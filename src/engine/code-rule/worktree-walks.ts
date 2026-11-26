@@ -12,8 +12,10 @@
  * `WORKTREE_FULL_WALK_MS` old. It hands each session what it saw of the others last time. Reading them all stat'ed
  * every file of every worktree on each walk: with 190 worktrees, about 5 s of the daemon's main thread a walk.
  */
+import { channel } from "node:diagnostics_channel";
 import { lstat } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
+import { FolderPlaces } from "../catalog/checkouts/folder-places.js";
 import type { WorktreeListLearning, WorktreeRegistry } from "../catalog/repository-identity.js";
 import { fileStamp } from "../file-stamp.js";
 import { gitFirstSightListing, GitReads, gitTrackedIgnoredReader, gitUnmergedReader, type HeadListing } from "../git.js";
@@ -57,6 +59,38 @@ export const WORKTREE_FULL_WALK_MS = 600_000;
  * walk it asks for then reads it, once each session watching it is past its gap.
  */
 export const WORKTREE_NOTICE_MS = 250;
+
+/**
+ * The `node:diagnostics_channel` channel on which the walks count their reads, and the sessions the turns of their lanes
+ * that apply what the walks found, for whoever measures the daemon: a load test subscribes through the inspector and
+ * reads the end of the daemon's first pass over every worktree from it. Nothing is published while no one subscribes.
+ */
+const WORKTREE_WALK_EVENTS = "rerail:worktree-walks";
+
+/** What the walks publish as each read of a worktree ends: whether it was the worktree's first, and whether it found a change. */
+interface WorktreeReadEvent {
+  readonly kind: "read";
+  readonly first: boolean;
+  readonly changed: boolean;
+}
+
+const walkEvents = channel(WORKTREE_WALK_EVENTS);
+
+/** Tells whoever subscribes (`WORKTREE_WALK_EVENTS`) of a read that made `snapshot` where the walk held `previous`. */
+function tellRead(previous: WorktreeSnapshot | undefined, snapshot: WorktreeSnapshot): void {
+  if (walkEvents.hasSubscribers) walkEvents.publish({ kind: "read", first: previous === undefined, changed: snapshot !== previous } satisfies WorktreeReadEvent);
+}
+
+/** What a session publishes as one turn of its lane applies a walk's take: how many of the take's worktrees it holds. */
+interface WorktreeTakeTurnEvent {
+  readonly kind: "take-turn";
+  readonly worktrees: number;
+}
+
+/** Tells whoever subscribes (`WORKTREE_WALK_EVENTS`) of a turn of a session's lane that applies `worktrees` worktrees of a take. */
+export function tellTakeTurn(worktrees: number): void {
+  if (walkEvents.hasSubscribers) walkEvents.publish({ kind: "take-turn", worktrees } satisfies WorktreeTakeTurnEvent);
+}
 
 /**
  * What one walk saw of a worktree, each source by its path in the worktree (`/`-separated). A snapshot never changes: a
@@ -219,9 +253,19 @@ export interface WatcherWalk {
   /**
    * Takes what the walk found. `records` holds, by worktree (physical), the changes no watching session made that this
    * session records once for the repository (`WorktreeWalks`). Never rejects: the session records its own failures.
+   * What it reads of the walk off its own lane it reads through `inTurn`, so the sessions taking a walk read one after
+   * another.
    */
-  take(walk: WorktreeWalk, records: WorktreeRecords): Promise<void>;
+  take(walk: WorktreeWalk, records: WorktreeRecords, inTurn: ReadTurn): Promise<void>;
 }
+
+/**
+ * Runs `read` once every read handed out before it has ended (`WatcherWalk.take`). Sessions that joined a repository's
+ * walk while its first walk read all take their first sight of every worktree when the next walk ends: read at once,
+ * each finding every new worktree's checkout and building its rules, those reads held each other, and every session's
+ * hooks, for seconds on Windows. A read waits for no lane and no take, only for the reads before it.
+ */
+export type ReadTurn = <T>(read: () => Promise<T>) => Promise<T>;
 
 /** A change a read found in a worktree since the read before it: the source's path in the worktree, and its new observation (undefined once removed). */
 export interface WorktreeChange {
@@ -626,6 +670,8 @@ export class WorktreeWalks {
   #pump: NodeJS.Timeout | undefined;
   /** Whether a walk is reading: it takes the notices itself, and asks for the walk they call for as it ends. */
   #walking = false;
+  /** The last read of a take handed out, which the next one waits for (`#inTurn`). */
+  #reads: Promise<void> = Promise.resolve();
   readonly #onWatching: ((watching: boolean) => void) | undefined;
   readonly #sessionWatch: (() => TreeWatch | undefined) | undefined;
 
@@ -1213,6 +1259,7 @@ export class WorktreeWalks {
       if (scan === undefined) continue;
       this.#notices.read(root, scan.seen);
       const { snapshot, texts } = nextSnapshot(previous, scan);
+      tellRead(previous, snapshot);
       const changes = previous === undefined ? [] : changesBetween(previous, snapshot);
       const listings = await listedFor(this.#git, { root, head: read.head, sources: snapshot.sources }, begun.firstSeen, scan.checkouts);
       const findings = {
@@ -1252,13 +1299,20 @@ export class WorktreeWalks {
       for (let next = watching.waiting; next !== undefined && !watching.closed; next = watching.waiting) {
         watching.waiting = undefined;
         watching.takingPart = next.walk;
-        await next.walk.take(next.found, next.records).catch(() => undefined);
+        await next.walk.take(next.found, next.records, read => this.#inTurn(read)).catch(() => undefined);
         watching.answered = Math.max(watching.answered, next.answers);
       }
     } finally {
       watching.taking = undefined;
       watching.takingPart = undefined;
     }
+  }
+
+  /** The sessions' reads of the walks they take, one after another ({@link ReadTurn}). */
+  #inTurn<T>(read: () => Promise<T>): Promise<T> {
+    const turn = this.#reads.then(read);
+    this.#reads = turn.then(() => undefined, () => undefined);
+    return turn;
   }
 }
 
@@ -1272,6 +1326,11 @@ export class RepositoryWorktreeWalks {
   readonly #options: { gapMs?: number; fullWalkMs?: number };
   readonly #treeWatch: SharedTreeWatch | undefined;
   /**
+   * Where each worktree's top folder is on disk, for every session of every repository: kept while the watch shows
+   * nothing moved it (`FolderPlaces`), through a user of the watch of its own.
+   */
+  readonly places: FolderPlaces;
+  /**
    * By repository, the walk its sessions watch, dropped once none does: nothing of an idle walk is worth keeping, and
    * a folder the catalog does not know is a repository of its own.
    */
@@ -1281,6 +1340,7 @@ export class RepositoryWorktreeWalks {
     const { treeWatch, ...walks } = options;
     this.#options = walks;
     this.#treeWatch = treeWatch === undefined ? undefined : new SharedTreeWatch(treeWatch);
+    this.places = new FolderPlaces({ watch: this.#treeWatch?.user({ flagsOnly: true }) });
   }
 
   /** The walk of the repository `repository` names, the same for every checkout of it (its clone id). */

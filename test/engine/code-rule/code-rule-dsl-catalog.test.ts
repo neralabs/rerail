@@ -30,7 +30,7 @@ import { applyCodeRuleConfig } from "../../../src/engine/code-rule/code-rule-opt
 import { setRepositoryStarted } from "../../../src/runtime/index.js";
 import { addAttachment, loadCheckoutRuleSet, ruleConfigurationSignature, setRuleSetting } from "../../../src/engine/catalog/rule-configuration.js";
 import { upsertLibraryRule } from "../../../src/engine/catalog/rule-library.js";
-import { approve, ruleSubject } from "../../../src/engine/catalog/rule-approval.js";
+import { approve, packSubject, ruleSubject } from "../../../src/engine/catalog/rule-approval.js";
 import { setUpTestRepository, testCodeRuleCatalog } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { validateCodeRule } from "../../../src/engine/rules.js";
@@ -269,6 +269,72 @@ describe("checkout code-rule catalog", () => {
       stringify.mockRestore();
       expect(secondCount).toBe(firstCount);
       expect(serialized).toBe(0);
+    } finally {
+      catalogs.close();
+    }
+  });
+
+  it("serializes no pack rule again for another checkout at the same mode, in another runtime's catalogs too", () => {
+    installPack("typescript");
+    const base = temporaryRoot();
+    const main = join(base, "main");
+    execFileSync("git", ["init", "--quiet", "-b", "main", main]);
+    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "base"], { cwd: main });
+    const [first, second] = ["first", "second"].map(name => join(base, name)) as [string, string];
+    for (const worktree of [first, second]) execFileSync("git", ["worktree", "add", "--quiet", "--detach", worktree], { cwd: main });
+    const databasePath = join(base, "rerail.sqlite");
+    setUpTestRepository(main, { packs: ["typescript"] }, databasePath);
+    const ruleCatalog = loadRuleCatalog();
+    const ids = new Set([...ruleCatalog.documents.values()].map(document => document.rule.id));
+    // Each runtime of the daemon keeps catalogs of its own; both build from the daemon's one rule catalog.
+    const [one, other] = [new CheckoutCatalogs(databasePath, { ruleCatalog }), new CheckoutCatalogs(databasePath, { ruleCatalog })];
+    try {
+      const firstCount = one.catalog(first).status.ruleCount;
+      expect(firstCount).toBeGreaterThan(0);
+      // A rule's content, as its catalog serializes it to compile it: the pack rule with the mode it runs at.
+      const stringify = vi.spyOn(JSON, "stringify");
+      const secondCount = other.catalog(second).status.ruleCount;
+      const serialized = stringify.mock.calls.filter(([value]) => {
+        const rule = value as { id?: unknown; mode?: unknown } | null | undefined;
+        return typeof rule === "object" && rule !== null && ids.has(rule.id as string) && "mode" in rule;
+      }).length;
+      stringify.mockRestore();
+      expect(secondCount).toBe(firstCount);
+      expect(serialized).toBe(0);
+    } finally {
+      one.close();
+      other.close();
+    }
+  });
+
+  it("runs a rule at each checkout's own mode, the same document wherever the mode is the same", () => {
+    installPack("typescript");
+    const base = temporaryRoot();
+    const main = join(base, "main");
+    execFileSync("git", ["init", "--quiet", "-b", "main", main]);
+    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "base"], { cwd: main });
+    const [first, second] = ["first", "second"].map(name => join(base, name)) as [string, string];
+    for (const worktree of [first, second]) execFileSync("git", ["worktree", "add", "--quiet", "--detach", worktree], { cwd: main });
+    const databasePath = join(base, "rerail.sqlite");
+    setUpTestRepository(main, { packs: ["typescript"] }, databasePath);
+    const ruleCatalog = loadRuleCatalog();
+    const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog });
+    try {
+      // A pack linked from a folder runs in Log until a person approves it, as `rerail rules approve` does here.
+      const subject = packSubject(ruleCatalog, ruleCatalog.packs.get("typescript")!);
+      if (subject !== undefined) approve(catalogs.database, subject);
+      for (const root of [first, second]) catalogs.refresh(root);
+      const rules = (root: string) => loadCheckoutRuleSet(
+        catalogs.database, ruleCatalog, catalogs.checkout(root)!, { started: true, setUp: true, startedBy: "repository" }, catalogs.ownerCheckoutPaths(root).slice(1),
+      ).rulesFor("");
+      const [ruled, other] = rules(first).filter(rule => rule.document.kind === "code" && rule.mode !== "log");
+      // The second worktree runs one rule in Log; the first runs it at the pack's mode.
+      setRuleSetting(catalogs.database, { owner: { kind: "checkout", checkoutPath: second }, folder: "", targetKind: "rule", targetId: ruled!.document.rule.id, on: null, mode: "log" });
+      const byId = (root: string) => new Map(rules(root).map(rule => [rule.document.rule.id, rule]));
+      const [atFirst, atSecond] = [byId(first), byId(second)];
+      expect(atFirst.get(ruled!.document.rule.id)!.document.rule.mode).toBe(ruled!.mode);
+      expect(atSecond.get(ruled!.document.rule.id)!.document.rule.mode).toBe("log");
+      expect(atSecond.get(other!.document.rule.id)!.document).toBe(atFirst.get(other!.document.rule.id)!.document);
     } finally {
       catalogs.close();
     }
