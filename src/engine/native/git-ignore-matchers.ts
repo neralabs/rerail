@@ -8,7 +8,10 @@
  * it, as a matcher opened then would read them. A router keeps the matcher it was given until it asks again, as a lane
  * of its opens where a lane of its own opened its own matcher. A router that asks under another owner of Git reads than
  * the one that opened the shared matcher (Git answered at last) gets one that owner opens, as a router's own open did.
+ * Each shared matcher keeps the answers the walks learn through it, for every router's walks (`GitIgnoreAnswers`,
+ * asked through a `look`), for as long as the matcher lives.
  */
+import { GitIgnoreAnswers, GitIgnoreLook } from "./git-ignore-answers.js";
 import { nativeGitAccess } from "./git-access.js";
 import type { NativeGitAccess, NativeGitIgnoreMatcher } from "./native.js";
 
@@ -31,6 +34,8 @@ export class GitIgnoreMatchers {
   readonly #held = new Set<Shared>();
   /** The checkouts whose matcher could not say whether what it read changed, said once each. */
   readonly #checkFailed = new Set<string>();
+  /** The answers kept for each matcher opened here; they go with the matcher once nothing holds it. */
+  readonly #answers = new WeakMap<NativeGitIgnoreMatcher, GitIgnoreAnswers>();
 
   constructor(opener: () => GitIgnoreOpener = () => nativeGitAccess()) {
     this.#opener = opener;
@@ -83,7 +88,13 @@ export class GitIgnoreMatchers {
     const shared: Shared = { root, matcher, opener, users: new Set() };
     this.#current.set(root, shared);
     this.#held.add(shared);
+    this.#answers.set(matcher, new GitIgnoreAnswers(root, matcher));
     return shared;
+  }
+
+  /** The questions of one walk: a matcher opened here answers by the answers kept for it, any other by itself. */
+  look(): GitIgnoreLook {
+    return new GitIgnoreLook(matcher => this.#answers.get(matcher));
   }
 
   /** Ends `user`'s use of every matcher; one no user holds is dropped, and its index with it. */

@@ -1,0 +1,1 @@
+With several sessions in one repository, the daemon asks Git's ignore rules about a file once for every session's walks of its checkout, until the index or a `.gitignore` on the way to the file changes, where each walk of each session asked again, so hooks wait less behind the walks.
