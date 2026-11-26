@@ -486,7 +486,7 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 
 | Operation (HTTP and MCP tool) | Route | Purpose |
 | --- | --- | --- |
-| `repositories_list` | `GET /api/repositories` | Known repositories: key, name, aliases, set up, started, checkout count. A repository whose stored aliases are not a JSON array of strings (a damaged file or a hand edit) lists with none, and `daemon.log` names it once. |
+| `repositories_list` | `GET /api/repositories` | Known repositories: key, name, aliases, set up, started, checkout count. A repository whose stored aliases are not a JSON array (a damaged file or a hand edit) lists with none, and one whose array holds an item that is not a string lists without that item; `daemon.log` names it once. |
 | `repository_context_get` | `GET /api/repository?repository=&checkout=` | A repository's clones and checkouts (own and effective state), and the caller's checkout and folder. |
 | `repository_rules_get` | `GET /api/repository/rules?repository=&checkout=` | Rules per attachment folder with on, mode, suppressions, config, what decided each, `addedAt`, and `updatedAt` and `copiedFromRuleId` for your rules; unresolvable ones marked unavailable. |
 | `repository_settings_set` | `PUT /api/repository/settings` | On/off, mode, `suppressions` per repository or checkout (`owner`) and folder; By Rerail code rule `config` (whole repository). Null clears. |
