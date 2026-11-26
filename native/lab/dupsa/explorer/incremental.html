@@ -78,7 +78,7 @@ svg .muted { fill: var(--muted) }
     <ol>
       <li><b>A suffix array to depth w is enough, and it is local.</b> A finding only depends on which w-unit windows are equal, so the index needs the windows sorted, and nothing past depth w. An edit then changes only the windows that overlap it.</li>
       <li><b>Two levels: an immutable base plus an overlay.</b> Base windows that the edit overlaps get tombstones. The new windows the edit makes are looked up in the base and added to their class. The rest of the edited file stays in the base and only moves. Compaction merges the overlay into a new base in one linear pass.</li>
-      <li><b>About 1,000× fewer instructions than a rebuild.</b> On Jeff's <code>native/src</code> as node symbols (5.6 M windows), an edit costs a median <b>5.7 M instructions</b> (0.6 ms) with the index in memory, against 6.4 G for a run that rebuilds. A fresh process that maps the saved index and applies the edit costs 0.15 G instructions, 0.02 s. All 100 replayed steps (50 per method) gave the rebuild's exact findings.</li>
+      <li><b>About 1,000× fewer instructions than a rebuild.</b> On Jeff's <code>native/src</code> as node symbols (5.6 M windows), an edit costs a median <b>5.7 M instructions</b> (0.6 ms) with the index in memory, against 6.6 G for a run that rebuilds. A fresh process that maps the saved index and applies the edit costs a median 91 M instructions, 0.01–0.02 s, of which 16.5 M is starting and ending the process. All 100 replayed steps (50 per method) gave the rebuild's exact findings.</li>
     </ol>
   </section>
 
@@ -142,30 +142,267 @@ svg .muted { fill: var(--muted) }
 
   <section>
     <h2>The index</h2>
-    <div class="text" style="display:grid; gap:10px">
-      <p><b>The base</b> holds every full window of a snapshot, in window order:</p>
-      <ul>
-        <li>a bit per window for "same as the window before", which replaces the LCP array;</li>
-        <li>each window's class (a run of equal windows);</li>
-        <li>each position's rank.</li>
-      </ul>
-      <p>That is 16 bytes per window: 91 MB for the node windows of <code>native/src</code>. The base is never edited.</p>
-      <p><b>The overlay</b> has an entry per document changed since the base. The entry is computed from the base version and the current version only, so editing a document again replaces its entry. A run that starts from a saved base only needs the documents changed since that base. An entry holds:</p>
-      <ul>
-        <li><b>Tombstones:</b> a bit per base window, with each class's count of live members.</li>
-        <li><b>Added windows:</b> each new window is found by a binary search over the base windows, skipping the units already matched at both bounds. It joins the base class it equals, or a fresh class, keyed by a hash of its units and compared in full, when no base window is the same.</li>
-        <li><b>A position map</b> for the rest of the document.</li>
-      </ul>
-      <p><b>The blocks</b> are kept per document, each holding its first window's class. After a batch of changes, blocks are recomputed only in documents with a member in a class that gained or lost one, since those classes' counts may have crossed 2. A block's other copies are read from its class when reported, so they never go stale. In the replays that was at most 6 documents a step.</p>
-      <p><b>Compaction</b> merges the overlay into a new base. It is one pass in window order:</p>
-      <ul>
-        <li>tombstoned windows are dropped;</li>
-        <li>added windows go at the end of their class;</li>
-        <li>fresh classes go at the rank their binary search stopped at.</li>
-      </ul>
-      <p>No window is compared or sorted again, and the "same as before" bits follow from the classes.</p>
-      <p><b>Finding changes:</b> each step, the last findings are moved through each document's change and compared with the new ones. A finding is then unchanged, moved, has changed copies, is added, or is removed.</p>
-    </div>
+    <figure>
+      <div class="tscroll" style="border:0; background:none">
+        <svg viewBox="0 0 900 200" width="900" height="200" role="img" aria-label="Two documents, A = x a b c y and B = a b c z, and the base: their five windows of 3 units sorted, each with a same-as-above bit, a class and its place. Class 0, a b c, has two places: a duplicated block." style="max-width:100%; height:auto; color:var(--ink)">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+<marker id="ahn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--new)"/></marker></defs>
+<text x="10" y="47" font-size="12" class="muted">A</text>
+<rect x="44" y="30" width="24" height="24" rx="3" fill="var(--soft)" stroke="var(--line)"/>
+<text x="56" y="46" text-anchor="middle" class="mono" font-size="13">x</text>
+<text x="56" y="67" text-anchor="middle" font-size="10" class="muted">0</text>
+<rect x="70" y="30" width="24" height="24" rx="3" fill="var(--soft)" stroke="var(--line)"/>
+<text x="82" y="46" text-anchor="middle" class="mono" font-size="13">a</text>
+<text x="82" y="67" text-anchor="middle" font-size="10" class="muted">1</text>
+<rect x="96" y="30" width="24" height="24" rx="3" fill="var(--soft)" stroke="var(--line)"/>
+<text x="108" y="46" text-anchor="middle" class="mono" font-size="13">b</text>
+<text x="108" y="67" text-anchor="middle" font-size="10" class="muted">2</text>
+<rect x="122" y="30" width="24" height="24" rx="3" fill="var(--soft)" stroke="var(--line)"/>
+<text x="134" y="46" text-anchor="middle" class="mono" font-size="13">c</text>
+<text x="134" y="67" text-anchor="middle" font-size="10" class="muted">3</text>
+<rect x="148" y="30" width="24" height="24" rx="3" fill="var(--soft)" stroke="var(--line)"/>
+<text x="160" y="46" text-anchor="middle" class="mono" font-size="13">y</text>
+<text x="160" y="67" text-anchor="middle" font-size="10" class="muted">4</text>
+<text x="10" y="117" font-size="12" class="muted">B</text>
+<rect x="44" y="100" width="24" height="24" rx="3" fill="var(--soft)" stroke="var(--line)"/>
+<text x="56" y="116" text-anchor="middle" class="mono" font-size="13">a</text>
+<text x="56" y="137" text-anchor="middle" font-size="10" class="muted">0</text>
+<rect x="70" y="100" width="24" height="24" rx="3" fill="var(--soft)" stroke="var(--line)"/>
+<text x="82" y="116" text-anchor="middle" class="mono" font-size="13">b</text>
+<text x="82" y="137" text-anchor="middle" font-size="10" class="muted">1</text>
+<rect x="96" y="100" width="24" height="24" rx="3" fill="var(--soft)" stroke="var(--line)"/>
+<text x="108" y="116" text-anchor="middle" class="mono" font-size="13">c</text>
+<text x="108" y="137" text-anchor="middle" font-size="10" class="muted">2</text>
+<rect x="122" y="100" width="24" height="24" rx="3" fill="var(--soft)" stroke="var(--line)"/>
+<text x="134" y="116" text-anchor="middle" class="mono" font-size="13">z</text>
+<text x="134" y="137" text-anchor="middle" font-size="10" class="muted">3</text>
+<text x="10" y="170" font-size="12" class="muted">windows of w = 3 units</text>
+<text x="10" y="188" font-size="12" class="muted">(30 lines, or 150 nodes)</text>
+<text x="352" y="16" font-size="12">the base: every window, in sorted order</text>
+<text x="360" y="40" font-size="11" class="muted">window</text>
+<text x="446" y="40" font-size="11" class="muted">same as above</text>
+<text x="546" y="40" font-size="11" class="muted">class</text>
+<text x="606" y="40" font-size="11" class="muted">place</text>
+<rect x="352" y="50" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="360" y="67" class="mono" font-size="13">a b c</text>
+<text x="476" y="67" class="mono" font-size="13" text-anchor="middle"></text>
+<text x="558" y="67" class="mono" font-size="13" text-anchor="middle">0</text>
+<text x="606" y="67" class="mono" font-size="13">A 1</text>
+<rect x="352" y="78" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="360" y="95" class="mono" font-size="13">a b c</text>
+<text x="476" y="95" class="mono" font-size="13" text-anchor="middle">=</text>
+<text x="558" y="95" class="mono" font-size="13" text-anchor="middle">0</text>
+<text x="606" y="95" class="mono" font-size="13">B 0</text>
+<rect x="352" y="106" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="360" y="123" class="mono" font-size="13">b c y</text>
+<text x="476" y="123" class="mono" font-size="13" text-anchor="middle"></text>
+<text x="558" y="123" class="mono" font-size="13" text-anchor="middle">1</text>
+<text x="606" y="123" class="mono" font-size="13">A 2</text>
+<rect x="352" y="134" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="360" y="151" class="mono" font-size="13">b c z</text>
+<text x="476" y="151" class="mono" font-size="13" text-anchor="middle"></text>
+<text x="558" y="151" class="mono" font-size="13" text-anchor="middle">2</text>
+<text x="606" y="151" class="mono" font-size="13">B 1</text>
+<rect x="352" y="162" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="360" y="179" class="mono" font-size="13">x a b</text>
+<text x="476" y="179" class="mono" font-size="13" text-anchor="middle"></text>
+<text x="558" y="179" class="mono" font-size="13" text-anchor="middle">3</text>
+<text x="606" y="179" class="mono" font-size="13">A 0</text>
+<path d="M690 52 h8 V100 h-8" fill="none" stroke="var(--accent)" stroke-width="1.5"/>
+<text x="706" y="80.0" font-size="12" fill="var(--accent)">class 0: 2 places</text>
+<text x="706" y="96.0" font-size="11" class="muted">a duplicated block, A 1 and B 0</text>
+<path d="M70 26 C 70 6, 320 6, 350 62" fill="none" stroke="currentColor" stroke-width="1.2" marker-end="url(#ah)"/>
+<rect x="68" y="28" width="78" height="28" rx="4" fill="none" stroke="currentColor" stroke-dasharray="3 3"/>
+        </svg>
+      </div>
+      <figcaption>The base on a toy example. Each place's window is one row, sorted by the window's units (a suffix array cut at depth w). A row's bit says it equals the row above; a run of equal rows is a class. A class with two or more live places is a duplicated block, here a b c at A 1 and B 0. Each position also keeps its row's rank, so a place finds its class in one read. The base is built once, and never edited.</figcaption>
+    </figure>
+    <figure>
+      <div class="tscroll" style="border:0; background:none">
+        <svg viewBox="0 0 900 250" width="900" height="250" role="img" aria-label="Document A's c becomes d. The base rows for A's windows overlapping the edit, a b c and b c y, get tombstones; the new windows a b d and b d y are found by binary search and added as fresh classes. Class 0 drops to one live place, so the A and B finding is removed." style="max-width:100%; height:auto; color:var(--ink)">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+<marker id="ahn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--new)"/></marker></defs>
+<text x="10" y="47" font-size="12" class="muted">A old</text>
+<rect x="44" y="30" width="24" height="24" rx="3" fill="var(--soft)" stroke="var(--line)"/>
+<text x="56" y="46" text-anchor="middle" class="mono" font-size="13">x</text>
+<text x="56" y="67" text-anchor="middle" font-size="10" class="muted">0</text>
+<rect x="70" y="30" width="24" height="24" rx="3" fill="var(--soft)" stroke="var(--line)"/>
+<text x="82" y="46" text-anchor="middle" class="mono" font-size="13">a</text>
+<text x="82" y="67" text-anchor="middle" font-size="10" class="muted">1</text>
+<rect x="96" y="30" width="24" height="24" rx="3" fill="var(--soft)" stroke="var(--line)"/>
+<text x="108" y="46" text-anchor="middle" class="mono" font-size="13">b</text>
+<text x="108" y="67" text-anchor="middle" font-size="10" class="muted">2</text>
+<rect x="122" y="30" width="24" height="24" rx="3" fill="var(--dead)" fill-opacity=".3" stroke="var(--line)"/>
+<text x="134" y="46" text-anchor="middle" class="mono" font-size="13">c</text>
+<text x="134" y="67" text-anchor="middle" font-size="10" class="muted">3</text>
+<rect x="148" y="30" width="24" height="24" rx="3" fill="var(--soft)" stroke="var(--line)"/>
+<text x="160" y="46" text-anchor="middle" class="mono" font-size="13">y</text>
+<text x="160" y="67" text-anchor="middle" font-size="10" class="muted">4</text>
+<text x="10" y="117" font-size="12" class="muted">A new</text>
+<rect x="44" y="100" width="24" height="24" rx="3" fill="var(--soft)" stroke="var(--line)"/>
+<text x="56" y="116" text-anchor="middle" class="mono" font-size="13">x</text>
+<text x="56" y="137" text-anchor="middle" font-size="10" class="muted">0</text>
+<rect x="70" y="100" width="24" height="24" rx="3" fill="var(--soft)" stroke="var(--line)"/>
+<text x="82" y="116" text-anchor="middle" class="mono" font-size="13">a</text>
+<text x="82" y="137" text-anchor="middle" font-size="10" class="muted">1</text>
+<rect x="96" y="100" width="24" height="24" rx="3" fill="var(--soft)" stroke="var(--line)"/>
+<text x="108" y="116" text-anchor="middle" class="mono" font-size="13">b</text>
+<text x="108" y="137" text-anchor="middle" font-size="10" class="muted">2</text>
+<rect x="122" y="100" width="24" height="24" rx="3" fill="var(--new)" fill-opacity=".3" stroke="var(--line)"/>
+<text x="134" y="116" text-anchor="middle" class="mono" font-size="13">d</text>
+<text x="134" y="137" text-anchor="middle" font-size="10" class="muted">3</text>
+<rect x="148" y="100" width="24" height="24" rx="3" fill="var(--soft)" stroke="var(--line)"/>
+<text x="160" y="116" text-anchor="middle" class="mono" font-size="13">y</text>
+<text x="160" y="137" text-anchor="middle" font-size="10" class="muted">4</text>
+<text x="10" y="170" font-size="12" class="muted">c → d at position 3: the windows</text>
+<text x="10" y="188" font-size="12" class="muted">starting at 1 and 2 overlap it</text>
+<text x="10" y="206" font-size="12" class="muted">(at most e + w − 1 of them)</text>
+<text x="352" y="16" font-size="12">the base, with document A's overlay</text>
+<text x="360" y="40" font-size="11" class="muted">window</text>
+<text x="446" y="40" font-size="11" class="muted">same as above</text>
+<text x="546" y="40" font-size="11" class="muted">class</text>
+<text x="606" y="40" font-size="11" class="muted">place</text>
+<rect x="352" y="50" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--dead)" stroke-width="2"/>
+<text x="360" y="67" class="mono" font-size="13">a b c</text>
+<text x="476" y="67" class="mono" font-size="13" text-anchor="middle"></text>
+<text x="558" y="67" class="mono" font-size="13" text-anchor="middle">0</text>
+<text x="606" y="67" class="mono" font-size="13">A 1</text>
+<line x1="358" y1="62" x2="676" y2="62" stroke="var(--dead)" stroke-width="2"/>
+<rect x="352" y="78" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="360" y="95" class="mono" font-size="13">a b c</text>
+<text x="476" y="95" class="mono" font-size="13" text-anchor="middle">=</text>
+<text x="558" y="95" class="mono" font-size="13" text-anchor="middle">0</text>
+<text x="606" y="95" class="mono" font-size="13">B 0</text>
+<rect x="352" y="106" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--new)" stroke-width="2"/>
+<text x="360" y="123" class="mono" font-size="13">a b d</text>
+<text x="476" y="123" class="mono" font-size="13" text-anchor="middle"></text>
+<text x="558" y="123" class="mono" font-size="13" text-anchor="middle">0′</text>
+<text x="606" y="123" class="mono" font-size="13">A 1</text>
+<rect x="352" y="134" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--dead)" stroke-width="2"/>
+<text x="360" y="151" class="mono" font-size="13">b c y</text>
+<text x="476" y="151" class="mono" font-size="13" text-anchor="middle"></text>
+<text x="558" y="151" class="mono" font-size="13" text-anchor="middle">1</text>
+<text x="606" y="151" class="mono" font-size="13">A 2</text>
+<line x1="358" y1="146" x2="676" y2="146" stroke="var(--dead)" stroke-width="2"/>
+<rect x="352" y="162" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="360" y="179" class="mono" font-size="13">b c z</text>
+<text x="476" y="179" class="mono" font-size="13" text-anchor="middle"></text>
+<text x="558" y="179" class="mono" font-size="13" text-anchor="middle">2</text>
+<text x="606" y="179" class="mono" font-size="13">B 1</text>
+<rect x="352" y="190" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--new)" stroke-width="2"/>
+<text x="360" y="207" class="mono" font-size="13">b d y</text>
+<text x="476" y="207" class="mono" font-size="13" text-anchor="middle"></text>
+<text x="558" y="207" class="mono" font-size="13" text-anchor="middle">1′</text>
+<text x="606" y="207" class="mono" font-size="13">A 2</text>
+<rect x="352" y="218" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="360" y="235" class="mono" font-size="13">x a b</text>
+<text x="476" y="235" class="mono" font-size="13" text-anchor="middle"></text>
+<text x="558" y="235" class="mono" font-size="13" text-anchor="middle">3</text>
+<text x="606" y="235" class="mono" font-size="13">A 0</text>
+<path d="M690 52 h8 V72 h-8" fill="none" stroke="var(--dead)" stroke-width="1.5"/>
+<text x="706" y="66.0" font-size="12" fill="var(--dead)">tombstone: class 0 now has 1 live place</text>
+<text x="706" y="82.0" font-size="11" class="muted">A 1 / B 0 finding removed</text>
+<path d="M690 108 h8 V128 h-8" fill="none" stroke="var(--new)" stroke-width="1.5"/>
+<text x="706" y="122.0" font-size="12" fill="var(--new)">binary search: no equal row, a fresh class</text>
+<path d="M690 136 h8 V156 h-8" fill="none" stroke="var(--dead)" stroke-width="1.5"/>
+<text x="706" y="150.0" font-size="12" fill="var(--dead)">tombstone</text>
+<path d="M690 192 h8 V212 h-8" fill="none" stroke="var(--new)" stroke-width="1.5"/>
+<text x="706" y="206.0" font-size="12" fill="var(--new)">binary search: a fresh class</text>
+<path d="M690 220 h8 V240 h-8" fill="none" stroke="var(--muted)" stroke-width="1.5"/>
+<text x="706" y="234.0" font-size="12" fill="var(--muted)">x a b ends before the edit: untouched</text>
+        </svg>
+      </div>
+      <figcaption>One edit. The change is the two versions with their common prefix and suffix trimmed. Base rows of the windows that overlap it get a tombstone, and their class's live count drops. Each new window is found by binary search in the base, skipping the units already matched at both bounds: it joins the class it equals, or starts a fresh one there. Windows after the edit keep their rows, and their places move by the edit's length. Blocks are then recomputed only in documents with a place in a class whose count changed, here A and B.</figcaption>
+    </figure>
+    <figure>
+      <div class="tscroll" style="border:0; background:none">
+        <svg viewBox="0 0 860 250" width="860" height="250" role="img" aria-label="Compaction: the base and overlay rows are read once in window order; tombstoned rows are dropped and the rest, added rows included, are written in that order as the new base, with classes renumbered." style="max-width:100%; height:auto; color:var(--ink)">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+<marker id="ahn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--new)"/></marker></defs>
+<text x="12" y="16" font-size="12">base and overlay, in window order</text>
+<text x="20" y="40" font-size="11" class="muted">window</text>
+<text x="106" y="40" font-size="11" class="muted">same as above</text>
+<text x="206" y="40" font-size="11" class="muted">class</text>
+<text x="266" y="40" font-size="11" class="muted">place</text>
+<rect x="12" y="50" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--dead)" stroke-width="2"/>
+<text x="20" y="67" class="mono" font-size="13">a b c</text>
+<text x="136" y="67" class="mono" font-size="13" text-anchor="middle"></text>
+<text x="218" y="67" class="mono" font-size="13" text-anchor="middle">0</text>
+<text x="266" y="67" class="mono" font-size="13">A 1</text>
+<line x1="18" y1="62" x2="336" y2="62" stroke="var(--dead)" stroke-width="2"/>
+<rect x="12" y="78" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="20" y="95" class="mono" font-size="13">a b c</text>
+<text x="136" y="95" class="mono" font-size="13" text-anchor="middle">=</text>
+<text x="218" y="95" class="mono" font-size="13" text-anchor="middle">0</text>
+<text x="266" y="95" class="mono" font-size="13">B 0</text>
+<rect x="12" y="106" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--new)" stroke-width="2"/>
+<text x="20" y="123" class="mono" font-size="13">a b d</text>
+<text x="136" y="123" class="mono" font-size="13" text-anchor="middle"></text>
+<text x="218" y="123" class="mono" font-size="13" text-anchor="middle">0′</text>
+<text x="266" y="123" class="mono" font-size="13">A 1</text>
+<rect x="12" y="134" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--dead)" stroke-width="2"/>
+<text x="20" y="151" class="mono" font-size="13">b c y</text>
+<text x="136" y="151" class="mono" font-size="13" text-anchor="middle"></text>
+<text x="218" y="151" class="mono" font-size="13" text-anchor="middle">1</text>
+<text x="266" y="151" class="mono" font-size="13">A 2</text>
+<line x1="18" y1="146" x2="336" y2="146" stroke="var(--dead)" stroke-width="2"/>
+<rect x="12" y="162" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="20" y="179" class="mono" font-size="13">b c z</text>
+<text x="136" y="179" class="mono" font-size="13" text-anchor="middle"></text>
+<text x="218" y="179" class="mono" font-size="13" text-anchor="middle">2</text>
+<text x="266" y="179" class="mono" font-size="13">B 1</text>
+<rect x="12" y="190" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--new)" stroke-width="2"/>
+<text x="20" y="207" class="mono" font-size="13">b d y</text>
+<text x="136" y="207" class="mono" font-size="13" text-anchor="middle"></text>
+<text x="218" y="207" class="mono" font-size="13" text-anchor="middle">1′</text>
+<text x="266" y="207" class="mono" font-size="13">A 2</text>
+<rect x="12" y="218" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="20" y="235" class="mono" font-size="13">x a b</text>
+<text x="136" y="235" class="mono" font-size="13" text-anchor="middle"></text>
+<text x="218" y="235" class="mono" font-size="13" text-anchor="middle">3</text>
+<text x="266" y="235" class="mono" font-size="13">A 0</text>
+<text x="512" y="16" font-size="12">the new base</text>
+<text x="520" y="40" font-size="11" class="muted">window</text>
+<text x="606" y="40" font-size="11" class="muted">same as above</text>
+<text x="706" y="40" font-size="11" class="muted">class</text>
+<text x="766" y="40" font-size="11" class="muted">place</text>
+<rect x="512" y="50" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="520" y="67" class="mono" font-size="13">a b c</text>
+<text x="636" y="67" class="mono" font-size="13" text-anchor="middle"></text>
+<text x="718" y="67" class="mono" font-size="13" text-anchor="middle">0</text>
+<text x="766" y="67" class="mono" font-size="13">B 0</text>
+<rect x="512" y="78" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="520" y="95" class="mono" font-size="13">a b d</text>
+<text x="636" y="95" class="mono" font-size="13" text-anchor="middle"></text>
+<text x="718" y="95" class="mono" font-size="13" text-anchor="middle">1</text>
+<text x="766" y="95" class="mono" font-size="13">A 1</text>
+<rect x="512" y="106" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="520" y="123" class="mono" font-size="13">b c z</text>
+<text x="636" y="123" class="mono" font-size="13" text-anchor="middle"></text>
+<text x="718" y="123" class="mono" font-size="13" text-anchor="middle">2</text>
+<text x="766" y="123" class="mono" font-size="13">B 1</text>
+<rect x="512" y="134" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="520" y="151" class="mono" font-size="13">b d y</text>
+<text x="636" y="151" class="mono" font-size="13" text-anchor="middle"></text>
+<text x="718" y="151" class="mono" font-size="13" text-anchor="middle">3</text>
+<text x="766" y="151" class="mono" font-size="13">A 2</text>
+<rect x="512" y="162" width="330" height="24" rx="4" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="520" y="179" class="mono" font-size="13">x a b</text>
+<text x="636" y="179" class="mono" font-size="13" text-anchor="middle"></text>
+<text x="718" y="179" class="mono" font-size="13" text-anchor="middle">4</text>
+<text x="766" y="179" class="mono" font-size="13">A 0</text>
+<line x1="350" y1="90" x2="506" y2="62" stroke="currentColor" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="350" y1="118" x2="506" y2="90" stroke="var(--new)" stroke-width="1.4" marker-end="url(#ahn)"/>
+<line x1="350" y1="174" x2="506" y2="118" stroke="currentColor" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="350" y1="202" x2="506" y2="146" stroke="var(--new)" stroke-width="1.4" marker-end="url(#ahn)"/>
+<line x1="350" y1="230" x2="506" y2="174" stroke="currentColor" stroke-width="1.4" marker-end="url(#ah)"/>
+<text x="360" y="66" font-size="11" fill="var(--dead)">dropped</text>
+<text x="360" y="150" font-size="11" fill="var(--dead)">dropped</text>
+        </svg>
+      </div>
+      <figcaption>Compaction merges the overlay into a new base in one pass in window order. Tombstoned rows are dropped. Added rows already know their place, after the members of their class, or where their binary search stopped for a fresh class. No window is compared or sorted again, and the same-as-above bits follow from the classes.</figcaption>
+    </figure>
+    <p class="text"><b>Finding changes.</b> The last findings are kept by document. Outside the documents whose blocks were recomputed, each finding is the same, at places moved by the edits. Inside them, the new findings are compared with the old ones moved, and each is unchanged, moved, has changed copies, is added, or is removed.</p>
   </section>
 
   <section>
@@ -192,12 +429,12 @@ svg .muted { fill: var(--muted) }
       <table>
         <thead><tr><th>Design</th><th>What it does</th><th>Result</th></tr></thead>
         <tbody>
-          <tr><td>Rebuild every run</td><td>SA-IS and Kasai LCP over every document, then blocks. With no state kept, a run after an edit costs what the first run did.</td><td>6.4 G instructions a run on nodes (0.47 s for the suffix array, down from 7 s: see below); 3.5 G on lines, most of it reading the files.</td></tr>
+          <tr><td>Rebuild every run</td><td>SA-IS and Kasai LCP over every document, then blocks. With no state kept, a run after an edit costs what the first run did.</td><td>6.6 G instructions a run on nodes (0.47 s for the suffix array, down from 7 s: see below); 2.7 G on lines, most of it reading the files.</td></tr>
           <tr><td>Construction by prefix doubling, to depth w</td><td>Each symbol read once. Each round sorts only the groups still tied (Larsson and Sadakane), and the rounds stop at w.</td><td>Base in 0.38 s on nodes, about the same as SA-IS now that SA-IS reads the symbol relation; 0.02 s on lines against 0.11 s. Same classes (tested).</td></tr>
           <tr><td>Log-structured, a whole file per insert</td><td>An edited file is tombstoned whole and all its windows are inserted again, as an LSM of per-file runs would do (<code>--whole-doc</code>).</td><td>54 M instructions median on nodes. It grows with the file, not the edit.</td></tr>
           <tr class="pick"><td>Tombstones plus edit-local delta</td><td>Only the windows the edit overlaps go out and come in; the rest of the file moves.</td><td><b>5.7 M instructions, 0.6 ms median, 5.6 ms worst</b> on nodes; 1.4 M, 0.16 ms on lines.</td></tr>
           <tr><td>Compaction</td><td>The overlay merged into a new base, in one pass (<code>--compact-every 10</code>).</td><td>About 230 ms. Lookups don't slow down as the overlay grows (7,347 tombstones and 6,361 added windows after 50 steps), so it is only needed to bound memory.</td></tr>
-          <tr><td>A fresh process with the saved index mapped</td><td>The index file and the tapes are mapped (memmap2) and read where they lie: the base, the blocks, the dictionaries, the lines' ids and the last findings. The run applies the edit and reports the changes (<code>--save</code>, <code>--load</code>).</td><td>0.15 G instructions on nodes, 0.06 G on lines; 0.02 s wall. Writing the index adds 0.4–0.6 G to the first run.</td></tr>
+          <tr><td>A fresh process with the saved index mapped</td><td>The index file and the tapes are mapped (memmap2) and read where they lie: the file table, the dictionaries, the symbols, the base, the blocks and the last findings. The run applies the edit and reports the changes (<code>--save</code>, <code>--load</code>).</td><td>91 M instructions median on nodes, 55 M on lines; 0.01–0.02 s wall. Writing the index adds 0.6 G to the first run.</td></tr>
         </tbody>
       </table>
     </div>
@@ -238,9 +475,10 @@ svg .muted { fill: var(--muted) }
       <ul>
         <li>deriving the symbols takes 0.15 s;</li>
         <li>the SA-IS base takes 0.47 s, down from 7 s;</li>
-        <li>a whole cold process takes 6.4 G instructions, down from 65.6 G.</li>
+        <li>a whole cold process takes 6.6 G instructions, down from 65.6 G;</li>
+        <li>a rebuild inside a running process after edits, over documents from several batches, reads each symbol once into the array it sorts: 0.5–0.9 s, down from 1.7 s.</li>
       </ul>
-      <p>The relation is 24 MB. It is a derived fact written once where it is computed, which decision 0353 counts as not a copy. A run on a saved index skips it: it reads about 150 symbols per lookup and derives each one where it reads it.</p>
+      <p>The relation is 24 MB. It is a derived fact written once where it is computed, which decision 0353 counts as not a copy. The base's relation is saved with the index, so a run on a saved index reads its symbols where the mapping holds them.</p>
     </div>
   </section>
 
@@ -248,14 +486,64 @@ svg .muted { fill: var(--muted) }
     <h2>The path after a small edit</h2>
     <div class="text" style="display:grid; gap:10px">
       <p><b>A process that stays up</b> (a watch mode or a language server) keeps the index in memory. After each save it reads the changed files' new versions, which for node symbols means parsing them. Reading a step's new tapes took 0.1–2.4 ms here; the engine's parse of the changed files is a separate cost, not measured here. It sets them in the overlay and recomputes the affected documents. That is milliseconds, and then it reports the changes in the findings.</p>
-      <p><b>A CLI run</b> maps the saved index and the base's tapes, applies every document changed since the base, and reports what changed since the last run: 0.02 s wall, 0.15 G instructions. The steps:</p>
+      <p><b>A CLI run</b> maps the saved index and the base's tapes, applies every document changed since the base, and reports what changed since the last run. The index holds everything such a run reads, so that it reads only what the edit touches:</p>
       <ul>
-        <li>The index file is mapped. Its arrays are slices of the mapping, aligned to 8 bytes, and nothing is read until used.</li>
-        <li>The lines method's base ids and its line dictionary are in the index, so the base files are not read again.</li>
-        <li>The last findings are in the index, by document. Only the affected documents' findings are recomputed; the others' are moved through the change.</li>
-        <li>Tombstone counts are held only for the classes an edit touched, so a loaded index starts without a pass over its 5.5 M classes.</li>
-        <li>Still open: each language (tape tag) needs its own base, and the spike runs one.</li>
+        <li>the scoped file table, so the 187 MB capture is not walked for its headers (that was 30 M instructions);</li>
+        <li>the node dictionary sorted, looked up by binary search where it lies, rather than made into a hash map of 5.5 M rows each run (56 M);</li>
+        <li>the base's symbol relation, so the binary searches read symbols rather than derive each one from its tape again (the paste's step: 200 M to 56 M);</li>
+        <li>the last findings by document, and the lines' ids and line dictionary; a tape's header is read only when its document is.</li>
       </ul>
+    </div>
+    <figure>
+      <div class="tscroll" style="border:0; background:none">
+        <svg viewBox="0 0 900 228" width="900" height="228" role="img" aria-label="Instructions of one edit, step 1: nodes 53.9 M as a fresh process with the index mapped, of which 16.5 M is process start and exit, 12.9 M opening the index and 21 M the edit, against 5.7 M for the edit in memory; lines 32.9 M against 1.4 M." style="max-width:100%; height:auto; color:var(--ink)">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+<marker id="ahn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--new)"/></marker></defs>
+<line x1="250.0" y1="12" x2="250.0" y2="176" stroke="var(--soft)"/>
+<text x="250.0" y="192" font-size="11" text-anchor="middle" class="muted">0 M</text>
+<line x1="350.0" y1="12" x2="350.0" y2="176" stroke="var(--soft)"/>
+<text x="350.0" y="192" font-size="11" text-anchor="middle" class="muted">10 M</text>
+<line x1="450.0" y1="12" x2="450.0" y2="176" stroke="var(--soft)"/>
+<text x="450.0" y="192" font-size="11" text-anchor="middle" class="muted">20 M</text>
+<line x1="550.0" y1="12" x2="550.0" y2="176" stroke="var(--soft)"/>
+<text x="550.0" y="192" font-size="11" text-anchor="middle" class="muted">30 M</text>
+<line x1="650.0" y1="12" x2="650.0" y2="176" stroke="var(--soft)"/>
+<text x="650.0" y="192" font-size="11" text-anchor="middle" class="muted">40 M</text>
+<line x1="750.0" y1="12" x2="750.0" y2="176" stroke="var(--soft)"/>
+<text x="750.0" y="192" font-size="11" text-anchor="middle" class="muted">50 M</text>
+<line x1="850.0" y1="12" x2="850.0" y2="176" stroke="var(--soft)"/>
+<text x="850.0" y="192" font-size="11" text-anchor="middle" class="muted">60 M</text>
+<text x="238" y="35" font-size="12" text-anchor="end">nodes, fresh process, index mapped</text>
+<rect x="250.0" y="20" width="163.0" height="20" rx="2" fill="var(--kept)"><title>process start and exit: 16.5 M instructions</title></rect>
+<rect x="415.0" y="20" width="127.0" height="20" rx="2" fill="var(--accent)"><title>opening the index: 12.9 M instructions</title></rect>
+<rect x="544.0" y="20" width="11.0" height="20" rx="2" fill="var(--cold)"><title>reading the changed file: 1.3 M instructions</title></rect>
+<rect x="557.0" y="20" width="208.0" height="20" rx="2" fill="var(--new)"><title>the edit and its diff: 21.0 M instructions</title></rect>
+<rect x="767.0" y="20" width="20.0" height="20" rx="2" fill="var(--line)"><title>other: 2.2 M instructions</title></rect>
+<text x="795.0" y="35" font-size="12" class="muted">53.9 M</text>
+<text x="238" y="75" font-size="12" text-anchor="end">nodes, in memory</text>
+<rect x="250.0" y="60" width="55.0" height="20" rx="2" fill="var(--new)"><title>the edit and its diff: 5.7 M instructions</title></rect>
+<text x="313.0" y="75" font-size="12" class="muted">5.7 M</text>
+<text x="238" y="115" font-size="12" text-anchor="end">lines, fresh process, index mapped</text>
+<rect x="250.0" y="100" width="163.0" height="20" rx="2" fill="var(--kept)"><title>process start and exit: 16.5 M instructions</title></rect>
+<rect x="415.0" y="100" width="26.0" height="20" rx="2" fill="var(--accent)"><title>opening the index: 2.8 M instructions</title></rect>
+<rect x="443.0" y="100" width="77.0" height="20" rx="2" fill="var(--cold)"><title>reading the changed file: 7.9 M instructions</title></rect>
+<rect x="522.0" y="100" width="24.0" height="20" rx="2" fill="var(--new)"><title>the edit and its diff: 2.6 M instructions</title></rect>
+<rect x="548.0" y="100" width="29.0" height="20" rx="2" fill="var(--line)"><title>other: 3.1 M instructions</title></rect>
+<text x="585.0" y="115" font-size="12" class="muted">32.9 M</text>
+<text x="238" y="155" font-size="12" text-anchor="end">lines, in memory</text>
+<rect x="250.0" y="140" width="12.0" height="20" rx="2" fill="var(--new)"><title>the edit and its diff: 1.4 M instructions</title></rect>
+<text x="270.0" y="155" font-size="12" class="muted">1.4 M</text>
+<rect x="20" y="208" width="12" height="10" rx="2" fill="var(--kept)"/><text x="38" y="217" font-size="12">process start and exit</text>
+<rect x="205.2" y="208" width="12" height="10" rx="2" fill="var(--accent)"/><text x="223.2" y="217" font-size="12">opening the index</text>
+<rect x="357.4" y="208" width="12" height="10" rx="2" fill="var(--cold)"/><text x="375.4" y="217" font-size="12">reading the changed file</text>
+<rect x="555.8" y="208" width="12" height="10" rx="2" fill="var(--new)"/><text x="573.8" y="217" font-size="12">the edit and its diff</text>
+<rect x="734.4" y="208" width="12" height="10" rx="2" fill="var(--line)"/><text x="752.4" y="217" font-size="12">other</text>
+        </svg>
+      </div>
+      <figcaption>Where a fresh process's instructions go, for one edit (step 1; instructions retired include the kernel's). Process start and exit cost 16.5 M whatever the run does. Opening the index reads the file table, maps the tapes and the index, and reads the lines' paths. The edit costs more mapped than in memory because its lookups touch pages of the mapped base for the first time, about 3 K instructions each. The lines method's changed file is read and normalised from disk.</figcaption>
+    </figure>
+    <div class="text">
+      <p>Still open: each language (tape tag) needs its own base, and the spike runs one.</p>
     </div>
   </section>
 
@@ -264,7 +552,7 @@ svg .muted { fill: var(--muted) }
     <ul class="text">
       <li><code>native/lab/dupsa/src/incr.rs</code>: the base, both builds, the overlay, compaction, saving, and the oracle tests.</li>
       <li><code>dupsa incr lines|nodes &lt;base&gt; &lt;steps&gt;</code> with <code>--check</code>, <code>--whole-doc</code>, <code>--compact-every N</code>, <code>--save</code> and <code>--load</code>. <code>dupsa readcost</code> was the profile of the node build above.</li>
-      <li><code>native/lab/dupsa/make_steps.py</code> writes the edit steps. <code>native/lab/dupsa/src/store.rs</code> maps the files, and <code>coldwarm.py</code> measures the chart above. Commits <code>5ddac0e5d0</code> and <code>c810505dbc</code>, pushed.</li>
+      <li><code>native/lab/dupsa/make_steps.py</code> writes the edit steps. <code>native/lab/dupsa/src/store.rs</code> maps the files, and <code>coldwarm.py</code> measures the chart above. Commits <code>5ddac0e5d0</code>, <code>c810505dbc</code> and later, pushed.</li>
     </ul>
   </section>
 </div>
@@ -272,7 +560,7 @@ svg .muted { fill: var(--muted) }
 <div class="tip" id="tip" hidden></div>
 <script>
 // [method, design, cold instructions, warm instructions], from coldwarm.py.
-const DATA = [["lines", "Rebuild every run, SA-IS", 3579317421, 3505281315], ["lines", "Rebuild every run, doubling", 2362773463, 2377127476], ["lines", "Whole file re-inserted", 2362773463, 2975022], ["lines", "Tombstones and edit-local delta, in memory", 2362773463, 1445996], ["lines", "Tombstones and edit-local delta, saved index mapped", 2941543398, 57343928], ["nodes", "Rebuild every run, SA-IS", 6387707424, 6402005204], ["nodes", "Rebuild every run, doubling", 7185207768, 7208801371], ["nodes", "Whole file re-inserted", 7185207768, 54177510], ["nodes", "Tombstones and edit-local delta, in memory", 7185207768, 5747337], ["nodes", "Tombstones and edit-local delta, saved index mapped", 7582489648, 152821745]];
+const DATA = [["lines", "Rebuild every run, SA-IS", 2674341171, 2873446583], ["lines", "Rebuild every run, doubling", 2368464242, 2374469326], ["lines", "Whole file re-inserted", 2368464242, 2989080], ["lines", "Tombstones and edit-local delta, in memory", 2368464242, 1443058], ["lines", "Tombstones and edit-local delta, saved index mapped", 2940079346, 54656140], ["nodes", "Rebuild every run, SA-IS", 6623197860, 6639333186], ["nodes", "Rebuild every run, doubling", 7244600359, 7268662848], ["nodes", "Whole file re-inserted", 7244600359, 54197124], ["nodes", "Tombstones and edit-local delta, in memory", 7244600359, 5689310], ["nodes", "Tombstones and edit-local delta, saved index mapped", 7815492625, 90711366]];
 const LO = 1e6, HI = 1e11;
 const x = v => Math.max(0, Math.min(1, (Math.log10(Math.max(v, LO)) - Math.log10(LO)) / (Math.log10(HI) - Math.log10(LO))));
 const fmt = v => v >= 1e9 ? (v / 1e9).toFixed(v >= 1e10 ? 0 : 1) + " G" : v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 0 : 1) + " M" : (v / 1e3).toFixed(0) + " K";

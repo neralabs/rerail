@@ -471,16 +471,16 @@ fn incr_command(o: Opts) -> Result<(), String> {
         .collect();
     names.sort();
     let (c0, i0) = (cpu(), instr());
-    // A saved index, mapped: "DUPIX002", the method's own part (lines: the base's line documents and dictionary;
+    // A saved index, mapped: "DUPIX004", the method's own part (lines: the base's line documents and dictionary;
     // nodes: the dictionary's rows), the base, the blocks. Every array is read in place.
     let saved: Option<&'static [u8]> = match &o.load {
         Some(p) => Some(rerail_dupsa_lab::store::map(Path::new(p))?),
         None => None,
     };
     if let Some(b) = saved
-        && !b.starts_with(b"DUPIX002")
+        && !b.starts_with(b"DUPIX004")
     {
-        return Err("not a DUPIX002 index".into());
+        return Err("not a DUPIX004 index".into());
     }
     let mut at = 8usize;
     // The method's part of the index, written when saving (before any step changes the dictionary).
@@ -525,17 +525,26 @@ fn incr_command(o: Opts) -> Result<(), String> {
                         && (o.ext.is_empty() || f.path.rsplit_once('.').is_some_and(|(_, e)| o.ext.iter().any(|x| x == e)))
                 });
             };
-            let mut capture = Capture::load(Path::new(base_at))?;
-            scope(&mut capture, &o);
+            // On a saved index, the scoped file table is the index's: the capture isn't walked.
+            let capture = match saved {
+                Some(b) => Capture::with_table(Path::new(base_at), b, &mut at)?,
+                None => {
+                    let mut capture = Capture::load(Path::new(base_at))?;
+                    scope(&mut capture, &o);
+                    let tag = capture.files.first().ok_or("no files in scope")?.tag;
+                    capture.files.retain(|f| f.tag == tag);
+                    capture.write_table(&mut head);
+                    capture
+                }
+            };
             let tag = capture.files.first().ok_or("no files in scope")?.tag;
-            capture.files.retain(|f| f.tag == tag);
             let capture: &'static Capture = Box::leak(Box::new(capture));
             let docs: &'static NodeDocs<'static> = Box::leak(Box::new(match saved {
                 Some(b) => {
                     // The rows as two halves (an array of u128 would want 16-byte alignment).
                     let (lo, hi) = (rerail_dupsa_lab::store::view::<u64>(b, &mut at), rerail_dupsa_lab::store::view::<u64>(b, &mut at));
-                    let values: Vec<u128> = lo.iter().zip(hi).map(|(&l, &h)| u128::from(l) | u128::from(h) << 64).collect();
-                    NodeDocs::with_values(capture, tag, o.cells, &values)?
+                    let (joined, starts) = (rerail_dupsa_lab::store::view::<u32>(b, &mut at), rerail_dupsa_lab::store::view::<u32>(b, &mut at));
+                    NodeDocs::with_dict(capture, tag, o.cells, rerail_dupsa_lab::nodes::Dict::mapped(lo, hi), joined, starts)?
                 }
                 None => NodeDocs::new(capture, tag, o.cells)?,
             }));
@@ -543,6 +552,8 @@ fn incr_command(o: Opts) -> Result<(), String> {
                 let v = docs.values();
                 rerail_dupsa_lab::store::put(&mut head, &v.iter().map(|&x| x as u64).collect::<Vec<_>>());
                 rerail_dupsa_lab::store::put(&mut head, &v.iter().map(|&x| (x >> 64) as u64).collect::<Vec<_>>());
+                rerail_dupsa_lab::store::put(&mut head, &docs.joined[..]);
+                rerail_dupsa_lab::store::put(&mut head, &docs.starts[..]);
             }
             let span_lines = |docs: &'static NodeDocs<'static>| -> Box<dyn Fn(u32, u32, u32) -> (u32, u32)> {
                 Box::new(move |nd, f, e| {
@@ -644,7 +655,7 @@ fn incr_command(o: Opts) -> Result<(), String> {
     };
     eprintln!("instructions: base read {i_read}, index {i_built}, blocks {i_blocks}, first findings {}", instr() - i3);
     if let Some(p) = &o.save {
-        let mut out = b"DUPIX002".to_vec();
+        let mut out = b"DUPIX004".to_vec();
         out.extend_from_slice(&head);
         ix.base.write(&mut out);
         ix.write_blocks(&mut out);

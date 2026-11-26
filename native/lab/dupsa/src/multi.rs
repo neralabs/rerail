@@ -4,8 +4,8 @@
 //! One departure from MLDB: MLDB concatenates the strings into one (`str.append(s)` with a NUL after each). Here the
 //! concatenation is virtual: position `i` is mapped to (document, offset) by the document starts (MLDB's `offsets`,
 //! searched as its `offsetToStringIndex` does), and each document's symbol is read from the document where it lies.
-//! Nothing holds the documents' symbols a second time. Where the symbols are a relation of their own (a node's
-//! symbol, derived once from its tape: `Docs::joined`), the sort reads that relation directly.
+//! The sort reads the joined text as one array: the documents' own (`Docs::joined`, a node's symbols derived once
+//! from its tape), or else each symbol read once, in order, into the array the sort reads.
 
 use crate::sais::{self, Text};
 
@@ -78,8 +78,11 @@ impl MultiSuffixArray {
                 (sa, raw)
             }
             None => {
-                let sa = sais::suffix_array(&joined, docs.upper() + 1);
-                let raw = sais::lcp(&joined, &sa);
+                // Each symbol read once, in order, into the text the sort reads (SA-IS and LCP read each about 12
+                // times, at random).
+                let t: Vec<u32> = (0..joined.len()).map(|i| joined.at(i)).collect();
+                let sa = sais::suffix_array(&t[..], docs.upper() + 1);
+                let raw = sais::lcp(&t[..], &sa);
                 (sa, raw)
             }
         };

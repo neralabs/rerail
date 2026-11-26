@@ -32,6 +32,32 @@ pub struct CapturedFile {
 }
 
 impl Capture {
+    /// The file table as bytes (`store` arrays): the paths joined by newlines, the tags, and each file's source and
+    /// image ranges, so a later run takes the capture's files without walking it.
+    pub fn write_table(&self, out: &mut Vec<u8>) {
+        let paths: Vec<&str> = self.files.iter().map(|f| f.path.as_str()).collect();
+        crate::store::put(out, paths.join("\n").as_bytes());
+        crate::store::put(out, &self.files.iter().map(|f| f.tag).collect::<Vec<u8>>());
+        let r: Vec<u64> = self.files.iter().flat_map(|f| [f.source.start, f.source.end, f.image.start, f.image.end]).map(|x| x as u64).collect();
+        crate::store::put(out, &r);
+    }
+
+    /// The capture at `path`, mapped, with the file table `write_table` wrote at `*at` in `b`.
+    pub fn with_table(path: &std::path::Path, b: &'static [u8], at: &mut usize) -> Result<Self, String> {
+        let bytes = crate::store::map(path)?;
+        let paths = crate::store::view::<u8>(b, at);
+        let tags = crate::store::view::<u8>(b, at);
+        let r = crate::store::view::<u64>(b, at);
+        let paths = std::str::from_utf8(paths).map_err(|e| e.to_string())?;
+        let files = paths
+            .split('\n')
+            .zip(tags)
+            .zip(r.chunks(4))
+            .map(|((p, &tag), r)| CapturedFile { path: p.to_owned(), tag, source: r[0] as usize..r[1] as usize, image: r[2] as usize..r[3] as usize })
+            .collect();
+        Ok(Self { bytes, files })
+    }
+
     pub fn load(path: &std::path::Path) -> Result<Self, String> {
         let bytes = crate::store::map(path)?;
         if !bytes.starts_with(b"T16CAP01") {
@@ -68,15 +94,93 @@ pub struct NodeDocs<'a> {
     pub capture: &'a Capture,
     /// The capture's files of this language, by index.
     pub files: Vec<usize>,
-    pub placements: Vec<Placement>,
-    pub views: Vec<TapeView>,
-    rank: HashMap<u128, u32, Fx>,
+    /// Each tape's placement and view, read from its header when the tape is first read (a run on a saved index
+    /// reads only the tapes it uses).
+    tapes: Vec<std::cell::OnceCell<(Placement, TapeView)>>,
+    tag: u8,
+    rank: Dict,
     cells: Cells,
     /// The symbol relation: each node's symbol (its row's rank), derived once from the tape in tape order and kept
     /// here as the one place the symbols live; laid out as the joined text the suffix array sorts (rank + 1 per
     /// node, 0 after each document). `starts[d]`: where document `d` begins in it.
-    pub joined: Vec<u32>,
-    starts: Vec<u32>,
+    pub joined: crate::store::Arr<u32>,
+    pub starts: crate::store::Arr<u32>,
+}
+
+/// The dictionary of rows: the base's distinct rows sorted (their rank is their place), owned or mapped from a saved
+/// index as two halves, and the rows later batches added, by first seen. A lookup is a binary search of the base, so a
+/// run on a saved index reads only the entries it looks up.
+#[derive(Clone, Default)]
+pub struct Dict {
+    base: DictBase,
+    added: HashMap<u128, u32, Fx>,
+}
+
+#[derive(Clone)]
+enum DictBase {
+    Owned(std::sync::Arc<Vec<u128>>),
+    Mapped(&'static [u64], &'static [u64]),
+}
+
+impl Default for DictBase {
+    fn default() -> Self {
+        DictBase::Owned(Default::default())
+    }
+}
+
+impl Dict {
+    pub fn mapped(lo: &'static [u64], hi: &'static [u64]) -> Self {
+        Self { base: DictBase::Mapped(lo, hi), added: HashMap::default() }
+    }
+    fn base_len(&self) -> usize {
+        match &self.base {
+            DictBase::Owned(v) => v.len(),
+            DictBase::Mapped(lo, _) => lo.len(),
+        }
+    }
+    fn base_at(&self, i: usize) -> u128 {
+        match &self.base {
+            DictBase::Owned(v) => v[i],
+            DictBase::Mapped(lo, hi) => u128::from(lo[i]) | u128::from(hi[i]) << 64,
+        }
+    }
+    pub fn len(&self) -> usize {
+        self.base_len() + self.added.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    #[inline]
+    pub fn get(&self, v: u128) -> Option<u32> {
+        let (mut lo, mut hi) = (0, self.base_len());
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            match self.base_at(mid).cmp(&v) {
+                std::cmp::Ordering::Less => lo = mid + 1,
+                std::cmp::Ordering::Greater => hi = mid,
+                std::cmp::Ordering::Equal => return Some(mid as u32),
+            }
+        }
+        self.added.get(&v).copied()
+    }
+    /// The row's rank, a new one (the next) if it is not in the dictionary.
+    pub fn id(&mut self, v: u128) -> u32 {
+        if let Some(r) = self.get(v) {
+            return r;
+        }
+        let next = self.len() as u32;
+        self.added.insert(v, next);
+        next
+    }
+    /// The rows in rank order.
+    pub fn values(&self) -> Vec<u128> {
+        let mut out: Vec<u128> = (0..self.base_len()).map(|i| self.base_at(i)).collect();
+        out.resize(self.len(), 0);
+        for (&v, &r) in &self.added {
+            out[r as usize] = v;
+        }
+        out
+    }
 }
 
 /// A hasher for the rows (one multiply a word): SipHash's resistance to chosen keys buys nothing on a tape's rows.
@@ -129,23 +233,26 @@ pub enum Cells {
 
 impl<'a> NodeDocs<'a> {
     /// The language's tapes, with no symbols yet.
-    fn open(capture: &'a Capture, tag: u8, cells: Cells, rank: HashMap<u128, u32, Fx>) -> Result<Self, String> {
-        let lang = f16::lang(tag).ok_or_else(|| format!("tape tag {tag} has no format 16 table"))?;
-        let mut docs = Self { capture, files: Vec::new(), placements: Vec::new(), views: Vec::new(), rank, cells, joined: Vec::new(), starts: Vec::new() };
-        for (k, f) in capture.files.iter().enumerate().filter(|(_, f)| f.tag == tag) {
-            let image = &capture.bytes[f.image.clone()];
-            let p = f16::placement(image).map_err(|e| format!("{}: {e}", f.path))?;
-            let v = p.view(lang, 0).map_err(|e| format!("{}: {e}", f.path))?;
-            docs.files.push(k);
-            docs.placements.push(p);
-            docs.views.push(v);
-        }
-        Ok(docs)
+    fn open(capture: &'a Capture, tag: u8, cells: Cells, rank: Dict) -> Result<Self, String> {
+        f16::lang(tag).ok_or_else(|| format!("tape tag {tag} has no format 16 table"))?;
+        let files: Vec<usize> = capture.files.iter().enumerate().filter(|(_, f)| f.tag == tag).map(|(k, _)| k).collect();
+        let tapes = files.iter().map(|_| std::cell::OnceCell::new()).collect();
+        Ok(Self { capture, files, tapes, tag, rank, cells, joined: Vec::new().into(), starts: Vec::new().into() })
+    }
+
+    /// Document `d`'s tape's placement and view.
+    pub fn tape(&self, d: usize) -> &(Placement, TapeView) {
+        self.tapes[d].get_or_init(|| {
+            let f = &self.capture.files[self.files[d]];
+            let p = f16::placement(self.image(d)).unwrap_or_else(|e| panic!("{}: {e}", f.path));
+            let v = p.view(f16::lang(self.tag).unwrap(), 0).unwrap_or_else(|e| panic!("{}: {e}", f.path));
+            (p, v)
+        })
     }
 
     /// Each document's rows read once, in tape order, ranked by `rank_of` into the symbol relation.
-    fn derive(&mut self, mut rank_of: impl FnMut(&mut HashMap<u128, u32, Fx>, u128) -> u32) {
-        let total: usize = self.placements.iter().map(|p| p.n + 1).sum();
+    fn derive(&mut self, mut rank_of: impl FnMut(&mut Dict, u128) -> u32) {
+        let total: usize = (0..self.files.len()).map(|d| self.tape(d).0.n + 1).sum();
         let mut joined = Vec::with_capacity(total);
         let mut starts = Vec::with_capacity(self.files.len());
         let mut rank = std::mem::take(&mut self.rank);
@@ -155,27 +262,29 @@ impl<'a> NodeDocs<'a> {
             joined.push(0);
         }
         self.rank = rank;
-        self.joined = joined;
-        self.starts = starts;
+        self.joined = joined.into();
+        self.starts = starts.into();
     }
 
     pub fn new(capture: &'a Capture, tag: u8, cells: Cells) -> Result<Self, String> {
-        let mut docs = Self::open(capture, tag, cells, HashMap::default())?;
-        // Each row's first-seen id, then the ids renumbered in the rows' value order.
+        let mut docs = Self::open(capture, tag, cells, Dict::default())?;
+        // Each row's first-seen id (a hash map while the rows are found), then the ids renumbered in the rows' value
+        // order, and the rows kept sorted as the dictionary's base.
         docs.derive(|m, v| {
-            let next = m.len() as u32;
-            *m.entry(v).or_insert(next)
+            let next = m.added.len() as u32;
+            *m.added.entry(v).or_insert(next)
         });
-        let mut values: Vec<(u128, u32)> = docs.rank.iter().map(|(&v, &r)| (v, r)).collect();
+        let mut values: Vec<(u128, u32)> = docs.rank.added.drain().collect();
         values.sort_unstable();
         let mut to = vec![0u32; values.len()];
         for (r, &(_, first)) in values.iter().enumerate() {
             to[first as usize] = r as u32;
         }
-        for x in docs.joined.iter_mut().filter(|x| **x != 0) {
+        let crate::store::Arr::Owned(joined) = &mut docs.joined else { unreachable!("a relation just derived") };
+        for x in joined.iter_mut().filter(|x| **x != 0) {
             *x = to[*x as usize - 1] + 1;
         }
-        docs.rank = values.into_iter().enumerate().map(|(r, (v, _))| (v, r as u32)).collect();
+        docs.rank = Dict { base: DictBase::Owned(std::sync::Arc::new(values.into_iter().map(|(v, _)| v).collect())), added: HashMap::default() };
         Ok(docs)
     }
 
@@ -183,38 +292,34 @@ impl<'a> NodeDocs<'a> {
     /// a row has one rank in every batch.
     pub fn extending(capture: &'a Capture, tag: u8, cells: Cells, prev: &NodeDocs) -> Result<Self, String> {
         let mut docs = Self::open(capture, tag, cells, prev.rank.clone())?;
-        docs.derive(|m, v| {
-            let next = m.len() as u32;
-            *m.entry(v).or_insert(next)
-        });
+        docs.derive(Dict::id);
         Ok(docs)
     }
 
-    /// The dictionary's rows in rank order, for a later run to rank by (`with_values`) without reading every row.
+    /// The dictionary's rows in rank order, for a later run to rank by (`with_dict`) without reading every row.
     pub fn values(&self) -> Vec<u128> {
-        let mut v = vec![0u128; self.rank.len()];
-        for (&x, &r) in &self.rank {
-            v[r as usize] = x;
-        }
-        v
+        self.rank.values()
     }
 
-    /// The documents ranked by a dictionary a run before kept (its rows in rank order).
-    pub fn with_values(capture: &'a Capture, tag: u8, cells: Cells, values: &[u128]) -> Result<Self, String> {
-        let rank = values.iter().enumerate().map(|(r, &v)| (v, r as u32)).collect();
-        // No symbol relation: a run on a saved index reads a few symbols per lookup, each derived where it is read.
-        Self::open(capture, tag, cells, rank)
+    /// The documents as a run before kept them: its dictionary (`Dict::mapped`) and its symbol relation and document
+    /// starts, read in place.
+    pub fn with_dict(capture: &'a Capture, tag: u8, cells: Cells, rank: Dict, joined: &'static [u32], starts: &'static [u32]) -> Result<Self, String> {
+        let mut docs = Self::open(capture, tag, cells, rank)?;
+        assert_eq!(starts.len(), docs.files.len(), "the saved relation is of these documents");
+        docs.joined = crate::store::Arr::Mapped(joined);
+        docs.starts = crate::store::Arr::Mapped(starts);
+        Ok(docs)
     }
 
     /// Document `d`'s rows in tape order (`value`'s), each read once: starts by the running sum of gaps
     /// (`start_next`, a checkpoint every K nodes), the line breaks by one scan of the source.
     fn rows(&self, d: usize, mut f: impl FnMut(u128)) {
-        let n = self.placements[d].n;
+        let n = self.tape(d).0.n;
         if !matches!(self.cells, Cells::Indent | Cells::Local) {
             (0..n).for_each(|j| f(self.value(d, j, self.cells)));
             return;
         }
-        let (t, p, v, src) = (self.image(d), &self.placements[d], &self.views[d], self.source(d));
+        let (t, p, v, src) = (self.image(d), &self.tape(d).0, &self.tape(d).1, self.source(d));
         let [w0, _, w2] = p.widths;
         let cell = |b: usize, r: usize, col: usize, w: usize| -> u128 {
             let at = p.column(b, col) + r * w;
@@ -259,7 +364,7 @@ impl<'a> NodeDocs<'a> {
     /// Node `j`'s row in document `d`, its cells as stored (little-endian, at the tape's widths) packed into one value.
     #[inline(always)]
     pub fn value(&self, d: usize, j: usize, cells: Cells) -> u128 {
-        let (t, p) = (self.image(d), &self.placements[d]);
+        let (t, p) = (self.image(d), &self.tape(d).0);
         let (b, r) = (j / Z, j % Z);
         let cell = |col: usize, w: usize| -> u128 {
             let at = p.column(b, col) + r * w;
@@ -275,7 +380,7 @@ impl<'a> NodeDocs<'a> {
             Cells::CodeSlot => code_slot,
             Cells::Row => code_slot | cell(2, w1) << 40 | cell(3, w2) << 72,
             Cells::Indent | Cells::Local => {
-                let (v, i) = (&self.views[d], j as u32);
+                let (v, i) = (&self.tape(d).1, j as u32);
                 let leaf = reads::slot(t, v, i) & 1 == 1;
                 let len = if leaf { cell(3, w2) } else { 0 };
                 let gap = if i == 0 {
@@ -301,13 +406,13 @@ impl<'a> NodeDocs<'a> {
 
     /// The source line (from 1) byte `x` lies on, by the tape's newline index.
     pub fn line(&self, d: usize, x: u32) -> u32 {
-        reads::line(self.image(d), &self.views[d], x) + 1
+        reads::line(self.image(d), &self.tape(d).1, x) + 1
     }
 
     /// The source span of nodes `first..end` of document `d`: from the first's start to the furthest end of a node
     /// whose subtree lies in the range (a node whose subtree runs past the range is cut by it).
     pub fn span(&self, d: usize, first: usize, end: usize) -> (u32, u32) {
-        let (t, v) = (self.image(d), &self.views[d]);
+        let (t, v) = (self.image(d), &self.tape(d).1);
         let start = reads::start(t, v, first as u32);
         let mut stop = start;
         for i in first..end {
@@ -324,12 +429,16 @@ impl Docs for NodeDocs<'_> {
         self.files.len()
     }
     fn doc_len(&self, d: usize) -> usize {
-        self.placements[d].n
+        if self.starts.is_empty() {
+            return self.tape(d).0.n;
+        }
+        let end = self.starts.get(d + 1).map_or(self.joined.len(), |&e| e as usize);
+        end - self.starts[d] as usize - 1
     }
     #[inline(always)]
     fn at(&self, d: usize, j: usize) -> u32 {
         if self.joined.is_empty() {
-            return self.rank[&self.value(d, j, self.cells)];
+            return self.rank.get(self.value(d, j, self.cells)).expect("a row in the dictionary");
         }
         self.joined[self.starts[d] as usize + j] - 1
     }
@@ -450,7 +559,7 @@ impl NodeDocs<'_> {
     pub fn kind_and_line(&self, d: usize, j: usize) -> (String, u32) {
         let f = &self.capture.files[self.files[d]];
         let lang = f16::lang(f.tag).expect("a table");
-        let (t, v) = (self.image(d), &self.views[d]);
+        let (t, v) = (self.image(d), &self.tape(d).1);
         let kind = lang.table().entry(reads::number(t, v, j as u32)).kind;
         let name = lang.names().kind_name(kind).unwrap_or("?").to_owned();
         (name, reads::line(t, v, reads::start(t, v, j as u32)) + 1)
