@@ -701,6 +701,24 @@ describe("record writes while another process holds the write lock", () => {
     holder.exec("COMMIT");
   }, 30_000);
 
+  // The audit controls take a use of the record writer at their first claim or release and give it back at their close,
+  // so the last store's close still makes what waits, or reports it, and closes the writer's connection.
+  it("are reported lost at the last store's close, a session's owner claim among them, once asked longer ago than the bound", async () => {
+    const { path, sessions, audits } = await stores();
+    const controls = new SqliteAuditControlStore(path);
+    const holder = holderHere(path);
+    const clock = boundClock();
+    sessions.openSession(session, 1_000);
+    controls.registerOwner(session.sessionId, "background");
+    clock.pastTheBound();
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+
+    expect(msOf(() => { controls.close(); audits.close(); sessions.close(); })).toBeLessThan(1_000);
+
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("2 records not written"));
+    holder.exec("COMMIT");
+  }, 30_000);
+
   // The move of the event numbers past a remote's ran on the store's own connection, on the thread answering hooks: it
   // slept the 5 s bound in SQLite's busy handler, then the session's open failed with the lock's error.
   it("move the event numbers past a remote's at a session's first open without waiting, ahead of its row and events", async () => {
