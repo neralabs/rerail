@@ -1285,48 +1285,55 @@ impl LoweredWave {
         let _stage = crate::code_rule_dsl::prof::Stage::start("labels.wave.roots");
         // A clause is W's on a tape where its labels, or those of a clause it reads, went to W there.
         let to_w = |c: usize, t: usize| given.contains(&(c, t)) || self.feeds[c].iter().any(|&fed| given.contains(&(fed, t)));
-        let mut limited = Vec::new();
-        let mut found = Vec::with_capacity(self.clauses.len());
-        let mut roots_cpu = Vec::with_capacity(self.clauses.len());
-        for (c, clause) in self.clauses.iter().enumerate() {
-            let clause_started = rerail_prof::thread_cpu();
-            let entry = Entry::of(&clause.program);
-            let walk = Micro::of(&clause.program);
-            let mut per = Vec::with_capacity(views.len());
-            for (t, (view, sets)) in views.iter().enumerate() {
-                if !active[c][t] {
-                    per.push(BTreeSet::new());
-                    continue;
-                }
-                if to_w(c, t) {
-                    limited.push((c, t));
-                    per.push(clause.unlabelled_candidates(view).collect());
-                    continue;
-                }
-                // A program that only tests its start's entry and reads labels: its roots are the AND of the labels'
-                // members, in the domain and past the entry.
-                if let Some(labels) = clause.label_formula() {
-                    per.push(members_of_all(sets, &labels).filter(|&node| entry.admits(view, node) && in_domain(&clause.domain, view, sets, node)).collect());
-                    continue;
-                }
-                // The root walk starts within its anchor (decision 0365): every label it reads is finished.
-                let anchor = anchors.then(|| {
-                    // The root walk runs on the interpreter, which tests text at each node it reaches: no rows of its own.
-                    let anchor = anchor_bits(&clause.program, walk.as_ref(), None, view, sets, indexes[t].get_or_init(Default::default), clause.domain.demand(), &|_| false);
-                    count_anchored(domain(&clause.domain, view, sets).filter(|&node| entry.admits(view, node)), &anchor);
-                    anchor
-                });
-                let candidates = || anchored(domain(&clause.domain, view, sets).filter(|&node| entry.admits(view, node)), anchor.as_deref());
-                per.push(match clause_roots(&clause.program, view, sets, candidates, budget)? {
-                    Some(roots) => roots,
-                    None => {
-                        limited.push((c, t));
-                        candidates().collect()
-                    }
-                });
+        // Each clause's roots on each tape, a pair at a time on the pool: a pair reads its tape's view and labels
+        // alone, so a chunk's wave runs on as many threads as it has pairs, not on its launch's one.
+        let entries: Vec<(Entry, Option<Micro>)> = self.clauses.iter().map(|clause| (Entry::of(&clause.program), Micro::of(&clause.program))).collect();
+        let pairs: Vec<(usize, usize)> = (0..self.clauses.len()).flat_map(|c| (0..views.len()).map(move |t| (c, t))).collect();
+        // A pair's roots, whether they are W's to confirm (`limited`), and the CPU it took.
+        let one = |c: usize, t: usize| -> Result<(BTreeSet<u32>, bool, u64), Error> {
+            let started = rerail_prof::thread_cpu();
+            let cpu = || rerail_prof::thread_cpu().saturating_sub(started).as_nanos() as u64;
+            let (clause, (entry, walk)) = (&self.clauses[c], &entries[c]);
+            let (view, sets) = &views[t];
+            if !active[c][t] {
+                return Ok((BTreeSet::new(), false, 0));
             }
-            found.push(per);
-            roots_cpu.push(rerail_prof::thread_cpu().saturating_sub(clause_started).as_nanos() as u64);
+            if to_w(c, t) {
+                return Ok((clause.unlabelled_candidates(view).collect(), true, cpu()));
+            }
+            // A program that only tests its start's entry and reads labels: its roots are the AND of the labels'
+            // members, in the domain and past the entry.
+            if let Some(labels) = clause.label_formula() {
+                let roots = members_of_all(sets, &labels).filter(|&node| entry.admits(view, node) && in_domain(&clause.domain, view, sets, node)).collect();
+                return Ok((roots, false, cpu()));
+            }
+            // The root walk starts within its anchor (decision 0365): every label it reads is finished.
+            let anchor = anchors.then(|| {
+                // The root walk runs on the interpreter, which tests text at each node it reaches: no rows of its own.
+                let anchor = anchor_bits(&clause.program, walk.as_ref(), None, view, sets, indexes[t].get_or_init(Default::default), clause.domain.demand(), &|_| false);
+                count_anchored(domain(&clause.domain, view, sets).filter(|&node| entry.admits(view, node)), &anchor);
+                anchor
+            });
+            let candidates = || anchored(domain(&clause.domain, view, sets).filter(|&node| entry.admits(view, node)), anchor.as_deref());
+            Ok(match clause_roots(&clause.program, view, sets, candidates, budget)? {
+                Some(roots) => (roots, false, cpu()),
+                None => (candidates().collect(), true, cpu()),
+            })
+        };
+        let got: Vec<Result<(BTreeSet<u32>, bool, u64), Error>> = {
+            use rayon::prelude::*;
+            crate::code_rule_dsl::logic::profile::on_cores(|| pairs.par_iter().map(|&(c, t)| one(c, t)).collect())
+        };
+        let mut limited = Vec::new();
+        let mut found: Vec<Vec<BTreeSet<u32>>> = (0..self.clauses.len()).map(|_| Vec::with_capacity(views.len())).collect();
+        let mut roots_cpu = vec![0u64; self.clauses.len()];
+        for (&(c, t), got) in pairs.iter().zip(got) {
+            let (roots, to_w, cpu) = got?;
+            if to_w {
+                limited.push((c, t));
+            }
+            found[c].push(roots);
+            roots_cpu[c] += cpu;
         }
         Ok((found, WaveRun { limited, roots_cpu, ..WaveRun::default() }))
     }
