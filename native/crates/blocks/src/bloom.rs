@@ -76,6 +76,27 @@ impl Bloom {
         Some(at)
     }
 
+    /// The filter whose descriptor lies at `at` of a block's bytes (a pinned block's, read in place): `None` when it
+    /// does not fit there or is misaligned. Its words' span is relative to it, so it reads the same wherever the
+    /// block is mapped.
+    pub fn at(bytes: &[u8], at: usize) -> Option<&Bloom> {
+        let end = at.checked_add(size_of::<Bloom>())?;
+        if end > bytes.len() || at == 0 || !(bytes.as_ptr() as usize + at).is_multiple_of(align_of::<Bloom>()) {
+            return None;
+        }
+        // SAFETY: in bounds and aligned; a descriptor is a span, read in place.
+        Some(unsafe { &*bytes.as_ptr().add(at).cast::<Bloom>() })
+    }
+
+    /// The filter whose descriptor lies at `at` of `block` (`try_create`'s offset).
+    pub fn in_block(block: &Block, at: usize) -> Option<&Bloom> {
+        if at == 0 || at + size_of::<Bloom>() > block.reserved() {
+            return None;
+        }
+        // SAFETY: within the block's reservation, where `try_create` put a descriptor.
+        Some(unsafe { &*block.ptr::<Bloom>(at) })
+    }
+
     /// Gives its chunks back to `block`, its own. Nothing may read it after.
     pub fn release(&self, block: &Block) {
         let (at, words) = (block.offset_of(self), block.offset_of(self.words.as_ptr()));

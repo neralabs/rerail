@@ -143,7 +143,7 @@ pub fn write_table(bytes: &mut [u8], rows: &[Desc]) {
 /// domain, its buffer the block's own (`Block::device_buffer`: its memory wrapped in place, nothing uploaded), and the
 /// length that buffer covers. With the buffers, which a launch names as used through addresses (`uses_read`).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-pub fn device_rows(rows: &[Desc], pins: &[BlockPin], device: &rerail_device::device::Device) -> Result<(Vec<Desc>, Vec<rerail_device::device::Buffer>), String> {
+pub fn device_rows(rows: &[Desc], pins: &[&BlockPin], device: &rerail_device::device::Device) -> Result<(Vec<Desc>, Vec<rerail_device::device::Buffer>), String> {
     let mut out = Vec::with_capacity(rows.len());
     let mut buffers = Vec::with_capacity(rows.len());
     for d in rows {
@@ -184,22 +184,31 @@ UKL_INLINE CLIF_BLOCK_SPACE const DescRow* desc_row(CLIF_BLOCK_SPACE const uint8
 pub struct Table<'a> {
     rows: &'a [Desc],
     pins: &'a [BlockPin],
+    written: &'a [u64],
 }
 
 impl<'a> Table<'a> {
-    /// The table written at `at` in `table`'s bytes, over `pins`. Panics on a row no pin holds.
-    pub fn new(table: &'a BlockPin, at: usize, pins: &'a [BlockPin]) -> Table<'a> {
+    /// The table written at `at` in `table`'s bytes, over `pins` (read), and `written`, the addresses of the
+    /// launch's slots pinned to write: their rows are in the table (O§2: "per block id it can reach (its slots, and
+    /// what they refer to, transitively)"), and a host read of one through it finds none (its writer reads it through
+    /// its own slot). Panics on a row neither holds.
+    pub fn new(table: &'a BlockPin, at: usize, pins: &'a [BlockPin], written: &'a [u64]) -> Table<'a> {
         let b = table.bytes();
         let n = word::<u64>(b, at) as usize;
         let rows = words::<Desc>(b, at + 8, n);
         for d in rows {
             assert!(
-                pins.iter().any(|p| p.addr() as u64 == d.addr && p.len() as u64 == d.len),
+                pins.iter().any(|p| p.addr() as u64 == d.addr && p.len() as u64 == d.len) || written.contains(&d.addr),
                 "descriptor table row #{} names memory the launch did not pin",
                 d.id
             );
         }
-        Table { rows, pins }
+        Table { rows, pins, written }
+    }
+
+    /// Whether block `id` is a slot of the launch pinned to write.
+    pub fn is_written(&self, id: Id) -> bool {
+        self.row(id).is_some_and(|d| self.written.contains(&d.addr))
     }
 
     /// Its rows, by id ascending.

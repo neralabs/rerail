@@ -94,7 +94,9 @@ def b1(failures: list) -> None:
     structures inside a call are allowed for now (the user, 2026-11-25); nothing may outlive a call or come from
     outside it. The twins' crate forbids unsafe, depends on blocks alone, and names no static, thread-local,
     Once/Lazy cell, lock or atomic, no thread's scratch, and no file, environment, process, network or time. Its
-    clippy.toml disallows the same by path. An operation's shape is phases on the six axes, with no enum of shapes
+    clippy.toml disallows the same by path. A twin writes blocks' structures with blocks' own code: "the twins depend
+    on blocks, and a slot is the pinned block, so a twin uses blocks' layouts and freeze in place" (the rebuild plan,
+    B1). An operation's shape is phases on the six axes, with no enum of shapes
     ("No enum of shapes"); a version other than the reference is registered only with a check against it."""
     lib = TWINS / "src/lib.rs"
     if "#![forbid(unsafe_code)]" not in lib.read_text():
@@ -115,7 +117,7 @@ def b1(failures: list) -> None:
         (r"std::(fs|env|net|process|time)\b|\bInstant\b|\bSystemTime\b", "the world (files, environment, processes, network, time)"),
         (r"\bunsafe\b", "unsafe"),
         (r"\bTwinFn\b", "a twin as one function (a twin is phases over tiles)"),
-        (r"\brelation::|\bchange::|\bRelation\b", "blocks code that computes over rows (every loop over rows is the twin's)"),
+        (r"\bchange::", "blocks' change code (a twin's change is its own phases)"),
     ]
     for path in sorted((TWINS / "src").rglob("*.rs")):
         code = strip_rust(path.read_text())
@@ -184,6 +186,37 @@ def b2(failures: list) -> None:
     for name in ("pipeline!(CONSOLIDATE, Cons);", "pipeline!(MERGE, Merge);"):
         if name not in twins:
             failures.append(f"the twins' trace.rs lacks {name}")
+    # P§12: "A layer is one blocks::relation::Relation"; the rebuild plan, B2: "built on blocks' relation and 0678's
+    # bistate, as one definition". The layer's rows are a Relation continuing the one below, frozen where it lies; its
+    # statistics are blocks' sketch (O§10), no second sketch; a permutation is packed's (P§12).
+    code = strip_rust(layer.read_text())
+    for want, why in (
+        (r"pub rows: &'a Relation", "a layer's rows are a Relation"),
+        (r"pub parts: &'a Relation", "a layer's partitions' change is a Relation"),
+        (r"Sketch::decode", "a layer's statistics are blocks' sketch, read back from its kept form"),
+        (r"IndexSpec::Perm\(_\) => \{\s*return Err", "a Perm index refused (packed's permutation, P§12)"),
+    ):
+        if not re.search(want, code):
+            failures.append(f"{layer.relative_to(ROOT)}: {why}")
+    hits(layer, code, r"\bSketchW\b|\bAMS\b|\bstruct\s+PartW\b|\bpflips\b", "a second sketch or a copy of a layer's kills", failures)
+    twins_code = strip_rust(twins)
+    for want, why in (
+        ("Relation::try_continue_far(", "the layer made as a Relation continuing the one below"),
+        ("freeze_layer(", "the layer frozen where it lies (blocks' freeze)"),
+        ("add_order(", "an Order index added to the relation (P§11.2)"),
+        ("set_sketches(", "the layer's sketches kept in its relation"),
+    ):
+        if want not in twins_code:
+            failures.append(f"the twins' trace.rs: {why} ({want} missing)")
+    # O§2: the descriptor table names "per block id it can reach (its slots, and what they refer to, transitively)".
+    dir_code = strip_rust((CRATE / "src/dir.rs").read_text())
+    hits(CRATE / "src/dir.rs", dir_code, r"filter\(\|id\| slots\.iter\(\)\.all", "a descriptor table without the launch's slots (O§2)", failures)
+    # The B2 checks the plan asks for, kept as tests: a restriction reads only its partition's rows, counted where the
+    # reads are made; is_identity reads a layer's counts only.
+    tests = (CRATE / "src/trace_tests.rs").read_text()
+    for name in ("fn a_restriction_reads_only_its_partitions_rows", "fn is_identity_reads_a_layers_counts_only"):
+        if name not in tests:
+            failures.append(f"delta_exec's trace tests lack {name}")
 
 
 def main() -> int:

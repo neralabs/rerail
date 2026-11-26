@@ -511,3 +511,86 @@ outside its runs:
   It now compares them signed and runs for every key; its test's column is sorted as i64 (the run whose high bits
   are negative first). blocks' findings left are in `maps.rs` (the run room's, not this line's).
 - **Cargo**: the three crates build and pass under cargo (Linux host): blocks 118 of 118, the delta crates 25 of 25.
+
+## B2's layer rebuilt as a Relation (2026-11-25)
+
+Compared with the plan pages again, the layer built above was a format of its own, not P§12's ("A layer is one
+`blocks::relation::Relation`: rows added, kills of rows below, its indexes, its partition digests, its statistics"),
+nor the rebuild plan's B2 ("A layer is `blocks::relation::Relation` as it is … built on blocks' relation and 0678's
+bistate, as one definition") or B1 ("a twin uses blocks' layouts and freeze in place"). The user: "BUILD THE PLAN".
+This section supersedes the layer format, the 23-phase pipeline and the sketches described above.
+
+What is built:
+
+- **A layer is three Relations in its block** (P§12). `rows`: the rows it adds, continuing the relation of the layer
+  below (`Relation::try_continue_far`: `DELTA | CONTINUES | FAR_BASE`, the base named by block id and its offset
+  there, `Relation::far`), its ids from the rows below on, its kills of rows below its `changed`, its hashed indexes
+  (each `Hash` index of the shape, and the row index) built by its freeze, and its sorted orders (`Order`: fences and
+  prints, `Relation::add_order`). `parts(part, digest, added, gone)` and `gone(part, id)`: the partitions' change
+  and the kills by partition, each a relation sorted on the partition (an index in the layer's block, not a copy:
+  0353). The header (`LayerHead`, written last) holds the three relations' offsets, the counts, the digest and each
+  Bloom filter's offset (`blocks::bloom`, in the block's chunks).
+- **Frozen where it lies**: `relation::freeze_layer` sorts the rows on the shape's first order column (they are
+  written in the whole canonical order, which the stable sort keeps), records the column, builds the indexes and
+  stats, and keeps the kills as the relation's change. The build of an index is the one `freeze_in` uses
+  (`build_indexes`, factored out of it).
+- **Statistics are blocks' sketch** (O§10, 0678 step 10): a layer keeps each column's `blocks::sketch::Sketch` of the
+  state it ends, in its kept form (`Relation::sketches`): the layer below's, its rows added, its kills taken. The
+  layer's own sketch type (`SketchW`, 8 AMS counters) is removed.
+- **No copy of a layer's kills**: the separate `flips` and `pflips` arrays are gone; a layer's kills are its
+  relation's change, and by partition the `gone` relation.
+- **Index kinds** (P§11.2): `Hash` is the relation's hashed index; `Order` is an order with fences and prints;
+  `Bloom` a filter. `Perm` is refused, naming packed's permutation (P§12), which belongs to the Packed encoding.
+- **The state** (`Chain`, P§12's `Version`, read through a launch's table) reads the relations in place: a row is
+  live when it is an own row of a layer and no layer above it kills it. A restriction reads a layer's partition as a
+  range of its rows (`Layer::part_rows`) and its kills from `gone`. A change across exactly one layer reads its
+  counts from the layer (`exact_counts_since`; a partition's from `parts`), touching no row. Changes are named by
+  layer (`flips_since`, `new_ranges`), so a layer that only kills (no rows of its own) is a change of its own.
+  `Chain::counted` counts every row and liveness word a read touches.
+- **The twins write the layer with blocks' code** (B1). consolidate and merge are 13 phases: sort, passes, segments,
+  count, scan (the layer's relations made and its rows claimed), place (its rows written, `Relation::put_own`), kills
+  (a batched search of the state below by its indexes), ksort, freeze, parts, orders (an Order or a Bloom filter an
+  item), sketch, seal. merge's source is the merged layers' own rows (+1) and their kills (−1, the killed row's
+  values). `Ctx::read_and_pin` gives a phase a read slot's bytes and the written slot's pin at once.
+- **The descriptor table names the launch's slots** (O§2: "per block id it can reach (its slots, and what they refer
+  to, transitively)"): a slot pinned to write is its pin's row (`Table::is_written`; a host read through the table
+  finds none, the writer reads it through its slot), a slot pinned to read is pinned and read like any reached block.
+  A device's table is made from the same rows.
+- **Signed 32-bit columns** (O§2: "integers, 32 bits where the values fit"; the Bootstrap page's keys use −1, as in
+  `k_arg(c, -1, i, t)`): a relation's 4-byte column may hold signed values (`rows::I32` in a spec's widths; the
+  column's `runs` set to `rows::SIGNED`: its high bits are its low bits' sign). Every read of a 4-byte column
+  sign-extends it: `ColDir::get`, `read_col`, `lower_bound`, and the CLIF's `col_get`, from which the UKL reads
+  header is generated again (`ukl/reads/relation.h`). A layer's `I32` columns, and its partition columns, are these.
+
+Checks, each passed under Relax on this machine:
+
+- `rerail-delta-exec --lib` (all but the device test): 26 of 26. The trace's tests are ported to the new layer and
+  two are added: `a_restriction_reads_only_its_partitions_rows` (a restricted scan, probe and change read only
+  partition 50's rows and kills, counted where the reads are made, against about a thousand rows in seven other
+  partitions) and `is_identity_reads_a_layers_counts_only` (a layer of rows, a layer whose run cancelled, a layer
+  that only kills: `is_identity`, whole and restricted, touches no row). The sketch's distinct values are checked
+  against the set's (within the sketch's own 20%); the descriptor table's rows include a launch's slots
+  (`references_are_to_frozen_blocks_…`).
+- `rerail-blocks --lib -- rows:: relation:: layer:: bistate::` 21 of 21, with `a_signed_columns_values_read_as_written`;
+  `-- sketch:: bloom:: gens::` passed.
+- `rerail-clif --lib -- relation:: reads::` 15 of 15: the JIT's reads of a signed column are the host's, and the
+  generated UKL header is the CLIF's. `the_jits_lower_bound_is_the_tables` had been failing since 231207f9b0 (freeze
+  keeps rows that arrive in another column's order, and the test's second column arrived sorted); its data now
+  arrives unsorted on both columns, as the test means.
+- `check_delta_exec_shape.py`: B1 no longer refuses blocks' relation code in the twins (the plan's B1 asks for it);
+  B2 checks that a layer's rows and parts are Relations, its statistics blocks' sketch, `Perm` refused, no second
+  sketch or kill copy, the twins making, freezing and indexing the relation, the descriptor table not filtering the
+  slots, and the two tests above.
+
+Not built yet, each still the plan's:
+
+- `relation::View` and `Chain` are two definitions; the plan's B2 asks for one (View generalized to n layers).
+- E1 on a device: GPU uses pinned through fences, and replicas made by the directory where a device needs them.
+- The executor runs a version's phases by its signature's shape, not `Version.shape`.
+- delta_exec's dependencies re-exported as B§7 has them (blocks and rr_syntax alone) is unchanged from 4fabca7c57.
+- The directory's references between blocks are block ids; only a layer's reference to the relation below carries
+  its offset too.
+- consolidate's kills search each row's key in every layer below (a binary search a layer, by its order); its cost
+  is not measured.
+- Clippy with the twins' `clippy.toml` was not run on this code (no cargo or clippy runs are allowed here), so it is
+  not shown to catch anything yet.

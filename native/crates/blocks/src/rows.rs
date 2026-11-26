@@ -24,6 +24,14 @@ pub const SEALED: i64 = 1;
 /// The smallest `min_log`: a group's quarter is at least 4 rows.
 pub const MIN_LOG: u32 = 4;
 
+/// A 4-byte column's `runs` when its values are signed: their high 32 bits are their low bits' sign (the CLIF's
+/// `col_get` sign-extends them). A run table is never this far from its directory (`set_runs`).
+pub const SIGNED: i32 = i32::MIN;
+
+/// A spec's width for a column of signed 32-bit values (`Rows::init_in`): 4 bytes, `SIGNED`. A width of 4 is a
+/// column of unsigned 32-bit values (ids, places, symbols); 8, of 64-bit values.
+pub const I32: u32 = 4 | 1 << 16;
+
 structure! {
     /// One column: its width in bytes (4 or 8), its key runs, and each chunk's offset from this descriptor.
     ///
@@ -95,8 +103,15 @@ impl ColDir {
         // the column was given (`Rows::set_runs`).
         unsafe {
             if self.width == 4 {
-                let low = i64::from(*p.cast::<u32>());
-                if self.runs == 0 { low } else { i64::from(self.high(i)) << 32 | low }
+                let raw = *p.cast::<u32>();
+                let low = i64::from(raw);
+                if self.runs == 0 {
+                    low
+                } else if self.runs == SIGNED {
+                    i64::from(raw as i32)
+                } else {
+                    i64::from(self.high(i)) << 32 | low
+                }
             } else {
                 *p.cast::<i64>()
             }
@@ -162,7 +177,13 @@ impl ColDir {
     /// Whether the column holds low bits under key runs.
     #[inline(always)]
     pub fn has_runs(&self) -> bool {
-        self.runs != 0
+        self.runs != 0 && self.runs != SIGNED
+    }
+
+    /// Whether the column holds signed 32-bit values (`I32`).
+    #[inline(always)]
+    pub fn is_signed(&self) -> bool {
+        self.runs == SIGNED
     }
 }
 
@@ -258,9 +279,9 @@ impl Rows {
         assert!(min_log >= MIN_LOG, "min_log {min_log} under {MIN_LOG}");
         unsafe {
             for (c, &w) in widths.iter().enumerate() {
-                assert!(w == 4 || w == 8);
-                (*cols.add(c)).width = w;
-                (*cols.add(c)).runs = 0;
+                assert!(w == 4 || w == 8 || w == I32, "a width of 4, 8 or `I32`");
+                (*cols.add(c)).width = w & 0xff;
+                (*cols.add(c)).runs = if w == I32 { SIGNED } else { 0 };
             }
             (*this).min_log = min_log;
             (*this).ncols = widths.len() as u32;
@@ -317,8 +338,14 @@ impl Rows {
             if w == 4 {
                 // A column with runs holds a value's low bits, its high bits its row's run's.
                 let d = self.col(c);
-                let fits = if d.has_runs() { (v as u64 >> 32) as u32 == d.high(i) } else { v >> 32 == 0 };
-                assert!(fits, "{v} in 4-byte column {c}: not its row {i}'s high bits");
+                let fits = if d.is_signed() {
+                    i32::try_from(v).is_ok()
+                } else if d.has_runs() {
+                    (v as u64 >> 32) as u32 == d.high(i)
+                } else {
+                    v >> 32 == 0
+                };
+                assert!(fits, "{v} in 4-byte column {c}: {}", if d.is_signed() { "past 32 signed bits".to_string() } else { format!("not its row {i}'s high bits") });
                 *(p as *mut u32) = v as u32
             } else {
                 *(p as *mut i64) = v
@@ -337,10 +364,11 @@ impl Rows {
     pub unsafe fn set_runs(&self, c: usize, runs: *const u32) {
         let d = self.col(c);
         assert_eq!(d.width, 4, "runs of high bits over a 4-byte column");
+        assert!(!d.is_signed(), "runs over a column of signed values");
         assert!(self.is_empty(), "runs given before the column's rows");
         let off = runs as isize - std::ptr::from_ref(d) as isize;
         assert!(off % 8 == 0 && off != 0, "a run table at a word from the column's directory");
-        let words = i32::try_from(off / 8).expect("a run table within 16 GB of the column's directory");
+        let words = i32::try_from(off / 8).ok().filter(|&w| w != SIGNED).expect("a run table within 16 GB of the column's directory");
         // SAFETY: the directory's one writer, before any reader (asserted empty).
         unsafe { (*std::ptr::from_ref(d).cast_mut()).runs = words };
     }
@@ -536,7 +564,7 @@ impl Rows {
     pub fn col_chunks_u32(&self, c: usize) -> impl Iterator<Item = &[u32]> + '_ {
         assert_eq!(self.col(c).width, 4);
         assert!(!self.is_sealed(c), "a scan of column {c}'s raw chunks, sealed (decision 0622)");
-        assert!(!self.col(c).has_runs(), "a scan of column {c}'s values reads only their low bits");
+        assert!(!self.col(c).has_runs() && !self.col(c).is_signed(), "a scan of column {c}'s values as unsigned 32-bit ones");
         let n = self.len() as u64;
         (0..self.nchunks.load(Relaxed) as usize)
             .map_while(move |k| self.chunk_raw(c, k, n))
@@ -564,6 +592,10 @@ impl Rows {
                     for (j, (o, &v)) in o.iter_mut().zip(s).enumerate() {
                         // SAFETY: the column's runs are set (`set_runs`).
                         *o = i64::from(unsafe { d.high(first as u32 + j as u32) }) << 32 | i64::from(v);
+                    }
+                } else if d.is_signed() {
+                    for (o, &v) in o.iter_mut().zip(s) {
+                        *o = i64::from(v as i32);
                     }
                 } else {
                     for (o, &v) in o.iter_mut().zip(s) {
@@ -633,6 +665,9 @@ impl Rows {
                 if r.get(start as u32 + m as u32) < key { l = m + 1 } else { h = m }
             }
             l
+        } else if r.width == 4 && self.col(c).is_signed() {
+            let s = unsafe { std::slice::from_raw_parts(p as *const u32, len) };
+            a + s[a..].partition_point(|&v| i64::from(v as i32) < key)
         } else if r.width == 4 {
             let s = unsafe { std::slice::from_raw_parts(p as *const u32, len) };
             a + s[a..].partition_point(|&v| (v as i64) < key)
@@ -880,6 +915,37 @@ mod tests {
         let mut back = vec![0i64; vals.len()];
         rows.read_col(1, n, &mut back);
         assert_eq!(back, vals);
+    }
+
+    /// A column of signed 32-bit values (`I32`) reads as its values through every read (a row's, a column resolved
+    /// once, a chunk at a time, the searches), and refuses a value past 32 signed bits; a 4-byte column beside it
+    /// stays unsigned.
+    #[test]
+    fn a_signed_columns_values_read_as_written() {
+        let block = Block::anon(kind::FACTS, 64 << 20);
+        let lock = Mutex::new(());
+        let rows: &Rows = unsafe { &*block.alloc_t::<Rows>(1) };
+        unsafe { Rows::init(rows as *const Rows as *mut Rows, &block, &[I32, 4], MIN_LOG) };
+        assert!(rows.col(0).is_signed() && !rows.col(0).has_runs() && !rows.col(1).is_signed());
+        let vals: Vec<i64> = (0..5_000i64).map(|i| i64::from(i32::MIN) + i * 858_993).collect();
+        let n = vals.len() as u32;
+        let s = rows.claim(&block, &lock, n);
+        for (i, &v) in vals.iter().enumerate() {
+            unsafe { rows.put(s + i as u32, 0, v) };
+            unsafe { rows.put(s + i as u32, 1, u32::MAX.into()) };
+        }
+        let r = rows.reader(0);
+        for i in 0..n {
+            assert_eq!((rows.get(i, 0), r.get(i), rows.get(i, 1)), (vals[i as usize], vals[i as usize], i64::from(u32::MAX)), "row {i}");
+        }
+        let mut back = vec![0i64; vals.len()];
+        rows.read_col(0, n, &mut back);
+        assert_eq!(back, vals);
+        for key in [i64::from(i32::MIN) - 1, i64::from(i32::MIN), -1, 0, vals[1234], vals[1234] + 1, i64::from(i32::MAX)] {
+            assert_eq!(rows.lower_bound(0, 0, n, key), vals.partition_point(|&v| v < key) as u32, "lower {key}");
+        }
+        let past = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe { rows.put(s, 0, i64::from(i32::MAX) + 1) }));
+        assert!(past.is_err(), "a value past 32 signed bits is refused");
     }
 
     /// A column under key runs (an axis's node ids: each document's key over its nodes' low bits) reads as its

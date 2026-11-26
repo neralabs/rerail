@@ -7,7 +7,8 @@
 //! here through a write pin, and only to a frozen block: the one-writer rule holds across references.
 //!
 //! A launch (`Directory::launch`) pins every slot by its mode, then read-pins every block the slots refer to,
-//! transitively, and writes the CPU's descriptor table of them: their host addresses, lengths, kinds and versions.
+//! transitively, and writes the CPU's descriptor table of all of them, its slots too (O§2: "per block id it can reach
+//! (its slots, and what they refer to, transitively)"): their host addresses, lengths, kinds and versions.
 //! Any conflict refuses the start, naming the operation, and nothing stays pinned.
 //!
 //! A launch's table on a device (`Launch::device_table`) is the same rows, each block's address the device's: its
@@ -54,10 +55,16 @@ pub struct Directory {
 impl Directory {
     /// A new open block of `kind` with a body of `body` bytes, and an empty reference table.
     pub fn make(&mut self, kind: u32, body: usize) -> BlockId {
+        self.make_room(kind, body, 0)
+    }
+
+    /// `make`, with `room` bytes past the body for the structures its writer makes in the block's chunks (a layer's
+    /// relations, `Relation::try_continue_far`).
+    pub fn make_room(&mut self, kind: u32, body: usize, room: usize) -> BlockId {
         self.sweep();
         // Free-listed: its freeze gives back what lies past the body's used length (an operation's work, past the
-        // facts it wrote), whole pages to the OS.
-        let b = Block::anon(kind, BODY_AT + body + rerail_blocks::block::PAGE).with_free_list();
+        // facts it wrote), whole pages to the OS, when nothing was made past the body.
+        let b = Block::anon(kind, BODY_AT + body + room + rerail_blocks::block::PAGE).with_free_list();
         assert_eq!(b.alloc(BODY_AT - gens::REFS_AT, 64), gens::REFS_AT, "a new block's first allocation is its reference table");
         assert_eq!(b.alloc(body.max(8), 64), BODY_AT, "and its body follows");
         let b = Arc::new(b);
@@ -202,12 +209,22 @@ impl Directory {
             let b = self.block(id).ok_or_else(|| format!("{op} could not start: slot {i}: {id} is held by nothing"))?;
             pins.push(pin_block(&b, op, write).map_err(|e| format!("{op} could not start: slot {i} ({id}): {e}"))?);
         }
+        // Every block the launch can reach, its slots among them (O§2), each a row. A slot pinned to write is its
+        // pin's row alone; every other block is pinned to read here (a slot read is pinned to read twice: a reader
+        // beside a reader).
         let from: Vec<BlockId> = slots.iter().map(|s| s.0).chain(read.iter().copied()).collect();
-        let below: Vec<BlockId> = self.reach(&from).into_iter().filter(|id| slots.iter().all(|s| s.0 != *id)).collect();
-        let mut reach = Vec::with_capacity(below.len());
-        let mut rows = Vec::with_capacity(below.len());
-        for id in below {
+        let all = self.reach(&from);
+        let mut reach = Vec::with_capacity(all.len());
+        let mut rows = Vec::with_capacity(all.len());
+        let mut written = Vec::new();
+        for id in all {
             let b = self.block(id).ok_or_else(|| format!("{op} could not start: {id}, referred to, is held by nothing"))?;
+            if let Some(k) = slots.iter().position(|s| s.0 == id && s.1) {
+                let p = &pins[k];
+                rows.push(Desc { id: id.0, kind: b.header().kind, version: p.version(), addr: p.addr() as u64, len: p.len() as u64 });
+                written.push(p.addr() as u64);
+                continue;
+            }
             let p = pin_block(&b, op, false).map_err(|e| format!("{op} could not start: {id}, reached: {e}"))?;
             rows.push(Desc { id: id.0, kind: b.header().kind, version: p.version(), addr: p.addr() as u64, len: p.len() as u64 });
             reach.push(p);
@@ -220,7 +237,7 @@ impl Directory {
             gens::write_table(&mut w.bytes_mut().expect("a write pin")[at..], &rows);
         }
         let table_pin = pin_block(&table, op, false).expect("the table is the launch's");
-        Ok(Launch { slots: pins, reach, table: table_pin, at, read: read.to_vec() })
+        Ok(Launch { slots: pins, reach, written, table: table_pin, at, read: read.to_vec() })
     }
 }
 
@@ -254,7 +271,8 @@ impl Launch {
     /// The launch's descriptor table on `device` (E2: a kernel follows a reference through its own device's table).
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub fn device_table(&self, device: &rerail_blocks::device::device::Device) -> Result<DeviceTable<'_>, String> {
-        let (rows, reached) = gens::device_rows(self.table().rows(), &self.reach, device)?;
+        let pins: Vec<&BlockPin> = self.slots.iter().chain(&self.reach).collect();
+        let (rows, reached) = gens::device_rows(self.table().rows(), &pins, device)?;
         let table = Arc::new(Block::anon(kind::DESC, BODY_AT + gens::table_bytes(&rows) + rerail_blocks::block::PAGE));
         let at = table.alloc(gens::table_bytes(&rows), 64);
         {
@@ -271,6 +289,8 @@ impl Launch {
 pub struct Launch {
     pub slots: Vec<BlockPin>,
     reach: Vec<BlockPin>,
+    /// The addresses of its slots pinned to write: rows of its table that a host read through it does not resolve.
+    written: Vec<u64>,
     table: BlockPin,
     at: usize,
     read: Vec<BlockId>,
@@ -279,18 +299,18 @@ pub struct Launch {
 impl Launch {
     /// The launch's slots, and its descriptor table over the blocks they reach.
     pub fn parts(&mut self) -> (&mut [BlockPin], Table<'_>) {
-        (&mut self.slots, Table::new(&self.table, self.at, &self.reach))
+        (&mut self.slots, Table::new(&self.table, self.at, &self.reach, &self.written))
     }
 
     /// Its descriptor table.
     pub fn table(&self) -> Table<'_> {
-        Table::new(&self.table, self.at, &self.reach)
+        Table::new(&self.table, self.at, &self.reach, &self.written)
     }
 
     /// The bytes of the `i`th block a read launch (`Directory::read`) was asked for.
     pub fn block(&self, i: usize) -> &[u8] {
         let id = self.read[i];
-        let t = Table::new(&self.table, self.at, &self.reach);
+        let t = Table::new(&self.table, self.at, &self.reach, &self.written);
         let d = *t.row(id.0).expect("a read block is in its table");
         self.reach.iter().find(|p| p.addr() as u64 == d.addr).expect("pinned").bytes()
     }

@@ -1,29 +1,35 @@
 //! A trace's blocks (decision 0686; *0686: Operations* §7 and §10; *Delta-first engine primitives* §11–§12): the
 //! run's δ runs, and the layers `consolidate` and `merge` write from them, each layer its own block.
 //!
-//! **A trace** is one relation's history: a chain of frozen layer blocks, newest first, each referring to the layer
-//! below it by block id (`gens`). The host holds only the newest layer's id. Two states are read (the user,
-//! 2026-11-24): the committed chain (before), and the chain with the run's new layer on it (after). The before state
-//! stays readable while the next layer is written: that is a new block.
+//! **A trace** is one relation's history: a chain of frozen layer blocks, newest first. The host holds only the newest
+//! layer's block id. Two states are read (the user, 2026-11-24): the committed chain (before), and the chain with the
+//! run's new layer on it (after). The before state stays readable while the next layer is written: that is a new
+//! block.
 //!
 //! **δ runs** (`Runs`, a scratch block): a run's `(row, diff)` pairs as its operations write them, each writer
 //! claiming its place with one atomic add (host threads or a GPU's); past the capacity a claim writes nothing and
 //! counts what was needed, and the run is redone at that size (shape 12).
 //!
-//! **A layer** (`Layer`): the δ, consolidated, in its trace's canonical order, grouped by partition first: sorted
-//! columns of rows, a sign a row (`+1` added, `-1` gone), for each gone row the id of the row it kills, those ids
-//! ascending (globally, and within each partition), the partition index with each partition's digest and counts, a
-//! statistics sketch per column, and the indexes the trace's shape asks for. Its rows' ids continue the layer below's
-//! (`start`). Its header's state is written last: a layer is read only once committed.
+//! **A layer** (P§12: "a layer is one `blocks::relation::Relation`: rows added, kills of rows below, its indexes, its
+//! partition digests, its statistics"; P§13: `Relation` "Keep"): in its block, a `Relation` whose own rows are the rows
+//! the layer added, in the trace's canonical order, and whose `changed` are its kills of rows below; it continues the
+//! layer below by that block's id and its descriptor's offset there (`Relation::try_continue_far`), so its ids follow
+//! the ones below. Its indexes are the relation's: the row index and a hashed index per `Hash` (`build_indexes`),
+//! sorted orders per `Order` (`Relation::add_order`, `blocks::order`'s search), Bloom filters per `Bloom` (in the
+//! block). Its statistics are each column's `blocks::sketch` of the state it ends (`Relation::sketches`). Beside it,
+//! two small relations: `parts` (each partition it changed: its digest's move and counts) and `gone` (its kills by
+//! partition). Its header names the three and is written last: a layer is read only once committed.
 //!
-//! **Reads** (`Chain`): a trace's state at a layer, read in place through a launch's descriptor table, as
-//! `bistate::Read`: a row is live when it was added and no layer at or below the state's has killed it. Its change
-//! since the layer below is that layer's own: `Bistate` reads it in its size.
-//!
-//! Every column is fixed-width, 32 bits where the values fit (`ColType`).
+//! **Reads** (`Chain`, P§12's `Version`: `relation::View` generalized from a base and one delta to n layers): a
+//! trace's state at a layer, read in place through a launch's descriptor table, as `bistate::Read`; its change since
+//! another state, `bistate::Bistate`, read in the change's size.
 
-use crate::bistate::{ColStats, ColumnIndex, Flips, Read, RowId, Since, States, WordIndex, below};
-use crate::gens::{BODY_AT, Id, Table, set_word, word, words, words_mut};
+use crate::bistate::{ColStats, ColumnIndex, Flips, Read, RowId, Since, States, WordIndex};
+use crate::bloom::{self, Bloom};
+use crate::gens::{BODY_AT, Id, Table, set_word, word};
+use crate::relation::{Relation, Spec, layer_sketch, leading, row_digest};
+use crate::sketch::Sketch;
+use std::cell::Cell;
 use std::cmp::Ordering;
 
 /// The most columns a trace's relation has.
@@ -61,11 +67,14 @@ impl ColType {
 /// An index a trace's shape asks for (P§11.2).
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum IndexSpec {
+    /// A hashed index of the layer's relation: its rows grouped by the key's hash (`Relation`'s buckets).
     Hash(Vec<u16>),
-    /// The rows' ids in the key's order (`blocks::order`), with fences and prints when asked.
+    /// The rows' ids in the key's order (`blocks::order`'s form, given to the relation: `Relation::add_order`), with
+    /// fences and prints when asked.
     Order { key: Vec<u16>, fences: bool, prints: bool },
-    /// Packed's permutation: the rows' ids in the key's order.
+    /// Packed's permutation (`blocks::packed`): an index of the Packed encoding, refused with it.
     Perm(Vec<u16>),
+    /// A Bloom filter of the key (`blocks::bloom`), in the layer's block.
     Bloom(Vec<u16>),
 }
 
@@ -196,8 +205,14 @@ impl Shape {
         for (i, ix) in self.indexes.iter().enumerate() {
             let (kind, key) = match ix {
                 IndexSpec::Order { key, fences, prints } => (IX_ORDER | if *fences { IX_FENCES } else { 0 } | if *prints { IX_PRINTS } else { 0 }, key),
-                IndexSpec::Perm(key) => (IX_ORDER, key),
-                IndexSpec::Hash(key) => (IX_HASH | IX_PRINTS, key),
+                IndexSpec::Perm(_) => {
+                    return Err(format!(
+                        "index {i}: Perm is packed's permutation (P§12), an index of the Packed encoding, which a run \
+                         block's Open layers are not (encoding Packed comes with the kept stores, after L1): an Order \
+                         serves an Open layer"
+                    ));
+                }
+                IndexSpec::Hash(key) => (IX_HASH, key),
                 IndexSpec::Bloom(key) => (IX_BLOOM, key),
             };
             if key.is_empty() || key.len() > MAX_KEY || key.iter().any(|&c| c as usize >= a) {
@@ -213,11 +228,10 @@ impl Shape {
     }
 }
 
-/// An index's kind, as its blocks hold it: an order (the rows' positions sorted by its key), and beside it the
-/// leading value of every `order::FENCE`th position (fences) and each position's 8-bit print of its whole key
-/// (prints), the search `blocks::order::find` reads; a hash order (sorted by the lead's 16-bit `order::tag`, then the
-/// key: a tag a position, and prints); a Bloom filter of the key (`blocks::bloom`'s hash and mask, its words a power of
-/// two). One format each, written once, the existing ones.
+/// An index's kind, as its shape holds it: a sorted order of the layer's relation (its ids sorted by the key) and
+/// beside it the leading value of every `order::FENCE`th (fences) and each one's 8-bit print of its whole key
+/// (prints), the search `blocks::order::find` reads; a hashed index of the relation (its buckets); a Bloom filter of
+/// the key (`blocks::bloom`'s hash and mask, its words a power of two). One format each, the existing ones.
 pub const IX_ORDER: u32 = 1;
 pub const IX_FENCES: u32 = 2;
 pub const IX_PRINTS: u32 = 4;
@@ -286,17 +300,14 @@ pub fn bloom_words(n: usize) -> usize {
     (n * 10).div_ceil(64).max(1).next_power_of_two()
 }
 
-/// The one value a Bloom filter hashes for a key: the value itself for one column, else the key's `row_hash`.
+/// The one value a Bloom filter hashes for a key: the value itself for one column, else the key's `row_digest`.
 pub fn bloom_key(key: impl ExactSizeIterator<Item = i64>) -> i64 {
     if key.len() == 1 {
         let mut k = key;
         k.next().expect("one value")
     } else {
-        row_hash(key) as i64
+        row_digest(key) as i64
     }
-}
-
-impl ShapeW {
 }
 
 fn round_up(n: usize, to: usize) -> usize {
@@ -436,474 +447,271 @@ impl<'a> Runs<'a> {
 
 // ---- layers -------------------------------------------------------------------------------------------------------
 
-/// One partition of a layer: its rows `lo..hi`, its gone rows' kill ids `flo..fhi` of the per-partition flips, its
-/// counts and its digest (the sum over its rows of each row's hash times its sign).
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub struct PartW {
-    /// The partition's value: a module's or a document's id, 32 bits.
-    pub key: i32,
-    pub lo: u32,
-    pub hi: u32,
-    pub flo: u32,
-    pub fhi: u32,
-    pub added: u32,
-    pub gone: u32,
-    pub pad: u32,
-    pub digest: u64,
-}
-
-unsafe impl crate::Pod for PartW {}
-
-/// The number of AMS counters a column's sketch keeps.
-pub const AMS: usize = 8;
-
-/// A column's statistics sketch in one layer: bounds of its added rows, and linear counters (adding two layers' is
-/// the sketch of both).
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SketchW {
-    pub min: i64,
-    pub max: i64,
-    /// The sum of the rows' signs.
-    pub count: i64,
-    /// AMS counters: the sum of sign × ±1 by a hash bit of the value.
-    pub ams: [i64; AMS],
-}
-
-unsafe impl crate::Pod for SketchW {}
-
-impl SketchW {
-    pub const EMPTY: SketchW = SketchW { min: i64::MAX, max: i64::MIN, count: 0, ams: [0; AMS] };
-
-    /// Adds one row's value with its sign.
-    pub fn add(&mut self, v: i64, diff: i32) {
-        if diff > 0 {
-            self.min = self.min.min(v);
-            self.max = self.max.max(v);
-        }
-        self.count += i64::from(diff);
-        let h = mix(v as u64);
-        for (k, a) in self.ams.iter_mut().enumerate() {
-            *a += if h >> k & 1 == 1 { i64::from(diff) } else { -i64::from(diff) };
-        }
-    }
-
-    /// Two sketches combined: the sketch of both layers' rows.
-    pub fn combine(&self, o: &SketchW) -> SketchW {
-        let mut ams = self.ams;
-        for (a, b) in ams.iter_mut().zip(o.ams) {
-            *a += b;
-        }
-        SketchW { min: self.min.min(o.min), max: self.max.max(o.max), count: self.count + o.count, ams }
-    }
-}
-
-/// SplitMix64's finalizer.
-#[inline]
+/// A splitmix64 step: a shuffle's and a test's random numbers.
 pub fn mix(mut z: u64) -> u64 {
     z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     z ^ (z >> 31)
 }
 
-/// A row's hash, for partition digests: the same row the same hash in every layer.
-pub fn row_hash(row: impl Iterator<Item = i64>) -> u64 {
-    row.fold(0x9e37_79b9_7f4a_7c15u64, |h, v| mix(h ^ mix(v as u64)))
-}
-
-/// A layer block's header, at `BODY_AT`: written last (`state`).
+/// A layer block's header, at `BODY_AT`: where its relations' descriptors lie in the block, and its counts. Written
+/// last (`state`): a layer is read only once committed.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct LayerHead {
+    /// The body's bytes (`gens::body_len`): the header's; the relations lie in the block's chunks past the body.
     pub len: u64,
     pub magic: u32,
     pub state: u32,
-    /// The layer below's block id (`NONE`: the first).
-    pub below: u32,
-    /// Its first row's id: the layer below's `end`.
-    pub start: u32,
-    pub n: u32,
+    /// The layer (P§12: "a layer is one `blocks::relation::Relation`"): its own rows are the rows it added, in the
+    /// trace's canonical order; its `changed` its kills of rows below; it continues the layer below by block id and
+    /// offset (`Relation::try_continue_far`); its indexes and statistics are its own.
+    pub rows: u64,
+    /// `parts(part, digest, added, gone)`: one row a partition the layer changed, sorted on the partition (P§11.2's
+    /// partition digests, "a small relation in the batch"). The digest is the move of the partition's: its rows
+    /// added's `row_digest`s less its rows gone's.
+    pub parts: u64,
+    /// `gone(part, id)`: the layer's kills by partition, ascending within each, one chunk (P§11.2's partition index,
+    /// of the kills: `restrict` reads a partition's alone).
+    pub gone: u64,
     pub added: u32,
-    pub gone: u32,
+    pub ngone: u32,
     pub nparts: u32,
+    pub pad: u32,
+    /// The sum of its partitions' digests.
     pub digest: u64,
+    /// Each Bloom index's filter (`blocks::bloom`, in the block): its descriptor's offset; 0 for another kind.
+    pub blooms: [u64; MAX_IX],
     pub shape: ShapeW,
-    pub col_at: [u64; MAX_COLS],
-    /// The signs, a bit a row (set: added).
-    pub plus_at: u64,
-    /// Each row's kill: the id a gone row kills, `NONE` for an added row.
-    pub kill_at: u64,
-    /// The kill ids, ascending: the layer's flips.
-    pub flips_at: u64,
-    /// The kill ids by partition, ascending within each (`PartW::flo..fhi`).
-    pub pflips_at: u64,
-    pub parts_at: u64,
-    pub sketch_at: u64,
-    /// Each index's row positions in its key's order (a Bloom filter's: its words).
-    pub idx_at: [u64; MAX_IX],
-    /// Each index's fences (`i64`, a `FENCE`th position's lead) or tags (`u16` a position), where it keeps them.
-    pub aux_at: [u64; MAX_IX],
-    /// Each index's prints (`u8` a position), where it keeps them.
-    pub prints_at: [u64; MAX_IX],
 }
 
 unsafe impl crate::Pod for LayerHead {}
 
-/// Where a layer's columns go: its header with every offset, and the body bytes it takes, for `n` rows.
-pub fn layer_layout(shape: &ShapeW, n: usize) -> LayerHead {
-    let mut at = round_up(BODY_AT + size_of::<LayerHead>(), 64);
-    let mut next = |bytes: usize| {
-        let a = at;
-        at = round_up(at + bytes, 64);
-        a as u64
-    };
-    let mut col_at = [0u64; MAX_COLS];
-    for (c, slot) in col_at.iter_mut().enumerate().take(shape.arity()) {
-        *slot = next(shape.width(c) * n);
-    }
-    let plus_at = next(8 * n.div_ceil(64));
-    let kill_at = next(4 * n);
-    let flips_at = next(4 * n);
-    let pflips_at = next(4 * n);
-    let parts_at = next(size_of::<PartW>() * n);
-    let sketch_at = next(size_of::<SketchW>() * shape.arity());
-    let (mut idx_at, mut aux_at, mut prints_at) = ([0u64; MAX_IX], [0u64; MAX_IX], [0u64; MAX_IX]);
-    for x in 0..shape.nidx as usize {
-        let k = shape.index_kind(x);
-        if k & IX_BLOOM != 0 {
-            idx_at[x] = next(8 * bloom_words(n));
-            continue;
-        }
-        idx_at[x] = next(4 * n);
-        if k & IX_FENCES != 0 {
-            aux_at[x] = next(8 * n.div_ceil(crate::order::FENCE));
-        }
-        if k & IX_HASH != 0 {
-            aux_at[x] = next(2 * n);
-        }
-        if k & IX_PRINTS != 0 {
-            prints_at[x] = next(n);
-        }
-    }
-    LayerHead {
-        len: (at - BODY_AT) as u64,
-        magic: LAYER_MAGIC,
-        state: OPEN,
-        below: NONE,
-        start: 0,
-        n: n as u32,
-        added: 0,
-        gone: 0,
-        nparts: 0,
-        digest: 0,
-        shape: *shape,
-        col_at,
-        plus_at,
-        kill_at,
-        flips_at,
-        pflips_at,
-        parts_at,
-        sketch_at,
-        idx_at,
-        aux_at,
-        prints_at,
-    }
-}
-
-/// The body bytes a layer of `n` rows of `shape` takes.
-pub fn layer_bytes(shape: &ShapeW, n: usize) -> usize {
-    layer_layout(shape, n).len as usize
-}
-
-/// A layer's id end: its start, then its rows, rounded to a word so that the next layer's ids start a word.
-pub fn layer_end(start: u32, n: u32) -> u32 {
-    start + round_up(n as usize, 64) as u32
-}
-
-/// The writer's view of a layer being written: its header (offsets) and its bytes. Used by the operations that write
-/// layers (`consolidate`, `merge`), in their write slot.
-pub struct LayerOut<'a> {
-    pub bytes: &'a mut [u8],
-    pub head: LayerHead,
-}
-
-impl<'a> LayerOut<'a> {
-    /// The layer at `BODY_AT` of `bytes`, as last written.
-    pub fn new(bytes: &'a mut [u8]) -> LayerOut<'a> {
-        let head: LayerHead = word(bytes, BODY_AT);
-        assert_eq!(head.magic, LAYER_MAGIC, "a layer block");
-        LayerOut { bytes, head }
-    }
-
-    /// Lays out an open layer of `n` rows of `shape`, starting at id `start`, over `below`.
-    pub fn init(bytes: &'a mut [u8], shape: &ShapeW, n: usize, start: u32, below: u32) -> LayerOut<'a> {
-        let mut head = layer_layout(shape, n);
-        head.start = start;
-        head.below = below;
-        assert!(BODY_AT + head.len as usize <= bytes.len(), "a layer of {n} rows needs {} body bytes", head.len);
-        set_word(bytes, BODY_AT, head);
-        LayerOut { bytes, head }
-    }
-
-    pub fn set(&mut self, i: usize, c: usize, v: i64) {
-        let at = self.head.col_at[c] as usize;
-        if self.head.shape.width(c) == 8 {
-            set_word::<i64>(self.bytes, at + 8 * i, v);
-        } else {
-            let v = i32::try_from(v).unwrap_or_else(|_| panic!("column {c} holds 32 bits: {v}"));
-            set_word::<i32>(self.bytes, at + 4 * i, v);
+impl LayerHead {
+    /// A layer's header as its writer lays it out at `BODY_AT`, before its rows: open, its three relations' offsets.
+    pub fn open(shape: ShapeW, rows: usize, parts: usize, gone: usize) -> LayerHead {
+        LayerHead {
+            len: LAYER_BODY as u64,
+            magic: LAYER_MAGIC,
+            state: OPEN,
+            rows: rows as u64,
+            parts: parts as u64,
+            gone: gone as u64,
+            added: 0,
+            ngone: 0,
+            nparts: 0,
+            pad: 0,
+            digest: 0,
+            blooms: [0; MAX_IX],
+            shape,
         }
     }
 
-    pub fn get(&self, i: usize, c: usize) -> i64 {
-        cell(self.bytes, self.head.col_at[c] as usize, self.head.shape.width(c), i)
+    /// The header of a layer being written, at `BODY_AT` of its block's bytes.
+    pub fn of_open(bytes: &[u8]) -> LayerHead {
+        let h: LayerHead = word(bytes, BODY_AT);
+        assert!(h.magic == LAYER_MAGIC && h.state == OPEN, "a layer being written");
+        h
     }
 
-    /// Whether row `i`'s sign, as written, is plus.
-    pub fn is_plus(&self, i: usize) -> bool {
-        word::<u64>(self.bytes, self.head.plus_at as usize + 8 * (i / 64)) >> (i % 64) & 1 == 1
-    }
-
-    /// Row `i`'s kill id, as written.
-    pub fn kill(&self, i: usize) -> u32 {
-        word::<u32>(self.bytes, self.head.kill_at as usize + 4 * i)
-    }
-
-    /// The sign words (a bit a row).
-    pub fn plus(&mut self) -> &mut [u64] {
-        words_mut(self.bytes, self.head.plus_at as usize, (self.head.n as usize).div_ceil(64))
-    }
-
-    pub fn kills(&mut self) -> &mut [u32] {
-        words_mut(self.bytes, self.head.kill_at as usize, self.head.n as usize)
-    }
-
-    pub fn flips(&mut self) -> &mut [u32] {
-        words_mut(self.bytes, self.head.flips_at as usize, self.head.n as usize)
-    }
-
-    pub fn pflips(&mut self) -> &mut [u32] {
-        words_mut(self.bytes, self.head.pflips_at as usize, self.head.n as usize)
-    }
-
-    pub fn parts(&mut self) -> &mut [PartW] {
-        words_mut(self.bytes, self.head.parts_at as usize, self.head.n as usize)
-    }
-
-    pub fn sketches(&mut self) -> &mut [SketchW] {
-        words_mut(self.bytes, self.head.sketch_at as usize, self.head.shape.arity())
-    }
-
-    pub fn perm(&mut self, i: usize) -> &mut [u32] {
-        words_mut(self.bytes, self.head.idx_at[i] as usize, self.head.n as usize)
-    }
-
-    pub fn fences(&mut self, i: usize) -> &mut [i64] {
-        words_mut(self.bytes, self.head.aux_at[i] as usize, (self.head.n as usize).div_ceil(crate::order::FENCE))
-    }
-
-    pub fn tags(&mut self, i: usize) -> &mut [u16] {
-        words_mut(self.bytes, self.head.aux_at[i] as usize, self.head.n as usize)
-    }
-
-    pub fn prints(&mut self, i: usize) -> &mut [u8] {
-        words_mut(self.bytes, self.head.prints_at[i] as usize, self.head.n as usize)
-    }
-
-    pub fn bloom(&mut self, i: usize) -> &mut [u64] {
-        words_mut(self.bytes, self.head.idx_at[i] as usize, bloom_words(self.head.n as usize))
-    }
-
-    /// Writes the header with its counts and its state, committed: last.
-    pub fn commit(&mut self, added: u32, gone: u32, nparts: u32, digest: u64) {
-        let mut h = self.head;
-        h.added = added;
-        h.gone = gone;
-        h.nparts = nparts;
-        h.digest = digest;
-        h.state = OPEN;
-        set_word(self.bytes, BODY_AT, h);
-        std::sync::atomic::fence(std::sync::atomic::Ordering::Release);
-        h.state = COMMITTED;
-        set_word(self.bytes, BODY_AT, h);
-        self.head = h;
+    /// Writes the header committed, whole, at `BODY_AT` of its block's bytes: the layer's last write.
+    pub fn commit(mut self, bytes: &mut [u8]) {
+        self.state = COMMITTED;
+        set_word(bytes, BODY_AT, self);
     }
 }
 
-/// A committed layer, read in place.
+/// The body bytes a layer block's header takes.
+pub const LAYER_BODY: usize = size_of::<LayerHead>();
+
+/// The bytes a layer block keeps room for past its body, for `n` rows of `shape`: its relations' chunks (each a power
+/// of two, rows growing by doubling), their indexes and orders, its Bloom filters and its sketches.
+pub fn layer_room(shape: &ShapeW, n: usize) -> usize {
+    let a = shape.arity();
+    let width: usize = (0..a).map(|c| shape.width(c)).sum();
+    (1 << 20) + n * (4 * width + 32 * (MAX_IX + 2) + 4 * 24) + a * (64 << 10)
+}
+
+/// The `Spec::min_log` that holds `n` rows in one chunk: the first group's quarter (`rows::chunk_of`).
+fn one_chunk(n: usize) -> u32 {
+    (n.max(1).next_power_of_two().trailing_zeros() + 2).max(crate::rows::MIN_LOG)
+}
+
+/// The layer relation's spec: the shape's columns at their widths, sorted on its canonical order's first column (the
+/// partition, when it has one; its rows written in the whole order, which the sort keeps), a hashed index for each
+/// `Hash` index (P§11.2), and its row index (every column: the next layer finds a row's live copy by it). Room for `n`
+/// rows in one chunk.
+pub fn rows_spec(shape: &ShapeW, n: usize) -> Spec {
+    let a = shape.arity();
+    let widths = (0..a).map(|c| col_width(if shape.width(c) == 8 { ColType::I64 } else { ColType::I32 })).collect();
+    let mut indexes: Vec<Vec<u16>> = (0..shape.nidx as usize).filter(|&x| shape.index_kind(x) & IX_HASH != 0).map(|x| shape.index_key(x).iter().map(|&c| u16::from(c)).collect()).collect();
+    let every: Vec<u16> = (0..a as u16).collect();
+    if a <= crate::relation::MAX_KEY && !indexes.contains(&every) {
+        indexes.push(every);
+    }
+    Spec { widths, sort: Some(u16::from(shape.order()[0])), indexes, min_log: one_chunk(n) }
+}
+
+/// A column type's width in a relation's spec: a signed 32-bit column's `rows::I32`.
+fn col_width(t: ColType) -> u32 {
+    match t {
+        ColType::I32 => crate::rows::I32,
+        ColType::I64 => 8,
+    }
+}
+
+/// `parts`' spec: the partition (signed 32 bits), its digest's move, rows added, rows gone; sorted on the partition.
+pub fn parts_spec(n: usize) -> Spec {
+    Spec { widths: vec![crate::rows::I32, 8, 4, 4], sort: Some(0), indexes: Vec::new(), min_log: one_chunk(n) }
+}
+
+/// `gone`'s spec: the partition, the id killed; sorted on the partition, in one chunk (a partition's ids are a slice).
+pub fn gone_spec(n: usize) -> Spec {
+    Spec { widths: vec![crate::rows::I32, 4], sort: Some(0), indexes: Vec::new(), min_log: one_chunk(n) }
+}
+
+/// A committed layer, read in place: its block's bytes, its header, and its three relations.
 #[derive(Clone, Copy)]
 pub struct Layer<'a> {
-    bytes: &'a [u8],
+    pub bytes: &'a [u8],
     pub head: LayerHead,
+    pub rows: &'a Relation,
+    pub parts: &'a Relation,
+    pub gone: &'a Relation,
 }
 
 impl<'a> Layer<'a> {
-    /// The layer in `bytes`: `Err` when they hold none, or one not committed.
+    /// The layer at `BODY_AT` of a block's bytes, committed.
     pub fn new(bytes: &'a [u8]) -> Result<Layer<'a>, String> {
+        if bytes.len() < BODY_AT + LAYER_BODY {
+            return Err("not a layer block".into());
+        }
         let head: LayerHead = word(bytes, BODY_AT);
         if head.magic != LAYER_MAGIC {
             return Err("not a layer block".into());
         }
         if head.state != COMMITTED {
-            return Err("a layer not committed".into());
+            return Err("a layer read before it was committed".into());
         }
-        Ok(Layer { bytes, head })
+        let rel = |at: u64, what: &str| Relation::at(bytes, at as usize).filter(|r| r.is_frozen()).ok_or_else(|| format!("the layer's {what}, frozen"));
+        Ok(Layer { bytes, head, rows: rel(head.rows, "rows")?, parts: rel(head.parts, "parts")?, gone: rel(head.gone, "gone")? })
     }
 
-    pub fn n(&self) -> usize {
-        self.head.n as usize
-    }
-
+    /// Its first own row's id: every id the layer below reads.
     pub fn start(&self) -> u32 {
-        self.head.start
+        self.rows.base_rows
     }
 
-    /// The id past its rows' word: the next layer's start.
     pub fn end(&self) -> u32 {
-        layer_end(self.head.start, self.head.n)
+        self.rows.base_rows + self.rows.rows.len()
     }
 
-    pub fn below(&self) -> Option<Id> {
-        (self.head.below != NONE).then_some(self.head.below)
+    /// Its own rows.
+    pub fn n(&self) -> usize {
+        self.rows.rows.len() as usize
     }
 
-    pub fn get(&self, i: usize, c: usize) -> i64 {
-        cell(self.bytes, self.head.col_at[c] as usize, self.head.shape.width(c), i)
+    /// The layer below: its block id, and its relation's offset there (the reference, `Relation::far`).
+    pub fn below(&self) -> Option<(Id, usize)> {
+        self.rows.far()
     }
 
-    pub fn plus(&self) -> &'a [u64] {
-        words(self.bytes, self.head.plus_at as usize, self.n().div_ceil(64))
+    /// Own row `id`'s value in column `c`.
+    #[inline]
+    pub fn get(&self, id: u32, c: usize) -> i64 {
+        self.rows.own(id, c)
     }
 
-    /// Whether row `i` (local) is added (`+1`), not gone.
-    pub fn is_plus(&self, i: usize) -> bool {
-        self.plus()[i / 64] >> (i % 64) & 1 == 1
-    }
-
+    /// Its kills: rows of the layers below, ascending.
     pub fn kills(&self) -> &'a [u32] {
-        words(self.bytes, self.head.kill_at as usize, self.n())
+        self.rows.changed.as_slice()
     }
 
-    pub fn flips(&self) -> &'a [u32] {
-        words(self.bytes, self.head.flips_at as usize, self.head.gone as usize)
+    /// Partition `p`'s own rows: a range of ids (its rows lie sorted on the partition). Every own row when the
+    /// trace has no partition.
+    pub fn part_rows(&self, p: i64) -> std::ops::Range<u32> {
+        let Some(c) = self.head.shape.partition() else { return self.start()..self.end() };
+        let r = leading(self.rows, &[c as u16], &[p]);
+        self.start() + r.start..self.start() + r.end
     }
 
-    pub fn pflips(&self) -> &'a [u32] {
-        words(self.bytes, self.head.pflips_at as usize, self.head.gone as usize)
+    /// Partition `p`'s row of `parts`: its digest's move, rows added and rows gone.
+    pub fn part_entry(&self, p: i64) -> Option<(u64, u32, u32)> {
+        let r = leading(self.parts, &[0], &[p]);
+        (!r.is_empty()).then(|| (self.parts.own(r.start, 1) as u64, self.parts.own(r.start, 2) as u32, self.parts.own(r.start, 3) as u32))
     }
 
-    pub fn parts(&self) -> &'a [PartW] {
-        words(self.bytes, self.head.parts_at as usize, self.head.nparts as usize)
-    }
-
-    pub fn sketches(&self) -> &'a [SketchW] {
-        words(self.bytes, self.head.sketch_at as usize, self.head.shape.arity())
-    }
-
-    pub fn perm(&self, i: usize) -> &'a [u32] {
-        words(self.bytes, self.head.idx_at[i] as usize, self.n())
-    }
-
-    /// Index `i`'s fences, when it keeps them.
-    pub fn fences(&self, i: usize) -> &'a [i64] {
-        if self.head.shape.index_kind(i) & IX_FENCES == 0 {
+    /// Partition `p`'s kills, ascending: a slice of `gone`'s id column.
+    pub fn part_kills(&self, p: i64) -> &'a [u32] {
+        let r = leading(self.gone, &[0], &[p]);
+        if r.is_empty() {
             return &[];
         }
-        words(self.bytes, self.head.aux_at[i] as usize, self.n().div_ceil(crate::order::FENCE))
+        let ids = self.gone.rows.col_chunks_u32(1).next().expect("a layer's kills by partition, in one chunk");
+        assert!(ids.len() >= r.end as usize, "a layer's kills by partition, in one chunk");
+        &ids[r.start as usize..r.end as usize]
     }
 
-    /// Index `i`'s tags, when it is a hash order.
-    pub fn tags(&self, i: usize) -> &'a [u16] {
-        if self.head.shape.index_kind(i) & IX_HASH == 0 {
-            return &[];
+    /// Compares own row `id` with `key` on columns `cols`.
+    pub fn cmp_key(&self, id: u32, cols: &[u16], key: &[i64]) -> Ordering {
+        cols.iter().zip(key).map(|(&c, &k)| self.get(id, c as usize).cmp(&k)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
+    }
+
+    /// The own rows whose `cols` equal `key`, where `cols` is a prefix of the canonical order: a range of ids, found
+    /// by binary search (its rows lie in that order). `None` when `cols` is not one.
+    pub fn prefix_range(&self, cols: &[u16], key: &[i64]) -> Option<std::ops::Range<u32>> {
+        let order = self.head.shape.order();
+        if cols.is_empty() || cols.len() > order.len() || order[..cols.len()].iter().zip(cols).any(|(&o, &c)| u16::from(o) != c) {
+            return None;
         }
-        words(self.bytes, self.head.aux_at[i] as usize, self.n())
+        let (s, n) = (self.start(), self.n());
+        let lo = partition_point(n, |i| self.cmp_key(s + i as u32, cols, key) == Ordering::Less);
+        let hi = lo + partition_point(n - lo, |i| self.cmp_key(s + (lo + i) as u32, cols, key) != Ordering::Greater);
+        Some(s + lo as u32..s + hi as u32)
     }
 
-    /// Index `i`'s prints, when it keeps them.
-    pub fn prints(&self, i: usize) -> &'a [u8] {
-        if self.head.shape.index_kind(i) & IX_PRINTS == 0 {
-            return &[];
-        }
-        words(self.bytes, self.head.prints_at[i] as usize, self.n())
+    /// The own rows whose `cols` equal `key` by a sorted order whose key starts with `cols` (`Relation::add_order`):
+    /// its ids, found by `blocks::order::find` (fences, prints, then bisection). `None` without such an order.
+    pub fn order_range(&self, cols: &[u16], key: &[i64]) -> Option<&'a [u32]> {
+        let rows = self.rows;
+        let x = rows.orders().find(|&x| {
+            let ix = rows.index_at(x);
+            let k = &ix.key[..ix.ncols as usize];
+            !cols.is_empty() && cols.len() <= k.len() && k[..cols.len()] == *cols
+        })?;
+        let ix = rows.index_at(x);
+        let ids = ix.rows.as_slice();
+        let cmp = |p: usize| self.cmp_key(ids[p], cols, key);
+        let whole = cols.len() == ix.ncols as usize;
+        let (lo, hi) = crate::order::find(ids.len(), ix.fences.as_slice(), ix.tags.as_slice(), ix.prints.as_slice(), key, whole, cmp);
+        Some(&ids[lo..hi])
     }
 
-    /// Index `i`'s Bloom words.
-    pub fn bloom(&self, i: usize) -> &'a [u64] {
-        words(self.bytes, self.head.idx_at[i] as usize, bloom_words(self.n()))
+    /// Index `x`'s Bloom filter, for a Bloom index.
+    pub fn bloom(&self, x: usize) -> Option<&'a Bloom> {
+        let at = self.head.blooms[x];
+        (at != 0).then(|| Bloom::at(self.bytes, at as usize).expect("a layer's Bloom filter"))
     }
 
-    /// Whether the layer may hold a row whose `cols` are `key`: false only when a Bloom filter on exactly those columns
-    /// says it holds none.
-    pub fn may_hold(&self, cols: &[u8], key: &[i64]) -> bool {
+    /// Whether a key on `cols` may be among its own rows: false only when a Bloom index on exactly `cols` says no.
+    pub fn may_hold(&self, cols: &[u16], key: &[i64]) -> bool {
         let s = &self.head.shape;
-        (0..s.nidx as usize).filter(|&x| s.index_kind(x) & IX_BLOOM != 0 && s.index_key(x) == cols).all(|x| {
-            let (w, m) = crate::bloom::place(crate::bloom::hash(bloom_key(key.iter().copied())), bloom_words(self.n()));
-            self.bloom(x)[w] & m == m
+        (0..s.nidx as usize).all(|x| {
+            let k = s.index_key(x);
+            s.index_kind(x) & IX_BLOOM == 0 || k.len() != cols.len() || k.iter().zip(cols).any(|(&a, &b)| u16::from(a) != b) || self.bloom(x).is_none_or(|b| b.may_hold_hashed(bloom::hash(bloom_key(key.iter().copied()))))
         })
     }
 
-    /// Partition `p`'s entry.
-    pub fn part(&self, p: i64) -> Option<&'a PartW> {
-        let parts = self.parts();
-        let p = i32::try_from(p).ok()?;
-        parts.binary_search_by_key(&p, |e| e.key).ok().map(|i| &parts[i])
+    /// Column `c`'s sketch of the state this layer ends (`Relation::sketches`), read back from its kept form.
+    pub fn sketch(&self, c: usize) -> Option<Sketch> {
+        let b = layer_sketch(self.rows, c)?;
+        Sketch::decode(&|i| b[i], 0, b.len(), sketch_room())
     }
+}
 
-    /// Compares local row `i` with `key` on columns `cols`.
-    pub fn cmp_key(&self, i: usize, cols: &[u8], key: &[i64]) -> Ordering {
-        for (&c, &k) in cols.iter().zip(key) {
-            match self.get(i, c as usize).cmp(&k) {
-                Ordering::Equal => {}
-                o => return o,
-            }
-        }
-        Ordering::Equal
-    }
-
-    /// The local rows whose `cols` equal `key`, where `cols` is a prefix of the canonical order: a range, found by
-    /// binary search. `None` when `cols` is not one.
-    pub fn prefix_range(&self, cols: &[u8], key: &[i64]) -> Option<std::ops::Range<usize>> {
-        let order = self.head.shape.order();
-        if cols.len() > order.len() || order[..cols.len()] != *cols {
-            return None;
-        }
-        let n = self.n();
-        let lo = partition_point(n, |i| self.cmp_key(i, cols, key) == Ordering::Less);
-        let hi = partition_point(n, |i| self.cmp_key(i, cols, key) != Ordering::Greater);
-        Some(lo..hi)
-    }
-
-    /// The local rows whose `cols` equal `key` by index `x` (its key starting with `cols`): positions in its order.
-    pub fn index_range(&self, x: usize, cols: &[u8], key: &[i64]) -> Option<&'a [u32]> {
-        let s = &self.head.shape;
-        if x >= s.nidx as usize {
-            return None;
-        }
-        let ikey = s.index_key(x);
-        if cols.len() > ikey.len() || ikey[..cols.len()] != *cols {
-            return None;
-        }
-        let kind = s.index_kind(x);
-        if kind & IX_BLOOM != 0 {
-            return None;
-        }
-        let perm = self.perm(x);
-        let n = perm.len();
-        let (tags, fences) = (self.tags(x), self.fences(x));
-        let cmp = |p: usize| self.cmp_key(perm[p] as usize, cols, key);
-        let (lo, hi) = if !tags.is_empty() || !fences.is_empty() {
-            // The search written once (`blocks::order::find`): the tags' or fences' span, then prints or bisection.
-            // In a hash order, positions are sorted by the lead's tag and then by the key.
-            let whole = cols.len() == ikey.len();
-            crate::order::find(n, fences, tags, self.prints(x), key, whole, cmp)
-        } else {
-            let lo = partition_point(n, |p| cmp(p) == Ordering::Less);
-            (lo, lo + partition_point(n - lo, |p| cmp(lo + p) != Ordering::Greater))
-        };
-        Some(&perm[lo..hi])
-    }
+/// Where a sketch read back from a layer keeps its arrays while it is read: the heap's (a reader's own, for one read).
+pub fn sketch_room() -> std::sync::Arc<dyn crate::maps::Room> {
+    std::sync::Arc::new(rerail_vector::HeapRoom)
 }
 
 /// The first `i` in `0..n` for which `pred` is false (`pred` true then false).
@@ -916,29 +724,48 @@ fn partition_point(n: usize, pred: impl Fn(usize) -> bool) -> usize {
     lo
 }
 
-/// A trace's state at a layer, read in place through a launch's descriptor table: `bistate::Read`. With a partition
-/// key (`restrict`), only that partition's rows: each layer's range of it, from its partition index.
+/// A trace's state at a layer (P§12's `Version`: `blocks::relation::View` generalized to n layers), read in place
+/// through a launch's descriptor table: `bistate::Read`. A row is live when it is an own row of a layer at or below the
+/// state's and no layer above that one, up to the state's, kills it. With a partition key (`restrict`), only that
+/// partition's rows: each layer's range of it, and its kills of it. Its reads can be counted (`counted`): every own
+/// row and every liveness word they touch.
 #[derive(Clone, Copy)]
 pub struct Chain<'a> {
     table: &'a Table<'a>,
     head: Option<Id>,
     arity: usize,
     part: Option<i64>,
+    reads: Option<&'a Cell<u64>>,
 }
 
 impl<'a> Chain<'a> {
-    /// The state at layer `head` (`None`: the empty state, of `arity` columns).
+    /// The state at layer `head` (`None`: the empty state, of `arity` columns). Each layer is checked once: reached,
+    /// committed, of `arity` columns, and where the layer above refers to it.
     pub fn new(table: &'a Table<'a>, head: Option<Id>, arity: usize) -> Result<Chain<'a>, String> {
-        let c = Chain { table, head, arity, part: None };
-        let mut id = head;
-        while let Some(i) = id {
-            let l = c.layer(i)?;
-            if l.head.shape.arity() != arity {
-                return Err(format!("layer #{i} has {} columns, not {arity}", l.head.shape.arity()));
+        let c = Chain { table, head, arity, part: None, reads: None };
+        let mut at = head.map(|h| (h, None));
+        while let Some((id, off)) = at {
+            let l = c.layer(id)?;
+            if off.is_some_and(|o| o != l.head.rows as usize) {
+                return Err(format!("layer #{id}'s relation is not where the layer above refers"));
             }
-            id = l.below();
+            if l.head.shape.arity() != arity || l.rows.arity as usize != arity {
+                return Err(format!("layer #{id} has {} columns, not {arity}", l.head.shape.arity()));
+            }
+            at = l.below().map(|(b, o)| (b, Some(o)));
         }
         Ok(c)
+    }
+
+    /// The same state, its reads counted into `reads`.
+    pub fn counted(self, reads: &'a Cell<u64>) -> Chain<'a> {
+        Chain { reads: Some(reads), ..self }
+    }
+
+    fn touch(&self, n: usize) {
+        if let Some(r) = self.reads {
+            r.set(r.get() + n as u64);
+        }
     }
 
     fn layer(&self, id: Id) -> Result<Layer<'a>, String> {
@@ -950,13 +777,14 @@ impl<'a> Chain<'a> {
         self.layer(id).expect("a chain's layers were checked when it was made")
     }
 
-    /// Its layers, newest first.
-    pub fn layers(&self) -> impl Iterator<Item = Layer<'a>> + '_ {
+    /// Its layers, newest first, with their block ids.
+    pub fn layers(&self) -> impl Iterator<Item = (Id, Layer<'a>)> + '_ {
         let mut id = self.head;
         std::iter::from_fn(move || {
-            let l = self.at(id?);
-            id = l.below();
-            Some(l)
+            let i = id?;
+            let l = self.at(i);
+            id = l.below().map(|(b, _)| b);
+            Some((i, l))
         })
     }
 
@@ -968,22 +796,45 @@ impl<'a> Chain<'a> {
         self.part
     }
 
-    /// The layer holding id `id`, and its local row.
-    fn locate(&self, id: u32) -> Option<(Layer<'a>, usize)> {
-        self.layers().find(|l| l.start() <= id).filter(|l| id < l.start() + l.head.n).map(|l| (l, (id - l.start()) as usize))
+    /// The layers above the state `before` ends (all of them for `None`), newest first: `None` when `before` is not
+    /// one of this state's.
+    fn above(&self, before: Option<&Chain<'a>>) -> Option<Vec<Layer<'a>>> {
+        let stop = before.and_then(|b| b.head);
+        // copy: not block data (a handle a layer, as many as lie above)
+        let mut out = Vec::new();
+        for (id, l) in self.layers() {
+            if Some(id) == stop {
+                return Some(out);
+            }
+            out.push(l);
+        }
+        stop.is_none().then_some(out)
     }
 
-    /// Partition `p`'s rows in layer `l`, local: all of them without a restriction.
-    fn span(&self, l: &Layer<'a>) -> std::ops::Range<usize> {
+    /// The layer holding id `id`.
+    fn locate(&self, id: u32) -> Option<Layer<'a>> {
+        self.layers().map(|(_, l)| l).find(|l| l.start() <= id && id < l.end())
+    }
+
+    /// Partition `p`'s own rows of layer `l`: all of them without a restriction.
+    fn span(&self, l: &Layer<'a>) -> std::ops::Range<u32> {
         match self.part {
-            None => 0..l.n(),
-            Some(p) => l.part(p).map_or(0..0, |e| e.lo as usize..e.hi as usize),
+            None => l.start()..l.end(),
+            Some(p) => l.part_rows(p),
         }
     }
 
-    /// Whether row `id` was killed by a layer at or below this state's head and above `l`.
+    /// Layer `l`'s kills of this state's rows: its partition's alone when restricted.
+    fn kills_of(&self, l: &Layer<'a>) -> &'a [u32] {
+        match self.part {
+            None => l.kills(),
+            Some(p) => l.part_kills(p),
+        }
+    }
+
+    /// Whether row `id`, of layer `l`, is killed by a layer above `l`, up to this state's.
     fn killed_above(&self, l: &Layer<'a>, id: u32) -> bool {
-        self.layers().take_while(|k| k.start() > l.start()).any(|k| k.flips().binary_search(&id).is_ok())
+        self.layers().map(|(_, k)| k).take_while(|k| !std::ptr::eq(k.rows, l.rows)).any(|k| k.kills().binary_search(&id).is_ok())
     }
 }
 
@@ -1002,35 +853,39 @@ impl Read for Chain<'_> {
     }
 
     fn live_word(&self, w: WordIndex) -> u64 {
-        let first = w.first().get();
-        let Some(l) = self.layers().find(|l| l.start() <= first) else { return 0 };
-        if first >= l.end() {
+        self.touch(1);
+        let (first, end) = (w.first().get(), self.end().get());
+        let last = first.saturating_add(64).min(end);
+        if first >= last {
             return 0;
         }
-        let local = (first - l.start()) as usize;
-        let span = self.span(&l);
-        let mut live = l.plus()[local / 64] & below(RowId::new(l.head.n), WordIndex::new((local / 64) as u32));
-        // Only the partition's rows, when restricted.
-        let lo = span.start.saturating_sub(local).min(64);
-        let hi = span.end.saturating_sub(local).min(64);
-        let mask = if hi <= lo { 0 } else { (if hi == 64 { u64::MAX } else { (1u64 << hi) - 1 }) & !((1u64 << lo) - 1) };
-        live &= mask;
-        if live == 0 {
-            return 0;
-        }
-        for k in self.layers().take_while(|k| k.start() > l.start()) {
-            let f = k.flips();
-            let from = f.partition_point(|&x| x < first);
-            for &x in f[from..].iter().take_while(|&&x| x < first + 64) {
-                live &= !(1u64 << (x - first));
+        // Each layer's own rows in the word (its partition's, when restricted), less every kill of one of them by a
+        // layer above it: a layer kills only rows below its own, so a kill names a live row of the state it was made
+        // over, and a row killed is never live again (a row added again is a new row). The kills are taken after
+        // every layer's rows are in.
+        let (mut live, mut killed) = (0u64, 0u64);
+        for (_, l) in self.layers() {
+            if l.end() <= first {
+                break;
+            }
+            let s = self.span(&l);
+            let (lo, hi) = (s.start.max(first), s.end.min(last));
+            if lo < hi {
+                let bits = if hi - lo == 64 { u64::MAX } else { ((1u64 << (hi - lo)) - 1) << (lo - first) };
+                live |= bits;
+            }
+            let k = l.kills();
+            let from = k.partition_point(|&x| x < first);
+            for &x in k[from..].iter().take_while(|&&x| x < last) {
+                killed |= 1u64 << (x - first);
             }
         }
-        live
+        live & !killed
     }
 
     fn get(&self, id: RowId, c: ColumnIndex) -> i64 {
-        let (l, i) = self.locate(id.get()).unwrap_or_else(|| panic!("row {id} is not in the state"));
-        l.get(i, c.get())
+        let l = self.locate(id.get()).unwrap_or_else(|| panic!("row {id} is not in the state"));
+        l.get(id.get(), c.get())
     }
 
     fn column(&self, c: ColumnIndex) -> Self::Column<'_> {
@@ -1039,39 +894,29 @@ impl Read for Chain<'_> {
 
     fn since(&self) -> Option<Since<'_>> {
         let l = self.at(self.head?);
-        let flips = match self.part {
-            None => l.flips(),
-            Some(p) => l.part(p).map_or(&[][..], |e| &l.pflips()[e.flo as usize..e.fhi as usize]),
-        };
-        Some(Since { end: RowId::new(l.start()), flips })
+        Some(Since { end: RowId::new(l.start()), flips: self.kills_of(&l) })
     }
 
-    fn flips_from(&self, end: RowId) -> Option<Flips<'_>> {
+    fn flips_since(&self, before: Option<&Self>) -> Option<Flips<'_>> {
         let mut f = Flips::default();
-        for l in self.layers() {
-            if l.start() < end.get() {
-                return None;
-            }
-            let run = match self.part {
-                None => l.flips(),
-                Some(p) => l.part(p).map_or(&[][..], |e| &l.pflips()[e.flo as usize..e.fhi as usize]),
-            };
-            f.push(run);
-            if l.start() == end.get() {
-                return Some(f);
-            }
+        for l in self.above(before)? {
+            f.push(self.kills_of(&l));
         }
-        (end.get() == 0).then_some(f)
+        Some(f)
     }
 
-    fn exact_counts_from(&self, end: RowId) -> Option<(usize, usize)> {
-        let l = self.at(self.head?);
-        if l.start() != end.get() {
-            return None;
-        }
+    fn new_ranges(&self, before: Option<&Self>) -> Option<Vec<(RowId, RowId)>> {
+        let mut r: Vec<(RowId, RowId)> = self.above(before)?.iter().map(|l| self.span(l)).filter(|s| !s.is_empty()).map(|s| (RowId::new(s.start), RowId::new(s.end))).collect(); // copy: not block data (a range a layer)
+        r.reverse();
+        Some(r)
+    }
+
+    fn exact_counts_since(&self, before: Option<&Self>) -> Option<(usize, usize)> {
+        let above = self.above(before)?;
+        let [l] = above.as_slice() else { return None };
         match self.part {
-            None => Some((l.head.gone as usize, l.head.added as usize)),
-            Some(p) => Some(l.part(p).map_or((0, 0), |e| (e.gone as usize, e.added as usize))),
+            None => Some((l.head.ngone as usize, l.head.added as usize)),
+            Some(p) => Some(l.part_entry(p).map_or((0, 0), |(_, added, gone)| (gone as usize, added as usize))),
         }
     }
 
@@ -1080,10 +925,9 @@ impl Read for Chain<'_> {
     }
 
     fn matching<'s>(&'s self, cols: &'s [ColumnIndex], key: &'s [i64]) -> impl Iterator<Item = RowId> + 's {
-        let cs: [u8; MAX_COLS] = std::array::from_fn(|i| cols.get(i).map_or(0, |c| c.get() as u8));
+        let cs: [u16; MAX_COLS] = std::array::from_fn(|i| cols.get(i).map_or(0, |c| c.get() as u16));
         let n = cols.len();
         let k: [i64; MAX_COLS] = std::array::from_fn(|i| key.get(i).copied().unwrap_or(0));
-        // The probe's key lives in the iterator; the chain's reads borrow `self`.
         ProbeIter { chain: *self, cs, k, n, inner: None, layer: self.head }
     }
 
@@ -1097,22 +941,50 @@ impl Read for Chain<'_> {
     }
 
     fn stats(&self, c: ColumnIndex) -> ColStats {
-        let s = self.layers().fold(SketchW::EMPTY, |s, l| s.combine(&l.sketches()[c.get()]));
-        ColStats { min: s.min, max: s.max, count: s.count, ams: s.ams }
+        // A partition's are read from its rows; the whole state's from its layers: the bounds of every row added
+        // (an estimate: rows since gone included), and the state's sketch, which its last layer keeps.
+        if self.part.is_some() || self.head.is_none() {
+            return crate::bistate::stats_of(self, c);
+        }
+        let (mut min, mut max) = (i64::MAX, i64::MIN);
+        for (_, l) in self.layers() {
+            if let Some(s) = l.rows.stats.as_slice().get(c.get()).filter(|_| l.n() > 0) {
+                min = min.min(s.min);
+                max = max.max(s.max);
+            }
+        }
+        let reading = self.at(self.head.expect("a state")).sketch(c.get()).map(|s| s.reading()).unwrap_or_default();
+        ColStats { min, max, rows: reading.rows, ndv: reading.ndv, sq: reading.sq }
     }
 }
 
-/// A probe's place in one layer: the layer, the positions left, and the index's order when one is read.
-type InLayer<'a> = (Layer<'a>, std::ops::Range<usize>, Option<&'a [u32]>);
-
-/// A probe of a chain: each layer's matches in turn.
+/// A probe of a chain: each layer's matches in turn, newest first, by the layer's indexes: a range of the canonical
+/// order when the key is a prefix of it, a sorted order (`Order`), a hashed index (`Hash`, or the row index), else
+/// its rows; a Bloom index skips a layer that cannot hold the key.
 pub struct ProbeIter<'a> {
     chain: Chain<'a>,
-    cs: [u8; MAX_COLS],
+    cs: [u16; MAX_COLS],
     k: [i64; MAX_COLS],
     n: usize,
-    inner: Option<InLayer<'a>>,
+    inner: Option<(Layer<'a>, Candidates<'a>)>,
     layer: Option<Id>,
+}
+
+/// A layer's candidates for a probe: a range of ids, or a list of them.
+enum Candidates<'a> {
+    Range(std::ops::Range<u32>),
+    Listed(std::slice::Iter<'a, u32>),
+}
+
+impl Iterator for Candidates<'_> {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<u32> {
+        match self {
+            Candidates::Range(r) => r.next(),
+            Candidates::Listed(s) => s.next().copied(),
+        }
+    }
 }
 
 impl Iterator for ProbeIter<'_> {
@@ -1120,42 +992,39 @@ impl Iterator for ProbeIter<'_> {
 
     fn next(&mut self) -> Option<RowId> {
         loop {
-            if let Some((l, r, perm)) = &mut self.inner {
+            if let Some((l, ids)) = &mut self.inner {
                 let (cs, ks) = (&self.cs[..self.n], &self.k[..self.n]);
                 let span = self.chain.span(l);
-                for j in r.by_ref() {
-                    let i = match perm {
-                        Some(p) => p[j] as usize,
-                        None => j,
-                    };
-                    if !span.contains(&i) || !l.is_plus(i) || (perm.is_none() && l.cmp_key(i, cs, ks) != Ordering::Equal) {
-                        continue;
-                    }
-                    let id = l.start() + i as u32;
-                    if !self.chain.killed_above(l, id) {
+                for id in ids.by_ref() {
+                    self.chain.touch(1);
+                    if span.contains(&id) && l.cmp_key(id, cs, ks) == Ordering::Equal && !self.chain.killed_above(l, id) {
                         return Some(RowId::new(id));
                     }
                 }
                 self.inner = None;
             }
             let l = self.chain.at(self.layer?);
-            self.layer = l.below();
+            self.layer = l.below().map(|(b, _)| b);
             let (cs, ks) = (&self.cs[..self.n], &self.k[..self.n]);
             if !l.may_hold(cs, ks) {
                 continue;
             }
-            self.inner = Some(if let Some(r) = l.prefix_range(cs, ks) {
-                (l, r, None)
-            } else if let Some(p) = (0..l.head.shape.nidx as usize).find_map(|x| l.index_range(x, cs, ks)) {
-                (l, 0..p.len(), Some(p))
+            let ids = if let Some(r) = l.prefix_range(cs, ks) {
+                Candidates::Range(r)
+            } else if let Some(p) = l.order_range(cs, ks) {
+                Candidates::Listed(p.iter())
+            } else if let Some(x) = l.rows.find_index(cs, l.rows.rows.len()) {
+                Candidates::Listed(l.rows.group(x, crate::key_hash(ks)).iter())
             } else {
-                (l, self.chain.span(&l), None)
-            });
+                Candidates::Range(self.chain.span(&l))
+            };
+            self.inner = Some((l, ids));
         }
     }
 }
 
-/// A chain's live rows in canonical order: a merge of its layers' runs (each layer is sorted), as many as it has.
+/// A chain's live rows in canonical order: a merge of its layers' runs (each layer lies in the order), as many as it
+/// has.
 pub struct Scan<'a> {
     chain: Chain<'a>,
     // copy: not block data (a cursor a layer: its handle and its place)
@@ -1166,9 +1035,9 @@ impl<'a> Scan<'a> {
     fn new(chain: &Chain<'a>) -> Scan<'a> {
         let heads = chain
             .layers()
-            .map(|l| {
+            .map(|(_, l)| {
                 let s = chain.span(&l);
-                (l, s.start as u32, s.end as u32)
+                (l, s.start, s.end)
             })
             .collect();
         Scan { chain: *chain, heads }
@@ -1189,17 +1058,17 @@ impl Iterator for Scan<'_> {
                 best = match best {
                     Some(b) => {
                         let (lb, ib, _) = self.heads[b];
-                        let o = lb.head.shape.order().iter().map(|&c| lk.get(ik as usize, c as usize).cmp(&lb.get(ib as usize, c as usize))).find(|o| o.is_ne());
+                        let o = lb.head.shape.order().iter().map(|&c| lk.get(ik, c as usize).cmp(&lb.get(ib, c as usize))).find(|o| o.is_ne());
                         if o == Some(Ordering::Less) { Some(k) } else { Some(b) }
                     }
                     None => Some(k),
                 };
             }
             let k = best?;
-            let (l, i, _) = self.heads[k];
+            let (l, id, _) = self.heads[k];
             self.heads[k].1 += 1;
-            let id = l.start() + i;
-            if l.is_plus(i as usize) && !self.chain.killed_above(&l, id) {
+            self.chain.touch(1);
+            if !self.chain.killed_above(&l, id) {
                 return Some(RowId::new(id));
             }
         }
@@ -1208,7 +1077,7 @@ impl Iterator for Scan<'_> {
 
 impl<'a> States for Chain<'a> {
     fn empty(&self) -> Self {
-        Chain { table: self.table, head: None, arity: self.arity, part: self.part }
+        Chain { head: None, ..*self }
     }
 
     fn same(&self, other: &Self) -> bool {
@@ -1220,36 +1089,27 @@ impl<'a> States for Chain<'a> {
         Chain { part: Some(p), ..*self }
     }
 
-    fn changed_parts_from(&self, end: RowId, out: &mut dyn FnMut(i64)) -> bool {
-        // The layers above `end`: their partition lists merged by key, digests summed.
-        let mut runs: Vec<&[PartW]> = Vec::new(); // copy: not block data (a handle a layer's partition index)
-        for l in self.layers() {
-            if l.start() < end.get() {
-                return false;
-            }
-            runs.push(l.parts());
-            if l.start() == end.get() {
-                break;
-            }
-        }
-        let n = runs.len();
-        let mut at = vec![0usize; n]; // copy: not block data (a cursor a layer)
+    fn changed_parts_since(&self, before: Option<&Self>, out: &mut dyn FnMut(i64)) -> bool {
+        // The layers above `before`: their `parts` merged on the partition, digests summed.
+        let Some(above) = self.above(before) else { return false };
+        let n = above.len();
+        let mut at: Vec<u32> = vec![0; n]; // copy: not block data (a cursor a layer)
         loop {
-            let key = (0..n).filter_map(|k| runs[k].get(at[k]).map(|e| e.key)).min();
+            let key = (0..n).filter(|&k| at[k] < above[k].parts.rows.len()).map(|k| above[k].parts.own(at[k], 0)).min();
             let Some(key) = key else { return true };
-            let key: i32 = key;
             let (mut digest, mut moved) = (0u64, 0u64);
             for k in 0..n {
-                if let Some(e) = runs[k].get(at[k]).filter(|e| e.key == key) {
-                    digest = digest.wrapping_add(e.digest);
-                    moved += u64::from(e.added + e.gone);
+                let p = above[k].parts;
+                if at[k] < p.rows.len() && p.own(at[k], 0) == key {
+                    digest = digest.wrapping_add(p.own(at[k], 1) as u64);
+                    moved += (p.own(at[k], 2) + p.own(at[k], 3)) as u64;
                     at[k] += 1;
                 }
             }
             // One layer's partition changed when it holds a row of it; across layers, when their digests do not
             // cancel (an add and its undo sum to zero).
-            if ((n == 1 && moved > 0) || digest != 0) && self.part.is_none_or(|p| p == i64::from(key)) {
-                out(i64::from(key));
+            if ((n == 1 && moved > 0) || digest != 0) && self.part.is_none_or(|p| p == key) {
+                out(key);
             }
         }
     }

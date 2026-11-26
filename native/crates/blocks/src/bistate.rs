@@ -99,8 +99,22 @@ pub trait Read {
         self.since().filter(|s| s.end == end).map(|s| Flips::one(s.flips))
     }
 
-    /// The rows gone and added since the state that ended at `end`, when it keeps them counted: a layer's counts.
-    fn exact_counts_from(&self, _end: RowId) -> Option<(usize, usize)> {
+    /// Its recorded change since `before` (an earlier state of the same rows; `None`: the empty state): by default its
+    /// change since the state that ended where `before` ends (`flips_from`). A trace's state names the layers above
+    /// `before` itself, since two states can end at one id (a layer that only kills).
+    fn flips_since(&self, before: Option<&Self>) -> Option<Flips<'_>> {
+        self.flips_from(before.map_or(RowId::ZERO, Read::end))
+    }
+
+    /// The ids from `before`'s end on that may be live, as ranges, ascending and apart (a trace's layers' own rows
+    /// above `before`, a partition's alone when restricted): only these words are read for rows added. `None`: every
+    /// id from `before`'s end to its own.
+    fn new_ranges(&self, _before: Option<&Self>) -> Option<Vec<(RowId, RowId)>> {
+        None
+    }
+
+    /// The rows gone and added since `before`, when it keeps them counted: a layer's counts.
+    fn exact_counts_since(&self, _before: Option<&Self>) -> Option<(usize, usize)> {
         None
     }
 
@@ -135,16 +149,12 @@ pub trait Read {
         self.live_ids().filter(move |&id| c.is_some_and(|c| self.get(id, c) == p))
     }
 
-    /// Column `c`'s statistics: by default, read from every live row.
+    /// Column `c`'s statistics: by default, read from every live row (`stats_of`).
     fn stats(&self, c: ColumnIndex) -> ColStats
     where
         Self: Sized,
     {
-        let mut s = crate::layer::SketchW::EMPTY;
-        for id in self.live_ids() {
-            s.add(self.get(id, c), 1);
-        }
-        ColStats { min: s.min, max: s.max, count: s.count, ams: s.ams }
+        stats_of(self, c)
     }
 
     /// Its live ids, ascending.
@@ -218,7 +228,7 @@ impl<F: Fn(WordIndex) -> u64> Bits<F> {
 fn bits_from(from: RowId, end: RowId, word: impl Fn(WordIndex) -> u64) -> Bits<impl Fn(WordIndex) -> u64> {
     let first = from.word();
     let words = first.get() as u32..end.get().div_ceil(64).max(first.get() as u32);
-    Bits { word: move |w: WordIndex| word(w) & !below(from, w), words, at: WordIndex::default(), cur: 0 }
+    Bits { word: move |w: WordIndex| word(w) & !below(from, w) & below(end, w), words, at: WordIndex::default(), cur: 0 }
 }
 
 /// One of two iterators of ids.
@@ -254,14 +264,31 @@ impl<F: Fn(WordIndex) -> u64> Iterator for Bits<F> {
     }
 }
 
-/// A column's statistics (P§12 `stats`): its live rows' bounds (an estimate: a bound of every row added, gone ones
-/// included), their count, and linear AMS counters.
+/// A column's statistics (P§12 `stats`; P§11.2: "per column min, max and counts"): its live rows' bounds (a trace's
+/// are an estimate: the bounds of every row added, gone ones included), and its `blocks::sketch` reading (rows,
+/// distinct values, the sum of each value's rows squared).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ColStats {
     pub min: i64,
     pub max: i64,
-    pub count: i64,
-    pub ams: [i64; crate::layer::AMS],
+    pub rows: u64,
+    pub ndv: u64,
+    pub sq: u64,
+}
+
+/// Column `c`'s statistics read from every live row of `state`: its bounds, and a sketch of its values
+/// (`blocks::sketch`, the one sketch), made for this read and let go.
+pub fn stats_of<R: Read>(state: &R, c: ColumnIndex) -> ColStats {
+    let mut s = crate::sketch::Sketch::new_in(crate::layer::sketch_room());
+    let (mut min, mut max) = (i64::MAX, i64::MIN);
+    for id in state.live_ids() {
+        let v = state.get(id, c);
+        s.add(v);
+        min = min.min(v);
+        max = max.max(v);
+    }
+    let r = s.reading();
+    ColStats { min, max, rows: r.rows, ndv: r.ndv, sq: r.sq }
 }
 
 /// A state's recorded change over several of its versions (`Read::flips_from`): each version's flipped ids, merged
@@ -316,9 +343,9 @@ pub trait States: Read + Copy {
     fn same(&self, other: &Self) -> bool;
     /// Partition `p`'s rows alone, by the partition's index.
     fn restrict(&self, p: i64) -> Self;
-    /// Gives `out` each partition changed since the state that ended at `end`, by partition digests, in the change's
-    /// size: false when it cannot (the change is then not recorded by partition).
-    fn changed_parts_from(&self, end: RowId, out: &mut dyn FnMut(i64)) -> bool;
+    /// Gives `out` each partition changed since `before` (`None`: the empty state), by partition digests, in the
+    /// change's size: false when it cannot (the change is then not recorded by partition).
+    fn changed_parts_since(&self, before: Option<&Self>, out: &mut dyn FnMut(i64)) -> bool;
 }
 
 /// One relation's rows at two states (P§1): `lo` the earlier, `hi` the later, of the same rows; `inverted` when the
@@ -366,17 +393,24 @@ impl<S: Read> Bistate<S> {
 
     /// The later state's record of its change since the earlier one, when it keeps one.
     fn listed(&self) -> Option<(Option<&S>, Flips<'_>)> {
-        let flips = self.hi.flips_from(self.lo_end())?;
+        let flips = self.hi.flips_since(self.lo.as_ref())?;
         Some((self.lo.as_ref(), flips))
+    }
+
+    /// The ids past `lo`'s end live in `hi`, ascending: only the words of the ranges `hi` names, when it names them.
+    fn new_ids(&self) -> impl Iterator<Item = RowId> + '_ {
+        let hi = &self.hi;
+        let ranges = hi.new_ranges(self.lo.as_ref()).unwrap_or_else(|| vec![(self.lo_end(), hi.end())]);
+        ranges.into_iter().flat_map(move |(a, b)| bits_from(a, b, move |w| hi.live_word(w)))
     }
 
     /// The ids live in `hi` and not `lo`, ascending.
     fn rise(&self) -> impl Iterator<Item = RowId> + '_ {
         match self.listed() {
             Some((lo, flips)) => {
-                let (hi, end) = (&self.hi, self.lo_end());
+                let hi = &self.hi;
                 let back = flips.filter(move |&id| !lo.is_some_and(|l| l.live(id)) && hi.live(id));
-                Either::L(back.chain(bits_from(end, hi.end(), move |w| hi.live_word(w))))
+                Either::L(back.chain(self.new_ids()))
             }
             None => Either::R(Bits::new(self.hi.end(), move |w| self.hi.live_word(w) & !self.lo_word(w))),
         }
@@ -405,7 +439,7 @@ impl<S: Read> Bistate<S> {
 
     /// `hi`'s rows that fell and rose since `lo`, counted.
     fn raw_counts(&self) -> (usize, usize) {
-        if let Some(c) = self.hi.exact_counts_from(self.lo_end()) {
+        if let Some(c) = self.hi.exact_counts_since(self.lo.as_ref()) {
             return c;
         }
         if let Some((lo, flips)) = self.listed() {
@@ -415,11 +449,7 @@ impl<S: Read> Bistate<S> {
                 fell += usize::from(b && !a);
                 rose += usize::from(a && !b);
             }
-            let new = bits_from(self.lo_end(), self.hi.end(), |w| self.hi.live_word(w));
-            let words = new.words.clone();
-            for w in words.map(WordIndex::new) {
-                rose += (new.word)(w).count_ones() as usize;
-            }
+            rose += self.new_ids().count();
             return (fell, rose);
         }
         let (mut fell, mut rose) = (0, 0);
@@ -440,7 +470,7 @@ impl<S: Read> Bistate<S> {
     /// Whether nothing changed: no row gone or added. A layer's counts say so in O(1) (P§1); a change over several
     /// layers is read in its size; one not recorded, word by word.
     pub fn is_identity(&self) -> bool {
-        if let Some(c) = self.hi.exact_counts_from(self.lo_end()) {
+        if let Some(c) = self.hi.exact_counts_since(self.lo.as_ref()) {
             return c == (0, 0);
         }
         if let Some((_, flips)) = self.listed() {
@@ -480,7 +510,7 @@ impl<S: States> Bistate<S> {
     /// The partitions whose restriction is not the identity (P§1), by the partitions' digests, in the change's size
     /// where the states record it by partition; otherwise read from the rows gone and added.
     pub fn changed_parts(&self, out: &mut dyn FnMut(i64)) {
-        if self.hi.changed_parts_from(self.lo_end(), out) {
+        if self.hi.changed_parts_since(self.lo.as_ref(), out) {
             return;
         }
         let c = self.hi.partition().expect("a partitioned relation's changed partitions");

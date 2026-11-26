@@ -18,7 +18,7 @@ use crate::op::{
 use rerail_blocks::bistate::Bistate;
 use rerail_blocks::block::kind;
 use rerail_blocks::gens::{BODY_AT, Table, word};
-use rerail_blocks::layer::{Chain, Layer, NONE, Runs, Shape, ShapeW, init_runs, runs_bytes};
+use rerail_blocks::layer::{Chain, Layer, NONE, Runs, Shape, ShapeW, init_runs, layer_room, runs_bytes};
 use rerail_delta_twins::Params;
 use rerail_delta_twins::trace::{CONTROL_BYTES, ConsolidateP, MergeP, out_bytes, refused};
 
@@ -26,10 +26,11 @@ const fn ph(name: &'static str, found: Found, unit: Unit, inside: Inside, across
     Phase { name, found, unit, inside, across, output, bounds }
 }
 
-/// The phases `consolidate` and `merge` share (Operations §4): sort (14), segmented scan (10), emit (11), a batched
-/// search (17), histogram (8) for the partition index, sorts for the flips and indexes, the indexes' fences, tags and
-/// prints, Bloom words (18), the sketch (9), the seal.
-static PIPELINE: [Phase; 25] = {
+/// The phases `consolidate` and `merge` share (Operations §4): sort (14), segmented scan (10), emit (11: count, scan,
+/// place), a batched search of the state below (17), the kills sorted, the layer's freeze where it lies (its order,
+/// indexes and change), its partitions' change (8, a histogram), its orders and Bloom filters (18), its sketch (9),
+/// the seal.
+static PIPELINE: [Phase; 13] = {
     use Found::*;
     use Output::*;
     use Unit::*;
@@ -41,29 +42,17 @@ static PIPELINE: [Phase; 25] = {
         ph("count", Indirect, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
         ph("scan", Fixed, Threadgroup, Inside::GroupMemory, Across::Combine, ByScan, &[]),
         ph("place", Indirect, Threadgroup, Inside::Nothing, Across::Nothing, ByScan, &[]),
-        ph("signs", Indirect, Lane, Inside::SimdOps, Across::Nothing, ByIndex, &[]),
         ph("kills", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
-        ph("pcount", Indirect, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
-        ph("pscan", Fixed, Threadgroup, Inside::GroupMemory, Across::Combine, ByScan, &[]),
-        ph("pindex", Indirect, Threadgroup, Inside::Nothing, Across::Nothing, ByScan, &[]),
-        ph("pfill", Indirect, Partition, Inside::Nothing, Across::Nothing, ByIndex, &[]),
-        ph("gscan", Fixed, Threadgroup, Inside::GroupMemory, Across::Combine, ByScan, &[]),
-        ph("pflips", Indirect, Partition, Inside::Nothing, Across::Nothing, ByScan, &[]),
-        ph("fsort", Indirect, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
-        ph("fpasses", Indirect, Threadgroup, Inside::Nothing, Across::Ordered, ByIndex, PASSES),
-        ph("fsettle", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
-        ph("isort", Indirect, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
-        ph("ipasses", Indirect, Threadgroup, Inside::Nothing, Across::Ordered, ByIndex, PASSES),
-        ph("isettle", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
-        ph("iaux", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
-        ph("bloom", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
-        ph("sketch", Indirect, Threadgroup, Inside::GroupMemory, Across::Combine, Sketch, &[]),
-        ph("sketches", Fixed, Lane, Inside::Nothing, Across::Combine, Sketch, &[]),
+        ph("ksort", Fixed, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
+        ph("freeze", Fixed, Threadgroup, Inside::GroupMemory, Across::Ordered, InPlace, &[]),
+        ph("parts", Fixed, Partition, Inside::Nothing, Across::Combine, ByScan, &[]),
+        ph("orders", Indirect, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
+        ph("sketch", Fixed, Lane, Inside::Nothing, Across::Combine, Sketch, &[]),
         ph("seal", Fixed, Lane, Inside::Nothing, Across::Ordered, InPlace, &[]),
     ]
 };
 
-const ALONG: Independence = Independence::Along("rows: a chunk, a pair of runs, a partition, a column");
+const ALONG: Independence = Independence::Along("rows: a chunk, a pair of runs, a row out, an index");
 
 /// `consolidate`: scratch δ runs · write facts · rw control.
 pub static CONSOLIDATE: Signature = Signature::new(
@@ -89,8 +78,10 @@ pub static MERGE: Signature = Signature::new(
     facts_of,
 );
 
-/// A layer's facts by meaning (F1): its rows with their signs and kills, its partition index, flips, sketches, indexes
-/// and counts, each a tagged row; a control block's words.
+/// A layer's facts by meaning (F1), each a tagged row: its rows (id, values), its kills, its partitions' change, its
+/// kills by partition, each index (an order's ids, fences and prints by its key; a Bloom filter's words), each
+/// column's statistics, its counts and the layer below; a control block's words. Where the block put each structure
+/// is not a fact.
 pub fn facts_of(_: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
     if slot == 2 {
         return vec![(0..4).map(|i| word::<u64>(bytes, BODY_AT + 8 + 8 * i) as i64).collect()];
@@ -98,34 +89,37 @@ pub fn facts_of(_: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
     let l = Layer::new(bytes).expect("a committed layer");
     let a = l.head.shape.arity();
     let mut out = Vec::new(); // copy: derived (a check's reading of facts)
-    for i in 0..l.n() {
-        let mut r = vec![0, i as i64];
-        r.extend((0..a).map(|c| l.get(i, c)));
-        r.extend([i64::from(l.is_plus(i)), i64::from(l.kills()[i])]);
+    for id in l.rows.ids() {
+        let mut r = vec![0, i64::from(id)];
+        r.extend((0..a).map(|c| l.get(id, c)));
         out.push(r);
     }
-    for p in l.parts() {
-        out.push(vec![1, p.key.into(), p.lo.into(), p.hi.into(), p.flo.into(), p.fhi.into(), p.added.into(), p.gone.into(), p.digest as i64]);
+    out.extend(l.kills().iter().map(|&k| vec![1, i64::from(k)]));
+    for id in l.parts.ids() {
+        out.push(vec![2, l.parts.own(id, 0), l.parts.own(id, 1), l.parts.own(id, 2), l.parts.own(id, 3)]);
     }
-    out.extend(l.flips().iter().enumerate().map(|(i, &f)| vec![2, i as i64, f.into()]));
-    out.extend(l.pflips().iter().enumerate().map(|(i, &f)| vec![3, i as i64, f.into()]));
-    for (c, s) in l.sketches().iter().enumerate() {
-        let mut r = vec![4, c as i64, s.min, s.max, s.count];
-        r.extend(s.ams);
-        out.push(r);
+    for id in l.gone.ids() {
+        out.push(vec![3, l.gone.own(id, 0), l.gone.own(id, 1)]);
     }
-    for x in 0..l.head.shape.nidx as usize {
-        if l.head.shape.index_kind(x) & rerail_blocks::layer::IX_BLOOM != 0 {
-            out.extend(l.bloom(x).iter().enumerate().map(|(i, &w)| vec![9, x as i64, i as i64, w as i64]));
+    let s = &l.head.shape;
+    for x in 0..s.nidx as usize {
+        if let Some(b) = l.bloom(x) {
+            out.extend((0..b.len()).map(|i| vec![4, x as i64, i as i64, b.word(i) as i64]));
             continue;
         }
-        out.extend(l.perm(x).iter().enumerate().map(|(i, &p)| vec![5, x as i64, i as i64, p.into()]));
-        out.extend(l.fences(x).iter().enumerate().map(|(i, &f)| vec![7, x as i64, i as i64, f]));
-        out.extend(l.tags(x).iter().enumerate().map(|(i, &t)| vec![8, x as i64, i as i64, t.into()]));
-        out.extend(l.prints(x).iter().enumerate().map(|(i, &p)| vec![10, x as i64, i as i64, p.into()]));
+        let cols: Vec<u16> = s.index_key(x).iter().map(|&c| u16::from(c)).collect();
+        let Some(o) = l.rows.find_order(&cols, l.rows.rows.len()) else { continue };
+        let ix = l.rows.index_at(o);
+        out.extend(ix.rows.as_slice().iter().enumerate().map(|(i, &id)| vec![5, x as i64, i as i64, i64::from(id)]));
+        out.extend(ix.fences.as_slice().iter().enumerate().map(|(i, &f)| vec![6, x as i64, i as i64, f]));
+        out.extend(ix.prints.as_slice().iter().enumerate().map(|(i, &p)| vec![7, x as i64, i as i64, i64::from(p)]));
+    }
+    for c in 0..a {
+        let r = l.sketch(c).map(|s| s.reading()).unwrap_or_default();
+        out.push(vec![8, c as i64, r.rows as i64, r.ndv as i64, r.sq as i64]);
     }
     let h = l.head;
-    out.push(vec![6, h.start.into(), h.n.into(), h.added.into(), h.gone.into(), h.nparts.into(), h.digest as i64, h.below.into()]);
+    out.push(vec![9, i64::from(l.start()), i64::from(h.added), i64::from(h.ngone), i64::from(h.nparts), h.digest as i64, l.below().map_or(-1, |(b, _)| i64::from(b))]);
     out
 }
 
@@ -187,7 +181,7 @@ impl Trace {
             dir.release(runs);
             return Err(format!("the run's δ outgrew its runs block by {needed} pairs: rerun at {}", n + needed));
         }
-        let out = dir.make(kind::FACTS, out_bytes(&self.shape, n));
+        let out = dir.make_room(kind::FACTS, out_bytes(n), layer_room(&self.shape, n));
         if let Some(h) = self.head {
             dir.refer(out, h)?;
         }
@@ -232,17 +226,17 @@ impl Trace {
             let (mut rows, mut id) = (0usize, Some(head.0));
             for _ in 0..count {
                 let layer = Layer::new(table.block(id.ok_or("fewer layers than merged")?).expect("reached"))?;
-                rows += layer.n();
-                id = layer.below();
+                rows += layer.n() + layer.kills().len();
+                id = layer.below().map(|(b, _)| b);
             }
             (rows, id)
         };
-        let out = dir.make(kind::FACTS, out_bytes(&self.shape, rows));
+        let out = dir.make_room(kind::FACTS, out_bytes(rows), layer_room(&self.shape, rows));
         if let Some(b) = below {
             dir.refer(out, BlockId(b))?;
         }
         let mut params = vec![0u8; MergeP::SIZE];
-        MergeP { count, below: below.unwrap_or(NONE) }.write(&mut params);
+        MergeP { head: head.0, count, below: below.unwrap_or(NONE), pad: 0 }.write(&mut params);
         if let Err(e) = run_cpu(reg, dir, ops.merge, &[head, out], &params, tiling) {
             dir.release(out);
             return Err(e);
@@ -286,7 +280,7 @@ pub fn consolidate_case<'r>(shape: &'r Shape, rows: &'r [(Vec<i64>, i32)]) -> im
                 w.push(r, *d).expect("room");
             }
         }
-        let out = dir.make(kind::FACTS, out_bytes(t.shape(), rows.len()));
+        let out = dir.make_room(kind::FACTS, out_bytes(rows.len()), layer_room(t.shape(), rows.len()));
         let ctl = dir.make(kind::CONTROL, CONTROL_BYTES);
         let mut params = vec![0u8; ConsolidateP::SIZE];
         ConsolidateP { below: NONE, pad: 0 }.write(&mut params);
@@ -317,12 +311,12 @@ pub fn merge_case<'r>(shape: &'r Shape, runs: &'r [Vec<(Vec<i64>, i32)>], count:
         let head = *heads.last().expect("a layer");
         let below = heads.len().checked_sub(count as usize + 1).map(|i| heads[i]);
         let total: usize = runs[runs.len() - count as usize..].iter().map(Vec::len).sum();
-        let out = dir.make(kind::FACTS, out_bytes(t.shape(), total));
+        let out = dir.make_room(kind::FACTS, out_bytes(total), layer_room(t.shape(), total));
         if let Some(b) = below {
             dir.refer(out, b).expect("frozen");
         }
         let mut params = vec![0u8; MergeP::SIZE];
-        MergeP { count, below: below.map_or(NONE, |b| b.0) }.write(&mut params);
+        MergeP { head: head.0, count, below: below.map_or(NONE, |b| b.0), pad: 0 }.write(&mut params);
         Case { slots: vec![head, out], params }
     }
 }

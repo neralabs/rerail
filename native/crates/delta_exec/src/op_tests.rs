@@ -278,6 +278,17 @@ fn references_are_to_frozen_blocks_and_reading_one_pins_what_it_refers_to() {
         assert_eq!(whole(&ab).region().cpu_reads(), 1, "reading c read-pinned a, which b refers to");
     }
     assert_eq!(whole(&ab).region().cpu_reads(), 0, "the launch's pins went with it");
+
+    // O§2: a launch's table names every block it can reach, its slots too. A slot pinned to write is its pin's row,
+    // read through the slot, not the table; a slot pinned to read is read through either.
+    let out = dir.make(kind::FACTS, 64);
+    let l = dir.launch("probe", &[(c, false), (out, true)]).unwrap();
+    let t = l.table();
+    assert_eq!(t.rows().iter().map(|d| d.id).collect::<Vec<_>>(), vec![a.0, b.0, c.0, out.0], "the table: its slots and what they reach");
+    assert!(t.is_written(out.0) && !t.is_written(c.0));
+    assert!(t.block(out.0).is_none(), "a written slot is read through its pin");
+    assert_eq!(rerail_blocks::gens::refs(t.block(c.0).unwrap()), &[b.0], "a slot read, by id");
+    assert_eq!(t.row(out.0).unwrap().addr, l.slots[1].addr() as u64, "the written slot's row is its pin's");
 }
 
 /// D1: a 31st slot is refused where the operation is declared.
@@ -357,8 +368,8 @@ fn a_twin_fits_its_signature() {
 #[test]
 fn params_give_ukl_their_layout() {
     let u = ParamsLayout::of::<rerail_delta_twins::trace::MergeP>().ukl();
-    assert!(u.contains("typedef struct MergeP {\n    uint32_t count;\n    uint32_t below;\n} MergeP;"), "{u}");
-    assert!(u.contains("UKL_OFFSETOF(MergeP, below) == 4"), "{u}");
+    assert!(u.contains("typedef struct MergeP {\n    uint32_t head;\n    uint32_t count;\n    uint32_t below;\n    uint32_t pad;\n} MergeP;"), "{u}");
+    assert!(u.contains("UKL_OFFSETOF(MergeP, below) == 8"), "{u}");
     assert_eq!(Mode::Read.ukl(), "ROBUFFER");
     assert_eq!(Mode::Scratch.ukl(), "RWBUFFER");
 }

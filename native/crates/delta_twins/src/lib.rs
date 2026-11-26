@@ -11,15 +11,16 @@
 //! leaves for the next lies in the operation's blocks (its scratch and control slots), never in Rust state, as it
 //! would on a GPU.
 //!
-//! A twin reads only its slots, the blocks its descriptor table reaches (`Table`: what its slots refer to, by block
-//! id) and its params, and writes only its write slots. Rust data structures inside one tile's call are allowed for
-//! now (the user, 2026-11-25: "using Rust data structures internally is going to be slow but not wrong"), and so is
-//! the blocks crate's format code (`gens`, `layer`): offsets, typed views, the reads every reader shares (`Chain`),
-//! and the format's definitions of one value (`row_hash`, a sketch's `add` and `combine`), each written once. Nothing may outlive a call or
-//! come from outside it: no `static`, thread-local, `Once`/`Lazy` cell, lock or atomic of the twin's own; no thread's
-//! scratch; no file, environment, process, network or time. The work itself is the twin's: it calls no blocks code
-//! that computes over rows (a relation's freeze, `blocks::change`, `blocks::relation`): every loop over rows is here. `unsafe` is forbidden. `check_delta_exec_shape.py`
-//! refuses each of these here, and this crate's `clippy.toml` disallows them by path.
+//! A twin reads only its slots, the blocks its descriptor table reaches (`Table`: its slots and what they refer to, by
+//! block id) and its params, and writes only its write slots. Rust data structures inside one tile's call are allowed
+//! for now (the user, 2026-11-25: "using Rust data structures internally is going to be slow but not wrong"). A twin
+//! writes a block's structures with blocks' own code, in place, through its slot's pin: "the twins depend on blocks,
+//! and a slot is the pinned block, so a twin uses blocks' layouts and freeze in place" (the rebuild plan, B1): a
+//! relation made, its rows claimed and written (`Relation::put_own`), frozen (`relation::freeze_layer`), its orders
+//! and sketches added; the reads every reader shares (`Chain`). Nothing may outlive a call or come from outside it: no
+//! `static`, thread-local, `Once`/`Lazy` cell, lock or atomic of the twin's own; no thread's scratch (a call makes its
+//! own, `Scratch::anon`); no file, environment, process, network or time. `unsafe` is forbidden.
+//! `check_delta_exec_shape.py` refuses each of these here, and this crate's `clippy.toml` disallows them by path.
 //!
 //! A params struct is declared once, here, by `params!`; the executor gives UKL its declaration from `Params::FIELDS`.
 
@@ -87,6 +88,32 @@ impl<'p> Ctx<'_, 'p, '_> {
     /// Slot `i`'s bytes, to read.
     pub fn read(&self, i: usize) -> &[u8] {
         self.slots[i].bytes()
+    }
+
+    /// Slot `read`'s bytes, to read, and slot `write`'s pin, to write a block's structures through (a relation's
+    /// rows, `Relation::put_own`; its freeze), at once.
+    pub fn read_and_pin(&mut self, read: usize, write: usize) -> (&[u8], &mut BlockPin) {
+        assert_ne!(read, write, "two slots");
+        let (mut r, mut w) = (None, None);
+        for (i, s) in self.slots.iter_mut().enumerate() {
+            if i == write {
+                match s {
+                    Slot::Write(p) => w = Some(&mut **p),
+                    Slot::Read(_) => panic!("slot {i} is written, and pinned to read"),
+                }
+            } else if i == read {
+                r = Some(s.bytes());
+            }
+        }
+        (r.expect("a slot read"), w.expect("a slot written"))
+    }
+
+    /// Slot `i`'s pin, to write through.
+    pub fn pin_mut(&mut self, i: usize) -> &mut BlockPin {
+        match &mut self.slots[i] {
+            Slot::Write(p) => p,
+            Slot::Read(_) => panic!("slot {i} is written, and pinned to read"),
+        }
     }
 }
 

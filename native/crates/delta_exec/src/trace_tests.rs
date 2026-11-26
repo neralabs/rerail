@@ -6,7 +6,7 @@
 
 use super::*;
 use crate::op::{Registry, Status, Tiling};
-use rerail_blocks::bistate::{ColumnIndex, Read, check};
+use rerail_blocks::bistate::{ColumnIndex, Read, States, check};
 use rerail_blocks::layer::{ColType, RunsW};
 use rerail_blocks::region::pin_block;
 use rerail_blocks::ids::RowId;
@@ -127,7 +127,11 @@ fn a_random_trace_reads_as_its_set() {
         }
         for c in ColumnIndex::all(3) {
             let st = s.stats(c);
-            assert_eq!(st.count, set.len() as i64, "state {k}: the sketch counts the live rows");
+            assert_eq!(st.rows, set.len() as u64, "state {k}: the sketch counts the live rows");
+            let ndv = set.iter().map(|x| x[c.get()]).collect::<BTreeSet<_>>().len() as f64;
+            // Exact while the sketch keeps exact counts; past them a HyperLogLog's, about 6.5% off (the sketch's own
+            // test allows 20%).
+            assert!((st.ndv as f64 - ndv).abs() <= 0.2 * ndv, "state {k}: the sketch's distinct values, {} against {ndv}", st.ndv);
             if let Some(m) = set.iter().map(|x| x[c.get()]).min() {
                 assert!(st.min <= m, "the sketch's min bounds the live rows'");
             }
@@ -271,7 +275,7 @@ fn a_roll_up_merges_layers_and_lets_the_merged_generations_go() {
     let table = l.table();
     let s = t.state(&table, Some(m)).unwrap();
     assert_eq!(rows_of(&s), set, "the roll-up's state is the state it rolled up");
-    let layer = s.layers().next().unwrap();
+    let (_, layer) = s.layers().next().unwrap();
     assert!(layer.n() <= set.len() + rows_of(&t.state(&table, Some(heads[0])).unwrap()).len(), "adds and their kills cancelled");
     check(&t.change(&table, Some(heads[0]), Some(m)).unwrap());
     drop(l);
@@ -314,13 +318,14 @@ fn a_shape_the_plan_puts_elsewhere_is_refused_saying_where() {
     refused(&|s| s.placement = Placement::PinnedSlab, "device executor");
     refused(&|s| s.retention = Retention::Cache, "operator cache");
     refused(&|s| s.retention = Retention::History, "two states");
+    refused(&|s| s.indexes = vec![rerail_blocks::layer::IndexSpec::Perm(vec![2])], "packed's permutation");
     let s = Shape::run(vec![ColType::I32, ColType::I64], vec![1, 0], Some(0));
     assert!(Trace::new(&s).err().unwrap().contains("first"));
     let s = Shape::run(vec![ColType::I64, ColType::I32], vec![0, 1], Some(0));
     assert!(Trace::new(&s).err().unwrap().contains("32 bits"));
 }
 
-/// The shape's indexes (P§11.2): an order with fences and prints, a hash order, a permutation and a Bloom filter,
+/// The shape's indexes (P§11.2): an order with fences and prints, a hashed index and a Bloom filter,
 /// written by consolidate and merge, at any tiling, and read by the probes: every probe of a random trace finds the
 /// brute-force set's rows; a Bloom filter holds every key of its layer and rules out most absent keys.
 #[test]
@@ -330,7 +335,7 @@ fn every_index_kind_answers_its_probes() {
     s.indexes = vec![
         IndexSpec::Order { key: vec![1], fences: true, prints: true },
         IndexSpec::Hash(vec![2, 1]),
-        IndexSpec::Perm(vec![2]),
+        IndexSpec::Hash(vec![2]),
         IndexSpec::Bloom(vec![1, 2]),
     ];
     let mut reg = Registry::default();
@@ -373,9 +378,9 @@ fn every_index_kind_answers_its_probes() {
         }
         // The Bloom filter: every key of a layer may be held; most absent keys are ruled out.
         let (mut present, mut ruled_out) = (0, 0);
-        for layer in st.layers() {
+        for (_, layer) in st.layers() {
             let layer: Layer<'_> = layer;
-            for i in 0..layer.n() {
+            for i in layer.rows.ids() {
                 assert!(layer.may_hold(&[1, 2], &[layer.get(i, 1), layer.get(i, 2)]), "a layer's own key");
                 present += 1;
             }
@@ -426,7 +431,7 @@ fn a_deep_chain_reads_as_its_set() {
 }
 
 /// O§13 for merge: the same rolled-up layer at every tiling and with its tiles in shuffled order, by the registry's
-/// check, over layers with all four index kinds.
+/// check, over layers with every index kind.
 #[test]
 fn merge_writes_the_same_layer_at_every_tiling() {
     use rerail_blocks::layer::IndexSpec;
@@ -445,4 +450,102 @@ fn merge_writes_the_same_layer_at_every_tiling() {
     let tilings = [Tiling::WHOLE, Tiling { tile: 1, seed: 4 }, Tiling { tile: 3, seed: 17 }];
     let checked = reg.check(&tiled, &merge_case(&s, &runs, 3), &tilings).unwrap();
     reg.register(tiled, checked).unwrap();
+}
+
+/// The trace of `runs` committed in turn: its heads, and each state's set.
+fn committed(runs_of: &[Vec<(Vec<i64>, i32)>]) -> (Registry, TraceOps, Directory, Trace, Vec<Option<BlockId>>) {
+    let (reg, ops, mut dir, mut t) = setup();
+    let mut heads = vec![None];
+    for (k, pairs) in runs_of.iter().enumerate() {
+        let id = runs(&mut dir, &t, pairs);
+        heads.push(Some(t.commit(&reg, &ops, &mut dir, id, Tiling { tile: 3, seed: k as u64 }).unwrap_or_else(|e| panic!("run {k}: {e}"))));
+    }
+    (reg, ops, dir, t, heads)
+}
+
+/// P§1, P§11: a restriction reads only its partition's rows. Over a trace of a thousand rows in seven partitions and
+/// a few in partition 50, the restricted state's scan and probe and the restricted change's rows gone and added touch
+/// only partition 50's rows of each layer and its kills, counted where the reads are made (`Chain::counted`).
+#[test]
+fn a_restriction_reads_only_its_partitions_rows() {
+    let mut r = rng(61);
+    let mut set = Rows::new();
+    let mut all = Vec::new();
+    let mut sets = vec![Rows::new()];
+    for step in 0..5i64 {
+        let (mut pairs, mut next) = random_run(&mut r, &set);
+        for k in 0..3 {
+            let x = vec![50, step * 10 + k, k];
+            pairs.push((x.clone(), 1));
+            next.insert(x);
+        }
+        if step > 0 {
+            let x = vec![50, (step - 1) * 10, 0];
+            pairs.push((x.clone(), -1));
+            next.remove(&x);
+        }
+        all.push(pairs);
+        set = next;
+        sets.push(set.clone());
+    }
+    let (_, _, dir, t, heads) = committed(&all);
+    let l = t.read(&dir, &[heads[5]]).unwrap();
+    let table = l.table();
+    let reads = std::cell::Cell::new(0u64);
+    let whole = t.state(&table, heads[5]).unwrap();
+    let rows_total: usize = whole.layers().map(|(_, l)| l.n()).sum();
+    let s = whole.counted(&reads).restrict(50);
+    let want: Rows = set.iter().filter(|x| x[0] == 50).cloned().collect();
+    assert_eq!(rows_of(&s), want);
+    let own: u64 = whole.layers().map(|(_, l)| l.part_rows(50).len() as u64).sum();
+    let kills: u64 = whole.layers().map(|(_, l)| l.part_kills(50).len() as u64).sum();
+    let scan = reads.replace(0);
+    assert!(scan <= own + kills, "a restricted scan read {scan} rows, its partition's own rows being {own} (of {rows_total})");
+    let cols: Vec<ColumnIndex> = ColumnIndex::all(3).collect();
+    let x = want.iter().next().unwrap();
+    assert_eq!(s.matching(&cols, x).count(), 1);
+    let probe = reads.replace(0);
+    assert!(probe <= own, "a restricted probe read {probe} rows");
+    let before = t.state(&table, heads[3]).unwrap().counted(&reads).restrict(50);
+    let b = Bistate::new(before, s);
+    let gone: Rows = b.gone().map(|id| row(b.before().unwrap(), id)).collect();
+    let added: Rows = b.added().map(|id| row(b.after(), id)).collect();
+    let of50 = |s: &Rows| s.iter().filter(|x| x[0] == 50).cloned().collect::<Rows>();
+    assert_eq!(gone, of50(&sets[3]).difference(&of50(&sets[5])).cloned().collect(), "partition 50's rows gone, 3→5");
+    assert_eq!(added, of50(&sets[5]).difference(&of50(&sets[3])).cloned().collect(), "and added");
+    let change = reads.replace(0);
+    assert!(change <= 4 * (own + kills), "a restricted change read {change} rows and words, its partition's being {}", own + kills);
+    assert!((scan + probe + change) * 10 < rows_total as u64, "far fewer reads than the trace's {rows_total} rows");
+}
+
+/// P§1: whether a change is the identity is read from a layer's counts, touching no row: a layer of rows, a layer
+/// whose run cancelled (an add and its undo: no rows), a layer that only kills, each whole and restricted.
+#[test]
+fn is_identity_reads_a_layers_counts_only() {
+    let (one, set) = random_run(&mut rng(4), &Rows::new());
+    let cancel = vec![(vec![2, 5, 5], 1), (vec![2, 5, 5], -1)];
+    let gone: Vec<Vec<i64>> = set.iter().take(4).cloned().collect();
+    let kill_only: Vec<(Vec<i64>, i32)> = gone.iter().map(|x| (x.clone(), -1)).collect();
+    let (_, _, dir, t, heads) = committed(&[one, cancel, kill_only]);
+    let l = t.read(&dir, &[heads[3]]).unwrap();
+    let table = l.table();
+    let reads = std::cell::Cell::new(0u64);
+    let st = |k: usize| t.state(&table, heads[k]).unwrap().counted(&reads);
+    for (k, identity) in [(1, false), (2, true), (3, false)] {
+        let b = Bistate::new(st(k - 1), st(k));
+        assert_eq!(b.is_identity(), identity, "layer {k}");
+        let p = gone[0][0];
+        let restricted = b.restrict(p);
+        assert_eq!(restricted.is_identity(), k == 2, "layer {k}, partition {p}");
+        assert!(b.restrict(1_000).is_identity(), "layer {k}, a partition it does not hold");
+        assert_eq!(reads.get(), 0, "layer {k}: is_identity read no row");
+    }
+    let l3 = st(3);
+    let (_, top) = l3.layers().next().unwrap();
+    assert_eq!((top.n(), top.kills().len()), (0, 4), "a layer that only kills");
+    let after: Rows = set.iter().filter(|x| !gone.contains(x)).cloned().collect();
+    assert_eq!(rows_of(&l3), after);
+    let b = t.change(&table, heads[2], heads[3]).unwrap();
+    check(&b);
+    assert_eq!(b.gone().map(|id| row(b.before().unwrap(), id)).collect::<Vec<_>>(), gone);
 }
