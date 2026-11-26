@@ -42,7 +42,7 @@ def_kind("function_definition"). def_kind("class_definition").
 .decl start(t: node, x: symbol, s: node, a: node)
 start(t, x, s, a) :- counter(_, _, t, x, s), k = max i : { binding(s, x, o, _), earlier(o, t), visit_index(o, i) },
     binding(s, x, a, "assign"), visit_index(a, k), start_value(a, v), unparen(v, z), kind(z, "integer"),
-    text(z, n), zero_number(n).
+    zero_number(z).
 // start_value(a, v): binding site a stores v: `i = v`, or the matching element of `n, i = 0, 0`.
 .decl start_value(a: node, v: node)
 start_value(a, v) :- binding_value(a, v).

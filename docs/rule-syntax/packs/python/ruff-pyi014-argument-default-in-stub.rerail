@@ -11,5 +11,5 @@
 
 .violation PYI014(at: node) code "PYI014" "Replace this default value with `...`; a stub only needs to show that the parameter has a default, and keeps literal values only when they are simple."
     suppress ruff "PYI014"
-PYI014(d) :- kind(f, "function_definition"), in_stub(f), sig_param(f, _, _, _, _, a, d), unset(a), !unset(d),
+PYI014(d) :- kind(f, "function_definition"), in_stub(f), sig_param(f, _, _, _, _, a, d), unset(a), kind(d, _),
     !simple_value(d, "top").

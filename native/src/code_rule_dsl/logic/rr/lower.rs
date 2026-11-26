@@ -2636,14 +2636,17 @@ impl Lowerer {
     /// `name(s, g_…)`: the matches of `re` over the texts of `input` (a unary relation), each named group a column
     /// (and the match's ordinal, start and end with `positions`), made natively (`front::Native::MatchAll`). Its one
     /// rule orders it after its input; the evaluator makes its rows.
-    fn match_all_native(&mut self, name: &str, input: &str, re: &str, gs: &[String], positions: bool) {
+    /// With `places`, the input's other columns place each text in its file (a node or span, `text_matches`): read,
+    /// not kept, as the native reads the texts alone (column 0).
+    fn match_all_native(&mut self, name: &str, input: &str, re: &str, gs: &[String], positions: bool, places: usize) {
         let mut cols: Vec<_> = std::iter::once("s".to_owned()).chain(gs.iter().map(|g| format!("g_{g}"))).map(|c| (c, "sym".to_owned())).collect();
         if positions {
             cols.extend(["ordinal", "start", "end"].map(|c| (c.to_owned(), "int".to_owned())));
         }
         self.prog.decls.insert(name.to_owned().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
         let x = |n: &str| Term::Var(n.to_owned().into());
-        let mut body = vec![Literal::Atom(Atom { rel: input.to_owned().into(), args: [x("s")].into(), neg: false, gated: false })];
+        let read: Vec<Term> = std::iter::once(x("s")).chain(std::iter::repeat_n(Term::Wild, places)).collect();
+        let mut body = vec![Literal::Atom(Atom { rel: input.to_owned().into(), args: read.into(), neg: false, gated: false })];
         body.extend(gs.iter().map(|g| Literal::Cmp { l: x(&format!("g_{g}")), op: "=", r: x("s") }));
         let mut head_args: Vec<_> = std::iter::once(x("s")).chain(gs.iter().map(|g| x(&format!("g_{g}")))).collect();
         if positions {
@@ -2664,7 +2667,10 @@ impl Lowerer {
             return true;
         }
         let ([h], [Lit::Atom { rel: input, args: of, neg: false }, Lit::Atom { rel: m, args, neg: false }]) = (heads, body) else { return false };
-        let ([STerm::Var(s)], Some(STerm::Str(re)), Some(STerm::Var(scanned))) = (of.as_slice(), args.first(), args.get(1)) else { return false };
+        let ([STerm::Var(s), places @ ..], Some(STerm::Str(re)), Some(STerm::Var(scanned))) = (of.as_slice(), args.first(), args.get(1)) else { return false };
+        if !places.iter().all(|a| matches!(a, STerm::Wild)) {
+            return false;
+        }
         if m != "match_all" || scanned != s || h.modal.is_some() || self.prog.natives.contains_key(&h.rel) {
             return false;
         }
@@ -2677,18 +2683,18 @@ impl Lowerer {
         if h.args != want {
             return false;
         }
-        // Over texts, as print writes it: a relation of one text column read, and the head declared (if it is) with
-        // the native's columns. Over a node or span (`piece(t: loc)`) the matches are spans placed in the file,
-        // which `text_matches` makes.
+        // Over texts, as print writes it: a relation of a text column read (and the nodes that place each text, left
+        // unread), and the head declared (if it is) with the native's columns. Over a node or span (`piece(t: loc)`)
+        // the matches are spans placed in the file, which `text_matches` makes.
         let types = |rel: &str| self.prog.decls.get(rel).map(|cols| cols.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>());
-        if types(input).as_deref() != Some(&["sym"][..]) {
+        if !types(input).is_some_and(|t| t.len() == 1 + places.len() && t[0] == "sym" && t[1..].iter().all(|t| matches!(*t, "node" | "loc"))) {
             return false;
         }
         let made: Vec<&str> = std::iter::repeat_n("sym", 1 + gs.len()).chain(std::iter::repeat_n("int", coordinates.len())).collect();
         if types(&h.rel).is_some_and(|t| t != made) {
             return false;
         }
-        self.match_all_native(&h.rel, input, re, &gs, !coordinates.is_empty());
+        self.match_all_native(&h.rel, input, re, &gs, !coordinates.is_empty(), places.len());
         true
     }
 
@@ -2762,13 +2768,42 @@ impl Lowerer {
         let reads_capture = |l: &Lit| body_vars(std::slice::from_ref(l)).iter().any(|x| produced.contains(x));
         self.siblings.retain(|l| !reads_capture(l) && !matches!(l, Lit::Atom { rel, .. } if rel == "match_all"));
         // The text a pattern scans keeps the derived atoms that say which nodes or spans it is (decision 0081).
+        // The context also holds a node that places each text in its file: the nearest the text's literals reach
+        // through shared variables (`strip_arg(c, v)`'s c; era_line(n, l)'s n, for a capture of l). Keyed by the
+        // text alone, the context was a table of every file's texts, cross-file wherever its text came from
+        // (decision 0677); placed, it and the matches (a function of its texts) are derived in each file. The native
+        // reads the texts, column 0, once each. With no node reached, the context is the text's alone, as it was.
+        let place = {
+            let mut reach: BTreeSet<String> = BTreeSet::from([v.clone()]);
+            loop {
+                let mut new: Vec<String> = Vec::new();
+                for l in &self.siblings {
+                    let lv = body_vars(std::slice::from_ref(l));
+                    if !lv.is_disjoint(&reach) {
+                        for x in lv {
+                            if !reach.contains(&x) && !new.contains(&x) {
+                                new.push(x);
+                            }
+                        }
+                    }
+                }
+                if new.is_empty() {
+                    break None;
+                }
+                if let Some(x) = new.iter().find(|x| self.siblings.iter().any(|l| self.node_in(l, x))) {
+                    break Some(x.clone());
+                }
+                reach.extend(new);
+            }
+        };
+        let asked: Vec<String> = std::iter::once(v.clone()).chain(place).collect();
         self.span_context = true;
-        let ctx = self.context(std::slice::from_ref(v));
+        let ctx = self.context(&asked);
         self.span_context = false;
         self.siblings = saved;
         let ctx = ctx?;
         let name = self.fresh("mall");
-        self.match_all_native(&name, &ctx.rel, re, &gs, !positions.is_empty());
+        self.match_all_native(&name, &ctx.rel, re, &gs, !positions.is_empty(), asked.len() - 1);
         let args = std::iter::once(Term::Var(v.clone().into())).chain(gs.iter().map(|g| Term::Var(g.clone().into())))
             .map(Ok).chain(positions.iter().map(|p| self.term(p))).collect::<Result<Vec<_>, Error>>()?;
         Ok(vec![vec![Literal::Atom(Atom { rel: name.into(), args: args.into(), neg: false, gated: false })]])

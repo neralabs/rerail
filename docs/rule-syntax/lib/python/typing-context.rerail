@@ -29,8 +29,9 @@
 typing_root(r) :- ann_root(r), deferred_ann(r).
 typing_root(s) :- ann_ctx(s), str_node(s), parsed(s, "annotation", _).   // a string annotation
 typing_root(v) :- kind(s, "type_alias_statement"), field(s, "right", v).
-typing_root(b) :- type_param(_, _, _, _, _, b, _), !unset(b).
-typing_root(d) :- type_param(_, _, _, _, _, _, d), !unset(d).
+// A bound or default that is set: `kind` places it in its file (decision 0677); `!unset` alone placed nothing.
+typing_root(b) :- type_param(_, _, _, _, _, b, _), kind(b, _).
+typing_root(d) :- type_param(_, _, _, _, _, _, d), kind(d, _).
 typing_root(b) :- tc_block(_, b).
 // deferred_ann(r): annotation r is never evaluated.
 .decl deferred_ann(r: node)

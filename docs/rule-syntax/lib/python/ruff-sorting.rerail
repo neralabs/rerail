@@ -8,7 +8,7 @@
 //   seq_item(v, i, e, s)      element i of sequence v is e, a str literal with value s (parentheses aside)
 //   seq_strings(v)            every element of v is a str literal (adjacent literals count), and there are two or more
 //   unsorted(v, style)        v has two adjacent elements out of order in that style
-//   sort_key(s, style, k)     comparing keys k by code point orders strings as the style does
+//   sort_key(e, style, k)     element e's key k: comparing keys by code point orders strings as the style does
 //
 // Sequences: a list, a tuple (with or without parentheses), a set, or a dict display's keys. Each is the value of
 // one assignment with a single target: `__all__ = x = […]` and `y = __all__ = […]` are not checked.
@@ -57,26 +57,28 @@ seq_child(v, e, j) :- sort_ask(v0, _), unparen(v0, v), kind(v, "dictionary"), ch
 seq_strings(v) :- sort_ask(v0, _), unparen(v0, v), n = count : { seq_child(v, _, _) }, n >= 2,
     n = count : { seq_item(v, _, _, _) }.
 .decl unsorted(v: node, style: symbol)
-unsorted(v0, st) :- sort_ask(v0, st), unparen(v0, v), seq_strings(v), seq_item(v, i, _, a), seq_item(v, i + 1, _, b),
+unsorted(v0, st) :- sort_ask(v0, st), unparen(v0, v), seq_strings(v), seq_item(v, i, a, _), seq_item(v, i + 1, b, _),
     sort_key(a, st, ka), sort_key(b, st, kb), ka > kb.
 
-.decl sort_key(s: symbol, style: symbol, k: symbol)
-sort_key(s, "natural", k) :- seq_item(_, _, _, s), nat_key(s, k).
-sort_key(s, "isort", cat(g, k)) :- seq_item(_, _, _, s), nat_key(s, k), member_group(s, g).
-// member_group(s, g): "0" a constant, "1" a class, "2" anything else. Uppercase is Unicode's: a character that
+// The keys are keyed by the element, in its own file: keyed by its string, each was a table of every file's
+// elements, joined by string in the cross-file part (decision 0677).
+.decl sort_key(e: node, style: symbol, k: symbol)
+sort_key(e, "natural", k) :- nat_key(e, k).
+sort_key(e, "isort", cat(g, k)) :- nat_key(e, k), member_group(e, g).
+// member_group(e, g): element e's string is "0" a constant, "1" a class, "2" anything else. Uppercase is Unicode's: a character that
 // @lower changes. Lowercase is ASCII `a`–`z` only (core has no @upper to test the rest; see NOTES-py-ruf L5).
-.decl member_group(s: symbol, g: symbol)
-member_group(s, "0") :- seq_item(_, _, _, s), constant(s).
-member_group(s, "1") :- seq_item(_, _, _, s), !constant(s), f = @slice(s, 0, 1), @lower(f) != f.
-member_group(s, "2") :- seq_item(_, _, _, s), !constant(s), f = @slice(s, 0, 1), @lower(f) = f.
-.decl constant(s: symbol)
-constant(s) :- seq_item(_, _, _, s), strlen(s) > 1, @lower(s) != s, !match("[\\s\\S]*[a-z][\\s\\S]*", s).
-// nat_key(s, k): whitespace dropped; each run of digits that starts with 0 becomes "0", the digits and "/" (below
+.decl member_group(e: node, g: symbol)
+member_group(e, "0") :- seq_item(_, _, e, _), constant(e).
+member_group(e, "1") :- seq_item(_, _, e, s), !constant(e), f = @slice(s, 0, 1), @lower(f) != f.
+member_group(e, "2") :- seq_item(_, _, e, s), !constant(e), f = @slice(s, 0, 1), @lower(f) = f.
+.decl constant(e: node)
+constant(e) :- seq_item(_, _, e, s), strlen(s) > 1, @lower(s) != s, !match("[\\s\\S]*[a-z][\\s\\S]*", s).
+// nat_key(e, k): element e's string s with whitespace dropped; each run of digits that starts with 0 becomes "0", the digits and "/" (below
 // every digit, so a run that stops sorts before one that goes on); each other run its length (as one character,
 // "1" to "9", ":" beyond) and the digits, so a longer number sorts after a shorter one and equal lengths compare
 // digit by digit. A run starting with 0 sorts before any other: natord compares those digit by digit.
-.decl nat_key(s: symbol, k: symbol)
-nat_key(s, @replace_all(k, "\\s", "")) :- seq_item(_, _, _, s),
+.decl nat_key(e: node, k: symbol)
+nat_key(e, @replace_all(k, "\\s", "")) :- seq_item(_, _, e, s),
     w = @replace_all(@replace_all(s, "([0-9]+)", "<${1}>"), "<(0[0-9]*)>", "0${1}/"),
     k = @replace_all(@replace_all(@replace_all(@replace_all(@replace_all(@replace_all(@replace_all(@replace_all(
         @replace_all(@replace_all(w, "<([0-9])>", "1${1}"), "<([0-9]{2})>", "2${1}"), "<([0-9]{3})>", "3${1}"),

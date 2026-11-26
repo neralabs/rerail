@@ -10,10 +10,13 @@
 //                              airflow.hooks.S3_hook.S3Hook  air_ref(<the attribute>, <S3Hook>, …)
 //   air_kw(c, x, n)          n is the name of call c's first keyword argument `x=…`, in a file that imports airflow
 //   air_call(c, q)           call c's callee resolves to q, an `airflow.…` name, in such a file
-//   air_dag(q)               q is `airflow.….DAG` or `airflow.….dag` (Ruff's `["airflow", .., "DAG" | "dag"]`)
-//   air_kind(q, m, s)        Ruff's is_airflow_builtin_or_provider(q, m, s): `airflow.m.….*s`, or
-//                            `airflow.providers.….m.….*s`, for the (m, s) pairs air_kind_ask lists:
-//                              air_kind("airflow.providers.amazon.aws.operators.s3.S3Operator", "operators", "Operator")
+//   air_dag(c)               call c's callee is `airflow.….DAG` or `airflow.….dag` (Ruff's `["airflow", .., "DAG" | "dag"]`)
+//   air_kind(n, m, s)        call or instance n's name q is Ruff's is_airflow_builtin_or_provider(q, m, s):
+//                            `airflow.m.….*s`, or `airflow.providers.….m.….*s`, for the (m, s) pairs air_kind_ask lists:
+//                              air_kind(<S3Operator(…)>, "operators", "Operator"), of
+//                              "airflow.providers.amazon.aws.operators.s3.S3Operator"
+//                            Both are keyed by the node: keyed by the name, each was a table of every file's names,
+//                            joined by name in the cross-file part (decision 0677).
 //   air_value(o, r)          name o's binding current at o is `o = r` (the latest binding before it in its scope)
 //   air_instance(o, q)       o's current binding is `o = q(…)` (Ruff's typing::resolve_assignment)
 //   air_task(f)              f is decorated `@task`, `@task(…)`, `@task.branch` or `@task.branch(…)`
@@ -48,12 +51,12 @@ air_kw_at(c, x, n, j) :- call_item(c, k, j), kind(k, "keyword_argument"), field(
     seen_module(d, "airflow").
 .decl air_call(c: node, q: symbol)
 air_call(c, q) :- call_q(c, q), prefix("airflow.", q), docof(c, d), seen_module(d, "airflow").
-.decl air_dag(q: symbol)
-air_dag(q) :- air_call(_, q), split_dot(q, m, x), m != "", (x = "DAG" ; x = "dag").
+.decl air_dag(c: node)
+air_dag(c) :- air_call(c, q), split_dot(q, m, x), m != "", (x = "DAG" ; x = "dag").
 
 .decl air_kind_ask(m: symbol, s: symbol) extensible
-.decl air_kind(q: symbol, m: symbol, s: symbol)
-air_kind(q, m, s) :- air_kind_ask(m, s), (air_call(_, q) ; air_instance(_, q)),
+.decl air_kind(n: node, m: symbol, s: symbol)
+air_kind(n, m, s) :- air_kind_ask(m, s), (air_call(n, q) ; air_instance(n, q)),
     match(cat("airflow\\.(providers\\.([^.]+\\.)*)?", cat(m, cat("\\.([^.]+\\.)*[^.]*", s))), q).
 
 .decl air_value(o: node, r: node)

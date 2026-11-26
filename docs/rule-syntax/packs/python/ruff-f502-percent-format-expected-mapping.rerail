@@ -13,4 +13,4 @@
 
 .violation F502(at: node) code "F502" "`%`-format string expected mapping but got sequence"
     suppress ruff "F502"
-F502(b) :- percent_fmt(b, _, r, v), pct_key(v, _), sequence_display(r).
+F502(b) :- percent_fmt(b, _, r, _), pct_key(b, _), sequence_display(r).

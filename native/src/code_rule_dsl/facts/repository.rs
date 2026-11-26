@@ -40,6 +40,7 @@ pub struct Rows {
     pub(crate) tsconfig_for: Vec<(String, String)>,
     pub(crate) tsconfig_path: Vec<(String, String, String)>,
     pub(crate) npm_ignored: Vec<String>,
+    pub(crate) py_unpackaged: Vec<String>,
 }
 
 fn scalar(v: &Value) -> String {
@@ -144,6 +145,26 @@ pub(crate) fn tree(root: &Path, docs: &[String], rows: &mut Rows) {
     package_for_rows(docs, &packages, rows);
     tsconfig_rows(root, docs, rows);
     npm_ignored_rows(root, &packages, rows);
+    py_unpackaged_rows(rows);
+}
+
+/// `py_unpackaged` of each Python file of the tree (`.py`, `.pyi`) that no regular package holds: a file of the root,
+/// or one whose folder has no `__init__.py` (or `.pyi`). Ruff names such a module by its file's stem alone (its
+/// `is_private_module`), where `doc`'s module is the file's dotted path. A file reads its own row (a setting by path,
+/// `file_local::SETTINGS_BY_PATH`): the folder's other files are not read in the cross-file part (decision 0677).
+fn py_unpackaged_rows(rows: &mut Rows) {
+    let files: std::collections::BTreeSet<&str> = rows.file.iter().map(String::as_str).collect();
+    let mut out = Vec::new();
+    for path in &rows.file {
+        if !(path.ends_with(".py") || path.ends_with(".pyi")) {
+            continue;
+        }
+        let packaged = path.rsplit_once('/').is_some_and(|(dir, _)| ["__init__.py", "__init__.pyi"].iter().any(|i| files.contains(format!("{dir}/{i}").as_str())));
+        if !packaged {
+            out.push(path.clone());
+        }
+    }
+    rows.py_unpackaged = out;
 }
 
 /// What npm publishes of a package: given its folder (workspace-relative), its package.json's bytes and its folder's
@@ -397,7 +418,7 @@ pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Valu
     if reads("option") || reads("option_item") {
         options(opts, &mut rows);
     }
-    if ["file", "package", "package_field", "package_for", "tsconfig", "tsconfig_for", "tsconfig_path", "npm_ignored"].iter().any(|r| reads(r)) {
+    if ["file", "package", "package_field", "package_for", "tsconfig", "tsconfig_for", "tsconfig_path", "npm_ignored", "py_unpackaged"].iter().any(|r| reads(r)) {
         tree(root, docs, &mut rows);
     }
     let mut texts: Vec<&str> = Vec::new();
@@ -410,6 +431,7 @@ pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Valu
     rows.tsconfig.iter().chain(&rows.tsconfig_for).for_each(|(a, b)| texts.extend([a.as_str(), b.as_str()]));
     rows.tsconfig_path.iter().for_each(|(a, b, c)| texts.extend([a.as_str(), b.as_str(), c.as_str()]));
     texts.extend(rows.npm_ignored.iter().map(String::as_str));
+    texts.extend(rows.py_unpackaged.iter().map(String::as_str));
     let atoms = store.intern_atoms(&texts)?;
     let mut next = atoms.iter().map(|&a| i64::from(a));
     let mut sym = || next.next().expect("an atom per string");
@@ -443,6 +465,8 @@ pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Valu
     make("tsconfig_path", &["dir", "pattern", "target"], tpath);
     let ignored: Vec<Vec<i64>> = rows.npm_ignored.iter().map(|_| vec![sym()]).collect();
     make("npm_ignored", &["path"], ignored);
+    let unpackaged: Vec<Vec<i64>> = rows.py_unpackaged.iter().map(|_| vec![sym()]).collect();
+    make("py_unpackaged", &["path"], unpackaged);
     Ok(out)
 }
 
@@ -498,6 +522,23 @@ pub mod tests {
         let mut rows = Rows::default();
         tree(&root, &[], &mut rows);
         assert_eq!(rows.npm_ignored, ["lib/sub/test/b.js", "lib/test/a.js"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `py_unpackaged`: a Python file of the root, or of a folder with no `__init__.py`, is in no regular package; one
+    /// beside an `__init__.py` or `__init__.pyi` is, and so is the `__init__.py` itself.
+    #[test]
+    fn a_python_file_outside_every_regular_package_is_unpackaged() {
+        let root = std::env::temp_dir().join(format!("rerail-unpackaged-{}-{:?}", std::process::id(), std::thread::current().id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for p in ["top.py", "pkg/__init__.py", "pkg/_m.py", "stubs/__init__.pyi", "stubs/s.pyi", "scripts/_run.py", "scripts/notes.txt"] {
+            let p = root.join(p);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, "").unwrap();
+        }
+        let mut rows = Rows::default();
+        tree(&root, &[], &mut rows);
+        assert_eq!(rows.py_unpackaged, ["scripts/_run.py", "top.py"]);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

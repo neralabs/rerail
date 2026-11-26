@@ -786,6 +786,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "tsconfig_for" => &["path", "dir"],
         "tsconfig_path" => &["dir", "pattern", "target"],
         "npm_ignored" => &["path"],
+        "py_unpackaged" => &["path"],
         "pkg" => &["d", "p"],
         "path_part" | "file_name" => &["d", "s"],
         "tape" => &["n", "par", "size", "depth"],

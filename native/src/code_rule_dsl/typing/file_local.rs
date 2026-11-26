@@ -236,14 +236,15 @@ pub fn setting_input(rel: &str) -> bool {
 /// module (`py_names__reads_at(path, m)`) whose rows it reads. `SETTINGS_BY_FOLDER` holds those keyed by such a folder,
 /// target or module, in column 0. The phase `points_to`'s answers name none (decision 0677, note t55): each row is
 /// about a node of the file at its path, by its term, and that file reads its own rows alone. `npm_ignored(path)` is
-/// keyed by its path alone: its column 0 is the path read, own or a target's. `node_resolve__file_at(path, spec,
+/// keyed by its path alone: its column 0 is the path read, own or a target's; `py_unpackaged(path)` too. `node_resolve__file_at(path, spec,
 /// style, file)`, the phase node_resolve's: each file's resolved specifiers, naming the file resolved to.
-pub const SETTINGS_BY_PATH: [(&str, Option<usize>); 13] = [
+pub const SETTINGS_BY_PATH: [(&str, Option<usize>); 14] = [
     ("package_for", Some(1)),
     ("tsconfig_for", Some(1)),
     ("tsx_names__target_at", Some(2)),
     ("py_names__reads_at", Some(1)),
     ("npm_ignored", Some(0)),
+    ("py_unpackaged", Some(0)),
     ("node_resolve__file_at", Some(3)),
     ("points_to__call_target_at", None),
     ("points_to__call_open_at", None),

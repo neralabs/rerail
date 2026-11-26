@@ -464,6 +464,44 @@ struct Adorn<'a> {
 
 type Magic = Vec<(Atom, Vec<(Literal, bool)>)>;
 
+/// Leaves out of a magic rule's body (`pre`, as `ks` keeps it) each literal the key does not need (`needed`) that the
+/// literals left out had tied to it, and that now joins it by a value alone. A literal's places are its variables
+/// among the rule's (`places`: at a `node`, `loc` or `span` column, or a document's). Counting every literal, its
+/// places reach the key's; counting the kept ones, none do. Left in, it joins another document's nodes to the key's by
+/// a value, and makes the demand of a relation of one file read two (decision 0677):
+/// `magic_unparen_bf(c) :- same_child(x, i, c), same_child(y, i, d)` was RUF034's, `same_pair(x, y)` left out (an
+/// extra that would unstratify the program), y's file joined to c's by the index i. Leaving a literal out only widens
+/// the demand. A key with no place is left as it is.
+fn drop_other_documents(key: &BTreeSet<String>, pre: &[(Literal, bool)], needed: &[bool], places: &BTreeSet<String>, ks: &mut [bool]) {
+    let placed: Vec<BTreeSet<String>> = pre.iter().map(|(l, _)| l.vars().intersection(places).cloned().collect()).collect();
+    let from: BTreeSet<String> = key.intersection(places).cloned().collect();
+    if from.is_empty() {
+        return;
+    }
+    // The places the key reaches through the literals `with` keeps.
+    let reach = |with: &dyn Fn(usize) -> bool| {
+        let mut reach = from.clone();
+        loop {
+            let mut grew = false;
+            for (i, p) in placed.iter().enumerate() {
+                if with(i) && !p.is_disjoint(&reach) && !p.is_subset(&reach) {
+                    reach.extend(p.iter().cloned());
+                    grew = true;
+                }
+            }
+            if !grew {
+                return reach;
+            }
+        }
+    };
+    let (every, kept) = (reach(&|_| true), reach(&|i| ks[i]));
+    for (i, p) in placed.iter().enumerate() {
+        if ks[i] && !needed[i] && !p.is_disjoint(&every) && p.is_disjoint(&kept) {
+            ks[i] = false;
+        }
+    }
+}
+
 fn bset(ad: &str) -> BTreeSet<usize> {
     ad.bytes().enumerate().filter(|(_, x)| *x == b'b').map(|(i, _)| i).collect()
 }
@@ -609,8 +647,8 @@ impl Adorn<'_> {
         &mut self,
         full: &BTreeSet<String>,
         coarse: &BTreeMap<(String, String), String>,
-    ) -> Result<(Vec<Rule>, Magic, BTreeSet<(String, String)>), Error> {
-        let (mut rules, mut magic, mut seen) = (Vec::new(), Vec::new(), BTreeSet::new());
+    ) -> Result<(Vec<Rule>, Magic, BTreeSet<(String, String)>, Vec<BTreeSet<String>>), Error> {
+        let (mut rules, mut magic, mut seen, mut places) = (Vec::new(), Vec::new(), BTreeSet::new(), Vec::new());
         self.answered.clear();
         let mut todo: Vec<(String, String)> =
             self.prog.outputs.iter().filter(|o| self.idb.contains(*o)).map(|o| (o.clone(), "f".repeat(self.arity(o)))).collect();
@@ -622,6 +660,7 @@ impl Adorn<'_> {
                 continue;
             }
             for rule in self.by[&rel].clone() {
+                let placed = self.places(&rule);
                 let (mut bound, mut pre, mut guard) = (BTreeSet::new(), Vec::<(Literal, bool)>::new(), None);
                 let mut body = rule.body.clone();
                 if ad.contains('b') {
@@ -663,6 +702,7 @@ impl Adorn<'_> {
                         if ad2.contains('b') {
                             let args = a.args.iter().zip(ad2.bytes()).filter(|(_, x)| *x == b'b').map(|(t, _)| t.clone()).collect();
                             magic.push((atom(format!("magic_{}_{ad2}", a.rel), args), pre.clone()));
+                            places.push(placed.clone());
                         }
                         todo.push((a.rel.to_string(), ad2));
                     }
@@ -682,15 +722,33 @@ impl Adorn<'_> {
                 rules.push(Rule { head: rule.head.clone(), body: out.into() });
             }
         }
-        Ok((rules, magic, seen))
+        Ok((rules, magic, seen, places))
+    }
+
+    /// A rule's places: its variables at a `node`, `loc` or `span` column, or at a document's
+    /// (`front::document_column`), in its head or any atom of its body (`drop_other_documents`).
+    fn places(&self, rule: &Rule) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        for a in std::iter::once(&rule.head).chain(rule.body.iter().filter_map(Literal::atom)) {
+            let Some(cols) = self.prog.decls.get(a.rel.as_str()) else { continue };
+            let document = crate::code_rule_dsl::logic::front::document_column(&a.rel);
+            for (i, (t, (_, ty))) in a.args.iter().zip(cols.iter()).enumerate() {
+                if let Term::Var(x) = t
+                    && (matches!(ty.as_str(), "node" | "loc" | "span") || document == Some(i))
+                {
+                    out.insert(x.to_string());
+                }
+            }
+        }
+        out
     }
 
     fn run(mut self, full_in: &BTreeSet<String>) -> Result<Program, Attempt> {
         // A relation demanded with every argument free anywhere is computed in full; an adornment binding a superset
         // of another's columns is answered through the other (`pv_bbb` through `pv_bbf`).
         let (mut full, mut coarse) = (full_in.clone(), BTreeMap::<(String, String), String>::new());
-        let (rules, magic, seen) = loop {
-            let (rules, magic, seen) = self.closure(&full, &coarse)?;
+        let (rules, magic, seen, rule_places) = loop {
+            let (rules, magic, seen, rule_places) = self.closure(&full, &coarse)?;
             let free: BTreeSet<String> =
                 seen.iter().filter(|(_, a)| !a.contains('b')).map(|(r, _)| r.clone()).filter(|r| !full.contains(r)).collect();
             let mut more = BTreeMap::new();
@@ -707,7 +765,7 @@ impl Adorn<'_> {
                 }
             }
             if free.is_empty() && more.is_empty() {
-                break (rules, magic, seen);
+                break (rules, magic, seen, rule_places);
             }
             full.extend(free);
             coarse.extend(more);
@@ -722,10 +780,11 @@ impl Adorn<'_> {
         let mut keep: Vec<Vec<bool>> = magic.iter().map(|(_, pre)| pre.iter().map(|(_, extra)| !extra).collect()).collect();
         let views: Vec<Rule> = self.prog.rules.iter().filter(|r| !self.idb.contains(r.head.rel.as_str())).cloned().collect();
         // One magic rule's body, as `ks` keeps its literals.
-        let one = |mh: &Atom, pre: &[(Literal, bool)], ks: &[bool]| -> Result<Vec<Literal>, Error> {
+        let one = |mh: &Atom, pre: &[(Literal, bool)], ks: &[bool], places: &BTreeSet<String>| -> Result<Vec<Literal>, Error> {
             // A left-out literal that binds a key variable, or what such a literal needs, stays.
             let key = vars_all(&mh.args);
             let (mut ks, mut need) = (ks.to_vec(), key.clone());
+            let mut needed = vec![false; pre.len()];
             for i in (0..pre.len()).rev() {
                 let l = &pre[i].0;
                 let gives = match l {
@@ -739,6 +798,7 @@ impl Adorn<'_> {
                     continue;
                 }
                 ks[i] = true;
+                needed[i] = true;
                 // A split gives its parts from the whole, and the whole from its parts.
                 let split = match l {
                     Literal::Cmp { l: Term::Var(v), r, .. } if r.is_cat() && !vars(r).is_disjoint(&need) => BTreeSet::from([v.to_string()]),
@@ -754,6 +814,7 @@ impl Adorn<'_> {
                     _ => {}
                 }
             }
+            drop_other_documents(&key, pre, &needed, places, &mut ks);
             let (mut bound, mut body) = (BTreeSet::new(), Vec::new());
             for ((l, _), k) in pre.iter().zip(&ks) {
                 if !k {
@@ -779,8 +840,8 @@ impl Adorn<'_> {
         let build = |keep: &[Vec<bool>]| -> Result<Vec<Rule>, Error> {
             // Keyed by T's repr of (head, body): the first of equal magic rules stays.
             let (mut out, mut keys) = (Vec::new(), BTreeSet::new());
-            for ((mh, pre), ks) in magic.iter().zip(keep) {
-                let mut body = one(mh, pre, ks)?;
+            for (((mh, pre), ks), places) in magic.iter().zip(keep).zip(&rule_places) {
+                let mut body = one(mh, pre, ks, places)?;
                 if keys.insert(format!("{mh} {}", join(&body))) {
                     if body.is_empty() {
                         body.push(magic_true());
@@ -851,9 +912,9 @@ impl Adorn<'_> {
                     continue;
                 }
                 let (mh, pre) = &magic[i];
-                let before = one(mh, pre, &keep[i]);
+                let before = one(mh, pre, &keep[i], &rule_places[i]);
                 keep[i][j] = true;
-                let after = one(mh, pre, &keep[i]);
+                let after = one(mh, pre, &keep[i], &rule_places[i]);
                 let unchanged = !self.options.gate
                     && comp.get(mh.rel.as_str()).is_some_and(|&head| match (&before, &after) {
                         (Ok(before), Ok(after)) => {

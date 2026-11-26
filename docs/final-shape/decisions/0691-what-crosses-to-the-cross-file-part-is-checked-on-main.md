@@ -325,6 +325,34 @@ Found on the way and fixed:
      (`gate/executor-coverage/packs.tsv`) moves rules from `engine` to `lib` with the library.
    - Tests: Django's 27 rule tests; the typing oracle tests; `quoted_annotations_are_read_as_their_code`;
      `leg_083_typed_counts_resolve_by_the_receivers_type`; every pack's split test.
+13. **The Python causes keyed by node, and two engine-made crossings** (the branch's 6d59c0b734, 0677 tail 3).
+   - Before this, the branch's fixes 3f, 3g and tails 1 and 2 were checked against main again: fixes 4 and 6 ported
+     them. 3f's third fix (an id range's bound stays with a pushed join) changes a step main lacks: main's push pass
+     never hands a bound to the reader (0575's narrow copies), so its bounds stay with the join already.
+   - Rules: the branch's 56 Python rule and library files. Each table that was keyed by a value is keyed by the
+     node the value came from (format strings, names, Airflow's calls, `sort_key`, `zero_number`, ...).
+   - A module's privacy (D1xx's `doc_public`) walked `file` for the package's folders, which reads every file. The
+     branch reads an ingested `unpackaged(d)`, which main lacks. Here the repository makes `py_unpackaged(path)`,
+     a Python file of the root or of a folder with no `__init__.py`, as it makes `npm_ignored` (fix 10). It is a setting
+     by path (`SETTINGS_BY_PATH`), so a file reads its own row.
+   - PERF401's `copy_only` joined a loop with any call's argument, tied only by PERF401's reads of it. On the branch
+     the reader-demand pass ties them; main lacks that pass (fix 3), so the rule states it: the argument is a call's
+     in the loop's body, as PERF401 reads it.
+   - The engine, in main's own form (main's magic sets and lowering are over `front::Program`):
+     - A magic rule (`magic::demand_bound_columns`) leaves out a literal the left-out literals had tied to its key and
+       that now joins it by a value alone. Its places are its `node`, `loc` and `span` columns and the document
+       columns, anywhere in the rule. RUF034's `same_pair(x, y)` was left out (it would close a negative cycle), so
+       `magic_unparen_bf(c) :- same_child(x, i, c), same_child(y, i, d)` joined y's file to c's by the index i.
+     - `match_all` over a text: its context also holds the nearest node its literals reach (`strip_arg(c, v)`'s c), so
+       it and the matches are derived in each file. The native reads the texts, column 0, once each, and a printed
+       program reads back as itself.
+     - Not ported: the deferred joins' fix (a lookup in a constant driven as a product). It is oscar's
+       `product_demand`, which main lacks.
+   - Tests: `a_demand_joins_no_other_documents_nodes_by_a_value` (it fails without the fix),
+     `a_match_all_over_a_derived_text_is_placed_by_its_node`, `a_python_file_outside_every_regular_package_is_unpackaged`;
+     every pack's split test; the rule files' own tests and `check_rr`; the rr, magic, file-local and plan tests.
+   - Lists: split 33 → 31, node 273 → 239 (Python 33 → 0, React 2 → 1: `sandbox_token`, as on the branch). The
+     executors' coverage loses the old privacy rule's `@replace_all` and `@contains`.
 
 ## Consequences
 
@@ -336,6 +364,4 @@ Found on the way and fixed:
 ## Open
 
 - The split's gaps still to port: 0652's follow-up (`same_document_ties`: SIM113).
-- A lowering's value view (`match_all`'s `rr_ctx`/`rr_mall`) is not covered by its readers (React's `sandbox_token`).
-- Django's 34 node entries and 3 crossings left after fix 12, and the data layer's (not in this pull request's
-  scope, 2026-11-25).
+- The packs' entries left after fix 13, and the data layer's (not in this pull request's scope, 2026-11-25).

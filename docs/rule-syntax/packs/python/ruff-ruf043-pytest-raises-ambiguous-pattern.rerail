@@ -15,12 +15,12 @@
 .violation RUF043(at: node) code "RUF043"
     "This `match=` string has regex special characters: make it a raw string (writing doubled backslashes once) if it is a regex, or wrap it in `re.escape(...)` if it is literal text."
     suppress ruff "RUF043"
-RUF043(v) :- call_q(c, "pytest.raises"), call_kwarg(c, "match", m), unparen(m, v), plain_str(v, s), !raw_part(v),
-    regex_special(s).
-// regex_special(s): reading s left to right, a backslash escapes the next character unless that character
+RUF043(v) :- call_q(c, "pytest.raises"), call_kwarg(c, "match", m), unparen(m, v), plain_str(v, _), !raw_part(v),
+    regex_special(v).
+// regex_special(v): str literal v's value s, keyed by the literal (0677). Reading s left to right, a backslash escapes the next character unless that character
 // starts a metasequence; s has an unescaped metacharacter or a metasequence.
-.decl regex_special(s: symbol)
-regex_special(s) :- call_kwarg(_, "match", m), unparen(m, v), plain_str(v, s),
+.decl regex_special(v: node)
+regex_special(v) :- call_kwarg(_, "match", m), unparen(m, v), plain_str(v, s),
     match("(?:[^\\\\.^$*+?{\\[|()]|\\\\[^AbBdDsSwWzZ])*(?:[.^$*+?{\\[|()]|\\\\[AbBdDsSwWzZ])[\\s\\S]*", s).
 .decl raw_part(v: node)
 raw_part(v) :- strprefix(v, p), match("[\\s\\S]*[rR][\\s\\S]*", p).
