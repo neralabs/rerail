@@ -19,6 +19,8 @@
 use ::bitlex::syntax::{Gram, Stmt, TokenElem};
 
 // Mounted by `rerail-bitlex` from the compiler's folder (`#[path]`): its submodule is found beside it.
+#[path = "bitlex_rust/asks.rs"]
+mod asks;
 #[path = "bitlex_rust/moves.rs"]
 mod moves;
 #[path = "bitlex_rust/one_loop.rs"]
@@ -1091,6 +1093,40 @@ impl<'a> G<'a> {
         cut
     }
 
+    /// How `g` may end, as `marked` reads it: having taken nothing (`1`), a mark last (`2`), or a token last or a
+    /// rule's end (`4`), whose `marked` is clear. A rule's end clears `marked` (`after_mark`); where its body ends only
+    /// on a token, its own take cleared it, and the clear is none (decision 0703).
+    fn ends_as(&self, g: &Gram, depth: usize) -> u8 {
+        const ALL: u8 = 7;
+        if depth > 32 {
+            return ALL;
+        }
+        let seq = |items: &[Gram]| {
+            let mut st = 1u8;
+            for x in items {
+                let e = self.ends_as(x, depth + 1);
+                st = (e & !1) | if e & 1 != 0 { st } else { 0 };
+            }
+            st
+        };
+        match g {
+            Gram::Lit(_) | Gram::Balanced { .. } | Gram::Any(_) | Gram::Leaf { .. } | Gram::As(..) | Gram::Merge(..) => 4,
+            Gram::Sym(n) if self.mark_of(n).is_some() => 2,
+            Gram::Sym(n) => match self.rules.get(n.as_str()) {
+                // A choice taken where it is used (`anon_choice`) has no end of its own.
+                Some(Stmt::Node { body, .. } | Stmt::Choice { body, .. }) if self.anon_choice(n).is_some() => self.ends_as(body, depth + 1),
+                _ => 4,
+            },
+            Gram::Seq(items) => seq(items),
+            Gram::Alt(items) => items.iter().fold(0, |a, x| a | self.ends_as(x, depth + 1)),
+            Gram::Opt(a) | Gram::Star(a) => self.ends_as(a, depth + 1) | 1,
+            Gram::Plus(a) => self.ends_as(a, depth + 1),
+            Gram::Unless { body, .. } => self.ends_as(body, depth + 1) | 1,
+            Gram::Field(_, a) | Gram::Retag(_, a) => self.ends_as(a, depth + 1),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } => self.ends_as(body, depth + 1),
+        }
+    }
+
     fn nested(&self, rule: &str) -> bool {
         matches!(self.rules.get(rule), Some(Stmt::Node { nested: true, .. } | Stmt::Choice { nested: true, .. })) || self.order.first() == Some(&rule)
     }
@@ -1749,7 +1785,9 @@ impl<'a> G<'a> {
                 if node {
                     inl.push(Op::Close);
                 }
-                inl.push(line("self.marked = false;"));
+                if self.ends_as(body, 0) & 3 != 0 {
+                    inl.push(line("self.marked = false;"));
+                }
                 if nf {
                     moves::no_refusing(&mut inl);
                 }
@@ -1767,7 +1805,9 @@ impl<'a> G<'a> {
             }
             // `marked` cleared at the rule's end: its own move, gone where no decision reads it (`moves::rewrite`).
             blk.push(Op::Line(std::mem::take(&mut out)));
-            blk.push(line("        self.marked = false;\n"));
+            if self.ends_as(body, 0) & 3 != 0 {
+                blk.push(line("        self.marked = false;\n"));
+            }
             out.push_str("        Ok(())\n");
         }
         out.push_str("    }\n\n");

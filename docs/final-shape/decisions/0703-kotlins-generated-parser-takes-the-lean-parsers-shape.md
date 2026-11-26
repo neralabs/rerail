@@ -125,6 +125,17 @@ them.
    a read once, not inlined into every mask that reads it. Kotlin's stage 1 keeps no mask a block: only the 5 vectors
    tier 2 reads a string's parts by. Tier 1's Rust is 607 KB (304 KB before step 11). rr's and JSON's code is
    unchanged.
+13. **`marked` is cleared where a rule may end with it set, and `asks` is set where its context is** (`G::ends_as`,
+   `bitlex_rust/asks.rs`). `marked` (a mark taken last, no token or rule's end since) is cleared at a rule's end
+   only where its body may end on a mark or take nothing: one that ends on a token had it cleared by that token's
+   take. Kotlin's clears are 9 of 191. Within a level `asks` is its entry's (each call restores it), so the values
+   each level is entered with are a fixpoint over the calls (`settle`). A call whose setting leaves its caller's values
+   as they are is a plain call; a level every caller sets alike sets it at its start; and a rule that sets it alike for
+   every call that sets it, and reads none of it, nor do the levels it calls plainly, sets it once at its start, for
+   the context (`contexts`), as the lean parser sets `stmt` where a statement or a parenthesis starts. Kotlin's 94
+   settings at calls are 27, each a rule's one switch (an `if`'s or a `while`'s condition, a parameter's type, a
+   template), and 22 levels and contexts set their own. rr's code changes only in an inlined block's indent; JSON has
+   neither.
 
 What stays: stage 1 makes the 5 vectors tier 2 reads a string's parts by, for the whole file, where the lean lexer
 makes 5 masks a block for its loop; and tier 1 computes four marks into the token's code: `head_ctor`'s line break
@@ -132,6 +143,7 @@ makes 5 masks a block for its loop; and tier 1 computes four marks into the toke
 a number's bytes). Its strings trip every condition of 0619's one pass: templates that resume a string (`tail ... or
 t_dollar resumes str`), a fill kept over a region (`assume ... at ends t_brace`), and strings that tier 2 reads in
 parts, from tier 1's masks (`rd1_open`). The lookahead of `as_split` and `is_split` stays a function a state
-(`next_*`). Tier 2 clears `marked` after 119 of its 145 closes and at 126 of its rules' ends: where a decision reads
-it, the reference's state after a mark (`G::after_mark`), which the lean parser keeps as its `asi` memo. `semi_close`
-is no derived mark: a comment keeps its own, which after a `;` is not its carrier's.
+(`next_*`). `semi_close` and `as_open` stay tier 1's: each reads `code` back over bytes the gap does not bound
+(`after_semi`'s fill from a `;`, `as_lt`'s run over a type's tokens), and tier 2 has no form of `code` from the bytes
+(a `;` in a comment is no code). `semi_close` is no derived mark either: a comment keeps its own, which after a `;` is
+not its carrier's.

@@ -862,9 +862,7 @@ impl<L: Layout> P<'_, L> {
             self.modifiers()?;
             self.close()?;
         } else if self.word() == w::DOT_12 && self.word_at(self.i + 1) == w::VIOLATION_68 {
-            self.open(k::VIOLATION_DECLARATION);
             self.violation_declaration()?;
-            self.close()?;
         } else if self.word() == w::DOT_12 && self.word_at(self.i + 1) == w::EDIT_69 {
             self.open(k::EDIT_DECLARATION);
             self.implied()?;
@@ -903,9 +901,7 @@ impl<L: Layout> P<'_, L> {
             }
             self.close()?;
         } else if self.word() == w::DOT_12 && matches!(self.word_at(self.i + 1), w::INPUT_58 | w::OUTPUT_59) {
-            self.open(k::IO_DIRECTIVE);
             self.io_directive()?;
-            self.close()?;
         } else if self.word() == w::DOT_12 && self.word_at(self.i + 1) == w::LATTICE_71 {
             self.open(k::LATTICE_DECLARATION);
             self.implied()?;
@@ -931,15 +927,14 @@ impl<L: Layout> P<'_, L> {
             }
             self.close()?;
         } else {
-            self.open(k::SETTING);
             self.setting()?;
-            self.close()?;
         }
         Ok(())
     }
 
     /// `setting`.
     fn setting(&mut self) -> R {
+        self.open(k::SETTING);
         self.p_stored(w::DOT_12, k::DOT)?;
         if self.i >= self.n || self.bit_at(self.i, 1) {
             self.id(f::NAME)?;
@@ -971,6 +966,7 @@ impl<L: Layout> P<'_, L> {
         } else {
             return self.refuse();
         }
+        self.close()?;
         Ok(())
     }
 
@@ -1015,6 +1011,7 @@ impl<L: Layout> P<'_, L> {
 
     /// `io_directive`.
     fn io_directive(&mut self) -> R {
+        self.open(k::IO_DIRECTIVE);
         self.leaf_open();
         self.word_pass_as(w::DOT_12)?;
         let kind = match self.word() {
@@ -1030,11 +1027,13 @@ impl<L: Layout> P<'_, L> {
         } else {
             return self.refuse();
         }
+        self.close()?;
         Ok(())
     }
 
     /// `violation_declaration`.
     fn violation_declaration(&mut self) -> R {
+        self.open(k::VIOLATION_DECLARATION);
         self.p(w::DOT_12)?;
         self.p(w::VIOLATION_68)?;
         self.id(f::NAME)?;
@@ -1108,6 +1107,7 @@ impl<L: Layout> P<'_, L> {
                 break;
             }
         }
+        self.close()?;
         Ok(())
     }
 
