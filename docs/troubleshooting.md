@@ -782,6 +782,23 @@ rerail: Rerail daemon exited with code 1 before it was ready:
 The following lines are what this start wrote to `~/.rerail/daemon.log`, and say why. A taken `--port` reads
 `listen EADDRINUSE: address already in use 127.0.0.1:<n>`: pick another port, or leave `--port` out.
 
+### `Engine: unavailable: no code rule can run: …`
+
+`rerail status` says this, and exits 5, when the daemon's kernel loads but its code rules can open no
+[content store](how-setup-works.md#the-content-store); the session footer says `engine unavailable`, and `daemon.log`
+and the support bundle give the same reason. The daemon reads it once, as it starts. Conversation rules, steers and
+session history still run; code rules and audits do not.
+
+- `… is neither the managed installation under … nor in a Git checkout, so it has no content store`: Rerail runs from a
+  package outside `~/.rerail/versions` and outside any Git checkout, such as one `npm install` put in a folder of its
+  own. Install a published version with `npx @neralabs/rerail setup`, run a checkout's build
+  ([Developing from a checkout](how-setup-works.md#developing-from-a-checkout)), or start the daemon with
+  `RERAIL_CONTENT_STORE_PATH` naming a file outside the machine-wide store directory (`~/.cache/rerail/`, on Windows
+  `%USERPROFILE%\AppData\Local\rerail\`). Then restart the daemon.
+- `The machine-wide Rerail content store … belongs to the main Rerail daemon`: `RERAIL_CONTENT_STORE_PATH` names a file
+  in the machine-wide store directory, which only the managed installation's daemon opens. Point it elsewhere, or unset
+  it, then restart the daemon.
+
 ### `Another main Rerail instance is running`
 
 A second daemon, from another `RERAIL_HOME` or left behind, holds Rerail's machine-wide lock. Stop it

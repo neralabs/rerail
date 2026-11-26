@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -26,6 +25,7 @@ import { outsideGit, repositoryIdentityLocation } from "../../../src/engine/cata
 import { setUpRepository } from "../../../src/engine/catalog/rule-configuration.js";
 import { shortSpelling } from "../support/short-path.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
+import { runProgram } from "../../support/processes/run-program.js";
 
 const temporaryDirectories: string[] = [];
 const openDatabases: RerailDatabase[] = [];
@@ -41,7 +41,7 @@ async function temporary(prefix: string): Promise<string> {
 }
 
 function git(cwd: string, ...args: string[]): string {
-  return execFileSync("git", ["-c", "protocol.file.allow=always", ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  return runProgram("git", ["-c", "protocol.file.allow=always", ...args], { cwd });
 }
 
 function gitRepository(path: string, origin?: string): string {
