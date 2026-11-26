@@ -692,3 +692,20 @@ formula").
   Mac, cold Kotlin with the CPU alone: `Fanout::of_range` 4,524 samples against the search's 7,074, 3,029 of them
   `ClauseOcc::of`. Now `Fanout::cnf` makes it at its first read (a `OnceLock`). Cold Kotlin on the Spark, the CPU
   alone, the shipped bytes: 93 to 101 s of user CPU to 60 s, the wall 20 to 30 s to 13 to 16 s.
+- **A solve's own work in the size of the solve, not of its window.** Sampled after the change above, inside
+  `Induction::solve`: the search 26,504 samples; `Fanout::of_range` of the solve's own gates 6,038 (four arrays the
+  size of the window's variables); `Formula::fingerprint` 2,972 (the window's gates and clauses hashed again each
+  solve); the window's values copied and sorted with the solve's (`held`) whenever it made any. Now:
+  - A fanout lists the variables from the least its gates touch to the most (`Fanout::lo`).
+  - A window's `Start` keeps the hash of what it was made of (`Start::made_of`); a solve's fingerprint takes it and
+    hashes only its own gates and clauses.
+  - The window's values and the solve's are read as two sorted runs (`merged`), in the same order as before.
+  - A fanout's lists are a derived index on the heap: no reader took their block offsets (`Fanout::placed`, gone).
+  Sampled again: the search 26,521, `of_range` 677, `fingerprint` 280. Cold Kotlin on the Spark, the CPU alone,
+  the shipped bytes: 60 s of user CPU to 54 to 55 s, the wall 13 to 16 s to 11.9 to 13.5 s.
+- **The device first, by propagation alone, the CPU's search where it did not decide: measured, not kept.** Of cold
+  Kotlin's 10,540 solves, 79% are decided at level 0 with no decision. Handed to the device first (Nadel et al.'s
+  engine, no decision, no conflict), it decided 6,759 of 8,714 in the main batch, but describing them cost the
+  asking threads 5.25 s of CPU, and 26 s once the device's clause index was made at its first read; on the CPU
+  those solves cost 1.5 s in all (0.17 ms each). Cold Kotlin 32 to 38 s and 107 to 114 s of user CPU, against the
+  CPU alone's 20 to 30 s and 93 to 101 s. The solves that cost the CPU are those that search.

@@ -228,10 +228,15 @@ impl Gates {
 /// its first `base` gates.
 #[derive(Clone, Debug, Default)]
 pub struct Fanout {
-    starts: Grown<u32>,
-    gates: Grown<u32>,
+    /// The variables it covers.
+    vars: usize,
+    /// The least variable it lists; the `i`th past it has its gates from `starts[i]` to `starts[i + 1]`.
+    lo: usize,
+    starts: Vec<u32>,
+    gates: Vec<u32>,
+    /// A window's gates that imply with nothing set (`seed`): the CPU's `Solver` checks them first.
     seeds: Vec<u32>,
-    /// Its gates, `range` of the gates it was made of.
+    /// The gates it was made of.
     range: std::ops::Range<usize>,
     /// The device's propagation (`bitlex_csat_gpu`): the gates' clauses (`Gates::clauses_of`, in gate order),
     /// indexed as Nadel et al.'s (`ClauseOcc`). Made at the device's first read: the CPU's search never reads it.
@@ -413,43 +418,50 @@ fn seed(gates: &Gates, g: usize) -> bool {
 impl Fanout {
     /// The fanout of `gates`' first `base` gates over `vars` variables.
     pub fn of(gates: &Gates, base: usize, vars: usize) -> Fanout {
-        Fanout::of_range(gates, 0..base, vars)
+        let mut f = Fanout::of_range(gates, 0..base, vars);
+        f.seeds = (0..base).filter(|&g| seed(gates, g)).map(|g| g as u32).collect();
+        f
     }
 
-    /// The fanout of the gates `range` over `vars` variables: a solve's own, past a window's, for the device's solver
-    /// (`bitlex_csat_gpu`), which reads a variable's gates as two lists.
+    /// The fanout of the gates `range` over `vars` variables, a variable's gates in order: over the variables from
+    /// the least its gates touch to the most (a solve's own, past a window's, are few of the window's).
     pub fn of_range(gates: &Gates, range: std::ops::Range<usize>, vars: usize) -> Fanout {
-        let mut count = vec![0u32; vars + 2];
-        let mut last = vec![u32::MAX; vars + 1];
+        let (mut lo, mut hi) = (usize::MAX, 0);
         for g in range.clone() {
             for v in vars_of(gates, g) {
-                if last[v] != g as u32 {
-                    last[v] = g as u32;
-                    count[v + 1] += 1;
+                (lo, hi) = (lo.min(v), hi.max(v));
+            }
+        }
+        if lo > hi {
+            return Fanout { vars, lo: 0, starts: Vec::new(), gates: Vec::new(), seeds: Vec::new(), range, cnf: std::sync::OnceLock::new() };
+        }
+        let n = hi - lo + 1;
+        let mut count = vec![0u32; n + 1];
+        let mut last = vec![u32::MAX; n];
+        for g in range.clone() {
+            for v in vars_of(gates, g) {
+                if last[v - lo] != g as u32 {
+                    last[v - lo] = g as u32;
+                    count[v - lo + 1] += 1;
                 }
             }
         }
-        for v in 0..=vars {
-            count[v + 1] += count[v];
+        for i in 0..n {
+            count[i + 1] += count[i];
         }
-        // Where the gates are: in their block, the kernel's to read too.
-        let mut starts = Grown::like(&gates.rec);
-        starts.extend_from_slice(&count);
-        let mut fill = count;
-        let mut out = Grown::like(&gates.rec);
-        out.resize(starts[vars + 1] as usize, 0);
+        let mut fill = count.clone();
+        let mut out = vec![0u32; count[n] as usize];
         last.fill(u32::MAX);
         for g in range.clone() {
             for v in vars_of(gates, g) {
-                if last[v] != g as u32 {
-                    last[v] = g as u32;
-                    out[fill[v] as usize] = g as u32;
-                    fill[v] += 1;
+                if last[v - lo] != g as u32 {
+                    last[v - lo] = g as u32;
+                    out[fill[v - lo] as usize] = g as u32;
+                    fill[v - lo] += 1;
                 }
             }
         }
-        let seeds = range.clone().filter(|&g| seed(gates, g)).map(|g| g as u32).collect();
-        Fanout { starts, gates: out, seeds, range, cnf: std::sync::OnceLock::new() }
+        Fanout { vars, lo, starts: count, gates: out, seeds: Vec::new(), range, cnf: std::sync::OnceLock::new() }
     }
 
     /// Its gates' clauses, as the device reads them: `gates` those it was made of.
@@ -459,33 +471,21 @@ impl Fanout {
             for g in self.range.clone() {
                 gates.clauses_of(g, &mut cs);
             }
-            ClauseOcc::of(&gates.rec, self.starts.len().saturating_sub(2), &cs, true)
+            ClauseOcc::of(&gates.rec, self.vars, &cs, true)
         })
-    }
-
-    /// Its starts (a variable's gates from `starts[v]` to `starts[v + 1]`) and gates: their byte offsets in the
-    /// block they are in.
-    pub fn placed(&self) -> Option<(usize, usize)> {
-        Some((self.starts.placed()?.1, self.gates.placed()?.1))
     }
 
     /// The variables it covers.
     pub fn vars(&self) -> usize {
-        self.starts.len().saturating_sub(2)
-    }
-
-    /// The gates that imply with nothing set.
-    pub fn seeds(&self) -> &[u32] {
-        &self.seeds
+        self.vars
     }
 
     pub(crate) fn of_var(&self, v: usize) -> &[u32] {
-        if v + 1 >= self.starts.len() {
-            return &[];
+        match v.checked_sub(self.lo) {
+            Some(i) if i + 1 < self.starts.len() => &self.gates[self.starts[i] as usize..self.starts[i + 1] as usize],
+            _ => &[],
         }
-        &self.gates[self.starts[v] as usize..self.starts[v + 1] as usize]
     }
-
 }
 
 /// No reason (a decision, or a unit given), and no link.

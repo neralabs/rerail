@@ -518,6 +518,29 @@ pub fn carried_in(ops: &[BlockOp], v: u16) -> Vec<u16> {
     out
 }
 
+/// Two sorted runs read as one, in order.
+fn merged<'a>(a: &'a [(u16, u32)], b: &'a [(u16, u32)]) -> impl Iterator<Item = (u16, u32)> + 'a {
+    let (mut i, mut j) = (0, 0);
+    std::iter::from_fn(move || {
+        let x = match (a.get(i), b.get(j)) {
+            (Some(&x), Some(&y)) if x <= y => {
+                i += 1;
+                x
+            }
+            (_, Some(&y)) => {
+                j += 1;
+                y
+            }
+            (Some(&x), None) => {
+                i += 1;
+                x
+            }
+            (None, None) => return None,
+        };
+        Some(x)
+    })
+}
+
 /// The carried values `v` reads, closed under their equations' operands, and the readers of
 /// each lag's byte.
 fn cone(ops: &[BlockOp], v: u16) -> (HashSet<(u16, u32)>, HashMap<u32, HashSet<Reader>>) {
@@ -1605,19 +1628,24 @@ impl Induction {
             }
         }
         // The lemmas, at each lag of the window whose values they read are in it.
-        // The window's values and those the hypothesis made: sorted, so a value's lags are a run.
-        let held: std::borrow::Cow<'_, [(u16, u32)]> = if u.memo_added.is_empty() {
-            std::borrow::Cow::Borrowed(held.as_slice())
-        } else {
-            let mut all: Vec<(u16, u32)> = held.iter().copied().chain(u.memo_added.iter().copied()).collect();
-            all.sort_unstable();
-            std::borrow::Cow::Owned(all)
+        // The window's values (sorted, kept by the window) and those this solve made (sorted here): a value's lags
+        // are a run in each, read as one run in order (`merged`), not the window's copied a solve.
+        let mut added = u.memo_added.clone();
+        added.sort_unstable();
+        let held = (held.as_slice(), added.as_slice());
+        let run = |a0: u16| {
+            let of = |s: &[(u16, u32)]| {
+                let from = s.partition_point(|&(at, _)| at < a0);
+                let to = from + s[from..].partition_point(|&(at, _)| at == a0);
+                (from, to)
+            };
+            let ((a, b), (c, d)) = (of(held.0), of(held.1));
+            merged(&held.0[a..b], &held.1[c..d])
         };
         let lemmas = self.lemmas.iter().chain(&self.given).map(|l| (l, 0)).chain(hypothesis.map(|l| (l, 1)));
         for (lemma, from) in lemmas {
             let Some(&(a0, l0, _)) = lemma.iter().find(|&&(at, _, _)| at != STREAM) else { continue };
-            let from_a0 = held.partition_point(|&(at, _)| at < a0);
-            for &(_, lag) in held[from_a0..].iter().take_while(|&&(at, _)| at == a0) {
+            for (_, lag) in run(a0) {
                 let Some(base) = lag.checked_sub(l0) else { continue };
                 if base < from {
                     continue;
@@ -1706,7 +1734,7 @@ impl Induction {
                 if bounded && let Some(file) = u.stream(&holds) {
                     self.witnesses.add(file);
                 }
-                let edge: Vec<(u16, u32)> = held.iter().copied().filter(|&(at, lag)| lag > reach && inside(lag) && (carried(ops, nexts, at) || matches!(ops[usize::from(at)], BlockOp::Eq(_) | BlockOp::Class { .. }))).collect();
+                let edge: Vec<(u16, u32)> = merged(held.0, held.1).filter(|&(at, lag)| lag > reach && inside(lag) && (carried(ops, nexts, at) || matches!(ops[usize::from(at)], BlockOp::Eq(_) | BlockOp::Class { .. }))).collect();
                 // The position's byte's group: the bytes its readers can not tell from it.
                 let group = match position.iter().find(|&&(_, l)| holds(l)) {
                     None => [!0; 4],
