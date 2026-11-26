@@ -104,7 +104,7 @@ them.
 10. **A level's call that keeps its caller's questions is a call** (`call_asks`). `asks` carries the questions a
    level that may end at a mark asks (Kotlin's: only `semi`'s, the lean parser's `stmt`). A call that keeps every
    one (`asks & keep | set` is `asks`) saves, sets and restores nothing. Kotlin's 16 such calls are plain calls; 94
-   set it, where the lean parser sets `stmt` in 3 places. rr and JSON have none.
+   set it. rr and JSON have none.
 11. **Stage 1's masks are read from the bytes where `lex` reads them** (`interleave::bit_reads`,
    `Bytes::partial_windows`), as the lean lexer reads its bytes: a test of one byte at the byte, a scan, a count, a
    forward mask's bits (`put`, now `wput`), a backward scan (`last_in`, `wlast_in`) and a pass's word (`M[i]`,
@@ -155,8 +155,9 @@ them.
 
 What stays: stage 1 makes the 5 vectors tier 2 reads a string's parts by, for the whole file, where the lean lexer
 makes 5 masks a block for its loop; and tier 1 computes two marks into the token's code, as the lean lexer does:
-`head_ctor`'s line break (its `nl`) and `real` (its real literal's kind, a count of a number's bytes). Tier 2 still
-switches `asks` at 27 calls and in 22 levels and contexts, where the lean parser switches `stmt` in 3 places. Its
-strings trip every condition of 0619's one pass: templates that resume a string (`tail ... or t_dollar resumes str`),
-a fill kept over a region (`assume ... at ends t_brace`), and strings that tier 2 reads in parts, from tier 1's masks
-(`rd1_open`). The lookahead of `as_split` and `is_split` stays a function a state (`next_*`).
+`head_ctor`'s line break (its `nl`) and `real` (its real literal's kind, a count of a number's bytes). Tier 2 switches
+`asks` at 27 calls and in 22 levels and contexts (49), where a bracket, a condition or a body starts; the lean parser
+switches `stmt` so in 30 (`level(stmt, …)` at 29, and one of its own). Its strings trip every condition of 0619's one
+pass: templates that resume a string (`tail ... or t_dollar resumes str`), a fill kept over a region (`assume ... at
+ends t_brace`), and strings that tier 2 reads in parts, from tier 1's masks (`rd1_open`). The lookahead of `as_split`
+and `is_split` stays a function a state (`next_*`).
