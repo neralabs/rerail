@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -8,7 +8,7 @@ import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DAEMON_STATE_FILE, probeDaemon, readDaemonState, type DaemonHealth } from "../../src/runtime/index.js";
 import { serveRerailDaemon } from "../../src/daemon/daemon.js";
-import { runRerailUpdate, startDaemonTray, startTray, trayGate, trayMenuState, type TrayDaemon, type TrayGateFacts, type TrayHandle, type TrayOptions, type TrayUpdateRun } from "../../src/daemon/tray.js";
+import { accountHome, displayHomePath, runRerailUpdate, startDaemonTray, startTray, trayGate, trayMenuState, type TrayDaemon, type TrayGateFacts, type TrayHandle, type TrayOptions, type TrayUpdateRun } from "../../src/daemon/tray.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { until } from "../support/processes/daemon-home.js";
@@ -119,7 +119,7 @@ describe("startDaemonTray", () => {
 
   it("starts nothing when a gate fails", () => {
     vi.stubEnv("RERAIL_TRAY", "0");
-    const daemon: TrayDaemon = { health: () => health(), url: () => "http://127.0.0.1:4737/", dashboardLink: () => "", loopback: true, stop: () => undefined };
+    const daemon: TrayDaemon = { health: () => health(), dashboardLink: () => "", loopback: true, stop: () => undefined };
     expect(startDaemonTray(daemon, { isNewer: () => false })).toBeUndefined();
   });
 });
@@ -128,14 +128,14 @@ describe("trayMenuState", () => {
   const menu = (input: { health?: DaemonHealth; newer?: string | null; update?: TrayUpdateRun } = {}) =>
     trayMenuState({
       health: input.health ?? health(),
-      url: "http://127.0.0.1:4737/",
+      homePath: "~/.rerail",
       newer: input.newer ?? null,
       update: input.update ?? { state: "idle" },
     });
 
   it("healthy with no update", () => {
     expect(JSON.stringify(menu())).toBe(
-      '{"healthy":true,"status":"Rerail is running","version":"Version 0.2.2","dashboard":"Dashboard at 127.0.0.1:4737",'
+      '{"healthy":true,"status":"Rerail is running","version":"Version 0.2.2","dashboard":"Home path: ~/.rerail",'
       + '"update":null,"attention":false}',
     );
   });
@@ -169,6 +169,35 @@ describe("trayMenuState", () => {
       update: { label: "Update failed, see daemon.log", enabled: true },
       attention: true,
     });
+  });
+});
+
+describe("displayHomePath", () => {
+  it("starts a home in the account's home folder with ~ on macOS and Linux", () => {
+    expect(displayHomePath("/Users/a/.rerail", "/Users/a", "darwin")).toBe("~/.rerail");
+    expect(displayHomePath("/home/a/work/rerail-home", "/home/a", "linux")).toBe("~/work/rerail-home");
+    expect(displayHomePath("/Users/a", "/Users/a", "darwin")).toBe("~");
+  });
+
+  it("names any other home in full", () => {
+    expect(displayHomePath("/private/tmp/rerail-tray-qFqa", "/Users/a", "darwin")).toBe("/private/tmp/rerail-tray-qFqa");
+    // A sibling whose name starts with the account's is not inside it.
+    expect(displayHomePath("/Users/ab/.rerail", "/Users/a", "darwin")).toBe("/Users/ab/.rerail");
+  });
+
+  it("names the home in full on Windows", () => {
+    expect(displayHomePath("C:\\Users\\a\\.rerail", "C:\\Users\\a", "win32")).toBe("C:\\Users\\a\\.rerail");
+  });
+});
+
+describe("accountHome", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("is the account's own home folder, not a sandbox's HOME", () => {
+    const sandbox = join(tmpdir(), "rerail-tray-sandbox-user");
+    vi.stubEnv("HOME", sandbox);
+    vi.stubEnv("USERPROFILE", sandbox);
+    expect(accountHome()).toBe(userInfo().homedir);
   });
 });
 
@@ -213,7 +242,7 @@ describe("startTray", () => {
         calls.health += 1;
         return (options.current ?? (() => health()))();
       },
-      url: () => "http://127.0.0.1:4737/",
+     
       dashboardLink: () => "http://127.0.0.1:4737/?access=secret",
       loopback: true,
       stop: () => void (calls.stopped += 1),
@@ -222,6 +251,7 @@ describe("startTray", () => {
       trayPath: process.execPath,
       args: [FAKE_TRAY],
       daemon,
+      homePath: "~/.rerail",
       isNewer: (latest, running) => latest !== running,
       openUrl: url => void calls.opened.push(url),
       runUpdate: () => {
@@ -368,7 +398,8 @@ describe("startTray", () => {
   it("a tray whose pipes could not be opened is logged once", async () => {
     const options = (logs: string[]): TrayOptions => ({
       trayPath: process.execPath,
-      daemon: { health: () => health(), url: () => "http://127.0.0.1:4737/", dashboardLink: () => "", loopback: true, stop: () => undefined },
+      daemon: { health: () => health(), dashboardLink: () => "", loopback: true, stop: () => undefined },
+      homePath: "~/.rerail",
       isNewer: () => false,
       openUrl: () => undefined,
       runUpdate: async () => 0,
@@ -398,7 +429,8 @@ describe("startTray", () => {
     const logs: string[] = [];
     tray = startTray({
       trayPath: join(folder, process.platform === "win32" ? "missing.exe" : "missing"),
-      daemon: { health: () => health(), url: () => "http://127.0.0.1:4737/", dashboardLink: () => "", loopback: true, stop: () => undefined },
+      daemon: { health: () => health(), dashboardLink: () => "", loopback: true, stop: () => undefined },
+      homePath: "~/.rerail",
       isNewer: () => false,
       openUrl: () => undefined,
       runUpdate: async () => 0,
@@ -420,7 +452,8 @@ describe("startTray", () => {
     const logs: string[] = [];
     tray = startTray({
       trayPath: program,
-      daemon: { health: () => health(), url: () => "http://127.0.0.1:4737/", dashboardLink: () => "", loopback: true, stop: () => undefined },
+      daemon: { health: () => health(), dashboardLink: () => "", loopback: true, stop: () => undefined },
+      homePath: "~/.rerail",
       isNewer: () => false,
       openUrl: () => undefined,
       runUpdate: async () => 0,
@@ -552,7 +585,6 @@ describe("the daemon's tray service", () => {
     const state = await readDaemonState(stateFile);
     if (state === undefined || given === undefined) throw new Error("the daemon wrote no state file, or gave the tray nothing");
     expect(given.loopback).toBe(true);
-    expect(given.url()).toBe(state.url);
     // The dashboard on the daemon's own origin, with the capability it keeps in the home.
     const link = new URL(given.dashboardLink());
     expect(link.origin).toBe(new URL(state.url).origin);

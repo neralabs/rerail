@@ -158,7 +158,7 @@ impl Tray for RerailTray {
             status.into(),
             MenuItem::Separator,
             line(&state.version),
-            line(&state.dashboard),
+            line(&state.home_path),
         ];
         menu.push(MenuItem::Separator);
         menu.push(button("Open dashboard", true, Action::Open));
@@ -187,10 +187,7 @@ mod tests {
 
     #[test]
     fn labels_keep_their_underscores() {
-        assert_eq!(
-            label("Dashboard at my_host:4737"),
-            "Dashboard at my__host:4737"
-        );
+        assert_eq!(label("Home path: ~/my_rerail"), "Home path: ~/my__rerail");
         assert_eq!(label("Version 0.2.2"), "Version 0.2.2");
     }
 }

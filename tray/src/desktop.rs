@@ -99,7 +99,7 @@ struct Tray {
     menu: Menu,
     status: IconMenuItem,
     version: MenuItem,
-    dashboard: MenuItem,
+    home_path: MenuItem,
     update: MenuItem,
     update_shown: bool,
     /// Whether the icon shows the attention badge; none until the first state sets it.
@@ -112,14 +112,14 @@ impl Tray {
         // item's icon and so washes out the circle. That dimming is assumed here, not seen.
         let status = IconMenuItem::with_id("status", "", true, None, None);
         let version = MenuItem::new("", false, None);
-        let dashboard = MenuItem::new("", false, None);
+        let home_path = MenuItem::new("", false, None);
         let update = MenuItem::with_id("update", "", true, None);
         let menu = Menu::new();
         menu.append_items(&[
             &status,
             &PredefinedMenuItem::separator(),
             &version,
-            &dashboard,
+            &home_path,
             &PredefinedMenuItem::separator(),
             &MenuItem::with_id("open", "Open dashboard", true, None),
             &MenuItem::with_id("stop", "Stop daemon", true, None),
@@ -136,7 +136,7 @@ impl Tray {
             menu,
             status,
             version,
-            dashboard,
+            home_path,
             update,
             update_shown: false,
             attention: None,
@@ -151,7 +151,7 @@ impl Tray {
         self.status
             .set_icon(menu_icon(art::status_circle(state.healthy, CIRCLE_SIZE)));
         self.version.set_text(label(&state.version));
-        self.dashboard.set_text(label(&state.dashboard));
+        self.home_path.set_text(label(&state.home_path));
         if let Some(update) = &state.update {
             self.update.set_text(label(&update.label));
             self.update.set_enabled(update.enabled);

@@ -1673,7 +1673,6 @@ async function runRerailDaemon(argv: readonly string[], services: RerailDaemonSe
   try {
     trayHandle = tray?.({
       health: () => daemon.health(),
-      url: () => daemon.url,
       dashboardLink: () => dashboardLink(daemon.state()),
       loopback: loopbackBindHost(arguments_.host),
       stop: way.stop,

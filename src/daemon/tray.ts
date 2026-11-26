@@ -10,7 +10,8 @@
  */
 import type { ChildProcess } from "node:child_process";
 import { accessSync, chmodSync, constants, existsSync } from "node:fs";
-import { join } from "node:path";
+import { homedir, userInfo } from "node:os";
+import { join, posix } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { spawn } from "../engine/child-process.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
@@ -77,14 +78,18 @@ export interface TrayMenuState {
   healthy: boolean;
   status: string;
   version: string;
+  /**
+   * The third line, `Home path: <path>`. Its key is the one the line had while it named the dashboard's address, so a
+   * tray and a daemon from either side of that change still read each other's lines.
+   */
   dashboard: string;
   update: { label: string; enabled: boolean } | null;
   attention: boolean;
 }
 
 /**
- * The menu for a daemon whose health is `health`, serving `url`. `newer` is the newer Rerail the update check found,
- * or null; `update` is where the menu's update is. The icon carries its "!" badge only while the daemon is unhealthy
+ * The menu for a daemon whose health is `health`, in the Rerail home `homePath` names ({@link displayHomePath}).
+ * `newer` is the newer Rerail the update check found, or null; `update` is where the menu's update is. The icon carries its "!" badge only while the daemon is unhealthy
  * or an update is there to click. The update's refresh replaces this daemon with the new version's, whose icon no
  * longer offers it, so the item says it is done only where this daemon outlives the update: when the refresh keeps it
  * running or could not replace it. The icon then drops its badge, though `health.update.latest` stays newer until the
@@ -92,7 +97,7 @@ export interface TrayMenuState {
  */
 export function trayMenuState(input: {
   health: DaemonHealth;
-  url: string;
+  homePath: string;
   newer: string | null;
   update: TrayUpdateRun;
 }): TrayMenuState {
@@ -102,7 +107,7 @@ export function trayMenuState(input: {
     healthy: health.healthy,
     status: health.healthy ? "Rerail is running" : `Rerail needs attention: ${unhealthyBecause(health)}`,
     version: `Version ${health.version}`,
-    dashboard: `Dashboard at ${new URL(input.url).host}`,
+    dashboard: `Home path: ${input.homePath}`,
     update,
     attention: !health.healthy || (update !== null && (run.state === "idle" || run.state === "failed")),
   };
@@ -131,8 +136,6 @@ function updateItem(newer: string | null, run: TrayUpdateRun): TrayMenuState["up
 /** What the tray needs of the running daemon. */
 export interface TrayDaemon {
   health(): DaemonHealth;
-  /** The URL the daemon serves. */
-  url(): string;
   /** The dashboard link with the access token, for this user's browser (`dashboardLink`). */
   dashboardLink(): string;
   /** Whether the daemon binds only a loopback host. */
@@ -152,6 +155,8 @@ export interface TrayOptions {
   /** Arguments for `trayPath`; none for the tray program. A test runs its fake tray as `node fake-tray.mjs`. */
   args?: readonly string[];
   daemon: TrayDaemon;
+  /** The daemon's Rerail home as the menu names it ({@link displayHomePath}). */
+  homePath: string;
   /** Whether the release `latest` is newer than the `running` one. */
   isNewer(latest: string, running: string): boolean;
   openUrl(url: string): void;
@@ -219,7 +224,7 @@ export function startTray(options: TrayOptions): TrayHandle {
   };
   const menu = (): TrayMenuState => {
     const health = daemon.health();
-    return trayMenuState({ health, url: daemon.url(), newer: newer(health), update: run });
+    return trayMenuState({ health, homePath: options.homePath, newer: newer(health), update: run });
   };
   const send = (): void => {
     if (ended) return;
@@ -367,6 +372,7 @@ export function startDaemonTray(daemon: TrayDaemon, deps: { isNewer(latest: stri
   return startTray({
     trayPath: gate.trayPath,
     daemon,
+    homePath: displayHomePath(home, accountHome(), process.platform),
     isNewer: deps.isNewer,
     // The link carries the access token, so the line does not name it.
     openUrl: url => {
@@ -375,6 +381,32 @@ export function startDaemonTray(daemon: TrayDaemon, deps: { isNewer(latest: stri
     runUpdate: async () => await runRerailUpdate(home, env),
     log,
   });
+}
+
+/**
+ * The Rerail home `home` as the menu names it, so two daemons' icons can be told apart. On macOS and Linux a home in the
+ * account's own home folder `userHome` starts with `~` (`~/.rerail`); any other home, and every home on Windows, is
+ * named in full.
+ */
+export function displayHomePath(home: string, userHome: string, platform: NodeJS.Platform): string {
+  if (platform === "win32") return home;
+  const inside = posix.relative(userHome, home);
+  if (inside === "") return "~";
+  if (inside === ".." || inside.startsWith("../") || posix.isAbsolute(inside)) return home;
+  return `~/${inside}`;
+}
+
+/**
+ * The account's own home folder, not `HOME`'s: a sandbox that sets `HOME` gets a Rerail home the menu names in full, so
+ * its icon is told apart from the user's own. An account without a user database entry (a container's arbitrary uid)
+ * falls back to `HOME`.
+ */
+export function accountHome(): string {
+  try {
+    return userInfo().homedir;
+  } catch {
+    return homedir();
+  }
 }
 
 /**

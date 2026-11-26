@@ -10,7 +10,10 @@ pub struct MenuState {
     pub healthy: bool,
     pub status: String,
     pub version: String,
-    pub dashboard: String,
+    /// The third line, `Home path: <path>`. Its key is `dashboard`, the one the line had while it named the dashboard's
+    /// address, so a tray and a daemon from either side of that change still read each other's lines.
+    #[serde(rename = "dashboard")]
+    pub home_path: String,
     pub update: Option<UpdateItem>,
     pub attention: bool,
 }
@@ -96,7 +99,7 @@ pub fn read_states(
 mod tests {
     use super::*;
 
-    const FULL: &str = r#"{"healthy":true,"status":"Rerail is running","version":"Version 0.2.2","dashboard":"Dashboard at 127.0.0.1:4737","update":{"label":"Update to 0.2.3","enabled":true},"attention":true}"#;
+    const FULL: &str = r#"{"healthy":true,"status":"Rerail is running","version":"Version 0.2.2","dashboard":"Home path: ~/.rerail","update":{"label":"Update to 0.2.3","enabled":true},"attention":true}"#;
 
     /// What `read_states` sends for `input`, and the notes it writes.
     fn collect(input: impl BufRead) -> (Vec<Incoming>, String) {
@@ -114,7 +117,7 @@ mod tests {
                 healthy: true,
                 status: "Rerail is running".into(),
                 version: "Version 0.2.2".into(),
-                dashboard: "Dashboard at 127.0.0.1:4737".into(),
+                home_path: "Home path: ~/.rerail".into(),
                 update: Some(UpdateItem {
                     label: "Update to 0.2.3".into(),
                     enabled: true
@@ -153,6 +156,24 @@ mod tests {
             home: Option<String>,
         }
         assert_eq!(serde_json::from_str::<WithHome>(FULL).unwrap().home, None);
+    }
+
+    #[test]
+    fn reads_a_state_from_a_daemon_that_still_sends_the_dashboard_line() {
+        let line = FULL.replace("Home path: ~/.rerail", "Dashboard at 127.0.0.1:4737");
+        let state: MenuState = serde_json::from_str(&line).unwrap();
+        assert_eq!(state.home_path, "Dashboard at 127.0.0.1:4737");
+    }
+
+    #[test]
+    fn a_tray_that_still_shows_the_dashboard_line_takes_the_home_path_in_it() {
+        // The shape of MenuState while its third line named the dashboard's address.
+        #[derive(Deserialize)]
+        struct WithDashboard {
+            dashboard: String,
+        }
+        let state = serde_json::from_str::<WithDashboard>(FULL).unwrap();
+        assert_eq!(state.dashboard, "Home path: ~/.rerail");
     }
 
     #[test]
