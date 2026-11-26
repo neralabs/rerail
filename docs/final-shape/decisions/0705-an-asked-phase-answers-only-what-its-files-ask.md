@@ -113,25 +113,28 @@ compared, not wall time.
 Findings, the switch off against on, over the data layer's 224-file sample: the same in each of the 18 data-layer
 policies, with no crossing. The Django pack's 27 rules' cases and the Python pack's 3 pass with the switch on.
 
-`bandit-b113-request-without-timeout` over the 224 files (`RERAIL_PROFILE=1`):
+`bandit-b113-request-without-timeout` over the 224 files (`RERAIL_PROFILE=1`), a cold run and then one after a
+one-file edit (a new top-level name in `data_layer/batching.py`), on the same stores:
 
 | | Off | On |
 |---|---|---|
-| The phase's work (the profile's heads, summed) | 13,571,526 | 15,289,136 |
-| The phase's CPU (its heads) | 2.13 s | 3.07 s |
-| Its runs | 1 | 2 rounds |
-| `reads_at`'s work | 29,031 | 15,169 |
-| Cold run, user CPU | 12.2 s | 14.6 s |
-| Cold run, peak | 682 MB | 688 MB |
-| After a one-file edit (a new top-level name), user CPU | 0.99 s | 0.77 s |
-| After that edit, the phase's rounds | 1 | 1 |
+| Rows handed on (the profile's "phase py_names: handed on") | 23,330 | 7,845 |
+| Of them, `exports` | 15,628 | 276 |
+| `reads_at` | 779 | 646 |
+| `defined`, `class` (not asked yet) | 6,091, 832 | 6,091, 832 |
+| The phase's rounds, cold | 1 | 2: 300 asks each; 224 files built, then 60 |
+| After the edit | 1 round | 1 round: 1 file built |
+| Cold run, user CPU | 9.8 s | 11.0 s |
+| After the edit, user CPU | 0.60 s | 0.58 s |
+| Cold run, peak | 668 MB | 676 MB |
 
-Cold, the asked phase costs more. Round 2 reads 164 of the 224 files from the memo and builds the other 60 again
+In an earlier pair of cold runs, with the profile's heads: the phase's work 13,571,526 off and 15,289,136 on, and
+its CPU 2.13 s and 3.07 s.
+
+Cold, the asked phase costs more. Both rounds hold the same 300 asks (no ask on the sample passes through a
+re-export): round 2 answers them. It reads 164 of the 224 files from the memo and builds the 60 asked files again
 whole, their python/scopes analysis with them, though only their answers read `ask_in`: no partial hit (decision
-0225 §2) is taken. The asks are many: `asked` made 93,699 rows and `ask_in` 11,002 over the two rounds, since a
-file's `qn` names include every attribute chain through an import and every module outside the workspace, where
-the step's estimate counted 227 pairs from import lines alone. After an edit, the run starts from the kept asks and
-takes one round.
+0225 §2) is taken. After an edit, the run starts from the kept asks and takes one round.
 
 ## Not yet done
 
@@ -139,7 +142,6 @@ takes one round.
   bases, a Django model's options by the model a file names.
 - Round 2 builds an asked file again whole. Its entry should be a partial hit, deriving again only the relations that
   read `ask_in`; why it is not is not found yet.
-- The asks should be only the names that can be a workspace module's: `asked` sends a name of an outside module
-  nowhere, but makes its row.
-- The rows each export hands on are reported per phase (the profile's "phase NAME: handed on"); they are not
-  measured here yet.
+- `asked` makes a row for every name a file spells through an import, an outside module's too (93,699 rows over
+  the two rounds, for 300 asks sent): only a workspace module's names need one.
+- `defined` and `class`, most of what is still handed on, are not asked.
