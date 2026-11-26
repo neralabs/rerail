@@ -8015,20 +8015,47 @@ fn ticks() -> u64 {
     crate::code_rule_dsl::logic::profile::ticks()
 }
 
+/// What one step switch of a profiled walk costs (`StepClock::to`), in ticks: measured once a run (the run's
+/// setting), as switches between two places of a clock of its own, the fewest ticks of several rounds (a round a
+/// thread was descheduled in costs more, never less).
+fn switch_ticks() -> f64 {
+    crate::code_rule_dsl::logic::profile::setting(measure_switch_ticks)
+}
+
+fn measure_switch_ticks() -> f64 {
+    const N: u64 = 4096;
+    let mut c = StepClock { ticks: rerail_blocks::vector![0; 3], switches: rerail_blocks::vector![0; 3], at: 2, last: ticks(), t0: 0, cpu0: 0.0, acc: crate::code_rule_dsl::logic::profile::accounted_ticks(), acc0: (0, 0.0), cost: 0.0 };
+    (0..8)
+        .map(|_| {
+            let t0 = ticks();
+            for k in 0..N {
+                std::hint::black_box(c.to(std::hint::black_box((k & 1) as usize)));
+            }
+            ticks().wrapping_sub(t0) as f64 / N as f64
+        })
+        .fold(f64::INFINITY, f64::min)
+}
+
 /// A profiled walk's CPU per step (Q36: a view's row can cost far more than a unit of work, and the stratum's CPU
 /// alone does not say which step's source it is). Each step entered and left charges the ticks since the last
 /// charge to the step the walk was in, so a step's time is its own, its source's lookups and tests included, the
 /// steps after it not. At the end the ticks are scaled to the thread's CPU over the walk: a thread descheduled
 /// mid-walk spreads that time over the steps in proportion, not onto the one it stopped in.
-struct StepClock { ticks: Vector<u64>, at: usize, last: u64, t0: u64, cpu0: f64, acc: u64, acc0: (u64, f64) }
+///
+/// The clock's own cost is not a step's: a switch (two counter reads and the account's) costs about what a cheap
+/// step does, and a step entered once a row was charged one a row, a membership test's three times its own cost on
+/// all (t57). So each place counts the switches charged to it (`switches`), and the walk's end takes off what they
+/// cost (`switch_ticks`, measured once a run) before the ticks are scaled.
+struct StepClock { ticks: Vector<u64>, switches: Vector<u64>, at: usize, last: u64, t0: u64, cpu0: f64, acc: u64, acc0: (u64, f64), cost: f64 }
 impl StepClock {
     /// Off unless profiling. `steps + 2` places: each step, the head's rows made, and the walk outside any step.
     fn start(steps: usize) -> Option<Box<StepClock>> {
         use crate::code_rule_dsl::logic::profile;
         profile::on().then(|| {
+            let cost = switch_ticks();
             let t = ticks();
             let acc0 = crate::code_rule_dsl::logic::profile::accounted();
-            Box::new(StepClock { ticks: rerail_blocks::vector![0; steps + 2], at: steps + 1, last: t, t0: t, cpu0: crate::code_rule_dsl::logic::profile::now(), acc: acc0.0, acc0 })
+            Box::new(StepClock { ticks: rerail_blocks::vector![0; steps + 2], switches: rerail_blocks::vector![0; steps + 2], at: steps + 1, last: t, t0: t, cpu0: crate::code_rule_dsl::logic::profile::now(), acc: acc0.0, acc0, cost })
         })
     }
     /// Charges the ticks since the last switch to the step the walk was in, less those a scope inside it accounted
@@ -8038,8 +8065,13 @@ impl StepClock {
         let t = ticks();
         let acc = crate::code_rule_dsl::logic::profile::accounted_ticks();
         self.ticks[self.at] += t.wrapping_sub(self.last).saturating_sub(acc.wrapping_sub(self.acc));
+        self.switches[self.at] += 1;
         (self.last, self.acc) = (t, acc);
         std::mem::replace(&mut self.at, at)
+    }
+    /// Place `k`'s own ticks: its charge less the switches' cost charged to it (none below nothing).
+    fn own(&self, k: usize) -> f64 {
+        (self.ticks[k] as f64 - self.switches[k] as f64 * self.cost).max(0.0)
     }
     /// The walk's CPU, by step, added to the join's (`JoinRule::step_ns`): its own ticks scaled to its own CPU, both
     /// less what the scopes inside it accounted for (t56 step 1). The walk then accounts for its whole time, for a
@@ -8055,7 +8087,7 @@ impl StepClock {
         let own_cpu = cpu - (acc1.1 - self.acc0.1);
         if own_span == 0 || own_cpu <= 0.0 { return; }
         let ns = own_cpu * 1e9 / own_span as f64;
-        for (c, &t) in j.step_ns.iter().zip(&self.ticks) { c.add((t as f64 * ns) as u64); }
+        for (k, c) in j.step_ns.iter().enumerate().take(self.ticks.len()) { c.add((self.own(k) * ns) as u64); }
     }
 }
 
@@ -8461,10 +8493,24 @@ fn analysed(mut plan: steps::Plan, fuse: bool, is_dot: impl Fn(i64) -> bool) -> 
     plan.edit(ordered);
     let s = plan.encode();
     plan.probes = probes(&s.steps, &s.out);
-    plan.fused = if fuse { rowcode::fuse(&s.steps).into_iter().map(|f| f.map(|f| rerail_section::Bound(Arc::from(f)))).collect() } else { s.steps.iter().map(|_| None).collect() };
+    // A fused test by a derived input's view (t57 E6) reads a whole view's source, of an input with no dead rows.
+    let view = |src: &Src| -> Option<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vector<usize>)> {
+        let Src::In(rel, _) = src else { return None };
+        let rel = s.bound(rel);
+        let v = rel.view.as_ref()?;
+        (v.ids.is_none() && v.eqs.is_empty() && rel.ndead == 0 && view_tests_on()).then(|| (Arc::clone(&v.src), v.cols.clone()))
+    };
+    plan.fused = if fuse { rowcode::fuse(&s.steps, &view).into_iter().map(|f| f.map(|f| rerail_section::Bound(Arc::from(f)))).collect() } else { s.steps.iter().map(|_| None).collect() };
     let s = plan.encode();
     scalars::register(&s, None);
     s
+}
+
+/// Whether a fused row program tests nodes by views (t57 E6): `RERAIL_VIEW_TESTS=off` leaves each such test to its
+/// own step's probe, as before (a measurement aid). Read where a plan is made: a process's plans are kept from run to
+/// run, so it holds for a process's runs, as a measurement's (one run a process).
+fn view_tests_on() -> bool {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_VIEW_TESTS").map_or(true, |v| v != "off"))
 }
 
 /// Runs a join probe over the store; its new head tuples go to `fresh`. Returns the tuples it derived.
@@ -8943,6 +8989,9 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         bump(0, s.rows as u64);
                         let added = std::cell::Cell::new(s.rows as u64);
                         // On the stack (decision 0687): a chunk's words, `CHUNK / 64` at most.
+                        if !f.reads.is_empty() {
+                            run_counts().view_tests.fetch_add(s.rows as u64, AtomicOrdering::Relaxed);
+                        }
                         let words: rerail_blocks::frame::InlineVec<u64, { rowcode::CHUNK / 64 }> =
                             f.run(s, |m, n| if m + 1 < f.steps { bump(m + 1, n); added.set(added.get() + n) }).iter().copied().collect();
                         // The chunk's filter work is charged after its rows run (below): charged first, a chunk
@@ -10599,6 +10648,8 @@ pub struct SetfixCounts {
     /// One-column keys of derived inputs whose tests read a node-keyed index (decision 0694 step 1), and those that
     /// have none (a view, dead rows, rows in several parts): counted at a key's first test.
     pub node_bits: [std::sync::atomic::AtomicU64; 2],
+    /// Nodes a fused row program tested by a view (t57 E6, `rowcode::Word::Holds`): a chunk's at once.
+    pub view_tests: std::sync::atomic::AtomicU64,
 }
 
 /// The run's `SetfixCounts`.

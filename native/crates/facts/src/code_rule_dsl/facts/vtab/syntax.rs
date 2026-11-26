@@ -4779,6 +4779,64 @@ impl Source for Viewed {
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         self.read_matches(column, value, columns, cursor, each)
     }
+    /// The node view's tests of a chunk of nodes by their own ids (`Source::holds_each`, t57 E6): each node found
+    /// through the read's memo (`node_hint`), and its column read as a probe's match reads it, through its document's
+    /// directory row (decision 0353 step 3; the document's read kept while the chunk's nodes stay in it), else off the
+    /// projection (`op_value`). No row is found and no match given. Other views, keys and columns: refused.
+    fn reads_tests_by(&self, by: usize) -> bool {
+        matches!(self.view, View::Node) && by == self.own()
+    }
+    fn holds_each(&self, by: usize, ids: &[i64], col: usize, want: Option<i64>, cursor: &mut super::ProbeCursor, out: &mut [i64]) -> bool {
+        use read_op::*;
+        let (op, needs) = Self::read_op(self.view, col);
+        // With no value, the node's row alone is the test: no column read.
+        if !matches!(self.view, View::Node) || by != self.own() || (want.is_some() && needs & !NEED_X != 0) || ids.len() != out.len() {
+            return false;
+        }
+        let b = &*self.batch;
+        let own_node = std::cell::Cell::new(super::NodeMemo::default());
+        let node: &std::cell::Cell<super::NodeMemo> = cursor.node.as_deref().unwrap_or(&own_node);
+        let kernel = self.kernel_view();
+        let mut read: Option<(usize, rerail_tape_format::view_reads::Doc<'_>)> = None;
+        for (o, &n) in out.iter_mut().zip(ids) {
+            let Some((doc, local, x)) = b.node_hint(n, &mut cursor.hint[0], node) else {
+                *o = 0;
+                continue;
+            };
+            let Some(want) = want else {
+                *o = 1;
+                continue;
+            };
+            if kernel && read.as_ref().is_none_or(|(at, _)| *at != doc) {
+                read = b.docs.read(doc, false).map(|d| (doc, d));
+            }
+            let v = match &read {
+                Some((at, d)) if *at == doc => {
+                    // A node view's row in its document is the node's local id.
+                    let d = if x == NONE { d.clone() } else { d.clone().knowing(local, x, u32::MAX) };
+                    let v = self.read_value(&d, local as usize, col);
+                    // The tape node the read selected, kept in the memo, as a probe's match keeps it.
+                    if x == NONE
+                        && let s = d.selected()
+                        && s.l == local
+                    {
+                        let m = node.get();
+                        if m.id == n && m.doc as usize == doc && m.local == local {
+                            node.set(super::NodeMemo { x: s.x, ..m });
+                        }
+                    }
+                    v
+                }
+                _ => {
+                    let p = &b.docs[doc];
+                    let x = if x != NONE || needs & NEED_X == 0 { x } else { b.tape_node(doc, local, n, node) };
+                    Self::op_value(b, p, local, x, n, 0, Known::default(), op)
+                }
+            };
+            *o = i64::from(v == want);
+        }
+        true
+    }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         self.lookup_docs(column, values, None)
     }

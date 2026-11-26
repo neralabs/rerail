@@ -347,7 +347,12 @@ fn program(d: &mut mj::Stage, f: &rowcode::Fused, kind: u32) -> Result<(), Strin
         return Err("a row program larger than a stage holds".into());
     }
     for (k, w) in f.columns.iter().enumerate() {
-        let (c, doc) = match *w { rowcode::Word::Col(c) => (c, 0), rowcode::Word::Doc(c) => (c, 1) };
+        let (c, doc) = match *w {
+            rowcode::Word::Col(c) => (c, 0),
+            rowcode::Word::Doc(c) => (c, 1),
+            // A view's test of a node (t57 E6) is the host's read; the stage has none yet (decision 0310's CLIF read).
+            rowcode::Word::Holds(..) => return Err("a row program that tests a node by a view".into()),
+        };
         d.col_kind[k] = kind;
         d.col_idx[k] = c as u32;
         d.col_doc[k] = doc;

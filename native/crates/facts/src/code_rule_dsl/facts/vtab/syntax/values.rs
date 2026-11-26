@@ -799,6 +799,15 @@ impl Source for Layered {
     fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
         self.lookup_read_at(column, value, columns, &mut super::super::ProbeCursor::default(), each)
     }
+    /// The base's: its probe (`lookup_read_at`) answers a part's values too.
+    fn reads_tests_by(&self, by: usize) -> bool {
+        self.base.reads_tests_by(by)
+    }
+    /// The base's tests while no part holds a row (`lookup_read_at`'s own case); else each value asked as a probe.
+    fn holds_each(&self, by: usize, ids: &[i64], col: usize, want: Option<i64>, cursor: &mut super::super::ProbeCursor, out: &mut [i64]) -> bool {
+        let parts = self.values.admitted.load(Ordering::Acquire) != 0 && self.values.parts.load().get(&self.name).is_some_and(|p| p.total > 0);
+        (!parts && self.base.holds_each(by, ids, col, want, cursor, out)) || super::super::holds_each_probed(self, by, ids, col, want, cursor, out)
+    }
     /// The cursor is the base's: a part's reads keep none (a value's rows are few).
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         // No value admitted (a chunk's first run): the base's read, with no load of the parts.

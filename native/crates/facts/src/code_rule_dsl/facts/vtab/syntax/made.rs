@@ -2180,6 +2180,20 @@ impl Source for MadeRows {
             None => self.template().keys_rows(_column),
         }
     }
+    /// A chunk's tests of nodes (t57 E6) as `keys_rows` answers: the relation's once made, else its template's (a
+    /// view of the tape reads a node's document in place, makes no document's rows).
+    fn reads_tests_by(&self, by: usize) -> bool {
+        match self.done() {
+            Some(t) => t.reads_tests_by(by),
+            None => self.template().reads_tests_by(by),
+        }
+    }
+    fn holds_each(&self, by: usize, ids: &[i64], col: usize, want: Option<i64>, cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor, out: &mut [i64]) -> bool {
+        match self.done() {
+            Some(t) => t.holds_each(by, ids, col, want, cursor, out),
+            None => self.template().holds_each(by, ids, col, want, cursor, out),
+        }
+    }
     /// A key column's row. `keys_rows` answers from the template before the rows are made, and a key's values are one
     /// row each in any order of the rows: but a measure's sample makes its documents' groups first
     /// (`Batch::sample_groups`), so the made relation's rows may not be in the order of its ids, and its column then
