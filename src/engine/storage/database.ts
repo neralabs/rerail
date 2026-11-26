@@ -355,10 +355,19 @@ function shapeChange(database: RerailDatabase, version: number, migrations: read
   return missing.length === 0 ? undefined : { what: `this Rerail's tables and indexes (${missing.join(", ")})`, ids, raising };
 }
 
+const SCHEMA_OBJECT_NAME = /^CREATE (?:UNIQUE )?(?:TABLE|INDEX|TRIGGER) IF NOT EXISTS `([^`]+)`/u;
+
 /** The tables, indexes and triggers this build's DDL creates, by name. */
 const SCHEMA_OBJECTS = RERAIL_SCHEMA_STATEMENTS
-  .map(statement => /^CREATE (?:UNIQUE )?(?:TABLE|INDEX|TRIGGER) IF NOT EXISTS `([^`]+)`/u.exec(statement)?.[1])
+  .map(statement => SCHEMA_OBJECT_NAME.exec(statement)?.[1])
   .filter(name => name !== undefined);
+
+/**
+ * The statements of this build's DDL that create no table, index or trigger {@link SCHEMA_OBJECTS} names (a view, a
+ * seed row): the shape check cannot tell whether a file holds what they make, so while one is left every writable
+ * open runs the DDL under the write lock.
+ */
+export const UNNAMED_SCHEMA_STATEMENTS: readonly string[] = RERAIL_SCHEMA_STATEMENTS.filter(statement => !SCHEMA_OBJECT_NAME.test(statement));
 
 /** The tables, indexes and triggers of this build's DDL that the file lacks. */
 function missingSchemaObjects(database: RerailDatabase): string[] {
@@ -399,15 +408,16 @@ function checkBeforeWriting(database: RerailDatabase, path: string, supported: n
  * Migration steps, DDL and stamp run under one write lock, so concurrent openers agree on the file's shape and a
  * step that fails leaves the file as it was. A file already in this build's shape, read with its stamp as one
  * snapshot, has nothing to change, so its open takes no lock and never waits behind another process's write; one that
- * needs a change is read again under the lock, where another opener may have made it first. `migrations` is undefined
- * for a read-only open, which only checks.
+ * needs a change is read again under the lock, where another opener may have made it first. A statement the check
+ * cannot name ({@link UNNAMED_SCHEMA_STATEMENTS}) counts as a change on every file. `migrations` is undefined for a
+ * read-only open, which only checks.
  */
 function applySchema(database: RerailDatabase, path: string, migrations: readonly Migration[] | undefined, supported: number): void {
   const change = database.$client.transaction(() => {
     const { version } = checkedStamp(database, path, supported);
     return migrations === undefined ? undefined : shapeChange(database, version, migrations);
   })();
-  if (migrations === undefined || change === undefined) return;
+  if (migrations === undefined || (change === undefined && UNNAMED_SCHEMA_STATEMENTS.length === 0)) return;
   database.run(sql.raw("BEGIN IMMEDIATE"));
   const stamp = checkedStamp(database, path, supported);
   const floor = migrate(database, { fresh: stamp.version === 0, floor: stamp.version }, RERAIL_SCHEMA_STATEMENTS, migrations);

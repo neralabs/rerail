@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { openRerailDatabase } from "../../../src/engine/storage/database.js";
+import { UNNAMED_SCHEMA_STATEMENTS, openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { RERAIL_MIGRATIONS, addColumn, type Migration } from "../../../src/engine/storage/migrations.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
@@ -84,6 +84,12 @@ describe("a writable open while another connection holds the database's write lo
       secureDelete: client.pragma("secure_delete", { simple: true }),
       repositories: client.prepare("SELECT count(*) FROM repositories").pluck().get(),
     }).toEqual({ journal: "wal", synchronous: 1, foreignKeys: 1, secureDelete: 1, repositories: 0 });
+  });
+
+  // A statement the shape check cannot name makes every writable open take the lock and run the DDL, so the case above
+  // would wait 5 s and fail; this one names the statement.
+  it("names every statement of this build's DDL, so a file in its shape needs no lock", () => {
+    expect(UNNAMED_SCHEMA_STATEMENTS).toEqual([]);
   });
 
   it("still waits for the lock to run a step the file has not run, and runs it once the lock is given back", async () => {
