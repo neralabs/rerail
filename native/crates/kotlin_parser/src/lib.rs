@@ -158,7 +158,21 @@ pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static 
         lap(name, at.elapsed());
         at = std::time::Instant::now();
     };
-    let (compiled, program) = assembled(grammar, known, &mut lap)?;
+    let stmts = ::bitlex::syntax::parse(grammar)?;
+    lap("syntax");
+    let own = std::cell::RefCell::new(std::collections::HashMap::<String, u16>::new());
+    let kind = |name: &str| {
+        lean_kind(name).or_else(|| {
+            let mut own = own.borrow_mut();
+            let next = OWN_IDS + own.len() as u16;
+            Some(*own.entry(name.to_owned()).or_insert(next))
+        })
+    };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
+    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known, bitlex_compile::AsRust::No)?;
+    lap("bitlex compiler");
+    let program = rir::assemble(&compiled.text()).map_err(|e| format!("{e}\n{}", compiled.words))?;
+    lap("assembled");
     let mut native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
     lap("native IR");
     native.tag = TAG;
@@ -176,34 +190,6 @@ pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static 
     lap("tier 2 Cranelift");
     let parser = native_cpu_stream::Parser::with_tiers(&native, &cut, tier1, tier2);
     Ok(Compiled { parser, program, words: compiled.words.clone(), machine: compiled.machine.clone(), proofs: compiled.proofs.clone(), numbers: Default::default() })
-}
-
-/// Tier 1's block program of `grammar` alone, from the shipped answers: compiled and assembled, with neither tier
-/// compiled to code. For what only runs the interpreter (`rerail-from-middle`): tier 2's Cranelift is most of a compile.
-pub fn block_program(grammar: &str) -> Result<rerail_compiler::block::BlockProgram, String> {
-    let (_, program) = assembled(grammar, shipped_answers(), &mut |_| {})?;
-    program.block_programs.into_iter().next().ok_or_else(|| "no tier 1 program".to_owned())
-}
-
-/// The grammar compiled by the Bitlex compiler from the answers `known`, and its words assembled: where every compile
-/// starts (`compile_timed`, `block_program`).
-fn assembled(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static str)) -> Result<(bitlex_compile::Compiled, rerail_compiler::program::Words), String> {
-    let stmts = ::bitlex::syntax::parse(grammar)?;
-    lap("syntax");
-    let own = std::cell::RefCell::new(std::collections::HashMap::<String, u16>::new());
-    let kind = |name: &str| {
-        lean_kind(name).or_else(|| {
-            let mut own = own.borrow_mut();
-            let next = OWN_IDS + own.len() as u16;
-            Some(*own.entry(name.to_owned()).or_insert(next))
-        })
-    };
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
-    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known, bitlex_compile::AsRust::No)?;
-    lap("bitlex compiler");
-    let program = rir::assemble(&compiled.text()).map_err(|e| format!("{e}\n{}", compiled.words))?;
-    lap("assembled");
-    Ok((compiled, program))
 }
 
 impl Compiled {

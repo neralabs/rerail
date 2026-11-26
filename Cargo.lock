@@ -3259,9 +3259,6 @@ name = "rerail-bitlex"
 version = "0.1.0"
 dependencies = [
  "bitlex",
- "foldhash",
- "libc",
- "rayon",
  "rerail-bitlex",
  "rerail-blocks",
  "rerail-compiler",
@@ -3452,6 +3449,7 @@ dependencies = [
  "cranelift-jit-wasm",
  "cranelift-module",
  "cranelift-native",
+ "foldhash",
  "libc",
  "rayon",
  "rerail-blocks",
@@ -4291,19 +4289,6 @@ dependencies = [
  "rerail-forte",
  "rerail-lang",
  "serde_json",
-]
-
-[[package]]
-name = "rerail-from-middle"
-version = "0.1.0"
-dependencies = [
- "rerail-bitlex",
- "rerail-blocks",
- "rerail-compiler",
- "rerail-cpu-stream",
- "rerail-from-middle",
- "rerail-kotlin-parser",
- "rerail-rr-parser",
 ]
 
 [[package]]

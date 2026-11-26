@@ -794,40 +794,6 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                         program.walks.push(crate::block::Walk { group, hidden, kinds: vec![kind] })
                     }
                 }
-            } else if first == "nest" {
-                // `block N nest %l1 … %lD [kind %k1 … %kD]… [within %f]`: a stack's levels, each
-                // string kind's, and the fill a kind's own stack is within (`crate::block::Nest`).
-                let mut nest = crate::block::Nest::default();
-                while line.peek_word().is_some_and(|w| w != "kind" && w != "within") {
-                    nest.levels.push(line.number("%")?);
-                }
-                while let Some(w) = line.peek_word() {
-                    if w == "within" {
-                        line.word()?;
-                        nest.within = Some(line.number("%")?);
-                        continue;
-                    }
-                    if w != "kind" {
-                        return Err(format!("block {at} nest: `kind %k1 … %kD` or `within %f`, not {w}"));
-                    }
-                    line.word()?;
-                    let kind: rerail_blocks::vector::Vector<u16> = (0..nest.levels.len()).map(|_| line.number::<u16>("%")).collect::<Result<_, _>>()?;
-                    nest.kinds.push(kind);
-                }
-                if nest.levels.is_empty() {
-                    return Err(format!("block {at} nest with no level"));
-                }
-                program.nests.push(nest);
-            } else if first == "apart" {
-                // `block N apart %a %b …`: values no two of which have a bit at one place.
-                let mut set = rerail_blocks::vector::Vector::new();
-                while line.peek_word().is_some() {
-                    set.push(line.number("%")?);
-                }
-                if set.len() < 2 {
-                    return Err(format!("block {at} apart with fewer than two values"));
-                }
-                program.apart.push(set);
             } else if first == "extract" {
                 program.extracts.push(line.number("%")?);
             } else if first == "total" {

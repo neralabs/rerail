@@ -1702,38 +1702,11 @@ impl Lowering {
         let body = regions.body();
         ::bitlex::syntax::strictly_causal(&body)?;
         self.rounds(&body)?;
-        let mut apart = rerail_blocks::vector::Vector::new();
         for r in &regions.kinds {
             let f = *self.names.get(&format!("f_{}", r.kind)).ok_or(format!("regions {}: no fill f_{}", regions.hidden, r.kind))?;
-            apart.push(f.v);
             let before = self.prev(f, 1)?;
             let flips = self.xor(f, before)?;
             self.toggles.push((f, flips));
-        }
-        // A region opens only where no other's bytes are hidden: the kinds' fills are apart.
-        if apart.len() > 1 {
-            self.program.apart.push(apart);
-        }
-        // The stacks: the regions' levels and their string kinds', and a kind's that nests.
-        let carry = |me: &Self, name: String| me.names.get(&name).map(|x| x.v).ok_or(format!("regions {}: no carry {name}", regions.hidden));
-        if let Some(n) = &regions.nest {
-            let mut nest = crate::block::Nest::default();
-            for j in 1..=n.depth {
-                nest.levels.push(carry(self, format!("{}_lv{j}", regions.hidden))?);
-            }
-            for r in &regions.kinds {
-                if self.names.contains_key(&format!("{}_lv1_{}", regions.hidden, r.kind)) {
-                    nest.kinds.push((1..=n.depth).map(|j| carry(self, format!("{}_lv{j}_{}", regions.hidden, r.kind))).collect::<Result<_, _>>()?);
-                }
-            }
-            self.program.nests.push(nest);
-        }
-        for r in &regions.kinds {
-            if let Some((d, _)) = &r.nests {
-                let levels = (1..=*d).map(|j| carry(self, format!("{}_lv{j}", r.kind))).collect::<Result<_, _>>()?;
-                let within = Some(carry(self, format!("f_{}", r.kind))?);
-                self.program.nests.push(crate::block::Nest { levels, kinds: Vec::new(), within });
-            }
         }
         Ok(())
     }
@@ -3582,24 +3555,6 @@ pub fn live_of(program: &BlockProgram, keep: &[bool]) -> BlockProgram {
             let kinds = w.kinds.iter().map(|k| crate::block::WalkKind { opener: n(k.opener), closer: n(k.closer), open: n(k.open), fill: n(k.fill), empty: k.empty.map(|(e, m)| (n(e), m)), or: k.or.map(|(c, m)| (n(c), m)), ..*k }).collect();
             Some(crate::block::Walk { group, hidden: n(w.hidden), kinds })
         })
-        .collect();
-    // A stack is kept while its levels are.
-    out.nests = program
-        .nests
-        .iter()
-        .filter(|nest| nest.levels.iter().chain(nest.kinds.iter().flatten()).all(|&v| keep[usize::from(v)]))
-        .map(|nest| crate::block::Nest {
-            levels: nest.levels.iter().map(|&v| n(v)).collect(),
-            kinds: nest.kinds.iter().map(|k| k.iter().map(|&v| n(v)).collect()).collect(),
-            within: nest.within.filter(|&v| keep[usize::from(v)]).map(n),
-        })
-        .collect();
-    // A set apart keeps its live values (any two of them are still apart).
-    out.apart = program
-        .apart
-        .iter()
-        .map(|set| set.iter().filter(|&&v| keep[usize::from(v)]).map(|&v| n(v)).collect::<rerail_blocks::vector::Vector<u16>>())
-        .filter(|set| set.len() > 1)
         .collect();
     out.records = program.records.clone();
     out
