@@ -470,8 +470,12 @@ fn share(p: &mut Program<'_>, rel: &str, n: usize) -> Result<Option<String>, Str
     let label = format!("{rel} column {col} ({} literals)", part.len());
     let (part, other, id) = (part.clone(), parts[1 - side].clone(), rule.id());
     let mut qualifiers = p.f.qualifiers.clone();
+    // Each is read whole, and asked for by no reader's demand (`upstream`, `no_magic`): the factor's endpoints are the
+    // hot ones already. A demand on it was made from the pairs rule's other part, which binds the witness through the
+    // key the head projects away: RUF051's `call_q` asked `factor(c, f)` of every requested `(c, q)` and every `f` of
+    // that `q` (52 M rows over 50 files, 6.7 GB), where the factor itself is one `f` a hot call.
     for r in [&hot, &factor] {
-        qualifiers.entry(r.clone()).or_default().insert("no_inline".to_owned());
+        qualifiers.entry(r.clone()).or_default().extend(["no_inline".to_owned(), "no_magic".to_owned()]);
     }
     qualifiers.entry(hot.clone()).or_default().insert(crate::code_rule_dsl::typing::file_local::STRATEGY.to_owned());
     let made = p.derive(

@@ -115,6 +115,8 @@ pub struct ContentStore {
     lease: std::sync::Arc<collection_guard::SharedLease>,
     /// How long an ended store session's data is kept (decision 0450 step 3).
     session_ageing: reclamation::SessionAgeing,
+    /// The store's segment bytes as last counted, and when, shared by its handles (`reclamation::require_write_capacity`).
+    segments_counted: std::sync::Arc<reclamation::SegmentsCounted>,
     /// An in-memory store's own folder, which its path names and its side folders (`.facts`, `.objects`, ...) are made
     /// in: none for a store on disk, whose folders are beside its file.
     own_folder: Option<std::sync::Arc<OwnFolder>>,
@@ -207,6 +209,7 @@ impl ContentStore {
             applying: parking_lot::Mutex::new((0, None)),
             write_back: None,
             session_ageing: self.session_ageing.clone(),
+            segments_counted: std::sync::Arc::clone(&self.segments_counted),
             own_folder: self.own_folder.clone(),
             #[cfg(not(target_family = "wasm"))]
             lease: Default::default(),
@@ -314,6 +317,7 @@ impl ContentStore {
             applying: parking_lot::Mutex::new((0, None)),
             write_back,
             session_ageing: reclamation::SessionAgeing::default(),
+            segments_counted: Default::default(),
             own_folder: None,
             #[cfg(not(target_family = "wasm"))]
             lease: Default::default(),

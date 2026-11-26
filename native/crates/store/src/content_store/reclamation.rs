@@ -175,6 +175,12 @@ impl ContentStore {
     }
 
     pub fn capacity(&self) -> StoreResult<StoreCapacity> {
+        self.capacity_counted(true)
+    }
+
+    /// `capacity`, its segments' bytes counted now when `fresh`, else as counted in the last second
+    /// (`SegmentsCounted`): what a write is checked against.
+    fn capacity_counted(&self, fresh: bool) -> StoreResult<StoreCapacity> {
         let mut bytes = 0_u64;
         for suffix in ["", "-wal", "-shm"] {
             let path = if suffix.is_empty() {
@@ -193,7 +199,7 @@ impl ContentStore {
             }
         }
         // The segments beside it (decision 0295): tapes and sources, frames, memo entries, uncompressed.
-        let bytes = bytes.saturating_add(super::segments::segment_bytes(&self.database_path));
+        let bytes = bytes.saturating_add(self.segments_counted.counted(&self.database_path, fresh));
         Ok(StoreCapacity {
             bytes,
             state: capacity_state(bytes),
@@ -201,7 +207,7 @@ impl ContentStore {
     }
 
     pub(super) fn require_write_capacity(&self) -> StoreResult<()> {
-        match self.capacity()?.state {
+        match self.capacity_counted(false)?.state {
             CapacityState::Normal | CapacityState::Collect => Ok(()),
             CapacityState::RejectWrites | CapacityState::OverBudget => Err(StoreError::Invalid(
                 "content store hard limit rejects new payloads".to_owned(),
@@ -546,6 +552,45 @@ pub(super) fn incremental_vacuum(connection: &rusqlite::Connection, pages: u32) 
     let mut rows = statement.query([])?;
     while rows.next()?.is_some() {}
     Ok(())
+}
+
+/// A store's segment bytes as last counted (`segments::segment_bytes`), shared by its handles. The count lists and stats
+/// every segment file of the store's four folders; each write's capacity check counted them again, so a batch's writes
+/// cost its writes times its segments (in a 10-file run of the Python pack's 537 policies, a fifth of the process's
+/// busy time; 2,257 files by a one-by-one 50-file run's end). A write reads a count at most `RECOUNT` old: a store
+/// grows by far less in that time than the 2 GB between its limits. `capacity`, which reports, counts afresh.
+#[derive(Default)]
+pub(super) struct SegmentsCounted {
+    #[cfg(not(target_family = "wasm"))]
+    last: parking_lot::Mutex<Option<(std::time::Instant, u64)>>,
+}
+
+impl SegmentsCounted {
+    #[cfg(not(target_family = "wasm"))]
+    const RECOUNT: std::time::Duration = std::time::Duration::from_secs(1);
+
+    /// The segment bytes of the store at `database`: counted now when `fresh`, or when the last count is older than
+    /// `RECOUNT`.
+    pub(super) fn counted(&self, database: &std::path::Path, fresh: bool) -> u64 {
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let now = std::time::Instant::now();
+            if !fresh
+                && let Some((at, bytes)) = *self.last.lock()
+                && now.duration_since(at) < Self::RECOUNT
+            {
+                return bytes;
+            }
+            let bytes = super::segments::segment_bytes(database);
+            *self.last.lock() = Some((now, bytes));
+            bytes
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            let _ = fresh;
+            super::segments::segment_bytes(database)
+        }
+    }
 }
 
 pub(super) fn capacity_state(bytes: u64) -> CapacityState {

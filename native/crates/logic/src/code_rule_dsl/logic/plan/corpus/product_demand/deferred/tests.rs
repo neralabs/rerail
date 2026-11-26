@@ -78,6 +78,13 @@
         assert_eq!(plans.pairs, ["wide"]);
         assert_eq!(plans.shared.len(), 1);
         let (hot, factor) = (declared(&made, "_hot"), declared(&made, "_factor"));
+        // Neither is asked for by its readers' demand: the factor's endpoints are the hot ones already, and a demand
+        // made from the pairs rule's other part binds the witness through the key the head projects away (RUF051's
+        // `call_q`: every requested call times every expression of its qualified name, 52 M rows over 50 files).
+        let qualifiers = F::qualifiers(&*made);
+        for rel in [&hot, &factor] {
+            assert!(qualifiers.get(rel).is_some_and(|q| q.contains("no_magic") && q.contains("no_inline")), "{rel}: {qualifiers:?}");
+        }
         let made = with_outputs(&made, &[&hot, &factor]);
         let mut actual = execute(&made, "deferred-adaptive");
         assert_eq!(actual.remove(&hot).unwrap(), [["1"]]);
