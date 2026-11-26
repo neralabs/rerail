@@ -38,6 +38,9 @@ pub(super) struct Bytes<'a> {
     pub(super) failed: std::collections::HashSet<String>,
     /// The fills' and escapes' windows and tests written (`wf_*`, `af_*`).
     wmemo: HashMap<Expr, String>,
+    /// Whether `code` is a closure's question of a byte (`code(q)`), as tier 2 asks it of its records (`code_at`): the
+    /// tests then take it, and are named apart (`ca_*`).
+    pub(super) code_fn: bool,
     amemo: std::cell::RefCell<HashMap<Expr, String>>,
     /// The operators' pairs masks the loop reads (`k_pair_K`): each row's pairs of bytes, a pair's first byte's bit where
     /// the second is the byte after (lean's `pair`), made of the block's classes too.
@@ -89,11 +92,21 @@ impl<'a> Bytes<'a> {
                 _ => {}
             }
         }
-        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default(), scalar: Default::default(), row_firsts: HashMap::new(), row: None, partial: false, failed: Default::default(), wmemo: HashMap::new(), amemo: Default::default() }
+        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default(), scalar: Default::default(), row_firsts: HashMap::new(), row: None, partial: false, failed: Default::default(), wmemo: HashMap::new(), amemo: Default::default(), code_fn: false }
     }
 
     /// `code` with each read of the masks it has (`locals`) in the windows' form, no block's words (decision 0703): a
     /// read of another mask, or one with no such form, stays as it is, the mask then in `failed`.
+    /// Reads with no form of the bytes stay as they are (`partial_windows`), and each mask's test is written once.
+    pub(super) fn set_partial(&mut self) {
+        self.partial = true;
+    }
+
+    /// The tests written once (`at_*`, `af_*`, `ca_*`), for the file.
+    pub(super) fn named_code(&self) -> String {
+        self.named.borrow().iter().map(|x| x.1.as_str()).collect()
+    }
+
     pub(super) fn partial_windows(&mut self, code: &str) -> String {
         self.in_region = true;
         self.partial = true;
@@ -252,14 +265,15 @@ impl<'a> Bytes<'a> {
                 Some(f) => f,
                 None => {
                     let body = self.at_raw(e, "q", depth)?;
-                    let f = format!("af_{}", self.amemo.borrow().len());
+                    let f = format!("{}af_{}", if self.code_fn { "c" } else { "" }, self.amemo.borrow().len());
                     self.amemo.borrow_mut().insert(e.clone(), f.clone());
-                    let code = format!("/// Whether a fill or an escape holds at byte `q`, from the bytes.\n#[inline]\n#[allow(unused_variables, dead_code)]\nfn {f}(src: &[u8], n: usize, q: usize) -> bool {{\n    {body}\n}}\n\n");
+                    let param = if self.code_fn { ", code: &dyn Fn(usize) -> bool" } else { "" };
+                    let code = format!("/// Whether a fill or an escape holds at byte `q`, from the bytes.\n#[inline]\n#[allow(unused_variables, dead_code)]\nfn {f}(src: &[u8], n: usize, q: usize{param}) -> bool {{\n    {body}\n}}\n\n");
                     self.named.borrow_mut().push((f.clone(), code));
                     f
                 }
             };
-            return Ok(format!("{f}(src, n, {at})"));
+            return Ok(format!("{f}(src, n, {at}{})", if self.code_fn { ", code" } else { "" }));
         }
         self.at_raw(e, at, depth)
     }
@@ -271,6 +285,10 @@ impl<'a> Bytes<'a> {
         Ok(match e {
             Expr::Empty => "false".to_owned(),
             Expr::Name(n) => {
+                // Asked of the records (`code_at`), where tier 2 asks it.
+                if self.code_fn && n == "code" {
+                    return Ok(format!("code({at})"));
+                }
                 if let Some(rs) = self.classes.get(n.as_str()) {
                     let test = |b: &str| if self.lean && rs.iter().map(|&(lo, hi)| hi + 1 - lo).sum::<u32>() > 1 { self.class_bit(n, b) } else { pattern_test(b, rs) };
                     if at == "s" {
@@ -282,12 +300,13 @@ impl<'a> Bytes<'a> {
                 } else if let Some(d) = self.defs.get(n) {
                     if self.partial {
                         // Each mask's test written once (`at_M`), as the lean lexer writes a read once.
-                        let f = format!("at_{}", ident(n));
+                        let f = format!("{}_{}", if self.code_fn { "ca" } else { "at" }, ident(n));
                         if !self.named.borrow().iter().any(|x| x.0 == f) {
                             self.named.borrow_mut().push((f.clone(), String::new()));
                             match self.at(&d.clone(), "q", depth + 1) {
                                 Ok(body) => {
-                                    let code = format!("/// Whether mask `{n}` holds at byte `q`, from the bytes.\n#[inline]\n#[allow(unused_variables, dead_code)]\nfn {f}(src: &[u8], n: usize, q: usize) -> bool {{\n    {body}\n}}\n\n");
+                                    let param = if self.code_fn { ", code: &dyn Fn(usize) -> bool" } else { "" };
+                                    let code = format!("/// Whether mask `{n}` holds at byte `q`, from the bytes.\n#[inline]\n#[allow(unused_variables, dead_code)]\nfn {f}(src: &[u8], n: usize, q: usize{param}) -> bool {{\n    {body}\n}}\n\n");
                                     if let Some(x) = self.named.borrow_mut().iter_mut().find(|x| x.0 == f) {
                                         x.1 = code;
                                     }
@@ -298,7 +317,7 @@ impl<'a> Bytes<'a> {
                                 }
                             }
                         }
-                        format!("{f}(src, n, {at})")
+                        format!("{f}(src, n, {at}{})", if self.code_fn { ", code" } else { "" })
                     } else {
                         self.at(d, at, depth + 1)?
                     }

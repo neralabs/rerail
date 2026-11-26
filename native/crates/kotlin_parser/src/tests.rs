@@ -184,7 +184,7 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
             continue;
         }
         let s = r.start as usize;
-        let d = (0..32).filter(|&b| SPANNED >> b & 1 == 1).fold(0u32, |m, b| m | u32::from(spanned(text.as_bytes(), ps, pe, x_end, s, before, b)) << b);
+        let d = (0..32).filter(|&b| SPANNED >> b & 1 == 1).fold(0u32, |m, b| m | u32::from(spanned(text.as_bytes(), ps, pe, x_end, s, before, b, &|q| rerail_kotlin_aot::code_at(&lx.recs, &lx.extras, q))) << b);
         r.code |= d << 16;
         (ps, pe, before) = (s, r.last as usize + 1, r.code >> 8 & 0xff);
     }

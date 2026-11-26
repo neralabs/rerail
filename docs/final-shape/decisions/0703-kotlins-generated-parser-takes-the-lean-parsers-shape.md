@@ -144,11 +144,19 @@ them.
    too, of the grammar token before it (`carried(before, bits)`, `before_x`), as the interpreter's mask gives it
    (after a `;`, none). Tier 1 writes three of the ten marks: the line break (the lean lexer's `nl`), `as_open` and
    `real`. rr's code changes in `carried`'s parameter and two blank lines; JSON's not.
+15. **A gap mark of a fill is asked by tier 2 of the bytes, `code` of the records** (`code_at`, `Bytes::code_fn`).
+   A byte is code where no extra holds it, nor a token of a region (a string's, a character's, a name in backticks:
+   the rows that read a region, their kinds their own or their first bytes', none another row's). A gap mark whose
+   accumulator reads a fill is tested at each byte since the grammar token before's second (`spanned`, given
+   `code`), each mask's test written once (`ca_*`), its fills read back from the bytes. Kotlin's `as_open` is so:
+   tier 1 keeps no `as_lt` over the gap. Tier 1 writes two of the ten marks, the line break (the lean lexer's `nl`)
+   and `real` (its real literal's kind); tier 1's Rust is 573 KB. rr's tier 1 gains `code_at` (its regions none),
+   and its calls of `spanned` the question; JSON's code is unchanged.
 
 What stays: stage 1 makes the 5 vectors tier 2 reads a string's parts by, for the whole file, where the lean lexer
-makes 5 masks a block for its loop; and tier 1 computes three marks into the token's code: `head_ctor`'s line break
-(the lean lexer's `nl`), `as_open` (of a fill tier 1 keeps over the gap), and `real` (a count of a number's bytes).
-Its strings trip every condition of 0619's one pass: templates that resume a string (`tail ... or t_dollar resumes
-str`), a fill kept over a region (`assume ... at ends t_brace`), and strings that tier 2 reads in parts, from tier 1's
-masks (`rd1_open`). The lookahead of `as_split` and `is_split` stays a function a state (`next_*`). `as_open` stays
-tier 1's: it reads `code` back over a type's tokens (`as_lt`'s run), and tier 2 has no form of `code` from the bytes.
+makes 5 masks a block for its loop; and tier 1 computes two marks into the token's code, as the lean lexer does:
+`head_ctor`'s line break (its `nl`) and `real` (its real literal's kind, a count of a number's bytes). Tier 2 still
+switches `asks` at 27 calls and in 22 levels and contexts, where the lean parser switches `stmt` in 3 places. Its
+strings trip every condition of 0619's one pass: templates that resume a string (`tail ... or t_dollar resumes str`),
+a fill kept over a region (`assume ... at ends t_brace`), and strings that tier 2 reads in parts, from tier 1's masks
+(`rd1_open`). The lookahead of `as_split` and `is_split` stays a function a state (`next_*`).

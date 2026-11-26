@@ -589,9 +589,19 @@ pub const SPANNED: u32 = 0x0;
 /// grammar token before (0: none), `xend` the byte after the extra before (0: none), `before` the grammar token before's
 /// word.
 #[inline]
-pub fn spanned(src: &[u8], ps: usize, pe: usize, xend: usize, s: usize, before: u32, b: u32) -> bool {
-    let _ = (src, ps, pe, xend, s, before, b);
+pub fn spanned(src: &[u8], ps: usize, pe: usize, xend: usize, s: usize, before: u32, b: u32, code: &dyn Fn(usize) -> bool) -> bool {
+    let _ = (src, ps, pe, xend, s, before, b, code);
     false
+}
+
+/// Whether byte `q` is code, of tier 1's records (`recs`, the extras `xs`): no extra holds it, nor a token of a region
+/// (a string's, a character's, a name in backticks), as the grammar's `code` is none of a region's bytes.
+pub fn code_at(recs: &[Rec], xs: &[Rec], q: usize) -> bool {
+    let q = q as u32;
+    let within = |rs: &[Rec]| rs.partition_point(|r| r.start <= q).checked_sub(1).is_some_and(|k| rs[k].last >= q);
+    let k = recs.partition_point(|r| r.start <= q);
+    let region = k > 0 && recs[k - 1].last >= q && matches!(recs[k - 1].code & 0xff, 5 | 7);
+    !region && !within(xs)
 }
 
 /// The gap marks tier 2 asks of the bytes, where a rule asks one (decision 0623 step 5), by their bits: tier 1's

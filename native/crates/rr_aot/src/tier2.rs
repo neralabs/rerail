@@ -479,7 +479,7 @@ impl<'a, L: Layout> P<'a, L> {
         // The extra before the token, where it ends.
         let q = self.xs.partition_point(|x| (x.start as usize) < s);
         let xend = if q > 0 { self.xs[q - 1].last as usize + 1 } else { 0 };
-        crate::tier1::spanned(self.src, ps, pe, xend, s, before, b)
+        crate::tier1::spanned(self.src, ps, pe, xend, s, before, b, &|q| crate::tier1::code_at(self.recs, self.xs, q))
     }
 
     /// Derived mark `b` at token `j` (`tier1::DERIVED`): its carrier's bit there, and the word of the grammar token before.

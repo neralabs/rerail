@@ -5805,6 +5805,8 @@ impl Gen<'_> {
             /// Its mask's one byte, where tier 2 may ask it of the bytes (decision 0623 step 5): kept by no
             /// accumulator, an extra keeps none of it, and no `else escape` reads it at the file's end.
             byte: Option<u8>,
+            /// Its mask (under its `unless after`, `under_unless`).
+            at: Expr,
         }
         /// A gap mark's mask made of the regions, kept by the loop as it reads (the lean lexer's
         /// "a line break since the token before"): whether it held since the grammar token before
@@ -5986,7 +5988,7 @@ impl Gen<'_> {
                 }),
                 _ => None,
             };
-            gaps.push(Gap { bit, mask, unless, name: kind.clone(), acc, rec, rec_at, byte });
+            gaps.push(Gap { bit, mask, unless, name: kind.clone(), acc, rec, rec_at, byte, at: at.clone() });
         }
         let skip = match &skip {
             Some(e) => self.val(e)?,
@@ -6025,6 +6027,8 @@ impl Gen<'_> {
         // kind and the test's bit.
         let mut once_asks: Vec<(String, u8)> = Vec::new();
         let mut row_ids: Vec<(String, bool, u32, [bool; 256], String)> = Vec::new();
+        let mut region_kinds: Vec<u32> = Vec::new();
+        let mut other_kinds: Vec<u32> = Vec::new();
         // Each row's rule where a common token's (decision 0655 step 4): a run of one mask (`run M`), a pair (`pairs F`:
         // the pairs mask `k_F`; `pair M`), one byte (`one`).
         let mut row_shapes: Vec<Option<String>> = Vec::new();
@@ -6399,6 +6403,19 @@ impl Gen<'_> {
                 None => (String::new(), k, extra.to_string(), hits),
             };
             row_ids.push((kind.clone(), extra, bits, sb, self.kind_of(*row)));
+            // A region's token (a string, a character, a name in backticks): none of its bytes is code (`code_at`). Its
+            // kinds: its own, or each of its first bytes' (`KINDS`).
+            if !extra {
+                let ks: Vec<u32> = match x.row_kinds.get(*row).copied().flatten() {
+                    Some(k) => vec![u32::from(k)],
+                    None => (0..256).filter(|&b| sb[b]).map(|b| u32::from(x.kinds[b])).collect(),
+                };
+                if matches!(rule, Some(TokenRule::Read(_) | TokenRule::ReadParts(..))) {
+                    region_kinds.extend(ks);
+                } else {
+                    other_kinds.extend(ks);
+                }
+            }
             row_shapes.push(row_shape);
             row_arms.push(RowArm { resume, word, open: open_k.is_some(), row: *row, first: sb, tail, starts: first_tests, start: start.clone(), check, body: format!("{{\n            // `{kind}`: {how}\n{decl}            //~defs\n            //~spans\n            let l = {l};\n            let l = l.max(s);\n{pause}{scans}            //~passed\n{hits}            (l, {k}, {extra_is}, "), bits });
         }
@@ -6460,6 +6477,9 @@ impl Gen<'_> {
             ks.as_ref() == Some(eo)
         };
         let at_bytes = bytes::Bytes::new(x.stmts, HashMap::new(), HashMap::new());
+        let mut code_bytes = bytes::Bytes::new(x.stmts, HashMap::new(), HashMap::new());
+        code_bytes.set_partial();
+        code_bytes.code_fn = true;
         let mut spanned: Vec<(u8, String, String)> = Vec::new();
         for g in &gaps {
             if tests.iter().any(|t| t.5 == g.bit) || unplaced_asks.iter().any(|u| u.0 == g.bit) || g.byte.is_some() || g.mask.is_some() || x.own >> g.bit & 1 == 1 || derived.iter().any(|d| d.0 == g.bit || d.1 == g.bit) {
@@ -6509,6 +6529,16 @@ impl Gen<'_> {
                 && only_extras(&accs[j].here)
             {
                 "back < s || fwd > lo || x".to_owned()
+            } else if let Some(j) = g.acc
+                && g.rec.is_none()
+                && accs[j].set.is_none()
+                && !region_kinds.is_empty()
+                && !region_kinds.iter().any(|k| other_kinds.contains(k))
+                && let Ok(t) = code_bytes.at(&g.at, "q", 0)
+            {
+                // Its mask at each byte since the grammar token before's first, `code` asked of the records (`code_at`):
+                // a fill tier 1 kept over the gap, read back from the bytes as the lean lexer reads a run.
+                format!("(from..s).any(|q| {t})")
             } else {
                 continue;
             };
@@ -7522,9 +7552,9 @@ impl Gen<'_> {
         }
         out.push_str("    r\n}\n");
         let sbits = spanned.iter().fold(0u32, |m, d| m | 1 << d.0);
-        let _ = write!(out, "\n/// The gap marks tier 2 asks of the spans between the records where a rule reads one (decision 0703), as the lean\n/// parser asks whether two tokens touch and whether a line breaks since the token before: tier 1 writes no bit of them.\npub const SPANNED: u32 = {sbits:#x};\n\n/// Whether spanned mark `b` holds at a grammar token starting at `s`: `ps` and `pe` the first byte and the byte after the\n/// grammar token before (0: none), `xend` the byte after the extra before (0: none), `before` the grammar token before's\n/// word.\n#[inline]\npub fn spanned(src: &[u8], ps: usize, pe: usize, xend: usize, s: usize, before: u32, b: u32) -> bool {{\n");
+        let _ = write!(out, "\n/// The gap marks tier 2 asks of the spans between the records where a rule reads one (decision 0703), as the lean\n/// parser asks whether two tokens touch and whether a line breaks since the token before: tier 1 writes no bit of them.\npub const SPANNED: u32 = {sbits:#x};\n\n/// Whether spanned mark `b` holds at a grammar token starting at `s`: `ps` and `pe` the first byte and the byte after the\n/// grammar token before (0: none), `xend` the byte after the extra before (0: none), `before` the grammar token before's\n/// word.\n#[inline]\npub fn spanned(src: &[u8], ps: usize, pe: usize, xend: usize, s: usize, before: u32, b: u32, code: &dyn Fn(usize) -> bool) -> bool {{\n");
         if spanned.is_empty() {
-            out.push_str("    let _ = (src, ps, pe, xend, s, before, b);\n    false\n}\n");
+            out.push_str("    let _ = (src, ps, pe, xend, s, before, b, code);\n    false\n}\n");
         } else {
             let rs = {
                 let mut rs: Vec<(u32, u32)> = Vec::new();
@@ -7539,12 +7569,19 @@ impl Gen<'_> {
                 rs
             };
             let (sb, sf) = (bytes::pattern_test("src[back - 1]", &rs), bytes::pattern_test("src[fwd]", &rs));
-            let _ = write!(out, "    let _ = before;\n    let n = src.len();\n    // The gap's skipped bytes, as the lean lexer reads a gap back from a token: from the record before's end (the\n    // grammar token before's, or the extra before's) to `s`, but a string's part read between, which is no record and\n    // carries the gap over (at most one: a grammar token follows each), from its first byte to its last, neither\n    // skipped. A token in a template of the grammar token before (`held`) has none since that string's part.\n    let held = pe > s;\n    let x = if held {{ xend > ps }} else {{ xend > pe }};\n    let lo = if x {{ xend }} else if held {{ ps + 1 }} else {{ pe }};\n    let mut back = s;\n    while back > lo && {sb} {{\n        back -= 1;\n    }}\n    let mut fwd = lo;\n    while !held && fwd < back && {sf} {{\n        fwd += 1;\n    }}\n    let _ = x;\n    match b {{\n");
+            let _ = write!(out, "    let _ = before;\n    let n = src.len();\n    // The gap's skipped bytes, as the lean lexer reads a gap back from a token: from the record before's end (the\n    // grammar token before's, or the extra before's) to `s`, but a string's part read between, which is no record and\n    // carries the gap over (at most one: a grammar token follows each), from its first byte to its last, neither\n    // skipped. A token in a template of the grammar token before (`held`) has none since that string's part.\n    let held = pe > s;\n    let x = if held {{ xend > ps }} else {{ xend > pe }};\n    let lo = if x {{ xend }} else if held {{ ps + 1 }} else {{ pe }};\n    let mut back = s;\n    while back > lo && {sb} {{\n        back -= 1;\n    }}\n    let mut fwd = lo;\n    while !held && fwd < back && {sf} {{\n        fwd += 1;\n    }}\n    let _ = (x, code);\n    // A mask tier 1 kept over the gap: from the grammar token before's second byte (none: the file's first).\n    let from = if pe > 0 {{ ps + 1 }} else {{ 0 }};\n    let _ = from;\n    match b {{\n");
             for (bit, ask, name) in &spanned {
                 let _ = writeln!(out, "        // `{name}`\n        {bit} => {ask},");
             }
             out.push_str("        _ => false,\n    }\n}\n");
         }
+        out.push_str(&code_bytes.named_code());
+        // Whether a byte is code, of the records: no extra, nor a region's token, holds it.
+        let mut rk = region_kinds.clone();
+        rk.sort_unstable();
+        rk.dedup();
+        let kinds = if rk.is_empty() || rk.iter().any(|k| other_kinds.contains(k)) { "_ if false".to_owned() } else { rk.iter().map(u32::to_string).collect::<Vec<_>>().join(" | ") };
+        let _ = write!(out, "\n/// Whether byte `q` is code, of tier 1's records (`recs`, the extras `xs`): no extra holds it, nor a token of a region\n/// (a string's, a character's, a name in backticks), as the grammar's `code` is none of a region's bytes.\npub fn code_at(recs: &[Rec], xs: &[Rec], q: usize) -> bool {{\n    let q = q as u32;\n    let within = |rs: &[Rec]| rs.partition_point(|r| r.start <= q).checked_sub(1).is_some_and(|k| rs[k].last >= q);\n    let k = recs.partition_point(|r| r.start <= q);\n    let region = k > 0 && recs[k - 1].last >= q && matches!(recs[k - 1].code & 0xff, {kinds});\n    !region && !within(xs)\n}}\n");
         let _ = write!(out, "\n/// The gap marks tier 2 asks of the bytes, where a rule asks one (decision 0623 step 5), by their bits: tier 1's\n/// records hold only its token tests' hits of them.\npub const ASKED: u32 = {bits:#x};\n\n/// Whether gap mark `b` holds over `src[from..to]`, the bytes since the grammar token before's first byte (`before` its\n/// word), as the lean parser asks whether a token is on a line.\n#[inline]\npub fn gap(src: &[u8], from: usize, to: usize, before: u32, b: u32) -> bool {{\n");
         if asked.is_empty() {
             out.push_str("    let _ = (src, from, to, before, b);\n    false\n}\n");
