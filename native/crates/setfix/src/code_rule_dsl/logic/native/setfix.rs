@@ -361,6 +361,20 @@ pub(crate) fn rows_held(r: &InRel) -> usize {
     if r.view.is_some() { 0 } else { r.len() }
 }
 
+/// The relations `conn`'s runs hold now, its derived ones and its loaded inputs (`input: <spec>`): name, rows, columns,
+/// and bytes of values, of rows' levels, and of its dedup set, dead bits and indexes (`InRel::held_bytes`). What a
+/// chunk holds at its end, for the profile (`a chunk's relations at its end`).
+pub fn held_on(conn: impl Scoped) -> Vec<(String, usize, usize, [usize; 3])> {
+    let on = on(conn);
+    let row = |name: String, r: &InRel| {
+        let (values, levels, index) = r.held_bytes();
+        (name, rows_held(r), r.k, [values, levels, index])
+    };
+    let mut out: Vec<_> = on.derived.lock().iter().map(|(n, r)| row(n.clone(), r)).collect();
+    out.extend(on.inputs.lock().iter().map(|(key, r)| row(format!("input: {}", key.sql.chars().take(80).collect::<String>()), r)));
+    out
+}
+
 pub fn held_by_name() -> Vec<(String, usize, usize, usize, usize)> {
     let held = crate::code_rule_dsl::logic::profile::machine::<Held>();
     let conns: Vec<Arc<OnConn>> = held.0.lock().iter().filter_map(std::sync::Weak::upgrade).collect();

@@ -194,6 +194,8 @@ pub(super) struct Sampled {
     /// span open whose path holds the text (a phase that is not the peak's), and that footprint.
     pub(super) heap_in: Vec<(u32, u64)>,
     pub(super) heap_in_at: u64,
+    /// The relations' blocks live then, by the span that made them (`BlocksBySpan`), as `blocks` at the peak.
+    pub(super) blocks_in: Vec<(u32, u8, usize, usize, String)>,
 }
 
 /// `RERAIL_HEAP_AT`'s text, read once a run.
@@ -309,8 +311,10 @@ pub(super) fn sample() {
                     s.heap_in_at = now;
                     drop(s);
                     let heap = rerail_prof::heap::snapshot();
+                    let blocks = super::machine::<BlocksBySpan>().0.get().map_or_else(Vec::new, |f| f());
                     s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                     s.heap_in = heap;
+                    s.blocks_in = blocks;
                 }
                 if keep {
                     s.rows.push(sample);
@@ -434,6 +438,13 @@ pub(super) fn sampled_report(r: &mut String) {
         for (id, bytes) in s.heap_in.iter().take(30) {
             let _ = writeln!(r, "{:>10} MB  {}", mb(*bytes as f64), super::short(&rerail_prof::heap::name(*id), 150));
         }
+        let total: usize = s.blocks_in.iter().filter(|b| b.3 > 0).map(|b| b.2).sum();
+        let _ = writeln!(r, "Relations' blocks live then, by the span that made them ({} MB used in all, of {} blocks):", total >> 20, s.blocks_in.iter().map(|b| b.3).sum::<usize>());
+        let lives = ["a run's", "sources'", "kept", "a device run's own"];
+        for (id, life, bytes, n, by) in s.blocks_in.iter().take(40) {
+            let by = if by.is_empty() { String::new() } else { format!(", by {by}") };
+            let _ = writeln!(r, "{:>10} MB  {:>5} blocks, {}, made in {}{by}", bytes >> 20, n, lives.get(*life as usize).unwrap_or(&"?"), super::short(&rerail_prof::heap::name(*id), 140));
+        }
     }
     let mut rose: Vec<(&String, &(u64, u64))> = s.rise.iter().filter(|(_, v)| v.0 > 0).collect();
     rose.sort_by_key(|(_, v)| std::cmp::Reverse(v.0));
@@ -451,6 +462,10 @@ pub fn heap_tsv() -> String {
     let mut t = String::from("bytes\tspan\n");
     for (id, bytes) in &s.heap {
         let _ = writeln!(t, "{bytes}\t{}", rerail_prof::heap::name(*id));
+    }
+    // `RERAIL_HEAP_AT`'s snapshot, each span marked `in:`.
+    for (id, bytes) in &s.heap_in {
+        let _ = writeln!(t, "{bytes}\tin: {}", rerail_prof::heap::name(*id));
     }
     t
 }

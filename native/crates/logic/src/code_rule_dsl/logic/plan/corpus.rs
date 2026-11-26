@@ -5363,7 +5363,7 @@ fn run_observed_within(
     type Hand<'h> = &'h mut dyn FnMut(&str, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>) -> Result<()>;
     let measured_once = parking_lot::Mutex::new(measured_once);
     let evaluate_in = |task: Task, db: &Connection, modules: &Modules, hand: Option<Hand<'_>>| -> Result<Evaluated> {
-        let Task { chunk_nodes_built: _, sources, mut grower, documents, mut stats, mix, cone, asked_before, seq, view: _ } = task;
+        let Task { chunk_nodes_built, sources, mut grower, documents, mut stats, mix, cone, asked_before, seq, view: _ } = task;
         // Its batch, whose made documents the corpus batch shares (decision 0683), where the cross part reads any.
         let chunk_batch = if stored.is_empty() { None } else { sources.iter().find_map(|(_, s)| s.python_batch()) };
         // A measurement made once per mix (Q88): taken from a chunk filed before this one began (`plan_window` back),
@@ -5768,6 +5768,21 @@ fn run_observed_within(
             ChunkCounted { files: own_files.len(), counts, unions, held }
         });
         drop(cross_bound);
+        // What its relations hold as it ends (those its runs let go after their last reader are gone already), against
+        // its nodes: the rows a chunk's memory is made of.
+        crate::code_rule_dsl::logic::profile::decision("a chunk's relations at its end", || {
+            let held = crate::code_rule_dsl::logic::native::setfix::held_on(db);
+            let nodes = chunk_nodes_built.max(1);
+            let (rows, bytes): (usize, [usize; 3]) = held.iter().fold((0, [0; 3]), |(r, b), h| (r + h.1, [b[0] + h.3[0], b[1] + h.3[1], b[2] + h.3[2]]));
+            let total = bytes.iter().sum::<usize>();
+            let mut top: Vec<&(String, usize, usize, [usize; 3])> = held.iter().collect();
+            top.sort_by_key(|h| std::cmp::Reverse(h.3.iter().sum::<usize>()));
+            let named = top.iter().take(12).map(|h| format!("{} {} rows x{} {} KB ({} values, {} levels, {} index)", h.0, h.1, h.2, h.3.iter().sum::<usize>() >> 10, h.3[0] >> 10, h.3[1] >> 10, h.3[2] >> 10)).collect::<Vec<_>>().join("; ");
+            format!(
+                "{} relations, {rows} rows ({:.1} a node), {} MB ({:.0} bytes a node: values {} MB, levels {} MB, sets and indexes {} MB) over {nodes} nodes; the most: {named}",
+                held.len(), rows as f64 / nodes as f64, total >> 20, total as f64 / nodes as f64, bytes[0] >> 20, bytes[1] >> 20, bytes[2] >> 20
+            )
+        });
         // The chunk's native relations are forgotten, and its sources dropped before the connection's next chunk.
         crate::code_rule_dsl::logic::native::component::forget_derived(db);
         for rel in &bound {
