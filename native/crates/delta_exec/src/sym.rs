@@ -2,8 +2,8 @@
 //! as an id, in one atoms block (decision 0401), the one program global every level shares: K-form rows and facts
 //! hold ids, and an id names the same string at every level and in every run.
 //!
-//! The atoms block is a directory block, written by one operation only, `intern` (read-write), which adds a changed
-//! document's identifiers and strings. Everything else reads it where it lies: `find` and `name` here, the views
+//! The atoms block is a directory block, written by two operations only (read-write): `intern`, which adds a changed
+//! document's identifiers and strings, and `intern_texts`, which adds the texts a rule's functions answered with. Everything else reads it where it lies: `find` and `name` here, the views
 //! through a document's symbols block, never interning.
 
 use crate::dir::{BlockId, Directory};

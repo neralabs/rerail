@@ -865,9 +865,9 @@ def k1(failures: list) -> None:
              "k1-8-order", "k1-9-turn", "k1-10-emit", "k1-11-graph", "k1-12-strata")
     heads = {"k1-0-numbers": ("next",),
              "k1-1-read": ("head_of", "several", "alt", "group_alt", "split", "aux_alt", "scope", "under", "up", "lit_step", "lit_arg",
-                           "expr", "paren", "op_step", "op_arg", "term_root", "in_term", "read_decl", "agg_under", "agg_lit"),
+                           "expr", "paren", "op_step", "op_arg", "term_root", "in_term", "read_decl", "agg_under", "agg_lit", "call_fn"),
              "k1-2-shared": ("onesplit", "ctx", "shared", "rep", "gt", "agg_atom", "agg_outer"),
-             "k1-3-rank": ("succ", "least", "rank", "agg_own", "agg_rel", "agg_arg", "agg_pat"),
+             "k1-3-rank": ("succ", "least", "rank", "agg_own", "agg_rel", "agg_arg", "agg_pat", "call_in"),
              "k1-4-rules": ("inst", "read_rule", "read_arg", "in_rule", "read_step"),
              "k1-5-steps": ("in_atom", "mover", "below", "in_filter", "uses_var", "bound_before"), "k1-6-binds": ("binds", "waits"),
              "k1-7-place": ("place", "moved"), "k1-8-order": ("const_op", "at", "before", "twixt", "not_first"),

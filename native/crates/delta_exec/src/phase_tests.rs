@@ -752,6 +752,75 @@ fn aggregates_fold_their_groups_and_are_maintained_by_changed_groups() {
     }
 }
 
+/// L4's functors (B§10 step 9; L4-f option 3): `@f(…)` and `f(…)` as calls of functions the executor knows by name,
+/// each a step of kind `call` placed as an operator is, its answer a number or a text's symbol. A text no symbol had
+/// is interned by the launch's driver, which runs the launch again. No answer (a text that is no number, a zero
+/// divisor) gives no row. An edit is maintained as a cold run gives it. A function the executor does not know, and a
+/// call of another arity, are refused.
+#[test]
+fn calls_answer_by_function_and_text_answers_are_interned() {
+    const W: &str = "w(\"ab\", 2).\nw(\"cde\", 2).\nw(\"x.y\", 3).\n";
+    const RULES: &str = "len(s, n) :- w(s, _), n = strlen(s).\n\
+bang(t) :- w(s, _), t = cat(s, \"!\").\n\
+dotz(t) :- w(s, 3), t = @dot(s, \"z\").\n\
+hd(@head(s)) :- w(s, _).\n\
+nest(t) :- w(s, _), t = cat(@head(s), \"-\", @to_string(strlen(s))).\n\
+mx(x, @max(x, 2)) :- e(x, _).\n\
+q(x, @div(4, x - 1)) :- e(x, _).\n\
+num(n) :- w(s, _), n = to_number(s).\n\
+fit(s) :- w(s, n), n = strlen(s).\n\
+two(t) :- t = cat(\"a\", \"b\").\n";
+    const ASK_W: &str = "load(\"u-facts.rerail\", \"u-facts\", \"rr\").\nload(\"u-w.rerail\", \"u-w\", \"rr\").\nload(\"u.rerail\", \"u\", \"rr\").\n";
+    let mut r = kernel_files("phase-call", ASK_W, &[("u-facts.rerail", FACTS), ("u-w.rerail", W), ("u.rerail", RULES)]);
+    r.run();
+    let want = |r: &Run, rows: &[&[&str]]| -> BTreeSet<Vec<i64>> {
+        // A number, or a text's symbol (`'` before a text written as digits).
+        rows.iter().map(|row| row.iter().map(|c| c.strip_prefix('\'').map_or_else(|| c.parse::<i64>().unwrap_or_else(|_| r.s(c)), |t| r.s(t))).collect()).collect()
+    };
+    let check = |r: &Run, when: &str, cases: &[(&str, &[&[&str]])]| {
+        for (rel, rows) in cases {
+            assert_eq!(r.rows(2, rel), want(r, rows), "{rel}, {when}");
+        }
+    };
+    let first: [(&str, &[&[&str]]); 10] = [
+        ("len", &[&["ab", "2"], &["cde", "3"], &["x.y", "3"]]),
+        ("bang", &[&["ab!"], &["cde!"], &["x.y!"]]),
+        ("dotz", &[&["x.y.z"]]),
+        ("hd", &[&["ab"], &["cde"], &["x"]]),
+        ("nest", &[&["ab-2"], &["cde-3"], &["x-3"]]),
+        ("mx", &[&["1", "2"], &["2", "2"], &["3", "3"]]),
+        ("q", &[&["2", "4"], &["3", "2"]]),
+        ("num", &[]),
+        ("fit", &[&["ab"], &["x.y"]]),
+        ("two", &[&["ab"]]),
+    ];
+    check(&r, "first", &first);
+    // An edit: a text added, one taken away, one changed; as the edit gives and as a cold run gives.
+    r.write("u-w.rerail", "w(\"ab\", 2).\nw(\"x.y\", 1).\nw(\"7\", 1).\nw(\"pq.rs\", 3).\n", 40);
+    r.run();
+    let after: [(&str, &[&[&str]]); 7] = [
+        ("len", &[&["ab", "2"], &["x.y", "3"], &["'7", "1"], &["pq.rs", "5"]]),
+        ("bang", &[&["ab!"], &["x.y!"], &["7!"], &["pq.rs!"]]),
+        ("dotz", &[&["pq.rs.z"]]),
+        ("hd", &[&["ab"], &["x"], &["'7"], &["pq"]]),
+        ("nest", &[&["ab-2"], &["x-3"], &["7-1"], &["pq-5"]]),
+        ("num", &[&["7"]]),
+        ("fit", &[&["ab"], &["'7"]]),
+    ];
+    check(&r, "after the edit", &after);
+    r.last = None;
+    r.run();
+    check(&r, "cold", &after);
+    for (name, rules, why) in [
+        ("unknown", "bad(t) :- w(s, _), t = nosuch(s).\n", "a call of nosuch, which is no function"),
+        ("arity", "bad(t) :- w(s, _), t = strlen(s, s).\n", "strlen of 2 arguments"),
+    ] {
+        let mut r = kernel_files(&format!("phase-call-{name}"), ASK_W, &[("u-facts.rerail", FACTS), ("u-w.rerail", W), ("u.rerail", rules)]);
+        let e = r.try_run().expect_err(name);
+        assert!(e.contains(why), "{name}: {e}");
+    }
+}
+
 /// K1's arithmetic (B§6, L3; B§10 step 8; K1-a): each expression a step of an operator (a Pure answer, B§3 sentence 3),
 /// its answer a variable named by its node, placed after the atom that binds the last variable under it and run in
 /// postorder there (an operand before its operator, an operator before its filter), one of constants alone first. Each

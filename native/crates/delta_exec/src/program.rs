@@ -177,14 +177,16 @@ impl Fold {
     }
 }
 
-/// What a step does: an atom of a relation, its negation, a comparison, an atom of an arithmetic operator (`Fn`), or
-/// an aggregate (`Agg`) of a relation: its arguments the relation's pattern, then its value's term and its answer's.
+/// What a step does: an atom of a relation, its negation, a comparison, an atom of an arithmetic operator (`Fn`), a
+/// call of a function (`Call`, its place in `funcs::FUNCS`: its arguments, then its answer), or an aggregate (`Agg`)
+/// of a relation: its arguments the relation's pattern, then its value's term and its answer's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Kind {
     Atom,
     Not,
     Cmp(Cmp),
     Fn(Arith),
+    Call(u16),
     Agg(AggOp),
 }
 
@@ -273,7 +275,7 @@ impl Rule {
             }
             match s.kind {
                 Kind::Atom => bound.extend(s.args.iter().filter_map(var)),
-                Kind::Fn(_) | Kind::Agg(_) => bound.extend(s.args.last().and_then(var)),
+                Kind::Fn(_) | Kind::Call(_) | Kind::Agg(_) => bound.extend(s.args.last().and_then(var)),
                 _ => {}
             }
         }
@@ -338,7 +340,7 @@ impl Program {
         assert_eq!(rows.len(), RELATIONS.len(), "a set a K-form relation");
         let at = |name: &str| RELATIONS.iter().position(|r| r.0 == name).expect("a K-form relation");
         let sym = |s: &str| find(atoms, s);
-        let (atom, not, cmp) = (sym("atom"), sym("not"), sym("cmp"));
+        let (atom, not, cmp, call) = (sym("atom"), sym("not"), sym("cmp"), sym("call"));
         let ops: BTreeMap<i64, Cmp> = Cmp::ALL.iter().filter_map(|(c, s)| sym(s).map(|i| (i, *c))).collect();
         let ariths: BTreeMap<i64, Arith> = Arith::ALL.iter().filter_map(|(c, s)| sym(s).map(|i| (i, *c))).collect();
         let aggs: BTreeMap<i64, AggOp> = AggOp::ALL.iter().filter_map(|(c, s)| sym(s).map(|i| (i, *c))).collect();
@@ -391,7 +393,11 @@ impl Program {
                 },
                 k if k == not => Kind::Not,
                 k if k == cmp => Kind::Cmp(*ops.get(&r[5]).ok_or_else(|| refuse(format!("step {key:?}: an unknown comparison")))?),
-                _ => return Err(refuse(format!("step {key:?}: a kind that is not atom, not or cmp"))),
+                k if k == call => {
+                    let name = crate::sym::name_of(atoms, r[5]);
+                    Kind::Call(crate::funcs::find(&name).ok_or_else(|| refuse(format!("step {key:?}: a call of {name}, which is no function")))? as u16)
+                }
+                _ => return Err(refuse(format!("step {key:?}: a kind that is not atom, not, cmp or call"))),
             };
             let rule = modules.get_mut(&m).and_then(|md| md.rules.iter_mut().find(|x| x.id == id)).ok_or_else(|| refuse(format!("step {key:?} of no rule")))?;
             rule.steps.push(Step { key, kind, rel: if kind.reads() { r[5] } else { 0 }, args: Vec::new() });
@@ -404,6 +410,17 @@ impl Program {
                     rule.steps[k].args = term_list(rule.module, rule.id, key)?;
                     // An aggregate as K1 writes it: the relation it folds, its answer, its value, then the pattern. As
                     // the executor reads it: the relation the step's, the pattern, the value and the answer.
+                    // A call as K1 writes it: its answer, then its arguments. As the executor reads it: its arguments,
+                    // then its answer, as an operator's.
+                    if let Kind::Call(f) = rule.steps[k].kind {
+                        let s = &mut rule.steps[k];
+                        let n = s.args.len().saturating_sub(1);
+                        if !crate::funcs::takes(usize::from(f), n) {
+                            let name = crate::funcs::FUNCS[usize::from(f)].0;
+                            return Err(Refused { module: rule.module, rule: rule.id, why: format!("step {key:?}: {name} of {n} arguments") });
+                        }
+                        s.args.rotate_left(1);
+                    }
                     if let Kind::Agg(op) = rule.steps[k].kind {
                         let s = &mut rule.steps[k];
                         let refuse = |why: String| Refused { module: rule.module, rule: rule.id, why };
@@ -501,6 +518,13 @@ impl Program {
                             let ins = s.args[..op.operands()].iter().filter_map(|t| if let Term::Var(v) = t { Some(*v) } else { None });
                             if let Some(v) = ins.clone().find(|v| !bound.contains(v)) {
                                 return Err(rule.refuse(format!("step {:?}: operand {} is not bound by an earlier step", s.key, n(v))));
+                            }
+                            bound.extend(vars);
+                        }
+                        Kind::Call(_) => {
+                            let ins = s.args[..s.args.len() - 1].iter().filter_map(|t| if let Term::Var(v) = t { Some(*v) } else { None });
+                            if let Some(v) = ins.clone().find(|v| !bound.contains(v)) {
+                                return Err(rule.refuse(format!("step {:?}: argument {} is not bound by an earlier step", s.key, n(v))));
                             }
                             bound.extend(vars);
                         }

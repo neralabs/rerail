@@ -329,11 +329,12 @@ impl ChainVars {
                     n.needs = vars & !own;
                 }
                 Op::Cmp(_) => n.needs = vars,
-                // An operator needs its operands and binds its answer's variable.
-                Op::Fn(op) => {
+                // An operator or a call needs its operands and binds its answer's variable.
+                Op::Fn(_) | Op::Call(_) => {
+                    let k = if let Op::Fn(op) = n.op { op.operands() } else { n.args.len() - 1 };
                     let of = |a: &V| if let V::Var(x) = *a { 1u64 << x } else { 0 };
-                    n.needs = n.args[..op.operands()].iter().fold(0, |m, a| m | of(a));
-                    n.binds = of(&n.args[op.operands()]) & !n.needs;
+                    n.needs = n.args[..k].iter().fold(0, |m, a| m | of(a));
+                    n.binds = of(&n.args[k]) & !n.needs;
                 }
             }
         }
@@ -348,7 +349,7 @@ impl ChainVars {
     /// The variables the atoms and operators of `placed` bind (an aggregate's answer, not its own variables).
     fn bound(&self, placed: u64) -> u64 {
         self.nodes.iter().enumerate().filter(|(j, _)| placed >> j & 1 == 1).fold(0, |m, (_, n)| match n.op {
-            Op::Atom | Op::Fn(_) | Op::AggKeys => m | n.binds,
+            Op::Atom | Op::Fn(_) | Op::Call(_) | Op::AggKeys => m | n.binds,
             Op::Agg(..) => m | (n.binds & if let Some(V::Var(x)) = n.args.last() { 1u64 << x } else { 0 }),
             _ => m,
         })
@@ -528,7 +529,7 @@ fn fan(c: &ChainVars, lp: &LinePrice, placed: u64, j: usize) -> f64 {
             _ => 1.0 / 3.0,
         },
         // One answer a tuple, or a test of the answer where it is bound.
-        Op::Fn(_) | Op::Agg(..) => {
+        Op::Fn(_) | Op::Call(_) | Op::Agg(..) => {
             if n.binds == 0 {
                 0.1
             } else {
@@ -1017,7 +1018,7 @@ fn lines(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let ([plan, atoms, memo], [out]) = c.views([0, 1, 2], [3]);
     let names = Names::new(atoms);
     let (p, keys) = plan_and_keys(plan);
-    let env = Env::new(table, plan, &names);
+    let env = Env::new(table, plan, &names, atoms);
     let mut w = vec![p.terms.len() as i64];
     for (ti, t) in p.terms.iter().enumerate() {
         let chain = ChainVars::of(t);
@@ -1028,7 +1029,7 @@ fn lines(c: &mut Ctx<'_, '_, '_>, _: Tile) {
             rows as f64
         };
         // Its declarations (0361), unless its rows broke them.
-        let decl: Vec<StepPrice> = t.steps.iter().map(|s| if matches!(s.op, Op::Cmp(_) | Op::Fn(_)) || note.as_ref().is_some_and(|n| n.broken) { StepPrice::default() } else { StepPrice { decl: env.declared(s.src), ..StepPrice::default() } }).collect();
+        let decl: Vec<StepPrice> = t.steps.iter().map(|s| if matches!(s.op, Op::Cmp(_) | Op::Fn(_) | Op::Call(_)) || note.as_ref().is_some_and(|n| n.broken) { StepPrice::default() } else { StepPrice { decl: env.declared(s.src), ..StepPrice::default() } }).collect();
         let mut default = None;
         let (status, kept) = match &chain {
             None => (ONE, Vec::new()),
@@ -1168,7 +1169,7 @@ fn price(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let ([plan, atoms, memo, lines, running], [out]) = c.views([0, 1, 2, 3, 4], [5]);
     let names = Names::new(atoms);
     let (p, keys) = plan_and_keys(plan);
-    let env = Env::new(table, plan, &names);
+    let env = Env::new(table, plan, &names, atoms);
     let (ls, rs) = (lines_of(lines), running_of(running));
     let mut w = vec![p.terms.len() as i64];
     for (ti, t) in p.terms.iter().enumerate() {
@@ -1186,7 +1187,7 @@ fn price(c: &mut Ctx<'_, '_, '_>, _: Tile) {
             .iter()
             .map(|s| {
                 let (rows, ndv) = env.side_stats(s.src, s.side, s.args.len());
-                let decl = if broken || matches!(s.op, Op::Cmp(_) | Op::Fn(_)) { Facts::default() } else { env.declared(s.src) };
+                let decl = if broken || matches!(s.op, Op::Cmp(_) | Op::Fn(_) | Op::Call(_)) { Facts::default() } else { env.declared(s.src) };
                 StepPrice { card: rows as f64, ndv: ndv.into_iter().map(|x| x as f64).collect(), corr: Vec::new(), decl }
             })
             .collect();
@@ -1489,7 +1490,7 @@ fn stats(c: &mut Ctx<'_, '_, '_>, _: Tile) {
         let ([plan, atoms, running, memo], []) = c.views([0, 1, 2, 3], []);
         let names = Names::new(atoms);
         let (p, keys) = plan_and_keys(plan);
-        let env = Env::new(table, plan, &names);
+        let env = Env::new(table, plan, &names, atoms);
         let mut w = words_of(running);
         w.remove(0);
         let rs = running_of_words(&w);
@@ -2186,7 +2187,7 @@ impl Round<'_> {
             for depth in d + 1..width {
                 let from = cur.unwrap_or(frames);
                 let only = Some((ti, if depth == d + 1 { sample } else { 0 }));
-                let (f, _) = body::emit_only(self.reg, self.body.step, dir, pb, self.atoms, Some(from), depth as i64, width, &mut room, only)?;
+                let (f, _) = body::emit_only(self.reg, self.body, self.body.step, dir, pb, self.atoms, Some(from), depth as i64, width, &mut room, only)?;
                 if let Some(c) = cur.replace(f) {
                     dir.release(c);
                 }

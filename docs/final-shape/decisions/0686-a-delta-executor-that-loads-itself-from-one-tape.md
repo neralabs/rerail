@@ -2369,3 +2369,41 @@ Checks (Relax, local, 138 of 138): `aggregates_fold_their_groups_and_are_maintai
 - An edit of the facts maintained across five aggregates, equal to the rows written by hand and to a cold run. With
   the before side's fold given +1, the edit's rows are wrong.
 - The two refusals.
+
+### L4: functors (B§10 step 9, L4-f option 3; 2026-11-26)
+
+Calls are Pure answers the executor knows by name. Each is a step placed as an operator is (K1-a).
+
+- **The functions** (`funcs::FUNCS`). Each has its meaning in `core.rerail` or Soufflé: `cat` and `concat` (any
+  count), `strlen`, `substr` (from 0), `to_string`, `to_number`, `lower`, `upper`, `ord`, `add`, `sub`, `mul`, `div`,
+  `mod`, `max`, `min`, `dot` and `head`.
+  - A function reads its arguments' values: a number, or a symbol's text, read from the atoms where it lies.
+  - It gives a number or a text.
+  - It gives no answer, and so no row, where it has none: a text that is no number, an overflow, a zero divisor, or a
+    node's name where it reads a text.
+- **Lowering** (`k1-1`, `k1-3`, `k1-4`, `k1-5`). `@f(…)` (`functor_call`) and `f(…)` (`call`) are expressions.
+  - Each is a step of kind `call`, whose relation column names the function. A function's name is an identifier and
+    may name a relation too, so it can't be an `atom` step as an operator is.
+  - The call's answer is its first term, its node's variable (`op_arg`, single-file). Its arguments follow from 1
+    (`call_in`, cross-file through `next`, so in a relation of its own).
+  - It moves: it is placed after the atom that binds the last variable under it, nested calls first (postorder).
+  - `STEP_KINDS` gains `call`.
+- **Reading** (`Program::read`). A `call` step names a function the executor knows, else it is refused ("a call of f,
+  which is no function"). It is refused at another arity ("f of n arguments"). Its terms are reordered: the
+  arguments, then the answer. Its arguments must be bound before it (B§7), and it binds its answer.
+- **Text answers.**
+  - A text answer is the symbol of that text. The launch's `Env` reads the atoms to find it.
+  - A text with no symbol yet is asked of the launch's driver: `seed` and `step` write the texts asked into their
+    frames block in place of its frames, sorted (`intern::texts_put`), and count them in control (`C_ASKED`).
+  - `emit_only` interns them with `intern_texts`, then runs the launch again. `intern_texts` is the atoms' second
+    writer beside `intern`: read the texts · rw the atoms, a twin, one ordered scan.
+  - The planner's estimates (`lines`, `price`, `stats`) ask nothing. A text with no symbol yet gives them no row.
+
+Checks (Relax, local, 139 of 139): `calls_answer_by_function_and_text_answers_are_interned`.
+- Ten programs against hand-written rows: `strlen`, `cat` making new texts, `@dot`, `@head` in a head, nested calls,
+  `@max`, `@div` with a zero divisor, `to_number` of a text that is no number, an answer compared with a bound
+  variable, and a call of constants.
+- An edit of the facts (a text added, one taken away, one changed), equal to the rows written by hand and to a cold
+  run.
+- The two refusals.
+- Mutations caught: the driver not interning the texts asked, and the answer left first.

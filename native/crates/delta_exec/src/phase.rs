@@ -400,6 +400,12 @@ impl<'s> Planner<'s> {
                     let args = bind(&st.args, j, &mut bound);
                     steps.push(StepPlan { op: Op::Fn(op), src: 0, side: Side::After, args });
                 }
+                // A call, as an operator: its arguments bound before it, its answer a variable it binds or a value it
+                // holds.
+                Kind::Call(f) => {
+                    let args = bind(&st.args, j, &mut bound);
+                    steps.push(StepPlan { op: Op::Call(f), src: 0, side: Side::After, args });
+                }
                 Kind::Atom | Kind::Not => {
                     let d = if side == Side::Delta { changed } else { docs };
                     let src = self.source(st.rel, st.arity(), d);

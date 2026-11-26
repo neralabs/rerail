@@ -54,6 +54,13 @@ op_arg(d, e, 1, a) :- kind(d, e, "binary_expression"), field(d, e, "right", a).
 op_arg(d, e, 2, e) :- kind(d, e, "binary_expression").
 op_arg(d, e, 0, a) :- kind(d, e, "unary_expression"), field(d, e, "operand", a).
 op_arg(d, e, 1, e) :- kind(d, e, "unary_expression").
+// A call (step 9, L4-f option 3), `@f(…)` or `f(…)`: an expression, a step of kind `call` naming its function, its
+// answer first (the executor puts it last), its arguments after it (`call_in`).
+expr(d, e) :- kind(d, e, "functor_call").
+expr(d, e) :- kind(d, e, "call").
+call_fn(d, e, f) :- kind(d, e, "functor_call"), field(d, e, "function", n), text(d, n, f).
+call_fn(d, e, f) :- kind(d, e, "call"), field(d, e, "function", n), text(d, n, f).
+op_arg(d, e, 0, e) :- call_fn(d, e, _), kind(d, e, _).
 // The nodes in a literal's or a head's terms (no scope lies there).
 term_root(d, l) :- kind(d, l, "atom").
 term_root(d, l) :- kind(d, l, "negation").

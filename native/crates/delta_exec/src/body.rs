@@ -99,11 +99,14 @@ pub enum Op {
     /// The changed groups of an aggregate's source, once a key (a delta term's first step): its frame word a changed
     /// row, its keys bound from it.
     AggKeys,
+    /// A call of function `funcs::FUNCS[f]`: its arguments, then its answer; its frame word its answer.
+    Call(u16),
 }
 
 /// Op codes past the comparisons and the operators.
 const AGG_KEYS: i64 = 2 + Cmp::ALL.len() as i64 + 7;
 const AGG_AT: i64 = AGG_KEYS + 1;
+const CALL_AT: i64 = AGG_AT + (1 << 24);
 
 /// A step of a chain: what it does, its source and side, its arguments.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -233,6 +236,7 @@ impl Plan {
                     Op::Fn(a) => 2 + Cmp::ALL.len() as i64 + a.code(),
                     Op::AggKeys => AGG_KEYS,
                     Op::Agg(a, v) => AGG_AT + (a.code() << 16) + i64::from(v),
+                    Op::Call(f) => CALL_AT + i64::from(f),
                 };
                 w.extend([op, s.src as i64, s.side as i64, s.args.len() as i64]);
                 s.args.iter().for_each(|a| put_arg(&mut w, a));
@@ -316,6 +320,7 @@ impl Plan {
                     1 => Op::Not,
                     c if c < 2 + Cmp::ALL.len() as i64 => Op::Cmp(Cmp::of_code(c - 2).expect("a comparison")),
                     AGG_KEYS => Op::AggKeys,
+                    c if c >= CALL_AT => Op::Call((c - CALL_AT) as u16),
                     c if c >= AGG_AT => Op::Agg(AggOp::of_code((c - AGG_AT) >> 16).expect("an aggregate"), ((c - AGG_AT) & 0xffff) as u16),
                     c => Op::Fn(Arith::of_code(c - 2 - Cmp::ALL.len() as i64).expect("an operator")),
                 };
@@ -364,16 +369,19 @@ pub(crate) enum Live<'t> {
     View { docs: Vec<usize> },
 }
 
-/// Everything a launch reads, where it lies: the plan, its sources, and its documents' views.
+/// Everything a launch reads, where it lies: the plan, its sources, its documents' views and the atoms; and the texts
+/// its calls answered with that have no symbol yet (`asked`).
 pub(crate) struct Env<'t> {
     pub(crate) plan: Plan,
+    atoms: &'t [u8],
+    pub(crate) asked: std::cell::RefCell<BTreeSet<String>>,
     srcs: Vec<Live<'t>>,
     /// Each document's view of each kind on each side, by its place: `[before, after]`.
     views: Vec<[Vec<Option<TapeView<'t>>>; 2]>,
 }
 
 impl<'t> Env<'t> {
-    pub(crate) fn new(table: &'t Table<'t>, plan_bytes: &[u8], names: &'t Names) -> Env<'t> {
+    pub(crate) fn new(table: &'t Table<'t>, plan_bytes: &[u8], names: &'t Names, atoms: &'t [u8]) -> Env<'t> {
         let n = word::<i64>(plan_bytes, BODY_AT) as usize;
         let words: Vec<i64> = (0..n).map(|i| word::<i64>(plan_bytes, BODY_AT + 8 + 8 * i)).collect(); // copy: derived (the plan's few words, decoded)
         let plan = Plan::of_words(&words);
@@ -397,7 +405,7 @@ impl<'t> Env<'t> {
             View::ALL.iter().map(|v| Some(TapeView::new(v.0, d, reads, syms, names))).collect()
         };
         let views = plan.docs.iter().map(|d| [text(&d.before, d.d), text(&d.after, d.d)]).collect();
-        Env { plan, srcs, views }
+        Env { plan, srcs, views, atoms, asked: Default::default() }
     }
 
     fn view_of(&self, src: usize) -> View {
@@ -562,8 +570,8 @@ impl<'t> Env<'t> {
                     debug_assert_eq!(c, op.operands(), "an operator binds its answer only");
                     refs[j] as i64
                 }
-                Op::Agg(..) => {
-                    debug_assert_eq!(c, t.steps[j].args.len() - 1, "an aggregate binds its answer only");
+                Op::Agg(..) | Op::Call(_) => {
+                    debug_assert_eq!(c, t.steps[j].args.len() - 1, "an aggregate or a call binds its answer only");
                     refs[j] as i64
                 }
                 _ => self.get(t.steps[j].src, refs[j], c),
@@ -664,7 +672,7 @@ impl<'t> Env<'t> {
                 }
                 // A filter first (a `not` or a `cmp` of constants: B§7 refuses an unbound variable in either): the
                 // empty tuple, kept when it passes. An operator of constants: its answer.
-                (Op::Not | Op::Cmp(_) | Op::Fn(_) | Op::Agg(..), _) => {
+                (Op::Not | Op::Cmp(_) | Op::Fn(_) | Op::Call(_) | Op::Agg(..), _) => {
                     let mut probes = 0;
                     self.step(ti, 0, &[NO_ROW], &mut probes, &mut |r| f(ti, t.sign, r.unwrap_or(NO_ROW)));
                 }
@@ -709,6 +717,29 @@ impl<'t> Env<'t> {
                 }
             }
             Op::AggKeys => unreachable!("an aggregate's changed groups lead its chain"),
+            // The function's answer: none where it has none; a text the symbol of that text, which a text with none
+            // yet asks of the launch's driver (`asked`), giving no row in this launch, which runs again once it has.
+            Op::Call(fi) => {
+                let n = s.args.len() - 1;
+                let x: Vec<i64> = s.args[..n].iter().map(|&a| self.val(t, refs, a)).collect(); // copy: derived (a call's few arguments)
+                let text = |id: i64| u32::try_from(id).ok().and_then(|i| rerail_blocks::atoms::name_in(self.atoms, i));
+                let v = match crate::funcs::call(usize::from(fi), &x, &text) {
+                    None => return,
+                    Some(crate::funcs::Out::Num(v)) => v,
+                    Some(crate::funcs::Out::Text(s)) => match crate::sym::find(self.atoms, &s) {
+                        Some(v) => v,
+                        None => {
+                            self.asked.borrow_mut().insert(s);
+                            return;
+                        }
+                    },
+                };
+                match s.args[n] {
+                    Arg::Bind | Arg::Wild => f(Some(v as u64)),
+                    a if self.val(t, refs, a) == v => f(Some(v as u64)),
+                    _ => {}
+                }
+            }
             // The operator's answer: none where it has none (a division by zero, an overflow), else the step's frame
             // word, where its last column is a variable it binds, or kept where that column holds the answer.
             Op::Fn(op) => {
@@ -806,22 +837,44 @@ const C_PROBES: usize = BODY_AT + 16;
 const C_ROWS: usize = BODY_AT + 24;
 const C_TERM: usize = BODY_AT + 32;
 const C_LIMIT: usize = BODY_AT + 40;
-const CONTROL_BYTES: usize = 48;
+/// The texts the launch's calls asked for, written in its frames block in place of its frames (`ask`).
+const C_ASKED: usize = BODY_AT + 48;
+const CONTROL_BYTES: usize = 56;
+
+/// The texts `env`'s calls answered with and found no symbol for, written into `out` in place of the launch's frames
+/// (`rerail_delta_twins::intern::texts_put`) and counted in control `ctl`, or past `out`'s room, the room they need
+/// named. Its driver interns them (`intern_texts`) and runs the launch again.
+fn ask(env: &Env<'_>, out: &mut [u8], ctl: &mut [u8], width: usize) {
+    use rerail_delta_twins::intern::{texts_bytes, texts_put};
+    let asked = env.asked.borrow();
+    if asked.is_empty() {
+        return;
+    }
+    let need = texts_bytes(asked.iter().map(String::as_str));
+    if BODY_AT + need > out.len() {
+        set_word::<i64>(ctl, C_NEEDED, need.div_ceil(8 * (width + 2)) as i64);
+        return;
+    }
+    texts_put(out, asked.iter().map(String::as_str));
+    set_word::<i64>(ctl, C_NEEDED, 0);
+    set_word::<i64>(ctl, C_ASKED, asked.len() as i64);
+}
 
 fn seed(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let table = c.table;
     let ([plan, atoms], [out, ctl]) = c.views([PLAN, ATOMS], [OUT, CONTROL]);
     let names = Names::new(atoms);
-    let env = Env::new(table, plan, &names);
+    let env = Env::new(table, plan, &names, atoms);
     let width = env.plan.width();
     emit_frames(out, ctl, width, &mut |_, f| env.seed(&mut |ti, sign, r| f(ti, sign, &[r])));
+    ask(&env, out, ctl, width);
 }
 
 fn step(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let table = c.table;
     let ([plan, atoms, frames], [out, ctl]) = c.views([PLAN, ATOMS, FRAMES], [OUT, CONTROL]);
     let names = Names::new(atoms);
-    let env = Env::new(table, plan, &names);
+    let env = Env::new(table, plan, &names, atoms);
     let d = word::<i64>(ctl, C_ARG) as usize;
     // A trial's launch (0207): only chain `C_TERM − 1`'s tuples, at most `C_LIMIT` of them (0: every chain, all).
     let (only, limit) = (word::<i64>(ctl, C_TERM), word::<i64>(ctl, C_LIMIT));
@@ -855,6 +908,7 @@ fn step(c: &mut Ctx<'_, '_, '_>, _: Tile) {
         }
     });
     set_word::<i64>(ctl, C_PROBES, probes as i64);
+    ask(&env, out, ctl, width);
 }
 
 fn head(c: &mut Ctx<'_, '_, '_>, _: Tile) {
@@ -862,7 +916,7 @@ fn head(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let ([plan, atoms, frames, ctl], [runs]) = c.views([PLAN, ATOMS, FRAMES, CONTROL], [OUT]);
     let h = word::<i64>(ctl, C_ARG) as usize;
     let names = Names::new(atoms);
-    let env = Env::new(table, plan, &names);
+    let env = Env::new(table, plan, &names, atoms);
     let mine = |ti: usize| env.plan.terms[ti].head == h;
     let n = tuples(frames).filter(|t| mine(t.0)).count();
     let Some(mut at) = runs_claim_in(runs, n as u32) else { return };
@@ -940,6 +994,8 @@ pub struct BodyOps {
     pub seed: OpId,
     pub step: OpId,
     pub head: OpId,
+    /// `intern_texts`: the texts a launch's calls asked for.
+    pub texts: OpId,
 }
 
 impl BodyOps {
@@ -950,7 +1006,8 @@ impl BodyOps {
         reg.register_reference(Version::host(step, "step on the host", &STEP_HOST, &EMIT))?;
         let head = reg.declare(&HEAD)?;
         reg.register_reference(Version::host(head, "head on the host", &HEAD_HOST, &EMIT))?;
-        Ok(BodyOps { seed, step, head })
+        let texts = crate::intern::declare_texts(reg)?;
+        Ok(BodyOps { seed, step, head, texts })
     }
 }
 
@@ -1003,20 +1060,32 @@ fn control_word(dir: &Directory, id: BlockId, at: usize) -> Result<i64, String> 
 /// Runs `op` into a new frames block from `frames` (`None`: `seed`), again at the room it names when it outgrew the
 /// first: the new block, and the probes it made.
 #[allow(clippy::too_many_arguments)]
-fn emit(reg: &Registry, op: OpId, dir: &mut Directory, plan: BlockId, atoms: BlockId, frames: Option<BlockId>, arg: i64, width: usize, room: &mut usize) -> Result<(BlockId, u64), String> {
-    emit_only(reg, op, dir, plan, atoms, frames, arg, width, room, None)
+fn emit(reg: &Registry, ops: &BodyOps, op: OpId, dir: &mut Directory, plan: BlockId, atoms: BlockId, frames: Option<BlockId>, arg: i64, width: usize, room: &mut usize) -> Result<(BlockId, u64), String> {
+    emit_only(reg, ops, op, dir, plan, atoms, frames, arg, width, room, None)
 }
 
 /// `emit`, for a trial's launch: only chain `only.0`'s first `only.1` tuples.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn emit_only(reg: &Registry, op: OpId, dir: &mut Directory, plan: BlockId, atoms: BlockId, frames: Option<BlockId>, arg: i64, width: usize, room: &mut usize, only: Option<(usize, usize)>) -> Result<(BlockId, u64), String> {
+pub(crate) fn emit_only(reg: &Registry, ops: &BodyOps, op: OpId, dir: &mut Directory, plan: BlockId, atoms: BlockId, frames: Option<BlockId>, arg: i64, width: usize, room: &mut usize, only: Option<(usize, usize)>) -> Result<(BlockId, u64), String> {
     loop {
         let out = dir.make(kind::SCRATCH, frames_bytes(*room, width));
         let ctl = control_for(dir, arg, only)?;
         let slots: Vec<BlockId> = [plan, atoms, out, ctl].into_iter().chain(frames).collect();
         let ran = run_cpu(reg, dir, op, &slots, &[], Tiling::WHOLE);
-        let (needed, probes) = match ran.and_then(|()| Ok((control_word(dir, ctl, C_NEEDED)?, control_word(dir, ctl, C_PROBES)?))) {
-            Ok(x) => x,
+        let words = ran.and_then(|()| Ok((control_word(dir, ctl, C_NEEDED)?, control_word(dir, ctl, C_PROBES)?, control_word(dir, ctl, C_ASKED)?)));
+        // The texts its calls asked for, interned, and the launch run again (its answers then found).
+        let words = match words {
+            Ok((_, _, asked)) if asked > 0 => run_cpu(reg, dir, ops.texts, &[out, atoms], &[], Tiling::WHOLE).map(|()| None),
+            Ok(w) => Ok(Some(w)),
+            Err(e) => Err(e),
+        };
+        let (needed, probes) = match words {
+            Ok(Some((needed, probes, _))) => (needed, probes),
+            Ok(None) => {
+                dir.release(out);
+                dir.release(ctl);
+                continue;
+            }
             Err(e) => {
                 dir.release(out);
                 dir.release(ctl);
@@ -1062,12 +1131,12 @@ pub(crate) fn run_block(reg: &Registry, ops: &BodyOps, dir: &mut Directory, atom
     }
     let width = plan.width();
     let mut room = 256usize;
-    let (mut frames, mut probes) = emit(reg, ops.seed, dir, pb, atoms, None, 0, width, &mut room)?;
+    let (mut frames, mut probes) = emit(reg, ops, ops.seed, dir, pb, atoms, None, 0, width, &mut room)?;
     let mut pb = pb;
     let ran = (|| {
         pb = between(dir, 0, frames, pb)?;
         for d in 1..width {
-            let next = emit(reg, ops.step, dir, pb, atoms, Some(frames), d as i64, width, &mut room);
+            let next = emit(reg, ops, ops.step, dir, pb, atoms, Some(frames), d as i64, width, &mut room);
             dir.release(frames);
             let (f, p) = next?;
             frames = f;

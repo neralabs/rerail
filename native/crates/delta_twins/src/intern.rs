@@ -35,7 +35,7 @@ crate::params! {
 }
 
 /// K-form's step kinds, which a pass writes as symbols.
-pub const STEP_KINDS: [&str; 3] = ["atom", "not", "cmp"];
+pub const STEP_KINDS: [&str; 4] = ["atom", "not", "cmp", "call"];
 
 /// The slots.
 const SOURCE: usize = 0;
@@ -192,3 +192,53 @@ pub const INTERN: &[TwinPhase] = &[
     TwinPhase { name: "hash", items: |c| count(c.read(SYMS)) as u32, run: hash, again: None },
     TwinPhase { name: "scan", items: |_| 1, run: scan, again: None },
 ];
+
+// ---- intern_texts ---------------------------------------------------------------------------------------------
+
+/// `intern_texts`' slots: the texts (read: a body launch's frames block, the texts its functions answered with that
+/// had no symbol, `texts_put`) and the atoms (read-write).
+pub const TEXTS: usize = 0;
+pub const TEXTS_ATOMS: usize = 1;
+
+/// The bytes the texts `texts` take from a block's body: their count, then each one's length and its bytes, padded
+/// to a word.
+pub fn texts_bytes<'s>(texts: impl IntoIterator<Item = &'s str>) -> usize {
+    8 + texts.into_iter().map(|t| 8 + t.len().next_multiple_of(8)).sum::<usize>()
+}
+
+/// Writes the texts `texts` into a block's bytes `b`, from its body (room for `texts_bytes` of them).
+pub fn texts_put<'s>(b: &mut [u8], texts: impl IntoIterator<Item = &'s str>) {
+    let mut at = BODY_AT + 8;
+    let mut n = 0;
+    for t in texts {
+        set_word::<u64>(b, at, t.len() as u64);
+        b[at + 8..at + 8 + t.len()].copy_from_slice(t.as_bytes());
+        at += 8 + t.len().next_multiple_of(8);
+        n += 1;
+    }
+    set_word::<u64>(b, BODY_AT, n);
+}
+
+/// The texts a block's bytes `b` hold (`texts_put`), read where they lie.
+pub fn texts_in(b: &[u8]) -> impl Iterator<Item = &str> {
+    let n = word::<u64>(b, BODY_AT) as usize;
+    let mut at = BODY_AT + 8;
+    (0..n).map(move |_| {
+        let len = word::<u64>(b, at) as usize;
+        let t = std::str::from_utf8(&b[at + 8..at + 8 + len]).expect("texts written as text");
+        at += 8 + len.next_multiple_of(8);
+        t
+    })
+}
+
+/// The scan (shape 10, ordered, one item): each text made an atom where it has none, in the order written (sorted by
+/// the asker, so a run's ids follow its texts).
+fn texts_scan(c: &mut Ctx<'_, '_, '_>, _: Tile) {
+    let ([texts], [atoms]) = c.views([TEXTS], [TEXTS_ATOMS]);
+    for t in texts_in(texts) {
+        put(atoms, t);
+    }
+}
+
+/// `intern_texts`: a functor's answers interned (B§10 step 9, L4-f option 3), the texts a launch asked for.
+pub const INTERN_TEXTS: &[TwinPhase] = &[TwinPhase { name: "scan", items: |_| 1, run: texts_scan, again: None }];

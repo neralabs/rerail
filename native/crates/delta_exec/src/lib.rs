@@ -41,6 +41,7 @@ pub mod contract;
 pub mod dir;
 pub mod drop;
 pub mod files;
+pub mod funcs;
 pub mod intern;
 pub mod k0;
 pub mod l1;

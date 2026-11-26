@@ -53,6 +53,33 @@ pub fn intern_facts(_: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
     }
 }
 
+/// `intern_texts`' shape: one ordered scan (shape 10), the texts in their order.
+static TEXTS_PHASE: [Phase; 1] = [Phase { name: "scan", found: Found::Fixed, unit: Unit::Threadgroup, inside: Inside::Nothing, across: Across::Ordered, output: Output::ByScan, bounds: &[] }];
+
+/// `intern_texts` (B§10 step 9, L4-f option 3): read the texts a launch's functions answered with and found no symbol
+/// for (its frames block, `twin::texts_put`) · rw the atoms. The atoms' other writer beside `intern`, of texts a
+/// rule computed rather than a document holds.
+pub static INTERN_TEXTS: Signature = Signature::new(
+    "intern_texts",
+    &[SlotSpec { name: "texts", mode: Mode::Read, kind: kind::SCRATCH }, SlotSpec { name: "atoms", mode: Mode::ReadWrite, kind: kind::ATOMS }],
+    ParamsLayout::of::<rerail_delta_twins::NoParams>(),
+    &TEXTS_PHASE,
+    Independence::Not("one writer of the atoms"),
+    texts_facts,
+);
+
+/// `intern_texts`' written slot's facts: the atoms' strings by id.
+fn texts_facts(t: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
+    if slot == twin::TEXTS_ATOMS { intern_facts(t, twin::ATOMS, bytes) } else { Vec::new() }
+}
+
+/// Declares `intern_texts`, its twin its reference.
+pub fn declare_texts(reg: &mut Registry) -> Result<OpId, String> {
+    let op = reg.declare(&INTERN_TEXTS)?;
+    reg.register_reference(Version::twin(op, "intern_texts twin", twin::INTERN_TEXTS, &TEXTS_PHASE))?;
+    Ok(op)
+}
+
 pub struct InternOps {
     pub intern: OpId,
 }
