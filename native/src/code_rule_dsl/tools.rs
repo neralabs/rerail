@@ -1601,10 +1601,12 @@ mod settings_tests {
 
     /// `nearest` over a node of a Blade template's compiled program reads the kind set's copy in that guest's grammar,
     /// `compiled-view`: the copy's name is a native table's, so the label's `-` is not in it (`rr_in_compiled_view_…`).
-    /// It was, and SQLite refused the table: the run failed with "invalid native table name", and
-    /// bladestan-if-always-true, bladestan-identical-always-true and complexity-cyclomatic-blade never ran.
+    /// It was, and SQLite refused the table: the run failed with "invalid native table name". Then the run found
+    /// nothing: `parsed(r, "compiled-view", p)` made no program (Blade's embedder builds none; the template's parse
+    /// derived it), named none so (its rows named `php` alone), and its kinds were named `compiled-view:…`, no grammar's.
+    /// bladestan-if-always-true, bladestan-identical-always-true and complexity-cyclomatic-blade did all of it.
     #[test]
-    fn run_policies_runs_nearest_over_a_blade_templates_compiled_program() {
+    fn run_policies_finds_nearest_over_a_blade_templates_compiled_program() {
         let dir = tempfile::tempdir().unwrap();
         let at = |name: &str| dir.path().join(name).display().to_string();
         std::fs::create_dir_all(at("root")).unwrap();
@@ -1620,6 +1622,8 @@ mod settings_tests {
         let out = super::cli_in(&args, &mut Default::default()).unwrap_or_else(|e| panic!("the policy runs: {e}"));
         let report: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(report["runs"][0]["files"], 1, "{report:#}");
+        // The closure's return, not the template's own.
+        assert_eq!(report["diagnostics"].as_array().map(Vec::len), Some(1), "{report:#}");
     }
 
     /// `run-policies --tool-calls <calls.json>` gives the run its tool calls (`docs/rule-syntax/tool-calls.md`): a
