@@ -117,10 +117,15 @@ pub fn files(root: &Path, include: &[String], ext: &[String]) -> Vec<String> {
 }
 
 pub fn read(root: &Path, include: &[String], ext: &[String]) -> LineDocs {
-    let mut ids_of: HashMap<String, u32> = HashMap::new();
+    read_with(root, &files(root, include, ext), &mut HashMap::new())
+}
+
+/// The files `rels` under `root`, their lines numbered by `ids_of` (shared between batches, so that a line has one id
+/// in every batch; new lines get the next).
+pub fn read_with(root: &Path, rels: &[String], ids_of: &mut HashMap<String, u32>) -> LineDocs {
     let mut docs = LineDocs { paths: Vec::new(), ids: Vec::new(), lines: Vec::new(), distinct: 0 };
     let mut norm = String::new();
-    for rel in files(root, include, ext) {
+    for rel in rels.iter().cloned() {
         // A file that is not UTF-8 is not text.
         let Ok(text) = std::fs::read_to_string(root.join(&rel)) else { continue };
         let hash = hash_comments(&rel);

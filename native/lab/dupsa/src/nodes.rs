@@ -117,6 +117,53 @@ impl<'a> NodeDocs<'a> {
         Ok(docs)
     }
 
+    /// A later batch's documents (new versions), ranked by `prev`'s dictionary and its own new rows after it, so that
+    /// a row has one rank in every batch.
+    pub fn extending(capture: &'a Capture, tag: u8, cells: Cells, prev: &NodeDocs) -> Result<Self, String> {
+        let lang = f16::lang(tag).ok_or_else(|| format!("tape tag {tag} has no format 16 table"))?;
+        let mut docs = Self { capture, files: Vec::new(), placements: Vec::new(), views: Vec::new(), rank: prev.rank.clone(), cells };
+        for (k, f) in capture.files.iter().enumerate().filter(|(_, f)| f.tag == tag) {
+            let image = &capture.bytes[f.image.clone()];
+            let p = f16::placement(image).map_err(|e| format!("{}: {e}", f.path))?;
+            let v = p.view(lang, 0).map_err(|e| format!("{}: {e}", f.path))?;
+            docs.files.push(k);
+            docs.placements.push(p);
+            docs.views.push(v);
+        }
+        for d in 0..docs.files.len() {
+            for j in 0..docs.placements[d].n {
+                let v = docs.value(d, j, cells);
+                let next = docs.rank.len() as u32;
+                docs.rank.entry(v).or_insert(next);
+            }
+        }
+        Ok(docs)
+    }
+
+    /// The dictionary's rows in rank order, for a later run to rank by (`with_values`) without reading every row.
+    pub fn values(&self) -> Vec<u128> {
+        let mut v = vec![0u128; self.rank.len()];
+        for (&x, &r) in &self.rank {
+            v[r as usize] = x;
+        }
+        v
+    }
+
+    /// The documents ranked by a dictionary a run before kept (its rows in rank order).
+    pub fn with_values(capture: &'a Capture, tag: u8, cells: Cells, values: &[u128]) -> Result<Self, String> {
+        let lang = f16::lang(tag).ok_or_else(|| format!("tape tag {tag} has no format 16 table"))?;
+        let rank = values.iter().enumerate().map(|(r, &v)| (v, r as u32)).collect();
+        let mut docs = Self { capture, files: Vec::new(), placements: Vec::new(), views: Vec::new(), rank, cells };
+        for (k, f) in capture.files.iter().enumerate().filter(|(_, f)| f.tag == tag) {
+            let image = &capture.bytes[f.image.clone()];
+            let p = f16::placement(image).map_err(|e| format!("{}: {e}", f.path))?;
+            docs.files.push(k);
+            docs.views.push(p.view(lang, 0).map_err(|e| format!("{}: {e}", f.path))?);
+            docs.placements.push(p);
+        }
+        Ok(docs)
+    }
+
     pub fn image(&self, d: usize) -> &'a [u8] {
         &self.capture.bytes[self.capture.files[self.files[d]].image.clone()]
     }

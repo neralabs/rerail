@@ -52,10 +52,16 @@ struct Opts {
     cells: Cells,
     key: rerail_dupsa_lab::nodes::LineKey,
     out: Option<String>,
+    build: String,
+    whole_doc: bool,
+    check: bool,
+    compact_every: usize,
+    save: Option<String>,
+    load: Option<String>,
 }
 
 fn opts(args: &[String]) -> Result<Opts, String> {
-    let mut o = Opts { pos: Vec::new(), include: Vec::new(), ext: Vec::new(), min: None, min_lines: 0, cells: Cells::Row, key: rerail_dupsa_lab::nodes::LineKey::Text, out: None };
+    let mut o = Opts { pos: Vec::new(), include: Vec::new(), ext: Vec::new(), min: None, min_lines: 0, cells: Cells::Row, key: rerail_dupsa_lab::nodes::LineKey::Text, out: None, build: "doubling".into(), whole_doc: false, check: false, compact_every: 0, save: None, load: None };
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut val = || it.next().cloned().ok_or_else(|| format!("{a} needs a value"));
@@ -81,6 +87,12 @@ fn opts(args: &[String]) -> Result<Opts, String> {
                 }
             }
             "--out" => o.out = Some(val()?),
+            "--build" => o.build = val()?,
+            "--whole-doc" => o.whole_doc = true,
+            "--save" => o.save = Some(val()?),
+            "--load" => o.load = Some(val()?),
+            "--check" => o.check = true,
+            "--compact-every" => o.compact_every = val()?.parse().map_err(|e| format!("--compact-every: {e}"))?,
             _ => o.pos.push(a.clone()),
         }
     }
@@ -358,12 +370,324 @@ fn explain_command(o: Opts) -> Result<(), String> {
     Ok(())
 }
 
+/// `readcost <capture> [--include/--ext] [--cells]`: where the node suffix array's time goes: the symbol reads it
+/// makes, one read's cost, and the same build over the symbols read once.
+fn readcost_command(o: Opts) -> Result<(), String> {
+    use rerail_dupsa_lab::multi::Docs;
+    let [cap] = &o.pos[..] else { return Err("usage: dupsa readcost <capture>".into()) };
+    let mut capture = Capture::load(Path::new(cap))?;
+    capture.files.retain(|f| {
+        (o.include.is_empty() || o.include.iter().any(|i| f.path.starts_with(i.as_str())))
+            && (o.ext.is_empty() || f.path.rsplit_once('.').is_some_and(|(_, e)| o.ext.iter().any(|x| x == e)))
+    });
+    let tag = capture.files[0].tag;
+    let docs = NodeDocs::new(&capture, tag, o.cells)?;
+    struct Counting<'a, D: Docs>(&'a D, std::cell::Cell<u64>);
+    impl<D: Docs> Docs for Counting<'_, D> {
+        fn count(&self) -> usize { self.0.count() }
+        fn doc_len(&self, d: usize) -> usize { self.0.doc_len(d) }
+        fn at(&self, d: usize, j: usize) -> u32 { self.1.set(self.1.get() + 1); self.0.at(d, j) }
+        fn upper(&self) -> u32 { self.0.upper() }
+    }
+    struct Read(Vec<Vec<u32>>, u32);
+    impl Docs for Read {
+        fn count(&self) -> usize { self.0.len() }
+        fn doc_len(&self, d: usize) -> usize { self.0[d].len() }
+        fn at(&self, d: usize, j: usize) -> u32 { self.0[d][j] }
+        fn upper(&self) -> u32 { self.1 }
+    }
+    let n: usize = (0..docs.count()).map(|d| docs.doc_len(d)).sum();
+    let c0 = cpu();
+    let read = Read((0..docs.count()).map(|d| (0..docs.doc_len(d)).map(|j| docs.at(d, j)).collect()).collect(), docs.upper());
+    let once = cpu() - c0;
+    let c1 = cpu();
+    let a = MultiSuffixArray::new(&read);
+    let over_array = cpu() - c1;
+    let counting = Counting(&docs, std::cell::Cell::new(0));
+    let c2 = cpu();
+    let b = MultiSuffixArray::new(&counting);
+    let in_place = cpu() - c2;
+    let reads = counting.1.get();
+    assert_eq!(a.entries, b.entries);
+    eprintln!("{n} symbols; every symbol read once: {once:.2} s CPU ({:.0} ns a read)", 1e9 * once / n as f64);
+    eprintln!("suffix array + LCP reading the tape: {in_place:.2} s CPU, {reads} reads ({:.1} a symbol; {:.2} s of reads at one read's cost)", reads as f64 / n as f64, reads as f64 * once / n as f64);
+    eprintln!("suffix array + LCP over the symbols read once: {over_array:.2} s CPU; same order");
+    struct Flat(Vec<u32>);
+    impl rerail_dupsa_lab::sais::Text for Flat {
+        fn len(&self) -> usize { self.0.len() }
+        fn at(&self, i: usize) -> u32 { self.0[i] }
+    }
+    let flat = Flat(read.0.iter().flat_map(|d| d.iter().map(|&x| x + 1).chain(std::iter::once(0))).collect());
+    let c3 = cpu();
+    let sa = rerail_dupsa_lab::sais::suffix_array(&flat, read.1 + 2);
+    let c4 = cpu();
+    let _ = rerail_dupsa_lab::sais::lcp(&flat, &sa);
+    let c5 = cpu();
+    eprintln!("over one flat array (no document lookup per read): SA-IS {:.2} s, LCP {:.2} s CPU", c4 - c3, c5 - c4);
+    Ok(())
+}
+
+/// One source of document versions for `incr`: its documents, their paths, and a block's file lines.
+struct Source {
+    docs: &'static dyn rerail_dupsa_lab::multi::Docs,
+    paths: Vec<String>,
+    lines: Box<dyn Fn(u32, u32, u32) -> (u32, u32)>,
+}
+
+type Key = (u32, u32, u32, Vec<(u32, u32)>);
+
+/// `incr lines <base root> <steps> | incr nodes <base capture> <steps>`: the findings kept up to date over a series
+/// of changes. `<steps>` holds one directory per step (`0001/`, …: each changed file's new version at its path),
+/// optionally `0001.deleted` (paths, one a line) and, for nodes, `0001.cap` (the step's files captured).
+/// Options: `--build doubling|sais` (the base), `--whole-doc` (re-add a changed file's every window), `--check`
+/// (rebuild every step and compare), `--compact-every N`.
+fn incr_command(o: Opts) -> Result<(), String> {
+    use rerail_dupsa_lab::multi::Docs;
+    let [kind, base_at, steps] = &o.pos[..] else { return Err("usage: dupsa incr lines|nodes <base> <steps dir>".into()) };
+    let steps_dir = Path::new(steps).to_path_buf();
+    let mut names: Vec<String> = std::fs::read_dir(&steps_dir)
+        .map_err(|e| format!("{steps}: {e}"))?
+        .filter_map(Result::ok)
+        .filter(|e| e.path().is_dir())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    let c0 = cpu();
+    // A saved index: "DUPIX001", the node dictionary (rows in rank order), the base, the blocks.
+    let saved: Option<&'static [u8]> = match &o.load {
+        Some(p) => Some(Box::leak(std::fs::read(p).map_err(|e| format!("{p}: {e}"))?.into_boxed_slice())),
+        None => None,
+    };
+    let mut at = 8usize;
+    let values: Vec<u128> = match saved {
+        Some(b) => {
+            let n = u64::from_le_bytes(b[8..16].try_into().unwrap()) as usize;
+            at = 16 + 16 * n;
+            b[16..at].chunks_exact(16).map(|c| u128::from_le_bytes(c.try_into().unwrap())).collect()
+        }
+        None => Vec::new(),
+    };
+    let mut dict: Vec<u128> = Vec::new();
+    let (base, mut load): (Source, Box<dyn FnMut(&str) -> Result<(Source, Vec<String>), String>>) = match kind.as_str() {
+        "lines" => {
+            let root = Path::new(base_at).to_path_buf();
+            let mut interner = std::collections::HashMap::new();
+            let docs: &'static lines::LineDocs = Box::leak(Box::new(lines::read_with(&root, &lines::files(&root, &o.include, &o.ext), &mut interner)));
+            let base = Source { docs, paths: docs.paths.clone(), lines: Box::new(move |nd, f, e| (docs.lines[nd as usize][f as usize], docs.lines[nd as usize][e as usize - 1])) };
+            let (include, ext, dir) = (o.include.clone(), o.ext.clone(), steps_dir.clone());
+            (base, Box::new(move |name: &str| {
+                let root = dir.join(name);
+                let docs: &'static lines::LineDocs = Box::leak(Box::new(lines::read_with(&root, &lines::files(&root, &include, &ext), &mut interner)));
+                let deleted = std::fs::read_to_string(dir.join(format!("{name}.deleted"))).unwrap_or_default().lines().map(str::to_owned).collect();
+                Ok((Source { docs, paths: docs.paths.clone(), lines: Box::new(move |nd, f, e| (docs.lines[nd as usize][f as usize], docs.lines[nd as usize][e as usize - 1])) }, deleted))
+            }))
+        }
+        "nodes" => {
+            let scope = |c: &mut Capture, o: &Opts| {
+                c.files.retain(|f| {
+                    (o.include.is_empty() || o.include.iter().any(|i| f.path.starts_with(i.as_str())))
+                        && !lines::excluded(&f.path)
+                        && (o.ext.is_empty() || f.path.rsplit_once('.').is_some_and(|(_, e)| o.ext.iter().any(|x| x == e)))
+                });
+            };
+            let mut capture = Capture::load(Path::new(base_at))?;
+            scope(&mut capture, &o);
+            let tag = capture.files.first().ok_or("no files in scope")?.tag;
+            capture.files.retain(|f| f.tag == tag);
+            let capture: &'static Capture = Box::leak(Box::new(capture));
+            let docs: &'static NodeDocs<'static> = Box::leak(Box::new(if saved.is_some() {
+                NodeDocs::with_values(capture, tag, o.cells, &values)?
+            } else {
+                NodeDocs::new(capture, tag, o.cells)?
+            }));
+            if o.save.is_some() {
+                dict = docs.values();
+            }
+            let span_lines = |docs: &'static NodeDocs<'static>| -> Box<dyn Fn(u32, u32, u32) -> (u32, u32)> {
+                Box::new(move |nd, f, e| {
+                    let (start, stop) = docs.span(nd as usize, f as usize, e as usize);
+                    (docs.line(nd as usize, start), docs.line(nd as usize, stop.saturating_sub(1).max(start)))
+                })
+            };
+            let paths = (0..docs.count()).map(|d| docs.path(d).to_owned()).collect();
+            let base = Source { docs, paths, lines: span_lines(docs) };
+            let (dir, oc, mut prev) = (steps_dir.clone(), Opts { pos: Vec::new(), out: None, ..o_clone(&o) }, docs);
+            (base, Box::new(move |name: &str| {
+                let mut c = Capture::load(&dir.join(format!("{name}.cap")))?;
+                scope(&mut c, &oc);
+                c.files.retain(|f| f.tag == tag);
+                let c: &'static Capture = Box::leak(Box::new(c));
+                let docs: &'static NodeDocs<'static> = Box::leak(Box::new(NodeDocs::extending(c, tag, oc.cells, prev)?));
+                prev = docs;
+                let deleted = std::fs::read_to_string(dir.join(format!("{name}.deleted"))).unwrap_or_default().lines().map(str::to_owned).collect();
+                let paths = (0..docs.count()).map(|d| docs.path(d).to_owned()).collect();
+                Ok((Source { docs, paths, lines: span_lines(docs) }, deleted))
+            }))
+        }
+        k => return Err(format!("incr {k}: lines or nodes")),
+    };
+    let read_base = cpu() - c0;
+    let w = o.min.unwrap_or(if kind == "lines" { 30 } else { 150 });
+    let mut sources = vec![base];
+    let mut path_doc: std::collections::HashMap<String, u32> =
+        sources[0].paths.iter().enumerate().map(|(d, p)| (p.clone(), d as u32)).collect();
+    let mut paths = sources[0].paths.clone();
+    let cur = rerail_dupsa_lab::incr::Current::of(sources[0].docs);
+    let c1 = cpu();
+    let b = match o.build.as_str() {
+        _ if saved.is_some() => rerail_dupsa_lab::incr::Base::read(saved.unwrap(), &mut at),
+        "sais" => rerail_dupsa_lab::incr::Base::from_suffix_array(&cur, &MultiSuffixArray::new(&cur), w),
+        "doubling" => rerail_dupsa_lab::incr::Base::doubling(&cur, w),
+        x => return Err(format!("--build {x}: doubling or sais")),
+    };
+    let built = cpu() - c1;
+    let (n, windows, classes, bytes) = (cur.at.len(), b.sa.len(), b.classes(), b.bytes());
+    let c2 = cpu();
+    let mut ix = match saved {
+        Some(bytes) => rerail_dupsa_lab::incr::Index::with_blocks(b, cur, bytes, &mut at),
+        None => rerail_dupsa_lab::incr::Index::new(b, cur),
+    };
+    ix.whole_doc = o.whole_doc;
+    let first_blocks = cpu() - c2;
+    if let Some(p) = &o.save {
+        let mut out = b"DUPIX001".to_vec();
+        out.extend_from_slice(&(dict.len() as u64).to_le_bytes());
+        for v in &dict {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        ix.base.write(&mut out);
+        ix.write_blocks(&mut out);
+        std::fs::write(p, &out).map_err(|e| format!("{p}: {e}"))?;
+        eprintln!("saved {p}: {:.0} MB", out.len() as f64 / 1e6);
+    }
+    let keyed = |ix: &rerail_dupsa_lab::incr::Index, blocks: Vec<rerail_dupsa_lab::report::Block>, sources: &[Source]| -> Vec<Key> {
+        let mut v: Vec<Key> = blocks
+            .into_iter()
+            .filter(|b| {
+                let (s, nd) = ix.cur.at[b.doc as usize];
+                let (f, l) = (sources[s as usize].lines)(nd, b.first, b.end);
+                l + 1 - f >= o.min_lines
+            })
+            .map(|b| (b.doc, b.first, b.end, b.others))
+            .collect();
+        v.sort();
+        v
+    };
+    let mut before = keyed(&ix, ix.findings(), &sources);
+    eprintln!(
+        "{kind}: {n} files; base read {read_base:.2} s CPU, {} {built:.2} s, blocks {first_blocks:.2} s; {windows} windows of {w}, {classes} classes, {:.0} MB; {} findings",
+        if saved.is_some() { "index loaded".to_owned() } else { format!("built ({})", o.build) }, bytes as f64 / 1e6, before.len()
+    );
+    println!("step\tfiles\tdead\tadded\tfresh\ttouched\taffected\trecomputed\tload_ms\tupdate_ms\tdiff_ms\tfindings\tadded\tremoved\tcopies\tmoved\trebuild_ms\tcheck\tcompact_ms\toverlay");
+    for name in &names {
+        let c3 = cpu();
+        let (src, deleted) = load(name)?;
+        let load_ms = 1e3 * (cpu() - c3);
+        ix.cur.sources.push(src.docs);
+        let s = ix.cur.sources.len() as u32 - 1;
+        let c4 = cpu();
+        for (nd, p) in src.paths.iter().enumerate() {
+            let d = *path_doc.entry(p.clone()).or_insert_with(|| {
+                paths.push(p.clone());
+                paths.len() as u32 - 1
+            });
+            ix.set(d, (s, nd as u32));
+        }
+        for p in &deleted {
+            if let Some(&d) = path_doc.get(p) {
+                ix.set(d, (u32::MAX, 0));
+            }
+        }
+        sources.push(src);
+        let st = ix.finish();
+        let update_ms = 1e3 * (cpu() - c4);
+        // The findings, and what changed since the last step: the last ones moved onto the new versions.
+        let c5 = cpu();
+        let after = keyed(&ix, ix.findings(), &sources);
+        let map = |d: u32, u: u32, wl: u32| match ix.last_changes.get(&d) {
+            Some(ch) => ch.map(u, wl),
+            None => Some(u),
+        };
+        let now: std::collections::HashMap<(u32, u32, u32), &Vec<(u32, u32)>> = after.iter().map(|(d, f, e, x)| ((*d, *f, *e), x)).collect();
+        let (mut same, mut moved, mut copies, mut removed) = (0, 0, 0, 0);
+        let mut matched = std::collections::HashSet::new();
+        for (d, f, e, x) in &before {
+            let span = map(*d, *f, e - f);
+            let others: Option<Vec<(u32, u32)>> = x.iter().map(|&(od, ou)| map(od, ou, w).map(|u| (od, u))).collect();
+            let k = span.map(|f2| (*d, f2, f2 + (e - f)));
+            match (k, k.and_then(|k| now.get(&k))) {
+                (Some(k), Some(y)) => {
+                    matched.insert(k);
+                    let mut o2 = others.unwrap_or_default();
+                    o2.sort_unstable();
+                    if &o2 != *y {
+                        copies += 1;
+                    } else if k.1 != *f {
+                        moved += 1;
+                    } else {
+                        same += 1;
+                    }
+                }
+                _ => removed += 1,
+            }
+        }
+        let added = after.len() - matched.len();
+        let diff_ms = 1e3 * (cpu() - c5);
+        let _ = same;
+        ix.last_changes.clear();
+        let (mut rebuild_ms, mut check) = (0.0, "-");
+        if o.check {
+            let c6 = cpu();
+            let a = MultiSuffixArray::new(&ix.cur);
+            let full = rerail_dupsa_lab::report::blocks(&a, w);
+            rebuild_ms = 1e3 * (cpu() - c6);
+            check = if keyed(&ix, full, &sources) == after { "same" } else { "DIFFERENT" };
+        }
+        let mut compact_ms = 0.0;
+        let step_no: usize = name.parse().unwrap_or(0);
+        if o.compact_every > 0 && step_no % o.compact_every == 0 {
+            let c7 = cpu();
+            ix.compact();
+            compact_ms = 1e3 * (cpu() - c7);
+        }
+        let (od, oa) = ix.overlay_size();
+        println!(
+            "{name}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{load_ms:.1}\t{update_ms:.2}\t{diff_ms:.2}\t{}\t{added}\t{removed}\t{copies}\t{moved}\t{rebuild_ms:.0}\t{check}\t{compact_ms:.0}\t{od}+{oa}",
+            st.docs, st.dead, st.added, st.fresh, st.touched, st.affected, st.recomputed_units, after.len()
+        );
+        before = after;
+    }
+    eprintln!("peak {:.0} MB", peak_mb());
+    Ok(())
+}
+
+fn o_clone(o: &Opts) -> Opts {
+    Opts {
+        pos: o.pos.clone(),
+        include: o.include.clone(),
+        ext: o.ext.clone(),
+        min: o.min,
+        min_lines: o.min_lines,
+        cells: o.cells,
+        key: o.key,
+        out: o.out.clone(),
+        build: o.build.clone(),
+        whole_doc: o.whole_doc,
+        check: o.check,
+        compact_every: o.compact_every,
+        save: o.save.clone(),
+        load: o.load.clone(),
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let r = match args.first().map(String::as_str) {
         Some("lines") => opts(&args[1..]).and_then(lines_command),
         Some("nodes") => opts(&args[1..]).and_then(nodes_command),
         Some("tlines") => opts(&args[1..]).and_then(tlines_command),
+        Some("incr") => opts(&args[1..]).and_then(incr_command),
+        Some("readcost") => opts(&args[1..]).and_then(readcost_command),
         Some("explain") => opts(&args[1..]).and_then(explain_command),
         Some("probe") => opts(&args[1..]).and_then(probe_command),
         _ => Err("usage: dupsa lines <root> … | dupsa nodes <capture> …".into()),
