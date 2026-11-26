@@ -4906,6 +4906,10 @@ impl Viewed {
             (View::Tape, "par") => None,
             (View::Node | View::Core | View::Loc(Place::Docof), "d") => Some(ColKind::Key),
             (View::Loc(Place::Col), "c") => Some(ColKind::U32),
+            // -1 for none: no sibling before (`prev_id`), no end point made (`end_id`).
+            (View::Sibling, "a") | (View::End, "p") => Some(ColKind::NodeOrNone),
+            // A text's atom (`Projected::text_atom`), an anonymous child's name's (`ViewDoc::names`).
+            (View::Text | View::Op, "s") => Some(ColKind::Atom),
             (View::Order, "k") | (_, "n" | "p" | "c" | "a" | "b") => Some(ColKind::Node),
             (View::Node, "kind" | "start" | "end_")
             | (View::Child, "idx")
@@ -6292,8 +6296,9 @@ pub fn views_read_both_ways(batch: &Arc<Batch>) -> Result<Vec<(&'static str, usi
 pub fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
     let mut out: Vec<(&'static str, Arc<dyn Source>)> = Vec::new();
     let named = named_views(batch.shape);
-    // A relation the batch made as rows (`Batch::made`: its spans have places too) is bound in place of the view.
-    for (name, view) in named.into_iter().filter(|(name, _)| !batch.made.contains(name)) {
+    // A relation the batch made as rows (`Batch::made`: its spans have places too) is bound in place of the view. `op`
+    // reads its codes' names, which a batch interns where its projection reads `op` (`Docs::names`): none, no view.
+    for (name, view) in named.into_iter().filter(|(name, _)| !batch.made.contains(name) && (*name != "op" || batch.docs.names().is_some())) {
         out.push((name, Arc::new(Viewed { batch: Arc::clone(batch), view, home: std::sync::OnceLock::new() })));
     }
     // The relations of the tape's answers no maker makes as rows (`tape_rows`): the token relations, `rr_token_named`.

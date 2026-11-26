@@ -1288,6 +1288,9 @@ pub(super) enum ColKind {
     Key,
     /// A node's or a span's id, `key << 32 | slot`.
     Node,
+    /// A node's or a span's id, or -1 for none (a node's sibling before it, its end point where the document's are
+    /// not made).
+    NodeOrNone,
     /// A text: an atom (`content_store::atoms::Sym`, 32 bits), one interned after it is asked too.
     Atom,
     /// A value the engine makes as a `u32`: a kind, a field, a position, a line, a depth, a child's place.
@@ -1308,6 +1311,8 @@ impl Batch {
             ColKind::Key => keys,
             ColKind::Node if keys[0] > keys[1] => keys,
             ColKind::Node => [keys[0] << 32, (keys[1] << 32) | i64::from(u32::MAX)],
+            ColKind::NodeOrNone if keys[0] > keys[1] => keys,
+            ColKind::NodeOrNone => [-1, (keys[1] << 32) | i64::from(u32::MAX)],
             ColKind::Atom | ColKind::U32 => [0, i64::from(u32::MAX)],
         }
     }

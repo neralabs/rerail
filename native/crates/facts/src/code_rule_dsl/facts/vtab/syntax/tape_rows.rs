@@ -15,7 +15,7 @@
 //! `doc`'s rows are a batch's documents themselves, one each, of what the documents are given.
 
 use super::cells::Cells;
-use super::made::ViewCounts;
+use super::made::{ColKind, ViewCounts};
 use super::ranks::Item;
 use super::tokens::TokRel;
 use super::{Batch, Projected, Shape};
@@ -125,6 +125,11 @@ pub(super) trait TapeRows: Send + Sync + 'static {
     fn row(&self, at: &At, d: &Self::Doc, item: u32, k: u32, out: &mut [i64]);
     /// The tape nodes under tape node `x` that may have a row whose `parent()` column is `x`, in order.
     fn under(&self, _at: &At, _x: u32, _each: &mut dyn FnMut(u32)) {}
+    /// What column `column` holds where the batch alone bounds it (`Batch::bounds_of`, `Source::col_bounds`): none
+    /// said.
+    fn col_kind(&self, _column: usize) -> Option<ColKind> {
+        None
+    }
     /// Whether a lookup on `column` finds its items (`find`).
     fn keyed(&self, column: usize) -> bool {
         column == self.own() || Some(column) == self.parent()
@@ -240,6 +245,10 @@ impl<R: TapeRows> Source for RowsView<R> {
     }
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         self.rows.statistics(&self.batch)
+    }
+    /// By what the column holds (`TapeRows::col_kind`), from the batch's documents: no row made.
+    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
+        self.rows.col_kind(column).map(|k| self.batch.bounds_of(k))
     }
     fn failure(&self) -> Option<String> {
         self.batch.docs.failure()
@@ -733,6 +742,10 @@ impl TapeRows for DocRow {
         out[0] = i64::from(at.batch.docs.key(at.doc));
         out[1] = d[0];
         out[2] = d[1];
+    }
+    /// Its document's key; its path's and module's atoms.
+    fn col_kind(&self, column: usize) -> Option<ColKind> {
+        Some(if column == 0 { ColKind::Key } else { ColKind::Atom })
     }
     fn keyed(&self, column: usize) -> bool {
         column < 3

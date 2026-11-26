@@ -856,6 +856,7 @@ impl Source for Layered {
         let [alo, ahi] = match kind {
             ColKind::Key => keys,
             ColKind::Node => [keys[0] << 32, (keys[1] << 32) | i64::from(u32::MAX)],
+            ColKind::NodeOrNone => [-1, (keys[1] << 32) | i64::from(u32::MAX)],
             ColKind::Atom | ColKind::U32 => [0, i64::from(u32::MAX)],
         };
         Some([lo.min(alo), hi.max(ahi)])
