@@ -11625,3 +11625,8 @@ asks for the new check), c-directives eval::tests 50.
   it (Q314), with no fallback in `size`.
 - Relax: check 0 errors (corpus-memo, logic, facts); corpus-memo 19 (sizing 7); tests-lang facts::vtab 104; tests-logic
   corpus 2 (both failed once while the disk was full, and pass).
+
+### Q562. Roll-up 134 (django-bugs f7720e505a onto Pulling-it-all-together): what the merge chose
+
+- django-bugs at its pin, f7720e505a (its merge of Typing-support 2697062439): no file changes, the hub holds both sides;
+  its spikes (b4ffdd3907, f7cd013c50) and the 0706 steps above them are not taken.
