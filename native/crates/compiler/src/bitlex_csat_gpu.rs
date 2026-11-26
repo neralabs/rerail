@@ -201,9 +201,9 @@ pub fn describe(f: &Formula) -> Result<Desc, String> {
     // The gates' clauses (the window's, a solve's own) and the formula's plain and carried clauses, each indexed
     // as the kernel's propagation reads them (`ClauseOcc`); the plain ones a solve's own (an own clause with
     // `-assume`, as the kernel reads it).
-    let fcl = words(f.fan.cnf().placed().ok_or_else(elsewhere)?)?;
+    let fcl = words(f.fan.cnf(f.gates).placed().ok_or_else(elsewhere)?)?;
     let ocl = match f.own {
-        Some(o) => words(o.cnf().placed().ok_or_else(elsewhere)?)?,
+        Some(o) => words(o.cnf(f.gates).placed().ok_or_else(elsewhere)?)?,
         None => u32::MAX,
     };
     let mut plain: Vec<Vec<crate::bitlex_sat::Lit>> = Vec::with_capacity(f.clauses.len());
@@ -220,7 +220,7 @@ pub fn describe(f: &Formula) -> Result<Desc, String> {
     }
     let pcl = ClauseOcc::of(&Grown::<u32>::in_block(b), f.vars, &plain, false);
     let pcl_at = words(pcl.placed().ok_or_else(elsewhere)?)?;
-    let longest = [f.fan.cnf().longest(), f.own.map_or(0, |o| o.cnf().longest()), pcl.longest()].into_iter().max().unwrap_or(0);
+    let longest = [f.fan.cnf(f.gates).longest(), f.own.map_or(0, |o| o.cnf(f.gates).longest()), pcl.longest()].into_iter().max().unwrap_or(0);
     // A clause word's count bits (Nadel et al. 2026, §4.2): 16 where every literal's index fits the other 16,
     // else 8 (a clause of 255 literals at most); past both, not the device's.
     let shift = if 2 * f.vars <= 0xFFFF {
@@ -230,8 +230,8 @@ pub fn describe(f: &Formula) -> Result<Desc, String> {
     } else {
         return Err(format!("the prover's GPU: {} variables and a clause of {longest} literals: past a clause word", f.vars));
     };
-    let all = f.fan.cnf().clauses() + f.own.map_or(0, |o| o.cnf().clauses()) + plain.len();
-    let longs = f.fan.cnf().longs() + f.own.map_or(0, |o| o.cnf().longs()) + pcl.longs();
+    let all = f.fan.cnf(f.gates).clauses() + f.own.map_or(0, |o| o.cnf(f.gates).clauses()) + plain.len();
+    let longs = f.fan.cnf(f.gates).longs() + f.own.map_or(0, |o| o.cnf(f.gates).longs()) + pcl.longs();
     let wide = wide(f.gates);
     // A window's solve: its window's level 0 and the clauses earlier solves carried, in the block too.
     let none = u32::MAX;

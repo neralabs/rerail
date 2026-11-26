@@ -687,3 +687,8 @@ formula").
   bytes, its solves 215 ms each from handed in (298 ms). Its 36 searches of over 100 ms: 90,261 M cycles in all
   (117,400 M), but 9.4 s at once (8.0 s): the batch ends with its longest search, whose path changed, 14,829 M
   cycles (12,709 M).
+- **The device's clause index made only where the device reads it.** `Fanout::of_range` built the device's
+  `ClauseOcc` of a solve's own gates for every solve, the CPU's too, which never reads it. Sampled on an M-series
+  Mac, cold Kotlin with the CPU alone: `Fanout::of_range` 4,524 samples against the search's 7,074, 3,029 of them
+  `ClauseOcc::of`. Now `Fanout::cnf` makes it at its first read (a `OnceLock`). Cold Kotlin on the Spark, the CPU
+  alone, the shipped bytes: 93 to 101 s of user CPU to 60 s, the wall 20 to 30 s to 13 to 16 s.

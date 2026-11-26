@@ -231,9 +231,11 @@ pub struct Fanout {
     starts: Grown<u32>,
     gates: Grown<u32>,
     seeds: Vec<u32>,
+    /// Its gates, `range` of the gates it was made of.
+    range: std::ops::Range<usize>,
     /// The device's propagation (`bitlex_csat_gpu`): the gates' clauses (`Gates::clauses_of`, in gate order),
-    /// indexed as Nadel et al.'s (`ClauseOcc`).
-    cnf: ClauseOcc,
+    /// indexed as Nadel et al.'s (`ClauseOcc`). Made at the device's first read: the CPU's search never reads it.
+    cnf: std::sync::OnceLock<ClauseOcc>,
 }
 
 /// A literal's index in the device's propagation (Nadel et al. 2026, §4.2): `2 (v - 1)` positive, `2 (v - 1) + 1`
@@ -447,18 +449,18 @@ impl Fanout {
             }
         }
         let seeds = range.clone().filter(|&g| seed(gates, g)).map(|g| g as u32).collect();
-        // The gates' clauses, indexed for the device.
-        let mut cs = Vec::new();
-        for g in range {
-            gates.clauses_of(g, &mut cs);
-        }
-        let cnf = ClauseOcc::of(&gates.rec, vars, &cs, true);
-        Fanout { starts, gates: out, seeds, cnf }
+        Fanout { starts, gates: out, seeds, range, cnf: std::sync::OnceLock::new() }
     }
 
-    /// Its gates' clauses, as the device reads them.
-    pub fn cnf(&self) -> &ClauseOcc {
-        &self.cnf
+    /// Its gates' clauses, as the device reads them: `gates` those it was made of.
+    pub fn cnf(&self, gates: &Gates) -> &ClauseOcc {
+        self.cnf.get_or_init(|| {
+            let mut cs = Vec::new();
+            for g in self.range.clone() {
+                gates.clauses_of(g, &mut cs);
+            }
+            ClauseOcc::of(&gates.rec, self.starts.len().saturating_sub(2), &cs, true)
+        })
     }
 
     /// Its starts (a variable's gates from `starts[v]` to `starts[v + 1]`) and gates: their byte offsets in the
