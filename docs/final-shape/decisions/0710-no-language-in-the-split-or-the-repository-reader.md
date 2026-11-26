@@ -51,8 +51,18 @@ family's Engine Adapter branches on a language.
    - With `exports` an input rather than a relation the phase derives, the receiver rules are keyed by the connecting
      call (a node of its file), not by its `"path:line"` place, and a sender's name not exported is a negation, not a
      count: so they stay per file.
-   - Its cost: `dj_names` runs `python/scopes` over each file once more, the cost 0677 kept the section in
-     `py_names` to avoid. Its per-file part is memoized per file as every phase's is.
+   - Its cost, measured (2026-11-26, the Django pack's 27 policies over the 120-file corpus of 0691's table, cold
+     store, profiling builds, instructions retired, two rounds): 184–186 G before the split (6a5a2085d4), 206.5–207 G
+     after it, +12%; findings 2 = 2. Of the 1.8 s of CPU added, `dj_names` is 1.45 s: 0.94 s its per-file jobs
+     (`python/syntax` and `python/scopes` again, `unparen`, `walk`, `call_arg`, `qualname`, …, which `py_names`
+     computes over the same files in its own run, and `dj_bare_super`), 0.24 s parsing and preparing it; `py_names`
+     +0.19 s for the exports added for it. This is the cost 0677 kept the section in `py_names` to avoid.
+     Demanding the lookup (`.pragma "magic-transform"` over `sym_of`, `qn`, `walk` and their readers, each reader
+     anchored at a syntax node so the sideways order binds the reference first) made it 214–217 G: the demand rules
+     over `unparen` and `builtin_ref` cost more than the walk they save. It is not kept.
+     Demanding the lookup (`.pragma "magic-transform"` over `sym_of`, `qn`, `walk` and their readers, each reader
+     anchored at a syntax node so the sideways order binds the reference first) made it 214–217 G: the demand rules
+     over `unparen` and `builtin_ref` cost more than the walk they save. It is not kept.
 5. **An input nothing produces is an error**, naming the input and its library. An `extensible` relation nothing
    states is still stated empty: that is an extension with no members, not a missing producer.
 
