@@ -1792,7 +1792,9 @@ use rerail_blocks::vector::Vector;
 
     /// Decision 0353 step 4: a view filtered by constants (`WHERE idx = 0`, `View::eqs`) is read in place whole, its
     /// constants keys its stage adds: probed by a column, its index is over that column and the filtered one, and
-    /// nothing of it is uploaded. A stage that checks no keys (a filter's) refuses it: nothing is uploaded (step 6).
+    /// nothing of it is uploaded. A stage that checks no keys (a filter's) refuses it: nothing is uploaded (step 6). A
+    /// `SELECT 1` view (a gate's: whether rows are there) has no source column for its one column, so it is not read
+    /// in place by its columns (it panicked there, the data layer's 50 files on the CPU's join program).
     #[test]
     fn a_filtered_view_is_read_in_place_its_constants_keys() {
         use crate::code_rule_dsl::facts::core::{self, Built};
@@ -1840,6 +1842,17 @@ use rerail_blocks::vector::Vector;
         let mut rep = super::Report::default();
         let Err(why) = super::resident(&rel, &[0, 1], &[], mj::FILTER, &mut batch, &mut rep) else { panic!("a filter's filtered view has no device form") };
         assert!(why.contains("filtered by constants"), "{why}");
+        // `SELECT 1 FROM child WHERE idx = 0`: its one column reads no source column.
+        let gate = InRel::over_filtered(Arc::clone(&src), rerail_blocks::vector![], vec![(2, 0)], vec![b'i']);
+        for cols in [&[][..], &[0][..]] {
+            let _evaluation = rerail_accel::gpu::launch::LaunchScope::enter();
+            let mut batch = mj::Batch::new().expect("the device");
+            let mut rep = super::Report::default();
+            if let Ok((_, _, place, consts)) = super::resident(&gate, &[0], cols, mj::JOIN, &mut batch, &mut rep) {
+                assert!(place.len() == 1 && consts.is_empty(), "{cols:?}: not read by its columns in place: {place:?} {consts:?}");
+                batch.finish().unwrap();
+            }
+        }
         let _ = std::fs::remove_file(&store_path);
     }
 

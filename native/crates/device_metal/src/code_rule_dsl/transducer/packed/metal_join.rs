@@ -2459,6 +2459,9 @@ impl Batch {
         if n == 0 {
             return Ok(());
         }
+        // Its rows, by whether it is built again each round (a live relation's: a recursive stratum's own, decision
+        // 0707's 13.9 M rows) or once.
+        crate::code_rule_dsl::prof::count_named(if rel.live { "device.index rows built: a live relation's, again each round" } else { "device.index rows built: once" }.into(), n);
         assert!(cols.len() <= 8, "an index of {} columns", cols.len());
         let mut ix = IxParams { n: m as u32, ncols: cols.len() as u32 | if rel.live { IX_LIVE } else { 0 }, at: rel.at, mask: room.mask, cols: [0; 8], dir: 0, kind: 0, from: rel.from, pad: 0 };
         for (k, &c) in cols.iter().enumerate() {

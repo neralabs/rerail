@@ -1559,7 +1559,9 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
     // (`with_consts`), so a probe's index is over its key columns and theirs and every candidate is checked against
     // them; nothing of it is uploaded. Where a stage checks no keys (a filter's), or the keys are more than a stage
     // holds, it is uploaded as before.
-    if let Some(view) = rel.view.as_ref().filter(|v| rel.ndead == 0 && !v.whole() && !v.eqs().is_empty() && cols.len() + v.eqs().len() <= mj::MAX_KEYS)
+    // A view of no source column for each of its relation's (`SELECT 1 ... WHERE`, a gate's: whether rows are there)
+    // has no place to read each column at: it goes on below.
+    if let Some(view) = rel.view.as_ref().filter(|v| rel.ndead == 0 && !v.whole() && !v.eqs().is_empty() && v.arity() == rel.k && cols.len() + v.eqs().len() <= mj::MAX_KEYS)
         && matches!(mode, mj::JOIN | mj::SEMI | mj::ANTI | mj::AGG | mj::WITNESS)
         && let Some(d) = view.src.device_view()
     {
@@ -1582,7 +1584,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
     }
     // A view filtered by constants of a source in a block is read there whole (decision 0353 step 6), as a view the
     // device reads in place is: its constants keys its stage adds.
-    if let Some(view) = rel.view.as_ref().filter(|v| rel.ndead == 0 && !v.whole() && !v.eqs().is_empty() && cols.len() + v.eqs().len() <= mj::MAX_KEYS)
+    if let Some(view) = rel.view.as_ref().filter(|v| rel.ndead == 0 && !v.whole() && !v.eqs().is_empty() && v.arity() == rel.k && cols.len() + v.eqs().len() <= mj::MAX_KEYS)
         && matches!(mode, mj::JOIN | mj::SEMI | mj::ANTI | mj::AGG | mj::WITNESS)
         && let Some(b) = view.src.in_block().filter(|b| b.rows as usize == view.src.len())
     {
