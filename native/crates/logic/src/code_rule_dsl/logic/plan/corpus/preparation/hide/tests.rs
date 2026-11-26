@@ -63,6 +63,27 @@
         assert!(out.iter().all(|r| r.contains("\"typescript:")), "{out:?}");
     }
 
+    /// A copy is its relation with a column seeded, and keeps its qualifiers: `rr_unplaced_through` (`no_inline`), read
+    /// over an ESLint directive's node, was copied without it, inlined, and its part of the finding's rule became a
+    /// relation of documents reading the finding's node in the cross part (decision 0677, batch 8).
+    #[test]
+    fn a_copy_keeps_its_relations_qualifiers() {
+        let v = hidden(
+            concat!(
+                ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.input parsed, e\n",
+                ".decl held(a: node) no_inline\nheld(a) :- e(a).\n",
+                ".decl out(r: node)\n.output out\nout(r) :- parsed(_, \"sql\", r), held(r).\n",
+            ),
+            1 << 30,
+        );
+        let copies: Vec<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).filter(|r| r.starts_with("rr_in_") && r.ends_with("held")).collect();
+        assert!(!copies.is_empty(), "held is copied for the guest: {}", v.show());
+        let qualifiers = ProgramFields::qualifiers(&*v);
+        for c in copies {
+            assert!(qualifiers.get(c).is_some_and(|q| q.contains("no_inline")), "{c} keeps `no_inline`: {qualifiers:?}");
+        }
+    }
+
     /// A relation read with guest variables in two columns its rules bind apart is copied once, with both seeded:
     /// copying the copy lost the first seed, so its reader read it at that column again, and schema-architecture's
     /// `rr_agg36` nested `rr_in_annotation_1_rr_in_annotation_0_…` without end.

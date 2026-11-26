@@ -552,6 +552,28 @@ fn a_context_keeps_the_group_tying_its_variables() {
     assert!(ctx.iter().all(|r| r.contains("child($c, $fc") && r.contains("field($fc, \"left\", $t)")), "{ctx:#?}");
 }
 
+/// A context asked for a text keeps the literal that binds it, its node bound through an equality (`K = c3, text(K,
+/// KT)`): FAST003's helpers are asked with a capture's text, not its node (decision 0677). Left out, the context's
+/// head held `KT` with nothing binding it ("$KT is unbound in SQL").
+#[test]
+fn a_context_keeps_the_text_it_is_asked_for() {
+    let p = parse(concat!(
+        ".decl holds(p: node, c: node)\n.decl kind(n: node, k: symbol)\n.decl text(n: node, x: symbol)\n",
+        ".decl child(p: node, c: node, i: number)\n.decl named(n: node, x: symbol)\n",
+        ".input holds, kind, text, child, named\n",
+        ".decl unused(n: node, k: node)\n.output unused\n",
+        "unused(n, K) :- kind(n, \"route\"), holds(n, c), K = c, text(K, KT),\n",
+        "    count : { child(n, p, _), named(p, KT) } = 0.\n",
+    ))
+    .unwrap();
+    strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    // The aggregate is asked with `KT`: the rule making its demand is the context, and binds `KT` by `text(K, KT)`.
+    let asks: Vec<String> = shown(&p, |_| true).into_iter().filter(|r| r.starts_with("rr_demand_agg_")).collect();
+    assert_eq!(asks.len(), 1, "{:#?}", shown(&p, |_| true));
+    assert!(asks[0].split(":-").next().is_some_and(|h| h.contains("$KT")), "the aggregate is asked with the text: {}", asks[0]);
+    assert!(asks[0].contains("text($K, $KT)"), "the text asked for is bound in the context: {}", asks[0]);
+}
+
 /// A helper's context (here the demand of strings `parsed` parses) keeps only the literals tied to its variables:
 /// `root(a)`, tied to `s` only through a disjunction the context leaves out, would test that some root exists in any document (`ann_root(_)`), making
 /// every row depend on every file.
@@ -2668,14 +2690,16 @@ Other(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), ki
     let joins: Vec<&str> = rules.iter().copied().filter(|l| l.contains("guest_place(") && l.contains("doc(")).collect();
     let placed: Vec<&&str> = joins.iter().filter(|l| l.starts_with(super::lower::findings::PLACED_LINE)).collect();
     assert_eq!(placed.len(), 1, "one rule places a value's node in its file: {joins:#?}");
-    assert!(joins.iter().all(|l| l.starts_with(super::lower::findings::PLACED_AT) || l.starts_with(super::lower::findings::PLACED_LINE)), "no finding joins the placement again: {joins:#?}");
+    assert!(joins.iter().all(|l| l.starts_with(super::lower::findings::PLACED_VALUE) || l.starts_with(super::lower::findings::PLACED_LINE)), "no finding joins the placement again: {joins:#?}");
     let readers = rules.iter().filter(|l| l.contains(&format!("{}(", super::lower::findings::PLACED_LINE)) && !l.starts_with(super::lower::findings::PLACED_LINE)).count();
     assert!(readers >= 4, "each finding's diagnostic and violation read it: {rules:#?}");
 }
 
-/// Decision 0431 R9: a program refuses its unplaced findings in one rule, over its findings' nodes, not in a rule each:
-/// each finding's own rule, negated reads and all, was a negation split, a demand and a join of its own (three strata
-/// a finding, 470 of a pack's on corpus0). A finding writes its clause and node alone, a positive projection.
+/// Decision 0431 R9: a program tests its findings' places with one negation, not one a finding: each finding's own
+/// rule, negated reads and all, was a negation split, a demand and a join of its own (three strata a finding, 470 of a
+/// pack's on corpus0). The negation is in one rule, the nodes no file places, each file's own; each finding's
+/// `rr_unplaced` rule is a positive join with it (decision 0677: no relation of the cross-file part holds the finding's
+/// node but the finding's own).
 #[test]
 fn a_program_refuses_its_unplaced_findings_in_one_rule() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("unplaced-once");
@@ -2697,17 +2721,25 @@ Other(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), ki
 Name(i) :- kind(i, "identifier").
 Number(i) :- kind(i, "integer").
 "#;
-    for (name, program, found) in [("guests", guests, super::lower::findings::FOUND_THROUGH), ("plain", plain, super::lower::findings::FOUND_NODE)] {
+    for (name, program, found) in [("guests", guests, super::lower::findings::UNPLACED_THROUGH), ("plain", plain, super::lower::findings::UNPLACED_NODE)] {
         let rule = dir.join(format!("{name}.rerail"));
         std::fs::write(&rule, program).unwrap();
         let flat = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
         let rules: Vec<&str> = flat.lines().filter(|l| l.contains(":-")).collect();
-        let unplaced: Vec<&&str> = rules.iter().filter(|l| l.starts_with(super::lower::findings::UNPLACED)).collect();
-        assert_eq!(unplaced.len(), 1, "{name}: one rule refuses the unplaced findings: {unplaced:#?}");
-        assert!(unplaced[0].contains(&format!("{found}(")), "{name}: it reads the findings' nodes: {unplaced:#?}");
-        let projections: Vec<&&str> = rules.iter().filter(|l| l.starts_with(&format!("{found}("))).collect();
-        assert_eq!(projections.len(), 2, "{name}: a projection a finding: {projections:#?}");
-        assert!(projections.iter().all(|l| !l.contains('!')), "{name}: each positive: {projections:#?}");
+        let of_found: Vec<&&str> = rules.iter().filter(|l| l.starts_with(&format!("{found}("))).collect();
+        assert_eq!(of_found.len(), 1, "{name}: one rule of the nodes no file places: {of_found:#?}");
+        // The negation, once: of the nodes, or, placed through a string, of the tape values, whose nodes are placed
+        // together (and the nodes of those unplaced read, positive).
+        use super::lower::findings::{PLACED_VALUE, UNPLACED_VALUE};
+        let negating: Vec<&&str> = rules.iter().filter(|l| l.contains("!doc(") && [found, UNPLACED_VALUE].iter().any(|h| l.starts_with(&format!("{h}(")))).collect();
+        assert_eq!(negating.len(), 1, "{name}: one rule holds the negation: {rules:#?}");
+        if found == super::lower::findings::UNPLACED_THROUGH {
+            assert!(negating[0].starts_with(UNPLACED_VALUE) && negating[0].contains(&format!("!{PLACED_VALUE}(")), "{name}: of the values: {negating:#?}");
+            assert!(!of_found[0].contains('!'), "{name}: the values' nodes: {of_found:#?}");
+        }
+        let unplaced: Vec<&&str> = rules.iter().filter(|l| l.starts_with(&format!("{}(", super::lower::findings::UNPLACED))).collect();
+        assert_eq!(unplaced.len(), 2, "{name}: a rule a finding: {unplaced:#?}");
+        assert!(unplaced.iter().all(|l| !l.contains('!') && l.contains(&format!("{found}("))), "{name}: each a positive join with it: {unplaced:#?}");
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

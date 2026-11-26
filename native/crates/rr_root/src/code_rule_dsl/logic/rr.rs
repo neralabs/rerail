@@ -141,7 +141,7 @@ pub use super::front::Error;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use lower::drop_unread_core;
 pub use lower::is_core;
-pub use lower::findings::{is_diagnostic, FOUND_NODE, FOUND_THROUGH, HEAD as DIAGNOSTIC_HEAD, PLACED_AT, PLACED_LINE, UNPLACED};
+pub use lower::findings::{is_diagnostic, PLACED_VALUE, UNPLACED_DOC, UNPLACED_NODE, UNPLACED_THROUGH, UNPLACED_VALUE, HEAD as DIAGNOSTIC_HEAD, PLACED_LINE, UNPLACED};
 pub use lower::{FILE_SYSTEM, WORLD};
 pub use print::print_version;
 pub use syntax::quote;

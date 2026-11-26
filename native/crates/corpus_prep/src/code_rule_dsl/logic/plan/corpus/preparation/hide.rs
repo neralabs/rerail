@@ -540,6 +540,13 @@ impl ProgramPass for Hide {
             let cols: Vec<(&str, &str)> = h.vars.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
             prog.b.fields().declare(&h.name, &cols);
         }
+        // A copy is its relation with a column seeded: it keeps the relation's qualifiers. Without them a `no_inline`
+        // relation's copy was inlined: the findings' `rr_unplaced_through`, read through an ESLint directive's copy,
+        // became a part of the finding's rule that `ProjectExistentials` moved into a relation of documents reading
+        // the finding's node in the cross part (decision 0677, batch 8).
+        let quals = crate::code_rule_dsl::logic::program_image::fields::ProgramFields::qualifiers(&*input);
+        let carried_quals: Vec<(String, String)> = specialized.iter().flat_map(|(copy, (orig, _))| quals.get(orig).into_iter().flatten().map(|q| (copy.clone(), q.clone()))).collect();
+        prog.b.fields().add_qualifiers(&carried_quals);
         // The version: every rule copied from its source with its edits, then the helpers, then the fields.
         let b = w.derive()?;
         b.fields().state_fields_of(&prog.b);
@@ -1111,10 +1118,13 @@ fn shown_columns(rules: &[W], outputs: &[String]) -> HashMap<String, BTreeSet<us
         shown.insert(o.clone(), (0..arity).collect());
         todo.push(o.as_str());
     }
-    // A finding's place: the column its `rr_unplaced` rule reads a node of (decision 0431 R9).
+    // A finding's place: the column its `rr_unplaced` rule tests is placed (decision 0431 R9), by the nodes no file
+    // places (`rr_unplaced_node`, `rr_unplaced_through`).
+    use crate::code_rule_dsl::logic::rr::{UNPLACED_NODE, UNPLACED_THROUGH};
+    let tests = |rel: &str| rel == UNPLACED_NODE || rel == UNPLACED_THROUGH;
     for w in rules.iter().filter(|w| w.head == crate::code_rule_dsl::logic::rr::UNPLACED) {
-        let placed: BTreeSet<Slot> = w.body.iter().filter_map(|(_, l)| l.positive()).filter(|a| a.rel == "node").filter_map(|a| a.args.get(1).and_then(S::var)).collect();
-        for a in w.body.iter().filter_map(|(_, l)| l.positive()).filter(|a| a.rel != "node") {
+        let placed: BTreeSet<Slot> = w.body.iter().filter_map(|(_, l)| l.positive()).filter(|a| tests(&a.rel)).filter_map(|a| a.args.first().and_then(S::var)).collect();
+        for a in w.body.iter().filter_map(|(_, l)| l.positive()).filter(|a| !tests(&a.rel)) {
             let cols: Vec<usize> = a.args.iter().enumerate().filter(|(_, t)| t.var().is_some_and(|x| placed.contains(&x))).map(|(c, _)| c).collect();
             if !cols.is_empty() {
                 shown.entry(a.rel.clone()).or_default().extend(cols);

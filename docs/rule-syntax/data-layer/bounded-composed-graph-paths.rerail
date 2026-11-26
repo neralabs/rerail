@@ -73,9 +73,14 @@ bcgp_def(p, l, m) :- bcgp_line(p, l, sp),
 bcgp_deco(p, a, k) :- bcgp_line(p, a, sp), match("    @(?<ks>[A-Za-z_][A-Za-z0-9_]*)(?:\\([^\\n]*\\))?", sp), text(ks, k).
 .decl bcgp_at_line(p: symbol, l: number)
 bcgp_at_line(p, l) :- bcgp_line(p, l, sp), match("    @.+", sp).
+// bcgp_deco_run(p, a, l): line l is in or just after the run of `    @…` lines from decorator line a. A walk down the
+// run: pairing each decorator with each later def and counting the lines between was cubic in a file's length (a
+// 20,000-line file passed 6 GB).
+.decl bcgp_deco_run(p: symbol, a: number, l: number)
+bcgp_deco_run(p, a, l) :- bcgp_deco(p, a, _), l = a + 1.
+bcgp_deco_run(p, a, l + 1) :- bcgp_deco_run(p, a, l), bcgp_at_line(p, l).
 .decl bcgp_decorated(p: symbol, a: number, k: symbol, m: symbol)
-bcgp_decorated(p, a, k, m) :- bcgp_deco(p, a, k), bcgp_def(p, b, m), b > a,
-    count : { bcgp_line(p, l, _), l > a, l < b, !bcgp_at_line(p, l) } = 0.
+bcgp_decorated(p, a, k, m) :- bcgp_deco(p, a, k), bcgp_deco_run(p, a, b), !bcgp_at_line(p, b), bcgp_def(p, b, m).
 // bcgp_has_decorated(p, x, m, k): class x's block holds method m decorated @k.
 .decl bcgp_has_decorated(p: symbol, x: symbol, m: symbol, k: symbol)
 bcgp_has_decorated(p, x, m, k) :- bcgp_in(p, x, _, a), bcgp_decorated(p, a, k, m).
@@ -197,7 +202,11 @@ BCGP(@place(p, 1), "BCGP008", "bounded path SQL lowering must consume the semant
 BCGP(@place(p, h), "BCGP009", cat(x, " must carry graph_type")) :- bcgp_class_req("BCGP009", p, x),
     bcgp_block(p, x, h, _), !bcgp_field(p, x, "graph_type", _).
 BCGP(@place(p, h), "BCGP009", cat(x, ".graph_type must be required and non-optional")) :-
-    bcgp_class_req("BCGP009", p, x), bcgp_block(p, x, h, _), bcgp_field(p, x, "graph_type", l), bcgp_line(p, l, sp),
+    bcgp_class_req("BCGP009", p, x), bcgp_block(p, x, h, _), bcgp_field(p, x, "graph_type", l), bcgp_optional_type(p, l).
+// A line declaring graph_type optional (`: … None …`, or `= None`): tested in its file, which holds the line's text, so
+// only its number is handed on (decision 0677).
+.decl bcgp_optional_type(p: symbol, l: number)
+bcgp_optional_type(p, l) :- bcgp_line(p, l, sp),
     (match("    graph_type\\s*:\\s*[^\\n=]*None.*", sp) ; match("    graph_type\\s*:\\s*[^\\n=]+=\\s*None\\s*", sp)).
 
 // ---- BCGP011, BCGP012: documents and suite activation --------------------------------------------------------

@@ -3441,9 +3441,9 @@ fn a_finding_no_file_holds_is_refused_naming_its_clause() {
     let text = ".policy \"p\" revision 1\n.language python\n.violation Assert(at: node) \"an assert\"\nAssert(n) :- kind(n, \"assert_statement\").\n";
     let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
     let shown = v.show();
-    // The finding's node by its clause, and the program's one rule refusing those of no file's document.
-    let found = crate::code_rule_dsl::logic::rr::FOUND_NODE;
-    assert!(shown.contains(&format!("{found}(\"Assert\", ")) && shown.contains(&format!("rr_unplaced($rr_clause) :- {found}(")) && shown.contains("!doc("), "the lowering writes R9's rule:\n{shown}");
+    // The nodes of no file's document, and the finding's rule refusing one of them by its clause.
+    let unplaced = crate::code_rule_dsl::logic::rr::UNPLACED_NODE;
+    assert!(shown.contains(&format!("rr_unplaced(\"Assert\") :- ")) && shown.contains(&format!("{unplaced}($rr_n) :- ")) && shown.contains("!doc("), "the lowering writes R9's rules:\n{shown}");
     assert!(v.output_names().iter().any(|o| o == crate::code_rule_dsl::logic::rr::UNPLACED));
     let out = dir.join("out");
     let run = |text: &str, out: &std::path::Path| super::run(text, &dir.join("ws"), None, out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);

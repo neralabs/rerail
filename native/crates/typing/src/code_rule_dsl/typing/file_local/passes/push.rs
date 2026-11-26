@@ -92,6 +92,35 @@ fn node_vars(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, atom: AtomRef<'_>) -
         .collect()
 }
 
+/// The chunks' domain of column `c` of a relation whose rules are `of`: each rule binds that column by a positive read
+/// of a file-local or base relation that narrows it (`WARNING(x, s) :- warn_at(x, s, p, l), !ignored(p, l)`: `warn_at`'s
+/// `x`), so those reads hold, file by file, every value the column takes. `None` where a rule binds it otherwise, or
+/// only by a node's attributes (`node(d, x, …)`, which narrows nothing).
+fn domain<'v>(v: &'v Version, f: Fields<'v>, local: &BTreeSet<String>, of: &[RuleRef<'v>], c: usize) -> Option<Vec<(RuleRef<'v>, LitRef<'v>)>> {
+    if of.is_empty() {
+        return None;
+    }
+    of.iter()
+        .map(|&r| {
+            let Some(TermRef::Var(x)) = r.head().args().nth(c) else { return None };
+            r.body()
+                .find(|l| match l.view() {
+                    L::Atom(a) => {
+                        let rel = v.rel_name(a.rel());
+                        !a.neg()
+                            && !a.gated()
+                            && !f.lattice(rel)
+                            && (f.is_input(rel) || local.contains(rel))
+                            && !(ATTRIBUTES.contains(&rel) && plain(v, r, a))
+                            && a.args().any(|t| matches!(t, TermRef::Var(s) if s == x))
+                    }
+                    _ => false,
+                })
+                .map(|l| (r, l))
+        })
+        .collect()
+}
+
 /// `push_with`'s `independent_node_groups`, each group's variables.
 fn node_groups(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, atoms: &[AtomRef<'_>], equal: &[(String, String)]) -> Vec<BTreeSet<String>> {
     let documents: BTreeSet<String> = atoms
@@ -244,6 +273,10 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
     let rules: Vec<RuleRef<'v>> = v.rules().collect();
     let decl_names: HashSet<String> = f.decls().iter().map(|d| v.text(d.name()).to_owned()).collect();
     let base = |rel: &str| f.is_input(rel);
+    let mut rules_of: BTreeMap<&str, Vec<RuleRef<'v>>> = BTreeMap::new();
+    for &r in &rules {
+        rules_of.entry(v.rel_name(r.head().rel())).or_default().push(r);
+    }
     let mut level: BTreeMap<usize, u8> = BTreeMap::new();
     *rounds = 0;
     loop {
@@ -337,7 +370,34 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 {
                     continue;
                 }
-                if !must && keep_unrestricted && (unrestricted(v, f, rule, &atoms) || descends(v, rule, &atoms)) {
+                // A component that narrows no node (a finding's location: `doc(d, p, _), node(d, v, …), line(v, l)`) is a
+                // row per node of the chunk. Where the rule reads each of its nodes from a relation whose every rule
+                // binds it from the chunks (`WARNING(v, _)`, of `warn_at(v, …)`), it is narrowed to those nodes: the
+                // rule's read implies the domain's, so the join keeps every row the rule uses (decision 0677: a pushed
+                // location lookup of every node of 277 files was 1.5 M rows, 1.7 times a policy's peak).
+                let mut narrowed: Vec<(String, usize, String, Vec<(RuleRef<'v>, LitRef<'v>)>)> = Vec::new();
+                if !must && unrestricted(v, f, rule, &atoms) {
+                    let keys: BTreeSet<String> = atoms.iter().flat_map(|a| node_vars(v, f, rule, *a)).collect();
+                    for x in &keys {
+                        let found = body.iter().enumerate().filter(|(j, _)| !lits.contains(j)).find_map(|(_, l)| {
+                            let L::Atom(a) = l.view() else { return None };
+                            let r = rel(&a);
+                            if a.neg() || a.gated() || r == head_rel || local.contains(r) || base(r) {
+                                return None;
+                            }
+                            let c = a.args().position(|t| matches!(t, TermRef::Var(s) if name(v, rule, s) == *x))?;
+                            Some((r.to_owned(), c, x.clone(), domain(v, f, local, rules_of.get(r)?, c)?))
+                        });
+                        match found {
+                            Some(d) => narrowed.push(d),
+                            None => {
+                                narrowed.clear();
+                                break;
+                            }
+                        }
+                    }
+                }
+                if !must && keep_unrestricted && narrowed.is_empty() && (unrestricted(v, f, rule, &atoms) || descends(v, rule, &atoms)) {
                     continue;
                 }
                 for (j, l) in body.iter().enumerate() {
@@ -435,7 +495,32 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 };
                 lits.retain(|&j| !reader_test(body[j]));
                 // Named by the join alone, not the rule's head: every rule that pushes the same join reads one helper.
-                let mut shown: Vec<String> = lits.iter().map(|&j| v.show_lit(rule, body[j])).collect();
+                // Each domain a helper of its own, made once (`domain`): `fl<h>_<rel>(x)`, a rule for each of the
+                // relation's.
+                let mut domains: Vec<(String, String)> = Vec::new();
+                for (r, c, x, of) in &narrowed {
+                    let content = format!("domain {r} {c}");
+                    let dom = match by_content.get(&content) {
+                        Some(h) => h.clone(),
+                        None => {
+                            let h = super::super::helper_name("fl", r, &content, |n| decl_names.contains(n), &mut used);
+                            by_content.insert(content, h.clone());
+                            h
+                        }
+                    };
+                    if !helpers.iter().any(|h| h.head.as_ref().is_some_and(|(name, _)| *name == dom)) {
+                        let ty = f.column_type(r, *c).map_or_else(|| "node".to_owned(), str::to_owned);
+                        decls.retain(|(n, _)| *n != dom);
+                        decls.push((dom.clone(), vec![("x".to_owned(), ty)]));
+                        for &(src, l) in of {
+                            let head = src.head().args().nth(*c).expect("the domain's column");
+                            helpers.push(Made { src, head: Some((dom.clone(), vec![NOwned::T(head)])), body: vec![BodyItem::Orig(l)], kept: false });
+                        }
+                    }
+                    made.read(i, dom.clone());
+                    domains.push((dom, x.clone()));
+                }
+                let mut shown: Vec<String> = lits.iter().map(|&j| v.show_lit(rule, body[j])).chain(domains.iter().map(|(d, x)| format!("{d}({x})"))).collect();
                 shown.sort();
                 let content = format!("({}) :- {}", iface.join(", "), shown.join(", "));
                 let helper = match by_content.get(&content) {
@@ -452,7 +537,8 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 if !helpers.iter().any(|h| h.head.as_ref().is_some_and(|(name, _)| *name == helper)) {
                     decls.retain(|(r, _)| *r != helper);
                     decls.push((helper.clone(), typed));
-                    helpers.push(Made { src: rule, head: Some((helper.clone(), args.clone())), body: lits.iter().map(|&j| BodyItem::Orig(body[j])).collect(), kept: false });
+                    let narrow = domains.iter().map(|(d, x)| BodyItem::New(d.clone(), vec![NOwned::V(x.clone())]));
+                    helpers.push(Made { src: rule, head: Some((helper.clone(), args.clone())), body: lits.iter().map(|&j| BodyItem::Orig(body[j])).chain(narrow).collect(), kept: false });
                 }
                 // Where the helper's read goes: its first literal no other helper's read took (a filter copied into
                 // several components is the first literal of more than one).

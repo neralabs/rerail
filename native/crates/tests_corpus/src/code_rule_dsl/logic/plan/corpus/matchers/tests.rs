@@ -43,6 +43,30 @@ b(c, f) :- kind(c, "call"), field(c, "function", f), kind(f, "attribute").
         assert_eq!(body("b").body().count(), 3, "a field the head reads stays a join");
     }
 
+    /// A guest language's kind (`braceFormat:identifier`, a tape value's node, decision 0431) is none of a Python
+    /// matcher's: its root and parent edges stay joins. Taken as one, the matcher did not lower ("Kind
+    /// `braceFormat:identifier` is invalid"), and FAST003's program, with its helpers keyed by a capture's text
+    /// (decision 0677), failed whole. A Python root beside it still becomes a matcher.
+    #[test]
+    fn a_guest_languages_kind_is_no_python_matcher() {
+        let src = r#"
+.decl g(c: node)
+.decl p(c: node)
+.output g, p
+g(c) :- guest_of(c, _), kind(c, "braceFormat:identifier"), !field(_, "braceFormat:attribute", c).
+p(c) :- guest_of(c, _), kind(c, "identifier"), !field(_, "attribute", c).
+"#;
+        use crate::code_rule_dsl::logic::plan::corpus::preparation::text::tree_parts_as_matchers;
+        use crate::code_rule_dsl::logic::program_image::Lit;
+        let prog = crate::code_rule_dsl::logic::rr::parse_version(src).unwrap();
+        let (v, made) = tree_parts_as_matchers(prog, false).unwrap();
+        assert_eq!(made, 1, "the Python rule alone");
+        for r in v.rules().filter(|r| v.rel_name(r.head().rel()) == "g") {
+            assert!(r.body().all(|l| !matches!(l.view(), Lit::Ast { .. })), "no matcher of a guest's kind: {}", v.show_rule(r));
+        }
+        assert!(v.rules().filter(|r| v.rel_name(r.head().rel()) == "p").any(|r| r.body().any(|l| matches!(l.view(), Lit::Ast { .. }))), "the Python kind is one");
+    }
+
     /// A matcher whose every read joins its node with a column only another matcher's roots fill is bound only at
     /// those roots (decision 0459); one read anywhere else, under a negation or with no such join, everywhere.
     #[test]

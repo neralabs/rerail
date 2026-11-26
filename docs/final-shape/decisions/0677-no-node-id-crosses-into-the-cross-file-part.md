@@ -1009,7 +1009,98 @@ and `rr_found_through` under `pkg_workspace_root`. Both are the located-output i
 The translation suite (`scripts/ship/translations.ts`) made its stores with the default mode, and the engine refuses a
 store folder others may read (decision 0574). Each translation failed before running. It now makes them mode 700.
 
+**Batch 8: the unplaced check in each file, FAST003 by a capture's text, and two engine fixes.** Every entry left by
+the lowering was its check of findings no file places (0431 R9): `rr_found_through` in seven packs, `rr_found_node` in
+PHP, and the negation helpers `exists_N` of a located output in five.
+
+- **The lowering: the negation is made in each file, and each finding's check is a positive join with it.** Before,
+  each finding wrote its node by its clause (`rr_found_node(clause, n)`, or `rr_found_through` where findings are
+  placed through a string), and the program's one rule refused those of no file's document in the cross part. A
+  finding at a location read back from the relay (0665, `no_redeclare`'s `@place(f, l)`) wrote its own negation,
+  `exists_N(d) :- V(v), docof(v, d)`. Both held a finding's node in the cross part. Now a program makes, once, in each
+  file's part, the nodes no file places: `rr_unplaced_node(n) :- node(d, n, _, _, _), !doc(d, _, _)`. Where findings
+  are placed through a string, a tape value's nodes are placed together (`guest_place` puts each of its nodes at each
+  string that holds it), so the test is of the values: `rr_unplaced_value(d) :- tape_of(d, _), !doc(d, _, _),
+  !rr_placed_value(d)`, and `rr_unplaced_through(n) :- rr_unplaced_value(d), node(d, n, _, _, _)`. Before, it was of
+  each node (`!rr_placed_at(n)`, a row for every node of every value). Both are kept relations (`no_inline`): inlined
+  into a finding's rule, the node and its document became a part that meets the rest at the document alone, which
+  `ProjectExistentials` moved into an `exists_N(d) :- V(v), node(d, v, …)` reading the finding's node, in the cross
+  part for a finding made there. A finding at a location reads `rr_unplaced_doc(d)`, the documents no file's. Each finding's rule is
+  `rr_unplaced(clause) :- V(…), rr_unplaced_node(v0)` (or `docof(v0, d), rr_unplaced_doc(d)`), positive, and an output.
+  A program still makes one negation, not one a finding (the reason R9 gathered them: three strata a finding). Only a
+  guest-reading program reads `tape_of`, a guest relation, as before. Hiding takes a finding's placed column from the
+  new atoms' first column. Tests: `a_program_refuses_its_unplaced_findings_in_one_rule` (one rule of the nodes no file
+  places holds the negation; each finding's rule joins it, positive), `a_finding_no_file_holds_is_refused_naming_its_clause`,
+  `a_packs_programs_share_their_unplaced_findings_relations`, and `a_session_passes_on_a_stratum_its_changed_kinds_do_not_reach`:
+  an edit of a placed file no longer reaches `rr_unplaced` at all. The nodes no file places did not change, so it is
+  neither an input that changed nor a stratum reached that saw no row.
+- **FAST003 (python-main) passes the path parameter's text, not its node.** The route's `{k}` is a node of the
+  brace-format tape, a value every file holding the text shares (0431). Its helpers (`param_eq`, `fn_has`, `init_has`,
+  `call_has`, `pyd_field`, `alt_2`, `alt_10`, `alt_13`, and the demands of the last two) took that node and compared
+  texts. `alt_2` and `pyd_field` were declared `cross_file` (0652): they joined any file's node of the text. Each
+  now takes the text (`KT`, bound once as `text(K, KT)`) and compares its own node's text with it in its file. The
+  alias branch compares the alias's value with `KT` too.
+- **The engine: an aggregate's context keeps the text it is asked for.** `placed_texts` left out a `text(v, t)` whose
+  node no atom of the context binds. FAST003's `K = c3, text(K, KT)` binds `K` through an equality, so the context's
+  head held `KT` with nothing binding it ("$KT is unbound in SQL"). A node equal to a bound one is bound, and a text
+  the context is asked for stays. Test: `a_context_keeps_the_text_it_is_asked_for`.
+- **The engine: a guest language's kind is no Python matcher's.** The pass that runs a rule's tree-shaped parts as
+  matchers (`Absorb`, 0106 §4) took `kind(c, "braceFormat:identifier")` with its parent edges as a Python matcher,
+  which did not lower ("Kind `braceFormat:identifier` is invalid"). A kind or field of another language stays a join.
+  Test: `a_guest_languages_kind_is_no_python_matcher`.
+- **The engine: a pushed location lookup is narrowed to the finding's nodes.** A cross-file finding's place is read by
+  `doc(d, p, _), node(d, v, …), line(v, l), col(v, c)`, a lookup of every node. The push pass (0281) left that lookup
+  in the cross part while the cross part read base relations anyway, and pushed it into the chunks otherwise, so that
+  the per-file memo works. With the crossings above gone, the data layer's cross part reads none, and the lookup was
+  pushed whole: 1.5 M rows over 277 files for `swallowed-exceptions`, whose peak went from 442 MB to 717 MB. Now where
+  the rule reads each of the lookup's nodes from a relation whose every rule binds it in the chunks
+  (`WARNING(x, s) :- warn_at(x, s, p, l), !ignored(p, l)`), the pushed join also reads that relation's domain, a
+  per-file helper of those reads (`fl…_WARNING(x) :- warn_at(x, _, _, _)`). The rule's own read implies the domain's,
+  so the join keeps every row the rule uses. `swallowed-exceptions` is back to 448 MB. Test:
+  `a_pushed_location_lookup_is_narrowed_to_the_findings_nodes`.
+- **The engine: hiding's copy of a relation keeps its qualifiers.** Hiding (0058 §2) copies a derived relation read
+  with a guest's node as `rr_in_<grammar>_<column>_<relation>`, with that column seeded. The copy had no qualifiers.
+  `rr_unplaced_through`, read over an ESLint directive's node in the JavaScript and Node packs, was copied without its
+  `no_inline` and inlined, which made the `exists_N` above. A copy now has its relation's qualifiers. Test:
+  `a_copy_keeps_its_relations_qualifiers`.
+
+Results, on the checkout's engine against batch 7's, each run with its own stores:
+- The data layer's 18 policies of batch 5, over 277 files of its repository, one at a time: the same findings in each,
+  and no crossing (batch 7: `rr_found_through` in five, `exists_4` or `exists_8` in two). Instructions and peak memory
+  are within the runs' spread of batch 7's (`swallowed-exceptions`: 255 M against 268 M, 447 MB against 447 MB).
+- The Node pack over its 20-finding sample: the same findings, no crossing (batch 7: `exists_17`,
+  `rr_found_through`), 305 M instructions against 311 M, 322 MB against 326 MB.
+- ESLint's no-loss-of-precision over its 40 cases and 16 more that do and do not lose precision: the same 12 findings.
+- FAST003 finds nothing in the pack's sample on either engine: `guest_of` has no rows in its program (§ Open). Its
+  rewrite was checked with `guest_of` given by a stub relation: the same findings as the rule before it.
+
+**Batch 9: the last three, and BCGP's decorators linear.** The list is empty.
+- **The data layer's `violation` under `bcgp_field`.** BCGP009's second rule tested `graph_type`'s line text in the
+  cross part: `bcgp_field(p, x, "graph_type", l), bcgp_line(p, l, sp), match(…, sp)`, a span read where `bcgp_field`
+  (a `min` per path and class) is. The line test is each file's now, `bcgp_optional_type(p, l)`, and the rule joins on
+  the line number. Both forms of an optional `graph_type` (`: … | None`, `= None`) give the same two findings as
+  before on a copy of `intent_graph.py` made to have them.
+- **BCGP's decorated methods, linear.** `bcgp_decorated(p, a, k, m)` paired each decorator line with each later def
+  and counted the lines between: cubic in a file's length, so the policy passed 6 GB on the sample's 20,000-line file,
+  on batch 7's engine as on this one. A decorator's run of `@` lines is walked instead (`bcgp_deco_run`), and the def
+  is the first line after it. The 12,000-line prefix: the same 30 findings, 1.2 GB to 236 MB, 425 M instructions to
+  78 M. The 277 files: 30 findings, 551 MB, where no engine finished before. A two-decorator method, and one whose
+  decorator a blank line parts from its def, are found and refused as before.
+- **Django's `dar_non_atomic_wrapped`.** The wrapped views were a table of call nodes, and `dar_wrapped(f)` joined a
+  def's node with them by name. The wrapped names are symbols now, and a view is refused by its own name where the
+  names meet: `dar_view_fn(fq, q)`, each file's (q `""` for a def with no name), then `dar_view(fq) :- dar_view_fn(fq,
+  q), !dar_non_atomic_wrapped(q)`. A project with a plain view, a urls-wrapped one, a decorated one, and one of each
+  calling a helper gives the same two findings as before.
+- **JavaScript's `significant_bits`.** `radix(n, …)` was keyed by a literal's text (`radix__key_slice0`, a table of
+  every file's texts). It is keyed by the literal now, `radix_digits(n, digits, zeros, b)` over `raw_number(n, r)`. The
+  same 12 findings.
+
 ## Open
+
+- **FAST003's `guest_of` has no rows.** A violation that reads a recursive relation over one that reads `guest_of(c, h)`
+  gets no `guest_of` rows in its program, on batch 5's engine as on this one: FAST003 (python-main) finds nothing in
+  the pack's sample. The smallest program that shows it is a violation reading `ra`, recursive over `dm`, where `dm`
+  reads `guest_of(c2, h4)`.
 
 - **A sharded pack's stale entries.** Each shard runs in a process of its own and sees its own policies, so no shard
   can say a listed relation no longer crosses. Fix 3's were found by comparing the shards' logs with the list by hand,
@@ -1030,12 +1121,6 @@ store folder others may read (decision 0574). Each translation failed before run
   part (UP015's, batch 3). UP015 writes its test as one regex. The aggregate's context can hold a node, as
   `match_all`'s does now (batch 3), with its readers joining on both.
 
-- **A located output's unplaced check.** An output at a `loc` whose rows include a place built from a path
-  (`no_redeclare`'s `@place(f, l)` for a `/* global */` item on a later line) has no location column, so `locate`
-  relays it and the cross part reads it back (0665, `READ_LOCATED`). The lowering's check of findings at no file's
-  node (`rr_unplaced`, 0431 R9) reads the read-back rows. Its negation helper (`exists_N(d) :- no_redeclare(v, _),
-  docof(v, d)`) then holds a node in the cross part: javascript's and typescript's no-redeclare, node's
-  no-unpublished-bin. The check is a test of each row. It belongs with the rows in each file, before the relay.
 - **Where a finding that pairs two files' nodes is written.** `call_target(call, def)` is an example. An output
   keeps its node (§ Built), but once its family is rewritten it names the second file's node by that node's symbol,
   or by the definition's place read in its own file. This is settled family by family, as each is rewritten.

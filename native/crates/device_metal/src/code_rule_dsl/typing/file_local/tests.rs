@@ -976,6 +976,41 @@ hit(n, l) :- pick(n), line(n, l).
     }
 }
 
+/// A cross-file finding's place (`node(d, n, …), doc(d, p, _), line(n, l)`) narrows no node: pushed into the chunks
+/// whole, it is a row for every node (1.5 M over 277 files of the data layer, decision 0677 batch 8). The finding's
+/// own relation binds its node in the chunks (`warn(n) :- at(n, x), !names(x)`), so the pushed join reads that domain,
+/// `at`'s nodes, and holds a row per candidate.
+#[test]
+fn a_pushed_location_lookup_is_narrowed_to_the_findings_nodes() {
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl doc(d: number, p: symbol, h: symbol)
+.decl text(n: node, s: symbol)
+.decl line(n: loc, l: number)
+.input node, doc, text, line
+.decl names(x: symbol)
+names(x) :- node(_, n, "string", _, _), text(n, x).
+.decl at(n: node, x: symbol)
+at(n, x) :- node(_, n, "identifier", _, _), text(n, x).
+.decl warn(n: node)
+warn(n) :- at(n, x), !names(x).
+.decl found(p: symbol, n: node, l: number)
+found(p, n, l) :- warn(n), node(d, n, _, _, _), doc(d, p, _), line(n, l).
+.output found
+"#;
+    let (v, made) = pushed(read(text));
+    let found = rules_of(&v, "found");
+    assert_eq!(found.len(), 1, "{}", v.show());
+    let join = reads(&v, found[0]).into_iter().find(|r| made.contains(r)).unwrap_or_else(|| panic!("the location lookup pushed: {}", v.show_rule(found[0])));
+    let join_rules = rules_of(&v, &join);
+    assert_eq!(join_rules.len(), 1);
+    let narrowing = reads(&v, join_rules[0]).into_iter().find(|r| made.contains(r)).unwrap_or_else(|| panic!("narrowed by the finding's domain: {}", v.show_rule(join_rules[0])));
+    let domain: Vec<Vec<String>> = rules_of(&v, &narrowing).into_iter().map(|r| reads(&v, r)).collect();
+    assert_eq!(domain, vec![vec!["at".to_owned()]], "the domain is `at`'s nodes");
+    let split = programs_of(v).unwrap();
+    assert!(split.file_local.contains(&join) && split.file_local.contains(&narrowing), "both made in the chunks: {:?}", split.causes);
+}
+
 /// A climb up the tree (`inside`, `has`, a nearest over a derived set: lower.rs `climb`) reads the tape's parent
 /// column, which `need_tape` declares over numbers. A node's parent is in its document, so the climb is file-local:
 /// cross-file, every climb of a pack joined the corpus on one worker (O-cold-seed-join).

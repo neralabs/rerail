@@ -5375,13 +5375,17 @@ impl Lowerer {
     /// (`t = @rr_node_text(v)` past the inline bound, decision 0109), and such a `v` is bound by the rule, not the
     /// context (`perf101_rebinding(n, NAME) :- demand(n, NAME), within_stop(c6, n, …), field(c6, "name", c7),
     /// text(c7, t), text(NAME, t)`, a context of `c6`). Left out, it widens the context, which the rule joins with
-    /// its own literals.
+    /// its own literals. A node equal to one bound is bound (`K = c3, text(K, KT)`), and a text asked about is kept:
+    /// it is what binds it (FAST003's `KT`, the text its helpers are asked with, decision 0677).
     fn placed_texts(&self, context: Vec<LitAt>, vars: &[String]) -> Vec<LitAt> {
         let text_of = |l: &LitAt| match self.lit(l) {
-            L::Atom { rel, neg: false, args, .. } if rel == "text" => match args.first().map(|a| self.tv(a)) {
-                Some(T::Var(v)) => Some(v),
-                _ => None,
-            },
+            L::Atom { rel, neg: false, args, .. } if rel == "text" => {
+                let var = |k: usize| match args.get(k).map(|a| self.tv(a)) {
+                    Some(T::Var(v)) => Some(v),
+                    _ => None,
+                };
+                var(0).map(|v| (v, var(1)))
+            }
             _ => None,
         };
         let binders: Vec<LitAt> = context
@@ -5389,8 +5393,24 @@ impl Lowerer {
             .filter(|l| matches!(self.lit(l), L::Atom { rel, neg: false, .. } if rel != "text" && test_of(&rel).is_none()))
             .cloned()
             .collect();
-        let bound = self.body_vars(&binders);
-        let kept = context.into_iter().filter(|l| text_of(l).is_none_or(|v| bound.contains(&v) || vars.contains(&v))).collect();
+        let mut bound = self.body_vars(&binders);
+        let mut grew = true;
+        while grew {
+            grew = false;
+            for l in &context {
+                if let L::Cmp { l, op: "=", r } = self.lit(l)
+                    && let (T::Var(a), T::Var(b)) = (self.tv(&l), self.tv(&r))
+                    && bound.contains(&a) != bound.contains(&b)
+                {
+                    bound.insert(if bound.contains(&a) { b } else { a });
+                    grew = true;
+                }
+            }
+        }
+        let kept = context
+            .into_iter()
+            .filter(|l| text_of(l).is_none_or(|(v, t)| bound.contains(&v) || vars.contains(&v) || t.is_some_and(|t| vars.contains(&t))))
+            .collect();
         // A comparison that read a node only the text bound goes with it (`@doc(FN) = @doc(BOUND)`).
         self.bound_context(kept).0
     }

@@ -182,8 +182,10 @@ impl RulePass for Absorb {
         let v = cx.v();
         // A kind or field name as the program holds it (`python:call`), as the matcher names it (`call`). Fresh names
         // are counted per rule: a rule's do not depend on the others'.
+        // A guest language's kind or field (`braceFormat:identifier`, decision 0431) is none of the matcher's
+        // language: its literal stays a join.
         let str_of = |t: Option<&TermRef<'_>>| match t {
-            Some(TermRef::Str(s)) => Some(v.text(*s).strip_prefix("python:").unwrap_or(v.text(*s)).to_owned()),
+            Some(TermRef::Str(s)) => Some(v.text(*s).strip_prefix("python:").unwrap_or(v.text(*s)).to_owned()).filter(|k| !k.contains(':')),
             _ => None,
         };
         let var_of = |t: Option<&TermRef<'_>>| t.and_then(|t| t.var());

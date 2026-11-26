@@ -27,18 +27,26 @@ pub const MESSAGE_COLUMN: usize = 6;
 
 /// Decision 0431 R9: the clauses whose findings are placed at a node no file holds (`corpus::refuse_unplaced`).
 pub const UNPLACED: &str = "rr_unplaced";
-/// The tape values' nodes a string of a file places (`guest_place` at a string whose document is a file's): a node of
-/// a string inside another value stands in that value's text, which is no file's (decision 0431 §3, R9).
-pub const PLACED_AT: &str = "rr_placed_at";
 /// A tape value's node's place in a file, `(n, line, col, path)`: at each string of a file that holds it
 /// (`guest_place`), in that string's document. One relation a program's findings placed through a string read, not a
 /// join each writes again (346 diagnostics on corpus0 each made every guest's placement).
 pub const PLACED_LINE: &str = "rr_placed_line";
-/// Decision 0431 R9: each finding at a node, by its clause, `(clause, n)`: a program's findings placed through a string
-/// (`FOUND_THROUGH`) or not (`FOUND_NODE`). `UNPLACED` refuses them in one rule a program, not one a finding (each a
-/// negation split, a demand and a join of its own: three strata a finding).
-pub const FOUND_THROUGH: &str = "rr_found_through";
-pub const FOUND_NODE: &str = "rr_found_node";
+/// Decision 0431 R9: the nodes no file places, each file's own (decision 0677: a test of each finding's row, made where
+/// its node is, so no relation of the cross-file part holds a finding's node but the finding's): those of a document
+/// no file's (`UNPLACED_NODE`), or, where findings are placed through a string, a tape value's no string of a file
+/// places (`UNPLACED_THROUGH`); and the documents no file's (`UNPLACED_DOC`), for a finding at a location. The
+/// negation is made once a program, in these; each finding's `UNPLACED` rule is a positive join with one (a
+/// finding's own negation was a negation split, a demand and a join: three strata a finding). Before 0677 the
+/// finding's node was projected by its clause (`rr_found_node(clause, n)`) and joined in the cross-file part.
+pub const UNPLACED_NODE: &str = "rr_unplaced_node";
+pub const UNPLACED_THROUGH: &str = "rr_unplaced_through";
+pub const UNPLACED_DOC: &str = "rr_unplaced_doc";
+/// The tape values a string of a file places (`guest_place` at a string whose document is a file's: a string inside
+/// another value stands in that value's text, which is no file's, decision 0431 §3, R9): `UNPLACED_THROUGH`'s test,
+/// of the values, not of their nodes (`rr_placed_at(n)` before, made of every node of every value).
+pub const PLACED_VALUE: &str = "rr_placed_value";
+/// The tape values no file's string places: `UNPLACED_THROUGH` holds their nodes.
+pub const UNPLACED_VALUE: &str = "rr_unplaced_value";
 
 /// Whether `rel` is a finding's relation.
 pub fn is_diagnostic(rel: &str) -> bool {
@@ -310,7 +318,6 @@ impl<'p> Findings<'_, 'p> {
             let through = at_document && f.node && seen.reads_guests;
             if through {
                 self.placed_line()?;
-                self.placed_at()?;
             }
             self.diagnostics(&policy, &f, at_document, commit_locations, through)?;
             let code_col = match f.code {
@@ -350,17 +357,19 @@ impl<'p> Findings<'_, 'p> {
                 self.b.fields().add_output(UNPLACED);
                 let clause = self.s(&f.name);
                 if f.node {
-                    // The finding's node, by its clause; the program's one rule refuses those unplaced.
-                    let found = if through { FOUND_THROUGH } else { FOUND_NODE };
-                    self.unplaced_nodes(found, through)?;
-                    let mut o = self.open(found, &[clause, v0.clone()]);
+                    // The finding at a node its file's rules found unplaced.
+                    let unplaced = if through { UNPLACED_THROUGH } else { UNPLACED_NODE };
+                    self.unplaced_nodes(unplaced, through)?;
+                    let mut o = self.open(UNPLACED, &[clause]);
                     self.put(&mut o, &f.name, &cols, false);
+                    self.put(&mut o, unplaced, std::slice::from_ref(&v0), false);
                     self.close(o)?;
                 } else {
+                    self.unplaced_docs()?;
                     let mut o = self.open(UNPLACED, &[clause]);
                     self.put(&mut o, &f.name, &cols, false);
                     self.put(&mut o, "docof", &[v0.clone(), d.clone()], false);
-                    self.put(&mut o, "doc", &[d.clone(), w(), w()], true);
+                    self.put(&mut o, UNPLACED_DOC, std::slice::from_ref(&d), false);
                     self.close(o)?;
                 }
             }
@@ -747,23 +756,82 @@ impl<'p> Findings<'_, 'p> {
         Ok(())
     }
 
-    /// `UNPLACED`'s rule over the nodes of `found` (`FOUND_THROUGH`, `FOUND_NODE`), once a program: a finding at a node
-    /// of no file's document, and, `through`, of a tape value's (`tape_of`, an entry: hiding leaves `d` unbounded, so a
-    /// value in the hidden range is refused too) that no file's string places.
-    fn unplaced_nodes(&mut self, found: &str, through: bool) -> Result<(), Error> {
-        if self.b.declares(found) {
+    /// `unplaced`'s rule (`UNPLACED_THROUGH`, `UNPLACED_NODE`), once a program: a node of no file's document, and,
+    /// `through`, of a tape value's (`tape_of`, an entry: hiding leaves `d` unbounded, so a value in the hidden range is
+    /// refused too) that no file's string places. Each file's, by the node's document.
+    fn unplaced_nodes(&mut self, unplaced: &str, through: bool) -> Result<(), Error> {
+        if self.b.declares(unplaced) {
             return Ok(());
         }
-        self.b.fields().declare(found, &[("clause", "sym"), ("n", "node")]);
-        let (clause, n, d) = (self.v("rr_clause"), self.v("rr_n"), self.v("rr_d"));
-        let mut o = self.open(UNPLACED, std::slice::from_ref(&clause));
-        self.put(&mut o, found, &[clause, n.clone()], false);
-        self.put(&mut o, "node", &[d.clone(), n.clone(), Tm::Wild, Tm::Wild, Tm::Wild], false);
-        self.put(&mut o, "doc", &[d.clone(), Tm::Wild, Tm::Wild], true);
+        self.b.fields().declare(unplaced, &[("n", "node")]);
+        // Kept a relation (`no_inline`), made in each file: inlined into a finding's rule (`V(v), node(d, v, …),
+        // !doc(d, …)`), the finding's node and its document became a part the rest meets at the document alone, which
+        // `ProjectExistentials` moves into a relation of documents (`exists_N(d) :- V(v), node(d, v, …)`), made where
+        // the finding is: in the cross part for a finding made there, reading its node (decision 0677).
+        self.b.fields().add_qualifiers(&[(unplaced, "no_inline")]);
+        let (n, d) = (self.v("rr_n"), self.v("rr_d"));
         if through {
-            self.put(&mut o, "tape_of", &[d, Tm::Wild], false);
-            self.put(&mut o, PLACED_AT, std::slice::from_ref(&n), true);
+            // A tape value's nodes stand at each of its places together (`guest_place`, a row of each node at each
+            // string that holds the value): a value is placed or not, and its nodes with it. So the values are
+            // tested, few, and the nodes of those unplaced read, not every node of every value probed for a place of
+            // its own (`rr_placed_at(n)`).
+            self.unplaced_values()?;
+            let mut o = self.open(unplaced, std::slice::from_ref(&n));
+            self.put(&mut o, UNPLACED_VALUE, std::slice::from_ref(&d), false);
+            self.put(&mut o, "node", &[d, n, Tm::Wild, Tm::Wild, Tm::Wild], false);
+            return self.close(o);
         }
+        let mut o = self.open(unplaced, std::slice::from_ref(&n));
+        self.put(&mut o, "node", &[d.clone(), n.clone(), Tm::Wild, Tm::Wild, Tm::Wild], false);
+        self.put(&mut o, "doc", &[d, Tm::Wild, Tm::Wild], true);
+        self.close(o)
+    }
+
+    /// `UNPLACED_VALUE`'s rule, once a program: a tape value (`tape_of`, an entry: hiding leaves `d` unbounded, so a
+    /// value in the hidden range is refused too) that no file's string places (`PLACED_VALUE`).
+    fn unplaced_values(&mut self) -> Result<(), Error> {
+        if self.b.declares(UNPLACED_VALUE) {
+            return Ok(());
+        }
+        self.placed_values()?;
+        let ty = self.b.columns_of("doc").and_then(|c| c.first().map(|(_, t)| t.clone())).unwrap_or_else(|| "int".to_owned());
+        self.b.fields().declare(UNPLACED_VALUE, &[("d", ty.as_str())]);
+        let d = self.v("rr_d");
+        let mut o = self.open(UNPLACED_VALUE, std::slice::from_ref(&d));
+        self.put(&mut o, "tape_of", &[d.clone(), Tm::Wild], false);
+        self.put(&mut o, "doc", &[d.clone(), Tm::Wild, Tm::Wild], true);
+        self.put(&mut o, PLACED_VALUE, std::slice::from_ref(&d), true);
+        self.close(o)
+    }
+
+    /// `PLACED_VALUE`'s rule, once a program: a tape value a string of a file places (`guest_place` at a node of a
+    /// document with a `doc` row).
+    fn placed_values(&mut self) -> Result<(), Error> {
+        if self.b.declares(PLACED_VALUE) {
+            return Ok(());
+        }
+        let ty = self.b.columns_of("doc").and_then(|c| c.first().map(|(_, t)| t.clone())).unwrap_or_else(|| "int".to_owned());
+        self.b.fields().declare(PLACED_VALUE, &[("d", ty.as_str())]);
+        let (n, s, d, f) = (self.v("rr_n"), self.v("rr_s"), self.v("rr_d"), self.v("rr_f"));
+        let mut o = self.open(PLACED_VALUE, std::slice::from_ref(&d));
+        self.put(&mut o, "guest_place", &[n.clone(), s.clone(), Tm::Wild, Tm::Wild], false);
+        self.put(&mut o, "node", &[d, n, Tm::Wild, Tm::Wild, Tm::Wild], false);
+        self.put(&mut o, "node", &[f.clone(), s, Tm::Wild, Tm::Wild, Tm::Wild], false);
+        self.put(&mut o, "doc", &[f, Tm::Wild, Tm::Wild], false);
+        self.close(o)
+    }
+
+    /// `UNPLACED_DOC`'s rule, once a program: a document no file's, each its own, by `node`'s rows.
+    fn unplaced_docs(&mut self) -> Result<(), Error> {
+        if self.b.declares(UNPLACED_DOC) {
+            return Ok(());
+        }
+        let ty = self.b.columns_of("doc").and_then(|c| c.first().map(|(_, t)| t.clone())).unwrap_or_else(|| "int".to_owned());
+        self.b.fields().declare(UNPLACED_DOC, &[("d", ty.as_str())]);
+        let d = self.v("rr_d");
+        let mut o = self.open(UNPLACED_DOC, std::slice::from_ref(&d));
+        self.put(&mut o, "node", &[d.clone(), Tm::Wild, Tm::Wild, Tm::Wild, Tm::Wild], false);
+        self.put(&mut o, "doc", &[d, Tm::Wild, Tm::Wild], true);
         self.close(o)
     }
 
@@ -779,18 +847,6 @@ impl<'p> Findings<'_, 'p> {
         self.put(&mut o, "guest_place", &[n, s.clone(), l, c], false);
         self.put(&mut o, "node", &[d.clone(), s, Tm::Wild, Tm::Wild, Tm::Wild], false);
         self.put(&mut o, "doc", &[d, p, Tm::Wild], false);
-        self.close(o)
-    }
-
-    /// `PLACED_AT`'s rule, once a program: a tape value's node `n` that `PLACED_LINE` places in a file.
-    fn placed_at(&mut self) -> Result<(), Error> {
-        if self.b.declares(PLACED_AT) {
-            return Ok(());
-        }
-        self.b.fields().declare(PLACED_AT, &[("n", "node")]);
-        let n = self.v("rr_n");
-        let mut o = self.open(PLACED_AT, std::slice::from_ref(&n));
-        self.put(&mut o, PLACED_LINE, &[n, Tm::Wild, Tm::Wild, Tm::Wild], false);
         self.close(o)
     }
 
