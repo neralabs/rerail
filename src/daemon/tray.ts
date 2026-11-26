@@ -98,38 +98,41 @@ export interface TrayMenuState {
  * replaces this daemon with the new version's, whose icon no longer offers it, so the item says it is done only where
  * this daemon outlives the update: when the refresh keeps it running or could not replace it. The icon then drops its
  * badge, though `health.update.latest` stays newer until the new version replaces this daemon; a later release than
- * the one installed is offered again.
+ * the one installed is offered again, never an older one, as when a pulled release moves the channel back. `isNewer`
+ * says whether release `latest` is newer than `running`.
  */
 export function trayMenuState(input: {
   health: DaemonHealth;
   homePath: string;
   newer: string | null;
   update: TrayUpdateRun;
+  isNewer(latest: string, running: string): boolean;
 }): TrayMenuState {
-  const { health, newer, update: run } = input;
-  const update = updateItem(newer, run);
+  const { health, newer, update: run, isNewer } = input;
+  const update = updateItem(newer, run, isNewer);
   return {
     healthy: health.healthy,
     status: health.healthy ? "Rerail is running" : `Rerail needs attention: ${unhealthyBecause(health)}`,
     version: `Version ${health.version}`,
     dashboard: `Home path: ${input.homePath}`,
     update,
-    attention: !health.healthy || updateOffered(newer, run) !== null,
+    attention: !health.healthy || updateOffered(newer, run, isNewer) !== null,
   };
 }
 
 /**
  * The version a click on the menu's update line updates to, or null where the line offers none: nothing newer, an
- * update under way, or one done to the newest release found. A failed update is retried at the newest release found.
+ * update under way, or one done to the newest release found or a later one. A failed update is retried at the newest
+ * release found.
  */
-function updateOffered(newer: string | null, run: TrayUpdateRun): string | null {
+function updateOffered(newer: string | null, run: TrayUpdateRun, isNewer: TrayOptions["isNewer"]): string | null {
   switch (run.state) {
     case "idle":
       return newer;
     case "running":
       return null;
     case "done":
-      return newer === run.version ? null : newer;
+      return newer !== null && isNewer(newer, run.version) ? newer : null;
     case "failed":
       return newer ?? run.version;
   }
@@ -142,15 +145,21 @@ function unhealthyBecause(health: DaemonHealth): string {
   return "unhealthy";
 }
 
-function updateItem(newer: string | null, run: TrayUpdateRun): TrayMenuState["update"] {
+function updateItem(
+  newer: string | null,
+  run: TrayUpdateRun,
+  isNewer: TrayOptions["isNewer"],
+): TrayMenuState["update"] {
   switch (run.state) {
     case "idle":
       return newer === null ? null : { label: `Update to ${newer}`, enabled: true };
     case "running":
       return { label: `Updating to ${run.version}…`, enabled: false };
-    case "done":
-      if (newer !== null && newer !== run.version) return { label: `Update to ${newer}`, enabled: true };
+    case "done": {
+      const next = updateOffered(newer, run, isNewer);
+      if (next !== null) return { label: `Update to ${next}`, enabled: true };
       return { label: `Updated to ${run.version}. New sessions use it.`, enabled: false };
+    }
     case "failed":
       return { label: "Update failed, see daemon.log", enabled: true };
   }
@@ -244,20 +253,22 @@ export function startTray(options: TrayOptions): TrayHandle {
    */
   let menuFailed = false;
 
+  const isNewer = (latest: string, running: string): boolean => {
+    try {
+      return options.isNewer(latest, running);
+    } catch {
+      // A version that does not parse is no update to offer.
+      return false;
+    }
+  };
   /** The newer Rerail the daemon's update check found, if any. */
   const newer = (health: DaemonHealth): string | null => {
     const latest = health.update?.latest;
-    if (latest === undefined) return null;
-    try {
-      return options.isNewer(latest, health.version) ? latest : null;
-    } catch {
-      // A version that does not parse is no update to offer.
-      return null;
-    }
+    return latest !== undefined && isNewer(latest, health.version) ? latest : null;
   };
   const menu = (): TrayMenuState => {
     const health = daemon.health();
-    return trayMenuState({ health, homePath: options.homePath, newer: newer(health), update: run });
+    return trayMenuState({ health, homePath: options.homePath, newer: newer(health), update: run, isNewer });
   };
   const send = (): void => {
     if (ended) return;
@@ -278,7 +289,7 @@ export function startTray(options: TrayOptions): TrayHandle {
 
   const update = (): void => {
     // Only what the menu offers: an update to a newer Rerail, or a retry of one that failed. One runs at a time.
-    const version = updateOffered(newer(daemon.health()), run);
+    const version = updateOffered(newer(daemon.health()), run, isNewer);
     if (version === null) return;
     run = { state: "running", version };
     send();
@@ -287,9 +298,16 @@ export function startTray(options: TrayOptions): TrayHandle {
       log(`rerail tray: the update to ${version} failed: ${why}`);
       return false;
     };
+    // One still running at the deadline may yet finish: the menu stopped waiting, and offers it again.
+    const settled = (exit: UpdateExit): boolean => {
+      if (exit.code === 0) return true;
+      if (exit.stillRunning !== true) return failed(exit.reason);
+      log(`rerail tray: the update to ${version} was ${exit.reason}; the menu stopped waiting for it`);
+      return false;
+    };
     // Through a promise, so a runUpdate that throws as it is called fails the update like one that rejects.
     void Promise.resolve().then(() => options.runUpdate()).then(
-      exit => exit.code === 0 || failed(exit.reason),
+      settled,
       (error: unknown) => failed(error instanceof Error ? error.message : String(error)),
     ).then(succeeded => {
       run = { state: succeeded ? "done" : "failed", version };
@@ -405,6 +423,8 @@ const UPDATE_DEADLINE_MS = 30 * 60_000;
 export interface UpdateExit {
   code: number;
   reason: string;
+  /** Set where it had not ended at the deadline: the menu stopped waiting for it, and it is left to run. */
+  stillRunning?: true;
 }
 
 /**
@@ -502,7 +522,7 @@ export async function runRerailUpdate(
     if (code !== undefined) return { code: code ?? 1, reason: launched.exitReason() ?? "exited" };
     if (performance.now() >= deadline) {
       const waited = deadlineMs >= 60_000 ? `${Math.round(deadlineMs / 60_000)} minutes` : `${deadlineMs} ms`;
-      return { code: 1, reason: `still running after ${waited}, and left to run` };
+      return { code: 1, reason: `still running after ${waited}`, stillRunning: true };
     }
     await delay(pollMs, undefined, { ref: false });
   }

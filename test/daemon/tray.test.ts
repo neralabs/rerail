@@ -8,7 +8,7 @@ import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DAEMON_STATE_FILE, probeDaemon, readDaemonState, type DaemonHealth } from "../../src/runtime/index.js";
 import { serveRerailDaemon } from "../../src/daemon/daemon.js";
-import { accountHome, displayHomePath, openTrayPage, runRerailUpdate, startDaemonTray, startTray, trayGate, trayMenuState, type TrayDaemon, type TrayGateFacts, type TrayHandle, type TrayOptions, type TrayUpdateRun } from "../../src/daemon/tray.js";
+import { accountHome, displayHomePath, openTrayPage, runRerailUpdate, startDaemonTray, startTray, trayGate, trayMenuState, type TrayDaemon, type TrayGateFacts, type TrayHandle, type TrayOptions, type TrayUpdateRun, type UpdateExit } from "../../src/daemon/tray.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { until } from "../support/processes/daemon-home.js";
@@ -164,12 +164,19 @@ describe("openTrayPage", () => {
 });
 
 describe("trayMenuState", () => {
+  /** Whether release `latest` is newer than `running`, for plain `x.y.z` versions. */
+  const isNewer = (latest: string, running: string): boolean => {
+    const [a, b] = [latest, running].map(version => version.split(".").map(Number));
+    const at = a!.findIndex((part, index) => part !== b![index]);
+    return at !== -1 && a![at]! > b![at]!;
+  };
   const menu = (input: { health?: DaemonHealth; newer?: string | null; update?: TrayUpdateRun } = {}) =>
     trayMenuState({
       health: input.health ?? health(),
       homePath: "~/.rerail",
       newer: input.newer ?? null,
       update: input.update ?? { state: "idle" },
+      isNewer,
     });
 
   it("healthy with no update", () => {
@@ -199,6 +206,14 @@ describe("trayMenuState", () => {
     expect(menu({ newer: "0.2.4", update: { state: "done", version: "0.2.3" } })).toMatchObject({
       update: { label: "Update to 0.2.4", enabled: true },
       attention: true,
+    });
+  });
+
+  it("a release older than the one an update installed is never offered", () => {
+    // The channel's latest moved back after the update, as when a release is pulled.
+    expect(menu({ newer: "0.2.3", update: { state: "done", version: "0.2.4" } })).toMatchObject({
+      update: { label: "Updated to 0.2.4. New sessions use it.", enabled: false },
+      attention: false,
     });
   });
 
@@ -278,7 +293,9 @@ describe("startTray", () => {
    * Starts the fake tray for a daemon whose health is `current()`, replying with `replies` (fake-tray.mjs says how),
    * and records what the tray asks of it.
    */
-  function start(options: { replies?: unknown[]; current?: () => DaemonHealth; runUpdate?: () => Promise<number>; intervalMs?: number } = {}) {
+  function start(
+    options: { replies?: unknown[]; current?: () => DaemonHealth; runUpdate?: () => Promise<number | UpdateExit>; intervalMs?: number } = {},
+  ) {
     vi.stubEnv("FAKE_TRAY_LINES", join(folder, "lines"));
     vi.stubEnv("FAKE_TRAY_PID", join(folder, "pid"));
     vi.stubEnv("FAKE_TRAY_REPLIES", JSON.stringify(options.replies ?? []));
@@ -300,11 +317,11 @@ describe("startTray", () => {
       homePath: "~/.rerail",
       isNewer: (latest, running) => latest !== running,
       openUrl: url => void calls.opened.push(url),
-      // A test's update gives its exit code; a throw as it is called stays one.
+      // A test's update gives its exit code, or how it ended; a throw as it is called stays one.
       runUpdate: () => {
         calls.updates += 1;
-        const code = options.runUpdate?.() ?? Promise.resolve(0);
-        return code.then(exit => ({ code: exit, reason: `exited with code ${exit}` }));
+        const ended = options.runUpdate?.() ?? Promise.resolve(0);
+        return ended.then(exit => (typeof exit === "number" ? { code: exit, reason: `exited with code ${exit}` } : exit));
       },
       log: line => void calls.logs.push(line),
       intervalMs: options.intervalMs ?? 20,
@@ -457,6 +474,18 @@ describe("startTray", () => {
     expect(calls.health).toBe(healthReads);
     // A second tray would have written its own pid.
     expect(readFileSync(join(folder, "pid"), "utf8")).toBe(pid);
+  });
+
+  it("an update the menu stopped waiting for is logged as that, not as failed", async () => {
+    const exits: UpdateExit[] = [{ code: 1, reason: "still running after 30 minutes", stillRunning: true }];
+    const calls = start({
+      current: offered,
+      replies: ['{"action":"update"}\n'],
+      runUpdate: async () => exits.shift() ?? 0,
+    });
+    await until(() => received().length === 3, 10_000, "the given-up update");
+    expect(updateLabels().at(-1)).toBe("Update failed, see daemon.log");
+    expect(calls.logs).toEqual(["rerail tray: the update to 0.2.3 was still running after 30 minutes; the menu stopped waiting for it"]);
   });
 
   it("an update that throws as it is called fails, and can be retried", async () => {
@@ -665,7 +694,8 @@ describe("runRerailUpdate", () => {
     });
     await expect(runRerailUpdate(home, {}, hung, { deadlineMs: 30, pollMs: 5 })).resolves.toEqual({
       code: 1,
-      reason: "still running after 30 ms, and left to run",
+      reason: "still running after 30 ms",
+      stillRunning: true,
     });
   });
 });
