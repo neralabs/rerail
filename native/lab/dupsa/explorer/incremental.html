@@ -53,7 +53,7 @@ tr:last-child td { border-bottom: 0 }
 .ticks { display: grid; grid-template-columns: 340px minmax(0, 1fr) 200px; gap: 12px; padding: 0 6px }
 .ticks .t { position: relative; height: 18px; border-top: 1px solid var(--line) }
 .ticks .t span { position: absolute; top: 2px; transform: translateX(-50%); font-size: 11px; color: var(--muted); white-space: nowrap }
-.gl { position: absolute; top: -3px; bottom: -3px; width: 1px; z-index: 1; background: color-mix(in srgb, var(--ink) 18%, transparent) }
+.gl { position: absolute; top: -3px; bottom: -3px; width: 1px; background: color-mix(in srgb, var(--ink) 18%, transparent) }
 .gl.major { background: color-mix(in srgb, var(--ink) 45%, transparent) }
 .tip { position: fixed; z-index: 20; pointer-events: none; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font-size: 12.5px; box-shadow: 0 4px 16px rgba(0,0,0,.12); max-width: 360px }
 .bars td.track { width: 46%; position: relative }
@@ -422,7 +422,7 @@ svg .muted { fill: var(--muted) }
       <li><b>cold</b> is the first run from nothing: a whole process that reads the base, builds the index and computes its findings, and for the saved index also writes it;</li>
       <li><b>warm</b> is one later edit. For the in-memory incremental designs, it is the median per-edit cost inside a running process (over all 50 steps). For the others, it is a whole new process: one that maps the saved index and applies the edit, or one that rebuilds the edited tree, since a rebuild keeps nothing. Medians over six steps.</li>
     </ul>
-    <p class="text">Both bars start at the axis's origin, on one log axis of instructions with gridlines at 1, 2 and 5 of each decade, so equal costs have equal bars. Each count is shown with its CPU seconds. The bars use instructions because they are the process's own count, which the machine's load doesn't change; CPU time grows with load. Hover a design for both figures.</p>
+    <p class="text">Both bars start at the axis's origin, on one log axis of instructions with gridlines at 1, 2 and 5 of each decade (labelled at the 1s), so equal costs have equal bars. Each count is shown with its CPU seconds. The bars use instructions because they are the process's own count, which the machine's load doesn't change; CPU time grows with load. Hover a design for both figures.</p>
     <div class="legend" style="display:flex; gap:18px; font-size:13px; color:var(--muted)">
       <span style="display:inline-flex; align-items:center; gap:6px"><span style="width:14px; height:10px; border-radius:2px; background:var(--warm)"></span>warm: one edit after it</span>
       <span style="display:inline-flex; align-items:center; gap:6px"><span style="width:14px; height:10px; border-radius:2px; background:var(--cold)"></span>cold: first run from nothing</span>
@@ -579,7 +579,7 @@ document.getElementById("charts").innerHTML = ["lines", "nodes"].map(m => {
   return `<div style="display:grid; gap:6px"><h3>${titles[m]}</h3><div class="tscroll" style="padding:8px 0"><div class="chart">${rows.map(([, name, cold, warm, coldS, warmS], i) => {
     const b = 100 * x(warm), e = 100 * x(cold);
     return `<div class="crow${name.includes("in memory") ? " pick" : ""}" data-m="${m}" data-i="${i}"><div class="lab">${name}</div><div class="track">${ticks.map(t => `<span class="gl${major(t) ? " major" : ""}" style="left:${(100 * x(t)).toFixed(2)}%"></span>`).join("")}<span class="seg w" style="width:${b.toFixed(2)}%"></span><span class="seg c" style="width:${e.toFixed(2)}%"></span></div><div class="num">warm <b>${fmt(warm)}</b> · ${secs(warmS)}<br>cold ${fmt(cold)} · ${secs(coldS)}</div></div>`;
-  }).join("")}<div class="ticks"><div class="note" style="text-align:right">instructions, log scale</div><div class="t">${ticks.map(t => `<span style="left:${(100 * x(t)).toFixed(2)}%${major(t) ? "" : ";opacity:.75"}">${tickLab(t)}</span>`).join("")}</div><div></div></div></div></div></div>`;
+  }).join("")}<div class="ticks"><div class="note" style="text-align:right">instructions, log scale</div><div class="t">${ticks.filter(major).map(t => `<span style="left:${(100 * x(t)).toFixed(2)}%">${tickLab(t)}</span>`).join("")}</div><div></div></div></div></div></div>`;
 }).join("");
 for (const el of document.querySelectorAll(".crow")) {
   const [, name, cold, warm, coldS, warmS] = DATA.filter(r => r[0] === el.dataset.m)[+el.dataset.i];
