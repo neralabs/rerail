@@ -227,6 +227,7 @@ impl<'t, P> In<'t, P> {
 /// A state per input port of `P` and per global: the plain function's inputs.
 pub struct At<'t, P> {
     ports: Vec<View<'t>>,
+    heads: Vec<Option<BlockId>>,
     globals: Vec<Global>,
     of: PhantomData<fn() -> P>,
 }
@@ -235,6 +236,11 @@ impl<'t, P> At<'t, P> {
     /// Input port `p`'s state.
     pub fn port(&self, p: PortIn<P>) -> &View<'t> {
         &self.ports[p.0]
+    }
+
+    /// The head input port `p`'s state is at.
+    pub fn head(&self, p: PortIn<P>) -> Option<BlockId> {
+        self.heads[p.0]
     }
 
     /// Global `g` at its state.
@@ -422,15 +428,39 @@ pub trait DeltaOp {
 
     /// The plain function: the reference path, and the tests' oracle.
     fn run(&self, cx: &mut Cx<'_>, ins: &At<'_, Self::Ports>, out: &mut Out<Self::Ports>) -> Result<(), String>;
+
+    /// Its ports: its port set's, checked against its counts. An operator whose ports its program names (a stratum:
+    /// the relations its rules read and write) gives its own, and its port set is `Programmed`.
+    fn ports(&self) -> Result<Ports, String> {
+        let p = Self::Ports::ports();
+        if (p.ins.len(), p.globals.len(), p.outs.len()) != (Self::Ports::INS, Self::Ports::GLOBALS, Self::Ports::OUTS) {
+            return Err("a port set's ports are not its counts".into());
+        }
+        Ok(p)
+    }
+
+    /// The input ports it asks of (P§7.1): its port set's.
+    fn asked(&self) -> &'static [usize] {
+        Self::Ports::ASKED
+    }
 }
 
-/// Operator `O`'s ports, declared, checked against its port set's counts.
-fn ports_of<O: DeltaOp>() -> Result<Ports, String> {
-    let p = O::Ports::ports();
-    if (p.ins.len(), p.globals.len(), p.outs.len()) != (O::Ports::INS, O::Ports::GLOBALS, O::Ports::OUTS) {
-        return Err("a port set's ports are not its counts".into());
+/// The port set of an operator whose ports its program names (`DeltaOp::ports`): its handles are its ports' places.
+pub struct Programmed;
+
+impl PortSet for Programmed {
+    const INS: usize = 0;
+    const GLOBALS: usize = 0;
+    const OUTS: usize = 0;
+
+    fn ports() -> Ports {
+        Ports { ins: Vec::new(), globals: Vec::new(), outs: Vec::new() }
     }
-    Ok(p)
+}
+
+/// Operator `op`'s ports.
+fn ports_of<O: DeltaOp>(op: &O) -> Result<Ports, String> {
+    op.ports()
 }
 
 /// An input port's trace and the heads of the run's two states.
@@ -469,10 +499,10 @@ pub struct Instance {
 pub type WantIn = Option<(Option<BlockId>, Option<BlockId>)>;
 
 impl Instance {
-    pub fn new<O: DeltaOp>(_: &O, dir: &mut Directory) -> Result<Instance, String> {
-        let ports = ports_of::<O>()?;
+    pub fn new<O: DeltaOp>(op: &O, dir: &mut Directory) -> Result<Instance, String> {
+        let ports = ports_of(op)?;
         let outs = ports.outs.iter().map(|p| Trace::new(&p.shape)).collect::<Result<_, _>>()?;
-        let asks = (0..ports.ins.len()).map(|p| O::Ports::ASKED.contains(&p).then(|| Trace::new(&asks_shape())).transpose()).collect::<Result<_, _>>()?;
+        let asks = (0..ports.ins.len()).map(|p| op.asked().contains(&p).then(|| Trace::new(&asks_shape())).transpose()).collect::<Result<_, _>>()?;
         Ok(Instance { outs, cache: OpCache::new(dir), want: Self::want_trace()?, asks })
     }
 
@@ -661,9 +691,33 @@ pub struct Change {
     pub gone: BTreeSet<Vec<i64>>,
 }
 
+impl Change {
+    /// The change by its rows' keys (`levels`: the rows' last column a level, 0364): a rewrite, a key gone at one
+    /// level and added at another, is no change.
+    pub fn keyed(self, levels: bool) -> Change {
+        if !levels {
+            return self;
+        }
+        let key = |rows: BTreeSet<Vec<i64>>| -> BTreeSet<Vec<i64>> { rows.into_iter().map(|mut r| {
+            r.pop();
+            r
+        }).collect() };
+        let (a, g) = (key(self.added), key(self.gone));
+        Change { added: a.difference(&g).cloned().collect(), gone: g.difference(&a).cloned().collect() }
+    }
+}
+
+/// Each output's rows by their keys: a levelled output's (0364) without its level column.
+fn keyed(ports: &Ports, rows: &[BTreeSet<Vec<i64>>]) -> Vec<BTreeSet<Vec<i64>>> {
+    rows.iter()
+        .zip(&ports.outs)
+        .map(|(r, p)| if p.shape.levels { r.iter().map(|x| x[..x.len() - 1].to_vec()).collect() } else { r.clone() }) // copy: derived (the oracle's keys)
+        .collect()
+}
+
 /// The plain function's output on the inputs' states `heads`: `run` into fresh output traces, committed, read.
 pub fn apply<O: DeltaOp>(op: &O, cx: &mut Cx<'_>, ins: &[(&Trace, Option<BlockId>)], globals: &[Global]) -> Result<Vec<BTreeSet<Vec<i64>>>, String> {
-    let ports = ports_of::<O>()?;
+    let ports = ports_of(op)?;
     let mut outs: Vec<Trace> = ports.outs.iter().map(|p| Trace::new(&p.shape).map(|t| t.with_roll_up(RollUp::Never))).collect::<Result<_, _>>()?;
     let mut cap = vec![FIRST_RUNS; outs.len()];
     loop {
@@ -674,7 +728,7 @@ pub fn apply<O: DeltaOp>(op: &O, cx: &mut Cx<'_>, ins: &[(&Trace, Option<BlockId
             let l = cx.dir.read("the reference's inputs", &heads)?;
             let table = l.table();
             let views = ins.iter().map(|(t, h)| t.state(&table, *h)).collect::<Result<Vec<_>, _>>()?;
-            op.run(cx, &At { ports: views, globals: globals.to_vec(), of: PhantomData }, &mut out)?;
+            op.run(cx, &At { ports: views, heads: ins.iter().map(|p| p.1).collect(), globals: globals.to_vec(), of: PhantomData }, &mut out)?;
         }
         let mut over = false;
         for (k, &r) in out.runs.iter().enumerate() {
@@ -735,7 +789,7 @@ pub fn harness<O: DeltaOp>(op: &O, chain: &Chain, drop_at: usize) -> Result<(), 
 pub fn harness_under<O: DeltaOp>(op: &O, chain: &Chain, drop_at: usize, wants: Option<&Wants>) -> Result<(), Broken> {
     let setup = |e: String| Broken { law: "setup", step: 0, what: e };
     let mut bench = Bench::new().map_err(setup)?;
-    let (mut ins, heads) = inputs::<O>(&mut bench, chain).map_err(setup)?;
+    let (mut ins, heads) = inputs(op, &mut bench, chain).map_err(setup)?;
     let globals = vec![Vec::new(); heads.len()];
     harness_on(op, &mut bench, &mut ins, &heads, &globals, drop_at, wants)
 }
@@ -801,9 +855,9 @@ impl Bench {
 /// The input traces of a chain of row changes, a trace a port, every state kept (a layer a step, none rolled up), and
 /// each step's heads.
 #[allow(clippy::type_complexity)]
-fn inputs<O: DeltaOp>(bench: &mut Bench, chain: &Chain) -> Result<(Vec<Trace>, Vec<Vec<Option<BlockId>>>), String> {
+fn inputs<O: DeltaOp>(op: &O, bench: &mut Bench, chain: &Chain) -> Result<(Vec<Trace>, Vec<Vec<Option<BlockId>>>), String> {
     let Bench { reg, dir, traces, .. } = &mut *bench;
-    let mut ins: Vec<Trace> = ports_of::<O>()?.ins.iter().map(|p| Trace::new(&p.shape).map(|t| t.with_roll_up(RollUp::Never))).collect::<Result<_, _>>()?;
+    let mut ins: Vec<Trace> = ports_of(op)?.ins.iter().map(|p| Trace::new(&p.shape).map(|t| t.with_roll_up(RollUp::Never))).collect::<Result<_, _>>()?;
     let mut heads: Vec<Vec<Option<BlockId>>> = vec![vec![None; ins.len()]];
     for step in chain {
         let mut now = heads.last().cloned().expect("a state");
@@ -820,6 +874,11 @@ fn inputs<O: DeltaOp>(bench: &mut Bench, chain: &Chain) -> Result<(Vec<Trace>, V
 
 /// Trace `t`'s next layer, of the `(row, ±1)` pairs `pairs`: its new head.
 pub fn push_layer(reg: &Registry, traces: &TraceOps, dir: &mut Directory, t: &mut Trace, pairs: &[(Vec<i64>, i32)]) -> Result<BlockId, String> {
+    push_layer_over(reg, traces, dir, t, pairs, None)
+}
+
+/// `push_layer` onto working layers over `base` (`Trace::over`), which it never lets go.
+pub fn push_layer_over(reg: &Registry, traces: &TraceOps, dir: &mut Directory, t: &mut Trace, pairs: &[(Vec<i64>, i32)], base: Option<BlockId>) -> Result<BlockId, String> {
     let id = t.open(dir, pairs.len().max(1));
     {
         let b = dir.block(id).expect("made");
@@ -829,7 +888,7 @@ pub fn push_layer(reg: &Registry, traces: &TraceOps, dir: &mut Directory, t: &mu
             w.push(r, *d).ok_or("room for the pairs")?;
         }
     }
-    t.commit(reg, traces, dir, id, Tiling::WHOLE)
+    t.commit_over(reg, traces, dir, id, Tiling::WHOLE, base)
 }
 
 /// A chain's wants: the want at each state of the chain (`(port, key)`), the first the state before it (its inputs ∅, so
@@ -850,17 +909,20 @@ pub type Wants = [BTreeSet<(usize, i64)>];
 pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], heads: &[Vec<Option<BlockId>>], globals: &[Vec<Global>], drop_at: usize, wants: Option<&Wants>) -> Result<(), Broken> {
     let fail = |law, step, what: String| Broken { law, step, what };
     let setup = |e: String| fail("setup", 0, e);
-    let ports = ports_of::<O>().map_err(|e| fail("setup", 0, e))?;
+    let ports = ports_of(op).map_err(|e| fail("setup", 0, e))?;
     let ins: &[Trace] = ins;
     let mut cx = bench.cx();
     let at = |k: usize| -> Vec<(&Trace, Option<BlockId>)> { ins.iter().zip(&heads[k]).map(|(t, &h)| (t, h)).collect() };
     let between = |a: Option<usize>, b: usize| -> Vec<GlobalIn> {
         globals[b].iter().enumerate().map(|(i, g)| GlobalIn { block: g.block, before: a.map(|a| globals[a][i].count), after: g.count }).collect()
     };
-    // Each output's rows at state `k`, restricted to its want (all of them under no want).
+    // Each output's rows at state `k`, restricted to its want (all of them under no want), each by its key: a
+    // recursive relation's level is a witness, carried from edit to edit (0364 §§1, 3), so two runs may give one row
+    // two levels.
     let narrow = |rows: &[BTreeSet<Vec<i64>>], k: usize| -> Vec<BTreeSet<Vec<i64>>> {
+        let rows = keyed(&ports, rows);
         match wants {
-            None => rows.to_vec(),
+            None => rows,
             Some(w) => rows.iter().enumerate().map(|(p, r)| restrict(r, p, &ports.outs[p].shape, &w[k])).collect(),
         }
     };
@@ -871,6 +933,21 @@ pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], head
     let mut over = Instance::new(op, cx.dir).map_err(setup)?;
     // Each instance's want moved to state `k`'s: the heads its run is between.
     let move_want = |cx: &mut Cx<'_>, inst: &mut Instance, k: usize| -> Result<WantIn, String> { wants.map(|w| inst.set_want(cx, &w[k])).transpose() };
+    // Every instance first runs the chain's first state from ∅ (L2 there), so that each holds op of it before the
+    // chain's first step: an operator whose output on ∅ inputs is not ∅ (a stratum's facts) starts where the
+    // reference does.
+    {
+        let first: Vec<InPort<'_>> = ins.iter().enumerate().map(|(p, t)| (t, None, heads[0][p])).collect();
+        let g0 = between(None, 0);
+        for (inst, wanted) in [(&mut threaded, true), (&mut dropped, true), (&mut over, false)] {
+            // `over` runs under no want (every output), as at every step.
+            let w = if wanted { move_want(&mut cx, inst, 0).map_err(|e| fail("L2", 0, e))? } else { None };
+            inst.step(op, &mut cx, &first, &g0, w).map_err(|e| fail("L2", 0, e))?;
+            if narrow(&outs_of(&cx, inst).map_err(|e| fail("L2", 0, e))?, 0) != narrow(&full[0], 0) {
+                return Err(fail("L2", 0, "from ∅, the output on the chain's first state is not op of it".into()));
+            }
+        }
+    }
     // The chain's instances start as any instance does, under no want; the chain's first state is ∅ (its inputs'), so
     // the first step's want is ∅ → the second state's.
     for k in 1..heads.len() {
@@ -897,7 +974,7 @@ pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], head
         let work = threaded.step(op, &mut cx, &step, &gstep, w).map_err(|e| fail("L1", k, e))?;
         let rows_after = outs_of(&cx, &threaded).map_err(|e| fail("L1", k, e))?;
         let reference: Vec<Change> = if wants.is_none() {
-            reference(op, &mut cx, &step, &gstep).map_err(|e| fail("reference", k, e))?
+            reference(op, &mut cx, &step, &gstep).map_err(|e| fail("reference", k, e))?.into_iter().enumerate().map(|(p, c)| c.keyed(ports.outs[p].shape.levels)).collect()
         } else {
             let (b, a) = (narrow(&full[k - 1], k - 1), narrow(&full[k], k));
             b.iter().zip(&a).map(|(b, a)| Change { added: a.difference(b).cloned().collect(), gone: b.difference(a).cloned().collect() }).collect()
@@ -911,8 +988,9 @@ pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], head
         }
         // D1: demand restricts, never changes.
         if wants.is_some() {
+            let (ka, kf) = (keyed(&ports, &rows_after), keyed(&ports, &full[k]));
             for p in 0..threaded.outs.len() {
-                if let Some(r) = rows_after[p].difference(&full[k][p]).next() {
+                if let Some(r) = ka[p].difference(&kf[p]).next() {
                     return Err(fail("D1", k, format!("port {}: row {r:?} is in no full output", ports.outs[p].name)));
                 }
             }

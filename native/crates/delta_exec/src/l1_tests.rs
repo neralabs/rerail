@@ -24,6 +24,7 @@ struct Disk {
     atoms: Atoms,
     l1: L1,
     inst: Instance,
+    levels: crate::phase::Levels,
     last: Option<Pins>,
 }
 
@@ -41,11 +42,15 @@ impl Disk {
         let ops = K0Ops::declare(&mut bench.reg).unwrap();
         let drops = crate::drop::DropOps::declare(&mut bench.reg).unwrap();
         let l1 = L1 { ops, drops };
+        let mut levels = crate::phase::Levels::new(crate::phase::PhaseOps::declare(&mut bench.reg, drops).unwrap());
         let place = bench.dir.lasting();
         let inst = Instance::new(&l1, &mut bench.dir).unwrap().resumed(place, pins.as_ref().map_or(&[][..], |p| &p.1.outs), pins.as_ref().and_then(|p| p.1.want), pins.as_ref().map_or(&[][..], |p| &p.1.asks));
         let docs = DocSet::new(world, iops, drops, &bench.dir, pins.as_ref().and_then(|p| p.1.tape), pins.as_ref().map(|p| p.0)).unwrap();
+        if let Some((_, p)) = &pins {
+            levels.resume(&bench.dir, atoms, place, &inst.outs, &p.levels).unwrap();
+        }
         let last = pins.map(|(_, p)| Pins { atoms: Global { block: atoms.0, ..p.atoms }, ..p });
-        Disk { root, docs, atoms, l1, inst, last }
+        Disk { root, docs, atoms, l1, inst, levels, last }
     }
 
     /// l0 read by the file layer (B§8's run, its first line).
@@ -58,7 +63,7 @@ impl Disk {
 
     /// B§8's run, its first two lines, from `last`: its pins.
     fn run_from(&mut self, bench: &mut Bench, last: Option<&Pins>) -> Result<(Pins, Doc, Work), String> {
-        crate::boot::run(&self.l1, &mut self.inst, PATH, MODULE, self.atoms, &mut self.docs, bench, last)
+        crate::boot::run(&self.l1, &mut self.inst, &mut self.levels, PATH, MODULE, self.atoms, &[], &mut self.docs, bench, last)
     }
 
     /// B§8's run from the last run's pins, its pins kept as the last.
@@ -81,7 +86,7 @@ impl Disk {
 
 /// l0 with a rule added, a rule changed and a rule removed.
 fn edits() -> [String; 3] {
-    let added = format!("{L0}\nb6_added(c, h) :- k_rule(_, c, h), !k_wild(_, c).\n");
+    let added = format!("{L0}\nb6_added(c, h) :- k_rule(_, c, h), !b6_none(c).\n");
     let changed = added.replace("k_wild(d, t) :- kind(d, t, \"wildcard\").", "k_wild(d, t) :- kind(d, t, \"wildcard\"), node(d, t, _, _, _).");
     let line = changed.lines().find(|l| l.starts_with("k_num(")).unwrap().to_string();
     let removed = changed.replace(&format!("{line}\n"), "");
@@ -158,7 +163,7 @@ fn a_document_no_longer_asked_goes_and_is_not_read() {
     disk.run(&mut bench).unwrap();
     let (reads, l0) = (disk.docs.world.asked.reads, disk.docs.key(&bench.dir, disk.atoms, PATH).unwrap());
     let last = disk.last.take();
-    let (pins, doc, _) = crate::boot::run(&disk.l1, &mut disk.inst, "other.rerail", "other", disk.atoms, &mut disk.docs, &mut bench, last.as_ref()).unwrap();
+    let (pins, doc, _) = crate::boot::run(&disk.l1, &mut disk.inst, &mut disk.levels, "other.rerail", "other", disk.atoms, &[], &mut disk.docs, &mut bench, last.as_ref()).unwrap();
     disk.last = Some(pins);
     assert!(!doc.is_identity());
     assert_eq!(disk.docs.world.asked.reads, reads + 1, "the other document read; l0, asked by no one, not read");
@@ -174,7 +179,7 @@ fn a_document_no_longer_asked_goes_and_is_not_read() {
     // Asked again, l0 comes back as an initial run of it, from the store (its content answered before).
     let parses = disk.docs.world.asked.parses;
     let last = disk.last.take();
-    let (pins, _, _) = crate::boot::run(&disk.l1, &mut disk.inst, PATH, MODULE, disk.atoms, &mut disk.docs, &mut bench, last.as_ref()).unwrap();
+    let (pins, _, _) = crate::boot::run(&disk.l1, &mut disk.inst, &mut disk.levels, PATH, MODULE, disk.atoms, &[], &mut disk.docs, &mut bench, last.as_ref()).unwrap();
     disk.last = Some(pins);
     assert_eq!(disk.docs.keys(&bench.dir).unwrap(), BTreeSet::from([l0]));
     assert_eq!(disk.docs.world.asked.parses, parses, "l0's content is answered before: not parsed again");
@@ -427,7 +432,7 @@ fn a_later_process_starts_where_the_last_run_left_off() {
         (rows, names)
     };
     // The process's observer forgotten, as a new process has none.
-    rerail_observe::content_store::observe::forget(&rerail_observe::content_store::observe::store_beside(&folder.join("objects.db")));
+    crate::files::forget_observer(&folder);
     let (mut bench, mut disk) = open(&root);
     assert!(disk.last.is_some(), "the last run's pins");
     let again: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| rows_at(&bench.dir, t, t.head()).unwrap()).collect();

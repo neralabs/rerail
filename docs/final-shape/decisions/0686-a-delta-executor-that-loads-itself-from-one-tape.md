@@ -1666,3 +1666,138 @@ Checks (Relax, local, 91 of 91):
   - the document set reading through each;
   - no leaf committed on its own.
 - Clippy is clean on `delta_exec`.
+
+### B§8's run: the rule body, Δwave, Δfix and the levels (2026-11-26)
+
+B§8's whole run is built: L1 gives P2, and each level after it runs over the program and facts the level before it
+exported, until a level exports no program.
+
+**The rule body** (`body.rs`; *Operations* §10's seed → steps → head) is three operations of the registry:
+
+- **`seed`** starts a term's frames: a fact's one empty frame (`NO_ROW`), or the first step's rows. A leading `not`
+  or `cmp` is evaluated over the empty frame.
+- **`step`** extends each frame by one atom, `not` or `cmp` on the before, after or delta side.
+- **`head`** writes each frame's head row into the head's runs, with the term's sign. A term that carries a level
+  writes one more than the highest level it read, and 0 when it read none (0364 §2.4).
+
+A plan (`Plan`: sources, documents, terms) is words, read back as the same plan.
+
+**`tally`** (`tally.rs`, 0678 step 9) nets a head's derivations against its counts. A head row moves only when its
+count crosses 0. A count below 0 is refused.
+
+**A stratum is a module** (`phase.rs`, `Stratum`, O4). It is a `DeltaOp`, and the harness checks it:
+
+- **Its input ports** are the document set, when it reads views, and the relations its rules read.
+- **Its global** is the atoms.
+- **Its outputs** are its heads. A non-recursive head has its derivation counts beside it. A recursive head is
+  levelled: its last column is an I32 level, one live level per key, and a rewrite is a kill plus an add (0364 §1).
+
+B§7's refusals are made when the stratum is built:
+
+- unbound variables;
+- a negated own head;
+- reading a later stratum's head;
+- a bad head variable, or `_` in a head;
+- a view read with the wrong arity;
+- a nullary recursive head;
+- single-file and cross-file rules writing one head.
+
+**Δwave** (a stratum that reads no head of its own):
+
+- **Single-file rules** run at the file's grain. A changed document's derivations are retracted from the counts kept
+  for it, read where they lie (`drop_counted`, P§3). Its rules then run cold over the new tape.
+- **Cross-file rules:** a removed rule runs cold on the before side (−1), and an added rule runs cold on the after
+  side. An unchanged rule runs by its delta terms (O1).
+- `tally` nets each head.
+
+**Δfix** (a stratum that reads its own heads), by levels (P§5, 0364):
+
+1. The candidates are the rows whose inputs went. They are taken in level order.
+2. A recheck runs the rules with the candidates as the first step, and each own-head step filtered to levels below
+   the candidate's (`cmp <`).
+3. A row with no derivation from below goes for now. The rows derived from it become candidates above its level.
+4. A row gone for now that is still derived comes back as a rewrite at its new level.
+5. Then the rounds add the rows not yet present, at 1 + the highest level each read.
+
+The output is the levelled head's change from the kept state. The host loop keeps the candidates and the rows that
+stay as maps (`Found`). Each is read back from the runs blocks the body writes and marked `copy: derived`, and no
+trace or tape is held on the host.
+
+**Levels compared by key.** A level is a witness, carried from edit to edit. A cold run may give a row another level
+than a run of deltas gives it. The harness therefore compares a levelled port by its key (`Change::keyed`):
+
+- **L1** compares keyed sets.
+- **The reference** is keyed.
+- **D1** compares keyed sets.
+
+Every instance first steps over state 0 from ∅, checked as L2 at state 0, since a stratum of facts is not empty
+over ∅.
+
+**A fresh stratum** (nothing kept, and every input's before ∅) runs cold, with before ∅.
+
+**Reshape.** A head's shape is its rules': its grain and its recursion. A trace keeps one shape, so an edit that
+changes it runs the level from ∅ and clears every later level (`Levels::clear_from`).
+
+**A level** (`Level`) is one phase of B§8's loop (Δphase):
+
+- **Its program** is the previous level's K-form relations (O6). Level 0's program is L1's output.
+- **Its facts** are the rest of the previous level's relations. Level 0's facts are the caller's.
+- **Its documents** are the `(path, module, grammar)` rows of its `load` facts, read through the document set.
+  `k_order` orders its strata.
+- **Its strata** run in `k_order`. A module that is gone is removed first. Each reads its inputs between where the
+  level's last run left them and where they are now (L6).
+
+Refusals name their place: `level N:`, then `module X:` or `a level's documents:`.
+
+The loop ends at the first level that exports no program, and is refused past 64 levels. A document that no level
+and no L1 reader asks for is let go. Each level rolls its relations up when the run ends.
+
+**One answer per path a run.** A run reads the world in one state, so a leaf is written once per run. `World::leaf`
+looks for the key's row in the run's layer of leaves first, read in place. The second read of a path in a run had
+retracted its committed leaf twice ("a row's diffs sum past ±1"). There is no map beside the leaves (P§11.4).
+
+**Pins and resume across processes:**
+
+- **The pins** hold each level's tapes, its relations' heads and counts, and the facts it saw (`LevelPins`).
+- **The atoms count** is the count at the run's end: the levels' documents intern too, and the atoms are
+  append-only.
+- **The pins block** refers to every head it keeps. A block refers to at most 30 blocks, so past 30 heads it refers
+  through lasting holder blocks, each referring to up to 30 heads (`refer_all`).
+- **A later process** resumes the levels where the pins put them (`Levels::resume`).
+
+**`Trace::over`** no longer stores the base it runs over (a Trace is its shape, its head and its roll-up). Its
+holder names the base to `commit_over` and `discard_over`.
+
+Checks (Relax, local, `rerail-delta-exec --lib` 104 of 104):
+
+- `phase_tests`:
+  - `a_wave_of_three_rules_over_facts_passes_the_harness`;
+  - `a_transitive_closure_passes_the_harness_through_edits`;
+  - `levels_stay_witnesses_through_edits`;
+  - `an_anti_join_whose_matches_come_and_go_with_facts_and_filters_first`;
+  - `each_refusal_of_b7_names_its_rule`;
+  - `a_single_file_rule_over_tapes_passes_the_harness`;
+  - `p2_run_as_a_level_over_l0s_tape_gives_p2`;
+  - `a_level_loads_its_files_and_the_next_runs_their_program_through_edits`: level 0's program is K-form, and level
+    1 runs it through edits;
+  - `an_edit_that_makes_a_stratum_recursive_runs_its_level_from_empty`;
+  - `a_later_process_resumes_the_levels_where_the_last_run_left_them`: an unchanged root is checks only, and an
+    edit after the resume runs.
+- `body_tests`:
+  - `a_hand_written_plan_runs_a_join_on_each_side_and_on_a_change`;
+  - `filters_facts_and_levels_in_a_hand_written_plan`;
+  - `tally_moves_a_head_row_only_where_its_count_crosses_zero`.
+- The L1 tests pass with the levels in the run. The L1 edit that negated its own head is now `!b6_none(c)`, since
+  B§7 refuses the old one.
+- Clippy is clean on `delta_exec` and `delta_twins`.
+- The shape script's new section, B8, requires:
+  - the body's three operations and `tally`;
+  - the stratum as a `DeltaOp`;
+  - the weighted drop, the levelled head and the recheck's level filter;
+  - the K-form program split and the export;
+  - the loop's end and the clearing after a reset;
+  - the levels' pins and `refer_all`;
+  - each test above.
+- Its M0, B2 and kept checks hold for the new code: no `stratum` stated per head, no second chain type, no map
+  beside the leaves.
+- `check_no_block_copies.py` and `check_dev_features.py` pass.

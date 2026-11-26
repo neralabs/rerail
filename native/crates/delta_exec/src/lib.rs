@@ -34,6 +34,7 @@
 //! tape through the file layer (B4), symbols (B5) and L1 itself (B6).
 
 pub mod answer;
+pub mod body;
 pub mod boot;
 pub mod cache;
 pub mod contract;
@@ -45,8 +46,11 @@ pub mod k0;
 pub mod l1;
 pub mod kform;
 pub mod op;
+pub mod phase;
+pub mod program;
 pub mod residency;
 pub mod sym;
+pub mod tally;
 pub mod tape;
 pub mod trace;
 

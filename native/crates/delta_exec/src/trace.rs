@@ -186,6 +186,31 @@ impl Trace {
         Ok(Trace { shape: shape.encode()?, head: None, roll: RollUp::Geometric })
     }
 
+    /// The trace whose head is `head`, a committed layer: its shape the layer's own, placed at `place` (a kept run's
+    /// trace, resumed where it was left).
+    pub fn at_layer(dir: &Directory, place: u32, head: BlockId) -> Result<Trace, String> {
+        let l = dir.read("a trace's head", &[head])?;
+        let mut shape = Layer::new(l.block(0))?.head.shape;
+        shape.placement = place;
+        Ok(Trace { shape, head: Some(head), roll: RollUp::Never })
+    }
+
+    /// A run's working layers over `base`, a head another trace holds (a fixpoint's rounds over its output's kept
+    /// state), not rolled up. Its holder keeps `base`: the caller commits to it with `commit_over` and lets it go with
+    /// `discard_over`, naming `base` each time, so that neither lets `base` go.
+    pub fn over(shape: &Shape, base: Option<BlockId>) -> Result<Trace, String> {
+        Ok(Trace { shape: shape.encode()?, head: base, roll: RollUp::Never })
+    }
+
+    /// Its own layers let go, over `base` (`over`'s), which is untouched.
+    pub fn discard_over(&mut self, dir: &mut Directory, base: Option<BlockId>) {
+        if let Some(h) = self.head.take()
+            && Some(h) != base
+        {
+            dir.release(h);
+        }
+    }
+
     /// A kept trace (`Placement::KeptFile`) opened from its blocks' folder (`Directory::open_kept`): its head the
     /// layer no other refers to.
     pub fn open_kept(shape: &Shape, dir: &Directory) -> Result<Trace, String> {
@@ -231,6 +256,12 @@ impl Trace {
     /// are merged (`roll_up`), and the merged layer is the head. The runs block is let go. Refused, with the head as it was, when
     /// the runs overflowed (rerun at the size it names) or `consolidate` refused the change.
     pub fn commit(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, runs: BlockId, tiling: Tiling) -> Result<BlockId, String> {
+        self.commit_over(reg, ops, dir, runs, tiling, None)
+    }
+
+    /// `commit` over `base`, a head another trace holds (`over`): the new layer refers to the head, and the head is
+    /// let go unless it is `base`.
+    pub fn commit_over(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, runs: BlockId, tiling: Tiling, base: Option<BlockId>) -> Result<BlockId, String> {
         let (n, needed) = {
             let l = dir.read("commit", &[runs])?;
             let r = Runs::new(l.block(0));
@@ -269,7 +300,9 @@ impl Trace {
             }));
         }
         dir.freeze(out)?;
-        if let Some(h) = self.head {
+        if let Some(h) = self.head
+            && Some(h) != base
+        {
             dir.release(h);
         }
         self.head = Some(out);

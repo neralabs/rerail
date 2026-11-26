@@ -1,9 +1,18 @@
-//! The boot's run, its first two lines (decision 0686, B6; B§8's `run`):
+//! The boot's run (decision 0686; B§8's `run`), the whole execution path, bootstrap and run alike:
 //!
 //! ```text
 //! pub fn run(l0: BlobId, globals: Facts, world: &dyn World, last: Option<&Pins>) -> Pins {
 //!     let tape = world.tape(l0, Grammar::Rr);                  // the rr parser, as a world read
 //!     let mut program = k0_pass(tape.since(last), last);        // L1: the file is its grain
+//!     let mut facts = globals;
+//!     loop {
+//!         let out = delta_phase(&program, &facts, world, last); // L2, L3, L4, main
+//!         match out.program() {
+//!             Some(next) => { program = next; facts = out.facts(); }
+//!             None => return out.pin(),                         // the run's findings
+//!         }
+//!     }
+//! }
 //! ```
 //!
 //! `DocSet` is the document set the world's answerers give (P§11.4: path → tape id, grammar; indexed by path,
@@ -13,7 +22,7 @@
 //! answer (B5) into the run's globals; the set moves to its next state, the document's old row retracted where the
 //! set keeps it (`drop_parts`) and its new row added; an unchanged document is the identity (no layer).
 //!
-//! `run` is B§8's first two lines under demand (P§7.1). The run's productions (l0's K-form) are L1's want. L1 asks of
+//! `run`'s first two lines are under demand (P§7.1). The run's productions (l0's K-form) are L1's want. L1 asks of
 //! the document set what it needs, and the world answers what is asked, through the three answerers
 //! (`files::Load`, `Parse`, `Intern`). Their leaves go into the run's one layer of the world's leaves, and what
 //! nothing asks for any more is let go. A run is rounds of L1's step and the world's answers, ending at the first round
@@ -29,8 +38,10 @@
 //! - it drops all of them `DROP_AFTER` an execution;
 //! - a document whose slab went is loaded again from the store's objects where its places say (`DocSet::resident`).
 //!
-//! B§8's later lines (the loop over the program's levels, its loads and its δ) are the rest of the rebuild plan's
-//! Figure 1, past the milestones of its §4, which build L1 and what it stands on.
+//! The loop is `phase::Levels`: each level is Δphase over the program the one before exported (L1's P2 first) and its
+//! facts out (the run's `facts` first). A level's documents are the `load` answers its facts ask, read through the
+//! document set like l0. Its program's δ is the change of its K-form rows: a changed module's rules removed and its new
+//! ones run cold. A level that exports no program ends the loop, and its relations are the run's findings.
 //!
 //! As agreed in B4, l0 is named by its path, which the file layer reads, not by a blob id the caller already holds; its
 //! module is named by the caller, as the engine's load names it.
@@ -48,11 +59,12 @@ use crate::intern::InternOps;
 use crate::kform::RELATIONS;
 use crate::l1::{L1, L1Ports, TAPE_PATH, row_blobs, tape_row, tape_shape};
 use crate::op::Tiling;
+use crate::phase::{FactIn, Level, LevelPins, Levels, kform_syms};
 use crate::sym::Atoms;
 use crate::trace::{RollUp, Trace};
 use rerail_blocks::bistate::{ColumnIndex, Read};
 use rerail_blocks::block::kind;
-use rerail_blocks::gens::BODY_AT;
+use rerail_blocks::gens::{BODY_AT, MAX_REFS};
 use std::collections::BTreeSet;
 
 /// The document set as the world and its answerers give it (B§7's first answerer, `load`, then `parse` and
@@ -77,6 +89,10 @@ impl DocSet {
     }
 
     /// The row of the document at `path`, by its path's symbol (the set's index on its path), when it has one.
+    pub fn row_of(&self, dir: &Directory, atoms: Atoms, path: &str) -> Result<Option<Vec<i64>>, String> {
+        self.row_at(dir, atoms, path)
+    }
+
     fn row_at(&self, dir: &Directory, atoms: Atoms, path: &str) -> Result<Option<Vec<i64>>, String> {
         let (Some(p), Some(h)) = (atoms.find(dir, path), self.tape.head()) else { return Ok(None) };
         let l = self.tape.read(dir, &[Some(h)])?;
@@ -206,6 +222,8 @@ pub struct Pins {
     /// L1's want (its productions) and its requests of each input port (P§7.1).
     pub want: Option<BlockId>,
     pub asks: Vec<Option<BlockId>>,
+    /// Each level's traces (B§8's loop).
+    pub levels: Vec<LevelPins>,
 }
 
 /// A kept pins block's first word.
@@ -224,6 +242,11 @@ impl Pins {
         [self.tape].into_iter().chain(self.world).chain([self.blobs, self.want]).chain(self.asks.iter().copied()).chain(self.outs.iter().copied()).collect()
     }
 
+    /// The levels' words: their count, then each level's (`LevelPins::words`).
+    fn level_words(&self) -> Vec<i64> {
+        std::iter::once(self.levels.len() as i64).chain(self.levels.iter().flat_map(LevelPins::words)).collect()
+    }
+
     /// Kept: a frozen block, its words the pins and a reference to every head, where the directory keeps what lasts.
     /// Its id (a later one's is larger: the newest pins are the largest id's).
     pub fn keep(&self, dir: &mut Directory) -> Result<BlockId, String> {
@@ -231,6 +254,7 @@ impl Pins {
         let words: Vec<i64> = [PINS_MAGIC, self.atoms.count as i64, self.outs.len() as i64, self.asks.len() as i64]
             .into_iter()
             .chain(heads.iter().map(|h| h.map_or(-1, |b| i64::from(b.0))))
+            .chain(self.level_words())
             .collect(); // copy: derived (the pins' words, written once)
         let id = dir.make_placed(dir.lasting(), kind::FACTS, 8 * words.len(), 0)?;
         {
@@ -241,9 +265,9 @@ impl Pins {
                 bytes[BODY_AT + 8 * i..BODY_AT + 8 * i + 8].copy_from_slice(&x.to_le_bytes()); // copy: derived (a word of the pins)
             }
         }
-        for h in heads.into_iter().flatten() {
-            dir.refer(id, h, BODY_AT)?;
-        }
+        let levels = self.levels.iter().flat_map(LevelPins::heads).map(Some);
+        let all: Vec<BlockId> = heads.into_iter().chain(levels).flatten().map(|b| b.0).collect::<BTreeSet<u32>>().into_iter().map(BlockId).collect();
+        refer_all(dir, id, &all)?;
         dir.freeze(id)?;
         Ok(id)
     }
@@ -252,7 +276,7 @@ impl Pins {
     /// between keeping one and letting the last go): `None` when none was kept. The atoms' block is the store's own,
     /// opened by its path: its count is the pins'.
     pub fn open(dir: &Directory) -> Result<Option<(BlockId, Pins)>, String> {
-        let mut best: Option<(BlockId, Vec<i64>)> = None;
+        let mut best: Option<(BlockId, Vec<i64>, Vec<LevelPins>)> = None;
         for id in dir.unreferred() {
             let l = dir.read("the run's pins", &[id])?;
             let b = l.block(0);
@@ -261,39 +285,93 @@ impl Pins {
                 continue;
             }
             let n = word(2).unwrap_or(0) as usize + word(3).unwrap_or(0) as usize;
-            let words: Option<Vec<i64>> = (0..HEAD + n).map(word).collect(); // copy: derived (the pins' words)
-            best = Some((id, words.ok_or("a kept pins block, short")?));
+            let words: Vec<i64> = (0..HEAD + n).map(word).collect::<Option<_>>().ok_or("a kept pins block, short")?; // copy: derived (the pins' words)
+            let mut at = HEAD + n;
+            let mut next = || -> Result<i64, String> {
+                let x = word(at).ok_or("a kept pins block, short")?;
+                at += 1;
+                Ok(x)
+            };
+            let levels = (0..next()?).map(|_| LevelPins::of_words(&mut next)).collect::<Result<Vec<_>, _>>()?;
+            best = Some((id, words, levels));
         }
-        let Some((id, w)) = best else { return Ok(None) };
+        let Some((id, w, levels)) = best else { return Ok(None) };
         let head = |x: i64| (x >= 0).then_some(BlockId(x as u32));
         let asks = w[3] as usize;
+        let n = HEAD + asks + w[2] as usize;
         Ok(Some((id, Pins {
+            levels,
             tape: head(w[4]),
             world: [head(w[5]), head(w[6]), head(w[7])],
             blobs: head(w[8]),
             want: head(w[9]),
             asks: w[HEAD..HEAD + asks].iter().map(|&x| head(x)).collect(),
-            outs: w[HEAD + asks..].iter().map(|&x| head(x)).collect(),
+            outs: w[HEAD + asks..n].iter().map(|&x| head(x)).collect(),
             atoms: Global { block: BlockId(u32::MAX), count: w[1] as u64 },
         })))
     }
 }
 
-/// B§8's run, its first two lines, under demand (P§7.1): the run's productions, l0's K-form (every relation of it, by
-/// l0's key), are the want on L1; L1 asks of its tape port the documents it needs, and the world answers what is asked
-/// (its load, parse and intern answers; the names it interns into `globals`), and lets go what is no longer asked. A
-/// run is rounds: L1 stepped over the document set since the last round, then every key asked answered (the first
-/// round's answers each kept request again, the world's cover; a later round's, those asked since), until a round
-/// moves nothing. `last`: `None` is cold (every bistate from ∅, L1's traces emptied first); refused when not where the
-/// last run left the traces. The run's pins, kept where the directory keeps what lasts; l0's answer; L1's work.
-#[allow(clippy::too_many_arguments)]
-pub fn run(l1: &L1, inst: &mut Instance, l0: &str, module: &str, globals: Atoms, docs: &mut DocSet, bench: &mut Bench, last: Option<&Pins>) -> Result<(Pins, Doc, Work), String> {
-    match last {
-        Some(p) if p.tape != docs.tape.head() || p.outs != inst.heads() || p.want != inst.want.head() || p.asks != inst.ask_heads() || p.atoms.count != u64::from(globals.count(&bench.dir)) => {
-            return Err(format!("pins of another state: {p:?} (a run starts where the last run left its traces)"));
+/// `from` made to refer to every block of `to`: directly while they fit a block's references (`MAX_REFS`), else
+/// through holders, each a lasting block that refers to as many as fit, `from` referring to the holders the same way.
+/// A holder holds no words: the pins' words name every head.
+fn refer_all(dir: &mut Directory, from: BlockId, to: &[BlockId]) -> Result<(), String> {
+    if to.len() <= MAX_REFS {
+        return to.iter().try_for_each(|&b| dir.refer(from, b, BODY_AT));
+    }
+    let mut holders = Vec::new();
+    for chunk in to.chunks(MAX_REFS) {
+        let h = dir.make_placed(dir.lasting(), kind::FACTS, 8, 0)?;
+        for &b in chunk {
+            dir.refer(h, b, BODY_AT)?;
         }
-        Some(_) => {}
-        None => inst.clear(&mut bench.dir),
+        dir.freeze(h)?;
+        holders.push(h);
+    }
+    let held = refer_all(dir, from, &holders);
+    // Each holder lives while `from` refers to it: the directory's own handle let go.
+    holders.iter().for_each(|&h| dir.release(h));
+    held
+}
+
+/// The levels a run may take before it is refused: each exported a program, and a chain that never stops exporting
+/// is a program that reads itself again at every level.
+const MAX_LEVELS: usize = 64;
+
+/// B§8's run under demand (P§7.1). Its first two lines: the run's productions, l0's K-form (every relation of it, by
+/// l0's key), are the want on L1; L1 asks of its tape port the documents it needs, and the world answers what is asked
+/// (its load, parse and intern answers; the names it interns into `globals`). A run's first part is rounds: L1 stepped
+/// over the document set since the last round, then every key asked answered (the first round's answers each kept
+/// request again, the world's cover; a later round's, those asked since), until a round moves nothing. Then B§8's
+/// loop: each level (`phase::Level`, Δphase) runs the program the one before it exported (L1's P2 first) over the
+/// facts it exported (the run's `facts` first), and the loop ends at the first level that exports no program; what
+/// no reader asks any more is let go. `last`: `None` is cold (every bistate from ∅, L1's and the levels' traces
+/// emptied first); refused when not where the last run left the traces. The run's pins, kept where the directory
+/// keeps what lasts; l0's answer; the run's work.
+#[allow(clippy::too_many_arguments)]
+pub fn run(l1: &L1, inst: &mut Instance, levels: &mut Levels, l0: &str, module: &str, globals: Atoms, facts: &[FactIn<'_>], docs: &mut DocSet, bench: &mut Bench, last: Option<&Pins>) -> Result<(Pins, Doc, Work), String> {
+    match last {
+        Some(p) => {
+            let now = levels.pins();
+            let differ: Vec<String> = [
+                (p.tape != docs.tape.head(), "the document set".to_string()),
+                (p.outs != inst.heads(), "L1's outputs".to_string()),
+                (p.want != inst.want.head(), "L1's want".to_string()),
+                (p.asks != inst.ask_heads(), "L1's asks".to_string()),
+                (p.atoms.count != u64::from(globals.count(&bench.dir)), format!("the atoms ({} now)", globals.count(&bench.dir))),
+                (p.levels != now, format!("the levels ({now:?} now)")),
+            ]
+            .into_iter()
+            .filter_map(|(d, what)| d.then_some(what))
+            .collect();
+            if !differ.is_empty() {
+                return Err(format!("pins of another state: {} (a run starts where the last run left its traces): {p:?}", differ.join(", ")));
+            }
+        }
+        None => {
+            inst.clear(&mut bench.dir);
+            levels.clear(&mut bench.dir);
+        }
     }
     docs.world.begin();
     let mut leaves = docs.world.leaves_w(&mut bench.dir);
@@ -307,6 +385,7 @@ pub fn run(l1: &L1, inst: &mut Instance, l0: &str, module: &str, globals: Atoms,
         let mut want = (wb, wa);
         let mut from = (last.and_then(|p| p.tape), last.map(|p| p.atoms.count));
         let (mut work, mut doc, mut answered) = (Work::default(), None, BTreeSet::new());
+        let read_by_levels = levels.docs(&bench.dir)?;
         for round in 0.. {
             if round == MAX_ROUNDS {
                 return Err(format!("a run past {MAX_ROUNDS} rounds: each asked what the last answered"));
@@ -318,10 +397,12 @@ pub fn run(l1: &L1, inst: &mut Instance, l0: &str, module: &str, globals: Atoms,
             work += inst.step(l1, &mut bench.cx(), &ins, &atoms, Some(want))?;
             from = (docs.tape.head(), Some(count));
             want = (wa, wa);
-            // Demand reaches the world as reads: what is asked answered, what is no longer asked let go.
+            // Demand reaches the world as reads: what is asked answered, what no reader asks any more let go.
             let asked = inst.asked(&bench.dir, L1Ports::TAPE.index())?;
             for gone in docs.keys(&bench.dir)?.difference(&asked) {
-                docs.forget(bench, *gone)?;
+                if !read_by_levels.contains(gone) {
+                    docs.forget(bench, *gone)?;
+                }
             }
             for &k in &asked {
                 if round > 0 && answered.contains(&k) {
@@ -337,12 +418,59 @@ pub fn run(l1: &L1, inst: &mut Instance, l0: &str, module: &str, globals: Atoms,
                 break;
             }
         }
-        // Its delta read, the run's before is no longer a layer the set needs: its layers rolled up (P§11.4's roll-up,
-        // the document set's), so the next run's before is one head.
+        // B§8's loop: each level over the export of the one before; the first that exports no program ends it.
+        let ksyms = kform_syms(&bench.dir, globals);
+        let mut k = 0;
+        loop {
+            if k == MAX_LEVELS {
+                return Err(format!("a run past {MAX_LEVELS} levels: each exported a program"));
+            }
+            if levels.levels.len() == k {
+                levels.levels.push(Level::new(bench.dir.lasting())?);
+            }
+            let ops = levels.ops;
+            let (done, rest) = levels.levels.split_at_mut(k);
+            let program: Vec<_> = if k == 0 { inst.outs.iter().map(|t| Some((t, None, t.head()))).collect() } else { done[k - 1].program(&ksyms) };
+            let owned;
+            let ins: &[FactIn<'_>] = if k == 0 {
+                facts
+            } else {
+                owned = done[k - 1].facts(&ksyms);
+                &owned
+            };
+            let r = rest[0].step(ops, bench, docs, &mut leaves, globals, &program, ins).map_err(|e| format!("level {}: {e}", k + 2))?;
+            work += r.work;
+            k += 1;
+            // A level run from ∅: every level after it reads its export from ∅ too.
+            if r.reset {
+                levels.clear_from(&mut bench.dir, k);
+            }
+            if !r.program {
+                break;
+            }
+        }
+        // The documents no reader asks for any more let go.
+        let keep: BTreeSet<i64> = inst.asked(&bench.dir, L1Ports::TAPE.index())?.into_iter().chain(levels.docs(&bench.dir)?).collect();
+        for gone in docs.keys(&bench.dir)?.difference(&keep) {
+            docs.forget(bench, *gone)?;
+        }
+        // Their deltas read, the run's befores are no longer layers anyone needs: rolled up (P§11.4's roll-up, the
+        // document set's and each level's), so the next run's before is one head; each level then sees its facts in
+        // where they are now.
+        for (j, l) in levels.levels[..k].iter_mut().enumerate() {
+            l.finish(bench).map_err(|e| format!("level {}'s roll-up: {e}", j + 2))?;
+        }
+        for j in 1..k {
+            let (done, rest) = levels.levels.split_at_mut(j);
+            rest[0].saw(&done[j - 1].facts(&ksyms));
+        }
         docs.tape.roll_up_run(&bench.reg, &bench.traces, &mut bench.dir, last.and_then(|p| p.tape), Tiling::WHOLE)?;
         inst.roll_up_want(&mut bench.cx(), last.and_then(|p| p.want))?;
         let doc = doc.ok_or("l0 was not asked")?;
-        Ok::<_, String>((doc, work, from.1.unwrap_or(0)))
+        // The atoms where the run left them: the levels' documents intern too. They are append-only (P§13: a trace
+        // with no kills), a symbol's id and name fixed once interned, so what an operator read of them holds at the
+        // later count, and the next run's before is this one's end.
+        Ok::<_, String>((doc, work, u64::from(globals.count(&bench.dir))))
     })();
     // The leaves the run read, its layer of the world's leaves (D3: misses too).
     let committed = docs.world.commit_leaves(&bench.reg, &bench.traces, &mut bench.dir, leaves);
@@ -351,7 +479,7 @@ pub fn run(l1: &L1, inst: &mut Instance, l0: &str, module: &str, globals: Atoms,
     // An execution ended: the residency drops everything `DROP_AFTER` from now, unless another run comes first.
     bench.dir.executed();
     let (doc, work, count) = ran?;
-    let pins = Pins { tape: docs.tape.head(), outs: inst.heads(), atoms: Global { block: globals.0, count }, world: docs.world.heads(), blobs: bench.blobs.head(), want: inst.want.head(), asks: inst.ask_heads() };
+    let pins = Pins { tape: docs.tape.head(), outs: inst.heads(), atoms: Global { block: globals.0, count }, world: docs.world.heads(), blobs: bench.blobs.head(), want: inst.want.head(), asks: inst.ask_heads(), levels: levels.pins() };
     if bench.dir.lasting() == crate::dir::PLACE_KEPT {
         let id = pins.keep(&mut bench.dir)?;
         if let Some(old) = docs.kept.replace(id) {

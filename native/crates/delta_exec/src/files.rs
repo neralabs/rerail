@@ -318,6 +318,13 @@ impl Answerer for Intern<'_> {
     }
 }
 
+/// The observer's store under `folder` forgotten, as a new process finds it with no stat of its own (tests of a later
+/// process: every file is read again by its content).
+#[cfg(test)]
+pub(crate) fn forget_observer(folder: &std::path::Path) {
+    observe::forget(&observe::store_beside(&folder.join("objects.db")));
+}
+
 /// A run's layer of the world's leaves (P§12's `leaves: &mut LayerW`): each leaf a world reader read, `(d, digest,
 /// found)`, against the row the committed trace holds for its key, pushed as its change into a δ runs block, and
 /// committed as the run's layer (`World::commit_leaves`). A key's leaf is written once a run (its answer is).
@@ -462,11 +469,17 @@ impl World {
         if old.as_ref() == Some(&row) {
             return Ok(());
         }
-        let (len, cap) = {
+        let (len, cap, written) = {
             let l = dir.read("the run's leaves", &[leaves.runs])?;
             let r = Runs::new(l.block(0));
-            (r.len(), r.head.cap as usize)
+            // A key's leaf is written once a run: a run reads the world in one state, so a second read of its path
+            // is the first's answer, read where the run's layer holds it.
+            let written = (0..r.len()).any(|i| r.diff(i) > 0 && r.get(i, 0) == d);
+            (r.len(), r.head.cap as usize, written)
         };
+        if written {
+            return Ok(());
+        }
         // Past its room: the layer so far committed, and the run's next leaves in a runs block twice the size.
         if len + 2 > cap {
             self.commit_leaves(reg, ops, dir, LeavesW { runs: leaves.runs })?;

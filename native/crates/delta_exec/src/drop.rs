@@ -52,6 +52,17 @@ impl DropOps {
 
 /// Pushes every live row of the state at `head` in partitions `parts` into `runs` with sign `diff`: how many.
 pub fn drop_parts(reg: &Registry, ops: &DropOps, dir: &mut Directory, head: BlockId, parts: &[i64], diff: i32, runs: BlockId) -> Result<u64, String> {
+    drop_in(reg, ops, dir, head, parts, diff, false, runs)
+}
+
+/// Pushes every live row of the counts state at `head` in partitions `parts` into `runs`, each without its count, its
+/// diff `diff` times its count: a head's derivations there, retracted (a file's grain, read where they lie).
+pub fn drop_counted(reg: &Registry, ops: &DropOps, dir: &mut Directory, head: BlockId, parts: &[i64], diff: i32, runs: BlockId) -> Result<u64, String> {
+    drop_in(reg, ops, dir, head, parts, diff, true, runs)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn drop_in(reg: &Registry, ops: &DropOps, dir: &mut Directory, head: BlockId, parts: &[i64], diff: i32, weighted: bool, runs: BlockId) -> Result<u64, String> {
     if parts.is_empty() {
         return Ok(0);
     }
@@ -64,7 +75,7 @@ pub fn drop_parts(reg: &Registry, ops: &DropOps, dir: &mut Directory, head: Bloc
         }
         let before = Runs::new(dir.read("drop_parts", &[runs])?.block(0)).head.claimed;
         let mut p = vec![0u8; DropP::SIZE];
-        DropP { head: u64::from(head.0), diff: i64::from(diff) }.write(&mut p);
+        DropP { head: u64::from(head.0), diff: i64::from(diff), weighted: u64::from(weighted) }.write(&mut p);
         run_cpu(reg, dir, ops.drop_parts, &[head, block, runs], &p, Tiling::WHOLE)?;
         Ok(u64::from(Runs::new(dir.read("drop_parts", &[runs])?.block(0)).head.claimed - before))
     })();

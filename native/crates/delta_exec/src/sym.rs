@@ -65,6 +65,13 @@ pub fn find(atoms: &[u8], s: &str) -> Option<i64> {
     find_in(atoms, s, hash_bytes(s.as_bytes())).map(i64::from)
 }
 
+/// The string of symbol `id` in the atoms block `atoms` (its bytes, where they lie): a name for a shape's choice and
+/// for messages (`#id` when it has none).
+pub fn name_of(atoms: &[u8], id: i64) -> String {
+    // copy: not block data (a name's text)
+    u32::try_from(id).ok().and_then(|i| rerail_blocks::atoms::name_in(atoms, i)).map_or_else(|| format!("#{id}"), str::to_owned)
+}
+
 /// The kinds' and fields' names as symbols, found once in the atoms (`intern` adds them), so a view compares ids.
 pub struct Names {
     kind: Vec<i64>,

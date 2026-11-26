@@ -11,10 +11,12 @@ use rerail_blocks::layer::{Layer, runs_claim_in, runs_set_in};
 use rerail_blocks::relation;
 
 crate::params! {
-    /// The state's head (its block id in the descriptor table) and the sign its rows are emitted with.
+    /// The state's head (its block id in the descriptor table) and the sign its rows are emitted with; `weighted`
+    /// (1): a counts state's rows, each emitted without its last column, its diff the sign times that count.
     pub struct DropP {
         pub head: u64,
         pub diff: i64,
+        pub weighted: u64,
     }
 }
 
@@ -61,7 +63,11 @@ fn drop_parts(c: &mut Ctx<'_, '_, '_>, _: Tile) {
             for (k, v) in row[..arity].iter_mut().enumerate() {
                 *v = Read::get(&state, id, ColumnIndex::new(k as u16));
             }
-            runs_set_in(runs, at, &row[..arity], p.diff as i32);
+            if p.weighted != 0 {
+                runs_set_in(runs, at, &row[..arity - 1], (p.diff * row[arity - 1]) as i32);
+            } else {
+                runs_set_in(runs, at, &row[..arity], p.diff as i32);
+            }
             at += 1;
         }
     }

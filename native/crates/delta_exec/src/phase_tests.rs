@@ -1,0 +1,537 @@
+//! Strata and levels (B§10): a stratum's rules over facts and over tapes, under the contract's laws; the refusals;
+//! and B§8's loop, its loads and its program's δ, over files on disk.
+
+use super::*;
+use crate::contract::{Bench, Global, apply, harness_on, push_layer};
+use crate::files::doc_of;
+use crate::intern::{InternOps, intern};
+use crate::k0::K0Ops;
+use crate::l1::{L1, tape_row};
+
+type Pairs = Vec<(Vec<i64>, i32)>;
+
+/// A bench with the stratum's operations and L1, and the atoms: rules compiled from text by L1, read as a program.
+struct P {
+    bench: Bench,
+    atoms: Atoms,
+    iops: InternOps,
+    l1: L1,
+    ops: PhaseOps,
+}
+
+impl P {
+    fn new() -> P {
+        let mut bench = Bench::new().unwrap();
+        let iops = InternOps::declare(&mut bench.reg).unwrap();
+        let k0 = K0Ops::declare(&mut bench.reg).unwrap();
+        let drops = DropOps::declare(&mut bench.reg).unwrap();
+        let ops = PhaseOps::declare(&mut bench.reg, drops).unwrap();
+        let atoms = Atoms::new(&mut bench.dir);
+        P { bench, atoms, iops, l1: L1 { ops: k0, drops }, ops }
+    }
+
+    /// A document of `src` at `path` (its module the path less `.rerail`), interned: its row in a document set.
+    fn doc(&mut self, src: &str, path: &str) -> Vec<i64> {
+        let b = &mut self.bench;
+        let ids = doc_of(&b.reg, &b.answers, &mut b.dir, &mut b.blobs, src).unwrap();
+        let module = path.strip_suffix(".rerail").unwrap_or(path);
+        let (s, t) = (b.blobs.get(&b.dir, &ids.source).unwrap().unwrap(), b.blobs.get(&b.dir, &ids.tape).unwrap().unwrap());
+        let syms = intern(&b.reg, &self.iops, &mut b.dir, &mut b.blobs, self.atoms, s, t, path, module).unwrap();
+        let d = self.s(module);
+        tape_row(d, self.s(path), 0, &ids, &syms)
+    }
+
+    fn global(&self) -> Global {
+        Global { block: self.atoms.0, count: u64::from(self.atoms.count(&self.bench.dir)) }
+    }
+
+    fn s(&self, x: &str) -> i64 {
+        self.atoms.find(&self.bench.dir, x).unwrap_or_else(|| panic!("{x:?} not interned"))
+    }
+
+    /// L1's K-form rows of the rules `src`, module `module`.
+    fn rows(&mut self, src: &str, module: &str) -> Vec<BTreeSet<Vec<i64>>> {
+        let row = self.doc(src, &format!("{module}.rerail"));
+        let mut t = Trace::new(&tape_shape()).unwrap().with_roll_up(RollUp::Never);
+        let g = self.global();
+        let b = &mut self.bench;
+        let h = push_layer(&b.reg, &b.traces, &mut b.dir, &mut t, &[(row, 1)]).unwrap();
+        apply(&self.l1, &mut b.cx(), &[(&t, Some(h))], &[g]).unwrap()
+    }
+
+    /// The program of the rules `src`, one module, or its refusal.
+    fn program(&mut self, src: &str, module: &str) -> Result<Program, Refused> {
+        let rows = self.rows(src, module);
+        let l = self.bench.dir.read("atoms", &[self.atoms.0]).unwrap();
+        Program::read(&rows, l.block(0))
+    }
+
+    fn known(&self) -> Known {
+        Known::new(self.bench.dir.read("atoms", &[self.atoms.0]).unwrap().block(0))
+    }
+
+    /// Module `module`'s stratum in `p`, reading relations `shapes` (by name).
+    fn module_op(&self, p: &Program, module: &str, shapes: &[(&str, Shape)]) -> Stratum {
+        let m = self.s(module);
+        let rules = p.modules[&m].rules.clone();
+        let shapes: BTreeMap<i64, Shape> = shapes.iter().map(|(n, s)| (self.s(n), s.clone())).collect();
+        let l = self.bench.dir.read("atoms", &[self.atoms.0]).unwrap();
+        Stratum::new(self.ops, m, rules.clone(), rules, self.known(), &shapes, l.block(0)).unwrap()
+    }
+
+    /// `st` under the harness over a chain of its input ports' changes, `steps` (a step each port's pairs; the
+    /// first state every port ∅), the cache dropped at a step chosen by each seed.
+    fn harness(&mut self, st: &Stratum, steps: &[Vec<Pairs>]) {
+        let ports = st.ports().unwrap();
+        let mut ins: Vec<Trace> = ports.ins.iter().map(|p| Trace::new(&p.shape).unwrap().with_roll_up(RollUp::Never)).collect();
+        let mut heads = vec![vec![None; ins.len()]];
+        for step in steps {
+            let mut now = heads.last().cloned().unwrap();
+            for (k, pairs) in step.iter().enumerate() {
+                if !pairs.is_empty() {
+                    let b = &mut self.bench;
+                    now[k] = Some(push_layer(&b.reg, &b.traces, &mut b.dir, &mut ins[k], pairs).unwrap());
+                }
+            }
+            heads.push(now);
+        }
+        let globals = vec![vec![self.global()]; heads.len()];
+        for seed in 1..=2u64 {
+            let drop_at = 1 + (rerail_blocks::layer::mix(seed) % (heads.len() as u64 - 1)) as usize;
+            harness_on(st, &mut self.bench, &mut ins, &heads, &globals, drop_at, None).unwrap_or_else(|b| panic!("{b:?}"));
+        }
+    }
+}
+
+fn fact(name: &str, arity: usize) -> (&str, Shape) {
+    (name, head_shape(name, arity, false))
+}
+
+fn add(rows: &[&[i64]]) -> Pairs {
+    rows.iter().map(|r| (r.to_vec(), 1)).collect()
+}
+
+fn drop(rows: &[&[i64]]) -> Pairs {
+    rows.iter().map(|r| (r.to_vec(), -1)).collect()
+}
+
+fn both(a: Pairs, b: Pairs) -> Pairs {
+    a.into_iter().chain(b).collect()
+}
+
+/// Δwave over facts (B§10 step 2): a join, an anti-join and a filter, cross-file rules by their delta terms, the
+/// heads' derivation counts beside them, under every law of the contract.
+#[test]
+fn a_wave_of_three_rules_over_facts_passes_the_harness() {
+    let mut p = P::new();
+    let src = "two(x, z) :- edge(x, y), edge(y, z).\nlone(x) :- edge(x, _), !mark(x).\nup(x, y) :- edge(x, y), x < y.\n";
+    let prog = p.program(src, "wave").unwrap();
+    let st = p.module_op(&prog, "wave", &[fact("edge", 2), fact("mark", 1)]);
+    assert!(!st.recursive);
+    assert_eq!(st.ports().unwrap().outs.len(), 6, "three heads, each with its counts");
+    p.harness(
+        &st,
+        &[
+            vec![add(&[&[1, 2], &[2, 3], &[3, 1], &[2, 4]]), vec![]],
+            vec![vec![], add(&[&[2]])],
+            vec![vec![], vec![]],
+            vec![both(drop(&[&[2, 3]]), add(&[&[4, 5]])), both(drop(&[&[2]]), add(&[&[4]]))],
+            vec![drop(&[&[1, 2], &[3, 1]]), vec![]],
+            vec![add(&[&[1, 2], &[2, 2]]), add(&[&[1]])],
+        ],
+    );
+}
+
+/// The edges of the chain the closure tests run: a cycle, a removal on it (rows held up only by the cycle go), its
+/// return, a shortcut, a chain's removal.
+fn closure_chain() -> Vec<Vec<Pairs>> {
+    vec![
+        vec![add(&[&[1, 2], &[2, 3], &[3, 1], &[3, 4]])],
+        vec![drop(&[&[3, 1]])],
+        vec![vec![]],
+        vec![add(&[&[3, 1], &[4, 5]])],
+        vec![add(&[&[1, 3]])],
+        vec![drop(&[&[1, 2]])],
+        vec![drop(&[&[2, 3], &[3, 4]])],
+        vec![add(&[&[5, 1], &[2, 3]])],
+    ]
+}
+
+/// Δfix (B§10 step 3): a transitive closure through edits, removals by levels (0364), under every law (each output
+/// by its key: a level is a witness).
+#[test]
+fn a_transitive_closure_passes_the_harness_through_edits() {
+    let mut p = P::new();
+    let prog = p.program("path(x, y) :- edge(x, y).\npath(x, z) :- path(x, y), edge(y, z).\n", "fix").unwrap();
+    let st = p.module_op(&prog, "fix", &[fact("edge", 2)]);
+    assert!(st.recursive);
+    let outs = st.ports().unwrap().outs;
+    assert_eq!(outs.len(), 1, "a recursive head's levels are its last column, with no counts");
+    assert!(outs[0].shape.levels);
+    p.harness(&st, &closure_chain());
+}
+
+/// Each row's level is a witness (0364 §1): a derivation from rows of lower level holds, through every edit. An
+/// added row gets one more than the highest level it reads (§2.4), so an edge's own row is at level 0.
+#[test]
+fn levels_stay_witnesses_through_edits() {
+    let mut p = P::new();
+    let prog = p.program("path(x, y) :- edge(x, y).\npath(x, z) :- path(x, y), edge(y, z).\n", "lv").unwrap();
+    let st = p.module_op(&prog, "lv", &[fact("edge", 2)]);
+    let mut edges = Trace::new(&head_shape("edge", 2, false)).unwrap().with_roll_up(RollUp::Never);
+    let mut inst = Instance::new(&st, &mut p.bench.dir).unwrap();
+    let g = p.global();
+    let globals = [GlobalIn { block: g.block, before: Some(g.count), after: g.count }];
+    let mut was = None;
+    for step in closure_chain() {
+        let b = &mut p.bench;
+        let now = if step[0].is_empty() { was } else { Some(push_layer(&b.reg, &b.traces, &mut b.dir, &mut edges, &step[0]).unwrap()) };
+        inst.step(&st, &mut b.cx(), &[(&edges, was, now)], &globals, None).unwrap();
+        was = now;
+        let e = rows_at(&b.dir, &edges, now).unwrap();
+        let rows = rows_at(&b.dir, &inst.outs[0], inst.outs[0].head()).unwrap();
+        for r in &rows {
+            let (x, y, l) = (r[0], r[1], r[2]);
+            let held = e.contains(&vec![x, y]) || rows.iter().any(|q| q[0] == x && q[2] < l && e.contains(&vec![q[1], y]));
+            assert!(held, "path({x}, {y}) at level {l}: no derivation from lower levels, in {rows:?} over {e:?}");
+            if l == 0 {
+                assert!(e.contains(&vec![x, y]), "a level-0 row is an edge's");
+            }
+        }
+    }
+}
+
+/// An anti-join whose matches come and go, a fact, and filters first (B§10's step 2): a `not` and a `cmp` of
+/// constants run on the empty tuple.
+#[test]
+fn an_anti_join_whose_matches_come_and_go_with_facts_and_filters_first() {
+    let mut p = P::new();
+    let src = "free(x) :- item(x), !used(x).\nseven(7).\nquiet(1) :- !alarm(1).\nsure(2) :- 1 < 2.\nnever(3) :- 2 < 1.\n";
+    let prog = p.program(src, "anti").unwrap();
+    let st = p.module_op(&prog, "anti", &[fact("item", 1), fact("used", 1), fact("alarm", 1)]);
+    p.harness(
+        &st,
+        &[
+            vec![add(&[&[1], &[2], &[3]]), vec![], vec![]],
+            vec![vec![], add(&[&[2]]), add(&[&[1]])],
+            vec![vec![], add(&[&[1], &[3]]), vec![]],
+            vec![vec![], drop(&[&[2]]), drop(&[&[1]])],
+            vec![drop(&[&[3]]), drop(&[&[1], &[3]]), vec![]],
+        ],
+    );
+}
+
+/// B§7's refusals, each naming its rule.
+#[test]
+fn each_refusal_of_b7_names_its_rule() {
+    let mut p = P::new();
+    let cases = [
+        ("a(x) :- b(x), !c(y).\n", "is not bound by an earlier step"),
+        ("a(x) :- b(x), x < y.\n", "is not bound by an earlier step"),
+        ("a(x, y) :- b(x).\n", "is bound by no step"),
+        ("a(x) :- b(x), !a(x).\n", "its own stratum's head"),
+    ];
+    for (i, (src, why)) in cases.into_iter().enumerate() {
+        let e = p.program(src, &format!("refused{i}")).unwrap_err();
+        assert!(e.why.contains(why) && e.rule >= 0, "{src}: {e:?}");
+    }
+    // A view read with other columns than its own, and a stratum written by single-file and cross-file rules both:
+    // refused when made.
+    let prog = p.program("n(x) :- node(x).\n", "arity").unwrap();
+    let l = p.bench.dir.read("atoms", &[p.atoms.0]).unwrap();
+    let m = p.s("arity");
+    let rules = prog.modules[&m].rules.clone();
+    let e = Stratum::new(p.ops, m, rules.clone(), rules, p.known(), &BTreeMap::new(), l.block(0)).err().expect("refused");
+    assert!(e.why.contains("view node of 5 columns with 1"), "{e:?}");
+    std::mem::drop(l);
+    let prog = p.program("h(d, t) :- kind(d, t, \"wildcard\").\nh(x, y) :- e(x, y).\n", "mixed").unwrap();
+    let l = p.bench.dir.read("atoms", &[p.atoms.0]).unwrap();
+    let m = p.s("mixed");
+    let rules = prog.modules[&m].rules.clone();
+    let e = Stratum::new(p.ops, m, rules.clone(), rules, p.known(), &BTreeMap::new(), l.block(0)).err().expect("refused");
+    assert!(e.why.contains("single-file and cross-file"), "{e:?}");
+}
+
+/// A single-file rule over tapes (B§10's one rule over a three-line tape): each document's rows at its grain, a
+/// changed document's retracted from its counts and run again over its new tape, under every law.
+#[test]
+fn a_single_file_rule_over_tapes_passes_the_harness() {
+    let mut p = P::new();
+    let prog = p.program("wild(d, t) :- kind(d, t, \"wildcard\").\n", "sf").unwrap();
+    let st = p.module_op(&prog, "sf", &[]);
+    assert!(st.tape && st.ins.is_empty());
+    let a1 = p.doc("x(_) :- y(_).\nz(1).\nw(_, _) :- v(_).\n", "a.rerail");
+    let a2 = p.doc("x(_) :- y(1).\nz(_) :- q(_).\nw(2).\n", "a.rerail");
+    let b = p.doc("u(_) :- t(_, _).\n", "b.rerail");
+    p.harness(&st, &[vec![add(&[&a1])], vec![both(drop(&[&a1]), add(&[&a2]))], vec![add(&[&b])], vec![vec![]], vec![drop(&[&a2])]]);
+    // The rows are the wildcards' nodes, a document's each partitioned by it.
+    let d = p.s("a");
+    let all = p.read_rows(&st, &[(&a1, 1)]);
+    assert_eq!(all.len(), 5, "a1's five wildcards: {all:?}");
+    assert!(all.iter().all(|r| r[0] == d));
+}
+
+impl P {
+    /// `st`'s first head's rows over a document set of `docs`.
+    fn read_rows(&mut self, st: &Stratum, docs: &[(&Vec<i64>, i32)]) -> BTreeSet<Vec<i64>> {
+        let mut t = Trace::new(&tape_shape()).unwrap().with_roll_up(RollUp::Never);
+        let pairs: Pairs = docs.iter().map(|(r, d)| ((*r).clone(), *d)).collect();
+        let g = self.global();
+        let b = &mut self.bench;
+        let h = push_layer(&b.reg, &b.traces, &mut b.dir, &mut t, &pairs).unwrap();
+        apply(st, &mut b.cx(), &[(&t, Some(h))], &[g]).unwrap().swap_remove(0)
+    }
+}
+
+/// B§8's run over files on disk: L1 over l0, then the levels, with the run's facts.
+struct Run {
+    bench: Bench,
+    root: std::path::PathBuf,
+    docs: DocSet,
+    atoms: Atoms,
+    l1: L1,
+    inst: Instance,
+    levels: Levels,
+    last: Option<crate::boot::Pins>,
+    facts: Vec<(i64, Trace, Shape)>,
+}
+
+const L0_PATH: &str = "bootstrap-l0.rerail";
+
+impl Run {
+    fn new(name: &str) -> Run {
+        let mut bench = Bench::new().unwrap();
+        let (root, store) = crate::files::tests::root(name);
+        crate::files::tests::write(&root.join(L0_PATH), crate::L0, 60);
+        let atoms = Atoms::new(&mut bench.dir);
+        let world = crate::files::World::new(root.clone(), store, bench.answers, &bench.dir, [None; 3]).unwrap();
+        let iops = InternOps::declare(&mut bench.reg).unwrap();
+        let k0 = K0Ops::declare(&mut bench.reg).unwrap();
+        let drops = DropOps::declare(&mut bench.reg).unwrap();
+        let l1 = L1 { ops: k0, drops };
+        let levels = Levels::new(PhaseOps::declare(&mut bench.reg, drops).unwrap());
+        let inst = Instance::new(&l1, &mut bench.dir).unwrap();
+        let docs = DocSet::new(world, iops, drops, &bench.dir, None, None).unwrap();
+        Run { bench, root, docs, atoms, l1, inst, levels, last: None, facts: Vec::new() }
+    }
+
+    /// The run kept in store `folder` over root `root`, at its last pins (none: a new store): L1's instance, the
+    /// document set and the levels resumed where the last run left them, and the run's facts where level 0 last read
+    /// them (its pins' `seen`).
+    fn open(root: &std::path::Path, folder: &std::path::Path) -> Run {
+        let store = crate::files::Store::open(folder).unwrap();
+        let (mut bench, pins) = Bench::open(&store.kept()).unwrap();
+        let atoms = Atoms::open(&mut bench.dir, &store.atoms()).unwrap();
+        let world = crate::files::World::new(root.to_path_buf(), store, bench.answers, &bench.dir, pins.as_ref().map_or([None; 3], |p| p.1.world)).unwrap();
+        let iops = InternOps::declare(&mut bench.reg).unwrap();
+        let k0 = K0Ops::declare(&mut bench.reg).unwrap();
+        let drops = DropOps::declare(&mut bench.reg).unwrap();
+        let l1 = L1 { ops: k0, drops };
+        let mut levels = Levels::new(PhaseOps::declare(&mut bench.reg, drops).unwrap());
+        let place = bench.dir.lasting();
+        let p = pins.as_ref().map(|p| &p.1);
+        let inst = Instance::new(&l1, &mut bench.dir).unwrap().resumed(place, p.map_or(&[][..], |p| &p.outs), p.and_then(|p| p.want), p.map_or(&[][..], |p| &p.asks));
+        let docs = DocSet::new(world, iops, drops, &bench.dir, p.and_then(|p| p.tape), pins.as_ref().map(|p| p.0)).unwrap();
+        let mut facts = Vec::new();
+        if let Some(p) = p {
+            levels.resume(&bench.dir, atoms, place, &inst.outs, &p.levels).unwrap();
+            for &(rel, h) in &p.levels[0].seen {
+                let h = h.expect("a fact read");
+                facts.push((rel, Trace::at_layer(&bench.dir, place, h).unwrap(), rows_shape(&bench.dir, h).unwrap()));
+            }
+        }
+        let last = pins.map(|(_, p)| crate::boot::Pins { atoms: Global { block: atoms.0, ..p.atoms }, ..p });
+        Run { bench, root: root.to_path_buf(), docs, atoms, l1, inst, levels, last, facts }
+    }
+
+    /// Names interned as the engine interns any text: a document's strings (with the facts' relations').
+    fn names(&mut self, names: &[&str]) {
+        let names: Vec<&str> = names.iter().copied().chain(["load", "boot"]).collect();
+        let src = format!("names({}).\n", names.iter().map(|n| format!("{n:?}")).collect::<Vec<_>>().join(", "));
+        let b = &mut self.bench;
+        let ids = doc_of(&b.reg, &b.answers, &mut b.dir, &mut b.blobs, &src).unwrap();
+        let (s, t) = (b.blobs.get(&b.dir, &ids.source).unwrap().unwrap(), b.blobs.get(&b.dir, &ids.tape).unwrap().unwrap());
+        intern(&b.reg, &self.docs.iops, &mut b.dir, &mut b.blobs, self.atoms, s, t, "names.rerail", "names").unwrap();
+    }
+
+    fn s(&self, x: &str) -> i64 {
+        self.atoms.find(&self.bench.dir, x).unwrap_or_else(|| panic!("{x:?} not interned"))
+    }
+
+    /// The run's fact `rel`'s rows moved to `rows` (a layer of their change).
+    fn fact(&mut self, rel: &str, rows: &[Vec<i64>]) {
+        let r = self.s(rel);
+        if !self.facts.iter().any(|f| f.0 == r) {
+            let shape = head_shape(rel, rows[0].len(), false);
+            let t = Trace::new(&shape).unwrap().with_roll_up(RollUp::Never).resumed(self.bench.dir.lasting(), None);
+            self.facts.push((r, t, shape));
+        }
+        let t = &mut self.facts.iter_mut().find(|f| f.0 == r).unwrap().1;
+        let have = rows_at(&self.bench.dir, t, t.head()).unwrap();
+        let want: BTreeSet<Vec<i64>> = rows.iter().cloned().collect();
+        let pairs: Pairs = have.difference(&want).map(|r| (r.clone(), -1)).chain(want.difference(&have).map(|r| (r.clone(), 1))).collect();
+        if !pairs.is_empty() {
+            let b = &mut self.bench;
+            push_layer(&b.reg, &b.traces, &mut b.dir, t, &pairs).unwrap();
+        }
+    }
+
+    /// B§8's run from the last pins.
+    fn run(&mut self) -> Work {
+        let last = self.last.take();
+        let facts: Vec<FactIn<'_>> = self.facts.iter().map(|(rel, t, shape)| FactIn { rel: *rel, trace: t, shape: shape.clone() }).collect();
+        let module = L0_PATH.strip_suffix(".rerail").unwrap();
+        let (pins, _, work) = crate::boot::run(&self.l1, &mut self.inst, &mut self.levels, L0_PATH, module, self.atoms, &facts, &mut self.docs, &mut self.bench, last.as_ref()).unwrap();
+        self.last = Some(pins);
+        work
+    }
+
+    /// Level `k`'s relation `rel`'s rows, each its relation's columns (a level dropped).
+    fn rows(&self, k: usize, rel: &str) -> BTreeSet<Vec<i64>> {
+        let Some(r) = self.levels.levels[k].rels.get(&self.s(rel)) else { return BTreeSet::new() };
+        let n = r.shape.columns.len() - usize::from(r.shape.levels);
+        rows_at(&self.bench.dir, &r.head, r.head.head()).unwrap().into_iter().map(|mut x| {
+            x.truncate(n);
+            x
+        }).collect()
+    }
+
+    fn write(&self, path: &str, text: &str, ago: u64) {
+        crate::files::tests::write(&self.root.join(path), text, ago);
+    }
+}
+
+/// The self-reading check (B§10, 0686: "P2 run over `l0`'s own tape gives P2 again, row for row"): L2 is P2 run as a
+/// level over the document its facts load, l0; its K-form is L1's. The level after it loads nothing and exports no
+/// program, which ends the loop.
+#[test]
+fn p2_run_as_a_level_over_l0s_tape_gives_p2() {
+    let mut r = Run::new("phase-self");
+    r.names(&[L0_PATH, "bootstrap-l0", "rr"]);
+    let (path, module, rr) = (r.s(L0_PATH), r.s("bootstrap-l0"), r.s("rr"));
+    r.fact("load", &[vec![path, module, rr]]);
+    r.run();
+    assert_eq!(r.levels.levels.len(), 2, "L2 exports P3, and L3, loading nothing, exports none");
+    for (k, (name, _)) in RELATIONS.iter().enumerate() {
+        let p2 = rows_at(&r.bench.dir, &r.inst.outs[k], r.inst.outs[k].head()).unwrap();
+        assert_eq!(r.rows(0, name), p2, "{name}: P2 over l0's tape is P2");
+    }
+    assert!(!r.rows(0, "k_rule").is_empty());
+}
+
+const A: &str = "base(1).\nbase(2).\ntwice(x, y) :- base(x), base(y), x < y.\n";
+const B: &str = "top(x) :- twice(x, _).\n";
+
+/// Loads (B§10): L2 runs P2 over the two K0 files its facts load, and its K-form is L1's of them, their `k_order`
+/// from the `boot` facts; L3 runs that program, its strata in `k_order`. Then the program's δ: an edit of a file moves
+/// L2's K-form and L3's results with it; an unchanged run is the identity; a cold run gives the same.
+#[test]
+fn a_level_loads_its_files_and_the_next_runs_their_program_through_edits() {
+    let mut r = Run::new("phase-loads");
+    r.write("a.rerail", A, 50);
+    r.write("b.rerail", B, 50);
+    r.names(&["a.rerail", "a", "b.rerail", "b", "rr"]);
+    let (pa, ma, pb, mb, rr) = (r.s("a.rerail"), r.s("a"), r.s("b.rerail"), r.s("b"), r.s("rr"));
+    r.fact("load", &[vec![pa, ma, rr], vec![pb, mb, rr]]);
+    r.fact("boot", &[vec![pa, 1], vec![pb, 2]]);
+    r.run();
+    assert_eq!(r.levels.levels.len(), 2, "L2 exports a and b's program; L3 runs it and exports none");
+    // L2's K-form is L1's of the two files.
+    let (da, db) = (r.docs.key(&r.bench.dir, r.atoms, "a.rerail").unwrap(), r.docs.key(&r.bench.dir, r.atoms, "b.rerail").unwrap());
+    let mut t = Trace::new(&tape_shape()).unwrap().with_roll_up(RollUp::Never);
+    let rows: Pairs = rows_at(&r.bench.dir, &r.docs.tape, r.docs.tape.head()).unwrap().into_iter().filter(|x| x[0] == da || x[0] == db).map(|x| (x, 1)).collect();
+    assert_eq!(rows.len(), 2);
+    let g = Global { block: r.atoms.0, count: u64::from(r.atoms.count(&r.bench.dir)) };
+    let l1 = {
+        let b = &mut r.bench;
+        let h = push_layer(&b.reg, &b.traces, &mut b.dir, &mut t, &rows).unwrap();
+        apply(&r.l1, &mut b.cx(), &[(&t, Some(h))], &[g]).unwrap()
+    };
+    for (k, (name, _)) in RELATIONS.iter().enumerate().filter(|(_, n)| n.0 != "k_order") {
+        assert_eq!(r.rows(0, name), l1[k], "{name}");
+    }
+    assert_eq!(r.rows(0, "k_order"), BTreeSet::from([vec![da, 1], vec![db, 2]]));
+    let check = |r: &Run, twice: &[[i64; 2]], top: &[i64]| {
+        assert_eq!(r.rows(1, "twice"), twice.iter().map(|x| x.to_vec()).collect(), "twice");
+        assert_eq!(r.rows(1, "top"), top.iter().map(|&x| vec![x]).collect(), "top");
+    };
+    check(&r, &[[1, 2]], &[1]);
+    // Unchanged: the identity.
+    let work = r.run();
+    assert!(work.is_checks_only(), "{work:?}");
+    // a's edit: its module's rules removed and its new ones run cold (O3), and b's over a's new rows.
+    r.write("a.rerail", &format!("{A}base(3).\n"), 40);
+    r.run();
+    check(&r, &[[1, 2], [1, 3], [2, 3]], &[1, 2]);
+    // b's edit.
+    r.write("b.rerail", "top(x) :- twice(_, x).\n", 30);
+    r.run();
+    check(&r, &[[1, 2], [1, 3], [2, 3]], &[2, 3]);
+    // A file no longer loaded: its program gone, and what it wrote.
+    r.fact("load", &[vec![pa, ma, rr]]);
+    r.run();
+    assert_eq!(r.rows(0, "k_order"), BTreeSet::from([vec![da, 1]]));
+    check(&r, &[[1, 2], [1, 3], [2, 3]], &[]);
+    // Cold: the same rows.
+    let warm: Vec<BTreeSet<Vec<i64>>> = ["twice", "top", "k_rule"].iter().map(|n| r.rows(1, n).into_iter().chain(r.rows(0, n)).collect()).collect();
+    r.last = None;
+    r.run();
+    let cold: Vec<BTreeSet<Vec<i64>>> = ["twice", "top", "k_rule"].iter().map(|n| r.rows(1, n).into_iter().chain(r.rows(0, n)).collect()).collect();
+    assert_eq!(cold, warm);
+}
+
+/// A program edit that makes a stratum recursive changes its heads' shape (a level column, 0364): the level runs
+/// again from ∅, and the levels after it too, with the same rows a cold run gives.
+#[test]
+fn an_edit_that_makes_a_stratum_recursive_runs_its_level_from_empty() {
+    let mut r = Run::new("phase-reshape");
+    r.write("a.rerail", "e(1, 2).\ne(2, 3).\np(x, y) :- e(x, y).\n", 50);
+    r.names(&["a.rerail", "a", "rr"]);
+    let (pa, ma, rr) = (r.s("a.rerail"), r.s("a"), r.s("rr"));
+    r.fact("load", &[vec![pa, ma, rr]]);
+    r.run();
+    assert_eq!(r.rows(1, "p"), BTreeSet::from([vec![1, 2], vec![2, 3]]));
+    r.write("a.rerail", "e(1, 2).\ne(2, 3).\np(x, y) :- e(x, y).\np(x, z) :- p(x, y), e(y, z).\n", 40);
+    r.run();
+    assert_eq!(r.rows(1, "p"), BTreeSet::from([vec![1, 2], vec![2, 3], vec![1, 3]]));
+    let p = r.levels.levels[1].rels.get(&r.s("p")).unwrap();
+    assert!(p.shape.levels && p.counts.is_none());
+}
+
+/// What a run keeps lasts across processes (B§8's `last`): a later process opens the pins, and its levels, their
+/// programs read again from where each level before left its K-form, and the run's facts, where level 0 last read
+/// them, start where the last run left them. An unchanged root is the identity; an edit then is the same as in the
+/// first process.
+#[test]
+fn a_later_process_resumes_the_levels_where_the_last_run_left_them() {
+    let _racy = crate::files::tests::racy_window();
+    let (root, store) = crate::files::tests::root("phase-restart");
+    let folder = store.folder.clone();
+    std::mem::drop(store);
+    crate::files::tests::write(&root.join("a.rerail"), A, 50);
+    crate::files::tests::write(&root.join("b.rerail"), B, 50);
+    crate::files::tests::past_racy_window();
+    let rows = |r: &Run| (r.rows(0, "k_rule"), r.rows(1, "twice"), r.rows(1, "top"));
+    let first = {
+        let mut r = Run::open(&root, &folder);
+        assert!(r.last.is_none());
+        r.names(&["a.rerail", "a", "b.rerail", "b", "rr"]);
+        let (pa, ma, pb, mb, rr) = (r.s("a.rerail"), r.s("a"), r.s("b.rerail"), r.s("b"), r.s("rr"));
+        r.fact("load", &[vec![pa, ma, rr], vec![pb, mb, rr]]);
+        r.fact("boot", &[vec![pa, 1], vec![pb, 2]]);
+        r.run();
+        rows(&r)
+    };
+    assert_eq!(first.2, BTreeSet::from([vec![1]]));
+    crate::files::forget_observer(&folder);
+    let mut r = Run::open(&root, &folder);
+    assert!(r.last.is_some(), "the last run's pins");
+    assert_eq!((r.levels.levels.len(), r.facts.len()), (2, 2), "the levels and the facts, resumed");
+    assert_eq!(rows(&r), first, "the levels' relations, where the last run left them");
+    let work = r.run();
+    assert!(work.is_checks_only(), "an unchanged root: {work:?}");
+    r.write("a.rerail", &format!("{A}base(3).\n"), 40);
+    r.run();
+    assert_eq!(r.rows(1, "twice"), BTreeSet::from([vec![1, 2], vec![1, 3], vec![2, 3]]));
+    assert_eq!(r.rows(1, "top"), BTreeSet::from([vec![1], vec![2]]));
+}

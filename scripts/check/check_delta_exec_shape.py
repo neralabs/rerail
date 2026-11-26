@@ -712,16 +712,69 @@ def kept(failures: list) -> None:
         failures.append("l1_tests.rs: no check that a later process starts where the last run left off")
 
 
+def b8(failures: list) -> None:
+    """B§8's run (*Rebuild Plan* B§8, B§3, B§7; P§5; 0364; 0678 step 9): the rule body as three operations (`seed`,
+    `step`, `head`) and `tally`; Δwave over counted derivations, the single-file rules at file grain through the
+    weighted drop; Δfix over a levelled head (0364), its rechecks a candidate first step and a level filter; each
+    stratum a module, passing the harness as a `DeltaOp`; the levels run over the export of the one before, K-form
+    the program and the rest facts, until one exports no program; and the levels' pins kept across processes."""
+    src = CRATE / "src"
+    body = strip_rust((src / "body.rs").read_text())
+    for op in ("SEED", "STEP", "HEAD"):
+        if f"reg.declare(&{op})?" not in body:
+            failures.append(f"body.rs: the rule body's {op.lower()} not an operation of the registry")
+    if "reg.declare(&TALLY)?" not in strip_rust((src / "tally.rs").read_text()):
+        failures.append("tally.rs: tally not an operation of the registry (0678 step 9)")
+    phase = strip_rust((src / "phase.rs").read_text())
+    for want, why in (
+        ("impl DeltaOp for Stratum", "a stratum an operation the harness checks (B§10's laws)"),
+        ("drop_counted(", "the single-file rules' changed files retracted by the weighted drop (P§3)"),
+        ("tally::run(", "a non-recursive head netted against its counts (0678 step 9)"),
+        ("s.levels = true;", "a recursive head's level column (0364)"),
+        ("op: Op::Cmp(Cmp::Lt)", "a recheck's level filter (0364 §2.4)"),
+        ("RELATIONS", "a level's program its K-form relations, the rest its facts (O6)"),
+        ("pub fn exports(", "a level's export, which ends the loop when it holds no program"),
+    ):
+        if want not in phase:
+            failures.append(f"phase.rs: {why} ({want} missing)")
+    hits(src / "phase.rs", phase, r"\bfn\s+(fix|wave)_cold\b|\bnaive\b", "a stratum's change computed by a cold rerun beside Δwave or Δfix", failures)
+    boot = strip_rust((src / "boot.rs").read_text())
+    if "if !r.program {" not in boot or "MAX_LEVELS" not in boot:
+        failures.append("boot.rs: the levels' loop does not end at the first level that exports no program (B§8)")
+    if "levels.clear_from(" not in boot:
+        failures.append("boot.rs: a level run from ∅ does not clear the levels after it")
+    if "pub levels: Vec<LevelPins>" not in boot or "fn refer_all(" not in boot:
+        failures.append("boot.rs: the levels' heads not in the pins, or the pins not referring to every head kept")
+    tests = (src / "phase_tests.rs").read_text() + (src / "body_tests.rs").read_text()
+    for t in (
+        "fn a_wave_of_three_rules_over_facts_passes_the_harness",
+        "fn a_transitive_closure_passes_the_harness_through_edits",
+        "fn levels_stay_witnesses_through_edits",
+        "fn an_anti_join_whose_matches_come_and_go_with_facts_and_filters_first",
+        "fn each_refusal_of_b7_names_its_rule",
+        "fn a_single_file_rule_over_tapes_passes_the_harness",
+        "fn p2_run_as_a_level_over_l0s_tape_gives_p2",
+        "fn a_level_loads_its_files_and_the_next_runs_their_program_through_edits",
+        "fn an_edit_that_makes_a_stratum_recursive_runs_its_level_from_empty",
+        "fn a_later_process_resumes_the_levels_where_the_last_run_left_them",
+        "fn a_hand_written_plan_runs_a_join_on_each_side_and_on_a_change",
+        "fn filters_facts_and_levels_in_a_hand_written_plan",
+        "fn tally_moves_a_head_row_only_where_its_count_crosses_zero",
+    ):
+        if t not in tests:
+            failures.append(f"B§8's tests lack {t}")
+
+
 def main() -> int:
     failures: list = []
-    for check in (m0, b1, b2, axes, bounds, cache, contract, b4, b5, b6, reach, e1, kept):
+    for check in (m0, b1, b2, axes, bounds, cache, contract, b4, b5, b6, reach, e1, kept, b8):
         check(failures)
     for f in failures:
         print(f)
     if failures:
         print(f"{len(failures)} shape check(s) failed (decision 0686, the rebuild plan)")
         return 1
-    print("delta_exec shape: every check holds (M0, B1, B2, axes, bounds, cache, contract, B4, B5, B6, reach, E1, kept)")
+    print("delta_exec shape: every check holds (M0, B1, B2, axes, bounds, cache, contract, B4, B5, B6, reach, E1, kept, B8)")
     return 0
 
 
