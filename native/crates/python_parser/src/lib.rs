@@ -29,9 +29,6 @@ pub struct Compiled {
     pub machine: String,
     /// The provers' answers the compile made, for the next (`compile_timed`'s `known`).
     pub proofs: Vec<(rerail_bitlex::bitlex_prove::Key, rerail_bitlex::bitlex_prove::Answer)>,
-    /// The parser as Rust (`rerail-python-aot`): tier 1 from the lexer's statements, tier 2 from
-    /// the tree rules, or why the compiler writes neither.
-    pub tiers_rust: Result<(String, String), String>,
 }
 
 /// The provers' answers by question (decision 0414).
@@ -114,7 +111,7 @@ pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static 
             Some(*own.entry(name.to_owned()).or_insert(next))
         })
     };
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines, rust: false };
     let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known)?;
     lap("bitlex compiler");
     let program = rir::assemble(&compiled.text()).map_err(|e| format!("{e}\n{}", compiled.words))?;
@@ -133,11 +130,31 @@ pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static 
     let tier2 = native_cpu_stream::compile_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
     lap("tier 2 Cranelift");
     let parser = native_cpu_stream::Parser::with_tiers(&native, &cut, tier1, tier2);
-    let tiers_rust = match (compiled.lexer_rust.clone(), compiled.rust.clone()) {
-        (Some(Ok(t1)), Some(Ok(t2))) => Ok((t1, t2)),
-        (t1, t2) => Err(format!("tier 1: {:?}; tier 2: {:?}", t1.map(|x| x.map(|_| ())), t2.map(|x| x.map(|_| ())))),
-    };
-    Ok(Compiled { parser, program, words: compiled.words.clone(), machine: compiled.machine.clone(), proofs: compiled.proofs.clone(), tiers_rust })
+    Ok(Compiled { parser, program, words: compiled.words.clone(), machine: compiled.machine.clone(), proofs: compiled.proofs.clone() })
+}
+
+/// The parser as Rust (`rerail-python-aot`): tier 1 from the lexer's statements, tier 2 from the tree rules, or why
+/// the compiler writes neither. A compile of its own, as `rerail_kotlin_parser::tiers_rust`: the parser's
+/// (`compiled`) writes no Rust.
+pub fn tiers_rust(grammar: &str) -> Result<(String, String), String> {
+    rerail_bitlex::answers::answered("python", grammar.as_bytes(), Proofs::default(), |known| {
+        let stmts = ::bitlex::syntax::parse(grammar)?;
+        let own = std::cell::RefCell::new(std::collections::HashMap::<String, u16>::new());
+        let kind = |name: &str| {
+            lean_kind(name).or_else(|| {
+                let mut own = own.borrow_mut();
+                let next = OWN_IDS + own.len() as u16;
+                Some(*own.entry(name.to_owned()).or_insert(next))
+            })
+        };
+        let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines, rust: true };
+        let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known)?;
+        let tiers = match (compiled.lexer_rust, compiled.rust) {
+            (Some(Ok(t1)), Some(Ok(t2))) => Ok((t1, t2)),
+            (t1, t2) => Err(format!("tier 1: {:?}; tier 2: {:?}", t1.map(|x| x.map(|_| ())), t2.map(|x| x.map(|_| ())))),
+        };
+        Ok((tiers, compiled.proofs))
+    })?
 }
 
 impl Compiled {

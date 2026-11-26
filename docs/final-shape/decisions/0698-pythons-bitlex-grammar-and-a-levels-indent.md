@@ -389,3 +389,17 @@ statements and blocks end.
 
     This is the second step to one pass. Next, the regional escapes and tier 2's regional masks are made from these
     in the lane, and the walk runs only in test builds.
+70. **A compile asks every prover question through the kept answers, and writes the Rust tiers only for a caller
+    that reads them.** A test's compile of Python took 18 s on the M1 Max, and Kotlin's Rust-writing compile 25 s,
+    with every answer already kept. Three causes:
+    - `last_row` and `token_ops_back` asked the provers directly. They skipped the answers (0414) and rebuilt the
+      prover's operations for each row of each check: 11 s of Python's compile. They now ask through
+      `Lowering::never` and `settled_never`, as `token_row` does. Kotlin's shipped answers hold the new questions.
+    - The Rust writers ran in every compile. Only `rust_is_current` reads their text. `Symbols::rust` asks for it:
+      Python's and Kotlin's `tiers_rust` set it, and the parsers' `compiled`, JSON's and the C directives' do not.
+    - Tier 1's writer expanded a named mask again at each reader in `in_region_of`, so a mask DAG became a tree:
+      22 s of Kotlin's. `Gen::region_memo` keeps each named mask's answer by region, part and context. `region_gen`
+      goes up at each change of `regional` or `fills`, so the memo never answers from an older state.
+
+    A test's compile is now 3.7 s: bitlex 1.5 s, Cranelift 2.1 s. nextest runs each test in a process of its own,
+    which compiles the grammar again, so Python's suite takes 26 s and Kotlin's 51 s.

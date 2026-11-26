@@ -1478,7 +1478,7 @@ fn tier1_cones() {
             Some(*own.entry(name.to_owned()).or_insert(next))
         })
     };
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &crate::field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &crate::field, terminators: rerail_tape_format::newlines::Terminators::Newlines, rust: true };
     let c = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, Default::default()).expect("compiles");
     let b = &c.program;
     let n = b.ops.len();
@@ -1728,7 +1728,7 @@ fn token_level_probe() {
             Some(*own.entry(name.to_owned()).or_insert(next))
         })
     };
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &crate::field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &crate::field, terminators: rerail_tape_format::newlines::Terminators::Newlines, rust: true };
     let c = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, Default::default()).expect("compiles");
     let mut by: HashMap<String, usize> = HashMap::new();
     for o in &c.origin {

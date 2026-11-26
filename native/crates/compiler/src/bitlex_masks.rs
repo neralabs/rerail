@@ -514,6 +514,9 @@ pub struct Symbols<'a> {
     pub field: &'a dyn Fn(&str) -> Option<u16>,
     /// The line terminators of the grammar's language (decision 0612): tier 1's line ends, the tape's line index's.
     pub terminators: rerail_tape_format::newlines::Terminators,
+    /// Whether the compile writes the tiers as Rust (`bitlex_rust`, `bitlex_lex_rust`): only a caller that reads them
+    /// asks, since writing them is most of a compile's time.
+    pub rust: bool,
 }
 
 /// Compile `stmts`, with `outputs` (mask names, or `FALLBACK`) as the block program's first
@@ -830,7 +833,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         words = lowered;
         machine = text;
         // Tier 2 as Rust, from the tree rules and the tables (`bitlex_rust`), the records' outputs the program's now.
-        if let (Some(t), Some(r), Some(symbols)) = (&low.rust_tables, &low.program.records, symbols) {
+        if let (Some(t), Some(r), Some(symbols)) = (&low.rust_tables, &low.program.records, symbols.filter(|s| s.rust)) {
             let marks = (0..low.marks.len())
                 .map(|i| {
                     let (name, _, end) = &low.marks[i];
@@ -2271,8 +2274,8 @@ impl Lowering {
         // The same refusals: `A & (L ^ L')` never holds.
         let differ = self.xor(l, sub)?;
         let differ = self.and(a, differ)?;
-        let ops = self.proof_ops();
-        if !(bitlex_prove::never(&ops, &self.program.tables, differ.v, differ.d) || bitlex_prove::never_unrolled(&ops, &self.program.tables, &[], differ.v, differ.d, 10, 4000)) {
+        // Asked as any other question, so a compile after this one has its answer (`Proofs`).
+        if !(self.never(differ) || self.settled_never(&mut bitlex_prove::Induction::new(&[], 10, 4000), differ)) {
             return Ok(None);
         }
         let Some(mut ops) = self.local_ops_with(a, true, Some((last.v, L::Const(u64::MAX), 0))) else { return Ok(None) };
@@ -3758,12 +3761,13 @@ fn gap_claims(low: &mut Lowering, prover: bitlex_prove::Induction, claims: &[Val
     Ok(left.into_iter().all(|c| never(low, c)))
 }
 
-/// The grammar row whose tokens' last bytes hold every bit of `a`, as the prover shows it.
+/// The grammar row whose tokens' last bytes hold every bit of `a`, as the prover shows it: each
+/// row's question asked as any other (`Proofs`), so a compile after this one has its answer.
 fn last_row(low: &mut Lowering, a: Val, rows: &[bitlex_tier2::Row], token_rows: &[(String, Val, Val)]) -> Result<Option<usize>, String> {
     let grammar_rows: Vec<usize> = (0..rows.len()).filter(|&r| !low.extra.contains(&token_rows[r].0) && !row_kinds(&rows[r]).is_empty()).collect();
     for r in grammar_rows {
         let off = low.andnot(a, token_rows[r].2)?;
-        if bitlex_prove::never(&low.proof_ops(), &low.program.tables, off.v, off.d) || bitlex_prove::never_unrolled(&low.proof_ops(), &low.program.tables, &[], off.v, off.d, 4, 1000) {
+        if low.never(off) || low.settled_never(&mut bitlex_prove::Induction::new(&[], 4, 1000), off) {
             return Ok(Some(r));
         }
     }

@@ -64,7 +64,7 @@ fn every_grammar_compiles_here_and_equals_the_interpreters() {
         let ids = Ids::default();
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
-        let symbols = Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
+        let symbols = Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines, rust: true };
         let compiled = bitlex_masks::compile(&stmts, &[FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("{name}: compiles: {e}"));
         let text = compiled.text();
         let words = rir_asm::assemble(&text).unwrap_or_else(|e| panic!("{name}: assembles: {e}\n{text}"));
@@ -96,7 +96,7 @@ fn a_tape_past_two_byte_columns_is_read_at_four() {
         let ids = Ids::default();
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
-        let symbols = Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
+        let symbols = Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines, rust: true };
         let compiled = bitlex_masks::compile(&stmts, &[FALLBACK], Some(&symbols)).expect("compiles");
         let words = rir_asm::assemble(&compiled.text()).expect("assembles");
         let structure = native_ir::lower(&words, 0, 0).expect("lowers");
@@ -148,7 +148,7 @@ fn tier2_writes_format_16_by_the_ops() {
         let ids = Ids::default();
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
-        let symbols = Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
+        let symbols = Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines, rust: true };
         let compiled = bitlex_masks::compile(&stmts, &[FALLBACK], Some(&symbols)).expect("compiles");
         let words = rir_asm::assemble(&compiled.text()).expect("assembles");
         let structure = native_ir::lower(&words, 0, 0).expect("lowers");
@@ -201,7 +201,7 @@ fn shared_arms_are_one_copy_and_refuse_at_their_own_word() {
         let ids = Ids::default();
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
-        let symbols = Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
+        let symbols = Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines, rust: true };
         let compiled = bitlex_masks::compile(&stmts, &[FALLBACK], Some(&symbols)).expect("compiles");
         let words = rir_asm::assemble(&compiled.text()).expect("assembles");
         let structure = native_ir::lower(&words, 0, 0).expect("lowers");

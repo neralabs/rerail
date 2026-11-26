@@ -786,6 +786,14 @@ struct RegionCheck {
 struct Ctx([[bool; 256]; 9]);
 
 impl Ctx {
+    /// Its bytes' digest, a key of `Gen::region_memo`.
+    fn digest(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.0.hash(&mut h);
+        h.finish()
+    }
+
     fn all() -> Ctx {
         Ctx([[true; 256]; 9])
     }
@@ -1111,6 +1119,12 @@ struct Gen<'a> {
     ends: Option<Vec<End>>,
     /// The fills shown to hold only in a body's bytes (`fill_kept`), by their key.
     fill_proofs: std::cell::RefCell<HashMap<String, bool>>,
+    /// A named mask in a part of a token (`in_region_of`), by its name, the region, the part, the bytes about it (`Ctx`),
+    /// and `region_gen` when it was asked: a mask read by many is worked out once, not again at each reader.
+    region_memo: std::cell::RefCell<HashMap<(String, Option<usize>, u8, u64, u64), Option<Expr>>>,
+    /// One more at each change of what `in_region_of` reads that changes (`regional`, `fills`), so `region_memo` holds
+    /// no answer of before.
+    region_gen: u64,
     opener_at: [[bool; 256]; 4],
     /// The escapes tested at each token's start; at the file's end, of a fill the loop keeps.
     start_checks: Vec<(String, Expr, [bool; 256])>,
@@ -1252,11 +1266,13 @@ impl Gen<'_> {
             return f(self);
         }
         let now = std::mem::replace(&mut self.regional, at.regional.clone());
+        self.region_gen += 1;
         let names = std::mem::replace(&mut self.names, at.names.clone());
         let node_of = std::mem::replace(&mut self.node_of, at.node_of.clone());
         let temps = std::mem::take(&mut self.temps);
         let r = f(self);
         (self.regional, self.names, self.node_of, self.temps) = (now, names, node_of, temps);
+        self.region_gen += 1;
         r
     }
 
@@ -2549,6 +2565,7 @@ impl Gen<'_> {
             let xg = if matches!(xg, Expr::Empty) { None } else { Some(self.val(&xg)?) };
             let start0 = if prev { Expr::Call("prev".into(), vec![Arg::E(x0.clone())]) } else { x0.clone() };
             self.fills.push(LoopFill { name: name.clone(), key, shown: show(e), prev, x, xg, eg, within: None, rows: codes, info, start0, stop0: e0.clone() });
+            self.region_gen += 1;
         }
         Ok(())
     }
@@ -2625,6 +2642,7 @@ impl Gen<'_> {
             codes.push((*row, g_l.code(), Known::No.code()));
         }
         self.fills.push(LoopFill { name: name.clone(), key: key.to_owned(), shown: show(e), prev: false, x: x.clone(), xg: None, eg: None, within: Some(j), rows: codes, info, start0: (**y).clone(), stop0: Expr::Empty });
+        self.region_gen += 1;
         Ok(true)
     }
 
@@ -2932,7 +2950,13 @@ impl Gen<'_> {
                 } else if let Some(q) = kind("f") {
                     k == Some(q) && !is_closer(part)
                 } else if let Some(d) = self.defs.get(n) {
-                    return self.in_region_of(d, k, part, ctx, memo);
+                    let key = (n.clone(), k, part, ctx.digest(), self.region_gen);
+                    if let Some(v) = self.region_memo.borrow().get(&key) {
+                        return v.clone();
+                    }
+                    let v = self.in_region_of(d, k, part, ctx, memo);
+                    self.region_memo.borrow_mut().insert(key, v.clone());
+                    return v;
                 } else {
                     // The hidden bytes.
                     k.is_some() && part > 0
@@ -4326,6 +4350,7 @@ impl Gen<'_> {
         let Some(x) = self.of_code(e) else { return Ok(false) };
         if !self.regional.contains("code_l") {
             self.regional.insert("code_l".to_owned());
+            self.region_gen += 1;
             self.names.insert("code_l".to_owned(), "code_l".to_owned());
         }
         let before = std::mem::take(&mut self.body);
@@ -4791,19 +4816,24 @@ impl Gen<'_> {
         let _ = writeln!(self.body, "                _ => break,\n            }}\n        }}\n    }}");
         self.names.insert(rg.hidden.clone(), hidden);
         self.regional.insert(rg.hidden.clone());
+        self.region_gen += 1;
         if let Some((_, _, _, _, deep, name)) = &level {
             self.names.insert(name.clone(), deep.clone());
             self.regional.insert(name.clone());
+            self.region_gen += 1;
             self.deep = Some(name.clone());
         }
         for r in ks {
             self.names.insert(format!("o_{}", r.kind), format!("m_o_{}", ident(&r.kind)));
             self.names.insert(format!("f_{}", r.kind), format!("m_f_{}", ident(&r.kind)));
             self.regional.insert(format!("o_{}", r.kind));
+            self.region_gen += 1;
             self.regional.insert(format!("f_{}", r.kind));
+            self.region_gen += 1;
             if let Some((e, _)) = &r.empty {
                 self.names.insert(e.clone(), format!("m_{}", ident(e)));
                 self.regional.insert(e.clone());
+                self.region_gen += 1;
             }
         }
         Ok(())
@@ -5063,6 +5093,7 @@ impl Gen<'_> {
                         }
                     };
                     self.regional.insert(name.clone());
+                    self.region_gen += 1;
                     self.bind(name, v);
                 }
                 Stmt::Rounds { regions: Some(rg), .. } => self.regions(rg)?,
@@ -7824,7 +7855,7 @@ fn toggle(x: &[u64]) -> Vec<u64> {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), level: None, deep: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), ends: None, fill_proofs: Default::default(), opener_at: [[true; 256]; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), passes: Vec::new(), open_pass: None, lane_passes: HashSet::new(), in_lane: false, walk_writes: false }.source()
+    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), level: None, deep: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), ends: None, fill_proofs: Default::default(), region_memo: Default::default(), region_gen: 0, opener_at: [[true; 256]; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), passes: Vec::new(), open_pass: None, lane_passes: HashSet::new(), in_lane: false, walk_writes: false }.source()
 }
 
 /// `code` with no test build's checks (decision 0655 step 3): each `#[cfg(feature = "test-hooks")]` assert and the

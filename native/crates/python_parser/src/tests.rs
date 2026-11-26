@@ -430,7 +430,8 @@ fn corpus() {
 /// `rerail-python-aot`'s tiers are the compiler's output (`RERAIL_BLESS=1` writes them again).
 #[test]
 fn rust_is_current() {
-    let (tier1, tier2) = compiled().expect("compiles").tiers_rust.clone().unwrap_or_else(|e| panic!("the parser as Rust: {e}"));
+    let grammar = std::env::var("RERAIL_PYTHON_GRAMMAR").map_or_else(|_| GRAMMAR.to_owned(), |p| std::fs::read_to_string(p).expect("the grammar file"));
+    let (tier1, tier2) = crate::tiers_rust(&grammar).unwrap_or_else(|e| panic!("the parser as Rust: {e}"));
     for (file, rust) in [("tier1.rs", tier1), ("tier2.rs", tier2)] {
         let path = format!("{}/../python_aot/src/{file}", env!("CARGO_MANIFEST_DIR"));
         if std::env::var_os("RERAIL_BLESS").is_some() {
