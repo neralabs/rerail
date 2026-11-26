@@ -80,17 +80,13 @@ data-layer:alone cpl_err
 data-layer:alone cpl_signed_text
 data-layer:alone csa_counterpart
 data-layer:alone csa_lazy_name
-data-layer:alone csb_owner
 data-layer:alone er_ann
 data-layer:alone er_ann_part
-data-layer:alone er_dirty
-data-layer:alone er_edge
 data-layer:alone er_exempt
 data-layer:alone er_lazy_def
 data-layer:alone er_lazy_expr
 data-layer:alone er_lazy_val
 data-layer:alone er_ph
-data-layer:alone er_phase
 data-layer:alone er_shape_exempt
 data-layer:alone er_site
 data-layer:alone er_tr

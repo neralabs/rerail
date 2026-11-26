@@ -1748,8 +1748,13 @@ mod pack_split_tests {
             std::fs::write(root.join(name), text).unwrap();
         }
         // A run of each policy alone splits each policy's program alone, which can place a relation the pack's does not:
-        // its lists are its own.
-        let pack = if batch == "off" { format!("{}:alone", pack_name(dir)) } else { pack_name(dir).to_owned() };
+        // its lists are its own. So are a shard's (`python-main/3`): it runs its own policies only, so every list it
+        // reads is complete for it, and a relation fixed leaves the lists in every run (review F4).
+        let pack = match (batch, shard) {
+            ("off", _) => format!("{}:alone", pack_name(dir)),
+            (_, Some((k, _))) => format!("{}/{k}", pack_name(dir)),
+            _ => pack_name(dir).to_owned(),
+        };
         // A policy that does not run (an error of its own, whatever the split) is set aside, with its error, and the
         // rest run: the batch stops at the first such error.
         let name = |p: &std::path::Path| p.strip_prefix(&rules).unwrap().display().to_string();
@@ -1776,7 +1781,7 @@ mod pack_split_tests {
         }
         let new: Vec<String> = not_run.iter().filter(|(p, _)| !known.contains(*p)).map(|(p, e)| format!("{pack} {p}: {e}")).collect();
         assert!(new.is_empty(), "{dir}: {} policies do not run, not in policies_not_run.txt:\n{}", new.len(), new.join("\n\n"));
-        if shard.is_none() {
+        {
             let ran: Vec<&String> = known.iter().filter(|p| !not_run.contains_key(*p)).collect();
             assert!(ran.is_empty(), "{dir}: these run now; take them out of policies_not_run.txt:\n{}", ran.iter().map(|p| format!("{pack} {p}")).collect::<Vec<_>>().join("\n"));
         }
@@ -1816,13 +1821,9 @@ mod pack_split_tests {
                     new.iter().map(|r| format!("{pack} {r}  under {}", under[*r])).collect::<Vec<_>>().join("\n")
                 ));
             }
-            // A shard, and a run of each policy alone, sees part of the pack's programs: only the whole pack's run tells
-            // a relation fixed.
-            if shard.is_none() && batch != "off" {
-                let fixed: Vec<&String> = listed.difference(&found).collect();
-                if !fixed.is_empty() {
-                    failures.push(format!("{pack}: no longer {what}; take them out of {file}:\n{}", fixed.iter().map(|r| format!("{pack} {r}")).collect::<Vec<_>>().join("\n")));
-                }
+            let fixed: Vec<&String> = listed.difference(&found).collect();
+            if !fixed.is_empty() {
+                failures.push(format!("{pack}: no longer {what}; take them out of {file}:\n{}", fixed.iter().map(|r| format!("{pack} {r}")).collect::<Vec<_>>().join("\n")));
             }
         }
         assert!(failures.is_empty(), "{}", failures.join("\n\n"));
