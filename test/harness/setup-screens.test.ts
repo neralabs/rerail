@@ -230,7 +230,7 @@ describe("T3 / C3 ask before reading", () => {
   it.each(LANES)("names the repo, says what scanning does, and offers three answers (%s)", lane => {
     const text = stripAnsi(renderReadRepoQuestion(input, lane));
     expect(text).toContain("Find rule packs for acme-web?");
-    expect(text).toContain("Rule packs are ready-made rules, mostly the same ones linters use\n(ESLint, Ruff, Clippy…).\n");
+    expect(text).toContain("Rule packs are best practices, mostly the same ones linters use\n(ESLint, Ruff, Clippy…).\n");
     expect(text).toContain("Rerail checks while your coding agent writes it, so the agent\nfixes problems in the same turn, before review or CI.");
     expect(text).toContain([
       "  ✓ Your linter and CI stay as they are. Rerail doesn’t change them.",
@@ -239,7 +239,12 @@ describe("T3 / C3 ask before reading", () => {
       "  ✓ It also reads the ESLint, oxlint or Ruff config at the repo’s root:",
       "    rules that config turns off start off in Rerail too.",
     ].join("\n"));
-    expect(text).toContain("  ✓ Nothing is installed or turned on until you say yes.");
+    expect(text).toContain([
+      "  ✓ Nothing is installed or turned on until you say yes.",
+      "",
+      "Tip: Rerail can enforce your linter rules as your agent writes. We",
+      "recommend turning those rules off in your linter to avoid duplicate checks.",
+    ].join("\n"));
     expect(text).toContain("1. Yes, scan acme-web");
     expect(text).toMatch(/2\. Scan a different repo… +e\.g\. ~\/code\/landing-page/);
     expect(text).toMatch(/3\. Skip, I’ll pick packs +Rerail won’t scan/);
@@ -397,7 +402,7 @@ describe("T4 / C4 recommended rule packs", () => {
       ...PACKS,
       lintConfig: {
         settings: [
-          ...Array.from({ length: 87 }, (_, index) => implicit(index, false, "eslint.config.js does not turn it on")),
+          ...Array.from({ length: 87 }, (_, index) => implicit(index, false, "not turned on in eslint.config.js")),
           implicit(100, true, "eslint.config.js: js.configs.recommended"),
           { ruleId: "eslint-no-console", folder: "", on: true, config: { allow: ["warn"] }, explicit: false, because: "eslint.config.js: js.configs.recommended" },
           ...Array.from({ length: 6 }, (_, index) => ({ ruleId: `eslint-off-${index}`, folder: "", on: false, config: null, explicit: true, because: `eslint.config.js: "off-${index}": "off"` })),
@@ -407,7 +412,7 @@ describe("T4 / C4 recommended rule packs", () => {
     }, "agent");
     expect(text).toContain([
       "  From your lint config (read as data, never run):",
-      "    87 rules start off  eslint.config.js does not turn it on",
+      "    87 rules start off  not turned on in eslint.config.js",
       "    1 rule starts on  eslint.config.js: js.configs.recommended",
       "    eslint-no-console starts on with allow = [\"warn\"]  eslint.config.js: js.configs.recommended",
       "    eslint-off-0 starts off  eslint.config.js: \"off-0\": \"off\"",

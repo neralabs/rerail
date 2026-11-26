@@ -395,7 +395,7 @@ function leafDecision(read: PhpcsRead, leaf: Leaf, result: RulesetResult, state:
   if (result.excluded !== undefined) return { code, on: false, explicit: true, because: result.excluded };
   const unread = state.unread[0];
   if (result.included === undefined) {
-    return unread === undefined ? { code, on: false, explicit: false, because: `${read.ruleset.file} does not turn it on` } : { code, on: "unknown", because: `${unread} is not read and may include it` };
+    return unread === undefined ? { code, on: false, explicit: false, because: `not turned on in ${read.ruleset.file}` } : { code, on: "unknown", because: `${unread} is not read and may include it` };
   }
   return severityDecision(leaf, result.included, state);
 }

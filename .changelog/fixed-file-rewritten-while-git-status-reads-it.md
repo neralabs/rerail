@@ -1,0 +1,1 @@
+A tracked file that another process rewrites or removes while Rerail reads the checkout's Git status, such as a log, a lock file or a file being formatted, no longer turns off reuse of earlier results for the whole checkout (`repository reuse is disabled: cannot read Git status item: failed to fill whole buffer`). That file counts as changed.

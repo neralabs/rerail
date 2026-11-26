@@ -446,7 +446,7 @@ export function readRepoQuestion(input: ReadRepoInput): QuestionForm {
     lead: [],
     prompt: `Find rule packs for ${repo}?`,
     trail: [
-      "Rule packs are ready-made rules, mostly the same ones linters use",
+      "Rule packs are best practices, mostly the same ones linters use",
       "(ESLint, Ruff, Clippy…).",
       "",
       "How they differ from your linter: your linter checks code after it’s",
@@ -459,6 +459,9 @@ export function readRepoQuestion(input: ReadRepoInput): QuestionForm {
       "  ✓ It also reads the ESLint, oxlint or Ruff config at the repo’s root:",
       "    rules that config turns off start off in Rerail too.",
       "  ✓ Nothing is installed or turned on until you say yes.",
+      "",
+      "Tip: Rerail can enforce your linter rules as your agent writes. We",
+      "recommend turning those rules off in your linter to avoid duplicate checks.",
     ],
     choices: [
       { answer: "yes", label: `Yes, scan ${repo}`, args: [SETUP_FLAGS.answer, "yes", ...repoFlag] },
@@ -533,7 +536,7 @@ function explicitRow(setting: LintConfigInputSetting, style: Style): string {
 
 /**
  * The settings a linter's defaults or a preset decide, one row per state and reason with how many rules it covers:
- * there can be hundreds, and one reason (`eslint.config.js does not turn it on`) covers them all.
+ * there can be hundreds, and one reason (`not turned on in eslint.config.js`) covers them all.
  */
 function implicitRows(settings: readonly LintConfigInputSetting[], style: Style): string[] {
   const groups = Map.groupBy(settings, setting => `${String(setting.on)}\0${setting.because}`);
@@ -541,6 +544,7 @@ function implicitRows(settings: readonly LintConfigInputSetting[], style: Style)
     const [{ on, because }] = group as [LintConfigInputSetting];
     const state = on ? "on" : "off";
     const count = group.length === 1 ? `1 rule starts ${state}` : `${group.length} rules start ${state}`;
+
     return `    ${count}  ${style.dim(clean(because))}`;
   });
 }

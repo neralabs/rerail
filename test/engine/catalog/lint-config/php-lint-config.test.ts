@@ -100,7 +100,7 @@ describe("phpstanReader", () => {
     expect(verdicts[RETURN_TYPE]?.decision).toEqual({
       on: false,
       explicit: false,
-      because: "phpstan.neon: level 5 does not turn it on (PHPStan reports missingType.return from level 6)",
+      because: "phpstan.neon: level 5: PHPStan reports missingType.return from level 6",
     });
   });
 
@@ -555,7 +555,7 @@ describe("phpcsReader", () => {
   it("turns on the sniffs of the standards it references, and leaves the others off", async () => {
     const psr12 = read(phpcsReader, await repository({ "phpcs.xml.dist": ruleset("<rule ref=\"PSR12\"/>") }), [LOWER_CASE, EVAL]);
     expect(psr12.verdicts[LOWER_CASE]).toEqual({ decision: { on: true, explicit: false, because: "phpcs.xml.dist: <rule ref=\"PSR12\">" } });
-    expect(psr12.verdicts[EVAL]).toEqual({ decision: { on: false, explicit: false, because: "phpcs.xml.dist does not turn it on" } });
+    expect(psr12.verdicts[EVAL]).toEqual({ decision: { on: false, explicit: false, because: "not turned on in phpcs.xml.dist" } });
     const squiz = read(phpcsReader, await repository({ "phpcs.xml": ruleset("<rule ref=\"Squiz\"/>") }), [EVAL, EMPTY, BACKTICK]);
     expect(squiz.verdicts[EVAL]?.decision).toEqual({ on: true, explicit: false, because: "phpcs.xml: <rule ref=\"Squiz\">" });
     // Squiz's own <severity>0 for DetectedCATCH names no message the sniff reports (it reports DetectedCatch).
