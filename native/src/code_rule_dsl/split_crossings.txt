@@ -3,9 +3,7 @@ data-layer annotations
 data-layer CONN301
 data-layer cpl_missing
 data-layer cpl_msg
-data-layer er_edge
 data-layer er_facade_site
-data-layer er_skip
 data-layer la_eager_delegate
 data-layer ma_branch_aware
 data-layer pos_allow_broken

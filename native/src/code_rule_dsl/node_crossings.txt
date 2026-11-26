@@ -8,14 +8,11 @@ data-layer csa_counterpart
 data-layer csa_lazy_name
 data-layer er_ann
 data-layer er_ann_part
-data-layer er_dirty
-data-layer er_edge
 data-layer er_exempt
 data-layer er_lazy_def
 data-layer er_lazy_expr
 data-layer er_lazy_val
 data-layer er_ph
-data-layer er_phase
 data-layer er_shape_exempt
 data-layer er_site
 data-layer er_tr

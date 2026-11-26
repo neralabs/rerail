@@ -146,13 +146,12 @@ fn a_rule_resolving_through_a_phases_names_stays_per_file() {
     assert!(!split.local.contains("near"), "another file's path, joined in the run: {:?}", split.local);
 }
 
-/// A name built from a file's path names its document too (decision 0665): a module from the path (a named group of a
-/// whole-path pattern, its separators replaced), a symbol the module leads (`cat(m, ".", q)`). A relation keyed by
-/// such a symbol, and an aggregate over it (eager-resolve's `er_last_def`: the last def of each symbol), stay
-/// per-file; the symbol is a key, no location. A symbol the module does not lead is no file's name: the aggregate
-/// over it is cross-file.
+/// A name built from a file's path by a pattern or a replacement is no file's own (review F2): a module from the path (a
+/// named group of a whole-path pattern, its separators replaced) is `a.b` for `a/b.py` and `a.b.py` alike, so an
+/// aggregate over a symbol it leads (eager-resolve's last def of each symbol) is of every file building that symbol,
+/// and cross-file. A name the path itself leads (`cat(p, "::", q)`) is one file's: an aggregate over it stays per-file.
 #[test]
-fn a_symbol_built_from_a_files_module_stays_per_file() {
+fn a_symbol_built_from_a_files_module_is_every_files_that_builds_it() {
     let text = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n\
                 .decl qual(f: node, q: symbol)\n.input qual\n.decl docof(n: node, d: number)\n.input docof\n.decl line(n: node, l: number)\n.input line\n\
                 .decl mod_of(d: number, m: symbol)\nmod_of(d, @replace_all(m, \"/\", \".\")) :- doc(d, p, _), match(\"(?<m>.*)\\\\.py\", p).\n\
@@ -161,12 +160,19 @@ fn a_symbol_built_from_a_files_module_stays_per_file() {
                 .decl tail(f: node, s: symbol)\ntail(f, cat(q, \".\", m)) :- qual(f, q), docof(f, d), mod_of(d, m).\n\
                 .decl last_tail(s: symbol, f: node)\nlast_tail(s, f) :- tail(f, s), line(f, l), l = max a : { tail(g, s), line(g, a) }.\n.output last_tail\n";
     let split = split_of(&read(text));
-    for rel in ["mod_of", "sym", "last_def"] {
+    for rel in ["mod_of", "sym"] {
         assert!(split.local.contains(rel), "{rel}: {:?} {:?}", split.local, split.causes);
     }
-    assert_eq!(split.path_keys.get("sym").map(Vec::as_slice), Some(&[1][..]), "the symbol is a key: {:?}", split.path_keys);
-    assert_eq!(split.locations["sym"], vec![0], "and no location: {:?}", split.locations);
-    assert!(!split.local.contains("last_tail"), "a symbol the module does not lead: {:?}", split.local);
+    assert_eq!(split.path_keys.get("sym").map(Vec::as_slice), None, "the symbol is no file's key: {:?}", split.path_keys);
+    assert!(!split.local.contains("last_def"), "two files can build one symbol: {:?}", split.local);
+    assert!(!split.local.contains("last_tail"), "nor one the module does not lead: {:?}", split.local);
+    // The path leading the name: one file's.
+    let led = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n\
+               .decl qual(f: node, q: symbol)\n.input qual\n.decl docof(n: node, d: number)\n.input docof\n.decl line(n: node, l: number)\n.input line\n\
+               .decl sym(f: node, s: symbol)\nsym(f, cat(p, \"::\", q)) :- qual(f, q), docof(f, d), doc(d, p, _).\n\
+               .decl last_def(s: symbol, f: node)\nlast_def(s, f) :- sym(f, s), line(f, l), l = max a : { sym(g, s), line(g, a) }.\n.output last_def\n";
+    let split = split_of(&read(led));
+    assert!(split.local.contains("last_def"), "{:?} {:?}", split.local, split.causes);
 }
 
 /// A name built from a file's path (`cat(p, "::", q)`) places a row in that file, but `doc` holds no such name, so
@@ -175,7 +181,7 @@ fn a_symbol_built_from_a_files_module_stays_per_file() {
 /// row was looked up in `doc` and found in no document, and the cross-file part read none (data-layer's
 /// `plp_find_k`, 0677 fix 3f). One keyed by the built name alone is not relayed by it, and moves to the cross-file part;
 /// its rule then reads the relayed relation from there, in a later round, through the relay already made (it was
-/// blocked, and moved too: eager-resolve's `er_edge`).
+/// blocked, and moved too).
 #[test]
 fn a_row_is_located_by_its_path_not_a_name_built_from_it() {
     let text = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n.decl qual(f: node, q: symbol)\n.input qual\n\

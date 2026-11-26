@@ -1825,9 +1825,11 @@ struct Form {
     built: Vec<(u32, u32)>,
 }
 
-/// The functions a document's name is built through (decision 0665): a named group of a whole-text pattern (`match`'s
-/// capture, `rx_group`), a replacement in a string (`@replace_all`), and a string the name leads (`cat`'s `concat`).
-const NAME_BUILDERS: [&str; 3] = ["rx_group", "replace_all", "concat"];
+/// The functions a document's name is built through (decision 0665): a string the path leads (`cat`'s `concat`), which
+/// keeps the whole path, so two documents build two names. A pattern's group (`rx_group`, `match`'s capture) or a
+/// replacement (`@replace_all`) can build one name from two paths (`a/b.py` and `a.b.py` give `a.b`; every
+/// `__init__.py` has one stem), and a join by it is of every document building it: it names no document (review F2).
+const NAME_BUILDERS: [&str; 1] = ["concat"];
 
 /// The variable a term's string is built from, where it leads it: the term itself, or the first argument of a
 /// `NAME_BUILDERS` call, through each such call (`cat(cat(m, "."), q)`'s `m`).
