@@ -257,6 +257,17 @@ them.
    reads only the block masks its loop asks; Kotlin's stage 1 made every class and fill of the grammar a block, read by
    nothing. Measured (same run, m1max, best of 15): tier 1 22.9 to 23.7 ms against 32.0 ms after 30; the whole AOT
    parse 263 to 285 ms against 264 ms, unchanged.
+32. **A number is read forward from its first byte, as the lean `number` reads it**: a token's run (`run_last` of a
+   mask that is a union of fills and byte tests, such as `nb`) is read part by part from the token's first byte, where
+   it was a window fill read back (`wf_9`, `wf_10`). A part's `prev` of another part is a bit of the parts that held at
+   the byte before (`last`), so no fill is read back. A fill whose stop is a class's complement is that class's run
+   at once (`wfirst_clear`, the lean lexer's `class_end`), where its byte and the one before are the class's and no
+   other part can start in the class's run, which is proved from the bytes each part tests and their offsets. The
+   lean lexer's `digits` and `exponent`: decimal digits, a `.` and the fraction's digits, `e`, a sign and the
+   exponent's digits, `f`; hex and binary digits after `0x`, `0b`. Unlike the lean lexer, every part is tested at
+   each byte where the number changes part, and the start's test is repeated there. A test build checks the run
+   against the mask over the file. Measured (same run, m1max, best of 15): tier 1 15.6 to 16.3 ms against 24.4 ms
+   after 31.
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`

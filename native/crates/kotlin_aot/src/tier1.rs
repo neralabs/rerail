@@ -4445,10 +4445,136 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
 ,
                 3 => {
                     // `integer_literal`: run nb, read as ((((((t175 | ((dot & prev(t175)) & next(digit))) | (((dot & next(digit)) & ~prev(s1.t56)) & ~prev(dot))) | t177) | t181) | t184) | t182) | (f_letter & prev(t185)) (assumed)
-                    let l = s1_past(src, &mut st1, &mut s1, wrun_last(n, s, |p: isize, esc: &mut u64| unsafe { w_t174::<S>(src, n, p, esc) }));
+                    let l = {
+        // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).
+        let mut q = s;
+        let mut last = 0u32;
+        while q < n {
+            let mut now = 0u32;
+            // Term 0: a run of `decd`.
+            if (((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && !(((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'x' | b'X'))))) && (q < n && !(((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'b' | b'B'))))) || (last >> 0 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) {
+                now |= 1 << 0;
+            }
+            // Term 1: a byte.
+            if (((q < n && (src[q] == b'.')) && (last >> 0 & 1 == 1)) && (q + 1 < n && matches!(src[q + 1], b'0'..=b'9'))) {
+                now |= 1 << 1;
+            }
+            // Term 2: a byte.
+            if ((((q < n && (src[q] == b'.')) && (q + 1 < n && matches!(src[q + 1], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && (q - 1 < n && (src[q - 1] == b'.'))))) {
+                now |= 1 << 2;
+            }
+            // Term 3: a run of `decd`.
+            if ((last >> 1 & 1 == 1) || (last >> 2 & 1 == 1)) || (last >> 3 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) {
+                now |= 1 << 3;
+            }
+            // Term 4: a byte.
+            if (((q < n && matches!(src[q], b'e' | b'E')) && ((last >> 0 & 1 == 1) || (last >> 3 & 1 == 1))) && ((q + 1 < n && matches!(src[q + 1], b'0'..=b'9')) || ((q + 1 < n && matches!(src[q + 1], b'+' | b'-')) && (q + 2 < n && matches!(src[q + 2], b'0'..=b'9'))))) {
+                now |= 1 << 4;
+            }
+            // Term 5: a byte.
+            if ((q < n && matches!(src[q], b'+' | b'-')) && (last >> 4 & 1 == 1)) {
+                now |= 1 << 5;
+            }
+            // Term 6: a run of `decd`.
+            if (((last >> 4 & 1 == 1) && (q < n && matches!(src[q], b'0'..=b'9'))) || (last >> 5 & 1 == 1)) || (last >> 6 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) {
+                now |= 1 << 6;
+            }
+            // Term 7: a byte.
+            if ((q < n && matches!(src[q], b'f' | b'F')) && (((last >> 0 & 1 == 1) || (last >> 3 & 1 == 1)) || (last >> 6 & 1 == 1))) {
+                now |= 1 << 7;
+            }
+            if now == 0 && q > s {
+                break;
+            }
+            // `decd`'s run: term 0 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 0 && (q < n && matches!(src[q], b'0'..=b'9' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_decd::<S>(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            // `decd`'s run: term 3 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 3 && (q < n && matches!(src[q], b'0'..=b'9' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_decd::<S>(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            // `decd`'s run: term 6 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 6 && (q < n && matches!(src[q], b'0'..=b'9' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_decd::<S>(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            last = now;
+            q += 1;
+        }
+        q.saturating_sub(1)
+    };
                     // Not proved: a test build checks it against the rule over the file.
                     #[cfg(feature = "test-hooks")]
-                    assert_eq!(run_last(&m_nb, s), s1_past(src, &mut st1, &mut s1, wrun_last(n, s, |p: isize, esc: &mut u64| unsafe { w_t174::<S>(src, n, p, esc) })), "assume in integer_literal at byte {s}");
+                    assert_eq!(run_last(&m_nb, s), {
+        // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).
+        let mut q = s;
+        let mut last = 0u32;
+        while q < n {
+            let mut now = 0u32;
+            // Term 0: a run of `decd`.
+            if (((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && !(((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'x' | b'X'))))) && (q < n && !(((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'b' | b'B'))))) || (last >> 0 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) {
+                now |= 1 << 0;
+            }
+            // Term 1: a byte.
+            if (((q < n && (src[q] == b'.')) && (last >> 0 & 1 == 1)) && (q + 1 < n && matches!(src[q + 1], b'0'..=b'9'))) {
+                now |= 1 << 1;
+            }
+            // Term 2: a byte.
+            if ((((q < n && (src[q] == b'.')) && (q + 1 < n && matches!(src[q + 1], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && (q - 1 < n && (src[q - 1] == b'.'))))) {
+                now |= 1 << 2;
+            }
+            // Term 3: a run of `decd`.
+            if ((last >> 1 & 1 == 1) || (last >> 2 & 1 == 1)) || (last >> 3 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) {
+                now |= 1 << 3;
+            }
+            // Term 4: a byte.
+            if (((q < n && matches!(src[q], b'e' | b'E')) && ((last >> 0 & 1 == 1) || (last >> 3 & 1 == 1))) && ((q + 1 < n && matches!(src[q + 1], b'0'..=b'9')) || ((q + 1 < n && matches!(src[q + 1], b'+' | b'-')) && (q + 2 < n && matches!(src[q + 2], b'0'..=b'9'))))) {
+                now |= 1 << 4;
+            }
+            // Term 5: a byte.
+            if ((q < n && matches!(src[q], b'+' | b'-')) && (last >> 4 & 1 == 1)) {
+                now |= 1 << 5;
+            }
+            // Term 6: a run of `decd`.
+            if (((last >> 4 & 1 == 1) && (q < n && matches!(src[q], b'0'..=b'9'))) || (last >> 5 & 1 == 1)) || (last >> 6 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) {
+                now |= 1 << 6;
+            }
+            // Term 7: a byte.
+            if ((q < n && matches!(src[q], b'f' | b'F')) && (((last >> 0 & 1 == 1) || (last >> 3 & 1 == 1)) || (last >> 6 & 1 == 1))) {
+                now |= 1 << 7;
+            }
+            if now == 0 && q > s {
+                break;
+            }
+            // `decd`'s run: term 0 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 0 && (q < n && matches!(src[q], b'0'..=b'9' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_decd::<S>(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            // `decd`'s run: term 3 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 3 && (q < n && matches!(src[q], b'0'..=b'9' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_decd::<S>(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            // `decd`'s run: term 6 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 6 && (q < n && matches!(src[q], b'0'..=b'9' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_decd::<S>(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            last = now;
+            q += 1;
+        }
+        q.saturating_sub(1)
+    }, "assume in integer_literal at byte {s}");
                     let l = l.max(s);
                     if wcount_in(n, s, l, |p: isize, esc: &mut u64| unsafe { l_t186::<S>(src, n, p, esc, upto(p, l)) }) >= 1 {
                         hits |= 1 << 9;
@@ -4484,10 +4610,136 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
 ,
                 4 => {
                     // `real_literal`: run nb, read as ((((((t175 | ((dot & prev(t175)) & next(digit))) | s1.t187) | t177) | t181) | t184) | t182) | (f_letter & prev(t185)) (assumed)
-                    let l = s1_past(src, &mut st1, &mut s1, wrun_last(n, s, |p: isize, esc: &mut u64| unsafe { w_t174::<S>(src, n, p, esc) }));
+                    let l = {
+        // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).
+        let mut q = s;
+        let mut last = 0u32;
+        while q < n {
+            let mut now = 0u32;
+            // Term 0: a run of `decd`.
+            if (((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && !(((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'x' | b'X'))))) && (q < n && !(((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'b' | b'B'))))) || (last >> 0 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) {
+                now |= 1 << 0;
+            }
+            // Term 1: a byte.
+            if (((q < n && (src[q] == b'.')) && (last >> 0 & 1 == 1)) && (q + 1 < n && matches!(src[q + 1], b'0'..=b'9'))) {
+                now |= 1 << 1;
+            }
+            // Term 2: a byte.
+            if ((((q < n && (src[q] == b'.')) && (q + 1 < n && matches!(src[q + 1], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && (q - 1 < n && (src[q - 1] == b'.'))))) {
+                now |= 1 << 2;
+            }
+            // Term 3: a run of `decd`.
+            if ((last >> 1 & 1 == 1) || (last >> 2 & 1 == 1)) || (last >> 3 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) {
+                now |= 1 << 3;
+            }
+            // Term 4: a byte.
+            if (((q < n && matches!(src[q], b'e' | b'E')) && ((last >> 0 & 1 == 1) || (last >> 3 & 1 == 1))) && ((q + 1 < n && matches!(src[q + 1], b'0'..=b'9')) || ((q + 1 < n && matches!(src[q + 1], b'+' | b'-')) && (q + 2 < n && matches!(src[q + 2], b'0'..=b'9'))))) {
+                now |= 1 << 4;
+            }
+            // Term 5: a byte.
+            if ((q < n && matches!(src[q], b'+' | b'-')) && (last >> 4 & 1 == 1)) {
+                now |= 1 << 5;
+            }
+            // Term 6: a run of `decd`.
+            if (((last >> 4 & 1 == 1) && (q < n && matches!(src[q], b'0'..=b'9'))) || (last >> 5 & 1 == 1)) || (last >> 6 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) {
+                now |= 1 << 6;
+            }
+            // Term 7: a byte.
+            if ((q < n && matches!(src[q], b'f' | b'F')) && (((last >> 0 & 1 == 1) || (last >> 3 & 1 == 1)) || (last >> 6 & 1 == 1))) {
+                now |= 1 << 7;
+            }
+            if now == 0 && q > s {
+                break;
+            }
+            // `decd`'s run: term 0 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 0 && (q < n && matches!(src[q], b'0'..=b'9' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_decd::<S>(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            // `decd`'s run: term 3 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 3 && (q < n && matches!(src[q], b'0'..=b'9' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_decd::<S>(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            // `decd`'s run: term 6 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 6 && (q < n && matches!(src[q], b'0'..=b'9' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_decd::<S>(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            last = now;
+            q += 1;
+        }
+        q.saturating_sub(1)
+    };
                     // Not proved: a test build checks it against the rule over the file.
                     #[cfg(feature = "test-hooks")]
-                    assert_eq!(run_last(&m_nb, s), s1_past(src, &mut st1, &mut s1, wrun_last(n, s, |p: isize, esc: &mut u64| unsafe { w_t174::<S>(src, n, p, esc) })), "assume in real_literal at byte {s}");
+                    assert_eq!(run_last(&m_nb, s), {
+        // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).
+        let mut q = s;
+        let mut last = 0u32;
+        while q < n {
+            let mut now = 0u32;
+            // Term 0: a run of `decd`.
+            if (((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && !(((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'x' | b'X'))))) && (q < n && !(((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'b' | b'B'))))) || (last >> 0 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) {
+                now |= 1 << 0;
+            }
+            // Term 1: a byte.
+            if (((q < n && (src[q] == b'.')) && (last >> 0 & 1 == 1)) && (q + 1 < n && matches!(src[q + 1], b'0'..=b'9'))) {
+                now |= 1 << 1;
+            }
+            // Term 2: a byte.
+            if ((((q < n && (src[q] == b'.')) && (q + 1 < n && matches!(src[q + 1], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && (q - 1 < n && (src[q - 1] == b'.'))))) {
+                now |= 1 << 2;
+            }
+            // Term 3: a run of `decd`.
+            if ((last >> 1 & 1 == 1) || (last >> 2 & 1 == 1)) || (last >> 3 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) {
+                now |= 1 << 3;
+            }
+            // Term 4: a byte.
+            if (((q < n && matches!(src[q], b'e' | b'E')) && ((last >> 0 & 1 == 1) || (last >> 3 & 1 == 1))) && ((q + 1 < n && matches!(src[q + 1], b'0'..=b'9')) || ((q + 1 < n && matches!(src[q + 1], b'+' | b'-')) && (q + 2 < n && matches!(src[q + 2], b'0'..=b'9'))))) {
+                now |= 1 << 4;
+            }
+            // Term 5: a byte.
+            if ((q < n && matches!(src[q], b'+' | b'-')) && (last >> 4 & 1 == 1)) {
+                now |= 1 << 5;
+            }
+            // Term 6: a run of `decd`.
+            if (((last >> 4 & 1 == 1) && (q < n && matches!(src[q], b'0'..=b'9'))) || (last >> 5 & 1 == 1)) || (last >> 6 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) {
+                now |= 1 << 6;
+            }
+            // Term 7: a byte.
+            if ((q < n && matches!(src[q], b'f' | b'F')) && (((last >> 0 & 1 == 1) || (last >> 3 & 1 == 1)) || (last >> 6 & 1 == 1))) {
+                now |= 1 << 7;
+            }
+            if now == 0 && q > s {
+                break;
+            }
+            // `decd`'s run: term 0 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 0 && (q < n && matches!(src[q], b'0'..=b'9' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_decd::<S>(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            // `decd`'s run: term 3 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 3 && (q < n && matches!(src[q], b'0'..=b'9' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_decd::<S>(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            // `decd`'s run: term 6 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 6 && (q < n && matches!(src[q], b'0'..=b'9' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_decd::<S>(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            last = now;
+            q += 1;
+        }
+        q.saturating_sub(1)
+    }, "assume in real_literal at byte {s}");
                     let l = l.max(s);
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
@@ -4520,10 +4772,64 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
 ,
                 5 => {
                     // `hex_literal`: run prev(hex_at) | hx, read as prev(t190) | t191 (assumed)
-                    let l = s1_past(src, &mut st1, &mut s1, wrun_last(n, s, |p: isize, esc: &mut u64| unsafe { w_t189::<S>(src, n, p, esc) }));
+                    let l = {
+        // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).
+        let mut q = s;
+        let mut last = 0u32;
+        while q < n {
+            let mut now = 0u32;
+            // Term 0: a byte.
+            if (q >= 1 && (((((((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff))) && (q - 1 < n && matches!(src[q - 1], b'0'..=b'9'))) && ((q - 1) < n && !((q - 1) >= 1 && ((((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], 0x80..=0xff)))))) && ((q - 1) < n && !((q - 1) >= 1 && ((((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')) && (((q - 1) - 1) < n && !(((q - 1) - 1) >= 1 && ((((q - 1) - 1) - 1) < n && (src[(((q - 1) - 1) - 1)] == b'.')))))))) && (q - 1 < n && (src[q - 1] == b'0'))) && (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'x' | b'X')))) {
+                now |= 1 << 0;
+            }
+            // Term 1: a run of `hexd`.
+            if ((q >= 2 && (((((((q - 2 < n && matches!(src[q - 2], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 2 < n && matches!(src[q - 2], 0x80..=0xff))) && (q - 2 < n && matches!(src[q - 2], b'0'..=b'9'))) && ((q - 2) < n && !((q - 2) >= 1 && ((((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], 0x80..=0xff)))))) && ((q - 2) < n && !((q - 2) >= 1 && ((((q - 2) - 1) < n && (src[((q - 2) - 1)] == b'.')) && (((q - 2) - 1) < n && !(((q - 2) - 1) >= 1 && ((((q - 2) - 1) - 1) < n && (src[(((q - 2) - 1) - 1)] == b'.')))))))) && (q - 2 < n && (src[q - 2] == b'0'))) && (((q - 2) + 1) < n && matches!(src[((q - 2) + 1)], b'x' | b'X')))) && (q < n && matches!(src[q], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'_'))) || (last >> 1 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'_')))) {
+                now |= 1 << 1;
+            }
+            if now == 0 && q > s {
+                break;
+            }
+            // `hexd`'s run: term 1 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 1 && (q < n && matches!(src[q], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_hexd::<S>(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            last = now;
+            q += 1;
+        }
+        q.saturating_sub(1)
+    };
                     // Not proved: a test build checks it against the rule over the file.
                     #[cfg(feature = "test-hooks")]
-                    assert_eq!(run_last(&t193, s), s1_past(src, &mut st1, &mut s1, wrun_last(n, s, |p: isize, esc: &mut u64| unsafe { w_t189::<S>(src, n, p, esc) })), "assume in hex_literal at byte {s}");
+                    assert_eq!(run_last(&t193, s), {
+        // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).
+        let mut q = s;
+        let mut last = 0u32;
+        while q < n {
+            let mut now = 0u32;
+            // Term 0: a byte.
+            if (q >= 1 && (((((((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff))) && (q - 1 < n && matches!(src[q - 1], b'0'..=b'9'))) && ((q - 1) < n && !((q - 1) >= 1 && ((((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], 0x80..=0xff)))))) && ((q - 1) < n && !((q - 1) >= 1 && ((((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')) && (((q - 1) - 1) < n && !(((q - 1) - 1) >= 1 && ((((q - 1) - 1) - 1) < n && (src[(((q - 1) - 1) - 1)] == b'.')))))))) && (q - 1 < n && (src[q - 1] == b'0'))) && (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'x' | b'X')))) {
+                now |= 1 << 0;
+            }
+            // Term 1: a run of `hexd`.
+            if ((q >= 2 && (((((((q - 2 < n && matches!(src[q - 2], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 2 < n && matches!(src[q - 2], 0x80..=0xff))) && (q - 2 < n && matches!(src[q - 2], b'0'..=b'9'))) && ((q - 2) < n && !((q - 2) >= 1 && ((((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], 0x80..=0xff)))))) && ((q - 2) < n && !((q - 2) >= 1 && ((((q - 2) - 1) < n && (src[((q - 2) - 1)] == b'.')) && (((q - 2) - 1) < n && !(((q - 2) - 1) >= 1 && ((((q - 2) - 1) - 1) < n && (src[(((q - 2) - 1) - 1)] == b'.')))))))) && (q - 2 < n && (src[q - 2] == b'0'))) && (((q - 2) + 1) < n && matches!(src[((q - 2) + 1)], b'x' | b'X')))) && (q < n && matches!(src[q], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'_'))) || (last >> 1 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'_')))) {
+                now |= 1 << 1;
+            }
+            if now == 0 && q > s {
+                break;
+            }
+            // `hexd`'s run: term 1 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 1 && (q < n && matches!(src[q], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_hexd::<S>(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            last = now;
+            q += 1;
+        }
+        q.saturating_sub(1)
+    }, "assume in hex_literal at byte {s}");
                     let l = l.max(s);
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
@@ -4551,10 +4857,64 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
 ,
                 6 => {
                     // `bin_literal`: run prev(bin_at) | bx, read as prev(t196) | t197 (assumed)
-                    let l = s1_past(src, &mut st1, &mut s1, wrun_last(n, s, |p: isize, esc: &mut u64| unsafe { w_t195::<S>(src, n, p, esc) }));
+                    let l = {
+        // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).
+        let mut q = s;
+        let mut last = 0u32;
+        while q < n {
+            let mut now = 0u32;
+            // Term 0: a byte.
+            if (q >= 1 && (((((((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff))) && (q - 1 < n && matches!(src[q - 1], b'0'..=b'9'))) && ((q - 1) < n && !((q - 1) >= 1 && ((((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], 0x80..=0xff)))))) && ((q - 1) < n && !((q - 1) >= 1 && ((((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')) && (((q - 1) - 1) < n && !(((q - 1) - 1) >= 1 && ((((q - 1) - 1) - 1) < n && (src[(((q - 1) - 1) - 1)] == b'.')))))))) && (q - 1 < n && (src[q - 1] == b'0'))) && (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'b' | b'B')))) {
+                now |= 1 << 0;
+            }
+            // Term 1: a run of `bind`.
+            if ((q >= 2 && (((((((q - 2 < n && matches!(src[q - 2], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 2 < n && matches!(src[q - 2], 0x80..=0xff))) && (q - 2 < n && matches!(src[q - 2], b'0'..=b'9'))) && ((q - 2) < n && !((q - 2) >= 1 && ((((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], 0x80..=0xff)))))) && ((q - 2) < n && !((q - 2) >= 1 && ((((q - 2) - 1) < n && (src[((q - 2) - 1)] == b'.')) && (((q - 2) - 1) < n && !(((q - 2) - 1) >= 1 && ((((q - 2) - 1) - 1) < n && (src[(((q - 2) - 1) - 1)] == b'.')))))))) && (q - 2 < n && (src[q - 2] == b'0'))) && (((q - 2) + 1) < n && matches!(src[((q - 2) + 1)], b'b' | b'B')))) && (q < n && matches!(src[q], b'0' | b'1' | b'_'))) || (last >> 1 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0' | b'1' | b'_')))) {
+                now |= 1 << 1;
+            }
+            if now == 0 && q > s {
+                break;
+            }
+            // `bind`'s run: term 1 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 1 && (q < n && matches!(src[q], b'0' | b'1' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_bind::<S>(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            last = now;
+            q += 1;
+        }
+        q.saturating_sub(1)
+    };
                     // Not proved: a test build checks it against the rule over the file.
                     #[cfg(feature = "test-hooks")]
-                    assert_eq!(run_last(&t199, s), s1_past(src, &mut st1, &mut s1, wrun_last(n, s, |p: isize, esc: &mut u64| unsafe { w_t195::<S>(src, n, p, esc) })), "assume in bin_literal at byte {s}");
+                    assert_eq!(run_last(&t199, s), {
+        // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).
+        let mut q = s;
+        let mut last = 0u32;
+        while q < n {
+            let mut now = 0u32;
+            // Term 0: a byte.
+            if (q >= 1 && (((((((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff))) && (q - 1 < n && matches!(src[q - 1], b'0'..=b'9'))) && ((q - 1) < n && !((q - 1) >= 1 && ((((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], 0x80..=0xff)))))) && ((q - 1) < n && !((q - 1) >= 1 && ((((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')) && (((q - 1) - 1) < n && !(((q - 1) - 1) >= 1 && ((((q - 1) - 1) - 1) < n && (src[(((q - 1) - 1) - 1)] == b'.')))))))) && (q - 1 < n && (src[q - 1] == b'0'))) && (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'b' | b'B')))) {
+                now |= 1 << 0;
+            }
+            // Term 1: a run of `bind`.
+            if ((q >= 2 && (((((((q - 2 < n && matches!(src[q - 2], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 2 < n && matches!(src[q - 2], 0x80..=0xff))) && (q - 2 < n && matches!(src[q - 2], b'0'..=b'9'))) && ((q - 2) < n && !((q - 2) >= 1 && ((((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], 0x80..=0xff)))))) && ((q - 2) < n && !((q - 2) >= 1 && ((((q - 2) - 1) < n && (src[((q - 2) - 1)] == b'.')) && (((q - 2) - 1) < n && !(((q - 2) - 1) >= 1 && ((((q - 2) - 1) - 1) < n && (src[(((q - 2) - 1) - 1)] == b'.')))))))) && (q - 2 < n && (src[q - 2] == b'0'))) && (((q - 2) + 1) < n && matches!(src[((q - 2) + 1)], b'b' | b'B')))) && (q < n && matches!(src[q], b'0' | b'1' | b'_'))) || (last >> 1 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0' | b'1' | b'_')))) {
+                now |= 1 << 1;
+            }
+            if now == 0 && q > s {
+                break;
+            }
+            // `bind`'s run: term 1 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 1 && (q < n && matches!(src[q], b'0' | b'1' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_bind::<S>(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            last = now;
+            q += 1;
+        }
+        q.saturating_sub(1)
+    }, "assume in bin_literal at byte {s}");
                     let l = l.max(s);
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]

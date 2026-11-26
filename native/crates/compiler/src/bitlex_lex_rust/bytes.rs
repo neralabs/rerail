@@ -293,6 +293,8 @@ impl<'a> Bytes<'a> {
         }
         Ok(match e {
             Expr::Empty => "false".to_owned(),
+            // A term of a run read forward (`forward_run`): whether it held at the byte before.
+            Expr::Name(n) if let Some(k) = n.strip_prefix("\u{0}last") => format!("(last >> {k} & 1 == 1)"),
             Expr::Name(n) => {
                 // Asked of the records (`code_at`), where tier 2 asks it.
                 if self.code_fn && n == "code" {
@@ -784,6 +786,185 @@ impl<'a> Bytes<'a> {
         Ok((format!("|p: isize, esc: &mut u64| unsafe {{ {f}::<S>(src, n, p, esc) }}"), esc))
     }
 
+    /// The last byte of the run of local `m` from byte `s0`, read forward as the lean lexer reads a number (its `digits`,
+    /// its `exponent`): `m` is a union of terms, each a fill (`fill(S, E)`) or a test of the bytes, where a term's
+    /// `prev` of another term is whether that one held at the byte before (`last`, a bit a term). At each byte the terms
+    /// that hold there: a fill where it starts or held before and `E` holds not. Where one fill alone holds, its stop a
+    /// class's complement (`~decd`), and no other term may start in that class's run (the byte not of its class, or a
+    /// `prev` of a term that is not this one), the run of the class at once, as lean's `class_end`. `None` where `m` is
+    /// not of that form.
+    fn forward_run(&mut self, m: &str, s0: &str) -> Option<String> {
+        let e = self.expr(m).ok()?;
+        let mut terms: Vec<(Option<String>, Expr)> = Vec::new();
+        fn ors(e: &Expr, out: &mut Vec<Expr>) {
+            match e {
+                Expr::Or(a, b) => {
+                    ors(a, out);
+                    ors(b, out);
+                }
+                e => out.push(e.clone()),
+            }
+        }
+        let mut flat = Vec::new();
+        ors(&e, &mut flat);
+        if flat.len() < 2 || flat.len() > 32 {
+            return None;
+        }
+        for t in flat {
+            match &t {
+                Expr::Name(n) if let Some(d) = self.locals.get(n).or_else(|| self.defs.get(n)) => terms.push((Some(n.clone()), d.clone())),
+                _ => terms.push((None, t)),
+            }
+        }
+        // A term's expression, its names resolved where they are no class.
+        let full: Vec<Expr> = terms.iter().map(|t| t.1.clone()).collect();
+        // `prev(T)` of terms `T` (one, or a union of them) as their bits at the byte before; `None` where a term is read
+        // but through `prev`.
+        fn sub(me: &Bytes, e: &Expr, full: &[Expr], depth: usize, top: bool) -> Option<Expr> {
+            if depth > 48 {
+                return None;
+            }
+            fn bits(me: &Bytes, x: &Expr, full: &[Expr], depth: usize) -> Option<Expr> {
+                if depth > 48 {
+                    return None;
+                }
+                if let Some(k) = full.iter().position(|t| t == x) {
+                    return Some(Expr::Name(format!("\u{0}last{k}")));
+                }
+                match x {
+                    Expr::Name(n) if !me.classes.contains_key(n.as_str()) => bits(me, me.locals.get(n).or_else(|| me.defs.get(n))?, full, depth + 1),
+                    Expr::Or(a, b) => Some(Expr::Or(Box::new(bits(me, a, full, depth + 1)?), Box::new(bits(me, b, full, depth + 1)?))),
+                    _ => None,
+                }
+            }
+            if !top && full.iter().any(|t| t == e) {
+                return None;
+            }
+            Some(match e {
+                Expr::Call(f, args) if f == "prev" && matches!(args.as_slice(), [Arg::E(_)] | [Arg::E(_), Arg::N(1)]) => {
+                    let Arg::E(x) = &args[0] else { return None };
+                    match bits(me, x, full, 0) {
+                        Some(b) => b,
+                        None => Expr::Call(f.clone(), vec![Arg::E(sub(me, x, full, depth + 1, false)?)]),
+                    }
+                }
+                Expr::Name(n) if !me.classes.contains_key(n.as_str()) && let Some(d) = me.locals.get(n).or_else(|| me.defs.get(n)) => {
+                    if full.iter().any(|t| t == d) {
+                        return None;
+                    }
+                    if reads_terms(me, d, full, 0) { sub(me, d, full, depth + 1, false)? } else { e.clone() }
+                }
+                Expr::Name(_) => e.clone(),
+                Expr::Not(a) => Expr::Not(Box::new(sub(me, a, full, depth + 1, false)?)),
+                Expr::And(a, b) => Expr::And(Box::new(sub(me, a, full, depth + 1, false)?), Box::new(sub(me, b, full, depth + 1, false)?)),
+                Expr::Or(a, b) => Expr::Or(Box::new(sub(me, a, full, depth + 1, false)?), Box::new(sub(me, b, full, depth + 1, false)?)),
+                Expr::Xor(a, b) => Expr::Xor(Box::new(sub(me, a, full, depth + 1, false)?), Box::new(sub(me, b, full, depth + 1, false)?)),
+                Expr::Call(f, args) => Expr::Call(
+                    f.clone(),
+                    args.iter()
+                        .map(|a| match a {
+                            Arg::E(x) => sub(me, x, full, depth + 1, false).map(Arg::E),
+                            a => Some(a.clone()),
+                        })
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+                Expr::Empty | Expr::Test { .. } => e.clone(),
+            })
+        }
+        // Each term: its start (a fill's `S`, else the term), and a fill's stop.
+        let mut parts: Vec<(Expr, Option<Expr>)> = Vec::new();
+        for (_, t) in &terms {
+            match t {
+                Expr::Call(f, args) if f == "fill" && let [Arg::E(st), Arg::E(stop)] = args.as_slice() => {
+                    parts.push((sub(self, st, &full, 0, false)?, Some(sub(self, stop, &full, 0, false)?)));
+                }
+                Expr::Call(f, _) if f == "fill" || f == "escaped" => return None,
+                t => parts.push((sub(self, t, &full, 0, true)?, None)),
+            }
+        }
+        // `e` as one test of the byte at an offset from the byte asked (`prev`, `next` of a set of bytes).
+        fn single(me: &Bytes, e: &Expr, depth: usize) -> Option<(i64, [bool; 256])> {
+            if depth > 48 {
+                return None;
+            }
+            match e {
+                Expr::Name(n) if n.starts_with('\u{0}') => None,
+                Expr::Name(n) => match me.classes.get(n.as_str()) {
+                    Some(rs) => Some((0, std::array::from_fn(|c| rs.iter().any(|&(lo, hi)| (lo..=hi).contains(&(c as u32)))))),
+                    None => single(me, me.locals.get(n).or_else(|| me.defs.get(n))?, depth + 1),
+                },
+                Expr::Call(f, args) if matches!(f.as_str(), "prev" | "next") => {
+                    let (x, k) = Bytes::shift(f, args)?;
+                    let (o, set) = single(me, &x, depth + 1)?;
+                    Some((o + k, set))
+                }
+                Expr::Not(a) => single(me, a, depth + 1).map(|(o, set)| (o, set.map(|x| !x))),
+                Expr::And(a, b) | Expr::Or(a, b) => {
+                    let ((oa, sa), (ob, sb)) = (single(me, a, depth + 1)?, single(me, b, depth + 1)?);
+                    if oa != ob {
+                        return None;
+                    }
+                    let and = matches!(e, Expr::And(..));
+                    Some((oa, std::array::from_fn(|c| if and { sa[c] && sb[c] } else { sa[c] || sb[c] })))
+                }
+                _ => None,
+            }
+        }
+        // Whether `e`, read at offset `off` from a byte, may hold where that byte and the one before are of `set` and
+        // `last` (the terms at the byte before) holds term `k` alone.
+        fn may(me: &Bytes, e: &Expr, set: &[bool; 256], k: usize, off: i64, depth: usize) -> bool {
+            if depth > 48 {
+                return true;
+            }
+            if let Some((o, held)) = single(me, e, 0) {
+                return !matches!(off + o, 0 | -1) || (0..256).any(|c| set[c] && held[c]);
+            }
+            match e {
+                Expr::Name(n) if let Some(j) = n.strip_prefix("\u{0}last") => off != 0 || j.parse() == Ok(k),
+                Expr::Name(n) if !me.classes.contains_key(n.as_str()) => {
+                    me.locals.get(n).or_else(|| me.defs.get(n)).is_none_or(|d| may(me, d, set, k, off, depth + 1))
+                }
+                Expr::Call(f, args) if matches!(f.as_str(), "prev" | "next") => match Bytes::shift(f, args) {
+                    Some((x, d)) => may(me, &x, set, k, off + d, depth + 1),
+                    None => true,
+                },
+                Expr::And(a, b) => may(me, a, set, k, off, depth + 1) && may(me, b, set, k, off, depth + 1),
+                Expr::Or(a, b) => may(me, a, set, k, off, depth + 1) || may(me, b, set, k, off, depth + 1),
+                _ => true,
+            }
+        }
+        let mut tests = String::new();
+        let mut jumps = String::new();
+        for (k, (st, stop)) in parts.iter().enumerate() {
+            let start = self.at(st, "q", 0).ok()?;
+            let test = match stop {
+                Some(stop) => format!("{start} || (last >> {k} & 1 == 1 && !{})", self.at(stop, "q", 0).ok()?),
+                None => start,
+            };
+            let why = match stop {
+                Some(Expr::Not(c)) if let Expr::Name(cn) = &**c => format!(": a run of `{cn}`"),
+                Some(_) => ": a fill".to_owned(),
+                None => ": a byte".to_owned(),
+            };
+            let _ = write!(tests, "            // Term {k}{why}.\n            if {test} {{\n                now |= 1 << {k};\n            }}\n");
+            // A fill whose stop is a class's complement, where no other term starts in the class's run.
+            if let Some(Expr::Not(c)) = stop
+                && let Expr::Name(cn) = &**c
+                && let Some(rs) = self.classes.get(cn.as_str())
+            {
+                let set: [bool; 256] = std::array::from_fn(|b| rs.iter().any(|&(lo, hi)| (lo..=hi).contains(&(b as u32))));
+                let alone = parts.iter().enumerate().all(|(j, (sj, _))| j == k || !may(self, sj, &set, k, 0, 0));
+                if alone {
+                    let cls = self.win(c, 0, 0).ok()?;
+                    let here = self.at(c, "q", 0).ok()?;
+                    let _ = write!(jumps, "            // `{cn}`'s run: term {k} alone holds over it (the lean lexer's `class_end`).\n            if now == 1 << {k} && {here} {{\n                last = now;\n                q = wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| {cls}).unwrap_or(n);\n                continue;\n            }}\n");
+                }
+            }
+        }
+        let _ = m;
+        Some(format!("{{\n        // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).\n        let mut q = {s0};\n        let mut last = 0u32;\n        while q < n {{\n            let mut now = 0u32;\n{tests}            if now == 0 && q > {s0} {{\n                break;\n            }}\n{jumps}            last = now;\n            q += 1;\n        }}\n        q.saturating_sub(1)\n    }}"))
+    }
+
     /// The window function of the local `m` for a test of bytes `..=b` from the window's first (`l_m`), written once:
     /// `live`, the bits it asks of, ANDed into the first test of each side (`with_live`), so a side whose first test holds
     /// at none of the token's bytes reads no further, as the lean lexer tests only the bytes it read.
@@ -861,6 +1042,14 @@ impl<'a> Bytes<'a> {
                 }
                 _ => return Err(format!("`{name}` with {} arguments has no form of the bytes", args.len())),
             }));
+        }
+        // A run of terms read forward from the token's first byte, as the lean lexer reads a number (`forward_run`).
+        if self.partial
+            && name == "run_last"
+            && args.len() == 2
+            && let Some(r) = self.forward_run(&m, args[1].trim())
+        {
+            return Ok(Some(r));
         }
         if self.lean
             && name != "bit"
@@ -2256,4 +2445,21 @@ fn cover(packs: &mut Vec<Vec<(u16, u16)>>, set: &[bool; 256]) -> Option<(usize, 
         packs[p].push(r);
     }
     Some((p, bits))
+}
+
+/// Whether `e` reads one of the terms `full` (where a name must be expanded to see the term's `prev`).
+fn reads_terms(me: &Bytes, e: &Expr, full: &[Expr], depth: usize) -> bool {
+    if depth > 48 {
+        return true;
+    }
+    if full.iter().any(|t| t == e) {
+        return true;
+    }
+    match e {
+        Expr::Name(n) if !me.classes.contains_key(n.as_str()) => me.locals.get(n).or_else(|| me.defs.get(n)).is_some_and(|d| reads_terms(me, d, full, depth + 1)),
+        Expr::Not(a) => reads_terms(me, a, full, depth + 1),
+        Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => reads_terms(me, a, full, depth + 1) || reads_terms(me, b, full, depth + 1),
+        Expr::Call(_, args) => args.iter().any(|a| matches!(a, Arg::E(x) if reads_terms(me, x, full, depth + 1))),
+        _ => false,
+    }
 }
