@@ -1335,40 +1335,62 @@ impl<'v> Program<'v> {
         }
         let local: BTreeSet<String> = derived().filter(|&r| local_now[r as usize]).map(|r| self.name(r).to_owned()).collect();
         let covered: BTreeSet<String> = derived().filter(|&r| covered_now[r as usize] && local_now[r as usize]).map(|r| self.name(r).to_owned()).collect();
-        // The covered views of values a cross-file rule reads that a located twin relays (decisions 0680, 0708): a keyed
-        // family's members and roots (0676: a member's rows at a key follow from its root's row there alone) that are
-        // file-local without their cover, each rule placing one document with the view itself read as any per-file
-        // relation of values is, not as a test, and reading no other covered view but its family's. Their rows over
-        // every file are the union of each chunk's, and the twin's rules, reading only what the view's do, take no other
-        // view's cover. Any other covered view a cross-file rule reads is the cross-file part's own (`crossing`): one only
-        // its cover keeps per-file (its chunk rows right at its readers' values alone: a walk across files, `ghw_drf_q`
-        // through another file's base), and, for now, one outside a family (points-to's `pt_callee_t`, whose relay took
-        // `pt_tm`, `pt_wsmod` and their readers cross-file in the splits after it).
+        // The covered views of values a located twin relays (decisions 0680, 0708): the chunks derive each once, and the
+        // cross part reads each value with its document. A view is relayed where its rows over every file are the union
+        // of each chunk's: each rule places one document with the view itself read as any per-file relation of values is,
+        // not as a test (not `ghw_drf_q`, which follows a class's bases into another file). The set is closed: a relayed
+        // view's rules read no covered view but relayed ones and its keyed family's (0676), so its twin's rules, new
+        // readers of what they read, take no view the cross part copies. A view the cross part copies (a covered view a
+        // cross-file rule reads that is not relayed, and every view it reads) is derived there by a rule both parts share,
+        // which reads the views below it as they are: those are copied too, not relayed (`pt_callee_t`, read by the
+        // copied `pt_pv`). A relayed view is read across files, directly or through another relayed view.
         let relayed_views: BTreeSet<String> = {
             let keyed = self.keyed(&local_now, &family_values, &placeless, &locs);
-            let own_family = |r: u32, x: u32| keyed[r as usize].is_some() && keyed[x as usize] == keyed[r as usize];
-            derived()
-                .filter(|&r| covered_now[r as usize] && local_now[r as usize] && locs[r as usize].is_empty() && keyed[r as usize].is_some())
-                .filter(|&r| rels.reading(r).iter().any(|&k| !local_now[rels.head[k] as usize]))
-                .filter(|&r| {
-                    rels.rules[r as usize].iter().all(|&k| {
-                        self.rules[k].body().all(|l| match l.view() {
-                            L::Atom(a) | L::Agg { atom: a, .. } => {
-                                let x = a.rel().0;
-                                !(covered_now[x as usize] && local_now[x as usize]) || own_family(r, x)
-                            }
-                            _ => true,
-                        })
-                    })
-                })
+            let own_family = |r: u32, x: u32| x == r || (keyed[r as usize].is_some() && keyed[x as usize] == keyed[r as usize]);
+            let view = |x: u32| covered_now[x as usize] && local_now[x as usize] && locs[x as usize].is_empty() && rels.is_derived(x);
+            let reads_views = |r: u32| -> Vec<u32> {
+                rels.rules[r as usize].iter().flat_map(|&k| self.rules[k].body().filter_map(|l| match l.view() {
+                    L::Atom(a) | L::Agg { atom: a, .. } => Some(a.rel().0),
+                    _ => None,
+                }).collect::<Vec<_>>()).filter(|&x| view(x) && !own_family(r, x)).collect()
+            };
+            // Read by a cross-file rule, or by a view relayed; file-local without its cover.
+            let mut set: BTreeSet<u32> = derived()
+                .filter(|&r| view(r))
                 .filter(|&r| {
                     let uncovered: Vec<bool> = (0..n).map(|x| covered_now[x] && x != r as usize).collect();
                     let skip: Vec<bool> = (0..n).map(|x| (uncovered[x] && local_now[x] && locs[x].is_empty()) || native_view(x as u32, &local_now, &uncovered)).collect();
                     let whole: Vec<bool> = (0..n).map(|x| local_now[x] && !uncovered[x]).collect();
                     rels.rules[r as usize].iter().all(|&k| forms.get(k).one_document(r, rels, &placeless, &local_now, &filtering, &skip, &locs, &nulls, &whole, &keyed, &|root, x| self.root_held(self.rules[k], root, x, &placeless, &locs)))
                 })
-                .map(|r| self.name(r).to_owned())
-                .collect()
+                .collect();
+            loop {
+                // The cross part's own copies: views a cross-file rule reads, and the views they read, that are not relayed.
+                let mut copied: BTreeSet<u32> = derived().filter(|&r| view(r) && !set.contains(&r) && rels.reading(r).iter().any(|&k| !local_now[rels.head[k] as usize])).collect();
+                let mut work: Vec<u32> = copied.iter().copied().collect();
+                while let Some(w) = work.pop() {
+                    for x in reads_views(w) {
+                        if copied.insert(x) {
+                            work.push(x);
+                        }
+                    }
+                }
+                let next: BTreeSet<u32> = set
+                    .iter()
+                    .copied()
+                    // Every view its rules read is relayed or its family's: a twin's rules read no view the cross part copies.
+                    .filter(|&r| reads_views(r).iter().all(|x| set.contains(x)))
+                    // A copy reads it, a rule both parts share: the cross part derives it for that copy anyway.
+                    .filter(|&r| !copied.contains(&r))
+                    // Read across files, directly or through a relayed view.
+                    .filter(|&r| rels.reading(r).iter().any(|&k| { let h = rels.head[k]; !local_now[h as usize] || (h != r && set.contains(&h)) }))
+                    .collect();
+                if next == set {
+                    break;
+                }
+                set = next;
+            }
+            set.into_iter().map(|r| self.name(r).to_owned()).collect()
         };
         // What placed each: its readers, and theirs through every located reader (one may anchor it, `Anchoring`) and
         // every native read at its inputs' values (`native_inputs`: its readers read them there, `covers`).

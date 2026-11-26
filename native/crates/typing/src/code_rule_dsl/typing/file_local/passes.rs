@@ -355,9 +355,10 @@ impl ProgramPass for Locate {
                 }
                 continue;
             };
-            // A covered view is relayed only where the twins it is placed through read no covered view but one of them:
-            // each twin's rules are new readers of what they read, and a covered view's cover would not hold them
-            // (`pt_callee_t` through `pt_callee`'s twin, a reader of `pt_wsmod`). Left to the cross part's own copy.
+            // A covered view is relayed only where the twins it is placed through read no covered view but one of them or
+            // a relayed one: each twin's rules are new readers of what they read, and a covered view's cover would not
+            // hold them (`pt_callee_t` through `pt_callee`'s twin, a reader of `pt_wsmod`). Left to the cross part's own
+            // copy.
             if left {
                 let mut chain: BTreeSet<String> = BTreeSet::from([rel.clone()]);
                 let mut work: Vec<String> = made.iter().filter_map(|&(rule, doc)| twin_read(rule, doc)).collect();
@@ -372,7 +373,7 @@ impl ProgramPass for Locate {
                     r.body().filter_map(|l| match l.view() {
                         L::Atom(a) | L::Agg { atom: a, .. } => Some(v.rel_name(a.rel())),
                         _ => None,
-                    }).any(|x| views.contains(x) && !chain.contains(x))
+                    }).any(|x| views.contains(x) && !chain.contains(x) && !view_targets.contains(x))
                 });
                 if foreign {
                     continue;

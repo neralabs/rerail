@@ -118,27 +118,29 @@ the set (`FileLocal::views`), and a prepared program stores it (`prepared_view`,
 
 0680, on the line this merged into, relays a per-file relation of values by a located twin (`q_at(d, …)`): the chunks
 derive it once, and the cross part reads each value with its document. §4's own copy derives it a second time, over
-every file. The user's ruling at the merge: the twin where `locate` can place the rows, the own copy otherwise.
+every file. Agreed at the merge: the twin where `locate` can place the rows, the own copy otherwise.
 
 A covered view's chunk rows are right only at the values its readers hold (§3): over every file, the union of the
-chunks' rows is the view's rows only where each row is found from its own file alone. So a covered view is relayed by
-its twin (`FileLocal::relayed_views`) only when all of these hold:
+chunks' rows is the view's rows only where each row is found from its own file alone. The relayed views
+(`FileLocal::relayed_views`) are the greatest set of covered views where:
 
-- it is a member or the root of a keyed family (0676), whose rows at a key follow from the root's row there;
-- a cross-file rule reads it;
-- it is file-local without its cover: `one_document`, the view itself left out of the covered set, finds each of its
-  rules in one document (Django's `ghw_drf_q` follows a class's bases into other files: its twin carried a node id
-  into the cross part, which 0677 forbids);
-- its rules read no covered view outside its family, and in `locate` the chain of twins it is placed through reads
-  none either.
+- **The union is every file's rows.** Each rule places one document with the view itself read as any per-file relation
+  of values is, not as a test (`one_document`, the view left out of the covered set). Django's `ghw_drf_q` follows a
+  class's bases into other files: its twin carried a node id into the cross part, which 0677 forbids.
+- **The set is closed.** A relayed view's rules read no covered view but relayed ones and its keyed family's (0676):
+  its twin's rules are new readers of what they read, and they take no view the cross part copies. `locate`'s chain of
+  twins checks the same.
+- **No copy reads it.** The parts share their rules (`Version::part` is an overlay). A view the cross part copies (a
+  covered view a cross-file rule reads that is not relayed, and every view it reads) is derived there by the rule the
+  chunks run, which reads the views below it as they are. A view below a copy is copied too. Rewriting the shared rule
+  to read the twin (`pt_pv`'s read of `pt_callee_t_at(_, …)`) made it, in the split of the located program, a read of a
+  located relation at no document: `pt_pv` went cross-file, and `pt_tm`, `pt_wsmod` and their readers with it.
+- **It is read across files**, directly or through another relayed view.
 
-Every other covered view keeps §4's own copy. A count or a sum reads no twin: a value in several documents would be
-counted once a document. It reads the union of the chunks' rows, as the cross part's own copy has them.
-
-Narrower than the ruling: a twin for every covered view `locate` could place made points-to's translation views
-(`pt_callee_t`, `pt_dec1_t`) twins, and in the later splits `pt_tm`, `pt_wsmod` and their readers went cross-file
-(four Python call tests and the reader-demand test failed). Why is not known: the splits there number in the hundreds,
-and the verdicts move between them. Until it is, a view outside a keyed family keeps the own copy.
+Every other covered view keeps §4's own copy. No rule both parts share reads a relayed view, so only cross-file rules
+read a view's twin. A count or a sum
+reads no twin: a value in several documents would be counted once a document. It reads the union of the chunks' rows,
+as the cross part's own copy has them.
 
 ## Found on the way
 
