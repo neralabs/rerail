@@ -3811,9 +3811,13 @@ name = "rerail-delta-exec"
 version = "0.1.0"
 dependencies = [
  "rerail-blocks",
+ "rerail-context",
  "rerail-delta-exec",
  "rerail-delta-twins",
+ "rerail-observe",
  "rerail-rr-syntax",
+ "rerail-slabs",
+ "sha2 0.11.1",
 ]
 
 [[package]]
@@ -6432,6 +6436,7 @@ dependencies = [
  "rerail-error",
  "rerail-prof",
  "rerail-slabs",
+ "rerail-tape-format",
  "sha2 0.10.9",
 ]
 
