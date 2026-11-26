@@ -132,8 +132,29 @@ pub struct Interner { pub atoms: Arc<crate::content_store::atoms::Atoms>, buf: S
 /// order one walk would have made them in, so each gets the atom one walk would have given it, and the morsels'
 /// rows are read with those atoms in place of these values (`morsels`). The morsels then intern nothing as they
 /// walk: no atom's id follows the threads' timing, and no morsel takes the arena's every shard to write.
+/// Each text held once, in `texts`; `at` finds it by its text, a slot an index into `texts` (a text held as its
+/// key too was a copy a deferred text: 1.62 M on cold PostHog).
 #[derive(Default)]
-struct Deferred { texts: Vec<String>, at: HashMap<String, u32> }
+struct Deferred { texts: Vec<String>, at: hashbrown::HashTable<u32> }
+
+impl Deferred {
+    fn hash(s: &str) -> u64 {
+        use std::hash::BuildHasher as _;
+        foldhash::fast::FixedState::with_seed(0).hash_one(s)
+    }
+    /// The place of text `s`, if deferred.
+    fn find(&self, s: &str) -> Option<u32> {
+        self.at.find(Self::hash(s), |&i| self.texts[i as usize] == s).copied()
+    }
+    /// Defers `s` (not deferred yet): its place.
+    fn add(&mut self, s: &str) -> u32 {
+        let at = self.texts.len() as u32;
+        self.texts.push(s.to_owned());
+        let texts = &self.texts;
+        self.at.insert_unique(Self::hash(s), at, |&i| Self::hash(&texts[i as usize]));
+        at
+    }
+}
 
 
 /// The first value of a text a morsel deferred (`Deferred`): past every atom (`Sym` is 32 bits) and below every node
@@ -174,7 +195,7 @@ impl Interner {
     /// The atom `id` would give `s`, if it would not make one (`Atoms::existing`): found as interning finds it, with
     /// no read interning would not make. In a morsel, a text it deferred is its deferred value.
     fn held(&self, s: &str) -> Option<i64> {
-        self.atoms.existing(s).map(i64::from).or_else(|| Some(DEFERRED + i64::from(*self.deferred.as_ref()?.at.get(s)?)))
+        self.atoms.existing(s).map(i64::from).or_else(|| Some(DEFERRED + i64::from(self.deferred.as_ref()?.find(s)?)))
     }
     /// `v`, unless it is a text this walk made and deferred: no row of a relation the walk reads holds one, so a probe
     /// of it (`PROBE_OUT`) matches nothing, as a text that is no atom (decision 0666: the device's atoms find, which
@@ -190,10 +211,7 @@ impl Interner {
             return v;
         }
         if let Some(d) = self.deferred.as_mut() {
-            let at = d.texts.len() as u32;
-            d.texts.push(s.to_owned());
-            d.at.insert(s.to_owned(), at);
-            return DEFERRED + i64::from(at);
+            return DEFERRED + i64::from(d.add(s));
         }
         match self.atoms.intern(s) {
             Ok(atom) => i64::from(atom),
@@ -206,7 +224,7 @@ impl Interner {
     /// The atom arena the symbols are in (the device interns the texts it makes into it).
     pub fn atoms(&self) -> &Arc<crate::content_store::atoms::Atoms> { &self.atoms }
     /// The atom of `s` in this process's arena (`symbols` read the database's atoms into it).
-    fn get(&self, s: &str) -> Option<i64> { self.atoms.get(s).map(i64::from).or_else(|| Some(DEFERRED + i64::from(*self.deferred.as_ref()?.at.get(s)?))) }
+    fn get(&self, s: &str) -> Option<i64> { self.atoms.get(s).map(i64::from).or_else(|| Some(DEFERRED + i64::from(self.deferred.as_ref()?.find(s)?))) }
     /// Atom `v`'s text, reading the database's atoms written since `symbols` when `v` is past the arena; "" if there
     /// is no such atom or they could not be read (a join step has no error to return: it matches as it did before).
     pub fn name(&self, v: i64) -> String {
@@ -1468,7 +1486,11 @@ impl Cands<'_> {
             Cands::Runs(found) => found.ids().any(f),
             Cands::Pending(found, lo, hi) => found.ids().any(&mut f) || (lo..hi).any(f),
             Cands::Read(rows) => rows.rows().iter().any(|&(id, _)| f(id)),
-            Cands::Stream(s) => s.view.find_keyed(s.cols, &s.key[..s.len], s.lead).into_iter().any(f),
+            Cands::Stream(s) => {
+                let mut hit = false;
+                s.view.each_keyed(s.cols, &s.key[..s.len], s.lead, &mut |r| hit = hit || f(r));
+                hit
+            }
         }
     }
 }
@@ -3619,7 +3641,7 @@ pub fn stats(conn: &Connection, name: &str) -> Result<String> {
             let Some(small) = sk.exact_counts() else { continue };
             let vals: Vec<String> = small.iter().map(|&[v, n]| {
                 let text = if r.types[c] == b's' { syms.name(v) } else { v.to_string() };
-                format!("{}={}", text.bytes().map(|b| format!("{b:02x}")).collect::<String>(), n)
+                format!("{}={}", rerail_prof::code_rule_dsl::prof::lower_hex(text.as_bytes()), n)
             }).collect();
             line.push_str(&format!(" |{c}:{}", vals.join(",")));
         }
@@ -4548,7 +4570,7 @@ fn push_text(syms: &Interner, s: &mut String, v: i64) {
 
 /// `cat_held` for texts not all in memory: each read where it is.
 fn cat_held_read(syms: &mut Interner, a: i64, b: i64) -> Option<i64> {
-    if syms.name(a).is_empty() {
+    if syms.with_name(a, str::is_empty) {
         return Some(b);
     }
     let mut s = std::mem::take(&mut syms.buf);
@@ -4579,7 +4601,7 @@ fn cat(syms: &mut Interner, a: i64, b: i64) -> i64 {
 
 /// `cat` for texts not all in memory: each read where it is.
 fn cat_read(syms: &mut Interner, a: i64, b: i64) -> i64 {
-    if syms.name(a).is_empty() {
+    if syms.with_name(a, str::is_empty) {
         return b;
     }
     let mut s = std::mem::take(&mut syms.buf);
@@ -4781,20 +4803,25 @@ impl View {
     /// `find_keyed`'s rows, written into `out` (emptied first): the caller's list, which a step's probes fill in turn.
     fn find_keyed_into(&self, cols: &[usize], key: &[i64], lead: usize, out: &mut Vector<u32>) {
         out.clear();
+        self.each_keyed(cols, key, lead, &mut |r| out.push(r));
+    }
+    /// `find_keyed`'s rows, each given to `each` in order, no list made of them: a probe that walks its rows once
+    /// (a test, a fold's read) made a list a probe (2.7 M on cold PostHog, `find_into`'s).
+    fn each_keyed(&self, cols: &[usize], key: &[i64], lead: usize, each: &mut dyn FnMut(u32)) {
         if self.eqs.is_empty()
             && let Some(dc) = self.src.doc_column()
             && let Some(j) = cols.iter().position(|&k| self.cols[k] == dc)
             && let Some(i) = cols.iter().position(|&k| self.src.kept_to_doc(self.cols[k]))
             && let Some(rows) = self.src.lookup_in(self.cols[cols[i]], &[key[i]], key[j])
         {
-            out.extend(rows.iter().map(|&r| r as u32));
+            rows.iter().for_each(|&r| each(r as u32));
             return;
         }
         if let Some(rows) = self.find_columns(cols, key) {
-            out.extend_from_slice(&rows);
+            rows.iter().for_each(|&r| each(r));
             return;
         }
-        self.find_into(cols[lead], key[lead], out)
+        self.each_one(cols[lead], key[lead], each)
     }
     /// The rows of a probe binding several key columns, where the source keeps it to the rows they name together
     /// (`Source::lookup_columns`: a made relation's documents every column routes to, none made for the others).
@@ -4994,14 +5021,18 @@ impl View {
     }
     /// `find`'s rows, added to `out`: the source's rows given as it finds them (`Source::lookup_each`), no list of its own.
     fn find_into(&self, c: usize, v: i64, out: &mut Vector<u32>) {
+        self.each_one(c, v, &mut |r| out.push(r));
+    }
+    /// `find_into`'s rows, each given to `each`.
+    fn each_one(&self, c: usize, v: i64, each: &mut dyn FnMut(u32)) {
         if !self.eqs.is_empty() && let Some(rows) = self.src.lookup_eq(self.cols[c], v, &self.eqs) {
-            out.extend(rows.iter().map(|&r| r as u32));
+            rows.iter().for_each(|&r| each(r as u32));
             return;
         }
         let eqs = &self.eqs;
         self.src.lookup_each(self.cols[c], &[v], &mut |r| {
             if eqs.iter().all(|&(c, v)| self.src.value(r, c) == v) {
-                out.push(r as u32);
+                each(r as u32);
             }
         });
     }
@@ -5101,8 +5132,26 @@ pub struct Csr { cols: Vector<usize>, source: bool, sorted: bool, chain: Option<
                  /// candidates, checked against the key by the reader.
                  block: Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)>,
                  /// A test's whole key's index (`sorted_hash`, t50 step 5): made at its first test of a derived input.
-                 hashed: OnceLock<sorted_hash::SortedHash> }
+                 hashed: OnceLock<sorted_hash::SortedHash>,
+                 /// A one-column key's node-keyed index in its relation's block (decision 0694 step 1): a test of a bound
+                 /// value is one bit there. Found or built at its first test; `None` when it has none.
+                 bits: OnceLock<Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)>> }
 impl Csr {
+    /// Whether `rel`'s rows hold `v` in this index's one column, by its node-keyed index (decision 0694 step 1):
+    /// `None` when it has none (a view, dead rows, rows in several parts).
+    fn node_bits_has(&self, rel: &InRel, v: i64, hint: &mut u32) -> Option<bool> {
+        let (ib, i) = self.bits.get_or_init(|| {
+            let bits = if cands::node_bits_on() { rel.node_bits(self.cols[0]) } else { None };
+            run_counts().node_bits[usize::from(bits.is_none())].fetch_add(1, AtomicOrdering::Relaxed);
+            if env_set!("RERAIL_SPIKE_INDEX") {
+                let one = rel.rows.in_one_block().map(|b| (b.rows as usize == rel.n, b.relation().base_rows, b.far().is_some()));
+                let sample: Vec<String> = if rel.view.is_none() && rel.len() > 0 { [0, rel.len() / 2, rel.len() - 1].iter().map(|&r| format!("{:#x}", rel.at(r).at(self.cols[0]))).collect() } else { Vec::new() };
+                eprintln!("E7 node bits {} col={} rows={} view={} dead={} block={one:?} rel={:?} sample={sample:?}", if bits.is_some() { "built" } else { "none" }, self.cols[0], rel.len(), rel.view.is_some(), rel.ndead, rel.name.get());
+            }
+            bits
+        }).as_ref()?;
+        Some(ib.relation().node_bits_has(*i, v, hint))
+    }
     /// The sorted hash of `rel`'s rows by this index's columns, made at its first ask.
     fn hashed(&self, rel: &InRel) -> &sorted_hash::SortedHash {
         self.hashed.get_or_init(|| {
@@ -6575,7 +6624,7 @@ impl InRel {
                 None => for &r in v.src.sorted_rows(c, k).unwrap_or(&[]) { give(RowRef::Source(v, r as usize).read()) },
             }
         } else if ix.source && let Some(v) = &self.view {
-            for r in v.find_keyed(&ix.cols, key, ix.lead) { give(RowRef::Source(v, r as usize).read()) }
+            v.each_keyed(&ix.cols, key, ix.lead, &mut |r| give(RowRef::Source(v, r as usize).read()));
         } else {
             let exact = ix.exact();
             for &id in ix.get(self, key) {
@@ -7067,6 +7116,15 @@ impl InRel {
     pub fn value(&self, id: usize, c: usize) -> i64 {
         match &self.view { None => self.rows.value(id as u32, self.k, c), Some(_) => self.at(id).at(c) }
     }
+    /// Column `c`'s values at ids `from..from + out.len()` into `out`, read where they lie a chunk at a time
+    /// (`Rows::read_range`); false for a view, whose rows are its source's.
+    pub fn read_range(&self, c: usize, from: usize, out: &mut [i64]) -> bool {
+        if self.view.is_some() {
+            return false;
+        }
+        self.rows.read_range(c, from as u32, out);
+        true
+    }
     /// The row whose `keyed` column is `v`, by the source's key (its rows are the view's). None or one.
     fn keyed_rows(&self, v: i64) -> std::ops::Range<u32> {
         let ky = self.keyed.as_ref().expect("a keyed relation");
@@ -7201,12 +7259,22 @@ impl InRel {
         let mut idx = self.idx.lock().unwrap();
         idx.entry(mask).or_insert_with(|| {
             run_counts().orders_opened.fetch_add(1, AtomicOrdering::Relaxed);
-            Arc::new(Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: Some(false), order: OnceLock::new(), block: None, then: Some(c), hashed: OnceLock::new() })
+            Arc::new(Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: Some(false), order: OnceLock::new(), block: None, then: Some(c), hashed: OnceLock::new(), bits: OnceLock::new() })
         }).clone()
     }
     /// Its rows' index on `cols` in their block (decision 0478 step 5, R2): the one the device finds and builds, over
     /// every row, dead ones too (a reader skips them by its dead bits, as the device reads a delta's). Built now when
     /// `build` and none is; `None` for a view, rows in several parts, or a block with no room for it.
+    /// Its rows' node-keyed index on column `col` in their block (decision 0694 step 1): found, or built now. `None`
+    /// for a view, dead rows, or rows in several parts.
+    fn node_bits(&self, col: usize) -> Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)> {
+        if self.view.is_some() || self.k == 0 || self.ndead != 0 || col >= self.k {
+            return None;
+        }
+        let ib = self.rows.in_one_block().filter(|b| b.rows as usize == self.n)?;
+        let i = ib.own_node_bits(col as u16)?;
+        Some((ib, i))
+    }
     fn block_index(&self, cols: &[usize], build: bool) -> Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)> {
         if self.view.is_some() || self.k == 0 || cols.is_empty() || cols.len() > rerail_blocks::relation::MAX_KEY {
             return None;
@@ -7246,7 +7314,7 @@ impl InRel {
             let (t0, c0) = (Instant::now(), thread_cpu());
             // No key columns: the step reads every row, not an index.
             let path = |i: usize| { run_counts().index_paths[i].fetch_add(1, AtomicOrdering::Relaxed); };
-            let empty = |source, sorted| Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source, sorted, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None, hashed: OnceLock::new() };
+            let empty = |source, sorted| Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source, sorted, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None, hashed: OnceLock::new(), bits: OnceLock::new() };
             let m = if cols.is_empty() {
                 path(0); empty(false, false)
             } else if let Some(b) = self.block_index(cols, false) {
@@ -8158,7 +8226,7 @@ fn join_rule_bound(conn: impl Scoped, spec: &ArchivedJoinSpec, syms: &mut Intern
     use steps::{Src, Step};
     use rerail_section::Bound;
     let conn = conn.db();
-    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None, hashed: OnceLock::new() });
+    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None, hashed: OnceLock::new(), bits: OnceLock::new() });
     let mut bound: Vec<bool> = Vec::new();
     for &s in pre {
         if bound.len() <= s { bound.resize(s + 1, false) }
@@ -8853,6 +8921,15 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
                 let given = if i == 0 { cx.first.take() } else { None };
                 let handed = given.is_some();
+                // A test of one bound column of a derived input with a node-keyed index (decision 0694 step 1): one bit
+                // read, no candidates. Not a first step (its rows are a cut's), one whose rows are restricted (a delta's,
+                // `only`), or one read by a filter.
+                if i > 0 && (*neg || binds.is_empty()) && i != cx.only_step && j.fused[i].is_none() && j.ranges[i].is_none()
+                    && let Some(found) = cands::node_bits_test(j, src, keys, tests, cx.key.first().copied().unwrap_or(0), &mut cx.hints[i][0])
+                {
+                    if found != *neg { go(cx, i + 1, slots); }
+                    return;
+                }
                 // The key columns the probe matched exactly, which its rows need not be read or checked for
                 // (`cands::exact_cols`). Candidates handed to the step were not found by its probe. A membership probe
                 // of a view by several columns, nothing else read, is a test of the source (`View::tests_keys`).
@@ -9270,13 +9347,49 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         _ => None,
                     }
                 } else {
-                    let mut strs = Vec::new();
-                    let mut numbers = Vec::new();
-                    for (k, a) in kinds.iter().zip(args) {
-                        match k { Kind::Text => strs.push(text(cx, val(slots, *a))), Kind::Number => numbers.push(val(slots, *a)) }
-                    }
-                    let strs: Vec<&str> = strs.iter().map(String::as_str).collect();
-                    let v = eval(name, &strs, &numbers);
+                    // The arguments' texts read into one buffer, the interner's, and their places, numbers and
+                    // slices in arrays: a string an argument and two lists a call were 3.7 M on cold PostHog.
+                    const ARGS: usize = 8;
+                    let v = if args.len() <= ARGS {
+                        let mut buf = std::mem::take(&mut cx.syms.buf);
+                        buf.clear();
+                        let (mut ends, mut numbers) = ([0usize; ARGS], [0i64; ARGS]);
+                        let (mut nt, mut nn) = (0, 0);
+                        for (k, a) in kinds.iter().zip(args) {
+                            let x = val(slots, *a);
+                            match k {
+                                Kind::Text => {
+                                    match scratch(cx, x) {
+                                        Some(t) => buf.push_str(t),
+                                        None => cx.syms.with_name(x, |t| buf.push_str(t)),
+                                    }
+                                    ends[nt] = buf.len();
+                                    nt += 1;
+                                }
+                                Kind::Number => {
+                                    numbers[nn] = x;
+                                    nn += 1;
+                                }
+                            }
+                        }
+                        let mut strs = [""; ARGS];
+                        let mut from = 0;
+                        for (s, &end) in strs.iter_mut().zip(&ends[..nt]) {
+                            *s = &buf[from..end];
+                            from = end;
+                        }
+                        let v = eval(name, &strs[..nt], &numbers[..nn]);
+                        cx.syms.buf = buf;
+                        v
+                    } else {
+                        let mut strs = Vec::new();
+                        let mut numbers = Vec::new();
+                        for (k, a) in kinds.iter().zip(args) {
+                            match k { Kind::Text => strs.push(text(cx, val(slots, *a))), Kind::Number => numbers.push(val(slots, *a)) }
+                        }
+                        let strs: Vec<&str> = strs.iter().map(String::as_str).collect();
+                        eval(name, &strs, &numbers)
+                    };
                     if let (Some((f, s)), Value::Text(t)) = (keep, &v) {
                         cx.syms.atoms.kept().keep_text(f, s, t);
                     }
@@ -9315,8 +9428,13 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     }
                     (Some(m), ..) => cx.syms.with_name(v, |t| m.is_match(t)),
                     (None, ..) => {
-                        let pattern = cx.syms.name(val(slots, *p));
-                        cx.syms.with_name(v, |t| crate::code_rule_dsl::logic::strings::test(op, t, &pattern))
+                        // The pattern read into the interner's buffer: a text made a test was 2.7 M on cold PostHog.
+                        let mut pattern = std::mem::take(&mut cx.syms.buf);
+                        pattern.clear();
+                        cx.syms.with_name(val(slots, *p), |t| pattern.push_str(t));
+                        let hit = cx.syms.with_name(v, |t| crate::code_rule_dsl::logic::strings::test(op, t, &pattern));
+                        cx.syms.buf = pattern;
+                        hit
                     }
                 };
                 if hit == *want { go(cx, i + 1, slots) }
@@ -10609,6 +10727,9 @@ pub struct SetfixCounts {
     /// directory (a maintained relation's, `Rel::based`); kept as they were, their arrays in another block or the
     /// directory full.
     pub orders_kept: [std::sync::atomic::AtomicU64; 3],
+    /// One-column keys of derived inputs whose tests read a node-keyed index (decision 0694 step 1), and those that
+    /// have none (a view, dead rows, rows in several parts): counted at a key's first test.
+    pub node_bits: [std::sync::atomic::AtomicU64; 2],
 }
 
 /// The run's `SetfixCounts`.

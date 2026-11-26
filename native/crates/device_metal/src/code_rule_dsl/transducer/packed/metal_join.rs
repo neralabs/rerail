@@ -2355,7 +2355,7 @@ impl Batch {
             // Either is kept by the batch until its work, which builds the index into it, completes (Q265: a fresh
             // relation dropped with its stage's handle gave back its index while the GPU built it).
             if let Some(view) = &rel.view {
-                crate::code_rule_dsl::prof::count_named(format!("device.index of a view in a fresh home (its home's room taken): {} rows keyed by {cols:?}", rel.rows), 1);
+                crate::code_rule_dsl::prof::count_named_args(format_args!("device.index of a view in a fresh home (its home's room taken): {} rows keyed by {cols:?}", rel.rows), 1);
                 if !may_move {
                     return Err(Error::BackendCapacity);
                 }
@@ -4489,7 +4489,7 @@ impl Kit {
                 }
                 Ok(None) => {}
                 Err(why) => {
-                    crate::code_rule_dsl::prof::count_named(format!("device.a gate's room not grown: {why}"), 1);
+                    crate::code_rule_dsl::prof::count_named_args(format_args!("device.a gate's room not grown: {why}"), 1);
                     return Ok(false);
                 }
             }

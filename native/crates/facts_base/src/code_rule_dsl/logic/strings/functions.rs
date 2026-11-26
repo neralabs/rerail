@@ -440,7 +440,7 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         "ascii_lower" => Some(t(0).to_ascii_lowercase()),
         "sha256" => {
             use sha2::Digest;
-            Some(sha2::Sha256::digest(t(0).as_bytes()).iter().map(|b| format!("{b:02x}")).collect())
+            Some(rerail_prof::code_rule_dsl::prof::lower_hex(&sha2::Sha256::digest(t(0).as_bytes())))
         }
         "json_str" => Some(json_str(t(0))),
         "str_concat" => Some(format!("{}{}", t(0), t(1))),

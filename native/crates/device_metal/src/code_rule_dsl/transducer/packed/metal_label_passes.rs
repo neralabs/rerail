@@ -1663,7 +1663,7 @@ fn leaves_fit(tests: usize, region: usize) -> bool {
 fn capacity() -> Error {
     if crate::code_rule_dsl::prof::on() {
         let at = std::panic::Location::caller();
-        crate::code_rule_dsl::prof::count_named(format!("capacity.{}:{}", at.file().rsplit('/').next().unwrap_or(""), at.line()), 1);
+        crate::code_rule_dsl::prof::count_named_args(format_args!("capacity.{}:{}", at.file().rsplit('/').next().unwrap_or(""), at.line()), 1);
     }
     Error::BackendCapacity
 }
@@ -2016,7 +2016,7 @@ fn encode(
     // The batch's one format, or 0 for a mixed batch: the kernels are made for it (`tape_view`).
     let format = tapes.table.format().unwrap_or(0);
     if crate::code_rule_dsl::prof::on() {
-        crate::code_rule_dsl::prof::count_named(format!("gpu.tape_format={format}"), 1);
+        crate::code_rule_dsl::prof::count_named_args(format_args!("gpu.tape_format={format}"), 1);
     }
     let mut runner = Runner {
         engine: compile_resident_interpreter_cached(format)?,
@@ -2378,8 +2378,8 @@ impl Runner<'_> {
         // Refused (the launch ledger is spent): the flush reports it.
         let Ok(times) = std::mem::replace(&mut self.command, lane::Command::new("Rerail label passes")).run() else { return None };
         let (start, end) = (0.0, times.device);
-        crate::code_rule_dsl::prof::count_named(format!("kernel_us.{label}"), ((end - start) * 1e6) as usize);
-        crate::code_rule_dsl::prof::count_named(format!("kernel_n.{label}"), 1);
+        crate::code_rule_dsl::prof::count_named_args(format_args!("kernel_us.{label}"), ((end - start) * 1e6) as usize);
+        crate::code_rule_dsl::prof::count_named_args(format_args!("kernel_n.{label}"), 1);
         // The run's GPU time too: split off here, its buffer never reaches the flush that counts it.
         crate::code_rule_dsl::prof::count("gpu.device_us", ((end - start) * 1e6) as usize);
         self.outcome.device += (end - start).max(0.0);
@@ -2426,10 +2426,10 @@ impl Runner<'_> {
             threads
         };
         if crate::code_rule_dsl::prof::on() {
-            crate::code_rule_dsl::prof::count_named(format!("threads.{label}"), threads);
+            crate::code_rule_dsl::prof::count_named_args(format_args!("threads.{label}"), threads);
             // The pipeline's thread limit: under 1,024 means the kernel's registers cap its occupancy (t41).
             if let Some(l) = limits {
-                crate::code_rule_dsl::prof::count_named(format!("pipeline.{label}.max_threads={}", l.threads), 1);
+                crate::code_rule_dsl::prof::count_named_args(format_args!("pipeline.{label}.max_threads={}", l.threads), 1);
             }
         }
         if threads == 0 {
@@ -2565,7 +2565,7 @@ impl Runner<'_> {
                         if walk.depth().is_none() && std::env::var_os("RERAIL_DUMP_LOOP").is_some() {
                             eprintln!("LOOP {:?}", walk.ops());
                         }
-                        crate::code_rule_dsl::prof::count_named(format!("depth_groups.{depth}"), count as usize);
+                        crate::code_rule_dsl::prof::count_named_args(format_args!("depth_groups.{depth}"), count as usize);
                     }
                     // The walk's slots as rows of `texts`, contiguous from `text_start`; a row
                     // already computed for another pass is copied.
@@ -2591,7 +2591,7 @@ impl Runner<'_> {
                         };
                         let Some(row) = row else {
                             if crate::code_rule_dsl::prof::on() {
-                                crate::code_rule_dsl::prof::count_named(format!("unslotted_groups.{key}"), count as usize);
+                                crate::code_rule_dsl::prof::count_named_args(format_args!("unslotted_groups.{key}"), count as usize);
                             }
                             return true;
                         };
@@ -2686,7 +2686,7 @@ impl Runner<'_> {
                 crate::code_rule_dsl::prof::count(if sweep.is_some() { "size.sweep_batches" } else { "size.level_batches" }, 1);
                 for &(program, _, _, _) in &passes {
                     let reason = if sweep.is_some() && Micro::of(program).is_some() { "sweep" } else { Micro::refusal(program) };
-                    crate::code_rule_dsl::prof::count_named(format!("refused.{reason}"), 1);
+                    crate::code_rule_dsl::prof::count_named_args(format_args!("refused.{reason}"), 1);
                 }
             }
             let programs = passes.iter().map(|(program, ..)| (*program).clone()).collect::<Vec<_>>();
@@ -2948,11 +2948,11 @@ impl Runner<'_> {
         let tests_buffer = self.upload(tests)?;
         let docs = self.tapes.docs.buffer().clone();
         let shape = Shape { target_count: tests.len() as u32, recursive: self.region() as u32, ..self.shape() };
-        crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[LEAVES_KERNEL]), 1);
+        crate::code_rule_dsl::prof::count_named_args(format_args!("kernel.{}", KERNELS[LEAVES_KERNEL]), 1);
         crate::code_rule_dsl::prof::count("gpu.anchor_leaves", tests.len());
         if crate::code_rule_dsl::prof::on() {
             for test in tests {
-                crate::code_rule_dsl::prof::count_named(format!("gpu.anchor_leaves.op{}", test & 255), 1);
+                crate::code_rule_dsl::prof::count_named_args(format_args!("gpu.anchor_leaves.op{}", test & 255), 1);
             }
         }
         // A thread a word of the rows' region (`region`: the files' words, two spare a file, two at the end).
@@ -3076,7 +3076,7 @@ impl Runner<'_> {
             let kernel = self.kernels[PARENTS_KERNEL].clone();
             assert!(wide_enough(&kernel), "label_parents takes {PHASE_WORDS} threads a group");
             let shape = Shape { recursive: region as u32, ..self.shape() };
-            crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[PARENTS_KERNEL]), 1);
+            crate::code_rule_dsl::prof::count_named_args(format_args!("kernel.{}", KERNELS[PARENTS_KERNEL]), 1);
             self.launch(&kernel, KERNELS[PARENTS_KERNEL])
                 .slot(0, inputs[0], 0)
                 .slot(1, parents.buffer(), 0)
@@ -3133,7 +3133,7 @@ impl Runner<'_> {
             unsafe { queue.host().cast::<u32>().add(5).write(capacity as u32) };
             let queue_buffer = queue.buffer().clone();
             self.phase_queues.push(queue);
-            crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[PHASE_KERNEL]), 1);
+            crate::code_rule_dsl::prof::count_named_args(format_args!("kernel.{}", KERNELS[PHASE_KERNEL]), 1);
             let queue_slot = kernel.queue.expect("label_phase's queue");
             let mut launch = self.launch(&kernel, KERNELS[PHASE_KERNEL]);
             for (index, buffer) in inputs.iter().enumerate() {
@@ -3480,7 +3480,7 @@ impl Runner<'_> {
     /// `false` where the group is not such (it runs as rounds of levels).
     fn group(&mut self, levels: &[Vec<Pass<'_>>]) -> Result<bool, Error> {
         let unfused = |why: &str| {
-            crate::code_rule_dsl::prof::count_named(format!("gpu.unfused.{why}"), 1);
+            crate::code_rule_dsl::prof::count_named_args(format_args!("gpu.unfused.{why}"), 1);
             if std::env::var_os("RERAIL_LAUNCHES").is_some() {
                 eprintln!("UNFUSED {why}: {} levels", levels.len());
             }
@@ -3572,7 +3572,7 @@ impl Runner<'_> {
         }
         buffers.push(self.group_stacks[depth].as_ref().expect("group stacks").buffer().clone());
         let kernel = self.kernels[pipeline].clone();
-        crate::code_rule_dsl::prof::count_named(format!("kernel.{label}"), 1);
+        crate::code_rule_dsl::prof::count_named_args(format_args!("kernel.{label}"), 1);
         // Scratch (5) and the tallies (8) are parts of the label state.
         let (scratch_at, counts_at) = (self.tapes.scratch_at, self.tapes.counts_at);
         let groups = self.files.len().max(1) as u64;
@@ -3881,7 +3881,7 @@ impl Runner<'_> {
             (&stacks, 0),
         ];
         if crate::code_rule_dsl::prof::on() {
-            crate::code_rule_dsl::prof::count_named(format!("items.tier{tier}"), threads);
+            crate::code_rule_dsl::prof::count_named_args(format_args!("items.tier{tier}"), threads);
         }
         let lanes = TIER_LANES[tier];
         shape.lanes = lanes as u32;

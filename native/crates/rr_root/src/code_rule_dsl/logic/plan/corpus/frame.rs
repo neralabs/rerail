@@ -71,19 +71,25 @@ impl Frame {
             facts.insert(THEN.to_owned(), vec![vec![s(&crate::content_store::observe::hex(then))].into()]);
         }
         facts.insert(SIZE.to_owned(), vec![vec![Value::Int(self.image.len() as i64)].into()]);
-        facts.insert(IMAGE.to_owned(), self.image.chunks(8).map(|w| {
+        facts
+    }
+
+    /// The image's words (`IMAGE`), each 8 bytes little-endian, the last padded with zeros: written into its block
+    /// from here (`Entries::put_with`), not a row made of each.
+    fn image_words(&self) -> Vec<i64> {
+        self.image.chunks(8).map(|w| {
             let mut b = [0u8; 8];
             b[..w.len()].copy_from_slice(w);
-            vec![Value::Int(i64::from_le_bytes(b))].into()
-        }).collect());
-        facts
+            i64::from_le_bytes(b)
+        }).collect()
     }
 }
 
 /// Keeps `frame` as the frame `key`, behind the run.
 pub fn put(store: &ContentStore, key: &[u8; 32], frame: &Frame) {
     let holder = HashKey::sha256(source_text(key).as_bytes()).sha256_bytes().expect("a sha256 key");
-    ENTRIES.put(store, Entries::part(key), holder, Some(plan()), &frame.facts());
+    let words = frame.image_words();
+    ENTRIES.put_with(store, Entries::part(key), holder, Some(plan()), &frame.facts(), &[(IMAGE, &words)]);
 }
 
 /// The frame `key`, read where the store keeps it; `None` where it keeps none, or one that does not read.
@@ -128,4 +134,30 @@ pub fn get(store: &ContentStore, key: &[u8; 32]) -> Option<Frame> {
 fn ordered<T>(mut rows: Vec<(i64, T)>) -> Vec<T> {
     rows.sort_by_key(|(at, _)| *at);
     rows.into_iter().map(|(_, x)| x).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    /// A frame put is read back whole: its image's words written into their block from where they lie
+    /// (`Entries::put_with`) read as the rows of one integer each did, the last word's padding cut.
+    #[test]
+    fn a_frame_reads_back_as_it_was_put() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::content_store::ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
+        let frame = super::Frame {
+            reads: vec![("k".into(), "p".into(), "d".into()), ("k2".into(), "p2".into(), "d2".into())],
+            plans: rerail_blocks::vector![[3u8; 32], [4u8; 32]],
+            summary: b"the summary".to_vec(),
+            image: (0..1003u32).map(|i| (i * 7 + 1) as u8).collect(),
+            then: Some([5; 32]),
+        };
+        let key = [9u8; 32];
+        super::put(&store, &key, &frame);
+        let back = super::get(&store, &key).expect("the frame read back");
+        assert_eq!(back.image, frame.image);
+        assert_eq!(back.reads, frame.reads);
+        assert_eq!(back.plans.as_slice(), frame.plans.as_slice());
+        assert_eq!(back.summary, frame.summary);
+        assert_eq!(back.then, frame.then);
+    }
 }

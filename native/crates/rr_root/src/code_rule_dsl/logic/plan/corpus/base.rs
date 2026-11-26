@@ -2238,7 +2238,7 @@ pub fn scoped(mut found: CorpusFiles, prog: &(impl ProgramFields + ?Sized), opti
 
 /// A digest as lowercase hex.
 pub fn hex(digest: &[u8]) -> String {
-    digest.iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(&digest[..])
 }
 
 /// A reader's refusal of one of a run's programs, named by the program's `.policy` (a run reads texts, not files).

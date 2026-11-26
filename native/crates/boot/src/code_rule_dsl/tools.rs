@@ -266,7 +266,7 @@ pub fn check_rr(paths: &[std::path::PathBuf]) -> serde_json::Value {
                 "outputs": program.output_names(),
                 "files": files.iter().map(|file| serde_json::json!({
                     "path": file.path,
-                    "sha256": file.sha256.map(|hash| hash.iter().map(|b| format!("{b:02x}")).collect::<String>())
+                    "sha256": file.sha256.map(|hash| rerail_prof::code_rule_dsl::prof::lower_hex(&hash[..]))
                 })).collect::<Vec<_>>()
             }),
             Err(error) => serde_json::json!({"path": path, "status": "reader-failed", "error": error.to_string()})

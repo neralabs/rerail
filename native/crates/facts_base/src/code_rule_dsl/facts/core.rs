@@ -232,7 +232,7 @@ fn record_parse(file: &dyn SourceFile, reader: &'static str) {
     if prof::on() {
         use sha2::{Digest as _, Sha256};
         let digest = Sha256::digest(file.source().as_bytes()).into();
-        prof::count_named(format!("source_tape.input.{reader}.{}.{}", file.language(), crate::content_store::observe::hex(&digest)), 1);
+        prof::count_named_args(format_args!("source_tape.input.{reader}.{}.{}", file.language(), crate::content_store::observe::hex(&digest)), 1);
     }
 }
 

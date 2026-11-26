@@ -325,3 +325,62 @@ fn reference_edge_matches_the_eager_graph_after_git_cache_reuse() {
     assert_eq!(graph_at("edited"), after);
     rerail_accel::upkeep::retire_files_under(root.path());
 }
+
+/// A node as the outputs give it: its document's path and its local part (its preorder index).
+type At = (String, i64);
+
+/// The graph a program of `head` (its settings) makes over the files under `dir` with `include`'s rules
+/// (`python/references.rerail`, or `python/references_w.rerail`: W's Rust), `reference_edge` and `reference_open`
+/// output as they are: no join locates their nodes, so the run is the graph's alone.
+fn bare_graph(head: &str, include: &str, dir: &std::path::Path, out: &std::path::Path) -> (BTreeSet<(At, At, String)>, BTreeSet<At>) {
+    let program = format!("{head}\n#include \"{include}\"\n.output reference_edge, reference_open\n");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, dir, None, out, "program", Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+    let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(out).unwrap();
+    let at = |r: &crate::code_rule_dsl::logic::plan::output::Row<'_>, c: usize| {
+        let node = r.get(c).node().expect("a node column");
+        let (path, local) = node.at().unwrap_or_else(|| panic!("a node of a file of the run: {node:?}"));
+        (path.to_owned(), local)
+    };
+    (
+        outputs.rows("reference_edge").iter().map(|r| (at(r, 0), at(r, 1), r.get(2).to_string())).collect(),
+        outputs.rows("reference_open").iter().map(|r| at(r, 0)).collect(),
+    )
+}
+
+/// The reference graph made by the rules (`python/references.rerail`) against the same graph from W's Rust
+/// (`python/references_w.rerail`: `calls::summarize` per file, `Graph::link_references` once), on the corpus at
+/// `RERAIL_REFERENCE_CORPUS` under `internal_dead_code`'s policy scope: the two graphs are equal, and each run's CPU is
+/// printed. The program outputs the graph and nothing else (`bare_graph`), so the two runs differ only in how the graph
+/// is made: on the data-layer repository (`all`) this is the head's whole difference from W on `internal_dead_code`
+/// (the rules' joins against W's Rust): 58 s CPU against the whole program's 57 s, both in profiling builds of the CLI;
+/// 70 s in this test's build, whose workspace crates are not optimized. A run of W's Rust first parses the corpus, so
+/// the two measured runs read the same tapes, warm.
+#[test]
+#[ignore = "a measurement on an external corpus (RERAIL_REFERENCE_CORPUS)"]
+fn reference_graph_by_rules_against_ws_rust_on_a_corpus() {
+    let corpus = std::path::PathBuf::from(std::env::var("RERAIL_REFERENCE_CORPUS").expect("RERAIL_REFERENCE_CORPUS: a corpus to run on"));
+    // The policy line of the program measured, its scope the files the graph is over.
+    let program = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/code_rule_dsl/logic/programs/data_layer/internal_dead_code.rerail");
+    let text = std::fs::read_to_string(&program).unwrap_or_else(|e| panic!("{}: {e}", program.display()));
+    let policy = text.lines().find(|l| l.starts_with(".policy")).expect("internal_dead_code's .policy line");
+    let outs = tempfile::tempdir().unwrap();
+    let cpu = || {
+        let (user, system) = crate::code_rule_dsl::prof::process_usage();
+        user + system
+    };
+    let measured = |include: &str, name: &str| {
+        let (cpu0, wall0) = (cpu(), std::time::Instant::now());
+        let graph = bare_graph(policy, include, &corpus, &outs.path().join(name));
+        let (cpu, wall) = (cpu() - cpu0, wall0.elapsed().as_secs_f64());
+        eprintln!("{include:<28} {name:<6} cpu {cpu:6.1} s  wall {wall:5.1} s  edges {}  open {}", graph.0.len(), graph.1.len());
+        (graph, cpu)
+    };
+    let _ = measured("python/references_w.rerail", "warm");
+    let ((rules_edges, rules_open), rules_cpu) = measured("python/references.rerail", "rules");
+    let ((rust_edges, rust_open), rust_cpu) = measured("python/references_w.rerail", "rust");
+    eprintln!("the rules' graph costs {:.1} s CPU more than W's Rust", rules_cpu - rust_cpu);
+    assert!(!rust_edges.is_empty(), "no edges: is {} a Python corpus?", corpus.display());
+    let only = |a: &BTreeSet<(At, At, String)>, b: &BTreeSet<(At, At, String)>| a.difference(b).take(5).cloned().collect::<Vec<_>>();
+    assert!(rules_edges == rust_edges, "edges: rules only {:?}, Rust only {:?}", only(&rules_edges, &rust_edges), only(&rust_edges, &rules_edges));
+    assert!(rules_open == rust_open, "open: rules only {:?}, Rust only {:?}", rules_open.difference(&rust_open).take(5).collect::<Vec<_>>(), rust_open.difference(&rules_open).take(5).collect::<Vec<_>>());
+}

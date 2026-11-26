@@ -201,6 +201,10 @@ impl MatcherWave {
     fn on(&self, backend: crate::code_rule_dsl::transducer::packed::MatcherBackend) -> WaveFound {
         use crate::code_rule_dsl::transducer::packed::MatcherBackend;
         let started = std::time::Instant::now();
+        crate::code_rule_dsl::logic::profile::decision("ast matcher wave: matchers, passes, tapes, node-passes", || {
+            let nodes: usize = self.tapes.iter().map(|t| t.transducer_len()).sum();
+            format!("{} matchers, {} passes, {} tapes, {} node-passes", self.active.len(), self.wave.passes(), self.tapes.len(), nodes * self.wave.passes().max(1))
+        });
         // On the cores, parts of the tapes side by side: a tape's labels and roots read that tape alone, so each part's
         // roots are the whole's at its tapes (a corpus batch's wave over every file ran on one core, 8 s on t50's
         // product run). Each part's limited roots are placed back at their tapes.
@@ -339,17 +343,20 @@ fn matched(
             return Err(StoreError::Invalid("ast matcher wave: not a program's result".into()));
         };
         let r = r.0.downcast::<WaveFound>().map_err(|_| StoreError::Invalid("ast matcher wave: a result of another type".into()))?;
-        let (found, run, wall) = r.as_ref().clone().map_err(|e| StoreError::Invalid(format!("ast matcher wave: {e}")))?;
+        // Taken whole where this is its one holder: copied, each document's set of each matcher was made again
+        // (1.31 M on cold PostHog).
+        let r = std::sync::Arc::try_unwrap(r).unwrap_or_else(|r| r.as_ref().clone());
+        let (found, run, wall) = r.map_err(|e| StoreError::Invalid(format!("ast matcher wave: {e}")))?;
         if run.metal {
             profile::device("ast matcher wave", run.command_buffers as u64, run.device, wall, nodes);
         }
         profile::decision("ast matcher wave lane", || (if run.metal { "metal" } else { "cpu" }).to_owned());
         if crate::code_rule_dsl::prof::on() {
             for (m, ns) in matchers.list.iter().zip(&run.roots_cpu) {
-                crate::code_rule_dsl::prof::count_named(format!("wave.roots_us.{}", m.rel), (*ns / 1000) as usize);
+                crate::code_rule_dsl::prof::count_named_args(format_args!("wave.roots_us.{}", m.rel), (*ns / 1000) as usize);
             }
             for (m, per) in matchers.list.iter().zip(&found) {
-                crate::code_rule_dsl::prof::count_named(format!("wave.roots_n.{}", m.rel), per.iter().map(BTreeSet::len).sum());
+                crate::code_rule_dsl::prof::count_named_args(format_args!("wave.roots_n.{}", m.rel), per.iter().map(BTreeSet::len).sum());
             }
         }
         if !run.limited.is_empty() {
@@ -428,7 +435,7 @@ fn matched(
             let found_n = found_rows.iter().map(Vec::len).sum::<usize>() / (1 + m.captures.len());
             // What the host's confirmation costs each relation: its roots, the rows kept and the pool's CPU.
             if crate::code_rule_dsl::prof::on() {
-                crate::code_rule_dsl::prof::count_named(format!("wave.captures_us.{}", m.rel), (cpu / 1000) as usize);
+                crate::code_rule_dsl::prof::count_named_args(format_args!("wave.captures_us.{}", m.rel), (cpu / 1000) as usize);
                 profile::decision("ast captures by W at each root: roots, rows, captures, CPU ms", || {
                     format!("{}: {roots} roots, {} rows, {} captures, {:.1} ms", m.rel, found_n, m.captures.len(), cpu as f64 / 1e6)
                 });

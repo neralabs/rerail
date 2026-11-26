@@ -40,6 +40,14 @@ fn in_order<K: rerail_blocks::maps::Key + Ord, V: rerail_blocks::Pod + Copy>(m: 
     (0..keys.len()).map(move |i| (keys[i], *m.get(&keys[i]).expect("listed")))
 }
 
+/// Rows of `N` values, each led by its entry's key, written once and sorted in place: in the keys' order, as each key
+/// is one entry's (`in_order`'s, with no list of the keys: 1.13 M on cold PostHog).
+fn sorted_rows<const N: usize>(values: impl Iterator<Item = i64>) -> Vector<i64> {
+    let mut rows: Vector<i64> = values.collect();
+    rows.as_chunks_mut::<N>().0.sort_unstable();
+    rows
+}
+
 /// A posting's key: its relation's and column's numbers, and the value.
 fn posting_key(rel: &str, col: &str, v: i64) -> [i64; 3] {
     [i64::from(crate::code_rule_dsl::logic::plan::table::rel_id(rel)), i64::from(crate::code_rule_dsl::logic::plan::table::rel_id(col)), v]
@@ -240,9 +248,9 @@ impl Own {
     /// Into a memo entry's rows (decision 0052): a memoised file hands on its share of the tree statistics as an
     /// evaluated one does.
     pub fn put(&self, rows: &mut BTreeMap<String, (usize, Vector<i64>)>) {
-        rows.insert(OWN_KINDS.into(), (3, in_order(&self.kinds).flat_map(|(k, [n, size])| [k, n, size]).collect()));
-        rows.insert(OWN_EDGES.into(), (3, in_order(&self.edges).flat_map(|([p, k], n)| [p, k, n]).collect()));
-        rows.insert(OWN_FIELDS.into(), (4, in_order(&self.fields).flat_map(|([p, k, f], n)| [p, k, f, n]).collect()));
+        rows.insert(OWN_KINDS.into(), (3, sorted_rows::<3>(self.kinds.iter().flat_map(|(k, [n, size])| [k, n, size]))));
+        rows.insert(OWN_EDGES.into(), (3, sorted_rows::<3>(self.edges.iter().flat_map(|([p, k], n)| [p, k, n]))));
+        rows.insert(OWN_FIELDS.into(), (4, sorted_rows::<4>(self.fields.iter().flat_map(|([p, k, f], n)| [p, k, f, n]))));
         rows.insert(OWN_DOCS.into(), (1, rerail_blocks::vector![self.docs]));
         // By relation and column name, then value: the order the entry's rows were written in by name.
         let mut posted: Vec<(Arc<str>, Arc<str>, i64, i64)> = self.postings.iter().map(|(k, n)| {
@@ -250,8 +258,15 @@ impl Own {
             (rel, col, k[2], n)
         }).collect();
         posted.sort_unstable();
-        for (rel, col, v, n) in posted {
-            rows.entry(format!("{OWN_POSTINGS}{rel}:{col}")).or_insert_with(|| (2, rerail_blocks::vector::Vector::new())).1.extend([v, n]);
+        // Sorted by relation and column: each (relation, column)'s rows a run, its name made once (a name a posting
+        // was 0.89 M on cold PostHog).
+        let mut at = 0;
+        while at < posted.len() {
+            let (rel, col) = (&posted[at].0, &posted[at].1);
+            let end = at + posted[at..].iter().take_while(|p| &p.0 == rel && &p.1 == col).count();
+            let held = &mut rows.entry(format!("{OWN_POSTINGS}{rel}:{col}")).or_insert_with(|| (2, rerail_blocks::vector::Vector::new())).1;
+            held.extend(posted[at..end].iter().flat_map(|&(_, _, v, n)| [v, n]));
+            at = end;
         }
     }
 

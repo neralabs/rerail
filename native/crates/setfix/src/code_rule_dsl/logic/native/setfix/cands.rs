@@ -144,6 +144,21 @@ pub(super) fn exact_cols(j: &JoinRule, src: &Src, membership: bool) -> u64 {
     }
 }
 
+/// A test of a derived input by one bound column (decision 0694 step 1): whether its rows hold `v` there, read in its
+/// node-keyed index (one group found, `hint` the last, and one bit), not by probing an index and reading candidates.
+/// `None` when the input has no such index (`Csr::node_bits_has`): the step probes as before.
+pub(super) fn node_bits_test(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tests: &[(usize, usize)], v: i64, hint: &mut u32) -> Option<bool> {
+    let Src::In(rel, ix) = src else { return None };
+    if keys.len() != 1 || !tests.is_empty() {
+        return None;
+    }
+    let (rel, ix) = j.src_in(rel, ix);
+    if ix.cols.len() != 1 || ix.cols[0] != keys[0].0 {
+        return None;
+    }
+    ix.node_bits_has(rel, v, hint)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, key: &[i64], keys: &[(usize, Key)], hints: &mut [u32; runs::HINTS], last: &mut LastProbe, need: u64, within: Within, stream: bool) -> (Rows<'a>, Cands<'a>) {
     match src {
@@ -203,7 +218,9 @@ pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, ke
                 // Only a join's step or a test asks so (`stream`): a fold's or a string join's need of 0 reads its rows.
                 if stream && need == 0 && v.keys_tested(&ix.cols) {
                     let found = v.tests_keys(&ix.cols, key, ix.lead, &mut last.cursor).unwrap_or_else(|| {
-                        v.find_keyed(&ix.cols, key, ix.lead).into_iter().any(|r| ix.cols.iter().zip(key).all(|(&c, &k)| v.src.value(r as usize, v.cols[c]) == k))
+                        let mut hit = false;
+                        v.each_keyed(&ix.cols, key, ix.lead, &mut |r| hit = hit || ix.cols.iter().zip(key).all(|(&c, &k)| v.src.value(r as usize, v.cols[c]) == k));
+                        hit
                     });
                     return (Rows::Source(v), Cands::Range(0, u32::from(found)));
                 }
@@ -321,6 +338,9 @@ pub(super) fn holds(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], ask
     };
     asked.key.clear();
     asked.key.extend(keys.iter().map(|&(_, k)| val(k)));
+    if let Some(found) = node_bits_test(j, src, keys, tests, asked.key.first().copied().unwrap_or(0), &mut asked.hints[0]) {
+        return found;
+    }
     // As the join's step: the key columns the probe matched exactly, which its rows need not be checked for.
     let exact: u64 = if keys.is_empty() { 0 } else { exact_cols(j, src, tests.is_empty()) };
     let need: u64 = keys.iter().filter(|&&(c, _)| exact >> c & 1 == 0).fold(0u64, |m, &(c, _)| m | 1 << c) | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0);
@@ -342,6 +362,12 @@ pub(super) fn holds(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], ask
     rows.each(cands, need, &mut asked.last, |id, row| {
         !rows.dead(id) && keys.iter().all(|&(c, k)| exact >> c & 1 != 0 || row.at(c) == val(k)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0))
     })
+}
+
+/// Whether a test of one node column reads its node-keyed index: `RERAIL_NODE_BITS=off` (a measurement aid, the
+/// run's setting) probes as before.
+pub(super) fn node_bits_on() -> bool {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_NODE_BITS").map_or(true, |v| v != "off"))
 }
 
 /// Whether a test of a derived input's whole key asks its sorted hash: `RERAIL_SORTED_HASH=off` (a measurement aid,

@@ -596,10 +596,10 @@ same_ann(f, g) :- ann_of(f, a), ann_of(g, a), f != g.
 "#);
     let split = split_of(&v);
     assert_eq!(split.locations["ann_of"], [0], "{:?}", split.locations);
-    assert_eq!(split.nullable.get("ann_of").map(|c| c.as_slice()), Some(&[1][..]), "{:?}", split.nullable);
+    assert_eq!(split.nullable.get("ann_of").map(|v| &v[..]), Some(&[1][..]), "{:?}", split.nullable);
     assert!(split.local.contains("ann_head"), "{:?} {:?}", split.local, split.causes);
     assert!(!split.local.contains("same_ann"), "two -1s are of any documents: {:?}", split.local);
-    assert_eq!(split.same_doc.get("ann_of").map(|c| c.as_slice()), Some(&[0][..]), "{:?}", split.same_doc);
+    assert_eq!(split.same_doc.get("ann_of").map(|v| &v[..]), Some(&[0][..]), "{:?}", split.same_doc);
 }
 
 /// An undeclared crossing is refused (decision 0652): a rule joining two documents by a value names its relation,

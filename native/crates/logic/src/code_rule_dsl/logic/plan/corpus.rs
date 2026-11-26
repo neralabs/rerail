@@ -94,6 +94,7 @@ pub mod cone_rounds;
 pub mod prepared;
 pub use rerail_corpus_memo::code_rule_dsl::logic::plan::corpus::maintain;
 pub mod retain;
+pub mod w_references;
 pub use rerail_corpus_memo::code_rule_dsl::logic::plan::corpus::keptstats;
 pub mod input_delta;
 pub use inputs::parameters as input_parameters;
@@ -555,7 +556,7 @@ fn cone_digests<'a>(exports: &exports::Exports, per_file: &[String], locations: 
                 h.update(v.to_le_bytes());
             }
         }
-        out.insert(path.clone(), h.finalize().iter().map(|b| format!("{b:02x}")).collect());
+        out.insert(path.clone(), rerail_prof::code_rule_dsl::prof::lower_hex(&h.finalize()));
     }
     Ok(out)
 }
@@ -2502,7 +2503,7 @@ fn run_observed_within(
             store.settle(&prepared::queued(&prepared_key));
             let found = prepared::lookup(store, source, dialect, &prepared_key).map_err(|e| Error::Plan(e.to_string()))?;
             if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
-                eprintln!("RERAIL_PREPARED_TRACE ({}) {} {label}: {}", phases::current().unwrap_or_else(|| "main".into()), prepared_key[..6].iter().map(|b| format!("{b:02x}")).collect::<String>(), match &found { None => "not in the store", Some((p, ..)) if !holds(p) => "in the store, its atoms not the store's", Some((_, _, prepared::Found::Moved)) => "read, its atoms moved to the store's", Some(_) => "read" });
+                eprintln!("RERAIL_PREPARED_TRACE ({}) {} {label}: {}", phases::current().unwrap_or_else(|| "main".into()), rerail_prof::code_rule_dsl::prof::lower_hex(&prepared_key[..6]), match &found { None => "not in the store", Some((p, ..)) if !holds(p) => "in the store, its atoms not the store's", Some((_, _, prepared::Found::Moved)) => "read, its atoms moved to the store's", Some(_) => "read" });
             }
             let found = found.filter(|(p, ..)| holds(p));
             (found.map(|(p, documents, how)| {
@@ -2735,7 +2736,7 @@ fn run_observed_within(
             let decided = deciding.close();
             let prepared = Arc::new(Prepared { source, vocabulary: Arc::new(vocabulary), lowered, sets, matchers, demanded, pushed, factorized, located, merged, split, interned, documents: Default::default(), runs: preparation_runs, cone: Default::default(), maintained: Default::default(), parts: Default::default(), decided, memo_strata });
             if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
-                eprintln!("RERAIL_PREPARED_TRACE ({}) {} {label}: prepared, durable {:?}", phases::current().unwrap_or_else(|| "main".into()), prepared_key[..6].iter().map(|b| format!("{b:02x}")).collect::<String>(), durable.map(|d| d.is_some()));
+                eprintln!("RERAIL_PREPARED_TRACE ({}) {} {label}: prepared, durable {:?}", phases::current().unwrap_or_else(|| "main".into()), rerail_prof::code_rule_dsl::prof::lower_hex(&prepared_key[..6]), durable.map(|d| d.is_some()));
             }
             keep_prepared(prepared_key, Arc::clone(&prepared));
             keep_durably(&prepared);
@@ -2957,6 +2958,18 @@ fn run_observed_within(
         _ => None,
     };
     let memoised = memo.is_some() && t.is_none() && unlocated.is_empty() && !reads_declared && std::env::var("RERAIL_CORPUS_MEMO").map_or(true, |v| v != "off") && options.get("memo").and_then(|v| v.as_str()) != Some("off");
+    // W's reference graph, for a program that reads it from W's Rust (`python/references_w.rerail`): its Python files
+    // summarized as their documents are built, linked once they all are, and bound for the cross-file part
+    // (`w_references`). Not memoised: the graph needs every file's tape, which a memo hit does not build.
+    let w_graph = if label == "python" {
+        let paths: Vec<String> = docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(root, p, label)).collect();
+        let names = core::core_names();
+        let core_shape = !names.is_empty() && names.iter().all(|r| ProgramFields::declares(head, r.as_str()));
+        w_references::Files::new(&head_settings, &read, &paths, core_shape)?
+    } else {
+        None
+    };
+    let memoised = memoised && w_graph.is_none();
     crate::code_rule_dsl::logic::profile::decision("per-file memo", || match (&located, memoised) {
         (_, true) => format!("each file's file-local rows are memoised under its content, path and the run's plan; {} relations given a document column; {}", located.as_ref().map_or(0, Vec::len), match prepared_placed.fields().map(|f| crate::code_rule_dsl::typing::file_local::moved_in(&f)).unwrap_or_default() {
             m if m.is_empty() => "none moved to the cross-file part".to_owned(),
@@ -3274,6 +3287,8 @@ fn run_observed_within(
         // A library's own input that core does not make and no fact gives (`tsx/node-package.rerail`'s
         // `npm_ignored`, "until core has it"): no rows, under its declared columns. A cross-file rule reads it as an
         // input like any other (decision 0652 moves such readers there), so it is bound, empty.
+        // W's reference graph's relations (`w_references`) are bound so too, empty, for what plans before the documents
+        // are built; the graph's rows replace them in the cross-file part once they are (below).
         let unbound: Vec<&String> = split.base.iter().filter(|rel| !repository.iter().any(|(r, _, _)| r == *rel)).collect();
         for rel in unbound {
             let own = projection.columns(rel).is_none() && head.find(rel).and_then(|a| head.facts(a)).is_none();
@@ -3410,7 +3425,7 @@ fn run_observed_within(
     let memo_program = memo::with_unpackaged(memo::with_modules(memo::with_tree_demand(memo_space, memo_tree_stats), &renamed_modules), &unpackaged_folders);
     // The memo plan's parts: a plan that differs between two runs of the same tree misses every entry.
     if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
-        let hex = |d: &[u8; 32]| d[..4].iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let hex = |d: &[u8; 32]| rerail_prof::code_rule_dsl::prof::lower_hex(&d[..4]);
         eprintln!(
             "rerail: memo plan {} of {}: rules {} (local {}, {} phased relations read), tree demand {memo_tree_stats}, {} modules renamed",
             hex(&memo::plan_digest(&memo_program)), run_label(given), hex(&memo_rules), hex(&memo_local), phased.len(), renamed_modules.len()
@@ -4531,7 +4546,7 @@ fn run_observed_within(
         });
     }
     let chunk_matchers = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the chunks' matchers, compiled".into()); matchers::compiled(matchers, &demand, &ProgramFields::policies(head)).map_err(Error::Plan)? };
-    let keep_tapes = !chunk_matchers.is_empty() || read.iter().any(|rel| syntax::taped(rel));
+    let keep_tapes = !chunk_matchers.is_empty() || read.iter().any(|rel| syntax::taped(rel)) || w_graph.is_some();
     if !chunk_matchers.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("ast matchers (decision 0106)", || format!("{} matchers run by the transducer over each chunk's tapes", chunk_matchers.len()));
     }
@@ -4632,6 +4647,12 @@ fn run_observed_within(
         };
         let (facts, tape) = held.as_ref();
         let tape = tape.as_ref();
+        if let Some(w) = &w_graph
+            && own == "python"
+        {
+            let doc = tape.ok_or_else(|| Error::Plan(format!("{path}: no tape for W's reference graph")))?;
+            w.add(*d as u32, path, &file.source, facts, doc)?;
+        }
         // The tape, in the file's context: kept only for a program that reads W's values, f-string trees or string
         // annotations off it, or runs matchers over it (decision 0106).
         let tape = tape.cloned().map(|doc| (doc, Arc::new(file) as Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>));
@@ -5812,6 +5833,8 @@ fn run_observed_within(
     // What the run wrote before its waves is a wave: the combined program, the prepared sources, the plan holds.
     crate::content_store::write_back::end_wave(crate::content_store::write_back::Boundary::Before);
     drop(psec.take());
+    // W's reference graph's relations (`w_references`), linked inside the scope once every file is built.
+    let mut w_relations: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = Vec::new();
     let worker_cpu = crate::threads::scope(|jobs| -> Result<((f64, f64), (f64, f64), Vec<crate::content_store::SourceId>, Vector<[u8; 32]>)> {
     // The main thread's error or end stops the builder: no job it starts after is left running.
     let _stop = Stopper(&builder.stopped);
@@ -6478,6 +6501,13 @@ fn run_observed_within(
         got
     };
     drain(&mut process, true)?;
+    // W's reference graph (`w_references`), every file built: linked once, read by the cone of requests (below) and the
+    // cross-file part, each in place of the empty binding the repository gave its relations.
+    if let Some(w) = &w_graph {
+        let intern = |values: &[&str]| -> Result<Vec<i64>> { Ok(store.intern_atoms(values).map_err(|e| Error::Plan(e.to_string()))?.iter().map(|&a| i64::from(a)).collect()) };
+        w_relations = w.relations(&intern, &read)?.into_iter().map(|(rel, columns, values)| (rel.to_owned(), crate::code_rule_dsl::logic::native::component::columns_source(columns, values))).collect();
+    }
+    let w_relations = &w_relations;
     // The chunks' connections are closed beside the run once the loads' chunks are evaluated too: what follows runs
     // on the run's.
     let close_workers = || for (wdb, wmodules) in std::mem::take(&mut *worker_conns.lock()) {
@@ -6524,8 +6554,12 @@ fn run_observed_within(
             .map(|a| load.rel_name(a.rel()).to_owned())
             .collect::<BTreeSet<String>>()
             .into_iter()
-            .filter(|r| phased.contains_key(r))
-            .map(|r| Ok((r.clone(), atoms_source(store, head.columns_of(&r).expect("a phase's export the program declares").len(), phased[&r].iter())?)))
+            .filter(|r| phased.contains_key(r) || w_relations.iter().any(|(w, _)| w == r))
+            .map(|r| match w_relations.iter().find(|(w, _)| *w == r) {
+                // W's reference graph, as the cross-file part binds it.
+                Some((_, source)) => Ok((r.clone(), Arc::clone(source))),
+                None => Ok((r.clone(), atoms_source(store, head.columns_of(&r).expect("a phase's export the program declares").len(), phased[&r].iter())?)),
+            })
             .collect::<Result<_>>()?;
         let (db_path, x_path, kept_in, world_in) = (path.clone(), cross_path.clone(), kept.clone(), world_inputs);
         // The cone's relations are kept like any (t33 K1), in a fact space of their own; its stratum that asks and
@@ -7213,7 +7247,7 @@ fn run_observed_within(
                         kept_rows.push(row.clone());
                     }
                 }
-                exports.borrow_mut().install(rel, width, cone_rounds::of_rows(width, kept_rows.iter()));
+                exports.borrow_mut().install(rel, width, cone_rounds::of_rows(width, kept_rows.iter().map(|r| &r[..])));
             }
             crate::code_rule_dsl::logic::profile::decision("the cone's rounds (decision 0145)", || format!("{} documents loaded and taken back: no load the run's own rows ask for names them", gone.len()));
         }
@@ -8661,6 +8695,16 @@ fn run_observed_within(
         cross_stats.probed_by(&rel, source.as_ref(), true);
         cross_inputs.push((rel.clone(), Arc::clone(&source)));
         modules.bind(db, &rel, source)?;
+    }
+    // W's reference graph (`w_relations`), in place of the empty binding the repository gave its relations, measured
+    // for the cross-file part's plan.
+    for (rel, source) in &w_relations {
+        cross_stats.measured(rel, syntax::statistics(source.as_ref()).into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
+        match cross_inputs.iter_mut().find(|(r, _)| r == rel) {
+            Some((_, held)) => *held = Arc::clone(source),
+            None => cross_inputs.push((rel.clone(), Arc::clone(source))),
+        }
+        modules.bind(db, rel, Arc::clone(source))?;
     }
     // One fixpoint (no bounded rounds) reads each export from `x` when its first reader runs and drops it, and each
     // base relation held for it, after its last; rounds read them all, every round. A session's run keeps its

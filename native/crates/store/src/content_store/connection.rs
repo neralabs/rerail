@@ -545,8 +545,19 @@ fn trace_for_hazards(connection: &Connection) {
                     *x.cast::<i64>() as u64,
                 )
             };
-            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-            super::hazards::sql_in_wave("store", &text, ns);
+            // Its words, one space apart, in the thread's buffer: a list and a string a statement were 1.5 M + 0.59 M
+            // on cold PostHog's profiled run.
+            thread_local!(static WORDS: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) });
+            WORDS.with_borrow_mut(|words| {
+                words.clear();
+                for w in text.split_whitespace() {
+                    if !words.is_empty() {
+                        words.push(' ');
+                    }
+                    words.push_str(w);
+                }
+                super::hazards::sql_in_wave("store", words, ns);
+            });
         }
         0
     }

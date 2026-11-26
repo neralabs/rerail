@@ -228,6 +228,7 @@ joins' steps took 154 ms before the work below and 116 ms after.
 | — | Not in the catalogue, the largest step: `text($e, $x)` read by its string walked every text row of every document for each probe (`rf_target`, 36.6 ms of 154). `Projected::text_rows_of` finds a document's rows of a text where the text occurs in its source, by a binary search on the tape's node starts. `rf_target` went from 52.9 to 12.8 ms, with the same outputs. The planner prices a step by the rows it passes on, so a read's own cost never enters a plan's price; this one was found only by timing. | 37f8fd8c9e |
 | E1 | `NearEnds`, run as a program is prepared (not in the lowering, which stays T's front end's). In a recursive rule whose recursion binds a `nearest`'s far end, the `nearest` and the atoms that bind its near end become a helper, made once and read by the far end. `rf_qn` reads 32–160 helper rows a wave, against 4,528 nodes. | e91529c5dd |
 | E4 | Built (2026-11-25). The demand split keeps a candidate whole where its readers ask about at least as many keys as it holds. Both sizes are the size scan's. It now bounds:<br>- a derived atom by its relation's own rows;<br>- an `ast` literal's node by its matcher's root kind's nodes (`TreeStats::freq`);<br>- a variable a comparison computes (`$x = @rr_node_text_any($n)`) by its inputs' rows;<br>- a relation another part derives by its measured rows.<br>On the cost case, `bind_only`'s readers ask about 3,602 keys of its 2,662 rows. It is made once, by its own rules: 3,687 units for 516 rows, against a bound of 1,437. The rest is the parameter rules' steps, a unit a row each (E3's count, not CPU). The cost cases pass 15 of 31, and the whole graph is 122 units a name read (137 before). On `all`, the head's instructions went from 1,604–1,612 G to 1,562 G. | — |
+| E7 | A spike beside the engine (2026-11-25): `rerail_blocks::node_keyed`. A relation keyed by one node of one document is a set (a bit a node), a value a node (`u32`; a second value breaks the key, and the writer is told), or a node's values grouped by offsets. All of it lies in the block, read in place. Over the same rows as a frozen relation probed by its index on the node (Relax, one thread, 2 M tests of 200 k nodes): a set's test 24.7 ns against 3.2 ns, in 35 times fewer bytes; a value's read 58.9 ns against 10.7 ns, in 4.5 times fewer bytes. Wired in as decision 0694. Step 1 (setfix tests a bound node in the relation's node-keyed index, each document as bits or its sorted lows, since node values are stable ids, sparse in their granules): 3.0% fewer instructions, 2.3% less CPU, the same rows. | — |
 
 The cost cases pass 13 of 31 (with E1). The remaining heads by step CPU: `rf_target` 12.8 ms (its `text` read and
 `rf_named`), `wstart` 8.1 (E7: `nearest` per name read, then the scope's kind), `rf_in` 6.0, `bind_only` 2.6–5.2
@@ -342,8 +343,12 @@ relation; W has no such parse.
 
 **The AST matchers.** Without `dbg_cls`, the head's matchers take 7.9 s against W's 10.0 s in the same run (wave
 7.9 s → 5.3 s, captures 2.2 s, confirmations 0.4 s): no longer a gap. The captures now write a tape's rows into one
-buffer as W's match binds them (`findings::captured_each`), no `Vector` a capture and no row cloned a capture; the
-cost case `the_matcher_wave_allocates_little` passes since.
+buffer as W's match binds them (`findings::captured_each`), no `Vector` a capture and no row cloned a capture. The
+cost case `the_matcher_wave_allocates_little` still fails (an earlier "passes" here was wrong): six runs at
+ec929805d0 allocate 1,632-1,636 bytes a name read, and six at the merge of django-bugs (187dc91678) 774-777, its
+bound 128. The merge's arenas (394543d27f, f5e6f0d694) take it from about 1,630 to 775; diffs reversed in the tree:
+without them 1,625, without the whole django merge 1,637. What remains is one wave over a chunk's documents made
+ahead (1.20 MB of 1.25 MB).
 
 **E6 and E10: a plan's tests in the order that drops rows soonest** (`tests_ordered`). Cost cases: `cls_late` 945 →
 657 units, `rf_builtin` 3,441 → 2,881. Their orders are now as the cases ask; what keeps them over their bounds is a
