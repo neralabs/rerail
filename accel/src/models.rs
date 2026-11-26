@@ -50,6 +50,9 @@ pub trait LearnedJoin: std::fmt::Debug + Send + Sync + 'static {
     fn costs(&self) -> (f64, f64);
 }
 
+/// A trained cost model and how it compared (`Models::compare_cost`).
+pub type Compared = (Comparison, Arc<dyn LearnedCost>);
+
 /// What trains the models and reads a saved cost model: rerail-accel-gpu's, on its device.
 pub trait Models: Send + Sync {
     /// A cost model saved by `LearnedCost::to_bytes`.
@@ -57,7 +60,7 @@ pub trait Models: Send + Sync {
     /// A cost model trained on all but the newest fifth of `samples` (oldest first), compared on that fifth with the
     /// rates and with what the prices estimated when the jobs ran; and the model. `None` once `stop` says so, between
     /// the model's forests.
-    fn compare_cost(&self, samples: &[Sample], stop: &dyn Fn() -> bool) -> Result<Option<(Comparison, Arc<dyn LearnedCost>)>, String>;
+    fn compare_cost(&self, samples: &[Sample], stop: &dyn Fn() -> bool) -> Result<Option<Compared>, String>;
     /// A cost model trained on every one of `samples`; `None` once `stop` says so, between its forests.
     fn train_cost(&self, samples: &[Sample], stop: &dyn Fn() -> bool) -> Result<Option<Arc<dyn LearnedCost>>, String>;
     /// A join model trained on `steps`.
