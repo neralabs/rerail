@@ -13,7 +13,7 @@ import {
 } from "../storage/schema.js";
 import type { RerailDatabase } from "../storage/database.js";
 import { normalizeFolder, RULE_SETTING_ORIGINS, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS, RULE_SUPPRESSIONS, type RuleCatalog } from "./repository-model.js";
-import { readableRepositoryRows } from "./repository-registry.js";
+import { aliasesAfter, readableRepositoryRows } from "./repository-registry.js";
 import { approve, isApproved, ruleSubject } from "./rule-approval.js";
 import { listLibraryRules, quarantinedLibraryRules, validateLibraryDocument, writeLibraryRule } from "./rule-library.js";
 import { RULE_MODES } from "./rule-mode.js";
@@ -199,13 +199,15 @@ export function importRulesDump(db: RerailDatabase, ruleCatalog: RuleCatalog, va
         shadowBundled: true,
       });
     }
-    const known = tx.select().from(repositories).all();
+    // Read as the export reads them, through `db`, whose file the line naming a damaged row names; one connection.
+    const known = readableRepositoryRows(db);
     for (const repository of dump.repositories) {
       // A repository this machine knows under another key, or under one of its aliases, takes the dump's configuration.
       const names = [repository.repositoryKey, ...repository.aliases];
       const existing = known.find(row => names.includes(row.repositoryKey) || row.aliases.some(alias => names.includes(alias)));
       const key = existing?.repositoryKey ?? repository.repositoryKey;
-      const aliases = [...new Set([...(existing?.aliases ?? []), ...names])].filter(alias => alias !== key);
+      // Undefined where its stored aliases hold no array: the import then leaves that text as it is.
+      const aliases = aliasesAfter([existing], names, key);
       const displayName = existing === undefined || existing.repositoryKey === repository.repositoryKey ? repository.displayName : existing.displayName;
       tx.insert(repositories).values({
         repositoryKey: key,

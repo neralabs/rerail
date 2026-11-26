@@ -5,10 +5,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRerailApi, DatabaseApiStores, operations } from "../../../../src/api/index.js";
-import { listRepositories, lookupCheckout, recordCheckout } from "../../../../src/engine/catalog/repository-registry.js";
-import { exportRulesDump } from "../../../../src/engine/catalog/rule-bootstrap.js";
+import { linkAlias, listRepositories, lookupCheckout, recordCheckout } from "../../../../src/engine/catalog/repository-registry.js";
+import { exportRulesDump, importRulesDump } from "../../../../src/engine/catalog/rule-bootstrap.js";
 import { openRerailDatabase, type RerailDatabase } from "../../../../src/engine/storage/database.js";
 import { removeFolder } from "../../../support/platform/remove-folder.js";
+import { testBundle } from "../../../support/rule-configuration-builders.js";
 
 const temporaryDirectories: string[] = [];
 const openDatabases: RerailDatabase[] = [];
@@ -65,7 +66,7 @@ describe("the repository list with a repository whose stored aliases do not read
     ]);
     expect(listRepositories(database, log)).toEqual(undamaged);
     expect(written).toEqual([`rerail: ${database.$client.name}: repository remote:github.com/acme/api reads with no aliases: the aliases_json `
-      + `of its row is not a JSON array of strings (${why}), which only a damaged file or a hand edit leaves.\n`]);
+      + `of its row is not a JSON array (${why}), which only a damaged file or a hand edit leaves.\n`]);
     // Nothing is written back: the text stays where a person can read and mend it.
     expect(database.$client.prepare("SELECT aliases_json FROM repositories WHERE repository_key = ?").pluck().get("remote:github.com/acme/api")).toBe(text);
   });
@@ -107,14 +108,24 @@ function git(cwd: string, ...args: string[]): void {
  */
 function newCloneOfAnAlias(database: RerailDatabase): [string, string] {
   database.$client.prepare("UPDATE repositories SET aliases_json = ? WHERE repository_key = ?").run('["remote:github.com/acme/old-cli"]', CLI);
+  return newCloneOf(database, "https://github.com/acme/old-cli.git");
+}
+
+/** A clone of `remote` Rerail has not recorded, with one commit and a worktree: the clone's and the worktree's paths. */
+function newCloneOf(database: RerailDatabase, remote?: string): [string, string] {
   const clone = join(dirname(database.$client.name), "new-clone");
   mkdirSync(clone);
   git(clone, "init", "-q", "-b", "main");
   git(clone, "-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-q", "--allow-empty", "-m", "base");
-  git(clone, "remote", "add", "origin", "https://github.com/acme/old-cli.git");
+  if (remote !== undefined) git(clone, "remote", "add", "origin", remote);
   const worktree = join(dirname(clone), "new-worktree");
   git(clone, "worktree", "add", "-q", "-b", "feature", worktree);
   return [clone, worktree];
+}
+
+/** The text a repository's aliases are stored as. */
+function storedText(database: RerailDatabase, repositoryKey: string): unknown {
+  return database.$client.prepare("SELECT aliases_json FROM repositories WHERE repository_key = ?").pluck().get(repositoryKey);
 }
 
 /** Spies on this thread's stderr, where a lookup writes the line that names a damaged row: the lines naming `repositoryKey`. */
@@ -208,6 +219,114 @@ describe("a repository whose aliases_json holds an item that is no string betwee
       const aliases = ["remote:github.com/acme/older-cli", "remote:github.com/acme/old-cli"];
       expect(listRepositories(database).find(repository => repository.repositoryKey === CLI)?.aliases).toEqual(aliases);
       expect(exportRulesDump(database).repositories.find(repository => repository.repositoryKey === CLI)?.aliases).toEqual(aliases);
+      expect(stderr.named()).toHaveLength(1);
+    } finally {
+      stderr.restore();
+    }
+  });
+
+  it("stores an alias added to it after its items as stored, the one that is no string too", async () => {
+    const database = await threeRepositories();
+    damage(database, CLI, '["remote:github.com/acme/older-cli",5,"remote:github.com/acme/old-cli"]');
+    const stderr = spyOnStderr(CLI);
+    try {
+      expect(linkAlias(database, CLI, "https://github.com/acme/new-cli")).toBe("remote:github.com/acme/new-cli");
+      expect(storedText(database, CLI)).toBe('["remote:github.com/acme/older-cli",5,"remote:github.com/acme/old-cli","remote:github.com/acme/new-cli"]');
+    } finally {
+      stderr.restore();
+    }
+  });
+});
+
+describe("a repository whose own stored aliases do not read", () => {
+  it("is found by its own key for a new clone and worktree of its remote, records the worktree, and keeps its text", async () => {
+    const database = await threeRepositories();
+    const [clone, worktree] = newCloneOf(database, "https://github.com/acme/cli.git");
+    damage(database, CLI, '["remote:github.com/acme/old-cli"');
+    const stderr = spyOnStderr(CLI);
+    try {
+      expect([clone, worktree].map(path => lookupCheckout(database, path)?.repositoryKey)).toEqual([CLI, CLI]);
+      expect(recordCheckout(database, worktree).repositoryKey).toBe(CLI);
+      expect(storedText(database, CLI)).toBe('["remote:github.com/acme/old-cli"');
+      expect(stderr.named()).toHaveLength(1);
+    } finally {
+      stderr.restore();
+    }
+  });
+
+  it("answers GET /api/repository?checkout= for a new clone of its remote with it", async () => {
+    const database = await threeRepositories();
+    const [clone] = newCloneOf(database, "https://github.com/acme/cli.git");
+    damage(database, CLI, '{"x":');
+    const path = database.$client.name;
+    const stores = new DatabaseApiStores(path, {
+      health: () => ({ pid: process.pid, database: { path, exists: true }, native: { ok: true } }), origin: () => "http://127.0.0.1:4737",
+    });
+    const stderr = spyOnStderr(CLI);
+    try {
+      const response = await createRerailApi(stores, operations, { version: "0.0.0-test" }).request(`/api/repository?checkout=${encodeURIComponent(clone)}`);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ repository: { repositoryKey: CLI } });
+    } finally {
+      stderr.restore();
+      stores.close();
+    }
+  });
+
+  it.each([["its own", '["remote:github.com/acme/old-cli"'], ["the remote's repository's", '{"x":1}']])(
+    "records a clone-keyed repository's checkout that gains a remote under its clone key while %s aliases_json is %s, and keeps that text",
+    async (whose, text) => {
+      const database = await threeRepositories();
+      const [clone] = newCloneOf(database);
+      const cloneKey = recordCheckout(database, clone).repositoryKey;
+      const damaged = whose === "its own" ? cloneKey : CLI;
+      damage(database, damaged, text);
+      git(clone, "remote", "add", "origin", "https://github.com/acme/cli.git");
+      const stderr = spyOnStderr(damaged);
+      try {
+        expect(recordCheckout(database, clone).repositoryKey).toBe(cloneKey);
+        expect([storedText(database, damaged), storedText(database, CLI) === undefined]).toEqual([text, false]);
+      } finally {
+        stderr.restore();
+      }
+    },
+  );
+
+  it.each([["the repository it is added to", CLI, '{"x":1}'], ["the repository the alias brings in", "remote:github.com/acme/api", '{"x":']])(
+    "refuses an alias while %s keeps aliases_json that is no array, naming that repository, and leaves every row as it was",
+    async (_, damaged, text) => {
+      const database = await threeRepositories();
+      damage(database, damaged, text);
+      const before = database.$client.prepare("SELECT * FROM repositories ORDER BY repository_key").all();
+      const stderr = spyOnStderr(damaged);
+      try {
+        expect(() => linkAlias(database, CLI, "https://github.com/acme/api"))
+          .toThrow(`repository ${damaged} takes no alias while the aliases_json of its row is not a JSON array`);
+        expect(database.$client.prepare("SELECT * FROM repositories ORDER BY repository_key").all()).toEqual(before);
+        expect(database.$client.prepare("SELECT repository_key FROM checkouts WHERE clone_id = 'git:api'").pluck().get()).toBe("remote:github.com/acme/api");
+      } finally {
+        stderr.restore();
+      }
+    },
+  );
+});
+
+describe("rerail rules import of an export, while a repository's stored aliases do not read", () => {
+  it.each([
+    ["is cut short", "remote:github.com/acme/api", '["remote:github.com/acme/old-api"'],
+    ["is another JSON value", "remote:github.com/acme/api", '{"x":1}'],
+    ["holds an item that is no string", "remote:github.com/acme/web", '["remote:github.com/acme/old-web",5]'],
+  ])("imports every repository's rules when one's aliases_json %s, keeps that text, and names it in one line", async (_, damaged, text) => {
+    const database = await threeRepositories();
+    database.$client.prepare("INSERT INTO rule_attachments (repository_key, folder, source_kind, source_id, created_at) VALUES (?, '', 'pack', 'tiny', 1)").run(CLI);
+    damage(database, damaged, text);
+    const stderr = spyOnStderr(damaged);
+    try {
+      const dump = exportRulesDump(database);
+      database.$client.prepare("DELETE FROM rule_attachments").run();
+      expect(importRulesDump(database, testBundle(), dump).repositories).toBe(3);
+      expect(database.$client.prepare("SELECT repository_key, source_id FROM rule_attachments").all()).toEqual([{ repository_key: CLI, source_id: "tiny" }]);
+      expect(storedText(database, damaged)).toBe(text);
       expect(stderr.named()).toHaveLength(1);
     } finally {
       stderr.restore();

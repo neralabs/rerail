@@ -494,7 +494,7 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | `repository_attachments_set` | `PUT /api/repository/attachments` | Add or remove packs, By Rerail rules and library rules per folder, with optional settings. The first addition (or `configure: true`) sets the repository up. |
 | `repository_start` | `POST /api/repository/start` | Start; `scope` is `checkout` (and checkouts inside) or `repository`. |
 | `repository_stop` | `POST /api/repository/stop` | Stop, same scopes; rules and history kept. |
-| `repository_link` | `POST /api/repository/aliases` | Resolve another remote address here. People only. |
+| `repository_link` | `POST /api/repository/aliases` | Resolve another remote address here. People only. Refused, naming the repository, while its stored aliases, or those of the repository the address names, are not a JSON array. |
 | `repository_reset` | `POST /api/repository/reset` | Clear history like `rerail reset`. Ended sessions go; running ones keep recording; rules and settings stay. People only. |
 | `rules_activity` | `GET /api/rules/activity?since=&repository=` | Per rule since a time: violations (log-only count), sessions, last sighting, `audits`, steers; removed rules with violations as `removed: true`. `sessions: { started, withViolations }`. |
 | `rule_packs_list` | `GET /api/rule-packs?checkout=` | Packs with npm package, publisher (`rerail`, or a third party's scope or package name) and rules (kind, title, group, mode, on/off, examples, and `dimensions` where the pack gives them: [rule dimensions](rule-dimensions.md)). With a checkout (MCP: the caller's), also its `.rerail/rules` as pack and publisher `worktree`, skipped files in `skipped`. Read-only. |

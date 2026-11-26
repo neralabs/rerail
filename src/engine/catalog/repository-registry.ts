@@ -25,7 +25,7 @@ import {
   type RepositoryIdentityLocation,
 } from "./repository-identity.js";
 import { checkouts, mergeAssistState, repositories, ruleSettings } from "../storage/schema.js";
-import { nameOnce, storedItems, type StoredListLog } from "../storage/stored-list.js";
+import { nameOnce, storedArray, storedItems, type StoredListLog } from "../storage/stored-list.js";
 
 type Reader = Pick<RerailDatabase, "select">;
 type Writer = Pick<RerailDatabase, "select" | "insert" | "update" | "delete">;
@@ -46,19 +46,21 @@ function recordOf(row: RepositoryRow): RepositoryRecord {
   return { ...row, started: row.started === true };
 }
 
-function repositoryRow(db: Reader, key: RepositoryKey): RepositoryRow | undefined {
-  return db.select().from(repositories).where(eq(repositories.repositoryKey, key)).get();
+/** The row `key` names, read as the list reads it (`storedRow`). */
+function repositoryRow(db: FileReader, key: RepositoryKey): StoredRow | undefined {
+  const row = db.select(LISTED_COLUMNS).from(repositories).where(eq(repositories.repositoryKey, key)).get();
+  return row === undefined ? undefined : storedRow(row, db.$client.name);
 }
 
 /**
- * The repository `key` names: its own key, else the one that lists it as an alias. The aliases are read as the list
- * reads them (`listedRow`): a repository whose aliases do not read matches no alias, rather than failing the lookup of
- * every checkout not recorded yet, and the list's line names it.
+ * The repository `key` names: its own key, else the one that lists it as an alias. Each row is read as the list reads
+ * it (`listedRow`): a repository whose aliases do not read is still found by its own key and matches no alias, rather
+ * than failing the lookup of every checkout not recorded yet, and the list's line names it.
  */
-function repositoryByKeyOrAlias(db: FileReader, key: RepositoryKey): RepositoryRow | undefined {
+function repositoryByKeyOrAlias(db: FileReader, key: RepositoryKey): StoredRow | undefined {
   return repositoryRow(db, key)
     ?? db.select(LISTED_COLUMNS).from(repositories).where(ne(repositories.aliases, [])).all()
-      .map(row => listedRow(row, db.$client.name, process.stderr)).find(row => row.aliases.includes(key));
+      .map(row => storedRow(row, db.$client.name)).find(row => row.aliases.includes(key));
 }
 
 /**
@@ -398,21 +400,25 @@ function eitherStarted(left: boolean | null, right: boolean | null): boolean | n
 export function adoptRemote(db: RerailDatabase, fromKey: RepositoryKey, toKey: RepositoryKey, now = Date.now()): void {
   if (fromKey === toKey) return;
   db.transaction(tx => {
-    const source = repositoryRow(tx, fromKey);
+    // `db` itself, as `recordCheckout` passes it, so a line `listedRow` writes names the file.
+    const source = repositoryRow(db, fromKey);
     // Another process adopted it first, moving its checkouts with it.
     if (source === undefined) return;
-    const target = repositoryRow(tx, toKey);
+    const target = repositoryRow(db, toKey);
     if (target?.configuredAt != null) {
       tx.update(checkouts).set({ repositoryKey: toKey }).where(eq(checkouts.repositoryKey, fromKey)).run();
       return;
     }
+    const aliases = aliasesAfter([source, target], [fromKey], toKey);
+    // The move would rewrite one row's aliases and remove the other's: while either text holds no array, the repository
+    // stays under its key, as it is, until a person mends the text; the lines `listedRow` wrote name the row.
+    if (aliases === undefined) return;
     if (target !== undefined) {
       tx.update(checkouts).set({ repositoryKey: fromKey }).where(eq(checkouts.repositoryKey, toKey)).run();
       tx.delete(repositories).where(eq(repositories.repositoryKey, toKey)).run();
     }
     // What `toKey` holds gives way to `fromKey`'s, rows a repository removed before left under it included.
     deleteRepositorySettings(tx, toKey);
-    const aliases = [...new Set([...source.aliases, ...(target?.aliases ?? []), fromKey])].filter(alias => alias !== toKey);
     tx.update(repositories)
       .set({
         repositoryKey: toKey,
@@ -435,12 +441,12 @@ export function linkAlias(db: RerailDatabase, key: RepositoryKey, address: strin
   const alias = normalizeRemoteAddress(address);
   if (alias === undefined) throw new Error(`${address} is not a remote address`);
   db.transaction(tx => {
-    const repository = repositoryRow(tx, key);
+    // `db` itself, as `recordCheckout` passes it, so a line `listedRow` writes names the file.
+    const repository = repositoryRow(db, key);
     if (repository === undefined) throw new Error(`Unknown repository: ${key}`);
     if (alias === key || repository.aliases.includes(alias)) return;
-    // `db` itself, as `recordCheckout` passes it, so a line `listedRow` writes names the file.
-    const merged = absorbAliasOwner(db, key, alias);
-    const aliases = [...new Set([...repository.aliases, alias, ...merged])].filter(name => name !== key);
+    const aliases = aliasesAfter([repository], [alias, ...absorbAliasOwner(db, key, alias)], key);
+    if (aliases === undefined) throw aliasesRefused(repository);
     tx.update(repositories).set({ aliases, updatedAt: now }).where(eq(repositories.repositoryKey, key)).run();
   }, { behavior: "immediate" });
   return alias;
@@ -448,16 +454,25 @@ export function linkAlias(db: RerailDatabase, key: RepositoryKey, address: strin
 
 /**
  * Gives `key` the checkouts of the repository `alias` already names and removes that repository, returning the names it
- * went by: its own key and aliases resolve to `key` too, so a fresh clone of its remote joins `key`. One set up is refused.
+ * went by, each item of its aliases as stored: its own key and aliases resolve to `key` too, so a fresh clone of its
+ * remote joins `key`. One set up is refused, and one whose stored aliases hold no array, which the removal would lose.
  */
-function absorbAliasOwner(tx: Writer & FileReader, key: RepositoryKey, alias: RepositoryKey): RepositoryKey[] {
+function absorbAliasOwner(tx: Writer & FileReader, key: RepositoryKey, alias: RepositoryKey): unknown[] {
   const other = repositoryByKeyOrAlias(tx, alias);
   if (other === undefined) return [];
   if (other.configuredAt !== null) throw new Error(`${alias} already belongs to the set-up repository ${other.repositoryKey}`);
+  const names = storedAliasItems(other);
+  if (names === undefined) throw aliasesRefused(other);
   tx.update(checkouts).set({ repositoryKey: key }).where(eq(checkouts.repositoryKey, other.repositoryKey)).run();
   deleteRepositorySettings(tx, other.repositoryKey);
   tx.delete(repositories).where(eq(repositories.repositoryKey, other.repositoryKey)).run();
-  return [other.repositoryKey, ...other.aliases];
+  return [other.repositoryKey, ...names];
+}
+
+/** Why an alias is not added: `row`'s stored aliases hold no array, and adding it would write over that text. */
+function aliasesRefused(row: StoredRow): Error {
+  return new Error(`repository ${row.repositoryKey} takes no alias while the ${repositories.aliases.name} of its row is not a JSON array, `
+    + "which only a damaged file or a hand edit leaves: mend that text first");
 }
 
 /**
@@ -583,12 +598,37 @@ function listedRow(row: ListedRow, file: string, log: StoredListLog): Repository
   const place = { file, place: `repository ${row.repositoryKey} ${column}` };
   if (typeof aliases === "string") {
     nameOnce(log, place, `rerail: ${file}: repository ${row.repositoryKey} reads with no aliases: the ${column} of its row is not `
-      + `a JSON array of strings (${aliases}), which only a damaged file or a hand edit leaves.\n`);
+      + `a JSON array (${aliases}), which only a damaged file or a hand edit leaves.\n`);
     return { ...row, aliases: [] };
   }
   if (aliases.left > 0) nameOnce(log, place, `rerail: ${file}: repository ${row.repositoryKey} reads without ${aliases.left} of the `
     + `${aliases.items.length + aliases.left} items of its aliases: the ${column} of its row holds no string there, which only a damaged file or a hand edit leaves.\n`);
   return { ...row, aliases: aliases.items as RepositoryKey[] }; // each item is a string: `storedItems` kept only those
+}
+
+/** A row as `listedRow` reads it, with the text its aliases are stored as, which a write extends (`aliasesAfter`). */
+type StoredRow = RepositoryRow & { readonly storedAliases: string };
+
+/** `row` as `listedRow` reads it, keeping the text its aliases are stored as. */
+function storedRow(row: ListedRow, file: string, log: StoredListLog = process.stderr): StoredRow {
+  return { ...listedRow(row, file, log), storedAliases: row.aliases };
+}
+
+/** The items of the array `row`'s aliases are stored as, one that is no string too; none for no row; undefined for text that holds no array. */
+function storedAliasItems(row: StoredRow | undefined): unknown[] | undefined {
+  const items = row === undefined ? [] : storedArray(row.storedAliases);
+  return typeof items === "string" ? undefined : items;
+}
+
+/**
+ * The aliases a write stores for the rows it merges into one: the items each row's aliases are stored as, in order,
+ * then `added`, each name once and `key` left out, so the write keeps every item a row holds, one that is no string
+ * too, and mends none. Undefined where a row's stored text holds no array: the write then leaves that text as it is.
+ */
+export function aliasesAfter(rows: readonly (StoredRow | undefined)[], added: readonly unknown[], key: RepositoryKey): RepositoryKey[] | undefined {
+  const items = rows.map(storedAliasItems);
+  // An item that is no string is kept as stored, though the column's type names strings.
+  return items.includes(undefined) ? undefined : [...new Set([...items.flat(), ...added])].filter(name => name !== key) as RepositoryKey[];
 }
 
 /**
@@ -607,9 +647,12 @@ export function listRepositories(db: Reader & Pick<RerailDatabase, "$client">, l
     .sort((left, right) => left.displayName.localeCompare(right.displayName) || left.repositoryKey.localeCompare(right.repositoryKey));
 }
 
-/** Every `repositories` row in key order, its aliases read as `listRepositories` reads them (`listedRow`). */
-export function readableRepositoryRows(db: FileReader, log: StoredListLog = process.stderr): RepositoryRow[] {
-  return db.select(LISTED_COLUMNS).from(repositories).orderBy(repositories.repositoryKey).all().map(row => listedRow(row, db.$client.name, log));
+/**
+ * Every `repositories` row in key order, its aliases read as `listRepositories` reads them (`listedRow`), with the text
+ * they are stored as, which a write extends (`aliasesAfter`).
+ */
+export function readableRepositoryRows(db: FileReader, log: StoredListLog = process.stderr): StoredRow[] {
+  return db.select(LISTED_COLUMNS).from(repositories).orderBy(repositories.repositoryKey).all().map(row => storedRow(row, db.$client.name, log));
 }
 
 /** A checkout of a listed repository as {@link listedCheckoutStates} reads it. */

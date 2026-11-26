@@ -24,7 +24,7 @@ export function isStoredItem(value: unknown, item: StoredItem): boolean {
 export const ITEMS: Record<StoredItem, string> = { text: "strings", object: "objects" };
 
 /** The JSON array `text` holds, or why it holds none. */
-function storedArray(text: string): unknown[] | string {
+export function storedArray(text: string): unknown[] | string {
   let value: unknown;
   try {
     value = JSON.parse(text);
