@@ -163,7 +163,8 @@ describe("rerail setup --json", { timeout: SETUP_TIMEOUT_MS }, () => {
     const start = packs.question!.options.find(option => option.answer === "start")!;
     const done = await runSetupStep(requestFrom(start.next.args, setup, environment));
     expect(done).toMatchObject({ step: "done", question: null });
-    expect(environment.pages).toEqual([expect.objectContaining({ page: "rules", open: false })]);
+    // Set-up ends on the active install's daemon, replacing one of another package.
+    expect(environment.pages).toEqual([expect.objectContaining({ page: "rules", open: false, daemon: "active" })]);
     expect(done.screen).toContain("http://127.0.0.1:4737/#rules");
     expect(done.screen).not.toContain("Opening in your browser.");
   });
@@ -233,7 +234,8 @@ describe("rerail start --json", { timeout: SETUP_TIMEOUT_MS }, () => {
     const step = await startRerailStep(setup.repo, { databasePath: setup.databasePath, environment });
     expect(step).toMatchObject({ step: "done", question: null });
     expect(step.screen.split("\n").at(-1)).toBe("  http://127.0.0.1:4737/#rules");
-    expect(environment.pages.at(-1)).toEqual({ repoRoot: setup.repo, repositoryKey, page: "rules", open: false });
+    // From whichever daemon runs, as `rerail start` without `--json` ends.
+    expect(environment.pages.at(-1)).toEqual({ repoRoot: setup.repo, repositoryKey, page: "rules", open: false, daemon: "running" });
   });
 
   it("takes `--relay`, as `/rerail-start` passes it, and answers in JSON", async () => {

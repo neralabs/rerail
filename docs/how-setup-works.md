@@ -366,9 +366,9 @@ The JSON object is the only thing on stdout.
 
 In OMP and Pi, `/rerail-start` always runs this picker through the launcher's `rerail start --json`. Each question's
 text shows as a notice, then the question as a select (a text box for a folder or agent ids); the summary shows when
-set-up ends. In a set-up repository the first step starts Rerail and says so. Closing a picker stops set-up and turns
-nothing on. Without a UI (print mode) it shows `rerail start`'s text. Claude Code, Codex and Cursor relay the
-questions as text.
+set-up ends. In a set-up repository the first step starts Rerail and says so, with the dashboard link, as
+`rerail start` does. Closing a picker stops set-up and turns nothing on. Without a UI (print mode) it shows
+`rerail start`'s text. Claude Code, Codex and Cursor relay the questions as text.
 
 </details>
 
@@ -458,6 +458,10 @@ rerail support-bundle    # write a file of diagnostics to attach to an issue, to
 rerail install --remove  # take Rerail out of every coding agent, stop the daemon, back up the database, delete the install
 rerail install --remove --delete-data  # the same, deleting the database, backups, cache, checkouts' session ledgers and the rest of the Rerail home instead
 ```
+
+In a repository set up before, `rerail start` ends on the dashboard link, with or without `--json`. The link is the
+running daemon's, even one of another installed version, which a coding agent's next hook replaces. Where no daemon
+runs, `rerail start` starts the active version's, unless `RERAIL_AUTOSTART` is `0` or `false`.
 
 Every coding agent also gets slash commands, from `/rerail` to `/rerail-bug-report`. Restart the coding agent after
 installing or rebuilding to load them.
