@@ -39,20 +39,27 @@ fn a_document_is_its_path_its_module_and_a_tape_from_nothing() {
     let d = files.answer("bootstrap-l0.rerail", &mut blobs, &mut dir).unwrap();
     assert_eq!((d.path.as_str(), d.module.as_str(), d.before), ("bootstrap-l0.rerail", "bootstrap-l0", None));
     let t = blobs.get(&d.after).unwrap();
-    assert_eq!(t.src.as_str(), crate::L0);
-    assert!(!t.tape.is_empty());
+    assert_eq!(t.text.src.as_str(), crate::L0);
+    assert!(!t.text.tape.is_empty());
 }
 
-/// The tape lies where the parser wrote it: a tape block's room.
+/// The source lies where the read placed it, and the tape where the parser wrote it: both in the document's tape
+/// block, which an operation reads as a slot.
 #[test]
-fn the_parser_writes_the_tape_into_a_tape_block() {
+fn the_source_and_the_tape_lie_in_the_documents_tape_block() {
     let (_, mut files) = root("room");
     let (mut blobs, mut dir) = (Blobs::default(), Directory::default());
     let d = files.answer("bootstrap-l0.rerail", &mut blobs, &mut dir).unwrap();
     let t = blobs.get(&d.after).unwrap();
-    let home::Home::Own(v) = t.tape.home() else { panic!("a tape the parser wrote is its writer's") };
-    let (block, _) = v.place().expect("the tape's bytes in a block");
+    let home::Home::Own(v) = t.text.tape.home() else { panic!("a tape the parser wrote is its writer's") };
+    let (block, at) = v.place().expect("the tape's bytes in a block");
     assert_eq!(block.header().kind, kind::TAPE);
+    assert!(Arc::ptr_eq(block, &dir.block(t.block).unwrap()));
+    assert_eq!(t.tape, (at, t.text.tape.as_bytes().len()));
+    let l = dir.read("t", &[t.block]).unwrap();
+    let b = l.block(0);
+    assert_eq!(&b[t.src.0..t.src.0 + t.src.1], crate::L0.as_bytes(), "the source, read where it lies in the block");
+    assert_eq!(&b[t.tape.0..t.tape.0 + t.tape.1], t.text.tape.as_bytes());
 }
 
 #[test]
@@ -85,7 +92,7 @@ fn an_edited_file_is_read_once_and_placed_once() {
     assert_ne!(edited.after, first.after);
     assert_eq!(files.reads, reads + 1, "read once, placed once (read_placed places what it reads)");
     assert_eq!(files.counts().since(&c0).hashed, 1);
-    assert!(blobs.get(&edited.after).unwrap().src.as_str().contains("b4_added"));
+    assert!(blobs.get(&edited.after).unwrap().text.src.as_str().contains("b4_added"));
 }
 
 #[test]

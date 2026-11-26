@@ -6,37 +6,34 @@
 //! - `kind(d, n, k)`: node `n`'s kind, a symbol;
 //! - `field(d, p, f, c)`: `c` is `p`'s child in field `f`;
 //! - `child(d, p, c, i)`: `c` is `p`'s `i`-th child, counting named children that are no comment;
-//! - `text(d, n, s)`: `n`'s source text, a symbol;
+//! - `text(d, n, s)`: a leaf's source text (an identifier, a variable, an operator, a literal), a symbol;
 //! - `value(d, n, v)`: a literal's value: a string's unescaped contents (a symbol), a number's value;
-//! - `doc(d, path, module)`: the document's path, and the module its load named it (as the engine's `doc` is,
+//! - `doc(d, path, module)`: the document's path, and the module its answer named (as the engine's `doc` is,
 //!   `Document::module`).
+//!
+//! The symbols a view gives are the document's node → symbol facts, which `intern` wrote into its symbols block
+//! (decision 0686, B5): a view reads them there, and never writes the atoms.
 //!
 //! A `TapeView` is one view of one document's tape: a `Table` whose row ids are the tape's node ids. How the views
 //! of many documents are read as one relation, partitioned by document, comes with the traces (rebuild plan, M1 and
 //! M4); nothing here gives a node an id past its own tape.
 
-use crate::sym::Symbols;
+use crate::sym::Names;
+use rerail_delta_twins::intern as syms;
 use rerail_blocks::bistate::{ColumnIndex, ColumnRead, Read, RowId, WordIndex, below};
 use rerail_blocks::table::{Run, Runs, Table};
-use rerail_rr_syntax::tape::{FIELD_NAMES, FIRST_ANONYMOUS, KIND_NAMES, Kind, entry_kind_field};
-use rerail_rr_syntax::tape_format::f16::{F16, Tape16};
+use rerail_rr_syntax::tape_format::f16::Tape16;
 use rerail_rr_syntax::tape_format::home;
 use rerail_rr_syntax::tape_format::tape::Tape as _;
 
-/// A document's text: its source, where the file layer's read placed it (or a source given in memory), and its tape,
-/// as the rr parser wrote it. Neither is copied: a view reads both where they lie.
+/// A document's text: its source, where the file layer's read placed it, and its tape, as the rr parser wrote it, both
+/// in the document's tape block (`files`). Neither is copied: a view reads both where they lie.
 pub struct Text {
     pub src: home::Text,
     pub tape: Tape16,
 }
 
 impl Text {
-    /// `src` parsed, its tape in the parser's own vector (a source in hand: the bootstrap's own files and tests).
-    pub fn parse(src: home::Text) -> Result<Text, String> {
-        let tape = rerail_rr_syntax::tape(src.as_str())?;
-        Text { src, tape }.checked()
-    }
-
     /// `src` parsed, its tape written by the parser in `room` (a tape block's, `files`).
     pub fn parse_in(src: home::Text, room: std::sync::Arc<dyn rerail_rr_syntax::tape_format::VectorRoom>) -> Result<Text, String> {
         let tape = rerail_rr_syntax::tape_in(src.as_str(), room)?;
@@ -46,7 +43,7 @@ impl Text {
     /// Refused when a statement does not parse (the parser writes it as an ERROR leaf, and a file the engine refuses
     /// to run still has a tape).
     fn checked(self) -> Result<Text, String> {
-        let r = Reads::of(&self);
+        let r = reads(&self);
         if let Some(i) = (0..r.len()).find(|&i| r.node(i).0 == rerail_rr_syntax::tape::ERROR) {
             return Err(format!("a statement that does not parse: {:?}", r.text(i)));
         }
@@ -92,166 +89,35 @@ impl View {
     }
 }
 
-/// The kinds' and fields' names as symbols, resolved once, so a view compares ids.
-pub struct Names {
-    kind: Vec<i64>,
-    field: Vec<i64>,
-}
+pub use rerail_delta_twins::tape::Reads;
 
-impl Names {
-    pub fn new(sym: &Symbols) -> Names {
-        Names {
-            kind: KIND_NAMES.iter().map(|n| sym.intern(n)).collect(),
-            field: FIELD_NAMES.iter().map(|n| sym.intern(n)).collect(),
-        }
-    }
-
-    pub fn kind(&self, k: u16) -> i64 {
-        self.kind.get(k as usize).copied().unwrap_or(0)
-    }
-
-    pub fn field(&self, f: u16) -> i64 {
-        self.field.get(f as usize).copied().unwrap_or(0)
-    }
-}
-
-/// A tape's reads: a node's kind, field, children and text, where the tape lies.
-pub struct Reads<'t> {
-    r: F16<'t>,
-    src: &'t str,
-}
-
-impl<'t> Reads<'t> {
-    pub fn of(text: &'t Text) -> Reads<'t> {
-        let r = text
-            .tape
-            .reader(rerail_rr_syntax::tape::lang())
-            .expect("an rr tape read with the rr table");
-        Reads { r, src: text.src.as_str() }
-    }
-
-    pub fn len(&self) -> usize {
-        self.r.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.r.len() == 0
-    }
-
-    /// Node `i`'s kind and field, and whether it is an extra (a comment).
-    pub fn node(&self, i: usize) -> (u16, u16, bool) {
-        let e = self.r.table().entry(self.r.code(i));
-        let (k, f) = entry_kind_field(e);
-        (k, f, e.flags & rerail_rr_syntax::tape_format::CODE_EXTRA != 0)
-    }
-
-    pub fn parent(&self, i: usize) -> Option<usize> {
-        self.r.parent(i)
-    }
-
-    /// Node `i`'s children, in order.
-    pub fn children(&self, i: usize) -> impl Iterator<Item = usize> + '_ {
-        let end = self.r.subtree_end(i);
-        std::iter::successors(self.r.first_child(i), move |&c| self.r.next_sibling(c, end))
-    }
-
-    /// Whether node `i` is counted by `child`: named, and no comment.
-    pub fn counted(&self, i: usize) -> bool {
-        let (k, _, extra) = self.node(i);
-        !extra && k < FIRST_ANONYMOUS
-    }
-
-    /// Node `i`'s source span: its first byte, and the byte past its last.
-    pub fn start(&self, i: usize) -> u32 {
-        self.r.start(i) as u32
-    }
-
-    pub fn end(&self, i: usize) -> u32 {
-        self.r.end(i) as u32
-    }
-
-    /// Node `i`'s source text.
-    pub fn text(&self, i: usize) -> &'t str {
-        &self.src[self.start(i) as usize..self.end(i) as usize]
-    }
-
-    /// A string's unescaped contents, when node `i` is one.
-    fn string(&self, i: usize) -> Option<String> {
-        if self.node(i).0 != Kind::String as u16 {
-            return None;
-        }
-        let body = self
-            .text(i)
-            .strip_prefix('"')
-            .and_then(|b| b.strip_suffix('"'))?;
-        rerail_rr_syntax::syntax::unescape(body).ok()
-    }
-
-    /// A number's value, when node `i` is one.
-    fn number(&self, i: usize) -> Option<i64> {
-        (self.node(i).0 == Kind::Number as u16)
-            .then(|| self.text(i).parse::<i64>().ok())
-            .flatten()
-    }
-
-    /// Whether node `i` has a `value`.
-    pub fn has_value(&self, i: usize) -> bool {
-        self.number(i).is_some() || self.string(i).is_some()
-    }
-
-    /// A literal's value: a string's unescaped contents, interned; a number's value. `None` for any other node.
-    pub fn value(&self, i: usize, sym: &Symbols) -> Option<i64> {
-        self.number(i)
-            .or_else(|| self.string(i).map(|s| sym.intern(&s)))
-    }
-
-    /// Node `c`'s place among its parent `p`'s counted children.
-    pub fn index(&self, p: usize, c: usize) -> i64 {
-        self.children(p)
-            .filter(|&x| self.counted(x))
-            .take_while(|&x| x != c)
-            .count() as i64
-    }
+/// A document's reads, where its tape and source lie.
+pub fn reads(text: &Text) -> Reads<'_> {
+    Reads::new(text.tape.reader(rerail_rr_syntax::tape::lang()).expect("an rr tape read with the rr table"), text.src.as_str())
 }
 
 /// One view of one document's tape: a `Table` read where the tape lies, its row ids the tape's node ids.
 pub struct TapeView<'t> {
     pub view: View,
-    /// The document's id, and its path and module, as symbols.
+    /// The document's id.
     d: i64,
-    path: i64,
-    module: i64,
     reads: Reads<'t>,
-    sym: &'t Symbols,
+    /// The document's symbols block (`intern`'s node → symbol facts), where it lies.
+    syms: &'t [u8],
     names: &'t Names,
 }
 
 impl<'t> TapeView<'t> {
-    pub fn new(
-        view: View,
-        d: i64,
-        path: i64,
-        module: i64,
-        text: &'t Text,
-        sym: &'t Symbols,
-        names: &'t Names,
-    ) -> Self {
-        TapeView {
-            view,
-            d,
-            path,
-            module,
-            reads: Reads::of(text),
-            sym,
-            names,
-        }
+    pub fn new(view: View, d: i64, text: &'t Text, syms: &'t [u8], names: &'t Names) -> Self {
+        TapeView { view, d, reads: reads(text), syms, names }
     }
 
     /// Whether node `n` is a row of the view.
     fn live_at(&self, n: usize) -> bool {
         let r = &self.reads;
         match self.view {
-            View::Node | View::Kind | View::Text => true,
+            View::Node | View::Kind => true,
+            View::Text => r.is_leaf(n),
             View::Field => r.node(n).1 != 0 && r.parent(n).is_some(),
             View::Child => r.counted(n) && r.parent(n).is_some(),
             View::Value => r.has_value(n),
@@ -264,17 +130,17 @@ impl<'t> TapeView<'t> {
         let r = &self.reads;
         match (self.view, c) {
             (_, 0) => self.d,
-            (View::Doc, 1) => self.path,
-            (View::Doc, 2) => self.module,
+            (View::Doc, 1) => i64::from(syms::doc_syms(self.syms).0),
+            (View::Doc, 2) => i64::from(syms::doc_syms(self.syms).1),
             (View::Node, 2) | (View::Kind, 2) => self.names.kind(r.node(n).0),
             (View::Node, 3) => i64::from(r.start(n)),
             (View::Node, 4) => i64::from(r.end(n)),
             (View::Field, 1) | (View::Child, 1) => r.parent(n).map_or(-1, |x| x as i64),
             (View::Field, 2) => self.names.field(r.node(n).1),
             (View::Child, 3) => r.parent(n).map_or(-1, |x| r.index(x, n)),
-            // A symbol made of the node's text: a derived fact, written once into the symbols' block.
-            (View::Text, 2) => self.sym.intern(r.text(n)),
-            (View::Value, 2) => r.value(n, self.sym).expect("a literal's value"),
+            // The node's symbols, as `intern` wrote them: read, never made here.
+            (View::Text, 2) => i64::from(syms::text(self.syms, n)),
+            (View::Value, 2) => r.number(n).unwrap_or_else(|| i64::from(syms::value(self.syms, n))),
             _ => n as i64,
         }
     }

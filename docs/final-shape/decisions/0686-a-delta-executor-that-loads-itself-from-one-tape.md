@@ -1000,3 +1000,36 @@ observer's counts since show no byte read (one answer reused on its stat); an ed
 the tape lies in a tape block; a cold answer names the path and its module. The shape script's `B4` section (and its
 file rule: a test may write the files it answers, and reads none). Clippy over slabs, tape_format, rr_syntax and
 delta_exec, clean.
+
+**B5: symbols, written by `intern` alone** (2026-11-26; `delta_exec::intern`, `delta_exec::sym`, twins
+`rerail_delta_twins::{intern, tape, k0}`).
+
+- The atoms block is a directory block (`sym::Atoms`): an atoms structure laid out inside it (`blocks::atoms::
+  lay_out_in`), read and appended where it lies, from a pinned slot's bytes (`find_in`, `name_in`, `count_in`,
+  `append_in`, sharing `AtomsW::append`'s code). `Symbols`, a locked writer every read could intern through, is gone.
+- `intern` is an operation (slots: the document's tape block, read; the atoms, read-write; the document's symbols
+  block, read-write), its twin the reference. One item, the document: the language's names and K-form's step kinds,
+  the answer's path and module, then each node in node order: a leaf's text (an identifier, a variable, an operator,
+  a literal) and a string's unescaped value. Its output is the document's node → symbol relation, laid out by node id
+  in the symbols block (the document is its partition, L9). `Interned` keeps each document's symbols block with the
+  blob it came from: an unchanged tape's is the one it had, and `intern` does not run.
+- The views read the symbols block: `text` is a leaf's symbol (a clause's whole text is no longer a symbol: B5 interns
+  identifiers and strings), `value` a string's symbol or a number's value, `doc` the path's and the module's.
+  `Names` finds the kinds' and fields' symbols; nothing in a read interns.
+- The walk (L1's reading, B6's twin) moved into the twins (`k0::walk`), reading a document's tape and source where
+  they lie (format 16's reader over a slot's bytes, `f16::read_in_place`, added to `tape_format`), its symbols from
+  the symbols block and its names from the atoms. The twins' crate depends on blocks and the rr parser's tape reads
+  (`rerail-rr-syntax`), the pair B§7 names for the executor; the shape script holds it to those two.
+- A change to B4 as built: an operation reads a document's source and tape through one slot, and a residency slab is
+  not a directory block, so the observer's placed read now places the source into a room of the document's tape
+  block (`files::place_in`), where the parser then writes the tape; the slabs' placer is not used here (it stays the
+  one placer, in `rerail-slabs`, for `lang`). When a device reads tapes, the tape block is what the slab is for it.
+
+Checks (Relax, local, `rerail-delta-exec --lib` 61 of 61): the same text gets the same symbol in a later run, and a
+new text a new id past the first run's; an unchanged tape interns nothing (no run of `intern`, the atoms' count as it
+was, the same symbols block); every row of every view of l0 read, and the atoms' count as it was. The reads that
+cannot write: `tape.rs:142-143` (`text` and `value` read `syms::text` and `syms::value`), `sym.rs:42,47,53`
+(`find_in`, `name_in`, `count_in` over a read launch), `rerail_delta_twins::k0::walk` (`find_in`, `syms::text`,
+`syms::value`); the one writer, `rerail_delta_twins/src/intern.rs` (`put`, `append_in`). `k0_pass_rows_by_hand` and
+`l0_is_k0` (14 rules) pass with symbols read, not made. The shape script's `B5` section; clippy over blocks, twins,
+tape_format and delta_exec, clean.

@@ -7,12 +7,15 @@ description = "The Rust twins of the delta executor's operations (decision 0686,
 
 [features]
 default = []
-test-hooks = ["rerail-blocks/test-hooks"]
+test-hooks = ["rerail-blocks/test-hooks", "rerail-rr-syntax/test-hooks"]
 
 [dependencies]
 # The blocks a twin reads and writes in place, and their formats (references, descriptor tables, layers): one
 # definition, there.
 rerail-blocks = { path = "../blocks" }
+# A `.rerail` tape's reads in place (format 16's, with the rr language's table): what `intern` and `k0_pass` read in
+# their tape slot (decision 0686, B5, B6). The executor's crate depends on the same two (B§7).
+rerail-rr-syntax = { path = "../rr_syntax" }
 
 [dev-dependencies]
 rerail-delta-twins = { path = ".", features = ["test-hooks"] }

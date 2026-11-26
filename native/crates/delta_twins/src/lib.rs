@@ -32,8 +32,11 @@ use rerail_blocks::gens::Table;
 use rerail_blocks::region::BlockPin;
 
 pub mod cache;
+pub mod intern;
+pub mod k0;
 pub mod samples;
 pub mod sort;
+pub mod tape;
 pub mod trace;
 
 /// One slot's block as a twin sees it: pinned by the executor, to read or to write (`BlockPin`). A twin reads a

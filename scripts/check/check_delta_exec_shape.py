@@ -110,9 +110,11 @@ def b1(failures: list) -> None:
     manifest = (TWINS / "Cargo.toml").read_text()
     deps = manifest.split("[dependencies]", 1)[1] if "[dependencies]" in manifest else ""
     deps = re.split(r"^\[", deps, flags=re.M)[0]
+    # Blocks, and the rr parser's tape reads in place (format 16's, with its language's table): what `intern` and
+    # `k0_pass` read in their tape slot (B5, B6), the pair B§7 names for the executor's crate.
     for name in re.findall(r"^\s*([\w-]+)\s*=", deps, flags=re.M):
-        if name != "rerail-blocks":
-            failures.append(f"{(TWINS / 'Cargo.toml').relative_to(ROOT)}: the twins' crate depends on {name} (blocks alone)")
+        if name not in ("rerail-blocks", "rerail-rr-syntax"):
+            failures.append(f"{(TWINS / 'Cargo.toml').relative_to(ROOT)}: the twins' crate depends on {name} (blocks and the tape's reads alone)")
     forbidden = [
         (r"\bstatic\b", "a static (state outliving a call)"),
         (r"thread_local|\bOnce\w*|\bLazy\w*|lazy_static|once_cell", "a thread-local or a once/lazy cell (state outliving a call)"),
@@ -250,7 +252,7 @@ def b2(failures: list) -> None:
         # B4: a document is answered through the engine's file layer (the observer, the slabs' placer), in `files`
         # alone.
         if path.name in ("files.rs", "files_tests.rs"):
-            allowed |= {"rerail_observe", "rerail_slabs"}
+            allowed.add("rerail_observe")
         # Its tests narrow the observer's racy window, through the context's switches, as the engine's do.
         if path.name == "files_tests.rs":
             allowed.add("rerail_context")
@@ -403,7 +405,8 @@ def b4(failures: list) -> None:
         return
     text = strip_rust(p.read_text())
     for pattern, why in ((r"\.digest_step\(", "the observer's digest step"), (r"\.digest_read\(", "the read recorded"),
-                         (r"read_placed\(&rerail_slabs::placed::placer\)", "the placed read, through the slabs' placer"),
+                         (r"\.read_placed\(&place\)", "the placed read, through a placer"),
+                         (r"fn place_in\(", "the placer: a room of the document's tape block"),
                          (r"Text::parse_in\(", "the tape written by the parser into a room"),
                          (r"kind::TAPE", "a tape block"), (r"blobs\.house\(", "a blob named by its content")):
         if not re.search(pattern, text):
@@ -414,6 +417,18 @@ def b4(failures: list) -> None:
         failures.append("tape.rs: Text holds a String (B4: its source where the file layer placed it)")
     if (ROOT / "native/crates/lang/src/code_rule_dsl/tape/placed.rs").read_text().count("fn place(") > 1:
         failures.append("lang's placed.rs: a placer of its own beside the slabs' (one definition, rerail_slabs::placed)")
+
+
+def b5(failures: list) -> None:
+    """B5: symbols. One operation writes the atoms, `intern` (its twin, the one caller of `append_in`); the views read
+    a document's symbols block (`intern`'s node → symbol facts) and never intern; the walk reads them too."""
+    for path in sorted((CRATE / "src").rglob("*.rs")) + sorted((TWINS / "src").rglob("*.rs")):
+        code = strip_rust(path.read_text())
+        if path != TWINS / "src/intern.rs":
+            hits(path, code, r"\bappend_in\(|\bAtomsW\b|\.append\(", "an atoms write outside `intern` (B5: one writer)", failures)
+        hits(path, code, r"\bSymbols\b|\.intern\(", "a symbol made inside a read (B5: `intern` writes them, reads read)", failures)
+    if "pub static INTERN: Signature" not in (CRATE / "src/intern.rs").read_text():
+        failures.append("intern.rs: intern is not an operation (B5)")
 
 
 def reach(failures: list) -> None:
@@ -509,14 +524,14 @@ def e1(failures: list) -> None:
 
 def main() -> int:
     failures: list = []
-    for check in (m0, b1, b2, axes, bounds, cache, contract, b4, reach, e1):
+    for check in (m0, b1, b2, axes, bounds, cache, contract, b4, b5, reach, e1):
         check(failures)
     for f in failures:
         print(f)
     if failures:
         print(f"{len(failures)} shape check(s) failed (decision 0686, the rebuild plan)")
         return 1
-    print("delta_exec shape: every check holds (M0, B1, B2, axes, bounds, cache, contract, B4, reach, E1)")
+    print("delta_exec shape: every check holds (M0, B1, B2, axes, bounds, cache, contract, B4, B5, reach, E1)")
     return 0
 
 

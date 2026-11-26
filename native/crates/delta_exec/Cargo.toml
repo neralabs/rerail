@@ -7,7 +7,7 @@ description = "A delta executor that loads itself from one tape (decision 0686):
 
 [features]
 default = []
-test-hooks = ["rerail-blocks/test-hooks", "rerail-delta-twins/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-observe/test-hooks", "rerail-slabs/test-hooks"]
+test-hooks = ["rerail-blocks/test-hooks", "rerail-delta-twins/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-observe/test-hooks"]
 
 [dependencies]
 # Relations, bistates and their change operations (decision 0678): every fact this executor keeps lies in them.
@@ -18,9 +18,8 @@ rerail-delta-twins = { path = "../delta_twins" }
 # through it (`rerail_rr_syntax::tape_format`), so this crate depends on blocks and the rr parser alone (B§7).
 rerail-rr-syntax = { path = "../rr_syntax" }
 # The engine's file layer (B4): the observer answers a path (its digest step, under the racy rule) and reads a changed
-# file once, placed (`read_placed`), into the home the slabs' placer makes (`rerail_slabs::placed`).
+# file once, placed (`read_placed`), into a room of the document's tape block.
 rerail-observe = { path = "../observe" }
-rerail-slabs = { path = "../slabs" }
 # A blob's name, its content's sha256 (P§12 item 1), as the store names its objects.
 sha2 = "0.11"
 

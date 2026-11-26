@@ -1,55 +1,75 @@
-//! The symbol table: every string a program names (a relation, a variable, a kind, a string constant) as an id, in
-//! one atoms block (decision 0401). It is the one program global every level shares (decision 0686): K-form rows and
-//! facts hold ids, and an id names the same string at every level.
+//! The symbols (decision 0686, B5): every string a program names (a relation, a variable, a kind, a string constant)
+//! as an id, in one atoms block (decision 0401), the one program global every level shares: K-form rows and facts
+//! hold ids, and an id names the same string at every level and in every run.
+//!
+//! The atoms block is a directory block, written by one operation only, `intern` (read-write), which adds a changed
+//! document's identifiers and strings. Everything else reads it where it lies: `find` and `name` here, the views
+//! through a document's symbols block, never interning.
 
-use rerail_blocks::atoms::{AtomRead, AtomsW};
-use std::sync::Mutex;
+use crate::dir::{BlockId, Directory};
+use rerail_blocks::atoms::{atoms_bytes, count_in, find_in, lay_out_in, name_in};
+use rerail_blocks::block::kind;
+use rerail_blocks::maps::hash_bytes;
+use rerail_rr_syntax::tape::{FIELD_NAMES, KIND_NAMES};
 
-/// Strings to ids and back, in an atoms block. Ids start at 1, so 0 is never a symbol.
-pub struct Symbols {
-    atoms: Mutex<AtomsW>,
-}
+/// How many atoms, and string bytes, the block has room for (address space only: nothing is resident until written).
+const CAP: u32 = 1 << 20;
+const BYTES_CAP: u64 = 64 << 20;
 
-impl Default for Symbols {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// The atoms block, by its directory id. Ids start at 1, so 0 is never a symbol.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Atoms(pub BlockId);
 
-impl Symbols {
-    pub fn new() -> Symbols {
-        Symbols {
-            atoms: Mutex::new(AtomsW::anon(1, 1 << 20, 64 << 20)),
-        }
-    }
-
-    /// The id of `s`, made when it has none.
-    pub fn intern(&self, s: &str) -> i64 {
-        let h = rerail_blocks::maps::hash_bytes(s.as_bytes());
-        let mut a = self.atoms.lock().expect("the symbols");
-        if let Some(id) = a.find(s, h) {
-            return i64::from(id);
-        }
-        i64::from(a.append(s, h).expect("the symbols' block is full"))
+impl Atoms {
+    /// An empty atoms block.
+    pub fn new(dir: &mut Directory) -> Atoms {
+        let reserve = atoms_bytes(CAP, BYTES_CAP) + (1 << 20);
+        let id = dir.make_capped(kind::ATOMS, 8, reserve, reserve);
+        lay_out_in(&dir.block(id).expect("just made"), 1, CAP, BYTES_CAP);
+        Atoms(id)
     }
 
     /// The id of `s`, when it has one.
-    pub fn find(&self, s: &str) -> Option<i64> {
-        let h = rerail_blocks::maps::hash_bytes(s.as_bytes());
-        self.atoms
-            .lock()
-            .expect("the symbols")
-            .find(s, h)
-            .map(i64::from)
+    pub fn find(self, dir: &Directory, s: &str) -> Option<i64> {
+        let l = dir.read("atoms", &[self.0]).ok()?;
+        find(l.block(0), s)
     }
 
     /// The string of `id`, for messages and tests.
-    pub fn name(&self, id: i64) -> String {
-        let a = self.atoms.lock().expect("the symbols");
+    pub fn name(self, dir: &Directory, id: i64) -> String {
+        let Ok(l) = dir.read("atoms", &[self.0]) else { return format!("#{id}") };
         // copy: not block data (a message's text)
-        u32::try_from(id)
-            .ok()
-            .and_then(|i| a.str(i))
-            .map_or_else(|| format!("#{id}"), str::to_owned)
+        u32::try_from(id).ok().and_then(|i| name_in(l.block(0), i)).map_or_else(|| format!("#{id}"), str::to_owned)
+    }
+
+    /// How many atoms it holds.
+    pub fn count(self, dir: &Directory) -> u32 {
+        dir.read("atoms", &[self.0]).map_or(0, |l| count_in(l.block(0)))
+    }
+}
+
+/// The id of `s` in the atoms block `atoms` (its bytes, where they lie), when it has one.
+pub fn find(atoms: &[u8], s: &str) -> Option<i64> {
+    find_in(atoms, s, hash_bytes(s.as_bytes())).map(i64::from)
+}
+
+/// The kinds' and fields' names as symbols, found once in the atoms (`intern` adds them), so a view compares ids.
+pub struct Names {
+    kind: Vec<i64>,
+    field: Vec<i64>,
+}
+
+impl Names {
+    pub fn new(atoms: &[u8]) -> Names {
+        let ids = |names: &[&str]| names.iter().map(|n| find(atoms, n).unwrap_or(0)).collect();
+        Names { kind: ids(KIND_NAMES), field: ids(FIELD_NAMES) }
+    }
+
+    pub fn kind(&self, k: u16) -> i64 {
+        self.kind.get(k as usize).copied().unwrap_or(0)
+    }
+
+    pub fn field(&self, f: u16) -> i64 {
+        self.field.get(f as usize).copied().unwrap_or(0)
     }
 }

@@ -12,11 +12,13 @@
 //! - `trace`: the program trace (B2), on the host as handles only: a chain of frozen layer blocks, each written by
 //!   `consolidate` (or rolled up by `merge`) into a block of its own over the one below; its two states and the
 //!   change between them read where the layers lie (`rerail_blocks::relation::View::chain`, `Bistate`);
-//! - `sym`: the symbol table, the one program global;
+//! - `files`: a document through the engine's file layer (B4), its source and tape in its tape block, a blob;
+//! - `sym`: the atoms block, the one program global, and `intern` (B5), its one writer: a changed document's
+//!   identifiers and strings, with its node → symbol facts;
 //! - `tape`: a document's text and its views (`kind`, `field`, `child`, `text`, `value`, `doc`), read where the
-//!   tape lies;
+//!   tape and its symbols lie;
 //! - `kform`: K-form's relations;
-//! - `k0`: L1's walk of a K0 tape into K-form rows.
+//! - `k0`: L1's walk of a K0 tape into K-form rows (the twins' `k0::walk`).
 //!
 //! Files are not read here: a document is answered through the engine's file layer (`files`: the observer, its
 //! placed read into the placer's home, the rr parser's tape written into a tape block, a blob named by its content),
@@ -29,6 +31,7 @@ pub mod cache;
 pub mod contract;
 pub mod dir;
 pub mod files;
+pub mod intern;
 pub mod k0;
 pub mod kform;
 pub mod op;
@@ -39,15 +42,5 @@ pub mod trace;
 #[cfg(test)]
 mod tests;
 
-use std::sync::Arc;
-use tape::Text;
-
 /// `bootstrap-l0.rerail`: the reader of rules (P2) and the rule that orders the bootstrap's modules.
 pub const L0: &str = include_str!("../rerail/bootstrap-l0.rerail");
-
-/// A text parsed, for callers holding a source.
-pub fn text(src: &str) -> Arc<Text> {
-    // copy: load (a source in hand: a test's literal, the bootstrap's own file)
-    let home = rerail_rr_syntax::tape_format::home::Home::Own(rerail_rr_syntax::tape_format::Vector::from(src.as_bytes()));
-    Arc::new(Text::parse(rerail_rr_syntax::tape_format::home::Text::new(home).expect("UTF-8")).expect("an rr file that parses"))
-}
