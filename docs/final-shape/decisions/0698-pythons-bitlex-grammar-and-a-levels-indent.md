@@ -379,3 +379,13 @@ statements and blocks end.
 
     This is the first step to one pass over the file. The walk's masks, which the string escapes read, and stage 1
     still run before the loop.
+69. **The token loop writes the regions' masks as it reads each region.** These are the masks the walk makes: each
+    region's opener `o_K` and fill `f_K`, and `hidden`. They are written with the walk's own writes, in `lw_…`
+    vectors (`Gen::walk_writes`, `with_walk_writes`). A grammar gets them when every region is read by a row (`read`,
+    or `read … parts`), none has an `else` form, and it is not lexed in the one pass (0619).
+    - `hidden` ends at the region's own last, not at the token's. A template's `${` is the token's closer, two bytes,
+      but the region closes at its `$`.
+    - A test build asserts each `lw_…` equals the walk's mask on every file not refused.
+
+    This is the second step to one pass. Next, the regional escapes and tier 2's regional masks are made from these
+    in the lane, and the walk runs only in test builds.

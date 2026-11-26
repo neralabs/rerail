@@ -2364,6 +2364,37 @@ pub fn lex(src: &[u8]) -> Lexed {
     let mut depth = 0usize;
     // The closer the region token read ends at, where a fill the loop keeps opens after it, or a read resumes a string's.
     let mut close: usize;
+    // The regions' masks as the walk makes them (`regions`), written as the loop reads each region: its opener, its
+    // fill to its closer, and the bytes it hides.
+    let mut lw_hidden = vec![0u64; nw];
+    let mut lw_o_cmt = vec![0u64; nw];
+    let mut lw_f_cmt = vec![0u64; nw];
+    let mut lw_o_s1 = vec![0u64; nw];
+    let mut lw_f_s1 = vec![0u64; nw];
+    let mut lw_o_d1 = vec![0u64; nw];
+    let mut lw_f_d1 = vec![0u64; nw];
+    let mut lw_o_s3 = vec![0u64; nw];
+    let mut lw_f_s3 = vec![0u64; nw];
+    let mut lw_o_d3 = vec![0u64; nw];
+    let mut lw_f_d3 = vec![0u64; nw];
+    let mut lw_o_fs1 = vec![0u64; nw];
+    let mut lw_f_fs1 = vec![0u64; nw];
+    let mut lw_o_fd1 = vec![0u64; nw];
+    let mut lw_f_fd1 = vec![0u64; nw];
+    let mut lw_o_fs3 = vec![0u64; nw];
+    let mut lw_f_fs3 = vec![0u64; nw];
+    let mut lw_o_fd3 = vec![0u64; nw];
+    let mut lw_f_fd3 = vec![0u64; nw];
+    let mut lw_o_ts1 = vec![0u64; nw];
+    let mut lw_f_ts1 = vec![0u64; nw];
+    let mut lw_o_td1 = vec![0u64; nw];
+    let mut lw_f_td1 = vec![0u64; nw];
+    let mut lw_o_ts3 = vec![0u64; nw];
+    let mut lw_f_ts3 = vec![0u64; nw];
+    let mut lw_o_td3 = vec![0u64; nw];
+    let mut lw_f_td3 = vec![0u64; nw];
+    let mut lw_o_spec = vec![0u64; nw];
+    let mut lw_f_spec = vec![0u64; nw];
     // `o_s1` for tier 2, written over each region token.
     let mut fw_o_s1 = vec![0u64; nw];
     // `o_d1` for tier 2, written over each region token.
@@ -2852,6 +2883,9 @@ pub fn lex(src: &[u8]) -> Lexed {
                         // `rd1_close`, for tier 2
                         clear(&mut fw_rd1_close, s, s);
                         clear(&mut fw_rd1_close, c, last);
+                        set(&mut lw_o_cmt, s, s + 1);
+                        set(&mut lw_f_cmt, s, c);
+                        set(&mut lw_hidden, s + 1, c);
                         last
                     };
                     let l = l.max(s);
@@ -2874,6 +2908,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     // `string_start`: read s1 parts, to its closer
                     let l = match first_bit(&m_sq_c, s + 1) {
                         Some(c) => {
+                            let last = {
                             let last = if bit(&m_quote, c) { c + 0 } else { c + 0 };
                             // a template string
                             if bit(&t64, s) {
@@ -2903,6 +2938,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `rd1_close`, for tier 2
                             put(&mut fw_rd1_close, &t132, s, s);
                             last
+                        };
+                            set(&mut lw_o_s1, s, s + 1);
+                            set(&mut lw_f_s1, s, c);
+                            set(&mut lw_hidden, s + 1, (c + 0) + 1);
+                            last
                         },
                         None => {
                             refused = true;
@@ -2917,6 +2957,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     // `string_start`: read d1 parts, to its closer
                     let l = match first_bit(&m_dq_c, s + 1) {
                         Some(c) => {
+                            let last = {
                             let last = if bit(&m_quote, c) { c + 0 } else { c + 0 };
                             // a template string
                             if bit(&t64, s) {
@@ -2946,6 +2987,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `rd1_close`, for tier 2
                             put(&mut fw_rd1_close, &t133, s, s);
                             last
+                        };
+                            set(&mut lw_o_d1, s, s + 1);
+                            set(&mut lw_f_d1, s, c);
+                            set(&mut lw_hidden, s + 1, (c + 0) + 1);
+                            last
                         },
                         None => {
                             refused = true;
@@ -2960,6 +3006,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     // `string_start`: read s3 parts, to its closer
                     let l = match first_bit(&m_sq3_c, s + 1) {
                         Some(c) => {
+                            let last = {
                             let last = if bit(&m_quote, c) { c + 2 } else { c + 2 };
                             // a template string
                             if bit(&t64, s) {
@@ -2994,6 +3041,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `rd1_close`, for tier 2
                             put(&mut fw_rd1_close, &t132, s, s);
                             last
+                        };
+                            set(&mut lw_o_s3, s, s + 1);
+                            set(&mut lw_f_s3, s, c);
+                            set(&mut lw_hidden, s + 1, (c + 2) + 1);
+                            last
                         },
                         None => {
                             refused = true;
@@ -3008,6 +3060,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     // `string_start`: read d3 parts, to its closer
                     let l = match first_bit(&m_dq3_c, s + 1) {
                         Some(c) => {
+                            let last = {
                             let last = if bit(&m_quote, c) { c + 2 } else { c + 2 };
                             // a template string
                             if bit(&t64, s) {
@@ -3042,6 +3095,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `rd1_close`, for tier 2
                             put(&mut fw_rd1_close, &t133, s, s);
                             last
+                        };
+                            set(&mut lw_o_d3, s, s + 1);
+                            set(&mut lw_f_d3, s, c);
+                            set(&mut lw_hidden, s + 1, (c + 2) + 1);
+                            last
                         },
                         None => {
                             refused = true;
@@ -3056,6 +3114,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     // `string_start`: read fs1 parts, to its closer
                     let l = match first_bit(&t13, s + 1) {
                         Some(c) => {
+                            let last = {
                             if bit(&m_i_open, c) {
                                 if template != usize::MAX && depth < 4 {
                                     frames[depth] = (template, level, held);
@@ -3099,6 +3158,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                             put(&mut fw_rd1_close, &t132, s, s);
                             last
                         }
+                        };
+                            set(&mut lw_o_fs1, s, s + 1);
+                            set(&mut lw_f_fs1, s, c);
+                            set(&mut lw_hidden, s + 1, (c + 0) + 1);
+                            last
                         },
                         None => {
                             refused = true;
@@ -3113,6 +3177,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     // `string_start`: read fd1 parts, to its closer
                     let l = match first_bit(&t15, s + 1) {
                         Some(c) => {
+                            let last = {
                             if bit(&m_i_open, c) {
                                 if template != usize::MAX && depth < 4 {
                                     frames[depth] = (template, level, held);
@@ -3156,6 +3221,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                             put(&mut fw_rd1_close, &t133, s, s);
                             last
                         }
+                        };
+                            set(&mut lw_o_fd1, s, s + 1);
+                            set(&mut lw_f_fd1, s, c);
+                            set(&mut lw_hidden, s + 1, (c + 0) + 1);
+                            last
                         },
                         None => {
                             refused = true;
@@ -3170,6 +3240,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     // `string_start`: read fs3 parts, to its closer
                     let l = match first_bit(&t17, s + 1) {
                         Some(c) => {
+                            let last = {
                             if bit(&m_i_open, c) {
                                 if template != usize::MAX && depth < 4 {
                                     frames[depth] = (template, level, held);
@@ -3218,6 +3289,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                             put(&mut fw_rd1_close, &t132, s, s);
                             last
                         }
+                        };
+                            set(&mut lw_o_fs3, s, s + 1);
+                            set(&mut lw_f_fs3, s, c);
+                            set(&mut lw_hidden, s + 1, (if bit(&m_i_open, c) { c + 0 } else { c + 2 }) + 1);
+                            last
                         },
                         None => {
                             refused = true;
@@ -3232,6 +3308,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     // `string_start`: read fd3 parts, to its closer
                     let l = match first_bit(&t19, s + 1) {
                         Some(c) => {
+                            let last = {
                             if bit(&m_i_open, c) {
                                 if template != usize::MAX && depth < 4 {
                                     frames[depth] = (template, level, held);
@@ -3280,6 +3357,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                             put(&mut fw_rd1_close, &t133, s, s);
                             last
                         }
+                        };
+                            set(&mut lw_o_fd3, s, s + 1);
+                            set(&mut lw_f_fd3, s, c);
+                            set(&mut lw_hidden, s + 1, (if bit(&m_i_open, c) { c + 0 } else { c + 2 }) + 1);
+                            last
                         },
                         None => {
                             refused = true;
@@ -3295,6 +3377,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     let l = match first_bit(&t13, s + 1) {
                         Some(c) => {
                             close = c;
+                            let last = {
                             let last = if bit(&m_quote, c) { c + 0 } else if bit(&m_i_open, c) { c + 0 } else { c + 0 };
                             // a line break in a one-line string that no backslash escapes
                             if any_in(&t69, s + 1, c - 1) {
@@ -3321,6 +3404,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                             put(&mut fw_rd1_closes1, &m_quote, c, last);
                             // `rd1_open`, for tier 2
                             set(&mut fw_rd1_open, s, s + 1);
+                            last
+                        };
+                            set(&mut lw_o_ts1, s, s + 1);
+                            set(&mut lw_f_ts1, s, c);
+                            set(&mut lw_hidden, s + 1, (c + 0) + 1);
                             last
                         },
                         None => {
@@ -3363,6 +3451,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     let l = match first_bit(&t15, s + 1) {
                         Some(c) => {
                             close = c;
+                            let last = {
                             let last = if bit(&m_quote, c) { c + 0 } else if bit(&m_i_open, c) { c + 0 } else { c + 0 };
                             // a line break in a one-line string that no backslash escapes
                             if any_in(&t69, s + 1, c - 1) {
@@ -3389,6 +3478,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                             put(&mut fw_rd1_closes1, &m_quote, c, last);
                             // `rd1_open`, for tier 2
                             set(&mut fw_rd1_open, s, s + 1);
+                            last
+                        };
+                            set(&mut lw_o_td1, s, s + 1);
+                            set(&mut lw_f_td1, s, c);
+                            set(&mut lw_hidden, s + 1, (c + 0) + 1);
                             last
                         },
                         None => {
@@ -3431,6 +3525,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     let l = match first_bit(&t17, s + 1) {
                         Some(c) => {
                             close = c;
+                            let last = {
                             let last = if bit(&m_quote, c) { c + 2 } else if bit(&m_i_open, c) { c + 0 } else { if bit(&m_i_open, c) { c + 0 } else { c + 2 } };
                             // a carriage return in a string
                             if any_in(&m_cr, s + 1, c - 1) {
@@ -3452,6 +3547,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                             put(&mut fw_rd1_closes0, &m_quote, c, c);
                             // `rd1_open`, for tier 2
                             set(&mut fw_rd1_open, s, s + 1);
+                            last
+                        };
+                            set(&mut lw_o_ts3, s, s + 1);
+                            set(&mut lw_f_ts3, s, c);
+                            set(&mut lw_hidden, s + 1, (if bit(&m_i_open, c) { c + 0 } else { c + 2 }) + 1);
                             last
                         },
                         None => {
@@ -3494,6 +3594,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     let l = match first_bit(&t19, s + 1) {
                         Some(c) => {
                             close = c;
+                            let last = {
                             let last = if bit(&m_quote, c) { c + 2 } else if bit(&m_i_open, c) { c + 0 } else { if bit(&m_i_open, c) { c + 0 } else { c + 2 } };
                             // a carriage return in a string
                             if any_in(&m_cr, s + 1, c - 1) {
@@ -3515,6 +3616,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                             put(&mut fw_rd1_closes0, &m_quote, c, c);
                             // `rd1_open`, for tier 2
                             set(&mut fw_rd1_open, s, s + 1);
+                            last
+                        };
+                            set(&mut lw_o_td3, s, s + 1);
+                            set(&mut lw_f_td3, s, c);
+                            set(&mut lw_hidden, s + 1, (if bit(&m_i_open, c) { c + 0 } else { c + 2 }) + 1);
                             last
                         },
                         None => {
@@ -3556,6 +3662,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     // `spec_text`: read spec
                     let l = match first_bit(&t20, s + 1) {
                         Some(c) => {
+                            let last = {
                             let last = c + 0;
                             // an empty format spec
                             if bit(&t20, s) {
@@ -3571,6 +3678,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                             clear(&mut fw_rd0_close, s, s);
                             // `rd1_close`, for tier 2
                             clear(&mut fw_rd1_close, s, s);
+                            last
+                        };
+                            set(&mut lw_o_spec, s, s + 1);
+                            set(&mut lw_f_spec, s, c);
+                            set(&mut lw_hidden, s + 1, last + 1);
                             last
                         },
                         None => {
@@ -3663,6 +3775,38 @@ pub fn lex(src: &[u8]) -> Lexed {
         b += 1;
     }
     let _ = (from, from_record, before, pending);
+    #[cfg(feature = "test-hooks")]
+    if !refused {
+        assert!(lw_hidden == m_hidden, "the loop's `hidden` is the walk's");
+        assert!(lw_o_cmt == m_o_cmt, "the loop's `o_cmt` is the walk's");
+        assert!(lw_f_cmt == m_f_cmt, "the loop's `f_cmt` is the walk's");
+        assert!(lw_o_s1 == m_o_s1, "the loop's `o_s1` is the walk's");
+        assert!(lw_f_s1 == m_f_s1, "the loop's `f_s1` is the walk's");
+        assert!(lw_o_d1 == m_o_d1, "the loop's `o_d1` is the walk's");
+        assert!(lw_f_d1 == m_f_d1, "the loop's `f_d1` is the walk's");
+        assert!(lw_o_s3 == m_o_s3, "the loop's `o_s3` is the walk's");
+        assert!(lw_f_s3 == m_f_s3, "the loop's `f_s3` is the walk's");
+        assert!(lw_o_d3 == m_o_d3, "the loop's `o_d3` is the walk's");
+        assert!(lw_f_d3 == m_f_d3, "the loop's `f_d3` is the walk's");
+        assert!(lw_o_fs1 == m_o_fs1, "the loop's `o_fs1` is the walk's");
+        assert!(lw_f_fs1 == m_f_fs1, "the loop's `f_fs1` is the walk's");
+        assert!(lw_o_fd1 == m_o_fd1, "the loop's `o_fd1` is the walk's");
+        assert!(lw_f_fd1 == m_f_fd1, "the loop's `f_fd1` is the walk's");
+        assert!(lw_o_fs3 == m_o_fs3, "the loop's `o_fs3` is the walk's");
+        assert!(lw_f_fs3 == m_f_fs3, "the loop's `f_fs3` is the walk's");
+        assert!(lw_o_fd3 == m_o_fd3, "the loop's `o_fd3` is the walk's");
+        assert!(lw_f_fd3 == m_f_fd3, "the loop's `f_fd3` is the walk's");
+        assert!(lw_o_ts1 == m_o_ts1, "the loop's `o_ts1` is the walk's");
+        assert!(lw_f_ts1 == m_f_ts1, "the loop's `f_ts1` is the walk's");
+        assert!(lw_o_td1 == m_o_td1, "the loop's `o_td1` is the walk's");
+        assert!(lw_f_td1 == m_f_td1, "the loop's `f_td1` is the walk's");
+        assert!(lw_o_ts3 == m_o_ts3, "the loop's `o_ts3` is the walk's");
+        assert!(lw_f_ts3 == m_f_ts3, "the loop's `f_ts3` is the walk's");
+        assert!(lw_o_td3 == m_o_td3, "the loop's `o_td3` is the walk's");
+        assert!(lw_f_td3 == m_f_td3, "the loop's `f_td3` is the walk's");
+        assert!(lw_o_spec == m_o_spec, "the loop's `o_spec` is the walk's");
+        assert!(lw_f_spec == m_f_spec, "the loop's `f_spec` is the walk's");
+    }
     for (c, v) in code_l.iter_mut().zip(&lv) {
         *c &= v;
     }

@@ -1132,6 +1132,9 @@ struct Gen<'a> {
     lane_passes: HashSet<usize>,
     /// Whether the masks made now are the lane's.
     in_lane: bool,
+    /// Whether the token loop writes the regions' masks as the walk makes them (`lw_…`): every region a row reads,
+    /// none with an `else` form, in the loop of the blocks (not the one pass).
+    walk_writes: bool,
 }
 
 /// A mask of a pass over the file's words (`Gen::fuse`): its word at word `i` a local of the step (`w_NAME`), the word
@@ -5094,6 +5097,18 @@ impl Gen<'_> {
             && x.assumed_ends.is_empty()
             && self.kinds.iter().all(|r| !r.resumes && r.or.is_none() && r.after.is_empty())
             && !x.stmts.iter().any(|s| matches!(s, Stmt::Token { rule: Some(TokenRule::ReadParts(..)), .. }));
+        // The loop writes the regions' masks where it reads every region, as the walk makes them (`lw_…`).
+        let read: Vec<&str> = x
+            .stmts
+            .iter()
+            .filter_map(|s| match s {
+                Stmt::Token { rule: Some(TokenRule::Read(rs) | TokenRule::ReadParts(rs, _)), .. } => Some(rs),
+                _ => None,
+            })
+            .flatten()
+            .map(|r| r.kind.as_str())
+            .collect();
+        self.walk_writes = !fused && !self.kinds.is_empty() && self.kinds.iter().all(|r| r.empty.is_none() && read.contains(&r.kind.as_str()));
         // The escapes and errors: a bit of any sends the file to tree-sitter.
         // Those not made of the regions, stage 1 tests a block at a time.
         // Those made of the regions where they hold only in a region a token reads: tests there.
@@ -5598,7 +5613,11 @@ impl Gen<'_> {
                         };
                         let c = self.val(&r.closers())?;
                         let tests = self.region_tests(&r.kind);
-                        let one = if r.outside {
+                        let one = if r.outside && self.walk_writes {
+                            // To its closer, or the file's end, outside it; its masks as the walk writes them.
+                            let k = ident(&r.kind);
+                            format!("{{\n                let c = first_bit(&{c}, s + 1).unwrap_or(n);\n                let last = c - 1;\n{}                set(&mut lw_o_{k}, s, s + 1);\n                set(&mut lw_f_{k}, s, c);\n                set(&mut lw_{h}, s + 1, c);\n                last\n            }}", indent(&tests, "                "), h = ident(&self.hidden))
+                        } else if r.outside {
                             // To its closer, or the file's end, outside it.
                             if tests.is_empty() {
                                 format!("first_bit(&{c}, s + 1).unwrap_or(n) - 1")
@@ -5609,6 +5628,7 @@ impl Gen<'_> {
                             let found = self.closer_last(r, &[])?;
                             let some = if tests.is_empty() { found } else { format!("{{\n                    let last = {found};\n{}                    last\n                }}", indent(&tests, "                    ")) };
                             let some = self.template_close(&r.kind, some)?;
+                            let some = if self.walk_writes { with_walk_writes(&some, &r.kind, &self.hidden, None) } else { some };
                             let some = if !self.keeps_close(*row, rule) { some } else { with_close(&some) };
                             format!("match first_bit(&{c}, s + 1) {{\n                Some(c) => {some},\n                None => {none}\n            }}")
                         };
@@ -5630,6 +5650,13 @@ impl Gen<'_> {
                     let tests = self.region_tests(&r.kind);
                     let found = if tests.is_empty() { found } else { format!("{{\n                    let last = {found};\n{}                    last\n                }}", indent(&tests, "                    ")) };
                     let found = self.template_close(&r.kind, found)?;
+                    let found = if self.walk_writes {
+                        let own = self.closer_last(&r, &[])?;
+                        let token = self.closer_last(&r, &parts.closes)?;
+                        with_walk_writes(&found, &r.kind, &self.hidden, (own != token).then_some(format!("({own})")).as_deref())
+                    } else {
+                        found
+                    };
                     let found = if !self.keeps_close(*row, rule) { found } else { with_close(&found) };
                     (format!("read {} parts, to its closer", r.kind), format!("match first_bit(&{c}, s + 1) {{\n                Some(c) => {found},\n                None => {{\n                    refused = true;\n                    break;\n                }}\n            }}"))
                 }
@@ -5945,6 +5972,12 @@ impl Gen<'_> {
             let _ = writeln!(fields_init, "            {f}: {v},");
         }
         let mut fw_decl = String::new();
+        if self.walk_writes {
+            let _ = writeln!(fw_decl, "    // The regions' masks as the walk makes them (`regions`), written as the loop reads each region: its opener, its\n    // fill to its closer, and the bytes it hides.\n    let mut lw_{} = vec![0u64; nw];", ident(&self.hidden));
+            for r in &self.kinds {
+                let _ = writeln!(fw_decl, "    let mut lw_o_{0} = vec![0u64; nw];\n    let mut lw_f_{0} = vec![0u64; nw];", ident(&r.kind));
+            }
+        }
         for fw in self.field_writes.iter().filter(|fw| fw.outside.is_none()) {
             let _ = writeln!(fw_decl, "    // `{}` for tier 2, written over each region token.\n    let mut {} = vec![0u64; nw];", fw.parts.first().map_or("", |p| p.why.as_str()).trim_start_matches('`').split('`').next().unwrap_or(""), fw.var);
         }
@@ -6186,6 +6219,20 @@ impl Gen<'_> {
                     }
                 }
             }
+        }
+        // The regions' masks the loop wrote, the walk's in a test build.
+        if self.walk_writes {
+            let mut checks = String::new();
+            let mut pairs = vec![(ident(&self.hidden), self.names.get(&self.hidden).cloned().unwrap_or_default())];
+            for r in &self.kinds {
+                for p in ["o", "f"] {
+                    pairs.push((format!("{p}_{}", ident(&r.kind)), self.names.get(&format!("{p}_{}", r.kind)).cloned().unwrap_or_default()));
+                }
+            }
+            for (lw, walk) in pairs {
+                let _ = writeln!(checks, "        assert!(lw_{lw} == {walk}, \"the loop's `{lw}` is the walk's\");");
+            }
+            let _ = write!(span_after, "    #[cfg(feature = \"test-hooks\")]\n    if !refused {{\n{checks}    }}\n");
         }
         // The bytes outside the region tokens, for the escapes made of `code`.
         if !self.code_after.is_empty() {
@@ -7169,6 +7216,15 @@ fn class_code(pairs: &mut Vec<Vec<Rect>>, set: &[bool; 256]) -> String {
     }
 }
 
+/// A read's arm at its closer `c` (`Some(c) => …`), its region's masks written as the walk writes them (`Gen::regions`):
+/// its opener at `s`, its fill to the closer, the hidden bytes after its opener through the region's last (`lw_…`):
+/// `region_last`, the walk's, where the token's closers are its parts' (a template's `${` to the region's `$`).
+fn with_walk_writes(arm: &str, kind: &str, hidden: &str, region_last: Option<&str>) -> String {
+    let k = ident(kind);
+    let end = region_last.map_or_else(|| "last + 1".to_owned(), |l| format!("{l} + 1"));
+    format!("{{\n                    let last = {arm};\n                    set(&mut lw_o_{k}, s, s + 1);\n                    set(&mut lw_f_{k}, s, c);\n                    set(&mut lw_{h}, s + 1, {end});\n                    last\n                }}", h = ident(hidden))
+}
+
 /// A read's arm at its closer `c` (`Some(c) => …`), keeping `c` as `close` first.
 fn with_close(arm: &str) -> String {
     match arm.strip_prefix("{\n") {
@@ -7768,7 +7824,7 @@ fn toggle(x: &[u64]) -> Vec<u64> {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), level: None, deep: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), ends: None, fill_proofs: Default::default(), opener_at: [[true; 256]; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), passes: Vec::new(), open_pass: None, lane_passes: HashSet::new(), in_lane: false }.source()
+    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), level: None, deep: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), ends: None, fill_proofs: Default::default(), opener_at: [[true; 256]; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), passes: Vec::new(), open_pass: None, lane_passes: HashSet::new(), in_lane: false, walk_writes: false }.source()
 }
 
 /// `code` with no test build's checks (decision 0655 step 3): each `#[cfg(feature = "test-hooks")]` assert and the

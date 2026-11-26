@@ -1279,7 +1279,7 @@ pub fn lex(src: &[u8]) -> Lexed {
     let mut refused = escapes;
     // The regions' walk and the masks made of it: only a test build's checks read them.
     #[cfg(feature = "test-hooks")]
-    let (m_t_brace, m_nb, m_name_more, t98, t101) = {
+    let (m_hidden, m_o_line, m_f_line, m_o_block, m_f_block, m_o_rstr, m_f_rstr, m_o_str, m_f_str, m_o_chr, m_f_chr, m_o_tick, m_f_tick, m_o_tail, m_f_tail, m_o_rtail, m_f_rtail, m_t_brace, m_nb, m_name_more, t98, t101) = {
         // regions hidden { … }: the first opener not hidden opens its region, to its closer.
         let mut m_hidden = vec![0u64; nw];
         let mut m_o_line = vec![0u64; nw];
@@ -1768,7 +1768,7 @@ pub fn lex(src: &[u8]) -> Lexed {
             t101[i] = w_t101;
         }
     }
-        (m_t_brace, m_nb, m_name_more, t98, t101)
+        (m_hidden, m_o_line, m_f_line, m_o_block, m_f_block, m_o_rstr, m_f_rstr, m_o_str, m_f_str, m_o_chr, m_f_chr, m_o_tick, m_f_tick, m_o_tail, m_f_tail, m_o_rtail, m_f_rtail, m_t_brace, m_nb, m_name_more, t98, t101)
     };
     // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.
     // Room for a record a byte, as the lean lexer's: each token's first byte is after the last's, so the writes need no check.
@@ -1808,6 +1808,25 @@ pub fn lex(src: &[u8]) -> Lexed {
     let mut fill_5 = false;
     // `fill(as_run & dot, ~as_run)` at the last byte of the token before.
     let mut fill_6 = false;
+    // The regions' masks as the walk makes them (`regions`), written as the loop reads each region: its opener, its
+    // fill to its closer, and the bytes it hides.
+    let mut lw_hidden = vec![0u64; nw];
+    let mut lw_o_line = vec![0u64; nw];
+    let mut lw_f_line = vec![0u64; nw];
+    let mut lw_o_block = vec![0u64; nw];
+    let mut lw_f_block = vec![0u64; nw];
+    let mut lw_o_rstr = vec![0u64; nw];
+    let mut lw_f_rstr = vec![0u64; nw];
+    let mut lw_o_str = vec![0u64; nw];
+    let mut lw_f_str = vec![0u64; nw];
+    let mut lw_o_chr = vec![0u64; nw];
+    let mut lw_f_chr = vec![0u64; nw];
+    let mut lw_o_tick = vec![0u64; nw];
+    let mut lw_f_tick = vec![0u64; nw];
+    let mut lw_o_tail = vec![0u64; nw];
+    let mut lw_f_tail = vec![0u64; nw];
+    let mut lw_o_rtail = vec![0u64; nw];
+    let mut lw_f_rtail = vec![0u64; nw];
     // `o_str` for tier 2, written over each region token.
     let mut fw_o_str = vec![0u64; nw];
     // `o_rstr` for tier 2, written over each region token.
@@ -1970,6 +1989,9 @@ pub fn lex(src: &[u8]) -> Lexed {
                         // `rd1_close`, for tier 2
                         clear(&mut fw_rd1_close, s, s);
                         clear(&mut fw_rd1_close, c, last);
+                        set(&mut lw_o_line, s, s + 1);
+                        set(&mut lw_f_line, s, c);
+                        set(&mut lw_hidden, s + 1, c);
                         last
                     };
                     let l = l.max(s);
@@ -1998,6 +2020,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     here_2 = true;
                     let l = match first_bit(&m_block_end, s + 1) {
                         Some(c) => {
+                            let last = {
                             let last = c + 0;
                             // a nested block comment
                             if any_in(&m_block_open, s + 1, c - 1) {
@@ -2010,6 +2033,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `rd1_close`, for tier 2
                             clear(&mut fw_rd1_close, s, s);
                             clear(&mut fw_rd1_close, c, last);
+                            last
+                        };
+                            set(&mut lw_o_block, s, s + 1);
+                            set(&mut lw_f_block, s, c);
+                            set(&mut lw_hidden, s + 1, last + 1);
                             last
                         },
                         None => {
@@ -2294,6 +2322,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     let l = match first_bit(&t4, s + 1) {
                         Some(c) => {
                             close = c;
+                            let last = {
                             if bit(&m_t_dollar, c) {
                                 if held.is_some() {
                                     refused = true;
@@ -2333,6 +2362,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                             put(&mut fw_rd1_close, &t90, s, s);
                             last
                         }
+                        };
+                            set(&mut lw_o_str, s, s + 1);
+                            set(&mut lw_f_str, s, c);
+                            set(&mut lw_hidden, s + 1, (c + 0) + 1);
+                            last
                         },
                         None => {
                             refused = true;
@@ -2364,6 +2398,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     let l = match first_bit(&t2, s + 1) {
                         Some(c) => {
                             close = c;
+                            let last = {
                             if bit(&m_t_dollar, c) {
                                 if held.is_some() {
                                     refused = true;
@@ -2444,6 +2479,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                             put(&mut fw_rd1_close, &t90, s, s);
                             last
                         }
+                        };
+                            set(&mut lw_o_rstr, s, s + 1);
+                            set(&mut lw_f_rstr, s, c);
+                            set(&mut lw_hidden, s + 1, (if bit(&m_t_dollar, c) { c + 0 } else { c + 2 }) + 1);
+                            last
                         },
                         None => {
                             refused = true;
@@ -2488,6 +2528,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     let l = match first_bit(&t4, s + 1) {
                         Some(c) => {
                             close = c;
+                            let last = {
                             let last = if bit(&m_dq_close, c) { c + 0 } else if bit(&m_t_dollar, c) { c + 1 } else { c + 0 };
                             // a string, a character or a backtick name over a line
                             if any_in(&m_lf, s + 1, c - 1) {
@@ -2519,6 +2560,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                             put(&mut fw_rd1_closes0, &m_dq_close, c, last);
                             // `rd1_open`, for tier 2
                             set(&mut fw_rd1_open, s, s + 1);
+                            last
+                        };
+                            set(&mut lw_o_tail, s, s + 1);
+                            set(&mut lw_f_tail, s, c);
+                            set(&mut lw_hidden, s + 1, (c + 0) + 1);
                             last
                         },
                         None => {
@@ -2585,6 +2631,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     let l = match first_bit(&t2, s + 1) {
                         Some(c) => {
                             close = c;
+                            let last = {
                             let last = if bit(&m_rclose, c) { c + 2 } else if bit(&m_t_dollar, c) { c + 1 } else { if bit(&m_t_dollar, c) { c + 0 } else { c + 2 } };
                             // a backslash before `$` in a raw string
                             if any_in(&t47, s + 1, c - 1) {
@@ -2629,6 +2676,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                             put(&mut fw_rd1_closes1, &m_rclose, c, c);
                             // `rd1_open`, for tier 2
                             set(&mut fw_rd1_open, s, s + 1);
+                            last
+                        };
+                            set(&mut lw_o_rtail, s, s + 1);
+                            set(&mut lw_f_rtail, s, c);
+                            set(&mut lw_hidden, s + 1, (if bit(&m_t_dollar, c) { c + 0 } else { c + 2 }) + 1);
                             last
                         },
                         None => {
@@ -2681,6 +2733,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     here_2 = false;
                     let l = match first_bit(&m_sq_close, s + 1) {
                         Some(c) => {
+                            let last = {
                             let last = c + 0;
                             // a string, a character or a backtick name over a line
                             if any_in(&m_lf, s + 1, c - 1) {
@@ -2708,6 +2761,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `o_chr`, for tier 2
                             set(&mut fw_o_chr, s, s + 1);
                             last
+                        };
+                            set(&mut lw_o_chr, s, s + 1);
+                            set(&mut lw_f_chr, s, c);
+                            set(&mut lw_hidden, s + 1, last + 1);
+                            last
                         },
                         None => {
                             refused = true;
@@ -2734,6 +2792,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     here_2 = false;
                     let l = match first_bit(&m_bt, s + 1) {
                         Some(c) => {
+                            let last = {
                             let last = c + 0;
                             // a string, a character or a backtick name over a line
                             if any_in(&m_lf, s + 1, c - 1) {
@@ -2746,6 +2805,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `rd1_close`, for tier 2
                             clear(&mut fw_rd1_close, s, s);
                             clear(&mut fw_rd1_close, c, last);
+                            last
+                        };
+                            set(&mut lw_o_tick, s, s + 1);
+                            set(&mut lw_f_tick, s, c);
+                            set(&mut lw_hidden, s + 1, last + 1);
                             last
                         },
                         None => {
@@ -2926,6 +2990,26 @@ pub fn lex(src: &[u8]) -> Lexed {
         if bit(&m_rbrace, l + 1) {
             refused = true;
         }
+    }
+    #[cfg(feature = "test-hooks")]
+    if !refused {
+        assert!(lw_hidden == m_hidden, "the loop's `hidden` is the walk's");
+        assert!(lw_o_line == m_o_line, "the loop's `o_line` is the walk's");
+        assert!(lw_f_line == m_f_line, "the loop's `f_line` is the walk's");
+        assert!(lw_o_block == m_o_block, "the loop's `o_block` is the walk's");
+        assert!(lw_f_block == m_f_block, "the loop's `f_block` is the walk's");
+        assert!(lw_o_rstr == m_o_rstr, "the loop's `o_rstr` is the walk's");
+        assert!(lw_f_rstr == m_f_rstr, "the loop's `f_rstr` is the walk's");
+        assert!(lw_o_str == m_o_str, "the loop's `o_str` is the walk's");
+        assert!(lw_f_str == m_f_str, "the loop's `f_str` is the walk's");
+        assert!(lw_o_chr == m_o_chr, "the loop's `o_chr` is the walk's");
+        assert!(lw_f_chr == m_f_chr, "the loop's `f_chr` is the walk's");
+        assert!(lw_o_tick == m_o_tick, "the loop's `o_tick` is the walk's");
+        assert!(lw_f_tick == m_f_tick, "the loop's `f_tick` is the walk's");
+        assert!(lw_o_tail == m_o_tail, "the loop's `o_tail` is the walk's");
+        assert!(lw_f_tail == m_f_tail, "the loop's `f_tail` is the walk's");
+        assert!(lw_o_rtail == m_o_rtail, "the loop's `o_rtail` is the walk's");
+        assert!(lw_f_rtail == m_f_rtail, "the loop's `f_rtail` is the walk's");
     }
     // a `;` that ends the file
     if fill_5 {
