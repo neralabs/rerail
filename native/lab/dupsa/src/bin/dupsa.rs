@@ -1,7 +1,7 @@
 //! ```text
 //! dupsa lines <root> [--include <prefix>]... [--ext <ext>]... [--min 30] [--out <file.tsv>]
 //!     Jeff's rule on a suffix array: blocks of at least `min` counted lines repeated anywhere in the scope.
-//! dupsa nodes <capture> [--min 200] [--min-lines 0] [--cells row|code-slot] [--out <file.tsv>]
+//! dupsa nodes <capture> [--min 200] [--min-lines 0] [--cells row|code-slot|indent|local] [--out <file.tsv>]
 //!     The same over format 16 tape nodes, one suffix array a language (`rerail-engine capture-tapes`).
 //! ```
 //!
@@ -65,7 +65,9 @@ fn opts(args: &[String]) -> Result<Opts, String> {
                 o.cells = match val()?.as_str() {
                     "row" => Cells::Row,
                     "code-slot" => Cells::CodeSlot,
-                    c => return Err(format!("--cells {c}: row or code-slot")),
+                    "indent" => Cells::Indent,
+                    "local" => Cells::Local,
+                    c => return Err(format!("--cells {c}: row, code-slot, indent or local")),
                 }
             }
             "--out" => o.out = Some(val()?),
@@ -125,7 +127,7 @@ fn lines_command(o: Opts) -> Result<(), String> {
 }
 
 fn nodes_command(o: Opts) -> Result<(), String> {
-    let [cap] = &o.pos[..] else { return Err("usage: dupsa nodes <capture> [--min 200] [--min-lines 0] [--cells row|code-slot]".into()) };
+    let [cap] = &o.pos[..] else { return Err("usage: dupsa nodes <capture> [--min 200] [--min-lines 0] [--cells row|code-slot|indent|local]".into()) };
     let min = o.min.unwrap_or(200);
     let mut capture = Capture::load(Path::new(cap))?;
     // Jeff's scope: the include prefixes, his excludes, and the extensions asked for.
@@ -183,11 +185,50 @@ fn nodes_command(o: Opts) -> Result<(), String> {
     Ok(())
 }
 
+/// `probe <capture> <path:line> <path:line> [--cells …]`: the two places' nodes from the first that starts on each
+/// line, side by side, and the first rows where their symbols differ, each cell shown.
+fn probe_command(o: Opts) -> Result<(), String> {
+    let [cap, a, b] = &o.pos[..] else { return Err("usage: dupsa probe <capture> <path:line> <path:line>".into()) };
+    let capture = Capture::load(Path::new(cap))?;
+    let place = |s: &str| -> Result<(String, u32), String> {
+        let (p, l) = s.rsplit_once(':').ok_or("path:line")?;
+        Ok((p.to_owned(), l.parse().map_err(|e| format!("{s}: {e}"))?))
+    };
+    let ((pa, la), (pb, lb)) = (place(a)?, place(b)?);
+    let tag = capture.files.iter().find(|f| f.path == pa).ok_or(format!("{pa} not captured"))?.tag;
+    capture.files.iter().find(|f| f.path == pb).ok_or(format!("{pb} not captured"))?;
+    let docs = NodeDocs::new(&capture, tag, o.cells)?;
+    let doc = |p: &str| (0..docs.count()).find(|&d| docs.path(d) == p).unwrap();
+    let (da, db) = (doc(&pa), doc(&pb));
+    let first = |d: usize, l: u32| (0..docs.doc_len(d)).find(|&j| docs.line(d, docs.span(d, j, j + 1).0) == l).unwrap();
+    let (ja, jb) = (first(da, la), first(db, lb));
+    let mut shown = 0;
+    let mut same = 0;
+    for k in 0..docs.doc_len(da).min(docs.doc_len(db)).saturating_sub(ja.max(jb)) {
+        let (x, y) = (docs.value(da, ja + k, o.cells), docs.value(db, jb + k, o.cells));
+        if x == y {
+            same += 1;
+            continue;
+        }
+        let shift = if matches!(o.cells, Cells::Indent | Cells::Local) { 80 } else { 72 };
+        let cells = |v: u128| format!("code {} slot {} gap {:#x} len {}", v & 0xff, (v >> 8) & 0xffff_ffff, (v >> 40) & 0x1_ffff_ffff, v >> shift);
+        let line = |d: usize, j: usize| docs.line(d, docs.span(d, j, j + 1).0);
+        println!("node +{k} (after {same} equal): {}:{} {}  |  {}:{} {}", pa, line(da, ja + k), cells(x), pb, line(db, jb + k), cells(y));
+        same = 0;
+        shown += 1;
+        if shown == 8 {
+            break;
+        }
+    }
+    Ok(())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let r = match args.first().map(String::as_str) {
         Some("lines") => opts(&args[1..]).and_then(lines_command),
         Some("nodes") => opts(&args[1..]).and_then(nodes_command),
+        Some("probe") => opts(&args[1..]).and_then(probe_command),
         _ => Err("usage: dupsa lines <root> … | dupsa nodes <capture> …".into()),
     };
     if let Err(e) = r {

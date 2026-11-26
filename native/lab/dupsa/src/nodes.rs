@@ -73,11 +73,23 @@ pub struct NodeDocs<'a> {
     cells: Cells,
 }
 
-/// Which cells of a row the symbol holds: all four, or the code and slot only (structure, no text extents).
+/// Which cells of a row the symbol holds: all four, or the code and slot only (structure, no text extents), or
+/// the row made indent-proof (`Indent`):
+/// - a gap that crosses a line break is a flag and the previous node's distance to its line's end (the previous
+///   line's own text), not the bytes to this start, which hold the indentation and blank lines;
+/// - an inner node's length is left out (a multi-line node's extent holds every inner line's indentation); a
+///   leaf's length is kept.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Cells {
     Row,
     CodeSlot,
+    Indent,
+    /// `Indent`, with every slot's distance left out, its leaf tag kept:
+    /// - an inner node's slot is its subtree size, different in each copy for a node that starts in a copy and ends
+    ///   past it;
+    /// - a leaf's slot steps back to its previous sibling, or to its parent on every K-th sibling, so it depends on
+    ///   the sibling's index mod K and can reach outside the copy.
+    Local,
 }
 
 impl<'a> NodeDocs<'a> {
@@ -131,6 +143,24 @@ impl<'a> NodeDocs<'a> {
         match cells {
             Cells::CodeSlot => code_slot,
             Cells::Row => code_slot | cell(2, w1) << 40 | cell(3, w2) << 72,
+            Cells::Indent | Cells::Local => {
+                let (v, i) = (&self.views[d], j as u32);
+                let leaf = reads::slot(t, v, i) & 1 == 1;
+                let len = if leaf { cell(3, w2) } else { 0 };
+                let gap = if i == 0 {
+                    0
+                } else {
+                    let (s, p) = (reads::start(t, v, i), reads::start(t, v, i - 1));
+                    let lp = reads::line(t, v, p);
+                    if reads::line(t, v, s) == lp {
+                        u128::from(s - p)
+                    } else {
+                        1 << 32 | u128::from(reads::line_start(t, v, lp + 1) - p)
+                    }
+                };
+                let code_slot = if cells == Cells::Local { cell(0, 1) | u128::from(leaf) << 8 } else { code_slot };
+                code_slot | gap << 40 | len << 80
+            }
         }
     }
 
