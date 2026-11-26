@@ -1,5 +1,5 @@
 // python/points-to: Python's call targets and value types, as a rule reads them (P3 of decision 0083 §1; decision 0677,
-// note t55). The analysis is the phase `points_to` (typing/programs/points_to.rerail, over python/points-to-solve):
+// note t55). The analysis is the phase `points_to` (phases/points_to.rerail, over python/points-to-solve):
 // its fixpoint across files runs first, over symbols, and hands on its answers by each file's path and each node's
 // term. A rule reads them here, at its own nodes: each relation below is per file.
 //

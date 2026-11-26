@@ -2,7 +2,7 @@
 // by file), and what crosses files, read through the phase py_names (decision 0677): no node crosses into the
 // cross-file part.
 //
-// The phase (native/src/code_rule_dsl/typing/programs/py_names.rerail) runs first, over the same files, and hands on
+// The phase (docs/rule-syntax/lib/phases/py_names.rerail) runs first, over the same files, and hands on
 // symbols alone, read from the modules' definitions and import statements (never a name's use):
 //   py_names__reads_at(p, m)    the file at path p can name something of workspace module m
 //   py_names__exports(m, x, q)  module m exposes x, which denotes q, re-exports and star imports followed

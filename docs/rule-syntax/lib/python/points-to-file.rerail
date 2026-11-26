@@ -7,7 +7,7 @@
 //   whose values are read), over its own nodes, and each node's term (`pt_tm`, at the end);
 // - python/points-to-solve: the rules that join files, over terms and symbols alone: no node crosses (0677);
 // - python/points-to: the interface a rule reads (`call_target`, `call_open`, `type_of`, ...), read back at the
-//   rule's own nodes from what the phase `points_to` (typing/programs/points_to.rerail) hands on.
+//   rule's own nodes from what the phase `points_to` (phases/points_to.rerail) hands on.
 // Every relation here is per file. Its own names start `pt_`.
 //
 // Guests (decision 0055): parsed(s, "annotation", r) asks for string s's code, rooted at r; host_node(n, h): h is

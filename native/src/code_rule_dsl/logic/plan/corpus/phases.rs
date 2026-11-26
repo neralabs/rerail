@@ -142,8 +142,7 @@ pub fn declared(prog: &Program) -> Option<Declared> {
     Some(Declared { name, exports: list("export") })
 }
 
-/// The phase program `name`, with its `#include`s read in: `<phase_dir>/<name>.rerail` when the run's options name a
-/// `phase_dir`, else `typing/programs/<name>.rerail`.
+/// The phase program `name`, with its `#include`s read in: the first of `candidates` that exists.
 fn source(name: &str, dir: Option<&Path>) -> Result<Option<String>> {
     let Some(path) = locate(name, dir) else {
         return Ok(None);
@@ -157,15 +156,26 @@ pub(super) fn builtin_dir() -> PathBuf {
     rerail_store::source_tree::native().join("src/code_rule_dsl/typing/programs")
 }
 
+/// The rule library's phase programs' directory (decision 0710): a language's or framework's phases (`py_names`,
+/// `tsx_names`, `points_to`, `node_resolve`) are the library's, beside the libraries that read them.
+pub(super) fn library_dir() -> PathBuf {
+    crate::code_rule_dsl::logic::rr::library().join("phases")
+}
+
+/// The directories a phase program is found in, in order: the library's, then the engine's own. No name is in both
+/// (`phase_programs_are_in_one_directory`), so phase 0, which asks both, loads one.
+pub fn dirs() -> [PathBuf; 2] {
+    [library_dir(), builtin_dir()]
+}
+
 /// The file of phase program `name` (`source`).
 fn locate(name: &str, dir: Option<&Path>) -> Option<PathBuf> {
     candidates(name, dir).into_iter().find(|p| p.exists())
 }
 
-/// Where a phase program `name` is looked for, in order: `dir`, then the engine's own programs.
+/// Where a phase program `name` is looked for, in order: `dir`, then `dirs`.
 fn candidates(name: &str, dir: Option<&Path>) -> Vec<PathBuf> {
-    let builtin = builtin_dir();
-    dir.into_iter().chain([builtin.as_path()]).map(|d| d.join(format!("{name}.rerail"))).collect()
+    dir.map(Path::to_path_buf).into_iter().chain(dirs()).map(|d| d.join(format!("{name}.rerail"))).collect()
 }
 
 /// The files of every phase program `programs` may read, and of the phases those may read: each phase's `.rerail` and

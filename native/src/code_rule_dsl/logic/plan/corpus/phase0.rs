@@ -298,14 +298,15 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph, dirs: &Dirs
     asks.sort();
     // The phases the text names are the file's (its declarations are the text's): their candidates, as
     // `bootstrap.rerail` makes them, each one the file's graph holds an answer for.
-    let phase_lib = &dirs.phases;
-    let mut named: Vec<(String, PathBuf)> = Vec::with_capacity(phases.len());
+    let mut named: Vec<(String, PathBuf)> = Vec::with_capacity(phases.len() * dirs.phases.len());
     for p in phases {
-        let path = PathBuf::from(format!("{}/{p}.rerail", phase_lib.display()));
-        if !file.digests.contains_key(&path) && !file.absent.contains(&path) {
-            return false;
+        for phase_lib in &dirs.phases {
+            let path = PathBuf::from(format!("{}/{p}.rerail", phase_lib.display()));
+            if !file.digests.contains_key(&path) && !file.absent.contains(&path) {
+                return false;
+            }
+            named.push((p.clone(), path));
         }
-        named.push((p.clone(), path));
     }
     let mut whole = file.clone();
     whole.includes.insert(text_key(0), asks);
@@ -332,22 +333,28 @@ pub fn in_separators(path: &str, separator: char) -> String {
     if separator == '/' { path.to_owned() } else { path.replace('/', &separator.to_string()) }
 }
 
-/// The rule library and the engine's phase programs' directory, canonical, as `bootstrap.rerail` is handed them: found
-/// once by a caller that keeps many texts (`keep_text`).
+/// The rule library and the phase programs' directories (`phase_libs`), canonical, as `bootstrap.rerail` is handed
+/// them: found once by a caller that keeps many texts (`keep_text`).
 pub(in crate::code_rule_dsl) struct Dirs {
     pub(in crate::code_rule_dsl) lib: PathBuf,
-    pub(in crate::code_rule_dsl) phases: PathBuf,
+    pub(in crate::code_rule_dsl) phases: Vec<PathBuf>,
 }
 
 impl Dirs {
     pub(in crate::code_rule_dsl) fn here() -> Option<Dirs> {
-        Some(Dirs { lib: dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok()?, phases: phase_lib()? })
+        Some(Dirs { lib: dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok()?, phases: phase_libs() })
     }
 }
 
 /// The engine's phase programs' directory (`phases::locate`'s builtin), canonical, as `bootstrap.rerail` is handed it.
 pub(in crate::code_rule_dsl) fn phase_lib() -> Option<PathBuf> {
     dunce::canonicalize(super::phases::builtin_dir()).ok()
+}
+
+/// The directories phase programs are found in (`phases::dirs`: the library's, then the engine's), canonical, as
+/// `bootstrap.rerail` is handed them; one that is not there is left out.
+pub(in crate::code_rule_dsl) fn phase_libs() -> Vec<PathBuf> {
+    super::phases::dirs().iter().filter_map(|d| dunce::canonicalize(d).ok()).collect()
 }
 
 /// Graphs as images (`rr::graph_image`): keyed by the engine's build and the seed, their paths written relative to the
@@ -569,8 +576,8 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     if let Some(parent) = lib.parent() {
         text.push_str(&format!("env(\"rerail.library_parent\", {}).\n", quote(&parent.to_string_lossy())));
     }
-    // The phase programs' directory, where a declaration's phase is found (`p0_phase`).
-    if let Some(dir) = phase_lib() {
+    // The phase programs' directories, where a declaration's phase is found (`p0_phase`).
+    for dir in phase_libs() {
         text.push_str(&format!("env(\"rerail.phase_lib\", {}).\n", quote(&dir.to_string_lossy())));
     }
     let mut dirs = std::collections::BTreeSet::new();
@@ -599,9 +606,10 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
         }
     }
     // The roots the loader may read (`world::World::new`: each setting that is a directory), canonical.
-    let roots: Vec<PathBuf> = [Some(lib.clone()), lib.parent().map(std::path::Path::to_path_buf), phase_lib()]
+    let roots: Vec<PathBuf> = [Some(lib.clone()), lib.parent().map(std::path::Path::to_path_buf)]
         .into_iter()
         .flatten()
+        .chain(phase_libs())
         .chain(dirs.iter().cloned())
         .filter_map(|d| dunce::canonicalize(d).ok())
         .collect();

@@ -277,3 +277,18 @@ anc(s, a) :- anc(s, b), p1__base(b, a).
         assert_eq!(report.phase_runs.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["sources", "p1"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// Decision 0710: a language's phases are the library's (`phases::library_dir`), the engine's own stay in
+    /// `typing/programs`, and no phase program is in both (phase 0 asks both directories and loads what is there).
+    #[test]
+    fn phase_programs_are_in_one_directory() {
+        let names = |dir: &std::path::Path| -> std::collections::BTreeSet<String> {
+            std::fs::read_dir(dir).unwrap().filter_map(Result::ok).filter_map(|e| e.file_name().to_str()?.strip_suffix(".rerail").map(str::to_owned)).collect()
+        };
+        let [library, builtin] = super::dirs();
+        let (library, builtin) = (names(&library), names(&builtin));
+        assert!(library.is_disjoint(&builtin), "in both: {:?}", library.intersection(&builtin).collect::<Vec<_>>());
+        for language in ["py_names", "tsx_names", "points_to", "node_resolve"] {
+            assert!(library.contains(language), "{language} is the library's: {library:?}");
+        }
+    }
