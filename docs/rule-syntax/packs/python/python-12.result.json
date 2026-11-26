@@ -1,0 +1,20 @@
+[
+  { "id": "ruff-up024-os-error-alias", "status": "same" },
+  { "id": "ruff-up026-deprecated-mock-import", "status": "same" },
+  { "id": "ruff-up028-yield-in-for-loop", "status": "same" },
+  { "id": "ruff-up029-unnecessary-builtin-import", "status": "same" },
+  { "id": "ruff-up030-format-literals", "status": "same" },
+  { "id": "ruff-up031-printf-string-formatting", "status": "same" },
+  {
+    "id": "ruff-up032-f-string",
+    "status": "different",
+    "reason": "The original reports a .format() call whose string mixes automatic and numbered fields: `\"{} {1}\".format(1, 2)` and `\"{0} {}\".format(1, 2)` (pyflakes/F525.py:1, 2; rerail/noqa/F525.py:1, 5, 7, 9). Ruff 0.17.6 reports none of them: f_strings.rs returns early when the summary has both autos and indices, as `str.format` raises ValueError there and an f-string would not. The translation skips mixed strings (`mixed(v)`) and matches Ruff on both files.",
+    "right": "translation",
+    "counts": {
+      "examples": { "originalOnly": 0, "translationOnly": 0 },
+      "fixtures": { "originalOnly": 6, "translationOnly": 0 },
+      "samples-python": { "originalOnly": 0, "translationOnly": 0 }
+    }
+  },
+  { "id": "ruff-up033-lru-cache-with-maxsize-none", "status": "same" }
+]

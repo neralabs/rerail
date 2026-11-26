@@ -7,24 +7,33 @@
 // Ruff UP029 (pyupgrade): a `from m import x` of a name Python 3 has as a builtin, where m is `builtins` or one
 // of the Python 2 compatibility modules that re-export it (six, six.moves, six.moves.builtins, io). The
 // statement is reported once. Not reported: a relative import, a name imported `as` another, and an import
-// that rebinds a name already bound above it in the same scope (it restores the builtin on purpose).
+// that rebinds a name already bound in the same scope (it restores the builtin on purpose). Ruff checks after
+// the whole statement has bound its names, so a name the statement binds twice is a rebinding too, and so is a
+// name the scope declares `global` or `nonlocal` above it (that declaration is a binding of the scope).
 //   from builtins import ascii, bytes        ← UP029
 //   from six.moves import filter, zip_longest ← UP029 (filter)
 //   from math import pow
 //   from builtins import pow                 not reported: shadows math's pow
+//   from builtins import str, str            not reported: the second str shadows the first
 #include "python/ast.rerail"
 //   import_alias(i, a, m, x, local), from_module_raw(i, m), binding(s, x, site, form), scope_node(n, s)
 
 .violation UP029(at: node) code "UP029"
     "Remove the names Python 3 already provides as builtins from this import, and the whole statement if nothing else remains. Keep it only if the code must still run on Python 2."
     suppress ruff "UP029"
-UP029(i) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"),
-    from_module_raw(i, m), builtin_from(m, x), field(i, "name", a), kind(a, "dotted_name"), text(a, x),
-    scope_node(i, s), !restores(s, x, a).
+UP029(i) :- up29_name(i, s, x), !restores(s, x, i).
 UP029(i) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"),
     from_module_raw(i, m), builtin_from(m, "*"), child(i, w, _), kind(w, "wildcard_import").
-.decl restores(s: node, x: symbol, a: node)  // an earlier binding of x in s, which the import shadows
-restores(s, x, a) :- binding(s, x, site, _), site != a, earlier(site, a).
+// up29_name(i, s, x): statement i of scope s imports builtin x under its own name.
+.decl up29_name(i: node, s: node, x: symbol)
+up29_name(i, s, x) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"),
+    from_module_raw(i, m), builtin_from(m, x), field(i, "name", a), kind(a, "dotted_name"), text(a, x),
+    scope_node(i, s).
+// restores(s, x, i): when i is done, its binding of x shadows another binding of x in s.
+.decl restores(s: node, x: symbol, i: node)
+restores(s, x, i) :- up29_name(i, s, x), count : { binding(s, x, site, _), (earlier(site, i) ; within(site, i)) } > 1.
+restores(s, x, i) :- up29_name(i, s, x), (kind(g, "global_statement") ; kind(g, "nonlocal_statement")),
+    child(g, n, _), text(n, x), scope_node(g, s), earlier(g, i).
 
 // builtin_from(m, x): Ruff's table of the builtins each module re-exports.
 .decl builtin_from(m: symbol, x: symbol)

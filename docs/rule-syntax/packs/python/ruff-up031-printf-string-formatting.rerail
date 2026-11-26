@@ -4,35 +4,73 @@
 .mode steer
 .scope include "**/*"
 
-// Ruff UP031 (pyupgrade): `S % R` where S is a str literal (adjacent ones joined; not bytes, not an f-string)
-// that parses as a printf-style format, and R is a literal, a name, an attribute, a subscript, a call, a tuple
-// or a dict (Ruff leaves `"%s" % [x]`, `"%s" % (a + b)`, `"%s" % -1`). The finding is at the `%` expression.
-// Ruff offers a fix only for the plain cases; the others are reported with the "by hand" message: a `%d`, `%i`,
-// `%u` or `%c`; a `*` width or precision; an empty key `%()s`; `%r`/`%a` with flags, width or precision; a
-// width on `%s`.
+// Ruff UP031 (pyupgrade): `S % R` where S is a str literal (adjacent ones allowed; not bytes, not an f-string).
+// Ruff parses each piece of S on its own, as written between its quotes (escapes not decoded), and stops at the
+// first piece that does not parse: no finding. A piece with a placeholder that has no `{}` equivalent is
+// reported at once, whatever R is, with the "by hand" message: a `%d`, `%i`, `%u` or `%c`; a `*` width or
+// precision; an empty key `%()s`; `%r`/`%a` with flags, width or precision; a width on `%s`; a placeholder
+// without a key when R is a dict. Otherwise R decides: a literal, a name, an attribute, a subscript, a call, a
+// tuple or a dict is reported (a dict whose keys are not distinct identifier strings by hand), anything else is
+// left (`"%s" % [x]`, `"%s" % (a + b)`, `"%s" % -1`). A finding Ruff can fix is at the `%` expression (from a
+// `(` around S); a by-hand one is at S itself, inside any parentheses.
+// Ruff checks a string annotation's code too.
 //   "%s %s" % (a, b)           ← UP031: "{} {}".format(a, b)
-//   "%d items" % n             ← UP031, by hand
+//   "%d items" % (n + 1)       ← UP031, by hand
+//   "%" "s" % (x,)             not reported: the piece "%" does not parse
 //   b"%s" % (x,)   "%4%" % ()  not reported (bytes; does not parse)
 #include "python/upgrade-format.rerail"
-//   percent_fmt(b, s, r, v), pct_ok(v), pct_spec, pct_conv, rhs_form(e)
+//   percent_fmt(b, s, r, v), pct_ok(v), pct_spec, pct_conv, rhs_form(e), lit_piece(e, s)
+#include "python/python-12.rerail"
+//   plain_str rows for the literals of string annotations
 
-.decl printf(b: node, v: symbol)
-printf(b, v) :- percent_fmt(b, _, r, v), pct_ok(v), rhs_form(r).
+// seg(b, k, x): the k-th piece of b's left string has the source text x between its quotes. Each is parsed
+// (pct_value is the parsers' seed).
+.decl seg(b: node, k: number, x: symbol)
+seg(b, 0, x) :- percent_fmt(b, s, _, _), unparen(s, m), kind(m, "string"), raw_body(m, x).
+seg(b, k, x) :- percent_fmt(b, s, _, _), unparen(s, m), kind(m, "concatenated_string"), child(m, p, k),
+    kind(p, "string"), raw_body(p, x).
+pct_value(x) :- seg(_, _, x).
+.decl raw_body(p: node, x: symbol)
+raw_body(p, @slice(t, strlen(a), strlen(t) - strlen(z))) :- kind(p, "string"), text(p, t), child(p, st, 0),
+    kind(st, "string_start"), text(st, a), child(p, en, i), kind(en, "string_end"), text(en, z),
+    !child(p, _, i + 1).
+// parsed_to(b, k): pieces 0 … k of b's left string all parse.
+.decl parsed_to(b: node, k: number)
+parsed_to(b, k) :- seg(b, k, x), pct_ok(x), count : { seg(b, j, y), j < k, !pct_ok(y) } = 0.
+// at_left(b, s0): where Ruff reports: b's left string without parentheses.
+.decl at_left(b: node, s0: node)
+at_left(b, s0) :- percent_fmt(b, s, _, _), unparen(s, s0).
 
 .violation printf_string_formatting(at: node) code "UP031"
     "Replace this percent-format with an f-string or `.format()`; if the right side is a name that may hold a tuple, leave it or unpack it explicitly."
     suppress ruff "UP031"
-printf_string_formatting(b) :- printf(b, v), !by_hand(v).
+printf_string_formatting(b) :- percent_fmt(b, _, r, _), !manual(b), rhs_form(r),
+    count : { seg(b, k, _), !parsed_to(b, k) } = 0, !dict_bad(r).
 
 .violation printf_string_formatting_manual(at: node) code "UP031"
     "Rewrite this percent-format string as an f-string or `.format()` by hand: `%d`, `%i`, `%u`, `%c`, `*` widths and unusual dict keys need explicit conversion."
     suppress ruff "UP031"
-printf_string_formatting_manual(b) :- printf(b, v), by_hand(v).
+printf_string_formatting_manual(s0) :- manual(b), at_left(b, s0).
+printf_string_formatting_manual(s0) :- percent_fmt(b, _, r, _), at_left(b, s0), !manual(b), dict_bad(r),
+    count : { seg(b, k, _), !parsed_to(b, k) } = 0.
 
-// by_hand(v): a placeholder of v has no `{}` equivalent Ruff writes for it.
-.decl by_hand(v: symbol)
-by_hand(v) :- pct_star(v).
-by_hand(v) :- pct_conv(v, _, _, c), (c = "d" ; c = "i" ; c = "u" ; c = "c").
-by_hand(v) :- pct_spec(v, _, "()", _, _, _).
-by_hand(v) :- pct_conv(v, i, fl, c), (c = "a" ; c = "r"), pct_spec(v, i, _, w, p, _), (fl != "" ; w != "" ; p != "").
-by_hand(v) :- pct_conv(v, i, _, "s"), pct_spec(v, i, _, w, _, _), w != "".
+// manual(b): a piece that parses, after pieces that all parse, has a placeholder Ruff cannot convert.
+.decl manual(b: node)
+manual(b) :- seg(b, k, x), parsed_to(b, k), by_hand(x).
+manual(b) :- percent_fmt(b, _, r, _), kind(r, "dictionary"), seg(b, k, x), parsed_to(b, k), pct_spec(x, _, "", _, _, _).
+// by_hand(x): a placeholder of x has no `{}` equivalent Ruff writes for it.
+.decl by_hand(x: symbol)
+by_hand(x) :- pct_star(x).
+by_hand(x) :- pct_conv(x, _, _, c), (c = "d" ; c = "i" ; c = "u" ; c = "c").
+by_hand(x) :- pct_spec(x, _, "()", _, _, _).
+by_hand(x) :- pct_conv(x, i, fl, c), (c = "a" ; c = "r"), pct_spec(x, i, _, w, p, _), (fl != "" ; w != "" ; p != "").
+by_hand(x) :- pct_conv(x, i, _, "s"), pct_spec(x, i, _, w, _, _), w != "".
+// dict_bad(r): Ruff cannot write dict r as keywords: it is empty, or a key is not a str literal naming an
+// identifier, or two keys are the same (`**m` entries are kept).
+.decl dict_bad(r: node)
+dict_bad(r) :- kind(r, "dictionary"), count : { child(r, e, _), !kind(e, "comment") } = 0.
+dict_bad(r) :- kind(r, "dictionary"), child(r, p, _), kind(p, "pair"), field(p, "key", k), !str_lit(k, _).
+dict_bad(r) :- kind(r, "dictionary"), child(r, p, _), kind(p, "pair"), field(p, "key", k), str_lit(k, x),
+    !identifier(x).
+dict_bad(r) :- kind(r, "dictionary"), child(r, p, i), kind(p, "pair"), field(p, "key", k), str_lit(k, x),
+    child(r, q, j), j < i, kind(q, "pair"), field(q, "key", k2), str_lit(k2, x).
