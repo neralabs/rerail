@@ -222,9 +222,10 @@ impl Projection {
         });
         crate::code_rule_dsl::logic::profile::decision("nodes with text", || match &read {
             None => format!("every node ({} reads the text of a node it does not narrow)", wide.as_deref().unwrap_or("a rule")),
-            Some(TextNodes { kinds, fields, parents, parent_fields, values }) => {
+            Some(TextNodes { kinds, fields, parents, parent_fields, values, relations }) => {
                 let some = |s: &BTreeSet<String>| s.iter().take(8).cloned().collect::<Vec<_>>().join(", ");
-                format!("{} kinds ({}), the nodes in {} fields ({}), the children of {} kinds ({}) and of the nodes in {} fields ({}), and those whose text is one of {} constants ({})", kinds.len(), some(kinds), fields.len(), some(fields), parents.len(), some(parents), parent_fields.len(), some(parent_fields), values.len(), some(values))
+                let held = if relations.is_empty() { String::new() } else { format!(", and the nodes {} hold ({})", relations.len(), some(relations)) };
+                format!("{} kinds ({}), the nodes in {} fields ({}), the children of {} kinds ({}) and of the nodes in {} fields ({}), and those whose text is one of {} constants ({}){held}", kinds.len(), some(kinds), fields.len(), some(fields), parents.len(), some(parents), parent_fields.len(), some(parent_fields), values.len(), some(values))
             }
         });
         if !std::env::var("RERAIL_TEXT_NODES").is_ok_and(|v| v == "all") {
@@ -269,7 +270,13 @@ pub struct TextNodes {
     pub parents: BTreeSet<String>,
     pub parent_fields: BTreeSet<String>,
     pub values: BTreeSet<String>,
+    /// The per-node relations whose nodes' text a rule reads (`comment(c, _), text(c, s)`: ERA001's and FIX00x's): of
+    /// them only `comment`, whose nodes are those of a comment kind (`core_rr::is_comment`, which makes its rows).
+    pub relations: BTreeSet<String>,
 }
+
+/// The per-node relations `TextNodes::relations` may name: each one's nodes are known by kind, as its rows are made.
+pub const TEXT_NODE_RELATIONS: [&str; 1] = ["comment"];
 
 impl TextNodes {
     /// Whether node `id` of `f` is one of these: of a kind read, in a field read, a child of a kind read or of a node in
@@ -285,6 +292,7 @@ impl TextNodes {
                         || dialect.catalog.field_name(f.field(q)).is_some_and(|name| self.parent_fields.contains(name))
                 })
             || !self.values.is_empty() && self.values.contains(f.text(id))
+            || self.relations.contains("comment") && core_rr::is_comment(dialect.name(f, id))
     }
 }
 
@@ -304,7 +312,13 @@ impl TextNodes {
     pub fn of_dialect(&self, dialect: &Dialect) -> NodesOf {
         let kinds = |names: &BTreeSet<String>| (0..dialect.catalog.kind_count()).map(|k| names.contains(dialect.code_name(k as u16))).collect::<Vec<bool>>();
         let fields = |names: &BTreeSet<String>| (0..=dialect.catalog.field_count()).map(|k| dialect.catalog.field_name(k as u16).is_some_and(|n| names.contains(n))).collect::<Vec<bool>>();
-        NodesOf { tag: dialect.tag, kinds: kinds(&self.kinds), fields: fields(&self.fields), parents: kinds(&self.parents), parent_fields: fields(&self.parent_fields) }
+        // A relation's nodes are of the kinds that make its rows: they join the kinds read.
+        let comments = self.relations.contains("comment");
+        let mut read = kinds(&self.kinds);
+        for (k, r) in read.iter_mut().enumerate() {
+            *r |= comments && core_rr::is_comment(dialect.code_name(k as u16));
+        }
+        NodesOf { tag: dialect.tag, kinds: read, fields: fields(&self.fields), parents: kinds(&self.parents), parent_fields: fields(&self.parent_fields) }
     }
 }
 

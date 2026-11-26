@@ -606,7 +606,7 @@ fn node_tests(v: &Version, of: &[(&'static str, &'static str)]) -> HashMap<Strin
 /// The columns of `v`'s relations that hold nodes alone: a base relation's, `core.rerail`'s declared `node`
 /// (`facts::core::core_node_columns`) and a matcher's (`matchers`: its root and captures); and a file-local derived
 /// relation's (`local`, the split's), each column every rule of it fills with a variable its body binds in such a
-/// column: the greatest such set, so a recursive relation keeps a column its base cases fill with nodes. Not a
+/// column, or with the empty value: the greatest such set, so a recursive relation keeps a column its base cases fill with nodes. Not a
 /// cross-file relation's: a node it binds is read in the cross part, where an edit's old document is not the batch's,
 /// so the read of a node a maintained rule retracts would read the edited file's (`NodeReads`).
 fn node_columns(v: &Version, matchers: &BTreeSet<String>, local: &BTreeSet<String>) -> HashMap<String, BTreeSet<usize>> {
@@ -633,7 +633,10 @@ fn node_columns(v: &Version, matchers: &BTreeSet<String>, local: &BTreeSet<Strin
             let head = v.rel_name(r.head().rel());
             let Some(now) = cols.get(head) else { continue };
             let bound = node_bound(v, r, &cols);
-            let keep: BTreeSet<usize> = now.iter().copied().filter(|&c| matches!(r.head().args().nth(c), Some(TermRef::Var(x)) if bound.contains(&x))).collect();
+            // The empty value (`unset`, -1, decision 0649) is no node, and neither its rows nor its read have its text:
+            // `text` is a node's row, and the read finds no document for it. A column a rule fills with it still
+            // holds nodes alone where it holds one (FAST002's `fast_param(f, p, x, -1, d)` for an unannotated parameter).
+            let keep: BTreeSet<usize> = now.iter().copied().filter(|&c| matches!(r.head().args().nth(c), Some(TermRef::Var(x)) if bound.contains(&x)) || matches!(r.head().args().nth(c), Some(TermRef::Int(-1)))).collect();
             if keep.len() != now.len() {
                 cols.insert(head.to_owned(), keep);
                 changed = true;
