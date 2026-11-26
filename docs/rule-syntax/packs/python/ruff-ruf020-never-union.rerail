@@ -1,4 +1,4 @@
-.policy "ruff-ruf020-never-union" revision 2
+.policy "ruff-ruf020-never-union" revision 3
 .description "Remove Never and NoReturn from union types; they have no values, so the union equals its other members."
 .language python
 .mode steer
@@ -6,11 +6,16 @@
 
 // Ruff RUF020: `Never` or `NoReturn` (typing or typing_extensions) as a member of a union. Neither has a
 // value, so `Never | T` is `T`. Each one is reported, in a `|` union (an operand of `|`) or in a
-// `Union[...]` of two or more members.
+// `Union[...]` of two or more members. A lone parenthesised tuple is the members (`Union[(A, B)]`), unless a
+// trailing comma makes it one member (`Union[(A, B),]`). Strings Ruff parses as types are checked too.
 //   x: Never | int            ← RUF020 at Never
 //   Union[NoReturn, int]      ← RUF020 at NoReturn
+//   Union[(Never, int)]       ← RUF020 at Never
+//   y: "Never | int"          ← RUF020 at Never
 //   def f() -> Never: ...     not reported
+//   Union[(Never, int),]      not reported: one member, a tuple
 #include "python/ruff.rerail"
+#include "python/python-02.rerail"
 
 .violation RUF020(at: node, n: symbol, msg: symbol) code "RUF020" "{msg}"
     suppress ruff "RUF020"
@@ -23,15 +28,31 @@ RUF020(m, x, cat(cat("Keep only the other members of this `Union[...]`; `", x), 
 .decl member(c: node, m: node)
 member(c, m) :- unparen(c, m), !kind(m, "type").
 member(c, m) :- unparen(c, t), kind(t, "type"), child(t, x, 0), member(x, m).
-// union_item(c): an element of `Union[a, b, …]` with two or more elements: a subscript, or in an annotation
-// tree-sitter's generic_type.
+// union_br(s, b): s is `Union[…]` and b holds what its brackets list: the subscript itself, or in an
+// annotation tree-sitter's generic_type's type_parameter. br_item(b, c): one of those items. Read through
+// child, not field, so that the trees of type strings are read too.
+.decl union_br(s: node, b: node)
+union_br(s, s) :- kind(s, "subscript"), child(s, h, 0), union_name(h).
+union_br(g, tp) :- kind(g, "generic_type"), child(g, h, 0), union_name(h), child(g, tp, 1), kind(tp, "type_parameter").
+.decl br_item(b: node, c: node)
+br_item(s, c) :- union_br(s, s), child(s, c, i), i > 0, !kind(c, "comment").
+br_item(tp, c) :- union_br(g, tp), kind(g, "generic_type"), child(tp, c, _), !kind(c, "comment").
+// union_item(c): a member of `Union[a, b, …]` with two or more members.
 .decl union_item(c: node)
-union_item(c) :- kind(s, "subscript"), field(s, "value", h), ruff_qual(h, q), union_q(q), field(s, "subscript", c),
-    count : { field(s, "subscript", _) } > 1.
-union_item(c) :- kind(g, "generic_type"), child(g, h, 0), ruff_qual(h, q), union_q(q), child(g, tp, 1),
-    kind(tp, "type_parameter"), child(tp, c, _), !kind(c, "comment"), count : { child(tp, x, _), !kind(x, "comment") } > 1.
+union_item(c) :- br_item(b, c), count : { br_item(b, _) } > 1.
+union_item(c) :- br_item(b, t), count : { br_item(b, _) } = 1, !trailing_comma(b), member(t, u), kind(u, "tuple"),
+    child(u, c, _), !kind(c, "comment"), count : { child(u, x, _), !kind(x, "comment") } > 1.
+// trailing_comma(b): a comma ends the list in brackets b (the tape keeps no commas of a subscript).
+.decl trailing_comma(b: node)
+trailing_comma(b) :- br_item(b, _), text(b, t), match("(?s).*,\\s*(#[^\\n]*\\s*)*\\]", t).
+.decl union_name(h: node)
+union_name(h) :- ruff_qual(h, q), union_q(q).
+union_name(h) :- tstr_qual(h, q), union_q(q).
 .decl union_q(q: symbol)
 union_q("typing.Union"). union_q("typing_extensions.Union").
 .decl never(m: node, x: symbol)
-never(m, x) :- (kind(m, "identifier") ; kind(m, "attribute")), ruff_qual(m, q), split_dot(q, mod, x),
-    (mod = "typing" ; mod = "typing_extensions"), (x = "Never" ; x = "NoReturn").
+never(m, x) :- (kind(m, "identifier") ; kind(m, "attribute")), ruff_qual(m, q), never_q(q, x).
+never(m, x) :- tstr_qual(m, q), never_q(q, x).
+.decl never_q(q: symbol, x: symbol)
+never_q("typing.Never", "Never"). never_q("typing.NoReturn", "NoReturn").
+never_q("typing_extensions.Never", "Never"). never_q("typing_extensions.NoReturn", "NoReturn").

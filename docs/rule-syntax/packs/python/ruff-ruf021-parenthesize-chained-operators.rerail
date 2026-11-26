@@ -1,4 +1,4 @@
-.policy "ruff-ruf021-parenthesize-chained-operators" revision 2
+.policy "ruff-ruf021-parenthesize-chained-operators" revision 3
 .description "Parenthesize an and expression that is chained with or, so the operator precedence is explicit."
 .language python
 .mode steer
@@ -6,14 +6,20 @@
 
 // Ruff RUF021: an `and` written bare as an operand of `or`. `and` binds tighter, so the code is right, but
 // parentheses make the reading explicit. Each bare `and` chain is reported once, at its start; `not` is left
-// alone. Annotations Ruff parses out of strings are trees like any other, so they are covered too.
-//   x = a or b and c          ← RUF021 at `b and c`
-//   x = a or (b and c)        not reported
-//   x = not a or b            not reported
+// alone. Strings Ruff parses as types (annotations, `cast("…", x)`, a TypeVar's bound, `List["…"]`) are
+// checked too, implicitly concatenated or with escapes as well.
+//   x = a or b and c              ← RUF021 at `b and c`
+//   y = cast("a and b or c", 1)   ← RUF021
+//   x = a or (b and c)            not reported
+//   x = not a or b                not reported
 #include "python/ruff.rerail"
+#include "python/python-02.rerail"
 
 .violation RUF021(at: node) code "RUF021"
     "Wrap this `and` expression in parentheses, as `(a and b)`, so its precedence under `or` is explicit; the result is unchanged."
     suppress ruff "RUF021"
+RUF021(a) :- bare_and(a).
+RUF021(a) :- tstr_node(a, _), bare_and(a).
 // tree-sitter keeps parentheses as a node of their own, so a parenthesised `and` is not a direct child.
-RUF021(a) :- kind(a, "boolean_operator"), op(a, "and"), child(o, a, _), kind(o, "boolean_operator"), op(o, "or").
+.decl bare_and(a: node)
+bare_and(a) :- kind(a, "boolean_operator"), op(a, "and"), child(o, a, _), kind(o, "boolean_operator"), op(o, "or").

@@ -1,4 +1,4 @@
-.policy "ruff-ruf018-assignment-in-assert" revision 3
+.policy "ruff-ruf018-assignment-in-assert" revision 4
 .description "Avoid assignment expressions in assert statements when the name is used outside asserts; the assignment is lost when assertions are disabled."
 .language python
 .mode steer
@@ -10,12 +10,63 @@
 //   print(x)                       ← RUF018 at `x := f()`
 //   assert (t := f()) == 1
 //   assert isinstance(t, tuple)    not reported: only asserts read t
-// Only reads of this binding count: after the walrus, with no other binding of the name in between.
+// The reads are Ruff's references of the binding, which its semantic model gathers in source order:
+//   - a read (or `del`) after it, before the next binding of the name in its scope;
+//   - the references of the binding it shadows, which a new binding copies, and so on back, unless the shadowed
+//     one is a `del` or the name of an `except … as` (unbound after the handler). A bare `x: T` and a `del`
+//     inside an `if`, loop or handler are no break.
+//       x = 0; print(x); assert (x := 1)          ← RUF018: print read x = 0, whose references the walrus took
+//       x = 0; print(x); del x; assert (x := 1)   not reported
+//   - Function and lambda bodies are read last, so their reads, and `nonlocal x`, go to the scope's last binding;
+//     so do the names of the module's `__all__`.
+//       def h(): return y
+//       assert (y := 1)                           ← RUF018: y's last binding
 #include "python/ruff.rerail"
 
 .violation RUF018(at: node, x: symbol) code "RUF018"
     "Assign `{x}` in its own statement before the `assert` and assert on `{x}`; under `python -O` asserts are skipped, so code outside the assert would not see this assignment."
     suppress ruff "RUF018"
-RUF018(w, x) :- kind(w, "named_expression"), inside(w, _, "assert_statement"), field(w, "name", t), text(t, x),
-    binding(s, x, t, "walrus"), look(n, x, s), expr_ctx(n, "load"), !inside(n, _, "assert_statement"), n > t,
-    count : { binding(s, x, b, _), b > t, b < n } = 0.
+RUF018(w, x) :- assert_walrus(w, t, x), carry(t, p), ref(p, n), !inside(n, _, "assert_statement").
+RUF018(w, x) :- assert_walrus(w, t, x), last_ev(s, x, t), late_ref(s, x, n), !inside(n, _, "assert_statement").
+.decl assert_walrus(w: node, t: node, x: symbol)
+assert_walrus(w, t, x) :- kind(w, "named_expression"), inside(w, _, "assert_statement"), field(w, "name", t), text(t, x),
+    binding(_, x, t, "walrus").
+
+// ev(s, x, b, e, brk): scope s binds or deletes x at b, in effect at offset e (the end of the statement or walrus
+// that binds); brk "yes" when the next binding copies nothing from it (a `del`, an `except … as` name).
+.decl ev(s: node, x: symbol, b: node, e: number, brk: symbol)
+ev(s, x, b, e, "no") :- binding(s, x, b, f), f != "except", f != "walrus", node(_, b, _, _, e).
+ev(s, x, t, e, "no") :- binding(s, x, t, "walrus"), field(w, "name", t), node(_, w, _, _, e).
+ev(s, x, b, e, "yes") :- binding(s, x, b, "except"), node(_, b, _, _, e).
+ev(s, x, n, e, "yes") :- del_site(s, n, _), text(n, x), node(_, n, _, _, e).
+// prev(b, p): p is the binding b shadows.
+.decl prev(b: node, p: node)
+prev(b, p) :- ev(s, x, b, eb, _), ev(s, x, p, ep, _), ep < eb, count : { ev(s, x, _, eq, _), eq > ep, eq < eb } = 0.
+// carry(t, p): t holds p's references.
+.decl carry(t: node, p: node)
+carry(t, t) :- assert_walrus(_, t, _).
+carry(t, p) :- carry(t, b), prev(b, p), ev(_, _, p, _, "no").
+// ref(p, n): n reads binding p, in source order: after it and before the next binding, not in a deferred body.
+.decl ref(p: node, n: node)
+ref(p, n) :- carry(_, p), ev(s, x, p, ep, _), read(s, x, n, sn), sn > ep, !deferred(n, s),
+    count : { ev(s, x, _, eq, _), eq > ep, eq < sn } = 0.
+.decl read(s: node, x: symbol, n: node, sn: number)
+read(s, x, n, sn) :- load_ref(n, x), look(n, x, s), node(_, n, _, sn, _).
+read(s, x, n, sn) :- del_unbinds(_, n), text(n, x), look(n, x, s), node(_, n, _, sn, _).
+// deferred(n, s): n is in the body of a def or lambda inside scope s; Ruff visits those bodies after s.
+.decl deferred(n: node, s: node)
+deferred(n, s) :- read(s, _, n, _), (kind(f, "function_definition") ; kind(f, "lambda")), field(f, "body", b),
+    within(n, b), within(f, s).
+// last_ev(s, x, b): b is the binding of x in effect at the end of scope s.
+.decl last_ev(s: node, x: symbol, b: node)
+last_ev(s, x, b) :- ev(s, x, b, e, "no"), count : { ev(s, x, _, e2, _), e2 > e } = 0.
+// late_ref(s, x, n): n refers to x's last binding in s: a deferred read, `nonlocal x`, or the module's `__all__`.
+.decl late_ref(s: node, x: symbol, n: node)
+late_ref(s, x, n) :- read(s, x, n, _), deferred(n, s).
+late_ref(s, x, i) :- kind(g, "nonlocal_statement"), child(g, i, _), kind(i, "identifier"), text(i, x),
+    nearest(g, f, scope), nl_up(f, x, s).
+late_ref(m, x, e) :- all_entry(e, x), nearest(e, m, scope), kind(m, "module").
+// nl_up(f, x, s): `nonlocal x` in f names the nearest enclosing function scope s that binds x.
+.decl nl_up(f: node, x: symbol, s: node)
+nl_up(f, x, s) :- kind(g, "nonlocal_statement"), child(g, i, _), text(i, x), nearest(g, f, scope), nearest(f, s, fdef).
+nl_up(f, x, s) :- nl_up(f, x, p), !ev(p, x, _, _, _), nearest(p, s, fdef).
