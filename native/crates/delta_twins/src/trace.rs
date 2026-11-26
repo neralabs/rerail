@@ -560,8 +560,10 @@ fn freeze<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     freeze_layer(&block, rows, &rows_spec(&head.shape, n), &ks[..ng], &s);
 }
 
-/// The layer's partitions' change (P§11.2's partition index): `parts(part, digest, added, gone)` and
-/// `gone(part, id)`, each sorted on the partition, written and frozen.
+/// The layer's partitions' change (P§11.2's partition index): `parts(part, digest, added, gone, first, kills_at)` and
+/// `gone(part, id)`, each sorted on the partition, written and frozen. A partition's own rows and its kills lie
+/// together (the rows sorted on the partition, the kills gathered by it), so `first` and `kills_at` are the sums of
+/// the partitions' before it.
 fn parts<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     if refused_so_far::<O>(c) {
         return;
@@ -595,10 +597,13 @@ fn parts<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     gone.sort_unstable();
     let pin = c.pin_mut(OUT);
     let at = pr.claim_own(pin, entries.len() as u32).expect("room for the partitions");
+    let (mut first, mut kills_at) = (0u32, 0u32);
     for (k, (&p, &(d, added, g))) in entries.iter().enumerate() {
-        for (col, v) in [p, d as i64, i64::from(added), i64::from(g)].into_iter().enumerate() {
+        for (col, v) in [p, d as i64, i64::from(added), i64::from(g), i64::from(first), i64::from(kills_at)].into_iter().enumerate() {
             pr.put_own(pin, at + k as u32, col, v);
         }
+        first += added;
+        kills_at += g;
     }
     let at = gr.claim_own(pin, gone.len() as u32).expect("room for the kills by partition");
     for (k, &(p, id)) in gone.iter().enumerate() {

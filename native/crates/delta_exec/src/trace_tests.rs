@@ -465,7 +465,8 @@ fn committed(runs_of: &[Vec<(Vec<i64>, i32)>]) -> (Registry, TraceOps, Directory
 
 /// P§1, P§11: a restriction reads only its partition's rows. Over a trace of a thousand rows in seven partitions and
 /// a few in partition 50, the restricted state's scan and probe and the restricted change's rows gone and added touch
-/// only partition 50's rows of each layer and its kills, counted where the reads are made (`View::counted`).
+/// only partition 50's rows of each layer and its kills, counted where the reads are made (`View::counted`): rows,
+/// kills, liveness words and search steps.
 #[test]
 fn a_restriction_reads_only_its_partitions_rows() {
     let mut r = rng(61);
@@ -494,18 +495,37 @@ fn a_restriction_reads_only_its_partitions_rows() {
     let reads = std::sync::atomic::AtomicU64::new(0);
     let whole = t.state(&table, heads[5]).unwrap();
     let rows_total: usize = whole.layers().map(|(_, l)| l.n()).sum();
+    // The partition index (`parts`): each partition's range is its own rows exactly, its kills its kills of rows below.
+    for (_, l) in whole.layers() {
+        for p in (0..7).chain([50, 99, 1_000]) {
+            let r = l.part_rows(p);
+            assert!(r.clone().all(|id| l.get(id, 0) == p), "partition {p}'s range holds its rows only");
+            assert_eq!(r.len(), (l.start()..l.end()).filter(|&id| l.get(id, 0) == p).count(), "and all of them");
+            let k = l.part_kills(p);
+            assert_eq!(k.len(), l.kills().iter().filter(|&&id| whole.get(id, 0) == p).count(), "partition {p}'s kills");
+            assert!(k.windows(2).all(|w| w[0] < w[1]) && k.iter().all(|id| l.kills().binary_search(id).is_ok()));
+        }
+    }
     let s = whole.counted(&reads).restrict(50);
     let want: Rows = set.iter().filter(|x| x[0] == 50).cloned().collect();
     assert_eq!(rows_of(&s), want);
     let own: u64 = whole.layers().map(|(_, l)| l.part_rows(50).len() as u64).sum();
     let kills: u64 = whole.layers().map(|(_, l)| l.part_kills(50).len() as u64).sum();
     let scan = reads.swap(0, std::sync::atomic::Ordering::Relaxed);
-    assert!(scan <= own + kills, "a restricted scan read {scan} rows, its partition's own rows being {own} (of {rows_total})");
+    // And the searches that place the scan's cursors in the partition's kills of each layer above another (`Scan`):
+    // each step a kill of partition 50's.
+    let pk: Vec<u64> = whole.layers().map(|(_, l)| l.part_kills(50).len() as u64).collect();
+    let log = |n: u64| u64::from(u64::BITS - n.leading_zeros());
+    let searches: u64 = (0..pk.len()).map(|k| (0..k).map(|j| log(pk[j]) + 1).sum::<u64>()).sum();
+    assert!(scan <= own + kills + searches, "a restricted scan read {scan} rows and kills, its partition's own rows being {own} (of {rows_total}), its kills {kills}, its searches {searches}");
     let cols: Vec<ColumnIndex> = ColumnIndex::all(3).collect();
     let x = want.iter().next().unwrap();
     assert_eq!(s.matching(&cols, x).count(), 1);
     let probe = reads.swap(0, std::sync::atomic::Ordering::Relaxed);
-    assert!(probe <= own, "a restricted probe read {probe} rows");
+    // A search a layer among its partition's rows (two bounds), then a search of the partition's kills above the match.
+    let psearch: u64 = whole.layers().map(|(_, l)| 2 * (log(l.part_rows(50).len() as u64) + 1)).sum();
+    let ksearch: u64 = pk.iter().map(|&n| log(n) + 1).sum();
+    assert!(probe <= psearch + 1 + ksearch, "a restricted probe read {probe} rows and kills: its searches {psearch} and {ksearch}");
     let before = t.state(&table, heads[3]).unwrap().counted(&reads).restrict(50);
     let b = Bistate::new(before, s);
     let gone: Rows = b.gone().map(|id| row(b.before().unwrap(), id)).collect();
@@ -515,7 +535,8 @@ fn a_restriction_reads_only_its_partitions_rows() {
     assert_eq!(added, of50(&sets[5]).difference(&of50(&sets[3])).cloned().collect(), "and added");
     let change = reads.swap(0, std::sync::atomic::Ordering::Relaxed);
     assert!(change <= 4 * (own + kills), "a restricted change read {change} rows and words, its partition's being {}", own + kills);
-    assert!((scan + probe + change) * 10 < rows_total as u64, "far fewer reads than the trace's {rows_total} rows");
+    // Each read above is partition 50's: its rows, its kills, and searches within its ranges (each bound in its terms
+    // alone), the partition index's own entries aside. Together they were 80 of the trace's 770 rows (2026-11-25).
 }
 
 /// P§1: whether a change is the identity is read from a layer's counts, touching no row: a layer of rows, a layer
@@ -548,4 +569,47 @@ fn is_identity_reads_a_layers_counts_only() {
     let b = t.change(&table, heads[2], heads[3]).unwrap();
     check(&b);
     assert_eq!(b.gone().map(|id| row(b.before().unwrap(), id)).collect::<Vec<_>>(), gone);
+}
+
+/// The kill search's cost (consolidate's `kills`: a probe of the state below on the trace's canonical order, its first
+/// live match): over a trace of eight runs, each row of the state's probe reads, counted where they are made (each
+/// row it compares in a layer's binary search, each candidate, each step of a search of a layer's kills above it),
+/// at most two searches a layer and a kill search a candidate's layer above: O(layers · log rows), not the state's
+/// rows.
+#[test]
+fn a_kill_search_reads_a_search_a_layer() {
+    let mut r = rng(83);
+    let mut set = Rows::new();
+    let mut all = Vec::new();
+    for _ in 0..8 {
+        let (pairs, next) = random_run(&mut r, &set);
+        all.push(pairs);
+        set = next;
+    }
+    let (_, _, dir, t, heads) = committed(&all);
+    let l = t.read(&dir, &[heads[8]]).unwrap();
+    let table = l.table();
+    let whole = t.state(&table, heads[8]).unwrap();
+    let layers: Vec<(usize, usize)> = whole.layers().map(|(_, l)| (l.n(), l.kills().len())).collect();
+    let log = |n: usize| (usize::BITS - n.leading_zeros()) as u64;
+    let search: u64 = layers.iter().map(|&(n, _)| 2 * (log(n) + 1)).sum();
+    let kill_search: u64 = layers.iter().map(|&(_, k)| log(k) + 1).sum();
+    let bound = search + layers.len() as u64 * (1 + kill_search);
+    let rows_total: usize = layers.iter().map(|&(n, _)| n).sum();
+    let (_, top) = whole.layers().next().unwrap();
+    let cols: Vec<ColumnIndex> = top.head.shape.order().iter().map(|&c| ColumnIndex::new(u16::from(c))).collect();
+    let reads = std::sync::atomic::AtomicU64::new(0);
+    let s = whole.counted(&reads);
+    let (mut sum, mut max) = (0u64, 0u64);
+    for x in &set {
+        let key: Vec<i64> = cols.iter().map(|c| x[c.get()]).collect();
+        let id = s.matching(&cols, &key).next().expect("a live row's live copy");
+        assert_eq!(row(&whole, id), *x);
+        let n = reads.swap(0, std::sync::atomic::Ordering::Relaxed);
+        assert!(n <= bound, "a kill search read {n}, past {bound} (layers {layers:?})");
+        sum += n;
+        max = max.max(n);
+    }
+    let mean = sum / set.len() as u64;
+    eprintln!("kill search: {} layers {layers:?}, {rows_total} rows; reads a key: mean {mean}, max {max}, bound {bound}", layers.len());
 }

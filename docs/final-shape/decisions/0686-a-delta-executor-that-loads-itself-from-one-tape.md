@@ -631,4 +631,28 @@ change:: sketch:: facts:: layer:: rows::` 42 of 42; `rerail-clif --lib -- relati
 Not run: the old engine's crates that build a View (setfix's blocks comparison tests, store's kept facts) and blocks'
 examples. Their change is the constructor only, and none of their tests are in the narrow runs allowed here.
 
-Still not built: E1 on a device, the cost of the kill search, and clippy (each as above).
+And **the kill search's cost, measured** (the third item above). A View's counted reads now count every search step
+too: each row a layer's binary search compares, and each step of a search of a layer's kills. Over a trace of eight
+runs (eight layers, 963 rows), each live row's probe as consolidate's `kills` makes it (the canonical order, its first
+live match) read 62 rows and kills on average and 165 at most, within its bound of two searches a layer and a search
+of the kills above a candidate (590 here) (`trace::tests::a_kill_search_reads_a_search_a_layer`).
+
+Counting the search steps showed two reads that were not what P§ says:
+
+- A chain's scan searched the kills of every layer above for each row it gave, and a restricted state searched each
+  layer's whole kills, not its partition's. The scan is now a merge: a cursor a layer above into its kills (its
+  partition's, when restricted), each moving forward only. A row's kill check reads its partition's kills alone.
+- A restricted state found its partition's rows by a search of the layer's rows on the partition column, which reads
+  other partitions' rows. P§: `restrict` is "a range of the block, by the partition's index", the index "part → its
+  rows, its digest and count". `parts` is now `(part, digest, added, gone, first, kills_at)`: a partition's own rows
+  are `first .. first + added`, its kills `kills_at .. kills_at + gone` of `gone`. The twins write both (the sums of
+  the partitions before it), and a restricted probe searches only inside its partition's range.
+
+The restriction test now bounds each read by partition 50's rows, kills and the searches within its ranges (the
+partition index's own entries are not counted). Its line "far fewer reads than the trace's rows, by ten" is gone: it
+was set when search steps were not counted, and with them the reads are 80 of the trace's 770 rows. The test also
+checks the index's ranges against the rows and kills of every partition of every layer. Checks (Relax, local):
+`rerail-delta-exec --lib` 27 of 27; `rerail-blocks --lib -- bistate:: relation:: table:: change:: layer:: gens::` 26
+of 26.
+
+Still not built: E1 on a device, and clippy (each as above).

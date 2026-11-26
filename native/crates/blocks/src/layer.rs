@@ -466,9 +466,11 @@ pub struct LayerHead {
     /// trace's canonical order; its `changed` its kills of rows below; it continues the layer below by block id and
     /// offset (`Relation::try_continue_far`); its indexes and statistics are its own.
     pub rows: u64,
-    /// `parts(part, digest, added, gone)`: one row a partition the layer changed, sorted on the partition (P§11.2's
-    /// partition digests, "a small relation in the batch"). The digest is the move of the partition's: its rows
-    /// added's `row_digest`s less its rows gone's.
+    /// `parts(part, digest, added, gone, first, kills_at)`: one row a partition the layer changed, sorted on the
+    /// partition (P§11.2's partition index, "part → its rows, its digest and count"; its digests "a small relation in
+    /// the batch"). The digest is the move of the partition's: its rows added's `row_digest`s less its rows gone's.
+    /// Its own rows are `first .. first + added` of the layer's (they lie sorted on the partition), its kills
+    /// `kills_at .. kills_at + gone` of `gone`'s: `restrict` reads "a range of the block, by the partition's index".
     pub parts: u64,
     /// `gone(part, id)`: the layer's kills by partition, ascending within each, one chunk (P§11.2's partition index,
     /// of the kills: `restrict` reads a partition's alone).
@@ -559,9 +561,10 @@ fn col_width(t: ColType) -> u32 {
     }
 }
 
-/// `parts`' spec: the partition (signed 32 bits), its digest's move, rows added, rows gone; sorted on the partition.
+/// `parts`' spec: the partition (signed 32 bits), its digest's move, rows added, rows gone, its first own row's place
+/// among the layer's, its first kill's place in `gone`; sorted on the partition.
 pub fn parts_spec(n: usize) -> Spec {
-    Spec { widths: vec![crate::rows::I32, 8, 4, 4], sort: Some(0), indexes: Vec::new(), min_log: one_chunk(n) }
+    Spec { widths: vec![crate::rows::I32, 8, 4, 4, 4, 4], sort: Some(0), indexes: Vec::new(), min_log: one_chunk(n) }
 }
 
 /// `gone`'s spec: the partition, the id killed; sorted on the partition, in one chunk (a partition's ids are a slice).
@@ -626,29 +629,40 @@ impl<'a> Layer<'a> {
         self.rows.changed.as_slice()
     }
 
-    /// Partition `p`'s own rows: a range of ids (its rows lie sorted on the partition). Every own row when the
-    /// trace has no partition.
+    /// Partition `p`'s row of `parts`, the partition index: found by a search of the index's entries (one a
+    /// partition the layer changed), not of the layer's rows.
+    fn part_at(&self, p: i64) -> Option<u32> {
+        let r = leading(self.parts, &[0], &[p]);
+        (!r.is_empty()).then_some(self.parts.base_rows + r.start)
+    }
+
+    /// Partition `p`'s own rows: a range of ids, read from the partition index. Every own row when the trace has no
+    /// partition.
     pub fn part_rows(&self, p: i64) -> std::ops::Range<u32> {
-        let Some(c) = self.head.shape.partition() else { return self.start()..self.end() };
-        let r = leading(self.rows, &[c as u16], &[p]);
-        self.start() + r.start..self.start() + r.end
+        if self.head.shape.partition().is_none() {
+            return self.start()..self.end();
+        }
+        let Some(e) = self.part_at(p) else { return self.start()..self.start() };
+        let (first, added) = (self.parts.own(e, 4) as u32, self.parts.own(e, 2) as u32);
+        self.start() + first..self.start() + first + added
     }
 
     /// Partition `p`'s row of `parts`: its digest's move, rows added and rows gone.
     pub fn part_entry(&self, p: i64) -> Option<(u64, u32, u32)> {
-        let r = leading(self.parts, &[0], &[p]);
-        (!r.is_empty()).then(|| (self.parts.own(r.start, 1) as u64, self.parts.own(r.start, 2) as u32, self.parts.own(r.start, 3) as u32))
+        let e = self.part_at(p)?;
+        Some((self.parts.own(e, 1) as u64, self.parts.own(e, 2) as u32, self.parts.own(e, 3) as u32))
     }
 
-    /// Partition `p`'s kills, ascending: a slice of `gone`'s id column.
+    /// Partition `p`'s kills, ascending: a slice of `gone`'s id column, by the partition index.
     pub fn part_kills(&self, p: i64) -> &'a [u32] {
-        let r = leading(self.gone, &[0], &[p]);
-        if r.is_empty() {
+        let Some(e) = self.part_at(p) else { return &[] };
+        let (at, n) = (self.parts.own(e, 5) as usize, self.parts.own(e, 3) as usize);
+        if n == 0 {
             return &[];
         }
         let ids = self.gone.rows.col_chunks_u32(1).next().expect("a layer's kills by partition, in one chunk");
-        assert!(ids.len() >= r.end as usize, "a layer's kills by partition, in one chunk");
-        &ids[r.start as usize..r.end as usize]
+        assert!(ids.len() >= at + n, "a layer's kills by partition, in one chunk");
+        &ids[at..at + n]
     }
 
     /// Compares own row `id` with `key` on columns `cols`.
@@ -659,13 +673,24 @@ impl<'a> Layer<'a> {
     /// The own rows whose `cols` equal `key`, where `cols` is a prefix of the canonical order: a range of ids, found
     /// by binary search (its rows lie in that order). `None` when `cols` is not one.
     pub fn prefix_range(&self, cols: &[u16], key: &[i64]) -> Option<std::ops::Range<u32>> {
+        self.prefix_range_counted(cols, key, self.start()..self.end(), &|| ())
+    }
+
+    /// `prefix_range` among the own ids `within` (a partition's, when restricted), calling `read` at each row it
+    /// compares (a counted read's search steps).
+    pub fn prefix_range_counted(&self, cols: &[u16], key: &[i64], within: std::ops::Range<u32>, read: &dyn Fn()) -> Option<std::ops::Range<u32>> {
         let order = self.head.shape.order();
         if cols.is_empty() || cols.len() > order.len() || order[..cols.len()].iter().zip(cols).any(|(&o, &c)| u16::from(o) != c) {
             return None;
         }
-        let (s, n) = (self.start(), self.n());
-        let lo = partition_point(n, |i| self.cmp_key(s + i as u32, cols, key) == Ordering::Less);
-        let hi = lo + partition_point(n - lo, |i| self.cmp_key(s + (lo + i) as u32, cols, key) != Ordering::Greater);
+        assert!(self.start() <= within.start && within.end <= self.end(), "a search among the layer's own rows");
+        let (s, n) = (within.start, (within.end - within.start) as usize);
+        let cmp = |id: u32| {
+            read();
+            self.cmp_key(id, cols, key)
+        };
+        let lo = partition_point(n, |i| cmp(s + i as u32) == Ordering::Less);
+        let hi = lo + partition_point(n - lo, |i| cmp(s + (lo + i) as u32) != Ordering::Greater);
         Some(s + lo as u32..s + hi as u32)
     }
 
@@ -815,9 +840,17 @@ impl<'a> View<'a> {
         }
     }
 
-    /// Whether row `id`, of layer `l`, is killed by a layer above `l`, up to this state's.
+    /// Whether row `id`, of layer `l`, is killed by a layer above `l`, up to this state's: a search of each one's
+    /// kills (its partition's, when restricted: a row of one is killed only by a kill of it), each step a counted read.
     fn killed_above(&self, l: &Layer<'a>, id: u32) -> bool {
-        self.layers().map(|(_, k)| k).take_while(|k| !std::ptr::eq(k.rows, l.rows)).any(|k| k.kills().binary_search(&id).is_ok())
+        self.layers().map(|(_, k)| k).take_while(|k| !std::ptr::eq(k.rows, l.rows)).any(|k| {
+            let ks = self.kills_of(&k);
+            let at = partition_point(ks.len(), |i| {
+                self.touch(1);
+                ks[i] < id
+            });
+            ks.get(at) == Some(&id)
+        })
     }
 
     pub(crate) fn chain_get(&self, id: u32, c: usize) -> i64 {
@@ -997,7 +1030,8 @@ impl Iterator for ProbeIter<'_> {
             if !l.may_hold(cs, ks) {
                 continue;
             }
-            let ids = if let Some(r) = l.prefix_range(cs, ks) {
+            let chain = self.chain;
+            let ids = if let Some(r) = l.prefix_range_counted(cs, ks, chain.span(&l), &|| chain.touch(1)) {
                 Candidates::Range(r)
             } else if let Some(p) = l.order_range(cs, ks) {
                 Candidates::Listed(p.iter())
@@ -1012,23 +1046,55 @@ impl Iterator for ProbeIter<'_> {
 }
 
 /// A trace's state's live rows in canonical order: a merge of its layers' runs (each layer lies in the order), as many
-/// as it has.
+/// as it has. A layer's ids come in ascending order, so whether one is killed above is a merge too: a cursor a layer
+/// above into its kills (its partition's, when restricted), each moving forward only. A scan reads its rows and the
+/// kills above them once each, and one search a layer pair to place the cursors.
 pub struct Scan<'a> {
     chain: View<'a>,
     // copy: not block data (a cursor a layer: its handle and its place)
     heads: Vec<(Layer<'a>, u32, u32)>,
+    // copy: not block data (a cursor a pair of layers: layer k's place in the kills of layer j above it, j < k)
+    at: Vec<Vec<usize>>,
 }
 
 impl<'a> Scan<'a> {
     fn new(chain: &View<'a>) -> Scan<'a> {
-        let heads = chain
+        let heads: Vec<(Layer<'a>, u32, u32)> = chain
             .layers()
             .map(|(_, l)| {
                 let s = chain.span(&l);
                 (l, s.start, s.end)
             })
             .collect();
-        Scan { chain: *chain, heads }
+        let at = (0..heads.len())
+            .map(|k| {
+                (0..k)
+                    .map(|j| {
+                        let ks = chain.kills_of(&heads[j].0);
+                        partition_point(ks.len(), |i| {
+                            chain.touch(1);
+                            ks[i] < heads[k].1
+                        })
+                    })
+                    .collect()
+            })
+            .collect();
+        Scan { chain: *chain, heads, at }
+    }
+
+    /// Whether layer `k`'s row `id` is killed above it, its cursors moved to `id`.
+    fn killed(&mut self, k: usize, id: u32) -> bool {
+        let mut gone = false;
+        for j in 0..k {
+            let ks = self.chain.kills_of(&self.heads[j].0);
+            let c = &mut self.at[k][j];
+            while *c < ks.len() && ks[*c] < id {
+                self.chain.touch(1);
+                *c += 1;
+            }
+            gone |= ks.get(*c) == Some(&id);
+        }
+        gone
     }
 }
 
@@ -1053,10 +1119,10 @@ impl Iterator for Scan<'_> {
                 };
             }
             let k = best?;
-            let (l, id, _) = self.heads[k];
+            let id = self.heads[k].1;
             self.heads[k].1 += 1;
             self.chain.touch(1);
-            if !self.chain.killed_above(&l, id) {
+            if !self.killed(k, id) {
                 return Some(RowId::new(id));
             }
         }
