@@ -2491,8 +2491,8 @@ root(n) :- kind(n, "function_definition"), package_field(".", "type", "module").
 .decl none(n: node)
 none(n) :- kind(n, "function_definition").
 .output none
-.decl tsx_names__target_at(p: symbol, s: symbol, t: symbol)
-.decl tsx_names__exports(m: symbol, x: symbol, q: symbol)
+.decl tsx_names__target_at(p: symbol, s: symbol, t: symbol) by_path 2
+.decl tsx_names__exports(m: symbol, x: symbol, q: symbol) keyed
 .decl tgt(d: number, s: symbol, t: symbol)
 tgt(d, s, t) :- doc(d, p, _), tsx_names__target_at(p, s, t).
 .decl resolved(n: node, q: symbol)
@@ -2516,6 +2516,49 @@ other(n, q) :- kind(n, "identifier"), text(n, x), tsx_names__exports(_, x, q).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+
+/// Decision 0710: Python's module privacy (D1xx's `doc_public`, Ruff's `is_private_module`) walks the package's folders
+/// over `file`, a setting, at the file's own path: no engine table. A segment starting with `_` and no dunder makes a
+/// module private; a file outside every regular package (`__init__.py` or `__init__.pyi`) is named by its stem alone.
+#[test]
+fn a_python_modules_privacy_is_read_over_the_files_at_its_own_path() {
+    crate::install_store_functions();
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("py-privacy");
+    let _ = std::fs::remove_dir_all(&dir);
+    for path in [
+        "top.py",
+        "_top.py",
+        "__main__.py",
+        "pkg/__init__.py",
+        "pkg/_m.py",
+        "pkg/m.py",
+        "pkg/_impl/__init__.py",
+        "pkg/_impl/m.py",
+        "_loose/m.py",
+        "stubs/__init__.pyi",
+        "stubs/_s.pyi",
+    ] {
+        let to = dir.join("ws").join(path);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::write(to, "x = 1\n").unwrap();
+    }
+    let rule = dir.join("program.rerail");
+    std::fs::write(
+        &rule,
+        ".language python\n#include \"python/docstrings.rerail\"\n.decl public_module(p: symbol)\npublic_module(p) :- kind(m, \"module\"), doc_public(m), docof(m, d), doc(d, p, _).\n.output public_module\n",
+    )
+    .unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
+    let mut rows: Vec<String> = outputs.get("public_module").map(|r| r.shown()).unwrap_or_default().into_iter().flatten().collect();
+    rows.sort();
+    // `_loose/m.py` is in no package: its module is `m`, public. `pkg/_impl/m.py` is `pkg._impl.m` and
+    // `pkg/_impl/__init__.py` is `pkg._impl`, both private.
+    assert_eq!(rows, ["__main__.py", "_loose/m.py", "pkg/__init__.py", "pkg/m.py", "stubs/__init__.pyi", "top.py"].map(str::to_owned));
+    let _ = std::fs::remove_dir_all(&dir);
+}
 
 /// `npm_ignored`, the repository input (`facts::repository`), as `package_manifest` reads a package: its `files` list
 /// decides where it has one (package.json always published); else its `.npmignore`; and a file under no package.json

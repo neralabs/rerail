@@ -1399,7 +1399,7 @@ impl Lowerer {
 
     fn decl(&mut self, name: String, cols: Vec<(String, String)>, tail: &[String]) -> Result<(), Error> {
         let mut widen = None;
-        let mut words = tail.iter();
+        let mut words = tail.iter().peekable();
         while let Some(w) = words.next() {
             match w.as_str() {
                 // `must, may`: three-valued (`three_valued`).
@@ -1413,6 +1413,21 @@ impl Lowerer {
                 "extensible" if self::core::is_core(&name) => {}
                 "extensible" => {
                     self.prog.qualifiers.entry(name.clone()).or_default().insert("extensible".to_owned());
+                }
+                // Where the relation's rows are placed (decision 0710): the project's settings, by key or by a file's
+                // path, the latter with the column naming the key its file reads (`by_path 1`).
+                w @ (crate::code_rule_dsl::logic::front::ast::SETTING | crate::code_rule_dsl::logic::front::ast::KEYED) => {
+                    self.prog.qualifiers.entry(name.clone()).or_default().insert(w.to_owned());
+                }
+                crate::code_rule_dsl::logic::front::ast::BY_PATH => {
+                    let column = words.next_if(|k| k.parse::<usize>().is_ok());
+                    if let Some(c) = column.and_then(|k| k.parse::<usize>().ok())
+                        && c >= cols.len()
+                    {
+                        return Err(Error::Syntax(format!(".decl {name}: `by_path {c}` names no column")));
+                    }
+                    let word = column.map_or_else(|| crate::code_rule_dsl::logic::front::ast::BY_PATH.to_owned(), |k| format!("{} {k}", crate::code_rule_dsl::logic::front::ast::BY_PATH));
+                    self.prog.qualifiers.entry(name.clone()).or_default().insert(word);
                 }
                 "widen" => widen = Some(words.next().and_then(|k| k.parse::<u32>().ok()).ok_or_else(|| Error::Syntax(format!("{name}: `widen` needs a count")))?),
                 // What the relation keeps (decision 0099): an override of the planner's choice.

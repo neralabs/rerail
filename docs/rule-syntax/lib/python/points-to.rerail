@@ -17,13 +17,13 @@
 // A rule's `possible: t` is `possible_type(n, t)` or `possible_open(n)`; `not proven: t` is `!proven_type(n, t)`.
 #include "python/points-to-file.rerail"
 
-.decl points_to__call_target_at(p: symbol, t: symbol, f: symbol)
-.decl points_to__call_open_at(p: symbol, t: symbol)
-.decl points_to__type_of_at(p: symbol, t: symbol, u: symbol)
-.decl points_to__type_open_at(p: symbol, t: symbol)
-.decl points_to__proven_type_at(p: symbol, t: symbol, u: symbol)
-.decl points_to__possible_type_at(p: symbol, t: symbol, u: symbol)
-.decl points_to__possible_open_at(p: symbol, t: symbol)
+.decl points_to__call_target_at(p: symbol, t: symbol, f: symbol) by_path
+.decl points_to__call_open_at(p: symbol, t: symbol) by_path
+.decl points_to__type_of_at(p: symbol, t: symbol, u: symbol) by_path
+.decl points_to__type_open_at(p: symbol, t: symbol) by_path
+.decl points_to__proven_type_at(p: symbol, t: symbol, u: symbol) by_path
+.decl points_to__possible_type_at(p: symbol, t: symbol, u: symbol) by_path
+.decl points_to__possible_open_at(p: symbol, t: symbol) by_path
 
 .decl call_target(c: node, f: symbol)
 call_target(c, f) :- kind(c, "call"), docof(c, d), doc(d, p, _), pt_tm(c, t), points_to__call_target_at(p, t, f).

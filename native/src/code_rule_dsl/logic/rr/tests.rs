@@ -933,7 +933,9 @@ fn rdl_programs_translate_to_the_same_program() {
         };
         let beside = path.with_extension("rerail");
         if beside.exists() && std::fs::read_to_string(&beside).unwrap() != rr {
-            failures.push(format!("{name}: {} is not its translation", beside.display()));
+            let had = std::fs::read_to_string(&beside).unwrap();
+            let first = had.lines().zip(rr.lines()).enumerate().find(|(_, (a, b))| a != b).map(|(i, (a, b))| format!("line {}: {a:?}, translated {b:?}", i + 1));
+            failures.push(format!("{name}: {} is not its translation ({})", beside.display(), first.unwrap_or_else(|| "a line added or dropped".to_owned())));
         }
         // The program's own statements: an `#include` passes through the translation as it is (checked above), and
         // what it names is read with the file (`parse_file`), not here.
@@ -4270,4 +4272,33 @@ fn ended_within(mut child: std::process::Child, limit: std::time::Duration) -> O
     child.kill().unwrap();
     child.wait().unwrap();
     None
+}
+
+/// Decision 0710: a setting's placement is declared on its `.decl` (`setting`, `keyed`, `by_path`, `by_path c`), the
+/// most specific word of every declaration wins, a column past the relation's is refused, and the words print back.
+#[test]
+fn a_settings_placement_is_declared_on_its_decl() {
+    use crate::code_rule_dsl::logic::front::ast::Setting;
+    let prog = super::parse(concat!(
+        ".decl env(key: symbol, value: symbol) setting\n.input env\n",
+        ".decl package(dir: symbol, name: symbol) keyed\n.input package\n",
+        ".decl package_for(path: symbol, dir: symbol) by_path 1\n.input package_for\n",
+        ".decl ignored(path: symbol) by_path\n.input ignored\n",
+        ".decl plain(path: symbol)\n.input plain\n",
+        ".decl out(k: symbol)\nout(k) :- env(k, _), package(_, k), package_for(k, _), ignored(k), plain(k).\n.output out\n",
+    ))
+    .unwrap();
+    let of = |rel: &str| Setting::of(prog.qualifiers.get(rel).into_iter().flatten().map(String::as_str));
+    assert_eq!(of("env"), Some(Setting::Whole));
+    assert_eq!(of("package"), Some(Setting::Keyed));
+    assert_eq!(of("package_for"), Some(Setting::ByPath(Some(1))));
+    assert_eq!(of("ignored"), Some(Setting::ByPath(None)));
+    assert_eq!(of("plain"), None);
+    assert_eq!(Setting::of(["setting", "by_path 1", "keyed"]), Some(Setting::ByPath(Some(1))), "the most specific word wins");
+    let printed = super::print(&prog).unwrap();
+    for line in [".decl env(key: symbol, value: symbol) setting", ".decl package(dir: symbol, name: symbol) keyed", ".decl package_for(path: symbol, dir: symbol) by_path 1", ".decl ignored(path: symbol) by_path"] {
+        assert!(printed.lines().any(|l| l.trim() == line), "{line} in:\n{printed}");
+    }
+    let refused = super::parse(".decl r(path: symbol) by_path 3\n.input r\n").expect_err("column 3 of a relation of one");
+    assert!(refused.to_string().contains("names no column"), "{refused}");
 }

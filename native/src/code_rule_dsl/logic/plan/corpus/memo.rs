@@ -116,7 +116,9 @@ pub(in crate::code_rule_dsl) fn identities(
     phased: &BTreeMap<String, Vec<Vec<crate::code_rule_dsl::logic::front::Value>>>,
     base: &[u8; 32],
 ) -> Result<BTreeMap<String, [u8; 32]>, String> {
-    Ok(strata(local, rels)?.identities(options, phased, base))
+    let fields = crate::code_rule_dsl::logic::plan::fields::Fields::of(local);
+    let setting = |r: &str| fields.as_ref().is_some_and(|f| crate::code_rule_dsl::typing::file_local::Setting::of(f.qualifiers_of(r)).is_some());
+    Ok(strata(local, rels)?.identities(options, phased, base, &setting))
 }
 
 /// What a relation's memo identity is made of in a file-local program (`identities`): its strata's identity (a
@@ -176,7 +178,14 @@ impl Strata {
     /// phases' exports (`phased`), and the projection the base rows are made under (`base`,
     /// `Projection::rows_digest`). So an export's identity changes when a rule it is derived from does, or what the
     /// documents' rows are made of, and only then.
-    pub(in crate::code_rule_dsl) fn identities(&self, options: &serde_json::Value, phased: &BTreeMap<String, Vec<Vec<crate::code_rule_dsl::logic::front::Value>>>, base: &[u8; 32]) -> BTreeMap<String, [u8; 32]> {
+    /// `setting`: whether a relation is one of the project's settings in the program (`file_local::Setting`).
+    pub(in crate::code_rule_dsl) fn identities(
+        &self,
+        options: &serde_json::Value,
+        phased: &BTreeMap<String, Vec<Vec<crate::code_rule_dsl::logic::front::Value>>>,
+        base: &[u8; 32],
+        setting: &dyn Fn(&str) -> bool,
+    ) -> BTreeMap<String, [u8; 32]> {
         let mut out = BTreeMap::new();
         for (rel, (id, reached)) in &self.by_rel {
             let mut hash = Sha256::new();
@@ -186,16 +195,16 @@ impl Strata {
             if reached.iter().any(|r| crate::code_rule_dsl::typing::file_local::option_input(r)) {
                 hash.update(options.to_string().as_bytes());
             }
-            // A phase's export read as a setting (`file_local::setting_input`, `tsx_names`'s) keys a file's entry by the
+            // A phase's export read as a setting (`file_local::Setting`, `tsx_names`'s) keys a file's entry by the
             // rows that file can read of it (`SettingsDigests::identities`), not by all of them.
-            let by_rows: Vec<&str> = reached.iter().map(String::as_str).filter(|r| phased.contains_key(*r) && !crate::code_rule_dsl::typing::file_local::setting_input(r)).collect();
+            let by_rows: Vec<&str> = reached.iter().map(String::as_str).filter(|r| phased.contains_key(*r) && !setting(r)).collect();
             out.insert(rel.clone(), with_rows(hash.finalize().into(), by_rows.iter().map(|r| (*r, &phased[*r]))));
         }
         out
     }
 }
 
-/// What a memoised relation's rows can read of the project's settings (decision 0665, `file_local::setting_input`):
+/// What a memoised relation's rows can read of the project's settings (decisions 0665, 0710, `file_local::Setting`):
 /// the settings of its own file alone, or any file's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SettingsScope {
@@ -213,7 +222,7 @@ pub enum SettingsScope {
 /// path, a variable its head drops) is of every file's rows, and so is a memoised relation still keyed by one.
 pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, rels: &BTreeSet<String>) -> BTreeMap<String, SettingsScope> {
     use crate::code_rule_dsl::logic::program_image::TermRef;
-    use crate::code_rule_dsl::typing::file_local::{SETTINGS_BY_FOLDER, setting_by_path};
+    use crate::code_rule_dsl::typing::file_local::Setting;
     /// A relation's reads of the settings: of any file's, of its own file's, and keyed by its columns' paths or folders.
     #[derive(Clone, Default, PartialEq)]
     struct Reach {
@@ -223,13 +232,18 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
         path: BTreeSet<usize>,
     }
     let v = &local.v;
+    // Each relation's setting, as its `.decl` places it (decision 0710).
+    let fields = crate::code_rule_dsl::logic::plan::fields::Fields::of(local);
+    let setting = |rel: &str| fields.as_ref().and_then(|f| Setting::of(f.qualifiers_of(rel)));
+    let setting_by_path = |rel: &str| match setting(rel) {
+        Some(Setting::ByPath(c)) => Some(c),
+        _ => None,
+    };
     let base = |rel: &str| -> Option<Reach> {
-        if SETTINGS_BY_FOLDER.contains(&rel) {
-            Some(Reach { folder: [0].into(), ..Reach::default() })
-        } else if setting_by_path(rel).is_some() {
-            Some(Reach { path: [0].into(), ..Reach::default() })
-        } else {
-            None
+        match setting(rel)? {
+            Setting::Keyed => Some(Reach { folder: [0].into(), ..Reach::default() }),
+            Setting::ByPath(_) => Some(Reach { path: [0].into(), ..Reach::default() }),
+            Setting::Whole => None,
         }
     };
     // A rule's own paths (its document's, `doc(d, p, _)`), and the folders or targets its own file's rows name: read
@@ -331,14 +345,14 @@ pub struct SettingsDigests {
 
 impl SettingsDigests {
     /// Of `rels`: each setting the run binds, by name.
-    pub fn of(rels: &[(&str, &dyn crate::code_rule_dsl::facts::vtab::Source)]) -> Self {
-        use crate::code_rule_dsl::typing::file_local::{SETTINGS_BY_FOLDER, setting_by_path};
+    pub fn of(rels: &[(&str, crate::code_rule_dsl::typing::file_local::Setting, &dyn crate::code_rule_dsl::facts::vtab::Source)]) -> Self {
+        use crate::code_rule_dsl::typing::file_local::Setting;
         let mut out = SettingsDigests::default();
         let mut hash = Sha256::new();
         hash.update(b"rerail.settings/v1\0");
-        let mut sorted: Vec<&(&str, &dyn crate::code_rule_dsl::facts::vtab::Source)> = rels.iter().collect();
-        sorted.sort_by_key(|(name, _)| *name);
-        for (k, (name, source)) in sorted.into_iter().enumerate() {
+        let mut sorted: Vec<&(&str, Setting, &dyn crate::code_rule_dsl::facts::vtab::Source)> = rels.iter().collect();
+        sorted.sort_by_key(|(name, ..)| *name);
+        for (k, (name, setting, source)) in sorted.into_iter().enumerate() {
             let width = source.columns().len();
             let mut rows: Vec<Vec<i64>> = (0..source.len()).map(|i| (0..width).map(|c| source.value(i, c)).collect()).collect();
             rows.sort_unstable();
@@ -347,15 +361,15 @@ impl SettingsDigests {
             for row in &rows {
                 row.iter().for_each(|x| hash.update(x.to_le_bytes()));
             }
-            let keyed = if let Some(hop) = setting_by_path(name) {
-                if let Some(c) = hop {
-                    out.hop.insert(k, c);
+            let keyed = match *setting {
+                Setting::ByPath(hop) => {
+                    if let Some(c) = hop {
+                        out.hop.insert(k, c);
+                    }
+                    Some(&mut out.by_path)
                 }
-                Some(&mut out.by_path)
-            } else if SETTINGS_BY_FOLDER.contains(name) {
-                Some(&mut out.by_folder)
-            } else {
-                None
+                Setting::Keyed => Some(&mut out.by_folder),
+                Setting::Whole => None,
             };
             if let Some(keyed) = keyed {
                 for row in rows.into_iter().filter(|r| !r.is_empty()) {

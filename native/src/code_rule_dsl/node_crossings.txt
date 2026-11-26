@@ -6,7 +6,6 @@ data-layer cpl_err
 data-layer cpl_signed_text
 data-layer csa_counterpart
 data-layer csa_lazy_name
-data-layer csb_owner
 data-layer er_ann
 data-layer er_ann_part
 data-layer er_dirty

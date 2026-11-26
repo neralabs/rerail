@@ -11,7 +11,7 @@
 //! While the tree's split runs too (its passes are not yet on versions), a debug build checks the two agree
 //! (`file_local::programs_over`).
 
-use super::{CHUNK_VALUES, document_column, option_input, path_key_column, setting_input};
+use super::{CHUNK_VALUES, Setting, document_column, option_input, path_key_column};
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
 use crate::code_rule_dsl::logic::program_image::manager::{Analysis, Cx, Delta, Reads};
 use crate::code_rule_dsl::logic::program_image::{CmpOp, Lit as L, NativeSpec, RelId, RuleRef, Slot, TermRef, Version};
@@ -234,7 +234,7 @@ impl<'v> Program<'v> {
 
     /// An input with one value for the whole run (`file_local::run_constant`).
     fn run_constant(&self, rel: &str) -> bool {
-        option_input(rel) || setting_input(rel) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(rel) && self.f.is_input(rel))
+        option_input(rel) || Setting::of(self.f.qualifiers_of(rel)).is_some() || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(rel) && self.f.is_input(rel))
     }
 
     fn keys(&self) -> Keys {

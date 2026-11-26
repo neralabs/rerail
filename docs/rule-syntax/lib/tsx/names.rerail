@@ -457,9 +457,9 @@ source_of(n, m) :- nearest(n, i, "import_statement"), field(i, "source", s), str
 // (relative paths against every file, tsconfig `paths`, chains of re-exports) by the phase `tsx_names`
 // (native/src/code_rule_dsl/typing/programs/tsx_names.rerail), which runs first over the same files and hands on
 // symbols alone: here they are read as settings are, so a rule reading them stays per-file (decision 0665).
-.decl tsx_names__target_at(p: symbol, spec: symbol, t: symbol)
-.decl tsx_names__exports(m: symbol, x: symbol, q: symbol)
-.decl tsx_names__module(m: symbol)
+.decl tsx_names__target_at(p: symbol, spec: symbol, t: symbol) by_path 2
+.decl tsx_names__exports(m: symbol, x: symbol, q: symbol) keyed
+.decl tsx_names__module(m: symbol) keyed
 .decl target(d: number, spec: symbol, t: symbol)
 target(d, s, t) :- doc(d, p, _), tsx_names__target_at(p, s, t).
 

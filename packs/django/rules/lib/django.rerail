@@ -188,12 +188,12 @@ dj_model_has_method(e, x) :- dj_model_named(e, mq), dj_model_ref(e, mq, m),
 //   dj_model_abstract(e)          its own Meta says `abstract = True`
 //   dj_model_manager_method(e, a, x)  its manager attribute a's class (or its get_queryset()'s class) of the run
 //                                 defines or inherits x, get_or_create or update_or_create
-.decl py_names__dj_group(m: symbol, q: symbol, g: symbol, x: symbol)
-.decl py_names__dj_cond_group(m: symbol, q: symbol, g: symbol, x: symbol)
-.decl py_names__dj_opaque(m: symbol, q: symbol)
-.decl py_names__dj_unmanaged(m: symbol, q: symbol)
-.decl py_names__dj_abstract(m: symbol, q: symbol)
-.decl py_names__dj_manager_method(m: symbol, q: symbol, a: symbol, x: symbol)
+.decl py_names__dj_group(m: symbol, q: symbol, g: symbol, x: symbol) keyed
+.decl py_names__dj_cond_group(m: symbol, q: symbol, g: symbol, x: symbol) keyed
+.decl py_names__dj_opaque(m: symbol, q: symbol) keyed
+.decl py_names__dj_unmanaged(m: symbol, q: symbol) keyed
+.decl py_names__dj_abstract(m: symbol, q: symbol) keyed
+.decl py_names__dj_manager_method(m: symbol, q: symbol, a: symbol, x: symbol) keyed
 .decl dj_model_group(e: node, g: symbol, x: symbol)
 dj_model_group(e, g, x) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names__dj_group(m, mq, g, x).
 .decl dj_model_cond_group(e: node, g: symbol, x: symbol)
@@ -210,8 +210,8 @@ dj_model_abstract(e) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names_
 //                                 call the base class's; a pre_save/post_save receiver for it in any file
 //   dj_receiver_def(f, mq)        def f of the reading file is connected, in any file, as a pre_save/post_save receiver
 //                                 for sender mq
-.decl py_names__dj_hook(m: symbol, q: symbol, k: symbol, h: symbol)
-.decl py_names__dj_receiver_fn(m: symbol, f: symbol, q: symbol)
+.decl py_names__dj_hook(m: symbol, q: symbol, k: symbol, h: symbol) keyed
+.decl py_names__dj_receiver_fn(m: symbol, f: symbol, q: symbol) keyed
 .decl dj_model_hook(e: node, k: symbol, h: symbol)
 dj_model_hook(e, k, h) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names__dj_hook(m, mq, k, h).
 .decl dj_receiver_def(f: node, mq: symbol)
@@ -391,17 +391,17 @@ dj_plain_at(d, q) :- doc(d, p, _), py_names__reads_at(p, m), py_names__plain_def
 // `Celery(..., task_cls=AMOTask)`). Such a call already waits for the commit. The task, its class and the app are in
 // any file: the phase py_names joins them by symbol (dj_deferred_task, dj_app_defers), read through the modules the
 // call's file reads (decision 0677).
-.decl py_names__dj_deferred_task(m: symbol, f: symbol)
-.decl py_names__dj_app_defers(m: symbol)
+.decl py_names__dj_deferred_task(m: symbol, f: symbol) keyed
+.decl py_names__dj_app_defers(m: symbol) keyed
 // py_names__dj_view_model(m, q, s): class q of module m, or an ancestor of the run, says `model = S` or
 // `queryset = S.objects…` in its body (get-handler-writes' view over S).
-.decl py_names__dj_view_model(m: symbol, q: symbol, s: symbol)
+.decl py_names__dj_view_model(m: symbol, q: symbol, s: symbol) keyed
 // py_names__dj_task_def(m, f): function f of module m is decorated as a Celery task (`@shared_task`, `@app.task(...)`,
 // `@task`).
-.decl py_names__dj_task_def(m: symbol, f: symbol)
+.decl py_names__dj_task_def(m: symbol, f: symbol) keyed
 // py_names__dj_anc_clean_call(m, q, x): a class of the run among class q's ancestors calls `self.x()`, x a clean_…
 // method (django-practice-clean-field-returns-value).
-.decl py_names__dj_anc_clean_call(m: symbol, q: symbol, x: symbol)
+.decl py_names__dj_anc_clean_call(m: symbol, q: symbol, x: symbol) keyed
 .decl dj_task_waits_for_commit(c: node)
 dj_task_waits_for_commit(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m),
     (m = "delay" ; m = "apply_async"), sym_of(o, q), docof(c, d), doc(d, p, _), py_names__reads_at(p, mq),

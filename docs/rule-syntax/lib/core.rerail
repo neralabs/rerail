@@ -293,7 +293,7 @@
 // setting names. load(path, module, grammar): a rule asks for
 // the file as a document, named as `module` (its resolution's answer); loaded(path, module, grammar): the documents
 // loaded, by canonical path. A loaded document is evaluated like any other; its rows are not the run's findings.
-.decl env(key: symbol, value: symbol) extensible
+.decl env(key: symbol, value: symbol) setting extensible
 .decl dir_entry(dir: symbol, name: symbol, is_dir: number)
 .decl file_line(path: symbol, i: number, text: symbol)
 .decl file_digest(path: symbol, c: symbol)
@@ -533,25 +533,25 @@
 // Facts from the repository that are not source code. Each reader parses one kind of file (JSON configs,
 // the Git tree, the policy) and is native because that is IO and format parsing, not logic.
 // file("src/c.tsx"): the file exists. Import resolution tests candidate paths against this.
-.decl file(path: symbol)                                 // a file in the scanned tree (Git tree facts)
+.decl file(path: symbol) setting                                 // a file in the scanned tree (Git tree facts)
 // tsconfig("web", "web/src") for web/tsconfig.json with "baseUrl": "src". `extends` chains are merged first.
-.decl tsconfig(dir: symbol, base_url: symbol)            // tsconfig.json / jsconfig.json, `extends` followed
+.decl tsconfig(dir: symbol, base_url: symbol) keyed            // tsconfig.json / jsconfig.json, `extends` followed
 // tsconfig_for("web/src/a.ts", "web"): the nearest tsconfig.json in or above its directory.
-.decl tsconfig_for(path: symbol, dir: symbol)            // the tsconfig directory that governs a file
+.decl tsconfig_for(path: symbol, dir: symbol) by_path 1            // the tsconfig directory that governs a file
 // "paths": {"@/*": ["src/*"]} in web/tsconfig.json gives tsconfig_path("web", "@/*", "src/*"), one row per target.
-.decl tsconfig_path(dir: symbol, pattern: symbol, target: symbol)
+.decl tsconfig_path(dir: symbol, pattern: symbol, target: symbol) keyed
 // package("packages/ui", "@acme/ui") from packages/ui/package.json: maps a workspace package name to its directory.
-.decl package(dir: symbol, name: symbol)                 // package.json name
+.decl package(dir: symbol, name: symbol) keyed                 // package.json name
 // "exports": {"./button": "./src/button.ts"} in @acme/ui's package.json gives
 // package_export("@acme/ui", "./button", "./src/button.ts").
-.decl package_export(name: symbol, subpath: symbol, target: symbol)
+.decl package_export(name: symbol, subpath: symbol, target: symbol) setting
 // package_for("web/src/a.js", "web"): the nearest package.json in or above a file's directory, as tsconfig_for.
 // package_field("web", "engines/node", ">=18"): its string values, one row each. The key is the member's path
 // from the root, segments joined by "/" and escaped as JSON pointer tokens (RFC 6901: "~" as "~0", "/" as "~1"),
 // array elements by index from 0: "type", "engines/node", "devEngines/runtime/0/version". Only strings give
 // rows: `"engines": { "node": 18 }` gives none, as the engine ignores a non-string there.
-.decl package_for(path: symbol, dir: symbol)
-.decl package_field(dir: symbol, key: symbol, v: symbol)
+.decl package_for(path: symbol, dir: symbol) by_path 1
+.decl package_field(dir: symbol, key: symbol, v: symbol) keyed
 // Python: in `x: "Foo"`, `cast("Foo", x)` or `TypeVar("T", bound="Foo")`, the string is a type. Native because the
 // list of positions follows Ruff's own table (its semantic model's string type definitions, nested ones included),
 // not anything visible in the tree. A `Literal` argument or `Annotated` metadata is none.

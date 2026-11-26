@@ -58,7 +58,7 @@
 
 // spec_resolved(n, f): the phase node_resolve's answer for n's file, specifier and style, read at n's own path. The
 // phase resolves every string a specifier may be (a superset of node_target's), so each of node_target's is asked.
-.decl node_resolve__file_at(p: symbol, x: symbol, st: symbol, f: symbol)
+.decl node_resolve__file_at(p: symbol, x: symbol, st: symbol, f: symbol) by_path 3
 .decl spec_resolved(n: node, file: symbol)
 spec_resolved(n, f) :- node_target(n, x, st), docof(n, d), doc(d, p, _), node_resolve__file_at(p, x, st, f).
 
