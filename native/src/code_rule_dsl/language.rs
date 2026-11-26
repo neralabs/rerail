@@ -565,7 +565,11 @@ pub fn fragment(name: &str) -> Option<(GrammarDialect, &'static str)> {
 /// The one dialect an embedding of id `via` gives (`compiled-view`: a Blade template's PHP); `None` for another name,
 /// or an embedding of several.
 pub fn embedding_dialect(via: &str) -> Option<GrammarDialect> {
-    let mut of = GrammarDialect::ALL.iter().flat_map(|d| d.embeds().iter()).filter(|(v, _)| v.id() == via).map(|&(_, d)| d);
+    let mut of = GrammarDialect::ALL
+        .iter()
+        .flat_map(|d| d.embeds().iter())
+        .filter(|(v, _)| v.id() == via)
+        .map(|&(_, d)| d);
     let first = of.next()?;
     of.all(|d| d == first).then_some(first)
 }

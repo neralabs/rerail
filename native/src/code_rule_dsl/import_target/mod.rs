@@ -387,7 +387,9 @@ pub fn resolver(root: &std::path::Path) -> Box<dyn Fn(&str, &str, &str) -> Optio
             return None;
         }
         Some(match found.file_path.as_deref() {
-            Some(file) => view.relative(file).map_or_else(|| file.to_owned(), str::to_owned),
+            Some(file) => view
+                .relative(file)
+                .map_or_else(|| file.to_owned(), str::to_owned),
             None => name.to_owned(),
         })
     })

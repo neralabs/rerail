@@ -5203,7 +5203,8 @@ pub(crate) fn install_languages() {
     logic::plan::corpus::world::install_module_resolver(import_target::resolver);
     // What npm publishes of a package (`npm_ignored`, a repository input).
     facts::repository::install_npm_publication(|folder, bytes, npmignore, gitignore| {
-        let manifest = package_manifest::Manifest::parse(folder.to_owned(), bytes).with_ignore_files(npmignore, gitignore);
+        let manifest = package_manifest::Manifest::parse(folder.to_owned(), bytes)
+            .with_ignore_files(npmignore, gitignore);
         Box::new(move |path| manifest.publishes(path))
     });
     // What the evaluator keeps per connection, dropped with it.
