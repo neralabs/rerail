@@ -1,0 +1,26 @@
+[
+  {
+    "id": "ruff-pt026-pytest-use-fixtures-without-parameters",
+    "status": "different",
+    "reason": "ruff/rerail/probes/PT026-bare-name-and-trailing-comment.py:23 is `@pytest.mark.usefixtures()` on `class TestE: ...`. The original's `inside` accepts a class_definition as well as a function_definition, so it reports it. Ruff 0.17.6 runs PT026 only on a def's decorators and reports lines 6, 10, 18 and 27 of that file, not 23. The translation reports the same four lines.",
+    "right": "translation",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 1,
+        "translationOnly": 0
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  },
+  {
+    "id": "ruff-pt030-pytest-warns-too-broad",
+    "status": "same"
+  }
+]
