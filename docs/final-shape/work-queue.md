@@ -6720,11 +6720,11 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   (9f68e3703), and 7410a263b's tables 2, 3 and 6, `kinds.tsv` and the lean parser's kinds with #508's tip. The test
   passes on Linux, with format 15's pinned digest (Tim's, 5e9b8dc4…) and the lean parsers' format tests.
 
-### Q246. (PR #508, t47) The end of children meets implied tokens (RER-131)
+### Q246. (PR #508, t47) The end of children meets implied tokens (decision 0161)
 
 - **Seen**: the packed matcher finds no `case $V:` in `case 1: f(); break;`.
 - **Keep**: Tim's 65ff68df5 and the vendored ast-grep-core half (its test needs `tokenless_matched`, ported with
-  it); the rer-131 worktree's work on tapes of named nodes.
+  it); the named-only tapes work (decision 0161).
 - **Done when**: `ast_pattern_end_of_children_meets_implied_tokens` passes, unignored, and the vendored test is in.
 - **Done** (2026-11-18, branch `pr508-fixes-as-tests`): 83b741861 (the end-of-children goal carries the implied
   word; an ellipsis before it leaves the candidate's trailing tokens) and 65ff68df5 (`Doc::implied_after`,
@@ -6755,7 +6755,7 @@ Done (2026-11-19):
   location, with Tim's test (2c9ab87b9).
 - Tim's TypeScript CLI tests (9036be38c, 9cc6eb22f, ed1872a09): ported with their fixes, `--delete-data` written for
   the v6 store (5b19487fb).
-- Found on the way, fixed: the rule schema refused RER-131's `stored` note, skipping the JavaScript, Python and
+- Found on the way, fixed: the rule schema refused decision 0161's `stored` note, skipping the JavaScript, Python and
   TypeScript packs whole (f2cf3dc2a); five shipped rules' caught examples found nothing, gap tests not answering a
   condition on an implied comma or a count of them (a3db5929d); vitest ran git with the person's config, so a
   machine signing commits failed about 120 tests (4c5e85057). audit-cli's four failures are a debug addon's speed
@@ -6857,7 +6857,7 @@ Open:
   - The three memos had come in with the merge (clean hunks outside the check's directories):
     `check_no_new_caches.py` now reads all of `code_rule_dsl/`.
   - Hub-side answers kept: `lowered` is `gap_test` alone (Tim's also counts `gap_split` and the token's own
-    `follows`/`precedes`, RER-131 work the hub has not taken).
+    `follows`/`precedes`, decision 0161 work the hub has not taken).
   - Tests (Linux): the token, census, automata, pattern, compile, prefilter and anchors filter, 520 of 528, the same 8
     failing at c2365d280 without the port (Q254).
 
@@ -6925,7 +6925,7 @@ Open:
 - **Done when**: each passes.
 - **Done** (2026-11-19), six of eight; the two `compile_matcher_tests` read ruff's fixtures, which no checkout here
   holds at their lock (`npm run fixtures:pull`).
-  - The four RER-131 tests and the two pack rules (`ruff-fast001`'s lone trailing comma, `ruff-sim118`'s `in`) needed
+  - The four decision 0161 tests and the two pack rules (`ruff-fast001`'s lone trailing comma, `ruff-sim118`'s `in`) needed
     t47's pending 48bf01694/241c19955 and c00a1d9f0, which stage 2 left out with the hub's token files. Ported onto
     the hub's gap index, not Tim's per-call item sequence: `gap_split` with a `Stored` token condition; a gap test's
     token conditions on a node's own tokens (`has`); a neighbour walk's `stored` test (no implied token between it and
@@ -11540,3 +11540,30 @@ asks for the new check), c-directives eval::tests 50.
 ### Q556. Roll-up 128 (build-and-test-loop-time a1be6a7657 onto Pulling-it-all-together): what the merge chose
 
 - build-and-test-loop-time (1 commit, a1be6a7657): farm 61, the hot path keeps clippy-driver's rustc argument first. Tooling only; a clean merge.
+
+### Q557. Roll-up 129 (main 8d62b17476 onto Pulling-it-all-together): what the merge chose
+
+- main (54 commits, 8d62b17476): the engine in six npm packages (#1009, the loader names the package: `source_tree::name_package`),
+  Windows reads a file edited with its size and time kept (#921: `worktree_stat`, the module graph's folder listing),
+  a linked worktree's Git access (#1048), the daemon's waits on facts (#964, #974, #997, #1104), Git reads without blocking
+  (worktree lists, submodules), the identifier scrub (#1014), regex-syntax 0.8.12 and roaring 0.12.
+- main is still the single `native/src` layout; its edits came across by rename to the crates. Its new files placed where
+  their modules are: `observe/src/git_workspace/worktree_stat.rs`, `lang_ecma/src/code_rule_dsl/module_graph/listing.rs`.
+  The hub's deletions of the old `native/src` copies stand.
+- Both sides kept: the module graph's disk walk (main's stamps and listing) beside the hub's snapshot graph and its
+  run-shared cache; the workspace restore's candidates and proof (main's split) with the hub's snapshot checked
+  sources; the source root's named package inside the hub's once-a-run setting; Git's worktree list read with `-z`
+  (the hub's, byte-exact paths) by the sync and the non-blocking reads alike (main's); the content store's owner check
+  (main's `ownedContentStorePath`) where the hub's analysis store is given.
+- main's new git-workspace tests that publish nothing live in rerail-observe's `git_workspace::tests` beside the stat's
+  own hooks; the store's keep the rest. CI's Windows engine job names the crates the tests now live in.
+- The scrub finished over the hub's own tree: `tempo_` JIT names in the stream compiler and the packed transducer, and
+  every ticket ID (`check-internal-refs` clean). `wave.rir` reblessed: its programs follow regex-syntax 0.8.12 (#1090).
+- After the merge: two of main's new TS tests built `CheckoutOwners` from a version reader; the hub's takes the database. main's
+  placement test set `GIT_DIR` and `GIT_OBJECT_DIRECTORY`, which never reach the hub's Git (hook variables), so it moves the
+  lookup by the variable that still does. registered-worktrees counts and stubs the `-z` byte reader too (its legacy-Git
+  case stubbed only the text reader, so it never reached the fallback).
+- roaring 0.12 in every crate (main bumped only its own; one version in the lock).
+- Relax: observe 13, store 22 (git_workspace), module_graph 22, rir 8, the wave golden, context_tests 75; check 0 errors
+  over the changed crates. tsc clean; the catalog suites green but for a stale engine addon and an unbuilt dist.
+  Red under Relax only: store-base's `the_image_is_the_one_the_loader_names` (no image holds JIT code).

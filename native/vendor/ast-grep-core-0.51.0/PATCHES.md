@@ -1,7 +1,7 @@
-# ast-grep-core 0.51.0, patched (RER-131)
+# ast-grep-core 0.51.0, patched (decision 0161)
 
 crates.io's ast-grep-core 0.51.0, with one addition for tapes that leave out the tokens their
-grammar implies (`native/src/code_rule_dsl/tape/tokens.rs`). Every change is marked `Rerail (RER-131)`.
+grammar implies (`native/src/code_rule_dsl/tape/tokens.rs`). Every change is marked `Rerail (decision 0161)`.
 
 - **The end-of-children goal** (`kind_utils::CHILDREN_END`, `PatternNode::children_end`). A pattern
   is parsed into a tape like any document, so its implied tokens are left out too. Under `Smart`

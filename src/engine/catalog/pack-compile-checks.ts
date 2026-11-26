@@ -8,12 +8,12 @@
  * engine's reading of each `.rerail` pack rule (`kept-rerail-descriptions.ts`).
  */
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { z } from "zod";
 import { bundledCodeRuleDslDirectory } from "../code-rule/code-rule-compile.js";
 import { replaceFileSync } from "../file-replace.js";
-import { resolveNativeBindingPath } from "../native/native.js";
+import { loadedEngineFile } from "../native/native.js";
 import { keptDescriptionSchema, keptRerailDescriber } from "./rerail-rules/kept-rerail-descriptions.js";
 import { describeRerailRules, type RerailDescriber, type RerailDescription } from "./rerail-rules/rerail-rule.js";
 
@@ -56,11 +56,13 @@ export interface PackCompileChecks {
   save(): void;
 }
 
-/** The engine build verdicts hold for: the native addon by path and stamp, and the capabilities rules compile against. */
+/**
+ * The engine build verdicts hold for: the native addon this process runs, by path and by its time and size as it was
+ * loaded (`loadedEngineFile`), and the capabilities rules compile against.
+ */
 function engineBuild(): string | undefined {
   try {
-    const addon = resolveNativeBindingPath();
-    const { mtimeMs, size } = statSync(addon);
+    const { path: addon, mtimeMs, size } = loadedEngineFile();
     const capabilities = readFileSync(resolve(bundledCodeRuleDslDirectory(), "capabilities.json"));
     return createHash("sha256").update(`${addon}\0${mtimeMs}:${size}\0`).update(capabilities).digest("hex");
   } catch {

@@ -2,12 +2,12 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ presentation: vi.fn(), rulesDashboard: vi.fn(), openDashboard: vi.fn(), summaryState: vi.fn() }));
-// `readSummaryState` stays real unless a test says otherwise: with an empty Rerail home no daemon answers.
+const mocks = vi.hoisted(() => ({ summary: vi.fn(), rulesDashboard: vi.fn(), openDashboard: vi.fn() }));
+// `readRerailSummary` stays real unless a test gives its answer once: with an empty Rerail home no daemon answers.
 vi.mock("../../src/presentation/session-presentation.js", async () => {
   const actual = await vi.importActual<typeof import("../../src/presentation/session-presentation.js")>("../../src/presentation/session-presentation.js");
-  mocks.summaryState.mockImplementation(actual.readSummaryState);
-  return { readSummaryState: mocks.summaryState, readPresentation: mocks.presentation, readRulesDashboard: mocks.rulesDashboard };
+  mocks.summary.mockImplementation(actual.readRerailSummary);
+  return { readRerailSummary: mocks.summary, readRulesDashboard: mocks.rulesDashboard };
 });
 vi.mock("../../src/runtime/daemon-control.js", async () => ({
   ...await vi.importActual<Record<string, unknown>>("../../src/runtime/daemon-control.js"),
@@ -85,18 +85,33 @@ describe("Rerail commands in OMP and Pi", () => {
   });
 });
 
+/** `/rerail`'s read of a session in `status`, with no counts and no rules page. */
+function withSession({ status, repositoryState }: { status: string; repositoryState: string | null }) {
+  return { presentation: { status, text: "", url: null, parts: [], presence: "compact", repositoryState, counts: null }, repositoryState, rulesUrl: null };
+}
+
+/** `/rerail`'s read of a session Rerail is on in, with its counts and the rules page the daemon's answer gives. */
+function sessionOn(counts: { rules: number; steered: number; awaitingApproval: number }, rulesUrl: string | null) {
+  return {
+    presentation: {
+      status: "on", text: "", url: "http://127.0.0.1:4737/?sessionId=session-1&host=omp#sessions", parts: [],
+      presence: "compact", repositoryState: "started", counts,
+    },
+    repositoryState: "started",
+    rulesUrl,
+  };
+}
+
 describe("/rerail", () => {
   it("says what Rerail is doing in this session, then lists every command", async () => {
-    mocks.presentation.mockResolvedValue({
-      status: "on", text: "", url: "http://127.0.0.1:4737/?sessionId=session-1&host=omp#sessions", parts: [],
-      presence: "compact", repositoryState: "started", counts: { rules: 26, steered: 1, awaitingApproval: 0 },
-    });
-    mocks.rulesDashboard.mockResolvedValue({ url: "http://127.0.0.1:4737/#rules", reason: null });
+    mocks.summary.mockResolvedValueOnce(sessionOn({ rules: 26, steered: 1, awaitingApproval: 0 }, "http://127.0.0.1:4737/#rules"));
     const { run, notices } = commandHarness();
     await run("rerail");
-    expect(mocks.presentation).toHaveBeenCalledWith({
-      sessionId: "session-1", host: "omp", cwd: "/workspace/acme-web", onDemand: true, startState: expect.any(Function),
+    expect(mocks.summary).toHaveBeenCalledWith({
+      host: "omp", sessionId: "session-1", cwd: "/workspace/acme-web", startState: expect.any(Function),
     });
+    // The one read gives the rules page too.
+    expect(mocks.rulesDashboard).not.toHaveBeenCalled();
     const [notice] = notices;
     expect(notice?.level).toBe("info");
     expect(notice?.message).toContain([
@@ -109,11 +124,9 @@ describe("/rerail", () => {
   });
 
   it("counts what runs in Log waiting for approval, linked to the dashboard, whose Overview lists it", async () => {
-    mocks.presentation.mockResolvedValue({
-      status: "on", text: "", url: null, parts: [],
-      presence: "compact", repositoryState: "started", counts: { rules: 26, steered: 0, awaitingApproval: 2 },
-    });
-    mocks.rulesDashboard.mockResolvedValue({ url: "http://127.0.0.1:4737/?repository=remote%3Agithub.com%2Facme%2Fapp#rules", reason: null });
+    mocks.summary.mockResolvedValueOnce(
+      sessionOn({ rules: 26, steered: 0, awaitingApproval: 2 }, "http://127.0.0.1:4737/?repository=remote%3Agithub.com%2Facme%2Fapp#rules"),
+    );
     const { run, notices } = commandHarness();
     await run("rerail");
     expect(notices[0]?.message).toContain(
@@ -122,11 +135,8 @@ describe("/rerail", () => {
   });
 
   it("answers /rerail-help exactly as /rerail", async () => {
-    mocks.presentation.mockResolvedValue({
-      status: "on", text: "", url: "http://127.0.0.1:4737/?sessionId=session-1&host=omp#sessions", parts: [],
-      presence: "compact", repositoryState: "started", counts: { rules: 26, steered: 1, awaitingApproval: 0 },
-    });
-    mocks.rulesDashboard.mockResolvedValue({ url: "http://127.0.0.1:4737/#rules", reason: null });
+    const read = sessionOn({ rules: 26, steered: 1, awaitingApproval: 0 }, "http://127.0.0.1:4737/#rules");
+    mocks.summary.mockResolvedValueOnce(read).mockResolvedValueOnce(read);
     const { run, notices } = commandHarness();
     await run("rerail");
     await run("rerail-help");
@@ -136,10 +146,7 @@ describe("/rerail", () => {
   });
 
   it("says Rerail is not on here, and how to start it, where it is stopped", async () => {
-    mocks.presentation.mockResolvedValue({
-      status: "not-on-here", text: "", url: null, parts: [], presence: "compact", repositoryState: "stopped", counts: null,
-    });
-    mocks.rulesDashboard.mockResolvedValue({ url: null, reason: "not on here" });
+    mocks.summary.mockResolvedValueOnce(withSession({ status: "not-on-here", repositoryState: "stopped" }));
     const { run, notices } = commandHarness();
     await run("rerail");
     expect(notices[0]?.message.split("\n").slice(0, 2)).toEqual(["○ Rerail is not on in acme-web.", "  Start it with /rerail-start."]);
@@ -153,7 +160,6 @@ describe("/rerail", () => {
     temporaryDirectories.push(home);
     vi.stubEnv("RERAIL_HOME", home);
     const root = await launcherPackage(`[ "$1" = state ]\nprintf '${state}\\n'`);
-    mocks.rulesDashboard.mockResolvedValue({ url: null, reason: "daemon unavailable" });
     const { run, notices } = commandHarness({ packageRoot: root, cwd: () => root, sessionId: () => undefined });
     await run("rerail");
     expect(notices[0]?.message.split("\n").slice(0, 2)).toEqual(running
@@ -162,10 +168,7 @@ describe("/rerail", () => {
   });
 
   it("says a started repository that is not set up checks no rules, and how to set it up", async () => {
-    mocks.presentation.mockResolvedValue({
-      status: "not-set-up", text: "", url: null, parts: [], presence: "compact", repositoryState: "not-set-up", counts: null,
-    });
-    mocks.rulesDashboard.mockResolvedValue({ url: null, reason: "daemon unavailable" });
+    mocks.summary.mockResolvedValueOnce(withSession({ status: "not-set-up", repositoryState: "not-set-up" }));
     const { run, notices } = commandHarness();
     await run("rerail");
     expect(notices[0]?.message.split("\n").slice(0, 2)).toEqual([
@@ -174,17 +177,14 @@ describe("/rerail", () => {
     ]);
   });
 
-  it("says a daemon that did not answer in time is running, and does not ask it again for the dashboard link", async () => {
-    mocks.presentation.mockResolvedValue({
-      status: "not-answering", text: "R E R A I L ● not answering", url: null, parts: [], presence: "compact", repositoryState: null, counts: null,
-    });
-    mocks.rulesDashboard.mockResolvedValue({ url: null, reason: "daemon unavailable" });
-    const withSession = commandHarness();
-    await withSession.run("rerail");
-    mocks.summaryState.mockResolvedValueOnce("not-answering");
+  it("says a daemon that did not answer in time is running, and asks it nothing more", async () => {
+    mocks.summary.mockResolvedValueOnce(withSession({ status: "not-answering", repositoryState: null }));
+    const session = commandHarness();
+    await session.run("rerail");
+    mocks.summary.mockResolvedValueOnce({ presentation: null, repositoryState: "not-answering", rulesUrl: null });
     const withoutSession = commandHarness({ sessionId: () => undefined });
     await withoutSession.run("rerail");
-    for (const { notices } of [withSession, withoutSession]) {
+    for (const { notices } of [session, withoutSession]) {
       expect(notices[0]?.message.split("\n").slice(0, 2)).toEqual([
         "● Rerail is running, but its daemon did not answer in time.",
         "  Ask again in a moment; if it keeps happening, run `rerail status` in a terminal.",
@@ -196,13 +196,10 @@ describe("/rerail", () => {
 
   it("hands the session read the launcher's start state for when no daemon answers", async () => {
     const root = await launcherPackage(`[ "$1" = state ]\nprintf 'stopped\\n'`);
-    mocks.presentation.mockResolvedValue({
-      status: "not-on-here", text: "", url: null, parts: [], presence: "compact", repositoryState: "stopped", counts: null,
-    });
-    mocks.rulesDashboard.mockResolvedValue({ url: null, reason: "daemon unavailable" });
+    mocks.summary.mockResolvedValueOnce(withSession({ status: "not-on-here", repositoryState: "stopped" }));
     const { run } = commandHarness({ packageRoot: root, cwd: () => root });
     await run("rerail");
-    const [request] = mocks.presentation.mock.calls[0] as [{ startState: () => Promise<string> }];
+    const [request] = mocks.summary.mock.calls[0] as [{ startState: () => Promise<string> }];
     expect(await request.startState()).toBe("stopped");
   });
 });

@@ -1,5 +1,7 @@
 # Rerail rule pack: JavaScript
 
+Install it with Rerail ([`@neralabs/rerail`](https://www.npmjs.com/package/@neralabs/rerail)), not with npm: `rerail packs add javascript`, then add it to a repository in the dashboard. It needs Rerail 0.2.1 or newer.
+
 **Linter-equivalent to ESLint 10.11.0 and eslint-plugin-unicorn 76.0.0.** Each rule flags what the original flags, bar declared differences. [What this means](../../docs/rule-packs.md#linter-equivalent).
 
 121 code rules for JavaScript and TypeScript source, with their default options: 118 ported from ESLint 10.11.0's core

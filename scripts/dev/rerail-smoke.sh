@@ -2,8 +2,9 @@
 #
 # `just rerail-smoke`: prove the installer end to end without the real npm registry.
 #
-# Publishes this checkout's package to a throwaway Verdaccio on localhost that, like
-# @neralabs/rerail on npm before launch, serves @neralabs/* only to a logged-in user.
+# Publishes this checkout's package, and the engine package it takes this machine's engine
+# from, to a throwaway Verdaccio on localhost that, like @neralabs/rerail on npm before launch,
+# serves @neralabs/* only to a logged-in user.
 # Runs the real `just rerail` installer (scripts/dev/rerail-setup.mjs) against it inside a
 # sandbox HOME that carries fake coding-agent directories, first logged out (it must stop
 # with a request to npm login) and then logged in, exercises the installed rerail launcher
@@ -43,8 +44,9 @@ CURL="$(command -v curl)" || fail "curl not found."
 node_major="$("$NODE" -p 'process.versions.node.split(".")[0]')"
 [ "$node_major" -ge "$MIN_NODE_MAJOR" ] || fail "Node $node_major is too old; Rerail needs $MIN_NODE_MAJOR+."
 
-# 1. A publishable build: the native engine plus dist/ (runtime, hook bundles, UI). An existing
-#    complete build is packed as it is; run `npm run build` first to pack fresh sources.
+# 1. A publishable build: the native engine (native/, packed as its own engine package) plus dist/
+#    (runtime, hook bundles, UI). An existing complete build is packed as it is; run `npm run build`
+#    first to pack fresh sources.
 if [ ! -f "$REPO_ROOT/dist/cli/cli.js" ] || ! ls "$REPO_ROOT"/native/*.node >/dev/null 2>&1; then
   info "No complete build in this checkout; running npm run build"
   (cd "$REPO_ROOT" && "$NPM" run build)
@@ -148,21 +150,35 @@ REGISTRY_TOKEN="$(REGISTRY_USER="$REGISTRY_USER" REGISTRY_PASSWORD="$REGISTRY_PA
 # The publisher's own throwaway userconfig; the sandbox .npmrc is the installing user's.
 printf '//127.0.0.1:%s/:_authToken=%s\n' "$PORT" "$REGISTRY_TOKEN" > "$SMOKE/npmrc"
 
-# 4. Publish this checkout's package there. The tarball is exactly what the release
-#    workflow would ship: package.json "files" decides what goes in.
-info "Packing and publishing $PACKAGE to $REGISTRY"
-manifests_before="$(cd "$REPO_ROOT" && cat .claude-plugin/plugin.json .codex-plugin/plugin.json .cursor-plugin/plugin.json)"
+# 4. Publish this checkout's packages there: an engine package for each engine in native/ (this
+#    machine's, in a checkout that built its own), then core packed against them, so it pins each
+#    one's version and integrity as a release pins all six. Core's tarball is otherwise what the
+#    release workflow would ship: package.json "files" decides what goes in.
+publish() { # <tarball> [npm publish option]...
+  "$NPM" publish "$@" --registry "$REGISTRY" --userconfig "$SMOKE/npmrc" --loglevel=warn >/dev/null
+}
+# Every engine package in a folder scripts/release/engine/packages.mjs packed. A release publishes them
+# before core too: a core whose engine package the registry lacks installs with exit code 0 and no engine.
+publish_engines() { # <folder>
+  local tarball
+  for tarball in "$1"/*.tgz; do publish "$tarball" --tag latest; done
+}
+info "Packing and publishing $PACKAGE and its engine package to $REGISTRY"
+"$NODE" "$REPO_ROOT/scripts/release/engine/packages.mjs" pack --out "$SMOKE/engines" >"$SMOKE/engines.log" 2>&1 \
+  || { cat "$SMOKE/engines.log" >&2; fail "could not pack the engine package"; }
+publish_engines "$SMOKE/engines"
+stamped_before="$(cd "$REPO_ROOT" && cat package.json .claude-plugin/plugin.json .codex-plugin/plugin.json .cursor-plugin/plugin.json)"
 # --json keeps the prepack/postpack banners out of the filename npm reports on stdout.
-TARBALL="$(cd "$REPO_ROOT" && "$NPM" pack --json --pack-destination "$SMOKE" 2>/dev/null \
+TARBALL="$(cd "$REPO_ROOT" && RERAIL_ENGINE_PACKAGES="$SMOKE/engines" "$NPM" pack --json --pack-destination "$SMOKE" 2>/dev/null \
   | "$NODE" -e 'let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => console.log(JSON.parse(s)[0].filename));')"
 [ -f "$SMOKE/$TARBALL" ] || fail "npm pack produced no tarball"
-[ "$(cd "$REPO_ROOT" && cat .claude-plugin/plugin.json .codex-plugin/plugin.json .cursor-plugin/plugin.json)" = "$manifests_before" ] \
-  || fail "npm pack left the plugin manifests stamped"
+[ "$(cd "$REPO_ROOT" && cat package.json .claude-plugin/plugin.json .codex-plugin/plugin.json .cursor-plugin/plugin.json)" = "$stamped_before" ] \
+  || fail "npm pack left package.json or the plugin manifests stamped"
 FIRST_VERSION="$("$NODE" -p 'require(process.argv[1]).version' "$REPO_ROOT/package.json")"
 assert_plugin_versions "$SMOKE/$TARBALL" "$FIRST_VERSION"
 # A prerelease package.json version needs an explicit dist-tag. The first release is on latest (the
 # updater's channel) and next (which the installer is asked for, to exercise --tag).
-"$NPM" publish "$SMOKE/$TARBALL" --tag latest --registry "$REGISTRY" --userconfig "$SMOKE/npmrc" --loglevel=warn >/dev/null
+publish "$SMOKE/$TARBALL" --tag latest
 "$NPM" dist-tag add "$PACKAGE@$FIRST_VERSION" next --registry "$REGISTRY" --userconfig "$SMOKE/npmrc" --loglevel=warn >/dev/null
 
 # 5. A sandbox HOME: every coding agent Rerail registers with looks present. Its .npmrc starts empty,
@@ -259,17 +275,38 @@ update_output="$(sandbox "$LAUNCHER" update check)"
 printf '%s\n' "$update_output"
 case "$update_output" in *"Update available: no"*) ;; *) fail "update check did not report 'Update available: no'" ;; esac
 
-# A newer release on latest: the same tarball with its patch version bumped.
+# A newer release on latest: the same tarball and engine packages with the patch version bumped. An engine
+# package packed at the new version has a new integrity, so core's pins move with it, in package.json and
+# in the shrinkwrap: a pin on another version or integrity installs with exit code 0 and no engine.
 NEXT_VERSION="$("$NODE" -p 'const [a, b, c] = process.argv[1].split("-")[0].split(".").map(Number); `${a}.${b}.${c + 1}`' "$FIRST_VERSION")"
-info "Publishing $PACKAGE@$NEXT_VERSION to $REGISTRY"
+info "Publishing $PACKAGE@$NEXT_VERSION and its engine package to $REGISTRY"
 mkdir -p "$SMOKE/next"
 tar -xzf "$SMOKE/$TARBALL" -C "$SMOKE/next"
-"$NODE" -e 'const fs = require("node:fs"); const p = process.argv[1]; const pkg = JSON.parse(fs.readFileSync(p, "utf8")); pkg.version = process.argv[2]; fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + "\n");' \
-  "$SMOKE/next/package/package.json" "$NEXT_VERSION"
+"$NODE" --input-type=module -e '
+  import { readFileSync, writeFileSync } from "node:fs";
+  import { join } from "node:path";
+  import { pathToFileURL } from "node:url";
+  const [repo, root, out, version] = process.argv.slice(1);
+  const release = (script) => import(pathToFileURL(join(repo, "scripts", "release", script)).href);
+  const { packEnginePackages, withEnginePins, withoutEnginePins } = await release("engine/packages.mjs");
+  const { SHRINKWRAP_FILE, shrinkwrapFrom } = await release("shrinkwrap.mjs");
+  const read = (file) => JSON.parse(readFileSync(join(root, file), "utf8"));
+  const write = (file, value) => writeFileSync(join(root, file), `${JSON.stringify(value, null, 2)}\n`);
+  const core = { ...withoutEnginePins(read("package.json")), version };
+  write("package.json", core);
+  const { manifest } = packEnginePackages({ root, native: join(repo, "native"), out });
+  // The shipped shrinkwrap without the engine packages of the first version: the lockfile the next is written from.
+  const shipped = read(SHRINKWRAP_FILE);
+  const lock = { ...shipped, packages: { ...shipped.packages, "": withoutEnginePins(shipped.packages[""]) } };
+  write(SHRINKWRAP_FILE, shrinkwrapFrom(core, lock, manifest));
+  write("package.json", withEnginePins(core, manifest));
+' "$REPO_ROOT" "$SMOKE/next/package" "$SMOKE/next-engines" "$NEXT_VERSION" >"$SMOKE/next-engines.log" 2>&1 \
+  || { cat "$SMOKE/next-engines.log" >&2; fail "could not pack $PACKAGE@$NEXT_VERSION and its engine package"; }
 "$NODE" "$REPO_ROOT/scripts/build/stamp-plugin-versions.mjs" stamp "$SMOKE/next/package"
 COPYFILE_DISABLE=1 tar -czf "$SMOKE/next.tgz" -C "$SMOKE/next" package
 assert_plugin_versions "$SMOKE/next.tgz" "$NEXT_VERSION"
-"$NPM" publish "$SMOKE/next.tgz" --registry "$REGISTRY" --userconfig "$SMOKE/npmrc" --loglevel=warn >/dev/null
+publish_engines "$SMOKE/next-engines"
+publish "$SMOKE/next.tgz"
 
 info "rerail update check (expects $NEXT_VERSION)"
 update_output="$(sandbox "$LAUNCHER" update check)"

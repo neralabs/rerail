@@ -127,6 +127,13 @@ describe("what the timeline says Rerail did not see of the session", () => {
     ].join("; "));
   });
 
+  it("says how many events' records a power cut took, after those that never reached Rerail", () => {
+    withGaps({ ...NO_GAPS, lostEvents: 2 });
+    expect(coverageGaps(row())).toBe("the records of 2 events were lost when the computer stopped");
+    withGaps({ ...NO_GAPS, droppedEvents: 1, lostEvents: 1 });
+    expect(coverageGaps(row())).toBe("1 event never reached Rerail; the records of 1 event were lost when the computer stopped");
+  });
+
   it("says when rules could not fully check part of the repository, beside the boundaries that answered before their walk ended", () => {
     withGaps({ ...NO_GAPS, discoveryGaps: 1 });
     expect(coverageGaps(row())).toBe("rules could not fully check part of the repository (1 place)");

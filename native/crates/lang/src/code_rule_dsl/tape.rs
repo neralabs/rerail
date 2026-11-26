@@ -1045,7 +1045,7 @@ pub trait TreeOut {
 /// Tree-sitter's tree under `root` written to `out` in preorder, `language` its grammar. An embedded
 /// program's placeholders its segments mark (`omitted`) are left out, with their subtrees. Where
 /// `filter` (the grammar's token automata) is given, a token it implies is skipped as the walk meets
-/// it: it is never a record (`tokens::TokenGrammar::stored_children`, RER-131).
+/// it: it is never a record (`tokens::TokenGrammar::stored_children`, decision 0161).
 fn encode_tree(
     out: &mut (impl TreeOut + ?Sized),
     root: TsNode<'_>,
@@ -2489,7 +2489,7 @@ impl TapeDoc {
     }
 
     /// Whether the tokens the tape leaves out right after `parent`'s child `child` (its index among
-    /// the children) begin with `word` (`Doc::implied_after`, RER-131).
+    /// the children) begin with `word` (`Doc::implied_after`, decision 0161).
     pub fn transducer_implied_after(&self, parent: u32, child: usize, word: &[&str]) -> bool {
         self.implied_after(&self.root_node().at(parent, UNKNOWN), child, word) == Some(true)
     }
@@ -2960,7 +2960,7 @@ impl Doc for TapeDoc {
         Cow::Borrowed(&self.source[node.range()])
     }
     /// The implied word the tape leaves out in the gap after `parent`'s child `child`
-    /// (`tokens::stored_gaps`: the word before the next named child, or after the last), RER-131.
+    /// (`tokens::stored_gaps`: the word before the next named child, or after the last), decision 0161.
     fn implied_after<'a>(&'a self, parent: &TapeNode<'a>, child: usize, word: &[&str]) -> Option<bool> {
         let grammar = tokens::TokenGrammar::of_dialect(self.grammar.lang)?;
         // `stored_gaps` reads an ast-grep node: the parent's, rebuilt over a root of this document.
@@ -2999,7 +2999,7 @@ pub fn stored_children_for_test<'t>(lang: GrammarDialect, node: TsNode<'t>) -> V
 
 /// A pattern's tree as a tape: tree-sitter's parse of `source`, written as a document is
 /// (`TapeImage::encode_tree_image`), so the tokens the grammar implies are left out of patterns as
-/// they are of documents (RER-131). With it, per record, what tree-sitter's node says that the tape
+/// they are of documents (decision 0161). With it, per record, what tree-sitter's node says that the tape
 /// does not ([`PatternShape`]).
 pub fn pattern_doc(lang: GrammarDialect, source: &str) -> Result<(TapeDoc, PatternShape), String> {
     use ast_grep_core::language::Language as _;

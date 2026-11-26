@@ -1,5 +1,5 @@
 //! Reading a syntax tree's shape: named children, and the anonymous tokens (punctuation,
-//! keywords, operators) between them (RER-131).
+//! keywords, operators) between them (decision 0161).
 //!
 //! Readers of trees use these instead of filtering `children()` by `is_named()` themselves, or
 //! comparing an anonymous child's `kind()`. Every function here reads the tree's children. A tape

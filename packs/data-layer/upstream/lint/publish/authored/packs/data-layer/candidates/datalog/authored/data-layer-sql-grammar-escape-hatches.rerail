@@ -285,7 +285,7 @@ usage_comma_kind("identifier"). usage_comma_kind("call"). usage_comma_kind("attr
 usage_comma_kind("dotted_name"). usage_comma_kind("aliased_import"). usage_comma_kind("generic_type"). usage_comma_kind("type").
 // usage_prev(n, s): the token right before n among its parent's children, anonymous ones and comments included (W's
 // `follows`, stopBy neighbor, its regex `^,$` / `^import$` on that token's text). The tape stores neither token
-// there (RER-131), so each is read from the named structure:
+// there (decision 0161), so each is read from the named structure:
 // - `import`: n is the first name an import lists (`from m import (a)` has a stored `(` before it instead);
 // - `,`: n is an element of a comma-separated list but its first, right after an element (not a comment).
 .decl usage_prev(n: node, s: symbol)

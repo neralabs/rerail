@@ -17,13 +17,21 @@ const temporaryDirectory = temporaryDirectories("rerail-session-records-gitignor
 
 /** Each records folder whose repair a session started, and whether its .gitignore was there then. */
 const repairs = vi.hoisted(() => [] as Array<{ folder: string; gitignore: boolean }>);
+/**
+ * The end of each repair a session started and no case has waited for yet: it resolves once the repair's `kept` does,
+ * after its last `icacls` has exited.
+ */
+const repairsUnderWay = vi.hoisted(() => [] as Array<Promise<unknown>>);
 vi.mock("../../src/engine/storage/private-files.js", async () => {
   const actual = await vi.importActual<typeof import("../../src/engine/storage/private-files.js")>("../../src/engine/storage/private-files.js");
   return {
     ...actual,
     keepFoundFolderPrivate: (folder: string, machine?: Parameters<typeof actual.keepFoundFolderPrivate>[1]) => {
       repairs.push({ folder, gitignore: existsSync(join(folder, ".gitignore")) });
-      return actual.keepFoundFolderPrivate(folder, machine);
+      const repair = actual.keepFoundFolderPrivate(folder, machine);
+      // A repair that failed to start ends here; the caller gets its rejection.
+      repairsUnderWay.push(repair.then(async started => await started.kept, () => undefined));
+      return repair;
     },
   };
 });
@@ -68,6 +76,11 @@ async function checkoutWithSessionStorage(): Promise<{ checkout: string; storage
   return { checkout, storageRoot: join(checkout, ".rerail", "sessions"), databasePath };
 }
 
+/**
+ * Opens one session, records a prompt and closes the runtime. A session waits for its records folder's ACL to be read,
+ * not for the repair that follows (`keepFoundFolderPrivate`): on Windows that repair's `icacls` can still run once the
+ * runtime is closed, so this waits for each repair to end before the case's folder goes.
+ */
 async function openOneSession(checkout: string, storageRoot: string, databasePath: string): Promise<void> {
   const runtime = new RerailRuntime({ storageRoot, databasePath, workspaceRoot: checkout, autostart: false, embedder: testEmbedder });
   try {
@@ -75,6 +88,7 @@ async function openOneSession(checkout: string, storageRoot: string, databasePat
     await runtime.ingest({ kind: "user-prompt", eventId: "prompt", sessionId: "gitignore", text: "Add a priority score to each todo" });
   } finally {
     await runtime.dispose();
+    await Promise.all(repairsUnderWay.splice(0));
   }
 }
 
@@ -233,18 +247,16 @@ describe("session records in a checkout", () => {
     if (POSIX_MODES) await openToOtherAccounts(storageRoot);
     expect(await readableByOthers(storageRoot)).toBe(true);
     await openOneSession(checkout, storageRoot, databasePath);
-    // The session's own record is private; on Windows the folder's repair goes on after the session opens, and the
-    // held-repair case in windows-acl.test.ts shows the record is private before it ends.
+    // On Windows the folder's repair goes on after the session opens, and openOneSession waits for it to end; the
+    // held-repair case in windows-acl.test.ts shows the session's own record is private before it ends.
     expect(await readableByOthers(join(storageRoot, createHash("sha256").update("gitignore").digest("hex"), "events.jsonl"))).toBe(false);
-    await vi.waitFor(async () => {
-      expect(await readableByOthers(storageRoot)).toBe(false);
-      // Elsewhere than Windows each session's folder is 0700 and no other user lists the records folder; on Windows the
-      // record and the .gitignore, written before the repair starts, take the folder's new ACL.
-      if (process.platform === "win32") {
-        expect(await readableByOthers(earlier)).toBe(false);
-        expect(await readableByOthers(join(storageRoot, ".gitignore"))).toBe(false);
-      }
-    }, { timeout: 30_000, interval: 200 });
+    expect(await readableByOthers(storageRoot)).toBe(false);
+    // Elsewhere than Windows each session's folder is 0700 and no other user lists the records folder; on Windows the
+    // record and the .gitignore, written before the repair starts, take the folder's new ACL.
+    if (process.platform === "win32") {
+      expect(await readableByOthers(earlier)).toBe(false);
+      expect(await readableByOthers(join(storageRoot, ".gitignore"))).toBe(false);
+    }
     // Windows PowerShell's Get-Acl, which reads each ACL, can take seconds to start on a cold machine.
   }, 60_000);
 

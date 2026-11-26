@@ -1,34 +1,38 @@
 name: Release
 
-# Builds the @neralabs/rerail package with package.yml (native rules engines for every supported target, the
-# TypeScript runtime, and the bundled UI, packed into one cross-platform tarball), installs it on Windows, Linux and
-# macOS, and publishes it.
+# Builds the @neralabs/rerail package with package.yml (native rules engines for every supported target, each packed
+# into an engine package of its own, and core: the TypeScript runtime and the bundled UI, which pins the six engine
+# packages), installs it on Windows, Linux and macOS, and publishes it: the six engine packages first, each read back
+# from npm, and core last (scripts/release/engine/release.mjs).
 #
-# A `v*` tag publishes that tarball to npmjs under the dist-tag derived from the tag (releaseChannel in
+# A `v*` tag publishes those tarballs to npmjs under the dist-tag derived from the tag (releaseChannel in
 # scripts/release/dist-tags.mjs): `v1.2.3` -> next, `v1.2.3-next.N` -> next, `v1.2.3-beta.N` -> beta. Nothing a tag
 # publishes reaches `latest` by itself: a plain version's run ends with the promote job, which waits for a person to
 # approve the `release` environment once the version is tested on `next` (docs/release.md, "Promoting"). The tag must
 # equal package.json's version, and the version must not be older
 # than core's `latest`. Merging the Release pull request makes the tag: release-pr.yml tags the version it set
-# (docs/distribution-model.md, "Release channels"). After publishing, the dist-tags job lists core's dist-tags in the
-# run summary and fails if the channel's dist-tag is not the version just published, or, for a `next` release, `next`
-# is older than `latest`.
+# (docs/distribution-model.md, "Release channels"). After publishing, the dist-tags job lists the dist-tags of core
+# and the engine packages in the run summary and fails if a package's dist-tag for the channel is not the version just
+# published, or, for a `next` release, its `next` is older than its `latest`.
 #
-# `workflow_dispatch` with no inputs builds and uploads the tarball as a run artifact without publishing, so a build
+# `workflow_dispatch` with no inputs builds and uploads the tarballs as a run artifact without publishing, so a build
 # can be installed and checked by hand. With `latest`, for a put-back or a promotion whose approval GitHub failed after
 # 30 days, it builds nothing and points core's `latest` dist-tag at that released plain version: a newer one promotes
 # it, an older one puts core back. It raises `next` to it as well, should
-# `next` be older, so `next` never trails `latest`. It runs behind the same `release`
+# `next` be older, so `next` never trails `latest`, and moves the dist-tags of that version's engine packages with
+# core's. It runs behind the same `release`
 # environment approval and with trusted publishing, so no npm login is needed. With `publish`, run from main, it retries
 # a release that failed before publishing: it builds main, checks and publishes it as that version behind the same
 # approval, leaving the version's tag where it is. It is refused unless the version is the one main's package.json
-# names, its tag exists and nothing core ships has changed since the tag (scripts/release/core-retry-check.mjs), so core's
-# own code is the tag's. How the package is built and its changelog can differ, and the run summary lists every path
-# changed since the tag for whoever approves. A release tag can't move, so without this a failed version is lost.
+# names, its tag exists, nothing core ships has changed since the tag (so core's own code is the tag's) and npm has no
+# engine package of the version yet (so no engine is built a second time under a version npm already holds):
+# scripts/release/core-retry-check.mjs. How the package is built and its changelog can differ, and the run summary
+# lists every path changed since the tag for whoever approves. A release tag can't move, so without this a failed
+# version is lost.
 #
 # package.yml's builds start from the compile cache store release-cache.yml saves on main, and save none.
 #
-# Once the tarball passes the shrinkwrap check and the managed installs, the github-release job makes the tag's GitHub
+# Once the tarballs pass the shrinkwrap check and the managed installs, the github-release job makes the tag's GitHub
 # Release, with the version's CHANGELOG.md section as its notes, beside the npm publish rather than after it: the
 # Release is this repository's, and npm being slow to publish or to serve the version can neither hold it back nor skip
 # it. A version published under `next` gets a pre-release; after a promotion or a put-back, the promoted-release job
@@ -123,7 +127,9 @@ jobs:
       actions: read
 
   # The tarball must ship the npm-shrinkwrap.json the tag's package-lock.json gives (docs/release.md, "Shrinkwrap"):
-  # npm installs core's dependencies from it. A missing or stale one fails the release before anything is published.
+  # npm installs core's dependencies from it. It must also pin all six engine packages, each at the version and
+  # integrity of the tarball in the same artifact: npm installs no engine the shrinkwrap does not list, and skips one
+  # whose bytes differ, with exit code 0. A missing or stale one fails the release before anything is published.
   shrinkwrap:
     name: Packed shrinkwrap
     needs: package
@@ -141,20 +147,22 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Download release tarball
+      - name: Download release tarballs
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rerail-package
           path: release
 
-      - name: Check the tarball's npm-shrinkwrap.json against package-lock.json
+      - name: Check the tarball's npm-shrinkwrap.json against package-lock.json and the engine packages
         env:
           TARBALL: release/${{ needs.package.outputs.tarball }}
+          RERAIL_ENGINE_PACKAGES: release
         run: node scripts/release/shrinkwrap-pack.mjs check "$TARBALL"
 
   # The managed install renames a staged version into place, runs the native engine, and starts the
   # daemon: behavior the Linux package smoke cannot see. Every release installs on native Windows, Linux
-  # and macOS before it ships.
+  # and macOS before it ships. Each gate serves all seven tarballs of the artifact from a registry of its own, as
+  # npmjs will, and fails unless the managed install holds this machine's engine package and no other.
   windows-install:
     name: Windows x64 managed install
     needs: package
@@ -176,7 +184,7 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Download release tarball
+      - name: Download release tarballs
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rerail-package
@@ -216,7 +224,7 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Download release tarball
+      - name: Download release tarballs
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rerail-package
@@ -235,21 +243,33 @@ jobs:
           path: results
           if-no-files-found: ignore
 
+  # Publishes seven packages, core last. Core pins the six engine packages by version and integrity, and npm skips an
+  # optional dependency the registry lacks, or whose bytes differ, with exit code 0: a core published before its
+  # engine packages, or beside other bytes, installs with no engine. So the six are published first, each one's
+  # integrity is read back from the registry and compared with the tarball's, and only then is core published
+  # (scripts/release/engine/release.mjs). A publish that stops between two packages leaves core unpublished, and
+  # nothing installs an engine package except through core; run the job again to finish it.
+  #
   # npm trusted publishing: the registry exchanges this job's GitHub OIDC token for a short-lived
   # publish credential, so no npm token exists anywhere. npmjs must list this repository,
-  # `release.yml`, and the `release` environment as the package's trusted publisher, allowing `npm dist-tag` as well
-  # as `npm publish` (a promotion or a put-back moves `latest`, and `next` up to it).
+  # `release.yml`, and the `release` environment as the trusted publisher of each of the seven packages, allowing
+  # `npm dist-tag` as well as `npm publish` (a promotion or a put-back moves `latest`, and `next` up to it). It can be
+  # configured only for a package that exists, so an engine package npm has never had fails the job by name before
+  # anything is published (docs/publishing-the-engine-packages.md).
   # `--provenance` makes npm attach a provenance attestation and fail the publish when it cannot generate one (for
   # example, if this repository is ever made private again), so no release reaches npm without one. The job can be run
   # again after a failure: a version npm already has is not published again (npm refuses to publish over it, which
-  # the step reads, as packs-publish.mjs does, since `npm view` can lag a publish by minutes), and a version older than
-  # the channel's (publishRefusal) is refused, so a re-run of an older release never moves `next` back.
+  # the steps read, as packs-publish.mjs does, since `npm view` can lag a publish by minutes), an engine package
+  # already there is still read back and compared, and a version older than the channel's (publishRefusal) is
+  # refused, so a re-run of an older release never moves `next` back.
   publish:
     name: Publish to npmjs
     needs: [metadata, package, shrinkwrap, windows-install, unix-install]
     if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && inputs.publish != '' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # Seven uploads, six of them 35 to 42 MB, each with its provenance attestation, then up to 5 minutes of reading the
+    # engine packages back while the registry does not serve them yet. Waiting for the approval is not counted.
+    timeout-minutes: 30
     environment: release
     permissions:
       contents: read
@@ -272,23 +292,38 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Download release tarball
+      - name: Download release tarballs
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rerail-package
           path: release
 
-      - name: Publish
+      # Checked again here, not only in metadata, whose outputs a re-run reuses: an older run re-run after a newer
+      # version shipped must not move the channel back. The engine packages follow core's channel, so core's answer
+      # covers all seven.
+      - name: Refuse a version that would move its channel back
+        env:
+          RELEASE_CHANNEL: ${{ needs.metadata.outputs.channel }}
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_CHANNEL" || { echo "::error::No release channel was derived for ${GITHUB_REF_NAME}" >&2; exit 1; }
+          node --input-type=module -e 'import { publishRefusal, readPublicDistTags } from "./scripts/release/dist-tags.mjs"; const refusal = publishRefusal(process.env.RELEASE_VERSION, process.env.RELEASE_CHANNEL, await readPublicDistTags("@neralabs/rerail")); if (refusal !== null) { console.log(`::error::${refusal}`); process.exit(1); }'
+
+      # Fails, with core unpublished, unless npm ends up serving all six at the integrity core pins.
+      - name: Publish the engine packages and read them back
+        env:
+          RELEASE_CHANNEL: ${{ needs.metadata.outputs.channel }}
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+        run: node scripts/release/engine/release.mjs publish release
+
+      - name: Publish core
         env:
           PACKAGE_TARBALL: release/${{ needs.package.outputs.tarball }}
           RELEASE_CHANNEL: ${{ needs.metadata.outputs.channel }}
           RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           set -euo pipefail
-          test -n "$RELEASE_CHANNEL" || { echo "::error::No release channel was derived for ${GITHUB_REF_NAME}" >&2; exit 1; }
-          # Checked again here, not only in metadata, whose outputs a re-run reuses: an older run re-run after a newer
-          # version shipped must not move the channel back.
-          node --input-type=module -e 'import { publishRefusal, readPublicDistTags } from "./scripts/release/dist-tags.mjs"; const refusal = publishRefusal(process.env.RELEASE_VERSION, process.env.RELEASE_CHANNEL, await readPublicDistTags("@neralabs/rerail")); if (refusal !== null) { console.log(`::error::${refusal}`); process.exit(1); }'
           errors="$RUNNER_TEMP/npm-publish.err"
           if npm publish "./$PACKAGE_TARBALL" --registry https://registry.npmjs.org --access public --tag "$RELEASE_CHANNEL" --provenance 2> "$errors"; then
             cat "$errors" >&2
@@ -299,7 +334,8 @@ jobs:
             echo "::notice::@neralabs/rerail@${RELEASE_VERSION} is already on npm (a re-run): not published again"
           fi
 
-  # Reads core's dist-tags back from npm with `npm dist-tag ls`; core is public, so no token is needed.
+  # Reads the dist-tags of core and of the engine packages published with it back from npm with `npm dist-tag ls`;
+  # they are public, so no token is needed.
   dist-tags:
     name: Published dist-tags
     needs: [metadata, publish]
@@ -317,10 +353,14 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Check core's dist-tag
+      - name: Check the dist-tag of core and of each engine package
         env:
-          RELEASED: "@neralabs/rerail@${{ needs.metadata.outputs.version }}:${{ needs.metadata.outputs.channel }}"
-        run: node scripts/release/dist-tags-check.mjs
+          VERSION: ${{ needs.metadata.outputs.version }}
+          CHANNEL: ${{ needs.metadata.outputs.channel }}
+        run: |
+          set -euo pipefail
+          engines="$(node scripts/release/engine/release.mjs specs "$VERSION" "$CHANNEL")"
+          RELEASED="@neralabs/rerail@${VERSION}:${CHANNEL} ${engines}" node scripts/release/dist-tags-check.mjs
 
   # Promotes core to `latest`, or puts it back. A release run of a plain version ends here: once the release is tested
   # on `next`, a person approves the `release` environment and this job points `latest` at it (docs/release.md,
@@ -330,8 +370,11 @@ jobs:
   # and `next` there too should `next` be older, so it never trails `latest`. A release run's promotion approved after a
   # newer version reached `latest` is refused, so it never moves `latest` back. It reads `latest` and then moves it,
   # beside other releases' promotions and put-backs, so two approved at once can undo each other: approve one at a time
-  # and let it finish (docs/release.md, "Promoting"). Trusted publishing, as for publish:
-  # core's trusted publisher on npmjs must allow `npm dist-tag` as well as `npm publish`.
+  # and let it finish (docs/release.md, "Promoting"). The six engine packages of the version are published under
+  # core's dist-tag, so their `latest` moves with core's, after it: seven moves, each safe to repeat, so a promotion that
+  # stops between two is run again. A put-back to a version from before the engine packages moves core alone: they have
+  # no such version (engineSpecs in scripts/release/engine/release.mjs). Trusted publishing, as for publish: each
+  # package's trusted publisher on npmjs must allow `npm dist-tag` as well as `npm publish`.
   promote:
     name: Point latest at ${{ inputs.latest || needs.metadata.outputs.version }}
     needs: [metadata, publish]
@@ -389,16 +432,37 @@ jobs:
         run: |
           node --input-type=module -e 'import { compareVersions, readPublicDistTags } from "./scripts/release/dist-tags.mjs"; const { latest } = await readPublicDistTags("@neralabs/rerail"); if (latest !== undefined && compareVersions(process.env.VERSION, latest) < 0) { console.log(`::error::latest is ${latest}, newer than ${process.env.VERSION}, so this release is superseded: it stays on next`); process.exit(1); }'
 
+      # Core first: its `latest` is the one installs read.
+      - id: packages
+        name: List core and the engine packages of ${{ env.VERSION }}
+        run: |
+          set -euo pipefail
+          engines="$(node scripts/release/engine/release.mjs specs "$VERSION")"
+          echo "specs=@neralabs/rerail@${VERSION} ${engines}" >> "$GITHUB_OUTPUT"
+
       - name: Point latest at ${{ env.VERSION }}
-        run: npm dist-tag add "@neralabs/rerail@${VERSION}" latest --registry https://registry.npmjs.org
+        env:
+          SPECS: ${{ steps.packages.outputs.specs }}
+        run: |
+          set -euo pipefail
+          read -r -a specs <<< "$SPECS"
+          for spec in "${specs[@]}"; do
+            npm dist-tag add "$spec" latest --registry https://registry.npmjs.org
+          done
 
       - name: Keep next from trailing latest
-        run: node scripts/release/raise-next.mjs "@neralabs/rerail@${VERSION}"
-
-      # Core is public, so `npm dist-tag ls` reads it back with no token.
-      - name: Check core's dist-tag
         env:
-          RELEASED: "@neralabs/rerail@${{ env.VERSION }}:latest"
+          SPECS: ${{ steps.packages.outputs.specs }}
+        run: |
+          set -euo pipefail
+          read -r -a specs <<< "$SPECS"
+          node scripts/release/raise-next.mjs "${specs[@]}"
+
+      # The packages are public, so `npm dist-tag ls` reads them back with no token. A spec with no dist-tag is checked
+      # under `latest`.
+      - name: Check the dist-tag of each package moved
+        env:
+          RELEASED: ${{ steps.packages.outputs.specs }}
         run: node scripts/release/dist-tags-check.mjs
 
   # The GitHub Release of the tag, once the tarball has passed the checks every publish needs: its notes are the

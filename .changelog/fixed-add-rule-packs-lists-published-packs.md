@@ -1,0 +1,1 @@
+Add rule packs in the dashboard now lists every rule pack published for this Rerail, not only those installed on this computer, as `rerail packs recommend` does: one that is not installed shows its version and rule count, why it is suggested when it fits, and the command that installs it, with Copy.

@@ -38,7 +38,7 @@ import { CONFORMANCE_FILE, documentPath, loadPack, packSchema, RERAIL_ROOT, type
 import { reportFailures, runPack } from "./languages/runner.js";
 import { decidingPattern, inToolSubdirectory, licenceAllowed, licenceAlternatives, packFixtureAbsence, pathGlob, PUBLISH_DIRECTORY, readUpstreamSources } from "../scripts/s3/pack-fixtures.mjs";
 import { isPrivatePack } from "../scripts/release/packs.mjs";
-import { admitsRefusingCore, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, RERAIL_DOCUMENTS_SINCE, rerailRules, RULE_KEY_SINCE, shippedLanguages, shippedRuleKeys } from "../scripts/release/core.mjs";
+import { admitsRefusingCore, DIMENSIONS_SINCE, dimensionedRules, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, RERAIL_DOCUMENTS_SINCE, rerailRules, RULE_KEY_SINCE, shippedLanguages, shippedRuleKeys } from "../scripts/release/core.mjs";
 import { describeListed, includedPackFiles, rerailExamplePairFailures, rerailListed, rerailProofFailures, rerailTestFailures } from "./rerail-pack-rules.js";
 import { capabilitiesJson } from "./engine.js";
 import { BIOME_SAME_SOURCES } from "./biome-same-sources.generated.js";
@@ -92,8 +92,8 @@ export interface ValidatePackOptions {
    */
   fixtures?: boolean;
   /**
-   * The core version check 5 holds the pack's core range to (`heldOff`, a language core first reads after 0.1.0, and
-   * an ast rule key core first reads after 0.1.5).
+   * The core version check 5 holds the pack's core range to (`heldOff`, a language core first reads after 0.1.0, an
+   * ast rule key core first reads after 0.1.5, rules written in `.rerail`, and `dimensions`).
    * Default: the repository's package.json version.
    */
   coreVersion?: string;
@@ -553,6 +553,15 @@ function refusedSince(range: string, names: readonly string[], releases: Readonl
 export function rerailRangeFailure(range: string, rerail: readonly string[], coreVersion: string): string | undefined {
   if (rerail.length === 0 || !admitsRefusingCore(range, RERAIL_DOCUMENTS_SINCE, coreVersion)) return undefined;
   return `package.json: the core range ${range} admits Rerail older than ${RERAIL_DOCUMENTS_SINCE}, which reads no rule written in .rerail (${rerail.join(", ")}); raise it to ${raisedCoreRange(RERAIL_DOCUMENTS_SINCE)}`;
+}
+
+/**
+ * Why a pack's core range `range` admits a core that refuses the `dimensions` its rules `dimensioned` carry in
+ * pack.json, or undefined: as for `heldOff`, once core is at `DIMENSIONS_SINCE`.
+ */
+export function dimensionsRangeFailure(range: string, dimensioned: readonly string[], coreVersion: string): string | undefined {
+  if (dimensioned.length === 0 || !admitsRefusingCore(range, DIMENSIONS_SINCE, coreVersion)) return undefined;
+  return `package.json: the core range ${range} admits Rerail older than ${DIMENSIONS_SINCE}, which refuses dimensions (${dimensioned.join(", ")}); raise it to ${raisedCoreRange(DIMENSIONS_SINCE)}`;
 }
 
 /** The SPDX ids an SPDX expression names. */
@@ -1216,6 +1225,7 @@ function checkCoreRange({ directory, options, fail }: Validation, manifest: Pack
     languageRangeFailure(range, shippedLanguages(directory), coreVersion),
     ruleKeyRangeFailure(range, shippedRuleKeys(directory), coreVersion),
     rerailRangeFailure(range, rerailRules(pack), coreVersion),
+    dimensionsRangeFailure(range, dimensionedRules(pack), coreVersion),
   ];
   for (const failure of failures) if (failure !== undefined) fail("package", failure);
 }

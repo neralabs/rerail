@@ -11,6 +11,7 @@ import {
   detectHarnesses,
   HARNESSES,
   loadsOmpPluginCopy,
+  NODE_HOOK_FALLBACK_NOTE,
   OMP_PLUGIN_NOTE,
   piHoldsGalleryBeside,
   registerHarnesses,
@@ -53,8 +54,8 @@ export interface DataAccessOptions {
   platform?: NodeJS.Platform;
   /** Claude Code's managed settings file (`claudeManagedSettingsPath`); null for none. */
   claudeManagedSettings?: string | null;
-  /** Whether a file is at a path, as the registration that counts as connected reads it (`RegistrationOptions.fileExists`). */
-  fileExists?: (path: string) => boolean | Promise<boolean>;
+  /** Test seam: registration's start of cmd.exe (`RegistrationOptions.cmdRuns`), which this check never makes. */
+  cmdRuns?: (path: string) => boolean | Promise<boolean>;
 }
 
 /**
@@ -69,19 +70,20 @@ export async function codingAgentStates(root: string, home: string, options: Dat
   const states: CodingAgentState[] = [];
   for (const id of HARNESSES) {
     const base = { id, name: CODING_AGENT_NAMES[id], found: found.has(id) };
-    const state = base.found ? await connection(root, home, id, { platform, fileExists: options.fileExists }) : { connected: false, problem: null };
+    const state = base.found ? await connection(root, home, id, { platform, cmdRuns: options.cmdRuns }) : { connected: false, problem: null };
     states.push({ ...base, ...state, rerailData: rerailDataAccess(id, state.connected, home, platform, managed) });
   }
   return states;
 }
 
 /** What a registration reads of this computer that a check of whether Rerail is connected can name. */
-type ConnectionFacts = Pick<RegistrationOptions, "platform" | "fileExists">;
+type ConnectionFacts = Pick<RegistrationOptions, "platform" | "cmdRuns">;
 
 async function connection(root: string, home: string, id: Harness, facts: ConnectionFacts): Promise<Pick<CodingAgentState, "connected" | "problem">> {
   try {
     // Either form a Claude Code hook entry on Windows can take counts as connected, whatever this process's PATH, and
-    // the check reads no PATH: the daemon runs it on its event loop each time the dashboard's Settings opens.
+    // the check reads no PATH and starts no program: the daemon runs it on its event loop each time the dashboard's
+    // Settings opens.
     const plan = await registerHarnesses({ root, home, harnesses: [id], dryRun: true, keepHookCommand: true, ...facts });
     return { connected: plan.changes.every(change => change.harness !== id || change.action === "unchanged"), problem: null };
   } catch (error) {
@@ -237,6 +239,8 @@ export interface ConnectResult {
   codexTrust: boolean;
   /** OMP also loads its own plugin install of Rerail (`OMP_PLUGIN_NOTE`): the person removes it with `omp plugin uninstall`. */
   ompPlugin: boolean;
+  /** cmd.exe ran no command, so Claude Code's hooks start with `node` (`NODE_HOOK_FALLBACK_NOTE`). */
+  nodeHookFallback: boolean;
 }
 
 /**
@@ -265,6 +269,7 @@ export async function connectCodingAgents(root: string, home: string, agents: re
     failures: connections.flatMap(connection => connection.problem ?? []),
     codexTrust: notes.includes(CODEX_TRUST_NOTE),
     ompPlugin,
+    nodeHookFallback: notes.includes(NODE_HOOK_FALLBACK_NOTE),
   };
 }
 

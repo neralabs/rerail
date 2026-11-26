@@ -12,8 +12,9 @@ import { answerAutostartOff, hookRerailStarted, runHostHook, withDaemonDeadline,
 export { CURSOR_FOLLOWUP_LOOP_LIMIT, cursorHookEvent, cursorHookOutput, handleCursorEvent } from "./cursor-hook-adapter.js";
 
 /**
- * A session that starts while no daemon runs, because `RERAIL_AUTOSTART` kept the hook from starting one, says so through
- * the model, which Cursor asks to relay the line (`answerAutostartOff`, `cursorRelayedLine`).
+ * A session that starts while no daemon it may use runs, because `RERAIL_AUTOSTART` kept the hook from starting or
+ * replacing one, says so through the model, which Cursor asks to relay the line (`answerAutostartOff`,
+ * `cursorRelayedLine`).
  */
 export async function runCursorHook(
   input: CursorHookInput,

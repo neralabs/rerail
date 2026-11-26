@@ -51,8 +51,8 @@ A reread that reads on into a marked row refuses.
 
 - `rust_stream::node_words`, `accept`, `reread`; `marks` (whether rows carry marks:
   a wrap's inner field, or a reread).
-- `native_cpu_stream`: the node words; `TableFns`, the outlined `tempo_stream_shift`,
-  `tempo_stream_unpend` and `tempo_stream_drop`. Each is made only where the program needs it.
+- `native_cpu_stream`: the node words; `TableFns`, the outlined `rerail_stream_shift`,
+  `rerail_stream_unpend` and `rerail_stream_drop`. Each is made only where the program needs it.
   The reorder, the table pass and their frame and chain state are gone.
 - The interpreter (`stream::run`) keeps the deferred form: it is the test oracle.
 

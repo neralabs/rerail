@@ -1038,7 +1038,7 @@ fn damaged_trees_keep_error_and_missing_nodes_like_native() {
             }
         }
         // The statement: `debugger` alone is natively its keyword, a token the grammar implies, which
-        // no tape stores (RER-131).
+        // no tape stores (decision 0161).
         let pattern = if lang == GrammarDialect::Python {
             "x = $A"
         } else {
@@ -1075,7 +1075,7 @@ fn cancellation_interrupts_mid_encode_without_partial_image() {
         "encode must poll before the final source digest"
     );
     let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
-    // A record per stored node: the tokens the grammar implies are in no tape (RER-131).
+    // A record per stored node: the tokens the grammar implies are in no tape (decision 0161).
     let nodes = native.tree.root_node().descendant_count();
     let doc = TapeDoc::restore(Arc::new(source.into()), grammar, &image, &|| false).unwrap();
     assert_eq!(doc.transducer_len(), doc.image.node_count());
@@ -1122,7 +1122,7 @@ fn checkpoint_stride_boundaries_preserve_native_nodes_and_matches() {
         (17, "x\n".repeat(8)),
     ] {
         let (native, tape, _, _) = fixture(&source, GrammarDialect::Python);
-        // The document's tree image: the stored one is named-only (RER-131).
+        // The document's tree image: the stored one is named-only (decision 0161).
         let image = Arc::clone(&tape.image);
         let left = AstGrep::doc(native);
         let right = AstGrep::doc(tape.clone());
@@ -1166,7 +1166,7 @@ fn span_varint_width_boundaries_preserve_utf8_ranges_and_captures() {
     for (length, expected_width) in [(127, 1), (128, 2), (16_383, 2), (16_384, 3)] {
         let source = format!("#é{}\nfoo(1)\n", "a".repeat(length - 3));
         let (native, tape, _, _) = fixture(&source, GrammarDialect::Python);
-        // The document's tree image: the stored one is named-only (RER-131).
+        // The document's tree image: the stored one is named-only (decision 0161).
         let image = Arc::clone(&tape.image);
         let left = AstGrep::doc(native);
         let right = AstGrep::doc(tape.clone());

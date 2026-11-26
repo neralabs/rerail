@@ -50,13 +50,13 @@ describe("a peer's link", () => {
 
 describe("the status strip", () => {
   it("says gh's state with the login it is signed in as", () => {
-    expect(githubText({ state: "signed-in", login: "akim", repository: "acme/storefront" })).toEqual({ ok: true, text: "Signed in as akim" });
-    expect(githubText({ state: "signed-out", login: null, repository: null }).ok).toBe(false);
+    expect(githubText({ state: "signed-in", login: "akim", repository: "acme/storefront", readAt: "2026-11-03T14:05:00Z" })).toEqual({ ok: true, text: "Signed in as akim" });
+    expect(githubText({ state: "signed-out", login: null, repository: null, readAt: "2026-11-03T14:05:00Z" }).ok).toBe(false);
   });
 
   it("tells every gh state apart, and none but signed in as ready", () => {
     const states = ["signed-in", "signed-out", "missing", "unavailable", "unchecked", "not-github"] as const;
-    const shown = states.map(state => githubText({ state, login: null, repository: null }));
+    const shown = states.map(state => githubText({ state, login: null, repository: null, readAt: null }));
     expect(new Set(shown.map(s => s.text)).size).toBe(states.length);
     expect(shown.map(s => s.ok)).toEqual([true, false, false, false, false, false]);
   });
@@ -89,13 +89,13 @@ describe("the readiness checklist", () => {
     const ready = readinessChecks(status().readiness);
     expect(ready.map(c => [c.key, c.ok])).toEqual([["github", true]]);
     expect(text(ready[0]!.text)).toContain("gh is signed in as akim");
-    const signedOut = readinessChecks({ ...status().readiness, github: { state: "signed-out", login: null, repository: null } });
+    const signedOut = readinessChecks({ ...status().readiness, github: { state: "signed-out", login: null, repository: null, readAt: "2026-11-03T14:05:00Z" } });
     expect(signedOut[0]!.ok).toBe(false);
     expect(text(signedOut[0]!.text)).toContain("Run gh auth login");
   });
 
   it("says gh was not run while off, and that its sign-in could not be read, apart from the other states", () => {
-    const check = (state: "unchecked" | "unavailable" | "not-github") => readinessChecks({ ...status().readiness, github: { state, login: null, repository: null } })[0]!;
+    const check = (state: "unchecked" | "unavailable" | "not-github") => readinessChecks({ ...status().readiness, github: { state, login: null, repository: null, readAt: null } })[0]!;
     const [unchecked, unavailable, notGithub] = [check("unchecked"), check("unavailable"), check("not-github")];
     expect(text(unchecked.text)).toContain("turn Merge Assist on");
     expect(text(unavailable.text)).toContain("couldn’t read gh");

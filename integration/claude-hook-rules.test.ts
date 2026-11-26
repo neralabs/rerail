@@ -22,7 +22,6 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import Database from "better-sqlite3";
 import { once } from "node:events";
 import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
-import { createServer, request, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { text } from "node:stream/consumers";
@@ -30,9 +29,10 @@ import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ENTRY_POINTS } from "../src/engine/index.js";
-import { DAEMON_STATE_FILE, ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, type DaemonState } from "../src/runtime/index.js";
+import { DAEMON_STATE_FILE } from "../src/runtime/index.js";
 import { removeFolder } from "../test/support/platform/remove-folder.js";
 import { setUpTestRepository } from "../test/support/repository-rules.js";
+import { awaitCodeRulesOpenThrough } from "./support/code-rules-open.js";
 
 const PACKAGE_ROOT = resolve(".");
 const CLI = join(PACKAGE_ROOT, "dist", "cli", "cli.js");
@@ -44,7 +44,10 @@ let root: string;
 let repo: string;
 let worktree: string;
 let daemon: ChildProcess | undefined;
-const servers: Server[] = [];
+/** Where the daemon's slow engine (`SLOW_ENGINE`) listens, new at each start of the daemon. */
+let slowEnginePath: string;
+/** How many times this file started the daemon, which names each start's slow engine. */
+let daemonStarts = 0;
 
 const environment = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({ ...process.env, BROWSER: "none", ...extra });
 
@@ -57,11 +60,67 @@ async function git(args: readonly string[], cwd: string): Promise<void> {
   await promisify(execFile)("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", ...args], { cwd, windowsHide: true });
 }
 
-/** A daemon of this build in the file's Rerail home, in the foreground, answering once its state file is written. */
+/** How long the daemon's slow engine (`SLOW_ENGINE`) holds each event. */
+const SLOW_ENGINE_DELAY_MS = 4_000;
+
+/**
+ * An engine endpoint the daemon's own process serves beside its engine's, which holds every event
+ * `SLOW_ENGINE_DELAY_MS` before passing it on to that engine with the daemon's capability: a daemon that takes that
+ * long to answer each event, as one does while it walks a large checkout. The daemon loads it with `--import` before
+ * its entry, so it runs in the daemon daemon.json records, and on Windows a hook sends its events there as to that
+ * daemon's own pipe: Windows names that daemon as the pipe's holder. Only the daemon's main thread serves it, at the path
+ * `SLOW_ENGINE_PATH` gives, which it takes out of its environment, so the workers and processes the daemon starts
+ * serve nothing. A failure to pass an event on is answered 502 with its message, which the hook's failure carries; a
+ * failure to listen is written to the daemon's stderr, and the hooks then fail on a pipe nothing listens on. Neither
+ * ends the daemon the later cases use.
+ */
+const SLOW_ENGINE = `
+import { readFileSync } from "node:fs";
+import { createServer, request } from "node:http";
+import { join } from "node:path";
+import { isMainThread } from "node:worker_threads";
+const path = process.env.SLOW_ENGINE_PATH;
+delete process.env.SLOW_ENGINE_PATH;
+if (isMainThread && path !== undefined) {
+  const server = createServer((incoming, outgoing) => {
+    const fail = error => outgoing.headersSent ? outgoing.destroy() : outgoing.writeHead(502, { "content-type": "text/plain" }).end(\`slow engine: \${String(error)}\`);
+    const chunks = [];
+    incoming.on("data", chunk => chunks.push(chunk)).on("end", () => setTimeout(() => {
+      try {
+        const body = Buffer.concat(chunks);
+        const state = JSON.parse(readFileSync(join(process.env.RERAIL_HOME, ${JSON.stringify(DAEMON_STATE_FILE)}), "utf8"));
+        const forwarded = request({
+          socketPath: state.kernelSocketPath, method: "POST", path: incoming.url,
+          headers: { "content-type": "application/json", "content-length": body.length, "x-rerail-access": state.accessToken ?? "" },
+        }, answer => {
+          outgoing.writeHead(answer.statusCode ?? 502, { "content-type": "application/json" });
+          answer.pipe(outgoing);
+        });
+        forwarded.on("error", fail);
+        forwarded.end(body);
+      } catch (error) {
+        fail(error);
+      }
+    }, ${SLOW_ENGINE_DELAY_MS}));
+  });
+  server.on("error", error => process.stderr.write(\`slow engine: \${String(error)}\\n\`));
+  server.listen(path);
+  server.unref();
+}
+`;
+
+/**
+ * A daemon of this build in the file's Rerail home, in the foreground, answering once its state file is written, with
+ * its slow engine (`SLOW_ENGINE`) at a new `slowEnginePath`: a pipe on Windows, elsewhere a socket in the test's folder
+ * with a name short enough for the 107 bytes a Linux socket path may take (`run-folder.ts`).
+ */
 async function startDaemon(): Promise<void> {
   const home = process.env.RERAIL_HOME!;
-  const child = spawn(process.execPath, [join(PACKAGE_ROOT, ENTRY_POINTS.daemon), "--port", "0", "--state-file", join(home, DAEMON_STATE_FILE)], {
-    env: environment(), stdio: ["ignore", "pipe", "ignore"], windowsHide: true,
+  daemonStarts += 1;
+  slowEnginePath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-slow-engine-${process.pid}-${daemonStarts}` : join(root, `slow-${daemonStarts}.sock`);
+  const slowEngine = `data:text/javascript,${encodeURIComponent(SLOW_ENGINE)}`;
+  const child = spawn(process.execPath, ["--import", slowEngine, join(PACKAGE_ROOT, ENTRY_POINTS.daemon), "--port", "0", "--state-file", join(home, DAEMON_STATE_FILE)], {
+    env: environment({ SLOW_ENGINE_PATH: slowEnginePath }), stdio: ["ignore", "pipe", "ignore"], windowsHide: true,
   });
   daemon = child;
   await Promise.race([
@@ -79,10 +138,6 @@ async function stopDaemon(): Promise<void> {
   await rerail(["daemon", "stop"]).catch(() => child.kill());
   await closed;
   daemon = undefined;
-}
-
-async function daemonState(): Promise<DaemonState> {
-  return JSON.parse(await readFile(join(process.env.RERAIL_HOME!, DAEMON_STATE_FILE), "utf8")) as DaemonState;
 }
 
 interface HookAnswer {
@@ -135,6 +190,15 @@ async function startSession(session: Session): Promise<void> {
   // The session-start note counts the rules on: the session's rules are available.
   expect(contextOf(start)).toMatch(/Rerail is on in this repo: \d+ rules? (?:is|are) on\./u);
   await hook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "prompt-1", prompt: "Add the classifiers." }, session.projectDir, session.env);
+  // A session's first start answers its tool calls without code rules while they open (the first index of the
+  // checkout, its rules compiled), and the first pass after checks what was edited meanwhile; only an edit made once
+  // they run is steered at its own result. So each session waits for them, through Read calls that edit nothing, sent
+  // to the daemon itself so a slow engine in front of it does not hold the wait.
+  await awaitCodeRulesOpenThrough(session.id, async probe => {
+    const read = { ...common, tool_name: "Read", tool_use_id: `toolu_open_probe_${probe}`, tool_input: { file_path: join(session.projectDir, "pyproject.toml") } };
+    await hook({ ...read, hook_event_name: "PreToolUse" }, session.projectDir);
+    await hook({ ...read, hook_event_name: "PostToolUse", tool_response: { type: "text" } }, session.projectDir);
+  });
 }
 
 /** The turn's end: `Stop`'s answer. */
@@ -272,38 +336,6 @@ async function expectRulesFired(session: Session, files: readonly string[]): Pro
   expect(new Set(logged)).toEqual(new Set(files.map(file => basename(file))));
 }
 
-/**
- * An engine socket in front of the daemon's that holds every event `delayMs` before passing it on, with the daemon's
- * capability: a daemon that takes that long to answer each event, as one does while it walks a large checkout. It
- * passes a proof's challenge on at once, as the daemon answers a challenge before it reads any event. On Windows this
- * socket is a pipe of the test's own process, which Windows does not name as the daemon, so a hook sends its event
- * only once the engine behind it proves it holds the capability in daemon.json.
- */
-async function slowEngine(delayMs: number): Promise<string> {
-  const state = await daemonState();
-  const path = process.platform === "win32" ? `\\\\.\\pipe\\rerail-slow-engine-${process.pid}-${Date.now()}` : join(root, "slow-engine.sock");
-  const server = createServer(async (incoming, outgoing) => {
-    const body = await text(incoming);
-    const challenge = incoming.headers[ENGINE_CHALLENGE_HEADER];
-    if (incoming.url !== ENGINE_PROOF_PATH) await delay(delayMs);
-    const forwarded = request({
-      socketPath: state.kernelSocketPath, method: "POST", path: incoming.url,
-      headers: {
-        "content-type": "application/json", "content-length": Buffer.byteLength(body), "x-rerail-access": state.accessToken ?? "",
-        ...(challenge === undefined ? {} : { [ENGINE_CHALLENGE_HEADER]: challenge }),
-      },
-    }, answer => {
-      outgoing.writeHead(answer.statusCode ?? 502, { "content-type": "application/json" });
-      answer.pipe(outgoing);
-    });
-    forwarded.on("error", () => outgoing.destroy());
-    forwarded.end(body);
-  });
-  servers.push(server);
-  await new Promise<void>(done => server.listen(path, done));
-  return path;
-}
-
 beforeAll(async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "rerail-claude-rules-")));
   repo = join(root, "app");
@@ -322,7 +354,6 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(async () => {
-  await Promise.all(servers.splice(0).map(server => new Promise(done => server.close(done))));
   await stopDaemon();
   await removeFolder(root);
 }, 60_000);
@@ -373,7 +404,7 @@ describe("the Claude Code hook against a daemon of this build", () => {
 
   it("steers and logs it in every edit of subagents whose hooks run at once while the daemon takes seconds per event", async () => {
     // Eight subagents' hooks, each event held 4 s: hooks that waited on each other's whole round trip passed 30 s.
-    const session: Session = { id: "parallel-subagents-session", projectDir: repo, env: { RERAIL_ENGINE_SOCKET: await slowEngine(4_000) } };
+    const session: Session = { id: "parallel-subagents-session", projectDir: repo, env: { RERAIL_ENGINE_SOCKET: slowEnginePath } };
     const files = Array.from({ length: 8 }, (_, agent) => join(repo, "src", "app", `parallel_edit_${agent}.py`));
     await startSession(session);
     const answers = await Promise.all(files.map((file, agent) => writeTooComplex(session, file, `agent-${agent}`)));
