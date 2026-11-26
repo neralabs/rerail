@@ -724,14 +724,18 @@ const INDEXED: usize = 8;
 /// A group's index of one column of one relation (an index in its relation's block, decision 0353): nothing where
 /// the group's rows are in the column's order, else its rows in that order (stable: equal values in row order). A
 /// probe is a binary search. A hash map of a row list a value was most of a made relation's first probes' time.
-/// A made relation's node ids in one group as bits: each document's ids, by the key in their high half, a bit an id
-/// from the document's least (`Group::holds`). Built only where the words are at most twice the rows: a document's
-/// rows are a few of its nodes, near each other.
+/// A made relation's node ids in one group as bits (`Group::holds`): the ids grouped by all but their low
+/// `ID_SPLIT` bits (a document and, by definition, a granule's slot; by tape position, a stretch of 2^18 of them),
+/// and within a group a bit an id from its least, as decision 0694's set form keys its bits by slot. Built only
+/// where the words are at most twice the rows.
 pub(super) struct NodeBits {
-    /// Each document's key, its least low half, and its words' start in `words`, by key.
-    docs: Vec<(u32, u32, u32)>,
+    /// Each group's high bits, its least id's low bits, and its words' start in `words`, by group.
+    docs: Vec<(i64, u32, u32)>,
     words: Vec<u64>,
 }
+
+/// The low bits of an id within its `NodeBits` group.
+const SPLIT: u32 = rerail_blocks::packed::ID_SPLIT;
 
 impl NodeBits {
     fn new(values: impl Iterator<Item = i64>) -> Option<Self> {
@@ -741,33 +745,42 @@ impl NodeBits {
         }
         ids.sort_unstable();
         ids.dedup();
-        let (mut docs, mut words) = (Vec::new(), Vec::new());
-        let mut i = 0;
+        // Each group's span, from its least id to its greatest: the words it takes, counted before any is made.
+        let budget = 2 * ids.len() + 8;
+        let mut spans = Vec::new();
+        let (mut i, mut need) = (0, 0usize);
         while i < ids.len() {
-            let key = (ids[i] >> 32) as u32;
-            let base = ids[i] as u32;
-            let start = words.len();
-            docs.push((key, base, start as u32));
-            while i < ids.len() && (ids[i] >> 32) as u32 == key {
-                let at = (ids[i] as u32 - base) as usize;
-                if start + at / 64 >= words.len() {
-                    words.resize(start + at / 64 + 1, 0);
-                }
-                words[start + at / 64] |= 1 << (at % 64);
-                i += 1;
-            }
-            if words.len() > 2 * ids.len() + 8 {
+            let key = ids[i] >> SPLIT;
+            let j = i + ids[i..].partition_point(|&v| v >> SPLIT == key);
+            need += ((ids[j - 1] - ids[i]) as usize) / 64 + 1;
+            if need > budget {
                 return None;
             }
+            spans.push(i..j);
+            i = j;
         }
+        let (mut docs, mut words) = (Vec::with_capacity(spans.len()), vec![0u64; need]);
+        let mut start = 0;
+        for span in spans {
+            let low = |v: i64| (v & ((1 << SPLIT) - 1)) as u32;
+            let (key, base) = (ids[span.start] >> SPLIT, low(ids[span.start]));
+            docs.push((key, base, start as u32));
+            let last = (low(ids[span.end - 1]) - base) as usize;
+            for &v in &ids[span] {
+                let at = (low(v) - base) as usize;
+                words[start + at / 64] |= 1 << (at % 64);
+            }
+            start += last / 64 + 1;
+        }
+        debug_assert_eq!(start, words.len());
         Some(NodeBits { docs, words })
     }
     fn has(&self, value: i64) -> bool {
-        let key = (value >> 32) as u32;
+        let key = value >> SPLIT;
         let d = self.docs.partition_point(|e| e.0 < key);
         let Some(&(k, base, start)) = self.docs.get(d).filter(|e| e.0 == key) else { return false };
         let end = self.docs.get(d + 1).map_or(self.words.len(), |e| e.2 as usize);
-        let Some(at) = (value as u32).checked_sub(base) else { return false };
+        let Some(at) = ((value & ((1 << SPLIT) - 1)) as u32).checked_sub(base) else { return false };
         let w = start as usize + at as usize / 64;
         debug_assert_eq!(k, key);
         w < end && self.words[w] >> (at % 64) & 1 != 0
@@ -854,12 +867,14 @@ mod node_bits_tests {
     #[test]
     fn bits_hold_exactly_the_rows_ids() {
         let id = |doc: i64, low: i64| doc << 32 | low;
-        let rows = [id(7, 1000), id(7, 1003), id(7, 1130), id(7, 1003), id(9, 5), id(9, 70)];
+        // By definition: a granule's slot above 18 index bits (two slots of document 7).
+        let def = |doc: i64, slot: i64, index: i64| doc << 32 | slot << 18 | index;
+        let rows = [id(7, 1000), id(7, 1003), id(7, 1130), id(7, 1003), id(9, 5), id(9, 70), def(7, 3, 4), def(7, 3, 9), def(7, 5, 0)];
         let bits = NodeBits::new(rows.iter().copied()).expect("dense ids take bits");
         for &v in &rows {
             assert!(bits.has(v), "{v:#x}");
         }
-        for v in [id(7, 999), id(7, 1001), id(7, 1131), id(7, 1 << 20), id(8, 1000), id(9, 4), id(9, 71), id(10, 5)] {
+        for v in [id(7, 999), id(7, 1001), id(7, 1131), id(7, 1 << 20), id(8, 1000), id(9, 4), id(9, 71), id(10, 5), def(7, 3, 5), def(7, 4, 4), def(7, 5, 1), def(7, 6, 0)] {
             assert!(!bits.has(v), "{v:#x}");
         }
     }
@@ -867,7 +882,7 @@ mod node_bits_tests {
     /// Ids too sparse for their words, or negative, take no bits: the probe reads the rows.
     #[test]
     fn sparse_or_negative_ids_take_no_bits() {
-        assert!(NodeBits::new([1i64 << 32, (1i64 << 32) | 1 << 20].into_iter()).is_none());
+        assert!(NodeBits::new([1i64 << 32, (1i64 << 32) | (1 << 17)].into_iter()).is_none());
         assert!(NodeBits::new([-1i64].into_iter()).is_none());
     }
 }
