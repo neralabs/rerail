@@ -13,7 +13,9 @@
 //   x = [1] + foo + [2]               ← RUF005 once, at the whole chain
 //   a = [1, 2] + (3, 4)               not reported: list and tuple
 //   a = foo + bar + [1]               not reported: `foo + bar` does not fold
+//   x: "foo + [1]" = 1                ← RUF005: a string annotation is code (typedef_node)
 #include "python/ruff.rerail"
+#include "python/python-01.rerail"     // typedef_node
 
 // folds(e, t): e is, after folding, a literal of type t ("list" or "tuple"): a literal, or a `+` that folds.
 .decl folds(e: node, t: symbol)
@@ -35,5 +37,6 @@ plus(b, l, r) :- kind(b, "binary_operator"), op(b, "+"), field(b, "left", l), fi
     suppress ruff "RUF005"
 // Ruff skips a `+` whose parent is a `+`.
 RUF005(b) :- plus(b, _, _), folds(b, _), !outer_binop(b).
+RUF005(b) :- typedef_node(b), plus(b, _, _), folds(b, _), !outer_binop(b).
 .decl outer_binop(b: node)
 outer_binop(b) :- plus(b, _, _), ast_up(b, p), plus(p, _, _).

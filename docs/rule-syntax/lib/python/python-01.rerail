@@ -1,0 +1,116 @@
+// python/python-01: Python as Ruff's AST shows it (RUF001, RUF002, RUF005, RUF008, RUF012, RUF013, RUF016): a lone
+// parenthesized tuple subscript is the argument list itself, a string type definition is code, and `"doc",` is a
+// tuple, not a docstring.
+//
+// Interface
+//   rt_in(t)               an annotation, or a part of one that is read as a type: ann_input's domain, plus the
+//                          elements of a tuple subscript
+//   rt_strip(t, m)         t without its `type` wrapper and parentheses (ann_strip on rt_in)
+//   rt_app(t, h, i, a)     annotation t is h[…] with argument a at position i, as Ruff counts them:
+//                          `Union[int, str]`, `Union[(int, str)]` and `Union[((int, str))]` have the arguments int, str
+//   rt_tupled(t)           t's subscript is a tuple (`Union[int, str]`, `Union[(int,)]`); `Union[(int)]` is not
+//   rt_last(t, i)          t's last argument is at position i
+//   rt_immutable(t)        Ruff's is_immutable_annotation over rt_app
+//   typedef_node(n)        n is in the tree parsed from a string type definition, which Ruff's expression rules
+//                          check as code
+//   typedef_str(s)         s is a string Ruff parses as a type: a str literal, or a concatenation of them, whose
+//                          text does not start with a space or a tab
+//   doc_piece(s)           s is a docstring, or a string of a docstring's implicit concatenation
+//
+// Ruff background
+//   - Ruff's parser makes `x[(a, b)]` and `x[a, b]` the same Subscript, whose slice is a Tuple; tree-sitter keeps the
+//     parentheses, so ruff-classes' type_app sees one argument, a tuple. Proposed: type_app reads it this way, and
+//     these relations fold back into ruff-classes.
+//   - is_immutable_annotation: `Union[…]` and `Annotated[…]` count only with a tuple subscript (all elements
+//     immutable; the first one), `Optional[x]` only without one.
+//   e.g.  a: Union[(int, str)] = []      rt_app(a's annotation, Union, 0, int), rt_app(…, 1, str); rt_immutable
+//         b: Union[(int,)] = []          rt_tupled, rt_last 0; rt_immutable
+//         c: Annotated[(list, 1)] = []   rt_app(…, 0, list); not rt_immutable
+//   - A string in a type context (an annotation, `cast("…", x)`'s type, a TypeVar bound, `list["…"]`, and a string in
+//     one) is parsed, and every expression rule runs on its tree, reported at the string. A string whose text starts
+//     with a space or a tab does not parse in Ruff (F722), nor do f-strings and bytes; the engine's parser would
+//     take the first. A relation over every node of a file does not reach the trees: a rule asks with
+//     typedef_node(n) first.
+//   e.g.  x: "[1]['a']" = 1              typedef_node(<[1]['a']>): RUF016 reports it
+//         y: "  [1] + foo" = 1           not parsed: F722
+#include "python/typing.rerail"
+#include "python/ruff-classes.rerail"
+
+.decl rt_in(t: node)
+rt_in(t) :- ann_input(t).
+rt_in(y) :- rt_in(t), unparen(t, x), kind(x, "type"), child(x, y, 0).
+rt_in(a) :- rt_raw(_, _, _, a).
+rt_in(e) :- rt_tuple_slice(_, x), child(x, e, _), !kind(e, "comment").
+rt_in(x) :- rt_in(t), rt_strip(t, m), kind(m, k), (k = "binary_operator" ; k = "union_type"), child(m, x, _).
+rt_in(r) :- rt_in(t), rt_strip(t, s), str_node(s), parsed(s, "annotation", r).
+.decl rt_strip(t: node, m: node)
+rt_strip(t, m) :- rt_in(t), unparen(t, m), !kind(m, "type").
+rt_strip(t, m) :- rt_in(t), unparen(t, x), kind(x, "type"), child(x, y, 0), rt_strip(y, m).
+// rt_raw(t, h, i, a): the subscript's arguments as written (ruff-classes' type_app, on rt_in).
+.decl rt_raw(t: node, h: node, i: number, a: node)
+rt_raw(t, h, i, a) :- rt_in(t), rt_strip(t, m), kind(m, "subscript"), field(m, "value", h), rt_at(m, i, a).
+rt_raw(t, h, i, a) :- rt_in(t), rt_strip(t, m), kind(m, "generic_type"), child(m, h, 0),
+    child(m, tp, 1), kind(tp, "type_parameter"), child(tp, a, i).
+// rt_at(m, i, a): a is argument i of subscript m (its value is child 0), or element i of tuple m. By child index,
+// not a count: a count in the engine does not see the nodes of a parsed string, so `"Annotated[int, x]"` would
+// number both 0. A comment among them shifts the numbers.
+.decl rt_at(m: node, i: number, a: node)
+rt_at(m, i, a) :- field(m, "subscript", a), child(m, a, j), i = j - 1.
+rt_at(m, i, a) :- kind(m, "tuple"), child(m, a, i), !kind(a, "comment").
+// rt_tuple_slice(t, x): t's only argument is the tuple x, through parentheses (and a generic_type's `type` node).
+.decl rt_tuple_slice(t: node, x: node)
+rt_tuple_slice(t, x) :- rt_in(t), rt_strip(t, m), rt_lone(m, a), rt_tuple_arg(a, x).
+.decl rt_lone(m: node, a: node)
+rt_lone(m, a) :- kind(m, "subscript"), rt_at(m, 0, a), !rt_at(m, 1, _).
+rt_lone(m, a) :- kind(m, "generic_type"), child(m, tp, 1), kind(tp, "type_parameter"), child(tp, a, 0), !child(tp, _, 1).
+.decl rt_tuple_arg(a: node, x: node)
+rt_tuple_arg(a, x) :- unparen(a, x), kind(x, "tuple").
+rt_tuple_arg(a, x) :- unparen(a, y), kind(y, "type"), child(y, z, 0), unparen(z, x), kind(x, "tuple").
+.decl rt_app(t: node, h: node, i: number, a: node)
+rt_app(t, h, i, a) :- rt_raw(t, h, i, a), !rt_tuple_slice(t, _).
+rt_app(t, h, i, a) :- rt_tuple_slice(t, x), rt_raw(t, h, 0, _), rt_at(x, i, a).
+.decl rt_tupled(t: node)
+rt_tupled(t) :- rt_tuple_slice(t, _).
+rt_tupled(t) :- rt_raw(t, _, 1, _).
+.decl rt_last(t: node, i: number)
+rt_last(t, i) :- rt_app(t, _, i, _), !rt_app(t, _, i + 1, _).
+.decl rt_q(t: node, q: symbol)
+rt_q(t, q) :- rt_strip(t, m), (kind(m, "identifier") ; kind(m, "attribute")), ruff_qual(m, q0), typing_name(q0, q).
+.decl rt_head_q(t: node, q: symbol)
+rt_head_q(t, q) :- rt_q(t, q).
+rt_head_q(t, q) :- rt_app(t, h, 0, _), ruff_qual(h, q0), typing_name(q0, q).
+
+.decl rt_immutable(t: node)
+rt_immutable(t) :- rt_strip(t, m), (kind(m, "identifier") ; kind(m, "attribute")), ruff_qual(m, q),
+    (immutable_type(q) ; option_item("flake8-bugbear.extend-immutable-calls", _, q)).
+rt_immutable(t) :- rt_app(t, h, 0, _), ruff_qual(h, q), immutable_generic(q).
+rt_immutable(t) :- rt_app(t, h, 0, a), ruff_qual(h, "typing.Optional"), !rt_tupled(t), rt_immutable(a).
+rt_immutable(t) :- rt_app(t, h, 0, _), ruff_qual(h, "typing.Union"), rt_tupled(t), rt_last(t, n), rt_imm_prefix(t, n).
+rt_immutable(t) :- rt_app(t, h, 0, a), ruff_qual(h, q), (q = "typing.Annotated" ; q = "typing_extensions.Annotated"),
+    rt_tupled(t), rt_immutable(a).
+rt_immutable(t) :- rt_strip(t, m), (kind(m, "binary_operator"), op(m, "|") ; kind(m, "union_type")),
+    child(m, x, 0), child(m, y, 1), rt_immutable(x), rt_immutable(y).
+rt_immutable(t) :- rt_strip(t, m), kind(m, "none").
+// rt_imm_prefix(t, i): arguments 0 to i of t are immutable (a chain, so the recursion stays positive).
+.decl rt_imm_prefix(t: node, i: number)
+rt_imm_prefix(t, 0) :- rt_app(t, _, 0, a), rt_immutable(a).
+rt_imm_prefix(t, i) :- rt_imm_prefix(t, i - 1), rt_app(t, _, i, a), rt_immutable(a).
+
+.decl typedef_node(n: node)
+typedef_node(n) :- type_ctx(s), typedef_str(s), parsed(s, "annotation", r), (n = r ; within(n, r)).
+// typedef_str(s): s is a str literal, or an implicit concatenation of them, whose text does not start with a space
+// or a tab. A part of a concatenation is parsed only as the whole.
+.decl typedef_str(s: node)
+typedef_str(s) :- kind(s, "string"), !concat_part(s), string_form(s, "str"), str(s, x), !match("[ \\t][\\s\\S]*", x).
+typedef_str(s) :- kind(s, "concatenated_string"), !typedef_other_part(s), child(s, p0, 0), str(p0, x),
+    !match("[ \\t][\\s\\S]*", x).
+.decl typedef_other_part(s: node)
+typedef_other_part(s) :- kind(s, "concatenated_string"), child(s, p, _), kind(p, "string"), !string_form(p, "str").
+
+// python/ast's docstring takes a first statement `"doc",` for one: its tuple has a single named child. Ruff's AST
+// has a Tuple there, so the string is a plain string (RUF001), not a docstring (RUF002).
+//   def f():
+//       "dоc",          not doc_piece
+.decl doc_piece(s: node)
+doc_piece(s) :- docstring(_, e), doc_stmt(st, e), text(st, x), !match("[\\s\\S]*,\\s*", x),
+    (s = e ; kind(e, "concatenated_string"), child(e, s, _)).

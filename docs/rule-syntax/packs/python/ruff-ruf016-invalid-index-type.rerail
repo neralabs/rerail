@@ -13,24 +13,32 @@
 //   [1][...]                ← RUF016: an ellipsis index
 //   [1][1:"a", 2]           ← RUF016 once, for the tuple; its slice is not looked into
 //   "abc"[i]                not reported
+//   x: "[1]['a']" = 1       ← RUF016: a string annotation is code (typedef_node)
 #include "python/ruff.rerail"
+#include "python/python-01.rerail"     // typedef_node
 
 .violation RUF016(at: node, msg: symbol) code "RUF016" "{msg}"
     suppress ruff "RUF016"
 RUF016(i, cat(cat(cat(cat("Index this ", vt), " literal with an integer or a slice; a "), it),
     " index raises a TypeError.")) :-
-    indexed(s, vt), field(s, "subscript", i), count : { field(s, "subscript", _) } = 1, lit_type(i, it), !index_ok(it).
+    indexed(s, vt), field(s, "subscript", i), !index_tuple(s), lit_type(i, it), !index_ok(it).
 RUF016(i, cat(cat("Index this ", vt), " literal with a single integer or a slice, not a tuple; a tuple index raises a TypeError.")) :-
-    indexed(s, vt), field(s, "subscript", i), count : { field(s, "subscript", _) } > 1,
-    count : { field(s, "subscript", i0), i0 < i } = 0.
+    indexed(s, vt), field(s, "subscript", i), index_tuple(s), !later_index(s, i).
 RUF016(b, cat(cat("Use an integer (or None) for each bound and step of this slice of a ", vt),
     cat(cat("; a ", bt), " bound raises a TypeError."))) :-
-    indexed(s, vt), field(s, "subscript", sl), count : { field(s, "subscript", _) } = 1, slice_part(sl, _, b), lit_type(b, bt),
+    indexed(s, vt), field(s, "subscript", sl), !index_tuple(s), slice_part(sl, _, b), lit_type(b, bt),
     !bound_ok(bt).
 
-// indexed(s, t): subscript s indexes a literal of type t.
+// indexed(s, t): subscript s indexes a literal of type t, in the file or in a string type definition.
 .decl indexed(s: node, t: symbol)
 indexed(s, t) :- kind(s, "subscript"), field(s, "value", v), lit_type(v, t), seq_type(t).
+indexed(s, t) :- typedef_node(s), kind(s, "subscript"), field(s, "value", v), lit_type(v, t), seq_type(t).
+// index_tuple(s): `x[a, b]`, a tuple index. later_index(s, i): an index of s comes before i. (Negations, not counts:
+// a count in the engine does not see the nodes of a parsed string.)
+.decl index_tuple(s: node)
+index_tuple(s) :- later_index(s, _).
+.decl later_index(s: node, i: node)
+later_index(s, i) :- field(s, "subscript", i0), field(s, "subscript", i), i0 < i.
 .decl seq_type(t: symbol)
 seq_type("str"). seq_type("bytes"). seq_type("list"). seq_type("tuple"). seq_type("list comprehension").
 .decl index_ok(t: symbol)
@@ -42,8 +50,9 @@ bound_ok("int"). bound_ok("bool"). bound_ok("None").
 .decl lit_type(e: node, t: symbol)
 lit_type(e, t) :- unparen(e, m), kind(m, k), kind_type(k, t).
 lit_type(e, "str") :- unparen(e, m), (string_form(m, "str") ; string_form(m, "fstr")).
-lit_type(e, "str") :- unparen(e, m), kind(m, "concatenated_string"), !string_form(m, _),
-    count : { child(m, x, _), string_form(x, f), f != "str", f != "fstr" } = 0.
+lit_type(e, "str") :- unparen(e, m), kind(m, "concatenated_string"), !string_form(m, _), !non_str_part(m).
+.decl non_str_part(m: node)
+non_str_part(m) :- kind(m, "concatenated_string"), child(m, x, _), string_form(x, f), f != "str", f != "fstr".
 lit_type(e, "bytes") :- unparen(e, m), string_form(m, "bytes").
 lit_type(e, "bytes") :- unparen(e, m), kind(m, "concatenated_string"), child(m, s0, 0), string_form(s0, "bytes").
 lit_type(e, "Template") :- unparen(e, m), string_form(m, "tstr").
