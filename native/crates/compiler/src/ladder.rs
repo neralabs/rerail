@@ -27,6 +27,9 @@ use crate::program::Words;
 use ::bitlex::syntax::{Gram, Stmt, parse};
 use std::collections::HashMap;
 
+/// The cost of a sentence that cannot be derived: a refusal, or a rule with none.
+const FAR: usize = 1 << 20;
+
 /// A seeded xorshift: the corpus is the same on every run.
 pub struct Rng(pub u64);
 
@@ -236,7 +239,6 @@ impl Lang {
     }
 
     fn cost(&self, g: &Gram) -> usize {
-        const FAR: usize = 1 << 20;
         match g {
             Gram::Lit(_) => 1,
             Gram::Sym(s) => match self.rules.get(s) {
@@ -250,6 +252,7 @@ impl Lang {
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.cost(body),
             Gram::Balanced { .. } => 2,
             Gram::Any(_) => 1,
+            Gram::Leaf { rule, .. } => self.cost(&Gram::Sym(rule.clone())),
         }
     }
 
@@ -263,8 +266,11 @@ impl Lang {
                 None => out.push(self.token(rng, s)),
             },
             Gram::Seq(gs) => gs.iter().for_each(|g| self.derive(rng, g, depth, out)),
+            // An arm that refuses (`refused`, no arms) derives no sentence: the others are picked from.
             Gram::Alt(gs) => {
-                let g = if deep { gs.iter().min_by_key(|g| self.cost(g)).unwrap() } else { rng.pick(gs) };
+                let arms: Vec<&Gram> = gs.iter().filter(|g| self.cost(g) < FAR).collect();
+                let Some(&least) = arms.iter().min_by_key(|g| self.cost(g)) else { return };
+                let g = if deep { least } else { *rng.pick(&arms) };
                 self.derive(rng, g, depth, out)
             }
             Gram::Opt(g) => {
@@ -283,6 +289,8 @@ impl Lang {
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.derive(rng, body, depth, out),
             // A word: a token of most kinds.
             Gram::Any(_) => out.push(self.token(rng, "identifier")),
+            // The tokens of a sentence of its rule.
+            Gram::Leaf { rule, .. } => self.derive(rng, &Gram::Sym(rule.clone()), depth, out),
             // The opener, maybe a few tokens and a nested pair, the closer.
             Gram::Balanced { open, close, .. } => {
                 out.push(self.keyword(rng, open));
@@ -364,7 +372,7 @@ impl Lang {
             }
             Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) | Gram::Flag { body: g, .. } | Gram::Unless { body: g, .. } => self.bytes(rng, g, long, out),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.bytes(rng, body, long, out),
-            Gram::Balanced { .. } | Gram::Any(_) => {}
+            Gram::Balanced { .. } | Gram::Any(_) | Gram::Leaf { .. } => {}
         }
     }
 }
@@ -526,6 +534,48 @@ pub struct Compiled {
     pub machine: String,
 }
 
+/// The compiled parser's nodes of `bytes`: the interpreter's, where the compiled tape is the one they make
+/// (`Parser::against`); else why not (a refusal, at its word, or a tape that differs).
+pub fn compiled_nodes(c: &Compiled, bytes: &[u8]) -> Result<Vec<crate::stream::Node>, String> {
+    let interp = crate::stream::run(&c.program, bytes, &c.program.block_programs[0].run(bytes));
+    match c.parser.against(bytes, interp.clone()) {
+        (Ok(got), Ok(want)) if got == want => Ok(interp.expect("the interpreter's nodes")),
+        (Err(a), Err(b)) if a == b => Err(format!("refused at word {a}")),
+        (got, want) => Err(format!("the compiled tape is not the interpreter's: {:?} against {:?}", got.map(|t| t.len()), want.map(|t| t.len()))),
+    }
+}
+
+/// A language of the codes of the nodes `program`'s interpreter makes of `files` (`stream::lang_of`): what a test
+/// numbers a grammar's tapes in where the grammar has no table of its own.
+pub fn lang_over(program: &Words, files: &[&[u8]]) -> rerail_tape_format::f16::Lang {
+    let nodes: Vec<crate::stream::Node> = files.iter().flat_map(|f| crate::stream::run(program, f, &program.block_programs[0].run(f)).unwrap_or_default()).collect();
+    crate::stream::lang_of(&nodes, &program.readings.extras)
+}
+
+/// What a measurement of tier 2 writes with (a test's): a writer kept from one document to the next, and a language
+/// with its numbers by a parser's tier 2's keys, and the lines' terminators.
+pub struct Writing<'a> {
+    pub w: rerail_tape_format::f16::Writer,
+    pub lang: &'a rerail_tape_format::f16::Lang,
+    pub numbers: crate::native_cpu_stream::Numbers,
+    pub terminators: rerail_tape_format::newlines::Terminators,
+}
+
+impl<'a> Writing<'a> {
+    pub fn new(parser: &crate::native_cpu_stream::Parser, lang: &'a rerail_tape_format::f16::Lang, terminators: rerail_tape_format::newlines::Terminators) -> Self {
+        Writing { w: rerail_tape_format::f16::Writer::empty(), lang, numbers: parser.tier2.numbers(lang), terminators }
+    }
+
+    /// Tier 2 and the writer over `batch`, tier 1's run of `bytes` (`Parser::words16`): the tape's nodes, or `None`
+    /// where it refuses. The tape goes back to the writer, the next one's room.
+    pub fn words(&mut self, parser: &crate::native_cpu_stream::Parser, batch: &crate::native_cpu_block::Batch, bytes: &[u8]) -> Option<usize> {
+        let t = parser.words16(&mut self.w, batch, bytes, crate::native_cpu_stream::Out16 { lang: self.lang, numbers: &self.numbers, terminators: self.terminators, z: false }).ok()?;
+        let n = t.len();
+        self.w.recycle(t);
+        Some(n)
+    }
+}
+
 pub fn compile_step(name: &str, source: &str) -> Compiled {
     compile_step_shaped(name, source, crate::bitlex_masks::Shape::Auto)
 }
@@ -547,7 +597,7 @@ pub fn compile_step_shaped(name: &str, source: &str, shape: crate::bitlex_masks:
     let compiled = {
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
-        let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
+        let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
         crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), shape).unwrap_or_else(|e| panic!("{name}: compiles: {e}"))
     };
     phase("bitlex compile");
@@ -571,7 +621,7 @@ pub fn compile_error_shaped(source: &str, shape: crate::bitlex_masks::Shape) -> 
     let ids = Ids::default();
     let kind = |n: &str| Some(ids.of(n));
     let field = |n: &str| Some(ids.of(&format!("field {n}")));
-    let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
+    let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), shape).err()
 }
 
@@ -581,7 +631,7 @@ pub fn compile_error(source: &str) -> Option<String> {
     let ids = Ids::default();
     let kind = |n: &str| Some(ids.of(n));
     let field = |n: &str| Some(ids.of(&format!("field {n}")));
-    let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
+    let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     crate::bitlex_masks::compile(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols)).err()
 }
 
@@ -752,7 +802,7 @@ pub(crate) fn tier1_agrees(cpu: &crate::block::BlockRun, interpreted: &crate::bl
 /// The outputs tier 1 on the CPU does not make as the interpreter does: those its record pass
 /// makes and the totals no one reads by their rows (`BlockNative::cpu_unstored`), and all of them
 /// where a pass has no block loop (`PassShape::block_loop`).
-fn tier1_made(c: &Compiled) -> Vec<usize> {
+fn tier1_made(c: &Compiled) -> rerail_blocks::vector::Vector<usize> {
     let block = &c.native.block_programs[0];
     let looped = c.parser.tier1.passes.iter().all(|p| p.back || p.block_loop);
     if !looped {
@@ -809,7 +859,6 @@ pub fn check_documents(
         let want = reference(c, &bytes);
         let run = c.program.block_programs[0].run_files(&[&bytes]).remove(0);
         let interp = crate::stream::run(&c.program, &bytes, &run).ok().map(as_ids);
-        let compiled = c.parser.parse(&bytes).ok().map(as_ids);
         let tier1 = c.parser.tier1.extract(&bytes);
         if !tier1_agrees(&tier1, &run, &made, lazy) {
             if std::env::var_os("RERAIL_LADDER_CODES").is_some() {
@@ -817,19 +866,24 @@ pub fn check_documents(
             }
             return Some(format!("{}: tier 1 compiled differs from its interpreter", show()));
         }
-        if interp != want || compiled != want {
+        // A statement recovered (`recover`, decision 0650): an ERROR leaf where the reference, which does not
+        // recover, refuses. There the interpreter's tree is not the reference's; the compiled code's is checked against
+        // the interpreter's by its tape below, as everywhere. The lean parser's tape is the grammar's own tests'.
+        let recovered = want.is_none() && interp.as_ref().is_some_and(|n| n.iter().any(|x| x.0 == crate::stream_ir::ERROR_LEAF));
+        if !recovered && interp != want {
             let why = crate::stream::run(&c.program, &bytes, &run).err().map(|r| format!("word {}: {}", r.pc, r.why));
             let fell = run.totals.iter().any(|&t| t != 0);
-            return Some(format!("{}:\n  reference {want:?}\n  interpreters {interp:?} ({why:?}, tier 1 falls back: {fell})\n  compiled {compiled:?}", show()));
+            return Some(format!("{}:\n  reference {want:?}\n  interpreters {interp:?} ({why:?}, tier 1 falls back: {fell})", show()));
         }
-        // The tape's bytes: the compiled code's, the interpreter's nodes through the tape's
-        // writer (`stream::image`), each extra's code flagged.
-        if let (Ok(image), Ok(nodes)) = (c.parser.image(&bytes), crate::stream::run(&c.program, &bytes, &run)) {
-            let want = crate::stream::image(&nodes, &c.program.readings.extras, c.parser.tier2.widths_tag().1, &bytes);
-            if image != want {
-                let at = image.iter().zip(&want).position(|(a, b)| a != b).unwrap_or(image.len().min(want.len()));
-                return Some(format!("{}: the tape differs from the interpreter's at {}", show(), rerail_tape_format::place(&want, at)));
+        // The tape: the compiled code's, and the interpreter's nodes through the writer (`stream::image16`), each
+        // extra's code flagged; or both refuse.
+        match c.parser.against(&bytes, crate::stream::run(&c.program, &bytes, &run)) {
+            (Ok(got), Ok(tape)) if got != tape => {
+                let at = got.iter().zip(&tape).position(|(a, b)| a != b).unwrap_or(got.len().min(tape.len()));
+                return Some(format!("{}: the tape differs from the interpreter's at byte {at} (lengths {} and {})", show(), got.len(), tape.len()));
             }
+            (Ok(_), Ok(_)) | (Err(_), Err(_)) => {}
+            (got, tape) => return Some(format!("{}:\n  reference {want:?}\n  compiled refuses at {:?}, the interpreter at {:?}", show(), got.err(), tape.err())),
         }
         if let Some(d) = also(name, c, &bytes, &want) {
             return Some(format!("{}:\n  {d}", show()));

@@ -13,6 +13,7 @@ use rerail_store::Canonical as _;
 /// checks the identities the build script computes.
 #[cfg(test)]
 mod build_identity;
+
 /// `build.rs` generates the language tables with this file; the library builds it only for tests,
 /// so `cargo test` checks how the build validates the language registry. The rest is the build script's.
 #[cfg(test)]
@@ -27,6 +28,9 @@ mod test_watchdog;
 // The test binary's stores flush nothing (`RERAIL_FLUSH=none`, decision 0481) unless the environment says otherwise.
 #[cfg(test)]
 mod test_flush;
+// The test binary's folders are the user's alone (a umask of 077, decision 0574).
+#[cfg(test)]
+mod test_private_folders;
 #[cfg(test)]
 mod text_readers_guard_tests;
 #[cfg(all(test, not(windows)))]
@@ -46,12 +50,15 @@ pub mod git_access {
 pub mod git_start;
 pub use rerail_store::git_workspace;
 pub use rerail_store::source_tree;
-pub use rerail_w::git_ignore;
+pub use rerail_workspace::git_ignore;
 mod main_instance;
 mod model;
-pub use rerail_w::panic_boundary;
+pub use rerail_workspace::panic_boundary;
 mod path_owner;
+pub mod pipe_server;
 pub mod process;
+/// The warning on a macOS whose allocator aborts the engine's work (`bin/rerail-engine.rs`).
+pub mod os_warning;
 pub use rerail_logic::threads;
 /// The browser's long-lived engine: `rerail_command` and its buffers (wasm/README.md).
 #[cfg(target_family = "wasm")]
@@ -69,55 +76,11 @@ use std::path::Path;
 // (`rust_allocations_reach_the_profile_allocator` checks it).
 #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
 #[global_allocator]
-static GLOBAL: Sampled = Sampled;
+static GLOBAL: rerail_prof::heap::Sampled = rerail_prof::heap::Sampled;
 
 #[cfg(all(windows, not(feature = "system-allocator")))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
-/// jemalloc, with the heap sampler around it (`rerail_prof::heap`, `RERAIL_HEAP_SAMPLE`): off, one load more an
-/// allocation. Tree-sitter's allocations go to jemalloc directly and are not sampled.
-#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
-#[cfg_attr(test, allow(dead_code))]
-struct Sampled;
-
-// Every allocation of every crate calls these through the allocator shim (`__rust_alloc`): inlined into it, as
-// jemalloc's own are, they cost the shim one load more an allocation and not a call of their own.
-#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
-unsafe impl std::alloc::GlobalAlloc for Sampled {
-    #[inline]
-    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
-        let p = unsafe { tikv_jemallocator::Jemalloc.alloc(layout) };
-        if rerail_prof::heap::on() {
-            rerail_prof::heap::alloc(p as usize, layout.size());
-        }
-        p
-    }
-    #[inline]
-    unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
-        let p = unsafe { tikv_jemallocator::Jemalloc.alloc_zeroed(layout) };
-        if rerail_prof::heap::on() {
-            rerail_prof::heap::alloc(p as usize, layout.size());
-        }
-        p
-    }
-    #[inline]
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
-        if rerail_prof::heap::on() {
-            rerail_prof::heap::free(ptr as usize);
-        }
-        unsafe { tikv_jemallocator::Jemalloc.dealloc(ptr, layout) }
-    }
-    #[inline]
-    unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
-        let q = unsafe { tikv_jemallocator::Jemalloc.realloc(ptr, layout, new_size) };
-        if rerail_prof::heap::on() && !q.is_null() {
-            rerail_prof::heap::free(ptr as usize);
-            rerail_prof::heap::alloc(q as usize, new_size);
-        }
-        q
-    }
-}
 
 #[cfg(not(any(test, windows, target_family = "wasm")))]
 union JemallocConf {
@@ -153,15 +116,7 @@ pub(crate) fn install_store_functions() {
             .ok()
             .filter(|id| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
             .map_or(grammar, |id| Box::leak(id.into_boxed_str()));
-        code_rule_dsl::build_ids::set(env!("RERAIL_ENGINE_BUILD_ID"), grammar);
-        code_rule_dsl::install_devices();
-        code_rule_dsl::install_languages();
-        code_rule_dsl::logic::plan::corpus::install_git_inventory();
-        content_store::set_connection_functions(|db| {
-            code_rule_dsl::text::install(db)?;
-            code_rule_dsl::prefilter::tapes::install(db)
-        });
-        code_rule_dsl::sql_hazards::strict_on_every_connection();
+        code_rule_dsl::boot::install(code_rule_dsl::boot::BuildIds { engine: env!("RERAIL_ENGINE_BUILD_ID"), grammar });
     });
 }
 
@@ -308,7 +263,7 @@ fn on_revisions<'s, T>(snapshots: impl IntoIterator<Item = &'s git_workspace::sn
 
 #[cfg(not(feature = "headless"))]
 #[napi]
-pub fn inspect_rr_policy(path: String, source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
+pub fn inspect_rr_policy(path: String, source: Option<&rerail_workspace::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
     let snapshot = source.map(|source| source.pinned_snapshot());
     on_revisions(snapshot.as_deref(), || code_rule_dsl::logic::plan::corpus::combined::inspect_separately(||
         LoadedRrPolicy::read(&path, snapshot.clone(), None)?.inspection()))
@@ -327,6 +282,38 @@ struct LoadedRrPolicy {
     location: PolicyLocation,
     program: std::sync::Arc<code_rule_dsl::logic::program_image::Version>,
     files: Vec<code_rule_dsl::logic::rr::LibraryFile>,
+    /// What its load did (`LoadedRrPolicies::load`'s stages: compiles, graph hits): a scan handed it ran that load
+    /// first, and its profile counts it (`Prepared::add`).
+    prepared: Prepared,
+}
+
+/// The stages a run counted (`rerail_prof::stages`) between two readings: a policy load's, carried to the scan.
+#[cfg(not(feature = "headless"))]
+#[derive(Clone, Default)]
+struct Prepared(std::sync::Arc<Vec<(String, std::time::Duration, usize)>>);
+
+#[cfg(not(feature = "headless"))]
+impl Prepared {
+    fn now() -> std::collections::BTreeMap<String, (std::time::Duration, usize)> {
+        rerail_prof::stages().clone()
+    }
+    /// What the run counted since `before`.
+    fn since(before: &std::collections::BTreeMap<String, (std::time::Duration, usize)>) -> Prepared {
+        let was = |stage: &str| before.get(stage).copied().unwrap_or_default();
+        Prepared(std::sync::Arc::new(Self::now().into_iter().filter_map(|(stage, (time, count))| {
+            let (t, c) = was(&stage);
+            (time > t || count > c).then(|| (stage, time.saturating_sub(t), count.saturating_sub(c)))
+        }).collect()))
+    }
+    /// Counted again by the run under way.
+    fn add(&self) {
+        let mut stages = rerail_prof::stages();
+        for (stage, time, count) in self.0.iter() {
+            let at = stages.entry(stage.clone()).or_default();
+            at.0 += *time;
+            at.1 += count;
+        }
+    }
 }
 
 #[cfg(not(feature = "headless"))]
@@ -338,7 +325,7 @@ impl LoadedRrPolicy {
             Some(snapshot) => PolicyLocation::Git { snapshot, inputs: git },
             None => PolicyLocation::Worktree { path: path.clone(), library: code_rule_dsl::logic::rr::library_root() },
         };
-        Ok(Self { location, program, files })
+        Ok(Self { location, program, files, prepared: Prepared::default() })
     }
 
     fn inspection(&self) -> Result<String> {
@@ -368,14 +355,16 @@ impl LoadedRrPolicies {
     }
 
     #[napi]
-    pub fn load(&self, path: String, source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
+    pub fn load(&self, path: String, source: Option<&rerail_workspace::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
         let key = policy_file_path(&path)?;
         let read = || code_rule_dsl::logic::plan::corpus::combined::inspect_separately(|| {
             let inspected = if source.is_none() && self.store.is_some() {
                 self.programs.lock().unwrap_or_else(|err| err.into_inner()).get(key)
                     .and_then(|versions| versions.get(&None)).map(|policy| policy.files.clone())
             } else { None };
-            let policy = LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()), inspected.as_deref())?;
+            let before = Prepared::now();
+            let mut policy = LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()), inspected.as_deref())?;
+            policy.prepared = Prepared::since(&before);
             let inspection = policy.inspection()?;
             let origin = match &policy.location {
                 PolicyLocation::Git { snapshot, .. } => Some(snapshot.source_key()),
@@ -386,10 +375,51 @@ impl LoadedRrPolicies {
         });
         let snapshot = source.map(|source| source.pinned_snapshot());
         on_revisions(snapshot.as_deref(), || match &self.store {
-            Some(store) => code_rule_dsl::logic::plan::corpus::with_tape_cache_path(store, None, read),
+            Some(store) => code_rule_dsl::logic::plan::corpus::with_tape_cache_path(store, None, || {
+                let inspection = read()?;
+                // The load is a command (decision 0441): what it queued for the store (its program's version) is in
+                // the store as it returns, not applied behind a later command, whose store may by then be another file.
+                // The store the load ran under (`tape_cache_path`): none for `:memory:`, which names no file to open.
+                if let Some(path) = code_rule_dsl::logic::plan::corpus::tape_cache_path()
+                    && let Ok(handle) = content_store::ContentStore::open(&path)
+                    && let Err(error) = handle.written()
+                {
+                    eprintln!("rerail: {}: the policy load's writes: {error}", path.display());
+                }
+                Ok(inspection)
+            }),
             None => read(),
         })
     }
+
+    /// The policy a failed `load` of `path` names: the one `.policy` its own text declares, read without lowering
+    /// (`declared_policy_ids`); `null` when it declares none or several, or cannot be read.
+    #[napi]
+    pub fn failed_policy(&self, path: String, source: Option<&rerail_workspace::code_rule_dsl::workspace::api::GitRevisionSource>) -> Option<String> {
+        let snapshot = source.map(|source| source.pinned_snapshot());
+        on_revisions(snapshot.as_deref(), || failed_policy_id(declared_policy_ids(&path, snapshot.as_deref())))
+    }
+}
+
+/// The `.policy` IDs the policy at `path` declares in its own text (`rr::declared_policies`), read where `snapshot`
+/// (a Git view, registered: `on_revisions`) or the worktree holds it, without its includes or lowering: what a policy
+/// whose program does not load names in its failure. Empty when the text cannot be read.
+#[cfg(not(feature = "headless"))]
+fn declared_policy_ids(path: &str, snapshot: Option<&git_workspace::snapshot::Snapshot>) -> Vec<String> {
+    let Ok(path) = rr_policy_path(path, snapshot) else { return Vec::new() };
+    let bytes = if git_workspace::snapshot::view_root(&path).is_some() {
+        git_workspace::snapshot::read_bounded(&path, 1024 * 1024).ok()
+    } else {
+        std::fs::read(&path).ok()
+    };
+    bytes.and_then(|bytes| String::from_utf8(bytes).ok()).map(|text| code_rule_dsl::logic::rr::declared_policies(&text)).unwrap_or_default()
+}
+
+/// The one policy a policy's failure names: its single declared `.policy` (`declared_policy_ids`), else none.
+#[cfg(not(feature = "headless"))]
+fn failed_policy_id(ids: Vec<String>) -> Option<String> {
+    let [id] = <[String; 1]>::try_from(ids).ok()?;
+    Some(id)
 }
 
 #[cfg(not(feature = "headless"))]
@@ -427,9 +457,9 @@ pub struct RrScanTarget {
 #[napi]
 pub fn scan_rr_policies_async(
     target: RrScanTarget,
-    analysis: Option<&rerail_w::code_rule_dsl::workspace::api::AnalysisScopeRun>,
-    source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>,
-    policy_source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>,
+    analysis: Option<&rerail_workspace::code_rule_dsl::workspace::api::AnalysisScopeRun>,
+    source: Option<&rerail_workspace::code_rule_dsl::workspace::api::GitRevisionSource>,
+    policy_source: Option<&rerail_workspace::code_rule_dsl::workspace::api::GitRevisionSource>,
     loaded: Option<&LoadedRrPolicies>,
 ) -> Result<napi::bindgen_prelude::AsyncTask<ScanRrPolicies>> {
     let RrScanTarget { paths, root, store, output, source_paths } = target;
@@ -492,7 +522,19 @@ impl napi::Task for ScanRrPolicies {
 impl ScanRrPolicies {
     fn scan(&mut self) -> Result<String> {
         use content_store::analysis_scope::{self, AnalysisRun, RunSource};
-        use code_rule_dsl::logic::plan::corpus;
+        use code_rule_dsl::logic::{plan::corpus, profile};
+        // The scan is one run (decision 0441: a command's): every policy's runs join it, and the programs each runs
+        // first (its dialects', Git's inventory). Its profile is theirs together (decision 0442: the records are the
+        // run's), held here and written once at its end; held by a corpus run, each run's would replace the last's.
+        let _run = code_rule_dsl::logic::run::scope(code_rule_dsl::logic::native::width::Settings::from_env);
+        let profiled = if profile::on() { profile::hold_records() } else { None };
+        if profiled.is_some() {
+            profile::reset();
+            // The loads it was handed ran first, for it: its profile counts them.
+            for policy in self.policies.iter().flatten().flatten() {
+                policy.prepared.add();
+            }
+        }
         let path = Path::new(&self.store);
         let root = self.snapshot.as_ref().map_or_else(|| Path::new(&self.root), |snapshot| snapshot.root());
         let mut warning = None;
@@ -530,10 +572,12 @@ impl ScanRrPolicies {
             let mut reports = Vec::new();
             let mut ephemeral = path == Path::new(":memory:");
             for (i, policy) in policies.into_iter().enumerate() {
-                let (LoadedRrPolicy { program, files, location }, ids) = match policy {
+                let (LoadedRrPolicy { program, files, location, .. }, ids) = match policy {
                     Ok(policy) => policy,
                     Err(error) => {
-                        reports.push(serde_json::json!({"error": error, "ruleId": null}));
+                        // A program that did not load names the policy its own text declares.
+                        let id = self.paths.get(i).and_then(|path| failed_policy_id(declared_policy_ids(path, self.policy_snapshot.as_deref())));
+                        reports.push(serde_json::json!({"error": error, "ruleId": id}));
                         continue;
                     }
                 };
@@ -578,6 +622,11 @@ impl ScanRrPolicies {
             }
             (reports, corpus::git_source_reads_complete())
         });
+        if profiled.is_some() && let Some(dir) = profile::directory() {
+            let header = format!("Profile of a policy scan: {} policies, each run and the programs it ran first\n", self.paths.len());
+            profile::report::write(&dir, &header).map_err(|e| Error::from_reason(format!("profile: {e}")))?;
+        }
+        drop(profiled);
         if let Some(mut run) = run {
             let succeeded = source_complete && reports.iter().all(|report| report.get("error").is_none());
             warning = match run.finish(succeeded) {

@@ -39,7 +39,8 @@
 #define UKL_RADIX_GROUPS (UKL_RADIX_THREADS / UKL_RADIX_RG)
 // The tile's threads a thread of a narrower group runs (decision 0527 §3), at most: `UKL_RADIX_THREADS / lsz` of
 // them, a block between barriers looping over its own. The CPU's groups are narrow (each of a group's threads is a
-// coroutine its barriers switch); a GPU's are `UKL_RADIX_THREADS`, its code a thread each.
+// coroutine its barriers switch); a GPU's are `UKL_RADIX_THREADS`, its code a thread each. A thread running several
+// matches each one's digits in its SIMD group, so its rank groups are SIMD groups.
 #ifndef UKL_RADIX_VT_MAX
 #if defined(UKL_CPU)
 #define UKL_RADIX_VT_MAX 8u

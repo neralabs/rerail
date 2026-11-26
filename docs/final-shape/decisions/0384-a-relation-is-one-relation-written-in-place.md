@@ -1,7 +1,7 @@
 # 0384. A relation is one relation, written in place
 
-Status: decided (2026-11-17), built (steps 1–8, 2026-11-18). The user picked it over two other forms: relations of many parts with
-an index per part, and nesting only the fixpoint's runs in blocks.
+Status: built (audited 2026-11-23). Decided (2026-11-17), built (steps 1–8, 2026-11-18). The user picked it over two
+other forms: relations of many parts with an index per part, and nesting only the fixpoint's runs in blocks.
 
 ## Intro
 
@@ -38,6 +38,17 @@ whole. A relation is never a list of parts that a reader must merge.
    - Metal: merges went from 262 (56 MB) to 157 (32 MB), and the profiled peak from 3.8 GB to 3.0 GB.
    - CPU: the findings are the reference's, in 18.3 s against 19.5 s. The peak is 1.79 GB against 1.85 GB.
      Filing costs 0.69 s against 0.62 s (`hold the export`).
+
+   **Amended 2026-11-22 (t52, the user's step 4: "Read each export where the chunks' rows lie: append the chunk's
+   block instead of copying its rows, and mark repeated rows dead").** Writing each chunk's rows again was a copy by
+   decision 0353 that its list did not name: on 3,089 files, 2.3 GB of the run's 10.1 GB of columns, 102 exports.
+   An export now holds each chunk's relation's parts where they lie, as segments (`Rows::append_segment`: a prefix,
+   never written, the chunk's kept-rows block `Life::Kept`, apart from the run's other relations). A repeat, or a
+   row dead in the chunk's relation, is dead in the export (`Exports::add`), and a tail past the segments is a
+   relation of the export's own, never a continuation in a chunk's block (`Rows::gathered`). The CPU reads the
+   segments where they lie. A device reader that binds one relation merges them (`Rows::in_block`), which is 0353 row
+   9's listed copy, until a run's relations lie in one slab (0353 step 6). So this step's "a reader finds it whole"
+   holds for the CPU and returns to the merge on the device.
 2. **A relation started from another's rows goes on in their relation** (built, Q175). This amends the form first
    written here, a blocks delta of the base: a delta needs kernels that read a base and a delta as one relation
    (two descriptors, two indexes), and a continuation needs none.
@@ -241,3 +252,5 @@ heads written into their own tail and the heads given a relation of their own.
   part.
 - Exports are filed in chunk order on the run's thread, so an export's row ids, and the order its readers see,
   stay fixed for a given input.
+
+**2026-11-23:** `BlockVec` is folded into `Vector` (decision 0628 §8). A relation's arrays are `Vector`s in its home's room (`Home::room`, `rows::vector_in`); the ledger check, borrowed rows (`rows::shared`) and the chunk hand-off (`InRelations::into_chunk`, `rows::from_chunk`) are `Vector`'s and its region's. Where this record says `BlockVec`, read that.

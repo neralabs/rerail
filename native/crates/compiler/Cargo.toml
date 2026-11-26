@@ -3,17 +3,21 @@ name = "rerail-compiler"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The transducer's parser compiler: Bitlex to tier 1 and tier 2, and their Cranelift lowering."
+description = "The transducer's parser compiler's front end: the programs and their analyses, which every backend reads."
 
 [features]
 # The relocations' recording (`native_cpu_codegen::relocations`), for the engine's tests.
-test-hooks = ["rerail-tape-format/test-hooks", "rerail-clif/test-hooks", "rerail-context/test-hooks", ]
+test-hooks = ["rerail-blocks/test-hooks", "rerail-tape-format/test-hooks", "rerail-clif/test-hooks", "rerail-context/test-hooks", ]
 
 [dependencies]
 rerail-context = { path = "../context" }
+# Its error, which the device's runtime returns too.
+rerail-error = { path = "../error" }
+# The block structures a run's outputs live in (decision 0353): the GPU and CPU read the same data.
+rerail-blocks = { path = "../blocks" }
 # The engine's tape, which tier 2 writes (decision 0140).
 rerail-tape-format = { path = "../tape_format" }
-# Bitlex's parser, for the masks' lowering (`bitlex_masks`). No dependencies of its own.
+# Bitlex's parser, for the grammar's state machine (`grammar`). No dependencies of its own.
 bitlex = { path = "../../../tools/bitlex", default-features = false }
 # The tape's reads written once, and the inlining pass every JIT function goes through (decision 0310).
 rerail-clif = { path = "../clif" }
@@ -25,12 +29,10 @@ cranelift-native = "=0.125.4"
 libc = "0.2.189"
 # The one pool the engine runs on (tier 2 clusters compiled in parallel).
 rayon = "=1.12.0"
-# The grammar compiler's maps (`bitlex_masks`, `bitlex_prove`, `bitlex_tier2`, `grammar`): a
+# The grammar compiler's maps (`grammar`): a
 # fixed hasher, so a compile is the same each run (the questions asked, and so the program, follow
 # the maps' order), and a cheap one for its small integer keys.
 rustc-hash = "=2.1.3"
-# The provers' answers keyed by their questions' digests (`bitlex_prove::Key`, decision 0414).
-sha2 = "0.11"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }

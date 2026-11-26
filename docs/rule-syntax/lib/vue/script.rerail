@@ -1,0 +1,33 @@
+// vue/script: a component's <script> blocks as the context `script` (decision 0597): what a script declares, read by
+// the template's code (vue/expression) and the component's rules through its exports. Its rules are vue/component's
+// and tsx/names', over the scripts' nodes alone.
+//
+// The extraction is the host's (rule 3), vue/component's, which declares the context:
+//   vscript_root(p, d)       p is the program of a <script> block of document d (vscript): the roots
+// The context's, exported:
+//   vscript_decl(d, x)       a script of document d declares x at its top level (imports included)
+//   vscript_option(d, g, x)  a component of document d declares x in its option g (vue/component's vname: props,
+//                            computed, methods, data, asyncData, setup)
+//   vscript_prop(d, x)       a <script setup> of document d declares the prop x (defineProps, vprop_name)
+// The host's, what it reads of them (rule 5), for policies:
+//   vscript_name(d, x), vscript_option_name(d, g, x), vscript_prop_name(d, x)
+//
+//   <script setup>import { ref } from "vue"; const item = ref(1)</script>
+//     vscript_name(d, "ref"), vscript_name(d, "item")
+#include "vue/component.rerail"
+.context script of vue roots vscript_root exports vscript_decl, vscript_option, vscript_prop
+.from script vscript_decl as vscript_q_decl, vscript_option as vscript_q_option, vscript_prop as vscript_q_prop
+.decl vscript_name(d: number, x: symbol)
+vscript_name(d, x) :- vscript_q_decl(d, x).
+.decl vscript_option_name(d: number, g: symbol, x: symbol)
+vscript_option_name(d, g, x) :- vscript_q_option(d, g, x).
+.decl vscript_prop_name(d: number, x: symbol)
+vscript_prop_name(d, x) :- vscript_q_prop(d, x).
+
+// ---- the context's rules --------------------------------------------------------------------------------------------
+.decl vscript_decl(d: number, x: symbol)
+vscript_decl(d, x) :- vscript_root(p, d), decl_site(p, x, _, _, _).
+.decl vscript_option(d: number, g: symbol, x: symbol)
+vscript_option(d, g, x) :- vname(o, g, x, _), docof(o, d).
+.decl vscript_prop(d: number, x: symbol)
+vscript_prop(d, x) :- vprop_name(c, x, _), docof(c, d).

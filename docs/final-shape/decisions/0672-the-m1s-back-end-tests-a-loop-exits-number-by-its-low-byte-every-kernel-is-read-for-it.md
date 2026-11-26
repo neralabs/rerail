@@ -71,13 +71,16 @@ is treated as unaffected.
        callers' units.
    - The transducer's interpreter and sweep (`run_batch`, `label_sweep`): on the G13 a large body (`UKL_LARGE`: the
      task, the steps, the evaluators, the output) is a call (`UKL_ONCE`).
-     - `rerail_ukl::metal_source_for(.., g13)` defines `UKL_METAL_G13` for that device, and `ukl/backend.h` reads
-       it.
+     - The G13 is a Metal target of its own, `apple7-g13` (decision 0645's tiers; the user's choice at roll-up 119,
+       2026-11-24): `Target::named("apple7-g13")` defines `UKL_METAL_G13`, `ukl/backend.h` reads it, and a device
+       takes the tier where `is_g13` holds (`target_name`). As first written, `metal_source_for(.., g13)` defined it
+       for the device beside its tier, which 0645 rules out (a text is its target's name's alone).
      - These kernels were already past the limit on the M1 (324 and 372 in `run_batch`, 650 in `label_sweep`), so
        they ran miscompiled with no error. The check found them as soon as it was in place.
      - Elsewhere, 0576 §22 stands: the M3 and the CPU inline large bodies.
-   - A shipped AIR library is preprocessed per device family: `<library>.g13.metallib` for a G13, and
-     `<library>.metallib` for any other Apple GPU.
+   - A shipped AIR library is its target's (0645): the G13's text keys its own `<library>.metallib`. Its tier runs
+     no other tier's code, and no other tier runs its (`METAL_APART`). As first written, it was `<library>.g13.metallib`
+     beside the other Apple GPUs' file.
 
 ## Measured (M1 Max, each function's highest exit number)
 

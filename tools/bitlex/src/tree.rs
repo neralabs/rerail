@@ -162,7 +162,7 @@ impl<'a> Parser<'a> {
             self.out.push(Node { kind: kind.clone(), field: None, supertypes: vec![], extra: false, start: 0, end: 0, size: 0, leaf: false });
             self.open.push(me);
             self.nested += usize::from(nested);
-            let next = self.matches(body, at, follow);
+            let next = self.matches(body, at, follow).filter(|_| self.ended(name, me + 1));
             self.nested -= usize::from(nested);
             self.asked = caller_asked;
             self.open.pop();
@@ -190,7 +190,7 @@ impl<'a> Parser<'a> {
         } else if let Some((_, supertype, body)) = decl.choices.iter().find(|c| &c.0 == name) {
             let me = self.out.len();
             self.nested += usize::from(nested);
-            let next = self.matches(body, at, follow);
+            let next = self.matches(body, at, follow).filter(|_| self.ended(name, me));
             self.nested -= usize::from(nested);
             self.asked = caller_asked;
             let next = next?;
@@ -214,6 +214,38 @@ impl<'a> Parser<'a> {
         } else {
             self.token(name, at, follow)
         }
+    }
+
+    /// Rule `name`'s level ended (`ending`, decision 0668): the node made last at it, one the call made (from `from`),
+    /// where it is an ending's kind, relabelled, as the lean parser's `retag_atom` after its `term`; or the file refused,
+    /// as a negation's literal that was a comparison. Whether the way goes on.
+    fn ended(&mut self, name: &str, from: usize) -> bool {
+        let decl = self.decl;
+        for (rule, kind, ending) in &decl.endings {
+            let Some(c) = self.last_made().filter(|&c| c >= from) else { continue };
+            if rule != name || self.out[c].kind != *kind {
+                continue;
+            }
+            match ending {
+                crate::syntax::Ending::Refused => {
+                    let here = self.out[c].start;
+                    self.fatal.get_or_insert_with(|| format!("{name} ends at a {kind}, at byte {here}"));
+                    return false;
+                }
+                crate::syntax::Ending::Relabel { moved, inner } => {
+                    let Some(m) = self.kind_of(moved) else { return false };
+                    if let Some(g) = inner {
+                        if self.out[c].size < 2 {
+                            return false;
+                        }
+                        self.out[c + 1].field = Some(g.clone());
+                    }
+                    self.out[c].field = None;
+                    self.out[c].kind = m;
+                }
+            }
+        }
+        true
     }
 
     /// The end of a node over tokens `at..next`, its last real token `last`: that token's, or
@@ -272,6 +304,8 @@ impl<'a> Parser<'a> {
             Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => self.first(a),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.first(body),
             Gram::Balanced { open, .. } => (self.look_bit(open), false),
+            // Desugared before (`desugar_leaves`).
+            Gram::Leaf { .. } => (0, false),
             Gram::Any(_) => (0, false),
         }
     }
@@ -301,14 +335,51 @@ impl<'a> Parser<'a> {
             Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => self.starts(a),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.starts(body),
             Gram::Balanced { open, .. } => (Starts::of(open), false),
+            Gram::Leaf { .. } => (Starts::default(), false),
             Gram::Any(except) => (Starts { kinds: Default::default(), any: Some(except.iter().cloned().collect()) }, false),
         }
     }
 
     /// The grammar token at `at` (no mark) starts `g`: the machine, which decides by the token,
     /// takes `g` there and does not go back.
+    /// A way the flags the level runs with guard (`unless F` with `F` set) starts nothing, as the machine's guard
+    /// takes it out of the decision.
     fn predicts(&self, g: &Gram, at: usize) -> bool {
-        self.tokens.get(at).is_some_and(|t| !t.mark && self.starts(g).0.has(t))
+        self.tokens.get(at).is_some_and(|t| !t.mark && self.starts_flagged(g, &self.flags).0.has(t))
+    }
+
+    /// `starts`, with the flags `flags` set: where `unless F` has `F` set, it starts nothing and matches nothing.
+    fn starts_flagged(&self, g: &Gram, flags: &[String]) -> (Starts, bool) {
+        match g {
+            Gram::Unless { flag, .. } if flags.contains(flag) => (Starts::default(), false),
+            Gram::Unless { body, .. } | Gram::Plus(body) | Gram::Field(_, body) | Gram::Retag(_, body) | Gram::Merge(_, body) | Gram::As(_, body) => self.starts_flagged(body, flags),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.starts_flagged(body, flags),
+            Gram::Flag { flag, set, body } => {
+                let mut f: Vec<String> = flags.iter().filter(|x| *x != flag).cloned().collect();
+                if *set {
+                    f.push(flag.clone());
+                }
+                self.starts_flagged(body, &f)
+            }
+            Gram::Seq(items) => {
+                let mut s = Starts::default();
+                for i in items {
+                    let (b, empty) = self.starts_flagged(i, flags);
+                    s.add(&b);
+                    if !empty {
+                        return (s, false);
+                    }
+                }
+                (s, true)
+            }
+            Gram::Alt(alts) => alts.iter().fold((Starts::default(), false), |(mut s, e), a| {
+                let (x, y) = self.starts_flagged(a, flags);
+                s.add(&x);
+                (s, e || y)
+            }),
+            Gram::Opt(a) | Gram::Star(a) => (self.starts_flagged(a, flags).0, true),
+            Gram::Lit(_) | Gram::Sym(_) | Gram::Balanced { .. } | Gram::Any(_) | Gram::Leaf { .. } => self.starts(g),
+        }
     }
 
     fn first_seq(&self, items: &[Gram]) -> (u128, bool) {
@@ -477,13 +548,15 @@ impl<'a> Parser<'a> {
                 Some(next)
             }
             Gram::Any(except) => {
-                let t = self.tokens.get(at).filter(|t| !t.mark && !except.contains(&t.kind))?;
+                let t = self.tokens.get(at).filter(|t| !t.mark && !except.contains(&t.kind) && !self.decl.untaken.contains(&t.kind))?;
                 let extra = self.decl.extra.contains(&t.kind);
                 let (kind, start, end) = (t.kind.clone(), t.start, t.end);
                 self.out.push(Node { kind, field: None, supertypes: vec![], extra, start, end, size: 1, leaf: true });
                 self.ask(at + 1, follow);
                 self.past_marks(at + 1, follow)
             }
+            // Desugared before (`desugar_leaves`).
+            Gram::Leaf { .. } => None,
             Gram::Balanced { kind, open, close } => {
                 // The opener's leaf, then every token to its matching closer, marks skipped:
                 // one leaf of `kind`.
@@ -492,6 +565,10 @@ impl<'a> Parser<'a> {
                 let mut depth = 1usize;
                 loop {
                     let t = self.tokens.get(p)?;
+                    // A token no rule takes (`untaken`): none here either.
+                    if self.decl.untaken.contains(&t.kind) {
+                        return None;
+                    }
                     if !t.mark {
                         if &t.kind == open {
                             depth += 1;
@@ -612,7 +689,7 @@ impl<'a> Parser<'a> {
                     None => None,
                 };
                 if let Some(f) = field {
-                    self.out[c].field = Some(f.clone());
+                    self.out[c].field = (f != crate::syntax::DECIDED).then(|| f.clone());
                 }
                 if let Some(m) = moved {
                     self.out[c].kind = self.kind_of(m)?;
@@ -940,10 +1017,6 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
             out[i].size -= before[e] - before[i];
         }
         out.retain(|x| x.kind != crate::syntax::GONE);
-    }
-    // A provisional field left: no tree of the grammar's.
-    if let Some(x) = out.iter().find(|x| x.field.as_ref().is_some_and(|f| decl.provisional.contains(f))) {
-        return Err(format!("a provisional field {} left at byte {}", x.field.as_deref().unwrap_or_default(), x.start));
     }
     // The root runs from its first token (or byte 0, when whole) to the end of the file.
     out[0].end = n;

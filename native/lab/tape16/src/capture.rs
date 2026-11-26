@@ -1,5 +1,5 @@
 //! Captured files: `rerail-engine capture-tapes` writes them (`T16CAP01`, then per file a path, a tape tag,
-//! the source and the format-15 image).
+//! the source and its format 16 tape).
 
 pub struct File {
     pub path: String,
@@ -37,6 +37,27 @@ pub fn language(tag: u8) -> &'static str {
         12 => "vue",
         13 => "rr",
         14 => "json",
+        15 => "percent-format",
+        16 => "brace-format",
+        17 => "eslint-directive",
+        18 => "java",
+        19 => "csharp",
+        20 => "html",
+        21 => "css",
+        22 => "markdown",
+        23 => "markdown-inline",
+        24 => "kotlin",
+        25 => "swift",
+        26 => "scala",
+        27 => "go",
+        28 => "c",
+        29 => "cpp",
+        30 => "annotation",
+        31 => "jsx",
+        32 => "html-element",
+        33 => "regex",
+        34 => "python-pattern",
+        250 => "test-html",
         _ => "other",
     }
 }

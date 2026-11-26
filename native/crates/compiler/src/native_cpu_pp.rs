@@ -13,6 +13,8 @@
 //! `native_cpu_shape` refuses any other loop, and any call.
 
 use crate::Error;
+// The refusals' reasons, the words' (`pp_words`), under the name this tier's callers read.
+pub use crate::pp_words::REASONS;
 use crate::native_cpu_shape::Step;
 use crate::pp_expr::Value as Val;
 use crate::pp_words::{self, DIGITS, EmC, Asked, B_BASE_FILE, B_COUNTER, B_DATE, B_FILE, B_FILE_NAME, B_HAS_EMBED, B_HAS_INCLUDE, B_HAS_INCLUDE_NEXT, B_INCLUDE_LEVEL, B_LINE, B_PRAGMA, B_TIME, B_TIMESTAMP, BUILTINS, Bi, Bounds, COND_ELSE, COND_SIZE, COND_SRC, COND_TAKEN, Ctx, Ex, FeatureC, Inc, MAX_INCLUDE_DEPTH, NamedC, OPS, Want, op_index, BOL, DIGRAPH, Def, DefState, EOF, EXP, Env, Expanded, File, FileC, Frame, HASH, HASHHASH, IDENT, LEVEL, LITERAL, NO_PARAM, NOEXP, NONE, NUMBER, PAIR, PASTE, PASTE_MARK, PLACEMARKER, PUNCT, Refused, SPACE, Slot, Src, Sub, Tok, USE, VA_ARGS, VA_OPT, VA_OPT_MARK};
@@ -38,44 +40,6 @@ macro_rules! em {
     };
 }
 
-/// Why the compiled words refuse a TU: the index the code returns above bit 32 (`run_native`),
-/// each the interpreter's reason.
-pub const REASONS: &[&str] = &[
-    "the compiled words refuse",
-    "the program stopped",
-    "past the calls' bound",
-    "a return with no call",
-    "past the output's bound",
-    "a directive with no file",
-    "a directive's line not in a file",
-    "past the arena's bound",
-    "past the macro table's bound",
-    "past the frames' bound",
-    "an argument with no frame",
-    "past the sources' bound",
-    "no level open",
-    "a level's source not on top",
-    "a level with no frame",
-    "an expansion with no frame",
-    "past the parameters' bound",
-    "past the definitions' bound",
-    "a __VA_OPT__ inside a __VA_OPT__",
-    "past the scratch bytes' bound",
-    "a substitution with no frame",
-    "past the expansions' bound",
-    "an argument substituted before its expansion",
-    "a raw string's prefix pasted",
-    "past the conditionals' bound",
-    "a line's source not on top",
-    "past the expression's bound",
-    "no value",
-    "no operator",
-    "no precedence",
-    "past the wanted files' bound",
-    "past push_macro's bound",
-    "past the unanswered features' bound",
-    "a _Pragma's text the token grammar refuses",
-];
 const R_STOPPED: u64 = 1;
 const R_CALLS: u64 = 2;
 const R_NO_CALL: u64 = 3;
@@ -206,6 +170,9 @@ pub struct CompiledPp {
     pub ir: Vec<(u32, cranelift_codegen::ir::Function)>,
     /// The run's function's id.
     pub run_id: u32,
+    /// The tape's reads the module declared, by id: what its functions call of them is called as their UKL
+    /// (`clif_ukl::translate`).
+    pub reads: Vec<(u32, &'static rerail_clif::reads::Read)>,
     /// Each function's machine code as Cranelift prints it, the run's first, where asked for
     /// (`disassemble`).
     pub disasm: Vec<String>,
@@ -291,6 +258,8 @@ struct Lower<'a, 'b> {
     ranks: &'a [u32],
     /// The return points, by rank.
     rets: &'a [usize],
+    /// The tape's reads, declared in the module (`__LINE__`'s `lines_line`, decision 0612).
+    reads: rerail_clif::inline::ReadIds,
 }
 
 impl Lower<'_, '_> {
@@ -3319,37 +3288,6 @@ impl Lower<'_, '_> {
         self.pragma_do(pc, file, (p0, wn), has_lit, (lp, ln), next);
     }
 
-    /// The count of the `n` `u32`s at `p` (rising) below `key` (`partition_point`), by halves
-    /// (`Step::Halve`).
-    fn count_below(&mut self, p: Value, n: Value, key: Value) -> Value {
-        let head = self.f.create_block();
-        self.f.append_block_param(head, types::I64);
-        self.f.append_block_param(head, types::I64);
-        self.heads.push((head, Step::Halve));
-        let done = self.f.create_block();
-        self.f.append_block_param(done, types::I64);
-        let z = self.f.ins().iconst(types::I64, 0);
-        self.f.ins().jump(head, &[z.into(), n.into()]);
-        self.f.switch_to_block(head);
-        let (lo, hi) = (self.f.block_params(head)[0], self.f.block_params(head)[1]);
-        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, lo, hi);
-        let step = self.f.create_block();
-        self.f.ins().brif(more, step, &[], done, &[lo.into()]);
-        self.f.switch_to_block(step);
-        let span = self.f.ins().isub(hi, lo);
-        let half = self.f.ins().ushr_imm(span, 1);
-        let mid = self.f.ins().iadd(lo, half);
-        let e = elem(self.f, p, mid, 4);
-        let k = ldu(self.f, types::I32, e, 0);
-        let below = self.f.ins().icmp(IntCC::UnsignedLessThan, k, key);
-        let m1 = self.f.ins().iadd_imm(mid, 1);
-        let lo1 = self.f.ins().select(below, m1, lo);
-        let hi1 = self.f.ins().select(below, hi, mid);
-        self.f.ins().jump(head, &[lo1.into(), hi1.into()]);
-        self.f.switch_to_block(done);
-        self.f.block_params(done)[0]
-    }
-
     /// The top source whose `test(file)` holds, searched from the top (`Step::Item`): whether
     /// there is one, and its address.
     fn last_source(&mut self, test: &dyn Fn(&mut Self, Value) -> Value) -> (Value, Value) {
@@ -3476,6 +3414,16 @@ impl Lower<'_, '_> {
 
     /// `Machine::line_of` of a token's `buf` and `start`: its physical line, moved by its file's
     /// `#line`.
+    /// The line (from 1, an i64) of byte `x` of a file, by its line index at `lines` (`FileC::lines`): the tape's
+    /// read, `lines_line`, written once in CLIF and inlined by the module's pass (decision 0612).
+    fn line_of_index(&mut self, lines: Value, x: Value) -> Value {
+        let read = self.reads.func_ref("lines_line", self.f.func);
+        let x = if self.f.func.dfg.value_type(x) == types::I32 { x } else { self.f.ins().ireduce(types::I32, x) };
+        let call = self.f.ins().call(read, &[lines, x]);
+        let line = self.f.inst_results(call)[0];
+        self.f.ins().uextend(types::I64, line)
+    }
+
     fn line_of_at(&mut self, buf: Value, start: Value) -> Value {
         let ctx = self.ctx;
         let nf = ld(self.f, types::I64, ctx, at!(nfiles));
@@ -3491,9 +3439,7 @@ impl Lower<'_, '_> {
         let f = self.f.ins().iadd_imm(buf, -1);
         let fc = self.file_c(f);
         let lines = ld(self.f, types::I64, fc, offset_of!(FileC, lines) as i32);
-        let nl = ld(self.f, types::I64, fc, offset_of!(FileC, nlines) as i32);
-        let below = self.count_below(lines, nl, start);
-        let phys = self.f.ins().iadd_imm(below, 1);
+        let phys = self.line_of_index(lines, start);
         let (has, s) = self.last_source(&|l, file| l.f.ins().icmp(IntCC::Equal, file, f));
         let dj = self.f.create_block();
         self.f.append_block_param(dj, types::I64);
@@ -4112,9 +4058,8 @@ impl Lower<'_, '_> {
         let file = ldu(self.f, types::I32, s, offset_of!(Src, file) as i32);
         let fc = self.file_c(file);
         let lines = ld(self.f, types::I64, fc, offset_of!(FileC, lines) as i32);
-        let nl = ld(self.f, types::I64, fc, offset_of!(FileC, nlines) as i32);
-        let below = self.count_below(lines, nl, last_end);
-        let phys = self.f.ins().iadd_imm(below, 2);
+        let line = self.line_of_index(lines, last_end);
+        let phys = self.f.ins().iadd_imm(line, 1);
         let delta = self.f.ins().isub(v, phys);
         st(self.f, types::I32, delta, s, offset_of!(Src, delta) as i32);
         let sk = ldu(self.f, types::I8, ctx, pt + TOK as i32 + T_KIND);
@@ -6710,55 +6655,13 @@ pub fn compile(program: &Words) -> Result<CompiledPp, Error> {
     compile_kept(program, false)
 }
 
-/// **Deprecated** (decision 0550): `rerail-pp-aot`'s source, through `clif_rust`.
-/// The compiled words' IR as Rust (`clif_rust`): the same functions, compiled by
-/// rustc and LLVM ahead of time. Its entry is `pp_run`, run by `run_aot`; it ends with its
-/// fingerprint, `SOURCE`, so a build runs it only where the words translate to it again.
-pub fn rust_source(program: &Words) -> Result<String, String> {
-    let c = compile_kept(program, true).map_err(|e| format!("{e:?}"))?;
-    let one = crate::clif_rust::translate(&c.ir, &[(c.run_id, "pp_run")], &[])?;
-    let h = crate::clif_rust::fingerprint(&one);
-    Ok(format!("{one}\n/// This source's fingerprint (`clif_rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};\n"))
-}
-
 /// The words' compiled code as UKL (`clif_ukl`, decisions 0348 stage 5, 0440 step D): the JIT's functions, the
 /// run's entry the kernel `pp_batch` over a batch of contexts, and its fingerprint.
 pub fn ukl_source(program: &Words) -> Result<String, String> {
     let c = compile_kept(program, true).map_err(|e| format!("{e:?}"))?;
-    let one = crate::clif_ukl::translate(&c.ir, &[(c.run_id, "pp_batch")])?;
-    let h = crate::clif_rust::fingerprint(&one);
-    Ok(format!("{one}\n// This source's fingerprint (`clif_rust::fingerprint` of what comes before): {h:#x}.\n"))
-}
-
-/// The interface an ahead-of-time build shares with the harness that runs it (`run_aot`): the
-/// sizes of the context and of the records it points at, and the refusal reasons. A build
-/// records it, and the host runs a build only where it is the compiler's now, so a build left
-/// stale by a change of the compiler is never handed a context of another layout.
-pub const ABI: u64 = {
-    use std::mem::size_of;
-    let parts = [
-        size_of::<Ctx>(), size_of::<Tok>(), size_of::<Inc>(), size_of::<Want>(), size_of::<EmC>(), size_of::<Bi>(), size_of::<Asked>(),
-        size_of::<FeatureC>(), size_of::<NamedC>(), size_of::<Src>(), size_of::<Def>(), size_of::<Slot>(), size_of::<Frame>(),
-        size_of::<Ex>(), size_of::<DefState>(), size_of::<Sub>(), size_of::<FileC>(), REASONS.len(),
-    ];
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    let mut i = 0;
-    while i < parts.len() {
-        h = (h ^ parts[i] as u64).wrapping_mul(0x100_0000_01b3);
-        i += 1;
-    }
-    h
-};
-
-/// `pp_words::run`'s work, by an ahead-of-time build of the words (`rust_source`'s `pp_run`).
-///
-/// # Safety
-/// `entry` must be `rust_source`'s `pp_run` for `program`.
-pub unsafe fn run_aot(entry: unsafe extern "C" fn(u64) -> u64, program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Result<Expanded, Refused> {
-    // SAFETY: the same ABI: one pointer-sized argument, a 64-bit result.
-    let code = unsafe { std::mem::transmute::<unsafe extern "C" fn(u64) -> u64, unsafe extern "C" fn(*mut Ctx) -> u64>(entry) };
-    // SAFETY: as `CompiledPp::run`'s; the caller vouches the code is the words'.
-    unsafe { pp_words::run_native(program, files, env, bounds, code, REASONS) }
+    let one = crate::clif_ukl::translate(&c.ir, &[(c.run_id, "pp_batch")], &c.reads)?;
+    let h = crate::clif_ukl::fingerprint(&one);
+    Ok(format!("{one}\n// This source's fingerprint (`clif_ukl::fingerprint` of what comes before): {h:#x}.\n"))
 }
 
 /// The compiled words, their IR and machine code kept (`ir`, `disasm`): to read
@@ -6777,6 +6680,11 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
     // `colocated`): JIT mappings apart can be past a branch's reach.
     builder.memory_provider(Box::new(cranelift_jit::ArenaMemoryProvider::new_with_size(64 << 20).map_err(|_| Error::BackendFailure)?));
     let mut module = JITModule::new(builder);
+    // The tape's reads the words call (decision 0310): checked as the module's own, inlined where hot, and the cold
+    // ones they reach defined once.
+    let reads = rerail_clif::inline::ReadIds::declare(&mut module).map_err(|_| Error::BackendFailure)?;
+    let read_names = [reads.name("lines_line")];
+    let mut cold: Vec<&'static str> = Vec::new();
     let pointer = module.target_config().pointer_type();
     let mut signature = module.make_signature();
     signature.params.push(AbiParam::new(pointer));
@@ -6805,7 +6713,7 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
             f.ins().jump(body, &[]);
             let mut blocks = vec![skip; program.words.len()];
             blocks[pc + 1] = held;
-            let mut l = Lower { f: &mut f, ctx, words: &program.words, strings: &program.strings, blocks, exit, heads: Vec::new(), pp: &program.pp, ranks: &ranks, rets: &rets };
+            let mut l = Lower { f: &mut f, ctx, words: &program.words, strings: &program.strings, blocks, exit, heads: Vec::new(), pp: &program.pp, ranks: &ranks, rets: &rets, reads };
             l.f.switch_to_block(body);
             l.word(pc)?;
             for (b, r) in [(held, 0), (skip, 1)] {
@@ -6826,7 +6734,9 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
         }
         let fid = module.declare_function(&format!("pp_word_{pc}"), Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
         branch_on_tests(&mut context.func);
-        crate::native_cpu_shape::check(&context.func, &heads, &[]).map_err(|r| Error::RefusedShape(format!("word {pc}: {r:?}")))?;
+        crate::native_cpu_shape::check(&context.func, &heads, &read_names).map_err(|r| Error::RefusedShape(format!("word {pc}: {r:?}")))?;
+        rerail_clif::inline::reads(&mut module, &mut context).map_err(|e| Error::RefusedShape(format!("word {pc}: {e:?}")))?;
+        cold.extend(rerail_clif::inline::reads_called(&module, &context.func));
         clif.push_str(&context.func.display().to_string());
         all_heads.extend(heads.iter().map(|h| h.1));
         if keep {
@@ -6844,7 +6754,7 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
         outlined.push((pc, fid));
     }
     let mut word_insts = vec![0; program.words.len()];
-    let own: Vec<UserExternalName> = outlined.iter().map(|&(_, fid)| UserExternalName::new(0, fid.as_u32())).collect();
+    let own: Vec<UserExternalName> = outlined.iter().map(|&(_, fid)| UserExternalName::new(0, fid.as_u32())).chain(read_names).collect();
     let mut context = module.make_context();
     context.func.signature = signature.clone();
     let heads;
@@ -6864,7 +6774,7 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
             calls[pc] = Some(f.import_function(ExtFuncData { name: ExternalName::user(name), signature: sig, colocated: true }));
         }
         f.ins().jump(blocks[0], &[]);
-        let mut l = Lower { f: &mut f, ctx, words: &program.words, strings: &program.strings, blocks, exit, heads: Vec::new(), pp: &program.pp, ranks: &ranks, rets: &rets };
+        let mut l = Lower { f: &mut f, ctx, words: &program.words, strings: &program.strings, blocks, exit, heads: Vec::new(), pp: &program.pp, ranks: &ranks, rets: &rets, reads };
         for pc in 0..program.words.len() {
             let before = l.f.func.dfg.num_insts();
             let b = l.blocks[pc];
@@ -6909,6 +6819,8 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
     }
     branch_on_tests(&mut context.func);
     crate::native_cpu_shape::check(&context.func, &heads, &own).map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
+    rerail_clif::inline::reads(&mut module, &mut context).map_err(|e| Error::RefusedShape(format!("pp_run: {e:?}")))?;
+    cold.extend(rerail_clif::inline::reads_called(&module, &context.func));
     clif.push_str(&context.func.display().to_string());
     all_heads.extend(heads.iter().map(|h| h.1));
     if keep {
@@ -6923,11 +6835,20 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
     }
     sizes.insert(0, context.compiled_code().map_or(0, |c| c.code_info().total_size as usize));
     module.clear_context(&mut context);
+    // The cold reads the words reach, kept with the words' IR (a lowering of it calls them too).
+    rerail_clif::inline::define_cold_of(&mut module, &cold, &mut |module, id, context| {
+        if keep {
+            ir.push((id.as_u32(), context.func.clone()));
+        }
+        module.define_function(id, context).map(|_| ())
+    })
+    .map_err(|e| Error::RefusedShape(format!("the reads: {e:?}")))?;
     module.finalize_definitions().map_err(|_| Error::BackendFailure)?;
     let code = module.get_finalized_function(id);
     // SAFETY: `pp_run` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, unsafe extern "C" fn(*mut Ctx) -> u64>(code) };
-    Ok(CompiledPp { _module: module, entry, clif, heads: all_heads, code_bytes: sizes, word_insts, ir, run_id: id.as_u32(), disasm, code: code_kept })
+    let reads = rerail_clif::reads::READS.iter().map(|read| (reads.name(read.name).index, read)).collect();
+    Ok(CompiledPp { _module: module, entry, clif, heads: all_heads, code_bytes: sizes, word_insts, ir, run_id: id.as_u32(), reads, disasm, code: code_kept })
 }
 
 #[cfg(test)]

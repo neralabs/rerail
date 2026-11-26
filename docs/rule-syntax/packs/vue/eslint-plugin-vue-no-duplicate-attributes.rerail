@@ -14,13 +14,13 @@
 //   <div class="a" :class="b" />             not reported;  <div :class="a" :class="b" />  the second is
 .violation duplicate_attribute(at: node, x: symbol) code "vue/no-duplicate-attributes" "Duplicate attribute '{x}'."
     suppress eslint "vue/no-duplicate-attributes"
-duplicate_attribute(a, x) :- attr_named(e, a, x, w), attr_named(e, b, x, v), precedes(b, a), clash(x, v, w).
+// The two clash when they are named alike the same way, or when x may not coexist (decision 0652: a relation of the
+// clashes, over every file's attributes, joined every file's names).
+duplicate_attribute(a, x) :- attr_named(e, a, x, w), attr_named(e, b, x, v), precedes(b, a), (v = w ; !coexist(x)).
 // attr_named(e, a, x, how): attribute a of e is named x; how is "plain" or "bound" (v-bind with a static argument).
 .decl attr_named(e: node, a: node, x: symbol, how: symbol)
 attr_named(e, a, @lower(x), "plain") :- vplain(e, a, x).
 attr_named(e, a, @lower(x), "bound") :- vdir(e, a, "bind", x), x != "", !vdyn(a).
-.decl clash(x: symbol, v: symbol, w: symbol)
-clash(x, v, w) :- attr_named(_, _, x, v), attr_named(_, _, x, w), (v = w ; !coexist(x)).
 .decl coexist(x: symbol)
 coexist("class") :- !option("allowCoexistClass", "false").
 coexist("style") :- !option("allowCoexistStyle", "false").

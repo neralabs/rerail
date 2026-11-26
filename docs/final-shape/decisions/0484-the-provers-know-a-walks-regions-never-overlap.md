@@ -1,7 +1,8 @@
 # 0484: The provers know a walk's regions never overlap
 
-Status: decided (the user, 2026-11-19: "fix the kotlin speed, starting with tiny examples", after
-Kotlin's ladder steps took 5 to 7 minutes each to compile). Follows 0412 (0453 on Parser-generators-final-shape).
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-19: "fix the kotlin speed, starting with tiny
+examples", after Kotlin's ladder steps took 5 to 7 minutes each to compile). Follows 0412 (0453 on
+Parser-generators-final-shape).
 
 ## Intro
 

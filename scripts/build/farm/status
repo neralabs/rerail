@@ -18,8 +18,24 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import farm  # noqa: E402
 
 
+def speed(name, base):
+    """`name`'s compile benchmark (`bench`), as a line: its times at each job count, its time at its own
+    cores against this Mac's at its own (`base`, `farm.bench_rating`), and the date; None when it has
+    not been measured."""
+    r = farm.read_json(farm.state("bench", name + ".json"), None)
+    runs = {int(j): x for j, x in (r or {}).get("runs", {}).items() if x.get("s") is not None}
+    if not runs:
+        return None
+    parts = [f"{x['s']:.0f} s at {j} job{'s' if j > 1 else ''}{' (contended)' if x.get('contended') else ''}" for j, x in sorted(runs.items())]
+    j, s = farm.bench_rating(name)
+    top = runs[j]
+    rel = f"; at {j} jobs {s / base:.2f}x this Mac's time" if base and name != "local" else ""
+    return f"compile benchmark (bench): {', '.join(parts)}{rel}; measured {time.strftime('%Y-%m-%d', time.localtime(top['at']))}"
+
+
 def main(argv):
     cfg = farm.config()
+    base = (farm.bench_rating("local") or (None, None))[1]
     path = farm.config_path()
     rows = []
     for host in farm.hosts():
@@ -43,6 +59,9 @@ def main(argv):
         local = os.statvfs(farm.HOME)
         print(f"this Mac: {local.f_bavail * local.f_frsize / 1e9:.0f} GB free; under {cfg.get('local_min_free_gb', 200)} GB, "
               "Rerail's least recently built builds go (free-local)")
+        print(f"  this Mac's cpu: {farm.local_cpu().get('model')}; vector: {farm.vector_summary(farm.local_cpu()) or '-'} (features)")
+        if speed("local", base):
+            print(f"  this Mac's {speed('local', base)}")
         print(f"farm sccache: {'installed' if os.path.exists(farm.SCCACHE) else 'not installed (setup)'}; mirror daemon: {daemon}")
         for host, h in rows:
             if farm.host_os(host) == "macos":
@@ -56,7 +75,13 @@ def main(argv):
                                                             (None if h.get("busy") is None else f"{h['busy']}%", "of its CPU busy"),
                                                             (h.get("load"), "load average")) if v is not None)
             state = "usable" if h.get("ok") else f"not usable: {h.get('why')}"
-            print(f"  {host['name']}: {state} ({host.get('cores')} cores; {uses}{'; ' + facts if facts else ''})")
+            hw = " ".join(x for x in (farm.host_arch(host), f"{farm.host_memory_gb(host)} GB" if farm.host_memory_gb(host) else None) if x)
+            print(f"  {host['name']}: {state} ({host.get('cores')} cores{', ' + hw if hw else ''}; {uses}{'; ' + facts if facts else ''})")
+            cpu = farm.host_cpu(host)
+            if cpu:
+                print(f"    cpu: {cpu.get('model') or 'a VM (model not shown)'}; vector: {farm.vector_summary(cpu) or '-'} (features)")
+            if speed(host["name"], base):
+                print(f"    {speed(host['name'], base)}")
             if h.get("arrival") and not farm.link_of(host):
                 print(f"    no link: it is reached over its {h['arrival']}; a fall back to WiFi is not caught")
             if h.get("ok") and h.get("short"):

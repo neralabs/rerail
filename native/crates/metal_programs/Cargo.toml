@@ -1,0 +1,26 @@
+[package]
+name = "rerail-metal-programs"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The compiler's programs on the device (block programs, the preprocessor's passes), over rerail-metal's runtime."
+
+[features]
+test-hooks = ["rerail-context/test-hooks", "rerail-blocks/test-hooks", "rerail-compiler/test-hooks", "rerail-rir/test-hooks", "rerail-metal/test-hooks", "rerail-accel-gpu/test-hooks"]
+
+[dependencies]
+rerail-context = { path = "../context" }
+rerail-accel = { path = "../../../accel" }
+# The block structures a run's outputs live in (decision 0353): the GPU and CPU read the same data.
+rerail-blocks = { path = "../blocks" }
+# The GPU lane: its kernels and device joins (crate split 10d-3).
+rerail-accel-gpu = { path = "../../../accel/gpu" }
+rerail-compiler = { path = "../compiler" }
+rerail-rir = { path = "../rir" }
+rerail-metal = { path = "../metal" }
+
+[target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
+rerail-device = { path = "../../../gpu/device" }
+
+[dev-dependencies]
+rerail-metal-programs = { path = ".", features = ["test-hooks"] }

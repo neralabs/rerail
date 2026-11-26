@@ -84,6 +84,13 @@ fn lane(f: &mut FunctionBuilder<'_>, v: Value, width: u8) -> Value {
     f.ins().sshr_imm(up, i64::from(64 - width))
 }
 
+/// A row program (`BlockProgram::rows`) on the CPU JIT.
+pub fn compile_program(program: &crate::block::BlockProgram) -> Result<CompiledRows, Error> {
+    program.verify()?;
+    let shape = program.rows.ok_or(Error::InvalidTarget(0))?;
+    compile(&BlockNative::lower(program), usize::from(shape.columns))
+}
+
 pub(super) fn compile(native: &BlockNative, columns: usize) -> Result<CompiledRows, Error> {
     let builder = crate::native_cpu_codegen::tier1_builder().map_err(|_| Error::BackendFailure)?;
     let mut module = JITModule::new(builder);

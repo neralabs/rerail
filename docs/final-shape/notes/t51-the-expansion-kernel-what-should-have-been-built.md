@@ -290,3 +290,12 @@ The user parked the preprocessor on the device here, to pick it up later. Its ev
 and its kernels' modules (`rerail_metal::{pp_arena, pp_eval, pp_expand}`) build only with the `device-pp` feature,
 which no build turns on: `cargo nextest run -p rerail-c-directives --lib --features test-hooks,device-pp --profile
 second` runs its tests. Where it stood: §7's table; open, the per-run barrier cost on CUDA and the 2-at-once suite.
+
+**The hub's merge (2026-11-25, the user's choice).** The hub had removed `ukl/grid.h` (0653): the preprocessor's
+setup is a program of phases on a work queue, without the spinning barriers this note's kernel ran between. The
+merge keeps the hub's setup and its expansion loop (`pp_loop.uglykl`) and every preprocessor file this branch had
+changed. This note's request expansion stays in the tree, unused, as `pp_req.uglykl` (last run at af9c7ca4da,
+with its host side and tests there): when the preprocessor is picked up, it is ported onto 0653's loop phase. The
+relocatable CUDA compile (`-rdc=true` and a driver link, 12–17 s for that kernel) is withdrawn with it: 0645 compiles
+a shipped kernel offline with the device's own options, and an offline compile has no driver to link with. The
+port puts both in `options_for`, with nvJitLink for the link.

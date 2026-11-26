@@ -1006,7 +1006,7 @@ fn main() {
     let ndocs: u32 = args.get(1).and_then(|a| a.parse().ok()).unwrap_or(300);
     let runs: usize = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(8);
     let dir = PathBuf::from(args.get(3).cloned().unwrap_or_else(|| "tmp/paces".into()));
-    std::fs::create_dir_all(&dir).unwrap();
+    rerail_blocks::mapped::make_folder(&dir).unwrap();
     let sc = schemas();
 
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]

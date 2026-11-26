@@ -394,3 +394,44 @@ Open:
   `magic_qv_bff`, `magic_fv_bbff`, `magic_retval_bf`, `magic_posarg_bbf`). Each comes from a reader
   that demand leaves in full.
 - Statistics patching after an edit counts `kind` and `docof` again.
+
+### Built: a demand never joins a request's component (2026-11-21)
+
+A rewrite must not join components the program keeps apart. A demanded relation has one demand
+relation, fed by every rule that reads it. When one reader asks for it after a literal that reads
+a request's answer, and the request reads the relation too, that one demand closes a cycle the
+program does not have. corpus0's typing showed it once decision 0431 answered `@parse` inside the
+fixpoint:
+
+```
+rr_embed_req -> tsub -> unparen -> magic_unparen_bf -> ref_site -> … -> parsed -> rr_embed_req
+```
+
+`tsub` (an AST relation the request reads) and `typevar_name` (a reader of the parsed annotations,
+through `ref_site`) both asked `unparen`. The joined component then held a count that `RankForm`
+makes after demand, and the gate refused it (decision 0065 §2a: no aggregate inside a component
+that loads).
+
+Demand now checks each transformed program against the graph with each request's answers
+(`about.answers`, and the guest relations `rr_embed_req` answers, `guests::answered`). Each demanded
+relation the request reads, and whose demand reads the answer, is split. Its component is copied
+(`unparen__rr_embed_req`), and the rules whose demand reads the answer read the copy, under a demand
+of its own. The program is transformed again, and a copy's reads of the demanded relations below it
+are split in the next round (at most 32 rounds). The copies' rules differ by their guards, so the
+merge of identical relations keeps them apart.
+
+Each split is kept in the demand's report (`Report::reasons`). The profile shows each one under
+"the program's demand: kept apart": the cycle, each step with its rule, and the rules moved. The
+relations computed in full for a negative cycle show there too, with the cycle's error. The gate
+records each negation it gates, under "gated negations (decision 0065 §2a)", with the cycle
+through the request that puts it in the component, rule by rule.
+
+corpus0 × the 317 B-now rules, deferred joins off: 463 findings, the same as before the merges.
+Tests: `a_demand_that_reads_a_requests_answer_is_split_from_what_the_request_reads`,
+`a_split_copy_splits_the_demand_below_it_in_the_next_round`,
+`a_shared_demand_with_no_request_is_not_split`.
+
+PYI001's component is not a demand's. `type_root` negates `typing_sym`, which resolves names
+through `wstart`, which reads `parsed_in`: the program's own cycle through the request, gated per
+key. One of its rules gates two negations, and the second's ask leaves the first out
+(`an_ask_past_a_gated_negation_leaves_it_out`).

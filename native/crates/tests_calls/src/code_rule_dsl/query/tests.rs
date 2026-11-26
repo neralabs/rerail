@@ -1,0 +1,218 @@
+use super::regex_matches;
+use crate::code_rule_dsl::budget::{MatchBudget, set_shortcuts_off};
+use crate::code_rule_dsl::model::RegexSource;
+use crate::code_rule_dsl::test_support::{CAPABILITIES, evaluate_file, pack_test_data};
+use crate::code_rule_dsl::{CompiledCodeRuleDsl};
+use regex::Regex;
+use serde_json::{Value, json};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+
+/// Matches keep their byte ranges past multibyte text; a match past the limit leaves the scan
+/// unfinished.
+#[test]
+fn regex_matches_keep_byte_ranges_and_stop_past_the_limit() {
+    let regex = Regex::new("é").unwrap();
+    let (first, finished) = regex_matches(&regex, &RegexSource::Content, "éxé.ts", 1);
+    assert_eq!((first.len(), first[0].clone(), finished), (1, 0..2, false));
+    let all = regex_matches(&regex, &RegexSource::Content, "éxé.ts", 2);
+    assert_eq!((all.0.as_slice(), all.1), (&[0..2, 3..5][..], true));
+}
+
+/// A path matches once: its first match, a finished scan, whatever the limit.
+#[test]
+fn a_path_regex_keeps_its_first_match() {
+    let regex = Regex::new("é").unwrap();
+    let (matches, finished) = regex_matches(&regex, &RegexSource::Path, "éxé.ts", 10);
+    assert_eq!(
+        (matches.len(), matches[0].clone(), finished),
+        (1, 0..2, true)
+    );
+}
+
+/// An exhausted match deadline leaves the scan unfinished before it keeps any match.
+#[test]
+fn regex_matches_stop_at_the_deadline() {
+    let _budget = crate::code_rule_dsl::budget::MatchBudget::expired_for_test();
+    let regex = Regex::new("needle").unwrap();
+    assert_eq!(
+        regex_matches(&regex, &RegexSource::Content, "needle\n", 2),
+        (Vec::new(), false)
+    );
+}
+
+/// A Python pack code rule (a path under `packs/python/`: `rules/` or `candidates/rules/`), as
+/// the conformance runner registers it.
+fn python_pack_code_rule(rule: &str) -> CompiledCodeRuleDsl {
+    let path = crate::source_tree::native()
+    .join("../packs/python")
+    .join(rule);
+    crate::code_rule_dsl::rule_api::compile(&std::fs::read_to_string(&path).expect("pack policy"), "json", CAPABILITIES)
+    .unwrap_or_else(|error| panic!("{}: {}", path.display(), error.reason))
+}
+
+/// A code rule's result on one file, evaluated with the work-skipping shortcuts on (`with`) and off
+/// (`without`, `set_shortcuts_off`): they must agree, violations and failures alike. Each mode has
+/// its own compiled copy of the rule, as a workspace keeps one compiled rule for every file.
+fn agreeing(
+    with: &CompiledCodeRuleDsl,
+    without: &CompiledCodeRuleDsl,
+    path: &str,
+    source: &str,
+) -> Value {
+    set_shortcuts_off(true);
+    let without = evaluate_file(without, "python", path, source);
+    set_shortcuts_off(false);
+    let with = evaluate_file(with, "python", path, source);
+    assert_eq!(with, without, "{path}: the shortcuts changed the result");
+    with
+}
+
+/// The shortcuts that only skip work (the anchor-set shortcuts) change no result of F811, F821 or
+/// F841: on every Ruff fixture, and on a module that mixes unpacking, assignment chains, walruses,
+/// `with` targets, redefinitions and dotted imports.
+fn python_shortcuts_agree_for_rule(rule: &str) {
+    let fixtures = pack_test_data("packs/python/upstream/ruff/fixtures");
+    let mut files = Vec::new();
+    let mut pending = vec![fixtures];
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(&directory).expect("fixtures") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path
+                .extension()
+                .is_some_and(|extension| extension == "py" || extension == "pyi")
+            {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    assert!(files.len() > 50, "{} fixtures", files.len());
+    let mixed = "\
+import os.path
+import os
+from typing import overload
+import json as json
+def f(items):
+    a, b = c = (1, 2)
+    d = e = f = [3, 4]
+    (g, h) = i = j = items
+    k = (l := 5)
+    m, n = o = p = 6, 7
+    with open('x') as (q, r), open('y') as s:
+        pass
+    t = 1
+    t = 2
+    u: int = 3
+    v += 1
+    for w in items:
+        pass
+    import json
+    def os():
+        pass
+    return [x for x in items if (y := x)]
+class C:
+    import sys
+    z = sys
+";
+    let (with, without) = (python_pack_code_rule(rule), python_pack_code_rule(rule));
+    for file in &files {
+        let source = std::fs::read_to_string(file).expect("fixture");
+        let path = if file.extension().is_some_and(|extension| extension == "pyi") {
+            "fixture.pyi"
+        } else {
+            "fixture.py"
+        };
+        agreeing(&with, &without, path, &source);
+    }
+    let result = agreeing(&with, &without, "mixed.py", mixed);
+    assert_eq!(result["failures"], json!([]), "{rule}: {result}");
+}
+
+#[test]
+fn python_shortcuts_change_no_pack_result_f811() {
+    python_shortcuts_agree_for_rule("candidates/rules/ruff-f811-redefined-while-unused.json");
+}
+
+#[test]
+fn python_shortcuts_change_no_pack_result_f821() {
+    python_shortcuts_agree_for_rule("candidates/rules/ruff-f821-undefined-name.json");
+}
+
+#[test]
+fn python_shortcuts_change_no_pack_result_f841() {
+    python_shortcuts_agree_for_rule("candidates/rules/ruff-f841-unused-variable.json");
+}
+
+/// F841's work grows linearly with a function's assignments, each an unpacked chain whose
+/// identifiers the capture-free utilities are asked about: doubling them at most about doubles
+/// the budget units spent.
+#[test]
+fn f841_work_grows_linearly_with_assignments() {
+    let code_rule = python_pack_code_rule("candidates/rules/ruff-f841-unused-variable.json");
+    let mut units = Vec::new();
+    for assignments in [500, 1000, 2000] {
+        let mut source = "def f(items):\n".to_owned();
+        for index in 0..assignments {
+            source.push_str(&format!(
+                "    a{index}, b{index} = c{index} = d{index} = (items, {index}, (e{index}, items))\n"
+            ));
+        }
+        source.push_str("    return a0, b0, c0, d0\n");
+        let budget = MatchBudget::work(&Arc::new(AtomicBool::new(false)), u64::MAX);
+        let result = evaluate_file(&code_rule, "python", "chains.py", &source);
+        let spent = budget.spent();
+        drop(budget);
+        assert_eq!(result["failures"], json!([]), "{result}");
+        // `c` and `d` of every assignment but the first are unused; `a` and `b` are unpacked.
+        assert_eq!(
+            result["violations"].as_array().map(Vec::len),
+            Some(2 * (assignments - 1)),
+            "{assignments} assignments"
+        );
+        units.push(spent);
+    }
+    assert!(units[0] > 0, "the evaluation polled its budget: {units:?}");
+    for pair in units.windows(2) {
+        assert!(
+            pair[1] * 4 <= pair[0] * 9,
+            "units {units:?}: doubling the assignments more than doubled the work"
+        );
+    }
+}
+
+/// ESLint's `SourceCode` strips a leading byte order mark before any rule reads the text: a
+/// `file.content` regex reads an ECMAScript or Vue file from past it, its spans still over the
+/// file's bytes. Other families' files keep it.
+#[test]
+fn content_regexes_skip_a_leading_byte_order_mark_where_eslint_strips_it() {
+    use crate::code_rule_dsl::test_support::{clause_document, compile_document_with, violation};
+    let run = |pattern: &str, language: &str, path: &str| {
+        let document = clause_document(json!({
+            "id": "bom",
+            "forbid": { "regex": { "source": "file.content", "pattern": pattern } },
+            "violation": violation(),
+        }));
+        let compiled = compile_document_with(
+            document,
+            &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
+        )
+        .unwrap_or_else(|error| panic!("{}", error.reason));
+        let result = evaluate_file(&compiled, language, path, "\u{feff}x = 1\n");
+        result["violations"]
+            .as_array()
+            .expect("violations")
+            .iter()
+            .map(|found| found["span"]["startByte"].as_u64().expect("start"))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(run("\\x{FEFF}", "javascript", "a.js"), Vec::<u64>::new());
+    assert_eq!(run("\\x{FEFF}", "typescript", "a.ts"), Vec::<u64>::new());
+    assert_eq!(run("\\Ax", "javascript", "a.js"), [3]);
+    assert_eq!(run("\\x{FEFF}", "vue", "a.vue"), Vec::<u64>::new());
+    assert_eq!(run("\\Ax", "vue", "a.vue"), [3]);
+    assert_eq!(run("\\x{FEFF}", "python", "a.py"), [0]);
+    assert_eq!(run("\\Ax", "python", "a.py"), Vec::<u64>::new());
+}

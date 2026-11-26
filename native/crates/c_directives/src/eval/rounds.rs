@@ -25,7 +25,7 @@ pub fn place(files: &[(&[u8], bool)]) -> Result<Unit, rerail_metal::Error> {
 /// residency let them go. Also the tapes it built.
 pub fn place_kept(files: &[(&[u8], bool)], kept: &mut Vec<[u8; 32]>) -> Result<(Unit, usize), rerail_metal::Error> {
     use sha2::{Digest as _, Sha256};
-    let image = |k: usize| rerail_c_pp::tape::image_16(files[k].0, crate::pp::options(files[k].1));
+    let image = |k: usize| rerail_c_pp::tape::image(files[k].0, crate::pp::options(files[k].1));
     let mut tapes: Vec<Option<_>> = (0..files.len()).map(|_| None).collect();
     kept.truncate(files.len());
     for k in kept.len()..files.len() {
@@ -272,7 +272,7 @@ pub struct Settled {
 
 /// The units `units` (each its files and its main file), of one configuration `cfg` (C++ where
 /// `cpp`), in rounds run as batches (decision 0486 §7): each round one run over the batch's units
-/// still running, a team each (decision 0588 §6), the units that request answered between rounds,
+/// still running, their programs on one queue (decision 0653), the units that request answered between rounds,
 /// and a unit's round with no requests its expansion. A refusal is a unit's alone. A batch is split
 /// in halves where the budget refuses its arena, or its documents are where a batch cannot read
 /// them together. `eval` is the device's run of a batch's units, each from the rooms it is given,

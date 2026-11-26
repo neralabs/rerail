@@ -1,8 +1,8 @@
 # 0411: A token's end is its gap's
 
-Status: decided (the user, 2026-11-18: page 39's item 3, "find token ends without a second
-position list", chosen by shape: "what brings us closer to the desired shape"). Follows 0398
-and 0399. Built for `14-json`; JSONC's comments keep the extract (below).
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-18: page 39's item 3, "find token ends without a second
+position list", chosen by shape: "what brings us closer to the desired shape"). Follows 0398 and 0399. Built for
+`14-json`; JSONC's comments keep the extract (below).
 
 ## Intro
 

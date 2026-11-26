@@ -10,6 +10,8 @@ description = "Kotlin's parser as Rust, written by the Bitlex compiler from the 
 test-hooks = ["rerail-tape-format/test-hooks"]
 
 [dependencies]
+# Stage 1 of tier 1 on simdjson's backends, as the lean lexer's (`bitlex_lex_rust`).
+rerail-simd8 = { path = "../simd8" }
 rerail-tape-format = { path = "../tape_format" }
 
 [dev-dependencies]

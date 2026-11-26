@@ -28,6 +28,7 @@ import {
   realOf,
   searchedIn,
   searchStep,
+  worktreeGitFolderGone,
   type PlacementInputs,
 } from "./checkouts/git-placement.js";
 import { foldersGitSearches } from "./checkouts/git-search.js";
@@ -41,12 +42,18 @@ export interface RepositoryIdentityLocation {
   /** The checkout's top folder: the main checkout's, or a linked worktree's own. */
   workspaceRoot: string;
   identityPath: string;
-  /** False only for a linked Git worktree; a folder outside Git is its own main checkout. */
+  /**
+   * False only for a linked worktree: one Git places, or one whose Git folder is gone
+   * ({@link RepositoryIdentityLocation.gitFolderGone}). Any other folder outside Git is its own main checkout.
+   */
   main: boolean;
+  /** Set only outside Git, on a linked worktree whose Git folder was gone as this answer was read ({@link worktreeGitFolderGone}). */
+  gitFolderGone?: true;
 }
 
-function nonGitLocation(requested: string): RepositoryIdentityLocation {
-  return { git: false, workspaceRoot: requested, identityPath: join(requested, ".rerail", "repository-id"), main: true };
+function nonGitLocation(requested: string, gitFolderGone = false): RepositoryIdentityLocation {
+  const location = { git: false, workspaceRoot: requested, identityPath: join(requested, ".rerail", "repository-id"), main: true };
+  return gitFolderGone ? { ...location, main: false, gitFolderGone } : location;
 }
 
 /** The file in Git's common metadata directory that holds a clone's id, shared by every linked worktree. */
@@ -121,7 +128,7 @@ function placedFromInputs(requested: string, inputs: PlacementInputs, lastAnswer
   const held = heldTopLevels.get(requested);
   if (held?.stamp === inputs.stamp && (inputs.owned || lastAnswer)) return { ...held.location };
   const fromFiles = linkedLocation(inputs);
-  const located = fromFiles === undefined ? locatedByGit(requested) : { location: fromFiles, byGit: false, searched: [] };
+  const located = fromFiles === undefined ? locatedByGit(requested, true) : { location: fromFiles, byGit: false, searched: [] };
   holdTopLevel(requested, inputs, located);
   return { ...located.location };
 }
@@ -134,10 +141,12 @@ interface Located {
   readonly searched: readonly Searched[];
 }
 
-function locatedByGit(requested: string): Located {
+/** Git's answer for `requested`; `gitFolderThere` as {@link gitFindsNone} takes it. */
+function locatedByGit(requested: string, gitFolderThere: boolean): Located {
   const searched = searchedUp(requested);
-  const result = locateInGit(requested);
-  const location = result === undefined || result.status !== 0 ? nonGitLocation(requested) : gitLocation(requested, result.stdout);
+  const none = gitFindsNone(requested, gitFolderThere);
+  const result = none === undefined ? locateInGit(requested) : undefined;
+  const location = result === undefined || result.status !== 0 ? nonGitLocation(requested, none === "gone") : gitLocation(requested, result.stdout);
   return { location, byGit: true, searched };
 }
 
@@ -210,7 +219,8 @@ function answersInputs(folder: string, inputs: PlacementInputs, located: Located
 /** Whether `location` is in Git and names `folder` as its own top level; false when a real path cannot be read. */
 function namesItself(folder: string, location: RepositoryIdentityLocation): boolean {
   try {
-    return location.git && physicalPath(location.workspaceRoot) === physicalPath(folder);
+    // As stored: on macOS a folder asked in another letter case is still the top level Git names in the stored case.
+    return location.git && storedPath(location.workspaceRoot) === storedPath(folder);
   } catch {
     return false;
   }
@@ -233,8 +243,9 @@ function rememberGitPlaced(common: string): void {
  */
 export async function repositoryIdentityLocationAsync(workspace: string, signal?: AbortSignal): Promise<RepositoryIdentityLocation> {
   const requested = resolve(workspace);
-  const result = outsideGit(requested) ? undefined : await runGitAsync(requested, LOCATE_ARGS, { signal }).catch(noGitInstalled);
-  return result === undefined || result.status !== 0 ? nonGitLocation(requested) : gitLocation(requested, result.stdout);
+  const none = gitFindsNone(requested);
+  const result = none === undefined ? await runGitAsync(requested, LOCATE_ARGS, { signal }).catch(noGitInstalled) : undefined;
+  return result === undefined || result.status !== 0 ? nonGitLocation(requested, none === "gone") : gitLocation(requested, result.stdout);
 }
 
 /** Undefined when Git is not installed; any other failure is thrown again. */
@@ -243,18 +254,26 @@ function noGitInstalled(error: unknown): undefined {
   throw error;
 }
 
-/**
- * Git's top level, common directory and Git directory for `requested`; undefined when Git is not installed, or when Git
- * would find no repository there ({@link outsideGit}), so a folder outside Git, asked about on every hook event of a
- * session working in it, starts no Git process.
- */
+/** Git's top level, common directory and Git directory for `requested`; undefined when Git is not installed. */
 function locateInGit(requested: string): ReturnType<typeof runGit> | undefined {
-  if (outsideGit(requested)) return undefined;
   try {
     return runGit(requested, LOCATE_ARGS);
   } catch (error) {
     return noGitInstalled(error);
   }
+}
+
+/**
+ * Why Git, asked where `requested`'s repository is, would answer none, read from the disk without starting Git, so a
+ * folder asked about on every hook event of a session working in it starts no Git process: `outside`, the folder is
+ * outside Git ({@link outsideGit}); `gone`, it is a linked worktree whose Git folder is gone, which Git refuses (exit
+ * 128) as it reads the worktree's `.git` file ({@link worktreeGitFolderGone}). Undefined where Git is to be asked. With
+ * `gitFolderThere` the placement inputs were just read, so the Git folder was there where Git reaches it, and that
+ * check, which reads the same path, is not made again.
+ */
+function gitFindsNone(requested: string, gitFolderThere = false): "outside" | "gone" | undefined {
+  if (outsideGit(requested)) return "outside";
+  return !gitFolderThere && worktreeGitFolderGone(requested) ? "gone" : undefined;
 }
 
 /**
@@ -264,8 +283,9 @@ function locateInGit(requested: string): ReturnType<typeof runGit> | undefined {
 const GIT_MARKERS = [".git", "HEAD"];
 
 /**
- * Whether Git, asked about `folder`, finds no repository, read from the disk without starting Git: `GIT_DIR` is unset in
- * the environment Rerail runs Git in, and no folder from `folder` up to its root holds one of {@link GIT_MARKERS}, by
+ * Whether Git, asked about `folder`, finds no repository, read from the disk without starting Git: no folder from
+ * `folder` up to its root holds one of {@link GIT_MARKERS} (Rerail's Git never gets this process's `GIT_DIR`, which
+ * `gitEnvironment` drops with every repository variable, so it leads that Git nowhere), by
  * the path as written and by its real path (Git searches up from the folder it changed into, and whether that folder's
  * name keeps a link's path or resolves it differs by system). False wherever the disk cannot tell: a folder that does
  * not resolve, an entry that cannot be read. So it skips Git only where Git has nothing to find; where a `.git` is there
@@ -273,7 +293,6 @@ const GIT_MARKERS = [".git", "HEAD"];
  * asked as before.
  */
 export function outsideGit(folder: string): boolean {
-  if (process.env.GIT_DIR !== undefined) return false;
   const written = resolve(folder);
   let real: string;
   try {
@@ -546,7 +565,7 @@ function stampOf(facts: string | undefined, searched: readonly string[]): string
 function acceptedByGit(requested: string): RepositoryIdentityLocation {
   heldTopLevels.delete(requested);
   const facts = ownFacts(requested);
-  const located = locatedByGit(requested);
+  const located = locatedByGit(requested, false);
   keepAcceptance(requested, facts, located);
   return { ...located.location };
 }
@@ -716,12 +735,12 @@ export function checkoutIdentity(location: RepositoryIdentityLocation): { id: st
   return { id, marked: false };
 }
 
-/** Publish complete identity bytes with an atomic no-clobber link. */
-function readOrCreateIdentity(identityPath: string, candidate: string): string {
+/** Publish complete identity bytes with an atomic no-clobber link; `candidate` is asked only when no id file is there. */
+function readOrCreateIdentity(identityPath: string, candidate: () => string): string {
   const existing = readIdentityFile(identityPath);
   if (existing !== undefined) return existing;
   const temporaryPath = `${identityPath}.${process.pid}.${randomUUID()}.tmp`;
-  writeFileSync(temporaryPath, `${candidate}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
+  writeFileSync(temporaryPath, `${candidate()}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
   try {
     try {
       linkSync(temporaryPath, identityPath);
@@ -747,7 +766,7 @@ function gitCloneId(location: RepositoryIdentityLocation): string {
   const { id: stable, marked } = checkoutIdentity(location);
   if (stable !== undefined && marked) return stable;
   try {
-    return readOrCreateIdentity(location.identityPath, stable ?? `git:${randomUUID()}`);
+    return readOrCreateIdentity(location.identityPath, () => stable ?? `git:${randomUUID()}`);
   } catch (error) {
     if (stable && ["EACCES", "EPERM", "EROFS"].includes(errorCode(error) ?? "")) return readIdentityFile(location.identityPath) ?? stable;
     throw error;
@@ -758,9 +777,12 @@ function gitCloneId(location: RepositoryIdentityLocation): string {
  * `workspace`'s clone id, created on first use and stored atomically in Git's common metadata directory. Linked
  * worktrees share it; clones and forks receive a new one; a legacy `rerail.repository-id` Git config value is adopted
  * when it is a well-formed id. Folders outside Git use the same file contract under `.rerail`, which must not be a
- * symlink.
+ * symlink; there an id file not created yet takes the id `recordedIdAt` gives for the folder, where the caller holds
+ * one, else a new one.
  */
-export function resolveCloneId(workspace: string): { cloneId: string; location: RepositoryIdentityLocation } {
+export function resolveCloneId(
+  workspace: string, recordedIdAt?: (location: RepositoryIdentityLocation) => string | undefined,
+): { cloneId: string; location: RepositoryIdentityLocation } {
   const location = repositoryIdentityLocation(workspace);
   if (location.git) return { cloneId: gitCloneId(location), location };
   const shared = sharedGitCloneId(location);
@@ -774,7 +796,7 @@ export function resolveCloneId(workspace: string): { cloneId: string; location: 
     if (errorCode(error) !== "EEXIST") throw error;
     if (!lstatSync(directory).isDirectory()) throw new Error(`${directory} is not a directory Rerail can keep its identity in`);
   }
-  return { cloneId: readOrCreateIdentity(location.identityPath, randomUUID()), location };
+  return { cloneId: readOrCreateIdentity(location.identityPath, () => recordedIdAt?.(location) ?? randomUUID()), location };
 }
 
 export interface RemoteAddress {

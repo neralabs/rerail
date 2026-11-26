@@ -80,6 +80,9 @@ pub struct Ledger {
     /// GPU uses of chunks queued now (`State::chunks`' length): with none, a CPU access is checked without the lock
     /// (a block's arrays are read and written at every value, `cpu_read`, `cpu_write`).
     chunk_uses: std::sync::atomic::AtomicUsize,
+    /// GPU uses queued now, of the block or a chunk (`State::open`'s counts): whether it is quiet, without the lock (a
+    /// thread's stack asks at each pop, `scratch::Stack::settle`).
+    uses: std::sync::atomic::AtomicUsize,
     /// The block's own region while a handle holds it (`region::whole`, decision 0491 step 3): what a kernel's bind
     /// of the block, found by address, pins (`region::bind_address`).
     pub(crate) root: Mutex<std::sync::Weak<crate::region::Region>>,
@@ -99,6 +102,15 @@ fn fail(v: Verdict) {
 }
 
 const G: usize = 1 << MIN_LOG;
+
+/// The least free chunk, merged with its free buddies (`Ledger::put`), whose pages a free gives to the OS: a smaller
+/// one stays on its list with its pages, for the next chunk of its class. A run's short-lived vectors and rows free and
+/// take chunks of a few KB thousands of times a second; giving each one's pages back and faulting them in again at the
+/// next take was a `madvise` a free and a page fault a page (t57 §8: about 2,000 of 163,000 working samples in
+/// give-back and reuse on the M3's `all`, and the kernel's page faults 30,000). A chunk of this size or more (a dead
+/// relation's chunks, which interleave with a live neighbour's and so never merge: `rows`' Q76 test), or a small one
+/// whose merge reaches it, goes back at once, as before.
+pub(crate) const GIVE_MIN: usize = 256 << 10;
 
 fn bits_range(bits: &[u64], from: usize, to: usize, mut each: impl FnMut(u64, u64) -> bool) -> bool {
     // Calls `each(word, mask)` over the words covering bits `from..to`; stops at the first `false`.
@@ -149,7 +161,7 @@ fn bit(bits: &[u64], i: usize) -> bool {
 
 impl Ledger {
     pub(crate) fn new(base: *mut u8, len: usize, pages: bool, ext: Arc<Extent>) -> Arc<Ledger> {
-        let l = Arc::new(Ledger { state: Mutex::default(), chunk_uses: std::sync::atomic::AtomicUsize::new(0), root: Mutex::new(std::sync::Weak::new()), base: base as usize, pages, ext });
+        let l = Arc::new(Ledger { state: Mutex::default(), chunk_uses: std::sync::atomic::AtomicUsize::new(0), uses: std::sync::atomic::AtomicUsize::new(0), root: Mutex::new(std::sync::Weak::new()), base: base as usize, pages, ext });
         let mut live = blocks();
         // After any at the same address: memory an outer ledger holds (a pooled lease) made a block's (`Block::over`)
         // or `Tracked`, the inner ledger is the one its address finds (`of_address`).
@@ -247,16 +259,16 @@ impl Ledger {
             return;
         }
         let (class, size) = crate::free::class_of(size);
-        Self::put(&mut s, at, class);
+        let (merged, merged_size) = Self::put(&mut s, at, class);
         self.ext.free.fetch_add(size, Relaxed);
-        if self.pages {
-            self.give_free_pages(&mut s, at, size);
+        if self.pages && merged_size >= GIVE_MIN {
+            self.give_free_pages(&mut s, merged, merged_size);
         }
     }
 
     /// A free chunk of `class` at `at` (aligned to its size, or to `ALIGN_MAX`) onto its list, merged with its buddy
-    /// while the buddy is free.
-    fn put(s: &mut State, mut at: usize, mut class: usize) {
+    /// while the buddy is free. The free chunk it ends in: its offset and size.
+    fn put(s: &mut State, mut at: usize, mut class: usize) -> (usize, usize) {
         loop {
             if s.lists.len() <= class + 1 {
                 s.lists.resize_with(class + 2, Default::default);
@@ -270,7 +282,7 @@ impl Ledger {
                 continue;
             }
             s.lists[class].insert(at);
-            return;
+            return (at, size);
         }
     }
 
@@ -291,6 +303,7 @@ impl Ledger {
                 p += 1;
             }
             set(&mut s.given, q0, p, false);
+            self.ext.given.fetch_sub((p - q0) * PAGE, Relaxed);
             // SAFETY: pages of the block given back earlier; their chunk is the taker's now.
             unsafe { crate::mem::reuse_pages((self.base + q0 * PAGE) as *mut u8, (p - q0) * PAGE) };
         }
@@ -314,10 +327,26 @@ impl Ledger {
                 p += 1;
             }
             set(&mut s.given, q0, p, true);
+            self.ext.given.fetch_add((p - q0) * PAGE, Relaxed);
             // SAFETY: whole pages of the block, none live (above).
             given += unsafe { crate::mem::give_back((self.base + q0 * PAGE) as *mut u8, (p - q0) * PAGE) };
         }
         given
+    }
+
+    /// Every free chunk's whole pages with no live byte, to the OS, small ones too: what a run leaves on the lists
+    /// when it ends (`trim_all`). A free keeps a chunk under `GIVE_MIN` resident for the next of its class; once the
+    /// run is over no next one comes, and its fragments held 12 MB after the cost cases' run. The bytes given.
+    pub fn trim(&self) -> usize {
+        if !self.pages {
+            return 0;
+        }
+        let mut s = self.lock();
+        if !s.listed {
+            return 0;
+        }
+        let chunks: Vec<(usize, usize)> = s.lists.iter().enumerate().flat_map(|(c, l)| l.iter().map(move |&at| (at, 1usize << (MIN_LOG as usize + c)))).collect();
+        chunks.into_iter().map(|(at, size)| self.give_free_pages(&mut s, at, size)).sum()
     }
 
     /// The tail `at + keep..at + size` of a chunk just handed out is not the holder's (never written).
@@ -363,19 +392,25 @@ impl Ledger {
         let mut given = 0;
         let mut piece_at = at;
         let mut left = len;
+        // A free chunk holds no link: every page it reaches with no live byte left goes, where it is a free chunk of
+        // `GIVE_MIN` or more (a listed block's: a piece merged with its buddies; pages given already are passed over),
+        // or the block keeps no lists.
+        let give = how.pages && self.pages;
         while left > 0 {
             // A chunk of its class whole, a fitted one in its pieces (`free::piece`).
             let piece = crate::free::piece(piece_at, left);
             if s.listed {
                 let (class, size) = crate::free::class_of(piece);
-                Self::put(s, piece_at, class);
+                let (m, m_size) = Self::put(s, piece_at, class);
                 self.ext.free.fetch_add(size, Relaxed);
+                if give && m_size >= GIVE_MIN {
+                    given += self.give_free_pages(s, m, m_size);
+                }
             }
             piece_at += piece;
             left = left.saturating_sub(piece);
         }
-        if how.pages && self.pages {
-            // A free chunk holds no link: every page it reaches with no live byte left goes.
+        if give && !s.listed {
             given += self.give_free_pages(s, at, len);
         }
         given
@@ -423,7 +458,7 @@ impl Ledger {
 
     /// Whether no GPU use of the block is queued.
     pub fn quiet(&self) -> bool {
-        self.lock().open.is_empty()
+        self.uses.load(std::sync::atomic::Ordering::Acquire) == 0
     }
 
     /// Chunks freed but held by queued GPU work.
@@ -439,6 +474,7 @@ impl Ledger {
             Some((e, n)) if *e == epoch => *n += 1,
             _ => s.open.push((epoch, 1)),
         }
+        self.uses.fetch_add(1, std::sync::atomic::Ordering::Release);
         let id = s.next_id;
         s.next_id += 1;
         if let Some((at, len)) = chunk {
@@ -456,6 +492,7 @@ impl Ledger {
             self.chunk_uses.store(s.chunks.len(), std::sync::atomic::Ordering::Release);
             if let Some(i) = s.open.iter().position(|(e, _)| *e == epoch) {
                 s.open[i].1 -= 1;
+                self.uses.fetch_sub(1, std::sync::atomic::Ordering::Release);
                 if s.open[i].1 == 0 {
                     s.open.remove(i);
                 }
@@ -522,7 +559,7 @@ pub struct Tracked<T: Send + 'static> {
 impl<T: Send + 'static> Tracked<T> {
     /// `value`, whose memory is the `len` bytes at `base`: found by any address in them while it lives.
     pub fn new(value: T, base: *mut u8, len: usize) -> Tracked<T> {
-        let ext = Arc::new(crate::block::Extent { top: std::sync::atomic::AtomicUsize::new(0), free: std::sync::atomic::AtomicUsize::new(0) });
+        let ext = Arc::new(crate::block::Extent::default());
         Tracked { value: Some(value), ledger: Ledger::new(base, len.max(1), false, ext) }
     }
 
@@ -561,6 +598,12 @@ fn blocks() -> MutexGuard<'static, Vec<(usize, usize, std::sync::Weak<Ledger>)>>
     BLOCKS.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Every live block's free chunks' pages to the OS (`Ledger::trim`): a run's end. The bytes given.
+pub fn trim_all() -> usize {
+    let ledgers: Vec<Arc<Ledger>> = blocks().iter().filter_map(|(_, _, l)| l.upgrade()).collect();
+    ledgers.iter().map(|l| l.trim()).sum()
+}
+
 /// The ledger of the live block whose memory holds `addr`: the innermost, where one ledger's memory lies in
 /// another's (a block over a pooled lease: the block's, registered after the lease's).
 pub fn of_address(addr: usize) -> Option<Arc<Ledger>> {
@@ -580,12 +623,16 @@ pub struct Fence {
     committed: AtomicBool,
     /// The regions its binds by address pinned (`region::bind_address`), by address and access: each once.
     pinned: Mutex<Vec<(usize, bool)>>,
+    /// The addresses its binds by address held already (`region::bind_address`), each with the ledger it found, or
+    /// none (a buffer of no block's): a program's stack binds the same buffers at each of its thousands of
+    /// dispatches (decision 0641).
+    bound: Mutex<std::collections::HashMap<usize, Option<Arc<Ledger>>>>,
     signal: Condvar,
 }
 
 impl Fence {
     pub fn new() -> Arc<Fence> {
-        Arc::new(Fence { uses: Mutex::new(Vec::new()), after: Mutex::new(Vec::new()), done: AtomicBool::new(false), committed: AtomicBool::new(false), pinned: Mutex::new(Vec::new()), signal: Condvar::new() })
+        Arc::new(Fence { uses: Mutex::new(Vec::new()), after: Mutex::new(Vec::new()), done: AtomicBool::new(false), committed: AtomicBool::new(false), pinned: Mutex::new(Vec::new()), bound: Mutex::new(std::collections::HashMap::new()), signal: Condvar::new() })
     }
 
     fn add(&self, ledger: &Arc<Ledger>, access: Access, chunk: Option<(usize, usize)>) {
@@ -601,12 +648,27 @@ impl Fence {
     /// Its work reads or writes the block whose memory holds `addr` (a buffer bound for a kernel, by its contents),
     /// once however often it is bound. Whether a block holds it: a buffer of no block's is not the ledger's.
     pub fn uses_address(&self, addr: usize) -> bool {
-        let Some(l) = of_address(addr) else { return false };
+        self.held_at(addr).is_some()
+    }
+
+    /// The ledger `addr` lies in, its block's use held by it (once however often it is bound). Found once a fence
+    /// and address: it holds the ledger until it completes, so nothing frees what lies there and puts another block
+    /// there before. An address no ledger held at its first bind is none of a ledger's at the next: the buffer
+    /// bound there, held by its submission, keeps the memory from any block for the fence's life.
+    pub(crate) fn held_at(&self, addr: usize) -> Option<Arc<Ledger>> {
+        if let Some(l) = self.bound.lock().unwrap_or_else(|e| e.into_inner()).get(&addr) {
+            return l.clone();
+        }
+        let Some(l) = of_address(addr) else {
+            self.bound.lock().unwrap_or_else(|e| e.into_inner()).insert(addr, None);
+            return None;
+        };
         let known = self.uses.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|u| Arc::ptr_eq(&u.0, &l));
         if !known {
             self.add(&l, Access::Write, None);
         }
-        true
+        self.bound.lock().unwrap_or_else(|e| e.into_inner()).insert(addr, Some(Arc::clone(&l)));
+        Some(l)
     }
 
     /// Whether `key` (a region, with its access) is pinned on it for the first time now.
@@ -659,6 +721,7 @@ impl Fence {
             }
             std::mem::take(&mut *uses)
         };
+        self.bound.lock().unwrap_or_else(|e| e.into_inner()).clear();
         // Pins first: a region its work held may go now, its chunk freed while the block's use still holds it.
         let after = std::mem::take(&mut *self.after.lock().unwrap_or_else(|e| e.into_inner()));
         for f in after {
@@ -915,14 +978,15 @@ mod tests {
         assert_eq!(unsafe { *b.ptr::<u64>(small) }, 7);
         #[cfg(target_vendor = "apple")]
         assert!(crate::mem::tests::modified(b.ptr::<u8>(small)), "the live chunk's page kept");
-        // A retiring chunk's pages wait too, and its neighbours' pages are not given back when it finishes.
-        let big = b.try_alloc_chunk(2 * PAGE, 64).unwrap();
+        // A retiring chunk's pages wait too, and its neighbours' pages are not given back when it finishes. One of
+        // `GIVE_MIN`: a smaller free chunk keeps its pages for the next of its class (`a_small_free_keeps_its_pages`).
+        let big = b.try_alloc_chunk(GIVE_MIN, 64).unwrap();
         let after = b.try_alloc_chunk(64, 64).unwrap();
         unsafe { *b.ptr::<u64>(after) = 9 };
-        unsafe { std::ptr::write_bytes(b.ptr::<u8>(big), 0xab, 2 * PAGE) };
+        unsafe { std::ptr::write_bytes(b.ptr::<u8>(big), 0xab, GIVE_MIN) };
         let f = Fence::new();
         f.reads(&b);
-        b.free_chunk(big, 2 * PAGE);
+        b.free_chunk(big, GIVE_MIN);
         #[cfg(target_vendor = "apple")]
         assert!(crate::mem::tests::modified(b.ptr::<u8>(big)), "a retiring chunk's pages wait");
         f.complete();
@@ -932,6 +996,53 @@ mod tests {
         // The page's modified bit is macOS's `mincore` alone; elsewhere the byte read back says it.
         #[cfg(target_vendor = "apple")]
         assert!(crate::mem::tests::modified(b.ptr::<u8>(after)), "its neighbour's page kept");
+    }
+
+    /// A free chunk smaller than `GIVE_MIN` keeps its pages (the next chunk of its class takes them with no fault), and
+    /// gives them back once a free merges it into a free chunk of `GIVE_MIN`.
+    #[test]
+    #[cfg(target_vendor = "apple")]
+    fn a_small_free_keeps_its_pages() {
+        let b = listed();
+        let size = crate::free::class_of(4 * PAGE).1;
+        let per = GIVE_MIN / size;
+        assert!(per >= 2);
+        // Small chunks handed out in a row, past the block's front: a `GIVE_MIN`-aligned window of `per` of them.
+        let chunks: Vec<usize> = (0..3 * per).map(|_| b.try_alloc_chunk(4 * PAGE, 64).unwrap()).collect();
+        let w = chunks.iter().copied().find(|&c| c % GIVE_MIN == 0 && (0..per).all(|k| chunks.contains(&(c + k * size)))).expect("an aligned window");
+        for k in 0..per {
+            unsafe { std::ptr::write_bytes(b.ptr::<u8>(w + k * size), 0xcd, 4 * PAGE) };
+        }
+        // All but the last freed: their free chunks merge to less than `GIVE_MIN`, and keep their pages.
+        for k in 0..per - 1 {
+            b.free_chunk(w + k * size, 4 * PAGE);
+            assert!(crate::mem::tests::modified(b.ptr::<u8>(w + k * size)), "a small free, under GIVE_MIN: its pages kept");
+        }
+        // The last one's free merges the window to `GIVE_MIN`: every page of it goes.
+        b.free_chunk(w + (per - 1) * size, 4 * PAGE);
+        for k in 0..per {
+            assert!(!crate::mem::tests::modified(b.ptr::<u8>(w + k * size)), "merged to GIVE_MIN: given back");
+        }
+    }
+
+    /// A run's end gives back what its frees kept (`Ledger::trim`): a small free chunk's pages go then, and a live
+    /// chunk's stay.
+    #[test]
+    #[cfg(target_vendor = "apple")]
+    fn a_trim_gives_back_the_small_free_chunks_pages() {
+        let b = listed();
+        let size = crate::free::class_of(4 * PAGE).1;
+        let (kept, live) = (b.try_alloc_chunk(4 * PAGE, 64).unwrap(), b.try_alloc_chunk(4 * PAGE, 64).unwrap());
+        for c in [kept, live] {
+            unsafe { std::ptr::write_bytes(b.ptr::<u8>(c), 0xcd, 4 * PAGE) };
+        }
+        assert!(size < GIVE_MIN);
+        b.free_chunk(kept, 4 * PAGE);
+        assert!(crate::mem::tests::modified(b.ptr::<u8>(kept)), "a small free keeps its pages");
+        assert!(b.ledger().trim() >= 4 * PAGE);
+        assert!(!crate::mem::tests::modified(b.ptr::<u8>(kept)), "trimmed: given back");
+        assert!(crate::mem::tests::modified(b.ptr::<u8>(live)), "a live chunk's pages stay");
+        assert_eq!(b.ledger().trim(), 0, "pages given already are passed over");
     }
 
     /// A buffer bound for a kernel is found to be its block's by its address, and holds the block's memory as any
@@ -968,5 +1079,18 @@ mod tests {
         let b = Block::anon(kind::FACTS, 1 << 20);
         let (slab, _) = watched();
         drop(b.relocate(slab));
+    }
+}
+
+/// A block's ledger as a region's guard (`rerail_vector::Region::guarded`): a vector in the block has each CPU read and
+/// write checked against the device's queued uses (R4).
+impl rerail_vector::Guard for Ledger {
+    #[inline]
+    fn cpu_read(&self, at: usize, len: usize) {
+        Ledger::cpu_read(self, at, len)
+    }
+    #[inline]
+    fn cpu_write(&self, at: usize, len: usize) {
+        Ledger::cpu_write(self, at, len)
     }
 }

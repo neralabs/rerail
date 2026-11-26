@@ -1,7 +1,7 @@
 # 0282. The critical path is issued and claimed first
 
-Status: decided (2026-11-15). Follows 0274, which trials the joins on a run's measured critical path (0208).
-Amends the issue board (0113 §2–§3) and the host stream's claims (`accel/src/stream.rs`).
+Status: built (audited 2026-11-23). Decided (2026-11-15). Follows 0274, which trials the joins on a run's measured
+critical path (0208). Amends the issue board (0113 §2–§3) and the host stream's claims (`accel/src/stream.rs`).
 
 ## Intro
 

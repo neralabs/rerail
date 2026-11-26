@@ -21,6 +21,12 @@
 //   p0_phase(from, phase, path)         `from` declares a relation of phase program `phase` (`<phase>__<export>`):
 //                                       its candidate `path`, loaded as an include is when it is there (`p0_absent`
 //                                       names it when not)
+//   p0_scope(m, s), p0_module_rank(m, k), p0_module_key(m, key)
+//                                       the module plan (decision 0639 §1, below): module `m` is lowered against the
+//                                       modules `s`, ranks `k`, and is kept under `key`
+//   p0_module_lowered(key, image)       the module of `key` lowered, its image's digest (the engine's answer)
+//
+// One more builtin fact: env("rerail.build", b), the engine's build, which a module's key names.
 //
 // A phase program is a rule file of every run that reads its exports, as an include is: the whole-run cutoff names
 // them all (O-cutoff-phases, decision 0246). So phase 0 resolves them too, and nothing parses a module again to list
@@ -52,12 +58,14 @@ p0_doc(d, @replace_all(f, "\\\\", "/")) :- doc(d, f, _), env("rerail.windows_pat
 p0_names(i, f, at, n) :- kind(i, "include"), field(i, "path", p), str(p, n), docof(i, d), p0_doc(d, f), node(d, i, _, at, _).
 .decl p0_declares_doc(i: node, f: symbol)
 p0_declares_doc(i, f) :- kind(i, "declaration"), field(i, "name", n), text(n, "doc"), docof(i, d), p0_doc(d, f).
-.decl p0_file_t_shape(path: symbol)
+// By path, across the loaded documents (decision 0652).
+.decl p0_file_t_shape(path: symbol) cross_file
 p0_file_t_shape(f) :- p0_file(f), p0_declares_doc(_, f).
 
 // What each text and each loaded module names. A text names `core.rerail` first unless it is in T's shape.
 // The engine requests components.rerail as a file seed only when a program consumes its relations.
-.decl p0_from(from: symbol, at: number, name: symbol)
+// Each text or module by its path: includes resolve across files (decision 0652).
+.decl p0_from(from: symbol, at: number, name: symbol) cross_file
 p0_from(t, at, n) :- p0_ask(t, at, n).
 p0_from(t, -1, "core.rerail") :- p0_text(t), !p0_t_shape(t).
 p0_from(f, -1, "core.rerail") :- p0_file(f), loaded(_, f, "rr"), !p0_file_t_shape(f).
@@ -92,7 +100,7 @@ load(c, c, "rr") :- p0_resolved(_, _, _, c).
 .decl p0_decl(i: node, f: symbol, name: symbol)
 p0_decl(i, f, s) :- kind(i, "declaration"), field(i, "name", n), text(n, s), match(".+__.+", s), docof(i, d), p0_doc(d, f).
 .decl p0_text_phase(t: symbol, phase: symbol)
-.decl p0_phase_named(from: symbol, phase: symbol)
+.decl p0_phase_named(from: symbol, phase: symbol) cross_file   // by path, as p0_from (decision 0652)
 p0_phase_named(f, p) :- p0_decl(_, f, s), match("(?<p>[^_]+(?:_[^_]+)*)__.+", s), !prefix("typing_", p), !prefix("rr_", p).
 p0_phase_named(t, p) :- p0_text_phase(t, p).
 .decl p0_phase_lib(dir: symbol)
@@ -115,4 +123,98 @@ p0_missing(a, at, n) :- p0_alias(f, a), p0_from(f, at, n), !p0_found(f, at, n).
 .decl p0_absent(path: symbol)
 p0_absent(c) :- p0_split(c, _, _), !p0_exists(c).
 
-.output p0_include, p0_missing, p0_absent, p0_phase
+// The module plan (decision 0639 §1): which files form each module, its scope, its rank and its key, derived from
+// the include edges between loaded files and each file's digest. A module is lowered once against its scope and kept
+// as its image under its key; a program is linked from its modules' images in rank order.
+//
+// A module of a program outside T's shape has `core.rerail` in its scope, though no file names it (a file is read
+// with `core.rerail` first). A program in T's shape declares `doc` itself and reads its files without it. So each file
+// reached is planned in the variant of the seeds that reach it, `core` or `bare`, and a module's name says which.
+.decl p0_canon(requested: symbol, canonical: symbol)
+p0_canon(c, f) :- loaded(f, c, "rr"), !env("rerail.windows_paths", "1").
+p0_canon(c, f) :- loaded(native, c, "rr"), env("rerail.windows_paths", "1"), f = @replace_all(native, "\\\\", "/").
+// A file's includes, between canonical paths.
+.decl p0_includes(a: symbol, b: symbol)
+p0_includes(a, b) :- p0_resolved(a, _, _, c), p0_canon(c, b), a != b.
+.decl p0_seed_variant(s: symbol, w: symbol)
+p0_seed_variant(t, "core") :- p0_text(t), !p0_t_shape(t).
+p0_seed_variant(t, "bare") :- p0_text(t), p0_t_shape(t).
+p0_seed_variant(f, "core") :- p0_file(f), !p0_file_t_shape(f).
+p0_seed_variant(f, "bare") :- p0_file(f), p0_file_t_shape(f), !p0_core(f).
+// `core.rerail` declares `doc`, but read with itself first is itself: a seed of its own, it is the module the
+// programs that read it have in their scope.
+p0_seed_variant(f, "core") :- p0_file(f), p0_core(f).
+// The files a seed reaches by its includes, and a file seed of the library or the phase programs itself: it is a
+// module of the programs that include it (a store's template plans them all). A program file of the run's own is a
+// program's text, no module (decision 0639 §2).
+.decl p0_seed_reaches(s: symbol, f: symbol)
+p0_seed_reaches(f, f) :- p0_file(f), loaded(_, f, "rr"), p0_lib(l), d = cat(l, "/"), prefix(d, f).
+p0_seed_reaches(f, f) :- p0_file(f), loaded(_, f, "rr"), p0_phase_lib(l), d = cat(l, "/"), prefix(d, f).
+p0_seed_reaches(s, f) :- p0_seed_variant(s, _), p0_resolved(s, _, _, c), p0_canon(c, f).
+p0_seed_reaches(s, b) :- p0_seed_reaches(s, a), p0_includes(a, b).
+.decl p0_variant(w: symbol, f: symbol)
+p0_variant(w, f) :- p0_seed_variant(s, w), p0_seed_reaches(s, f).
+.decl p0_digest(f: symbol, d: symbol)
+p0_digest(f, d) :- p0_variant(_, f), file_digest(f, d).
+.decl p0_core(f: symbol)
+p0_core(f) :- p0_lib(l), c = cat(l, "/core.rerail"), p0_canon(c, f).
+.decl p0_edge(w: symbol, a: symbol, b: symbol)
+p0_edge(w, a, b) :- p0_variant(w, a), p0_includes(a, b), p0_digest(b, _).
+p0_edge("core", a, k) :- p0_variant("core", a), p0_core(k), p0_digest(k, _), a != k.
+.decl p0_reaches(w: symbol, a: symbol, b: symbol)
+p0_reaches(w, a, b) :- p0_edge(w, a, b).
+p0_reaches(w, a, c) :- p0_reaches(w, a, b), p0_edge(w, b, c).
+// A module: a file with the files that reach it and that it reaches. Its name is its variant and its members'
+// digests, in order.
+.decl p0_member(w: symbol, p: symbol, q: symbol)
+p0_member(w, p, p) :- p0_variant(w, p), p0_digest(p, _).
+p0_member(w, p, q) :- p0_reaches(w, p, q), p0_reaches(w, q, p).
+.decl p0_module_of(w: symbol, p: symbol, m: symbol)
+p0_module_of(w, p, m) :- p0_variant(w, p), p0_digest(p, _), j = join d by d sep "+" : { p0_member(w, p, q), p0_digest(q, d) }, m = cat(w, ":", j).
+// Its closure: its own files and every file they reach.
+.decl p0_closure(w: symbol, m: symbol, q: symbol)
+p0_closure(w, m, q) :- p0_module_of(w, p, m), p0_member(w, p, q).
+p0_closure(w, m, q) :- p0_module_of(w, p, m), p0_reaches(w, p, q).
+.decl p0_scope(m: symbol, s: symbol)
+p0_scope(m, s) :- p0_closure(w, m, q), p0_module_of(w, q, s), s != m.
+// Its rank: the files of its closure. A module ranks above every module in its scope.
+.decl p0_module_rank(m: symbol, reached: number)
+p0_module_rank(m, k) :- p0_module_of(w, _, m), k = count : { p0_closure(w, m, _) }.
+// A scope's file by its interface (decision 0639 §4, `core.rerail`'s `file_interface`, the file system's answer): its
+// statements less its rules' bodies and its includes, all a module lowered against it reads of it (T9).
+// Each file of a module's closure as its key names it: its own files by their bytes, its scope's by their interface,
+// so an edit of a rule's body in its scope leaves its key, and its image, as they were.
+.decl p0_key_digest(m: symbol, q: symbol, d: symbol)
+p0_key_digest(m, q, d) :- p0_closure(w, m, q), p0_module_of(w, q, m), p0_digest(q, d).
+p0_key_digest(m, q, d) :- p0_closure(w, m, q), p0_module_of(w, q, s), s != m, file_interface(q, d).
+// Its key: the engine's build, its name, and its closure's digests and edges, each in order. A key reads digests, not
+// other keys, so no recursion runs through an aggregate.
+.decl p0_closure_digests(m: symbol, ds: symbol)
+p0_closure_digests(m, ds) :- p0_module_rank(m, _), ds = join d by d sep "," : { p0_key_digest(m, _, d) }.
+.decl p0_edge_text(m: symbol, e: symbol)
+p0_edge_text(m, e) :- p0_closure(w, m, a), p0_edge(w, a, b), p0_key_digest(m, a, da), p0_key_digest(m, b, db), e = cat(da, ">", db).
+.decl p0_closure_edges(m: symbol, es: symbol)
+p0_closure_edges(m, es) :- p0_module_rank(m, _), es = join e by e sep "," : { p0_edge_text(m, e) }.
+.decl p0_module_key(m: symbol, key: symbol)
+p0_module_key(m, @sha256(cat(b, "|", m, "|", ds, "|", es))) :- env("rerail.build", b), p0_closure_digests(m, ds), p0_closure_edges(m, es).
+
+// Each module's lowering, asked of the engine (decision 0639 §3): its key, its rank, its files by path in its name's
+// order, its scope's keys and its scope's files. The engine answers a wave's requests in rank order, each against the
+// images of its scope, which rank below it: so every module is asked at once, and one pause of the fixpoint answers
+// them all. The answer is the digest of the module's image, kept in the image store under the module's key.
+.decl p0_module_files(m: symbol, fs: symbol)
+p0_module_files(m, fs) :- p0_module_rank(m, _), fs = join f by d sep "\n" : { p0_module_of(_, f, m), p0_digest(f, d) }.
+.decl p0_scope_keys(m: symbol, ks: symbol)
+p0_scope_keys(m, ks) :- p0_module_rank(m, _), ks = join k by k sep "," : { p0_scope(m, s), p0_module_key(s, k) }.
+// The files its scope's modules hold, by path: a file adds no rules or facts to their relations but the `extensible`
+// ones (decision 0263), which the engine checks of the module's files against theirs.
+.decl p0_scope_file(m: symbol, f: symbol, d: symbol)
+p0_scope_file(m, f, d) :- p0_closure(w, m, f), p0_module_of(w, f, s), s != m, p0_digest(f, d).
+.decl p0_scope_files(m: symbol, fs: symbol)
+p0_scope_files(m, fs) :- p0_module_rank(m, _), fs = join f by d sep "\n" : { p0_scope_file(m, f, d) }.
+.decl p0_lower_req(key: symbol, rank: number, files: symbol, scope: symbol, reached: symbol)
+p0_lower_req(k, r, fs, ks, rs) :- p0_module_key(m, k), p0_module_rank(m, r), p0_module_files(m, fs), p0_scope_keys(m, ks), p0_scope_files(m, rs).
+.decl p0_module_lowered(key: symbol, image: symbol)
+.answer p0_lower_req -> p0_module_lowered
+
+.output p0_include, p0_missing, p0_absent, p0_phase, p0_scope, p0_module_rank, p0_module_key, p0_module_lowered

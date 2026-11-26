@@ -2,9 +2,9 @@
 
 Numbered 0497 where it was written.
 
-Status: decided (the user, 2026-11-19: "the automatic semicolon as a question asked at the
-statement's end, like `asi()`, instead of a tier-1 bit corrected afterwards"). Item 2 of the
-lean shape; follows 0492 and 0496.
+Status: superseded by 0565 (rust_stream removed); 0562 (tier 2 Rust from the grammar) (audited 2026-11-23). Decided
+(the user, 2026-11-19: "the automatic semicolon as a question asked at the statement's end, like `asi()`, instead of a
+tier-1 bit corrected afterwards"). Item 2 of the lean shape; follows 0492 and 0496.
 
 ## Intro
 

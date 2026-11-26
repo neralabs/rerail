@@ -38,9 +38,13 @@ const KEY = (value: string): string => `coalesce(json_extract(${value}, '$.claus
 /** The agent was not told: the audit ran in Log mode, or the violation's rule was in Log mode. */
 const LOGGED = "(audit.mode = 'log' OR json_extract(violation.value, '$.mode') = 'log')";
 
-const scopeSql = (repositories: readonly string[] | undefined): string => repositories === undefined
-  ? "1 = 1"
-  : `audit.session_id IN (SELECT session_id FROM sessions WHERE repository_id IN (${repositories.map(id => `'${id}'`).join(", ")}))`;
+/** A repository's audits: its sessions', and its own, which name no session (`AuditOwner`). */
+const scopeSql = (repositories: readonly string[] | undefined): string => {
+  if (repositories === undefined) return "1 = 1";
+  const ids = repositories.map(id => `'${id}'`).join(", ");
+  return `(audit.session_id IN (SELECT session_id FROM sessions WHERE repository_id IN (${ids}))
+    OR (audit.session_id IS NULL AND audit.repository_id IN (${ids})))`;
+};
 
 function oracleActivity(client: Database.Database, since: number, repositories?: readonly string[]): Map<string, RuleActivityTotals> {
   const rows = client.prepare(`
@@ -65,7 +69,7 @@ function oracleActivity(client: Database.Database, since: number, repositories?:
   return new Map(rows.map(({ ruleId, ...totals }) => [ruleId, totals]));
 }
 
-interface HistoryRow { auditId: string; sessionId: string; at: number; ruleId: string | null; payload: string; logged: boolean }
+interface HistoryRow { auditId: string; sessionId: string | null; at: number; ruleId: string | null; payload: string; logged: boolean }
 
 function oracleHistory(client: Database.Database, since: number, repositories?: readonly string[]): HistoryRow[] {
   return (client.prepare(`
@@ -113,6 +117,8 @@ const RULES = ["rule-a", "rule-b", "rule-c", "rule-d"] as const;
 const REPOSITORY_A = "remote:example/a";
 const REPOSITORY_B = "remote:example/b";
 const SESSIONS = [["s1", REPOSITORY_A], ["s2", REPOSITORY_A], ["s3", REPOSITORY_B]] as const;
+/** A checkout of each repository, which owns the audits recorded for it that no session made. */
+const CHECKOUTS = [["/wa", REPOSITORY_A], ["/wb", REPOSITORY_B]] as const;
 
 /** Violations drawn from a small pool, so audits repeat each other and themselves; some carry no rule id. */
 function violations(next: () => number): CodeRuleViolation[] {
@@ -142,9 +148,11 @@ const revisions = (next: () => number) => RULES.filter(() => next() < 0.6).map(r
 /**
  * Audits written every way history gets written: this build's store (start, progress, finish, paged results,
  * interruption, a scan's cumulative progress), plain SQL the way an older Rerail sharing the file writes, and audits
- * re-dated after the fact. Some of the store's are scans (`origin`), which history leaves out.
+ * re-dated after the fact. Some of the store's are scans (`origin`), which history leaves out, and some the repository
+ * owns (`AuditOwner`), run by a session but in no session's history; none with `sessionsOnly`, for a file as a build
+ * before `audits-repository-owner` left it, which could hold none.
  */
-function writeHistory(path: string, client: Database.Database, seed: number): void {
+function writeHistory(path: string, client: Database.Database, seed: number, { sessionsOnly = false } = {}): void {
   const next = random(seed);
   const store = new SqliteAuditStore(path);
   try {
@@ -158,8 +166,10 @@ function writeHistory(path: string, client: Database.Database, seed: number): vo
           .run(`older-${index}`, sessionId, auditMode(next), JSON.stringify(revisions(next)), Math.floor(next() * 10_000), JSON.stringify(violations(next)));
         continue;
       }
+      const repository = !sessionsOnly && next() < 0.3 ? CHECKOUTS[Math.floor(next() * CHECKOUTS.length)]![0] : undefined;
       const auditId = store.start({
-        sessionId, workspaceRoot: "/w", scope: "repository", mode: auditMode(next), origin: next() < 0.2 ? "scan" : "ongoing",
+        sessionId, ...(repository === undefined ? { workspaceRoot: "/w" } : { owner: "repository", workspaceRoot: repository }),
+        scope: "repository", mode: auditMode(next), origin: next() < 0.2 ? "scan" : "ongoing",
         revision: 1, catalogRevision: null, ruleRevisions: revisions(next), paths: [], ruleProvenance: [],
       });
       if (way === 1) {
@@ -200,7 +210,8 @@ function expectMatchesOracle(path: string, client: Database.Database): void {
         expect(rows.map(rowKey).sort()).toEqual(expected.map(rowKey).sort());
         expect(new Set(rows.map(rowKey)).size).toBe(rows.length);
         expect(rows.map(row => row.at)).toEqual(rows.map(row => row.at).sort((a, b) => b - a));
-        expect(store.sessionsWithViolations(since, repositories)).toBe(new Set(expected.map(row => row.sessionId)).size);
+        // The repository's own violations count for no session.
+        expect(store.sessionsWithViolations(since, repositories)).toBe(new Set(expected.flatMap(row => (row.sessionId === null ? [] : [row.sessionId]))).size);
         for (const ruleId of ["rule-a", "rule-d"]) {
           expect(pagedHistory(store, { since, ruleId }, repositories).rows.map(rowKey).sort())
             .toEqual(expected.filter(row => row.ruleId === ruleId).map(rowKey).sort());
@@ -214,7 +225,22 @@ function expectMatchesOracle(path: string, client: Database.Database): void {
   }
 }
 
+/** Records `CHECKOUTS` under their repositories, as a session's first look at them does. */
+function recordCheckouts(client: Database.Database): void {
+  for (const [checkout, repository] of CHECKOUTS) {
+    client.prepare("INSERT OR IGNORE INTO repositories (repository_key, display_name, created_at, updated_at) VALUES (?, ?, 1, 1)").run(repository, repository);
+    client.prepare("INSERT INTO checkouts (checkout_path, repository_key, clone_id, created_at, last_seen_at) VALUES (?, ?, ?, 1, 1)")
+      .run(checkout, repository, `clone-${checkout}`);
+  }
+}
+
 function openSessions(path: string): void {
+  const database = openRerailDatabase(path);
+  try {
+    recordCheckouts(database.$client);
+  } finally {
+    database.$client.close();
+  }
   const sessions = new SqliteSessionStore(path);
   try {
     for (const [sessionId, repository] of SESSIONS) sessions.openSession({ host: "codex", sessionId, cwd: "/w" }, 1, repository);
@@ -239,7 +265,10 @@ describe("derived audit history", () => {
       expectMatchesOracle(path, database.$client);
       for (const table of ["audit_violations", "rule_violation_rollup", "audit_rule_set_uses"]) {
         expect(database.$client.prepare(`SELECT count(*) AS n FROM ${table} WHERE session_id IN ('s1', 's2')`).get(), table).toEqual({ n: 0 });
+        expect(database.$client.prepare(`SELECT count(*) AS n FROM ${table} WHERE session_id IS NULL AND repository_id = ?`).get(REPOSITORY_A), table).toEqual({ n: 0 });
       }
+      // Repository B's own audits stay, with what was derived from them.
+      expect((database.$client.prepare("SELECT count(*) AS n FROM audits WHERE session_id IS NULL AND repository_id = ?").get(REPOSITORY_B) as { n: number }).n).toBeGreaterThan(0);
     } finally {
       database.$client.close();
     }
@@ -346,7 +375,7 @@ describe("derived audit history", () => {
         if (!sql.includes("NEW.mode = 'log' OR ")) continue;
         client.exec(`DROP TRIGGER \`${name}\`; ${sql.replaceAll("NEW.mode = 'log' OR ", "")}`);
       }
-      writeHistory(path, client, 7);
+      writeHistory(path, client, 7, { sessionsOnly: true });
       client.prepare("DELETE FROM schema_migrations WHERE id = 'audit-violations-logged-by-audit-mode'").run();
       // The older triggers derived some violations of Log-mode audits as steered: the case to repair.
       expect(client.prepare(`SELECT count(*) AS n FROM audit_violations violation JOIN audits audit USING (audit_id)
@@ -424,7 +453,7 @@ describe("derived audit history", () => {
         client.exec(`DROP TRIGGER \`${name}\`; ${sql.replaceAll(/ AND (NEW|OLD)\.origin = 'ongoing'/gu, "").replaceAll(/WHERE (NEW|OLD)\.origin = 'ongoing'\s+AND /gu, "WHERE ")}`);
       }
       expect(triggers()).not.toEqual(current);
-      writeHistory(path, client, 8);
+      writeHistory(path, client, 8, { sessionsOnly: true });
       client.prepare("UPDATE audits SET origin = 'ongoing'").run();
       // Scans it recorded: two by `rerail scan --session` and the first repository audit, whichever held violations.
       const withViolations = client.prepare("SELECT audit_id FROM audits WHERE json_array_length(violations_json) > 0 ORDER BY audit_id LIMIT 3")
@@ -495,6 +524,8 @@ describe("derived audit history", () => {
       expect(database.$client.prepare("SELECT audit_id FROM audits WHERE origin = 'scan' ORDER BY audit_id").pluck().all())
         .toEqual(["before-0", "before-3", "before-4"]);
       expectMatchesOracle(path, database.$client);
+      // Upgraded, the file takes audits the repository owns too.
+      recordCheckouts(database.$client);
       writeHistory(path, database.$client, 4);
       expectMatchesOracle(path, database.$client);
     } finally {

@@ -2,6 +2,12 @@
 //! 0440 steps 3 and 4): a library compiled at run time from UKL source by NVRTC, its functions with their arguments,
 //! a queue of launches, copies and fills on a stream, its events, and buffers.
 //!
+//! **HIP** (AMD's GPUs, decision 0440 "HIP"): the same runtime over HIP's driver calls (`amdhip64`) and hiprtc, which
+//! are CUDA's driver API and NVRTC call for call, with the same signatures and, for every constant read here but the
+//! device attributes', the same values. `Vendor` is which the process opened: CUDA's driver where there is one, else
+//! HIP's (`RERAIL_GPU=hip` asks for HIP). The few calls whose shapes differ are their own entries (`Api`), and UKL
+//! preprocesses the kernels for HIP's language (`rerail_ukl::Backend::Hip`).
+//!
 //! Copyright (c) 2026 Jeremy Barnes. This file is part of MLDB's forest as carried in Rerail. Apache-2.0 (see the
 //! LICENSE at `forest/src/mldb/`).
 //!
@@ -31,8 +37,28 @@ type CUresult = i32;
 type Ptr = *mut c_void;
 type DevPtr = u64;
 
-/// The entry points used, from `libcuda` and `libnvrtc`.
+/// Whose driver the process opened.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Vendor {
+    /// NVIDIA's: `libcuda` and NVRTC.
+    Cuda,
+    /// AMD's: `amdhip64` and hiprtc.
+    Hip,
+}
+
+impl Vendor {
+    pub fn name(self) -> &'static str {
+        match self {
+            Vendor::Cuda => "CUDA",
+            Vendor::Hip => "HIP",
+        }
+    }
+}
+
+/// The entry points used, from `libcuda` and `libnvrtc`, or HIP's of the same signatures under CUDA's names (HIP's
+/// names beside each in `api`).
 struct Api {
+    vendor: Vendor,
     cu_init: unsafe extern "C" fn(u32) -> CUresult,
     cu_device_get: unsafe extern "C" fn(*mut i32, i32) -> CUresult,
     cu_device_get_attribute: unsafe extern "C" fn(*mut i32, i32, i32) -> CUresult,
@@ -43,28 +69,28 @@ struct Api {
     cu_mem_host_register: unsafe extern "C" fn(Ptr, usize, u32) -> CUresult,
     cu_mem_host_unregister: unsafe extern "C" fn(Ptr) -> CUresult,
     cu_module_load_data: unsafe extern "C" fn(*mut Ptr, *const c_void) -> CUresult,
-    cu_link_create: unsafe extern "C" fn(u32, *mut i32, *mut Ptr, *mut Ptr) -> CUresult,
-    cu_link_add_data: unsafe extern "C" fn(Ptr, i32, *mut c_void, usize, *const c_char, u32, *mut i32, *mut Ptr) -> CUresult,
-    cu_link_complete: unsafe extern "C" fn(Ptr, *mut Ptr, *mut usize) -> CUresult,
-    cu_link_destroy: unsafe extern "C" fn(Ptr) -> CUresult,
     cu_module_get_function: unsafe extern "C" fn(*mut Ptr, Ptr, *const c_char) -> CUresult,
     cu_module_get_global: unsafe extern "C" fn(*mut DevPtr, *mut usize, Ptr, *const c_char) -> CUresult,
     cu_memcpy_dtoh: unsafe extern "C" fn(*mut c_void, DevPtr, usize) -> CUresult,
     cu_memcpy_async: unsafe extern "C" fn(DevPtr, DevPtr, usize, Ptr) -> CUresult,
-    cu_memset_d8_async: unsafe extern "C" fn(DevPtr, u8, usize, Ptr) -> CUresult,
+    // The byte is CUDA's `unsigned char`, HIP's `int`: passed as a 32-bit register on both.
+    cu_memset_d8_async: unsafe extern "C" fn(DevPtr, u32, usize, Ptr) -> CUresult,
     cu_launch_kernel: unsafe extern "C" fn(Ptr, u32, u32, u32, u32, u32, u32, u32, Ptr, *mut Ptr, *mut Ptr) -> CUresult,
     cu_stream_create: unsafe extern "C" fn(*mut Ptr, u32) -> CUresult,
     cu_stream_synchronize: unsafe extern "C" fn(Ptr) -> CUresult,
-    cu_stream_wait_value64: unsafe extern "C" fn(Ptr, DevPtr, u64, u32) -> CUresult,
+    cu_stream_wait_value64: Option<unsafe extern "C" fn(Ptr, DevPtr, u64, u32) -> CUresult>,
+    /// HIP's: a pointer, and a mask of the word's bits compared.
+    hip_stream_wait_value64: Option<unsafe extern "C" fn(Ptr, Ptr, u64, u32, u64) -> CUresult>,
     cu_event_create: unsafe extern "C" fn(*mut Ptr, u32) -> CUresult,
     cu_event_record: unsafe extern "C" fn(Ptr, Ptr) -> CUresult,
     cu_event_synchronize: unsafe extern "C" fn(Ptr) -> CUresult,
     cu_event_query: unsafe extern "C" fn(Ptr) -> CUresult,
     cu_event_elapsed_time: unsafe extern "C" fn(*mut f32, Ptr, Ptr) -> CUresult,
     cu_event_destroy: unsafe extern "C" fn(Ptr) -> CUresult,
-    cu_func_set_attribute: unsafe extern "C" fn(Ptr, i32, i32) -> CUresult,
+    /// CUDA's opt-in to more dynamic shared memory than the default; HIP has none (a block may take all its LDS).
+    cu_func_set_attribute: Option<unsafe extern "C" fn(Ptr, i32, i32) -> CUresult>,
     cu_func_get_attribute: unsafe extern "C" fn(*mut i32, i32, Ptr) -> CUresult,
-    cu_occupancy_max_active_blocks_per_multiprocessor: unsafe extern "C" fn(*mut i32, Ptr, i32, usize) -> CUresult,
+    /// The blocks of a kernel a multiprocessor holds at once, at a block size and dynamic shared memory.
     cu_get_error_string: unsafe extern "C" fn(CUresult, *mut *const c_char) -> CUresult,
     nvrtc_create_program: unsafe extern "C" fn(*mut Ptr, *const c_char, *const c_char, i32, *const *const c_char, *const *const c_char) -> i32,
     nvrtc_compile_program: unsafe extern "C" fn(Ptr, i32, *const *const c_char) -> i32,
@@ -72,26 +98,329 @@ struct Api {
     nvrtc_get_program_log: unsafe extern "C" fn(Ptr, *mut c_char) -> i32,
     nvrtc_get_cubin_size: unsafe extern "C" fn(Ptr, *mut usize) -> i32,
     nvrtc_get_cubin: unsafe extern "C" fn(Ptr, *mut c_char) -> i32,
+    /// NVRTC's PTX of a program compiled for a virtual architecture (`native_code`); HIP's code object on HIP.
+    nvrtc_get_ptx_size: unsafe extern "C" fn(Ptr, *mut usize) -> i32,
+    nvrtc_get_ptx: unsafe extern "C" fn(Ptr, *mut c_char) -> i32,
     nvrtc_destroy_program: unsafe extern "C" fn(*mut Ptr) -> i32,
     nvrtc_version: unsafe extern "C" fn(*mut i32, *mut i32) -> i32,
     cu_driver_get_version: unsafe extern "C" fn(*mut i32) -> CUresult,
+    /// HIP's device properties (`hipGetDevicePropertiesR0600`), for the architecture's name (`gcnArchName`).
+    hip_get_device_properties: Option<unsafe extern "C" fn(*mut u8, i32) -> CUresult>,
+    /// The architectures NVRTC compiles for (`nvrtcGetNumSupportedArchs`, `nvrtcGetSupportedArchs`, CUDA 11.2 on):
+    /// a device it does not compile for is told which toolkit it needs (`needs`). None on HIP.
+    nvrtc_supported_archs: Option<(unsafe extern "C" fn(*mut i32) -> i32, unsafe extern "C" fn(*mut i32) -> i32)>,
 }
+
+/// What this machine lacks that the user must install for GPU support (decision 0645: Rerail ships no GPU
+/// compiler): a GPU driver without its runtime compiler, or a compiler that does not compile for the GPU. Said
+/// once, where the process then has no GPU (`rerail_device::shared`); a machine with no GPU driver says nothing.
+static NEEDS: OnceLock<String> = OnceLock::new();
+
+/// What the user must install for GPU support, when the process found a GPU it could not use (`NEEDS`).
+pub fn needs() -> Option<&'static str> {
+    NEEDS.get().map(String::as_str)
+}
+
+/// The compile's options for `target` (`sm_<N>`, `compute_<N>`, a `gfx` target): the device's compile and a build's
+/// for a target (`compile_offline`) take the same, so a kernel shipped for the device's target is the one its own
+/// compile makes.
+fn options_for(vendor: Vendor, target: &str) -> Vec<String> {
+    match vendor {
+        Vendor::Cuda => vec![format!("--gpu-architecture={target}"), "-std=c++20".into(), "-default-device".into()],
+        // hiprtc's functions are host functions unless marked; UKL's HIP shim marks every one a device's
+        // (`force_cuda_host_device`), as NVRTC's `-default-device` does.
+        Vendor::Hip => vec![format!("--offload-arch={target}"), "-std=c++20".into(), "-O3".into()],
+    }
+}
+
+/// A runtime compiler alone (NVRTC or hiprtc), without the driver or a GPU: what a build compiles ahead of time
+/// with (decision 0645 step 3).
+struct Rtc {
+    _lib: crate::os::Lib,
+    name: &'static str,
+    create: unsafe extern "C" fn(*mut Ptr, *const c_char, *const c_char, i32, *const *const c_char, *const *const c_char) -> i32,
+    compile: unsafe extern "C" fn(Ptr, i32, *const *const c_char) -> i32,
+    log_size: unsafe extern "C" fn(Ptr, *mut usize) -> i32,
+    log: unsafe extern "C" fn(Ptr, *mut c_char) -> i32,
+    /// SASS (`nvrtcGetCUBIN`), PTX, or hiprtc's code object.
+    code_size: unsafe extern "C" fn(Ptr, *mut usize) -> i32,
+    code: unsafe extern "C" fn(Ptr, *mut c_char) -> i32,
+    destroy: unsafe extern "C" fn(*mut Ptr) -> i32,
+    version: unsafe extern "C" fn(*mut i32, *mut i32) -> i32,
+    archs: Option<(unsafe extern "C" fn(*mut i32) -> i32, unsafe extern "C" fn(*mut i32) -> i32)>,
+}
+
+impl Rtc {
+    /// The compiler in the library at the first of `names` that opens, its entry points for `form` (`cubin`, `ptx`,
+    /// `hsaco`).
+    fn open(names: &[String], form: &str) -> Option<Rtc> {
+        use crate::os::{Lib, Scope};
+        let lib = Lib::open(names, Scope::Local)?;
+        let f = |n: &str| -> Option<*mut c_void> { Some(lib.sym(n)).filter(|p| !p.is_null()) };
+        let hip = f("hiprtcCreateProgram").is_some();
+        let p = if hip { "hiprtc" } else { "nvrtc" };
+        let g = |n: &str| f(&format!("{p}{n}"));
+        let (size, code) = match form {
+            "ptx" => ("GetPTXSize", "GetPTX"),
+            "cubin" => ("GetCUBINSize", "GetCUBIN"),
+            _ => ("GetCodeSize", "GetCode"),
+        };
+        Some(Rtc {
+            name: if hip { "hiprtc" } else { "NVRTC" },
+            create: sym_as(g("CreateProgram")?),
+            compile: sym_as(g("CompileProgram")?),
+            log_size: sym_as(g("GetProgramLogSize")?),
+            log: sym_as(g("GetProgramLog")?),
+            code_size: sym_as(g(size)?),
+            code: sym_as(g(code)?),
+            destroy: sym_as(g("DestroyProgram")?),
+            version: sym_as(g("Version")?),
+            archs: g("GetNumSupportedArchs").zip(g("GetSupportedArchs")).map(|(n, l)| (sym_as(n), sym_as(l))),
+            _lib: lib,
+        })
+    }
+
+    /// The architectures the compiler lists (NVRTC's; hiprtc lists none).
+    fn archs(&self) -> Option<Vec<i32>> {
+        let (count, list) = self.archs?;
+        let mut n = 0;
+        if unsafe { count(&mut n) } != 0 || n <= 0 {
+            return None;
+        }
+        let mut v = vec![0i32; n as usize];
+        (unsafe { list(v.as_mut_ptr()) } == 0).then_some(v)
+    }
+
+    fn version(&self) -> (i32, i32) {
+        let (mut major, mut minor) = (0, 0);
+        unsafe { (self.version)(&mut major, &mut minor) };
+        (major, minor)
+    }
+
+    fn compile(&self, options: &[String], source: &str, name: &str) -> Result<Vec<u8>, String> {
+        let src = CString::new(source).map_err(|e| e.to_string())?;
+        let cname = CString::new(name).map_err(|e| e.to_string())?;
+        let opts: Vec<CString> = options.iter().map(|o| CString::new(o.as_str()).unwrap()).collect();
+        let ptrs: Vec<*const c_char> = opts.iter().map(|o| o.as_ptr()).collect();
+        let mut prog = std::ptr::null_mut();
+        unsafe {
+            if (self.create)(&mut prog, src.as_ptr(), cname.as_ptr(), 0, std::ptr::null(), std::ptr::null()) != 0 {
+                return Err(format!("{}'s program creation failed", self.name));
+            }
+            let r = (self.compile)(prog, ptrs.len() as i32, ptrs.as_ptr());
+            if r != 0 {
+                let mut n = 0;
+                (self.log_size)(prog, &mut n);
+                let mut log = vec![0u8; n.max(1)];
+                (self.log)(prog, log.as_mut_ptr().cast());
+                (self.destroy)(&mut prog);
+                let log = String::from_utf8_lossy(&log);
+                let errors: Vec<&str> = log.lines().filter(|l| l.contains("error")).take(20).collect();
+                return Err(format!("{} compiling {name} ({}): {}", self.name, options.join(" "), errors.join("\n")));
+            }
+            let mut n = 0;
+            (self.code_size)(prog, &mut n);
+            let mut code = vec![0u8; n];
+            (self.code)(prog, code.as_mut_ptr().cast());
+            (self.destroy)(&mut prog);
+            Ok(code)
+        }
+    }
+}
+
+/// Compiles `source` (prepared for `target`) ahead of time, without a GPU (decision 0645 step 3): `sm_<N>`'s SASS
+/// and `compute_<N>`'s PTX by NVRTC, a `gfx` target's code object by hiprtc, with the options the device's own
+/// compile takes (`options_for`).
+///
+/// NVRTC is the newest that compiles for the architecture, of the toolkits in `RERAIL_SHIP_CUDA_HOMES` (a path
+/// list: no one toolkit compiles for every architecture from sm_70 to the newest, so a release names a 12.x one
+/// beside the newest) and `CUDA_HOME`'s and the system's.
+pub fn compile_offline(target: &str, source: &str, name: &str) -> Result<Vec<u8>, String> {
+    if target.starts_with("gfx") {
+        let rtc = Rtc::open(&hip_library_names().1, "hsaco").ok_or("no hiprtc (ROCm, or the HIP SDK on Windows): a build ships AMD's targets with it")?;
+        return rtc.compile(&options_for(Vendor::Hip, target), source, name);
+    }
+    let form = if target.starts_with("compute_") { "ptx" } else { "cubin" };
+    let sm: i32 = target.trim_start_matches("sm_").trim_start_matches("compute_").parse().map_err(|_| format!("{target}: no CUDA target"))?;
+    // A toolkit's libraries: Windows' `bin`; Linux's `lib64`, or `lib` (NVIDIA's NVRTC wheel, `nvidia-cuda-nvrtc-cu12`);
+    // or the directory holding them, named itself. Not Windows' `.alt.` build (the wheel's `nvrtc64_120_0.alt.dll`),
+    // whose builtins library the wheel does not hold.
+    let (sep, libs): (char, &[&str]) = if cfg!(windows) { (';', &["bin", "."]) } else { (':', &["lib64", "lib", "."]) };
+    let homes: Vec<String> = std::env::var("RERAIL_SHIP_CUDA_HOMES").unwrap_or_default().split(sep).filter(|h| !h.is_empty()).map(str::to_owned).collect();
+    let mut candidates: Vec<Vec<String>> = homes
+        .iter()
+        .map(|h| {
+            libs.iter()
+                .flat_map(|lib| std::fs::read_dir(format!("{h}/{lib}")))
+                .flatten()
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(if cfg!(windows) { "nvrtc64_" } else { "libnvrtc.so" }) && !n.contains("builtins") && !n.contains(".alt.")))
+                .map(|p| p.display().to_string())
+                .collect()
+        })
+        .collect();
+    candidates.push(cuda_library_names().1);
+    // NVRTC loads its builtins library (`nvrtc-builtins64_129.dll`) by name when it compiles, which Windows finds on
+    // `PATH`: the CUDA Toolkit's installer puts its `bin` there, and a build's toolkit (a wheel's) is put there here.
+    #[cfg(windows)]
+    for h in &homes {
+        let path = std::env::var("PATH").unwrap_or_default();
+        if !path.split(';').any(|p| p.eq_ignore_ascii_case(h)) {
+            // SAFETY: Windows' environment calls are thread-safe (`SetEnvironmentVariableW`, behind std's lock).
+            unsafe { std::env::set_var("PATH", format!("{h};{path}")) };
+        }
+    }
+    // The newest that compiles for the architecture.
+    let mut tried = Vec::new();
+    let mut best: Option<Rtc> = None;
+    for names in candidates {
+        let Some(rtc) = Rtc::open(&names, form) else { continue };
+        let (major, minor) = rtc.version();
+        if rtc.archs().is_some_and(|a| !a.contains(&sm)) {
+            tried.push(format!("NVRTC {major}.{minor}"));
+        } else if best.as_ref().is_none_or(|b| b.version() < (major, minor)) {
+            best = Some(rtc);
+        }
+    }
+    if let Some(rtc) = best {
+        return rtc.compile(&options_for(Vendor::Cuda, target), source, name);
+    }
+    Err(if tried.is_empty() {
+        format!("{target}: no NVRTC (the CUDA Toolkit): a build ships CUDA's targets with it")
+    } else {
+        format!("{target}: no NVRTC found compiles for it ({}): name a CUDA Toolkit that does in RERAIL_SHIP_CUDA_HOMES (12.x for sm_70)", tried.join(", "))
+    })
+}
+
+/// What the user must install where NVRTC (its version `nvrtc`) does not compile for the GPU's `sm`, among the
+/// architectures it lists (`archs`): an older toolkit for a GPU older than it compiles for (CUDA 13 dropped sm_70,
+/// the V100), a newer one for a newer GPU. None where it compiles for it.
+fn needs_for_arch(sm: u32, nvrtc: (i32, i32), archs: &[i32]) -> Option<String> {
+    if archs.contains(&(sm as i32)) || archs.is_empty() {
+        return None;
+    }
+    let (lo, hi) = (archs.iter().min().copied().unwrap_or(0), archs.iter().max().copied().unwrap_or(0));
+    let which = if (sm as i32) < lo { "an older CUDA Toolkit that still compiles for it (12.x for sm_70, the Tesla V100)" } else { "a newer CUDA Toolkit" };
+    Some(format!(
+        "This machine's NVIDIA GPU is sm_{sm}, and its CUDA Toolkit's NVRTC ({}.{}) compiles for sm_{lo} to sm_{hi}, not \
+         for it; Rerail runs on the CPU until it can compile for the GPU. Install {which}: {CUDA_TOOLKIT}, and set {} to it.",
+        nvrtc.0,
+        nvrtc.1,
+        if cfg!(windows) { "CUDA_PATH" } else { "CUDA_HOME" }
+    ))
+}
+
+/// Whether HIP's runtime compiler compiles for `arch`: a kernel of nothing, compiled as every kernel is
+/// (`options_for`); its log where it does not. The answer is kept in the store by hiprtc's version and the
+/// architecture, so a machine compiles it once.
+fn hip_compiles_for(a: &Api, arch: &str) -> Result<(), String> {
+    let (mut major, mut minor) = (0, 0);
+    unsafe { (a.nvrtc_version)(&mut major, &mut minor) };
+    let key = crate::store::key(&[b"hip arch probe", format!("{major}.{minor}").as_bytes(), arch.as_bytes()]);
+    if crate::store::load("hip", &key, "probe").is_some_and(|b| b == b"ok") {
+        return Ok(());
+    }
+    let src = CString::new("extern \"C\" __global__ void rerail_arch_probe(int* p) { if (p) *p = 0; }\n").unwrap();
+    let name = CString::new("rerail_arch_probe.hip").unwrap();
+    let opts: Vec<CString> = options_for(Vendor::Hip, arch).into_iter().map(|o| CString::new(o).unwrap()).collect();
+    let ptrs: Vec<*const c_char> = opts.iter().map(|o| o.as_ptr()).collect();
+    let mut prog = std::ptr::null_mut();
+    unsafe {
+        if (a.nvrtc_create_program)(&mut prog, src.as_ptr(), name.as_ptr(), 0, std::ptr::null(), std::ptr::null()) != 0 {
+            return Err("hiprtc's program creation failed".to_owned());
+        }
+        let r = (a.nvrtc_compile_program)(prog, ptrs.len() as i32, ptrs.as_ptr());
+        let mut n = 0;
+        (a.nvrtc_get_program_log_size)(prog, &mut n);
+        let mut log = vec![0u8; n.max(1)];
+        (a.nvrtc_get_program_log)(prog, log.as_mut_ptr().cast());
+        (a.nvrtc_destroy_program)(&mut prog);
+        if r != 0 {
+            let log = String::from_utf8_lossy(&log);
+            let log = log.trim_matches(|c: char| c == '\0' || c.is_whitespace());
+            let line = log.lines().find(|l| l.contains("error")).unwrap_or(log).trim();
+            // hiprtc's results (hiprtc.h): an architecture it does not know is an invalid option, with no log.
+            let code = match r {
+                5 => "HIPRTC_ERROR_INVALID_OPTION".to_owned(),
+                6 => "HIPRTC_ERROR_COMPILATION".to_owned(),
+                n => format!("hiprtc result {n}"),
+            };
+            return Err(if line.is_empty() { code } else { format!("{code}: {line}") });
+        }
+    }
+    crate::store::save("hip", &key, "probe", b"ok");
+    Ok(())
+}
+
+/// What the user must install where hiprtc (its version `hiprtc`) does not compile for the AMD GPU `arch` (its
+/// first error, `error`): a ROCm, or on Windows a HIP SDK, that supports the GPU.
+fn needs_for_hip(arch: &str, hiprtc: (i32, i32), error: &str) -> String {
+    let (what, url, var) = if cfg!(windows) {
+        ("AMD's HIP SDK", "https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html", "HIP_PATH")
+    } else {
+        ("ROCm", "https://rocm.docs.amd.com/projects/install-on-linux/en/latest/reference/system-requirements.html", "ROCM_PATH")
+    };
+    format!(
+        "This machine's AMD GPU is {arch}, and its hiprtc ({}.{}, {what}'s compiler) does not compile for it ({}); \
+         Rerail runs on the CPU until it can. Install {what} in a version that supports {arch}: {url}. Installed \
+         elsewhere, set {var} to it.",
+        hiprtc.0,
+        hiprtc.1,
+        error.trim()
+    )
+}
+
+/// Where to get the CUDA Toolkit, in each message that asks for it.
+const CUDA_TOOLKIT: &str = "https://developer.nvidia.com/cuda-toolkit-archive";
 
 unsafe impl Send for Api {}
 unsafe impl Sync for Api {}
 
-// Driver API constants (cuda.h).
+// Driver API constants (cuda.h); HIP's are the same (hip_runtime_api.h, measured on HIP 7.2), but its device
+// attributes' (`Attributes`).
 const CU_MEMHOSTALLOC_PORTABLE: u32 = 0x01;
 const CU_MEMHOSTALLOC_DEVICEMAP: u32 = 0x02;
 const CU_STREAM_NON_BLOCKING: u32 = 0x1;
 const CU_STREAM_WAIT_VALUE_GEQ: u32 = 0x0;
 const CU_ERROR_NOT_READY: CUresult = 600;
-const CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT: i32 = 16;
-const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR: i32 = 75;
-const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR: i32 = 76;
-const CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN: i32 = 97;
-const CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES: i32 = 100;
-const CU_DEVICE_ATTRIBUTE_CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM: i32 = 91;
+
+/// The device attributes read, by number: each vendor's enumeration's.
+struct Attributes {
+    capability_major: i32,
+    capability_minor: i32,
+    max_shared_per_block_optin: i32,
+    pageable_uses_host_page_tables: i32,
+    host_pointer_for_registered_mem: i32,
+    warp_size: i32,
+    multiprocessors: i32,
+}
+
+const CUDA_ATTRIBUTES: Attributes = Attributes {
+    capability_major: 75,
+    capability_minor: 76,
+    max_shared_per_block_optin: 97,
+    pageable_uses_host_page_tables: 100,
+    host_pointer_for_registered_mem: 91,
+    warp_size: 10,
+    multiprocessors: 16,
+};
+
+const HIP_ATTRIBUTES: Attributes = Attributes {
+    capability_major: 23,
+    capability_minor: 61,
+    max_shared_per_block_optin: 75,
+    pageable_uses_host_page_tables: 66,
+    host_pointer_for_registered_mem: 4,
+    warp_size: 87,
+    // A Radeon's are its work-group processors (6 on a 680M).
+    multiprocessors: 63,
+};
+
+/// `hipDeviceProp_tR0600`: its size, and where its architecture's name lies (`gcnArchName`, 256 bytes), measured
+/// against HIP 7.2's header. The buffer the call fills is larger, for a later revision's tail.
+const HIP_PROPS_BYTES: usize = 4096;
+const HIP_PROPS_ARCH_NAME: usize = 1160;
 const CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED: CUresult = 712;
 const CU_MEMHOSTREGISTER_PORTABLE: u32 = 0x01;
 const CU_MEMHOSTREGISTER_DEVICEMAP: u32 = 0x02;
@@ -99,20 +428,61 @@ const CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES: i32 = 1;
 const CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES: i32 = 8;
 
 /// The driver's library, and NVRTC's in the system's search and in the toolkit's (`CUDA_HOME`, Windows' `CUDA_PATH`).
-fn library_names() -> (&'static [&'static str], Vec<String>) {
+fn cuda_library_names() -> (Vec<String>, Vec<String>) {
+    let s = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     if cfg!(windows) {
         let nvrtc = ["nvrtc64_130_0.dll", "nvrtc64_120_0.dll", "nvrtc64_112_0.dll"];
-        let mut names: Vec<String> = nvrtc.iter().map(|s| s.to_string()).collect();
-        if let Ok(home) = std::env::var("CUDA_PATH") {
-            names.extend(nvrtc.iter().map(|s| format!("{home}\\bin\\{s}")));
-        }
-        (&["nvcuda.dll"], names)
+        // The toolkit the user named first (`CUDA_PATH`: the one `needs` asks for), then the system's search.
+        let mut names: Vec<String> = std::env::var("CUDA_PATH").into_iter().flat_map(|home| nvrtc.iter().map(move |s| format!("{home}\\bin\\{s}"))).collect();
+        names.extend(s(&nvrtc));
+        (s(&["nvcuda.dll"]), names)
     } else {
-        let home = std::env::var("CUDA_HOME").unwrap_or_else(|_| "/usr/local/cuda".into());
         let nvrtc = ["libnvrtc.so", "libnvrtc.so.13", "libnvrtc.so.12"];
-        let mut names: Vec<String> = nvrtc.iter().map(|s| s.to_string()).collect();
-        names.extend(nvrtc.iter().map(|s| format!("{home}/lib64/{s}")));
-        (&["libcuda.so.1", "libcuda.so"], names)
+        // The toolkit the user named first (`CUDA_HOME`: the one `needs` asks for), then the system's search, then
+        // the toolkit's default place.
+        let home = std::env::var("CUDA_HOME").ok();
+        let mut names: Vec<String> = home.iter().flat_map(|h| nvrtc.iter().map(move |s| format!("{h}/lib64/{s}"))).collect();
+        names.extend(s(&nvrtc));
+        if home.is_none() {
+            names.extend(nvrtc.iter().map(|s| format!("/usr/local/cuda/lib64/{s}")));
+        }
+        (s(&["libcuda.so.1", "libcuda.so"]), names)
+    }
+}
+
+/// HIP's library and hiprtc's: in the system's search (the driver installs `amdhip64`), and in the SDK's (`HIP_PATH`,
+/// else each version under ROCm's install, newest first; on Linux `ROCM_PATH`, else `/opt/rocm`). hiprtc's Windows
+/// name carries its version (`hiprtc0702.dll`): each in the SDK's directory is a candidate.
+fn hip_library_names() -> (Vec<String>, Vec<String>) {
+    if cfg!(windows) {
+        let mut dirs: Vec<String> = std::env::var("HIP_PATH").into_iter().map(|h| format!("{}\\bin", h.trim_end_matches('\\'))).collect();
+        let root = "C:\\Program Files\\AMD\\ROCm";
+        let mut versions: Vec<String> = std::fs::read_dir(root).into_iter().flatten().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        versions.sort_by(|a, b| b.cmp(a));
+        dirs.extend(versions.iter().map(|v| format!("{root}\\{v}\\bin")));
+        let mut hip: Vec<String> = ["amdhip64_7.dll", "amdhip64_6.dll"].iter().map(|s| s.to_string()).collect();
+        let mut rtc = Vec::new();
+        for d in &dirs {
+            hip.extend(["amdhip64_7.dll", "amdhip64_6.dll"].iter().map(|s| format!("{d}\\{s}")));
+            let mut found: Vec<String> = std::fs::read_dir(d)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.starts_with("hiprtc0") && n.ends_with(".dll"))
+                .collect();
+            found.sort_by(|a, b| b.cmp(a));
+            rtc.extend(found.into_iter().map(|n| format!("{d}\\{n}")));
+        }
+        (hip, rtc)
+    } else {
+        let home = std::env::var("ROCM_PATH").unwrap_or_else(|_| "/opt/rocm".into());
+        let with = |names: &[&str]| -> Vec<String> {
+            let mut v: Vec<String> = names.iter().map(|s| s.to_string()).collect();
+            v.extend(names.iter().map(|s| format!("{home}/lib/{s}")));
+            v
+        };
+        (with(&["libamdhip64.so", "libamdhip64.so.7", "libamdhip64.so.6"]), with(&["libhiprtc.so", "libhiprtc.so.7", "libhiprtc.so.6"]))
     }
 }
 
@@ -123,74 +493,183 @@ fn sym_as<F>(p: *mut c_void) -> F {
     unsafe { std::mem::transmute_copy(&p) }
 }
 
-/// The driver and NVRTC, opened once; `Err` says what is missing.
+/// The hardware queues HIP's runtime is asked for (`GPU_MAX_HW_QUEUES`, 4 by default): as CUDA's connections
+/// (`MAX_CONNECTIONS`), enough that the waiting root's stream holds back no other's.
+const HIP_HW_QUEUES: usize = 8;
+
+static API: OnceLock<Result<Api, String>> = OnceLock::new();
+
+/// Whose driver the process opened, once it has (without opening one).
+pub fn opened_vendor() -> Option<Vendor> {
+    API.get().and_then(|a| a.as_ref().ok()).map(|a| a.vendor)
+}
+
+/// The driver and its runtime compiler, opened once: CUDA's, else HIP's (HIP's alone where `RERAIL_GPU=hip` asks for
+/// it); `Err` says what is missing.
 fn api() -> Result<&'static Api, String> {
-    static API: OnceLock<Result<Api, String>> = OnceLock::new();
     API.get_or_init(|| {
-        // The hardware queues the driver maps streams onto, round-robin in the order they are made: one for each of
-        // the process's streams (a root's each, `CudaQueueRoot`), so no two share one.
-        crate::os::nvidia_hardware_queues(MAX_CONNECTIONS);
-        use crate::os::{Lib, Scope};
-        let (driver, nvrtc_names) = library_names();
-        let cuda = Lib::open(driver, Scope::Global).ok_or_else(|| format!("no CUDA driver ({})", driver.join(", ")))?;
-        let nvrtc = Lib::open(&nvrtc_names, Scope::Global).ok_or_else(|| format!("no NVRTC ({})", nvrtc_names.join(", ")))?;
-        macro_rules! sym {
-            ($lib:expr, $($name:literal)|+) => {{
-                let mut p: *mut c_void = std::ptr::null_mut();
-                $( if p.is_null() { p = $lib.sym($name); } )+
-                if p.is_null() {
-                    return Err(format!("{} not found", [$($name),+].join(" or ")));
-                }
-                sym_as(p)
-            }};
+        if std::env::var("RERAIL_GPU").is_ok_and(|v| v.eq_ignore_ascii_case("hip")) {
+            return hip_api();
         }
-        Ok(Api {
-            cu_init: sym!(cuda, "cuInit"),
-            cu_device_get: sym!(cuda, "cuDeviceGet"),
-            cu_device_get_attribute: sym!(cuda, "cuDeviceGetAttribute"),
-            cu_device_primary_ctx_retain: sym!(cuda, "cuDevicePrimaryCtxRetain"),
-            cu_ctx_set_current: sym!(cuda, "cuCtxSetCurrent"),
-            cu_mem_host_alloc: sym!(cuda, "cuMemHostAlloc"),
-            cu_mem_host_get_device_pointer: sym!(cuda, "cuMemHostGetDevicePointer_v2"),
-            cu_mem_host_register: sym!(cuda, "cuMemHostRegister_v2" | "cuMemHostRegister"),
-            cu_mem_host_unregister: sym!(cuda, "cuMemHostUnregister"),
-            cu_module_load_data: sym!(cuda, "cuModuleLoadData"),
-            cu_link_create: sym!(cuda, "cuLinkCreate_v2"),
-            cu_link_add_data: sym!(cuda, "cuLinkAddData_v2"),
-            cu_link_complete: sym!(cuda, "cuLinkComplete"),
-            cu_link_destroy: sym!(cuda, "cuLinkDestroy"),
-            cu_module_get_function: sym!(cuda, "cuModuleGetFunction"),
-            cu_module_get_global: sym!(cuda, "cuModuleGetGlobal_v2"),
-            cu_memcpy_dtoh: sym!(cuda, "cuMemcpyDtoH_v2"),
-            cu_memcpy_async: sym!(cuda, "cuMemcpyAsync"),
-            cu_memset_d8_async: sym!(cuda, "cuMemsetD8Async"),
-            cu_launch_kernel: sym!(cuda, "cuLaunchKernel"),
-            cu_stream_create: sym!(cuda, "cuStreamCreate"),
-            cu_stream_synchronize: sym!(cuda, "cuStreamSynchronize"),
-            cu_stream_wait_value64: sym!(cuda, "cuStreamWaitValue64_v2" | "cuStreamWaitValue64"),
-            cu_event_create: sym!(cuda, "cuEventCreate"),
-            cu_event_record: sym!(cuda, "cuEventRecord"),
-            cu_event_synchronize: sym!(cuda, "cuEventSynchronize"),
-            cu_event_query: sym!(cuda, "cuEventQuery"),
-            cu_event_elapsed_time: sym!(cuda, "cuEventElapsedTime_v2" | "cuEventElapsedTime"),
-            cu_event_destroy: sym!(cuda, "cuEventDestroy_v2"),
-            cu_func_set_attribute: sym!(cuda, "cuFuncSetAttribute"),
-            cu_func_get_attribute: sym!(cuda, "cuFuncGetAttribute"),
-            cu_occupancy_max_active_blocks_per_multiprocessor: sym!(cuda, "cuOccupancyMaxActiveBlocksPerMultiprocessor"),
-            cu_get_error_string: sym!(cuda, "cuGetErrorString"),
-            nvrtc_create_program: sym!(nvrtc, "nvrtcCreateProgram"),
-            nvrtc_compile_program: sym!(nvrtc, "nvrtcCompileProgram"),
-            nvrtc_get_program_log_size: sym!(nvrtc, "nvrtcGetProgramLogSize"),
-            nvrtc_get_program_log: sym!(nvrtc, "nvrtcGetProgramLog"),
-            nvrtc_get_cubin_size: sym!(nvrtc, "nvrtcGetCUBINSize"),
-            nvrtc_get_cubin: sym!(nvrtc, "nvrtcGetCUBIN"),
-            nvrtc_destroy_program: sym!(nvrtc, "nvrtcDestroyProgram"),
-            nvrtc_version: sym!(nvrtc, "nvrtcVersion"),
-            cu_driver_get_version: sym!(cuda, "cuDriverGetVersion"),
-        })
+        cuda_api().or_else(|c| hip_api().map_err(|h| format!("{c}; {h}")))
     })
     .as_ref()
     .map_err(Clone::clone)
+}
+
+macro_rules! sym {
+    ($lib:expr, $($name:literal)|+) => {{
+        let p = sym_opt!($lib, $($name)|+);
+        if p.is_null() {
+            return Err(format!("{} not found", [$($name),+].join(" or ")));
+        }
+        sym_as(p)
+    }};
+}
+
+macro_rules! sym_opt {
+    ($lib:expr, $($name:literal)|+) => {{
+        let mut p: *mut c_void = std::ptr::null_mut();
+        $( if p.is_null() { p = $lib.sym($name); } )+
+        p
+    }};
+}
+
+fn cuda_api() -> Result<Api, String> {
+    // The hardware queues the driver maps streams onto, round-robin in the order they are made: enough that no two of
+    // the process's streams (a root's each, `CudaQueueRoot`, and any a caller makes) share one. Read by the driver when
+    // it loads; a value the environment sets is kept.
+    crate::os::nvidia_hardware_queues(MAX_CONNECTIONS);
+    use crate::os::{Lib, Scope};
+    let (driver, nvrtc_names) = cuda_library_names();
+    let cuda = Lib::open(&driver, Scope::Global).ok_or_else(|| format!("no CUDA driver ({})", driver.join(", ")))?;
+    let nvrtc = Lib::open(&nvrtc_names, Scope::Global).ok_or_else(|| {
+        let _ = NEEDS.set(format!(
+            "This machine has NVIDIA's GPU driver, but not NVRTC, the CUDA Toolkit's compiler, which Rerail needs to \
+             compile its GPU kernels; Rerail runs on the CPU until it is installed. Install the CUDA Toolkit (12.x or \
+             later; 12.x for a Tesla V100 or another sm_70 GPU): {CUDA_TOOLKIT}. Installed elsewhere, set {} to it.",
+            if cfg!(windows) { "CUDA_PATH" } else { "CUDA_HOME" }
+        ));
+        format!("no NVRTC ({})", nvrtc_names.join(", "))
+    })?;
+    Ok(Api {
+        vendor: Vendor::Cuda,
+        cu_init: sym!(cuda, "cuInit"),
+        cu_device_get: sym!(cuda, "cuDeviceGet"),
+        cu_device_get_attribute: sym!(cuda, "cuDeviceGetAttribute"),
+        cu_device_primary_ctx_retain: sym!(cuda, "cuDevicePrimaryCtxRetain"),
+        cu_ctx_set_current: sym!(cuda, "cuCtxSetCurrent"),
+        cu_mem_host_alloc: sym!(cuda, "cuMemHostAlloc"),
+        cu_mem_host_get_device_pointer: sym!(cuda, "cuMemHostGetDevicePointer_v2"),
+        cu_mem_host_register: sym!(cuda, "cuMemHostRegister_v2" | "cuMemHostRegister"),
+        cu_mem_host_unregister: sym!(cuda, "cuMemHostUnregister"),
+        cu_module_load_data: sym!(cuda, "cuModuleLoadData"),
+        cu_module_get_function: sym!(cuda, "cuModuleGetFunction"),
+        cu_module_get_global: sym!(cuda, "cuModuleGetGlobal_v2"),
+        cu_memcpy_dtoh: sym!(cuda, "cuMemcpyDtoH_v2"),
+        cu_memcpy_async: sym!(cuda, "cuMemcpyAsync"),
+        cu_memset_d8_async: sym!(cuda, "cuMemsetD8Async"),
+        cu_launch_kernel: sym!(cuda, "cuLaunchKernel"),
+        cu_stream_create: sym!(cuda, "cuStreamCreate"),
+        cu_stream_synchronize: sym!(cuda, "cuStreamSynchronize"),
+        cu_stream_wait_value64: Some(sym!(cuda, "cuStreamWaitValue64_v2" | "cuStreamWaitValue64")),
+        hip_stream_wait_value64: None,
+        cu_event_create: sym!(cuda, "cuEventCreate"),
+        cu_event_record: sym!(cuda, "cuEventRecord"),
+        cu_event_synchronize: sym!(cuda, "cuEventSynchronize"),
+        cu_event_query: sym!(cuda, "cuEventQuery"),
+        cu_event_elapsed_time: sym!(cuda, "cuEventElapsedTime_v2" | "cuEventElapsedTime"),
+        cu_event_destroy: sym!(cuda, "cuEventDestroy_v2"),
+        cu_func_set_attribute: Some(sym!(cuda, "cuFuncSetAttribute")),
+        cu_func_get_attribute: sym!(cuda, "cuFuncGetAttribute"),
+        cu_get_error_string: sym!(cuda, "cuGetErrorString"),
+        nvrtc_create_program: sym!(nvrtc, "nvrtcCreateProgram"),
+        nvrtc_compile_program: sym!(nvrtc, "nvrtcCompileProgram"),
+        nvrtc_get_program_log_size: sym!(nvrtc, "nvrtcGetProgramLogSize"),
+        nvrtc_get_program_log: sym!(nvrtc, "nvrtcGetProgramLog"),
+        nvrtc_get_cubin_size: sym!(nvrtc, "nvrtcGetCUBINSize"),
+        nvrtc_get_cubin: sym!(nvrtc, "nvrtcGetCUBIN"),
+        nvrtc_get_ptx_size: sym!(nvrtc, "nvrtcGetPTXSize"),
+        nvrtc_get_ptx: sym!(nvrtc, "nvrtcGetPTX"),
+        nvrtc_destroy_program: sym!(nvrtc, "nvrtcDestroyProgram"),
+        nvrtc_version: sym!(nvrtc, "nvrtcVersion"),
+        cu_driver_get_version: sym!(cuda, "cuDriverGetVersion"),
+        hip_get_device_properties: None,
+        nvrtc_supported_archs: {
+            let (n, list) = (sym_opt!(nvrtc, "nvrtcGetNumSupportedArchs"), sym_opt!(nvrtc, "nvrtcGetSupportedArchs"));
+            (!n.is_null() && !list.is_null()).then(|| (sym_as(n), sym_as(list)))
+        },
+    })
+}
+
+/// HIP's calls under CUDA's names: each the same signature as the CUDA call its field is named for.
+fn hip_api() -> Result<Api, String> {
+    if std::env::var_os("GPU_MAX_HW_QUEUES").is_none() {
+        // SAFETY: once, before HIP's runtime loads, as the process's first use of the device.
+        unsafe { std::env::set_var("GPU_MAX_HW_QUEUES", HIP_HW_QUEUES.to_string()) };
+    }
+    use crate::os::{Lib, Scope};
+    let (driver, rtc_names) = hip_library_names();
+    let hip = Lib::open(&driver, Scope::Global).ok_or_else(|| format!("no HIP runtime ({})", driver.join(", ")))?;
+    let rtc = Lib::open(&rtc_names, Scope::Global).ok_or_else(|| {
+        let _ = NEEDS.set(if cfg!(windows) {
+            "This machine has AMD's HIP runtime, but not hiprtc, the HIP SDK's compiler, which Rerail needs to compile \
+             its GPU kernels on HIP. Install AMD's HIP SDK for Windows: https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html. \
+             Installed elsewhere, set HIP_PATH to it."
+                .to_string()
+        } else {
+            "This machine has AMD's HIP runtime, but not hiprtc, ROCm's compiler, which Rerail needs to compile its GPU \
+             kernels; Rerail runs on the CPU until it is installed. Install ROCm: https://rocm.docs.amd.com. Installed \
+             elsewhere, set ROCM_PATH to it."
+                .to_string()
+        });
+        format!("no hiprtc ({})", rtc_names.join(", "))
+    })?;
+    Ok(Api {
+        vendor: Vendor::Hip,
+        cu_init: sym!(hip, "hipInit"),
+        cu_device_get: sym!(hip, "hipDeviceGet"),
+        cu_device_get_attribute: sym!(hip, "hipDeviceGetAttribute"),
+        cu_device_primary_ctx_retain: sym!(hip, "hipDevicePrimaryCtxRetain"),
+        cu_ctx_set_current: sym!(hip, "hipCtxSetCurrent"),
+        cu_mem_host_alloc: sym!(hip, "hipHostMalloc" | "hipHostAlloc"),
+        cu_mem_host_get_device_pointer: sym!(hip, "hipHostGetDevicePointer"),
+        cu_mem_host_register: sym!(hip, "hipHostRegister"),
+        cu_mem_host_unregister: sym!(hip, "hipHostUnregister"),
+        cu_module_load_data: sym!(hip, "hipModuleLoadData"),
+        cu_module_get_function: sym!(hip, "hipModuleGetFunction"),
+        cu_module_get_global: sym!(hip, "hipModuleGetGlobal"),
+        cu_memcpy_dtoh: sym!(hip, "hipMemcpyDtoH"),
+        cu_memcpy_async: sym!(hip, "hipMemcpyDtoDAsync"),
+        cu_memset_d8_async: sym!(hip, "hipMemsetD8Async"),
+        cu_launch_kernel: sym!(hip, "hipModuleLaunchKernel"),
+        cu_stream_create: sym!(hip, "hipStreamCreateWithFlags"),
+        cu_stream_synchronize: sym!(hip, "hipStreamSynchronize"),
+        cu_stream_wait_value64: None,
+        hip_stream_wait_value64: Some(sym!(hip, "hipStreamWaitValue64")),
+        cu_event_create: sym!(hip, "hipEventCreateWithFlags"),
+        cu_event_record: sym!(hip, "hipEventRecord"),
+        cu_event_synchronize: sym!(hip, "hipEventSynchronize"),
+        cu_event_query: sym!(hip, "hipEventQuery"),
+        cu_event_elapsed_time: sym!(hip, "hipEventElapsedTime"),
+        cu_event_destroy: sym!(hip, "hipEventDestroy"),
+        cu_func_set_attribute: None,
+        cu_func_get_attribute: sym!(hip, "hipFuncGetAttribute"),
+        cu_get_error_string: sym!(hip, "hipDrvGetErrorString"),
+        nvrtc_create_program: sym!(rtc, "hiprtcCreateProgram"),
+        nvrtc_compile_program: sym!(rtc, "hiprtcCompileProgram"),
+        nvrtc_get_program_log_size: sym!(rtc, "hiprtcGetProgramLogSize"),
+        nvrtc_get_program_log: sym!(rtc, "hiprtcGetProgramLog"),
+        nvrtc_get_cubin_size: sym!(rtc, "hiprtcGetCodeSize"),
+        nvrtc_get_cubin: sym!(rtc, "hiprtcGetCode"),
+        nvrtc_get_ptx_size: sym!(rtc, "hiprtcGetCodeSize"),
+        nvrtc_get_ptx: sym!(rtc, "hiprtcGetCode"),
+        nvrtc_destroy_program: sym!(rtc, "hiprtcDestroyProgram"),
+        nvrtc_version: sym!(rtc, "hiprtcVersion"),
+        cu_driver_get_version: sym!(hip, "hipDriverGetVersion"),
+        hip_get_device_properties: Some(sym!(hip, "hipGetDevicePropertiesR0600")),
+        nvrtc_supported_archs: None,
+    })
 }
 
 /// A driver call's result: `Ok`, or an error naming the call and the driver's message.
@@ -203,7 +682,8 @@ fn ck(r: CUresult, what: &str) -> Result<(), String> {
         Ok(a) if unsafe { (a.cu_get_error_string)(r, &mut s) } == 0 && !s.is_null() => unsafe { CStr::from_ptr(s) }.to_string_lossy().into_owned(),
         _ => String::new(),
     };
-    Err(format!("{what}: CUDA error {r} {msg}"))
+    let vendor = api().map_or("CUDA", |a| a.vendor.name());
+    Err(format!("{what}: {vendor} error {r} {msg}"))
 }
 
 /// A driver call that cannot fail in a correct program (a release, a record on a live stream).
@@ -213,23 +693,29 @@ fn must(r: CUresult, what: &str) {
     }
 }
 
-/// The process's device: the first CUDA device, its primary context, and what the launches need of it.
+/// The process's device: the first CUDA (or HIP) device, its primary context, and what the launches need of it.
 #[derive(Clone, Copy, Debug)]
 pub struct CudaDevice {
     ctx: Ptr,
-    /// The compute capability as `major * 10 + minor` (121 for GB10's 12.1).
+    /// Whose driver it is.
+    pub vendor: Vendor,
+    /// The compute capability as `major * 10 + minor` (121 for GB10's 12.1); HIP's, which no compile reads.
     pub sm: u32,
+    /// HIP's architecture (`gfx1035` for a Radeon 680M): what its kernels are compiled for. Empty on CUDA.
+    pub arch: &'static str,
+    /// The lanes of a SIMD group: a warp's 32; a wavefront's 32 or 64 on AMD's.
+    pub simd_width: u32,
     /// The shared memory a block may opt in to (static and dynamic together).
     pub max_shared_per_block: u32,
     /// Whether the device reads the host's pageable memory through the host's page tables (a GB10's ATS): then
     /// memory wrapped in place (`wrap_host_memory`) is read at the host's address, nothing registered.
     pub pageable: bool,
-    /// Whether registered host memory is the device's at the host's address (`CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM`):
-    /// then a wrap may span several registrations (`Registered`).
-    host_pointer: bool,
-    /// Its streaming multiprocessors: a persistent grid's resident blocks are these times a block's occupancy
-    /// (`CudaComputeFunction::resident_groups`).
+    /// Its multiprocessors (NVIDIA's SMs, AMD's work-group processors).
     pub multiprocessors: u32,
+    /// Whether registered host memory is the device's at the host's address (`CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM`,
+    /// and a page registered at open to confirm it: HIP on Windows says so, and maps it elsewhere): then a wrap may
+    /// span several registrations (`register_runs`); else each wrap lies in one (`register_mapped`).
+    host_pointer: bool,
 }
 
 unsafe impl Send for CudaDevice {}
@@ -242,7 +728,34 @@ thread_local! {
     static CURRENT: std::cell::Cell<Ptr> = const { std::cell::Cell::new(std::ptr::null_mut()) };
 }
 
+/// Whether a page of the host's, registered, is the device's at the host's address.
+fn registered_at_host_address(a: &Api) -> Result<bool, String> {
+    let page = page_bytes() as usize;
+    let layout = std::alloc::Layout::from_size_align(page, page).map_err(|e| e.to_string())?;
+    // SAFETY: a page, freed below; registered and unregistered while nothing else holds it.
+    unsafe {
+        let p = std::alloc::alloc_zeroed(layout);
+        if p.is_null() {
+            return Err("no page to register".into());
+        }
+        let r = ck((a.cu_mem_host_register)(p.cast(), page, CU_MEMHOSTREGISTER_PORTABLE | CU_MEMHOSTREGISTER_DEVICEMAP), "registering a page");
+        let mut dev = 0;
+        let same = r.is_ok() && (a.cu_mem_host_get_device_pointer)(&mut dev, p.cast(), 0) == 0 && dev == p as u64;
+        if r.is_ok() {
+            (a.cu_mem_host_unregister)(p.cast());
+        }
+        std::alloc::dealloc(p, layout);
+        r.map(|()| same)
+    }
+}
+
 impl CudaDevice {
+    /// Whether its buffers over the host's memory are at the host's address (`pageable`, or registered memory the
+    /// device reads there): a wrap of a longer prefix of the same pages is then at the same address.
+    pub fn at_host_address(&self) -> bool {
+        self.pageable || self.host_pointer
+    }
+
     /// The first device, or `None` without a driver, NVRTC or a device.
     pub fn system_default() -> Option<CudaDevice> {
         match Self::open() {
@@ -251,7 +764,7 @@ impl CudaDevice {
                 // A process that asked for CUDA (`RERAIL_GPU=cuda`) says why it has none, as one that asked for OpenCL
                 // does: without it every unit after was refused as over capacity, with no word of the device.
                 if std::env::var_os("RERAIL_CUDA_DEBUG").is_some() || crate::device::chosen() == "cuda" {
-                    eprintln!("no CUDA device: {e}");
+                    eprintln!("no CUDA or HIP device: {e}");
                 }
                 None
             }
@@ -269,20 +782,70 @@ impl CudaDevice {
                 ck((a.cu_device_get_attribute)(&mut v, n, dev), "cuDeviceGetAttribute")?;
                 Ok(v)
             };
-            let sm = (attr(CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR)? * 10 + attr(CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR)?) as u32;
-            let max_shared_per_block = attr(CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN)? as u32;
-            let pageable = attr(CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES).unwrap_or(0) != 0;
-            let host_pointer = attr(CU_DEVICE_ATTRIBUTE_CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM).unwrap_or(0) != 0;
-            let multiprocessors = attr(CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT)?.max(1) as u32;
+            let at = match a.vendor {
+                Vendor::Cuda => &CUDA_ATTRIBUTES,
+                Vendor::Hip => &HIP_ATTRIBUTES,
+            };
+            let sm = (attr(at.capability_major)? * 10 + attr(at.capability_minor)?) as u32;
+            if let Some((count, list)) = a.nvrtc_supported_archs {
+                let mut n = 0;
+                if count(&mut n) == 0 && n > 0 {
+                    let mut archs = vec![0i32; n as usize];
+                    let (mut major, mut minor) = (0, 0);
+                    (a.nvrtc_version)(&mut major, &mut minor);
+                    if list(archs.as_mut_ptr()) == 0
+                        && let Some(needs) = needs_for_arch(sm, (major, minor), &archs)
+                    {
+                        let _ = NEEDS.set(needs);
+                        return Err(format!("NVRTC {major}.{minor} does not compile for sm_{sm}"));
+                    }
+                }
+            }
+            let max_shared_per_block = attr(at.max_shared_per_block_optin)? as u32;
+            let pageable = attr(at.pageable_uses_host_page_tables).unwrap_or(0) != 0;
+            let says_host_pointer = attr(at.host_pointer_for_registered_mem).unwrap_or(0) != 0;
+            let simd_width = attr(at.warp_size)? as u32;
+            let multiprocessors = attr(at.multiprocessors)? as u32;
+            if simd_width != 32 && simd_width != 64 {
+                return Err(format!("a SIMD group of {simd_width} lanes"));
+            }
+            let arch = match a.hip_get_device_properties {
+                None => "",
+                Some(props) => {
+                    let mut p = vec![0u8; HIP_PROPS_BYTES];
+                    ck(props(p.as_mut_ptr(), dev), "hipGetDevicePropertiesR0600")?;
+                    let name = CStr::from_bytes_until_nul(&p[HIP_PROPS_ARCH_NAME..HIP_PROPS_ARCH_NAME + 256]).map_err(|e| e.to_string())?;
+                    // The name and its features (`gfx90a:sramecc+:xnack-`): the compile takes the name.
+                    let name = name.to_string_lossy();
+                    let name = name.split(':').next().unwrap_or_default();
+                    if !name.starts_with("gfx") {
+                        return Err(format!("HIP's architecture is {name:?}, not a gfx name"));
+                    }
+                    // hiprtc lists no architectures (NVRTC's `needs_for_arch`): one small compile for this one says,
+                    // once a machine (the store keeps the answer by hiprtc's version and the architecture).
+                    if let Err(log) = hip_compiles_for(a, name) {
+                        let (mut major, mut minor) = (0, 0);
+                        (a.nvrtc_version)(&mut major, &mut minor);
+                        let _ = NEEDS.set(needs_for_hip(name, (major, minor), &log));
+                        return Err(format!("hiprtc {major}.{minor} does not compile for {name}"));
+                    }
+                    Box::leak(name.to_owned().into_boxed_str())
+                }
+            };
             let mut ctx = std::ptr::null_mut();
             ck((a.cu_device_primary_ctx_retain)(&mut ctx, dev), "cuDevicePrimaryCtxRetain")?;
-            Ok(CudaDevice { ctx, sm, max_shared_per_block, pageable, host_pointer, multiprocessors })
+            ck((a.cu_ctx_set_current)(ctx), "cuCtxSetCurrent")?;
+            // The attribute, measured: HIP on Windows says registered memory is the device's at the host's address,
+            // and maps it elsewhere (0440, "The HIP backend": the device then read unmapped addresses, the IOMMU
+            // faulted, and the host's hypervisor missed its DPC deadline). A page registered tells.
+            let host_pointer = says_host_pointer && registered_at_host_address(a)?;
+            Ok(CudaDevice { ctx, vendor: a.vendor, sm, arch, simd_width, multiprocessors, max_shared_per_block, pageable, host_pointer })
         }
     }
 
     /// Makes the context current on this thread (once a thread).
     fn current(&self) -> &'static Api {
-        let a = api().expect("a CUDA device without its API");
+        let a = api().expect("a CUDA or HIP device without its API");
         CURRENT.with(|c| {
             if c.get() != self.ctx {
                 must(unsafe { (a.cu_ctx_set_current)(self.ctx) }, "cuCtxSetCurrent");
@@ -292,9 +855,19 @@ impl CudaDevice {
         a
     }
 
+    /// The name of the device's target (decision 0645, `rerail_ukl::Target`): CUDA's `sm_<N>`, HIP's `gfx`
+    /// architecture.
+    pub fn target_name(&self) -> String {
+        match self.vendor {
+            Vendor::Cuda => format!("sm_{}", self.sm),
+            Vendor::Hip => self.arch.to_string(),
+        }
+    }
+
     /// An event the host signals and a queue waits on (`metal::SharedEvent`): a word of pinned memory.
     pub fn new_shared_event(&self) -> CudaSharedEvent {
-        let b = alloc_uninitialized_array_sync::<u64>(self, 1);
+        // Coherent: the device's wait reads the host's writes while it runs.
+        let b = alloc(self, 8, true);
         unsafe { b.contents().cast::<u64>().write_volatile(0) };
         CudaSharedEvent { word: b }
     }
@@ -308,14 +881,15 @@ struct Allocation {
     len: u64,
     /// The block's size class: the bytes it holds. 0: memory wrapped in place (`wrap_host_memory`), its owner's.
     class: u64,
-    /// Wrapped memory's registration with the driver: none (read where it lies), the wrap's own (`cuMemHostRegister`
-    /// of exactly its bytes), or its share of the page runs registered (`Registered`); released when the buffer goes.
+    /// Whether its pool's memory is kept coherent with the host while a kernel runs (`alloc`).
+    coherent: bool,
+    /// Wrapped memory's registration with the driver: none (read where it lies, or pinned by the driver itself), or
+    /// its share of the page runs registered (`REGISTERED`); released when the buffer goes.
     registered: Registration,
 }
 
 enum Registration {
     None,
-    Own,
     Runs(Vec<u64>),
 }
 
@@ -330,16 +904,11 @@ impl Drop for Allocation {
         if self.class == 0 {
             match std::mem::replace(&mut self.registered, Registration::None) {
                 Registration::None => {}
-                Registration::Own => {
-                    if let Ok(a) = api() {
-                        unsafe { (a.cu_mem_host_unregister)(self.host.cast()) };
-                    }
-                }
                 Registration::Runs(runs) => release_runs(&runs),
             }
             return;
         }
-        POOL.lock().unwrap().entry(self.class).or_default().push(Block { host: self.host, dev: self.dev });
+        POOL.lock().unwrap().entry((self.class, self.coherent)).or_default().push(Block { host: self.host, dev: self.dev });
     }
 }
 
@@ -352,7 +921,7 @@ struct Block {
 unsafe impl Send for Block {}
 
 /// The free pinned blocks, by size (a power of two, at least 256 bytes).
-static POOL: std::sync::Mutex<std::collections::BTreeMap<u64, Vec<Block>>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+static POOL: std::sync::Mutex<std::collections::BTreeMap<(u64, bool), Vec<Block>>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
 
 /// A buffer (`metal::Buffer`): shared by its clones, freed when the last goes (a queue keeps those it uses until
 /// its work is awaited).
@@ -411,10 +980,31 @@ impl CudaSharedEvent {
 /// The block is of the bytes' size class (a power of two, at least 256), from the pool when one is free; it is
 /// uninitialized (a reused block holds what it last held).
 pub fn alloc_uninitialized_array_sync<T>(device: &CudaDevice, length: usize) -> CudaBuffer {
-    let len = (length * std::mem::size_of::<T>()).max(16) as u64;
+    alloc(device, (length * std::mem::size_of::<T>()) as u64, false)
+}
+
+/// `hipHostMalloc`'s kinds of host memory: kept coherent with the host while a kernel runs (fine-grained), or not
+/// (coarse-grained: the device caches it, and the host sees the device's writes once the kernel ends, as it reads
+/// them, after an event).
+const HIP_HOST_MALLOC_COHERENT: u32 = 0x4000_0000;
+const HIP_HOST_MALLOC_NON_COHERENT: u32 = 0x8000_0000;
+
+/// Pinned host memory of at least `bytes`, from its size class's pool. On HIP it is coarse-grained but where
+/// `coherent` asks (a word the host writes while the device waits on it, `new_shared_event`): AMD's device does its
+/// atomics on fine-grained memory in the host's, past its caches. A Radeon 680M built a 1 Mi-key histogram in 150 ms
+/// there, 0.76 ms in coarse-grained memory and 0.94 ms in its own (0440, "HIP's copies and fills"). Reads ran alike.
+///
+/// On HIP a block of a page or more is the host's own memory, page-aligned, registered with the driver: what
+/// OpenCL's buffers are (`CL_MEM_USE_HOST_PTR`) and what a wrap of the engine's blocks is (`register_mapped`). Its
+/// atomics ran as coarse-grained memory's (0.91 ms the histogram), and writes spread over many pages ran faster: a
+/// radix pass's (a row to each of 256 buckets, keys and values) took 52.6 ms over 4 Mi rows there, 65.8 ms in
+/// `hipHostMalloc`'s coarse-grained memory and 62.7 in the device's own. A smaller block stays `hipHostMalloc`'s,
+/// as registering it would pin a page for it.
+fn alloc(device: &CudaDevice, bytes: u64, coherent: bool) -> CudaBuffer {
+    let len = bytes.max(16);
     let class = len.max(256).next_power_of_two();
     sweep_pending(device.current());
-    let reused = POOL.lock().unwrap().get_mut(&class).and_then(Vec::pop);
+    let reused = POOL.lock().unwrap().get_mut(&(class, coherent)).and_then(Vec::pop);
     let Block { host, dev } = reused.unwrap_or_else(|| {
         // The host's pages where the device reads them through its page tables (decision 0580): a pinned block's
         // atomics and fences take a slow path there. `RERAIL_CUDA_PINNED` keeps pinned blocks, a measurement aid.
@@ -423,13 +1013,34 @@ pub fn alloc_uninitialized_array_sync<T>(device: &CudaDevice, length: usize) -> 
             return Block { host, dev: host as DevPtr };
         }
         let a = device.current();
+        if a.vendor == Vendor::Hip && !coherent && class >= page_bytes() {
+            return registered_block(a, class);
+        }
         let mut host = std::ptr::null_mut();
-        must(unsafe { (a.cu_mem_host_alloc)(&mut host, class as usize, CU_MEMHOSTALLOC_PORTABLE | CU_MEMHOSTALLOC_DEVICEMAP) }, "cuMemHostAlloc");
+        let kind = match a.vendor {
+            Vendor::Cuda => 0,
+            Vendor::Hip if coherent => HIP_HOST_MALLOC_COHERENT,
+            Vendor::Hip => HIP_HOST_MALLOC_NON_COHERENT,
+        };
+        must(unsafe { (a.cu_mem_host_alloc)(&mut host, class as usize, CU_MEMHOSTALLOC_PORTABLE | CU_MEMHOSTALLOC_DEVICEMAP | kind) }, "cuMemHostAlloc");
         let mut dev = 0;
         must(unsafe { (a.cu_mem_host_get_device_pointer)(&mut dev, host, 0) }, "cuMemHostGetDevicePointer");
         Block { host: host.cast(), dev }
     });
-    CudaBuffer(Arc::new(Allocation { host, dev, len, class, registered: Registration::None }))
+    CudaBuffer(Arc::new(Allocation { host, dev, len, class, coherent, registered: Registration::None }))
+}
+
+/// A pool block of `class` bytes (a page or more) of the host's memory, registered and mapped (`alloc` on HIP). It is
+/// the pool's for the process's life, as `cuMemHostAlloc`'s blocks are.
+fn registered_block(a: &Api, class: u64) -> Block {
+    let layout = std::alloc::Layout::from_size_align(class as usize, page_bytes() as usize).expect("a pool block's layout");
+    // SAFETY: a non-zero size; the block is never freed (the pool keeps it).
+    let host = unsafe { std::alloc::alloc(layout) };
+    assert!(!host.is_null(), "out of memory for a {class}-byte block");
+    must(unsafe { (a.cu_mem_host_register)(host.cast(), class as usize, CU_MEMHOSTREGISTER_PORTABLE | CU_MEMHOSTREGISTER_DEVICEMAP) }, "cuMemHostRegister");
+    let mut dev = 0;
+    must(unsafe { (a.cu_mem_host_get_device_pointer)(&mut dev, host.cast(), 0) }, "cuMemHostGetDevicePointer");
+    Block { host, dev }
 }
 
 /// A buffer over `len` bytes of the host's memory at `ptr`, read in place (decision 0353): at the host's address
@@ -442,7 +1053,7 @@ pub fn alloc_uninitialized_array_sync<T>(device: &CudaDevice, length: usize) -> 
 /// # Safety
 /// The memory outlives the buffer and its clones, and every use of them by queued work.
 pub unsafe fn wrap_host_memory(device: &CudaDevice, ptr: *mut u8, len: usize) -> Result<CudaBuffer, String> {
-    let wrap = |dev: DevPtr, registered: Registration| Ok(CudaBuffer(Arc::new(Allocation { host: ptr, dev, len: len as u64, class: 0, registered })));
+    let wrap = |dev: DevPtr, registered: Registration| Ok(CudaBuffer(Arc::new(Allocation { host: ptr, dev, len: len as u64, class: 0, coherent: true, registered })));
     if device.pageable {
         return wrap(ptr as DevPtr, Registration::None);
     }
@@ -451,14 +1062,51 @@ pub unsafe fn wrap_host_memory(device: &CudaDevice, ptr: *mut u8, len: usize) ->
         let runs = register_runs(a, ptr as u64, len as u64)?;
         return wrap(ptr as DevPtr, Registration::Runs(runs));
     }
-    unsafe {
-        ck((a.cu_mem_host_register)(ptr.cast(), len, CU_MEMHOSTREGISTER_PORTABLE | CU_MEMHOSTREGISTER_DEVICEMAP), "cuMemHostRegister")?;
-        let mut dev = 0;
-        if let Err(e) = ck((a.cu_mem_host_get_device_pointer)(&mut dev, ptr.cast(), 0), "cuMemHostGetDevicePointer") {
-            (a.cu_mem_host_unregister)(ptr.cast());
-            return Err(e);
+    let (dev, registered) = register_mapped(a, ptr as u64, len as u64)?;
+    wrap(dev, registered)
+}
+
+/// A wrap's pages registered where the device maps them elsewhere (`CudaDevice::host_pointer` false): its device
+/// address, and its registration. A run that holds all its pages already gives it (its device base and the offset);
+/// else its pages become a run of their own; pages the driver pinned itself (`cuMemHostAlloc`'s, error 712) are read
+/// where it maps them, when that is one span. A wrap over pages of several registrations has no single device
+/// address: an error, never an address the device does not map.
+fn register_mapped(a: &Api, at: u64, len: u64) -> Result<(DevPtr, Registration), String> {
+    let page = page_bytes();
+    let (lo, hi) = (at / page * page, (at + len.max(1)).div_ceil(page) * page);
+    let mut runs = REGISTERED.lock().unwrap_or_else(|p| p.into_inner());
+    let over: Vec<(u64, u64, u64)> = runs.range(..hi).rev().take_while(|(_, r)| r.end > lo).map(|(&s, r)| (s, r.end, r.dev)).collect();
+    match over.as_slice() {
+        [(s, e, dev)] if *s <= lo && *e >= hi => {
+            runs.get_mut(s).expect("a run").holders += 1;
+            return Ok((dev + (at - s), Registration::Runs(vec![*s])));
         }
-        wrap(dev, Registration::Own)
+        [] => {}
+        _ => return Err(format!("{len} bytes at {at:#x} span pages of {} registrations: no one device address", over.len())),
+    }
+    let flags = CU_MEMHOSTREGISTER_PORTABLE | CU_MEMHOSTREGISTER_DEVICEMAP;
+    let r = unsafe { (a.cu_mem_host_register)(lo as Ptr, (hi - lo) as usize, flags) };
+    let device_pointer = |p: u64| {
+        let mut dev = 0;
+        ck(unsafe { (a.cu_mem_host_get_device_pointer)(&mut dev, p as Ptr, 0) }, "cuMemHostGetDevicePointer").map(|()| dev)
+    };
+    if r == CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED {
+        let (first, last) = (device_pointer(at)?, device_pointer(at + len.max(1) - 1)?);
+        if last != first + len.max(1) - 1 {
+            return Err(format!("{len} bytes at {at:#x}: pages the driver pinned, mapped apart"));
+        }
+        return Ok((first, Registration::None));
+    }
+    ck(r, "cuMemHostRegister")?;
+    match device_pointer(lo) {
+        Ok(dev) => {
+            runs.insert(lo, Run { end: hi, holders: 1, dev });
+            Ok((dev + (at - lo), Registration::Runs(vec![lo])))
+        }
+        Err(e) => {
+            unsafe { (a.cu_mem_host_unregister)(lo as Ptr) };
+            Err(e)
+        }
     }
 }
 
@@ -466,6 +1114,8 @@ pub unsafe fn wrap_host_memory(device: &CudaDevice, ptr: *mut u8, len: usize) ->
 struct Run {
     end: u64,
     holders: usize,
+    /// The device's address of its first byte: the host's where the device reads registered memory there.
+    dev: u64,
 }
 
 /// The runs registered, by their first byte; they never overlap. Pages pinned otherwise (the pool's blocks,
@@ -506,7 +1156,7 @@ fn register_runs(a: &Api, at: u64, len: u64) -> Result<Vec<u64>, String> {
         }
     }
     for (s, e) in made {
-        runs.insert(s, Run { end: e, holders: 0 });
+        runs.insert(s, Run { end: e, holders: 0, dev: s });
     }
     let starts: Vec<u64> = runs.range(..hi).rev().take_while(|(_, r)| r.end > lo).map(|(&s, _)| s).collect();
     for s in &starts {
@@ -592,39 +1242,24 @@ pub struct CudaComputeFunctionLibrary {
 unsafe impl Send for CudaComputeFunctionLibrary {}
 unsafe impl Sync for CudaComputeFunctionLibrary {}
 
-/// A relocatable cubin (NVRTC's `-rdc=true`) linked by the driver into the cubin a module loads.
-fn link(a: &Api, relocatable: &mut [u8]) -> Result<Vec<u8>, String> {
-    const CU_JIT_INPUT_CUBIN: i32 = 0;
-    unsafe {
-        let mut state = std::ptr::null_mut();
-        ck((a.cu_link_create)(0, std::ptr::null_mut(), std::ptr::null_mut(), &mut state), "cuLinkCreate")?;
-        let name = c"kernels";
-        let added = ck((a.cu_link_add_data)(state, CU_JIT_INPUT_CUBIN, relocatable.as_mut_ptr().cast(), relocatable.len(), name.as_ptr(), 0, std::ptr::null_mut(), std::ptr::null_mut()), "cuLinkAddData");
-        let mut out = std::ptr::null_mut();
-        let mut n = 0usize;
-        let done = added.and_then(|()| ck((a.cu_link_complete)(state, &mut out, &mut n), "cuLinkComplete"));
-        // The linked image is the link state's: copied out before it goes.
-        let linked = done.map(|()| std::slice::from_raw_parts(out.cast::<u8>(), n).to_vec());
-        (a.cu_link_destroy)(state);
-        linked
-    }
-}
-
 impl CudaComputeFunctionLibrary {
-    /// Compiles CUDA C++ (UKL preprocessed for this device) with NVRTC for the device's architecture, and loads it.
+    /// Compiles CUDA C++ (UKL preprocessed for this device) with NVRTC for the device's architecture, and loads it;
+    /// on HIP, HIP's C++ with hiprtc for the device's `gfx` architecture, its code object.
     pub fn compile_from_source(device: &CudaDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let a = device.current();
-        // Relocatable (`-rdc=true`), then linked (`link`): ptxas compiles each function once. Whole-program, it
-        // compiles every function again for each kernel that reaches it: the preprocessor's evaluator, two kernels
-        // over one call tree, took ptxas past a minute, relocatable 4.5 s and its link 0.5 s (a GB10, 2026-11-25).
-        let options = [format!("--gpu-architecture=sm_{}", device.sm), "-std=c++20".into(), "-default-device".into(), "-rdc=true".into()];
-        // The store's cubin (`crate::store`), keyed by all the compile reads: NVRTC's and the driver's builds too.
+        let (mut options, kind, target): (Vec<String>, &str, String) = match device.vendor {
+            Vendor::Cuda => (options_for(Vendor::Cuda, &format!("sm_{}", device.sm)), "cuda", format!("sm_{}", device.sm)),
+            Vendor::Hip => (options_for(Vendor::Hip, device.arch), "hip", device.arch.to_string()),
+        };
+        // `RERAIL_CUDA_OPTIONS`: more of NVRTC's (or hiprtc's) options, a measurement aid (they are in the key).
+        options.extend(std::env::var("RERAIL_CUDA_OPTIONS").unwrap_or_default().split_whitespace().map(str::to_owned));
+        // The store's code (`crate::store`), keyed by all the compile reads: the compiler's and the driver's builds too.
         let (mut major, mut minor, mut driver) = (0, 0, 0);
         unsafe { (a.nvrtc_version)(&mut major, &mut minor) };
         unsafe { (a.cu_driver_get_version)(&mut driver) };
-        let versions = format!("nvrtc {major}.{minor} driver {driver}");
-        let key = crate::store::key(&[b"cuda", versions.as_bytes(), options.join(" ").as_bytes(), preprocessed_source.as_bytes()]);
-        if let Some(cubin) = crate::store::load("cuda", &key, "cubin") {
+        let versions = format!("{kind} rtc {major}.{minor} driver {driver}");
+        let key = crate::store::key(&[kind.as_bytes(), versions.as_bytes(), options.join(" ").as_bytes(), preprocessed_source.as_bytes()]);
+        if let Some(cubin) = crate::store::load(kind, &key, "cubin") {
             let mut module = std::ptr::null_mut();
             if unsafe { (a.cu_module_load_data)(&mut module, cubin.as_ptr().cast()) } == 0 {
                 crate::store::count(true);
@@ -632,6 +1267,7 @@ impl CudaComputeFunctionLibrary {
             }
         }
         crate::store::count(false);
+        crate::store::dump(file_name_to_appear_in_error_messages, if kind == "hip" { "hip" } else { "cu" }, &options.join(" "), preprocessed_source);
         let src = CString::new(preprocessed_source).map_err(|e| e.to_string())?;
         let name = CString::new(file_name_to_appear_in_error_messages).map_err(|e| e.to_string())?;
         let opts: Vec<CString> = options.into_iter().map(|o| CString::new(o).unwrap()).collect();
@@ -639,7 +1275,7 @@ impl CudaComputeFunctionLibrary {
         let mut prog = std::ptr::null_mut();
         unsafe {
             if (a.nvrtc_create_program)(&mut prog, src.as_ptr(), name.as_ptr(), 0, std::ptr::null(), std::ptr::null()) != 0 {
-                return Err("nvrtcCreateProgram failed".into());
+                return Err(format!("{}'s program creation failed", a.vendor.name()));
             }
             let r = (a.nvrtc_compile_program)(prog, opt_ptrs.len() as i32, opt_ptrs.as_ptr());
             let mut n = 0;
@@ -650,18 +1286,67 @@ impl CudaComputeFunctionLibrary {
                 (a.nvrtc_destroy_program)(&mut prog);
                 let log = String::from_utf8_lossy(&log);
                 let errors: Vec<&str> = log.lines().filter(|l| l.contains("error")).take(20).collect();
-                return Err(format!("NVRTC compiling {file_name_to_appear_in_error_messages} for sm_{}: {}", device.sm, errors.join("\n")));
+                let compiler = if kind == "hip" { "hiprtc" } else { "NVRTC" };
+                return Err(format!("{compiler} compiling {file_name_to_appear_in_error_messages} for {target}: {}", errors.join("\n")));
             }
             let mut n = 0;
             (a.nvrtc_get_cubin_size)(prog, &mut n);
             let mut cubin = vec![0u8; n];
             (a.nvrtc_get_cubin)(prog, cubin.as_mut_ptr().cast());
             (a.nvrtc_destroy_program)(&mut prog);
-            let cubin = link(a, &mut cubin)?;
             let mut module = std::ptr::null_mut();
             ck((a.cu_module_load_data)(&mut module, cubin.as_ptr().cast()), "cuModuleLoadData")?;
-            crate::store::save("cuda", &key, "cubin", &cubin);
+            crate::store::save(kind, &key, "cubin", &cubin);
             Ok(CudaComputeFunctionLibrary { module, device: *device })
+        }
+    }
+
+    /// A library of code compiled ahead of time for a target this device runs (decision 0645: a shipped kernel):
+    /// CUDA's SASS or PTX (which the driver compiles), or an AMD code object.
+    pub fn from_compiled(device: &CudaDevice, code: &[u8]) -> Result<Self, String> {
+        let a = device.current();
+        let mut module = std::ptr::null_mut();
+        ck(unsafe { (a.cu_module_load_data)(&mut module, code.as_ptr().cast()) }, "cuModuleLoadData")?;
+        crate::store::count(true);
+        Ok(CudaComputeFunctionLibrary { module, device: *device })
+    }
+
+    /// The PTX NVRTC makes of `preprocessed_source` for the device's virtual architecture (`compute_<sm>`), as its
+    /// library's compile would, its options the same: what a test reads to see which instructions a kernel's form
+    /// took (decision 0617, R7). None on HIP, whose compiler makes a code object, no text.
+    pub fn native_code(device: &CudaDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Option<String>, String> {
+        if device.vendor != Vendor::Cuda {
+            return Ok(None);
+        }
+        let a = device.current();
+        let mut options = vec![format!("--gpu-architecture=compute_{}", device.sm), "-std=c++20".to_owned(), "-default-device".to_owned()];
+        options.extend(std::env::var("RERAIL_CUDA_OPTIONS").unwrap_or_default().split_whitespace().map(str::to_owned));
+        let src = CString::new(preprocessed_source).map_err(|e| e.to_string())?;
+        let name = CString::new(file_name_to_appear_in_error_messages).map_err(|e| e.to_string())?;
+        let opts: Vec<CString> = options.into_iter().map(|o| CString::new(o).unwrap()).collect();
+        let opt_ptrs: Vec<*const c_char> = opts.iter().map(|o| o.as_ptr()).collect();
+        let mut prog = std::ptr::null_mut();
+        unsafe {
+            if (a.nvrtc_create_program)(&mut prog, src.as_ptr(), name.as_ptr(), 0, std::ptr::null(), std::ptr::null()) != 0 {
+                return Err("NVRTC's program creation failed".into());
+            }
+            let r = (a.nvrtc_compile_program)(prog, opt_ptrs.len() as i32, opt_ptrs.as_ptr());
+            if r != 0 {
+                let mut n = 0;
+                (a.nvrtc_get_program_log_size)(prog, &mut n);
+                let mut log = vec![0u8; n.max(1)];
+                (a.nvrtc_get_program_log)(prog, log.as_mut_ptr().cast());
+                (a.nvrtc_destroy_program)(&mut prog);
+                let log = String::from_utf8_lossy(&log);
+                let errors: Vec<&str> = log.lines().filter(|l| l.contains("error")).take(20).collect();
+                return Err(format!("NVRTC compiling {file_name_to_appear_in_error_messages} to PTX: {}", errors.join("\n")));
+            }
+            let mut n = 0;
+            (a.nvrtc_get_ptx_size)(prog, &mut n);
+            let mut ptx = vec![0u8; n];
+            (a.nvrtc_get_ptx)(prog, ptx.as_mut_ptr().cast());
+            (a.nvrtc_destroy_program)(&mut prog);
+            Ok(Some(String::from_utf8_lossy(&ptx).trim_end_matches('\0').to_owned()))
         }
     }
 
@@ -715,14 +1400,17 @@ impl CudaComputeFunctionLibrary {
         let mut static_smem = 0;
         ck(unsafe { (a.cu_func_get_attribute)(&mut static_smem, CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, func) }, "cuFuncGetAttribute")?;
         let dynamic_limit = self.device.max_shared_per_block.saturating_sub(static_smem as u32);
-        ck(unsafe { (a.cu_func_set_attribute)(func, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, dynamic_limit as i32) }, "cuFuncSetAttribute")?;
-        Ok(CudaComputeFunction { func, name: function_name.to_string(), arguments, param_sizes, dynamic_limit })
+        if let Some(set) = a.cu_func_set_attribute {
+            ck(unsafe { set(func, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, dynamic_limit as i32) }, "cuFuncSetAttribute")?;
+        }
+        Ok(CudaComputeFunction { func, device: self.device, name: function_name.to_string(), arguments, param_sizes, dynamic_limit })
     }
 }
 
 /// A kernel of a library, with its arguments (`MetalComputeFunction`).
 pub struct CudaComputeFunction {
     func: Ptr,
+    device: CudaDevice,
     pub name: String,
     arguments: Vec<GridComputeFunctionArgument>,
     /// Each launch parameter's size, in the kernel's order.
@@ -737,17 +1425,6 @@ unsafe impl Sync for CudaComputeFunction {}
 impl CudaComputeFunction {
     pub fn get_argument_info(&self) -> &[GridComputeFunctionArgument] {
         &self.arguments
-    }
-
-    /// The blocks of `threads` threads, each with `dynamic` bytes of dynamic shared memory, that `device` holds at
-    /// once: the driver's occupancy of this function (its registers, its static and dynamic shared memory) times the
-    /// device's multiprocessors. A persistent grid's groups (decision 0568), the driver's answer, not a measure.
-    pub fn resident_groups(&self, device: &CudaDevice, threads: u32, dynamic: u64) -> Result<u64, String> {
-        let a = device.current();
-        let mut per = 0;
-        // SAFETY: the function's own handle, its context current.
-        ck(unsafe { (a.cu_occupancy_max_active_blocks_per_multiprocessor)(&mut per, self.func, threads as i32, dynamic as usize) }, "cuOccupancyMaxActiveBlocksPerMultiprocessor")?;
-        Ok(u64::from(device.multiprocessors) * per.max(0) as u64)
     }
 }
 
@@ -777,6 +1454,76 @@ static STREAMS_MADE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicU
 pub struct CudaQueueRoot {
     device: CudaDevice,
     stream: Ptr,
+    /// HIP's copies and fills, as kernels (`Blit`); `None` on CUDA, whose driver's are fast.
+    blit: Option<Arc<Blit>>,
+}
+
+/// Copies and fills as kernels, for HIP: its runtime's own (`hipMemcpyDtoDAsync`, `hipMemsetD8Async`) are slow on
+/// host memory, which every buffer here is. Measured on a Radeon 680M, 1 MB: a copy 0.25 ms (a kernel's 0.1), a fill
+/// 2.7 ms; 16 MB, a fill 31 ms (0.5 in device memory). OpenCL's driver copies and fills by kernels, and the grid's
+/// sort and scan, which fill and copy between their passes, ran 4 to 15 times OpenCL's time (0440, "HIP's copies and
+/// fills"). Each kernel moves elements of its width (16, 4 or 1 bytes): the widest that divides both addresses and the
+/// length.
+struct Blit {
+    /// The functions by width: 16, 4 and 1 bytes.
+    copy: [Ptr; 3],
+    fill: [Ptr; 3],
+    _library: CudaComputeFunctionLibrary,
+}
+
+unsafe impl Send for Blit {}
+unsafe impl Sync for Blit {}
+
+const BLIT_SOURCE: &str = r#"
+typedef unsigned int u32;
+typedef unsigned long long u64;
+typedef u32 u32x4 __attribute__((ext_vector_type(4)));
+#define BLIT(W, T) \
+extern "C" __global__ void rerail_copy##W(T* d, const T* s, u64 n) { \
+    for (u64 i = (u64)blockIdx.x * blockDim.x + threadIdx.x; i < n; i += (u64)gridDim.x * blockDim.x) d[i] = s[i]; } \
+extern "C" __global__ void rerail_fill##W(T* d, u64 n) { \
+    for (u64 i = (u64)blockIdx.x * blockDim.x + threadIdx.x; i < n; i += (u64)gridDim.x * blockDim.x) d[i] = (T)0; }
+BLIT(16, u32x4)
+BLIT(4, u32)
+BLIT(1, unsigned char)
+"#;
+
+/// The threads of a blit's group, and the most groups a blit launches (each thread strides past the grid).
+const BLIT_THREADS: u32 = 256;
+const BLIT_GROUPS: u64 = 4096;
+
+impl Blit {
+    fn new(device: &CudaDevice) -> Blit {
+        let library = CudaComputeFunctionLibrary::compile_from_source(device, BLIT_SOURCE, "rerail_blit.hip").unwrap_or_else(|e| panic!("HIP's copy and fill kernels: {e}"));
+        let f = |name: String| library.function_handle(&name).unwrap_or_else(|e| panic!("{e}"));
+        let widths = [16, 4, 1];
+        Blit { copy: widths.map(|w| f(format!("rerail_copy{w}"))), fill: widths.map(|w| f(format!("rerail_fill{w}"))), _library: library }
+    }
+
+    /// The widest of 16, 4 and 1 bytes that divides every one of `parts`: the width's index.
+    fn width(parts: &[u64]) -> (usize, u64) {
+        let bits = parts.iter().fold(0, |m, p| m | p);
+        [16u64, 4, 1].iter().enumerate().find(|(_, w)| bits % **w == 0).map(|(i, w)| (i, *w)).expect("1 divides all")
+    }
+
+    fn launch(a: &Api, stream: Ptr, func: Ptr, args: &mut [u64], elements: u64, what: &str) -> Result<(), String> {
+        if elements == 0 {
+            return Ok(());
+        }
+        let groups = elements.div_ceil(BLIT_THREADS as u64).min(BLIT_GROUPS) as u32;
+        let mut ptrs: Vec<Ptr> = args.iter_mut().map(|p| (p as *mut u64).cast::<c_void>()).collect();
+        ck(unsafe { (a.cu_launch_kernel)(func, groups, 1, 1, BLIT_THREADS, 1, 1, 0, stream, ptrs.as_mut_ptr(), std::ptr::null_mut()) }, what)
+    }
+
+    fn copy(&self, a: &Api, stream: Ptr, dst: u64, src: u64, bytes: usize) -> Result<(), String> {
+        let (i, w) = Blit::width(&[dst, src, bytes as u64]);
+        Blit::launch(a, stream, self.copy[i], &mut [dst, src, bytes as u64 / w], bytes as u64 / w, "a copy kernel")
+    }
+
+    fn fill(&self, a: &Api, stream: Ptr, dst: u64, bytes: usize) -> Result<(), String> {
+        let (i, w) = Blit::width(&[dst, bytes as u64]);
+        Blit::launch(a, stream, self.fill[i], &mut [dst, bytes as u64 / w], bytes as u64 / w, "a fill kernel")
+    }
 }
 
 /// Held while a submission's operations go onto a stream (`CudaComputeQueue::flush`): one submission's are
@@ -804,7 +1551,8 @@ impl CudaQueueRoot {
         let a = device.current();
         let mut stream = std::ptr::null_mut();
         must(unsafe { (a.cu_stream_create)(&mut stream, CU_STREAM_NON_BLOCKING) }, "cuStreamCreate");
-        CudaQueueRoot { device, stream }
+        let blit = (device.vendor == Vendor::Hip).then(|| Arc::new(Blit::new(&device)));
+        CudaQueueRoot { device, stream, blit }
     }
 }
 
@@ -814,6 +1562,7 @@ impl CudaQueueRoot {
 pub struct CudaComputeQueue {
     device: CudaDevice,
     stream: Ptr,
+    blit: Option<Arc<Blit>>,
     /// The operations encoded since the last flush, in order (`Op`).
     ops: RefCell<Vec<Op>>,
     /// The staging memory for `enqueue_copy_from_host`, and how much is used (as on Metal).
@@ -840,7 +1589,7 @@ fn new_event(a: &Api) -> Ptr {
 impl CudaComputeQueue {
     /// A queue on `root`'s stream.
     pub fn new(root: &CudaQueueRoot) -> Self {
-        CudaComputeQueue { device: root.device, stream: root.stream, ops: Default::default(), staging: Default::default(), keep: Default::default() }
+        CudaComputeQueue { device: root.device, stream: root.stream, blit: root.blit.clone(), ops: Default::default(), staging: Default::default(), keep: Default::default() }
     }
 
     /// `newBindContext`: one launch of `function`, on the queue's stream.
@@ -915,7 +1664,7 @@ impl CudaComputeQueue {
             let _issue = ISSUE.lock().unwrap_or_else(|p| p.into_inner());
             must(unsafe { (a.cu_event_record)(start, self.stream) }, "cuEventRecord");
             for op in ops {
-                if let Err(e) = issue(a, self.stream, op) {
+                if let Err(e) = issue(a, self.stream, self.blit.as_deref(), op) {
                     failed = Some(e);
                     break;
                 }
@@ -931,8 +1680,8 @@ impl CudaComputeQueue {
     }
 }
 
-/// One operation onto `stream`.
-fn issue(a: &Api, stream: Ptr, op: Op) -> Result<(), String> {
+/// One operation onto `stream`: copies and fills by `blit`'s kernels where it is given (HIP's).
+fn issue(a: &Api, stream: Ptr, blit: Option<&Blit>, op: Op) -> Result<(), String> {
     match op {
         Op::Launch { func, grid, block, shared, mut params, name } => {
             // The driver reads each parameter's bytes during the call.
@@ -942,9 +1691,20 @@ fn issue(a: &Api, stream: Ptr, op: Op) -> Result<(), String> {
                 &format!("launching {name}"),
             )
         }
-        Op::Memset { dst, bytes } => ck(unsafe { (a.cu_memset_d8_async)(dst, 0, bytes, stream) }, "cuMemsetD8Async"),
-        Op::Memcpy { dst, src, bytes } => ck(unsafe { (a.cu_memcpy_async)(dst, src, bytes, stream) }, "cuMemcpyAsync"),
-        Op::WaitValue { at, value } => ck(unsafe { (a.cu_stream_wait_value64)(stream, at, value, CU_STREAM_WAIT_VALUE_GEQ) }, "cuStreamWaitValue64"),
+        Op::Memset { dst, bytes } => match blit {
+            Some(b) => b.fill(a, stream, dst, bytes),
+            None => ck(unsafe { (a.cu_memset_d8_async)(dst, 0, bytes, stream) }, "cuMemsetD8Async"),
+        },
+        Op::Memcpy { dst, src, bytes } => match blit {
+            Some(b) => b.copy(a, stream, dst, src, bytes),
+            None => ck(unsafe { (a.cu_memcpy_async)(dst, src, bytes, stream) }, "cuMemcpyAsync"),
+        },
+        Op::WaitValue { at, value } => match (a.cu_stream_wait_value64, a.hip_stream_wait_value64) {
+            (Some(wait), _) => ck(unsafe { wait(stream, at, value, CU_STREAM_WAIT_VALUE_GEQ) }, "cuStreamWaitValue64"),
+            // The word is pinned host memory, at the same address for the device (`hipHostMalloc`'s): all its bits.
+            (None, Some(wait)) => ck(unsafe { wait(stream, at as Ptr, value, CU_STREAM_WAIT_VALUE_GEQ, u64::MAX) }, "hipStreamWaitValue64"),
+            (None, None) => unreachable!("a driver without a wait on a value"),
+        },
     }
 }
 
@@ -1115,5 +1875,45 @@ impl CudaBindContext<'_> {
         let r = self.launch(max_groups, block);
         self.params[hidden] = vec![0];
         r
+    }
+}
+
+#[cfg(test)]
+mod needs_tests {
+    use super::needs_for_arch;
+
+    /// Decision 0645: a GPU the installed NVRTC does not compile for is told which toolkit to install.
+    #[test]
+    fn a_gpu_nvrtc_does_not_compile_for_is_told_the_toolkit() {
+        let without_sm70 = [75, 80, 86, 89, 90, 100, 120, 121]; // a toolkit that has dropped sm_70 (illustrative)
+        let v100 = needs_for_arch(70, (13, 0), &without_sm70).expect("CUDA 13 does not compile for sm_70");
+        assert!(v100.contains("sm_70") && v100.contains("12.x") && v100.contains("NVRTC (13.0)") && v100.contains("sm_75 to sm_121"), "{v100}");
+        assert!(v100.contains(if cfg!(windows) { "CUDA_PATH" } else { "CUDA_HOME" }) && v100.contains("https://"), "{v100}");
+        let newer = needs_for_arch(130, (12, 4), &[50, 60, 70, 80, 90]).expect("12.4 does not compile for sm_130");
+        assert!(newer.contains("a newer CUDA Toolkit"), "{newer}");
+        assert_eq!(needs_for_arch(121, (13, 0), &without_sm70), None);
+        assert_eq!(needs_for_arch(70, (13, 0), &[]), None, "an empty list says nothing");
+    }
+
+    /// Decision 0645 §6: an AMD GPU hiprtc does not compile for is told what to install, with hiprtc's reason.
+    #[test]
+    fn an_amd_gpu_hiprtc_does_not_compile_for_is_told_what_to_install() {
+        let m = super::needs_for_hip("gfx1250", (7, 2), "error: unsupported HIP gpu architecture: gfx1250");
+        assert!(m.contains("gfx1250") && m.contains("hiprtc (7.2") && m.contains("unsupported HIP gpu architecture") && m.contains("https://"), "{m}");
+        assert!(m.contains(if cfg!(windows) { "HIP_PATH" } else { "ROCM_PATH" }), "{m}");
+    }
+
+    /// The probe on a real HIP device: its own architecture compiles; one that is no GPU's does not, with a reason.
+    #[test]
+    fn hiprtc_is_asked_whether_it_compiles_for_the_gpu() {
+        let Ok(a) = super::api() else { return };
+        if a.vendor != super::Vendor::Hip {
+            return;
+        }
+        let Some(d) = super::CudaDevice::system_default() else { return };
+        assert_eq!(super::hip_compiles_for(a, d.arch), Ok(()));
+        let e = super::hip_compiles_for(a, "gfx9999").expect_err("no GPU is gfx9999");
+        eprintln!("gfx9999: {e}");
+        assert!(!e.is_empty());
     }
 }

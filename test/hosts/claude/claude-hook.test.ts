@@ -1,9 +1,11 @@
-import { execFileSync } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { once } from "node:events";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -16,6 +18,7 @@ import { dashboardOrigin, presentedSessionNoteRules } from "../../../src/present
 import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 import { startChurn } from "../../support/processes/churn.js";
 import { denyAccess, restoreAccess } from "../../support/platform/deny-access.js";
 import { editSteer, steeredRules } from "../../support/steers.js";
@@ -38,6 +41,17 @@ vi.mock("../../../src/runtime/daemon/daemon-waits.js", async () => {
 });
 
 const temporaryDirectory = temporaryDirectories("rerail-claude-hook-");
+
+/** A code rule that steers every `print(` in a Python file. */
+const NO_PRINT = codeRuleSchema.parse({
+  format: "rerail.policy/v1", id: "test:no-print", revision: 1, mode: "steer",
+  scope: { include: ["**/*.py"], exclude: [] },
+  clauses: [{
+    id: "no-print",
+    violation: { code: "PRINT", anchor: "witness.span", message: "Use logging" },
+    forbid: { regex: { pattern: "\\bprint\\(", source: "file.content" } },
+  }],
+});
 
 /**
  * `hookOptions` without the test's embedder, so a hook takes the daemon path a coding agent's hook takes, and, unless
@@ -82,6 +96,50 @@ describe("Claude Code hook without a daemon", () => {
   });
 });
 
+/**
+ * A listener on an engine pipe in a process of its own (`path`, then `mode`): another process answers 500; the home's
+ * older daemon answers the proof 404, as Rerail 0.1.4's did, and each event as an engine does. Each request is written
+ * out as its method, path and capability. It ends once its stdin does.
+ */
+const LISTENER_APART = `
+const server = require("node:http").createServer((request, response) => {
+  let body = "";
+  request.setEncoding("utf8").on("data", chunk => { body += chunk; });
+  request.on("end", () => {
+    process.stdout.write(request.method + " " + request.url + " " + (request.headers["x-rerail-access"] ?? "no capability") + "\\n");
+    if (process.argv[2] !== "older daemon" || request.url !== "/events") return void response.writeHead(process.argv[2] === "older daemon" ? 404 : 500).end();
+    response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ eventId: JSON.parse(body).event.eventId, deliveries: [] }));
+  });
+});
+server.listen(process.argv[1], () => process.stdout.write("listening\\n"));
+process.stdin.on("end", () => { server.close(); server.closeAllConnections(); }).resume();
+`;
+
+interface ListenerApart {
+  pid: number;
+  /** Ends it, and gives every request it got. */
+  stop(): Promise<string[]>;
+}
+
+async function listenerApart(path: string, mode: "other process" | "older daemon", started: ChildProcess[]): Promise<ListenerApart> {
+  const child = spawn(process.execPath, ["-e", LISTENER_APART, path, mode], { stdio: ["pipe", "pipe", "inherit"], windowsHide: true });
+  started.push(child);
+  const received: string[] = [];
+  const listening = Promise.withResolvers<void>();
+  createInterface({ input: child.stdout }).on("line", line => (line === "listening" ? listening.resolve() : received.push(line)));
+  child.once("exit", () => listening.reject(new Error(`the ${mode} ended before it listened`)));
+  await listening.promise;
+  return {
+    pid: child.pid!,
+    stop: async () => {
+      const closed = once(child, "close");
+      child.stdin.end();
+      await closed;
+      return received;
+    },
+  };
+}
+
 describe("Claude Code hook with a daemon that misses its health probe", () => {
   // The hook's waits for the daemon, shorter than the product's 2 s probe and 10 s busy wait, in the same order and
   // with the same 2 s start check (`READ_TIMEOUT_MS`) before them: a hook waits `HOOK_WAIT_MS` from the event's arrival.
@@ -90,11 +148,13 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
   const BUSY_MS = 6_000;
   const HOOK_WAIT_MS = PROBE_MS + BUSY_MS;
   const servers: Server[] = [];
+  const apart: ChildProcess[] = [];
   beforeEach(() => {
     waits.probeMs = PROBE_MS;
     waits.busyMs = BUSY_MS;
   });
   afterEach(async () => {
+    for (const child of apart.splice(0)) child.kill();
     waits.probeMs = undefined;
     waits.busyMs = undefined;
     vi.unstubAllEnvs();
@@ -184,6 +244,86 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     expect(await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath)).toEqual({});
     // On Windows the hook asks the engine there to prove it holds the capability, which sends only a challenge.
     expect(received.filter(line => process.platform !== "win32" || line !== "POST /proof no capability")).toEqual([]);
+  });
+
+  /**
+   * Another process listening on a new engine pipe, which Windows names as the pipe's holder; each request it gets is
+   * kept as its method, path and capability, and answered 500. `received` gives every request once it is ended.
+   */
+  async function listenerInAnotherProcess(started: ChildProcess[]): Promise<{ otherProcessPipe: string; received: () => Promise<string[]> }> {
+    const otherProcessPipe = `\\\\.\\pipe\\rerail-other-process-${process.pid}-${Date.now()}`;
+    return { otherProcessPipe, received: (await listenerApart(otherProcessPipe, "other process", started)).stop };
+  }
+
+  /** daemon.json naming `pipe` as its engine's pipe, with nothing answering at the recorded URL. */
+  async function recordEnginePipe(pipe: string): Promise<void> {
+    await rewriteState(state => ({ ...state, url: "http://127.0.0.1:1/", port: 1, kernelSocketPath: pipe }));
+  }
+
+  // Off Windows the daemon's socket sits in a folder only the person can open, so no other account can hold it.
+  it.runIf(process.platform === "win32").each([
+    // As daemon.json does once a logoff or a reboot ended the daemon that wrote it.
+    { names: "the pipe another process holds", inDaemonJson: true },
+    // As daemon.json does when another process held the default pipe's name as the daemon started.
+    { names: "the daemon's own pipe", inDaemonJson: false },
+  ])("sends nothing to the engine pipe RERAIL_ENGINE_SOCKET names until what holds it proves it is this home's daemon (daemon.json names $names)", { timeout: 60_000 }, async ({ inDaemonJson }) => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_AUTOSTART", "0");
+    // The listener began before the daemon stamped its start in daemon.json, so only its pid tells it from the daemon.
+    const { otherProcessPipe, received: otherProcessReceived } = await listenerInAnotherProcess(apart);
+    await startNativeTestDaemon(root);
+    if (inDaemonJson) await recordEnginePipe(otherProcessPipe);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", otherProcessPipe);
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
+    const common = { session_id: "other-process-session", cwd: root };
+    const answers = [
+      await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath).catch((error: unknown) => error),
+      await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath).catch((error: unknown) => error),
+    ];
+    // Only challenges reached the pipe, each hook's own and, where daemon.json names the pipe, its start check's: neither
+    // the capability nor an event.
+    const received = await otherProcessReceived();
+    expect(received.filter(line => line !== "POST /proof no capability")).toEqual([]);
+    expect(received).toContain("POST /proof no capability");
+    const notThisHome = { name: "DaemonUnreachableError", message: expect.stringContaining(`${otherProcessPipe} is not this Rerail home's daemon`) };
+    expect(answers).toEqual([expect.objectContaining(notThisHome), expect.objectContaining(notThisHome)]);
+    // Each event lost so is in the hook failure log `rerail status` reads, with that reason.
+    const notThisHomeLogged = (event: string) => expect.objectContaining({ event, reason: expect.stringContaining(`${otherProcessPipe} is not this Rerail home's daemon`) });
+    const log = await readFile(join(process.env.RERAIL_HOME!, "hook-failures.jsonl"), "utf8");
+    const failures = log.split("\n").filter(line => line !== "").map(line => JSON.parse(line) as { reason: string });
+    expect(failures.filter(failure => failure.reason.includes(otherProcessPipe))).toEqual([notThisHomeLogged("SessionStart"), notThisHomeLogged("UserPromptSubmit")]);
+  });
+
+  it.runIf(process.platform === "win32")("sends a session's events to the home's own daemon of Rerail 0.1.4 or earlier on the pipe RERAIL_ENGINE_SOCKET names, which gives no proof, since Windows names that daemon as the pipe's holder", { timeout: 60_000 }, async () => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_AUTOSTART", "0");
+    const pipe = `\\\\.\\pipe\\rerail-older-${process.pid}-${Date.now()}`;
+    const older = await listenerApart(pipe, "older daemon", apart);
+    // daemon.json as that daemon wrote it: its pid, its pipe and capability, and a start stamped after its process began.
+    await mkdir(process.env.RERAIL_HOME!, { recursive: true });
+    await writeFile(join(process.env.RERAIL_HOME!, "daemon.json"), JSON.stringify({ pid: older.pid, host: "127.0.0.1", port: 1, url: "http://127.0.0.1:1/",
+      version: "0.1.4", databasePath: defaultRerailDatabasePath(), kernelSocketPath: pipe, ui: "bundled", startedAt: Date.now(), packageRoot: root, accessToken: "older-capability" }));
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", pipe);
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
+    const common = { session_id: "older-session", cwd: root };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
+    await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath);
+    expect((await older.stop()).filter(line => line.startsWith("POST /events"))).toEqual(["POST /events older-capability", "POST /events older-capability"]);
+  });
+
+  it("records a session's events at the daemon's engine socket RERAIL_ENGINE_SOCKET names, which on Windows proves itself first", { timeout: 60_000 }, async () => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_AUTOSTART", "0");
+    const daemon = await startNativeTestDaemon(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", daemon.kernelSocketPath);
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
+    const common = { session_id: "named-session", cwd: root };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
+    await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath);
+    expect(eventIds()).toEqual(expect.arrayContaining(["named-session:SessionStart", "named-session:prompt:p1"]));
   });
 
   /** A listener at a new loopback URL that takes every request and answers none: a daemon whose event loop is held. */
@@ -294,6 +434,43 @@ describe("Claude Code hook with a running daemon", () => {
     expect(await ledgerSamples(root, "reply-session", "message")).toEqual([
       { eventId: "reply-session:message:m1:3", text: "Here is the plan:\n\nFix the test." },
     ]);
+  });
+
+  it("records and checks a session in a worktree whose main checkout was deleted, under the repository it was recorded in", { timeout: 60_000 }, async () => {
+    const root = await temporaryDirectory({ started: false });
+    const main = join(root, "main");
+    const worktree = join(root, "feature");
+    await mkdir(main);
+    const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, stdio: "ignore" });
+    git(main, "init", "-q", "-b", "main");
+    git(main, "commit", "-q", "--allow-empty", "-m", "first");
+    git(main, "worktree", "add", "-q", "-b", "feature", worktree);
+    setUpTestRepository(main, { library: [{ kind: "code", rule: NO_PRINT }] });
+    startTestRepository(worktree);
+    // Git refuses the worktree from here on: its .git file names a Git folder that went with the main checkout.
+    await removeFolder(main);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    await startNativeTestDaemon(root);
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
+
+    const common = { session_id: "gone-main-session", cwd: worktree };
+    const file = join(worktree, "app.py");
+    const content = "print(1)\n";
+    const write = { ...common, tool_name: "Write", tool_use_id: "tool-1", tool_input: { file_path: file, content } };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
+    await runClaudeHook({ ...write, hook_event_name: "PreToolUse" }, daemonPath);
+    await writeFile(file, content);
+    const result = await runClaudeHook({ ...write, hook_event_name: "PostToolUse", tool_response: "ok" }, daemonPath);
+    const stop = await runClaudeHook({ ...common, hook_event_name: "Stop", prompt_id: "p1", stop_hook_active: false }, daemonPath);
+
+    const database = new Database(defaultRerailDatabasePath(), { readonly: true });
+    try {
+      expect(database.prepare("SELECT kind FROM events WHERE session_id = ? AND kind IN ('call', 'result', 'turn-end') ORDER BY sequence")
+        .all("gone-main-session")).toEqual([{ kind: "call" }, { kind: "result" }, { kind: "turn-end" }]);
+    } finally {
+      database.close();
+    }
+    expect(JSON.stringify([result, stop])).toContain("test:no-print");
   });
 
   describe("a session whose turn ends cannot check part of the repository", () => {

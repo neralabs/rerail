@@ -214,6 +214,9 @@ pub struct Lower<'func, I: VCodeInst> {
     /// See doc comment on `ValueUseState` for more details.
     value_ir_uses: SecondaryMap<Value, ValueUseState>,
 
+    /// Each value's direct uses in the CLIF, up to 2 (rerail's patch).
+    direct_uses: SecondaryMap<Value, u8>,
+
     /// Actual uses of each SSA value so far, incremented while lowering.
     value_lowered_uses: SecondaryMap<Value, u32>,
 
@@ -508,6 +511,15 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
         }
 
         let value_ir_uses = compute_use_states(f, sret_param);
+        let mut direct_uses: SecondaryMap<Value, u8> = SecondaryMap::with_default(0);
+        for block in f.layout.blocks() {
+            for inst in f.layout.block_insts(block) {
+                for v in f.dfg.inst_values(inst) {
+                    let v = f.dfg.resolve_aliases(v);
+                    direct_uses[v] = direct_uses[v].saturating_add(1).min(2);
+                }
+            }
+        }
 
         Ok(Lower {
             f,
@@ -519,6 +531,7 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
             side_effect_inst_entry_colors,
             inst_constants,
             value_ir_uses,
+            direct_uses,
             value_lowered_uses: SecondaryMap::default(),
             inst_sunk: FxHashSet::default(),
             cur_scan_entry_color: None,
@@ -1193,6 +1206,11 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
         let vcode = self.vcode.build(self.vregs);
 
         Ok(vcode)
+    }
+
+    /// Whether more than one instruction uses `val` itself (rerail's patch).
+    pub fn value_is_multiply_used(&self, val: Value) -> bool {
+        self.direct_uses[self.f.dfg.resolve_aliases(val)] > 1
     }
 
     pub fn value_is_unused(&self, val: Value) -> bool {

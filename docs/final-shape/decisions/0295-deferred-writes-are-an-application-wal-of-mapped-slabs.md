@@ -1,9 +1,10 @@
 # 0295. Deferred writes are an application WAL of mapped slabs, archived into SQLite as rows in bulk
 
-Status: decided (2026-11-16), by the user's two requirements and answers below. Path steps 2 (the tier), 3 (Outputs on blocks), 4 (the memo in segments) and 5's frames, tapes and sources built. Converges 0266 (blocks)
-with 0173/0241/0244/0276 (the program image and its versions), 0239 (the output image), 0240 §4 and 0280 (the
-memo's pack), 0259 §5 (the spool) and 0260 §8 (the journal block). Keeps 0008 (facts read through virtual tables)
-and 0024 §5 (work can be redone, so no `fsync`).
+Status: built (audited 2026-11-23). Decided (2026-11-16), by the user's two requirements and answers below. Path steps
+2 (the tier), 3 (Outputs on blocks), 4 (the memo in segments) and 5's frames, tapes and sources built. Converges 0266
+(blocks) with 0173/0241/0244/0276 (the program image and its versions), 0239 (the output image), 0240 §4 and 0280 (the
+memo's pack), 0259 §5 (the spool) and 0260 §8 (the journal block). Keeps 0008 (facts read through virtual tables) and
+0024 §5 (work can be redone, so no `fsync`).
 
 ## Intro
 

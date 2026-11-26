@@ -7,7 +7,7 @@ use crate::events::{self, Candidates, Events};
 use crate::layout::{self, Extras, Layout};
 use crate::measure::{Cost, cost};
 use crate::tree::{NONE, Tree};
-use crate::{huff, v15};
+use crate::{captured, huff};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// A captured file, read and encoded once: what every solution starts from. Only the events and the source
@@ -20,10 +20,10 @@ pub struct Prepared {
     pub source: Vec<u8>,
     pub events: Events,
     pub nodes: usize,
-    pub v15_raw: usize,
-    pub v15_stored: usize,
+    pub image_raw: usize,
+    pub image_stored: usize,
     /// Format 15 under zstd with a dictionary trained on the training half (test files only; else 0).
-    pub v15_trained: usize,
+    pub image_trained: usize,
     pub source_stored: usize,
 }
 
@@ -36,8 +36,8 @@ impl Prepared {
 pub struct Corpus {
     pub files: Vec<Prepared>,
     pub candidates: Candidates,
-    /// Whether format 15 had a dictionary trained for the language (zstd's trainer needs 8 samples).
-    pub v15_trained: BTreeMap<u8, bool>,
+    /// Whether the captured tapes had a dictionary trained for the language (zstd's trainer needs 8 samples).
+    pub image_trained: BTreeMap<u8, bool>,
 }
 
 /// Training samples: 4 KiB pieces, at most 16 MiB per language (zstd's trainer wants many small samples).
@@ -58,30 +58,30 @@ pub fn prepare(files: Vec<File>) -> Result<Corpus, String> {
 /// As `prepare`, with the supertype candidates already learned (a streamed corpus learns them from every
 /// file first, so every shard numbers masks alike).
 pub fn prepare_with(files: Vec<File>, known: Option<Candidates>) -> Result<Corpus, String> {
-    // Pass 1: every tree's supertypes (a mask indexes the full candidate list), and format 15's training half.
+    // Pass 1: every tree's supertypes (a mask indexes the full candidate list), and the captured tapes' training half.
     let learn = known.is_none();
     let mut candidates = known.unwrap_or_default();
-    let mut v15_train: BTreeMap<u8, (Vec<Vec<u8>>, usize)> = BTreeMap::new();
+    let mut image_train: BTreeMap<u8, (Vec<Vec<u8>>, usize)> = BTreeMap::new();
     for f in &files {
         if learn {
-            let tree = v15::read(&f.image).map_err(|e| format!("{}: {e}", f.path))?;
+            let tree = captured::read(&f.image).map_err(|e| format!("{}: {e}", f.path))?;
             candidates.learn(f.tag, &tree);
         }
         if !f.is_test() {
-            let (v, total) = v15_train.entry(f.tag).or_default();
+            let (v, total) = image_train.entry(f.tag).or_default();
             add_samples(v, total, &f.image);
         }
     }
-    let trained: BTreeMap<u8, Dictionary> = v15_train.iter().map(|(t, (v, _))| (*t, Dictionary::train(v, 64 * 1024))).collect();
+    let trained: BTreeMap<u8, Dictionary> = image_train.iter().map(|(t, (v, _))| (*t, Dictionary::train(v, 64 * 1024))).collect();
     // Pass 2: events, the baselines' sizes; the image and the tree are dropped.
     let mut out = Vec::with_capacity(files.len());
     for f in files {
-        let tree = v15::read(&f.image).map_err(|e| format!("{}: {e}", f.path))?;
+        let tree = captured::read(&f.image).map_err(|e| format!("{}: {e}", f.path))?;
         let events = events::encode(&tree, f.tag, &candidates);
-        let store_dict = v15::store_tape_dictionary(f.tag);
-        let source_dict = v15::store_source_dictionary(f.tag);
+        let store_dict = captured::store_tape_dictionary(f.tag);
+        let source_dict = captured::store_source_dictionary(f.tag);
         let test = f.is_test();
-        let v15_trained = match trained.get(&f.tag) {
+        let image_trained = match trained.get(&f.tag) {
             Some(d) if test && !d.bytes.is_empty() => codec::compress(Codec::Zstd, &f.image, d, 64).len(),
             _ => 0,
         };
@@ -89,17 +89,17 @@ pub fn prepare_with(files: Vec<File>, known: Option<Candidates>) -> Result<Corpu
             tag: f.tag,
             test,
             nodes: tree.len(),
-            v15_raw: f.image.len(),
-            v15_stored: v15::stored_size(&f.image, store_dict.as_deref()),
-            v15_trained,
-            source_stored: v15::stored_size(&f.source, source_dict.as_deref()),
+            image_raw: f.image.len(),
+            image_stored: captured::stored_size(&f.image, store_dict.as_deref()),
+            image_trained,
+            source_stored: captured::stored_size(&f.source, source_dict.as_deref()),
             path: f.path,
             source: f.source,
             events,
         });
     }
-    let v15_trained = trained.into_iter().map(|(t, d)| (t, !d.bytes.is_empty())).collect();
-    Ok(Corpus { files: out, candidates, v15_trained })
+    let image_trained = trained.into_iter().map(|(t, d)| (t, !d.bytes.is_empty())).collect();
+    Ok(Corpus { files: out, candidates, image_trained })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -224,9 +224,9 @@ pub struct Lang {
     pub nodes: u64,
     pub source_bytes: u64,
     pub source_stored: u64,
-    pub v15_raw: u64,
-    pub v15_stored: u64,
-    pub v15_trained: u64,
+    pub image_raw: u64,
+    pub image_stored: u64,
+    pub image_trained: u64,
     pub laid: u64,
     pub stored: u64,
     pub placement: u64,
@@ -255,9 +255,9 @@ impl Lang {
         self.nodes += o.nodes;
         self.source_bytes += o.source_bytes;
         self.source_stored += o.source_stored;
-        self.v15_raw += o.v15_raw;
-        self.v15_stored += o.v15_stored;
-        self.v15_trained += o.v15_trained;
+        self.image_raw += o.image_raw;
+        self.image_stored += o.image_stored;
+        self.image_trained += o.image_trained;
         self.laid += o.laid;
         self.stored += o.stored;
         self.placement += o.placement;
@@ -293,9 +293,9 @@ impl Row {
             t.nodes += l.nodes;
             t.source_bytes += l.source_bytes;
             t.source_stored += l.source_stored;
-            t.v15_raw += l.v15_raw;
-            t.v15_stored += l.v15_stored;
-            t.v15_trained += l.v15_trained;
+            t.image_raw += l.image_raw;
+            t.image_stored += l.image_stored;
+            t.image_trained += l.image_trained;
             t.laid += l.laid;
             t.stored += l.stored;
             t.placement += l.placement;
@@ -328,17 +328,17 @@ pub fn evaluate(corpus: &Corpus, s: &Solution, dicts: &mut Dicts, check: bool) -
         let lang = row.by_lang.entry(crate::capture::language(p.tag).to_owned()).or_default();
         if tags_seen.insert(p.tag) {
             lang.dict_bytes = dict.bytes.len() as u64;
-            lang.trained = corpus.v15_trained.get(&p.tag).copied().unwrap_or(false);
+            lang.trained = corpus.image_trained.get(&p.tag).copied().unwrap_or(false);
         }
         lang.files += 1;
         let tree = p.tree(corpus);
         lang.nodes += tree.len() as u64;
         lang.source_bytes += p.source.len() as u64;
         lang.source_stored += p.source_stored as u64;
-        lang.v15_raw += p.v15_raw as u64;
-        lang.v15_stored += p.v15_stored as u64;
+        lang.image_raw += p.image_raw as u64;
+        lang.image_stored += p.image_stored as u64;
         // With too few training files to train on (zstd needs 8), the store's dictionary stands in.
-        lang.v15_trained += if lang.trained { p.v15_trained } else { p.v15_stored } as u64;
+        lang.image_trained += if lang.trained { p.image_trained } else { p.image_stored } as u64;
         // Encode (E6, the writer from a tree): events, blocks, laid out, compressed.
         let tables = s.huff().then(|| dicts.tables(corpus, p.tag, s));
         let ((bs, places, compressed, laid, coded), c) = cost(|| {

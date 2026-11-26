@@ -1,41 +1,39 @@
-//! `.rerail`'s `\\u` checks: tier 2's, at the string (tier 1's `gating_tests` has the gated regions).
+//! `.rerail`'s `\\u` escapes: a string's as written, JSON's checked by tier 2 at the string (tier 1's `gating_tests` has the gated regions).
 
-use rerail_compiler::native_cpu_block::State;
+use rerail_cpu_block::native_cpu_block::State;
 use rerail_compiler::block_native::Pass;
 
-/// `.rerail`'s `\\u` check is tier 2's (`CHECK`, a local check at the string token): tier 1 makes
-/// the escapes' mask alone, none of the digits' values; the check is the escape's ops.
+/// A `\\u` in a `.rerail` string is the string's, whatever its digits (decision 0655 step 13): a
+/// checker reads a string to its quote, as tree-sitter does, and no executor refuses one. JSON's
+/// `\\u`, four hex digits, is `json_bad`'s: tier 2's local check at the string, in a JSON
+/// document's levels alone. Tier 1 makes no mask of the digits.
 #[test]
-fn rr_checks_its_unicode_escapes_at_the_string() {
+fn rr_takes_a_strings_unicode_escapes_as_written() {
     let c = super::compiled().expect("compiles");
-    for name in ["h4", "b_short", "b_four", "b_five", "b_six", "u_ok"] {
-        assert!(!c.values.iter().any(|v| v.name == name), "`{name}` is still tier 1's");
-    }
-    // The escape's, and `json_bad`'s `\\u` part: checked in a JSON document's levels alone. A
-    // number's 19 digits are the token loop's (`a_numbers_checks_are_at_its_token`).
-    assert_eq!(c.program.local_checks.len(), 2, "two local checks");
+    assert!(!c.values.iter().any(|v| v.name == "h4"), "`h4` is tier 1's");
+    assert_eq!(c.program.local_checks.len(), 1, "one local check: JSON's `\\u`");
     let json = |v: &str| format!(".policy {{\"a\": [1, \"{v}\"]}}");
     for (src, ok) in [(json("\\u0041"), true), (json("\\u{41}"), false), (json("\\u12"), false), ("r(x) :- x = \"\\u{41}\".".to_owned(), true)] {
         assert_eq!(super::compiled_tape(&src).is_some(), ok, "{src}");
         assert_eq!(super::tape(&src), super::engine_tape(&src), "{src}");
     }
-    assert!(c.words.contains(" CHECK"), "tier 2 checks at the string");
-    // The words refuse a bad escape and take a good one, as the engine's tape says.
-    for (src, ok) in [("r(x) :- x = \"\\u0041\".", true), ("r(x) :- x = \"\\u{1F600}\".", true), ("r(x) :- x = \"\\uD800\".", false), ("r(x) :- x = \"a\\u12\".", false), ("r(x) :- x = \"\\u{110000}\".", false)] {
-        assert_eq!(super::compiled_tape(src).is_some(), ok, "{src}");
-        assert_eq!(super::tape(src), super::engine_tape(src), "{src}");
+    assert!(c.words.contains(" CHECK"), "tier 2 checks JSON's at the string");
+    // Each escape as written, with the escape the engine reads in its place, of its length:
+    // the same tape (a string leaf over the same bytes).
+    let read = [("\\u0041", "\\u0041"), ("\\u{1F600}", "\\u{1F600}"), ("\\uD800", "\\u0041"), ("\\u12", "\\\\u1"), ("\\u{110000}", "\\u{100000}"), ("\\u{41}", "\\u{41}"), ("\\\\u12", "\\\\u12")];
+    let check = |src: &str, engine: &str| {
+        assert!(super::compiled_tape(src).is_some(), "{src}: taken");
+        assert_eq!(super::tape(src), super::engine_tape(engine), "{src}");
+    };
+    for (esc, engine) in read {
+        check(&format!("r(x) :- x = \"a{esc}\"."), &format!("r(x) :- x = \"a{engine}\"."));
+        // A string past a word of 64 bytes, its escape in the second word.
+        check(&format!("r(x) :- x = \"{}{esc}\".", "a".repeat(70)), &format!("r(x) :- x = \"{}{engine}\".", "a".repeat(70)));
     }
-    // A string past a word of 64 bytes, its escape in the second word.
-    let long = format!("r(x) :- x = \"{}\\uD800\".", "a".repeat(70));
-    assert!(super::compiled_tape(&long).is_none());
-    let long = format!("r(x) :- x = \"{}\\u0041\".", "a".repeat(70));
-    assert!(super::compiled_tape(&long).is_some());
-    // The check word-parallel: an escape at every place across two words' edges, its digits
-    // in the next word, good and bad, as the engine's tape says.
+    // An escape at every place across two words' edges, its digits in the next word.
     for pad in 40..140 {
-        for esc in ["\\u0041", "\\uD800", "\\u12", "\\u{41}", "\\u{110000}", "\\\\u12"] {
-            let src = format!("r(x) :- x = \"{}{esc}\".", "a".repeat(pad));
-            assert_eq!(super::tape(&src), super::engine_tape(&src), "{src}");
+        for (esc, engine) in read {
+            check(&format!("r(x) :- x = \"{}{esc}\".", "a".repeat(pad)), &format!("r(x) :- x = \"{}{engine}\".", "a".repeat(pad)));
         }
     }
 }
@@ -45,7 +43,7 @@ fn rr_checks_its_unicode_escapes_at_the_string() {
 fn dump_rr_unicode() {
     let c = super::compiled().expect("compiles");
     let passes = c.native.passes_with(&c.native.pure());
-    let names = ["uesc", "h4", "u_four", "u_brace", "b_short", "b_four", "b_six", "u_ok"];
+    let names = ["uesc", "h4"];
     for (k, pass) in passes.passes.iter().enumerate() {
         let Pass::Forward { body, .. } = pass else { continue };
         let origin = &passes.origins[k];

@@ -1,6 +1,7 @@
 # 0041: Text matching is chunk-at-a-time and per file, never per node per byte
 
-Status: accepted (user, 2026-11-04); host part done, device part open (O66)
+Status: partly built (audited 2026-11-23). Left: Device chunked automata (per-chunk state maps composed by prefix
+scan) replacing the per-byte device NFA (O66). Accepted (user, 2026-11-04); host part done, device part open (O66)
 Date: 2026-11-04
 
 ## Question

@@ -1,11 +1,11 @@
 # 0547. A run's analysis scope is held by a lease, not written as it starts
 
-Status: accepted (2026-11-20, the user: "do this … Deletions that are concurrent with runs should be handled by
-making the delete wait, or making it fail and need to be retried after"). Follows 0104 (one read before the first
-wave, writes behind the run) and 0306 (a run's small writes are its record's items). Changes the scope protocol of
-`docs/final-shape/notes/git-inputs/analysis-scopes.md` (73689678b and the commits before it). Numbered 0494 on
-benchmarks-on-integration, 0514 on CUDA-support, and 0547 at the hub's roll-up 36 (2026-11-20), as four other
-worktrees have their own 0494.
+Status: built (audited 2026-11-23). Accepted (2026-11-20, the user: "do this … Deletions that are concurrent with runs
+should be handled by making the delete wait, or making it fail and need to be retried after"). Follows 0104 (one read
+before the first wave, writes behind the run) and 0306 (a run's small writes are its record's items). Changes the
+scope protocol of `docs/final-shape/notes/git-inputs/analysis-scopes.md` (73689678b and the commits before it).
+Numbered 0494 on benchmarks-on-integration, 0514 on CUDA-support (2026-11-20), and 0547 at roll-up 36; roll-up 40
+keeps 0547.
 
 ## Intro
 

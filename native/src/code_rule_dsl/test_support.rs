@@ -2,7 +2,7 @@
 
 use super::matcher::GrammarMatcher;
 use super::model::{ClauseKind, Query};
-use super::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
+use super::CompiledCodeRuleDsl;
 use napi::Result;
 use serde_json::{Map, Value, json};
 use std::path::PathBuf;
@@ -11,10 +11,14 @@ pub(super) const CAPABILITIES: &str = include_str!("capabilities.json");
 
 /// Pack test data at `relative` (a repository path under `packs/<id>/upstream/<tool>/`), which is not in
 /// git (scripts/s3/pack-fixtures.mjs): its path in the checkout, or a failure saying to fetch and derive it.
+/// The data-layer packs are disabled (`packs/data-layer/DISABLED.md`): their data is refused, so a test of them run by
+/// name stops saying why rather than running.
 pub(super) fn pack_test_data(relative: &str) -> PathBuf {
-    let path = std::path::PathBuf::from(
-        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
-    )
+    assert!(
+        !relative.starts_with("packs/data-layer/"),
+        "{relative}: the data-layer packs are disabled and not run (packs/data-layer/DISABLED.md)"
+    );
+    let path = crate::source_tree::native()
     .join("..")
     .join(relative);
     assert!(
@@ -64,11 +68,7 @@ pub(super) fn compile_typescript_rule(rule: Value) -> Result<CompiledCodeRuleDsl
             "violation": { "anchor": "witness.span", "code": "AST_MATCH", "message": "match" },
         }],
     });
-    CodeRuleDslRuntime::compile(
-        document.to_string(),
-        "json".to_owned(),
-        CAPABILITIES.to_owned(),
-    )
+    crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", CAPABILITIES)
 }
 
 pub(super) fn evaluate_file(
@@ -103,11 +103,7 @@ pub(super) fn compile_document_with(
     document: Value,
     capabilities: &Value,
 ) -> Result<CompiledCodeRuleDsl> {
-    CodeRuleDslRuntime::compile(
-        document.to_string(),
-        "json".to_owned(),
-        capabilities.to_string(),
-    )
+    crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", &capabilities.to_string())
 }
 
 pub(super) fn clause_document(clause: Value) -> Value {
@@ -442,22 +438,39 @@ pub(super) fn pattern_for<D: 'static>(
 }
 
 /// This test binary as a child process at the lowest priority (AGENTS.md: every test run at a high nice value):
-/// through `nice -n 19` on Unix; on Windows, which has no `nice`, started in the idle priority class.
+/// at nice 19 on Unix, set in the child before it runs (`nice -n 19`'s `setpriority`), the binary itself the program
+/// started: a runner that knows its own executable (Relax runs a spawn of it as the same program) sees it, where
+/// `nice <binary>` is a spawn of another program. On Windows, which has no `nice`, started in the idle priority class.
 pub(crate) fn niced_self() -> std::process::Command {
     let exe = std::env::current_exe().expect("the test binary's path");
     #[cfg(unix)]
     {
-        let mut c = std::process::Command::new("nice");
-        c.args(["-n", "19"]).arg(exe);
+        use std::os::unix::process::CommandExt as _;
+        let mut c = std::process::Command::new(exe);
+        // SAFETY: runs in the child between fork and exec, calling only `setpriority` (async-signal-safe). Lowering
+        // a process's own priority needs no privilege; where it fails the child runs at its parent's.
+        unsafe {
+            c.pre_exec(|| {
+                libc::setpriority(libc::PRIO_PROCESS as _, 0, 19);
+                Ok(())
+            });
+        }
         c
     }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;
-        /// `IDLE_PRIORITY_CLASS`: the process runs when nothing else on the machine wants the CPU.
-        const IDLE_PRIORITY_CLASS: u32 = 0x40;
+        use windows_sys::Win32::System::Threading::{BELOW_NORMAL_PRIORITY_CLASS, GetCurrentProcess, GetPriorityClass, IDLE_PRIORITY_CLASS};
         let mut c = std::process::Command::new(exe);
-        c.creation_flags(IDLE_PRIORITY_CLASS);
+        // Windows' classes are strict where Unix's nice is a share: a child in a class below the tests beside it
+        // (the farm runs them below normal) gets no core while they run (a 15 s graph took 37 s under the quick
+        // tier). A test already below normal hands its class on (a child inherits it); one at normal or above starts
+        // its child below normal.
+        // SAFETY: the process's pseudo-handle; no arguments otherwise.
+        let mine = unsafe { GetPriorityClass(GetCurrentProcess()) };
+        if mine != BELOW_NORMAL_PRIORITY_CLASS && mine != IDLE_PRIORITY_CLASS {
+            c.creation_flags(BELOW_NORMAL_PRIORITY_CLASS);
+        }
         c
     }
     #[cfg(not(any(unix, windows)))]

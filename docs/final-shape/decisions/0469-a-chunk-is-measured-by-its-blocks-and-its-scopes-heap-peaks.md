@@ -1,5 +1,7 @@
 # 0469. A chunk is measured by what its blocks wrote and its scopes' heap at their most
 
+Status: built (audited 2026-11-23).
+
 Date: 2026-11-19. Status: decided (the user, 2026-11-19, on the merge of Native-and-GPU-strata d719a840ef into
 investigate-bend-vs-datalog: "0435's schedule, Q203's measure"). Amends 0435 §4 and §6 (the measure); keeps 0435
 R1-R6 and Q203 item 3.

@@ -1,11 +1,11 @@
 import type { SteerRule } from "../adapter-contract.js";
-import type { AuditFailure, AuditMode, AuditScope } from "../audit/audit.js";
+import type { AuditFailure, AuditMode, AuditOwner, AuditScope } from "../audit/audit.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
 import { sensitiveByName } from "../path-boundary.js";
 import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
 import { inlineCode, steerBlock, steerRules, steerText, type SteerFinding, type SteerShell, type SteerTrigger } from "./rerail-steer.js";
-import { steerOrigin, steerTitle, type SteerRuleSource } from "./steer-origin.js";
+import { steerNaming, type SteerRuleSource } from "./steer-origin.js";
 
 export type CodeRuleDslScalar = boolean | number | string | null;
 export type CodeRuleDslValue = CodeRuleDslScalar | CodeRuleDslValue[] | { [key: string]: CodeRuleDslValue };
@@ -1475,6 +1475,11 @@ export interface CodeRuleEditBatch {
    * in `log` mode, so the restored source is judged and recorded but steers nothing.
    */
   mode?: AuditMode;
+  /**
+   * Who these edits' audits belong to; `session` when absent. `repository`: changes the walk of the other worktrees
+   * found that no session made, recorded once for the repository by the one session the walk handed them to.
+   */
+  owner?: AuditOwner;
 }
 
 export interface CodeRuleSourceSpan {
@@ -1597,6 +1602,14 @@ export interface CodeRuleAuditor {
    * `.git` moved away, a gitlink staged). Absent: a file's checkout does not change while a session runs.
    */
   refreshOwners?(): void;
+  /**
+   * Before a tool call's files are filtered at its start: builds the rules of the checkouts that own `paths` (as for
+   * `acceptsPath`), compiling them off the daemon's thread, and settles once they are built, so `acceptsPath`
+   * compiles nothing on it. Absent: `acceptsPath` builds them itself.
+   */
+  prepareRules?(paths: readonly string[]): Promise<void>;
+  /** Settles once the rules `openWorkspace` builds ahead of any call are built. Absent: it builds none. */
+  rulesBuiltAhead?(): Promise<void>;
   /** Activates defaults at the next event boundary; work already queued keeps its snapshot. */
   updateSettings?(settings: Required<AuditSettings>): void;
   /** `path` is relative to the session folder and may lead out of it (`../`) into another checkout. */
@@ -1646,6 +1659,8 @@ export interface CodeRuleAuditor {
    * walk's included, is checked by one audit of the whole repository. False when absent.
    */
   steeringWaitsForLog?(): boolean;
+  /** The agent's turn ended (or the session reached its final checkpoint): work waiting for the session to go quiet starts now. */
+  turnEnded?(): void;
   /** An audit someone asked for, whose runs are recorded as scans (`AuditOrigin`), not as the session's own. */
   audit?(sessionId: string, input: {
     scope: "repository" | "touched-files";
@@ -1752,9 +1767,10 @@ export function buildSteer(
   shell?: SteerShell,
 ): { content: string; ruleIds: string[]; rules: SteerRule[] } {
   const findings = steerFindings(violations, sensitive);
+  const naming = steerNaming(sourceOf);
   return {
     content: steerBlock(trigger, findings, shell),
     ruleIds: steerRuleIds(violations),
-    rules: steerRules(findings, ruleId => steerOrigin(ruleId, sourceOf(ruleId)), ruleId => steerTitle(ruleId, sourceOf(ruleId))),
+    rules: steerRules(findings, naming.origin, naming.title),
   };
 }

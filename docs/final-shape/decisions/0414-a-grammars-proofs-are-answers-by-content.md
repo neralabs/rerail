@@ -1,9 +1,10 @@
 # 0414: A grammar's proofs are answers by content
 
-Status: decided (the user, 2026-11-18: "please figure out how we can also implement a proof
-cache so that we don't do the heavy work over and over"). Follows 0264 (images by content), 0092
-and 0103 (a cache is a key and a result, nothing more).
-Numbered 0402 where it was written, then 0404.
+Status: partly built (audited 2026-11-23). Left: Answers read from and written to the engine build's content store for
+every grammar compiled for a run (Q234), not only Kotlin's shipped seed. Decided (the user, 2026-11-18: "please figure
+out how we can also implement a proof cache so that we don't do the heavy work over and over"). Follows 0264 (images
+by content), 0092 and 0103 (a cache is a key and a result, nothing more). Numbered 0402 where it was written, then
+0404.
 
 ## Intro
 

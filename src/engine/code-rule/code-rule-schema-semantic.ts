@@ -22,7 +22,7 @@ const sqlfluffReference = z
 
 /**
  * A violation's `suppress`: the suppression kinds it may ask for, one entry per linter, in the engine's order (its table in
- * `native/src/code_rule_dsl/suppress.rs`): the key is the kind's `suppress` key and registry name, the value its shape.
+ * `native/crates/adapters/src/code_rule_dsl/suppress.rs`): the key is the kind's `suppress` key and registry name, the value its shape.
  * Which languages honour a kind is the registry's (`suppressions`) and the engine's to check. A new kind is one entry here.
  */
 export const codeRuleSuppressSchema = z

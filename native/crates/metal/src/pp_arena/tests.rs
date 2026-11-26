@@ -1,6 +1,6 @@
 //! R1 of decision 0448: the searches equal a host reference, across SIMD-group and group edges.
-//! The scans, segmented scans and sorts are the persistent grid's, tested with UKL's library
-//! (`gpu/src/library_tests.rs`: `the_grid_*`).
+//! The scans, segmented scans and sorts are UKL's stages (`ukl/stages.h`), tested with UKL's library
+//! (`gpu/src/library_tests.rs`: `the_stages_*`).
 
 use super::*;
 use crate::lane::Pod;
@@ -202,87 +202,48 @@ fn an_evaluation_is_one_command_buffer() {
     assert!(two.is_err(), "a second command in one evaluation");
 }
 
-/// A measurement, not a check: the grid's sort alone, a few keys, one group.
+/// A unit's tiles a phase are one a `TILE_ITEMS` of its items, at least one, at most `TILES_MOST`, and 1 on the CPU
+/// (its one worker): `TILE_ITEMS` is `ukl/stages.h`'s `UKL_STAGE_SMALL` (a stage of one tile), `TILES_MOST` the
+/// program's `PP_TLIB` (the most tiles `SUMS` holds a stage's sums of).
 #[test]
-#[ignore = "a measurement"]
-fn the_grid_sort_alone_is_fast() {
-    // Hashed keys (a definitions' rows), and the closes' (a depth by 2^15 over a position).
-    let hashed = |n: usize| (0..n as u64).map(|k| k.wrapping_mul(0x9e37_79b9_7f4a_7c15)).collect::<Vec<u64>>();
-    let closes = |n: usize| (0..n as u64).map(|k| ((32767 + k % 5) << 24) | (k * 7)).collect::<Vec<u64>>();
-    for (what, n, low, bits) in [("hashed", 500usize, 0u32, 64u32), ("hashed", 1000, 0, 64), ("closes", 1600, 0, 40), ("closes", 1600, 24, 40), ("closes", 6000, 24, 40)] {
-        let keys = if what == "hashed" { hashed(n) } else { closes(n) };
-        for groups in [1u64, 32] {
-            let z32 = zeroed::<u32>;
-            let t = (0..5)
-                .map(|_| {
-                    let (ctl, kb, va, k2, v2, hist, sums) = (z32(8), buf(&keys), z32(n), zeroed::<u64>(n), z32(n), z32(256 * n.div_ceil(1024) + 1), z32(4 * groups as usize + 4));
-                    let rows: [(&str, &dyn Bound); 7] = [("ctl", &ctl), ("keys", &kb), ("values", &va), ("keys2", &k2), ("values2", &v2), ("hist", &hist), ("sums", &sums)];
-                    crate::pp_eval::run_timed(|e| {
-                        e.run("pb_sort_alone", &rows, Some(ProbeArgs([n as u32, bits, low, 0])), groups);
-                        Ok(())
-                    })
-                    .unwrap()
-                    .1
-                })
-                .fold(f64::MAX, f64::min);
-            eprintln!("sort alone: {n} {what} keys, bits {low}..{bits}, {groups} groups: {:.1} us", t * 1e6);
-        }
+fn a_units_tiles_are_one_a_stages_small_items() {
+    let header = rerail_ukl::LIBRARY.iter().find(|(p, _)| *p == "ukl/stages.h").expect("UKL's stages header").1;
+    assert!(header.contains(&format!("#define UKL_STAGE_SMALL {TILE_ITEMS}u")), "UKL_STAGE_SMALL is TILE_ITEMS");
+    assert!(include_str!("../pp_grid.uglykl").contains(&format!("#define PP_TLIB {TILES_MOST}u")), "PP_TLIB is TILES_MOST");
+    if matches!(lane::device(), Ok(lane::Device::Cpu(_))) {
+        assert_eq!((tiles_for(0), tiles_for(usize::MAX / 2), workers()), (1, 1, 1), "the CPU's one worker, a tile a phase");
+        return;
     }
+    assert_eq!(tiles_for(0), 1);
+    assert_eq!(tiles_for(TILE_ITEMS), 1);
+    assert_eq!(tiles_for(TILE_ITEMS + 1), 2);
+    assert_eq!(tiles_for(usize::MAX / 2), TILES_MOST);
 }
 
-/// A measurement, not a check: what a grid barrier, a device fence, a threadgroup barrier and a
-/// dependent coherent load each cost.
+/// Decision 0653: no persistent grid. The evaluator's source names no grid barrier, join or residency (`ukl/grid.h`
+/// is gone), and a launch's ring holds its budget's pushes, a phase's tiles a worker past it, and the tiles queued.
 #[test]
-#[ignore = "a measurement"]
-fn what_a_barrier_costs() {
-    let names = ["grid barrier", "device fence", "tg barrier (device)", "coherent load chain", "plain load chain"];
-    for what in 0..5u32 {
-        for groups in [1u64, 32] {
-            let time = |n: u32| {
-                (0..5)
-                    .map(|_| {
-                        let (ctl, data) = (zeroed::<u32>(8), zeroed::<u32>(512));
-                        crate::pp_eval::run_timed(|e| {
-                            e.run("pb_barriers_alone", &[("ctl", &ctl), ("data", &data)], Some(ProbeArgs([n, what, 0, 0])), groups);
-                            Ok(())
-                        })
-                        .unwrap()
-                        .1
-                    })
-                    .fold(f64::MAX, f64::min)
-            };
-            let (t0, t1) = (time(0), time(1000));
-            if what == 0 {
-                eprintln!("empty run, {groups} groups: {:.1} us", t0 * 1e6);
-            }
-            eprintln!("{}, {groups} groups: {:.3} us each", names[what as usize], (t1 - t0) * 1e6 / 1000.0);
-        }
+fn the_setup_is_a_program_on_a_queue() {
+    for gone in ["grid.h", "ukl_grid_", "UKL_GRID_", "UklGrid", "pp_setup", "pp_teams", "pp_check"] {
+        assert!(!source().contains(gone), "the evaluator's source names {gone}");
     }
+    assert!(source().contains("#include <ukl/stages.h>") && source().contains("#include <ukl/workqueue.h>"));
+    let tiles = [1, 7, TILES_MOST];
+    assert_eq!(queue_slots(&tiles), BUDGET as usize + workers() as usize * TILES_MOST as usize + (8 + TILES_MOST as usize) + 64);
+    assert!(2 * PP_LAUNCHES <= crate::launch::KERNEL_LAUNCH_LIMIT, "a command's launches within the limit");
 }
 
-/// `GRID_SMALL` is `ukl/grid.h`'s `UKL_GRID_SMALL`, and a unit's groups are one a `GRID_SMALL` of its nodes, at
-/// least one, at most the grid's.
+/// A unit's runs (`runs`, `LPRUN`) are laid out as the kernel reads them: a tile's `RUN_SLOTS` slots of `RUN_BYTES`
+/// each (`pp_grid.uglykl`'s `LP_SLOTS`, `LP_RUN_BYTES`), by the loop's phase's tile, and the run fits its slot (the
+/// source's static assertion: it compiles).
 #[test]
-fn a_units_groups_are_one_a_small_grids_nodes() {
-    let header = rerail_ukl::LIBRARY.iter().find(|(p, _)| *p == "ukl/grid.h").expect("UKL's grid header").1;
-    assert!(header.contains(&format!("#define UKL_GRID_SMALL {}u", GRID_SMALL)), "UKL_GRID_SMALL is GRID_SMALL");
-    let most = groups();
-    assert_eq!(groups_for(0), 1);
-    assert_eq!(groups_for(GRID_SMALL), 1);
-    assert_eq!(groups_for(GRID_SMALL + 1), 2.min(most));
-    assert_eq!(groups_for(usize::MAX / 2), most);
-}
-
-/// A dispatch's runs (`runs`, `LPRUN`) are laid out as the kernel reads them: a group's `RUN_SLOTS` slots of
-/// `RUN_BYTES` each (`pp_grid.uglykl`'s `LP_SLOTS`, `LP_RUN_BYTES`), and the run fits its slot (the source's
-/// static assertion: it compiles).
-#[test]
-fn a_dispatchs_runs_are_the_kernels_slots() {
+fn a_units_runs_are_the_kernels_slots() {
     let src = source();
     assert!(src.contains(&format!("#define LP_RUN_BYTES ({}u)", RUN_BYTES)), "LP_RUN_BYTES is RUN_BYTES");
     assert!(src.contains(&format!("#define LP_SLOTS ({}u / UKL_SIMD_WIDTH)", TG)), "LP_SLOTS is TG's SIMD groups");
     assert_eq!(RUN_SLOTS as u64, TG / 32);
     assert!(src.contains("UKL_STATIC_ASSERT(sizeof(LpRun) <= LP_RUN_BYTES"), "the run's size is checked");
+    assert!(src.contains("lp_run_slot(AT(uint8_t, LPRUN), g.tile, g.lid)"), "a SIMD group's run by its tile");
 }
 
 /// The expansion's loops are bounded by the unit's work (`LP_UNIT_WORK`, `lp_spend`): a run that does not progress
@@ -303,24 +264,27 @@ fn the_expansions_loops_are_bounded_by_the_units_work() {
     assert!(src.contains("if (++rounds >= LP_WORK"), "a piece's rounds are bounded");
 }
 
-/// The setup's Metal source splits one unit a barriered phase function (decision 0571): the grid's
-/// primitives, the expansion's loop (`lp_loop`, decision 0588) and a unit's setup (`pp_unit`, the
-/// grid's or a team's: 0588 §6), the loop's look for a `(` (`lp_next_is_lparen`: inlined, it crashed the
-/// M3's back end), a helper's reading of another unit's loop (`lp_help`, 0613 §4), and one a large body called at
-/// several sites (decision 0672: `lp_substitute`, `lp_call_next`, `p1_if_line`, `p1_find_header`), 15 dynamic
-/// libraries; the small tape reads stay in their callers.
+/// The setup's Metal source splits one unit a barriered phase function (decision 0571), and one a large body called at
+/// several sites (decision 0672): the program's phases (`pp_step`, decision 0653), the stages it calls and
+/// `pp_advance`, which calls it, calls 5 deep: a tape read is two calls, `clif_tape_<name>` and
+/// 16z's block (`clif_z_block`; decision 0576 checks 16z in the public read, with no `_z` read between); the small
+/// tape reads stay in their callers. The loop's look for a `(` (`lp_next_is_lparen`) is called, never inlined
+/// (inlined, it crashed the M3's back end); small, it is kept in its callers' units.
 #[test]
 fn the_setup_splits_one_unit_a_barriered_function() {
-    let msl = rerail_ukl::metal_source("pp_setup", source()).expect("the setup's source preprocesses");
+    let msl = rerail_ukl::metal_source(&rerail_ukl::Target::named("apple7").unwrap(), "pp_run", source()).expect("the setup's source preprocesses");
     let split = rerail_ukl::split::split(&msl).expect("the setup has barriered functions");
     for (l, units) in split.levels().iter().enumerate() {
         eprintln!("level {l}: {}", units.iter().map(|u| format!("{}({})", u.name, u.calls.join(","))).collect::<Vec<_>>().join(" "));
     }
     eprintln!("local: {}; depth {}", split.local.join(" "), split.depth);
-    assert!(split.units.iter().any(|u| u.name == "lp_loop"), "lp_loop is a unit");
-    assert!(split.units.iter().any(|u| u.name == "pp_unit"), "pp_unit is a unit");
+    assert!(split.units.iter().any(|u| u.name == "pp_step"), "pp_step is a unit");
     assert!(split.local.iter().any(|n| n.starts_with("node_")), "the tape's reads stay local");
-    assert!(split.units.iter().any(|u| u.name == "lp_next_is_lparen"), "the look for a `(` is a unit");
+    // The look for a `(` is called, never inlined (inlined with the node frames' reads it crashed the M3's back end):
+    // a `UKL_ONCE` function, a unit of its own or, small and barrier-free, kept noinline in its callers' units.
+    assert!(split.units.iter().any(|u| u.name == "lp_next_is_lparen") || split.local.iter().any(|n| n == "lp_next_is_lparen"), "the look for a `(` is called");
+    // The loop's phase is a unit of its own (`lp_loop_run`): inlined into `pp_step`, the M3's back end miscompiled it.
+    assert!(split.units.iter().any(|u| u.name == "lp_loop_run"), "the loop's phase is a unit");
     // Compiled once and called, each its own unit (decision 0672): inlined at their several sites, their loop exits
     // counted past 255 in `lp_piece` and `pp_step`, which the M1's back end miscompiles. The rare cases those
     // reached inlined (a region's growth, a line splice's end) are calls kept in their callers' units.
@@ -330,11 +294,12 @@ fn the_setup_splits_one_unit_a_barriered_function() {
     for rare in ["lp_grow", "splice_end"] {
         assert!(split.local.iter().any(|n| n == rare), "{rare} is called in its callers' units");
     }
-    assert!(split.units.iter().any(|u| u.name == "lp_help"), "a helper's reading is a unit");
-    assert_eq!(split.units.len(), 15);
-    // `pp_unit`, `lp_loop`, `lp_call_next` and `lp_substitute` under the kernel and the grid's calls: 8 deep.
-    assert_eq!(split.depth, 8);
-    assert!(split.kernel.contains("kernel void pp_setup") && split.units.iter().all(|u| !u.source.contains("kernel void")));
+    // The stages (`ukl/stages.h`: 4 of the scans, 3 of the segmented scans, 4 of the sort), the loop's phase and the
+    // four above, `pp_step` and `pp_advance`, which runs the afters: `pp_advance`, `pp_step`, `lp_loop_run`,
+    // `lp_call_next`, `lp_substitute` and its stage calls 7 deep.
+    assert_eq!(split.units.len(), 18);
+    assert_eq!(split.depth, 7);
+    assert!(split.kernel.contains("kernel void pp_run") && split.units.iter().all(|u| !u.source.contains("kernel void")));
 }
 
 /// The evaluator's kernels compile (a failed compile is fatal: its message is the panic's).
@@ -342,9 +307,9 @@ fn the_setup_splits_one_unit_a_barriered_function() {
 fn the_source_compiles() {
     // `RERAIL_PP_DUMP`: the source as Metal's front end takes it, written there (its errors' lines).
     if let Some(path) = std::env::var_os("RERAIL_PP_DUMP") {
-        std::fs::write(path, rerail_ukl::metal_source("pp_setup", source()).unwrap_or_else(|e| e.to_string())).unwrap();
+        std::fs::write(path, rerail_ukl::metal_source(&rerail_ukl::Target::named("apple7").unwrap(), "pp_run", source()).unwrap_or_else(|e| e.to_string())).unwrap();
     }
-    for name in ["pp_setup", "pp_check", "pb_search", "pb_expand", "pd_relex_test", "pb_sort_alone", "pb_barriers_alone"] {
+    for name in ["pp_run", "pp_rebase", "pb_search", "pb_expand", "pd_relex_test"] {
         kernel(name);
     }
 }
@@ -369,32 +334,4 @@ fn the_source_is_opencl_c_1_2() {
         std::fs::remove_file(&file).ok();
     }
     assert!(o.status.success(), "the evaluator is not OpenCL C 1.2 ({}):\n{errors}", file.display());
-}
-
-/// §4 of decision 0468: the grid is the device's resident count at the grid kernels' threadgroup
-/// memory (`Device::resident_groups`), at most `GROUPS_MOST`, and `GROUPS_UNKNOWN` on a device
-/// that gives no cores. On the CPU it is one group (decision 0527 §3: its groups are coroutines
-/// on one host thread).
-#[test]
-fn the_grid_is_the_devices_resident_count() {
-    let device = lane::device().unwrap();
-    if matches!(device, lane::Device::Cpu(_)) {
-        assert_eq!(groups(), 1, "the CPU's grid");
-        return;
-    }
-    let local = kernel("pp_setup").threadgroup_bytes();
-    match device.gpu_cores() {
-        Some(cores) => {
-            eprintln!("{cores} GPU cores, {local} bytes of threadgroup memory a group: {} groups", groups());
-            let bound = device.resident_groups(tg() as u32, local).unwrap();
-            assert!(bound >= cores as u64, "a core holds a group at least");
-            // Decision 0568: the bound until a failed barrier measures less, kept for the machine.
-            let r = residency();
-            assert!(r.groups <= bound && r.groups >= 1, "{r:?} against the bound {bound}");
-            assert_eq!(groups(), r.groups.min(GROUPS_MOST), "the resident count, capped");
-        }
-        // No cores given: the backend's own answer where it has one (decision 0568: CUDA's occupancy), else unknown.
-        None if residency().known == rerail_device::grid::Known::Api => assert_eq!(groups(), residency().groups.min(GROUPS_MOST), "the backend's answer, capped"),
-        None => assert_eq!(groups(), GROUPS_UNKNOWN),
-    }
 }

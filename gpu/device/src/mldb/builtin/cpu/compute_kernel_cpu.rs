@@ -225,10 +225,34 @@ pub fn gpu_seconds_awaited() -> f64 {
     CPU_NANOS.load(Ordering::Relaxed) as f64 * 1e-9
 }
 
-/// A compiled library: the shared object the host's compiler made of the source, loaded.
+/// A compiled library: the shared object the host's compiler made of the source, loaded; or the kernels run by an
+/// interpreter (`CpuInterpreter`). Its kernels that are Rust of its very source (`rerail_ukl_rust`, decision 0567
+/// step 3) run as that Rust (`host`), their arguments the library's rows.
 pub struct CpuComputeFunctionLibrary {
-    lib: crate::os::Lib,
+    code: Code,
     name: String,
+    host: Vec<(&'static str, rerail_ukl_rust::Kernel)>,
+    /// The compiled reads `host`'s kernels call (`rerail_ukl_rust::Launch::reads`), where one does.
+    reads: Option<Arc<rerail_ukl_rust::Reads>>,
+}
+
+enum Code {
+    Compiled(crate::os::Lib),
+    Interpreted(Arc<dyn CpuInterpreter>),
+}
+
+/// Kernels the CPU runs from their source without its compiler (`rerail_ukl_vec`, decision 0567): given by the layer
+/// above the preprocessor (`rerail_gpu`), which this one is below. Its kernels' arguments are the shim's rows, as a
+/// compiled library's.
+pub trait CpuInterpreter: Send + Sync {
+    /// Kernel `kernel`'s rows (`Name__ukl_params`'s text), and each row's type's size, alignment and code
+    /// (`Name__ukl_rows`).
+    fn rows(&self, kernel: &str) -> Result<(String, Vec<u64>), String>;
+    /// An `ARGS` structure's field names (`Type__ukl_fields`) and layout (its layout function's numbers).
+    fn layout(&self, ty: &str) -> Result<(String, Vec<u64>), String>;
+    /// A launch of `kernel` over `grid` groups of `block` threads: each argument's words (a buffer's address, an
+    /// `ARGS` row's bytes, a threadgroup row's offset in the `shared` bytes past the kernel's own).
+    fn launch(&self, kernel: &str, params: &[Vec<u64>], grid: [u32; 3], block: [u32; 3], shared: u64) -> Result<(), String>;
 }
 
 unsafe impl Send for CpuComputeFunctionLibrary {}
@@ -257,12 +281,25 @@ fn open_library(lib: &std::path::Path) -> Result<crate::os::Lib, String> {
     crate::os::Lib::open(&[path.as_ref()], crate::os::Scope::Local).ok_or_else(|| format!("loading {}: {}", lib.display(), crate::os::Lib::error()))
 }
 
+/// A debugging aid: `RERAIL_CPU_SANITIZE`, flags the kernels' compile adds (`-fsanitize=undefined,bounds-strict`: a
+/// read or write past a fixed array, of a thread's or a group's, reported at its line). Its own libraries (the key).
+fn sanitize() -> Vec<String> {
+    std::env::var("RERAIL_CPU_SANITIZE").map(|v| v.split_whitespace().map(str::to_owned).collect()).unwrap_or_default()
+}
+
 impl CpuComputeFunctionLibrary {
     /// Compiles C++ (UKL preprocessed for the CPU) with the host's compiler into a shared object, and loads it.
     pub fn compile_from_source(_device: &CpuDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let cxx = compiler()?;
         // The store's (`crate::store`), else the temporary directory's: the CPU's form is a file `dlopen` loads.
-        let k = crate::store::key(&[b"cpu", cxx.as_bytes(), compiler_version(cxx).as_bytes(), CXX_FLAGS.join(" ").as_bytes(), if strict_simd() { b"-O0" } else { b"" }, preprocessed_source.as_bytes()]);
+        let k = crate::store::key(&[b"cpu", cxx.as_bytes(), compiler_version(cxx).as_bytes(), CXX_FLAGS.join(" ").as_bytes(), if strict_simd() { b"-O0" } else { b"" }, sanitize().join(" ").as_bytes(), preprocessed_source.as_bytes()]);
+        // The shipped library (`crate::store::shipped`), of this compiler: loaded in place.
+        if let Some(shipped) = crate::store::shipped("cpu", &k, LIB_EXTENSION)
+            && let Ok(opened) = open_library(&shipped)
+        {
+            crate::store::count(true);
+            return Ok(CpuComputeFunctionLibrary { code: Code::Compiled(opened), name: file_name_to_appear_in_error_messages.to_string(), host: Vec::new(), reads: None });
+        }
         let lib = match crate::store::path("cpu", &k, LIB_EXTENSION) {
             Some(p) => p,
             None => {
@@ -278,7 +315,7 @@ impl CpuComputeFunctionLibrary {
                 Ok(opened) => {
                     crate::store::count(true);
                     crate::store::used(&lib);
-                    return Ok(CpuComputeFunctionLibrary { lib: opened, name: file_name_to_appear_in_error_messages.to_string() });
+                    return Ok(CpuComputeFunctionLibrary { code: Code::Compiled(opened), name: file_name_to_appear_in_error_messages.to_string(), host: Vec::new(), reads: None });
                 }
                 // Damaged, or another build's: compiled again, and replaced.
                 Err(_) => _ = std::fs::remove_file(&lib),
@@ -298,6 +335,7 @@ impl CpuComputeFunctionLibrary {
             let o = std::process::Command::new(cxx)
                 .args(flags)
                 .args(strict_simd().then_some("-O0"))
+                .args(sanitize())
                 .args(out)
                 .arg(&tmp)
                 .arg(&src)
@@ -328,15 +366,35 @@ impl CpuComputeFunctionLibrary {
             }
         }
         let opened = open_library(&lib)?;
-        Ok(CpuComputeFunctionLibrary { lib: opened, name: file_name_to_appear_in_error_messages.to_string() })
+        Ok(CpuComputeFunctionLibrary { code: Code::Compiled(opened), name: file_name_to_appear_in_error_messages.to_string(), host: Vec::new(), reads: None })
+    }
+
+    /// The kernels `interpreter` runs, named `name` in errors.
+    pub fn interpreted(interpreter: Arc<dyn CpuInterpreter>, name: &str) -> Self {
+        CpuComputeFunctionLibrary { code: Code::Interpreted(interpreter), name: name.to_string(), host: Vec::new(), reads: None }
+    }
+
+    /// This library, its kernels `host` names run as their Rust (`rerail_ukl_rust::kernels` of its source and
+    /// defines): a compiled library's alone, whose rows give their arguments. `reads`: the compiled reads they call.
+    pub fn with_host(mut self, host: Vec<(&'static str, rerail_ukl_rust::Kernel)>, reads: Option<Arc<rerail_ukl_rust::Reads>>) -> Self {
+        if matches!(self.code, Code::Compiled(_)) {
+            self.host = host;
+            self.reads = reads;
+        }
+        self
     }
 
     fn symbol(&self, name: &str) -> Result<*mut c_void, String> {
-        let p = self.lib.sym(name);
-        if p.is_null() {
-            return Err(format!("{}: no {name}", self.name));
+        match &self.code {
+            Code::Compiled(lib) => {
+                let p = lib.sym(name);
+                if p.is_null() {
+                    return Err(format!("{}: no {name}", self.name));
+                }
+                Ok(p)
+            }
+            Code::Interpreted(_) => Err(format!("{}: an interpreted library has no symbol {name}", self.name)),
         }
-        Ok(p)
     }
 
     fn string(&self, name: &str) -> Result<String, String> {
@@ -347,6 +405,10 @@ impl CpuComputeFunctionLibrary {
 
     /// An `args` structure's layout: its layout function called (`UKL_REFLECT_STRUCT`).
     fn struct_type(&self, ty: &str) -> Result<KernelBaseType, String> {
+        if let Code::Interpreted(i) = &self.code {
+            let (names, l) = i.layout(ty)?;
+            return crate::rows::struct_type(ty, &names, &l);
+        }
         let names = self.string(&format!("{ty}__ukl_fields")).map_err(|e| format!("{ty} is an ARGS row's type with no UKL_REFLECT_STRUCT: {e}"))?;
         let f = self.symbol(&format!("{ty}__ukl_layout"))?;
         let mut l = vec![0u64; crate::rows::layout_len(&names)];
@@ -358,6 +420,11 @@ impl CpuComputeFunctionLibrary {
 
     /// The kernel `function_name`, with its arguments from its rows (`Name__ukl_params`, `Name__ukl_rows`).
     pub fn get_function(&self, _device: &CpuDevice, function_name: &str) -> Result<CpuComputeFunction, String> {
+        if let Code::Interpreted(i) = &self.code {
+            let (text, rows) = i.rows(function_name)?;
+            let (arguments, param_sizes) = crate::rows::arguments(function_name, &text, &rows, |ty| self.struct_type(ty))?;
+            return Ok(CpuComputeFunction { entry: Run::Interpreted(i.clone()), name: function_name.to_string(), arguments, param_sizes });
+        }
         let entry = self.symbol(function_name)?;
         let text = self.string(&format!("{function_name}__ukl_params"))?;
         let n = crate::rows::split_top(&text).len() / 4 * 3;
@@ -367,6 +434,10 @@ impl CpuComputeFunctionLibrary {
         let (arguments, param_sizes) = crate::rows::arguments(function_name, &text, &rows, |ty| self.struct_type(ty))?;
         // SAFETY: the shim's entry has this signature.
         let entry: Entry = unsafe { std::mem::transmute(entry) };
+        let entry = match self.host.iter().find(|(n, _)| *n == function_name) {
+            Some(&(_, k)) => Run::Host(k, self.reads.clone()),
+            None => Run::Compiled(entry),
+        };
         Ok(CpuComputeFunction { entry, name: function_name.to_string(), arguments, param_sizes })
     }
 }
@@ -392,35 +463,38 @@ struct Launch {
 /// The scheduler's storage a root's thread gives each launch: more than the shim's (`__ukl_cpu_sched`, which checks).
 const SCHED_BYTES: usize = 256 << 10;
 
-/// The thread key whose value on a thread is its running launch's scheduler (`__ukl_cpu_sched`; its running thread is
+/// The pthread key whose value on a thread is its running launch's scheduler (`__ukl_cpu_sched`; its running thread is
 /// the scheduler's): the one thread-local every kernel library uses, read and written by the shim itself
-/// (`pthread_getspecific`, Windows' `TlsGetValue`). A library has none of its own: macOS gives each loaded image's
-/// thread-locals a pthread key, and a process runs out of them after a few hundred libraries. A pthread key on Unix,
-/// a TLS index on Windows.
+/// (`pthread_getspecific`). A library has none of its own: macOS gives each loaded image's thread-locals a pthread
+/// key, and a process runs out of them after a few hundred libraries. On Windows the key is a TLS index (`TlsAlloc`),
+/// which the shim reads with `TlsGetValue`.
+#[cfg(not(windows))]
 fn tls_key() -> u64 {
     static KEY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *KEY.get_or_init(|| {
-        #[cfg(unix)]
-        {
-            let mut key: libc::pthread_key_t = 0;
-            // SAFETY: a key made once for the process, with no destructor (its values are the launches', which
-            // outlive no launch).
-            let made = unsafe { libc::pthread_key_create(&mut key, None) };
-            assert_eq!(made, 0, "the CPU backend's thread key: {}", std::io::Error::from_raw_os_error(made));
-            key as u64
-        }
-        #[cfg(windows)]
-        {
-            #[link(name = "kernel32")]
-            unsafe extern "system" {
-                fn TlsAlloc() -> u32;
-            }
-            const TLS_OUT_OF_INDEXES: u32 = u32::MAX;
-            // SAFETY: an index made once for the process, never freed.
-            let index = unsafe { TlsAlloc() };
-            assert_ne!(index, TLS_OUT_OF_INDEXES, "the CPU backend's thread key: {}", std::io::Error::last_os_error());
-            u64::from(index)
-        }
+        let mut key: libc::pthread_key_t = 0;
+        // SAFETY: a key made once for the process, with no destructor (its values are the launches', which outlive
+        // no launch).
+        let made = unsafe { libc::pthread_key_create(&mut key, None) };
+        assert_eq!(made, 0, "the CPU backend's thread key: {}", std::io::Error::from_raw_os_error(made));
+        key as u64
+    })
+}
+
+#[cfg(windows)]
+fn tls_key() -> u64 {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn TlsAlloc() -> u32;
+    }
+    /// `TlsAlloc`'s answer when the process has no index left.
+    const TLS_OUT_OF_INDEXES: u32 = u32::MAX;
+    static KEY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *KEY.get_or_init(|| {
+        // SAFETY: an index allocated once for the process and never freed (its values are the launches').
+        let key = unsafe { TlsAlloc() };
+        assert_ne!(key, TLS_OUT_OF_INDEXES, "the CPU backend's thread key: {}", std::io::Error::last_os_error());
+        u64::from(key)
     })
 }
 
@@ -433,12 +507,21 @@ pub fn resident_groups(threads: usize) -> usize {
     (RESIDENT_THREADS / threads.max(1)).clamp(1, 64)
 }
 
+/// How a kernel runs: its compiled entry, or its library's interpreter.
+#[derive(Clone)]
+enum Run {
+    Compiled(Entry),
+    Interpreted(Arc<dyn CpuInterpreter>),
+    /// Its source's Rust (`rerail_ukl_rust`): a group at a time, each its threads in lanes.
+    Host(rerail_ukl_rust::Kernel, Option<Arc<rerail_ukl_rust::Reads>>),
+}
+
 /// A kernel's entry: a pointer to each argument's bytes, and the launch; 0, or 1 with the launch's error written.
 type Entry = extern "C" fn(*const *const c_void, *const Launch) -> i32;
 
 /// A kernel of a library, with its arguments (`MetalComputeFunction`).
 pub struct CpuComputeFunction {
-    entry: Entry,
+    entry: Run,
     pub name: String,
     arguments: Vec<GridComputeFunctionArgument>,
     param_sizes: Vec<usize>,
@@ -686,7 +769,7 @@ impl CpuBindContext<'_> {
             return Ok(());
         }
         let threads = block.iter().map(|&b| b as usize).product::<usize>();
-        let (entry, name, shared) = (f.entry, f.name.clone(), self.shared);
+        let (entry, name, shared) = (f.entry.clone(), f.name.clone(), self.shared);
         let params = std::mem::take(&mut self.params);
         self.params = vec![Vec::new(); params.len()];
         let keep = std::mem::take(&mut self.keep);
@@ -700,6 +783,38 @@ impl CpuBindContext<'_> {
             if grid.contains(&0) {
                 return Ok(());
             }
+            let entry = match entry {
+                Run::Compiled(e) => e,
+                Run::Interpreted(i) => return i.launch(&name, &params, grid, block, shared).map_err(|e| format!("{name} on the CPU: {e}")),
+                Run::Host(k, reads) => {
+                    // Its threadgroup memory is its own (`tg`, its `SHARED` rows'): a row of the launch's has no place.
+                    if shared != 0 {
+                        return Err(format!("{name} on the CPU: its Rust takes no threadgroup row of the launch's"));
+                    }
+                    // The shim's two arguments past the kernel's: no groups' counts (the device read them), and the
+                    // first group's position 0.
+                    let (counts, first): (*const u32, u32) = (std::ptr::null(), 0);
+                    let mut argv: Vec<*const u8> = params.iter().map(|p| p.as_ptr().cast::<u8>()).collect();
+                    argv.extend([(&raw const counts).cast::<u8>(), (&raw const first).cast::<u8>()]);
+                    // A kernel's panic is its launch's error: the queue's thread goes on, and its waiters hear of it.
+                    let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        for z in 0..grid[2] {
+                            for y in 0..grid[1] {
+                                for x in 0..grid[0] {
+                                    let l = rerail_ukl_rust::Launch { group: [x, y, z], block, groups: grid, reads: reads.as_ref().map_or(std::ptr::null(), |r| r.table()) };
+                                    // SAFETY: `argv` holds the kernel's arguments as its rows bound them (each buffer's
+                                    // address, each value's bytes), and the shim's two.
+                                    unsafe { k(argv.as_ptr(), &l) };
+                                }
+                            }
+                        }
+                    }));
+                    return ran.map_err(|p| {
+                        let why = p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default();
+                        format!("{name} on the CPU: its Rust panicked: {why}")
+                    });
+                }
+            };
             let groups = grid.iter().map(|&g| g as usize).product::<usize>();
             let resident = resident_groups(threads).min(groups);
             let slot = (shared as usize).div_ceil(16) * 16;
@@ -814,6 +929,42 @@ DEFINE_KERNEL2(t, t_divergent,
         }
         ctx.launch(&[grid], &[block])?;
         q.finish()
+    }
+
+    /// A kernel's Rust (`with_host`) runs in place of the compiler's build: each group in turn, its arguments the
+    /// library's rows bound (here `out`'s address), then the shim's two.
+    #[test]
+    fn a_kernel_with_rust_runs_its_rust() {
+        unsafe fn host(argv: *const *const u8, l: &rerail_ukl_rust::Launch) {
+            let out = unsafe { (*argv.add(0) as *const *mut u32).read_unaligned() };
+            let counts = unsafe { (*argv.add(1) as *const *const u32).read_unaligned() };
+            let first = unsafe { (*argv.add(2) as *const u32).read_unaligned() };
+            for lid in 0..l.block[0] {
+                let i = l.group[0] * l.block[0] + lid;
+                unsafe { out.add(i as usize).write(1000 + i + first + u32::from(!counts.is_null())) };
+            }
+        }
+        let Some((device, lib)) = compile("t.uglykl", KERNELS) else { return };
+        let lib = lib.with_host(vec![("t_ends_after", host)], None);
+        let f = lib.get_function(&device, "t_ends_after").unwrap();
+        let out = alloc_uninitialized_array_sync::<u32>(&device, 64);
+        run(&device, &f, &out, None, 2, 32).unwrap();
+        assert_eq!(transfer_to_host_sync::<u32>(&out, 64), (1000..1064).collect::<Vec<u32>>());
+        // A kernel of the library without Rust: its compiled build.
+        let g = lib.get_function(&device, "t_group").unwrap();
+        assert!(matches!(g.entry, Run::Compiled(_)));
+    }
+
+    /// A kernel's Rust keeps its threadgroup memory itself: a launch that gives it a threadgroup row is refused.
+    #[test]
+    fn a_kernel_with_rust_takes_no_threadgroup_row() {
+        unsafe fn host(_: *const *const u8, _: &rerail_ukl_rust::Launch) {}
+        let Some((device, lib)) = compile("t.uglykl", KERNELS) else { return };
+        let lib = lib.with_host(vec![("t_group", host)], None);
+        let f = lib.get_function(&device, "t_group").unwrap();
+        let out = alloc_uninitialized_array_sync::<u32>(&device, 64);
+        let e = run(&device, &f, &out, Some(64), 1, 64).unwrap_err();
+        assert!(e.contains("no threadgroup row"), "{e}");
     }
 
     /// Threadgroup memory, a barrier and SIMD-group shuffles give each thread what a GPU gives it.

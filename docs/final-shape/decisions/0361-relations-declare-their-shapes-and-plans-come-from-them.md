@@ -1,8 +1,10 @@
 # 0361. Relations declare their shapes, and plans come from them
 
-Status: decided (2026-11-17), being built: steps 1, 2, 3, 4, 5 and 7 built (2026-11-18), step 6 at the probes (2026-11-19; at the writes: Q330). The user: "a directive which allows us to add enough data to the
-relations in the .rr files that we can provide good default shapes for them (or at least name an algorithm or
-something) so that we don't need to pay for planning, or only in exceptional circumstances."
+Status: partly built (audited 2026-11-23). Left: derived relations' estimates switched off (Q290); 'plans nothing at
+run time' done-criterion not shown met. Decided (2026-11-17), being built: steps 1, 2, 3, 4, 5 and 7 built
+(2026-11-18), step 6 at the probes (2026-11-19; at the writes: Q330). The user: "a directive which allows us to add
+enough data to the relations in the .rr files that we can provide good default shapes for them (or at least name an
+algorithm or something) so that we don't need to pay for planning, or only in exceptional circumstances."
 
 ## Intro
 

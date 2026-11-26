@@ -892,6 +892,7 @@ impl ABIMachineSpec for X64ABIMachineSpec {
             (isa::CallConv::Winch, _) => ALL_CLOBBERS,
             (isa::CallConv::SystemV, _) => SYSV_CLOBBERS,
             (isa::CallConv::PreserveMost, false) => PRESERVE_MOST_CLOBBERS,
+            (isa::CallConv::PreserveAll, false) => PRESERVE_ALL_CLOBBERS,
             (isa::CallConv::WindowsFastcall, false) => WINDOWS_CLOBBERS,
             (_, false) => SYSV_CLOBBERS,
             (call_conv, true) => panic!("unimplemented clobbers for exn abi of {call_conv:?}"),
@@ -937,6 +938,11 @@ impl ABIMachineSpec for X64ABIMachineSpec {
                 .iter()
                 .cloned()
                 .filter(|r| is_callee_save_preserve_most(r.to_reg(), flags.enable_pinned_reg()))
+                .collect(),
+            CallConv::PreserveAll => regs
+                .iter()
+                .cloned()
+                .filter(|r| is_callee_save_preserve_all(r.to_reg(), flags.enable_pinned_reg()))
                 .collect(),
             CallConv::Probestack => todo!("probestack?"),
             CallConv::AppleAarch64 => unreachable!(),
@@ -1079,7 +1085,7 @@ fn get_intreg_for_retval(
             // NB: `r15` is reserved as a scratch register.
             _ => None,
         },
-        CallConv::Fast | CallConv::Cold | CallConv::SystemV | CallConv::PreserveMost => match intreg_idx {
+        CallConv::Fast | CallConv::Cold | CallConv::SystemV | CallConv::PreserveMost | CallConv::PreserveAll => match intreg_idx {
             0 => Some(regs::rax()),
             1 => Some(regs::rdx()),
             2 if flags.enable_llvm_abi_extensions() => Some(regs::rcx()),
@@ -1110,7 +1116,7 @@ fn get_fltreg_for_retval(call_conv: CallConv, fltreg_idx: usize, is_last: bool) 
             7 => Some(regs::xmm7()),
             _ => None,
         },
-        CallConv::Fast | CallConv::Cold | CallConv::SystemV | CallConv::PreserveMost => match fltreg_idx {
+        CallConv::Fast | CallConv::Cold | CallConv::SystemV | CallConv::PreserveMost | CallConv::PreserveAll => match fltreg_idx {
             0 => Some(regs::xmm0()),
             1 => Some(regs::xmm1()),
             _ => None,
@@ -1156,6 +1162,16 @@ fn is_callee_save_preserve_most(r: RealReg, enable_pinned_reg: bool) -> bool {
     }
 }
 
+/// `CallConv::PreserveAll`: `PreserveMost`'s general registers, and every vector but the
+/// returns' (xmm0, xmm1), saved whole.
+fn is_callee_save_preserve_all(r: RealReg, enable_pinned_reg: bool) -> bool {
+    match r.class() {
+        RegClass::Int => is_callee_save_preserve_most(r, enable_pinned_reg),
+        RegClass::Float => r.hw_enc() >= 2,
+        RegClass::Vector => unreachable!(),
+    }
+}
+
 fn is_callee_save_fastcall(r: RealReg, enable_pinned_reg: bool) -> bool {
     use asm::gpr::enc::*;
     use asm::xmm::enc::*;
@@ -1195,6 +1211,18 @@ fn compute_clobber_size(clobbers: &[Writable<RealReg>]) -> u32 {
 const WINDOWS_CLOBBERS: PRegSet = windows_clobbers();
 const SYSV_CLOBBERS: PRegSet = sysv_clobbers();
 const PRESERVE_MOST_CLOBBERS: PRegSet = preserve_most_clobbers();
+const PRESERVE_ALL_CLOBBERS: PRegSet = preserve_all_clobbers();
+
+/// `CallConv::PreserveAll`'s clobbers: rax, rdx, r11, and the returns' vectors (xmm0, xmm1).
+const fn preserve_all_clobbers() -> PRegSet {
+    use asm::gpr::enc::*;
+    PRegSet::empty()
+        .with(regs::gpr_preg(RAX))
+        .with(regs::gpr_preg(RDX))
+        .with(regs::gpr_preg(R11))
+        .with(regs::fpr_preg(0))
+        .with(regs::fpr_preg(1))
+}
 
 /// `CallConv::PreserveMost`'s clobbers: rax, rdx, r11, and every vector (as System V's).
 const fn preserve_most_clobbers() -> PRegSet {

@@ -1,7 +1,7 @@
 //! The forest's device (Rerail, decision 0440): the target's GPU (Metal on macOS, compute_kernel_metal.rs; CUDA on
-//! Linux and Windows, compute_kernel_cuda.rs), an OpenCL GPU (compute_kernel_opencl.rs: integrated GPUs with no other way in) or
+//! Linux and Windows, or HIP on AMD's GPUs, compute_kernel_cuda.rs), an OpenCL GPU (compute_kernel_opencl.rs: integrated GPUs with no other way in) or
 //! the CPU (compute_kernel_cpu.rs: every threadgroup's threads coroutines, for debugging kernels), chosen once a
-//! process: `RERAIL_GPU=cpu` or `=opencl`, else the target's GPU. Each type below is one of them, and gives the grid
+//! process: `RERAIL_GPU=cpu` or `=opencl`, else the target's GPU (`=hip`: HIP's where there is CUDA's too). Each type below is one of them, and gives the grid
 //! runtime and the trainer one interface (MLDB's `ComputeRuntime`):
 //!
 //! - `Device`, `DeviceRef`: the device (`gpu::shared`'s); `QueueRoot`: what a `ComputeQueue` is made from;
@@ -31,7 +31,9 @@ mod native {
     pub type Buffer = metal::Buffer;
     pub type QueueRoot = metal::CommandQueue;
     pub type SharedEvent = metal::SharedEvent;
-    pub const NAME: &str = "Metal";
+    pub fn name() -> &'static str {
+        "Metal"
+    }
     /// The device's own name (the GPU's model).
     pub fn device_name(d: &Device) -> String {
         d.name().to_owned()
@@ -49,10 +51,17 @@ mod native {
     pub fn device_address(b: &Buffer) -> Option<u64> {
         Some(b.device_address())
     }
-    pub const NAME: &str = "CUDA";
-    /// The device's own name: the backend's until the driver's is read (step E).
-    pub fn device_name(_d: &Device) -> String {
-        NAME.to_owned()
+    /// CUDA, or HIP where the process opened AMD's driver (`compute_kernel_cuda::Vendor`).
+    pub fn name() -> &'static str {
+        crate::compute_kernel_cuda::opened_vendor().map_or("CUDA", |v| v.name())
+    }
+    /// The device's own name: the backend's (and HIP's architecture) until the driver's is read (step E).
+    pub fn device_name(d: &Device) -> String {
+        if d.arch.is_empty() {
+            d.vendor.name().to_owned()
+        } else {
+            format!("{} {}", d.vendor.name(), d.arch)
+        }
     }
 }
 
@@ -87,11 +96,17 @@ pub fn backend() -> &'static str {
     match crate::shared::get().map(|s| &s.device) {
         Some(Device::Cpu(_)) => "CPU",
         Some(Device::OpenCl(_)) => "OpenCL",
-        Some(Device::Native(_)) => native::NAME,
+        Some(Device::Native(_)) => native::name(),
         None if cpu_chosen() => "CPU",
         None if opencl_chosen() => "OpenCL",
-        None => native::NAME,
+        None => native::name(),
     }
+}
+
+/// Whether the process's device is Metal's (Apple's GPUs), where a join program's kernels are compiled call-free
+/// (decision 0641: on the M3, an indirect dispatch of a pipeline that makes calls hung the GPU).
+pub fn is_metal() -> bool {
+    cfg!(target_os = "macos") && matches!(crate::shared::get().map(|s| &s.device), Some(Device::Native(_)))
 }
 
 fn other() -> ! {
@@ -128,7 +143,7 @@ impl Device {
         }
     }
 
-    /// The CUDA device, when the process's is CUDA.
+    /// The CUDA device, when the process's is CUDA (or HIP: `CudaDevice::vendor`).
     #[cfg(not(target_os = "macos"))]
     pub fn cuda(&self) -> Option<&crate::compute_kernel_cuda::CudaDevice> {
         match self {
@@ -140,9 +155,12 @@ impl Device {
     /// The lanes of the device's SIMD groups, as its kernels are compiled (`UKL_SIMD_WIDTH`).
     pub fn simd_width(&self) -> u32 {
         match self {
+            #[cfg(not(target_os = "macos"))]
+            Device::Native(d) => d.simd_width,
+            #[cfg(target_os = "macos")]
             Device::Native(_) => 32,
             Device::Cpu(_) => cpu::simd_width(),
-            Device::OpenCl(_) => cl::simd_width(),
+            Device::OpenCl(d) => d.simd_width(),
         }
     }
 
@@ -208,17 +226,6 @@ impl Device {
         matches!(self, Device::Cpu(_))
     }
 
-    /// The device's GPU cores, when it says: on a Mac, IORegistry's `gpu-core-count` of the device's entry
-    /// (the `MTLDevice`'s registry ID). A persistent grid's resident groups are these times the groups a core
-    /// holds (decision 0468 §4).
-    pub fn gpu_cores(&self) -> Option<u32> {
-        match self {
-            #[cfg(target_os = "macos")]
-            Device::Native(d) => ioreg::gpu_core_count(d.registry_id()),
-            _ => None,
-        }
-    }
-
     /// The most threadgroup memory a group may have: Metal's `maxThreadgroupMemoryLength`; 32 KB elsewhere.
     pub fn max_threadgroup_memory(&self) -> u64 {
         match self {
@@ -228,20 +235,22 @@ impl Device {
         }
     }
 
-    /// The groups of `threads` threads, each using `local` bytes of threadgroup memory, that the device holds at
-    /// once, when it gives its cores (`gpu_cores`): a persistent grid's G (decision 0468 §4). Each core is taken at
-    /// its least: one group of the device's largest (`max_threadgroup`) and the most threadgroup memory a group may
-    /// have (`max_threadgroup_memory`).
-    pub fn resident_groups(&self, threads: u32, local: u64) -> Option<u64> {
-        let cores = self.gpu_cores()? as u64;
-        let by_threads = (self.max_threadgroup() / threads.max(1)).max(1) as u64;
-        let by_memory = self.max_threadgroup_memory().checked_div(local).map_or(by_threads, |n| n.max(1));
-        Some(cores * by_threads.min(by_memory))
+    /// The name of the target a kernel's text is prepared for on this device (decision 0645, `rerail_ukl::Target`,
+    /// which `rerail_gpu::Preprocessing` makes of it): Metal's tier, CUDA's `sm_<N>`, HIP's `gfx` target. None on
+    /// OpenCL and the CPU, whose text is prepared from what the device reports (`local_defines`).
+    pub fn target_name(&self) -> Option<String> {
+        match self {
+            Device::Cpu(_) | Device::OpenCl(_) => None,
+            #[cfg(not(target_os = "macos"))]
+            Device::Native(d) => Some(d.target_name()),
+            #[cfg(target_os = "macos")]
+            Device::Native(d) => Some(crate::compute_kernel_metal::target_name(d).to_string()),
+        }
     }
 
-    /// The defines a kernel's preprocessing for this device takes (the CPU's knobs, `compute_kernel_cpu::defines`;
-    /// OpenCL's width and largest threadgroup): `rerail_gpu::Preprocessing`.
-    pub fn compile_defines(&self) -> Vec<(&'static str, String)> {
+    /// The defines of a device without a target's name (`target_name`): the CPU's knobs
+    /// (`compute_kernel_cpu::defines`), OpenCL's width and largest threadgroup and its units.
+    pub fn local_defines(&self) -> Vec<(&'static str, String)> {
         match self {
             Device::Cpu(_) => cpu::defines(),
             Device::OpenCl(d) => d.defines(),
@@ -374,6 +383,9 @@ pub trait Watch: Send + Sync {
 pub struct ComputeQueue {
     kind: QueueKind,
     watch: Option<std::sync::Arc<dyn Watch>>,
+    /// Its launches so far (`new_bind_context`): each one's span of residency where a buffer made resident is kept
+    /// by the launch alone (`residency_span`).
+    launches: std::cell::Cell<u64>,
 }
 
 enum QueueKind {
@@ -391,7 +403,7 @@ impl ComputeQueue {
             QueueRoot::Cpu(r) => QueueKind::Cpu(cpu::CpuComputeQueue::new(r)),
             QueueRoot::OpenCl(r) => QueueKind::OpenCl(cl::ClComputeQueue::new(r)),
         };
-        ComputeQueue { kind, watch: None }
+        ComputeQueue { kind, watch: None, launches: std::cell::Cell::new(0) }
     }
 
     /// A queue whose every reach of a buffer `watch` sees first.
@@ -406,6 +418,7 @@ impl ComputeQueue {
     }
 
     pub fn new_bind_context<'a>(&'a self, function: &'a ComputeFunction) -> BindContext<'a> {
+        self.launches.set(self.launches.get() + 1);
         let kind = match (&self.kind, function) {
             (QueueKind::Native(q), ComputeFunction::Native(f)) => BindKind::Native(q.new_bind_context(f)),
             (QueueKind::Cpu(q), ComputeFunction::Cpu(f)) => BindKind::Cpu(q.new_bind_context(f)),
@@ -452,6 +465,18 @@ impl ComputeQueue {
             (QueueKind::Cpu(q), SharedEvent::Cpu(e)) => q.wait_for_event(e, value),
             (QueueKind::OpenCl(q), SharedEvent::OpenCl(e)) => q.wait_for_event(e, value),
             _ => other(),
+        }
+    }
+
+    /// Which span of its launches a buffer made resident (`GridBindContext::use_buffer`) stays resident over: while
+    /// this is the same, a launch after it needs it made resident no more (decision 0641). Metal's is its open
+    /// compute encoder (`useResource` holds for the encoder's life). The other backends keep what a launch uses with
+    /// that launch alone (OpenCL's indirect-access list, the CPU's and CUDA's buffers kept), so each launch is a span.
+    pub fn residency_span(&self) -> u64 {
+        match &self.kind {
+            #[cfg(target_os = "macos")]
+            QueueKind::Native(q) => q.encoders(),
+            _ => self.launches.get(),
         }
     }
 
@@ -521,6 +546,22 @@ pub enum ComputeFunctionLibrary {
     OpenCl(cl::ClComputeFunctionLibrary),
 }
 
+/// Compiles `source`, prepared for the shippable target `target`, ahead of time and without a GPU (decision 0645
+/// step 3): Metal's tiers (their `__METAL_VERSION__` `metal_version`) on macOS by Xcode's compiler; CUDA's and AMD's
+/// targets elsewhere, by NVRTC and hiprtc.
+pub fn compile_offline(target: &str, metal_version: Option<u32>, source: &str, name: &str) -> Result<Vec<u8>, String> {
+    if let Some(version) = metal_version {
+        #[cfg(target_os = "macos")]
+        return crate::compute_kernel_metal::compile_offline(version, source, name);
+        #[cfg(not(target_os = "macos"))]
+        return Err(format!("{target} (Metal {version}): Metal's kernels ship from macOS"));
+    }
+    #[cfg(not(target_os = "macos"))]
+    return crate::compute_kernel_cuda::compile_offline(target, source, name);
+    #[cfg(target_os = "macos")]
+    return Err(format!("{target}: CUDA's and AMD's kernels ship from Linux or Windows ({name})"));
+}
+
 impl ComputeFunctionLibrary {
     /// `preprocessed_source`, UKL preprocessed for `device` (`Device::ukl_backend`), compiled.
     pub fn compile_from_source(device: &Device, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
@@ -529,6 +570,40 @@ impl ComputeFunctionLibrary {
             Device::Cpu(d) => ComputeFunctionLibrary::Cpu(cpu::CpuComputeFunctionLibrary::compile_from_source(d, preprocessed_source, file_name_to_appear_in_error_messages)?),
             Device::OpenCl(d) => ComputeFunctionLibrary::OpenCl(cl::ClComputeFunctionLibrary::compile_from_source(d, preprocessed_source, file_name_to_appear_in_error_messages)?),
         })
+    }
+
+    /// A library of code compiled ahead of time for a target the device runs (decision 0645: a shipped kernel). Only
+    /// a GPU's: OpenCL's and the CPU's targets are local.
+    pub fn from_compiled(device: &Device, code: &[u8]) -> Result<Self, String> {
+        match device {
+            Device::Native(d) => Ok(ComputeFunctionLibrary::Native(native::Library::from_compiled(d, code)?)),
+            Device::Cpu(_) | Device::OpenCl(_) => Err("no compiled code ships for a local target".to_owned()),
+        }
+    }
+
+    /// `preprocessed_source` compiled to the backend's text of its instructions (CUDA's PTX), for a test to read which
+    /// instructions a kernel took (decision 0617, R7); None where the backend has no such text.
+    pub fn native_code(device: &Device, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Option<String>, String> {
+        match device {
+            Device::Native(d) => native::Library::native_code(d, preprocessed_source, file_name_to_appear_in_error_messages),
+            Device::OpenCl(d) => cl::ClComputeFunctionLibrary::native_code(d, preprocessed_source, file_name_to_appear_in_error_messages, &std::env::var("RERAIL_OPENCL_NATIVE_CODE_OPTIONS").unwrap_or_default()),
+            Device::Cpu(_) => Ok(None),
+        }
+    }
+
+    /// This library of the UKL `text` specialized by `defines`, its kernels that are Rust of that very text and those
+    /// defines (`rerail_ukl_rust::kernels`, decision 0567 step 3) run as their Rust on the CPU; on another device,
+    /// or of another text, the same library. A kernel that calls the compiled reads gets them from `reads`, made for
+    /// this library alone.
+    pub fn with_rust(self, text: &str, defines: &[(&str, &str)], reads: impl FnOnce() -> rerail_ukl_rust::Reads) -> Self {
+        match self {
+            ComputeFunctionLibrary::Cpu(l) => {
+                let host = rerail_ukl_rust::kernels(text, defines);
+                let reads = rerail_ukl_rust::calls_reads(&host).then(|| std::sync::Arc::new(reads()));
+                ComputeFunctionLibrary::Cpu(l.with_host(host, reads))
+            }
+            other => other,
+        }
     }
 
     pub fn get_function(&self, device: &Device, function_name: &str) -> Result<ComputeFunction, String> {
@@ -724,6 +799,212 @@ pub unsafe fn wrap_host_memory(device: &Device, ptr: *mut u8, len: usize) -> Res
     }
 }
 
+/// Address space for `bytes` whose pages are real memory only as they are mapped (decision 0603's fewer reruns): the
+/// kernels use it at one address for its life, each page below `mapped()` only, and the host maps more between
+/// launches (`map`). Metal: a placement sparse buffer, its pages from heaps (private storage: the host reads none of
+/// it); or, where the host reads it (`reserve`'s `host_reads`), the host's address space, wrapped as a buffer over its
+/// mapped bytes only (a wrap is wired whole), each `map` a larger wrap of the same pages, at another address (nothing
+/// moves: the wraps alias one memory). The CPU backend: the host's address space, its pages committed as they are
+/// touched (`os::reserve`; Windows commits them as `map` maps them), its mapped bytes a count `map` raises, so its kernels
+/// keep to them as Metal's do. CUDA at the host's address: wrapped as Metal's host-read one, each wrap at the same address.
+/// OpenCL, and CUDA elsewhere: an allocation of what `reserve` first maps, which `map` cannot grow
+/// (false past it).
+pub struct Reserved {
+    buffer: Buffer,
+    kind: ReservedKind,
+}
+
+enum ReservedKind {
+    #[cfg(target_os = "macos")]
+    Sparse(std::sync::Arc<crate::compute_kernel_metal::Sparse>, metal::Device),
+    /// The host's pages, at `ptr` (`os::reserve`, committed as mapped where the system needs it), `len` bytes, unmapped when the last clone of the buffer is gone;
+    /// and the bytes mapped.
+    Host(std::sync::Arc<HostPages>, std::sync::atomic::AtomicUsize),
+    /// The host's pages, wrapped over the bytes mapped: every wrap made (the last the one the kernels use now), then
+    /// the pages, unmapped after the wraps are dropped (field order).
+    Wrapped(std::sync::Mutex<Vec<(Buffer, usize)>>, Device, std::sync::Arc<HostPages>),
+    Fixed(usize),
+}
+
+/// Pages `os::map_zeroed` gave, unmapped when dropped (after the buffers over them: `Reserved` holds both).
+struct HostPages {
+    ptr: *mut u8,
+    len: usize,
+}
+
+// SAFETY: plain memory, shared by address; its users order their accesses (the queue's work, then the host).
+unsafe impl Send for HostPages {}
+unsafe impl Sync for HostPages {}
+
+impl Drop for HostPages {
+    fn drop(&mut self) {
+        // SAFETY: the whole of one mapping `map_zeroed` gave; the buffer over it is dropped before (field order).
+        unsafe { crate::os::unmap(self.ptr, self.len) };
+    }
+}
+
+/// Whether `reserve`'s address space maps further as its users reach it (`Reserved::map`): Metal's, the CPU
+/// backend's, and CUDA's where its buffers are the host's memory at the host's address. Elsewhere (OpenCL, a discrete
+/// card whose registered memory has another address) it is an allocation of its first bytes, which cannot grow.
+pub fn reserve_grows(device: &Device) -> bool {
+    match device {
+        #[cfg(target_os = "macos")]
+        Device::Native(_) => true,
+        #[cfg(not(target_os = "macos"))]
+        Device::Native(d) => d.at_host_address(),
+        Device::Cpu(_) => true,
+        _ => false,
+    }
+}
+
+/// Whether mapping `reserve`'s pages commits real memory at once: Metal's (a sparse buffer's tiles, a wrap's wired
+/// pages), and Windows' (its pages committed as they are mapped). The CPU backend's on Unix is a count, its pages
+/// committed only as they are touched.
+pub fn map_commits(device: &Device) -> bool {
+    match device {
+        #[cfg(target_os = "macos")]
+        Device::Native(_) => true,
+        // CUDA: pageable memory (ATS) is committed as touched; registered memory is pinned as it is mapped.
+        #[cfg(not(target_os = "macos"))]
+        Device::Native(d) => !d.pageable,
+        Device::Cpu(_) => cfg!(windows),
+        _ => true,
+    }
+}
+
+/// `bytes` of address space (`Reserved`), its first `mapped` bytes mapped; `host_reads`: the host reads what the
+/// kernels write there (on Metal, not a sparse buffer then: private storage).
+pub fn reserve(device: &Device, bytes: usize, mapped: usize, host_reads: bool) -> Result<Reserved, String> {
+    let mapped = mapped.min(bytes).max(16);
+    // The host's address space, wrapped over its mapped bytes (each `map` a larger wrap of the same pages).
+    let wrapped = || -> Result<Reserved, String> {
+        let page = crate::os::page_bytes();
+        let len = bytes.next_multiple_of(page);
+        let ptr = crate::os::reserve(len).ok_or_else(|| format!("{len} bytes of address space refused"))?;
+        let pages = std::sync::Arc::new(HostPages { ptr, len });
+        let first = mapped.next_multiple_of(page).min(len);
+        // SAFETY: the first `first` bytes of the range `reserve` gave.
+        if !unsafe { crate::os::commit(ptr, first) } {
+            return Err(format!("{first} bytes of a reservation not committed"));
+        }
+        // SAFETY: the pages outlive every wrap: `Reserved` drops its wraps before them (field order), and a clone a
+        // queue's work holds is let go before its `Reserved` (the engine holds both together).
+        let buffer = unsafe { wrap_host_memory(device, ptr, first)? };
+        let wraps = std::sync::Mutex::new(vec![(buffer.clone(), first)]);
+        Ok(Reserved { buffer, kind: ReservedKind::Wrapped(wraps, device.clone(), pages) })
+    };
+    // Only Metal's private storage is one the host cannot read.
+    #[cfg(not(target_os = "macos"))]
+    let _ = host_reads;
+    match device {
+        #[cfg(target_os = "macos")]
+        Device::Native(_) if host_reads => wrapped(),
+        // CUDA where its buffers are the host's memory at the host's address (pageable, or registered so): each wrap
+        // at the same address, its pages the mapped ones only (registered as mapped).
+        #[cfg(not(target_os = "macos"))]
+        Device::Native(d) if d.at_host_address() => wrapped(),
+        #[cfg(target_os = "macos")]
+        Device::Native(d) => {
+            if let Some(s) = crate::compute_kernel_metal::Sparse::new(d, bytes) {
+                s.map(d, mapped)?;
+                let buffer = Buffer::Native(s.buffer.clone());
+                return Ok(Reserved { buffer, kind: ReservedKind::Sparse(std::sync::Arc::new(s), d.clone()) });
+            }
+            // Without sparse buffers (they need Metal 4: none on macOS 15, the M3's): the host's address space wrapped
+            // over its mapped bytes, as a reservation the host reads is, so it still grows (each `map` a larger wrap,
+            // at another address). Before, a fixed allocation of its first bytes: a program's arena past them, and a
+            // level sort's room, could only run again.
+            wrapped()
+        }
+        Device::Cpu(d) => {
+            let len = bytes.next_multiple_of(crate::os::page_bytes());
+            let ptr = crate::os::reserve(len).ok_or_else(|| format!("{len} bytes of address space refused"))?;
+            let pages = std::sync::Arc::new(HostPages { ptr, len });
+            let mapped = mapped.next_multiple_of(crate::os::page_bytes()).min(len);
+            // SAFETY: the first `mapped` bytes of the range `reserve` gave.
+            if !unsafe { crate::os::commit(ptr, mapped) } {
+                return Err(format!("{mapped} bytes of a reservation not committed"));
+            }
+            // SAFETY: the pages outlive the buffer: `Reserved` drops its buffer before them, and a clone of the buffer
+            // a queue's work holds is let go before its `Reserved` (the engine holds both together).
+            let buffer = Buffer::Cpu(unsafe { cpu::wrap_host_memory(d, ptr, len)? });
+            Ok(Reserved { buffer, kind: ReservedKind::Host(pages, std::sync::atomic::AtomicUsize::new(mapped)) })
+        }
+        _ => Ok(Reserved { buffer: alloc_uninitialized_array_sync::<u8>(device, mapped), kind: ReservedKind::Fixed(mapped) }),
+    }
+}
+
+impl Reserved {
+    /// The buffer the kernels use now: a wrapped one's last wrap (`map` makes another).
+    pub fn buffer(&self) -> Buffer {
+        match &self.kind {
+            ReservedKind::Wrapped(w, _, _) => w.lock().expect("the wraps").last().expect("a wrap").0.clone(),
+            _ => self.buffer.clone(),
+        }
+    }
+
+    /// Whether `map` can grow it: not an allocation of its first bytes (`Fixed`: a backend with no reservation, as
+    /// OpenCL's). A caller whose room must grow then sizes its first bytes for what it will reach.
+    pub fn grows(&self) -> bool {
+        !matches!(self.kind, ReservedKind::Fixed(_))
+    }
+
+    /// Whether `map` grows it at its address: Metal's sparse buffer, the CPU backend's pages, CUDA's host memory at
+    /// the host's address. A wrapped reservation on Metal grows at another address (each `map` a new wrap), so what
+    /// holds its address must be re-pointed (a program's arena is, `Kit::rebase`).
+    pub fn grows_in_place(&self) -> bool {
+        match &self.kind {
+            ReservedKind::Fixed(_) => false,
+            ReservedKind::Wrapped(..) => !cfg!(target_os = "macos"),
+            _ => true,
+        }
+    }
+
+    /// The bytes the kernels may use, from its start.
+    pub fn mapped(&self) -> usize {
+        match &self.kind {
+            #[cfg(target_os = "macos")]
+            ReservedKind::Sparse(s, _) => s.mapped(),
+            ReservedKind::Host(_, m) => m.load(std::sync::atomic::Ordering::Acquire),
+            ReservedKind::Wrapped(w, _, _) => w.lock().expect("the wraps").last().expect("a wrap").1,
+            ReservedKind::Fixed(n) => *n,
+        }
+    }
+
+    /// Its first `bytes` mapped, when no work that uses it is running: false where it cannot be (past its address
+    /// space, or an allocation that cannot grow).
+    pub fn map(&self, bytes: usize) -> Result<bool, String> {
+        if bytes <= self.mapped() {
+            return Ok(true);
+        }
+        match &self.kind {
+            #[cfg(target_os = "macos")]
+            ReservedKind::Sparse(s, d) if bytes as u64 <= s.buffer.length() => s.map(d, bytes).map(|()| true),
+            ReservedKind::Host(p, m) if bytes <= p.len => {
+                let bytes = bytes.next_multiple_of(crate::os::page_bytes()).min(p.len);
+                // SAFETY: the first `bytes` of the range `reserve` gave; no work that uses it is running.
+                if !unsafe { crate::os::commit(p.ptr, bytes) } {
+                    return Ok(false);
+                }
+                m.store(bytes, std::sync::atomic::Ordering::Release);
+                Ok(true)
+            }
+            ReservedKind::Wrapped(w, d, p) if bytes <= p.len => {
+                let len = bytes.next_multiple_of(crate::os::page_bytes()).min(p.len);
+                // SAFETY: the first `len` bytes of the range `reserve` gave; no work that uses it is running.
+                if !unsafe { crate::os::commit(p.ptr, len) } {
+                    return Ok(false);
+                }
+                // SAFETY: as `reserve`'s first wrap: the pages outlive it.
+                let b = unsafe { wrap_host_memory(d, p.ptr, len)? };
+                w.lock().expect("the wraps").push((b, len));
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+}
+
 /// `transferToDeviceImmutable`: memory holding `data`.
 pub fn transfer_to_device_immutable<T: crate::Pod>(device: &Device, data: &[T]) -> Buffer {
     match device {
@@ -745,52 +1026,4 @@ pub fn transfer_to_host_sync<T: crate::Pod + Clone>(buffer: &Buffer, length: usi
 /// The device seconds of every event awaited so far in this process.
 pub fn gpu_seconds_awaited() -> f64 {
     native::gpu_seconds_awaited() + cpu::gpu_seconds_awaited() + cl::gpu_seconds_awaited()
-}
-
-/// IORegistry's description of a Mac's GPU: its `gpu-core-count`.
-#[cfg(target_os = "macos")]
-mod ioreg {
-    use std::ffi::c_void;
-
-    type CfRef = *const c_void;
-    const UTF8: u32 = 0x0800_0100;
-    const SINT32: isize = 3;
-
-    #[link(name = "IOKit", kind = "framework")]
-    unsafe extern "C" {
-        fn IORegistryEntryIDMatching(id: u64) -> CfRef;
-        fn IOServiceGetMatchingService(main_port: u32, matching: CfRef) -> u32;
-        fn IORegistryEntryCreateCFProperty(entry: u32, key: CfRef, allocator: CfRef, options: u32) -> CfRef;
-        fn IOObjectRelease(object: u32) -> i32;
-    }
-    #[link(name = "CoreFoundation", kind = "framework")]
-    unsafe extern "C" {
-        fn CFStringCreateWithCString(allocator: CfRef, s: *const u8, encoding: u32) -> CfRef;
-        fn CFGetTypeID(v: CfRef) -> usize;
-        fn CFNumberGetTypeID() -> usize;
-        fn CFNumberGetValue(n: CfRef, kind: isize, out: *mut c_void) -> bool;
-        fn CFRelease(v: CfRef);
-    }
-
-    /// `gpu-core-count` of the IORegistry entry `id`, when it has one.
-    pub fn gpu_core_count(id: u64) -> Option<u32> {
-        // SAFETY: each object made here is released here; the matching dictionary is consumed by the lookup.
-        unsafe {
-            let entry = IOServiceGetMatchingService(0, IORegistryEntryIDMatching(id));
-            if entry == 0 {
-                return None;
-            }
-            let key = CFStringCreateWithCString(std::ptr::null(), c"gpu-core-count".as_ptr().cast(), UTF8);
-            let v = IORegistryEntryCreateCFProperty(entry, key, std::ptr::null(), 0);
-            CFRelease(key);
-            IOObjectRelease(entry);
-            if v.is_null() {
-                return None;
-            }
-            let mut n = 0i32;
-            let ok = CFGetTypeID(v) == CFNumberGetTypeID() && CFNumberGetValue(v, SINT32, (&raw mut n).cast());
-            CFRelease(v);
-            (ok && n > 0).then_some(n as u32)
-        }
-    }
 }

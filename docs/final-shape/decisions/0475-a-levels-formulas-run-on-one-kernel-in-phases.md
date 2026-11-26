@@ -1,6 +1,7 @@
 # 0475. A level's formulas run on one kernel, in phases, from the batch's parents
 
-Status: accepted (2026-11-19). Follows 0474. Supersedes 0473 (the size classes are removed with `label_formula`) and Numbered 0463 on final-rerail-shape (renumbered in the roll-up: the hub has its own 0463).
+Status: built (audited 2026-11-23). Accepted (2026-11-19). Follows 0474. Supersedes 0473 (the size classes are removed
+with `label_formula`) and Numbered 0463 on final-rerail-shape (renumbered in the roll-up: the hub has its own 0463).
 0474's decision 1 (the phases are no longer a measure behind a switch, they are the only path).
 
 ## Intro

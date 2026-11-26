@@ -7,6 +7,9 @@ after each is done. And so on, while there is still expansion work to be done. [
 the expansions and identify how we can create a tree-like structure for intermediate expansions"). Builds on 0588's
 loop, which stays as the executor of one request. It does not bring back 0527's rounds (§5).
 
+> **Superseded in part by 0653 (2026-11-23):** §4's helpers (`lp_help`, `PG_HELP`) are gone; the loop's own queue
+> (`LPQ`) is as before.
+
 ## Intro
 
 0588 gives each top stretch ("piece") to one lane group, which runs clang's reader over it to the end. The piece's
@@ -510,7 +513,7 @@ So:
      `a_line_past_its_room_runs_again_larger`'s 8⁴ fan-out is one serial piece: 25,747 steps and 131,073
      tokens out, about 1 s of GPU a run. Under load, m3's GPU watchdog sometimes stops it as a hang, and the
      commit before this one does the same. It is fixed when the evaluator reads the results' tree (stage 2's
-     roll-up, on the device).
+     roll-up, on the device). **Fixed** (2026-11-23, below: "A line's expansion is requests").
 
    **Stage 4, built** (2026-11-23): a call's arguments are requests.
    - **An argument's request.** At a call's first argument turn (`lp_call_next`), each argument it uses plainly
@@ -901,3 +904,36 @@ So:
 - `the_waves_are_the_nesting_depth`: chains of 1, 8 and 20 nested macros, each invoked many times. The run's waves
   are the depth, whatever the number of invocations.
 - The eval tests, the corpus slices and Boost.Preprocessor give the serial pass's tokens, as now.
+
+   **A line's expansion is requests** (2026-11-23). `a_line_past_its_room_runs_again_larger` took 7.8 s on the CPU
+   backend, past the eval tests' 1 s: its `#if` line's 8⁴ fan-out (`A4 + A4`, `A0` to `A4` object-like) was one serial
+   piece of 25,747 steps, since a line posted no requests and the memo keeps function-like calls only. Three causes,
+   each fixed where it is:
+   - **A line posts its top calls** as the text does. A request of a line's that reaches `__COUNTER__` stops
+     (`LP_INLINE`), so its piece reads the use as the line's own (its place in the line); a name that pops a macro
+     is not refused there, as in the line; a piece read again voids its uses at the lines' half of the slots.
+   - **An object-like macro a request reads at its own level is a request** (as its calls are). Its key holds the
+     macros disabled where it is read (`lp_dead_key`): a call's key holds its arguments' places in the text, so a
+     request's call never meets a piece's, but an object-like one's would, and `X → Y → Z → X` then waited on itself.
+     With them, the macros disabled along a chain of waits only grow, so no wait closes a loop, and the `A3`s that
+     `A4` names eight times are one request. The line's 25,747 steps are 282.
+   - **The device's readers read a result's leaves** (§6: "readers read through the occurrences"). The roll-up writes
+     each order slot's place (the output's ninth column); `Ov` finds a token by it and reads a leaf in the tokens'
+     store, as the host's reader does. Before, only the host could read a result's leaves: the `#if` evaluator, the
+     `#line` rows and the include names read the line's output pieces alone.
+
+   Then the evaluation was the time (the CPU backend's clock, `cntvct_el0` on arm64, made the phase trace show it:
+   99.5% in `PH_I_EVAL`, 530 ms a pass). A SIMD group evaluating a long line broadcast each token by three shuffles,
+   and every lane fed every token: on the CPU backend each shuffle switches all 32 lanes' coroutines, and the lanes
+   run one after another. Now the lanes' tokens go through a window in threadgroup memory (a barrier each side), lane
+   0 alone feeds, and its end flags are shared once a window (`sy_share`). The test takes 0.63 s; its largest run 67
+   ms, from 1.7 s. (At the hub's roll-up 104 this window is 0588's `IfWin`, which the hub had built for the same
+   test: lane 0 alone evaluates, the other lanes only fill its slots, and an early stop tells them through `at`.) The
+   eval tests pass (47, profile `second`), with `a_definition_changed_between_uses_is_expanded_again` counting the
+   `A`s' hits in each expansion of `F` too.
+
+   At the hub's roll-up 107 (this, with "calls read in an argument's expansion are requests"): a request posts an
+   object-like macro only where the request it makes is below the levels' bound (`LP_RQ_LEVELS`), as its body's calls
+   then are requests too. One at the bound read them with none, and the call holding it shared nothing:
+   `an_argument_spelled_alike_is_a_hole`'s `P(x, 1)`, read in an argument at four places, had no hit, against 11
+   on the Go/C branch alone (and the test passed on the hub before the merge). Every eval test passes on the CPU backend (67).

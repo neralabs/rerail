@@ -19,7 +19,7 @@
 use crate::kinds::{K, f};
 use crate::lex::{Extra, Lexer, NO_NL, R, Refusal, T, Tok, w};
 use crate::{Dialect, Tape, key, unkey};
-use rerail_tape_format::{Checkpoint, Redo, Widths, Writer};
+use rerail_tape_format::{Checkpoint, Redo, Sink, Widths, Writer};
 
 mod cpp;
 mod decl;
@@ -218,16 +218,21 @@ struct Mark {
 
 /// `src` parsed.
 pub fn parse(src: &[u8], dialect: Dialect) -> R<Tape> {
-    parse_from(src, None, dialect)
+    parse_from(src, None, dialect, &mut crate::sink(dialect)).map(crate::written)
+}
+
+/// [`parse`], the writer finished by `finish`: format 16 or 16z (decisions 0293, 0434).
+pub fn parse_into<Out>(src: &[u8], dialect: Dialect, finish: &mut dyn Sink<Out>) -> R<Out> {
+    parse_from(src, None, dialect, finish)
 }
 
 /// `src` parsed from the tokens `given` (ending in `Eof`), which are `src`'s: the lexer is not run.
 pub fn parse_tokens(src: &[u8], given: &[Tok], dialect: Dialect) -> R<Tape> {
     debug_assert!(given.last().is_some_and(|t| t.kind == T::Eof));
-    parse_from(src, Some(given), dialect)
+    parse_from(src, Some(given), dialect, &mut crate::sink(dialect)).map(crate::written)
 }
 
-fn parse_from(src: &[u8], given: Option<&[Tok]>, dialect: Dialect) -> R<Tape> {
+fn parse_from<Out>(src: &[u8], given: Option<&[Tok]>, dialect: Dialect, finish: &mut dyn Sink<Out>) -> R<Out> {
     let cpp = dialect == Dialect::Cpp;
     let lx = Lexer::new(src, cpp);
     if let Some(at) = lx.blocks.first_nul() {
@@ -248,7 +253,7 @@ fn parse_from(src: &[u8], given: Option<&[Tok]>, dialect: Dialect) -> R<Tape> {
             extras: Vec::new(),
             e: 0,
             extra_at: u32::MAX,
-            w: Writer::new(0, widths, src.len() / 3 + 16),
+            w: Writer::new(widths, src.len() / 3 + 16).to(finish.target(), src),
             last_end: 0,
             depth: 0,
             far: 0,
@@ -275,10 +280,10 @@ fn parse_from(src: &[u8], given: Option<&[Tok]>, dialect: Dialect) -> R<Tape> {
         if let Some(at) = p.poisoned {
             return Err(Refusal::Parse(at));
         }
-        match p.w.finish_columns() {
-            Ok(columns) => return Ok(columns),
+        match finish.finish(p.w) {
+            Ok(done) => return Ok(done),
             Err(Redo(w)) => {
-                if w == widths {
+                if w == widths && !finish.again() {
                     return Err(Refusal::TooLarge);
                 }
                 widths = w;
@@ -905,6 +910,8 @@ impl<'a> P<'a> {
         let root = self.w.push(key(K::TranslationUnit, f::NONE, C_NONE, false), first);
         while self.peek() != T::Eof {
             self.item(Level::Top, K::TranslationUnit)?;
+            // A top-level item is final: its nodes are committed (passed to format 16's ops; decision 0434 §2).
+            self.w.commit();
         }
         let t = self.tok();
         if t.word == u8::MAX {

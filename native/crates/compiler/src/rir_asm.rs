@@ -62,6 +62,7 @@ pub const OPCODES: &[(u8, &str)] = &[
     (COUNT, "COUNT"),
     (CHECK, "CHECK"),
     (SETTLE, "SETTLE"),
+    (STATEMENT, "STATEMENT"),
     (READ, "READ"),
     (LINE, "LINE"),
     (IS, "IS"),
@@ -287,16 +288,16 @@ impl Line<'_> {
     }
 
     /// A bracketed list of items read by `item`.
-    pub fn list(&mut self, mut item: impl FnMut(&mut Self) -> Result<u16, String>) -> Result<Vec<u16>, String> {
+    pub fn list<C: Default + Extend<u16>>(&mut self, mut item: impl FnMut(&mut Self) -> Result<u16, String>) -> Result<C, String> {
         if self.next()? != Token::OpenList {
             return Err("a list opens with `[`".into());
         }
-        let mut out = Vec::new();
+        let mut out = C::default();
         while self.tokens.peek() != Some(&Token::CloseList) {
             if self.tokens.peek().is_none() {
                 return Err("a list closes with `]`".into());
             }
-            out.push(item(self)?);
+            out.extend([item(self)?]);
         }
         self.next()?;
         Ok(out)
@@ -531,12 +532,27 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             }
             parts.counts.push(line.number("")?);
         }
-        "tokenmark" | "gappattern" => {
-            let order: u8 = line.number("")?;
+        "tokenmark" | "gappattern" | "recover" => {
+            // `recover at|past [first]`: a resume point's pattern (`Words::recover`), its elements a token mark's.
+            let recover = keyword == "recover";
+            let (order, past, first): (u8, bool, bool) = if recover {
+                let past = match line.word()?.as_str() {
+                    "at" => false,
+                    "past" => true,
+                    w => return Err(format!("recover at|past, not `{w}`")),
+                };
+                let first = line.peek_word().as_deref() == Some("first");
+                if first {
+                    line.word()?;
+                }
+                (0, past, first)
+            } else {
+                (line.number("")?, false, false)
+            };
             let gap = keyword == "gappattern";
             let list = if gap { &parts.gap_patterns } else { &parts.token_marks };
             // A mark's entries share its order (`program::patterns_hold`).
-            if list.last().is_some_and(|m| m.order > order) {
+            if !recover && list.last().is_some_and(|m| m.order > order) {
                 return Err(format!("{keyword} {order} out of order"));
             }
             let mut elems: Vec<crate::program::TokenElem> = Vec::new();
@@ -621,6 +637,13 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     return Err(format!("a bad token mark's part `{w}`"));
                 }
             }
+            if recover {
+                if refuses || unless {
+                    return Err("recover: no `refuses` or `unless`".into());
+                }
+                parts.recover.push(crate::program::Recover { past, first, elems });
+                return Ok(());
+            }
             let m = crate::program::TokenMark { order, elems, refuses, unless };
             if gap {
                 parts.gap_patterns.push(m);
@@ -635,10 +658,6 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 return Err(format!("tokenextra b{b} out of order"));
             }
             parts.extras.push((b, k));
-        }
-        "provisional" => {
-            let f: u16 = line.number("#")?;
-            parts.readings.provisional.push(f);
         }
         "extra" => {
             let k: u16 = line.number("#")?;
@@ -714,7 +733,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let group: u16 = line.number("")?;
                 let (opener, closer, open, fill): (u16, u16, u16, u16) = (line.number("%")?, line.number("%")?, line.number("%")?, line.number("%")?);
                 let bytes: u8 = line.number("")?;
-                let (mut outside, mut empty, mut or, mut after) = (false, None, None, 0u16);
+                let (mut outside, mut empty, mut or, mut after, mut resumes) = (false, None, None, 0u16, false);
                 while let Some(w) = line.peek_word() {
                     if w == "outside" {
                         line.word()?;
@@ -728,11 +747,14 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     } else if w == "after" {
                         line.word()?;
                         after = line.number("")?;
+                    } else if w == "resumes" {
+                        line.word()?;
+                        resumes = true;
                     } else {
-                        return Err(format!("block {at} region: `outside`, `else %e M`, `or %c M` or `after MASK`, not {w}"));
+                        return Err(format!("block {at} region: `outside`, `else %e M`, `or %c M` or `after MASK [resumes]`, not {w}"));
                     }
                 }
-                let kind = crate::block::WalkKind { opener, closer, open, fill, bytes, outside, empty, or, after };
+                let kind = crate::block::WalkKind { opener, closer, open, fill, bytes, outside, empty, or, after, resumes };
                 match program.walks.last_mut() {
                     Some(w) if w.group == group => w.kinds.push(kind),
                     _ => {
@@ -747,13 +769,14 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             } else if first == "mask" {
                 program.masks.push(line.number("%")?);
             } else if first == "newlines" {
-                program.newlines = Some(line.number("%")?);
+                let (v, k): (u16, usize) = (line.number("%")?, line.number("")?);
+                program.newlines = Some((v, rerail_tape_format::newlines::Terminators::of_index(k).ok_or(format!("block {at} line ends of no terminators {k}"))?));
             } else if first == "records" {
                 let (starts, lasts): (u16, u16) = (line.number("")?, line.number("")?);
                 let kinds = line.word()?;
                 let hex = kinds.strip_prefix("kinds=").ok_or("`records S L kinds=…`")?;
                 let kinds: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<_, _>>().map_err(|_| "a bad kind")?;
-                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, kind_rows: None, untaken: Vec::new(), unless: Vec::new(), unplaced: 0, checks: Vec::new(), readers: Vec::new(), retags: Vec::new(), nexts: Vec::new(), tested_only: 0, alone: 0, read: 0, blanks: Vec::new(), own: 0, check_masks: Vec::new(), prefix: Vec::new(), gap: None });
+                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, kind_rows: None, untaken: rerail_blocks::vector::Vector::new(), unless: Vec::new(), unplaced: 0, checks: Vec::new(), readers: Vec::new(), retags: Vec::new(), nexts: Vec::new(), tested_only: 0, alone: 0, read: 0, blanks: Vec::new(), own: 0, check_masks: rerail_blocks::vector::Vector::new(), prefix: Vec::new(), gap: None });
             } else if first == "word" {
                 let r = program.records.as_mut().ok_or(format!("block {at} word before its records"))?;
                 r.words.push(line.quoted()?);
@@ -784,7 +807,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let r = program.records.as_mut().ok_or(format!("block {at} recnext before its records"))?;
                 let hex = line.word()?;
                 let row = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<Vec<u8>, _>>().map_err(|_| "a bad pair row")?;
-                r.nexts.push(crate::records::PairTable { row, sets: Vec::new(), thirds: Vec::new() });
+                r.nexts.push(crate::records::PairTable { row, sets: rerail_blocks::vector::Vector::new(), thirds: rerail_blocks::vector::Vector::new() });
             } else if first == "recpairs" {
                 // `recpairs W0 W1 W2 W3`: a set of the last table's (`PairTable::sets`).
                 let r = program.records.as_mut().ok_or(format!("block {at} recpairs before its records"))?;
@@ -804,7 +827,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     Ok(w) if w == "retag" => Some((line.number("")?, line.number("")?)),
                     _ => None,
                 };
-                r.readers.push(crate::records::Reader { arms: Vec::new(), other, retag, parts: Vec::new(), content: None, closers: Vec::new(), split: crate::records::Split::Tier1, quiet: false });
+                r.readers.push(crate::records::Reader { arms: Vec::new(), other, retag, parts: Vec::new(), content: None, closers: Vec::new(), split: crate::records::Split::Tier1, quiet: false, resumes: false });
             } else if first == "recretag" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recretag before its records"))?;
                 let (o, kind, marks): (u16, u8, u32) = (line.number("")?, line.number("")?, line.number("")?);
@@ -829,18 +852,20 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let none = match line.word()?.as_str() {
                     "refuse" => crate::records::ReadNone::Refuse,
                     "end" => crate::records::ReadNone::End,
-                    w => crate::records::ReadNone::Bytes(w.strip_prefix("bytes").and_then(|m| m.parse().ok()).ok_or(format!("block {at} recarm: `refuse`, `end` or `bytesM`, not {w}"))?),
+                    w if w.starts_with("bad") => crate::records::ReadNone::Bad(w["bad".len()..].parse().map_err(|_| format!("block {at} recarm: `badK`, not {w}"))?),
+                    w => crate::records::ReadNone::Bytes(w.strip_prefix("bytes").and_then(|m| m.parse().ok()).ok_or(format!("block {at} recarm: `refuse`, `end`, `bytesM` or `badK`, not {w}"))?),
                 };
-                let (mut retag, mut last) = (None, None);
+                let (mut retag, mut last, mut template) = (None, None, None);
                 while let Ok(w) = line.word() {
                     match w.as_str() {
                         "retag" => retag = Some((line.number("")?, line.number("")?)),
                         "last" => last = Some(line.number("")?),
-                        w => return Err(format!("block {at} recarm: `retag` or `last`, not {w}")),
+                        "template" => template = Some(line.number("")?),
+                        w => return Err(format!("block {at} recarm: `retag`, `last` or `template`, not {w}")),
                     }
                 }
                 let rd = r.readers.get_mut(k).ok_or(format!("block {at} recarm {k}: no such reader"))?;
-                rd.arms.push(crate::records::ReadArm { opener, closer, off, last, none, retag });
+                rd.arms.push(crate::records::ReadArm { opener, closer, off, last, none, retag, template });
             } else if first == "recpart" {
                 // `recpart K START BYTES [last O] [kind K]`: a part of reader K's region (`Reader::parts`).
                 let r = program.records.as_mut().ok_or(format!("block {at} recpart before its records"))?;
@@ -868,6 +893,11 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let k: usize = line.number("")?;
                 let (b, kind): (u8, u8) = (line.number("")?, line.number("")?);
                 r.readers.get_mut(k).ok_or(format!("block {at} recclose {k}: no such reader"))?.closers.push((b, kind));
+            } else if first == "recresumes" {
+                // `recresumes K`: reader K's regions resume a token's (`Reader::resumes`).
+                let r = program.records.as_mut().ok_or(format!("block {at} recresumes before its records"))?;
+                let k: usize = line.number("")?;
+                r.readers.get_mut(k).ok_or(format!("block {at} recresumes {k}: no such reader"))?.resumes = true;
             } else if first == "recquiet" {
                 // `recquiet K`: reader K's region holds no mask mark (`Reader::quiet`).
                 let r = program.records.as_mut().ok_or(format!("block {at} recquiet before its records"))?;
@@ -1102,6 +1132,7 @@ pub fn head_rows(out: &mut String, program: &Words) {
     crate::rir_text::extra_rows(out, &program.extras);
     crate::rir_text::token_mark_rows(out, &program.token_marks);
     crate::rir_text::gap_pattern_rows(out, &program.gap_patterns);
+    crate::rir_text::recover_rows(out, &program.recover);
     crate::rir_text::count_rows(out, &program.counts);
     crate::rir_text::local_check_rows(out, &program.local_checks);
     crate::rir_text::rule_rows(out, &program.rules);

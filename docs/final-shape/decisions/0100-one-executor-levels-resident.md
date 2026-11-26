@@ -1,7 +1,7 @@
 # 0100: One executor for a chunk's strata: levels sent to every lane at once, relations kept on the GPU
 
-Status: draft (2026-11-09). It builds 0095 §5 (device waves) on the executor of 0098 §6. The order of work is
-below; steps 1–5 and 7–14 are built, and step 6 is measured.
+Status: built (audited 2026-11-23). Draft (2026-11-09). It builds 0095 §5 (device waves) on the executor of 0098 §6.
+The order of work is below; steps 1–5 and 7–14 are built, and step 6 is measured.
 
 ## Intro
 

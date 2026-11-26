@@ -2,8 +2,9 @@
 
 Numbered 0493 where it was written.
 
-Status: decided (the user, 2026-11-19: "tier 1 interleaved with tier 2 in batches, instead of two
-whole-file passes"). Item 4 of the lean shape; follows 0489, 0490 and 0492.
+Status: partly built (audited 2026-11-23). Left: Today's generated Rust (bitlex_rust) and the JIT lex the whole file
+before tier 2; no path feeds records a batch at a time. Decided (the user, 2026-11-19: "tier 1 interleaved with tier 2
+in batches, instead of two whole-file passes"). Item 4 of the lean shape; follows 0489, 0490 and 0492.
 
 ## Intro
 

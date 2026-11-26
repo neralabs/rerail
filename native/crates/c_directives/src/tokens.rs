@@ -37,31 +37,32 @@ static CPP: std::sync::OnceLock<Result<Compiled, String>> = std::sync::OnceLock:
 /// The process's compiled token grammar for C or C++, compiled the first time.
 pub fn compiled(cpp: bool) -> Result<&'static Compiled, &'static str> {
     let cell = if cpp { &CPP } else { &C };
-    cell.get_or_init(|| compile_kinds(&grammar(cpp), KINDS, &[])).as_ref().map_err(String::as_str)
+    cell.get_or_init(|| compile_kinds(&grammar(cpp), KINDS, &[], None)).as_ref().map_err(String::as_str)
 }
 
-static C_WORDS: std::sync::OnceLock<Result<rerail_compiler::program::Words, String>> = std::sync::OnceLock::new();
-static CPP_WORDS: std::sync::OnceLock<Result<rerail_compiler::program::Words, String>> = std::sync::OnceLock::new();
+type Lowered = (rerail_compiler::program::Words, rerail_tape_format::f16::Lang);
+static C_WORDS: std::sync::OnceLock<Result<Lowered, String>> = std::sync::OnceLock::new();
+static CPP_WORDS: std::sync::OnceLock<Result<Lowered, String>> = std::sync::OnceLock::new();
 
 /// The grammar lowered to the transducer's words only (no Cranelift), the first time: the
-/// interpreter's input.
-pub fn lowered(cpp: bool) -> Result<&'static rerail_compiler::program::Words, &'static str> {
+/// interpreter's input, and its tape's table (`crate::table`).
+pub fn lowered(cpp: bool) -> Result<&'static Lowered, &'static str> {
     let cell = if cpp { &CPP_WORDS } else { &C_WORDS };
-    cell.get_or_init(|| crate::lower_kinds(&grammar(cpp), KINDS, &[]).map(|l| l.0)).as_ref().map_err(String::as_str)
+    cell.get_or_init(|| crate::lower_kinds(&grammar(cpp), KINDS, &[]).map(|l| { let lang = crate::table(KINDS.len(), l.4, 0, &l.0.readings.extras); (l.0, lang) })).as_ref().map_err(String::as_str)
 }
 
 /// `src`'s tokens by the interpreter, or `None` where it refuses the file.
 pub fn interpreted(src: &[u8], cpp: bool) -> Option<Vec<Tok>> {
-    let program = lowered(cpp).ok()?;
+    let (program, lang) = lowered(cpp).ok()?;
     let run = program.block_programs[0].run(src);
     let nodes = rerail_compiler::stream::run(program, src, &run).ok()?;
-    read(&rerail_compiler::stream::image(&nodes, &program.readings.extras, 0, src), src).ok()
+    let tape = crate::written(rerail_compiler::stream::image16(&nodes, &program.readings.extras, lang, crate::TERMINATORS, crate::TAG, src).ok()?)?;
+    read(&crate::Nodes::of(&tape, lang).ok()?, src).ok()
 }
 
 /// A token tape's tokens (of file `src`), with their flags: `BOL` a line's first, `SPACE` where
 /// the byte before is white space or a comment's, not the line break the token starts after.
-pub fn read(image: &[u8], src: &[u8]) -> Result<Vec<Tok>, String> {
-    let v = rerail_tape_format::View::new(image)?;
+pub fn read(v: &crate::Nodes<'_>, src: &[u8]) -> Result<Vec<Tok>, String> {
     let mut out = Vec::with_capacity(v.len());
     let (mut bol, mut end) = (false, 0);
     for i in 1..v.len() {
@@ -87,7 +88,8 @@ fn line_break_before(src: &[u8], at: usize) -> bool {
 
 /// `src`'s tokens by the compiled grammar, or `None` where it refuses the file.
 pub fn tokens(src: &[u8], cpp: bool) -> Option<Vec<Tok>> {
-    read(&compiled(cpp).ok()?.image(src)?, src).ok()
+    let c = compiled(cpp).ok()?;
+    read(&crate::Nodes::of(&c.image(src)?, c.lang()).ok()?, src).ok()
 }
 
 /// `src`'s tokens by the lean lexer, in the file's bytes (its phase-2 text mapped back).
@@ -109,22 +111,27 @@ mod tests {
         let image = c.image(src);
         let interp = c.interpreter_image(src);
         if interp != image {
-            return Err(format!("the interpreter's tape differs ({} / {})", interp.is_some(), image.is_some()));
+            return Err(match (&interp, &image) {
+                (Some(i), Some(t)) => format!("the interpreter's tape differs: {}", crate::difference(i, t, c.lang())),
+                _ => format!("the interpreter's tape differs ({} / {})", interp.is_some(), image.is_some()),
+            });
         }
         // The device's tape: on a Mac it always runs, so a failure is the test's (a failed device compile is fatal,
-        // never skipped). A Linux or Windows host's GPU lane (decision 0440 step E) may have no device, and is then
-        // skipped.
+        // never skipped). A Linux or Windows host's GPU lane (decision 0440 step E) may have no device
+        // (`UnsupportedBackend`), and is then skipped; where there is one, any other failure is the test's there too.
         #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-        if let Some(m) = match c.metal_images(&[src]) {
-            Ok(m) => Some(m),
-            Err(e) if cfg!(target_os = "macos") => return Err(format!("the device runs it: {e:?}")),
-            Err(_) => None,
-        } && m[0] != image
-        {
-            return Err(format!("Metal's tape differs ({} / {})", m[0].is_some(), image.is_some()));
+        match c.metal_images(&[src]) {
+            Ok(m) if m[0] != image => {
+                return Err(match (&m[0], &image) {
+                    (Some(d), Some(t)) => format!("Metal's tape differs: {}", crate::difference(d, t, c.lang())),
+                    _ => format!("Metal's tape differs ({} / {})", m[0].is_some(), image.is_some()),
+                });
+            }
+            Ok(_) | Err(rerail_compiler::Error::UnsupportedBackend) => {}
+            Err(e) => return Err(format!("the device runs it: {e:?}")),
         }
         let Some(image) = image else { return Ok(false) };
-        let (got, want) = (read(&image, src)?, lean(src, cpp));
+        let (got, want) = (read(&crate::Nodes::of(&image, c.lang())?, src)?, lean(src, cpp));
         match got.iter().zip(&want).position(|(a, b)| a != b) {
             None if got.len() == want.len() => Ok(true),
             at => {
@@ -190,7 +197,7 @@ mod tests {
                 match check(&src, cpp) {
                     Ok(true) => same += 1,
                     Ok(false) => {
-                        let why = compiled(cpp).unwrap().parser.image(&src).err().map(|e| format!("{e:?}")).unwrap_or_default();
+                        let why = compiled(cpp).unwrap().tape(&src).err().unwrap_or_default();
                         *refused.entry(why.chars().take(90).collect()).or_default() += 1;
                     }
                     Err(e) => differ.push(format!("{}: {e}", p.display())),
@@ -214,20 +221,20 @@ mod lowering_time {
     #[test]
     #[ignore = "a measurement"]
     fn lowering_steps() {
-        use rerail_compiler::bitlex_masks as bc;
+        use rerail_bitlex::bitlex_masks as bc;
         for cpp in [false, true] {
             let t = std::time::Instant::now();
             let stmts = ::bitlex::syntax::parse(&super::grammar(cpp)).unwrap();
             let parse = t.elapsed();
             let kind = |name: &str| super::KINDS.iter().position(|&k| k == name).map(|i| i as u16).or(Some(900));
             let field = |_: &str| None;
-            let symbols = bc::Symbols { kind: &kind, field: &field };
+            let symbols = bc::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
             let t = std::time::Instant::now();
             let compiled = bc::compile_shaped(&stmts, &[bc::FALLBACK], Some(&symbols), bc::Shape::Rules).unwrap();
             let compile = t.elapsed();
             let t = std::time::Instant::now();
             let text = compiled.text();
-            let program = rerail_compiler::rir_asm::assemble(&text).unwrap();
+            let program = rerail_rir::rir_asm::assemble(&text).unwrap();
             let assemble = t.elapsed();
             let t = std::time::Instant::now();
             let _native = rerail_compiler::native_ir::lower(&program, 0, 0).unwrap();

@@ -493,7 +493,6 @@ pub mod heap {
     pub static DROPPED: AtomicU64 = AtomicU64::new(0);
 
     thread_local! {
-        static SPAN: Cell<u32> = const { Cell::new(0) };
         static LEFT: Cell<i64> = const { Cell::new(INTERVAL as i64) };
         /// This thread's number for samples taken with no span open (`THREAD`), 0 until its first.
         static THREAD_IX: Cell<u32> = const { Cell::new(0) };
@@ -503,16 +502,57 @@ pub mod heap {
     /// The threads' names by number, as each named itself (`name_thread`).
     static THREAD_NAMES: std::sync::Mutex<Vec<(u32, String)>> = std::sync::Mutex::new(Vec::new());
 
-    /// This thread's number (1 on), given at its first ask without allocating.
+    /// This thread's number (1 on), given at its first ask without allocating. Its name as the system holds it is
+    /// kept by its number (`SYSTEM_NAMES`), read on the thread itself: a thread that names itself to the system alone
+    /// (a pool's, `thread_name`, as std's start sets it before the thread runs) is named in the report.
     fn thread_ix() -> u32 {
         THREAD_IX
             .try_with(|c| {
                 if c.get() == 0 {
-                    c.set(THREADS.fetch_add(1, Relaxed) + 1);
+                    let ix = THREADS.fetch_add(1, Relaxed) + 1;
+                    keep_system_name(ix);
+                    c.set(ix);
                 }
                 c.get()
             })
             .unwrap_or(0)
+    }
+
+    /// The bytes of a system name kept (`SYSTEM_NAMES`), NUL-padded.
+    const NAME_WORDS: usize = 8;
+    /// The numbered threads' system names, by number: `NAME_WORDS` words of bytes each (0: none kept).
+    static SYSTEM_NAMES: [[AtomicU64; NAME_WORDS]; 4096] = [const { [const { AtomicU64::new(0) }; NAME_WORDS] }; 4096];
+
+    /// Keeps the calling thread's system name as thread `ix`'s, without allocating.
+    fn keep_system_name(ix: u32) {
+        #[cfg(unix)]
+        if let Some(slot) = SYSTEM_NAMES.get(ix as usize) {
+            let mut buf = [0u8; NAME_WORDS * 8];
+            // SAFETY: the calling thread's own handle; the name is written NUL-ended into `buf`, of its length.
+            if unsafe { libc::pthread_getname_np(libc::pthread_self(), buf.as_mut_ptr().cast(), buf.len()) } == 0 {
+                for (w, bytes) in slot.iter().zip(buf.as_chunks::<8>().0) {
+                    w.store(u64::from_le_bytes(*bytes), Relaxed);
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        let _ = ix;
+    }
+
+    /// A thread that names itself to the system alone (a pool's) is named by that name where it opened no span.
+    #[cfg(all(test, unix))]
+    #[test]
+    fn a_thread_named_to_the_system_alone_is_named() {
+        let ix = std::thread::Builder::new().name("rr-lane-host 3".into()).spawn(thread_ix).unwrap().join().unwrap();
+        assert_eq!(system_name(ix).as_deref(), Some("rr-lane-host 3"));
+        assert!(name(THREAD | ix).ends_with("rr-lane-host 3"), "{}", name(THREAD | ix));
+    }
+
+    /// Thread `ix`'s system name, as it was when it was numbered.
+    fn system_name(ix: u32) -> Option<String> {
+        let slot = SYSTEM_NAMES.get(ix as usize)?;
+        let bytes: Vec<u8> = slot.iter().flat_map(|w| w.load(Relaxed).to_le_bytes()).take_while(|&b| b != 0).collect();
+        (!bytes.is_empty()).then(|| String::from_utf8_lossy(&bytes).into_owned())
     }
 
     /// Names this thread for its samples taken with no span open (the profile names each thread at its first span).
@@ -541,14 +581,15 @@ pub mod heap {
         }
     }
 
-    /// The span this thread's allocations are charged to (`intern`'s id; 0 none).
+    /// The span this thread's allocations are charged to (`intern`'s id; 0 none): `rerail_context`'s `HEAP_SPAN`,
+    /// carried with a job to the thread that runs it.
     pub fn set_span(id: u32) {
-        let _ = SPAN.try_with(|s| s.set(id));
+        rerail_context::set_heap_span(id);
     }
 
     /// The span this thread's allocations are charged to now (0 none): a refused device lease's (Q203).
     pub fn span() -> u32 {
-        SPAN.try_with(Cell::get).unwrap_or(0)
+        rerail_context::heap_span()
     }
 
     fn slot(ptr: usize) -> usize {
@@ -592,7 +633,7 @@ pub mod heap {
             }
         }
         // With no span open, charged to the thread: "(no span open)" alone named none of 494 MB at a 300-file peak.
-        let span = match SPAN.try_with(Cell::get).unwrap_or(0) {
+        let span = match rerail_context::heap_span() {
             0 => THREAD | thread_ix(),
             s => s,
         } | by;
@@ -624,6 +665,52 @@ pub mod heap {
                 return;
             }
             at = (at + 1) & (SLOTS - 1);
+        }
+    }
+
+    /// jemalloc, with the heap sampler around it (`RERAIL_HEAP_SAMPLE`): off, one load more an allocation. The
+    /// global allocator of every binary of the engine: the engine's own (`rerail-engine`'s `lib.rs`) and each test
+    /// crate's. A test crate that declared none ran on the system allocator, which the engine never runs on (on glibc,
+    /// a mapping made and unmapped for each large allocation, its pages faulted in again each time).
+    /// Tree-sitter's allocations go to jemalloc directly and are not sampled.
+    #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+    pub struct Sampled;
+
+    // Every allocation of every crate calls these through the allocator shim (`__rust_alloc`): inlined into it, as
+    // jemalloc's own are, they cost the shim one load more an allocation and not a call of their own.
+    #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+    unsafe impl std::alloc::GlobalAlloc for Sampled {
+        #[inline]
+        unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+            let p = unsafe { tikv_jemallocator::Jemalloc.alloc(layout) };
+            if on() {
+                alloc(p as usize, layout.size());
+            }
+            p
+        }
+        #[inline]
+        unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
+            let p = unsafe { tikv_jemallocator::Jemalloc.alloc_zeroed(layout) };
+            if on() {
+                alloc(p as usize, layout.size());
+            }
+            p
+        }
+        #[inline]
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+            if on() {
+                free(ptr as usize);
+            }
+            unsafe { tikv_jemallocator::Jemalloc.dealloc(ptr, layout) }
+        }
+        #[inline]
+        unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
+            let q = unsafe { tikv_jemallocator::Jemalloc.realloc(ptr, layout, new_size) };
+            if on() && !q.is_null() {
+                free(ptr as usize);
+                alloc(q as usize, new_size);
+            }
+            q
         }
     }
 
@@ -818,7 +905,10 @@ pub mod heap {
             let names = THREAD_NAMES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             return match names.iter().find(|(i, _)| *i == ix) {
                 Some((_, n)) => format!("(no span open) on {n}"),
-                None => format!("(no span open) on thread #{ix}, unnamed (it opened no span)"),
+                None => match system_name(ix) {
+                    Some(n) => format!("(no span open) on thread #{ix}, {n}"),
+                    None => format!("(no span open) on thread #{ix}, unnamed (it opened no span)"),
+                },
             };
         }
         if id == 0 {
@@ -833,26 +923,15 @@ pub mod heap {
 extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
 extern crate self as rerail_prof;
-#[path = "../../../src/code_rule_dsl"]
+#[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     #[path = "logic"]
     pub mod logic {
-        pub mod front {
-            pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
-            pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
-            #[allow(unused_imports)]
-            use std::collections::{BTreeMap, BTreeSet};
-            #[allow(unused_imports)]
-            use std::fmt;
-            #[allow(unused_imports)]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::name::Name;
-            #[allow(unused_imports)]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, AggOp, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, SCOPE_NOT, SpanIn, Value, axis, globals, is_axis, is_transduced};
-        }
         pub mod profile;
     }
     pub mod phase_clock;
     pub mod prof;
+    pub mod sql_frame;
     #[allow(unused_imports)]
     use napi::Result;
     #[allow(unused_imports)]

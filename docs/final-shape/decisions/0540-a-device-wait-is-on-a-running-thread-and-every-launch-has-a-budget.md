@@ -1,11 +1,16 @@
 # 0540. A device wait is on a thread that is running, and every persistent launch has a budget
 
-Status: decided (2026-11-20), by the user: "It sounds like we need a better solution for device-side enqueuing than
-busy waits. What can we do? can we make the kernels discover their order based on an atomic counter and do the work
-in those? Can we make a thread which wants to spin instead cooperatively take on part of the work it's waiting for?",
-then "please do 2 and 3 first": 2, the 16z cache's waits; 3, the persistent grid's and a budget for each launch.
-Amends `view::cache` (decision 0353 step 4b): "a miss waits for no thread" becomes a bounded wait for a writer.
-Follows 0524 point 5 (a wait is a turn of its function's one loop).
+Status: partly built (audited 2026-11-23). Left: Step 4 (a 16z block decoded by its SIMD group together); the resident
+interpreter's Metal gate; the preprocessor's own MSL still waits by polling. Decided (2026-11-20), by the user: "It
+sounds like we need a better solution for device-side enqueuing than busy waits. What can we do? can we make the
+kernels discover their order based on an atomic counter and do the work in those? Can we make a thread which wants to
+spin instead cooperatively take on part of the work it's waiting for?", then "please do 2 and 3 first": 2, the 16z
+cache's waits; 3, the persistent grid's and a budget for each launch. Amends `view::cache` (decision 0353 step 4b): "a
+miss waits for no thread" becomes a bounded wait for a writer. Follows 0524 point 5 (a wait is a turn of its
+function's one loop).
+
+> **0653 (2026-11-23):** §3's grid join and the preprocessor's last grid barrier are gone with `ukl/grid.h`; step 6's
+> scheme (continuations on a work queue) runs the preprocessor's setup.
 
 ## Intro
 
@@ -112,9 +117,8 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
        a DGX Spark's CUDA and the Mac mini's Metal.
    - The label passes' spill queue needs no item budget: its frames are walks' pieces, and every walk is within
      its task's step budget (decision 0334), past which it stops and goes to W or runs again.
-   - **Still to do: `pp_expand`'s workers.** Its host already encodes a bounded number of work launches
-     (`WORK_LAUNCHES`) and refuses what is left (`px_check`). Its workers are Metal-only, and pp runs on Metal are
-     off until they are allowed again.
+   - **`pp_expand`'s workers:** another agent's work (2026-11-21); a budget written here for them was taken out
+     again, its files as they were.
 4. A 16z block decoded by its SIMD group's lanes together, so a miss costs a group a block once.
 5. The M3, then the M1 Max: the grid's tests, the device's tape tests and the engine's Metal tests, one at a time.
    - **The M3 (2026-11-21):**
@@ -126,3 +130,261 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
      - A decode of a block takes well under a millisecond, so the writers waited for stood still while their
        waiters spun. Point 2's premise, that a claimant goes on, does not hold on the M3. The bound held: nothing
        hung.
+     - **The experiments (2026-11-21), each one run of that test on the M3:**
+       - *Not a lane waiting for its own SIMD group.* With one lane in 32 reading (the rest returned at once) it
+         failed worse: 828 waits ran out, none ended with its block found, 631 turns of the cache.
+       - *Not a writer that waits for a turn on its core.* Waits that read memory one turn in 64, over 64 times the
+         turns, and that stalled on loads of the tape's own bytes between: 15 s of waiting, all 7 blocks filled, and
+         still 8,510 waits ran out.
+       - *What a wait that runs out finds.* Every one (117 of 117) finds a slot of its key claimed, with no entry
+         yet. At the first, no writer is counted in the head, and every claim made so far has been settled (given
+         an entry or given back). The claimed slot read complete a moment before, the same way on every run. An
+         add of a zero the compiler cannot know, a poll and a load all agree that it then reads claimed. No clear
+         touched the head, and no decode or copy wrote past its entry.
+       - *Takes that find the head full with 8 entries.* 1,667 claims in one run found no free slot among their 16
+         probes while most of the head's slots were empty: the cache turned with 8 entries in it. A lookup's first
+         turn reads the epoch and the take's stamp check by loads, which may be stale copies (Q123). With the stamp
+         check a poll and every turn after a failed try polling, such claims were 57 to 2,673 a run, and the test
+         still failed.
+       - *A won claim is lost (2026-11-21, a log of every write to the cache's index, in the dead entry).* With one
+         read a node and the decode skipped, the 7 blocks' first claims are made at once, each by lane 0 of its own
+         SIMD group, into slots of one 128-byte line. Every run, the same 4 of them are lost: right after the claim
+         loop the claimant's slot reads 0, or (two blocks whose probes meet) the other block's tag, and no logged
+         write was made to it. Inside the loop a second compare-and-swap, of the tag for the tag, still finds the
+         tag. At that moment no generation's index holds the 4 losers' tags anywhere, while it holds the 3 others'.
+         Two claims of one slot both found it 0, by compare-and-swap and by `fetch_or`, which coherent atomics
+         cannot do. So the losers' atomics act on a copy of the line that no load sees, and that never reaches the
+         buffer. Every write of the cache's code to an index slot is logged, and none explains it.
+       - *What does not change it:* one lane of a SIMD group's swap at a time, every store an exchange, the cold
+         reads inlined, a claim by `fetch_or` in place of a swap, and the cache's atomics on `coherent(device)`
+         words. The counts are the same to a few in every run.
+       - *What differs:* the M3 Max runs macOS 15.7.7 (Metal 3). The Mac mini (an M1) runs macOS 27.2.1 and the
+         M1 Max macOS 26.2 (Metal 4), and both run the same instrumented kernel cleanly: 7 claims, 7 numbers. Metal
+         compiles the source on the device, so the M3's compiler and driver differ from theirs, as well as its GPU.
+         A runtime compile cannot turn Metal's optimizer off, so the M3 itself on macOS 26 is what separates the two.
+       - *Not the compiler (2026-11-21).* Each Mac's own runtime compile of the kernel's source (kept by
+         `RERAIL_METAL_SOURCE_DIR`), in a binary archive: its AIR, from macOS 15.7.7 and from macOS 27.2.1, is the
+         same instruction for instruction, but for the operand Metal 4 adds to each atomic. The claim is one relaxed
+         device-scope swap. And the M3's AIR compiled for G15 by Xcode 26's back end (`metal-tt`), run on the M3
+         from that archive (`RERAIL_METAL_BINARY_ARCHIVE`, the archive's code confirmed), loses the same 4 claims.
+         So the front end does not make the difference, and neither does the back end's version: both back ends
+         compile the code for G15 otherwise than for G13. A user on an M3, whatever their Metal version, may meet
+         it. Apple's tools have no disassembler for G15 code ("no instruction printer for target agx3").
+       - **Found (2026-11-21): two address foldings of G15's back end, by reduction.** The kernel was cut down on
+         the M3, one piece at a time, while the loss still showed (a harness that compiles a `.metal` file and runs
+         it once on the test's dumped inputs). Both come from how the back end folds an address computed from a
+         loaded value; both reproduce in kernels of a few lines, from the runtime compiler of macOS 15.7.7 and from
+         Xcode 26's `metal-tt`.
+         - *The claim's swap.* A compare-and-swap at `gen + ((h + p) & (slots - 1)) * 4 + INDEX`, with `slots` read
+           from the header, acts on another word than its address: two threads both win one slot, and a load of the
+           slot after finds neither's tag. With the index masked by a constant as well, it acts on the slot. A
+           constant mask up to 2^29 - 1 is enough; 0x3FFFFFFF is not. So the slot's index is masked by
+           `view::cache::SLOTS_MAX - 1` too (131,072 slots, the most `Spec::new` makes for the most entries), in
+           `tape_body.h` and in the CLIF, and `Spec::check` and `init_zeroed` refuse a cache of more slots.
+         - *The decode's match.* LZ4's copy reads at the output's place less the match's offset, a zero-extended
+           16-bit load: `dst + at - zext16(off)`. G15 folds it as `dst + at + (uint16)(-off)`, a place 2^16 bytes
+           past the source, so every match read the entry's zeros. This is what failed the blocks once the claims
+           were kept. The decode now computes its places as 32-bit offsets from the output's start and adds each
+           to `dst` (`dst + (uint64_t)(uint32_t)(at - off)`), which G15 compiles right.
+         - With both: `the_device_reads_read_every_node_as_the_crate_does` and
+           `the_device_reads_16z_through_a_cache_that_turns` pass on the M3 Max, the Mac mini and the M1 Max, and the
+           host's tests (the CLIF's reads, which gain the mask, and the generated relation reads) pass on Linux.
+         - Other device code that subtracts a loaded narrow value from an address, or swaps at an index masked only
+           by a loaded count, may meet the same foldings.
+     - **The engine's Metal tests on the M3 (2026-11-21, `--features metal-tests`, one at a time).** Of the 118
+       conformance tests (`metal_semantic_conformance`), 117 pass. Of the 15 others, 10 pass. What fails, and what
+       the M1 Max (macOS 26.2) says of the same tests:
+       - *M3 only: the step budgets' tests* (`a_misplanned_label_sweep_runs_again_and_finds_the_full_budgets_roots`,
+         `on_metal_an_unfinished_pass_goes_to_w_where_w_costs_less_and_runs_again_where_it_does_not`): no task runs
+         over its budget. Both pass on the M1 Max. The same evaluation (one program, one file, 34 tasks, a budget of
+         256 steps each on both) takes 477 steps at most a task on the M1 Max and 18 on the M3, with the roots the
+         CPU finds (`lowered_clauses_find_the_same_roots_on_the_resident_interpreter` passes on the M3). So the M3
+         counts a task's steps short, or explores fewer of its pending paths. Not yet reduced.
+       - *M3 only: `retained_grid_runtime::inputs_compact_stage_capturing_sibling_closures_preserve_maximal_prefixes`*
+         fails as `BackendFailure` after 3 attempts, where the CPU's JIT agrees with the expected output. On the M1
+         Max the same test held the GPU: the farm's watchdog killed it after a one-thread dispatch had not finished
+         for 16 s. Not to be run again until the wait is found in the code.
+       - *Both Macs: the launch limit.* `lowered_clauses_find_the_same_roots_on_metal` (2 ruf028 clauses) and both
+         wave tests stop with `BackendLaunchLimit`. A chain's reach with more levels than `label_phase`'s programs
+         hold fails its run (`ChainLevels`), which runs again with twice the levels, from 1. These clauses need 4:
+         three runs of about 69 launches each, every run's launches in the evaluation's ledger, past its 200
+         (`KERNEL_LAUNCH_LIMIT`, a user decision). Not a GPU's difference.
+       - **Decided (user, 2026-11-21): a rerun charges a budget of its own**, which allows one rerun an evaluation on
+         average. `launch_budget::Reruns` is the run's (decision 0442): each evaluation adds `KERNEL_LAUNCH_LIMIT` as
+         its outermost scope opens, and a rerun (`launch::rerun`: every run of the label sweep after its first, for
+         more chain levels, more budget, wider lanes, more rounds) takes its launches from it, not from the
+         evaluation's own 200; one that needs more takes what others did not. A rerun's plan is checked against what
+         it has left (`launch::rerun_available`), not against the launches before it. The ruf028 clauses pass on the
+         M1 Max and the M3 (`lowered_clauses_find_the_same_roots_on_metal`, all 492).
+       - *Found with it: the plan left out a recursive group's anchors.* `encode` evaluates them once before the
+         group's sweeps, rounds or fused dispatch (Q133), but the plan's `fixed` counted only plain steps' levels, so
+         a wave's plan said 198 launches and its run took more. It counts them now (each anchor once, in `encode`'s
+         order; a round's levels only their formula passes): the wave's plan is 337 and its run 345 (8 files: 326
+         and 342; a level's formulas past the phases' scratch split into more dispatches, which the plan does not
+         see). So the wave's first run alone is past 200, and both wave tests stop at the plan with
+         `BackendLaunchLimit`. Run once with the limit at 400 on the M1 Max, `the_wave_finds_ws_matches_on_metal`
+         finds 219 clauses' matches missing that W finds, and `the_wave_is_one_evaluation_on_metal` runs past its
+         240 s: more than the limit stands between the wave and passing.
+       - *Fixed: the CPU interpreter's labels copied every label set at every write.* `LoweredMatcher::label` held
+         its views (each an `Arc` of the file's sets) while it wrote a label's new set, so `Arc::make_mut` cloned the
+         whole table, a label at a time, every round (decision 0353's copy). `ruff-pyi041`'s
+         `redundant-beside-complex` sat in it past the test's 240 s on the M3; with the views dropped before the
+         write, 1.6 s. `sweeps_needed` (the probe) did the same per marked node, and drops its view too. The whole
+         gate then passes on the M3: 492 of 492 clauses equal on 60 fixtures, 41 s, at most 96 launches a clause.
+       - *Was open, fixed 2026-11-22 (below): the resident interpreter's gate*
+         (`lowered_clauses_find_the_same_roots_on_the_resident_interpreter`,
+         every walk interpreted). With reruns funded it passed once on the M1 Max (134 s, the host loaded). With the
+         same GPU code, its next run there was killed by the farm's GPU watchdog (no one-thread dispatch finished for
+         15 s) after the clause `ruff-e711-none-comparison/none-comparison-equal`. On the M3 it finishes in 18 s with
+         14 of 123 clauses differing from the CPU (roots missing and extra: e741, pie790, b013, b021, b029, f707,
+         f901, n801, ret502, sim905, tid252, try400, up035, up039) and 12 refused at the launch limit. Before reruns
+         had a budget, a clause that needed one was refused, and a refused clause is counted, not compared. Not run
+         on Metal again until the cause is found in code. Also open on the M3 only: the two step-budget tests
+         (`a_misplanned_label_sweep_…`, `on_metal_an_unfinished_pass_goes_to_w_…`): no task runs over its budget.
+       - *Fixed (2026-11-22): the gate, from the code on CPU runs.* On spark2's CPU backend, after 0601, the gate
+         stopped at the launch budget's hard failure on its eighth clause. Two causes in `metal_label_passes::run`:
+         - *The plan priced an interpreted group's rounds at nothing.* It counted every group of micro walks as
+           fused, one dispatch to its fixpoint. On the interpreter (`micro` false: `INTERPRET_ONLY`, or a run whose
+           walks outgrew their frames) no group fuses, and each round launches its levels. So a clause planned at 6
+           launches took 56, one at 20 took 138, and `dtz003` spent its evaluation's 200 with its plan within them.
+           A plan now prices a group by whether its walks run as micro walks (`per_group_of`), and an interpreted
+           run's rounds are capped within its launches as a fused run's are.
+         - *An overrun without a W reran at the rate it ran over.* `replanned` observed a misprediction only on the
+           path that weighs W against running again. A run with no W (`matcher_roots`, this gate) observed none, so
+           each rerun only doubled the budget. `d416`'s walks over a file of 2,158 nodes ran six times and spent the
+           reruns' launches. Every overrun is now observed first, and its program repriced at once: `d416` takes four
+           runs (its rate 6, 48, then 194 steps a node).
+         - *Measured* (one run each): the gate 123 of 123 equal, none refused, on spark2's CPU backend, the mini's Metal
+           (M1) and the M3's. The M3's two step-budget tests pass (12 clauses checked, 1 rerun with twice the budget;
+           2 evaluations given to W). The Metal parity gate is 492 of 492 on spark2's CPU backend and the M3, at most
+           52 launches a clause. The 14 clauses that differed on the M3 do not differ.
+       - *Fixed: the wave tests aborted on the M3* on a pool thread's read of the machine's jobs' walls outside any
+         run (decision 0442): the label kernels' warm-up, and `threads::spawn_in`, read them before they entered
+         their caller's run. They enter first now.
+6. **Done (2026-11-21): a level's formulas are one launch, a work queue with continuations, not a launch a phase.**
+   - *Why.* The wave's plan was 337 launches, past the 200 an evaluation has: 212 of them `label_phase`'s, a launch a
+     phase of each level's formula with the most (up to 12), most formulas needing 1 to 3. Then leaves 49, programs
+     and sinks 34, settles 23, recursive groups 13, patterns 5, parents 1.
+   - **Decided (user, 2026-11-21): no cross-thread barrier that spins.** "Those that launch should launch and do
+     whatever useful work is available. If they need to wait for another thread, they should enqueue a continuation
+     and pick up more work rather than spin." What was tried first, and why it is not the design:
+     - *A persistent grid* (`ukl_grid_join`, a grid barrier between phases). On the M3 Max (40 cores), 1,024 groups of
+       64 threads all joined, and 520 to 950 reached the first barrier; at 640, every group finished its items and
+       exactly 520 (13 a core) reached it, the other 120 running only once those gave up at the bound. A group that
+       has started can be kept from going on there.
+     - *The grid sized by occupancy* (the cores, from the IORegistry's `gpu-core-count`, times the groups
+       `maxTotalThreadsPerThreadgroup` admits). Right on the M1 Max (512 groups, the clause passed); on the M3 Max
+       the pipeline says 1,024 threads a core and 832 went on. No bound read from the pipeline holds there.
+   - *The queue* (`label_phase`, `<ukl/workqueue.h>`): an item is a phase of a formula over a block of the region's
+     words, a group of 64 threads an item. Each formula's phase 0 is there from the start (seeds, taken from a
+     counter); the group whose item finishes a formula's phase (its count of done items reaches the phase's end)
+     pushes the next phase's blocks and goes on taking items, so a pushed item has a worker that is running. A
+     group that finds nothing ends. Nothing waits for another group, and the groups that run at once are not this
+     kernel's concern. Ordering: a group's writes, a device barrier and fence, then its count; the pusher's fence,
+     then its pushes; the taker's fence after its take. The slots' plain reads and writes are coherent.
+   - *Its capacity*: the continuations (each formula's phases past its first, its blocks each), and a slot a dispatched
+     group more: a take that comes before its push's write gives that slot up, and a group ends at a take that finds
+     nothing, so it gives up one at most. Counting only the continuations, a clause overflowed (`BackendCapacity`).
+     After the run the host reads each queue: overflow is `BackendCapacity`, an item left active `BackendFailure`.
+   - *No worker budget* (point 4) here: a budget ends a worker with items left, and an evaluation is one command, so
+     nothing would launch again for them. The launch's work is the plan's items, each a phase of one block, and no
+     worker waits: its time is its items', which the launches a phase took in the same command buffer.
+   - The plan counts a level's formulas as 2 launches (their leaves, their phases).
+   - *Measured*, the lowered-clauses gate (492 clauses, 60 fixtures): 492 equal on the M3 Max and the M1 Max; 8,332
+     launches against 12,685, at most 52 a clause against 96; Metal 15.5 s against 15.3 s on the M3 Max, the host
+     as loaded (CPU 21.5 s both). The wave: planned 174, launched 126 (345 before), one command buffer, 5.7 s. Its
+     matches still differ from the oracle in 406 (clause, file) pairs, the same clauses first (B404, B603, A005 in
+     `f000.py`) that a run with a launch a phase and the limit at 400 missed: the wave's, not the phases'.
+   - The label-sweep tests on the M3 Max fail as before and no more: the two step-budget tests, and the resident
+     interpreter's (the same 14 clauses; 99 equal, 97 before, two fewer refused at the limit).
+7. **No device thread waits for another by polling (user, 2026-11-21): "find any places where we're spinning in the
+   same way elsewhere in the system and replace it with the scheme" of step 6.** The places, and what each became:
+   - **Done: an idle work-queue worker ends at once.** `ukl_wq_idle` and `ukl_wq_idle_sg` polled the queue's active
+     count up to a limit for others' pushes (the label sweep's spill queue: its first 512 threads 4,096 polls, the
+     rest 1; the lattice: 4,096). They are gone: a take that finds nothing ends the worker. A worker that pushed is
+     running and takes on, and a dispatch's later workers start as earlier ones end and take what is queued then.
+     The gate on the M3 Max: Metal 17.6 s without the polls, 18.4 s with them, run after run on one host (a first
+     run at 49.8 s was the host's load: the same code ran at 17.6 s next). The queue's tests pass on the Mac mini's
+     Metal and spark1; the device fix waves (the lattice) and the spilled walks on the M3 Max.
+   - **Done: a lane's lazy arena block has no pending state.** `ensure_lazy_block` (`batch_runtime.uglykl`) claimed a
+     block by CAS (state 1) and spun on state 1 for another thread's reservation. A lane is one thread's own (a lane a
+     thread: `lane_arenas_full` in `run_batch` and the label sweep), so no thread ever saw another's claim: the wait
+     was a spin in form only. It reads the state, and at the lane's first need reserves and stores it, with no CAS
+     and no loop. The host's model of it (`LazyArenaBlock` in `packed_arena.rs`, which `std::hint::spin_loop`ed on
+     the same state) is the same: `ensure(&mut self)`, the block one lane's.
+   - **Kept: the 16z cache's wait for a pending entry** (`clif_tc_get` in `<ukl/reads/tape_body.h>`). It is not a
+     barrier: the thread waited for has claimed the entry and is decoding it, so it is running and owes no other
+     thread anything; the wait is bounded (`CLIF_T_C_SPIN` turns, then the block decoded into an entry of its own),
+     and ends at once once any lookup has failed. A read inside an evaluation has no continuation to push, and
+     decoding instead of waiting was measured worse (21.8 s and 121,577 failed lookups against 7.2 s and none).
+   - **Not a launch: the leaves.** The run reads every anchor's and formula pass's leaves in one `label_leaves`
+     launch where their rows fit the formulas' scratch (`run_leaf_tests`, `leaves_fit`), and did before; the plan
+     counted a leaf launch at each level with formulas. It now counts the run's one (the wave's plan: 49 leaves
+     were 48 launches that never ran).
+   - **Measured, not taken yet: the block programs' look-back as parks** (branch `jeremybarnes/block-lookback-parks`,
+     commit 4cf62550d7). A group reads each predecessor's word once; where one is not published yet it parks and its
+     worker takes other work. Its predecessor counts each publication that changes a word (states only grow, so a
+     group run again changes nothing) in the group's wake word, and pushes the group where it is parked. Generated
+     UKL keeps a parked group's values in a save slot (a few a worker), its body a block a stage, so the group goes on
+     from its exchange. One launch a batch, and every block-program test equal on the Mac mini's Metal. But on one
+     3.8 MB file (`stage1_cost_per_block`, the M1 Max quiet, ns a 64-byte block, before and after): masks 3.2 and
+     6.5 (Planes, 64-byte lanes), with the extract 4.7 and 41.0, and 6.5 and 154.6 by lookups. The groups in flight
+     reach each exchange together, so nearly every one finds its predecessor's word not there yet: 1 to 2.5 parks a
+     group. Without the fences that order only atomics it was no faster. Not taken.
+   - **Done: the block programs' cooperation is the forward carry, where no segment waits on another.** The user's:
+     that fine-grained cooperation needs a better concurrency design. Why neither form of look-back can be one: a
+     group's summary at a level depends on the carries resolved at the levels before, so a group whose predecessor
+     has not reached a level cannot go on (park) and can only wait. A summary free of the levels before would be
+     the group's function of its whole carry-in state, and that state is too wide to enumerate: over the corpus
+     (`corpus_boundary_shapes` in commit bcfa0ea74a, removed with the look-back's plan it read), the bits crossing a
+     group's edge reach 192 and the
+     widest cone 191 (halos of `prev`s by up to 63 bits); 14-json's cone is 7 bits (128 candidates a group), 15-jsonc's
+     18. So the carries resolve level by level, and without a wait inside a launch, by the forward carry
+     (`block_serial.rs`, doc 23): a level's pass gives each segment its table of each scan, a prefix over each file's
+     segments makes them exact, the `prev`s start from a guess, and a check runs again the segments whose start
+     differs. Measured equal to the look-back on JSON's corpus (doc 23 §5: 4.10 ms against 4.19 ms), and tier 1
+     already runs on it. Its last product user moves to it: code rules' span prefilters (`span_ends`,
+     `device_metal.rs`), which ran the look-back executor with 64 polls. While a set's kernels compile on threads of
+     their own (`serial::compiled`, each through `kernels::ready_behind_function`) the cores run the batch; the GPU's
+     interpreter, which covered that window, was the look-back's.
+   - **Done: the look-back is removed.** The user's: no look-back at all. Gone: the look-back executor
+     (`run_batch`, `run_split`, `Executor`, `ClassStrategy`, `SPINS`, `RepeatedLaunches`), its interpreter
+     (`block_program.uglykl`), generated UKL's exchanges (`Plan`, `levels`, `exchange_kinds`), and the protocol in
+     `block_common.uglykl` (`poll` and `BLOCK_POLL_RMW`, `look_back`, `halo_exchange`, `exchange_word`, `count_sink`)
+     with the helpers only they used. The tests that compared the look-back's lane widths and class strategies now
+     run the forward carry, in segments of 3 blocks (a short file speculates and runs again) and of tier 1's 29;
+     those that tested the look-back itself (its fallback launches, its one kernel, its strategies' times) are gone.
+     `block_program.rs` keeps what the forward carry shares: the head, the file table, `emit` and its forms.
+   - **Done: a level's programs need no sink.** The label sweep's programs had already marked their results' bits
+     and tallies as they published them (`packed_batch::MARKS`, `run_task_in`), and they kept no results. So
+     `label_sink`, a launch after every level's programs, routed nothing; all it did was fold each lane's status into
+     `flags[0]`. The level's settle (`label_settle`) does that fold now. It skips exactly when the sink skipped, since
+     a settled round's programs return at once too. `label_sink` is gone, and a level plans one launch for its
+     programs, not two.
+   - **Done: the whole wave is the CPU's labels on Metal.** Before the settles are changed, the wave they are measured
+     on must be right. A test now labels every Python clause in one wave on Metal and compares it with the CPU, label
+     by label (`the_waves_labels_on_metal_are_the_cpus`). It found three faults:
+     - **A formula pass dropped its demand.** A pass of `Domain::Within` (0460) names only the set's kinds in its
+       rule; a walk's anchor holds the set itself. A pass made into a formula has no anchor, so it labelled every
+       node of those kinds. Now `device_formula` and `device_targets` AND the demand in.
+     - **A rerun charged the evaluation's own budget.** `launch::attempt`, which every launch goes through, took each
+       launch from the evaluation's own budget even during a rerun. But `check_submission` read only the rerun's
+       refusals. Three runs of 84 launches passed the evaluation's 200, and the third was submitted with its last 52
+       launches left out: 316 labels were lost at 174 clauses, and every label at 492. Now one charge
+       (`Evaluation::charge`) serves `attempt` and `reserve`: a rerun's launch is charged to the reruns' budget, and is
+       refused where the submission check reads it.
+     - **A chain's levels were a run again.** `REACH_CHAIN` was unrolled to a fixed number of levels. A deeper chain
+       failed its run (`Error::ChainLevels`), which ran again with twice the levels: 1, 2, 4, each time the whole
+       sweep. Now a level is two phases, and the second ends in `PHASE_LOOP`. While a member is left, the group that
+       finishes the loop's phase pushes the loop's first phase again, not the next phase. The decision is a
+       continuation in the same queue, with no wait. A loop runs again at most `PHASE_CHAIN_MOST - 1` times (64
+       levels, the old cap), and the queue's capacity holds that. The whole wave now runs once: 124 launches, no label
+       apart. `Error::ChainLevels` and its reruns are gone.
+     One difference stays, by 0460's design. In a recursive group, a demand can read the group's own labels. The
+     group's anchors read those labels as every node (Q133), so on Metal such a pass labels more nodes outside its
+     demand, where nothing reads its value. The test compares such a label, and a complement of one, within the demand
+     only.
+   - **Marked: `<ukl/grid.h>`'s barrier** is not for new code; no engine kernel includes it. The preprocessor's own
+     MSL (`pp_blocks.metal`, `pp_expand.metal`'s idle wait, `work_queue.metal`) still waits so: the preprocessor is
+     another agent's, so its waits are left to it. Outside the device, forest's random-forest predictor has a "spin"
+     mode that waits for a GPU event by polling the host's CPU (`randomforest_predict.rs`), one of its modes.

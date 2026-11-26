@@ -89,7 +89,10 @@ pub(crate) unsafe fn release(p: *mut u8, len: usize) {
         libc::munmap(p.cast(), len);
     }
     #[cfg(windows)]
-    crate::windows::release(p, len);
+    {
+        let _ = len;
+        crate::windows::release(p);
+    }
     #[cfg(not(any(unix, windows)))]
     unsafe {
         std::alloc::dealloc(p, std::alloc::Layout::from_size_align(len, PAGE).expect("a page-aligned reservation"));

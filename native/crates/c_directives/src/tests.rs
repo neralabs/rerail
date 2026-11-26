@@ -168,7 +168,7 @@ fn directives_read_as_the_lean_scan_reads_them() {
     for src in cases {
         let b = src.as_bytes();
         let got = c.read(b).unwrap_or_else(|| panic!("refused: {src:?}"));
-        let text = || image_text(&c.image(b).unwrap()).unwrap();
+        let text = || image_text(&Nodes::of(&c.image(b).unwrap(), c.lang()).unwrap()).unwrap();
         assert_eq!(got.rows, lean(b, false), "{src:?}\n{}", text());
         assert_eq!(normal(b, &got.operands), lean_operands(b, false), "{src:?}\n{}", text());
         let mut next = got.next.clone();
@@ -180,8 +180,7 @@ fn directives_read_as_the_lean_scan_reads_them() {
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     {
         let files: Vec<&[u8]> = cases.iter().map(|s| s.as_bytes()).collect();
-        let metal = c.metal_read(&files).unwrap_or_else(|e| panic!("the device runs the batch: {e:?}"));
-        for (src, m) in cases.iter().zip(metal) {
+        for (src, m) in cases.iter().zip(on_device(c, &files, "the batch").unwrap_or_default()) {
             assert_eq!(m, c.read(src.as_bytes()), "Metal, {src:?}");
         }
     }
@@ -266,9 +265,7 @@ fn the_corpus_reads_the_same_or_is_refused() {
     assert!(differ.is_empty() && interp.is_empty() && metal.is_empty());
 }
 
-/// A file past 64 KiB: its tape needs 4-byte columns (the root's tail from its last directive to
-/// the file's end, and offsets from a block's base), so the narrow parser refuses it and the wide
-/// one reads it, on every backend.
+/// A file past 64 KiB: its root's span and its nodes' starts past 16 bits, read on every backend.
 #[test]
 fn a_file_past_64_kib_is_read_at_wide_columns() {
     let c = compiled_or_panic();

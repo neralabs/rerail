@@ -85,7 +85,7 @@ pub struct Document<'a> {
 pub struct Writer {
     state: Box<State>,
     /// The parts' buffers, by `part::*`, each its capacity long.
-    parts: [Vec<u8>; part::COUNT],
+    parts: [crate::Vector<u8>; part::COUNT],
     presence_words: (usize, usize),
     keep_blocks: bool,
     z: bool,
@@ -104,9 +104,9 @@ impl Writer {
     /// A writer of a document of `source` in `lang`, of about `nodes` nodes, in 16z where `z`, with each block's
     /// presence where `blocks`. Its parts' room is reserved for `nodes` nodes, their side lists' usual share and the
     /// source's newline index: more nodes grow them.
-    pub fn new(lang: &Lang, source: &[u8], tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
+    pub fn new(lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
         let mut w = Writer::empty();
-        w.begin(lang, source, tag, z, blocks, nodes);
+        w.begin(lang, source, terminators, tag, z, blocks, nodes);
         w
     }
 
@@ -119,13 +119,14 @@ impl Writer {
     /// where it is short, so a writer used again zeroes no room), as simdjson's parser keeps its tape from one document to
     /// the next. A buffer's bytes are the last document's: the ops write each byte before they read it (in tests every
     /// part kept is filled with `FRESH`, so a byte read before it is written shows).
-    pub fn begin(&mut self, lang: &Lang, source: &[u8], tag: u8, z: bool, blocks: bool, nodes: usize) {
-        self.begin_with(&Document { lang, source, tag, z, blocks, nodes }, |out| crate::newlines::index_into(out, source));
+    /// The line index is of the source's lines as its language's `terminators` end them (decision 0612).
+    pub fn begin(&mut self, lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) {
+        self.begin_with(&Document { lang, source, tag, z, blocks, nodes }, |out| crate::newlines::index_into(out, source, terminators));
     }
 
     /// `begin`, the newline index written into its part by `lines` (`newlines::index_of`), in the part's own buffer: a
     /// producer that has the source's newlines (tier 1's bits) makes it with no scan of the source.
-    pub fn begin_with(&mut self, doc: &Document<'_>, lines: impl FnOnce(&mut Vec<u8>)) {
+    pub fn begin_with(&mut self, doc: &Document<'_>, lines: impl FnOnce(&mut crate::Vector<u8>)) {
         let &Document { lang, source, tag, z, blocks, nodes } = doc;
         let source_len = source.len() as u64;
         let wd = lang.widths;
@@ -156,7 +157,11 @@ impl Writer {
             ..State::default()
         });
         debug_assert_eq!(state.stride, w::stride_of(w3, cw as u32));
-        let kinds: Vec<u8> = lang.kind_field.iter().flat_map(|&(k, f)| (u32::from(k) | u32::from(f) << 16).to_le_bytes()).collect();
+        // The language's kinds' part, made once with it (`Lang::kinds_part`), into this part's own buffer: built from
+        // the code table at each document, it was a third of a small document's writer (a rule file's).
+        let mut kinds = std::mem::take(&mut self.parts[part::KINDS as usize]);
+        kinds.clear();
+        kinds.extend_from_slice(lang.kinds_part());
         let words = 8 * (kind_words + field_words);
         let count = nodes.div_ceil(Z).max(1);
         let buckets = (4 * count).next_power_of_two().max(64);
@@ -180,7 +185,9 @@ impl Writer {
             count * TABLE as usize,
             2 * SIDE_AREA as usize,
             64,
-            LAID_MAX,
+            // A block's laid parts, and the 8 bytes past them `reserve` keeps: the first node's `reserve_final` asks
+            // for that much, and a part held at `LAID_MAX` was moved to twice it at once.
+            LAID_MAX + 8,
             count * LAID_AT as usize,
             words * (1 + if blocks { count + 1 } else { 0 }) + 8,
             lines.len() + 8,
@@ -190,6 +197,8 @@ impl Writer {
             if z { 4 * buckets + 8 } else { 8 },
             if z { count * (Z / K) * cw + 8 } else { 8 },
             if z { w::LZ_TABLES as usize + 8 } else { 8 },
+            // The faults: room for a block's (each node may be one), as the first node's `reserve_final` asks.
+            4 * Z + 8,
         ];
         // The kinds' table and the newline index are their parts, made where they are computed.
         self.parts[part::KINDS as usize] = kinds;
@@ -256,7 +265,8 @@ impl Writer {
             part::PIECES => &mut state.pieces,
             part::SEEN => &mut state.seen,
             part::CKPT => &mut state.ckpt,
-            _ => &mut state.lz,
+            part::LZ => &mut state.lz,
+            _ => &mut state.errors,
         }
     }
 
@@ -296,7 +306,8 @@ impl Writer {
             part::PIECES => &s.pieces,
             part::SEEN => &s.seen,
             part::CKPT => &s.ckpt,
-            _ => &s.lz,
+            part::LZ => &s.lz,
+            _ => &s.errors,
         };
         p.len as usize
     }
@@ -324,7 +335,12 @@ impl Writer {
         let (laid, free) = (self.len_of(part::LAID), self.len_of(part::FREE));
         self.reserve(part::LAID, laid + blocks * LAID_MAX);
         self.reserve(part::FREE, free + 4 * blocks);
-        let count = self.state.blocks as usize;
+        // Each of a block's nodes may be a fault (`w_finalize` lists them).
+        let errors = self.len_of(part::ERRORS);
+        self.reserve(part::ERRORS, errors + 4 * Z * blocks);
+        // Each block's entry by its number: the blocks made, and the `blocks` more a run (`reserve_run`) may make
+        // before it lays them.
+        let count = self.state.blocks as usize + blocks;
         self.reserve(part::LAID_AT, count * LAID_AT as usize);
         if self.z {
             let (out, rooms) = (self.len_of(part::OUT), self.len_of(part::ROOM_FREE));
@@ -376,6 +392,12 @@ impl Writer {
             self.reserve(part::PRESENCE, (count + 1) * words);
         }
         self.reserve_final(count);
+    }
+
+    /// Each node final as it is written: no commit is needed, and no node is changed after (`w::FINAL_AS_WRITTEN`).
+    /// The blocks settle as they would with a commit after each node, so the tape is the same.
+    pub fn final_as_written(&mut self) {
+        self.state.flags |= w::FINAL_AS_WRITTEN;
     }
 
     /// The state's address: what code that calls the ops itself passes them (`reserve_run` first).
@@ -492,10 +514,12 @@ impl Writer {
         self.finish_ops()?;
         let count = (self.state.n as usize).div_ceil(Z);
         let end = self.len_of(part::OUT);
+        let faults = self.len_of(part::ERRORS);
         let mut out = std::mem::take(&mut self.parts[part::OUT as usize]);
         self.given = (out.as_ptr() as usize, out.len());
         out.truncate(end);
-        finished(out, &self.parts[part::PRESENCE as usize], self.presence_words, self.keep_blocks.then_some(count), self.z)
+        let (low, high) = self.parts.split_at_mut(part::ERRORS as usize);
+        finished(out, &low[part::PRESENCE as usize], &mut high[0][..faults], self.presence_words, self.keep_blocks.then_some(count), self.z)
     }
 
     /// `finish`'s ops, each with the room it can need reserved first.
@@ -539,14 +563,37 @@ impl Writer {
 
 /// A finished writer's tape (`out`, its OUT part at its length), with its presence laid after it in its home
 /// (`presence::lay_words`), from its PRESENCE part: the document's, and a presence a block where `blocks` counts them.
-fn finished(mut out: Vec<u8>, presence: &[u8], words: (usize, usize), blocks: Option<usize>, z: bool) -> Result<Finished, String> {
+/// Its faults (`faults`, its ERRORS part: each block's in preorder, the blocks in the order they were made final) laid
+/// after it in preorder.
+fn finished(mut out: crate::Vector<u8>, presence: &[u8], faults: &mut [u8], words: (usize, usize), blocks: Option<usize>, z: bool) -> Result<Finished, String> {
     let word = |k: usize| u64::from_le_bytes(presence[8 * k..8 * k + 8].try_into().expect("8 bytes"));
     let count = 1 + blocks.unwrap_or(0);
-    super::presence::lay_words(&mut out, words, count, &mut (0..(words.0 + words.1) * count).map(word));
+    in_preorder(faults);
+    super::presence::lay_words(&mut out, words, count, &mut (0..(words.0 + words.1) * count).map(word), faults);
     let tape = if z { Written::F16Z(Tape16Z::from_bytes(out)?) } else { Written::F16(Tape16::from_bytes(out)?) };
     Ok(Finished { tape })
 }
 
+
+/// The ERRORS part's u32s sorted where they lie: a block made final after a later one (a node of it open past the
+/// later one's end) listed its faults after the later one's.
+fn in_preorder(faults: &mut [u8]) {
+    let n = faults.len() / 4;
+    let at = |f: &[u8], k: usize| u32::from_le_bytes(f[4 * k..4 * k + 4].try_into().expect("4 bytes"));
+    if (1..n).all(|k| at(faults, k - 1) <= at(faults, k)) {
+        return;
+    }
+    // Insertion by block runs: each run ascends, so a run moves down past the later blocks' ids before it.
+    for k in 1..n {
+        let x = at(faults, k);
+        let mut j = k;
+        while j > 0 && at(faults, j - 1) > x {
+            faults.copy_within(4 * (j - 1)..4 * j, 4 * j);
+            j -= 1;
+        }
+        faults[4 * j..4 * j + 4].copy_from_slice(&x.to_le_bytes());
+    }
+}
 
 /// The CLIF LZ4 compressor alone (a test's): its state, its tables, a piece's room.
 #[cfg(test)]
@@ -578,19 +625,11 @@ impl Lz {
     }
 }
 
-/// The ops in UKL on the device (decisions 0434 §6 R15, 0440), a test's: the calls are recorded, then replayed by one
-/// thread of a kernel over the region in one buffer, the state at its start and each part at its offset from it, as
-/// the host names them. The device's region does not grow: each part gets the room the host's run of the same calls
-/// reserved (sizing it from bounds is tier 2's, R17). On the process's device, whatever its backend.
-#[cfg(test)]
-pub(super) mod device {
-    use super::{FRESH, Writer, State, Z, finished, part};
-    use crate::f16::{Finished, Lang};
-
-    /// The kernel: thread `id` replays writer `id` of `args.n`: its calls (an op and up to three arguments each, at
-    /// `jobs[id].calls` in `c`) through the ops (`<ukl/writer.h>`) on its region (at `jobs[id].region` in `r`), then
-    /// `finish`. A writer's ops are one thread's, in a group of its own; the writers are many groups.
-    const REPLAY: &str = r#"
+/// The kernel: thread `id` replays writer `id` of `args.n`: its calls (an op and up to three arguments each, at
+/// `jobs[id].calls` in `c`) through the ops (`<ukl/writer.h>`) on its region (at `jobs[id].region` in `r`), then
+/// `finish`. A writer's ops are one thread's, in a group of its own; the writers are many groups.
+#[cfg(any(test, feature = "test-hooks"))]
+pub const REPLAY: &str = r#"
 #include <ukl/writer.h>
 
 typedef struct ReplayArgs {
@@ -627,6 +666,20 @@ DEFINE_KERNEL2(writer, replay,
 }
 "#;
 
+/// The replay's program's name (`REPLAY` its text: `f16::kernels`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub const REPLAY_NAME: &str = "tape_writer_replay";
+
+/// The ops in UKL on the device (decisions 0434 §6 R15, 0440), a test's: the calls are recorded, then replayed by one
+/// thread of a kernel over the region in one buffer, the state at its start and each part at its offset from it, as
+/// the host names them. The device's region does not grow: each part gets the room the host's run of the same calls
+/// reserved (sizing it from bounds is tier 2's, R17). On the process's device, whatever its backend.
+#[cfg(test)]
+pub(super) mod device {
+    use super::{FRESH, Writer, State, Z, finished, part};
+    use crate::f16::{Finished, Lang};
+
+
     #[repr(C)]
     #[derive(Clone, Copy)]
     struct ReplayArgs {
@@ -644,8 +697,8 @@ DEFINE_KERNEL2(writer, replay,
     }
 
     impl DeviceOps {
-        pub(in crate::f16) fn new(lang: &Lang, source: &[u8], tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
-            DeviceOps { host: Writer::new(lang, source, tag, z, blocks, nodes), made: Writer::new(lang, source, tag, z, blocks, nodes), calls: Vec::new() }
+        pub(in crate::f16) fn new(lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
+            DeviceOps { host: Writer::new(lang, source, terminators, tag, z, blocks, nodes), made: Writer::new(lang, source, terminators, tag, z, blocks, nodes), calls: Vec::new() }
         }
         pub(in crate::f16) fn open(&mut self, number: u32, start: u64) -> usize {
             self.calls.push([0, number.into(), start, 0]);
@@ -732,7 +785,7 @@ DEFINE_KERNEL2(writer, replay,
                     return Ok((Vec::new(), Vec::new()));
                 }
                 let shared = rerail_gpu::shared::get().ok_or("no device")?;
-                let program = rerail_gpu::kernels::program("tape_writer_replay", REPLAY).unwrap_or_else(|e| panic!("{}: the writer's ops in UKL: {e}", rerail_gpu::device::backend()));
+                let program = rerail_gpu::kernels::program(super::REPLAY_NAME, super::REPLAY).unwrap_or_else(|e| panic!("{}: the writer's ops in UKL: {e}", rerail_gpu::device::backend()));
                 // At least one call's room: a buffer is never empty.
                 calls.extend([0; 4]);
                 let (region, calls, jobs, result) = (buffer_of(&bytes)?, buffer_of(&calls)?, buffer_of(&jobs)?, buffer_of(&vec![0u32; n])?);
@@ -766,7 +819,9 @@ DEFINE_KERNEL2(writer, replay,
                     let (at, len) = (state.out.at as usize, state.out.len as usize);
                     let count = (state.n as usize).div_ceil(Z);
                     let presence = &bytes[state.presence.at as usize..][..w.host.parts[part::PRESENCE as usize].len()];
-                    finished(bytes[at..at + len].to_vec(), presence, w.made.presence_words, w.made.keep_blocks.then_some(count), w.made.z)
+                    // copy: not block data: a test's faults read back from the device's region, sorted where they lie.
+                    let mut faults = bytes[state.errors.at as usize..][..state.errors.len as usize].to_vec();
+                    finished(crate::Vector::from(&bytes[at..at + len]), presence, &mut faults, w.made.presence_words, w.made.keep_blocks.then_some(count), w.made.z)
                 })
                 .collect()
         }

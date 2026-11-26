@@ -31,19 +31,27 @@ import {
   rulePackPackageName,
   rulePackPackageOf,
   rulePacksThatFit,
+  rulesStartingOn,
   type NoFitExplanation,
   type RulePack,
 } from "../engine/catalog/rule-packs.js";
 import { RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 import { defaultRerailHome, UPDATE_STATE_FILE } from "../engine/storage/rerail-home.js";
 import { CommandTimeoutError, outsideAnyProject, prefixInstallNpm, runNpm, unreachableRegistryReason, type NpmRunner } from "../runtime/npm.js";
-import { formatDuration } from "../runtime/progress.js";
+import { formatDuration, NO_PROGRESS, type Progress } from "../runtime/progress.js";
 import { withPacksLock } from "./packs-lock.js";
 
 /** The dist-tag a pack is fetched under when core's update channel has no version of it: where every release publishes. */
 export const PACK_FALLBACK_TAG = "next";
 /** A staging folder older than this is left from a run that never finished, and is removed by the next fetch. */
 const STALE_STAGING_MS = 60 * 60 * 1000;
+/**
+ * An npm install or uninstall in the packs prefix is stopped at this; a checked install then puts the prefix back. A
+ * pack is a few MB (the largest of Rerail's, python, is about 6 MB unpacked): seconds on most lines. The packs lock
+ * is held through a stopped install and its put-back, which can be an install and a removal: three npm calls, each
+ * stopped at this plus `KILL_GRACE_MS`, about 4 min 15 s in all, under the `PACKS_LOCK_WAIT_MS` another process waits.
+ */
+const PACK_INSTALL_TIMEOUT_MS = 80_000;
 
 /** One pack at an exact version: what set-up shows a person and installs once they confirm. */
 export interface PackVersion {
@@ -201,14 +209,16 @@ export function npmPackStore(home: string = defaultRerailHome(), runner: NpmRunn
     async install(specs) {
       if (specs.length === 0) return;
       // Exact versions only: the tarballs discovery just fetched are in npm's cache under their integrity, so an
-      // answer installs the version the person saw without asking the registry again. A tag or range must ask it.
+      // answer installs the version the person saw without asking the registry again. `rerail packs update` installs
+      // a version its `npm view` just read, which writes the listing this install reads from the cache. A tag or
+      // range must ask the registry. A version named by hand may be missing from an old cached listing (#992).
       const exact = specs.every(spec => semver.valid(spec.slice(spec.lastIndexOf("@") + 1)) !== null);
-      await npm(["install", "--prefix", prefix, ...quiet, ...(exact ? ["--prefer-offline"] : []), "--save-exact", "--", ...specs]);
+      await npm(["install", "--prefix", prefix, ...quiet, ...(exact ? ["--prefer-offline"] : []), "--save-exact", "--", ...specs], { timeoutMs: PACK_INSTALL_TIMEOUT_MS });
     },
     async remove(packageNames) {
       if (packageNames.length === 0) return;
       // npm reinstalls a listed package missing from node_modules while it uninstalls another: its scripts must not run.
-      await npm(["uninstall", "--prefix", prefix, "--ignore-scripts", "--no-audit", "--no-fund", "--", ...packageNames]);
+      await npm(["uninstall", "--prefix", prefix, "--ignore-scripts", "--no-audit", "--no-fund", "--", ...packageNames], { timeoutMs: PACK_INSTALL_TIMEOUT_MS });
     },
   };
 }
@@ -263,16 +273,16 @@ export interface PackUpdate {
   readonly tag: string;
 }
 
-/** What `newerPackVersions` found: the packs to suggest, and why a pack could not be checked. */
+/** What `newerPackVersions` found: the packs to update, and why a pack could not be checked. */
 export interface PackUpdateCheck {
   readonly updates: readonly PackUpdate[];
   readonly problems: readonly string[];
 }
 
-/** npm's answer when a package has no version under the tag asked for: nothing to suggest, not a problem. */
-const NO_MATCH_FOR_TAG = /\bNo match found for version\b/u;
-/** One `npm view` per pack, run side by side; the update is done by then, so a check that hangs is cut short. */
+/** Each `npm view` about a pack is cut short at this: the pack check runs after core's update is done. */
 const PACK_CHECK_TIMEOUT_MS = 60_000;
+/** npm's own limit on each request of a pack check, under `PACK_CHECK_TIMEOUT_MS`. */
+const PACK_FETCH_TIMEOUT = "--fetch-timeout=30000";
 
 /** A pack version npm has, with the core range it names; undefined when it names none. */
 interface ViewedPack {
@@ -280,9 +290,10 @@ interface ViewedPack {
   readonly coreRange: string | undefined;
 }
 
-/** A pack version npm has under `tag`. */
-interface TaggedPack extends ViewedPack {
-  readonly tag: string;
+/** What npm lists of a package: its dist-tags, and every version it has. */
+interface PackListing {
+  readonly distTags: ReadonlyMap<string, string>;
+  readonly versions: readonly string[];
 }
 
 /** An installed pack `newerPackVersions` asks npm about. */
@@ -298,76 +309,115 @@ function fieldOf(value: unknown, key: string): unknown {
 
 const stringOrUndefined = (value: unknown): string | undefined => typeof value === "string" ? value : undefined;
 
-/** The version and core range npm's `view <spec> version peerDependencies --json` printed; undefined for no version. */
-function viewedPack(stdout: string): ViewedPack | undefined {
-  if (stdout.trim() === "") return undefined;
-  const parsed = JSON.parse(stdout) as unknown;
-  // npm prints the field alone when the package has only one of the two.
-  if (typeof parsed === "string") return { version: parsed, coreRange: undefined };
-  const version = stringOrUndefined(fieldOf(parsed, "version"));
+/** One version in what npm's `view <spec> name version peerDependencies --json` printed; undefined for none. */
+function viewedPack(value: unknown): ViewedPack | undefined {
+  const version = stringOrUndefined(fieldOf(value, "version"));
   if (version === undefined) return undefined;
-  return { version, coreRange: stringOrUndefined(fieldOf(fieldOf(parsed, "peerDependencies"), RERAIL_PACKAGE_NAME)) };
+  return { version, coreRange: stringOrUndefined(fieldOf(fieldOf(value, "peerDependencies"), RERAIL_PACKAGE_NAME)) };
 }
 
-/** What npm has of `packageName` under `tag`; undefined when it has no version there. */
-async function viewUnderTag(npm: NpmRunner, cwd: string, packageName: string, tag: string): Promise<ViewedPack | undefined> {
-  try {
-    return viewedPack((await npm(
-      ["view", `${packageName}@${tag}`, "version", "peerDependencies", "--json", "--fetch-timeout=30000"],
-      { cwd, timeoutMs: PACK_CHECK_TIMEOUT_MS },
-    )).stdout);
-  } catch (error) {
-    if (error instanceof Error && NO_MATCH_FOR_TAG.test(error.message)) return undefined;
-    throw error;
+/** Every version npm's `view <spec> name version peerDependencies --json` printed: an array when the spec matched more than one. */
+function viewedPacks(stdout: string): ViewedPack[] {
+  if (stdout.trim() === "") return [];
+  const parsed = JSON.parse(stdout) as unknown;
+  return (Array.isArray(parsed) ? parsed : [parsed]).flatMap(value => viewedPack(value) ?? []);
+}
+
+/** npm's `view <package> dist-tags versions --json`, read. */
+function packListing(stdout: string): PackListing {
+  const parsed = JSON.parse(stdout) as unknown;
+  const tags = fieldOf(parsed, "dist-tags");
+  const versions = fieldOf(parsed, "versions");
+  return {
+    distTags: new Map(Object.entries(typeof tags === "object" && tags !== null ? tags : {}).flatMap(([tag, version]) => typeof version === "string" ? [[tag, version] as const] : [])),
+    versions: (Array.isArray(versions) ? versions : [versions]).filter((version): version is string => typeof version === "string"),
+  };
+}
+
+/** The version under `tag` in `listing`, when it is one semver reads. */
+function taggedVersion(listing: PackListing, tag: string): string | undefined {
+  const version = listing.distTags.get(tag);
+  return version !== undefined && semver.valid(version) !== null ? version : undefined;
+}
+
+/**
+ * The tag a pack's newer versions are taken up to, with its version: the channel, or `next` when the channel has no
+ * version of the pack, since set-up installs it from there then. Undefined when npm has neither.
+ */
+function packTag(listing: PackListing, channel: string): { readonly tag: string; readonly version: string } | undefined {
+  for (const tag of [channel, PACK_FALLBACK_TAG]) {
+    const version = taggedVersion(listing, tag);
+    if (version !== undefined) return { tag, version };
   }
+  return undefined;
 }
 
 /**
- * What npm has of `packageName` under `channel`, or, when the channel has no version of it, under `next`: set-up
- * installs a pack from there then, so that is where its newer versions are.
+ * The versions in `listing` that may replace `installed`, newest first: newer than it and none newer than `tagged`, so
+ * a pack never moves past its tag; a prerelease only when `tagged` is one, so a channel of releases gets none.
  */
-async function viewNewest(npm: NpmRunner, cwd: string, packageName: string, channel: string): Promise<TaggedPack | undefined> {
-  const viewed = await viewUnderTag(npm, cwd, packageName, channel);
-  if (viewed !== undefined || channel === PACK_FALLBACK_TAG) return viewed && { ...viewed, tag: channel };
-  const fallback = await viewUnderTag(npm, cwd, packageName, PACK_FALLBACK_TAG);
-  return fallback && { ...fallback, tag: PACK_FALLBACK_TAG };
+function candidateVersions(listing: PackListing, tagged: string, installed: string): string[] {
+  const prereleases = semver.prerelease(tagged) !== null;
+  return listing.versions
+    .filter(version => semver.valid(version) !== null && semver.gt(version, installed) && semver.lte(version, tagged)
+      && (prereleases || semver.prerelease(version) === null))
+    .sort(semver.rcompare);
 }
 
-/** The update to suggest for `pack`: npm's version when it is newer than the installed one and core `coreVersion` loads it. */
-function packUpdate(pack: InstalledPack, available: TaggedPack | undefined, coreVersion: string): PackUpdate | undefined {
-  if (available === undefined || semver.valid(available.version) === null || !semver.gt(available.version, pack.version)) return undefined;
-  if (available.coreRange !== undefined && !semver.satisfies(coreVersion, available.coreRange, { includePrerelease: true })) return undefined;
-  return { packageName: pack.packageName, installed: pack.version, available: available.version, tag: available.tag };
-}
+/** Whether core `coreVersion` loads `pack` by its core range; one that names none fits any core. */
+const fitsCore = (pack: ViewedPack, coreVersion: string): boolean =>
+  pack.coreRange === undefined || semver.satisfies(coreVersion, pack.coreRange, { includePrerelease: true });
 
 /**
- * The installed packs in `home` with a newer version under `channel` that core `coreVersion` loads by its core range:
- * what `rerail update` suggests, installing none. A pack the channel has no version of is looked up under `next`, where
- * set-up installs it from. A pack from a folder or tarball has no version on npm to compare, and one installed newer
- * than npm's under the tag (from `next`, by hand) is never offered an older one. A pack npm has no version of under
- * either tag is skipped; one npm could not be asked about is a problem, with why.
+ * The newest version of `pack` that core `coreVersion` loads, up to the version under `channel` (or `next`), when it is
+ * newer than the installed one: one `npm view` for the listing, and one for the core ranges of every version that may
+ * replace it, so a newest version made for a later core gives way to the newest one this core loads.
  */
-export async function newerPackVersions(home: string, channel: string, coreVersion: string, npm: NpmRunner = runNpm): Promise<PackUpdateCheck> {
+async function newestFittingVersion(npm: NpmRunner, cwd: string, pack: InstalledPack, channel: string, coreVersion: string): Promise<PackUpdate | undefined> {
+  const view = async (args: readonly string[]) => (await npm(["view", ...args, "--json", PACK_FETCH_TIMEOUT], { cwd, timeoutMs: PACK_CHECK_TIMEOUT_MS })).stdout;
+  const listing = packListing(await view([pack.packageName, "dist-tags", "versions"]));
+  const tagged = packTag(listing, channel);
+  if (tagged === undefined) return undefined;
+  const candidates = candidateVersions(listing, tagged.version, pack.version);
+  if (candidates.length === 0) return undefined;
+  // Each candidate exactly: npm reads `a || b` as a range and answers with every version it matches. It reduces every
+  // answer to its one field when the first matched version has only one, losing the others' core ranges: `name`, which
+  // every version has, keeps each answer whole.
+  const answers = await view([`${pack.packageName}@${candidates.join(" || ")}`, "name", "version", "peerDependencies"]);
+  const viewed = new Map(viewedPacks(answers).map(found => [found.version, found]));
+  const available = candidates.find(version => viewed.has(version) && fitsCore(viewed.get(version)!, coreVersion));
+  return available === undefined ? undefined : { packageName: pack.packageName, installed: pack.version, available, tag: tagged.tag };
+}
+
+/** The installed packs in `home` that npm has versions of: none from a folder or tarball, and none of a version semver cannot read. */
+function npmInstalledPacks(home: string): InstalledPack[] {
   const recorded = recordedSpecs(home);
-  const installed = installedPackDirectories(home).flatMap((directory): InstalledPack[] => {
+  return installedPackDirectories(home).flatMap((directory): InstalledPack[] => {
     const packageName = installedPackageName(directory);
     const version = readPackageVersion(directory);
     if (recorded.get(packageName)?.startsWith(`${packageName}@file:`) === true || version === null || semver.valid(version) === null) return [];
     return [{ packageName, version }];
   });
+}
+
+/**
+ * The installed packs in `home` with a newer version that core `coreVersion` loads by its core range, each at the newest
+ * such version up to the one under `channel`: what `rerail packs update` installs. A pack the channel has no version of
+ * is taken up to its version under `next`, where set-up installs it from. A pack from a folder or tarball has no version
+ * on npm to compare, and one installed newer than npm's under the tag (from `next`, by hand) is never offered an older
+ * one. A pack npm has no version of under either tag is skipped; one npm could not be asked about is a problem, with why.
+ */
+export async function newerPackVersions(home: string, channel: string, coreVersion: string, npm: NpmRunner = runNpm): Promise<PackUpdateCheck> {
+  const installed = npmInstalledPacks(home);
   if (installed.length === 0) return { updates: [], problems: [] };
   return await outsideAnyProject(async (cwd) => {
-    const settled = await Promise.allSettled(installed.map(async pack => await viewNewest(npm, cwd, pack.packageName, channel)));
+    const settled = await Promise.allSettled(installed.map(async pack => await newestFittingVersion(npm, cwd, pack, channel, coreVersion)));
     const updates: PackUpdate[] = [];
     const problems: string[] = [];
     settled.forEach((result, index) => {
       const pack = installed[index]!;
-      if (result.status === "rejected") {
-        problems.push(`${pack.packageName}: ${fetchProblemReason(pack.packageName, result.reason)}`);
-        return;
-      }
-      const update = packUpdate(pack, result.value, coreVersion);
-      if (update !== undefined) updates.push(update);
+      if (result.status === "rejected") problems.push(`${pack.packageName}: ${fetchProblemReason(pack.packageName, result.reason)}`);
+      else if (result.value !== undefined) updates.push(result.value);
     });
     return { updates, problems };
   });
@@ -490,7 +540,7 @@ export async function discoverPacks(repositoryRoot: string | undefined, store: P
     const { catalog, leftOut } = discoveryCatalog(home, fromNpm);
     const packs = [...catalog.packs.values()];
     const scan = repositoryRoot === undefined ? undefined : scanRepository(repositoryRoot);
-    const matched = new Map((scan === undefined ? [] : rulePacksThatFit(scan, packs)).map(found => [found.pack.id, found]));
+    const matched = new Map((scan === undefined ? [] : rulePacksThatFit(scan, packs, catalog.notRun)).map(found => [found.pack.id, found]));
     const discovered = packs.flatMap((pack): DiscoveredPack[] => {
       if (pack.version === null || pack.packageName === null) return [];
       const found = matched.get(pack.id);
@@ -498,7 +548,7 @@ export async function discoverPacks(repositoryRoot: string | undefined, store: P
         pack,
         packageName: pack.packageName,
         version: pack.version,
-        ruleCount: pack.rules.filter(rule => rule.on).length,
+        ruleCount: rulesStartingOn(pack, catalog.notRun),
         ...(found === undefined ? {} : { match: { reason: found.reason, folder: found.folder } }),
         installed: installedPackVersion(pack.packageName, home),
       }];
@@ -663,4 +713,60 @@ export async function addPackSpecs(specs: readonly string[], store: PackStore): 
       return version === null ? [] : [{ packageName, id: packIdOfPackage(packageName)!, version }];
     }),
   );
+}
+
+/** A pack `updatePacks` could not move, and why, which says what is installed now: mostly put back as it was. */
+export interface FailedPackUpdate {
+  readonly update: PackUpdate;
+  readonly problem: string;
+}
+
+/** What `updatePacks` did: the packs it moved, those it could not, and why a pack could not be checked. */
+export interface PackUpdateRun {
+  readonly updated: readonly PackUpdate[];
+  readonly failed: readonly FailedPackUpdate[];
+  readonly problems: readonly string[];
+}
+
+/**
+ * `rerail packs update`, which ends `rerail update`: moves each installed pack in `store.home` to the newest version
+ * the active core loads (`newerPackVersions`, under the update channel). Each pack is installed and checked on its own
+ * (`installChecked`), so one npm cannot install, or that does not load, is put back alone and the others still move. A
+ * pack whose installed version changed since the check (another `rerail packs add` in between) is left as it is now.
+ * An error that is no one pack's own (the packs lock held past its wait) ends the run there, reporting what moved first.
+ */
+export async function updatePacks(store: PackStore, progress: Progress = NO_PROGRESS, npm: NpmRunner = runNpm): Promise<PackUpdateRun> {
+  const { home } = store;
+  const check = await progress.step(
+    "Checking your rule packs for newer versions",
+    async () => await newerPackVersions(home, updateChannel(home), activeCoreVersion(home), npm),
+    { afterMs: 30_000, hint: "npm may be slow or stuck; each npm request about a pack stops at 1 min." },
+  );
+  const updated: PackUpdate[] = [];
+  const failed: FailedPackUpdate[] = [];
+  for (const [index, update] of check.updates.entries()) {
+    const pack: PackVersion = { packageName: update.packageName, id: packIdOfPackage(update.packageName)!, version: update.available };
+    let result: PackInstall;
+    try {
+      result = await progress.step(`Installing ${packSpec(pack)}`, async () => await installChecked(
+        store,
+        before => before.get(update.packageName)?.version === update.installed ? [packSpec(pack)] : [],
+        changed => changed.includes(update.packageName) ? [pack] : [],
+      ), {
+        afterMs: 30_000,
+        hint: `npm may be slow or stuck, or another Rerail process is changing the rule packs; npm is stopped at ${formatDuration(PACK_INSTALL_TIMEOUT_MS)}.`,
+      });
+    } catch (error) {
+      // Not a failure of this pack's own, which installChecked returns: the packs lock stayed held past its wait, or the
+      // catalog could not be read, possibly after npm installed it. Every pack after it would meet the same, so none is
+      // tried, and the packs already moved are still reported.
+      const why = (error instanceof Error ? error.message : String(error)).replace(/\.+$/u, "");
+      failed.push({ update, problem: `${why}. \`rerail packs list\` shows what is installed now.` });
+      failed.push(...check.updates.slice(index + 1).map(next => ({ update: next, problem: `not tried, since updating ${update.packageName} stopped` })));
+      break;
+    }
+    if ("problem" in result) failed.push({ update, problem: result.problem });
+    else if (result.installed.length > 0) updated.push(update);
+  }
+  return { updated, failed, problems: check.problems };
 }

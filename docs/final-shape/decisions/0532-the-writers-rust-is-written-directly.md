@@ -1,7 +1,8 @@
 # 0532: The writer's Rust is written directly, not translated from CLIF
 
-Status: decided (the user, 2026-11-20: "we should not be translating Rust from CLIF. We should be generating it
-directly. I already told you to do that."). Follows 0451 (tier 1's Rust written directly), 0434, page 40 step 38.
+Status: superseded by 0533, 0565 (audited 2026-11-23). Decided (the user, 2026-11-20: "we should not be translating
+Rust from CLIF. We should be generating it directly. I already told you to do that."). Follows 0451 (tier 1's Rust
+written directly), 0434, page 40 step 38.
 
 ## Intro
 

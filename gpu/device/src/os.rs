@@ -1,12 +1,18 @@
 //! The system's calls the backends make, on macOS and Linux and on Windows:
 //!
 //! - the libraries a backend loads when it is first asked for (OpenCL's, CUDA's driver and NVRTC, the CPU backend's
-//!   kernels): `dlopen`, `LoadLibraryW`. No backend has a link dependency, so a machine without a driver still runs,
+//!   kernels): `dlopen`, `LoadLibraryExW`. No backend has a link dependency, so a machine without a driver still runs,
 //!   with no device of that kind (decision 0440);
 //! - the size of a page;
 //! - the CPU backend's thread stacks, a guard page below each (`Stacks`).
 
 use std::ffi::c_void;
+
+/// The file this code was loaded from: the program, or the library loaded into one (the Node addon,
+/// `rerail_engine.<target>.node`), where what ships with the engine lies beside it (`store::shipped_dir`).
+pub fn own_image() -> Option<std::path::PathBuf> {
+    sys::loaded_from(own_image as *const c_void)
+}
 
 /// A library this process has open. It stays open for the process's life: the backends keep its functions.
 #[derive(Clone, Copy)]
@@ -64,6 +70,21 @@ pub fn map_zeroed(len: usize) -> Option<*mut u8> {
     sys::map(len)
 }
 
+/// `len` bytes (whole pages) of address space, zeroed by the system, committed only as [`commit`] commits a prefix of
+/// it (Unix: at once as address space, its pages committed as they are touched). Given back with [`unmap`].
+pub fn reserve(len: usize) -> Option<*mut u8> {
+    sys::reserve(len)
+}
+
+/// `[at, at + len)` of a [`reserve`]d range committed (Windows; Unix commits pages as they are touched): false where
+/// the system refused.
+///
+/// # Safety
+/// The range lies in one range `reserve` gave.
+pub unsafe fn commit(at: *mut u8, len: usize) -> bool {
+    unsafe { sys::commit(at, len) }
+}
+
 /// Gives back memory [`map_zeroed`] gave.
 ///
 /// # Safety
@@ -103,7 +124,7 @@ impl Stacks {
     /// only a thread's own stack, not one a coroutine runs on.
     pub fn new(count: usize, stride: usize) -> Option<Stacks> {
         let page = page_bytes();
-        assert!(stride % page == 0 && stride > page, "a stack is whole pages, more than its guard");
+        assert!(stride.is_multiple_of(page) && stride > page, "a stack is whole pages, more than its guard");
         let len = count * stride;
         let base = sys::map(len)?;
         for k in 0..count {
@@ -137,6 +158,19 @@ impl Drop for Stacks {
 mod sys {
     use super::Scope;
     use std::ffi::{c_void, CStr, CString};
+
+    /// The image (program or library) holding `address`, by the loader (`dladdr`).
+    pub fn loaded_from(address: *const c_void) -> Option<std::path::PathBuf> {
+        use std::os::unix::ffi::OsStrExt;
+        // SAFETY: `dladdr` reads only the address, and fills `info` with pointers into the loader's own tables.
+        let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
+        if unsafe { libc::dladdr(address, &mut info) } == 0 || info.dli_fname.is_null() {
+            return None;
+        }
+        // SAFETY: a non-null `dli_fname` is a NUL-terminated path the loader keeps for the image's lifetime.
+        let name = unsafe { CStr::from_ptr(info.dli_fname) };
+        Some(std::path::PathBuf::from(std::ffi::OsStr::from_bytes(name.to_bytes())))
+    }
 
     pub fn open(name: &str, scope: Scope) -> Option<*mut c_void> {
         let c = CString::new(name).ok()?;
@@ -191,6 +225,16 @@ mod sys {
         (p != libc::MAP_FAILED).then_some(p.cast())
     }
 
+    pub fn reserve(len: usize) -> Option<*mut u8> {
+        map(len)
+    }
+
+    /// # Safety
+    /// The caller's (`super::commit`): nothing to do, pages are committed as they are touched.
+    pub unsafe fn commit(_at: *mut u8, _len: usize) -> bool {
+        true
+    }
+
     /// # Safety
     /// `[at, at + len)` is whole pages of a mapping `map` made.
     pub unsafe fn guard(at: *mut u8, len: usize) {
@@ -225,7 +269,9 @@ mod sys {
 
     #[link(name = "kernel32")]
     unsafe extern "system" {
-        fn LoadLibraryW(name: *const u16) -> *mut c_void;
+        fn LoadLibraryExW(name: *const u16, file: *mut c_void, flags: u32) -> *mut c_void;
+        fn GetModuleHandleExW(flags: u32, address: *const u16, module: *mut *mut c_void) -> i32;
+        fn GetModuleFileNameW(module: *mut c_void, name: *mut u16, size: u32) -> u32;
         fn GetProcAddress(module: *mut c_void, name: *const i8) -> *mut c_void;
         fn GetLastError() -> u32;
         fn GetSystemInfo(info: *mut SystemInfo);
@@ -238,6 +284,25 @@ mod sys {
         fn GetThreadTimes(thread: *mut c_void, created: *mut u64, exited: *mut u64, kernel: *mut u64, user: *mut u64) -> i32;
         fn QueryPerformanceCounter(count: *mut i64) -> i32;
         fn QueryPerformanceFrequency(frequency: *mut i64) -> i32;
+    }
+
+    /// The module (program or DLL) holding `address`, by the loader.
+    pub fn loaded_from(address: *const c_void) -> Option<std::path::PathBuf> {
+        use std::os::windows::ffi::OsStringExt;
+        // GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT
+        let mut module = std::ptr::null_mut();
+        // SAFETY: the flags name `address` as an address in the module, and take no reference.
+        if unsafe { GetModuleHandleExW(0x4 | 0x2, address.cast(), &mut module) } == 0 {
+            return None;
+        }
+        let mut name = vec![0u16; 32768];
+        // SAFETY: a buffer of `name.len()` units.
+        let n = unsafe { GetModuleFileNameW(module, name.as_mut_ptr(), name.len() as u32) } as usize;
+        (n > 0 && n < name.len()).then(|| std::ffi::OsString::from_wide(&name[..n]).into())
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
     }
 
     pub fn monotonic() -> f64 {
@@ -276,8 +341,13 @@ mod sys {
 
     pub fn open(name: &str, _: super::Scope) -> Option<*mut c_void> {
         let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
-        // SAFETY: a NUL-terminated name; a library the system's search finds (System32 for a driver's).
-        let h = unsafe { LoadLibraryW(wide.as_ptr()) };
+        // A path's library finds the libraries it needs beside it (a toolkit's: HIP's hiprtc needs its comgr), as
+        // `dlopen` finds them through the library's own run path; a bare name, the system's search (System32 for a
+        // driver's).
+        const LOAD_WITH_ALTERED_SEARCH_PATH: u32 = 0x8;
+        let flags = if name.contains(['\\', '/']) { LOAD_WITH_ALTERED_SEARCH_PATH } else { 0 };
+        // SAFETY: a NUL-terminated name.
+        let h = unsafe { LoadLibraryExW(wide.as_ptr(), std::ptr::null_mut(), flags) };
         (!h.is_null()).then_some(h)
     }
 
@@ -305,6 +375,19 @@ mod sys {
         (!p.is_null()).then_some(p.cast())
     }
 
+    pub fn reserve(len: usize) -> Option<*mut u8> {
+        // SAFETY: fresh address space, nothing committed.
+        let p = unsafe { VirtualAlloc(std::ptr::null_mut(), len, MEM_RESERVE, PAGE_READWRITE) };
+        (!p.is_null()).then_some(p.cast())
+    }
+
+    /// # Safety
+    /// The caller's (`super::commit`).
+    pub unsafe fn commit(at: *mut u8, len: usize) -> bool {
+        // SAFETY: within a range `reserve` gave; committed pages are zeroed by the system.
+        !unsafe { VirtualAlloc(at.cast(), len, MEM_COMMIT, PAGE_READWRITE) }.is_null()
+    }
+
     /// # Safety
     /// `[at, at + len)` is whole pages of a mapping `map` made.
     pub unsafe fn guard(at: *mut u8, len: usize) {
@@ -316,5 +399,16 @@ mod sys {
     /// The whole of a mapping `map` made, no longer used.
     pub unsafe fn unmap(at: *mut u8, _len: usize) {
         unsafe { VirtualFree(at.cast(), 0, MEM_RELEASE) };
+    }
+}
+
+#[cfg(test)]
+mod own_image_tests {
+    /// The file the engine's code was loaded from (decision 0645: what ships lies beside it): here, the test program.
+    #[test]
+    fn the_engine_finds_the_file_it_was_loaded_from() {
+        let image = super::own_image().expect("the loader names the image");
+        assert!(image.is_file(), "{}", image.display());
+        assert_eq!(image.canonicalize().unwrap(), std::env::current_exe().unwrap().canonicalize().unwrap());
     }
 }

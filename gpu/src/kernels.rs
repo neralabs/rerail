@@ -17,12 +17,99 @@ pub fn preprocess(name: &str, text: &str) -> Result<String, String> {
 
 /// `text` preprocessed for the process's device with `defines` (a specialization: `program_with`).
 pub fn preprocess_with(name: &str, text: &str, defines: &[(&str, &str)]) -> Result<String, String> {
+    preprocess_for(&crate::shared::get().ok_or("no device")?.device.target(), name, text, defines)
+}
+
+/// `text` preprocessed for `target` with `defines`: what a device of the target prepares (decision 0645).
+pub fn preprocess_for(target: &rerail_ukl::Target, name: &str, text: &str, defines: &[(&str, &str)]) -> Result<String, String> {
     let path = format!("/<kernels>/{name}");
-    let mut p = crate::shared::get().ok_or("no device")?.device.preprocess().file(&path, text);
+    let mut p = target.preprocess().file(&path, text);
     for (n, v) in defines {
         p = p.define(n, Some(v));
     }
     p.run(&path).map_err(|e| e.to_string())
+}
+
+/// Where a kernel compiled ahead of time for `target` from the text `source` (prepared for a target) is shipped:
+/// `<dir>/gpu/<target>/<key>.<form>`, the key of the target's name and the text (decision 0645 §4). A device looks
+/// up its own text under each target it runs (`Target::runs`), so another target's code is taken only where it was
+/// compiled from the device's very text. The compile's options are the backend's fixed ones (`compile_offline`'s
+/// and the device's own compile's alike).
+pub fn shipped_path(dir: &std::path::Path, target: &rerail_ukl::Target, source: &str) -> Option<std::path::PathBuf> {
+    let form = target.form()?;
+    let key = rerail_device::store::key(&[b"shipped 0645", target.name.as_bytes(), source.as_bytes()]);
+    Some(dir.join("gpu").join(&target.name).join(format!("{key}.{form}")))
+}
+
+/// The library shipped for the device's text `source` (decision 0645 §4): compiled for its own target, else for
+/// the best target it runs whose text was the same; None where none ships (or `RERAIL_CUDA_OPTIONS` changes the
+/// compile). A shipped form that does not load (a PTX newer than the driver) is passed over.
+pub(crate) fn shipped(device: &crate::device::Device, dir: &std::path::Path, source: &str) -> Option<ComputeFunctionLibrary> {
+    if std::env::var_os("RERAIL_CUDA_OPTIONS").is_some_and(|v| !v.is_empty()) {
+        return None;
+    }
+    device.target().runs().iter().filter_map(|n| rerail_ukl::Target::named(n)).find_map(|t| {
+        let code = std::fs::read(shipped_path(dir, &t, source)?).ok()?;
+        ComputeFunctionLibrary::from_compiled(device, &code).ok()
+    })
+}
+
+/// A build that ships kernels (`rerail-engine kernels ship --targets`, decision 0645 step 3): each program compiled
+/// in this process is also prepared for each of `targets` and compiled for it ahead of time, into `dir`.
+struct Ship {
+    dir: std::path::PathBuf,
+    targets: Vec<rerail_ukl::Target>,
+    /// Each target's (programs shipped, programs already there) and the failures, `program target: why`.
+    counts: Mutex<(HashMap<String, (u64, u64)>, Vec<String>)>,
+}
+
+/// The process's shipping, when it is a build that ships (a build tool's mode, set once).
+static SHIP: OnceLock<Ship> = OnceLock::new();
+
+/// Makes this process a build that ships its programs for `targets` into `dir` (decision 0645 step 3): every program
+/// compiled from now on. Once a process.
+pub fn ship_for(dir: &std::path::Path, targets: Vec<rerail_ukl::Target>) -> Result<(), String> {
+    if let Some(t) = targets.iter().find(|t| t.form().is_none()) {
+        return Err(format!("{} is a local target: nothing of it ships", t.name));
+    }
+    SHIP.set(Ship { dir: dir.to_path_buf(), targets, counts: Default::default() }).map_err(|_| "this process ships already".to_owned())
+}
+
+/// What shipping did: per target, (programs compiled for it, programs already shipped); and each failure.
+pub fn shipped_counts() -> (Vec<(String, u64, u64)>, Vec<String>) {
+    let Some(ship) = SHIP.get() else { return (Vec::new(), Vec::new()) };
+    let c = ship.counts.lock().unwrap_or_else(|p| p.into_inner());
+    (ship.targets.iter().map(|t| c.0.get(&t.name).map_or((t.name.clone(), 0, 0), |&(m, h)| (t.name.clone(), m, h))).collect(), c.1.clone())
+}
+
+/// Ships the program `text` (`name`, `defines`) for each target of the process's shipping, where it is not shipped yet.
+fn ship(name: &str, text: &str, defines: &[(&str, &str)]) {
+    let Some(ship) = SHIP.get() else { return };
+    for t in &ship.targets {
+        let result = preprocess_for(t, name, text, defines).and_then(|source| {
+            let path = shipped_path(&ship.dir, t, &source).ok_or("no form")?;
+            if path.is_file() {
+                return Ok(false);
+            }
+            let version = match t.backend {
+                rerail_ukl::Backend::Metal { version } => Some(version),
+                _ => None,
+            };
+            let code = rerail_device::device::compile_offline(&t.name, version, &source, name)?;
+            std::fs::create_dir_all(path.parent().expect("a target's directory")).map_err(|e| e.to_string())?;
+            let tmp = path.with_extension(format!("tmp{}", rerail_device::store::unique()));
+            std::fs::write(&tmp, &code).and_then(|()| std::fs::rename(&tmp, &path)).map_err(|e| format!("{}: {e}", path.display()))?;
+            Ok(true)
+        });
+        let mut c = ship.counts.lock().unwrap_or_else(|p| p.into_inner());
+        match result {
+            Ok(made) => {
+                let e = c.0.entry(t.name.clone()).or_default();
+                if made { e.0 += 1 } else { e.1 += 1 }
+            }
+            Err(e) => c.1.push(format!("{name} {}: {e}", t.name)),
+        }
+    }
 }
 
 /// A compiled program: its library, and its functions as they are asked for.
@@ -42,8 +129,12 @@ pub fn program(name: &str, text: &str) -> Result<&'static Program, String> {
 /// A define is portable where a function constant is Metal's alone, and the compiler folds it the same way.
 ///
 /// A program is kept by its name, its text and its defines: two texts of one name are two programs.
+///
+/// Each program has a slot of its own: two threads that ask for one program compile it once (the second waits for
+/// it), and two programs compile at once (`compile_ahead` compiles a list so).
 pub fn program_with(name: &str, text: &str, defines: &[(&str, &str)]) -> Result<&'static Program, String> {
-    static PROGRAMS: OnceLock<Mutex<HashMap<String, Result<&'static Program, String>>>> = OnceLock::new();
+    type Slot = std::sync::Arc<OnceLock<Result<&'static Program, String>>>;
+    static PROGRAMS: OnceLock<Mutex<HashMap<String, Slot>>> = OnceLock::new();
     let digest = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -51,22 +142,146 @@ pub fn program_with(name: &str, text: &str, defines: &[(&str, &str)]) -> Result<
         h.finish()
     };
     let key: String = std::iter::once(format!("{name} {digest:016x}")).chain(defines.iter().map(|(n, v)| format!(" -D{n}={v}"))).collect();
-    let mut programs = PROGRAMS.get_or_init(Default::default).lock().unwrap();
-    programs
-        .entry(key.clone())
-        .or_insert_with(|| {
-            let shared = crate::shared::get().ok_or("no device")?;
+    let slot: Slot = std::sync::Arc::clone(PROGRAMS.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner()).entry(key.clone()).or_default());
+    slot.get_or_init(|| {
+        let shared = crate::shared::get().ok_or("no device")?;
+        ship(name, text, defines);
+        let started = std::time::Instant::now();
+        let (library, preprocessed, bytes) = if crate::vec::on(&shared.device) {
+            (crate::vec::library(name, &format!("/<kernels>/{name}"), text, defines)?, started.elapsed(), text.len())
+        } else {
             let source = preprocess_with(name, text, defines)?;
-            // `RERAIL_GPU_DUMP`: each program's preprocessed source written to that directory, as its device's compiler
-            // reads it (to measure or compile it apart: a CUDA source by `nvcc --time`).
-            if let Some(dir) = std::env::var_os("RERAIL_GPU_DUMP") {
-                let _ = std::fs::create_dir_all(&dir);
-                let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.src")), &source);
+            let preprocessed = started.elapsed();
+            // Shipped (decision 0645 §4), else the store's or compiled (the device layer's).
+            let library = match rerail_device::store::shipped_dir().and_then(|dir| shipped(&shared.device, dir, &source)) {
+                Some(l) => l,
+                None => ComputeFunctionLibrary::compile_from_source(&shared.device, &source, name)?,
+            };
+            // On the CPU, a kernel that is Rust of this very text and these defines runs as that Rust (decision 0567
+            // step 3). `RERAIL_CPU_RUST=0`, a measurement aid: every kernel the compiler's build.
+            let library = if std::env::var("RERAIL_CPU_RUST").is_ok_and(|v| v == "0") { library } else { library.with_rust(text, defines, compiled_reads) };
+            (library, preprocessed, source.len())
+        };
+        // `RERAIL_GPU_TIMES`, a measurement aid: each program's preprocessing and compile (or load), on stderr.
+        if std::env::var_os("RERAIL_GPU_TIMES").is_some() {
+            eprintln!("gpu program {name}: preprocessed {:.3} s ({bytes} bytes), compiled {:.3} s", preprocessed.as_secs_f64(), (started.elapsed() - preprocessed).as_secs_f64());
+        }
+        Ok(&*Box::leak(Box::new(Program { name: key, library, functions: Default::default() })))
+    })
+    .clone()
+}
+
+/// The backend's text of `text`'s compiled instructions (CUDA's PTX), its defines `defines`, for a test to read which
+/// instructions a kernel took (decision 0617, R7): None where the backend has none, or there is no device.
+pub fn native_code(name: &str, text: &str, defines: &[(&str, &str)]) -> Result<Option<String>, String> {
+    let Some(shared) = crate::shared::get() else { return Ok(None) };
+    if crate::vec::on(&shared.device) {
+        return Ok(None);
+    }
+    let source = preprocess_with(name, text, defines)?;
+    ComputeFunctionLibrary::native_code(&shared.device, &source, name)
+}
+
+/// A program compiled ahead of its first use (decision 0395's tiers on the device layer): `make` asks for it as its
+/// use does (the same call, so the same name, defines and text, and the same entry in the store), and its use then
+/// finds it, in this process or in the store.
+pub struct Ahead {
+    pub name: String,
+    pub make: Box<dyn Fn() -> Result<(), String> + Send + Sync>,
+}
+
+impl Ahead {
+    pub fn new(name: impl Into<String>, make: impl Fn() -> Result<(), String> + Send + Sync + 'static) -> Ahead {
+        Ahead { name: name.into(), make: Box::new(make) }
+    }
+}
+
+/// What compiling one program ahead did: its time, the libraries it loaded (shipped or from the store) and
+/// compiled, and the entries it used (`kernels ship` copies them).
+#[derive(Debug)]
+pub struct Made {
+    pub name: String,
+    pub seconds: f64,
+    pub loaded: u64,
+    pub compiled: u64,
+    pub entries: Vec<std::path::PathBuf>,
+    pub result: Result<(), String>,
+    /// Not started: the list's time to start was up (`Bound::start_by`). Its use compiles it, or a later list.
+    pub skipped: bool,
+    /// Still compiling when the list's time was up (`Bound::end_by`): left to its thread, which the process may end.
+    pub unfinished: bool,
+}
+
+/// How long `compile_ahead` may take: no compile starts after `start_by`, and it returns at `end_by` whatever is still
+/// compiling (a compile cannot be stopped; its result is a rename into the store, so one cut off leaves nothing).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Bound {
+    pub start_by: Option<std::time::Instant>,
+    pub end_by: Option<std::time::Instant>,
+}
+
+/// Every program of `list`, `threads` at a time (each compile is the device compiler's, on the host's cores): in the
+/// list's order. A program that fails is reported, not fatal: its use fails the same way, saying why. Within `bound`:
+/// a bounded step, which the next one goes on from, since the store keeps what this one made.
+pub fn compile_ahead(list: Vec<Ahead>, threads: usize, bound: Bound) -> Vec<Made> {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Work {
+        list: Vec<Ahead>,
+        next: AtomicUsize,
+        done: AtomicUsize,
+        made: Mutex<Vec<Option<Made>>>,
+        /// Each entry's start, while it compiles.
+        running: Mutex<Vec<Option<std::time::Instant>>>,
+    }
+    let n = list.len();
+    let work = Arc::new(Work { list, next: AtomicUsize::new(0), done: AtomicUsize::new(0), made: Mutex::new((0..n).map(|_| None).collect()), running: Mutex::new(vec![None; n]) });
+    for _ in 0..threads.clamp(1, n.max(1)) {
+        let work = Arc::clone(&work);
+        std::thread::spawn(move || {
+            loop {
+                let i = work.next.fetch_add(1, Ordering::Relaxed);
+                let Some(a) = work.list.get(i) else { break };
+                let m = if bound.start_by.is_some_and(|u| std::time::Instant::now() >= u) {
+                    Made { name: a.name.clone(), seconds: 0.0, loaded: 0, compiled: 0, entries: Vec::new(), result: Ok(()), skipped: true, unfinished: false }
+                } else {
+                    let started = std::time::Instant::now();
+                    work.running.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[i] = Some(started);
+                    let (loaded, compiled) = rerail_device::store::here();
+                    let (result, entries) = rerail_device::store::recording(|| (a.make)());
+                    let (l, c) = rerail_device::store::here();
+                    let seconds = started.elapsed().as_secs_f64();
+                    Made { name: a.name.clone(), seconds, loaded: l - loaded, compiled: c - compiled, entries, result, skipped: false, unfinished: false }
+                };
+                work.made.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[i] = Some(m);
+                work.done.fetch_add(1, Ordering::Release);
             }
-            let library = ComputeFunctionLibrary::compile_from_source(&shared.device, &source, name)?;
-            Ok(&*Box::leak(Box::new(Program { name: key, library, functions: Default::default() })))
+        });
+    }
+    while work.done.load(Ordering::Acquire) < n {
+        if bound.end_by.is_some_and(|e| std::time::Instant::now() >= e) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    // Each slot taken, not the list: a compile left running still writes its own slot.
+    let made: Vec<Option<Made>> = work.made.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter_mut().map(Option::take).collect();
+    let running = work.running.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    made.into_iter()
+        .enumerate()
+        .map(|(i, m)| {
+            m.unwrap_or_else(|| {
+                let a = &work.list[i];
+                let seconds = running[i].map_or(0.0, |s| s.elapsed().as_secs_f64());
+                Made { name: a.name.clone(), seconds, loaded: 0, compiled: 0, entries: Vec::new(), result: Ok(()), skipped: running[i].is_none(), unfinished: running[i].is_some() }
+            })
         })
-        .clone()
+        .collect()
+}
+
+/// The threads `compile_ahead` takes by default: half the host's cores (a compile is one core's), at least one.
+pub fn ahead_threads() -> usize {
+    std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).max(1))
 }
 
 impl Program {
@@ -202,4 +417,12 @@ pub fn buffer_of<T: Pod>(data: &[T]) -> Result<Buffer, String> {
 /// The first `n` values of a buffer.
 pub fn read<T: Pod + Clone>(buffer: &BufferRef, n: usize) -> Vec<T> {
     transfer_to_host_sync::<T>(buffer, n)
+}
+
+/// The reads written once in CLIF, compiled for the CPU: what a kernel's Rust calls (`rerail_ukl_rust::Launch::reads`),
+/// made for the library whose kernel calls them.
+fn compiled_reads() -> rerail_ukl_rust::Reads {
+    let reads = rerail_clif::jit::Reads::new();
+    // SAFETY: the table is the JIT's code, which `reads` holds unchanged while it lives.
+    unsafe { rerail_ukl_rust::Reads::new(reads.table(), Box::new(reads)) }
 }

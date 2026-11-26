@@ -7,7 +7,7 @@
 //! runs none of them: the rule Metal's command buffers kept, kept on backends whose queue starts a launch as it is
 //! enqueued. A kernel's arguments are bound by their names in its rows (`DEFINE_KERNEL2`).
 //!
-//! Kernels come from the engine's kernel store (`rerail_accel::gpu::kernels::function`): on Metal its pipelines
+//! Kernels come from the engine's kernel store (`rerail_accel_gpu::gpu::kernels::function`): on Metal its pipelines
 //! and binary archives, elsewhere the device layer's compile and store.
 
 use crate::Error;
@@ -63,12 +63,18 @@ pub fn limits(kernel: &ComputeFunction) -> Option<Limits> {
 
 /// The kernel `name` of `source` (UKL), with `constant` at specialization constant 0 (`UKL_CONSTANT_U32`).
 pub fn kernel(source: &str, name: &str, constant: Option<u32>) -> Kernel {
-    rerail_accel::gpu::kernels::function(source, name, constant)
+    rerail_accel_gpu::gpu::kernels::function(source, name, constant)
+}
+
+/// The kernels `names` of `source` (UKL), with `constant` as [`kernel`]: kernels used together, made together (one
+/// program on OpenCL).
+pub fn kernels(source: &str, names: &[&str], constant: Option<u32>) -> Vec<Kernel> {
+    rerail_accel_gpu::gpu::kernels::functions(source, names, constant)
 }
 
 /// [`kernel`] of a fixed source (an interpreter's, the same for every rule set): shipped with the engine.
 pub fn kernel_fixed(source: &str, name: &str, constant: Option<u32>) -> Kernel {
-    rerail_accel::gpu::kernels::function_fixed(source, name, constant)
+    rerail_accel_gpu::gpu::kernels::function_fixed(source, name, constant)
 }
 
 /// One argument of a launch, bound at the commit.
@@ -145,9 +151,10 @@ impl Command {
         self.steps.is_empty()
     }
 
-    /// Submits the command: refused (and nothing of it run) when the evaluation is past its launch budget.
+    /// Submits the command, checked against the evaluation's launch budget (`launch::check_submission`): past it,
+    /// the hard failure (decision 0601).
     pub fn commit(self) -> Result<Committed, Error> {
-        crate::launch::check_submission()?;
+        crate::launch::check_submission();
         // The process's queue: every buffer its steps reach is held until the command completes (decision 0487).
         let queue = rerail_accel::gpu::shared::Queue::new().map_err(|_| Error::UnsupportedBackend)?;
         for step in &self.steps {
@@ -293,9 +300,9 @@ impl Launch<'_> {
 
     fn push(self, grid: Grid, shape: ([u64; 3], [u64; 3]), indirect: bool) {
         let buffers = self.buffers();
-        if crate::launch::attempt(self.command.pointer(), &self.label, shape.0, shape.1, indirect, buffers) {
-            self.command.steps.push(Step::Launch { kernel: self.kernel, label: self.label, args: self.args, grid });
-        }
+        // Charged before it is held: past the budget, the hard failure (decision 0601).
+        crate::launch::attempt(self.command.pointer(), &self.label, shape.0, shape.1, indirect, buffers);
+        self.command.steps.push(Step::Launch { kernel: self.kernel, label: self.label, args: self.args, grid });
     }
 
     /// `groups` threadgroups of `block` threads.

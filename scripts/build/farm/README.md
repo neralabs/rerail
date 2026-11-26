@@ -21,9 +21,13 @@ keyed on the checkout's path saw each worktree's crates as different. The farm f
   same environment, from `~/.cargo/config.toml`, and a build that differs is stopped, not quietly
   compiled apart. Every worktree runs the one installed farm.
 - **Editing.** A workspace crate that misses is being edited here: it compiles incrementally on
-  this Mac, never on another, so its next edit starts from that state. For the next 2 hours it
-  skips the cache, as without the farm. A crate that was a hit has no incremental state: its first
-  edit compiles it whole.
+  this Mac, never on another, so its next edit starts from that state. Until 2 hours after its last
+  compile it skips the cache, as without the farm. A crate that was a hit has no incremental state: its first
+  edit compiles it whole. A hot compile runs rustc with the `--remap-path-prefix` arguments sccache
+  gives a miss (`sccache_remaps`): rustc counts them in its incremental state's options, and
+  without them each change between the two ways threw the state away. The first edit after a
+  miss then compiled every crate it reached whole: 10 crates, 524 s CPU, against 45 s with them
+  (farm 59).
 
 ```
 cargo ──▶ rustc-wrapper ──┬─ hot crate ───────────────▶ rustc -C incremental (here)
@@ -53,7 +57,9 @@ instead, and only that run's output is shown.
 | `linux-sysroot` | copies a Linux host's headers and libraries for `cargo-linux` |
 | `test-mirror` | a test of the mirror against an agent run here: a file the checkout deleted goes from the host's copy |
 | `test-mac-compiles HOST` | a test of this Mac's compiles on HOST: a small crate's library compiles (proc-macros, `OUT_DIR`, bundled C) go there through the farm, and each output must be this Mac's bytes |
-| `status` | what the farm can use now: each host probed, and why one is not usable |
+| `status` | what the farm can use now: each host probed, and why one is not usable; each host's compile benchmark |
+| `features` | each host's CPU: its model, vector units and lengths, every feature by one set of names; which hosts have given features ("CPU features") |
+| `bench` | the compile benchmark: a clean `gix` build at 1, 4 and 8 jobs and at its own cores on each host, kept in the farm's state for `status` ("How fast each host compiles") |
 | `dashboard` | a live page of every host and this Mac: CPU (farm, fleet, the machine's own, idle), GPU, memory, disk, jobs, reachability, round trip, traffic ("Dashboard") |
 | `sampler` | the dashboard's end on each machine: one JSON line of its state every 3 seconds |
 | `free-local` | this Mac's disk floor: Rerail's least recently built builds go under `local_min_free_gb` |
@@ -138,8 +144,9 @@ alone takes 90 s at a load of 80).
 The daemon, the wrapper and the agents on the hosts are the installed farm
 (`~/.local/share/rerail-farm`), one version for every worktree; `test-remote` and
 `live-test-remote` run it too, not their checkout's copy, and say when their checkout's is newer.
-`farm.VERSION` numbers it: `setup` refuses to install an older version over a newer one (`--force`
-does), the daemon refuses a caller of another version, and stops taking compiles once `setup`
+`farm.VERSION` numbers it: `setup` refuses to install an older version over a newer one, or
+over an install from a commit this checkout has not merged (`installed-from`: a branch's farm
+changes at the same version were lost so, 2026-11-21) (`--force` does both), the daemon refuses a caller of another version, and stops taking compiles once `setup`
 installs another (it finishes the ones it has; the next compile starts the new one). A change to
 the farm's protocol or to what a host keeps raises `VERSION`.
 
@@ -215,6 +222,18 @@ its message.
 A variable builds must share (CC, CXX, SOURCE_DATE_EPOCH, JEMALLOC_OVERRIDE) stops the
 build at the first compile. `RERAIL_FARM_QUIET=1` silences the warnings.
 
+## A crate built against a replaced one
+
+A library in a target directory can be replaced under the same file name and cargo fingerprint, and
+keep a file time no newer than the crates built against it: cargo then sees all of them fresh, and
+rustc refuses the next crate that links both (E0460 "found possibly newer version of crate", E0463,
+or "compiled by an incompatible version of rustc"; cranelift_frontend against cranelift_codegen,
+2026-11-21). A compile here that fails so compiles each refused crate again, from the record of its
+last compile (`calls/`, for Rerail checkouts and registry crates), down to 3 levels of what that
+crate links in turn, and then runs again. It says so as a `warning: rerail-farm:` line, and logs
+each one in `~/Library/Caches/rerail-farm/stale-externs.log`, since what replaced the library is
+still unknown.
+
 ## Configuration
 
 The farm's configuration is local to this Mac and never in git: `$RERAIL_FARM_CONFIG` if set, else
@@ -227,7 +246,7 @@ hosts, and everything compiles and tests here, as without the farm.
 | `os` | `"macos"` (default) or `"linux"`: a Linux host runs test commands as Linux builds, Relax runs, and this Mac's library compiles in a container (below, "Linux hosts") |
 | `mac_compiles` | `false` keeps a Linux host to tests and Relax runs: no compiles of this Mac's (default `true`) |
 | `nice` | the nice value of `test-remote`'s commands there (default 10; 0 where the farm is an equal of the host's other work) |
-| `fleet` | `true` on a nera-fleet node: while any fleet job runs there (a container labelled `fleet.job`), the farm starts no command there, and asks again each minute. The two are equals: neither preempts the other, and what runs finishes |
+| `fleet` | `true` on a node of Nera's job fleet: while any fleet job runs there (a container labelled `fleet.job`), the farm starts no command there, and asks again each minute. The two are equals: neither preempts the other, and what runs finishes |
 | `name` | what ssh connects to (a `Host` entry of `~/.ssh/config`) |
 | `enabled` | `false` leaves a host out (default `true`) |
 | `tests` | whether `scripts/dev/test-remote` runs there (default `true`) |
@@ -263,7 +282,10 @@ first, and two Macs ran loads of 44 and 88 while the Linux hosts' 150 cores sat 
 link of 8 MB/s or more through ssh go first (a slower one, such as a remote site's tunnel, costs
 minutes a send), then slower links, then VMs on this Mac; within those, the
 most free slots, then the most spare cores. A slow link only puts a host later; it never takes it
-out ("Health"). Both figures are measured through ssh: the round trip is the least of three (each
+out ("Health"). Waiting commands take slots first come, first served (farm 60, `farm.SlotQueue`): each
+holds a ticket in `tests/queue` naming the machines it would take now, and a freed slot goes to the
+earliest one that would take it, not to whichever looks first. Without the line, a command held to
+the M3 by `--host` waited 20 minutes while later commands took its slots as they freed. Both figures are measured through ssh: the round trip is the least of three (each
 starts an ssh process, which a loaded Mac delays), and the throughput 32 MB through a plain pipe,
 every 10 minutes. They fall when either machine is busy, so a low one is no proof of a slow link:
 the order uses the best throughput of the last hour (`mbps_best`). A PC's 10 MB/s link read 4.6
@@ -745,6 +767,84 @@ sample); `ioreg` or `nvidia-smi` every 6 seconds, docker every 15. Each line rep
 sampler used, shown under each card: 0.3 to 2% of one core (2026-11-19). The dashboard adds no
 health probe: it reads the farm's records. The page and its data stay on 127.0.0.1; the hosts'
 names come from the configuration at run time.
+
+## CPU features
+
+Each health probe records the host's CPU (farm 57): its model, every feature its kernel reports, and
+the SVE and SME vector lengths. A VM's are what the VM passes on, which is less than its machine's
+(the Linux VMs on Macs show no bf16, i8mm or SME), so a VM's record is its own. The names are one
+set for macOS and Linux: x86 Linux's flags (`avx2`, `avx512f`, `avx_vnni`, `amx_tile`); on arm64,
+Linux's (`sve`, `sve2`, `sme`, `bf16`, `i8mm`), with `neon`, `fp16`, `dotprod`, `fhm` and `rdm` for
+the asimd ones, and macOS's FEAT_X as `x`.
+
+```
+scripts/build/farm/features                 # each host: model, vector units, lengths
+scripts/build/farm/features sve2 i8mm       # who has these, and what the rest lack
+scripts/build/farm/features --host NAME     # one host's every feature (`local`: this Mac)
+scripts/build/farm/features --json
+scripts/dev/test-remote --cpu-feature sve2 -- cargo nextest run ...
+```
+
+`test-remote --cpu-feature F` (repeatable) takes only hosts that have F; with none, COMMAND runs
+here only if this Mac has F. COMMAND is told its machine's CPU, on a host or here:
+RERAIL_FARM_CPU_MODEL, RERAIL_FARM_CPU_FEATURES (space-separated), RERAIL_FARM_SVE_BITS and
+RERAIL_FARM_SME_BITS (0: none). A stopped guest's record is from its last run (none before its
+first, so `--cpu-feature` leaves it out until then). As of 2026-11-21 no host has AVX-512 (both
+PCs stop at AVX2), SVE2 is on the Sparks alone (at 128 bits), and SME2 on this Mac alone (512-bit
+streaming vectors).
+
+## How fast each host compiles
+
+`bench` measures each host on one task: a clean debug build of the workspace's `gix` (121 crates, the
+same `Cargo.lock` everywhere), with no compile cache, from an empty target directory, at 1, 4 and 8
+jobs and at the host's own cores as the farm counts them, SMT threads included (the configuration's
+`cores`: the jobs the farm gives it). It runs through `test-remote --host`, so on a Linux or Windows
+host it is that OS's build. The results stay in the farm's state, outside the tree, and `status`
+prints each host's under its line. A host is rated by its time at its own cores, against this Mac's at
+its own (18). `bench HOST` measures one again (after a change to a host, or a run marked contended);
+`bench HOST --jobs own` only at its own cores.
+
+Rating at 8 jobs undersold the hosts with more: the Ryzen 7 7735HS mini PC (8 cores with SMT, 16 threads)
+built in 46.4 s at 8 jobs on its Linux side and 34.6 s at 16, and in 82 s and 70 s on Windows
+(2026-11-22, back to back; one run at 8 jobs there varies from 40 to 46 s).
+
+Measured 2026-11-21 and 22, in seconds (`*`: the host was busy with other work, so the time is high):
+
+| Machine | OS | 1 job | 4 jobs | 8 jobs | own cores | own cores, against this Mac |
+|---|---|---|---|---|---|---|
+| DGX Spark (two) | Linux | 116, 121 | 33.5, 33.8 | 20.8, 19.4 | 11.0, 14.0* (20) | 0.78, 0.99 |
+| M3 Max Mac | Linux VM (Lima) | 101 | 29.5 | 16.6 | 13.9 (12) | 0.98 |
+| M5 Max MacBook Pro (this Mac, nice 19) | macOS | 113 | 36.1 | 20.9 | 14.1 (18) | 1.00 |
+| M3 Max Mac | macOS, the first-run check off | 147* | 39.0 | 20.6 | 15.8 (16) | 1.12 |
+| M1 Max Mac | macOS, the first-run check off | 156 | 46.0 | 25.6 | 26.4 (10) | 1.87 |
+| M5 Max MacBook Pro | Linux VM (OrbStack) | 118 | 45.7 | 27.6 | 27.6 (8) | 1.95 |
+| M5 Max MacBook Pro | Windows 11 ARM VM (Parallels) | 200 | 45.8 | 29.9 | 29.9 (8) | 2.12 |
+| Mac mini M1 | Linux VM (Lima, 6 cores) | 126* | 39.1 | 31.9 | 31.9 (at 8) | 2.25 |
+| Ryzen 7 7735HS mini PC | Linux (WSL2) | 167 | 55.4 | 46.4 | 34.6 (16) | 2.45 |
+| M1 Max Mac | Linux VM (Lima) | 161 | 54.1 | 42.9 | 42.9 (8) | 3.03 |
+| Core Ultra 7 268V laptop | Linux (WSL2) | 152 | 73.0 | 58.2 | 58.2 (8) | 4.11 |
+| Ryzen 7 7735HS mini PC | Windows (MSVC) | 392 | 137* | 82 | 70.0 (16) | 4.95 |
+| Mac mini M1 | macOS | 185 | 74* | 80* | 80* (8) | 5.66 |
+| Core Ultra 7 268V laptop | Windows (MSVC) | 379 | 115 | 102 | 102 (8) | 7.21 |
+
+What follows from it:
+
+- A Linux side beats macOS on the same Mac (the M3 Max: 101 s against 142 s at 1 job). One cause is
+  measured: macOS checks each new program the first time it runs, and over ssh (the farm's way in) that
+  took 290 ms a program on the M3 Max and 345 ms on the M1 Max, against 5 ms in this Mac's terminal,
+  which is a Developer Tool (System Settings, Privacy & Security, Developer Tools). A build runs a few
+  dozen new build scripts. With `/usr/libexec/sshd-keygen-wrapper` added there (it starts sshd, so
+  every ssh session counts as a developer tool), a first run takes 3 ms, and the M3 Max's macOS
+  build at 8 jobs went from 26.9 s to 20.6 s, the M1 Max's from 37.9 s to 25.6 s. On macOS 26 the
+  grant reaches only ssh sessions that start after it: the shared connections already open (ssh's
+  and the farm's, `~/Library/Caches/rerail-farm/ssh/`) keep the check until they are told
+  `ssh -O stop` (2026-11-21: the M1 Max's grant looked lost for that). macOS 15 applies it at once.
+- A Windows build costs about twice the Linux side of the same PC. Defender is not the cause: with
+  the farm's directory, the toolchains and the compilers excluded (2026-11-21), the PCs' times moved by
+  under 10% at 4 and 8 jobs. Only the Windows VM gained (51 s to 30 s at 8 jobs). On Windows, add
+  exclusions with literal paths: a PowerShell command that adds them through `$env:` variables is
+  stopped as `Trojan:Win32/PowExcEnv`.
+- So a command that does not need Windows or macOS goes fastest to a Linux side.
 
 ## No benchmark leases
 

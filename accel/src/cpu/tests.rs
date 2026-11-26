@@ -1,63 +1,11 @@
 //! The reference kernels against their definitions, written the slow obvious way, on small random inputs.
 
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::exec::{Batch, Executor, Launch};
 use crate::lanes::Lane;
 use std::sync::Arc;
-
-/// A small deterministic generator (xorshift), so the tests need no crate.
-pub(crate) struct Rng(pub u64);
-impl Rng {
-    pub(crate) fn next(&mut self) -> u64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        self.0
-    }
-    pub(crate) fn below(&mut self, n: u64) -> u64 {
-        self.next() % n.max(1)
-    }
-}
-
-/// Random bit rows, `density` out of 16 bits set.
-pub(crate) fn bits(rng: &mut Rng, rows: usize, width: usize, density: u64) -> Bits {
-    let words = width.div_ceil(64);
-    let mut data = vec![0u64; rows * words];
-    for r in 0..rows {
-        for c in 0..width {
-            if rng.below(16) < density {
-                data[r * words + c / 64] |= 1 << (c % 64);
-            }
-        }
-    }
-    Bits::new(rows, words, data)
-}
-
-/// Random partitions of codes below `codes`.
-pub(crate) fn parts(rng: &mut Rng, nparts: usize, max: u64, codes: u64) -> (Arc<[u32]>, Arc<[u16]>) {
-    let mut off = vec![0u32];
-    let mut col = Vec::new();
-    for _ in 0..nparts {
-        for _ in 0..rng.below(max + 1) {
-            col.push(rng.below(codes) as u16);
-        }
-        off.push(col.len() as u32);
-    }
-    (off.into(), col.into())
-}
-
-/// A random graph of `n` nodes, about `deg` edges each, with some self edges and cycles.
-pub(crate) fn graph(rng: &mut Rng, n: usize, deg: u64) -> (Arc<[u32]>, Arc<[u32]>) {
-    let mut off = vec![0u32];
-    let mut dst = Vec::new();
-    for _ in 0..n {
-        for _ in 0..rng.below(2 * deg + 1) {
-            dst.push(rng.below(n as u64) as u32);
-        }
-        off.push(dst.len() as u32);
-    }
-    (off.into(), dst.into())
-}
+pub(crate) use crate::workloads::{Rng, bits, graph, parts};
 
 #[test]
 fn bit_product_counts_and_thresholds() {
@@ -71,10 +19,10 @@ fn bit_product_counts_and_thresholds() {
             assert_eq!(data[i * 23 + j], want);
         }
     }
-    let min: Vec<u32> = (0..23).map(|j| (j % 7) as u32 + 5).collect();
+    let min: Vector<u32> = (0..23).map(|j| (j % 7) as u32 + 5).collect();
     let Output::Pairs(p) = bit_product(&a, &b, Some(&min)) else { panic!() };
-    let want: Vec<(u32, u32)> =
-        (0..37).flat_map(|i| (0..23).map(move |j| (i, j))).filter(|&(i, j)| data[i * 23 + j] >= min[j]).map(|(i, j)| (i as u32, j as u32)).collect();
+    let want: Vec<[u32; 2]> =
+        (0..37).flat_map(|i| (0..23).map(move |j| (i, j))).filter(|&(i, j)| data[i * 23 + j] >= min[j]).map(|(i, j)| [i as u32, j as u32]).collect();
     assert_eq!(p, want);
 }
 
@@ -88,7 +36,7 @@ fn count_table_counts_and_pairs() {
     let mut want = Vec::new();
     for p in 0..40 {
         for li in loff[p]..loff[p + 1] {
-            let n = (roff[p]..roff[p + 1]).filter(|&ri| right[ri as usize] == left[li as usize]).inspect(|&ri| want.push((li, ri))).count();
+            let n = (roff[p]..roff[p + 1]).filter(|&ri| right[ri as usize] == left[li as usize]).inspect(|&ri| want.push([li, ri])).count();
             assert_eq!(c[li as usize], n as u32);
         }
     }
@@ -117,7 +65,7 @@ fn closure_is_reachability() {
         // Reachability by search from each node's successors.
         for s in 0..n {
             let mut seen = vec![false; n];
-            let mut todo: Vec<u32> = dst[off[s] as usize..off[s + 1] as usize].to_vec();
+            let mut todo: Vector<u32> = rerail_blocks::vector::Vector::from(&dst[off[s] as usize..off[s + 1] as usize]);
             while let Some(v) = todo.pop() {
                 if std::mem::replace(&mut seen[v as usize], true) {
                     continue;

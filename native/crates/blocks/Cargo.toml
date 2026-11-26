@@ -11,8 +11,14 @@ test-hooks = ["rerail-context/test-hooks"]
 
 [dependencies]
 rerail-context = { path = "../context" }
+# Plain values, rooms and the vector, below the tape format (decision 0628 §3); this crate's blocks are their room.
+rerail-vector = { path = "../vector" }
 libc = "0.2.189"
 rayon = "=1.12.0"
+# A structure in a block (`maps::Vector`) is written and read as a sequence, as the `Vec` it replaces was.
+serde = "1.0"
+# A `DICT` column's distinct values, counted at seal (`col::choose_for_reads`).
+rustc-hash = "=2.1.3"
 
 [target.'cfg(windows)'.dependencies]
 # Windows' memory calls for blocks and scratch regions (`windows`); `CreateFileMappingW` takes its security attributes from `Win32_Security`;

@@ -223,38 +223,16 @@ pub fn read_only(base: *mut u8, len: usize) -> io::Result<()> {
     result
 }
 
-/// Gives back `len` bytes at `p` of a region `anon` made: the whole region when `p` is its start, else the range's
-/// pages decommitted, and the region ending at `p` when the range reaches its end (a freeze gives back its
-/// reservation's tail: Windows releases a reservation only whole, from its base, and its address space then goes
-/// with it). A touch past a region's end faults, as one past an `munmap` does.
-pub fn release(p: *mut u8, len: usize) {
-    let at = p as usize;
-    let whole = {
+/// Gives back a region `anon` made.
+pub fn release(base: *mut u8) {
+    {
         let mut regions = REGIONS.write().unwrap_or_else(|e| e.into_inner());
-        let k = regions.partition_point(|r| r.start <= at);
-        match k.checked_sub(1).filter(|&k| at < regions[k].end) {
-            Some(k) if regions[k].start == at => {
-                regions.remove(k);
-                true
-            }
-            Some(k) => {
-                if at + len >= regions[k].end {
-                    regions[k].end = at;
-                }
-                false
-            }
-            // Not a region of ours: a reservation's whole, as a caller's.
-            None => true,
-        }
-    };
-    // SAFETY: the caller's own region (or its pages), which nothing reads after.
-    unsafe {
-        if whole {
-            VirtualFree(p.cast(), 0, MEM_RELEASE);
-        } else {
-            VirtualFree(p.cast(), len, MEM_DECOMMIT);
+        if let Some(k) = regions.iter().position(|r| r.start == base as usize) {
+            regions.remove(k);
         }
     }
+    // SAFETY: the caller's own region, which nothing reads after.
+    unsafe { VirtualFree(base.cast(), 0, MEM_RELEASE) };
 }
 
 /// Unmaps a view `map_file` made.
@@ -299,7 +277,7 @@ mod tests {
             assert_eq!(touched, 3 * GRANULE, "three granules committed of {len} bytes");
         }
         for p in regions {
-            release(p, len);
+            release(p);
         }
     }
 
@@ -320,7 +298,7 @@ mod tests {
             for t in 0..8 {
                 assert_eq!(unsafe { *((p + GRANULE * round + t * 64) as *const u8) }, t as u8 + 1);
             }
-            release(p as *mut u8, len);
+            release(p as *mut u8);
         }
     }
 
@@ -343,26 +321,6 @@ mod tests {
         commit(unsafe { p.add(12 * GRANULE) }, 2 * GRANULE).unwrap();
         assert_eq!(committed(p as usize + 13 * GRANULE), Some(PAGE_READONLY), "a device's commit keeps the freeze");
         assert_eq!(unsafe { *p }, 7);
-        release(p, len);
-    }
-
-    /// A freeze's release of a region's tail decommits it and ends the region there: its pages are given back, the
-    /// head stays, and a release of the head then gives back the whole reservation.
-    #[test]
-    fn a_release_of_a_regions_tail_decommits_it_and_ends_the_region() {
-        let len = 16 * GRANULE;
-        let p = anon(len).unwrap();
-        // SAFETY: bytes of the reservation.
-        unsafe {
-            *p = 3;
-            *p.add(12 * GRANULE) = 4;
-        }
-        release(unsafe { p.add(8 * GRANULE) }, 8 * GRANULE);
-        assert_eq!(committed(p as usize + 12 * GRANULE), None, "the tail is decommitted");
-        let end = REGIONS.read().unwrap().iter().find(|r| r.start == p as usize).map(|r| r.end);
-        assert_eq!(end, Some(p as usize + 8 * GRANULE), "the region ends where its tail went");
-        assert_eq!(unsafe { *p }, 3, "the head is kept");
-        release(p, 8 * GRANULE);
-        assert!(REGIONS.read().unwrap().iter().all(|r| r.start != p as usize), "and goes whole");
+        release(p);
     }
 }

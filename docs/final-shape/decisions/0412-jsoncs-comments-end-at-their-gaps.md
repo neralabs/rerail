@@ -1,7 +1,7 @@
 # 0412: JSONC's comments end at their gaps
 
-Status: decided (the user, 2026-11-18: "please work through these", the first being "JSONC keeps
-its lasts extract … until the prover can handle that case"). Follows 0411.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-18: "please work through these", the first being "JSONC
+keeps its lasts extract … until the prover can handle that case"). Follows 0411.
 
 ## Intro
 

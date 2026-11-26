@@ -1,8 +1,9 @@
 # 0331. A chunk's guest rounds are one maintained program, driven by its deltas
 
-Status: decided (2026-11-16). Builds on 0055 (guests made in rounds), 0145 (`maintained::run`, the cone's rounds),
-0117 step 3 (a session's run walks the base program, each stratum's form made when a delta reaches it), 0077 and
-O125 (kept rows are whole relations), 0094 §4, 0096 step 4 and 0123 (a kept relation's statistics kept with it).
+Status: built (audited 2026-11-23). Decided (2026-11-16). Builds on 0055 (guests made in rounds), 0145
+(`maintained::run`, the cone's rounds), 0117 step 3 (a session's run walks the base program, each stratum's form made
+when a delta reaches it), 0077 and O125 (kept rows are whole relations), 0094 §4, 0096 step 4 and 0123 (a kept
+relation's statistics kept with it).
 
 ## Intro
 

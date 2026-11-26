@@ -1,0 +1,74 @@
+//! The profile's SQL hazards (decision 0104: no wave waits for SQL): the store's connections trace their statements and
+//! its writer its waits in the profile (`rerail_prof`'s, below this crate), which counts them. With the profile off
+//! (the store alone, its own tests), each is nothing.
+
+use rerail_prof::code_rule_dsl::logic::profile;
+
+pub fn on() -> bool {
+    profile::tracing()
+}
+
+pub fn sql_in_wave(conn: &'static str, text: &str, ns: u64) {
+    profile::sql_in_wave(conn, text, ns);
+}
+
+pub fn statement(conn: &'static str, text: &str) {
+    profile::strict_statement(conn, text);
+}
+
+pub fn inside_waves() -> bool {
+    profile::inside_waves()
+}
+
+pub fn wait_in_wave(what: &str, wall: f64) {
+    profile::wait_in_wave(what, wall);
+}
+
+/// The profile's span for `what` (the writer's CPU under the profile's spans, a job at a time), open until dropped.
+pub fn span(what: &'static str) -> Option<Box<dyn std::any::Any>> {
+    Some(Box::new(profile::span(move || format!("store writer: {what}"))))
+}
+
+pub fn behind_the_run() {
+    profile::behind_the_run();
+}
+
+/// The command's own bookkeeping around its run (`profile::around_the_run`).
+pub fn around_the_run<T>(f: impl FnOnce() -> T) -> T {
+    profile::around_the_run(f)
+}
+
+/// A recomputation in a warm run (`RERAIL_WARM`, `profile::warm_fault`): nothing without it.
+pub fn warm_fault(kind: &'static str, detail: impl FnOnce() -> String) {
+    profile::warm_fault(kind, detail);
+}
+
+/// A commit on `db` in a warm run (`profile::warm_commit`), for a connection whose commit hook is the store's own.
+///
+/// # Safety
+/// As `profile::warm_commit`: `db` is open, and this runs inside its commit hook.
+pub unsafe fn warm_commit(db: *mut rusqlite::ffi::sqlite3) {
+    // SAFETY: the caller's guarantee.
+    unsafe { profile::warm_commit(db) };
+}
+
+/// A transaction of the store's writer (`profile::warm_scope`): its commit is not a fault of the warm check if every
+/// job it ran is one of the writes a warm run may make (`profile::WARM_WRITES_ALLOWED`).
+pub fn warm_scope() -> profile::WarmScope {
+    profile::warm_scope()
+}
+
+/// The writer runs the job `what` in its open `warm_scope`.
+pub fn warm_job(what: &str) {
+    profile::warm_job(what);
+}
+
+/// Whether a warm run may queue the job `what` (`profile::WARM_WRITES_ALLOWED`).
+pub fn warm_write_allowed(what: &str) -> bool {
+    profile::warm_write_allowed(what)
+}
+
+/// Whether a store may be asked here: not inside the waves (`profile::may_read_store`, decision 0104).
+pub fn may_read_store() -> bool {
+    profile::may_read_store()
+}

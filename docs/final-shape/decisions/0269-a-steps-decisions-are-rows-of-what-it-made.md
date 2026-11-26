@@ -1,9 +1,9 @@
 # 0269: A step's decisions are rows of what it made
 
-Status: decided (2026-11-15). Builds on 0060 §3 (the prepared program kept for the process), 0073 and 0155 (kept in
-the store, as facts and texts), 0103 (a cache is two rules), 0246 (loading as module images and derivations) and
-0264 (rule images made when the engine is built). Agrees with 0251: a run that reuses something records what a run
-that made it records.
+Status: built (audited 2026-11-23). Decided (2026-11-15). Builds on 0060 §3 (the prepared program kept for the
+process), 0073 and 0155 (kept in the store, as facts and texts), 0103 (a cache is two rules), 0246 (loading as module
+images and derivations) and 0264 (rule images made when the engine is built). Agrees with 0251: a run that reuses
+something records what a run that made it records.
 
 ## Intro
 

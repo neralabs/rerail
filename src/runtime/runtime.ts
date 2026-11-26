@@ -409,6 +409,8 @@ const LedgerEntrySchema = z.union([
     })).optional(),
     // Absent for the session's own agent, and in a ledger written before calls recorded their subagent.
     agentId: z.string().optional(),
+    // The folder the call ran in, where its host said; absent too in a ledger written before calls recorded it.
+    cwd: z.string().optional(),
   }),
   z.object({ type: z.literal("policy-result"), toolCallId: z.string() }),
   z.object({ type: z.literal("secret-call"), toolCallId: z.string() }),
@@ -424,7 +426,7 @@ type LedgerEntry =
   | { type: "delivery"; delivery: AdapterDelivery }
   | { type: "rule-mutation"; mutation: RuleMutation }
   | { type: "rule-match"; ruleId: string; turn: number }
-  | { type: "policy-call"; toolCallId: string; toolName: string; paths: string[]; preimages?: Readonly<Record<string, Preimage>>; agentId?: string }
+  | { type: "policy-call"; toolCallId: string; toolName: string; paths: string[]; preimages?: Readonly<Record<string, Preimage>>; agentId?: string; cwd?: string }
   | { type: "policy-result"; toolCallId: string }
   | { type: "secret-call"; toolCallId: string }
   | { type: "secret-result"; toolCallId: string; eventId: string }
@@ -821,6 +823,14 @@ export type IdleClose =
   | { readonly kind: "suspended"; readonly suspension: SessionSuspension }
   /** Its memory is freed and its record ended, as its end would (`end`); its next event opens it again. */
   | { readonly kind: "ended" };
+
+/**
+ * Whether the session of `state` records its rule coverage: published (unpublished sessions have no session row yet;
+ * the session-start ingest records coverage once they do) and not closed.
+ */
+function recordsCoverage(state: RuntimeSessionState | undefined): state is RuntimeSessionState {
+  return state !== undefined && !state.closed && state.ownerClaim !== undefined;
+}
 
 /** The bridge option that resumes the session's walks where `suspension` left them; none for a fresh open. */
 function walkResumeOption(suspension: SessionSuspension | undefined): { resume?: SessionWalkResume } {
@@ -1337,7 +1347,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       const sourceSignature = this.#sessions.get(sessionId)?.ruleSync?.sourceSignature;
       const deliveries = await this.#ingestOrDropOwed(event);
       if (event.kind !== "assistant-delta" || event.final
-          || sourceSignature !== this.#sessions.get(sessionId)?.ruleSync?.sourceSignature) this.recordRuleCoverage(sessionId);
+          || sourceSignature !== this.#sessions.get(sessionId)?.ruleSync?.sourceSignature) {
+        await this.#sessionRulesBuilt(sessionId);
+        this.recordRuleCoverage(sessionId);
+      }
       return deliveries;
     });
   }
@@ -1555,8 +1568,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     bridge: CodeRuleBridge | undefined,
     event: Extract<AdapterEvent, { kind: "call" }>,
   ): Promise<Readonly<Record<string, Preimage>> | undefined> {
-    if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input);
-    await state.codeRuleBridge?.unwatchedCall(event.toolCallId, event.toolName, event.input);
+    if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input, undefined, event.cwd);
+    await state.codeRuleBridge?.unwatchedCall(event.toolCallId, { toolName: event.toolName, input: event.input, cwd: event.cwd });
     return undefined;
   }
 
@@ -1572,7 +1585,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const paths = generatedEditPaths(event.toolName, event.input);
     await this.#append(state, {
       type: "policy-call", toolCallId: id, toolName: event.toolName, paths,
-      ...(preimages === undefined ? {} : { preimages }), ...agent,
+      ...(preimages === undefined ? {} : { preimages }), ...agent, ...(event.cwd === undefined ? {} : { cwd: event.cwd }),
     });
     state.pendingCodeRuleCalls.push({ id, toolName: event.toolName, ...agent });
     if (paths.length > 0) state.mergeAssistEdits.add(id);
@@ -1583,11 +1596,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * call's window, so its turn, from the prompt to the turn's end, is one: what is stamped then is the session's own.
    * A call opens it too, as a turn has one only at its prompt, which a daemon restart in the middle of the turn loses;
    * a window already open keeps its start. Two of its sessions' turns in one folder at once both take a change made
-   * then, as overlapping calls do.
+   * then, as overlapping calls do. It runs in the folder the hook names (Codex's `cwd`), as the turn's calls do.
    */
   async #noteTurnWindow(state: RuntimeSessionState, event: AdapterEvent): Promise<void> {
     if (ADAPTER_CAPABILITIES[state.descriptor.host].observedFileWrite !== "shell") return;
-    if (event.kind === "user-prompt" || event.kind === "call") await state.codeRuleBridge?.unwatchedCall(TURN_WINDOW_ID);
+    if (event.kind === "user-prompt" || event.kind === "call") await state.codeRuleBridge?.unwatchedCall(TURN_WINDOW_ID, { cwd: event.session?.cwd });
     else if (event.kind === "turn-end") await state.codeRuleBridge?.unwatchedResult(TURN_WINDOW_ID);
   }
 
@@ -1631,7 +1644,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   async #checkRestoredCall(state: RuntimeSessionState, bridge: CodeRuleBridge, call: RestoredCall, failed: boolean): Promise<void> {
     try {
-      await bridge.begin(call.toolCallId, call.toolName, { paths: call.paths }, call.preimages ?? {});
+      await bridge.begin(call.toolCallId, call.toolName, { paths: call.paths }, call.preimages ?? {}, call.cwd);
       await bridge.finish(call.toolCallId, failed);
     } catch (error) {
       // A session closed meanwhile closed its evaluator too.
@@ -2059,11 +2072,22 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
   }
 
+  /**
+   * Settles once the rules of the session's checkout are built, compiled off the daemon's thread (`CheckoutCatalogs.prepare`):
+   * at once after the first time. The coverage this event records then reads them as built, and the answer that waits for
+   * it names the session's rules as before, while every other session's events run.
+   */
+  async #sessionRulesBuilt(sessionId: string): Promise<void> {
+    const state = this.#sessions.get(sessionId);
+    if (!recordsCoverage(state)) return;
+    // A build that fails here is the coverage's to report, as it builds the rules itself then.
+    await this.#catalogs.prepare(state.checkout.root).catch(() => undefined);
+  }
+
   /** Report loaded sources, never refresh enforcement for presentation metadata. */
   recordRuleCoverage(sessionId: string): void {
     const state = this.#sessions.get(sessionId);
-    // Unpublished sessions have no session row yet; the session-start ingest records coverage once they do.
-    if (state === undefined || state.closed || state.ownerClaim === undefined) return;
+    if (!recordsCoverage(state)) return;
     try {
       const { root } = state.checkout;
       const repositoryId = this.#repositoryKey(state.checkout);
@@ -2098,6 +2122,15 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    */
   async codeRulesOpened(sessionId: string): Promise<void> {
     await this.#sessions.get(sessionId)?.codeRuleWorkspace.catch(() => undefined);
+  }
+
+  /**
+   * Settles once the session's evaluator is open and has built the rules it builds ahead of any call: those of the
+   * repositories the session's earlier checks ran in.
+   */
+  async rulesBuiltAhead(sessionId: string): Promise<void> {
+    const bridge = await this.#sessions.get(sessionId)?.codeRuleWorkspace.catch(() => undefined);
+    await bridge?.rulesBuiltAhead();
   }
 
   async dispose(): Promise<void> {
@@ -2471,7 +2504,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         // A result that arrived while the evaluator opened went on without code rules: its call is not begun late, or
         // the bridge would hold it pending, and skip its paths in every later shell-write walk, for the session's life.
         if (!state.pendingCodeRuleCalls.some(pending => pending.id === call.toolCallId)) continue;
-        await bridge.begin(call.toolCallId, call.toolName, { paths: call.paths }, call.preimages ?? {});
+        await bridge.begin(call.toolCallId, call.toolName, { paths: call.paths }, call.preimages ?? {}, call.cwd);
       }
     } catch (error) {
       delete state.codeRuleBridge;
@@ -3302,8 +3335,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     recordCheckout(this.#catalogs.database, cwd);
     const start = startingCheckout(this.#owners, cwd);
     // The session's rule coverage reads the checkout's catalog before its evaluator opens. Other sessions' lanes in the
-    // checkout share that catalog and read it again only at their own use, so its rules are read here.
-    if (this.#catalogs.refresh(start.checkoutRoot) !== "unrecorded") this.#catalogs.catalog(start.checkoutRoot).refresh();
+    // checkout share that catalog and read it again only at their own use, so its rules are read here. A catalog not
+    // built yet is built off the daemon's thread before the coverage reads it (`#sessionRulesBuilt`).
+    if (this.#catalogs.refresh(start.checkoutRoot) !== "unrecorded") this.#catalogs.refreshCatalog(start.checkoutRoot);
     return { root: start.checkoutRoot, folder: start.path, cwd };
   }
 
