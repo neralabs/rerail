@@ -350,10 +350,12 @@ pub trait Source: Send + Sync {
     /// ended, which a source may keep its place in (a view of the tape: the document and granule). Probes in key
     /// order (a scan's rows sorted by the next key, decision 0112) then find their place without a search. A hint is
     /// checked, never trusted: any value gives the same rows.
-    /// Decision 0706 E1: for each of `values` of `column` (a row's own id: a node's), whether a row with it has its
-    /// value of `want` (one for every value, or one each) in column `read`, into `out`. The batch's ids resolved
-    /// first, then their values read. `false` where the source has no such read (nothing written).
-    fn test_own_batch(&self, _column: usize, _values: &[i64], _read: usize, _want: &[i64], _out: &mut [bool]) -> bool { false }
+    /// Decision 0706 E1: for each of `values` of `column` (a row's own id: a node's, at most one row each), its row's
+    /// values of the columns `reads` into `out` (`reads.len()` a value), and in `found` whether it has a row (1), has
+    /// none (0), or the source cannot say in a batch (2: the caller probes it as one row). The batch's ids found first,
+    /// then their columns read. `false` where the source has no such read of `column` (nothing written); asked with no
+    /// values, whether it has one.
+    fn read_own_batch(&self, _column: usize, _values: &[i64], _reads: &[usize], _out: &mut [i64], _found: &mut [u8]) -> bool { false }
     /// Decision 0706 E4: the source's value index of `column` (its rows by value, in its block) built now, ahead of
     /// its readers, where it keeps one: the rows read to build it. `None` where it keeps none, or had it built.
     fn build_value_index(&self, _column: usize) -> Option<usize> { None }
@@ -439,6 +441,11 @@ pub trait Source: Send + Sync {
     fn rows_of_documents(&self, _docs: &std::collections::BTreeSet<u32>) -> Option<rerail_blocks::vector::Vector<usize>> {
         None
     }
+    /// Decision 0706 E5: for each pair of `pairs` (flat, two a pair: the values of columns `cols[0]` and `cols[1]`),
+    /// whether a row holds both, in `out`: 1 it does, 0 it does not, 2 the source cannot say in a batch (the caller
+    /// asks it as one row). `false` where it has no such test of these columns (nothing written); asked with no
+    /// pairs, whether it has one.
+    fn holds_batch(&self, _cols: [usize; 2], _pairs: &[i64], _out: &mut [u8]) -> bool { false }
     /// Whether the relation holds the row of these values, every column given (`(column, value)`), answered by a
     /// test and not by its rows: a join step that reads no column of the row asks only this (`within(n, a)` with
     /// both bound is an interval test on the tape, t50 step 4). `None`: the source has no such test; `lookup_all`.

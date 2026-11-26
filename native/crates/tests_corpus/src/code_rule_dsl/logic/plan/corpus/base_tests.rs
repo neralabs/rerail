@@ -1887,3 +1887,102 @@ same(a, b) :- node(d, n, "identifier", _, _), node_text(n, s), node(d, m, "ident
     let same: BTreeSet<(i64, i64)> = got[2].iter().map(|r| (r[0].parse().unwrap(), r[1].parse().unwrap())).collect();
     assert_eq!(same, BTreeSet::from([(1, 6), (6, 1), (2, 4), (4, 2)]));
 }
+
+/// Decision 0706 E1: a view's step by a bound node that binds its row's other columns (`field(p, f, n)` with `n`
+/// bound binds the parent and the field; `node(_, x, k, _, _)` with `x` bound binds its kind), and one whose keys
+/// and negation are checked (`kind(p, "binary_operator")`, `!kind(p, "assignment")`), read a batch of rows at a time.
+/// The rows are the source's: each line `x{i} = a{i} + b{i}` has an addition whose operands are its left and right,
+/// identifiers, under no assignment directly.
+#[test]
+fn node_reads_that_bind_in_batches_give_each_rows_rows() {
+    use crate::code_rule_dsl::logic::native::component::{kind_batched_rows, kind_batches_forced};
+    let body: String = (0..400).map(|i| format!("x{i} = a{i} + b{i}\n")).collect();
+    let dir = corpus("node-reads", &[("a.py", body.as_str())]);
+    let program = r#"
+.decl operands(l: number, f: symbol)
+operands(l, f) :- kind(n, "identifier"), field(p, f, n), kind(p, "binary_operator"), line(n, l).
+.decl not_assigned(l: number, f: symbol)
+not_assigned(l, f) :- kind(n, "identifier"), field(p, f, n), !kind(p, "assignment"), line(n, l).
+.decl left_kinds(l: number, k: symbol)
+left_kinds(l, k) :- kind(b, "binary_operator"), field(b, "left", x), node(_, x, k, _, _), line(x, l).
+.output operands, not_assigned, left_kinds
+"#;
+    kind_batches_forced(Some(true));
+    let before = kind_batched_rows();
+    let got = run(&dir, program, &["operands", "not_assigned", "left_kinds"]);
+    kind_batches_forced(None);
+    assert!(kind_batched_rows() > before + 256, "read in batches ({} rows)", kind_batched_rows() - before);
+    let of = |rows: &Vec<Vec<String>>| rows.iter().map(|r| (r[0].parse::<i64>().unwrap(), r[1].trim_matches('"').to_owned())).collect::<BTreeSet<_>>();
+    let both: BTreeSet<(i64, String)> = (1..=400).flat_map(|l| [(l, "left".to_owned()), (l, "right".to_owned())]).collect();
+    assert_eq!(of(&got[0]), both);
+    assert_eq!(of(&got[1]), both, "the assignments' left sides are under an assignment");
+    let ids: BTreeSet<(i64, String)> = (1..=400).map(|l| (l, "identifier".to_owned())).collect();
+    assert_eq!(of(&got[2]), ids);
+}
+
+/// Decision 0706 E5: a step probing a computed relation by bound slots and binding its other columns (`owner(n, f)`
+/// by `n`, `pair(f, g)` by `f`) probes a batch of rows sorted by their keys; a membership test by two slots
+/// (`seen(n, f)`) is probed as it comes (E2's). The rows are the same as each probed as it comes.
+#[test]
+fn keyed_probes_in_sorted_batches_give_each_rows_rows() {
+    use crate::code_rule_dsl::logic::native::component::{keyed_batched_rows, keyed_batches_forced};
+    let body: String = (0..300).map(|i| format!("def f{i}(a, b):\n    return a{} + b\n", (i * 7) % 300)).collect();
+    // Each run of a source of its own: a second run of one source is the first's results (kept by its content).
+    let body_on = format!("{body}# on\n");
+    let (dir_off, dir_on) = (corpus("keyed-probes-off", &[("a.py", body.as_str())]), corpus("keyed-probes-on", &[("a.py", body_on.as_str())]));
+    let program = r#"
+.decl owner(n: number, f: number)
+owner(n, f) :- kind(f, "function_definition"), field(f, "body", b), within(n, b), kind(n, "identifier").
+.decl pair(f: number, g: number)
+pair(f, g) :- owner(n, f), owner(m, g), docof(f, d), docof(g, d), text(n, t), text(m, t), f != g.
+.decl seen(n: number, f: number)
+seen(n, f) :- kind(n, "identifier"), within(n, f), kind(f, "function_definition").
+.decl counted(l: number, k: number)
+counted(l, k) :- owner(n, f), seen(n, f), pair(f, g), line(g, l), line(n, k).
+.output owner, pair, counted
+"#;
+    keyed_batches_forced(Some(false));
+    let off = run(&dir_off, program, &["owner", "pair", "counted"]);
+    keyed_batches_forced(Some(true));
+    let before = keyed_batched_rows();
+    let on = run(&dir_on, program, &["owner", "pair", "counted"]);
+    keyed_batches_forced(None);
+    assert!(keyed_batched_rows() > before + 256, "probed in sorted batches ({} rows)", keyed_batched_rows() - before);
+    let sets = |g: &Vec<Vec<Vec<String>>>| g.iter().map(|rows| rows.iter().cloned().collect::<BTreeSet<_>>()).collect::<Vec<_>>();
+    assert!(!off[0].is_empty() && !off[1].is_empty() && !off[2].is_empty(), "every relation has rows");
+    assert_eq!(sets(&on), sets(&off));
+}
+
+/// Decision 0706 E5: `within(n, f)` with both nodes bound, and its negation, is asked a batch of pairs at a time
+/// (`within`'s interval walk). The rows are the same as each pair asked as it comes, and every identifier of a
+/// function's body is inside it, none outside.
+#[test]
+fn within_pairs_in_batches_give_each_pairs_rows() {
+    use crate::code_rule_dsl::logic::native::component::{keyed_batched_rows, keyed_batches_forced};
+    let body: String = (0..100).map(|i| format!("def f{i}(a):\n    return a + b{i}\n")).collect();
+    let body_on = format!("{body}# on\n");
+    let (dir_off, dir_on) = (corpus("within-pairs-off", &[("a.py", body.as_str())]), corpus("within-pairs-on", &[("a.py", body_on.as_str())]));
+    let program = r#"
+.decl cand(n: number, f: number)
+cand(n, f) :- kind(n, "identifier"), kind(f, "function_definition"), docof(n, d), docof(f, d).
+.decl held_in(l: number, k: number)
+held_in(l, k) :- cand(n, f), within(n, f), line(n, l), line(f, k).
+.decl held_out(n: number)
+held_out(n) :- cand(n, f), !within(n, f), line(n, l), line(f, l).
+.output held_in, held_out
+"#;
+    keyed_batches_forced(Some(false));
+    let off = run(&dir_off, program, &["held_in", "held_out"]);
+    keyed_batches_forced(Some(true));
+    let before = keyed_batched_rows();
+    let on = run(&dir_on, program, &["held_in", "held_out"]);
+    keyed_batches_forced(None);
+    assert!(keyed_batched_rows() > before + 256, "asked in batches ({} rows)", keyed_batched_rows() - before);
+    let sets = |g: &Vec<Vec<Vec<String>>>| g.iter().map(|rows| rows.iter().cloned().collect::<BTreeSet<_>>()).collect::<Vec<_>>();
+    assert_eq!(sets(&on), sets(&off));
+    // Each function's lines are 2i+1 and 2i+2; its identifiers `a` (both) and `b{i}` lie in them.
+    let inside: BTreeSet<(i64, i64)> = on[0].iter().map(|r| (r[0].parse().unwrap(), r[1].parse().unwrap())).collect();
+    assert!((0..100).all(|i| inside.contains(&(2 * i + 2, 2 * i + 1))), "each body's identifiers are inside its function");
+    assert!(inside.iter().all(|&(l, k)| l == k || l == k + 1), "no identifier is inside another function");
+    assert!(on[1].is_empty(), "the identifiers on a function's own line are its own ({:?})", &on[1][..on[1].len().min(4)]);
+}

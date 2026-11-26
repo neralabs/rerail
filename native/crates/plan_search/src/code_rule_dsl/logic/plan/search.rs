@@ -4836,6 +4836,48 @@ impl Model {
             }
             best
         };
+        // Decision 0706 §3: a probe of an input the run holds reads its order on the probe's columns (E5's), built ahead
+        // of its level. The search prices it with what is available: an order the run's readers probed before is
+        // scheduled, its build shared by the plans that read it; one never probed is absent, and the first plan to
+        // probe it pays its whole build. The price is work (rows, at a probe's ns a row), added once to the step.
+        // Per join, where it may read such an order: the absent order's price over its relation's rows, and the orders
+        // available of that relation, by their columns as a mask, with their prices (found once a search).
+        // Off unless `RERAIL_ORDER_PRICES=on`: on `all` (decision 0706 step 5's record) these prices led to plans that
+        // walked more (instructions +0.8% to +1.7%, the same rows); the walks' cost is the search's whole price.
+        let priced_orders = super::super::native::setfix::access::order_prices();
+        let available = if priced_orders { super::super::native::setfix::access::orders_available() } else { Default::default() };
+        let orders: Vec<Option<(f64, Vec<(u64, f64)>)>> = joins
+            .iter()
+            .map(|&j| {
+                let Lit::Atom(a) = b.view(j) else { return None };
+                let rel = b.rel(a);
+                if !priced_orders || a.neg() || !self.stats.held.contains(rel) || self.derived.contains(rel) || self.view_src.contains_key(rel) || self.stats.solving.contains(rel) {
+                    return None;
+                }
+                use rerail_logic_core::code_rule_dsl::logic::access::{Kind, build_ns};
+                let of: Vec<(u64, f64)> = available
+                    .0
+                    .iter()
+                    .filter(|(k, _)| k.rel == rel)
+                    .filter_map(|(k, _)| match &k.kind { Kind::Order(cols) => Some((cols.iter().fold(0u64, |m, &c| m | 1 << c.min(63)), available.cost(k, 0))), _ => None })
+                    .collect();
+                Some((build_ns(&Kind::Order(Vec::new()), self.card(rel) as u64), of))
+            })
+            .collect();
+        let order_cost = |i: usize, bound: u128| -> f64 {
+            let Some((absent, of)) = &orders[i] else { return 0.0 };
+            if jmask[i] & bound == 0 {
+                return 0.0;
+            }
+            let j = joins[i];
+            let cols = b.args(j).iter().enumerate().filter(|&(_, &t)| b.constant(t).is_some() || matches!(t, TermRef::Var(v) if pinned.contains(v) || var_ids[v.index()].is_some_and(|k| k < 128 && bound >> k & 1 == 1))).fold(0u64, |m, (c, _)| m | 1 << c.min(63));
+            // No column bound, or every one (a membership test, E2's filters and node bits): no order read.
+            let all = (1u64 << b.args(j).len().min(63)) - 1;
+            if cols == 0 || cols == all {
+                return 0.0;
+            }
+            of.iter().find(|&&(m, _)| m == cols).map_or(*absent, |&(_, c)| c) / rerail_logic_core::code_rule_dsl::logic::access::PROBE_NS
+        };
         // By subset mask (at most `GREEDY` joins, so 4,096 subsets).
         let mut cells: Vec<Option<Cell>> = (0..1usize << joins.len()).map(|_| None).collect();
         let mut closed: Vec<(u128, u128)> = vec![(0, 0); 1 << joins.len()];
@@ -4901,7 +4943,7 @@ impl Model {
                     let p = price(i, *bound);
                     let by = match p { Price::Atom(_, _, by, _) => by, _ => "" };
                     let Some((w, mut out, mode)) = priced(p, left) else { continue };
-                    let w = w * range_pass(i, *bound);
+                    let w = w * range_pass(i, *bound) + order_cost(i, *bound);
                     let fan = if left > 0.0 { out / left } else { 0.0 };
                     let unfounded = (prev == 0 || from.unfounded) && no_rows_when_priced(i);
                     candidates += 1;

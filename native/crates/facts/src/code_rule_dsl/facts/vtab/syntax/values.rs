@@ -933,43 +933,18 @@ impl Source for Layered {
     }
     /// The base's batch test (decision 0706 E1), then, for each value the base has no such row of, the parts that may
     /// hold it, read as `lookup_read_at` reads them.
-    fn test_own_batch(&self, column: usize, values: &[i64], read: usize, want: &[i64], out: &mut [bool]) -> bool {
-        if !self.base.test_own_batch(column, values, read, want, out) {
+    /// The base's read; a node it has no row of, while the chunk has admitted values of the relation, may be a part's
+    /// (or a made row's): the caller probes it as one row.
+    fn read_own_batch(&self, column: usize, values: &[i64], reads: &[usize], out: &mut [i64], found: &mut [u8]) -> bool {
+        if !self.base.read_own_batch(column, values, reads, out, found) {
             return false;
         }
         if self.values.admitted.load(Ordering::Acquire) == 0 {
             return true;
         }
         let all = self.values.parts.load();
-        let Some(p) = all.get(self.name.as_str()).filter(|p| p.total > 0) else { return true };
-        // Made on lookup: the values' rows of each value, by the scan's index.
-        let want_of = |k: usize| if want.len() == 1 { want[0] } else { want[k] };
-        if self.made.is_some() {
-            let width = self.width.max(1);
-            self.scanned(|s| {
-                for (k, (&v, o)) in values.iter().zip(out.iter_mut()).enumerate().filter(|(_, (_, o))| !**o) {
-                    *o = s.holding(0, column, v).any(|i| s.row(i, width)[read] == want_of(k));
-                }
-            });
-            return true;
-        }
-        let docs = self.base.keys_documents(column);
-        let mut row = [0i64; 1];
-        for (k, (&v, o)) in values.iter().zip(out.iter_mut()).enumerate().filter(|(_, (_, o))| !**o) {
-            let want = want_of(k);
-            p.of(v, docs, &mut |part| {
-                if *o {
-                    return;
-                }
-                if part.src.lookup_read(column, v, &[read], &mut |_, got| *o |= got[0] == want) {
-                    return;
-                }
-                let rows = part.src.lookup(column, &[v]).unwrap_or_else(|| (0..part.src.len()).filter(|&r| part.src.value(r, column) == v).collect());
-                for r in rows {
-                    part.src.row_at(r, &[read], &mut row);
-                    *o |= row[0] == want;
-                }
-            });
+        if all.get(self.name.as_str()).is_some_and(|p| p.total > 0) {
+            found.iter_mut().filter(|f| **f == 0).for_each(|f| *f = 2);
         }
         true
     }
@@ -1090,6 +1065,16 @@ impl Source for Layered {
     /// The base's test (`within`'s interval, t50 step 4), else the test of each part that may hold the row's first
     /// value's node: a value's nodes are its part's, never the batch's. Unforwarded, a chunk's every `within` test was
     /// a lookup of the node's rows (`def_outside`: 1.56 M tests at 1.6 µs on 1,000 files).
+    /// The base's; a pair it does not hold may be a part's, where the relation has parts: asked as one row.
+    fn holds_batch(&self, cols: [usize; 2], pairs: &[i64], out: &mut [u8]) -> bool {
+        if !self.base.holds_batch(cols, pairs, out) {
+            return false;
+        }
+        if !pairs.is_empty() && self.has_parts() {
+            out.iter_mut().filter(|o| **o == 0).for_each(|o| *o = 2);
+        }
+        true
+    }
     fn holds(&self, equal: &[(usize, i64)]) -> Option<bool> {
         let base = self.base.holds(equal)?;
         if base || !self.has_parts() {

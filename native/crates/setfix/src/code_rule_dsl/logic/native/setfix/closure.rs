@@ -555,8 +555,9 @@ fn keyed(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<
     // A test asked as the index's probe alone (the spike, decision 0561); `RERAIL_DIRECT_TESTS=off` asks it as a join.
     let direct = std::env::var("RERAIL_DIRECT_TESTS").map_or(true, |v| v != "off");
     let asked: Vec<std::cell::RefCell<super::cands::Asked>> = cl.tests.iter().map(|_| Default::default()).collect();
-    // A test that is a kind test (decision 0706 E1): its rows' nodes read as one batch (`kinds::KindTest`).
-    let kinds: Vec<Option<super::kinds::KindTest<'_>>> = cl.tests.iter().map(|t| if direct && super::kinds::in_closures() { super::kinds::kind_test(t, 0) } else { None }).collect();
+    // A test that is a node read binding nothing (decision 0706 E1): its rows' nodes read as one batch
+    // (`kinds::OwnRead`).
+    let kinds: Vec<Option<super::kinds::OwnRead<'_>>> = cl.tests.iter().map(|t| if direct && super::kinds::in_closures() { super::kinds::own_read(t, 0).filter(|r| r.tests_only()) } else { None }).collect();
     while !frontier.is_empty() {
         depths += 1;
         made.clear();
@@ -571,13 +572,21 @@ fn keyed(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<
             for &(t, want) in need {
                 let ask: Vector<u32> = alive.iter().copied().filter(|&i| answers[t][i as usize] == 0).collect();
                 if !ask.is_empty() && let Some(kt) = &kinds[t] {
-                    let nodes: Vector<i64> = ask.iter().map(|&r| frontier[r as usize * k + kt.slot]).collect();
-                    let wants: Vec<i64> = match kt.want { super::Key::Const(c) => vec![c], super::Key::Slot(s) => ask.iter().map(|&r| frontier[r as usize * k + s]).collect() };
-                    let mut vals = vec![false; nodes.len()];
-                    if super::kinds::trace() { eprintln!("RERAIL_KIND_TRACE closure {}", nodes.len()); }
-                    kt.read(&nodes, &wants, &mut vals[..]);
-                    for (&r, &v) in ask.iter().zip(vals.iter()) {
-                        answers[t][r as usize] = if v { 1 } else { 2 };
+                    let rows: Vec<i64> = ask.iter().flat_map(|&r| frontier[r as usize * k..(r as usize + 1) * k].iter().copied()).collect();
+                    let (mut vals, mut got) = (Vec::new(), Vec::new());
+                    if super::kinds::trace() { eprintln!("RERAIL_KIND_TRACE closure {}", ask.len()); }
+                    kt.read(&rows, k, &mut vals, &mut got);
+                    let mut a = asked[t].borrow_mut();
+                    for (&r, &g) in ask.iter().zip(got.iter()) {
+                        // Whether the row is there, before the step's negation (as `cands::holds` answers).
+                        answers[t][r as usize] = match g {
+                            super::kinds::Answer::Yes | super::kinds::Answer::No if (g == super::kinds::Answer::Yes) != kt.neg => 1,
+                            super::kinds::Answer::Yes | super::kinds::Answer::No => 2,
+                            super::kinds::Answer::Probe => {
+                                let row = &frontier[r as usize * k..(r as usize + 1) * k];
+                                if super::cands::holds(&cl.tests[t], &cl.tests[t].steps[0], store, row, &mut a) { 1 } else { 2 }
+                            }
+                        };
                     }
                 } else if !ask.is_empty() && direct {
                     let mut a = asked[t].borrow_mut();

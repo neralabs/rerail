@@ -12,7 +12,7 @@
 //! E2 (membership): node bits for a test by one column (decision 0694), a filter for one by several, read before the
 //! exact probe. A test the filter rejects reads no row.
 
-use super::{InRel, JoinRule, Src, Step};
+use super::{InRel, JoinRule, Key, Src, Step};
 use crate::code_rule_dsl::logic::access::{self, Access, Kind, Use};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -28,10 +28,10 @@ impl Observed {
     }
 }
 
-/// What the build batches made in the run: indexes built, by kind (node bits, filters), the rows they read, and
-/// views' value indexes.
+/// What the build batches made in the run: indexes built, by kind (node bits, filters), the rows they read,
+/// views' value indexes, and orders (E5).
 #[derive(Default)]
-pub(super) struct Built(Mutex<[u64; 4]>);
+pub(super) struct Built(Mutex<[u64; 5]>);
 
 /// Whether compiled step `i` of `j` is a membership test the walker reads an index for (`run_join_in_each`'s: not the
 /// first, not a delta's, not fused or ranged, binding nothing or negated, keyed, no tests of its own columns): its
@@ -59,8 +59,12 @@ pub(super) fn observe(j: &JoinRule, counts: &[(u64, u64)]) {
         }
         if super::kinds::trace() && let Step::Atom { src, neg, keys, binds, tests: t, .. } = &j.steps[i] {
             let name = match src { Src::In(r, x) => j.src_in(r, x).0.name.get().cloned().unwrap_or_default(), Src::Delta(_) => "delta".into(), Src::Full(_) => "full".into(), Src::FullMulti(..) => "multi".into() };
+            if std::env::var_os("RERAIL_STEP_FORMS").is_some() {
+                let form = match super::kinds::batches(j, true, [None, None]).get(i) { Some(Some((super::kinds::Batched::Own(_), _))) => "own", Some(Some((super::kinds::Batched::Keyed(_), _))) => "keyed", Some(Some((super::kinds::Batched::Held(_), _))) => "pairs", _ => "walk" };
+                eprintln!("RERAIL_STEP_FORM\t{name}\tkeys {:?} binds {:?} neg {neg} first {}\t{form}\t{tests}\t{out}", keys.iter().map(|&(c, k)| (c, matches!(k, Key::Slot(_)))).collect::<Vec<_>>(), binds.iter().map(|b| b.0).collect::<Vec<_>>(), i == 0);
+            }
             if name == "kind" {
-                eprintln!("RERAIL_KIND_TRACE steps kind first {} neg {neg} keys {} binds {} tests {} fused {} ranged {} batchable {} in {tests} out {out}", i == 0, keys.len(), binds.len(), t.len(), j.fused[i].is_some(), j.ranges[i].is_some(), super::kinds::kind_test(j, i).is_some());
+                eprintln!("RERAIL_KIND_TRACE steps kind first {} neg {neg} keys {} binds {} tests {} fused {} ranged {} batchable {} in {tests} out {out}", i == 0, keys.len(), binds.len(), t.len(), j.fused[i].is_some(), j.ranges[i].is_some(), super::kinds::own_read(j, i).is_some());
             }
         }
         // A scalar step over a complete input (E3): its probes, and the rows its input held, for its summary's price.
@@ -70,6 +74,30 @@ pub(super) fn observe(j: &JoinRule, counts: &[(u64, u64)]) {
                 seen.push((Access { rel: name.clone(), kind: j.bound(bag).access() }, Use { tests, found: rel.len() as u64 }));
             }
             continue;
+        }
+        // A keyed probe of a held input (E5): the index it reads on its key's columns, whatever its form (the order a
+        // probe makes, an index in the input's block, a kept chain): its probes, the rows its input held, and this
+        // plan as a reader. The search prices the probe by it (`orders_available`); a membership test's is E2's.
+        if let (Step::Atom { src: Src::In(rel, ix), keys, .. } | Step::Scalar { src: Src::In(rel, ix), keys, .. }) = &j.steps[i]
+            && !keys.is_empty()
+            && needs(j, i).is_none()
+            && order_prices()
+        {
+            let (rel, ix) = j.src_in(rel, ix);
+            if rel.view.is_none() && !ix.keyed && let Some(name) = rel.name.get() {
+                let mut cols: Vec<u16> = ix.cols.iter().map(|&c| c as u16).collect();
+                cols.sort_unstable();
+                let a = Access { rel: name.clone(), kind: Kind::Order(cols) };
+                {
+                    let r = crate::code_rule_dsl::logic::run::local::<Readers>();
+                    let mut r = r.0.lock().unwrap();
+                    let e = r.entry(a.clone()).or_default();
+                    e.0.insert(j.spec);
+                    e.1 = rel.len() as u64;
+                }
+                seen.push((a, Use { tests, found: 0 }));
+                continue;
+            }
         }
         let Some((a, neg)) = needs(j, i) else {
             if trace() && let Step::Atom { src: Src::In(rel, ix), neg, binds, keys, tests } = &j.steps[i] {
@@ -89,6 +117,29 @@ pub(super) fn observe(j: &JoinRule, counts: &[(u64, u64)]) {
     for (a, u) in seen {
         o.entry(a).or_default().add(u);
     }
+}
+
+/// Whether the search prices orders (`RERAIL_ORDER_PRICES=on`, off by default: decision 0706 step 5's record), and
+/// so whether their readers are observed.
+pub fn order_prices() -> bool {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_ORDER_PRICES").is_ok_and(|v| v == "on"))
+}
+
+/// The plans (by their spec's digest) that probed each order over the run, and the rows its input held when last
+/// probed (E5): an order's readers and its size.
+#[derive(Default)]
+struct Readers(Mutex<BTreeMap<Access, (BTreeSet<u64>, u64)>>);
+
+/// Decision 0706 §3: the orders the search prices with. Each order the run's readers have probed is scheduled: built
+/// ahead of its level (`orders_ahead`) at its build over the rows its input held, shared by the plans that read it.
+/// One not listed is absent, its whole build the price of the plan that would read it first.
+pub fn orders_available() -> access::Available {
+    let mut a = access::Available::default();
+    let Some(r) = crate::code_rule_dsl::logic::run::local_if_any::<Readers>() else { return a };
+    for (k, (plans, rows)) in r.0.lock().unwrap().iter() {
+        a.0.insert(k.clone(), access::State::Scheduled { cost: access::build_ns(&k.kind, *rows), readers: (plans.len() as u32).max(1) });
+    }
+    a
 }
 
 /// The sources whose walks the run has counted, by index: a chunk's view is counted once (`Use::found`).
@@ -186,8 +237,8 @@ fn trace() -> bool {
     *ON
 }
 
-/// What the run's build batches made: node bits, filters, the rows they read, and views' value indexes.
-pub fn built() -> [u64; 4] {
+/// What the run's build batches made: node bits, filters, the rows they read, views' value indexes, and orders.
+pub fn built() -> [u64; 5] {
     crate::code_rule_dsl::logic::run::local_if_any::<Built>().map(|b| *b.0.lock().unwrap()).unwrap_or_default()
 }
 
@@ -215,4 +266,81 @@ static VALUES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn value_indexes_built_for_tests() -> u64 {
     VALUES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Decision 0706 E5: the orders a component's plans probe derived inputs by (`Csr::runs`: a keyed probe's held
+/// order, an atom's or a scalar step's), built before its walks, in parallel, each into its relation's block as its first reader made it. No reader
+/// makes one after (`count_order_made` counts those that still do). An order is wanted by its plan, not by an earlier
+/// chunk's use: a reader that finds none makes it, at the same cost, inside its walk.
+pub(super) fn orders_ahead<'a>(plans: impl Iterator<Item = &'a JoinRule>) -> usize {
+    if !on() {
+        return 0;
+    }
+    let mut jobs: Vec<(&InRel, &super::Csr)> = Vec::new();
+    for p in plans {
+        for step in p.steps.iter() {
+            // An atom's probe, or a scalar step's (an aggregate's candidates by its key).
+            let (Step::Atom { src: Src::In(rel, ix), keys, .. } | Step::Scalar { src: Src::In(rel, ix), keys, .. }) = step else { continue };
+            if keys.is_empty() {
+                continue;
+            }
+            let (rel, ix) = p.src_in(rel, ix);
+            let ix: &super::Csr = ix;
+            if ix.ordered.is_none() || ix.order.get().is_some() || jobs.iter().any(|(_, c)| std::ptr::eq(*c, ix)) {
+                continue;
+            }
+            jobs.push((rel, ix));
+        }
+    }
+    build_orders(&jobs)
+}
+
+/// Each of `jobs`' orders (a derived input and the index a probe of it reads) made, in parallel, as its first reader
+/// would make it (`Csr::runs`), counted as built ahead. The number made.
+pub(super) fn build_orders(jobs: &[(&InRel, &super::Csr)]) -> usize {
+    if jobs.is_empty() {
+        return 0;
+    }
+    let _span = crate::code_rule_dsl::logic::profile::span(|| "orders built ahead (decision 0706 E5)".into());
+    use rayon::prelude::*;
+    jobs.par_iter().for_each(|(rel, ix)| {
+        AHEAD.with(|a| a.set(true));
+        let _ = ix.runs(rel);
+        AHEAD.with(|a| a.set(false));
+    });
+    #[cfg(any(test, feature = "test-hooks"))]
+    AHEAD_MADE.fetch_add(jobs.len(), std::sync::atomic::Ordering::Relaxed);
+    let b = crate::code_rule_dsl::logic::run::local::<Built>();
+    b.0.lock().unwrap()[4] += jobs.len() as u64;
+    jobs.len()
+}
+
+thread_local! {
+    /// Whether this thread is building orders ahead (`orders_ahead`).
+    static AHEAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// An order made: by the build ahead, or by a reader (counted, for tests).
+/// Whether a reader made it.
+pub(super) fn count_order_made() -> bool {
+    let reader = !AHEAD.with(std::cell::Cell::get);
+    if reader {
+        #[cfg(any(test, feature = "test-hooks"))]
+        READERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    reader
+}
+#[cfg(any(test, feature = "test-hooks"))]
+static READERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+#[cfg(any(test, feature = "test-hooks"))]
+static AHEAD_MADE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Tests: the orders the process built ahead of their readers.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn orders_built_ahead_for_tests() -> usize {
+    AHEAD_MADE.load(std::sync::atomic::Ordering::Relaxed)
+}
+/// Tests: the orders the process's readers made in their walks.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn orders_made_by_readers_for_tests() -> usize {
+    READERS.load(std::sync::atomic::Ordering::Relaxed)
 }

@@ -205,6 +205,58 @@ On `all` (m1max, load 10–27, two runs each, same rows): CPU 122.8 / 122.1 s be
 instructions 1,360 / 1,357 G before, 1,336 / 1,333 G after; peak 2,250 / 2,309 MB before, 2,211 / 2,306 MB after.
 W: 48.8 s, 477 G.
 
+### Step 2 (E1's node reads by node), as built
+
+- `Source::read_own_batch` replaces `test_own_batch`: for a batch of nodes by a view's own column, each one's row's
+  columns `reads`, and whether it has a row (or `2`: the source cannot say in a batch, and the walker probes it as one
+  row). `Viewed` finds every node of a chunk first, then reads their columns; the place and text views (`Loc`,
+  `Text`) read each node as `read_matches` does; `Places` (`line`, `col`, `docof`, …) hands a node's place to its view
+  and a span's to a probe; the values wrapper hands its parts' rows to a probe.
+- `kinds::OwnRead` (was `KindTest`): a view's step by a bound node with any keys, binds and tests: its other keys and
+  tests checked on the read values, its binds bound from them (`field(p, f, n)` by `n`, `node(_, x, k, _, _)` by
+  `x`, `docof(n, d)` by `n`). A closure's test that binds nothing reads the same batch.
+- Filtered views (`field WHERE f = …`, `child WHERE idx = …`) stay with the walker: their rows are those found at
+  their first scan (`View::ids`), and checking their filters against the source later gave other rows on `all`
+  (20,066 to 20,071 findings, against 20,046, varying run to run). Tested with each new form switched off: the
+  filtered views alone.
+- Test: `node_reads_that_bind_in_batches_give_each_rows_rows`.
+
+On `all`: 29.4 M rows of steps read as node reads (`RERAIL_STEP_FORMS`), the same rows; no change in CPU or
+instructions (below, with step 5). Profiled, the batch read's own cost is the node's document and local id found
+(`node_hint`, `granule_of_low`: about half of it), not the walker's work a row, which batching saves.
+
+### Step 5 (E5, keyed probes and `within`), as built
+
+- `kinds::Keyed`: a step that probes a relation or a view's source by bound slots and binds a column (a test that
+  binds nothing is E2's) waits in a batch; the batch's rows are sorted by the key's first column and each probed as the
+  walker probes one. The step's probe state goes from row to row (its hints into the order's runs, its last probe's
+  memo, its source's cursor), so the probes are a merge against the held order (0112). Batching the membership tests
+  as well (90 M rows on `all`) cost 45 G instructions more than it saved, so they are not batched.
+- `kinds::Held` and `Source::holds_batch`: `within(n, a)` with both bound, and its negation, a batch of pairs at a
+  time: `within`'s interval walk takes the pairs in their outer node's order, finds each outer node and its preorder
+  interval once, and each inner node from the last one's document. The values wrapper hands misses to a probe where
+  the relation has parts.
+- Orders built ahead (`access::orders_ahead`, at a component run's start beside E3's summaries): the orders its plans'
+  atoms and scalar steps probe derived inputs by (`Csr::runs`), in parallel, into their relations' blocks, as their
+  first reader made them. On `all`: 29 orders, 116 ms, all built ahead (before: made at their first probe, inside the
+  walk). `access::count_order_made` counts the orders a reader still makes.
+- §3, the search pricing with what is available: `Kind::Order` priced (`ORDER_BUILD_NS`, 88 ns a row, from the 29),
+  `Available::cost` (built: nothing; scheduled: its build's share over its readers; absent: its whole build), the
+  run's observed probes of held inputs with their readers (`orders_available`), and the DP search adding a probe's
+  share to its step. On `all` this chose plans that walked more: instructions 1,342 / 1,339 G without it, 1,351 /
+  1,353 G with it; observing every held input's probe (not only those reading an order) left it worse (1,344 / 1,345
+  against 1,355 / 1,368 G), the same rows each time. The builds it prices are a few hundred ms of a run's 120 s, and
+  the walks are the price. It is off unless `RERAIL_ORDER_PRICES=on`, and its readers are observed only then.
+- Tests: `keyed_probes_in_sorted_batches_give_each_rows_rows`, `within_pairs_in_batches_give_each_pairs_rows`
+  (tests_corpus: the rows with the batches on and off), `an_order_built_ahead_is_the_one_its_probe_reads`
+  (setfix: built ahead into the block's directory, the probe after it makes none), `an_order_is_priced_by_what_is_
+  available` (logic-core).
+
+On `all` (m1max, load 8–15, two runs each, same rows), steps 2 and 5 together: CPU 119.5 / 121.0 s before, 119.5 /
+119.7 s after; instructions 1,336 / 1,336 G before, 1,337 / 1,341 G after; peak 2,262 / 2,329 MB before, 2,314 /
+2,310 MB after. W: 48.7 s, 472 G. No change: the batches take the rows (29.4 M node reads, the keyed probes and
+`within`'s pairs), and the reads under them cost what they did.
+
 ## Consequences
 
 - 0694's node bits are made by the build batch, not at a key's first test.

@@ -1112,6 +1112,39 @@ impl Source for Within {
         }
         Some(self.below(n, a))
     }
+    /// `holds` of a batch of pairs (decision 0706 E5, `within`'s interval walk): the pairs taken in their outer
+    /// node's order, each outer node found once with its preorder interval (`below`'s), and each inner node found
+    /// from the last one's document (one memo for the batch); a pair holds where the inner node lies in the interval.
+    fn holds_batch(&self, cols: [usize; 2], pairs: &[i64], out: &mut [u8]) -> bool {
+        if self.mode != Mode::Tree {
+            return false;
+        }
+        let (inner, outer) = match cols {
+            [0, 1] => (0, 1),
+            [1, 0] => (1, 0),
+            _ => return false,
+        };
+        let n = pairs.len() / 2;
+        let mut order: Vec<(i64, i64, u32)> = (0..n).map(|r| (pairs[2 * r + outer], pairs[2 * r + inner], r as u32)).collect();
+        order.sort_unstable();
+        let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
+        let mut last: Option<(i64, Option<(usize, u32, u32)>)> = None;
+        for (a, v, r) in order {
+            let held = match last {
+                Some((x, h)) if x == a => h,
+                _ => {
+                    let h = self.batch.node(a, &mut memo).map(|(d, l)| (d, l, self.batch.docs[d].size(l as usize) as u32));
+                    last = Some((a, h));
+                    h
+                }
+            };
+            out[r as usize] = match (held, held.and_then(|_| self.batch.node(v, &mut memo))) {
+                (Some((da, la, size)), Some((dn, ln))) => u8::from(dn == da && la < ln && ln <= la + size),
+                _ => 0,
+            };
+        }
+        true
+    }
     /// By `n` on the batch's solve: each of the node's rows with its values, read from the solve's rows as they are
     /// found. No list of rows is made, and no row's value is read again (`lookup` then `value`). An axis not solved
     /// for the batch gives nothing here (`false`), and its rows are made per lookup as before.

@@ -62,6 +62,11 @@ pub enum State {
 pub struct Available(pub BTreeMap<Access, State>);
 
 impl Available {
+    /// The ns a step reading `a` pays for it: nothing where it is built, its share where it is scheduled, and its whole
+    /// build over `rows` where it is absent (decision 0706 §3).
+    pub fn cost(&self, a: &Access, rows: u64) -> f64 {
+        self.share(a).unwrap_or_else(|| build_ns(&a.kind, rows))
+    }
     pub fn state(&self, a: &Access) -> Option<State> {
         self.0.get(a).copied()
     }
@@ -112,6 +117,9 @@ pub const VALUE_WALK_NS: f64 = 44.0;
 pub const VALUE_BUILD_NS: f64 = 60.0;
 /// A whole summary's build, in ns a row (the row's group key read, hashed, its group's summary updated).
 pub const SUMMARY_BUILD_NS: f64 = 30.0;
+/// A derived input's sorted order built (`Csr::runs`), in ns a row: on `all`, 116 ms over 1.32 M rows (decision
+/// 0706 E5).
+pub const ORDER_BUILD_NS: f64 = 88.0;
 /// The share of absent keys a filter lets through (`blocks::relation::FILTER_BITS`, 5 bits a key).
 pub const FILTER_PASS: f64 = 0.003;
 
@@ -123,6 +131,7 @@ pub fn build_ns(kind: &Kind, rows: u64) -> f64 {
             Kind::NodeBits(_) => NODE_BITS_BUILD_NS,
             Kind::Summary { .. } => SUMMARY_BUILD_NS,
             Kind::Value(_) => VALUE_BUILD_NS,
+            Kind::Order(_) => ORDER_BUILD_NS,
             _ => f64::INFINITY,
         }
 }
@@ -148,6 +157,8 @@ pub fn pays(kind: &Kind, rows: u64, u: Use) -> bool {
         // A value index's use is its walks (`tests`) over the chunks they were in (`found`): the walks a chunk makes
         // against one build a chunk, both over the view's rows.
         Kind::Value(_) => u.tests as f64 * VALUE_WALK_NS > u.found.max(1) as f64 * VALUE_BUILD_NS,
+        // An order is its probes' only read: a reader without one makes it, at the same cost. Probed at all, it pays.
+        Kind::Order(_) => u.tests > 0,
         _ => saves_ns(kind, u) > build_ns(kind, rows),
     }
 }
@@ -173,6 +184,21 @@ mod tests {
         assert_eq!(a.share(&k), Some(300.0), "a scheduled build shared by its readers");
         a.0.insert(k.clone(), State::Built);
         assert_eq!(a.share(&k), Some(0.0));
+    }
+
+    /// Decision 0706 E5, §3: an order pays once probed at all (a reader would make it anyway); the search prices one
+    /// absent at its whole build over its input's rows, one scheduled at its build's share, one built at nothing.
+    #[test]
+    fn an_order_is_priced_by_what_is_available() {
+        let k = Access { rel: "r".into(), kind: Kind::Order(vec![0]) };
+        assert!(pays(&k.kind, 1_000_000, Use { tests: 1, found: 0 }));
+        assert!(!pays(&k.kind, 1_000_000, Use { tests: 0, found: 0 }));
+        let mut a = Available::default();
+        assert_eq!(a.cost(&k, 1_000), 1_000.0 * ORDER_BUILD_NS, "absent: its whole build");
+        a.0.insert(k.clone(), State::Scheduled { cost: 4_000.0, readers: 4 });
+        assert_eq!(a.cost(&k, 1_000), 1_000.0, "scheduled: its share");
+        a.0.insert(k.clone(), State::Built);
+        assert_eq!(a.cost(&k, 1_000), 0.0, "built");
     }
 
     /// Decision 0706 E3: a summary pays when its probes are not few against its relation's rows, whatever its size.

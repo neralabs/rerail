@@ -212,6 +212,33 @@ fn an_order_made_at_a_probe_is_in_the_blocks_directory() {
     assert_eq!(rel.rows.last_in_block().unwrap().relation().orders().count(), before + 1, "the order is in the directory");
 }
 
+/// Decision 0706 E5: a derived input's order built ahead of its readers (`access::build_orders`, as a component's
+/// plans' are) is in its block's directory, and the probe after it reads it there and makes none of its own.
+#[test]
+fn an_order_built_ahead_is_the_one_its_probe_reads() {
+    let _run = crate::code_rule_dsl::logic::profile::test_run();
+    let n = 3000;
+    let k = 2;
+    let mut rows_ = crate::code_rule_dsl::facts::rows::Rows::frozen(k, rows(n / 2), n / 2);
+    let mut rest = crate::code_rule_dsl::facts::rows::Rows::new(k);
+    rest.extend_from_slice(&rows(n)[n..]);
+    rows_.append_part(rest.parts().last().expect("its rows' part").clone());
+    let rows_ = rows_.freeze(n);
+    let rel = InRel::held(rows_, n, vec![b'i'; 2], rerail_blocks::vector::Vector::new());
+    let before = rel.rows.last_in_block().unwrap().relation().orders().count();
+    let ix = rel.index(&[1]);
+    assert!(ix.ordered.is_some() && ix.order.get().is_none(), "a derived input's order, not yet made");
+    let (ahead, readers) = (super::access::orders_built_ahead_for_tests(), super::access::orders_made_by_readers_for_tests());
+    assert_eq!(super::access::build_orders(&[(&*rel, &*ix)]), 1);
+    assert_eq!(super::access::orders_built_ahead_for_tests(), ahead + 1);
+    assert_eq!(rel.rows.last_in_block().unwrap().relation().orders().count(), before + 1, "the order is in the directory");
+    let mut got = Vec::new();
+    rel.probe_each(&[1], &[2000], &mut |row| got.push((row(0), row(1))));
+    assert_eq!(got, vec![(2000 % 7, 2000)]);
+    assert_eq!(super::access::orders_made_by_readers_for_tests(), readers, "the probe made no order");
+    assert_eq!(rel.rows.last_in_block().unwrap().relation().orders().count(), before + 1);
+}
+
 /// Decision 0478 step 6: a derived input's value counts and measured statistics are written once in a block, and
 /// its rows' values are not copied to count them.
 #[test]

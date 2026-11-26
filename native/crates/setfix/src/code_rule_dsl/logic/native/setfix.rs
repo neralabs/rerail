@@ -115,6 +115,8 @@ pub use scalars::built_whole_for_tests as summaries_built_whole;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use kinds::term_atoms_for_tests as node_text_term_atoms;
 #[cfg(any(test, feature = "test-hooks"))]
+pub use kinds::{keyed_force_for_tests as keyed_batches_forced, keyed_rows_for_tests as keyed_batched_rows};
+#[cfg(any(test, feature = "test-hooks"))]
 pub use access::value_indexes_built_for_tests as value_indexes_built;
 pub mod access;
 mod sorted_hash;
@@ -2931,8 +2933,9 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             if let Body::Join(join)=&probe.body {scalars::register(join,Some(&store));}
             if let Some(join)=&probe.whole {scalars::register(join,Some(&store));}
         }
-        let plans = comp.probes.iter().flat_map(|p| [match &p.body { Body::Join(j) => Some(&**j), _ => None }, p.whole.as_ref()]).flatten();
-        scalars::build_ahead(plans);
+        let plans = || comp.probes.iter().flat_map(|p| [match &p.body { Body::Join(j) => Some(&**j), _ => None }, p.whole.as_ref()]).flatten();
+        scalars::build_ahead(plans());
+        access::orders_ahead(plans());
     }
     let mut stmts = Vec::new();
     for p in &comp.probes { stmts.push(match &p.body { Body::Sql(sql) => Some(conn.sql()?.prepare(sql)?), Body::Join(_) | Body::Unplanned => None }); }
@@ -5292,6 +5295,8 @@ impl Csr {
             // wait for the one build.
             Some(printed) => Some(self.order.get_or_init(|| runs::inline(|| {
                 let _index = crate::code_rule_dsl::logic::profile::span(|| "probe: order of a derived input".into());
+                // A reader's (decision 0706 E5: its component's plans' orders are built ahead, `access::orders_ahead`).
+                let by_reader = access::count_order_made();
                 let c0 = thread_cpu();
                 charge(Unit::IndexEntry, rel.len() as u64);
                 // A ranged probe's order holds the range's column after the key's; it prints the key's columns alone,
@@ -5302,7 +5307,7 @@ impl Csr {
                 run_counts().orders_made.fetch_add(1, AtomicOrdering::Relaxed);
                 loaded(1, thread_cpu() - c0, 0);
                 if env_set!("RERAIL_SPIKE_INDEX") {
-                    eprintln!("O125 order made took {:.3} ms rows={} cols={:?} of {} viewed={}", (thread_cpu() - c0) * 1e3, rel.len(), self.cols, rel.name.get().map_or("?", String::as_str), rel.viewed);
+                    eprintln!("O125 order made took {:.3} ms rows={} cols={:?} of {} viewed={} reader={by_reader}", (thread_cpu() - c0) * 1e3, rel.len(), self.cols, rel.name.get().map_or("?", String::as_str), rel.viewed);
                 }
                 // Into the directory of the block that holds the relation's last rows, as a frozen relation's orders
                 // (decision 0478 step 5e): this keeps a handle to it.
@@ -8758,8 +8763,8 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                      factor: Vec<Option<Factor>>,
                      screen: Option<&'a join_filter::JoinFilter>,
                      /// Per step, a kind test whose rows wait to be tested a batch at a time (decision 0706 E1,
-                     /// `kinds::KindTest`): the test, and the waiting rows' slots, one after another.
-                     batch: Vec<Option<(kinds::KindTest<'a>, Vec<i64>)>>,
+                     /// `kinds::OwnRead`): the read, and the waiting rows' slots, one after another.
+                     batch: Vec<Option<(kinds::Batched<'a>, Vec<i64>)>>,
                      /// This walk's (morsel's) tests of `screen`, added to its counts as it ends.
                      screening: join_filter::Screening,
                      /// The deepest step entered (`go`), so a factored step knows where its row's descent stopped.
@@ -8971,38 +8976,75 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     /// Step `i`'s waiting rows tested (decision 0706 E1): their nodes' values read as one batch, and each row whose
     /// value is the test's (or is not, negated) goes on to the next step.
     fn run_batch(cx: &mut Ctx<'_, '_>, i: usize) {
-        let Some(Some((t, rows))) = cx.batch.get_mut(i) else { return };
-        let (t, rows) = (*t, std::mem::take(rows));
+        // The step's read and rows, out of the batch while they are read: a row probed as one row (`Answer::Probe`)
+        // is entered at the step with no batch there, and no other row comes to it meanwhile (rows go forward only).
+        let Some(Some((t, rows))) = cx.batch.get_mut(i).map(Option::take) else { return };
         let w = cx.j.nslots.max(1);
         let n = rows.len() / w;
-        if n == 0 || cx.error.is_some() { return; }
+        if n == 0 || cx.error.is_some() {
+            cx.batch[i] = Some((t, rows));
+            return;
+        }
         // Every row of the batch goes on, a cut or not: they are rows of first-step rows the walk has passed, which a
         // cut counts as finished. The budget waits until the batch is done; past it, the walk stops at its next step.
         let (stop, budget) = (cx.stop, cx.budget);
         cx.stop = false;
         cx.budget = u64::MAX;
-        let vals: Vec<i64> = (0..n).map(|r| rows[r * w + t.slot]).collect();
-        let wants: Vec<i64> = match t.want { Key::Const(c) => vec![c], Key::Slot(s) => (0..n).map(|r| rows[r * w + s]).collect() };
-        let mut out = vec![false; n];
         if kinds::trace() { eprintln!("RERAIL_KIND_TRACE batch {n}"); }
         let was = cx.clock.as_mut().map(|c| c.to(i));
-        t.read(&vals, &wants, &mut out);
+        // Entered again as it was: its counts and work, taken at its first entry, are not taken twice.
+        let again = |cx: &mut Ctx<'_, '_>, slots: &mut [i64]| {
+            if i > 0 { let c = &cx.counts[i - 1][1]; c.set(c.get() - 1); }
+            if let Some(c) = cx.counts.get(i) { c[0].set(c[0].get() - 1); }
+            cx.work -= 1;
+            enter(cx, i, slots);
+        };
         let mut slots = vec![0i64; w];
-        for (r, &hit) in out.iter().enumerate() {
-            if hit != t.neg {
-                slots.copy_from_slice(&rows[r * w..(r + 1) * w]);
-                go(cx, i + 1, &mut slots);
+        match &t {
+            kinds::Batched::Own(t) => {
+                let (mut vals, mut answers) = (Vec::new(), Vec::new());
+                t.read(&rows, w, &mut vals, &mut answers);
+                let k = vals.len() / n;
+                for (r, &a) in answers.iter().enumerate() {
+                    if a == kinds::Answer::No {
+                        continue;
+                    }
+                    slots.copy_from_slice(&rows[r * w..(r + 1) * w]);
+                    if a == kinds::Answer::Yes {
+                        t.bind(&mut slots, &vals[r * k..(r + 1) * k]);
+                        go(cx, i + 1, &mut slots);
+                    } else {
+                        again(cx, &mut slots);
+                    }
+                }
+            }
+            kinds::Batched::Held(t) => {
+                let mut answers = Vec::new();
+                t.read(&rows, w, &mut answers);
+                for (r, &a) in answers.iter().enumerate() {
+                    if a == kinds::Answer::No {
+                        continue;
+                    }
+                    slots.copy_from_slice(&rows[r * w..(r + 1) * w]);
+                    if a == kinds::Answer::Yes { go(cx, i + 1, &mut slots) } else { again(cx, &mut slots) }
+                }
+            }
+            // The rows in their keys' order, each probed as the walker probes one (E5).
+            kinds::Batched::Keyed(t) => {
+                for r in t.order(&rows, w) {
+                    let r = r as usize;
+                    slots.copy_from_slice(&rows[r * w..(r + 1) * w]);
+                    again(cx, &mut slots);
+                }
             }
         }
         if let (Some(c), Some(was)) = (cx.clock.as_mut(), was) { c.to(was); }
         cx.budget = budget;
         cx.stop |= stop || cx.work > budget;
-        // The buffer's room back, for the step's next rows.
-        if let Some(Some((_, b))) = cx.batch.get_mut(i) && b.is_empty() {
-            let mut rows = rows;
-            rows.clear();
-            *b = rows;
-        }
+        // The read back, with the buffer's room for the step's next rows.
+        let mut rows = rows;
+        rows.clear();
+        cx.batch[i] = Some((t, rows));
     }
     /// Every step's waiting rows tested, in step order (a step's passing rows wait at later steps only), a cut or not
     /// (`run_batch`): a walk cut at its budget finishes the rows waiting, past it by at most a batch a step. Its rows
@@ -9035,7 +9077,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 |step|step.observes(*slot))) {
                 cx.error=Some(super::aggregation::sum_value(*value).unwrap_err());return;
             }
-        // A kind test tested a batch at a time (decision 0706 E1): the row waits with the step's others. Counted as
+        // A node read a batch at a time (decision 0706 E1): the row waits with the step's others. Counted as
         // gone past every step, so no factored step records it as failed while it waits.
         if let Some(Some((_, rows))) = cx.batch.get_mut(i) && cx.pending.is_empty() {
             rows.extend_from_slice(slots);

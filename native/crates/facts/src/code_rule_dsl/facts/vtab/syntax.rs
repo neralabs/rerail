@@ -4904,36 +4904,53 @@ impl Source for Viewed {
     /// `read_matches` reads a probe by the own column (a node's one row): every id found first (its document, local
     /// id, tape node and row), then each read, through the document's directory row where the view is the kernels',
     /// else off the tape.
-    fn test_own_batch(&self, column: usize, values: &[i64], read: usize, want: &[i64], out: &mut [bool]) -> bool {
+    fn read_own_batch(&self, column: usize, values: &[i64], reads: &[usize], out: &mut [i64], found: &mut [u8]) -> bool {
         use read_op::*;
-        if column != self.own() || matches!(self.view, View::Loc(_) | View::Text | View::Op) {
+        // An operator's rows are its tokens' (several to a node).
+        if column != self.own() || matches!(self.view, View::Spread | View::Op) {
             return false;
+        }
+        // A place's and a text's rows (a node's or a position's, one): each read as a probe reads it
+        // (`read_matches`), the batch's ids one after another with one cursor.
+        if matches!(self.view, View::Loc(_) | View::Text) {
+            let k = reads.len();
+            let mut cursor = super::ProbeCursor::default();
+            for (r, &v) in values.iter().enumerate() {
+                let (o, f) = (&mut out[r * k..(r + 1) * k], &mut found[r]);
+                *f = 0;
+                if !self.read_matches(column, v, reads, &mut cursor, &mut |_, got| {
+                    o.copy_from_slice(got);
+                    *f = 1;
+                }) {
+                    *f = 2;
+                }
+            }
+            return true;
         }
         const B: usize = 256;
         let b = &*self.batch;
         let (firsts, kernel, view) = (b.firsts(self.view), self.kernel_view(), self.view);
         let node = std::cell::Cell::new(super::NodeMemo::default());
         let mut hint = 0u32;
-        let (op, needs) = Self::read_op(view, read);
-        let mut found = [(0usize, 0u32, 0u32, 0usize); B];
-        let one = want.len() == 1;
-        for (c, (vs, os)) in values.chunks(B).zip(out.chunks_mut(B)).enumerate() {
-            let want_of = |k: usize| if one { want[0] } else { want[c * B + k] };
-            for ((&v, f), o) in vs.iter().zip(found.iter_mut()).zip(os.iter_mut()) {
-                *o = false;
-                let row = b.node_hint(v, &mut hint, &node).and_then(|(doc, local, x)| {
-                    let row = if x != NONE { b.row_of_node(view, doc, local, x) } else { b.row(view, doc, local) }?;
-                    Some((doc, local, x, row))
-                });
-                match row {
-                    Some(r) => *f = r,
-                    None => *f = (usize::MAX, 0, 0, 0),
-                }
+        let ops: Vec<_> = reads.iter().map(|&r| Self::read_op(view, r)).collect();
+        let needs = ops.iter().fold(0, |n, &(_, need)| n | need);
+        let k = reads.len();
+        let mut at = [(0usize, 0u32, 0u32, 0usize); B];
+        for (c, vs) in values.chunks(B).enumerate() {
+            // Every node of the chunk found, then every one's columns read.
+            for (&v, f) in vs.iter().zip(at.iter_mut()) {
+                *f = b
+                    .node_hint(v, &mut hint, &node)
+                    .and_then(|(doc, local, x)| Some((doc, local, x, if x != NONE { b.row_of_node(view, doc, local, x) } else { b.row(view, doc, local) }?)))
+                    .unwrap_or((usize::MAX, 0, 0, 0));
             }
-            for (k, ((&v, &(doc, local, x, row)), o)) in vs.iter().zip(found.iter()).zip(os.iter_mut()).enumerate() {
+            for (j, (&v, &(doc, local, x, row))) in vs.iter().zip(at.iter()).enumerate() {
+                let r = c * B + j;
+                found[r] = u8::from(doc != usize::MAX);
                 if doc == usize::MAX {
                     continue;
                 }
+                let o = &mut out[r * k..(r + 1) * k];
                 if kernel
                     && let Some(d) = b.docs.read(doc, false)
                 {
@@ -4943,13 +4960,17 @@ impl Source for Viewed {
                         View::Field => d.knowing(local, x, i as u32),
                         _ => d.knowing(local, x, u32::MAX),
                     };
-                    *o = self.read_value(&d, i, read) == want_of(k);
+                    for (o, &rd) in o.iter_mut().zip(reads) {
+                        *o = self.read_value(&d, i, rd);
+                    }
                     continue;
                 }
                 let p = &b.docs[doc];
                 let x = if x != NONE || needs & NEED_X == 0 { x } else { b.tape_node(doc, local, v, &node) };
                 let up = if needs & NEED_UP != 0 { Self::parent_id_of(p, local, x) } else { 0 };
-                *o = Self::op_value(b, p, local, x, v, up, Known::default(), op) == want_of(k);
+                for (o, &(op, _)) in o.iter_mut().zip(&ops) {
+                    *o = Self::op_value(b, p, local, x, v, up, Known::default(), op);
+                }
             }
         }
         true
