@@ -41,6 +41,11 @@ describe.runIf(process.platform === "win32")("cases that turn this process's Bac
     expect(await withoutBackupPrivileges(async () => "ran")).toBe("ran");
   }, CASE_LIMIT_MS);
 
+  it("pass a body's error on to the case, and their PowerShell answers the next body", async () => {
+    await expect(withoutBackupPrivileges(() => Promise.reject(new Error("the body failed")))).rejects.toThrow("the body failed");
+    expect(await withoutBackupPrivileges(async () => "ran")).toBe("ran");
+  }, CASE_LIMIT_MS);
+
   it("run the body with both off and turn on again those that were on, after a body that throws too", async ({ skip }) => {
     const before = privilegeStates();
     if (!BACKUP_PRIVILEGES.every(name => before.get(name) === "Enabled")) skip("this process's token holds Backup and Restore off");
