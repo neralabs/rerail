@@ -50,6 +50,7 @@ pub const FUNCS: &[(&str, Args, Ty)] = &[
     ("dir", Some(&[Text]), Text),
     ("join", Some(&[Text, Text]), Text),
     ("replace", Some(&[Text, Text, Text]), Text),
+    ("shortlex_min", Some(&[Text, Text]), Text),
 ];
 
 /// Function `name`'s place in `FUNCS`.
@@ -116,6 +117,11 @@ pub fn call<'a>(f: usize, args: &[i64], text: &dyn Fn(i64) -> Option<&'a str>) -
         // `rel` from `dir`, normalised, `..` resolved (`@join(@dir("src/a/b.ts"), "../c")` = `"src/c"`).
         "join" => txt(join(t(0)?, t(1)?)),
         // Every occurrence of the text `from` (no regex: `core.rerail`'s `replace_all` is one) by `by`, left to right.
+        // The shorter, then the lesser by text (`core.rerail`'s `shortlex_min<>`, a lattice's join).
+        "shortlex_min" => {
+            let (a, b) = (t(0)?, t(1)?);
+            txt(if (a.len(), a) <= (b.len(), b) { a } else { b }.to_string())
+        }
         "replace" => {
             let (s, from, by) = (t(0)?, t(1)?, t(2)?);
             txt(if from.is_empty() { s.to_string() } else { s.replace(from, by) })

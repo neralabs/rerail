@@ -352,9 +352,31 @@ impl Trace {
     /// layer of it until its delta is read): the layers committed since `since` rolled up into one, then the geometric
     /// policy (`due_to_merge`) over the layers below, as a commit under `RollUp::Geometric` does. The head.
     pub fn roll_up_run(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, since: Option<BlockId>, tiling: Tiling) -> Result<Option<BlockId>, String> {
-        let Some(head) = self.head else { return Ok(None) };
-        let count = {
+        if self.head.is_none() {
+            return Ok(None);
+        }
+        self.roll_up_since(reg, ops, dir, since, tiling)?;
+        let head = self.head.expect("rolled up");
+        let due = {
             let l = dir.read("a run's roll-up", &[head])?;
+            let table = l.table();
+            let layer = Layer::new(table.block(head.0).expect("reached"))?;
+            let size = layer.n() as u64 + layer.kills().len() as u64;
+            rerail_delta_twins::trace::due_to_merge(&table, layer.below().map_or(NONE, |(b, _)| b), size)
+        };
+        if due >= 2 {
+            self.roll_up(reg, ops, dir, due as u32, tiling)?;
+        }
+        Ok(self.head)
+    }
+
+    /// The layers committed since `since` (a layer of its chain, or `None`: its first) rolled up into one, where there
+    /// are two or more; `since` stays a layer of the chain. A fixpoint's rounds (`phase`'s Δfix) keep their chain to
+    /// two layers over the run's base this way, the last round's change and the rest.
+    pub fn roll_up_since(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, since: Option<BlockId>, tiling: Tiling) -> Result<(), String> {
+        let Some(head) = self.head else { return Ok(()) };
+        let count = {
+            let l = dir.read("a roll-up since a layer", &[head])?;
             let table = l.table();
             let (mut k, mut id) = (0u32, Some(head.0));
             while let Some(b) = id
@@ -368,18 +390,7 @@ impl Trace {
         if count >= 2 {
             self.roll_up(reg, ops, dir, count, tiling)?;
         }
-        let head = self.head.expect("rolled up");
-        let due = {
-            let l = dir.read("a run's roll-up", &[head])?;
-            let table = l.table();
-            let layer = Layer::new(table.block(head.0).expect("reached"))?;
-            let size = layer.n() as u64 + layer.kills().len() as u64;
-            rerail_delta_twins::trace::due_to_merge(&table, layer.below().map_or(NONE, |(b, _)| b), size)
-        };
-        if due >= 2 {
-            self.roll_up(reg, ops, dir, due as u32, tiling)?;
-        }
-        Ok(self.head)
+        Ok(())
     }
 
     /// The trace emptied: its head let go (a cold run's outputs start from ∅, B§8). A trace has two states, the

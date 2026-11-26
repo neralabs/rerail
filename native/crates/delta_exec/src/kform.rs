@@ -12,6 +12,9 @@
 //! - `k_decl(m, rel, i, type)`: module `m` declares relation `rel` (`.decl`, K1-d), its `i`-th column of type `type`.
 //!   A step or a head of another arity is refused, as a relation of two declarations that differ is; K0 declares
 //!   none.
+//!   A lattice (0686, L4-i) is two more places, which no column has: `k_decl(m, L, -1, f)`, lattice `L`'s join is the
+//!   function `f` (`.lattice L<base> { Lub -> @f }`); `k_decl(m, rel, -2, k)`, relation `rel` is declared `widen k`.
+//!   A relation whose last column's type is `flat`, `max`, `min` or a lattice keeps one row a key (`phase::Lattice`).
 //!
 //! What a program means is fixed by §3's five sentences, and nothing else is: the executor never reorders, rewrites
 //! or stratifies a rule.

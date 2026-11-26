@@ -329,6 +329,11 @@ pub struct Program {
     pub modules: BTreeMap<i64, Module>,
     /// The declared relations (`k_decl`, K1-d): each one's columns' types, in column order.
     pub decls: BTreeMap<i64, Vec<i64>>,
+    /// The declared lattices (`.lattice L<base> { Lub -> @f }`, `k_decl(m, L, -1, f)`; 0686 L4-i): each one's join
+    /// function, by its name's symbol.
+    pub lattices: BTreeMap<i64, i64>,
+    /// The relations declared `widen k` (`k_decl(m, rel, -2, k)`): a lattice value goes to top once it changed k times.
+    pub widen: BTreeMap<i64, i64>,
 }
 
 /// A step's place: its module, its rule, and its `(k, j)` (`(-1, -1)`: the head).
@@ -453,7 +458,20 @@ impl Program {
         // The declarations: each module's columns of a relation, dense from 0, one type a column (a module's
         // declarations of one relation are the union of their columns); two modules' that differ are refused.
         let mut by: BTreeMap<(i64, i64), BTreeMap<i64, i64>> = BTreeMap::new();
+        let (mut lattices, mut widen) = (BTreeMap::new(), BTreeMap::new());
         for r in &rows[at("k_decl")] {
+            // A lattice's join, and a relation's widening (no column: places -1 and -2).
+            let into = match r[2] {
+                -1 => Some(&mut lattices),
+                -2 => Some(&mut widen),
+                _ => None,
+            };
+            if let Some(into) = into {
+                if let Some(t) = into.insert(r[1], r[3]).filter(|&t| t != r[3]) {
+                    return Err(Refused { module: r[0], rule: -1, why: format!("{} is declared twice, with {t} and {}", crate::sym::name_of(atoms, r[1]), r[3]) });
+                }
+                continue;
+            }
             if let Some(t) = by.entry((r[0], r[1])).or_default().insert(r[2], r[3]).filter(|&t| t != r[3]) {
                 let (a, b) = (crate::sym::name_of(atoms, t), crate::sym::name_of(atoms, r[3]));
                 return Err(Refused { module: r[0], rule: -1, why: format!("relation {}'s column {} is declared of type {a} and of {b}", crate::sym::name_of(atoms, r[1]), r[2]) });
@@ -471,7 +489,7 @@ impl Program {
             }
             decls.insert(rel, types);
         }
-        let p = Program { modules, decls };
+        let p = Program { modules, decls, lattices, widen };
         p.check(atoms)?;
         Ok(p)
     }

@@ -932,6 +932,57 @@ loose(1) :- n ~ `other($A, $B).`.\n";
     assert!(e.contains("a list of two $$$"), "{e}");
 }
 
+/// Lattices (B§6, L4; `core.rerail`; L4-i): a relation whose last column is a lattice keeps one row a key, the join
+/// of the values derived for it: `flat<>` (one value, or top when two differ), `max<>`, `min<>`, a `.lattice` by its
+/// join function (`shortlex_min`, as `rf_shortlex` is), and `widen k` (top once a key's value moved k times). Through
+/// recursion, a cycle included, and read by a later module. An edit gives what a cold run gives.
+#[test]
+fn lattices_keep_each_keys_join_by_the_executors_rounds() {
+    const U: &str = ".decl cv(n: symbol, v: flat<>)\n.decl best(n: symbol, v: max<>)\n.decl low(n: symbol, v: min<>)\n\
+.decl far(n: symbol, v: max<>)\n.decl near(n: symbol, v: min<>)\n\
+.lattice sl<symbol> { Lub -> @shortlex_min }\n.decl route(c: symbol, r: sl<>) widen 64\n\
+.decl grow(n: symbol, v: max<>) widen 3\n.decl climb(n: symbol, v: max<>)\n.decl few(n: symbol, v: max<>) widen 3\n\
+cv(n, v) :- src(n, v).\nbest(n, v) :- src(n, v).\nlow(n, v) :- src(n, v).\n\
+far(\"x\", 0).\nfar(c, w) :- far(b, v), f(b, c), w = v + 1.\nnear(\"x\", 0).\nnear(c, w) :- near(b, v), f(b, c), w = v + 1.\n\
+route(\"x\", \"x\").\nroute(c, s) :- route(b, r), e(b, c), s = cat(r, c).\n\
+grow(\"g\", 0).\ngrow(n, w) :- grow(n, v), w = v + 1, w < 100.\nclimb(\"g\", 0).\nclimb(n, w) :- climb(n, v), w = v + 1, w < 100.\n\
+few(\"g\", 0).\nfew(n, w) :- few(n, v), w = v + 1, w < 3.\n";
+    const FACTS: &str = "src(\"a\", 1).\nsrc(\"a\", 1).\nsrc(\"b\", 1).\nsrc(\"b\", 2).\n\
+f(\"x\", \"y\").\nf(\"y\", \"z\").\nf(\"x\", \"z\").\n\
+e(\"x\", \"y\").\ne(\"y\", \"z\").\ne(\"x\", \"z\").\ne(\"z\", \"w\").\ne(\"w\", \"x\").\n";
+    const V: &str = "two(n) :- far(n, 2).\nflat_top(n) :- cv(n, v), v = 9223372036854775807.\n";
+    let roots = "root(\"facts.rerail\", \"facts\").\nroot(\"u.rerail\", \"u\").\nroot(\"v.rerail\", \"v\").\np0_lib(\"lib\").\n";
+    let mut r = compiler_files("phase-lattices", roots, &[("facts.rerail", FACTS), ("u.rerail", U), ("v.rerail", V)]);
+    r.run();
+    let top = i64::MAX;
+    let rows = |r: &Run, cells: &[(&str, i64)]| -> BTreeSet<Vec<i64>> { cells.iter().map(|(k, v)| vec![r.s(k), *v]).collect() };
+    let syms = |r: &Run, cells: &[(&str, &str)]| -> BTreeSet<Vec<i64>> { cells.iter().map(|(k, v)| vec![r.s(k), r.s(v)]).collect() };
+    let check = |r: &Run, what: &str, b: i64| {
+        assert_eq!(r.rows(3, "cv"), rows(r, &[("a", 1), ("b", if b == 1 { 1 } else { top })]), "{what}: flat");
+        assert_eq!(r.rows(3, "best"), rows(r, &[("a", 1), ("b", b)]), "{what}: max");
+        assert_eq!(r.rows(3, "low"), rows(r, &[("a", 1), ("b", 1)]), "{what}: min");
+        assert_eq!(r.rows(3, "far"), rows(r, &[("x", 0), ("y", 1), ("z", 2)]), "{what}: max through recursion");
+        assert_eq!(r.rows(3, "near"), rows(r, &[("x", 0), ("y", 1), ("z", 1)]), "{what}: min through recursion");
+        assert_eq!(r.rows(3, "route"), syms(r, &[("x", "x"), ("y", "xy"), ("z", "xz"), ("w", "xzw")]), "{what}: a lattice by its join, through a cycle");
+        assert_eq!(r.rows(3, "grow"), rows(r, &[("g", top)]), "{what}: widened");
+        assert_eq!(r.rows(3, "climb"), rows(r, &[("g", 99)]), "{what}: not widened");
+        assert_eq!(r.rows(3, "few"), rows(r, &[("g", 2)]), "{what}: two moves, under its widen of 3");
+        assert_eq!(r.rows(3, "two"), [vec![r.s("z")]].into_iter().collect(), "{what}: read by a later module");
+        let tops: BTreeSet<Vec<i64>> = if b == 1 { BTreeSet::new() } else { [vec![r.s("b")]].into_iter().collect() };
+        assert_eq!(r.rows(3, "flat_top"), tops, "{what}: top read");
+    };
+    check(&r, "cold", 2);
+    r.write("facts.rerail", &FACTS.replace("src(\"b\", 2)", "src(\"b\", 1)"), 40);
+    r.run();
+    check(&r, "edited", 1);
+    r.write("facts.rerail", FACTS, 30);
+    r.run();
+    check(&r, "edited back", 2);
+    r.last = None;
+    r.run();
+    check(&r, "cold again", 2);
+}
+
 /// L4's aggregates (B§10 step 9; L4-f): `count`, `sum`, `min`, `max` and `mean` as delta operators the executor knows
 /// by symbol, each a step folding the rows of its body's atom that match its keys (the variables it shares with its
 /// clause, bound before it), its own variables only its, in a head or bound by `=`. `count` of none is 0. An edit is

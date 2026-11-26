@@ -82,3 +82,7 @@ read_wild(d, t) :- kind(d, t, "wildcard").
 read_wild(d, m) :- kind(d, m, "pattern_match").
 // A declaration (K1-d): its relation's columns, each by its place and its type's name.
 read_decl(d, r, i, t) :- kind(d, x, "declaration"), field(d, x, "name", n), text(d, n, r), field(d, x, "columns", l), child(d, l, c, i), field(d, c, "type", y), field(d, y, "name", tn), text(d, tn, t).
+// A lattice (0686, L4-i): `.lattice L<base> { Lub -> @f }` declares L's join, `f`, at place -1 (no column's); a
+// declaration's `widen k`, at place -2. A column of type `flat<>`, `max<>`, `min<>` or `L<>` is a lattice's.
+read_decl(d, l, -1, f) :- kind(d, x, "lattice_declaration"), field(d, x, "name", n), text(d, n, l), field(d, x, "operation", o), field(d, o, "name", on), text(d, on, "Lub"), field(d, o, "value", v), field(d, v, "function", fn), text(d, fn, f).
+read_decl(d, r, -2, k) :- kind(d, x, "declaration"), field(d, x, "name", n), text(d, n, r), field(d, x, "modifier", w), text(d, w, "widen"), field(d, x, "modifier", m), kind(d, m, "number"), value(d, m, k).

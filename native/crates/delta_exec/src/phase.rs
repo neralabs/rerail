@@ -104,14 +104,63 @@ fn key_shape(head: &Shape) -> Shape {
     s
 }
 
-/// A head of a stratum: its relation, its arity, its trace's shape (levelled in a recursive stratum), and its
-/// derivation counts' shape (a non-recursive stratum's).
+/// A head of a stratum: its relation, its arity, its trace's shape (levelled in a recursive stratum), its
+/// derivation counts' shape (a non-recursive stratum's), and its lattice, when its last column is one.
 #[derive(Clone, Debug)]
 pub struct Head {
     pub rel: i64,
     pub arity: usize,
     pub shape: Shape,
     pub counts: Option<Shape>,
+    pub lattice: Option<Lattice>,
+}
+
+/// A lattice's join (0686, L4-i; `core.rerail`: "`flat<>`: one value, or top when two differ; `min<>` and `max<>`
+/// keep the least or greatest"; `.lattice L<base> { Lub -> @f }`: the function `f`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Join {
+    Flat,
+    Max,
+    Min,
+    Fn(usize),
+}
+
+/// A head's lattice: its join, and how many changes of a key's value send it to top (`widen k`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Lattice {
+    pub join: Join,
+    pub widen: Option<i64>,
+}
+
+impl Lattice {
+    /// Top: the value the join keeps once there (no value of the base: a symbol is a small positive id).
+    pub fn top(self) -> i64 {
+        match self.join {
+            Join::Flat | Join::Max => i64::MAX,
+            Join::Min | Join::Fn(_) => i64::MIN,
+        }
+    }
+
+    /// The join of `a` and `b`; `text` a symbol's text, for a function's; `None`: a function's answer that is no
+    /// symbol of either, or none.
+    pub fn join<'a>(self, a: i64, b: i64, text: &dyn Fn(i64) -> Option<&'a str>) -> Option<i64> {
+        let top = self.top();
+        if a == top || b == top {
+            return Some(top);
+        }
+        Some(match self.join {
+            Join::Flat if a == b => a,
+            Join::Flat => top,
+            Join::Max => a.max(b),
+            Join::Min => a.min(b),
+            Join::Fn(f) => match crate::funcs::call(f, &[a, b], text)? {
+                crate::funcs::Out::Num(v) => v,
+                crate::funcs::Out::Text(t) if text(a) == Some(&t) => a,
+                crate::funcs::Out::Text(t) if text(b) == Some(&t) => b,
+                crate::funcs::Out::Text(_) => return None,
+            },
+        })
+    }
 }
 
 /// A stratum: a module's rules on each side, the relations they read and the heads they write.
@@ -132,6 +181,8 @@ pub struct Stratum {
     pub inferred: Vec<(i64, Facts)>,
     /// Its algorithm, found from the facts (0361 item 4): a recursion along a tree, run cold in one wave.
     pub along: Option<Along>,
+    /// The atoms, where a lattice head's join reads a symbol's text (`with_lattices`).
+    pub atoms: Option<BlockId>,
 }
 
 /// A linear recursion along one column (Operations, class 30; 0361: "a tree plus recursion along it gives a walk"):
@@ -537,7 +588,47 @@ impl Stratum {
                 ins.push((d, sh.clone()));
             }
         }
-        Ok(Stratum { ops, module, before, after, known, tape, ins, heads, recursive, inferred: Vec::new(), along: None })
+        Ok(Stratum { ops, module, before, after, known, tape, ins, heads, recursive, inferred: Vec::new(), along: None, atoms: None })
+    }
+
+    /// It, with each head whose last column `program` declares a lattice (`flat`, `max`, `min`, or a `.lattice`'s
+    /// name) keeping one value a key, the join of those derived (0686, L4-i). A stratum of a lattice head is a Δfix run
+    /// from ∅ (`fix`): its rounds join each key's values, and the rows a value no longer kept derived stay (a lattice's
+    /// rules are monotone, as Soufflé's), so an edit gives what a cold run gives. Refused for a lattice whose join is
+    /// no function of two arguments.
+    pub fn with_lattices(mut self, program: &Program, atoms: crate::sym::Atoms, names: &[u8]) -> Result<Stratum, Refused> {
+        let n = |s: i64| crate::sym::name_of(names, s);
+        for h in &mut self.heads {
+            let Some(&ty) = program.decls.get(&h.rel).and_then(|c| c.last()) else { continue };
+            let join = match n(ty).as_str() {
+                "flat" => Join::Flat,
+                "max" => Join::Max,
+                "min" => Join::Min,
+                _ => match program.lattices.get(&ty) {
+                    None => continue,
+                    Some(&f) => match crate::funcs::find(&n(f)) {
+                        Some(fi) if crate::funcs::takes(fi, 2) => Join::Fn(fi),
+                        _ => return Err(Refused { module: self.module, rule: -1, why: format!("lattice {}'s join {}, which is no function of two arguments", n(ty), n(f)) }),
+                    },
+                },
+            };
+            h.lattice = Some(Lattice { join, widen: program.widen.get(&h.rel).copied() });
+        }
+        if self.heads.iter().any(|h| h.lattice.is_some()) {
+            if !self.recursive {
+                for h in &mut self.heads {
+                    if h.arity == 0 {
+                        return Err(Refused { module: self.module, rule: -1, why: format!("relation {} is nullary in a stratum of a lattice: a level is a column of a row (0364)", n(h.rel)) });
+                    }
+                    h.shape = levelled(&h.shape);
+                    h.counts = None;
+                }
+                self.recursive = true;
+            }
+            self.along = None;
+            self.atoms = Some(atoms.0);
+        }
+        Ok(self)
     }
 
     /// It, with its algorithm found from the facts `of` gives the relations it reads (0361 item 4): `Along` where its
@@ -649,7 +740,7 @@ impl Stratum {
                 return Err(Refused { module, rule: r.id, why: format!("relation {} is written by single-file and cross-file rules both", crate::sym::name_of(atoms, r.head)) });
             }
             let name = crate::sym::name_of(atoms, r.head);
-            heads.push(Head { rel: r.head, arity: r.args.len(), counts: None, shape: head_shape(&name, r.args.len(), sf.contains(&true)) });
+            heads.push(Head { rel: r.head, arity: r.args.len(), counts: None, shape: head_shape(&name, r.args.len(), sf.contains(&true)), lattice: None });
         }
         let own: BTreeSet<i64> = heads.iter().map(|h| h.rel).collect();
         let recursive = side.iter().any(|r| r.reads().any(|(_, rel)| own.contains(&rel)));
@@ -865,7 +956,8 @@ impl Stratum {
     /// when the program changed), and its change since then the output's.
     fn fix(&self, cx: &mut Cx<'_>, s: &Sides, before: &[Rule], out: &mut Out<Programmed>) -> Result<Work, String> {
         let mut work = Work::default();
-        let program_changed = before != self.after.as_slice();
+        // A lattice head's stratum runs from ∅ (`with_lattices`).
+        let program_changed = before != self.after.as_slice() || self.heads.iter().any(|h| h.lattice.is_some());
         let base: Vec<Option<BlockId>> = (0..self.heads.len()).map(|k| if program_changed { None } else { out.kept(self.h(k)) }).collect();
         let mut w: Vec<Trace> = self.heads.iter().zip(&base).map(|(h, &b)| Trace::over(&h.shape, b)).collect::<Result<_, _>>()?;
         let ran = self.fix_in(cx, s, program_changed, &mut w, &base, &mut work);
@@ -981,10 +1073,26 @@ impl Stratum {
         }
         // Rounds: the rows found that are not present added at the level their derivation gives (one more than the
         // highest it reads: added rows never lower a level, §3), then what they derive, until a round adds nothing.
+        // A lattice head's keys' changes, for `widen`.
+        let mut changes: Vec<BTreeMap<Vec<i64>, i64>> = vec![BTreeMap::new(); n];
         loop {
+            // A lattice head's rounds before, one layer over the base: its rounds kill the rows a join moved, and a
+            // kill searches the chain below it (a bound of 64 layers); a round reads only the last one's change. Other
+            // heads' rounds only add.
+            for ((t, &b), h) in w.iter_mut().zip(base).zip(&self.heads) {
+                if h.lattice.is_some() {
+                    t.roll_up_since(cx.reg, cx.traces, cx.dir, b, crate::op::Tiling::WHOLE)?;
+                }
+            }
             let from = heads_of(w);
             let mut any = false;
             for (k, rows) in seeds.iter().enumerate() {
+                if let Some(lat) = self.heads[k].lattice {
+                    let moved = self.joined(cx, lat, &mut now[k], rows, &mut changes[k])?;
+                    any |= !moved.is_empty();
+                    self.put(cx, &mut w[k], base[k], &moved)?;
+                    continue;
+                }
                 let new: Vec<(Vec<i64>, i64, i32)> = rows.iter().filter(|(r, _)| !now[k].contains_key(*r)).map(|(r, &l)| (r.clone(), l, 1)).collect(); // copy: derived (a round's new rows)
                 any |= !new.is_empty();
                 for (r, l, _) in &new {
@@ -1000,6 +1108,59 @@ impl Stratum {
             seeds = vec![BTreeMap::new(); n];
             found(&mut seeds, self.derive(cx, s, &p, work)?);
         }
+    }
+
+    /// A lattice head's round (0686, L4-i): each key's value joined with the values `rows` derive for it, its row in
+    /// `now` replaced where the join moved it (the old row out, the new in: the rows to put), or sent to top once it
+    /// moved `widen` times (`changes`, a key's count).
+    fn joined(&self, cx: &Cx<'_>, lat: Lattice, now: &mut BTreeMap<Vec<i64>, i64>, rows: &BTreeMap<Vec<i64>, i64>, changes: &mut BTreeMap<Vec<i64>, i64>) -> Result<Vec<(Vec<i64>, i64, i32)>, String> {
+        let l = match self.atoms {
+            Some(a) => Some(cx.dir.read("a lattice's join", &[a])?),
+            None => None,
+        };
+        let text = |id: i64| l.as_ref().and_then(|l| u32::try_from(id).ok().and_then(|i| rerail_blocks::atoms::name_in(l.block(0), i)));
+        // Each key's derived values, and the least level among them.
+        let mut by: BTreeMap<&[i64], (Vec<i64>, i64)> = BTreeMap::new();
+        for (r, &lv) in rows {
+            let (key, v) = r.split_at(r.len() - 1);
+            let e = by.entry(key).or_insert_with(|| (Vec::new(), lv));
+            e.0.push(v[0]);
+            e.1 = e.1.min(lv);
+        }
+        let mut out = Vec::new();
+        for (key, (vals, lv)) in by {
+            let present = now.range(key.to_vec()..).next().filter(|(r, _)| r.starts_with(key)).map(|(r, &l)| (r.clone(), l));
+            let mut v = match &present {
+                Some((r, _)) => r[r.len() - 1],
+                None => vals[0],
+            };
+            for &x in &vals {
+                v = lat.join(v, x, &text).ok_or_else(|| format!("a lattice's join of {v} and {x} gave a text that is neither"))?;
+            }
+            if present.as_ref().is_some_and(|(r, _)| r[r.len() - 1] == v) {
+                continue;
+            }
+            // A key's first value is no change.
+            if present.is_some() {
+                let moved = changes.entry(key.to_vec()).or_insert(0);
+                *moved += 1;
+                if lat.widen.is_some_and(|k| *moved >= k) {
+                    v = lat.top();
+                }
+            }
+            let level = present.as_ref().map_or(lv, |p| p.1);
+            if let Some((r, pl)) = present {
+                if r[r.len() - 1] == v {
+                    continue;
+                }
+                now.remove(&r);
+                out.push((r, pl, -1));
+            }
+            let row: Vec<i64> = key.iter().copied().chain([v]).collect(); // copy: derived (a key's joined row, written once)
+            now.insert(row.clone(), level);
+            out.push((row, level, 1));
+        }
+        Ok(out)
     }
 
     /// Of `cands` (a head's keys each), those with a derivation from the working states as they are, through own rows
@@ -1361,7 +1522,7 @@ impl Level {
                 let ran = if round == 0 { &self.ran } else { &next };
                 let before = ran.modules.get(&m).map_or(Vec::new(), |md| md.rules.clone());
                 let after = next.modules.get(&m).map_or(Vec::new(), |md| md.rules.clone());
-                let (w, writes, reads) = self.run_module(ops, bench, atoms, &known, m, before, after, facts, &inferred).map_err(|e| format!("module {}: {e}", docs.path_of(&bench.dir, atoms, m)))?;
+                let (w, writes, reads) = self.run_module(ops, bench, atoms, &known, &next, m, before, after, facts, &inferred).map_err(|e| format!("module {}: {e}", docs.path_of(&bench.dir, atoms, m)))?;
                 work += w;
                 if let Some(md) = next.modules.get(&m) {
                     strata.push((m, writes.clone(), reads));
@@ -1495,7 +1656,8 @@ impl Level {
     /// One stratum's run: module `m`'s rules `before` and `after`, its inputs each between where this level last read
     /// it and where it is now.
     #[allow(clippy::too_many_arguments)]
-    fn run_module(&mut self, ops: PhaseOps, bench: &mut Bench, atoms: Atoms, known: &Known, m: i64, before: Vec<Rule>, after: Vec<Rule>, facts: &[FactIn<'_>], inferred: &Shapes) -> Result<(Work, Vec<i64>, Vec<i64>), String> {
+    #[allow(clippy::too_many_arguments)]
+    fn run_module(&mut self, ops: PhaseOps, bench: &mut Bench, atoms: Atoms, known: &Known, program: &Program, m: i64, before: Vec<Rule>, after: Vec<Rule>, facts: &[FactIn<'_>], inferred: &Shapes) -> Result<(Work, Vec<i64>, Vec<i64>), String> {
         let mut shapes: BTreeMap<i64, Shape> = facts.iter().map(|f| (f.rel, f.shape.clone())).collect();
         shapes.extend(self.rels.iter().map(|(&r, t)| (r, t.shape.clone())));
         let after_empty = after.is_empty();
@@ -1510,7 +1672,10 @@ impl Level {
             (Some(a), Some(b)) => Some(a.and(b)),
             (a, b) => a.or(b).cloned(),
         };
-        let st = st.with_facts(&of, named);
+        let st = {
+            let l = bench.dir.read("atoms", &[atoms.0])?;
+            st.with_facts(&of, named).with_lattices(program, atoms, l.block(0)).map_err(|e| format!("rule {}: {}", e.rule, e.why))?
+        };
         for h in &st.heads {
             if !self.rels.contains_key(&h.rel) {
                 let head = Trace::new(&h.shape)?.with_roll_up(RollUp::Never).resumed(self.place, None);

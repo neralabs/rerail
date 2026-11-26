@@ -2586,3 +2586,45 @@ What it covers and what not:
 - The suite's time doubled (63 s to 129 s): each compiler run reads twenty files.
 
 Still to build in step 9: lattices and the passes, as the compiler's rules.
+
+### L4: lattices, joined by the executor's rounds (B§6's L4 row; core.rerail; L4-i; 2026-11-26)
+
+A relation whose last column is a lattice keeps one row a key, the join of every value derived for it (core.rerail:
+"flat<>: one value, or top when two differ; min<> and max<> keep the least or greatest"; `.lattice L<base> { Lub ->
+@f }`; `widen k`). Lattices are used through recursion (`rf_order`'s route, typing's constant values), so a lattice
+is recursion through a join, and the join is the executor's, as an aggregate is.
+
+- **The compiler** (c-1) reads a `.lattice`'s join and a declaration's `widen k` into `k_decl` at two places no column
+  has: `k_decl(m, L, -1, f)` and `k_decl(m, rel, -2, k)`. A column of type `flat`, `max`, `min` or `L` is a lattice's.
+  K-form stays nine relations; kform.rs says what the places mean.
+- **The executor:**
+  - `Program` reads those rows apart from the columns' types.
+  - `Stratum::with_lattices` gives each head whose last column is a lattice its `Lattice`: the join (`Flat`, `Max`,
+    `Min`, or `Fn` of a function of two arguments) and its widening. A join that is no such function is refused.
+  - A stratum of a lattice head is a Δfix run from ∅: its heads are levelled, and its change is the new state against
+    the kept one.
+  - Each round joins each key's values (`joined`): the present value with every value the round derived. Where the
+    join moved, the old row goes and the new comes. A key's value goes to top once it has moved `widen` times (its
+    first value is no move).
+  - Rows derived from a value since replaced stay, as Soufflé's do: a lattice's rules are monotone. Since the run is
+    from ∅, an edit gives what a cold run gives.
+  - Top is `i64::MAX` for `flat` and `max`, `i64::MIN` for `min` and a function's lattice: no value of the base.
+  - A lattice head's working trace rolls its rounds into one layer over the run's base each round
+    (`Trace::roll_up_since`), since its rounds kill the rows a join moved and a kill searches the chain below it. A
+    climb of 100 rounds passed the bound of 64. Other heads' rounds only add, and keep their layers.
+  - `shortlex_min` (core.rerail's, `rf_shortlex`'s join) is a function now.
+
+Checks (Relax, local, 144 of 144, at a load average of 58 to 70: the suite took 282 s):
+`lattices_keep_each_keys_join_by_the_executors_rounds`.
+- `flat<>` over facts (one value; two that differ, top);
+- `max<>` and `min<>` over facts and through recursion;
+- a `.lattice` by `shortlex_min` through a cycle;
+- `widen 3` reached (top) and not reached (two moves);
+- a max recursion of 100 rounds;
+- a later module reading a lattice and its top;
+- an edit, back, and cold.
+- Mutations caught: `flat` joining as `max`, and a key's first value counted as a move. The second was caught only
+  after the test gained a key that moves fewer times than its widening.
+
+Not built: `top` as a term, since rr parses `top` as a variable (typing's `top` is one). Still to build in step 9:
+the passes.
