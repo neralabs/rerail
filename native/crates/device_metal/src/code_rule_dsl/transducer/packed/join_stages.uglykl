@@ -943,9 +943,10 @@ UKL_INLINE void stage_scatter_one(Longs L, Longs R_rows, JSPACE const uint8_t* R
         if ((offsets[t + 1] - o0) > at) write_row(s, L, t, R, 0, O, at);
         return;
     }
-    // A join's finds (`stage_count_one`'s): its rows out, each found once, none walked again.
-    uint64_t found = (uint64_t)V[t];
-    if (s->mode == 0 && (uint32_t)found != NONE) {
+    // A join's finds (`stage_count_one`'s): its rows out, each found once, none walked again. Read only by a join: no
+    // other stage has them (`Job::desc.v` is bound for a join's alone), and a read of them faults where it is null.
+    uint64_t found = s->mode == 0 ? (uint64_t)V[t] : (uint64_t)FINDS_WALK;
+    if ((uint32_t)found != NONE) {
         uint32_t first = (uint32_t)found, bits = (uint32_t)(found >> 32);
         for (; bits != 0u && at < s->cap_out; bits &= bits - 1u) {
             uint32_t q = first + ukl_ctz32(bits);
