@@ -1,4 +1,4 @@
-.policy "ruff-ann401-any-type" revision 2
+.policy "ruff-ann401-any-type" revision 3
 .description "Use a specific type instead of Any in function signatures; Any switches off type checking for every value that passes through it."
 .language python
 .mode steer
@@ -14,11 +14,16 @@
 //   def foo(a: object) -> None: ...              not reported
 //   @override
 //   def foo(self, a: Any) -> int: ...            not reported
-#include "python/annotations.rerail"
+#include "python/python-26.rerail"
+
+// A quoted annotation whose parsed value is another string is invalid to Ruff and therefore resolves to Any.
+.decl p26_ann_any_type(t: node)
+p26_ann_any_type(t) :- ann_any_type(t).
+p26_ann_any_type(t) :- annt_top(t, r), (kind(r, "string") ; kind(r, "concatenated_string")).
 
 .violation ANN401(at: node, name: symbol) code "ANN401"
     "This annotation amounts to `Any`; replace it with the type the code actually accepts or returns (a union, a TypeVar or a Protocol), keeping `Any` only where every type is truly allowed."
     suppress ruff "ANN401"
-ANN401(a, x) :- ann_def(f), !ann_override(f), ann_param(f, _, x0, k, a), ann_any_type(a),
+ANN401(a, x) :- ann_def(f), !ann_override(f), p26_ann_param(f, _, x0, k, a), p26_ann_any_type(a),
     (k = "vararg", x = cat("*", x0) ; k = "kwarg", x = cat("**", x0) ; k != "vararg", k != "kwarg", x = x0).
-ANN401(t, x) :- ann_def(f), !ann_override(f), field(f, "return_type", t), ann_any_type(t), def_name(f, x).
+ANN401(t, x) :- ann_def(f), !ann_override(f), field(f, "return_type", t), p26_ann_any_type(t), def_name(f, x).

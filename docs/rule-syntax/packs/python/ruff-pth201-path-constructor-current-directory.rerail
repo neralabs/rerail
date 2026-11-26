@@ -1,4 +1,4 @@
-.policy "ruff-pth201-path-constructor-current-directory" revision 2
+.policy "ruff-pth201-path-constructor-current-directory" revision 3
 .description "Call Path() without arguments instead of passing the current directory explicitly; the constructor already defaults to it."
 .language python
 .mode steer
@@ -11,12 +11,16 @@
 //   pathlib.PurePath("")                 ← PTH201
 //   Path(".", "foo"), Path(f"."), Path(b".")      not reported
 #include "python/pathlib.rerail"
+#include "python/python-22.rerail"
 //   pth_call(c, q, f)   c calls q; f the callee (python/pathlib)
 //   call_only(c, a)   a is c's one argument, positional (python/ruff)
 //   plain_str(e, v)   a str literal's value (python/pyflakes)
+//   p22_call / p22_call_only / p22_unparen / p22_plain_str   parsed string type definitions (python/python-22)
 
 .violation PTH201(at: node, f: node) code "PTH201"
     "Call `{f}()` with no argument instead of `{f}({at})`; the constructor already defaults to the current directory."
     suppress ruff "PTH201"
 PTH201(a, f) :- pth_call(c, q, f), (q = "pathlib.Path" ; q = "pathlib.PurePath"), call_only(c, v), unparen(v, a),
     plain_str(a, s), (s = "." ; s = "").
+PTH201(a, f) :- p22_call(c, q, f), (q = "pathlib.Path" ; q = "pathlib.PurePath"), p22_call_only(c, v),
+    p22_unparen(v, a), p22_plain_str(a, s), (s = "." ; s = "").

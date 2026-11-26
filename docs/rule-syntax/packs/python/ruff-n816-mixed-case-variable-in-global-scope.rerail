@@ -4,16 +4,18 @@
 .mode steer
 .scope include "**/*"
 
-// Ruff N816 (pep8-naming): a name stored at module level in mixedCase: not all lowercase, and its first letter
-// (after one `_`) lowercase. Exempt: namedtuple/NamedTuple assignments and names matching
-// `pep8-naming.ignore-names`. A `global` statement does not make a function's store module-level here: Ruff
-// checks the scope the store is written in.
+// Ruff N816 (pep8-naming): a name stored while Ruff's current scope is the module, in mixedCase: not all
+// lowercase, and its first letter (after one `_`) lowercase. Names are NFKC-normalised and cased by Unicode, as
+// Ruff reads them. The stores are assignment, loop, `with`, walrus and `type` targets and `case` captures, including
+// a walrus in a parameter default or a comprehension's first iterable, which Ruff visits at module level. Exempt:
+// namedtuple/NamedTuple assignments and names matching `pep8-naming.ignore-names`. A `global` statement does not
+// make a function's store module-level here: Ruff checks the scope the store is written in.
 //   myVariable = 0                    ← N816
+//   gs = {k: v for k, v in (fooB := {}).items()}   ← N816
 //   MyObj = namedtuple("MyObj", ["a"])   not reported (and not mixedCase)
-#include "python/naming.rerail"
+#include "python/python-20.rerail"
 
 .violation N816(at: node, x: symbol) code "N816"
     "Rename `{x}` to lowercase snake_case, such as `my_variable`, and update its uses; keep the name if other modules import it or it mirrors an external API."
     suppress ruff "N816"
-N816(n, x) :- store_name(n, x, m), kind(m, "module"), mixed_name(n, x), !store_makes(n, "namedtuple"),
-    !naming_ignored(n, x).
+N816(n, x) :- ruff_store(n, x, m), kind(m, "module"), ruff_mixed(x), !store_makes(n, "namedtuple"), !ruff_ignored(x).

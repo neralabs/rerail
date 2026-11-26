@@ -1,0 +1,34 @@
+[
+  {
+    "id": "ruff-pt003-pytest-extraneous-scope-function",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pt010-pytest-raises-without-exception",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pt011-pytest-raises-too-broad",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pt012-pytest-raises-with-multiple-statements",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pt013-pytest-incorrect-pytest-import",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pt014-pytest-duplicate-parametrize-test-cases",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pt015-pytest-assert-always-false",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pt022-pytest-useless-yield-fixture",
+    "status": "same"
+  }
+]

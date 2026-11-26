@@ -11,8 +11,10 @@
 //   with pytest.raises(ValueError): …                ← PT011, at ValueError
 //   with pytest.raises(ValueError, match="bad"): …   not reported
 #include "python/pytest.rerail"
-//   exc_call(c, q), exc_argument(c, k, i, a), exc_arg(c, i, a), kwarg(c, k, v), pytest_empty_or_null(e),
-//   pytest_broad(c, e, s)
+//   exc_call(c, q), kwarg(c, k, v), pytest_empty_or_null(e)
+#include "python/python-23.rerail"
+//   pt_arg(c, i, a), pt_argument(c, k, i, a), pt_broad(c, e, s): a line continuation is no argument, and calls in
+//   string annotations count, their builtins too
 
 .violation PT011(at: node, id: symbol) code "PT011" "{id}"
     suppress ruff "PT011"
@@ -23,7 +25,7 @@ PT011(e, cat("`", x, "` is an alias of `OSError`; expect a specific subclass suc
     broad_raise(e, "socket.error"), text(e, x).
 
 .decl broad_raise(e: node, s: symbol)
-broad_raise(e, s) :- exc_call(c, "pytest.raises"), !kwarg(c, "func", _), !exc_arg(c, 1, _),
-    exc_argument(c, "expected_exception", 0, e), pytest_broad("raises", e, s),
+broad_raise(e, s) :- exc_call(c, "pytest.raises"), !kwarg(c, "func", _), !pt_arg(c, 1, _),
+    pt_argument(c, "expected_exception", 0, e), pt_broad("raises", e, s),
     (!kwarg(c, "match", _) ; kwarg(c, "match", m), pytest_empty_or_null(m)),
     (!kwarg(c, "check", _) ; kwarg(c, "check", k), kind(k, "none")).

@@ -4,17 +4,20 @@
 .mode steer
 .scope include "**/*"
 
-// Ruff N818 (pep8-naming): a class whose name does not end in `Error` though one of its bases is spelled
-// `Exception` or `…Error`. Ruff reads the bases as written: a bare name only, not resolved, not `mod.Error`.
+// Ruff N818 (pep8-naming): a class whose name does not end in `Error` though one of its positional bases is the
+// name `Exception` or `…Error`. Ruff reads the bases as written: a bare name only (parentheses aside), not resolved,
+// not `mod.Error`. Names are NFKC-normalised, as Ruff's parser reads them.
 //   class C(Exception): ...          ← N818
+//   class A(Ｅxception): ...         ← N818: the base is `Exception`
+//   class Ｅrror(Exception): ...     not reported: the name is "Error"
 //   class D(BaseException): ...      not reported: the base is neither
-#include "python/naming.rerail"
+#include "python/python-20.rerail"
 
 .violation N818(at: node, x: symbol) code "N818"
     "Rename the exception class `{x}` to end in `Error`, e.g. `{x}Error` or swapping an `Exception` suffix for `Error`, and update references; keep it if it signals control flow, not an error."
     suppress ruff "N818"
-N818(nm, x) :- kind(c, "class_definition"), field(c, "name", nm), text(nm, x), !suffix("Error", x),
-    error_base(c), !naming_ignored(nm, x).
+N818(nm, x) :- kind(c, "class_definition"), field(c, "name", nm), text(nm, t), ruff_norm(t, x), !suffix("Error", x),
+    error_base(c), !ruff_ignored(x).
 .decl error_base(c: node)  // a positional base that is the name `Exception` or `…Error`
-error_base(c) :- field(c, "superclasses", al), child(al, b, _), kind(b, "identifier"), text(b, t),
-    (t = "Exception" ; suffix("Error", t)).
+error_base(c) :- field(c, "superclasses", al), child(al, b0, _), unparen(b0, b), kind(b, "identifier"), text(b, t),
+    ruff_norm(t, y), (y = "Exception" ; suffix("Error", y)).

@@ -482,20 +482,6 @@
         }
       }
     },
-    "ruff-ann001-missing-type-function-argument": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 11
-        },
-        "samples-python": {
-          "originalOnly": 0,
-          "translationOnly": 1
-        }
-      }
-    },
     "ruff-ann002-missing-type-args": {
       "reason": "recorded by the suite, not yet explained",
       "right": "unknown",
@@ -517,67 +503,29 @@
       }
     },
     "ruff-ann201-missing-return-type-undocumented-public-function": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "The JSON original omits nine public functions in ruff/flake8_bugbear/B012.py. Ruff reports ANN201 for all nine (including lines 1, 16, 26, 36, and 50), as does the translation.",
+      "right": "translation",
       "counts": {
         "fixtures": {
-          "originalOnly": 5,
-          "translationOnly": 48
-        },
-        "samples-python": {
           "originalOnly": 0,
-          "translationOnly": 1
+          "translationOnly": 9
         }
       }
     },
     "ruff-ann202-missing-return-type-private-function": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 6,
-          "translationOnly": 13
-        }
-      }
-    },
-    "ruff-ann204-missing-return-type-special-method": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "The JSON original omits the four nested functions at lines 40, 55, 68, and 80 of ruff/flake8_bugbear/B012.py. Ruff reports ANN202 for each, as does the translation.",
+      "right": "translation",
       "counts": {
         "fixtures": {
           "originalOnly": 0,
-          "translationOnly": 8
-        }
-      }
-    },
-    "ruff-ann205-missing-return-type-static-method": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 5
-        }
-      }
-    },
-    "ruff-ann206-missing-return-type-class-method": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 5
+          "translationOnly": 4
         }
       }
     },
     "ruff-ann401-any-type": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "The JSON original omits four valid ANN401 finding keys in Pydantic's json_schema.py (lines 207, 2029, 2127, and 2393) and exceeds its clause budget on that corpus. Ruff reports ANN401 on every listed line, as does the translation.",
+      "right": "translation",
       "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 4
-        },
         "samples-python": {
           "originalOnly": 0,
           "translationOnly": 4
@@ -2160,16 +2108,6 @@
         }
       }
     },
-    "ruff-n801-invalid-class-name": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 4
-        }
-      }
-    },
     "ruff-n802-invalid-function-name": {
       "reason": "recorded by the suite, not yet explained",
       "right": "unknown",
@@ -2180,133 +2118,13 @@
         }
       }
     },
-    "ruff-n803-invalid-argument-name": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 5
-        }
-      }
-    },
-    "ruff-n804-invalid-first-argument-name-for-class-method": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-n805-invalid-first-argument-name-for-method": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 9
-        }
-      }
-    },
-    "ruff-n806-non-lowercase-variable-in-function": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 6,
-          "translationOnly": 4
-        }
-      }
-    },
-    "ruff-n807-dunder-function-name": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 4
-        }
-      }
-    },
-    "ruff-n811-constant-imported-as-non-constant": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 6,
-          "translationOnly": 3
-        }
-      }
-    },
     "ruff-n812-lowercase-imported-as-non-lowercase": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 5,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-n813-camelcase-imported-as-lowercase": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "N812-normalized-alias-and-ignored-names.py:15, `from mod import foo as ˤx`: NFKC gives `ʕx`. Unicode 17 made U+0295 a caseless letter (Lo), so Ruff (Rust std, Unicode 17) finds `ʕx` not lowercase and reports it; the engine's regexes use regex-syntax's Unicode 16 tables, where U+0295 is Ll and in \\p{Lowercase}, so the translation reads `ʕx` as lowercase. An engine gap (regex Unicode tables), not expressible in the rule without special-casing the character.",
+      "right": "original",
       "counts": {
         "fixtures": {
           "originalOnly": 1,
-          "translationOnly": 5
-        }
-      }
-    },
-    "ruff-n814-camelcase-imported-as-constant": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-n815-mixed-case-variable-in-class-scope": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 6,
-          "translationOnly": 4
-        }
-      }
-    },
-    "ruff-n816-mixed-case-variable-in-global-scope": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 5,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-n817-camelcase-imported-as-acronym": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 2
-        }
-      }
-    },
-    "ruff-n818-error-suffix-on-exception-name": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 4,
-          "translationOnly": 4
+          "translationOnly": 0
         }
       }
     },
@@ -2534,16 +2352,6 @@
         }
       }
     },
-    "ruff-pt003-pytest-extraneous-scope-function": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 3
-        }
-      }
-    },
     "ruff-pt006-pytest-parametrize-names-wrong-type": {
       "reason": "recorded by the suite, not yet explained",
       "right": "unknown",
@@ -2580,66 +2388,6 @@
       "counts": {
         "fixtures": {
           "originalOnly": 0,
-          "translationOnly": 4
-        }
-      }
-    },
-    "ruff-pt010-pytest-raises-without-exception": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 6
-        }
-      }
-    },
-    "ruff-pt011-pytest-raises-too-broad": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-pt012-pytest-raises-with-multiple-statements": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-pt013-pytest-incorrect-pytest-import": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 18,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-pt014-pytest-duplicate-parametrize-test-cases": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 4
-        }
-      }
-    },
-    "ruff-pt015-pytest-assert-always-false": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
           "translationOnly": 4
         }
       }
@@ -2704,16 +2452,6 @@
         }
       }
     },
-    "ruff-pt022-pytest-useless-yield-fixture": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 4
-        }
-      }
-    },
     "ruff-pt023-pytest-incorrect-mark-parentheses-style": {
       "reason": "recorded by the suite, not yet explained",
       "right": "unknown",
@@ -2745,12 +2483,12 @@
       }
     },
     "ruff-pt026-pytest-use-fixtures-without-parameters": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "ruff/rerail/probes/PT026-bare-name-and-trailing-comment.py:23 is `@pytest.mark.usefixtures()` on `class TestE: ...`. The original's `inside` accepts a class_definition as well as a function_definition, so it reports it. Ruff 0.17.6 runs PT026 only on a def's decorators and reports lines 6, 10, 18 and 27 of that file, not 23. The translation reports the same four lines.",
+      "right": "translation",
       "counts": {
         "fixtures": {
           "originalOnly": 1,
-          "translationOnly": 3
+          "translationOnly": 0
         }
       }
     },
@@ -2771,16 +2509,6 @@
         "fixtures": {
           "originalOnly": 0,
           "translationOnly": 3
-        }
-      }
-    },
-    "ruff-pt030-pytest-warns-too-broad": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 4,
-          "translationOnly": 4
         }
       }
     },
@@ -3041,56 +2769,6 @@
         "fixtures": {
           "originalOnly": 0,
           "translationOnly": 4
-        }
-      }
-    },
-    "ruff-pth201-path-constructor-current-directory": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-pth202-os-path-getsize": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-pth203-os-path-getatime": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-pth204-os-path-getmtime": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-pth205-os-path-getctime": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 3
         }
       }
     },
@@ -4896,46 +4574,6 @@
         }
       }
     },
-    "ruff-ytt101-sys-version-slice3": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-ytt102-sys-version2": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-ytt103-sys-version-cmp-str3": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 4,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-ytt201-sys-version-info0-eq3": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 3
-        }
-      }
-    },
     "ruff-ytt202-six-py3": {
       "reason": "recorded by the suite, not yet explained",
       "right": "unknown",
@@ -4963,36 +4601,6 @@
         "fixtures": {
           "originalOnly": 0,
           "translationOnly": 3
-        }
-      }
-    },
-    "ruff-ytt301-sys-version0": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-ytt302-sys-version-cmp-str10": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 7
-        }
-      }
-    },
-    "ruff-ytt303-sys-version-slice1": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 4
         }
       }
     }

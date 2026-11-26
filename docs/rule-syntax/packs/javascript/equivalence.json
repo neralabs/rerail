@@ -9,6 +9,16 @@
     "eslint-one-var": "failed: check-rr reader-failed eslint-one-var.rerail: line 82: not lowered yet: `ordered` on .decl crowded"
   },
   "different": {
+    "eslint-id-length": {
+      "reason": "fixtures eslint/no-irregular-whitespace/181.js:3 (original only): `var a = 'b',<U+2028>c = 'd',⏎e = 'f'<U+2028>`. JavaScript counts U+2028/U+2029 as line terminators and ESLint reports `a` 1, `c` 2, `e` 3, as the original on this box does; the engine's `line` counts only `\\n`, so the translation reports lines 1, 1, 2. A rule cannot move a finding's line; the fix is the engine's `line` for JavaScript and TypeScript sources (NOTES-javascript-01.md, NOTES-js-1.md). The javascript-01 merge's own check saw this key on both sides once; every run since sees it original-only.",
+      "right": "original",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 0
+        }
+      }
+    },
     "eslint-no-empty-function": {
       "reason": "recorded by the suite, not yet explained",
       "right": "unknown",
