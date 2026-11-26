@@ -4,7 +4,7 @@
  * touches the DOM only when called, so modules that import it load in tests; `app.js` connects it to the render
  * pass and the views (`connectShell`) and starts it (`startRouting`).
  */
-import { h } from "./dom.js";
+import { h, icon } from "./dom.js";
 import { failed } from "./format.js";
 import { settingWrites } from "./settings-writes.js";
 import { attachmentWrites } from "./attachments.js";
@@ -39,6 +39,7 @@ export function invalidate() {
 export function renderNow() {
   scheduled = false;
   hooks.render();
+  markCopied();
 }
 
 /* ---------- toast, clipboard, theme ----------
@@ -72,9 +73,12 @@ export function hideToast() {
   document.getElementById("toast").classList.remove("show");
 }
 
-/** Copy `text`; where the clipboard is blocked, select it in `field` (when given) and copy that. */
-export function copyText(text, field, message) {
-  const ok = () => toast(message ?? "Copied. Paste it into your coding agent.");
+/**
+ * Copy `text`; where the clipboard is blocked, select it in `field` (when given) and copy that. Once copied, the toast
+ * says `message`, and `button` (the Copy that was clicked, when given) reads Copied for a moment.
+ */
+export function copyText(text, { field = null, message = "Copied. Paste it into your coding agent.", button = null } = {}) {
+  const ok = () => { toast(message); showCopied(button); };
   const manual = () => {
     if (field) { field.focus(); field.select(); }
     let done = false;
@@ -82,6 +86,50 @@ export function copyText(text, field, message) {
     done ? ok() : toast(field ? "Couldn’t copy. The text is selected; copy it yourself." : `Couldn’t copy. Copy ${text} yourself.`);
   };
   if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(ok, manual); else manual();
+}
+
+/*
+ * The Copy that copied reads "✓ Copied" for COPIED_MS, where the person is already looking; the toast is at the foot of
+ * the window. A render may rebuild or relabel that button meanwhile, so each render marks the buttons with its
+ * `data-act` and `data-i` again, and the label the render gave comes back when the moment is over.
+ */
+const COPIED_MS = 1600;
+/** The copy shown as done: `{ act, i, timer }`, or `null`. */
+let copied = null;
+/** Each marked button's own content, put back when the moment is over. */
+const labels = new WeakMap();
+
+function showCopied(button) {
+  if (button === null) return;
+  if (copied !== null) { clearTimeout(copied.timer); unmarkCopied(); }
+  copied = { act: button.dataset.act, i: button.dataset.i ?? null, timer: setTimeout(endCopied, COPIED_MS) };
+  markCopied();
+}
+
+function endCopied() {
+  unmarkCopied();
+  copied = null;
+  invalidate(); // a label a render changed meanwhile is put right
+}
+
+const copiedButtons = () => (copied === null ? []
+  : [...document.querySelectorAll("[data-act]")].filter(b => b.dataset.act === copied.act && (b.dataset.i ?? null) === copied.i));
+
+function markCopied() {
+  for (const b of copiedButtons()) {
+    if (b.querySelector(":scope > .copied")) continue;
+    labels.set(b, [...b.childNodes]);
+    b.style.minWidth = `${b.offsetWidth}px`; // a shorter label must not move what sits beside it
+    b.replaceChildren(icon("check"), h("span.copied", null, "Copied"));
+  }
+}
+
+function unmarkCopied() {
+  for (const b of copiedButtons()) {
+    if (!b.querySelector(":scope > .copied")) continue;
+    b.replaceChildren(...(labels.get(b) ?? []));
+    b.style.minWidth = "";
+  }
 }
 
 const THEME_KEY = "rerail-ui-theme";
