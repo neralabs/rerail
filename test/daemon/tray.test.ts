@@ -242,7 +242,6 @@ describe("startTray", () => {
         calls.health += 1;
         return (options.current ?? (() => health()))();
       },
-     
       dashboardLink: () => "http://127.0.0.1:4737/?access=secret",
       loopback: true,
       stop: () => void (calls.stopped += 1),

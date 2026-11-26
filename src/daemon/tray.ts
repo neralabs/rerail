@@ -80,7 +80,8 @@ export interface TrayMenuState {
   version: string;
   /**
    * The third line, `Home path: <path>`. Its key is the one the line had while it named the dashboard's address, so a
-   * tray and a daemon from either side of that change still read each other's lines.
+   * tray and a daemon from either side of that change still read each other's lines; the tray's `MenuState` calls it
+   * `home_path` (`#[serde(rename = "dashboard")]`).
    */
   dashboard: string;
   update: { label: string; enabled: boolean } | null;
@@ -89,11 +90,11 @@ export interface TrayMenuState {
 
 /**
  * The menu for a daemon whose health is `health`, in the Rerail home `homePath` names ({@link displayHomePath}).
- * `newer` is the newer Rerail the update check found, or null; `update` is where the menu's update is. The icon carries its "!" badge only while the daemon is unhealthy
- * or an update is there to click. The update's refresh replaces this daemon with the new version's, whose icon no
- * longer offers it, so the item says it is done only where this daemon outlives the update: when the refresh keeps it
- * running or could not replace it. The icon then drops its badge, though `health.update.latest` stays newer until the
- * new version replaces this daemon.
+ * `newer` is the newer Rerail the update check found, or null; `update` is where the menu's update is. The icon
+ * carries its "!" badge only while the daemon is unhealthy or an update is there to click. The update's refresh
+ * replaces this daemon with the new version's, whose icon no longer offers it, so the item says it is done only where
+ * this daemon outlives the update: when the refresh keeps it running or could not replace it. The icon then drops its
+ * badge, though `health.update.latest` stays newer until the new version replaces this daemon.
  */
 export function trayMenuState(input: {
   health: DaemonHealth;
@@ -384,9 +385,9 @@ export function startDaemonTray(daemon: TrayDaemon, deps: { isNewer(latest: stri
 }
 
 /**
- * The Rerail home `home` as the menu names it, so two daemons' icons can be told apart. On macOS and Linux a home in the
- * account's own home folder `userHome` starts with `~` (`~/.rerail`); any other home, and every home on Windows, is
- * named in full.
+ * The Rerail home `home` as the menu names it, so two daemons' icons can be told apart. On macOS and Linux a home in
+ * the account's own home folder `userHome` starts with `~` (`~/.rerail`); any other home, and every home on Windows,
+ * is named in full.
  */
 export function displayHomePath(home: string, userHome: string, platform: NodeJS.Platform): string {
   if (platform === "win32") return home;
