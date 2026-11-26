@@ -5920,17 +5920,36 @@ impl Batch {
     pub fn tree_shape(&self) -> TreeShape {
         let n = self.nodes().total();
         let mut t = TreeShape { parent: Vec::with_capacity(n), idx: Vec::with_capacity(n), field: Vec::with_capacity(n) };
+        let check = std::env::var_os("RERAIL_SPIKE_CHECK").is_some();
+        let mut differ = 0usize;
+        // Each document's nodes in one preorder walk of its open subtrees (`places`): a node's parent is the innermost
+        // open one, its place the count of that one's children before it; no node's parent or place searched for.
+        let mut open: Vec<(u32, u32, u32)> = Vec::new();
         for (doc, p) in self.docs.iter().enumerate() {
             let base = self.nodes().at(doc) as u32;
-            for l in 0..p.len() {
-                let x = p.node(l);
-                t.parent.push(match p.parent(l as usize) {
-                    NONE => NONE,
-                    up => base + up,
-                });
-                t.idx.push(p.idx(l as usize));
+            open.clear();
+            for (l, x) in p.ranks().iter(Item::Node) {
+                while open.last().is_some_and(|&(end, _, _)| end <= x) {
+                    open.pop();
+                }
+                let (parent, idx) = match open.last_mut() {
+                    None => (NONE, 0),
+                    Some(o) => {
+                        o.1 += 1;
+                        (base + o.2, o.1 - 1)
+                    }
+                };
+                open.push((p.f().subtree_end(x), 0, l));
+                if check && (parent != p.parent(l as usize).checked_add(base).unwrap_or(NONE) || idx != p.idx(l as usize)) {
+                    differ += 1;
+                }
+                t.parent.push(parent);
+                t.idx.push(idx);
                 t.field.push(if l > 0 && p.ranks().is(Item::Field, x) { i64::from(field_atom(p.tag(), p.f().field(x))) } else { i64::MIN });
             }
+        }
+        if check {
+            eprintln!("SPIKE SHAPE {} nodes, {differ} whose parent or place the walk finds otherwise", t.parent.len());
         }
         t
     }

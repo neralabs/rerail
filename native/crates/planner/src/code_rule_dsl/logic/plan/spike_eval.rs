@@ -178,6 +178,8 @@ pub struct Sorted {
     dir: Vec<u32>,
     bits: u32,
     keys: usize,
+    /// The rows a probe by a key of its own rows finds, on average: `Σ c² / n` over its keys' row counts `c`.
+    fan: f64,
 }
 
 impl Sorted {
@@ -210,17 +212,31 @@ impl Sorted {
         }
         drop(fill);
         let vals = |id: u32| cols.iter().map(move |&c| v.get(k, id, c));
-        let mut keys = 0;
+        let (mut keys, mut squares) = (0, 0f64);
         for b in 0..1 << bits {
             let rows = &mut order[dir[b] as usize..dir[b + 1] as usize];
             if rows.len() > 1 {
                 rows.sort_unstable_by(|&x, &y| fp[x as usize].cmp(&fp[y as usize]).then_with(|| vals(x).cmp(vals(y))));
             }
-            keys += rows.len().min(1) + rows.windows(2).filter(|w| fp[w[0] as usize] != fp[w[1] as usize] || vals(w[0]).ne(vals(w[1]))).count();
+            // Each key's run of rows.
+            let mut run = 0f64;
+            for (j, &id) in rows.iter().enumerate() {
+                if j > 0 && (fp[rows[j - 1] as usize] != fp[id as usize] || vals(rows[j - 1]).ne(vals(id))) {
+                    keys += 1;
+                    squares += run * run;
+                    run = 0.0;
+                }
+                run += 1.0;
+            }
+            if run > 0.0 {
+                keys += 1;
+                squares += run * run;
+            }
         }
+        let fan = squares / n.max(1) as f64;
         // Each row's bits in the index's order, read beside it.
         let fp: Vec<u32> = order.iter().map(|&id| fp[id as usize]).collect();
-        Sorted { cols, order, fp, dir, bits, keys }
+        Sorted { cols, order, fp, dir, bits, keys, fan }
     }
 
     /// The rows whose columns are `key`.
@@ -232,7 +248,15 @@ impl Sorted {
         let (lo, hi) = (self.dir[b] as usize, self.dir[b + 1] as usize);
         let fps = &self.fp[lo..hi];
         let mut at = lo + fps.partition_point(|&x| x < f);
+        let to = lo + fps.partition_point(|&x| x <= f);
+        if at == to {
+            return &[];
+        }
         let same = |id: u32| self.cols.iter().zip(key).all(|(&c, &x)| v.get(k, id, c) == x);
+        // The rows of these bits are sorted by their columns: where the first and last are this key, all are.
+        if same(self.order[at]) && same(self.order[to - 1]) {
+            return &self.order[at..to];
+        }
         // Past keys of the same bits (rare): sorted by their columns, so a scan reaches this one's run.
         while at < hi && self.fp[at] == f && !same(self.order[at]) {
             at += 1;
@@ -261,7 +285,7 @@ pub struct HRel {
     /// A relation the chunk holds for the strata after it: its indexes, each made whole at its first probe.
     shared: std::sync::Mutex<Vec<Arc<Sorted>>>,
     /// Its keys' counts by columns, estimated off a sample for a plan's costs (`keys`): no index made to price one.
-    est: std::sync::Mutex<Vec<(Vec<usize>, usize)>>,
+    est: std::sync::Mutex<Vec<(Vec<usize>, usize, f64)>>,
 }
 
 impl HRel {
@@ -289,7 +313,7 @@ impl HRel {
     }
 
     /// Its rows let go for the engine's relation `src` of the same rows in the same order, read where they lie: its
-    /// indexes stay. Whether they were (a relation the engine holds in one part).
+    /// indexes stay. Whether they were (a relation the engine holds, in its parts, past its dead rows).
     pub fn lend_to(&mut self, src: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>) -> bool {
         match Vals::lent(src, self.k, self.n) {
             Some(vals) => {
@@ -316,38 +340,39 @@ impl HRel {
         self.vals.get(self.k, id, c)
     }
 
-    /// Its keys' count by `cols`: its index's where one is made, else estimated off at most `SAMPLE` rows spread over
-    /// it (Haas and Stokes' GEE: the sample's values seen twice or more, and those seen once scaled by `sqrt(n / s)`),
-    /// once a relation and columns.
-    fn keys(&self, cols: &[usize]) -> usize {
+    /// Its keys' count by `cols`, and the rows a probe by a key drawn from its own rows finds on average (`Σ c² / n`
+    /// over each key's row count `c`: under skew, far more than `n / keys`): its index's where one is made, else
+    /// estimated off at most `SAMPLE` rows spread over it, once a relation and columns. The keys by Haas and Stokes'
+    /// GEE (the sample's values seen twice or more, and those seen once scaled by `sqrt(n / s)`); the probe's rows by
+    /// the unbiased estimate of a self-join's size from a sample, `Σ c(c - 1) · n(n - 1) / (s(s - 1)) + n`, over `n`.
+    fn keys(&self, cols: &[usize]) -> (usize, f64) {
         const SAMPLE: usize = 4096;
         if let Some(i) = self.shared.lock().unwrap().iter().find(|i| i.cols == cols) {
-            return i.keys;
+            return (i.keys, i.fan);
         }
         let mut est = self.est.lock().unwrap();
-        if let Some(&(_, k)) = est.iter().find(|(c, _)| c == cols) {
-            return k;
+        if let Some(&(_, k, f)) = est.iter().find(|(c, _, _)| c == cols) {
+            return (k, f);
         }
         let n = self.n;
-        let k = if n <= SAMPLE {
-            let mut seen: HashMap<u64, ()> = HashMap::default();
-            for id in 0..n as u32 {
-                seen.insert(hash_vals(cols.iter().map(|&c| self.get(id, c))), ());
-            }
-            seen.len()
+        let (s, step) = if n <= SAMPLE { (n, 1) } else { (SAMPLE, n / SAMPLE) };
+        let mut counts: HashMap<u64, u32> = HashMap::default();
+        for j in 0..s {
+            let id = (j * step) as u32;
+            *counts.entry(hash_vals(cols.iter().map(|&c| self.get(id, c)))).or_default() += 1;
+        }
+        let (k, f) = if s == n {
+            (counts.len(), counts.values().map(|&c| f64::from(c) * f64::from(c)).sum::<f64>() / n.max(1) as f64)
         } else {
-            let step = n / SAMPLE;
-            let mut counts: HashMap<u64, u32> = HashMap::default();
-            for j in 0..SAMPLE {
-                let id = (j * step) as u32;
-                *counts.entry(hash_vals(cols.iter().map(|&c| self.get(id, c)))).or_default() += 1;
-            }
             let once = counts.values().filter(|&&c| c == 1).count() as f64;
             let more = counts.len() as f64 - once;
-            ((n as f64 / SAMPLE as f64).sqrt() * once + more).round().clamp(1.0, n as f64) as usize
+            let keys = ((n as f64 / s as f64).sqrt() * once + more).round().clamp(1.0, n as f64) as usize;
+            let (nf, sf) = (n as f64, s as f64);
+            let pairs: f64 = counts.values().map(|&c| f64::from(c) * (f64::from(c) - 1.0)).sum();
+            (keys, (pairs * nf * (nf - 1.0) / (sf * (sf - 1.0)) + nf) / nf)
         };
-        est.push((cols.to_vec(), k));
-        k
+        est.push((cols.to_vec(), k, f));
+        (k, f)
     }
 
     /// Adds `row` if new.
@@ -477,6 +502,17 @@ enum Expr {
     Call(Fun, Vec<Expr>),
 }
 
+/// A text test's matcher of a constant pattern (or set of them), made at its first use and kept: no row pays its
+/// lookup in the run's shared matchers.
+#[derive(Clone, Default)]
+struct Held(std::sync::OnceLock<Option<Arc<crate::code_rule_dsl::logic::strings::Matcher>>>);
+
+impl std::fmt::Debug for Held {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("matcher")
+    }
+}
+
 /// A function a rule calls.
 #[derive(Clone, Debug)]
 enum Fun {
@@ -486,8 +522,9 @@ enum Fun {
     Doc,
     /// A node read (`syntax::NODE_READS`): its text at any length, value or string, by the run's long-text nodes.
     NodeRead(&'static str),
-    /// A text test (`strings::TESTS`) of a string against a pattern or a set of them: 1 or 0.
-    Test(&'static str),
+    /// A text test (`strings::TESTS`) of a string against a pattern or a set of them: 1 or 0; a constant pattern's
+    /// matcher held.
+    Test(&'static str, Held),
     /// `@in(x, {…})`, `@equals(x, {…})` once lowered: membership of the set's constants.
     In(Vec<i64>),
     /// A set's patterns (a test's second argument).
@@ -571,7 +608,7 @@ fn expr(v: &Version, t: TermRef<'_>, names: &dyn Names) -> Result<Expr, String> 
             let members: Vec<TermRef<'_>> = members.collect();
             return Ok(Expr::Call(Fun::In(consts(&members)?), vec![expr(v, args[0], names)?]));
         }
-        _ if strings::is_test(f) && n == 2 => Fun::Test(strings::TESTS.iter().find(|t| **t == f).copied().expect("a test")),
+        _ if strings::is_test(f) && n == 2 => Fun::Test(strings::TESTS.iter().find(|t| **t == f).copied().expect("a test"), Held::default()),
         "concat" if n == 2 => {
             let (name, kinds, out) = functions::signature("str_concat").ok_or("no str_concat")?;
             Fun::Eval(name, kinds, out, false)
@@ -775,6 +812,8 @@ struct Step {
     lit: usize,
     bound: u64,
     acts: Vec<Act>,
+    /// A held relation's columns a row it finds is read at, with their acts: none skipped, none its index matched.
+    reads: Vec<(usize, Act)>,
     key: Vec<usize>,
     ix: Option<IxRef>,
     part: Part,
@@ -861,6 +900,8 @@ pub trait Calls {
     fn intern(&self, text: &str) -> i64;
     /// The symbol of `text`: the one held, else a new one (`intern`).
     fn atom(&self, text: &str) -> i64;
+    /// Whether symbol `sym`'s text matches `m`, read where it lies; `None` for a symbol with no text.
+    fn is_match(&self, sym: i64, m: &crate::code_rule_dsl::logic::strings::Matcher) -> Option<bool>;
     fn cat(&self, a: i64, b: i64) -> i64;
     fn node_read(&self, name: &str, n: i64) -> Option<String>;
 }
@@ -875,7 +916,13 @@ struct Eval<'a> {
     /// Each own relation's last wave: rows `lo..hi`.
     lo: Vec<usize>,
     hi: Vec<usize>,
+    /// The values of calls of text functions, `@cat` and node reads by the call (its place) and its arguments' values,
+    /// for the stratum: a row whose arguments an earlier row had reads no text and interns nothing. At most `MEMO`.
+    memo: std::cell::RefCell<HashMap<(usize, [i64; 3]), Option<i64>>>,
 }
+
+/// The most call values a stratum keeps (`Eval::memo`): 32 bytes each.
+const MEMO: usize = 1 << 18;
 
 /// The slots' values and, for a node bound off the tree, its row.
 struct Env {
@@ -908,7 +955,7 @@ impl<'a> Eval<'a> {
                 Expr::Call(f, args) => {
                     let own = match f {
                         Fun::NodeRead(_) => 30.0,
-                        Fun::Eval(..) | Fun::Test(_) => 10.0,
+                        Fun::Eval(..) | Fun::Test(..) => 10.0,
                         Fun::Cat => 5.0,
                         Fun::Doc | Fun::In(_) | Fun::Set(_) => 0.1,
                     };
@@ -997,13 +1044,15 @@ impl<'a> Eval<'a> {
                             return Some((size, 0.5 + size));
                         }
                         // The rows a key finds, on average: the relation's rows over its keys' count.
-                        let keys = if *r < self.prog.nscc {
-                            self.own[*r].idx.iter().find(|i| i.cols == key).map_or(0, |i| i.keys)
+                        let (keys, skew) = if *r < self.prog.nscc {
+                            (self.own[*r].idx.iter().find(|i| i.cols == key).map_or(0, |i| i.keys), 0.0)
                         } else {
                             self.rel(*r).keys(&key)
                         };
                         let all = self.size(*r, Part::All) as f64;
-                        let mut fan = if keys == 0 { (size / 2.0).max(0.5) } else { all / keys as f64 };
+                        // A probe finds its key's rows: as many as a key has on average, or under skew, as many as a
+                        // key drawn from the rows has.
+                        let mut fan = if keys == 0 { (size / 2.0).max(0.5) } else { (all / keys as f64).max(skew) };
                         if key.len() == b.len() {
                             fan = fan.min(0.5);
                         }
@@ -1114,7 +1163,7 @@ impl<'a> Eval<'a> {
         for pick in order {
             let part = if Some(pick) == delta { Part::Delta } else { Part::All };
             let lit = &rule.lits[pick];
-            let mut step = Step { lit: pick, bound, acts: Vec::new(), key: Vec::new(), ix: None, part };
+            let mut step = Step { lit: pick, bound, acts: Vec::new(), reads: Vec::new(), key: Vec::new(), ix: None, part };
             match lit {
                 LitP::Atom(a) => {
                     step.acts = acts_of(&a.args, bound);
@@ -1123,6 +1172,8 @@ impl<'a> Eval<'a> {
                         if !step.key.is_empty() {
                             step.ix = Some(self.index(r, &step.key));
                         }
+                        let matched = |c: usize| step.ix.is_some() && step.key.contains(&c);
+                        step.reads = step.acts.iter().enumerate().filter(|&(c, act)| !matches!(act, Act::Skip) && !matched(c)).map(|(c, &act)| (c, act)).collect();
                     }
                     if !a.neg {
                         bound |= binds(&a.args);
@@ -1158,7 +1209,11 @@ impl<'a> Eval<'a> {
     }
 
     fn index(&mut self, r: usize, key: &[usize]) -> IxRef {
-        if r < self.prog.nscc { IxRef::Own(self.own[r].index(key)) } else { IxRef::Shared(self.rel(r).shared_index(key)) }
+        if r < self.prog.nscc {
+            IxRef::Own(self.own[r].index(key))
+        } else {
+            IxRef::Shared(self.rel(r).shared_index(key))
+        }
     }
 
     #[inline]
@@ -1173,11 +1228,39 @@ impl<'a> Eval<'a> {
 
     /// A computed term's value; `None` where a function gives none.
     fn value(&self, env: &Env, e: &Expr) -> Option<i64> {
-        use crate::code_rule_dsl::logic::strings;
         let (f, args) = match e {
             Expr::A(a) => return Some(Self::val(env, *a)),
             Expr::Call(f, args) => (f, args),
         };
+        let arg = |i: usize| self.value(env, &args[i]);
+        // A text function's, `@cat`'s or a node read's value, by its arguments' values: once a stratum.
+        let memo = matches!(f, Fun::Cat | Fun::NodeRead(_) | Fun::Eval(..)) && args.len() <= 3;
+        let key = if memo {
+            let mut vals = [i64::MIN; 3];
+            for (v, i) in vals.iter_mut().zip(0..args.len()) {
+                *v = arg(i)?;
+            }
+            let key = (std::ptr::from_ref(e) as usize, vals);
+            if let Some(&x) = self.memo.borrow().get(&key) {
+                return x;
+            }
+            Some(key)
+        } else {
+            None
+        };
+        let x = self.call(env, f, args);
+        if let Some(key) = key {
+            let mut m = self.memo.borrow_mut();
+            if m.len() < MEMO {
+                m.insert(key, x);
+            }
+        }
+        x
+    }
+
+    /// Call `f` of `args`, evaluated.
+    fn call(&self, env: &Env, f: &Fun, args: &[Expr]) -> Option<i64> {
+        use crate::code_rule_dsl::logic::strings;
         let calls = self.calls;
         let arg = |i: usize| self.value(env, &args[i]);
         Some(match f {
@@ -1186,7 +1269,23 @@ impl<'a> Eval<'a> {
             Fun::NodeRead(name) => calls.intern(&calls.node_read(name, arg(0)?)?),
             Fun::In(set) => i64::from(set.contains(&arg(0)?)),
             Fun::Set(_) => return None,
-            Fun::Test(op) => {
+            Fun::Test(op, held) if matches!(&args[1], Expr::Call(Fun::Set(_), _) | Expr::A(Arg::Const(_))) => {
+                let x = arg(0)?;
+                let m = held.0.get_or_init(|| {
+                    // The patterns as `strings::test` reads them: the set's joined, split at its separator.
+                    let joined = match &args[1] {
+                        Expr::Call(Fun::Set(ps), _) => ps.iter().map(|&p| calls.name(p)).collect::<Option<Vec<_>>>()?.join(&strings::SET_SEP.to_string()),
+                        p => calls.name(self.value(env, p)?)?,
+                    };
+                    let patterns: Vec<String> = joined.split(strings::SET_SEP).map(str::to_owned).collect();
+                    strings::Matcher::new(op, &patterns).ok().map(Arc::new)
+                });
+                match m {
+                    Some(m) => i64::from(calls.is_match(x, m)?),
+                    None => 0,
+                }
+            }
+            Fun::Test(op, _) => {
                 let s = calls.name(arg(0)?)?;
                 let pattern = match &args[1] {
                     Expr::Call(Fun::Set(ps), _) => ps.iter().map(|&p| calls.name(p)).collect::<Option<Vec<_>>>()?.join(&strings::SET_SEP.to_string()),
@@ -1389,12 +1488,29 @@ impl<'a> Eval<'a> {
                             (0, h.n)
                         };
                         let k = h.k;
-                        let mut cols = [(0i64, NONE); 16];
-                        let mut visit = |id: u32, env: &mut Env, out: &mut Vec<i64>| {
-                            for (c, col) in cols[..k].iter_mut().enumerate() {
-                                *col = (h.get(id, c), NONE);
+                        // A row's columns read only where an act needs them (`Step::reads`).
+                        let visit = |id: u32, env: &mut Env, out: &mut Vec<i64>| {
+                            for &(c, act) in &step.reads {
+                                let x = h.get(id, c);
+                                match act {
+                                    Act::Skip => {}
+                                    Act::Is(v) => {
+                                        if x != v {
+                                            return;
+                                        }
+                                    }
+                                    Act::Test(s) => {
+                                        if env.v[s] != x {
+                                            return;
+                                        }
+                                    }
+                                    Act::Bind(s) => {
+                                        env.v[s] = x;
+                                        env.r[s] = NONE;
+                                    }
+                                }
                             }
-                            self.accept(rule, steps, i, &cols[..k], env, out);
+                            self.go(rule, steps, i + 1, env, out);
                         };
                         match &step.ix {
                             Some(IxRef::Shared(ix)) => {
@@ -1812,7 +1928,7 @@ pub fn run(prog: &Prog, c: &Chunk<'_>, read: Vec<Option<Arc<HRel>>>, calls: &dyn
         c.shape();
     }
     let own: Vec<HRel> = (0..prog.nscc).map(|r| HRel::new(prog.widths[r])).collect();
-    let mut ev = Eval { prog, calls, c, own, read, lo: vec![0; prog.nscc], hi: vec![0; prog.nscc] };
+    let mut ev = Eval { prog, calls, c, own, read, lo: vec![0; prog.nscc], hi: vec![0; prog.nscc], memo: Default::default() };
     // Wave 0: every rule over its relations as they are (the stratum's empty).
     let mut plans: Vec<Vec<Step>> = Vec::new();
     for rule in &prog.rules {

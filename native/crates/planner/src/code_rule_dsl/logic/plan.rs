@@ -1453,15 +1453,13 @@ impl<'a> Run<'a, '_> {
                         spike_eval::declined(&names, &format!("{rel} not held"));
                         return Ok(None);
                     };
-                    // The engine's relation read where it lies; another source's rows copied flat.
                     let width = f.width(rel);
-                    let h = Arc::new(spike_eval::HRel::of_engine(&src, width, src.len()).unwrap_or_else(|| {
-                        if std::env::var_os("RERAIL_SPIKE_WHY").is_some() {
-                            let held = super::native::component::held_rows(&*src).map(|(_, n, dead, _)| (n, dead.iter().any(|&w| w != 0)));
-                            eprintln!("SPIKE COPY {rel}: {} rows copied flat: engine's (rows, dead) {held:?}", src.len());
-                        }
+                    // The engine's relation read where it lies; a view copied flat (a probe of the copy's index is a
+                    // load or two; the view's own lookup finds a row's document and place each time).
+                    let n = src.len();
+                    let h = Arc::new(spike_eval::HRel::of_engine(&src, width, n).unwrap_or_else(|| {
                         let flat = spike_strata::rows(&*src);
-                        spike_eval::HRel::of_rows(flat.k, flat.v, src.len())
+                        spike_eval::HRel::of_rows(flat.k, flat.v, n)
                     }));
                     tree.held.lock().unwrap().insert((key, rel.to_owned()), Arc::clone(&h));
                     h
@@ -1526,7 +1524,25 @@ impl<'a> Run<'a, '_> {
     fn spike_holder(&self) -> Arc<spike_strata::Tree> {
         match self.spike_tree() {
             Some((_, t)) => t,
-            None => Arc::clone(self.spike_bare.get_or_init(|| Arc::new(spike_strata::Tree::bare()))),
+            None => Arc::clone(self.spike_bare.get_or_init(|| {
+                if std::env::var_os("RERAIL_SPIKE_WHY").is_some() {
+                    use crate::code_rule_dsl::facts::vtab::syntax::{Batch, values::Layered};
+                    let rels: Vec<String> = ["node", "kind", "child"]
+                        .iter()
+                        .map(|rel| match self.spike_source(rel) {
+                            None => format!("{rel}: none"),
+                            Some(src) => {
+                                let any = src.as_any();
+                                let layered = any.and_then(|a| a.downcast_ref::<Layered>()).is_some();
+                                let batch = src.syntax_batch().map(|b| b.downcast::<Batch>().is_ok());
+                                format!("{rel}: {} rows, any {}, layered {layered}, syntax_batch {batch:?}, derived {}", src.len(), any.is_some(), super::native::component::derived(self.db, rel).is_some())
+                            }
+                        })
+                        .collect();
+                    eprintln!("SPIKE BARE {}", rels.join("; "));
+                }
+                Arc::new(spike_strata::Tree::bare())
+            })),
         }
     }
 
@@ -1735,6 +1751,11 @@ impl spike_eval::Calls for SpikeCalls<'_> {
 
     fn atom(&self, text: &str) -> i64 {
         self.atoms.existing(text).map_or_else(|| self.intern(text), i64::from)
+    }
+
+    fn is_match(&self, sym: i64, m: &crate::code_rule_dsl::logic::strings::Matcher) -> Option<bool> {
+        let atom = crate::content_store::atoms::Sym::try_from(sym).ok()?;
+        self.atoms.with_str(atom, |s| m.is_match(s)).or_else(|| self.name(sym).map(|s| m.is_match(&s)))
     }
 
     /// `a.b`; `"" . b` is `b`.
