@@ -6,7 +6,7 @@ import {
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { availableParallelism, tmpdir } from "node:os";
 import { delimiter, join, sep } from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { gitHead, gitModifiedOrUntrackedPaths, runGit, runGitWithoutBlocking, type GitResult } from "../../../src/engine/git.js";
 import { looksOutsideFolder } from "../../../src/engine/git-guard/submodule-state.js";
@@ -1374,22 +1374,58 @@ interface Started<T> {
   readonly answer: T;
 }
 
+/** A clock {@link countedClock} makes, and what moves it. */
+interface CountedClock {
+  /** Moves the clock on by `ms`. */
+  readonly pass: (ms: number) => void;
+  /** The time passed so far. */
+  readonly spent: () => number;
+  /** Resolves once the clock has been read `count` more times. */
+  readonly read: (count: number) => Promise<void>;
+  readonly restore: () => void;
+}
+
+/**
+ * A clock for `performance.now()` that stands still but for the steps `pass` adds, so no real time reaches a call that
+ * reads it: the call's limit and each of its Gits' own are spent only so.
+ */
+function countedClock(): CountedClock {
+  const began = performance.now();
+  let used = 0;
+  let reads = 0;
+  let waiting: Array<{ readonly at: number; readonly resolve: () => void }> = [];
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => {
+    reads += 1;
+    for (const { resolve } of waiting.filter(({ at }) => at <= reads)) resolve();
+    waiting = waiting.filter(({ at }) => at > reads);
+    return began + used;
+  });
+  return {
+    pass: ms => {
+      used += ms;
+    },
+    spent: () => used,
+    read: async count => await new Promise<void>(resolve => waiting.push({ at: reads + count, resolve })),
+    restore: () => clock.mockRestore(),
+  };
+}
+
 /**
  * `call` in a Rerail loaded afresh, which asks Git's version at its first call that reads worktree files. Each Git it
- * starts, blocking or not, answers as itself, or `git version` as `version` when given, and as if it had taken `step` ms.
+ * starts, blocking or not, answers as itself, or `git version` as `version` when given, and as if it had taken `step` ms:
+ * the call's clock moves by those steps alone, so the time a machine takes to start and run each Git leaves every
+ * later Git of the call the same part of its limit on a slow machine as on a fast one.
  */
 async function startedBy<T>(call: (fresh: typeof import("../../../src/engine/git.js")) => T | Promise<T>, version?: string, step = 2_500): Promise<Started<T>> {
   vi.resetModules();
   const fresh = await import("../../../src/engine/git.js");
   const started = await import("node:child_process");
-  const now = performance.now.bind(performance);
-  let used = 0;
-  const clock = vi.spyOn(performance, "now").mockImplementation(() => now() + used);
+  const clock = countedClock();
   const gits: Array<{ file: string; args: readonly string[]; limit: number | undefined }> = [];
   const asked = (file: string, args: readonly string[], limit: number | undefined): void => {
     if (!args.includes("-C")) return;
     gits.push({ file, args, limit });
-    used += step;
+    clock.pass(step);
   };
   const versionAsked = (args: readonly string[]): boolean => version !== undefined && args.at(-1) === "version";
   vi.mocked(started.spawnSync).mockImplementation(((file: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => {
@@ -1401,7 +1437,7 @@ async function startedBy<T>(call: (fresh: typeof import("../../../src/engine/git
   }) as unknown as typeof childProcess.spawnSync);
   vi.mocked(started.spawn).mockImplementation(((file: string, args: readonly string[], options: childProcess.SpawnOptions) => {
     // What was left of a 20 s limit when a Git that does not block started.
-    asked(file, args, 20_000 - used);
+    asked(file, args, 20_000 - clock.spent());
     return versionAsked(args)
       ? actualChildProcess.spawn(process.execPath, ["-e", `process.stdout.write(${JSON.stringify(version)})`], options)
       : actualChildProcess.spawn(file, args, options);
@@ -1411,7 +1447,7 @@ async function startedBy<T>(call: (fresh: typeof import("../../../src/engine/git
   } finally {
     vi.mocked(started.spawnSync).mockImplementation(actualChildProcess.spawnSync);
     vi.mocked(started.spawn).mockImplementation(actualChildProcess.spawn);
-    clock.mockRestore();
+    clock.restore();
   }
 }
 
@@ -1463,6 +1499,96 @@ async function startedLate<T>(root: string, wait: (args: readonly string[]) => n
   }
 }
 
+/** A program that runs the program and arguments after the file `gate` once that file exists, with its own input and output. */
+const HELD = String.raw`
+const { existsSync } = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const [gate, file, ...args] = process.argv.slice(2);
+const look = setInterval(() => {
+  if (!existsSync(gate)) return;
+  clearInterval(look);
+  process.exit(spawnSync(file, args, { stdio: "inherit" }).status ?? 1);
+}, 5);`;
+
+/** A Git a call started, held through {@link HELD}: its arguments, what lets it run, and its process's exit. */
+interface HeldGit {
+  readonly args: readonly string[];
+  readonly go: () => void;
+  readonly exited: Promise<void>;
+}
+
+/** What a case does with the Gits of a call {@link heldBy} holds. */
+interface Holds {
+  /** The next `count` Gits the call starts, none of them let go, once it has started them or has answered. */
+  readonly next: (count: number) => Promise<HeldGit[]>;
+  /**
+   * Moves the call's clock on by `ms`, then waits until the call has looked once at the time limit of each held Git that
+   * still runs, as it looks each second at each Git it waits on: one past its limit is ended there.
+   */
+  readonly pass: (ms: number) => Promise<void>;
+}
+
+/** What Git is asked in `args`, as Rerail starts it: the first word after `-C <folder>` that is no option. */
+const gitVerb = (args: readonly string[] | undefined): string | undefined => args?.slice(args.indexOf("-C") + 2).find(arg => !arg.startsWith("-"));
+
+/**
+ * `call`'s answer, with each Git it starts that does not block held until `drive` lets it go, on a clock that moves only
+ * when `drive` says ({@link countedClock}): the time the machine takes to start and run each Git is no part of the call's.
+ */
+async function heldBy<T>(root: string, call: () => Promise<T>, drive: (holds: Holds) => Promise<void>): Promise<T> {
+  const program = join(root, "held.cjs");
+  writeFileSync(program, HELD);
+  const started = await import("node:child_process");
+  const waiting: HeldGit[] = [];
+  const running = new Set<childProcess.ChildProcess>();
+  let gates = 0;
+  let wake = (): void => undefined;
+  vi.mocked(started.spawn).mockImplementation(((file: string, args: readonly string[], options: childProcess.SpawnOptions) => {
+    // Only a Git is held: on Windows ending a Git's process tree starts `taskkill` too.
+    if (!args.includes("-C")) return actualChildProcess.spawn(file, args, options);
+    gates += 1;
+    const gate = join(root, `gate-${gates}`);
+    const child = actualChildProcess.spawn(process.execPath, [program, gate, file, ...args], options);
+    running.add(child);
+    const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
+    void exited.then(() => running.delete(child));
+    waiting.push({ args, go: () => writeFileSync(gate, ""), exited });
+    wake();
+    return child;
+  }) as unknown as typeof childProcess.spawn);
+  const clock = countedClock();
+  // A case that ends before its call, as one past its own time limit, leaves no clock, no spawn and no Git held.
+  const restore = (): void => {
+    clock.restore();
+    vi.mocked(started.spawn).mockImplementation(actualChildProcess.spawn);
+    for (const child of running) child.kill();
+  };
+  onTestFinished(restore);
+  let answered = false;
+  const next = async (count: number): Promise<HeldGit[]> => {
+    while (waiting.length < count && !answered) {
+      await new Promise<void>(resolve => {
+        wake = resolve;
+      });
+    }
+    return waiting.splice(0, count);
+  };
+  try {
+    const answer = call().finally(() => {
+      answered = true;
+      wake();
+    });
+    const pass = async (ms: number): Promise<void> => {
+      clock.pass(ms);
+      await clock.read(running.size);
+    };
+    const [result] = await Promise.all([answer, drive({ next, pass })]);
+    return result;
+  } finally {
+    restore();
+  }
+}
+
 describe("Rerail's diff of a checkout with submodules keeps the call's one time limit", () => {
   it("as each Git it starts gets what is left of it, and none starts once it is spent", async () => {
     const root = await folder();
@@ -1492,11 +1618,28 @@ describe("Rerail's diff of a checkout with submodules keeps the call's one time 
     await writeFile(join(work, "top.txt"), "changed\n");
     // Git's version, asked once in a process, is asked first.
     await runGitWithoutBlocking(work, AUDIT_DIFF);
+    // The four submodules' statuses run as many at once as the machine has processors.
+    const atOnce = Math.min(4, availableParallelism());
+    const statuses = Array.from({ length: Math.ceil(4 / atOnce) }, (_, turn) => Math.min(atOnce, 4 - turn * atOnce));
+    const turns: string[][] = [];
 
-    const { answer } = await startedLate(root, () => 1_000, async () => await runGitWithoutBlocking(work, AUDIT_DIFF));
+    const answer = await heldBy(root, async () => await runGitWithoutBlocking(work, AUDIT_DIFF), async holds => {
+      // Each turn's Gits, all started before one of them ends, take a tenth of the call's 10 s together.
+      for (const count of [1, 1, 1, 1, ...statuses]) {
+        const gits = await holds.next(count);
+        turns.push(gits.map(({ args }) => gitVerb(args) ?? ""));
+        await holds.pass(1_000);
+        for (const git of gits) git.go();
+      }
+    });
 
-    // Asked in turn, the 16 Gits of the call (4 for the checkout, 3 for each submodule) would take 16 s.
-    expect([answer.status, answer.error?.message, listed(answer.stdout)]).toEqual([0, undefined, ["four", "one", "three", "top.txt", "two"]]);
+    // The diff, the index's submodules, the top folder and the config listing, then the statuses: five tenths on four
+    // processors or more, what Git's own diff takes for itself and its four statuses in turn; the call's 8 Gits asked in
+    // turn would take eight.
+    expect([answer.status, answer.error?.message, listed(answer.stdout), turns]).toEqual([
+      0, undefined, ["four", "one", "three", "top.txt", "two"],
+      [["diff"], ["ls-files"], ["rev-parse"], ["config"], ...statuses.map(count => Array<string>(count).fill("status"))],
+    ]);
   }, 60_000);
 
   it("and runs no more Gits at once than the machine has processors", async () => {
@@ -1514,13 +1657,20 @@ describe("Rerail's diff of a checkout with submodules keeps the call's one time 
     const root = await folder();
     const work = await changedSubmodules(root, ["one"]);
     await runGitWithoutBlocking(work, AUDIT_DIFF);
+    const turns: string[][] = [];
 
-    const began = performance.now();
-    const { answer } = await startedLate(root, args => args.includes("status") ? 600_000 : 0, async () => await runGitWithoutBlocking(work, AUDIT_DIFF, { timeout: 2_000 }));
-    const ms = performance.now() - began;
+    const answer = await heldBy(root, async () => await runGitWithoutBlocking(work, AUDIT_DIFF, { timeout: 2_000 }), async holds => {
+      // The checkout's four Gits answer with no time passing; the submodule's status is never let go.
+      for (let turn = 0; turn < 4; turn += 1) for (const git of await holds.next(1)) git.go();
+      const status = await holds.next(1);
+      turns.push(status.map(({ args }) => gitVerb(args) ?? ""));
+      await holds.pass(2_000);
+      await Promise.all(status.map(async ({ exited }) => await exited));
+    });
 
     expect(answer.error).toMatchObject({ code: "ETIMEDOUT", message: expect.stringMatching(/^spawnSync .* ETIMEDOUT$/u) });
-    expect([answer.status, ms >= 2_000, ms < 8_000]).toEqual([null, true, true]);
+    // Only the 2 s the case passed spent the limit, and the status was ended with its process.
+    expect([answer.status, turns]).toEqual([null, [["status"]]]);
   }, 60_000);
 
   it("and so does the session walk's listing, which does not block: its Gits share the read's 10 s", async () => {
