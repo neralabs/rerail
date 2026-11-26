@@ -640,7 +640,7 @@ pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
     }
     let alone: HashSet<String> = heads
         .into_iter()
-        .filter(|(h, n)| *n == 1 && !prog.outputs.contains(h) && !prog.inputs.contains(h) && !prog.facts.contains_key(h) && !prog.natives.get(h).is_some_and(|n| !matches!(n, super::front::Native::TextTest { .. })))
+        .filter(|(h, n)| *n == 1 && !prog.outputs.contains(h) && !prog.inputs.contains(h) && !prog.facts.contains_key(h) && prog.natives.get(h).is_none_or(|n| matches!(n, super::front::Native::TextTest { .. })))
         .map(|(h, _)| h)
         .collect();
     for rule in &mut prog.rules {

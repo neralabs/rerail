@@ -805,7 +805,7 @@ impl<'v> Program<'v> {
                         if placeless[s] {
                             continue;
                         }
-                        let in_family = matches!(at[s], Some(_));
+                        let in_family = at[s].is_some();
                         let at_key = matches!(a.args().next(), Some(TermRef::Var(y)) if classes[y.0 as usize] == key);
                         if !in_family || !at_key {
                             fits = false;

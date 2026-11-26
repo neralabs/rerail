@@ -1739,7 +1739,7 @@ fn extensible_stated(prog: &mut front::Program) {
         .map(|(rel, _)| rel.clone())
         .collect();
     for rel in empty {
-        prog.facts.insert(rel.into(), Vec::new());
+        prog.facts.insert(rel, Vec::new());
     }
 }
 
