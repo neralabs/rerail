@@ -68,7 +68,7 @@ pub fn kernels(text: &str, defines: &[(&str, &str)]) -> Vec<(&'static str, Kerne
         out.push(("label_parents", label_parents_w8::label_parents_w8));
     }
     if JOIN_PROGRAM.contains(&d) {
-        out.push(("join_run", join_run::join_run));
+        out.extend([("join_grid", join_run::join_grid as Kernel), ("join_phase", join_run::join_phase), ("join_chain", join_run::join_chain)]);
     }
     out
 }

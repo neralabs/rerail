@@ -215,7 +215,7 @@ where
     unsafe fn new(l: &Lanes, id: R<N>) -> Self {
         let s = l.st.s;
         let at = if s.r_view == 0 {
-            Found::Rel(ln::rel_at(l.d, id))
+            Found::Rel(ln::rel_at(l.d, id, l.st.rf))
         } else {
             let mut memo = NONE;
             let first = vrow(s.r_view, s.v_dir, id[0], &mut memo);

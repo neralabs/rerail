@@ -1,6 +1,6 @@
-//! `join_run`, the join program (`join_stages.uglykl` with `JOIN_PROGRAM`, decision 0603), written by hand in Rust:
-//! the oracle the Rust that rerail-ukl-vec writes from the same source is held to (decision 0567), in results and in
-//! the shape of its code.
+//! The join program (`join_stages.uglykl` with `JOIN_PROGRAM`, decisions 0603, 0648: its kernels `join_grid`,
+//! `join_phase` and `join_chain`), written by hand in Rust: the oracle the Rust that rerail-ukl-vec writes from the
+//! same source is held to (decision 0567), in results and in the shape of its code.
 //!
 //! Its shape is the source's, read as a CPU runs it. A group is `JOIN_TG` (256) threads, and an item's work is a
 //! function of a thread (`stage_count_one`, `dedup_claim_one`, ...), so the group's work is a loop over its threads,
@@ -25,10 +25,16 @@ use rerail_simd::{LaneCount, SimdElement, SupportedLaneCount};
 use core::sync::atomic::{AtomicU32, Ordering, Ordering::SeqCst};
 
 const NONE: u32 = u32::MAX;
-/// A finisher's phases run itself at most, a dispatch (`JOIN_INLINE`, decision 0674), of at most
-/// `JOIN_INLINE_GROUPS` groups each.
-const JOIN_INLINE: u32 = 256;
-const JOIN_INLINE_GROUPS: u32 = 4;
+/// A phase's groups at most (`PHASE_GROUPS`, decision 0648), a segment's its share of them (`seg_cap`).
+const PHASE_GROUPS: u32 = 1 << 12;
+/// A segment whose count of none starts no group (`SEG_EMPTY`, decision 0647): its `per`'s top bit.
+const SEG_EMPTY: u32 = 1 << 31;
+/// A phase's groups at most that a chain runs (`CHAIN_GROUPS`, decision 0647).
+const CHAIN_GROUPS: u32 = 4;
+/// The program's flags that stop it (a gate, past its rounds, handed back, no new rows, parked), and with them those
+/// that park it (a text arena full, a gate's room).
+const STOPS: u32 = 2 | 4 | 8 | 16 | 32;
+const PARKS: u32 = 64 | 128;
 /// A group's threads (`JOIN_TG`).
 const TG: u32 = 256;
 /// A text row's SIMD group (`SGW`): its rows and their counts are laid out by it.
@@ -48,8 +54,10 @@ const PK_IX_KEY: u32 = 2;
 const PK_RADIX_HIST: u32 = 3;
 const PK_RADIX_SCATTER: u32 = 4;
 const PK_IX_PLACE: u32 = 5;
-const PK_IX_MARK: u32 = 30;
-const PK_DEDUP_KEY: u32 = 31;
+/// An index's buckets' offsets (`ix_offs_one`), a thread a bucket, beside its rows placed (`PK_IX_PLACE`).
+const PK_IX_OFFS: u32 = 30;
+const PK_IX_MARK: u32 = 31;
+const PK_DEDUP_KEY: u32 = 32;
 const PK_DEDUP_CLEAR: u32 = 6;
 const PK_DEDUP_CLAIM: u32 = 7;
 const PK_MAP: u32 = 8;
@@ -211,8 +219,12 @@ struct Job {
     cnt: *const u32,
     // Its words (`JobWords`): base, n, kb, eb, l_at, o_at, v_at, h_at.
     at: [u32; 8],
+    /// The blocks the far bases of the relations it reads lie in (decision 0353 step 6, `RelB`): `rf` the stage's
+    /// `r`'s (a copy's or an index's, `l`'s), `wf` the witness probes'. Null: the relation's own block.
+    rf: *const u8,
+    wf: [*const u8; 3],
 }
-const _: () = assert!(size_of::<Job>() == 208);
+const _: () = assert!(size_of::<Job>() == 240);
 
 #[repr(C)]
 struct IxP {
@@ -287,7 +299,7 @@ struct RoundP {
     nops: u32,
     max: u32,
     next: u32,
-    pad: u32,
+    narrow: u32,
     ops: [RoundOp; 1],
 }
 #[repr(C)]
@@ -310,8 +322,8 @@ struct Seg {
 struct ScanLevel {
     input: *mut u32,
     sums: *mut u32,
-    // Its words (`ScanWords`): n, offsets, at, sums_at.
-    w: [u32; 4],
+    // Its words (`ScanWords`): n, offsets (1: it has them; 2: a sized first level), at, sums_at, summed, pad.
+    w: [u32; 6],
 }
 #[repr(C)]
 struct SortPass {
@@ -325,11 +337,16 @@ struct SortPass {
     pad2: u64,
 }
 #[repr(C)]
-struct ProgP {
-    phases: u32,
-    dispatches: u32,
-    pad0: u32,
-    pad1: u32,
+/// A phase's dispatch or its grid's (`PhaseP`, decision 0648): the phase, whether its groups run the listed items
+/// (`slots[at + g]`), and its grid's first word (`NONE`: a phase of no segments, its own groups checking the flags,
+/// `at` its dispatch's sequence).
+#[repr(C)]
+#[derive(Clone, core::marker::Copy)]
+struct PhaseP {
+    q: u32,
+    list: u32,
+    at: u32,
+    slot: u32,
 }
 #[repr(C)]
 struct SizeOp {
@@ -340,7 +357,7 @@ struct SizeOp {
     x: u32,
     y: u32,
 }
-const _: () = assert!(size_of::<Item>() == 16 && size_of::<Seg>() == 24 && size_of::<ScanLevel>() == 32);
+const _: () = assert!(size_of::<Item>() == 16 && size_of::<Seg>() == 24 && size_of::<ScanLevel>() == 40);
 const _: () = assert!(size_of::<SortPass>() == 64 && size_of::<SizeOp>() == 32);
 
 // ---- Memory: a word's atomics, a column's value. ----
@@ -376,8 +393,15 @@ unsafe fn rows_put(t: *const u8, a0: u64, r: u32, c: u32, v: u64) -> u32 {
     ln::rows_put(at_(t, a0), r, c, v)
 }
 #[inline(always)]
-unsafe fn rel_get(t: *const u8, a0: u64, r: u32, c: u32) -> u64 {
-    ln::one::rel_get(at_(t, a0), r, c)
+/// Row `r`'s column `c` of the relation at `t + a0`; a base in another block is read in `far`'s (decision 0353 step 6:
+/// `clif_rel_get`'s far block, here its address; the relation's own block, or none, where it has no far base).
+unsafe fn rel_get(t: *const u8, a0: u64, r: u32, c: u32, far: *const u8) -> u64 {
+    ln::one::rel_get(at_(t, a0), r, c, far)
+}
+/// A job's far block (`Job::rf`): its own where it names none (`j->RF != 0 ? j->RF : L`).
+#[inline(always)]
+fn far(rf: *const u8, own: *const i64) -> *const u8 {
+    if rf.is_null() { own as *const u8 } else { rf }
 }
 #[inline(always)]
 unsafe fn rel_dead(t: *const u8, a0: u64, r: u32) -> u32 {
@@ -480,11 +504,11 @@ unsafe fn vrow_dir<'a>(kind: u32, d: *const ViewDir, r: u32, memo: &mut u32) -> 
 }
 
 /// A row of a view or a relation, found once, so that each of its columns is read from it: a view row's document
-/// and tape node (`reads::At`), or a relation's row (`t + a0`'s row `r`).
+/// and tape node (`reads::At`), or a relation's row (`t + a0`'s row `r`, its far base's block `far`).
 #[derive(Clone, core::marker::Copy)]
 enum Row<'a> {
     View(reads::At<'a>),
-    Rel(*const u8, u64, u32),
+    Rel(*const u8, u64, u32, *const u8),
 }
 
 impl Row<'_> {
@@ -492,7 +516,7 @@ impl Row<'_> {
     unsafe fn get(&self, col: u32) -> i64 {
         match *self {
             Row::View(a) => a.col(col) as i64,
-            Row::Rel(t, a0, r) => rel_get(t, a0, r, col) as i64,
+            Row::Rel(t, a0, r, far) => rel_get(t, a0, r, col, far) as i64,
         }
     }
 }
@@ -505,7 +529,8 @@ unsafe fn vrow<'a>(kind: u32, d: *const ViewDir, r: u32, memo: &mut u32) -> Row<
     if r < (*p).rows {
         return vrow_dir(kind & !VIEW_PLACED, (*p).dir, r, memo);
     }
-    Row::Rel((*p).tail, (*p).at, r - (*p).rows)
+    // The tail, one relation in its own block: no far base.
+    Row::Rel((*p).tail, (*p).at, r - (*p).rows, (*p).tail)
 }
 
 /// View `kind`'s row `r`, column `col` (`vrow`'s).
@@ -521,14 +546,18 @@ struct St<'a> {
     s: &'a Stage,
     l: *const i64,
     r: *const i64,
+    /// The block `r`'s far base lies in (`RelB`, decision 0353 step 6): `r`'s own where it has none.
+    rf: *const u8,
     /// The row last found (`row`) and its number: a binding reads several columns of each row it walks. Its reads
     /// point into the launch's buffers, which outlive every stage.
     last: core::cell::Cell<(u32, Option<Row<'static>>)>,
 }
 
 impl<'a> St<'a> {
-    fn new(s: &'a Stage, l: *const i64, r: *const i64) -> Self {
-        St { s, l, r, last: core::cell::Cell::new((NONE, None)) }
+    /// Stage `s` over bindings `l` and relation `r`, its far base in `rf` (none: `r`'s own block, `rel_b`).
+    fn new(s: &'a Stage, l: *const i64, r: *const i64, rf: *const u8) -> Self {
+        let rf = if rf.is_null() { r as *const u8 } else { rf };
+        St { s, l, r, rf, last: core::cell::Cell::new((NONE, None)) }
     }
 }
 
@@ -546,7 +575,7 @@ impl St<'_> {
         } else if s.r_view != 0 {
             vrow(s.r_view, s.v_dir, r, &mut memo)
         } else {
-            return Row::Rel(self.r as *const u8, s.r_at, r);
+            return Row::Rel(self.r as *const u8, s.r_at, r, self.rf);
         };
         self.last.set((r, Some(row)));
         row
@@ -1593,7 +1622,7 @@ unsafe fn stage_scatter_one(st: &St, j: &Job, b: &Bufs, t: u32) {
 }
 
 /// A witness's probe: whether relation `r` has a row of `b`'s keys (an anti-join's: none).
-unsafe fn witness_probe(b: &Stage, l: *const i64, t: u32, cap_in: u32, a: &St, ra: u32, r: *const i64) -> bool {
+unsafe fn witness_probe(b: &Stage, l: *const i64, t: u32, cap_in: u32, a: &St, ra: u32, r: *const i64, rf: *const u8) -> bool {
     let mut kv = [0i64; 8];
     for (i, k) in kv.iter_mut().enumerate().take(b.nkeys.min(8) as usize) {
         *k = match b.key_kind[i] {
@@ -1602,7 +1631,7 @@ unsafe fn witness_probe(b: &Stage, l: *const i64, t: u32, cap_in: u32, a: &St, r
             _ => b.key_const[i],
         };
     }
-    let bst = St::new(b, l, r);
+    let bst = St::new(b, l, r, rf);
     let w = bst.probe(&kv);
     let mut found = false;
     bst.each(w, &kv, |row, _, key| {
@@ -1630,7 +1659,7 @@ unsafe fn witness_count_one(st: &St, j: &Job, b: &Bufs, t: u32) {
         if !st.matches(r, &kv, key) {
             return true;
         }
-        let all = (0..nb).all(|k| witness_probe(&*j.bs.add(k), st.l, t, s.cap_in, st, r, j.w[k]));
+        let all = (0..nb).all(|k| witness_probe(&*j.bs.add(k), st.l, t, s.cap_in, st, r, j.w[k], j.wf[k]));
         if all {
             found = 1;
         }
@@ -1640,7 +1669,7 @@ unsafe fn witness_count_one(st: &St, j: &Job, b: &Bufs, t: u32) {
 }
 
 /// Row `t` of a copy that reads a view or a relation, or writes a relation: a read and a write each value.
-unsafe fn rows_copy_one(src: *const u8, dst: *mut u8, c: &Copy, n: u32, t: u32) {
+unsafe fn rows_copy_one(src: *const u8, dst: *mut u8, c: &Copy, sf: *const u8, n: u32, t: u32) {
     if t >= n {
         return;
     }
@@ -1658,7 +1687,7 @@ unsafe fn rows_copy_one(src: *const u8, dst: *mut u8, c: &Copy, n: u32, t: u32) 
         } else if c.src_at == 0 {
             col(src as *const i64, from, c.src_stride, t)
         } else {
-            rel_get(src, c.src_at, c.src_from.wrapping_add(t), from) as i64
+            rel_get(src, c.src_at, c.src_from.wrapping_add(t), from, sf) as i64
         };
         if c.dst_rows_at == 0 {
             col_put(dst as *mut i64, k as u32, c.dst_stride, a, v);
@@ -1720,16 +1749,17 @@ unsafe fn ix_rows(bb: *const u8, p: &IxP) -> u32 {
     if len > p.from { (len - p.from).min(p.n) } else { 0 }
 }
 
-/// The index's row `t` (from its first, `from`), found once for its key columns.
+/// The index's row `t` (from its first, `from`), found once for its key columns; its relation's far base in `bf`'s
+/// block (decision 0353 step 6).
 #[inline]
-unsafe fn ix_row<'a>(bb: *const u8, p: &IxP, t: u32, memo: &mut u32) -> Row<'a> {
-    if p.kind != 0 { vrow(p.kind as u32, p.dir, t, memo) } else { Row::Rel(bb, p.at, p.from.wrapping_add(t)) }
+unsafe fn ix_row<'a>(bb: *const u8, bf: *const u8, p: &IxP, t: u32, memo: &mut u32) -> Row<'a> {
+    if p.kind != 0 { vrow(p.kind as u32, p.dir, t, memo) } else { Row::Rel(bb, p.at, p.from.wrapping_add(t), bf) }
 }
 
 /// Row `t`'s key hash (`key_hash`).
-unsafe fn ix_hash64(bb: *const u8, p: &IxP, t: u32) -> u64 {
+unsafe fn ix_hash64(bb: *const u8, bf: *const u8, p: &IxP, t: u32) -> u64 {
     let mut memo = NONE;
-    let row = ix_row(bb, p, t, &mut memo);
+    let row = ix_row(bb, bf, p, t, &mut memo);
     let mut h = KEY_SEED;
     for i in 0..(p.ncols & !IX_LIVE).min(8) as usize {
         h = key_mix(h, row.get(p.cols[i]));
@@ -1738,8 +1768,8 @@ unsafe fn ix_hash64(bb: *const u8, p: &IxP, t: u32) -> u64 {
 }
 
 /// Row `t`'s key hash, masked to the index's places.
-unsafe fn ix_hash(bb: *const u8, p: &IxP, t: u32) -> u32 {
-    (ix_hash64(bb, p, t) & p.mask) as u32
+unsafe fn ix_hash(bb: *const u8, bf: *const u8, p: &IxP, t: u32) -> u32 {
+    (ix_hash64(bb, bf, p, t) & p.mask) as u32
 }
 
 /// `MARK_REACH` (decision 0671): the places before one a builder looks back over for its tag.
@@ -1747,7 +1777,7 @@ const MARK_REACH: u32 = 8;
 
 /// `join_stages`' `ix_mark_one` of places `t0..t1`: each one's key's tag, and `MARK_SAME` where its bucket's previous
 /// place of the tag, among the `MARK_REACH` before it, holds its key. Its marks after its rows' room (`n`).
-unsafe fn ix_mark_range(bb: *const u8, keys: *const u32, offs: *const u32, rows: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32) {
+unsafe fn ix_mark_range(bb: *const u8, keys: *const u32, offs: *const u32, rows: *mut u32, p: &IxP, bf: *const u8, kb: u32, eb: u32, t0: u32, t1: u32) {
     let t1 = t1.min(ix_rows(bb, p));
     let row = |u: u32| (*rows.add(u as usize)).wrapping_sub(p.from);
     // The tags of the places a place looks back over and its own, each place's computed once (`at[u % 2R]` place
@@ -1757,7 +1787,7 @@ unsafe fn ix_mark_range(bb: *const u8, keys: *const u32, offs: *const u32, rows:
     let mut tag = |u: u32| {
         let k = (u % RING) as usize;
         if of[k] != u {
-            (at[k], of[k]) = (mark_tag(ix_hash64(bb, p, row(u))), u);
+            (at[k], of[k]) = (mark_tag(ix_hash64(bb, bf, p, row(u))), u);
         }
         at[k]
     };
@@ -1772,7 +1802,7 @@ unsafe fn ix_mark_range(bb: *const u8, keys: *const u32, offs: *const u32, rows:
                 continue;
             }
             let (mut mu, mut mt) = (NONE, NONE);
-            let (a, b) = (ix_row(bb, p, ru, &mut mu), ix_row(bb, p, rt, &mut mt));
+            let (a, b) = (ix_row(bb, bf, p, ru, &mut mu), ix_row(bb, bf, p, rt, &mut mt));
             same = (0..(p.ncols & !IX_LIVE).min(8) as usize).all(|i| a.get(p.cols[i]) == b.get(p.cols[i]));
             break;
         }
@@ -1783,7 +1813,8 @@ unsafe fn ix_mark_range(bb: *const u8, keys: *const u32, offs: *const u32, rows:
 // ---- A lattice relation's rounds (decision 0124). ----
 
 unsafe fn lat_r(r: *const u8, p: &LatP, row: u32, c: u32) -> i64 {
-    rel_get(r, p.r_at, row, c) as i64
+    // The device's own relation, one part in its block: no far base.
+    rel_get(r, p.r_at, row, c, r) as i64
 }
 
 unsafe fn lat_put(r: *const u8, p: &LatP, row: u32, c: u32, v: i64) {
@@ -1841,7 +1872,7 @@ unsafe fn lat_rehash_one(r: *const u8, ob: *const u8, hb: *mut u8, p: &LatP, s: 
         }
         return;
     }
-    if s > p.omask {
+    if s > p.omask || p.omask == NONE {
         return;
     }
     let old = ob.add(p.h0_at as usize) as *const u32;
@@ -2490,7 +2521,7 @@ unsafe fn stage_map_range(s: &Stage, bb: *mut i64, totals: *const u32, t0: u32, 
 
 /// A copy of rows: columns to columns a column's copy at a time; through a view or a relation's reads a row at a
 /// time.
-unsafe fn rows_copy_range(src: *const u8, dst: *mut u8, totals: *const u32, c: &Copy, t0: u32, t1: u32) {
+unsafe fn rows_copy_range(src: *const u8, dst: *mut u8, totals: *const u32, c: &Copy, sf: *const u8, t0: u32, t1: u32) {
     let n = if c.count_slot == NONE { c.n } else { (*totals.add(c.count_slot as usize)).min(c.n) };
     let t1 = t1.min(n);
     if t0 >= t1 {
@@ -2498,7 +2529,7 @@ unsafe fn rows_copy_range(src: *const u8, dst: *mut u8, totals: *const u32, c: &
     }
     if c.r_view != 0 || c.src_at != 0 || c.dst_rows_at != 0 {
         for t in t0..t1 {
-            rows_copy_one(src, dst, c, n, t);
+            rows_copy_one(src, dst, c, sf, n, t);
         }
         return;
     }
@@ -2514,7 +2545,7 @@ unsafe fn rows_copy_range(src: *const u8, dst: *mut u8, totals: *const u32, c: &
     }
 }
 
-unsafe fn ix_key_range(bb: *const u8, out: *mut u32, places: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32) {
+unsafe fn ix_key_range(bb: *const u8, out: *mut u32, places: *mut u32, p: &IxP, bf: *const u8, kb: u32, eb: u32, t0: u32, t1: u32) {
     let t1 = t1.min(ix_rows(bb, p));
     if t0 >= t1 {
         return;
@@ -2531,19 +2562,16 @@ unsafe fn ix_key_range(bb: *const u8, out: *mut u32, places: *mut u32, p: &IxP, 
         *places.add((eb + t) as usize) = eb + t;
     }
     if p.kind == 0 {
-        dedup_lanes::ix_keys_lanes::<{ stage_lanes::LANES }>(bb, out, p, kb, eb, t0, t1);
+        dedup_lanes::ix_keys_lanes::<{ stage_lanes::LANES }>(bb, bf, out, p, kb, eb, t0, t1);
         return;
     }
-    dedup_lanes::ix_keys_view_lanes::<{ stage_lanes::LANES }>(bb, out, p, kb, eb, t0, t1);
+    dedup_lanes::ix_keys_view_lanes::<{ stage_lanes::LANES }>(bb, bf, out, p, kb, eb, t0, t1);
 }
 
-unsafe fn ix_place_range(bb: *const u8, keys: *const u32, places: *const u32, offs: *mut u32, rows: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32) {
-    let n = ix_rows(bb, p);
-    let cap = (p.mask as u32).wrapping_add(1);
-    if n == 0 && t0 == 0 && t1 > 0 {
-        fill_u32(offs, 0, cap.saturating_add(1), 0);
-    }
-    let t1 = t1.min(n);
+/// `ix_place_one` of sorted places `t0..t1`: each one's row, the place it came from less `eb`, past the relation's
+/// first `from`.
+unsafe fn ix_place_range(bb: *const u8, places: *const u32, rows: *mut u32, p: &IxP, eb: u32, t0: u32, t1: u32) {
+    let t1 = t1.min(ix_rows(bb, p));
     if t0 >= t1 {
         return;
     }
@@ -2557,14 +2585,29 @@ unsafe fn ix_place_range(bb: *const u8, keys: *const u32, places: *const u32, of
     for t in t..t1 {
         *rows.add(t as usize) = p.from.wrapping_add(*places.add((eb + t) as usize)).wrapping_sub(eb);
     }
-    // Each row the first of its keys' places: their offsets set to it.
-    for t in t0..t1 {
-        let b = (*keys.add((eb + t) as usize)).wrapping_sub(kb);
-        let from = if t == 0 { 0 } else { (*keys.add((eb + t - 1) as usize)).wrapping_sub(kb).wrapping_add(1) };
-        fill_u32(offs, from, b.saturating_add(1), t);
-        if t == n - 1 {
-            fill_u32(offs, b.saturating_add(1), cap.saturating_add(1), n);
+}
+
+/// `ix_offs_one` of buckets `x0..x1` (decision 0647), of the index's `cap + 1`: each one's first sorted place whose
+/// bucket is it or past it. The first by a search of the sorted keys, each after it walked on from the one before
+/// (the keys are sorted, so the walk finds what the search would).
+unsafe fn ix_offs_range(bb: *const u8, keys: *const u32, offs: *mut u32, p: &IxP, kb: u32, eb: u32, x0: u32, x1: u32) {
+    let cap = (p.mask as u32).wrapping_add(1);
+    let x1 = x1.min(cap.saturating_add(1));
+    if x0 >= x1 {
+        return;
+    }
+    let n = ix_rows(bb, p);
+    let key = |t: u32| (*keys.add((eb + t) as usize)).wrapping_sub(kb);
+    let (mut lo, mut hi) = (0u32, n);
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if key(mid) < x0 { lo = mid + 1 } else { hi = mid }
+    }
+    for x in x0..x1 {
+        while lo < n && key(lo) < x {
+            lo += 1;
         }
+        *offs.add(x as usize) = lo;
     }
 }
 
@@ -2578,6 +2621,10 @@ unsafe fn lat_clear_range(pl: *mut u32, best: *mut u32, flags: *mut u32, p: &Lat
 /// A lattice's key table cleared: each entry (row, changes, level) none, 0, 0, four entries three stores. Code 6: a
 /// held bitmap's words, 0.
 unsafe fn lat_hclear_range(hb: *mut u8, p: &LatP, i0: u32, i1: u32) {
+    // A program's tail's growth of a map that did not grow (`omask` all ones, `Batch::lattice_tail`): nothing.
+    if p.omask == NONE {
+        return;
+    }
     let i1 = i1.min(p.hmask.saturating_add(1));
     let h = hb.add(p.h_at as usize) as *mut u32;
     if p.code == 6 {
@@ -2621,9 +2668,12 @@ unsafe fn gate_one(p: *const GateP, ctl: *mut u32, t: u32) {
     }
 }
 
+/// A recursive component's round's end (`round_one`): its ops in order, the round counted; the program ends with no
+/// new rows (16), stops past its rounds (4), or hands the component back with less work than `narrow` (8).
 unsafe fn round_one(p: *const RoundP, ctl: *mut u32) {
     let ops = core::slice::from_raw_parts((*p).ops.as_ptr(), (*p).nops as usize);
     let any = ops.iter().any(|o| o.op == 4 && *o.from != 0);
+    let work: u64 = ops.iter().filter(|o| o.op == 6).map(|o| *o.from as u64).sum();
     let cur = *(*p).round;
     for o in ops {
         match o.op {
@@ -2641,15 +2691,12 @@ unsafe fn round_one(p: *const RoundP, ctl: *mut u32) {
     }
     *(*p).round = cur.wrapping_add(1);
     let ctl6 = at(ctl.add(6));
-    let ctl7 = at(ctl.add(7));
     if !any {
         ctl6.fetch_or(16, SeqCst);
-        ctl7.store(NONE, SeqCst);
     } else if cur.wrapping_add(1) > (*p).max {
         ctl6.fetch_or(4, SeqCst);
-        ctl7.store(NONE, SeqCst);
-    } else {
-        ctl7.store((*p).next + 1, SeqCst);
+    } else if work < (*p).narrow as u64 {
+        ctl6.fetch_or(8, SeqCst);
     }
 }
 
@@ -2754,10 +2801,9 @@ unsafe fn scan_tile_sum(input: *const u32, sums: *mut u32, n: u32, tile: u32) {
     *sums.add(tile as usize) = sum_u32(input.add(first as usize), end - first);
 }
 
-/// Tile `tile` scanned in place from its offset; the last tile writes the total at `n`.
-unsafe fn scan_tile(io: *mut u32, offsets: Option<*const u32>, n: u32, tile: u32) {
+/// Tile `tile` scanned in place from `base` (`ukl_scan_tile_from`); the last tile writes the total at `n`.
+unsafe fn scan_tile(io: *mut u32, base: u32, n: u32, tile: u32) {
     let (first, end) = scan_tile_range(n, tile);
-    let base = offsets.map_or(0, |o| *o.add(tile as usize));
     let run = scan_u32(io.add(first as usize), end - first, base);
     let last = if n == 0 { 0 } else { (n - 1) / (TG * SCAN_ITEMS) };
     if tile == last {
@@ -2876,6 +2922,21 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
         return;
     }
     let (a, d, g, vc) = (j.a, j.d, j.g, j.vc);
+    // P[6]: the arena keeps its texts one value a content, in table `t` (`canon_text`, decision 0659). `ROW_FIND`
+    // (bit 10): a made text's value is the atom it is (`atom_of_text`, decision 0666), no row where none is.
+    let (canon, t) = (pw(6) != 0, b.h);
+    let finds = s.agg[0] & (1 << 10) != 0;
+    let value_of = |off: u32, len: u32| {
+        if finds {
+            atom_of_text(a, off, len, d)
+        } else if canon {
+            canon_text(a, t, off, len, ctl)
+        } else {
+            arena_value(off, len)
+        }
+    };
+    // The rows' scratch (`fs`): a SIMD group's share, a regex group's Pike VM's lists.
+    let fs = j.s_.add(sg as usize * 2 * SGW as usize * pw(1) as usize);
     let op = s.agg[0] & 15;
     let want = (s.agg[0] >> 8) & 1 != 0;
     // A test's automaton, its byte classes in registers for every row of the group's.
@@ -2944,15 +3005,15 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
             if e & 3 == 0 {
                 let e = e as *const u8;
                 let len = (e.add(12) as *const u32).read_unaligned().wrapping_sub(16);
-                let (off, full) = arena_claim(a, len);
+                let (off, full) = arena_claim(a, len, canon);
                 if !full {
                     core::ptr::copy_nonoverlapping(e.add(16), (a as *mut u8).add(16 + off as usize), len as usize);
                 }
-                made(ctl, vv, counts, r, off, len, full);
+                made(ctl, vv, counts, r, if full { -1 } else { value_of(off, len) }, full);
                 continue;
             }
         }
-        let y = st.txt_of(r, d, a, 2, s.agg[1] >> 4, &mut unheld);
+        let y = st.txt_of(r, d, a, 2, (s.agg[1] >> 4) & 15, &mut unheld);
         let f = (s.agg[0] >> 16) & 255;
         let lx = x.len();
         // How the text is made, and its length.
@@ -2981,6 +3042,45 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
                 len += pad;
             }
             (Make::Digits { neg, u, ndig, pad }, len)
+        } else if f == 12 {
+            // str_between(x, y, z): x less prefix y (keys 2, 3) and suffix z (keys 4, 5), each of its kind; no row
+            // where x has not both.
+            let y = st.txt_of(r, d, a, 2, (s.agg[1] >> 4) & 15, &mut unheld);
+            let z = st.txt_of(r, d, a, 4, (s.agg[1] >> 8) & 15, &mut unheld);
+            let (ly, lz) = (y.len(), z.len());
+            if lx < ly + lz || !x.same(0, &y, 0, ly) || !x.same(lx - lz, &z, 0, lz) {
+                *vv.add(r as usize) = -1;
+                *counts.add(r as usize) = 0;
+                continue;
+            }
+            (Make::Range(ly), lx - lz - ly)
+        } else if f == 13 {
+            // pkg_up(x, k): x to its k-th '.' from its end; empty where it has fewer.
+            let k = st.key_value(r, 5);
+            let mut cut = lx;
+            if k > 0 {
+                let mut seen = 0i64;
+                cut = 0;
+                for i in (1..=lx).rev() {
+                    if x.byte(i - 1) == b'.' {
+                        seen += 1;
+                        if seen == k {
+                            cut = i - 1;
+                            break;
+                        }
+                    }
+                }
+            }
+            (Make::Range(0), cut)
+        } else if f == 14 {
+            // rx_group(x, re, name): the group's range of x by its program `g` (`rx_group_range`); no row where the
+            // regex does not match x or the group took no part.
+            let Some((from, to)) = rx_group_range(g, &x, fs) else {
+                *vv.add(r as usize) = -1;
+                *counts.add(r as usize) = 0;
+                continue;
+            };
+            (Make::Range(from), to - from)
         } else if f == 6 {
             let y = st.txt_of(r, d, a, 2, 0, &mut unheld);
             let z = st.txt_of(r, d, a, 4, 0, &mut unheld);
@@ -2997,7 +3097,7 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
             }
             (Make::Range(from), to.wrapping_sub(from))
         };
-        let (off, full) = arena_claim(a, len);
+        let (off, full) = arena_claim(a, len, canon);
         let o = (a as *mut u8).add(16 + off as usize);
         if !full {
             match make {
@@ -3051,26 +3151,378 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
         if unheld {
             counter(4);
         }
-        made(ctl, vv, counts, r, off, len, full);
+        made(ctl, vv, counts, r, if full { -1 } else { value_of(off, len) }, full);
     }
 }
 
-/// `len` bytes of the text arena: their offset, and whether they are past its room.
-unsafe fn arena_claim(a: *mut u32, len: u32) -> (u32, bool) {
-    let off = at(a).fetch_add(len, SeqCst);
-    (off, off as u64 + len as u64 > at(a.add(1)).load(SeqCst) as u64)
+/// A text's room in the arena (`arena_claim`): its bytes, and in a canonical one (`canon`) its length before them, 4
+/// bytes little-endian; its bytes' offset, and whether they are past its room.
+unsafe fn arena_claim(a: *mut u32, len: u32, canon: bool) -> (u32, bool) {
+    let room = len + if canon { 4 } else { 0 };
+    let off = at(a).fetch_add(room, SeqCst);
+    let full = off as u64 + room as u64 > at(a.add(1)).load(SeqCst) as u64;
+    if canon && !full {
+        core::ptr::copy_nonoverlapping(len.to_le_bytes().as_ptr(), (a as *mut u8).add(16 + off as usize), 4);
+    }
+    (off + if canon { 4 } else { 0 }, full)
 }
 
-/// A made text's row: its value (none where the arena was full: the phase runs again) and its keep bit.
-unsafe fn made(ctl: *mut u32, vv: *mut i64, counts: *mut u32, r: u32, off: u32, len: u32, full: bool) {
+/// A made text's row: its value (-1 where the arena was full: the phase runs again; or no atom is) and its keep bit:
+/// none for a text no atom is (`ROW_FIND`, as the CPU drops it at the function).
+unsafe fn made(ctl: *mut u32, vv: *mut i64, counts: *mut u32, r: u32, value: i64, full: bool) {
     if full {
         at(ctl.add(6)).fetch_or(64, SeqCst);
     }
-    *vv.add(r as usize) = if full { -1 } else { arena_value(off, len) };
-    *counts.add(r as usize) = 1;
+    *vv.add(r as usize) = value;
+    *counts.add(r as usize) = u32::from(full || value != -1);
 }
 
-// ---- The program: a chain of dispatches, a phase a dispatch, a group an item (decision 0674). ----
+/// A canonical arena's probes a text at most before its table is called full (`CANON_PROBES`).
+const CANON_PROBES: u32 = 64;
+
+/// The made text at `off` of `len` bytes kept one value a content (`canon_text`, decision 0659): the value of the one
+/// in table `t` (header [places - 1, texts, full, 0], places after) whose bytes are its, else its own, put there. A
+/// table with no place for it in `CANON_PROBES`: its full word, the program's flag 64, and -1.
+unsafe fn canon_text(a: *mut u32, t: *mut u32, off: u32, len: u32, ctl: *mut u32) -> i64 {
+    let bytes = (a as *const u8).add(16);
+    let mine = bytes.add(off as usize);
+    let mut h = 0x811c_9dc5u32;
+    for i in 0..len as usize {
+        h = (h ^ *mine.add(i) as u32).wrapping_mul(0x0100_0193);
+    }
+    let mask = *t;
+    for p in 0..CANON_PROBES.min(mask.saturating_add(1)) {
+        let i = h.wrapping_add(p) & mask;
+        let e = match at(t.add(4 + i as usize)).compare_exchange(0, off + 1, SeqCst, SeqCst) {
+            Ok(_) => {
+                at(t.add(1)).fetch_add(1, SeqCst);
+                return arena_value(off, len);
+            }
+            Err(e) => e,
+        };
+        let theirs = bytes.add(e as usize - 1);
+        let elen = u32::from_le_bytes(core::ptr::read_unaligned(theirs.sub(4) as *const [u8; 4]));
+        if elen == len && first_diff(theirs, mine, len).is_none() {
+            return arena_value(e - 1, len);
+        }
+    }
+    at(t.add(2)).fetch_or(1, SeqCst);
+    at(ctl.add(6)).fetch_or(64, SeqCst);
+    -1
+}
+
+/// foldhash's folded multiply: the 128-bit product's halves, xored.
+fn fold_mul(x: u64, y: u64) -> u64 {
+    let p = x as u128 * y as u128;
+    (p as u64) ^ (p >> 64) as u64
+}
+
+/// `n` (at most 8) bytes from `p` as a little-endian word.
+unsafe fn bytes_le(p: *const u8, n: usize) -> u64 {
+    (0..n).fold(0u64, |w, k| w | (*p.add(k) as u64) << (8 * k))
+}
+
+/// The store's hash of a string (`store_hash`: `rerail_atoms::hash_str`, foldhash 0.2's quality hasher, seed
+/// 0x5EED71, a `str`'s bytes then 0xff), the atoms blocks' tables' key (decision 0666).
+pub(crate) unsafe fn store_hash(mut v: *const u8, len: u32) -> u64 {
+    const S0: u64 = 0xc0ac_29b7_c97c_50dd;
+    const S1: u64 = 0x3f84_d5b5_b547_0917;
+    const S2: u64 = 0x9216_d5d9_8979_fb1b;
+    const S3: u64 = 0xd131_0ba6_98df_b5ac;
+    const S4: u64 = 0x2ffd_72db_d01a_dfb7;
+    const S5: u64 = 0xb8e1_afed_6a26_7e96;
+    let mut acc = fold_mul(0x5EED71, 0x4528_21e6_38d0_1377) ^ 0x082e_fa98_ec4e_6c89;
+    acc = acc.rotate_right(len & 63);
+    if len <= 16 {
+        let (mut s0, mut s1) = (acc, S1);
+        let l = len as usize;
+        if len >= 8 {
+            s0 ^= bytes_le(v, 8);
+            s1 ^= bytes_le(v.add(l - 8), 8);
+        } else if len >= 4 {
+            s0 ^= bytes_le(v, 4);
+            s1 ^= bytes_le(v.add(l - 4), 4);
+        } else if len > 0 {
+            s0 ^= *v as u64;
+            s1 ^= (*v.add(l - 1) as u64) << 8 | *v.add(l / 2) as u64;
+        }
+        acc = fold_mul(s0, s1);
+    } else {
+        let (mut s0, mut s1) = (acc, acc.wrapping_add(S1));
+        let mut n = len as usize;
+        let w = |p: *const u8, k: usize| bytes_le(p.add(k), 8);
+        if n > 128 {
+            let (mut s2, mut s3) = (acc.wrapping_add(S2), acc.wrapping_add(S3));
+            if n > 256 {
+                let (mut s4, mut s5) = (acc.wrapping_add(S4), acc.wrapping_add(S5));
+                loop {
+                    s0 = fold_mul(w(v, 0) ^ s0, w(v, 48) ^ S0);
+                    s1 = fold_mul(w(v, 8) ^ s1, w(v, 56) ^ S0);
+                    s2 = fold_mul(w(v, 16) ^ s2, w(v, 64) ^ S0);
+                    s3 = fold_mul(w(v, 24) ^ s3, w(v, 72) ^ S0);
+                    s4 = fold_mul(w(v, 32) ^ s4, w(v, 80) ^ S0);
+                    s5 = fold_mul(w(v, 40) ^ s5, w(v, 88) ^ S0);
+                    v = v.add(96);
+                    n -= 96;
+                    if n <= 256 {
+                        break;
+                    }
+                }
+                s0 ^= s4;
+                s1 ^= s5;
+            }
+            loop {
+                s0 = fold_mul(w(v, 0) ^ s0, w(v, 32) ^ S0);
+                s1 = fold_mul(w(v, 8) ^ s1, w(v, 40) ^ S0);
+                s2 = fold_mul(w(v, 16) ^ s2, w(v, 48) ^ S0);
+                s3 = fold_mul(w(v, 24) ^ s3, w(v, 56) ^ S0);
+                v = v.add(64);
+                n -= 64;
+                if n <= 128 {
+                    break;
+                }
+            }
+            s0 ^= s2;
+            s1 ^= s3;
+        }
+        s0 = fold_mul(w(v, 0) ^ s0, w(v, n - 16) ^ S0);
+        s1 = fold_mul(w(v, 8) ^ s1, w(v, n - 8) ^ S0);
+        if n >= 32 {
+            s0 = fold_mul(w(v, 16) ^ s0, w(v, n - 32) ^ S0);
+            s1 = fold_mul(w(v, 24) ^ s1, w(v, n - 24) ^ S0);
+            if n >= 64 {
+                s0 = fold_mul(w(v, 32) ^ s0, w(v, n - 48) ^ S0);
+                s1 = fold_mul(w(v, 40) ^ s1, w(v, n - 40) ^ S0);
+                if n >= 96 {
+                    s0 = fold_mul(w(v, 48) ^ s0, w(v, n - 64) ^ S0);
+                    s1 = fold_mul(w(v, 56) ^ s1, w(v, n - 56) ^ S0);
+                }
+            }
+        }
+        acc = s0 ^ s1;
+    }
+    fold_mul(fold_mul(0xff ^ acc, S0), 0x243f_6a88_85a3_08d3)
+}
+
+/// The atom whose string is the made text at `off` of `len` bytes (`atom_of_text`, decision 0666): its id, found by
+/// the store's hash in the tables of atoms directory `d`'s runs, each candidate's bytes compared; -1 where none is.
+unsafe fn atom_of_text(a: *mut u32, off: u32, len: u32, d: *const u8) -> i64 {
+    if len == 0 {
+        return 0;
+    }
+    let mine = (a as *const u8).add(16 + off as usize);
+    let h = store_hash(mine, len);
+    for k in 0.. {
+        let id = reads::atoms_find(d, h, len, k);
+        if id == NONE {
+            return -1;
+        }
+        if first_diff(reads::atoms_str(d, id), mine, len).is_none() {
+            return id as i64;
+        }
+    }
+    -1
+}
+
+/// A regex group's Pike VM's closure (`rx_group_closure`): from state `sid` at `pos`, each state once into list
+/// (`dense`, `sparse`, two slots a thread), its slots `c0`, `c1`, a capture's saved and put back by the stack.
+unsafe fn rx_group_closure(w: *const u32, dense: *mut u32, sparse: *mut u32, slots: *mut u32, count: &mut u32, stack: *mut u32, sid: u32, pos: u32, n: u32, c0: u32, c1: u32) {
+    let st = w.add(*w.add(4) as usize);
+    let mut cur = [c0, c1];
+    let cap = *w.add(3);
+    *stack = sid;
+    *stack.add(1) = 0;
+    let mut sp = 1u32;
+    let push = |sp: &mut u32, a: u32, old: u32| {
+        *stack.add(2 * *sp as usize) = a;
+        *stack.add(2 * *sp as usize + 1) = old;
+        *sp += 1;
+    };
+    for _ in 0..2 * cap + 2 {
+        if sp == 0 {
+            break;
+        }
+        sp -= 1;
+        let (a, old) = (*stack.add(2 * sp as usize), *stack.add(2 * sp as usize + 1));
+        if a & 0x8000_0000 != 0 {
+            cur[(a & 1) as usize] = old;
+            continue;
+        }
+        let i = *sparse.add(a as usize);
+        if i < *count && *dense.add(i as usize) == a {
+            continue;
+        }
+        *sparse.add(a as usize) = *count;
+        *dense.add(*count as usize) = a;
+        *slots.add(2 * *count as usize) = cur[0];
+        *slots.add(2 * *count as usize + 1) = cur[1];
+        *count += 1;
+        let s = st.add(4 * a as usize);
+        let (kind, s1, s2) = (*s, *s.add(1), *s.add(2));
+        if kind == 3 {
+            let mut k = s1;
+            while k > 0 && sp < cap {
+                push(&mut sp, *w.add((s2 + k - 1) as usize), 0);
+                k -= 1;
+            }
+        } else if kind == 4 && sp + 2 <= cap {
+            if s1 < 2 {
+                push(&mut sp, 0x8000_0000 | s1, cur[s1 as usize]);
+                cur[s1 as usize] = pos;
+            }
+            push(&mut sp, s2, 0);
+        } else if kind == 5 && ((s1 == 0 && pos == 0) || (s1 == 1 && pos == n)) && sp < cap {
+            push(&mut sp, s2, 0);
+        }
+    }
+}
+
+/// A regex's capture group's range of `x` (`rx_group_range`, decision 0668): program `g` (its Thompson NFA) walked
+/// by a Pike VM over its bytes, the leftmost-first match's group; none where it does not match or the group took no
+/// part. `f`: its scratch, two thread lists and the closure's stack.
+unsafe fn rx_group_range(g: *const u8, x: &Txt, f: *mut u8) -> Option<(u32, u32)> {
+    let w = g as *const u32;
+    let (ns, n) = (*w as usize, x.len());
+    let st = w.add(*w.add(4) as usize);
+    let m = f as *mut u32;
+    let lists = [m, m.add(4 * ns)];
+    let stack = m.add(8 * ns);
+    let mut counts = [0u32; 2];
+    let (mut got0, mut got1) = (NONE, NONE);
+    let mut c = 0usize;
+    rx_group_closure(w, lists[0], lists[0].add(ns), lists[0].add(2 * ns), &mut counts[0], stack, *w.add(2), 0, n, NONE, NONE);
+    let mut pos = 0;
+    while pos <= n && counts[c] > 0 {
+        let (cd, cs, nd) = (lists[c], lists[c].add(2 * ns), lists[1 - c]);
+        counts[1 - c] = 0;
+        let b = if pos < n { x.byte(pos) as u32 } else { 0 };
+        for i in 0..counts[c] as usize {
+            let s = st.add(4 * *cd.add(i) as usize);
+            if *s == 6 {
+                (got0, got1) = (*cs.add(2 * i), *cs.add(2 * i + 1));
+                break;
+            }
+            if pos == n {
+                continue;
+            }
+            let mut next = NONE;
+            if *s == 1 && *s.add(1) <= b && b <= *s.add(2) {
+                next = *s.add(3);
+            } else if *s == 2 {
+                for k in 0..*s.add(1) {
+                    let r = w.add((*s.add(2) + 3 * k) as usize);
+                    if *r <= b && b <= *r.add(1) {
+                        next = *r.add(2);
+                        break;
+                    }
+                }
+            }
+            if next != NONE {
+                let (c0, c1) = (*cs.add(2 * i), *cs.add(2 * i + 1));
+                let mut cnt = counts[1 - c];
+                rx_group_closure(w, nd, nd.add(ns), nd.add(2 * ns), &mut cnt, stack, next, pos + 1, n, c0, c1);
+                counts[1 - c] = cnt;
+            }
+        }
+        c = 1 - c;
+        pos += 1;
+    }
+    (got0 != NONE && got1 != NONE).then_some((got0, got1))
+}
+
+/// A string join's rows of SIMD group `sg` (`row_strjoin`, decision 0661): each binding's matching rows, their
+/// distinct (by, x) ordered by `by` (column `col_idx[1]`) then x (`col_idx[0]`, a symbol), their names joined by the
+/// separator's (`par_const[0]`) into the arena. More matches than a group's lanes, two names at one `by`, or a symbol
+/// no atom is: the counter's bit (2 or 4), and the stratum runs on the host.
+unsafe fn row_strjoin(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
+    let s = st.s;
+    let (counts, vv, p, a, d) = (b.c, b.v, j.p, j.a, j.d);
+    let n = (*j.totals.add(s.in_slot as usize)).min(s.cap_in);
+    let (groups, canon) = (*p, *p.add(6) != 0);
+    let mut r = n as u64 + (sg * SGW) as u64;
+    while r <= s.cap_in as u64 {
+        for l in 0..SGW as u64 {
+            if r + l <= s.cap_in as u64 {
+                *counts.add((r + l) as usize) = 0;
+            }
+        }
+        r += (groups * SGW) as u64;
+    }
+    if sg >= groups {
+        return;
+    }
+    let mut unheld = false;
+    let (sep, lsep) = sym_text(d, s.par_const[0], &mut unheld);
+    let mut row = sg;
+    while row < n {
+        let t = row;
+        row += groups;
+        let mut kv = [0i64; 8];
+        let w = st.candidates(t, j.f, &mut kv);
+        // The matches, a lane's each, the group's lanes at most.
+        let mut found = [(i64::MAX, i64::MAX); SGW as usize];
+        let (mut k, mut over) = (0usize, false);
+        st.each(w, &kv, |r, _, key| {
+            if !st.matches(r, &kv, key) {
+                return true;
+            }
+            if k == SGW as usize {
+                over = true;
+                return false;
+            }
+            found[k] = (st.rget(r, s.col_idx[1]), st.rget(r, s.col_idx[0]));
+            k += 1;
+            true
+        });
+        found.sort_unstable();
+        let (mut tie, mut held0, mut all_held) = (false, true, true);
+        let mut names = [(core::ptr::null::<u8>(), 0u32); SGW as usize];
+        let mut kept = 0usize;
+        for i in 0..k {
+            if i > 0 && found[i] == found[i - 1] {
+                continue;
+            }
+            tie |= i > 0 && found[i].0 == found[i - 1].0;
+            let mut u = false;
+            let name = sym_text(d, found[i].1, &mut u);
+            if i == 0 {
+                held0 = !u;
+            }
+            all_held &= !u;
+            names[kept] = name;
+            kept += 1;
+        }
+        if over || tie || !all_held || unheld {
+            if s.counter != NONE {
+                at(j.counters.add(s.counter as usize)).fetch_or(if held0 && !unheld { 2 } else { 4 }, SeqCst);
+            }
+            *vv.add(t as usize) = -1;
+            *counts.add(t as usize) = 1;
+            continue;
+        }
+        let total = names[..kept].iter().map(|x| x.1).sum::<u32>() + if kept > 0 { lsep * (kept as u32 - 1) } else { 0 };
+        let (off, full) = arena_claim(a, total, canon);
+        if !full {
+            let mut o = (a as *mut u8).add(16 + off as usize);
+            for (i, &(x, len)) in names[..kept].iter().enumerate() {
+                core::ptr::copy_nonoverlapping(x, o, len as usize);
+                o = o.add(len as usize);
+                if i + 1 < kept {
+                    core::ptr::copy_nonoverlapping(sep, o, lsep as usize);
+                    o = o.add(lsep as usize);
+                }
+            }
+        }
+        let value = if full { -1 } else if canon { canon_text(a, b.h, off, total, ctl) } else { arena_value(off, total) };
+        if full {
+            at(ctl.add(6)).fetch_or(64, SeqCst);
+        }
+        *vv.add(t as usize) = value;
+        *counts.add(t as usize) = 1;
+    }
+}
+
+// ---- The program: a phase a dispatch, a group an item, its grid written before it (decision 0648). ----
 
 struct Prog {
     jobs: *mut Job,
@@ -3081,128 +3533,100 @@ struct Prog {
     sorts: *const SortPass,
     script: *const SizeOp,
     ctl: *mut u32,
+    slots: *mut u32,
     counts: *mut u32,
-    a: ProgP,
+}
+
+fn seg_cap(ns: u32) -> u32 {
+    PHASE_GROUPS / ns.max(1)
+}
+
+/// A segment's groups (`seg_groups`): as its count needs them, at most `cap`; its items where it has no `per`.
+unsafe fn seg_groups(g: *const Seg, cap: u32) -> u32 {
+    let g = &*g;
+    let per = g.per & !SEG_EMPTY;
+    if per == 0 {
+        return g.items;
+    }
+    ((*g.count as u64 + g.plus as u64).div_ceil(per as u64)).min(cap as u64) as u32
+}
+
+/// `ctl[i]`'s word.
+unsafe fn ctl_at<'a>(ctl: *mut u32, i: usize) -> &'a AtomicU32 {
+    at(ctl.add(i))
+}
+
+/// `join_grid`'s and `phase_begins`' check of the program's flags `f` as phase `q` begins: none where they stop it; a
+/// park where they park it (`ctl[9]`, the phase last begun); else `q` the phase last begun. Whether it runs.
+unsafe fn begin(ctl: *mut u32, q: u32, f: u32) -> bool {
+    let before = ctl_at(ctl, 11).load(SeqCst).wrapping_sub(1);
+    if f & STOPS != 0 {
+        return false;
+    }
+    for (bit, top) in [(128u32, 0xC000_0000u32), (64, 0x8000_0000)] {
+        if f & bit != 0 {
+            ctl_at(ctl, 6).fetch_and(!bit, SeqCst);
+            ctl_at(ctl, 9).store(top | before, SeqCst);
+            ctl_at(ctl, 6).fetch_or(32, SeqCst);
+            return false;
+        }
+    }
+    ctl_at(ctl, 11).store(q + 1, SeqCst);
+    true
 }
 
 impl Prog {
-    unsafe fn ctl(&self, i: usize) -> &AtomicU32 {
-        at(self.ctl.add(i))
-    }
-
-    unsafe fn seg_items(&self, g: *const Seg) -> u32 {
-        let g = &*g;
-        if g.per == 0 {
-            return g.items;
-        }
-        let need = (*g.count as u64 + g.plus as u64).div_ceil(g.per as u64);
-        need.min(g.items as u64) as u32
-    }
-
     unsafe fn phase(&self, q: u32) -> [u32; 4] {
         core::array::from_fn(|k| *self.phases.add(4 * q as usize + k))
     }
 
-    unsafe fn phase_reset(&self, q: u32) -> u32 {
-        let [_, _, s0, ns] = self.phase(q);
-        let m = (0..ns).fold(0u32, |m, g| m.wrapping_add(self.seg_items(self.segs.add((s0 + g) as usize))));
-        at(self.ctl.add(10 + self.a.phases as usize + q as usize)).store(if ns == 0 { 0 } else { m.max(1) }, SeqCst);
-        at(self.ctl.add(10 + q as usize)).store(0, SeqCst);
-        (ns != 0 && m == 0) as u32
-    }
-
-    /// Whether phase `q`'s items are each at most a group's rows (`phase_light`): no segment's rows past its items'.
-    unsafe fn phase_light(&self, q: u32) -> bool {
-        let [_, _, s0, ns] = self.phase(q);
-        (0..ns).all(|s| {
-            let g = &*self.segs.add((s0 + s) as usize);
-            g.per == 0 || (*g.count as u64 + g.plus as u64).div_ceil(g.per as u64) <= g.items as u64
-        })
-    }
-
-    /// Phase `q`'s groups, a group an item, once reset: its items, or its segments' (its `target`).
+    /// Phase `q`'s groups (`phase_groups`): its segments' as their counts need them, at least one in all unless every
+    /// one is `SEG_EMPTY`; its items where it has none.
     unsafe fn phase_groups(&self, q: u32) -> u32 {
-        let [_, count, _, ns] = self.phase(q);
-        if ns == 0 { count } else { self.ctl(10 + (self.a.phases + q) as usize).load(SeqCst) }
+        let [_, count, s0, ns] = self.phase(q);
+        if ns == 0 {
+            return count;
+        }
+        let cap = seg_cap(ns);
+        let (mut m, mut empty) = (0u32, true);
+        for g in 0..ns {
+            let seg = self.segs.add((s0 + g) as usize);
+            m = m.wrapping_add(seg_groups(seg, cap));
+            empty &= (*seg).per & SEG_EMPTY != 0;
+        }
+        if empty { m } else { m.max(1) }
     }
 
-    /// The item group `g` of phase `p` runs (`phase_item`): its `g`-th through its segments' counts (the first
-    /// segment's first alone where `none`); with `texts`, its `g`-th text item. `NONE` past them.
-    unsafe fn phase_item(&self, p: u32, mut g: u32, none: u32, texts: bool) -> u32 {
-        let [first, count, s0, ns] = self.phase(p);
-        for s in 0..ns.max(1) {
-            let (at_, n) = if ns == 0 {
-                (first, count)
-            } else {
-                let seg = self.segs.add((s0 + s) as usize);
-                ((*seg).first, if none != 0 && s == 0 { 1 } else { self.seg_items(seg) })
-            };
-            if !texts {
-                if g < n {
-                    return at_ + g;
-                }
-                g -= n;
-                continue;
+    /// Phase `q`'s `k`th group (`phase_group`): its item, and the group it runs as.
+    unsafe fn phase_group(&self, q: u32, mut k: u32) -> (u32, u32) {
+        let [first, _, s0, ns] = self.phase(q);
+        if ns == 0 {
+            return (first + k, (*self.items.add((first + k) as usize)).group);
+        }
+        let cap = seg_cap(ns);
+        for g in 0..ns {
+            let sg = &*self.segs.add((s0 + g) as usize);
+            let n = seg_groups(sg, cap);
+            if k < n {
+                let group = if sg.per == 0 { (*self.items.add((sg.first + k) as usize)).group } else { k };
+                return (sg.first + if k < sg.items { k } else { 0 }, group);
             }
-            for i in 0..n {
-                if (*self.items.add((at_ + i) as usize)).what >> 24 != PK_ROW_TEXT {
-                    continue;
-                }
-                if g == 0 {
-                    return at_ + i;
-                }
-                g -= 1;
-            }
+            k -= n;
         }
-        NONE
+        let f = (*self.segs.add(s0 as usize)).first;
+        (f, (*self.items.add(f as usize)).group)
     }
 
-    /// Phase `p`'s text items to run again (`phase_texts`): its count emptied, its items to count them; their number.
-    unsafe fn phase_texts(&self, p: u32) -> u32 {
-        let [first, count, s0, ns] = self.phase(p);
-        let mut m = 0u32;
-        for g in 0..ns.max(1) {
-            let (a, n) = if ns == 0 { (first, count) } else { let seg = self.segs.add((s0 + g) as usize); ((*seg).first, self.seg_items(seg)) };
-            for i in 0..n {
-                m += u32::from((*self.items.add((a + i) as usize)).what >> 24 == PK_ROW_TEXT);
-            }
+    /// Item `item` run as group `group`; a size script that parked lists it (`slots[ctl[3]]`) and parks the program.
+    unsafe fn run(&self, item: u32, group: u32, listed: bool) {
+        let mut it = *self.items.add(item as usize);
+        if !listed {
+            it.group = group;
         }
-        self.ctl(10 + (self.a.phases + p) as usize).store(m.max(1), SeqCst);
-        self.ctl(10 + p as usize).store(0, SeqCst);
-        m
-    }
-
-    /// The phase after phase `p`'s last item (`phase_next`): a round's end's jump, else the next; none where a gate
-    /// stopped the program or past the last. Reset and made the one running; its groups.
-    unsafe fn phase_next(&self, p: u32) -> u32 {
-        let jump = self.ctl(7).load(SeqCst);
-        if jump != 0 {
-            self.ctl(7).store(0, SeqCst);
+        if !self.item(it) {
+            *self.slots.add(ctl_at(self.ctl, 3).fetch_add(1, SeqCst) as usize) = item;
+            ctl_at(self.ctl, 6).fetch_or(32, SeqCst);
         }
-        let next = if jump != 0 {
-            if jump == NONE { 0 } else { jump }
-        } else if p + 1 < self.a.phases && self.ctl(6).load(SeqCst) & 2 == 0 {
-            p + 2
-        } else {
-            0
-        };
-        if next == 0 {
-            return 0;
-        }
-        let none = self.phase_reset(next - 1);
-        self.ctl(0).store(next - 1, SeqCst);
-        self.ctl(3).store(none, SeqCst);
-        self.phase_groups(next - 1)
-    }
-
-    /// The next dispatch's groups, `n` (`ukl_chain_set`), the finisher's of dispatch `d`.
-    unsafe fn chain_set(&self, d: u32, n: u32) {
-        self.ctl(4).store(n, SeqCst);
-        let slot = 10 + 2 * self.a.phases as usize + 4 * d as usize;
-        self.ctl(slot).store(n, SeqCst);
-        self.ctl(slot + 1).store(1, SeqCst);
-        self.ctl(slot + 2).store(1, SeqCst);
-        self.ctl(1).store(d, SeqCst);
     }
 
     /// Item `it`'s work, every thread of the group's: whether it is whole (a size script that parked is not).
@@ -3211,28 +3635,38 @@ impl Prog {
         if kind == PK_SIZE {
             return size_one(self.script.add(x as usize), g);
         }
-        // A segment's item strides its job's rows: `t`, `t + step`, ..., below its count's.
+        // A segment's item strides its job's rows past its phase's cap: `t`, `t + step`, ..., below its count's.
         let (mut step, mut lim) = (0u32, 0u32);
         if it.seg != 0 {
             let seg = self.segs.add(it.seg as usize - 1);
             if (*seg).per != 0 {
-                step = self.seg_items(seg) * TG;
+                step = seg_groups(seg, seg_cap(*self.phases.add(4 * it.phase as usize + 3))).wrapping_mul(TG);
                 lim = (*(*seg).count).wrapping_add((*seg).plus);
             }
         }
         if kind == PK_SCAN_SUMS || kind == PK_SCAN_TILES {
             let lv = &*self.scans.add(x as usize);
-            let n = lv.w[0];
-            let input = lv.input.add(lv.w[2] as usize);
-            let sums = lv.sums.add(lv.w[3] as usize);
+            let w = |k: usize| core::ptr::addr_of!(lv.w).cast::<u32>().add(k).read_volatile();
+            let n = w(0);
+            let input = lv.input.add(w(2) as usize);
+            let sums = lv.sums.add(w(3) as usize);
             let tiles = n.div_ceil(TG * SCAN_ITEMS);
             let tstep = step / TG;
+            // A sized first level whose next is empty (decision 0647): each tile adds the sums before it itself.
+            let own = kind == PK_SCAN_TILES && lv.w[1] & 2 != 0 && core::ptr::addr_of!((*self.scans.add(x as usize + 1)).w).cast::<u32>().read_volatile() == 0;
             let mut tile = g;
             loop {
                 if kind == PK_SCAN_SUMS {
                     scan_tile_sum(input, sums, n, tile);
                 } else {
-                    scan_tile(input, (lv.w[1] != 0).then_some(sums as *const u32), n, tile);
+                    let base = if own {
+                        sum_u32(sums, tile)
+                    } else if lv.w[1] & 1 != 0 {
+                        *sums.add(tile as usize)
+                    } else {
+                        0
+                    };
+                    scan_tile(input, base, n, tile);
                 }
                 if tstep == 0 || tile + tstep >= tiles {
                     break;
@@ -3243,31 +3677,33 @@ impl Prog {
         }
         if kind == PK_RADIX_HIST || kind == PK_RADIX_SCATTER {
             let sp = &*self.sorts.add(x as usize);
-            let (n, shift, tiles) = (sp.w[0], sp.w[1], sp.w[2]);
-            // The wide sort's (t58 increment A): its region the arena's, from its size script's word; its tiles as many
-            // as its keys claimed, an item each stride.
-            if sp.w[3] != 0 {
-                let wa = wide_at(self.counts.add(sp.w[3] as usize - 1), n);
-                let from = ((shift / 8) % 2) as usize;
-                let tstep = step / TG;
-                let mut tile = g;
-                while tile < tiles {
+            let w = |k: usize| core::ptr::addr_of!(sp.w).cast::<u32>().add(k).read_volatile();
+            let (n, shift, tiles, wide) = (w(0), sp.w[1], w(2), w(3));
+            // Its tiles: this item's, then each `step` on while below its tiles'.
+            let tstep = step / TG;
+            let mut tile = g;
+            loop {
+                // The wide sort's (t58 increment A): its region the arena's, from its size script's word.
+                if wide != 0 {
+                    if tile >= tiles {
+                        break;
+                    }
+                    let wa = wide_at(self.counts.add(wide as usize - 1), n);
+                    let from = ((shift / 8) % 2) as usize;
                     if kind == PK_RADIX_HIST {
                         radix_hist_tile64(wa.keys[from], wa.hist, n, shift, tiles, tile);
                     } else {
                         radix_scatter_tile64(wa, from, n, shift, tiles, tile);
                     }
-                    if tstep == 0 {
-                        break;
-                    }
-                    tile += tstep;
+                } else if kind == PK_RADIX_HIST {
+                    radix_hist_tile(sp.keys, sp.hist as *mut u32, n, shift, tiles, tile);
+                } else {
+                    radix_scatter_tile(sp, n, shift, tiles, tile);
                 }
-                return true;
-            }
-            if kind == PK_RADIX_HIST {
-                radix_hist_tile(sp.keys, sp.hist as *mut u32, n, shift, tiles, g);
-            } else {
-                radix_scatter_tile(sp, n, shift, tiles, g);
+                if tstep == 0 || tile + tstep >= tiles {
+                    break;
+                }
+                tile += tstep;
             }
             return true;
         }
@@ -3294,10 +3730,14 @@ impl Prog {
             bufs.h = bufs.h.add(2 * places);
         }
         if kind == PK_ROW_TEXT {
-            // A SIMD group a row: the group's SIMD groups, each its rows.
-            let st = St::new(&*j.s, bufs.l, j.r);
+            // A SIMD group a row: the group's SIMD groups, each its rows (a string join's, its group's together).
+            let st = St::new(&*j.s, bufs.l, j.r, j.rf);
             for sg in g * (TG / SGW)..(g + 1) * (TG / SGW) {
-                row_text(&st, j, &bufs, self.ctl, sg);
+                if (*j.s).agg[0] & 15 == 6 {
+                    row_strjoin(&st, j, &bufs, self.ctl, sg);
+                } else {
+                    row_text(&st, j, &bufs, self.ctl, sg);
+                }
             }
             return true;
         }
@@ -3316,13 +3756,14 @@ impl Prog {
 
     /// Threads [t0, t1) of job `j`, of kind `kind`: a range's vector work, or each thread's own.
     unsafe fn range(&self, kind: u32, j: &Job, b: &Bufs, t0: u32, t1: u32) {
-        let stage = |s: *const Stage| St::new(&*s, b.l, j.r);
+        let stage = |s: *const Stage| St::new(&*s, b.l, j.r, j.rf);
         let lat = || &*(j.p as *const LatP);
         match kind {
-            PK_COPY => rows_copy_range(b.l as *const u8, b.o as *mut u8, j.totals, &*(j.p as *const Copy), t0, t1),
-            PK_IX_KEY => ix_key_range(b.l as *const u8, b.h, j.s_ as *mut u32, &*(j.p as *const IxP), b.kb, b.eb, t0, t1),
-            PK_IX_PLACE => ix_place_range(b.l as *const u8, b.v as *const u32, j.vc as *const u32, j.a, j.counters, &*(j.p as *const IxP), b.kb, b.eb, t0, t1),
-            PK_IX_MARK => ix_mark_range(b.l as *const u8, b.v as *const u32, j.a, j.counters, &*(j.p as *const IxP), b.kb, b.eb, t0, t1),
+            PK_COPY => rows_copy_range(b.l as *const u8, b.o as *mut u8, j.totals, &*(j.p as *const Copy), far(j.rf, b.l), t0, t1),
+            PK_IX_KEY => ix_key_range(b.l as *const u8, b.h, j.s_ as *mut u32, &*(j.p as *const IxP), far(j.rf, b.l), b.kb, b.eb, t0, t1),
+            PK_IX_PLACE => ix_place_range(b.l as *const u8, j.vc as *const u32, j.counters, &*(j.p as *const IxP), b.eb, t0, t1),
+            PK_IX_OFFS => ix_offs_range(b.l as *const u8, b.v as *const u32, j.a, &*(j.p as *const IxP), b.kb, b.eb, t0, t1),
+            PK_IX_MARK => ix_mark_range(b.l as *const u8, b.v as *const u32, j.a, j.counters, &*(j.p as *const IxP), far(j.rf, b.l), b.kb, b.eb, t0, t1),
             // Threads [t0, t1) clear places 4 t0 to 4 t1, within those the rows use (`dedup_mask`).
             PK_DEDUP_CLEAR => {
                 let end = dedup_mask(j.totals, &*j.dd) as u64 + 1;
@@ -3384,127 +3825,124 @@ impl Prog {
         }
     }
 
-    /// Group `g` of the chain's dispatch now (`join_run`): the start (dispatch 0), else its phase's item, and the
-    /// next dispatch's groups where it finishes the phase.
-    unsafe fn group(&self, g: u32) {
-        let (d, p, mode, back) = (self.ctl(1).load(SeqCst), self.ctl(0).load(SeqCst), self.ctl(3).load(SeqCst), self.ctl(2).load(SeqCst));
-        if d == 0 {
-            let pp = self.ctl(9).load(SeqCst);
-            let n = if self.ctl(5).load(SeqCst) == 0 {
-                self.ctl(5).store(1, SeqCst);
-                let none = self.phase_reset(0);
-                self.ctl(0).store(0, SeqCst);
-                self.ctl(3).store(none, SeqCst);
-                self.phase_groups(0)
-            } else if pp >> 30 == 1 {
-                self.ctl(9).store(0, SeqCst);
-                let q = pp & 0x3fff_ffff;
-                let n = self.phase_texts(q);
-                self.ctl(0).store(q, SeqCst);
-                self.ctl(3).store(2, SeqCst);
-                n
-            } else if pp >> 29 == 1 {
-                self.ctl(9).store(0, SeqCst);
-                self.phase_next(pp & 0x1fff_ffff)
-            } else if back != 0 {
-                1
-            } else {
-                self.ctl(4).load(SeqCst)
-            };
-            self.chain_set(1, n);
-            return;
-        }
-        let (mut p, mut back) = (p, back);
-        let mut item = if back != 0 { back - 1 } else { self.phase_item(p, g, mode & 1, mode & 2 != 0) };
-        // Its item, then whether it finishes its phase; a finisher whose next phase is few and light runs it itself,
-        // each of its items in turn (`gi` of its `gn` groups; 0: the dispatch's own item), all of them once begun.
-        let (mut gi, mut gn, mut ph) = (0u32, 0u32, 0u32);
-        for _ in 0..JOIN_INLINE * JOIN_INLINE_GROUPS {
-            let whole = item == NONE || self.item(*self.items.add(item as usize));
-            let q = self.finish(p, item, whole, back, d, ph + 1 < JOIN_INLINE);
-            let (next, groups) = if q != 0 {
-                (0, self.phase_groups(q - 1))
-            } else if whole && gi + 1 < gn {
-                (gi + 1, gn)
-            } else {
-                return;
-            };
-            if next == 0 {
-                ph += 1;
-                p = q - 1;
-            }
-            (back, gi, gn) = (0, next, groups);
-            item = self.phase_item(p, gi, self.ctl(3).load(SeqCst) & 1, false);
-        }
-    }
-
-    /// The group's item `item` of phase `p` counted (`prog_finish`): where it finishes its phase, the next reset and
-    /// its groups, the next dispatch's, or the phase and one where they are few and light and `inline_ok` (this group
-    /// runs each of its items); 0 where the group is done with the phase.
-    unsafe fn finish(&self, p: u32, item: u32, whole: bool, back: u32, d: u32, inline_ok: bool) -> u32 {
-        if back != 0 {
-            self.ctl(2).store(0, SeqCst);
-        }
-        if !whole {
-            self.ctl(9).store(item + 1, SeqCst);
-            self.ctl(6).fetch_or(32, SeqCst);
-            return 0;
-        }
-        let want = self.ctl(10 + (self.a.phases + p) as usize).load(SeqCst);
-        let want = if want != 0 { want } else { self.phase(p)[1] };
-        if self.ctl(10 + p as usize).fetch_add(1, SeqCst) + 1 != want {
-            return 0;
-        }
-        self.ctl(8).fetch_add(1, SeqCst);
-        let flags = self.ctl(6).load(SeqCst);
-        if flags & 128 != 0 {
-            self.ctl(6).fetch_and(!128, SeqCst);
-        }
-        let n = if flags & 128 != 0 && flags & 2 == 0 {
-            // A gate's room mapped past: the program parks after the gate's phase.
-            self.ctl(9).store(0xC000_0000 | p, SeqCst);
-            self.ctl(6).fetch_or(32, SeqCst);
-            0
-        } else if flags & 64 != 0 {
-            // Its texts found the arena full: the phase parks, and runs its texts again once the host maps more.
-            self.ctl(6).fetch_and(!64, SeqCst);
-            self.ctl(9).store(0x8000_0000 | p, SeqCst);
-            self.ctl(6).fetch_or(32, SeqCst);
-            0
-        } else {
-            self.phase_next(p)
-        };
-        if inline_ok && (n == 1 || (n != 0 && n <= JOIN_INLINE_GROUPS && self.phase_light(self.ctl(0).load(SeqCst)))) {
-            return self.ctl(0).load(SeqCst) + 1;
-        }
-        self.chain_set(d + 1, n);
-        0
-    }
 }
 
-/// The join program's group (`join_run`): its `JOIN_TG` threads, run as one.
+/// The kernel's buffer `i` (its address's bytes at `argv[i]`).
+unsafe fn buf(argv: *const *const u8, i: usize) -> *mut u8 {
+    (*argv.add(i) as *const *mut u8).read_unaligned()
+}
+
+/// `join_phase`'s and `join_chain`'s buffers, as their arguments list them, and their `PhaseP` (argument 11).
+unsafe fn prog(argv: *const *const u8, l: &Launch, name: &str) -> (Prog, *const u32, PhaseP) {
+    let threads = l.block[0] * l.block[1] * l.block[2];
+    assert!(threads == TG, "{name}: a group of {TG} threads, not {threads}");
+    let p = Prog {
+        jobs: buf(argv, 0) as *mut Job,
+        items: buf(argv, 1) as *const Item,
+        phases: buf(argv, 2) as *const u32,
+        segs: buf(argv, 3) as *const Seg,
+        scans: buf(argv, 4) as *mut ScanLevel,
+        sorts: buf(argv, 5) as *const SortPass,
+        script: buf(argv, 6) as *const SizeOp,
+        ctl: buf(argv, 7) as *mut u32,
+        slots: buf(argv, 8) as *mut u32,
+        counts: buf(argv, 9) as *mut u32,
+    };
+    (p, buf(argv, 10) as *const u32, (*argv.add(11) as *const PhaseP).read_unaligned())
+}
+
+/// A phase's grid (`join_grid`, decision 0648): one thread. None where the program is over or parks (`begin`), or
+/// where its chain ran it; else its groups.
 ///
 /// # Safety
 ///
-/// `argv` holds the kernel's arguments (each the address of its bytes: a buffer's address, the `ProgP`'s bytes), its
-/// buffers as the host made them.
-pub unsafe fn join_run(argv: *const *const u8, l: &Launch) {
-    let threads = l.block[0] * l.block[1] * l.block[2];
-    assert!(threads == TG, "join_run: a group of {TG} threads, not {threads}");
-    let buf = |i: usize| (*argv.add(i) as *const *mut u8).read_unaligned();
-    let a = (*argv.add(9) as *const ProgP).read_unaligned();
-    let prog = Prog {
-        jobs: buf(0) as *mut Job,
-        items: buf(1) as *const Item,
-        phases: buf(2) as *const u32,
-        segs: buf(3) as *const Seg,
-        scans: buf(4) as *mut ScanLevel,
-        sorts: buf(5) as *const SortPass,
-        script: buf(6) as *const SizeOp,
-        ctl: buf(7) as *mut u32,
-        counts: buf(8) as *mut u32,
-        a,
+/// `argv` holds the kernel's arguments (`phases`, `segs`, `ctl`, `grids`, then the `PhaseP`'s bytes), its buffers as
+/// the host made them.
+pub unsafe fn join_grid(argv: *const *const u8, l: &Launch) {
+    if l.group[0] != 0 {
+        return;
+    }
+    let (phases, segs, ctl, grids) = (buf(argv, 0) as *const u32, buf(argv, 1) as *const Seg, buf(argv, 2) as *mut u32, buf(argv, 3) as *mut u32);
+    let a = (*argv.add(4) as *const PhaseP).read_unaligned();
+    let p = Prog { jobs: core::ptr::null_mut(), items: core::ptr::null(), phases, segs, scans: core::ptr::null_mut(), sorts: core::ptr::null(), script: core::ptr::null(), ctl, slots: core::ptr::null_mut(), counts: core::ptr::null_mut() };
+    let n = if a.q < ctl_at(ctl, 13).load(SeqCst) {
+        // Run by its chain (`join_chain`): nothing left.
+        0
+    } else {
+        if begin(ctl, a.q, ctl_at(ctl, 6).load(SeqCst)) { p.phase_groups(a.q) } else { 0 }
     };
-    // Its groups run one after another on one thread (the CPU device's), each as the kernel's group.
-    prog.group(l.group[0]);
+    let g = grids.add(a.slot as usize);
+    (*g, *g.add(1), *g.add(2)) = (n, 1, 1);
+}
+
+/// A phase's dispatch (`join_phase`, decision 0648): group `gid` its item, as its grid's or its list's count. A phase
+/// of no segments (`slot` NONE) checks the flags itself, as its dispatch began (`phase_begins`).
+///
+/// # Safety
+///
+/// `argv` holds the kernel's arguments (`jobs` .. `grids`, then the `PhaseP`'s bytes), its buffers as the host made
+/// them.
+pub unsafe fn join_phase(argv: *const *const u8, l: &Launch) {
+    let (p, grids, a) = prog(argv, l, "join_phase");
+    let gid = l.group[0];
+    if a.list == 0 && a.slot == NONE {
+        if a.q < ctl_at(p.ctl, 13).load(SeqCst) || !phase_begins(p.ctl, a.q, a.at) {
+            return;
+        }
+    } else if a.list == 0 && gid >= *grids.add(a.slot as usize) {
+        return;
+    }
+    let (item, group) = if a.list != 0 { (*p.slots.add((a.at + gid) as usize), 0) } else { p.phase_group(a.q, gid) };
+    p.run(item, group, a.list != 0);
+}
+
+/// Whether a phase of no segments, its dispatch `seq`, runs (`phase_begins`, decision 0647): its first group to begin
+/// swaps its sequence and the flags into `ctl[12]` and does `begin`'s parks; every other group reads them there.
+unsafe fn phase_begins(ctl: *mut u32, q: u32, seq: u32) -> bool {
+    let w12 = ctl_at(ctl, 12);
+    let mut w = w12.load(SeqCst);
+    let mut flags = 0u32;
+    for _ in 0..8 {
+        if w >> 8 == seq {
+            flags = w & 0xff;
+            break;
+        }
+        let f = ctl_at(ctl, 6).load(SeqCst) & 0xff;
+        match w12.compare_exchange(w, (seq << 8) | f, SeqCst, SeqCst) {
+            Ok(_) => {
+                begin(ctl, q, f);
+                flags = f;
+                break;
+            }
+            Err(x) => w = x,
+        }
+    }
+    flags & (STOPS | PARKS) == 0
+}
+
+/// A run of a round's phases in one group (`join_chain`, decision 0647): from phase `q`, its next `at`, each while
+/// its groups are `CHAIN_GROUPS` at most, one after another; the first it does not run in `ctl[13]`.
+///
+/// # Safety
+///
+/// As `join_phase`'s.
+pub unsafe fn join_chain(argv: *const *const u8, l: &Launch) {
+    let (p, _, a) = prog(argv, l, "join_chain");
+    let (mut q, end) = (a.q, a.q + a.at);
+    while q < end {
+        if ctl_at(p.ctl, 6).load(SeqCst) & (STOPS | PARKS) != 0 {
+            break;
+        }
+        let n = p.phase_groups(q);
+        if n > CHAIN_GROUPS {
+            break;
+        }
+        ctl_at(p.ctl, 11).store(q + 1, SeqCst);
+        for k in 0..n {
+            let (item, group) = p.phase_group(q, k);
+            p.run(item, group, false);
+        }
+        q += 1;
+    }
+    ctl_at(p.ctl, 13).store(q, SeqCst);
 }

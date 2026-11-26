@@ -8723,6 +8723,7 @@ dependencies = [
 name = "rerail-ukl-rust"
 version = "0.1.0"
 dependencies = [
+ "foldhash",
  "rerail-blocks",
  "rerail-clif",
  "rerail-reads",

@@ -95,7 +95,8 @@ where
             let Some(f) = go.first_set() else { break };
             // A lane done reads the first walking lane's row: every read is of a row there is.
             let y = go.select(y, sr(y[f]));
-            let row = ln::rel_at(rd, y);
+            // The head relation in its own block: no far base.
+            let row = ln::rel_at(rd, y, rel);
             let mut same = go;
             for c in 0..d.ncols.min(16) as usize {
                 same &= row.get(c as u32).cast::<i64>().simd_eq(self.v[c]).cast::<i32>();
@@ -197,7 +198,7 @@ where
 /// `ix_key`'s of a view's rows `t0..t1` at `N` lanes: each document found once and its rows walked in order
 /// (`reads::Rows`: each one's tape node the next of its numbering's, not selected again), `N` rows' keys hashed an
 /// operation. A placed view's rows past its directory's (its tail relation's) are `ix_hash`'s.
-pub(super) unsafe fn ix_keys_view_lanes<const N: usize>(bb: *const u8, out: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32)
+pub(super) unsafe fn ix_keys_view_lanes<const N: usize>(bb: *const u8, bf: *const u8, out: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32)
 where
     LaneCount<N>: SupportedLaneCount,
 {
@@ -216,7 +217,7 @@ where
         let first = (*e).rows[k as usize];
         let stop = if a + 1 < ndocs { (*rows.add(a as usize + 1)).rows[k as usize].min(lim) } else { lim };
         if stop <= t {
-            *out.add((eb + t) as usize) = kb.wrapping_add(ix_hash(bb, p, t));
+            *out.add((eb + t) as usize) = kb.wrapping_add(ix_hash(bb, bf, p, t));
             t += 1;
             continue;
         }
@@ -241,13 +242,13 @@ where
         }
     }
     for t in lim.max(t0)..t1 {
-        *out.add((eb + t) as usize) = kb.wrapping_add(ix_hash(bb, p, t));
+        *out.add((eb + t) as usize) = kb.wrapping_add(ix_hash(bb, bf, p, t));
     }
 }
 
 /// Rows `t0..t1` of an index's relation (rows in its block, no view): each one's key hash, masked, plus `kb`, at
 /// `eb + t` of `out`, as `ix_key`'s.
-pub(super) unsafe fn ix_keys_lanes<const N: usize>(bb: *const u8, out: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32)
+pub(super) unsafe fn ix_keys_lanes<const N: usize>(bb: *const u8, bf: *const u8, out: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32)
 where
     LaneCount<N>: SupportedLaneCount,
 {
@@ -257,7 +258,7 @@ where
         let n = (t1 - t).min(N as u32);
         // Lanes past the rows read the first one's: every read is of a row there is.
         let row = first::<N>(n).select(sr(p.from.wrapping_add(t)) + iota::<N>(), sr(p.from.wrapping_add(t)));
-        let at = ln::rel_at(d, row);
+        let at = ln::rel_at(d, row, bf);
         let mut h = U::splat(KEY_SEED);
         for i in 0..(p.ncols & !IX_LIVE).min(8) as usize {
             h = ln::key_mix(h, at.get(p.cols[i]));

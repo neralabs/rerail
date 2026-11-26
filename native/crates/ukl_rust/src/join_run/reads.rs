@@ -518,7 +518,7 @@ impl<'a> Doc<'a> {
 
 /// An atoms directory's layout (`rerail_blocks::atoms::AtomsDirRoot`, `DirEntry`; a test holds it to it): its
 /// runs' count and entries, and each entry's first id, end, the id its strings start at, their ends and bytes (its
-/// hash table, 0666's, after them: no read here takes it).
+/// hash table from hash to id after them, 0666's: `atoms_find`'s).
 pub(crate) mod atoms_at {
     pub const DIR_N: usize = 0;
     pub const DIR_ENTRIES: usize = 8;
@@ -527,6 +527,7 @@ pub(crate) mod atoms_at {
     pub const E_FROM: usize = 8;
     pub const E_ENDS: usize = 16;
     pub const E_STRINGS: usize = 32;
+    pub const E_TABLE: usize = 48;
     pub const E_SIZE: usize = 64;
 }
 
@@ -589,4 +590,41 @@ pub unsafe fn atoms_str(dir: *const u8, id: u32) -> *const u8 {
         Some(e) => follow(e, atoms_at::E_STRINGS).wrapping_add(atoms_bounds(e, id).0 as usize),
         None => dir,
     }
+}
+
+/// The `k`th atom (from 0, the runs in order) of directory `dir` whose slot in its run's table, probed from hash `h`
+/// to the first empty slot, has `h`'s high half, whose id is one of the run's own, and whose string is `len` bytes;
+/// `u32::MAX` past the last: the CLIF's `atoms_find` (decision 0666). The caller compares each one's bytes.
+pub unsafe fn atoms_find(dir: *const u8, h: u64, len: u32, k: u32) -> u32 {
+    use atoms_at::*;
+    let n = dir.add(DIR_N).cast::<u64>().read_unaligned() as u32;
+    let entries = follow(dir, DIR_ENTRIES);
+    let tag = h & 0xFFFF_FFFF_0000_0000;
+    let mut seen = 0u32;
+    for r in 0..n {
+        let e = entries.wrapping_add(r as usize * E_SIZE);
+        let table = follow(e, E_TABLE).cast::<u64>();
+        let slots = e.add(E_TABLE + 8).cast::<u64>().read_unaligned();
+        let mask = slots.wrapping_sub(1);
+        let (first, end) = (e.add(E_FIRST).cast::<u32>().read_unaligned(), e.add(E_END).cast::<u32>().read_unaligned());
+        let mut i = h & mask;
+        for _ in 0..slots {
+            let v = table.add(i as usize).read_unaligned();
+            if v == 0 {
+                break;
+            }
+            let id = (v as u32).wrapping_sub(1);
+            if v & 0xFFFF_FFFF_0000_0000 == tag && id >= first && id < end {
+                let (s0, s1) = atoms_bounds(e, id);
+                if s1.wrapping_sub(s0) as u32 == len {
+                    if seen == k {
+                        return id;
+                    }
+                    seen += 1;
+                }
+            }
+            i = (i + 1) & mask;
+        }
+    }
+    u32::MAX
 }

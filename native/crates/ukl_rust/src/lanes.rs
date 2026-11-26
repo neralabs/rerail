@@ -397,11 +397,11 @@ pub unsafe fn rows_col(rows: *const u8, c: u32) -> *const u8 {
 /// `clif_rel_get` of relation `d`: column `c` of each lane's row `r` (a delta's, its base's under it, by the chain of
 /// blocks each lane walks to its row's).
 #[inline(always)]
-pub unsafe fn rel_get<const N: usize>(d: *const u8, r: R<N>, c: u32) -> V<N>
+pub unsafe fn rel_get<const N: usize>(d: *const u8, r: R<N>, c: u32, far: *const u8) -> V<N>
 where
     LaneCount<N>: SupportedLaneCount,
 {
-    rel_at(d, r).get(c)
+    rel_at(d, r, far).get(c)
 }
 
 /// Each lane's row of a relation, found once for all its columns (`rel_at`): its block's columns and the row's place
@@ -437,10 +437,22 @@ where
     }
 }
 
+/// A relation's descriptor's words the chain walk reads (`rerail_blocks::relation::Relation`; `tests` holds them to
+/// it): its flags, its base's rows, its base's offset, its jump's offset and the rows below it.
+pub(crate) const REL_FLAGS: u64 = 4;
+pub(crate) const REL_BASE_ROWS: u64 = 8;
+pub(crate) const REL_BASE_OFF: u64 = 192;
+pub(crate) const REL_JUMP_OFF: u64 = 200;
+pub(crate) const REL_JUMP_ROWS: u64 = 208;
+/// A base in another block (`rerail_blocks::relation::FAR_BASE`, decision 0353 step 6).
+pub(crate) const FAR_BASE: u32 = 64;
+
 /// Each lane's row `r` of relation `d` found (a delta's, its base's under it, by the chain of blocks each lane walks
-/// to its row's), for `RowAt::get` of its columns.
+/// to its row's), for `RowAt::get` of its columns. A base in another block (`FAR_BASE`) is its offset from `far`,
+/// that block's start (`clif_rel_get`'s last argument); a descriptor's jump (an ancestor in its block) is taken where
+/// the row lies below its rows, as `rerail_clif::relation::rel_get` walks.
 #[inline(always)]
-pub unsafe fn rel_at<const N: usize>(d: *const u8, r: R<N>) -> RowAt<N>
+pub unsafe fn rel_at<const N: usize>(d: *const u8, r: R<N>, far: *const u8) -> RowAt<N>
 where
     LaneCount<N>: SupportedLaneCount,
 {
@@ -453,15 +465,21 @@ where
     }
     // Each lane walks from the newest block to the one its row is in: down while its row is below the block's first.
     let mut b: P<N> = Simd::splat(d);
+    let fars: P<N> = Simd::splat(far);
     let mut first;
     loop {
-        first = gather32(b.wrapping_add(Simd::splat(8)));
-        let next = gather64(b.wrapping_add(Simd::splat(192)));
-        let go = r.simd_lt(first) & next.simd_ne(s64(0)).cast::<i32>();
+        first = gather32(b.wrapping_add(Simd::splat(REL_BASE_ROWS as usize)));
+        let off = gather64(b.wrapping_add(Simd::splat(REL_BASE_OFF as usize)));
+        let go = r.simd_lt(first) & off.simd_ne(s64(0)).cast::<i32>();
         if !go.any() {
             break;
         }
-        b = go.cast::<isize>().select(b.wrapping_add(next.cast::<usize>()), b);
+        let is_far = (gather32(b.wrapping_add(Simd::splat(REL_FLAGS as usize))) & s32(FAR_BASE)).simd_ne(s32(0));
+        let base = is_far.cast::<isize>().select(fars, b).wrapping_add(off.cast::<usize>());
+        let jump = gather64(b.wrapping_add(Simd::splat(REL_JUMP_OFF as usize)));
+        let take = jump.simd_ne(s64(0)).cast::<i32>() & r.simd_lt(gather32(b.wrapping_add(Simd::splat(REL_JUMP_ROWS as usize))));
+        let next = take.cast::<isize>().select(b.wrapping_add(jump.cast::<usize>()), base);
+        b = go.cast::<isize>().select(next, b);
     }
     let rows = b.wrapping_add(Simd::splat(40));
     let shift = gather32(rows.wrapping_add(Simd::splat(8)));
@@ -529,8 +547,8 @@ pub mod one {
     use super::*;
 
     #[inline(always)]
-    pub unsafe fn rel_get(d: *const u8, r: u32, c: u32) -> u64 {
-        super::rel_get::<1>(d, s32(r), c)[0]
+    pub unsafe fn rel_get(d: *const u8, r: u32, c: u32, far: *const u8) -> u64 {
+        super::rel_get::<1>(d, s32(r), c, far)[0]
     }
     #[inline(always)]
     pub unsafe fn rel_dead(d: *const u8, r: u32) -> bool {

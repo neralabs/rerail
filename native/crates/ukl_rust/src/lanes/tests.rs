@@ -10,7 +10,7 @@ use std::sync::Mutex;
 #[test]
 fn the_lane_reads_are_the_compiled_reads() {
     let reads = rerail_clif::jit::Reads::new();
-    type Two = extern "C" fn(*const u8, u32, u32) -> u64;
+    type Two = extern "C" fn(*const u8, u32, u32, *const u8) -> u64;
     type One = extern "C" fn(*const u8, u32) -> u32;
     type Group = extern "C" fn(*const u8, u32, u64) -> u64;
     type GroupRow = extern "C" fn(*const u8, u32, u32) -> u32;
@@ -49,15 +49,23 @@ fn the_lane_reads_are_the_compiled_reads() {
     }
     w.extend(&(0..700i64).flat_map(|i| [-i - 1, 40 + i % 5]).collect::<Vec<_>>());
     freeze(&top_block, top, &spec, Some(base));
+    // A far base (decision 0353 step 6): a link in its own block, its ids below the base's rows `base`'s in
+    // `base_block`, then its own rows where they lie.
+    let link_block = Block::anon(kind::FACTS, 16 << 20);
+    let linked = Relation::create(&link_block, &spec, None);
+    RelW { block: &link_block, rel: linked, lock: &lock }.extend(&(0..900i64).flat_map(|i| [i * 3 + 1, 50 + i % 7]).collect::<Vec<_>>());
+    freeze(&link_block, linked, &spec, None);
+    let link = Relation::try_link(&link_block, &spec, Some((&base_block, base)), base.rows.len(), linked, linked.rows.len()).expect("a link");
+    assert!(link.flags.load(std::sync::atomic::Ordering::Relaxed) & rerail_blocks::relation::FAR_BASE != 0, "a far base");
 
     let one = Compiled { rel_get: rel_get_1, rel_dead: rel_dead_1, rel_group: rel_group_1, group_row: group_row_1, mix: mix_1 };
     // A frozen relation, and a delta's own rows (`base_rows` on): its keys' groups, its dead rows.
     for rel in [base, top] {
         let d = std::ptr::from_ref(rel).cast::<u8>();
         let (lo, n, own) = (rel.base_rows, rel.base_rows + rel.rows.len(), rel.rows.len());
-        relation_lanes::<4>(d, lo, n, own, &one, true);
-        relation_lanes::<8>(d, lo, n, own, &one, true);
-        relation_lanes::<16>(d, lo, n, own, &one, true);
+        relation_lanes::<4>(d, lo, n, own, std::ptr::null(), &one, true);
+        relation_lanes::<8>(d, lo, n, own, std::ptr::null(), &one, true);
+        relation_lanes::<16>(d, lo, n, own, std::ptr::null(), &one, true);
     }
     // A chain of continuations (`try_continue`: a fork of a fork): every id read down the chain, each lane walking
     // to its own row's relation.
@@ -67,8 +75,13 @@ fn the_lane_reads_are_the_compiled_reads() {
     RelW { block: &base_block, rel: c2, lock: &lock }.extend(&(0..1_300i64).flat_map(|i| [-(i << 20), 7 + i % 3]).collect::<Vec<_>>());
     let d = std::ptr::from_ref(c2).cast::<u8>();
     let n = c2.base_rows + c2.rows.len();
-    relation_lanes::<4>(d, 0, n, c2.rows.len(), &one, false);
-    relation_lanes::<8>(d, 0, n, c2.rows.len(), &one, false);
+    relation_lanes::<4>(d, 0, n, c2.rows.len(), std::ptr::null(), &one, false);
+    relation_lanes::<8>(d, 0, n, c2.rows.len(), std::ptr::null(), &one, false);
+    // The far link: every id, the base's read in its block through `far`.
+    let (d, far) = (std::ptr::from_ref(link).cast::<u8>(), base_block.base_ptr().cast_const());
+    let n = link.base_rows + link.rows.len();
+    relation_lanes::<4>(d, 0, n, link.rows.len(), far, &one, false);
+    relation_lanes::<8>(d, 0, n, link.rows.len(), far, &one, false);
 
     // A bloom filter's hashes and verdicts, for keys it holds and keys it does not.
     use rerail_blocks::bloom::{self, Bloom};
@@ -88,7 +101,7 @@ fn the_lane_reads_are_the_compiled_reads() {
 }
 
 struct Compiled {
-    rel_get: extern "C" fn(*const u8, u32, u32) -> u64,
+    rel_get: extern "C" fn(*const u8, u32, u32, *const u8) -> u64,
     rel_dead: extern "C" fn(*const u8, u32) -> u32,
     rel_group: extern "C" fn(*const u8, u32, u64) -> u64,
     group_row: extern "C" fn(*const u8, u32, u32) -> u32,
@@ -98,7 +111,7 @@ struct Compiled {
 /// Every id `lo..n` of relation `d` (`own` rows of its own), `N` a step from far apart (a chain's lanes in different
 /// relations), each read at `N` lanes against the compiled read on each lane; its keys' groups where it has its
 /// index (`group`).
-fn relation_lanes<const N: usize>(d: *const u8, lo: u32, n: u32, own: u32, one: &Compiled, group: bool)
+fn relation_lanes<const N: usize>(d: *const u8, lo: u32, n: u32, own: u32, far: *const u8, one: &Compiled, group: bool)
 where
     LaneCount<N>: SupportedLaneCount,
 {
@@ -108,9 +121,9 @@ where
         let rv = Simd::from_array(r);
         unsafe {
             for c in 0..2u32 {
-                let got = rel_get(d, rv, c).to_array();
+                let got = rel_get(d, rv, c, far).to_array();
                 for l in 0..N {
-                    assert_eq!(got[l], (one.rel_get)(d, r[l], c), "rel_get row {} column {c} at {N} lanes", r[l]);
+                    assert_eq!(got[l], (one.rel_get)(d, r[l], c, far), "rel_get row {} column {c} at {N} lanes", r[l]);
                 }
             }
             let o = r.map(|x| x % own);
@@ -121,7 +134,7 @@ where
             if !group {
                 continue;
             }
-            let h = r.map(|x| rerail_blocks::key_hash(&[(one.rel_get)(d, x, 1) as i64]));
+            let h = r.map(|x| rerail_blocks::key_hash(&[(one.rel_get)(d, x, 1, far) as i64]));
             let (start, len) = rel_group(d, 0, Simd::from_array(h));
             let (start, len) = (start.to_array(), len.to_array());
             for l in 0..N {
@@ -131,7 +144,7 @@ where
             for l in 0..N {
                 assert_eq!(rows[l], (one.group_row)(d, 0, start[l]), "rel_group_row {}", start[l]);
             }
-            let v = r.map(|x| (one.rel_get)(d, x, 0));
+            let v = r.map(|x| (one.rel_get)(d, x, 0, far));
             let mixed = key_mix(Simd::from_array(h), Simd::from_array(v)).to_array();
             for l in 0..N {
                 assert_eq!(mixed[l], (one.mix)(std::ptr::null(), h[l], v[l]), "key_mix");
@@ -184,6 +197,10 @@ fn the_scalar_reads_layouts_are_the_blocks() {
     use std::mem::{offset_of, size_of};
     assert_eq!((ROWS_LEN, ROWS_RESERVED, ROWS_NEEDED, ROWS_NCOLS), (offset_of!(Rows, len) as u64, offset_of!(Rows, reserved) as u64, offset_of!(Rows, needed) as u64, offset_of!(Rows, ncols) as u64));
     assert_eq!((INDEX_MARKS, REL_INDEXES, INDEX_SIZE), (offset_of!(Index, marks) as u64, offset_of!(Relation, indexes) as u64, size_of::<Index>()));
+    assert_eq!(
+        (REL_FLAGS, REL_BASE_ROWS, REL_BASE_OFF, REL_JUMP_OFF, REL_JUMP_ROWS, FAR_BASE),
+        (offset_of!(Relation, flags) as u64, offset_of!(Relation, base_rows) as u64, offset_of!(Relation, base_off) as u64, offset_of!(Relation, jump_off) as u64, offset_of!(Relation, jump_rows) as u64, rerail_blocks::relation::FAR_BASE)
+    );
     assert_eq!(KEY_SEED, rerail_blocks::SEED);
     assert_eq!((a::DIR_N, a::DIR_ENTRIES), (offset_of!(AtomsDirRoot, n), offset_of!(AtomsDirRoot, entries)));
     assert_eq!((a::E_FIRST, a::E_END, a::E_FROM, a::E_ENDS, a::E_STRINGS, a::E_SIZE), (offset_of!(DirEntry, first), offset_of!(DirEntry, end), offset_of!(DirEntry, from), offset_of!(DirEntry, ends), offset_of!(DirEntry, strings), size_of::<DirEntry>()));
@@ -201,13 +218,14 @@ fn the_scalar_reads_are_the_compiled_reads() {
     let reads = rerail_clif::jit::Reads::new();
     let f = |name: &str| reads.function(name);
     // SAFETY: each read's signature: its descriptor's address, then its parameters.
-    let (get, dead, group, row, mark): (extern "C" fn(*const u8, u32, u32) -> u64, extern "C" fn(*const u8, u32) -> u32, extern "C" fn(*const u8, u32, u64) -> u64, extern "C" fn(*const u8, u32, u32) -> u32, extern "C" fn(*const u8, u32, u32) -> u32) =
+    let (get, dead, group, row, mark): (extern "C" fn(*const u8, u32, u32, *const u8) -> u64, extern "C" fn(*const u8, u32) -> u32, extern "C" fn(*const u8, u32, u64) -> u64, extern "C" fn(*const u8, u32, u32) -> u32, extern "C" fn(*const u8, u32, u32) -> u32) =
         unsafe { (std::mem::transmute(f("rel_get")), std::mem::transmute(f("rel_dead")), std::mem::transmute(f("rel_group")), std::mem::transmute(f("rel_group_row")), std::mem::transmute(f("rel_group_mark"))) };
     let (len, put, rows_get): (extern "C" fn(*const u8) -> u32, extern "C" fn(*const u8, u32, u32, u64) -> u32, extern "C" fn(*const u8, u32, u32) -> u64) =
         unsafe { (std::mem::transmute(f("rows_len")), std::mem::transmute(f("rows_put")), std::mem::transmute(f("rows_get"))) };
     let (mix, hash, may): (extern "C" fn(*const u8, u64, u64) -> u64, extern "C" fn(*const u8, u64) -> u64, extern "C" fn(*const u8, u64) -> u32) =
         unsafe { (std::mem::transmute(f("rel_key_mix")), std::mem::transmute(f("bloom_hash")), std::mem::transmute(f("bloom_may"))) };
     let (atoms_at, atoms_len): (extern "C" fn(*const u8, u32) -> u64, extern "C" fn(*const u8, u32) -> u32) = unsafe { (std::mem::transmute(f("atoms_at")), std::mem::transmute(f("atoms_len"))) };
+    let atoms_find: extern "C" fn(*const u8, u64, u32, u32) -> u32 = unsafe { std::mem::transmute(f("atoms_find")) };
 
     let spec = Spec { widths: vec![8, 4], order: vec![0], indexes: vec![vec![1]], min_log: 4 };
     let lock = Mutex::new(());
@@ -232,12 +250,12 @@ fn the_scalar_reads_are_the_compiled_reads() {
             assert_eq!(rows_len(rows), len(rows), "rows_len");
             for id in rel.base_rows..rel.base_rows + rel.rows.len() {
                 for c in 0..2 {
-                    assert_eq!(one::rel_get(d, id, c), get(d, id, c), "rel_get {id} {c}");
+                    assert_eq!(one::rel_get(d, id, c, std::ptr::null()), get(d, id, c, std::ptr::null()), "rel_get {id} {c}");
                 }
                 let own = id - rel.base_rows;
                 assert_eq!(one::rel_dead(d, own), dead(d, own) != 0, "rel_dead {own}");
-                let h = one::key_hash(&[get(d, id, 1) as i64]);
-                assert_eq!(h, rerail_blocks::key_hash(&[get(d, id, 1) as i64]), "key_hash");
+                let h = one::key_hash(&[get(d, id, 1, std::ptr::null()) as i64]);
+                assert_eq!(h, rerail_blocks::key_hash(&[get(d, id, 1, std::ptr::null()) as i64]), "key_hash");
                 assert_eq!(one::key_mix(h, id.into()), mix(std::ptr::null(), h, id.into()), "key_mix");
                 let (start, n) = one::rel_group(d, 0, h);
                 assert_eq!(u64::from(start) << 32 | u64::from(n), group(d, 0, h), "rel_group of {id}'s key");
@@ -308,5 +326,29 @@ fn the_scalar_reads_are_the_compiled_reads() {
             assert_eq!(crate::join_run::reads::atoms_str(root, id) as u64, atoms_at(root, id), "atoms_at {id}");
         }
     }
+    // Each word's atoms by its hash (decision 0666's tables), the k-th of them and past them; a hash none has, a
+    // length none has.
+    let finds = words.iter().map(|w| (k_hash(w), w.len() as u32)).chain([(0x1234_5678_9abc_def0, 3), (k_hash(&words[3]), 99)]);
+    for (h, len) in finds {
+        for k in 0..3 {
+            // SAFETY: as above.
+            assert_eq!(unsafe { crate::join_run::reads::atoms_find(root, h, len, k) }, atoms_find(root, h, len, k), "atoms_find {h:#x} {len} {k}");
+        }
+    }
     assert!(tried > 3_000);
+}
+
+/// The store's hash of a text, as the join program computes it to find a made text's atom (`store_hash`, decision
+/// 0666), is `rerail_atoms::hash_str`'s: foldhash's quality hasher at its seed, for every length to past its widest
+/// loop's (256 bytes) and its branches' bounds.
+#[test]
+fn the_store_hash_is_the_stores() {
+    use std::hash::BuildHasher;
+    let state = foldhash::quality::FixedState::with_seed(0x005E_ED71);
+    let text: String = (0..700u32).map(|i| char::from(b'!' + (i.wrapping_mul(2_654_435_761) >> 25) as u8 % 90)).collect();
+    for len in (0..=300).chain([383, 384, 385, 511, 512, 513, 700]) {
+        let s = &text[..len];
+        // SAFETY: the text's bytes, held here.
+        assert_eq!(unsafe { crate::join_run::store_hash(s.as_ptr(), len as u32) }, state.hash_one(s), "store_hash of {len} bytes");
+    }
 }
