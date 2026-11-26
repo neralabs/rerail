@@ -48,11 +48,11 @@ cfr_clean(f, m, x) :- cfr_form(c), kind(f, "function_definition"), nearest(f, c,
     !dj_test_doc(d).
 // cfr_helper(c, m, x): clean_<x> in form c is a helper, not a field's hook: c or one of its bases in the run calls
 // `self.clean_<x>()` (Django needs no such call), or c defines a method or property named x (a field would shadow
-// it).
+// it). A base's calls, in any file, are read by symbol from the phase py_names (dj_anc_clean_call, decision 0677).
 .decl cfr_helper(c: node, m: symbol, x: symbol)
 cfr_helper(c, m, x) :- cfr_form(c), cfr_self_call(c, m), match("clean_(?<x>.+)", m).
-cfr_helper(c, m, x) :- cfr_form(c), class_def(c, q), subclass(q, b), class_def(a, b), cfr_self_call(a, m),
-    match("clean_(?<x>.+)", m).
+cfr_helper(c, m, x) :- cfr_form(c), class_def(c, q), docof(c, d), doc(d, p, _), py_names__reads_at(p, mq),
+    py_names__dj_anc_clean_call(mq, q, m), match("clean_(?<x>.+)", m).
 cfr_helper(c, m, x) :- cfr_form(c), kind(g, "function_definition"), nearest(g, c, scope), def_name(g, x),
     m = cat("clean_", x).
 .decl cfr_self_call(c: node, m: symbol)

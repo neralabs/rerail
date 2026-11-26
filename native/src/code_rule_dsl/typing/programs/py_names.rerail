@@ -21,6 +21,7 @@
 //   anc_method(m, q, x)       such an ancestor defines method x (a def whose nearest scope is the class)
 //   member_call(m, q, x, f), member_kw(m, q, x, k, v), member_method(m, q, x)
 //                             the same of class q's own body: a file naming q (read through reads_at) reads them
+//   plain_def(m, q)           module m defines function q (a def, nested ones too) with no decorator
 //   dj_group(m, q, g, x)      Django (0677 fix 3c): field x is in group g, a set of fields the database keeps unique
 //                             together for model q's rows: unique_together, or a UniqueConstraint(fields=[...]) with no
 //                             condition, in q's Meta options (dj_opts_from: its own Meta, an abstract base's it takes,
@@ -38,6 +39,18 @@
 //                             base class's (`Book.save() (shop/models.py:22)`); a pre_save/post_save receiver connected
 //                             for sender q in any file (`post_save receiver `tag_saved` (shop/signals.py:7)`)
 //   dj_receiver_fn(m, f, q)   function f of module m is connected as a pre_save/post_save receiver for sender q
+//   dj_deferred_task(m, f)    function f of module m is a Celery task whose decorator names a task class `base=X`
+//                             whose delay or apply_async (its own, else an ancestor's of the run) calls
+//                             transaction.on_commit (pretix's TransactionAwareTask): its .delay() waits for the commit
+//   dj_app_defers(m)          the run's Celery app makes such a class every task's class (`Celery(..., task_cls=X)`):
+//                             a fact of the whole run, handed on under every module m, so a file's memo entry, keyed by
+//                             the rows of the modules it reads, is keyed by it too
+//   dj_task_def(m, f)         function f of module m is decorated as a Celery task (`@shared_task`, `@app.task(...)`,
+//                             `@task`)
+//   dj_view_model(m, q, s)    class q, or an ancestor of the run, says `model = S` or `queryset = S.objects…` in its
+//                             body (S as the file binds it): a view over S
+//   dj_anc_clean_call(m, q, x)  a class of the run among class q's ancestors calls `self.x()`, x a `clean_…` method
+//                             (a form's clean_<field> it calls itself is a helper, not the field's hook)
 // An ancestor's members are handed on under the class's own module, not the ancestor's: a file need not read the
 // module an ancestor is defined in (`use.py`'s `Leaf(Mid)`, Mid's base in a module use.py never imports).
 // python/names reads them as `py_names__reads_at`, `py_names__exports`, … . This program includes python/scopes, not
@@ -49,8 +62,9 @@
 
 .phase py_names
 .export reads_at, exports, class, defined, public, ancestor, library_ancestor, anc_call, anc_kw, anc_ref, anc_method,
-    member_call, member_kw, member_method, dj_group, dj_cond_group, dj_opaque, dj_unmanaged, dj_abstract,
-    dj_manager_method, dj_hook, dj_receiver_fn
+    member_call, member_kw, member_method, plain_def, dj_group, dj_cond_group, dj_opaque, dj_unmanaged, dj_abstract,
+    dj_manager_method, dj_hook, dj_receiver_fn, dj_deferred_task, dj_app_defers, dj_task_def,
+    dj_view_model, dj_anc_clean_call
 
 // imported(p, q): an import statement of the file at path p names q: a module (`import a.b`, `from .m import x`'s
 // "pkg.m"), or a name of one ("pkg.m.x").
@@ -164,6 +178,11 @@ anc_kw(m, q, x, k, v) :- class(m, q), anc(q, o), own_kw(o, x, k, v).
 anc_ref(m, q, x, s) :- class(m, q), anc(q, o), own_ref(o, x, s).
 .decl anc_method(m: symbol, q: symbol, x: symbol)
 anc_method(m, q, x) :- class(m, q), anc(q, o), own_method(o, x).
+// plain_def(m, q): each file's undecorated defs, by qualname (plain_here), under the module that defines them.
+.decl plain_here(q: symbol)
+plain_here(q) :- kind(g, "function_definition"), qualname(g, q), !decorator(g, _).
+.decl plain_def(m: symbol, q: symbol)
+plain_def(m, q) :- defined(m, q), plain_here(q).
 
 // ---- Django's model options and managers (0677 fix 3c) -------------------------------------------------------------
 // Here, not in a phase of Django's own: they need the class line (base, anc) and the names' resolution (sym_of, qn,
@@ -338,3 +357,53 @@ dj_hook(m, q, k, h) :- class(m, q), anc(q, o), dj_own_hook(o, k, h).
 dj_hook(m, q, "save", h) :- class(m, q), dj_rcv_hook(q, h).
 .decl dj_receiver_fn(m: symbol, f: symbol, q: symbol)
 dj_receiver_fn(m, fq, q) :- dj_rcv_fn(p, fq), dj_rcv_sender(p, q), defined(m, fq).
+
+// ---- Django's task classes and forms (0677, the tail) --------------------------------------------------------------
+// A task's .delay() that already waits for the commit (python/django's dj_task_waits_for_commit), and a form's
+// clean_<x> called by an ancestor (django-practice-clean-field-returns-value). Each file's rules turn its own classes,
+// task decorators and apps into symbols; the phase joins them by symbol, a class's ancestors by `anc`. A name is read
+// as the file binds it or, imported, by its qualified name (`sym_of ; qn`), as dj_signal reads one.
+// dj_own_defer(o, x): class o's own method x, delay or apply_async, calls transaction.on_commit.
+.decl dj_own_defer(o: symbol, x: symbol)
+dj_own_defer(o, x) :- class_def(c, o), kind(h, "function_definition"), nearest(h, c, scope), def_name(h, x),
+    (x = "delay" ; x = "apply_async"), kind(oc, "call"), within(oc, h), field(oc, "function", of),
+    (sym_of(of, q) ; qn(of, q)), q = "django.db.transaction.on_commit".
+// dj_defer_q(q): class q's delay or apply_async calls it: q's own method, else an ancestor's of the run (python/scopes'
+// mro_method: with no own method, any ancestor's).
+.decl dj_defer_q(q: symbol)
+dj_defer_q(q) :- dj_own_defer(q, _).
+dj_defer_q(q) :- run_class(q), (x = "delay" ; x = "apply_async"), !own_method(q, x), anc(q, o), dj_own_defer(o, x).
+// dj_task_base_here(f, b): def f's decorator is a call passing `base=` the class b names (`@shared_task(base=X)`).
+.decl dj_task_base_here(f: symbol, b: symbol)
+dj_task_base_here(fq, bq) :- kind(g, "function_definition"), qualname(g, fq), decorator(g, e), kind(e, "call"),
+    call_arg(e, _, "base", bv), (sym_of(bv, bq) ; qn(bv, bq)).
+.decl dj_deferred_task(m: symbol, f: symbol)
+dj_deferred_task(m, fq) :- defined(m, fq), dj_task_base_here(fq, bq), dj_defer_q(bq).
+// dj_task_here(f): def f is decorated as a task.
+.decl dj_task_here(f: symbol)
+dj_task_here(fq) :- kind(g, "function_definition"), qualname(g, fq), decorator(g, e), unparen(e, m), dj_task_deco(m).
+.decl dj_task_deco(e: node)
+dj_task_deco(e) :- attr_of(e, _, "task").
+dj_task_deco(e) :- (sym_of(e, q) ; qn(e, q)), (split_dot(q, _, "task") ; split_dot(q, _, "shared_task")).
+dj_task_deco(e) :- kind(e, "call"), field(e, "function", f), dj_task_deco(f).
+.decl dj_task_def(m: symbol, f: symbol)
+dj_task_def(m, fq) :- defined(m, fq), dj_task_here(fq).
+// dj_app_cls_here(b): a `celery.Celery(..., task_cls=X)` call, X naming class b.
+.decl dj_app_cls_here(b: symbol)
+dj_app_cls_here(bq) :- kind(k, "call"), field(k, "function", f), (sym_of(f, c) ; qn(f, c)), c = "celery.Celery",
+    call_arg(k, _, "task_cls", v), (sym_of(v, bq) ; qn(v, bq)).
+.decl dj_app_defers(m: symbol)
+dj_app_defers(m) :- reads_at(_, m), dj_app_cls_here(bq), dj_defer_q(bq).
+// dj_own_view_model(o, s): class o's own body says `model = S` or `queryset = S.objects…`.
+.decl dj_own_view_model(o: symbol, s: symbol)
+dj_own_view_model(o, s) :- own_asg(o, x, r), (x = "model" ; x = "queryset"), unparen(r, e),
+    (w = e ; dj_qs_root(e, w)), (sym_of(w, s) ; qn(w, s)).
+.decl dj_view_model(m: symbol, q: symbol, s: symbol)
+dj_view_model(m, q, s) :- class(m, q), dj_own_view_model(q, s).
+dj_view_model(m, q, s) :- class(m, q), anc(q, o), dj_own_view_model(o, s).
+// dj_own_clean_call(o, x): a method of class o calls `self.x()`, x a clean_… method.
+.decl dj_own_clean_call(o: symbol, x: symbol)
+dj_own_clean_call(o, x) :- class_def(a, o), kind(k, "call"), field(k, "function", fn), attr_of(fn, s, x), prefix("clean_", x),
+    text(s, "self"), nearest(k, a, "class_definition").
+.decl dj_anc_clean_call(m: symbol, q: symbol, x: symbol)
+dj_anc_clean_call(m, q, x) :- class(m, q), anc(q, o), dj_own_clean_call(o, x).

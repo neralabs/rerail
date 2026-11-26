@@ -376,6 +376,23 @@ Found on the way and fixed:
      every pack's split test; the rule files' own tests and `check_rr`; the executors' coverage (unchanged).
    - Lists: split 31 → 30, node 239 → 210. JavaScript 7 → 1 (`significant_bits`, under the engine's
      `radix__key_slice0`, as on the branch), TypeScript 8, PHP 4, Vue 4, Rust 2, SQL 2, Blade 2 and React 1 → 0.
+15. **Django by the phase `py_names`, and one engine fix** (the branch's a0e95c0b6a, 0677 tail 6, and bulk-not-loop
+   from 516477cb21, tail 5).
+   - Rules: the branch's Django walks of the run's classes and defs by `class_def` and `qualname` in any file now go
+     through the phase: each file turns its defs, decorators and calls into symbols, the phase joins them by symbol,
+     and hands them on under a module (`plain_def`, `dj_task_def`, `dj_deferred_task`, `dj_app_defers`,
+     `dj_view_model`, `dj_anc_clean_call`, listed in `SETTINGS_BY_FOLDER`). bulk-not-loop's number field is a test of
+     the document, over the rows the phase hands on for the modules it reads. The queryset helpers moved to
+     python/django-shared, which now includes python/scopes for what they read (`attr_of`, `unparen`).
+   - The engine: a magic rule also leaves out a literal that the key's binders need only through a value, where the
+     rule ties it to the key through the demanded atom or a literal after it (default-called-once's
+     `magic_unparen_bf(v)`, answered through a coarser demand), unless it reads a key variable, and only while the
+     kept positive literals still bind the key. In main's form, each magic rule carries its source rule's per-literal
+     places. T's golden `magic_home_ffb` changes as on the branch.
+   - Not ported: tail 5's symbol-demand fix (`product_demand`, which main lacks); its data-layer rules (out of scope).
+   - Tests: `a_coarser_demand_keeps_no_literal_only_the_demanded_atom_tied`, `t_programs_transform_like_t`; Django's
+     27 rule tests; the typing tests; every pack's split test; the rule files' own tests and `check_rr`.
+   - Lists: split 30 → 28, node 210 → 177 (Django 34 → 1, `dar_non_atomic_wrapped`, as on the branch).
 
 ## Consequences
 
@@ -387,4 +404,4 @@ Found on the way and fixed:
 ## Open
 
 - The split's gaps still to port: 0652's follow-up (`same_document_ties`: SIM113).
-- The packs' entries left after fix 14, and the data layer's (not in this pull request's scope, 2026-11-25).
+- The packs' entries left after fix 15, and the data layer's (not in this pull request's scope, 2026-11-25).

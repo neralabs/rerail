@@ -254,7 +254,7 @@ pub const SETTINGS_BY_PATH: [(&str, Option<usize>); 14] = [
     ("points_to__possible_type_at", None),
     ("points_to__possible_open_at", None),
 ];
-pub const SETTINGS_BY_FOLDER: [&str; 27] = [
+pub const SETTINGS_BY_FOLDER: [&str; 33] = [
     "package",
     "package_field",
     "tsconfig",
@@ -274,6 +274,7 @@ pub const SETTINGS_BY_FOLDER: [&str; 27] = [
     "py_names__member_call",
     "py_names__member_kw",
     "py_names__member_method",
+    "py_names__plain_def",
     "py_names__dj_group",
     "py_names__dj_cond_group",
     "py_names__dj_opaque",
@@ -282,6 +283,11 @@ pub const SETTINGS_BY_FOLDER: [&str; 27] = [
     "py_names__dj_manager_method",
     "py_names__dj_hook",
     "py_names__dj_receiver_fn",
+    "py_names__dj_deferred_task",
+    "py_names__dj_app_defers",
+    "py_names__dj_task_def",
+    "py_names__dj_view_model",
+    "py_names__dj_anc_clean_call",
 ];
 
 /// The folder, target or module column of a setting keyed by a file's path (`SETTINGS_BY_PATH`): `None` when the

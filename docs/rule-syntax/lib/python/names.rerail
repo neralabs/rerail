@@ -15,6 +15,7 @@
 //   py_names__anc_method(m, q, x)  what class q's ancestors of the run assign and define in their bodies
 //   py_names__member_call(m, q, x, f), py_names__member_kw(m, q, x, k, v), py_names__member_method(m, q, x)
 //                               the same of class q's own body
+//   py_names__plain_def(m, q)   module m defines function q with no decorator
 // Each is read by a module the file's own `reads_at` rows name, so a rule reading them stays file-local, and a file's
 // memo entry is keyed by those rows alone (decision 0665): an edit misses the files whose modules' rows changed.
 #include "python/scopes.rerail"
@@ -30,6 +31,7 @@
 .decl py_names__anc_kw(m: symbol, q: symbol, x: symbol, k: symbol, v: symbol)
 .decl py_names__anc_ref(m: symbol, q: symbol, x: symbol, s: symbol)
 .decl py_names__anc_method(m: symbol, q: symbol, x: symbol)
+.decl py_names__plain_def(m: symbol, q: symbol)
 .decl py_names__member_call(m: symbol, q: symbol, x: symbol, f: symbol)
 .decl py_names__member_kw(m: symbol, q: symbol, x: symbol, k: symbol, v: symbol)
 .decl py_names__member_method(m: symbol, q: symbol, x: symbol)

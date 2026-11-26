@@ -464,6 +464,9 @@ struct Adorn<'a> {
 
 type Magic = Vec<(Atom, Vec<(Literal, bool)>)>;
 
+/// A magic rule's source rule's places (`Adorn::places`), and each of its body literals' places.
+type Placed = (BTreeSet<String>, Vec<BTreeSet<String>>);
+
 /// Leaves out of a magic rule's body (`pre`, as `ks` keeps it) each literal the key does not need (`needed`) that the
 /// literals left out had tied to it, and that now joins it by a value alone. A literal's places are its variables
 /// among the rule's (`places`: at a `node`, `loc` or `span` column, or a document's). Counting every literal, its
@@ -472,18 +475,26 @@ type Magic = Vec<(Atom, Vec<(Literal, bool)>)>;
 /// `magic_unparen_bf(c) :- same_child(x, i, c), same_child(y, i, d)` was RUF034's, `same_pair(x, y)` left out (an
 /// extra that would unstratify the program), y's file joined to c's by the index i. Leaving a literal out only widens
 /// the demand. A key with no place is left as it is.
-fn drop_other_documents(key: &BTreeSet<String>, pre: &[(Literal, bool)], needed: &[bool], places: &BTreeSet<String>, ks: &mut [bool]) {
+///
+/// The same holds of a literal the key's binders need only through a value, where the rule ties it to the key through
+/// the demanded atom itself, or a literal after it (`whole`: each of the rule's literals' places). A demand answered
+/// through a coarser one (`unparen_bb` through `unparen_bf`) keeps the prefix that bound the dropped column:
+/// default-called-once's `magic_unparen_bf(v) :- field(c, "function", e), kind(c, "call"), sym_of(e, q),
+/// dco_w161_whole(t, q), dco_field(f, t), call_arg(f, -1, "default", v)` joined the call c's file to v's by t, c tied
+/// to v by the demanded `unparen(v, c)` alone. Such a literal is left out too unless it reads a key variable, and only
+/// while the positive literals kept still bind the key.
+fn drop_other_documents(key: &BTreeSet<String>, pre: &[(Literal, bool)], needed: &[bool], (places, whole): &Placed, ks: &mut [bool]) {
     let placed: Vec<BTreeSet<String>> = pre.iter().map(|(l, _)| l.vars().intersection(places).cloned().collect()).collect();
     let from: BTreeSet<String> = key.intersection(places).cloned().collect();
     if from.is_empty() {
         return;
     }
-    // The places the key reaches through the literals `with` keeps.
-    let reach = |with: &dyn Fn(usize) -> bool| {
+    // The places the key reaches through the place sets `with` keeps.
+    let reach = |sets: &[BTreeSet<String>], with: &dyn Fn(usize) -> bool| {
         let mut reach = from.clone();
         loop {
             let mut grew = false;
-            for (i, p) in placed.iter().enumerate() {
+            for (i, p) in sets.iter().enumerate() {
                 if with(i) && !p.is_disjoint(&reach) && !p.is_subset(&reach) {
                     reach.extend(p.iter().cloned());
                     grew = true;
@@ -494,11 +505,23 @@ fn drop_other_documents(key: &BTreeSet<String>, pre: &[(Literal, bool)], needed:
             }
         }
     };
-    let (every, kept) = (reach(&|_| true), reach(&|i| ks[i]));
+    let (every, kept) = (reach(whole, &|_| true), reach(&placed, &|i| ks[i]));
+    let before = ks.to_vec();
     for (i, p) in placed.iter().enumerate() {
-        if ks[i] && !needed[i] && !p.is_disjoint(&every) && p.is_disjoint(&kept) {
+        let reads_key = !pre[i].0.vars().is_disjoint(key);
+        if ks[i] && (!needed[i] || !reads_key) && !p.is_empty() && !p.is_disjoint(&every) && p.is_disjoint(&kept) {
             ks[i] = false;
         }
+    }
+    // The positive literals kept must still bind the key; otherwise the demand stays as it was.
+    let mut bound = BTreeSet::new();
+    for (i, (l, _)) in pre.iter().enumerate() {
+        if ks[i] && let Some(a) = positive(l) {
+            bound.extend(a.vars());
+        }
+    }
+    if !key.is_subset(&bound) {
+        ks.copy_from_slice(&before);
     }
 }
 
@@ -647,7 +670,7 @@ impl Adorn<'_> {
         &mut self,
         full: &BTreeSet<String>,
         coarse: &BTreeMap<(String, String), String>,
-    ) -> Result<(Vec<Rule>, Magic, BTreeSet<(String, String)>, Vec<BTreeSet<String>>), Error> {
+    ) -> Result<(Vec<Rule>, Magic, BTreeSet<(String, String)>, Vec<Placed>), Error> {
         let (mut rules, mut magic, mut seen, mut places) = (Vec::new(), Vec::new(), BTreeSet::new(), Vec::new());
         self.answered.clear();
         let mut todo: Vec<(String, String)> =
@@ -660,7 +683,11 @@ impl Adorn<'_> {
                 continue;
             }
             for rule in self.by[&rel].clone() {
-                let placed = self.places(&rule);
+                let placed: Placed = {
+                    let places = self.places(&rule);
+                    let whole = rule.body.iter().map(|l| l.vars().intersection(&places).cloned().collect()).collect();
+                    (places, whole)
+                };
                 let (mut bound, mut pre, mut guard) = (BTreeSet::new(), Vec::<(Literal, bool)>::new(), None);
                 let mut body = rule.body.clone();
                 if ad.contains('b') {
@@ -780,7 +807,7 @@ impl Adorn<'_> {
         let mut keep: Vec<Vec<bool>> = magic.iter().map(|(_, pre)| pre.iter().map(|(_, extra)| !extra).collect()).collect();
         let views: Vec<Rule> = self.prog.rules.iter().filter(|r| !self.idb.contains(r.head.rel.as_str())).cloned().collect();
         // One magic rule's body, as `ks` keeps its literals.
-        let one = |mh: &Atom, pre: &[(Literal, bool)], ks: &[bool], places: &BTreeSet<String>| -> Result<Vec<Literal>, Error> {
+        let one = |mh: &Atom, pre: &[(Literal, bool)], ks: &[bool], places: &Placed| -> Result<Vec<Literal>, Error> {
             // A left-out literal that binds a key variable, or what such a literal needs, stays.
             let key = vars_all(&mh.args);
             let (mut ks, mut need) = (ks.to_vec(), key.clone());
