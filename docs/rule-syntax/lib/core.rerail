@@ -101,7 +101,7 @@
 // interpolation replaced by the marker, a constant; a debug field's `x = ` stays literal text. The same hosts.
 .decl fstring_template(n: node, marker: symbol, v: symbol)
 .input doc, pkg, path_part, file_name, node, kind, field, child, text, op, docof, line, unset, list_len
-.input value, str, strprefix, name, comment, static_value, value_type, value_type_of, fstring_piece, fstring_template
+.input value, str, strprefix, name, comment, static_value, static_value_type_of, value_type, value_type_of, fstring_piece, fstring_template
 
 // ---- text tests (built-in constraints) -----------------------------------------------------------------------
 // Most tests on text are not regexes: exact names, sets of names, prefixes, suffixes, path shapes. They are

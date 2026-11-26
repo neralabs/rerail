@@ -51,10 +51,13 @@ dar_true(v) :- kind(v, "identifier"), text(v, x), nearest(v, f, fdef), sig_param
 // dar_view(f): def f is a sync view that ATOMIC_REQUESTS wraps; dar_live(f): f runs inside one, by calls. Both by the
 // def's symbol (decision 0677), as `call_target` names it; dar_call is each file's own calls.
 .decl dar_view(f: symbol)
-dar_view(fq) :- param(f, "request", 0), nearest(f, s, scope), !kind(s, "class_definition"), !is_async(f),
-    !dar_middleware(f), !dar_non_atomic(f), !dar_non_atomic_wrapped(f), docof(f, d), !dj_test_doc(d), pt_tm(f, fq).
+dar_view(fq) :- dar_view_fn(fq, q), !dar_non_atomic_wrapped(q).
 dar_view(fq) :- dj_view_class(k), kind(f, "function_definition"), nearest(f, k, scope), !is_async(f),
     !dar_non_atomic(k), !dar_non_atomic_member(k), docof(f, d), !dj_test_doc(d), pt_tm(f, fq).
+// dar_view_fn(fq, q): def fq, of qualified name q, is a sync function view; the run's urls may still wrap it.
+.decl dar_view_fn(fq: symbol, q: symbol)
+dar_view_fn(fq, q) :- param(f, "request", 0), nearest(f, s, scope), !kind(s, "class_definition"), !is_async(f),
+    !dar_middleware(f), !dar_non_atomic(f), docof(f, d), !dj_test_doc(d), pt_tm(f, fq), qualname(f, q).
 .decl dar_live(f: symbol)
 dar_live(fq) :- dar_on(), dar_view(fq).
 dar_live(gq) :- dar_live(fq), dar_call(fq, gq).
@@ -75,10 +78,12 @@ dar_non_atomic(o) :- decorator(o, e), (n = e ; within(n, e)), dar_non_atomic_ref
 // in `as_view` (`return non_atomic_requests(super().as_view(**kw))`).
 .decl dar_non_atomic_member(k: node)
 dar_non_atomic_member(k) :- kind(k, "class_definition"), field(k, "body", b), within(n, b), dar_non_atomic_ref(n).
-// dar_non_atomic_wrapped(f): some file wraps f by call, `path("x/", non_atomic_requests(views.f))`.
-.decl dar_non_atomic_wrapped(f: node)
-dar_non_atomic_wrapped(f) :- kind(c, "call"), field(c, "function", n), dar_non_atomic_ref(n), posarg(c, 0, a),
-    sym_of(a, q), qualname(f, q).
+// dar_non_atomic_wrapped(q): some file wraps the def of qualified name q by call,
+// `path("x/", non_atomic_requests(views.f))`. By symbol: the call's file and the def's join by the name alone
+// (decision 0677).
+.decl dar_non_atomic_wrapped(q: symbol)
+dar_non_atomic_wrapped(q) :- kind(c, "call"), field(c, "function", n), dar_non_atomic_ref(n), posarg(c, 0, a),
+    sym_of(a, q).
 // dar_on_commit(oc): oc is `transaction.on_commit(...)`, or `.on_commit(...)` on a connection
 // (`connection.on_commit(...)`, `connections["x"].on_commit(...)`); dar_after_commit(n): n is in a lambda or def
 // written in its arguments, which runs after the commit. A call in the arguments themselves runs at once:

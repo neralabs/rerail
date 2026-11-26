@@ -26,4 +26,3 @@ data-layer:alone pos_allow_broken
 data-layer:alone pos_bypass
 data-layer:alone static_tests
 data-layer:alone vmi_backed
-django dar_non_atomic_wrapped

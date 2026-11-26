@@ -42,6 +42,8 @@ pub mod textglob;
 mod tool_calls;
 mod translate;
 #[doc(hidden)]
+pub use translate::key_captures_by_text;
+#[doc(hidden)]
 pub mod value;
 
 use std::collections::BTreeSet;

@@ -416,7 +416,28 @@ Found on the way and fixed:
      this machine's sandbox, as before.
    - Lists: node 177 → 166 (Node 11 → 0). Outside the data layer the lists now hold only what the branch keeps:
      Django's `dar_non_atomic_wrapped` (both lists), JavaScript's `significant_bits` (under the engine's
-     `radix__key_slice0`), and python-main's 7 (FAST003).
+     `radix__key_slice0`), and python-main's 7 (FAST003). Fix 17 takes them out.
+
+17. **The last entries outside the data layer, which the branch keeps too** (new here).
+   - Django, `dar_non_atomic_wrapped`: a `non_atomic_requests(views.upload)` call, in `urls.py` say, was joined with
+     the view's def in another file by node. It is keyed by the wrapped function's qualified name now
+     (`dar_non_atomic_wrapped(q: symbol)`), and `dar_view` tests it on the def's name (`dar_view_fn(fq, q)`).
+   - JavaScript, `significant_bits`: its helper `radix(r, …)` was keyed by the literal's text, any file's, and an
+     `@slice` of that text (`radix__key_slice0`) crossed. It is `radix_digits(n, …)` now, keyed by the literal node.
+   - python-main, FAST003 (7): the route's `{K}` is a guest node. The helpers FAST003 passes it to (`fn_has`,
+     `param_eq`, `alt_2`, `pyd_field`, `init_has`, `call_has`, the two demands) read it only by text, and each
+     joined any file's node of that text with its own nodes. The translator's new pass `key_captures_by_text`
+     passes such a capture by its text: a helper that reads it only by text takes the text (`text(K, t)` becomes
+     `t = K`, the `node(_, K, …)` binder goes); a rule that binds K joins `text(K, K_text<i>)` at each call that
+     passes it, inside an aggregate too, and a helper head that passes K on takes `K_text`. On a 3-file FastAPI
+     probe the old and new rule give the same 7 findings, and the program prepares in 4.5 s of CPU instead of 11.4.
+   - SQL: fix 14's `static_value_type_of` is on core's `.input` line too, so the SQL route takes it as an input
+     (the gate's `rule_files_use_the_core_prelude_and_unused_inputs_need_no_binding`).
+   - Tests: `json_rules_a_capture_read_by_text_is_passed_by_its_text`; the json_rules tests (FAST003's golden
+     rewritten); every pack's split test; the rule files' own tests and `check_rr`; the SQL executor's tests; the
+     executors' coverage; Django's 27 rule tests.
+   - Lists: split 28 → 27, node 166 → 157 (Django 1 → 0 in both, JavaScript 1 → 0, python-main 7 → 0). Every entry
+     left is the data layer's.
 
 ## Consequences
 

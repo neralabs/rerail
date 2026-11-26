@@ -33,6 +33,24 @@ fn json_rules_pack_is_current() {
     assert!(differ.is_empty(), "{} of {} rules differ:\n{}", differ.len(), jsons.len(), differ.join("\n"));
 }
 
+/// A guest capture the rules read by text (FAST003's route `{K}`) is passed to its helpers by its text (decisions
+/// 0652, 0677). A helper that reads K only by text takes the text (`text(K, t)` is `t = K`, its "any node" binder
+/// goes); a helper and the clause that bind K join `text(K, …)` where they pass it, inside an aggregate too.
+#[test]
+fn json_rules_a_capture_read_by_text_is_passed_by_its_text() {
+    let mut rules: Vec<(String, Vec<String>)> = vec![
+        ("eq(n, K)".into(), vec!["node(_, K, _, _, _)".into(), "kind(n, \"identifier\")".into(), "text(K, t1), text(n, t1)".into()]),
+        ("has(n, K)".into(), vec!["child(n, c, _)".into(), "eq(c, K)".into()]),
+        ("FAST(n, K)".into(), vec!["guest_name(n, c)".into(), "K = c".into(), "count : { child(n, p, _), !has(p, K) } = 0".into()]),
+    ];
+    let mut refs: Vec<(&mut String, &mut Vec<String>)> = rules.iter_mut().map(|(h, l)| (h, l)).collect();
+    let keyed = super::key_captures_by_text(&BTreeSet::from(["K".to_owned()]), &mut refs);
+    assert_eq!(keyed, [("eq".to_owned(), 1), ("has".to_owned(), 1)]);
+    assert_eq!(rules[0], ("eq(n, K)".to_owned(), vec!["kind(n, \"identifier\")".to_owned(), "t1 = K, text(n, t1)".to_owned()]));
+    assert_eq!(rules[1].1, ["child(n, c, _)", "eq(c, K)"], "has passes K, now its text, on");
+    assert_eq!(rules[2].1[2], "count : { child(n, p, _), text(K, K_text1), !has(p, K_text1) } = 0");
+}
+
 #[test]
 fn json_rules_policy_json_is_recognised() {
     assert!(super::is_policy_json(r#"{"format": "rerail.policy/v1", "id": "x"}"#));
