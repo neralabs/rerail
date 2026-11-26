@@ -1978,3 +1978,29 @@ Checks (Relax, local, 118 of 118):
 - `a_levels_run_marks_its_critical_lines`: a cold run's 14,400-row line is critical, and a small edit marks none.
 
 The shape script requires the constants, the three operations, the level's call and the tests.
+
+### Trials follow the critical path (0274, 0207 §2; 2026-11-26)
+
+0274 is the user's decision: "trialing should focus on what has been observed to be on the critical path of a run".
+Before the critical path existed, the planner could not follow it. It trialled every slow line at its handoff, and
+never trialled a line that was not slow. 0207 §2 trials a line at its first check, and once more after it is flagged
+slow. Both now hold:
+
+- `check` reads the memo. At a due point where a line is not slow, the line is due a trial if it is on the path
+  (`CRITICAL` of it) with its orders untrialled. The handoff then trials its candidates from that depth, as it does a
+  slow line's, without exact pairs: the pairs are a slow line's (0203 §3).
+- A slow line is trialled only where it is on the path. Off the path it is planned again from its cut, with its exact
+  pairs, and goes on in its search's order under the handoff's limit (0271; 0274 §3). The trials block marks such a
+  line −1, and `choose` takes the search's order.
+- A note keeps whether its line's orders were trialled. A slow flag clears it, so the line is trialled once more.
+
+Checks (Relax, local, 120 of 120):
+- `a_slow_line_on_the_critical_path_is_trialled_and_handed_off_to_a_better_order`. A small change reaching none of the
+  skew is run first, and the path gives the line its whole share. Then the big change: slow, its pairs, at least two
+  trials, and a handoff to c before d. With a small change that does reach the skew, the measured ratio corrects the
+  next choice to the good order from the start: the trials confirm it, and no handoff is needed.
+- `a_slow_line_is_cut_trialled_and_handed_off_to_a_better_order`: off the path, no trials, planned again from its cut
+  to c before d, the rows unchanged. Without the on-path gate, it fails.
+- `a_critical_line_is_trialled_once_at_its_first_check`. An exactly priced line of 300 K rows is not slow. On the
+  path, it is trialled at its first due point; its next run trials nothing; off the path it is never trialled.
+  Without `check`'s trial flag, it fails.

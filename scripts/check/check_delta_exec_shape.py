@@ -805,6 +805,8 @@ def planning(failures: list) -> None:
         ("note.merge_tried(", "a run's ratio merged as a geometric mean (0203 §6)"),
         ("n.matters()", "exploration only for lines that matter (0203 §7)"),
         ("!n.pending()", "a pending line searched, its kept order not taken (0203 §6)"),
+        ("!on_path[ti] ||", "trials only on the critical path (0274)"),
+        ("n.critical >= CRITICAL && !n.trialled", "a critical line trialled at its first check, once (0207 §2)"),
     ):
         if want not in plan:
             failures.append(f"plan.rs: {why} ({want} missing)")
@@ -830,6 +832,8 @@ def planning(failures: list) -> None:
         "fn a_wider_search_is_exact_past_the_rounds_bound_and_proposes_distinct_orders",
         "fn step_misses_are_judged_past_eight_searches_of_work",
         "fn the_critical_path_marks_the_lines_of_its_heaviest_chain",
+        "fn a_slow_line_on_the_critical_path_is_trialled_and_handed_off_to_a_better_order",
+        "fn a_critical_line_is_trialled_once_at_its_first_check",
     ):
         if t not in tests:
             failures.append(f"the planning track's tests lack {t}")

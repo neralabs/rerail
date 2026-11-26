@@ -45,7 +45,7 @@ impl B {
 
     /// The rows `go` writes into a runs block per head (`arities`), read back sorted.
     fn rows(&mut self, arities: &[usize], go: impl FnOnce(&mut B, &[BlockId])) -> Vec<Rows> {
-        let runs: Vec<BlockId> = arities.iter().map(|&a| open_runs(&mut self.dir, B::trace(a).shape(), 20_000)).collect();
+        let runs: Vec<BlockId> = arities.iter().map(|&a| open_runs(&mut self.dir, B::trace(a).shape(), 1 << 18)).collect();
         go(self, &runs);
         let out = runs
             .iter()
@@ -366,34 +366,65 @@ fn step_misses_are_judged_past_eight_searches_of_work() {
     assert!(!step_miss(late, &[100.0, 200.0, 0.0], &[0.0; 3], 1), "unpriced");
 }
 
-/// A slow line (0203 §3, 0206, 0207): its estimate misled by skew, it passes its limit at a depth; its exact pairs
-/// are measured, it is searched again from the steps it ran, its candidates are trialled over a sample of its
-/// tuples, and it goes on in the order the trials measured least. The answer is the rule order's.
-#[test]
-fn a_slow_line_is_cut_trialled_and_handed_off_to_a_better_order() {
-    let mut b = B::new();
-    // δa(x, y): 200 rows, y = 0. bb(y, z): 501 rows of y = 0 (z 0..=500), and 4499 of their own y. c(z, v): ten
-    // rows of z = 7, ten each of z 1000..1100. d(z, w): four each of z 0..1000.
-    let a = b.rel(2, (0..200).map(|x| vec![x, 0]));
+/// The skewed line of the slow-line tests: δa(x, y), 200 rows of y = 0 (`delta` of them, at `y`). bb(y, z): 501 rows of
+/// y = 0 (z 0..=500), and 4499 of their own y. c(z, v): ten rows of z = 7, ten each of z 1000..1100. d(z, w): four
+/// each of z 0..1000. q(x, v, w) :- δa(x, y), bb(y, z), c(z, v), d(z, w).
+fn skewed(b: &mut B, delta: i64, y: i64) -> Plan {
+    let a = b.rel(2, (0..delta).map(|x| vec![x, y]));
     let bb = b.rel(2, (0..=500).map(|z| vec![0, z]).chain((1..4500).map(|y| vec![y, 100_000 + y])));
     let c = b.rel(2, (0..10).map(|v| vec![7, v]).chain((1000..1100).flat_map(|z| (0..10).map(move |v| vec![z, v]))));
     let d = b.rel(2, (0..1000).flat_map(|z| (0..4).map(move |w| vec![z, w])));
-    // q(x, v, w) :- δa(x, y), bb(y, z), c(z, v), d(z, w).
     let t = term(
         vec![atom(0, Side::Delta, vec![Arg::Bind, Arg::Bind]), atom(1, Side::After, vec![Arg::Eq(0, 1), Arg::Bind]), atom(2, Side::After, vec![Arg::Eq(1, 1), Arg::Bind]), atom(3, Side::After, vec![Arg::Eq(1, 1), Arg::Bind])],
         vec![Arg::Eq(0, 0), Arg::Eq(2, 1), Arg::Eq(3, 1)],
     );
-    let plan = Plan { srcs: vec![tr(2, a), tr(2, bb), tr(2, c), tr(2, d)], docs: Vec::new(), terms: vec![t] };
+    Plan { srcs: vec![tr(2, a), tr(2, bb), tr(2, c), tr(2, d)], docs: Vec::new(), terms: vec![t] }
+}
+
+/// A slow line on the critical path (0274): run first on a small change that reaches none of the skew (y = 1) and
+/// given the path's whole share, then on the big one: it passes its limit at a depth; its exact pairs are measured, it is searched again from the steps it
+/// ran, its candidates are trialled over a sample of its tuples (0207), and it goes on in the order the trials
+/// measured least. The answer is the rule order's.
+#[test]
+fn a_slow_line_on_the_critical_path_is_trialled_and_handed_off_to_a_better_order() {
+    let mut b = B::new();
+    let key = 0x5eed_0003;
+    assert!(seed_draw(key, 1) >= EXPLORE_RATE, "no exploration at its second plan");
+    let memo = b.memo();
+    let small = skewed(&mut b, 2, 1);
+    let (got, pd) = b.planned(&small, &[key], memo, None, &[3]);
+    assert_eq!((got, pd.slow, pd.trials), (b.ruled(&small, &[3]), 0, 0));
+    b.plan.critical_path(&b.reg, &mut b.dir, &[memo], &[Vec::new()]).unwrap();
+    assert_eq!(b.notes(memo)[0].1.critical, 1.0);
+    let plan = skewed(&mut b, 200, 0);
     let want = b.ruled(&plan, &[3]);
     assert_eq!(want[0].len(), 8000);
-    let memo = b.memo();
-    let (got, pd) = b.planned(&plan, &[0x5eed_0003], memo, None, &[3]);
+    let (got, pd) = b.planned(&plan, &[key], memo, None, &[3]);
     assert_eq!(got, want);
     assert_eq!((pd.slow, pd.handoffs), (1, 1), "{pd:?}");
     assert!(pd.trials >= 2 && pd.pairs > 0, "{pd:?}");
     let note = &b.notes(memo)[0].1;
     assert_eq!(note.order, vec![0, 1, 2, 3], "c before d, after the handoff");
-    assert_eq!(note.slow, 1);
+    assert!(note.trialled && note.slow == 1);
+}
+
+/// A slow line off the critical path (0274) is bounded, not trialled: its exact pairs measured, it is planned again
+/// from the steps it ran and goes on in the search's order there, under the handoff's limit (0271). Then a slow line
+/// asks for a wider search, made inline where its work pays for it. The answer is the rule order's.
+#[test]
+fn a_slow_line_is_cut_trialled_and_handed_off_to_a_better_order() {
+    let mut b = B::new();
+    let plan = skewed(&mut b, 200, 0);
+    let want = b.ruled(&plan, &[3]);
+    assert_eq!(want[0].len(), 8000);
+    let memo = b.memo();
+    let (got, pd) = b.planned(&plan, &[0x5eed_0003], memo, None, &[3]);
+    assert_eq!(got, want);
+    assert_eq!((pd.slow, pd.handoffs, pd.trials), (1, 1, 0), "{pd:?}");
+    assert!(pd.pairs > 0, "{pd:?}");
+    let note = &b.notes(memo)[0].1;
+    assert_eq!(note.order, vec![0, 1, 2, 3], "c before d, planned again from the cut");
+    assert_eq!((note.slow, note.trialled), (1, false));
     assert!(note.work < 200_000.0, "d before c would have made 400800 tuples: {}", note.work);
     // A slow line asks for a wider search (0203 §3); its work pays for it, so its next plan makes it inline (§2):
     // its proposals kept, the ask answered, the rows the same.
@@ -410,6 +441,43 @@ fn a_slow_line_is_cut_trialled_and_handed_off_to_a_better_order() {
     assert_eq!(note.tried.iter().filter(|t| t.0 == note.order).count(), 1);
     let (got, pd) = b.planned(&plan, &[0x5eed_0003], memo, None, &[3]);
     assert_eq!((got, pd.wide), (want, u64::from(note.wants_search)));
+}
+
+/// A line on the critical path is trialled at its first due point though it is not slow, and once only (0207 §2):
+/// its next run, as accurate, trials nothing; a line off the path is never trialled.
+#[test]
+fn a_critical_line_is_trialled_once_at_its_first_check() {
+    // q(x, v, w) :- δa(x, y), bb(y, z), c(z, v), d(z, w): every estimate exact (bb's y has one value), 300 K rows.
+    let line = |b: &mut B, delta: i64| {
+        let a = b.rel(2, (0..delta).map(|x| vec![x, 0]));
+        let bb = b.rel(2, (0..=500).map(|z| vec![0, z]));
+        let c = b.rel(2, (0..=500).map(|z| vec![z, z]));
+        let d = b.rel(2, (0..=500).map(|z| vec![z, z]));
+        let t = term(
+            vec![atom(0, Side::Delta, vec![Arg::Bind, Arg::Bind]), atom(1, Side::After, vec![Arg::Eq(0, 1), Arg::Bind]), atom(2, Side::After, vec![Arg::Eq(1, 1), Arg::Bind]), atom(3, Side::After, vec![Arg::Eq(1, 1), Arg::Bind])],
+            vec![Arg::Eq(0, 0), Arg::Eq(2, 1), Arg::Eq(3, 1)],
+        );
+        Plan { srcs: vec![tr(2, a), tr(2, bb), tr(2, c), tr(2, d)], docs: Vec::new(), terms: vec![t] }
+    };
+    let mut b = B::new();
+    let key = (0..10_000i64).find(|&k| (1..4).all(|r| seed_draw(k, r) >= EXPLORE_RATE)).unwrap();
+    let (on, off) = (b.memo(), b.memo());
+    let small = line(&mut b, 2);
+    for m in [on, off] {
+        b.planned(&small, &[key], m, None, &[3]);
+    }
+    b.plan.critical_path(&b.reg, &mut b.dir, &[on], &[Vec::new()]).unwrap();
+    let big = line(&mut b, 200);
+    let want = b.ruled(&big, &[3]);
+    let (got, pd) = b.planned(&big, &[key], on, None, &[3]);
+    assert_eq!(got, want);
+    assert_eq!(pd.slow, 0, "{pd:?}");
+    assert!(pd.trials >= 2, "{pd:?}");
+    assert!(b.notes(on)[0].1.trialled);
+    let (got, pd) = b.planned(&big, &[key], on, None, &[3]);
+    assert_eq!((got, pd.trials), (want.clone(), 0), "trialled once");
+    let (got, pd) = b.planned(&big, &[key], off, None, &[3]);
+    assert_eq!((got, pd.trials), (want, 0), "off the path");
 }
 
 /// The run's critical path (0203 §4): the longest chain of producers by the strata's work. A line on it with its

@@ -17,24 +17,35 @@
 //!   keeping the best order ending in each other step as runners-up (0203 §1). A step's fanout is its rows over the
 //!   distinct values of each column bound (by a constant, an earlier step or a repeat), corrected; a `not` keeps what
 //!   its key misses; a `cmp` keeps a fixed share. An order's price is the rows it makes, step by step.
-//! - **choose** (a map): the cheapest candidate, its price corrected by what its order measured when it last ran
-//!   (0203 §6); now and then (`EXPLORE_RATE`) an untried runner-up within `MARGIN` of it, for a line priced under
-//!   `EXPLORE_ROWS`, by a seeded draw from the line's key and its runs (a pure function of them). At a handoff it
-//!   takes the order a trial measured least, where it beats the running one by `TRIAL_MARGIN` (0207).
+//!   A line that wants a wider search, where its work pays `WIDE_PAYS` times its cost, has it inline (0203 §2, §5):
+//!   exact up to `WIDE_GREEDY` steps and `RANDOM_ORDERS` random connected orders, the best `PROPOSALS` its
+//!   proposals; any other line's proposals are priced again beside its runners-up.
+//! - **choose** (a map): the cheapest candidate, its price corrected by what its order measured, a geometric mean
+//!   over runs (0203 §6); now and then (`EXPLORE_RATE`) an untried runner-up within `MARGIN` of it, for a line that
+//!   matters (on the critical path with its share, or slow: §7) priced under `EXPLORE_ROWS`, by a seeded draw from
+//!   the line's key and its runs (a pure function of them). At a handoff it takes the order a trial measured least,
+//!   where it beats the running one by `TRIAL_MARGIN` (0207), or a slow line's search from its cut, untrialled.
 //! - **emit_plan** (an emit): the chosen chains into the plan block `seed`, `step` and `head` read (each step's
 //!   arguments bound again in the new order), and each priced line's choice and runners-up into the memo.
 //! - **check** (a map, after each depth): each line's work so far against its limit, at its due points (`SLOW_ROWS`,
-//!   then each doubling): past `SLOW_FACTOR` times its price, it is slow (0203 §3).
+//!   then each doubling): past `SLOW_FACTOR` times its price, or a step missed (0203 §3a), it is slow (§3); else a
+//!   line on the critical path whose orders are untrialled is due a trial (0207 §2, 0274).
 //! - **stats** (a map, for slow lines): the exact rows of each pair of the line's atoms that share a variable, into
 //!   the memo (0203 §3's exact pair statistics), which the next pricing uses.
 //! - **note** (a map, at the round's end): what each line measured, into the memo: its work and its first step's
 //!   rows (the budget's next test), its order's measured ratio, and each step's sample (its rows in and out against
-//!   its price: the learned model's training rows, `samples`).
+//!   its price: the learned model's training rows, `samples`). A slow line asks for a wider search.
+//! - **weigh**, **critical**, **mark** (at a level's run's end, `PlanOps::critical_path`): each stratum's work this
+//!   run, the longest chain of producers by it, and each line's share of that path into its note, a moving average;
+//!   a critical line (`CRITICAL` of it, `CRITICAL_ROWS` of work) asks for a wider search while its order measured
+//!   over `CRITICAL_RATIO` times its price or it has no proposals (0203 §4).
 //!
 //! A slow line is planned again from the depth it reached (0206's cut): `stats`, `price` and `search` with the steps
-//! it ran as a fixed prefix and its tuples there as the rows in; its candidates are trialled over a sample of those
-//! tuples (0207: `TRIAL_ROWS`, each cut at `TRIAL_CUTOFF` times the least measured so far, the sample what
-//! `TRIAL_SHARE` of its work pays for), and the one that goes on is given a limit (0271, `limit_again`). Its steps
+//! it ran as a fixed prefix and its tuples there as the rows in. Where it is on the critical path (0274), its
+//! candidates are trialled over a sample of those tuples (0207: `TRIAL_ROWS`, each cut at `TRIAL_CUTOFF` times the
+//! least measured so far, the sample what `TRIAL_SHARE` of its work pays for), as are those of a line due a trial;
+//! off the path, a slow line goes on in its search's order. The one that goes on is given a limit (0271,
+//! `limit_again`). Its steps
 //! already run keep their places, so the tuples made so far read the same in the new order.
 //!
 //! The memo is the stratum's operator cache (P§11.3, L5): dropping it changes what is planned, never an answer, and
@@ -722,6 +733,8 @@ pub struct Note {
     /// It ran since the run's critical path last marked it, and its work since then, over its rounds.
     pub fresh: bool,
     pub ran: f64,
+    /// Its orders were trialled (0207 §2, 0274): once, and once more after it is flagged slow.
+    pub trialled: bool,
 }
 
 impl Note {
@@ -744,7 +757,7 @@ impl Note {
         for s in &self.samples {
             w.extend([s.step as i64, s.pos as i64, s.mask as i64, fb(s.est_in), fb(s.est_fan), fb(s.actual_in), fb(s.actual_out), fb(s.card), fb(s.key_ndv)]);
         }
-        w.extend([fb(self.critical), i64::from(self.wants_search), i64::from(self.fresh), fb(self.ran), self.proposals.len() as i64]);
+        w.extend([fb(self.critical), i64::from(self.wants_search), i64::from(self.fresh), fb(self.ran), i64::from(self.trialled), self.proposals.len() as i64]);
         for (o, x) in &self.proposals {
             w.extend(o.iter().map(|&j| j as i64));
             w.push(fb(*x));
@@ -772,14 +785,14 @@ impl Note {
         let samples = (0..ns)
             .map(|_| Sample { step: c.n(), pos: c.n(), mask: c.next() as u64, est_in: c.f(), est_fan: c.f(), actual_in: c.f(), actual_out: c.f(), card: c.f(), key_ndv: c.f() })
             .collect();
-        let (critical, wants_search, fresh, ran) = (c.f(), c.next() != 0, c.next() != 0, c.f());
+        let (critical, wants_search, fresh, ran, trialled) = (c.f(), c.next() != 0, c.next() != 0, c.f(), c.next() != 0);
         let proposals = (0..c.n())
             .map(|_| {
                 let o = c.vec(n);
                 (o, c.f())
             })
             .collect();
-        Note { order, price, est, work, start, runs, slow, tried, runners, pairs, samples, critical, proposals, wants_search, fresh, ran }
+        Note { order, price, est, work, start, runs, slow, tried, runners, pairs, samples, critical, proposals, wants_search, fresh, ran, trialled }
     }
 
     /// Ratio `ratio` measured for order `o`, merged into its tried ratio, a geometric mean at weight `weight`; at most
@@ -969,6 +982,10 @@ struct RunningLine {
     cut: usize,
     /// How many times it ran slow this round (a handoff clears `slow`, so the checks go on).
     times: u64,
+    /// A due point passed with its orders untrialled on the critical path (0207 §2, 0274): trialled at this depth;
+    /// and whether this round trialled them.
+    trial: bool,
+    trialled: bool,
     counts: Vec<f64>,
 }
 
@@ -979,7 +996,7 @@ fn running_of(b: &[u8]) -> Vec<RunningLine> {
 fn running_words(lines: &[RunningLine], width: usize) -> Vec<i64> {
     let mut w = vec![lines.len() as i64, width as i64];
     for l in lines {
-        w.extend([fb(l.work), fb(l.due), fb(l.limit), i64::from(l.slow), l.cut as i64, l.times as i64]);
+        w.extend([fb(l.work), fb(l.due), fb(l.limit), i64::from(l.slow), l.cut as i64, l.times as i64, i64::from(l.trial), i64::from(l.trialled)]);
         w.extend(l.counts.iter().map(|&x| fb(x)));
     }
     w
@@ -1170,14 +1187,15 @@ fn choose(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let ([plan, lines, search, memo, trials, now], [out]) = c.views([0, 1, 2, 3, 4, 5], [6]);
     let (p, keys) = plan_and_keys(plan);
     let (ls, ss, now) = (lines_of(lines), searched_of(search), choices_of(now));
-    // A handoff's trials: per line, each candidate's measured work per sample row (candidate 0: the running order).
+    // A handoff's trials: per line, each candidate's measured work per sample row (candidate 0: the running order);
+    // `None` for a slow line not trialled, planned again from its cut (0274).
     let tw = words_of(trials);
-    let mut measured: Vec<Vec<f64>> = Vec::new();
+    let mut measured: Vec<Option<Vec<f64>>> = Vec::new();
     if !tw.is_empty() {
         let mut tc = Cur::new(&tw);
         for _ in 0..tc.n() {
-            let k = tc.n();
-            measured.push(tc.fs(k));
+            let k = tc.next();
+            measured.push((k >= 0).then(|| tc.fs(k as usize)));
         }
     }
     let mut cs = Vec::new();
@@ -1186,8 +1204,11 @@ fn choose(c: &mut Ctx<'_, '_, '_>, _: Tile) {
         let note = Note::of(memo, keys[ti], t.steps.len());
         let ch = match (ss.get(ti).cloned().flatten(), now.get(ti)) {
             // A handoff: the order a trial measured least, where it beats the running one by the margin.
+            (Some(s), Some(run)) if !now.is_empty() && matches!(measured.get(ti), Some(None)) => {
+                if s.order == run.order { run.clone() } else { Choice { order: s.order.clone(), price: s.price, est: s.est.clone(), explored: false } }
+            }
             (Some(s), Some(run)) if !now.is_empty() => {
-                let m = measured.get(ti).cloned().unwrap_or_default();
+                let m = measured.get(ti).cloned().flatten().unwrap_or_default();
                 let cands: Vec<(Vec<usize>, f64)> = std::iter::once((run.order.clone(), run.price)).chain(std::iter::once((s.order.clone(), s.price))).chain(s.runners.iter().cloned()).collect();
                 let best = (0..cands.len().min(m.len())).min_by(|&a, &b| m[a].total_cmp(&m[b])).unwrap_or(0);
                 if best != 0 && m[best] * TRIAL_MARGIN < m[0] {
@@ -1276,11 +1297,12 @@ fn step_miss(work: f64, counts: &[f64], est: &[f64], d: usize) -> bool {
     blown || over
 }
 
-/// `check`: read the plan, choice, frames · rw running (its first word the depth just run): each line's tuples
-/// counted at that depth; past its due point, slow when its work passed its limit or a step missed (0203 §3a).
+/// `check`: read the plan, choice, frames, memo · rw running (its first word the depth just run): each line's tuples
+/// counted at that depth; past its due point, slow when its work passed its limit or a step missed (0203 §3a), else
+/// to be trialled where it is on the critical path with its orders untrialled (0207 §2, 0274).
 fn check(c: &mut Ctx<'_, '_, '_>, _: Tile) {
-    let ([plan, choice, frames], [running]) = c.views([0, 1, 2], [3]);
-    let (p, _) = plan_and_keys(plan);
+    let ([plan, choice, frames, memo], [running]) = c.views([0, 1, 2, 4], [3]);
+    let (p, keys) = plan_and_keys(plan);
     let cs = choices_of(choice);
     let mut w = words_of(running);
     let d = w.remove(0) as usize;
@@ -1304,6 +1326,9 @@ fn check(c: &mut Ctx<'_, '_, '_>, _: Tile) {
                 r.slow = true;
                 r.times += 1;
                 r.cut = d;
+            } else if !r.slow && !r.trial && !r.trialled && Note::of(memo, keys[ti], p.terms[ti].steps.len()).is_some_and(|n| n.critical >= CRITICAL && !n.trialled) {
+                r.trial = true;
+                r.cut = d;
             }
         }
     }
@@ -1319,7 +1344,7 @@ fn running_of_words(w: &[i64]) -> Vec<RunningLine> {
     }
     let mut c = Cur::new(w);
     let (n, width) = (c.n(), c.n());
-    (0..n).map(|_| RunningLine { work: c.f(), due: c.f(), limit: c.f(), slow: c.next() != 0, cut: c.n(), times: c.next() as u64, counts: c.fs(width) }).collect()
+    (0..n).map(|_| RunningLine { work: c.f(), due: c.f(), limit: c.f(), slow: c.next() != 0, cut: c.n(), times: c.next() as u64, trial: c.next() != 0, trialled: c.next() != 0, counts: c.fs(width) }).collect()
 }
 
 /// `stats`: read the rule-order plan, atoms, running · rw memo: each slow line's exact pairs.
@@ -1392,6 +1417,8 @@ fn note(c: &mut Ctx<'_, '_, '_>, _: Tile) {
             note.slow += r.times;
             note.ran = if note.fresh { note.ran + r.work } else { r.work };
             note.fresh = true;
+            // Trialled once, and once more after it is flagged slow (0207 §2).
+            note.trialled = (note.trialled && r.times == 0) || r.trialled;
             // A slow line asks for a wider search (0203 §3).
             if r.times > 0 {
                 note.wants_search = true;
@@ -1547,7 +1574,7 @@ static PRICE_SLOTS: [SlotSpec; 6] = [s("plan", R, CTL), s("atoms", R, kind::ATOM
 static SEARCH_SLOTS: [SlotSpec; 8] = [s("plan", R, CTL), s("lines", R, CTL), s("prices", R, CTL), s("corrections", R, CTL), s("running", R, CTL), s("running choice", R, CTL), s("memo", R, kind::CACHE), s("searched", W, CTL)];
 static CHOOSE_SLOTS: [SlotSpec; 7] = [s("plan", R, CTL), s("lines", R, CTL), s("searched", R, CTL), s("memo", R, kind::CACHE), s("trials", R, CTL), s("running choice", R, CTL), s("choice", W, CTL)];
 static EMIT_SLOTS: [SlotSpec; 5] = [s("plan", R, CTL), s("choice", R, CTL), s("searched", R, CTL), s("planned", W, CTL), s("memo", RW, kind::CACHE)];
-static CHECK_SLOTS: [SlotSpec; 4] = [s("plan", R, CTL), s("choice", R, CTL), s("frames", R, kind::SCRATCH), s("running", RW, CTL)];
+static CHECK_SLOTS: [SlotSpec; 5] = [s("plan", R, CTL), s("choice", R, CTL), s("frames", R, kind::SCRATCH), s("running", RW, CTL), s("memo", R, kind::CACHE)];
 static STATS_SLOTS: [SlotSpec; 4] = [s("plan", R, CTL), s("atoms", R, kind::ATOMS), s("running", R, CTL), s("memo", RW, kind::CACHE)];
 static NOTE_SLOTS: [SlotSpec; 4] = [s("plan", R, CTL), s("choice", R, CTL), s("running", R, CTL), s("memo", RW, kind::CACHE)];
 static WEIGH_SLOTS: [SlotSpec; 2] = [s("memo", R, kind::CACHE), s("path", RW, CTL)];
@@ -1778,7 +1805,7 @@ impl Round<'_> {
         // The run, checked after each depth.
         let width = planned.width();
         let cs = read_block(dir, choice, choices_of)?;
-        let start: Vec<RunningLine> = cs.iter().map(|c| RunningLine { work: 0.0, due: SLOW_ROWS, limit: (SLOW_FACTOR * c.price).max(SLOW_ROWS), slow: false, cut: 0, times: 0, counts: vec![0.0; width] }).collect();
+        let start: Vec<RunningLine> = cs.iter().map(|c| RunningLine { work: 0.0, due: SLOW_ROWS, limit: (SLOW_FACTOR * c.price).max(SLOW_ROWS), slow: false, cut: 0, times: 0, trial: false, trialled: false, counts: vec![0.0; width] }).collect();
         let mut rw = vec![0i64];
         rw.extend(running_words(&start, width));
         let running = given(dir, &rw)?;
@@ -1791,14 +1818,16 @@ impl Round<'_> {
                     let mut pin = pin_block(&b, "the running lines", true)?;
                     set_word::<i64>(pin.bytes_mut().expect("a write pin"), BODY_AT + 8, d as i64);
                 }
-                self.launch(dir, self.ops.check, &[pb, choice, frames, running])?;
+                self.launch(dir, self.ops.check, &[pb, choice, frames, running, memo])?;
                 let rs = read_block(dir, running, |b| running_of_words(&words_of(b)[1..]))?;
-                let slow: Vec<usize> = rs.iter().enumerate().filter(|(_, r)| r.slow && r.cut == d && d + 1 < width).map(|(ti, _)| ti).collect();
-                if slow.is_empty() {
+                let here = |r: &RunningLine| r.cut == d && d + 1 < width;
+                let slow: Vec<usize> = rs.iter().enumerate().filter(|(_, r)| r.slow && here(r)).map(|(ti, _)| ti).collect();
+                let trial: Vec<usize> = rs.iter().enumerate().filter(|(_, r)| r.trial && !r.slow && here(r)).map(|(ti, _)| ti).collect();
+                if slow.is_empty() && trial.is_empty() {
                     return Ok(pb);
                 }
                 pd.slow += slow.len() as u64;
-                Ok(match self.handoff(dir, made, rule, choice, running, frames, &slow, d, n, &mut pd)? {
+                Ok(match self.handoff(dir, made, rule, choice, running, frames, &slow, &trial, d, n, &mut pd)? {
                     Some((nb, nc)) => {
                         choice = nc;
                         nb
@@ -1863,20 +1892,22 @@ impl Round<'_> {
         Ok(b)
     }
 
-    /// A handoff (0206) at depth `d` for the slow lines `slow`: their exact pairs, their prices and searches from the
-    /// steps they ran, their candidates trialled over a sample of their tuples there (0207), the choice, and a new
-    /// plan block when any line's order changed (`None`: none did).
+    /// A handoff (0206) at depth `d` for the slow lines `slow` and the lines `trial` whose orders are due a trial
+    /// (0207 §2): the slow lines' exact pairs; their prices and searches from the steps they ran; their candidates
+    /// trialled over a sample of their tuples there where they are on the critical path (0274), a slow line off it
+    /// planned again from its cut; the choice, and a new plan block when any line's order changed (`None`: none did).
     #[allow(clippy::too_many_arguments)]
-    fn handoff(&self, dir: &mut Directory, made: &mut Vec<BlockId>, rule: BlockId, choice: BlockId, running: BlockId, frames: BlockId, slow: &[usize], d: usize, n: usize, pd: &mut Planned) -> Result<Option<(BlockId, BlockId)>, String> {
+    fn handoff(&self, dir: &mut Directory, made: &mut Vec<BlockId>, rule: BlockId, choice: BlockId, running: BlockId, frames: BlockId, slow: &[usize], trial: &[usize], d: usize, n: usize, pd: &mut Planned) -> Result<Option<(BlockId, BlockId)>, String> {
         let (atoms, memo) = (self.atoms, self.memo);
+        let handed: Vec<usize> = slow.iter().chain(trial).copied().collect();
         // The running block as `price` and `search` read it: without its depth word.
         let rs = read_block(dir, running, |b| running_of_words(&words_of(b)[1..]))?;
         let width = rs.first().map_or(0, |r| r.counts.len());
-        let only_slow: Vec<RunningLine> = rs.iter().enumerate().map(|(ti, r)| RunningLine { slow: slow.contains(&ti), cut: d, counts: r.counts.clone(), ..*r }).collect();
-        let rblock = given(dir, &running_words(&only_slow, width))?;
+        let marked = |of: &[usize]| -> Vec<RunningLine> { rs.iter().enumerate().map(|(ti, r)| RunningLine { slow: of.contains(&ti), cut: d, counts: r.counts.clone(), ..*r }).collect() };
+        let rblock = given(dir, &running_words(&marked(&handed), width))?;
         made.push(rblock);
         let mut sw = vec![0i64];
-        sw.extend(running_words(&only_slow, width));
+        sw.extend(running_words(&marked(slow), width));
         let sblock = given(dir, &sw)?;
         made.push(sblock);
         self.launch(dir, self.ops.stats, &[rule, atoms, sblock, memo])?;
@@ -1896,22 +1927,27 @@ impl Round<'_> {
         let prices = self.into(dir, made, self.ops.price, &[rule, atoms, memo, lines, rblock], 5, n)?;
         let corr = self.correct(dir, made, prices)?;
         let searched = self.into(dir, made, self.ops.search, &[rule, lines, prices, corr, rblock, choice, self.memo], 7, n)?;
-        // The trials: each line's running order and its candidates over a sample of its tuples at depth `d`.
+        // The trials: each line's running order and its candidates over a sample of its tuples at depth `d`, where it
+        // is on the critical path (0274). A slow line not trialled is planned again (-1: the search's best from its cut).
         let ss = read_block(dir, searched, searched_of)?;
         let cs = read_block(dir, choice, choices_of)?;
+        let on_path: Vec<bool> = read_block(dir, memo, |b| p.terms.iter().enumerate().map(|(ti, t)| Note::of(b, keys[ti], t.steps.len()).is_some_and(|n| n.critical >= CRITICAL)).collect())?;
+        let mut tried_lines: Vec<usize> = Vec::new();
         let mut tw = vec![p.terms.len() as i64];
         for (ti, t) in p.terms.iter().enumerate() {
-            let (Some(Some(s)), true) = (ss.get(ti), slow.contains(&ti)) else {
+            let untried = if slow.contains(&ti) { -1 } else { 0 };
+            let (Some(Some(s)), true) = (ss.get(ti), handed.contains(&ti)) else {
                 tw.push(0);
                 continue;
             };
             let here = rs[ti].counts[d] as usize;
             let share = (TRIAL_SHARE * rs[ti].work / (rs[ti].work / here.max(1) as f64).max(1.0)) as usize;
             let sample = here.min(TRIAL_ROWS).min(share.max(TRIAL_LEAST));
-            if sample < TRIAL_LEAST || (s.order == cs[ti].order && s.runners.is_empty()) {
-                tw.push(0);
+            if !on_path[ti] || sample < TRIAL_LEAST || (s.order == cs[ti].order && s.runners.is_empty()) {
+                tw.push(untried);
                 continue;
             }
+            tried_lines.push(ti);
             let cands: Vec<Vec<usize>> = std::iter::once(cs[ti].order.clone()).chain(std::iter::once(s.order.clone())).chain(s.runners.iter().map(|r| r.0.clone())).collect();
             let Some(ch) = ChainVars::of(t) else {
                 tw.push(0);
@@ -1942,6 +1978,19 @@ impl Round<'_> {
         made.push(trials);
         let next = self.into(dir, made, self.ops.choose, &[rule, lines, searched, memo, trials, choice], 6, n)?;
         let nc = read_block(dir, next, choices_of)?;
+        // A line due a trial was handed off once at this depth; a line trialled keeps it for its note.
+        {
+            let mut rs_now = read_block(dir, running, |b| running_of_words(&words_of(b)[1..]))?;
+            for (ti, r) in rs_now.iter_mut().enumerate() {
+                r.trial = r.trial && !trial.contains(&ti);
+                r.trialled |= tried_lines.contains(&ti);
+            }
+            let mut out = vec![d as i64];
+            out.extend(running_words(&rs_now, width));
+            let b = dir.block(running).expect("made");
+            let mut pin = pin_block(&b, "the running lines", true)?;
+            put_words(pin.bytes_mut().expect("a write pin"), &out);
+        }
         if nc.iter().zip(&cs).all(|(a, b)| a.order == b.order) {
             return Ok(None);
         }
