@@ -349,6 +349,30 @@ impl Ledger {
         chunks.into_iter().map(|(at, size)| self.give_free_pages(&mut s, at, size)).sum()
     }
 
+    /// `free_kept_split` of this block: its free chunks' bytes in pages not given back, by whether a live chunk
+    /// reaches the page.
+    fn free_kept_split(&self) -> (usize, usize) {
+        const PER: usize = PAGE / G;
+        let s = self.lock();
+        if !s.listed {
+            return (0, 0);
+        }
+        let (mut givable, mut pinned) = (0, 0);
+        for (c, l) in s.lists.iter().enumerate() {
+            let size = 1usize << (MIN_LOG as usize + c);
+            for &at in l {
+                for p in at / PAGE..(at + size).div_ceil(PAGE) {
+                    if bit(&s.given, p) {
+                        continue;
+                    }
+                    let overlap = (at + size).min((p + 1) * PAGE) - at.max(p * PAGE);
+                    if any(&s.live, p * PER, (p + 1) * PER) { pinned += overlap } else { givable += overlap }
+                }
+            }
+        }
+        (givable, pinned)
+    }
+
     /// The tail `at + keep..at + size` of a chunk just handed out is not the holder's (never written).
     pub(crate) fn untaken_tail(&self, at: usize, size: usize, keep: usize) {
         let mut s = self.lock();
@@ -605,6 +629,36 @@ fn blocks() -> RwLockReadGuard<'static, Live> {
 
 fn blocks_mut() -> RwLockWriteGuard<'static, Live> {
     BLOCKS.write().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The free chunks' bytes the live anonymous blocks keep in memory, split: those in pages no live chunk reaches (a give
+/// would take them: `GIVE_MIN`'s small chunks kept for the next of their class), and those in pages a live chunk
+/// shares (no give takes them: the blocks' fragmentation). A profile's measure.
+pub fn free_kept_split() -> (usize, usize) {
+    let ledgers: Vec<Arc<Ledger>> = blocks().iter().filter_map(|(_, _, l)| l.upgrade()).collect();
+    ledgers.iter().filter(|l| l.pages).map(|l| l.free_kept_split()).fold((0, 0), |(a, b), (c, d)| (a + c, b + d))
+}
+
+/// The bytes in memory of every live ledger's memory (`mem::resident`): the anonymous blocks' by their kind
+/// (`block::kind`, 0 for none set), and the rest's (pooled leases and the blocks over them, file mappings). A range
+/// inside another (a block over a lease) is counted once. A profile's measure.
+pub fn resident_split() -> ([usize; 9], usize) {
+    let ranges: Vec<(usize, usize, Option<u32>)> =
+        blocks().iter().filter_map(|(a, b, l)| l.upgrade().map(|l| (*a, *b, l.pages.then(|| l.ext.kind.load(Relaxed))))).collect();
+    let (mut anon, mut rest, mut end) = ([0; 9], 0, 0);
+    for (a, b, kind) in ranges {
+        if b <= end {
+            continue;
+        }
+        let from = a.max(end);
+        let r = crate::mem::resident(from, b - from);
+        match kind {
+            Some(k) => anon[(k as usize).min(8)] += r,
+            None => rest += r,
+        }
+        end = b;
+    }
+    (anon, rest)
 }
 
 /// Every live block's free chunks' pages to the OS (`Ledger::trim`): a run's end. The bytes given.

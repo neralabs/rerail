@@ -38,6 +38,7 @@ native/crates/atoms/src/lib.rs::GIVEN	stays	a test's counter
 native/crates/atoms/src/lib.rs::SMALL_BLOCKS	stays	a test hook (`test-hooks`): the store's test binary sets it as it loads
 native/crates/blocks/src/alloc.rs::POLICY	stays	code registered at load: the one policy accel installs, the first installed staying
 native/crates/blocks/src/alloc.rs::RUN_DEVICE	stays	code a crate above registers at load
+native/crates/blocks/src/block.rs::CHUNK_HOOK	stays	code registered at load (a profiler's hook, as LEASE_HOOK)
 native/crates/blocks/src/census.rs::C	review	Native-and-GPU-strata's, unlisted there; listed in the merge, not yet classified
 native/crates/blocks/src/ledger.rs::BLOCKS	stays	the process's mapped blocks and leases by address, each with its ledger (decision 0487 R8): what memory is, not what a run has
 native/crates/blocks/src/long.rs::IN_MEMORY	review	Native-and-GPU-strata's, unlisted there; listed in the merge, not yet classified

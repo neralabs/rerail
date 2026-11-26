@@ -1284,6 +1284,20 @@ impl Relation {
         cap * width + self.dead.len() * 8 + ix + size_of::<Relation>()
     }
 
+    /// The bytes of its indexes in memory now (`mem::resident`: their buckets, rows and marks, an order's fences,
+    /// tags and prints): a profile's measure.
+    pub fn index_resident(&self) -> usize {
+        fn of<T>(s: &crate::refs::Span<T>) -> usize {
+            crate::mem::resident(s.as_ptr() as usize, s.len() * size_of::<T>())
+        }
+        let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
+        self.indexes.as_slice()[..n]
+            .iter()
+            .filter(|ix| ix.ncols > 0 && ix.state != DEAD)
+            .map(|ix| of(&ix.offs) + of(&ix.rows) + of(&ix.marks) + of(&ix.fences) + of(&ix.tags) + of(&ix.prints))
+            .sum()
+    }
+
     /// Bytes this relation's values, order, indexes and bits take (what a reader may touch: a continuation's chain's
     /// rows too, decision 0384 step 7).
     pub fn bytes(&self) -> usize {

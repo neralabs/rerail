@@ -626,6 +626,8 @@ pub mod heap {
     pub const DEVICE: u32 = 1 << 29;
     /// An allocation with no span open: the low bits are its thread's number (`thread_ix`), not a span.
     pub const THREAD: u32 = 1 << 28;
+    /// Chunks the engine's anonymous blocks hand out (`rerail_blocks::block::set_chunk_hook`): outside jemalloc's heap.
+    pub const BLOCKS: u32 = 1 << 27;
 
     /// An allocation of `size` bytes at `ptr`: sampled when its thread's countdown runs out, or when big.
     #[inline]
@@ -750,6 +752,15 @@ pub mod heap {
 
     /// The live samples' bytes by span id: a sample of `size` stands for `size` bytes when big, else for
     /// `size / (1 - e^(-size / INTERVAL))` (the expected bytes a sample of a byte-countdown stands for).
+    /// A live sample's bytes, scaled up for the sampling under `BIG`. A blocks' chunk counts its bytes in memory
+    /// (`rerail_blocks::mem::resident`, at most its own): a chunk a join reserves for its rows is room, mostly never
+    /// written.
+    fn weight(ptr: usize, size: u64, span: u32) -> f64 {
+        let held = if span & BLOCKS != 0 { rerail_blocks::mem::resident(ptr, size as usize).min(size as usize) as f64 } else { size as f64 };
+        let size = size as f64;
+        if size >= BIG as f64 { held } else { held / (1.0 - (-size / INTERVAL as f64).exp()).max(1e-9) }
+    }
+
     pub fn snapshot() -> Vec<(u32, u64)> {
         let mut by = std::collections::HashMap::<u32, f64>::new();
         for at in 0..SLOTS {
@@ -757,9 +768,8 @@ pub mod heap {
             if k == EMPTY || k == GONE {
                 continue;
             }
-            let size = SIZES[at].load(Relaxed) as f64;
-            let weight = if size >= BIG as f64 { size } else { size / (1.0 - (-size / INTERVAL as f64).exp()).max(1e-9) };
-            *by.entry(SPANS[at].load(Relaxed)).or_default() += weight;
+            let span = SPANS[at].load(Relaxed);
+            *by.entry(span).or_default() += weight(k, SIZES[at].load(Relaxed), span);
         }
         let mut v: Vec<(u32, u64)> = by.into_iter().map(|(k, w)| (k, w as u64)).collect();
         v.sort_by_key(|b| std::cmp::Reverse(b.1));
@@ -777,9 +787,8 @@ pub mod heap {
                 continue;
             }
             let Some(stack) = frames::of(at) else { continue };
-            let size = SIZES[at].load(Relaxed) as f64;
-            let weight = if size >= BIG as f64 { size } else { size / (1.0 - (-size / INTERVAL as f64).exp()).max(1e-9) };
-            *by.entry((SPANS[at].load(Relaxed), stack)).or_default() += weight;
+            let span = SPANS[at].load(Relaxed);
+            *by.entry((span, stack)).or_default() += weight(k, SIZES[at].load(Relaxed), span);
         }
         let mut v: Vec<((u32, Vec<usize>), u64)> = by.into_iter().map(|(k, w)| (k, w as u64)).collect();
         v.sort_by_key(|x| std::cmp::Reverse(x.1));
@@ -930,6 +939,9 @@ pub mod heap {
         }
         if id & DEVICE != 0 {
             return format!("device leases, in {}", name(id & !DEVICE));
+        }
+        if id & BLOCKS != 0 {
+            return format!("blocks' chunks, in {}", name(id & !BLOCKS));
         }
         if id & TREE_SITTER != 0 {
             return format!("Tree-sitter's, in {}", name(id & !TREE_SITTER));

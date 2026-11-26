@@ -70,6 +70,16 @@ pub trait Backing: Send + Sync {
     }
 }
 
+/// A profiler's hook (`set_chunk_hook`): told each chunk an anonymous listed block hands out (its address and bytes)
+/// and each one given back (its address, 0 bytes), so a heap profile names the span and stack that hold them.
+// state: bookkeeping (a profiler's hook, set once per process, as `rerail_accel::gpu::shared`'s lease hook)
+static CHUNK_HOOK: std::sync::OnceLock<fn(usize, usize)> = std::sync::OnceLock::new();
+
+/// Sets the chunk hook (`CHUNK_HOOK`), once per process.
+pub fn set_chunk_hook(hook: fn(usize, usize)) {
+    let _ = CHUNK_HOOK.set(hook);
+}
+
 /// The bytes zeroed as blocks' memory was handed out again (a free list's chunk, a dirty block's allocation).
 pub fn zeroed_bytes() -> u64 {
     rerail_context::with_local::<Zeroed, _>(|z| z.0.load(Relaxed))
@@ -99,6 +109,8 @@ pub struct Extent {
     pub given: AtomicUsize,
     /// Where the block's memory starts: what `resident` reads.
     pub base: AtomicUsize,
+    /// Its block's kind (`kind`), set as its header is: what a profile groups blocks' memory by.
+    pub kind: std::sync::atomic::AtomicU32,
 }
 
 impl Extent {
@@ -276,7 +288,23 @@ impl Block {
         self.chunk(bytes, align, true)
     }
 
+    /// Whether its chunks are told to a profile (`set_chunk_hook`): an anonymous block's with a free list, whose
+    /// chunks no other account names (a pooled slab's are its lease's).
+    fn told(&self) -> bool {
+        self.listed && self.backing.is_none() && self.file.is_none() && !self.mapped
+    }
+
     fn chunk(&self, bytes: usize, align: usize, zeroed: bool) -> Option<usize> {
+        let at = self.chunk_untold(bytes, align, zeroed)?;
+        if self.told()
+            && let Some(hook) = CHUNK_HOOK.get()
+        {
+            hook(self.base as usize + at, crate::free::class_of(bytes).1);
+        }
+        Some(at)
+    }
+
+    fn chunk_untold(&self, bytes: usize, align: usize, zeroed: bool) -> Option<usize> {
         if !self.listed {
             return self.alloc_filled(bytes, align, zeroed);
         }
@@ -322,6 +350,11 @@ impl Block {
         if !self.listed || !self.writable {
             return 0;
         }
+        if self.told()
+            && let Some(hook) = CHUNK_HOOK.get()
+        {
+            hook(self.base as usize + at, 0);
+        }
         self.ledger.free(at, len, how)
     }
 
@@ -338,12 +371,17 @@ impl Block {
     /// smaller chunks at once (a class is up to twice what was asked). Its offset and the bytes kept, which
     /// `free_chunk_fit` takes back.
     pub fn try_alloc_chunk_fit(&self, bytes: usize, align: usize) -> Option<(usize, usize)> {
-        let at = self.chunk(bytes, align, false)?;
+        let at = self.chunk_untold(bytes, align, false)?;
         if !self.listed {
             return Some((at, bytes));
         }
         let (_, size) = crate::free::class_of(bytes);
         let keep = self.fit_kept(bytes);
+        if self.told()
+            && let Some(hook) = CHUNK_HOOK.get()
+        {
+            hook(self.base as usize + at, keep);
+        }
         self.ledger.untaken_tail(at, size, keep);
         // Never written: the pages they leave with no live byte go to the OS (a chunk taken again from the list may
         // have had them resident).
@@ -494,6 +532,7 @@ impl Block {
         h.format = 1;
         h.state = OPEN;
         h.reserved = self.reserved as u64;
+        self.ext.kind.store(kind, Relaxed);
     }
 
     /// Whether it lies in a slab of a pool's (`rerail_accel::gpu::shared::lease_block`), not memory of its own.

@@ -136,11 +136,11 @@ pub(super) struct Sample {
     /// reservations, relational work's leases (live, idle), SQLite's heap, the host blocks (used, and of it free
     /// on their lists, and of that what is still resident: a free chunk's pages may have gone to the OS; decision
     /// 0342), and the threads' stacks and long rooms (blocks of their own, which no allocator counts).
-    pub(super) holders: [usize; 11],
+    pub(super) holders: [usize; 23],
 }
 
 /// The holders a sample reads (`Sample::holders`), in MB.
-fn holders() -> [usize; 11] {
+fn holders() -> [usize; 23] {
     let (reserved, driver) = crate::code_rule_dsl::prof::device_memory();
     // Relational work's device leases exist only where the device does (macOS).
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
@@ -153,7 +153,13 @@ fn holders() -> [usize; 11] {
     let (stacks, long) = (rerail_blocks::scratch::resident(), rerail_blocks::long::resident());
     // The host blocks' bytes in memory, measured: their used bytes count room reserved and never written.
     let host_in_memory = rerail_accel::blocks::host_resident();
-    [driver, reserved, live >> 20, idle >> 20, sqlite >> 20, host >> 20, host_free >> 20, host_free_resident >> 20, stacks >> 20, long >> 20, host_in_memory >> 20]
+    // Of the free bytes kept in memory: those a give would take, and those in pages a live chunk shares.
+    let (givable, pinned) = rerail_accel::blocks::free_kept_split();
+    // Every block's memory in memory: the anonymous blocks', and the leases' and mappings'.
+    let (by_kind, leased_in_memory) = rerail_accel::blocks::resident_split();
+    let anon: usize = by_kind.iter().sum();
+    let k = by_kind.map(|b| b >> 20);
+    [driver, reserved, live >> 20, idle >> 20, sqlite >> 20, host >> 20, host_free >> 20, host_free_resident >> 20, stacks >> 20, long >> 20, host_in_memory >> 20, givable >> 20, pinned >> 20, anon >> 20, leased_in_memory >> 20, k[0], k[1], k[2], k[3], k[4], k[5], k[6], k[7] + k[8]]
 }
 
 /// The relations' blocks live now by the span that made them (span, life, bytes used, blocks), as the facts crate
@@ -170,9 +176,9 @@ pub type SpanBlocks = (u32, u8, usize, usize, String, usize);
 #[derive(Default)]
 pub struct RelationsByName(pub std::sync::OnceLock<fn() -> Vec<NamedRelation>>);
 
-/// One relation held now: name, rows, columns, bytes of values (their room), runs holding it, and the bytes of that
-/// room in memory.
-pub type NamedRelation = (String, usize, usize, usize, usize, usize);
+/// One relation held now: name, rows, columns, bytes of values (their room), runs holding it, the bytes of that room
+/// in memory, and the bytes of its indexes in memory.
+pub type NamedRelation = (String, usize, usize, usize, usize, usize, usize);
 
 #[derive(Default)]
 pub(super) struct Sampled {
@@ -223,6 +229,15 @@ pub(super) fn sample() {
                     rerail_prof::heap::free(ptr);
                 } else {
                     rerail_prof::heap::alloc_by(ptr, len, rerail_prof::heap::DEVICE);
+                }
+            });
+            // So are the chunks the anonymous blocks hand out (relations, vectors, indexes), under the span that took
+            // them: the blocks' account names only the span that made each block.
+            rerail_blocks::block::set_chunk_hook(|ptr, len| {
+                if len == 0 {
+                    rerail_prof::heap::free(ptr);
+                } else {
+                    rerail_prof::heap::alloc_by(ptr, len, rerail_prof::heap::BLOCKS);
                 }
             });
             // Q203 (c): what holds the device's budget when a lease is refused, by the span that leased it (the first
@@ -383,13 +398,13 @@ pub(super) fn sampled_report(r: &mut String) {
     // allocators). The driver's count (`current_allocated_size`) is shown apart: it counts every no-copy wrap of host
     // memory (the blocks, the heap) again, so it is no holder of its own (ab145: 2,709 MB of it at a 3,051 MB
     // footprint whose IOAccelerator regions were 971 MB).
-    let [driver, reserved, leased, idle, sqlite, host, host_free, host_free_resident, stacks, long, host_resident] = t.holders;
+    let [driver, reserved, leased, idle, sqlite, host, host_free, host_free_resident, stacks, long, host_resident, givable, pinned, anon, leased_in_memory, k0, facts, chunk, program, outputs, journal, scratch, atoms_kept] = t.holders;
     let heap_mb = |b: u64| (b >> 20) as usize;
     // The blocks' bytes in memory are measured (`blocks::host_resident`): their used bytes, less their free chunks'
     // pages given back, counted room reserved and never written too (7,890 MB of them at a 4,243 MB footprint).
     let accounted = heap_mb(t.resident) + reserved + leased + idle + host_resident + stacks + long;
-    let _ = writeln!(r, "  by holder then (MB): heap live {}, heap resident beyond live {}; the device's own {} (device pool {}, relational leases {} + {} idle); SQLite heap {}; host blocks {} used, {} of them in memory ({} live, {} free on their lists; {} more free given back to the OS); the threads' stacks {}, their long rooms {}; the rest {}; the Metal driver's count {} (no-copy wraps of host memory counted again)",
-        heap_mb(t.live), heap_mb(t.resident.saturating_sub(t.live)), reserved + leased + idle, reserved, leased, idle, sqlite, host, host_resident, host_resident.saturating_sub(host_free_resident), host_free_resident, host_free.saturating_sub(host_free_resident), stacks, long, heap_mb(t.footprint).saturating_sub(accounted), driver);
+    let _ = writeln!(r, "  by holder then (MB): heap live {}, heap resident beyond live {}; the device's own {} (device pool {}, relational leases {} + {} idle; of every ledger's memory {} MB in memory, anonymous blocks {} of it: facts {}, chunk {}, program {}, outputs {}, journal {}, scratch {}, atoms and kept {}, no kind {}); SQLite heap {}; host blocks {} used, {} of them in memory ({} live, {} free on their lists: {} in pages no live chunk reaches, {} in pages one shares; {} more free given back to the OS); the threads' stacks {}, their long rooms {}; the rest {}; the Metal driver's count {} (no-copy wraps of host memory counted again)",
+        heap_mb(t.live), heap_mb(t.resident.saturating_sub(t.live)), reserved + leased + idle, reserved, leased, idle, anon + leased_in_memory, anon, facts, chunk, program, outputs, journal, scratch, atoms_kept, k0, sqlite, host, host_resident, host_resident.saturating_sub(host_free_resident), host_free_resident, givable, pinned, host_free.saturating_sub(host_free_resident), stacks, long, heap_mb(t.footprint).saturating_sub(accounted), driver);
     // Blocks' memory handed out again and zeroed for it (decision 0342): a free list's chunk asked zeroed (a
     // descriptor), a recycled slab's allocation; a relation's rows are written before read and never zeroed.
     let _ = writeln!(r, "  blocks: {} MB zeroed as their memory was handed out again", rerail_accel::blocks::zeroed_bytes() >> 20);
@@ -424,12 +439,13 @@ pub(super) fn sampled_report(r: &mut String) {
     if !s.relations.is_empty() {
         let total: usize = s.relations.iter().map(|r| r.3).sum();
         let resident: usize = s.relations.iter().map(|r| r.5).sum();
+        let indexes: usize = s.relations.iter().map(|r| r.6).sum();
         let rows: usize = s.relations.iter().map(|r| r.1).sum();
-        let _ = writeln!(r, "The runs' relations held then, by name (at {} MB footprint; {} relations, {} rows, {} MB of values' room in all, {} MB of it in memory; room, in memory, rows, columns, runs):",
-            mb(s.heap_at as f64), s.relations.len(), rows, total >> 20, resident >> 20);
+        let _ = writeln!(r, "The runs' relations held then, by name (at {} MB footprint; {} relations, {} rows, {} MB of values' room in all, {} MB of it in memory, their indexes {} MB in memory; room, in memory, indexes in memory, rows, columns, runs):",
+            mb(s.heap_at as f64), s.relations.len(), rows, total >> 20, resident >> 20, indexes >> 20);
         // Every one: what the rows are is read off the whole list, not its head.
-        for (name, rows, k, bytes, runs, res) in s.relations.iter() {
-            let _ = writeln!(r, "{:>10} KB {:>10} KB  {:>9} rows  {k} columns  {runs} runs  {}", bytes >> 10, res >> 10, rows, super::short(name, 120));
+        for (name, rows, k, bytes, runs, res, ix) in s.relations.iter() {
+            let _ = writeln!(r, "{:>10} KB {:>10} KB {:>10} KB  {:>9} rows  {k} columns  {runs} runs  {}", bytes >> 10, res >> 10, ix >> 10, rows, super::short(name, 120));
         }
     }
     if let Some(text) = heap_at_text()
@@ -500,10 +516,10 @@ pub fn heap_frames_tsv() -> String {
 pub fn sampled_tsv() -> String {
     use std::fmt::Write as _;
     let s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut t = String::from("at_s\tunix_s\tfootprint_bytes\tmax_bytes\tjemalloc_live_bytes\tjemalloc_resident_bytes\tmetal_driver_mb\tdevice_pool_mb\trelational_leased_mb\trelational_idle_mb\tsqlite_mb\thost_blocks_mb\thost_free_mb\thost_free_resident_mb\tstacks_mb\tlong_rooms_mb\tthreads\topen\thost_resident_mb\n");
+    let mut t = String::from("at_s\tunix_s\tfootprint_bytes\tmax_bytes\tjemalloc_live_bytes\tjemalloc_resident_bytes\tmetal_driver_mb\tdevice_pool_mb\trelational_leased_mb\trelational_idle_mb\tsqlite_mb\thost_blocks_mb\thost_free_mb\thost_free_resident_mb\tstacks_mb\tlong_rooms_mb\tthreads\topen\thost_resident_mb\tfree_givable_mb\tfree_pinned_mb\tanon_blocks_resident_mb\tleases_maps_resident_mb\n");
     for r in &s.rows {
-        let [d, p, l, i, q, h, f, fr, st, lo, hr] = r.holders;
-        let _ = writeln!(t, "{:.3}\t{:.3}\t{}\t{}\t{}\t{}\t{d}\t{p}\t{l}\t{i}\t{q}\t{h}\t{f}\t{fr}\t{st}\t{lo}\t{}\t{}\t{hr}", r.at, r.unix, r.footprint, r.max, r.live, r.resident, r.threads, r.open.join(" | "));
+        let [d, p, l, i, q, h, f, fr, st, lo, hr, fg, fp, an, lm, ..] = r.holders;
+        let _ = writeln!(t, "{:.3}\t{:.3}\t{}\t{}\t{}\t{}\t{d}\t{p}\t{l}\t{i}\t{q}\t{h}\t{f}\t{fr}\t{st}\t{lo}\t{}\t{}\t{hr}\t{fg}\t{fp}\t{an}\t{lm}", r.at, r.unix, r.footprint, r.max, r.live, r.resident, r.threads, r.open.join(" | "));
     }
     t
 }

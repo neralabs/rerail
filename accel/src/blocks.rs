@@ -91,6 +91,18 @@ pub fn host_resident() -> usize {
     live.iter().map(|e| e.resident()).sum()
 }
 
+/// The free chunks' bytes the blocks keep in memory: in pages no live chunk reaches, and in pages one shares
+/// (`rerail_blocks::ledger::free_kept_split`).
+pub fn free_kept_split() -> (usize, usize) {
+    rerail_blocks::ledger::free_kept_split()
+}
+
+/// The bytes in memory of every block's memory: the anonymous blocks', and the rest's (pooled leases and the blocks
+/// over them, file mappings; `rerail_blocks::ledger::resident_split`).
+pub fn resident_split() -> ([usize; 9], usize) {
+    rerail_blocks::ledger::resident_split()
+}
+
 /// The host blocks live now: bytes used in them, and of those the bytes their free lists hold.
 pub fn host_held() -> (usize, usize) {
     let host = rerail_context::machine::<Host>();
