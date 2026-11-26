@@ -144,6 +144,12 @@ fn octal_and_binary_numbers_and_quotes_in_strings_are_the_lean_parsers() {
 }
 
 #[test]
+fn brackets_in_an_interpolation_are_the_lean_parsers() {
+    same(&["x = f\"{a[1:2]}\"\n", "x = f\"{a[b[1]:2]:>4}\"\n", "x = f\"{(lambda y: y)(1)}\"\n", "x = f\"{a[:]} {b}\"\n"]);
+    same(&["x = f\"{ {'k': v} }\"\n", "x = f\"{g({'a': 1})}?q\"\n", "x = f\"{d['k']:x}\"\n", "x = f\"\"\"{\n  {1: 2}\n}\"\"\"\n", "x = f\"{ {a} }\"\n"]);
+}
+
+#[test]
 fn braces_raw_f_strings_and_line_breaks_in_interpolations_are_the_lean_parsers() {
     same(&["x = f\"{{{a}}}\"\n", "x = f\"a {{{b}}} c\"\n", "x = f\"{{{{a}}}}\"\n", "x = f\"{{a}}\"\n"]);
     same(&["x = rf\"a\\\\d{b}\\\\w\"\n", "x = fr\'{a}\\\\n\'\n", "x = rf\"{a}\\\\n{b}\\\\t\"\n", "x = rf\"{a}\" + f\"{b}\\\\n\"\n"]);
@@ -220,7 +226,7 @@ fn f_strings_are_the_lean_parsers() {
     same(&["def f():\n    return f\"{a}\"\n", "x = {'a': f'{b}'}\n"]);
     // Not read yet: a nested spec, a raw f-string, `=`, a `:` in brackets, braces in code, an
     // empty interpolation or spec, a `}` alone.
-    refused(&["x = f\"{x:}\"\n", "x = f\"{b:{w}}\"\n", "x = f\"{b=}\"\n", "x = f\"{a[1:2]}\"\n", "x = f\"{ {a} }\"\n", "x = f\"{}\"\n", "x = f\"a}\"\n"]);
+    refused(&["x = f\"{x:}\"\n", "x = f\"{b:{w}}\"\n", "x = f\"{b=}\"\n", "x = f\"{}\"\n", "x = f\"a}\"\n"]);
 }
 
 #[test]

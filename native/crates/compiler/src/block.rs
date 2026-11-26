@@ -532,6 +532,10 @@ pub struct BlockProgram {
 /// opener is no opener. A kind that `resumes` and closes at its own closer (a template's tail at
 /// its quote) ends that: none closed so since (decision 0600, the lean lexer's string ended). The
 /// next region opens at the first place after the hidden ones (after `t` at least).
+///
+/// With a `level` (`Level`), the walk counts brackets in a template's code (decision 0698).
+/// The rounds do not count them, so such a walk has no rounds form: the rounds' fixed point
+/// is its meaning only where no template's code has a bracket.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Walk {
     /// Its rounds group (`BlockProgram::rounds`).
@@ -540,6 +544,23 @@ pub struct Walk {
     /// second: the places where such a kind closed at its own closer, in the round before.
     pub hidden: u16,
     pub kinds: Vec<WalkKind>,
+    pub level: Option<Level>,
+}
+
+/// A walk's bracket level in a template's code (`Walk::level`): from where a plain kind's
+/// region closes at its second closer (a template opens) to where a kind that resumes closes
+/// at its own (its string ends), the places outside the regions where `opens` has a bit add
+/// one, and those where `closes` has one take one away (none at zero). A kind with `after`
+/// opens only at level zero, as the lean lexer's string reader takes back only the `}` its
+/// template's own `{` opened. An open past `max` is `deep` (the level stays `max`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Level {
+    pub opens: u16,
+    pub closes: u16,
+    /// At most 15.
+    pub max: u8,
+    /// A group member the walk makes.
+    pub deep: u16,
 }
 
 /// A kind of region (`Walk`). `opener` and `closer` are outside the group; `open`, `fill` and
@@ -575,12 +596,15 @@ impl Walk {
             out.push(k.fill);
             out.extend(k.empty.map(|e| e.0));
         }
+        out.extend(self.level.map(|l| l.deep));
         out
     }
 
-    /// The values it reads: each kind's opener and closer, and a second closer.
+    /// The values it reads: each kind's opener and closer, and a second closer; a level's
+    /// brackets.
     pub fn reads(&self) -> Vec<u16> {
-        self.kinds.iter().flat_map(|k| [k.opener, k.closer].into_iter().chain(k.or.map(|o| o.0))).collect()
+        let level = self.level.into_iter().flat_map(|l| [l.opens, l.closes]);
+        self.kinds.iter().flat_map(|k| [k.opener, k.closer].into_iter().chain(k.or.map(|o| o.0))).chain(level).collect()
     }
 
     /// The kinds with no `after`, as a mask by place.
@@ -859,6 +883,9 @@ impl BlockProgram {
             if walk.kinds.iter().any(|k| k.after != 0) && (walk.kinds.len() > 15 || walk.kinds.iter().any(|k| k.after & !(plain & ors) != 0 || k.after != 0 && (k.empty.is_some() || k.outside))) {
                 return Err(format!("walk {w}: an `after` naming a kind with one or with no `or`, on a kind with an `else` or `outside`, or past 15 kinds"));
             }
+            if walk.level.is_some_and(|l| l.max == 0 || l.max > 15 || !walk.kinds.iter().any(|k| k.after != 0)) {
+                return Err(format!("walk {w}: a level of no `after` kind, or a max not from 1 to 15"));
+            }
             for k in &walk.kinds {
                 let fits = (1..=3).contains(&k.bytes) && (!k.outside || k.bytes == 1 && k.or.is_none()) && k.empty.is_none_or(|e| (1..=3).contains(&e.1)) && k.or.is_none_or(|o| (1..=3).contains(&o.1));
                 if self.ops.get(usize::from(k.fill)) != Some(&BlockOp::Fill(k.open, k.closer)) || !fits {
@@ -988,6 +1015,13 @@ impl BlockProgram {
                     out.extend_from_slice(&k.after.to_le_bytes());
                     out.push(u8::from(k.resumes));
                 }
+            }
+            if let Some(l) = walk.level {
+                out.extend_from_slice(b"level");
+                for v in [l.opens, l.closes, l.deep] {
+                    out.extend_from_slice(&v.to_le_bytes());
+                }
+                out.push(l.max);
             }
         }
         out
@@ -1308,18 +1342,38 @@ impl BlockProgram {
             let end = 64 * starts.get(f + 1).copied().unwrap_or(blocks);
             let mut resume = 64 * s;
             // The last kind with no `after` whose region closed at its second closer, a template's
-            // (none: 16, which no `after` names).
+            // (none: 16, which no `after` names), and the level in its code (`Level`).
             let mut last = 16u32;
+            let mut level = 0u8;
             loop {
                 let mut best: Option<(usize, usize)> = None;
                 for (k, kind) in walk.kinds.iter().enumerate() {
-                    if kind.after != 0 && !(last < 16 && (u32::from(kind.after) >> last) & 1 != 0) {
+                    if kind.after != 0 && !(last < 16 && level == 0 && (u32::from(kind.after) >> last) & 1 != 0) {
                         continue;
                     }
                     if let Some(t) = next_bit(&values[usize::from(kind.opener)], resume, end)
                         && best.is_none_or(|b| t < b.0)
                     {
                         best = Some((t, k));
+                    }
+                }
+                // A bracket in a template's code before the opener: the level, then on past it.
+                if let Some(l) = walk.level.filter(|_| last < 16) {
+                    let limit = best.map_or(end, |b| b.0);
+                    let o = next_bit(&values[usize::from(l.opens)], resume, limit);
+                    let c = next_bit(&values[usize::from(l.closes)], resume, limit);
+                    if let Some(b) = o.into_iter().chain(c).min() {
+                        if o == Some(b) {
+                            if level == l.max {
+                                set(&mut values[usize::from(l.deep)], b, b + 1);
+                            } else {
+                                level += 1;
+                            }
+                        } else {
+                            level = level.saturating_sub(1);
+                        }
+                        resume = b + 1;
+                        continue;
                     }
                 }
                 let Some((t, k)) = best else { break };
@@ -1341,11 +1395,11 @@ impl BlockProgram {
                 set(&mut values[usize::from(kind.fill)], t, c);
                 let wide = kind.or.filter(|&(c2, _)| (values[usize::from(c2)][c / 64] >> (c % 64)) & 1 != 0);
                 if kind.after == 0 && wide.is_some() {
-                    last = k as u32;
+                    (last, level) = (k as u32, 0);
                 }
                 // A kind that resumes, closed at its own closer: the string ended.
                 if kind.resumes && wide.is_none() {
-                    last = 16;
+                    (last, level) = (16, 0);
                 }
                 let to = if kind.outside { c } else { c + usize::from(wide.map_or(kind.bytes, |o| o.1)) };
                 set(&mut values[hidden], t + 1, to.min(end));
@@ -1820,6 +1874,10 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
             let or = k.or.map_or(String::new(), |(c, m)| format!(" or %{c} {m}"));
             let after = if k.after != 0 { format!(" after {}{}", k.after, if k.resumes { " resumes" } else { "" }) } else { String::new() };
             let _ = writeln!(out, "  block {at} region {} %{} %{} %{} %{} {}{outside}{empty}{or}{after}", walk.group, k.opener, k.closer, k.open, k.fill, k.bytes);
+        }
+        // `block N level G %opens %closes MAX %deep`: its level (`Level`), after its kinds.
+        if let Some(l) = walk.level {
+            let _ = writeln!(out, "  block {at} level {} %{} %{} {} %{}", walk.group, l.opens, l.closes, l.max, l.deep);
         }
     }
     for (k, value) in block.outputs.iter().enumerate() {

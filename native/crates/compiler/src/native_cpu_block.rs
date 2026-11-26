@@ -594,9 +594,10 @@ pub struct WalkState;
 impl WalkState {
     pub const SKIP: u8 = 4;
     pub const NONE: u8 = 8;
-    /// The field's width for a walk of `kinds` kinds.
-    pub fn width(kinds: usize, after: bool) -> u8 {
-        Self::NONE + kinds as u8 + if after { 4 } else { 0 }
+    /// The field's width for a walk of `kinds` kinds: with `after`, the last template's kind;
+    /// with a level (`block::Level`), its four bits too.
+    pub fn width(kinds: usize, after: bool, level: bool) -> u8 {
+        Self::NONE + kinds as u8 + if after { 4 } else { 0 } + if level { 4 } else { 0 }
     }
 }
 
@@ -642,7 +643,7 @@ impl State {
             }
         }
         for (w, walk) in native.walks.iter().enumerate().filter(|(_, w)| !w.kinds.is_empty()) {
-            wanted.push((usize::from(walk.hidden), WalkState::width(walk.kinds.len(), walk.kinds.iter().any(|k| k.after != 0)), 2 + w, false));
+            wanted.push((usize::from(walk.hidden), WalkState::width(walk.kinds.len(), walk.kinds.iter().any(|k| k.after != 0), walk.level.is_some()), 2 + w, false));
         }
         let mut used: Vec<u8> = Vec::new();
         let (mut fields, mut top, mut flag, mut walk) = (Vec::new(), vec![None; n], vec![None; n], vec![None; native.walks.len()]);
@@ -1934,7 +1935,7 @@ impl Emit<'_, '_> {
         let calls = self.walks.expect("a walk's function");
         let field = self.state.fields[self.state.walk[w].expect("a walk's state field")];
         let made = walk.made();
-        let n = crate::native_cpu_walk::layout(walk.kinds.len(), made.len());
+        let n = crate::native_cpu_walk::layout(walk);
         let slot = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * n as u32, 3));
         let state_in = self.read(&mut *f, &field, 0, field.width);
         f.ins().stack_store(state_in, slot, 0);
@@ -1948,6 +1949,12 @@ impl Emit<'_, '_> {
                 None => f.ins().iconst(types::I64, 0),
             };
             f.ins().stack_store(c2, slot, 8 * (3 + 3 * k as i32));
+        }
+        if let Some(l) = walk.level {
+            for (j, v) in [l.opens, l.closes].into_iter().enumerate() {
+                let x = plain(&mut *f, &self.syms, &mut self.values, usize::from(v));
+                f.ins().stack_store(x, slot, 8 * (1 + 3 * walk.kinds.len() + j) as i32);
+            }
         }
         if calls.built.borrow()[w].is_none() {
             let func = crate::native_cpu_walk::build_walk(native, w, calls).expect("a walk the program verified");
@@ -1963,7 +1970,7 @@ impl Emit<'_, '_> {
         self.put(&mut *f, field, state_out);
         self.walked[w] = true;
         for (j, &v) in made.iter().enumerate() {
-            self.set(usize::from(v), Sym::Slot(slot, 8 * (1 + 3 * walk.kinds.len() + j) as i32, false));
+            self.set(usize::from(v), Sym::Slot(slot, 8 * (crate::native_cpu_walk::made_at(walk) + j) as i32, false));
             self.carry(&mut *f, usize::from(v));
         }
     }

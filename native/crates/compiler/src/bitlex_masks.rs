@@ -1385,8 +1385,12 @@ impl Lowering {
                 None => None,
             });
         }
+        let brackets = match &regions.level {
+            Some(l) => Some((self.expr(&l.opens)?, self.expr(&l.closes)?)),
+            None => None,
+        };
         let later = regions.kinds.iter().any(|r| r.empty.is_some());
-        let d = inputs.iter().flat_map(|(o, c)| [o.d, c.d]).chain(seconds.iter().flatten().map(|(c, _)| c.d)).max().unwrap_or(0) + u8::from(later);
+        let d = inputs.iter().flat_map(|(o, c)| [o.d, c.d]).chain(seconds.iter().flatten().map(|(c, _)| c.d)).chain(brackets.iter().flat_map(|(o, c)| [o.d, c.d])).max().unwrap_or(0) + u8::from(later);
         let zero = self.op(BlockOp::Const(0));
         let w = self.within(d)?;
         let clean = |me: &mut Self, x: Val, d: u8| -> Result<u16, String> {
@@ -1400,6 +1404,7 @@ impl Lowering {
         // byte is `prev(t)`, the opener `q & ~prev(t)`, and the fill
         // `open | (prev(t) & ~q) = q ^ prev(t) = t`.
         if let ([r], [(o, c)]) = (regions.kinds.as_slice(), inputs.as_slice())
+            && regions.level.is_none()
             && r.empty.is_none()
             && r.or.is_none()
             && !r.outside
@@ -1546,6 +1551,19 @@ impl Lowering {
             self.toggles.push((f, flips));
             kinds.push(crate::block::WalkKind { opener, closer, open, fill, bytes: r.bytes, outside: r.outside, empty, or, after, resumes: r.resumes });
         }
+        // A level's brackets, and its deep ones: empty in its rounds, which count no level
+        // (`block::Walk`), and a member of the group, as a part of the hidden places' next (a
+        // `prev` of it, as the group's strict rule asks).
+        let level = match (&regions.level, brackets) {
+            (Some(l), Some((o, c))) => {
+                let (opens, closes) = (clean(self, o, d)?, clean(self, c, d)?);
+                let deep = self.op(BlockOp::And(code, zero));
+                named(self, l.deep.clone(), deep);
+                hide.push(self.op(BlockOp::Prev(deep, 1)));
+                Some(crate::block::Level { opens, closes, max: l.max, deep })
+            }
+            _ => None,
+        };
         let mut next = *hide.first().ok_or("regions that hide nothing")?;
         for &h in &hide[1..] {
             next = self.op(BlockOp::Or(next, h));
@@ -1561,7 +1579,7 @@ impl Lowering {
             pairs.push((e, x));
         }
         self.program.rounds.push(pairs);
-        self.program.walks.push(crate::block::Walk { group: (self.program.rounds.len() - 1) as u16, hidden, kinds });
+        self.program.walks.push(crate::block::Walk { group: (self.program.rounds.len() - 1) as u16, hidden, kinds, level });
         Ok(())
     }
 
@@ -3156,7 +3174,8 @@ pub fn live_of(program: &BlockProgram, keep: &[bool]) -> BlockProgram {
         .filter_map(|w| {
             let group = kept_groups.iter().position(|&g| g == usize::from(w.group))? as u16;
             let kinds = w.kinds.iter().map(|k| crate::block::WalkKind { opener: n(k.opener), closer: n(k.closer), open: n(k.open), fill: n(k.fill), empty: k.empty.map(|(e, m)| (n(e), m)), or: k.or.map(|(c, m)| (n(c), m)), ..*k }).collect();
-            Some(crate::block::Walk { group, hidden: n(w.hidden), kinds })
+            let level = w.level.map(|l| crate::block::Level { opens: n(l.opens), closes: n(l.closes), deep: n(l.deep), ..l });
+            Some(crate::block::Walk { group, hidden: n(w.hidden), kinds, level })
         })
         .collect();
     out.records = program.records.clone();

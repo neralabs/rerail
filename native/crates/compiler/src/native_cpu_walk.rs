@@ -54,10 +54,15 @@ impl WalkCalls {
 }
 
 /// The words a walk's function reads and writes, eight bytes each: the state (in, then out),
-/// each kind's opener, closer and second closer (`or`; zero without), then the values it makes
-/// (`block::Walk::made`).
-pub fn layout(kinds: usize, made: usize) -> usize {
-    1 + 3 * kinds + made
+/// each kind's opener, closer and second closer (`or`; zero without), a level's opens and
+/// closes (`block::Level`), then the values it makes (`block::Walk::made`), from `made_at`.
+pub fn layout(walk: &crate::block::Walk) -> usize {
+    made_at(walk) + walk.made().len()
+}
+
+/// The word of the first value a walk makes (`layout`).
+pub fn made_at(walk: &crate::block::Walk) -> usize {
+    1 + 3 * walk.kinds.len() + 2 * usize::from(walk.level.is_some())
 }
 
 /// Value `v` of the CPU's form as byte tests, as `block::byte_tests` gives them on the program.
@@ -144,8 +149,10 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
         let openers: Vec<Value> = (0..kinds).map(|k| f.ins().load(types::I64, flags, io, 8 * (1 + 3 * k as i32))).collect();
         let closers: Vec<Value> = (0..kinds).map(|k| f.ins().load(types::I64, flags, io, 8 * (2 + 3 * k as i32))).collect();
         let seconds: Vec<Value> = (0..kinds).map(|k| f.ins().load(types::I64, flags, io, 8 * (3 + 3 * k as i32))).collect();
+        let brackets = walk.level.map(|_| (f.ins().load(types::I64, flags, io, 8 * (1 + 3 * kinds as i32)), f.ins().load(types::I64, flags, io, 8 * (2 + 3 * kinds as i32))));
         // Each value made, by its place in `made`: its word's offset in `io`.
-        let out = |v: u16| 8 * (1 + 3 * kinds + made.iter().position(|&m| m == v).expect("made")) as i32;
+        let first = made_at(walk);
+        let out = |v: u16| 8 * (first + made.iter().position(|&m| m == v).expect("made")) as i32;
         let zero = f.ins().iconst(types::I64, 0);
         for &v in &made[1..] {
             f.ins().store(flags, zero, io, out(v));
@@ -160,12 +167,13 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
         let skip = f.ins().ushr_imm(state, i64::from(WalkState::SKIP));
         let skip = f.ins().band_imm(skip, 3);
         // The last kind with no `after` whose region closed at its second closer (a template's
-        // `$`), plus one (0: none), past the kinds' flags.
+        // `$`), plus one (0: none), past the kinds' flags; with a level, the level in its four
+        // bits above (`block::Level`).
         let last_at = i64::from(WalkState::NONE) + kinds as i64;
         let conditioned = walk.kinds.iter().any(|k| k.after != 0);
         let last0 = if conditioned {
             let l = f.ins().ushr_imm(state, last_at);
-            f.ins().band_imm(l, 15)
+            f.ins().band_imm(l, if walk.level.is_some() { 255 } else { 15 })
         } else {
             zero
         };
@@ -210,6 +218,13 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
         let last = f.block_params(head)[1];
         let above = from(&mut f, r);
         // A kind with `after`: its openers only where the last plain kind is one it names.
+        // With a level: only at level zero (`last` below 16).
+        let flat = if walk.level.is_some() {
+            let lo = f.ins().icmp_imm(IntCC::UnsignedLessThan, last, 16);
+            Some(f.ins().uextend(types::I64, lo))
+        } else {
+            None
+        };
         let openers: Vec<Value> = walk
             .kinds
             .iter()
@@ -219,8 +234,13 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
                     return o;
                 }
                 let named = f.ins().iconst(types::I64, i64::from(kind.after) << 1);
-                let bit = f.ins().ushr(named, last);
+                let kind_of = f.ins().band_imm(last, 15);
+                let bit = f.ins().ushr(named, kind_of);
                 let bit = f.ins().band_imm(bit, 1);
+                let bit = match flat {
+                    Some(z) => f.ins().band(bit, z),
+                    None => bit,
+                };
                 let all = f.ins().ineg(bit);
                 f.ins().band(o, all)
             })
@@ -234,6 +254,45 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
             });
         }
         let any = any.expect("a kind");
+        // A bracket in a template's code before the next opener: the level, and on past it.
+        if let (Some(level), Some((opens, closes))) = (walk.level, brackets) {
+            let kind_of = f.ins().band_imm(last, 15);
+            let inside = f.ins().icmp_imm(IntCC::NotEqual, kind_of, 0);
+            let inside = f.ins().uextend(types::I64, inside);
+            let inside = f.ins().ineg(inside);
+            let both = f.ins().bor(opens, closes);
+            let both = f.ins().band(both, above);
+            let br = f.ins().band(both, inside);
+            let (ta, tb) = (f.ins().ctz(any), f.ins().ctz(br));
+            let take = f.ins().icmp(IntCC::UnsignedLessThan, tb, ta);
+            let (bracket, on) = (f.create_block(), f.create_block());
+            f.ins().brif(take, bracket, &[], on, &[]);
+            f.switch_to_block(bracket);
+            let one = f.ins().iconst(types::I64, 1);
+            let bit = f.ins().ishl(one, tb);
+            let is_open = f.ins().ushr(opens, tb);
+            let is_open = f.ins().band_imm(is_open, 1);
+            let depth = f.ins().ushr_imm(last, 4);
+            let full = f.ins().icmp_imm(IntCC::Equal, depth, i64::from(level.max));
+            let full = f.ins().uextend(types::I64, full);
+            let over = f.ins().band(is_open, full);
+            let over_all = f.ins().ineg(over);
+            let deep_bit = f.ins().band(bit, over_all);
+            or(&mut f, level.deep, deep_bit);
+            let up = f.ins().bxor_imm(full, 1);
+            let up = f.ins().band(is_open, up);
+            let shut = f.ins().bxor_imm(is_open, 1);
+            let some = f.ins().icmp_imm(IntCC::NotEqual, depth, 0);
+            let some = f.ins().uextend(types::I64, some);
+            let down = f.ins().band(shut, some);
+            let depth = f.ins().iadd(depth, up);
+            let depth = f.ins().isub(depth, down);
+            let depth = f.ins().ishl_imm(depth, 4);
+            let now = f.ins().bor(kind_of, depth);
+            let past = f.ins().iadd_imm(tb, 1);
+            f.ins().jump(head, &[past.into(), now.into()]);
+            f.switch_to_block(on);
+        }
         let found = f.create_block();
         f.ins().brif(any, found, &[], exit, &[zero.into(), r.into(), last.into()]);
         f.switch_to_block(found);

@@ -427,6 +427,24 @@ pub struct Regions {
     /// The hidden bytes' name: the carry.
     pub hidden: String,
     pub kinds: Vec<Region>,
+    /// `level O to C max N else D` (after `H`): the bracket level in a template's code.
+    pub level: Option<RegionLevel>,
+}
+
+/// `regions H level O to C max N else D { … }`: from where a plain kind's region closes at its
+/// `or` (a template opens) to where a kind that `resumes` closes at its own closer (its string
+/// ends), each byte of `O` outside the regions adds one to the level and each of `C` takes one
+/// away (none at zero). A kind with `after` opens only at level zero, as the lean lexer's
+/// string reader takes back only the `}` its template's own `{` opened (`{a[1:2]}` has no
+/// format spec, `{ {k: v} }` one template). An `O` past `N` (1 to 15) is `D`: the level stays
+/// `N`. Not a fixed point of masks: the evaluator and the backends walk such regions (the
+/// rounds' body makes `D` empty and counts no level).
+#[derive(Clone, Debug)]
+pub struct RegionLevel {
+    pub opens: Expr,
+    pub closes: Expr,
+    pub max: u8,
+    pub deep: String,
 }
 
 /// A kind of region (`Regions`).
@@ -490,6 +508,7 @@ impl Regions {
     /// (`prev(c & ~C2)`, the string ended), from the round before, among the `B`s and no opener.
     pub fn body(&self) -> Vec<Stmt> {
         let name = |s: &str| Expr::Name(s.to_string());
+        let deep = self.level.iter().map(|l| Stmt::Mask(l.deep.clone(), Expr::Empty));
         let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
         let not = |a: Expr| Expr::Not(Box::new(a));
         let call = |f: &str, args: Vec<Arg>| Expr::Call(f.to_string(), args);
@@ -590,6 +609,7 @@ impl Regions {
         if resumes {
             out.push(Stmt::Next(ended, call("prev", vec![Arg::E(ends.unwrap_or(Expr::Empty))])));
         }
+        out.extend(deep);
         out
     }
 }
@@ -1771,9 +1791,24 @@ impl P {
     }
 
     // --- statements ---
-    /// `regions H { K = O .. C [bytes N] [outside] [else E bytes M] [open K] … }` (`Regions`).
+    /// `regions H [level O to C max N else D] { K = O .. C [bytes N] [outside] [else E bytes M]
+    /// [open K] … }` (`Regions`).
     fn regions(&mut self) -> R<Regions> {
         let hidden = self.ident()?;
+        let level = if self.eat_kw("level") {
+            let opens = self.expr()?;
+            self.want_kw("to")?;
+            let closes = self.expr()?;
+            self.want_kw("max")?;
+            let max = self.int()?;
+            if !(1..=15).contains(&max) {
+                return self.err("a level's max from 1 to 15");
+            }
+            self.want_kw("else")?;
+            Some(RegionLevel { opens, closes, max: max as u8, deep: self.ident()? })
+        } else {
+            None
+        };
         self.want_p("{")?;
         self.nls();
         let mut kinds = Vec::new();
@@ -1841,7 +1876,10 @@ impl P {
         if kinds.len() > 15 && kinds.iter().any(|r| !r.after.is_empty()) {
             return Err("regions with `after`: at most 15 kinds".into());
         }
-        Ok(Regions { hidden, kinds })
+        if level.is_some() && !kinds.iter().any(|r| !r.after.is_empty()) {
+            return self.err("a `level` on regions with a kind with `after`");
+        }
+        Ok(Regions { hidden, kinds, level })
     }
 
     fn block(&mut self) -> R<Vec<Stmt>> {

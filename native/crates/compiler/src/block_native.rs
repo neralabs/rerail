@@ -201,7 +201,8 @@ impl BlockNative {
     /// A walk with its values renamed by `m`.
     fn walk_renamed(w: &crate::block::Walk, m: impl Fn(u16) -> u16) -> crate::block::Walk {
         let kinds = w.kinds.iter().map(|k| crate::block::WalkKind { opener: m(k.opener), closer: m(k.closer), open: m(k.open), fill: m(k.fill), empty: k.empty.map(|(e, n)| (m(e), n)), or: k.or.map(|(c, n)| (m(c), n)), ..*k }).collect();
-        crate::block::Walk { group: w.group, hidden: m(w.hidden), kinds }
+        let level = w.level.map(|l| crate::block::Level { opens: m(l.opens), closes: m(l.closes), deep: m(l.deep), ..l });
+        crate::block::Walk { group: w.group, hidden: m(w.hidden), kinds, level }
     }
 
     /// The CPU's form (decision 0139): each walk's group made by the walk, not by rounds. The
@@ -824,7 +825,7 @@ impl BlockNative {
                 .collect();
             // A walk is made in the pass of its values, all in one (its `Walk`s read one `Args`).
             // In another pass it is a walk of no kinds, of nothing (its `hidden` any value).
-            let walks: Vec<crate::block::Walk> = self.walks.iter().map(|w| if w.made().iter().all(|&v| in_pass(usize::from(v), p)) { Self::walk_renamed(w, |v| place(usize::from(v)) as u16) } else { crate::block::Walk { group: w.group, hidden: 0, kinds: Vec::new() } }).collect();
+            let walks: Vec<crate::block::Walk> = self.walks.iter().map(|w| if w.made().iter().all(|&v| in_pass(usize::from(v), p)) { Self::walk_renamed(w, |v| place(usize::from(v)) as u16) } else { crate::block::Walk { group: w.group, hidden: 0, kinds: Vec::new(), level: None } }).collect();
             let body = |outputs: Vec<u16>, last: bool| BlockNative {
                 walks: walks.clone(),
                 pad: self.pad,

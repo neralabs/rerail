@@ -249,3 +249,14 @@ statements and blocks end.
 55. **A class pattern's trailing comma** keeps `,` and `)` as leaves (`trail_paren`).
 56. What is left of Python's escapes is the regions' walk's: an interpolation's code holds no bracket count (a
     `:` in its brackets, a brace in it) and no second f-string (a nested one ends the outer one's template).
+57. **The regions' walk counts a bracket level in a template's code** (`regions H level O to C max N else D`,
+    `block::Level`). The user asked for the level to be tracked. From a template's opening to its string's
+    end, each `O` outside the regions adds one and each `C` takes one away (none at zero). A kind with
+    `after` opens only at level zero: `{a[1:2]}` has no format spec, and `{ {k: v} }`'s first `}` is the
+    dict's. An `O` past `N` (1 to 15) is `D`, an escape in Python's grammar (`i_deep`, `N` 15). The escapes
+    for a `:` in an interpolation's brackets and a brace in an interpolation are gone.
+58. **A walk with a level has no rounds form.** No fixed point of masks counts brackets. The rounds' body
+    counts no level and makes `D` empty, so it is the walk only where no template's code has a bracket.
+    The evaluator walks such regions (`Eval::walk_regions`), as the interpreter's walk and the JIT's do.
+    The JIT keeps the level in four bits above the last template's kind in the walk's state. The lowering
+    to Rust refuses a level, as it refuses an `attached` node.

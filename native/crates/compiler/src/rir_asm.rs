@@ -785,8 +785,19 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     Some(w) if w.group == group => w.kinds.push(kind),
                     _ => {
                         let hidden = program.rounds.get(usize::from(group)).and_then(|g| g.first()).ok_or(format!("block {at} region of no rounds group {group}"))?.0;
-                        program.walks.push(crate::block::Walk { group, hidden, kinds: vec![kind] })
+                        program.walks.push(crate::block::Walk { group, hidden, kinds: vec![kind], level: None })
                     }
+                }
+            } else if first == "level" {
+                // `block N level G %opens %closes MAX %deep`: the level of rounds group G's walk
+                // (`crate::block::Level`), after its kinds.
+                let group: u16 = line.number("")?;
+                let (opens, closes): (u16, u16) = (line.number("%")?, line.number("%")?);
+                let max: u8 = line.number("")?;
+                let deep: u16 = line.number("%")?;
+                match program.walks.last_mut() {
+                    Some(w) if w.group == group && w.level.is_none() => w.level = Some(crate::block::Level { opens, closes, max, deep }),
+                    _ => return Err(format!("block {at} level of no walk of group {group} before it")),
                 }
             } else if first == "extract" {
                 program.extracts.push(line.number("%")?);
