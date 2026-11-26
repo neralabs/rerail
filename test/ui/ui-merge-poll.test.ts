@@ -156,18 +156,19 @@ describe("Merge Assist reads and writes", () => {
     expect(requested.filter(url => url.pathname === "/api/merge-assist")).toHaveLength(0);
   });
 
-  it("reads Merge Assist again once the daemon restarts, since it may run with the experiment on now", async () => {
-    mergeRead = () => json({ error: "experimental-off", message: "Merge Assist is experimental and off." }, 404);
+  it("reads Merge Assist again when /healthz shows a restarted daemon runs the experiment", async () => {
+    experiments = [];
     await refresh();
     expect(data.mergeAssistExperiment).toBe(false);
+    expect(requested.filter(url => url.pathname === "/api/merge-assist")).toHaveLength(0);
 
     pid = 2;
-    mergeRead = () => json(status("open"));
+    experiments = ["MERGE_ASSIST"];
     await refresh();
 
     expect(data.mergeAssistExperiment).toBe(true);
     expect(data.mergeAssist!.conflicts[0]!.status).toBe("open");
-    expect(requested.filter(url => url.pathname === "/api/merge-assist")).toHaveLength(2);
+    expect(requested.filter(url => url.pathname === "/api/merge-assist")).toHaveLength(1);
   });
 
   it("keeps Merge Assist in the sidebar after a read fails while /healthz lists the experiment", async () => {
