@@ -16,8 +16,9 @@ const AMBER: [u8; 3] = [0xFF, 0x9F, 0x0A];
 const WHITE: [u8; 3] = [0xFF, 0xFF, 0xFF];
 const BLACK: [u8; 3] = [0, 0, 0];
 
-/// The status circle's diameter, as a share of its image's edge.
-const CIRCLE: f32 = 0.75;
+/// The status circle's diameter, as a share of its image's edge: 10 pt of macOS's 18 pt item image, about the size of
+/// Docker Desktop's, centred in the same image, so the status text lines up with the other items' text.
+const CIRCLE: f32 = 10.0 / 18.0;
 /// The badge's diameter, as a share of the shorter side of what the icon draws.
 const BADGE: f32 = 0.55;
 /// How far the badge reaches past the lower right corner of what the icon draws, as a share of its radius, so it covers
@@ -258,6 +259,17 @@ mod tests {
             (32, 32, 32 * 32 * 4)
         );
         assert_eq!(pixel(&circle, 0, 0)[3], 0);
+    }
+
+    #[test]
+    fn status_circle_is_10_of_18_parts_across() {
+        // 36 px is macOS's 18 pt item image at 2x, so the disc is 20 px, 10 pt, across: a radius of 10 px.
+        let circle = status_circle(true, 36);
+        assert_eq!(pixel(&circle, 18, 18), GREEN);
+        // A pixel 8.5 px from the centre is inside; one 11.5 px away is past the radius and its pixel of anti-aliasing.
+        assert_eq!(pixel(&circle, 26, 18), GREEN);
+        assert_eq!(pixel(&circle, 29, 18)[3], 0);
+        assert_eq!(pixel(&circle, 18, 29)[3], 0);
     }
 
     #[test]

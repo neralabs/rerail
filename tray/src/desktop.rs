@@ -22,7 +22,11 @@ const ICON: &[u8] = include_bytes!("../assets/icon-template.png");
 const ICON: &[u8] = include_bytes!("../assets/icon.png");
 const TEMPLATE: bool = cfg!(target_os = "macos");
 
-/// The status line's circle, in pixels. macOS draws a menu item's icon at most 18 pt tall.
+/// The status line's circle, in pixels. macOS draws a menu item's image at most 18 pt tall (muda scales a taller one
+/// down to that), so 36 px is 2x there, crisp on a Retina display. Windows draws the bitmap as it is.
+#[cfg(target_os = "macos")]
+const CIRCLE_SIZE: u32 = 36;
+#[cfg(windows)]
 const CIRCLE_SIZE: u32 = 32;
 
 /// The item the update line goes in just before, while there is one.
