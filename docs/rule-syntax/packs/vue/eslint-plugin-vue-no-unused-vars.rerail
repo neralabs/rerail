@@ -1,29 +1,71 @@
 .policy "eslint-plugin-vue-no-unused-vars" revision 2
+.guests off
 .description "Remove v-for aliases and slot parameters that the Vue template never uses."
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/code.rerail"
-//   tvar(e, x, id, k), tbind(r, id), tdestructured(id), vel_name(e, x)
+#include "vue/vue-02.rerail"
+//   vv_param(n, x, a), vv_destructured(n), vv_read(r, n)
 
-// eslint-plugin-vue's no-unused-vars: a variable a template element declares (a v-for alias, a v-slot, slot-scope or
-// scope parameter) that no template code reads. Positional variables are checked from the last: an unused one
-// before a used one of the same kind is needed for its position and passes, unless it is destructured. A name used as
-// a descendant's tag (<Item> from `v-slot="{ Item }"`) is used. Option ignorePattern: a regex of names to skip.
+// eslint-plugin-vue's no-unused-vars over the component's view (vue/view): a variable a template element declares
+// (a v-for alias, a v-slot, #slot, slot-scope or scope parameter) that no template code reads. A read is a reference
+// in the view, except a component tag's (`<Foo>` is `Foo;`) and a Vue 2 filter's name (`{{ a | f }}`). Positional
+// variables are checked from the last: an unused one before a used one passes, unless it is destructured. An alias
+// read in the v-if of its own element counts as read, and so does a name that a descendant's tag spells. No options
+// (the plugin's ignorePattern is not in the JSON).
 //   <li v-for="(item, i) in items">{{ i }}</li>                item passes: i after it is used
 //   <li v-for="(item, i) in items">{{ item }}</li>             i is reported
 //   <comp v-slot="{ a, b }">{{ b }}</comp>                    a is reported: it is destructured
+//   <Bar #default="{ Foo }"><Foo /></Bar>                     Foo passes: a descendant's tag
 .violation unused_var(at: node, x: symbol) code "vue/no-unused-vars" "'{x}' is defined but never used."
     suppress eslint "vue/no-unused-vars"
-unused_var(id, x) :- tvar(e, x, id, k), !used(id), !ignored(x), !used_after(e, id, k), !tag_use(e, x).
-unused_var(id, x) :- tvar(e, x, id, k), !used(id), !ignored(x), used_after(e, id, k), tdestructured(id),
-    !tag_use(e, x).
-.decl used(id: node)
-used(id) :- tbind(_, id).
-.decl ignored(x: symbol)
-ignored(x) :- tvar(_, x, _, _), option("ignorePattern", p), match(cat(".*(?:", p, ").*"), x).
-// used_after(e, id, k): a variable of the same kind, declared after id on e, is used.
-.decl used_after(e: node, id: node, k: symbol)
-used_after(e, id, k) :- tvar(e, _, id, k), tvar(e, _, j, k), earlier(id, j), used(j).
-.decl tag_use(e: node, x: symbol)
-tag_use(e, x) :- tvar(e, x, _, _), has(e, c, vel_kind), vel_name(c, x).
+unused_var(n, x) :- docof(n, g), (guest(g, _, _, "javascript") ; guest(g, _, _, "typescript") ; guest(g, _, _, "tsx")),
+    vv_param(n, x, _), !used(n), !if_read(n, x), !tag_named(n, x), (vv_destructured(n) ; !used_after(n)).
+
+.decl used(n: node)
+used(n) :- vv_read(r, n), (kind(r, "identifier") ; kind(r, "shorthand_property_identifier")), !tag_read(r),
+    !filter_name(r).
+// used_after(n): a variable declared after n in its parameter list, or after the pattern n is in, is used.
+.decl used_after(n: node)
+used_after(n) :- vv_param(n, _, _), nearest(n, ps, "formal_parameters"), (p = n ; within(n, p), within(p, ps)),
+    precedes(p, s), (q = s ; within(q, s)), vv_param(q, y, _), (used(q) ; if_read(q, y)).
+
+// if_read(n, x): `<li v-for="x in xs" v-if="x.ok">`: Vue 3 runs the v-if first, so the view puts the condition
+// outside the alias's arrow, `if ((x.ok)) { (xs), (x) => { … }; }`; the plugin counts it as a read.
+.decl if_read(n: node, x: symbol)
+if_read(n, x) :- vv_param(n, x, a), child(sq, a, _), kind(sq, "sequence_expression"), child(e, sq, _),
+    kind(e, "expression_statement"), host_node(e, h), has_v_if(h), child(b, e, _), kind(b, "statement_block"),
+    child(i, b, _), kind(i, "if_statement"), field(i, "condition", c), within(r, c),
+    (kind(r, "identifier") ; kind(r, "shorthand_property_identifier")), text(r, x).
+.decl has_v_if(h: node)
+has_v_if(h) :- child(h, d, _), v_if(d).
+has_v_if(h) :- child(h, t, _), (kind(t, "start_tag") ; kind(t, "self_closing_tag")), child(t, d, _), v_if(d).
+.decl v_if(d: node)
+v_if(d) :- kind(d, "directive_attribute"), match("v-(?:else-)?if(?:[.:=\\s]|$).*", d).
+
+// tag_named(n, x): a descendant of the declaring element has the tag x (not a dotted `<x.Y>`).
+.decl tag_named(n: node, x: symbol)
+tag_named(n, x) :- vv_param(n, x, _), host_node(n, h), inside(h, d, "directive_attribute"), child(t, d, _),
+    (kind(t, "start_tag") ; kind(t, "self_closing_tag")), child(e, t, _), within(c, e),
+    (kind(c, "element") ; kind(c, "template_element")), child(c, ct, _),
+    (kind(ct, "start_tag") ; kind(ct, "self_closing_tag")), child(ct, tn, _), kind(tn, "tag_name"), text(tn, x),
+    !match("<[^\\s/>.]+\\..*", ct).
+// tag_read(r): r is a component tag's statement, `Foo;` or `Foo.Bar;`.
+.decl tag_read(r: node)
+tag_read(r) :- child(e, r, _), kind(e, "expression_statement").
+tag_read(r) :- tag_chain(r, m), child(e, m, _), kind(e, "expression_statement").
+.decl tag_chain(r: node, m: node)  // m is a member expression r heads, through member expressions only
+tag_chain(r, m) :- vv_read(r, _), child(m, r, _), kind(m, "member_expression").
+tag_chain(r, m) :- tag_chain(r, c), child(m, c, _), kind(m, "member_expression").
+// filter_name(r): `{{ a | f }}`, `{{ a | f(b) }}`, Vue 2's filters, which the view reads as `|`.
+.decl filter_name(r: node)
+filter_name(r) :- kind(r, "identifier"), (field(p, "right", r) ; field(c, "function", r), kind(c, "call_expression"),
+    field(p, "right", c)), filter_pipe(p).
+.decl filter_pipe(p: node)  // a `|` of a {{ }} or a v-bind's own expression, through `|`s only
+filter_pipe(p) :- pipe(p), child(x, p, _), kind(x, "parenthesized_expression"), filter_top(x).
+filter_pipe(p) :- pipe(p), child(q, p, _), filter_pipe(q).
+.decl pipe(p: node)
+pipe(p) :- kind(p, "binary_expression"), op(p, "|").
+.decl filter_top(x: node)  // the parentheses of `(E);` for a {{ }} or a v-bind
+filter_top(x) :- child(e, x, _), kind(e, "expression_statement"), host_node(x, h),
+    (kind(h, "interpolation") ; kind(h, "directive_attribute"), match("(?:v-bind(?:[:.=\\s]|$)|[:.]).*", h)).

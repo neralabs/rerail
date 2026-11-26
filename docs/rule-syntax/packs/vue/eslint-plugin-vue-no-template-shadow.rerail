@@ -1,31 +1,97 @@
 .policy "eslint-plugin-vue-no-template-shadow" revision 2
+.guests off
 .description "Avoid naming a v-for alias or slot parameter after an outer template variable, prop, data, computed, method or setup binding; it shadows that name."
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rerail"
-//   tvar(e, x, id, k), vname(o, g, x, n), vprop_name(c, x, n), vscript(p, setup), vsetup_doc(d), decl_site(…)
+#include "vue/vue-02.rerail"
+#include "vue/compare.rerail"
+//   vv_arrow(a), vv_param(n, x, a), vv_module_name(k), vv_setup_stmt(s), vv_site(r, d), vv_site_only(d), cmp_unquoted(n, x)
 
-// eslint-plugin-vue's no-template-shadow: a template variable (v-for alias, slot parameter) whose name is already
-// taken by
-//   an outer element's template variable, or an earlier one of the same element;
-//   a name the component declares: props, computed, data, asyncData, methods, setup (vue/component's vname), or a
-//   <script setup> prop (defineProps);
-//   in a file with <script setup>, a top-level declaration of its scripts (imports included).
-// Option allow: names that may shadow.
+// eslint-plugin-vue's no-template-shadow over the component's view (vue/view): a template variable (a v-for alias,
+// a slot parameter) whose name is already taken by
+//   a variable of an outer element's v-for or slot;
+//   a top-level binding of <script setup> (imports included);
+//   a prop defineProps declares: `defineProps({ a: … })`, `defineProps(["a"])`, `defineProps<{ a: T }>()`, or the
+//   members of the interface or type alias `defineProps<Props>()` names;
+//   a member of the component's props, computed, data, asyncData, methods or setup: an object's key, a returned
+//   object's key, or a string of a props array.
+// No options (the plugin's allow is not in the JSON).
 //   <li v-for="item in items"><p v-for="item in item.parts" /></li>    the inner item is reported
 //   data() { return { item: 1 } } … <li v-for="item in items" />       reported
 .violation shadow(at: node, x: symbol) code "vue/no-template-shadow" "Variable '{x}' is already declared in the upper scope."
     suppress eslint "vue/no-template-shadow"
-shadow(id, x) :- tvar(e, x, id, _), !option_item("allow", _, x), taken(e, id, x).
-.decl taken(e: node, id: node, x: symbol)
-taken(e, id, x) :- tvar(e, x, id, _), within(e, p), tvar(p, x, _, _).
-taken(e, id, x) :- tvar(e, x, id, _), tvar(e, x, j, _), earlier(j, id).
-taken(e, id, x) :- tvar(e, x, id, _), docof(id, d), script_name(d, x).
-// script_name(d, x): what document d's script declares for the template.
-.decl script_name(d: number, x: symbol)
-script_name(d, x) :- vname(o, g, x, _), group(g), docof(o, d).
-script_name(d, x) :- vprop_name(c, x, _), docof(c, d).
-script_name(d, x) :- vsetup_doc(d), vscript(p, _), docof(p, d), decl_site(p, x, _, _, _).
-.decl group(g: symbol)
-group("props"). group("computed"). group("data"). group("asyncData"). group("methods"). group("setup").
+shadow(n, x) :- docof(n, g), (guest(g, _, _, "javascript") ; guest(g, _, _, "typescript") ; guest(g, _, _, "tsx")),
+    vv_param(n, x, a), taken(n, x, a).
+.decl taken(n: node, x: symbol, a: node)
+taken(n, x, a) :- vv_param(n, x, a), within(a, o), vv_arrow(o), vv_param(_, x, o).
+taken(n, x, a) :- vv_param(n, x, a), cmp_unquoted(n, t), declared(k), cmp_unquoted(k, t), docof(n, g), docof(k, g).
+// declared(k): k names something the script declares for the template.
+.decl declared(k: node)
+declared(k) :- (kind(k, "identifier") ; kind(k, "shorthand_property_identifier_pattern")), vv_module_name(k),
+    within(k, st), vv_setup_stmt(st).
+declared(k) :- member_key(m, k), child(o, m, _), kind(o, "object"), child(as, o, _), kind(as, "arguments"),
+    child(c, as, _), props_call(c).
+declared(k) :- kind(k, "string"), child(r, k, _), kind(r, "array"), child(as, r, _), kind(as, "arguments"),
+    child(c, as, _), props_call(c).
+declared(k) :- signature_name(s, k), child(t, s, _), kind(t, "object_type"), child(ta, t, _), kind(ta, "type_arguments"),
+    child(c, ta, _), props_call(c).
+declared(k) :- signature_name(s, k), child(b, s, _), (kind(b, "interface_body") ; kind(b, "object_type")),
+    child(d, b, _), (kind(d, "interface_declaration") ; kind(d, "type_alias_declaration")), field(d, "name", tn),
+    kind(tn, "type_identifier"), text(tn, t), inside(d, p, "program"), has(p, u, "type_identifier"), text(u, t),
+    child(ta, u, _), kind(ta, "type_arguments"), child(c, ta, _), props_call(c).
+declared(k) :- member_key(m, k), child(o, m, _), group_object(o).
+declared(k) :- kind(k, "string"), child(r, k, _), kind(r, "array"), child(p, r, _), group_pair(p).
+
+// props_call(c): a defineProps() call in <script setup>.
+.decl props_call(c: node)
+props_call(c) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"), text(f, "defineProps"),
+    within(c, st), vv_setup_stmt(st).
+// member_key(m, k): object member m's static name k: `a: 1`, `'a': 1`, `['a']: 1`, `a() {}`, `{ a }`.
+.decl member_key(m: node, k: node)
+member_key(m, k) :- (kind(m, "pair"), field(m, "key", n) ; kind(m, "method_definition"), field(m, "name", n)),
+    (k = n, (kind(n, "property_identifier") ; kind(n, "string")) ;
+     kind(n, "computed_property_name"), child(n, k, _), kind(k, "string")).
+member_key(k, k) :- kind(k, "shorthand_property_identifier").
+.decl signature_name(s: node, k: node)  // `a: T;` or `a(): T;` in a type
+signature_name(s, k) :- (kind(s, "property_signature") ; kind(s, "method_signature")), field(s, "name", k),
+    (kind(k, "property_identifier") ; kind(k, "string")).
+
+// The options API: an object the component's definition holds, and its groups that name things for the template.
+.decl component_object(o: node)
+component_object(o) :- kind(o, "object"), child(p, o, _),
+    (kind(p, "export_statement") ;
+     kind(p, "arguments"), child(c, p, _), kind(c, "call_expression"), field(c, "function", f), definer(f) ;
+     kind(p, "arguments"), child(c, p, _), kind(c, "new_expression"), field(c, "constructor", v), text(v, "Vue")).
+// definer(f): defineComponent and the like, unless the name resolves to a non-Vue import, a function, a class, a
+// catch parameter or a `const { … } = require("other")`.
+.decl definer(f: node)
+definer(f) :- field(_, "function", f),
+    match("(defineNuxtComponent|Vue\\.(component|mixin|extend)|[A-Za-z_$][\\w$]*\\.(component|mixin))", f).
+definer(f) :- kind(f, "identifier"), match("(defineComponent|component|createApp)", f),
+    count : { vv_site(f, s), vv_site_only(s), (d = s ; within(s, d)), shadowing_site(d) } = 0.
+.decl shadowing_site(d: node)
+shadowing_site(d) :- kind(d, "function_declaration") ; kind(d, "generator_function_declaration") ;
+    kind(d, "class_declaration") ; kind(d, "catch_clause").
+shadowing_site(d) :- kind(d, "import_specifier"),
+    count : { inside(d, i, "import_statement"), field(i, "source", m), vue_package(m) } = 0.
+shadowing_site(d) :- kind(d, "variable_declarator"), field(d, "name", l), kind(l, "object_pattern"), field(d, "value", c),
+    kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"), text(f, "require"),
+    count : { field(c, "arguments", as), child(as, m, _), vue_package(m) } = 0.
+.decl vue_package(m: node)  // a string naming Vue's package
+vue_package(m) :- kind(m, "string"), str(m, v), match("vue|@vue/composition-api|@nuxtjs/composition-api|#imports", v).
+.decl group_pair(p: node)  // `props: …`, `data: …` in a component object
+group_pair(p) :- kind(p, "pair"), field(p, "key", k), group_name(k), child(o, p, _), component_object(o).
+.decl group_function(f: node)  // `data() {}`, `data: function () {}`, `setup: () => …`
+group_function(f) :- kind(f, "method_definition"), field(f, "name", k), group_name(k), child(o, f, _), component_object(o).
+group_function(f) :- (kind(f, "function_expression") ; kind(f, "generator_function") ; kind(f, "arrow_function")),
+    child(p, f, _), group_pair(p).
+.decl group_object(o: node)  // a group's object, or one its function returns
+group_object(o) :- kind(o, "object"), child(p, o, _), group_pair(p).
+group_object(o) :- kind(o, "object"), child(r, o, _), kind(r, "return_statement"), child(b, r, _),
+    kind(b, "statement_block"), child(f, b, _), group_function(f).
+group_object(o) :- kind(o, "object"), child(pe, o, _), kind(pe, "parenthesized_expression"), child(f, pe, _),
+    kind(f, "arrow_function"), group_function(f).
+.decl group_name(k: node)
+group_name(k) :- (field(_, "key", k) ; field(_, "name", k)),
+    match("['\"]?(props|computed|data|asyncData|methods|setup)['\"]?", k).
