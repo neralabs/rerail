@@ -186,6 +186,30 @@ pub(super) fn interleave(text: &str) -> Option<String> {
                 t = o;
             }
         }
+        // A scan of the bytes (`bit_reads`) ends where stage 1 may not be made: made through its end, for the reads
+        // there.
+        for scan in ["wfirst_bit", "wfirst_in", "wfirst_clear", "wrun_last", "wrun_once_last", "bfirst_bit", "bfirst_in", "bfirst_clear", "brun_last", "brun_once_last"] {
+            let pat = format!("{scan}(n, ");
+            let mut o = String::new();
+            let mut rest = t.as_str();
+            while let Some(p) = rest.find(&pat) {
+                let ok = rest[..p].chars().next_back().is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_' || c == '.'));
+                o.push_str(&rest[..p]);
+                let inner = &rest[p + scan.len() + 1..];
+                match super::bytes::closing(inner) {
+                    Some(c) if ok => {
+                        let _ = write!(o, "s1_past(src, &mut st1, &mut s1, {scan}({}))", &inner[..c]);
+                        rest = &inner[c + 1..];
+                    }
+                    _ => {
+                        o.push_str(&pat);
+                        rest = &rest[p + pat.len()..];
+                    }
+                }
+            }
+            o.push_str(rest);
+            t = o;
+        }
         t
     };
     let product = |t: &str| prefixed(&scans(t), &masks, "s1.");
@@ -223,7 +247,7 @@ pub(super) fn interleave(text: &str) -> Option<String> {
     }
     let _ = write!(out, "{lp_text}\n{fin}{post}\n{}", seg(lend, l.len()));
     let helpers = format!(
-        "\n/// `first_bit` of a mask of stage 1's, its blocks made as the scan comes to them (decision 0703).\n#[inline(always)]\nfn s1_first_bit(src: &[u8], st: &mut Stage1Run, s1: &mut Stage1, m: impl Fn(&Stage1) -> &[u64], from: usize) -> Option<usize> {{\n    let nw = src.len().div_ceil(64);\n    loop {{\n        let made = st.t.saturating_sub({lag}).min(nw);\n        if from / 64 + 1 < made || made == nw {{\n            match first_bit(&m(s1)[..made], from) {{\n                Some(p) if p / 64 + 1 < made || made == nw => return Some(p),\n                None if made == nw => return None,\n                _ => {{}}\n            }}\n        }}\n        let to = (st.t * 2).max(st.t + 16);\n        stage1_best(src, st, s1, to);\n    }}\n}}\n\n/// `run_last` of a mask of stage 1's, its blocks made as the run comes to them (decision 0703).\n#[inline(always)]\nfn s1_run_last(src: &[u8], st: &mut Stage1Run, s1: &mut Stage1, m: impl Fn(&Stage1) -> &[u64], s: usize) -> usize {{\n    let nw = src.len().div_ceil(64);\n    loop {{\n        let made = st.t.saturating_sub({lag}).min(nw);\n        if s / 64 + 1 < made || made == nw {{\n            let l = run_last(&m(s1)[..made], s);\n            if l / 64 + 1 < made || made == nw {{\n                return l;\n            }}\n        }}\n        let to = (st.t * 2).max(st.t + 16);\n        stage1_best(src, st, s1, to);\n    }}\n}}\n"
+        "\n/// `r`, stage 1 made through the block after the byte it names (a scan of the bytes' end).\n#[inline(always)]\nfn s1_past<T: Copy + Into<Option<usize>>>(src: &[u8], st: &mut Stage1Run, s1: &mut Stage1, r: T) -> T {{\n    if let Some(p) = r.into() {{\n        let to = p / 64 + 2 + {lag};\n        if st.t < to {{\n            stage1_best(src, st, s1, to.max(st.t + 16));\n        }}\n    }}\n    r\n}}\n\n/// `first_bit` of a mask of stage 1's, its blocks made as the scan comes to them (decision 0703).\n#[inline(always)]\nfn s1_first_bit(src: &[u8], st: &mut Stage1Run, s1: &mut Stage1, m: impl Fn(&Stage1) -> &[u64], from: usize) -> Option<usize> {{\n    let nw = src.len().div_ceil(64);\n    loop {{\n        let made = st.t.saturating_sub({lag}).min(nw);\n        if from / 64 + 1 < made || made == nw {{\n            match first_bit(&m(s1)[..made], from) {{\n                Some(p) if p / 64 + 1 < made || made == nw => return Some(p),\n                None if made == nw => return None,\n                _ => {{}}\n            }}\n        }}\n        let to = (st.t * 2).max(st.t + 16);\n        stage1_best(src, st, s1, to);\n    }}\n}}\n\n/// `run_last` of a mask of stage 1's, its blocks made as the run comes to them (decision 0703).\n#[inline(always)]\nfn s1_run_last(src: &[u8], st: &mut Stage1Run, s1: &mut Stage1, m: impl Fn(&Stage1) -> &[u64], s: usize) -> usize {{\n    let nw = src.len().div_ceil(64);\n    loop {{\n        let made = st.t.saturating_sub({lag}).min(nw);\n        if s / 64 + 1 < made || made == nw {{\n            let l = run_last(&m(s1)[..made], s);\n            if l / 64 + 1 < made || made == nw {{\n                return l;\n            }}\n        }}\n        let to = (st.t * 2).max(st.t + 16);\n        stage1_best(src, st, s1, to);\n    }}\n}}\n"
     );
     let at = "\n/// `src`'s records.\npub fn lex(";
     if !out.contains(at) {
@@ -413,7 +437,9 @@ fn together(text: &str) -> Option<String> {
 fn test_only(text: &str, fields: &[(&str, &str)]) -> String {
     let Some(lx) = text.find("\npub fn lex(src: &[u8]) -> Lexed {") else { return text.to_owned() };
     let lex = &text[lx..];
-    let lex = &lex[..lex.find("\n}\n").unwrap_or(lex.len())];
+    // Its code, not its comments (which name masks).
+    let lex: String = lex[..lex.find("\n}\n").unwrap_or(lex.len())].split('\n').map(|l| format!("{}\n", code_of(l))).collect();
+    let lex = lex.as_str();
     let read = |f: &str| {
         let whole = |pat: &str| lex.match_indices(pat).any(|(i, _)| !lex[i + pat.len()..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_'));
         whole(&format!("s1.{f}")) || whole(&format!("&o.{f}[..]"))
@@ -437,101 +463,68 @@ fn test_only(text: &str, fields: &[(&str, &str)]) -> String {
     out
 }
 
-/// The one-byte tests of stage 1's masks as tests of the bytes (decision 0703), as the lean lexer tests `c == b'/'`:
-/// a `bit(&M, i)` in `lex` (not the test build's walk of the regions) where `M` reads no region and `lex` reads it only
-/// so. Stage 1 then keeps no vector of it in the product build (`test_only`). `exprs`: each mask's expression.
+/// Stage 1's masks read from the bytes where `lex` reads them (decision 0703), as the lean lexer reads its bytes: a
+/// one-byte test as a test of the bytes there (`c == b'/'`), a search or a count over bytes 64 at a time from its
+/// first (`Bytes`' windows, the one pass's). A mask that reads no region, each of whose reads in `lex` (not the test
+/// build's walk of the regions) has that form. Stage 1 then keeps none of it in the product build (`test_only`), and
+/// `lex` reads the bytes on `S`'s backend (`generic_lex`). `exprs`: each mask's expression.
 pub(super) fn bit_reads(text: &str, stmts: &[::bitlex::syntax::Stmt], exprs: &[(String, ::bitlex::syntax::Expr)]) -> String {
     let Some(lx) = text.find("\npub fn lex(src: &[u8]) -> Lexed {") else { return text.to_owned() };
     let Some(len) = text[lx..].find("\n}\n") else { return text.to_owned() };
     let (head, lex, tail) = (&text[..lx], &text[lx..lx + len], &text[lx + len..]);
     // The product's lines: not the destructuring of stage 1's masks, nor the walk.
-    let mut product = String::new();
-    let mut in_walk = false;
     let lines: Vec<&str> = lex.split('\n').collect();
+    let mut product = vec![false; lines.len()];
+    let mut in_walk = false;
     for (i, l) in lines.iter().enumerate() {
         if l.starts_with("    let (") && l.ends_with(") = {") && i > 0 && lines[i - 1].trim() == "#[cfg(feature = \"test-hooks\")]" {
             in_walk = true;
         }
-        if !in_walk && !l.starts_with("    let Stage1 { ") {
-            product.push_str(l);
-            product.push('\n');
-        }
+        product[i] = !in_walk && !l.starts_with("    let Stage1 { ");
         if in_walk && *l == "    };" {
             in_walk = false;
         }
     }
     let whole = |t: &str, pat: &str| t.match_indices(pat).filter(|(i, _)| !t[..*i].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.') && !t[i + pat.len()..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')).count();
-    let by = super::bytes::Bytes::new(stmts, HashMap::new(), HashMap::new());
-    let mut tests: Vec<(&str, &::bitlex::syntax::Expr)> = Vec::new();
-    for (name, e) in exprs {
-        let reads = whole(&product, name);
-        let bits = product.matches(&format!("bit(&{name}, ")).count();
-        if reads > 0 && reads == bits && by.at(e, "s", 0).is_ok() {
-            tests.push((name, e));
+    let all: String = lines.iter().zip(&product).filter(|x| *x.1).map(|x| format!("{}\n", code_of(x.0))).collect();
+    let mut cands: HashSet<&str> = exprs.iter().map(|e| e.0.as_str()).filter(|n| whole(&all, n) > 0).collect();
+    // Until every mask left has each read in the bytes' form.
+    loop {
+        if cands.is_empty() {
+            return text.to_owned();
+        }
+        let locals: HashMap<String, ::bitlex::syntax::Expr> = exprs.iter().filter(|e| cands.contains(e.0.as_str())).cloned().collect();
+        let mut by = super::bytes::Bytes::new(stmts, locals, HashMap::new());
+        let out: Vec<String> = lines.iter().zip(&product).map(|(l, &p)| if p { by.partial_windows(l) } else { (*l).to_owned() }).collect();
+        let done: String = out.iter().zip(&product).filter(|x| *x.1).map(|x| format!("{}\n", code_of(x.0))).collect();
+        let keep: Vec<&str> = cands.iter().copied().filter(|n| by.failed.contains(*n) || whole(&done, n) > 0).collect();
+        if keep.is_empty() {
+            return format!("{head}{}{tail}\n{}", out.join("\n"), by.code());
+        }
+        for k in keep {
+            cands.remove(k);
         }
     }
-    if tests.is_empty() {
+}
+
+/// A line's code: not its comment.
+fn code_of(l: &str) -> &str {
+    if l.trim_start().starts_with("//") { "" } else { l.split_once(" // ").map_or(l, |x| x.0) }
+}
+
+/// `lex` on `S`'s backend where it reads the bytes 64 at a time (`bit_reads`), dispatched as stage 1 is.
+pub(super) fn generic_lex(text: &str) -> String {
+    let at = "\npub fn lex(src: &[u8]) -> Lexed {";
+    let Some(lx) = text.find(at) else { return text.to_owned() };
+    let Some(len) = text[lx..].find("\n}\n") else { return text.to_owned() };
+    if !text[lx..lx + len].contains("::<S>(src, n, ") {
         return text.to_owned();
     }
-    // Each `bit(&M, i)` outside the walk and the destructuring, as the test of the bytes at `i`.
-    let mut out = String::new();
-    let mut in_walk = false;
-    for (i, l) in lines.iter().enumerate() {
-        if l.starts_with("    let (") && l.ends_with(") = {") && i > 0 && lines[i - 1].trim() == "#[cfg(feature = \"test-hooks\")]" {
-            in_walk = true;
-        }
-        let mut line = (*l).to_owned();
-        if !in_walk && !l.starts_with("    let Stage1 { ") {
-            for (name, e) in &tests {
-                let pat = format!("bit(&{name}, ");
-                let mut o = String::new();
-                let mut rest = line.as_str();
-                while let Some(p) = rest.find(&pat) {
-                    let ok = !rest[..p].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_');
-                    o.push_str(&rest[..p]);
-                    let after = &rest[p + pat.len()..];
-                    // The position: to the call's close.
-                    let mut depth = 0i32;
-                    let end = after.char_indices().find(|&(_, c)| {
-                        match c {
-                            '(' | '[' => depth += 1,
-                            ')' | ']' if depth > 0 => depth -= 1,
-                            ')' => return true,
-                            _ => {}
-                        }
-                        false
-                    });
-                    match (ok, end) {
-                        (true, Some((k, _))) => {
-                            let at = after[..k].trim();
-                            let at = if at.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') { at.to_owned() } else { format!("({at})") };
-                            match by.at(e, &at, 0) {
-                                Ok(t) => {
-                                    let _ = write!(o, "({t})");
-                                    rest = &after[k + 1..];
-                                }
-                                Err(_) => {
-                                    o.push_str(&pat);
-                                    rest = after;
-                                }
-                            }
-                        }
-                        _ => {
-                            o.push_str(&pat);
-                            rest = after;
-                        }
-                    }
-                }
-                o.push_str(rest);
-                line = o;
-            }
-        }
-        if in_walk && *l == "    };" {
-            in_walk = false;
-        }
-        out.push_str(&line);
-        out.push('\n');
-    }
-    out.pop();
-    format!("{head}{out}{tail}")
+    let mut out = String::with_capacity(text.len() + 256);
+    out.push_str(&text[..lx]);
+    out.push_str("\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\nunsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {");
+    out.push_str(&text[lx + at.len()..lx + len + 3]);
+    out.push_str("\nrerail_simd8::dispatch! {\n    /// `src`'s records.\n    pub fn lex(src: &[u8]) -> Lexed = lex_on, on lex_on_best;\n}\n");
+    out.push_str(&text[lx + len + 3..]);
+    out
 }

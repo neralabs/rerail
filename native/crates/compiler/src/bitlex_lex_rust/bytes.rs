@@ -33,6 +33,9 @@ pub(super) struct Bytes<'a> {
     class_code: HashMap<String, String>,
     /// Whether the line read is in a region's row: its reads go from the opener, as the lean lexer's micro-lexers.
     in_region: bool,
+    /// Whether a read with no form of the bytes stays as it is (`partial_windows`), its mask in `failed`.
+    partial: bool,
+    pub(super) failed: std::collections::HashSet<String>,
     /// The operators' pairs masks the loop reads (`k_pair_K`): each row's pairs of bytes, a pair's first byte's bit where
     /// the second is the byte after (lean's `pair`), made of the block's classes too.
     pub(super) pairs: Vec<(String, Vec<(u8, u8)>)>,
@@ -63,8 +66,8 @@ pub(super) struct Bytes<'a> {
 }
 
 /// The calls of the loop that read a mask: their name, and how many of their first arguments are masks.
-const READS: [(&str, usize); 9] =
-    [("run_once_last", 2), ("run_once_hit", 2), ("first_clear", 1), ("first_bit", 1), ("count_in", 1), ("first_in", 1), ("run_last", 1), ("any_in", 1), ("bit", 1)];
+const READS: [(&str, usize); 11] =
+    [("run_once_last", 2), ("run_once_hit", 2), ("first_clear", 1), ("first_bit", 1), ("count_in", 1), ("first_in", 1), ("run_last", 1), ("any_in", 1), ("bit", 1), ("put", 1), ("last_in", 1)];
 
 impl<'a> Bytes<'a> {
     pub(super) fn new(stmts: &'a [Stmt], locals: HashMap<String, Expr>, class_code: HashMap<String, String>) -> Self {
@@ -83,7 +86,18 @@ impl<'a> Bytes<'a> {
                 _ => {}
             }
         }
-        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default(), scalar: Default::default(), row_firsts: HashMap::new(), row: None }
+        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default(), scalar: Default::default(), row_firsts: HashMap::new(), row: None, partial: false, failed: Default::default() }
+    }
+
+    /// `code` with each read of the masks it has (`locals`) in the windows' form, no block's words (decision 0703): a
+    /// read of another mask, or one with no such form, stays as it is, the mask then in `failed`.
+    pub(super) fn partial_windows(&mut self, code: &str) -> String {
+        self.in_region = true;
+        self.partial = true;
+        let out = self.rewrite_line(code, code).unwrap_or_else(|_| code.to_owned());
+        self.partial = false;
+        self.in_region = false;
+        out
     }
 
     /// Class `n` tested of byte `b` (`src[i]`) by its bit in the byte's `CLASS` entry, as the lean lexer tests a class:
@@ -253,6 +267,11 @@ impl<'a> Bytes<'a> {
             Expr::And(a, b) => format!("({} && {})", self.at(a, at, depth + 1)?, self.at(b, at, depth + 1)?),
             Expr::Or(a, b) => format!("({} || {})", self.at(a, at, depth + 1)?, self.at(b, at, depth + 1)?),
             Expr::Xor(a, b) => format!("({} != {})", self.at(a, at, depth + 1)?, self.at(b, at, depth + 1)?),
+            // An escaped byte: after an odd run of the escaping bytes (`partial_windows`).
+            Expr::Call(f, args) if f == "escaped" && self.partial && let [Arg::E(b)] = args.as_slice() => {
+                let t = self.at(b, "q", depth + 1)?;
+                format!("(esc_back(({at}) as isize, |q: usize| {t}) == 1)")
+            }
             // `text(T)`: the bytes from here are `T`'s.
             Expr::Call(f, args) if f == "text" && let [Arg::S(t)] = args.as_slice() && !t.is_empty() => {
                 let i = if at == "s" { "s".to_owned() } else { at.to_owned() };
@@ -362,6 +381,19 @@ impl<'a> Bytes<'a> {
             }
             Expr::Or(a, b) => format!("({} | {})", self.win(a, off, depth + 1)?, self.win(b, off, depth + 1)?),
             Expr::Xor(a, b) => format!("({} ^ {})", self.win(a, off, depth + 1)?, self.win(b, off, depth + 1)?),
+            // A read from anywhere (`partial_windows`): the window's carry read back from the bytes, the run of the
+            // escaping bytes that ends before it (odd: the window's first byte is escaped), as simdjson's carry is.
+            Expr::Call(f, args) if f == "escaped" && self.partial => {
+                let Some(Arg::E(b)) = args.first() else { return Err("`escaped` of no mask".into()) };
+                let at = self.at(b, "q", depth + 1)?;
+                let b = self.win(b, off, depth + 1)?;
+                format!("{{ let mut c = esc_back({p}, |q: usize| {at}); escaped_step({b}, &mut c) }}")
+            }
+            // `text(T)`: each of `T`'s bytes in its window, `k` bytes on.
+            Expr::Call(f, args) if f == "text" && self.partial && let [Arg::S(t)] = args.as_slice() && !t.is_empty() => {
+                let terms: Vec<String> = t.iter().enumerate().map(|(k, c)| format!("unsafe {{ wbyte::<S>(src, n, {}, {c:#04x}) }}", if off + k as i64 == 0 { "p".to_owned() } else { format!("(p + {})", off + k as i64) })).collect();
+                format!("({})", terms.join(" & "))
+            }
             Expr::Call(f, args) if f == "escaped" && off == 0 => {
                 let Some(Arg::E(b)) = args.first() else { return Err("`escaped` of no mask".into()) };
                 let b = self.win(b, 0, depth + 1)?;
@@ -613,10 +645,16 @@ impl<'a> Bytes<'a> {
     /// One read (`name(args)`) of the loop as the bytes' form.
     fn read(&mut self, name: &str, args: &[String], line: &str) -> Result<Option<String>, String> {
         let mask = |a: &str| a.trim().strip_prefix('&').map(|m| m.strip_suffix("[..made]").unwrap_or(m).to_owned());
+        // A forward mask's bits made the mask's (`put(&mut V, &M, a, b)`): of its windows.
+        if self.partial && name == "put" && args.len() == 4 {
+            let Some(m) = mask(&args[1]).filter(|m| self.locals.contains_key(m)) else { return Ok(None) };
+            let (f, _) = self.window_fn(&m)?;
+            return Ok(Some(format!("wput({}, {}, {}, {f})", args[0].trim(), args[2].trim(), args[3].trim())));
+        }
         let Some(m) = mask(&args[0]) else { return Ok(None) };
         // The test build's checks read the walk's masks, which stay the walk's.
         if !self.locals.contains_key(&m) {
-            return if line.contains("assert") { Ok(None) } else { Err(format!("`{m}` is no mask of the bytes")) };
+            return if line.contains("assert") || self.partial { Ok(None) } else { Err(format!("`{m}` is no mask of the bytes")) };
         }
         let from_start = |a: &str| matches!(a.trim(), "s" | "s + 1");
         let windowed = |me: &mut Self, from: &str| -> Result<String, String> {
@@ -674,6 +712,7 @@ impl<'a> Bytes<'a> {
                 let e = self.expr(&m)?;
                 format!("({})", self.at(&e, args[1].trim(), 0)?)
             }
+            ("last_in", 3) if self.partial => format!("wlast_in({}, {}, {})", args[1].trim(), args[2].trim(), self.window_fn(&m)?.0),
             ("first_bit", 2) => format!("wfirst_bit(n, {}, {})", args[1].trim(), windowed(self, &args[1])?),
             ("count_in", 3) => format!("wcount_in(n, {}, {}, {})", args[1].trim(), args[2].trim(), windowed(self, &args[1])?),
             ("first_in", 3) => format!("wfirst_in(n, {}, {}, {})", args[1].trim(), args[2].trim(), windowed(self, &args[1])?),
@@ -728,13 +767,34 @@ impl<'a> Bytes<'a> {
         let mut out = String::new();
         let mut rest = text;
         'scan: while !rest.is_empty() {
+            // A word of a mask (`M[i]`, `prev(&M, i, k)`, `next(&M, i, k)`) in a pass over the words: its window there.
+            if self.partial && !out.chars().next_back().is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.') {
+                if let Some(r) = self.word_read(rest)? {
+                    out.push_str(&r.0);
+                    rest = &rest[r.1..];
+                    continue 'scan;
+                }
+            }
             for (name, _) in READS {
+                // `put` only where a read may stay as it is (`partial_windows`).
+                if (name == "put" || name == "last_in") && !self.partial {
+                    continue;
+                }
                 let pat = format!("{name}(&");
                 if rest.starts_with(&pat) && !out.chars().next_back().is_some_and(|c| c.is_alphanumeric() || c == '_') {
                     let inner = &rest[name.len() + 1..];
                     let Some(close) = closing(inner) else { return Err(format!("an unclosed call in `{}`", line.trim())) };
                     let args: Vec<String> = split_args(&inner[..close]).into_iter().map(|a| self.rewrite_line(&a, line)).collect::<Result<_, _>>()?;
-                    match self.read(name, &args, line)? {
+                    let read = match self.read(name, &args, line) {
+                        Err(_) if self.partial => {
+                            if let Some(m) = args.get(usize::from(name == "put")).and_then(|a| a.trim().strip_prefix('&')) {
+                                self.failed.insert(m.to_owned());
+                            }
+                            None
+                        }
+                        r => r?,
+                    };
+                    match read {
                         Some(r) => out.push_str(&r),
                         None => {
                             let _ = write!(out, "{name}({})", args.join(","));
@@ -749,6 +809,50 @@ impl<'a> Bytes<'a> {
             rest = &rest[c.len_utf8()..];
         }
         Ok(out)
+    }
+
+    /// A word of a mask at the start of `rest`, read as its window, and the length read: `M[i]`, `prev(&M, i, k)` or
+    /// `next(&M, i, k)`, `i` a name.
+    fn word_read(&mut self, rest: &str) -> Result<Option<(String, usize)>, String> {
+        let name_len = |t: &str| t.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(t.len());
+        for (f, sign) in [("prev(&", "-"), ("next(&", "+")] {
+            if let Some(t) = rest.strip_prefix(f) {
+                let m = &t[..name_len(t)];
+                let Some(close) = closing(t) else { return Ok(None) };
+                let args = split_args(&t[..close]);
+                if !self.locals.contains_key(m) || args.len() != 3 || args[0].trim() != m {
+                    return Ok(None);
+                }
+                let (i, k) = (args[1].trim(), args[2].trim());
+                if name_len(i) != i.len() || k.parse::<u32>().is_err() {
+                    return Ok(None);
+                }
+                let m = m.to_owned();
+                if let Err(e) = self.window_fn(&m) {
+                    self.failed.insert(m);
+                    let _ = e;
+                    return Ok(None);
+                }
+                return Ok(Some((format!("unsafe {{ w_{m}::<S>(src, n, ({i} * 64) as isize {sign} {k}, &mut 0) }}"), f.len() + close + 1)));
+            }
+        }
+        let l = name_len(rest);
+        let m = &rest[..l];
+        if l == 0 || !self.locals.contains_key(m) || !rest[l..].starts_with('[') {
+            return Ok(None);
+        }
+        let t = &rest[l + 1..];
+        let Some(e) = t.find(']') else { return Ok(None) };
+        let i = &t[..e];
+        if i.is_empty() || name_len(i) != i.len() {
+            return Ok(None);
+        }
+        let m = m.to_owned();
+        if self.window_fn(&m).is_err() {
+            self.failed.insert(m);
+            return Ok(None);
+        }
+        Ok(Some((format!("unsafe {{ w_{m}::<S>(src, n, ({i} * 64) as isize, &mut 0) }}"), l + 1 + e + 1)))
     }
 
     /// The block's word of mask `m` (`k_m`), made once a block.
@@ -1031,7 +1135,7 @@ impl<'a> Bytes<'a> {
 }
 
 /// The index of the `)` that closes the call whose arguments start `s`.
-fn closing(s: &str) -> Option<usize> {
+pub(super) fn closing(s: &str) -> Option<usize> {
     let mut depth = 0i32;
     for (i, c) in s.char_indices() {
         match c {
@@ -1390,6 +1494,65 @@ fn valid(n: usize, p: isize) -> u64 {
     let left = n as isize - p;
     let hi = if left >= 64 { !0 } else if left <= 0 { 0 } else { (1u64 << left) - 1 };
     if p < 0 { hi & (!0u64 << (-p).min(63)) } else { hi }
+}
+
+/// The escape carry of the window from `p`, from the bytes: the parity of the run of bytes `t` holds that ends before
+/// it.
+#[inline(always)]
+fn esc_back(p: isize, t: impl Fn(usize) -> bool) -> u64 {
+    let mut c = 0;
+    let mut q = p;
+    while q > 0 && t((q - 1) as usize) {
+        c ^= 1;
+        q -= 1;
+    }
+    c
+}
+
+/// Byte `c`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn wbyte<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, c: u8) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    held(unsafe { S::eq_mask(v, c) }, q, n, p)
+}
+
+/// The last byte of `a..=b` the windows `w` give, from `b`'s word back.
+#[inline(always)]
+fn wlast_in(a: usize, b: usize, mut w: impl FnMut(isize, &mut u64) -> u64) -> Option<usize> {
+    if a > b {
+        return None;
+    }
+    let mut q = b / 64;
+    loop {
+        let lo = if q == a / 64 { !0u64 << (a % 64) } else { !0 };
+        let hi = if q == b / 64 { !0u64 >> (63 - b % 64) } else { !0 };
+        let m = w((q * 64) as isize, &mut 0) & lo & hi;
+        if m != 0 {
+            return Some(q * 64 + 63 - m.leading_zeros() as usize);
+        }
+        if q == a / 64 {
+            return None;
+        }
+        q -= 1;
+    }
+}
+
+/// `v`'s bits at bytes `a..=b` made those of the windows `w` gives (`put`'s).
+#[inline(always)]
+fn wput(v: &mut [u64], a: usize, b: usize, mut w: impl FnMut(isize, &mut u64) -> u64) {
+    let mut i = a;
+    let mut esc = 0;
+    while i <= b {
+        let (q, r) = (i / 64, i % 64);
+        let k = (b + 1 - i).min(64 - r);
+        let m = (if k == 64 { !0 } else { (1u64 << k) - 1 }) << r;
+        v[q] = v[q] & !m | w((q * 64) as isize, &mut esc) & m;
+        i += k;
+    }
 }
 
 /// One window's escaped bytes (`escaped`), each after an odd run of `bs`'s; `carry`, the run's escape over the window

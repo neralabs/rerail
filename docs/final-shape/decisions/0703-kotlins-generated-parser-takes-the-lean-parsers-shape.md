@@ -105,13 +105,26 @@ them.
    level that may end at a mark asks (Kotlin's: only `semi`'s, the lean parser's `stmt`). A call that keeps every
    one (`asks & keep | set` is `asks`) saves, sets and restores nothing. Kotlin's 16 such calls are plain calls; 94
    set it, where the lean parser sets `stmt` in 3 places. rr and JSON have none.
+11. **Stage 1's masks are read from the bytes where `lex` reads them** (`interleave::bit_reads`,
+   `Bytes::partial_windows`), as the lean lexer reads its bytes: a test of one byte at the byte, a scan, a count, a
+   forward mask's bits (`put`, now `wput`), a backward scan (`last_in`, `wlast_in`) and a pass's word (`M[i]`,
+   `prev(&M, i, k)`) 64 bytes at a time from the bytes (`Bytes`' windows, the one pass's), `lex` generic over the SIMD
+   backend (`generic_lex`). An escape's carry at a window is read back from the bytes: the parity of the run of its
+   escaping bytes that ends before it (`esc_back`), simdjson's carry, so an escape reads from anywhere, not only from
+   a token's start; `text` is its bytes' windows (`wbyte`). A mask with a read with no such form (a `fill`, whose
+   carry is the state since the file's start) stays stage 1's. A scan of the bytes ends where stage 1 may not yet be
+   made, so it is made through the scan's end (`s1_past`). A mask a comment names, or only the test build reads, is
+   the test build's. Kotlin's stage 1 keeps 21 masks a block, the fills and the masks read with them, and the 5
+   vectors tier 2 takes; tier 1's Rust is 304 KB to 782 KB, each mask's window a function of its own (`w_*`). rr's
+   and JSON's code is unchanged.
 
-What stays: stage 1 makes 95 masks a block, where the lean lexer makes 5 and works out the rest (its strings, escapes,
-comments) from the bytes in its loop; and tier 1 computes four marks into the token's code: `head_ctor`'s line break
-(the lean lexer's `nl`), `semi_close` and `as_open` (each of a fill tier 1 keeps over the gap), and `real` (a count of
-a number's bytes). Its strings trip every condition of 0619's one pass: templates that resume a string (`tail ... or
-t_dollar resumes str`), a fill kept over a region (`assume ... at ends t_brace`), and strings that tier 2 reads in
-parts, from tier 1's masks (`rd1_open`). The lookahead of `as_split` and `is_split` stays a function a state
-(`next_*`). Tier 2 clears `marked` after 119 of its 145 closes and at 126 of its rules' ends: where a decision
-reads it, the reference's state after a mark (`G::after_mark`), which the lean parser keeps as its `asi` memo.
-`semi_close` is no derived mark: a comment keeps its own, which after a `;` is not its carrier's.
+What stays: stage 1 makes 21 masks a block, the fills (strings, comments, templates) and what is read with them, where
+the lean lexer makes 5 and keeps whether it is in a string as its loop's state; and tier 1 computes four marks into
+the token's code: `head_ctor`'s line break (the lean lexer's `nl`), `semi_close` and `as_open` (each of a fill tier 1
+keeps over the gap), and `real` (a count of a number's bytes). Its strings trip every condition of 0619's one pass:
+templates that resume a string (`tail ... or t_dollar resumes str`), a fill kept over a region (`assume ... at ends
+t_brace`), and strings that tier 2 reads in parts, from tier 1's masks (`rd1_open`). The lookahead of `as_split` and
+`is_split` stays a function a state (`next_*`). Tier 2 clears `marked` after 119 of its 145 closes and at 126 of its
+rules' ends: where a decision reads it, the reference's state after a mark (`G::after_mark`), which the lean parser
+keeps as its `asi` memo. `semi_close` is no derived mark: a comment keeps its own, which after a `;` is not its
+carrier's.
