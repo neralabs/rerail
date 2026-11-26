@@ -4273,20 +4273,21 @@ fn run_observed(
             let measured = counts.statistics(&|_| true);
             repository.push((rel.clone(), source, measured));
         }
-        // A library's own input that core does not make and no fact gives (`tsx/node-package.rerail`'s
-        // `npm_ignored`, "until core has it"): no rows, under its declared columns. A cross-file rule reads it as an
-        // input like any other (decision 0652 moves such readers there), so it is bound, empty.
-        let unbound: Vec<&String> = split.base.iter().filter(|rel| !repository.iter().any(|(r, _, _)| r == *rel)).collect();
-        for rel in unbound {
-            let own = projection.columns(rel).is_none() && !prog.facts.contains_key(rel.as_str());
-            let Some(cols) = prog.decls.get(rel.as_str()).filter(|_| own) else { continue };
-            // Its columns by position (`c0`, …), as a phase's export's (`atoms_source`): the cross part reads a
-            // relation core does not shape by position.
-            let names: Vec<String> = (0..cols.len()).map(|c| format!("c{c}")).collect();
-            let names: Vec<&str> = names.iter().map(String::as_str).collect();
-            let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(crate::code_rule_dsl::facts::vtab::Relation::new(&names));
-            let measured = syntax::statistics(source.as_ref());
-            repository.push((rel.clone(), source, measured));
+        // An input nothing gives rows (decision 0710): not core's, no registered reader's (`facts::repository`), no
+        // phase's export, no fact or `.input` setting. Bound empty, a rule reading it would read nothing where its
+        // producer is missing, so the run stops and names it. An `extensible` relation nothing states is stated empty
+        // (`extensible_stated`): an extension with no members, not a missing producer.
+        let unproduced: Vec<&str> = split
+            .base
+            .iter()
+            .filter(|rel| !repository.iter().any(|(r, _, _)| r == *rel) && projection.columns(rel).is_none() && !prog.facts.contains_key(rel.as_str()) && prog.decls.contains_key(rel.as_str()))
+            .map(String::as_str)
+            .collect();
+        if !unproduced.is_empty() {
+            return Err(Error::Plan(format!(
+                "{}: read as an input, and nothing gives it rows: no core relation, no registered reader's (a language's adapter registers its project files' readers at load), no phase's export, no fact and no `.input` setting (decision 0710)",
+                unproduced.join(", ")
+            )));
         }
         repository
     };

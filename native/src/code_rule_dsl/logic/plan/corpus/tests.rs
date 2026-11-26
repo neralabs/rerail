@@ -2560,6 +2560,39 @@ fn a_python_modules_privacy_is_read_over_the_files_at_its_own_path() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Decision 0710: an input nothing gives rows is an error naming it, not an empty relation a rule reads nothing from.
+/// An `extensible` relation nothing states is an extension with no members: stated empty, and the run goes on.
+#[test]
+fn an_input_nothing_produces_is_an_error_and_an_unstated_extension_is_empty() {
+    crate::install_store_functions();
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("unproduced");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("ws")).unwrap();
+    std::fs::write(dir.join("ws/a.py"), "x = 1\n").unwrap();
+    let run = |text: &str, out: &str| {
+        let rule = dir.join(format!("{out}.rerail"));
+        std::fs::write(&rule, text).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        super::run(&program, &dir.join("ws"), None, &dir.join(out), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18)
+    };
+    let missing = run(
+        ".language python\n.decl nobody_makes(path: symbol)\n.input nobody_makes\n.decl hit(p: symbol)\nhit(p) :- doc(_, p, _), nobody_makes(p).\n.output hit\n",
+        "missing",
+    );
+    let err = missing.err().expect("an input nothing produces fails the run").to_string();
+    assert!(err.contains("nobody_makes") && err.contains("nothing gives it rows"), "{err}");
+    let extension = run(
+        ".language python\n.decl members(path: symbol) extensible\n.decl hit(p: symbol)\nhit(p) :- doc(_, p, _), !members(p).\n.output hit\n",
+        "extension",
+    );
+    extension.expect("an unstated extension is empty");
+    let outputs = super::super::output::Outputs::open(&dir.join("extension")).unwrap();
+    let rows: Vec<String> = outputs.get("hit").map(|r| r.shown()).unwrap_or_default().into_iter().flatten().collect();
+    assert_eq!(rows, ["a.py"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `npm_ignored`, the repository input (`facts::repository`), as `package_manifest` reads a package: its `files` list
 /// decides where it has one (package.json always published); else its `.npmignore`; and a file under no package.json
 /// has no row. Read at each file's own path, it is a per-file setting (`SETTINGS_BY_PATH`).
