@@ -6,7 +6,7 @@ import type { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { backupPrivilegeSwitch, PRIVILEGE_SWITCH_START_BOUND_MS } from "./backup-privileges.js";
-import { type PrivilegeSwitch, powerShellWords, startPrivilegeSwitch, WINDOWS_POWERSHELL } from "./privileges/privilege-switch.js";
+import { PrivilegeSwitch, powerShellWords, startPrivilegeSwitch, WINDOWS_POWERSHELL } from "./privileges/privilege-switch.js";
 
 /** A case's time limit: room for two answers of a PowerShell that runs, which take milliseconds, never for a start. */
 const CASE_LIMIT_MS = 2_000;
@@ -116,5 +116,16 @@ describe("a privilege switch whose program ends before it is ready", () => {
         '<S S="Error">OpenProcessToken failed: 5_x000D__x000A_</S><S S="Error">At line:9 char:79 &amp; &lt;here&gt;_x000D__x000A_</S></Objs>',
     ].join("\r\n");
     expect(powerShellWords(errorOutput)).toBe("OpenProcessToken failed: 5\r\nAt line:9 char:79 & <here>");
+  });
+});
+
+describe("a privilege switch ended while its program still starts", () => {
+  it("ends that program at once, as a set-up cut at its bound leaves it to the tear-down", async () => {
+    // A start held ten minutes: only ending the program, not closing its input, ends the switch within this case.
+    const starting = new PrivilegeSwitch([process.execPath, join(import.meta.dirname, "privileges", "held-start.mjs"), "600000", process.execPath]);
+    const ready = starting.ready().then(() => undefined, (error: unknown) => error);
+    await starting.end();
+    expect(running(starting.pid ?? 0)).toBe(false);
+    expect(await ready).toBeInstanceOf(Error);
   });
 });
