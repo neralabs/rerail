@@ -1354,7 +1354,10 @@ impl<L: Layout> P<'_, L> {
             }
         }
         while self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_69 || self.m_named() || self.m_acc() || matches!(self.word(), w::THIS_5..=w::DO_26 | w::LPAREN_61..=w::AT_70 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
+            let asks = self.asks;
+            self.asks = asks & 0x0 | 0x8;
             self.r_statement()?;
+            self.asks = asks;
             self.ask_semi(false)?;
             if self.m_semi() {
                 self.mark_semi()?;
@@ -1483,9 +1486,6 @@ impl<L: Layout> P<'_, L> {
 
     /// `statement`.
     fn r_statement(&mut self) -> R {
-        // The level's questions (`asks`, decision 0703): its own, set where it starts.
-        let level_asks = self.asks;
-        self.asks = level_asks & 0x0 | 0x8;
         self.deeper()?;
         if self.m_label_at() || !self.m_lab_loop() && (self.m_lab_lam() || self.pat_this_at_0_0(self.i, self.n) || self.pat_jump_at_0_0(self.i, self.n) || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.word() == w::LBRACE_62 && self.word_at(self.i + 1) == w::MINUS_GT_38 || self.pat_lam_params_0_0(self.i, self.n) || self.m_ann_expr()) || !(self.m_lab_loop() || (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_27 | w::COLON_COLON_69))) && (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && matches!(self.word_at(self.i + 1), w::VAL_17..=w::TYPEALIAS_23 | w::AT_70 | w::SEALED_81..=w::SET_108 | w::COMPANION_121..=w::ENUM_123)) && ((self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_121)) && self.word() == w::OBJECT_20 && matches!(self.word_at(self.i + 1), w::COLON_29 | w::LBRACE_62) || (self.word() == w::FUN_19 && self.word_at(self.i + 1) == w::LPAREN_61) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::RETURN_10 | w::THROW_11 | w::COMMA_28 | w::COLON_29 | w::EQ_36 | w::AMP_AMP_44..=w::MINUS_EQ_47 | w::QUEST_COLON_52 | w::EQ_EQ_56 | w::BANG_EQ_57 | w::LPAREN_61 | w::LBRACK_63) && self.word() == w::FUN_19) || self.word() == w::SUSPEND_97 && self.word_at(self.i + 1) == w::FUN_19 && self.word_at(self.i + 2) == w::LPAREN_61 || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_69) || !(self.m_lab_loop() || (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_27 | w::COLON_COLON_69))) && (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && matches!(self.word_at(self.i + 1), w::VAL_17..=w::TYPEALIAS_23 | w::AT_70 | w::SEALED_81..=w::SET_108 | w::COMPANION_121..=w::ENUM_123) || self.m_named() || self.word() == w::ENUM_123 && self.word_at(self.i + 1) == w::CLASS_21 || self.m_acc() || matches!(self.word(), w::VAL_17..=w::TYPEALIAS_23 | w::AT_70) || self.word() == w::FOR_24 || self.word() == w::WHILE_25 || self.word() == w::DO_26) && (matches!(self.word(), w::THIS_5..=w::NULL_16 | w::LPAREN_61..=w::COLON_COLON_69 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE)) {
             self.r_expression()?;
@@ -1536,15 +1536,14 @@ impl<L: Layout> P<'_, L> {
             return self.refuse();
         }
         self.depth -= 1;
-        self.asks = level_asks;
         Ok(())
     }
 
     /// `statements`.
     fn statements(&mut self) -> R {
-        // The level's questions (`asks`, decision 0703): its own, set where it starts.
+        // The context's questions (`asks`, decision 0703): set where its body starts, for every level it calls.
         let level_asks = self.asks;
-        self.asks = level_asks & 0x0 | 0x0;
+        self.asks = level_asks & 0x0 | 0x8;
         self.deeper()?;
         self.open(k::STATEMENTS);
         self.r_statement()?;
@@ -1566,9 +1565,7 @@ impl<L: Layout> P<'_, L> {
                 break;
             }
         }
-        self.ask_semi(true)?;
-        if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() {
-        } else if self.m_semi_close() {
+        if self.m_semi_close() {
             self.mark_semi_close()?;
         }
         self.close()?;
@@ -1590,6 +1587,9 @@ impl<L: Layout> P<'_, L> {
 
     /// `control_structure_body`.
     fn control_structure_body(&mut self) -> R {
+        // The context's questions (`asks`, decision 0703): set where its body starts, for every level it calls.
+        let level_asks = self.asks;
+        self.asks = level_asks & 0x0 | 0x8;
         self.open(k::CONTROL_STRUCTURE_BODY);
         if self.i > 0 && matches!(self.word_at(self.i - 1), w::RPAREN_30 | w::ELSE_3 | w::DO_26 | w::TRY_9 | w::FINALLY_119 | w::MINUS_GT_38) && self.word() == w::LBRACE_62 {
             self.r_block()?;
@@ -1597,6 +1597,7 @@ impl<L: Layout> P<'_, L> {
             self.r_statement()?;
         }
         self.close()?;
+        self.asks = level_asks;
         Ok(())
     }
 
@@ -1940,6 +1941,9 @@ impl<L: Layout> P<'_, L> {
 
     /// `enum_class_body`.
     fn enum_class_body(&mut self) -> R {
+        // The context's questions (`asks`, decision 0703): set where its body starts, for every level it calls.
+        let level_asks = self.asks;
+        self.asks = level_asks & 0x0 | 0x8;
         self.open(k::ENUM_CLASS_BODY);
         if self.m_enum_k() {
             self.mark_enum_k()?;
@@ -2007,6 +2011,7 @@ impl<L: Layout> P<'_, L> {
             return self.refuse();
         }
         self.close()?;
+        self.asks = level_asks;
         Ok(())
     }
 
@@ -2328,10 +2333,14 @@ impl<L: Layout> P<'_, L> {
 
     /// `class_body`.
     fn class_body(&mut self) -> R {
+        // The context's questions (`asks`, decision 0703): set where its body starts, for every level it calls.
+        let level_asks = self.asks;
+        self.asks = level_asks & 0x0 | 0x8;
         self.open(k::CLASS_BODY);
         self.p(w::LBRACE_62)?;
         self.member_ends()?;
         self.close()?;
+        self.asks = level_asks;
         Ok(())
     }
 
@@ -2353,9 +2362,6 @@ impl<L: Layout> P<'_, L> {
 
     /// `class_member`.
     fn class_member(&mut self) -> R {
-        // The level's questions (`asks`, decision 0703): its own, set where it starts.
-        let level_asks = self.asks;
-        self.asks = level_asks & 0x0 | 0x8;
         self.deeper()?;
         self.open(UNSET);
         if (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_27 | w::COLON_COLON_69))) && (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && matches!(self.word_at(self.i + 1), w::VAL_17..=w::TYPEALIAS_23 | w::AT_70 | w::SEALED_81..=w::SET_108 | w::COMPANION_121..=w::ENUM_123) {
@@ -2367,7 +2373,6 @@ impl<L: Layout> P<'_, L> {
         self.member_rest()?;
         self.close()?;
         self.depth -= 1;
-        self.asks = level_asks;
         Ok(())
     }
 

@@ -194,6 +194,16 @@ them.
    SEALED..=ENUM`. No word test in tier 2 lists more than two keywords: the two that list four or more words are
    punctuation's (`IN | AT | LPAREN | FILE`, a postfix's `DOT | BANG_BANG | LPAREN | LBRACK | PLUS_PLUS..=COLON_COLON`).
    rr's code differs in its numbers and its ranges' ends.
+22. **`asks` is set true where a body starts** (`asks::lift`), as the lean parser sets `stmt`: a level's own setting
+   that ignores its caller's (`r_statement`'s, `class_member`'s) goes up through its callers that make no node (a
+   list's loop, `member_ends`) to the one that makes the body's, which sets it for every level it calls; its own reads
+   of its old value are constants there (`statements`' `ask_semi(true)` at its end, nothing at 0, is gone). Where that
+   level's other callees read what it would set, the call is set instead (`source_file`'s statements: its file
+   annotation's type arguments read the root's). Tier 2 sets `asks` true at `statements` (the lean parser's
+   `statements`, a block's and a lambda's), `control_structure_body` (a `when` entry's body, as the lean parser's
+   `when_expression`, and an `if`'s or a loop's), `class_body`, `enum_class_body` and the file's statements: the lean
+   parser's six body starts, the block and the lambda one method here. The callees ignored their callers' value: the
+   parse is the same.
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`
