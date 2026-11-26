@@ -43,6 +43,10 @@ struct Api {
     cu_mem_host_register: unsafe extern "C" fn(Ptr, usize, u32) -> CUresult,
     cu_mem_host_unregister: unsafe extern "C" fn(Ptr) -> CUresult,
     cu_module_load_data: unsafe extern "C" fn(*mut Ptr, *const c_void) -> CUresult,
+    cu_link_create: unsafe extern "C" fn(u32, *mut i32, *mut Ptr, *mut Ptr) -> CUresult,
+    cu_link_add_data: unsafe extern "C" fn(Ptr, i32, *mut c_void, usize, *const c_char, u32, *mut i32, *mut Ptr) -> CUresult,
+    cu_link_complete: unsafe extern "C" fn(Ptr, *mut Ptr, *mut usize) -> CUresult,
+    cu_link_destroy: unsafe extern "C" fn(Ptr) -> CUresult,
     cu_module_get_function: unsafe extern "C" fn(*mut Ptr, Ptr, *const c_char) -> CUresult,
     cu_module_get_global: unsafe extern "C" fn(*mut DevPtr, *mut usize, Ptr, *const c_char) -> CUresult,
     cu_memcpy_dtoh: unsafe extern "C" fn(*mut c_void, DevPtr, usize) -> CUresult,
@@ -151,6 +155,10 @@ fn api() -> Result<&'static Api, String> {
             cu_mem_host_register: sym!(cuda, "cuMemHostRegister_v2" | "cuMemHostRegister"),
             cu_mem_host_unregister: sym!(cuda, "cuMemHostUnregister"),
             cu_module_load_data: sym!(cuda, "cuModuleLoadData"),
+            cu_link_create: sym!(cuda, "cuLinkCreate_v2"),
+            cu_link_add_data: sym!(cuda, "cuLinkAddData_v2"),
+            cu_link_complete: sym!(cuda, "cuLinkComplete"),
+            cu_link_destroy: sym!(cuda, "cuLinkDestroy"),
             cu_module_get_function: sym!(cuda, "cuModuleGetFunction"),
             cu_module_get_global: sym!(cuda, "cuModuleGetGlobal_v2"),
             cu_memcpy_dtoh: sym!(cuda, "cuMemcpyDtoH_v2"),
@@ -584,11 +592,32 @@ pub struct CudaComputeFunctionLibrary {
 unsafe impl Send for CudaComputeFunctionLibrary {}
 unsafe impl Sync for CudaComputeFunctionLibrary {}
 
+/// A relocatable cubin (NVRTC's `-rdc=true`) linked by the driver into the cubin a module loads.
+fn link(a: &Api, relocatable: &mut [u8]) -> Result<Vec<u8>, String> {
+    const CU_JIT_INPUT_CUBIN: i32 = 0;
+    unsafe {
+        let mut state = std::ptr::null_mut();
+        ck((a.cu_link_create)(0, std::ptr::null_mut(), std::ptr::null_mut(), &mut state), "cuLinkCreate")?;
+        let name = c"kernels";
+        let added = ck((a.cu_link_add_data)(state, CU_JIT_INPUT_CUBIN, relocatable.as_mut_ptr().cast(), relocatable.len(), name.as_ptr(), 0, std::ptr::null_mut(), std::ptr::null_mut()), "cuLinkAddData");
+        let mut out = std::ptr::null_mut();
+        let mut n = 0usize;
+        let done = added.and_then(|()| ck((a.cu_link_complete)(state, &mut out, &mut n), "cuLinkComplete"));
+        // The linked image is the link state's: copied out before it goes.
+        let linked = done.map(|()| std::slice::from_raw_parts(out.cast::<u8>(), n).to_vec());
+        (a.cu_link_destroy)(state);
+        linked
+    }
+}
+
 impl CudaComputeFunctionLibrary {
     /// Compiles CUDA C++ (UKL preprocessed for this device) with NVRTC for the device's architecture, and loads it.
     pub fn compile_from_source(device: &CudaDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let a = device.current();
-        let options = [format!("--gpu-architecture=sm_{}", device.sm), "-std=c++20".into(), "-default-device".into()];
+        // Relocatable (`-rdc=true`), then linked (`link`): ptxas compiles each function once. Whole-program, it
+        // compiles every function again for each kernel that reaches it: the preprocessor's evaluator, two kernels
+        // over one call tree, took ptxas past a minute, relocatable 4.5 s and its link 0.5 s (a GB10, 2026-11-25).
+        let options = [format!("--gpu-architecture=sm_{}", device.sm), "-std=c++20".into(), "-default-device".into(), "-rdc=true".into()];
         // The store's cubin (`crate::store`), keyed by all the compile reads: NVRTC's and the driver's builds too.
         let (mut major, mut minor, mut driver) = (0, 0, 0);
         unsafe { (a.nvrtc_version)(&mut major, &mut minor) };
@@ -628,6 +657,7 @@ impl CudaComputeFunctionLibrary {
             let mut cubin = vec![0u8; n];
             (a.nvrtc_get_cubin)(prog, cubin.as_mut_ptr().cast());
             (a.nvrtc_destroy_program)(&mut prog);
+            let cubin = link(a, &mut cubin)?;
             let mut module = std::ptr::null_mut();
             ck((a.cu_module_load_data)(&mut module, cubin.as_ptr().cast()), "cuModuleLoadData")?;
             crate::store::save("cuda", &key, "cubin", &cubin);

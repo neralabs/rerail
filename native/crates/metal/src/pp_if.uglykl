@@ -827,6 +827,42 @@ UKL_ONCE void p1_if_line(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLOBA
             uint64_t wb = 0ul;
             bool plain = o + ln < o1 && p1_if_plain(u, &look, o + ln, g0, count[w], ops, s0, defined_key, true_key, true_is_one, op_keys, op_kinds, n_ops, &wop, &wb, &wf);
             uint32_t k = ukl_min(ukl_min((uint32_t)ukl_ctz64((uint64_t)(ukl_sg_ballot(!plain __UKL_ARGS))), (uint32_t)UKL_SIMD_WIDTH), o1 - o);
+            // A run of values joined by `+` and `-` (left to right, wrapping: one signed sum): its first value and
+            // operator fed as they are, the values after them summed lane-parallel and fed as one value. A
+            // window's other tokens are fed one at a time below.
+            {
+                uint32_t a0 = y.want ? 1u : 0u;
+                bool isv = wop == 0u, isa = wop == EO_PLUS || wop == EO_MINUS;
+                bool want_v = ((ln + (y.want ? 0u : 1u)) & 1u) == 0u;
+                bool fit = ln < k && (want_v ? isv : isa);
+                uint32_t m = ukl_min((uint32_t)ukl_ctz64((uint64_t)ukl_sg_ballot(!fit __UKL_ARGS)), k);
+                // The run's last value summed: values sit at `a0 + 1 + 2i`, and each summed has a `+` or `-` after it
+                // in the run (a value past it may bind to a tighter operator: `1 + 2 + 3 * 4`).
+                uint32_t e = m >= a0 + 3u ? a0 + 1u + 2u * ((m - a0 - 3u) / 2u) : 0u;
+                uint32_t sa = ukl_sg_shuffle(wop, a0 __UKL_ARGS);
+                uint32_t sp = ukl_sg_shuffle(wop, ln == 0u ? 0u : ln - 1u __UKL_ARGS);
+                if (e >= a0 + 3u) {
+                    // Each value's sign in the run relative to the operator before it all (`sa`).
+                    bool in_run = ln >= a0 + 1u && ln <= e && isv;
+                    bool neg = in_run && ln > a0 + 1u && sp != sa;
+                    uint64_t t = in_run ? (neg ? (uint64_t)0 - wb : wb) : 0ul;
+                    uint32_t q0 = ukl_sg_inclusive_sum((uint32_t)(t & 0xfffful), ln __UKL_ARGS);
+                    uint32_t q1 = ukl_sg_inclusive_sum((uint32_t)((t >> 16) & 0xfffful), ln __UKL_ARGS);
+                    uint32_t q2 = ukl_sg_inclusive_sum((uint32_t)((t >> 32) & 0xfffful), ln __UKL_ARGS);
+                    uint32_t q3 = ukl_sg_inclusive_sum((uint32_t)(t >> 48), ln __UKL_ARGS);
+                    uint64_t v = (uint64_t)ukl_sg_shuffle(q0, e __UKL_ARGS) + ((uint64_t)ukl_sg_shuffle(q1, e __UKL_ARGS) << 16) +
+                                 ((uint64_t)ukl_sg_shuffle(q2, e __UKL_ARGS) << 32) + ((uint64_t)ukl_sg_shuffle(q3, e __UKL_ARGS) << 48);
+                    uint32_t vf = (ukl_sg_ballot(in_run && (wf & VF_U) != 0u __UKL_ARGS) != 0u ? VF_U : 0u) |
+                                  (ukl_sg_ballot(in_run && (wf & VF_ERR) != 0u __UKL_ARGS) != 0u ? VF_ERR : 0u);
+                    for (uint32_t j = 0u; j <= a0; j++) {
+                        uint32_t lo = ukl_sg_shuffle((uint32_t)wb, j __UKL_ARGS), hi = ukl_sg_shuffle((uint32_t)(wb >> 32), j __UKL_ARGS);
+                        sy_feed(&y, ukl_sg_shuffle(wop, j __UKL_ARGS), (uint64_t)lo | ((uint64_t)hi << 32), ukl_sg_shuffle(wf, j __UKL_ARGS));
+                    }
+                    sy_feed(&y, 0u, v, vf);
+                    o += e + 1u;
+                    continue;
+                }
+            }
             for (uint32_t j = 0u; j < k && !y.bad && !y.big; j++) {
                 uint32_t lo = ukl_sg_shuffle((uint32_t)wb, j __UKL_ARGS), hi = ukl_sg_shuffle((uint32_t)(wb >> 32), j __UKL_ARGS);
                 sy_feed(&y, ukl_sg_shuffle(wop, j __UKL_ARGS), (uint64_t)lo | ((uint64_t)hi << 32), ukl_sg_shuffle(wf, j __UKL_ARGS));
@@ -840,7 +876,7 @@ UKL_ONCE void p1_if_line(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLOBA
         if ((g & SCRATCH) == 0u && g >= g0 && g < g0 + count[w]) {
             uint32_t s = s0 + (g - g0);
             mark = ops[s];
-            if (mark != 0u && state[s] == 2u) { ukl_atomic_or(x.flags, P1_IF_DEFINED); return; }
+            if (mark != 0u && (state[s] & 2u) != 0u) { ukl_atomic_or(x.flags, P1_IF_DEFINED); return; }
         }
         if (mark == IO_DEFINED) {
             // `defined X`, `defined ( X )`: the operand read raw, then the `)`.

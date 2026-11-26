@@ -167,6 +167,10 @@ UKL_INLINE uint32_t ukl_sg_exclusive_sum_native(uint32_t v __UKL_PARAMS) { retur
 #ifndef UKL_ONCE
 #define UKL_ONCE static __device__ __noinline__
 #endif
+// A poll of another group's progress (a work queue's idle take, `ukl_wq_idle_sg`): a short sleep, so the groups with
+// nothing to take do not hammer the queue's counters while the few with work run (a chain of requests, one ready at a
+// time: its GPU time varied 2-5 times run to run on a GB10 with every other group spinning, 2026-11-25).
+#define ukl_poll_yield() __nanosleep(128)
 #define UKL_GLOBAL
 #define UKL_COHERENT volatile
 #define UKL_LOCAL

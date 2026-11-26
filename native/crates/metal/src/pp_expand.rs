@@ -452,6 +452,43 @@ impl Caps {
 /// literals and the `#line` rows' room). The first run's are from the top level's tokens; a run
 /// refused for room says what each used (`Exp::room`), and the next is sized from that (`grown`):
 /// only the rooms that ran out grow, by twice what they lacked at least.
+/// The expansion's first rooms' floors, however small its unit: its tokens' rows (the heap's, and the output's past
+/// its share) and its scratch bytes. The output's rows, the whole unit's, not a window's, keep theirs.
+#[derive(Clone, Copy, Debug)]
+pub struct Floors {
+    pub tok: usize,
+    pub sb: usize,
+}
+
+impl Floors {
+    /// The product's.
+    pub const DEFAULT: Floors = Floors { tok: 4096, sb: 64 << 10 };
+    /// A test's: a small input reaches past its first rooms, and their runs again, in milliseconds.
+    pub const SMALL: Floors = Floors { tok: 64, sb: 1 << 10 };
+}
+
+#[cfg(feature = "test-hooks")]
+thread_local! {
+    static FLOORS: std::cell::Cell<Floors> = const { std::cell::Cell::new(Floors::DEFAULT) };
+}
+
+/// The floors this thread's runs take (`Floors::DEFAULT` but where a test set others, `with_floors`).
+pub fn floors() -> Floors {
+    #[cfg(feature = "test-hooks")]
+    return FLOORS.with(|f| f.get());
+    #[cfg(not(feature = "test-hooks"))]
+    Floors::DEFAULT
+}
+
+/// `run` with this thread's runs at `floors`.
+#[cfg(feature = "test-hooks")]
+pub fn with_floors<R>(floors: Floors, run: impl FnOnce() -> R) -> R {
+    let was = FLOORS.with(|f| f.replace(floors));
+    let r = run();
+    FLOORS.with(|f| f.set(was));
+    r
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct XCaps {
     pub tok: usize,
@@ -470,8 +507,9 @@ impl XCaps {
     /// §8): tokens 0.39, the output 0.64, scratch bytes 0.34; a room past them grows from its own
     /// count.
     pub fn at(top: usize, rung: u32) -> XCaps {
-        let tok = (top + 4096) << (rung + 1);
-        XCaps { tok, out: top + tok / 4 + 4096, sb: ((64usize << 10) << rung).max(tok / 2), st: tok / 4 + 256, rung }
+        let f = floors();
+        let tok = (top + f.tok) << (rung + 1);
+        XCaps { tok, out: top + tok / 4 + f.tok, sb: (f.sb << rung).max(tok / 2), st: tok / 4 + 256, rung }
     }
 
     fn max(self, a: XCaps) -> XCaps {
@@ -485,7 +523,7 @@ impl XCaps {
     }
 
     /// The next run's rooms after one refused for room that used `room` (`Exp::room`): each
-    /// room that ran out grows by twice its lack, at least fourfold (its count stopped where it
+    /// room that ran out grows by twice its lack, at least twofold (its count stopped where it
     /// ran out), and the others double where their use is past their room's half. A room `room` does not name (the counters) grows them all a rung.
     pub fn grown(self, top: usize, room: [(u32, u32); ROOMS]) -> XCaps {
         // A run refused for room stops where the first room ran out: the others' counts are
@@ -493,8 +531,9 @@ impl XCaps {
         let out = room.iter().any(|&(used, cap)| used > cap);
         let up = |(used, cap): (u32, u32), now: usize| {
             if used > cap {
-                // Its count stopped where it ran out: what it needs is past it, unknown.
-                (now + 2 * (used - cap) as usize).max(4 * now)
+                // Its count stopped where it ran out: what it needs is past it, unknown. Twice: the heap is most of
+                // the arena, and a window that ran out of it runs again (`rx_loop`) before the unit does.
+                (now + 2 * (used - cap) as usize).max(2 * now)
             } else if out && used as usize * 2 > cap as usize {
                 2 * now
             } else {
@@ -1235,8 +1274,10 @@ impl Exp {
             // The queue's slots (`lpq_cap`: the pieces', the requests' and their ends', a request's record
             // `RQ_ENTRIES` of the tokens' rows), then the pieces' three words.
             lpq: zeroed(16 + 3 * top + 64 + tok / 3 + 5 * top)?,
-            xrows: zeroed(3 * tok)?,
-            xrows_cap: tok as u32,
+            // A row an expansion: far fewer than the heap's rows (Boost's `seq.c` line 428: 637,201 against 6M). A
+            // unit past them reports 4 heap rows a row (`CTL` 0), and runs again with its rows' room.
+            xrows: zeroed(3 * (tok / 4).max(4096))?,
+            xrows_cap: (tok / 4).max(4096) as u32,
             lpq_top: top as u32,
             ctl: arena.from_slice(&ctl)?,
             cnt: zeroed(2 + 2 * cnt_cap)?,
@@ -1475,8 +1516,9 @@ impl Exp {
         let show = std::env::var_os("RERAIL_PP_PIECES").is_some();
         for i in 0..np {
             // The pieces in the order of their places (`rx_loop`'s sort): each a run of a source's tokens, read in place.
+            // A piece's id is its place among those written; merged ones (`rx_piece_merge`) are fewer.
             let e = o[5 * cap + i] as usize;
-            if e >= np {
+            if e >= cap {
                 return Err(crate::pp_arena::failure(concat!(file!(), ":", line!())));
             }
             let (src, len, st) = (o[e], o[cap + e] & PN_LEN, o[2 * cap + e]);
@@ -1613,7 +1655,19 @@ fn expand_sized_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) ->
         };
         match arena.lease() {
             Ok(()) => {}
-            Err(Error::BackendCapacity) if r.short.is_some() => return Ok(r.short.take().unwrap()),
+            Err(Error::BackendCapacity) if r.short.is_some() => {
+                // A heap grown past the budget: the run again between it and the last one's, while that is an
+                // eighth more than the last (a run's heap is most of its arena: 2026-11-25, Boost's `seq.c` line 428
+                // needed about 106M words, its rungs 90M and 180M against a budget of 1,024 MB).
+                if let Some(last) = r.x_last_tok {
+                    let mid = (last + r.x.tok) / 2;
+                    if mid > last + last / 8 {
+                        r.x.tok = mid;
+                        continue;
+                    }
+                }
+                return Ok(r.short.take().unwrap());
+            }
             Err(e) => return Err(e),
         }
         let (launches, gpu_seconds) = on_grid(&arena, unit, &m.front, &m.l, groups)?;
@@ -1721,7 +1775,23 @@ pub fn expand_teams(units: &[(&Unit, &Layout)], sizes: &mut [Sizes]) -> Result<V
             first += *team as u32;
         }
         let teams = arena.from_slice(&words)?;
-        arena.lease()?;
+        match arena.lease() {
+            Ok(()) => {}
+            // One unit whose heap grew past the budget: its run again between it and its last run's heap, as
+            // `expand_sized_at`'s.
+            Err(Error::BackendCapacity) if made.len() == 1 => {
+                let k = made[0].0;
+                if let Some(last) = runs[k].x_last_tok {
+                    let mid = (last + runs[k].x.tok) / 2;
+                    if mid > last + last / 8 {
+                        runs[k].x.tok = mid;
+                        continue;
+                    }
+                }
+                return Err(Error::BackendCapacity);
+            }
+            Err(e) => return Err(e),
+        }
         let groups = most.min(seats);
         let ran = {
             let refs: Vec<(&Front, &Lay)> = made.iter().map(|(_, m, _)| (&m.front, &m.l)).collect();
@@ -1794,6 +1864,9 @@ struct Runs<'u> {
     x: XCaps,
     p1_tries: u32,
     x_tries: u32,
+    /// The token rows (the heap's room) of the run before the expansion's last growth: where a grown run's arena is
+    /// past the budget, it runs between the two instead (`expand_sized_at`).
+    x_last_tok: Option<usize>,
     short: Option<Expanded>,
 }
 
@@ -1810,7 +1883,7 @@ struct Made {
 
 impl<'u> Runs<'u> {
     fn new(unit: &'u Unit, lay: &'u Layout, sizes: &Sizes) -> Runs<'u> {
-        Runs { unit, lay, def_rung: sizes.defs, p1: sizes.p1, x: sizes.x, p1_tries: 0, x_tries: 0, short: None }
+        Runs { unit, lay, def_rung: sizes.defs, p1: sizes.p1, x: sizes.x, p1_tries: 0, x_tries: 0, x_last_tok: None, short: None }
     }
 
     /// The next run's stores in `arena`, for a grid of `groups`; or the unit's answer, where they
@@ -1852,10 +1925,10 @@ impl<'u> Runs<'u> {
         if std::env::var_os("RERAIL_PP_LOOP_LOG").is_some() {
             // SAFETY: the device finished; `trn` holds 32 words, 16 to 19 the longest piece's, 20 to 23 the slowest's.
             let w = |k: usize| unsafe { *exp.trn.host().cast::<u32>().add(k) };
-            // SAFETY: as `w`: the queue's control words (`LPQ`, 16), 5 to 7 the requests posted, the pieces read
-            // again and the requests' steps.
+            // SAFETY: as `w`: the queue's control words (`LPQ`, 16; `RXS_*`): 5 the requests made, 6 the memo's
+            // hits, 11 and 12 the waits and resumptions, 13 the steps; 7 to 10 the last wait's (`rx_wait`).
             let q = |k: usize| unsafe { *exp.lpq.host().cast::<u32>().add(k) };
-            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out; the slowest {} us, {} steps, top tokens {}..{} (nodes {}); all pieces {} us, {} steps, {groups} groups; memo {} hits, {} kept; requests {}, {} steps, pieces read again {}; parked {}, resumed {}, read in place {}, holes read again {}; arguments taken {}, read by their caller {}, read twice {}; tokens {:?} rung {} top {}", exp.loop_pieces(), w(16), w(17), w(18), w(19), f64::from(w(20)) / 1e3, w(22), w(21), w(23), unit.node_bound, w(24), w(25), w(28), w(29), q(5), q(7), q(6), q(11), q(12), q(13), q(14), q(8), q(9), q(10), exp.room()[0], x.rung, p1.top);
+            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out; the slowest {} us, {} steps, top tokens {}..{} (nodes {}); all pieces {} us, {} steps, {groups} groups; memo {} hits, {} kept; requests {} made, {} memo hits, {} steps; parked {}, resumed {}; the last wait: record {:#x}, item {:#x}, {:#x}, {:#x}; heap {} words (the most a window took); tokens {:?} rung {} top {}", exp.loop_pieces(), w(16), w(17), w(18), w(19), f64::from(w(20)) / 1e3, w(22), w(21), w(23), unit.node_bound, w(24), w(25), w(28), w(29), q(5), q(6), q(13), q(11), q(12), q(7), q(8), q(9), q(10), exp.heap(), exp.room()[0], x.rung, p1.top);
         }
         // The loop's work, where the run reached the text (a round that ends at its requests did not): the
         // unit's, kept for its next run and its next evaluation.
@@ -1898,6 +1971,7 @@ impl<'u> Runs<'u> {
         let lines = exp.line_refusals();
         if lines & X_ROOM != 0 && self.x_tries + 1 < EXP_RUNGS {
             why("the lines' expansion");
+            self.x_last_tok = Some(x.tok);
             self.x = x.grown(p1.top, exp.room());
             self.x_tries += 1;
             return None;
@@ -1925,6 +1999,7 @@ impl<'u> Runs<'u> {
             if std::env::var_os("RERAIL_PP_ARENA_LOG").is_some() {
                 eprintln!("expansion room at rung {rung}: (used, cap) {:?} {:?}", ROOM_STORES, exp.room());
             }
+            self.x_last_tok = Some(x.tok);
             self.x = x.grown(p1.top, exp.room());
             self.x_tries += 1;
             match expanded(refused, 0, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()) {

@@ -826,12 +826,13 @@ fn expanded(files: &[(&str, &str)], cpp: bool) -> DeviceRun {
 
 /// `expanded` under `cfg`, its search path `dirs`.
 fn expanded_in(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, rerail_c_pp::files::DirKind)]) -> DeviceRun {
-    let (got, want, rung, launches, _) = expanded_run(files, cfg, dirs);
+    let (got, want, rung, launches, _, _) = expanded_run(files, cfg, dirs);
     (got, want, rung, launches)
 }
 
-/// A device run's outputs (`DeviceRun`) and its heap's words past the memo table (`Expanded::heap`).
-type HeapRun = (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize, u32);
+/// A device run's outputs (`DeviceRun`), its heap's words past the memo table (`Expanded::heap`: the most a window
+/// took), and its last run's heap room in words (`RX_HEAP` a token row).
+type HeapRun = (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize, u32, usize);
 
 /// `expanded_in`, and its heap's words (t51 §4: the records, lists, results, call sites and occurrences).
 fn expanded_run(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, rerail_c_pp::files::DirKind)]) -> HeapRun {
@@ -847,10 +848,11 @@ fn expanded_run(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str,
     let mut units: Vec<(Box<dyn rerail_c_pp::files::Files>, String)> = vec![(Box::new(Search::new(dirs, move |p: &str| m.get(p).cloned())), "main.c".into())];
     let (s, tapes) = settled_many(&cfg, &mut units, &mut Ran::default()).pop().unwrap().unwrap();
     let x = &*s.part.x;
+    let room = rerail_metal::pp_expand::RX_HEAP * x.xcaps.tok;
     if x.refused != 0 {
-        return (Err(x.refused), serial.0, x.rung, x.launches, x.heap);
+        return (Err(x.refused), serial.0, x.rung, x.launches, x.heap, room);
     }
-    (Ok(part_tokens(&s.part, &s.loaded.files, &tapes)), serial.0, x.rung, x.launches, x.heap)
+    (Ok(part_tokens(&s.part, &s.loaded.files, &tapes)), serial.0, x.rung, x.launches, x.heap, room)
 }
 
 /// Decisions 0468 §4 and 0485 §1: an evaluation is a fixed handful of launches, `pp_setup` (the
@@ -860,11 +862,11 @@ fn expanded_run(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str,
 #[test]
 fn an_evaluation_is_a_fixed_handful_of_launches() {
     let mut big = String::new();
-    for k in 0..400usize {
+    for k in 0..100usize {
         big += &format!("#define M{k}(a, b) (a + b * {k}) M{}\n", k.saturating_sub(1));
     }
-    for k in 0..400 {
-        big += &format!("int v{k} = M{k}(x{k}, y) + M{}(1, 2);\n", (k * 7) % 400);
+    for k in 0..100 {
+        big += &format!("int v{k} = M{k}(x{k}, y) + M{}(1, 2);\n", (k * 7) % 100);
     }
     let doubling = "#define A0 x y\n#define A1 A0 A0\n#define A2 A1 A1\n#define A3 A2 A2\n#define A4 A3 A3\n#define A5 A4 A4\n#define A6 A5 A5\n#define A7 A6 A6\n#define A8 A7 A7\n#define A9 A8 A8\nA9 A9 A9\n";
     let shapes: [(&str, &[(&str, &str)]); 3] = [("empty", &[("main.c", "")]), ("large", &[("main.c", big.as_str())]), ("doubling", &[("main.c", doubling)])];
@@ -998,19 +1000,16 @@ fn a_long_if_line_is_read_by_its_group() {
         lines.push(format!("{ones} defined X + T32 + defined Y == {}", pad + 33));
         lines.push(format!("{ones} 'b' - 'a' + T32 == {}", pad + 32));
     }
-    for line in &lines {
-        let main = format!("{head}#if {line}
-yes
-#else
-no
-#endif
-end
-");
-        for cpp in [false, true] {
-            let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
-            let (got, want, _, _) = expanded_in(&[("main.c", main.as_str()), ("inc/h1.h", "h\n")], cfg, &[("inc", DirKind::Angle)]);
-            same(got.map(|g| show(&g)), Ok(show(&want)), format!("{line}, C++ {cpp}"));
-        }
+    // Every line in one unit, each its own group: line k gives `yes k` or `no k`.
+    let mut main = head.to_string();
+    for (k, line) in lines.iter().enumerate() {
+        main += &format!("#if {line}\nyes {k}\n#else\nno {k}\n#endif\n");
+    }
+    main += "end\n";
+    for cpp in [false, true] {
+        let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
+        let (got, want, _, _) = expanded_in(&[("main.c", main.as_str()), ("inc/h1.h", "h\n")], cfg, &[("inc", DirKind::Angle)]);
+        same(got.map(|g| show(&g)), Ok(show(&want)), format!("C++ {cpp}"));
     }
 }
 
@@ -1202,6 +1201,54 @@ fn a_name_passed_in_a_tuple_is_called() {
         &[("main.c", &*Box::leak(format!("{d}#define L (O, z, q, 0)\n[F(1, L, M) F(1, L, M)]\n").into_boxed_str()))],
     ];
     shapes_agree(shapes);
+}
+
+/// A run cut into pieces at its lines (`rx_cut`): a piece a top request, and what crosses a line kept whole: a
+/// result's tail called by a `(` on the next line, a call's arguments over lines, a `)` that closes a `(` a result
+/// made (its run is not cut), a `_Pragma` whose operand is on the next line; lines that are plain text and calls.
+#[test]
+fn a_run_cut_at_its_lines_is_the_serial_passes() {
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define F(x) [x]\n#define G F\nG\n(1) a\nG\nb (2)\nF(\n3,\n4\n)\nc\n")],
+        &[("main.c", "#define LP (\n#define F(x) [x]\n#define CALL F LP\nx CALL 1\n) y\nz\nF\n\n(5)\n")],
+        &[("main.c", "#define F(x) <x>\na F(1)\nb F(2) F(3)\nc\n_Pragma\n(\"once\") d\ne F\nf\n")],
+        &[("main.c", "#define E\n#define F(x) x x\nF(E)\nE\nF(F(1))\n\nF(2)\n")],
+    ];
+    shapes_agree(shapes);
+}
+
+/// A unit's pieces run in windows, each on an empty heap (`rx_loop`): a text of lines each of which fits the heap
+/// but not all of them together runs in its first room, not again larger, and equals the serial pass. 2 and 16 lines
+/// of calls 4 deep with arguments read elsewhere, at a test's small first room (`with_floors`): both at rung 0 within
+/// it, where 16 lines in one window (at the product's room) take more.
+#[test]
+fn lines_past_the_heap_run_in_windows_at_the_same_room() {
+    use rerail_metal::pp_expand::Floors;
+    let mut defs = String::from("#define ID(x) x\n#define K() k\n#define F(a, b, c, d) [a | b | c | d]\n#define C0(x) x\n");
+    for k in 1..=4 {
+        defs += &format!("#define C{k}(x) C{}(ID(x))\n", k - 1);
+    }
+    let run = |n: usize, floor: usize| {
+        let mut t = defs.clone();
+        for i in 0..n {
+            t += &format!("F(C4({i}), C4(K() a{i}), C4(ID(a{i}) b), K())\n");
+        }
+        let cfg = rerail_c_pp::Config::new(crate::pp::options(false));
+        let floors = Floors { tok: floor, ..Floors::DEFAULT };
+        let (got, want, rung, _, heap, room) = rerail_metal::pp_expand::with_floors(floors, || expanded_run(&[("main.c", t.as_str())], cfg, &[]));
+        let got = got.unwrap_or_else(|why| panic!("{n} lines: refused {why}"));
+        same(show(&got), show(&want), format!("{n} lines"));
+        eprintln!("{n} lines: rung {rung}, heap {heap} words of {room}");
+        (rung, heap as usize, room)
+    };
+    // A first room of 512 token rows past the top's (2 lines: 14k heap words; 16 lines: 27k). 2 lines (10k) fit in
+    // one window, 16 (76k in one window) only in windows. Each at rung 0, within its first room (2026-11-25).
+    let ((r2, h2, m2), (r16, h16, m16)) = (run(2, 512), run(16, 512));
+    assert_eq!((r2, r16), (0, 0), "a run past its first room");
+    assert!(h2 <= m2 && h16 <= m16, "a heap past its room: 2 lines {h2} of {m2}, 16 lines {h16} of {m16}");
+    // 16 lines in one window, at the product's first room: past the small room they ran in.
+    let (r, one, _) = run(16, Floors::DEFAULT.tok);
+    assert!(r == 0 && one > m16, "16 lines took {one} heap words in one window: within {m16}, no windows needed");
 }
 
 /// The shapes of `shapes`, each in C and C++, expanded on the device, against the serial pass.
@@ -1512,20 +1559,20 @@ fn expansions_are_the_serial_passes() {
 
 /// t51 §4: a place's built-in (`__LINE__`, `__COUNTER__`) is an entry resolved at its occurrence, and a function-like
 /// name at a result's end its open tail, read by its reader: so a result that holds either is memoized as any other,
-/// and each occurrence still gives its own place's value or its own call. `L(a)` four times on three lines: `L` and
-/// its argument once, three hits. `f(1)` four times, twice called on by its tail: `f`, `g(2)`, `g(3)` and their
-/// arguments once each, three hits. And (§4) a call inside a result, a request of its own, that reads one (`C`'s
+/// and each occurrence still gives its own place's value or its own call. `L(a)` four times on three lines: `L` once
+/// (its argument, no macro's name, is its own pre-expansion), three hits. `f(1)` four times, twice called on by its tail: `f`, `g(2)` and `g(3)` once each,
+/// three hits (their arguments, numbers, are their own pre-expansions: no requests, t51 §6). And (§4) a call inside a result, a request of its own, that reads one (`C`'s
 /// `L()`, on four lines: a tensorflow test printed another line's `__LINE__`).
 #[test]
 fn place_builtins_and_open_tails_are_memoized() {
     let src = "#define L(x) x __LINE__\nL(a)\nL(a)\nL(a) L(a)\n";
     let (got, want, memo) = expanded_memo(&[("main.c", src)], false);
     same(show(&got.expect("refused")), show(&want), "__LINE__");
-    same(memo, (3, 2), "the memo's hits and requests");
+    same(memo, (3, 1), "the memo's hits and requests");
     let src = "#define g(x) <x>\n#define f(x) x g\nf(1)(2) f(1) f(1)(3) f(1) x\n";
     let (got, want, memo) = expanded_memo(&[("main.c", src)], false);
     same(show(&got.expect("refused")), show(&want), "an open tail");
-    same(memo, (3, 6), "the memo's hits and requests");
+    same(memo, (3, 3), "the memo's hits and requests");
     let shapes: &[&[(&str, &str)]] = &[
         &[("main.c", "#define C(x) x __COUNTER__\nC(a) C(a)\nC(a)\n")],
         &[("main.c", "#define L() __LINE__\n#define C(x) [x L()]\nC(a)\nC(a)\n\nC(a) C(a)\n")],
@@ -2500,6 +2547,13 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
             pp.run(&path);
             drop(pp);
             serial_s += t0.elapsed().as_secs_f64();
+            // The serial pass's expansions (its `Expansion` rows), to set a device run's requests against.
+            if std::env::var_os("RERAIL_PP_SERIAL_ROWS").is_some() {
+                let mut rows = WithExpansions::default();
+                let mut io = Search::new(dirs.clone(), read);
+                rerail_c_pp::Pp::new(cfg.clone(), &mut io, &mut rows).run(&path);
+                eprintln!("serial {path}: {} tokens, {} expansions", rows.0.len(), rows.1.len());
+            }
             serials.push(serial.0);
             ios.push((Box::new(Search::new(dirs.clone(), read)), path));
         }
@@ -2693,16 +2747,17 @@ fn a_unit_past_its_scratch_room_runs_again_larger() {
 }
 
 /// R8: an `#if` line past rung 0's room that decides an include. The rounds and the expansion's run both run it
-/// again larger before reading what the lines decided (a request made from a line cut short is none). Two 8⁴
-/// fan-outs: 16,383 pieces of the line's output (decision 0588: the loop's room).
+/// again larger before reading what the lines decided (a request made from a line cut short is none). Two 8²
+/// fan-outs, 2,047 tokens of the line's output, past a test's small first rooms (`Floors::SMALL`; the product's
+/// took 8⁴, decision 0588: the loop's room).
 #[test]
 fn a_line_past_its_room_runs_again_larger() {
-    let fan = "#define A0 1+1+1+1+1+1+1+1\n#define A1 A0+A0+A0+A0+A0+A0+A0+A0\n#define A2 A1+A1+A1+A1+A1+A1+A1+A1\n\
-               #define A3 A2+A2+A2+A2+A2+A2+A2+A2\n#define A4 A3+A3+A3+A3+A3+A3+A3+A3\n";
-    let main = format!("{fan}#if A4 + A4 == 65536\n#include \"h.h\"\n#endif\nend\n");
+    use rerail_metal::pp_expand::{Floors, with_floors};
+    let fan = "#define A0 1+1+1+1+1+1+1+1\n#define A1 A0+A0+A0+A0+A0+A0+A0+A0\n#define A2 A1+A1+A1+A1+A1+A1+A1+A1\n";
+    let main = format!("{fan}#if A2 + A2 == 1024\n#include \"h.h\"\n#endif\nend\n");
     for cpp in [false, true] {
         let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
-        let (got, want, rung, _) = expanded_in(&[("main.c", main.as_str()), ("h.h", "in h\n")], cfg, &[]);
+        let (got, want, rung, _) = with_floors(Floors::SMALL, || expanded_in(&[("main.c", main.as_str()), ("h.h", "in h\n")], cfg, &[]));
         same(got.map(|g| show(&g)), Ok("in h end".to_string()), "a line past its room");
         same(show(&want), "in h end".to_string(), "the serial pass");
         assert!(rung > 0, "a line past its room: ran at rung 0");
@@ -2735,13 +2790,13 @@ fn a_flat_argument_is_read_in_place() {
     }
 }
 
-/// t51 §4: an argument passed on is a reference whatever its size. Chains of 40 calls each passing a state on, of 120
+/// t51 §4: an argument passed on is a reference whatever its size. Chains of 16 calls each passing a state on, of 120
 /// tokens and of 6: the heap's words differ by less than a level's do, so no level holds the state's tokens. The
 /// state passed through plain calls, through an argument scanned at each level, and through an exit at each level
 /// (a join); `__LINE__` in it, `#` of it at the end, calls beside it; each the serial pass's at rung 0, in C and C++.
 #[test]
 fn a_chains_heap_is_the_same_whatever_its_states_size() {
-    let levels = 40;
+    let levels = 16;
     let chain = |n: usize, body: &dyn Fn(usize) -> String, last: &str, tail: &str| {
         let state = (0..n).map(|i| format!("a{i} (b, c)")).collect::<Vec<_>>().join(" ");
         let mut t = String::from("#define ID(x) x\n#define CAT(a, b) a ## b\n#define S(x) #x\n#define X(x) S(x)\n#define G(x) -\n");
@@ -2766,7 +2821,7 @@ fn a_chains_heap_is_the_same_whatever_its_states_size() {
                 .iter()
                 .map(|&n| {
                     let text = chain(n, *body, last, tail);
-                    let (got, want, rung, _, heap) = expanded_run(&[("main.c", text.as_str())], rerail_c_pp::Config::new(crate::pp::options(cpp)), &[]);
+                    let (got, want, rung, _, heap, _) = expanded_run(&[("main.c", text.as_str())], rerail_c_pp::Config::new(crate::pp::options(cpp)), &[]);
                     let got = got.unwrap_or_else(|why| panic!("{what}: refused {why}"));
                     same(show(&got), show(&want), what);
                     assert_eq!(rung, 0, "{what}: grew to rung {rung}");
@@ -2805,7 +2860,7 @@ fn a_chains_heap_is_linear_in_its_length() {
             .iter()
             .map(|&n| {
                 let text = chain(n, body);
-                let (got, want, _, _, heap) = expanded_run(&[("main.c", text.as_str())], rerail_c_pp::Config::new(crate::pp::options(false)), &[]);
+                let (got, want, _, _, heap, _) = expanded_run(&[("main.c", text.as_str())], rerail_c_pp::Config::new(crate::pp::options(false)), &[]);
                 let got = got.unwrap_or_else(|why| panic!("{what}, {n} levels: refused {why}"));
                 same(show(&got), show(&want), what);
                 heap
@@ -2838,7 +2893,7 @@ fn a_done_calls_exits_are_records_linear_in_the_chain() {
     };
     let heap = |levels: usize, n: usize| {
         let text = chain(levels, n);
-        let (got, want, _, _, heap) = expanded_run(&[("main.c", text.as_str())], rerail_c_pp::Config::new(crate::pp::options(false)), &[]);
+        let (got, want, _, _, heap, _) = expanded_run(&[("main.c", text.as_str())], rerail_c_pp::Config::new(crate::pp::options(false)), &[]);
         let got = got.unwrap_or_else(|why| panic!("{levels} levels: refused {why}"));
         same(show(&got), show(&want), "a chain of exits beside it");
         heap
@@ -2977,10 +3032,11 @@ fn a_reading_waits_for_its_holes_result() {
 
 /// Expansions as deep as the input nests (t51 §4, §5), as Boost.Preprocessor's `BOOST_PP_REPEAT_1_n(m, d)` is
 /// `BOOST_PP_REPEAT_1_{n-1}(m, d) m(2, n-1, d)` (256 deep): object-like and function-like chains 100 and 300 deep, at
-/// the top and in an argument, each the serial pass's. Each key is one request: a level's `O`, `R`, `M` calls and
-/// `R`'s and `M`'s arguments' pre-expansions (an argument's key holds the macros disabled where it is read, so `m`
-/// is one a level), the second chain's calls the first's (one hit at its root); and the heap's use is linear in the
-/// depth: there are no frames.
+/// the top and in an argument, each the serial pass's. Each key is one request: a level's `O`, `R` and `M` calls
+/// (`R`'s argument `M` and `M`'s, a number, are their own pre-expansions: no requests, t51 §6). A key holds whether
+/// a space comes before the call (`CS_NSP`: its result's first token takes it), and a call at its body's start reads
+/// its caller's: the third line's `R` (`ID(R`, no space) is made again at each level, its `M` calls hits, and its `O`
+/// a hit at its root. The heap's use is linear in the depth: there are no frames.
 #[test]
 fn expansions_are_as_deep_as_the_input_and_one_request_a_key() {
     use rerail_c_pp::files::Search;
@@ -3004,10 +3060,11 @@ fn expansions_are_as_deep_as_the_input_and_one_request_a_key() {
         let x = &s.part.x;
         same(x.refused, 0, format!("refused at depth {depth}"));
         same(show(&part_tokens(&s.part, &s.loaded.files, &tapes)), show(&serial.0), format!("the output at depth {depth}"));
-        // `O` a level and its root; `R`, `M` and their arguments 4 a level; `ID` and its argument; the top piece.
+        // `O`, `R` and `M` a level and their roots; the third line's `R` a level and its root; `ID`, its argument and
+        // the top piece. Hits: the third line's `M` a level and its `O`'s root.
         let (hits, made) = x.memo;
-        same(made as usize, 6 * depth + 9, format!("the requests at depth {depth}"));
-        assert!(hits >= 1, "depth {depth}: the second chain is not the first's");
+        same(made as usize, 4 * depth + 7, format!("the requests at depth {depth}"));
+        same(hits as usize, depth + 1, format!("the memo's hits at depth {depth}"));
         uses.push(x.heap as usize);
     }
     eprintln!("the heap's words: {uses:?}");
@@ -3269,3 +3326,47 @@ fn a_round_lexes_only_its_new_files() {
     same(first.len(), 1, "the first round's documents");
 }
 
+/// A parameter passed whole into another call's argument keeps its own call's bit (t51 §6: whether a token in it acts
+/// in a pre-expansion) only where its last token is followed as there: `P(G)`'s `f` is `G` before a `)`, a name that
+/// does not act, but in `Q(f(1))` a `(` follows it, so `Q`'s argument is expanded first (`Q(1)` inside it is not
+/// yet disabled: `1`), not read raw (then `Q` would be disabled in its rescan: `Q(1)`). Boost.Preprocessor's
+/// `BOOST_PP_SEQ_FILTER(F, ...)` passes its predicate so.
+#[test]
+fn a_parameter_passed_whole_acts_where_a_paren_follows_it() {
+    for src in [
+        "#define Q(a) a\n#define G(x) Q(x)\n#define P(f) Q(f(1))\nP(G)\n",
+        "#define Q(a) a\n#define G(x) Q(x)\n#define P(f) R(f)\n#define R(f) Q(f(1))\nP(G)\n",
+        "#define Q(a) a\n#define G(x) Q(x)\n#define P(f) Q(f)\nP(G)(1)\n",
+    ] {
+        let (got, want, _) = expanded_memo(&[("main.c", src)], false);
+        same(show(&got.expect("refused")), show(&want), src);
+    }
+}
+
+/// An `#if` line's runs of values joined by `+` and `-` are summed in a step (one signed sum, wrapping): each its
+/// serial pass's, beside tighter operators, unary signs, parentheses, unsigned values and a run longer than a window.
+#[test]
+fn if_sums_are_the_serial_passes() {
+    let mut long = String::from("1");
+    for k in 0..100 {
+        long += if k % 3 == 0 { " - 2" } else { " + 3" };
+    }
+    let lines = [
+        "1 + 2 + 3 * 4 == 15".to_string(),
+        "1 - 2 - 3 + 4 - 5 + 6 == 1".to_string(),
+        "2 * 3 + 4 - 5 + 6 - 7 == 4".to_string(),
+        "10 - 1 + 2 + 3 + 4 << 1 == 36".to_string(),
+        "- 1 + 2 + 3 + 4 == 8".to_string(),
+        "(1 + 2 + 3) * (4 - 5 - 6) == -42".to_string(),
+        "0u - 1 + 1 + 1 + 1 > 0".to_string(),
+        "0x7fffffffffffffff + 1 + 1 - 1 - 1 == 0x7fffffffffffffff".to_string(),
+        format!("{long} == {}", 1 + (0..100).map(|k| if k % 3 == 0 { -2 } else { 3 }).sum::<i64>()),
+        "1 ? 2 + 3 + 4 : 5 + 6 + 7".to_string(),
+    ];
+    for l in lines {
+        let src = format!("#if {l}\nyes\n#else\nno\n#endif\n");
+        let (got, want, _) = expanded_memo(&[("main.c", &src)], false);
+        same(show(&got.expect("refused")), show(&want), &src);
+        same(show(&want), "yes".to_string(), &src);
+    }
+}

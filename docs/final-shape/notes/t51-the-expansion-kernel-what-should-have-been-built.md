@@ -161,3 +161,125 @@ Each requirement gets a test that fails on the structure it replaces:
   work in.
 
 The serial pass is the oracle, token for token and row for row.
+
+## 6. Memory: what a request costs, and what it keeps
+
+The user's direction (2026-11-25), after Boost's `seq.c` and `tuple.c` ran out of room: "do A and B, but I suspect
+that we will also need C". A: a smaller heap a request. B: bounded windows of top pieces, the heap emptied between
+them. C: finished requests' words given back.
+
+### What was measured
+
+Boost's `seq.c` line 428, `BOOST_PP_SEQ_ELEM(4, BOOST_PP_SEQ_FILTER(FILTER_MOD_S, 20, SEQ_100))`, is one line with
+637,201 expansions in the serial pass. On the CPU backend, before any of the below, its run filled a heap of 45.2M
+words after 358,388 requests, 126 words each:
+
+| Part | Share of the heap |
+|---|---|
+| Request records (45 words and a word an argument) | 38.5% |
+| Call sites (12 words and 6 an argument) | 23% |
+| Substituted lists | 20% |
+| Results | 16.5% |
+| Waiters | 1.5% |
+
+81% of its argument pre-expansions (306,148 of 377,858) made no call: a request for an argument whose
+pre-expansion is itself.
+
+The heap was 8 words a token row, and the rows' room grew fourfold when the heap ran out, with every store sized
+from it (the expansion rows at 3 words a token row: 18M words for 637,201 rows). Its next run asked for a 1,280 MB
+arena against a 1,024 MB budget.
+
+### What is built
+
+- **B, windows.** A run is cut into pieces at its lines (`rx_cut`): where a line starts at the run's depth, not
+  inside parentheses and not before a `(`. Contiguous pieces of top text are one output piece again after the
+  place sort (`rx_piece_merge`). `rx_loop` runs the pieces in windows. Each window starts on an empty heap and
+  memo table, and runs its requests, its counts, its occurrences and its output after the windows before it. A
+  window whose heap ran out is undone and runs again half as wide; a piece alone that runs out refuses the unit,
+  which runs again larger. A unit that fits is one window.
+- **A, a request's words.**
+  - An argument with no token that acts in its pre-expansion is its own pre-expansion: read raw where it is used,
+    never a request. A token acts there if it is a built-in, an object-like macro at the call's slot, or a
+    function-like macro with a `(` after it (or a next token not known where it is read: `rx_acts_pre`). Each call
+    site keeps a bit per argument (`CS_NAMES`), set while the argument is hashed. A result passed whole gives its
+    own bit (`RQ_NAMES` bit 0, made at its seal).
+  - Boost's arguments are mostly names passed on: `BOOST_PP_SEQ_FILTER(F, …)`'s predicate, `REPEAT`'s macro. Read
+    raw, such a parameter is read token by token at each level it is passed through (in the collection, the seal's
+    summary and the rescan), which made `an_argument_passed_on_costs_nothing_for_its_size` fail. So a parameter
+    passed on whole is passed in a step (`rx_whole_param`):
+    - its hash is its call site's, its first token's term changed to its spacing here (`rx_param_hash`);
+    - its bit is its call site's, unless its last token may act (`rx_may_act`: a built-in, or a name with
+      definitions) and a `(` follows it here, or the token after it is not known. At its call site a `,` or `)`
+      followed it. Without that check, `F` passed into `Q(f(1))` was read raw, and Boost's `SEQ_FILTER` gave
+      another line's result (`a_parameter_passed_whole_acts_where_a_paren_follows_it`);
+    - each call site keeps a second bit per argument, set if any token in it may act anywhere (`CS_MAY`, and
+      `RQ_NAMES` bit 1 for a result). The rescan passes a parameter with that bit clear in a step, unread, and
+      the seal's summary takes the bit.
+  - The fields nothing read go (`RQ_KEY0`, `RQ_KEY1`, `RQ_STEPS`): 42 words a record.
+  - A chunk's header is 3 words; a result's first chunk holds 2 entries, not 4; a substituted list is sized to its
+    entries, not 4 more.
+
+  Line 428 then made 428,591 requests in the same 45.2M words: 105 words each.
+- **Measured with all of the above (2026-11-25, CPU backend, m3):**
+  - Line 428 is the serial pass's: 710,598 requests and 45,968 memo hits, in one window of 91.9M words (129
+    words a request).
+  - Its batch of one asked for 1,280 MB, then 1,024 MB, and both were refused. It ran at the size between its
+    last run's and the refused one (`expand_teams`, as `expand_sized_at` does).
+  - It took 1,004 s of the backend's time, against 1.9 s for the serial pass. `zzf25` (49,549 requests) took 13
+    s, so the time grows faster than the requests (14 times the requests, 76 times the time).
+  - `sample`, 20 s at 200 s into the run, on m3: one thread ran the kernel, and the other threads waited.
+    - `__ukl_cpu_switch`: 48% of its samples. This is the CPU backend switching between a SIMD group's emulated
+      lanes at each shuffle or ballot.
+    - `rx_collect`: 29%. Its per-token path does 4 shuffles per lane per window.
+    - `rx_tok_e`: 5%; `rx_scan`: 4%.
+
+    So most of the time is the CPU backend's emulation of SIMD groups on one thread. The device's time for the
+    line is to be measured on CUDA.
+- **The rooms.** The expansion rows have their own room (a quarter of the token rows; a unit past it reports them),
+  and a room that ran out grows twofold, not fourfold.
+
+### C: what a finished request still needs
+
+A done request is read in three ways:
+
+1. By its readers while the expansion runs: its result, its length, its summary (`RQ_NET` to `RQ_NAMES`), its
+   tail, hot place, first token and open call.
+2. By the memo: a later call with the same key finds the record.
+3. By the roll-up: its kind, definition, call site (the arguments' ranges), substituted list, result, rows,
+   counters and pre-expansions, for each occurrence of it.
+
+What only a running request needs: where its reading is (`RQ_K`, `RQ_O`, `RQ_PHASE`), its result's last chunk
+(`RQ_RLAST`), its live tail (`RQ_LIVE`), its candidates (`RQ_CAND`, a list), a pragma's operand (`RQ_PJ`), its
+waiters' nodes, and its arguments' hashes (2 words of the call site's 6 an argument) once its pre-expansions are
+keyed. And an occurrence of the roll-up is needed only until its row is written and its children are made.
+
+So C is two pools, each given back where its use ends:
+
+- **A request's running state** (its reading's place, phase, last chunk, live tail, candidates, waiters), taken
+  when it starts and given back at its seal. A free list a group, read and written by that group alone (no
+  atomics, no ABA): a request started in one group and sealed in another gives its state to the second.
+- **The roll-up's occurrences**, given back once their rows and children are made: the roll-up then holds its
+  frontier, not the tree.
+
+What stays is what the roll-up reads: the records' kept words, the call sites' ranges, the substituted lists and
+the results, about 75 words a request. Fewer than that needs rows made at a request's seal instead of from the
+tree, relative to its occurrence, which memoized requests share between occurrences at different places. That is
+an open question for the user, not built.
+
+## 7. Speed: each test under 1 s, each compile under 30 s (2026-11-25)
+
+The user: a preprocessor runs in milliseconds; each test has 1 s (`--profile second`) and each compile 30 s. What was
+measured, and what changed:
+
+| Cost | Measured | Cause | Change |
+|---|---|---|---|
+| A test process's first evaluation, CPU backend | 222 ms | the serial preprocessor applying UKL's shim to the 500 KB source, unoptimized | `rerail-c-pp` at `opt-level` 3 in dev (`Cargo.toml`): 0.2 s → 0.09 s a small test |
+| The kernel's CUDA compile | ~25 min, 27.5 MB cubin | every function forced inline (`rx_item` 455k lines of PTX), and ptxas compiling the whole call tree again for each of `pp_setup` and `pp_teams` (56 s of ptxas alone after the splits) | `rx_item` and its parts called (`UKL_ONCE`); NVRTC `-rdc=true`, then a driver link (`cuLink*`): ptxas compiles each function once. 12–17 s, 4 MB |
+| A chain passing its argument on, scanned at each level | 544 ms GPU at 100 levels, O(depth²) | `rx_tok_e` reads a token through every level's binding and result | a forward at the seal (`rx_forward`, `RQ_FQ`..`RQ_FO`): a result that is one whole reference reads from its end. 139 ms on CUDA; CPU backend 141 → 71 ms |
+| A chain's GPU time run to run | 655–1,449 ms, the same test | idle groups spinning on the queue's counters beside the one group with work | CUDA's `ukl_poll_yield` sleeps 128 ns: 385–425 ms |
+| A test's own room tests | 1–2 s on the CPU backend | inputs sized to the product's first rooms | `with_floors` (a test hook): the rooms small, the inputs small |
+
+Open: a CUDA test process's context costs 110 ms alone and queues in the driver behind others (4 at once: 470 ms
+each), so the suite runs 2 at a time on CUDA (`-j 2`): 59 of 61 under 1 s. Each grid run of a small unit costs about
+2.4 ms of GPU time on CUDA (270 runs in `every_name_sees_the_spikes_definition`: 652 ms), its phases' barriers; and
+`a_done_calls_exits_are_records_linear_in_the_chain` takes 0.86 s alone.

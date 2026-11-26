@@ -31,6 +31,11 @@
 // says how many rows it used).
 #define RX_FRONT (24u)
 #define RX_MSLOTS (25u)
+// A window of top pieces (`rx_loop`): the heap past its room in it (`RX_FULL`, its items then drained unrun), its
+// end, and whether it holds one piece only.
+#define RX_FULL (15u)
+#define RX_WEND (16u)
+#define RX_WONE (17u)
 // The first refusal's place (`CTL` 28 to 31: where, the request, a word, a word), for the host's reading.
 UKL_INLINE void rx_diag(Ar a, uint32_t where, uint32_t r, uint32_t w0, uint32_t w1) {
     if (ukl_atomic_cas(&a.ctl[28], 0u, where) == 0u) { a.ctl[29] = r; a.ctl[30] = w0; a.ctl[31] = w1; }
@@ -43,7 +48,8 @@ UKL_INLINE PP_GLOBAL uint32_t* rx_h(Ar a) { return a.psrc; }
 UKL_INLINE uint32_t rx_cap(Ar a) { return RX_HEAP * a.tok_cap; }
 UKL_INLINE uint32_t rx_alloc(Ar a, uint32_t n) {
     uint32_t at = ukl_atomic_add(&a.ctl[RX_FRONT], n);
-    if (at + n > rx_cap(a) || at + n < at) { px_refuse(a.ctl, X_ROOM); return RX_NONE; }
+    // Past its room: its window runs again smaller, or the unit larger (`rx_loop`).
+    if (at + n > rx_cap(a) || at + n < at) { ukl_atomic_store(&a.ctl[RX_FULL], 1u); return RX_NONE; }
     return at;
 }
 
@@ -101,14 +107,14 @@ UKL_INLINE Ent e_make(uint32_t kind, uint32_t x, uint32_t y, uint32_t from, uint
     return e;
 }
 
-// A list: chunks of entries, each `[next, count, cap, 0]` and its entries. A substituted list is one chunk; a result
+// A list: chunks of entries, each `[next, count, cap]` and its entries. A substituted list is one chunk; a result
 // grows a chunk at a time, written by the one group that runs its request.
-#define CH_HDR (4u)
+#define CH_HDR (3u)
 UKL_INLINE uint32_t rx_chunk(Ar a, uint32_t cap) {
     uint32_t c = rx_alloc(a, CH_HDR + 4u * cap);
     if (c == RX_NONE) return RX_NONE;
     PP_GLOBAL uint32_t* h = rx_h(a);
-    h[c] = RX_NONE; h[c + 1u] = 0u; h[c + 2u] = cap; h[c + 3u] = 0u;
+    h[c] = RX_NONE; h[c + 1u] = 0u; h[c + 2u] = cap;
     return c;
 }
 UKL_INLINE Ent rx_ent(Ar a, uint32_t c, uint32_t k) {
@@ -142,46 +148,60 @@ UKL_INLINE uint32_t rx_count(Ar a, uint32_t c) { return rx_h(a)[c + 1u]; }
 #define RQ_PHASE (14u)  // `RP_*`
 #define RQ_PRE (15u)    // its arguments' pre-expansions: a word a parameter, `RX_NONE` none
 #define RQ_NARGS (16u)
-#define RQ_KEY0 (17u)
-#define RQ_KEY1 (18u)
-#define RQ_BLOOM0 (19u) // the macros disabled in its rescan: a 64-bit filter, and their hash
-#define RQ_BLOOM1 (20u)
-#define RQ_CTX0 (21u)
-#define RQ_CTX1 (22u)
-#define RQ_TAIL (23u)   // its last token, a function-like macro's name a rescan may act on: its definition
-#define RQ_FIRST (24u)  // its first token's ref, `RX_NONE` none (empty)
-#define RQ_KSLOT (25u)  // the slot its key holds (`rx_key_slot`)
-#define RQ_CNTS (26u)   // the `__COUNTER__` uses of one use of it (its own, its arguments', its calls')
-#define RQ_OWNC (27u)   // its result's own `__COUNTER__` entries
-#define RQ_RLAST (28u)  // its result's last chunk (while it is written)
-#define RQ_IF (29u)     // 1: a line of an `#if` (its key's)
-#define RQ_STEPS (30u)  // its steps
-#define RQ_LIVE (31u)   // its result's last token: a function-like macro's name, its definition (while reading)
+#define RQ_BLOOM0 (17u) // the macros disabled in its rescan: a 64-bit filter, and their hash
+#define RQ_BLOOM1 (18u)
+#define RQ_CTX0 (19u)
+#define RQ_CTX1 (20u)
+#define RQ_TAIL (21u)   // its last token, a function-like macro's name a rescan may act on: its definition
+#define RQ_FIRST (22u)  // its first token's ref, `RX_NONE` none (empty)
+#define RQ_KSLOT (23u)  // the slot its key holds (`rx_key_slot`)
+#define RQ_CNTS (24u)   // the `__COUNTER__` uses of one use of it (its own, its arguments', its calls')
+#define RQ_OWNC (25u)   // its result's own `__COUNTER__` entries
+#define RQ_RLAST (26u)  // its result's last chunk (while it is written)
+#define RQ_IF (27u)     // 1: a line of an `#if` (its key's)
+#define RQ_LIVE (28u)   // its result's last token: a function-like macro's name, its definition (while reading)
 // The first token of its result a rescan of it acts on (a function-like macro's name with a `(` after it there,
 // read as plain where it was made: decision 0613 §4, C17 6.10.3.1's rescan of an argument's expansion), once done.
-#define RQ_HOT (32u)
+#define RQ_HOT (29u)
 // The places in its result of names that may be such (`rx_cand`): a list, checked at its seal.
-#define RQ_CAND (33u)
+#define RQ_CAND (30u)
 // Whether its last token is a name read as plain with nothing after it in it, which a `(` after it calls in a
 // rescan (`DEFER(A)()`'s `A`): 1, else 0.
-#define RQ_LASTC (34u)
+#define RQ_LASTC (31u)
 // Whether its open (`RQ_OPEN`) is a `_Pragma` or a configuration's test at its end, not a call: what follows it may be its operand, nothing
 // need be (1, else 0).
-#define RQ_SOFT (35u)
+#define RQ_SOFT (32u)
 // A `_Pragma`'s operand with names in it being expanded (`rx_operand_req`), while its reading waits for it.
-#define RQ_PJ (36u)
+#define RQ_PJ (33u)
 // Its summary (t51 §4), made once at its seal (`rx_summary`), read where its result is passed whole: the depth of
 // parentheses its tokens end at (an `int32_t`), the least they reach (from 0), the least a depth-0 comma of its is
 // at (`RX_NOCOMMA` none), and its spelling's two polynomial hashes (the `i`th token's `rx_thash` half times the
 // base, `RX_B0` or `RX_B1`, to the `i`th; its first token's without its space) with each base to its length.
-#define RQ_NET (37u)
-#define RQ_MINR (38u)
-#define RQ_MINC (39u)
-#define RQ_H0 (40u)
-#define RQ_H1 (41u)
-#define RQ_P0 (42u)
-#define RQ_P1 (43u)
-#define RQ_WORDS (44u)
+#define RQ_NET (34u)
+#define RQ_MINR (35u)
+#define RQ_MINC (36u)
+#define RQ_H0 (37u)
+#define RQ_H1 (38u)
+#define RQ_P0 (39u)
+#define RQ_P1 (40u)
+// Its result's tokens, made at its seal (`rx_summary`): bit 0, one acts in a pre-expansion (`rx_acts_pre`; an `#if`
+// line's, any); bit 1, one may act anywhere (`rx_may_act`). An argument passing it whole takes them (`CS_NAMES`,
+// `CS_MAY`).
+#define RQ_NAMES (41u)
+// Its forward (t51 §4: a reference read at a reference's cost, however deep): where a result of one entry, whole,
+// reads from past every whole reference it passes on (`rx_forward`), made at its seal over done results only: the
+// request whose list holds it (`RQ_FQ`), the list's chunk (`RQ_FC`, 0: none), the entry's index and the flags of the
+// entries passed over (`RQ_FK`, `FW_*`), and the entry's token its first is (`RQ_FO`). Read where no occurrence is
+// (a rescan's reading, `rx_tok_e`).
+#define RQ_FQ (42u)
+#define RQ_FC (43u)
+#define RQ_FK (44u)
+#define RQ_FO (45u)
+#define RQ_WORDS (46u)
+#define FW_NOEXP (1u << 31)
+#define FW_SPSET (1u << 30)
+#define FW_SP (1u << 29)
+#define FW_K (0xffffffu)
 #define RX_NOCOMMA (0x7fffffffu)
 #define RX_B0 (0x01000193u)
 #define RX_B1 (0x9e3779b1u)
@@ -240,7 +260,14 @@ UKL_INLINE bool rq_done(Ar a, uint32_t r) {
 #define CS_PK (8u)
 #define CS_PO (9u)
 #define CS_TX (10u)
-#define CS_ARGS (11u)
+// Its first 32 arguments with a token that may act among them (`rx_may_act`), a bit each (a group of the top text passed
+// whole counts as one with): one with none is its own pre-expansion, read raw where it is used (`rx_subst`), never a
+// request (t51 §6).
+#define CS_NAMES (11u)
+// Its first 32 arguments with a token that may act anywhere among them (`rx_may_act`), a bit each: one with none
+// is read in a step wherever it is passed (`rx_scan`), never looked up.
+#define CS_MAY (12u)
+#define CS_ARGS (13u)
 #define CS_ARG (6u)
 #define CS_TAIL (0x80000000u)
 UKL_INLINE uint32_t cs_words(uint32_t n) { return CS_ARGS + CS_ARG * n; }
@@ -456,7 +483,7 @@ UKL_INLINE uint32_t rx_elen(Ar a, Ent e) {
 #define SK_OK (0u)
 #define SK_END (1u)
 #define SK_WAIT (2u)
-UKL_INLINE uint32_t rx_seek(Ar a, uint32_t s, UKL_PRIVATE uint32_t* k, UKL_PRIVATE uint32_t* t, UKL_PRIVATE uint32_t* pend) {
+UKL_ONCE uint32_t rx_seek(Ar a, uint32_t s, UKL_PRIVATE uint32_t* k, UKL_PRIVATE uint32_t* t, UKL_PRIVATE uint32_t* pend) {
     uint32_t n = rx_count(a, s);
     for (uint32_t g = 0u; g < (1u << 20); g++) {
         if (*k >= n) return SK_END;
@@ -527,7 +554,7 @@ UKL_INLINE uint32_t rx_calls_before(Ar a, uint32_t r, uint32_t idx) {
 
 // Token `x` of entry `e` (of request `r`'s list, at occurrence `o`; `ord` the entry's place among its result's
 // calls), read down to its leaf. `SK_WAIT` where a result on the way is not done (`*pend`).
-UKL_INLINE uint32_t rx_tok_e(Ux u, Ar a, uint32_t r, uint32_t o, Ent e, uint32_t ord, uint32_t x, UKL_PRIVATE Tok* out, UKL_PRIVATE uint32_t* pend) {
+UKL_ONCE uint32_t rx_tok_e(Ux u, Ar a, uint32_t r, uint32_t o, Ent e, uint32_t ord, uint32_t x, UKL_PRIVATE Tok* out, UKL_PRIVATE uint32_t* pend) {
     PP_GLOBAL const uint32_t* h = rx_h(a);
     uint32_t flags = 0u;
     bool spset = false;
@@ -572,6 +599,14 @@ UKL_INLINE uint32_t rx_tok_e(Ux u, Ar a, uint32_t r, uint32_t o, Ent e, uint32_t
         // A result: an argument's pre-expansion, or a call's.
         uint32_t nr = rx_node_req(a, e);
         if (!rq_done(a, nr)) { *pend = nr; return SK_WAIT; }
+        // Its forward: the entry its result reads from, past the whole references on the way (`rx_forward`).
+        if (o == RX_NONE && h[nr + RQ_FC] != 0u) {
+            uint32_t fk = h[nr + RQ_FK];
+            if ((fk & FW_NOEXP) != 0u) flags |= T_NOEXP;
+            if (y == 0u && !spset && (fk & FW_SPSET) != 0u) { spset = true; if ((fk & FW_SP) != 0u) flags |= T_SPACE; }
+            r = h[nr + RQ_FQ]; e = rx_ent(a, h[nr + RQ_FC], fk & FW_K); x = h[nr + RQ_FO] + y; ord = RX_NONE;
+            continue;
+        }
         if (o != RX_NONE) {
             if (kind == EK_ARGX) o = h[o + OC_ARGS] == RX_NONE ? RX_NONE : h[h[o + OC_ARGS] + e_param(e)];
             else if (kind == EK_CALL && ((e.w & EF_READ) != 0u || ord == RX_NONE)) o = rx_occ_find(a, o, e.y);
@@ -757,12 +792,40 @@ UKL_INLINE uint32_t rx_top_run(Ar a, uint32_t r, uint32_t k, uint32_t t, UKL_PRI
 }
 
 // Top piece `s` (a run's first token, one thread): its request, its list the run's tokens, posted.
+// A run's pieces (each a top request): a top token starts one where its run starts, or where it is the first of its
+// line at its run's depth of parentheses and is not a `(`, in a run whose depth never falls below its first's (a
+// `)` there may close a `(` a result made). Nothing the serial pass reads crosses such a cut but a result's tail,
+// and only a `(` next would call it. Three passes: each run's first depth (`base`, by its run), the runs that fall
+// below it (`low`), the pieces' first tokens (`cut`). The text's lines are a piece each (no runs).
+UKL_INLINE uint32_t rx_depth(PP_GLOBAL const uint32_t* dep, uint32_t s) { return dep[s] - s; }
+UKL_INLINE bool rx_run_start(Ux u, uint32_t s) { return s == 0u || rx_run_of(u, s) != rx_run_of(u, s - 1u); }
+UKL_INLINE void rx_cut_base(Ux u, PP_GLOBAL const uint32_t* dep, PP_GLOBAL uint32_t* base, PP_GLOBAL uint32_t* low, uint32_t nt, uint32_t s) {
+    if (s >= nt) return;
+    low[s] = 0u;
+    uint32_t j = rx_run_of(u, s);
+    if (rx_run_start(u, s) && j < nt) base[j] = rx_depth(dep, s);
+}
+UKL_INLINE void rx_cut_low(Ux u, PP_GLOBAL const uint32_t* dep, PP_GLOBAL const uint32_t* base, PP_GLOBAL uint32_t* low, uint32_t nt, uint32_t s) {
+    if (s >= nt) return;
+    uint32_t j = rx_run_of(u, s);
+    if (j < nt && (int32_t)(rx_depth(dep, s) - base[j]) < 0) low[j] = 1u;
+}
+UKL_INLINE void rx_cut(Ux u, RxIn in, PP_GLOBAL const uint32_t* dep, PP_GLOBAL const uint32_t* base, PP_GLOBAL const uint32_t* low,
+                       uint32_t nt, uint32_t s) {
+    if (s >= nt) return;
+    bool start = rx_run_start(u, s);
+    uint32_t j = rx_run_of(u, s);
+    if (!start && in.is_if == 0u && u.sc.runs != 0u && j < nt && low[j] == 0u && rx_depth(dep, s) == base[j] &&
+        ref_punct(u, u.tnode[s]) != ((uint8_t)('(')) && px_line(u, u.tnode[s]) != px_line(u, u.tnode[s - 1u])) start = true;
+    // Bit 0 of the token's state (`STATE`; bit 1 its `defined`'s mark, `rx_scan`), for every window's reading.
+    in.state[s] = start ? 1u : 0u;
+}
 UKL_INLINE void rx_top(Ux u, Ar a, RxIn in, PP_GLOBAL const uint32_t* n_toks, uint32_t s) {
     if (s >= n_toks[0]) return;
     in.tops[s] = 0u;
-    in.state[s] = 0u;
-    if (s != 0u && rx_run_of(u, s) == rx_run_of(u, s - 1u)) return;
+    if ((in.state[s] & 1u) == 0u) return;
     uint32_t end = ukl_min(rx_run_end(u, s), n_toks[0]);
+    for (uint32_t t = s + 1u; t < end; t++) if ((in.state[t] & 1u) != 0u) { end = t; break; }
     uint32_t r = rx_record(a, RK_TOP, RX_NONE, s, end, top_slot(u.sc, u.gat, u.n_gaps, s), 0u, in.is_if);
     uint32_t c = rx_chunk(a, 1u);
     if (r == RX_NONE || c == RX_NONE) return;
@@ -783,8 +846,8 @@ UKL_INLINE void rx_out(Ar a, uint32_t r, Ent e) {
     PP_GLOBAL uint32_t* h = rx_h(a);
     uint32_t c = h[r + RQ_RLAST];
     if (c == RX_NONE) {
-        // Most results are a few entries: the first chunk small, each next twice the last.
-        c = rx_chunk(a, 4u);
+        // Most results are one or two entries: the first chunk two, each next twice the last.
+        c = rx_chunk(a, 2u);
         if (c == RX_NONE) return;
         h[r + RQ_RES] = c; h[r + RQ_RLAST] = c;
     }
@@ -843,6 +906,55 @@ UKL_INLINE bool rx_is_paste(Ux u, Ent e) {
 UKL_INLINE bool rx_is_pm(Ent e) { return e_kind(e) == EK_TOK && e.y == PLACEMARKER; }
 UKL_INLINE Ent rx_spaced(Ent e, bool sp) { e.w = (e.w & ~(EF_SPSET | EF_SP)) | EF_SPSET | (sp ? EF_SP : 0u); return e; }
 
+// Whether call `q`'s argument `p` is its own pre-expansion: no name or built-in among its tokens (`CS_NAMES`).
+UKL_INLINE bool rx_arg_raw(Ar a, uint32_t q, uint32_t p) {
+    return p < 32u && ((rq(a, rq(a, q, RQ_CS), CS_NAMES) >> p) & 1u) == 0u;
+}
+
+// The call site of request `r`'s parameter `*p` (a join's reader's; an argument's pre-expansion's, its call's
+// parameter: `rx_binding`'s), and the call (`*call`); `RX_NONE` none.
+UKL_INLINE uint32_t rx_param_site(Ar a, uint32_t r, UKL_PRIVATE uint32_t* p, UKL_PRIVATE uint32_t* call) {
+    PP_GLOBAL const uint32_t* h = rx_h(a);
+    for (uint32_t g = 0u; g < 256u && h[r + RQ_KIND] == RK_JOIN; g++) r = h[r + RQ_UP];
+    if (h[r + RQ_KIND] == RK_ARG) { *p = h[r + RQ_DEF]; r = h[r + RQ_CS]; }
+    if (h[r + RQ_KIND] != RK_CALL) return RX_NONE;
+    uint32_t cs = h[r + RQ_CS];
+    if (*p >= h[cs + CS_NARGS] || *p >= 32u) return RX_NONE;
+    *call = r;
+    return cs;
+}
+// An entry of request `r`'s list that is one of its parameters whole (raw, from its first token, not the variadic
+// one): its call site (`*cs`, `*p`) and length (`*len`). Its parentheses are balanced, it has no comma at its depth
+// 0, and its spelling's hash is its call site's: so it is passed in a step (`rx_collect`, `rx_summary`).
+UKL_INLINE bool rx_whole_param(Ux u, Ar a, uint32_t r, Ent e, UKL_PRIVATE uint32_t* cs, UKL_PRIVATE uint32_t* p, UKL_PRIVATE uint32_t* len) {
+    if (e_kind(e) != EK_PARAM || (e.w & (EF_READ | EF_NOEXP)) != 0u || e.from != 0u || e.len == RX_NONE || e.len == 0u) return false;
+    uint32_t call = RX_NONE;
+    *p = e_x(e);
+    *cs = rx_param_site(a, r, p, &call);
+    if (*cs == RX_NONE) return false;
+    PP_GLOBAL const uint32_t* h = rx_h(a);
+    PpDef d = u.defs[h[call + RQ_DEF]];
+    if ((d.flags & D_VARIADIC) != 0u && *p + 1u == h[*cs + CS_NARGS]) return false;
+    PP_GLOBAL const uint32_t* b = h + *cs + CS_ARGS + CS_ARG * *p;
+    *len = rx_span_len(a, h[*cs + CS_OWNER], b[0], b[1], b[2], b[3]);
+    return *len == e.len;
+}
+// That parameter's hash terms as read here (`fl` its first token's flags here), from its call site's: its first
+// token's term changed from the call's reading of it.
+UKL_INLINE bool rx_param_hash(Ux u, Ar a, uint32_t cs, uint32_t p, uint32_t len, uint32_t fl, uint32_t ref,
+                              UKL_PRIVATE uint32_t* g0, UKL_PRIVATE uint32_t* g1) {
+    PP_GLOBAL const uint32_t* h = rx_h(a);
+    PP_GLOBAL const uint32_t* b = h + cs + CS_ARGS + CS_ARG * p;
+    uint32_t owner = h[cs + CS_OWNER], os = rq(a, owner, RQ_S), k = b[0], t = b[1], pd = RX_NONE;
+    if (rx_seek(a, os, &k, &t, &pd) != SK_OK) return false;
+    Tok o0; uint32_t pz = 0u;
+    if (rx_tok_e(u, a, owner, RX_NONE, rx_ent(a, os, k), 0u, t, &o0, &pz) != SK_OK || o0.ref != ref) return false;
+    uint64_t th = rx_thash(u, ref, fl), to = rx_thash(u, ref, o0.flags);
+    *g0 = b[4] - rx_pow(RX_B0, len) + (uint32_t)th - (uint32_t)to;
+    *g1 = b[5] - rx_pow(RX_B1, len) + (uint32_t)(th >> 32) - (uint32_t)(to >> 32);
+    return true;
+}
+
 // The pre-expansion of call `q`'s parameter `p`: its request, by its key (the argument's spelling and where it is
 // read), made and posted where none is.
 UKL_INLINE uint32_t rx_pre(Ux u, Ar a, uint32_t q, uint32_t p) {
@@ -864,7 +976,6 @@ UKL_INLINE uint32_t rx_pre(Ux u, Ar a, uint32_t q, uint32_t p) {
     rx_put(a, c, 0u, e_make(EK_PARAM, 0u, 0u, 0u, len, 0u));
     h[c + 1u] = 1u;
     h[r + RQ_S] = c; h[r + RQ_KSLOT] = h[q + RQ_KSLOT];
-    h[r + RQ_KEY0] = (uint32_t)key; h[r + RQ_KEY1] = (uint32_t)(key >> 32);
     ukl_fence_device();
     if (sl != RX_NONE) rx_publish(a, sl, r);
     h[pre] = r;
@@ -965,7 +1076,7 @@ UKL_INLINE uint32_t rx_stringize(Ux u, Ar a, uint32_t q, uint32_t p) {
 
 // Call `q`'s substituted list (`RQ_S`). `RX_SUB_WAIT` where its `__VA_OPT__` waits for the variadic argument's
 // pre-expansion (`*pend`).
-UKL_INLINE uint32_t rx_subst(Ux u, Ar a, uint32_t q, UKL_PRIVATE uint32_t* pend) {
+UKL_ONCE uint32_t rx_subst(Ux u, Ar a, uint32_t q, UKL_PRIVATE uint32_t* pend) {
     PP_GLOBAL uint32_t* h = rx_h(a);
     uint32_t def = h[q + RQ_DEF], cs = h[q + RQ_CS];
     PpDef d = u.defs[def];
@@ -982,7 +1093,9 @@ UKL_INLINE uint32_t rx_subst(Ux u, Ar a, uint32_t q, UKL_PRIVATE uint32_t* pend)
         uint32_t vk = vo ? u.vai[d.ifirst + i] & ~VA_OFF : 0u;
         if (vk == VA_NAME) {
             present = false;
-            if (rx_param_len(a, q, va) != 0u) {
+            if (rx_param_len(a, q, va) != 0u && rx_arg_raw(a, q, va)) {
+                present = true;
+            } else if (rx_param_len(a, q, va) != 0u) {
                 uint32_t r = rx_pre(u, a, q, va);
                 if (r == RX_NONE) return RX_SUB_STOP;
                 if (!rq_done(a, r)) { *pend = r; return RX_SUB_WAIT; }
@@ -991,12 +1104,12 @@ UKL_INLINE uint32_t rx_subst(Ux u, Ar a, uint32_t q, UKL_PRIVATE uint32_t* pend)
             if (!present) i += u.vai[d.ifirst + i] & VA_OFF;
             continue;
         }
-        if (p == NO_PARAM || p >= nargs || !rx_plain_use(u, d, i)) continue;
+        if (p == NO_PARAM || p >= nargs || !rx_plain_use(u, d, i) || rx_arg_raw(a, q, p)) continue;
         if (rx_pre(u, a, q, p) == RX_NONE) return RX_SUB_STOP;
     }
     // Its entries at most: a parameter's use 1, or 3 beside `##`; a body token 1, but one after a plain body token
-    // (its run's entry goes on).
-    uint32_t need = 4u;
+    // (its run's entry goes on). Past it is a failure (`rx_qref` 140), never a write past the chunk.
+    uint32_t need = 1u;
     for (uint32_t i = 0u; i < d.n_body; i++) {
         uint32_t it = u.items[d.ifirst + i], p = it & 0xffffu;
         bool pasted = (it & I_PASTE) != 0u || (i > 0u && (u.items[d.ifirst + i - 1u] & I_PASTE) != 0u) || (i + 1u < d.n_body && (u.items[d.ifirst + i + 1u] & I_PASTE) != 0u);
@@ -1055,7 +1168,8 @@ UKL_INLINE uint32_t rx_subst(Ux u, Ar a, uint32_t q, UKL_PRIVATE uint32_t* pend)
             bool after = i + 1u < d.n_body && (u.items[d.ifirst + i + 1u] & I_PASTE) != 0u;
             uint32_t fl = EF_SPSET | (sp ? EF_SP : 0u);
             if (!before && !after) {
-                rx_put(a, s, w++, e_make(EK_ARGX, p, h[h[q + RQ_PRE] + p], 0u, RX_NONE, fl));
+                if (rx_arg_raw(a, q, p)) rx_put(a, s, w++, e_make(EK_PARAM, p, 0u, 0u, rx_param_len(a, q, p), fl));
+                else rx_put(a, s, w++, e_make(EK_ARGX, p, h[h[q + RQ_PRE] + p], 0u, RX_NONE, fl));
                 continue;
             }
             uint32_t len = rx_param_len(a, q, p);
@@ -1200,6 +1314,27 @@ UKL_INLINE uint32_t rx_lookup(Ux u, Ar a, RxIn in, Tok q, uint32_t slot, uint32_
     return m;
 }
 UKL_INLINE bool rx_acts(uint32_t m) { return m != L_NOT_NAME && m != L_NONE && m != L_IDENT; }
+// Whether a token may act wherever it is read: a built-in, or a name not painted that some definition of the unit
+// names (its rows, at any slot). One that cannot is the same in a pre-expansion (`CS_NAMES`, `RQ_NAMES`).
+// Whether a token acts in a pre-expansion read at `slot` (`floor` its unit's): a built-in, a name of an object-like
+// macro there, or of a function-like one with `(` next (`lp`; `known` false: the next unknown, so it may). A
+// function-like name with no `(` next reads the same raw: a rescan of the callee, whose disabled macros hold the
+// caller's, paints it as the pre-expansion would.
+UKL_INLINE bool rx_acts_pre(Ux u, Ar a, RxIn in, Tok q, uint32_t slot, uint32_t floor, bool top, bool lp, bool known) {
+    if (q.kind == EK_BI) return true;
+    uint32_t m = rx_lookup(u, a, in, q, slot, floor, top);
+    if (!rx_acts(m)) return false;
+    if (m >= L_DEFS || (u.defs[m].flags & D_FNLIKE) == 0u) return true;
+    return lp || !known;
+}
+UKL_INLINE bool rx_may_act(Ux u, Tok q) {
+    if (q.kind == EK_BI) return true;
+    if ((q.flags & T_NOEXP) != 0u || q.ref == PLACEMARKER) return false;
+    if (q.kind == EK_BODY) return u.irows[2u * (u.defs[q.def].ifirst + q.at)] != IR_NONE;
+    if (q.kind == EK_TOP) return u.trows[2u * q.at] != IR_NONE;
+    if (ref_kind(u, q.ref) != K_IDENTIFIER) return false;
+    return name_rows_lo(u.sorted, u.n_rows, ref_key(u, q.ref)) != IR_NONE;
+}
 
 // The first token at or after place (`k`, `t`) of request `r`'s list (lane 0's reading, broadcast): its ref and
 // place, or the list's end, or the result not done it is in (`*pend`).
@@ -1238,7 +1373,7 @@ UKL_INLINE uint32_t rx_site(Ar a, uint32_t r, uint32_t cap, uint32_t nk, uint32_
         if (cs != RX_NONE) {
             PP_GLOBAL uint32_t* h = rx_h(a) + cs;
             h[CS_REQ] = RX_NONE; h[CS_OWNER] = r; h[CS_NARGS] = 0u; h[CS_NK] = nk; h[CS_NO] = no; h[CS_EK] = nk; h[CS_EO] = no;
-            h[CS_NSP] = nsp; h[CS_PK] = pk; h[CS_PO] = po; h[CS_TX] = tx;
+            h[CS_NSP] = nsp; h[CS_PK] = pk; h[CS_PO] = po; h[CS_TX] = tx; h[CS_NAMES] = 0xffffffffu; h[CS_MAY] = 0xffffffffu;
         }
     }
     return RX_B(cs);
@@ -1252,7 +1387,7 @@ UKL_INLINE uint32_t rx_site(Ar a, uint32_t r, uint32_t cap, uint32_t nk, uint32_
 #define RC_WAIT (1u)
 #define RC_END (2u)
 #define RC_COUNT (3u)
-UKL_INLINE uint32_t rx_collect(Ux u, Ar a, RxIn in, uint32_t r, uint32_t m, uint32_t cs, uint32_t cap, uint32_t pk, uint32_t pt,
+UKL_ONCE uint32_t rx_collect(Ux u, Ar a, RxIn in, uint32_t r, uint32_t m, uint32_t cs, uint32_t cap, uint32_t pk, uint32_t pt,
                                UKL_PRIVATE uint32_t* ek, UKL_PRIVATE uint32_t* et, UKL_PRIVATE uint32_t* etop, UKL_PRIVATE uint32_t* pend, uint32_t ln __UKL_PARAMS) {
     PpDef d = u.defs[m];
     uint32_t n = d.n_params >= 2u ? (d.n_params - 1u) / 2u : 0u;
@@ -1268,6 +1403,11 @@ UKL_INLINE uint32_t rx_collect(Ux u, Ar a, RxIn in, uint32_t r, uint32_t m, uint
     // to the `i`th (`hh0`, `hh1`; the bases to the count so far, `pw0`, `pw1`), so a result or a group of the top
     // text passed whole adds its own in a step.
     uint32_t hh0 = 0u, hh1 = 0u, pw0 = 1u, pw1 = 1u;
+    // The arguments with a token that acts in their pre-expansions (`CS_NAMES`), and whether the one read holds one.
+    uint32_t nmask = 0u, mmask = 0u;
+    bool nm = false, nmay = false;
+    uint32_t cslot = rq(a, r, RQ_SLOT), cfloor = unit_floor(u.floors, u.n_units, cslot);
+    bool ctop = rq(a, r, RQ_KIND) == RK_TOP;
     if (ln == 0u) { args[0] = ck; args[1] = ct; }
     for (uint32_t it = 0u; it < (1u << 22); it++) {
         if (!mark) {
@@ -1281,6 +1421,7 @@ UKL_INLINE uint32_t rx_collect(Ux u, Ar a, RxIn in, uint32_t r, uint32_t m, uint
                 pw0 *= rx_pow(RX_B0, len); pw1 *= rx_pow(RX_B1, len);
                 cnt += len;
                 ct += len;
+                nm = true; nmay = true;
                 windows++;
                 continue;
             }
@@ -1301,11 +1442,39 @@ UKL_INLINE uint32_t rx_collect(Ux u, Ar a, RxIn in, uint32_t r, uint32_t m, uint
                             hh1 += pw1 * (rq(a, nr, RQ_H1) + (uint32_t)(tc >> 32) - (uint32_t)(tn >> 32));
                             pw0 *= rq(a, nr, RQ_P0); pw1 *= rq(a, nr, RQ_P1);
                             cnt += rq(a, nr, RQ_LEN);
+                            nm = nm || (rq(a, nr, RQ_NAMES) & 1u) != 0u || rq(a, nr, RQ_SLOT) != cslot;
+                            nmay = nmay || (rq(a, nr, RQ_NAMES) & 2u) != 0u;
                             depth += (int32_t)rq(a, nr, RQ_NET);
                             ck = sk + 1u; ct = 0u;
                             windows++;
                             continue;
                         }
+                    }
+                }
+                // One of `r`'s parameters whole: its call site's hash and bits, in a step (balanced, no comma at
+                // its depth 0: the argument it was).
+                uint32_t wcs, wp, wlen;
+                if (nr == RX_NONE && rx_whole_param(u, a, r, ne, &wcs, &wp, &wlen)) {
+                    Tok q0; uint32_t pz = 0u, g0, g1;
+                    if (rx_tok_e(u, a, r, RX_NONE, ne, 0u, 0u, &q0, &pz) == SK_OK && rx_param_hash(u, a, wcs, wp, wlen, q0.flags, q0.ref, &g0, &g1)) {
+                        hh0 += pw0 * g0; hh1 += pw1 * g1;
+                        pw0 *= rx_pow(RX_B0, wlen); pw1 *= rx_pow(RX_B1, wlen);
+                        cnt += wlen;
+                        // Its bit 0 was read where its call collected it, at the call's slot (this request's, or its
+                        // argument's call's), its last token before that call's `,` or `)`: here a `(` after its last
+                        // token may call it.
+                        nm = nm || ((rq(a, wcs, CS_NAMES) >> wp) & 1u) != 0u;
+                        Tok ql; uint32_t lz = 0u;
+                        if (!nm && (rx_tok_e(u, a, r, RX_NONE, ne, 0u, wlen - 1u, &ql, &lz) != SK_OK || rx_may_act(u, ql))) {
+                            uint32_t xk = sk + 1u, xt = 0u, xd = RX_NONE;
+                            Tok qn; uint32_t nz = 0u;
+                            nm = rx_seek(a, s, &xk, &xt, &xd) != SK_OK || rx_tok_e(u, a, r, RX_NONE, rx_ent(a, s, xk), 0u, xt, &qn, &nz) != SK_OK ||
+                                 ref_punct(u, qn.ref) == ((uint8_t)('('));
+                        }
+                        nmay = nmay || ((rq(a, wcs, CS_MAY) >> wp) & 1u) != 0u;
+                        ck = sk + 1u; ct = 0u;
+                        windows++;
+                        continue;
                     }
                 }
             }
@@ -1327,24 +1496,70 @@ UKL_INLINE uint32_t rx_collect(Ux u, Ar a, RxIn in, uint32_t r, uint32_t m, uint
         bool close = ok && live && ln < f && c == ((uint8_t)(')')) && before == 0;
         uint32_t cl = ukl_min((uint32_t)ukl_ctz64((uint64_t)ukl_sg_ballot(close __UKL_ARGS)), RX_W);
         uint32_t lim = ukl_min(ukl_min(f, cl), cut);
-        if (mark && ok && live && ln < ukl_min(f, cl + 1u) && q.kind == EK_TOP) in.state[q.at] = 2u;
+        if (mark && ok && live && ln < ukl_min(f, cl + 1u) && q.kind == EK_TOP) ukl_atomic_or(&in.state[q.at], 2u);
         bool comma = ok && live && c == ((uint8_t)(',')) && before == 0;
         uint64_t th = ok ? rx_thash(u, q.ref, q.flags) : 0ul;
-        for (uint32_t j = 0u; j < RX_W; j++) {
-            uint32_t cj = ukl_sg_shuffle(comma ? 1u : 0u, j __UKL_ARGS);
-            uint32_t lo = ukl_sg_shuffle((uint32_t)th, j __UKL_ARGS), hi = ukl_sg_shuffle((uint32_t)(th >> 32), j __UKL_ARGS);
-            uint32_t kj = ukl_sg_shuffle(kk, j __UKL_ARGS), tj = ukl_sg_shuffle(tt, j __UKL_ARGS);
-            if (ln != 0u || j >= lim) continue;
-            if (cj != 0u && !(var && na == n)) {
-                if (na <= cap) { PP_GLOBAL uint32_t* b = args + CS_ARG * (na - 1u); b[2] = kj; b[3] = tj; b[4] = hh0 + pw0; b[5] = hh1 + pw1; }
-                if (na == 1u) cnt0 = cnt;
-                na++; cnt = 0u; hh0 = 0u; hh1 = 0u; pw0 = 1u; pw1 = 1u;
-                if (na <= cap) { PP_GLOBAL uint32_t* b = args + CS_ARG * (na - 1u); b[0] = kj; b[1] = tj + 1u; }
+        uint32_t nx = ukl_min(ln + 1u, RX_W - 1u);
+        uint32_t nlp = ukl_sg_shuffle(ok && live && c == ((uint8_t)('(')) ? 1u : 0u, nx __UKL_ARGS);
+        uint32_t nok = ukl_sg_shuffle(ok && live ? 1u : 0u, nx __UKL_ARGS);
+        bool nknown = ln + 1u < RX_W && nok != 0u;
+        bool isn = ok && live && (mark || in.is_if != 0u || rx_acts_pre(u, a, in, q, cslot, cfloor, ctop, nlp != 0u, nknown));
+        bool ism = ok && live && (mark || in.is_if != 0u || rx_may_act(u, q));
+        // The window's tokens before `lim`, folded into the arguments lane-parallel (not a token at a time): the commas
+        // that end an argument (all but the variadic argument's: the first `split` of them), each lane's term times
+        // the base to its place in its argument (the first argument's times the carried bases), and one prefix sum
+        // each hash. Only the arguments a comma ends are read out, one shuffle pair each.
+        uint64_t below = ln == 0u ? 0ul : ((1ul << ln) - 1ul);
+        uint64_t cmask = (uint64_t)ukl_sg_ballot(comma && ln < lim __UKL_ARGS);
+        uint64_t nmask_w = (uint64_t)ukl_sg_ballot(isn && ln < lim __UKL_ARGS);
+        uint64_t mmask_w = (uint64_t)ukl_sg_ballot(ism && ln < lim __UKL_ARGS);
+        uint32_t split = var ? (n > na ? n - na : 0u) : RX_W;
+        uint64_t smask = 0ul;
+        for (uint64_t cm = cmask; cm != 0ul && (uint32_t)ukl_popcount64(smask) < split; cm &= cm - 1ul) smask |= cm & (~cm + 1ul);
+        bool sp = ((smask >> ln) & 1ul) != 0ul, in_w = ln < lim && !sp;
+        uint64_t sb = smask & below;
+        bool first_w = sb == 0ul;
+        uint32_t pos = first_w ? ln : ln - (63u - (uint32_t)ukl_clz64(sb)) - 1u;
+        uint32_t c0 = in_w ? (uint32_t)th * rx_pow(RX_B0, pos) * (first_w ? pw0 : 1u) : 0u;
+        uint32_t c1 = in_w ? (uint32_t)(th >> 32) * rx_pow(RX_B1, pos) * (first_w ? pw1 : 1u) : 0u;
+        uint32_t s0 = ukl_sg_inclusive_sum(c0, ln __UKL_ARGS), s1 = ukl_sg_inclusive_sum(c1, ln __UKL_ARGS);
+        int32_t prev = -1;
+        uint32_t ps0 = 0u, ps1 = 0u;
+        for (uint64_t sm = smask; sm != 0ul; sm &= sm - 1ul) {
+            uint32_t jj = (uint32_t)ukl_ctz64(sm);
+            uint32_t a0 = ukl_sg_shuffle(s0, jj __UKL_ARGS), a1 = ukl_sg_shuffle(s1, jj __UKL_ARGS);
+            uint32_t kj = ukl_sg_shuffle(kk, jj __UKL_ARGS), tj = ukl_sg_shuffle(tt, jj __UKL_ARGS);
+            uint32_t len = jj - (uint32_t)(prev + 1);
+            uint64_t seg = (jj == 0u ? 0ul : ((1ul << jj) - 1ul)) & ~((1ul << (uint32_t)(prev + 1)) - 1ul);
+            if (prev < 0) {
+                hh0 += a0 - ps0; hh1 += a1 - ps1;
+                pw0 *= rx_pow(RX_B0, len); pw1 *= rx_pow(RX_B1, len);
+                cnt += len;
             } else {
-                hh0 += lo * pw0; hh1 += hi * pw1;
-                pw0 *= RX_B0; pw1 *= RX_B1;
-                cnt++;
+                hh0 = a0 - ps0; hh1 = a1 - ps1;
+                pw0 = rx_pow(RX_B0, len); pw1 = rx_pow(RX_B1, len);
+                cnt = len;
             }
+            nm = nm || (nmask_w & seg) != 0ul;
+            nmay = nmay || (mmask_w & seg) != 0ul;
+            if (ln == 0u && na <= cap) { PP_GLOBAL uint32_t* b = args + CS_ARG * (na - 1u); b[2] = kj; b[3] = tj; b[4] = hh0 + pw0; b[5] = hh1 + pw1; }
+            if (na == 1u) cnt0 = cnt;
+            if (nm && na <= 32u) nmask |= 1u << (na - 1u);
+            if (nmay && na <= 32u) mmask |= 1u << (na - 1u);
+            na++; cnt = 0u; hh0 = 0u; hh1 = 0u; pw0 = 1u; pw1 = 1u; nm = false; nmay = false;
+            if (ln == 0u && na <= cap) { PP_GLOBAL uint32_t* b = args + CS_ARG * (na - 1u); b[0] = kj; b[1] = tj + 1u; }
+            prev = (int32_t)jj; ps0 = a0; ps1 = a1;
+        }
+        if (lim != 0u && (uint32_t)(prev + 1) < lim) {
+            // The tokens past the last comma: the argument read on.
+            uint32_t a0 = ukl_sg_shuffle(s0, lim - 1u __UKL_ARGS), a1 = ukl_sg_shuffle(s1, lim - 1u __UKL_ARGS);
+            uint32_t len = lim - (uint32_t)(prev + 1);
+            uint64_t seg = (lim >= 64u ? ~0ul : ((1ul << lim) - 1ul)) & ~((1ul << (uint32_t)(prev + 1)) - 1ul);
+            hh0 += a0 - ps0; hh1 += a1 - ps1;
+            if (prev < 0) { pw0 *= rx_pow(RX_B0, len); pw1 *= rx_pow(RX_B1, len); } else { pw0 = rx_pow(RX_B0, len); pw1 = rx_pow(RX_B1, len); }
+            cnt += len;
+            nm = nm || (nmask_w & seg) != 0ul;
+            nmay = nmay || (mmask_w & seg) != 0ul;
         }
         if (cl < RX_W) {
             uint32_t kc = ukl_sg_shuffle(kk, cl __UKL_ARGS), tc = ukl_sg_shuffle(tt, cl __UKL_ARGS);
@@ -1352,10 +1567,12 @@ UKL_INLINE uint32_t rx_collect(Ux u, Ar a, RxIn in, uint32_t r, uint32_t m, uint
             *ek = kc; *et = tc;
             uint32_t res = RC_OK;
             if (ln == 0u) {
-                h[r + RQ_STEPS] += windows;
                 ukl_atomic_add(&a.lpq[RXS_STEPS], windows);
                 if (na <= cap) { PP_GLOBAL uint32_t* b = args + CS_ARG * (na - 1u); b[2] = kc; b[3] = tc; b[4] = hh0 + pw0; b[5] = hh1 + pw1; }
                 if (na == 1u) cnt0 = cnt;
+                if (nm && na <= 32u) nmask |= 1u << (na - 1u);
+                if (nmay && na <= 32u) mmask |= 1u << (na - 1u);
+                h[cs + CS_NAMES] = nmask; h[cs + CS_MAY] = mmask;
                 h[cs + CS_EK] = kc; h[cs + CS_EO] = tc;
                 if (n == 0u) {
                     if (na == 1u && cnt0 == 0u) h[cs + CS_NARGS] = 0u; else res = RC_COUNT;
@@ -1375,7 +1592,7 @@ UKL_INLINE uint32_t rx_collect(Ux u, Ar a, RxIn in, uint32_t r, uint32_t m, uint
         if (f < cut) {
             uint32_t sf = ukl_sg_shuffle(st, f __UKL_ARGS);
             *pend = ukl_sg_shuffle(pd, f __UKL_ARGS);
-            if (ln == 0u) { h[r + RQ_STEPS] += windows; ukl_atomic_add(&a.lpq[RXS_STEPS], windows); }
+            if (ln == 0u) ukl_atomic_add(&a.lpq[RXS_STEPS], windows);
             return sf == SK_WAIT ? RC_WAIT : RC_END;
         }
         depth += (int32_t)ukl_sg_shuffle(inc, cut - 1u __UKL_ARGS) - (int32_t)cut;
@@ -1409,7 +1626,7 @@ UKL_INLINE uint32_t rx_call(Ux u, Ar a, uint32_t r, uint32_t m, uint32_t cs, uin
     } else {
         q = rx_record(a, RK_CALL, r, m, cs, slot, nargs, h[r + RQ_IF]);
         if (q == RX_NONE) return RX_NONE;
-        h[q + RQ_KSLOT] = kslot; h[q + RQ_KEY0] = (uint32_t)key; h[q + RQ_KEY1] = (uint32_t)(key >> 32);
+        h[q + RQ_KSLOT] = kslot;
         ukl_fence_device();
         if (sl != RX_NONE) rx_publish(a, sl, q);
         ukl_atomic_add(&a.lpq[RXS_MADE], 1u);
@@ -1536,7 +1753,7 @@ UKL_INLINE bool rx_lparen(Ux u, Ar a, uint32_t r, uint32_t ref, uint32_t pk, uin
     return u.gat[pb_item_of(u.gat, u.n_gaps, q.at)] != q.at;
 }
 
-UKL_INLINE uint32_t rx_after(Ux u, Ar a, RxIn in, uint32_t r, UKL_PRIVATE uint32_t* kp, UKL_PRIVATE uint32_t* tp, uint32_t ln __UKL_PARAMS) {
+UKL_ONCE uint32_t rx_after(Ux u, Ar a, RxIn in, uint32_t r, UKL_PRIVATE uint32_t* kp, UKL_PRIVATE uint32_t* tp, uint32_t ln __UKL_PARAMS) {
     PP_GLOBAL uint32_t* h = rx_h(a);
     for (uint32_t g = 0u; g < (1u << 16); g++) {
         uint32_t c = 0u, n = 0u, has = 0u;
@@ -1692,7 +1909,7 @@ UKL_INLINE uint32_t rx_operand(Ux u, Ar a, uint32_t r, uint32_t pk, uint32_t pt,
 // A built-in's name at place (`*kp`, `*tp`) of request `r`'s list (`Pp::builtin`): a one-token one an entry its
 // occurrence gives its value (`EK_BI`); a configuration's test called (`__has_feature`…) its value, by the test's
 // name and its operand's spelling (`px_feature`); `_Pragma ( "…" )` an entry its occurrence makes its effect from.
-UKL_INLINE uint32_t rx_builtin(Ux u, Ar a, RxIn in, uint32_t r, UKL_PRIVATE uint32_t* kp, UKL_PRIVATE uint32_t* tp, Ent e,
+UKL_ONCE uint32_t rx_builtin(Ux u, Ar a, RxIn in, uint32_t r, UKL_PRIVATE uint32_t* kp, UKL_PRIVATE uint32_t* tp, Ent e,
                                uint32_t hm, uint32_t hkind, uint32_t hat, uint32_t hfl, uint32_t ln __UKL_PARAMS) {
     PP_GLOBAL uint32_t* h = rx_h(a);
     uint32_t k = *kp, t = *tp;
@@ -1868,7 +2085,7 @@ UKL_INLINE uint32_t rx_name(Ux u, Ar a, RxIn in, uint32_t r, UKL_PRIVATE uint32_
 }
 
 // Request `r`'s rescan from where it stands (`RQ_K`, `RQ_O`): its result's entries.
-UKL_INLINE uint32_t rx_scan(Ux u, Ar a, RxIn in, uint32_t r, uint32_t ln __UKL_PARAMS) {
+UKL_ONCE uint32_t rx_scan(Ux u, Ar a, RxIn in, uint32_t r, uint32_t ln __UKL_PARAMS) {
     PP_GLOBAL uint32_t* h = rx_h(a);
     uint32_t s = RX_B(h[r + RQ_S]), ns = RX_B(rx_count(a, s));
     uint32_t k = RX_B(h[r + RQ_K]), t = RX_B(h[r + RQ_O]), phase = RX_B(h[r + RQ_PHASE]);
@@ -1923,6 +2140,15 @@ UKL_INLINE uint32_t rx_scan(Ux u, Ar a, RxIn in, uint32_t r, uint32_t ln __UKL_P
         // acts on (no place, tail, open call): passed in a step, unread (t51 §4).
         if (e_kind(e) == EK_PARAM) {
             uint32_t pass = 0u;
+            // An argument no token of which may act anywhere (`CS_MAY`): passed in a step, never looked up.
+            uint32_t mp = e_x(e), mcall = RX_NONE;
+            uint32_t mcs = in.is_if == 0u && e.len != RX_NONE ? rx_param_site(a, r, &mp, &mcall) : RX_NONE;
+            if (mcs != RX_NONE && ((rq(a, mcs, CS_MAY) >> mp) & 1u) == 0u) {
+                pass = e.len - t;
+                if (ln == 0u) rx_out(a, r, rx_trim(e, t, pass));
+                t += pass;
+                continue;
+            }
             if (ln == 0u) {
                 uint32_t owner, oo, k0, o0, k1, o1;
                 if (rx_binding(a, r, RX_NONE, e_x(e), &owner, &oo, &k0, &o0, &k1, &o1)) {
@@ -1973,7 +2199,6 @@ UKL_INLINE uint32_t rx_scan(Ux u, Ar a, RxIn in, uint32_t r, uint32_t ln __UKL_P
         x = rx_name(u, a, in, r, &k, &t, e, hm, hkind, hat, hfl, ln __UKL_ARGS);
     }
     if (ln == 0u) {
-        h[r + RQ_STEPS] += steps;
         ukl_atomic_add(&a.lpq[RXS_STEPS], steps);
     }
     if (x == RX_GO) { px_refuse(a.ctl, X_WORK); return RX_STOP; }
@@ -2073,11 +2298,74 @@ UKL_INLINE bool rx_seal_ready(Ux u, Ar a, uint32_t r) {
 // Request `r`'s summary (`RQ_NET` to `RQ_P1`), by its SIMD group: a result passed whole is its summary's, read in a
 // step; any other entry's tokens 32 a step, their parentheses' depths and commas by a prefix sum, their hashes'
 // terms by each lane's power of the base.
-UKL_INLINE void rx_summary(Ux u, Ar a, uint32_t r, uint32_t ln __UKL_PARAMS) {
+// The entry of list chunk `c` on (its chunks') holding token `*t` (`*t` made its place in it): its chunk `*fc` and
+// index `*fk`. False where a result on the way is not done.
+UKL_INLINE bool rx_find_at(Ar a, uint32_t c, UKL_PRIVATE uint32_t* t, UKL_PRIVATE uint32_t* fc, UKL_PRIVATE uint32_t* fk) {
+    for (uint32_t g = 0u; c != RX_NONE && g < (1u << 20); g++) {
+        uint32_t n = rx_count(a, c);
+        for (uint32_t k = 0u; k < n; k++) {
+            uint32_t len = rx_elen(a, rx_ent(a, c, k));
+            if (len == RX_NONE) return false;
+            if (*t < len) { *fc = c; *fk = k; return true; }
+            *t -= len;
+        }
+        c = rx_h(a)[c];
+    }
+    return false;
+}
+// Request `r`'s forward (`RQ_FQ`), at its seal (one thread): where its result is one entry, whole, the entry it
+// reads from past each whole reference on the way: a parameter's binding, or a done result's entry (or its
+// forward). Each step's entry holds every token of the result; the flags of the entries passed over are kept (the
+// first token's space where it is set first, outermost). None where no step is taken.
+UKL_INLINE void rx_forward(Ar a, uint32_t r) {
+    PP_GLOBAL uint32_t* h = rx_h(a);
+    uint32_t n = h[r + RQ_LEN], c = h[r + RQ_RES];
+    h[r + RQ_FC] = 0u;
+    if (n == 0u || c == RX_NONE || h[c] != RX_NONE || rx_count(a, c) != 1u) return;
+    uint32_t q = r, k = 0u, off = 0u, fl = 0u, steps = 0u;
+    if (rx_elen(a, rx_ent(a, c, 0u)) != n) return;
+    for (uint32_t g = 0u; g < 64u; g++) {
+        Ent e = rx_ent(a, c, k);
+        uint32_t kind = e_kind(e), y = e.from + off, nq, nc, nk, no, fk = 0u;
+        if (kind == EK_PARAM) {
+            uint32_t owner, oo, k0, o0, k1, o1, pend = RX_NONE;
+            if (!rx_binding(a, q, RX_NONE, e_x(e), &owner, &oo, &k0, &o0, &k1, &o1)) break;
+            uint32_t kk = k0, t = o0 + y;
+            if (rx_seek(a, rq(a, owner, RQ_S), &kk, &t, &pend) != SK_OK) break;
+            nq = owner; nc = rq(a, owner, RQ_S); nk = kk; no = t;
+        } else if (kind == EK_ARGX || kind == EK_CALL) {
+            uint32_t nr = rx_node_req(a, e);
+            if (!rq_done(a, nr)) break;
+            if (h[nr + RQ_FC] != 0u) {
+                fk = h[nr + RQ_FK];
+                nq = h[nr + RQ_FQ]; nc = h[nr + RQ_FC]; nk = fk & FW_K; no = h[nr + RQ_FO] + y;
+            } else {
+                uint32_t t = y;
+                if (!rx_find_at(a, rq(a, nr, RQ_RES), &t, &nc, &nk)) break;
+                nq = nr; no = t;
+            }
+        } else {
+            break;
+        }
+        // The entry it steps to holds every token of the result.
+        uint32_t nlen = rx_elen(a, rx_ent(a, nc, nk));
+        if (nlen == RX_NONE || no + n > nlen) break;
+        // The flags of the entry passed over, then of those its result's forward passed over (at its token `y`).
+        if ((e.w & EF_NOEXP) != 0u) fl |= FW_NOEXP;
+        if (off == 0u && (fl & FW_SPSET) == 0u && (e.w & EF_SPSET) != 0u) fl |= FW_SPSET | ((e.w & EF_SP) != 0u ? FW_SP : 0u);
+        if ((fk & FW_NOEXP) != 0u) fl |= FW_NOEXP;
+        if (y == 0u && (fl & FW_SPSET) == 0u && (fk & FW_SPSET) != 0u) fl |= FW_SPSET | (fk & FW_SP);
+        q = nq; c = nc; k = nk; off = no; steps++;
+    }
+    if (steps == 0u || k > FW_K) return;
+    h[r + RQ_FQ] = q; h[r + RQ_FK] = k | fl; h[r + RQ_FO] = off; h[r + RQ_FC] = c;
+}
+UKL_ONCE void rx_summary(Ux u, Ar a, RxIn in, uint32_t r, uint32_t ln __UKL_PARAMS) {
     PP_GLOBAL uint32_t* h = rx_h(a);
     int32_t net = 0, minr = 0, minc = (int32_t)RX_NOCOMMA;
     uint32_t h0 = 0u, h1 = 0u, p0 = 1u, p1 = 1u;
-    bool first = true;
+    bool first = true, names = false, may = false;
+    uint32_t sslot = h[r + RQ_SLOT], sfloor = unit_floor(u.floors, u.n_units, sslot);
     for (uint32_t c = RX_B(h[r + RQ_RES]), g = 0u; c != RX_NONE && g < (1u << 20); c = RX_B(h[c]), g++) {
         for (uint32_t k = 0u; k < RX_B(rx_count(a, c)); k++) {
             Ent e = rx_ent(a, c, k);
@@ -2099,9 +2387,27 @@ UKL_INLINE void rx_summary(Ux u, Ar a, uint32_t r, uint32_t ln __UKL_PARAMS) {
                 minr = ukl_min(minr, net + nm);
                 if (nc != (int32_t)RX_NOCOMMA) minc = ukl_min(minc, net + nc);
                 net += (int32_t)rq(a, nr, RQ_NET);
+                names = names || (rq(a, nr, RQ_NAMES) & 1u) != 0u || rq(a, nr, RQ_SLOT) != sslot;
+                may = may || (rq(a, nr, RQ_NAMES) & 2u) != 0u;
                 h0 += p0 * g0; h1 += p1 * g1; p0 *= q0; p1 *= q1;
                 first = false;
                 continue;
+            }
+            // One of its parameters whole (`rx_whole_param`): its call site's hash and bits, in a step. Its last token
+            // may be a function-like name a `(` after it here calls: it acts as its bit 1 says.
+            uint32_t wcs, wp, wlen;
+            if (rx_whole_param(u, a, r, e, &wcs, &wp, &wlen)) {
+                Tok t0; uint32_t pz = 0u, g0, g1;
+                if (rx_tok_e(u, a, r, RX_NONE, e, 0u, 0u, &t0, &pz) == SK_OK &&
+                    rx_param_hash(u, a, wcs, wp, wlen, first ? t0.flags & ~T_SPACE : t0.flags, t0.ref, &g0, &g1)) {
+                    uint32_t mb = (rq(a, wcs, CS_MAY) >> wp) & 1u;
+                    names = names || mb != 0u || h[r + RQ_IF] != 0u;
+                    may = may || mb != 0u;
+                    minr = ukl_min(minr, net);
+                    h0 += p0 * g0; h1 += p1 * g1; p0 *= rx_pow(RX_B0, wlen); p1 *= rx_pow(RX_B1, wlen);
+                    first = false;
+                    continue;
+                }
             }
             for (uint32_t w0 = 0u; w0 < n && w0 < (1u << 30); w0 += RX_W) {
                 uint32_t p = w0 + ln, wn = ukl_min(RX_W, n - w0);
@@ -2111,6 +2417,11 @@ UKL_INLINE void rx_summary(Ux u, Ar a, uint32_t r, uint32_t ln __UKL_PARAMS) {
                 if (first && p == 0u) fl &= ~T_SPACE;
                 uint64_t th = ok ? rx_thash(u, q.ref, fl) : 0ul;
                 uint8_t ch = ok ? ref_punct(u, q.ref) : (uint8_t)0;
+                uint32_t nx = ukl_min(ln + 1u, RX_W - 1u);
+                uint32_t nlp = ukl_sg_shuffle(ok && ch == ((uint8_t)('(')) ? 1u : 0u, nx __UKL_ARGS);
+                bool nknown = ln + 1u < wn;
+                if (ukl_sg_ballot(ok && (h[r + RQ_IF] != 0u || rx_acts_pre(u, a, in, q, sslot, sfloor, false, nlp != 0u, nknown)) __UKL_ARGS) != 0u) names = true;
+                if (ukl_sg_ballot(ok && (h[r + RQ_IF] != 0u || rx_may_act(u, q)) __UKL_ARGS) != 0u) may = true;
                 int32_t dl = ch == ((uint8_t)('(')) ? 1 : (ch == ((uint8_t)(')')) ? -1 : 0);
                 int32_t d = net + (int32_t)ukl_sg_inclusive_sum((uint32_t)(dl + 1), ln __UKL_ARGS) - (int32_t)(ln + 1u);
                 uint32_t bm = ukl_sg_min(ok ? (uint32_t)d ^ 0x80000000u : 0xffffffffu __UKL_ARGS);
@@ -2129,12 +2440,13 @@ UKL_INLINE void rx_summary(Ux u, Ar a, uint32_t r, uint32_t ln __UKL_PARAMS) {
     if (ln == 0u) {
         h[r + RQ_NET] = (uint32_t)net; h[r + RQ_MINR] = (uint32_t)minr; h[r + RQ_MINC] = (uint32_t)minc;
         h[r + RQ_H0] = h0; h[r + RQ_H1] = h1; h[r + RQ_P0] = p0; h[r + RQ_P1] = p1;
+        h[r + RQ_NAMES] = (names ? 1u : 0u) | (may ? 2u : 0u);
     }
 }
 
 // Request `r`'s seal (one thread), once ready (`rx_seal_ready`) and summed (`rx_summary`): its length, rows,
 // counters, tail, open call and hot place; its waiters pushed.
-UKL_INLINE void rx_seal(Ux u, Ar a, uint32_t r) {
+UKL_ONCE void rx_seal(Ux u, Ar a, uint32_t r) {
     PP_GLOBAL uint32_t* h = rx_h(a);
     uint32_t kind = h[r + RQ_KIND];
     uint32_t len = 0u, rows = kind == RK_CALL ? 1u : 0u, cnts = h[r + RQ_OWNC], prev = RX_NONE;
@@ -2211,16 +2523,20 @@ UKL_INLINE void rx_seal(Ux u, Ar a, uint32_t r) {
     }
     h[r + RQ_LEN] = len; h[r + RQ_ROWS] = rows; h[r + RQ_CNTS] = cnts; h[r + RQ_TAIL] = tail; h[r + RQ_OPEN] = open;
     h[r + RQ_HOT] = hot; h[r + RQ_LASTC] = hot == RX_NONE && want != RX_NONE ? 1u : 0u;
+    rx_forward(a, r);
     rx_wake(a, r);
 }
 
 // --- The workers --------------------------------------------------------------------------------------------------
 
-UKL_INLINE void rx_occ_make(Ux u, Ar a, RxIn in, uint32_t o);
-UKL_INLINE void rx_emit(Ux u, Ar a, RxIn in, uint32_t m);
+UKL_ONCE void rx_occ_make(Ux u, Ar a, RxIn in, uint32_t o);
+UKL_ONCE void rx_emit(Ux u, Ar a, RxIn in, uint32_t m);
 
 // One item, by a SIMD group: a request run from where it stands, to its next wait or its end.
-UKL_INLINE void rx_item(Ux u, Ar a, RxIn in, uint32_t item, uint32_t ln __UKL_PARAMS) {
+// Not inlined (`UKL_ONCE`), nor are its parts (`rx_subst`, `rx_scan`, `rx_collect`, `rx_summary`, `rx_seal`, the
+// roll-up's): `RX_WORK` runs the queue three times in `rx_loop`, and each copy inlined made `rx_item` 455k lines of PTX
+// (unoptimized; 7k with them called), and NVRTC's PTX alone past 30 s (2026-11-25, a GB10).
+UKL_ONCE void rx_item(Ux u, Ar a, RxIn in, uint32_t item, uint32_t ln __UKL_PARAMS) {
     // A refusal stops the work; but `X_PRAGMA`'s, which a text pass's facts decide (a pop's row is the pass's own
     // output): that pass runs to its end, so the next sees the same rows, and the iterations settle on it.
     if (RX_B((ukl_atomic_poll(&a.ctl[2]) & ~X_PRAGMA) != 0u ? 1u : 0u) != 0u) return;
@@ -2249,7 +2565,7 @@ UKL_INLINE void rx_item(Ux u, Ar a, RxIn in, uint32_t item, uint32_t ln __UKL_PA
     if (ln == 0u) ready = rx_seal_ready(u, a, r) ? 1u : 0u;
     rx_sync();
     if (RX_B(ready) == 0u) return;
-    rx_summary(u, a, r, ln __UKL_ARGS);
+    rx_summary(u, a, in, r, ln __UKL_ARGS);
     rx_sync();
     if (ln == 0u) rx_seal(u, a, r);
     rx_sync();
@@ -2271,7 +2587,8 @@ UKL_INLINE void rx_work(Ux u, Ar a, RxIn in, uint32_t ln, uint32_t idle __UKL_PA
         for (uint32_t j = 0u; j < RX_W; j++) {
             if ((((uint64_t)mask >> j) & 1ul) == 0ul) continue;
             uint32_t it = ukl_sg_shuffle(item, j __UKL_ARGS);
-            rx_item(u, a, in, it, ln __UKL_ARGS);
+            // The heap past its room: the window runs again (`rx_loop`), its items drained unrun.
+            if (ukl_sg_shuffle(ukl_atomic_poll(&a.ctl[RX_FULL]), 0u __UKL_ARGS) == 0u) rx_item(u, a, in, it, ln __UKL_ARGS);
             if (ln == 0u) ukl_wq_done(q);
         }
     }
@@ -2297,6 +2614,30 @@ UKL_INLINE void rx_piece(Ar a, uint32_t src, uint32_t st, uint32_t n, uint32_t a
     a.out[2u * c + i] = st;
     a.out[3u * c + i] = at;
     a.out[4u * c + i] = 0u;
+}
+
+// Whether the piece `i` goes on piece `j` before it in the output (both of the top text, its tokens and its place
+// the next, painted alike, its first token's space its source's): the two are one piece (decision 0520 §3; a run cut
+// into pieces, `rx_cut`, writes each its own).
+#define PN_LEN (0xffffffu)
+UKL_INLINE bool rx_piece_on(PP_GLOBAL const uint32_t* out, uint32_t c, uint32_t j, uint32_t i) {
+    if ((out[j] & P_KIND) != P_TOP || (out[i] & P_KIND) != P_TOP) return false;
+    uint32_t nj = out[c + j] & PN_LEN, ni = out[c + i] & PN_LEN;
+    if ((out[c + i] & PF_SPSET) != 0u || (out[c + i] & PF_NOEXP) != (out[c + j] & PF_NOEXP)) return false;
+    return out[2u * c + j] + nj == out[2u * c + i] && out[3u * c + j] + nj == out[3u * c + i] && nj + ni <= PN_LEN;
+}
+// Piece `k` in the output's order: 1 where it starts a piece of its own (`head`).
+UKL_INLINE void rx_piece_head(PP_GLOBAL const uint32_t* out, uint32_t c, PP_GLOBAL uint32_t* head, uint32_t k) {
+    head[k] = k == 0u || !rx_piece_on(out, c, out[5u * c + k - 1u], out[5u * c + k]) ? 1u : 0u;
+}
+// A head's length, its followers' added; its place in the merged order (`at`, by a scan of `head`).
+UKL_INLINE void rx_piece_merge(PP_GLOBAL uint32_t* out, uint32_t c, PP_GLOBAL const uint32_t* head, PP_GLOBAL const uint32_t* at,
+                               PP_GLOBAL uint32_t* order, uint32_t np, uint32_t k) {
+    if (k >= np || head[k] == 0u) return;
+    uint32_t e = out[5u * c + k], n = out[c + e] & PN_LEN;
+    for (uint32_t f = k + 1u; f < np && head[f] == 0u; f++) n += out[c + out[5u * c + f]] & PN_LEN;
+    out[c + e] = (out[c + e] & ~PN_LEN) | n;
+    order[at[k]] = e;
 }
 
 // An occurrence's record: its request, call site (an argument's parameter), holder, first row, its built-ins'
@@ -2457,7 +2798,7 @@ UKL_INLINE uint32_t rx_bi_value(Ux u, Ar a, uint32_t m, uint32_t s, uint32_t ps)
 // Occurrence `o`'s own row (a call's), its children's records, rows and `__COUNTER__` ranks, each pushed to make its
 // own; its own counters' uses and its pragmas' effects (one thread). The serial pass's order: a call's row, its
 // arguments' pre-expansions (first use first), then its rescan's calls and built-ins in order.
-UKL_INLINE void rx_occ_make(Ux u, Ar a, RxIn in, uint32_t o) {
+UKL_ONCE void rx_occ_make(Ux u, Ar a, RxIn in, uint32_t o) {
     PP_GLOBAL uint32_t* h = rx_h(a);
     uint32_t q = h[o + OC_REQ], next = h[o + OC_ROW], cn = h[o + OC_CNT], org = h[o + OC_ORG];
     if (h[q + RQ_KIND] == RK_CALL) {
@@ -2604,7 +2945,7 @@ UKL_INLINE void rx_emit_push(Ar a, uint32_t occ, uint32_t req, uint32_t res, uin
     rx_push(a, QI_EMIT | m);
 }
 // One range written out (one thread): its leaves as pieces, each other entry a range of its own.
-UKL_INLINE void rx_emit(Ux u, Ar a, RxIn in, uint32_t m) {
+UKL_ONCE void rx_emit(Ux u, Ar a, RxIn in, uint32_t m) {
     PP_GLOBAL uint32_t* h = rx_h(a);
     uint32_t occ = h[m], req = h[m + 1u], res = h[m + 2u], k = h[m + 3u], t = h[m + 4u], len = h[m + 5u], at = h[m + 6u], fl = h[m + 7u];
     // A range that is all one entry's that refers on (a parameter's, an argument's, a result's) is followed here, not

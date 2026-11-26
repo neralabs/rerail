@@ -292,7 +292,7 @@ UKL_ONCE bool rx_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
     ONE(x) {
         PP_GLOBAL uint32_t* c_ = AT(uint32_t, CTL);
         c_[RX_MSLOTS] = mslots; c_[RX_FRONT] = 4u * mslots; c_[RX_PIECES] = 0u; c_[0] = 0u;
-        // Record ids are heap words below 2^30 (`QI_KIND`'s bits above them).
+        // Record ids are heap words below 2^30 (`QI_KIND`'s bits above them). The queue's counts from 0 (`RXS_*`).
         if (RX_HEAP * tc >= (1u << 30) - 64u) px_refuse(c_, X_ROOM);
         for (uint32_t i = 5u; i < RXQ_CTL; i++) AT(uint32_t, LPQ)[i] = 0u;
     }
@@ -319,66 +319,156 @@ UKL_ONCE bool rx_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
         EACH(i, nt) rx_top_pairs(xu, AT(const uint64_t, OKEYS), AT(const uint32_t, OVA), AT(uint32_t, DEPTH), nt, i);
     }
     BARRIER();
-    // Each run a top request (`rx_top`), pushed.
+    // Each run's pieces (`rx_cut`): the cuts by three passes, in stores the windows take later (`V`, `OPV`), and
+    // bit 0 of each token's state.
+    {
+        PX_UA(DR);
+        EACH(s, nt) rx_cut_base(xu, AT(const uint32_t, THEADS), AT(uint32_t, V), AT(uint32_t, OPV), nt, s);
+    }
+    BARRIER();
+    {
+        PX_UA(DR);
+        EACH(s, nt) rx_cut_low(xu, AT(const uint32_t, THEADS), AT(const uint32_t, V), AT(uint32_t, OPV), nt, s);
+    }
+    BARRIER();
     {
         PX_UA(DR);
         RX_IN(in);
-        EACH(s, nt) rx_top(xu, xa, in, toks, s);
+        EACH(s, nt) rx_cut(xu, in, AT(const uint32_t, THEADS), AT(const uint32_t, V), AT(const uint32_t, OPV), nt, s);
     }
     BARRIER();
-    RX_WORK();
-    // The tops' lengths and rows, their places and first rows by scans.
-    {
-        PX_UA(DR);
-        RX_IN(in);
-        EACH(s, nt) rx_roll_count(xa, in, toks, AT(uint32_t, V), AT(uint32_t, OPV), s);
+    // The pieces in windows, each run on an empty heap (its memo table too): its requests, the tops' lengths and
+    // rows (their places and first rows by scans, after the windows' before), the occurrences and their rows, the
+    // pieces written where they go. A window whose heap ran past its room runs again from its start, half as wide
+    // (what it wrote undone: the scratch's, the pieces', the counters' and the text facts' counts, the refusals); a
+    // piece alone past it refuses the unit (`X_ROOM`: it runs again larger). A unit that fits is one window.
+    uint32_t w0 = 0u, span = nt, ocarry = 0u, rcarry = 0u, most = 0u;
+    for (uint32_t turn = 0u; w0 < nt && turn < (1u << 20); turn++) {
+        ONE(x) {
+            PP_GLOBAL uint32_t* c_ = AT(uint32_t, CTL);
+            PP_GLOBAL const uint32_t* st_ = AT(const uint32_t, STATE);
+            uint32_t e = span < nt - w0 ? w0 + span : nt;
+            while (e < nt && (st_[e] & 1u) == 0u) e++;
+            uint32_t n2 = w0 + 1u;
+            while (n2 < nt && (st_[n2] & 1u) == 0u) n2++;
+            c_[RX_WEND] = e; c_[RX_WONE] = n2 >= e ? 1u : 0u;
+        }
+        BARRIER();
+        uint32_t w1 = AT(const uint32_t, CTL)[RX_WEND], one = AT(const uint32_t, CTL)[RX_WONE];
+        uint32_t sv2 = AT(const uint32_t, CTL)[2], sv4 = AT(const uint32_t, CTL)[4], sv5 = AT(const uint32_t, CTL)[5];
+        uint32_t svp = AT(const uint32_t, CTL)[RX_PIECES], svc = AT(const uint32_t, CNT)[1];
+        uint32_t svt0 = AT(const uint32_t, TRN)[0], svt1 = AT(const uint32_t, TRN)[1], svt2 = AT(const uint32_t, TRN)[2];
+        uint32_t svt3 = AT(const uint32_t, TRN)[3], svt4 = AT(const uint32_t, TRN)[4], svt5 = AT(const uint32_t, TRN)[5];
+        uint32_t svq5 = AT(const uint32_t, LPQ)[5], svq6 = AT(const uint32_t, LPQ)[6], svq11 = AT(const uint32_t, LPQ)[11];
+        uint32_t svq12 = AT(const uint32_t, LPQ)[12], svq13 = AT(const uint32_t, LPQ)[13];
+        BARRIER();
+        ONE(x) {
+            PP_GLOBAL uint32_t* c_ = AT(uint32_t, CTL);
+            c_[RX_FRONT] = 4u * mslots; c_[RX_FULL] = 0u;
+        }
+        EACH(i, 4u * mslots) AT(uint32_t, TOKENS)[i] = 0u;
+        RX_QUEUE_RESET();
+        {
+            PX_UA(DR);
+            RX_IN(in);
+            EACH(k, w1 - w0) rx_top(xu, xa, in, toks, w0 + k);
+        }
+        BARRIER();
+        RX_WORK();
+        bool ok = AT(const uint32_t, CTL)[RX_FULL] == 0u;
+        if (ok) {
+            {
+                PX_UA(DR);
+                RX_IN(in);
+                EACH(s, nt) {
+                    if (s >= w0 && s < w1) rx_roll_count(xa, in, toks, AT(uint32_t, V), AT(uint32_t, OPV), s);
+                    else { AT(uint32_t, V)[s] = 0u; AT(uint32_t, OPV)[s] = 0u; }
+                }
+            }
+            BARRIER();
+            SCAN(nt, V, OVA, VTOTAL);
+            SCAN(nt, OPV, OVB, OPTOTAL);
+            EACH(k, w1 - w0) {
+                AT(uint32_t, OBASE)[w0 + k] = AT(const uint32_t, OVA)[w0 + k] + ocarry;
+                AT(uint32_t, OPBASE)[w0 + k] = AT(const uint32_t, OVB)[w0 + k] + rcarry;
+            }
+            ONE(x) {
+                PP_GLOBAL uint32_t* c_ = AT(uint32_t, CTL);
+                c_[26] = rcarry + AT(const uint32_t, OPTOTAL)[0];
+                if (c_[26] > W(XROWS_CAP)) px_refuse(c_, X_ROOM);
+            }
+            BARRIER();
+            uint32_t r1 = ukl_min(AT(const uint32_t, CTL)[26], W(XROWS_CAP)), wv = AT(const uint32_t, VTOTAL)[0];
+            // Every counted row empty until its occurrence makes it: a run cut short leaves rows unmade, and `rx_row`
+            // reads only the made ones, never an earlier run's.
+            EACH(k, r1 > rcarry ? r1 - rcarry : 0u) AT(uint32_t, XROWS)[3u * (rcarry + k)] = 0u;
+            BARRIER();
+            // The occurrences, top down, and their rows.
+            RX_QUEUE_RESET();
+            {
+                PX_UA(DR);
+                RX_IN(in);
+                EACH(k, w1 - w0) rx_root(xa, in, toks, AT(const uint32_t, OPBASE), w0 + k);
+            }
+            BARRIER();
+            RX_WORK();
+            ok = AT(const uint32_t, CTL)[RX_FULL] == 0u;
+            if (ok) {
+                {
+                    PX_UA(DR);
+                    RX_IN(in);
+                    EACH(k, r1 > rcarry ? r1 - rcarry : 0u) rx_row(xu, xa, in, rcarry + k);
+                }
+                BARRIER();
+                // The pieces, each where it goes.
+                RX_QUEUE_RESET();
+                {
+                    PX_UA(DR);
+                    RX_IN(in);
+                    EACH(k, w1 - w0) rx_root_emit(xa, in, toks, AT(const uint32_t, OBASE), w0 + k);
+                }
+                BARRIER();
+                RX_WORK();
+                ok = AT(const uint32_t, CTL)[RX_FULL] == 0u;
+            }
+            if (ok) { ocarry += wv; rcarry = r1; }
+        }
+        most = ukl_max(most, AT(const uint32_t, CTL)[RX_FRONT]);
+        if (ok) {
+            // The next window as wide again as this one's span, twice it once it fitted.
+            w0 = w1;
+            span = span < (nt >> 1) ? 2u * span : nt;
+        } else {
+            // Undone: what the window wrote past where it started.
+            ONE(x) {
+                PP_GLOBAL uint32_t* c_ = AT(uint32_t, CTL);
+                c_[2] = one != 0u ? sv2 | X_ROOM : sv2;
+                c_[4] = sv4; c_[5] = sv5; c_[RX_PIECES] = svp; AT(uint32_t, CNT)[1] = svc;
+                PP_GLOBAL uint32_t* t_ = AT(uint32_t, TRN);
+                t_[0] = svt0; t_[1] = svt1; t_[2] = svt2; t_[3] = svt3; t_[4] = svt4; t_[5] = svt5;
+                // The queue's counts (`RXS_*`): a drained window's waits were never resumed. A unit refused keeps
+                // its requests, hits and steps (the log's: how far its window went).
+                PP_GLOBAL uint32_t* q_ = AT(uint32_t, LPQ);
+                q_[11] = svq11; q_[12] = svq12;
+                if (one == 0u) { q_[5] = svq5; q_[6] = svq6; q_[13] = svq13; }
+            }
+            BARRIER();
+            if (one != 0u) break;
+            span = ukl_max((w1 - w0) / 2u, 1u);
+        }
     }
-    BARRIER();
-    SCAN(nt, V, OBASE, VTOTAL);
-    SCAN(nt, OPV, OPBASE, OPTOTAL);
-    ONE(x) {
-        PP_GLOBAL uint32_t* c_ = AT(uint32_t, CTL);
-        c_[26] = AT(const uint32_t, OPTOTAL)[0];
-        if (c_[26] > W(XROWS_CAP)) px_refuse(c_, X_ROOM);
-    }
-    BARRIER();
-    // Every counted row empty until its occurrence makes it: a run cut short (a refusal, a heap past its room) leaves
-    // rows unmade, and `rx_row` reads only the made ones, never an earlier run's.
-    EACH(r, ukl_min(AT(const uint32_t, CTL)[26], W(XROWS_CAP))) AT(uint32_t, XROWS)[3u * r] = 0u;
-    BARRIER();
-    // The occurrences, top down, and their rows.
-    RX_QUEUE_RESET();
-    {
-        PX_UA(DR);
-        RX_IN(in);
-        EACH(s, nt) rx_root(xa, in, toks, AT(const uint32_t, OPBASE), s);
-    }
-    BARRIER();
-    RX_WORK();
-    {
-        PX_UA(DR);
-        RX_IN(in);
-        EACH(r, ukl_min(AT(const uint32_t, CTL)[26], W(XROWS_CAP))) rx_row(xu, xa, in, r);
-    }
-    BARRIER();
-    // The pieces, each where it goes.
-    RX_QUEUE_RESET();
-    {
-        PX_UA(DR);
-        RX_IN(in);
-        EACH(s, nt) rx_root_emit(xa, in, toks, AT(const uint32_t, OBASE), s);
-    }
-    BARRIER();
-    RX_WORK();
-    // The output past its room: refused, the next run sized from it (`CTL` 14); the heap's use as the tokens'
-    // rows (`CTL` 0: `Exp::room`).
+    // The output past its room: refused, the next run sized from it (`CTL` 14); the heap's use, the most a window
+    // took, as the tokens' rows (`CTL` 0: `Exp::room`) and its front (`RX_FRONT`: `Exp::heap`); the text's length.
     uint32_t np = ukl_min(AT(const uint32_t, CTL)[RX_PIECES], W(OUT_CAP));
     ONE(x) {
         PP_GLOBAL uint32_t* c_ = AT(uint32_t, CTL);
         c_[14] = ukl_max(c_[14], c_[RX_PIECES]);
         if (c_[RX_PIECES] > W(OUT_CAP)) px_refuse(c_, X_ROOM);
-        c_[0] = (c_[RX_FRONT] + RX_HEAP - 1u) / RX_HEAP;
+        // The rows past their room (`XROWS_CAP`, a quarter of the tokens' rows) as 4 heap rows each.
+        c_[0] = ukl_max((most + RX_HEAP - 1u) / RX_HEAP, c_[26] > W(XROWS_CAP) ? 4u * c_[26] : 0u);
+        c_[RX_FRONT] = most;
         AT(uint32_t, OPTOTAL)[0] = np;
+        AT(uint32_t, VTOTAL)[0] = ocarry;
     }
     // Their order: sorted by their places (the output's sixth column).
     EACH(i, np) {
@@ -388,6 +478,14 @@ UKL_ONCE bool rx_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
     BARRIER();
     SORT(np, 32u, OKEYS, OVA, OKB, OVB, OHIST);
     EACH(i, np) AT(uint32_t, OUT)[5u * W(OUT_CAP) + i] = AT(const uint32_t, OVA)[i];
+    BARRIER();
+    // A run's pieces' top text written by each its own (`rx_cut`): contiguous ones one piece, the order compacted.
+    EACH(k, np) rx_piece_head(AT(const uint32_t, OUT), W(OUT_CAP), AT(uint32_t, OVB), k);
+    BARRIER();
+    SCAN(np, OVB, OKB, OPTOTAL);
+    EACH(k, np) rx_piece_merge(AT(uint32_t, OUT), W(OUT_CAP), AT(const uint32_t, OVB), AT(const uint32_t, OKB), AT(uint32_t, OVA), np, k);
+    BARRIER();
+    EACH(i, AT(const uint32_t, OPTOTAL)[0]) AT(uint32_t, OUT)[5u * W(OUT_CAP) + i] = AT(const uint32_t, OVA)[i];
     BARRIER();
     *phasep = phase;
     return true;

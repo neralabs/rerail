@@ -112,6 +112,12 @@ opt-level = 3
 [profile.dev.package.rerail-compiler]
 opt-level = 3
 
+# The serial preprocessor (`rerail-c-pp`; its lexer, `rerail-c-lean`, is above) applies UKL's shim to every kernel's
+# source (`rerail_ukl`), half a megabyte for the preprocessor's evaluator, once a process: unoptimized, 130 ms of every
+# evaluation test's process (2026-11-25), past a tenth of the 1 s a test has.
+[profile.dev.package.rerail-c-pp]
+opt-level = 3
+
 # simdjson's operations (`rerail-simd8`) are each a few instructions, inlined into the kernels that use them.
 [profile.dev.package.rerail-simd8]
 opt-level = 3

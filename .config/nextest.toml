@@ -89,6 +89,9 @@ path = "junit.xml"
 [profile.second]
 default-filter = "package(rerail-c-directives) & test(/^eval::tests::/)"
 slow-timeout = { period = "1s", terminate-after = 1 }
+# A test's process pays its device's setup once (CUDA on a GB10: 0.21 s for the context, 0.21 s for the first unit's
+# kernel load; a unit after it, 1.2 ms, 2026-11-25), and every test shares one device: 8 at once, not a core each.
+test-threads = 8
 failure-output = "final"
 # Past the default profile's override for the package (which every profile takes), the second's.
 [[profile.second.overrides]]

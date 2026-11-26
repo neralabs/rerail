@@ -57,6 +57,12 @@ pub fn program_with(name: &str, text: &str, defines: &[(&str, &str)]) -> Result<
         .or_insert_with(|| {
             let shared = crate::shared::get().ok_or("no device")?;
             let source = preprocess_with(name, text, defines)?;
+            // `RERAIL_GPU_DUMP`: each program's preprocessed source written to that directory, as its device's compiler
+            // reads it (to measure or compile it apart: a CUDA source by `nvcc --time`).
+            if let Some(dir) = std::env::var_os("RERAIL_GPU_DUMP") {
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.src")), &source);
+            }
             let library = ComputeFunctionLibrary::compile_from_source(&shared.device, &source, name)?;
             Ok(&*Box::leak(Box::new(Program { name: key, library, functions: Default::default() })))
         })
