@@ -73,3 +73,16 @@ export function newerRelease(health) {
   if (typeof latest !== "string" || typeof health?.version !== "string") return null;
   return isNewerVersion(latest, health.version) ? latest : null;
 }
+
+/**
+ * Why the version running is a pre-release, as the Pre-release badge's title says it, or `null` when it is not: a
+ * version with a prerelease part (`0.3.0-next.1`), or one from a channel other than `latest`
+ * (`/healthz.updateChannel`), where `next` holds release candidates still in QA. A daemon that cannot tell the channel
+ * (a checkout's, or one with a signed customer profile) reports null, and only the version decides.
+ */
+export function preReleaseNote(health) {
+  const version = health?.version, channel = health?.updateChannel;
+  if (typeof version !== "string") return null;
+  if (typeof channel === "string" && channel !== "latest") return `This computer updates from ${channel}, a pre-release channel: versions still in QA, not releases.`;
+  return parseVersion(version)?.[3] == null ? null : `Rerail ${version} is a pre-release, still in QA.`;
+}

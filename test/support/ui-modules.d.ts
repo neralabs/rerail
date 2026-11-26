@@ -361,6 +361,7 @@ declare module "*/ui/settings-model.js" {
   export function releaseUrl(version: string): string;
   export function isNewerVersion(a: string, b: string): boolean;
   export function newerRelease(health: { version?: unknown; update?: { latest?: unknown; checkedAt?: unknown } | null } | null | undefined): string | null;
+  export function preReleaseNote(health: { version?: unknown; updateChannel?: unknown } | null | undefined): string | null;
 }
 
 declare module "*/ui/render/rule-sheet-model.js" {

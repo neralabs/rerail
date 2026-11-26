@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { changeScope } from "../../ui/poll.js";
 import { loadRepoRuleCounts, repoRuleCounts } from "../../ui/repo-rule-counts.js";
 import { repoLine, repoTag, ruleCountsOf } from "../../ui/repo-rules.js";
-import { agentStatus, installedLabel, isNewerVersion, newerRelease, releaseUrl } from "../../ui/settings-model.js";
+import { agentStatus, installedLabel, isNewerVersion, newerRelease, preReleaseNote, releaseUrl } from "../../ui/settings-model.js";
 import { data } from "../../ui/state.js";
 import { actions as settingsActions } from "../../ui/views/settings.js";
 import type * as Shell from "../../ui/shell.js";
@@ -94,6 +94,17 @@ describe("the version in About Rerail and the top bar", () => {
     expect(newerRelease({ version: "0.2.0" })).toBeNull();
     expect(newerRelease({ version: "0.2.0", update: null })).toBeNull();
     expect(newerRelease(null)).toBeNull();
+  });
+
+  it("marks a pre-release: a version from a channel other than latest, or one with a prerelease part", () => {
+    expect(preReleaseNote({ version: "0.2.2", updateChannel: "next" })).toBe("This computer updates from next, a pre-release channel: versions still in QA, not releases.");
+    expect(preReleaseNote({ version: "0.2.0-beta.1", updateChannel: "beta" })).toContain("updates from beta");
+    expect(preReleaseNote({ version: "0.3.0-next.1", updateChannel: "latest" })).toBe("Rerail 0.3.0-next.1 is a pre-release, still in QA.");
+    // A daemon that cannot tell the channel (a checkout's, a signed customer profile's): the version alone decides.
+    expect(preReleaseNote({ version: "0.3.0-next.1", updateChannel: null })).toBe("Rerail 0.3.0-next.1 is a pre-release, still in QA.");
+    expect(preReleaseNote({ version: "0.2.2", updateChannel: "latest" })).toBeNull();
+    expect(preReleaseNote({ version: "0.2.2", updateChannel: null })).toBeNull();
+    expect(preReleaseNote(null)).toBeNull();
   });
 });
 

@@ -373,7 +373,8 @@ Updates are explicit: Rerail never installs on its own. Once a day the daemon of
 version under the `latest` dist-tag and keeps the answer in `update-check.json` in the Rerail home. A release
 candidate under `next` is still in QA and is never recommended. `/healthz` reports the answer as `update`, and the dashboard shows "Update available"
 while it is newer than the daemon's version. The daemon checks only while a bare `rerail update` installs from
-`latest`: on `next` or `beta` that update would install a preview, so the dashboard says nothing there. A failed ask keeps the last answer, logs one line to `daemon.log` and is
+`latest`: on `next` or `beta` that update would install a preview, so the dashboard says nothing there. There, and
+for any version with a prerelease part (`0.3.0-next.1`), the top bar and Settings say "Pre-release" beside the version. A failed ask keeps the last answer, logs one line to `daemon.log` and is
 tried again a day later; a restarted daemon asks only once that day has passed. Unless you add a remote or turn Merge
 Assist on (internal testing), it is the only request Rerail makes on its own, apart from an npm rebuild of the SQLite binding when it fails to load ([privacy](privacy.md)). `RERAIL_UPDATE_CHECK=0` (or `false`) set for the daemon turns it off. A daemon run from a checkout never
 checks, and neither does one while its home holds a signed customer profile (internal testing), which limits updates
@@ -449,7 +450,7 @@ The daemon owns the resident kernel and exposes the database over HTTP, OpenAPI 
 The daemon writes rules and work links; the shared runtime records harness events.
 
 - `/healthz` reports version, pid, database path and presence, kernel status, `installedAt`, `update` (the daily
-  update check's last answer, `{ latest, checkedAt }`, or null; [Update](#update)), and `model`: bundled model files checked once per process against `model/manifest.json`, `ok` or the problem and file. `healthy` means engine and model are ok; `status` only means the daemon answers.
+  update check's last answer, `{ latest, checkedAt }`, or null; [Update](#update)), `updateChannel` (the channel a bare `rerail update` installs from, or null for a checkout's daemon and under a signed customer profile), and `model`: bundled model files checked once per process against `model/manifest.json`, `ok` or the problem and file. `healthy` means engine and model are ok; `status` only means the daemon answers.
 - `/mcp` is stateless and JSON-response. Non-POST gets `405 Allow: POST`; there is no SSE listener or transport session.
 - `/api/changes[?checkout=<path>]` stays open while the dashboard tab shows. Each message's data is a change token: it
   is sent at once, again when a commit to the database becomes readable or a pack is installed or removed, and

@@ -15,7 +15,7 @@ import { applyTheme, invalidate, toast } from "../shell.js";
 import { loadRepoRuleCounts } from "../repo-rule-counts.js";
 import { repoTag } from "../repo-rules.js";
 import { repoCounts } from "../render/repos.js";
-import { agentStatus, installedLabel, newerRelease, releaseUrl } from "../settings-model.js";
+import { agentStatus, installedLabel, newerRelease, preReleaseNote, releaseUrl } from "../settings-model.js";
 
 export const needs = [];
 
@@ -146,14 +146,17 @@ function about() {
 
 /**
  * Version: how to update while `/healthz.update` is null, and only "never updates on its own" once the daily check has
- * answered, since the Update row then carries the steps. Its release notes show unless a newer one is out.
+ * answered, since the Update row then carries the steps. Its release notes show unless a newer one is out. A
+ * pre-release (`preReleaseNote`) says "Pre-release", in Steer's amber.
  */
 function versionRow(version, latest) {
   const knows = typeof data.health?.update?.latest === "string";
   const how = knows ? [] : [" To update, run ", h("code", null, UPDATE_COMMAND), " in a terminal or ask your coding agent: ", h("code", null, "/rerail-update"), "."];
   const notes = latest === null ? h("span.relline", null, releaseLink(version, `${version} release notes`)) : null;
   const badge = latest === null ? null : h("span.badge.info", { title: `Rerail ${latest} is out` }, "Update available");
-  return row("Version", ["Rerail never updates on its own.", ...how, notes], h("span.val.vrow", null, badge, h("span", null, version)));
+  const note = preReleaseNote(data.health);
+  const pre = note === null ? null : h("span.badge.pre", { title: note }, "Pre-release");
+  return row("Version", ["Rerail never updates on its own.", ...how, notes], h("span.val.vrow", null, pre, badge, h("span", null, version)));
 }
 
 /** Update to <latest>: the command, what it keeps, and that version's release notes. */

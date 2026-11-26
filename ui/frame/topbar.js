@@ -1,14 +1,14 @@
 /**
  * The top bar, over the sidebar and content and above the sheet, so nothing in it moves when the sheet opens: the
  * sidebar toggle, the wordmark, the repository the page shows (a pill; with a chevron and a menu of the others only
- * when Rerail knows more than one), and the status, with the version and, while a newer one is out, "Update available"
- * and its popover. The theme is in Settings → General.
+ * when Rerail knows more than one), and the status, with the version, "Pre-release" while it is one, and, while a newer
+ * one is out, "Update available" and its popover. The theme is in Settings → General.
  */
 import { h, setAttr, setText, setContent, icon } from "../dom.js";
 import { data, ui, repoName, stateHere } from "../state.js";
 import { invalidate } from "../shell.js";
 import { LIVE_MS } from "../poll.js";
-import { newerRelease } from "../settings-model.js";
+import { newerRelease, preReleaseNote } from "../settings-model.js";
 import { repoOption, repoHint } from "../render/repos.js";
 import { AGENT_UPDATE_COMMAND, updateCopyButton, updateDetailsLink } from "../render/command.js";
 
@@ -143,17 +143,18 @@ export function renderStatus() {
 
 /**
  * The version of Rerail on this computer, "v0.2.0" in quiet text at the start of the status, whatever the status's
- * colour; it opens Settings at About Rerail, where the release notes and how to update are. While the daemon reports a
- * newer version, a small "Update available" beside it opens a popover with the command that updates Rerail, until
- * Rerail is updated.
+ * colour; it opens Settings at About Rerail, where the release notes and how to update are. A pre-release (a `next`
+ * install, `preReleaseNote`) says "Pre-release" beside it, in Steer's amber. While the daemon reports a newer version, a
+ * small "Update available" beside it opens a popover with the command that updates Rerail, until Rerail is updated.
  */
 function renderVersion(statusEl) {
   const version = data.health?.version ?? null;
   if (version === null) { statusEl.querySelector(".verwrap")?.remove(); return; }
-  const latest = newerRelease(data.health), el = versionSlot(statusEl), key = JSON.stringify([version, latest]);
+  const latest = newerRelease(data.health), pre = preReleaseNote(data.health), el = versionSlot(statusEl);
+  const key = JSON.stringify([version, latest, pre]);
   if (el.dataset.key === key) return;
   el.dataset.key = key;
-  el.replaceChildren(...versionButtons(version, latest));
+  el.replaceChildren(...versionButtons(version, latest, pre));
 }
 
 /** The version's place at the start of the status, made the first time there is a version. */
@@ -163,10 +164,11 @@ function versionSlot(statusEl) {
   return el;
 }
 
-function versionButtons(version, latest) {
+function versionButtons(version, latest, pre) {
   const ver = h("button.ver", { "data-act": "nav", "data-i": "settings?section=about", title: `Rerail ${version}, on this computer. Open Settings to see how to update.` }, `v${version}`);
-  if (latest === null) return [ver];
-  return [ver, h("button.vnew", { "data-act": "updatepop", "aria-haspopup": "dialog", "aria-expanded": String(updateOpen), title: `Rerail ${latest} is available` }, "Update available")];
+  const tag = pre === null ? [] : [h("span.vpre", { title: pre }, "Pre-release")];
+  if (latest === null) return [ver, ...tag];
+  return [ver, ...tag, h("button.vnew", { "data-act": "updatepop", "aria-haspopup": "dialog", "aria-expanded": String(updateOpen), title: `Rerail ${latest} is available` }, "Update available")];
 }
 
 /* ---------- the update popover ----------

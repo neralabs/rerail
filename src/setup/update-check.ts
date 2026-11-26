@@ -94,7 +94,16 @@ function profileActive(home: string): boolean {
  * to `beta`, which never reaches the version named.
  */
 function checkedChannel(home: string): string | undefined {
-  return profileActive(home) || recordedChannel(home) !== CHECKED_CHANNEL ? undefined : CHECKED_CHANNEL;
+  return updateChannel(home) === CHECKED_CHANNEL ? CHECKED_CHANNEL : undefined;
+}
+
+/**
+ * The channel a bare `rerail update` installs from in `home`, as `/healthz.updateChannel` reports it (the dashboard
+ * marks a channel other than `latest` Pre-release); undefined while a signed customer profile is active, whose channel
+ * the daemon cannot read without the device's keychain.
+ */
+export function updateChannel(home: string): string | undefined {
+  return profileActive(home) ? undefined : recordedChannel(home);
 }
 
 /** The channel a bare `rerail update` installs from: the one `update-state.json` records, else `latest`. */

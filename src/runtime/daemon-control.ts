@@ -460,6 +460,11 @@ export interface DaemonHealth extends Pick<DaemonState, "version" | "pid" | "ui"
    * (`setup/update-check.ts`); null before its first answer, and always for a daemon that does not check.
    */
   update: { latest: string; checkedAt: number } | null;
+  /**
+   * The channel a bare `rerail update` installs from (`update-state.json`); the dashboard marks a version from any
+   * channel but `latest` Pre-release. Null for a checkout's daemon and while a signed customer profile is active.
+   */
+  updateChannel: string | null;
 }
 
 /**
