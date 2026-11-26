@@ -469,6 +469,11 @@ def b6(failures: list) -> None:
     files = (CRATE / "src/files.rs").read_text()
     if not re.search(r"pub struct Blobs \{[^}]*\brows: Trace\b[^}]*\}", files) or re.search(r"pub struct Blobs \{[^}]*HashMap", files):
         failures.append("files.rs: the blobs are not rows in a trace, as the store's objects are (P§12 item 1)")
+    interned = (TWINS / "src/intern.rs").read_text()
+    if re.search(r"is_leaf\(n\)\s*\{\s*put\(", interned):
+        failures.append("delta_twins/src/intern.rs: every leaf interned (intern names only identifiers and strings)")
+    if not re.search(r"if find_in\(atoms, last,[^{]*\{\s*for n in language\(\)", interned):
+        failures.append("delta_twins/src/intern.rs: the language's names not interned once, behind one find")
     boot = (CRATE / "src/boot.rs").read_text()
     if not re.search(r"pub fn run\([^)]*last: Option<&Pins>\) -> Result<\(Pins,", boot):
         failures.append("boot.rs: run does not take and return Pins (B§8)")

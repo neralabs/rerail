@@ -1223,3 +1223,19 @@ sampled check, which must find no mismatch.
 Checks (Relax, local, 72 of 72): every earlier check runs over the trace-held blobs. These include 20 documents'
 60 blobs, with shared tapes and geometric roll-ups, all found by their names, and the same bytes housed twice giving
 one row. The shape script holds `Blobs` to rows in a trace, with no map.
+
+**`intern` names only identifiers and strings**.
+
+- A node's text symbol is made only for an identifier or a variable. An operator's is the language's name for its
+  token: found in the atoms, never made. A number is its value, and a string is its unescaped value, so neither
+  literal's text is interned.
+- The `text` view's rows are the nodes with a name: identifiers, variables and operators. A literal is read through
+  `value`. The thirteen reader rules use `text` only on names and operators.
+- The language's names (its kinds and fields, and K-form's step kinds) are interned once, by the first run that
+  lacks them. They are appended in order, so one `find` of the last of them answers for all. Before, each run looked
+  up every one of them.
+
+Checks (Relax, local, 73 of 73): `intern_names_only_identifiers_and_strings` interns a second document. Its new atoms
+are exactly its path, its module, its identifiers and variables, and its string's value. A number's text, a string's
+quoted text and an operator are not among them. The operator reads in `text` as the language's `!=`. The shape
+script refuses interning every leaf, and the language's names interned without the one guard.

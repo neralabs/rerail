@@ -5,12 +5,14 @@
 //! document's symbols block (read-write: its header the host's, its facts the operation's).
 //!
 //! The symbols block is the document's node → symbol relation, partitioned by the document (its node ids are its own,
-//! L9) and laid out by node id: for each node, the symbol of its text when it is a leaf (an identifier, a variable, an
-//! operator, a literal: what the `text` view reads) and the symbol of its value when it is a string (what `value`
-//! reads), 0 where it has none. Its header: the body's length (a block's first word, what a freeze keeps), the nodes'
+//! L9) and laid out by node id: for each node, the symbol of its text when it is a name (an identifier or a variable:
+//! what the `text` view reads; an operator's is the language's name for its token, found, never made) and the symbol
+//! of its value when it is a string (what `value` reads), 0 where it has none. Only identifiers and strings make new
+//! atoms: a number is its value, and punctuation is the language's. Its header: the body's length (a block's first word, what a freeze keeps), the nodes'
 //! count, the document's path and module (the answer's, written by the host) and their symbols. Once written it is
 //! frozen, and housed as a blob. The language's names (its kinds and fields) and K-form's step kinds are interned
-//! too, so a read finds every name a view or a pass compares.
+//! once, by the first run that finds them missing (one find, of the last of them: they are appended in order), so a
+//! read finds every name a view or a pass compares.
 //!
 //! A symbol is an atom's id: the same text has the same id across runs and documents. Nothing reads the atoms to
 //! write them but this operation: a view reads the symbols block, and finds names (`find_in`), never interns.
@@ -20,6 +22,7 @@ use crate::{Ctx, Tile, TwinPhase};
 use rerail_blocks::atoms::{append_in, find_in};
 use rerail_blocks::gens::{BODY_AT, set_word, word};
 use rerail_blocks::maps::hash_bytes;
+use rerail_rr_syntax::tape::{FIRST_ANONYMOUS, KIND_NAMES, Kind};
 
 crate::params! {
     /// Where the document's source and tape lie in their blocks, by offset and length.
@@ -110,9 +113,12 @@ fn intern(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let ([source, tape], [atoms, syms]) = c.views([SOURCE, TAPE], [ATOMS, SYMS]);
     let src = std::str::from_utf8(&source[p.src_at as usize..(p.src_at + p.src_len) as usize]).expect("a source the file layer checked is UTF-8");
     let r = Reads::in_place(&tape[p.tape_at as usize..(p.tape_at + p.tape_len) as usize], src).expect("a tape the parser wrote");
-    let language = rerail_rr_syntax::tape::KIND_NAMES.iter().chain(rerail_rr_syntax::tape::FIELD_NAMES).chain(&STEP_KINDS);
-    for n in language.filter(|n| !n.is_empty()) {
-        put(atoms, n);
+    let language = || KIND_NAMES.iter().chain(rerail_rr_syntax::tape::FIELD_NAMES).chain(&STEP_KINDS).filter(|n| !n.is_empty());
+    let last = language().last().expect("the language's names");
+    if find_in(atoms, last, hash_bytes(last.as_bytes())).is_none() {
+        for n in language() {
+            put(atoms, n);
+        }
     }
     let (ps, ms) = {
         let (path, module) = names(syms);
@@ -122,7 +128,16 @@ fn intern(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     set_word::<u32>(syms, MODULE_SYM_AT, ms);
     assert_eq!(count(syms), r.len(), "a symbols block of the tape's nodes");
     for n in 0..r.len() {
-        let t = if r.is_leaf(n) { put(atoms, r.text(n)) } else { 0 };
+        let k = r.node(n).0;
+        let t = if k == Kind::Identifier as u16 || k == Kind::Variable as u16 {
+            put(atoms, r.text(n))
+        } else if k >= FIRST_ANONYMOUS && r.is_leaf(n) {
+            // An operator: its token's name, the language's.
+            let s = r.text(n);
+            find_in(atoms, s, hash_bytes(s.as_bytes())).unwrap_or(0)
+        } else {
+            0
+        };
         let v = r.string(n).map_or(0, |s| put(atoms, &s));
         let at = node_at(syms, n);
         set_word::<u32>(syms, at, t);

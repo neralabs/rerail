@@ -6,7 +6,8 @@
 //! - `kind(d, n, k)`: node `n`'s kind, a symbol;
 //! - `field(d, p, f, c)`: `c` is `p`'s child in field `f`;
 //! - `child(d, p, c, i)`: `c` is `p`'s `i`-th child, counting named children that are no comment;
-//! - `text(d, n, s)`: a leaf's source text (an identifier, a variable, an operator, a literal), a symbol;
+//! - `text(d, n, s)`: a name's text (an identifier's, a variable's, an operator's), a symbol; a literal is read by
+//!   `value`;
 //! - `value(d, n, v)`: a literal's value: a string's unescaped contents (a symbol), a number's value;
 //! - `doc(d, path, module)`: the document's path, and the module its answer named (as the engine's `doc` is,
 //!   `Document::module`).
@@ -118,7 +119,7 @@ impl<'t> TapeView<'t> {
         let r = &self.reads;
         match self.view {
             View::Node | View::Kind => true,
-            View::Text => r.is_leaf(n),
+            View::Text => syms::text(self.syms, n) != 0,
             View::Field => r.node(n).1 != 0 && r.parent(n).is_some(),
             View::Child => r.counted(n) && r.parent(n).is_some(),
             View::Value => r.has_value(n),

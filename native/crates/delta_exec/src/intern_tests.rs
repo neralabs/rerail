@@ -78,3 +78,21 @@ fn no_views_read_writes_the_atoms() {
     assert!(cells > 1000);
     assert_eq!(fx.atoms.count(&fx.dir), n);
 }
+
+/// `intern` names only identifiers and strings: a document's new atoms are its identifiers and variables, its strings'
+/// values, its path and its module; not a number's text, a string's quoted text, or an operator (the language's
+/// name for its token, found). The language's names are interned once, by the first run.
+#[test]
+fn intern_names_only_identifiers_and_strings() {
+    let mut fx = Fx::new();
+    fx.doc("e(1, 2).\n", "first.rerail");
+    let first = fx.atoms.count(&fx.dir);
+    let doc = fx.doc("r1(xa, \"s q\") :- e1(xa, 12345), xa != 67890.\n", "second.rerail");
+    let added: std::collections::BTreeSet<String> = (first + 1..=fx.atoms.count(&fx.dir)).map(|id| fx.atoms.name(&fx.dir, i64::from(id))).collect();
+    let want: std::collections::BTreeSet<String> = ["second.rerail", "second", "r1", "xa", "s q", "e1"].map(String::from).into();
+    assert_eq!(added, want);
+    // The operator's symbol is the language's `!=`, and the view reads it.
+    let ne = fx.s("!=");
+    assert!(texts(&fx, &doc).iter().any(|(t, s)| t == "!=" && *s == ne));
+    assert!(texts(&fx, &doc).iter().all(|(t, _)| !t.starts_with(['"', '1', '6'])), "no literal's text");
+}
