@@ -186,14 +186,16 @@ describe("shards and outputs", () => {
 
   // CI's select-tests job starts the script with plain Node, which strips the types of the .ts files it imports but,
   // unlike vitest, finds no .ts file for a .js import: an import it cannot find fails the script, and the job's fallback
-  // runs every shard.
+  // runs every shard. spawnSync holds the worker's event loop, where vitest's limit runs, so the script gets its own
+  // limit, 10 s inside the case's: a script that hangs is ended and the case says so.
   it("come from the script under plain Node as CI starts it, for a change of prose alone", ON_THE_REPOSITORY, () => {
     const dir = mkdtempSync(join(tmpdir(), "rerail-test-selection-"));
     onTestFinished(() => removeFolderSync(dir));
     const list = join(dir, "changed.txt");
     writeFileSync(list, "CHANGELOG.md\n");
-    const run = spawnSync(process.execPath, ["scripts/check/ci/test-selection.mjs", list, "--github"], { cwd: ROOT, encoding: "utf8" });
-    const said = `exit status ${run.status}, signal ${run.signal}, start error ${run.error?.message ?? "none"}, stderr:\n${run.stderr}`;
+    const options = { cwd: ROOT, encoding: "utf8", timeout: ON_THE_REPOSITORY.timeout - 10_000 };
+    const run = spawnSync(process.execPath, ["scripts/check/ci/test-selection.mjs", list, "--github"], options);
+    const said = `exit status ${run.status}, signal ${run.signal}, spawn error ${run.error?.message ?? "none"}, stderr:\n${run.stderr}`;
     expect(run.status, said).toBe(0);
     const lines = run.stdout.split(/\r?\n/u);
     expect(lines.filter((line) => /^unit-shards=\[[\d,]*\]$/u.test(line)), run.stdout).toHaveLength(1);
