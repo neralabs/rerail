@@ -1,4 +1,4 @@
-.policy "ruff-up018-native-literals" revision 2
+.policy "ruff-up018-native-literals" revision 3
 .description "Write literals directly instead of calling str(), bytes(), int(), float(), bool() or complex() on a literal or with no arguments."
 .language python
 .mode steer
@@ -8,18 +8,23 @@
 // literal: with no arguments (the empty value), or with one literal of the same type (a sign allowed on a
 // number). The one argument may be passed as `str(object=…)` or `complex(real=…)`; any other keyword or a
 // `*`/`**` argument leaves it. Inside an f-string nested in another one, Ruff leaves the call (the quotes of
-// the literal would clash).
-//   str()   int(-1)   bytes(b"a" b"b")      ← UP018: write "", -1, b"a" b"b"
-//   str(1)  int("1")  int(10, base=2)       not reported
+// the literal would clash). A parenthesized callee counts, and so does a call inside a string type definition.
+//   str()   int(-1)   bytes(b"a" b"b")   (int)(1)   x: "int(1)"      ← UP018: write "", -1, b"a" b"b", 1, 1
+//   str(1)  int("1")  int(10, base=2)    x: "int(y)"                 not reported
 #include "python/upgrade.rerail"
 //   builtin_at(e, x)
 #include "python/upgrade-format.rerail"
 //   up_arg, up_kw, up_argc, str_lit
+#include "python/python-11.rerail"
+//   td_node, td_call, td_builtin, td_noarg, td_onearg, td_arg, td_kw, td_str: string type definitions' calls
 
-// native(c, t): c calls the builtin t, one of the six, outside a nested f-string.
+// native(c, t): c calls the builtin t, one of the six, outside a nested f-string. The calls of a string type
+// definition are native_td's: up_argc and up_arg do not see their arguments.
 .decl native(c: node, t: symbol)
-native(c, t) :- kind(c, "call"), field(c, "function", f), builtin_at(f, t), literal_type(t),
-    count : { inside(c, s, "string"), fstring(s) } < 2.
+native(c, t) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), builtin_at(f, t), literal_type(t),
+    !td_node(c, _), count : { inside(c, s, "string"), fstring(s) } < 2.
+.decl native_td(c: node, t: symbol)
+native_td(c, t) :- td_call(c, f), td_builtin(f, t), literal_type(t).
 .decl literal_type(t: symbol)
 literal_type("str"). literal_type("bytes"). literal_type("int"). literal_type("float"). literal_type("bool").
 literal_type("complex").
@@ -28,18 +33,23 @@ literal_type("complex").
     "Replace this call with the empty literal of its type: `\"\"` for str, `b\"\"` for bytes, `0` for int, `0.0` for float, `False` for bool, `0j` for complex."
     suppress ruff "UP018"
 call_without_argument(c, t) :- native(c, t), up_argc(c, 0).
+call_without_argument(c, t) :- native_td(c, t), td_noarg(c).
 
 .violation call_on_literal(at: node, t: symbol) code "UP018"
     "Replace this call with the literal it wraps, keeping parentheses where needed, as in `(1).real`; converting a literal to its own type changes nothing."
     suppress ruff "UP018"
 call_on_literal(c, t) :- native(c, t), up_argc(c, 1), (up_arg(c, 0, a) ; call_kw(c, k, a), keyword(t, k)), lit(a, t).
+call_on_literal(c, t) :- native_td(c, t), td_onearg(c, _), (td_arg(c, 0, a) ; td_kw(c, k, a), keyword(t, k)),
+    (lit(a, t) ; t = "str", td_str(a, _)).
 .decl keyword(t: symbol, k: symbol)
 keyword("str", "object"). keyword("complex", "real").
 
 // lit(e, t): e, through parentheses, is a literal of type t. A number may carry one sign: `-1`, `+1.0`, `-1j`.
 .decl lit(e: node, t: symbol)
 lit(e, "str") :- str_lit(e, _).
-lit(e, "bytes") :- unparen(e, m), count : { lit_piece(m, s), !string_form(s, "bytes") } = 0, lit_piece(m, _).
+lit(e, "bytes") :- unparen(e, m), lit_piece(m, _), !non_bytes(m).
+.decl non_bytes(m: node)  // a negation, not a count: a count sees no node of a string type definition's tree
+non_bytes(m) :- lit_piece(m, s), !string_form(s, "bytes").
 lit(e, "bool") :- unparen(e, m), (kind(m, "true") ; kind(m, "false")).
 lit(e, t) :- unparen(e, m), num_lit(m, t).
 lit(e, t) :- unparen(e, m), kind(m, "unary_operator"), (op(m, "-") ; op(m, "+")), field(m, "argument", n),

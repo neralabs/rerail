@@ -1,0 +1,34 @@
+[
+  {
+    "id": "ruff-up014-convert-named-tuple-functional-to-class",
+    "status": "same"
+  },
+  {
+    "id": "ruff-up015-redundant-open-modes",
+    "status": "same"
+  },
+  {
+    "id": "ruff-up018-native-literals",
+    "status": "same"
+  },
+  {
+    "id": "ruff-up019-typing-text-str-alias",
+    "status": "same"
+  },
+  {
+    "id": "ruff-up020-open-alias",
+    "status": "same"
+  },
+  {
+    "id": "ruff-up021-replace-universal-newlines",
+    "status": "same"
+  },
+  {
+    "id": "ruff-up022-replace-stdout-stderr",
+    "status": "same"
+  },
+  {
+    "id": "ruff-up023-deprecated-c-element-tree",
+    "status": "same"
+  }
+]

@@ -1,0 +1,85 @@
+// python/python-11: the code inside a string Ruff reads as a type definition, for the pyupgrade rules that check
+// calls and names there (UP015, UP018, UP019, UP020, UP021, UP022).
+//
+// Interface
+//   td_node(n, h)        n is in the tree parsed from a string type definition (core's string_annotation: an
+//                        annotation, cast's type, a TypeVar bound, `List["…"]`, and the strings inside those);
+//                        h is the outermost such string, the one in the file
+//   td_sym(e, q)         e, a name or attribute chain of such a tree, names q (as upgrade's sym_at): its head is
+//                        looked up from h's scope, every binding of the file visible, a scope's latest one winning
+//   td_builtin(e, x)     td_sym(e, "builtins.x")
+//   td_call(c, f)        c is a call of such a tree, f its callee without parentheses
+//   td_arglist(c, a, j)  a is argument j of call c, of any kind (comments left out; a lone generator is 0)
+//   td_arg(c, i, a)      a is c's i-th positional argument, before any keyword or `*xs`, parentheses off
+//   td_kwarg(c, k, ka)   `k=v` is a keyword argument of c, ka the whole `k=v`
+//   td_kw(c, k, v)       the same, v its value without parentheses
+//   td_noarg(c)          c has no argument
+//   td_onearg(c, a)      c has one argument, a, of any kind, as written
+//   td_str(e, v)         e is a plain str literal (no prefix but r/u) with decoded value v; one piece only
+//
+// Ruff background
+//   - Ruff parses each string type definition and runs its expression rules on the tree, reporting at the string
+//     (or at the node, for a simple string). Names there are resolved after the whole module: a name read in
+//     `x: "io.open('f')"` or `cast("io.open('f')", 1)` sees every binding of the scope the string sits in.
+//   e.g.  import io
+//         x: "io.open('f')"                    td_call(<io.open('f')>, <io.open>), td_sym(<io.open>, "io.open")
+//         y = cast("list[io.open(1)]", z)      the same, in a cast and in its nested string
+//
+// Engine (see NOTES-python-11.md): a relation over every node of a file does not reach these trees, and neither do
+// upgrade's up_arg/up_kwarg/sym_at nor ruff's call_kw: a pattern of `kind` and `field` from a call is matched on the
+// files only, and a count sees none of a tree's nodes. So every relation here starts from td_node, and arguments
+// are numbered by child index and tested by negation. A comment inside a string type definition would shift the
+// numbering; Ruff's strings hardly ever hold one.
+#include "python/upgrade.rerail"
+
+.decl td_node(n: node, h: node)
+td_node(n, h) :- string_annotation(h), nearest(h, _, lscope), parsed(h, "annotation", r), (n = r ; within(n, r)).
+td_node(n, h) :- td_node(s, h), string_annotation(s), parsed(s, "annotation", r), (n = r ; within(n, r)).
+
+// ---- names --------------------------------------------------------------------------------------------------------
+// td_walk(h, x, s): head name h (x) of a tree is looked up in scope s: from the host string's scope outwards, class
+// bodies passed over beyond the first, as names' walk.
+.decl td_walk(h: node, x: symbol, s: node)
+td_walk(h, x, s) :- td_node(h, hs), head_ref(_, h, x), nearest(hs, s, lscope).
+td_walk(h, x, p) :- td_walk(h, x, s), !bound_in(s, x), nearest(s, p, lfscope).
+// td_site(h, site): the binding h reads: the latest of the first scope that binds it.
+.decl td_site(h: node, site: node)
+td_site(h, site) :- td_walk(h, x, s), bound_in(s, x), k = max i : { binding(s, x, st, _), visit_index(st, i) },
+    binding(s, x, site, _), visit_index(site, k).
+.decl td_sym(e: node, q: symbol)
+td_sym(e, q) :- td_chain(e, q0, "import"), resolve_export(q0, q).
+td_sym(e, q0) :- td_chain(e, q0, "import"), !resolve_export(q0, _).
+td_sym(e, q) :- td_chain(e, q, "def").
+td_sym(e, @dot("builtins", x)) :- td_node(e, _), kind(e, "identifier"), head_ref(e, e, x), td_walk(e, x, m),
+    kind(m, "module"), !bound_in(m, x), builtin(x).
+.decl td_chain(e: node, q: symbol, how: symbol)
+td_chain(e, cat(r, @slice(de, strlen(x), strlen(de))), how) :- td_node(e, _), head_ref(e, h, x), td_site(h, site),
+    site_root(site, r, how), dotted_expr(e, de).
+.decl td_builtin(e: node, x: symbol)
+td_builtin(e, x) :- td_sym(e, q), split_dot(q, "builtins", x).
+
+// ---- calls --------------------------------------------------------------------------------------------------------
+.decl td_call(c: node, f: node)
+td_call(c, f) :- td_node(c, _), kind(c, "call"), field(c, "function", f0), unparen(f0, f).
+.decl td_arglist(c: node, a: node, j: number)
+td_arglist(c, a, j) :- td_node(c, _), field(c, "arguments", l), kind(l, "argument_list"), child(l, a, j),
+    !kind(a, "comment").
+td_arglist(c, g, 0) :- td_node(c, _), field(c, "arguments", g), kind(g, "generator_expression").
+.decl td_nonpos(c: node, j: number)  // argument j of c is a keyword, `*xs` or `**kw`
+td_nonpos(c, j) :- td_arglist(c, a, j), (kind(a, "keyword_argument") ; kind(a, "list_splat") ;
+    kind(a, "dictionary_splat")).
+.decl td_nonpos_before(c: node, j: number)
+td_nonpos_before(c, j) :- td_arglist(c, _, j), td_nonpos(c, k), k < j.
+.decl td_arg(c: node, i: number, a: node)
+td_arg(c, j, a) :- td_arglist(c, a0, j), !td_nonpos(c, j), !td_nonpos_before(c, j), unparen(a0, a).
+.decl td_kwarg(c: node, k: symbol, ka: node)
+td_kwarg(c, k, ka) :- td_arglist(c, ka, _), kind(ka, "keyword_argument"), field(ka, "name", n), text(n, k).
+.decl td_kw(c: node, k: symbol, v: node)
+td_kw(c, k, v) :- td_kwarg(c, k, ka), field(ka, "value", v0), unparen(v0, v).
+.decl td_noarg(c: node)
+td_noarg(c) :- td_call(c, _), !td_arglist(c, _, _).
+.decl td_onearg(c: node, a: node)
+td_onearg(c, a) :- td_arglist(c, a, 0), !td_arglist(c, _, 1).
+// ast's plain_str reads `value`, which has no rows for these trees; `str` has.
+.decl td_str(e: node, v: symbol)
+td_str(e, v) :- td_node(e, _), string_form(e, "str"), !fstring(e), str(e, v).
