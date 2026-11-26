@@ -6,20 +6,72 @@
 
 // Ruff RUF021: an `and` written bare as an operand of `or`. `and` binds tighter, so the code is right, but
 // parentheses make the reading explicit. Each bare `and` chain is reported once, at its start; `not` is left
-// alone. Strings Ruff parses as types (annotations, `cast("…", x)`, a TypeVar's bound, `List["…"]`) are
-// checked too, implicitly concatenated or with escapes as well.
+// alone. Strings Ruff parses as types (python/python-02: annotations, `cast("…", x)` and `cast(typ="…")`, a
+// TypeVar's bound or default, `List["…"]`, …, not an ordinary call's argument) are checked too, implicitly
+// concatenated or with escapes as well. In such a complex string Ruff cannot see parentheses, so a parenthesised
+// `and` under `or` is reported there too.
 //   x = a or b and c              ← RUF021 at `b and c`
 //   y = cast("a and b or c", 1)   ← RUF021
+//   z: "a or (b and c)" ""        ← RUF021: a complex string
 //   x = a or (b and c)            not reported
 //   x = not a or b                not reported
+//   w: f("a or b and c")          not reported: a value, not a type
 #include "python/ruff.rerail"
 #include "python/python-02.rerail"
 
 .violation RUF021(at: node) code "RUF021"
     "Wrap this `and` expression in parentheses, as `(a and b)`, so its precedence under `or` is explicit; the result is unchanged."
     suppress ruff "RUF021"
-RUF021(a) :- bare_and(a).
-RUF021(a) :- tstr_node(a, _), bare_and(a).
+RUF021(a) :- bare_and(a), !tstr_in(a, _).
+RUF021(a) :- tstr_node(a, s), tstr_simple(s), bare_and(a).
+RUF021(a) :- tstr_node(a, s), !tstr_simple(s), kind(a, "boolean_operator"), op(a, "and"), ast_up(a, o),
+    kind(o, "boolean_operator"), op(o, "or").
 // tree-sitter keeps parentheses as a node of their own, so a parenthesised `and` is not a direct child.
 .decl bare_and(a: node)
 bare_and(a) :- kind(a, "boolean_operator"), op(a, "and"), child(o, a, _), kind(o, "boolean_operator"), op(o, "or").
+
+// Tests: the review's counterexamples (review/python-02.review.md), each Ruff 0.17.6's lines.
+.test ruffs_other_type_definition_sites exactly
+    .fixture "r021-cast-keyword.py" ```
+        from typing import NamedTuple, NewType, TypeVar, TypedDict, cast
+        from typing_extensions import TypeAliasType, TypeForm
+        from mypy_extensions import Arg
+        value = cast(typ="a or b and c", val=1)
+        T = TypeVar("T", default="a or b and c")
+        N = NewType("N", tp="a or b and c")
+        A = TypeAliasType("A", "a or b and c")
+        P = NamedTuple("P", [("x", "a or b and c")])
+        D = TypedDict("D", {"x": "a or b and c"})
+        F = TypeForm("a or b and c")
+        G = Arg("a or b and c")
+        class E(TypedDict, extra_items="a or b and c"):
+            pass
+        ```
+    .expect RUF021 at "r021-cast-keyword.py":4
+    .expect RUF021 at "r021-cast-keyword.py":5
+    .expect RUF021 at "r021-cast-keyword.py":6
+    .expect RUF021 at "r021-cast-keyword.py":7
+    .expect RUF021 at "r021-cast-keyword.py":8
+    .expect RUF021 at "r021-cast-keyword.py":9
+    .expect RUF021 at "r021-cast-keyword.py":10
+    .expect RUF021 at "r021-cast-keyword.py":11
+    .expect RUF021 at "r021-cast-keyword.py":12
+.end
+
+.test an_ordinary_calls_arguments_are_values exactly
+    .fixture "r021-call-argument.py" ```
+        x: f("a or b and c")
+        y: f(k="a or b and c")
+        z: "f('a or b and c')"
+        ```
+.end
+
+.test a_complex_string_hides_parentheses exactly
+    .fixture "r021-complex-parentheses.py" ```
+        long_variable_name_to_shift_offsets: "a or (b and c)" ""
+        another_long_variable_name_to_shift: 'a or (b \x61nd c)'
+        simple_variable_name_to_shift_offset: "a or (b and c)"
+        ```
+    .expect RUF021 at "r021-complex-parentheses.py":1
+    .expect RUF021 at "r021-complex-parentheses.py":2
+.end

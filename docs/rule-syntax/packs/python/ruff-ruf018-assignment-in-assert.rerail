@@ -10,63 +10,227 @@
 //   print(x)                       ← RUF018 at `x := f()`
 //   assert (t := f()) == 1
 //   assert isinstance(t, tuple)    not reported: only asserts read t
-// The reads are Ruff's references of the binding, which its semantic model gathers in source order:
-//   - a read (or `del`) after it, before the next binding of the name in its scope;
+// The reads are Ruff's references of the binding, which its semantic model gathers in its visiting order:
+//   - a read (or `del`) after it, before the next binding of the name in its scope. A `for` binds its target
+//     after reading its iterable: `assert (x := [1])` then `for x in x:` reads the walrus.
 //   - the references of the binding it shadows, which a new binding copies, and so on back, unless the shadowed
-//     one is a `del` or the name of an `except … as` (unbound after the handler). A bare `x: T` and a `del`
-//     inside an `if`, loop or handler are no break.
+//     one is a `del` or the end of an `except … as` handler. A bare `x: T` that is the scope's first binding of x
+//     is a binding: its reads go to the walrus that shadows it. A `del` inside an `if`, loop or handler is no
+//     break.
 //       x = 0; print(x); assert (x := 1)          ← RUF018: print read x = 0, whose references the walrus took
 //       x = 0; print(x); del x; assert (x := 1)   not reported
+//   - after an `except … as x` handler, reads go back to the binding x had before it:
+//       assert (x := 1) / try: … / except E as x: … / print(x)   ← RUF018
 //   - Function and lambda bodies are read last, so their reads, and `nonlocal x`, go to the scope's last binding;
-//     so do the names of the module's `__all__`.
+//     so do the names of the module's `__all__`, of strings Ruff parses as types, and of annotations under
+//     `from __future__ import annotations` (forward references, which prefer the module's last binding).
 //       def h(): return y
 //       assert (y := 1)                           ← RUF018: y's last binding
+//       def f(a: "T"): …
+//       assert (T := int)                         ← RUF018
+//   - A def with `global x` that binds x has a binding of its own: its later reads are not the module's.
 #include "python/ruff.rerail"
+#include "python/upgrade.rerail"
+#include "python/python-02.rerail"
 
 .violation RUF018(at: node, x: symbol) code "RUF018"
     "Assign `{x}` in its own statement before the `assert` and assert on `{x}`; under `python -O` asserts are skipped, so code outside the assert would not see this assignment."
     suppress ruff "RUF018"
 RUF018(w, x) :- assert_walrus(w, t, x), carry(t, p), ref(p, n), !inside(n, _, "assert_statement").
-RUF018(w, x) :- assert_walrus(w, t, x), last_ev(s, x, t), late_ref(s, x, n), !inside(n, _, "assert_statement").
+RUF018(w, x) :- assert_walrus(w, t, x), last_to(s, x, t), late_ref(s, x, n), !inside(n, _, "assert_statement").
 .decl assert_walrus(w: node, t: node, x: symbol)
 assert_walrus(w, t, x) :- kind(w, "named_expression"), inside(w, _, "assert_statement"), field(w, "name", t), text(t, x),
     binding(_, x, t, "walrus").
 
-// ev(s, x, b, e, brk): scope s binds or deletes x at b, in effect at offset e (the end of the statement or walrus
-// that binds); brk "yes" when the next binding copies nothing from it (a `del`, an `except … as` name).
-.decl ev(s: node, x: symbol, b: node, e: number, brk: symbol)
-ev(s, x, b, e, "no") :- binding(s, x, b, f), f != "except", f != "walrus", node(_, b, _, _, e).
+// ev(s, x, b, e, k): scope s binds, annotates or unbinds x at b, in effect from offset e (where Ruff adds the
+// binding). k: "no" a binding; "ann" a bare annotation, the scope's first binding of x; "del" a `del`; "unb" the
+// end of an `except … as x` handler b. A binding copies the references of an "no" or "ann" one it shadows.
+.decl ev(s: node, x: symbol, b: node, e: number, k: symbol)
+ev(s, x, b, e, "no") :- binding(s, x, b, f), f != "walrus", f != "for", !homed(b, s), node(_, b, _, _, e).
 ev(s, x, t, e, "no") :- binding(s, x, t, "walrus"), field(w, "name", t), node(_, w, _, _, e).
-ev(s, x, b, e, "yes") :- binding(s, x, b, "except"), node(_, b, _, _, e).
-ev(s, x, n, e, "yes") :- del_site(s, n, _), text(n, x), node(_, n, _, _, e).
+ev(s, x, t, e, "no") :- binding(s, x, t, "for"), nearest(t, f, for_kind), field(f, "right", r), node(_, r, _, _, e).
+ev(s, x, h, e, "unb") :- exc_as(s, x, _, h), node(_, h, _, _, e).
+ev(s, x, n, e, "del") :- del_site(s, n, _), text(n, x), node(_, n, _, _, e).
+ev(s, x, a, e, "ann") :- ann_site(s, x, a), node(_, a, _, _, e).
+.decl for_kind(k: symbol)
+for_kind("for_statement"). for_kind("for_in_clause").
+// exc_as(s, x, b, h): b is the `as x` of except clause h.
+.decl exc_as(s: node, x: symbol, b: node, h: node)
+exc_as(s, x, b, h) :- binding(s, x, b, "except"), nearest(b, h, except_kind).
+.decl except_kind(k: symbol)
+except_kind("except_clause"). except_kind("except_group_clause").
+// homed(b, s): b binds in s through `global` or `nonlocal` from a def inside s; Ruff keeps it in that def.
+.decl homed(b: node, s: node)
+homed(b, s) :- binding(s, _, b, _), (kind(f, "function_definition") ; kind(f, "lambda")), field(f, "body", bd),
+    within(b, bd), within(f, s).
 // prev(b, p): p is the binding b shadows.
 .decl prev(b: node, p: node)
 prev(b, p) :- ev(s, x, b, eb, _), ev(s, x, p, ep, _), ep < eb, count : { ev(s, x, _, eq, _), eq > ep, eq < eb } = 0.
+.decl copied(k: symbol)
+copied("no"). copied("ann").
 // carry(t, p): t holds p's references.
 .decl carry(t: node, p: node)
 carry(t, t) :- assert_walrus(_, t, _).
-carry(t, p) :- carry(t, b), prev(b, p), ev(_, _, p, _, "no").
-// ref(p, n): n reads binding p, in source order: after it and before the next binding, not in a deferred body.
+carry(t, p) :- carry(t, b), prev(b, p), ev(_, _, p, _, k), copied(k).
+// unb_to(h, p): after handler h, reads of its name go to p, the binding in effect before its `as`.
+.decl unb_to(h: node, p: node)
+unb_to(h, p) :- exc_as(_, _, b, h), prev(b, p), ev(_, _, p, _, "no").
+unb_to(h, p) :- exc_as(_, _, b, h), prev(b, u), ev(_, _, u, _, "unb"), unb_to(u, p).
+// ref(p, n): n reads binding p, in Ruff's order: after it and before the next binding, not deferred.
 .decl ref(p: node, n: node)
 ref(p, n) :- carry(_, p), ev(s, x, p, ep, _), read(s, x, n, sn), sn > ep, !deferred(n, s),
     count : { ev(s, x, _, eq, _), eq > ep, eq < sn } = 0.
+ref(p, n) :- carry(_, p), unb_to(h, p), ev(s, x, h, eh, "unb"), read(s, x, n, sn), sn > eh, !deferred(n, s),
+    count : { ev(s, x, _, eq, _), eq > eh, eq < sn } = 0.
 .decl read(s: node, x: symbol, n: node, sn: number)
-read(s, x, n, sn) :- load_ref(n, x), look(n, x, s), node(_, n, _, sn, _).
+read(s, x, n, sn) :- load_ref(n, x), look(n, x, s), node(_, n, _, sn, _), !fwd(n, _, _).
 read(s, x, n, sn) :- del_unbinds(_, n), text(n, x), look(n, x, s), node(_, n, _, sn, _).
-// deferred(n, s): n is in the body of a def or lambda inside scope s; Ruff visits those bodies after s.
+// deferred(n, s): n is in the body of a def or lambda inside scope s (the body itself too: `lambda: q`); Ruff
+// visits those bodies after s.
 .decl deferred(n: node, s: node)
 deferred(n, s) :- read(s, _, n, _), (kind(f, "function_definition") ; kind(f, "lambda")), field(f, "body", b),
-    within(n, b), within(f, s).
-// last_ev(s, x, b): b is the binding of x in effect at the end of scope s.
+    (n = b ; within(n, b)), within(f, s).
+// last_ev(s, x, b): b is the last event of x in s, a binding. last_to(s, x, p): a read at the end of s gets p.
 .decl last_ev(s: node, x: symbol, b: node)
 last_ev(s, x, b) :- ev(s, x, b, e, "no"), count : { ev(s, x, _, e2, _), e2 > e } = 0.
-// late_ref(s, x, n): n refers to x's last binding in s: a deferred read, `nonlocal x`, or the module's `__all__`.
+.decl last_to(s: node, x: symbol, p: node)
+last_to(s, x, p) :- last_ev(s, x, p).
+last_to(s, x, p) :- ev(s, x, h, e, "unb"), count : { ev(s, x, _, e2, _), e2 > e } = 0, unb_to(h, p).
+// late_ref(s, x, n): n refers to x's last binding in s: a deferred read, `nonlocal x`, the module's `__all__`, or a
+// forward reference. A deferred read in a def that binds x itself (`global x; x = 2`) before it is that def's.
 .decl late_ref(s: node, x: symbol, n: node)
-late_ref(s, x, n) :- read(s, x, n, _), deferred(n, s).
+late_ref(s, x, n) :- read(s, x, n, sn), deferred(n, s), !own_before(s, x, n, sn).
 late_ref(s, x, i) :- kind(g, "nonlocal_statement"), child(g, i, _), kind(i, "identifier"), text(i, x),
     nearest(g, f, scope), nl_up(f, x, s).
 late_ref(m, x, e) :- all_entry(e, x), nearest(e, m, scope), kind(m, "module").
+late_ref(m, x, e) :- fwd(e, x, m), last_ev(m, x, _).
+late_ref(s, x, e) :- fwd(e, x, m), !last_ev(m, x, _), fwd_scope(e, x, s).
+.decl own_before(s: node, x: symbol, n: node, sn: number)
+own_before(s, x, n, sn) :- read(s, x, n, sn), deferred(n, s), nearest(n, g, scope), binding(s, x, b, _), homed(b, s),
+    nearest(b, g, scope), node(_, b, _, _, eb), eb < sn.
+// fwd(e, x, m): e reads x as a forward reference in module m: a name of a string Ruff parses as a type, or of an
+// annotation under `from __future__ import annotations` (or in a stub). Ruff reads them last, from the module
+// first. fwd_scope(e, x, s): where e's lookup finds x otherwise.
+.decl fwd(e: node, x: symbol, m: node)
+fwd(e, x, m) :- tstr_name(e, x), tstr_in(e, h), docof(h, d), modnode(d, m).
+fwd(e, x, m) :- ann_root(r), docof(r, d), (future_annotations(d) ; stub_file(d)), load_ref(e, x), (e = r ; within(e, r)),
+    modnode(d, m).
+.decl fwd_scope(e: node, x: symbol, s: node)
+fwd_scope(e, x, s) :- fwd(e, x, _), tstr_walk(e, x, s), bound_in(s, x).
+fwd_scope(e, x, s) :- fwd(e, x, _), !tstr_name(e, _), look(e, x, s).
 // nl_up(f, x, s): `nonlocal x` in f names the nearest enclosing function scope s that binds x.
 .decl nl_up(f: node, x: symbol, s: node)
 nl_up(f, x, s) :- kind(g, "nonlocal_statement"), child(g, i, _), text(i, x), nearest(g, f, scope), nearest(f, s, fdef).
 nl_up(f, x, s) :- nl_up(f, x, p), !ev(p, x, _, _, _), nearest(p, s, fdef).
+
+// Tests: the review's counterexamples (review/python-02.review.md), each Ruff 0.17.6's lines.
+.test after_a_handler_reads_go_back_to_the_earlier_binding exactly
+    .fixture "r018-except.py" ```
+        assert (x := 1)
+        try:
+            pass
+        except ValueError as x:
+            pass
+        print(x)
+        ```
+    .fixture "r018-except-two.py" ```
+        x = 0
+        assert (x := 1)
+        try:
+            pass
+        except ValueError as x:
+            pass
+        except TypeError as x:
+            pass
+        print(x)
+        ```
+    .fixture "r018-except-inside.py" ```
+        assert (x := 1)
+        try:
+            pass
+        except ValueError as x:
+            print(x)
+        ```
+    .expect RUF018 at "r018-except.py":1
+    .expect RUF018 at "r018-except-two.py":2
+.end
+
+.test a_for_reads_its_iterable_before_binding_its_target exactly
+    .fixture "r018-for.py" ```
+        assert (x := [1])
+        for x in x:
+            pass
+        ```
+    .expect RUF018 at "r018-for.py":1
+.end
+
+.test a_global_def_that_binds_the_name_reads_its_own_binding exactly
+    .fixture "r018-global.py" ```
+        def f():
+            global x
+            x = 2
+            return x
+
+        assert (x := 1)
+        ```
+    .fixture "r018-global-first.py" ```
+        def f():
+            global x
+            print(x)
+            x = 2
+            return x
+
+        assert (x := 1)
+        ```
+    .expect RUF018 at "r018-global-first.py":7
+.end
+
+.test forward_references_read_the_last_binding exactly
+    .fixture "r018-forward.py" ```
+        def f(a: "T"):
+            pass
+
+        assert (T := int)
+        ```
+    .fixture "r018-cast.py" ```
+        from typing import cast
+        v = cast("T", 1)
+        assert (T := int)
+        ```
+    .fixture "r018-future.py" ```
+        from __future__ import annotations
+
+        def f(a: T):
+            pass
+
+        assert (T := int)
+        ```
+    .fixture "r018-rebound.py" ```
+        x: "T" = 1
+        assert (T := int)
+        T = 2
+        ```
+    .expect RUF018 at "r018-forward.py":4
+    .expect RUF018 at "r018-cast.py":3
+    .expect RUF018 at "r018-future.py":6
+.end
+
+.test a_bare_annotation_is_a_binding_the_walrus_shadows exactly
+    .fixture "r018-bare-annotation.py" ```
+        x: int
+        print(x)
+        assert (x := 1)
+        ```
+    .expect RUF018 at "r018-bare-annotation.py":3
+.end
+
+.test a_lambda_body_that_is_the_name_is_deferred exactly
+    .fixture "r018-lambda.py" ```
+        g = lambda: q
+        assert (q := 1)
+        h = lambda: r
+        assert (r := 1)
+        r = 2
+        ```
+    .expect RUF018 at "r018-lambda.py":2
+.end

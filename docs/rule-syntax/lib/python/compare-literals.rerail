@@ -1,0 +1,103 @@
+// python/compare-literals: Ruff's ComparableExpr on literals, which it compares by value (RUF019). Batch python-02.
+// python/compare compares them by their tree; packs/python/NOTES-python-02.md proposes moving this into its
+// same_leaf, so that every depth of an expression compares this way. Until then a rule asks here about the
+// expressions it compares at the top (a key, a tuple's items) and asks compare about the rest.
+//
+// Interface
+//   lit_same_ask(a, b)   the rule lists the pairs it asks about
+//   lit_one(e)           e (asked) is a literal Ruff compares by value: a str, bytes, int, float, complex or
+//                        f-string literal, adjacent pieces too, or `-`, `+` or `~` on one
+//   lit_same(a, b)       a and b are such literals, and Ruff's ComparableExpr finds them equal
+//
+// Python and Ruff background
+//   - Adjacent pieces are one value: `"a" "b"` is `"ab"`, `b"a" b"b"` is `b"ab"`, `f"a" "b"` is `f"ab"`; a str is
+//     not an f-string (`"ab"` is not `f"ab"`), nor bytes.
+//   - An f-string is its elements: literal text (decoded, adjacent pieces joined) and interpolations, each its
+//     expression (python/compare), its conversion, its format spec (by its text here) and its debug text:
+//     `f"{x=}"` is not `f"{x =}"` nor `f"x={x!r}"`.
+//   - An int is its value up to 2**64 - 1. Beyond, Ruff keeps the digits of a decimal one (underscores aside) and
+//     the token of any other: `0x10000000000000000` is not `18446744073709551616`.
+//   - A float is its value as a double, and so is the imaginary part of a complex number: `1j` is `1.0j`.
+//
+//   if f"a" "b" in d and d[f"ab"]: …       lit_same(<f"a" "b">, <f"ab">)
+//   if 1j in d and d[1.0J]: …              lit_same(<1j>, <1.0J>)
+#include "python/compare.rerail"
+
+.decl lit_same_ask(a: node, b: node) extensible
+.decl lit_ask(e: node)
+lit_ask(m) :- (lit_same_ask(e, _) ; lit_same_ask(_, e)), unparen(e, m).
+lit_ask(m) :- lit_ask(u), kind(u, "unary_operator"), child(u, a, 0), unparen(a, m).
+.decl lit_one(e: node)
+lit_one(e) :- (lit_same_ask(e, _) ; lit_same_ask(_, e)), unparen(e, m), (lit_val(m, _, _) ; fstr(m)).
+.decl lit_same(a: node, b: node)
+lit_same(a, b) :- lit_same_ask(a, b), unparen(a, x), unparen(b, y), lit_val(x, t, v), lit_val(y, t, v).
+lit_same(a, b) :- lit_same_ask(a, b), unparen(a, x), unparen(b, y), fstr_same(x, y).
+
+// lit_val(m, t, v): m compares by tag t and value v.
+.decl lit_val(m: node, t: symbol, v: symbol)
+lit_val(m, "str", v) :- lit_ask(m), plain_str(m, v).
+lit_val(m, "bytes", v) :- lit_ask(m), string_form(m, "bytes"), str(m, v).
+lit_val(m, "bytes", v) :- lit_ask(m), kind(m, "concatenated_string"), child(m, s0, 0), string_form(s0, "bytes"),
+    v = join w by i sep "" : { child(m, s, i), kind(s, "string"), str(s, w) }.
+lit_val(m, "int", v) :- lit_ask(m), kind(m, "integer"), !lit_imag(m), value(m, v), small_int(v).
+lit_val(m, "big", v) :- lit_ask(m), kind(m, "integer"), !lit_imag(m), value(m, v), !small_int(v), text(m, t),
+    !match("0[xXoObB].*", t).
+lit_val(m, "bigtoken", t) :- lit_ask(m), kind(m, "integer"), !lit_imag(m), value(m, v), !small_int(v), text(m, t),
+    match("0[xXoObB].*", t).
+lit_val(m, "float", to_string(to_float(@replace_all(t, "_", "")))) :- lit_ask(m), kind(m, "float"), !lit_imag(m),
+    text(m, t).
+lit_val(m, "complex", to_string(to_float(@replace_all(t, "[_jJ]", "")))) :- lit_ask(m), lit_imag(m), text(m, t).
+lit_val(m, cat(o, t), v) :- lit_ask(m), kind(m, "unary_operator"), op(m, o), child(m, a, 0), unparen(a, x),
+    lit_val(x, t, v).
+.decl lit_imag(m: node)  // `2j`: tree-sitter calls it an integer or a float
+lit_imag(m) :- lit_ask(m), (kind(m, "integer") ; kind(m, "float")), text(m, t), match(".*[jJ]", t).
+// small_int(v): the decimal value v fits in 64 bits unsigned.
+.decl small_int(v: symbol)
+small_int(v) :- lit_ask(m), kind(m, "integer"), value(m, v), (strlen(v) < 20 ; strlen(v) = 20, v <= "18446744073709551615").
+
+// fstr(m): m is an f-string (alone or among adjacent literals) whose pieces are known. Its elements, in order:
+// fstr_el(m, j, k, v) is a literal ("lit", v its text) or an interpolation ("int", v its ordinal among them).
+// fstring_piece gives CPython's pieces, where a debug field's `x=` ends the literal before it; Ruff keeps it in the
+// interpolation, so it is cut off the literal here (an empty literal then is none).
+.decl fstr(m: node)
+fstr(m) :- lit_ask(m), fstring_piece(m, _, _, _).
+.decl fstr_piece(m: node, i: number, k: symbol, v: symbol)
+fstr_piece(m, i, "lit", v) :- fstr(m), fstring_piece(m, i, "literal", v), !fstring_piece(m, i + 1, "debug", _), v != "".
+fstr_piece(m, i, "lit", v) :- fstr(m), fstring_piece(m, i, "literal", v0), fstring_piece(m, i + 1, "debug", g),
+    v = @slice(v0, 0, strlen(v0) - strlen(g)), v != "".
+fstr_piece(m, i, "int", to_string(k)) :- fstr(m), fstring_piece(m, i, "interpolation", _),
+    k = count : { fstring_piece(m, i2, "interpolation", _), i2 < i }.
+.decl fstr_el(m: node, j: number, k: symbol, v: symbol)
+fstr_el(m, j, k, v) :- fstr_piece(m, i, k, v), j = count : { fstr_piece(m, i2, _, _), i2 < i }.
+.decl fstr_len(m: node, n: number)
+fstr_len(m, n) :- fstr(m), n = count : { fstr_piece(m, _, _, _) }.
+// fstr_int(m, k, x, a): the k-th interpolation of m has expression x and the attributes a: its conversion, debug
+// text and format spec, joined.
+.decl fstr_int(m: node, k: number, x: node, a: symbol)
+fstr_int(m, k, x, cat(cat(cat(c, "|"), cat(g, "|")), s)) :- fstr_inode(m, k, n), child(n, x, 0), fstring_piece(m, i, "interpolation", _),
+    k = count : { fstring_piece(m, i2, "interpolation", _), i2 < i }, fstr_conv(n, c), fstr_attr(m, i, "debug", g),
+    fstr_attr(m, i, "format_spec", s).
+// fstr_inode(m, k, n): n is m's k-th interpolation node, in a piece of m (not in a format spec).
+.decl fstr_inode(m: node, k: number, n: node)
+fstr_inode(m, k, n) :- fstr(m), (p = m ; child(m, p, _)), child(p, n, _), kind(n, "interpolation"), node(_, n, _, sn, _),
+    k = count : { (p2 = m ; child(m, p2, _)), child(p2, n2, _), kind(n2, "interpolation"), node(_, n2, _, s2, _), s2 < sn }.
+.decl fstr_conv(n: node, c: symbol)
+fstr_conv(n, c) :- fstr_inode(_, _, n), child(n, t, _), kind(t, "type_conversion"), text(t, c).
+fstr_conv(n, "") :- fstr_inode(_, _, n), !has_conv(n).
+.decl has_conv(n: node)
+has_conv(n) :- fstr_inode(_, _, n), child(n, t, _), kind(t, "type_conversion").
+.decl fstr_attr(m: node, i: number, k: symbol, v: symbol)
+fstr_attr(m, i, k, v) :- fstring_piece(m, i, "interpolation", _), (k = "debug" ; k = "format_spec"), fstr(m),
+    fstring_piece(m, i, k, v).
+fstr_attr(m, i, k, "-") :- fstring_piece(m, i, "interpolation", _), (k = "debug" ; k = "format_spec"), fstr(m),
+    !fstring_piece(m, i, k, _).
+// fstr_same(x, y): the same elements in the same order.
+.decl fstr_pair(x: node, y: node)
+fstr_pair(x, y) :- lit_same_ask(a, b), unparen(a, x), unparen(b, y), fstr(x), fstr(y), fstr_len(x, n), fstr_len(y, n).
+cmp_same_ask(u, v) :- fstr_pair(x, y), fstr_int(x, k, u, _), fstr_int(y, k, v, _).
+.decl fstr_el_same(x: node, y: node, j: number)
+fstr_el_same(x, y, j) :- fstr_pair(x, y), fstr_el(x, j, "lit", v), fstr_el(y, j, "lit", v).
+fstr_el_same(x, y, j) :- fstr_pair(x, y), fstr_el(x, j, "int", k1), fstr_el(y, j, "int", k2),
+    fstr_int(x, to_number(k1), u, a), fstr_int(y, to_number(k2), w, a), cmp_same(u, w).
+.decl fstr_same(x: node, y: node)
+fstr_same(x, y) :- fstr_pair(x, y), fstr_len(x, n), n = count : { fstr_el_same(x, y, _) }.

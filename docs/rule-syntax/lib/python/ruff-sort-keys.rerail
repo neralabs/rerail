@@ -1,0 +1,52 @@
+// python/ruff-sort-keys: sort keys for Ruff's isort-style string order (RUF022), exact for any text: Unicode
+// letters, UTF-8 lengths and digit runs of any length. Batch python-02. python/ruff-sorting's sort_key reads only
+// ASCII lowercase as lowercase, counts characters where Ruff counts bytes and runs out of lengths at ten digits;
+// packs/python/NOTES-python-02.md proposes that it take these keys.
+//
+// Interface
+//   isort_ask(s)         the strings to key: python/ruff-sorting's seq_item strings, and any a rule adds
+//   isort_key(s, k)      comparing keys k by code point orders the strings as Ruff's IsortSortKey: the member
+//                        group, then natord's natural order
+//   isort_unsorted(v)    sequence v (sort_ask(v, "isort")) of two or more strings has two adjacent elements out of
+//                        that order
+//
+// Ruff background (crates/ruff_linter/src/rules/ruff/rules/sequence_sorting.rs, the natord crate)
+//   - The groups: a constant (more than one byte of UTF-8, a character with Unicode's Uppercase property and none
+//     with its Lowercase property: `"É"`, `"ℂ"`, `"API_V2"`), then a class (the first character Uppercase: `"Day"`,
+//     `"Éé"`), then the rest (`"ǅǅ"`: titlecase is neither).
+//   - natord skips whitespace and compares character by character, except at two runs of ASCII digits: when either
+//     starts with 0 they compare digit by digit (a run that stops first is less), otherwise the longer run is greater
+//     and runs of one length compare digit by digit.
+//   - The key: each digit run starting with 0 becomes "0", its digits and "/" (below every digit); each other one
+//     its length, written as the number of the length's digits and the length (prefix-free, ordered by length:
+//     "15" for 5 digits, "212" for 12), then its digits. Every run so starts with a digit, which compares with the
+//     other string's character as natord's first digit would. Whitespace goes after the runs are found.
+//   __all__ = ["A", "É"]                  unsorted: "É" is two bytes, a constant
+//   __all__ = ["a9999999999", "a10000000000"]   sorted: 10 digits before 11
+#include "python/ruff-sorting.rerail"
+
+.decl isort_ask(s: symbol) extensible
+isort_ask(s) :- seq_item(_, _, _, s).
+.decl isort_key(s: symbol, k: symbol)
+isort_key(s, cat(g, k)) :- isort_ask(s), member_kind(s, g), nat_key2(s, k).
+.decl member_kind(s: symbol, g: symbol)
+member_kind(s, "0") :- is_constant(s).
+member_kind(s, "1") :- isort_ask(s), !is_constant(s), match("(?s)\\p{Uppercase}.*", s).
+member_kind(s, "2") :- isort_ask(s), !is_constant(s), !match("(?s)\\p{Uppercase}.*", s).
+// is_constant(s): more than one byte, and Ruff's is_cased_uppercase.
+.decl is_constant(s: symbol)
+is_constant(s) :- isort_ask(s), (strlen(s) > 1 ; match("(?s).*[^\\x00-\\x7F].*", s)),
+    match("(?s).*\\p{Uppercase}.*", s), !match("(?s).*\\p{Lowercase}.*", s).
+// nat_key2(s, k): the pieces of s in order, joined.
+.decl nat_key2(s: symbol, k: symbol)
+nat_key2(s, k) :- isort_ask(s), k = join p by st sep "" : { nat_piece(s, st, p) }.
+.decl nat_piece(s: symbol, st: number, p: symbol)
+nat_piece(s, st, @replace_all(t, "\\s", "")) :- isort_ask(s), match_all("[^0-9]+", s, _, st, en), t = @slice(s, st, en).
+nat_piece(s, st, cat(cat("0", d), "/")) :- isort_ask(s), match_all("[0-9]+", s, _, st, en), d = @slice(s, st, en),
+    match("0.*", d).
+nat_piece(s, st, cat(cat(to_string(strlen(to_string(en - st))), to_string(en - st)), d)) :- isort_ask(s),
+    match_all("[0-9]+", s, _, st, en), d = @slice(s, st, en), !match("0.*", d).
+
+.decl isort_unsorted(v: node)
+isort_unsorted(v0) :- sort_ask(v0, "isort"), unparen(v0, v), seq_strings(v), seq_item(v, i, _, a), seq_item(v, i + 1, _, b),
+    isort_key(a, ka), isort_key(b, kb), ka > kb.

@@ -5,18 +5,21 @@
 .scope include "**/*"
 
 // Ruff RUF028: a formatter comment the formatter will ignore where it stands. The comments: `# fmt: off`,
-// `# fmt: on`, `# fmt: skip`, `# yapf: disable` (off) and `# yapf: enable` (on), also after other text
-// (`# noqa: X # fmt: skip`). One finding per comment, first reason first:
+// `# fmt: on`, `# fmt: skip`, `# yapf: disable` (off) and `# yapf: enable` (on), as the whole comment; a skip
+// also as one of its `#`-separated parts (`# noqa: X # fmt: skip`, `# fmt: skip # noqa: X`). One finding per
+// comment, first reason first:
 //   x = [  # fmt: off  …  ]            ← in brackets or an expression (any kind)
 //   # fmt: skip     (own line)         ← skip must end a line; on must not
 //   @dec  / # fmt: off /  def f(): …   ← off or on after a decorator
-//   # fmt: off      (just above `else:`, at its indent)   ← directly above else, elif, except or finally
-//   off as the first line of the else or finally block of a try with except clauses
+//   # fmt: off      (just above the first else, elif, except or finally, or first in a try's else or finally
+//                   block after except, at another indentation than the statement before)
 // Where a comment stands is Ruff's enclosing node, as its comment visitor finds it on Ruff's tree, which has no
-// parentheses: in `x = (  # fmt: off` the comment is in the assignment, not in an expression. A comment right
-// after a node, with only blanks between, is that node's when Ruff walked into the node's parent (it does where
-// the parent holds a formatter comment) and, on a line of its own, when it is indented deeper than the line the
-// node starts on (a node after other text on its line counts as column 0):
+// parentheses: in `x = (  # fmt: off` the comment is in the assignment, not in an expression, and in
+// `def f() -> (  # fmt: off` in the def. A comment right after a node, with only blanks between, is that node's
+// when Ruff walked into the node's parent (it does where the parent holds a formatter comment) and, on a line of its
+// own, when the comments from the line after the node up to it are all indented deeper than the line the node starts
+// on (a node after other text on its line counts as column 0). A comment after the module's last statement with
+// such an indentation of 0 is no node's: Ruff does not look at it.
 //   def f():
 //       x = [  # fmt: off
 //           1
@@ -30,44 +33,92 @@
 .violation RUF028(at: node, msg: symbol) code "RUF028" "{msg}"
     suppress ruff "RUF028"
 RUF028(c, "Move this formatter comment out of the brackets or expression to a line between statements; the formatter ignores it where it stands.") :-
-    fmt_comment(c, _), in_expr(c).
+    cap(c, _), in_expr(c).
 RUF028(c, "Put a skip comment at the end of the line it applies to and an on comment on a line of its own; the other way round the formatter ignores them.") :-
-    fmt_comment(c, k), !in_expr(c), (k = "skip", own_line(c) ; k = "on", !own_line(c)).
+    cap(c, k), !in_expr(c), (k = "skip", own_line(c) ; k = "on", !own_line(c)).
 RUF028(c, "Move this comment above the first decorator; after a decorator the formatter ignores it.") :-
-    fmt_comment(c, k), k != "skip", own_line(c), child(p, c, _), kind(p, "decorated_definition").
-RUF028(c, "Indent this off comment to match the block above, or move it before the whole statement; directly above else, elif, except or finally the formatter ignores it.") :-
-    fmt_comment(c, "off"), own_line(c), !in_expr(c), next_sibling(c, t), kind(t, k),
-    (k = "else_clause" ; k = "elif_clause" ; k = "except_clause" ; k = "finally_clause"), col(c, n), col(t, n).
-RUF028(c, "Move this off comment below the first statement of the else or finally block, or above the try statement; at the start of a block after except the formatter ignores it.") :-
-    fmt_comment(c, "off"), own_line(c), kind(y, "try_statement"), child(y, x, _), kind(x, "except_clause"),
-    child(y, e, _), (kind(e, "else_clause") ; kind(e, "finally_clause")), field(e, "body", b), child(b, s, 0),
-    next_sibling(c, x), node(_, x, _, st, _), node(_, s, _, st, _).
+    cap(c, k), k != "skip", own_line(c), after_decorator(c).
+RUF028(c, "Indent this off comment as the statement before it, or move it before the whole statement; directly above an else, elif, except or finally block, or first in a try's else or finally block, the formatter ignores it.") :-
+    cap(c, "off"), own_line(c), alt_start(f, p, hdr), node(_, p, _, _, pe), node(_, f, _, fs, _), node(_, c, _, cs, ce),
+    cs > pe, ce <= fs, cmin(c, p, k), indent(p, i), k != i, (k < i ; cs > hdr).
 
-// fmt_comment(c, k): comment c is a formatter comment of kind "off", "on" or "skip".
+// fmt_comment(c, k): comment c is a formatter comment of kind "off", "on" or "skip" (Ruff's
+// SuppressionKind::from_comment: the comment after one `#`, blanks trimmed, or a skip as any `#`-separated part).
 .decl fmt_comment(c: node, k: symbol)
 fmt_comment(c, k) :- kind(c, "comment"), text(c, t),
-    match("#(?:[^#]*#)*\\s*(?<w>fmt|yapf):\\s*(?<v>off|on|skip|disable|enable)\\s*", t), fmt_word(w, v, k).
+    match("#[ \\t\\f]*(?<w>fmt|yapf):[ \\t\\f]*(?<v>off|on|skip|disable|enable)[ \\t\\f]*", t), fmt_word(w, v, k).
+fmt_comment(c, "skip") :- kind(c, "comment"), text(c, t), match("(.*#)?[ \\t\\f]*fmt:[ \\t\\f]*skip[ \\t\\f]*(#.*)?", t).
 .decl fmt_word(w: symbol, v: symbol, k: symbol)
 fmt_word("fmt", "off", "off"). fmt_word("fmt", "on", "on"). fmt_word("fmt", "skip", "skip").
 fmt_word("yapf", "disable", "off"). fmt_word("yapf", "enable", "on").
+// cap(c, k): formatter comment c, which Ruff's visitor reaches: not one after the module's last statement whose
+// indentation (cmin) is 0, and not one in a file without statements.
+.decl cap(c: node, k: symbol)
+cap(c, k) :- fmt_comment(c, k), !uncaptured(c).
+.decl uncaptured(c: node)
+uncaptured(c) :- fmt_comment(c, _), docof(c, d), modnode(d, m), !has_stmt(m).
+uncaptured(c) :- fmt_comment(c, _), own_line(c), docof(c, d), modnode(d, m), last_stmt(m, s), node(_, s, _, _, se),
+    node(_, c, _, cs, _), cs >= se, cmin(c, s, 0).
+.decl has_stmt(m: node)
+has_stmt(m) :- child(m, s, _), !kind(s, "comment").
+.decl last_stmt(m: node, s: node)
+last_stmt(m, s) :- fmt_comment(c, _), docof(c, d), modnode(d, m), child(m, s, j), !kind(s, "comment"),
+    count : { child(m, s2, j2), j2 > j, !kind(s2, "comment") } = 0.
 // own_line(c): nothing comes before c on its line.
 .decl own_line(c: node)
 own_line(c) :- fmt_comment(c, _), line_start(c).
 // line_start(n): only whitespace comes before n on its line. The tape's tokens would not say: it leaves out tokens
 // the grammar implies (the `)` of `x = (\n1\n)  # fmt: skip`).
 .decl line_start(n: node)
-line_start(n) :- (fmt_comment(n, _) ; entered(n)), docof(n, d), line(n, l), col(n, k), tape_line(d, l, sp), text(sp, s),
+line_start(n) :- (kind(n, "comment") ; indent_ask(n)), docof(n, d), line(n, l), col(n, k), tape_line(d, l, sp), text(sp, s),
     match("[ \t\f]*", @slice(s, 0, k)).
-// in_expr(c): c sits in an expression, brackets or a statement's header, not between statements.
+// cmin(c, n, k): Ruff's comment_indentation_after: the least indentation of the comments on lines of their own from
+// the line after n's last one up to comment c.
+.decl cmin_ask(c: node, n: node)
+cmin_ask(c, e) :- cand(c, e).
+cmin_ask(c, s) :- fmt_comment(c, _), docof(c, d), modnode(d, m), last_stmt(m, s).
+cmin_ask(c, d) :- fmt_comment(c, _), dec_before(c, d).
+cmin_ask(c, p) :- fmt_comment(c, "off"), alt_start(_, p, _).
+.decl cmin(c: node, n: node, k: number)
+cmin(c, n, k) :- cmin_ask(c, n), own_line(c), docof(c, d), end_point(n, p), line(p, l), node(_, c, _, cs, _),
+    k = min k2 : { kind(c2, "comment"), docof(c2, d), line(c2, l2), l2 > l, node(_, c2, _, s2, _), s2 <= cs,
+        line_start(c2), col(c2, k2) }.
+// indent(n, i): the indentation of n's line when n starts it, else 0 (Ruff's indentation_at_offset).
+.decl indent_ask(n: node)
+indent_ask(e) :- entered(e).
+indent_ask(d) :- dec_before(_, d).
+indent_ask(p) :- alt_start(_, p, _).
+.decl indent(n: node, i: number)
+indent(e, i) :- indent_ask(e), line_start(e), col(e, i).
+indent(e, 0) :- indent_ask(e), !line_start(e).
+
+// in_expr(c): c sits in an expression, brackets or a statement's header, not between statements: its enclosing
+// node in Ruff's tree, past the nodes Ruff's tree has not (ruff_enc), is no statement.
 .decl in_expr(c: node)
 in_expr(c) :- trail_expr(c).
-in_expr(c) :- kind(c, "comment"), child(q, c, _), !kind(q, "parenthesized_expression"), !stmt_level(q).
-in_expr(c) :- kind(c, "comment"), child(q, c, _), kind(q, "parenthesized_expression"), ast_up(q, p), !stmt_level(p).
+in_expr(c) :- kind(c, "comment"), child(q, c, _), ruff_enc(q, p), !stmt_level(p).
+// ruff_enc(q, p): p is q, or the nearest node above q that Ruff's tree has. Ruff has no node for parentheses, for
+// tree-sitter's `type` around an annotation, for `( x )` as a target or pattern (a one-item tuple_pattern without a
+// comma), for a case pattern's wrapper or a guard's `if`, for the with clause, or for a with item that is the
+// parenthesised items of the statement (`with (open(a) as b):`).
+.decl ruff_enc(q: node, p: node)
+ruff_enc(q, q) :- child(q, c, _), kind(c, "comment"), !wrapper(q).
+ruff_enc(q, p) :- child(q, c, _), kind(c, "comment"), wrapper(q), wrapper_up(q, p).
+.decl wrapper_up(q: node, p: node)
+wrapper_up(q, p) :- wrapper(q), child(p, q, _), !wrapper(p).
+wrapper_up(q, p) :- wrapper(q), child(x, q, _), wrapper(x), wrapper_up(x, p).
+.decl wrapper(q: node)
+wrapper(q) :- kind(q, k), (k = "parenthesized_expression" ; k = "type" ; k = "case_pattern" ; k = "with_clause").
+wrapper(q) :- kind(q, "tuple_pattern"), count : { child(q, x, _), !kind(x, "comment") } = 1, text(q, t),
+    !match("(?s).*,(\\s|#[^\\n]*)*\\)", t).
+wrapper(q) :- kind(q, "if_clause"), child(p, q, _), kind(p, "case_clause").
+wrapper(q) :- kind(q, "with_item"), child(q, pe, 0), kind(pe, "parenthesized_expression"), child(pe, a, _),
+    kind(a, "as_pattern").
 // trail_expr(c): formatter comment c follows an expression e, with only blanks and comments between, that Ruff
-// entered, and, on a line of its own, is indented deeper than e's line.
+// entered, and, on a line of its own, the comments up to it are indented deeper than e's line.
 .decl trail_expr(c: node)
 trail_expr(c) :- cand(c, e), !stmt_level(e), !kind(e, "parenthesized_expression"), !kind(e, "comment"), entered(e),
-    (!own_line(c) ; own_line(c), indent(e, i), col(c, k), i < k).
+    (!own_line(c) ; own_line(c), indent(e, i), cmin(c, e, k), i < k).
 // after(c, s): comment c comes right after its sibling s, or after comments that do, with only blanks between:
 // no `,`, bracket or `:` (read from the lines' text: the tape leaves out tokens the grammar implies).
 .decl after(c: node, s: node)
@@ -95,10 +146,56 @@ cand(c, e) :- after_comments(c, s), node(_, s, _, _, se), (e = s ; within(e, s))
 .decl entered(e: node)
 entered(e) :- cand(_, e), ast_up(e, p), node(_, p, _, ps, pe), fmt_comment(c2, _), node(_, c2, _, s2, ce2), s2 >= ps,
     ce2 < pe.
-// indent(e, i): the indentation of e's line when e starts it, else 0 (Ruff's indentation_at_offset).
-.decl indent(e: node, i: number)
-indent(e, i) :- entered(e), line_start(e), col(e, i).
-indent(e, 0) :- entered(e), !line_start(e).
+
+// after_decorator(c): c, on a line of its own after a decorator and before the def or class, is not that decorator's:
+// its indentation (cmin) is not deeper than the decorator's line.
+.decl after_decorator(c: node)
+after_decorator(c) :- dec_before(c, d), cmin(c, d, k), indent(d, i), k <= i.
+// dec_before(c, d): d is the decorator right before comment c (comments between aside).
+.decl dec_before(c: node, d: node)
+dec_before(c, d) :- fmt_comment(c, _), child(p, c, j), kind(p, "decorated_definition"), child(p, d, i), i < j,
+    kind(d, "decorator"), count : { child(p, d2, i2), i2 > i, i2 < j, !kind(d2, "comment") } = 0.
+
+// alt_start(f, p, hdr): f is the first node of an alternate body as Ruff's is_first_statement_in_alternate_body
+// says, p the node Ruff visits right before it, and hdr where the tokens between them start: an if's first elif or
+// else clause (p the last statement of its body); a for's or while's else (f its first statement, p the body's last);
+// a try's first except clause (p the body's last statement), its else (f its first statement, p the last except
+// clause) and its finally (f its first statement, p the last thing before: the else's last statement, the last
+// except clause, or the body's last statement). A comment between p and f, not p's (indented deeper, nothing
+// between), is reported when its indentation differs from p's line's.
+.decl alt_start(f: node, p: node, hdr: number)
+alt_start(f, p, fs) :- kind(e, "if_statement"), block_of(e, b), last_code(b, p), alt_clause(e, f, 0), node(_, f, _, fs, _).
+alt_start(f, p, hs) :- (kind(e, "for_statement") ; kind(e, "while_statement")), block_of(e, b), last_code(b, p),
+    child(e, x, _), kind(x, "else_clause"), block_of(x, xb), first_code(xb, f), node(_, x, _, hs, _).
+alt_start(f, p, fs) :- kind(e, "try_statement"), block_of(e, b), last_code(b, p), handler_n(e, f, 0), node(_, f, _, fs, _).
+alt_start(f, p, hs) :- kind(e, "try_statement"), child(e, x, _), kind(x, "else_clause"), block_of(x, xb), first_code(xb, f),
+    last_handler(e, p), node(_, x, _, hs, _).
+alt_start(f, p, hs) :- kind(e, "try_statement"), child(e, x, _), kind(x, "finally_clause"), block_of(x, xb), first_code(xb, f),
+    before_finally(e, p), node(_, x, _, hs, _).
+.decl block_of(e: node, b: node)  // e's own block: the first block child
+block_of(e, b) :- (kind(e, "if_statement") ; kind(e, "for_statement") ; kind(e, "while_statement") ; kind(e, "try_statement") ;
+    kind(e, "else_clause") ; kind(e, "finally_clause")), child(e, b, j), kind(b, "block"),
+    count : { child(e, b2, j2), j2 < j, kind(b2, "block") } = 0.
+.decl first_code(b: node, s: node)
+first_code(b, s) :- kind(b, "block"), child(b, s, j), !kind(s, "comment"), count : { child(b, s2, j2), j2 < j, !kind(s2, "comment") } = 0.
+.decl last_code(b: node, s: node)
+last_code(b, s) :- kind(b, "block"), child(b, s, j), !kind(s, "comment"), count : { child(b, s2, j2), j2 > j, !kind(s2, "comment") } = 0.
+// alt_clause(e, x, n): x is if e's n-th elif or else clause; handler_n(e, x, n): x is try e's n-th except clause.
+.decl alt_clause(e: node, x: node, n: number)
+alt_clause(e, x, n) :- kind(e, "if_statement"), child(e, x, j), (kind(x, "elif_clause") ; kind(x, "else_clause")),
+    n = count : { child(e, x2, j2), j2 < j, (kind(x2, "elif_clause") ; kind(x2, "else_clause")) }.
+.decl handler_n(e: node, x: node, n: number)
+handler_n(e, x, n) :- kind(e, "try_statement"), child(e, x, j), (kind(x, "except_clause") ; kind(x, "except_group_clause")),
+    n = count : { child(e, x2, j2), j2 < j, (kind(x2, "except_clause") ; kind(x2, "except_group_clause")) }.
+.decl last_handler(e: node, x: node)
+last_handler(e, x) :- handler_n(e, x, n), count : { handler_n(e, _, n2), n2 > n } = 0.
+.decl before_finally(e: node, p: node)
+before_finally(e, p) :- kind(e, "try_statement"), child(e, x, _), kind(x, "else_clause"), block_of(x, xb), last_code(xb, p).
+before_finally(e, p) :- kind(e, "try_statement"), !try_else(e), last_handler(e, p).
+before_finally(e, p) :- kind(e, "try_statement"), !try_else(e), !handler_n(e, _, _), block_of(e, b), last_code(b, p).
+.decl try_else(e: node)
+try_else(e) :- kind(e, "try_statement"), child(e, x, _), kind(x, "else_clause").
+
 // stmt_level(p): p is (part of) a statement in Ruff's tree. tree-sitter wraps an assignment in an
 // expression_statement; Ruff's Assign, AugAssign and AnnAssign are statements themselves.
 .decl stmt_level(p: node)
@@ -140,3 +237,213 @@ stmt_level(p) :- kind(p, "type_alias_statement").
 stmt_level(p) :- kind(p, "while_statement").
 stmt_level(p) :- kind(p, "with_statement").
 
+// Tests: the review's counterexamples (review/python-02.review.md), each Ruff 0.17.6's lines.
+.test only_the_whole_comment_or_a_skip_part_is_a_directive exactly
+    .fixture "r028-prefixed.py" ```
+        x = [
+            # noqa: E501 # fmt: off
+            1,
+            ## fmt: off
+            2,
+            ## fmt: on
+            # noqa: E501 # fmt: skip
+        ]
+        ```
+    .expect RUF028 at "r028-prefixed.py":7
+.end
+
+.test an_own_line_comment_after_the_last_statement_is_not_visited exactly
+    .fixture "r028-eof.py" ```
+        x = 1
+        # fmt: skip
+        ```
+    .fixture "r028-only-comment.py" ```
+        # fmt: skip
+        ```
+    .fixture "r028-eof-def.py" ```
+        def f():
+            pass
+            # fmt: skip
+        ```
+    .expect RUF028 at "r028-eof-def.py":3
+.end
+
+.test the_least_indentation_of_the_comments_between_counts exactly
+    .fixture "r028-min-indent.py" ```
+        def f():
+            x = [  # fmt: off
+                1
+            ]
+        # explanation
+            # fmt: on
+        ```
+    .expect RUF028 at "r028-min-indent.py":2
+.end
+
+.test only_the_first_alternate_body exactly
+    .fixture "r028-second-elif.py" ```
+        def f():
+            if a:
+                pass
+            elif b:
+                pass
+            # fmt: off
+            elif c:
+                pass
+        ```
+    .fixture "r028-second-except.py" ```
+        def f():
+            try:
+                pass
+            except A:
+                pass
+            # fmt: off
+            except B:
+                pass
+            # fmt: off
+            else:
+                pass
+            # fmt: off
+            finally:
+                pass
+        ```
+    .fixture "r028-first-elif.py" ```
+        def f():
+            if a:
+                pass
+            # fmt: off
+            elif b:
+                pass
+        ```
+    .expect RUF028 at "r028-first-elif.py":4
+    .expect RUF028 at "r028-second-except.py":12
+.end
+
+.test a_deeper_comment_after_a_decorator_is_the_decorators exactly
+    .fixture "r028-decorator-indent.py" ```
+        @dec
+            # fmt: off
+        def f():
+            pass
+        @dec
+        # fmt: off
+        def g():
+            pass
+        ```
+    .expect RUF028 at "r028-decorator-indent.py":6
+.end
+
+.test an_end_of_line_off_on_a_decorator exactly
+    .fixture "r028-decorator-trailing.py" ```
+        @dec  # fmt: off
+        def f():
+            pass
+        ```
+.end
+
+.test parentheses_ruff_has_no_node_for exactly
+    .fixture "r028-return-annotation.py" ```
+        def f() -> (  # fmt: off
+            int
+        ):
+            pass
+        x: (  # fmt: off
+            int
+        ) = 1
+        for (  # fmt: off
+            y
+        ) in z:
+            pass
+        match v:
+            case (  # fmt: off
+                1
+            ):
+                pass
+            case w if (  # fmt: off
+                w
+            ):
+                pass
+        type T = (  # fmt: off
+            int
+        )
+        with (  # fmt: off
+            open(a) as b
+        ):
+            pass
+        with (
+            open(a) as b  # fmt: skip
+            , open(c) as d
+        ):
+            pass
+        with (
+            open(a)  # fmt: skip
+            as b
+        ):
+            pass
+        ```
+    .expect RUF028 at "r028-return-annotation.py":29
+    .expect RUF028 at "r028-return-annotation.py":34
+.end
+
+.test a_skip_part_before_other_parts exactly
+    .fixture "r028-skip-suffix.py" ```
+        def f():
+            # fmt: skip # noqa: E501
+            pass
+        ```
+    .expect RUF028 at "r028-skip-suffix.py":2
+.end
+
+.test any_misalignment_above_an_alternate_body exactly
+    .fixture "r028-misaligned.py" ```
+        if True:
+            pass
+          # fmt: off
+        else:
+            pass
+        for x in y:
+            pass
+        # fmt: off
+        else:
+            pass
+        while x:
+            pass
+            # fmt: off
+        else:
+            pass
+        ```
+    .expect RUF028 at "r028-misaligned.py":3
+    .expect RUF028 at "r028-misaligned.py":8
+.end
+
+.test the_first_line_of_a_try_s_else_or_finally_after_except exactly
+    .fixture "r028-handler-else.py" ```
+        def f():
+            try:
+                pass
+            except Exception:
+                pass
+            else:
+                # fmt: off
+                pass
+        def g():
+            try:
+                pass
+            except Exception:
+                pass
+            finally:
+                # fmt: off
+                pass
+        def h():
+            try:
+                pass
+            except Exception:
+                pass
+            # fmt: off
+            # why
+            else:
+                pass
+        ```
+    .expect RUF028 at "r028-handler-else.py":7
+    .expect RUF028 at "r028-handler-else.py":15
+.end

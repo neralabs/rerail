@@ -4,16 +4,19 @@
 .mode steer
 .scope include "**/*"
 
-// Ruff RUF020: `Never` or `NoReturn` (typing or typing_extensions) as a member of a union. Neither has a
-// value, so `Never | T` is `T`. Each one is reported, in a `|` union (an operand of `|`) or in a
-// `Union[...]` of two or more members. A lone parenthesised tuple is the members (`Union[(A, B)]`), unless a
-// trailing comma makes it one member (`Union[(A, B),]`). Strings Ruff parses as types are checked too.
+// Ruff RUF020: `Never` or `NoReturn` (typing, typing_extensions or _typeshed) as a member of a union. Neither has
+// a value, so `Never | T` is `T`. Each one is reported, in a `|` union (an operand of `|`) or in a `Union[...]` of
+// two or more members. A lone parenthesised tuple is the members (`Union[(A, B)]`), unless a trailing comma makes
+// it one member (`Union[(A, B),]`). Strings Ruff parses as types are checked too, with their names as Ruff
+// resolves them (python/python-02: in a concatenated string, each name reads as the last one that resolves). A def's
+// body is read after the module, so a later `Never = int` makes its `Never` no longer typing's.
 //   x: Never | int            ← RUF020 at Never
 //   Union[NoReturn, int]      ← RUF020 at NoReturn
 //   Union[(Never, int)]       ← RUF020 at Never
 //   y: "Never | int"          ← RUF020 at Never
 //   def f() -> Never: ...     not reported
 //   Union[(Never, int),]      not reported: one member, a tuple
+//   y: "Never | " "int"       not reported: both names read as `int`
 #include "python/ruff.rerail"
 #include "python/python-02.rerail"
 
@@ -42,17 +45,76 @@ br_item(tp, c) :- union_br(g, tp), kind(g, "generic_type"), child(tp, c, _), !ki
 union_item(c) :- br_item(b, c), count : { br_item(b, _) } > 1.
 union_item(c) :- br_item(b, t), count : { br_item(b, _) } = 1, !trailing_comma(b), member(t, u), kind(u, "tuple"),
     child(u, c, _), !kind(c, "comment"), count : { child(u, x, _), !kind(x, "comment") } > 1.
-// trailing_comma(b): a comma ends the list in brackets b (the tape keeps no commas of a subscript).
+// trailing_comma(b): a comma ends the list in brackets b (the tape keeps no commas of a subscript): a comma followed
+// by nothing but blanks and comments up to the `]`, and not itself in a comment or a string.
 .decl trailing_comma(b: node)
-trailing_comma(b) :- br_item(b, _), text(b, t), match("(?s).*,\\s*(#[^\\n]*\\s*)*\\]", t).
+trailing_comma(b) :- br_item(b, _), text(b, t),
+    match("(?s)(.*\\n)?([^#\"'\\n]|\"([^\"\\\\\\n]|\\\\.)*\"|'([^'\\\\\\n]|\\\\.)*')*,(\\s|#[^\\n]*)*\\]", t).
+// The names of a type string are tstr_qual's: names' own lookup reads annotation strings too.
 .decl union_name(h: node)
-union_name(h) :- ruff_qual(h, q), union_q(q).
+union_name(h) :- ruff_qual(h, q), union_q(q), !late_rebound(h), !tstr_in(h, _).
 union_name(h) :- tstr_qual(h, q), union_q(q).
 .decl union_q(q: symbol)
-union_q("typing.Union"). union_q("typing_extensions.Union").
+union_q("typing.Union"). union_q("typing_extensions.Union"). union_q("_typeshed.Union").
 .decl never(m: node, x: symbol)
-never(m, x) :- (kind(m, "identifier") ; kind(m, "attribute")), ruff_qual(m, q), never_q(q, x).
+never(m, x) :- (kind(m, "identifier") ; kind(m, "attribute")), ruff_qual(m, q), never_q(q, x), !late_rebound(m),
+    !tstr_in(m, _).
 never(m, x) :- tstr_qual(m, q), never_q(q, x).
 .decl never_q(q: symbol, x: symbol)
 never_q("typing.Never", "Never"). never_q("typing.NoReturn", "NoReturn").
 never_q("typing_extensions.Never", "Never"). never_q("typing_extensions.NoReturn", "NoReturn").
+never_q("_typeshed.Never", "Never"). never_q("_typeshed.NoReturn", "NoReturn").
+
+// Tests: the review's counterexamples (review/python-02.review.md), each Ruff 0.17.6's lines.
+.test typeshed_names_are_typing_names exactly
+    .fixture "r020-typeshed.py" ```
+        from _typeshed import Never
+        x: Never | int
+        ```
+    .fixture "r020-typeshed-union.py" ```
+        from _typeshed import Never, Union
+        y: Union[Never, int]
+        ```
+    .expect RUF020 at "r020-typeshed.py":2
+    .expect RUF020 at "r020-typeshed-union.py":2
+.end
+
+.test a_comma_in_a_comment_is_no_trailing_comma exactly
+    .fixture "r020-comment-comma.py" ```
+        from typing import Never, Union
+        Union[(Never, int)  # a,
+        ]
+        Union[(Never, int),  # a
+        ]
+        ```
+    .expect RUF020 at "r020-comment-comma.py":2
+.end
+
+.test a_def_body_reads_the_modules_last_binding exactly
+    .fixture "r020-later-rebind.py" ```
+        from typing import Never
+
+        def f():
+            return Never | int
+
+        def g():
+            return int | Never
+
+        x = Never | int
+        Never = int
+        ```
+    .expect RUF020 at "r020-later-rebind.py":9
+.end
+
+.test a_complex_string_reads_each_name_as_the_last_that_resolves exactly
+    .fixture "r020-complex-string.py" ```
+        from typing import Never, Union
+        y: "Never | " "int"
+        z: "Never | " "Foo"
+        w: 'Never | \x69nt'
+        v: "Union[Never, " "int]"
+        t: "Foo | " "Never"
+        ```
+    .expect RUF020 at "r020-complex-string.py":3
+    .expect RUF020 at "r020-complex-string.py":6
+.end
