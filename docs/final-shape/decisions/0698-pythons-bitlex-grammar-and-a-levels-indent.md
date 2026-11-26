@@ -174,3 +174,15 @@ statements and blocks end.
     `pattern_list` of them: not an expression, whose comparison takes `in`. `expressions` is `nested`, as the loop
     reads it before `:` and a statement before its line break. Not read yet, refused: `async`, a parenthesized
     `with` (a token mark no state takes), a tuple or list as a target.
+31. **A comprehension is its bracket's node retagged** (`relabel body retag list_comprehension comprehension ']'`).
+    Past the first item, a `for` makes the item `body:` (the node made last: an expression, or a dictionary's
+    `pair`) and the open node a `list_comprehension`, `set_comprehension`, `dictionary_comprehension` or
+    `generator_expression`; a call's only argument's generator stands for its `argument_list`. A `for_in_clause`
+    keeps `for` and `async` as leaves; its right side, and an `if_clause`'s, is an expression with no conditional,
+    as the next clause's `if` is no `else`'s. The kinds a relabel's rest retags the node to are in the supertype
+    table (`grammar::super_classes`), as a node's own rule's are.
+32. **`await`, `...` and `async`.** `await` is a primary over a primary (slot `primary_expression`). `...` is a token
+    of its own (`ellipsis`) from the first dot of a run, as the lean lexer reads it; two dots are two operators.
+    `async` is a leaf before `def`, `for` or `with`, the node retagged by the word after it.
+33. **A list whose one item is a splat is refused.** tree-sitter reads `[*b]` with the splat a primary (`[*b.c()]`:
+    the call's object), not a list item.

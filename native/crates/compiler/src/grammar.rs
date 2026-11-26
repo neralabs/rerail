@@ -328,7 +328,8 @@ pub fn super_classes(stmts: &[Stmt], ids: &Ids<'_>) -> Result<Vec<(u16, u16, Vec
             }
             Gram::Seq(gs) | Gram::Alt(gs) => gs.iter().for_each(|g| retags(g, out)),
             Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) => retags(a, out),
-            Gram::Flag { body, .. } | Gram::Unless { body, .. } => retags(body, out),
+            // A relabel's rest is still the node's rule (`relabel body retag list_comprehension …`).
+            Gram::Flag { body, .. } | Gram::Unless { body, .. } | Gram::Relabel { body, .. } => retags(body, out),
             _ => {}
         }
     }

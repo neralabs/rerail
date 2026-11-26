@@ -228,9 +228,14 @@ token integer   = start int_start | dot_start run number
 
 pairs two_start = "**" "//" "==" "!=" "<=" ">=" "<<" ">>" "->" "+=" "-=" "*=" "/=" "%=" "&=" "|=" "^=" "@=" ":=" "<>" "**=" "//=" "<<=" ">>="
 mask second     = (prev(two_start) | prev(two_start_three, 2)) & code
-mask p_start    = code & punct & ~second & ~number & ~conv_at
+# `...`: three dots, a token of its own (`ellipsis`), from the first dot of a run; past it the
+# run's dots are operators, as the lean lexer reads `....`. Two dots are two operators.
+mask ell_at     = code & dot & next(dot) & next(dot, 2) & ~prev(dot)
+mask ell        = ell_at | prev(ell_at) | prev(ell_at, 2)
+mask p_start    = code & punct & ~second & ~number & ~conv_at & ~ell
 assume "an operator starts at its first byte: a start is never a pair's second" at starts p_start = punct
 token punct     = start p_start pair two_start
+token ellipsis  = start ell_at run ell
 
 token comment   = start hash & o_cmt read cmt
 
@@ -313,21 +318,26 @@ tree python {
   node else_clause      = 'else' ':' indent body: block
   node while_statement  = 'while' condition: expression ':' indent body: block [alternative: else_clause]
   # A loop's target: a pattern, or a list of them; not an expression, whose comparison takes `in`.
-  node for_statement    = 'for' left: for_target 'in' right: expressions ':' indent body: block [alternative: else_clause]
+  node for_statement    = 'for' for_rest
+  choice for_rest       = left: for_target 'in' right: expressions ':' indent body: block [alternative: else_clause]
   choice for_target     = pattern [wrap pattern_list _ in pattern (',' pattern)+]
   # `try`'s handlers: the `except` and its `:` are leaves, its block and `finally`'s have no field.
   node try_statement    = 'try' ':' indent body: block (except_clause+ [else_clause] [finally_clause] | finally_clause)
   node except_clause    = 'except' [value: as_value] ':' indent block
   node finally_clause   = 'finally' ':' indent block
   # `with`: its keyword a leaf, its items a clause.
-  node with_statement   = 'with' with_clause ':' indent body: block
+  node with_statement   = 'with' with_rest
+  choice with_rest      = with_clause ':' indent body: block
   node with_clause      = with_item (',' with_item)*
   node with_item        = value: as_value
   # An expression, or one bound by `as` (an `as_pattern` in the expression's slot).
   choice as_value supertype expression = expression [wrap as_pattern _ in expression 'as' alias: as_pattern_target]
   node as_pattern_target = primary_expression
   # --- Definitions
-  node function_definition = ['async'] 'def' name: identifier parameters: parameters ['->' return_type: types] ':' indent body: block
+  # `async`: a leaf before `def`, `for` or `with`, the node retagged by the word after it.
+  node function_definition = 'async' ('def' def_rest | retag for_statement 'for' for_rest | retag with_statement 'with' with_rest)
+                        | 'def' def_rest
+  choice def_rest       = name: identifier parameters: parameters ['->' return_type: types] ':' indent body: block
   node class_definition = 'class' name: identifier [superclasses: argument_list] ':' indent body: block
   node decorated_definition = decorator+ definition: definition
   choice definition     = function_definition | class_definition
@@ -423,32 +433,46 @@ tree python {
   choice band_operand supertype primary_expression nested = (unary_operator | power) (mul_op | add_op | shift_op | xor_op)*
   choice bor_operand supertype primary_expression nested = (unary_operator | power) (mul_op | add_op | shift_op | xor_op | band_op)*
   # A primary and its postfix operations, each a wrap of the primary so far.
-  choice primary        = atom postfix*
+  choice primary        = atom postfix* | await
+  node await            = 'await' await_operand
+  choice await_operand supertype primary_expression nested = primary
   choice postfix        = wrap attribute object in primary_expression '.' attribute: identifier
                         | wrap call function in primary_expression arguments: argument_list
                         | wrap subscript value in primary_expression '[' subscript: expression (',' subscript: expression)* ']'
   choice atom           = identifier | real integer as float | integer | string | list | parenthesized_expression | dictionary
-                        | 'True' as true | 'False' as false | 'None' as none
+                        | 'True' as true | 'False' as false | 'None' as none | ellipsis
   # The patterns an assignment's target is in (tree-sitter-python's `pattern`), and a loop's
   # target read as one: a name, its attributes and subscripts.
   choice pattern supertype pattern = identifier pattern_postfix*
   choice pattern_postfix = wrap attribute object in primary_expression '.' attribute: identifier
                         | wrap subscript value in primary_expression '[' subscript: expression (',' subscript: expression)* ']'
 
-  node argument_list    = '(' [argument (',' argument)*] (trail_paren | ')')
+  # A generator as a call's only argument stands for its list (`arguments:`).
+  node argument_list    = '(' (')' | argument (relabel body retag generator_expression comprehension ')' | (',' argument)* (trail_paren | ')')))
   choice argument       = expression [wrap keyword_argument name '=' value: expression] | list_splat | dictionary_splat
   node list_splat       = '*' expression
   node dictionary_splat = '**' expression
-  node list             = '[' [expression (',' expression)*] (trail_bracket | ']')
+  # A list whose one item is a splat (`[*b]`) tree-sitter reads otherwise (the splat a primary's):
+  # not read yet, refused.
+  node list             = '[' (']' | expression (relabel body retag list_comprehension comprehension ']' | (',' list_item)* (trail_bracket | ']'))
+                              | list_splat (',' list_item)+ (trail_bracket | ']'))
+  choice list_item      = expression | list_splat
+  # A comprehension: its first item the `body:` of the node it is retagged to, then its clauses.
+  choice comprehension  = for_in_clause (for_in_clause | if_clause)*
+  node for_in_clause    = ['async'] 'for' left: for_target 'in' right: in_operand
+  node if_clause        = 'if' in_operand
+  # An expression with no conditional: a clause's `if` is the next clause's.
+  choice in_operand supertype expression nested = (not_operator | primary_expression [comparison]) (and_op | or_op)*
   # `{}`, a dictionary of pairs and splats, or a set: its first item says which.
   node dictionary       = '{' ('}' | dictionary_splat dict_more | retag set list_splat set_more
-                              | expression ((wrap pair key in expression ':' value: expression) dict_more | retag set set_more))
+                              | expression ((wrap pair key in expression ':' value: expression) (dict_more | relabel body retag dictionary_comprehension comprehension '}')
+                                           | retag set set_more | relabel body retag set_comprehension comprehension '}'))
   choice dict_more      = (',' dict_item)* (trail_brace | '}')
   choice dict_item      = expression (wrap pair key in expression ':' value: expression) | dictionary_splat
   choice set_more       = (',' set_item)* (trail_brace | '}')
   choice set_item       = expression | list_splat
   # `(a)`, or a tuple: `()`, `(a,)`, `(a, b)`.
-  node parenthesized_expression = '(' (retag tuple ')' | expression (')' | retag tuple paren_more))
+  node parenthesized_expression = '(' (retag tuple ')' | expression (')' | retag tuple paren_more | relabel body retag generator_expression comprehension ')'))
   choice paren_more     = (',' expression)+ (trail_paren | ')') | trail_paren
   # A trailing comma: the lean parser leaves a list's tokens out only where they are the ones the
   # grammar implies, so after one the `,` and the closer are leaves.
@@ -476,11 +500,11 @@ tree python {
   implied elif_clause 'elif' ':'
   implied else_clause 'else' ':'
   implied while_statement 'while' ':'
-  implied for_statement 'in' ':'
+  implied for_rest 'in' ':'
   implied for_target ','
   implied try_statement 'try' ':'
   implied finally_clause 'finally' ':'
-  implied with_statement ':'
+  implied with_rest ':'
   implied with_clause ','
   implied as_value 'as'
   implied pattern_postfix '.' '[' ']' ','
@@ -513,7 +537,10 @@ tree python {
   implied not_operator 'not'
   implied conditional 'if' 'else'
   implied paren_more ',' ')'
-  implied function_definition '->' ':'
+  implied def_rest '->' ':'
+  implied for_in_clause 'in'
+  implied if_clause 'if'
+  implied await 'await'
   implied class_definition 'class' ':'
   implied decorator '@'
   implied parameters '(' ')' ','

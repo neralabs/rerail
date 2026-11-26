@@ -109,6 +109,22 @@ fn dictionaries_are_the_lean_parsers() {
 }
 
 #[test]
+fn comprehensions_are_the_lean_parsers() {
+    same(&["x = [a for a in b]\n", "x = [a for a in b if c if d for e in f]\n", "x = {a: b for a, b in c}\n", "x = {a for a in b}\n"]);
+    same(&["f(a for a in b)\n", "x = (a for a in b)\n", "x = [a.b for a in c if not a.d]\n", "x = [a for a in b if c and d or e]\n"]);
+    same(&["x = [a if b else c for a in d]\n", "x = [*a, *b]\n", "x = [*a, b]\n", "x = [a, *b]\n", "x = []\n", "f()\n", "x = [a async for a in b]\n"]);
+    // A list whose one item is a splat: tree-sitter's splat is a primary there. Not read yet.
+    refused(&["x = [a for s in [*b]]\n", "x = [a for s in [*b.c()]]\n", "for s in [*b]:\n    a\n"]);
+}
+
+#[test]
+fn await_ellipsis_and_async_are_the_lean_parsers() {
+    same(&["x = await a.b(c)\n", "await a\n", "x = [await a for a in b]\n", "x: tuple[int, ...] = ...\n", "def f():\n    ...\n", "x = a[...]\n"]);
+    same(&["async def f():\n    async for a in b:\n        c\n    async with a as b:\n        c\n", "async def f() -> int:\n    a\n"]);
+    same(&["from . import a\n", "from .. import a\n"]);
+}
+
+#[test]
 fn types_are_the_lean_parsers() {
     same(&["x: int | None = None\n", "x: int | None\n", "def f(a: int | None = None) -> str | None:\n    a\n", "x: Optional[int] = None\n"]);
     // A union over a generic is a `union_type`, left to right; any other `|` is an expression's.
@@ -121,8 +137,8 @@ fn try_with_and_for_are_the_lean_parsers() {
     same(&["try:\n    a\nexcept E as e:\n    b\nexcept:\n    c\nelse:\n    d\nfinally:\n    e\n", "try:\n    a\nexcept (A, B):\n    b\n", "try:\n    a\nfinally:\n    b\n"]);
     same(&["with a as b, c:\n    d\n", "with a(x) as b:\n    d\n", "with a as b.c:\n    d\n"]);
     same(&["for i in range(3):\n    a\nelse:\n    b\n", "for a, b in c:\n    d\n", "for a.b in c:\n    d\n", "for a in b, c:\n    d\n", "for a[0] in b:\n    c\n"]);
-    // Not read yet: `async`, a parenthesized `with`, a tuple or list as a loop's target.
-    refused(&["async for a in b:\n    c\n", "async with a as b:\n    c\n", "with (\n    a as b,\n):\n    c\n", "with (a(), b()):\n    c\n", "with (a):\n    c\n", "for (a, b) in c:\n    d\n", "for [a] in c:\n    d\n"]);
+    // Not read yet: a parenthesized `with`, a tuple or list as a loop's target.
+    refused(&["with (\n    a as b,\n):\n    c\n", "with (a(), b()):\n    c\n", "with (a):\n    c\n", "for (a, b) in c:\n    d\n", "for [a] in c:\n    d\n"]);
 }
 
 #[test]
