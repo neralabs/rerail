@@ -352,6 +352,7 @@ native/crates/swift_lean/src/lex.rs::OCT	stays	a byte class of a literal
 native/crates/swift_lean/src/lex.rs::TICK_BODY	stays	a byte class of a literal
 native/crates/tape_format/src/f16.rs::LANGS	stays	languages registered at load
 native/crates/tape_format/src/f16.rs::NEXT	stays	an id counter: append-only
+native/crates/tape_format/src/lib.rs::DIR	stays	the languages' codes' atoms, bytes in the binary (decision 0697): a constant
 native/crates/tape_format/src/lib.rs::LANG	stays	a test's language, made once from constants
 native/crates/tape_format/src/tape.rs::PLACE	stays	the engine's placement of code tables in blocks, registered at load
 native/crates/tests_admission/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the test binary

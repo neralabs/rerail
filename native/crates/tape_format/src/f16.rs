@@ -101,42 +101,7 @@ impl Names {
     }
 }
 
-/// A name in a table's text: `\\`, `\n`, `\r`, `\t` and `\0` escaped (C's and Go's tokens hold a newline and a NUL).
-fn escaped(name: &str) -> String {
-    let mut s = String::with_capacity(name.len());
-    for c in name.chars() {
-        match c {
-            '\\' => s.push_str("\\\\"),
-            '\n' => s.push_str("\\n"),
-            '\r' => s.push_str("\\r"),
-            '\t' => s.push_str("\\t"),
-            '\0' => s.push_str("\\0"),
-            c => s.push(c),
-        }
-    }
-    s
-}
-
-/// `escaped`'s inverse; `None` for an escape it does not write.
-fn unescaped(s: &str) -> Option<String> {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        out.push(match chars.next()? {
-            '\\' => '\\',
-            'n' => '\n',
-            'r' => '\r',
-            't' => '\t',
-            '0' => '\0',
-            _ => return None,
-        });
-    }
-    Some(out)
-}
+use crate::codes::escaped;
 
 impl Lang {
     /// `table` by number (the lab's: every code the grammar allows and no other, decision 0631, numbered by how often
@@ -244,34 +209,19 @@ impl Lang {
 
     /// The choices from their text (`to_text`).
     pub fn from_text(text: &str) -> Result<Self, String> {
+        use crate::codes::Line;
         let (mut revision, mut widths, mut entries, mut names) = (None, None, Vec::new(), Names::default());
         for (k, line) in text.lines().enumerate() {
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let bad = || format!("line {}: {line}", k + 1);
-            let c: Vec<&str> = line.split('\t').collect();
-            let num = |s: &str| s.parse::<u64>().map_err(|_| bad());
-            match c[0] {
-                "revision" if c.len() == 2 => revision = Some(num(c[1])? as u8),
-                "widths" if c.len() == 4 => widths = Some([num(c[1])? as usize, num(c[2])? as usize, num(c[3])? as usize]),
-                "code" if c.len() == 6 => {
-                    let alias = match c[4] {
-                        "-" => None,
-                        a => {
-                            let (named, name) = a.split_once(':').ok_or_else(bad)?;
-                            Some((name.to_owned(), named == "1"))
-                        }
-                    };
-                    let classes = if c[5] == "-" { Vec::new() } else { c[5].split(',').map(|x| x.parse::<u16>().map_err(|_| bad())).collect::<Result<_, _>>()? };
-                    entries.push(Entry { kind: num(c[1])? as u16, field: num(c[2])? as u16, flags: num(c[3])? as u8, alias, classes });
-                }
-                "kind" if c.len() == 4 => names.kinds.push((num(c[1])? as u16, c[2] == "1", unescaped(c[3]).ok_or_else(bad)?)),
-                "lookup" if c.len() == 4 => names.lookups.push((c[1] == "1", unescaped(c[2]).ok_or_else(bad)?, num(c[3])? as u16)),
-                "field" if c.len() == 3 => names.fields.push((num(c[1])? as u16, unescaped(c[2]).ok_or_else(bad)?)),
-                "class" if c.len() == 3 => names.classes.push((num(c[1])? as u16, unescaped(c[2]).ok_or_else(bad)?)),
-                "supertype" if c.len() == 3 => names.supertypes.push((unescaped(c[1]).ok_or_else(bad)?, num(c[2])? as u16)),
-                _ => return Err(bad()),
+            match crate::codes::line(line).map_err(|line| format!("line {}: {line}", k + 1))? {
+                Line::Revision(r) => revision = Some(r),
+                Line::Widths(w) => widths = Some(w),
+                Line::Code { kind, field, flags, alias, classes } => entries.push(Entry { kind, field, flags, alias, classes }),
+                Line::Kind(id, named, name) => names.kinds.push((id, named, name)),
+                Line::Lookup(named, name, id) => names.lookups.push((named, name, id)),
+                Line::Field(id, name) => names.fields.push((id, name)),
+                Line::Class(id, name) => names.classes.push((id, name)),
+                Line::Supertype(name, id) => names.supertypes.push((name, id)),
+                Line::None(_) => {}
             }
         }
         Ok(Lang::new(CodeTable::new(entries), widths.ok_or("no widths")?, revision.ok_or("no revision")?)?.with_names(names))

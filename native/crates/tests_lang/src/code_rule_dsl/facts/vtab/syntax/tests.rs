@@ -3104,14 +3104,15 @@ fn the_view_reads_are_the_hosts_rows() {
     use rerail_gpu::device::ComputeQueue;
     use rerail_gpu::kernels::{alloc, buffer_of, launch, read};
     const WIDE: usize = 16;
-    /// The probe's parameters: the entry's offset in its block, the tape's and the lines' device addresses, the
-    /// projection's nodes and fields.
+    /// The probe's parameters: the entry's offset in its block, the tape's, the lines' and the codes' directory's
+    /// device addresses, the projection's nodes and fields.
     #[repr(C)]
     #[derive(Clone, Copy)]
     struct ViewP {
         d: u64,
         tt: u64,
         ll: u64,
+        cd: u64,
         n: u32,
         nf: u32,
     }
@@ -3119,8 +3120,8 @@ fn the_view_reads_are_the_hosts_rows() {
     const KERNEL: &str = r#"
 // The tape and the lines are reached by their device addresses (a word each in the parameters, the buffers made
 // resident): no binding.
-typedef struct ViewP { uint64_t d; uint64_t tt; uint64_t ll; uint32_t n; uint32_t nf; } ViewP;
-UKL_REFLECT_STRUCT(ViewP, d, tt, ll, n, nf)
+typedef struct ViewP { uint64_t d; uint64_t tt; uint64_t ll; uint64_t cd; uint32_t n; uint32_t nf; } ViewP;
+UKL_REFLECT_STRUCT(ViewP, d, tt, ll, cd, n, nf)
 DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, ViewP, p, , ROBUFFER, uint32_t, tv, "[32]",
                RWBUFFER, int64_t, out, "[n * 16]", GID0, uint32_t, g, )
 {
@@ -3132,21 +3133,25 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
     uint32_t n = p.n, nf = p.nf;
     UKL_GLOBAL const uint8_t* tt = (UKL_GLOBAL const uint8_t*)p.tt;
     UKL_GLOBAL const uint8_t* ll = (UKL_GLOBAL const uint8_t*)p.ll;
+    UKL_GLOBAL const uint8_t* cd = (UKL_GLOBAL const uint8_t*)p.cd;
     uint32_t v[32];
     for (uint32_t q = 0u; q < 32u; q++) v[q] = tv[q];
     int64_t r = 0;
     // The lines by their buffer's base and their offset in it (none: a buffer of their own).
-    if (k < 5u) r = (int64_t)clif_view_node(b, d, tt, v, ll, 0u, l, k);
-    else if (k < 8u) r = l + 1u < n ? (int64_t)clif_view_child(b, d, tt, v, ll, 0u, l, k - 5u) : 0;
-    else if (k < 11u) r = l < nf ? (int64_t)clif_view_field(b, d, tt, v, ll, 0u, l, k - 8u) : 0;
-    else if (k < 14u) r = (int64_t)clif_view_core(b, d, tt, v, ll, 0u, l, k - 11u);
-    else r = (int64_t)clif_view_line(b, d, tt, v, ll, 0u, l, k - 14u);
+    if (k < 5u) r = (int64_t)clif_view_node(b, d, tt, v, ll, 0u, cd, l, k);
+    else if (k < 8u) r = l + 1u < n ? (int64_t)clif_view_child(b, d, tt, v, ll, 0u, cd, l, k - 5u) : 0;
+    else if (k < 11u) r = l < nf ? (int64_t)clif_view_field(b, d, tt, v, ll, 0u, cd, l, k - 8u) : 0;
+    else if (k < 14u) r = (int64_t)clif_view_core(b, d, tt, v, ll, 0u, cd, l, k - 11u);
+    else r = (int64_t)clif_view_line(b, d, tt, v, ll, 0u, cd, l, k - 14u);
     out[l * 16u + k] = r;
 }
 "#;
     let jit = rerail_clif::jit::Reads::new();
-    // SAFETY: `view_node`'s signature: the entry, the tape's base, its view, the lines' base, a local, a column.
-    let read_of = |name: &str| -> extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32, u32) -> i64 { unsafe { std::mem::transmute(jit.function(name)) } };
+    // SAFETY: `view_node`'s signature: the entry, the tape's base, its view, the lines' base, the codes' directory, a
+    // local, a column.
+    let read_of = |name: &str| -> extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, *const u8, u32, u32) -> i64 { unsafe { std::mem::transmute(jit.function(name)) } };
+    // The codes' directory, the binary's (decision 0697).
+    let cd = rerail_tape_format::codes_dir::bytes().as_ptr();
     let (node, child, field, core_node, line) = (read_of("view_node"), read_of("view_child"), read_of("view_field"), read_of("view_core"), read_of("view_line"));
     let view_op = read_of("view_op");
     // The atoms the entries' names are interned in (`ViewDoc::names`, the `op` view's), as a batch reading `op` has.
@@ -3220,11 +3225,11 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                 let ll = words.as_ptr();
                 let jitted: Vector<i64> = (0..n)
                     .flat_map(|l| {
-                        let mut row: Vector<i64> = (0..5).map(|c| node(e, t, v, ll, l, c)).collect();
-                        row.extend((0..3).map(|c| if l + 1 < n { child(e, t, v, ll, l, c) } else { 0 }));
-                        row.extend((0..3).map(|c| if l < nf { field(e, t, v, ll, l, c) } else { 0 }));
-                        row.extend((0..3).map(|c| core_node(e, t, v, ll, l, c)));
-                        row.extend((0..2).map(|c| line(e, t, v, ll, l, c)));
+                        let mut row: Vector<i64> = (0..5).map(|c| node(e, t, v, ll, cd, l, c)).collect();
+                        row.extend((0..3).map(|c| if l + 1 < n { child(e, t, v, ll, cd, l, c) } else { 0 }));
+                        row.extend((0..3).map(|c| if l < nf { field(e, t, v, ll, cd, l, c) } else { 0 }));
+                        row.extend((0..3).map(|c| core_node(e, t, v, ll, cd, l, c)));
+                        row.extend((0..2).map(|c| line(e, t, v, ll, cd, l, c)));
                         row
                     })
                     .collect();
@@ -3253,23 +3258,24 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                         .collect();
                     assert_eq!(rust, want, "{at}: the Rust reads' rows");
                     // A parent's first child, a child's next, a node by its id's low bits: the JIT's.
-                    // SAFETY: each read's signature: the entry, the tape's base, its view, the lines' base, its argument.
-                    let probe_of = |name: &str| -> extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32) -> u32 { unsafe { std::mem::transmute(jit.function(name)) } };
+                    // SAFETY: each read's signature: the entry, the tape's base, its view, the lines' base, the codes'
+                    // directory, its argument.
+                    let probe_of = |name: &str| -> extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, *const u8, u32) -> u32 { unsafe { std::mem::transmute(jit.function(name)) } };
                     let (first, next, number) = (probe_of("view_child_first"), probe_of("view_child_next"), probe_of("view_number"));
                     // SAFETY: `view_text_span`'s signature, as the probes' but an i64.
-                    let text_span: extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32) -> i64 = unsafe { std::mem::transmute(jit.function("view_text_span")) };
+                    let text_span: extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, *const u8, u32) -> i64 = unsafe { std::mem::transmute(jit.function("view_text_span")) };
                     for l in 0..n {
                         // A node's text read where its source lies (decision 0287 §2): the JIT's range and the Rust
                         // read's text, the projection's.
                         let x = p.ranks().select(Item::Node, l).unwrap();
-                        assert_eq!(text_span(e, t, v, ll, l) as u64, doc.text_span(l), "{at}: node {l}'s text span, the JIT's");
+                        assert_eq!(text_span(e, t, v, ll, cd, l) as u64, doc.text_span(l), "{at}: node {l}'s text span, the JIT's");
                         assert_eq!(doc.text(l), Some(p.f().text(x)), "{at}: node {l}'s text");
-                        assert_eq!(doc.child_first(l), first(e, t, v, ll, l), "{at}: node {l}'s first child");
+                        assert_eq!(doc.child_first(l), first(e, t, v, ll, cd, l), "{at}: node {l}'s first child");
                         if l + 1 < n {
-                            assert_eq!(doc.child_next(l), next(e, t, v, ll, l), "{at}: child row {l}'s next");
+                            assert_eq!(doc.child_next(l), next(e, t, v, ll, cd, l), "{at}: child row {l}'s next");
                         }
                         let low = (p.global(l) & 0xffff_ffff) as u32;
-                        assert_eq!(doc.number(low), number(e, t, v, ll, low), "{at}: node {l} by its id");
+                        assert_eq!(doc.number(low), number(e, t, v, ll, cd, low), "{at}: node {l} by its id");
                         assert_eq!(doc.number(low), l, "{at}: node {l} by its id");
                         // The views no CLIF reads: the host's rows.
                         assert_eq!(doc.size(l), p.size(l as usize), "{at}: node {l}'s size");
@@ -3279,7 +3285,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                     // A line's text read where its source lies (decision 0353 row 7): the JIT's range and terminator
                     // length, the Rust read's, and its text `LineTable::text_of`'s (the whole source at 0); a guest's
                     // lines are its host's, read on the host.
-                    let line_span: extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32) -> i64 = unsafe { std::mem::transmute(jit.function("view_line_span")) };
+                    let line_span: extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, *const u8, u32) -> i64 = unsafe { std::mem::transmute(jit.function("view_line_span")) };
                     // SAFETY: `lines_terminator_length`'s signature: the source's base, the terminator's last byte.
                     let terminator: extern "C" fn(*const u8, u32) -> u32 = unsafe { std::mem::transmute(jit.function("lines_terminator_length")) };
                     // SAFETY: `view_line_terminated`'s signature, as the probes'.
@@ -3292,8 +3298,8 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                     assert_eq!(doc.line_span(p.global(0) as u32), rerail_clif::view_reads::NO_SPAN, "{at}: a node is no line");
                     for l in 0..=lines.count() as u32 + 1 {
                         let low = line_low(l);
-                        assert_eq!(line_span(e, t, v, ll, low) as u64, doc.line_span(low), "{at}: line {l}'s span, the JIT's");
-                        assert_eq!(terminated(e, t, v, ll, low) != 0, doc.line_terminated(low), "{at}: line {l} terminated, the JIT's");
+                        assert_eq!(line_span(e, t, v, ll, cd, low) as u64, doc.line_span(low), "{at}: line {l}'s span, the JIT's");
+                        assert_eq!(terminated(e, t, v, ll, cd, low) != 0, doc.line_terminated(low), "{at}: line {l} terminated, the JIT's");
                         if doc.line_span(low) == rerail_clif::view_reads::NO_SPAN {
                             assert!(doc.entry.own_text == 0 || l > lines.count() as u32, "{at}: line {l} read");
                             continue;
@@ -3321,7 +3327,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                         let node = p.global(p.f().parent(x).map_or(0, |q| p.local_of_node(q)));
                         let name = i64::from(atoms.intern(dialect.name(p.f(), x)).unwrap());
                         assert_eq!([doc.op(i, 0), doc.op(i, 1)], [node, name], "{at}: op row {i}");
-                        assert_eq!([view_op(e, t, v, ll, i, 0), view_op(e, t, v, ll, i, 1)], [node, name], "{at}: op row {i}, the JIT's");
+                        assert_eq!([view_op(e, t, v, ll, cd, i, 0), view_op(e, t, v, ll, cd, i, 1)], [node, name], "{at}: op row {i}, the JIT's");
                     }
                 }
                 if let Some((shared, probe)) = probe {
@@ -3334,6 +3340,11 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                     // Its lines where the device reads them: a test's buffer of their index.
                     let lb = buffer_of(&words).unwrap();
                     let (tt_at, lb_at) = (tt.device_address().unwrap(), lb.device_address().unwrap());
+                    // The codes' directory where it lies in the binary, wrapped in place (decision 0697).
+                    let codes = rerail_tape_format::codes_dir::bytes();
+                    // SAFETY: the binary's directory, which outlives the buffer; the kernel only loads from it.
+                    let cb = unsafe { rerail_gpu::device::wrap_host_memory(&shared.device, codes.as_ptr().cast_mut(), codes.len()) }.unwrap();
+                    let cd_at = cb.device_address().unwrap();
                     // A 16z tape's blocks through a cache every thread shares (0353 step 4b): one of a block a
                     // generation, which turns all the time and may find no room (a failure counted: the device
                     // refuses the batch), and one with room.
@@ -3353,11 +3364,12 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                     let mut q = ComputeQueue::new(&shared.queue);
                     launch(&q, probe)
                         .buffer("b", &block.device_buffer(&shared.device).unwrap())
-                        .value("p", &ViewP { d, tt: tt_at, ll: lb_at, n, nf })
+                        .value("p", &ViewP { d, tt: tt_at, ll: lb_at, cd: cd_at, n, nf })
                         .buffer("tv", &tv)
                         .buffer("out", &out)
                         .uses(&tt)
                         .uses(&lb)
+                        .uses(&cb)
                         .uses(&cache)
                         .run(&[(u64::from(n) * 16).div_ceil(64)], &[64])
                         .unwrap_or_else(|e| panic!("{e}"));
@@ -4253,6 +4265,33 @@ fn a_span_reader_s_places_are_the_view_s_then_the_spans() {
     }
 }
 
+/// The codes' directory the binary holds (decision 0697) is each language's codes' kind atom and field atom as its
+/// dialect reads them: a kind its name's canonical code's (`Dialect::kind_of_atom`), ERROR its dialect's 0, a field
+/// `tag << 16 | field`. Every shipped table with a dialect, every code.
+#[test]
+fn the_codes_directory_is_the_dialects_atoms() {
+    use rerail_tape_format::{CODE_ERROR, codes_dir};
+    let mut tags = 0;
+    for tag in 0..=u8::MAX {
+        let Some(lang) = rerail_tape_format::f16::lang(tag) else {
+            assert!(codes_dir::kinds(tag).is_empty() && codes_dir::fields(tag).is_empty(), "tag {tag}: no table, no codes");
+            continue;
+        };
+        let Ok(dialect) = Dialect::new(tag) else { continue };
+        let table = lang.table();
+        let (kinds, fields) = (codes_dir::kinds(tag), codes_dir::fields(tag));
+        assert_eq!((kinds.len(), fields.len()), (table.len(), table.len()), "tag {tag}: a kind and a field a code");
+        for c in 0..table.len() as u32 {
+            let e = table.entry(c);
+            let kind = core::kind_atom(tag, if e.flags & CODE_ERROR != 0 { u16::MAX } else { e.kind });
+            assert_eq!(kinds[c as usize], dialect.kind_of_atom(kind), "tag {tag}: code {c}'s kind (kind {}, flags {})", e.kind, e.flags);
+            assert_eq!(fields[c as usize], field_atom(tag, e.field), "tag {tag}: code {c}'s field");
+        }
+        tags += 1;
+    }
+    assert!(tags >= 20, "the shipped languages' tables: {tags}");
+}
+
 /// Decision 0353, step 3 on the CPU (step 1): a batch's views' directory is made with or without a device, and
 /// self-relative. Read from its offset in the batch's block, at the host's bases of its homes, each document's row
 /// names that document's entry, its tape's bytes and its lines' words where they lie. The device's address of it is
@@ -4282,10 +4321,12 @@ fn the_views_directory_is_the_hosts_too() {
         assert_eq!(homes[row.homes[1] as usize].host + row.lines, p.facts.lines.index().as_ptr() as u64, "document {}'s line index, in its tape or its own", p.key());
         assert_eq!(homes[row.homes[2] as usize].host + row.source, p.facts.source.as_bytes().as_ptr() as u64, "document {}'s source, where it lies", p.key());
     }
-    // The homes its rows name (fixed: a row's tape in `3i`, its lines in `3i + 1`, its source in `3i + 2`), and the
-    // 16z cache's where it has one. The device reads the directory where it reads every tape and lines; a source
-    // it does not read keeps a node's text on the host alone (`ViewsInPlace::sources`).
-    assert_eq!(dir.nhomes as usize, 3 * rows.len() + 1, "three homes a row, and the cache's");
+    // The homes its rows name (fixed: a row's tape in `3i`, its lines in `3i + 1`, its source in `3i + 2`), the
+    // 16z cache's where it has one, and the codes'. The device reads the directory where it reads every tape and
+    // lines; a source it does not read keeps a node's text on the host alone (`ViewsInPlace::sources`).
+    assert_eq!(dir.nhomes as usize, 3 * rows.len() + 2, "three homes a row, the cache's and the codes'");
+    // The codes' directory's home: the binary's (decision 0697).
+    assert_eq!(homes[dir.codes as usize].host, rerail_tape_format::codes_dir::bytes().as_ptr() as u64, "the codes' home is the binary's directory");
     let sources_on_device = rows.iter().zip(batch.docs.iter()).filter(|(_, p)| p.len() > 0).all(|(r, _)| homes[r.homes[2] as usize].gpu != 0);
     assert_eq!(views.sources, views.dir.is_some() && sources_on_device, "a node's text on the device only where it reads every source");
     let named = rows.iter().flat_map(|r| [r.homes[0], r.homes[1]]).map(|h| h as usize).chain((dir.cache != 0).then(|| dir.cache as usize - 1));

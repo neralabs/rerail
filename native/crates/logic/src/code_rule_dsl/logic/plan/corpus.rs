@@ -603,6 +603,20 @@ fn chunk_mix<'a>(docs: impl Iterator<Item = (&'a str, usize)>) -> String {
     format!("{types}/{size}")
 }
 
+/// How many chunks evaluate at once: `RERAIL_CHUNKS_AT_ONCE`, else the pool's threads less the main thread's (which
+/// files them), at most 8. One is the main thread alone, on its own connection, as before.
+pub fn chunks_at_once() -> usize {
+    std::env::var("RERAIL_CHUNKS_AT_ONCE").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or_else(|| crate::threads::max().saturating_sub(1).min(8)).max(1)
+}
+
+/// Q88: what chunk `n` plans with is the run's as filed once chunks `0..=n - plan_window()` were, whether the chunks
+/// evaluate at once or one by one: the same plans either way, and whatever the threads' timing. Two sets of the
+/// chunks at once: those evaluating, and as many evaluated waiting for a slower one before them to be filed. One set
+/// held them to 8 begun and unfiled: cold PostHog's chunks ran 2-4 at once in most of the phase.
+pub fn plan_window() -> usize {
+    2 * crate::code_rule_dsl::logic::plan::PLAN_WINDOW.max(chunks_at_once())
+}
+
 pub fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize) -> Result<Report> {
     run_typed(&[program], root, t_facts, out, modes, binding, chunk_nodes, &Typing::default())
 }
@@ -5244,14 +5258,7 @@ fn run_observed_within(
             self.0.store(true, std::sync::atomic::Ordering::Relaxed);
         }
     }
-    // How many chunks evaluate at once: `RERAIL_CHUNKS_AT_ONCE`, else the pool's threads less the main thread's (which
-    // files them), at most 8. One is the main thread alone, on its own connection, as before.
-    let chunks_at_once = std::env::var("RERAIL_CHUNKS_AT_ONCE").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or_else(|| crate::threads::max().saturating_sub(1).min(8)).max(1);
-    // Q88: what chunk `n` plans with is the run's as filed once chunks `0..=n - plan_window` were, whether the chunks
-    // evaluate at once or one by one: the same plans either way, and whatever the threads' timing.
-    // Two sets of the chunks at once: those evaluating, and as many evaluated waiting for a slower one before them to
-    // be filed. One set held them to 8 begun and unfiled: cold PostHog's chunks ran 2-4 at once in most of the phase.
-    let plan_window = 2 * crate::code_rule_dsl::logic::plan::PLAN_WINDOW.max(chunks_at_once);
+    let (chunks_at_once, plan_window) = (chunks_at_once(), plan_window());
     // The chunks' sizes (decision 0435 §4, Q314): the first `probe_nodes()`, each next decided from the chunks
     // filed before it in their order, by what their blocks wrote, against the limit less the run's count now; the
     // builder holds a cut until its size is decided, so every run cuts the same chunks. `RERAIL_RUN_MB` (a

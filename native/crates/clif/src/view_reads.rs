@@ -5,7 +5,8 @@
 //! A read takes the document's entry (`ViewDoc`, in its batch's block beside the projection's numbering, which it
 //! refers to by a run), the tape's base and its view (`view::TapeView`), then a row's local number and a column. The
 //! entry holds no per-node column: what a node's row says is its tape node's (`num_select`), read off the tape
-//! (`tape_number`, `tape_start`, `tape_end`); a kind is its code's, by the derived table of the tape's codes.
+//! (`tape_number`, `tape_start`, `tape_end`); a kind and a field are its code's, in its language's run of the codes'
+//! directory (`CodesLang`, decision 0697), which the binary holds and a read is passed.
 
 use crate::ids::Run;
 #[cfg(feature = "ir")]
@@ -31,10 +32,6 @@ pub struct ViewDoc {
     pub nodes: u32,
     /// The projection's numbering (`ids::Numbering`, one).
     pub numbering: Run,
-    /// By the tape's code (its table's number, `tape_number`): the kind atom its `kind` column holds (u32s, its
-    /// name's canonical code's), and the field atom (`tag << 16 | field`).
-    pub kinds: Run,
-    pub fields: Run,
     /// core.rerail's positions past the nodes (`Locs`), for the `Loc` views: the tokens, then where the text is the
     /// document's own (1) the whole text and each line, then the end points (`ends`, one a node, or none).
     pub tokens: u32,
@@ -75,7 +72,18 @@ pub struct ViewDoc {
     pub place: u32,
     pub pad: u32,
 }
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 24 + 16 * 7 + 8);
+const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 2 + 16 + 24 + 16 * 7 + 8);
+
+/// A language's place in the codes' directory (decision 0697, `rerail_tape_format::codes_dir`, in the binary): by
+/// tape tag, the offsets from the directory's first byte of its codes' kind atoms and field atoms (u32s, by the tape's
+/// code: its table's number, `tape_number`); 0 for a tag with no table. The `node` view's kind is the kind atom its
+/// `kind` column holds (its name's canonical code's), the `field` view's the field atom (`tag << 16 | field`).
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct CodesLang {
+    pub kinds: u32,
+    pub fields: u32,
+}
 
 /// `ViewDoc::place`'s kinds.
 pub const PLACE_NAMED: u32 = 1;
@@ -173,7 +181,8 @@ pub struct ViewDir {
     pub by_key: u64,
     pub ends: [u32; ROWS],
     pub counted: u32,
-    pub pad: u32,
+    /// The codes' directory's home (decision 0697): the binary's, at its host address and the device's.
+    pub codes: u32,
 }
 const _: () = assert!(std::mem::size_of::<ViewDir>() == (48 + 4 * ROWS + 8).next_multiple_of(8));
 
@@ -337,8 +346,6 @@ pub mod at {
     pub const PREORDER: i32 = offset_of!(ViewDoc, preorder) as i32;
     pub const NODES: i32 = offset_of!(ViewDoc, nodes) as i32;
     pub const NUMBERING: i32 = offset_of!(ViewDoc, numbering) as i32;
-    pub const KINDS: i32 = offset_of!(ViewDoc, kinds) as i32;
-    pub const FIELDS: i32 = offset_of!(ViewDoc, fields) as i32;
     pub const TOKENS: i32 = offset_of!(ViewDoc, tokens) as i32;
     pub const OWN_TEXT: i32 = offset_of!(ViewDoc, own_text) as i32;
     pub const ENDS: i32 = offset_of!(ViewDoc, ends) as i32;
@@ -376,14 +383,12 @@ pub const OP_COLUMNS: u32 = 2;
 #[cfg(feature = "ir")]
 pub fn ukl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 25] = [
+    let fields: [(&str, &str, usize); 23] = [
         ("uint32_t", "key", offset_of!(ViewDoc, key)),
         ("uint32_t", "tag", offset_of!(ViewDoc, tag)),
         ("uint32_t", "preorder", offset_of!(ViewDoc, preorder)),
         ("uint32_t", "nodes", offset_of!(ViewDoc, nodes)),
         ("Run", "numbering", offset_of!(ViewDoc, numbering)),
-        ("Run", "kinds", offset_of!(ViewDoc, kinds)),
-        ("Run", "fields", offset_of!(ViewDoc, fields)),
         ("uint32_t", "tokens", offset_of!(ViewDoc, tokens)),
         ("uint32_t", "own_text", offset_of!(ViewDoc, own_text)),
         ("uint32_t", "ends", offset_of!(ViewDoc, ends)),
@@ -406,7 +411,7 @@ pub fn ukl() -> String {
     let mut s = format!(
         "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint64_t source;\n    uint32_t homes[3];\n    uint32_t key;\n    uint32_t rows[{}];\n    uint32_t view[{}];\n    uint32_t bytes;\n}} ViewRow;\n\
          typedef struct ViewHome {{\n    uint64_t host;\n    UKL_GLOBAL const uint8_t* gpu;\n}} ViewHome;\n\
-         typedef struct ViewDir {{\n    uint64_t at;\n    uint32_t ndocs;\n    uint32_t nhomes;\n    uint64_t rows;\n    uint64_t homes;\n    uint64_t cache;\n    uint64_t by_key;\n    uint32_t ends[{}];\n    uint32_t counted;\n    uint32_t pad;\n}} ViewDir;\n",
+         typedef struct ViewDir {{\n    uint64_t at;\n    uint32_t ndocs;\n    uint32_t nhomes;\n    uint64_t rows;\n    uint64_t homes;\n    uint64_t cache;\n    uint64_t by_key;\n    uint32_t ends[{}];\n    uint32_t counted;\n    uint32_t codes;\n}} ViewDir;\n",
         ROWS,
         std::mem::size_of::<crate::view::TapeView>() / 4,
         ROWS,
@@ -420,6 +425,7 @@ pub fn ukl() -> String {
     s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, rows) == {}, \"ViewDir.rows\");\n", std::mem::offset_of!(ViewDir, rows));
     s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, cache) == {}, \"ViewDir.cache\");\n", std::mem::offset_of!(ViewDir, cache));
     s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, by_key) == {}, \"ViewDir.by_key\");\n", std::mem::offset_of!(ViewDir, by_key));
+    s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, codes) == {}, \"ViewDir.codes\");\n", std::mem::offset_of!(ViewDir, codes));
     // A directory's places as a kernel reads them: the block's start, a row, and a row's tape and lines at their
     // homes' device bases.
     s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_block(UKL_GLOBAL const ViewDir* d) { return (UKL_GLOBAL const uint8_t*)d - d->at; }\n";
@@ -430,6 +436,8 @@ pub fn ukl() -> String {
     // A document's lines by their home's base and their offset there (`ViewRow::lines`): a view read takes both (`ll`,
     // `la`), as a load's base must be 8-aligned and a tape's line index is 4-aligned in it (decision 0612).
     s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_lines_base(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[1], 0); }\n";
+    // The codes' directory (decision 0697), every row's: the binary's, at its home's device base.
+    s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_codes(UKL_GLOBAL const ViewDir* d) { return view_home(d, d->codes, 0); }\n";
     s += "typedef struct ViewDoc {\n";
     for (ty, name, _) in fields.iter() {
         s += &format!("    {ty} {name};\n");
@@ -452,7 +460,14 @@ impl B<'_, '_> {
         let v = self.word_at(I32, self.tape, offset);
         self.f.ins().uextend(I64, v)
     }
-    /// The u32 at index `i` of the entry's run at `offset`, widened.
+    /// Code `code`'s atom in the document's language's run of the codes' directory (`read`: `codes_kind` or
+    /// `codes_field`), widened.
+    fn code_atom(&mut self, read: &str, code: Value) -> Value {
+        let tag = self.word_at(I32, self.tape, at::TAG);
+        let v = self.call_codes(read, &[tag, code]);
+        self.f.ins().uextend(I64, v)
+    }
+    /// The u32 at index `i` of the entry's run at `offset`, widened (the op view's `names`).
     fn entry_item(&mut self, offset: i32, i: Value) -> Value {
         let items = self.follow(self.tape, offset);
         let p = self.item(items, i, 4);
@@ -513,7 +528,7 @@ pub fn node(b: &mut B<'_, '_>) -> Value {
             let c = is(b, 2);
             b.either(I64, c, |b| {
                 let code = b.call_tape("tape_number", &[x]);
-                b.entry_item(at::KINDS, code)
+                b.code_atom("codes_kind", code)
             }, |b| {
                 let c = is(b, 3);
                 let v = b.either(I32, c, |b| b.call_tape("tape_start", &[x]), |b| b.call_tape("tape_end", &[x]));
@@ -584,7 +599,7 @@ pub fn field(b: &mut B<'_, '_>) -> Value {
         b.either(I64, c, |b| {
             let x = tape_node(b);
             let code = b.call_tape("tape_number", &[x]);
-            b.entry_item(at::FIELDS, code)
+            b.code_atom("codes_field", code)
         }, |b| {
             let x = tape_node(b);
             let l = numbered(b, x);

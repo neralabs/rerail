@@ -115,7 +115,7 @@ const REC: usize = 6;
 /// they lie (decision 0628 §2). On format 16 every document of a language shares its table (`f16::Lang`).
 #[derive(Clone)]
 pub struct CodeTable {
-    /// The words' owner, held so that `at`'s slice lives: never read, `at` and `n` are read instead.
+    /// The words `at` points into, held so they stay where they lie: read through `at` alone.
     _words: Words,
     /// `words`' slice, taken once when the table is made (`of_words`): a read of an entry reads the words through it,
     /// not through `words`' dynamic `as_ref` (a call, and a placed region's guard check, about eight to an entry:

@@ -286,7 +286,7 @@ impl<'a> Doc<'a> {
             _ => {
                 let x = self.x_of(l, x);
                 match col {
-                    2 => i64::from(self.items(&self.entry.kinds)[self.tape.number(x) as usize]),
+                    2 => i64::from(crate::codes_dir::kinds(self.entry.tag as u8)[self.tape.number(x) as usize]),
                     3 => i64::from(self.tape.start(x)),
                     _ => i64::from(self.tape.end(x)),
                 }
@@ -345,7 +345,7 @@ impl<'a> Doc<'a> {
     pub fn field_at(&self, l: u32, x: u32, col: u32) -> i64 {
         match col {
             0 => self.parent_id(l, x),
-            1 => i64::from(self.items(&self.entry.fields)[self.tape.number(x) as usize]),
+            1 => i64::from(crate::codes_dir::fields(self.entry.tag as u8)[self.tape.number(x) as usize]),
             _ => self.node_id(l),
         }
     }

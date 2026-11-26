@@ -621,7 +621,8 @@ home(d, p, x) :- used_in(d, x), dpath(d, p), @rx_matches(p, "^[bc][.]py$") = 1.
 #[test]
 fn a_kept_measure_is_scaled_without_a_sample_of_each_chunk() {
     use crate::code_rule_dsl::logic::profile;
-    let window = crate::code_rule_dsl::logic::plan::PLAN_WINDOW as u64;
+    // The run's window (two sets of the chunks at once, at least the plans' window).
+    let window = crate::code_rule_dsl::logic::plan::corpus::plan_window() as u64;
     // `PROGRAM`, and a file-local test of a document's path (a node's text is read in place, no text test): a text
     // test each chunk reads, its scan priced by its sample.
     const PROGRAM_TESTED: &str = concat!(
@@ -631,8 +632,8 @@ fn a_kept_measure_is_scaled_without_a_sample_of_each_chunk() {
     );
     let program = format!("{PROGRAM}{PROGRAM_TESTED}");
     let mut c = Corpus::with("kept-measure-scaled", &program, &["shape", "named", "span", "home", "qnamed"]);
-    // More chunks than a plan window, a few files each, every file Python: one mix.
-    for i in 0..24 {
+    // More chunks than the run's window (about 2.4 files a chunk), every file Python: one mix.
+    for i in 0..(3 * window as usize).max(24) {
         c.write(&format!("m{i}.py"), &format!("from a import f\n\ndef q{i}(v):\n    return f(v)\n"));
     }
     c.chunk_nodes = 48;
@@ -663,7 +664,7 @@ fn a_kept_measure_is_scaled_without_a_sample_of_each_chunk() {
     assert!(!sampled.is_empty(), "a chunk measures a relation on a sample: {:?}", made.keys().filter(|(t, _)| t.contains("0494")).collect::<Vec<_>>());
     for (rel, n) in &sampled {
         let reused = scaled.get(rel).copied().unwrap_or(0);
-        assert!(reused > 0, "{rel}: the chunks past the plan window scale its kept measure ({n} sampled)");
+        assert!(reused > 0, "{rel}: the chunks past the plan window scale its kept measure ({n} sampled; sampled {sampled:?}, scaled {scaled:?})");
         assert!(*n <= window, "{rel}: measured on a sample by the plan window's chunks alone, not by each of {}: {n}", n + reused);
     }
 }

@@ -141,7 +141,7 @@ fn a_joins_candidates_cost() {
     let mut syms = Interner::for_loading(&store.syms);
     let mut j = join_rule_with(&db, &spec, &mut syms, false).unwrap();
     j.indexed();
-    let src = match &j.steps[1] { Step::Atom { src, .. } => src.clone(), _ => panic!("a probe of lab_one") };
+    let src = match &j.steps[1] { Step::Atom { src, .. } => src, _ => panic!("a probe of lab_one") };
     let spec = [(0usize, Key::Slot(0))];
     let need = 0b11u64;
     // The keys as the scan orders them for a tagged order (`scan_order`): by the lead's tag, then by value.
@@ -163,16 +163,16 @@ fn a_joins_candidates_cost() {
     let keys = by_tag;
     time("parts: candidates", keys.len(), &|| {
         let (mut hints, mut last) = ([0u32; runs::HINTS], LastProbe::default());
-        keys.iter().map(|&k| { let (_, c) = cands::candidates(&j, &src, &store, &[k], &spec, &mut hints, &mut last, need, None, false); i64::from(c.any(|_| false)) + 1 }).sum()
+        keys.iter().map(|&k| { let (_, c) = cands::candidates(&j, src, &store, &[k], &spec, &mut hints, &mut last, need, None, false); i64::from(c.any(|_| false)) + 1 }).sum()
     });
     time("parts: candidates, ids walked", keys.len(), &|| {
         let (mut hints, mut last) = ([0u32; runs::HINTS], LastProbe::default());
-        keys.iter().map(|&k| { let (_, c) = cands::candidates(&j, &src, &store, &[k], &spec, &mut hints, &mut last, need, None, false); let mut s = 0i64; c.any(|id| { s += i64::from(id); false }); s }).sum()
+        keys.iter().map(|&k| { let (_, c) = cands::candidates(&j, src, &store, &[k], &spec, &mut hints, &mut last, need, None, false); let mut s = 0i64; c.any(|id| { s += i64::from(id); false }); s }).sum()
     });
     time("parts: candidates, rows read (each)", keys.len(), &|| {
         let (mut hints, mut last) = ([0u32; runs::HINTS], LastProbe::default());
         keys.iter().map(|&k| {
-            let (rows, c) = cands::candidates(&j, &src, &store, &[k], &spec, &mut hints, &mut last, need, None, false);
+            let (rows, c) = cands::candidates(&j, src, &store, &[k], &spec, &mut hints, &mut last, need, None, false);
             let mut s = 0i64;
             rows.each(c, need, &mut LastProbe::default(), |_, row| { if row.at(0) == k { s += row.at(1) } false });
             s
