@@ -230,7 +230,7 @@ describe("T3 / C3 ask before reading", () => {
   it.each(LANES)("names the repo, says what scanning does, and offers three answers (%s)", lane => {
     const text = stripAnsi(renderReadRepoQuestion(input, lane));
     expect(text).toContain("Find rule packs for acme-web?");
-    expect(text).toContain("Rule packs are ready-made rules, mostly the same ones linters use\n(ESLint, Ruff, Clippy…).\n");
+    expect(text).toContain("Rule packs are best practices, mostly the same ones linters use\n(ESLint, Ruff, Clippy…).\n");
     expect(text).toContain("Rerail checks while your coding agent writes it, so the agent\nfixes problems in the same turn, before review or CI.");
     expect(text).toContain([
       "  ✓ Your linter and CI stay as they are. Rerail doesn’t change them.",
@@ -239,7 +239,10 @@ describe("T3 / C3 ask before reading", () => {
       "  ✓ It also reads the ESLint, oxlint or Ruff config at the repo’s root:",
       "    rules that config turns off start off in Rerail too.",
     ].join("\n"));
-    expect(text).toContain("  ✓ Nothing is installed or turned on until you say yes.");
+    expect(text).toContain([
+      "  ✓ Nothing is installed or turned on until you say yes.",
+      "  ✓ Consider keeping Rerail on and turning off linter rules it duplicates.",
+    ].join("\n"));
     expect(text).toContain("1. Yes, scan acme-web");
     expect(text).toMatch(/2\. Scan a different repo… +e\.g\. ~\/code\/landing-page/);
     expect(text).toMatch(/3\. Skip, I’ll pick packs +Rerail won’t scan/);

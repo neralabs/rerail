@@ -446,7 +446,7 @@ export function readRepoQuestion(input: ReadRepoInput): QuestionForm {
     lead: [],
     prompt: `Find rule packs for ${repo}?`,
     trail: [
-      "Rule packs are ready-made rules, mostly the same ones linters use",
+      "Rule packs are best practices, mostly the same ones linters use",
       "(ESLint, Ruff, Clippy…).",
       "",
       "How they differ from your linter: your linter checks code after it’s",
@@ -459,6 +459,7 @@ export function readRepoQuestion(input: ReadRepoInput): QuestionForm {
       "  ✓ It also reads the ESLint, oxlint or Ruff config at the repo’s root:",
       "    rules that config turns off start off in Rerail too.",
       "  ✓ Nothing is installed or turned on until you say yes.",
+      "  ✓ Consider keeping Rerail on and turning off linter rules it duplicates.",
     ],
     choices: [
       { answer: "yes", label: `Yes, scan ${repo}`, args: [SETUP_FLAGS.answer, "yes", ...repoFlag] },
