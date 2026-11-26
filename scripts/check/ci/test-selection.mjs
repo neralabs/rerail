@@ -2,6 +2,12 @@
 // Which unit test files a pull request's change can affect: ci.yml's `select-tests` job runs this on the pull request's
 // files, and the unit jobs (Linux and Windows) run only those files, on as many shards as they need, or none.
 //
+// How many shards a job runs for a selection: its shards for every test file times the selection's share, rounded up,
+// with the larger of two shares: of the test files, and of the job's recorded test time, each file weighed as the
+// time-balanced sequencer weighs it (test/support/shards/shard-split.ts, with the times beside it). By time, a shard
+// of the selection holds no more test time than a shard of every file does; by count, no more of what the times leave
+// out (each file's import and collection).
+//
 // A test file is selected when a changed file is in what it runs or reads:
 //   - its import closure (esbuild's metafile from the file, with vitest's setup files, node_modules left out), and the
 //     closures of the scripts and modules it names by path (a test that spawns `scripts/x.mjs` runs x's imports too);
@@ -15,7 +21,8 @@
 //
 // Every test file is selected (`all`) when the change reaches every test or this cannot tell: the dependencies and
 // their lockfile, the TypeScript and vitest configuration, this workflow and its actions, this script and the
-// engine-inputs.mjs and prose.mjs it reads; a failure of any kind.
+// engine-inputs.mjs and prose.mjs it reads; a failure of any kind. The times and shard-split.ts it also reads decide
+// how many shards run, not which files: a change to them selects the tests that read them.
 //
 // A change of prose alone (prose.mjs: changesets, changelog entries, the root's and docs/'s Markdown) gets no Windows
 // shard: it changes no code, and its bytes and file names are the same on Windows. The Linux shards run what it selects.
@@ -26,6 +33,8 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, posix, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { platformTimes, shardsByTime } from "../../../test/support/shards/shard-split.ts";
+import { UNIT_TEST_TIMES } from "../../../test/support/shards/unit-test-times.generated.ts";
 import { engineSources, isEngineInput } from "./engine-inputs.mjs";
 import { proseOnly } from "./prose.mjs";
 
@@ -52,6 +61,9 @@ export const WINDOWS_EXTRA = ["integration/claude-hook-rules.test.ts"];
 
 /** The shards each unit job runs when it runs every test file (ci.yml's matrices before selection). */
 export const SHARDS = { linux: 3, windows: 5 };
+
+/** The platform whose recorded times each unit job's shards are counted by, as the times file names it. */
+const PLATFORMS = { linux: "linux", windows: "win32" };
 
 /**
  * The longest list of selected paths a job takes on its command line, which node gets whole from bash (Windows'
@@ -342,11 +354,19 @@ export function affected(tests, { closure, named }, changed, sources) {
   });
 }
 
-/** The shards of `total` a job runs for `count` of `all` test files: as many as their share needs, at least one. */
-export function shards(count, all, total) {
-  const n = Math.min(total, Math.max(1, Math.ceil((total * count) / all)));
+/**
+ * The shards `job` (a key of SHARDS) runs for `tests`, a selection of `all` test files: as many as the larger of its
+ * share of the files and its share of the job's recorded time (`times`, by platform) needs, at least one.
+ */
+export function shards(job, tests, all, times = UNIT_TEST_TIMES) {
+  const total = SHARDS[job];
+  const byCount = Math.ceil((total * tests.length) / all);
+  const n = Math.max(byCount, shardsByTime(tests, platformTimes(times, PLATFORMS[job]), total));
   return Array.from({ length: n }, (_, i) => i + 1);
 }
+
+/** Every shard of `job`, as for a selection of every test file. */
+const everyShard = (job) => Array.from({ length: SHARDS[job] }, (_, i) => i + 1);
 
 /** The selection for `changed` under `root`: `{ unit, tests, windowsExtra, prose, reasons }`. */
 export async function select(root, changed) {
@@ -364,21 +384,26 @@ export async function select(root, changed) {
   return { unit, tests: selected, all: tests.length, windowsExtra, prose, reasons };
 }
 
-/** Windows' shards: none for prose alone, the selection's, its first alone when only its hook test is selected, or none. */
-function windowsShards(unit, count, all, windowsExtra, prose) {
-  if (prose) return [];
-  if (unit !== "none") return shards(count, all, SHARDS.windows);
-  return windowsExtra ? shards(0, all, SHARDS.windows) : [];
+/** A job's shards for a selection that is not `none`: every one for `all`, else as many as `shards` gives. */
+function selectionShards(job, { unit, tests, all }, times) {
+  return unit === "all" ? everyShard(job) : shards(job, tests, all, times);
 }
 
-/** The `select-tests` job's outputs. */
-export function outputs({ unit, tests, all, windowsExtra, prose = false }) {
-  const count = unit === "all" ? all : tests.length;
+/** Windows' shards: none for prose alone, the selection's, its first alone when only its hook test is selected, or none. */
+function windowsShards(selection, times) {
+  if (selection.prose) return [];
+  if (selection.unit !== "none") return selectionShards("windows", selection, times);
+  return selection.windowsExtra ? [1] : [];
+}
+
+/** The `select-tests` job's outputs, with the shards counted by `times` (the recorded times by default). */
+export function outputs(selection, times = UNIT_TEST_TIMES) {
+  const { unit, tests } = selection;
   return {
     unit,
     "unit-tests": unit === "some" ? tests.join(" ") : "",
-    "unit-shards": JSON.stringify(unit === "none" ? [] : shards(count, all, SHARDS.linux)),
-    "windows-shards": JSON.stringify(windowsShards(unit, count, all, windowsExtra, prose)),
+    "unit-shards": JSON.stringify(unit === "none" ? [] : selectionShards("linux", selection, times)),
+    "windows-shards": JSON.stringify(windowsShards(selection, times)),
   };
 }
 
