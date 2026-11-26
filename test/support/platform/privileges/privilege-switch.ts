@@ -124,7 +124,7 @@ export class PrivilegeSwitch {
     this.#ready = true;
   }
 
-  /** Sets `names` to `state` (0 off, 2 on) in this process's token; resolves to those of them that were on before. */
+  /** Sets `names` to `state` (0 off, 2 on) in the token it opened; resolves to those of them that were on before. */
   async set(names: readonly string[], state: 0 | 2): Promise<string[]> {
     const reply = this.#reply();
     this.#child.stdin.write(`${state} ${names.join(" ")}\n`);
