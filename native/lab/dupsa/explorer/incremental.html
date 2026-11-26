@@ -40,7 +40,7 @@ td.n { text-align: right; white-space: nowrap }
 tr.pick td { background: color-mix(in srgb, var(--accent) 9%, transparent) }
 tr:last-child td { border-bottom: 0 }
 .chart { display: grid; gap: 4px; min-width: 640px }
-.crow { display: grid; grid-template-columns: 300px minmax(0, 1fr) 150px; gap: 12px; align-items: center; min-height: 28px; border-radius: 4px; padding: 0 6px }
+.crow { display: grid; grid-template-columns: 340px minmax(0, 1fr) 175px; gap: 12px; align-items: center; min-height: 28px; border-radius: 4px; padding: 0 6px }
 .crow:hover { background: var(--soft) }
 .crow .lab { font-size: 13px; text-align: right }
 .crow.pick .lab { font-weight: 600 }
@@ -48,7 +48,7 @@ tr:last-child td { border-bottom: 0 }
 .crow .seg { position: absolute; top: 1px; height: 12px }
 .crow .num { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap }
 .crow .num b { color: var(--ink); font-weight: 500 }
-.ticks { display: grid; grid-template-columns: 300px minmax(0, 1fr) 150px; gap: 12px; padding: 0 6px }
+.ticks { display: grid; grid-template-columns: 340px minmax(0, 1fr) 175px; gap: 12px; padding: 0 6px }
 .ticks .t { position: relative; height: 18px; border-top: 1px solid var(--line) }
 .ticks .t span { position: absolute; top: 2px; transform: translateX(-50%); font-size: 11px; color: var(--muted) }
 .gl { position: absolute; top: -2px; bottom: -2px; width: 1px; background: var(--soft) }
@@ -414,15 +414,15 @@ svg .muted { fill: var(--muted) }
       <li>one file deleted;</li>
       <li>three steps that each change 5 files.</li>
     </ul>
-    <p class="text">Each bar is one design, in two colours on one log scale of instructions retired:</p>
+    <p class="text">Each bar is one design: the first run, then one edit after it, end to end.</p>
     <ul class="text">
       <li><b>cold</b> is the first run from nothing: a whole process that reads the base, builds the index and computes its findings, and for the saved index also writes it;</li>
-      <li><b>warm</b> is one later edit. For the in-memory designs, that is the median per-edit cost inside a running process (rebuilds over steps 1–10, updates over all 50). For the saved index, it is a whole new process that maps the index, applies the edit and reports the changes, median over six steps.</li>
+      <li><b>warm</b> is one later edit. For the in-memory incremental designs, it is the median per-edit cost inside a running process (over all 50 steps). For the others, it is a whole new process: one that maps the saved index and applies the edit, or one that rebuilds the edited tree, since a rebuild keeps nothing. Medians over six steps.</li>
     </ul>
-    <p class="text">Instructions are the process's own count. Unlike CPU time, the machine's load doesn't change them (its load average reached 145 during these runs). Hover a bar for both figures.</p>
+    <p class="text">Each segment's length is its own count on the same log scale, from 1 M to 10 G instructions, so a warm edit of a few million still shows beside a cold run of billions. Instructions are the process's own count, which the machine's load doesn't change, unlike CPU time. Hover a bar for both figures.</p>
     <div class="legend" style="display:flex; gap:18px; font-size:13px; color:var(--muted)">
-      <span style="display:inline-flex; align-items:center; gap:6px"><span style="width:14px; height:10px; border-radius:2px; background:var(--warm)"></span>warm: one later edit</span>
       <span style="display:inline-flex; align-items:center; gap:6px"><span style="width:14px; height:10px; border-radius:2px; background:var(--cold)"></span>cold: first run from nothing</span>
+      <span style="display:inline-flex; align-items:center; gap:6px"><span style="width:14px; height:10px; border-radius:2px; background:var(--warm)"></span>warm: one edit after it</span>
     </div>
     <div id="charts" style="display:grid; gap:18px"></div>
     <div class="tscroll">
@@ -561,22 +561,20 @@ svg .muted { fill: var(--muted) }
 <script>
 // [method, design, cold instructions, warm instructions], from coldwarm.py.
 const DATA = [["lines", "Rebuild every run, SA-IS", 2674341171, 2873446583], ["lines", "Rebuild every run, doubling", 2368464242, 2374469326], ["lines", "Whole file re-inserted", 2368464242, 2989080], ["lines", "Tombstones and edit-local delta, in memory", 2368464242, 1443058], ["lines", "Tombstones and edit-local delta, saved index mapped", 2940079346, 54656140], ["nodes", "Rebuild every run, SA-IS", 6623197860, 6639333186], ["nodes", "Rebuild every run, doubling", 7244600359, 7268662848], ["nodes", "Whole file re-inserted", 7244600359, 54197124], ["nodes", "Tombstones and edit-local delta, in memory", 7244600359, 5689310], ["nodes", "Tombstones and edit-local delta, saved index mapped", 7815492625, 90711366]];
-const LO = 1e6, HI = 1e11;
-const x = v => Math.max(0, Math.min(1, (Math.log10(Math.max(v, LO)) - Math.log10(LO)) / (Math.log10(HI) - Math.log10(LO))));
-const fmt = v => v >= 1e9 ? (v / 1e9).toFixed(v >= 1e10 ? 0 : 1) + " G" : v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 0 : 1) + " M" : (v / 1e3).toFixed(0) + " K";
-const ticks = [1e6, 1e7, 1e8, 1e9, 1e10, 1e11];
+// Each segment on its own log scale, 1 M to 10 G, half the track: cold, then warm from where cold ends.
+const LO = 1e6, HI = 1e10;
+const x = v => Math.max(0.004, Math.min(1, (Math.log10(Math.max(v, LO)) - Math.log10(LO)) / (Math.log10(HI) - Math.log10(LO))));
+const fmt = v => v >= 1e9 ? (v / 1e9).toFixed(1) + " G" : v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 0 : 1) + " M" : (v / 1e3).toFixed(0) + " K";
+const ticks = [1e6, 1e7, 1e8, 1e9, 1e10];
 const tickLab = v => v >= 1e9 ? v / 1e9 + " G" : v / 1e6 + " M";
 const titles = { lines: "Lines (0.63 M counted lines, window 30)", nodes: "Node symbols (5.9 M nodes, window 150)" };
 const tip = document.getElementById("tip");
 document.getElementById("charts").innerHTML = ["lines", "nodes"].map(m => {
   const rows = DATA.filter(r => r[0] === m);
   return `<div style="display:grid; gap:6px"><h3>${titles[m]}</h3><div class="tscroll" style="padding:8px 0"><div class="chart">${rows.map(([, name, cold, warm], i) => {
-    // One bar: warm from 0, cold from there on (or the other way round where warm costs more).
-    const [lo, hi] = warm <= cold ? [warm, cold] : [cold, warm];
-    const [cLo, cHi] = warm <= cold ? ["var(--warm)", "var(--cold)"] : ["var(--cold)", "var(--warm)"];
-    const a = 100 * x(lo), b = 100 * x(hi);
-    return `<div class="crow${name.includes("in memory") ? " pick" : ""}" data-m="${m}" data-i="${i}"><div class="lab">${name}</div><div class="track">${ticks.map(t => `<span class="gl" style="left:${(100 * x(t)).toFixed(2)}%"></span>`).join("")}<span class="seg" style="left:0;width:${a.toFixed(2)}%;background:${cLo};border-radius:0 ${b - a < 0.5 ? "3px 3px" : "0 0"} 0"></span><span class="seg" style="left:${a.toFixed(2)}%;width:${Math.max(0.4, b - a).toFixed(2)}%;background:${cHi};border-left:2px solid var(--panel);border-radius:0 3px 3px 0"></span></div><div class="num">warm <b>${fmt(warm)}</b> · cold ${fmt(cold)}</div></div>`;
-  }).join("")}<div class="ticks"><div class="note" style="text-align:right">instructions, log scale</div><div class="t">${ticks.map(t => `<span style="left:${(100 * x(t)).toFixed(2)}%">${tickLab(t)}</span>`).join("")}</div><div></div></div></div></div></div>`;
+    const a = 50 * x(cold), b = 50 * x(warm);
+    return `<div class="crow${name.includes("in memory") ? " pick" : ""}" data-m="${m}" data-i="${i}"><div class="lab">${name}</div><div class="track">${ticks.map(t => `<span class="gl" style="left:${(50 * x(t)).toFixed(2)}%"></span>`).join("")}<span class="seg" style="left:0;width:${a.toFixed(2)}%;background:var(--cold)"></span><span class="seg" style="left:${a.toFixed(2)}%;width:${b.toFixed(2)}%;background:var(--warm);border-left:2px solid var(--panel);border-radius:0 3px 3px 0"></span></div><div class="num">cold ${fmt(cold)} + warm <b>${fmt(warm)}</b></div></div>`;
+  }).join("")}<div class="ticks"><div class="note" style="text-align:right">a segment's count, log scale</div><div class="t">${ticks.map(t => `<span style="left:${(50 * x(t)).toFixed(2)}%">${tickLab(t)}</span>`).join("")}</div><div></div></div></div></div></div>`;
 }).join("");
 for (const el of document.querySelectorAll(".crow")) {
   const [, name, cold, warm] = DATA.filter(r => r[0] === el.dataset.m)[+el.dataset.i];
