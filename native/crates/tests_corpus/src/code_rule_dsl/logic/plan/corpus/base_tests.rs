@@ -1818,3 +1818,37 @@ first(p, l) :- doc(d, p, _), l = min x : { calls(d, x) }.
     assert_eq!(of(&got[0]), want_n);
     assert_eq!(of(&got[1]), want_l);
 }
+
+/// Decision 0706 E4: seed scans of the `field` view by several fields (`field(_, "left", n)`, `field(_, "right",
+/// n)`, ...), run over many chunks: once the run has seen a chunk walk the field column for more than one field, the
+/// batch's field index is built ahead of the level, and each scan reads its field's rows from it. The rows are the
+/// source's: each line `a{i} = b{i} + c{i}` has one left and one right operand, and one assignment's left side.
+#[test]
+fn field_scans_over_a_value_index_built_ahead_give_each_fields_rows() {
+    use crate::code_rule_dsl::logic::native::component::value_indexes_built;
+    let sources: Vec<(String, String)> = (0..80).map(|i| (format!("g{i:02}.py"), (0..(i % 4 + 1)).map(|k| format!("a{k} = b{k} + c{k}\n")).collect())).collect();
+    let files: Vec<(&str, &str)> = sources.iter().map(|(p, s)| (p.as_str(), s.as_str())).collect();
+    let dir = corpus("field-index", &files);
+    let program = r#"
+.decl at(n: node, p: symbol, l: number)
+at(n, p, l) :- docof(n, d), doc(d, p, _), line(n, l).
+.decl lefts(p: symbol, l: number)
+lefts(p, l) :- field(_, "left", n), kind(n, "identifier"), at(n, p, l).
+.decl rights(p: symbol, l: number)
+rights(p, l) :- field(_, "right", n), at(n, p, l).
+.decl targets(p: symbol, l: number)
+targets(p, l) :- field(a, "left", n), kind(a, "assignment"), at(n, p, l).
+.output lefts, rights, targets
+"#;
+    let before = value_indexes_built();
+    let out = dir.join(".out");
+    super::run(program, &dir, None, &out, "program", Binding::Cpu, 64).unwrap();
+    let got = shown_of(&Outputs::open(&out).unwrap(), &["lefts", "rights", "targets"]);
+    assert!(value_indexes_built() > before, "the field index built ahead");
+    let file = |p: &str| p.rsplit('/').next().unwrap_or(p).trim_matches('"').to_owned();
+    let of = |rows: &Vec<Vec<String>>| rows.iter().map(|r| (file(&r[0]), r[1].parse::<i64>().unwrap())).collect::<BTreeSet<_>>();
+    let want: BTreeSet<(String, i64)> = (0..80).flat_map(|i| (1..=(i % 4 + 1) as i64).map(move |l| (format!("g{i:02}.py"), l))).collect();
+    assert_eq!(of(&got[0]), want, "lefts: the assignments' and the additions' left operands");
+    assert_eq!(of(&got[1]), want);
+    assert_eq!(of(&got[2]), want);
+}

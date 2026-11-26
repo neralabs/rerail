@@ -112,6 +112,8 @@ mod kinds;
 pub use kinds::{batched_rows_for_tests as kind_batched_rows, force_for_tests as kind_batches_forced};
 #[cfg(any(test, feature = "test-hooks"))]
 pub use scalars::built_whole_for_tests as summaries_built_whole;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use access::value_indexes_built_for_tests as value_indexes_built;
 pub mod access;
 mod sorted_hash;
 pub mod table;
@@ -3801,7 +3803,7 @@ pub fn step_counts(conn: impl Scoped, name: &str) -> Result<Vec<Vec<(i64, i64)>>
 /// the relations `reads` that the run holds, built now into their blocks. Returns (indexes built, relations).
 pub fn prefetch_indexes(conn: &Connection, reads: &std::collections::BTreeSet<String>) -> (usize, usize) {
     let on = on(conn);
-    access::prefetch(reads, |name| on.derived.lock().get(name).cloned())
+    access::prefetch(reads, |name| on.derived.lock().get(name).cloned(), |name| crate::code_rule_dsl::facts::vtab::bound_source(conn, name))
 }
 
 /// The declared keys (`key` lines, decision 0361 step 6) a second row broke in component `name`'s relations since the
@@ -4788,7 +4790,7 @@ pub enum Ver {
 /// (`eqs`) finds them on its first scan (`View::ids`), not when it is opened: its probes check the filters
 /// themselves (`find`), so a source made on lookup (a batch's relation, decision 0494) makes only the documents
 /// its probes name.
-pub struct View { pub src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vector<usize>, ids: Option<OnceLock<Vector<u32>>>, eqs: Vec<(usize, i64)> }
+pub struct View { pub src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vector<usize>, ids: Option<OnceLock<Vector<u32>>>, eqs: Vec<(usize, i64)>, of: Option<Arc<str>> }
 impl View {
     /// Its rows' places in the source, a view of some rows': found when first asked, for a filtered one.
     fn ids(&self) -> Option<&[u32]> {
@@ -4818,12 +4820,23 @@ impl View {
         // The roofline's work: each candidate's filter values read.
         match src.lookup(c, &[v]) {
             Some(cands) => {
-                charge(Unit::Value, (cands.len() * eqs.len()) as u64);
-                cands.into_iter().filter(|&r| eqs.iter().all(|&(c, v)| src.value(r, c) == v)).map(|r| r as u32).collect()
+                // The lookup's column holds its value in every row it gives: the other filters are read.
+                let rest: Vec<(usize, i64)> = eqs.iter().copied().filter(|&e| e != (c, v)).collect();
+                charge(Unit::Value, (cands.len() * rest.len()) as u64);
+                cands.into_iter().filter(|&r| rest.iter().all(|&(c, v)| src.value(r, c) == v)).map(|r| r as u32).collect()
             }
             None => {
                 charge(Unit::Value, (src.len() * eqs.len()) as u64);
-                src.filter_eq(eqs)
+                // A walk of the column the source keeps no index of: the catalogue's (decision 0706 E4).
+                if let Some(of) = &self.of {
+                    access::observe_walk(of, c, src);
+                }
+                let t0 = scalars::trace().then(Instant::now);
+                let out = src.filter_eq(eqs);
+                if let Some(t0) = t0 {
+                    scalars::note(|| format!("filter_eq {eqs:?}"), 1, 0, t0.elapsed().as_micros() as u64, src.len() as u64);
+                }
+                out
             }
         }
     }
@@ -5647,7 +5660,7 @@ pub fn give_versions(conn: impl Scoped, table: &str, types: Vec<u8>, given: [(Ar
     let k = types.len();
     let view = |(src, cols): (Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Option<rerail_blocks::vector::Vector<usize>>)| -> Arc<InRel> {
         let viewed = cols.is_some();
-        let view = View { src, cols: cols.unwrap_or_else(|| (0..k).collect()), ids: None, eqs: Vec::new() };
+        let view = View { src, cols: cols.unwrap_or_else(|| (0..k).collect()), ids: None, eqs: Vec::new(), of: None };
         Arc::new(InRel { vers: Default::default(), viewed, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types: types.clone(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: crate::code_rule_dsl::facts::rows::vector_in(None, 0), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), ahead: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: crate::code_rule_dsl::facts::rows::vector_in(None, 0), stats: None })
     };
     forgotten_on_close();
@@ -5808,7 +5821,7 @@ impl InRel {
     pub fn over_filtered(src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vector<usize>, eqs: Vec<(usize, i64)>, types: Vec<u8>) -> Arc<InRel> {
         let k = types.len();
         debug_assert_eq!(cols.len(), k);
-        let view = View { src, cols, ids: Some(OnceLock::new()), eqs };
+        let view = View { src, cols, ids: Some(OnceLock::new()), eqs, of: None };
         Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: crate::code_rule_dsl::facts::rows::vector_in(None, 0), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), ahead: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: crate::code_rule_dsl::facts::rows::vector_in(None, 0), stats: None })
     }
     /// A view of `src`'s columns `cols`, read in place (`hold_view_in_place`): its rows the source's, row for row, a
@@ -5817,7 +5830,7 @@ impl InRel {
         let k = types.len();
         debug_assert_eq!(cols.len(), k);
         let keyed = Keyed::of(&src, &cols);
-        let view = View { src, cols, ids: None, eqs: Vec::new() };
+        let view = View { src, cols, ids: None, eqs: Vec::new(), of: None };
         Arc::new(InRel { vers: Default::default(), viewed: true, keyed, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: crate::code_rule_dsl::facts::rows::vector_in(None, 0), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), ahead: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: crate::code_rule_dsl::facts::rows::vector_in(None, 0), stats: None })
     }
     /// A relation of `n` rows, flat (`types.len()` values each), as a stored frame gives them (t33 K4): read as a
@@ -7161,7 +7174,7 @@ impl InRel {
                 // Over its rows with no dead marks (shared, not copied), so a view's ids are the relation's own: a
                 // source of it would number its live rows, and a row gone is not among them.
                 let every = InRel::held(self.rows.shared(self.n), self.n, self.types.clone(), rerail_blocks::vector::Vector::new());
-                let view = View { src: every.source(names), cols: (0..k).collect(), ids: Some(OnceLock::from(ids)), eqs: Vec::new() };
+                let view = View { src: every.source(names), cols: (0..k).collect(), ids: Some(OnceLock::from(ids)), eqs: Vec::new(), of: None };
                 let n = view.len();
                 Some(Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n, rows: Rows::new(k), view: Some(view), base: false, types: self.types.clone(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: crate::code_rule_dsl::facts::rows::vector_in(None, 0), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), ahead: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: crate::code_rule_dsl::facts::rows::vector_in(None, 0), stats: None }))
             }
@@ -7172,7 +7185,7 @@ impl InRel {
     pub fn picked(src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, ids: Vector<u32>, names: Vec<String>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
         let k = names.len();
         let n = ids.len();
-        let view = View { src, cols: (0..k).collect(), ids: Some(OnceLock::from(ids)), eqs: Vec::new() };
+        let view = View { src, cols: (0..k).collect(), ids: Some(OnceLock::from(ids)), eqs: Vec::new(), of: None };
         let rel = Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n, rows: Rows::new(k), view: Some(view), base: false, types: vec![b'i'; k], stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: crate::code_rule_dsl::facts::rows::vector_in(None, 0), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), ahead: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: crate::code_rule_dsl::facts::rows::vector_in(None, 0), stats: None });
         rel.source(names)
     }
@@ -7182,7 +7195,7 @@ impl InRel {
         // Rows that lie in an order (a kept relation's canonical one) are known sorted: a scan of them for the next
         // step's probes is not sorted again (decision 0187).
         let sorted = src.order().map_or_else(runs::Sorted::default, |cols| runs::Sorted::whole(src.len() as u32, k, &cols));
-        let view = View { src, cols: (0..k).collect(), ids: None, eqs: Vec::new() };
+        let view = View { src, cols: (0..k).collect(), ids: None, eqs: Vec::new(), of: None };
         Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted, sketches: Vec::new(), serves: Vec::new(), dead: crate::code_rule_dsl::facts::rows::vector_in(None, 0), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), ahead: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: crate::code_rule_dsl::facts::rows::vector_in(None, 0), stats: None })
     }
     pub fn in_block(&self) -> Option<InBlock> {
@@ -7624,7 +7637,7 @@ fn view(conn: impl Scoped, table: &str, cols: &str) -> Option<View> {
     }
     // A filtered view's rows are found on its first scan (`View::ids`).
     let ids = (!eqs.is_empty()).then(OnceLock::new);
-    Some(View { src, cols, ids, eqs })
+    Some(View { src, cols, ids, eqs, of: Some(Arc::from(name)) })
 }
 
 /// A table of integer columns in an attached schema (the cross-file pass's `x`), read in place: the columns an input
@@ -10271,7 +10284,7 @@ pub mod posted_tests {
             let flat: Vector<i64> = (0..src.len()).flat_map(|r| [0, 1].map(|c| src.value(r, c))).collect();
             let n = flat.len() / 2;
             let mut v = Arc::into_inner(InRel::from_flat(flat, n, vec![b'i'; 2])).expect("a new relation");
-            v.view = Some(View { src: Arc::clone(src), cols: rerail_blocks::vector![0, 1], ids: None, eqs: Vec::new() });
+            v.view = Some(View { src: Arc::clone(src), cols: rerail_blocks::vector![0, 1], ids: None, eqs: Vec::new(), of: None });
             v
         };
         let a: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = source(40);
@@ -10280,7 +10293,7 @@ pub mod posted_tests {
         assert_eq!(view.delta_ids_since_mark(&mark).map(|d| d.counts()), Some((0, 0)), "the same view: unchanged");
         assert!(viewing(&a).delta_ids_since_mark(&mark).is_none(), "another relation over the source");
         // The same relation, rows and address, now over another source: its change is not known.
-        view.view = Some(View { src: source(40), cols: rerail_blocks::vector![0, 1], ids: None, eqs: Vec::new() });
+        view.view = Some(View { src: source(40), cols: rerail_blocks::vector![0, 1], ids: None, eqs: Vec::new(), of: None });
         assert!(view.delta_ids_since_mark(&mark).is_none(), "another source");
     }
 

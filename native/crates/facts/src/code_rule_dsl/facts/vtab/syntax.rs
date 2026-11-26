@@ -2464,6 +2464,10 @@ pub struct Batch {
     /// first lookup of one of its kinds over that tag's documents alone (Q183; decision 0494: a program's language
     /// stays unmade).
     kinds: Vec<(u8, OnceLock<KindRows>)>,
+    /// The `field` view's rows by field (decision 0706 E4), built ahead of the seed scans of a field (`field(_, #f, _)`)
+    /// in one walk of every document's fielded nodes, when the run has seen a chunk's scans walk them for several
+    /// fields (`Source::build_value_index`). None until then: a scan walks the field column (`filter_eq`).
+    fields: OnceLock<FieldRows>,
     shape: Shape,
     /// The registered lazy families (`Families`, Python's `py.*`: list step 25), by registration; `None` for one
     /// whose dialect has no document in the batch.
@@ -2618,6 +2622,37 @@ impl KindRows {
         }
         starts.push(all.len() as u32);
         KindRows { keys: in_block(&b.block, &keys), starts: in_block(&b.block, &starts), at: in_block(&b.block, &all.iter().map(|&(_, d, l, x)| [d, l, x]).collect::<Vec<_>>()) }
+    }
+}
+
+/// The `field` view's rows by its field column (`Batch::fields`).
+struct FieldRows {
+    /// The fields, ascending.
+    keys: Cells<i64>,
+    /// Where each field's rows start in `rows`, and one past the last.
+    starts: Cells<u32>,
+    /// Each field's rows, ascending.
+    rows: Cells<u32>,
+}
+
+impl FieldRows {
+    /// Over `(field, row)` pairs in row order.
+    fn new(b: &Batch, mut all: Vec<(i64, u32)>) -> Self {
+        // Stable: within a field, the rows stay in order.
+        all.sort_by_key(|e| e.0);
+        let (mut keys, mut starts) = (Vec::new(), Vec::new());
+        for (i, e) in all.iter().enumerate() {
+            if keys.last() != Some(&e.0) {
+                keys.push(e.0);
+                starts.push(i as u32);
+            }
+        }
+        starts.push(all.len() as u32);
+        FieldRows { keys: in_block(&b.block, &keys), starts: in_block(&b.block, &starts), rows: in_block(&b.block, &all.iter().map(|e| e.1).collect::<Vec<_>>()) }
+    }
+    /// The rows of `field`.
+    fn of(&self, field: i64) -> &[u32] {
+        self.keys.binary_search(&field).map_or(&[][..], |i| &self.rows[self.starts[i] as usize..self.starts[i + 1] as usize])
     }
 }
 
@@ -3840,6 +3875,7 @@ impl Batch {
             dialects,
             offsets: made::Offsets::default(),
             kinds: (0..=u8::MAX).filter(|&t| tag_at[usize::from(t) + 1] > tag_at[usize::from(t)]).map(|t| (t, OnceLock::new())).collect(),
+            fields: OnceLock::new(),
             by_tag,
             tag_at: in_block(&block, &tag_at),
             shape,
@@ -4905,7 +4941,33 @@ impl Source for Viewed {
         true
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
+        // A field's rows from the batch's field index, where it was built ahead (decision 0706 E4).
+        if matches!(self.view, View::Field) && column == 1 && let Some(f) = self.batch.fields.get() {
+            let mut rows: rerail_blocks::vector::Vector<usize> = values.iter().flat_map(|&v| f.of(v).iter().map(|&r| r as usize)).collect();
+            if values.len() > 1 {
+                rows.sort_unstable();
+                rows.dedup();
+            }
+            return Some(rows);
+        }
         self.lookup_docs(column, values, None)
+    }
+    fn build_value_index(&self, column: usize) -> Option<usize> {
+        if !matches!(self.view, View::Field) || column != 1 {
+            return None;
+        }
+        let mut built = None;
+        self.batch.fields.get_or_init(|| {
+            let offsets = self.batch.firsts(self.view);
+            let mut all: Vec<(i64, u32)> = Vec::new();
+            for doc in 0..self.batch.docs.len() {
+                let base = offsets.at(doc);
+                self.each_row(doc, offsets.at(doc + 1) - base, &[1], |i, value| all.push((value[0], (base + i) as u32)));
+            }
+            built = Some(all.len());
+            FieldRows::new(&self.batch, all)
+        });
+        built
     }
     /// A kind's nodes read in their list (`Batch::by_kind`), not one run each; the other lookups' runs (a document's
     /// rows are one) listed.

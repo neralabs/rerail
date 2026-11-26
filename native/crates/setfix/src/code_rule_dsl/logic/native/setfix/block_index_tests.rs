@@ -287,8 +287,8 @@ fn a_test_by_two_columns_reads_the_filter_built_ahead() {
     super::access::seed_observed(a.clone(), Use { tests: 1_000_000, found: 1_000 });
     assert!(access::pays(&a.kind, n as u64, Use { tests: 1_000_000, found: 1_000 }));
     let reads = std::iter::once("held".to_owned()).collect();
-    assert_eq!(super::access::prefetch(&reads, |name| (name == "held").then(|| rel.clone())), (1, 1));
-    assert_eq!(super::access::prefetch(&reads, |name| (name == "held").then(|| rel.clone())), (0, 0), "built once");
+    assert_eq!(super::access::prefetch(&reads, |name| (name == "held").then(|| rel.clone()), |_| None), (1, 1));
+    assert_eq!(super::access::prefetch(&reads, |name| (name == "held").then(|| rel.clone()), |_| None), (0, 0), "built once");
     // A fresh index (another plan) finds it; each key it rejects is in no row, and it rejects most absent keys.
     let ix = rel.index(&[1, 0]);
     let (mut absent, mut rejected) = (0, 0);
@@ -309,5 +309,5 @@ fn a_test_by_two_columns_reads_the_filter_built_ahead() {
     let _ = other.name.set("hit".into());
     super::access::seed_observed(Access::membership("hit", [0, 1]), Use { tests: 100, found: 100 });
     let reads = std::iter::once("hit".to_owned()).collect();
-    assert_eq!(super::access::prefetch(&reads, |name| (name == "hit").then(|| other.clone())), (0, 0));
+    assert_eq!(super::access::prefetch(&reads, |name| (name == "hit").then(|| other.clone()), |_| None), (0, 0));
 }

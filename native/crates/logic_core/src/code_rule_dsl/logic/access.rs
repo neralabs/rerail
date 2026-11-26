@@ -75,6 +75,7 @@ impl Available {
 }
 
 /// What the steps reading an `Access` did over a run's chunks: membership tests made, and those that found a row. For
+/// a view's value index (`Kind::Value`): the walks of its column, and the chunks they were in. For
 /// a summary (`Kind::Summary`): its probes, and the rows its relation held at each step's count (`found`), so the
 /// probes a row is the ratio, whatever a chunk's size.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -105,6 +106,10 @@ pub const NODE_BITS_TEST_NS: f64 = 12.0;
 pub const SUMMARY_FOLD_NS: f64 = 1_000.0;
 /// A probe of a summary built whole (a read lock, one hash lookup), in ns.
 pub const SUMMARY_HIT_NS: f64 = 60.0;
+/// A walk of a view's column for one constant, in ns a row (the `field` view's, on `all`: 8 ms over 183 k rows).
+pub const VALUE_WALK_NS: f64 = 44.0;
+/// A view's value index built, in ns a row: the column walked once, its rows sorted by value.
+pub const VALUE_BUILD_NS: f64 = 60.0;
 /// A whole summary's build, in ns a row (the row's group key read, hashed, its group's summary updated).
 pub const SUMMARY_BUILD_NS: f64 = 30.0;
 /// The share of absent keys a filter lets through (`blocks::relation::FILTER_BITS`, 5 bits a key).
@@ -117,6 +122,7 @@ pub fn build_ns(kind: &Kind, rows: u64) -> f64 {
             Kind::Filter(_) => FILTER_BUILD_NS,
             Kind::NodeBits(_) => NODE_BITS_BUILD_NS,
             Kind::Summary { .. } => SUMMARY_BUILD_NS,
+            Kind::Value(_) => VALUE_BUILD_NS,
             _ => f64::INFINITY,
         }
 }
@@ -139,6 +145,9 @@ pub fn pays(kind: &Kind, rows: u64, u: Use) -> bool {
     match kind {
         // A summary's use is by the rows its relation held: its probes over those rows against a build over them.
         Kind::Summary { .. } => u.tests as f64 * (SUMMARY_FOLD_NS - SUMMARY_HIT_NS) > build_ns(kind, u.found.max(1)),
+        // A value index's use is its walks (`tests`) over the chunks they were in (`found`): the walks a chunk makes
+        // against one build a chunk, both over the view's rows.
+        Kind::Value(_) => u.tests as f64 * VALUE_WALK_NS > u.found.max(1) as f64 * VALUE_BUILD_NS,
         _ => saves_ns(kind, u) > build_ns(kind, rows),
     }
 }
@@ -173,5 +182,14 @@ mod tests {
         assert!(pays(&k, 1, Use { tests: 330_631, found: 330_607 }), "public_len's: a probe a row");
         assert!(pays(&k, 1, Use { tests: 481_713, found: 21_473 * 40 }), "rf_fn_at's count: 12 probes a row held");
         assert!(!pays(&k, 1, Use { tests: 36, found: 64_799 }), "rf_owner's: 36 probes of one group, whose fold reads what a build would");
+    }
+
+    /// Decision 0706 E4: a view's value index pays when a chunk walks its column for more than one constant.
+    #[test]
+    fn a_value_index_pays_by_its_walks_a_chunk() {
+        let k = Kind::Value(1);
+        assert!(pays(&k, 0, Use { tests: 8 * 36, found: 36 }), "field's: 8 fields walked a chunk");
+        assert!(pays(&k, 0, Use { tests: 2, found: 1 }), "two walks a chunk");
+        assert!(!pays(&k, 0, Use { tests: 36, found: 36 }), "one walk a chunk: the build is that walk");
     }
 }

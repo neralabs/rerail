@@ -354,6 +354,9 @@ pub trait Source: Send + Sync {
     /// value of `want` (one for every value, or one each) in column `read`, into `out`. The batch's ids resolved
     /// first, then their values read. `false` where the source has no such read (nothing written).
     fn test_own_batch(&self, _column: usize, _values: &[i64], _read: usize, _want: &[i64], _out: &mut [bool]) -> bool { false }
+    /// Decision 0706 E4: the source's value index of `column` (its rows by value, in its block) built now, ahead of
+    /// its readers, where it keeps one: the rows read to build it. `None` where it keeps none, or had it built.
+    fn build_value_index(&self, _column: usize) -> Option<usize> { None }
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], _cursor: &mut ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         self.lookup_read(column, value, columns, each)
     }

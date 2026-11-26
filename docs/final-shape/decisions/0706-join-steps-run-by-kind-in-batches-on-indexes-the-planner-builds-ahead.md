@@ -167,6 +167,32 @@ instructions 1,366 / 1,371 G before, 1,361 / 1,360 G after. Folds left: each bag
 `import_start` 46,645), priced before any use is observed; the first chunk prices by the search's estimates with
 §3.
 
+### Step 4 (E4, seed scans with a constant), as built
+
+What the first steps cost on `all` (`RERAIL_SPIKE_SHAPES`, 7.6 s of 46.4 s step CPU): the scans of `field(_, #f, _)`
+about 3 s, 484 to 48,000 ns a row out. Each was a walk of the whole `field` view for one field (`View::filtered`,
+`filter_eq`): one walk a field a chunk, 36 chunks, about 8 ms over 183 k rows, eight fields walked apart, 2.5 s.
+
+- `Batch::fields`: the `field` view's rows by field, every field's rows from one walk of the documents' fielded
+  nodes, sorted by field in scratch and written once into the batch's block (`FieldRows`, as `KindRows` holds the
+  `node` view's by kind). `Source::build_value_index` builds it; `Viewed::lookup(1, …)` reads it once built. The
+  values wrapper hands both to its base.
+- The catalogue: a view's walk of a column it keeps no index of is `Kind::Value(col)` on the view's bound name
+  (`View::of`), observed by `access::observe_walk` (a walk, and a chunk the first time a source is walked); `pays`
+  when a chunk walks the column for more than one constant (a walk at 44 ns a row against a build at 60).
+- The level's build ahead (`access::prefetch`) builds a paying value index on the source the view is bound to
+  (`vtab::bound_source`), in parallel with the relations' indexes.
+- `View::filtered`, given a lookup's rows, reads only the other constants (a row's read was spent on the looked-up
+  column too).
+- Tests: `a_value_index_pays_by_its_walks_a_chunk` (logic-core), `field_scans_over_a_value_index_built_ahead_give_
+  each_fields_rows` (tests_corpus: three scans by two fields over 80 files in chunks, the rows against the source's).
+  Also fixed: `a_corpus_runs_memoised_rows_bind_by_name_from_their_frames` (tests_sql) declares its `dup` cross-file,
+  as decision 0652 asks (it was red since 0652).
+
+On `all` (m1max, load 10–27, two runs each, same rows): CPU 122.8 / 122.1 s before, 119.0 / 119.5 s after;
+instructions 1,360 / 1,357 G before, 1,336 / 1,333 G after; peak 2,250 / 2,309 MB before, 2,211 / 2,306 MB after.
+W: 48.8 s, 477 G.
+
 ## Consequences
 
 - 0694's node bits are made by the build batch, not at a key's first test.

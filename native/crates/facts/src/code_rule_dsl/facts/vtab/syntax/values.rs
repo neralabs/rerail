@@ -852,6 +852,9 @@ impl Source for Layered {
     fn made_on_lookup(&self) -> bool {
         self.base.made_on_lookup()
     }
+    fn build_value_index(&self, column: usize) -> Option<usize> {
+        self.base.build_value_index(column)
+    }
     fn complete_rows(&self) -> bool {
         self.base.complete_rows()
     }

@@ -3,6 +3,9 @@
 //! (`prefetch`): each index that its readers' use pays for, built in parallel into its relation's block before the
 //! level runs. A reader only finds one (`Csr::filter`, `Csr::bits`); none builds one.
 //!
+//! E4 (seed scans with a constant): a view's walks of a column it keeps no index of, by chunk (`observe_walk`), priced
+//! against its value index built ahead (`Source::build_value_index`).
+//!
 //! E3 (grouped aggregates): a scalar step's probes of its bag, and its input's rows, priced against a whole summary
 //! built in one pass (`scalars::build_ahead`).
 //!
@@ -25,9 +28,10 @@ impl Observed {
     }
 }
 
-/// What the build batches made in the run: indexes built, by kind (node bits, filters), and the rows they read.
+/// What the build batches made in the run: indexes built, by kind (node bits, filters), the rows they read, and
+/// views' value indexes.
 #[derive(Default)]
-pub(super) struct Built(Mutex<[u64; 3]>);
+pub(super) struct Built(Mutex<[u64; 4]>);
 
 /// Whether compiled step `i` of `j` is a membership test the walker reads an index for (`run_join_in_each`'s: not the
 /// first, not a delta's, not fused or ranged, binding nothing or negated, keyed, no tests of its own columns): its
@@ -87,10 +91,23 @@ pub(super) fn observe(j: &JoinRule, counts: &[(u64, u64)]) {
     }
 }
 
+/// The sources whose walks the run has counted, by index: a chunk's view is counted once (`Use::found`).
+#[derive(Default)]
+struct Walked(Mutex<std::collections::HashSet<(Access, usize)>>);
+
+/// Decision 0706 E4: a scan of view `of` walked its source's column `col` (no index of it): a walk, and a chunk the
+/// first time this source is walked.
+pub(super) fn observe_walk(of: &str, col: usize, src: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>) {
+    let a = Access { rel: of.to_owned(), kind: Kind::Value(col as u16) };
+    let new = crate::code_rule_dsl::logic::run::local::<Walked>().0.lock().unwrap().insert((a.clone(), Arc::as_ptr(src) as *const u8 as usize));
+    let o = crate::code_rule_dsl::logic::run::local::<Observed>();
+    o.0.lock().unwrap().entry(a).or_default().add(Use { tests: 1, found: u64::from(new) });
+}
+
 /// The level's build ahead (decision 0706 §4, §5): of the indexes its strata's membership steps have needed so far in
 /// the run, those on a relation it reads (`reads`) that the run holds complete, whose use pays for their build,
 /// built now in parallel into the relations' blocks. Returns (indexes built, relations).
-pub(super) fn prefetch(reads: &BTreeSet<String>, held: impl Fn(&str) -> Option<Arc<InRel>>) -> (usize, usize) {
+pub(super) fn prefetch(reads: &BTreeSet<String>, held: impl Fn(&str) -> Option<Arc<InRel>>, bound: impl Fn(&str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>) -> (usize, usize) {
     if !on() {
         return (0, 0);
     }
@@ -103,6 +120,14 @@ pub(super) fn prefetch(reads: &BTreeSet<String>, held: impl Fn(&str) -> Option<A
         }
     }
     let wanted: Vec<(Access, Use)> = o.0.lock().unwrap().iter().filter(|(a, _)| reads.contains(&a.rel)).map(|(a, u)| (a.clone(), *u)).collect();
+    // A view's value index (E4), on the source the view is bound to: built in parallel with the relations'.
+    let values: Vec<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, usize)> = wanted
+        .iter()
+        .filter_map(|(a, u)| match &a.kind {
+            Kind::Value(c) if access::pays(&a.kind, 0, *u) => bound(&a.rel).map(|s| (s, usize::from(*c))),
+            _ => None,
+        })
+        .collect();
     let jobs: Vec<(Arc<InRel>, Kind)> = wanted
         .into_iter()
         .filter_map(|(a, u)| {
@@ -110,11 +135,12 @@ pub(super) fn prefetch(reads: &BTreeSet<String>, held: impl Fn(&str) -> Option<A
             (rel.view.is_none() && access::pays(&a.kind, rel.n as u64, u)).then_some((rel, a.kind))
         })
         .collect();
-    if jobs.is_empty() {
+    if jobs.is_empty() && values.is_empty() {
         return (0, 0);
     }
     let _span = crate::code_rule_dsl::logic::profile::span(|| "index builds ahead (decision 0706)".into());
     use rayon::prelude::*;
+    let made_values: Vec<Option<usize>> = values.par_iter().map(|(s, c)| s.build_value_index(*c)).collect();
     let made: Vec<Option<(usize, u64)>> = jobs
         .par_iter()
         .map(|(rel, kind)| {
@@ -144,6 +170,13 @@ pub(super) fn prefetch(reads: &BTreeSet<String>, held: impl Fn(&str) -> Option<A
         b[2] += rows;
         n += 1;
     }
+    for rows in made_values.into_iter().flatten() {
+        #[cfg(any(test, feature = "test-hooks"))]
+        VALUES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        b[3] += 1;
+        b[2] += rows as u64;
+        n += 1;
+    }
     (n, rels.len())
 }
 
@@ -153,8 +186,8 @@ fn trace() -> bool {
     *ON
 }
 
-/// What the run's build batches made: node bits, filters, and the rows they read.
-pub fn built() -> [u64; 3] {
+/// What the run's build batches made: node bits, filters, the rows they read, and views' value indexes.
+pub fn built() -> [u64; 4] {
     crate::code_rule_dsl::logic::run::local_if_any::<Built>().map(|b| *b.0.lock().unwrap()).unwrap_or_default()
 }
 
@@ -174,4 +207,12 @@ pub(super) fn on() -> bool {
 #[cfg(test)]
 pub(super) fn seed_observed(a: Access, u: Use) {
     crate::code_rule_dsl::logic::run::local::<Observed>().0.lock().unwrap().entry(a).or_default().add(u);
+}
+
+/// Tests: the views' value indexes the process built ahead.
+#[cfg(any(test, feature = "test-hooks"))]
+static VALUES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn value_indexes_built_for_tests() -> u64 {
+    VALUES.load(std::sync::atomic::Ordering::Relaxed)
 }
