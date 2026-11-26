@@ -1,6 +1,7 @@
 # 0341: A toggle is a carry-less multiply
 
-Status: decided (2026-11-17); landed on the CPU (the JIT, and the AOT's Rust). Follows 0338.
+Status: built (audited 2026-11-23). Decided (2026-11-17); landed on the CPU (the JIT, and the AOT's Rust). Follows
+0338.
 
 **Corrected by 0343.** The premise below is wrong: simdjson 5.0.5's arm64 `prefix_xor` is the
 six shift-XOR rounds. Its `vmull_p64` line is commented out ("apparently slow"). Whether tier 1

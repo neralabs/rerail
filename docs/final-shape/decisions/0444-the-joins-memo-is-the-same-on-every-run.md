@@ -1,5 +1,7 @@
 # 0444. The joins' memo and the planning choices are the same on every run
 
+Status: built (audited 2026-11-23).
+
 Date: 2026-11-19. Status: decided (user, 2026-11-19, on Q314: "Make it deterministic"). Amends 0203 and 0208.
 
 ## Intro

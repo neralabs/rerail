@@ -69,6 +69,7 @@
 //!   clause the run leaves out (the replay's `keep`) is dropped from both. The merge, less what `violation` does not
 //!   reach, is printed with `rr::print`.
 
+use rerail_blocks::vector::Vector;
 #[cfg(test)]
 use super::front;
 #[cfg(test)]
@@ -253,7 +254,7 @@ impl Emitter {
             AstMatcher::Any(ms) => {
                 let mark = self.next;
                 let bodies = ms.iter().map(|t| self.at_node(n, "$n", |e| e.scoped(|e| e.body(t, "$n")))).collect::<Res<Vec<_>>>()?;
-                if bodies.iter().any(Vec::is_empty) {
+                if bodies.iter().any(|v| v.is_empty()) {
                     return Ok(Vec::new());
                 }
                 if bodies.len() == 1 {
@@ -497,12 +498,15 @@ impl Emitter {
         match p {
             PatternNode::MetaVar { meta_var } => match meta_var {
                 MetaVariable::Capture(name, _) => match captures.get(name).cloned() {
-                    // Bound before: the same name, as ast-grep compares their text.
+                    // Bound before: the same name, as ast-grep compares their text. Both are nodes of one match, so
+                    // of one document (decision 0652): a helper of the comparison alone joins no two files.
                     Some(prior) if prior != n => {
                         self.approx.insert("a metavariable twice: equal names".into());
-                        let t = self.var();
+                        let (t, d) = (self.var(), self.var());
                         body.push(format!("text({prior}, {t})"));
                         body.push(format!("text({n}, {t})"));
+                        body.push(format!("docof({prior}, {d})"));
+                        body.push(format!("docof({n}, {d})"));
                     }
                     Some(_) => {}
                     None => {
@@ -543,7 +547,7 @@ impl Emitter {
                     }
                 }
                 let named: Vec<&PatternNode> = children.iter().filter(|c| !matches!(c, PatternNode::Terminal { is_named: false, .. })).collect();
-                let ellipsis: Vec<usize> = named
+                let ellipsis: Vector<usize> = named
                     .iter()
                     .enumerate()
                     .filter(|(_, c)| matches!(c, PatternNode::MetaVar { meta_var: MetaVariable::Multiple | MetaVariable::MultiCapture(_) }))
@@ -1224,7 +1228,7 @@ fn nonempty(body: Body, n: &str) -> Body {
 }
 
 /// The kind ids a `kind` matcher names.
-fn kind_ids(k: &ast_grep_core::matcher::KindMatcher) -> Vec<u16> {
+fn kind_ids(k: &ast_grep_core::matcher::KindMatcher) -> Vector<u16> {
     use ast_grep_core::matcher::Matcher;
     k.potential_kinds().map(|set| set.iter().filter_map(|k| u16::try_from(k).ok()).collect()).unwrap_or_default()
 }

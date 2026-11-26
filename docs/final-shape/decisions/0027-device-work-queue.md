@@ -1,7 +1,7 @@
 # 0027: device-side enqueue is a work queue inside a persistent dispatch
 
-Status: accepted (2026-11-02, list step 17; reworked the same day at the user's direction, replacing
-a first version that limited device loops to one threadgroup's own loop)
+Status: built (audited 2026-11-23). Accepted (2026-11-02, list step 17; reworked the same day at the user's direction,
+replacing a first version that limited device loops to one threadgroup's own loop)
 
 ## Context
 

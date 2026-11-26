@@ -210,7 +210,7 @@ where
     let (ndocs, rows) = ((*d).ndocs, view_rows(d));
     let (mut t, mut memo) = (t0, NONE);
     while t < lim {
-        let a = (*d).doc_of_row(k, t, memo);
+        let a = ViewDir::doc_of_row(d, k, t, memo);
         memo = a;
         let e = rows.add(a as usize);
         let first = (*e).rows[k as usize];

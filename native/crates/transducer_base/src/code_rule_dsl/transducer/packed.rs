@@ -1,4 +1,5 @@
 
+use rerail_blocks::vector::Vector;
 use super::super::tape::TapeDoc;
 use ast_grep_core::MatchStrictness;
 use ast_grep_core::matcher::{Pattern, PatternNode};
@@ -53,9 +54,9 @@ pub use device::{RootJobs, RootsFound};
 pub trait CpuExecutor: Send + Sync {
     /// The batch on the compiled CPU, from `anchors`, at most `result_limits` results per program, each task held to
     /// `budget` (decision 0334).
-    fn execute_packed(&self, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>, budget: Budget) -> Result<PackedExecution, Error>;
+    fn execute_packed(&self, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<rerail_blocks::vector::Vector<u32>>], result_limits: Option<&[u32]>, budget: Budget) -> Result<PackedExecution, Error>;
     /// The batch's outcomes on the compiled CPU.
-    fn execute_outcomes(&self, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>]) -> Result<BatchOutcome, Error>;
+    fn execute_outcomes(&self, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<rerail_blocks::vector::Vector<u32>>]) -> Result<BatchOutcome, Error>;
     /// `program` compiled ahead of its first batch.
     fn warm(&self, program: &Program) -> Result<(), Error>;
     /// Whether every one of `programs` is compiled.
@@ -143,10 +144,6 @@ pub mod regex_block;
 // cratify: `block_rows_tests` is rerail-device-metal's (it mounts it)
 #[cfg(test)]
 pub mod block_digest_tests;
-// The `.rerail` parser (`rerail_rr_parser`): the Bitlex grammar compiled, the engine's parser for
-// what it refuses. Nothing in the engine parses with it yet; named here for the engine's callers.
-#[allow(unused_imports)]
-pub use rerail_rr_parser as rr_parser;
 // cratify: `json_parser` is rerail-lang-json's (it mounts it)
 pub mod stream;
 // cratify: `regex_relocation_tests` is rerail-device-metal's (it mounts it)
@@ -295,7 +292,7 @@ impl Budget {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Unfinished {
     pub work: bool,
-    pub outgrown: Vec<u32>,
+    pub outgrown: Vector<u32>,
 }
 
 /// The tasks whose states grew in a restart (decision 0334 §9): (file, program, root within its file) to how many
@@ -310,19 +307,19 @@ pub type StateGrowth = std::collections::BTreeMap<(usize, usize, u32), u32>;
 /// case's results. Each run's evaluations are observed for the cost store (`evaluation_costs`).
 pub fn restarting(
     programs: &[Program],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     budget: Budget,
-    once: &mut dyn FnMut(&[Vec<Vec<u32>>], Budget, &StateGrowth) -> Result<packed_batch::PackedExecution, Error>,
+    once: &mut dyn FnMut(&[Vec<Vector<u32>>], Budget, &StateGrowth) -> Result<packed_batch::PackedExecution, Error>,
 ) -> Result<packed_batch::PackedExecution, Error> {
     restarting_grown(programs, anchors, budget, &StateGrowth::new(), once)
 }
 
 fn restarting_grown(
     programs: &[Program],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     budget: Budget,
     growth: &StateGrowth,
-    once: &mut dyn FnMut(&[Vec<Vec<u32>>], Budget, &StateGrowth) -> Result<packed_batch::PackedExecution, Error>,
+    once: &mut dyn FnMut(&[Vec<Vector<u32>>], Budget, &StateGrowth) -> Result<packed_batch::PackedExecution, Error>,
 ) -> Result<packed_batch::PackedExecution, Error> {
     let execution = once(anchors, budget, growth)?;
     // Every run reprices its programs for the evaluations not yet started (decision 0334).
@@ -344,7 +341,7 @@ fn restarting_grown(
     if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         eprintln!("RERAIL_PACKED_RESTART budget={budget:?} next={next:?} unfinished={unfinished:?}");
     }
-    let mut rerun = anchors.iter().map(|file| vec![Vec::new(); file.len()]).collect::<Vec<_>>();
+    let mut rerun = anchors.iter().map(|file| vec![Vector::new(); file.len()]).collect::<Vec<_>>();
     for &(file, program, _) in &unfinished {
         rerun[file][program] = anchors[file][program].clone();
     }
@@ -914,7 +911,7 @@ pub enum CapturePredicate {
     },
     AnyOf {
         capture: u16,
-        strings: Vec<u16>,
+        strings: Vector<u16>,
         negated: bool,
         any: bool,
     },
@@ -926,18 +923,18 @@ pub enum CapturePredicate {
     },
     Kinds {
         capture: u16,
-        kinds: Vec<u16>,
+        kinds: Vector<u16>,
         negated: bool,
     },
     Contains {
         capture: u16,
-        strings: Vec<u16>,
+        strings: Vector<u16>,
         negated: bool,
         any: bool,
     },
     Relation {
         capture: u16,
-        kinds: Vec<u16>,
+        kinds: Vector<u16>,
         ancestor: bool,
         negated: bool,
     },
@@ -987,7 +984,7 @@ pub enum ExecutionBackend {
 pub fn interpreter_reference(
     programs: &[Program],
     file: &TapeDoc,
-    roots: &[Vec<u32>],
+    roots: &[Vector<u32>],
     limits: &[u32],
 ) -> Result<packed_batch::PackedExecution, Error> {
     packed_batch::PackedExecution::interpret_reference(programs, file, roots, limits)
@@ -1013,10 +1010,67 @@ pub struct ExecutionArena {
     capture_transitions: HashMap<(u32, u16, u32), u32>,
     pub cursors: Vec<Vec<Option<u32>>>,
     cursor_indexes: HashMap<Vec<Option<u32>>, u32>,
-    pub repeats: Vec<Vec<u16>>,
-    repeat_indexes: HashMap<Vec<u16>, u32>,
+    pub repeats: Vec<Vector<u16>>,
+    repeat_indexes: HashMap<Vector<u16>, u32>,
     greedy_paths: Vec<Option<Path>>,
     greedy_indexes: HashMap<(u16, u32, u32, u32, u32), u32>,
+}
+
+thread_local! {
+    /// This thread's execution arena and states between transducer runs: their containers' room, the same on any
+    /// thread. Made a run, their first captures were 5 arrays a run (1.16 M runs on cold PostHog).
+    static SPARE_ARENA: std::cell::Cell<Option<Box<(ExecutionArena, HashMap<QueryStateKey, CaptureStateSet>)>>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// A run's arena and states, from the thread's spare (a new one when a run on this thread holds it), given back when
+/// the run ends, by any path.
+struct SpareArena(Option<Box<(ExecutionArena, HashMap<QueryStateKey, CaptureStateSet>)>>);
+
+impl SpareArena {
+    fn take() -> Self {
+        SpareArena(Some(SPARE_ARENA.take().unwrap_or_default()))
+    }
+    fn parts(&mut self) -> (&mut ExecutionArena, &mut HashMap<QueryStateKey, CaptureStateSet>) {
+        let held = self.0.as_mut().expect("held until dropped");
+        (&mut held.0, &mut held.1)
+    }
+}
+
+impl Drop for SpareArena {
+    fn drop(&mut self) {
+        if let Some(mut held) = self.0.take() {
+            held.0.clear();
+            held.1.clear();
+            let other = SPARE_ARENA.take();
+            SPARE_ARENA.set(Some(match other {
+                // A nested run's gave its back first: the larger kept.
+                Some(o) if o.1.capacity() > held.1.capacity() => o,
+                _ => held,
+            }));
+        }
+    }
+}
+
+impl ExecutionArena {
+    /// As `default`, its containers' room kept: one arena serves every root of a run (`execute_roots_split`), where
+    /// an arena a root made seven containers each time (2.3 M arenas on cold PostHog).
+    pub fn clear(&mut self) {
+        self.captures.truncate(1);
+        self.captures[0].clear();
+        self.ordered_captures.truncate(1);
+        self.capture_transitions.clear();
+        self.cursors.truncate(1);
+        self.cursors[0].clear();
+        self.cursor_indexes.clear();
+        self.cursor_indexes.insert(Vec::new(), 0);
+        self.repeats.truncate(1);
+        self.repeats[0].clear();
+        self.repeat_indexes.clear();
+        self.repeat_indexes.insert(Vector::new(), 0);
+        self.greedy_paths.clear();
+        self.greedy_indexes.clear();
+    }
 }
 
 impl Default for ExecutionArena {
@@ -1027,8 +1081,8 @@ impl Default for ExecutionArena {
             capture_transitions: HashMap::new(),
             cursors: vec![Vec::new()],
             cursor_indexes: HashMap::from([(Vec::new(), 0)]),
-            repeats: vec![Vec::new()],
-            repeat_indexes: HashMap::from([(Vec::new(), 0)]),
+            repeats: vec![rerail_blocks::vector::Vector::new()],
+            repeat_indexes: HashMap::from([(Vector::new(), 0)]),
             greedy_paths: Vec::new(),
             greedy_indexes: HashMap::new(),
         }
@@ -1213,7 +1267,7 @@ pub fn compare_capture_nodes(left: CaptureIdentity, right: CaptureIdentity) -> s
 #[derive(Default)]
 struct CaptureAntichain {
     states: Vec<Option<Vec<CaptureIdentity>>>,
-    by_length: BTreeMap<usize, Vec<usize>>,
+    by_length: BTreeMap<usize, Vector<usize>>,
 }
 
 #[allow(dead_code)]
@@ -1464,7 +1518,7 @@ enum Slotted {
 struct SlottedPattern {
     root: Slotted,
     names: Vec<String>,
-    order: Vec<u16>,
+    order: Vector<u16>,
 }
 
 impl SlottedPattern {
@@ -1491,7 +1545,7 @@ impl SlottedPattern {
         }
         let mut names = Vec::new();
         let root = lower(pattern, &mut names);
-        let mut order: Vec<u16> = (0..names.len() as u16).collect();
+        let mut order: Vector<u16> = (0..names.len() as u16).collect();
         order.sort_by(|a, b| names[usize::from(*a)].cmp(&names[usize::from(*b)]));
         Self { root, names, order }
     }
@@ -1528,8 +1582,8 @@ enum Binding {
 #[derive(Default)]
 pub struct AstBindings {
     slots: Vec<Binding>,
-    nodes: Vec<u32>,
-    log: Vec<u16>,
+    nodes: Vector<u32>,
+    log: Vector<u16>,
 }
 
 impl AstBindings {
@@ -1845,7 +1899,7 @@ impl Program {
 
     pub fn compile_regex(regex: &Regex) -> Result<Self, Error> {
         Self::new(
-            vec![word(TEXT, 0, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 1)],
+            rerail_blocks::vector![word(TEXT, 0, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 1)],
             vec![
                 regex.as_str().as_bytes().to_vec(),
                 b"match".to_vec(),
@@ -1855,8 +1909,8 @@ impl Program {
                 source: 0,
                 compiled: regex.clone(),
             }],
-            vec![1, 2],
-            Vec::new(),
+            rerail_blocks::vector![1, 2],
+            rerail_blocks::vector::Vector::new(),
         )
     }
 
@@ -1877,21 +1931,21 @@ impl Program {
 
     pub fn compile_navigation() -> Result<Self, Error> {
         Self::new(
-            vec![word(STOP, 0, 0)],
+            rerail_blocks::vector![word(STOP, 0, 0)],
             Vec::new(),
             Vec::new(),
-            Vec::new(),
-            Vec::new(),
+            rerail_blocks::vector::Vector::new(),
+            rerail_blocks::vector::Vector::new(),
         )
     }
 
     pub fn compile_universe() -> Result<Self, Error> {
         Self::new(
-            vec![word(CAPTURE, 0, 0), word(EMIT, 0, 1)],
+            rerail_blocks::vector![word(CAPTURE, 0, 0), word(EMIT, 0, 1)],
             vec![b"match".to_vec(), b"universe".to_vec()],
             Vec::new(),
-            vec![0, 1],
-            Vec::new(),
+            rerail_blocks::vector![0, 1],
+            rerail_blocks::vector::Vector::new(),
         )
     }
 
@@ -1905,15 +1959,15 @@ impl Program {
 
     fn compile_kind_operation(operation: u8, kind: u16) -> Result<Self, Error> {
         Self::new(
-            vec![
+            rerail_blocks::vector![
                 word(operation, 0, kind),
                 word(CAPTURE, 0, 0),
                 word(EMIT, 0, 1),
             ],
             vec![b"match".to_vec(), b"kind".to_vec()],
             Vec::new(),
-            vec![0, 1],
-            Vec::new(),
+            rerail_blocks::vector![0, 1],
+            rerail_blocks::vector::Vector::new(),
         )
     }
 
@@ -1929,7 +1983,7 @@ impl Program {
         else {
             return Err(Error::UnsupportedPattern);
         };
-        let mut words = vec![word(KIND, 0, *kind_id)];
+        let mut words = rerail_blocks::vector![word(KIND, 0, *kind_id)];
         let predicates = if *is_named {
             words.push(word(TEXT, 0, 0));
             vec![TextPredicate::Equal(0)]
@@ -1945,8 +1999,8 @@ impl Program {
                 b"ast-grep-literal".to_vec(),
             ],
             predicates,
-            vec![1, 2],
-            Vec::new(),
+            rerail_blocks::vector![1, 2],
+            rerail_blocks::vector::Vector::new(),
         )
     }
 
@@ -2019,22 +2073,22 @@ impl Program {
     }
 
     pub fn new(
-        words: Vec<u32>,
+        words: Vector<u32>,
         strings: Vec<Vec<u8>>,
         predicates: Vec<TextPredicate>,
-        labels: Vec<u16>,
-        longs: Vec<u64>,
+        labels: Vector<u16>,
+        longs: Vector<u64>,
     ) -> Result<Self, Error> {
         Self::new_with_capture_predicates(words, strings, predicates, Vec::new(), labels, longs)
     }
 
     pub fn new_with_capture_predicates(
-        words: Vec<u32>,
+        words: Vector<u32>,
         strings: Vec<Vec<u8>>,
         predicates: Vec<TextPredicate>,
         capture_predicates: Vec<CapturePredicate>,
-        labels: Vec<u16>,
-        longs: Vec<u64>,
+        labels: Vector<u16>,
+        longs: Vector<u64>,
     ) -> Result<Self, Error> {
         let value_programs = predicates
             .iter()
@@ -3032,7 +3086,7 @@ impl Program {
             node: Node<'tree, D>,
             captures: Vec<(u16, Node<'tree, D>)>,
             cursors: Vec<Option<Node<'tree, D>>>,
-            active_repeats: Vec<u16>,
+            active_repeats: Vector<u16>,
             steps: usize,
         }
         let mut paths = vec![Path {
@@ -3040,7 +3094,7 @@ impl Program {
             node: start.clone(),
             captures: Vec::new(),
             cursors: Vec::new(),
-            active_repeats: Vec::new(),
+            active_repeats: rerail_blocks::vector::Vector::new(),
             steps: 0,
         }];
         while let Some(mut path) = paths.pop() {
@@ -3536,12 +3590,16 @@ impl Program {
         let reach = if self.set_mode { set_mode::Reach::of(&self.words) } else { None };
         let eligible = |node: u32, named: bool| !named || tape.transducer_flags(node) & 1 != 0;
         let next_descendant = |from: u32, end: u32, named: bool| (from..end).find(|&node| eligible(node, named));
+        // A root's arena and states, cleared at each root: their room kept across the run's roots, and the thread's
+        // runs (`SPARE_ARENA`).
+        let mut spare = SpareArena::take();
+        let (arena, seen_states) = spare.parts();
         for root in roots {
             debug_assert!(pending.is_empty());
             let mut fired = 0_u64;
-            let mut seen_states = HashMap::<QueryStateKey, CaptureStateSet>::new();
+            seen_states.clear();
             let mut task_work = 0_usize;
-            let mut arena = ExecutionArena::default();
+            arena.clear();
             pending.push(WorkItem::Path(Path {
                 pc: initial_pc,
                 node: root,
@@ -3577,7 +3635,7 @@ impl Program {
                             && !self.admit_query_state(
                                 &path,
                                 &arena,
-                                &mut seen_states,
+                                &mut *seen_states,
                                 &mut task_work,
                             )?
                         {
@@ -3674,7 +3732,7 @@ impl Program {
                         && !self.admit_query_state(
                             &path,
                             &arena,
-                            &mut seen_states,
+                            &mut *seen_states,
                             &mut task_work,
                         )?
                     {
@@ -3970,7 +4028,7 @@ impl Program {
         }
         let mut dominated = vec![false; output.len()];
         if has_repeats {
-            let mut by_start = BTreeMap::<u32, Vec<usize>>::new();
+            let mut by_start = BTreeMap::<u32, Vector<usize>>::new();
             for (index, found) in output.iter().enumerate() {
                 by_start.entry(found.start).or_default().push(index);
             }
@@ -4036,7 +4094,7 @@ impl Program {
 pub fn execute_batch(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: Option<&[Vec<Vec<u32>>]>,
+    anchors: Option<&[Vec<Vector<u32>>]>,
 ) -> Result<Vec<Vec<Vec<Output>>>, Error> {
     if let Some(anchors) = anchors
         && (anchors.len() != files.len() || anchors.iter().any(|file| file.len() != programs.len()))
@@ -4105,7 +4163,7 @@ impl BatchOutcome {
 pub fn execute_batch_outcomes(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
 ) -> Result<BatchOutcome, Error> {
     if anchors.len() != files.len() || anchors.iter().any(|file| file.len() != programs.len()) {
         return Err(Error::InvalidAnchor);
@@ -4157,7 +4215,7 @@ pub fn execute_with_backend(
     backend: ExecutionBackend,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
 ) -> Result<Vec<Vec<Vec<Output>>>, Error> {
     execute_with_backend_outcomes(backend, programs, files, anchors)?.into_result()
 }
@@ -4165,7 +4223,7 @@ pub fn execute_with_backend(
 pub fn packed_workspace_fits(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: &[u32],
 ) -> Result<(), Error> {
     let mut batch = packed_batch::PackedBatch::new_in_place(programs, files, anchors)?;
@@ -4181,7 +4239,7 @@ pub fn packed_workspace_fits(
 pub fn packed_workspace_size(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: &[u32],
 ) -> Result<(u64, [u64; 15]), Error> {
     let mut batch = packed_batch::PackedBatch::new_in_place(programs, files, anchors)?;
@@ -4194,15 +4252,15 @@ pub fn packed_workspace_size(
 pub fn packed_program_counts(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
-) -> Result<Vec<[u64; 15]>, Error> {
+    anchors: &[Vec<Vector<u32>>],
+) -> Result<Vector<[u64; 15]>, Error> {
     packed_batch::PackedBatch::new_in_place(programs, files, anchors)?.program_counts(programs)
 }
 
 pub(in crate::code_rule_dsl) fn packed_workspace_bytes(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: &[u32],
 ) -> Result<u64, Error> {
     let mut batch = packed_batch::PackedBatch::new_in_place(programs, files, anchors)?;
@@ -4214,7 +4272,7 @@ pub fn execute_with_backend_packed_result_limits(
     backend: ExecutionBackend,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: Option<&[u32]>,
 ) -> Result<packed_batch::PackedExecution, Error> {
     execute_planned(backend, PlanId::of_programs(programs), programs, files, anchors, result_limits)
@@ -4228,7 +4286,7 @@ pub fn execute_planned(
     plan: PlanId,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: Option<&[u32]>,
 ) -> Result<packed_batch::PackedExecution, Error> {
     execute_planned_budgeted(backend, plan, programs, files, anchors, result_limits, Budget::current())
@@ -4243,7 +4301,7 @@ pub fn execute_planned_budgeted(
     plan: PlanId,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: Option<&[u32]>,
     budget: Budget,
 ) -> Result<packed_batch::PackedExecution, Error> {
@@ -4255,7 +4313,7 @@ fn execute_planned_once(
     plan: PlanId,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: Option<&[u32]>,
     budget: Budget,
 ) -> Result<packed_batch::PackedExecution, Error> {
@@ -4284,7 +4342,7 @@ pub fn execute_with_backend_outcomes(
     backend: ExecutionBackend,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
 ) -> Result<BatchOutcome, Error> {
     match compilation::resolve(backend, programs)? {
         ExecutionBackend::CpuInterpreter => execute_batch_outcomes(programs, files, anchors),
@@ -4300,7 +4358,7 @@ pub fn execute_with_backend_bounded_limit(
     backend: ExecutionBackend,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     maximum_programs: usize,
 ) -> Result<BatchOutcome, Error> {
     if anchors.len() != files.len() || anchors.iter().any(|file| file.len() != programs.len()) {
@@ -4369,8 +4427,8 @@ pub fn execute_with_backend_bounded_limit(
                             let take = available.min(left);
                             left -= take;
                             vec![
-                                file[start][offsets[file_index]..offsets[file_index] + take]
-                                    .to_vec(),
+                                Vector::from(&file[start][offsets[file_index]..offsets[file_index] + take]),
+                                    
                             ]
                         })
                         .collect::<Vec<_>>()
@@ -4507,7 +4565,7 @@ pub fn execute_production_corpus(
 ) -> Result<packed_batch::PackedExecution, Error> {
     let anchors = anchors
         .iter()
-        .map(|file| file.iter().map(|roots| roots.to_vec()).collect())
+        .map(|file| file.iter().map(|roots| Vector::from(&roots[..])).collect())
         .collect::<Vec<_>>();
     if let Some(device) = device::matcher() {
         return device.execute_packed(device::Engine::Jit, programs, files, &anchors, Some(result_limits), Budget::current());

@@ -248,8 +248,14 @@ pub(super) fn sample() {
             rerail_prof::heap::name_thread("profile memory (the memory sampler)");
             let start = std::time::Instant::now();
             let mut last_max = footprint().1;
+            let mut ticks = 0u64;
             loop {
                 std::thread::sleep(std::time::Duration::from_millis(every_ms));
+                // The queues the system's nameless threads serve, about every 50 ms (`note_dispatch_labels`).
+                ticks += 1;
+                if ticks.is_multiple_of((50 / every_ms.max(1)).max(1)) {
+                    super::note_dispatch_labels();
+                }
                 let (now, max) = footprint();
                 let (live, resident) = heap();
                 let at = start.elapsed().as_secs_f64();
@@ -598,6 +604,11 @@ pub mod width_census {
         let total: u64 = by.iter().map(|e| e.2).sum();
         let mut out = vec![format!("relations let go: {} names, {} M values in all; the most:", by.len(), total / 1_000_000)];
         out.extend(by.iter().take(n).map(|(name, rows, values, times)| format!("{:>8.1} M values {:>8.1} M rows {times:>6}x  {name}", *values as f64 / 1e6, *rows as f64 / 1e6)));
+        // Hiding's narrow twins (decisions 0165, 0611), every one whatever its size: a run with no annotation document
+        // should hold none.
+        let narrow: Vec<_> = by.iter().filter(|e| e.0.contains("rr_narrow_")).collect();
+        out.push(format!("narrow twins let go: {} names", narrow.len()));
+        out.extend(narrow.iter().map(|(name, rows, values, times)| format!("{:>8.3} M values {:>8.3} M rows {times:>6}x  {name}", *values as f64 / 1e6, *rows as f64 / 1e6)));
         out
     }
 

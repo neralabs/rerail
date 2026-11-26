@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use super::{
     BatchOutcome, Error, Output, Program,
     metal_batch_abi::{
@@ -229,7 +230,9 @@ pub struct NativeTaskContext {
     pub repeat_quota_limit: u32,
     pub results: *mut ResultRecord,
     pub result_quota_limit: u32,
-    pub line_starts: *const u32,
+    /// Its document's line index (decision 0612: `LineTable::index`, its language's lines), read where it lies by
+    /// the lines' reads (`lines_line`, `lines_start`).
+    pub lines: *const u8,
     pub line_count: u32,
     pub final_captures: *mut FinalCaptureRecord,
     pub final_capture_capacity: u32,
@@ -2565,7 +2568,7 @@ pub(super) fn compile_cached(program: &Program) -> Result<Arc<CompiledStraightLi
 pub fn execute_batch(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
 ) -> Result<Vec<Vec<Vec<Output>>>, Error> {
     execute_batch_outcomes(programs, files, anchors)?.into_result()
 }
@@ -2573,7 +2576,7 @@ pub fn execute_batch(
 pub(super) fn execute_batch_outcomes(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
 ) -> Result<BatchOutcome, Error> {
     execute_batch_packed(programs, files, anchors)?.into_outcome()
 }
@@ -2581,7 +2584,7 @@ pub(super) fn execute_batch_outcomes(
 pub(super) fn execute_batch_packed(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
 ) -> Result<PackedExecution, Error> {
     execute_batch_packed_with_result_limits(programs, files, anchors, None)
 }
@@ -2589,7 +2592,7 @@ pub(super) fn execute_batch_packed(
 pub(super) fn execute_batch_packed_with_result_limits(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: Option<&[u32]>,
 ) -> Result<PackedExecution, Error> {
     execute_batch_packed_with_work_limit(
@@ -2605,7 +2608,7 @@ pub(super) fn execute_batch_packed_with_result_limits(
 pub fn execute_terminal_reference_with_work_limit(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: Option<&[u32]>,
     work_limit: u32,
 ) -> Result<PackedExecution, Error> {
@@ -2622,7 +2625,7 @@ pub fn execute_terminal_reference_with_work_limit(
 pub fn execute_batch_packed_with_work_limit(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: Option<&[u32]>,
     work_limit: u32,
 ) -> Result<PackedExecution, Error> {
@@ -2636,7 +2639,7 @@ pub fn execute_batch_packed_with_work_limit(
 pub(super) fn execute_batch_packed_budgeted(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: Option<&[u32]>,
     budget: super::Budget,
 ) -> Result<PackedExecution, Error> {
@@ -2648,13 +2651,15 @@ pub(super) fn execute_batch_packed_budgeted(
 fn execute_batch_packed_once(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: Option<&[u32]>,
     work_limit: u32,
     budget: super::Budget,
     growth: &super::StateGrowth,
 ) -> Result<PackedExecution, Error> {
     let stage = crate::code_rule_dsl::prof::Stage::start("jit.batch");
+    // Its 16z files read in one batch, the packing's reads and the workers' (`tape::formats::in_one_batch`).
+    let files = &*crate::code_rule_dsl::tape::formats::in_one_batch(files);
     let mut batch = PackedBatch::new_in_place(programs, files, anchors)?;
     batch.apply_budget(budget, growth);
     drop(stage);
@@ -2762,8 +2767,6 @@ struct PreparedRun {
     entries: Vec<NativeTaskEntry>,
     contexts: Vec<(usize, NativeTaskContext)>,
     _tapes: Vec<FileTape>,
-    /// The 16z tapes' readers, whose views the contexts point at: held until the tasks have run.
-    _readers: Readers,
     workspace: BatchRegions,
     _compiled: Vec<Arc<CompiledStraightLine>>,
     allocation_elapsed: std::time::Duration,
@@ -2799,7 +2802,7 @@ fn prepare_run(
     let mut workspace = BatchRegions::allocate(batch, totals)?;
     let evaluation_starts = evaluation_arena_starts(batch)?;
     drop(regions);
-    let (tapes, readers, contexts) = build_task_contexts(files, batch, &mut workspace, &evaluation_starts, totals, work_limit)?;
+    let (tapes, contexts) = build_task_contexts(files, batch, &mut workspace, &evaluation_starts, totals, work_limit)?;
     let allocation_elapsed = allocation_started.elapsed();
     let entries = compiled
         .iter()
@@ -2807,7 +2810,7 @@ fn prepare_run(
         .collect::<Vec<_>>();
     let execution_started = std::time::Instant::now();
     drop(setup);
-    Ok(PreparedRun { entries, contexts, _tapes: tapes, _readers: readers, workspace, _compiled: compiled, allocation_elapsed, execution_started })
+    Ok(PreparedRun { entries, contexts, _tapes: tapes, workspace, _compiled: compiled, allocation_elapsed, execution_started })
 }
 
 /// Each evaluation's first record in each arena: the evaluations' quotas laid end to end.
@@ -2830,9 +2833,16 @@ fn evaluation_arena_starts(batch: &PackedBatch) -> Result<Vec<[u32; ARENA_KIND_C
 fn file_tapes(files: &[TapeDoc], batch: &PackedBatch) -> Result<Vec<FileTape>, Error> {
     let mut tables: std::collections::HashMap<usize, Arc<Vec<crate::code_rule_dsl::tape::resident::DeviceCode>>> = std::collections::HashMap::new();
     let mut tapes = Vec::with_capacity(files.len());
+    // The 16z tapes' cache (0353 step 4b): their batch's (`tape::formats::in_one_batch`: their own, else one made for
+    // this run's files). Every worker's reads share it, checked after each read (`columns[4]`, as the device's are), as
+    // the host's reads of the same documents do.
     for (doc, file) in files.iter().zip(&batch.files) {
         let (bytes, mut view) = doc.doc_tape().in_place().map_err(|_| Error::BackendFailure)?;
         (view.node_base, view.source_base) = (file.node_start, file.source_start);
+        if view.format == rerail_clif::view::F16Z_FORMAT {
+            let cache = doc.doc_tape().cache().ok_or(Error::BackendFailure)?;
+            view = cache.view_for(&view, bytes.as_ptr());
+        }
         let table = crate::code_rule_dsl::tape::resident::codes_key(doc);
         let codes = match tables.get(&table) {
             Some(codes) => Arc::clone(codes),
@@ -2847,12 +2857,8 @@ fn file_tapes(files: &[TapeDoc], batch: &PackedBatch) -> Result<Vec<FileTape>, E
     Ok(tapes)
 }
 
-/// A 16z tape's reader for each (evaluation, file) that reads it (0353 step 4b).
-type Readers = std::collections::HashMap<(u32, u32), rerail_clif::view::Reader>;
-
-/// Each task's context, over its evaluation's share of `workspace`; the contexts point into the tapes and the readers
-/// returned with them, which the caller holds while the tasks run (roll-up 35 dropped the readers here, as the
-/// function returned: every 16z run read freed memory).
+/// Each task's context, over its evaluation's share of `workspace`; the contexts point into the tapes returned with
+/// them, which the caller holds while the tasks run (a 16z tape's view points into its batch's cache).
 fn build_task_contexts(
     files: &[TapeDoc],
     batch: &PackedBatch,
@@ -2860,7 +2866,7 @@ fn build_task_contexts(
     evaluation_starts: &[[u32; ARENA_KIND_COUNT]],
     totals: super::packed_workspace::WorkspaceTotals,
     work_limit: u32,
-) -> Result<(Vec<FileTape>, Readers, Vec<(usize, NativeTaskContext)>), Error> {
+) -> Result<(Vec<FileTape>, Vec<(usize, NativeTaskContext)>), Error> {
     let _contexts = crate::code_rule_dsl::prof::Stage::start("jit.contexts");
     let BatchRegions {
         paths: PathRegions { pending, captures, cursors, repeats },
@@ -2869,9 +2875,6 @@ fn build_task_contexts(
     } = workspace;
     let tapes = file_tapes(files, batch)?;
     let node_count = batch.files.iter().map(|file| file.node_count).sum::<u32>();
-    // A 16z tape's reader for each evaluation that reads it (0353 step 4b): its reads decode a block into the
-    // reader's slots, and an evaluation's tasks run on one worker, in order.
-    let mut readers = Readers::new();
     let mut contexts = Vec::with_capacity(batch.tasks.len());
 
     for (task_index, task) in batch.tasks.iter().enumerate() {
@@ -2888,17 +2891,17 @@ fn build_task_contexts(
         let mut context: NativeTaskContext = unsafe { mem::zeroed() };
         let (tape, view, codes) = &tapes[task.file as usize];
         context.tape = *tape;
-        context.view = if view.format == rerail_clif::view::F16Z_FORMAT {
-            readers.entry((task.evaluation, task.file)).or_insert_with(|| rerail_clif::view::Reader::new(view, *tape)).view()
-        } else {
-            std::ptr::from_ref(view)
-        };
+        context.view = std::ptr::from_ref(view);
         context.codes = codes.as_ptr();
         context.node_base = view.node_base;
         context.source_base = view.source_base;
         context.node_count = node_count;
-        context.source = batch.source.as_ptr();
-        context.source_length = batch.source.len() as u32;
+        // The document's source where its tape holds it (decision 0353 step 7), based so the batch's numbering of
+        // source bytes indexes it: its bytes lie at `source_start..source_start + source_length`, its nodes' spans
+        // with them.
+        let doc = &files[task.file as usize];
+        context.source = doc.transducer_source().as_ptr().wrapping_sub(file.source_start as usize);
+        context.source_length = file.source_start + file.source_length;
         context.values = unsafe { batch.values.as_ptr().add(program.value_start as usize) };
         context.value_count = value_count;
         context.nfa_states = batch.nfa_states.as_ptr();
@@ -2979,7 +2982,8 @@ fn build_task_contexts(
                 .add(totals.candidates as usize + arena_starts[ArenaKind::Result as usize] as usize)
         };
         context.result_quota_limit = batch.evaluation_limit(task, ArenaKind::Result);
-        context.line_starts = unsafe { batch.line_starts.as_ptr().add(file.line_start as usize) };
+        // Its lines, the document's own line index, read where it lies (`line_start` adds `source_base`).
+        context.lines = doc.line_table().index().as_ptr();
         context.line_count = file.line_count;
         context.final_captures = unsafe {
             final_captures
@@ -3008,7 +3012,7 @@ fn build_task_contexts(
         contexts.push((task.program as usize, context));
     }
     drop(_contexts);
-    Ok((tapes, readers, contexts))
+    Ok((tapes, contexts))
 }
 
 fn evaluation_spans<'a>(
@@ -3334,10 +3338,10 @@ fn rebase_property_text(property: &mut PropertyRecord, byte_base: u32) -> Result
 pub struct Executor;
 
 impl super::CpuExecutor for Executor {
-    fn execute_packed(&self, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>, budget: super::Budget) -> Result<PackedExecution, Error> {
+    fn execute_packed(&self, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<rerail_blocks::vector::Vector<u32>>], result_limits: Option<&[u32]>, budget: super::Budget) -> Result<PackedExecution, Error> {
         execute_batch_packed_budgeted(programs, files, anchors, result_limits, budget)
     }
-    fn execute_outcomes(&self, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>]) -> Result<BatchOutcome, Error> {
+    fn execute_outcomes(&self, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<rerail_blocks::vector::Vector<u32>>]) -> Result<BatchOutcome, Error> {
         execute_batch_outcomes(programs, files, anchors)
     }
     fn warm(&self, program: &Program) -> Result<(), Error> {

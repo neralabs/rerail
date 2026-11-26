@@ -1,6 +1,7 @@
 //! Base and worktree state, and the per-event maintenance step: per-path blocks deleted and
 //! reinserted, keyed tables updated with the changed keys collected, the readers of those keys
 //! re-run in level order (engine), roots registered, refusals and edges updated.
+use rerail_blocks::vector::Vector;
 use super::engine::*;
 use super::intern::{Interner, Sym};
 use super::path::{self, Block, ModuleCtx, SDef, CLASS};
@@ -254,8 +255,8 @@ impl Delta {
     pub fn breakdown(&self) -> serde_json::Value {
         let m = &self.memos;
         let table_keys: usize = self.tables.t.iter().map(|t| t.len()).sum();
-        let table_rows: usize = self.tables.t.iter().map(|t| t.values().map(Vec::len).sum::<usize>()).sum();
-        let per_table: Vec<(usize, usize)> = self.tables.t.iter().map(|t| (t.len(), t.values().map(Vec::len).sum::<usize>())).collect();
+        let table_rows: usize = self.tables.t.iter().map(|t| t.values().map(|v| v.len()).sum::<usize>()).sum();
+        let per_table: Vec<(usize, usize)> = self.tables.t.iter().map(|t| (t.len(), t.values().map(|v| v.len()).sum::<usize>())).collect();
         serde_json::json!({
             "tables": self.tables.bytes(), "table_keys": table_keys, "table_rows": table_rows, "per_table_keys_rows": per_table,
             "memos": m.memos.capacity() * 12 + m.memos.values().map(Memo::bytes).sum::<usize>(), "memo_count": m.memos.len(),
@@ -640,7 +641,7 @@ pub fn apply(sh: &mut Shared, below: &Below, d: &mut Delta, changes: &[Change]) 
     }
     changed.sort_unstable();
     step.keys_changed = changed.len() as u64;
-    let dep_keys: Vec<u64> = changed.iter().map(|&(t, k)| dep_key(t, sh.it.hash_of(k))).collect();
+    let dep_keys: Vector<u64> = changed.iter().map(|&(t, k)| dep_key(t, sh.it.hash_of(k))).collect();
     // 5. re-run the readers (level order, early cutoff), then roots and refusals
     let mut cx = Ctx::new(TView { below: bt.clone(), delta: &d.tables }, &mut sh.it, &mut sh.qt, &mut sh.defs, below.memos(), &mut d.memos, &mut sh.anomalies);
     cx.propagate(&dep_keys);
@@ -676,7 +677,7 @@ pub fn apply(sh: &mut Shared, below: &Below, d: &mut Delta, changes: &[Change]) 
             K_REFSUP => !cx.tv.rows(T_SUPERS, qq.a).is_empty(),
             K_OWNREF => {
                 let rows = cx.tv.rows(T_BYNAME, qq.a);
-                let mut names: Vec<u32> = rows.iter().map(|r| r.0[3]).collect();
+                let mut names: Vector<u32> = rows.iter().map(|r| r.0[3]).collect();
                 names.sort_unstable();
                 names.dedup();
                 names.len() > 1

@@ -466,7 +466,7 @@ impl Visitor<'_, '_> {
                 let index = self.builder.table.scopes[scope as usize]
                     .bindings
                     .get(name.as_str())
-                    .map_or(0, Vec::len);
+                    .map_or(0, |c| c.len());
                 self.builder.bind(scope, &name, binding);
                 let id = self.bindings.len() as u32;
                 self.bindings

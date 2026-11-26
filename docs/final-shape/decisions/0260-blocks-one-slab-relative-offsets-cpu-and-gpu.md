@@ -1,11 +1,12 @@
 # 0260: Everything lives in blocks: linear, relative offsets, the same bytes on CPU, GPU and disk
 
-Status: draft (2026-11-15), the target shape. §1–§6 are revised by decision 0266: a block is one of the
-engine's few big things (a program, a batch, a phase's facts, a run's outputs), with every structure nested
-inside it; a delta refers to its full version only; no checksums.
-Takes over decision 0259's stage 2: the journal is the first block
-written to a file. Generalises spec §20 (tape residency slabs) from tapes to every structure. Answers 0246's open
-question (one layer of regions and strings for program, module and output images): yes, and this is that layer.
+Status: partly built (audited 2026-11-23). Left: facts handed between waves as base+delta blocks; scheduler and
+scoreboard over kernels; remaining 0353 copies. Draft (2026-11-15), the target shape. §1–§6 are revised by decision
+0266: a block is one of the engine's few big things (a program, a batch, a phase's facts, a run's outputs), with every
+structure nested inside it; a delta refers to its full version only; no checksums. Takes over decision 0259's stage 2:
+the journal is the first block written to a file. Generalises spec §20 (tape residency slabs) from tapes to every
+structure. Answers 0246's open question (one layer of regions and strings for program, module and output images): yes,
+and this is that layer.
 
 ## Intro
 

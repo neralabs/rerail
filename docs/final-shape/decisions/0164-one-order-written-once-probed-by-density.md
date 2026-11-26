@@ -1,8 +1,10 @@
 # 0164: One sorted order a key set, written once, kept in the frames, probed by how dense the keys are
 
-Status: proposed (2026-11-13). Drafted as 0160, which another worktree took. It builds on 0112 (indexes are sorted orders for probed keys) and replaces the
-readers' index (`Csr`) and the orders-in-frames proposal of t34. The history it rests on is in
-`../index-shape-history.md`; the per-shape detail is in `../index-shape-exploration.md`.
+Status: partly built (audited 2026-11-23). Left: orders kept in frames (full/delta, compaction), density probing
+(dense merge, node-key interpolation), readers building nothing. Proposed (2026-11-13). Drafted as 0160, which another
+worktree took. It builds on 0112 (indexes are sorted orders for probed keys) and replaces the readers' index (`Csr`)
+and the orders-in-frames proposal of t34. The history it rests on is in `../index-shape-history.md`; the per-shape
+detail is in `../index-shape-exploration.md`.
 
 ## Intro
 

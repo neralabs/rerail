@@ -1,9 +1,9 @@
 # 0119: Transitive closures are held as a reach index, one bitmap per start
 
-Status: draft (2026-11-11). Built: the form found in a program (`logic/reach_form.rs`), the index
-(`logic/native/reach.rs`), its stratum and its probes. Measured: see **Measured** at the end.
-It takes up O-cone-libraries (open items) and builds on 0098 §1 (the closure form inside a component) and
-0101 §1 (what the cross-file part keeps).
+Status: built (audited 2026-11-23). Draft (2026-11-11). Built: the form found in a program (`logic/reach_form.rs`),
+the index (`logic/native/reach.rs`), its stratum and its probes. Measured: see **Measured** at the end. It takes up
+O-cone-libraries (open items) and builds on 0098 §1 (the closure form inside a component) and 0101 §1 (what the
+cross-file part keeps).
 
 ## Intro
 

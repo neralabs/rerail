@@ -1,6 +1,6 @@
 # 0060: A run's fixed costs are kept for the process; collection decides only when it can change something
 
-Status: proposed (2026-11-07)
+Status: built (audited 2026-11-23). Proposed (2026-11-07)
 
 ## Intro
 

@@ -59,14 +59,13 @@ unsafe extern "C" {
 }
 
 /// The pairs a mask buffer holds, in `(i, j)` order, read off in C (two u32s a pair, the layout checked).
-fn pairs(rows: usize, npb: usize, masks: &[u32]) -> Vec<(u32, u32)> {
-    const { assert!(std::mem::size_of::<(u32, u32)>() == 8 && std::mem::offset_of!((u32, u32), 0) == 0 && std::mem::offset_of!((u32, u32), 1) == 4) };
+fn pairs(rows: usize, npb: usize, masks: &[u32]) -> rerail_blocks::vector::Vector<[u32; 2]> {
     let masks = &masks[..rows * npb];
     let n = unsafe { rr_sme_mask_count(masks.as_ptr(), masks.len() as i64) } as usize;
-    let mut out: Vec<(u32, u32)> = Vec::with_capacity(n);
+    let mut out = rerail_blocks::vector::Vector::with_capacity(n);
+    out.resize(n, [0u32; 2]);
     let got = unsafe { rr_sme_mask_pairs(masks.as_ptr(), 0, rows as i64, npb as i64, out.as_mut_ptr().cast()) } as usize;
     assert_eq!(got, n);
-    unsafe { out.set_len(n) };
     out
 }
 
@@ -127,9 +126,9 @@ fn key(b: &Bits) -> (usize, usize, usize) {
 enum Out {
     /// Done without the unit (no rows, or no words).
     Ready(Output),
-    Counts { rows: usize, cols: usize, data: Vec<u32> },
+    Counts { rows: usize, cols: usize, data: rerail_blocks::vector::Vector<u32> },
     /// One 32-bit mask per padded row of A and panel of B; `min` padded with `u32::MAX`.
-    Mask { rows: usize, npb: usize, masks: Vec<u32>, thr: Vec<u32> },
+    Mask { rows: usize, npb: usize, masks: rerail_blocks::vector::Vector<u32>, thr: rerail_blocks::vector::Vector<u32> },
 }
 
 /// The B panels per group (a group stays in L2 while A panels stream past), and the A panels per tile.
@@ -181,19 +180,19 @@ impl Sme {
                 let Kernel::BitProduct { a, b, min } = k else { unreachable!() };
                 if a.rows == 0 || b.rows == 0 || a.words == 0 {
                     return Out::Ready(match min {
-                        None => Output::Counts { rows: a.rows, cols: b.rows, data: vec![0; a.rows * b.rows] },
+                        None => Output::Counts { rows: a.rows, cols: b.rows, data: rerail_blocks::vector![0; a.rows * b.rows] },
                         Some(m) => Output::Pairs(
-                            (0..a.rows as u32).flat_map(|i| (0..b.rows as u32).filter(|&j| m[j as usize] == 0).map(move |j| (i, j))).collect(),
+                            (0..a.rows as u32).flat_map(|i| (0..b.rows as u32).filter(|&j| m[j as usize] == 0).map(move |j| [i, j])).collect(),
                         ),
                     });
                 }
                 match min {
-                    None => Out::Counts { rows: a.rows, cols: b.rows, data: vec![0; a.rows * b.rows] },
+                    None => Out::Counts { rows: a.rows, cols: b.rows, data: rerail_blocks::vector![0; a.rows * b.rows] },
                     Some(m) => {
                         let (npa, npb) = (a.rows.div_ceil(32), b.rows.div_ceil(32));
-                        let mut mm = vec![u32::MAX; npb * 32];
+                        let mut mm = rerail_blocks::vector![u32::MAX; npb * 32];
                         mm[..b.rows].copy_from_slice(m);
-                        Out::Mask { rows: a.rows, npb, masks: vec![0; npa * 32 * npb], thr: mm }
+                        Out::Mask { rows: a.rows, npb, masks: rerail_blocks::vector![0; npa * 32 * npb], thr: mm }
                     }
                 }
             })

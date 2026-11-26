@@ -1,6 +1,6 @@
 # 0270: a lowered program's atoms are branded, and move to another store's
 
-Status: decided and built (2026-11-15).
+Status: built (audited 2026-11-23). Decided and built (2026-11-15).
 
 ## Intro
 

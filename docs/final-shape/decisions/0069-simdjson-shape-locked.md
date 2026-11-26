@@ -1,9 +1,8 @@
 # 0069: Compiled languages keep simdjson's shape, locked by tests
 
-Status: accepted (user, 2026-11-07: "We should be able to get approximately SIMDJSON performance
-on the CPU, since we should generate nearly identical code … ensure that the correct shape is
-locked in from now on"; the plan, "yes, please go ahead with it, and make sure that you lock in
-the improvements with tdd")
+Status: built (audited 2026-11-23). Accepted (user, 2026-11-07: "We should be able to get approximately SIMDJSON
+performance on the CPU, since we should generate nearly identical code … ensure that the correct shape is locked in
+from now on"; the plan, "yes, please go ahead with it, and make sure that you lock in the improvements with tdd")
 
 ## Intro
 

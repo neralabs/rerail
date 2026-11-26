@@ -35,9 +35,12 @@
 //! - A one-shot process (`drain_at_end`) holds the wider searches' proposals until its run ends: they are the next
 //!   run's, not those of whichever chunk planned after a search finished at idle.
 
+use rerail_blocks::vector::Vector;
 use super::{Constant, Mode, PlanKey, Sig, Step, StoredStep};
+use super::table::Overlay;
 use parking_lot::{Mutex, RwLock};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rerail_section::{Archive, Decode, Names, Section};
+use rustc_hash::FxHashSet;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
@@ -97,12 +100,12 @@ pub fn trials_on() -> bool {
 /// (0208), a moving average over runs, is at least `critical_share`. A line that leaves the path halves its share
 /// each run, and drops below in a few: the next path's lines are found as each is made faster.
 pub fn on_critical_path(key: &PlanKey) -> bool {
-    joins().noted.load(Relaxed) && read(|m| m.notes.get(key).is_some_and(|n| n.critical >= critical_share()))
+    joins().noted.load(Relaxed) && read(|m| m.note(key).is_some_and(|n| n.critical >= critical_share()))
 }
 
 /// Decision 0274: whether line `key`'s orders would be trialled at this check (`take_trial`), without taking it.
 pub fn trial_due(key: &PlanKey) -> bool {
-    trials_on() && on_critical_path(key) && !read(|m| m.trialled.contains(key))
+    trials_on() && on_critical_path(key) && !read(|m| m.trialled.get(&pk(*key)).is_some())
 }
 
 /// Whether line `key`'s orders are trialled at this check: decision 0274, only a line observed on a run's critical
@@ -165,14 +168,14 @@ fn merge_tried(n: &mut Note, order: Vec<StoredStep>, ratio: f64, weight: f64) {
 /// `None` where its search priced them, or made none.
 pub fn walked(key: &PlanKey) -> Option<(f64, Vec<(Vec<Step>, f64)>)> {
     read(|m| {
-        let n = m.notes.get(key).filter(|n| n.walked > 0.0 && !n.proposals.is_empty())?;
-        Some((n.walked, n.proposals.iter().map(|(o, w)| (o.iter().map(|&(at, mode)| Step { at: at as usize, mode }).collect(), *w)).collect()))
+        let n = m.note(key).filter(|n| n.walked > 0.0 && !n.proposals.is_empty())?;
+        Some((n.walked, n.proposed().map(|(o, w)| (unstored(o), w)).collect()))
     })
 }
 
 /// Line `key`'s proposals from a wider search, as orders.
 pub fn proposals(key: &PlanKey) -> Vec<Vec<Step>> {
-    read(|m| m.notes.get(key).map(|n| n.proposals.iter().map(|(o, _)| o.iter().map(|&(at, mode)| Step { at: at as usize, mode }).collect()).collect()).unwrap_or_default())
+    read(|m| m.note(key).map(|n| n.proposed().map(|(o, _)| unstored(o)).collect()).unwrap_or_default())
 }
 
 /// `RERAIL_JOINS=off`: no memo, no flags, no exploration (the planner as before).
@@ -192,16 +195,20 @@ pub fn log(what: impl FnOnce() -> String) {
 }
 
 /// An order a line ran, and how its measured work compared with its price.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Archive)]
+#[archive(derive(Debug), decode)]
 pub struct Tried {
+    #[archive(flat)]
     pub order: Vec<StoredStep>,
     /// Measured work over priced work, a geometric mean over its runs.
     pub ratio: f64,
     pub runs: u32,
 }
 
-/// What the runs learnt of one line.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// What the runs learnt of one line. Held as a section (decision 0628 §4), read in place (`ArchivedNote`); a write
+/// decodes it, changes it and encodes it again (`edit`).
+#[derive(Clone, Debug, Default, PartialEq, Archive)]
+#[archive(derive(Debug), decode)]
 pub struct Note {
     /// The rule's observation key (`Body::observed_key`), which its exact statistics are kept under.
     pub rule: u64,
@@ -218,7 +225,7 @@ pub struct Note {
     pub tried: Vec<Tried>,
     /// Orders a wider search found, with their prices then; or, where the search walked them (`walked` above
     /// 0), their walked work over the line.
-    pub proposals: Vec<(Vec<StoredStep>, f64)>,
+    pub proposals: Vec<Proposal>,
     /// Decision 0243: the walked work over the line of the order it ran, where the search walked its orders (0:
     /// they were priced).
     pub walked: f64,
@@ -229,43 +236,106 @@ pub struct Note {
     pub raised: Vec<(String, usize)>,
 }
 
-impl Note {
+/// A wider search's order for a line, and its price then or its walked work.
+#[derive(Clone, Debug, PartialEq, Archive)]
+#[archive(derive(Debug), decode)]
+pub struct Proposal(#[archive(flat)] pub Vec<StoredStep>, pub f64);
+
+impl ArchivedNote {
     fn weight(&self) -> f64 {
         (self.critical + 0.01 * f64::from(self.slow)) * self.ran.max(1.0)
     }
-    fn tried(&self, order: &[StoredStep]) -> Option<&Tried> {
-        self.tried.iter().find(|t| t.order == order)
+    fn tried(&self, order: &[StoredStep]) -> Option<&ArchivedTried> {
+        self.tried.iter().find(|t| *t.order == *order)
+    }
+    /// Its proposals' orders.
+    fn proposed(&self) -> impl Iterator<Item = (&[StoredStep], f64)> + '_ {
+        self.proposals.iter().map(|p| (&*p.0, p.1))
     }
 }
 
+/// A line's key in the memo's tables: its plan key's words.
+fn pk(key: PlanKey) -> [u64; 2] {
+    [(key >> 64) as u64, key as u64]
+}
+
+fn unpk([hi, lo]: [u64; 2]) -> PlanKey {
+    u128::from(hi) << 64 | u128::from(lo)
+}
+
+/// An order's key: its digest.
+fn order_key(order: &[StoredStep]) -> u64 {
+    super::super::derived::digest(|d| {
+        for &(at, mode) in order {
+            d.u64(u64::from(at) << 2 | match mode { None => 0, Some(Mode::Range) => 1, Some(Mode::Climb) => 2, Some(Mode::Descend) => 3 });
+        }
+    }) as u64
+}
+
+/// The memo: each table an overlay in blocks (decision 0628 §1), so a chunk's memo (`chunk_memo`) shares the run's
+/// as it was and holds only what the chunk writes.
 #[derive(Clone, Default)]
 pub struct Memo {
-    notes: FxHashMap<PlanKey, Note>,
+    /// Each line's note, by its key (`pk`).
+    notes: Overlay<[u64; 2], Arc<Section<Note>>>,
+    /// How many notes it holds.
+    count: usize,
     /// Per rule, its exact statistics, as the search reads them.
-    exact: FxHashMap<u64, Arc<HashMap<Sig, [i64; 2]>>>,
+    exact: Overlay<u64, Arc<rerail_blocks::maps::BlockHash<u64, [i64; 2]>>>,
     /// Per rule, how many times its exact statistics were measured (a rule with any is priced at each plan).
-    epochs: FxHashMap<u64, u32>,
-    /// Lines flagged in this process, by the order each was flagged in, and the work at which each is checked next
-    /// (`check`).
-    flagged: FxHashMap<PlanKey, Vec<StoredStep>>,
-    next_check: FxHashMap<PlanKey, f64>,
+    epochs: Overlay<u64, u32>,
+    /// Lines flagged in this process, by the order each was flagged in (`order_key`), and the work at which each is
+    /// checked next (`check`).
+    flagged: Overlay<[u64; 2], u64>,
+    next_check: Overlay<[u64; 2], f64>,
     /// Lines whose next replan skips the planning budget (a flag's).
-    forced: FxHashSet<PlanKey>,
+    forced: Overlay<[u64; 2], u32>,
     /// Lines whose orders were trialled in this process (decision 0207): once, and once more after a flag.
-    trialled: FxHashSet<PlanKey>,
-    /// Columns raised to keep their heavy values (decision 0209 §4): a checked line's skewed join columns, and those
-    /// of lines on the measured path that ran over twice their price. Made from the start of each later plan.
-    raised: FxHashSet<(String, usize)>,
+    trialled: Overlay<[u64; 2], u32>,
+    /// Columns raised to keep their heavy values (decision 0209 §4), by (relation number, column): a checked line's
+    /// skewed join columns, and those of lines on the measured path that ran over twice their price. Made from the
+    /// start of each later plan.
+    raised: Overlay<[u64; 2], u32>,
     dirty: bool,
     /// Decision 0247: each note's decision fingerprint as last written or read (`fingerprint`): a run that changed
     /// nothing the planner reads writes nothing.
-    written: FxHashMap<PlanKey, u64>,
+    written: Overlay<[u64; 2], u64>,
     /// Proposals a one-shot process holds until its run ends (`propose`, `drain`): its line, orders, walked work.
-    held: Vec<(PlanKey, Vec<(Vec<StoredStep>, f64)>, Option<f64>)>,
+    // copy: not block data: the sections' handles, in the order they came.
+    held: Vec<(PlanKey, Arc<Section<Vec<Proposal>>>, Option<f64>)>,
     /// A device stage's rows out per row of its input's space, by rule (its spec's hash) and stage, as last filed:
     /// its next run's space is guessed from it (decision 0478 step 7, was the device's thread-local `GROWTH`).
-    growth: FxHashMap<(u64, usize), f64>,
+    growth: Overlay<[u64; 2], f64>,
 }
+
+impl Memo {
+    fn note(&self, key: &PlanKey) -> Option<&ArchivedNote> {
+        self.notes.get(&pk(*key)).map(|n| n.get())
+    }
+    fn has(&self, key: &PlanKey) -> bool {
+        self.notes.get(&pk(*key)).is_some()
+    }
+    /// Each line's key and note, by key.
+    fn each(&self) -> impl Iterator<Item = (PlanKey, &ArchivedNote)> + '_ {
+        let keys = self.notes.keys();
+        (0..keys.len()).map(move |i| (unpk(keys[i]), self.notes.get(&keys[i]).expect("listed").get()))
+    }
+    /// Line `key`'s note, `f` applied: decoded, changed and encoded again; made where it has none.
+    fn edit<R>(&mut self, key: PlanKey, f: impl FnOnce(&mut Note) -> R) -> R {
+        let k = pk(key);
+        // copy: derived: a note decoded to be written again, as a plan rewritten is (decision 0628 §4).
+        let mut n = self.notes.get(&k).map_or_else(Note::default, |s| Note::decode(s.get(), &Names::NONE));
+        let r = f(&mut n);
+        if self.notes.insert(k, Arc::new(Section::of(&n))).is_none() {
+            self.count += 1;
+        }
+        r
+    }
+    fn set(set: &mut Overlay<[u64; 2], u32>, k: [u64; 2]) -> bool {
+        set.insert(k, 1).is_none()
+    }
+}
+
 
 /// What a chunk reads and writes of the memo (Q314): the run's as filed when it began, with its own writes, and
 /// those writes, to be filed into the run's in the chunks' order (`file_ops`).
@@ -330,7 +400,7 @@ fn write_filed(op: Op) {
 /// A device stage's growth as filed (decision 0478 step 7): rows out per row of its input's space, by its rule's
 /// spec hash and the stage.
 pub fn growth(rule: u64, stage: usize) -> Option<f64> {
-    read(|m| m.growth.get(&(rule, stage)).copied())
+    read(|m| m.growth.get(&[rule, stage as u64]).copied())
 }
 
 /// A device stage's growth seen, for the chunks after this one (`growth`): a chunk's most stands.
@@ -394,97 +464,98 @@ impl Op {
 
     pub fn apply(&self, m: &mut Memo) -> bool {
         match self {
-            Op::Tried { key, rule, order, ratio, weight } => {
-                let n = noted_mut(m, *key, *rule);
+            Op::Tried { key, rule, order, ratio, weight } => noted_mut(m, *key, *rule, |n| {
                 merge_tried(n, order.clone(), *ratio, *weight);
                 true
-            }
-            Op::CutTrial { key, rule, order, ratio } => {
-                let n = noted_mut(m, *key, *rule);
+            }),
+            Op::CutTrial { key, rule, order, ratio } => noted_mut(m, *key, *rule, |n| {
                 match n.tried.iter_mut().find(|t| t.order == *order) {
                     Some(t) => t.ratio = t.ratio.max(*ratio),
                     None => merge_tried(n, order.clone(), *ratio, TRIAL_WEIGHT),
                 }
                 true
-            }
+            }),
             Op::Slow { key, rule, order, est, ran } => {
-                m.flagged.insert(*key, order.clone());
-                m.forced.insert(*key);
-                m.trialled.remove(key);
-                let n = noted_mut(m, *key, *rule);
-                n.slow += 1;
-                n.est = *est;
-                n.ran = *ran;
-                n.wants_search = true;
-                let ratio = (ran / est.max(1.0)).clamp(1e-6, 1e9);
-                if ratio > 1.0 {
-                    match n.tried.iter_mut().find(|t| t.order == *order) {
-                        Some(t) => t.ratio = t.ratio.max(ratio),
-                        None => merge_tried(n, order.clone(), ratio, RUN_WEIGHT),
+                m.flagged.insert(pk(*key), order_key(order));
+                Memo::set(&mut m.forced, pk(*key));
+                m.trialled.remove(&pk(*key));
+                noted_mut(m, *key, *rule, |n| {
+                    n.slow += 1;
+                    n.est = *est;
+                    n.ran = *ran;
+                    n.wants_search = true;
+                    let ratio = (ran / est.max(1.0)).clamp(1e-6, 1e9);
+                    if ratio > 1.0 {
+                        match n.tried.iter_mut().find(|t| t.order == *order) {
+                            Some(t) => t.ratio = t.ratio.max(ratio),
+                            None => merge_tried(n, order.clone(), ratio, RUN_WEIGHT),
+                        }
                     }
-                }
-                true
+                    true
+                })
             }
             Op::Raise { key, rel, c } => {
                 joins().raised.store(true, Relaxed);
                 if let Some(key) = key {
                     // A trial raises before its line is noted (`put_tried` notes it, with its rule, right after).
                     joins().noted.store(true, Relaxed);
-                    let n = m.notes.entry(*key).or_default();
-                    if !n.raised.iter().any(|(r, k)| r == rel && k == c) {
-                        n.raised.push((rel.clone(), *c));
+                    if !m.note(key).is_some_and(|n| n.raised.iter().any(|r| r.0.as_str() == rel && r.1 == *c as u64)) {
+                        m.edit(*key, |n| n.raised.push((rel.clone(), *c)));
                         m.dirty = true;
                     }
                 }
-                m.raised.insert((rel.clone(), *c))
+                Memo::set(&mut m.raised, [u64::from(super::table::rel_id(rel)), *c as u64])
             }
             Op::Exact { key, rule, stats } => {
-                let n = noted_mut(m, *key, *rule);
-                for (sig, c) in stats {
-                    match n.exact.iter_mut().find(|(s, _)| s == sig) {
-                        Some(e) => e.1 = *c,
-                        None => n.exact.push((sig.clone(), *c)),
+                let map: rerail_blocks::maps::BlockHash<u64, [i64; 2]> = noted_mut(m, *key, *rule, |n| {
+                    for (sig, c) in stats {
+                        match n.exact.iter_mut().find(|(s, _)| s == sig) {
+                            Some(e) => e.1 = *c,
+                            None => n.exact.push((sig.clone(), *c)),
+                        }
                     }
-                }
-                let map: HashMap<Sig, [i64; 2]> = n.exact.iter().cloned().collect();
+                    n.exact.iter().map(|(s, c)| (super::sig_key(s), *c)).collect()
+                });
                 m.exact.insert(*rule, Arc::new(map));
-                *m.epochs.entry(*rule).or_insert(0) += 1;
+                let e = m.epochs.get(rule).copied().unwrap_or(0) + 1;
+                m.epochs.insert(*rule, e);
                 joins().exact.store(true, Relaxed);
                 true
             }
             Op::Line { key, rule, share, critical, work, est, order } => {
-                if !critical && !m.notes.contains_key(key) {
+                if !critical && !m.has(key) {
                     return false;
                 }
-                let n = noted_mut(m, *key, *rule);
-                n.runs += 1;
-                n.critical = if n.runs == 1 { *share } else { 0.5 * n.critical + 0.5 * share };
-                n.ran = *work;
-                if *est > 0.0 {
-                    n.est = *est;
-                    let ratio = (work.max(1.0) / est.max(1.0)).clamp(1e-6, 1e9);
-                    merge_tried(n, order.clone(), ratio, RUN_WEIGHT);
-                    if *critical && (ratio > 2.0 || n.proposals.is_empty()) {
-                        n.wants_search = true;
+                noted_mut(m, *key, *rule, |n| {
+                    n.runs += 1;
+                    n.critical = if n.runs == 1 { *share } else { 0.5 * n.critical + 0.5 * share };
+                    n.ran = *work;
+                    if *est > 0.0 {
+                        n.est = *est;
+                        let ratio = (work.max(1.0) / est.max(1.0)).clamp(1e-6, 1e9);
+                        merge_tried(n, order.clone(), ratio, RUN_WEIGHT);
+                        if *critical && (ratio > 2.0 || n.proposals.is_empty()) {
+                            n.wants_search = true;
+                        }
                     }
-                }
+                });
                 *critical
             }
             Op::Check { key, work, order } => {
-                if m.flagged.get(key).is_some_and(|o| o == order) {
+                if m.flagged.get(&pk(*key)) == Some(&order_key(order)) {
                     return false;
                 }
-                let next = m.next_check.entry(*key).or_insert(0.0);
-                if *work < *next {
+                let next = m.next_check.get(&pk(*key)).copied().unwrap_or(0.0);
+                if *work < next {
                     return false;
                 }
-                *next = 2.0 * work;
+                m.next_check.insert(pk(*key), 2.0 * work);
                 true
             }
-            Op::TakeTrial { key } => m.notes.get(key).is_some_and(|n| n.critical >= critical_share()) && m.trialled.insert(*key),
-            Op::TakeForced { key } => m.forced.remove(key),
+            Op::TakeTrial { key } => m.note(key).is_some_and(|n| n.critical >= critical_share()) && Memo::set(&mut m.trialled, pk(*key)),
+            Op::TakeForced { key } => m.forced.remove(&pk(*key)).is_some(),
             Op::Growth { rule, stage, ratio } => {
-                m.growth.insert((*rule, *stage), *ratio);
+                m.growth.insert([*rule, *stage as u64], *ratio);
                 true
             }
         }
@@ -495,17 +566,17 @@ impl Op {
 /// measures to a quarter octave, its walked work, whether a search is wanted, its exact statistics and raised
 /// columns, and whether it is critical or slow. Its runs, moving shares and last measures are not: a warm run that
 /// ran its joins again rewrote every note and, with them, the kept plans (django-bugs decision 0228).
-fn fingerprint(n: &Note) -> u64 {
+fn fingerprint(n: &ArchivedNote) -> u64 {
     use std::hash::{Hash, Hasher};
     let q = |x: f64| if x > 0.0 { (x.log2() * 4.0).round() as i64 } else { i64::MIN };
     let mut h = std::collections::hash_map::DefaultHasher::new();
     n.rule.hash(&mut h);
-    for t in &n.tried { format!("{:?}", t.order).hash(&mut h); q(t.ratio).hash(&mut h); }
-    for (o, w) in &n.proposals { format!("{o:?}").hash(&mut h); q(*w).hash(&mut h); }
+    for t in n.tried.iter() { order_key(&t.order).hash(&mut h); q(t.ratio).hash(&mut h); }
+    for (o, w) in n.proposed() { order_key(o).hash(&mut h); q(w).hash(&mut h); }
     q(n.walked).hash(&mut h);
     n.wants_search.hash(&mut h);
     format!("{:?}", n.exact).hash(&mut h);
-    n.raised.hash(&mut h);
+    for r in n.raised.iter() { (r.0.as_str(), r.1).hash(&mut h); }
     (n.critical >= critical_share()).hash(&mut h);
     (n.slow > 0).hash(&mut h);
     h.finish()
@@ -554,7 +625,7 @@ pub fn raise(key: Option<PlanKey>, rel: &str, c: usize) -> bool {
 /// Whether column `c` of `rel` keeps its heavy values.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn raised(rel: &str, c: usize) -> bool {
-    joins().raised.load(Relaxed) && read(|m| m.raised.contains(&(rel.to_owned(), c)))
+    joins().raised.load(Relaxed) && read(|m| super::table::find(rel).is_some_and(|r| m.raised.get(&[u64::from(r), c as u64]).is_some()))
 }
 
 /// The columns that keep their heavy values, read once (`Run::heavy_for` checks every shared column of every rule
@@ -563,7 +634,7 @@ pub fn raised_all() -> Vec<(String, usize)> {
     if !joins().raised.load(Relaxed) {
         return Vec::new();
     }
-    read(|m| m.raised.iter().cloned().collect())
+    read(|m| m.raised.keys().iter().map(|&[r, c]| (super::table::rel_name(r as super::table::RelId).to_string(), c as usize)).collect())
 }
 
 pub fn any_raised() -> bool {
@@ -571,25 +642,36 @@ pub fn any_raised() -> bool {
 }
 
 
-pub(super) fn noted(key: &PlanKey) -> bool {
-    joins().noted.load(Relaxed) && read(|m| m.notes.contains_key(key))
+pub fn noted(key: &PlanKey) -> bool {
+    joins().noted.load(Relaxed) && read(|m| m.has(key))
 }
 
 pub fn any_noted() -> bool {
     joins().noted.load(Relaxed)
 }
 
+/// Line `key`'s share of a critical path (0: not noted).
+pub fn critical_share_of(key: &PlanKey) -> f64 {
+    if !joins().noted.load(Relaxed) {
+        return 0.0;
+    }
+    read(|m| m.note(key).map_or(0.0, |n| n.critical))
+}
+
+/// Line `key`'s note, decoded: for a test's look at it.
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn note(key: &PlanKey) -> Option<Note> {
     if !joins().noted.load(Relaxed) {
         return None;
     }
-    read(|m| m.notes.get(key).cloned())
+    // copy: derived: a test's decoded note.
+    read(|m| m.note(key).map(|n| Note::decode(n, &Names::NONE)))
 }
 
 /// Whether the line has work queued for its next plan: a wider search wanted, or a proposal not tried yet. Such a
 /// line is searched, not taken at its kept price.
 pub fn pending(key: &PlanKey) -> bool {
-    joins().noted.load(Relaxed) && read(|m| m.notes.get(key).is_some_and(|n| n.wants_search || n.proposals.iter().any(|(o, _)| n.tried(o).is_none())))
+    joins().noted.load(Relaxed) && read(|m| m.note(key).is_some_and(|n| n.wants_search || n.proposed().any(|(o, _)| n.tried(o).is_none())))
 }
 
 /// The epoch of `rule`'s exact statistics (0: none), digested into its plan keys.
@@ -605,27 +687,31 @@ pub fn any_exact() -> bool {
 }
 
 /// `rule`'s exact statistics, read once per search.
-pub fn exact_for(rule: u64) -> Option<Arc<HashMap<Sig, [i64; 2]>>> {
+pub fn exact_for(rule: u64) -> Option<Arc<rerail_blocks::maps::BlockHash<u64, [i64; 2]>>> {
     if !joins().exact.load(Relaxed) {
         return None;
     }
     read(|m| m.exact.get(&rule).cloned())
 }
 
-pub fn noted_mut(memo: &mut Memo, key: PlanKey, rule: u64) -> &mut Note {
+/// Line `key`'s note of `rule`, `f` applied (`Memo::edit`); past `NOTES_MAX` notes, the least important tenth go
+/// first.
+pub fn noted_mut<R>(memo: &mut Memo, key: PlanKey, rule: u64, f: impl FnOnce(&mut Note) -> R) -> R {
     joins().noted.store(true, Relaxed);
     memo.dirty = true;
-    if memo.notes.len() >= NOTES_MAX && !memo.notes.contains_key(&key) {
-        // The least important tenth goes.
-        let mut w: Vec<(f64, PlanKey)> = memo.notes.iter().map(|(k, n)| (n.weight(), *k)).collect();
+    if memo.count >= NOTES_MAX && !memo.has(&key) {
+        let mut w: Vec<(f64, PlanKey)> = memo.each().map(|(k, n)| (n.weight(), k)).collect();
         w.sort_by(|a, b| a.0.total_cmp(&b.0));
         for (_, k) in w.into_iter().take(NOTES_MAX / 10) {
-            memo.notes.remove(&k);
+            if memo.notes.remove(&pk(k)).is_some() {
+                memo.count -= 1;
+            }
         }
     }
-    let n = memo.notes.entry(key).or_default();
-    n.rule = rule;
-    n
+    memo.edit(key, |n| {
+        n.rule = rule;
+        f(n)
+    })
 }
 
 /// Whether a line's work so far, `work`, is due to be checked against its price: the first time past `slow_rows`,
@@ -642,10 +728,10 @@ pub fn check(key: PlanKey, work: f64, order: &[Step]) -> bool {
 /// none once flagged in the order it runs (`order`).
 pub fn next_due(key: PlanKey, order: &[Step]) -> Option<f64> {
     read(|m| {
-        if m.flagged.get(&key).is_some_and(|o| *o == steps(order)) {
+        if m.flagged.get(&pk(key)) == Some(&order_key(&steps(order))) {
             return None;
         }
-        Some(m.next_check.get(&key).copied().unwrap_or(0.0).max(slow_rows()))
+        Some(m.next_check.get(&pk(key)).copied().unwrap_or(0.0).max(slow_rows()))
     })
 }
 
@@ -684,7 +770,7 @@ pub fn count_handoff(back: bool) {
 /// price (`pre_546` on hogql: priced 360 to 513 for 102 K rows of work, at each of its trips).
 /// Whether line `key` is flagged in the order it runs (`flag_slow`): checked no more in it.
 pub fn flagged(key: PlanKey, order: &[Step]) -> bool {
-    joins().memo.read().flagged.get(&key).is_some_and(|o| *o == steps(order))
+    joins().memo.read().flagged.get(&pk(key)) == Some(&order_key(&steps(order)))
 }
 
 /// How a running line's rows missed its order's estimate, step by step (`step_miss`).
@@ -737,7 +823,7 @@ pub fn step_miss(est: &[f64], ran: &[(u64, u64)], search_work: f64) -> Option<Mi
     }
     let f = slow_factor();
     let scale = lead / est[0].max(1e-9);
-    let priced: Vec<f64> = est.iter().map(|e| e * scale).collect();
+    let priced: Vector<f64> = est.iter().map(|e| e * scale).collect();
     let widest_est = priced.iter().copied().fold(0.0, f64::max);
     let widest_ran = ran.iter().map(|r| r.1 as f64).fold(0.0, f64::max);
     // A few lead rows are not a sample of the lead: a walk reads its rows in key order, and those that meet the rest
@@ -793,7 +879,8 @@ pub fn put_exact(key: PlanKey, rule: u64, stats: Vec<(Sig, [i64; 2])>) {
 
 /// A wider search's orders for line `key`, best first: its proposals. `walked`: the walked work of the order the
 /// line ran, where the search walked them (decision 0243).
-pub fn propose(key: PlanKey, mut orders: Vec<(Vec<StoredStep>, f64)>, walked: Option<f64>) {
+pub fn propose(key: PlanKey, orders: Vec<(Vec<StoredStep>, f64)>, walked: Option<f64>) {
+    let mut orders: Vec<Proposal> = orders.into_iter().map(|(o, w)| Proposal(o, w)).collect();
     orders.sort_by(|a, b| a.1.total_cmp(&b.1));
     orders.dedup_by(|a, b| a.0 == b.0);
     orders.truncate(PROPOSALS);
@@ -804,17 +891,21 @@ pub fn propose(key: PlanKey, mut orders: Vec<(Vec<StoredStep>, f64)>, walked: Op
     // A one-shot process's are its next run's (Q314): a search ends at idle, at the clock's time, and its proposals
     // went to whichever chunk planned after.
     if crate::code_rule_dsl::logic::profile::bound::<Drain>().0 {
-        m.held.push((key, orders, walked));
+        m.held.push((key, Arc::new(Section::of(&orders)), walked));
         return;
     }
     take_proposals(&mut m, key, orders, walked);
 }
 
-fn take_proposals(m: &mut Memo, key: PlanKey, orders: Vec<(Vec<StoredStep>, f64)>, walked: Option<f64>) {
-    let Some(n) = m.notes.get_mut(&key) else { return };
-    n.proposals = orders;
-    n.walked = walked.unwrap_or(0.0);
-    n.wants_search = false;
+fn take_proposals(m: &mut Memo, key: PlanKey, orders: Vec<Proposal>, walked: Option<f64>) {
+    if !m.has(&key) {
+        return;
+    }
+    m.edit(key, |n| {
+        n.proposals = orders;
+        n.walked = walked.unwrap_or(0.0);
+        n.wants_search = false;
+    });
     m.dirty = true;
 }
 
@@ -863,7 +954,7 @@ pub use crate::code_rule_dsl::logic::bloom::BloomProbeInput;
 /// A batch prediction of the candidates' work (decision 0203 §2): one call per round, a price per candidate. The
 /// planner's estimates stand where none is set, or where it answers `None`.
 pub trait Pricer: Send + Sync {
-    fn price(&self, round: &[Choice]) -> Option<Vec<Vec<f64>>>;
+    fn price(&self, round: &[Choice]) -> Option<Vec<Vector<f64>>>;
     /// Rank a bounded pair cache against reading its factors at each reader. The caller first proves
     /// that the cache fits. Keep predictions deterministic for an analysis and its retained state.
     fn cache_pairs(&self, _input: PairCacheInput) -> Option<bool> { None }
@@ -954,7 +1045,7 @@ pub fn choose(round: &mut [Choice]) {
     }
 }
 
-fn choose_with(round: &mut [Choice], predicted: Option<&Vec<Vec<f64>>>, memo: Option<&Memo>) {
+fn choose_with(round: &mut [Choice], predicted: Option<&Vec<Vector<f64>>>, memo: Option<&Memo>) {
     for (k, c) in round.iter_mut().enumerate() {
         c.chosen = 0;
         c.why = "the search's best";
@@ -962,18 +1053,18 @@ fn choose_with(round: &mut [Choice], predicted: Option<&Vec<Vec<f64>>>, memo: Op
             continue;
         }
         let price = |i: usize| predicted.and_then(|p| p.get(k)?.get(i).copied()).unwrap_or(c.candidates[i].est);
-        let note = memo.and_then(|m| m.notes.get(&c.key));
+        let note = memo.and_then(|m| m.note(&c.key));
         let corrected = |i: usize| {
             let ratio = note.and_then(|n| n.tried(&steps(&c.candidates[i].order))).map_or(1.0, |t| t.ratio);
             price(i) * ratio
         };
-        let mut costs: Vec<f64> = (0..c.candidates.len()).map(corrected).collect();
+        let mut costs: Vector<f64> = (0..c.candidates.len()).map(corrected).collect();
         // Decision 0245: an order the background walked and no run measured is costed in the walks' units, against
         // the order the line ran: its walked work times that order's measured cost over its walked work. A walk's
         // ratio to a price made then, times a price made now, mixed two models' prices (on the fixture it took an
         // order walked 1.35 times the one that ran).
         if let Some(n) = note.filter(|n| n.walked > 0.0) {
-            let walked_of = |i: usize| { let o = steps(&c.candidates[i].order); n.proposals.iter().find(|(p, _)| *p == o).map(|p| p.1) };
+            let walked_of = |i: usize| { let o = steps(&c.candidates[i].order); n.proposed().find(|(p, _)| **p == *o).map(|p| p.1) };
             let measured = |i: usize| n.tried(&steps(&c.candidates[i].order)).is_some();
             let ran = (0..c.candidates.len()).find(|&i| measured(i) && walked_of(i) == Some(n.walked));
             if let Some(ran) = ran {
@@ -996,7 +1087,7 @@ fn choose_with(round: &mut [Choice], predicted: Option<&Vec<Vec<f64>>>, memo: Op
         // Decision 0354: where the learned model chose, a share of its choices take another candidate within the
         // margin, so that the steps it learns from are not only the orders it picks.
         if note.is_none() && predicted.is_some() {
-            let near: Vec<usize> = (0..costs.len()).filter(|&i| i != best && costs[i] <= margin() * costs[best].max(1.0)).collect();
+            let near: Vector<usize> = (0..costs.len()).filter(|&i| i != best && costs[i] <= margin() * costs[best].max(1.0)).collect();
             let mut rng = Rng::new(c.key as u64 ^ 0x6a6f_696e);
             if !near.is_empty() && costs[best] <= explore_rows() && rng.unit() < explore_rate() {
                 c.chosen = near[rng.below(near.len())];
@@ -1009,7 +1100,7 @@ fn choose_with(round: &mut [Choice], predicted: Option<&Vec<Vec<f64>>>, memo: Op
         if n.critical < critical_share() && n.slow == 0 {
             continue;
         }
-        let untried: Vec<usize> = (0..costs.len()).filter(|&i| i != best && costs[i] <= margin() * costs[best].max(1.0) && n.tried(&steps(&c.candidates[i].order)).is_none()).collect();
+        let untried: Vector<usize> = (0..costs.len()).filter(|&i| i != best && costs[i] <= margin() * costs[best].max(1.0) && n.tried(&steps(&c.candidates[i].order)).is_none()).collect();
         if untried.is_empty() {
             continue;
         }
@@ -1047,7 +1138,7 @@ pub struct LineRun {
 #[derive(Debug, Default, PartialEq)]
 pub struct Path {
     /// The strata on it, in order, and its work: the path the lines' work predicts.
-    pub strata: Vec<usize>,
+    pub strata: Vector<usize>,
     pub work: f64,
     /// Its lines noted, with their shares (of the measured path where there is one).
     pub lines: Vec<(PlanKey, f64)>,
@@ -1060,7 +1151,7 @@ pub struct Path {
 /// it waited for); from the first's start to the last's end; and how many are on the predicted path.
 #[derive(Debug, Default, PartialEq)]
 pub struct Measured {
-    pub strata: Vec<usize>,
+    pub strata: Vector<usize>,
     pub busy: f64,
     pub waited: f64,
     pub span: f64,
@@ -1070,10 +1161,10 @@ pub struct Measured {
 /// Decision 0208: the measured path over `timeline` (each stratum's start, end and where it ran: 0 the loop's
 /// thread). From the stratum that ended last, each step back is to what the stratum could not start before: the
 /// latest to end, before its start, of its producers and (on the loop's thread) the stratum the loop ran before it.
-pub fn measured_path(producers: &[Vec<usize>], timeline: &[Option<(f64, f64, u8)>]) -> Option<Measured> {
+pub fn measured_path(producers: &[Vector<usize>], timeline: &[Option<(f64, f64, u8)>]) -> Option<Measured> {
     const EPS: f64 = 1e-6;
     let end = (0..timeline.len()).filter(|&j| timeline[j].is_some()).max_by(|&a, &b| timeline[a].unwrap().1.total_cmp(&timeline[b].unwrap().1))?;
-    let mut path = vec![end];
+    let mut path = rerail_blocks::vector![end];
     let (mut busy, mut waited) = (0.0, 0.0);
     let mut at = end;
     loop {
@@ -1094,7 +1185,7 @@ pub fn measured_path(producers: &[Vec<usize>], timeline: &[Option<(f64, f64, u8)
 }
 
 /// `critical_timed` with no times: the predicted path notes the lines.
-pub fn critical(strata: &[String], producers: &[Vec<usize>], runs: &[LineRun]) -> Path {
+pub fn critical(strata: &[String], producers: &[Vector<usize>], runs: &[LineRun]) -> Path {
     critical_timed(strata, producers, runs, None)
 }
 
@@ -1106,7 +1197,7 @@ pub fn critical(strata: &[String], producers: &[Vec<usize>], runs: &[LineRun]) -
 /// Decision 0208: where the strata's times are given, the path as they ran (`measured_path`) notes the lines
 /// instead: a line's share is its seconds over the path's busy seconds (its work over the path's, where its seconds
 /// are not known).
-pub fn critical_timed(strata: &[String], producers: &[Vec<usize>], runs: &[LineRun], timeline: Option<&[Option<(f64, f64, u8)>]>) -> Path {
+pub fn critical_timed(strata: &[String], producers: &[Vector<usize>], runs: &[LineRun], timeline: Option<&[Option<(f64, f64, u8)>]>) -> Path {
     let at: HashMap<&str, usize> = strata.iter().enumerate().map(|(j, s)| (s.as_str(), j)).collect();
     let mut weight = vec![0.0f64; strata.len()];
     for r in runs {
@@ -1122,7 +1213,7 @@ pub fn critical_timed(strata: &[String], producers: &[Vec<usize>], runs: &[LineR
         prev[j] = from;
     }
     let Some(end) = (0..strata.len()).max_by(|&a, &b| dist[a].total_cmp(&dist[b])) else { return Path::default() };
-    let mut path = Vec::new();
+    let mut path = rerail_blocks::vector::Vector::new();
     let mut at_ = Some(end);
     while let Some(j) = at_ {
         path.push(j);
@@ -1159,19 +1250,19 @@ pub fn critical_timed(strata: &[String], producers: &[Vec<usize>], runs: &[LineR
 
 /// Random connected orders of joins `vars` (each join's variables, as bits), from `start` where given, else from any
 /// join: each next join shares a variable with those placed while one can. Distinct, at most `n`.
-pub fn random_orders(vars: &[u128], start: Option<usize>, n: usize, rng: &mut Rng) -> Vec<Vec<usize>> {
-    let mut out: Vec<Vec<usize>> = Vec::new();
-    let mut seen: FxHashSet<Vec<usize>> = FxHashSet::default();
+pub fn random_orders(vars: &[u128], start: Option<usize>, n: usize, rng: &mut Rng) -> Vec<Vector<usize>> {
+    let mut out: Vec<Vector<usize>> = Vec::new();
+    let mut seen: FxHashSet<Vector<usize>> = FxHashSet::default();
     for _ in 0..n * 4 {
         if out.len() >= n || vars.is_empty() {
             break;
         }
         let first = start.unwrap_or_else(|| rng.below(vars.len()));
-        let mut order = vec![first];
+        let mut order = rerail_blocks::vector![first];
         let mut bound = vars[first];
-        let mut left: Vec<usize> = (0..vars.len()).filter(|&i| i != first).collect();
+        let mut left: Vector<usize> = (0..vars.len()).filter(|&i| i != first).collect();
         while !left.is_empty() {
-            let connected: Vec<usize> = (0..left.len()).filter(|&k| vars[left[k]] & bound != 0).collect();
+            let connected: Vector<usize> = (0..left.len()).filter(|&k| vars[left[k]] & bound != 0).collect();
             let k = if connected.is_empty() { rng.below(left.len()) } else { connected[rng.below(connected.len())] };
             let j = left.swap_remove(k);
             bound |= vars[j];
@@ -1227,7 +1318,7 @@ pub fn wants_request(key: &PlanKey) -> bool {
     if joins().requests.lock().iter().any(|r| &r.0 == key) {
         return false;
     }
-    !(joins().noted.load(Relaxed) && read(|m| m.notes.get(key).is_some_and(|n| !n.proposals.is_empty() && !n.wants_search)))
+    !(joins().noted.load(Relaxed) && read(|m| m.note(key).is_some_and(|n| !n.proposals.is_empty() && !n.wants_search)))
 }
 
 /// Raises the waiting searches of the critical path's lines to its work: they are searched first.
@@ -1307,7 +1398,8 @@ impl Drop for TakeHeld {
         let held = joins();
     let mut m = held.memo.write();
         for (key, orders, walked) in std::mem::take(&mut m.held) {
-            take_proposals(&mut m, key, orders, walked);
+            // copy: derived: the held orders decoded into the note that takes them.
+            take_proposals(&mut m, key, Vec::<Proposal>::decode(orders.get(), &Names::NONE), walked);
         }
     }
 }
@@ -1353,7 +1445,7 @@ fn unfloat(x: i64) -> f64 {
     f64::from_bits(x as u64)
 }
 
-fn push_steps(row: &mut Vec<i64>, order: &[StoredStep]) {
+fn push_steps(row: &mut Vector<i64>, order: &[StoredStep]) {
     row.push(order.len() as i64);
     for four in order.chunks(4) {
         let mut x = 0u64;
@@ -1381,17 +1473,17 @@ fn read_steps(next: &mut dyn FnMut() -> Option<i64>) -> Option<Vec<StoredStep>> 
 
 /// A note as integers: `[key high, key low, rule, runs, slow, critical, est, ran, wants, tried: n, (ratio, runs,
 /// steps)…, proposals: n, (price, steps)…]` (floats by their bits).
-pub fn note_row(key: PlanKey, n: &Note) -> Vec<i64> {
-    let mut row = vec![(key >> 64) as i64, key as i64, n.rule as i64, i64::from(n.runs), i64::from(n.slow), float(n.critical), float(n.est), float(n.ran), i64::from(n.wants_search)];
+pub fn note_row(key: PlanKey, n: &ArchivedNote) -> Vector<i64> {
+    let mut row = rerail_blocks::vector![(key >> 64) as i64, key as i64, n.rule as i64, i64::from(n.runs), i64::from(n.slow), float(n.critical), float(n.est), float(n.ran), i64::from(n.wants_search)];
     row.push(n.tried.len() as i64);
-    for t in &n.tried {
+    for t in n.tried.iter() {
         row.push(float(t.ratio));
         row.push(i64::from(t.runs));
         push_steps(&mut row, &t.order);
     }
     row.push(n.proposals.len() as i64);
-    for (o, p) in &n.proposals {
-        row.push(float(*p));
+    for (o, p) in n.proposed() {
+        row.push(float(p));
         push_steps(&mut row, o);
     }
     // Decision 0243, last: a row stored before it ends here, and reads as priced.
@@ -1411,7 +1503,7 @@ pub fn of_note_row(row: &[i64]) -> Option<(PlanKey, Note)> {
     }
     for _ in 0..usize::try_from(next()?).ok()?.min(PROPOSALS) {
         let p = unfloat(next()?);
-        n.proposals.push((read_steps(&mut next)?, p));
+        n.proposals.push(Proposal(read_steps(&mut next)?, p));
     }
     n.walked = next().map_or(0.0, unfloat);
     Some((key, n))
@@ -1427,9 +1519,9 @@ fn constant_text(c: &Constant) -> String {
 
 /// An exact statistic as values: `[key high, key low, rule, relation, columns, in, out]`; the columns as
 /// `c` or `c=constant`, joined by `\u{1}`.
-pub fn exact_row(key: PlanKey, rule: u64, (rel, cols): &Sig, c: [i64; 2]) -> (Vec<i64>, String, String, [i64; 2]) {
+pub fn exact_row(key: PlanKey, rule: u64, (rel, cols): &Sig, c: [i64; 2]) -> (Vector<i64>, String, String, [i64; 2]) {
     let text: Vec<String> = cols.iter().map(|(col, k)| match k { None => col.to_string(), Some(k) => format!("{col}={}", constant_text(k)) }).collect();
-    (vec![(key >> 64) as i64, key as i64, rule as i64], rel.clone(), text.join("\u{1}"), c)
+    (rerail_blocks::vector![(key >> 64) as i64, key as i64, rule as i64], rel.clone(), text.join("\u{1}"), c)
 }
 
 pub fn of_exact_row(ints: &[i64], rel: &str, cols: &str, c: [i64; 2]) -> Option<(PlanKey, u64, Sig, [i64; 2])> {
@@ -1450,74 +1542,105 @@ pub fn of_exact_row(ints: &[i64], rel: &str, cols: &str, c: [i64; 2]) -> Option<
     Some((key, rule as u64, (rel.to_owned(), parsed), c))
 }
 
-/// The memo's rows for the store: its notes, their exact statistics, and the columns they raised.
-pub type Stored = (Vec<(PlanKey, Note)>, Vec<(PlanKey, u64, Sig, [i64; 2])>, Vec<(PlanKey, String, usize)>);
+/// The memo's notes for the store: each line's key and its note, as the memo holds it.
+// copy: not block data: the notes' handles.
+pub type Stored = Vec<(PlanKey, Arc<Section<Note>>)>;
 
-/// The memo's notes and exact statistics, for the store, where any changed since the last call.
+/// The store's notes, read: each note, its exact statistics, and the columns they raised.
+pub type Loaded = (Vec<(PlanKey, Note)>, Vec<(PlanKey, u64, Sig, [i64; 2])>, Vec<(PlanKey, String, usize)>);
+
+/// A stored note's exact statistics: `(key, rule, statistic, counts)`.
+pub fn exact_of(key: PlanKey, n: &ArchivedNote) -> Vec<(PlanKey, u64, Sig, [i64; 2])> {
+    // copy: derived: the statistics decoded for the store's rows.
+    Vec::<(Sig, [i64; 2])>::decode(&n.exact, &Names::NONE).into_iter().map(|(s, c)| (key, n.rule, s, c)).collect()
+}
+
+/// A stored note's raised columns: `(key, relation, column)`.
+pub fn raised_of(key: PlanKey, n: &ArchivedNote) -> impl Iterator<Item = (PlanKey, &str, usize)> + '_ {
+    n.raised.iter().map(move |r| (key, r.0.as_str(), r.1 as usize))
+}
+
+/// The memo's notes, for the store, where any changed since the last call.
 pub fn to_store() -> Option<Stored> {
     let st_ = joins();
     let mut m = st_.memo.write();
     if !std::mem::take(&mut m.dirty) {
         return None;
     }
-    let now: FxHashMap<PlanKey, u64> = m.notes.iter().map(|(k, n)| (*k, fingerprint(n))).collect();
-    if now == m.written {
+    let keys = m.notes.keys();
+    let now: Vec<([u64; 2], u64)> = keys.iter().map(|k| (*k, fingerprint(m.notes.get(k).expect("listed").get()))).collect();
+    if now.len() == m.written.keys().len() && now.iter().all(|(k, f)| m.written.get(k) == Some(f)) {
         return None;
     }
-    m.written = now;
-    let notes: Vec<(PlanKey, Note)> = m.notes.iter().map(|(k, n)| (*k, n.clone())).collect();
-    let exact = notes.iter().flat_map(|(k, n)| n.exact.iter().map(move |(s, c)| (*k, n.rule, s.clone(), *c))).collect();
-    let raised = notes.iter().flat_map(|(k, n)| n.raised.iter().map(move |(r, c)| (*k, r.clone(), *c))).collect();
-    Some((notes, exact, raised))
+    let mut written = Overlay::default();
+    for (k, f) in now {
+        written.insert(k, f);
+    }
+    m.written = written;
+    Some(keys.iter().map(|k| (unpk(*k), Arc::clone(m.notes.get(k).expect("listed")))).collect())
 }
 
 /// Takes the store's notes: a line this process noted already keeps its own (memory is ahead of the store).
-pub fn from_store((notes, exact, raised): Stored) {
+pub fn from_store((notes, exact, raised): Loaded) {
     if notes.is_empty() {
         return;
     }
     let st_ = joins();
     let mut m = st_.memo.write();
-    let mut taken: FxHashSet<PlanKey> = FxHashSet::default();
+    let mut taken: Vec<PlanKey> = Vec::new();
+    let mut fresh: std::collections::BTreeMap<PlanKey, Note> = std::collections::BTreeMap::new();
     for (k, n) in notes {
-        m.notes.entry(k).or_insert_with(|| {
-            taken.insert(k);
-            n
-        });
+        if !m.has(&k) && !fresh.contains_key(&k) {
+            taken.push(k);
+            fresh.insert(k, n);
+        }
     }
-    for (k, rule, sig, c) in exact {
-        if taken.contains(&k)
-            && let Some(n) = m.notes.get_mut(&k)
-        {
+    for (k, _rule, sig, c) in exact {
+        if let Some(n) = fresh.get_mut(&k) {
             n.exact.push((sig, c));
-            let _ = rule;
         }
     }
     for (k, rel, c) in raised {
-        if taken.contains(&k)
-            && let Some(n) = m.notes.get_mut(&k)
-        {
+        if let Some(n) = fresh.get_mut(&k) {
             n.raised.push((rel, c));
         }
     }
-    // The columns every note raised: made from a stratum's first plan (`Run::heavy_for`).
-    let all: Vec<(String, usize)> = m.notes.values().flat_map(|n| n.raised.iter().cloned()).collect();
-    if !all.is_empty() {
+    for (k, n) in fresh {
+        let f = Arc::new(Section::of(&n));
+        m.written.insert(pk(k), fingerprint(f.get()));
+        if m.notes.insert(pk(k), f).is_none() {
+            m.count += 1;
+        }
+    }
+    // The columns every note raised: made from a stratum's first plan (`Run::heavy_for`); and each rule's exact
+    // statistics, from its notes'.
+    let mut any_raised = false;
+    let mut rules: Vec<(u64, rerail_blocks::maps::BlockHash<u64, [i64; 2]>)> = Vec::new();
+    let mut raised_cols: Vec<[u64; 2]> = Vec::new();
+    for (_, n) in m.each() {
+        for r in n.raised.iter() {
+            any_raised = true;
+            raised_cols.push([u64::from(super::table::rel_id(r.0.as_str())), r.1]);
+        }
+        if !n.exact.is_empty() {
+            let pairs = Vec::<(Sig, [i64; 2])>::decode(&n.exact, &Names::NONE);
+            rules.push((n.rule, pairs.iter().map(|(s, c)| (super::sig_key(s), *c)).collect()));
+        }
+    }
+    for k in raised_cols {
+        Memo::set(&mut m.raised, k);
+    }
+    if any_raised {
         joins().raised.store(true, Relaxed);
-        m.raised.extend(all);
     }
-    // As the store holds them: a run that changes none of them writes none.
-    for k in &taken {
-        let f = fingerprint(&m.notes[k]);
-        m.written.insert(*k, f);
-    }
-    let rules: Vec<(u64, HashMap<Sig, [i64; 2]>)> = m.notes.values().filter(|n| !n.exact.is_empty()).map(|n| (n.rule, n.exact.iter().cloned().collect())).collect();
     for (rule, map) in rules {
-        m.epochs.entry(rule).or_insert(1);
+        if m.epochs.get(&rule).is_none() {
+            m.epochs.insert(rule, 1);
+        }
         m.exact.insert(rule, Arc::new(map));
         joins().exact.store(true, Relaxed);
     }
-    joins().noted.store(!m.notes.is_empty(), Relaxed);
+    joins().noted.store(m.count > 0, Relaxed);
 }
 
 /// The learned join model as the batch pricer.

@@ -9,7 +9,8 @@ pub mod scalars;
 pub mod stages;
 pub use program::ProgramAnalysis;
 
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, rerail_section::Archive)]
+#[archive(decode)]
 pub struct Decision {
     pub proven: bool,
     pub reason: String,

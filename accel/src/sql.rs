@@ -164,8 +164,8 @@ mod tests {
         let executor = Executor::sql_only();
         assert_eq!(executor.lanes(), vec![Lane::Sql]);
         let non_sql = Kernel::Histogram {
-            off: vec![0, 1].into(),
-            codes: vec![0].into(),
+            off: rerail_blocks::vector![0, 1].into(),
+            codes: rerail_blocks::vector![0].into(),
             width: 1,
         };
         assert!(executor.run(Batch(vec![Launch::new(non_sql)])).is_err());

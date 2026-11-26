@@ -1,6 +1,7 @@
 # 0117: A relation carries its delta; maintenance is the core's, driven by the deltas that are not empty
 
-Status: accepted (2026-11-11). Steps 1–4 are built (below).
+Status: partly built (audited 2026-11-23). Left: step 5 amendment: a reached stratum's component (plans, spec,
+compiled joins, indexes) kept with the session across steps. Accepted (2026-11-11). Steps 1–4 are built (below).
 
 ## Intro
 

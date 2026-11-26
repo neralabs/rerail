@@ -1,7 +1,7 @@
 # 0523. The `.guests` setting is retired
 
-Status: decided (2026-11-20), by the user: "Retire it", of three choices for what `.guests off` means after 0431
-and 0470 (Q325 item 3). Supersedes the `.guests` part of 0058 §1 and 0055 §5.
+Status: built (audited 2026-11-23). Decided (2026-11-20), by the user: "Retire it", of three choices for what `.guests
+off` means after 0431 and 0470 (Q325 item 3). Supersedes the `.guests` part of 0058 §1 and 0055 §5.
 
 ## Intro
 

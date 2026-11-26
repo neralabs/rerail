@@ -52,9 +52,13 @@ case $MODE in
     script=$OUT/script.txt; : > $script
     echo "env RERAIL_SESSION=$OUTA/session" >> $script
     echo "env RERAIL_TAPE_CACHE=$OUTA/store.sqlite" >> $script
+    # SESSION_ENV: more settings of the session's process (VAR=VALUE ...), set as the script's first lines.
+    for e in ${=SESSION_ENV:-}; do echo "env $e" >> $script; done
     for s in $steps; do
       [ $s != 00 ] && echo "sh cd $PWD && rsync -rlpc --exclude .deleted $IN/o125-replay/$s/ $W/ && (while read f; do [ -n \"\$f\" ] && mv $W/\$f /tmp/ai-trash/mm-$$-\$(echo \$f | tr / _); done < $IN/o125-replay/$s/.deleted; true)" >> $script
       [ "${PROFILE_STEP:-}" = $s ] && echo "env RERAIL_PROFILE=$OUTA/prof-$s" >> $script
+      # The step's stacks (`/usr/bin/sample`, 1 ms, SAMPLE_S seconds) over the session's process, the whole command.
+      [ "${SAMPLE_STEP:-}" = $s ] && echo "sh (/usr/bin/sample \$PPID ${SAMPLE_S:-4} 1 -mayDie -file $OUTA/sample-$s.txt > $OUTA/sample-$s.log 2>&1 &) ; sleep 0.3" >> $script
       echo "run-policies $W $OUT/out-$s $POLICY" >> $script
     done
     capped $ENGINE repeat $script > $OUT/all.json 2> $OUT/all.err || echo "session failed"

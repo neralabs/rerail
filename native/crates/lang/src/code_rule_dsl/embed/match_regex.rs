@@ -98,7 +98,7 @@ fn program(string: HostNode<'_>, source: &str, budget: &dyn Fn() -> bool) -> Opt
         return None;
     }
     segments.index();
-    let parse = super::Parse::read(GrammarDialect::Regex, &text, budget)?;
+    let parse = super::Parse::read_program(GrammarDialect::Regex, &text, &segments, budget)?;
     Some(Program { dialect: GrammarDialect::Regex, parse, text, segments, host_errors: Vec::new(), at: Some(range) })
 }
 

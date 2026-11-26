@@ -1,8 +1,7 @@
 # 0480. Bitlex tier 2 keeps the reference's meaning of calls and token marks
 
-Status: accepted (2026-11-19; the user: "I want to fix the compiler, not work around it").
-Follows 0436 (whose grammar met the three limits), 0407 and 0129. Kotlin's `, ends` (Q346)
-stays open and Kotlin's.
+Status: built (audited 2026-11-23). Accepted (2026-11-19; the user: "I want to fix the compiler, not work around it").
+Follows 0436 (whose grammar met the three limits), 0407 and 0129. Kotlin's `, ends` (Q346) stays open and Kotlin's.
 
 ## Intro
 

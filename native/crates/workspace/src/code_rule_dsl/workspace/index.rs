@@ -646,7 +646,7 @@ impl WorkspaceIndexTask {
             let input = FileInput::new(
                 file.path.clone(),
                 file.language.clone(),
-                Arc::new(String::new()),
+                Arc::new(String::new().into()),
                 module.as_ref(),
                 package,
                 &file.path,

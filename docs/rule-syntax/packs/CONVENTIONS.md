@@ -67,9 +67,9 @@ tool-call rule (`sample.boundary: "tool-call"`) matches a coding agent's tool ca
 `run-policies --tool-calls`; a finding is the rule and the call, as the original names no code.
 
 A directory here is a pack with originals only when `packs/<id>/pack.json` exists. One without has no
-`equivalence.json` and is not checked: `--all` names it as not a pack, and `--pack` refuses it. Today those are `rr`
-and `django`, rules written in `.rerail` from the start with no JSON to compare against (their own `.test`s, run by
-`rerail-engine test-rr`, are their check), and `python-main`, a machine translation of the `python` pack's rules kept
+`equivalence.json` and is not checked: `--all` names it as not a pack, and `--pack` refuses it. Today those are `rr`,
+rules written in `.rerail` from the start with no JSON to compare against (its own `.test`s, run by
+`rerail-engine test-rr`, are its check), and `python-main`, a machine translation of the `python` pack's rules kept
 under another name, which the `python` pack's own translations stand for here.
 
 Each pack declares what it expects in `equivalence.json` here:

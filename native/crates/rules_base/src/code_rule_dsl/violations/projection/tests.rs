@@ -3,7 +3,7 @@ use serde_json::json;
 
 #[test]
 fn chunks_share_schema_and_borrow_unicode_source_without_row_maps() {
-    let source = Arc::new("before αβ after".to_owned());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from("before αβ after"));
     let mut rows = Vec::new();
     {
         let _scope = Scope::enter();
@@ -88,7 +88,7 @@ fn wire_round_trips_keep_json_type_and_missing_distinct_from_null() {
 
 #[test]
 fn nulls_duplicates_and_subspans_survive_publication_and_sql_binding() {
-    let source = Arc::new("prefix NAME suffix".to_owned());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from("prefix NAME suffix"));
     let row = append(
         (1, 2, 3),
         || vec!["name".into(), "empty".into()],

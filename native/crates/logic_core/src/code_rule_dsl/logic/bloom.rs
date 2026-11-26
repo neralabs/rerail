@@ -18,6 +18,7 @@
 //!
 //! A filter of `2w` words folds to `w` (word `i` is words `i` and `i + w` OR-ed): the words a key takes are the low
 //! bits of the same field. So any two filters compare at the smaller one's size (`shared`).
+use rerail_blocks::vector::Vector;
 /// Bits of a word a key sets.
 pub const K: u32 = 5;
 /// The bits a screen's own filter (a probe side without a kept one) gives each distinct key.
@@ -136,7 +137,7 @@ pub fn rank(h: u64) -> u64 {
 /// share of these keys that column holds, whatever the two filters' sizes.
 #[derive(Clone, Debug, Default)]
 pub struct Sample {
-    hashes: Vec<u64>,
+    hashes: Vector<u64>,
 }
 
 impl Sample {
@@ -255,7 +256,7 @@ impl std::fmt::Debug for Kept {
 #[derive(Debug)]
 pub struct Reading {
     pub filter: std::sync::Arc<Kept>,
-    pub sample: Box<[u64]>,
+    pub sample: Vector<u64>,
     ones: u64,
 }
 
@@ -309,7 +310,7 @@ impl Keys {
     /// The keys of `values` (distinct or not) as a sketch keeps them: few exactly, else a filter sized for twice
     /// them (as a sketch's grows) and a sample.
     pub fn of(values: impl IntoIterator<Item = i64>) -> Keys {
-        let mut v: Vec<i64> = values.into_iter().collect();
+        let mut v: Vector<i64> = values.into_iter().collect();
         v.sort_unstable();
         v.dedup();
         if v.len() <= crate::code_rule_dsl::logic::join_size::EXACT {

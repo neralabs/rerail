@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use crate::code_rule_dsl::logic::program_image::manager::{self, Pipeline};
@@ -109,15 +110,15 @@ fn a_rule_joining_a_phase_export_is_cross_file_and_one_joining_an_option_is_not(
 /// │   └ 3 function
 /// └ 4 other
 /// ```
-fn chunk() -> (Vec<u32>, Vec<i64>) {
-    (vec![NONE, 0, 1, 2, 0, NONE, 5, 6], vec![1, 2, 3, 2, 3, 1, 3, 2])
+fn chunk() -> (Vector<u32>, Vector<i64>) {
+    (rerail_blocks::vector![NONE, 0, 1, 2, 0, NONE, 5, 6], rerail_blocks::vector![1, 2, 3, 2, 3, 1, 3, 2])
 }
 
 #[test]
 fn nearest_is_each_nodes_closest_ancestor_in_the_set() {
     let (parent, kind) = chunk();
     let trees = Trees { parent: &parent, kind: &kind };
-    let sets = [vec![1], vec![2], vec![1, 2]];
+    let sets = [rerail_blocks::vector![1], rerail_blocks::vector![2], rerail_blocks::vector![1, 2]];
     let got = nearest(&trees, &sets, Binding::Cpu).unwrap();
     assert_eq!(got[0], [NONE, 0, 0, 0, 0, NONE, 5, 5]);
     assert_eq!(got[1], [NONE, NONE, 1, 1, NONE, NONE, NONE, NONE]);
@@ -135,7 +136,7 @@ fn the_device_finds_the_cpus_nearest() {
         kind.push(i64::from(i % 5));
     }
     let trees = Trees { parent: &parent, kind: &kind };
-    let sets = [vec![1], vec![2, 3], vec![4]];
+    let sets = [rerail_blocks::vector![1], rerail_blocks::vector![2, 3], rerail_blocks::vector![4]];
     let cpu = nearest(&trees, &sets, Binding::Cpu).unwrap();
     let metal = nearest(&trees, &sets, Binding::Metal).unwrap();
     assert_eq!(cpu, metal);
@@ -166,9 +167,9 @@ fn nearest_costs_by_solver() {
 fn nearest_costs(cap: usize) {
     let n = 172_000usize;
     // Preorder forest: 80 documents; a node's parent is the open node on top of a stack that grows and shrinks.
-    let mut parent = Vec::with_capacity(n);
+    let mut parent = rerail_blocks::vector::Vector::with_capacity(n);
     let mut kind = Vec::with_capacity(n);
-    let mut stack: Vec<u32> = Vec::new();
+    let mut stack: Vector<u32> = rerail_blocks::vector::Vector::new();
     let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
     let mut rand = || {
         x ^= x << 13;
@@ -189,7 +190,7 @@ fn nearest_costs(cap: usize) {
         stack.push(i as u32);
     }
     let depth = (0..n).map(|mut v| { let mut d = 0; while parent[v] != NONE { v = parent[v] as usize; d += 1; } d }).max().unwrap();
-    let sets = vec![vec![7]];
+    let sets = vec![rerail_blocks::vector![7]];
     let trees = Trees { parent: &parent, kind: &kind };
     let sys = system(&trees, &sets).unwrap();
     let t = std::time::Instant::now();
@@ -214,7 +215,7 @@ fn nearest_costs(cap: usize) {
     use crate::code_rule_dsl::transducer::packed::metal_nearest;
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     for how in [metal_nearest::Buffers::Fresh, metal_nearest::Buffers::Blocks, metal_nearest::Buffers::Fresh, metal_nearest::Buffers::Blocks] {
-        let target: Vec<u32> = parent.clone();
+        let target: Vector<u32> = parent.clone();
         let done: Vec<u8> = parent.iter().map(|&p| u8::from(p == NONE || sets[0].contains(&kind[p as usize]))).collect();
         for round in 0..4 {
             // `RERAIL_NEAREST_IDLE_MS`: the GPU left idle before each call, as between a run's chunks.
@@ -321,8 +322,15 @@ finding(n, s) :- node(_, n, "call", _, _), field(n, "function", f), text(f, s), 
     let join = rules_of(&v, &made[0])[0];
     assert_eq!(join.body().count(), 5, "{}", v.show_rule(join));
     assert_eq!(join.head().args().count(), 2);
-    // Its rows are attributable to their file: the node column is a location.
-    assert_eq!(split.locations[&made[0]], [0], "{:?}", split.locations);
+    // Its rows are attributable to their file: the node column is a location. The interface's order is the join's
+    // canonical one (its literals by their text, decision 0575), so the node's column is found by its variable.
+    let shown = v.show_rule(join);
+    let (head, body) = shown.split_once(" :- ").expect("a rule");
+    let head_vars: Vec<&str> = head[head.find('(').unwrap() + 1..head.rfind(')').unwrap()].split(", ").collect();
+    let node_at = body.find("node(").expect("the join reads node");
+    let node_var = body[node_at + 5..].split(", ").nth(1).expect("node's node column");
+    let column = head_vars.iter().position(|x| *x == node_var).expect("the node is in the interface");
+    assert_eq!(split.locations[&made[0]], [column], "{shown}: {:?}", split.locations);
 }
 
 /// A cross-file join by a value (two files' identifiers of one text, `text(a, t), text(b, t)`) is each file's part,
@@ -421,6 +429,100 @@ named(n) :- node(_, n, "identifier", _, _), text(n, x), side(x).
     let lv = &parts.versions.local;
     assert!(lv.rules().any(|r| lv.rel_name(r.head().rel()) == "side"), "the chunks derive side for named");
     assert!(!split.causes.contains_key("under"), "{:?}", split.causes);
+}
+
+/// A column filled by a node in one rule and by `unset` (-1) in another is a nullable location (decision 0649): a rule
+/// that joins through it, its variable placed by a node column too (`child(a, e, 0)`), stays on one document, as
+/// `conditional-architecture`'s `ca_alias_at` reads `ca_param`'s annotation. Two rows joined by that column alone may
+/// both be -1, of two documents: that rule is cross-file. The column is no location, so no row's document is read
+/// off it.
+#[test]
+fn a_location_or_unset_column_keeps_a_rule_through_it_on_one_document() {
+    let v = read(r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.input node, child, field
+.decl ann_of(f: node, a: loc)
+ann_of(f, a) :- node(_, f, "function_definition", _, _), field(f, "return_type", a).
+ann_of(f, a) :- node(_, f, "function_definition", _, _), !field(f, "return_type", _), unset(a).
+.decl ann_head(f: node, e: node)
+ann_head(f, e) :- ann_of(f, a), child(a, e, 0).
+.decl same_ann(f: node, g: node)
+same_ann(f, g) :- ann_of(f, a), ann_of(g, a), f != g.
+.output ann_head, same_ann
+"#);
+    let split = split_of(&v);
+    assert_eq!(split.locations["ann_of"], [0], "{:?}", split.locations);
+    assert_eq!(split.nullable.get("ann_of").map(|v| &v[..]), Some(&[1][..]), "{:?}", split.nullable);
+    assert!(split.local.contains("ann_head"), "{:?} {:?}", split.local, split.causes);
+    assert!(!split.local.contains("same_ann"), "two -1s are of any documents: {:?}", split.local);
+    assert_eq!(split.same_doc.get("ann_of").map(|v| &v[..]), Some(&[0][..]), "{:?}", split.same_doc);
+}
+
+/// An undeclared crossing is refused (decision 0652): a rule joining two documents by a value names its relation,
+/// cause and rule. Declared `cross_file`, it is accepted, and its reader follows it with no declaration. A relation
+/// the lowering made for a rule is named with that rule's relation.
+#[test]
+fn an_undeclared_crossing_is_refused_and_a_declared_one_is_not() {
+    let base = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.input node, text
+.decl named(n: node, s: symbol)
+named(n, s) :- node(_, n, "identifier", _, _), text(n, s).
+.decl twin(a: node, b: node)DECL
+twin(a, b) :- named(a, s), named(b, s), a != b.
+.decl has_twin(a: node)
+has_twin(a) :- twin(a, _).
+.output has_twin
+"#;
+    let refused = crossings_checked(&programs_of(read(&base.replace("DECL", ""))).unwrap()).unwrap_err();
+    assert!(refused.contains("twin: joins 2 documents"), "{refused}");
+    assert!(refused.contains("decision 0652") && refused.contains("cross_file"), "{refused}");
+    assert!(!refused.contains("has_twin"), "a reader of a crossing is not one: {refused}");
+    let declared = programs_of(read(&base.replace("DECL", " cross_file"))).unwrap();
+    crossings_checked(&declared).unwrap();
+    assert!(!declared.file_local.contains("twin") && !declared.file_local.contains("has_twin"), "{:?}", declared.file_local);
+    let helper = read(r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.input node, text
+.decl alone(a: node)
+alone(a) :- node(_, a, "identifier", _, _), text(a, s), !(text(b, s), b != a).
+.output alone
+"#);
+    let refused = crossings_checked(&programs_of(helper).unwrap()).unwrap_err();
+    assert!(refused.contains("made by the lowering of alone") || refused.contains("  alone:"), "{refused}");
+}
+
+/// A cross-file rule reading a node's position (decision 0649) is reported, with the relation it reads; one placing a
+/// finding (its head an output) is not, and a file-local rule reading one is not.
+#[test]
+fn a_cross_file_rule_reading_a_position_is_reported() {
+    let v = read(r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl visit_index(n: node, i: number)
+.decl line(n: loc, l: number)
+.decl text(n: node, s: symbol)
+.input node, visit_index, line, text
+.decl call(n: node, s: symbol)
+call(n, s) :- node(_, n, "call", _, _), text(n, s).
+.decl first_of(s: symbol, i: number)
+first_of(s, i) :- call(n, s), call(m, s), n != m, visit_index(n, i).
+.decl local_at(n: node, l: number)
+local_at(n, l) :- call(n, _), line(n, l).
+.decl found(n: node, l: number)
+found(n, l) :- call(n, s), first_of(s, _), line(n, l).
+.output found, local_at
+"#);
+    let parts = programs_of(Arc::clone(&v)).unwrap();
+    assert!(!parts.file_local.contains("first_of"), "{:?}", parts.file_local);
+    assert_eq!(parts.positions, [("first_of".to_owned(), "visit_index".to_owned())], "{:?}", parts.positions);
+    let refused = positions_checked(&parts.positions, true).unwrap_err();
+    assert!(refused.contains("first_of reads visit_index"), "{refused}");
+    assert!(positions_checked(&parts.positions, false).is_ok());
+    assert!(positions_checked(&[], true).is_ok());
 }
 
 /// A relation stated with no rows is a constant, as one with rows is: reading it, or its negation, joins no document

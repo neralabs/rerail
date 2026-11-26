@@ -4,7 +4,7 @@
 pub struct Node {
     pub kind: u16,
     pub field: u8,
-    /// Extra 1, error 2, missing 4 (format 15's code flags).
+    /// Extra 1, error 2, missing 4 (a code's flags).
     pub flags: u8,
     /// Supertype memberships, ascending.
     pub classes: Vec<u16>,

@@ -1,7 +1,8 @@
 # 0319. A chunk's counted constants are estimates, and the branded ones are counted
 
-Status: decided (2026-11-16), working on the user's "35 second cold run ... too long". Corrects 0203's inputs (a
-line's price) and keeps 0048's demand bar as it was tuned. Builds on 0270 (kinds, fields and names as branded terms).
+Status: built (audited 2026-11-23). Decided (2026-11-16), working on the user's "35 second cold run ... too long".
+Corrects 0203's inputs (a line's price) and keeps 0048's demand bar as it was tuned. Builds on 0270 (kinds, fields and
+names as branded terms).
 
 ## Intro
 

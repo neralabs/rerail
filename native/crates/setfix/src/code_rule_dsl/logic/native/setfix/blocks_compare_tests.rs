@@ -9,6 +9,7 @@
 //!
 //! Each arm is its own test, run in its own process, so its heap figures start clean.
 
+use rerail_blocks::vector::Vector;
 use super::*;
 use rerail_blocks::block::{Block, kind};
 use rerail_blocks::relation::{self as brel, RelW, Relation, Spec, View};
@@ -20,8 +21,8 @@ const EDIT_KILL: usize = 100;
 const EDIT_ADD: usize = 100;
 
 /// `N` rows of 3 columns (caller, callee, doc), about 10% of them repeats: the shape of a call-edge relation.
-fn rows() -> Vec<i64> {
-    let mut v = Vec::with_capacity(N * K);
+fn rows() -> Vector<i64> {
+    let mut v = rerail_blocks::vector::Vector::with_capacity(N * K);
     let mut x: u64 = 0x2545F4914F6CDD1D;
     for i in 0..N {
         x ^= x << 13;
@@ -33,7 +34,7 @@ fn rows() -> Vec<i64> {
     v
 }
 
-fn added() -> Vec<i64> {
+fn added() -> Vector<i64> {
     (0..EDIT_ADD).flat_map(|i| [900_000 + i as i64, (i * 13 % 200_000) as i64, 4_000]).collect()
 }
 
@@ -156,7 +157,7 @@ fn blocks_compare_baseline() {
         }
         s
     });
-    let gone: Vec<i64> = flat[..EDIT_KILL * K].to_vec();
+    let gone: Vector<i64> = rerail_blocks::vector::Vector::from(&flat[..EDIT_KILL * K][..]);
     let gone = InRel::from_flat(gone, EDIT_KILL, types.clone());
     let add = added();
     let next = m.time("one edit: based + push + close", || {

@@ -7,6 +7,7 @@
 //!
 //! The CPU's `lattice_fixpoint` is the reference: a monotone system over a finite lattice has one
 //! least fixpoint, whatever order its cells are evaluated in.
+use rerail_blocks::vector::Vector;
 use super::*;
 pub use crate::code_rule_dsl::logic::device::lattice::{Solved, System};
 use rerail_metal::lane;
@@ -27,9 +28,9 @@ struct Args {
 unsafe impl lane::Pod for Args {}
 
 /// `(start, items)` CSR of `edges` by their first element over `n` cells.
-fn csr(n: usize, mut edges: Vec<(u32, u32)>) -> (Vec<u32>, Vec<u32>) {
+fn csr(n: usize, mut edges: Vec<(u32, u32)>) -> (Vector<u32>, Vector<u32>) {
     edges.sort_unstable();
-    let mut start = vec![0_u32; n + 1];
+    let mut start = rerail_blocks::vector![0_u32; n + 1];
     for &(a, _) in &edges {
         start[a as usize + 1] += 1;
     }
@@ -43,7 +44,7 @@ fn csr(n: usize, mut edges: Vec<(u32, u32)>) -> (Vec<u32>, Vec<u32>) {
 pub(in crate::code_rule_dsl) fn solve(system: &System<'_>) -> Result<Solved, Error> {
     let n = system.seeds.len();
     if n == 0 {
-        return Ok(Solved { values: Vec::new(), launches: 0, visits: 0, retries: 0, gpu: 0.0, wall: 0.0, phases: [0.0; 7], made: 0, reused: 0 });
+        return Ok(Solved { values: rerail_blocks::vector::Vector::new(), launches: 0, visits: 0, retries: 0, gpu: 0.0, wall: 0.0, phases: [0.0; 7], made: 0, reused: 0 });
     }
     if n > u32::MAX as usize / 4 {
         return Err(Error::BackendCapacity);
@@ -171,10 +172,10 @@ mod tests {
     }
 
     /// The least fixpoint by rounds over every cell until none changes: the reference.
-    fn fixpoint(s: &System<'_>) -> Vec<i64> {
-        let mut v = s.seeds.to_vec();
+    fn fixpoint(s: &System<'_>) -> Vector<i64> {
+        let mut v = rerail_blocks::vector::Vector::from(s.seeds);
         loop {
-            let mut next = s.seeds.to_vec();
+            let mut next = rerail_blocks::vector::Vector::from(s.seeds);
             for &(cell, source) in s.copies {
                 next[cell as usize] = lub(next[cell as usize], v[source as usize]);
             }
@@ -206,7 +207,7 @@ mod tests {
             x ^= x << 5;
             x
         };
-        let seeds: Vec<i64> = (0..n).map(|_| match next() % 10 { 0 => 7, 1 => i64::from(next() % 5), 2 => TOP, _ => BOT }).collect();
+        let seeds: Vector<i64> = (0..n).map(|_| match next() % 10 { 0 => 7, 1 => i64::from(next() % 5), 2 => TOP, _ => BOT }).collect();
         let mut copies = Vec::new();
         let mut bins = Vec::new();
         for c in 1..n {

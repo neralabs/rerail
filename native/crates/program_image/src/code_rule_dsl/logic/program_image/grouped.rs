@@ -2,6 +2,7 @@
 //! appended since, chained from each key's last block. An append fills its key's tail block or starts one; it never
 //! moves the base. `freeze` lays both out as one CSR, as a built image stores it.
 
+use rerail_blocks::vector::Vector;
 const BLOCK: usize = 16;
 
 #[derive(Clone, Copy)]
@@ -15,19 +16,19 @@ struct Block {
 #[derive(Default)]
 pub struct Grouped {
     /// The base: key k's values are `values[starts[k]..starts[k + 1]]`.
-    starts: Vec<u32>,
-    values: Vec<u32>,
+    starts: Vector<u32>,
+    values: Vector<u32>,
     /// Per key, its first and last tail block + 1 (0: none).
-    first: Vec<u32>,
-    last: Vec<u32>,
+    first: Vector<u32>,
+    last: Vector<u32>,
     blocks: Vec<Block>,
 }
 
 impl Grouped {
     /// A base of `starts` and `values` (CSR), with no tails.
-    pub fn of(starts: Vec<u32>, values: Vec<u32>) -> Grouped {
+    pub fn of(starts: Vector<u32>, values: Vector<u32>) -> Grouped {
         let keys = starts.len().saturating_sub(1);
-        Grouped { starts, values, first: vec![0; keys], last: vec![0; keys], blocks: Vec::new() }
+        Grouped { starts, values, first: rerail_blocks::vector![0; keys], last: rerail_blocks::vector![0; keys], blocks: Vec::new() }
     }
     pub fn keys(&self) -> usize {
         self.first.len()
@@ -80,10 +81,10 @@ impl Grouped {
         self.blocks.len()
     }
     /// The whole index as one CSR over `keys` keys (at least as many as were pushed): no tails.
-    pub fn freeze(&self, keys: usize) -> (Vec<u32>, Vec<u32>) {
+    pub fn freeze(&self, keys: usize) -> (Vector<u32>, Vector<u32>) {
         let keys = keys.max(self.keys());
-        let mut starts = Vec::with_capacity(keys + 1);
-        let mut values = Vec::with_capacity(self.values.len() + self.blocks.len() * BLOCK);
+        let mut starts = rerail_blocks::vector::Vector::with_capacity(keys + 1);
+        let mut values = rerail_blocks::vector::Vector::with_capacity(self.values.len() + self.blocks.len() * BLOCK);
         for k in 0..keys {
             starts.push(values.len() as u32);
             values.extend(self.get(k as u32));

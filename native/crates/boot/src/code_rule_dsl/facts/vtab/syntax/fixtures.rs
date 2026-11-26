@@ -15,7 +15,7 @@ pub fn corpus() -> Vec<(String, String)> {
     serde_json::from_slice(&raw).unwrap()
 }
 pub fn facts(path: &str, source: &str) -> Arc<Facts> {
-    let file = FileInput::new(path.to_owned(), "python".to_owned(), Arc::new(source.to_owned()), None, None, "core").unwrap();
+    let file = FileInput::new(path.to_owned(), "python".to_owned(), Arc::new(source.to_owned().into()), None, None, "core").unwrap();
     match core::build(&file).unwrap() {
         Built::Facts(f) => Arc::new(f),
         Built::Unparsed => panic!("{path} did not parse"),

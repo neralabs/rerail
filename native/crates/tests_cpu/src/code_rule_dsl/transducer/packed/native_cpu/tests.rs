@@ -1,4 +1,5 @@
     use super::*;
+    use rerail_blocks::vector::Vector;
     use crate::code_rule_dsl::{
         tape::{Grammar, TapeImage},
         transducer::packed::{CAPTURE, EMIT, KIND, Program, native_ir, word},
@@ -8,12 +9,12 @@
     use ast_grep_core::tree_sitter::LanguageExt;
     use std::sync::Arc;
 
-    /// A test's nodes as the tape the JIT reads (decision 0310): format 15's columns over `nodes` in preorder, the
-    /// tree their parent links describe (a later node with none is a child of node 0), each node its own code
-    /// (its kind, field and flags; its supertype memberships from `classes`, (node, kind) pairs), its span as
-    /// written. A node's other links (siblings, children, subtree end) are the tree's.
+    /// A test's nodes as the tape the JIT reads (decision 0310): format 16 over `nodes` in preorder, written by its
+    /// writer, the tree their parent links describe (a later node with none is a child of node 0), each node its
+    /// own code (its kind, field and flags; its supertype memberships from `classes`, (node, kind) pairs), its span
+    /// as written. A node's other links (siblings, children, subtree end) are the tree's.
     struct TestTape {
-        bytes: Vec<u8>,
+        tape: rerail_tape_format::f16::Tape16,
         view: rerail_clif::view::TapeView,
         codes: Vec<crate::code_rule_dsl::tape::resident::DeviceCode>,
     }
@@ -24,6 +25,8 @@
         }
 
         fn with_classes(nodes: &[MetalNode], classes: &[(u32, u16)]) -> Self {
+            use rerail_tape_format::f16::{Lang, Node, Written, placement, write};
+            use rerail_tape_format::tape::{CodeTable, Entry};
             let n = nodes.len();
             let parent = |i: usize| match nodes[i].parent {
                 p if i > 0 && (p == NONE || p as usize >= i) => 0,
@@ -37,23 +40,19 @@
                 let p = parent(i);
                 assert!(i < p + size[p] as usize, "node {i} lies outside its parent {p}'s subtree: the nodes are not in preorder");
             }
-            let block_base = |k: usize| nodes[k * 16..n.min(k * 16 + 16)].iter().map(|node| node.source_start).min().unwrap_or(0);
-            let words = |values: &mut dyn Iterator<Item = u32>| values.flat_map(u32::to_le_bytes).collect::<Vec<u8>>();
-            let code: Vec<u8> = (0..n as u16).flat_map(u16::to_le_bytes).collect();
-            let sizes = words(&mut size.iter().copied());
-            let base = words(&mut (0..n.div_ceil(16)).map(block_base));
-            let off = words(&mut (0..n).map(|i| nodes[i].source_start - block_base(i / 16)));
-            let tail = words(&mut nodes.iter().map(|node| node.source_end - node.source_start));
-            let mut bytes = Vec::new();
-            let mut at = [0_u32; 5];
-            for (k, column) in [code, sizes, base, off, tail].into_iter().enumerate() {
-                at[k] = bytes.len() as u32;
-                bytes.extend_from_slice(&column);
-                bytes.resize(bytes.len().next_multiple_of(8), 0);
-            }
-            // The source its nodes span, as a tape's header states it: its reads hold spans to it (decision 0463).
+            // Each node its own number in a table of one entry a node: its code is the test's (`codes`), by number.
+            let entries = (0..n).map(|i| Entry { kind: (i % 1024) as u16, field: (i / 1024) as u16, flags: 0, alias: None, classes: Vec::new() }).collect();
+            let lang = Lang::new(CodeTable::new(entries), [1, 1, 1], 1).expect("a table");
+            // The source its nodes span, as the tape's header states it: its reads hold spans to it (decision 0463).
             let source_len = nodes.iter().map(|node| node.source_end).max().unwrap_or(0);
-            let view = rerail_clif::view::TapeView { nodes: n as u32, format: 15, widths: 4 | 4 << 4 | 4 << 8 | 1 << 12, columns: at, source_len, ..Default::default() };
+            let source = vec![b' '; source_len as usize];
+            let node = |i: usize| Node { number: i as u32, start: u64::from(nodes[i].source_start), end: u64::from(nodes[i].source_end), subtree_end: i + size[i] as usize };
+            let tape = match write(&lang, n, &source, rerail_tape_format::newlines::Terminators::Lf, 0, false, node) {
+                Ok(Written::F16(tape)) => tape,
+                Ok(Written::F16Z(_)) => unreachable!("format 16 was asked for"),
+                Err(why) => panic!("the test's nodes are not a format 16 tape: {why}"),
+            };
+            let view = placement(tape.as_bytes()).and_then(|p| p.view(&lang, 0)).expect("the tape's view");
             let codes = nodes
                 .iter()
                 .enumerate()
@@ -67,12 +66,17 @@
                     code
                 })
                 .collect();
-            Self { bytes, view, codes }
+            Self { tape, view, codes }
+        }
+
+        /// The tape's bytes, where its view's offsets count from.
+        fn bytes(&self) -> &[u8] {
+            self.tape.as_bytes()
         }
 
         /// The context reads this tape, as the batch's only document.
         fn bind(&self, context: &mut NativeTaskContext) {
-            context.tape = self.bytes.as_ptr();
+            context.tape = self.bytes().as_ptr();
             context.view = &self.view;
             context.codes = self.codes.as_ptr();
             (context.node_base, context.source_base) = (0, 0);
@@ -94,7 +98,7 @@
         let native = StrDoc::new(source, SupportLang::Python);
         let image =
             TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
-        TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap()
+        TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap()
     }
 
     #[test]
@@ -116,7 +120,7 @@
             let anchors = vec![vec![
                 (0..files[0].transducer_len() as u32)
                     .filter(|&node| kinds.contains(&files[0].transducer_kind(node)))
-                    .collect::<Vec<_>>(),
+                    .collect::<rerail_blocks::vector::Vector<_>>(),
             ]];
             let expected = super::execute_batch(&programs, &files, &anchors).unwrap();
             let actual = crate::code_rule_dsl::transducer::packed::interpreter_reference(
@@ -146,7 +150,7 @@
                 &SupportLang::Python.get_ts_language(),
             )
             .unwrap();
-            let roots = (0..files[0].transducer_len() as u32).collect::<Vec<_>>();
+            let roots = (0..files[0].transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>();
             let anchors = vec![vec![roots.clone()]];
             let expected = crate::code_rule_dsl::transducer::packed::execute_batch(
                 std::slice::from_ref(&program),
@@ -232,11 +236,11 @@
             )
             .unwrap(),
             Program::new(
-                vec![word(RESTORE_CURSOR, 0, 0), word(EMIT, 0, 0)],
+                rerail_blocks::vector![word(RESTORE_CURSOR, 0, 0), word(EMIT, 0, 0)],
                 vec![b"error".to_vec()],
                 vec![],
-                vec![0],
-                vec![],
+                rerail_blocks::vector![0],
+                rerail_blocks::vector![],
             )
             .unwrap(),
             Program::compile_tree_sitter_query_pattern(
@@ -245,8 +249,8 @@
             )
             .unwrap(),
         ];
-        let roots = (0..files[0].transducer_len() as u32).collect::<Vec<_>>();
-        let anchors = vec![roots.clone(), vec![0], roots.clone()];
+        let roots = (0..files[0].transducer_len() as u32).collect::<Vector<_>>();
+        let anchors = vec![roots.clone(), rerail_blocks::vector![0], roots.clone()];
         let limits = [0, 0, 1];
         let mut expected = crate::code_rule_dsl::transducer::packed::execute_batch_outcomes(
             &programs,
@@ -291,7 +295,7 @@
             interpreter_reference(&programs, &files[0], &anchors, &limits[..2]),
             Err(Error::InvalidAnchor)
         ));
-        let invalid_roots = vec![vec![1, 0], vec![0], roots];
+        let invalid_roots = vec![rerail_blocks::vector![1, 0], rerail_blocks::vector![0], roots];
         assert!(matches!(
             interpreter_reference(&programs, &files[0], &invalid_roots, &limits),
             Err(Error::InvalidAnchor)
@@ -340,7 +344,7 @@
                 .id_for_node_kind("call", true);
             let roots = (0..files[0].transducer_len() as u32)
                 .filter(|&node| files[0].transducer_kind(node) == call)
-                .collect::<Vec<_>>();
+                .collect::<rerail_blocks::vector::Vector<_>>();
             assert_eq!(roots.len(), root_count);
             let anchors = vec![vec![roots.clone()]];
             let expected = crate::code_rule_dsl::transducer::packed::execute_batch(
@@ -417,7 +421,7 @@
         let anchors = vec![vec![
             (0..files[0].transducer_len() as u32)
                 .filter(|&node| kinds.contains(&files[0].transducer_kind(node)))
-                .collect::<Vec<_>>(),
+                .collect::<rerail_blocks::vector::Vector<_>>(),
         ]];
         let started = std::time::Instant::now();
         let output =
@@ -447,7 +451,7 @@
             "fields: ClassVar[dict[str, Field[str]]]\nfile: IO[str] | IO[bytes] | None\n",
         )];
         let anchors = vec![vec![
-            (0..files[0].transducer_len() as u32).collect::<Vec<_>>(),
+            (0..files[0].transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>(),
         ]];
         let expected =
             crate::code_rule_dsl::transducer::packed::execute_batch(&programs, &files, Some(&anchors))
@@ -467,7 +471,7 @@
         .unwrap();
         let files = [tape("# first\n# second\nvalue\n# third\n")];
         let anchors = vec![vec![
-            (0..files[0].transducer_len() as u32).collect::<Vec<_>>(),
+            (0..files[0].transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>(),
         ]];
         let expected = crate::code_rule_dsl::transducer::packed::execute_batch(
             std::slice::from_ref(&program),
@@ -484,17 +488,17 @@
         let grammar = SupportLang::Python.get_ts_language();
         let kind = grammar.id_for_node_kind("identifier", true);
         let program = Program::new(
-            vec![word(KIND, 0, kind), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(KIND, 0, kind), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let files = vec![tape("first\n"), tape("second\n")];
         let anchors = files
             .iter()
-            .map(|file| vec![(0..file.transducer_len() as u32).collect::<Vec<_>>()])
+            .map(|file| vec![(0..file.transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>()])
             .collect::<Vec<_>>();
         let expected = crate::code_rule_dsl::transducer::packed::execute_batch(
             std::slice::from_ref(&program),
@@ -514,11 +518,11 @@
             .into_iter()
             .map(|expected| {
                 Program::new(
-                    vec![word(TEXT, 0, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+                    rerail_blocks::vector![word(TEXT, 0, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
                     vec![expected.clone(), b"match".to_vec()],
                     vec![TextPredicate::Equal(0)],
-                    vec![1],
-                    Vec::new(),
+                    rerail_blocks::vector![1],
+                    rerail_blocks::vector::Vector::new(),
                 )
                 .unwrap()
                 .with_directives(vec![Directive::Downcase { capture: 0 }])
@@ -531,7 +535,7 @@
             .map(|file| {
                 programs
                     .iter()
-                    .map(|_| (0..file.transducer_len() as u32).collect::<Vec<_>>())
+                    .map(|_| (0..file.transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>())
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
@@ -545,11 +549,11 @@
     #[test]
     fn cranelift_task_shell_writes_status_without_a_rust_callout() {
         let program = Program::new(
-            vec![word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -573,7 +577,7 @@
         use crate::code_rule_dsl::transducer::packed::{FLAGS, KIND, SIZE};
 
         let program = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(KIND, 0, 7),
                 word(FLAGS, 1, 2),
                 word(SIZE, 0, 4),
@@ -581,8 +585,8 @@
             ],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -598,7 +602,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -658,7 +662,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: 1,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -686,11 +690,11 @@
         use crate::code_rule_dsl::transducer::packed::KIND;
 
         let program = Program::new(
-            vec![word(KIND, 0, 8), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(KIND, 0, 8), word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -703,7 +707,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -763,7 +767,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: 1,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -793,7 +797,7 @@
         use crate::code_rule_dsl::transducer::packed::{FORK, STOP};
 
         let program = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(FORK, 0, 3),
                 word(EMIT, 0, 0),
                 word(STOP, 0, 0),
@@ -801,8 +805,8 @@
             ],
             vec![b"first".to_vec(), b"second".to_vec()],
             Vec::new(),
-            vec![0, 1],
-            Vec::new(),
+            rerail_blocks::vector![0, 1],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -815,7 +819,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -875,7 +879,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: 2,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: final_captures.as_mut_ptr(),
             final_capture_capacity: final_captures.len() as u32,
@@ -914,7 +918,7 @@
         use crate::code_rule_dsl::transducer::packed::{CAPTURE, FORK, NEXT, STOP};
 
         let program = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(FORK, 0, 5),
                 word(NEXT, 0, 0),
                 word(CAPTURE, 0, 0),
@@ -925,8 +929,8 @@
             ],
             vec![b"capture".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let compiled = compile_straight_line(&native_ir::lower(&program).unwrap()).unwrap();
@@ -974,7 +978,7 @@
         use crate::code_rule_dsl::transducer::packed::{FORK, GOTO};
 
         let program = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(FORK, 1, 5),
                 word(FORK, 0, 3),
                 word(GOTO, 0, 3),
@@ -984,8 +988,8 @@
             ],
             vec![b"first".to_vec(), b"second".to_vec()],
             Vec::new(),
-            vec![0, 1],
-            Vec::new(),
+            rerail_blocks::vector![0, 1],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let mut native = native_ir::lower(&program).unwrap();
@@ -1002,7 +1006,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -1062,7 +1066,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: results.len() as u32,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -1109,11 +1113,11 @@
 
         fn run(mode: u8, expected: u32, expected_last: u32) {
             let program = Program::new(
-                vec![word(FOLLOWING, mode, 0), word(EMIT, 0, 0)],
+                rerail_blocks::vector![word(FOLLOWING, mode, 0), word(EMIT, 0, 0)],
                 vec![b"match".to_vec()],
                 Vec::new(),
-                vec![0],
-                Vec::new(),
+                rerail_blocks::vector![0],
+                rerail_blocks::vector::Vector::new(),
             )
             .unwrap();
             let mut native = native_ir::lower(&program).unwrap();
@@ -1130,8 +1134,9 @@
             };
             let mut nodes = vec![MetalNode { parent: NONE, ..MetalNode::default() }];
             nodes.extend((0..siblings).map(|_| MetalNode { parent: 0, ..MetalNode::default() }));
-            if let Some(third) = nodes.get_mut(3) {
-                (third.source_start, third.source_end) = (4, 4);
+            // The third sibling and those after it at 4 (a tape's starts never go back in preorder).
+            for later in nodes.iter_mut().skip(3) {
+                (later.source_start, later.source_end) = (4, 4);
             }
             if mode == NAMED {
                 (nodes[3].flags, nodes[4].flags) = (1, 1);
@@ -1144,7 +1149,7 @@
             let mut status = TaskStatus::default();
             let tape = TestTape::of(&nodes);
             let mut context = NativeTaskContext {
-                tape: tape.bytes.as_ptr(),
+                tape: tape.bytes().as_ptr(),
                 view: &tape.view,
                 codes: tape.codes.as_ptr(),
                 node_base: 0,
@@ -1204,7 +1209,7 @@
                 repeat_quota_limit: 0,
                 results: results.as_mut_ptr(),
                 result_quota_limit: results.len() as u32,
-                line_starts: std::ptr::null(),
+                lines: std::ptr::null(),
                 line_count: 0,
                 final_captures: std::ptr::null_mut(),
                 final_capture_capacity: 0,
@@ -1242,7 +1247,7 @@
         use crate::code_rule_dsl::transducer::packed::{FORK, GOTO};
 
         let program = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(FORK, 0, 3),
                 word(FORK, 0, 3),
                 word(GOTO, 0, 3),
@@ -1250,8 +1255,8 @@
             ],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let mut native = native_ir::lower(&program).unwrap();
@@ -1267,7 +1272,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -1327,7 +1332,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: results.len() as u32,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -1355,11 +1360,11 @@
         use crate::code_rule_dsl::transducer::packed::FORK;
 
         let program = Program::new(
-            vec![word(FORK, 0, 1), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(FORK, 0, 1), word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -1369,7 +1374,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -1429,7 +1434,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: 2,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -1474,11 +1479,11 @@
         use crate::code_rule_dsl::transducer::packed::FORK;
 
         let program = Program::new(
-            vec![word(FORK, 0, 2), word(EMIT, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(FORK, 0, 2), word(EMIT, 0, 0), word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -1489,7 +1494,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -1549,7 +1554,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: 1,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -1576,11 +1581,11 @@
     #[test]
     fn cranelift_scheduler_relations_compare_complete_packed_states() {
         let program = Program::new(
-            vec![word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -1670,7 +1675,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -1730,7 +1735,7 @@
             repeat_quota_limit: 0,
             results: std::ptr::null_mut(),
             result_quota_limit: 0,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -1940,7 +1945,7 @@
             let mut status = TaskStatus::default();
             let tape = TestTape::of(&nodes);
             let mut context = NativeTaskContext {
-                tape: tape.bytes.as_ptr(),
+                tape: tape.bytes().as_ptr(),
                 view: &tape.view,
                 codes: tape.codes.as_ptr(),
                 node_base: 0,
@@ -2000,7 +2005,7 @@
                 repeat_quota_limit: 0,
                 results: results.as_mut_ptr(),
                 result_quota_limit: results.len() as u32,
-                line_starts: std::ptr::null(),
+                lines: std::ptr::null(),
                 line_count: 0,
                 final_captures: std::ptr::null_mut(),
                 final_capture_capacity: 0,
@@ -2020,7 +2025,7 @@
         }
 
         let normal_forks = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(FORK, 0, 4),
                 word(FORK, 0, 3),
                 word(EMIT, 0, 0),
@@ -2029,12 +2034,12 @@
             ],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let greedy_forks = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(FORK, 1, 4),
                 word(FORK, 1, 3),
                 word(EMIT, 0, 0),
@@ -2043,16 +2048,16 @@
             ],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let query = Program::new(
-            vec![word(KIND, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(KIND, 0, 0), word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let ample = Capacities {
@@ -2135,7 +2140,7 @@
         };
 
         let program = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(SAVE_CURSOR, 0, 0),
                 word(CHILD, 0, 0),
                 word(CAPTURE, 0, 0),
@@ -2147,8 +2152,8 @@
             ],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -2172,7 +2177,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -2232,7 +2237,7 @@
             repeat_quota_limit: repeats.len() as u32,
             results: results.as_mut_ptr(),
             result_quota_limit: results.len() as u32,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: final_captures.as_mut_ptr(),
             final_capture_capacity: final_captures.len() as u32,
@@ -2349,11 +2354,11 @@
 
         fn run(operation: u8, mode: u8, _expected: u32) {
             let program = Program::new(
-                vec![word(operation, mode, 0), word(EMIT, 0, 0)],
+                rerail_blocks::vector![word(operation, mode, 0), word(EMIT, 0, 0)],
                 vec![b"match".to_vec()],
                 Vec::new(),
-                vec![0],
-                Vec::new(),
+                rerail_blocks::vector![0],
+                rerail_blocks::vector::Vector::new(),
             )
             .unwrap();
             let mut native = native_ir::lower(&program).unwrap();
@@ -2375,6 +2380,8 @@
             nodes[2].source_end = 3;
             nodes[3].parent = 0;
             nodes[3].flags = 1;
+            // After node 2 in preorder, so not before it (a tape's starts never go back).
+            (nodes[3].source_start, nodes[3].source_end) = (3, 3);
             let mut pending = [PendingRecord::default(); 2];
             let mut query_buckets = [QueryBucketRecord::default(); 8];
             let mut query_members = [QueryMemberRecord::default(); 8];
@@ -2383,7 +2390,7 @@
             let mut status = TaskStatus::default();
             let tape = TestTape::of(&nodes);
             let mut context = NativeTaskContext {
-                tape: tape.bytes.as_ptr(),
+                tape: tape.bytes().as_ptr(),
                 view: &tape.view,
                 codes: tape.codes.as_ptr(),
                 node_base: 0,
@@ -2443,7 +2450,7 @@
                 repeat_quota_limit: 0,
                 results: results.as_mut_ptr(),
                 result_quota_limit: results.len() as u32,
-                line_starts: std::ptr::null(),
+                lines: std::ptr::null(),
                 line_count: 0,
                 final_captures: std::ptr::null_mut(),
                 final_capture_capacity: 0,
@@ -2480,11 +2487,11 @@
         use crate::code_rule_dsl::transducer::packed::TEXT;
 
         let program = Program::new(
-            vec![word(TEXT, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(TEXT, 0, 0), word(EMIT, 0, 0)],
             strings,
             vec![predicate],
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -2535,7 +2542,7 @@
             (
                 CapturePredicate::AnyOf {
                     capture: 0,
-                    strings: vec![0, 1],
+                    strings: rerail_blocks::vector![0, 1],
                     negated: false,
                     any: false,
                 },
@@ -2546,7 +2553,7 @@
             (
                 CapturePredicate::AnyOf {
                     capture: 0,
-                    strings: vec![0],
+                    strings: rerail_blocks::vector![0],
                     negated: true,
                     any: false,
                 },
@@ -2557,7 +2564,7 @@
             (
                 CapturePredicate::AnyOf {
                     capture: 0,
-                    strings: vec![0],
+                    strings: rerail_blocks::vector![0],
                     negated: false,
                     any: false,
                 },
@@ -2579,7 +2586,7 @@
             (
                 CapturePredicate::Contains {
                     capture: 0,
-                    strings: vec![0],
+                    strings: rerail_blocks::vector![0],
                     negated: false,
                     any: false,
                 },
@@ -2590,7 +2597,7 @@
             (
                 CapturePredicate::Relation {
                     capture: 0,
-                    kinds: vec![1],
+                    kinds: rerail_blocks::vector![1],
                     ancestor: true,
                     negated: true,
                 },
@@ -2605,12 +2612,12 @@
                 Vec::new()
             };
             let program = Program::new_with_capture_predicates(
-                vec![word(CAPTURE, 0, 0), word(ASSERT, 0, 0), word(EMIT, 0, 0)],
+                rerail_blocks::vector![word(CAPTURE, 0, 0), word(ASSERT, 0, 0), word(EMIT, 0, 0)],
                 strings,
                 text_predicates,
                 vec![predicate],
-                vec![0],
-                Vec::new(),
+                rerail_blocks::vector![0],
+                rerail_blocks::vector::Vector::new(),
             )
             .unwrap();
             let native = native_ir::lower(&program).unwrap();
@@ -2672,7 +2679,7 @@
             },
         ] {
             let program = Program::new_with_capture_predicates(
-                vec![
+                rerail_blocks::vector![
                     word(CAPTURE, 0, 1),
                     word(CAPTURE, 0, 0),
                     word(ASSERT, 0, 0),
@@ -2681,8 +2688,8 @@
                 vec![b"left".to_vec(), b"right".to_vec()],
                 Vec::new(),
                 vec![predicate],
-                vec![0, 1],
-                Vec::new(),
+                rerail_blocks::vector![0, 1],
+                rerail_blocks::vector::Vector::new(),
             )
             .unwrap();
             let native = native_ir::lower(&program).unwrap();
@@ -2705,6 +2712,10 @@
             context.node_count = 1;
             context.source = source.as_ptr();
             context.source_length = source.len() as u32;
+            // The document's line index (decision 0612), which every task has: a capture's line is read off it.
+            let lines = rerail_tape_format::newlines::Lines::of(source, rerail_tape_format::newlines::Terminators::Lf);
+            context.lines = lines.bytes().as_ptr();
+            context.line_count = 1;
             context.current_node = 0;
             context.task_work_limit = 1 << 20;
             context.path_work_limit = 1 << 20;
@@ -2727,14 +2738,14 @@
         use crate::code_rule_dsl::transducer::packed::Directive;
 
         let program = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(crate::code_rule_dsl::transducer::packed::CAPTURE, 0, 0),
                 word(EMIT, 0, 0),
             ],
             vec![b"key".to_vec(), b"value".to_vec(), b"match".to_vec()],
             Vec::new(),
-            vec![2],
-            Vec::new(),
+            rerail_blocks::vector![2],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap()
         .with_directives(vec![
@@ -2796,11 +2807,11 @@
         use crate::code_rule_dsl::transducer::packed::{CAPTURE, Directive};
 
         let program = Program::new(
-            vec![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
             vec![b"capture".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap()
         .with_directives(vec![Directive::Offset {
@@ -2818,7 +2829,8 @@
             source_end: source.len() as u32,
             ..MetalNode::default()
         }];
-        let line_starts = [0_u32];
+        // The source's lines, its line index as a document's (decision 0612).
+        let lines = rerail_tape_format::newlines::Lines::of(source, rerail_tape_format::newlines::Terminators::Lf);
         let mut captures = [LinkRecord::default(); 1];
         let mut final_captures = [FinalCaptureRecord::default(); 1];
         let mut results = [ResultRecord::default(); 1];
@@ -2836,7 +2848,7 @@
         context.capture_quota_limit = 1;
         context.results = results.as_mut_ptr();
         context.result_quota_limit = 1;
-        context.line_starts = line_starts.as_ptr();
+        context.lines = lines.bytes().as_ptr();
         context.line_count = 1;
         context.final_captures = final_captures.as_mut_ptr();
         context.final_capture_capacity = 1;
@@ -2852,11 +2864,11 @@
         use crate::code_rule_dsl::transducer::packed::{CAPTURE, Directive};
 
         let program = Program::new(
-            vec![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
             vec![b"capture".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap()
         .with_directives(vec![Directive::Offset {
@@ -2873,7 +2885,8 @@
             source_end: source.len() as u32,
             ..MetalNode::default()
         }];
-        let line_starts = [0_u32];
+        // The source's lines, its line index as a document's (decision 0612).
+        let lines = rerail_tape_format::newlines::Lines::of(source, rerail_tape_format::newlines::Terminators::Lf);
         let mut captures = [LinkRecord::default(); 1];
         let mut final_captures = [FinalCaptureRecord::default(); 1];
         let mut results = [ResultRecord::default(); 1];
@@ -2891,7 +2904,7 @@
         context.capture_quota_limit = 1;
         context.results = results.as_mut_ptr();
         context.result_quota_limit = 1;
-        context.line_starts = line_starts.as_ptr();
+        context.lines = lines.bytes().as_ptr();
         context.line_count = 1;
         context.final_captures = final_captures.as_mut_ptr();
         context.final_capture_capacity = 1;
@@ -2908,7 +2921,7 @@
         use crate::code_rule_dsl::transducer::packed::{CAPTURE, CHILD, Directive, NEXT};
 
         let program = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(CHILD, 0, 0),
                 word(CAPTURE, 0, 0),
                 word(NEXT, 0, 0),
@@ -2919,8 +2932,8 @@
             ],
             vec![b"source".to_vec(), b"target".to_vec()],
             Vec::new(),
-            vec![0, 1],
-            Vec::new(),
+            rerail_blocks::vector![0, 1],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap()
         .with_directives(vec![Directive::SelectAdjacent {
@@ -2949,7 +2962,8 @@
         nodes[3].parent = 0;
         nodes[3].source_start = 5;
         nodes[3].source_end = 6;
-        let line_starts = [0_u32, 2, 3];
+        // The source's lines, its line index as a document's (decision 0612).
+        let lines = rerail_tape_format::newlines::Lines::of(source, rerail_tape_format::newlines::Terminators::Lf);
         let mut pending = [PendingRecord::default(); 4];
         let mut captures = [LinkRecord::default(); 8];
         let mut final_captures = [FinalCaptureRecord::default(); 3];
@@ -2969,8 +2983,8 @@
         context.capture_quota_limit = captures.len() as u32;
         context.results = results.as_mut_ptr();
         context.result_quota_limit = 1;
-        context.line_starts = line_starts.as_ptr();
-        context.line_count = line_starts.len() as u32;
+        context.lines = lines.bytes().as_ptr();
+        context.line_count = lines.count() as u32;
         context.final_captures = final_captures.as_mut_ptr();
         context.final_capture_capacity = final_captures.len() as u32;
         context.status = &mut status;
@@ -2992,11 +3006,11 @@
         use crate::code_rule_dsl::transducer::packed::{CAPTURE, Directive};
 
         let program = Program::new(
-            vec![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
             vec![b"capture".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap()
         .with_directives(vec![
@@ -3051,11 +3065,11 @@
         use crate::code_rule_dsl::transducer::packed::{CAPTURE, Directive};
 
         let program = Program::new(
-            vec![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
             vec![b"n".to_vec(), b"capture".to_vec()],
             Vec::new(),
-            vec![1],
-            Vec::new(),
+            rerail_blocks::vector![1],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap()
         .with_directives(vec![Directive::Strip {
@@ -3113,11 +3127,11 @@
         use crate::code_rule_dsl::transducer::packed::{CAPTURE, Directive};
 
         let program = Program::new(
-            vec![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
             vec![b"capture".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap()
         .with_directives(vec![Directive::SetLanguageFromMimeType { capture: 0 }])
@@ -3338,11 +3352,11 @@
             (TextPredicate::Prefix(1), b"val".as_slice(), 0),
         ] {
             let program = Program::new(
-                vec![word(TEXT, 0, 0), word(EMIT, 0, 0)],
+                rerail_blocks::vector![word(TEXT, 0, 0), word(EMIT, 0, 0)],
                 vec![b"match".to_vec(), b"value".to_vec()],
                 vec![predicate],
-                vec![0],
-                Vec::new(),
+                rerail_blocks::vector![0],
+                rerail_blocks::vector::Vector::new(),
             )
             .unwrap();
             let native = native_ir::lower(&program).unwrap();
@@ -3358,7 +3372,7 @@
             let mut status = TaskStatus::default();
             let tape = TestTape::of(&nodes);
             let mut context = NativeTaskContext {
-                tape: tape.bytes.as_ptr(),
+                tape: tape.bytes().as_ptr(),
                 view: &tape.view,
                 codes: tape.codes.as_ptr(),
                 node_base: 0,
@@ -3418,7 +3432,7 @@
                 repeat_quota_limit: 0,
                 results: results.as_mut_ptr(),
                 result_quota_limit: results.len() as u32,
-                line_starts: std::ptr::null(),
+                lines: std::ptr::null(),
                 line_count: 0,
                 final_captures: std::ptr::null_mut(),
                 final_capture_capacity: 0,
@@ -3444,11 +3458,11 @@
         use crate::code_rule_dsl::transducer::packed::SUPERTYPE;
 
         let program = Program::new(
-            vec![word(SUPERTYPE, 0, 9), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(SUPERTYPE, 0, 9), word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -3463,7 +3477,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::with_classes(&nodes, &[(0, 9)]);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -3523,7 +3537,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: results.len() as u32,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -3557,11 +3571,11 @@
         use crate::code_rule_dsl::transducer::packed::ABSENT_FIELD;
 
         let program = Program::new(
-            vec![word(ABSENT_FIELD, 0, 7), word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(ABSENT_FIELD, 0, 7), word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -3579,7 +3593,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -3639,7 +3653,7 @@
             repeat_quota_limit: 0,
             results: results.as_mut_ptr(),
             result_quota_limit: results.len() as u32,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -3674,11 +3688,11 @@
 
         for (mode, expected_results) in [(0x80, 1), (0x81, 1), (0x82, 1)] {
             let program = Program::new(
-                vec![word(SIZE, mode, 0), word(EMIT, 0, 0)],
+                rerail_blocks::vector![word(SIZE, mode, 0), word(EMIT, 0, 0)],
                 vec![b"match".to_vec()],
                 Vec::new(),
-                vec![0],
-                vec![70_000],
+                rerail_blocks::vector![0],
+                rerail_blocks::vector![70_000],
             )
             .unwrap();
             let native = native_ir::lower(&program).unwrap();
@@ -3695,7 +3709,7 @@
             let mut status = TaskStatus::default();
             let tape = TestTape::of(&nodes);
             let mut context = NativeTaskContext {
-                tape: tape.bytes.as_ptr(),
+                tape: tape.bytes().as_ptr(),
                 view: &tape.view,
                 codes: tape.codes.as_ptr(),
                 node_base: 0,
@@ -3755,7 +3769,7 @@
                 repeat_quota_limit: 0,
                 results: results.as_mut_ptr(),
                 result_quota_limit: results.len() as u32,
-                line_starts: std::ptr::null(),
+                lines: std::ptr::null(),
                 line_count: 0,
                 final_captures: std::ptr::null_mut(),
                 final_capture_capacity: 0,
@@ -3779,11 +3793,11 @@
     #[test]
     fn straight_line_cranelift_reports_exact_result_capacity() {
         let program = Program::new(
-            vec![word(EMIT, 0, 0)],
+            rerail_blocks::vector![word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
             Vec::new(),
-            vec![0],
-            Vec::new(),
+            rerail_blocks::vector![0],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = native_ir::lower(&program).unwrap();
@@ -3792,7 +3806,7 @@
         let mut status = TaskStatus::default();
         let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            tape: tape.bytes.as_ptr(),
+            tape: tape.bytes().as_ptr(),
             view: &tape.view,
             codes: tape.codes.as_ptr(),
             node_base: 0,
@@ -3852,7 +3866,7 @@
             repeat_quota_limit: 0,
             results: std::ptr::null_mut(),
             result_quota_limit: 0,
-            line_starts: std::ptr::null(),
+            lines: std::ptr::null(),
             line_count: 0,
             final_captures: std::ptr::null_mut(),
             final_capture_capacity: 0,
@@ -3891,10 +3905,10 @@
             })
             .expect("two capture searches fit one budget but two candidates do not");
         let files = [tape(&format!("{source}\n{source}\n"))];
-        let anchors = [vec![vec![0]]];
+        let anchors = [vec![rerail_blocks::vector![0]]];
         for query in [false, true] {
             let base = Program::new(
-                vec![
+                rerail_blocks::vector![
                     word(super::super::CHILD, 1, 0),
                     word(CAPTURE, 0, 0),
                     word(CAPTURE, 0, 0),
@@ -3902,8 +3916,8 @@
                 ],
                 vec![b"text".to_vec(), pattern.as_bytes().to_vec()],
                 vec![],
-                vec![0],
-                vec![],
+                rerail_blocks::vector![0],
+                rerail_blocks::vector![],
             )
             .unwrap()
             .with_directives(vec![Directive::Strip {
@@ -3979,11 +3993,11 @@
             }
             cost *= 2;
             let programs = [Program::new(
-                vec![word(CAPTURE, 0, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+                rerail_blocks::vector![word(CAPTURE, 0, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
                 vec![b"text".to_vec(), pattern.as_bytes().to_vec()],
                 vec![],
-                vec![0],
-                vec![],
+                rerail_blocks::vector![0],
+                rerail_blocks::vector![],
             )
             .unwrap()
             .with_directives(vec![Directive::Strip {
@@ -3993,7 +4007,7 @@
             }])
             .unwrap()];
             let files = [tape(source)];
-            let anchors = [vec![vec![0]]];
+            let anchors = [vec![rerail_blocks::vector![0]]];
             let expected =
                 crate::code_rule_dsl::transducer::packed::execute_batch(&programs, &files, Some(&anchors))
                     .unwrap();
@@ -4025,4 +4039,82 @@
                 }
             }
         }
+    }
+
+    /// The executor's workload: `files` Python files, file `f` of `reps(f)` functions with `f` in each function's name
+    /// and string, and four programs that between them write every kind of output a task copies out: results,
+    /// captures, a quantified capture, captured text, static properties, and dynamic properties whose value is a span of
+    /// the source (`application/json`) or bytes the task writes (`importmap` and `module` name `json` and `javascript`).
+    fn batch_workload(files: usize, reps: impl Fn(usize) -> usize) -> (Vec<Program>, Vec<TapeDoc>) {
+        let language = SupportLang::Python.get_ts_language();
+        let programs = [
+            "(comment)+ @comment.around",
+            "(call function: (identifier) @name arguments: (argument_list) @args) @call",
+            r#"((identifier) @inner @outer (#offset! @inner 0 1 0 -1) (#downcase! @outer) (#set! role "trimmed") (#set! flag) (#set! @outer kind "raw"))"#,
+            "((string (string_content) @mime) (#set-lang-from-mimetype! @mime))",
+        ]
+        .map(|query| Program::compile_tree_sitter_query_pattern(query, &language).unwrap())
+        .to_vec();
+        let file = |f: usize| {
+            tape(&(0..reps(f))
+                .map(|i| format!("# first {f} {i}\n# second {i}\ndef f{f}_{i}(x, y):\n    return g(x, y) + h(x, \"s{f}_{i}\", 'application/json', 'importmap', 'module')\n"))
+                .collect::<String>())
+        };
+        (programs, (0..files).map(file).collect())
+    }
+
+    /// Every node of each file as a root of every program.
+    fn every_root(programs: &[Program], files: &[TapeDoc]) -> Vec<Vec<rerail_blocks::vector::Vector<u32>>> {
+        files.iter().map(|file| vec![(0..file.transducer_len() as u32).collect(); programs.len()]).collect()
+    }
+
+    /// A batch of several files gives the interpreter's outputs: each task's results, captures and properties are
+    /// copied out of its arenas and rebased onto the batch's. The workload's outputs reach static and dynamic
+    /// properties and captured text, so a copy that drops or misplaces one shows. Each file has its own size and
+    /// text, so outputs handed to the wrong file show too.
+    #[test]
+    fn multi_file_batches_give_the_interpreter_outputs() {
+        let (programs, files) = batch_workload(6, |f| 1 + f % 3);
+        for batch in files.chunks(3) {
+            let anchors = every_root(&programs, batch);
+            let expected =
+                crate::code_rule_dsl::transducer::packed::execute_batch(&programs, batch, Some(&anchors)).unwrap();
+            let outputs = || expected.iter().flatten().flatten();
+            assert!(outputs().any(|o| !o.properties.is_empty()), "the workload writes static properties");
+            let languages = outputs().flat_map(|o| &o.dynamic_properties).filter_map(|(_, value)| value.as_deref());
+            assert!(languages.filter(|l| *l == b"javascript").count() > 1, "the workload writes dynamic properties' values");
+            assert!(outputs().flat_map(|o| &o.captures).any(|c| c.text.is_some()), "the workload captures text");
+            assert_eq!(super::execute_batch(&programs, batch, &anchors).unwrap(), expected);
+        }
+    }
+
+    /// The executor's time over the workload in one-file batches (47,616 tasks), as the median and fastest of
+    /// `RERAIL_PACKED_CPU_BATCH_ITERATIONS` runs (30 by default), each checked against the first.
+    #[test]
+    #[ignore = "timing: run in a release build to compare the CPU batch executor before and after a change"]
+    fn cpu_batch_executor_timing() {
+        let iterations = std::env::var("RERAIL_PACKED_CPU_BATCH_ITERATIONS").map_or(30, |v| v.parse().unwrap());
+        let (programs, files) = batch_workload(64, |_| 5);
+        let batches = files.chunks(1).map(|batch| (batch, every_root(&programs, batch))).collect::<Vec<_>>();
+        let run = || {
+            batches
+                .iter()
+                .map(|(batch, anchors)| super::execute_batch(std::hint::black_box(&programs), batch, anchors).unwrap())
+                .collect::<Vec<_>>()
+        };
+        let expected = run();
+        let mut seconds = (0..iterations)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                assert_eq!(run(), expected);
+                started.elapsed().as_secs_f64()
+            })
+            .collect::<Vec<_>>();
+        seconds.sort_by(f64::total_cmp);
+        eprintln!(
+            "RERAIL_PACKED_CPU_BATCH_TIMING tasks={} median={:.6} min={:.6}",
+            files.iter().map(|file| file.transducer_len() * programs.len()).sum::<usize>(),
+            seconds[seconds.len() / 2],
+            seconds[0]
+        );
     }

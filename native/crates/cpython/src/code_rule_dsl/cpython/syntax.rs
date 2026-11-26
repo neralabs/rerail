@@ -295,8 +295,7 @@ struct Lines {
 
 impl Lines {
     fn new(source: &str) -> Self {
-        let terminators = crate::code_rule_dsl::lines::terminators(crate::code_rule_dsl::language::GrammarDialect::Python);
-        Self { table: crate::code_rule_dsl::lines::LineTable::new(source, terminators), len: source.len() }
+        Self { table: crate::code_rule_dsl::lines::LineTable::new(source, super::LINE_ENDS), len: source.len() }
     }
 
     /// The 1-based line of byte offset `at`.

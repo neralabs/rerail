@@ -33,7 +33,7 @@ pub(super) fn workspace_memory_profile(state: &WorkspaceState) -> Value {
                 + size_of::<FileState>()
                 + file.input.path.capacity()
                 + file.input.language.capacity()
-                + file.input.source.capacity()
+                + file.input.source.len()
                 + file.witnesses.len() * size_of::<(ClauseId, Vec<Witness>)>()
                 + file
                     .witnesses

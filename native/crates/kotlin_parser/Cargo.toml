@@ -23,6 +23,8 @@ bitlex = { path = "../../../tools/bitlex", default-features = false }
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-kotlin-parser = { path = ".", features = ["test-hooks"] }
+# The block runs' outputs the tests print (`BlockRun`, decision 0353).
+rerail-blocks = { path = "../blocks", features = ["test-hooks"] }
 # Tier 2 as Rust, as the Bitlex compiler writes it (`tier2_rust`): every text the tests check is
 # read through it too.
 rerail-kotlin-aot = { path = "../kotlin_aot" }

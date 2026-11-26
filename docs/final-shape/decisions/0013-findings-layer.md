@@ -1,7 +1,6 @@
 # 0013: Findings are one stratified SQL layer over the match facts, from facts of the tape
 
-Status: accepted
-Date: 2026-10-30
+Status: built (audited 2026-11-23). Accepted Date: 2026-10-30
 
 ## Question
 06 S5: after the wave's fixpoint, how do match facts become finding keys? Which parts of W's

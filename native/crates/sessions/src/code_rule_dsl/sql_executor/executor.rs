@@ -148,7 +148,7 @@ impl CodeRuleSqlExecutor {
             }
             let documents =
                 super::super::facts::families::stored_documents(&this.store, &scope, &paths).map_err(error)?;
-            if documents.len() != paths.len() || documents.iter().any(|d| d.facts.syntax_errors()) {
+            if documents.len() != paths.len() || documents.iter().any(|d| d.facts.has_syntax_error()) {
                 return Err(error(
                     "requested stored documents have missing or incomplete core facts",
                 ));
@@ -237,7 +237,7 @@ impl CodeRuleSqlExecutor {
                         .map(|(i, value)| {
                             wire::fact(&symbols, value, input.types.as_ref().map(|t| t[i].as_str()))
                         })
-                        .collect::<Result<Vec<_>>>()
+                        .collect::<Result<rerail_blocks::vector::Vector<_>>>()
                 })
                 .collect::<Result<BTreeSet<_>>>()?;
             let source = Arc::new(live::Live::from_rows(input.columns, values));

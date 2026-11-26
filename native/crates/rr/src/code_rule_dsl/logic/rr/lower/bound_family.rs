@@ -35,15 +35,16 @@ struct Same;
 impl Rewrite for Same {}
 
 /// `v` with each bound family's readers' requests and negations' guards (`inherited`: the families its includes
-/// declared; `dependencies`: each relation's reads, by head): `None` where nothing changes.
-pub(super) fn lower(v: &Arc<Version>, inherited: &[String], dependencies: &BTreeMap<String, BTreeSet<String>>) -> Result<Option<Arc<Version>>, Error> {
+/// declared; `scope`: their declarations, which a module's own version leaves out; `dependencies`: each relation's
+/// reads, by head): `None` where nothing changes.
+pub(super) fn lower(v: &Arc<Version>, inherited: &[String], scope: &(impl ProgramFields + ?Sized), dependencies: &BTreeMap<String, BTreeSet<String>>) -> Result<Option<Arc<Version>>, Error> {
     let mut members: BTreeMap<String, (String, String, usize)> = BTreeMap::new();
     for spec in inherited.iter().cloned().chain(specs(&**v)) {
         let names: Vec<_> = spec.split_whitespace().collect();
         let [request, complete, rest @ ..] = names.as_slice() else {
             continue;
         };
-        let columns = |name: &str| v.columns_of(name).ok_or_else(|| Error::Syntax(format!("bound-family: undeclared relation {name}")));
+        let columns = |name: &str| v.columns_of(name).or_else(|| scope.columns_of(name)).ok_or_else(|| Error::Syntax(format!("bound-family: undeclared relation {name}")));
         let key = columns(request)?;
         for name in std::iter::once(complete).chain(rest) {
             let cols = columns(name)?;

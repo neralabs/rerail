@@ -1,7 +1,7 @@
 # 0201: Main's other rules run: `.js` read as TypeScript, ESLint's directives widen globals, lowering stays bounded
 
-Status: decided (2026-11-14, in the work to run main's rules directly: "Fix these", on what decision 0194 left
-open; "decision: keep this the same as main for now", on how `.js` is read).
+Status: built (audited 2026-11-23). Decided (2026-11-14, in the work to run main's rules directly: "Fix these", on
+what decision 0194 left open; "decision: keep this the same as main for now", on how `.js` is read).
 
 ## Intro
 

@@ -108,7 +108,7 @@ fn split(path: &Path) -> Result<((String, CompiledCodeRuleDsl), Vec<(String, Str
 }
 
 #[test]
-#[ignore = "the data-layer bench; RERAIL_DL_POLICY and RERAIL_DL_ROOT, --ignored --nocapture"]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md); was: the data-layer bench; RERAIL_DL_POLICY and RERAIL_DL_ROOT, --ignored --nocapture"]
 fn data_layer_bench() {
     let root = PathBuf::from(std::env::var("RERAIL_DL_ROOT").expect("RERAIL_DL_ROOT"));
     let mut policies = Vec::new();
@@ -221,7 +221,7 @@ fn data_layer_bench() {
 /// is a root of its files, audited cold with the policy compiled at the event's options; its keys (code,
 /// path, line) are compared with the recorded findings. Prints per entry point how many events agree.
 #[test]
-#[ignore = "the data-layer fixtures; RERAIL_DL_POLICY, RERAIL_DL_RECORDING, RERAIL_DL_CHECK, --ignored --nocapture"]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md); was: the data-layer fixtures; RERAIL_DL_POLICY, RERAIL_DL_RECORDING, RERAIL_DL_CHECK, --ignored --nocapture"]
 fn data_layer_fixtures() {
     let policy = PathBuf::from(std::env::var("RERAIL_DL_POLICY").expect("RERAIL_DL_POLICY"));
     let recording: serde_json::Value =

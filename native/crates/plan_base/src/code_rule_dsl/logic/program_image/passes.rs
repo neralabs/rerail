@@ -5,7 +5,7 @@ use super::build::{Builder, PartFields, Rewrite, Site, T};
 use super::manager::{Cx, Pipeline, ProgramPass, ProgramW, RuleOut, RulePass, Select, Step};
 use super::handles::{AtomRef, Lit, RuleRef, TermRef};
 use super::version::Version;
-use super::{Cell, RelId, RuleId, Slot};
+use super::{Cell, RelId, Rows, RuleId, Slot};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
@@ -93,15 +93,15 @@ pub struct Normalize {
     /// The tops given (`normalize_with_tops`), by relation.
     given_tops: Option<BTreeMap<String, i64>>,
     /// The facts it states: each sentinel's, with its presence cell, and each ground rule's head.
-    facts: BTreeMap<RelId, Vec<Vec<Cell>>>,
+    facts: BTreeMap<RelId, Rows>,
     /// The relations given a presence column, and every declared one of no columns, by id.
     pub sentinels: Vec<RelId>,
 }
 
 /// The rows of `r`'s stated facts in `v`, a sentinel's with its presence cell.
-fn rows_of(v: &Version, sentinel: &[bool], r: RelId) -> Vec<Vec<Cell>> {
-    let rows: Vec<Vec<Cell>> = v.facts(v.rel_atom(r)).map(|f| f.rows().map(|row| row.collect::<Vec<Cell>>()).collect()).unwrap_or_default();
-    if sentinel[r.index()] { rows.into_iter().map(|row: Vec<Cell>| std::iter::once(Cell::Int(1)).chain(row).collect()).collect() } else { rows }
+fn rows_of(v: &Version, sentinel: &[bool], r: RelId) -> Rows {
+    let Some(f) = v.facts(v.rel_atom(r)) else { return Rows::new() };
+    if sentinel[r.index()] { Rows::of_cells(f.rows().map(|row| std::iter::once(Cell::Int(1)).chain(row))) } else { Rows::of_cells(f.rows()) }
 }
 
 impl RulePass for Normalize {
@@ -321,7 +321,7 @@ impl ProgramPass for StatedApart {
         for rel in moved {
             let name = v.rel_name(rel);
             let apart = format!("{name}__stated");
-            let rows: Vec<Vec<Cell>> = v.facts(v.rel_atom(rel)).expect("stated facts").rows().map(|r| r.collect()).collect();
+            let rows = Rows::of_cells(v.facts(v.rel_atom(rel)).expect("stated facts").rows());
             let d = v.decl(v.rel_atom(rel)).ok_or_else(|| format!("{name} has stated facts and no declaration"))?;
             let cols: Vec<(&str, &str)> = d.cols().map(|(c, t)| (v.text(c), v.text(t))).collect();
             b.fields().drop_facts(name);

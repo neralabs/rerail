@@ -4,6 +4,7 @@
 //! (`nearest.uglykl`). States other threads have already moved up let a thread skip ahead. One command, one dispatch
 //! and one wait per call, whatever the depth, on the process's device (decision 0440 step C). The CPU's one pass in
 //! preorder (`typing::file_local`) is the reference.
+use rerail_blocks::vector::Vector;
 use super::*;
 pub use crate::code_rule_dsl::logic::device::nearest::{Buffers, Solved};
 use rerail_metal::lane::{self, Buffer};
@@ -37,9 +38,9 @@ impl Held {
         }
     }
 
-    fn read(&self, count: usize) -> Vec<u32> {
+    fn read(&self, count: usize) -> Vector<u32> {
         // SAFETY: the buffer holds at least `count` u32 in the host's memory; the device is done with it.
-        unsafe { std::slice::from_raw_parts(self.buffer().contents().cast::<u32>(), count).to_vec() }
+        Vector::from(unsafe { std::slice::from_raw_parts(self.buffer().contents().cast::<u32>(), count) })
     }
 }
 
@@ -54,7 +55,7 @@ pub(in crate::code_rule_dsl) fn solve_with(nodes: usize, target: &[u32], done: &
     use rerail_metal::launch::host_seconds;
     let cells = target.len();
     if cells == 0 {
-        return Ok(Solved { targets: Vec::new(), rounds: 0, launches: 0, gpu: 0.0, wall: 0.0, phases: [0.0; 7], made: 0, reused: 0 });
+        return Ok(Solved { targets: rerail_blocks::vector::Vector::new(), rounds: 0, launches: 0, gpu: 0.0, wall: 0.0, phases: [0.0; 7], made: 0, reused: 0 });
     }
     // Node indices leave bit 31 free.
     if cells >= u32::MAX as usize || nodes == 0 || nodes >= FINAL as usize || !cells.is_multiple_of(nodes) || done.len() != cells {
@@ -66,7 +67,7 @@ pub(in crate::code_rule_dsl) fn solve_with(nodes: usize, target: &[u32], done: &
     let mut phases = [0.0f64; 7];
     let (mut made, mut reused) = (0u64, 0u64);
     let begun = host_seconds();
-    let state: Vec<u32> = target.iter().zip(done).map(|(&t, &d)| if t == NONE { NONE } else if d != 0 { t | FINAL } else { t }).collect();
+    let state: Vector<u32> = target.iter().zip(done).map(|(&t, &d)| if t == NONE { NONE } else if d != 0 { t | FINAL } else { t }).collect();
     let (state, stats) = match how {
         Buffers::Fresh => {
             made += (cells * 4 + 4) as u64;

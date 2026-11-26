@@ -1,5 +1,8 @@
 # t32. The rest of t28: a plan, with every cache as two rules
 
+Status (2026-11-23): built but for 5.3. Stages 1–4, 5.1–5.2, 6 and 8 are done. Stage 7's searches were measured
+and not taken (0144). Left: 5.3, the other caches of 0103 §8, which is t33's plan.
+
 ## Intro
 
 t28 made Python typing three phases: P1 `struct.rr`, P2 `types.rr`, P3 `calls_p3.rr`. P3 now answers every call

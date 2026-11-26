@@ -87,11 +87,32 @@ pub fn gap_pattern_rows(out: &mut String, patterns: &[crate::program::TokenMark]
     mark_rows(out, "gappattern", patterns);
 }
 
+/// `recover`'s patterns (`Words::recover`, decision 0650): `recover at|past [first]`, then a token mark's elements.
+pub fn recover_rows(out: &mut String, patterns: &[crate::program::Recover]) {
+    for r in patterns {
+        out.push_str(if r.past { "  recover past" } else { "  recover at" });
+        if r.first {
+            out.push_str(" first");
+        }
+        elem_rows(out, &r.elems);
+        out.push('\n');
+    }
+}
+
 fn mark_rows(out: &mut String, row: &str, marks: &[crate::program::TokenMark]) {
     use std::fmt::Write as _;
     for m in marks {
         let _ = write!(out, "  {row} {}{}{}", m.order, if m.refuses { " refuses" } else { "" }, if m.unless { " unless" } else { "" });
-        for e in &m.elems {
+        elem_rows(out, &m.elems);
+        out.push('\n');
+    }
+}
+
+/// A token mark's elements, as its row writes them.
+fn elem_rows(out: &mut String, elems: &[crate::program::TokenElem]) {
+    use std::fmt::Write as _;
+    {
+        for e in elems {
             let _ = write!(out, " o{} k{:x}", e.offset, e.kinds);
             if e.rows != 0 {
                 let _ = write!(out, " r{:x}", e.rows);
@@ -151,7 +172,6 @@ fn mark_rows(out: &mut String, row: &str, marks: &[crate::program::TokenMark]) {
                 }
             }
         }
-        out.push('\n');
     }
 }
 

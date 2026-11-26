@@ -1,8 +1,8 @@
 # 0070: Carried state is bits, packed
 
-Status: accepted (user, 2026-11-07: "there should not be anything like the number of carried
-words"; "I want this pinned down with TDD tests. The shape HAS to be correct"; "storing 1 bit
-in 64 bits is 4x worse than the still very naive approach")
+Status: built (audited 2026-11-23). Accepted (user, 2026-11-07: "there should not be anything like the number of
+carried words"; "I want this pinned down with TDD tests. The shape HAS to be correct"; "storing 1 bit in 64 bits is 4x
+worse than the still very naive approach")
 
 ## Intro
 

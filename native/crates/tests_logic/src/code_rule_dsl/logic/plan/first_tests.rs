@@ -4,7 +4,7 @@ use super::*;
 use crate::code_rule_dsl::logic::rr::lower::first::{First, Order, recognize};
 use crate::content_store::ContentStore;
 
-fn statements(src: &str) -> Vec<crate::code_rule_dsl::logic::rr::from_tape::Stmt> {
+fn statements(src: &str) -> crate::code_rule_dsl::logic::rr::from_tape::Statements {
     crate::code_rule_dsl::logic::rr::from_tape::RrFile::read(src.to_owned()).unwrap_or_else(|e| panic!("{e}")).statements()
 }
 

@@ -1,6 +1,7 @@
 # 0226: The lean SQL parser writes its tape as it parses, with no arena
 
-Status: decided (user, 2026-11-14: "yes, take that on next", on removing the arena's second pass).
+Status: built (audited 2026-11-23). Decided (user, 2026-11-14: "yes, take that on next", on removing the arena's
+second pass).
 
 ## Intro
 

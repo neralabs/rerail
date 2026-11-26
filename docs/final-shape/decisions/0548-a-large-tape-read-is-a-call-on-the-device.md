@@ -1,7 +1,7 @@
 # 0548. A large tape read is a call on the device
 
-Status: accepted (2026-11-20). Refines 0310's inlining policy for the UKL backend (decision 0440); the JIT's policy
-is unchanged.
+Status: built (audited 2026-11-23). Accepted (2026-11-20). Refines 0310's inlining policy for the UKL backend
+(decision 0440); the JIT's policy is unchanged.
 
 ## Intro
 

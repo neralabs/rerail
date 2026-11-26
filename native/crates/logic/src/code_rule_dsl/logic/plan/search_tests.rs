@@ -1,10 +1,11 @@
+    use rerail_blocks::vector::Vector;
     use super::*;
     /// `cyclic_relations` by one pass over the edges is the walk from each relation: every relation that reaches
     /// itself through the given rules' atoms (a self-read, or a strongly connected part of more than one), over
     /// generated programs.
     #[test]
     fn cyclic_relations_are_those_that_reach_themselves() {
-        let walked = |scc: &BTreeSet<String>, v: &Version| -> BTreeSet<String> {
+        let walked = |scc: &crate::code_rule_dsl::logic::front::Comp, v: &Version| -> BTreeSet<String> {
             let mut next: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
             for r in v.rules() {
                 for l in r.body() {
@@ -16,13 +17,13 @@
                 }
             }
             scc.iter().filter(|start| {
-                let (mut seen, mut todo): (BTreeSet<&str>, Vec<&str>) = (BTreeSet::new(), next.get(start.as_str()).into_iter().flatten().copied().collect());
+                let (mut seen, mut todo): (BTreeSet<&str>, Vec<&str>) = (BTreeSet::new(), next.get(start).into_iter().flatten().copied().collect());
                 while let Some(x) = todo.pop() {
-                    if x == start.as_str() { return true; }
+                    if x == *start { return true; }
                     if seen.insert(x) { todo.extend(next.get(x).into_iter().flatten().copied()); }
                 }
                 false
-            }).cloned().collect()
+            }).map(str::to_owned).collect()
         };
         let mut seed = 7u64;
         let mut rand = |n: u64| { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; seed % n };
@@ -41,10 +42,11 @@
             text.push_str(&format!(".output {}\n", (0..n).map(|i| format!("r{i}")).collect::<Vec<_>>().join(",")));
             let p = super::super::rr::parse_version(&text).unwrap();
             // The relations taken as one part (a superset of each strongly connected part), with base outside it.
-            let scc: BTreeSet<String> = (0..n).map(|i| format!("r{i}")).collect();
+            let names: Vec<String> = (0..n).map(|i| format!("r{i}")).collect();
+            let scc = &crate::code_rule_dsl::logic::front::Components::of_names([names.iter().map(String::as_str)])[0];
             let vs = body::Versions::of_placed(body::Placed::whole(p.clone()));
             let keys: Vec<RuleKey> = body::Versions::keys(0, p.rules().count()).collect();
-            assert_eq!(cyclic_relations(&vs, &scc, &keys), walked(&scc, &p), "{text}");
+            assert_eq!(cyclic_relations(&vs, scc, &keys), walked(scc, &p), "{text}");
         }
     }
 
@@ -105,7 +107,7 @@
         let given = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
         let v = &prog.v;
         let derived: HashSet<String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect();
-        let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&prog.fields().unwrap()), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: given.into(), derived: derived.into() };
+        let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&prog.fields().unwrap()), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: given.into(), derived: derived.iter().collect() };
         model.stats.nodes = 1_000_000.0;
         for &(rel, rows, ndv) in inputs {
             model.stats.card.insert(rel, rows);
@@ -139,7 +141,7 @@
             for first in [None, Some(1)] {
                 let (plan, x) = model.plan_rule_explained(placed.fields().unwrap(), &b, first).unwrap();
                 let (lean, rows) = model.plan_rule_step_rows(placed.fields().unwrap(), &b, first).unwrap();
-                let recorded: Vec<f64> = x.expect("explained").steps.iter().map(|s| s.rows).collect();
+                let recorded: Vector<f64> = x.expect("explained").steps.iter().map(|s| s.rows).collect();
                 assert_eq!((b.shown(&lean.0), lean.1, lean.2), (b.shown(&plan.0), plan.1, plan.2), "{r}");
                 assert_eq!(rows, recorded, "{r} from {first:?}");
             }

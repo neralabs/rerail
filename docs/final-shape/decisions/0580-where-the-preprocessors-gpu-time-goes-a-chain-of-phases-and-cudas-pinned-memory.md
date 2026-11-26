@@ -1,8 +1,8 @@
 # 0580. Where the preprocessor's GPU time goes: a chain of phases, and CUDA's pinned memory
 
-Status: accepted (2026-11-21, the user: "this is still an incredibly slow preprocessor despite running in parallel on
-a GPU. tell me why. You can start with metal and cuda as they have the best tooling"). A measurement, and the one
-fix it found. The kernels' design (0468 §4, 0527) is unchanged.
+Status: built (audited 2026-11-23). Accepted (2026-11-21, the user: "this is still an incredibly slow preprocessor
+despite running in parallel on a GPU. tell me why. You can start with metal and cuda as they have the best tooling").
+A measurement, and the one fix it found. The kernels' design (0468 §4, 0527) is unchanged.
 
 ## Intro
 

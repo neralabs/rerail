@@ -2,6 +2,7 @@
 //! (`candidates`), and each reader's split (`analyse`), as `split_negations` and `split_with` read the tree. The
 //! rules are read by their handles, each variable by its name; the program's other fields by `Fields`.
 
+use rerail_blocks::vector::Vector;
 use super::super::super::program_image::{AtomRef, CmpOp, Lit, LitRef, RuleRef, Slot, TermRef, Version};
 use super::super::body::{Placed, lit_vars, term_vars, VarSet};
 use super::super::fields::Fields;
@@ -64,7 +65,7 @@ pub fn base(f: &Fields<'_>, rel: &str, a: AtomRef<'_>) -> bool {
 /// derived, `kind(o, "type_alias_statement")` bound nothing, a definition's `field(o, "left", l)` (8,152 rows in a
 /// chunk of PostHog) made `tp_name` large and so demanded, and `tp_ref`'s split made every identifier with each of
 /// its ancestors (55 M rows a cold run; work queue Q88's measurement).
-pub fn view_of<'v>(f: &Fields<'v>, a: AtomRef<'_>) -> Option<(String, Vec<usize>)> {
+pub fn view_of<'v>(f: &Fields<'v>, a: AtomRef<'_>) -> Option<(String, Vector<usize>)> {
     if f.is_input(f.v.rel_name(a.rel())) {
         return None;
     }
@@ -158,7 +159,7 @@ pub fn per_node_relations(rules: &[R<'_>]) -> BTreeSet<String> {
                         }
                     }
                     Lit::Atom(a) if !a.neg() => {
-                        let at: Vec<usize> = a.args().enumerate().filter(|(_, t)| t.var() == Some(key)).map(|(c, _)| c).collect();
+                        let at: Vector<usize> = a.args().enumerate().filter(|(_, t)| t.var() == Some(key)).map(|(c, _)| c).collect();
                         if at.is_empty() {
                             continue;
                         }
@@ -230,38 +231,7 @@ pub fn candidates<'v>(f: &Fields<'v>, p: &'v Placed, model: &super::super::Model
     // `nameref`'s split made a `pre_` relation of every identifier, a demand of 236 k rows and a second pass, 0.45 s
     // of a cold hogql run's strata CPU against 0.22 s for `nameref` whole.
     let scan = |r: &R<'_>| -> Option<f64> {
-        let atoms: Vec<(AtomRef<'_>, f64)> = (0..r.lits.len())
-            .filter_map(|i| match r.lits[i].view() {
-                Lit::Atom(a) if !a.neg() && base(f, r.rel(a), a) => Some((a, base_rows(f, model, r.rel(a), a))),
-                _ => None,
-            })
-            .collect();
-        let mut rows: BTreeMap<Slot, f64> = BTreeMap::new();
-        for &(a, n) in &atoms {
-            for v in a.args().filter_map(|t| t.var()) {
-                let e = rows.entry(v).or_insert(n);
-                *e = e.min(n);
-            }
-        }
-        for _ in 0..atoms.len() {
-            let mut changed = false;
-            for &(a, _) in &atoms {
-                let vars: Vec<Option<Slot>> = a.args().map(|t| t.var()).collect();
-                for (c, u) in vars.iter().enumerate() {
-                    let Some(u) = u else { continue };
-                    let reach = rows[u] * base_fan(f, model, r.rel(a), a, c);
-                    for v in vars.iter().flatten().filter(|v| *v != u) {
-                        if reach < rows[v] {
-                            rows.insert(*v, reach);
-                            changed = true;
-                        }
-                    }
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
+        let rows = var_rows(f, model, r, None, None);
         r.r.head().args().filter_map(|t| t.var()).filter_map(|v| rows.get(&v).copied()).reduce(f64::max)
     };
     // A scan is worth demanding when it reaches at least this many rows: the rows not built must outweigh the strata
@@ -294,7 +264,169 @@ pub fn candidates<'v>(f: &Fields<'v>, p: &'v Placed, model: &super::super::Model
         }
     }
     candidates.retain(|r| read.contains(r));
+    // A demand pays where its readers ask about fewer keys than the relation holds. `bind_only`, ten rules read only
+    // negated, was demanded by every name read (`rf_read`, `def_outside`, `ref_site`): its keys nearly all of the
+    // relation's, the demand saved no row, and each of its rules joined the demand first (t57 §8, E4: 19,527 units
+    // for 932 rows). Both sizes are the scan's, a derived atom bounded by its relation's own size (`Sizes`); a
+    // relation of a row per node, or one either size is unknown for, is demanded as before.
+    let mut sizes = Sizes { f, model, by_rel: &by_rel, memo: BTreeMap::new(), visiting: BTreeSet::new() };
+    candidates.retain(|rel| {
+        if f.qualified(rel, "magic") || by_rel.get(rel).is_some_and(|rs| rs.iter().all(|r| per_node(r))) {
+            return true;
+        }
+        let Some(own) = sizes.rows(rel) else { return true };
+        let mut asked = 0.0;
+        for r in &rules {
+            for i in 0..r.lits.len() {
+                let Lit::Atom(a) = r.lits[i].view() else { continue };
+                if r.rel(a) != *rel {
+                    continue;
+                }
+                let Some(key) = a.args().next().and_then(|t| t.var()) else { return true };
+                let got = var_rows(f, model, r, Some(i), Some(&mut sizes)).get(&key).copied();
+                match got.as_ref() {
+                    Some(n) => asked += n,
+                    None => return true,
+                }
+            }
+        }
+        let keep = asked < own;
+        if !keep {
+            super::super::super::profile::decision("demand (decision 0048)", || format!("{rel}: whole, its readers ask about {asked:.0} keys of its {own:.0} rows"));
+        }
+        keep
+    });
     candidates
+}
+
+/// Per variable of rule `r`, the fewest rows a positive atom that binds it reaches: a base atom's measured rows (and
+/// its constants' postings), and another variable's rows times the fan of a base atom they share
+/// (`pat_tail(n) :- kind(d, "dotted_name"), child(d, n, i), …` binds `n` from the few dotted names' children, not
+/// from every `child` row). With `sizes`, a derived atom's relation's own size bounds its variables too. `skip`: a
+/// literal left out (a reader's read of the relation it asks about).
+fn var_rows(f: &Fields<'_>, model: &super::super::Model, r: &R<'_>, skip: Option<usize>, mut sizes: Option<&mut Sizes<'_, '_>>) -> BTreeMap<Slot, f64> {
+    let mut atoms: Vec<(AtomRef<'_>, f64)> = Vec::new();
+    let mut rows: BTreeMap<Slot, f64> = BTreeMap::new();
+    for i in (0..r.lits.len()).filter(|&i| Some(i) != skip) {
+        // An `ast` literal (decision 0106): its node is one of its matcher's root kind's nodes.
+        if let Lit::Ast { node, matcher, .. } = r.lits[i].view()
+            && let Some(n) = ast_rows(f, model, matcher)
+        {
+            let e = rows.entry(node).or_insert(n);
+            *e = e.min(n);
+            continue;
+        }
+        let Lit::Atom(a) = r.lits[i].view() else { continue };
+        if a.neg() {
+            continue;
+        }
+        let rel = r.rel(a);
+        if base(f, rel, a) {
+            atoms.push((a, base_rows(f, model, rel, a)));
+        } else if let Some(n) = sizes.as_deref_mut().and_then(|s| s.rows(rel)) {
+            for v in a.args().filter_map(|t| t.var()) {
+                let e = rows.entry(v).or_insert(n);
+                *e = e.min(n);
+            }
+        }
+    }
+    for &(a, n) in &atoms {
+        for v in a.args().filter_map(|t| t.var()) {
+            let e = rows.entry(v).or_insert(n);
+            *e = e.min(n);
+        }
+    }
+    // A variable a comparison computes from others (`$x = @rr_node_text_any($n)`, `$s = $a`): a value for each of
+    // their rows at most.
+    let computed: Vec<(Slot, VarSet)> = (0..r.lits.len())
+        .filter(|&i| Some(i) != skip)
+        .filter_map(|i| match r.lits[i].view() {
+            Lit::Cmp { l, op: CmpOp::Eq, r: t } => Some((l, t)),
+            _ => None,
+        })
+        .flat_map(|(l, t)| [(l, t), (t, l)])
+        .filter_map(|(v, t)| {
+            let v = v.var()?;
+            let mut from = VarSet::new();
+            term_vars(t, &mut from);
+            (!from.contains(v)).then_some((v, from))
+        })
+        .collect();
+    for _ in 0..atoms.len() + computed.len() {
+        let mut changed = false;
+        for (v, from) in &computed {
+            let Some(n) = from.iter().try_fold(1.0f64, |n, u| rows.get(&u).map(|&m| n * m)) else { continue };
+            if rows.get(v).is_none_or(|&x| n < x) {
+                rows.insert(*v, n);
+                changed = true;
+            }
+        }
+        for &(a, _) in &atoms {
+            let vars: Vec<Option<Slot>> = a.args().map(|t| t.var()).collect();
+            for (c, u) in vars.iter().enumerate() {
+                let Some(u) = u else { continue };
+                let Some(&ru) = rows.get(u) else { continue };
+                let reach = ru * base_fan(f, model, r.rel(a), a, c);
+                for v in vars.iter().flatten().filter(|v| *v != u) {
+                    if rows.get(v).is_none_or(|&x| reach < x) {
+                        rows.insert(*v, reach);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    rows
+}
+
+/// The rows an `ast` literal of `matcher` reaches: its root kind's nodes (`TreeStats`, by the kind's name as its
+/// grammar names it); `None` for a matcher of no single root kind, or a kind the statistics do not count.
+fn ast_rows(f: &Fields<'_>, model: &super::super::Model, matcher: super::super::super::program_image::AtomId) -> Option<f64> {
+    let kind = super::super::text_demand::root_kind(f.text(matcher))?;
+    let bare = kind.rsplit(':').next().unwrap_or(&kind);
+    model.stats.tree.freq(bare).map(|n| n as f64)
+}
+
+/// A derived relation's size by its rules' scans (`var_rows`): per rule the most rows of its head's variables, summed
+/// over its rules; `None` where a rule's head is bound by no atom of a known size, or the relation is recursive.
+/// Measured counts and the program's constants only, as the scan's, through the derived relations below.
+struct Sizes<'a, 'v> {
+    f: &'a Fields<'v>,
+    model: &'a super::super::Model,
+    by_rel: &'a BTreeMap<&'v str, Vec<&'a R<'v>>>,
+    memo: BTreeMap<String, Option<f64>>,
+    visiting: BTreeSet<String>,
+}
+
+impl Sizes<'_, '_> {
+    fn rows(&mut self, rel: &str) -> Option<f64> {
+        if let Some(n) = self.memo.get(rel) {
+            return *n;
+        }
+        // A relation another part derives (`Fields::given`): its measured rows, where the statistics have them.
+        let Some(rules) = self.by_rel.get(rel).cloned() else {
+            return self.model.stats.card.get(rel).copied();
+        };
+        if !self.visiting.insert(rel.to_owned()) {
+            return None;
+        }
+        let (f, model) = (self.f, self.model);
+        let mut total = Some(0.0);
+        for r in rules {
+            let rows = var_rows(f, model, r, None, Some(self));
+            let head = r.r.head().args().filter_map(|t| t.var()).map(|v| rows.get(&v).copied()).try_fold(0.0f64, |m, x| x.map(|x| m.max(x)));
+            total = total.zip(head).map(|(t, h)| t + h);
+            if total.is_none() {
+                break;
+            }
+        }
+        self.visiting.remove(rel);
+        self.memo.insert(rel.to_owned(), total);
+        total
+    }
 }
 
 /// Whether the positive atoms `cut` leaves fall apart: two of them share no variable through the others (or
@@ -394,7 +526,7 @@ fn reached(f: &Fields<'_>, model: &super::super::Model, per_node: &BTreeSet<Stri
             _ => on(0),
         }
     };
-    let mut todo: Vec<usize> = (0..r.lits.len())
+    let mut todo: Vector<usize> = (0..r.lits.len())
         .filter(|&j| match r.lits[j].view() {
             Lit::Atom(b) => !b.neg() && !cut(j),
             Lit::Nearest { .. } => true,
@@ -433,7 +565,7 @@ pub(super) fn analyse(f: &Fields<'_>, p: &Placed, model: &super::super::Model, c
         eprintln!("demand: relations of a row per node: {per_node:?}");
     }
     let negated = |r: &R<'_>, i: usize| r.plain(i).is_some_and(|a| candidates.contains(r.rel(a)));
-    let readers: Vec<usize> = (0..n).filter(|&k| (0..rules[k].lits.len()).any(|i| negated(&rules[k], i))).collect();
+    let readers: Vector<usize> = (0..n).filter(|&k| (0..rules[k].lits.len()).any(|i| negated(&rules[k], i))).collect();
     // A positive read is cut only where one kept anchor binds all its variables (the module's guard). Every reader is
     // checked before any is split, so one round drops every candidate a guard refuses.
     let mut refused = BTreeSet::new();
@@ -495,8 +627,8 @@ pub(super) fn analyse(f: &Fields<'_>, p: &Placed, model: &super::super::Model, c
     let (mut splits, mut decls, mut nullary) = (BTreeMap::new(), Vec::new(), Vec::new());
     for &k in &readers {
         let r = &rules[k];
-        let cut: Vec<usize> = (0..r.lits.len()).filter(|&i| negated(r, i)).collect();
-        let kept: Vec<usize> = (0..r.lits.len()).filter(|i| !cut.contains(i)).collect();
+        let cut: Vector<usize> = (0..r.lits.len()).filter(|&i| negated(r, i)).collect();
+        let kept: Vector<usize> = (0..r.lits.len()).filter(|i| !cut.contains(i)).collect();
         let own = candidates.contains(r.head());
         // The reader's own demand's variables (its head's, a computed column a fresh `rr_demanded<i>`, which a
         // comparison binds with the column's variables), and the type a variable takes from the first positive

@@ -1,7 +1,8 @@
 # 0303. The process's end waits for an upkeep step under way, and a mostly free store is vacuumed whole
 
-Status: decided (2026-11-16). Builds on 0190 (upkeep behind the runs), 0227 (collection by reachability), 0053
-(corpus runs' bounded history), 0302 (a policy set's newer lane supersedes its older). Q19 in the work queue.
+Status: built (audited 2026-11-23). Decided (2026-11-16). Builds on 0190 (upkeep behind the runs), 0227 (collection by
+reachability), 0053 (corpus runs' bounded history), 0302 (a policy set's newer lane supersedes its older). Q19 in the
+work queue.
 
 ## Intro
 

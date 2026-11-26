@@ -1,5 +1,6 @@
 //! Retain generated SQL tree-walk CTEs as positive relations for overdelete/rederive.
 //! Seeds and outputs can contain retained scalar reducers; recursive walk arms stay positive.
+use rerail_blocks::vector::Vector;
 use super::super::logic::sql::{
     select::{FromItem, Join, Query, Relation as Rel, Select},
     sql_ast::SqlExpression as E,
@@ -368,7 +369,7 @@ fn order_dependencies(e: &mut plan::emit::Emitted) {
         at: usize,
         graph: &[BTreeSet<usize>],
         seen: &mut BTreeSet<usize>,
-        out: &mut Vec<usize>,
+        out: &mut Vector<usize>,
     ) {
         if !seen.insert(at) {
             return;
@@ -378,7 +379,7 @@ fn order_dependencies(e: &mut plan::emit::Emitted) {
         }
         out.push(at);
     }
-    let mut order = Vec::new();
+    let mut order = rerail_blocks::vector::Vector::new();
     let mut seen = BTreeSet::new();
     for at in 0..names.len() {
         finish(at, &users, &mut seen, &mut order);
@@ -391,7 +392,7 @@ fn order_dependencies(e: &mut plan::emit::Emitted) {
             continue;
         }
         position += 1;
-        let mut component = Vec::new();
+        let mut component = rerail_blocks::vector::Vector::new();
         finish(at, &deps, &mut seen, &mut component);
         for member in component {
             positions[member] = position;

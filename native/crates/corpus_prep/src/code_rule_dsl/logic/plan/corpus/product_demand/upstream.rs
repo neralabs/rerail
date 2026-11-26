@@ -1,6 +1,7 @@
 //! Projected reader demand around a product. An optional restriction is installed only when every read supplies
 //! the selected columns independently and the new demand sits outside the relation's dependency component.
 
+use rerail_blocks::vector::Vector;
 use super::{Context, PREFIX as PRODUCT, Part, Program, connect, plain, rewritten, same, value, write_demand};
 use crate::code_rule_dsl::logic::front::name::List;
 use crate::code_rule_dsl::logic::front::Value;
@@ -49,7 +50,9 @@ fn vars_of(terms: &[TermRef<'_>]) -> VarSet {
 
 fn filter_term(v: &Version, term: TermRef<'_>) -> bool {
     match term {
-        TermRef::Call(f, args) => matches!(v.text(f), "prefix" | "suffix" | "glob" | "set") && args.into_iter().all(|t| filter_term(v, t)),
+        // `@doc(a) = @doc(b)` keeps a request on its reader's document (decision 0652): left out, the request joined
+        // every file's rows by a value.
+        TermRef::Call(f, args) => matches!(v.text(f), "prefix" | "suffix" | "glob" | "set" | "doc") && args.into_iter().all(|t| filter_term(v, t)),
         _ => plain(term),
     }
 }
@@ -392,7 +395,7 @@ pub fn install_requests(
     Ok(installed)
 }
 
-fn node_columns(program: &Program<'_>, rel: &str) -> Vec<usize> {
+fn node_columns(program: &Program<'_>, rel: &str) -> Vector<usize> {
     program
         .columns(rel)
         .unwrap_or_default()
@@ -417,7 +420,7 @@ pub fn restrict(program: &mut Program<'_>, rel: &str, products: &BTreeSet<String
         }
     }
     // A symbol can also bound a read, for example a requested qualified name.
-    let symbols: Vec<usize> = program
+    let symbols: Vector<usize> = program
         .columns(rel)
         .unwrap_or_default()
         .iter()

@@ -55,7 +55,7 @@ fn compile() -> Result<Compiled, String> {
     native.tag = crate::code_rule_dsl::language::tape_tag(GrammarDialect::Json).ok_or("JSON has no tape tag")?;
     let parser = native_cpu_stream::Parser::new(&native).map_err(|e| format!("Cranelift: {e:?}"))?;
     let lang = crate::code_rule_dsl::tape::f16::lang(native.tag).ok_or("JSON has no format 16 table")?;
-    let numbers = parser.sixteen().ok_or("tier 2 does not compile for format 16")?.numbers(lang);
+    let numbers = parser.tier2.numbers(lang);
     Ok(Compiled { parser, numbers })
 }
 

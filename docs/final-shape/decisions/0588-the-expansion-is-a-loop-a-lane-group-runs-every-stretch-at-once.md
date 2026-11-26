@@ -1,9 +1,11 @@
 # 0588. The expansion is a loop a lane group runs, every stretch at once
 
-Status: accepted (2026-11-21, the user: "go ahead", after "do you think this is an intellectual puzzle where you solve
-a programming task without being able to use loops"; the goal, the user: as fast as it can be, "one nanosecond").
-Replaces 0527's level-synchronous rounds for the text's expansion. 0520's pieces, the arena (0468 §3) and the
-tapes read in place stay.
+Status: built (audited 2026-11-23). Accepted (2026-11-21, the user: "go ahead", after "do you think this is an
+intellectual puzzle where you solve a programming task without being able to use loops"; the goal, the user: as fast
+as it can be, "one nanosecond"). Replaces 0527's level-synchronous rounds for the text's expansion. 0520's pieces, the
+arena (0468 §3) and the tapes read in place stay.
+
+> **Superseded in part by 0653 (2026-11-23):** §6's teams are gone; a batch's units share one queue.
 
 ## Intro
 
@@ -261,3 +263,22 @@ a team is slower on the M3 (a group for each 4,096 of a unit's work: 13.7 ms for
   group's: 78, 259 and 389 ms a run on the GB10, 207, 730 and 1,083 ms on the M3 Max. P1's second iteration expands
   and evaluates it again, though nothing before it changed. On the mini, with every test running at once, macOS's
   display watchdog stops each of its runs; alone it passes.
+
+## Built: a SIMD group's exchanges through its memory (2026-11-22)
+
+On the CPU backend a SIMD-group operation (a shuffle, a ballot, a sum) is a pass through the group's 32 lanes, each
+a coroutine. So the group's readers cost a pass per word they exchanged. `a_line_past_its_room_runs_again_larger`
+took 4.8 s on a GB10's CPU, against its 1 s bound. Its `#if` line's window took a ballot and four shuffles a token,
+129 passes per 32 tokens. Every exchange of a word that only the thread needs is now a write to the group's memory,
+then one meeting (`ukl_sg_barrier`):
+
+- **The `#if` line's window** (`IfWin`, in `PpTg` beside `LpRun`). Lane 0 runs the evaluation. At each step it
+  writes where the window starts, the lanes write a slot each (a token's operator, value and flags, or not
+  plain), and lane 0 reads them. That is two meetings a step, and one evaluation, not one a lane.
+- **The thread's ask** (`LpRun::q`). The thread writes whether it asks and its query, and the lanes read it past one
+  meeting, against 8 shuffles. On the GB10 the shuffles were 36 µs of the names asks' 121 µs (above).
+- **The window's delimiters** (`LpRun::wc`). Each lane writes its tokens' `(`, `)` or `,`, and the thread makes the
+  three masks after one meeting, against 6 ballots.
+
+The test now takes 0.76 s alone on the GB10's CPU, and 0.81 s with the eval tier's others (37 of 37 within 1 s).
+Not run on a GPU: this branch runs the preprocessor on the CPU backend only.

@@ -1,8 +1,9 @@
 # 0266: A block is one of the engine's few big things; everything it holds is nested inside it
 
-Status: draft (2026-11-15), the target shape. A rewrite: two earlier drafts treated each data structure as a block
-of its own, and the user corrected that. Builds on decision 0260 and revises its §1–§6 (0260 points here). The
-catalogue of what goes where is `docs/final-shape/data-structures.md`.
+Status: partly built (audited 2026-11-23). Left: step 4: setfix relations as RelationW/RelationV blocks, maintained
+runs as deltas, kernels reading relations in place. Draft (2026-11-15), the target shape. A rewrite: two earlier
+drafts treated each data structure as a block of its own, and the user corrected that. Builds on decision 0260 and
+revises its §1–§6 (0260 points here). The catalogue of what goes where is `docs/final-shape/data-structures.md`.
 
 ## Intro
 

@@ -10,7 +10,7 @@ pub(super) fn document(source: &str, lang: GrammarDialect) -> TapeDoc {
     let native = StrDoc::new(source, lang);
     let grammar = Grammar::new(lang).unwrap();
     let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
-    TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap()
+    TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap()
 }
 
 #[test]

@@ -1,6 +1,6 @@
 # 0052: A corpus run memoises each file's file-local rows; an unchanged file is neither parsed nor evaluated
 
-Status: accepted (2026-11-06; built and measured)
+Status: built (audited 2026-11-23). Accepted (2026-11-06; built and measured)
 
 ## Intro
 

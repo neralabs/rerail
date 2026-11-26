@@ -38,7 +38,7 @@ fn core_eligibility_equals_reference_on_known_inapplicable_and_broken_expression
         // Every expression/node, including malformed ancestors, checks conservative handling.
         for node in root.root().dfs() {
             assert_eq!(
-                eligibility(&g, &facts, node.node_id() as u32),
+                facts.alone(|f| eligibility(&g, f, node.node_id() as u32)),
                 python_facts::qualification_chain(&node),
                 "{source}: {}",
                 node.text()

@@ -25,6 +25,8 @@ describe("a hash", () => {
     ["#sessions?filter=in-progress", { view: "sessions" }],
     ["#sessions?filter=nonsense", { view: "sessions" }],
     ["#settings", { view: "settings" }],
+    ["#settings?section=about", { view: "settings", section: "about" }],
+    ["#settings?section=nonsense", { view: "settings" }],
     ["#merge", { view: "merge" }],
     ["#merge?conflict=conflict:native%2Fsrc%2Fmodel.rs%23matchers:ab12", { view: "merge", conflict: "conflict:native/src/model.rs#matchers:ab12" }],
     ["#merge?conflict=", { view: "merge" }],

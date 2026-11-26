@@ -7,18 +7,18 @@
 .cathead{margin-bottom:10px}
 .cathead .btn{padding-inline:2px}
 
-/* One row per pack: icon, name, what it covers (three lines, always three lines of room), size; state and action end on one line. */
+/* One row per pack: icon, name, its status line, what it covers (three lines, always three lines of room), why it is
+ * suggested, size; the action at the end. */
 .prow2{display:flex;align-items:flex-start;gap:16px;padding:16px;border-top:1px solid var(--border);cursor:pointer;text-align:left}
 .prow2:first-child{border-top:0}
 .prow2:hover{background:var(--subtle-fill)}
 .prow2 .pt2{flex:1;min-width:0;display:grid;gap:3px}
-.prow2 .pt2 b{font-size:14px;font-weight:600}
+.prow2 .pt2 > b{font-size:14px;font-weight:600}
 .prow2 .pt2 .sub{font-size:13px;color:var(--foreground);line-height:1.45;max-width:72ch}
 .catalog:not(.rv) .prow2 .pt2 .sub{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;line-height:19px;min-height:57px}
 .prow2 .pt2 .meta{font-size:12.5px;color:var(--muted-foreground)}
 .prow2 .pend{flex:none;width:250px;align-self:center;display:flex;align-items:center;justify-content:flex-end;gap:22px;min-height:30px}
 .prow2 .pend .btn{white-space:nowrap}
-.prow2 .pstatus{font-size:12.5px;color:var(--muted-foreground);white-space:nowrap}
 .prow2 .pact2{flex:none;align-self:center;display:flex;justify-content:flex-end}
 .added{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:var(--radius-md);background:var(--success-subtle);color:var(--success-foreground);font-size:11.5px;font-weight:500;white-space:nowrap}
 .added .ico{color:inherit}
@@ -34,7 +34,7 @@
 .rv .prow2 .why b{font-weight:600;font-size:11px;letter-spacing:.06em;text-transform:uppercase;margin-right:6px}
 .swl{display:inline-flex;align-items:center;gap:10px;font-size:12.5px;color:var(--muted-foreground)}
 
-/* Narrow, or beside an open sheet: the row wraps, its text full width, the state and action under it. */
+/* Narrow, or beside an open sheet: the row wraps, its text full width, the action under it. */
 @media (max-width:1100px){
   .prow2{flex-wrap:wrap;row-gap:10px} .prow2 .pt2{flex:1 1 calc(100% - 52px)}
   .prow2 .pend{width:100%;min-height:0}
@@ -43,6 +43,52 @@ body[data-panel="open"] .prow2{flex-wrap:wrap;row-gap:10px}
 body[data-panel="open"] .prow2 .pt2{flex:1 1 calc(100% - 52px)}
 body[data-panel="open"] .prow2 .pend{width:100%;min-height:0}
 
+/* The catalog's rows: the description and "Why suggested" run the row's width, and the action column holds only the
+ * button, 82px from the text on a wide page. Narrow, or beside an open sheet, the button sits at the row's top right,
+ * level with the name; the name and the status line leave room for it, and the text runs full width under it. */
+.catalog:not(.rv) .prow2 .pt2 .sub{max-width:none}
+.catalog:not(.rv) .prow2 .pt2 > .pstate{margin:5px 0}
+.catalog:not(.rv) .prow2 .whybox + .meta{margin-top:13px}
+@media (min-width:1101px){
+  body:not([data-panel="open"]) .catalog:not(.rv) .prow2 .pend{width:104px;margin-left:66px}
+}
+@media (max-width:1100px){
+  .catalog:not(.rv) .prow2{position:relative}
+  .catalog:not(.rv) .prow2 .pend{position:absolute;top:12px;right:16px;width:auto;min-height:0}
+  .catalog:not(.rv) .prow2 .pt2 > b,.catalog:not(.rv) .prow2 .pt2 > .pstate{padding-right:132px}
+}
+body[data-panel="open"] .catalog:not(.rv) .prow2{position:relative}
+body[data-panel="open"] .catalog:not(.rv) .prow2 .pend{position:absolute;top:12px;right:16px;width:auto;min-height:0}
+body[data-panel="open"] .catalog:not(.rv) .prow2 .pt2 > b,body[data-panel="open"] .catalog:not(.rv) .prow2 .pt2 > .pstate{padding-right:132px}
+
+/* The catalog in two groups once Rerail has suggested packs for this repo: the suggested ones, then the others. */
+.groups > .ghead.grp{margin-top:22px}
+.groups > .ghead.grp:first-child{margin-top:14px}
+.ghead.grp h3{margin:0;font-size:15px;font-weight:600}
+.ghead.grp h3 .n2{display:inline-flex;align-items:center;font-size:11.5px;font-weight:500;line-height:16px;color:var(--muted-foreground);background:var(--subtle);padding:1px 7px;border-radius:var(--radius-md);margin-left:8px;vertical-align:1px}
+.ghead.grp p{margin:2px 0 0;font-size:13px;color:var(--muted-foreground)}
+
+/* A pack's status line, under its name: its version, quiet, then Added or Removed; every chip as tall as "Added". */
+.pstate{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px}
+.pstate .badge,.pstate .added,.pstate .rmtag{line-height:16px}
+.pstate .badge{padding:2px 8px;font-size:11.5px}
+.pcard .pstate{margin-bottom:-4px}
+
+/* "Why suggested" (render/pack-panel.js), in the brand's light fill so a suggested pack reads apart at a glance: the
+ * label in small capitals in the brand colour, on its sentence's baseline, with the question mark; the reason in the
+ * page's text colour. */
+.whybox{display:block;padding:8px 10px;border-radius:var(--radius-lg);background:var(--brand-subtle);font-size:12.5px;line-height:1.45;color:var(--foreground)}
+.whyhead{display:inline-flex;align-items:baseline;gap:5px;margin-right:8px;color:var(--brand);white-space:nowrap}
+.whyhead b{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--brand)}
+.whyhead .ico{flex:none;align-self:center}
+.prow2 .pt2 .whybox{margin-top:6px}
+/* The box follows its description straight on: a description shorter than three lines keeps no blank line above it. */
+.catalog:not(.rv) .prow2 .pt2 .sub:has(+ .whybox){min-height:0}
+/* Cards: on a suggested pack the box is the divider; it sits on the footer, whose line goes. It is three lines tall
+ * whether its reason takes two or three, so the cards of a row line up; a longer reason grows it. */
+.pcard .whybox{margin-top:auto;min-height:calc(3 * 1.45em + 16px)}
+.pcard:has(.whybox) .pc-foot{border-top:0;margin-top:0;padding-top:12px}
+
 /* Every card the same size: each row as tall as the tallest card, and a description at most three lines (the whole of
  * it in its hover and on the pack's page), so one long description does not stretch them all. */
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(272px,1fr));grid-auto-rows:1fr;gap:16px}
@@ -50,7 +96,6 @@ body[data-panel="open"] .prow2 .pend{width:100%;min-height:0}
 .pcard:hover{border-color:var(--border-strong)}
 .pcard .pc-top{display:flex;align-items:center;gap:14px}
 .pcard .pc-top .pc-name{flex:1;min-width:0}
-.pcard .pc-top .pstatus{flex:none;align-self:flex-start}
 .pcard .pc-top .picon{width:40px;height:40px}
 .pcard .pc-top b{display:block;font-size:15px;font-weight:600}
 .pcard .pc-top .kind{display:block;font-size:12px;color:var(--muted-foreground);margin-top:1px}
@@ -70,3 +115,16 @@ body[data-panel="open"] .prow2 .pend{width:100%;min-height:0}
 .pwrap.pack .pfoot{position:sticky;bottom:0;z-index:2;margin:auto -20px 0;padding:12px 20px;border-top:1px solid var(--border);background:var(--card)}
 .pwrap.pack .pgrp.flat{margin-bottom:32px}
 .pwrap.pack .pfoot .rmask{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-start;gap:8px 10px;font-size:13px;line-height:1.5}
+/* A pack not added: its rules under "Start on" and "Start off", each with its title over its id and its Steer or Log
+ * only tag, faded for the ones that start off. A heading and its count never wrap; the line beside them does. */
+.pwrap.pack .whybox{margin:12px 0}
+.pwrap.pack .prow.prule{align-items:center}
+.prule .ptext{flex:1;min-width:0;display:grid;gap:2px}
+.prule .ptext .t{line-height:1.4}
+.prule .ptext .mono{max-width:none}
+.prule.startsoff .enftag{opacity:.5}
+.pstart{display:flex;align-items:baseline;gap:10px;padding:14px 14px 6px;border-top:1px solid var(--border)}
+.pstart:first-child{border-top:0;padding-top:8px}
+.pstart b{flex:none;white-space:nowrap;font-size:13px;font-weight:600}
+.pstart b .n2{font-size:11.5px;font-weight:500;color:var(--muted-foreground);background:var(--subtle);padding:1px 7px;border-radius:var(--radius-md);margin-left:6px}
+.pstart > span{flex:1;min-width:0;font-size:12px;color:var(--muted-foreground)}

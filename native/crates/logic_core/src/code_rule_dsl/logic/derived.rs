@@ -44,32 +44,13 @@ pub(in crate::code_rule_dsl) fn share() -> Option<Shared> {
     crate::code_rule_dsl::logic::profile::bound::<Memoized>().0
 }
 
-/// Derived values kept for the run while held; for a session's run (`across`, the session's generation), the values
-/// its earlier runs kept, put back at the end (decision 0090 step 5).
-pub struct Keep(Option<u64>, Option<crate::code_rule_dsl::logic::profile::Bound>);
-
-thread_local! {
-    /// A session's derived values between its runs, with the session's generation.
-    static SESSION_MEMO: RefCell<Option<(u64, Memo)>> = const { RefCell::new(None) };
-}
+/// Derived values kept for the run while held, none at its start: a session's run derives its own, as a new
+/// process's does (t33 step 3).
+pub struct Keep(#[allow(dead_code)] crate::code_rule_dsl::logic::profile::Bound);
 
 impl Keep {
-    pub fn start(across: Option<u64>) -> Self {
-        let kept = across.and_then(|g| SESSION_MEMO.with(|s| s.borrow_mut().take().filter(|(k, _)| *k == g).map(|(_, m)| m)));
-        let memo = crate::code_rule_dsl::logic::profile::bind(Memoized(Some(Arc::new(parking_lot::Mutex::new(kept.unwrap_or_else(|| Memo { keys: (RandomState::default(), RandomState::default()), values: FxHashMap::default() }))))));
-        Keep(across, Some(memo))
-    }
-}
-
-impl Drop for Keep {
-    fn drop(&mut self) {
-        // Every job that entered it has ended: the run's thread holds the last handle.
-        let memo = share();
-        drop(self.1.take());
-        let memo = memo.map(|m| Arc::try_unwrap(m).map_or_else(|m| std::mem::replace(&mut *m.lock(), Memo { keys: (RandomState::default(), RandomState::default()), values: FxHashMap::default() }), parking_lot::Mutex::into_inner));
-        if let (Some(g), Some(memo)) = (self.0, memo) {
-            SESSION_MEMO.with(|s| *s.borrow_mut() = Some((g, memo)));
-        }
+    pub fn start() -> Self {
+        Keep(crate::code_rule_dsl::logic::profile::bind(Memoized(Some(Arc::new(parking_lot::Mutex::new(Memo { keys: (RandomState::default(), RandomState::default()), values: FxHashMap::default() }))))))
     }
 }
 
@@ -122,6 +103,14 @@ pub fn digest(inputs: impl FnOnce(&mut Inputs)) -> u128 {
     Inputs::over(&KEYS, inputs)
 }
 
+/// `f`, what it makes with no room made in the thread's long-lived room (`maps::long`, decision 0342 amended
+/// 2026-11-24), where what the memo keeps lies (a kept value's section, `join_spec`'s): `value` gives its maker no
+/// room, so a value's temporaries stay on the thread's stack and only what is kept is made long-lived. On the stack, a
+/// value kept for the run held everything its thread made after it.
+pub fn placed<R>(f: impl FnOnce() -> R) -> R {
+    rerail_blocks::maps::long(f)
+}
+
 /// The value `name` over the inputs `inputs` writes: kept from an earlier request with the same digest, or `make`'s.
 /// Counted per name as a hit or a miss in the profile's decisions ("derived values").
 pub fn value<V: Clone + Send + Sync + 'static>(name: &'static str, inputs: impl FnOnce(&mut Inputs), make: impl FnOnce() -> V) -> V {
@@ -156,6 +145,18 @@ pub fn value<V: Clone + Send + Sync + 'static>(name: &'static str, inputs: impl 
 pub mod tests {
     use super::*;
 
+    /// What the run's memo keeps is made in the thread's long-lived room (`placed`, decision 0342 amended), not on its
+    /// stack; what is made outside `placed`, on the stack as ever.
+    #[test]
+    fn a_kept_value_is_made_in_the_long_room() {
+        use rerail_blocks::maps::default_room;
+        let _keep = Keep::start();
+        let kept = placed(|| default_room().region(64, 8, "a test's"));
+        assert!(kept.owner().downcast_ref::<rerail_blocks::long::InLong>().is_some(), "kept: the long room's");
+        let elsewhere = default_room().region(64, 8, "a test's");
+        assert!(elsewhere.owner().downcast_ref::<rerail_blocks::long::InLong>().is_none(), "outside `placed`: not");
+    }
+
     #[test]
     fn a_value_is_kept_by_its_inputs_and_made_again_when_one_changes() {
         let made = std::cell::Cell::new(0);
@@ -169,7 +170,7 @@ pub mod tests {
         assert_eq!(get("a"), "<a>");
         assert_eq!(get("a"), "<a>");
         assert_eq!(made.get(), 2);
-        let _keep = Keep::start(None);
+        let _keep = Keep::start();
         assert_eq!(get("a"), "<a>");
         assert_eq!(get("a"), "<a>");
         assert_eq!(made.get(), 3);

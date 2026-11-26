@@ -139,8 +139,6 @@ pub mod code_rule_dsl {
     pub use rerail_facts::code_rule_dsl::search_index;
     pub use rerail_lang::code_rule_dsl::semver;
     pub use rerail_matcher::code_rule_dsl::soundness;
-    pub use rerail_facts::code_rule_dsl::sql_profile;
-    pub use rerail_facts::code_rule_dsl::sql_admission;
     pub mod stats;
     pub use rerail_adapters::code_rule_dsl::suppress;
     pub mod tape {
@@ -218,3 +216,9 @@ pub mod code_rule_dsl {
 pub mod git_ignore;
 pub use rerail_tree_watch::panic_boundary;
 // cratify: mounts end
+
+// The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
+// host's umask of `002` made a fixture's folder `775`, which the mapped files' rules refuse.
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;

@@ -1,6 +1,6 @@
 # 0396. A recursive group's walks start within anchors that read its own labels as every node
 
-Status: accepted (2026-11-18)
+Status: built (audited 2026-11-23). Accepted (2026-11-18)
 
 ## Intro
 

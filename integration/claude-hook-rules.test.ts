@@ -19,6 +19,7 @@
  * steered on it.
  */
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import Database from "better-sqlite3";
 import { once } from "node:events";
 import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { createServer, request, type Server } from "node:http";
@@ -29,7 +30,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ENTRY_POINTS } from "../src/engine/index.js";
-import { DAEMON_STATE_FILE, type DaemonState } from "../src/runtime/index.js";
+import { DAEMON_STATE_FILE, ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, type DaemonState } from "../src/runtime/index.js";
 import { removeFolder } from "../test/support/platform/remove-folder.js";
 import { setUpTestRepository } from "../test/support/repository-rules.js";
 
@@ -273,17 +274,24 @@ async function expectRulesFired(session: Session, files: readonly string[]): Pro
 
 /**
  * An engine socket in front of the daemon's that holds every event `delayMs` before passing it on, with the daemon's
- * capability: a daemon that takes that long to answer each event, as one does while it walks a large checkout.
+ * capability: a daemon that takes that long to answer each event, as one does while it walks a large checkout. It
+ * passes a proof's challenge on at once, as the daemon answers a challenge before it reads any event. On Windows this
+ * socket is a pipe of the test's own process, which Windows does not name as the daemon, so a hook sends its event
+ * only once the engine behind it proves it holds the capability in daemon.json.
  */
 async function slowEngine(delayMs: number): Promise<string> {
   const state = await daemonState();
   const path = process.platform === "win32" ? `\\\\.\\pipe\\rerail-slow-engine-${process.pid}-${Date.now()}` : join(root, "slow-engine.sock");
   const server = createServer(async (incoming, outgoing) => {
     const body = await text(incoming);
-    await delay(delayMs);
+    const challenge = incoming.headers[ENGINE_CHALLENGE_HEADER];
+    if (incoming.url !== ENGINE_PROOF_PATH) await delay(delayMs);
     const forwarded = request({
       socketPath: state.kernelSocketPath, method: "POST", path: incoming.url,
-      headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body), "x-rerail-access": state.accessToken ?? "" },
+      headers: {
+        "content-type": "application/json", "content-length": Buffer.byteLength(body), "x-rerail-access": state.accessToken ?? "",
+        ...(challenge === undefined ? {} : { [ENGINE_CHALLENGE_HEADER]: challenge }),
+      },
     }, answer => {
       outgoing.writeHead(answer.statusCode ?? 502, { "content-type": "application/json" });
       answer.pipe(outgoing);
@@ -373,6 +381,73 @@ describe("the Claude Code hook against a daemon of this build", () => {
     await endTurn(session);
     await expectRulesFired(session, files);
   }, 180_000);
+
+  // #535: the session that wrote it from the shell, its command running in the worktree, was never steered on it.
+  // #534: every other session open recorded it in its own history.
+  it("steers a shell write in a linked worktree on the session whose command ran there, and records one aimed there from elsewhere once, in no session", async () => {
+    const writer: Session = { id: "worktree-shell-writer", projectDir: repo };
+    const reader: Session = { id: "worktree-shell-reader", projectDir: repo };
+    await startSession(writer);
+    await startSession(reader);
+    const ranThere = join(worktree, "src", "app", "shell_there.py");
+    const aimedThere = join(worktree, "src", "app", "shell_aimed.py");
+    let call = 0;
+    /** A Bash call of `session` whose command runs in `cwd` and writes `file`, if any; what its two answers told the agent. */
+    const bash = async (session: Session, cwd: string, file?: string): Promise<string> => {
+      const common = { session_id: session.id, cwd, tool_name: "Bash", tool_use_id: `toolu_bash_${call += 1}`, tool_input: { command: "./write.sh" } };
+      const pre = await hook({ ...common, hook_event_name: "PreToolUse" }, session.projectDir);
+      if (file !== undefined) await writeFile(file, tooComplex(basename(file, ".py")));
+      const post = await hook({ ...common, hook_event_name: "PostToolUse", tool_response: { stdout: "", stderr: "" } }, session.projectDir);
+      return `${contextOf(pre)}${contextOf(post)}`;
+    };
+    // The walk of the other worktrees runs behind the command, so the steer comes with a later answer of the session.
+    const steerOf = async (session: Session, cwd: string, first: string): Promise<string> => {
+      let told = first;
+      for (let tries = 0; !told.includes(`[${RULE}]`) && tries < 20; tries += 1) {
+        await delay(500);
+        told = await bash(session, cwd);
+      }
+      return told;
+    };
+
+    expect(await steerOf(writer, worktree, await bash(writer, worktree, ranThere))).toContain(basename(ranThere));
+    expect(await steerOf(writer, repo, await bash(writer, repo, aimedThere))).not.toContain(basename(aimedThere));
+    await bash(reader, repo);
+    await endTurn(writer);
+    await endTurn(reader);
+    // Once the walks have settled: the writer's history holds what it wrote there, the reader's nothing of either, and
+    // the write aimed there from the main checkout is the repository's, recorded once.
+    await delay(6_000);
+    const database = new Database(join(process.env.RERAIL_HOME!, "rerail.sqlite"), { readonly: true });
+    try {
+      const recorded = (file: string) => database.prepare(`SELECT audit.session_id AS session, audit.mode AS mode FROM audits audit, json_each(audit.violations_json) violation
+        WHERE json_extract(violation.value, '$.ruleId') = ? AND json_extract(violation.value, '$.path') LIKE ?`).all(RULE, `%${basename(file)}`);
+      expect(recorded(ranThere)).toEqual([expect.objectContaining({ session: writer.id, mode: "steer" })]);
+      expect(recorded(aimedThere)).toEqual([{ session: null, mode: "log" }]);
+    } finally {
+      database.close();
+    }
+  }, 180_000);
+
+  // The walk of the other worktrees runs behind the turn's end, which does not wait for it: the last write of a turn
+  // there is told at the session's next answer, the next turn's first tool call.
+  it("steers a shell write in a linked worktree made just before the turn ends, at the session's next tool call", async () => {
+    const writer: Session = { id: "worktree-last-write", projectDir: repo };
+    await startSession(writer);
+    const file = join(worktree, "src", "app", "last_write.py");
+    const write = { session_id: writer.id, cwd: worktree, tool_name: "Bash", tool_use_id: "toolu_last_1", tool_input: { command: "./write.sh" } };
+    const told: string[] = [];
+    told.push(contextOf(await hook({ ...write, hook_event_name: "PreToolUse" }, repo)));
+    await writeFile(file, tooComplex("last_write"));
+    told.push(contextOf(await hook({ ...write, hook_event_name: "PostToolUse", tool_response: { stdout: "", stderr: "" } }, repo)));
+    told.push(contextOf(await endTurn(writer)));
+    await delay(6_000);
+    await hook({ session_id: writer.id, cwd: worktree, hook_event_name: "UserPromptSubmit", prompt_id: "prompt-2", prompt: "Next." }, repo);
+    const next = { session_id: writer.id, cwd: worktree, tool_name: "Bash", tool_use_id: "toolu_last_2", tool_input: { command: "ls" } };
+    told.push(contextOf(await hook({ ...next, hook_event_name: "PreToolUse" }, repo)));
+    expect(told.join("\n")).toContain(`last_write.py:1:1`);
+    expect(told.join("\n")).toContain(`[${RULE}]`);
+  }, 120_000);
 
   it("steers and logs it after the daemon restarts mid-session", async () => {
     const session: Session = { id: "daemon-restart-session", projectDir: repo };

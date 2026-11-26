@@ -1,8 +1,8 @@
 # 0438: A kept relation is bound where it lies, and kept as the run holds it
 
-Status: decided (2026-11-18, 0401 step 7). Follows 0401 (F3, F6), 0353 (blocks are never copied) and 0104 (no SQL
-inside the waves). Supersedes the snapshot check `admission_matches` and the frames' reads of the per-stratum keep
-(`kept_strata`).
+Status: built (audited 2026-11-23). Decided (2026-11-18, 0401 step 7). Follows 0401 (F3, F6), 0353 (blocks are never
+copied) and 0104 (no SQL inside the waves). Supersedes the snapshot check `admission_matches` and the frames' reads of
+the per-stratum keep (`kept_strata`).
 
 ## Intro
 

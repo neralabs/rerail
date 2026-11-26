@@ -10,13 +10,17 @@
 use crate::lanes::Lane;
 use std::sync::Arc;
 
+/// A kernel's input array: a block the host holds (`rerail_blocks::vector::Vector`), shared by the launches that
+/// read it, which read it in place (decision 0353).
+pub type Words<T> = Arc<rerail_blocks::vector::Vector<T>>;
+
 /// Rows of bits, packed: row `r` is `data[r * words..(r + 1) * words]`, bit `c` of a row in word `c / 64`, bit
 /// `c % 64`. Bits past the row's width are zero.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Bits {
     pub rows: usize,
     pub words: usize,
-    pub data: Arc<[u64]>,
+    pub data: Words<u64>,
     /// Set when the rows are a **fixed relation**: the same across many runs (a pack's rule vocabularies, library
     /// facts held once). It is the digest of the rows' content, and keys whatever a lane builds from them once (the
     /// Neural Engine compiles them into a model as a constant). `None` for rows made per run.
@@ -24,14 +28,14 @@ pub struct Bits {
 }
 
 impl Bits {
-    pub fn new(rows: usize, words: usize, data: impl Into<Arc<[u64]>>) -> Self {
+    pub fn new(rows: usize, words: usize, data: impl Into<Words<u64>>) -> Self {
         let data = data.into();
         assert_eq!(data.len(), rows * words, "bits: {rows} rows of {words} words");
         Bits { rows, words, data, fixed: None }
     }
 
     pub fn zeros(rows: usize, words: usize) -> Self {
-        Bits::new(rows, words, vec![0u64; rows * words])
+        Bits::new(rows, words, rerail_blocks::vector![0u64; rows * words])
     }
 
     /// The same rows, marked as a fixed relation by the digest of their content.
@@ -99,7 +103,7 @@ pub enum Kernel {
     /// With `min`, only the pairs whose count reaches `min[j]` are kept, as [`Output::Pairs`] in `(i, j)` order:
     /// a semi-join (`min` all 1), or the prefilter's "every one of the rule's names occurs" (`min[j]` the size of
     /// rule `j`). Without it, every count, as [`Output::Counts`] (`a.rows` × `b.rows`).
-    BitProduct { a: Bits, b: Bits, min: Option<Arc<[u32]>> },
+    BitProduct { a: Bits, b: Bits, min: Option<Words<u32>> },
 
     /// **Count table.** An equality join within each partition, on 16-bit codes (decision 0095 §6: a document's
     /// local name ids, a kind, a node's low 16 bits).
@@ -108,16 +112,16 @@ pub enum Kernel {
     /// (`left.len()` counts). With `emit`, the pairs themselves instead, as [`Output::Pairs`] of (left row, right
     /// row), both indexes into the whole columns, in left order and then right order. `loff` and `roff` have the same
     /// number of partitions.
-    CountTable { loff: Arc<[u32]>, left: Arc<[u16]>, roff: Arc<[u32]>, right: Arc<[u16]>, emit: bool },
+    CountTable { loff: Words<u32>, left: Words<u16>, roff: Words<u32>, right: Words<u16>, emit: bool },
 
     /// **Histogram.** A group-by count per partition on a code below `width`: [`Output::Counts`] of `nparts` ×
     /// `width`.
-    Histogram { off: Arc<[u32]>, codes: Arc<[u16]>, width: u32 },
+    Histogram { off: Words<u32>, codes: Words<u16>, width: u32 },
 
     /// **Closure.** The transitive closure of a graph of `n` nodes, its edges as CSR (`off`: `n + 1` offsets into
     /// `dst`). Node `j` is in row `i` of the [`Output::Bits`] when a path of one or more edges leads from `i` to `j`
     /// (so `i` is in its own row only on a cycle).
-    Closure { n: u32, off: Arc<[u32]>, dst: Arc<[u32]> },
+    Closure { n: u32, off: Words<u32>, dst: Words<u32> },
 
     /// **Join.** The equi-join of two relations on their key columns, key `i` each side's column `i` (decision 0100
     /// §1): [`Output::Pairs`] of (left row, right row), in left row order and, within a left row, in right row
@@ -256,11 +260,11 @@ impl Form {
 #[derive(Clone, Debug)]
 pub enum Output {
     /// A matrix of counts, row-major.
-    Counts { rows: usize, cols: usize, data: Vec<u32> },
+    Counts { rows: usize, cols: usize, data: rerail_blocks::vector::Vector<u32> },
     /// One count per input row.
-    PerRow(Vec<u32>),
+    PerRow(rerail_blocks::vector::Vector<u32>),
     /// Pairs of row indexes, in the order the kernel defines.
-    Pairs(Vec<(u32, u32)>),
+    Pairs(rerail_blocks::vector::Vector<[u32; 2]>),
     /// The same, read in place in a device's buffer: no copy.
     View(PairView),
     /// Rows of bits.
@@ -292,7 +296,7 @@ impl Output {
     /// The pairs, copied (tests, reports).
     pub fn pairs(&self) -> Option<Vec<(u32, u32)>> {
         match self {
-            Output::Pairs(p) => Some(p.clone()),
+            Output::Pairs(p) => Some(p.iter().map(|q| (q[0], q[1])).collect()),
             Output::View(v) => Some(v.iter().collect()),
             _ => None,
         }
@@ -372,7 +376,7 @@ impl std::fmt::Debug for PairView {
 /// A join's pairs: owned, or read in place.
 #[derive(Clone, Debug)]
 pub enum Pairs {
-    Owned(Vec<(u32, u32)>),
+    Owned(rerail_blocks::vector::Vector<[u32; 2]>),
     View(PairView),
 }
 
@@ -398,7 +402,7 @@ impl Pairs {
 
 /// The pairs of [`Pairs::iter`], in order.
 pub struct PairsIter<'a> {
-    owned: std::slice::Iter<'a, (u32, u32)>,
+    owned: std::slice::Iter<'a, [u32; 2]>,
     cur: &'a [[u32; 2]],
     segs: Option<Box<dyn Iterator<Item = &'a [[u32; 2]]> + 'a>>,
 }
@@ -407,8 +411,8 @@ impl Iterator for PairsIter<'_> {
     type Item = (u32, u32);
     #[inline]
     fn next(&mut self) -> Option<(u32, u32)> {
-        if let Some(&p) = self.owned.next() {
-            return Some(p);
+        if let Some(p) = self.owned.next() {
+            return Some((p[0], p[1]));
         }
         loop {
             if let Some((p, rest)) = self.cur.split_first() {

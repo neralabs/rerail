@@ -399,7 +399,7 @@ impl Ane {
         let parts: Vec<(&Bits, &Bits, Option<&[u32]>)> = ks
             .iter()
             .map(|k| match k {
-                Kernel::BitProduct { a, b, min } => (a, b, min.as_deref()),
+                Kernel::BitProduct { a, b, min } => (a, b, min.as_deref().map(|m| &m[..])),
                 _ => unreachable!("grouped as bit products"),
             })
             .collect();
@@ -410,7 +410,7 @@ impl Ane {
             (parts[l].0, g - starts[l])
         };
         let n = t.n;
-        let mut counts = vec![0u32; total * n];
+        let mut counts = rerail_blocks::vector![0u32; total * n];
         let tiles = total.div_ceil(t.m);
         let surfaces = !self.arrays_only.load(Ordering::Relaxed)
             && (0..t.pieces.len()).all(|p| coreml::surface_fits(t.m, t.k(p))) && coreml::surface_fits(t.m, n);
@@ -433,11 +433,11 @@ impl Ane {
             .map(|(&(a, b, min), &s)| {
                 let c = &counts[s * n..(s + a.rows) * n];
                 match min {
-                    None => Output::Counts { rows: a.rows, cols: b.rows, data: c.to_vec() },
+                    None => Output::Counts { rows: a.rows, cols: b.rows, data: c.iter().copied().collect::<rerail_blocks::vector::Vector<_>>() },
                     Some(min) => Output::Pairs(
                         c.chunks(n.max(1))
                             .enumerate()
-                            .flat_map(|(i, row)| row.iter().enumerate().filter(|&(j, &x)| x >= min[j]).map(move |(j, _)| (i as u32, j as u32)))
+                            .flat_map(|(i, row)| row.iter().enumerate().filter(|&(j, &x)| x >= min[j]).map(move |(j, _)| [i as u32, j as u32]))
                             .collect(),
                     ),
                 }
@@ -743,7 +743,7 @@ impl Tiler<'_, '_> {
 
 /// The digest key of an ahead-of-time model from its constant file.
 fn aot_key(constant: &[u8]) -> Option<[u8; 32]> {
-    let (rows, words, data) = package::read_constant(constant).ok()?;
+    let (rows, words, data) = package::read_constant::<rerail_blocks::vector::Vector<u64>>(constant).ok()?;
     let b = Bits::new(rows, words, data).fixed();
     let t = package::plan(rows, words, &b.data, package::TILE_ROWS).ok()?;
     Some(model_key(&t, &b.fixed.unwrap()))
@@ -849,8 +849,8 @@ impl Backend for Ane {
             let Kernel::BitProduct { a, b, min } = k else { unreachable!() };
             if a.rows == 0 {
                 outs[i] = Some(match min {
-                    None => Output::Counts { rows: 0, cols: b.rows, data: Vec::new() },
-                    Some(_) => Output::Pairs(Vec::new()),
+                    None => Output::Counts { rows: 0, cols: b.rows, data: rerail_blocks::vector::Vector::new() },
+                    Some(_) => Output::Pairs(rerail_blocks::vector::Vector::new()),
                 });
                 continue;
             }

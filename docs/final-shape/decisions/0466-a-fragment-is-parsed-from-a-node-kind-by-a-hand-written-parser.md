@@ -1,9 +1,9 @@
 # 0466. A fragment is parsed from a node kind, by a hand-written parser
 
-Status: decided (2026-11-19), by the user: "we need to allow a parse to start from a given node type. For example, a
-Python annotation is not a module. It's a type. A JSX document doesn't start with a <html> tag. And so on." For
-dialects that only tree-sitter parses: "Hand-written parsers only". Comes before 0431's next step, embeds a language
-declares at known places (Q325, the user's choice 2).
+Status: built (audited 2026-11-23). Decided (2026-11-19), by the user: "we need to allow a parse to start from a given
+node type. For example, a Python annotation is not a module. It's a type. A JSX document doesn't start with a <html>
+tag. And so on." For dialects that only tree-sitter parses: "Hand-written parsers only". Comes before 0431's next
+step, embeds a language declares at known places (Q325, the user's choice 2).
 
 Amends 0082 §1 (a fragment's start symbol). Uses 0431's tape values.
 

@@ -1,6 +1,6 @@
 # 0035: Cross-file rounds bound file crossings, not iterations
 
-Status: accepted (2026-11-04, list step 29; I11; O41)
+Status: superseded by 0065 (with 0276 §9) (audited 2026-11-23). Accepted (2026-11-04, list step 29; I11; O41)
 
 ## Intro
 

@@ -3,13 +3,13 @@
 Numbered 0403 on sync-integration-hub-tape (this branch's 0403 is "a `prev` reads the chunk before, chunk 0
 included"). Numbered 0427 on django-bugs (until roll-up 7) and on CUDA-support (until roll-up 8).
 
-Status: decided (2026-11-18), by the user, on Q265: "That's not just a correctness issue but a security issue too.
-That means both identifying and fixing the root-cause for corruption, and ensuring that (at least behind a flag)
-that we prove that reads can't exceed the bounds, being smart about it (for example, for an offset table we can
-validate that it's both sorted and the maximum is in bound rather than check every access when it happens)". Built
-here, always on: no flag is needed, because what each read costs is a few instructions where it is cheap (below).
-Follows 0310 (the reads written once in CLIF, for the CPU, the JIT and Metal) and 0353 step 4b (16z read in place
-through a rolling cache).
+Status: built (audited 2026-11-23). Decided (2026-11-18), by the user, on Q265: "That's not just a correctness issue
+but a security issue too. That means both identifying and fixing the root-cause for corruption, and ensuring that (at
+least behind a flag) that we prove that reads can't exceed the bounds, being smart about it (for example, for an
+offset table we can validate that it's both sorted and the maximum is in bound rather than check every access when it
+happens)". Built here, always on: no flag is needed, because what each read costs is a few instructions where it is
+cheap (below). Follows 0310 (the reads written once in CLIF, for the CPU, the JIT and Metal) and 0353 step 4b (16z
+read in place through a rolling cache).
 
 ## Intro
 

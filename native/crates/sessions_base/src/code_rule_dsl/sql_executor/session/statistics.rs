@@ -25,7 +25,7 @@ impl Source for Rows {
     fn indexed(&self, _: usize) -> bool {
         false
     }
-    fn lookup(&self, _: usize, _: &[i64]) -> Option<Vec<usize>> {
+    fn lookup(&self, _: usize, _: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         None
     }
     fn value(&self, r: usize, c: usize) -> i64 {

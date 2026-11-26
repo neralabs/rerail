@@ -1,8 +1,9 @@
 # 0302. A policy set's newer lane supersedes its older: an edit's predecessor keeps no protection, and the program that reuses its frames holds them
 
-Status: decided (2026-11-16, the user's choice among three). Builds on 0053 (corpus runs' bounded history), 0227
-(collection by reachability), 0104 (one read before the first wave), 0197 (a warm run queues no empty job). Q19 step 2
-in the work queue. Numbered 0301 until another worktree's 0301 (the planner's shared state) was found.
+Status: built (audited 2026-11-23). Decided (2026-11-16, the user's choice among three). Builds on 0053 (corpus runs'
+bounded history), 0227 (collection by reachability), 0104 (one read before the first wave), 0197 (a warm run queues no
+empty job). Q19 step 2 in the work queue. Numbered 0301 until another worktree's 0301 (the planner's shared state) was
+found.
 
 ## Intro
 

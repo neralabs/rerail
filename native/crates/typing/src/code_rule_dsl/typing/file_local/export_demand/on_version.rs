@@ -3,6 +3,7 @@
 //! fixed order and makes its rules; each round's cut is a version of its own, split again to check it stays
 //! file-local.
 
+use rerail_blocks::vector::Vector;
 use super::super::FileLocal;
 use super::{MAX_KEYS, ROUNDS, on};
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
@@ -97,8 +98,8 @@ struct Pass<'a> {
     v: &'a Version,
     f: Fields<'a>,
     local: &'a BTreeSet<String>,
-    locations: &'a BTreeMap<String, Vec<usize>>,
-    same_doc: &'a BTreeMap<String, Vec<usize>>,
+    locations: &'a BTreeMap<String, Vector<usize>>,
+    same_doc: &'a BTreeMap<String, Vector<usize>>,
     rules_of: HashMap<&'a str, Vec<RuleRef<'a>>>,
     shapes: BTreeMap<Key, Option<Vec<Shape<'a>>>>,
 }
@@ -349,7 +350,7 @@ fn one_group<'v>(v: &Version, rule: RuleRef<'v>, head: String, alias: &BTreeMap<
     let mut seed: Option<usize> = None;
     while seed.is_none() && !layer.is_empty() {
         let mut next = Vec::new();
-        let mut found: Vec<usize> = Vec::new();
+        let mut found: Vector<usize> = rerail_blocks::vector::Vector::new();
         for x in &layer {
             for (i, it) in items.iter().enumerate() {
                 let Some(vars) = it else { continue };

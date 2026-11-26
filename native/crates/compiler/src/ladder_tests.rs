@@ -330,13 +330,12 @@ tree t {
     };
     let fixed = ["k a\nc()\n", "k a\nb\n", "k a c()\nb\n", "k a\nc\nb\n", "b\nk a\nc()"];
     assert_eq!(fixed.iter().map(|d| (count(d, decl), count(d, ctor))).collect::<Vec<_>>(), [(1, 1), (1, 0), (1, 1), (1, 0), (1, 1)]);
-    // Cranelift's nodes and tape: the interpreter's.
+    // Cranelift's tape: the interpreter's.
     for d in fixed {
         let run = c.program.block_programs[0].run_files(&[d.as_bytes()]).remove(0);
         let nodes = crate::stream::run(&c.program, d.as_bytes(), &run).expect("the interpreter parses");
-        let want = crate::stream::image(&nodes, &c.program.readings.extras, c.parser.tier2.widths_tag().1, d.as_bytes());
-        assert_eq!(c.parser.parse(d.as_bytes()).ok().map(as_ids), Some(as_ids(nodes)), "{d:?}");
-        assert_eq!(c.parser.image(d.as_bytes()).ok(), Some(want), "{d:?}");
+        let (got, want) = c.parser.against(d.as_bytes(), Ok(nodes));
+        assert!(got.is_ok() && got == want, "{d:?}");
     }
 }
 

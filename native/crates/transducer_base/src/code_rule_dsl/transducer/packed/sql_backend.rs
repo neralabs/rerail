@@ -4,6 +4,7 @@
 //! that batch once and exposes match, capture, and completion rows. SQL remains the outer rule
 //! engine; no scalar function executes one matcher for each joined row.
 
+use rerail_blocks::vector::Vector;
 use super::{Error, ExecutionBackend, Output, Program, execute_with_backend};
 use crate::code_rule_dsl::tape::TapeDoc;
 use rusqlite::ffi;
@@ -51,7 +52,7 @@ struct MatchBatch {
     backend: TerminalBackend,
     programs: Vec<Program>,
     files: Vec<TapeDoc>,
-    anchors: Option<Vec<Vec<Vec<u32>>>>,
+    anchors: Option<Vec<Vec<Vector<u32>>>>,
     rows: OnceLock<Result<Arc<Vec<MatchRow>>, String>>,
     executions: AtomicUsize,
 }
@@ -183,7 +184,7 @@ impl MatchRegistry {
         &self,
         programs: &[Program],
         files: &[TapeDoc],
-        anchors: Option<&[Vec<Vec<u32>>]>,
+        anchors: Option<&[Vec<Vector<u32>>]>,
     ) -> Result<i64, Error> {
         self.register(programs, files, anchors, TerminalBackend::Cpu)
     }
@@ -193,7 +194,7 @@ impl MatchRegistry {
     /// SQL-owned relational composition through `tempo_matches(batch)`.
     pub fn register_indexed_batch(
         &self,
-        store: &crate::content_store::ContentStore,
+        store: &dyn crate::content_store::FactStore,
         tape_ids: &[crate::content_store::TapeId],
         programs: &[Program],
         files: &[TapeDoc],
@@ -214,7 +215,7 @@ impl MatchRegistry {
         &self,
         programs: &[Program],
         files: &[TapeDoc],
-        anchors: &[Vec<Vec<u32>>],
+        anchors: &[Vec<Vector<u32>>],
     ) -> Result<i64, Error> {
         self.register(programs, files, Some(anchors), TerminalBackend::Metal)
     }
@@ -223,7 +224,7 @@ impl MatchRegistry {
         &self,
         programs: &[Program],
         files: &[TapeDoc],
-        anchors: Option<&[Vec<Vec<u32>>]>,
+        anchors: Option<&[Vec<Vector<u32>>]>,
         backend: TerminalBackend,
     ) -> Result<i64, Error> {
         if anchors.is_some_and(|anchors| {
@@ -237,7 +238,7 @@ impl MatchRegistry {
             backend,
             programs: programs.to_vec(),
             files: files.to_vec(),
-            anchors: anchors.map(<[Vec<Vec<u32>>]>::to_vec),
+            anchors: anchors.map(<[Vec<Vector<u32>>]>::to_vec),
             rows: OnceLock::new(),
             executions: AtomicUsize::new(0),
         });

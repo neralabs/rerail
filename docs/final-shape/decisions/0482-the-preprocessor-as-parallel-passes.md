@@ -2,9 +2,9 @@
 
 (Was 0421 on Go-C-and-C-support; renumbered at its roll-up into rr-align, roll-up 12, past 0474.)
 
-Status: draft (2026-11-18). Follows 0408, whose gate missed. A spike: no product path calls it.
-The placement of the passes (transducer side programs, or `.rerail` rules for the directives) waits
-on the user, from these numbers.
+Status: analysis (audited 2026-11-23). Draft (2026-11-18). Follows 0408, whose gate missed. A spike: no product path
+calls it. The placement of the passes (transducer side programs, or `.rerail` rules for the directives) waits on the
+user, from these numbers.
 
 ## Intro
 

@@ -2,10 +2,11 @@
 
 Numbered 0264 where it was written, 0273 at the django-bugs merge.
 
-Status: §6–§8 built (2026-11-15). The RCU arena of §1–§5 is dropped, superseded by §7: §0's probe bounds the gain
-of lock-free reads at about 0.4 s of a 40 s run, and §7's sharded lock takes it without rewriting the arena. Refines the arena of decisions 0049 and 0111 (`content_store::atoms`). Keeps the
-reservations of 0114 §4, the provisional ids of 0160 and the fork map of 0170. Follows decision 0278, whose
-§4 keeps text-reading joins on one thread because of this lock.
+Status: built (audited 2026-11-23). §6–§8 built (2026-11-15). The RCU arena of §1–§5 is dropped, superseded by §7:
+§0's probe bounds the gain of lock-free reads at about 0.4 s of a 40 s run, and §7's sharded lock takes it without
+rewriting the arena. Refines the arena of decisions 0049 and 0111 (`content_store::atoms`). Keeps the reservations of
+0114 §4, the provisional ids of 0160 and the fork map of 0170. Follows decision 0278, whose §4 keeps text-reading
+joins on one thread because of this lock.
 
 ## Intro
 

@@ -1,7 +1,8 @@
 # 0301. The planner's shared state without a hot lock: plans published by RCU, their feedback in cells, the lines and the observed sums reduced
 
-Status: decided (2026-11-16, the user: "yes, please implement and validate it"); built as in "As built" below. Builds on 0113 (strata as jobs, `enter_plans`), 0038 (kept
-plans), 0122 (planning budget), 0203 §4 (the lines run), 0116 (stored plans).
+Status: built (audited 2026-11-23). Decided (2026-11-16, the user: "yes, please implement and validate it"); built as
+in "As built" below. Builds on 0113 (strata as jobs, `enter_plans`), 0038 (kept plans), 0122 (planning budget), 0203
+§4 (the lines run), 0116 (stored plans).
 
 ## Intro
 

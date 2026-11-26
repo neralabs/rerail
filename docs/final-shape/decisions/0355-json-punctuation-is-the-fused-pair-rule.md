@@ -1,8 +1,8 @@
 # 0355: JSON's punctuation is the fused pair rule, and its starts the lean lexer's
 
-Status: decided (the user, 2026-11-17: "go ahead with 2 then 1", item 1: the token loop's cost a
-token on numbers and short strings, read against the lean lexer and `rerail-json-lean`, the
-shape differences fixed in the generator). Follows 0381. (Numbered 0354 at first; 0354 was another worktree's.)
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-17: "go ahead with 2 then 1", item 1: the token loop's
+cost a token on numbers and short strings, read against the lean lexer and `rerail-json-lean`, the shape differences
+fixed in the generator). Follows 0381. (Numbered 0354 at first; 0354 was another worktree's.)
 
 ## Intro
 

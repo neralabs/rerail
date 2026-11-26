@@ -1,6 +1,6 @@
 # 0057: Values derived again in every chunk are kept by their inputs' digest; the kind-set axes are made on demand
 
-Status: proposed (2026-11-07)
+Status: built (audited 2026-11-23). Proposed (2026-11-07)
 
 ## Intro
 

@@ -18,6 +18,7 @@
 //! The index is a `Source`: its rows are `(x, z)` ordered by `x`, then `z`, and row ids are a start's offset plus the
 //! node's rank in its bitmap. A probe of both columns is a bitmap test; of the start, a range of rows; of the node,
 //! a test per start. Statistics are counted from the bitmaps, never from rows.
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::facts::vtab::Source;
 use roaring::RoaringBitmap;
 use std::sync::{Arc, OnceLock};
@@ -25,15 +26,15 @@ use std::sync::{Arc, OnceLock};
 /// The edges' graph over dense node ids (values sorted, so an id's order is its value's), condensed: each node's
 /// component, components numbered sinks first (a component's successors have smaller numbers).
 pub struct Graph {
-    nodes: Vec<i64>,
-    comp: Vec<u32>,
-    members: Vec<Vec<u32>>,
-    succ: Vec<Vec<u32>>,
+    nodes: Vector<i64>,
+    comp: Vector<u32>,
+    members: Vec<Vector<u32>>,
+    succ: Vec<Vector<u32>>,
     /// The distinct edges, and those from a node to itself.
     edges: usize,
     loops: usize,
     /// Each node's weakly connected component (the edges taken both ways), numbered from 0.
-    weak: Vec<u32>,
+    weak: Vector<u32>,
 }
 
 /// The graph's shape for the run's explain output: its cycles and its connected parts, largest first.
@@ -47,10 +48,10 @@ pub struct Shape {
     pub cyclic: usize,
     pub self_loops: usize,
     /// The largest cycles: each one's size and its first nodes' values (at most `SAMPLE`).
-    pub largest_cycles: Vec<(usize, Vec<i64>)>,
+    pub largest_cycles: Vec<(usize, Vector<i64>)>,
     /// Weakly connected components: how many, and the largest ones' sizes with their first nodes' values.
     pub connected: usize,
-    pub largest_connected: Vec<(usize, Vec<i64>)>,
+    pub largest_connected: Vec<(usize, Vector<i64>)>,
 }
 
 /// How many of the largest cycles and connected parts the shape lists, and how many nodes of each.
@@ -60,7 +61,7 @@ pub const SAMPLE: usize = 4;
 impl Graph {
     /// The graph of `edges` with `extra` nodes (seeds' targets that no edge touches).
     pub fn new(edges: &[(i64, i64)], extra: impl IntoIterator<Item = i64>) -> Graph {
-        let mut nodes: Vec<i64> = edges.iter().flat_map(|&(a, b)| [a, b]).chain(extra).collect();
+        let mut nodes: Vector<i64> = edges.iter().flat_map(|&(a, b)| [a, b]).chain(extra).collect();
         nodes.sort_unstable();
         nodes.dedup();
         let id = |v: i64| nodes.binary_search(&v).expect("a node") as u32;
@@ -76,13 +77,13 @@ impl Graph {
         for i in 0..n {
             start[i + 1] += start[i];
         }
-        let adj: Vec<u32> = pairs.iter().map(|&(_, b)| b).collect();
+        let adj: Vector<u32> = pairs.iter().map(|&(_, b)| b).collect();
         let out = |v: usize| &adj[start[v] as usize..start[v + 1] as usize];
         // Tarjan's components, iteratively: each is emitted after every component it reaches.
         const NONE: u32 = u32::MAX;
-        let (mut index, mut low, mut comp) = (vec![NONE; n], vec![0u32; n], vec![NONE; n]);
+        let (mut index, mut low, mut comp) = (vec![NONE; n], vec![0u32; n], rerail_blocks::vector![NONE; n]);
         let (mut stack, mut on) = (Vec::new(), vec![false; n]);
-        let mut members: Vec<Vec<u32>> = Vec::new();
+        let mut members: Vec<Vector<u32>> = Vec::new();
         let mut next = 0u32;
         let mut call: Vec<(u32, u32)> = Vec::new();
         for root in 0..n as u32 {
@@ -116,7 +117,7 @@ impl Graph {
                 }
                 if low[vu] == index[vu] {
                     let c = members.len() as u32;
-                    let mut m = Vec::new();
+                    let mut m = rerail_blocks::vector::Vector::new();
                     while let Some(w) = stack.pop() {
                         on[w as usize] = false;
                         comp[w as usize] = c;
@@ -129,7 +130,7 @@ impl Graph {
                 }
             }
         }
-        let mut succ: Vec<Vec<u32>> = vec![Vec::new(); members.len()];
+        let mut succ: Vec<Vector<u32>> = vec![rerail_blocks::vector::Vector::new(); members.len()];
         for &(a, b) in &pairs {
             let (ca, cb) = (comp[a as usize], comp[b as usize]);
             if ca != cb {
@@ -147,16 +148,16 @@ impl Graph {
 
     /// Its cycles and connected parts (`Shape`).
     pub fn shape(&self) -> Shape {
-        let sample = |ids: &mut Vec<u32>| {
+        let sample = |ids: &mut Vector<u32>| {
             ids.sort_unstable();
-            ids.iter().take(SAMPLE).map(|&i| self.nodes[i as usize]).collect::<Vec<i64>>()
+            ids.iter().take(SAMPLE).map(|&i| self.nodes[i as usize]).collect::<Vector<i64>>()
         };
         let self_loops = self.loops;
-        let mut cycles: Vec<&Vec<u32>> = self.members.iter().filter(|m| m.len() > 1).collect();
+        let mut cycles: Vec<&Vector<u32>> = self.members.iter().filter(|m| m.len() > 1).collect();
         cycles.sort_by_key(|m| std::cmp::Reverse(m.len()));
-        let largest_cycles = cycles.iter().take(LARGEST).map(|m| (m.len(), sample(&mut m.to_vec()))).collect();
+        let largest_cycles = cycles.iter().take(LARGEST).map(|m| (m.len(), sample(&mut m.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()))).collect();
         let connected = self.weak.iter().map(|&w| w as usize + 1).max().unwrap_or(0);
-        let mut parts: Vec<Vec<u32>> = vec![Vec::new(); connected];
+        let mut parts: Vec<Vector<u32>> = vec![rerail_blocks::vector::Vector::new(); connected];
         for (i, &w) in self.weak.iter().enumerate() {
             parts[w as usize].push(i as u32);
         }
@@ -183,7 +184,7 @@ impl Graph {
     fn close(&self, wanted: &[u32], base: impl Fn(u32, &mut RoaringBitmap)) -> Vec<Option<Arc<RoaringBitmap>>> {
         let k = self.members.len();
         let mut need = vec![false; k];
-        let mut todo: Vec<u32> = wanted.to_vec();
+        let mut todo: Vector<u32> = wanted.iter().copied().collect::<rerail_blocks::vector::Vector<_>>();
         while let Some(c) = todo.pop() {
             if !std::mem::replace(&mut need[c as usize], true) {
                 todo.extend(self.succ[c as usize].iter().copied().filter(|&s| !need[s as usize]));
@@ -218,8 +219,8 @@ impl Graph {
 }
 
 /// Each node's weakly connected component, numbered in order of each component's smallest node (union by size).
-fn weak_components(n: usize, pairs: &[(u32, u32)]) -> Vec<u32> {
-    let mut parent: Vec<u32> = (0..n as u32).collect();
+fn weak_components(n: usize, pairs: &[(u32, u32)]) -> Vector<u32> {
+    let mut parent: Vector<u32> = (0..n as u32).collect();
     let mut size = vec![1u32; n];
     fn find(parent: &mut [u32], mut x: u32) -> u32 {
         while parent[x as usize] != x {
@@ -255,14 +256,14 @@ fn weak_components(n: usize, pairs: &[(u32, u32)]) -> Vec<u32> {
 
 /// A relation `(x, z)` held as each start's bitmap over `domain`'s values (`z = domain[id]`).
 pub struct Closed {
-    xs: Vec<i64>,
+    xs: Vector<i64>,
     sets: Vec<Arc<RoaringBitmap>>,
     /// Each start's first row id; one past the last row at the end.
-    off: Vec<usize>,
-    domain: Arc<Vec<i64>>,
+    off: Vector<usize>,
+    domain: Arc<Vector<i64>>,
     /// The graph and each start's seed components, for a relation through this one (`through`).
     graph: Arc<Graph>,
-    seeds: Vec<Vec<u32>>,
+    seeds: Vec<Vector<u32>>,
     stats: OnceLock<Vec<(String, i64, i64, i64, i64)>>,
 }
 
@@ -271,7 +272,7 @@ impl Closed {
     pub fn reach(seed: &[(i64, i64)], edges: &[(i64, i64)]) -> Closed {
         let graph = Arc::new(Graph::new(edges, seed.iter().map(|&(_, y)| y)));
         let (xs, seeds) = Self::starts(&graph, seed);
-        let wanted: Vec<u32> = seeds.iter().flatten().copied().collect();
+        let wanted: Vector<u32> = seeds.iter().flatten().copied().collect();
         let closed = graph.close(&wanted, |m, out| {
             out.insert(m);
         });
@@ -282,7 +283,7 @@ impl Closed {
     /// `s(x, q) :- r(x, e), map(e, q)` for this relation `r`: each start's values of `map` over the nodes it reaches.
     pub fn through(&self, map: &[(i64, i64)]) -> Closed {
         let graph = &self.graph;
-        let mut domain: Vec<i64> = map.iter().map(|&(_, q)| q).collect();
+        let mut domain: Vector<i64> = map.iter().map(|&(_, q)| q).collect();
         domain.sort_unstable();
         domain.dedup();
         let mut of: Vec<RoaringBitmap> = vec![RoaringBitmap::new(); graph.nodes.len()];
@@ -291,28 +292,28 @@ impl Closed {
                 of[e as usize].insert(domain.binary_search(&q).expect("a value") as u32);
             }
         }
-        let wanted: Vec<u32> = self.seeds.iter().flatten().copied().collect();
+        let wanted: Vector<u32> = self.seeds.iter().flatten().copied().collect();
         let closed = graph.close(&wanted, |m, out| *out |= &of[m as usize]);
         Self::new(self.xs.clone(), self.seeds.clone(), &closed, Arc::new(domain), Arc::clone(graph))
     }
 
     /// The distinct starts, and each one's seeds' components.
-    fn starts(graph: &Graph, seed: &[(i64, i64)]) -> (Vec<i64>, Vec<Vec<u32>>) {
+    fn starts(graph: &Graph, seed: &[(i64, i64)]) -> (Vector<i64>, Vec<Vector<u32>>) {
         let mut pairs: Vec<(i64, u32)> = seed.iter().map(|&(x, y)| (x, graph.comp[graph.id(y).expect("a seed's node") as usize])).collect();
         pairs.sort_unstable();
         pairs.dedup();
-        let (mut xs, mut seeds): (Vec<i64>, Vec<Vec<u32>>) = (Vec::new(), Vec::new());
+        let (mut xs, mut seeds): (Vector<i64>, Vec<Vector<u32>>) = (rerail_blocks::vector::Vector::new(), Vec::new());
         for (x, c) in pairs {
             if xs.last() != Some(&x) {
                 xs.push(x);
-                seeds.push(Vec::new());
+                seeds.push(rerail_blocks::vector::Vector::new());
             }
             seeds.last_mut().unwrap().push(c);
         }
         (xs, seeds)
     }
 
-    fn new(xs: Vec<i64>, seeds: Vec<Vec<u32>>, closed: &[Option<Arc<RoaringBitmap>>], domain: Arc<Vec<i64>>, graph: Arc<Graph>) -> Closed {
+    fn new(xs: Vector<i64>, seeds: Vec<Vector<u32>>, closed: &[Option<Arc<RoaringBitmap>>], domain: Arc<Vector<i64>>, graph: Arc<Graph>) -> Closed {
         let get = |c: u32| closed[c as usize].as_ref().expect("a seed's component is closed");
         let sets: Vec<Arc<RoaringBitmap>> = seeds
             .iter()
@@ -324,7 +325,7 @@ impl Closed {
                 })),
             })
             .collect();
-        let mut off = Vec::with_capacity(sets.len() + 1);
+        let mut off = rerail_blocks::vector::Vector::with_capacity(sets.len() + 1);
         let mut at = 0usize;
         for s in &sets {
             off.push(at);
@@ -388,7 +389,7 @@ impl Closed {
         // The node column: each node's starts, and by the starts' documents.
         let mut count = vec![0i64; self.domain.len()];
         let mut in_doc = vec![0i64; self.domain.len()];
-        let mut touched: Vec<u32> = Vec::new();
+        let mut touched: Vector<u32> = rerail_blocks::vector::Vector::new();
         let mut sqd1 = 0i64;
         let mut i = 0;
         while i < self.xs.len() {
@@ -447,11 +448,11 @@ impl Source for Closed {
     fn composite(&self) -> bool {
         true
     }
-    fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vec<usize>> {
+    fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<rerail_blocks::vector::Vector<usize>> {
         let x = equal.iter().filter(|e| e.0 == 0).map(|e| e.1).collect::<Vec<_>>();
         let z = equal.iter().filter(|e| e.0 == 1).map(|e| e.1).collect::<Vec<_>>();
         if x.windows(2).any(|w| w[0] != w[1]) || z.windows(2).any(|w| w[0] != w[1]) {
-            return Some(Vec::new());
+            return Some(rerail_blocks::vector::Vector::new());
         }
         match (x.first(), z.first()) {
             (Some(&x), Some(&z)) => Some(self.row_of(x, z).into_iter().collect()),
@@ -460,7 +461,7 @@ impl Source for Closed {
             (None, None) => None,
         }
     }
-    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
+    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vector<u32> {
         match self.lookup_all(eqs) {
             Some(rows) => rows.into_iter().map(|r| r as u32).collect(),
             None => (0..self.len() as u32).collect(),
@@ -469,8 +470,8 @@ impl Source for Closed {
     fn indexed(&self, column: usize) -> bool {
         column < 2
     }
-    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
-        let mut out = Vec::new();
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
+        let mut out = rerail_blocks::vector::Vector::new();
         match column {
             0 => {
                 for &v in values {
@@ -480,7 +481,7 @@ impl Source for Closed {
                 }
             }
             1 => {
-                let ids: Vec<u32> = values.iter().filter_map(|v| self.domain.binary_search(v).ok().map(|i| i as u32)).collect();
+                let ids: Vector<u32> = values.iter().filter_map(|v| self.domain.binary_search(v).ok().map(|i| i as u32)).collect();
                 for (i, set) in self.sets.iter().enumerate() {
                     for &id in &ids {
                         if set.contains(id) {
@@ -495,7 +496,7 @@ impl Source for Closed {
         out.dedup();
         Some(out)
     }
-    fn value_counts(&self, wanted: &[(usize, i64)]) -> Option<Vec<i64>> {
+    fn value_counts(&self, wanted: &[(usize, i64)]) -> Option<Vector<i64>> {
         Some(
             wanted
                 .iter()

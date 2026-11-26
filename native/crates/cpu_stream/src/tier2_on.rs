@@ -1,23 +1,30 @@
-//! Tier 2 on tier 1's buffers as the Metal backend left them (`rerail_metal::block_program`): the compiled words
+//! Tier 2 on tier 1's buffers as the Metal backend left them (`rerail_metal_programs::block_program`): the compiled words
 //! (`native_cpu_stream`) read a file's bytes, records (positions and codes), mask words and totals in the device's
 //! shared memory, where tier 1 wrote them.
 
-use rerail_metal::block_program::serial::Resident;
+use rerail_metal_programs::block_program::serial::Resident;
 use crate::native_cpu_stream::{CompiledStream, Parser, Tier1View};
-use rerail_compiler::stream::Refused;
 
-/// File `i`'s tape (the engine's bytes) from tier 1's buffers as the device left them
-/// (`Resident`): tier 2 reads the file's bytes, positions, mask words and totals in the device's
-/// shared memory, where tier 1 wrote them. Or the word that refused it. A file whose tape does not
-/// fit the narrow widths is read again at wider ones (`Parser::again`).
-pub fn image_on(parser: &Parser, run: &Resident, i: usize) -> Result<Vec<u8>, Refused> {
-    image_with(parser, &parser.tier2, run, i).or_else(|narrow| parser.again(narrow, |t2| image_with(parser, t2, run, i)))
+/// File `i`'s tape in format 16 (16z where `z`) from tier 1's buffers as the device left them (`Resident`), by tier 2
+/// (`Parser::tier2`), each node numbered in `lang` (`numbers`), its lines those
+/// `terminators` end; or why it is not one (a word refused the file).
+pub fn image16_on(parser: &Parser, run: &Resident, i: usize, terminators: rerail_tape_format::newlines::Terminators, lang: &rerail_tape_format::f16::Lang, numbers: &crate::native_cpu_stream::Numbers, z: bool) -> Result<rerail_tape_format::f16::Written, String> {
+    let t2 = &parser.tier2;
+    let (view, n) = tier1_view(parser, t2, run, i);
+    let source = &run.sources[i];
+    // The code counts on the program's padding (`BlockNative::pad`): the slab's margin is its.
+    assert!(parser.tier1.pad <= rerail_metal::slabs::SOURCE_MARGIN, "a program padded past the slab's margin");
+    // SAFETY: the source's bytes are `len` bytes at its offset in its slab, which the device finished with.
+    let bytes = unsafe { std::slice::from_raw_parts(source.slab.host().add(source.offset), source.len) };
+    // SAFETY: as `tier1_view`'s; the source's bytes have `SOURCE_MARGIN` zero bytes after them in its slab, the
+    // program's padding at least; the tape is sized for the stream.
+    t2.image16_by(bytes, crate::native_cpu_stream::Out16 { lang, numbers, terminators, z }, t2.tokens(n, source.len), |tape| unsafe { t2.call(bytes.as_ptr(), bytes.len(), view, tape) })
 }
 
-/// `image_on`, by tier 2 `t2`.
-fn image_with(parser: &Parser, t2: &CompiledStream, run: &Resident, i: usize) -> Result<Vec<u8>, Refused> {
+/// File `i`'s tier 1 records, mask words and totals as tier 2 `t2` reads them in the device's buffers, and its records'
+/// count.
+fn tier1_view(parser: &Parser, t2: &CompiledStream, run: &Resident, i: usize) -> (Tier1View, usize) {
     let f = run.files[i];
-    let source = &run.sources[i];
     let (pos, tot, out) = (run.positions.host().cast::<u32>(), run.tot.host().cast::<u32>(), run.out.host().cast::<u64>());
     // SAFETY: the run's buffers hold each file's counts from `tot_base`, its positions from
     // `pos_base` (`capacity` a stream), its output words from `out_base` (`blocks` an output),
@@ -53,15 +60,5 @@ fn image_with(parser: &Parser, t2: &CompiledStream, run: &Resident, i: usize) ->
         more: 0,
         feed: 0,
     };
-    let mut tape = t2.tape(starts.1);
-    // The code counts on the program's padding (`BlockNative::pad`): the slab's margin is its.
-    assert!(parser.tier1.pad <= rerail_metal::slabs::SOURCE_MARGIN, "a program padded past the slab's margin");
-    // SAFETY: as above; the source's bytes have `SOURCE_MARGIN` zero bytes after them in its
-    // slab, the program's padding at least; the tape is sized for the stream.
-    let r = unsafe { t2.call(source.slab.host().add(source.offset), source.len, view, &mut tape) };
-    if r != 0 {
-        return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse", at: None });
-    }
-    Ok(tape.image())
+    (view, starts.1)
 }
-

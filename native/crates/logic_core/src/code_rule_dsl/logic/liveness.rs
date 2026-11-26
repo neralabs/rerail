@@ -32,7 +32,7 @@
 
 use std::collections::BTreeSet;
 
-use super::front::AggOp;
+use super::front::ast::AggOp;
 use super::program_image::{Builder, CmpOp, Lit, T, TermRef, Version, t_of};
 use std::sync::Arc;
 

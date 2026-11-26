@@ -3,10 +3,10 @@
 (Was 0475 on Go-C-and-C-support; renumbered at its roll-up into the hub, roll-up 21, past 0484. 0488 on rr-align
 at its roll-up 21, 0502 on investigate-bend-vs-datalog.)
 
-Status: accepted (the user, 2026-11-19: "please implement these two": "A `_Pragma` that changes
-macro state (`once`, `push_macro`, `pop_macro`, or one whose operand is a macro)", and
-"`__COUNTER__` inside a directive's line"; 0467 left both refused, and named the choice: "either
-the text pass joins those iterations for units that have one, or the refusal stays").
+Status: built (audited 2026-11-23). Accepted (the user, 2026-11-19: "please implement these two": "A `_Pragma` that
+changes macro state (`once`, `push_macro`, `pop_macro`, or one whose operand is a macro)", and "`__COUNTER__` inside a
+directive's line"; 0467 left both refused, and named the choice: "either the text pass joins those iterations for
+units that have one, or the refusal stays").
 
 ## Intro
 

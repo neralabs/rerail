@@ -1,8 +1,9 @@
 # 0315. The atom arena's locks held short: hashed once, written only for the new values, read in runs
 
-Status: decided (2026-11-16, the user: "can we change the string interner to do bulk adds and take the lock for
-the whole batch?"). Builds on 0279 §7 (the sharded lock), 0292 §1 (a morsel's deferred texts), 0160 (provisional
-atoms). Numbered 0306 on django-bugs until the hub's merge (the hub's 0306, a run's small writes as one record, was written first).
+Status: built (audited 2026-11-23). Decided (2026-11-16, the user: "can we change the string interner to do bulk adds
+and take the lock for the whole batch?"). Builds on 0279 §7 (the sharded lock), 0292 §1 (a morsel's deferred texts),
+0160 (provisional atoms). Numbered 0306 on django-bugs until the hub's merge (the hub's 0306, a run's small writes as
+one record, was written first).
 
 ## Intro
 

@@ -1,7 +1,7 @@
 # 0273. A walk counts the rows its last step makes
 
-Status: decided (2026-11-15). Answers the leftovers of decisions 0247 and 0248: walks read 0.71 to 0.90 of the
-real work, with a 20–30% spread. `Walker::work_at` in `plan.rs`.
+Status: built (audited 2026-11-23). Decided (2026-11-15). Answers the leftovers of decisions 0247 and 0248: walks read
+0.71 to 0.90 of the real work, with a 20–30% spread. `Walker::work_at` in `plan.rs`.
 
 ## Intro
 

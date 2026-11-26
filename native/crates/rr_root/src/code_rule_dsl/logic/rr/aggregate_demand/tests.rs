@@ -35,7 +35,7 @@ fn stratifies(v: &Version) {
 
 /// The helper and its demand guard: the helper reads the guard over three columns.
 fn guarded_helper(p: &Version) -> RuleRef<'_> {
-    let helper = rules(p, |h| h.starts_with("rr_agg") && !h.contains("demand"))[0];
+    let helper = rules(p, |h| crate::code_rule_dsl::logic::rr::lower::helper_stem(h) == Some("agg"))[0];
     assert!(atoms(p, helper).iter().any(|(rel, _, args)| rel.starts_with("rr_demand_agg") && args.len() == 3), "unrestricted helper: {}", p.show_rule(helper));
     helper
 }
@@ -108,7 +108,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
     let helpers: BTreeSet<String> = p
         .rules()
         .map(|r| p.rel_name(r.head().rel()))
-        .filter(|rel| rel.starts_with("rr_agg"))
+        .filter(|rel| crate::code_rule_dsl::logic::rr::lower::helper_stem(rel) == Some("agg"))
         .map(str::to_owned)
         .collect();
     let p = {
@@ -261,7 +261,7 @@ fn multiple_consumers_union_their_safe_demands() {
 #[ignore = "pyflakes.rerail writes the outer binding as a rule (`outer_bound`, 913cb3f7a), not an aggregate over bound_in: no rr_agg helper reads it"]
 fn pyflakes_outer_binding_existence_keeps_load_and_nearest_scope_demands() {
     let p = rr::parse_version("#include \"python/pyflakes.rerail\"\n.output unbound_ref\n").unwrap();
-    let helpers: Vec<_> = p.rules().filter(|&r| p.rel_name(r.head().rel()).starts_with("rr_agg") && atoms(&p, r).iter().any(|(rel, _, _)| *rel == "bound_in")).collect();
+    let helpers: Vec<_> = p.rules().filter(|&r| crate::code_rule_dsl::logic::rr::lower::helper_stem(p.rel_name(r.head().rel())) == Some("agg") && atoms(&p, r).iter().any(|(rel, _, _)| *rel == "bound_in")).collect();
     assert!(!helpers.is_empty());
     for helper in helpers {
         let guard = atoms(&p, helper).into_iter().find(|(rel, _, _)| rel.starts_with("rr_demand_agg")).expect("outer bindings still expanded globally").0;
@@ -315,7 +315,7 @@ fn a_guard_reached_through_a_comparison_restricts_the_demand() {
 odd(p) :- byte(p, _), q = @sub(p, 1), byte(q, 92), m = max j : { byte(j, v), v != 92, j < p }, @sub(p, m) = 3.
 "#;
     let bounded = rr::parse_version(src).unwrap();
-    assert!(rules(&bounded, |h| h.starts_with("rr_demand_agg") || h.starts_with("rr_ctx")).is_empty(), "a bounded aggregate asks no demand and keeps no context of its probes: {}", bounded.show());
+    assert!(rules(&bounded, |h| h.starts_with("rr_demand_agg") || crate::code_rule_dsl::logic::rr::lower::helper_stem(h) == Some("ctx")).is_empty(), "a bounded aggregate asks no demand and keeps no context of its probes: {}", bounded.show());
     stratifies(&bounded);
     let _as_written = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_ASOF", "off")]);
     let p = rr::parse_version(src).unwrap();

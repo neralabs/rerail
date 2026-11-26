@@ -12,7 +12,7 @@
 //! keyed by the source, the architecture, the options and the NVRTC and driver versions; OpenCL the program's
 //! binary (`opencl/<key>.bin`), keyed by the source, the options and the device's name, version and driver; the
 //! CPU the shared object the compiler made (`cpu/<key>.so`), keyed by the source, the options and the compiler's
-//! version. Metal's pipelines are in the engine's archive store (`rerail_accel::gpu::kernels`) until the engine's
+//! version. Metal's pipelines are in the engine's archive store (`rerail_accel_gpu::gpu::kernels`) until the engine's
 //! kernels are on the device layer (0440 step C).
 //!
 //! A form that does not load (damaged, or of another build the key missed) is compiled again and replaced. A store
@@ -62,16 +62,21 @@ pub fn key(parts: &[&[u8]]) -> String {
     format!("{:016x}{:016x}", h[0], h[1])
 }
 
-/// The kernels shipped with the engine (`rerail-engine kernels ship`, decision 0395's middle tier): read-only, each
-/// backend's forms under `<dir>/<backend>/` by the store's own keys, so a shipped form is used only where every
-/// part of its key is this machine's (its device, compiler and driver). `RERAIL_SHIPPED_KERNELS=<dir>|off`, else
-/// `rerail-kernels/` beside the program, as Metal's (`rerail_accel::gpu::kernels`).
+/// The kernels shipped with the engine (`rerail-engine kernels ship`): read-only. Each kernel compiled ahead of time
+/// for a target under `<dir>/gpu/<target>/` (decision 0645, `rerail_gpu::kernels::shipped_path`); Metal's AIR and
+/// archives (`rerail_accel_gpu::gpu::kernels`); and decision 0395's forms by the store's own keys under
+/// `<dir>/<backend>/`, used only where every part of the key is this machine's. `RERAIL_SHIPPED_KERNELS=<dir>|off`,
+/// else `rerail-kernels/` beside the program, or beside the library the engine was loaded from (the Node addon in
+/// the package's `native/`: `os::own_image`).
 pub fn shipped_dir() -> Option<&'static Path> {
     static DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
     DIR.get_or_init(|| match std::env::var_os("RERAIL_SHIPPED_KERNELS") {
         Some(v) if v == "off" => None,
         Some(v) if !v.is_empty() => Some(PathBuf::from(v)),
-        _ => std::env::current_exe().ok().and_then(|e| Some(e.parent()?.join("rerail-kernels"))).filter(|p| p.is_dir()),
+        _ => {
+            let beside = |p: PathBuf| Some(p.parent()?.join("rerail-kernels")).filter(|d| d.is_dir());
+            std::env::current_exe().ok().and_then(beside).or_else(|| crate::os::own_image().and_then(beside))
+        }
     })
     .as_deref()
 }

@@ -1,8 +1,8 @@
 # 0537: Each word written once as a method; one room check; refusals coded and cold; the source laid out
 
-Status: the five items are the user's (2026-11-20: "please implement all of these things"). How each is done is
-the implementer's choice, not the user's, and is marked so below. What the tests hold is under "Checks". What they
-do not hold is under "Not checked". Follows 0532, 0533, 0535. Page 40, step 42.
+Status: superseded by 0565 (audited 2026-11-23). The five items are the user's (2026-11-20: "please implement all of
+these things"). How each is done is the implementer's choice, not the user's, and is marked so below. What the tests
+hold is under "Checks". What they do not hold is under "Not checked". Follows 0532, 0533, 0535. Page 40, step 42.
 
 ## What the user asked
 

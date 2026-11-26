@@ -10,7 +10,7 @@ description = "The matcher (W's): ast rules over a document's tape, their anchor
 default = ["rerail-adapters/default", "rerail-facts/default", "rerail-lang/default"]
 headless = ["rerail-adapters/headless", "rerail-facts/headless", "rerail-lang/headless"]
 code-rule-profile = ["rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile"]
-test-hooks = ["rerail-adapters/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-prof/test-hooks", "rerail-store/test-hooks", "rerail-blocks/test-hooks", "rerail-rr-syntax/test-hooks", "dep:tempfile"]
+test-hooks = ["rerail-adapters/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-prof/test-hooks", "rerail-observe/test-hooks", "rerail-blocks/test-hooks", "rerail-rr-syntax/test-hooks", "dep:tempfile"]
 
 [dependencies]
 ast-grep-core = "=0.51.0"
@@ -34,7 +34,8 @@ rerail-facts = { path = "../facts", default-features = false }
 rerail-lang = { path = "../lang", default-features = false }
 rerail-prof = { path = "../prof" }
 rerail-rr-syntax = { path = "../rr_syntax" }
-rerail-store = { path = "../store" }
+# The store's records and interface (rerail-store-base, re-exported), and git.
+rerail-observe = { path = "../observe" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.189"

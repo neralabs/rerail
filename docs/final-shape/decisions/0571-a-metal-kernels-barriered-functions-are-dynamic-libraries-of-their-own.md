@@ -1,8 +1,8 @@
 # 0571. A Metal kernel's barriered functions are dynamic libraries of their own
 
-Status: accepted (2026-11-21, the user, on per-function dylibs for pp's Metal kernel: "yes"). The engine's Metal
-compile path (`accel/src/gpu/kernels.rs`) and UKL's source (`rerail_ukl::split`); every backend's source is
-unchanged.
+Status: built (audited 2026-11-23). Accepted (2026-11-21, the user, on per-function dylibs for pp's Metal kernel:
+"yes"). The engine's Metal compile path (`accel/src/gpu/kernels.rs`) and UKL's source (`rerail_ukl::split`); every
+backend's source is unchanged.
 
 ## Intro
 

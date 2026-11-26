@@ -1,8 +1,7 @@
 # 0140: The parsers write the engine's tape, its bytes
 
-Status: decided (2026-11-13). Built for the lean parser, and for tier 2's
-interpreter, Cranelift and Rust ahead of time (docs/parser-generators/37).
-Corrects 0136.
+Status: built (audited 2026-11-23). Decided (2026-11-13). Built for the lean parser, and for tier 2's interpreter,
+Cranelift and Rust ahead of time (docs/parser-generators/37). Corrects 0136.
 
 ## Intro
 

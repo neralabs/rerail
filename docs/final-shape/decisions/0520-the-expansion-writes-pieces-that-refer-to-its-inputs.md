@@ -1,5 +1,7 @@
 # 0520: the expansion writes pieces that refer to its inputs, never copies of them
 
+Status: built (audited 2026-11-23).
+
 The user, 2026-11-20, after 0486 §10's reclaiming: "you are getting the writing all wrong. We need
 to write out a format that's not just text but allows us to copy text from the inputs and the
 definitions too. Our input and output text formats should include two things: 1. text copied

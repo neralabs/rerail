@@ -1,9 +1,9 @@
 # 0401: The store's atoms and its kept facts are blocks, in files that are mapped
 
-Status: decided by the user (2026-11-18: "everything should be in blocks all the time"; "these should be blocks …
-I would prefer memory-mappable files than blobs"). Builds 0266's `Atoms` and `Facts` as what the store keeps.
-Replaces the atoms' segment rows and key (0049, 0111) and the cross part's frames (0104, 0295 §4) as storage.
-Steps 1–3 (atoms) built and 4 measured; 5 (the kept block) and 6 (the keep, beside the frames) built. **0456
+Status: built (audited 2026-11-23). Decided by the user (2026-11-18: "everything should be in blocks all the time";
+"these should be blocks … I would prefer memory-mappable files than blobs"). Builds 0266's `Atoms` and `Facts` as what
+the store keeps. Replaces the atoms' segment rows and key (0049, 0111) and the cross part's frames (0104, 0295 §4) as
+storage. Steps 1–3 (atoms) built and 4 measured; 5 (the kept block) and 6 (the keep, beside the frames) built. **0456
 replaces F1, F2 and F6's copy** (the kept relation as a copy of the run's, a base and one cumulative delta): kept
 facts are packed chunks appended to a chain; steps 7–10 continue as 0456's 4–7.
 

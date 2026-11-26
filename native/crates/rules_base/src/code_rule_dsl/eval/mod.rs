@@ -70,9 +70,7 @@ pub fn parse_snapshot(source: &str, server_graph: bool) -> Result<(Snapshot, Der
             FileInput::new(
                 path.to_owned(),
                 language.to_owned(),
-                required_str(file, "source", "snapshot.files")?
-                    .to_owned()
-                    .into(),
+                Arc::new(required_str(file, "source", "snapshot.files")?.into()),
                 file.get("module").or(module.as_ref()),
                 package,
                 &at,

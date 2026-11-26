@@ -1,7 +1,7 @@
 # 0231: The compiler chooses the records' layout
 
-Status: decided (2026-11-14); landed on the CPU (rows for rr) and on Metal
-(columns). Part of 0177's token loop.
+Status: built (audited 2026-11-23). Decided (2026-11-14); landed on the CPU (rows for rr) and on Metal (columns). Part
+of 0177's token loop.
 
 ## Intro
 

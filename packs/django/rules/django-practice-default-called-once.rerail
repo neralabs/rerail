@@ -1,0 +1,97 @@
+.policy "django-practice-default-called-once" revision 1
+.description "Pass a callable, not the result of a call, as a model field's default when the value must differ per row."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. A model field's `default=` (or a value in its `limit_choices_to=`) that calls a
+// function whose result varies (uuid1/4/6/7, secrets, random, os.urandom, get_random_string, time.time, the
+// current date or time) runs that call once, when models.py is imported: every row the process creates gets the
+// same value. Django calls a callable default per new object. Field classes are Django's, and the run's classes
+// derived from them (`class ShortUUIDField(models.CharField)`).
+// Left to Django's check fields.W161, which compares the default with the current UTC time: the whole default
+// `timezone.now()`, `timezone.localtime()` or `datetime.utcnow()` on a DateTimeField (or their `.date()` on a
+// DateField, `timezone.now().time()`/`utcnow().time()` on a TimeField), and `date.today()` or
+// `timezone.localdate()` on a DateField. A naive `datetime.now()`/`datetime.today()` is local time, which W161
+// reports only when TIME_ZONE is UTC, so it is reported here.
+//   id = models.UUIDField(default=uuid.uuid4())                           reported
+//   expires = models.DateTimeField(default=timezone.now() + timedelta(7)) reported
+//   token = models.CharField(default=get_random_string(32))               reported
+//   id = models.UUIDField(default=uuid.uuid4)                             not reported: a callable
+//   created = models.DateTimeField(default=timezone.now())                not reported: fields.W161 reports it
+//   created = models.DateTimeField(default=datetime.now())                reported: naive local, W161 misses it
+//   expires = models.DateTimeField(default=lambda: now() + timedelta(7))  not reported: runs per object
+
+#include "lib/django.rerail"
+
+.violation DefaultCalledOnce(at: node, fn: symbol) "`{fn}()` runs once, when this field is defined at import, not for each object: every row this process creates (or every choice filter, for limit_choices_to) gets that one value. Pass a callable instead (`default=uuid.uuid4`, or a module-level function for a derived value such as now plus seven days, which migrations can serialize) so Django calls it each time."
+DefaultCalledOnce(c, q) :- dco_value(f, v), (c = v ; within_stop(c, v, dco_stop)), dco_call(c, q), docof(f, d),
+    !dj_test_doc(d), !dj_migration_doc(d), !dco_w161(f, v).
+
+// dco_value(f, v): v is the default, or the limit_choices_to value, of model field call f, unless it is a lambda.
+.decl dco_value(f: node, v: node)
+dco_value(f, v) :- dco_field(f, _), call_arg(f, -1, k, v), (k = "default" ; k = "limit_choices_to"), unparen(v, u),
+    !kind(u, "lambda").
+// dco_field(f, t): call f constructs a model field whose Django class is t: a Django field class, or a class of the
+// run derived from one (dco_field_q, a linear closure from the Django classes).
+.decl dco_field(f: node, t: symbol)
+dco_field(f, t) :- dj_field_call(f, t).
+dco_field(f, t) :- kind(f, "call"), field(f, "function", e), sym_of(e, q), dco_field_q(q, t).
+.decl dco_field_q(q: symbol, t: symbol)
+dco_field_q(q, t) :- class_def(c, q), class_base(c, b), split_dot(b, m, t), dj_field_module(m),
+    (suffix("Field", t) ; dj_relation_class(t)).
+dco_field_q(q, t) :- class_def(c, q), class_base(c, b), dco_field_q(b, t).
+// dco_stop: code in a lambda or def runs when it is called, not at import.
+.decl dco_stop(k: symbol)
+dco_stop("lambda"). dco_stop("function_definition").
+// dco_call(c, q): call c returns a new value each time: q is its callee's name, for the message.
+.decl dco_call(c: node, q: symbol)
+dco_call(c, q) :- kind(c, "call"), field(c, "function", e), sym_of(e, q),
+    (dco_once(q) ; dco_now(q) ; prefix("secrets.", q) ; prefix("random.", q)).
+.decl dco_once(q: symbol)
+dco_once("uuid.uuid1"). dco_once("uuid.uuid4"). dco_once("uuid.uuid6"). dco_once("uuid.uuid7").
+dco_once("os.urandom"). dco_once("django.utils.crypto.get_random_string"). dco_once("time.time").
+// dco_now(q): the current date or time.
+.decl dco_now(q: symbol)
+dco_now("datetime.datetime.now"). dco_now("datetime.datetime.utcnow"). dco_now("datetime.datetime.today").
+dco_now("datetime.date.today"). dco_now("django.utils.timezone.now"). dco_now("django.utils.timezone.localtime").
+dco_now("django.utils.timezone.localdate").
+// dco_w161(f, v): fields.W161 reports default v of field f: v is exactly a call fields.W161 finds within ten seconds
+// of the current UTC time on that field class (dco_w161_whole), or `.date()`/`.time()` of one (dco_w161_part).
+.decl dco_w161(f: node, v: node)
+dco_w161(f, v) :- dco_field(f, t), call_arg(f, -1, "default", v), unparen(v, c), kind(c, "call"),
+    field(c, "function", e), sym_of(e, q), dco_w161_whole(t, q).
+dco_w161(f, v) :- dco_field(f, t), call_arg(f, -1, "default", v), unparen(v, m), kind(m, "call"),
+    field(m, "function", e), attr_of(e, o, x), unparen(o, c), kind(c, "call"), field(c, "function", ce), sym_of(ce, q),
+    dco_w161_part(t, x, q).
+.decl dco_w161_whole(t: symbol, q: symbol)
+dco_w161_whole("DateTimeField", "django.utils.timezone.now"). dco_w161_whole("DateTimeField", "django.utils.timezone.localtime").
+dco_w161_whole("DateTimeField", "datetime.datetime.utcnow"). dco_w161_whole("DateField", "datetime.date.today").
+dco_w161_whole("DateField", "django.utils.timezone.localdate").
+.decl dco_w161_part(t: symbol, x: symbol, q: symbol)
+dco_w161_part("DateField", "date", "django.utils.timezone.now"). dco_w161_part("DateField", "date", "django.utils.timezone.localtime").
+dco_w161_part("DateField", "date", "datetime.datetime.utcnow"). dco_w161_part("TimeField", "time", "django.utils.timezone.now").
+dco_w161_part("TimeField", "time", "datetime.datetime.utcnow").
+
+// The cases, `cases/django-practice-default-called-once/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "shop/migrations/0002_invite_key.py" from "../cases/django-practice-default-called-once/shop/migrations/0002_invite_key.py"
+    .fixture "shop/models.py" from "../cases/django-practice-default-called-once/shop/models.py"
+    .fixture "shop/tests/test_models.py" from "../cases/django-practice-default-called-once/shop/tests/test_models.py"
+    .expect _ at "shop/models.py":30
+    .expect _ at "shop/models.py":31
+    .expect _ at "shop/models.py":32
+    .expect _ at "shop/models.py":33
+    .expect _ at "shop/models.py":34
+    .expect _ at "shop/models.py":35
+    .expect _ at "shop/models.py":36
+    .expect _ at "shop/models.py":37
+    .expect _ at "shop/models.py":38
+    .expect _ at "shop/models.py":39
+    .expect _ at "shop/models.py":41
+    .expect _ at "shop/models.py":46
+    .expect _ at "shop/models.py":64
+    .expect _ at "shop/models.py":65
+    .expect _ at "shop/models.py":67
+    .expect _ at "shop/models.py":75
+.end

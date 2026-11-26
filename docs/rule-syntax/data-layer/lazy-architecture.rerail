@@ -399,7 +399,8 @@ la_ffind("LA-014", f, l) :- !la_skip(f), la_fact(f, d, _, _, _), la_in(d, "servi
 la_server_phase("lower"). la_server_phase("compile"). la_server_phase("preprocess"). la_server_phase("pre_op").
 la_server_phase("post_op").
 // la_eager_delegate(s): fact s does plan I/O itself, or calls something whose symbol ends in a plan I/O name.
-.decl la_eager_delegate(s: symbol)
+// Cross-file: a symbol deferred in one file, its facts in another (decision 0652).
+.decl la_eager_delegate(s: symbol) cross_file
 la_eager_delegate(s) :- la_deferred(_, _, s), la_fact(t, _, s, _, _), la_canon(t), la_has(t, "io").
 la_eager_delegate(s) :- la_deferred(_, _, s), la_fact(t, _, s, _, _), la_canon(t), la_call(t, c), la_func(c, g),
     la_local_last(t, g, x), la_set("PLAN_IO_NAMES", x).

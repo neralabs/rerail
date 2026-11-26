@@ -357,48 +357,21 @@ fn metal() -> bool {
     false
 }
 
+/// A line of the coverage matrix or ledger, hand-kept documents of tab-separated cells: its cells.
+fn ledger_cells(line: &str) -> Vec<&str> {
+    line.split('\t').collect()
+}
+
 /// The second ledger, `packs.tsv`: each gap the matrix records (a probe not native, or not on the device), by how
 /// many shipped programs of each pack use its operations: which gaps the packs meet, and how often. Written and
 /// compared with the matrix (`RERAIL_BLESS_COVERAGE=1`).
 fn packs_ledger(all: &[Probe], matrix: &str) {
     let (used, _, _) = census();
-    // A file's pack: the directory under `packs/`, else the tree it is in (`data-layer`, `lib`, the engine's own).
-    let pack = |f: &str| -> String {
-        if let Some((_, rest)) = f.split_once("/rule-syntax/packs/") {
-            return rest.split('/').next().unwrap_or("?").to_owned();
-        }
-        if let Some((_, rest)) = f.split_once("/rule-syntax/") {
-            return rest.split('/').next().filter(|d| !d.ends_with(".rerail")).unwrap_or("rule-syntax").to_owned();
-        }
-        if f.contains("/programs/data_layer/") { "data-layer (engine)".into() } else { "engine".into() }
-    };
-    let cells: BTreeMap<&str, (&str, &str)> = matrix.lines().filter(|l| !l.starts_with('#')).filter_map(|l| {
-        let mut c = l.split('\t');
-        Some((c.next()?, (c.next()?, c.next()?)))
+    let cells: BTreeMap<&str, (&str, &str)> = matrix.lines().filter(|l| !l.starts_with('#')).filter_map(|l| match ledger_cells(l)[..] {
+        [probe, a, b, ..] => Some((probe, (a, b))),
+        _ => None,
     }).collect();
-    let mut rows: Vec<(usize, String)> = Vec::new();
-    for pr in all {
-        let Some(&(native, device)) = cells.get(pr.name.as_str()) else { continue };
-        if native == "native" && device == "device" {
-            continue;
-        }
-        let files: BTreeSet<&String> = pr.ops.iter().filter_map(|op| used.get(op)).flatten().collect();
-        if files.is_empty() {
-            continue;
-        }
-        let mut by: BTreeMap<String, usize> = BTreeMap::new();
-        for f in &files {
-            *by.entry(pack(f)).or_default() += 1;
-        }
-        let mut by: Vec<(String, usize)> = by.into_iter().collect();
-        by.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        let gap = match (native == "native", device == "device") {
-            (false, _) => format!("not native: {native}"),
-            _ => format!("not on the device: {device}"),
-        };
-        let packs = by.iter().map(|(p, n)| format!("{p} {n}")).collect::<Vec<_>>().join(", ");
-        rows.push((files.len(), format!("{}\t{}\t{}\t{packs}", files.len(), pr.name, gap)));
-    }
+    let mut rows: Vec<(usize, String)> = all.iter().filter_map(|pr| gap_row(pr, &cells, used)).collect();
     rows.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
     let mut text = String::from("# Executor gaps by the shipped programs that meet them (plan/coverage.rs, from matrix.tsv; RERAIL_BLESS_COVERAGE=1 writes this).\n# programs\tprobe\tgap\tprograms by pack\n");
     for (_, r) in rows {
@@ -414,6 +387,50 @@ fn packs_ledger(all: &[Probe], matrix: &str) {
     let (old, new): (BTreeSet<&str>, BTreeSet<&str>) = (had.lines().collect(), text.lines().collect());
     let shown = |a: &BTreeSet<&str>, b: &BTreeSet<&str>| a.difference(b).copied().collect::<Vec<_>>().join("\n");
     assert!(had == text, "the executors' gaps by pack differ from {}: RERAIL_BLESS_COVERAGE=1 writes it\n--- ledger\n{}\n+++ now\n{}", path.display(), shown(&old, &new), shown(&new, &old));
+}
+
+/// A probe's row of `packs.tsv`, keyed by how many shipped programs meet its gap: none when the matrix records no gap
+/// for it, or no shipped program uses its operations.
+fn gap_row(pr: &Probe, cells: &BTreeMap<&str, (&str, &str)>, used: &BTreeMap<String, BTreeSet<String>>) -> Option<(usize, String)> {
+    let &(native, device) = cells.get(pr.name.as_str())?;
+    let gap = gap_of(native, device)?;
+    let files: BTreeSet<&String> = pr.ops.iter().filter_map(|op| used.get(op)).flatten().collect();
+    if files.is_empty() {
+        return None;
+    }
+    Some((files.len(), format!("{}\t{}\t{}\t{}", files.len(), pr.name, gap, programs_by_pack(&files))))
+}
+
+/// The matrix's gap for a probe's cells, or none when it ran natively and on the device.
+fn gap_of(native: &str, device: &str) -> Option<String> {
+    match (native == "native", device == "device") {
+        (true, true) => None,
+        (false, _) => Some(format!("not native: {native}")),
+        _ => Some(format!("not on the device: {device}")),
+    }
+}
+
+/// `files` counted by pack, most first: `python-main 462, lib 64, …`.
+fn programs_by_pack(files: &BTreeSet<&String>) -> String {
+    let mut by: BTreeMap<String, usize> = BTreeMap::new();
+    for f in files {
+        *by.entry(pack_of(f)).or_default() += 1;
+    }
+    let mut by: Vec<(String, usize)> = by.into_iter().collect();
+    by.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    by.iter().map(|(p, n)| format!("{p} {n}")).collect::<Vec<_>>().join(", ")
+}
+
+/// A file's pack: the directory under the workbench's `rule-syntax/packs/` or the repository's `packs/`, else the tree
+/// it is in (`data-layer`, `lib`, the engine's own).
+fn pack_of(f: &str) -> String {
+    if let Some((_, rest)) = f.split_once("/rule-syntax/packs/").or_else(|| f.split_once("/../packs/")) {
+        return rest.split('/').next().unwrap_or("?").to_owned();
+    }
+    if let Some((_, rest)) = f.split_once("/rule-syntax/") {
+        return rest.split('/').next().filter(|d| !d.ends_with(".rerail")).unwrap_or("rule-syntax").to_owned();
+    }
+    if f.contains("/programs/data_layer/") { "data-layer (engine)".into() } else { "engine".into() }
 }
 
 /// The ledger's place.
@@ -482,14 +499,13 @@ fn every_operation_runs_on_every_executor() {
     let rows = if metal() {
         rows
     } else {
-        // A ledger row's four cells (probe, native, device, rules), read in one place for the ledger and the rows.
-        fn cells(l: &str) -> Option<[&str; 4]> {
-            l.split('\t').collect::<Vec<_>>().try_into().ok()
-        }
-        let device: BTreeMap<&str, &str> = had.lines().filter_map(|l| cells(l).map(|c| (c[0], c[2]))).collect();
-        rows.lines().map(|l| match cells(l).and_then(|c| device.get(c[0]).map(|d| (c, d))) {
-            Some((c, d)) => format!("{}\t{}\t{d}\t{}\n", c[0], c[1], c[3]),
-            None => format!("{l}\n"),
+        let device: BTreeMap<&str, &str> = had.lines().filter_map(|l| { let c = ledger_cells(l); (c.len() == 4).then(|| (c[0], c[2])) }).collect();
+        rows.lines().map(|l| {
+            let c = ledger_cells(l);
+            match (c.len(), device.get(c[0])) {
+                (4, Some(d)) => format!("{}\t{}\t{d}\t{}\n", c[0], c[1], c[3]),
+                _ => format!("{l}\n"),
+            }
         }).collect()
     };
     if std::env::var_os("RERAIL_BLESS_COVERAGE").is_some() {
@@ -597,12 +613,21 @@ fn ops_of(file: &std::sync::Arc<crate::code_rule_dsl::logic::rr::from_tape::RrFi
     Some(())
 }
 
-/// The shipped `.rerail` files: the packs and the engine's own programs.
+/// The shipped `.rerail` files: the workbench's packs and library, each pack's `rules/` under `packs/`, and the engine's
+/// own programs.
 fn shipped() -> Vec<PathBuf> {
     let root = crate::source_tree::native();
+    let packs = std::fs::read_dir(root.join("../packs")).into_iter().flatten().flatten().map(|e| e.path().join("rules"));
+    let tops = std::iter::once(root.join("../docs/rule-syntax")).chain(crate::source_tree::source_paths("code_rule_dsl")).chain(packs);
+    let mut out: Vec<PathBuf> = tops.flat_map(|d| rerail_files(&d)).collect();
+    out.sort();
+    out
+}
+
+/// The `.rerail` files under `top`, at any depth.
+fn rerail_files(top: &std::path::Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    let mut walk = vec![root.join("../docs/rule-syntax")];
-    walk.extend(crate::source_tree::source_paths("code_rule_dsl"));
+    let mut walk = vec![top.to_path_buf()];
     while let Some(d) = walk.pop() {
         let Ok(entries) = std::fs::read_dir(&d) else { continue };
         for e in entries.flatten() {
@@ -614,7 +639,6 @@ fn shipped() -> Vec<PathBuf> {
             }
         }
     }
-    out.sort();
     out
 }
 

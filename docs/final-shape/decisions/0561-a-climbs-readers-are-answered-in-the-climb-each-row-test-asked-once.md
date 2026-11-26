@@ -1,6 +1,8 @@
 # 0561. A climb's readers are answered in the climb, each of a row's tests asked once
 
-Status: accepted (2026-11-21), the CPU form built. t50 step 5, second part; extends 0570.
+Status: partly built (audited 2026-11-23). Left: Metal: the device refuses a keyed closure. walk's rows are still
+pushed during the climb. Cheaper probes are the probe structure's job. Accepted (2026-11-21), the CPU form built. t50
+step 5, second part; extends 0570.
 
 ## Intro
 

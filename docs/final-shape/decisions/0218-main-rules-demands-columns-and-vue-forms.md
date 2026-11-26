@@ -1,7 +1,7 @@
 # 0218: Demands keep what their arguments reach; a column's type through `=`; a witness's end point; export lists are references
 
-Status: decided (2026-11-14, in the work on what decisions 0201 and 0222 (drafted as 0202) left open: "please merge in the hub
-again / Then work through all of these").
+Status: built (audited 2026-11-23). Decided (2026-11-14, in the work on what decisions 0201 and 0222 (drafted as 0202)
+left open: "please merge in the hub again / Then work through all of these").
 
 ## Intro
 

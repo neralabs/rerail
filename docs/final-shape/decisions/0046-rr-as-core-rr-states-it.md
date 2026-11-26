@@ -1,6 +1,6 @@
 # 0046: The engine reads `.rr` as `core.rr` states it
 
-Status: proposed (2026-11-06)
+Status: built (audited 2026-11-23). Proposed (2026-11-06)
 
 ## Intro
 

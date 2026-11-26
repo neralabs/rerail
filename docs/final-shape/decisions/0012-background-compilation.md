@@ -1,7 +1,6 @@
 # 0012: Compilation runs in the background, on demand; the interpreter runs until it is ready
 
-Status: accepted
-Date: 2026-10-30
+Status: built (audited 2026-11-23). Accepted Date: 2026-10-30
 
 ## Question
 06 S4's leftovers: the CPU JIT and Metal compile a batch's programs before running it, so a new set

@@ -1,6 +1,6 @@
 # 0109: Long text twins, tree ancestry for frames, and what the symbol-graph ports need
 
-Status: proposed (2026-11-10)
+Status: built (audited 2026-11-23). Proposed (2026-11-10)
 
 ## Intro
 

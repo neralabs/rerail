@@ -1,6 +1,6 @@
 # 0024: a wave's execution shape: one node space, sets as bitmaps, every walk on the device
 
-Status: accepted (2026-11-01); built through step 6 (Progress)
+Status: built (audited 2026-11-23). Accepted (2026-11-01); built through step 6 (Progress)
 
 ## Context
 

@@ -1,7 +1,8 @@
 # 0332: Kotlin, Swift and Scala in Bitlex: ladders against the lean parsers, and the compiler's additions
 
-Status: decided (user, 2026-11-16: "build bitlex versions of each of these"). Kotlin's step 1 is
-built. Swift and Scala are not started.
+Status: partly built (audited 2026-11-23). Left: Swift and Scala Bitlex versions not started; Kotlin's open gaps (lost
+block comments, Q198). Decided (user, 2026-11-16: "build bitlex versions of each of these"). Kotlin's step 1 is built.
+Swift and Scala are not started.
 
 ## Intro
 

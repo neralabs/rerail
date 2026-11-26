@@ -1,6 +1,8 @@
 # 0429: Context over tokens is the token loop's state
 
-Status: decided (2026-11-18), 0415's stage 3 made concrete. Follows 0415, 0177 and 0407.
+Status: partly built (audited 2026-11-23). Left: Marks' context (acc, recv, generic, dotted) still byte masks, not
+token-loop state; class header context; region masks. Decided (2026-11-18), 0415's stage 3 made concrete. Follows
+0415, 0177 and 0407.
 
 ## Intro
 

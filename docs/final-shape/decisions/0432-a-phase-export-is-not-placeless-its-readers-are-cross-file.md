@@ -1,7 +1,7 @@
 # 0432: A phase's export is not placeless: a rule that joins it is cross-file
 
-Status: decided (2026-11-18, while finding why the data-layer pack's edits were slow). Follows 0083 §2.3 (a
-phase's exported delta is the next phase's input delta) and 0104 (phases on the run path).
+Status: built (audited 2026-11-23). Decided (2026-11-18, while finding why the data-layer pack's edits were slow).
+Follows 0083 §2.3 (a phase's exported delta is the next phase's input delta) and 0104 (phases on the run path).
 
 ## Intro
 

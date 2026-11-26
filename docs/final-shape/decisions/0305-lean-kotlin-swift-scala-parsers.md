@@ -1,8 +1,7 @@
 # 0305: Lean parsers for Kotlin, Swift and Scala, tested against tree-sitter
 
-Status: decided (user, 2026-11-16: "please create and test Rerail lean parsers for Swift, Kotlin
-and Scala … get to Treesitter-equivalence for direct-to-tape parsers on valid input"). All three
-built.
+Status: built (audited 2026-11-23). Decided (user, 2026-11-16: "please create and test Rerail lean parsers for Swift,
+Kotlin and Scala … get to Treesitter-equivalence for direct-to-tape parsers on valid input"). All three built.
 
 ## Intro
 

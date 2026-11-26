@@ -1,6 +1,9 @@
 # 0055: Embedded languages are guest documents the library declares; a tape is a value rules can make
 
-Status: accepted (2026-11-07). The `.rr` path's guests are built for Python and Rust files: file-local embeds, `sub_tape` and `parsed` requests, embeds of embeds, `.guests` and `.on guest_error` (see [What was built](#what-was-built)). Decision 0058 builds hiding, kinds across grammars, normalized strings and `@parse`, `@splice`, `@unparse`. Global embeds and the matcher path's guests are not built yet.
+Status: built (audited 2026-11-23). Accepted (2026-11-07). The `.rr` path's guests are built for Python and Rust
+files: file-local embeds, `sub_tape` and `parsed` requests, embeds of embeds, `.guests` and `.on guest_error` (see
+[What was built](#what-was-built)). Decision 0058 builds hiding, kinds across grammars, normalized strings and
+`@parse`, `@splice`, `@unparse`. Global embeds and the matcher path's guests are not built yet.
 
 ## Intro
 

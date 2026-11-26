@@ -1,4 +1,5 @@
 //! Strict forest indexing over SQL-normalized identities. No detector decisions live here.
+use rerail_blocks::vector::Vector;
 use super::{Connection, Result, insert, source, sql_error};
 use crate::code_rule_dsl::json::invalid;
 use rusqlite::types::Value;
@@ -29,7 +30,7 @@ impl<'a> Steps<'a> {
 
 #[derive(Debug)]
 struct Forest {
-    preorder: Vec<usize>,
+    preorder: Vector<usize>,
     ranges: Vec<(usize, usize)>,
 }
 impl Forest {
@@ -56,7 +57,7 @@ impl Forest {
                 children[parent].push(child);
             }
         }
-        let mut preorder = Vec::with_capacity(count);
+        let mut preorder = rerail_blocks::vector::Vector::with_capacity(count);
         let mut ranges = vec![(0, 0); count];
         let mut pending = parents
             .iter()

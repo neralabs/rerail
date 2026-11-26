@@ -1,8 +1,8 @@
 # 0391. (was 0323) A guest's key is the store's, one per identity
 
-Status: decided (2026-11-16), by the user (option 1 of four: "okay, let's try 1"). Builds on 0055 (guests and their
-keys), 0058 §1 (the key ranges), 0052 §3 (a key a collision moved only misses), 0104 (no SQL inside the waves), 0306
-(a run's small writes are one record). Q20 in the work queue.
+Status: built (audited 2026-11-23). Decided (2026-11-16), by the user (option 1 of four: "okay, let's try 1"). Builds
+on 0055 (guests and their keys), 0058 §1 (the key ranges), 0052 §3 (a key a collision moved only misses), 0104 (no SQL
+inside the waves), 0306 (a run's small writes are one record). Q20 in the work queue.
 
 ## Intro
 

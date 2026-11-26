@@ -2,8 +2,10 @@
 
 Numbered 0286 where it was written: django-bugs has its own 0286.
 
-Status: §1 built (2026-11-15); §2–§4 draft, not to be built before a workload shows their gain. Refines the
-device's placement (`plan::placement`, decision 0095) and its compile (`setfix::device`).
+Status: partly built (audited 2026-11-23). Left: §2–§4 drafts: node texts read from source on the device, made texts
+inside recursion, remaining functions (deferred until a workload shows gain). §1 built (2026-11-15); §2–§4 draft, not
+to be built before a workload shows their gain. Refines the device's placement (`plan::placement`, decision 0095) and
+its compile (`setfix::device`).
 
 ## Intro
 

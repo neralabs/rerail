@@ -1,8 +1,8 @@
 # 0203: What a run's joins measured feeds their next plans, first on the critical path
 
-Status: draft (2026-11-14). The memo, the choice, the slow flag, the critical path, the wider search and its
-upkeep job are built (`logic/plan/joins.rs`). Open: a batch pricer to set (O166), and searches that outlive their
-process (O167).
+Status: built (audited 2026-11-23). Draft (2026-11-14). The memo, the choice, the slow flag, the critical path, the
+wider search and its upkeep job are built (`logic/plan/joins.rs`). Open: a batch pricer to set (O166), and searches
+that outlive their process (O167).
 
 ## Intro
 

@@ -1,4 +1,5 @@
 //! Copy-on-write integer relations for temporal rule operators. SQL keeps the evaluation logic.
+use rerail_blocks::vector::Vector;
 use super::super::facts::vtab::Modules;
 use super::*;
 use parking_lot::RwLock;
@@ -113,7 +114,7 @@ pub struct Version {
     indexes: Vec<Link<Row>>,
     secondary: Arc<[bool]>,
     lazy: bool,
-    distinct: Vec<usize>,
+    distinct: Vector<usize>,
     next: i64,
 }
 pub fn key(values: impl IntoIterator<Item = Option<i64>>) -> Key {
@@ -141,7 +142,7 @@ impl Version {
             lazy: false,
             secondary: (0..schema.columns.len()).map(|c| c > 0).collect(),
             indexes: vec![None; schema.columns.len()],
-            distinct: vec![0; schema.columns.len()],
+            distinct: rerail_blocks::vector![0; schema.columns.len()],
             schema,
             full: None,
             primary: None,
@@ -349,7 +350,7 @@ impl Source for Version {
     fn primary_key_len(&self) -> Option<usize> {
         Some(self.schema.keys)
     }
-    fn lookup_primary_batch(&self, values: &[Vec<i64>]) -> Option<Vec<usize>> {
+    fn lookup_primary_batch(&self, values: &[Vector<i64>]) -> Option<rerail_blocks::vector::Vector<usize>> {
         Some(self.primary_batch(values))
     }
     fn estimated_matches_all(&self, columns: &[usize]) -> usize {
@@ -367,7 +368,7 @@ impl Source for Version {
     fn composite(&self) -> bool {
         true
     }
-    fn lookup_all(&self, eq: &[(usize, i64)]) -> Option<Vec<usize>> {
+    fn lookup_all(&self, eq: &[(usize, i64)]) -> Option<rerail_blocks::vector::Vector<usize>> {
         if (0..self.schema.keys).all(|c| eq.iter().any(|(col, _)| *col == c)) {
             let pk = (0..self.schema.keys)
                 .map(|c| Some(eq.iter().find(|(col, _)| *col == c).unwrap().1))
@@ -411,7 +412,7 @@ impl Source for Version {
                 .collect(),
         )
     }
-    fn lookup(&self, c: usize, values: &[i64]) -> Option<Vec<usize>> {
+    fn lookup(&self, c: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         if c == 0 {
             let values = values.iter().copied().collect::<BTreeSet<_>>();
             return Some(
@@ -496,6 +497,12 @@ impl Source for Mutable {
     fn lookup_cost(&self, c: usize) -> f64 {
         self.state.read().lookup_cost(c)
     }
+    fn scan_cost(&self) -> f64 {
+        self.state.read().scan_cost()
+    }
+    fn may_hold_rows(&self) -> bool {
+        self.state.read().may_hold_rows()
+    }
     fn indexed(&self, c: usize) -> bool {
         self.state.read().indexed(c)
     }
@@ -511,7 +518,7 @@ impl Source for Mutable {
     fn primary_key_len(&self) -> Option<usize> {
         self.state.read().primary_key_len()
     }
-    fn lookup_primary_batch(&self, values: &[Vec<i64>]) -> Option<Vec<usize>> {
+    fn lookup_primary_batch(&self, values: &[Vector<i64>]) -> Option<rerail_blocks::vector::Vector<usize>> {
         self.state.read().lookup_primary_batch(values)
     }
     fn estimated_matches_all(&self, columns: &[usize]) -> usize {
@@ -520,10 +527,10 @@ impl Source for Mutable {
     fn composite(&self) -> bool {
         true
     }
-    fn lookup_all(&self, eq: &[(usize, i64)]) -> Option<Vec<usize>> {
+    fn lookup_all(&self, eq: &[(usize, i64)]) -> Option<rerail_blocks::vector::Vector<usize>> {
         self.state.read().lookup_all(eq)
     }
-    fn lookup(&self, c: usize, values: &[i64]) -> Option<Vec<usize>> {
+    fn lookup(&self, c: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         self.state.read().lookup(c, values)
     }
     fn value(&self, row: usize, c: usize) -> i64 {

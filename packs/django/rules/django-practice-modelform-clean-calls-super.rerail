@@ -1,0 +1,90 @@
+.policy "django-practice-modelform-clean-calls-super" revision 1
+.description "A clean() override on a Django ModelForm or model formset must call the parent class's clean()."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. ModelForm.clean() is what turns on the model's uniqueness and constraint checks
+// (it sets _validate_unique and _validate_constraints for _post_clean), and BaseModelFormSet.clean() checks
+// uniqueness across the formset's forms. A clean() that never calls its parent's skips them: a duplicate passes
+// validation and fails at save() with an IntegrityError. It matches `def clean(self)` written directly in a
+// subclass, through the run's classes in any file, of ModelForm, BaseModelForm, BaseModelFormSet,
+// BaseInlineFormSet, BaseGenericInlineFormSet, a ModelForm of django.contrib.auth/flatpages or wagtail, or another
+// package's `…ModelForm` / `…ModelFormSet` class, whose body has no call `super().clean()`,
+// `super(Cls, self).clean()` or `<Base>.clean(self)` (in a formset, `self.validate_unique()`, all that
+// BaseModelFormSet.clean() does, counts too). Test files are skipped.
+//   class BookForm(forms.ModelForm):
+//       def clean(self):                       reported
+//           if self.cleaned_data["title"] == "x":
+//               raise ValidationError("no")
+//           return self.cleaned_data
+//   class AuthorForm(forms.ModelForm):
+//       def clean(self):                       not reported
+//           data = super().clean()
+//           ...
+//   class SearchForm(forms.Form):
+//       def clean(self): ...                   not reported: a plain Form has no model validation to skip
+
+#include "lib/django.rerail"
+
+.violation ModelFormCleanSkipsSuper(at: node, c: symbol, skip: symbol, fix: symbol) "`{c}.clean()` never calls the parent class's clean(), so Django skips {skip} and a duplicate fails at save() with an IntegrityError. {fix}"
+ModelFormCleanSkipsSuper(n, cn, skip, fix) :- mcs_clean(c, f), !mcs_calls_parent(f), param(f, "self", 0), docof(f, d),
+    !dj_test_doc(d), def_name(c, cn), field(f, "name", n), mcs_skip(c, skip, fix).
+// mcs_skip(c, skip, fix): what model form c's parent clean() checks, and how to keep it.
+.decl mcs_skip(c: node, skip: symbol, fix: symbol)
+mcs_skip(c, "the model's unique, unique_together and constraint validation for this form",
+    "Start it with `cleaned_data = super().clean()`.") :- mcs_model_form(c), !mcs_formset(c).
+mcs_skip(c, "the uniqueness check across the formset's forms", "Call `super().clean()` in it.") :- mcs_formset(c).
+
+// mcs_clean(c, f): f is the clean() method written in model form c's body.
+.decl mcs_clean(c: node, f: node)
+mcs_clean(c, f) :- mcs_model_form(c), kind(f, "function_definition"), nearest(f, c, scope), def_name(f, "clean").
+
+// mcs_base(q): model form and model formset classes outside the run, whose clean() a subclass must call.
+.decl mcs_base(q: symbol)
+mcs_base("django.forms.ModelForm"). mcs_base("django.forms.models.ModelForm").
+mcs_base("django.forms.models.BaseModelForm"). mcs_base("django.forms.BaseModelForm").
+mcs_base("django.forms.BaseModelFormSet"). mcs_base("django.forms.models.BaseModelFormSet").
+mcs_base("django.forms.BaseInlineFormSet"). mcs_base("django.forms.models.BaseInlineFormSet").
+mcs_base("django.contrib.contenttypes.forms.BaseGenericInlineFormSet").
+mcs_base("django.contrib.auth.forms.UserCreationForm"). mcs_base("django.contrib.auth.forms.BaseUserCreationForm").
+mcs_base("django.contrib.auth.forms.UserChangeForm"). mcs_base("django.contrib.flatpages.forms.FlatpageForm").
+mcs_base("wagtail.admin.forms.WagtailAdminModelForm"). mcs_base("wagtail.admin.forms.models.WagtailAdminModelForm").
+mcs_base("wagtail.admin.forms.WagtailAdminPageForm"). mcs_base("wagtail.admin.forms.pages.WagtailAdminPageForm").
+// Other packages' model forms are named so: i18nfield's I18nModelForm, parler's TranslatableModelForm; and Django
+// re-exports its formsets elsewhere (django.contrib.admin.options.BaseInlineFormSet).
+mcs_base(q) :- class_base(_, q), !class_def(_, q), split_dot(q, _, x),
+    (suffix("ModelForm", x) ; suffix("ModelFormSet", x) ; prefix("django.", q), suffix("InlineFormSet", x)).
+.decl mcs_model_form(c: node)
+mcs_model_form(c) :- class_def(c, q), subclass(q, b), mcs_base(b).
+// mcs_formset(c): c is a model formset (a base whose name holds `FormSet`).
+.decl mcs_formset(c: node)
+mcs_formset(c) :- class_def(c, q), subclass(q, b), mcs_base(b), split_dot(b, _, x), contains("FormSet", x).
+
+// mcs_calls_parent(f): in f's own body, `super().clean(...)`, `super(C, self).clean(...)` or `X.clean(self, ...)`.
+.decl mcs_calls_parent(f: node)
+mcs_calls_parent(f) :- mcs_clean_call(f, _, o), kind(o, "call"), field(o, "function", s), text(s, "super").
+mcs_calls_parent(f) :- mcs_clean_call(f, k, _), posarg(k, 0, a), text(a, "self").
+mcs_calls_parent(f) :- mcs_clean(c, f), mcs_formset(c), kind(k, "call"), field(k, "function", fn),
+    attr_of(fn, o, "validate_unique"), text(o, "self"), nearest(k, f, "function_definition").
+// mcs_clean_call(f, k, o): call k is `o.clean(...)`, in def f's own body (not in a def nested in it).
+.decl mcs_clean_call(f: node, k: node, o: node)
+mcs_clean_call(f, k, o) :- kind(k, "call"), field(k, "function", fn), attr_of(fn, o, "clean"),
+    nearest(k, f, "function_definition").
+
+// The cases, `cases/django-practice-modelform-clean-calls-super/`, read as one repository: each line ending in `#
+// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "library/__init__.py" from "../cases/django-practice-modelform-clean-calls-super/library/__init__.py"
+    .fixture "library/base.py" from "../cases/django-practice-modelform-clean-calls-super/library/base.py"
+    .fixture "library/forms.py" from "../cases/django-practice-modelform-clean-calls-super/library/forms.py"
+    .fixture "library/models.py" from "../cases/django-practice-modelform-clean-calls-super/library/models.py"
+    .fixture "library/tests/__init__.py" from "../cases/django-practice-modelform-clean-calls-super/library/tests/__init__.py"
+    .fixture "library/tests/test_forms.py" from "../cases/django-practice-modelform-clean-calls-super/library/tests/test_forms.py"
+    .expect _ at "library/forms.py":14
+    .expect _ at "library/forms.py":52
+    .expect _ at "library/forms.py":79
+    .expect _ at "library/forms.py":85
+    .expect _ at "library/forms.py":91
+    .expect _ at "library/forms.py":125
+    .expect _ at "library/forms.py":133
+.end

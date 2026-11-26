@@ -136,7 +136,11 @@ restart OMP. Set-up cannot replace OMP's copy, so both would load; set-up and `r
 
 ## Update
 
-Rerail updates only when you ask; nothing polls the registry or installs a version in the background.
+Rerail updates only when you ask; nothing installs a version in the background. Once a day the daemon asks npm
+whether a newer version is out, and the dashboard says so in the top bar and in Settings, under About Rerail. Unless
+you add a remote or turn Merge Assist on (internal testing), that check is the only request Rerail makes on its own,
+apart from an npm rebuild of the SQLite binding when it fails to load ([privacy](privacy.md)); `RERAIL_UPDATE_CHECK=0`
+set for the daemon turns it off.
 
 ```sh
 rerail update check   # is a newer version on the channel?
@@ -233,6 +237,16 @@ In short: macOS, glibc Linux and Windows 11 on arm64 or x64, with Node.js 24+, f
   - On Windows, Claude Code runs Rerail's commands in Git Bash, and Codex and Cursor in PowerShell; set-up writes each
     agent's commands for its shell. Claude Code there needs Git Bash, from Git for Windows, even though Claude Code
     itself does not require it.
+- **GPUs**, optional: Rerail runs on the CPU without one.
+  - Apple's GPUs (M1 and later), through Metal: nothing to install.
+  - NVIDIA's GPUs from the Tesla V100 on, with the [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit-archive)
+    installed: 12.x or later, and 12.x for a V100 (CUDA 13 no longer compiles for it). Set `CUDA_HOME` (Windows:
+    `CUDA_PATH`) to a toolkit outside the usual place.
+  - AMD's GPUs with HIP: [ROCm](https://rocm.docs.amd.com) on Linux, the
+    [HIP SDK](https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html) on Windows.
+
+  Rerail compiles some of its GPU code on your machine, with the toolkit you install; it ships none. Where it finds a
+  GPU but not the toolkit, or a toolkit too old or too new for the GPU, it runs on the CPU and says what to install.
 - **Containers and devcontainers** with a glibc image, including the default `node:24` and `node:24-slim`, with or
   without an init process.
 - **WSL 2**, as Linux, with the coding agent running in WSL too: install Rerail on the same side as the coding agent. A

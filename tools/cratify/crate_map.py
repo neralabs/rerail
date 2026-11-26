@@ -4,8 +4,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, '..', '..'))
 DAG = {
     'rerail-rr-syntax': [], 'rerail-store': [],
-    # the profiler records .rerail programs' projections (analysis_report::projection)
-    'rerail-prof': ['rerail-rr-syntax'],
+    # the profiler reads nothing of the language (its mount of `logic::front` was the split's facade, cut in 10e-1)
+    'rerail-prof': [],
     # tapes are keyed by the store's identities (tape::tape_identity)
     'rerail-lang': ['rerail-prof', 'rerail-rr-syntax', 'rerail-store'],
     'rerail-facts': ['rerail-lang', 'rerail-store'],

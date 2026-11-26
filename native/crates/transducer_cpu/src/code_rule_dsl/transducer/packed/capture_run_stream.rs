@@ -1,12 +1,13 @@
 //! A complete run with one final tail needs scalar counts, not exit records.
 //! Logical admission and work remain identical to the range operator.
+use rerail_blocks::vector::Vector;
 use super::*;
 
 struct Cost {
     visits: usize,
     maximum: usize,
     success: Option<usize>,
-    labels: Vec<u16>,
+    labels: Vector<u16>,
 }
 fn cost(
     program: &Program,
@@ -21,7 +22,7 @@ fn cost(
         visits: 0,
         maximum: 0,
         success: None,
-        labels: vec![],
+        labels: rerail_blocks::vector![],
     };
     for pc in body.first..body.end {
         let (op, _, arg) = split(program.words[pc]);

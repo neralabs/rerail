@@ -1,4 +1,5 @@
 //! Test-only ordered active-frontier model. It is not a production executor.
+use rerail_blocks::vector::Vector;
 use super::*;
 use ast_grep_core::tree_sitter::LanguageExt;
 
@@ -10,7 +11,7 @@ struct State {
     pc: usize,
     node: u32,
     cursors: Vec<Option<u32>>,
-    repeats: Vec<u16>,
+    repeats: Vector<u16>,
     captures: Vec<(u16, u32, usize, usize)>,
 }
 
@@ -21,14 +22,14 @@ enum Kind {
     // The marker encloses only the still-pending continuation subtree. An offer
     // from a later external branch cannot update an already separate exit.
     Greedy {
-        body: Vec<usize>,
-        last_offer: Vec<usize>,
+        body: Vector<usize>,
+        last_offer: Vector<usize>,
     },
 }
 
 #[derive(Clone)]
 struct Item {
-    position: Vec<usize>,
+    position: Vector<usize>,
     state: State,
     kind: Kind,
 }
@@ -94,7 +95,7 @@ struct ScheduleObservation {
 #[test]
 fn bulk_closure_preserves_terminal_results_without_one_round_per_sibling() {
     let program = Program::new(
-        vec![
+        rerail_blocks::vector![
             word(CAPTURE, 0, 0),
             word(REPEAT_BEGIN, 0, 0),
             word(REPEAT_BUMP, 0, 0),
@@ -108,8 +109,8 @@ fn bulk_closure_preserves_terminal_results_without_one_round_per_sibling() {
         ],
         vec![b"prefix".to_vec()],
         vec![],
-        vec![0],
-        vec![],
+        rerail_blocks::vector![0],
+        rerail_blocks::vector![],
     )
     .unwrap()
     .with_tree_sitter_query_semantics()
@@ -178,12 +179,12 @@ fn execute_mode(
         BTreeMap::new()
     };
     let mut frontier = vec![Item {
-        position: vec![],
+        position: rerail_blocks::vector![],
         state: State {
             pc: 0,
             node: root,
             cursors: vec![],
-            repeats: vec![],
+            repeats: rerail_blocks::vector![],
             captures: vec![],
         },
         kind: Kind::Active,
@@ -511,7 +512,7 @@ fn measure_ordered_greedy_schedule_depth() {
     // A validated capture-free terminal loop, with an observable prefix capture.
     // This is a hand-built contract fixture, not a pinned-catalog benchmark.
     let program = Program::new(
-        vec![
+        rerail_blocks::vector![
             word(CAPTURE, 0, 0),
             word(REPEAT_BEGIN, 0, 0),
             word(REPEAT_BUMP, 0, 0),
@@ -525,8 +526,8 @@ fn measure_ordered_greedy_schedule_depth() {
         ],
         vec![b"prefix".to_vec()],
         vec![],
-        vec![0],
-        vec![],
+        rerail_blocks::vector![0],
+        rerail_blocks::vector![],
     )
     .unwrap()
     .with_tree_sitter_query_semantics()
@@ -603,7 +604,7 @@ fn ordered_active_model_retains_dfs_ordinals_and_ordinary_occurrences() {
     let tape = document("# first\n# second\n");
     for query in [false, true] {
         let mut program = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(REPEAT_BEGIN, 0, 0),
                 word(FORK, 0, 6),
                 word(SAVE_CURSOR, 0, 0),
@@ -616,8 +617,8 @@ fn ordered_active_model_retains_dfs_ordinals_and_ordinary_occurrences() {
             ],
             vec![b"item".to_vec()],
             vec![],
-            vec![0],
-            vec![],
+            rerail_blocks::vector![0],
+            rerail_blocks::vector![],
         )
         .unwrap();
         program.tree_sitter_query = query;
@@ -628,11 +629,11 @@ fn ordered_active_model_retains_dfs_ordinals_and_ordinary_occurrences() {
         );
     }
     let program = Program::new(
-        vec![word(FORK, GREEDY, 2), word(EMIT, 0, 0), word(EMIT, 0, 0)],
+        rerail_blocks::vector![word(FORK, GREEDY, 2), word(EMIT, 0, 0), word(EMIT, 0, 0)],
         vec![b"item".to_vec()],
         vec![],
-        vec![0],
-        vec![],
+        rerail_blocks::vector![0],
+        rerail_blocks::vector![],
     )
     .unwrap();
     let expected = program.execute_roots(&tape, [1]).unwrap();
@@ -668,7 +669,7 @@ fn ordered_active_model_bounds_ambiguous_capture_growth_without_partial_success(
 #[test]
 fn ordered_active_model_preserves_the_production_convergence_ordinal_gap() {
     let mut program = Program::new(
-        vec![
+        rerail_blocks::vector![
             word(SAVE_CURSOR, 0, 0),
             word(REPEAT_BEGIN, 0, 0),
             word(FORK, 0, 12),
@@ -686,8 +687,8 @@ fn ordered_active_model_preserves_the_production_convergence_ordinal_gap() {
         ],
         vec![b"empty".to_vec(), b"captured".to_vec()],
         vec![],
-        vec![0, 1],
-        vec![],
+        rerail_blocks::vector![0, 1],
+        rerail_blocks::vector![],
     )
     .unwrap();
     program.tree_sitter_query = true;
@@ -724,7 +725,7 @@ fn greedy_diamond() -> Program {
     // All cycles advance. The body and exit are capture-free. The exit's
     // LAST test makes the selected node observable through the prefix capture.
     let mut program = Program::new(
-        vec![
+        rerail_blocks::vector![
             word(CAPTURE, 0, 0),
             word(REPEAT_BEGIN, 0, 0),
             word(REPEAT_BUMP, 0, 0),
@@ -751,8 +752,8 @@ fn greedy_diamond() -> Program {
         ],
         vec![b"prefix".to_vec()],
         vec![],
-        vec![0],
-        vec![],
+        rerail_blocks::vector![0],
+        rerail_blocks::vector![],
     )
     .unwrap();
     program.tree_sitter_query = true;
@@ -829,7 +830,7 @@ fn greedy_contract_rejects_reentry_through_the_preceding_repeat_bump() {
 fn ordered_active_model_waits_for_upstream_regions_before_admitting_shared_headers() {
     let mut program = greedy_diamond();
     let diamond = program.words.clone();
-    program.words = vec![
+    program.words = rerail_blocks::vector![
         word(CAPTURE, 0, 0),
         word(FORK, 0, 11),
         word(REPEAT_BEGIN, 0, 0),
@@ -880,7 +881,7 @@ fn ordered_active_model_waits_for_upstream_regions_before_admitting_shared_heade
 fn greedy_contract_preserves_a_maximum_length_terminal_repetition() {
     let mut program = greedy_diamond();
     let size = usize::from(u16::MAX) + 1;
-    program.words = vec![word(FLAGS, 0, 0); size];
+    program.words = rerail_blocks::vector![word(FLAGS, 0, 0); size];
     program.words[..5].copy_from_slice(&[
         word(CAPTURE, 0, 0),
         word(REPEAT_BEGIN, 0, 0),
@@ -946,7 +947,7 @@ fn ordered_active_model_matches_every_ordered_advancing_graph_on_four_nodes() {
             last = node;
             pending.extend(graph[node].iter().rev().copied());
         }
-        let mut words = vec![
+        let mut words = rerail_blocks::vector![
             word(CAPTURE, 0, 0),
             word(REPEAT_BEGIN, 0, 0),
             word(REPEAT_BUMP, 0, 0),
@@ -975,7 +976,7 @@ fn ordered_active_model_matches_every_ordered_advancing_graph_on_four_nodes() {
             words[at] = word(GOTO, 0, join as u16);
         }
         let mut program =
-            Program::new(words, vec![b"prefix".to_vec()], vec![], vec![0], vec![]).unwrap();
+            Program::new(words, vec![b"prefix".to_vec()], vec![], rerail_blocks::vector![0], rerail_blocks::vector![]).unwrap();
         program.tree_sitter_query = true;
         for selected in 0..4 {
             program.words[exit + 1] = word(SIZE, 0, selected as u16 + 2);

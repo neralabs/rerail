@@ -1,6 +1,7 @@
 # 0120: An edit reaches strata by their deltas, and a kept relation brings its statistics
 
-Status: draft (2026-11-12). It designs 0117's steps 3 and 4. §3 is built as a spike (below); §1 and §2 are not.
+Status: built (audited 2026-11-23). Draft (2026-11-12). It designs 0117's steps 3 and 4. §3 is built as a spike
+(below); §1 and §2 are not.
 
 ## Intro
 

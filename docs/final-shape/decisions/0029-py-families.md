@@ -1,6 +1,6 @@
 # 0029: the `py.*` fact families
 
-Status: accepted (2026-11-03, list step 25)
+Status: built (audited 2026-11-23). Accepted (2026-11-03, list step 25)
 
 ## Context
 

@@ -1,7 +1,7 @@
 # 0364: A recursive stratum is maintained by levels kept with its rows
 
-Status: decided (the user, 2026-11-17). Takes the recursive case of decision 0328's decision 6. Reuses decision 0090's
-*levels, checked*. Retires counting and DRed for recursion.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-17). Takes the recursive case of decision 0328's
+decision 6. Reuses decision 0090's *levels, checked*. Retires counting and DRed for recursion.
 
 ## Intro
 

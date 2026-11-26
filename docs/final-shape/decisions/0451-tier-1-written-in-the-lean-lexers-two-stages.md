@@ -1,7 +1,8 @@
 # 0451: Tier 1 written as Rust in the lean lexer's two stages
 
-Status: decided (2026-11-19). It closes gap A of 0479 and states what is left of gap B. The
-user: "please redo the tier 1 rust generation".
+Status: partly built (audited 2026-11-23). Left: marks' masks (recv, dotted) at the token; escapes into token readers;
+tier 2 reading 31 tier-1 mask words. Decided (2026-11-19). It closes gap A of 0479 and states what is left of gap B.
+The user: "please redo the tier 1 rust generation".
 
 ## Intro
 

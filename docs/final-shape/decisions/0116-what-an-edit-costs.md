@@ -1,7 +1,8 @@
 # 0116: What a one-line edit costs, and why
 
-Status: analysis (2026-11-11). Measured on the 20-file corpus. The fixes it found on the way are built (below),
-and so is step 2 of what it proposes (plans kept across processes). The other steps are not.
+Status: partly built (audited 2026-11-23). Left: step 5: derived relations' frames written by document granule not
+confirmed. Analysis (2026-11-11). Measured on the 20-file corpus. The fixes it found on the way are built (below), and
+so is step 2 of what it proposes (plans kept across processes). The other steps are not.
 
 ## Intro
 

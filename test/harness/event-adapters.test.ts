@@ -37,6 +37,21 @@ describe("lifecycle event adapters", () => {
     expect(AdapterEventSchema.parse(claudeHookEvents({ ...call, agent_id: "agent-a" })[0])).toMatchObject({ agentId: "agent-a" });
   });
 
+  // A shell write in another worktree is the session's own only when its call ran there (#535): the session is named by
+  // its launch folder, `CLAUDE_PROJECT_DIR`, and the call by the hook's `cwd`, which follows the agent's `cd`.
+  it("keeps the folder each Claude and Codex tool call ran in, apart from the folder that names the session", () => {
+    vi.stubEnv("CLAUDE_PROJECT_DIR", process.cwd());
+    try {
+      const claude = claudeHookEvents({ hook_event_name: "PreToolUse", session_id: "s", cwd: "/repo/.claude/worktrees/w", tool_use_id: "t", tool_name: "Bash", tool_input: {} })[0];
+      expect(claude).toMatchObject({ kind: "call", cwd: "/repo/.claude/worktrees/w", session: { cwd: process.cwd() } });
+      expect(AdapterEventSchema.parse(claude)).toMatchObject({ cwd: "/repo/.claude/worktrees/w" });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    const codex = codexHookEvents({ hook_event_name: "PreToolUse", session_id: "s", cwd: "/repo/w", tool_use_id: "t", tool_name: "shell", tool_input: {} })[0];
+    expect(AdapterEventSchema.parse(codex)).toMatchObject({ kind: "call", cwd: "/repo/w" });
+  });
+
   it("takes any text as a Claude MessageDisplay delta, blank or empty included, and rejects a missing one", () => {
     const batch = { hook_event_name: "MessageDisplay", session_id: "claude-1", cwd: "/workspace", message_id: "m1", index: 0, final: true };
     for (const delta of ["", "\n", "Done."]) {

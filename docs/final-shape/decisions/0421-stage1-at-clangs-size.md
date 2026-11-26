@@ -1,8 +1,8 @@
 # 0421: simdjson's stage 1, compiled by ours, at clang's size
 
-Status: decided (the user, 2026-11-18: "trace the 35 extra ands and the 2 extra masks on
-stage1.rir, fix whatever the compiler does wrong there, and update page 39's numbers").
-Follows 0071, 0406, 0417 and 0420.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-18: "trace the 35 extra ands and the 2 extra masks on
+stage1.rir, fix whatever the compiler does wrong there, and update page 39's numbers"). Follows 0071, 0406, 0417 and
+0420.
 
 ## Intro
 

@@ -1,9 +1,9 @@
 # 0576. The kernels' tape reads: one body per format, the format chosen once, 16z checked once
 
-Status: decided (2026-11-21), by the user: "we need to change it completely / include it 3 times with different
-includes, once for each format / format detection happens in one place and is implicit everywhere else / move all
-validation to a single place / have a single read helper (the compiler can inline it if it needs to) / I want simple
-and straightforward code for each one". Amends 0524 §1 (the shape of the hand-written `tape_body.h`).
+Status: built (audited 2026-11-23). Decided (2026-11-21), by the user: "we need to change it completely / include it 3
+times with different includes, once for each format / format detection happens in one place and is implicit everywhere
+else / move all validation to a single place / have a single read helper (the compiler can inline it if it needs to) /
+I want simple and straightforward code for each one". Amends 0524 §1 (the shape of the hand-written `tape_body.h`).
 
 ## Intro
 

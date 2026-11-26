@@ -226,7 +226,7 @@ impl WorkspaceState {
                 resident += bytes;
                 continue;
             }
-            file.input.source = Arc::new(String::new());
+            file.input.source = Arc::new(String::new().into());
             file.tape = None;
             file.results_only = true;
             released += 1;
@@ -250,12 +250,12 @@ thread_local! {
 #[cfg(any(test, feature = "test-hooks"))]
 pub struct TestPhaseGate {
     pub phase: &'static str,
-    pub reached: std::sync::mpsc::Sender<std::sync::Weak<String>>,
+    pub reached: std::sync::mpsc::Sender<std::sync::Weak<crate::code_rule_dsl::tape::Text>>,
     pub release: std::sync::mpsc::Receiver<()>,
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
-fn pause_at_test_phase(phase: &str, source: &Arc<String>) {
+fn pause_at_test_phase(phase: &str, source: &Arc<crate::code_rule_dsl::tape::Text>) {
     TEST_PHASE_GATE.with(|gate| {
         if let Some(gate) = gate.borrow().as_ref().filter(|gate| gate.phase == phase) {
             gate.reached

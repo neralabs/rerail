@@ -1,7 +1,7 @@
 //! E10 (0156 T9, t38): in-memory tapes read in place. Each candidate is built from a file's tree, and
 //! every question is answered on its own bytes, with nothing built beside it.
 //!
-//! - `F15`: format 15's image as it is (code, size, base + off, tail; the code table per tape).
+//! - `E16`: the engine's format 16 tape as captured, read by its own reads.
 //! - `X`: explicit, bit-packed a block at a time: code, subtree size, back distance to the parent,
 //!   start (frame of reference) and length, each with patched exceptions (PFOR).
 //! - `B`: balanced parentheses (format 16's events, one bit an event) with rank samples and excess
@@ -361,7 +361,7 @@ impl Codes {
 pub trait Reader {
     fn bytes(&self) -> usize;
     fn id_of(&self, preorder: usize) -> usize;
-    /// The code's index into the language's table (format 15: its tape's table, mapped by `kind`).
+    /// The code's index into the language's table (`E16`: its language's table, mapped by `kind`).
     fn code(&self, id: usize) -> u32;
     /// The id just past the subtree.
     fn subtree_end(&self, id: usize) -> usize;
@@ -420,102 +420,70 @@ pub trait Reader {
     const PREORDER_IDS: bool;
 }
 
-// ---- F15: format 15 in place ----------------------------------------------------------------------
+// ---- E16: the engine's format 16 tape, as captured, in place -----------------------------------
 
-pub struct F15<'a> {
-    n: usize,
-    code: &'a [u8],
-    size: &'a [u8],
-    base: &'a [u8],
-    off: &'a [u8],
-    tail: &'a [u8],
-    w: [usize; 3],
-    from_start: bool,
-    /// The tape's code number to the language's (for checks).
+/// The capture's tape as the engine wrote it, read where it lies by the tape's own reads
+/// (`rerail_tape_format::reads::f16`): the baseline every candidate is set against.
+pub struct E16<'a> {
+    bytes: &'a [u8],
+    view: rerail_tape_format::reads::TapeView,
+    /// The language's code number to this module's (for checks).
     to_lang: Vec<u32>,
-    image_bytes: usize,
 }
 
-#[inline(always)]
-fn le(col: &[u8], width: usize, i: usize) -> u64 {
-    // SAFETY: format 15 pads every column to 16 bytes, so an 8-byte read at a value stays in the image.
-    let v = unsafe { std::ptr::read_unaligned(col.as_ptr().add(i * width) as *const u64) };
-    v & mask(width as u32 * 8)
-}
-
-impl<'a> F15<'a> {
-    pub fn new(image: &'a [u8], codes: &Codes) -> F15<'a> {
-        use rerail_tape_format::{CHECKPOINT_STRIDE, HEADER_BYTES, TAIL_FROM_START, header, padded};
-        let u64_at = |at: usize| u64::from_le_bytes(image[at..at + 8].try_into().unwrap()) as usize;
-        let w = [image[header::WIDTHS] as usize, image[header::WIDTHS + 1] as usize, (image[header::WIDTHS + 2] & !TAIL_FROM_START) as usize];
-        let from_start = image[header::WIDTHS + 2] & TAIL_FROM_START != 0;
-        let (n, ncodes) = (u64_at(header::NODES), u64_at(header::CODES));
-        let mut at = HEADER_BYTES;
-        let mut column = |width: usize, count: usize| {
-            let c = &image[at..];
-            at = padded(at + width * count);
-            c
-        };
-        let code = column(2, n);
-        let size = column(w[0], n);
-        let base = column(4, n.div_ceil(CHECKPOINT_STRIDE));
-        let off = column(w[1], n);
-        let tail = column(w[2], n);
-        let mut to_lang = Vec::new();
-        let mut c = at;
-        for _ in 0..ncodes {
-            let kf = u16::from_le_bytes([image[c], image[c + 1]]);
-            let flags = image[c + 2];
-            let alias = u16::from_le_bytes([image[c + 3], image[c + 4]]);
-            let count = image[c + 5] as usize;
-            let classes: Vec<u16> = (0..count).map(|k| u16::from_le_bytes([image[c + 6 + 2 * k], image[c + 7 + 2 * k]])).collect();
-            let kind = if alias != u16::MAX { 0x8000 | alias } else { kf & 1023 };
-            to_lang.push(codes.ids.get(&(kind, (kf >> 10) as u8, flags, classes)).copied().unwrap_or(u32::MAX));
-            c += 6 + 2 * count;
-        }
-        F15 { n, code, size, base, off, tail, w, from_start, to_lang, image_bytes: image.len() }
+impl<'a> E16<'a> {
+    pub fn new(image: &'a [u8], codes: &Codes) -> E16<'a> {
+        use rerail_tape_format::f16;
+        let tag = image[f16::head::LANGUAGE];
+        let lang = f16::lang(tag).expect("a captured tape's language has its table");
+        let view = f16::placement(image).and_then(|p| p.view(lang, 0)).expect("a captured format 16 tape");
+        let aliases = crate::captured::aliases(image);
+        let to_lang = lang
+            .table()
+            .entries()
+            .iter()
+            .map(|e| {
+                let kind = match &e.alias {
+                    Some(a) => 0x8000 | aliases.iter().position(|x| x == a).expect("the table's alias") as u16,
+                    None => e.kind,
+                };
+                codes.ids.get(&(kind, e.field as u8, e.flags, e.classes.clone())).copied().unwrap_or(u32::MAX)
+            })
+            .collect();
+        E16 { bytes: image, view, to_lang }
     }
     #[inline(always)]
     fn size(&self, i: usize) -> usize {
-        le(self.size, self.w[0], i) as usize
+        rerail_tape_format::reads::f16::size(self.bytes, &self.view, i as u32) as usize
     }
 }
 
-impl Reader for F15<'_> {
+impl Reader for E16<'_> {
     fn bytes(&self) -> usize {
-        self.image_bytes
+        self.bytes.len()
     }
     fn id_of(&self, p: usize) -> usize {
         p
     }
     #[inline(always)]
     fn code(&self, i: usize) -> u32 {
-        self.to_lang[le(self.code, 2, i) as usize]
+        self.to_lang[rerail_tape_format::reads::f16::number(self.bytes, &self.view, i as u32) as usize]
     }
     #[inline(always)]
     fn subtree_end(&self, i: usize) -> usize {
-        i + self.size(i).max(1)
+        i + self.size(i)
     }
-    /// Not stored: back over the preceding nodes to the first whose subtree holds `i`.
     fn parent(&self, i: usize) -> Option<usize> {
-        let mut j = i;
-        while j > 0 {
-            j -= 1;
-            if j + self.size(j) > i {
-                return Some(j);
-            }
-        }
-        None
+        let p = rerail_tape_format::reads::f16::parent(self.bytes, &self.view, i as u32);
+        (p != rerail_tape_format::reads::NONE).then_some(p as usize)
     }
     #[inline(always)]
     fn start(&self, i: usize) -> u64 {
-        le(self.base, 4, i / rerail_tape_format::CHECKPOINT_STRIDE) + le(self.off, self.w[1], i)
+        u64::from(rerail_tape_format::reads::f16::start(self.bytes, &self.view, i as u32))
     }
     #[inline(always)]
     fn end(&self, i: usize) -> u64 {
-        let last = i + self.size(i).max(1) - 1;
-        let from = if self.from_start { self.start(i) } else { self.start(last) };
-        from.wrapping_add(le(self.tail, self.w[2], i)) & 0xffff_ffff
+        u64::from(rerail_tape_format::reads::f16::end(self.bytes, &self.view, i as u32))
     }
     #[inline(always)]
     fn first_child(&self, i: usize) -> Option<usize> {
@@ -524,14 +492,14 @@ impl Reader for F15<'_> {
     #[inline(always)]
     fn next_sibling(&self, i: usize, pe: usize) -> Option<usize> {
         let j = self.subtree_end(i);
-        (j < pe && j < self.n).then_some(j)
+        (j < pe && j < Reader::len(self)).then_some(j)
     }
     #[inline(always)]
     fn next(&self, id: usize) -> Option<usize> {
         (id + 1 < Reader::len(self)).then_some(id + 1)
     }
     fn len(&self) -> usize {
-        self.n
+        self.view.nodes as usize
     }
     #[inline(always)]
     fn prev(&self, id: usize) -> Option<usize> {

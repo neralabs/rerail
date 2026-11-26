@@ -1,9 +1,9 @@
 # 0382. A Metal compile failure is fatal; no fallback the user has not agreed to
 
-Status: decided (2026-11-17, the user) and built. The user, on the hub's note that a label pipeline that failed
-to compile fell back to the CPU: "please note and implement my decision that Metal failing to compile should always
-be a fatal error, and that fallback paths, especially fallback paths on error, are discouraged unless I have agreed
-to them".
+Status: built (audited 2026-11-23). Decided (2026-11-17, the user) and built. The user, on the hub's note that a label
+pipeline that failed to compile fell back to the CPU: "please note and implement my decision that Metal failing to
+compile should always be a fatal error, and that fallback paths, especially fallback paths on error, are discouraged
+unless I have agreed to them".
 
 ## Intro
 

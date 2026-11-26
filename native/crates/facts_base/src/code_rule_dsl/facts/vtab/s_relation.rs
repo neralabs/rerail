@@ -1,5 +1,6 @@
 //! Compact integer relations exposed without per-row INSERT statements.
 //! A cursor only reads completed facts. It cannot call a matcher or producer.
+use rerail_blocks::vector::Vector;
 use rusqlite::{
     Connection, Result, ffi,
     vtab::{Context, Filters, IndexInfo, Module, VTab, VTabConfig, VTabConnection, VTabCursor},
@@ -15,7 +16,7 @@ use std::{
 
 pub(super) struct Relation {
     columns: &'static [&'static str],
-    cells: Vec<i64>,
+    cells: Vector<i64>,
     pub filters: AtomicU64,
     pub nexts: AtomicU64,
 }
@@ -24,7 +25,7 @@ impl Relation {
         assert!(!columns.is_empty());
         Self {
             columns,
-            cells: Vec::new(),
+            cells: rerail_blocks::vector::Vector::new(),
             filters: AtomicU64::new(0),
             nexts: AtomicU64::new(0),
         }

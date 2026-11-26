@@ -172,7 +172,7 @@ impl ContentStore {
         for (at, raw_length, [seg, seg_at, seg_len], (tape, programs)) in rows {
             // A tape whose segment is gone is a miss: parsed again.
             if let Some(frame) = row_frame(&mut maps, seg, seg_at, seg_len) {
-                out[at as usize] = Some(TapeFrame { raw_length, frame, programs: None });
+                out[at as usize] = Some(TapeFrame::new(raw_length, frame));
                 recorded.push((at as usize, tape, programs));
             }
         }
@@ -212,7 +212,7 @@ impl ContentStore {
                     Some(StoredProgram { document, text, tape })
                 })
                 .collect();
-            frame.programs = programs.map(Into::into);
+            frame.set_programs(programs.map(Into::into));
         }
         Ok(())
     }
@@ -240,7 +240,7 @@ impl ContentStore {
         let mut maps = SegmentMaps::new(object_dir(&self.database_path));
         for (id, raw_length, [seg, seg_at, seg_len]) in rows {
             if let Some(frame) = row_frame(&mut maps, seg, seg_at, seg_len) {
-                out.insert(TapeId(id), TapeFrame { raw_length, frame, programs: None });
+                out.insert(TapeId(id), TapeFrame::new(raw_length, frame));
             }
         }
         Ok(out)
@@ -283,7 +283,7 @@ impl ContentStore {
         for (source, hash, raw_length, [seg, seg_at, seg_len], (tape, programs)) in rows {
             // A tape whose segment is gone is a miss: parsed again.
             if let Some(frame) = row_frame(&mut maps, seg, seg_at, seg_len) {
-                out.push((source, hash, TapeFrame { raw_length, frame, programs: None }));
+                out.push((source, hash, TapeFrame::new(raw_length, frame)));
                 recorded.push((tape, programs));
             }
         }
@@ -328,7 +328,7 @@ impl ContentStore {
         for (source, hash, grammar, raw_length, [seg, seg_at, seg_len], _) in rows {
             // A tape whose segment is gone is a miss: parsed again.
             if let Some(frame) = row_frame(&mut maps, seg, seg_at, seg_len) {
-                out.push((source, hash, grammar, TapeFrame { raw_length, frame, programs: None }));
+                out.push((source, hash, grammar, TapeFrame::new(raw_length, frame)));
             }
         }
         Ok(out)
@@ -1360,56 +1360,4 @@ pub(super) fn source_id_by_hash(
         .map_err(StoreError::from)
 }
 
-/// A stored tape as its row has it (`tape_frames_for`): its bytes in a segment.
-#[derive(Clone, Debug)]
-pub struct TapeFrame {
-    raw_length: i64,
-    frame: ObjectFrame,
-    /// A file's tape: the programs recorded with it (decision 0431 step 6); `None` where not known.
-    programs: Option<Arc<[StoredProgram]>>,
-}
-
-impl TapeFrame {
-    /// A tape of `raw_length` bytes in `frame` (`document_places`: a place its documents' table keeps), its programs
-    /// not known there.
-    pub(super) fn new(raw_length: i64, frame: ObjectFrame) -> Self {
-        Self { raw_length, frame, programs: None }
-    }
-
-    /// A file's tape: the programs recorded with it (decision 0431 step 6); `None` where not known.
-    pub fn programs(&self) -> Option<&[StoredProgram]> {
-        self.programs.as_deref()
-    }
-
-    /// The tape's stored bytes, read in place in its segment.
-    pub fn in_place(&self) -> &[u8] {
-        self.frame.segment().bytes()
-    }
-
-    /// The tape's bytes, read in place: its length checked against its row's.
-    pub fn bytes(&self) -> StoreResult<super::ObjectBytes> {
-        self.frame
-            .bytes(usize::try_from(self.raw_length).unwrap_or(usize::MAX))
-            .map_err(|_| StoreError::Corrupt("tape length does not match metadata".to_owned()))
-    }
-
-    /// The frame's size, as stored.
-    #[allow(clippy::len_without_is_empty)]
-    pub fn len(&self) -> usize {
-        self.frame.len()
-    }
-    pub fn is_empty(&self) -> bool {
-        self.frame.is_empty()
-    }
-
-    /// The tape's length, as its metadata gives it.
-    pub fn raw_len(&self) -> StoreResult<usize> {
-        usize::try_from(self.raw_length).map_err(|_| StoreError::Corrupt("a tape's length".to_owned()))
-    }
-
-    /// The tape's bytes into `out` (`raw_len` of them), read from its segment (decision 0353 step 4a: a tape's load
-    /// writes its one home).
-    pub fn copy_into(&self, out: &mut [u8]) -> std::io::Result<()> {
-        self.frame.copy_into(out)
-    }
-}
+pub use rerail_store_base::content_store::TapeFrame;

@@ -8,7 +8,7 @@ import { openRerailDatabase, recordCheckout, setUpRepository } from "../../../sr
 import { setRepositoryStarted } from "../../../src/runtime/index.js";
 import { installedPackagesOf, type PackStore } from "../../../src/setup/index.js";
 import { directoryPackStore } from "../../support/directory-pack-store.js";
-import { installPackDirectory, linkingPackStore, thirdPartyPack } from "../../support/installed-packs.js";
+import { installPackDirectory, linkingPackStore, thirdPartyPack, withOlderTokenRule } from "../../support/installed-packs.js";
 import { fixturesPath, repositoryPath } from "../../support/oracles.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
@@ -212,6 +212,16 @@ describe("rerail packs list", () => {
 
     expect(text).toMatch(/^ {2}valid@0\.1\.0 {2}Valid: /mu);
     expect(text).toContain("  left out: @aaa/rerail-pack-valid@1.0.0: pack id valid is taken by @neralabs/rerail-pack-valid");
+  });
+
+  it("leaves a rule this Rerail no longer runs out of what starts on, and names it with what runs it again", async () => {
+    const home = temporaryHome();
+    installPackDirectory(withOlderTokenRule(fixturesPath("packs", "valid"), join(home, "copy"), "pass-statement"), "valid", home);
+
+    const text = await packsOutput(["list"], linkingPackStore(home, {}));
+
+    expect(text).toMatch(/^ {2}valid@0\.1\.0 {2}Valid: 1 of 2 rules start on/mu);
+    expect(text).toContain("    1 rule does not run on this Rerail: it tests a token parsed files now leave out, and the pack's next version runs it again: pass-statement\n");
   });
 
   it("lists the worktree's own rules there, saying when they do not run until Rerail is on and the repo set up", async () => {

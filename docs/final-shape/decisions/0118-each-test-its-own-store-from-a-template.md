@@ -1,5 +1,7 @@
 # 0118. Each test has its own store, copied from a template
 
+Status: built (audited 2026-11-23).
+
 ## Intro
 
 The engine keeps what a run learns in a SQLite store: rule files' tapes, plans, planning choices, kept frames. The

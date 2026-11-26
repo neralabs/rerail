@@ -1,4 +1,5 @@
 //! Iteration-indexed recursive execution. Each rule cache reads only preceding-wave versions.
+use rerail_blocks::vector::Vector;
 use super::super::logic::sql::select::{Query, Relation as Rel};
 use super::maintenance::{Delta, Work};
 use super::*;
@@ -20,7 +21,7 @@ const UNSUPPORTED: &str = "unsupported temporal retention: ";
 
 #[derive(Clone)]
 pub struct Relation {
-    indexes: Vec<usize>,
+    indexes: Vector<usize>,
     width: usize,
     keys: usize,
     lattice: bool,

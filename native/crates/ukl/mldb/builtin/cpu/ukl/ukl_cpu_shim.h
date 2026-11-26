@@ -325,17 +325,6 @@ static inline void __ukl_cpu_wait_in(__ukl_cpu_sched* s, __ukl_cpu_thread* t, ui
     __ukl_cpu_pass(s, t);
 }
 
-// The groups the launch runs at once (`resident`, at most its groups, as `__ukl_cpu_run` takes it): every one of
-// them starts before any waits for long, so a persistent grid's join closes at this count (`UKL_GRID_RESIDENT`).
-static inline uint32_t __ukl_cpu_resident()
-{
-    const __ukl_cpu_launch* L = __ukl_sched->launch;
-    uint32_t total = L->grid[0] * L->grid[1] * L->grid[2];
-    uint32_t r = L->resident < 1u ? 1u : L->resident;
-    r = r > __UKL_CPU_MAX_RESIDENT ? __UKL_CPU_MAX_RESIDENT : r;
-    return r > total ? total : r;
-}
-
 // Suspends the calling thread at a barrier of kind `kind` until the scheduler releases it.
 static inline void __ukl_cpu_wait(uint32_t kind)
 {

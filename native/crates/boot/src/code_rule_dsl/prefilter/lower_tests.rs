@@ -2,7 +2,7 @@ use super::*;
 use crate::code_rule_dsl::{
     language::{self, GrammarDialect},
     matcher::AstMatcher,
-    fixtures::{open, temp}, prefilter::fixtures::{matcher, put},
+    fixtures::temp, prefilter::fixtures::{matcher, open, put},
     tape::TapeDoc,
 };
 use crate::content_store::{ContentStore, StoreResult};
@@ -382,14 +382,12 @@ fn regex_vocabulary_fills_once_follows_new_terms_and_dies_with_its_terms() {
     let selected = select_each(&store, lang, std::slice::from_ref(&first), &rules);
     assert_eq!(selected[0][0].0, selected[0][0].1);
     assert_eq!(selected[1][0].0, selected[1][0].1);
-    assert_eq!(count("SELECT count(*) FROM vocabulary_predicate WHERE ready=1"), 2);
-    assert_eq!(count("SELECT count(*) FROM vocabulary_literal"), 2, "an exact literal set joins its literals");
+    assert_eq!(count("SELECT count(DISTINCT expression) FROM vocabulary_term"), 2);
     assert_eq!(count("SELECT count(*) FROM vocabulary_term WHERE expression='^tar'"), 4, "target, tar, tarz, taré");
-    assert_eq!(count("SELECT count(*) FROM vocabulary_term"), 6);
-    assert_eq!(count("SELECT count(*) FROM vocabulary_pending"), 0);
-    // A new tape's new terms are pending until the next statement matches them.
+    assert_eq!(count("SELECT count(*) FROM vocabulary_term"), 6, "an exact literal set is its literals");
+    // A new tape's new terms are tested when a statement next reads the regexes (t33 step 7).
     let second = put(&store, "let tarp = gamma;", lang);
-    assert_eq!(count("SELECT count(*) FROM vocabulary_pending WHERE term IN (SELECT atom FROM atoms WHERE value IN ('tarp','gamma','let'))"), 3);
+    assert_eq!(count("SELECT count(*) FROM vocabulary_term WHERE term=(SELECT atom FROM atoms WHERE value='tarp')"), 0);
     let tapes = [first, second];
     let selected = select_each(&store, lang, &tapes, &rules);
     for per_tape in &selected {

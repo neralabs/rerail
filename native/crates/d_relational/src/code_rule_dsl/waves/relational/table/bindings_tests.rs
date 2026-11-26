@@ -1,5 +1,6 @@
+use rerail_blocks::vector::Vector;
 use super::*;
-struct Rows(Vec<i64>);
+struct Rows(Vector<i64>);
 impl Source for Rows {
     fn columns(&self) -> Vec<String> {
         vec!["value".into()]
@@ -16,7 +17,7 @@ impl Source for Rows {
     fn indexed(&self, _: usize) -> bool {
         false
     }
-    fn lookup(&self, _: usize, _: &[Value]) -> Result<Option<Vec<usize>>> {
+    fn lookup(&self, _: usize, _: &[Value]) -> Result<Option<rerail_blocks::vector::Vector<usize>>> {
         Ok(None)
     }
     fn column(&self, row: usize, _: usize, ctx: &mut Context) -> Result<()> {
@@ -29,14 +30,14 @@ impl Source for Rows {
 #[test]
 fn rebinding_preserves_open_cursor_schema_and_releases_old_payloads() -> Result<()> {
     let db = super::super::Database::open()?;
-    let first = Arc::new(Rows(vec![1, 2]));
+    let first = Arc::new(Rows(rerail_blocks::vector![1, 2]));
     let weak = Arc::downgrade(&first);
     bind(&db, "__context_native", first.clone())?;
     drop(first);
     let mut statement = db.prepare_cached("SELECT value FROM __context_native")?;
     let mut rows = statement.query([])?;
     assert_eq!(rows.next()?.unwrap().get::<_, i64>(0)?, 1);
-    bind(&db, "__context_native", Arc::new(Rows(vec![8])))?;
+    bind(&db, "__context_native", Arc::new(Rows(rerail_blocks::vector![8])))?;
     assert_eq!(rows.next()?.unwrap().get::<_, i64>(0)?, 2);
     assert!(rows.next()?.is_none());
     drop(rows);
@@ -65,8 +66,8 @@ fn cached_execution_plans_distinguish_empty_and_populated_native_estimates() -> 
     let db = super::super::Database::open()?;
     let sources =
         |values| BTreeMap::from([("native".into(), Arc::new(Rows(values)) as Arc<dyn Source>)]);
-    let empty = sources(vec![]);
-    let populated = sources(vec![1, 2, 3, 4]);
+    let empty = sources(rerail_blocks::vector![]);
+    let populated = sources(rerail_blocks::vector![1, 2, 3, 4]);
     assert_ne!(plan_signature(&empty), plan_signature(&populated));
     bind(&db, "native", empty["native"].clone())?;
     db.plan_signature.set(plan_signature(&empty));

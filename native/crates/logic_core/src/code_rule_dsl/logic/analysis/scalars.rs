@@ -1,4 +1,5 @@
 //! Compatibility of retained scalar summaries, independent of their storage and evaluator.
+use rerail_blocks::vector::Vector;
 use super::Decision;
 
 pub fn unused_sum(bound: bool, observed: bool) -> Decision {
@@ -65,6 +66,10 @@ pub enum Kind {
     OrderedJoin,
     Exists,
 }
+
+// A scalar's kind is held in a plan's steps as it is (`setfix::steps`), in its crate (the archive's trait is foreign
+// to the steps').
+rerail_section::plain_archive!(Kind);
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Scalar {
@@ -148,7 +153,7 @@ pub struct Layout {
 }
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct Family {
-    pub members: Vec<usize>,
+    pub members: Vector<usize>,
     pub witness: usize,
     pub layout: Layout,
     pub lookup: Decision,
@@ -207,7 +212,7 @@ fn analyze_mode(inputs: Vec<Scalar>, lookup: bool) -> Analysis {
         }
         let f = selected.unwrap_or_else(|| {
             result.families.push(Family {
-                members: vec![],
+                members: rerail_blocks::vector![],
                 witness: i,
                 layout: Layout::default(),
                 lookup: Decision::new(can_share, if can_share {

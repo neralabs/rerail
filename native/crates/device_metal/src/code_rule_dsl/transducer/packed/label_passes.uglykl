@@ -1123,7 +1123,7 @@ UKL_INLINE void phase_item(UKL_GLOBAL const DocView* docs,UKL_GLOBAL const uint3
   }
   uint32_t valid=!live?0u:(lw*32u+32u<=nodes?0xffffffffu:((1u<<(nodes-lw*32u))-1u));
   // Plain reads and writes of the slots are coherent: another group's, before a barrier, are read after it
-  // (<ukl/grid.h>). Atomics go through `base`.
+  // (`UKL_COHERENT`, Q367). Atomics go through `base`.
   UKL_GLOBAL uint32_t* base=scratch+y*shape.queue;
   UKL_COHERENT uint32_t* cbase=(UKL_COHERENT uint32_t*)base;
   #define PHASE_SLOT(i) (cbase+(i)*shape.recursive)

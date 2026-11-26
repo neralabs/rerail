@@ -169,8 +169,10 @@ mask in_dots    = fill(dots_start, ~d_dot)
 
 # Code outside the directives: its first byte after each directive (or the file's start), one
 # token however long it runs. It starts a line, so it is no `#` (that would be a directive's):
-# said, as a token mark tells kinds by their first byte.
-mask outside    = code & ~blank & ~nl & ~dir_line
+# said, as a token mark tells kinds by their first byte. Nor is it a blank (`blank` holds
+# `code & blankc`): said too, so that the blanks begin no token and `ellipsis`, which shares `.`
+# with `punct`, takes one of them as its kind's byte (decision 0509).
+mask outside    = code & ~blank & ~blankc & ~nl & ~dir_line
 mask code_start = outside & ~hash & ~prev(fill(outside, ~dir_hash))
 token code       = start code_start
 
@@ -189,7 +191,8 @@ token char_lit   = start sq & o_chr & dir_line run c_bytes
 token hash       = start (dir_hash | (d_code & hash)) & ~prev(two_start & d_code & hash) pair two_start
 token identifier = start d_word & idstart & ~prev(d_word) run d_word
 token number     = start d_word & digit & ~prev(d_word) run d_word
-mask d_punct    = d_code & ~d_word & ~hash & ~o_str & ~o_raw & ~o_chr
+# A directive's other bytes, no blank (said, as `outside` says it).
+mask d_punct    = d_code & ~blankc & ~d_word & ~hash & ~o_str & ~o_raw & ~o_chr
 token fn_open    = start fn_paren
 token ellipsis   = start dots_start run in_dots
 token punct      = start d_punct & ~fn_paren & ~in_dots & ~prev(two_start & d_punct) pair two_start

@@ -1,6 +1,6 @@
 # 0067: A batch's files are read in place in residency slabs
 
-Status: accepted (user, 2026-11-07: the list item "Binding residency slabs as the source
+Status: built (audited 2026-11-23). Accepted (user, 2026-11-07: the list item "Binding residency slabs as the source
 buffer; today the batch copies files into one leased block")
 
 ## Intro

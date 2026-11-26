@@ -1,6 +1,7 @@
 # 0476. The parse workers' time is the reference graph's summaries, not the parse
 
-Status: accepted (2026-11-19). Follows 0465 (its next steps 1–3, Q334). Numbered 0466 on final-rerail-shape (renumbered in the roll-up: the hub has its own 0466).
+Status: built (audited 2026-11-23). Accepted (2026-11-19). Follows 0465 (its next steps 1–3, Q334). Numbered 0466 on
+final-rerail-shape (renumbered in the roll-up: the hub has its own 0466).
 
 ## Intro
 

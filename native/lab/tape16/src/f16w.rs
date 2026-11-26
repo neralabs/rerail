@@ -8,8 +8,7 @@
 //! - at `close`: the length, and an inner node's slot (`size << 1`);
 //! - at `finish`: the last node's slot, and the side lists, each block's entries sorted, laid in parts.
 //!
-//! Its output is checked byte for byte against the reader's tape (`F16::new` over the same nodes), and its
-//! cost is set against format 15's writer (`tape_format::preorder_image`) from the same nodes.
+//! Its output is checked byte for byte against the reader's tape (`F16::new` over the same nodes).
 
 use crate::code8::{PART, side_parts};
 use crate::f16::{F16Lang, K, ckpt_width, fit_limit};
@@ -232,9 +231,8 @@ pub struct Report {
     pub files: usize,
     pub nodes: u64,
     pub source: u64,
-    /// Instructions and ns: format 15's writer from the node list; format 16's writer driven as a parser
-    /// drives it; and, with the `lean` feature on `.rerail`, the lean parse with its format-15 write.
-    pub f15: crate::measure::Cost,
+    /// Instructions and ns: format 16's writer driven as a parser drives it; and, with the `lean` feature on
+    /// `.rerail`, the lean parse with its format 16 write.
     pub f16: crate::measure::Cost,
     /// Of `f16`: `finish` alone (the side lists laid in parts).
     pub finish: crate::measure::Cost,
@@ -247,7 +245,7 @@ pub fn run(files: &[&crate::capture::File]) -> Report {
     use crate::f16::{F16, grammar_codes};
     use crate::inplace::Codes;
     use crate::measure::cost;
-    let read = |f: &crate::capture::File| crate::v15::read(&f.image).unwrap_or_else(|e| panic!("{}: {e}", f.path));
+    let read = |f: &crate::capture::File| crate::captured::read(&f.image).unwrap_or_else(|e| panic!("{}: {e}", f.path));
     let mut codes = Codes::default();
     for f in files {
         codes.learn(&read(f));
@@ -263,19 +261,15 @@ pub fn run(files: &[&crate::capture::File]) -> Report {
         let c = &cols[i];
         r.nodes += c.len() as u64;
         r.source += f.source.len() as u64;
-        let recs = crate::writer::records(&f.image).unwrap_or_else(|e| panic!("{}: {e}", f.path));
         // The best of three, each.
         let best = |r: &mut crate::measure::Cost, x: crate::measure::Cost| {
             if r.nanos == 0 || x.nanos < r.nanos {
                 *r = x;
             }
         };
-        let (mut b15, mut b16, mut bf) = (crate::measure::Cost::default(), crate::measure::Cost::default(), crate::measure::Cost::default());
+        let (mut b16, mut bf) = (crate::measure::Cost::default(), crate::measure::Cost::default());
         let mut out = None;
         for _ in 0..3 {
-            let (img, x) = cost(|| rerail_tape_format::preorder_image(f.tag, &f.source, &recs));
-            std::hint::black_box(img);
-            best(&mut b15, x);
             let ((s, z), y) = if lang.widths == [8, 8, 8] {
                 let (w, y) = cost(|| drive::<1>(&lang, c));
                 (cost(|| w.finish()), y)
@@ -289,7 +283,6 @@ pub fn run(files: &[&crate::capture::File]) -> Report {
             best(&mut bf, z);
             out = Some(s);
         }
-        r.f15 += b15;
         r.f16 += b16;
         r.finish += bf;
         r.wrong += usize::from(out.unwrap() != F16::new(c, &lang).streams());
@@ -299,7 +292,7 @@ pub fn run(files: &[&crate::capture::File]) -> Report {
             let mut bl = crate::measure::Cost::default();
             for _ in 0..3 {
                 let (img, x) = cost(|| rerail_rr_syntax::lean::tape(src));
-                std::hint::black_box(img);
+                std::hint::black_box(img.expect("the lean parser writes format 16"));
                 best(&mut bl, x);
             }
             r.lean += bl;
@@ -310,18 +303,13 @@ pub fn run(files: &[&crate::capture::File]) -> Report {
 }
 
 pub fn print_header() {
-    println!("| language | files | nodes | format 15's writer, instructions / ns a node | format 16's writer, instructions / ns a node (of which finish) | lean parse + format 15 write | lean parse + format 16 write (A − B + C) | bytes right |");
-    println!("|---|---|---|---|---|---|---|---|");
+    println!("| language | files | nodes | format 16's writer, instructions / ns a node (of which finish) | lean parse + format 16 write | bytes right |");
+    println!("|---|---|---|---|---|---|");
 }
 
 pub fn print(lang: &str, r: &Report) {
     let nn = r.nodes.max(1) as f64;
     let per = |c: &crate::measure::Cost| format!("{:.0} / {:.1}", c.instructions as f64 / nn, c.nanos as f64 / nn);
-    let (a, e) = if r.lean_files > 0 {
-        let e = r.lean.instructions as f64 - r.f15.instructions as f64 + r.f16.instructions as f64;
-        (per(&r.lean), format!("{:.0}", e / nn))
-    } else {
-        (String::new(), String::new())
-    };
-    println!("| {lang} | {} | {} | {} | {} ({}) | {a} | {e} | {} |", r.files, r.nodes, per(&r.f15), per(&r.f16), per(&r.finish), if r.wrong == 0 { "yes".into() } else { format!("NO ({})", r.wrong) });
+    let a = if r.lean_files > 0 { per(&r.lean) } else { String::new() };
+    println!("| {lang} | {} | {} | {} ({}) | {a} | {} |", r.files, r.nodes, per(&r.f16), per(&r.finish), if r.wrong == 0 { "yes".into() } else { format!("NO ({})", r.wrong) });
 }

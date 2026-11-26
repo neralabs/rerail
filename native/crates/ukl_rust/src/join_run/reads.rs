@@ -16,8 +16,8 @@
 
 use rerail_reads::ids::{INDEX_BITS, Numbering, Run, SLOT_BITS, SPAN_SLOTS};
 use rerail_reads::view::{F16Z_FORMAT, TapeView};
-use rerail_reads::views::{NO_ROW, PLACED_AT, ViewDir, ViewDoc, ViewHome, ViewRow};
-use rerail_reads::tape::{InPlace, f15, f16, f16z};
+use rerail_reads::views::{ANCHOR_ITEM, NO_ROW, PLACE_PAST_COMMENTS, PLACED_AT, ViewDir, ViewDoc, ViewHome, ViewRow};
+use rerail_reads::tape::{InPlace, f16, f16z};
 
 /// A tape where it lies, and its view (the host's: a 16z view's cache at the host's address).
 #[derive(Clone, Copy)]
@@ -30,8 +30,7 @@ macro_rules! by_format {
     ($self:ident, $name:ident($($a:expr),*)) => {
         match $self.v.format {
             16 => f16::$name($self.t, &$self.v, $($a),*),
-            F16Z_FORMAT => f16z::$name($self.t, &$self.v, $($a),*),
-            _ => f15::$name($self.t, &$self.v, $($a),*),
+            _ => f16z::$name($self.t, &$self.v, $($a),*),
         }
     };
 }
@@ -208,7 +207,7 @@ impl<'a> Doc<'a> {
         let t = home(d, row.homes[0], row.tape);
         let mut v = row.view;
         if (*d).cache != 0 && v.format == F16Z_FORMAT {
-            let rel = (home(d, (*d).cache - 1, 0) as i64).wrapping_sub(t as i64);
+            let rel = (home(d, ((*d).cache - 1) as u32, 0) as i64).wrapping_sub(t as i64);
             (v.side[0], v.side[1]) = (rel as u32, (rel >> 32) as u32);
         }
         Doc { e, n: &*items::<Numbering>(&e.numbering), tape: Tape { t: InPlace::new(t), v }, lines: Lines(InPlace::new(home(d, row.homes[1], row.lines))) }
@@ -268,8 +267,20 @@ impl<'a> Doc<'a> {
         match col {
             0 => self.parent_id(l, x),
             1 => self.node_id(l),
-            _ => Self::item(&self.e.places, l),
+            _ => self.place(x),
         }
+    }
+
+    /// Numbered node `l`'s place among its parent's children, its tape node `x` (decision 0656 step 4): an outermost
+    /// anchor's its rank among the anchors; any other's read in its tape's auxiliary index, as its entry's shape
+    /// numbers places (`rerail_reads::tape::place`, the one Rust read of it).
+    unsafe fn place(&self, x: u32) -> u64 {
+        let anchor = ANCHOR_ITEM as u32;
+        if self.n.is(anchor, x) {
+            return u64::from(self.n.rank(anchor, x));
+        }
+        let t = &self.tape;
+        u64::from(rerail_reads::tape::place(t.t, &t.v, x, self.e.place == PLACE_PAST_COMMENTS, |c| t.parent(c), |c| t.number(c), |c| t.end_of(c)))
     }
 
     /// `field` row `i`, of the document's `i`-th node under a field, its tape node `x`: the parent's id, the field
@@ -506,7 +517,8 @@ impl<'a> Doc<'a> {
 }
 
 /// An atoms directory's layout (`rerail_blocks::atoms::AtomsDirRoot`, `DirEntry`; a test holds it to it): its
-/// runs' count and entries, and each entry's first id, end, the id its strings start at, their ends and bytes.
+/// runs' count and entries, and each entry's first id, end, the id its strings start at, their ends and bytes (its
+/// hash table, 0666's, after them: no read here takes it).
 pub(crate) mod atoms_at {
     pub const DIR_N: usize = 0;
     pub const DIR_ENTRIES: usize = 8;
@@ -515,7 +527,7 @@ pub(crate) mod atoms_at {
     pub const E_FROM: usize = 8;
     pub const E_ENDS: usize = 16;
     pub const E_STRINGS: usize = 32;
-    pub const E_SIZE: usize = 48;
+    pub const E_SIZE: usize = 64;
 }
 
 /// The address a span at `p + o` names (its own place plus its offset).

@@ -2,6 +2,7 @@
 //! metavariables its callers pass in), `node_demand` (a recursion that looks at every descendant),
 //! `hoist_ancestor_steps` and `unroll_negative` (a recursion through `!` as UNROLL levels).
 
+use rerail_blocks::vector::Vector;
 use super::lower::R;
 use super::program::{Entry, LibEntry, Program, Rule};
 use super::patterns::Patterns;
@@ -71,8 +72,8 @@ fn connected(px: &Patterns, lits: Vec<String>, seeds: &[String]) -> Vec<String> 
     lits.into_iter().zip(keep).filter(|(_, k)| *k).map(|(l, _)| l).collect()
 }
 
-fn by_head(prog: &Program, entries: &[usize]) -> IndexMap<String, Vec<usize>> {
-    let mut by: IndexMap<String, Vec<usize>> = IndexMap::new();
+fn by_head(prog: &Program, entries: &[usize]) -> IndexMap<String, Vector<usize>> {
+    let mut by: IndexMap<String, Vector<usize>> = IndexMap::new();
     for &e in entries {
         if !prog.arena[e].drop {
             by.entry(prog.arena[e].name().to_owned()).or_default().push(e);
@@ -127,13 +128,13 @@ fn call_sites(px: &Patterns, text: &str, h: &str, ctx: &[String]) -> Vec<Site> {
 }
 
 /// Each helper's callees, transitively (the helpers in `by` its rules name).
-fn reach_of(px: &Patterns, prog: &Program, by: &IndexMap<String, Vec<usize>>, keep: bool) -> BTreeMap<String, Set> {
+fn reach_of(px: &Patterns, prog: &Program, by: &IndexMap<String, Vector<usize>>, keep: bool) -> BTreeMap<String, Set> {
     let mut reach = BTreeMap::new();
     for h in by.keys() {
         let mut r = Set::new();
         let mut todo = vec![h.clone()];
         while let Some(t) = todo.pop() {
-            for &e in by.get(&t).map(Vec::as_slice).unwrap_or(&[]) {
+            for &e in by.get(&t).map(|v| v.as_slice()).unwrap_or(&[]) {
                 let text = prog.arena[e].lits.join(", ");
                 let names = if keep { findall(&px.text_called, &mask_ticks(px, &strip_strings_keep(px, &text))) } else { findall(&px.text_called, &mask_ticks(px, &strip_strings(px, &text))) };
                 for gname in names {
@@ -151,7 +152,7 @@ fn reach_of(px: &Patterns, prog: &Program, by: &IndexMap<String, Vec<usize>>, ke
 struct Demand<'a> {
     entries: &'a [usize],
     inputs: &'a BTreeMap<String, Set>,
-    by: IndexMap<String, Vec<usize>>,
+    by: IndexMap<String, Vector<usize>>,
     reach: BTreeMap<String, Set>,
     sites: Sites,
 }
@@ -167,7 +168,7 @@ impl Demand<'_> {
 
     fn try_demand(&mut self, px: &Patterns, prog: &mut Program, group: &[String]) -> R<bool> {
         let gset: Set = group.iter().cloned().collect();
-        let mut pos: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut pos: BTreeMap<String, Vector<usize>> = BTreeMap::new();
         for h in &gset {
             let empty = Set::new();
             let ins = self.inputs.get(h).unwrap_or(&empty);
@@ -178,7 +179,7 @@ impl Demand<'_> {
             if params[1..].iter().any(|p| !ins.contains(p) && !is_full(UPPER, p)) {
                 return Ok(false);
             }
-            let mut ps = vec![0];
+            let mut ps = rerail_blocks::vector![0];
             ps.extend(params.iter().enumerate().filter(|(_, p)| ins.contains(*p)).map(|(i, _)| i));
             pos.insert(h.clone(), ps);
         }
@@ -262,7 +263,7 @@ impl Demand<'_> {
             let dname = format!("demand_{h}");
             let decl = &prog.decls[&h];
             let cols: Vec<String> = decl[decl.find('(').expect("a declaration") + 1..decl.len() - 1].split(',').map(|c| c.trim().to_owned()).collect();
-            let keep: Vec<usize> = (0..rules.len()).filter(|&i| !rules[..i].contains(&rules[i])).collect();
+            let keep: Vector<usize> = (0..rules.len()).filter(|&i| !rules[..i].contains(&rules[i])).collect();
             let entry: LibEntry = (
                 format!(".decl {dname}({})", pos[&h].iter().map(|&i| cols[i].clone()).collect::<Vec<_>>().join(", ")),
                 vec![format!("// {dname}: the rows of {h} its callers ask for (the metavariable columns they pass in)")],
@@ -608,7 +609,7 @@ impl Tarjan<'_> {
 
 /// A recursive group of helpers through `!` or an aggregate becomes UNROLL levels, level k reading level k-1.
 /// Returns the new entries and the relations declared empty.
-pub fn unroll_negative(px: &Patterns, prog: &mut Program, entries: &[usize], helpers: &Set, inputs: &mut BTreeMap<String, Set>) -> (Vec<usize>, Vec<(String, String)>) {
+pub fn unroll_negative(px: &Patterns, prog: &mut Program, entries: &[usize], helpers: &Set, inputs: &mut BTreeMap<String, Set>) -> (Vector<usize>, Vec<(String, String)>) {
     let by = by_head(prog, entries);
     let names: Vec<String> = helpers.iter().filter(|h| by.contains_key(*h)).cloned().collect();
     let mut graph: BTreeMap<String, Vec<(String, bool)>> = BTreeMap::new();
@@ -634,7 +635,7 @@ pub fn unroll_negative(px: &Patterns, prog: &mut Program, entries: &[usize], hel
         }
     }
     let sccs = t.sccs;
-    let (mut new, mut empty): (Vec<usize>, Vec<(String, String)>) = (Vec::new(), Vec::new());
+    let (mut new, mut empty): (Vector<usize>, Vec<(String, String)>) = (rerail_blocks::vector::Vector::new(), Vec::new());
     for comp in sccs {
         let members: Set = comp.iter().cloned().collect();
         if !comp.iter().any(|v| graph[v].iter().any(|(w, neg)| *neg && members.contains(w))) {

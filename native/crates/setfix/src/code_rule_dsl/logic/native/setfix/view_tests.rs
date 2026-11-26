@@ -1,4 +1,5 @@
 //! A bound input is read in place by the name its statement writes (O-pse-alone-strict).
+use rerail_blocks::vector::Vector;
 use super::*;
 
 /// A relation named like a SQLite keyword is quoted in every statement (`sql::ident`, O106): `plan` is read as
@@ -8,7 +9,7 @@ use super::*;
 fn a_bound_input_named_like_a_sql_keyword_is_read_in_place() {
     let db = Connection::open_in_memory().unwrap();
     let modules = crate::code_rule_dsl::facts::vtab::Modules::default();
-    let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into()], vec![Some(vec![4, 7])]);
+    let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into()], vec![Some(rerail_blocks::vector![4, 7])]);
     modules.bind(&db, "plan", source).unwrap();
     let table = format!("main.{}", crate::code_rule_dsl::logic::sql::ident("plan"));
     assert_eq!(table, "main.\"plan\"");
@@ -35,7 +36,7 @@ fn unquote_reads_back_an_identifier() {
 fn an_export_named_like_an_input_is_read_in_place_by_the_inputs_column_names() {
     let db = Connection::open_in_memory().unwrap();
     let modules = crate::code_rule_dsl::facts::vtab::Modules::default();
-    let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(vec![4, 7]), Some(vec![40, 70])]);
+    let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(rerail_blocks::vector![4, 7]), Some(rerail_blocks::vector![40, 70])]);
     modules.bind(&db, "value", source).unwrap();
     let (n, v) = (crate::code_rule_dsl::logic::sql::select::sql_col("value", 0), crate::code_rule_dsl::logic::sql::select::sql_col("value", 1));
     assert_eq!((n.as_str(), v.as_str()), ("n", "v"), "the statement names `value`'s columns as the input's");
@@ -52,11 +53,11 @@ fn an_export_named_like_an_input_is_read_in_place_by_the_inputs_column_names() {
 fn an_export_named_like_an_input_is_bound_again_with_the_same_columns() {
     let db = Connection::open_in_memory().unwrap();
     let modules = crate::code_rule_dsl::facts::vtab::Modules::default();
-    let source = |rows: Vec<i64>| crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(rows.clone()), Some(rows)]);
-    modules.bind(&db, "value", source(vec![4])).unwrap();
-    modules.bind(&db, "value", source(vec![4, 7])).expect("bound again, the same columns");
+    let source = |rows: Vector<i64>| crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(rows.clone()), Some(rows)]);
+    modules.bind(&db, "value", source(rerail_blocks::vector![4])).unwrap();
+    modules.bind(&db, "value", source(rerail_blocks::vector![4, 7])).expect("bound again, the same columns");
     assert_eq!(crate::code_rule_dsl::facts::vtab::bound_source(&db, "value").unwrap().len(), 2);
-    let other = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into()], vec![Some(vec![1])]);
+    let other = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into()], vec![Some(rerail_blocks::vector![1])]);
     assert!(modules.bind(&db, "value", other).is_err(), "another shape is refused");
 }
 
@@ -67,7 +68,7 @@ fn an_export_named_like_an_input_is_bound_again_with_the_same_columns() {
 fn a_filtered_view_finds_its_rows_on_its_first_scan() {
     let db = Connection::open_in_memory().unwrap();
     let modules = crate::code_rule_dsl::facts::vtab::Modules::default();
-    let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(vec![4, 7, 7]), Some(vec![1, 2, 3])]);
+    let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(rerail_blocks::vector![4, 7, 7]), Some(rerail_blocks::vector![1, 2, 3])]);
     modules.bind(&db, "pairs", source).unwrap();
     let some = view(&db, "main.pairs WHERE c0 = 7", "c1").expect("read in place, filtered");
     assert!(some.ids.as_ref().is_some_and(|ids| ids.get().is_none()), "no row is found to open it");
@@ -83,7 +84,7 @@ fn a_filtered_view_finds_its_rows_on_its_first_scan() {
 /// every column of every row for one column's distinct values (ep2's edit: 15% of its CPU).
 #[test]
 fn a_whole_views_estimate_is_its_sources() {
-    let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["a".into(), "b".into()], vec![Some(vec![1, 1, 2, 2, 3, 3]), Some(vec![5, 6, 7, 8, 9, 10])]);
+    let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["a".into(), "b".into()], vec![Some(rerail_blocks::vector![1, 1, 2, 2, 3, 3]), Some(rerail_blocks::vector![5, 6, 7, 8, 9, 10])]);
     let held = InRel::over_source(Arc::clone(&source), vec![b'i', b'i']);
     let viewed = held.source(vec!["a".into(), "b".into()]);
     assert_eq!(viewed.estimated_matches(0, false), source.estimated_matches(0, false), "the source's estimate");
@@ -115,8 +116,8 @@ fn the_memory_profile_asks_no_view_its_length() {
         fn indexed(&self, _column: usize) -> bool {
             true
         }
-        fn lookup(&self, _column: usize, _values: &[i64]) -> Option<Vec<usize>> {
-            Some(Vec::new())
+        fn lookup(&self, _column: usize, _values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
+            Some(rerail_blocks::vector::Vector::new())
         }
         fn value(&self, _row: usize, _column: usize) -> i64 {
             0

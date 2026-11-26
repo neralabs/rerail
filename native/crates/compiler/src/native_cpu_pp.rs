@@ -170,6 +170,9 @@ pub struct CompiledPp {
     pub ir: Vec<(u32, cranelift_codegen::ir::Function)>,
     /// The run's function's id.
     pub run_id: u32,
+    /// The tape's reads the module declared, by id: what its functions call of them is called as their UKL
+    /// (`clif_ukl::translate`).
+    pub reads: Vec<(u32, &'static rerail_clif::reads::Read)>,
     /// Each function's machine code as Cranelift prints it, the run's first, where asked for
     /// (`disassemble`).
     pub disasm: Vec<String>,
@@ -6656,7 +6659,7 @@ pub fn compile(program: &Words) -> Result<CompiledPp, Error> {
 /// run's entry the kernel `pp_batch` over a batch of contexts, and its fingerprint.
 pub fn ukl_source(program: &Words) -> Result<String, String> {
     let c = compile_kept(program, true).map_err(|e| format!("{e:?}"))?;
-    let one = crate::clif_ukl::translate(&c.ir, &[(c.run_id, "pp_batch")])?;
+    let one = crate::clif_ukl::translate(&c.ir, &[(c.run_id, "pp_batch")], &c.reads)?;
     let h = crate::clif_ukl::fingerprint(&one);
     Ok(format!("{one}\n// This source's fingerprint (`clif_ukl::fingerprint` of what comes before): {h:#x}.\n"))
 }
@@ -6844,7 +6847,8 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
     let code = module.get_finalized_function(id);
     // SAFETY: `pp_run` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, unsafe extern "C" fn(*mut Ctx) -> u64>(code) };
-    Ok(CompiledPp { _module: module, entry, clif, heads: all_heads, code_bytes: sizes, word_insts, ir, run_id: id.as_u32(), disasm, code: code_kept })
+    let reads = rerail_clif::reads::READS.iter().map(|read| (reads.name(read.name).index, read)).collect();
+    Ok(CompiledPp { _module: module, entry, clif, heads: all_heads, code_bytes: sizes, word_insts, ir, run_id: id.as_u32(), reads, disasm, code: code_kept })
 }
 
 #[cfg(test)]

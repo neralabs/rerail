@@ -87,7 +87,7 @@ fn a_runs_chunks_normalize_the_program_once() {
     std::fs::write(&rule, r#"
 .decl def(n: node, x: symbol)
 def(n, x) :- kind(n, "function_definition"), field(n, "name", c), text(c, x).
-.decl calls(n: node, x: symbol)
+.decl calls(n: node, x: symbol) cross_file
 calls(n, x) :- kind(n, "call"), field(n, "function", c), text(c, x), def(_, x).
 .output calls
 "#).unwrap();
@@ -141,7 +141,7 @@ fn a_program_reading_the_import_closure_has_its_rules() {
     let text = program(
         r#"
 #include "core.rerail"
-.decl seen(p: symbol, q: symbol)
+.decl seen(p: symbol, q: symbol) cross_file
 seen(p, q) :- rr_cx_reach(d, e), d != e, doc(d, p, _), doc(e, q, _).
 .output seen
 "#,
@@ -149,7 +149,7 @@ seen(p, q) :- rr_cx_reach(d, e), d != e, doc(d, p, _), doc(e, q, _).
     .unwrap();
     run(&text).unwrap();
     assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "seen").unwrap(), [["b.py", "a.py"]]);
-    let err = program(".pragma \"cross-memo\" \"seen\"\n.decl seen(p: symbol)\nseen(p) :- doc(_, p, _).\n.output seen\n").err().map(|e| format!("{e:?}")).unwrap_or_default();
+    let err = program(".pragma \"cross-memo\" \"seen\"\n.decl seen(p: symbol) cross_file\nseen(p) :- doc(_, p, _).\n.output seen\n").err().map(|e| format!("{e:?}")).unwrap_or_default();
     assert!(err.contains("cross-memo") && err.contains("removed"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -286,13 +286,18 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
         let (first, expected) = run(texts, src, true);
         let (ran, all) = first.cross_kept.expect("a run with a store keeps its cross-file part");
         assert_eq!(ran, all, "the first run evaluates every stratum");
-        assert_eq!(run(texts, src, false).1, expected);
+        // Its states: the first run's, then each edit's (`fresh_tier`).
+        if super::fresh_tier::compared(0, edits.len() + 1) {
+            assert_eq!(run(texts, src, false).1, expected);
+        }
         let (mut maintained, mut recursive) = (0, 0);
-        for (path, text) in edits {
+        for (i, (path, text)) in edits.iter().enumerate() {
             std::fs::write(src.join(path), text).unwrap();
             let (report, got) = run(texts, src, true);
-            let (_, want) = run(texts, src, false);
-            assert_eq!(got, want, "after editing {path}, the findings are those of a run with an empty store");
+            if super::fresh_tier::compared(i + 1, edits.len() + 1) {
+                let (_, want) = run(texts, src, false);
+                assert_eq!(got, want, "after editing {path}, the findings are those of a run with an empty store");
+            }
             eprintln!("{path}: {:?} strata, {:?} maintained (recursive, derived again; {:?}); {} findings", report.cross_kept, report.cross_maintained, report.cross_again, got.len());
             maintained += report.cross_maintained.0;
             recursive += report.cross_maintained.1;
@@ -329,7 +334,7 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
     std::fs::write(
         &rule,
         ".policy \"test-import-cycle\" revision 1\n.description \"An import that closes a cycle of imports.\"\n.language python\n.mode steer\n\
-         .scope include \"**/*.py\"\n#include \"python/names.rerail\"\n.decl dep(a: number, b: number)\ndep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).\n\
+         .scope include \"**/*.py\"\n#include \"python/names.rerail\"\n.decl dep(a: number, b: number) cross_file\ndep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).\n\
          .decl reach(a: number, b: number) no_reach\nreach(a, b) :- dep(a, b).\nreach(a, c) :- reach(a, b), dep(b, c).\n\
          .violation CYC(at: node) code \"CYC\" \"This import closes a cycle of imports.\"\nCYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).\n",
     )
@@ -354,7 +359,7 @@ pub(super) const REACH_RULE: &str = r#".policy "test-reach-index" revision 1
 .mode steer
 .scope include "**/*.py"
 #include "python/names.rerail"
-.decl dep(a: number, b: number)
+.decl dep(a: number, b: number) cross_file
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
 .decl own(a: number)
 own(a) :- doc(a, _, _).
@@ -434,14 +439,20 @@ fn the_reach_index_is_derived_again_when_cycles_and_connections_change_in_a_new_
         findings()
     };
     let first = run(true);
-    assert_eq!(run(false), first);
+    // Its states: the first run's, then each edit's (`fresh_tier`).
+    let states = REACH_EDITS.len() + 1;
+    if super::fresh_tier::compared(0, states) {
+        assert_eq!(run(false), first);
+    }
     assert!(first.iter().any(|f| f.iter().any(|v| v.contains("CYC"))), "the first cycle's imports: {first:?}");
     let mut codes = std::collections::BTreeSet::new();
-    for (path, text, what) in REACH_EDITS {
+    for (i, (path, text, what)) in REACH_EDITS.iter().enumerate() {
         std::fs::write(src.join(path), text).unwrap();
         let got = run(true);
-        let want = run(false);
-        assert_eq!(got, want, "after editing {path} ({what}), the findings are those of a run with an empty store");
+        if super::fresh_tier::compared(i + 1, states) {
+            let want = run(false);
+            assert_eq!(got, want, "after editing {path} ({what}), the findings are those of a run with an empty store");
+        }
         codes.extend(got.iter().flat_map(|f| ["CYC", "INCYC", "TOF", "SEESE", "DIRECT"].into_iter().filter(|c| f.iter().any(|v| v.contains(c)))));
     }
     assert_eq!(codes.len(), 5, "every reader's findings appeared along the edits: {codes:?}");
@@ -493,7 +504,7 @@ fn cross_file_strata_are_kept_across_runs_in_the_tape_cache() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl used(f: node)
 used(f) :- uses(_, f).
@@ -545,7 +556,7 @@ fn a_finding_of_three_columns_held_cross_file_is_read_where_it_is() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl used(f: node)
+.decl used(f: node) cross_file
 used(f) :- imp(_, q), def(f, q).
 .decl finding(category: symbol, q: symbol, n: node)
 finding("unused", q, f) :- def(f, q), !used(f).
@@ -651,6 +662,40 @@ fn the_cone_of_requests_is_kept_while_its_reads_and_answers_are() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The cone's strata are kept for every root (`kept_strata::cone_space_shared`, unless `RERAIL_CONE_SPACE=root`): a
+/// corpus's first run finds clean the strata another corpus's run over the same libraries kept, and loads what a run
+/// with nothing kept loads.
+#[test]
+fn a_corpus_first_run_reads_the_cone_strata_another_root_kept() {
+    if std::env::var("RERAIL_CONE_SPACE").is_ok_and(|v| v == "root") {
+        return;
+    }
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("cone-shared");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (a, b) = (dir.join("a"), dir.join("b"));
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    std::fs::write(a.join("main.py"), "import os\n").unwrap();
+    std::fs::write(b.join("tool.py"), "import os\nx = 1\n").unwrap();
+    let rule = dir.join("p.rerail");
+    std::fs::write(&rule, "#include \"python/modules.rerail\"\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n").unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    let run = |root: &std::path::Path, store: &str| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        let report = super::run(&text, root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let mut loaded = crate::code_rule_dsl::logic::plan::output::shown(&out, "n_loaded").unwrap();
+        loaded.sort();
+        (report.cone_kept, loaded)
+    };
+    run(&a, "kept.sqlite");
+    let (kept, loaded) = run(&b, "kept.sqlite");
+    let (evaluated, of) = kept.expect("a run with a store keeps its cone");
+    assert!(evaluated < of, "b's first run evaluates only the strata a's left unclean: {evaluated} of {of}");
+    assert_eq!(loaded, run(&b, "fresh.sqlite").1, "b's loads are a run's with nothing kept");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0145: the cone run as rounds from the last run's final round finds what the gated fixpoint over
 /// nothing kept finds, edit after edit: a new import, a library's own import, an import taken away (its load is
 /// not asked again), and a library file that goes.
@@ -685,13 +730,17 @@ fn the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads() {
         loaded.sort();
         (report.cone_rounds, loaded)
     };
+    // The edits below, each a state checked against a fresh run's in the full tier, the last in every tier (`fresh_tier`).
+    const EDITS: usize = 5;
     let both = |what: &str, want: &[&str]| {
         let (rounds, kept) = run("kept.sqlite");
         fresh.set(fresh.get() + 1);
-        let (none, again) = run(&format!("fresh-{}.sqlite", fresh.get()));
+        if super::fresh_tier::compared(fresh.get() - 1, EDITS) {
+            let (none, again) = run(&format!("fresh-{}.sqlite", fresh.get()));
+            assert_eq!(none, 0, "{what}: a run with nothing kept runs the fixpoint");
+            assert_eq!(kept, again, "{what}: rounds load what the fixpoint loads");
+        }
         assert!(rounds > 0, "{what}: the kept run runs rounds");
-        assert_eq!(none, 0, "{what}: a run with nothing kept runs the fixpoint");
-        assert_eq!(kept, again, "{what}: rounds load what the fixpoint loads");
         assert_eq!(kept, want, "{what}");
     };
     assert_eq!(run("kept.sqlite"), (0, vec!["a.pyi".to_owned(), "b.pyi".to_owned(), "builtins.pyi".to_owned()]), "the first run is the fixpoint");
@@ -842,7 +891,7 @@ fn a_new_process_maintains_the_cross_file_part_from_the_kept_rows() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl used(f: node)
 used(f) :- uses(_, f).
@@ -895,7 +944,7 @@ fn a_maintained_run_decodes_and_copies_no_tree() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl used(f: node)
 used(f) :- uses(_, f).
@@ -941,7 +990,7 @@ fn a_maintained_strata_pieces_run_as_one_component() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl used(f: node)
 used(f) :- uses(_, f).
@@ -974,12 +1023,15 @@ lone(f) :- unused(f), !used(f), def(f, q), !imp(_, q).
         ("c.py", "from b import g\ndef h():\n    pass\n"),
         ("b.py", "def g():\n    pass\n"),
     ];
+    let n = edits.len();
     for (i, (file, body)) in edits.into_iter().enumerate() {
         write(file, body);
         let (maintained, rows, pieces) = run("kept.sqlite");
         together += pieces;
-        let (_, fresh, _) = run(&format!("fresh{i}.sqlite"));
-        assert_eq!(rows, fresh, "after edit {i} ({file})");
+        if super::fresh_tier::compared(i, n) {
+            let (_, fresh, _) = run(&format!("fresh{i}.sqlite"));
+            assert_eq!(rows, fresh, "after edit {i} ({file})");
+        }
         assert!(maintained > 0, "edit {i}: a changed stratum maintained from the kept rows");
     }
     assert!(together > 0, "a stratum's pieces ran together, or the maintain mode ran it as one component");
@@ -1013,7 +1065,7 @@ fn a_cycle_closed_by_an_empty_relation_still_keeps_levels() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl never(n: node)
 never(n) :- kind(n, "no_such_kind").
@@ -1066,7 +1118,7 @@ fn the_maintain_mode_keeps_aggregates_by_their_groups_and_computed_heads() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl fanout(f: node, n: number)
 fanout(f, n) :- def(f, _), n = count : { uses(_, f) }.
@@ -1099,11 +1151,14 @@ named(n, @dot(q, q)) :- uses(n, f), def(f, q).
         ("c.py", "def h():\n    pass\n", "two uses gone: f's count falls, g's group empties"),
         ("b.py", "def g():\n    pass\n", "every use gone"),
     ];
+    let n = edits.len();
     for (i, (file, body, what)) in edits.into_iter().enumerate() {
         write(file, body);
         let (rows, mode) = run("kept.sqlite");
-        let (fresh, _) = run(&format!("fresh{i}.sqlite"));
-        assert_eq!(rows, fresh, "after {what}");
+        if super::fresh_tier::compared(i, n) {
+            let (fresh, _) = run(&format!("fresh{i}.sqlite"));
+            assert_eq!(rows, fresh, "after {what}");
+        }
         assert!(mode > 0, "after {what}: the maintain mode maintained strata");
     }
     let _ = std::fs::remove_dir_all(&dir);
@@ -1125,7 +1180,7 @@ fn a_relation_two_programs_share_is_kept_once_and_a_rule_edit_reaches_only_its_r
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .output uses
 "#;
@@ -1231,6 +1286,52 @@ fn a_programs_facts_of_a_library_relation_ask_of_the_library() {
     assert_eq!(v.fact_rows(&threshold).len(), 1, "{threshold}: {:?}", v.fact_names().into_iter().filter(|k| k.contains("threshold")).collect::<Vec<_>>());
 }
 
+/// match-frames' `mf_def` (the innermost def around a node, read off the tree per node) has the rows of the climb it
+/// replaced: `mf_up`, the innermost def, class or decorator, a decorator standing for its definition, climbed through
+/// the classes. Over nested defs and classes, decorated defs and classes, decorators with lambdas and calls, and a
+/// decorated class inside a decorated class.
+#[test]
+fn mf_def_is_the_climb_through_classes() {
+    let program = ".language python\n#include \"data-layer/match-frames.rerail\"\n\
+        .decl om(k: symbol)\nom(\"function_definition\"). om(\"class_definition\"). om(\"decorator\").\n\
+        .decl oup(n: node, o: node)\n\
+        oup(n, o) :- nearest(n, o, om), !kind(o, \"decorator\").\n\
+        oup(n, o) :- nearest(n, dc, om), kind(dc, \"decorator\"), child(dd, dc, _), field(dd, \"definition\", o).\n\
+        .decl odef(n: node, f: node)\n\
+        odef(n, f) :- oup(n, f), kind(f, \"function_definition\").\n\
+        odef(n, f) :- oup(n, k), kind(k, \"class_definition\"), odef(k, f).\n\
+        .decl gap(side: symbol, k: symbol, l: number, lf: number)\n\
+        gap(\"new\", k, l, lf) :- mf_def(n, f), !odef(n, f), kind(n, k), line(n, l), line(f, lf).\n\
+        gap(\"old\", k, l, lf) :- odef(n, f), !mf_def(n, f), kind(n, k), line(n, l), line(f, lf).\n\
+        gap(\"new up\", k, l, lf) :- mf_up(n, f), !oup(n, f), kind(n, k), line(n, l), line(f, lf).\n\
+        gap(\"old up\", k, l, lf) :- oup(n, f), !mf_up(n, f), kind(n, k), line(n, l), line(f, lf).\n.output gap\n\
+        .decl rows(k: number) cross_file\nrows(k) :- k = count : { mf_def(_, _) }.\n.output rows\n\
+        .decl decorated(l: number, lf: number)\n\
+        decorated(l, lf) :- mf_def(n, f), kind(n, \"identifier\"), text(n, x), (x = \"w\" ; x = \"v\" ; x = \"arg\" ; x = \"q\" ; x = \"p\" ; x = \"c\"), line(n, l), line(f, lf).\n.output decorated\n";
+    let py = "@top(lambda q: q)\ndef f(a=lambda: 1):\n    class B:\n        x = 1\n        @staticmethod\n        def m(self):\n            def g():\n                return h(1)\n            return g\n        @deco(arg(2))\n        class Inner:\n            y = 2\n    return B\n@cls_deco(z)\nclass C:\n    def n(self):\n        @wrap(w)\n        class D:\n            @d2(v)\n            class E:\n                pass\n        return D\nu = 3\ndef outer():\n    @wrap2(p)\n    def inner():\n        return p2\n    if p:\n        @a\n        @b(c)\n        def k(): pass\n    return inner\n";
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("mf-def");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), py).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let out = dir.join("out");
+    super::run_all(&[program], &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
+    let (gap, rows, decorated) = (read("gap"), read("rows"), read("decorated"));
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(gap.is_empty(), "mf_def against the climb: {gap:?}");
+    let n: usize = rows.first().and_then(|r| r.first()).and_then(|k| k.parse().ok()).unwrap_or(0);
+    assert!(n > 40, "mf_def's rows: {rows:?}");
+    // `q` (top's lambda, f's decorator) is f's (line 2); `arg` (Inner's decorator) is f's, through B and Inner;
+    // `w` (D's decorator) is n's (line 16); `v` (E's, a class decorating inside a decorated class) is n's too. In a
+    // function's body, `p` (inner's decorator, line 25) is inner's (26); `if p` (28) is outer's (24); `c` (k's
+    // second decorator, 30) is k's (31).
+    let mut got: Vec<(String, String)> = decorated.iter().map(|r| (r[0].clone(), r[1].clone())).collect();
+    got.sort();
+    let want: Vec<(String, String)> = [("1", "2"), ("10", "2"), ("17", "16"), ("19", "16"), ("25", "26"), ("28", "24"), ("30", "31")].iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+    assert_eq!(got, want);
+}
+
 /// A library's kind set that a program reads by `nearest` (ruff-n807's `nearest(f, s, scope)` over python/names.rerail's
 /// `scope`) has the library's kinds in a pack, as alone. Lowered in its library's scope, the program was seeded the
 /// set's declaration but not its facts, so it held `scope` empty, and its `nearest` climbed to nothing: ruff-n807,
@@ -1295,6 +1396,25 @@ fn alone_and_together(name: &str, file: (&str, &str), first: &str, other: &str, 
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
     let _ = std::fs::remove_dir_all(&dir);
     (alone, together)
+}
+
+/// RUF034 alone: `value` answered on request, and python/ast.rerail's demand on `unparen`. `value`'s request reads
+/// `unparen`, whose demand comes from `same_pair`, which negates `same_leaf`, which reads `value`: the demand leaves
+/// `same_pair` out to stay stratified, and then joins the compared nodes by a child's position only, across files. Its
+/// answer was cross-file once preparation applied the demand, after combining had judged it file-local, and the run
+/// was refused ("`value` is answered on request in the cross-file part"). Beside a reader of `value` across files it
+/// ran, `value` eager. Alone it runs too, and finds what it finds there.
+#[test]
+fn an_answer_the_programs_demand_puts_across_files_is_eager_alone_as_in_a_pack() {
+    let same = ".language python\n#include \"python/compare.rerail\"\n.decl same(l: number)\nsame(l) :- branches(e, a, b), cmp_same(a, b), line(e, l).\n\
+                .decl branches(e: node, a: node, b: node)\nbranches(e, a, b) :- kind(e, \"conditional_expression\"), child(e, a, 0), child(e, b, 2).\n\
+                cmp_same_ask(a, b) :- branches(_, a, b).\n.output same\n";
+    let across = ".language python\n.decl twin(v: symbol) cross_file\n\
+                  twin(v) :- kind(n, \"integer\"), kind(m, \"integer\"), docof(n, d), docof(m, e), d != e, value(n, v), value(m, v).\n.output twin\n";
+    let py = "x = 1 if f else 1\ny = 1 if f else 0\nz = 0x10 if f else 16\nw = (2) if f else 2.0\n";
+    let (alone, together) = alone_and_together("demand-across-files", ("a.py", py), same, across, "same");
+    assert_eq!(together, [["1"], ["3"]], "the same branches, literals by value");
+    assert_eq!(alone, together);
 }
 
 /// A `match_all` over a library relation's node (FAST003's over `route_path`'s `s`, a string by `plain_str`) scans
@@ -1523,7 +1643,6 @@ fn a_python_file_no_package_holds_is_unpackaged() {
 /// file. Its context was the inputs alone (`str_node`), and a module of 111k string pairs (netbox's `un_locode.py`)
 /// asked for every one: 297k parses, past 25 minutes and 33 GB.
 #[test]
-#[ignore = "Q322: python/typing's file-local `pyi_sym` and the guests answered in the fixpoint (0431 §8) make one component that negates `typing_sym`"]
 fn a_parse_request_asks_only_for_the_strings_its_rule_reads() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("request-context");
     let _ = std::fs::remove_dir_all(&base);
@@ -1667,6 +1786,7 @@ fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, fil
     super::test_store::begun(&store);
     let manifests = || -> Vec<(Vec<u8>, Vec<u8>)> {
         let db = rusqlite::Connection::open(&store).unwrap();
+        crate::content_store::install_kept_tables(&db).unwrap();
         let mut rows: Vec<(Vec<u8>, Vec<u8>)> = db.prepare("SELECT digest, sources FROM corpus_manifests").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().flatten().collect();
         rows.sort();
         rows
@@ -1802,6 +1922,7 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
     super::test_store::begun(&store);
     let manifests = || -> Vec<(Vec<u8>, Vec<u8>)> {
         let db = rusqlite::Connection::open(&store).unwrap();
+        crate::content_store::install_kept_tables(&db).unwrap();
         let mut rows: Vec<(Vec<u8>, Vec<u8>)> = db.prepare("SELECT digest, sources FROM corpus_manifests").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().flatten().collect();
         rows.sort();
         rows
@@ -1850,7 +1971,6 @@ fn a_handed_programs_hidden_form_is_kept_under_its_texts() {
 /// the combined program's readers; each part lowered alone made `rr_value_req` read `literal_leaf`, recursive
 /// with `value` through that negation, and the pair was refused as not stratifiable.
 #[test]
-#[ignore = "Q322: python/typing's file-local `pyi_sym` and the guests answered in the fixpoint (0431 §8) make one component that negates `typing_sym`"]
 fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
     use crate::code_rule_dsl::typing::file_local::Binding;
     let dir = std::env::temp_dir().join(format!("rerail-pyi062-pyi059-{}", std::process::id()));
@@ -1875,6 +1995,7 @@ fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
 /// the undo then dropped the inputs they read (`rr_token_anon`, `rr_token_named`), and the combined run failed on an
 /// undeclared relation (Q67: these three of the data-layer pack, on any file).
 #[test]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn programs_hidden_alone_keep_their_attribute_copies_declared() {
     use crate::code_rule_dsl::typing::file_local::Binding;
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("token-copies");
@@ -1911,7 +2032,7 @@ fn a_cross_file_text_test_is_maintained_as_a_filter() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl passes(f: node)
 passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
@@ -1933,17 +2054,53 @@ passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
         ("b.py", "def g():\n    pass\n"),
     ];
     let mut tested = false;
+    let n = edits.len();
     for (i, (file, body)) in edits.into_iter().enumerate() {
         write(file, body);
         let (report, rows) = run("kept.sqlite");
-        let (_, fresh) = run(&format!("fresh{i}.sqlite"));
-        assert_eq!(rows, fresh, "after edit {i} ({file})");
+        if super::fresh_tier::compared(i, n) {
+            let (_, fresh) = run(&format!("fresh{i}.sqlite"));
+            assert_eq!(rows, fresh, "after edit {i} ({file})");
+        }
         // The program's one native is the text test.
         assert!(!report.cross_again.contains_key("a relation made natively"), "edit {i}: the text test is maintained, not derived again: {:?}", report.cross_again);
         tested |= report.text.0 > 0;
     }
     assert!(tested, "the program has a text test");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A text a `join` makes, read by `cat(w, ":", j)`, gives its row in a store where neither text is an atom yet. The cat
+/// checks `j` against the text it recovers from `m`: a test of a bound slot, whose `j` the walk made and deferred
+/// (`Deferred`). Looked up as a probe's text, a deferred text was no atom, and the row was dropped: phase 0 planned no
+/// module of two files (`core:a+b`), and every program reading one failed ("in no module of phase 0's plan").
+#[test]
+fn a_cat_of_a_text_its_join_made_keeps_its_row() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("cat-of-join");
+    std::fs::create_dir_all(dir.join("corpus")).unwrap();
+    // Texts no store holds: the joined texts and the names are made in this run.
+    let nonce = format!("{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let program = format!(r#"
+.decl g(p: symbol)
+.decl member(p: symbol, q: symbol)
+.decl name(p: symbol, m: symbol)
+g("a"). g("b"). g("c").
+member("a", "x1{nonce}"). member("a", "x2{nonce}"). member("b", "y{nonce}"). member("c", "z1{nonce}"). member("c", "z2{nonce}"). member("c", "z3{nonce}").
+name(p, m) :- g(p), j = join q by q sep "+" : {{ member(p, q) }}, m = cat("core", ":", j).
+.output name
+"#);
+    let out = dir.join("out");
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    super::run(&program, &dir.join("corpus"), None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let mut rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "name").unwrap();
+    rows.sort();
+    let _ = std::fs::remove_dir_all(&dir);
+    let want: Vec<Vec<String>> = vec![
+        vec!["a".into(), format!("core:x1{nonce}+x2{nonce}")],
+        vec!["b".into(), format!("core:y{nonce}")],
+        vec!["c".into(), format!("core:z1{nonce}+z2{nonce}+z3{nonce}")],
+    ];
+    assert_eq!(rows, want, "each group's name, its members joined");
 }
 
 /// A cross-file reader of a node's text (`passes` reads `uses`, which joins two files) finds it (O-cross-file-answers):
@@ -1962,7 +2119,7 @@ fn a_cross_file_reader_finds_the_text_of_another_files_node() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl passes(f: node)
 passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
@@ -2116,12 +2273,17 @@ fn every_switch_lowering_reads_is_classified() {
     let region = |from: &str, to: &str| region_of("corpus.rs", &corpus, from, to);
     let base_region = |from: &str, to: &str| region_of("corpus/base.rs", &base, from, to);
     // Combining: `combine_tail` (its link, `combine_linked_as`, and its tail, `tail_version`), what it calls that
-    // reads a switch (`scoping`, the tail's passes), and the `.rerail` lowering its `rr::parse` runs
-    // (`logic/rr`, `front`). The combined program is kept under `COMBINING` alone.
+    // reads a switch (`scoping`, the tail's passes), the `.rerail` lowering its `rr::parse` runs (`logic/rr`,
+    // `front`), and the passes it replays to judge an answer as the program's own demand leaves it
+    // (`answers_where_documents_are_version` through `reading_demanded`: simplify, reach index, demand). The combined
+    // program is kept under `COMBINING` alone.
     let mut combining = sources(&[
         "logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs", "logic/plan/corpus/preparation/whole.rs",
         "logic/plan/corpus/preparation/on_request.rs", "logic/plan/corpus/preparation/hide.rs", "logic/plan/corpus/link.rs",
+        "logic/plan/corpus/preparation/simplify.rs", "logic/plan/corpus/preparation/prune.rs", "logic/plan/corpus/preparation/demand.rs",
+        "logic/plan/corpus/preparation/magic.rs", "logic/plan/corpus/preparation/magic",
     ]);
+    combining.push(("corpus/base.rs, answers_where_documents_are_version".to_owned(), base_region("\npub fn answers_where_documents_are_version(", "\n/// The programs `programs` linked into one")));
     combining.push(("corpus/base.rs, combine_tail".to_owned(), base_region("\npub fn combine_tail(", "\n}\n")));
     combining.push(("corpus/base.rs, the combine's tail".to_owned(), base_region("\npub enum Tail {", "\n/// The programs `programs` linked into one")));
     // The link: `combine_linked_as`, its modes, `combine_linked_spliced` and the splice (`combine_spliced`).
@@ -2240,7 +2402,7 @@ const CROSS_FILE_VALUES: &str = r#"
 ann_node(m, x) :- string_annotation(n), parsed(n, "annotation", _), guest_of(m, n), kind(m, "identifier"), text(m, x).
 .decl cls(c: node, x: symbol)
 cls(c, x) :- kind(c, "class_definition"), field(c, "name", i), text(i, x).
-.decl refers(m: node, c: node)
+.decl refers(m: node, c: node) cross_file
 refers(m, c) :- ann_node(m, x), cls(c, x).
 .decl shown(x: symbol, p: symbol, l: number)
 shown(x, p, l) :- refers(m, c), text(m, x), guest_place(m, _, l, _), docof(c, d), doc(d, p, _).
@@ -2909,6 +3071,41 @@ holes(x, k, l) :- sql_template_hole(_, i, k), text(i, x), line(i, l).
     assert_eq!(holes, [row(&["{col}", "name", "3"]), row(&["{table}", "table", "3"]), row(&["{uid}", "value", "2"]), row(&["{uid}", "value", "3"])]);
 }
 
+/// Decision 0597 rule 8: a pass's kept rows are an input of every chunk, bound empty where the chunk admits no tape
+/// value. PYI050 as it was written before d6fec0755c (its `parsed` in a branch of its own body), beside ASYNC100,
+/// makes the annotation context's pass read `def_outside`, whose kept rows (`…_rr_kept`) the program declares; over a
+/// file with no string to parse, the chunk answers no request in its fixpoint, and they were left unbound: its plan
+/// failed ("no statistics for rr_pass_annotation_def_outside_rr_kept.c0") where the engine before the hub's merge ran.
+#[test]
+fn a_pass_kept_rows_are_bound_in_a_chunk_that_admits_no_value() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("pass-kept-empty");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+    let pack = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../docs/rule-syntax/packs/python");
+    let async100 = std::fs::read_to_string(pack.join("ruff-async100-cancel-scope-no-checkpoint.rerail")).unwrap();
+    let pyi050 = "\
+.policy \"t:pyi050-before\" revision 1
+.language python
+#include \"python/typing.rerail\"
+#include \"python/version.rerail\"
+.violation PYI050(at: node) code \"PYI050\" \"NoReturn as a parameter's annotation\"
+PYI050(t) :- kind(f, \"function_definition\"), applies(f), sig_param(f, _, _, _, _, a, _), !unset(a), type_bare(a, t),
+    (typing_sym(t, \"NoReturn\") ; parsed(t, \"annotation\", r), type_bare(r, n), typing_sym(n, \"NoReturn\")).
+.decl applies(f: node)
+applies(f) :- in_stub(f).
+applies(f) :- kind(f, \"function_definition\"), targets(11).
+";
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    // As the `logic` command runs a folder of rule files: one run of them all, the memo on.
+    let options = serde_json::json!({ "reuse": true });
+    let ran = super::run_with_parsed(&[async100.as_str(), pyi050], &[None, None], &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &super::Typing::default(), &options);
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let found = crate::code_rule_dsl::logic::plan::output::shown(&dir.join("out"), "violation").unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    ran.unwrap_or_else(|e| panic!("the run fails: {e}"));
+    assert!(found.is_empty(), "no finding over a file of no def or with: {found:?}");
+}
+
 /// 0597 rung 2.8: a finding at a context's node stands at its string's line in the file (0431 §3, R9's
 /// `guest_place`): the unresolved name of `y: "Bar"`, on line 3.
 #[test]
@@ -2967,7 +3164,8 @@ fn a_run_with_no_root_runs_no_stratum_of_the_context() {
     let none = ran("x = 1\ndef f(y: int): ...\n");
     assert!(none.is_empty(), "no root, no rule of the context runs: {none:?}");
     let some = ran("x: \"List[int]\" = []\n");
-    assert!(some.iter().any(|h| h.split('\t').nth(1) == Some("rr_pass_quoted_ann_ident")), "with a root they run: {some:?}");
+    // The pass's relation, kept by its tape (rule 8), is derived as `rr_pass_quoted_ann_ident_rr_kd`.
+    assert!(some.iter().any(|h| h.split('\t').nth(1).is_some_and(|h| h.starts_with("rr_pass_quoted_ann_ident"))), "with a root they run: {some:?}");
 }
 
 #[test]
@@ -2975,6 +3173,112 @@ fn a_run_with_no_root_runs_no_stratum_of_the_context() {
 fn context_root_child() {
     let source = std::env::var("CONTEXT_ROOT_SOURCE").unwrap();
     printed_run("pass-root", ("a.py", &source), ANNOTATION_PASS, "quoted_names");
+}
+
+/// 0597 rung 7.1 (rule 7 on the memo path): an edit that changes no root and nothing the context reads runs none of
+/// its strata. A comment added to a file whose annotation is unchanged leaves the context's roots (its values, keyed
+/// by their text) and its reads as they were: no stratum of the context runs. An edit of the annotation's text makes
+/// a new root, and they run. Each run is a child process (`context_edit_child`) into one store, its heads read from
+/// its profile's `heads.tsv`, as rung 2.10's are.
+#[test]
+fn a_memo_edit_that_changes_no_root_runs_no_stratum_of_the_context() {
+    let directory = tempfile::tempdir().unwrap();
+    let step = |k: &str, source: &str| -> (Vec<String>, Vec<Vec<String>>) {
+        let profile = directory.path().join(format!("profile-{k}"));
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::context_edit_child", "--ignored", "--nocapture"])
+            .env("RERAIL_PROFILE", &profile)
+            .env("CONTEXT_EDIT_DIR", directory.path())
+            .env("CONTEXT_EDIT_SOURCE", source);
+        let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
+        assert!(status.success(), "{k}");
+        let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap_or_default();
+        let ran = heads.lines().skip(1).filter_map(|l| l.split('\t').nth(1)).filter(|h| h.contains("rr_pass_quoted_")).map(str::to_owned).collect();
+        let rows = crate::code_rule_dsl::logic::plan::output::shown(&directory.path().join("out"), "quoted_names").unwrap_or_default();
+        (ran, rows)
+    };
+    let (cold, rows) = step("cold", "x: \"List[int]\" = []\n");
+    assert!(!cold.is_empty() && rows.contains(&vec!["List".to_owned()]), "a cold run runs the context: {cold:?} {rows:?}");
+    let (comment, rows) = step("comment", "# a comment\nx: \"List[int]\" = []\n");
+    assert!(comment.is_empty(), "a comment changes no root: no stratum of the context runs: {comment:?}");
+    assert!(rows.contains(&vec!["List".to_owned()]) && rows.contains(&vec!["int".to_owned()]), "the context's rows stand: {rows:?}");
+    let (text, rows) = step("text", "# a comment\nx: \"List[str]\" = []\n");
+    assert!(!text.is_empty(), "a new annotation text is a new root: the context runs");
+    assert!(rows.contains(&vec!["str".to_owned()]) && !rows.contains(&vec!["int".to_owned()]), "the new text's rows: {rows:?}");
+}
+
+#[test]
+#[ignore = "child process of a_memo_edit_that_changes_no_root_runs_no_stratum_of_the_context"]
+fn context_edit_child() {
+    let dir = std::path::PathBuf::from(std::env::var("CONTEXT_EDIT_DIR").unwrap());
+    std::fs::write(dir.join("a.py"), std::env::var("CONTEXT_EDIT_SOURCE").unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let path = dir.join("g.rerail");
+    std::fs::write(&path, ANNOTATION_PASS).unwrap();
+    let printed = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::copy(dir.join("a.py"), src.join("a.py")).unwrap();
+    super::run(&printed, &src, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// 0597 rung 7.2 (rule 8 across chunks): a text a later chunk places is given the pass's rows the first chunk kept
+/// under its value, and runs none of the pass's strata. Two files holding one annotation text, each a chunk of its
+/// own (`RERAIL_PROBE_NODES`, `RERAIL_CHUNK_NODES`), do the pass's work of one file; both files' rows stand. Each run
+/// is a child process (`context_chunks_child`), its heads read from its profile's `heads.tsv` (part, head, cpu_s,
+/// work, plans), as rung 2.10's are.
+#[test]
+fn a_text_a_later_chunk_places_runs_no_stratum_of_the_context() {
+    let run = |files: usize| -> (std::collections::BTreeMap<String, u64>, String, Vec<Vec<String>>) {
+        let directory = tempfile::tempdir().unwrap();
+        let profile = directory.path().join("profile");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::context_chunks_child", "--ignored", "--nocapture"])
+            .env("RERAIL_PROFILE", &profile)
+            .env("RERAIL_PROBE_NODES", "1")
+            .env("RERAIL_CHUNK_NODES", "1")
+            .env("RERAIL_CHUNKS_AT_ONCE", "1")
+            .env("CONTEXT_CHUNKS_DIR", directory.path())
+            .env("CONTEXT_CHUNKS_FILES", files.to_string());
+        let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
+        assert!(status.success(), "{files} files");
+        let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap_or_default();
+        let mut work: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+        for l in heads.lines().skip(1) {
+            let cols: Vec<&str> = l.split('\t').collect();
+            if let (Some(h), Some(w)) = (cols.get(1).filter(|h| h.contains("rr_pass_quoted_")), cols.get(3).and_then(|w| w.parse::<u64>().ok())) {
+                *work.entry((*h).to_owned()).or_default() += w;
+            }
+        }
+        let report = std::fs::read_to_string(profile.join("profile.txt")).unwrap_or_default();
+        let rows = crate::code_rule_dsl::logic::plan::output::shown(&directory.path().join("out"), "quoted_names").unwrap_or_default();
+        (work, report, rows)
+    };
+    let (one, _, rows) = run(1);
+    assert!(!one.is_empty() && rows.contains(&vec!["List".to_owned()]), "one file runs the context: {one:?} {rows:?}");
+    let (two, report, rows) = run(2);
+    assert!(report.contains("2 made in chunks"), "each file a chunk of its own: the text is a value of each");
+    assert_eq!(two, one, "the second chunk is given the first's rows: the pass's work is one file's");
+    assert!(rows.contains(&vec!["List".to_owned()]) && rows.contains(&vec!["int".to_owned()]), "the rows stand: {rows:?}");
+}
+
+#[test]
+#[ignore = "child process of a_text_a_later_chunk_places_runs_no_stratum_of_the_context"]
+fn context_chunks_child() {
+    let dir = std::path::PathBuf::from(std::env::var("CONTEXT_CHUNKS_DIR").unwrap());
+    let files: usize = std::env::var("CONTEXT_CHUNKS_FILES").unwrap().parse().unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let path = dir.join("g.rerail");
+    std::fs::write(&path, ANNOTATION_PASS).unwrap();
+    let printed = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    for i in 0..files {
+        std::fs::write(src.join(format!("f{i}.py")), format!("v{i}: \"List[int]\" = []\n")).unwrap();
+    }
+    super::run(&printed, &src, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
 }
 
 /// 0597 rung 2.12: one mechanism on the CPU and the device: 2.3's context views and 2.5's `.from` read give Metal's
@@ -3083,42 +3387,77 @@ names(x) :- names_in(x).
     assert_eq!(sorted(alone_and_together("vue-names", file, program, VUE_PLAIN, "names")), [row(&["count"]), row(&["inc"])]);
 }
 
-/// `first`'s relation `rel` over the one file `file`, run alone, and its findings (its rows of `violation`: path, line,
-/// column, sorted) alone and in a pack with `other`. A pack shows a policy's findings, not its own relations.
-fn findings_alone_and_together(name: &str, file: (&str, &str), first: &str, other: &str, rel: &str) -> (Vec<Vec<String>>, Vec<Vec<String>>, Vec<Vec<String>>) {
-    let id = first.lines().find_map(|l| l.strip_prefix(".policy \"")).and_then(|l| l.split('"').next()).unwrap_or_default().to_owned();
+/// A policy's id (its `.policy "<id>"` line).
+fn policy_id(program: &str) -> String {
+    program.lines().find_map(|l| l.strip_prefix(".policy \"")).and_then(|l| l.split('"').next()).unwrap_or_default().to_owned()
+}
+
+/// The rows of `violation` (policy, …, path, line, column, …) of `programs` run as one pack over `files` (path,
+/// text) under a directory of their own (`name`).
+fn pack_findings(name: &str, files: &[(String, &str)], programs: &[&str]) -> Vec<Vec<String>> {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    for (path, text) in files {
+        let at = dir.join(path);
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::fs::write(at, text).unwrap();
+    }
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let out = dir.join("out");
+    let ran = super::run_all(programs, &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    ran.unwrap_or_else(|e| panic!("{e}"));
+    let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    rows
+}
+
+/// `program`'s relation `rel` over the one file `file`, run alone, and its findings (its rows of `violation`: path,
+/// line, column, sorted).
+fn findings_alone(name: &str, file: (&str, &str), program: &str, rel: &str) -> (Vec<Vec<String>>, Vec<Vec<String>>) {
+    let id = policy_id(program);
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join(file.0), file.1).unwrap();
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
-    let run = |programs: &[&str], out: &str| {
-        let out = dir.join(out);
-        super::run_all(programs, &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
-        let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
-        let rows = read(&format!("p0_{rel}"));
-        let mut found: Vec<Vec<String>> = read("violation").into_iter().filter(|r| r.first() == Some(&id)).map(|r| r[3..].to_vec()).collect();
-        found.sort();
-        (if rows.is_empty() { read(rel) } else { rows }, found)
-    };
-    let (rows, alone) = run(&[first], "alone");
-    let (_, together) = run(&[first, other], "together");
+    let out = dir.join("alone");
+    let ran = super::run_all(&[program], &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    ran.unwrap_or_else(|e| panic!("{e}"));
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
+    let rows = read(&format!("p0_{rel}"));
+    let mut found: Vec<Vec<String>> = read("violation").into_iter().filter(|r| r.first() == Some(&id)).map(|r| r[3..].to_vec()).collect();
+    found.sort();
+    let rows = if rows.is_empty() { read(rel) } else { rows };
     let _ = std::fs::remove_dir_all(&dir);
-    (rows, alone, together)
+    (rows, found)
 }
 
 /// Each case of the Vue pack's tables: the policy, a component, its violation, and the last column of each finding
-/// (`*`: a finding, whatever it says). Each finds that alone and beside a policy of the other kind, as a pack runs
-/// them (rule 5: a relation has one meaning in every program): beside no-template-shadow, whose code is the contexts'
-/// alone, and no-template-shadow beside no-mutating-props, which reads both contexts.
+/// (`*`: a finding, whatever it says). Each finds that alone, and the same in the pack (rule 5: a relation has one
+/// meaning in every program): every case's policy run together, beside no-template-shadow, whose code is the
+/// contexts' alone, and no-mutating-props, which reads both contexts, over every case's component, each in a
+/// directory of its own (`case<k>/a.vue`). A case's findings in the pack are its policy's in its file.
 fn vue_pack_cases(cases: &[(&str, String, &str, Vec<&str>)]) {
     let read = |policy: &str| std::fs::read_to_string(crate::source_tree::native().join(format!("../docs/rule-syntax/packs/vue/eslint-plugin-vue-{policy}.rerail"))).unwrap();
+    let mut policies: Vec<&str> = cases.iter().map(|c| c.0).chain(["no-template-shadow", "no-mutating-props"]).collect();
+    policies.sort_unstable();
+    policies.dedup();
+    let texts: Vec<String> = policies.iter().map(|p| read(p)).collect();
+    let files: Vec<(String, &str)> = cases.iter().enumerate().map(|(k, c)| (format!("case{k}/a.vue"), c.1.as_str())).collect();
+    let pack = pack_findings("vue-pack-together", &files, &texts.iter().map(String::as_str).collect::<Vec<_>>());
     let mut wrong = Vec::new();
-    for (policy, text, rel, want) in cases {
+    for (k, (policy, text, rel, want)) in cases.iter().enumerate() {
         let program = read(policy);
-        let other = read(if *policy == "no-template-shadow" { "no-mutating-props" } else { "no-template-shadow" });
-        let run = std::panic::catch_unwind(|| findings_alone_and_together(&format!("vue-pack-{policy}"), ("a.vue", text.as_str()), &program, &other, rel));
-        let Ok((found, alone, together)) = run else {
+        let id = policy_id(&program);
+        let path = format!("case{k}/a.vue");
+        let mut together: Vec<Vec<String>> = pack
+            .iter()
+            .filter(|r| r.first() == Some(&id) && r.get(3) == Some(&path))
+            .map(|r| std::iter::once("a.vue".to_owned()).chain(r[4..].iter().cloned()).collect())
+            .collect();
+        together.sort();
+        let run = std::panic::catch_unwind(|| findings_alone(&format!("vue-pack-{policy}"), ("a.vue", text.as_str()), &program, rel));
+        let Ok((found, alone)) = run else {
             let e = run.err().unwrap();
             let e = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| (*s).to_owned())).unwrap_or_default();
             wrong.push(format!("{policy} on {text:?}: {e}"));
@@ -3127,7 +3466,7 @@ fn vue_pack_cases(cases: &[(&str, String, &str, Vec<&str>)]) {
         let mut got: Vec<String> = found.iter().map(|r| if want.first() == Some(&"*") { "*".to_owned() } else { r.last().cloned().unwrap_or_default() }).collect();
         got.sort();
         if got != *want || alone.len() != found.len() || together != alone {
-            wrong.push(format!("{policy} on {text:?}: {found:?} (findings {alone:?}, together {together:?}), wanted {want:?}"));
+            wrong.push(format!("{policy} on {text:?}: {found:?} (findings {alone:?}, in the pack {together:?}), wanted {want:?}"));
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
@@ -3283,4 +3622,34 @@ fn a_kept_texts_modules_stand_while_it_and_its_files_are_as_kept() {
     assert_eq!(shown(super::kept_texts::known(&store, &programs)), [kept[0].clone(), None, kept[2].clone()], "b.rerail changed: its includer is read again");
     drop(store);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A matcher whose captures are its root's field children (as `Absorb` writes them, decision 0106 §4) has its rows
+/// read from the tape at the transducer's roots (`ast_wave::field_captures`, t50 step 6): the same rows as W's matcher
+/// at each root (`RERAIL_AST_DIRECT_CAPTURES=off`), a capture in a field holding two kinds and a root with none.
+#[test]
+fn field_captures_read_from_the_tape_are_ws() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("field-captures");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "a.b.c\nx.y\nf(1).z\ng(h)\nk.m(n)\n").unwrap();
+    let program = ".language python\n.decl attr(t: symbol)\n.decl callee(t: symbol)\n.output attr, callee\n\
+                   attr(t) :- ast(d, r, {\"language\":\"python\",\"rule\":{\"all\":[{\"kind\":\"attribute\"},{\"has\":{\"field\":\"attribute\",\"kind\":\"identifier\",\"pattern\":\"$C1\",\"stopBy\":\"neighbor\"}}]}}, C1: x), text(x, t).\n\
+                   callee(t) :- ast(d, r, {\"language\":\"python\",\"rule\":{\"all\":[{\"kind\":\"call\"},{\"has\":{\"field\":\"function\",\"kind\":\"identifier\",\"pattern\":\"$C1\",\"stopBy\":\"neighbor\"}}]}}, C1: x), text(x, t).\n";
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let run = |out: &str| {
+        let out = dir.join(out);
+        super::run_all(&[program], &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+        let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
+        (read("attr"), read("callee"))
+    };
+    let direct = run("direct");
+    let by_w = {
+        let _off = super::switches::set(&[("RERAIL_AST_DIRECT_CAPTURES", "off")]);
+        run("by-w")
+    };
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(direct.0, [["b"], ["c"], ["m"], ["y"], ["z"]]);
+    assert_eq!(direct.1, [["f"], ["g"]]);
+    assert_eq!(direct, by_w, "the tape's field children are W's captures");
 }

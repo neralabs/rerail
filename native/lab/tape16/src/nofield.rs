@@ -260,7 +260,7 @@ pub struct Report {
 }
 
 pub fn run(files: &[&File]) -> Report {
-    let read = |f: &File| crate::v15::read(&f.image).unwrap_or_else(|e| panic!("{}: {e}", f.path));
+    let read = |f: &File| crate::captured::read(&f.image).unwrap_or_else(|e| panic!("{}: {e}", f.path));
     let trees: Vec<_> = files.iter().map(|f| read(f)).collect();
     let mut codes = Codes::default();
     for t in &trees {

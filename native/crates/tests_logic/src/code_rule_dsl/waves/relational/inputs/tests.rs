@@ -12,7 +12,7 @@ use std::sync::atomic::Ordering;
 fn rule() -> crate::code_rule_dsl::CompiledCodeRuleDsl {
     crate::code_rule_dsl::rule_api::compile(&json!({"format":"rerail.policy/v1","id":"stream","revision":1,"mode":"log","clauses":[{"id":"rows","relational":{"inputs":{"facts":{"evidence":{"as":"f","query":{"ast":{"language":"python","rule":{"kind":"identifier","pattern":"$NAME"}}},"project":{"name":"capture.NAME","pos":"capture.NAME.startByte"}}}},"query":"SELECT __path path,__start start_byte,__end end_byte,name,pos FROM facts"},"violation":{"code":"STREAM","message":"Stream","anchor":"witness.span"}}]}).to_string(), "json", include_str!("../../../../../../../src/code_rule_dsl/capabilities.json")).unwrap()
 }
-fn fill(sink: &mut Sink<'_>, count: usize, source: &Arc<String>) {
+fn fill(sink: &mut Sink<'_>, count: usize, source: &Arc<crate::code_rule_dsl::tape::Text>) {
     let _scope = projection::Scope::enter();
     let names: Arc<[String]> = sink.input.project.iter().map(|p| p.field.clone()).collect();
     for row in 0..count {
@@ -76,7 +76,7 @@ fn columns_stream_in_bounded_batches_preserving_unicode_nulls_and_duplicates() {
         peak: 0,
         batches: 0,
     };
-    let source = Arc::new("é猫".to_string());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from("é猫"));
     let weak = Arc::downgrade(&source);
     fill(&mut sink, 600, &source);
     sink.flush().unwrap();

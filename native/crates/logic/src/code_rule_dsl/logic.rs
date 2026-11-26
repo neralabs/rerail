@@ -1,7 +1,7 @@
 //! The logic language (docs/final-shape/03-architecture.md §12; 05 Phases 5–6): rules as named
 //! facts and Datalog over them, planned from statistics and lowered to SQL or transducer groups.
-//! `sql` is the typed SQL its plans emit. The core modules (`sql`, `analysis`, `costs`, …) are
-//! `rerail-logic-core`'s, and the native solvers with the run, its lanes and its state (`native`, `run`, `lanes`,
+//! `sql` is the typed SQL its plans emit. The core modules (`sql`, `analysis`, …) are `rerail-logic-core`'s, the
+//! cost statistics (`costs`) `rerail-costs`', and the native solvers with the run, its lanes and its state (`native`, `run`, `lanes`,
 //! `run_state`, `device`) `rerail-setfix`'s, under the planner; this module re-exports them under their paths.
 
 pub use rerail_logic_core::code_rule_dsl::logic::crypto;
@@ -33,6 +33,7 @@ pub mod facts_only;
 #[cfg(test)]
 mod test_load {
     extern "C" fn load() {
+        rerail_blocks::maps::install();
         crate::code_rule_dsl::logic::profile::strict_on_every_connection();
         crate::code_rule_dsl::logic::run_state::CARRIERS.register("rerail-logic's tests", crate::code_rule_dsl::logic::CARRIERS);
         crate::code_rule_dsl::logic::plan::corpus::RUNNER.register("rerail-logic's tests", &crate::code_rule_dsl::logic::plan::corpus::Corpus);
@@ -97,7 +98,7 @@ pub mod front {
     #[allow(unused_imports)]
     use std::fmt;
 }
-pub use rerail_logic_core::code_rule_dsl::logic::costs;
+pub use rerail_costs::code_rule_dsl::logic::costs;
 // The logic's device interface; the engine registers a device as it loads (`crate::install_devices`).
 pub use rerail_setfix::code_rule_dsl::logic::device;
 pub use rerail_setfix::code_rule_dsl::logic::lanes;

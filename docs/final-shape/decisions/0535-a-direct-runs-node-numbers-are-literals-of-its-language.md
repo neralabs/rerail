@@ -1,6 +1,7 @@
 # 0535: A direct run's node numbers are literals of the language it is generated for
 
-Status: decided (the user, 2026-11-20: "please address these", of 0533's §6, where D7 was left). Follows 0533,
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-20: "please address these", of 0533's §6, where D7 was
+left). Follows 0533,
 0534. Page 40, step 41.
 
 ## Intro

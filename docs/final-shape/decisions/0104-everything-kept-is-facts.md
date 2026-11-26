@@ -1,6 +1,8 @@
 # 0104: Everything kept is facts, on the same fact path
 
-Status: decided (2026-11-10). The checks are built; the moves are in the order below.
+Status: partly built (audited 2026-11-23; steps 1-8 done 2026-11-23, t33). Left: an unchanged run's fixed cost, so
+the kept frames can go, and the kept entries read in place (t33, "K4: what is left"). `logic::facts_only` lists no
+table and no map not yet facts. Decided (2026-11-10). The checks are built; the moves are in the order below.
 
 ## Intro
 

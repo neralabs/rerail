@@ -637,7 +637,7 @@ mod host_tests {
     use crate::kernel::JoinBy;
 
     fn join(n: usize) -> Kernel {
-        let keys = |n: usize| -> crate::kernel::Keys { vec![Col::from((0..n as i64).collect::<Vec<_>>())].into() };
+        let keys = |n: usize| -> crate::kernel::Keys { vec![Col::from((0..n as i64).collect::<rerail_blocks::vector::Vector<_>>())].into() };
         Kernel::Join { left: keys(n), right: keys(n), right_id: None, by: JoinBy::Probe }
     }
 

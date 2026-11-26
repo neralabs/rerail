@@ -1,4 +1,5 @@
 //! Pure structural entry shapes. No execution state or scheduler phases.
+use rerail_blocks::vector::Vector;
 use super::{
     ABSENT_FIELD, ASSERT, CAPTURE, EMIT, FIELD, FIRST, FLAGS, FORK, GOTO, KIND, LAST, Program,
     SIZE, STOP, SUPERTYPE, TEXT, split,
@@ -103,7 +104,7 @@ pub struct ProgramRequirements {
 
 /// Prove complete register work, rather than trusting the catalog's coarse class.
 /// Paths contain instruction positions, so shared signatures still load each Program's operands.
-pub fn register_program_paths(program: &Program) -> Option<Vec<Vec<usize>>> {
+pub fn register_program_paths(program: &Program) -> Option<Vec<Vector<usize>>> {
     register_paths_for(&program.words, program.tree_sitter_query, |operand| {
         program
             .value_programs
@@ -118,7 +119,7 @@ pub(super) fn register_paths_for(
     words: &[u32],
     query: bool,
     mut finite_text: impl FnMut(u16) -> bool,
-) -> Option<Vec<Vec<usize>>> {
+) -> Option<Vec<Vector<usize>>> {
     register_paths_for_with_children(words, query, &mut finite_text, |_, _| false)
 }
 
@@ -127,7 +128,7 @@ pub(super) fn register_paths_for_with_children(
     query: bool,
     mut finite_text: impl FnMut(u16) -> bool,
     child: impl Fn(&[usize], usize) -> bool,
-) -> Option<Vec<Vec<usize>>> {
+) -> Option<Vec<Vector<usize>>> {
     if words.iter().any(|&instruction| {
         let (op, _, operand) = split(instruction);
         (op == ASSERT && !query) || (op == TEXT && !finite_text(operand))
@@ -143,20 +144,20 @@ pub(super) fn register_paths_for_with_children(
 
 pub(super) const REGISTER_VISIT_LIMIT: usize = 4096;
 
-pub fn register_paths(words: &[u32]) -> Option<Vec<Vec<usize>>> {
+pub fn register_paths(words: &[u32]) -> Option<Vec<Vector<usize>>> {
     register_paths_with_children(words, &|_, _| false)
 }
 
 fn register_paths_with_children(
     words: &[u32],
     child: &dyn Fn(&[usize], usize) -> bool,
-) -> Option<Vec<Vec<usize>>> {
+) -> Option<Vec<Vector<usize>>> {
     fn visit(
         words: &[u32],
         pc: usize,
         active: &mut BTreeSet<usize>,
-        path: &mut Vec<usize>,
-        outputs: &mut Vec<Vec<usize>>,
+        path: &mut Vector<usize>,
+        outputs: &mut Vec<Vector<usize>>,
         visits: &mut usize,
         child: &dyn Fn(&[usize], usize) -> bool,
     ) -> Option<()> {
@@ -258,7 +259,7 @@ fn register_paths_with_children(
         words,
         0,
         &mut BTreeSet::new(),
-        &mut Vec::new(),
+        &mut rerail_blocks::vector::Vector::new(),
         &mut paths,
         &mut 0,
         child,
@@ -327,13 +328,13 @@ fn metal_deterministic_opcode(opcode: u8) -> bool {
     )
 }
 
-pub fn value_execution_signature(value: &super::value::ValueProgram) -> Vec<u32> {
+pub fn value_execution_signature(value: &super::value::ValueProgram) -> Vector<u32> {
     match value {
-        super::value::ValueProgram::Equal { .. } => vec![0],
-        super::value::ValueProgram::Prefix { .. } => vec![1],
+        super::value::ValueProgram::Equal { .. } => rerail_blocks::vector![0],
+        super::value::ValueProgram::Prefix { .. } => rerail_blocks::vector![1],
         super::value::ValueProgram::Regex(nfa) => {
             use super::value::NfaState;
-            let mut key = vec![2, nfa.states.len() as u32, nfa.start, nfa.anchored_start];
+            let mut key = rerail_blocks::vector![2, nfa.states.len() as u32, nfa.start, nfa.anchored_start];
             for state in &nfa.states {
                 match state {
                     NfaState::Bytes(ranges) => {
@@ -354,7 +355,7 @@ pub fn value_execution_signature(value: &super::value::ValueProgram) -> Vec<u32>
         }
         super::value::ValueProgram::Lua(_) => {
             let bytes = value.canonical_bytes();
-            let mut key = vec![3, bytes.len() as u32];
+            let mut key = rerail_blocks::vector![3, bytes.len() as u32];
             key.extend(bytes.chunks(4).map(|chunk| {
                 let mut word = [0; 4];
                 word[..chunk.len()].copy_from_slice(chunk);
@@ -394,9 +395,9 @@ fn capture_uses_shared_frame(capture: &super::value::CaptureProgram) -> bool {
     )
 }
 
-pub(super) fn cursor_layouts(programs: &[Program]) -> (Vec<(u32, u32)>, Vec<u32>) {
-    let mut table = Vec::new();
-    let mut intern = std::collections::BTreeMap::<Vec<u32>, u32>::new();
+pub(super) fn cursor_layouts(programs: &[Program]) -> (Vec<(u32, u32)>, Vector<u32>) {
+    let mut table = rerail_blocks::vector::Vector::new();
+    let mut intern = std::collections::BTreeMap::<Vector<u32>, u32>::new();
     let layouts = programs
         .iter()
         .map(|program| {
@@ -410,7 +411,7 @@ pub(super) fn cursor_layouts(programs: &[Program]) -> (Vec<(u32, u32)>, Vec<u32>
                 })
                 .collect::<std::collections::BTreeSet<_>>()
                 .into_iter()
-                .collect::<Vec<_>>();
+                .collect::<Vector<_>>();
             let count = slots.len() as u32;
             let start = *intern.entry(slots.clone()).or_insert_with(|| {
                 let start = table.len() as u32;
@@ -425,7 +426,7 @@ pub(super) fn cursor_layouts(programs: &[Program]) -> (Vec<(u32, u32)>, Vec<u32>
 
 /// Describe only the first bounded structural entry. Keys contain no scheduler addresses.
 pub fn compile_entry_shapes(programs: &[Program]) -> Vec<EntryShape> {
-    let mut signatures = std::collections::BTreeMap::<Vec<u32>, u32>::new();
+    let mut signatures = std::collections::BTreeMap::<Vector<u32>, u32>::new();
     let (cursor_layouts, _) = cursor_layouts(programs);
     programs
         .iter()
@@ -504,7 +505,7 @@ pub fn compile_entry_shapes(programs: &[Program]) -> Vec<EntryShape> {
             }
             let prefix_flags = u32::from(query_join) * 4;
             let mut prefix_slots = std::collections::BTreeMap::new();
-            let mut signature_key = Vec::new();
+            let mut signature_key = rerail_blocks::vector::Vector::new();
             for &instruction in &program.words[start..terminal_pc] {
                 let (opcode, _, operand) = split(instruction);
                 signature_key.push(instruction & 0xffff);
@@ -711,13 +712,13 @@ pub mod tests {
     #[test]
     fn structural_entry_routes_follow_bounded_navigation_and_expansion() {
         let make =
-            |words| Program::new(words, vec![b"match".to_vec()], vec![], vec![0], vec![]).unwrap();
+            |words| Program::new(words, vec![b"match".to_vec()], vec![], rerail_blocks::vector![0], rerail_blocks::vector![]).unwrap();
         let programs = [
-            make(vec![word(KIND, 0, 1), word(EMIT, 0, 0)]),
-            make(vec![word(PARENT, 0, 0), word(EMIT, 0, 0)]),
-            make(vec![word(CHILD, 0, 0), word(EMIT, 0, 0)]),
-            make(vec![word(DESCEND, 0, 0), word(EMIT, 0, 0)]),
-            make(vec![word(super::super::FOLLOWING, 0, 0), word(EMIT, 0, 0)]),
+            make(rerail_blocks::vector![word(KIND, 0, 1), word(EMIT, 0, 0)]),
+            make(rerail_blocks::vector![word(PARENT, 0, 0), word(EMIT, 0, 0)]),
+            make(rerail_blocks::vector![word(CHILD, 0, 0), word(EMIT, 0, 0)]),
+            make(rerail_blocks::vector![word(DESCEND, 0, 0), word(EMIT, 0, 0)]),
+            make(rerail_blocks::vector![word(super::super::FOLLOWING, 0, 0), word(EMIT, 0, 0)]),
         ];
         assert_eq!(
             compile_entry_shapes(&programs)
@@ -738,7 +739,7 @@ pub mod tests {
     fn entry_signatures_keep_cursor_identity_without_sparse_id_capacity() {
         let make = |second, restore| {
             Program::new(
-                vec![
+                rerail_blocks::vector![
                     word(SAVE_CURSOR, 0, 7),
                     word(NEXT, 1, 0),
                     word(SAVE_CURSOR, 0, second),
@@ -748,8 +749,8 @@ pub mod tests {
                 ],
                 vec![b"match".to_vec()],
                 vec![],
-                vec![0],
-                vec![],
+                rerail_blocks::vector![0],
+                rerail_blocks::vector![],
             )
             .unwrap()
         };
@@ -770,11 +771,11 @@ pub mod tests {
     fn compatible_entries_share_blocks_despite_different_unreached_suffixes() {
         let make = |tail| {
             Program::new(
-                vec![word(DESCEND, 0, 0), tail, word(EMIT, 0, 0)],
+                rerail_blocks::vector![word(DESCEND, 0, 0), tail, word(EMIT, 0, 0)],
                 vec![b"match".to_vec()],
                 vec![],
-                vec![0],
-                vec![],
+                rerail_blocks::vector![0],
+                rerail_blocks::vector![],
             )
             .unwrap()
         };

@@ -1,6 +1,7 @@
 # 0040: Nearest ancestors are found in one dispatch per chunk
 
-Status: accepted and built (2026-11-05, the user: "we need to launch once only"; list step 30)
+Status: built (audited 2026-11-23). Accepted and built (2026-11-05, the user: "we need to launch once only"; list step
+30)
 
 ## Intro
 

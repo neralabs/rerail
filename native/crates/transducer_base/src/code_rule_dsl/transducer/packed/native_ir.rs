@@ -54,7 +54,7 @@ pub mod tests {
     #[test]
     fn native_ir_decodes_control_flow_without_a_host_call_operation() {
         let program = Program::new(
-            vec![
+            rerail_blocks::vector![
                 word(KIND, 0, 7),
                 word(FORK, GREEDY, 4),
                 word(CHILD, NAMED, 0),
@@ -63,8 +63,8 @@ pub mod tests {
             ],
             vec![b"unused".to_vec(), b"unused".to_vec(), b"match".to_vec()],
             Vec::new(),
-            vec![2],
-            Vec::new(),
+            rerail_blocks::vector![2],
+            rerail_blocks::vector::Vector::new(),
         )
         .unwrap();
         let native = lower(&program).unwrap();
@@ -111,11 +111,11 @@ pub mod tests {
     #[test]
     fn program_verification_rejects_an_invalid_branch_target_before_native_lowering() {
         let Err(error) = Program::new(
-            vec![word(GOTO, 0, 2)],
+            rerail_blocks::vector![word(GOTO, 0, 2)],
             Vec::new(),
             Vec::new(),
-            Vec::new(),
-            Vec::new(),
+            rerail_blocks::vector::Vector::new(),
+            rerail_blocks::vector::Vector::new(),
         ) else {
             panic!("invalid target was accepted");
         };

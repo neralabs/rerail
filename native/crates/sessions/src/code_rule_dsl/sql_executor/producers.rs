@@ -71,7 +71,7 @@ pub fn take(program: Arc<Version>) -> Result<(Arc<Version>, Vec<Producer>)> {
             kept.push((key, text));
             continue;
         };
-        let params = plan::corpus::input_parameters(params).map_err(error)?;
+        let params = plan::corpus::inputs::parameters(params).map_err(error)?;
         if params.get("IO").map(String::as_str) != Some("sql") {
             kept.push((key, text));
             continue;
@@ -103,8 +103,8 @@ pub fn take(program: Arc<Version>) -> Result<(Arc<Version>, Vec<Producer>)> {
     // The settings left, in their order.
     let p = b.about_rows("setting").first().map(|row| row[0]);
     let rows = match p {
-        Some(p) => kept.iter().enumerate().map(|(k, (key, text))| vec![p, Cell::Int(k as i64), Cell::Str(b.atom(key)), Cell::Str(b.atom(text))]).collect(),
-        None => Vec::new(),
+        Some(p) => kept.iter().enumerate().map(|(k, (key, text))| [p, Cell::Int(k as i64), Cell::Str(b.atom(key)), Cell::Str(b.atom(text))]).collect(),
+        None => crate::code_rule_dsl::logic::program_image::Rows::new(),
     };
     b.fields().set_about_rows("setting", rows);
     Ok((b.finish().map_err(error)?.0, producers))

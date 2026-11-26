@@ -1,4 +1,5 @@
 //! A partition is sound only when every recursive read stays in the head's partition.
+use rerail_blocks::vector::Vector;
 use super::*;
 struct Rule {
     output: String,
@@ -132,7 +133,7 @@ pub(super) fn partition(
                             .filter(|rule| rule.output == *r)
                             .all(|rule| plain(&rule.head[col]))
                     })
-                    .collect::<Vec<_>>(),
+                    .collect::<Vector<_>>(),
             )
         })
         .collect::<BTreeMap<_, _>>();
@@ -155,7 +156,7 @@ pub(super) fn partition(
         })
         .collect::<Vec<_>>();
     fn search(
-        mut domains: BTreeMap<String, Vec<usize>>,
+        mut domains: BTreeMap<String, Vector<usize>>,
         constraints: &[(String, String, Vec<Vec<bool>>)],
     ) -> Option<BTreeMap<String, usize>> {
         // Propagate key-column constraints before choosing a column. Without this, an
@@ -170,17 +171,17 @@ pub(super) fn partition(
                     .iter()
                     .copied()
                     .filter(|&h| reads.iter().any(|&i| valid(h, i)))
-                    .collect::<Vec<_>>();
+                    .collect::<Vector<_>>();
                 let next_reads = reads
                     .iter()
                     .copied()
                     .filter(|&i| heads.iter().any(|&h| valid(h, i)))
-                    .collect::<Vec<_>>();
+                    .collect::<Vector<_>>();
                 changed |= next_heads != heads || next_reads != reads;
                 domains.insert(output.clone(), next_heads);
                 domains.insert(input.clone(), next_reads);
             }
-            if domains.values().any(Vec::is_empty) {
+            if domains.values().any(|d| d.is_empty()) {
                 return None;
             }
             if !changed {
@@ -197,14 +198,14 @@ pub(super) fn partition(
         let relation = relation.clone();
         for &choice in choices {
             let mut next = domains.clone();
-            next.insert(relation.clone(), vec![choice]);
+            next.insert(relation.clone(), rerail_blocks::vector![choice]);
             if let Some(solution) = search(next, constraints) {
                 return Some(solution);
             }
         }
         None
     }
-    if domains.values().any(Vec::is_empty) {
+    if domains.values().any(|d| d.is_empty()) {
         return None;
     }
     search(std::mem::take(&mut domains), &constraints)

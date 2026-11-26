@@ -1,7 +1,8 @@
 # 0122: Planning costs no more than running, and a first wave driven by changes
 
-Status: decided and built (2026-11-12): §1 (`plan.rs`, `SEARCH_WORK`, `plan_rule_reused`, `drive`) and §2
-(`plan.rs`, `reads_change`; `native/setfix.rs`, `Line::KeptOld`), both on by default. §4 is taken up by 0123.
+Status: built (audited 2026-11-23). Decided and built (2026-11-12): §1 (`plan.rs`, `SEARCH_WORK`, `plan_rule_reused`,
+`drive`) and §2 (`plan.rs`, `reads_change`; `native/setfix.rs`, `Line::KeptOld`), both on by default. §4 is taken up
+by 0123.
 
 ## Intro
 

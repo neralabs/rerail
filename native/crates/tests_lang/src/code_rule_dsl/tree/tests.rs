@@ -19,7 +19,7 @@
             let native = StrDoc::new(source, lang);
             let grammar = Grammar::new(lang).unwrap();
             let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
-            let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+            let tape = TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap();
             let stored: Vec<Vec<(String, std::ops::Range<usize>, bool)>> = {
                 let mut out = Vec::new();
                 let mut stack = vec![native.tree.root_node()];

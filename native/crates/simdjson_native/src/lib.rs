@@ -1,12 +1,12 @@
 //! The platform's part of reading JSON: simdjson (the C++ library, vendored at
 //! `native/vendor/simdjson-5.0.5`) and the v9np kernels (`kernel.inc`), compiled for each of
 //! simdjson's implementations the target has. Everything here is native code behind a C ABI;
-//! `rerail-simdjson` is the portable side (the `Tape`, the index writer).
+//! `rerail-simdjson` is the portable side (the events' callers, the index writer).
 //!
 //! - `structurals`: simdjson's DOM parser, which picks its implementation at run time, and the
 //!   structural index its stage 1 found. Any CPU.
-//! - `Kernel`: stage 1 with the source's SHA-256 in it and our stage 2, which writes the tape into the
-//!   caller's buffers (`Sink`). One for each implementation, with the CPU's SHA-256 instructions and
+//! - `Kernel`: stage 1 with the source's SHA-256 in it and our stage 2, which gives each node of the tape
+//!   to the caller as format 16's event (`Sink`). One for each implementation, with the CPU's SHA-256 instructions and
 //!   without: `Kernel::ALL` lists them best first, and `Kernel::runs` says which this CPU runs.
 //!
 //! On MSVC the C++ is compiled by Visual Studio's clang-cl (`build.rs`): MSVC's own compiler takes none of simdjson's
@@ -21,22 +21,15 @@ unsafe extern "C" {
     fn rerail_simdjson_v9np_jsonc(kernel: u32, src: *const c_char, len: usize, sink: *mut Sink) -> i32;
     fn rerail_simdjson_v9np_unhashed(kernel: u32, src: *const c_char, len: usize, sink: *mut Sink) -> i32;
     fn rerail_simdjson_stage1(kernel: u32, src: *const c_char, len: usize, hashed: i32) -> i64;
-    fn rerail_simdjson_v9np_rewalks(kernel: u32) -> u64;
     fn rerail_simdjson_release_above(keep: usize);
     fn rerail_simdjson_error_message(code: i32) -> *const c_char;
     fn rerail_simdjson_implementation() -> *const c_char;
 }
 
-/// The tape's buffers as a kernel's stage 2 writes them (`rerail_v9np_sink`): the caller's, whose
-/// pointers, lengths and capacities it reads, grown through `grow` (which `ctx` is passed to).
+/// What a kernel's stage 2 gives its nodes to (`rerail_v9np_sink`): the caller's, `ctx` its own.
 #[repr(C)]
 pub struct Sink {
-    pub col: [*mut u8; 5],
-    pub len: [usize; 5],
-    pub cap: [usize; 5],
-    pub width: [u8; 3],
     pub ctx: *mut std::ffi::c_void,
-    pub grow: unsafe extern "C" fn(*mut Sink, *const usize),
     pub kind: [u16; 12],
     pub key_field: u16,
     pub value_field: u16,
@@ -45,8 +38,8 @@ pub struct Sink {
     pub code_field: [u16; 36],
     pub code_value: [u8; 36],
     pub digest: [u8; 32],
-    /// Format 16 (decision 0434): where `ev` is set, the walk writes no column but each node's event, three words,
-    /// and calls `flush` with `ev_len` words when `ev_cap` are full and at the end (`rerail_simdjson::events_with`).
+    /// Format 16 (decision 0434): each node's event, three words, into `ev`; `flush` is called with `ev_len` words
+    /// when `ev_cap` are full and at the end (`rerail_simdjson::events_with`).
     pub ev: *mut u32,
     pub ev_len: u32,
     pub ev_cap: u32,
@@ -107,18 +100,18 @@ impl Kernel {
         Kernel::ALL.into_iter().find(|k| k.runs())
     }
 
-    /// Writes `src`'s tape and digest into `sink`: 0, simdjson's error code, or -1 where the kernel does
-    /// not run here (or `src` is past 2 GB).
+    /// Gives `src`'s tape's events to `sink` and writes its digest there: 0, simdjson's error code, or -1 where the
+    /// kernel does not run here (or `src` is past 2 GB).
     ///
     /// # Safety
-    /// `sink`'s `col`, `len` and `cap` describe buffers `grow` can grow, with `ctx` what it expects.
+    /// `sink`'s `ev` holds `ev_cap` words, and its `flush` takes `ctx` as it is.
     pub unsafe fn tape(self, src: &[u8], sink: &mut Sink) -> i32 {
         // SAFETY: `src` is read for its length; the caller vouches for the sink.
         unsafe { rerail_simdjson_v9np(self as u32, src.as_ptr().cast(), src.len(), sink) }
     }
 
     /// As `tape`, `src` read as JSONC: each comment (`//` to the line's end, `/* */`) blanked for stage 1
-    /// and written to the tape as a leaf where tree-sitter-json places an extra, and a trailing comma
+    /// and given as a leaf where tree-sitter-json places an extra, and a trailing comma
     /// passed over. For a file `tape` refused; a strict file gives `tape`'s tape.
     ///
     /// # Safety
@@ -144,11 +137,6 @@ impl Kernel {
         unsafe { rerail_simdjson_stage1(self as u32, src.as_ptr().cast(), src.len(), i32::from(hashed)) }
     }
 
-    /// This thread's stage 2 walks made again at other widths (a column's prediction wrong).
-    pub fn rewalks(self) -> u64 {
-        // SAFETY: reads a thread-local counter.
-        unsafe { rerail_simdjson_v9np_rewalks(self as u32) }
-    }
 }
 
 /// A thread keeps its parsers' buffers for files up to this size; a larger file's are freed once

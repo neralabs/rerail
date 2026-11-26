@@ -6,15 +6,23 @@ use super::lower::{Statement, lifetime::Action};
 use crate::content_store::{ContentStore, StoreResult};
 use rusqlite::{Connection, Result, params_from_iter};
 
-/// The candidate rows of `statement`: one transaction, which writes only when the statement
-/// registers vocabulary predicates.
+/// The candidate rows of `statement`: its regexes' vocabulary brought up to date (kept facts, written in a
+/// transaction of their own), then one transaction that only reads.
 pub fn candidates(
     store: &ContentStore,
     statement: &Statement,
     mut emit: impl FnMut(usize, i64, usize),
 ) -> StoreResult<()> {
-    // A busy writer lock fails BEGIN IMMEDIATE before any row is emitted, so a retry repeats none.
-    store.candidate_transaction(statement.writes(), |db| rows(db, statement, &mut emit))
+    prepare(store, statement)?;
+    store.candidate_transaction(false, |db| rows(db, statement, &mut emit))
+}
+
+/// `statement`'s regexes' terms brought up to date, for its relations' reads of `vocabulary_term`.
+pub fn prepare(store: &ContentStore, statement: &Statement) -> StoreResult<()> {
+    if !statement.regexes.is_empty() {
+        store.regex_terms(i64::from(statement.language), &statement.regexes)?;
+    }
+    Ok(())
 }
 
 /// Fills the `request_file` temp table with the requested tapes.

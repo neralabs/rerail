@@ -1,11 +1,12 @@
 //! The maintain mode of a non-recursive component (decision 0364 stage 3): removal joins over the versions of what
 //! changed below, a recheck of each candidate with its head bound, and the add joins as seeds.
+use rerail_blocks::vector::Vector;
 use super::spec::hex;
 use super::*;
 
 fn connection() -> Connection {
     let path = crate::code_rule_dsl::fixtures::temp();
-    drop(crate::code_rule_dsl::fixtures::open(&path));
+    drop(crate::content_store::ContentStore::open(&path).unwrap());
     let db = Connection::open(path).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
     db
@@ -32,18 +33,18 @@ fn padded(rows: &[&[i64]], types: &[u8]) -> InRel {
 }
 
 /// `live`, less the padding.
-fn unpadded(rows: Vec<Vec<i64>>) -> Vec<Vec<i64>> {
+fn unpadded(rows: Vec<Vector<i64>>) -> Vec<Vector<i64>> {
     rows.into_iter().filter(|r| r[0] < 1000).collect()
 }
 
-fn live(rel: &InRel) -> Vec<Vec<i64>> {
-    let mut out: Vec<Vec<i64>> = rel.live_rows().expect("flat").chunks_exact(rel.k).map(<[i64]>::to_vec).collect();
+fn live(rel: &InRel) -> Vec<Vector<i64>> {
+    let mut out: Vec<Vector<i64>> = rel.live_rows().expect("flat").chunks_exact(rel.k).map(rerail_blocks::vector::Vector::<i64>::from).collect();
     out.sort();
     out
 }
 
-fn rows(rel: &InRel) -> Vec<Vec<i64>> {
-    let mut out: Vec<Vec<i64>> = (0..rel.len()).map(|i| { let r = rel.at(i); (0..rel.k).map(|c| r.at(c)).collect() }).collect();
+fn rows(rel: &InRel) -> Vec<Vector<i64>> {
+    let mut out: Vec<Vector<i64>> = (0..rel.len()).map(|i| { let r = rel.at(i); (0..rel.k).map(|c| r.at(c)).collect() }).collect();
     out.sort();
     out
 }

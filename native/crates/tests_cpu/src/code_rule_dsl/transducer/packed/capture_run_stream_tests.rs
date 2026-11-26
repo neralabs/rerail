@@ -4,7 +4,7 @@ use super::*;
 fn slow_initial_zero_path(mut program: Program) -> Program {
     let at = 9;
     let extra = 80;
-    let mut words = Vec::new();
+    let mut words = rerail_blocks::vector::Vector::new();
     for (pc, &w) in program.words.iter().enumerate() {
         if pc == at {
             words.extend((0..extra).map(|step| word(GOTO, 0, (at + step + 1) as u16)));

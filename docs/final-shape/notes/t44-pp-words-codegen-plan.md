@@ -1,5 +1,9 @@
 # t44: Why the compiled preprocessing words stall, and the plan to fix it
 
+Status (2026-11-23): done. Steps 1–4 were run, and the user chose option B, which was built (§5, 2026-11-18). B's
+rustc build of the words came from `clif_rust`, which decision 0569 removed (2026-11-21). The CPU path is
+Cranelift's code again, and nothing was measured after the removal (0569, "Not checked, not done").
+
 ## Intro
 
 The C preprocessor's mode (b) runs as *preprocessing words*: a small program

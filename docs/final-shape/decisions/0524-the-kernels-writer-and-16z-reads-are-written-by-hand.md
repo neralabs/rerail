@@ -1,9 +1,9 @@
 # 0524. The kernels' tape writer and 16z reads are written by hand, held to the CLIF by tests
 
-Status: decided (2026-11-20), by the user: "I don't like how we checked in writer.h and tape_z.h from an intermediate
-representation / please re-work them to be actual maintainable hand-written functions". Amends 0310 §3 (the Metal
-backend is the CLIF→UKL translator) and 0434 §6 (since roll-up 8, `rerail_clif::writer::ukl_source` writes the
-device's ops), for these two headers.
+Status: built (audited 2026-11-23). Decided (2026-11-20), by the user: "I don't like how we checked in writer.h and
+tape_z.h from an intermediate representation / please re-work them to be actual maintainable hand-written functions".
+Amends 0310 §3 (the Metal backend is the CLIF→UKL translator) and 0434 §6 (since roll-up 8,
+`rerail_clif::writer::ukl_source` writes the device's ops), for these two headers.
 
 ## Intro
 

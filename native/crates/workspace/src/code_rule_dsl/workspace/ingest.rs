@@ -322,7 +322,7 @@ fn module_under(input: &FileInput, is_package: impl Fn(&str) -> bool) -> Result<
     FileInput::new(
         input.path.clone(),
         input.language.clone(),
-        Arc::new(String::new()),
+        Arc::new(String::new().into()),
         python_module_in(&input.path, is_package).as_ref(),
         None,
         &input.path,
@@ -355,7 +355,7 @@ impl WorkspaceState {
     /// Holds `path`'s `source` for import target resolution (`import_target::fs::HeldFiles`): a
     /// change disk below the root does not already show moves `import_generation`. A workspace
     /// whose clauses read no import targets (they are fixed before its first apply) holds none.
-    pub(super) fn hold_import_file(&mut self, path: &str, source: &Arc<String>) {
+    pub(super) fn hold_import_file(&mut self, path: &str, source: &Arc<crate::code_rule_dsl::tape::Text>) {
         if self.import_clauses.is_empty() {
             return;
         }

@@ -7,9 +7,10 @@ publish = false
 description = "M's Y1 reference graph as copied (facts::ygraph), under the facts."
 
 [features]
-test-hooks = ["rerail-prof/test-hooks"]
+test-hooks = ["rerail-prof/test-hooks", "rerail-blocks/test-hooks"]
 
 [dependencies]
+rerail-blocks = { path = "../blocks" }
 foldhash = "=0.2.0"
 hashbrown = { version = "=0.16.1", default-features = false }
 memchr = "=2.8.3"

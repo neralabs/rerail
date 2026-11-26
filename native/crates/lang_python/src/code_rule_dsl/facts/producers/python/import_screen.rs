@@ -274,7 +274,7 @@ fn wanted(name: &str, imports: &BTreeSet<String>) -> bool {
 
 /// The same conservative import screen over existing core facts. No tape restoration or scope table.
 impl Imports {
-    pub fn from_core(f: &crate::code_rule_dsl::facts::core::Facts, catalog: &crate::code_rule_dsl::language::KindCatalog, module: Option<&ModulePath>) -> Self {
+    pub fn from_core(f: crate::code_rule_dsl::facts::core::FactsIn<'_>, catalog: &crate::code_rule_dsl::language::KindCatalog, module: Option<&ModulePath>) -> Self {
         use crate::code_rule_dsl::facts::core::{kind_atom, kind_code, facts_tag};
         let kind = |n: u32| catalog.kind_name(kind_code(f.kind(n))).unwrap_or("");
         let named = |n: u32| f.flags(n) & 1 != 0 && !matches!(kind(n), "comment" | "line_continuation");
@@ -295,7 +295,7 @@ impl Imports {
         let mut out=Self { opaque:f.syntax_errors(), ..Self::default() };
         for name in ["import_statement","import_from_statement","future_import_statement"] {
             let code=catalog.kind_id(name); if code==0 {continue;}
-            for n in f.of_kind(kind_atom(facts_tag(f),code)) {
+            for n in f.of_kind(kind_atom(facts_tag(f.facts),code)) {
                 if name=="import_statement" {
                     for c in f.children(n).iter().copied().filter(|&c|named(c)) {
                         match kind(c) {

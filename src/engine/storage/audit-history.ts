@@ -15,6 +15,10 @@
  * Only ongoing audits (`AuditOrigin`) reach the tables: a scan's violations are the checkout's, found when someone
  * asked, not the session's, so the dashboard counts neither them nor the scan as an audit of its rules. The scan
  * keeps its result in `audits`, where `rerail scan` reads it.
+ *
+ * Each derived row carries its audit's owner: `session_id`, or with none the repository `repository_id` names
+ * (`schema.ts`). A row of one kind is matched by its own key with `=`, in a statement of its own (`ownerKeys`), so each
+ * lookup takes its index: an `IS` or an `OR` over both kinds would read the whole table.
  */
 
 /**
@@ -60,14 +64,15 @@ const ONGOING = (audit: string): string => `${audit}.origin = 'ongoing'`;
  * The `audit_violations` rows of the audit a trigger holds as `NEW`, from its entries at ordinal `from` on: repeats
  * of a (rule, key) among them collapse onto the first copy (`violationCopiesSql`). None for a scan (`ONGOING`).
  */
-const violationRows = (from: string): string => `SELECT NEW.audit_id, entry.ordinal, NEW.session_id, NEW.started_at, entry.rule_id, entry.violation_key, entry.logged
+const violationRows = (from: string): string => `SELECT NEW.audit_id, entry.ordinal, NEW.session_id, NEW.started_at, entry.rule_id, entry.violation_key, entry.logged,
+    NEW.repository_id
     FROM (
       ${violationCopiesSql("NEW", "json_each(NEW.violations_json) violation", `violation.key >= ${from} AND ${ONGOING("NEW")}`)}
     ) entry
     WHERE entry.copy = 1`;
 
-const VIOLATION_COLUMNS = "(audit_id, ordinal, session_id, started_at, rule_id, violation_key, logged)";
-const STAGED_COLUMNS = "staged.audit_id, staged.ordinal, staged.session_id, staged.started_at, staged.rule_id, staged.violation_key, staged.logged";
+const VIOLATION_COLUMNS = "(audit_id, ordinal, session_id, started_at, rule_id, violation_key, logged, repository_id)";
+const STAGED_COLUMNS = "staged.audit_id, staged.ordinal, staged.session_id, staged.started_at, staged.rule_id, staged.violation_key, staged.logged, staged.repository_id";
 
 const INSERT_VIOLATIONS = `INSERT INTO audit_violations ${VIOLATION_COLUMNS} ${violationRows("0")}`;
 
@@ -92,7 +97,7 @@ const OLD_LENGTH = "(SELECT json_array_length(OLD.violations_json))";
 const APPEND_VIOLATIONS = `
   INSERT INTO audit_violations_staging ${VIOLATION_COLUMNS} ${violationRows(OLD_LENGTH)};
   INSERT INTO audit_violations_staging ${VIOLATION_COLUMNS}
-    SELECT kept.audit_id, kept.ordinal, kept.session_id, kept.started_at, kept.rule_id, kept.violation_key, 1
+    SELECT kept.audit_id, kept.ordinal, kept.session_id, kept.started_at, kept.rule_id, kept.violation_key, 1, kept.repository_id
     FROM audit_violations_staging staged
     JOIN audit_violations kept INDEXED BY audit_violations_audit_key
       ON kept.audit_id = staged.audit_id AND kept.rule_id IS staged.rule_id AND kept.violation_key = staged.violation_key
@@ -118,7 +123,8 @@ const REPLACE_VIOLATIONS = `
   DELETE FROM audit_violations WHERE audit_id = OLD.audit_id AND NOT EXISTS (
     SELECT 1 FROM audit_violations_staging staged
     WHERE staged.audit_id = NEW.audit_id AND staged.audit_id = audit_violations.audit_id AND staged.ordinal = audit_violations.ordinal
-      AND staged.session_id = audit_violations.session_id AND staged.started_at = audit_violations.started_at
+      AND staged.session_id IS audit_violations.session_id AND staged.repository_id IS audit_violations.repository_id
+      AND staged.started_at = audit_violations.started_at
       AND staged.rule_id IS audit_violations.rule_id AND staged.violation_key = audit_violations.violation_key
       AND staged.logged = audit_violations.logged);
   INSERT INTO audit_violations ${VIOLATION_COLUMNS}
@@ -141,31 +147,42 @@ const USE_RULE_SET = (audit: string): string => `
     WHERE rule_set.rule_revisions_json = ${audit}.rule_revisions_json
       AND json_extract(revision.value, '$.ruleId') IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM audit_rule_set_rules member WHERE member.rule_set_id = rule_set.rule_set_id);
-  INSERT INTO audit_rule_set_uses (audit_id, session_id, started_at, rule_set_id)
-    SELECT ${audit}.audit_id, ${audit}.session_id, ${audit}.started_at, rule_set_id
+  INSERT INTO audit_rule_set_uses (audit_id, session_id, started_at, rule_set_id, repository_id)
+    SELECT ${audit}.audit_id, ${audit}.session_id, ${audit}.started_at, rule_set_id, ${audit}.repository_id
     FROM audit_rule_sets WHERE rule_revisions_json = ${audit}.rule_revisions_json AND ${ONGOING(audit)};`;
 
-const sameKey = (row: string): string =>
-  `session_id = ${row}.session_id AND rule_id = ${row}.rule_id AND violation_key = ${row}.violation_key`;
+/**
+ * The rows with `row`'s owner, rule and violation key, as two conditions: a session's rows, and the repository's (no
+ * session). The one that is not `row`'s kind holds for no row, and costs nothing, as its first term is a constant.
+ */
+const ownerKeys = (row: string): readonly [string, string] => {
+  const ruleKey = `rule_id = ${row}.rule_id AND violation_key = ${row}.violation_key`;
+  return [
+    `${row}.session_id IS NOT NULL AND session_id = ${row}.session_id AND ${ruleKey}`,
+    `${row}.session_id IS NULL AND session_id IS NULL AND repository_id = ${row}.repository_id AND ${ruleKey}`,
+  ];
+};
 
 /** A new sighting can only move its rollup row's maxima forward: raise them in place, or add the row. */
-const RAISE_ROLLUP = `
+const RAISE_ROLLUP = `${ownerKeys("NEW").map(key => `
   UPDATE rule_violation_rollup SET
     last_seen_at = max(last_seen_at, NEW.started_at),
     last_logged_at = CASE WHEN NEW.logged = 1 THEN max(coalesce(last_logged_at, NEW.started_at), NEW.started_at) ELSE last_logged_at END
-  WHERE ${sameKey("NEW")};
-  INSERT INTO rule_violation_rollup (session_id, rule_id, violation_key, last_seen_at, last_logged_at)
-    SELECT NEW.session_id, NEW.rule_id, NEW.violation_key, NEW.started_at, CASE WHEN NEW.logged = 1 THEN NEW.started_at END
-    WHERE NOT EXISTS (SELECT 1 FROM rule_violation_rollup WHERE ${sameKey("NEW")});`;
+  WHERE ${key};`).join("")}
+  INSERT INTO rule_violation_rollup (session_id, rule_id, violation_key, last_seen_at, last_logged_at, repository_id)
+    SELECT NEW.session_id, NEW.rule_id, NEW.violation_key, NEW.started_at, CASE WHEN NEW.logged = 1 THEN NEW.started_at END, NEW.repository_id
+    WHERE ${ownerKeys("NEW").map(key => `NOT EXISTS (SELECT 1 FROM rule_violation_rollup WHERE ${key})`).join(" AND ")};`;
+
+/** The latest start of `OLD`'s owner, rule and key in `audit_violations` where `extra` holds (index-only); null for none. */
+const latestSighting = (extra: string): string =>
+  `coalesce(${ownerKeys("OLD").map(key => `(SELECT max(started_at) FROM audit_violations WHERE ${key}${extra})`).join(", ")})`;
 
 /** A removed sighting may have held a maximum: recompute the row from what is left (index-only), or drop it. */
-const RECOMPUTE_ROLLUP = `
-  DELETE FROM rule_violation_rollup WHERE ${sameKey("OLD")};
-  INSERT INTO rule_violation_rollup (session_id, rule_id, violation_key, last_seen_at, last_logged_at)
-    SELECT OLD.session_id, OLD.rule_id, OLD.violation_key, latest.seen, latest.logged FROM (
-      SELECT
-        (SELECT max(started_at) FROM audit_violations WHERE ${sameKey("OLD")}) AS seen,
-        (SELECT max(started_at) FROM audit_violations WHERE ${sameKey("OLD")} AND logged = 1) AS logged
+const RECOMPUTE_ROLLUP = `${ownerKeys("OLD").map(key => `
+  DELETE FROM rule_violation_rollup WHERE ${key};`).join("")}
+  INSERT INTO rule_violation_rollup (session_id, rule_id, violation_key, last_seen_at, last_logged_at, repository_id)
+    SELECT OLD.session_id, OLD.rule_id, OLD.violation_key, latest.seen, latest.logged, OLD.repository_id FROM (
+      SELECT ${latestSighting("")} AS seen, ${latestSighting(" AND logged = 1")} AS logged
     ) latest
     WHERE latest.seen IS NOT NULL;`;
 

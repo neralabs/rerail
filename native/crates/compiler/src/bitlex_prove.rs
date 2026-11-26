@@ -678,7 +678,7 @@ struct Witnesses {
     files: Vec<Vec<u8>>,
     /// The operations `values` are of, and their words over the files end to end.
     ops: Vec<BlockOp>,
-    values: Vec<Vec<u64>>,
+    values: Vec<rerail_blocks::vector::Vector<u64>>,
     /// Each file's blocks in `values`, and whether a block is its file's first.
     spans: Vec<std::ops::Range<usize>>,
     first: Vec<bool>,
@@ -733,11 +733,11 @@ impl Witnesses {
 
     /// An operation of values made already, word by word: `None` for one that reads the bytes
     /// or carries (made by the interpreter, `remake`).
-    fn combine(&self, op: BlockOp) -> Option<Vec<u64>> {
+    fn combine(&self, op: BlockOp) -> Option<rerail_blocks::vector::Vector<u64>> {
         let at = |x: u16| &self.values[usize::from(x)];
         let two = |a: u16, b: u16, f: fn(u64, u64) -> u64| at(a).iter().zip(at(b)).map(|(&x, &y)| f(x, y)).collect();
         Some(match op {
-            BlockOp::Const(c) => vec![c; self.first.len()],
+            BlockOp::Const(c) => rerail_blocks::vector![c; self.first.len()],
             BlockOp::Not(a) => at(a).iter().map(|&x| !x).collect(),
             BlockOp::And(a, b) => two(a, b, |x, y| x & y),
             BlockOp::Or(a, b) => two(a, b, |x, y| x | y),

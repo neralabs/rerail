@@ -545,8 +545,19 @@ fn trace_for_hazards(connection: &Connection) {
                     *x.cast::<i64>() as u64,
                 )
             };
-            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-            super::hazards::sql_in_wave("store", &text, ns);
+            // Its words, one space apart, in the thread's buffer: a list and a string a statement were 1.5 M + 0.59 M
+            // on cold PostHog's profiled run.
+            thread_local!(static WORDS: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) });
+            WORDS.with_borrow_mut(|words| {
+                words.clear();
+                for w in text.split_whitespace() {
+                    if !words.is_empty() {
+                        words.push(' ');
+                    }
+                    words.push_str(w);
+                }
+                super::hazards::sql_in_wave("store", words, ns);
+            });
         }
         0
     }
@@ -597,6 +608,10 @@ pub use super::base::flush_of;
 pub(super) fn configure_connection(connection: &mut Connection, flush: Flush) -> StoreResult<()> {
     trace_for_hazards(connection);
     connection.set_prepared_statement_cache_capacity(256);
+    // A statement is planned once, whatever is bound to it: without this, SQLite 3.54 re-plans a cached statement at
+    // each new value of a parameter it reads as a possible integer constant, so every source lookup by its hash
+    // (`h.lane0 = ?2`, …) was prepared again at each call, some 800 times in an unchanged run.
+    connection.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_ENABLE_QPSG, true)?;
     connection.busy_handler(Some(wait_for_writer))?;
     // `auto_vacuum` takes only on an empty file, before `journal_mode = WAL` writes its header: set later, inside the
     // creating transaction, it was ignored, so no store returned freed pages (decision 0053 §4).
@@ -630,7 +645,7 @@ pub(super) fn configure_connection(connection: &mut Connection, flush: Flush) ->
     }
     // `atoms` over this process's arena, and the commit hook that keeps pending atoms out of
     // committed rows (decision 0049).
-    super::atoms::Atoms::install(connection)?;
+    super::install_atoms(connection)?;
     Ok(())
 }
 

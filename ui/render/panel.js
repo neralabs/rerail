@@ -6,8 +6,8 @@
  * rule created by you a Delete in a footer at the end. A rule pack's contents render here too (`pack-panel.js`).
  */
 import { h, setAttr, setText, setContent, icon, pendingIcon } from "../dom.js";
-import { fmt, plural, whenLabel, clock, shortSessionId } from "../format.js";
-import { ruleMode, isLog, isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN, awaitingApproval, awaitingYourApproval, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
+import { fmt, plural, whenLabel, clock, violationOwner } from "../format.js";
+import { ruleMode, modeLabel, isLog, isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN, awaitingApproval, awaitingYourApproval, notRunningReason, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
 import { data, ui, rangeCaption, fires, allFires, isMeasured, ruleFindings, ruleFindingsTotal, titleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
 import { renderPackPanel } from "./pack-panel.js";
 import { MODE_READ_ONLY, enforcementTag, updateEnforcementTag } from "./enforcement.js";
@@ -66,7 +66,8 @@ function buildRule() {
   el.recent = h("div");
   el.foot = h("div.pfoot");
   el.approval = h("div");
-  el.body = h("div.pbody", null, el.pask, el.approval,
+  el.notRunning = h("div");
+  el.body = h("div.pbody", null, el.pask, el.notRunning, el.approval,
     h("div.enf", null, h("div.enfhead", null, h("div.lbl", null, "On a violation"), el.enforcement), el.modeText, h("p.enfhint", null, MODE_READ_ONLY)),
     el.stats, el.statsNone,
     h("section.psec", null, h("h3", null, "Description"), el.description),
@@ -101,7 +102,10 @@ function renderAsk(stored) {
 /** What the rule does on a violation: the tag on the "On a violation" line, and the sentence that says what that means. */
 function renderModes(stored) {
   updateEnforcementTag(p.enforcement, stored);
-  setText(p.modeText, MODE_PLAIN[ruleMode(stored)] ?? "");
+  // A rule that runs nowhere does nothing on a violation: the line says what it is set to, for when it runs again.
+  setText(p.modeText, notRunningReason(stored) === null
+    ? MODE_PLAIN[ruleMode(stored)] ?? ""
+    : `Set to ${modeLabel(stored)}. Nothing is logged or steered while it does not run.`);
 }
 
 /** The three cards' count and caption: logged and declined in the range, logged since install; dashes if uncounted. */
@@ -165,6 +169,18 @@ const otherNotice = (stored, subject, pack) => h("div.welcome.warn", { role: "st
   approveButton(subject)));
 
 /**
+ * For a rule switched on that runs nowhere (its options don't apply, or Rerail does not run its document), that it
+ * does not run and why: its switch and mode below say what it would do; nothing for a rule that runs or is off.
+ */
+function renderNotRunning(stored) {
+  const reason = notRunningReason(stored);
+  setContent(p.notRunning, JSON.stringify([reason]), () => (reason === null ? null
+    : h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
+      h("b", null, "On, but not running."),
+      h("p", null, reason)))));
+}
+
+/**
  * While the rule's content (or its pack's) waits for a person's approval, what that means and an Approve button that
  * approves exactly the content this page read; nothing once approved, or for a rule that needs none.
  */
@@ -223,13 +239,17 @@ function agentSeesEdit(stored, message) {
       h("button.btn.sm.solid", { "data-act": "promptcopy" }, icon("copy"), "Copy prompt"))));
 }
 
+function ownerButton(owner) {
+  return h("button.open", { "data-act": "session", "data-i": owner.session, title: owner.title, disabled: owner.session === null }, owner.label);
+}
+
 /** One violation: what the agent was told (when it differs from the rule's text), the file and its folder, when, and its session. */
 function violationRow(x, said) {
   const { file, dir } = splitPath(x.path);
   return h("div.rrow", null,
     x.message && x.message !== said ? h("span.m", null, x.message) : null,
     file ? h("span.file.mono", { title: x.path }, file) : h("span.file.muted", null, "No path recorded"),
-    h("button.open", { "data-act": "session", "data-i": x.sessionId, title: "Open this session" }, shortSessionId(x.sessionId, x.host)),
+    ownerButton(violationOwner(x)),
     h("span.dir.mono", { title: dir }, dir),
     h("span.when", null, `${capitalize(whenLabel(x.at))} · ${clock(x.at)}`));
 }
@@ -278,6 +298,7 @@ function renderRule(root, stored) {
   setText(p.swText, stored.enabled ? "On" : "Off");
   renderAsk(stored);
   renderModes(stored);
+  renderNotRunning(stored);
   renderApproval(stored);
   renderStats(stored, id);
   setText(p.description, twoSentences(conditionText(stored) || `${titleOf(stored)}.`));

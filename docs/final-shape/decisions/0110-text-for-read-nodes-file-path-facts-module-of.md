@@ -1,6 +1,6 @@
 # 0110: Text only for the nodes read, `filePath` inside a matcher, and `module_of`
 
-Status: proposed (2026-11-11)
+Status: built (audited 2026-11-23). Proposed (2026-11-11)
 
 ## Intro
 

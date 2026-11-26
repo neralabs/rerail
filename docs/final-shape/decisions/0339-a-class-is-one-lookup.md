@@ -1,7 +1,7 @@
 # 0339: A class is one lookup
 
-Status: decided (2026-11-17); landed. Follows 0338. Judged by the
-generated code's structure against simdjson's stage 1.
+Status: built (audited 2026-11-23). Decided (2026-11-17); landed. Follows 0338. Judged by the generated code's
+structure against simdjson's stage 1.
 
 ## Intro
 

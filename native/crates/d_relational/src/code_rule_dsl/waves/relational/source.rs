@@ -11,7 +11,7 @@ use std::{
 };
 
 struct Slice {
-    source: Arc<String>,
+    source: Arc<crate::code_rule_dsl::tape::Text>,
     start: usize,
     end: usize,
 }
@@ -41,7 +41,7 @@ pub(in crate::code_rule_dsl) fn charge(work: &AtomicUsize, count: usize) -> Resu
 }
 
 pub(super) struct Binding {
-    files: HashMap<String, Arc<String>>,
+    files: HashMap<String, Arc<crate::code_rule_dsl::tape::Text>>,
     work: Arc<AtomicUsize>,
 }
 pub(super) type SharedBinding = Arc<parking_lot::RwLock<Binding>>;

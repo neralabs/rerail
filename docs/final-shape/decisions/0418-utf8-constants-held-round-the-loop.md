@@ -1,7 +1,7 @@
 # 0418: The UTF-8 check's constants held round the loop
 
-Status: decided (the user, 2026-11-18: "go ahead", on 0417's open item). Follows 0069, 0350,
-0353 and 0417.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-18: "go ahead", on 0417's open item). Follows 0069,
+0350, 0353 and 0417.
 
 ## Intro
 

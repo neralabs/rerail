@@ -11,7 +11,7 @@ default = ["rerail-matcher/default", "rerail-adapters/default", "rerail-facts/de
 headless = ["napi-derive/noop", "rerail-matcher/headless", "rerail-adapters/headless", "rerail-facts/headless", "rerail-lang/headless", "rerail-rules-base/headless", "rerail-p-anchors/headless", "rerail-d-relational/headless", "rerail-d-anchors/headless"]
 code-rule-profile = ["rerail-matcher/code-rule-profile", "rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile", "rerail-rules-base/code-rule-profile", "rerail-p-anchors/code-rule-profile", "rerail-d-relational/code-rule-profile", "rerail-d-anchors/code-rule-profile"]
 p-anchor-corpus = ["rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus", "rerail-rules-base/p-anchor-corpus", "rerail-p-anchors/p-anchor-corpus", "rerail-d-relational/p-anchor-corpus", "rerail-d-anchors/p-anchor-corpus"]
-test-hooks = ["rerail-matcher/test-hooks", "rerail-adapters/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-blocks/test-hooks", "dep:tempfile", "rerail-rules-base/test-hooks", "rerail-p-anchors/test-hooks", "rerail-d-relational/test-hooks", "rerail-d-anchors/test-hooks"]
+test-hooks = ["rerail-matcher/test-hooks", "rerail-adapters/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-blocks/test-hooks", "dep:tempfile", "rerail-rules-base/test-hooks", "rerail-p-anchors/test-hooks", "rerail-d-relational/test-hooks", "rerail-d-anchors/test-hooks"]
 
 [dependencies]
 ast-grep-core = "=0.51.0"
@@ -46,7 +46,6 @@ rerail-rules-base = { path = "../rules_base", default-features = false }
 rerail-p-anchors = { path = "../p_anchors", default-features = false }
 rerail-d-relational = { path = "../d_relational", default-features = false }
 rerail-d-anchors = { path = "../d_anchors", default-features = false }
-rerail-store = { path = "../store" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.189"

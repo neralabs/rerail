@@ -14,15 +14,15 @@ pub fn with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, usize)>
         source.push(' ');
     }
     source.push('\n');
-    let input = FileInput::new("a.py".into(), "python".into(), Arc::new(source), None, None, "core").unwrap();
+    let input = FileInput::new("a.py".into(), "python".into(), Arc::new(source.into()), None, None, "core").unwrap();
     let Built::Facts(facts) = core::build(&input).unwrap() else { panic!("literal test failed to parse") };
     let dialect = Dialect::new(crate::code_rule_dsl::facts::core::facts_tag(&facts)).unwrap();
     let p = Projected::new(0, Arc::new(facts), Some(&dialect), super::Shape::Core, false, None);
-    let local = p.nodes().find(|&(_, id)| matches!(dialect.name(&p.facts, id), "string" | "concatenated_string")).unwrap().0;
+    let local = p.nodes().find(|&(_, id)| matches!(dialect.name(p.f(), id), "string" | "concatenated_string")).unwrap().0;
     from_tape(&p, &dialect, local, false).into_iter().map(|(v, at, spec, offset)| {
         // `at` is a node id: its low bits are a local id only under preorder ids.
         let at = p.local_of(at as u32).expect("a node of the document");
-        let start = p.facts.start(p.node(at as u32));
+        let start = p.f().start(p.node(at as u32));
         let node = positions.iter().find(|&&(s, _)| s == start).unwrap().1;
         (v, node, spec, offset)
     }).collect()
@@ -39,10 +39,10 @@ pub(crate) fn from_tape(p: &Projected, dialect: &Dialect, local: u32, words: boo
     let id = p.node(local);
     let mut current = None;
     let mut formatted = false;
-    let valid = if dialect.name(&p.facts, id) == "string" {
+    let valid = if dialect.name(p.f(), id) == "string" {
         reader.literal(id, &mut current, &mut formatted)
     } else {
-        p.facts.children(id).iter().copied().filter(|&c| dialect.name(&p.facts, c) == "string")
+        p.f().children(id).iter().copied().filter(|&c| dialect.name(p.f(), c) == "string")
             .all(|c| reader.literal(c, &mut current, &mut formatted))
     };
     if !valid { return Vec::new(); }
@@ -58,13 +58,13 @@ struct Constants<'a> {
 }
 
 impl Constants<'_> {
-    fn kind(&self, id: u32) -> &str { self.dialect.name(&self.p.facts, id) }
+    fn kind(&self, id: u32) -> &str { self.dialect.name(self.p.f(), id) }
 
     fn append(&self, current: &mut Option<Piece>, value: String, owner: u32, start: u32, spec: u8) {
         if let Some((text, _, _, _)) = current { text.push_str(&value); }
         else {
             let at = self.p.global(self.p.local_of_node(owner));
-            *current = Some((value, at, spec, (start - self.p.facts.start(owner)) as usize));
+            *current = Some((value, at, spec, (start - self.p.f().start(owner)) as usize));
         }
     }
 
@@ -84,7 +84,7 @@ impl Constants<'_> {
 
     fn literal(&mut self, id: u32, current: &mut Option<Piece>, formatted: &mut bool) -> bool {
         let p = self.p;
-        let f = &p.facts;
+        let f = p.f();
         let text = f.text(id);
         let prefix: String = text.chars().take_while(char::is_ascii_alphabetic).collect::<String>().to_ascii_lowercase();
         if prefix.contains(['b', 't']) { return false; }
@@ -114,7 +114,7 @@ impl Constants<'_> {
 
     fn field(&mut self, id: u32, owner: u32, current: &mut Option<Piece>, raw: bool, spec: u8) {
         let p = self.p;
-        let f = &p.facts;
+        let f = p.f();
         let children = f.children(id);
         if f.tokens(id).iter().any(|t| self.dialect.atom_name(t.kind) == "=") {
             let end = children.iter().copied().find(|&c| matches!(self.kind(c), "type_conversion" | "format_specifier"))
@@ -130,7 +130,7 @@ impl Constants<'_> {
 
     fn format(&mut self, id: u32, owner: u32, raw: bool) {
         let p = self.p;
-        let f = &p.facts;
+        let f = p.f();
         let mut current = None;
         let mut previous = f.start(id) + 1; // skip ':'
         for child in f.children(id) {

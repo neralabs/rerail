@@ -5,10 +5,11 @@
 //! own: a relation is its `RelId`, a variable its `Slot`, and the last split is the analysis of the edit's input,
 //! carried to its output by the manager, which hands `maintain` the edit.
 
+use rerail_blocks::vector::Vector;
 use super::{CHUNK_VALUES, document_column, option_input};
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
 use crate::code_rule_dsl::logic::program_image::manager::{Analysis, Cx, Delta, Reads};
-use crate::code_rule_dsl::logic::program_image::{CmpOp, Lit as L, NativeSpec, RelId, RuleRef, Slot, TermRef, Version};
+use crate::code_rule_dsl::logic::program_image::{CmpOp, Lit as L, ArchivedNativeSpec, NativeSpec, RelId, RuleRef, Slot, TermRef, Version};
 use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
 
@@ -38,10 +39,19 @@ use std::hash::{Hash, Hasher};
 pub struct FileLocal {
     pub local: BTreeSet<String>,
     pub constants: BTreeSet<String>,
-    pub locations: BTreeMap<String, Vec<usize>>,
+    pub locations: BTreeMap<String, Vector<usize>>,
     pub filters: BTreeSet<String>,
     pub causes: BTreeMap<String, String>,
-    pub same_doc: BTreeMap<String, Vec<usize>>,
+    pub same_doc: BTreeMap<String, Vector<usize>>,
+    /// Each derived relation's nullable location columns (decision 0649): not its `locations`, but filled in every
+    /// rule by a location or by `unset` (-1, no node). A rule joins through one only where the same rule places its
+    /// variable by a location column too, which -1 never is; a row's document is never read off one.
+    pub nullable: BTreeMap<String, Vector<usize>>,
+    /// The undeclared crossings (decision 0652): each relation in the cross-file part that is not declared
+    /// `cross_file`, whose own rule places rows of two documents, or which is made natively. Its value is the cause and
+    /// the rule. Not one: a relation whose rules read a cross-file relation (it follows it), or are on one document
+    /// but for an input naming no document (the run's settings, a phase's export, the files beyond the corpus).
+    pub crossings: BTreeMap<String, String>,
     pub no_document: bool,
     keys: Keys,
 }
@@ -58,6 +68,8 @@ impl PartialEq for FileLocal {
             && self.filters == o.filters
             && self.causes.keys().eq(o.causes.keys())
             && self.same_doc == o.same_doc
+            && self.nullable == o.nullable
+            && self.crossings == o.crossings
             && self.no_document == o.no_document
             && self.keys == o.keys
     }
@@ -89,7 +101,7 @@ impl Analysis for FileLocal {
     }
     /// Its fields as rows, each tagged by its field (decision 0333 §4): `(0, rel)` file-local, `(1, rel)` constant,
     /// `(2, rel, columns)` locations, `(3, rel)` filters, `(4, rel, cause)`, `(5, rel, columns)` same-document,
-    /// `(6, no document)`, and its keys, `(7, global)` and `(8, head, key)`.
+    /// `(6, no document)`, its keys, `(7, global)` and `(8, head, key)`, and `(9, rel, columns)` nullable locations.
     fn rows(&self, _v: &Version) -> Option<Vec<crate::code_rule_dsl::logic::program_image::manager::Row>> {
         use crate::code_rule_dsl::logic::front::Value;
         let str = |s: &str| Value::Str(s.to_owned().into());
@@ -105,11 +117,13 @@ impl Analysis for FileLocal {
         out.push(vec![tag(6), Value::Int(i64::from(self.no_document))]);
         out.push(vec![tag(7), Value::Int(self.keys.global as i64)]);
         out.extend(self.keys.heads.iter().map(|(h, k)| vec![tag(8), str(h), Value::Int(*k as i64)]));
+        out.extend(self.nullable.iter().map(|(r, c)| vec![tag(9), str(r), cols(c)]));
+        out.extend(self.crossings.iter().map(|(r, c)| vec![tag(10), str(r), str(c)]));
         Some(out)
     }
     fn of_rows(_v: &Version, rows: &[crate::code_rule_dsl::logic::program_image::manager::Row]) -> Option<FileLocal> {
         use crate::code_rule_dsl::logic::front::Value;
-        let cols = |s: &str| -> Option<Vec<usize>> { if s.is_empty() { Some(Vec::new()) } else { s.split(',').map(|x| x.parse().ok()).collect() } };
+        let cols = |s: &str| -> Option<rerail_blocks::vector::Vector<usize>> { if s.is_empty() { Some(rerail_blocks::vector::Vector::new()) } else { s.split(',').map(|x| x.parse::<usize>().ok()).collect() } };
         let mut f = FileLocal::default();
         for r in rows {
             match r.as_slice() {
@@ -122,6 +136,8 @@ impl Analysis for FileLocal {
                 [Value::Int(6), Value::Int(b)] => f.no_document = *b != 0,
                 [Value::Int(7), Value::Int(k)] => f.keys.global = *k as u64,
                 [Value::Int(8), Value::Str(h), Value::Int(k)] => drop(f.keys.heads.insert(h.to_string(), *k as u64)),
+                [Value::Int(9), Value::Str(n), Value::Str(c)] => drop(f.nullable.insert(n.to_string(), cols(c)?)),
+                [Value::Int(10), Value::Str(n), Value::Str(c)] => drop(f.crossings.insert(n.to_string(), c.to_string())),
                 _ => return None,
             }
         }
@@ -158,7 +174,7 @@ impl Analysis for FileLocal {
             return Some(p.finish(self.clone(), keys));
         }
         let mut cone: BTreeSet<u32> = BTreeSet::new();
-        let mut work: Vec<u32> = changed.iter().filter_map(|r| p.v.rel(r)).map(|r| r.0).collect();
+        let mut work: Vector<u32> = changed.iter().filter_map(|r| p.v.rel(r)).map(|r| r.0).collect();
         cone.extend(work.iter().copied().filter(|&r| p.rels.is_derived(r)));
         while let Some(r) = work.pop() {
             for &k in p.rels.reading(r) {
@@ -185,7 +201,7 @@ impl Program<'_> {
     /// `split` with what it reads of every input, made again whatever the edit (the same-document columns, and
     /// whether the program reads a document: the keys digest only the inputs the fixpoints ask about), and `keys`.
     fn finish(&self, mut split: FileLocal, keys: Keys) -> FileLocal {
-        let mut same_doc: BTreeMap<String, Vec<usize>> = self.f.inputs().filter(|i| !self.f.derives(i)).map(|i| (i.to_owned(), self.base_locations(i))).collect();
+        let mut same_doc: BTreeMap<String, Vector<usize>> = self.f.inputs().filter(|i| !self.f.derives(i)).map(|i| (i.to_owned(), self.base_locations(i))).collect();
         same_doc.extend(split.local.iter().map(|rel| (rel.clone(), split.locations[rel].clone())));
         split.same_doc = same_doc;
         split.no_document = self.reads_no_document();
@@ -239,7 +255,7 @@ impl<'v> Program<'v> {
             }
             any = true;
             for w in self.f.qualifiers_of(rel) {
-                let cols = |c: &str| c.split(',').filter(|x| !x.is_empty()).filter_map(|x| x.parse().ok()).collect::<Vec<usize>>();
+                let cols = |c: &str| c.split(',').filter(|x| !x.is_empty()).filter_map(|x| x.parse::<usize>().ok()).collect::<Vector<usize>>();
                 match w.split_once('=') {
                     Some(("part:loc", c)) => drop(given.locations.insert(rel.to_owned(), cols(c))),
                     Some(("part:same", c)) => drop(given.same_doc.insert(rel.to_owned(), cols(c))),
@@ -322,7 +338,7 @@ impl<'v> Program<'v> {
         facts.hash(&mut g);
         // The `.about` rows: natives and lattices, and the rest, which the split does not read (a change there
         // splits whole, as a change of a native does).
-        let mut about: Vec<u64> = self.v.about_facts().into_iter().map(|f| f.hash()).collect();
+        let mut about: Vector<u64> = self.v.about_facts().into_iter().map(|f| f.hash()).collect();
         about.sort_unstable();
         about.hash(&mut g);
         let mut heads: BTreeMap<String, u64> = BTreeMap::new();
@@ -357,9 +373,9 @@ impl<'v> Program<'v> {
     /// A base relation's location columns: node columns, the document column (`document_column`: `node`, `doc`,
     /// `pkg`, `syntax_error`, `cpython_syntax_error`, the source text's, the path's, the guests') and `docof(n, d)`'s
     /// document.
-    fn base_locations(&self, rel: &str) -> Vec<usize> {
+    fn base_locations(&self, rel: &str) -> Vector<usize> {
         // An undeclared one (a tree axis before lowering declares it) has none of its own, as the tree's.
-        let mut columns: Vec<usize> = self.f.columns(rel).unwrap_or_default().iter().enumerate().filter(|(_, (_, t))| *t == "node").map(|(i, _)| i).collect();
+        let mut columns: Vector<usize> = self.f.columns(rel).unwrap_or_default().iter().enumerate().filter(|(_, (_, t))| *t == "node").map(|(i, _)| i).collect();
         if let Some(column) = document_column(rel) {
             columns.push(column);
         }
@@ -411,9 +427,9 @@ impl<'v> Program<'v> {
                     }
             })
             .collect();
-        let mut round: Vec<u32> = (0..rels.n as u32).filter(|&r| scope[r as usize] && constant[r as usize]).collect();
+        let mut round: Vector<u32> = (0..rels.n as u32).filter(|&r| scope[r as usize] && constant[r as usize]).collect();
         while !round.is_empty() {
-            let leaving: Vec<u32> = round.iter().copied().filter(|&r| !rels.rules[r as usize].iter().all(|&k| forms.get(k).reads_constants(rels, &constant))).collect();
+            let leaving: Vector<u32> = round.iter().copied().filter(|&r| !rels.rules[r as usize].iter().all(|&k| forms.get(k).reads_constants(rels, &constant))).collect();
             for &r in &leaving {
                 constant[r as usize] = false;
             }
@@ -435,23 +451,23 @@ impl<'v> Program<'v> {
         let constant = self.constants(&forms, &in_scope, prev.map(|p| &p.constants));
         let placeless: Vec<bool> = (0..n).map(|r| rels.fact[r] || constant[r] || rels.placeless_input[r] || rels.chunk_value[r] || rels.test[r]).collect();
         // A derived relation's location columns: those every rule fills from a location.
-        let mut locs: Vec<Vec<usize>> = (0..n)
+        let mut locs: Vec<Vector<usize>> = (0..n)
             .map(|r| {
                 if !rels.is_derived(r as u32) {
-                    return Vec::new();
+                    return Vector::new();
                 }
                 let kept = was(r).and_then(|p| p.locations.get(self.name(r as u32)).cloned());
                 kept.unwrap_or_else(|| (0..self.f.width(self.name(r as u32))).collect())
             })
             .collect();
-        let mut round: Vec<u32> = (0..n as u32).filter(|&r| in_scope[r as usize]).collect();
+        let mut round: Vector<u32> = (0..n as u32).filter(|&r| in_scope[r as usize]).collect();
         while !round.is_empty() {
-            let changed: Vec<(u32, Vec<usize>)> = round
+            let changed: Vec<(u32, Vector<usize>)> = round
                 .iter()
                 .filter_map(|&r| {
                     let rules = &rels.rules[r as usize];
                     let placed: Vec<Bits> = rules.iter().map(|&k| forms.get(k).placed_classes(rels, &locs)).collect();
-                    let kept: Vec<usize> = locs[r as usize].iter().copied().filter(|&c| rules.iter().zip(&placed).all(|(&k, p)| forms.get(k).head_placed(self.rules[k], c, p))).collect();
+                    let kept: Vector<usize> = locs[r as usize].iter().copied().filter(|&c| rules.iter().zip(&placed).all(|(&k, p)| forms.get(k).head_placed(self.rules[k], c, p))).collect();
                     (kept != locs[r as usize]).then_some((r, kept))
                 })
                 .collect();
@@ -461,13 +477,44 @@ impl<'v> Program<'v> {
             }
             round = next;
         }
+        // Nullable location columns (decision 0649): those every rule fills from a location (a location column, or a
+        // nullable one read) or with `unset`, past the location columns.
+        let mut nulls: Vec<Vec<usize>> = (0..n)
+            .map(|r| {
+                if !rels.is_derived(r as u32) {
+                    return Vec::new();
+                }
+                match was(r) {
+                    Some(p) => p.nullable.get(self.name(r as u32)).map(|v| v.iter().copied().collect()).unwrap_or_default(),
+                    None => (0..self.f.width(self.name(r as u32))).filter(|c| !locs[r].contains(c)).collect(),
+                }
+            })
+            .collect();
+        let mut round: Vector<u32> = (0..n as u32).filter(|&r| in_scope[r as usize] && !nulls[r as usize].is_empty()).collect();
+        while !round.is_empty() {
+            let changed: Vec<(u32, Vec<usize>)> = round
+                .iter()
+                .filter_map(|&r| {
+                    let rules = &rels.rules[r as usize];
+                    let placed: Vec<Bits> = rules.iter().map(|&k| forms.get(k).placed_or_null(rels, &locs, &nulls)).collect();
+                    let kept: Vec<usize> = nulls[r as usize].iter().copied().filter(|&c| rules.iter().zip(&placed).all(|(&k, p)| forms.get(k).head_placed_or_unset(self.rules[k], c, p))).collect();
+                    (kept != nulls[r as usize]).then_some((r, kept))
+                })
+                .collect();
+            let next = rels.heads_reading(changed.iter().map(|(r, _)| *r), |_| true);
+            for (r, kept) in changed {
+                nulls[r as usize] = kept;
+            }
+            round = next;
+        }
         let derived = || (0..n as u32).filter(|&r| rels.is_derived(r));
-        let locations: BTreeMap<String, Vec<usize>> = derived().map(|r| (self.name(r).to_owned(), locs[r as usize].clone())).collect();
+        let locations: BTreeMap<String, Vector<usize>> = derived().map(|r| (self.name(r).to_owned(), locs[r as usize].clone())).collect();
+        let nullable: BTreeMap<String, Vector<usize>> = derived().filter(|&r| !nulls[r as usize].is_empty()).map(|r| (self.name(r).to_owned(), nulls[r as usize].iter().copied().collect())).collect();
         // String filters (decision 0037).
         let mut filtering: Vec<bool> = (0..n).map(|r| rels.is_derived(r as u32) && was(r).is_none_or(|p| p.filters.contains(self.name(r as u32)))).collect();
-        let mut round: Vec<u32> = (0..n as u32).filter(|&r| in_scope[r as usize] && filtering[r as usize]).collect();
+        let mut round: Vector<u32> = (0..n as u32).filter(|&r| in_scope[r as usize] && filtering[r as usize]).collect();
         while !round.is_empty() {
-            let leaving: Vec<u32> = round.iter().copied().filter(|&r| !rels.rules[r as usize].iter().all(|&k| forms.get(k).filters(self.rules[k], rels, &filtering))).collect();
+            let leaving: Vector<u32> = round.iter().copied().filter(|&r| !rels.rules[r as usize].iter().all(|&k| forms.get(k).filters(self.rules[k], rels, &filtering))).collect();
             for &r in &leaving {
                 filtering[r as usize] = false;
             }
@@ -479,14 +526,16 @@ impl<'v> Program<'v> {
             let rel = self.v.rel_name(r);
             self.fact(rel) && !self.f.is_input(rel)
         };
+        // A native relation is judged by its rules, which the lowering keeps beside it with its rows' shape (decision
+        // 0652): a walk (`dfs_first`, `reach`, `components`) over edges of one document each stays in it, and one over
+        // edges between documents is cross-file by its rules as any rule is. A function of strings (`match_all`, a
+        // text test) is judged by its input (`functional`). Python's natives over a cross-file target are made in the
+        // cross-file part.
         let cross_native = |rel: &str| {
             self.f.native(rel).is_some_and(|nat| match &nat.spec {
-                NativeSpec::TextTest { .. } => false,
-                // A rank's rows are its groups' (`rank_form`): its rule's join on the group is judged as any rule's.
-                NativeSpec::Rank { .. } => false,
-                NativeSpec::PythonCandidates { targets, .. } => !constants.contains(self.v.rel_name(*targets)) && !fact_not_input(*targets),
-                NativeSpec::Python { targets, .. } => targets.is_some_and(|t| !constants.contains(self.v.rel_name(t)) && !fact_not_input(t)),
-                _ => true,
+                ArchivedNativeSpec::PythonCandidates { targets, .. } => !constants.contains(self.v.rel_name(*targets)) && !fact_not_input(*targets),
+                ArchivedNativeSpec::Python { targets, .. } => targets.is_some_and(|t| !constants.contains(self.v.rel_name(t)) && !fact_not_input(t)),
+                _ => false,
             })
         };
         // A relation `locate_all` moved (`CROSS_FILE`): its rows name no document, so it is derived once over every file
@@ -507,16 +556,25 @@ impl<'v> Program<'v> {
                 match was(r as usize) {
                     Some(p) => p.causes.get(rel).map(|c| (rel.to_owned(), c.clone())),
                     None if cross_native(rel) => Some((rel.to_owned(), "made natively".to_owned())),
-                    None => moved(rel).then(|| (rel.to_owned(), "its rows name no document (moved by `locate`)".to_owned())),
+                    None if self.f.qualified(rel, super::MOVED_CROSS_FILE) => Some((rel.to_owned(), "its rows name no document (moved by `locate`)".to_owned())),
+                    None => moved(rel).then(|| (rel.to_owned(), "declared `cross_file`".to_owned())),
                 }
             })
             .collect();
-        let mut dirty: Option<Vec<usize>> = None;
+        let mut dirty: Option<rerail_blocks::vector::Vector<usize>> = None;
         loop {
-            let explain = |k: usize, local_now: &[bool]| self.why_not_local(self.rules[k], local_now, &constants, &filters, &locations);
+            let explain = |k: usize, local_now: &[bool]| self.why_not_local(self.rules[k], local_now, &constants, &filters, &locations, &nullable);
             let check = |k: usize| -> Option<(u32, String)> {
                 let head = rels.head[k];
-                if forms.get(k).one_document(head, rels, &placeless, &local_now, &filtering, &locs) {
+                // A function of strings is where its input is: its rows are its input strings' values.
+                if rels.functional[head as usize] {
+                    let crossed = forms.get(k).lits.iter().find_map(|l| match l {
+                        Lit::Read { rel: x, .. } if rels.is_derived(*x) && !local_now[*x as usize] && !placeless[*x as usize] => Some(*x),
+                        _ => None,
+                    });
+                    return crossed.map(|x| (head, format!("reads cross-file {}", self.name(x))));
+                }
+                if forms.get(k).one_document(head, rels, &placeless, &local_now, &filtering, &locs, &nulls) {
                     debug_assert!(explain(k, &local_now).is_none(), "the numbered check and the text's agree on {}", self.name(head));
                     return None;
                 }
@@ -528,7 +586,7 @@ impl<'v> Program<'v> {
                 None => (0..self.rules.len()).filter(|&k| in_scope[rels.head[k] as usize] && local_now[rels.head[k] as usize]).filter_map(check).collect(),
                 Some(rules) => rules.iter().copied().filter(|&k| local_now[rels.head[k] as usize]).filter_map(check).collect(),
             };
-            let mut next: Vec<usize> = Vec::new();
+            let mut next: rerail_blocks::vector::Vector<usize> = rerail_blocks::vector::Vector::new();
             let mut left = false;
             for (r, why) in failing {
                 if std::mem::replace(&mut local_now[r as usize], false) {
@@ -545,20 +603,96 @@ impl<'v> Program<'v> {
             }
         }
         let local: BTreeSet<String> = derived().filter(|&r| local_now[r as usize]).map(|r| self.name(r).to_owned()).collect();
+        // The undeclared crossings (decision 0652): a cross-file relation's rule that reads no cross-file relation and,
+        // with every input naming no document taken as placeless, still does not place one document.
+        let placeless_or_input: Vec<bool> = (0..n).map(|r| placeless[r] || (!rels.is_derived(r as u32) && rels.base_locs[r].is_empty())).collect();
+        let mut crossings: BTreeMap<String, String> = BTreeMap::new();
+        for r in derived() {
+            let (ru, rel) = (r as usize, self.name(r));
+            if local_now[ru] || moved(rel) {
+                continue;
+            }
+            if let Some(p) = was(ru) {
+                if let Some(c) = p.crossings.get(rel) {
+                    crossings.insert(rel.to_owned(), c.clone());
+                }
+                continue;
+            }
+            if cross_native(rel) {
+                crossings.insert(rel.to_owned(), "made natively".to_owned());
+                continue;
+            }
+            for &k in &rels.rules[ru] {
+                let form = forms.get(k);
+                let reads_cross = form.lits.iter().any(|l| matches!(l, Lit::Read { rel: x, .. } if rels.is_derived(*x) && !local_now[*x as usize] && !placeless[*x as usize]));
+                // Its reads of documents' rows. None: the run's inputs alone, the run's rows. One plain positive read:
+                // each row is one file's, a union (as the cross part reads the chunks' findings back). Neither is a
+                // crossing; documents meet only where a rule joins two reads of them, or aggregates one.
+                let documents: Vec<&Lit> = form.lits.iter().filter(|l| match l {
+                    Lit::Read { rel: x, .. } => !placeless_or_input[*x as usize],
+                    Lit::Ast | Lit::Nearest(..) => true,
+                    Lit::Cmp | Lit::Same(..) => false,
+                }).collect();
+                let union = matches!(documents.as_slice(), [] | [Lit::Read { neg: false, plain: true, .. }]);
+                if reads_cross || union || form.one_document(r, rels, &placeless_or_input, &local_now, &filtering, &locs, &nulls) {
+                    continue;
+                }
+                let why = self.why_not_local(self.rules[k], &local_now, &constants, &filters, &locations, &nullable).unwrap_or_else(|| "places more than one document".to_owned());
+                crossings.insert(rel.to_owned(), format!("{why}\n      {}", self.v.show_rule(self.rules[k]).chars().take(400).collect::<String>()));
+                break;
+            }
+        }
         // The same-document columns and the rest: `finish`.
-        self.finish(FileLocal { local, constants, locations, filters, causes, ..Default::default() }, self.keys())
+        self.finish(FileLocal { local, constants, locations, filters, causes, nullable, crossings, ..Default::default() }, self.keys())
     }
 
     /// Why `rule` places more than one document, from its text: `None` where it does
     /// not. Asked only of a rule the numbered check fails (and, in a debug build, of each it passes).
-    fn why_not_local(&self, rule: RuleRef<'v>, local_now: &[bool], constants: &BTreeSet<String>, filters: &BTreeSet<String>, locations: &BTreeMap<String, Vec<usize>>) -> Option<String> {
+    fn why_not_local(&self, rule: RuleRef<'v>, local_now: &[bool], constants: &BTreeSet<String>, filters: &BTreeSet<String>, locations: &BTreeMap<String, Vector<usize>>, nullable: &BTreeMap<String, Vector<usize>>) -> Option<String> {
         let v = self.v;
+        let equal_names: Vec<(String, String)> = super::var_equalities_in(v, rule).into_iter().map(|(a, b)| (v.text(rule.var(a)).to_owned(), v.text(rule.var(b)).to_owned())).collect();
+        // The variables a location column of a positive read places (`one_document`'s `strict`): a nullable
+        // column's variable among them is no -1.
+        let mut strict: BTreeSet<String> = BTreeSet::new();
+        for l in rule.body() {
+            if let L::Atom(a) | L::Agg { atom: a, .. } = l.view()
+                && !a.neg()
+            {
+                let rel = v.rel_name(a.rel());
+                let columns = if self.f.derives(rel) { locations.get(rel).cloned().unwrap_or_default() } else { self.base_locations(rel) };
+                let args: Vec<TermRef<'_>> = a.args().collect();
+                strict.extend(columns.iter().filter_map(|&c| args.get(c).and_then(|t| t.var())).map(|s| v.text(rule.var(s)).to_owned()));
+            }
+        }
+        super::close_under(&mut strict, &equal_names);
+        // `one_document`'s `nullable_row`: a nullable column's variable no location column places, to its positive
+        // row's first location variable.
+        let mut nullable_row: BTreeMap<String, String> = BTreeMap::new();
+        for l in rule.body() {
+            if let L::Atom(a) = l.view()
+                && !a.neg()
+                && self.f.derives(v.rel_name(a.rel()))
+                && let Some(nc) = nullable.get(v.rel_name(a.rel()))
+            {
+                let args: Vec<TermRef<'_>> = a.args().collect();
+                let Some(anchor) = locations.get(v.rel_name(a.rel())).and_then(|cs| cs.iter().find_map(|&c| args.get(c).and_then(|t| t.var()))) else { continue };
+                for &c in nc {
+                    if let Some(x) = args.get(c).and_then(|t| t.var()).map(|s| v.text(rule.var(s)).to_owned())
+                        && !strict.contains(&x)
+                    {
+                        nullable_row.entry(x).or_insert_with(|| v.text(rule.var(anchor)).to_owned());
+                    }
+                }
+            }
+        }
         let head = v.rel_name(rule.head().rel());
         let var = |s: Slot| v.text(rule.var(s)).to_owned();
         let local = |rel: &str| v.rel(rel).is_some_and(|r| local_now[r.0 as usize]);
         let placed = ValueTapes::of(v, rule);
         let tape = |c: u32| format!("rr_value_tape:{}", var(Slot(c)));
         let mut groups: Vec<BTreeSet<String>> = Vec::new();
+        // `@doc(a) = @doc(b)` and `d = @doc(n)`: one document's (`Lit::Same`).
+        let mut same_doc: Vec<(String, String)> = Vec::new();
         for &(n, t) in &placed.splices {
             groups.push(BTreeSet::from([var(n), tape(t)]));
         }
@@ -571,13 +705,22 @@ impl<'v> Program<'v> {
                     groups.push(BTreeSet::from([var(n), var(a)]));
                     continue;
                 }
+                L::Cmp { l, op: CmpOp::Eq, r } => {
+                    if let (Some((a, x)), Some((b, y))) = (doc_side(v, l), doc_side(v, r))
+                        && (x || y)
+                    {
+                        same_doc.push((var(a), var(b)));
+                    }
+                    continue;
+                }
                 L::Cmp { .. } => continue,
             };
             let rel = v.rel_name(atom.rel());
             let derived = self.f.derives(rel);
             let constant = (!derived && self.fact(rel) && !self.f.is_input(rel)) || constants.contains(rel) || self.placeless_input(rel);
             let chunk_value = !derived && CHUNK_VALUES.contains(&rel);
-            if constant || chunk_value || rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) || filters.contains(rel) || filters.contains(head) {
+            let functional = local(rel) && (self.f.native(rel).is_some_and(|nat| matches!(nat.spec, ArchivedNativeSpec::MatchAll { .. })) || self.f.qualified(rel, super::STRATEGY));
+            if constant || chunk_value || functional || rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) || filters.contains(rel) || filters.contains(head) {
                 continue;
             }
             if derived && !local(rel) {
@@ -586,6 +729,12 @@ impl<'v> Program<'v> {
             let columns = if derived { locations[rel].clone() } else { self.base_locations(rel) };
             let args: Vec<TermRef<'_>> = atom.args().collect();
             let mut vars: BTreeSet<String> = columns.iter().filter_map(|&c| args.get(c).and_then(|t| t.var())).map(var).collect();
+            if atom.neg() {
+                vars = vars.into_iter().map(|x| nullable_row.get(&x).cloned().unwrap_or(x)).collect();
+            }
+            if derived && let Some(nc) = nullable.get(rel) {
+                vars.extend(nc.iter().filter_map(|&c| args.get(c).and_then(|t| t.var())).map(var).filter(|x| strict.contains(x)));
+            }
             let binder = plain && placed.by_binder.values().any(|b| *b == index);
             if vars.is_empty() && binder && !columns.is_empty() {
                 vars.insert(format!("rr_value_binder:{index}"));
@@ -604,7 +753,8 @@ impl<'v> Program<'v> {
             }
             groups.push(vars);
         }
-        let equal: Vec<(String, String)> = super::var_equalities_in(v, rule).into_iter().map(|(a, b)| (var(a), var(b))).collect();
+        let mut equal: Vec<(String, String)> = super::var_equalities_in(v, rule).into_iter().map(|(a, b)| (var(a), var(b))).collect();
+        equal.extend(same_doc);
         for g in &mut groups {
             super::close_under(g, &equal);
         }
@@ -639,11 +789,35 @@ pub(super) struct Crossing {
     pub(super) projected: BTreeSet<String>,
 }
 
+/// Whether rule `r` reads a node's text or value by a function (`syntax::NODE_READS`, `t = @rr_node_text_any(v)`):
+/// a read of the long-text nodes' binding (`syntax::LONG_TEXT_NODES`), which holds the batch the node is read from.
+pub fn reads_a_node(v: &Version, r: RuleRef<'_>) -> bool {
+    fn calls(v: &Version, t: TermRef<'_>) -> bool {
+        match t {
+            TermRef::Call(f, mut args) => crate::code_rule_dsl::facts::vtab::syntax::NODE_READS.contains(&v.text(f)) || args.any(|a| calls(v, a)),
+            _ => false,
+        }
+    }
+    r.body().any(|l| match l.view() {
+        L::Cmp { l, r, .. } => calls(v, l) || calls(v, r),
+        _ => false,
+    })
+}
+
 pub(super) fn crossing(v: &Version, f: Fields<'_>, local: &BTreeSet<String>) -> Crossing {
     let is_local = |rel: &str| local.contains(rel);
     let head = |r: &RuleRef<'_>| v.rel_name(r.head().rel());
+    // A rule's reads: its atoms', by relation id, each named once (a name made per atom read, twice over the rules,
+    // was 5 ms of a warm run); and the long-text nodes' binding where it reads a node's text or value
+    // (`syntax::NODE_READS`: the binding holds the batch every node read goes through, the corpus batch's in the
+    // cross-file part).
     let read = |keep: &dyn Fn(&str) -> bool| -> BTreeSet<String> {
-        v.rules().filter(|r| keep(head(r))).flat_map(|r| r.reads().map(|a| v.rel_name(a.rel()).to_owned()).collect::<Vec<_>>()).collect()
+        let ids: std::collections::HashSet<_> = v.rules().filter(|r| keep(head(r))).flat_map(|r| r.reads().map(|a| a.rel())).collect();
+        let mut names: BTreeSet<String> = ids.into_iter().map(|r| v.rel_name(r).to_owned()).collect();
+        if v.rules().filter(|r| keep(head(r))).any(|r| reads_a_node(v, r)) {
+            names.insert(crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES.to_owned());
+        }
+        names
     };
     let cross_reads = read(&|h| !is_local(h));
     let projection = |rel: &str| {
@@ -653,8 +827,12 @@ pub(super) fn crossing(v: &Version, f: Fields<'_>, local: &BTreeSet<String>) -> 
             && !f.lattice(rel)
             && rules.all(|r| {
                 let mut body = r.body();
+                // Not over a matcher's relation (`rr_ast_<k>`): its rows are made by a wave over each document's tape,
+                // which the chunks run already; read in the cross part, the corpus batch ran the wave again over every
+                // file and made every document's rows for it (`raw_all_name` on t50's product run, 24 s of CPU).
+                // Its projection is exported instead.
                 match (body.next().map(|l| l.view()), body.next()) {
-                    (Some(L::Atom(a)), None) => !a.neg() && f.is_input(v.rel_name(a.rel())),
+                    (Some(L::Atom(a)), None) => !a.neg() && f.is_input(v.rel_name(a.rel())) && !v.rel_name(a.rel()).starts_with(crate::code_rule_dsl::facts::core::ast_matches::PREFIX),
                     _ => false,
                 }
             })
@@ -686,15 +864,18 @@ struct Rels<'v> {
     placeless_input: Vec<bool>,
     chunk_value: Vec<bool>,
     test: Vec<bool>,
+    /// Placed where its inputs are, and read as a test is where it is per-file: a native function of strings
+    /// (`match_all`), or a relation that chooses its readers' evaluation, not their rows (`STRATEGY`).
+    functional: Vec<bool>,
     text: Vec<Option<&'static [usize]>>,
-    base_locs: Vec<Vec<usize>>,
+    base_locs: Vec<Vector<usize>>,
     candidate: Vec<bool>,
     /// A derived relation's rules, by index in the program's order.
-    rules: Vec<Vec<usize>>,
+    rules: Vec<Vector<usize>>,
     /// The rules reading each relation, by index, each once, in order.
-    reading: Vec<Vec<usize>>,
+    reading: Vec<Vector<usize>>,
     /// Each rule's head.
-    head: Vec<u32>,
+    head: Vector<u32>,
     _v: std::marker::PhantomData<&'v ()>,
 }
 
@@ -702,10 +883,10 @@ impl<'v> Rels<'v> {
     fn of(v: &'v Version, f: Fields<'v>, rules: &[RuleRef<'v>]) -> Rels<'v> {
         let n = v.rel_end() as usize;
         let mut derived = vec![false; n];
-        let mut by_head: Vec<Vec<usize>> = vec![Vec::new(); n];
-        let mut reading: Vec<Vec<usize>> = vec![Vec::new(); n];
+        let mut by_head: Vec<Vector<usize>> = vec![rerail_blocks::vector::Vector::new(); n];
+        let mut reading: Vec<Vector<usize>> = vec![rerail_blocks::vector::Vector::new(); n];
         let mut read = vec![false; n];
-        let head: Vec<u32> = rules.iter().map(|r| r.head().rel().0).collect();
+        let head: Vector<u32> = rules.iter().map(|r| r.head().rel().0).collect();
         for (k, r) in rules.iter().enumerate() {
             let h = head[k] as usize;
             derived[h] = true;
@@ -728,6 +909,7 @@ impl<'v> Rels<'v> {
         }
         let base = |r: usize| !derived[r] && read[r];
         let test = |r: &str| r.starts_with(crate::code_rule_dsl::logic::strings::RELATION);
+        let functional = |r: &str| f.native(r).is_some_and(|nat| matches!(nat.spec, ArchivedNativeSpec::MatchAll { .. })) || f.qualified(r, super::STRATEGY);
         Rels {
             n,
             derived_count: derived.iter().filter(|d| **d).count(),
@@ -735,8 +917,9 @@ impl<'v> Rels<'v> {
             placeless_input: (0..n).map(|r| (derived[r] || read[r]) && p.placeless_input(name(r))).collect(),
             chunk_value: (0..n).map(|r| base(r) && CHUNK_VALUES.contains(&name(r))).collect(),
             test: (0..n).map(|r| (derived[r] || read[r]) && test(name(r))).collect(),
+            functional: (0..n).map(|r| derived[r] && functional(name(r))).collect(),
             text: (0..n).map(|r| if derived[r] || read[r] { crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(t, _)| *t == name(r)).map(|(_, c)| *c) } else { None }).collect(),
-            base_locs: (0..n).map(|r| if base(r) { p.base_locations(name(r)) } else { Vec::new() }).collect(),
+            base_locs: (0..n).map(|r| if base(r) { p.base_locations(name(r)) } else { rerail_blocks::vector::Vector::new() }).collect(),
             candidate: (0..n).map(|r| derived[r] && f.native(name(r)).is_none() && !f.lattice(name(r)) && !f.is_input(name(r))).collect(),
             rules: by_head,
             reading,
@@ -747,7 +930,7 @@ impl<'v> Rels<'v> {
     }
 
     fn empty() -> Rels<'v> {
-        Rels { n: 0, derived_count: 0, derived: Vec::new(), fact: Vec::new(), placeless_input: Vec::new(), chunk_value: Vec::new(), test: Vec::new(), text: Vec::new(), base_locs: Vec::new(), candidate: Vec::new(), rules: Vec::new(), reading: Vec::new(), head: Vec::new(), _v: std::marker::PhantomData }
+        Rels { n: 0, derived_count: 0, derived: Vec::new(), fact: Vec::new(), placeless_input: Vec::new(), chunk_value: Vec::new(), test: Vec::new(), functional: Vec::new(), text: Vec::new(), base_locs: Vec::new(), candidate: Vec::new(), rules: Vec::new(), reading: Vec::new(), head: rerail_blocks::vector::Vector::new(), _v: std::marker::PhantomData }
     }
 
     fn is_derived(&self, r: u32) -> bool {
@@ -759,8 +942,8 @@ impl<'v> Rels<'v> {
     }
 
     /// The derived relations whose rules read any of `rels`, each once, in order.
-    fn heads_reading(&self, rels: impl Iterator<Item = u32>, keep: impl Fn(u32) -> bool) -> Vec<u32> {
-        let mut out: Vec<u32> = rels.flat_map(|r| self.reading[r as usize].iter().map(|&k| self.head[k])).filter(|&h| keep(h)).collect();
+    fn heads_reading(&self, rels: impl Iterator<Item = u32>, keep: impl Fn(u32) -> bool) -> Vector<u32> {
+        let mut out: Vector<u32> = rels.flat_map(|r| self.reading[r as usize].iter().map(|&k| self.head[k])).filter(|&h| keep(h)).collect();
         out.sort_unstable();
         out.dedup();
         out
@@ -785,25 +968,26 @@ impl<'p, 'v> Forms<'p, 'v> {
 /// The value tapes of a rule (decision 0058 §4, O96) and where they stand, by slot: each class under the rule's `a =
 /// b` named by its least slot. A value is made in the chunk of the document whose row gave its text, and is that
 /// document's: `parse_of(x, g, t)`'s t stands with the one atom that binds x (two atoms binding x join two documents
-/// on a string, which is no one document's), and `splice_of(_, n, _, t3)`'s t3 with node n.
+/// on a string, which is no one document's), `splice_of(_, n, _, t3)`'s t3 with node n, and `sub_tape(n, _, t)`'s
+/// t with node n.
 struct ValueTapes {
     /// Each value tape's class and the body index of the atom that gave its text.
     by_binder: BTreeMap<u32, usize>,
     /// Each spliced tape's node and tape class.
     splices: Vec<(Slot, u32)>,
-    class: Vec<u32>,
+    class: Vector<u32>,
 }
 
 impl ValueTapes {
     fn of(v: &Version, rule: RuleRef<'_>) -> ValueTapes {
         let n = rule.var_count();
-        let mut root: Vec<u32> = (0..n as u32).collect();
+        let mut root: Vector<u32> = (0..n as u32).collect();
         for l in rule.body() {
             if let L::Cmp { l: TermRef::Var(a), op: CmpOp::Eq, r: TermRef::Var(b) } = l.view() {
                 join(&mut root, a.0, b.0);
             }
         }
-        let class: Vec<u32> = (0..n as u32).map(|s| find(&mut root, s)).collect();
+        let class: Vector<u32> = (0..n as u32).map(|s| find(&mut root, s)).collect();
         let mut out = ValueTapes { by_binder: BTreeMap::new(), splices: Vec::new(), class };
         let body: Vec<L<'_>> = rule.body().map(|l| l.view()).collect();
         for l in &body {
@@ -815,7 +999,7 @@ impl ValueTapes {
             match (v.rel_name(a.rel()), args.as_slice()) {
                 ("parse_of", [TermRef::Var(x), _, TermRef::Var(t)]) => {
                     let x = out.class[x.0 as usize];
-                    let binders: Vec<usize> = body
+                    let binders: Vector<usize> = body
                         .iter()
                         .enumerate()
                         .filter(|(_, l)| match l {
@@ -832,6 +1016,9 @@ impl ValueTapes {
                     }
                 }
                 ("splice_of", [_, TermRef::Var(n), _, TermRef::Var(t3)]) => out.splices.push((*n, out.class[t3.0 as usize])),
+                // A guest's tape stands with its node: a guest and its host are one file (decision 0055), as a splice's
+                // tape with its node (decision 0652: the lowering's finding for a guest that does not parse).
+                ("sub_tape", [TermRef::Var(n), _, TermRef::Var(t)]) => out.splices.push((*n, out.class[t.0 as usize])),
                 _ => {}
             }
         }
@@ -847,10 +1034,24 @@ impl ValueTapes {
 
 /// A body literal as the split reads it.
 enum Lit {
-    Read { neg: bool, plain: bool, rel: u32, args: Vec<Option<u32>>, binder: bool, tapes: Vec<u32> },
+    Read { neg: bool, plain: bool, rel: u32, args: Vec<Option<u32>>, binder: bool, tapes: Vector<u32> },
     Ast,
     Nearest(u32, u32),
     Cmp,
+    /// `@doc(a) = @doc(b)`, or `d = @doc(n)`: the two classes are of one document (decision 0652), as `docof` says.
+    Same(u32, u32),
+}
+
+/// A side of `@doc(a) = @doc(b)` or `d = @doc(n)`: its variable, and whether it is the `@doc` call.
+fn doc_side(v: &Version, t: TermRef<'_>) -> Option<(Slot, bool)> {
+    match t {
+        TermRef::Var(s) => Some((s, false)),
+        TermRef::Call(f, mut args) if v.text(f) == "doc" => match (args.next(), args.next()) {
+            (Some(TermRef::Var(s)), None) => Some((s, true)),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// A rule body numbered for the split: its slots, each with its class under the body's equalities;
@@ -859,7 +1060,7 @@ struct Form {
     /// Whether a term of the body names the slot (a head's variable is found only then, as the tree's `Form` finds it
     /// by name).
     named: Vec<bool>,
-    class: Vec<u32>,
+    class: Vector<u32>,
     lits: Vec<Lit>,
     splices: Vec<(u32, u32)>,
     ids: usize,
@@ -887,11 +1088,11 @@ impl Form {
                 _ => {}
             }
         }
-        let mut root: Vec<u32> = (0..n as u32).collect();
+        let mut root: Vector<u32> = (0..n as u32).collect();
         for (a, b) in super::var_equalities_in(v, rule) {
             join(&mut root, a.0, b.0);
         }
-        let class: Vec<u32> = (0..n as u32).map(|s| find(&mut root, s)).collect();
+        let class: Vector<u32> = (0..n as u32).map(|s| find(&mut root, s)).collect();
         let placed = ValueTapes::of(v, rule);
         // The value tapes, numbered after the slots.
         let mut tapes: BTreeMap<u32, u32> = BTreeMap::new();
@@ -910,7 +1111,7 @@ impl Form {
                         _ => unreachable!(),
                     };
                     let args: Vec<TermRef<'_>> = a.args().collect();
-                    let mut stand: Vec<u32> = placed.by_binder.iter().filter(|(_, b)| **b == index).map(|(t, _)| tape(*t)).collect();
+                    let mut stand: Vector<u32> = placed.by_binder.iter().filter(|(_, b)| **b == index).map(|(t, _)| tape(*t)).collect();
                     if v.rel_name(a.rel()) == "tape_of"
                         && let Some(t) = args.get(1).and_then(|t| t.var())
                         && let Some(t) = placed.canonical(t)
@@ -928,6 +1129,10 @@ impl Form {
                 }
                 L::Ast { .. } => Lit::Ast,
                 L::Nearest { n, a, .. } => Lit::Nearest(class[n.0 as usize], class[a.0 as usize]),
+                L::Cmp { l, op: CmpOp::Eq, r } => match (doc_side(v, l), doc_side(v, r)) {
+                    (Some((a, x)), Some((b, y))) if x || y => Lit::Same(class[a.0 as usize], class[b.0 as usize]),
+                    _ => Lit::Cmp,
+                },
                 L::Cmp { .. } => Lit::Cmp,
             });
         }
@@ -947,12 +1152,12 @@ impl Form {
                 let r = *rel as usize;
                 constant[r] || rels.placeless_input[r] || rels.fact[r]
             }
-            Lit::Cmp => true,
+            Lit::Cmp | Lit::Same(..) => true,
             _ => false,
         })
     }
 
-    fn placed_classes(&self, rels: &Rels<'_>, locs: &[Vec<usize>]) -> Bits {
+    fn placed_classes(&self, rels: &Rels<'_>, locs: &[Vector<usize>]) -> Bits {
         let mut out = Bits::new(self.ids);
         for l in &self.lits {
             if let Lit::Read { neg: false, rel, args, .. } = l {
@@ -965,6 +1170,28 @@ impl Form {
             }
         }
         out
+    }
+
+    /// `placed_classes` with the classes nullable location columns place too (decision 0649).
+    fn placed_or_null(&self, rels: &Rels<'_>, locs: &[Vector<usize>], nulls: &[Vec<usize>]) -> Bits {
+        let mut out = self.placed_classes(rels, locs);
+        for l in &self.lits {
+            if let Lit::Read { neg: false, rel, args, .. } = l
+                && rels.is_derived(*rel)
+            {
+                for &c in &nulls[*rel as usize] {
+                    if let Some(Some(v)) = args.get(c) {
+                        out.set(self.class[*v as usize]);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Head column `c` is a placed variable, or `unset`'s -1.
+    fn head_placed_or_unset(&self, rule: RuleRef<'_>, c: usize, placed: &Bits) -> bool {
+        matches!(rule.head().args().nth(c), Some(TermRef::Int(crate::code_rule_dsl::logic::rr::lower::UNSET))) || self.head_placed(rule, c, placed)
     }
 
     fn head_placed(&self, rule: RuleRef<'_>, c: usize, placed: &Bits) -> bool {
@@ -985,27 +1212,49 @@ impl Form {
                     false
                 }
             }
-            Lit::Cmp => true,
+            Lit::Cmp | Lit::Same(..) => true,
             _ => false,
         });
         reads_only_text && rule.head().args().all(|t| self.var(t).is_some_and(|v| strings.has(v)))
     }
 
-    fn one_document(&self, head: u32, rels: &Rels<'_>, placeless: &[bool], local: &[bool], filters: &[bool], locs: &[Vec<usize>]) -> bool {
+    fn one_document(&self, head: u32, rels: &Rels<'_>, placeless: &[bool], local: &[bool], filters: &[bool], locs: &[Vector<usize>], nulls: &[Vec<usize>]) -> bool {
         let head_filter = filters[head as usize];
-        let mut root: Vec<u32> = (0..self.ids as u32).collect();
-        let mut firsts: Vec<u32> = Vec::new();
+        // A nullable column joins its row's group only where a location column of this rule places its variable
+        // (decision 0649): then it is no -1.
+        let strict = self.placed_classes(rels, locs);
+        // A negated read of a nullable column's variable that no location column places (decision 0652): where it
+        // is -1 the negated read matches no row and reads no document, and otherwise it is a node of the row's
+        // document, so the negated read is placed with the positive row that holds the column.
+        let mut nullable_row: Vec<(u32, u32)> = Vec::new();
+        for l in &self.lits {
+            if let Lit::Read { neg: false, rel, args, .. } = l
+                && rels.is_derived(*rel)
+                && let Some(&anchor) = locs[*rel as usize].iter().find_map(|&c| args.get(c).copied().flatten()).as_ref()
+            {
+                for &c in &nulls[*rel as usize] {
+                    if let Some(v) = args.get(c).copied().flatten()
+                        && !strict.has(self.class[v as usize])
+                    {
+                        nullable_row.push((self.class[v as usize], self.class[anchor as usize]));
+                    }
+                }
+            }
+        }
+        let mut root: Vector<u32> = (0..self.ids as u32).collect();
+        let mut firsts: Vector<u32> = rerail_blocks::vector::Vector::new();
         for &(n, t) in &self.splices {
             join(&mut root, n, t);
             firsts.push(n);
         }
-        let mut group: Vec<u32> = Vec::new();
+        let mut group: Vector<u32> = rerail_blocks::vector::Vector::new();
         for (index, l) in self.lits.iter().enumerate() {
             match l {
-                Lit::Read { plain, rel, args, binder, tapes, .. } => {
+                Lit::Read { neg, plain, rel, args, binder, tapes } => {
                     let r = *rel;
                     let derived = rels.is_derived(r);
-                    if placeless[r as usize] || (derived && filters[r as usize]) || head_filter {
+                    // A function of strings where it is per-file is read as a test is.
+                    if placeless[r as usize] || (derived && filters[r as usize]) || head_filter || (rels.functional[r as usize] && local[r as usize]) {
                         continue;
                     }
                     if derived && !local[r as usize] {
@@ -1014,6 +1263,16 @@ impl Form {
                     let columns = if derived { &locs[r as usize] } else { &rels.base_locs[r as usize] };
                     group.clear();
                     group.extend(columns.iter().filter_map(|&c| args.get(c).copied().flatten().map(|v| self.class[v as usize])));
+                    if *neg {
+                        for k in group.iter_mut() {
+                            if let Some(&(_, anchor)) = nullable_row.iter().find(|(x, _)| x == k) {
+                                *k = anchor;
+                            }
+                        }
+                    }
+                    if derived {
+                        group.extend(nulls[r as usize].iter().filter_map(|&c| args.get(c).copied().flatten().map(|v| self.class[v as usize])).filter(|&k| strict.has(k)));
+                    }
                     if group.is_empty() && *plain && *binder && !columns.is_empty() {
                         group.push(self.binders + index as u32);
                     }
@@ -1032,9 +1291,10 @@ impl Form {
                     firsts.push(*n);
                 }
                 Lit::Cmp => {}
+                Lit::Same(a, b) => join(&mut root, *a, *b),
             }
         }
-        let mut roots: Vec<u32> = firsts.iter().map(|&f| find(&mut root, f)).collect();
+        let mut roots: Vector<u32> = firsts.iter().map(|&f| find(&mut root, f)).collect();
         roots.sort_unstable();
         roots.dedup();
         roots.len() == 1 || (roots.is_empty() && head_filter)
@@ -1057,11 +1317,11 @@ fn join(root: &mut [u32], a: u32, b: u32) {
 }
 
 /// A set of a body's ids.
-struct Bits(Vec<u64>);
+struct Bits(Vector<u64>);
 
 impl Bits {
     fn new(n: usize) -> Bits {
-        Bits(vec![0; n.div_ceil(64)])
+        Bits(rerail_blocks::vector![0; n.div_ceil(64)])
     }
     fn set(&mut self, i: u32) {
         self.0[i as usize / 64] |= 1 << (i % 64);

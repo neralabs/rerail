@@ -1,6 +1,8 @@
 # 0045: Node sets are chunked containers: arrays, bitmaps and runs
 
-Status: accepted (user agreed, 2026-11-06); steps 1-2 done (`space::NodeSet`), step 3 done for kind postings
+Status: partly built (audited 2026-11-23). Left: Step 4: device containers for Metal set steps and label passes
+(threadgroup per present chunk). Accepted (user agreed, 2026-11-06); steps 1-2 done (`space::NodeSet`), step 3 done
+for kind postings
 
 ## Intro
 

@@ -43,9 +43,10 @@ after:   RelStats [n, kind], from [0, 1]        two counted; start, end, line re
 - **Why it stays right:** the statistics name their columns, and the blob keeps the names. A run whose rules read
   other columns asks for other names, and the keeper counts that relation from scratch (as for a relation new to
   it). `begin` compares the names, so nothing counted at two columns is taken for three.
-- **Symbols (decision 0170):** `map_symbols` maps a column's exact map between this process's ids and the store's.
+- **Symbols (decision 0170):** a symbol column's exact map is mapped between this process's ids and the store's.
   It reads a base relation's symbol columns by name now (`Syms::columns_named`), since its statistics no longer
-  have the row's width.
+  have the row's width. (Since t33 step 6 the maps are an atom column of a kept relation, `keeper_exact`: the kept
+  writer maps them to the store's ids and `Keeper::of_kept` back, so the read needs no symbol columns.)
 
 **2. A column is counted without a map entry a row.** `rows_of` built a map for each document and one for each
 value, an entry a row in each, and then merged them. Now each row's (document, value, whether its first column is

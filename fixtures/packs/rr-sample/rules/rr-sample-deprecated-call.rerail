@@ -1,0 +1,27 @@
+.policy "rr-sample-deprecated-call" revision 1
+.description "Call the replacement of a function another file marks deprecated, since deprecated functions are going away."
+.language python
+.mode steer
+.scope include "**/*.py"
+// A fixture rule (fixtures/packs/README.md): a call is reported for what another file says of the function it calls.
+
+.decl deprecated_function(name: symbol, d: number)
+deprecated_function(x, d) :- kind(dd, "decorated_definition"), child(dd, dc, _), kind(dc, "decorator"), text(dc, "@deprecated"),
+    field(dd, "definition", f), field(f, "name", n), text(n, x), docof(dd, d).
+
+.violation D001(at: node) code "D001" "Another file marks this function deprecated; call its replacement."
+D001(c) :- kind(c, "call"), field(c, "function", g), kind(g, "identifier"), text(g, x), deprecated_function(x, d), docof(c, e), d != e.
+
+.test deprecated_calls_are_reported exactly
+    .fixture "app/legacy.py" ```
+        @deprecated
+        def old_total(items):
+            return sum(items)
+        ```
+    .fixture "app/views.py" ```
+        from app.legacy import old_total
+        def view(items):
+            return old_total(items)
+        ```
+    .expect D001 at "app/views.py":3
+.end

@@ -5,6 +5,7 @@
 //! and a test of random shapes allows the placement check's refusals. The timing tests at the real workloads' sizes are ignored; run each alone:
 //! `cargo test -p rerail-accel --no-default-features --features ane ane::tests::time_w1 -- --ignored --nocapture`.
 
+use rerail_blocks::vector::Vector;
 use super::package::{self, Template};
 use super::*;
 use crate::cpu::tests::{bits, Rng};
@@ -15,12 +16,12 @@ fn ane() -> Ane {
     Ane::new(Arc::new(MemoryStore::default()))
 }
 
-fn product(a: &Bits, b: &Bits, min: Option<Vec<u32>>) -> Kernel {
+fn product(a: &Bits, b: &Bits, min: Option<Vector<u32>>) -> Kernel {
     Kernel::BitProduct { a: a.clone(), b: b.clone(), min: min.map(Into::into) }
 }
 
 /// Thresholds around the counts' middle, so that some pairs pass and some do not.
-fn thresholds(rng: &mut Rng, b: &Bits, a_density: u64) -> Vec<u32> {
+fn thresholds(rng: &mut Rng, b: &Bits, a_density: u64) -> Vector<u32> {
     (0..b.rows)
         .map(|j| {
             let ones: u32 = b.row(j).iter().map(|w| w.count_ones()).sum();
@@ -36,7 +37,7 @@ fn writer_matches_coremltools() {
     // The fixture's constants (W0: 128 x 24 at data offset 0x80, W1: 64 x 24 at 0x240) back to b's rows.
     let (n, k0, k1) = (24usize, 128usize, 64usize);
     let bit = |off: usize, e: usize| want_weights[off + e / 8] >> (e % 8) & 1 == 1;
-    let mut data = vec![0u64; n * 3];
+    let mut data = rerail_blocks::vector![0u64; n * 3];
     for j in 0..n {
         for c in 0..k0 + k1 {
             let on = if c < k0 { bit(0x80, c * n + j) } else { bit(0x240, (c - k0) * n + j) };
@@ -69,7 +70,7 @@ fn plan_splits_pieces() {
         }
     }
     // All ones over 20,480 bits: ten pieces of 2,048, more than a template takes.
-    let all = Bits::new(4, 320, vec![u64::MAX; 4 * 320]);
+    let all = Bits::new(4, 320, rerail_blocks::vector![u64::MAX; 4 * 320]);
     assert!(package::plan(4, 320, &all.data, 2048).unwrap_err().contains("10 pieces"));
 }
 
@@ -105,12 +106,12 @@ fn archive_round_trip() {
     let src = base.join("src.mlmodelc");
     std::fs::create_dir_all(src.join("weights")).unwrap();
     std::fs::write(src.join("model.mil"), b"program").unwrap();
-    std::fs::write(src.join("weights/weight.bin"), vec![7u8; 1000]).unwrap();
+    std::fs::write(src.join("weights/weight.bin"), rerail_blocks::vector![7u8; 1000]).unwrap();
     let a = package::archive(&src).unwrap();
     let dst = base.join("dst.mlmodelc");
     package::unarchive(&a, &dst).unwrap();
     assert_eq!(std::fs::read(dst.join("model.mil")).unwrap(), b"program");
-    assert_eq!(std::fs::read(dst.join("weights/weight.bin")).unwrap(), vec![7u8; 1000]);
+    assert_eq!(std::fs::read(dst.join("weights/weight.bin")).unwrap(), rerail_blocks::vector![7u8; 1000]);
     assert_eq!(package::archive(&dst).unwrap(), a);
     assert!(package::unarchive(&a[..a.len() - 1], &dst).is_err());
     std::fs::remove_dir_all(&base).unwrap();
@@ -126,14 +127,14 @@ fn refusals() {
     assert!(lane.refusal(&product(&a, &b, None)).unwrap().contains("not a fixed relation"));
     // Too many pieces: every row all ones over 20,480 bits.
     let wide = bits(&mut rng, 100, 20480, 4);
-    let all = Bits::new(64, 320, vec![u64::MAX; 64 * 320]).fixed();
+    let all = Bits::new(64, 320, rerail_blocks::vector![u64::MAX; 64 * 320]).fixed();
     assert!(lane.refusal(&product(&wide, &all, None)).unwrap().contains("pieces"));
     // Too small for the Neural Engine.
     let small = bits(&mut rng, 8, 128, 4).fixed();
     let a2 = bits(&mut rng, 10, 128, 4);
     assert!(lane.refusal(&product(&a2, &small, None)).unwrap().contains("CPU"));
     // Another form.
-    let k = Kernel::Histogram { off: vec![0u32, 1].into(), codes: vec![0u16].into(), width: 1 };
+    let k = Kernel::Histogram { off: rerail_blocks::vector![0u32, 1].into(), codes: rerail_blocks::vector![0u16].into(), width: 1 };
     assert!(!lane.can(&k));
     // Nothing was compiled for these.
     assert!(lane.state.lock().unwrap().loaded.is_empty());
@@ -204,7 +205,7 @@ fn exact_past_2048_and_past_16384() {
     // Wide and sparse: 20,000 bits, split by the 16,384-bit limit.
     let wb = bits(&mut rng, 64, 20000, 1).fixed();
     let wa = bits(&mut rng, 300, 20000, 2);
-    let ks = [product(&a, &b, None), product(&wa, &wb, None), product(&wa, &wb, Some(vec![2; 64]))];
+    let ks = [product(&a, &b, None), product(&wa, &wb, None), product(&wa, &wb, Some(rerail_blocks::vector![2; 64]))];
     let refs: Vec<&Kernel> = ks.iter().collect();
     let got = lane.submit(&refs).unwrap();
     for (k, g) in refs.iter().zip(&got) {
@@ -308,7 +309,7 @@ fn embedded_models_load() {
     let lane = ane();
     let mut rng = Rng(19);
     for &(c, _) in aot::AOT {
-        let (rows, words, data) = package::read_constant(c).unwrap();
+        let (rows, words, data) = package::read_constant::<rerail_blocks::vector::Vector<u64>>(c).unwrap();
         let b = Bits::new(rows, words, data).fixed();
         let a = bits(&mut rng, 300, words * 64, 3);
         let k = product(&a, &b, None);
@@ -325,7 +326,7 @@ fn executor_places_on_the_lane() {
     let mut rng = Rng(13);
     let b = bits(&mut rng, 200, 1500, 2).fixed();
     let a = bits(&mut rng, 900, 1500, 2);
-    let k = product(&a, &b, Some(vec![1; 200]));
+    let k = product(&a, &b, Some(rerail_blocks::vector![1; 200]));
     let not_fixed = product(&a, &Bits { fixed: None, ..b.clone() }, None);
     let (done, report) = ex.run(Batch(vec![Launch::on(k.clone(), Lane::Ane), Launch::new(not_fixed.clone())])).unwrap();
     assert_eq!(done[0].lane, Lane::Ane);

@@ -1,8 +1,8 @@
 # 0481: A store flushes at the OS's pace; tests flush nothing
 
-Status: accepted (2026-11-19). Q361. Follows 0266 (blocks in mmap files), 0402/0456 (kept facts), 0295 (the
-deferrable tier; cited as 0440 on Typing-support-final-shape, whose tree has no 0440). Numbered 0474 there; 0481
-here (roll-up 14).
+Status: built (audited 2026-11-23). Accepted (2026-11-19). Q361. Follows 0266 (blocks in mmap files), 0402/0456 (kept
+facts), 0295 (the deferrable tier; cited as 0440 on Typing-support-final-shape, whose tree has no 0440). Numbered 0474
+there; 0481 here (roll-up 14).
 
 ## Intro
 

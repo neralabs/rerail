@@ -69,7 +69,7 @@ fn terms_are_case_exact_grammar_agnostic_and_die_with_their_tape() {
     assert_eq!(count(&store, "SELECT count(*) FROM term_freq WHERE term IN (SELECT atom FROM atoms WHERE value IN ('Target','target'))"), 0);
     assert_eq!(store.prefilter_version(tape).unwrap(), None);
     store.remove_prefilter(replacement).unwrap();
-    for table in ["term_postings", "term_freq", "term_coverage", "tape_kind_counts", "kind_size", "edge_freq"] {
+    for table in ["term_postings", "term_freq", "term_coverage", "tape_kind_counts", "kind_size", "term_node_freq", "term_kind_freq", "prefilter_sets"] {
         assert_eq!(count(&store, &format!("SELECT count(*) FROM {table}")), 0, "{table}");
     }
 }

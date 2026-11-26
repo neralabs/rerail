@@ -1,4 +1,5 @@
 //! Broad CPU producer passes. SQL publication is a separate completed-output consumer.
+use rerail_blocks::vector::Vector;
 use super::{Result, invalid, source, sql_error};
 use std::{
     cell::Cell,
@@ -73,7 +74,7 @@ pub struct Root {
 #[derive(Clone)]
 pub struct Tree {
     pub facts: Arc<super::syntax::Facts>,
-    pub visible: Arc<Vec<u32>>,
+    pub visible: Arc<Vector<u32>>,
 }
 pub struct Demand {
     pub roots: Vec<Root>,
@@ -82,9 +83,9 @@ pub struct Demand {
     pub work: Arc<AtomicUsize>,
 }
 struct Output {
-    roots: Vec<u32>,
-    nodes: Vec<u32>,
-    files: Vec<u32>,
+    roots: Vector<u32>,
+    nodes: Vector<u32>,
+    files: Vector<u32>,
 }
 /// Constructed only after all passes succeed for this relation.
 pub(in crate::code_rule_dsl) struct Completed {
@@ -99,11 +100,11 @@ impl Completed {
 /// Checked, flat request columns. Relation boundaries are numeric CSR offsets.
 #[derive(Default)]
 pub struct Resident {
-    ends: Vec<u32>,
-    visible: Vec<u32>,
-    files: Vec<[u32; 4]>,
+    ends: Vector<u32>,
+    visible: Vector<u32>,
+    files: Vector<[u32; 4]>,
     roots: Vec<Root>,
-    relations: Vec<usize>,
+    relations: Vector<usize>,
     documents: std::collections::HashMap<usize, (u32, u32)>,
     selectors: std::collections::HashMap<(usize, usize), u32>,
     retained: Vec<Tree>,
@@ -302,9 +303,9 @@ pub(in crate::code_rule_dsl) fn execute(
                 continue;
             }
             let mut output = Output {
-                roots: vec![0; totals[i]],
-                nodes: vec![0; totals[i]],
-                files: vec![0; totals[i]],
+                roots: rerail_blocks::vector![0; totals[i]],
+                nodes: rerail_blocks::vector![0; totals[i]],
+                files: rerail_blocks::vector![0; totals[i]],
             };
             let result = contexts[indices[i]].run(|| -> Result<()> {
                 for (local, j) in (resident.relations[i]..resident.relations[i + 1]).enumerate() {

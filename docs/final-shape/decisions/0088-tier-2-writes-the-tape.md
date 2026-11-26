@@ -1,6 +1,6 @@
 # 0088: Tier 2 writes the tape
 
-Status: accepted (user, 2026-11-08: "please complete the tape writing").
+Status: built (audited 2026-11-23). Accepted (user, 2026-11-08: "please complete the tape writing").
 
 ## Intro
 

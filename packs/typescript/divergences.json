@@ -80,6 +80,86 @@
     "evidence": "This file is the rename variant of consistent-indexed-object-style/038.ts, whose divergence is declared above, and it misses for the same reason. The engine's tree-sitter-typescript grammar (0.23.2 with Rerail's patches, native/grammars) does not parse an index signature without a type annotation (`type Hlo = { [] };`): on this file the engine reports source-partial (\"file has syntax errors\") and the rule misses the finding upstream reports on the type alias. typescript-eslint 8.70.1 parses it, and TypeScript 6.0.3's parser reads it with no parse diagnostics; only TypeScript's checker rejects it (TS1096, an index signature must have exactly one parameter). Rerail cannot decide it until the grammar reads the construct."
   },
   {
+    "rule": "typescript-eslint-no-invalid-void-type",
+    "source": "fixtures",
+    "path": "no-invalid-void-type/041.ts",
+    "line": 1,
+    "kind": "upstream-wrong",
+    "evidence": "typescript-eslint 8.70.1 reports `void` as a call's type argument: no-invalid-void-type lists CallExpression among the grandparents where `void` under a TSTypeParameterInstantiation stays invalid even with allowInGenericTypeArguments true (packages/eslint-plugin/src/rules/no-invalid-void-type.ts, invalidGrandParents; its test reports `functionGeneric<void>(undefined);`), while `new Promise<void>()` and a tagged template's type argument are allowed. The steer to pass undefined instead is wrong for a call: `Promise.withResolvers<undefined>()` makes every `resolve()` need an argument, and a type test's `toEqualTypeOf<void>()` asserts a different type with undefined. Rerail allows `void` as any call's type argument while allowInGenericTypeArguments is true, and still reports it under false or the array form."
+  },
+  {
+    "rule": "typescript-eslint-no-invalid-void-type",
+    "source": "fixtures",
+    "path": "renamed/no-invalid-void-type/041.ts",
+    "line": 1,
+    "kind": "upstream-wrong",
+    "evidence": "This file is the rename variant of no-invalid-void-type/041.ts, whose divergence is declared above, and Rerail leaves it unreported for the same reason. typescript-eslint 8.70.1 reports `void` as a call's type argument: no-invalid-void-type lists CallExpression among the grandparents where `void` under a TSTypeParameterInstantiation stays invalid even with allowInGenericTypeArguments true (packages/eslint-plugin/src/rules/no-invalid-void-type.ts, invalidGrandParents; its test reports `functionGeneric<void>(undefined);`), while `new Promise<void>()` and a tagged template's type argument are allowed. The steer to pass undefined instead is wrong for a call: `Promise.withResolvers<undefined>()` makes every `resolve()` need an argument, and a type test's `toEqualTypeOf<void>()` asserts a different type with undefined. Rerail allows `void` as any call's type argument while allowInGenericTypeArguments is true, and still reports it under false or the array form."
+  },
+  {
+    "rule": "typescript-eslint-no-invalid-void-type",
+    "source": "samples",
+    "path": "gatsby-packages-gatsby-adapter-netlify-src-pretty-urls.ts-04ee3054021c/packages/gatsby-adapter-netlify/src/pretty-urls.ts",
+    "line": 35,
+    "kind": "upstream-wrong",
+    "evidence": "The call type-argument divergence declared on no-invalid-void-type/041.ts, on real code: `fastq<void, IMoveTask, void>(async (task, cb) => {...})` names the queue's context and result types on line 35. typescript-eslint 8.70.1 reports `void` there because CallExpression is among the rule's invalid grandparents, and steers to undefined, which says only that the queue's context and result hold undefined; `void` is how TypeScript code names an absent context and a worker that returns nothing. Rerail allows `void` as a call's type argument while allowInGenericTypeArguments is true."
+  },
+  {
+    "rule": "typescript-eslint-no-invalid-void-type",
+    "source": "samples",
+    "path": "ghost-ghost-test-unit-boot-init-background-services.test.ts-5d633940a49e/ghost/test/unit/boot/init-background-services.test.ts",
+    "line": 80,
+    "kind": "upstream-wrong",
+    "evidence": "The call type-argument divergence declared on no-invalid-void-type/041.ts, on real code: `Promise.withResolvers<void>()` on line 80. typescript-eslint 8.70.1 reports `void` there because CallExpression is among the rule's invalid grandparents, and steers to undefined, which makes the promise's `resolve()` require an argument (TypeScript 5.9 strict reports TS2554 on `Promise.withResolvers<undefined>().resolve()`). Rerail allows `void` as a call's type argument while allowInGenericTypeArguments is true."
+  },
+  {
+    "rule": "typescript-eslint-no-invalid-void-type",
+    "source": "samples",
+    "path": "ghost-ghost-test-unit-boot-init-background-services.test.ts-5d633940a49e/ghost/test/unit/boot/init-background-services.test.ts",
+    "line": 125,
+    "kind": "upstream-wrong",
+    "evidence": "The call type-argument divergence declared on no-invalid-void-type/041.ts, on real code: `Promise.withResolvers<void>()` on line 125. typescript-eslint 8.70.1 reports `void` there because CallExpression is among the rule's invalid grandparents, and steers to undefined, which makes the promise's `resolve()` require an argument (TypeScript 5.9 strict reports TS2554 on `Promise.withResolvers<undefined>().resolve()`). Rerail allows `void` as a call's type argument while allowInGenericTypeArguments is true."
+  },
+  {
+    "rule": "typescript-eslint-no-invalid-void-type",
+    "source": "samples",
+    "path": "ghost-ghost-test-unit-server-services-content-import-index.test.ts-9e0c17ab2c52/ghost/test/unit/server/services/content-import/index.test.ts",
+    "line": 150,
+    "kind": "upstream-wrong",
+    "evidence": "The call type-argument divergence declared on no-invalid-void-type/041.ts, on real code: `Promise.withResolvers<void>()` on line 150. typescript-eslint 8.70.1 reports `void` there because CallExpression is among the rule's invalid grandparents, and steers to undefined, which makes the promise's `resolve()` require an argument (TypeScript 5.9 strict reports TS2554 on `Promise.withResolvers<undefined>().resolve()`). Rerail allows `void` as a call's type argument while allowInGenericTypeArguments is true."
+  },
+  {
+    "rule": "typescript-eslint-no-invalid-void-type",
+    "source": "samples",
+    "path": "ghost-ghost-test-unit-server-services-content-import-index.test.ts-9e0c17ab2c52/ghost/test/unit/server/services/content-import/index.test.ts",
+    "line": 151,
+    "kind": "upstream-wrong",
+    "evidence": "The call type-argument divergence declared on no-invalid-void-type/041.ts, on real code: `Promise.withResolvers<void>()` on line 151. typescript-eslint 8.70.1 reports `void` there because CallExpression is among the rule's invalid grandparents, and steers to undefined, which makes the promise's `resolve()` require an argument (TypeScript 5.9 strict reports TS2554 on `Promise.withResolvers<undefined>().resolve()`). Rerail allows `void` as a call's type argument while allowInGenericTypeArguments is true."
+  },
+  {
+    "rule": "typescript-eslint-no-invalid-void-type",
+    "source": "samples",
+    "path": "ghost-ghost-test-unit-server-services-export-requests-root.test.ts-60b7755d16d6/ghost/test/unit/server/services/export-requests/root.test.ts",
+    "line": 120,
+    "kind": "upstream-wrong",
+    "evidence": "The call type-argument divergence declared on no-invalid-void-type/041.ts, on real code: `Promise.withResolvers<void>()` on line 120. typescript-eslint 8.70.1 reports `void` there because CallExpression is among the rule's invalid grandparents, and steers to undefined, which makes the promise's `resolve()` require an argument (TypeScript 5.9 strict reports TS2554 on `Promise.withResolvers<undefined>().resolve()`). Rerail allows `void` as a call's type argument while allowInGenericTypeArguments is true."
+  },
+  {
+    "rule": "typescript-eslint-no-invalid-void-type",
+    "source": "samples",
+    "path": "vscode-src-vs-workbench-contrib-tasks-test-browser-taskterminalstatus.test.ts-c69bf44fa88b/src/vs/workbench/contrib/tasks/test/browser/taskTerminalStatus.test.ts",
+    "line": 103,
+    "kind": "upstream-wrong",
+    "evidence": "The call type-argument divergence declared on no-invalid-void-type/041.ts, on real code: `poll<void>(async () => Promise.resolve(), ...)` names the result type of a callback that resolves with nothing on line 103. typescript-eslint 8.70.1 reports `void` there because CallExpression is among the rule's invalid grandparents, and steers to undefined, which the callback's `Promise.resolve()`, a Promise<void>, does not satisfy (TypeScript 5.9 strict reports TS2322 for `poll<undefined>(async () => Promise.resolve(), ...)` against `poll<T>(fn: () => Promise<T>, ...)`). Rerail allows `void` as a call's type argument while allowInGenericTypeArguments is true."
+  },
+  {
+    "rule": "typescript-eslint-no-invalid-void-type",
+    "source": "samples",
+    "path": "vscode-src-vs-workbench-contrib-tasks-test-browser-taskterminalstatus.test.ts-c69bf44fa88b/src/vs/workbench/contrib/tasks/test/browser/taskTerminalStatus.test.ts",
+    "line": 123,
+    "kind": "upstream-wrong",
+    "evidence": "The call type-argument divergence declared on no-invalid-void-type/041.ts, on real code: `poll<void>(async () => Promise.resolve(), ...)` names the result type of a callback that resolves with nothing on line 123. typescript-eslint 8.70.1 reports `void` there because CallExpression is among the rule's invalid grandparents, and steers to undefined, which the callback's `Promise.resolve()`, a Promise<void>, does not satisfy (TypeScript 5.9 strict reports TS2322 for `poll<undefined>(async () => Promise.resolve(), ...)` against `poll<T>(fn: () => Promise<T>, ...)`). Rerail allows `void` as a call's type argument while allowInGenericTypeArguments is true."
+  },
+  {
     "rule": "typescript-eslint-no-unused-vars",
     "source": "fixtures",
     "path": "consistent-indexed-object-style/037.ts",

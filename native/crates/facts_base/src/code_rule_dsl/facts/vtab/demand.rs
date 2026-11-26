@@ -1,5 +1,6 @@
 //! Immutable unary demand frames shared by batch operators within one statement.
 //! SQL passes handles; readers share the key vector without serializing or rebuilding IN sets.
+use rerail_blocks::vector::Vector;
 use rusqlite::{
     Connection, Result,
     functions::{Aggregate, Context, FunctionFlags},
@@ -13,7 +14,7 @@ use std::{
     },
 };
 
-type Frames = HashMap<i64, Arc<Vec<i64>>>;
+type Frames = HashMap<i64, Arc<Vector<i64>>>;
 thread_local! {static FRAMES:RefCell<Option<Frames>>=const{RefCell::new(None)};}
 static NEXT: AtomicI64 = AtomicI64::new(1);
 pub struct Scope(Option<Frames>);
@@ -29,23 +30,23 @@ impl Drop for Scope {
         });
     }
 }
-pub fn read(id: i64) -> Result<Arc<Vec<i64>>> {
+pub fn read(id: i64) -> Result<Arc<Vector<i64>>> {
     FRAMES
         .with(|f| f.borrow().as_ref().and_then(|f| f.get(&id).cloned()))
         .ok_or_else(|| super::failure("demand frame is outside its statement"))
 }
 struct Collect;
-impl Aggregate<Vec<i64>, i64> for Collect {
-    fn init(&self, _: &mut Context<'_>) -> Result<Vec<i64>> {
-        Ok(Vec::new())
+impl Aggregate<Vector<i64>, i64> for Collect {
+    fn init(&self, _: &mut Context<'_>) -> Result<Vector<i64>> {
+        Ok(rerail_blocks::vector::Vector::new())
     }
-    fn step(&self, ctx: &mut Context<'_>, keys: &mut Vec<i64>) -> Result<()> {
+    fn step(&self, ctx: &mut Context<'_>, keys: &mut Vector<i64>) -> Result<()> {
         if let Some(n) = ctx.get::<Option<i64>>(0)? {
             keys.push(n)
         }
         Ok(())
     }
-    fn finalize(&self, _: &mut Context<'_>, keys: Option<Vec<i64>>) -> Result<i64> {
+    fn finalize(&self, _: &mut Context<'_>, keys: Option<Vector<i64>>) -> Result<i64> {
         let mut keys = keys.unwrap_or_default();
         keys.sort_unstable();
         keys.dedup();

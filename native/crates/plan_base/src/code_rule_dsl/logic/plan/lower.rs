@@ -6,6 +6,7 @@
 //! constants then become integers by the domain they meet: name atoms (interned), or kind and field atoms in the
 //! program's dialect (`-1`, which matches nothing, for a name the grammar lacks). Planning and SQL see only integers.
 
+use rerail_blocks::vector::Vector;
 use super::super::front::{Branded, Class, Value};
 use crate::code_rule_dsl::logic::program_image::Version;
 use super::{Error, Result};
@@ -133,7 +134,7 @@ pub fn domains_of(v: &crate::code_rule_dsl::logic::program_image::Version) -> Re
         std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).collect()
     }
     let rels: Vec<Vec<Option<u32>>> = rules.iter().map(|&r| atoms(r).iter().map(|a| decl_of[a.rel().0 as usize]).collect()).collect();
-    let mut readers: Vec<Vec<usize>> = vec![Vec::new(); decls.len()];
+    let mut readers: Vec<Vector<usize>> = vec![rerail_blocks::vector::Vector::new(); decls.len()];
     for (i, atoms) in rels.iter().enumerate() {
         for &d in atoms.iter().flatten() {
             let list = &mut readers[d as usize];
@@ -151,7 +152,7 @@ pub fn domains_of(v: &crate::code_rule_dsl::logic::program_image::Version) -> Re
         queued[i] = false;
         let r = rules[i];
         let vars = rule_vars(r, &cols, &rels[i])?;
-        let mut gained: Vec<u32> = Vec::new();
+        let mut gained: Vector<u32> = rerail_blocks::vector::Vector::new();
         for (a, d) in atoms(r).iter().zip(&rels[i]) {
             let Some(d) = *d else { continue };
             let ds = &mut cols[d as usize];

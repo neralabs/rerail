@@ -1,9 +1,9 @@
 # 0534: The tape's reads in Rust are written directly
 
-Status: decided (the user, 2026-11-20: "please address these", of 0533's report, where the tape's reads were still
-Rust translated from CLIF; and earlier, "we should not be translating Rust from CLIF. We should be generating it
-directly"). Follows 0533. Supersedes 0310 step 3's generated file (`tape_format/src/generated_reads.rs`,
-`rerail_clif::reads::rust_source`).
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-20: "please address these", of 0533's report, where the
+tape's reads were still Rust translated from CLIF; and earlier, "we should not be translating Rust from CLIF. We
+should be generating it directly"). Follows 0533. Supersedes 0310 step 3's generated file
+(`tape_format/src/generated_reads.rs`, `rerail_clif::reads::rust_source`).
 
 ## Intro
 

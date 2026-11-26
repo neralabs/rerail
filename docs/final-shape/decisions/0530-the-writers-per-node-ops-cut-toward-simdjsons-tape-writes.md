@@ -1,7 +1,7 @@
 # 0530: The writer's per-node ops, cut toward simdjson's tape writes
 
-Status: in progress (the user, 2026-11-20: "go ahead in that order", the third of page 40 step 34's three changes).
-Follows 0434, 0528, 0529.
+Status: built (audited 2026-11-23). In progress (the user, 2026-11-20: "go ahead in that order", the third of page 40
+step 34's three changes). Follows 0434, 0528, 0529.
 
 ## Intro
 

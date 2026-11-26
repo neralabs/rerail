@@ -1,6 +1,7 @@
 //! Per-content syntactic facts (schema v0), built from rerail's own tape so node ids, kinds,
 //! fields and spans equal the native engine's (preorder transducer ids over every tree-sitter
 //! node, named and anonymous).
+use rerail_blocks::vector::Vector;
 use ast_grep_core::source::SgNode;
 use crate::code_rule_dsl::{eval, lines::LineTable, model::FileInput, tape::TapeDoc};
 use parking_lot::Mutex;
@@ -71,7 +72,7 @@ thread_local! {
 
 /// The patched Python grammar the native engine parses with (field codes and names).
 pub static GRAMMAR: LazyLock<Arc<crate::code_rule_dsl::tape::Grammar>> = LazyLock::new(|| {
-    let file = FileInput::new("g.py".into(), "python".into(), Arc::new(String::new()), None, None, "grammar")
+    let file = FileInput::new("g.py".into(), "python".into(), Arc::new(String::new().into()), None, None, "grammar")
         .unwrap_or_else(|e| panic!("{}", e.reason));
     let language = eval::file_language(&file).expect("python grammar");
     crate::code_rule_dsl::tape::Grammar::new(language).expect("grammar")
@@ -83,27 +84,27 @@ pub fn field_name(code: u16) -> String {
 
 /// One file's facts. Columns are indexed by node id.
 pub struct Facts {
-    pub source: Arc<String>,
+    pub source: Arc<crate::code_rule_dsl::tape::Text>,
     pub lines: Arc<LineTable>,
     /// node(id, kind, parent, start, end, start_line, end_line) + subtree_end, flags, field.
-    pub kind: Vec<u32>,
-    pub parent: Vec<u32>,
-    pub start: Vec<u32>,
-    pub end: Vec<u32>,
-    pub start_line: Vec<u32>,
-    pub end_line: Vec<u32>,
-    pub subtree_end: Vec<u32>,
+    pub kind: Vector<u32>,
+    pub parent: Vector<u32>,
+    pub start: Vector<u32>,
+    pub end: Vector<u32>,
+    pub start_line: Vector<u32>,
+    pub end_line: Vector<u32>,
+    pub subtree_end: Vector<u32>,
     /// named | extra<<1 | missing<<2 | error<<3
     pub flags: Vec<u8>,
     /// Field (grammar field code, 0 = none) under which the node hangs from its parent.
-    pub field: Vec<u16>,
+    pub field: Vector<u16>,
     /// Children in order: CSR over parent ids.
-    pub child_offsets: Vec<u32>,
-    pub children: Vec<u32>,
+    pub child_offsets: Vector<u32>,
+    pub children: Vector<u32>,
     /// Kind postings (CSR over kind symbols present in this file, sorted by kind sym).
-    pub kind_keys: Vec<u32>,
-    pub kind_offsets: Vec<u32>,
-    pub kind_nodes: Vec<u32>,
+    pub kind_keys: Vector<u32>,
+    pub kind_offsets: Vector<u32>,
+    pub kind_nodes: Vector<u32>,
     pub syntax_errors: bool,
     /// The native tape the facts came from (absent when read from a fact file): the input of the
     /// parser facts computed on demand (`typedefs`).
@@ -125,7 +126,7 @@ thread_local! {
     static KIND_CACHE: std::cell::RefCell<rustc_hash::FxHashMap<String, u32>> = Default::default();
 }
 
-pub fn build(path: &str, source: Arc<String>) -> Result<Built, String> {
+pub fn build(path: &str, source: Arc<crate::code_rule_dsl::tape::Text>) -> Result<Built, String> {
     build_timed(path, source, &mut BuildNs::default())
 }
 
@@ -137,7 +138,7 @@ pub struct BuildNs {
     pub extract: u64,
 }
 
-pub fn build_timed(path: &str, source: Arc<String>, ns: &mut BuildNs) -> Result<Built, String> {
+pub fn build_timed(path: &str, source: Arc<crate::code_rule_dsl::tape::Text>, ns: &mut BuildNs) -> Result<Built, String> {
     let t0 = std::time::Instant::now();
     let file = FileInput::new(
         path.to_owned(),
@@ -171,26 +172,26 @@ fn kind_sym(name: &str) -> u32 {
     })
 }
 
-pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>, source: Arc<String>) -> Facts {
+pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>, source: Arc<crate::code_rule_dsl::tape::Text>) -> Facts {
     let n = doc.transducer_len();
     let mut f = Facts {
         source,
         lines,
-        kind: Vec::with_capacity(n),
-        parent: Vec::with_capacity(n),
-        start: Vec::with_capacity(n),
-        end: Vec::with_capacity(n),
-        start_line: Vec::with_capacity(n),
-        end_line: Vec::with_capacity(n),
-        subtree_end: Vec::with_capacity(n),
+        kind: rerail_blocks::vector::Vector::with_capacity(n),
+        parent: rerail_blocks::vector::Vector::with_capacity(n),
+        start: rerail_blocks::vector::Vector::with_capacity(n),
+        end: rerail_blocks::vector::Vector::with_capacity(n),
+        start_line: rerail_blocks::vector::Vector::with_capacity(n),
+        end_line: rerail_blocks::vector::Vector::with_capacity(n),
+        subtree_end: rerail_blocks::vector::Vector::with_capacity(n),
         flags: Vec::with_capacity(n),
-        field: Vec::with_capacity(n),
-        child_offsets: Vec::new(),
-        children: Vec::new(),
-        kind_keys: Vec::new(),
-        kind_offsets: Vec::new(),
-        kind_nodes: Vec::new(),
-        syntax_errors: !doc.syntax_error_ranges().is_empty(),
+        field: rerail_blocks::vector::Vector::with_capacity(n),
+        child_offsets: rerail_blocks::vector::Vector::new(),
+        children: rerail_blocks::vector::Vector::new(),
+        kind_keys: rerail_blocks::vector::Vector::new(),
+        kind_offsets: rerail_blocks::vector::Vector::new(),
+        kind_nodes: rerail_blocks::vector::Vector::new(),
+        syntax_errors: doc.has_syntax_error(),
         tape: Some(doc.clone()),
         typedefs: Default::default(),
         bindings: Default::default(),
@@ -216,7 +217,7 @@ pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>, source: Arc<String>) -> F
 /// kind postings. Rebuilt from `parent` and `kind` when facts are read from a fact file.
 pub fn index(f: &mut Facts) {
     let n = f.len();
-    let mut counts = vec![0u32; n + 1];
+    let mut counts = rerail_blocks::vector![0u32; n + 1];
     for &p in &f.parent {
         if p != NONE {
             counts[p as usize + 1] += 1;
@@ -226,7 +227,7 @@ pub fn index(f: &mut Facts) {
         counts[i] += counts[i - 1];
     }
     let mut cursor = counts.clone();
-    let mut children = vec![0u32; counts[n] as usize];
+    let mut children = rerail_blocks::vector![0u32; counts[n] as usize];
     for (id, &p) in f.parent.iter().enumerate() {
         if p != NONE {
             children[cursor[p as usize] as usize] = id as u32;

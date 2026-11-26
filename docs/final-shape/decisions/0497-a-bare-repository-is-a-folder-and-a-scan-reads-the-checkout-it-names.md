@@ -1,8 +1,8 @@
 # 0497: A bare repository is a folder, and a scan reads the checkout it names
 
-Status: accepted (2026-11-20, the user, at the hub's merge into the sync branch). Supersedes git-commit-tree-metadata's
-87d18d609a (a bare repository as a checkout) and 250abffc6b's rule for every Git process (a caller's repository
-variables never inherited). Keeps main's placement (#813, #895) and both sides' tests.
+Status: built (audited 2026-11-23). Accepted (2026-11-20, the user, at the hub's merge into the sync branch).
+Supersedes git-commit-tree-metadata's 87d18d609a (a bare repository as a checkout) and 250abffc6b's rule for every Git
+process (a caller's repository variables never inherited). Keeps main's placement (#813, #895) and both sides' tests.
 
 ## Intro
 

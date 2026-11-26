@@ -24,7 +24,7 @@ struct Data {
     rows: usize,
     raw: Option<Value>,
     columns: Vec<Box<[Cell]>>,
-    sources: Vec<Arc<String>>,
+    sources: Vec<Arc<crate::code_rule_dsl::tape::Text>>,
     owned: Vec<bool>,
 }
 #[derive(Clone, Debug)]
@@ -37,7 +37,7 @@ pub(crate) enum Input<'a> {
     Null,
     Integer(i64),
     Text(Cow<'a, str>),
-    Source(&'a Arc<String>, Range<usize>),
+    Source(&'a Arc<crate::code_rule_dsl::tape::Text>, Range<usize>),
 }
 impl Input<'_> {
     pub(crate) fn text(&self) -> Option<&str> {
@@ -57,7 +57,7 @@ impl Input<'_> {
     }
 }
 #[derive(Hash, PartialEq, Eq)]
-struct Interned(Arc<String>);
+struct Interned(Arc<crate::code_rule_dsl::tape::Text>);
 impl std::borrow::Borrow<str> for Interned {
     fn borrow(&self) -> &str {
         self.0.as_str()
@@ -68,7 +68,7 @@ struct Builder {
     rows: usize,
     data: Arc<OnceLock<Data>>,
     columns: Vec<Vec<Cell>>,
-    sources: Vec<Arc<String>>,
+    sources: Vec<Arc<crate::code_rule_dsl::tape::Text>>,
     owned: Vec<bool>,
     pointers: HashMap<usize, u32>,
     strings: HashMap<Interned, u32>,
@@ -86,7 +86,7 @@ impl Builder {
             strings: HashMap::new(),
         }
     }
-    fn source(&mut self, value: &Arc<String>) -> u32 {
+    fn source(&mut self, value: &Arc<crate::code_rule_dsl::tape::Text>) -> u32 {
         let ptr = Arc::as_ptr(value) as usize;
         if let Some(&id) = self.pointers.get(&ptr) {
             return id;
@@ -101,7 +101,7 @@ impl Builder {
         if let Some(&id) = self.strings.get(value.as_ref()) {
             return id;
         }
-        let value = Arc::new(value.into_owned());
+        let value = Arc::new(crate::code_rule_dsl::tape::Text::from(value.into_owned()));
         let id = u32::try_from(self.sources.len()).expect("bounded projection sources");
         self.sources.push(Arc::clone(&value));
         self.owned.push(true);
@@ -319,7 +319,7 @@ impl Row {
                 .iter()
                 .zip(&d.owned)
                 .filter(|(_, owned)| **owned)
-                .map(|(s, _)| s.capacity())
+                .map(|(s, _)| s.len())
                 .sum::<usize>();
         (
             bytes,

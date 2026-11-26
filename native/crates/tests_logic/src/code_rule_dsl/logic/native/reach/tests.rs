@@ -28,7 +28,7 @@ fn the_index_holds_the_closure_and_answers_its_probes() {
     assert_eq!(rows(&c), want);
     for (r, &(x, z)) in want.iter().enumerate() {
         assert_eq!(c.row_of(x, z), Some(r));
-        assert_eq!(c.lookup_all(&[(0, x), (1, z)]), Some(vec![r]));
+        assert_eq!(c.lookup_all(&[(0, x), (1, z)]), Some(rerail_blocks::vector![r]));
     }
     assert_eq!(c.row_of(11, 2), None);
     assert_eq!(c.lookup(0, &[13]), Some(want.iter().enumerate().filter(|(_, p)| p.0 == 13).map(|(r, _)| r).collect()));
@@ -56,9 +56,9 @@ fn the_shape_names_the_cycles_and_the_connected_parts_largest_first() {
     let c = Closed::reach(&[(10, 1), (11, 7), (12, 9)], &edges);
     let s = c.shape();
     assert_eq!((s.nodes, s.edges, s.components, s.cyclic, s.self_loops), (7, 6, 5, 1, 1));
-    assert_eq!(s.largest_cycles, vec![(3, vec![1, 2, 3])]);
+    assert_eq!(s.largest_cycles, vec![(3, rerail_blocks::vector![1, 2, 3])]);
     assert_eq!(s.connected, 3);
-    assert_eq!(s.largest_connected, vec![(4, vec![1, 2, 3, 4]), (2, vec![7, 8]), (1, vec![9])]);
+    assert_eq!(s.largest_connected, vec![(4, rerail_blocks::vector![1, 2, 3, 4]), (2, rerail_blocks::vector![7, 8]), (1, rerail_blocks::vector![9])]);
     assert_eq!(c.spread(), (3, 3, 4));
 }
 

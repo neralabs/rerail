@@ -16,7 +16,7 @@ different trust (a security boundary), never reach each other's state. What a st
     the memory budget): from the machine object every shared object is made on (`Machine`);
   - `review`: not yet classified by hand.
 
-Every non-constant `static` in the engine's source (native/src, native/crates/*/src, accel/src; test files and
+Every non-constant `static` in the engine's source (native/src, native/crates/*/src, accel/src, accel/gpu/src; test files and
 examples left out) must be in `global-state.txt` beside this script, as `path::NAME<TAB>class<TAB>why`. A static not listed is
 refused; a listed one that is gone must be cut from the list (it is printed). Thread-locals have their own check
 (`check_thread_state.py`, `run_state::STATE`).
@@ -30,7 +30,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 LIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "global-state.txt")
-BASES = ["native/src", "native/crates", "accel/src"]
+BASES = ["native/src", "native/crates", "accel/src", "accel/gpu/src"]
 STATIC = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?static\s+(?:mut\s+)?([A-Z_][A-Z_0-9]*)\s*:\s*([^=;]+)", re.M)
 
 

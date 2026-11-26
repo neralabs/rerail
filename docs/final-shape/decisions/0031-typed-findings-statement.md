@@ -1,6 +1,6 @@
 # 0031: The findings layer's statement is one typed query
 
-Status: accepted (2026-11-03, list step 27)
+Status: built (audited 2026-11-23). Accepted (2026-11-03, list step 27)
 
 ## Context
 

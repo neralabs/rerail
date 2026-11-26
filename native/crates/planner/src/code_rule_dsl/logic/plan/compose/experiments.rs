@@ -306,7 +306,7 @@ pub(super) fn physical_sql(mut sql: String, f: Fields<'_>) -> String {
     if candidate {
         super::super::super::profile::decision("candidate spike rewrite", || "after projection planning".into());
         let target_relations:BTreeSet<_>=f.natives().iter().filter_map(|native| match &native.spec {
-            NativeSpec::Python {kind,input,targets:Some(target)} if f.text(*kind)=="qualified" && f.rel_name(*input)=="async_reference" => Some(f.rel_name(*target)),
+            ArchivedNativeSpec::Python {kind,input,targets:rerail_section::ArchivedOption::Some(target)} if f.text(*kind)=="qualified" && f.rel_name(*input)=="async_reference" => Some(f.rel_name(*target)),
             _=>None,
         }).collect();
         let targets=target_relations.into_iter().map(|n|format!("SELECT c0 FROM {}",ident(n))).collect::<Vec<_>>().join(" UNION ");
@@ -332,7 +332,7 @@ pub(super) fn physical_sql(mut sql: String, f: Fields<'_>) -> String {
                 if name.starts_with("__rr_demand_") {
                     assert!(body.contains("rr_demand_frame("));
                     gates.push((range,format!("{body} HAVING count(*) > 0")));
-                }else if let Some(NativeSpec::Python{kind,..})=f.native(&name).map(|n|&n.spec) {
+                }else if let Some(ArchivedNativeSpec::Python{kind,..})=f.native(&name).map(|n|&n.spec) {
                     let kind=f.text(*kind);
                     let frame=body.split("frame=(SELECT handle FROM ").nth(1).unwrap().split(')').next().unwrap();
                     let guarded=body.replace(&format!("FROM rr_batch_python_{kind} WHERE"),&format!("FROM {frame} AS demanded CROSS JOIN rr_batch_python_{kind} WHERE"))
@@ -345,7 +345,7 @@ pub(super) fn physical_sql(mut sql: String, f: Fields<'_>) -> String {
         if std::env::var_os("RERAIL_EMPTY_DEMAND_GUARD").is_some() {
             let mut guards=Vec::new();
             for (name,range) in bodies(&sql) {
-                if let Some(NativeSpec::Python{input,..})=f.native(&name).map(|n|&n.spec) {
+                if let Some(ArchivedNativeSpec::Python{input,..})=f.native(&name).map(|n|&n.spec) {
                     let body=&sql[range.clone()];
                     let guarded=body.replacen(" WHERE ",&format!(" WHERE EXISTS (SELECT 1 FROM {}) AND ",ident(f.rel_name(*input))),1);
                     assert_ne!(&guarded,body);guards.push((range,guarded));

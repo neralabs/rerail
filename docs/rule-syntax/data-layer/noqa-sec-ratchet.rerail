@@ -49,7 +49,8 @@ SEC(m, c) :- hit(m, c).
 
 // The metric: every SEC code on a suppression line, counted with multiplicity (two SEC1 on one line are two
 // spans, so two). One key, as the script's counts dict has.
-.decl annotations(k: symbol, n: number)
+// Cross-file: the corpus's count (decision 0652).
+.decl annotations(k: symbol, n: number) cross_file
 .output annotations
 annotations("noqa_sec_annotations", n) :- n = count : { hit(_, _) }.
 

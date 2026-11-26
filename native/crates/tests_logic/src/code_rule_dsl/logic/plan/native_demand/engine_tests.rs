@@ -18,7 +18,7 @@ reached(c,f,r,o) :- python_candidates(c,f,r,o,demand,targets,"async_function","o
 .output reached
 "#).unwrap();
     let strata = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::Strata>(&p).unwrap();
-    let sccs: Vec<std::collections::BTreeSet<String>> = strata.sccs.iter().map(|scc| scc.iter().map(|&r| p.rel_name(r).to_owned()).collect()).collect();
+    let sccs = crate::code_rule_dsl::logic::front::Components::of_names(strata.sccs.iter().map(|scc| scc.iter().map(|&r| p.rel_name(r))));
     let natives = p.native_map().unwrap();
     let operator = natives.keys().next().unwrap();
     let consumer = sccs.iter().position(|s| s.contains(operator)).unwrap();

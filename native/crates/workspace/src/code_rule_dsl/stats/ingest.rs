@@ -9,10 +9,10 @@
 //! - **Read by the planner in one statement** (`stats/inputs.rs`, S259).
 //!
 //! T kept its facts as SQL tables per document and derived every aggregate from them. Here:
-//! - `kind_size` (T's `stat_kind`) and `edge_freq` (`stat_edge`) come from the tape as its prefilter
-//!   set is built (`prefilter::image`), in the same pass. Publication adds them; removal, including
-//!   a collected tape's cascade, subtracts them in triggers: kind sizes from `tape_kind_counts.size`,
-//!   edges from the set's own `edges` segment (PIAT spec §2.5's per-document `edge_counts`).
+//! - `kind_size` (T's `stat_kind`) comes from the tape as its prefilter set is built (`prefilter::image`), in the
+//!   same pass, and is counted with the store's other prefilter counts (`content_store::prefilter::kept`): a
+//!   publication adds a tape's, and a removal or a collection takes them out again. `edge_freq` (`stat_edge`) went
+//!   (t33 step 6): nothing read it.
 //! - T's signed merge for fact relations stored as SQL tables (`fact_stats`, `fact_value_stats`, its `stat_col` and
 //!   `stat_val`) went (t33 step 6): no fact relation is stored as a SQL table with a document column.
 //!
@@ -21,37 +21,28 @@
 //! cannot describe other rows).
 
 use crate::code_rule_dsl::facts::core::KIND_STRIDE as LANG_STRIDE;
-use crate::code_rule_dsl::search_index::kind_code;
 use crate::code_rule_dsl::tape::TapeDoc;
-use rusqlite::{Connection, Result, params};
-use std::collections::BTreeMap;
 
-/// One tape's kind sizes and direct edges, accumulated node by node.
+/// One tape's kind sizes, accumulated node by node.
 pub struct TapeStatistics {
-    lang: u32,
     /// Per kind code, the sum of its nodes' descendant counts.
     pub sizes: Vec<u64>,
-    /// (parent kind atom, child kind atom, field) → edges.
-    pub edges: BTreeMap<(u32, u32, u16), u32>,
 }
 
 impl TapeStatistics {
-    pub fn new(lang: u32) -> Self {
-        Self { lang, sizes: vec![0; LANG_STRIDE as usize], edges: BTreeMap::new() }
+    pub fn new() -> Self {
+        Self { sizes: vec![0; LANG_STRIDE as usize] }
     }
 
-    /// Adds node `pre`, of kind code `kind`, its parent `parent` (a preorder pass's, `TapeDoc::transducer_parents`).
-    pub fn node(&mut self, doc: &TapeDoc, pre: u32, kind: u16, parent: Option<u32>) {
+    /// Adds node `pre`, of kind code `kind`.
+    pub fn node(&mut self, doc: &TapeDoc, pre: u32, kind: u16) {
         self.sizes[usize::from(kind)] += u64::from(doc.transducer_descendants(pre).len() as u32);
-        if let Some(parent) = parent {
-            let atom = |code: u16| self.lang * LANG_STRIDE + u32::from(code);
-            let key = (atom(kind_code(doc, parent)), atom(kind), doc.transducer_field(pre));
-            *self.edges.entry(key).or_default() += 1;
-        }
     }
+}
 
-    pub fn edges(&self) -> Vec<(u32, u32, u16, u32)> {
-        self.edges.iter().map(|(&(parent, child, field), &n)| (parent, child, field, n)).collect()
+impl Default for TapeStatistics {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

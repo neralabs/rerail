@@ -9,7 +9,7 @@ use super::*;
 pub fn integer_domain(db:&Database)->Result<()> {
     if super::super::facts::vtab::bound_source(&**db,"rdl_int").is_none() {
         db.bind("rdl_int",Arc::new(live::Live::from_rows(
-            vec!["i".into()],(1..=4096).map(|i|vec![i]),
+            vec!["i".into()],(1..=4096).map(|i|rerail_blocks::vector![i]),
         ))).map_err(error)?;
     }
     Ok(())

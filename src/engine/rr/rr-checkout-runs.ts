@@ -1,0 +1,144 @@
+/**
+ * The `.rerail` runs of one session's checks of one checkout: the runs after its edits (`rr-edit-runs.ts`), and the
+ * `.rerail` part of each audit it was asked for (`rr-audit-run.ts`). The checkout's code-rule enforcer holds one, and
+ * tells it of edits, audits, rule changes and its end.
+ */
+import type { AuditMode, AuditRecorder, AuditRuleProvenance, AuditScope } from "../audit/audit.js";
+import type { CodeRuleEdit } from "../code-rule/code-rule.js";
+import type { CodeRuleDslCatalog, RerailRuleEntry } from "../code-rule/code-rule-dsl-catalog.js";
+import type { SteerTarget } from "../code-rule/edit-findings/steer-publication.js";
+import { RrAuditRun, type RrAuditResults } from "./rr-audit-run.js";
+import { editRunTiming, RerailEditRuns } from "./rr-edit-runs.js";
+import { type RrRunTiming, RrRunQueue, rrRunQueue } from "./rr-run-queue.js";
+import { RrRunSlots } from "./rr-run-slots.js";
+
+export interface CheckoutRerailHost {
+  readonly sessionId: string;
+  readonly workspaceRoot: string;
+  readonly catalog: CodeRuleDslCatalog;
+  readonly audits: AuditRecorder;
+  readonly steerTarget: SteerTarget;
+  /** Folders of the checkout that are checkouts of their own, judged in their own lanes. */
+  readonly nestedCheckouts: () => readonly string[];
+}
+
+/** An audit's results as its native evaluation gave them: what the `.rerail` run's are added to. */
+export interface StreamedAuditResults extends RrAuditResults {
+  /** Whether the results went to the audit's pages (`AuditRecorder.appendResultPage`) rather than `violations`. */
+  readonly paged: boolean;
+  readonly pageCount: number;
+  readonly violationCount: number;
+}
+
+/**
+ * The checkout's queue of runs after edits. A `RERAIL_RR_QUIET_MS` that holds no positive whole number fails each of
+ * its runs with the reason, as the runner's own `RERAIL_RR_*` overrides do.
+ */
+function editQueue(root: string): RrRunQueue {
+  let timing: RrRunTiming;
+  try {
+    timing = editRunTiming();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return new RrRunQueue(root, { deadlineMs: 0, quietMs: 0 }, new RrRunSlots(async () => ({ status: "failed", message })));
+  }
+  return rrRunQueue(root, timing);
+}
+
+export class CheckoutRerailRuns {
+  readonly #host: CheckoutRerailHost;
+  readonly #edits: RerailEditRuns;
+  readonly #audits = new Map<string, RrAuditRun>();
+
+  constructor(host: CheckoutRerailHost) {
+    this.#host = host;
+    const rules = (): readonly RerailRuleEntry[] => host.catalog.snapshot().rerailRules;
+    this.#edits = new RerailEditRuns({
+      ...host,
+      rules,
+      catalogRevision: () => host.catalog.status.version,
+      queue: editQueue(host.workspaceRoot),
+    });
+  }
+
+  /** Whether one of the checkout's `.rerail` rules takes a write of `path` (relative to the checkout). */
+  takes(path: string): boolean {
+    return this.#edits.takes(path);
+  }
+
+  /** Gathers the edits of a revision for the next run after edits; returns at once. */
+  gather(edits: readonly CodeRuleEdit[], revision: number, scope: AuditScope, mode: AuditMode): void {
+    this.#edits.gather(edits, revision, scope, mode);
+  }
+
+  /** The checkout's rules were read again: a run after edits that carries rules since changed starts again. */
+  rulesChanged(): void {
+    this.#edits.rulesChanged();
+  }
+
+  /** The agent's turn ended: a run after edits waiting for quiet starts now. */
+  turnEnded(): void {
+    this.#edits.turnEnded();
+  }
+
+  /**
+   * Starts an audit with `start`, given the provenance of the `.rerail` rules it also runs, and starts their run beside
+   * it: over `paths` (relative to the checkout) for a touched-files audit, over the whole checkout for a repository one.
+   */
+  beginAudit(
+    scope: "repository" | "touched-files",
+    paths: readonly string[],
+    start: (provenance: readonly AuditRuleProvenance[]) => string | undefined,
+  ): string | undefined {
+    const run = new RrAuditRun({
+      root: this.#host.workspaceRoot,
+      rules: this.#host.catalog.snapshot().rerailRules,
+      paths: scope === "repository" ? undefined : paths,
+      nestedCheckouts: this.#host.nestedCheckouts(),
+    });
+    const auditId = start(run.provenance);
+    if (auditId === undefined || run.empty) return auditId;
+    this.#audits.set(auditId, run);
+    run.start();
+    return auditId;
+  }
+
+  /**
+   * The audit's results with its `.rerail` run's, once that run has ended: a paged audit gets them as one more page
+   * (`appendPage`), any other in its `violations`; both count their failures. The run stays this object's until it
+   * ends, so `close()` stops it while the audit waits for it; the audit then ends interrupted (`RrAuditRun.results`
+   * throws).
+   */
+  async withAuditResults<T extends StreamedAuditResults>(
+    auditId: string | undefined,
+    streamed: T,
+    appendPage: (pageIndex: number, page: RrAuditResults) => void,
+  ): Promise<T> {
+    const run = auditId === undefined ? undefined : this.#audits.get(auditId);
+    if (run === undefined) return streamed;
+    let added: RrAuditResults;
+    try {
+      added = await run.results();
+    } finally {
+      this.#audits.delete(auditId!);
+    }
+    const failures = [...streamed.failures, ...added.failures];
+    const violationCount = streamed.violationCount + added.violations.length;
+    if (!streamed.paged) return { ...streamed, violations: [...streamed.violations, ...added.violations], failures, violationCount };
+    appendPage(streamed.pageCount, added);
+    return { ...streamed, failures, violationCount, pageCount: streamed.pageCount + 1 };
+  }
+  /** The audit ended without its results (it failed): its `.rerail` run is killed. */
+  abandonAudit(auditId: string | undefined): void {
+    if (auditId === undefined) return;
+    this.#audits.get(auditId)?.abort();
+    this.#audits.delete(auditId);
+  }
+
+  /** The session's checks end: every run of theirs is left or killed, and no audit of theirs is left running. */
+  close(): void {
+    this.#edits.close();
+    for (const run of this.#audits.values()) run.abort();
+    this.#audits.clear();
+  }
+}

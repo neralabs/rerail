@@ -23,7 +23,6 @@ pub mod block_native;
 pub mod clif_fold;
 pub mod clif_text;
 pub mod grammar;
-mod error;
 pub mod native_cpu_codegen;
 pub mod native_cpu_edge;
 /// Which of tier 1's values are byte-local (`Plan`), for every vector backend.
@@ -53,7 +52,7 @@ pub mod stream_ir;
 /// Which tier 1 values are token-level checks (doc 25): local windows, anchors, readers.
 pub mod token_local;
 
-pub use error::Error;
+pub use rerail_error::Error;
 
 #[cfg(test)]
 mod grammar_tests;

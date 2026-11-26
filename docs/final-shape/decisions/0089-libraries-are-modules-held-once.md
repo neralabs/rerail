@@ -1,6 +1,7 @@
 # 0089: A library is a module, held once per run; its facts are one relation for every rule that reads it
 
-Status: accepted (2026-11-08). It answers O135.
+Status: partly built (audited 2026-11-23). Left: Stage 3: the per-unit memo (§6), a file's library rows kept under the
+library; one library per bound (.guests off). Accepted (2026-11-08). It answers O135.
 
 - **Stage 1 is built.** The full pack gives the same findings as with libraries pasted in, at a third to a half of
   the CPU. O135 has the measurements.

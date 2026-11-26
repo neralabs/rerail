@@ -303,8 +303,8 @@ fn same_line(
 ) -> cranelift_codegen::ir::Value {
     let (left_start, _) = native_cpu_tape::span(function, reads, task, left);
     let (right_start, _) = native_cpu_tape::span(function, reads, task, right);
-    let left_line = super::native_cpu_output::line_for(function, task, left_start);
-    let right_line = super::native_cpu_output::line_for(function, task, right_start);
+    let left_line = super::native_cpu_output::line_for(function, reads, task, left_start);
+    let right_line = super::native_cpu_output::line_for(function, reads, task, right_start);
     function.ins().icmp(IntCC::Equal, left_line, right_line)
 }
 

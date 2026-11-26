@@ -1,6 +1,6 @@
 # 0107: Matchers run as one wave, with captures; the data-layer programs run on the `.rr` engine
 
-Status: proposed (2026-11-10)
+Status: built (audited 2026-11-23). Proposed (2026-11-10)
 
 ## Intro
 

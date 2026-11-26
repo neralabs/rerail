@@ -1,6 +1,7 @@
 //! The Soufflé-text helpers the translator uses: `whole` (a search regex as a whole-string one), the text's
 //! segments, and `check_rule` (the variables a rule leaves unbound).
 
+use rerail_blocks::vector::Vector;
 use super::patterns::Patterns;
 use super::pyre::{findall, re};
 use std::collections::BTreeSet;
@@ -505,7 +506,7 @@ fn strip_relation_args(l: &[String]) -> Result<Toks, Unreadable> {
         && let Some(drop_at) = relation_arg(&l[0])
     {
         let (name, args) = atom_args(l);
-        let drop: Vec<usize> = drop_at.iter().copied().filter(|&k| k < args.len() && args[k].len() == 1).collect();
+        let drop: Vector<usize> = drop_at.iter().copied().filter(|&k| k < args.len() && args[k].len() == 1).collect();
         let args: Vec<Toks> = args.into_iter().enumerate().filter(|(j, _)| !drop.contains(j)).map(|(_, a)| a).collect();
         let mut out = vec![name, "(".to_owned()];
         for (j, a) in args.into_iter().enumerate() {

@@ -1,7 +1,7 @@
 # 0383: The full body runs on the edge blocks
 
-Status: decided (the user, 2026-11-17: "go ahead in that order", on making tier 1's block work
-simdjson's shape). Follows 0372, 0374 and 0375.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-17: "go ahead in that order", on making tier 1's block
+work simdjson's shape). Follows 0372, 0374 and 0375.
 
 ## Intro
 

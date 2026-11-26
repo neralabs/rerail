@@ -1,5 +1,6 @@
 //! Optional join acceleration (the Bloom screens, the failed-probe caches) shares one allowance across the walks and
 //! morsels of a machine: the machine's (decision 0442), not the process's.
+use rerail_blocks::vector::Vector;
 use super::FACTOR_MAX;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
@@ -37,7 +38,7 @@ impl Drop for Reservation {
 /// A collision evicts the old entry. Compare the entire key and the probe generation on every hit.
 #[derive(Default)]
 pub(super) struct Failures {
-    words: Box<[u64]>,
+    words: Vector<u64>,
     reservation: Option<Reservation>,
     epoch: u64,
     buckets: usize,
@@ -99,7 +100,7 @@ impl Failures {
                 self.disabled = true;
                 return;
             };
-            self.words = vec![0; len].into_boxed_slice();
+            self.words = rerail_blocks::vector![0; len];
             self.reservation = Some(permit);
         }
         let start = self.bucket(key);

@@ -1,12 +1,12 @@
 //! The parsers on Metal, against the CPU: every JSON grammar's tier 1 in the forward carry equals
 //! the interpreter (`every_grammar_on_metal_equals_the_interpreter`), and the JSON forms' Metal
 //! measurement over a corpus (`json_metal_serial_bench`, run by name). The backend is the Metal
-//! crate's (`rerail_metal::block_program::serial`).
+//! crate's (`rerail_metal_programs::block_program::serial`).
 
 use crate::json::{base, files_in, form};
 use rerail_cpu_stream::ladder::*;
 use rerail_compiler::{block, block_native as native_ir};
-use rerail_metal::block_program;
+use rerail_metal_programs::block_program;
 
 /// Each JSON grammar's tier 1 on Metal, in the forward carry (tier 1's segments), equals the CPU
 /// interpreter on every document: outputs, totals, and the extracted positions of the files no

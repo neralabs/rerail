@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::Error;
 use super::clause::{At, HeadAt, L, LitAt, Reads, T};
-use super::from_tape::{RrFile, S, Stmt};
+use super::from_tape::{RrFile, S, Statements, Stmt};
 use super::tape::Field;
 
 /// The relations: the argument holding the node, the one holding the token's text (`None`: the token is the
@@ -310,7 +310,7 @@ impl Columns {
 }
 
 /// Refuses a program whose clauses read a token the tape may leave out (above), for the program's `.language`.
-pub(super) fn refuse(files: &[(std::path::PathBuf, Vec<Stmt>)]) -> Result<(), Error> {
+pub(super) fn refuse(files: &[(std::path::PathBuf, Statements)]) -> Result<(), Error> {
     let language = files.iter().flat_map(|(_, statements)| statements).find_map(|s| match s.what()? {
         S::Setting { key: "language", text } => Some(text.trim().trim_matches('"').to_owned()),
         _ => None,
@@ -319,10 +319,10 @@ pub(super) fn refuse(files: &[(std::path::PathBuf, Vec<Stmt>)]) -> Result<(), Er
     // Each clause's heads and body, read off its tape.
     let clauses: Vec<Clause<'_>> = files
         .iter()
-        .flat_map(|(file, statements)| statements.iter().map(move |s| (file, s)))
-        .filter(|(_, s)| s.what() == Some(S::Clause))
-        .map(|(file, s)| {
-            let (f, n) = (&**s.file(), s.node());
+        .flat_map(|(file, statements)| statements.places().map(move |(f, s)| (file, f, s)))
+        .filter(|(_, _, s)| s.what() == Some(S::Clause))
+        .map(|(file, f, s)| {
+            let (f, n) = (&**f, s.node());
             f.check_clause(n)?;
             let body = f.tape().get(n, Field::Body).map_or_else(Vec::new, |b| f.body_at(b, 0));
             let (mut all, mut equal) = (Vec::new(), Vec::new());

@@ -1,11 +1,12 @@
 //! Set membership proofs over frozen sources. Independent of SQL and physical storage.
+use rerail_blocks::vector::Vector;
 use super::Decision;
 use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 struct Projection {
     source: String,
-    columns: Vec<usize>,
+    columns: Vector<usize>,
 }
 
 /// A union of projected sources. This describes membership, never bag multiplicity.
@@ -63,7 +64,7 @@ impl KeySet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn evaluate(set: &KeySet, a: &[Vec<i64>], b: &[Vec<i64>]) -> BTreeSet<Vec<i64>> {
+    fn evaluate(set: &KeySet, a: &[Vector<i64>], b: &[Vector<i64>]) -> BTreeSet<Vector<i64>> {
         set.terms
             .iter()
             .flat_map(|t| {
@@ -88,7 +89,7 @@ mod tests {
             a.project(&[1, 0]).project(&[1]),
         ];
         for mask in 0..256_u32 {
-            let rows = (0..8).map(|i| vec![i % 3, i / 3]).collect::<Vec<_>>();
+            let rows = (0..8).map(|i| rerail_blocks::vector![i % 3, i / 3]).collect::<Vec<_>>();
             let ar = rows
                 .iter()
                 .enumerate()

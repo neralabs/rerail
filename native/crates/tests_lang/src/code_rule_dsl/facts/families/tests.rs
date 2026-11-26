@@ -121,7 +121,7 @@ fn the_families_propagate_the_same_over_the_overlay() {
     let store = Arc::new(ContentStore::open(&temp("overlay").with_extension("sqlite")).unwrap());
     let roots = contents(&store);
     let limits = Limits { top: 1, resident: 1 << 20, behind: 4, spill: temp("spill"), background: true };
-    let overlay = Overlay::new(Arc::clone(&store), limits).unwrap();
+    let overlay = Overlay::new(store.clone(), limits).unwrap();
     check(&overlay, &roots);
     overlay.flush().unwrap();
     assert!(store.derivation_valid(RULE).unwrap());
@@ -224,7 +224,7 @@ fn prefilter_rows_reach_sqlite_before_the_derivations_that_claim_them() {
     let prefilter_recorded = |store: &ContentStore| store.binding(&prefilter_name(WS, "a.py")).unwrap().is_some_and(|digest| digest != ABSENT);
     // No background writer: every layer waits until written by hand, oldest first.
     let limits = Limits { top: usize::MAX, resident: 1 << 20, behind: usize::MAX, spill: temp("rows-first-spill"), background: false };
-    let overlay = Overlay::new(Arc::clone(&store), limits).unwrap();
+    let overlay = Overlay::new(store.clone(), limits).unwrap();
     let mut families = Families::default();
     overlay.begin_push().unwrap();
     let (changed, _) = crate::code_rule_dsl::facts::observe::observe_root(&overlay, WS, roots[0]).unwrap();

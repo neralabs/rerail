@@ -1,11 +1,11 @@
 # 0289: A chunk is a block, and the device reads its views there
 
-Status: draft (2026-11-15), being built. **§1–2 superseded by 0353 (2026-11-17):** the chunk block holds the placed
-tapes and granule tables, never node columns, projection arrays or views made from them; a view is a read of the
-tape. §3's second half was overtaken by 0293 step 4 (2026-11-16): the device's
-reads of the tape wait for 0293 step 5. 0266's path step 2 (`Chunk`), taken here at the user's choice. It is
-done in the order that removes the measured cost first. Builds on 0266 (blocks), 0254 (chunks evaluated at once)
-and 0277 (what the device reads).
+Status: built (audited 2026-11-23). Draft (2026-11-15), being built. **§1–2 superseded by 0353 (2026-11-17):** the
+chunk block holds the placed tapes and granule tables, never node columns, projection arrays or views made from them;
+a view is a read of the tape. §3's second half was overtaken by 0293 step 4 (2026-11-16): the device's reads of the
+tape wait for 0293 step 5. 0266's path step 2 (`Chunk`), taken here at the user's choice. It is done in the order that
+removes the measured cost first. Builds on 0266 (blocks), 0254 (chunks evaluated at once) and 0277 (what the device
+reads).
 
 ## Intro
 

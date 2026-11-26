@@ -1,6 +1,7 @@
 //! The SQL a planned rule runs as, read by handles (decision 0173, t36 item 3): one SELECT from a rule (`Body`) and its
 //! planned steps. The SELECT reads the rule's literals in plan order, binds each variable (by slot) to the column or
 //! expression that first gives its value, and writes every later use as a condition on it.
+use rerail_blocks::vector::Vector;
 use super::body::{Body, VarSet, binds_right, term_vars};
 use super::{
     Error, Inputs, Mode, Model, Result, Step, TOP, bin, call, col, eq, integer, kinds, length, string, substr, symbol_of, text_of,
@@ -326,7 +327,8 @@ impl<'a, 'v> SelectBuilder<'a, 'v> {
         let lv = b.vars(s.at);
         let found = self.steps.iter().find_map(|o| {
             let d = b.plain_atom(o.at)?;
-            let &(nc, dc) = self.model.docof.get(b.rel(d))?;
+            let &rerail_section::Tuple2(nc, dc) = self.model.docof.get(b.rel(d))?;
+            let (nc, dc) = (nc as usize, dc as usize);
             let dargs = b.args(o.at);
             let TermRef::Var(v) = dargs[nc] else { return None };
             let dv = dargs[dc];
@@ -567,7 +569,7 @@ impl<'a, 'v> SelectBuilder<'a, 'v> {
         // Repeated local value fields are equal within the bag, even when
         // the outer rule binds a variable with that name.
         if let Some(over) = over {
-            let columns: Vec<usize> = args.iter().enumerate().filter_map(|(c, t)| (t.var() == Some(over)).then_some(c)).collect();
+            let columns: Vector<usize> = args.iter().enumerate().filter_map(|(c, t)| (t.var() == Some(over)).then_some(c)).collect();
             for pair in columns.windows(2) {
                 conds.push(eq(col(al, &self.model.col(rel, pair[0])), col(al, &self.model.col(rel, pair[1]))));
             }

@@ -60,7 +60,7 @@ impl Source for Metadata {
     fn indexed(&self, _: usize) -> bool {
         false
     }
-    fn lookup(&self, _: usize, _: &[Value]) -> Result<Option<Vec<usize>>> {
+    fn lookup(&self, _: usize, _: &[Value]) -> Result<Option<rerail_blocks::vector::Vector<usize>>> {
         Ok(None)
     }
     fn column(&self, _: usize, _: usize, _: &mut Context) -> Result<()> {
@@ -304,7 +304,7 @@ struct Cursor {
     shared: Shared,
     source: Arc<dyn Source>,
     range: Range<usize>,
-    selected: Option<Vec<usize>>,
+    selected: Option<rerail_blocks::vector::Vector<usize>>,
     position: usize,
 }
 impl Cursor {
@@ -368,7 +368,7 @@ unsafe impl VTabCursor for Cursor {
             };
             self.selected = self.source.lookup(column, &values)?;
         }
-        let count = self.selected.as_ref().map_or(self.range.len(), Vec::len);
+        let count = self.selected.as_ref().map_or(self.range.len(), |v| v.len());
         self.shared
             .stats
             .candidates

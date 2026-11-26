@@ -1,9 +1,9 @@
 # 0123: Statistics are requested, made in one batch, then planned with
 
-Status: decided and built (2026-11-12): §2 (`plan.rs`: `Model::wants`, `wants_strata`, `make_statistics`, `late`;
-`plan/issue.rs`), §3 (`plan/corpus.rs`, the kept relations' lazy statistics). It takes up 0122 §4. §5's two items
-are closed (2026-11-13): §6 (`plan/issue.rs`, `lanes::wave`) and §7 (`plan.rs`, `mispriced`, greedy first). §8
-(`profile`, jobs' spans) and §9 (`plan.rs`, `native/setfix.rs`: lazy probes) are built (2026-11-13).
+Status: built (audited 2026-11-23). Decided and built (2026-11-12): §2 (`plan.rs`: `Model::wants`, `wants_strata`,
+`make_statistics`, `late`; `plan/issue.rs`), §3 (`plan/corpus.rs`, the kept relations' lazy statistics). It takes up
+0122 §4. §5's two items are closed (2026-11-13): §6 (`plan/issue.rs`, `lanes::wave`) and §7 (`plan.rs`, `mispriced`,
+greedy first). §8 (`profile`, jobs' spans) and §9 (`plan.rs`, `native/setfix.rs`: lazy probes) are built (2026-11-13).
 
 ## Intro
 

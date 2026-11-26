@@ -1,7 +1,7 @@
 # 0405: UTF-8 at simdjson's structure
 
-Status: decided (the user, 2026-11-18: "please do all of these", the three gaps 0404 left).
-Follows 0403 and 0404.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-18: "please do all of these", the three gaps 0404
+left). Follows 0403 and 0404.
 
 ## Intro
 

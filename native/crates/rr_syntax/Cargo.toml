@@ -37,9 +37,12 @@ system-allocator = []
 code-rule-profile = []
 p-anchor-corpus = []
 metal-tests = []
-test-hooks = ["rerail-context/test-hooks", "rerail-tape-format/test-hooks"]
+test-hooks = ["rerail-blocks/test-hooks", "rerail-context/test-hooks", "rerail-tape-format/test-hooks"]
 
 [dependencies]
+# Its structures lie in blocks (`rerail_blocks::vector::Vector`, `maps`), as the engine\'s do.
+rerail-blocks = { path = "../blocks" }
+rerail-section = { path = "../section" }
 # The names' table is the shared object's (decision 0442).
 rerail-context = { path = "../context" }
 base64 = "=0.22.1"
@@ -83,7 +86,7 @@ tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-
 tree-sitter = "=0.27.1"
 bitlex = { path = "../../../tools/bitlex", default-features = false }
 unicode-normalization = "=0.1.26"
-zstd = "=0.14.3"
+zstd = "=0.14.4"
 # A `.policy` block's document, as the engine reads it.
 serde_json = "1.0"
 # The engine's tape, which the lean parser writes.

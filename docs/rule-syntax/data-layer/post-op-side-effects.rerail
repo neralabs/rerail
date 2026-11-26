@@ -97,7 +97,8 @@ pos_later_verifier(f) :- pos_verifier_def(f), pos_verifier_def(g), earlier(g, f)
 .decl pos_verify_line(f: node, l: number)
 pos_verify_line(f, l) :- pos_verifier(f), within(c, f), call_name(c, x),
     (x = "_post_op_allowlist_signature_valid" ; x = "verify_allowlist"), line(c, l).
-.decl pos_bypass(why: symbol)
+// Cross-file: whether any file has the verifier (decision 0652).
+.decl pos_bypass(why: symbol) cross_file
 pos_bypass("boolean opt-out") :- pos_top_assign("allowlist", _, "ENFORCE_POST_OP_RUNTIME_ALLOWLIST").
 pos_bypass("verifier missing") :- !pos_verifier(_).
 pos_bypass("no signature verification") :- pos_verifier(f), !pos_verify_line(f, _).
@@ -122,7 +123,8 @@ pos_signed_assign(v) :- pos_signed_first(a), assign_value(a, v0), unparen(v0, v)
 .decl pos_signed_display(v: node)
 pos_signed_display(v) :- pos_signed_value(v), (kind(v, "set") ; kind(v, "list") ; kind(v, "tuple")).
 // pos_allow_broken(): the plugin's reader of the allowlist file raises, so the file gives no facts at all.
-.decl pos_allow_broken()
+// Cross-file: a gate over the allowlist file, read by every file's rules (decision 0652).
+.decl pos_allow_broken() cross_file
 pos_allow_broken() :- pos_allow_read(_), !pos_signed_first(_).
 pos_allow_broken() :- pos_allow_read(_), !pos_signed_display(_).
 pos_allow_broken() :- pos_allow_read(_), pos_signed_display(v), child(v, c, _),
@@ -164,7 +166,7 @@ allow_entry("pos_runtime", e) :- pos_signed(e).
 .decl pos_runtime_sig(s: symbol, i: number)
 pos_runtime_sig(s, i) :- pos_top_assign("allowlist", a, "ALLOWLIST_SIGNATURE"), field(a, "type", _),
     assign_value(a, v), (str_const(v, s) ; kind(v, "identifier"), text(v, s), unsigned_sig(s)), visit_index(a, i),
-    pos_allow_read(_).
+    docof(a, d), pos_allow_read(d).
 .decl pos_runtime_sig_ok(s: symbol)
 pos_runtime_sig_ok(s) :- pos_runtime_sig(s, i), i = min j : { pos_runtime_sig(_, j) }, !pos_allow_broken().
 allow_sig("pos_runtime", "post_op_runtime_allowlist", @replace_all(s, "[^A-Za-z0-9+/=]", "")) :- pos_runtime_sig_ok(s).

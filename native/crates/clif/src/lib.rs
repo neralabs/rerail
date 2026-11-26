@@ -2,7 +2,7 @@
 //!
 //! - [`view`]: a document's tape as a reader is told where it lies (`TapeView`, the device's
 //!   `DocView`): offsets from the tape's base, its format and its widths.
-//! - [`reads`]: the tape's primitive reads, format 15's and format 16's, as CLIF functions built
+//! - [`reads`]: the tape's primitive reads, format 16's (and 16z's), as CLIF functions built
 //!   once (a node's code number, its subtree size, its start and end, its parent, hops over its
 //!   children and siblings), each marked hot or cold.
 //! - [`ukl`]: CLIF as UKL: the reads for every GPU's kernels (`<ukl/reads/*.h>`).

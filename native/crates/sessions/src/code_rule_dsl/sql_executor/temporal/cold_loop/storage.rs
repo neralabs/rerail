@@ -40,7 +40,7 @@ impl Arena {
             parent,
             roots,
             counts,
-            cleared: vec![id],
+            cleared: rerail_blocks::vector![id],
         });
         self.storage_cpu_ns = self
             .storage_cpu_ns
@@ -54,7 +54,7 @@ impl Arena {
             parent,
             roots: vec![],
             counts: BTreeMap::new(),
-            cleared: vec![],
+            cleared: rerail_blocks::vector![],
         };
         for &handle in handles {
             if handle == parent {
@@ -107,7 +107,7 @@ impl Arena {
                     parent,
                     roots,
                     counts: built.counts,
-                    cleared: vec![],
+                    cleared: rerail_blocks::vector![],
                 }));
             }
             let mut combined = if parent < 0 {
@@ -123,7 +123,7 @@ impl Arena {
                     parent,
                     roots: vec![],
                     counts: BTreeMap::new(),
-                    cleared: vec![],
+                    cleared: rerail_blocks::vector![],
                 }
             };
             combined.roots.extend(roots);

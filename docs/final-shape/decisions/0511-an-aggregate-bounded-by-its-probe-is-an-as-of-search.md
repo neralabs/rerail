@@ -1,6 +1,8 @@
 # 0511. An aggregate bounded by its probe is an as-of search, not a helper per probe
 
-Status: accepted (2026-11-20), steps 1, 2, 4 (SQL) and 5 built; the search of step 3 not yet (§ Built). t50 step 3; follows 0483.
+Status: partly built (audited 2026-11-23). Left: §3's binary search through an order on key+value columns; the
+device's merge-path form (it only refuses the stratum, untested). Accepted (2026-11-20), steps 1, 2, 4 (SQL) and 5
+built; the search of step 3 not yet (§ Built). t50 step 3; follows 0483.
 
 ## Intro
 

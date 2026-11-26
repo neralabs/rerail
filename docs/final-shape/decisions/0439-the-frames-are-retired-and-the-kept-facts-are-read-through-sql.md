@@ -1,8 +1,8 @@
 # 0439: The frames are retired, and the kept facts are read through SQL
 
-Status: decided (2026-11-19, 0401 step 9). Follows 0401 (F5, F6), 0438 (step 7), 0104 (no SQL inside the waves) and
-0353 (blocks are never copied). Supersedes the frames of 0104, 0117 (confirmations, retags, deltas), 0138 (use rows),
-0227's collection of maintained frames, 0295 §4 (frame segments) and 0302 (`hold_frames`).
+Status: built (audited 2026-11-23). Decided (2026-11-19, 0401 step 9). Follows 0401 (F5, F6), 0438 (step 7), 0104 (no
+SQL inside the waves) and 0353 (blocks are never copied). Supersedes the frames of 0104, 0117 (confirmations, retags,
+deltas), 0138 (use rows), 0227's collection of maintained frames, 0295 §4 (frame segments) and 0302 (`hold_frames`).
 
 ## Intro
 

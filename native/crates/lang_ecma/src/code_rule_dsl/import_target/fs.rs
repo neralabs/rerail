@@ -55,7 +55,7 @@ fn keeps_text(path: &str, bytes: usize) -> bool {
 /// What a resolution reads of the file at `path` (workspace-relative) on disk below `root`, as
 /// `HeldFiles` would hold it: `None` where there is no regular file, else its text where kept
 /// (`keeps_text`).
-fn on_disk(path: &str, root: Option<&Path>) -> Option<Option<Arc<String>>> {
+fn on_disk(path: &str, root: Option<&Path>) -> Option<Option<Arc<crate::code_rule_dsl::tape::Text>>> {
     let absolute = root?.join(path);
     let metadata = std::fs::metadata(&absolute)
         .ok()
@@ -63,7 +63,7 @@ fn on_disk(path: &str, root: Option<&Path>) -> Option<Option<Arc<String>>> {
     let bytes = usize::try_from(metadata.len()).unwrap_or(usize::MAX);
     Some(keeps_text(path, bytes).then(|| {
         std::fs::read_to_string(&absolute)
-            .map(Arc::new)
+            .map(|s| Arc::new(s.into()))
             .unwrap_or_default()
     }))
 }
@@ -72,13 +72,13 @@ fn on_disk(path: &str, root: Option<&Path>) -> Option<Option<Arc<String>>> {
 /// a resolution reads it (`keeps_text`).
 #[derive(Clone, Default)]
 pub(crate) struct HeldFiles {
-    files: BTreeMap<String, Option<Arc<String>>>,
+    files: BTreeMap<String, Option<Arc<crate::code_rule_dsl::tape::Text>>>,
 }
 
 impl HeldFiles {
     /// Holds the file at `path` with `source`; whether that changes what a resolution reads,
     /// where disk below `root` stands for a path not held before (`on_disk`).
-    pub(crate) fn hold(&mut self, path: &str, source: &Arc<String>, root: Option<&Path>) -> bool {
+    pub(crate) fn hold(&mut self, path: &str, source: &Arc<crate::code_rule_dsl::tape::Text>, root: Option<&Path>) -> bool {
         let text = keeps_text(path, source.len()).then(|| Arc::clone(source));
         let before = self.files.insert(path.to_owned(), text.clone());
         before.or_else(|| on_disk(path, root)) != Some(text)
@@ -93,7 +93,7 @@ impl HeldFiles {
     }
 
     /// Whether the file at `path` is held, and its text where kept.
-    pub(crate) fn get(&self, path: &str) -> Option<Option<&Arc<String>>> {
+    pub(crate) fn get(&self, path: &str) -> Option<Option<&Arc<crate::code_rule_dsl::tape::Text>>> {
         self.files.get(path).map(Option::as_ref)
     }
 
@@ -138,7 +138,7 @@ pub(crate) type Json = Result<Arc<Parsed>, String>;
 #[derive(Default)]
 struct Cache {
     kinds: HashMap<String, Option<Kind>>,
-    texts: HashMap<String, Option<Arc<String>>>,
+    texts: HashMap<String, Option<Arc<crate::code_rule_dsl::tape::Text>>>,
     json: HashMap<String, Option<Json>>,
     listings: HashMap<String, Arc<Vec<String>>>,
     real: HashMap<String, String>,
@@ -311,7 +311,7 @@ impl View {
     }
 
     /// The text of the file at `absolute`: a held one's, else disk's (at most 1 MiB, UTF-8).
-    pub(crate) fn text(&self, absolute: &str) -> Option<Arc<String>> {
+    pub(crate) fn text(&self, absolute: &str) -> Option<Arc<crate::code_rule_dsl::tape::Text>> {
         let relative = self.relative(absolute)?;
         if let Some(Some(text)) = self.held.get(relative) {
             return Some(Arc::clone(text));
@@ -331,7 +331,7 @@ impl View {
                     .flatten()
             })
             .and_then(|bytes| String::from_utf8(bytes).ok())
-            .map(Arc::new);
+            .map(|s| Arc::new(s.into()));
         let mut cache = self.cache.lock();
         cache.bound();
         cache.texts.insert(absolute.to_owned(), text.clone());

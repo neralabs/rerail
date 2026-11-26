@@ -1,7 +1,7 @@
 # 0254: A run's chunks evaluate at once, each on a connection of its own
 
-Status: building (2026-11-15). Refines the chunked file-local part (`corpus::run_observed`, the chunk builder of
-decision 0029) and the native engine's loaded inputs (`setfix::INPUTS`).
+Status: built (audited 2026-11-23). Building (2026-11-15). Refines the chunked file-local part
+(`corpus::run_observed`, the chunk builder of decision 0029) and the native engine's loaded inputs (`setfix::INPUTS`).
 
 ## Intro
 

@@ -695,7 +695,7 @@
         let file = crate::code_rule_dsl::model::FileInput::new(
             "a.ts".to_owned(),
             "typescript".to_owned(),
-            std::sync::Arc::new(source.clone()),
+            std::sync::Arc::new(source.clone().into()),
             None,
             None,
             "file",

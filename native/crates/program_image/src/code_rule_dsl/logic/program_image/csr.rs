@@ -2,6 +2,7 @@
 //! key k's values. Dense in a base (every key from 0); keyed in a delta, whose few keys are any of its stack's, so a
 //! delta's index is the size of its edit. `Csr` reads either; `Keyed` writes the keyed form.
 
+use rerail_blocks::vector::Vector;
 /// A CSR's starts, dense (`keys` empty) or over sorted `keys`.
 pub struct Csr<'a> {
     keys: &'a [u32],
@@ -31,12 +32,14 @@ impl<'a> Csr<'a> {
 
 /// The keyed form of (key, value) pairs: the sorted distinct keys, their starts, and the values grouped by key in
 /// the order given.
-pub fn keyed(mut pairs: Vec<(u32, u32)>) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
-    pairs.sort_by_key(|p| p.0);
-    let mut keys = Vec::new();
-    let mut starts = vec![0u32];
-    let mut values = Vec::with_capacity(pairs.len());
-    for (k, v) in pairs {
+pub fn keyed(pairs: &[[u32; 2]]) -> (Vector<u32>, Vector<u32>, Vector<u32>) {
+    // The pairs in key order, each key's in the order written: the index's order, made once.
+    let mut pairs: Vector<[u32; 2]> = pairs.iter().copied().collect();
+    pairs.sort_by_key(|p| p[0]);
+    let mut keys = rerail_blocks::vector::Vector::new();
+    let mut starts = rerail_blocks::vector![0u32];
+    let mut values = rerail_blocks::vector::Vector::with_capacity(pairs.len());
+    for &[k, v] in pairs.iter() {
         if keys.last() != Some(&k) {
             if !keys.is_empty() {
                 starts.push(values.len() as u32);

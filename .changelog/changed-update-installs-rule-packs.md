@@ -1,0 +1,1 @@
+`rerail update` now updates your installed rule packs once core is updated, each to the newest version that fits the new core, where it used to only list them; `rerail packs update` does the same on its own. A third party's pack moves too, and its rules run in Log until you approve the new version.

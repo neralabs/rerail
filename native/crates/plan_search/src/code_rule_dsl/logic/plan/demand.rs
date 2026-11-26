@@ -58,6 +58,7 @@
 //! becomes `pre_i($n) :- m126($n)`, `demand_m131($n) :- pre_i($n)`, `m131` over `demand_m131`, and
 //! `m132($n) :- pre_i($n), m131($n)`. Corpus runs only, so the golden plans are unchanged.
 
+use rerail_blocks::vector::Vector;
 use super::super::program_image::{Builder, CmpOp, RuleId, RuleRef, T, TermRef, Version};
 use super::keeps::inline::named;
 use std::collections::{BTreeMap, BTreeSet};
@@ -227,7 +228,7 @@ pub fn overlaid(base: &Placed, candidates: &BTreeSet<&str>, splits: &BTreeMap<us
             rb = rb.atom(demand.as_str(), &own_args);
         }
         let body = super::body::Body::of(v, r);
-        let kept: Vec<usize> = (0..body.len()).filter(|i| !s.cut.contains(i)).collect();
+        let kept: Vector<usize> = (0..body.len()).filter(|i| !s.cut.contains(i)).collect();
         for &i in &kept {
             if !body.implied_read(i, &kept) {
                 rb = rb.lit(v, r, body.lit(i));

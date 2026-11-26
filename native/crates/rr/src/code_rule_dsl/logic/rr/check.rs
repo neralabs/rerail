@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::clause::{At, L, LitAt, Reads, T};
-use super::from_tape::{RrFile, S, Stmt};
+use super::from_tape::{RrFile, S, Statements, Stmt};
 use super::lower::{RELATION_ARG, TESTS};
 use super::tape::Field;
 
@@ -249,7 +249,7 @@ pub(super) fn unbound(f: &RrFile, c: u32, given: &BTreeSet<String>) -> Vec<Strin
 }
 
 /// The relations a file's `fix` lines and `.edit` declarations name.
-pub fn fix_relations(statements: &[Stmt]) -> BTreeSet<String> {
+pub fn fix_relations(statements: &Statements) -> BTreeSet<String> {
     statements
         .iter()
         .flat_map(|s| match s.what() {
@@ -264,7 +264,7 @@ pub fn fix_relations(statements: &[Stmt]) -> BTreeSet<String> {
 }
 
 /// Ungrounded rules of one file: (line, unbound variables).
-pub fn grounded(statements: &[Stmt], given: &BTreeSet<String>) -> Vec<(usize, Vec<String>)> {
+pub fn grounded(statements: &Statements, given: &BTreeSet<String>) -> Vec<(usize, Vec<String>)> {
     let mut given = given.clone();
     given.extend(fix_relations(statements));
     statements
@@ -280,7 +280,7 @@ pub fn grounded(statements: &[Stmt], given: &BTreeSet<String>) -> Vec<(usize, Ve
 }
 
 /// Declarations made more than once in a program, or of a built-in constraint: (relation, files) per problem.
-pub fn declarations(files: &[(String, Vec<Stmt>)]) -> Vec<String> {
+pub fn declarations(files: &[(String, Statements)]) -> Vec<String> {
     let mut decls = BTreeMap::<String, Vec<String>>::new();
     for (file, statements) in files {
         for s in statements {
@@ -432,11 +432,17 @@ pub fn clause_reads(f: &RrFile, lits: &[LitAt], out: &mut Vec<String>) {
 
 /// Relations a program's rules read that none of its files declares, nor the lowering makes (its built-ins): the
 /// syntax-level form of `lowering_tail::Declared`, which a run and check-rr apply to the lowered program.
-pub fn undeclared(statements: &[&Stmt]) -> Vec<String> {
+pub fn undeclared(statements: &Statements) -> Vec<String> {
     let mut declared = BTreeSet::new();
     for s in statements {
-        if let Some(S::Decl(name) | S::Edit(name) | S::Violation(name)) = s.what() {
-            declared.insert(name.to_owned());
+        match s.what() {
+            Some(S::Decl(name) | S::Edit(name) | S::Violation(name)) => {
+                declared.insert(name.to_owned());
+            }
+            // `.from PASS rel [as local], … [for READER]`: each local name is another pass's relation, which a run
+            // declares where it rewrites the read (`contexts::Declared`'s reads).
+            Some(S::Setting { key: "from", text }) => declared.extend(from_names(text)),
+            _ => {}
         }
     }
     // The import closure's relations (`rr_cx_*`) are the engine's: a run adds `components.rerail` to a program that reads
@@ -460,8 +466,22 @@ pub fn undeclared(statements: &[&Stmt]) -> Vec<String> {
     out.into_iter().collect()
 }
 
+/// The local names a `.from` setting's text gives (`PASS rel [as local], … [for READER]`), as `contexts` reads them.
+fn from_names(text: &str) -> Vec<String> {
+    let spaced = text.replace(',', " , ");
+    let words: Vec<&str> = spaced.split_whitespace().skip(1).take_while(|w| *w != "for").collect();
+    words
+        .split(|w| *w == ",")
+        .filter_map(|name| match name {
+            [rel] => Some((*rel).to_owned()),
+            [_, "as", local] => Some((*local).to_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Stratification problems of one program (every statement of its files): "h depends on d" per problem.
-pub fn strata(statements: &[&Stmt]) -> Vec<String> {
+pub fn strata(statements: &Statements) -> Vec<String> {
     let mut ordered = BTreeMap::new();
     let mut rules = Vec::new();
     for s in statements {

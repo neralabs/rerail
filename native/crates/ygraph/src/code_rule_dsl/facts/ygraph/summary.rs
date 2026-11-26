@@ -3,6 +3,7 @@
 //! every string interned. Export ids are the compiled plan's (`facts-b gnorm --dump all`):
 //! 3 `in_scope`, 7 `cgn_def`, 8 `cgn_edge`, 9 `cgn_alias`, 10 `cgn_opaque`, 11 `cgn_module`,
 //! 12 `cgn_open`, 13 `cgn_reference_alias`.
+use rerail_blocks::vector::Vector;
 use super::intern::{Interner, Sym};
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
@@ -25,7 +26,7 @@ pub struct VRows {
     pub aliases: Vec<(Sym, Sym)>,
     pub opaque: Vec<Sym>,
     pub module: Vec<Sym>,
-    pub open: Vec<i64>,
+    pub open: Vector<i64>,
     /// `cgn_reference_alias` rows whose raw key holds `.<base-slot>.`
     pub base_slots: Vec<(Sym, Sym)>,
 }

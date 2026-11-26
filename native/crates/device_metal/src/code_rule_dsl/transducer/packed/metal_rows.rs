@@ -13,7 +13,7 @@
 //! **The kernels**, generated from the row program (one generator, not one per case):
 //! - `rows_count`: each thread a row, its predicate a straight-line expression of the program's
 //!   operations; the tile's passing rows summed by a SIMD group sum into its count;
-//! - the counts' exclusive prefix sum: the UKL library's scan (`rerail_accel::gpu::join::Scan`);
+//! - the counts' exclusive prefix sum: the UKL library's scan (`rerail_accel_gpu::gpu::join::Scan`);
 //! - `rows_scatter`: the predicate again, each passing row written at its tile's offset plus its
 //!   rank (a SIMD group's exclusive sum). The output is in order, with no atomic append.
 //!
@@ -24,13 +24,14 @@
 //!
 //! Threadgroup memory: eight words. Every loop is bounded by its input.
 
+use rerail_blocks::vector::Vector;
 use super::Error;
 use super::block::{BlockOp, BlockProgram, CmpOp, Rhs};
 use super::metal_sort::Held;
-pub use rerail_accel::gpu::tile::{Form, Resident};
+pub use rerail_accel_gpu::gpu::tile::{Form, Resident};
 #[cfg(any(test, feature = "test-hooks"))]
-pub use rerail_accel::gpu::tile::{Joined, tile_join};
-use rerail_accel::gpu::join::{Pass, Scan, pipeline};
+pub use rerail_accel_gpu::gpu::tile::{Joined, tile_join};
+use rerail_accel_gpu::gpu::join::{Pass, Scan, pipeline};
 use rerail_device::device::Buffer;
 use std::fmt::Write as _;
 
@@ -44,7 +45,7 @@ pub enum Input {
 
 /// A scan's result: the host rows that pass, in order, and the submission's device time.
 pub struct Scanned {
-    pub rows: Vec<u32>,
+    pub rows: Vector<u32>,
     pub gpu_seconds: f64,
 }
 
@@ -132,7 +133,7 @@ fn source(body: &str, forms: &[Form]) -> String {
     let cols: String = forms.iter().enumerate().map(|(g, &f)| format!(", UKL_GLOBAL const {}* c{g}", ty(f))).collect();
     let args: String = (0..forms.len()).map(|g| format!(", c{g}")).collect();
     let rows: String = forms.iter().enumerate().map(|(g, &f)| format!("               ROBUFFER, {}, c{g}, \"[rows]\",\n", ty(f))).collect();
-    let common = rerail_accel::gpu::join::COMMON;
+    let common = rerail_accel_gpu::gpu::join::COMMON;
     format!(
         r#"{common}
 typedef struct Tile {{ uint32_t group; uint32_t start; uint32_t count; uint32_t pad; }} Tile;
@@ -193,7 +194,7 @@ pub fn scan(program: &BlockProgram, inputs: &[Input], resident: &Resident, param
     // One variant per program's source: the predicate is the program's.
     let count = pipeline(&src, "rows_count", || src.clone()).map_err(device_err)?;
     let scatter = pipeline(&src, "rows_scatter", || src.clone()).map_err(device_err)?;
-    let wide: Vec<i64> = params.iter().flat_map(|&p| [p, p >> 16, p & 0xffff]).chain([0]).collect();
+    let wide: Vector<i64> = params.iter().flat_map(|&p| [p, p >> 16, p & 0xffff]).chain([0]).collect();
     let params = Held::of(wide.iter().copied()).map_err(device_err)?;
     let tiles = resident.tile_count;
     let counts = Held::new(4 * tiles).map_err(device_err)?;
@@ -224,7 +225,7 @@ pub fn scan(program: &BlockProgram, inputs: &[Input], resident: &Resident, param
     // SAFETY: the buffers hold `tiles + 1` and `rows` words, written by the kernels and read
     // after the command buffer completed.
     let total = unsafe { *offsets.buffer.contents().cast::<u32>().add(tiles) } as usize;
-    let rows = unsafe { std::slice::from_raw_parts(out.buffer.contents().cast::<u32>(), total) }.to_vec();
+    let rows = rerail_blocks::vector::Vector::from(unsafe { std::slice::from_raw_parts(out.buffer.contents().cast::<u32>(), total) });
     Ok(Scanned { rows, gpu_seconds: gpu })
 }
 

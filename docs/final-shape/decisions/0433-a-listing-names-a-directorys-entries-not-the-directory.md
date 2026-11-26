@@ -1,8 +1,8 @@
 # 0433: A listing names a directory's entries, not the directory; a racy answer is checked by its bytes
 
-Status: decided (2026-11-18, found by `a_header_edit_asks_again_only_for_the_units_that_read_it`, red since the
-small roots were checked by listings). Amends 0400 (R2, R4) and keeps 0105's naming: a named path is forgotten with
-everything under it.
+Status: built (audited 2026-11-23). Decided (2026-11-18, found by
+`a_header_edit_asks_again_only_for_the_units_that_read_it`, red since the small roots were checked by listings).
+Amends 0400 (R2, R4) and keeps 0105's naming: a named path is forgotten with everything under it.
 
 ## Intro
 

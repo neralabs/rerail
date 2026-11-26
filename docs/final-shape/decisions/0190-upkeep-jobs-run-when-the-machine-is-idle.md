@@ -1,7 +1,9 @@
 # 0190: Upkeep jobs run when the machine is idle, at the lowest priority, within a CPU and memory share
 
-Status: draft (2026-11-13); a job's shape (§7, `Qos`) added 2026-11-14; the scheduler and five jobs built (§4: collection, SQLite files, search indexes,
-the cost model); re-sorting stored rows (§5, O160) and trying join orders (§6, O161) designed, not built.
+Status: partly built (audited 2026-11-23). Left: re-sorting stored rows (§5, O160, waits on 0164's frames); a launchd
+agent for machines without a daemon. Draft (2026-11-13); a job's shape (§7, `Qos`) added 2026-11-14; the scheduler and
+five jobs built (§4: collection, SQLite files, search indexes, the cost model); re-sorting stored rows (§5, O160) and
+trying join orders (§6, O161) designed, not built.
 
 ## Intro
 

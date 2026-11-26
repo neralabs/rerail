@@ -1,6 +1,6 @@
 # 0357: A reader's window has no escape carry after its opener
 
-Status: decided (the user, 2026-11-17: "go ahead with 2 then 1", item 1: short strings).
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-17: "go ahead with 2 then 1", item 1: short strings).
 Follows 0356.
 
 ## Intro

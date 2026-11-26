@@ -1,10 +1,11 @@
+use rerail_blocks::vector::Vector;
 use super::{TOP, register};
 use rusqlite::Connection;
 
 /// A connection to a new content store, whose `atoms` table holds the symbols.
 fn connection() -> Connection {
     let path = crate::code_rule_dsl::fixtures::temp();
-    drop(crate::code_rule_dsl::fixtures::open(&path));
+    drop(crate::content_store::ContentStore::open(&path).unwrap());
     let db = Connection::open(path).unwrap();
     register(&db).unwrap();
     db
@@ -325,10 +326,10 @@ fn a_fixpoint_pauses_for_requests_and_resumes_with_their_answers() {
         match report.rsplit(' ').next() {
             Some("2") => {
                 pauses += 1;
-                let mut answer = Vec::new();
+                let mut answer: Vec<rerail_blocks::vector::Vector<i64>> = Vec::new();
                 for (table, rows) in super::setfix::pending(&db, "asks").unwrap() {
                     assert_eq!(table, "req");
-                    answer.extend(rows.iter().filter(|r| r[0] < 5).map(|r| vec![r[0], r[0] + 1]));
+                    answer.extend(rows.iter().filter(|r| r[0] < 5).map(|r| rerail_blocks::vector![r[0], r[0] + 1]));
                 }
                 super::setfix::add(&db, "asks", "got", &answer).unwrap();
             }
@@ -337,7 +338,7 @@ fn a_fixpoint_pauses_for_requests_and_resumes_with_their_answers() {
         }
     }
     assert_eq!(pauses, 5, "one pause per request, as each answer makes the next");
-    let ints = |sql: &str| -> Vec<i64> { db.prepare(sql).unwrap().query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap() };
+    let ints = |sql: &str| -> Vector<i64> { db.prepare(sql).unwrap().query_map([], |r| r.get::<_, i64>(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap() };
     assert_eq!(ints("SELECT c0 FROM want ORDER BY c0"), [1, 2, 3, 4, 5]);
     assert_eq!(ints("SELECT c0 FROM req ORDER BY c0"), [1, 2, 3, 4, 5]);
     // A produced relation is the caller's to write: the fixpoint writes none of its rows.
@@ -465,7 +466,7 @@ fn a_closure_over_many_components_runs_in_pieces_like_semi_naive() {
         got
     };
     // Reachability by search: each seed's node, and every node a path of one or more edges leads to.
-    let mut out: std::collections::HashMap<i64, Vec<i64>> = std::collections::HashMap::new();
+    let mut out: std::collections::HashMap<i64, Vector<i64>> = std::collections::HashMap::new();
     for &(a, b) in &edges {
         out.entry(a).or_default().push(b);
     }

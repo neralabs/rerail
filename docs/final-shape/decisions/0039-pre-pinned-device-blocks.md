@@ -1,6 +1,6 @@
 # 0039: Device scratch buffers come from pre-pinned blocks that are reused
 
-Status: accepted and built (2026-11-05, the user; list step 30)
+Status: built (audited 2026-11-23). Accepted and built (2026-11-05, the user; list step 30)
 
 ## Intro
 

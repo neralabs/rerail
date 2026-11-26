@@ -551,7 +551,7 @@ fn an_existence_count_reads_the_projection() {
         out(n) :- node(_, n, "call", _, _), count : { pair(n, _, _) } = 0.
         "#,
     );
-    assert_eq!(report.projected, vec![("pair".to_owned(), vec![1, 2])]);
+    assert_eq!(report.projected, vec![("pair".to_owned(), rerail_blocks::vector![1, 2])]);
     assert_eq!(v.columns_of("pair").map(|c| c.len()), Some(1));
     let text = rules(&v);
     assert!(text.iter().any(|r| r.starts_with("out(") && r.contains("pair($n)")), "{text:?}");
@@ -573,7 +573,7 @@ fn a_projection_keeps_a_location_column() {
         out(q) :- docmod(_, _, q).
         "#,
     );
-    assert_eq!(report.projected, vec![("docmod".to_owned(), vec![1])]);
+    assert_eq!(report.projected, vec![("docmod".to_owned(), rerail_blocks::vector![1])]);
     let text = rules(&v);
     assert!(text.iter().any(|r| r.starts_with("docmod($d, $q) :-")), "{text:?}");
 }
@@ -672,7 +672,7 @@ fn a_zero_counts_helper_keeps_only_the_columns_read() {
         "#,
     );
     let text = rules(&v);
-    let helper = text.iter().find(|r| r.starts_with("rr_agg")).unwrap_or_else(|| panic!("{text:?}"));
+    let helper = text.iter().find(|r| r.split('(').next().and_then(crate::code_rule_dsl::logic::rr::lower::helper_stem) == Some("agg")).unwrap_or_else(|| panic!("{text:?}"));
     let head = &helper[..helper.find(" :-").unwrap()];
     assert_eq!(head.matches('$').count(), 3, "{head}: {:?} {text:?}", report.projected);
 }

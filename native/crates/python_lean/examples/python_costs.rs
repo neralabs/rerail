@@ -1,9 +1,9 @@
 //! The parser's cost over a list of files, for `/usr/bin/time -l` (instructions retired, cycles):
 //! `costs <list> <passes> [tokens]`. The files are read first; each pass tapes every one.
-/// The columns' digest, for comparing two builds' tapes.
-fn digest(h: &mut std::collections::hash_map::DefaultHasher, t: &rerail_tape_format::Columns) {
+/// The tape's digest, for comparing two builds' tapes.
+fn digest(h: &mut std::collections::hash_map::DefaultHasher, t: &rerail_tape_format::f16::Finished) {
     use std::hash::Hash;
-    (&t.code, &t.size, &t.base, &t.off, &t.tail, t.widths, &t.keys).hash(h);
+    t.tape.as_bytes().hash(h);
 }
 
 fn main() {
@@ -22,7 +22,7 @@ fn main() {
                 if pass == 0 {
                     digest(&mut h, &t);
                 }
-                n += t.code.len() / 2;
+                n += t.tape.len();
                 bytes += f.len();
             }
         }

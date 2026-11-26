@@ -7,6 +7,7 @@
 //! to a SQLite table, read back, decoded and made a relation again. Each step is a span (`spike …`); the bytes by
 //! kind go to the profile's decisions. Nothing read back is used: the run goes on with what it built.
 
+use rerail_blocks::vector::Vector;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -51,7 +52,7 @@ fn unzigzag(v: u64) -> i64 {
 }
 
 /// A (document, relation)'s columns: each column's values as deltas from the one before, zigzag varints.
-fn encode(cols: &[Vec<i64>]) -> Vec<u8> {
+fn encode(cols: &[Vector<i64>]) -> Vec<u8> {
     let mut out = Vec::new();
     for col in cols {
         let mut prev = 0i64;
@@ -63,7 +64,7 @@ fn encode(cols: &[Vec<i64>]) -> Vec<u8> {
     out
 }
 
-fn decode(bytes: &[u8], ncols: usize, nrows: usize) -> Vec<Vec<i64>> {
+fn decode(bytes: &[u8], ncols: usize, nrows: usize) -> Vec<Vector<i64>> {
     let mut at = 0;
     (0..ncols)
         .map(|_| {
@@ -83,15 +84,15 @@ pub(super) fn run(db: &std::ffi::OsStr, sources: &[(String, Arc<dyn Source>, Kin
     use crate::code_rule_dsl::logic::profile::span;
     // 1. Split by document: a row's document is its first column's high half, or the column itself when it is `d`.
     let split = span(|| "spike split by document".into());
-    let mut parts: Vec<(String, Kind, Vec<String>, HashMap<Doc, Vec<Vec<i64>>>)> = Vec::new();
+    let mut parts: Vec<(String, Kind, Vec<String>, HashMap<Doc, Vec<Vector<i64>>>)> = Vec::new();
     for (name, source, kind) in sources {
         let columns = source.columns();
         let by_key = columns.first().is_some_and(|c| c == "d");
-        let mut docs: HashMap<Doc, Vec<Vec<i64>>> = HashMap::new();
+        let mut docs: HashMap<Doc, Vec<Vector<i64>>> = HashMap::new();
         for row in 0..source.len() {
             let first = source.value(row, 0);
             let doc = if by_key { first } else { first >> 32 };
-            let cols = docs.entry(doc).or_insert_with(|| vec![Vec::new(); columns.len()]);
+            let cols = docs.entry(doc).or_insert_with(|| vec![rerail_blocks::vector::Vector::new(); columns.len()]);
             for (c, col) in cols.iter_mut().enumerate() {
                 col.push(source.value(row, c));
             }
@@ -108,10 +109,10 @@ pub(super) fn run(db: &std::ffi::OsStr, sources: &[(String, Arc<dyn Source>, Kin
             let bytes = encode(cols);
             let packed = zstd::bulk::compress(&bytes, 1).unwrap_or_default();
             let e = raw.entry(*kind).or_default();
-            e.0 += cols.first().map_or(0, Vec::len);
+            e.0 += cols.first().map_or(0, |c| c.len());
             e.1 += bytes.len();
             e.2 += packed.len();
-            blobs.push((*doc, name.clone(), columns.len(), cols.first().map_or(0, Vec::len), packed));
+            blobs.push((*doc, name.clone(), columns.len(), cols.first().map_or(0, |c| c.len()), packed));
         }
     }
     drop(encoding);
@@ -182,7 +183,7 @@ pub(super) fn run(db: &std::ffi::OsStr, sources: &[(String, Arc<dyn Source>, Kin
 pub mod tests {
     #[test]
     fn columns_round_trip() {
-        let cols = vec![vec![5, 3, i64::MAX, -7, 0], vec![1 << 40, (1 << 40) + 3, 2, 2, -1]];
+        let cols = vec![rerail_blocks::vector![5, 3, i64::MAX, -7, 0], rerail_blocks::vector![1 << 40, (1 << 40) + 3, 2, 2, -1]];
         assert_eq!(super::decode(&super::encode(&cols), 2, 5), cols);
     }
 }

@@ -1,0 +1,24 @@
+[package]
+name = "rerail-sql-profile"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The SQL profiler (RERAIL_SQL_PROFILE_DIR) and the SQL admission ledger: above the facts, for the crates that run SQL owners."
+
+[features]
+# The test hooks of the crates below.
+test-hooks = ["rerail-prof/test-hooks"]
+
+[dependencies]
+rerail-prof = { path = "../prof" }
+parking_lot = { version = "0.12", features = ["arc_lock"] }
+rusqlite = { version = "=0.41.1", features = ["bundled", "column_decltype", "functions", "hooks", "limits", "modern_sqlite", "series", "vtab"] }
+serde_json = "1.0"
+regex = "=1.13.1"
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+# The failure snapshot's test writes into a temporary directory.
+tempfile = "=3.27.0"
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-sql-profile = { path = ".", features = ["test-hooks"] }

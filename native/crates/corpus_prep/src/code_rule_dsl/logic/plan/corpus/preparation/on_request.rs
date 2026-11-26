@@ -16,6 +16,7 @@
 //! written to the profile's decisions (`<a> on request`, its readers and the widened copies): what each reader asks,
 //! what it leaves out and why.
 
+use rerail_blocks::vector::Vector;
 use super::simplify::Tm;
 use crate::code_rule_dsl::logic::front::{List, Value};
 use crate::code_rule_dsl::logic::program_image::build::{Rewrite, Site, T};
@@ -37,7 +38,7 @@ pub struct SourcesOnRequest {
 #[derive(Clone)]
 enum Item {
     Own(u32),
-    Wide { node: u32, rel: String, cols: Vec<usize> },
+    Wide { node: u32, rel: String, cols: Vector<usize> },
 }
 
 /// A rule made from rule `src`: a request (`req(n)`), a demand's ask (`req_by_r_c(rr_dn)`, decision 0291) or a widened
@@ -59,7 +60,7 @@ struct New {
 #[derive(Clone)]
 enum Head {
     Node(Slot),
-    Cols(Vec<usize>),
+    Cols(Vector<usize>),
 }
 
 fn lit_at<'v>(r: RuleRef<'v>, node: u32) -> LitRef<'v> {
@@ -308,7 +309,7 @@ struct Widen<'v> {
     v: &'v Version,
     attrs: BTreeSet<&'static str>,
     prefix: String,
-    cols: BTreeMap<String, Vec<usize>>,
+    cols: BTreeMap<String, Vector<usize>>,
 }
 
 /// What `Widen::rules` adds.
@@ -317,7 +318,7 @@ struct Widened {
     rules: Vec<New>,
     decls: BTreeMap<String, Vec<(String, String)>>,
     facts: BTreeMap<String, Vec<Vec<Value>>>,
-    copies: Vec<(String, Vec<usize>)>,
+    copies: Vec<(String, Vector<usize>)>,
     asked: BTreeMap<String, Vec<BTreeSet<String>>>,
 }
 
@@ -347,7 +348,7 @@ impl<'v> Widen<'v> {
                 let head = v.rel_name(rule.head().rel());
                 let Some(cols) = w.cols.get(head) else { continue };
                 let (_, bound, _) = w.widen(rule, None, &BTreeSet::new(), None);
-                let kept: Vec<usize> = cols.iter().copied().filter(|&c| Self::bound_term(rule.head().args().nth(c).expect("a head column"), &bound)).collect();
+                let kept: Vector<usize> = cols.iter().copied().filter(|&c| Self::bound_term(rule.head().args().nth(c).expect("a head column"), &bound)).collect();
                 if kept.len() != cols.len() {
                     w.cols.insert(head.to_owned(), kept);
                     changed = true;

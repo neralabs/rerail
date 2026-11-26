@@ -12,7 +12,7 @@ pub mod tests {
         let db = Connection::open_in_memory().unwrap();
         let source = component::columns_source(
             vec!["c0".into()],
-            vec![Some(vec![1, 1, 2, (2_i64 << 32) | 1])],
+            vec![Some(rerail_blocks::vector![1, 1, 2, (2_i64 << 32) | 1])],
         );
         let mut demands = Demands::default();
         let first = demands.read(&db, "keys", "c0", Some(source)).unwrap();
@@ -20,7 +20,7 @@ pub mod tests {
         // There is no SQL table: a second consumer must reuse the same snapshot.
         let second = demands.read(&db, "keys", "c0", None).unwrap();
         assert!(Arc::ptr_eq(&first, &second));
-        let narrower = component::columns_source(vec!["c0".into()], vec![Some(vec![2])]);
+        let narrower = component::columns_source(vec!["c0".into()], vec![Some(rerail_blocks::vector![2])]);
         assert_eq!(
             demands
                 .read(&db, "narrower", "c0", Some(narrower))
@@ -29,7 +29,7 @@ pub mod tests {
             &[2]
         );
         demands.forget("keys");
-        let empty = component::columns_source(vec!["c0".into()], vec![Some(vec![])]);
+        let empty = component::columns_source(vec!["c0".into()], vec![Some(rerail_blocks::vector![])]);
         assert!(
             demands
                 .read(&db, "keys", "c0", Some(empty))
@@ -37,7 +37,7 @@ pub mod tests {
                 .is_empty()
         );
         let mut next_run = Demands::default();
-        let other = component::columns_source(vec!["c0".into()], vec![Some(vec![9])]);
+        let other = component::columns_source(vec!["c0".into()], vec![Some(rerail_blocks::vector![9])]);
         assert_eq!(
             next_run
                 .read(&db, "keys", "c0", Some(other))

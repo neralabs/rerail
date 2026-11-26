@@ -27,7 +27,9 @@
 //! a frozen block's length from its header.
 
 use crate::block::{Backing, Block, FROZEN, Flush, Frozen, Header};
-use std::fs::{File, OpenOptions};
+use std::fs::File;
+#[cfg(windows)]
+use std::fs::OpenOptions;
 use std::io;
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
@@ -117,7 +119,7 @@ impl Deferrable {
         #[cfg(any(target_os = "macos", target_os = "linux", windows))] device: Option<&rerail_device::device::Device>,
     ) -> io::Result<Deferrable> {
         let len = len.max(crate::block::PAGE).div_ceil(crate::block::PAGE) * crate::block::PAGE;
-        let f = OpenOptions::new().read(true).write(true).create(true).truncate(fresh).open(path)?;
+        let f = crate::mapped::open_write(path, true, fresh)?;
         f.set_len(len as u64)?;
         let p: *mut libc::c_void = map_shared(&f, len, true)?.cast();
         // SAFETY: the mapping outlives the wrap, which it holds and lets go at the seal, before it is unmapped.
@@ -222,7 +224,7 @@ impl Sealed {
         // Written by the host alone: no page is wired, so one `MS_SYNC` writes every one, and the mapping stays,
         // its readers reading on (the block a queued write's readers hold).
         if !mapping.wrapped {
-            let f = OpenOptions::new().read(true).write(true).open(&path)?;
+            let f = crate::mapped::open_write(&path, false, false)?;
             if flush.waits() {
                 flush_pages(mapping.base, length, Some(&f))?;
             }
@@ -233,6 +235,8 @@ impl Sealed {
                 *mapping.cut.lock().unwrap() = Some((path.clone(), length as u64));
             }
             write_at(&f, &FROZEN.to_ne_bytes(), std::mem::offset_of!(Header, state) as u64)?;
+            // Frozen: read-only on disk too (`mapped`, decision 0574).
+            crate::mapped::mark_frozen(&f)?;
             let _ = kind;
             return Ok(frozen);
         }
@@ -247,7 +251,7 @@ impl Sealed {
             std::thread::sleep(wait);
             wait = (wait * 2).min(Duration::from_millis(10));
         }
-        let f = OpenOptions::new().read(true).write(true).open(&path)?;
+        let f = crate::mapped::open_write(&path, false, false)?;
         f.set_len(length as u64)?;
         // The kernel's pages, dirty since their wire, written back through a mapping of their own. The driver lets go
         // of them some time after the unmap (190–260 ms measured, whatever the size), and an `msync` meanwhile skips
@@ -259,8 +263,9 @@ impl Sealed {
             unsafe { unmap(p, length) };
             r?;
         }
-        // The state, last.
+        // The state, last; then the file read-only (`mapped`, decision 0574).
         write_at(&f, &FROZEN.to_ne_bytes(), std::mem::offset_of!(Header, state) as u64)?;
+        crate::mapped::mark_frozen(&f)?;
         drop(f);
         Block::open_file(&path, kind).map_err(io::Error::other)
     }
@@ -413,7 +418,7 @@ mod tests {
 
     fn dir(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("rerail-deferrable-{}-{name}", std::process::id()));
-        std::fs::create_dir_all(&d).unwrap();
+        crate::mapped::make_folder(&d).unwrap();
         d
     }
 

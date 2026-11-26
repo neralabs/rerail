@@ -134,3 +134,5 @@ pub fn c_tape(source: &Source) -> Result<Tape, Error> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod aux_index_tests;

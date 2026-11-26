@@ -15,7 +15,8 @@
 //! empty slot. The host's fold (`Rel::fold`) and the device's (`Batch::lattice_fold`) probe the same slots: the map the
 //! device grows is the one the host's next fold probes. It grows (every key placed again) past half full.
 
-use super::rows::{BlockVec, Facts, Home};
+use rerail_blocks::vector::Vector;
+use super::rows::{Facts, Home, InRelations};
 use super::runs::RowData;
 use std::sync::Arc;
 
@@ -39,7 +40,7 @@ const LEADING: [usize; 64] = {
 /// A lattice relation's key map: see the module's doc.
 #[derive(Clone)]
 pub struct KeyMap {
-    slots: BlockVec<u32>,
+    slots: rerail_blocks::vector::Vector<u32>,
     /// Keys held.
     keys: usize,
 }
@@ -48,11 +49,11 @@ impl KeyMap {
     /// An empty map of room for `keys` keys (twice as many slots, a power of two), near `home`.
     pub fn new(home: Option<&Home>, keys: usize) -> KeyMap {
         let places = (2 * keys).next_power_of_two().max(LEAST);
-        KeyMap { slots: BlockVec::from_iter_in(home, std::iter::repeat_n(EMPTY, places * SLOT)), keys: 0 }
+        KeyMap { slots: crate::code_rule_dsl::facts::rows::collect_in(home, std::iter::repeat_n(EMPTY, places * SLOT)), keys: 0 }
     }
 
     /// A map of the slots `slots` (another writer's to fill, `held`), holding `keys` keys.
-    pub fn of(slots: BlockVec<u32>, keys: usize) -> KeyMap {
+    pub fn of(slots: rerail_blocks::vector::Vector<u32>, keys: usize) -> KeyMap {
         debug_assert!((slots.len() / SLOT).is_power_of_two() && slots.len().is_multiple_of(SLOT), "a map of {} words", slots.len());
         KeyMap { slots, keys }
     }
@@ -68,7 +69,7 @@ impl KeyMap {
     }
 
     /// Its slots' words: where they lie, for a reader that binds the block (the device).
-    pub fn words(&self) -> &BlockVec<u32> {
+    pub fn words(&self) -> &rerail_blocks::vector::Vector<u32> {
         &self.slots
     }
 
@@ -185,7 +186,7 @@ impl KeyMap {
 /// row placed again) past half full.
 #[derive(Default)]
 pub struct RowSet {
-    slots: BlockVec<u32>,
+    slots: rerail_blocks::vector::Vector<u32>,
     rows: usize,
 }
 
@@ -266,7 +267,7 @@ impl RowSet {
             return;
         }
         let places = (2 * need).next_power_of_two().max(LEAST);
-        let old = std::mem::replace(&mut self.slots, BlockVec::from_iter_in(data.home().as_ref(), std::iter::repeat_n(EMPTY, places * ROW_SLOT)));
+        let old = std::mem::replace(&mut self.slots, crate::code_rule_dsl::facts::rows::collect_in(data.home().as_ref(), std::iter::repeat_n(EMPTY, places * ROW_SLOT)));
         for w in old.as_chunks::<ROW_SLOT>().0.iter().filter(|w| w[0] != EMPTY) {
             self.place(rerail_blocks::key_hash(&data.row(w[0], k)), w[0]);
         }
@@ -287,7 +288,7 @@ mod tests {
         // 3,000 keys a wave, each key's value lower in the next wave for every third key.
         let mut want: std::collections::HashMap<i64, (i64, u32)> = std::collections::HashMap::new();
         for wave in 0..3i64 {
-            let rows: Vec<i64> = (0..3000i64).flat_map(|key| [key, if key % 3 == 0 { 100 - wave } else { 100 }]).collect();
+            let rows: Vector<i64> = (0..3000i64).flat_map(|key| [key, if key % 3 == 0 { 100 - wave } else { 100 }]).collect();
             rel.fold(&rows);
             for key in 0..3000i64 {
                 let v = if key % 3 == 0 { 100 - wave } else { 100 };

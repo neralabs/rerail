@@ -15,7 +15,7 @@ fn program(name: &str) -> Arc<Version> {
 
 /// `v`'s components in T's order (by name), or the first that a negation or an aggregate closes.
 fn strata(v: &Version) -> Result<Vec<BTreeSet<String>>, Error> {
-    analyses::components_by_name(v, &About::of(v))
+    analyses::components_by_name(v, &About::of(v)).map(|c| c.to_sets())
 }
 
 /// The body literals of `v`'s rule `k`.

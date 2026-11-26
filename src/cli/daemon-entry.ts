@@ -12,7 +12,9 @@ import { scrubWrites } from "../engine/secret-scrub.js";
 import { runHomeDaemon } from "../daemon/daemon.js";
 import type { RerailApiStores } from "../api/operation.js";
 import { keepClaudeStatusFiles } from "../presentation/claude-status-files.js";
+import { isMainRerailBuild } from "../engine/native/rerail-build.js";
 import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
+import { startUpdateChecks, updateCheckApplies } from "../setup/update-check.js";
 import { checkNodeVersion } from "../setup/node-version.js";
 import { stampLines } from "./daemon-log.js";
 
@@ -40,6 +42,10 @@ startGitWithoutCopying(loadNativeBinding);
 try {
   await runHomeDaemon(process.argv.slice(2), {
     codingAgents: () => codingAgentStates(registrationRoot(defaultRerailHome(), PACKAGE_ROOT), codingAgentHome()),
+    // A managed install asks npm once a day whether a newer Rerail is out; a checkout's build never does.
+    ...(isMainRerailBuild() && updateCheckApplies(defaultRerailHome()) ? {
+      updateChecks: () => startUpdateChecks({ home: defaultRerailHome() }),
+    } : {}),
     ...(process.platform === "win32" ? {} : {
       statusLines: (stores: RerailApiStores) => keepClaudeStatusFiles({ stores, folder: join(defaultRerailHome(), STATUS_LINES_FOLDER) }),
     }),

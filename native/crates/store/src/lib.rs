@@ -25,6 +25,8 @@ pub mod content_store;
 mod test_load {
     extern "C" fn load() {
         crate::content_store::observer_store::register();
+        // Blocks that start small, so that its stores grow chains and roll them up (`rerail_atoms::small_blocks`).
+        rerail_atoms::set_small_blocks();
     }
     #[used]
     #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
@@ -32,3 +34,8 @@ mod test_load {
     #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
     static LOAD: extern "C" fn() = load;
 }
+// The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
+// host's umask of `002` made a fixture's folder `775`, which the mapped files' rules refuse.
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;

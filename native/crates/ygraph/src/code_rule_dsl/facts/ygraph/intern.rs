@@ -1,6 +1,7 @@
 //! One string interner for the graph: every name, key, path and content hash is a `Sym` (u32).
 //! Strings live back to back in one byte arena; the table holds only ids. Append-only: a string
 //! interned by any worktree keeps its id for every other (ids are shared across base and deltas).
+use rerail_blocks::vector::Vector;
 use std::hash::BuildHasher;
 
 pub type Sym = u32;
@@ -12,16 +13,16 @@ pub fn hash_str(s: &str) -> u64 {
 }
 
 pub struct Interner {
-    buf: Vec<u8>,
+    buf: Vector<u8>,
     /// ends[i] = end offset of string i in `buf` (start = ends[i - 1]).
-    ends: Vec<u32>,
-    hashes: Vec<u64>,
-    table: hashbrown::HashTable<Sym>,
+    ends: Vector<u32>,
+    hashes: Vector<u64>,
+    table: rerail_blocks::maps::IdTable<Sym>,
 }
 
 impl Default for Interner {
     fn default() -> Self {
-        let mut i = Interner { buf: Vec::new(), ends: Vec::new(), hashes: Vec::new(), table: hashbrown::HashTable::new() };
+        let mut i = Interner { buf: Vector::new(), ends: Vector::new(), hashes: Vector::new(), table: rerail_blocks::maps::IdTable::new() };
         // Sym 0 is the empty string.
         i.intern("");
         i
@@ -67,8 +68,8 @@ impl Interner {
         self.ends.len()
     }
 
-    /// Heap bytes held (capacities).
+    /// Bytes held (capacities).
     pub fn bytes(&self) -> usize {
-        self.buf.capacity() + self.ends.capacity() * 4 + self.hashes.capacity() * 8 + self.table.capacity() * 5
+        self.buf.capacity() + self.ends.capacity() * 4 + self.hashes.capacity() * 8 + self.table.capacity() * 8
     }
 }

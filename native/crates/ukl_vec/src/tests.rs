@@ -7,7 +7,7 @@ fn the_library_tests_are_one_c_tape() {
     let src = super::source("/<kernels>/library_tests.uglykl", LIBRARY_TESTS, &[]).unwrap();
     assert!(src.text().contains("__ukl_sg_ballot") && !src.text().contains("sub_group_"), "the SIMD group's intrinsics, not OpenCL's");
     let tape = super::c_tape(&src).unwrap();
-    assert!(tape.code.len() / 2 > 10_000, "a tape of the whole source");
+    assert!(tape.tape.len() > 10_000, "a tape of the whole source");
 }
 
 /// Writes the preprocessed library tests to `RERAIL_UKL_VEC_DUMP`, when set: for reading what the parser sees.
@@ -26,7 +26,7 @@ fn the_library_tests_lower_and_vectorize() {
     let src = super::source("/<kernels>/library_tests.uglykl", LIBRARY_TESTS, &[]).unwrap();
     let tape = super::c_tape(&src).unwrap();
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
-    for name in ["t_simd", "t_group", "t_lz4", "t_grid_sort", "t_workqueue_sg", "ukl_radix_u64_scatter"] {
+    for name in ["t_simd", "t_group", "t_lz4", "t_stage_sort", "t_workqueue_sg", "ukl_radix_u64_scatter"] {
         let k = p.kernel(name).unwrap_or_else(|| panic!("no kernel {name}"));
         assert!(p.stacks[k as usize] > 0, "{name}'s stack");
     }
@@ -124,7 +124,7 @@ fn a_kernel_kept_as_bytes_reads_back_the_same() {
     let bytes = k.to_bytes();
     let back = super::vector::Kernel::from_bytes(&bytes).expect("the kernel's bytes");
     assert_eq!((back.name.as_str(), back.lid), (k.name.as_str(), k.lid));
-    assert_eq!((&back.tape.image, &back.tape.words, &back.code.image, &back.code.words), (&k.tape.image, &k.tape.words, &k.code.image, &k.code.words));
+    assert_eq!((&back.tape.nodes, &back.tape.words, &back.code.nodes, &back.code.words), (&k.tape.nodes, &k.tape.words, &k.code.nodes, &k.code.words));
     assert!(super::vector::Kernel::from_bytes(&bytes[..bytes.len() - 1]).is_none(), "a kernel cut short");
     let mut other = bytes.clone();
     other[7] ^= 1;

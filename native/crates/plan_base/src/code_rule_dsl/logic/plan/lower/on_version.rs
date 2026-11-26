@@ -2,12 +2,13 @@
 //! (`Memberships`); then every string becomes its atom, by its column's domain (a name's atom, a kind's or a field's
 //! id), in rules (`Constants`), facts and kind sets (`FactsAndSets`).
 
+use rerail_blocks::vector::Vector;
 use super::{Constants, Domain, Domains, columns_of, domains_of, functor_domains, rule_var_domains};
 use crate::code_rule_dsl::facts::core::kind_atom;
 use crate::code_rule_dsl::language::{GrammarDialect, tape_tag};
 use crate::code_rule_dsl::logic::front::EVERY_KIND;
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, Pipeline, ProgramPass, ProgramW, RulePass, RuleOut, RuleSet, Select, Step};
-use crate::code_rule_dsl::logic::program_image::{AtomRef, Cell, CmpOp, Lit, LitRef, Rewrite, RuleRef, Site, Slot, T, TermRef, Version};
+use crate::code_rule_dsl::logic::program_image::{AtomRef, Cell, CmpOp, Lit, LitRef, Rewrite, Rows, RuleRef, Site, Slot, T, TermRef, Version};
 use crate::code_rule_dsl::logic::strings::SET;
 use super::super::{Error, Result};
 use rustc_hash::FxHashMap as HashMap;
@@ -15,14 +16,14 @@ use std::sync::Arc;
 
 /// `v` lowered for `dialect` and read as the run reads it (`Lowered::of_placed`), with no preparation pass between:
 /// what a test or a tool that runs a program as written lowers. `intern` gives the name atoms of strings.
-pub fn lowered(v: Arc<Version>, dialect: GrammarDialect, intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>) -> Result<super::Lowered> {
+pub fn lowered(v: Arc<Version>, dialect: GrammarDialect, intern: &mut dyn FnMut(&[&str]) -> Result<Vector<u32>>) -> Result<super::Lowered> {
     let (v, domains, ops) = lower_version(v, dialect, intern)?;
     Ok(super::Lowered::of_placed(super::super::body::Placed::whole(v), domains, ops, dialect))
 }
 
 /// `v` lowered for `dialect`, with the domains of its relations' columns (found before its strings became atoms) and
 /// the name atoms of `+`, `-` and `*`; `intern` gives the name atoms of strings.
-pub fn lower_version(v: Arc<Version>, dialect: GrammarDialect, intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>) -> Result<(Arc<Version>, Domains, [i64; 3])> {
+pub fn lower_version(v: Arc<Version>, dialect: GrammarDialect, intern: &mut dyn FnMut(&[&str]) -> Result<Vector<u32>>) -> Result<(Arc<Version>, Domains, [i64; 3])> {
     let tag = tape_tag(dialect).ok_or_else(|| Error::Plan("the dialect has no tape tag".to_owned()))?;
     let mut p = Pipeline::new("lower", v);
     p.rules(&mut Memberships::default());
@@ -98,7 +99,7 @@ fn membership<'v>(v: &Version, l: LitRef<'v>) -> Option<(Slot, Vec<TermRef<'v>>,
 
 /// Each atom's column domains in rule `r`, the head's then its body atoms', for `rule_var_domains`.
 fn atom_domains<'d>(v: &Version, r: RuleRef<'_>, cols: &'d HashMap<&str, Vec<Option<Domain>>>) -> Vec<Option<&'d [Option<Domain>]>> {
-    std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).map(|a| cols.get(v.rel_name(a.rel())).map(Vec::as_slice)).collect()
+    std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).map(|a| cols.get(v.rel_name(a.rel())).map(|v| v.as_slice())).collect()
 }
 
 /// A membership of a kind or field in a set of them (`@equals($k, {"a", "b"}) = 1`) as a rule per member, each
@@ -326,17 +327,18 @@ impl ProgramPass for FactsAndSets<'_> {
     const NAME: &'static str = "facts and kind sets lowered";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> std::result::Result<(), String> {
         let v = cx.v();
-        let mut facts: Vec<(String, Vec<Vec<Cell>>)> = Vec::new();
+        let mut facts: Vec<(String, Rows)> = Vec::new();
         for f in v.all_facts().into_iter().filter(|f| !f.about()) {
-            let rows: Vec<Vec<Cell>> = f.rows().map(|r| r.collect()).collect();
-            if !rows.iter().flatten().any(|c| matches!(c, Cell::Str(_))) {
+            let rows = Rows::of_cells(f.rows());
+            if !rows.as_ref().cells().iter().any(|c| matches!(c, Cell::Str(_))) {
                 continue;
             }
             let rel = v.text(f.name());
-            let mut out = Vec::with_capacity(rows.len());
-            for row in rows {
-                let mut lowered = Vec::with_capacity(row.len());
-                for (c, cell) in row.into_iter().enumerate() {
+            let mut out = Rows::new();
+            let mut lowered: Vector<Cell> = Vector::new();
+            for row in rows.iter() {
+                lowered.clear();
+                for (c, &cell) in row.iter().enumerate() {
                     lowered.push(match cell {
                         Cell::Str(a) => {
                             let d = self.domains.get(rel).and_then(|ds| ds.get(c)).copied().unwrap_or(Domain::Name);
@@ -348,7 +350,7 @@ impl ProgramPass for FactsAndSets<'_> {
                         c => c,
                     });
                 }
-                out.push(lowered);
+                out.push(&lowered[..]);
             }
             facts.push((rel.to_owned(), out));
         }
@@ -362,26 +364,27 @@ impl ProgramPass for FactsAndSets<'_> {
         }
         // The sets holding `EVERY_KIND`, by their name's atom.
         let every: Vec<Cell> = rows.iter().filter(|r| matches!(r.get(3), Some(Cell::Str(a)) if b.text(*a) == EVERY_KIND)).filter_map(|r| r.get(1).copied()).collect();
-        let mut out: Vec<Vec<Cell>> = Vec::with_capacity(rows.len());
+        let mut out = Rows::new();
         let mut done: Vec<Cell> = Vec::new();
-        for row in rows {
+        for row in rows.iter() {
             let set = row[1];
             if every.contains(&set) {
                 if !done.contains(&set) {
                     done.push(set);
                     for code in 1..self.k.kinds.kind_count() as u16 {
                         let kind = b.atom(&i64::from(kind_atom(self.k.tag, code)).to_string());
-                        out.push(vec![row[0], set, Cell::Int(i64::from(code) - 1), Cell::Str(kind)]);
+                        out.push([row[0], set, Cell::Int(i64::from(code) - 1), Cell::Str(kind)]);
                     }
                 }
                 continue;
             }
-            let mut row = row;
             if let Some(Cell::Str(a)) = row.get(3).copied() {
                 let id = self.k.of(b.text(a), Domain::Kind).map_err(|e| e.to_string())?;
-                row[3] = Cell::Str(b.atom(&id.to_string()));
+                let id = Cell::Str(b.atom(&id.to_string()));
+                out.push_cells(row.iter().enumerate().map(|(i, &c)| if i == 3 { id } else { c }));
+            } else {
+                out.push(row);
             }
-            out.push(row);
         }
         b.fields().set_about_rows("kindset_kind", out);
         Ok(())

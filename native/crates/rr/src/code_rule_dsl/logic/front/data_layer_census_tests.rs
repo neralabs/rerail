@@ -699,6 +699,7 @@ fn render(census: &Census, table: &BTreeMap<String, String>, table_text: &str) -
 
 /// The census files are what the rule files say; `recursion.tsv` names exactly the recursions there are.
 #[test]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn data_layer_census_matches_the_rules() {
     let census = derive();
     assert_eq!(census.clauses.keys().map(|k| &k.0).collect::<BTreeSet<_>>().len(), 60, "60 rules");

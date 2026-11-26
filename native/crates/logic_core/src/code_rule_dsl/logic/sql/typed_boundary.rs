@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use super::physical::{FactFamilyContract, StatementRelations};
 use crate::code_rule_dsl::stats::identity::UtilityDefinitionId;
 use super::sql_ast::{
@@ -198,7 +199,7 @@ impl RelationScanAst {
         let node = if self.producer_scoped {
             SqlAstNode::DemandScan {
                 source: self.source.clone(),
-                producer_ids: producers.to_vec(),
+                producer_ids: producers.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(),
                 projection: self.projection.items(),
                 predicates: vec![batch],
             }
@@ -248,7 +249,7 @@ impl CteAst {
 }
 
 pub struct TypedBoundaryAst {
-    producers: Vec<u64>,
+    producers: Vector<u64>,
     utility_definitions: Vec<UtilityDefinitionId>,
     ctes: Vec<CteAst>,
 }
@@ -258,7 +259,7 @@ impl TypedBoundaryAst {
         relations: &StatementRelations,
         producers: impl IntoIterator<Item = u64>,
     ) -> Self {
-        let mut producers = producers.into_iter().collect::<Vec<_>>();
+        let mut producers = producers.into_iter().collect::<Vector<_>>();
         producers.sort_unstable();
         producers.dedup();
         let scan = |source, projection, producer_scoped| {

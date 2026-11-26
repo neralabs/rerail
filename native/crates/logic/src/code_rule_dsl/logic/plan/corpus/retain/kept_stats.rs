@@ -12,6 +12,7 @@
 //! rows. Statistics are a function of the rows, and the digest names the rows, so a relation admitted at that
 //! digest has those statistics. An entry whose digest no frame has any more is stale and is never matched. They are
 //! a part of the relation's frame (`PART`), admitted with its rows, so reading them is no read of its own.
+use rerail_blocks::vector::Vector;
 use super::Measured;
 use std::collections::{BTreeSet, HashMap};
 
@@ -28,8 +29,8 @@ pub(super) fn on() -> bool {
 }
 
 /// `bytes` as a frame part's one column of words: the length, then the bytes eight to a word.
-pub(super) fn to_words(bytes: &[u8]) -> Vec<i64> {
-    let mut out = vec![bytes.len() as i64];
+pub(super) fn to_words(bytes: &[u8]) -> Vector<i64> {
+    let mut out = rerail_blocks::vector![bytes.len() as i64];
     out.extend(bytes.chunks(8).map(|c| {
         let mut w = [0u8; 8];
         w[..c.len()].copy_from_slice(c);
@@ -38,12 +39,13 @@ pub(super) fn to_words(bytes: &[u8]) -> Vec<i64> {
     out
 }
 
-/// `to_words`' entries back (`decode`); `None` if the words are not such a part.
-pub(super) fn from_words(words: &[i64]) -> Option<ByDigest> {
-    let (&n, rest) = words.split_first()?;
-    let n = usize::try_from(n).ok().filter(|n| n.div_ceil(8) == rest.len())?;
-    let bytes: Vec<u8> = rest.iter().flat_map(|w| w.to_le_bytes()).take(n).collect();
-    decode(&bytes)
+/// `to_words`' entries back (`decode`) from a part of `n` words, `word(i)` its `i`th read where it lies (decision
+/// 0353 step 8: the entry's words are not read into a vector first); `None` if the words are not such a part.
+pub(super) fn from_words(n: usize, word: &dyn Fn(usize) -> i64) -> Option<ByDigest> {
+    let rest = n.checked_sub(1)?;
+    let len = usize::try_from(word(0)).ok().filter(|len| len.div_ceil(8) == rest)?;
+    let byte = |i: usize| (word(1 + i / 8) >> (8 * (i % 8))) as u8;
+    decode_from(&byte, len)
 }
 
 fn int(out: &mut Vec<u8>, v: i64) {
@@ -92,26 +94,33 @@ pub(super) fn encode(all: &ByDigest) -> Vec<u8> {
     out
 }
 
+/// A blob's bytes read by position (`byte`, `n` of them), where they lie.
 struct Reader<'a> {
-    b: &'a [u8],
+    byte: &'a dyn Fn(usize) -> u8,
+    n: usize,
     at: usize,
 }
 
 impl Reader<'_> {
-    fn take(&mut self, n: usize) -> Option<&[u8]> {
-        let s = self.b.get(self.at..self.at.checked_add(n)?)?;
-        self.at += n;
-        Some(s)
+    /// The next `n` bytes' place, past them.
+    fn take(&mut self, n: usize) -> Option<std::ops::Range<usize>> {
+        let end = self.at.checked_add(n).filter(|&e| e <= self.n)?;
+        let r = self.at..end;
+        self.at = end;
+        Some(r)
+    }
+    fn u64(&mut self) -> Option<u64> {
+        Some(self.take(8)?.rev().fold(0u64, |w, i| w << 8 | (self.byte)(i) as u64))
     }
     fn int(&mut self) -> Option<i64> {
-        Some(i64::from_le_bytes(self.take(8)?.try_into().ok()?))
+        Some(self.u64()? as i64)
     }
     fn len(&mut self) -> Option<usize> {
-        usize::try_from(self.int()?).ok().filter(|n| *n <= self.b.len())
+        usize::try_from(self.int()?).ok().filter(|n| *n <= self.n)
     }
     fn text(&mut self) -> Option<String> {
         let n = self.len()?;
-        String::from_utf8(self.take(n)?.to_vec()).ok()
+        String::from_utf8(self.take(n)?.map(|i| (self.byte)(i)).collect()).ok()
     }
     fn counts(&mut self) -> Option<Vec<(String, i64, i64)>> {
         (0..self.len()?).map(|_| Some((self.text()?, self.int()?, self.int()?))).collect()
@@ -124,19 +133,24 @@ impl Reader<'_> {
 /// `encode`'s entries back; `None` if the blob is not of this format (the caller keeps none, so a format 1 blob is
 /// measured again once).
 pub(super) fn decode(b: &[u8]) -> Option<ByDigest> {
-    let mut r = Reader { b, at: 0 };
-    if r.take(1)? != [2] {
+    decode_from(&|i| b[i], b.len())
+}
+
+/// `decode`, of `n` bytes read by position.
+fn decode_from(byte: &dyn Fn(usize) -> u8, bytes: usize) -> Option<ByDigest> {
+    let mut r = Reader { byte, n: bytes, at: 0 };
+    if byte(r.take(1)?.start) != 2 {
         return None;
     }
     let n = r.len()?;
     let mut all = ByDigest::with_capacity(n);
     for _ in 0..n {
         let name = r.text()?;
-        let digest = u64::from_le_bytes(r.take(8)?.try_into().ok()?);
+        let digest = r.u64()?;
         let cols = (0..r.len()?).map(|_| Some((r.text()?, r.int()?, r.int()?, r.int()?, r.int()?))).collect::<Option<Vec<_>>>()?;
         all.insert((name, digest), (cols, r.counts()?, r.tested()?));
     }
-    (r.at == b.len()).then_some(all)
+    (r.at == bytes).then_some(all)
 }
 
 #[cfg(test)]
@@ -155,7 +169,9 @@ mod tests {
         assert!(decode(&blob[..blob.len() - 1]).is_none());
         assert!(decode(&[1]).is_none());
         assert!(decode(&[3]).is_none());
-        assert_eq!(from_words(&to_words(&blob)).map(|b| b.len()), Some(2));
-        assert!(from_words(&to_words(&blob)[1..]).is_none());
+        let words = to_words(&blob);
+        assert_eq!(from_words(words.len(), &|i| words[i]).map(|b| b.len()), Some(2));
+        assert!(from_words(words.len() - 1, &|i| words[i + 1]).is_none());
+        assert!(from_words(0, &|i| words[i]).is_none());
     }
 }

@@ -2,9 +2,9 @@
 
 Numbered 0264 where it was written: the hub's 0264 (rule images ship with the engine) kept the number.
 
-Status: decided (2026-11-15). Answers the hub's work-queue question 2 (Q2/Q5) with its option (a), and closes
-O-cross-file-answers. Builds on 0174 (node attributes answered on request), 0145 (requests), and the file-local
-split (list step 29, `typing::file_local::split`).
+Status: built (audited 2026-11-23). Decided (2026-11-15). Answers the hub's work-queue question 2 (Q2/Q5) with its
+option (a), and closes O-cross-file-answers. Builds on 0174 (node attributes answered on request), 0145 (requests),
+and the file-local split (list step 29, `typing::file_local::split`).
 
 With 0174 §8b (Benchmarks-and-parity, merged 2026-11-16): combining narrows first (`requests_file_local`), then
 makes eager an attribute whose answer is still cross-file (`answers_where_documents_are`), and preparation refuses

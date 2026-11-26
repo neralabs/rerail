@@ -4,6 +4,7 @@
 //! observer (rerail-observe) makes its puts with it, and the store (rerail-store, `kept_facts.rs`) writes them and
 //! re-exports it.
 use rerail_blocks::kept::FactKey;
+use rerail_blocks::packed::RowsIn;
 use rerail_blocks::relation::Relation;
 
 /// A relation the keep puts, lent by its holder (the engine's run): its rows, dead bits and levels, kept alive while
@@ -15,23 +16,21 @@ pub trait KeptRows: Send + Sync {
 }
 
 /// Rows a put reads where they lie (an input's granule, read from the input in place; a view's rows, read from its
-/// source; rows written in a block of their own, `BlockFlat`): `n` rows of `width` columns, which `fill` writes
-/// column-major into the writer's scratch (`KeptW::put_filled`), with each row's level where `has_levels`. `given`:
-/// kept in the order given, every row (read by position); else in canonical order, as a relation's.
-pub trait KeptPicked: Send + Sync {
-    fn rows(&self) -> usize;
-    fn width(&self) -> usize;
+/// source; rows written in a block of their own, `BlockFlat`), which the writer's packer reads by row and column as it
+/// writes them (`RowsIn`, decision 0353 step 8): nothing is filled into columns or a scratch first. `given`: kept in
+/// the order given, every row (read by position); else in canonical order, as a relation's.
+pub trait KeptPicked: RowsIn + Send {
     fn given(&self) -> bool {
         true
     }
-    fn has_levels(&self) -> bool {
-        false
+    /// Each row's level (decision 0090), where its rows have them.
+    fn levels(&self) -> Option<std::borrow::Cow<'_, [u32]>> {
+        None
     }
     /// The bytes it holds until written (a block of its own), not what it lends.
     fn held(&self) -> usize {
         0
     }
-    fn fill(&self, cols: &mut [i64], levels: Option<&mut [u32]>);
 }
 
 /// Rows written in a block of their own, never on the heap (blocks are never copied, decision 0353): `n` rows of
@@ -164,27 +163,28 @@ impl FlatWriter<'_> {
     }
 }
 
-impl KeptPicked for BlockFlat {
-    fn rows(&self) -> usize {
+impl RowsIn for BlockFlat {
+    fn n(&self) -> usize {
         self.n
     }
-    fn width(&self) -> usize {
+    fn arity(&self) -> usize {
         self.width
     }
+    #[inline]
+    fn get(&self, r: usize, c: usize) -> i64 {
+        BlockFlat::get(self, r, c)
+    }
+}
+
+impl KeptPicked for BlockFlat {
     fn given(&self) -> bool {
         self.given
     }
-    fn has_levels(&self) -> bool {
-        self.levels.is_some()
+    fn levels(&self) -> Option<std::borrow::Cow<'_, [u32]>> {
+        self.level_words().map(std::borrow::Cow::Borrowed)
     }
     fn held(&self) -> usize {
         self.n * (self.width * 8 + if self.levels.is_some() { 4 } else { 0 })
-    }
-    fn fill(&self, cols: &mut [i64], levels: Option<&mut [u32]>) {
-        cols.copy_from_slice(self.cols());
-        if let (Some(out), Some(l)) = (levels, self.level_words()) {
-            out.copy_from_slice(l);
-        }
     }
 }
 

@@ -1,6 +1,6 @@
 # 0437. A chain's reach is descendant images, a level each time a member sits below a blocker
 
-Status: accepted (2026-11-18). Follows 0419; closes Q331.
+Status: built (audited 2026-11-23). Accepted (2026-11-18). Follows 0419; closes Q331.
 
 ## Intro
 

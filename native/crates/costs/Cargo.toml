@@ -1,0 +1,35 @@
+[package]
+name = "rerail-costs"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The cost statistics and the learned models (decision 0100 §14): the executor's samples kept across runs, the prices' rates fitted from them, and the models trained, saved and put in place."
+
+[features]
+# The test hooks of the crates below.
+test-hooks = ["rerail-accel/test-hooks", "rerail-blocks/test-hooks", "rerail-observe/test-hooks", "rerail-prof/test-hooks"]
+
+[dependencies]
+# The prices, the scores and the models the statistics train (`rerail_accel::{price, score, cost_model, join_model}`).
+rerail-accel = { path = "../../../accel" }
+# The learned model's file is a kept fact (`costs::models`).
+rerail-blocks = { path = "../blocks" }
+# The store's records and interface (rerail-store-base, re-exported): the kept facts and the registered store.
+rerail-observe = { path = "../observe" }
+# The machine's state and the work behind the run (`logic::profile`).
+rerail-prof = { path = "../prof" }
+parking_lot = { version = "0.12", features = ["arc_lock"] }
+rayon = "=1.12.0"
+rusqlite = { version = "=0.41.1", features = ["bundled", "column_decltype", "functions", "hooks", "limits", "modern_sqlite", "series", "vtab"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.11"
+
+[dev-dependencies]
+# The store, registered as the tests' binary loads (`test_load`): the learned model is a kept fact of its files.
+rerail-store = { path = "../store", features = ["test-hooks"] }
+# The learned models, registered as the tests' binary loads (`test_load`).
+rerail-accel-gpu = { path = "../../../accel/gpu", features = ["test-hooks"] }
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-costs = { path = ".", features = ["test-hooks"] }
+tempfile = "=3.27.0"

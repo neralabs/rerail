@@ -70,6 +70,20 @@ export function readsLeftOutToken(reason: string): boolean {
 }
 
 /**
+ * The stable code of an installed pack's rule this Rerail does not run because it reads a token a tape may leave out
+ * (`readsLeftOutToken`): the catalog keeps the rule, shows it as not running, and the pack's next version runs it.
+ */
+export const READS_LEFT_OUT_TOKEN_CODE = "reads-left-out-token";
+
+/** Why a code rule is kept but never evaluated: the engine does not read its language yet, or no longer reads its form. */
+export interface InactiveCodeRule {
+  code: typeof LANGUAGE_NOT_SUPPORTED | typeof READS_LEFT_OUT_TOKEN_CODE;
+  reason: string;
+}
+
+export const INACTIVE_CODE_RULE_CODES = [LANGUAGE_NOT_SUPPORTED, READS_LEFT_OUT_TOKEN_CODE] as const;
+
+/**
  * Compile a schema-valid code rule exactly as the live catalog will (same source text, same bundled capabilities),
  * so a rule the engine rejects never reaches the catalog and fails every later refresh. Code-rule evaluation has
  * no fallback without the engine either, so an unavailable engine refuses the write rather than storing an

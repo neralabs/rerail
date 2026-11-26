@@ -2,6 +2,7 @@
 //! program's version, run in one pipeline after the program's one image, from the last of the tree's passes
 //! backward as they move.
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::logic::program_image::manager::{self, Run, Cx, Pipeline, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::program_image::Version;
 use std::collections::{BTreeSet, HashSet};
@@ -21,6 +22,7 @@ pub mod simplify;
 mod nearest;
 pub mod parts;
 pub mod text;
+pub mod kept;
 pub use merge::{DropRepeated, MergeIdentical, congruence};
 pub use prune::Prune;
 pub use nearest::Nearest;
@@ -36,14 +38,76 @@ impl<F: FnMut(&Version) -> Result<(), String>> ProgramPass for Check<F> {
     }
 }
 
-/// An input no rule reads is never bound or measured: it is not an input of what runs (an output stays one).
+/// Every head variable of every rule is bound in its body: by a positive atom, a matched pattern or a nearest, a
+/// comparison that defines it from bound terms (`Body::cmp_binds`), or an aggregate's result. A variable named only in a
+/// negation, or not at all, has no value: the rule's rows are not the rule's meaning, and its finding has no place
+/// (decision 0652: a `$$$X` captures nothing, and RUF016's fallback read its `I` from a negation alone).
+pub fn head_bound(v: &Version) -> Result<(), String> {
+    use crate::code_rule_dsl::logic::plan::body::{Body, VarSet, lit_vars, term_vars};
+    use crate::code_rule_dsl::logic::program_image::Lit as L;
+    let mut wrong = Vec::new();
+    for rule in v.rules() {
+        // An aggregate's context (`rr_ctx…`) names the outer rule's variables, some of which the outer rule binds.
+        if crate::code_rule_dsl::logic::rr::aggregate_demand::helper(v.rel_name(rule.head().rel())) {
+            continue;
+        }
+        let lits: Vec<_> = rule.body().collect();
+        let mut bound = VarSet::new();
+        let mut rest = Vec::new();
+        for l in &lits {
+            match l.view() {
+                L::Atom(a) if !a.neg() => bound.extend(&lit_vars(*l)),
+                L::Nearest { .. } | L::Ast { .. } => bound.extend(&lit_vars(*l)),
+                L::Agg { var, .. } => {
+                    bound.insert(var);
+                }
+                L::Cmp { .. } => rest.push(*l),
+                L::Atom(_) => {}
+            }
+        }
+        let body = Body::of(v, rule);
+        loop {
+            let before = rest.len();
+            rest.retain(|l| match l.view() {
+                // `x = t` or `t = x`: either side defines the other.
+                L::Cmp { l: a, op, r } => match body.cmp_binds(a, op, r, &bound).or_else(|| body.cmp_binds(r, op, a, &bound)) {
+                    Some(new) => {
+                        bound.extend(&new);
+                        false
+                    }
+                    None => true,
+                },
+                _ => false,
+            });
+            if rest.len() == before {
+                break;
+            }
+        }
+        let mut head = VarSet::new();
+        rule.head().args().for_each(|t| term_vars(t, &mut head));
+        let free: Vec<&str> = head.minus(&bound).iter().map(|s| v.text(rule.var(s))).collect();
+        if !free.is_empty() {
+            wrong.push(format!("  {}: {} bound by no positive literal\n      {}", v.rel_name(rule.head().rel()), free.iter().map(|x| format!("${x}")).collect::<Vec<_>>().join(", "), v.show_rule(rule).chars().take(400).collect::<String>()));
+        }
+    }
+    if wrong.is_empty() {
+        return Ok(());
+    }
+    Err(format!("{} rule(s) leave a head variable unbound: give each a value in a positive literal, or leave it out of the head:\n{}", wrong.len(), wrong.join("\n")))
+}
+
+/// An input no rule reads is never bound or measured: it is not an input of what runs (an output stays one). A node read
+/// (`typing::file_local::reads_a_node`) reads the long-text nodes' binding, though no atom names it.
 pub struct InputsRead;
 
 impl ProgramPass for InputsRead {
     const NAME: &'static str = "the inputs the rules read";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v = cx.v();
-        let read: HashSet<u32> = v.rules().flat_map(|r| r.body().filter_map(|l| l.atom()).map(|a| a.rel().0).collect::<Vec<_>>()).collect();
+        let mut read: HashSet<u32> = v.rules().flat_map(|r| r.body().filter_map(|l| l.atom()).map(|a| a.rel().0).collect::<Vec<_>>()).collect();
+        if let Some(long) = v.rel(crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES).filter(|_| v.rules().any(|r| crate::code_rule_dsl::typing::file_local::reads_a_node(v, r))) {
+            read.insert(long.0);
+        }
         let outputs: HashSet<&str> = v.outputs().map(|a| v.text(a)).collect();
         let inputs: Vec<&str> = v.inputs().map(|a| v.text(a)).collect();
         let kept: Vec<&str> = inputs.iter().copied().filter(|i| v.rel(i).is_some_and(|r| read.contains(&r.0)) || outputs.contains(i)).collect();
@@ -91,7 +155,7 @@ impl ProgramPass for RuleOrder {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Found {
     /// The relations the run makes for the tree axes and `nearest` (`Nearest::sets`).
-    pub sets: Vec<(String, Vec<i64>)>,
+    pub sets: Vec<(String, Vector<i64>)>,
     /// The relations the file-local joins were pushed into (`file_local::PushLocalJoins`).
     pub pushed: Vec<String>,
     /// What the factorized store handed on as parts (`file_local::FactorizeExports`): a line per relation.
@@ -232,6 +296,11 @@ pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::lan
     // @py_unparse(n) and @ast_dump(n) read the relations the batches bind them as; the base relations the program
     // reads and does not derive are inputs, as an authored file's are.
     p.program(&mut simplify::CpythonFunctors);
+    // A pass's tape-local facts kept by its tape (decision 0597 rule 8): its kept rows are inputs (`BaseInputs`). A
+    // pack's parts were rewritten whole before they were split (`parts::front`).
+    if whole {
+        p.program(&mut kept::Kept);
+    }
     p.program(&mut simplify::BaseInputs);
     // Only the rules an output reads, directly or through other rules (T's front prunes the same way).
     p.program(&mut prune::Prune::default());
@@ -239,6 +308,9 @@ pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::lan
     let simplified = simplify::passes(&mut p)?;
     simplify::decide(&simplified);
     p.program(&mut prune::Prune::default());
+    // A recursion's `nearest` read from its near end, through a helper made once (t57 §8, E1). The engine's, not T's
+    // front end's: the lowered program stays T's.
+    p.program(&mut lowering_tail::NearEnds);
     if whole {
         p.program(&mut super::product_demand::BoundProducts::Whole);
     }
@@ -316,6 +388,7 @@ pub fn run(version: Arc<Version>, factorize: bool, last: Option<Run>, bound: imp
     let mut nearest = Nearest::default();
     p.rules(&mut nearest);
     p.program(&mut Check(bound));
+    p.program(&mut Check(head_bound));
     // The file-local part of each cross-file rule runs in the chunks, which export its rows, not their base relations.
     let mut pushed = crate::code_rule_dsl::typing::file_local::PushLocalJoins::default();
     p.program(&mut pushed);

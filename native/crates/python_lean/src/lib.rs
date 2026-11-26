@@ -10,7 +10,7 @@
 //! - **The parser** (`parse`) is recursive descent over the tokens. Each node is written in
 //!   preorder as it opens, with its code (kind, field, supertypes); a node found after its first
 //!   child (an operator after its left operand) is put before it (`Writer::insert`). Only the
-//!   tokens tree-sitter's tape stores are written (format 15: the ones its grammar does not imply).
+//!   tokens tree-sitter's tape stores are written (the ones its grammar does not imply).
 //! - **Extras** are placed as tree-sitter places them: in the lowest node holding the tokens on
 //!   either side, the layout tokens counted. A comment is written when the parse next opens a
 //!   node or reads a token, at the node then open.
@@ -497,16 +497,48 @@ pub const fn unkey(key: u32) -> (u8, u8, u8, bool) {
 
 /// A file's tape as the parser writes it: the columns at their widths (`rerail_tape_format::Columns`),
 /// each code id's key.
-pub use rerail_tape_format::Columns as Tape;
+/// A tape this crate writes (`tape`): format 16 in its language's table, numbered by names (`sink`; decision 0631).
+pub type Tape = rerail_tape_format::f16::Finished;
+
+/// The language's tape tag.
+pub const TAPE_TAG: u8 = 1;
+
+/// The line terminators of the language's ecosystem (decision 0612).
+pub const TERMINATORS: rerail_tape_format::newlines::Terminators = rerail_tape_format::newlines::Terminators::Newlines;
+
+/// Key `key`'s names, as the grammar names them: what its number in its language's table is found by (decision
+/// 0631; `sink`, and the engine's `formats::lean_named`). `None` for a key the parser does not write.
+pub fn names(key: u32) -> Option<rerail_tape_format::KeyNames> {
+    let (kind, field, class, extra) = unkey(key);
+    let (kind, named) = *KINDS.get(usize::from(kind))?;
+    Some(rerail_tape_format::KeyNames {
+        kind,
+        named,
+        field: FIELDS.get(usize::from(field)).copied()?,
+        flags: if extra { rerail_tape_format::CODE_EXTRA } else { 0 },
+        classes: if extra { &[] } else { CLASSES.get(usize::from(class)).copied()? },
+    })
+}
+
+/// The crate's own sink (decision 0631): format 16, each key numbered in the language's table by its names (`names`),
+/// as the engine numbers the parser's keys (its `formats::lean_named`): one numbering, so the tapes are the same.
+pub fn sink() -> rerail_tape_format::Named {
+    rerail_tape_format::Named::new(TAPE_TAG, TERMINATORS, names)
+}
+
+/// `sink`'s tape: its tree is the language's (a code its table lacks is the parser's bug).
+pub(crate) fn written(t: Result<Tape, String>) -> Tape {
+    t.unwrap_or_else(|e| panic!("the parser's tree is no format 16 tape of its language's table: {e}"))
+}
 
 /// The tape of `src`, a Python file: tree-sitter-python's, as the engine encodes it. `Err` where the
 /// parser leaves the file to tree-sitter (a syntax error, a construct it does not read).
 pub fn tape(src: &[u8]) -> Result<Tape, Refusal> {
-    tape_into(src, &mut rerail_tape_format::Writer::<rerail_tape_format::Widths>::finish_columns)
+    tape_into(src, &mut sink()).map(written)
 }
 
-/// [`tape`], the parser's writer writing to `finish`'s target and finished by it: format 15's columns (`tape`), or
-/// format 16 written by its ops as the parse goes (`Writer::finish_16`, decision 0434).
+/// [`tape`], the parser's writer writing to `finish`'s target and finished by it: format 16 or 16z, written by its ops
+/// as the parse goes (`Writer::finish_16`, decision 0434).
 pub fn tape_into<T>(src: &[u8], finish: &mut dyn rerail_tape_format::Sink<T>) -> Result<T, Refusal> {
     module_into(src, finish, lex::lex_joined)
 }
@@ -536,11 +568,19 @@ pub const STARTS: &[&str] = &["module", "type", "pattern_module"];
 /// The tape of `src` parsed from the node kind `start` (one of [`STARTS`]): its root a node of that kind, with no
 /// node above it. A `type` is read as if in parentheses: its line ends are blanks.
 pub fn tape_from(src: &[u8], start: &str) -> Result<Tape, Refusal> {
-    tape_from_into(src, start, &mut rerail_tape_format::Writer::<rerail_tape_format::Widths>::finish_columns)
+    tape_from_into(src, start, &mut sink()).map(written)
 }
 
 /// [`tape_from`], written to `finish`'s target.
 pub fn tape_from_into<T>(src: &[u8], start: &str, finish: &mut dyn rerail_tape_format::Sink<T>) -> Result<T, Refusal> {
+    let mut kept = rerail_tape_format::Kept::new(finish);
+    tape_from_into_kept(src, start, &mut kept).map(|()| kept.take())
+}
+
+/// `tape_from_into` writing through `Sink<()>` (`rerail_tape_format::Kept`): the parse is one instance, compiled in this
+/// crate (optimized in dev builds), whatever the caller's output.
+#[inline(never)]
+fn tape_from_into_kept(src: &[u8], start: &str, finish: &mut dyn rerail_tape_format::Sink<()>) -> Result<(), Refusal> {
     match start {
         "module" => tape_into(src, finish),
         "pattern_module" => module_into(src, finish, lex::lex_pattern),
@@ -573,42 +613,7 @@ pub fn tokens_text(src: &[u8]) -> Result<String, Refusal> {
 /// A tape as text, as the engine's `python_tape_plain` writes tree-sitter's: a node a line,
 /// indented by depth, its kind, field, flags, supertypes and span.
 pub fn tape_text(tape: &Tape) -> String {
-    use rerail_tape_format::TAIL_FROM_START;
-    let cell = |column: &[u8], width: u8, i: usize| -> u32 {
-        let w = usize::from(width & 0x7f);
-        let b = &column[i * w..i * w + w];
-        if w == 2 { u32::from(u16::from_le_bytes([b[0], b[1]])) } else { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) }
-    };
-    let n = tape.code.len() / 2;
-    let start = |i: usize| {
-        let b = i / rerail_tape_format::CHECKPOINT_STRIDE;
-        u32::from_le_bytes(tape.base[4 * b..4 * b + 4].try_into().expect("a base")) + cell(&tape.off, tape.widths[1], i)
-    };
-    let mut out = String::new();
-    let mut open: Vec<usize> = Vec::new();
-    for i in 0..n {
-        while open.last().is_some_and(|&end| end <= i) {
-            open.pop();
-        }
-        let code = u16::from_le_bytes([tape.code[2 * i], tape.code[2 * i + 1]]);
-        let (kind, field, class, extra) = unkey(tape.keys[usize::from(code)]);
-        let size = cell(&tape.size, tape.widths[0], i) as usize;
-        let s = start(i);
-        let from = if tape.widths[2] & TAIL_FROM_START != 0 { s } else { start(i + size - 1) };
-        let end = from + cell(&tape.tail, tape.widths[2], i);
-        let classes = CLASSES[usize::from(class)];
-        let flags = u8::from(extra);
-        out.push_str(&format!(
-            "{}{}{}{}{} [{s}..{end}]\n",
-            "  ".repeat(open.len()),
-            KINDS[usize::from(kind)].0,
-            if field == 0 { String::new() } else { format!(" {}:", FIELDS[usize::from(field)]) },
-            if flags == 0 { String::new() } else { format!(" flags={flags}") },
-            if classes.is_empty() { String::new() } else { format!(" {{{}}}", classes.join(",")) },
-        ));
-        open.push(i + size);
-    }
-    out
+    tape.tape.text().unwrap_or_else(|e| panic!("a tape this crate wrote: {e}"))
 }
 
 #[cfg(test)]

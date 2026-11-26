@@ -11,6 +11,7 @@
 //!
 //! In Rerail (05 Phase 10 row 2), `main` is a function over the two directories; under test, every
 //! golden check must find no difference.
+use rerail_blocks::vector::Vector;
 use rayon::prelude::*;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
@@ -49,8 +50,8 @@ impl Sym {
 }
 
 /// Compressed rows keyed by a dense id, preserving input order within a key.
-fn csr<T: Copy + Default>(n: usize, rows: &[(u32, T)]) -> (Vec<u32>, Vec<T>) {
-    let mut off = vec![0u32; n + 1];
+fn csr<T: Copy + Default, C: FromIterator<T> + std::ops::IndexMut<usize, Output = T>>(n: usize, rows: &[(u32, T)]) -> (Vector<u32>, C) {
+    let mut off = rerail_blocks::vector![0u32; n + 1];
     for &(k, _) in rows {
         off[k as usize + 1] += 1;
     }
@@ -58,7 +59,7 @@ fn csr<T: Copy + Default>(n: usize, rows: &[(u32, T)]) -> (Vec<u32>, Vec<T>) {
         off[i + 1] += off[i];
     }
     let mut pos = off.clone();
-    let mut val = vec![T::default(); rows.len()];
+    let mut val: C = rows.iter().map(|_| T::default()).collect();
     for &(k, v) in rows {
         val[pos[k as usize] as usize] = v;
         pos[k as usize] += 1;
@@ -76,23 +77,23 @@ fn num(s: &str) -> u32 {
 struct Facts {
     sy: Sym,
     n: usize,
-    module: Vec<u32>,
+    module: Vector<u32>,
     path: Vec<String>,
-    kind: Vec<u32>,
-    doc: Vec<u32>,
-    par: Vec<u32>,
-    ch_off: Vec<u32>,
-    ch: Vec<u32>,
-    fl_off: Vec<u32>,
+    kind: Vector<u32>,
+    doc: Vector<u32>,
+    par: Vector<u32>,
+    ch_off: Vector<u32>,
+    ch: Vector<u32>,
+    fl_off: Vector<u32>,
     fl: Vec<(u32, u32)>,
-    text: Vec<u32>,
+    text: Vector<u32>,
     intval: HashMap<u32, i64>,
-    op: Vec<u32>,
+    op: Vector<u32>,
 }
 impl Facts {
     fn load(dir: &str) -> Facts {
         let mut sy = Sym::default();
-        let (mut module, mut path) = (Vec::new(), Vec::new());
+        let (mut module, mut path) = (Vector::new(), Vec::new());
         for l in read(dir, "doc").lines() {
             let c: Vec<&str> = l.split('\t').collect();
             let d = num(c[0]) as usize;
@@ -114,12 +115,12 @@ impl Facts {
         }
         // Node ids are global; a subset keeps its original ids, so arrays are sized to the largest id.
         let n = maxn as usize + 1;
-        let (mut kind, mut doc) = (vec![NONE; n], vec![NONE; n]);
+        let (mut kind, mut doc) = (rerail_blocks::vector![NONE; n], rerail_blocks::vector![NONE; n]);
         for (v, d, k) in rows {
             kind[v as usize] = k;
             doc[v as usize] = d;
         }
-        let mut par = vec![NONE; n];
+        let mut par = rerail_blocks::vector![NONE; n];
         for l in read(dir, "tape").lines() {
             let c: Vec<&str> = l.split('\t').collect();
             if c[1] != "-1" {
@@ -142,7 +143,7 @@ impl Facts {
             })
             .collect();
         let (fl_off, fl) = csr(n, &field);
-        let mut text = vec![NONE; n];
+        let mut text = rerail_blocks::vector![NONE; n];
         for l in read(dir, "text").lines() {
             let (a, b) = l.split_once('\t').unwrap();
             text[num(a) as usize] = sy.id(b);
@@ -152,7 +153,7 @@ impl Facts {
             let (a, b) = l.split_once('\t').unwrap();
             intval.insert(num(a), b.parse::<i64>().unwrap());
         }
-        let mut op = vec![NONE; n];
+        let mut op = rerail_blocks::vector![NONE; n];
         for l in read(dir, "op").lines() {
             let (a, b) = l.split_once('\t').unwrap();
             op[num(a) as usize] = sy.id(b);
@@ -173,11 +174,11 @@ impl Facts {
 /// A value-flow graph: copy edges (pulled by `eval`), plus binary-operator nodes whose two operands feed a transfer.
 struct Graph {
     n: usize,
-    in_off: Vec<u32>,
-    ins: Vec<u32>,
-    out_off: Vec<u32>,
-    outs: Vec<u32>,
-    bin: Vec<u32>,
+    in_off: Vector<u32>,
+    ins: Vector<u32>,
+    out_off: Vector<u32>,
+    outs: Vector<u32>,
+    bin: Vector<u32>,
     bins: Vec<(u8, u32, u32)>,
 }
 impl Graph {
@@ -185,7 +186,7 @@ impl Graph {
         let inr: Vec<(u32, u32)> = edges.iter().map(|&(s, d)| (d, s)).collect();
         let (in_off, ins) = csr(n, &inr);
         let mut outr: Vec<(u32, u32)> = edges.to_vec();
-        let mut bin = vec![NONE; n];
+        let mut bin = rerail_blocks::vector![NONE; n];
         let mut bv = Vec::new();
         for &(v, op, l, r) in bins {
             bin[v as usize] = bv.len() as u32;
@@ -257,9 +258,9 @@ impl Lat for Cv {
 
 /// W4's exact set union of type symbols.
 #[derive(Clone, PartialEq, Debug, Default)]
-struct Ty(Vec<u32>);
-fn union(a: &[u32], b: &[u32]) -> Vec<u32> {
-    let mut out = Vec::with_capacity(a.len() + b.len());
+struct Ty(Vector<u32>);
+fn union(a: &[u32], b: &[u32]) -> Vector<u32> {
+    let mut out = rerail_blocks::vector::Vector::with_capacity(a.len() + b.len());
     let (mut i, mut j) = (0, 0);
     while i < a.len() && j < b.len() {
         if a[i] < b[j] {
@@ -280,7 +281,7 @@ fn union(a: &[u32], b: &[u32]) -> Vec<u32> {
 }
 impl Lat for Ty {
     fn bot() -> Self {
-        Ty(Vec::new())
+        Ty(rerail_blocks::vector::Vector::new())
     }
     fn join(&mut self, o: &Self) -> bool {
         if o.0.is_empty() || o.0.iter().all(|t| self.0.binary_search(t).is_ok()) {
@@ -296,7 +297,7 @@ const K: usize = 4;
 #[derive(Clone, PartialEq, Debug, Default)]
 struct TyK {
     top: bool,
-    s: Vec<u32>,
+    s: Vector<u32>,
 }
 impl Lat for TyK {
     fn bot() -> Self {
@@ -307,12 +308,12 @@ impl Lat for TyK {
             return false;
         }
         if o.top {
-            *self = TyK { top: true, s: Vec::new() };
+            *self = TyK { top: true, s: rerail_blocks::vector::Vector::new() };
             return true;
         }
         self.s = union(&self.s, &o.s);
         if self.s.len() > K {
-            *self = TyK { top: true, s: Vec::new() };
+            *self = TyK { top: true, s: rerail_blocks::vector::Vector::new() };
         }
         true
     }
@@ -422,7 +423,7 @@ fn waves<L: Lat>(g: &Graph, seed: &[L]) -> (Vec<L>, St) {
 }
 
 /// Reverse postorder of the flow graph, by an iterative depth-first search.
-fn rpo(g: &Graph) -> Vec<u32> {
+fn rpo(g: &Graph) -> Vector<u32> {
     let mut seen = vec![false; g.n];
     let mut post = Vec::with_capacity(g.n);
     for root in 0..g.n {
@@ -447,7 +448,7 @@ fn rpo(g: &Graph) -> Vec<u32> {
             }
         }
     }
-    let mut rank = vec![0u32; g.n];
+    let mut rank = rerail_blocks::vector![0u32; g.n];
     for (i, &v) in post.iter().rev().enumerate() {
         rank[v as usize] = i as u32;
     }
@@ -496,7 +497,7 @@ fn worklist<L: Lat>(g: &Graph, seed: &[L], rank: &[u32]) -> (Vec<L>, St) {
 }
 
 /// Tarjan's strongly connected components, iteratively; components come out sinks first.
-fn tarjan(g: &Graph) -> Vec<Vec<u32>> {
+fn tarjan(g: &Graph) -> Vec<Vector<u32>> {
     let n = g.n;
     let (mut idx, mut low, mut on) = (vec![NONE; n], vec![0u32; n], vec![false; n]);
     let (mut stack, mut comps, mut counter) = (Vec::new(), Vec::new(), 0u32);
@@ -531,7 +532,7 @@ fn tarjan(g: &Graph) -> Vec<Vec<u32>> {
                     low[p as usize] = low[p as usize].min(low[v as usize]);
                 }
                 if low[v as usize] == idx[v as usize] {
-                    let mut comp = Vec::new();
+                    let mut comp = Vector::new();
                     loop {
                         let w = stack.pop().unwrap();
                         on[w as usize] = false;
@@ -549,7 +550,7 @@ fn tarjan(g: &Graph) -> Vec<Vec<u32>> {
 }
 
 /// SCC condensation: components in topological order, one evaluation per acyclic node, a local fixpoint per cycle.
-fn scc<L: Lat>(g: &Graph, seed: &[L], comps: &[Vec<u32>]) -> (Vec<L>, St) {
+fn scc<L: Lat>(g: &Graph, seed: &[L], comps: &[Vector<u32>]) -> (Vec<L>, St) {
     let t = Instant::now();
     let mut st = St::default();
     let mut vals = vec![L::bot(); g.n];
@@ -594,7 +595,7 @@ trait AL: Sync {
 struct ACv;
 /// The larger constants interned, the shared object's (decision 0442): a word is its own object's.
 #[derive(Default)]
-struct Bigs(std::sync::Mutex<(Vec<i64>, Option<HashMap<i64, u64>>)>);
+struct Bigs(std::sync::Mutex<(Vector<i64>, Option<HashMap<i64, u64>>)>);
 fn cv_enc(c: &Cv) -> u64 {
     match c {
         Cv::Bot => 0,
@@ -659,7 +660,7 @@ impl AL for ATy {
         if b == TY_BOT || a == b {
             return a;
         }
-        let mut s: Vec<u16> = ty_slots(a).chain(ty_slots(b)).collect();
+        let mut s: Vector<u16> = ty_slots(a).chain(ty_slots(b)).collect();
         s.sort_unstable();
         s.dedup();
         if s.len() > K { TY_TOP } else { ty_pack(&s) }
@@ -692,17 +693,17 @@ fn cas_join<A: AL>(cell: &AtomicU64, x: u64) -> bool {
     }
 }
 /// Frontier waves in parallel: successors are deduplicated per wave with an atomic stamp, values join by CAS.
-fn waves_par<A: AL>(g: &Graph, seed: &[u64]) -> (Vec<u64>, St) {
+fn waves_par<A: AL>(g: &Graph, seed: &[u64]) -> (Vector<u64>, St) {
     let t = Instant::now();
     let mut st = St::default();
     let vals: Vec<AtomicU64> = seed.iter().map(|&s| AtomicU64::new(s)).collect();
     let stamp: Vec<AtomicU32> = (0..g.n).map(|_| AtomicU32::new(0)).collect();
-    let mut frontier: Vec<u32> = crate::code_rule_dsl::logic::profile::on_cores(|| (0..g.n as u32).into_par_iter().filter(|&v| seed[v as usize] != A::BOT && !g.outs(v as usize).is_empty()).collect());
+    let mut frontier: Vector<u32> = crate::code_rule_dsl::logic::profile::on_cores(|| (0..g.n as u32).into_par_iter().filter(|&v| seed[v as usize] != A::BOT && !g.outs(v as usize).is_empty()).collect());
     st.max_frontier = frontier.len();
     let mut wave = 0u32;
     while !frontier.is_empty() {
         wave += 1;
-        let cand: Vec<u32> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        let cand: Vector<u32> = crate::code_rule_dsl::logic::profile::on_cores(|| {
             frontier
                 .par_iter()
                 .with_min_len(256)
@@ -733,14 +734,14 @@ fn waves_par<A: AL>(g: &Graph, seed: &[u64]) -> (Vec<u64>, St) {
 
 struct Built {
     gn: usize,
-    gdoc: Vec<u32>,
+    gdoc: Vector<u32>,
     ty_edges: Vec<(u32, u32)>,
     ty_seed: Vec<Ty>,
     cv_edges: Vec<(u32, u32)>,
     cv_bins: Vec<(u32, u8, u32, u32)>,
     cv_seed: Vec<Cv>,
-    exported: Vec<Vec<u32>>,
-    classes: Vec<Vec<u32>>,
+    exported: Vec<Vector<u32>>,
+    classes: Vec<Vector<u32>>,
     class_deps: Vec<(u32, u32)>,
     anc_ms: f64,
     build_ms: f64,
@@ -784,7 +785,7 @@ fn build(f: &mut Facts) -> Built {
         }
     }
     // W3 binds and resolves.
-    let mut binds: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
+    let mut binds: HashMap<(u32, u32), Vector<u32>> = HashMap::new();
     for i in 0..n as u32 {
         let (kd, d) = (f.kind[i as usize], f.doc[i as usize]);
         if kd == k_import {
@@ -832,7 +833,7 @@ fn build(f: &mut Facts) -> Built {
             }
         }
     }
-    let mut resolves: HashMap<u32, Vec<u32>> = HashMap::new();
+    let mut resolves: HashMap<u32, Vector<u32>> = HashMap::new();
     for v in (0..n as u32).rev() {
         let kd = f.kind[v as usize];
         if kd == k_ident && f.text[v as usize] != NONE {
@@ -843,7 +844,7 @@ fn build(f: &mut Facts) -> Built {
                 resolves.insert(v, qs);
             }
         } else if kd == k_attr {
-            let mut out = Vec::new();
+            let mut out = rerail_blocks::vector::Vector::new();
             for o in f.field(v, f_object).collect::<Vec<_>>() {
                 if let Some(ms) = resolves.get(&o).cloned() {
                     for a in f.field(v, f_attribute).collect::<Vec<_>>() {
@@ -864,14 +865,14 @@ fn build(f: &mut Facts) -> Built {
         }
     }
     // W4 scopes and bindings.
-    let mut assigns: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
-    let mut augdef: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
-    let mut def_class: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
-    let mut class_q: HashMap<u32, Vec<u32>> = HashMap::new();
-    let mut def_fn: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
-    let mut fn_q: HashMap<u32, Vec<u32>> = HashMap::new();
+    let mut assigns: HashMap<(u32, u32), Vector<u32>> = HashMap::new();
+    let mut augdef: HashMap<(u32, u32), Vector<u32>> = HashMap::new();
+    let mut def_class: HashMap<(u32, u32), Vector<u32>> = HashMap::new();
+    let mut class_q: HashMap<u32, Vector<u32>> = HashMap::new();
+    let mut def_fn: HashMap<(u32, u32), Vector<u32>> = HashMap::new();
+    let mut fn_q: HashMap<u32, Vector<u32>> = HashMap::new();
     let mut bound: HashSet<(u32, u32)> = HashSet::new();
-    let mut classes = vec![Vec::new(); ndoc];
+    let mut classes = vec![Vector::new(); ndoc];
     let mut exported_fns = vec![Vec::new(); ndoc];
     for v in 0..n as u32 {
         let kd = f.kind[v as usize];
@@ -957,7 +958,7 @@ fn build(f: &mut Facts) -> Built {
         }
     }
     let gn = gn as usize;
-    let exported: Vec<Vec<u32>> = exported_fns.iter().map(|fs| fs.iter().map(|&x| retslot[x as usize]).collect()).collect();
+    let exported: Vec<Vector<u32>> = exported_fns.iter().map(|fs| fs.iter().map(|&x| retslot[x as usize]).collect()).collect();
 
     let mut ty_seed = vec![Ty::default(); gn];
     let mut ty_edges = Vec::new();
@@ -1003,8 +1004,8 @@ fn build(f: &mut Facts) -> Built {
         if kd == k_call {
             for fnode in f.field(v, f_function).collect::<Vec<_>>() {
                 let fi = fnode as usize;
-                let mut qs: Vec<u32> = Vec::new();
-                let mut funcs: Vec<u32> = Vec::new();
+                let mut qs: Vector<u32> = rerail_blocks::vector::Vector::new();
+                let mut funcs: Vector<u32> = rerail_blocks::vector::Vector::new();
                 if look[fi] != NONE {
                     let key = (look[fi], f.text[fi]);
                     qs.extend(def_class.get(&key).into_iter().flatten());
@@ -1123,9 +1124,9 @@ fn line(name: &str, st: &St, check: &str) {
 
 /// A document's own subgraph: local ids, edges inside the document, and the cross-file edges that enter it.
 struct DocG {
-    l2g: Vec<u32>,
+    l2g: Vector<u32>,
     g: Graph,
-    comps: Vec<Vec<u32>>,
+    comps: Vec<Vector<u32>>,
     cv_g: Graph,
     cross_in: Vec<(u32, u32)>,
 }
@@ -1148,7 +1149,7 @@ pub(crate) fn main(dir: &str, gold: &str) {
     let mut cv_seed = b.cv_seed.clone();
     cv_seed.resize(b.gn, Cv::Bot);
     let cg = Graph::new(b.gn, &b.cv_edges, &b.cv_bins);
-    let ty_k_seed: Vec<TyK> = b.ty_seed.iter().map(|s| TyK { top: s.0.len() > K, s: if s.0.len() > K { vec![] } else { s.0.clone() } }).collect();
+    let ty_k_seed: Vec<TyK> = b.ty_seed.iter().map(|s| TyK { top: s.0.len() > K, s: if s.0.len() > K { rerail_blocks::vector![] } else { s.0.clone() } }).collect();
 
     // SCC structure of both graphs.
     let ts = Instant::now();
@@ -1158,7 +1159,7 @@ pub(crate) fn main(dir: &str, gold: &str) {
     let cv_comps = tarjan(&cg);
     let tarjan_cv_ms = ts.elapsed().as_secs_f64() * 1e3;
     for (name, comps, g, ms) in [("type_of", &ty_comps, &tg, tarjan_ty_ms), ("cv", &cv_comps, &cg, tarjan_cv_ms)] {
-        let cyclic: Vec<usize> = comps
+        let cyclic: Vector<usize> = comps
             .iter()
             .filter(|c| c.len() > 1 || g.outs(c[0] as usize).contains(&c[0]))
             .map(|c| c.len())
@@ -1217,7 +1218,7 @@ pub(crate) fn main(dir: &str, gold: &str) {
 
     // ---- Wave-parallel with atomics, whole corpus and the largest document ----------------------------------
     let mut ty_ids: HashMap<u32, u16> = HashMap::new();
-    let mut ty_back: Vec<u32> = Vec::new();
+    let mut ty_back: Vector<u32> = rerail_blocks::vector::Vector::new();
     for s in &b.ty_seed {
         for &t in &s.0 {
             ty_ids.entry(t).or_insert_with(|| {
@@ -1227,17 +1228,17 @@ pub(crate) fn main(dir: &str, gold: &str) {
         }
     }
     assert!(ty_back.len() < 0xFFFE);
-    let aty_seed: Vec<u64> = b.ty_seed.iter().map(|s| {
+    let aty_seed: Vector<u64> = b.ty_seed.iter().map(|s| {
         if s.0.len() > K { TY_TOP } else {
-            let mut ids: Vec<u16> = s.0.iter().map(|t| ty_ids[t]).collect();
+            let mut ids: Vector<u16> = s.0.iter().map(|t| ty_ids[t]).collect();
             ids.sort_unstable();
             ty_pack(&ids)
         }
     }).collect();
-    let acv_seed: Vec<u64> = cv_seed.iter().map(cv_enc).collect();
+    let acv_seed: Vector<u64> = cv_seed.iter().map(cv_enc).collect();
     let dec_ty = |x: u64| -> TyK {
-        if x == TY_TOP { TyK { top: true, s: vec![] } } else {
-            let mut s: Vec<u32> = ty_slots(x).map(|i| ty_back[i as usize]).collect();
+        if x == TY_TOP { TyK { top: true, s: rerail_blocks::vector![] } } else {
+            let mut s: Vector<u32> = ty_slots(x).map(|i| ty_back[i as usize]).collect();
             s.sort_unstable();
             TyK { top: false, s }
         }
@@ -1254,7 +1255,7 @@ pub(crate) fn main(dir: &str, gold: &str) {
 
     // ---- Per-document subgraphs ---------------------------------------------------------------------------------
     let tb = Instant::now();
-    let mut members: Vec<Vec<u32>> = vec![Vec::new(); ndoc];
+    let mut members: Vec<Vector<u32>> = vec![rerail_blocks::vector::Vector::new(); ndoc];
     for v in 0..b.gn {
         members[b.gdoc[v] as usize].push(v as u32);
     }
@@ -1293,7 +1294,7 @@ pub(crate) fn main(dir: &str, gold: &str) {
             })
             .collect()
     });
-    println!("\nper-document subgraphs built in {:.0} ms (parallel); cross-file type edges {}", tb.elapsed().as_secs_f64() * 1e3, cross.iter().map(Vec::len).sum::<usize>());
+    println!("\nper-document subgraphs built in {:.0} ms (parallel); cross-file type edges {}", tb.elapsed().as_secs_f64() * 1e3, cross.iter().map(|v| v.len()).sum::<usize>());
     let lseed_ty = |d: &DocG| -> Vec<Ty> { d.l2g.iter().map(|&v| b.ty_seed[v as usize].clone()).collect() };
     let lseed_cv = |d: &DocG| -> Vec<Cv> { d.l2g.iter().map(|&v| cv_seed[v as usize].clone()).collect() };
 
@@ -1321,17 +1322,17 @@ pub(crate) fn main(dir: &str, gold: &str) {
             .par_iter()
             .map(|d| {
                 let (_, a) = waves(&d.cv_g, &lseed_cv(d));
-                let (_, t) = waves(&d.g, &lseed_ty(d).iter().map(|s| TyK { top: s.0.len() > K, s: if s.0.len() > K { vec![] } else { s.0.clone() } }).collect::<Vec<_>>());
+                let (_, t) = waves(&d.g, &lseed_ty(d).iter().map(|s| TyK { top: s.0.len() > K, s: if s.0.len() > K { rerail_blocks::vector![] } else { s.0.clone() } }).collect::<Vec<_>>());
                 (a.iters, t.iters, d.l2g.len(), a.max_changes.max(t.max_changes))
             })
             .collect()
     });
-    let pct = |v: &mut Vec<usize>, p: f64| {
+    let pct = |v: &mut Vector<usize>, p: f64| {
         v.sort_unstable();
         v[((v.len() as f64 - 1.0) * p) as usize]
     };
-    let mut wcv: Vec<usize> = wv.iter().map(|x| x.0).collect();
-    let mut wty: Vec<usize> = wv.iter().map(|x| x.1).collect();
+    let mut wcv: Vector<usize> = wv.iter().map(|x| x.0).collect();
+    let mut wty: Vector<usize> = wv.iter().map(|x| x.1).collect();
     let (c50, c99) = (pct(&mut wcv, 0.5), pct(&mut wcv, 0.99));
     let (t50, t99) = (pct(&mut wty, 0.5), pct(&mut wty, 0.99));
     println!(
@@ -1348,12 +1349,12 @@ pub(crate) fn main(dir: &str, gold: &str) {
     line("SCC, cv, 1 thread", &st, "—");
     let (vw, st) = waves(&dbig.cv_g, &lseed_cv(dbig));
     line("semi-naive waves, cv, 1 thread", &st, &format!("{}", vw == vs));
-    let a_seed: Vec<u64> = lseed_cv(dbig).iter().map(cv_enc).collect();
+    let a_seed: Vector<u64> = lseed_cv(dbig).iter().map(cv_enc).collect();
     let (va, st) = waves_par::<ACv>(&dbig.cv_g, &a_seed);
     line(&format!("wave-parallel, cv, {threads} threads"), &st, &format!("{}", va.iter().map(|&x| cv_dec(x)).collect::<Vec<_>>() == vs));
     let (_, st) = scc(&dbig.g, &lseed_ty(dbig), &dbig.comps);
     line("SCC, exact types (doc-local), 1 thread", &st, "—");
-    let la: Vec<u64> = dbig.l2g.iter().map(|&v| aty_seed[v as usize]).collect();
+    let la: Vector<u64> = dbig.l2g.iter().map(|&v| aty_seed[v as usize]).collect();
     let (_, st) = waves_par::<ATy>(&dbig.g, &la);
     line(&format!("wave-parallel, capped types, {threads} threads"), &st, "—");
 
@@ -1389,9 +1390,9 @@ pub(crate) fn main(dir: &str, gold: &str) {
         }
     }
     let nlayers = layer.iter().max().map_or(0, |x| x + 1);
-    let cyclic_docs: usize = dcomps.iter().filter(|c| c.len() > 1).map(Vec::len).sum();
+    let cyclic_docs: usize = dcomps.iter().filter(|c| c.len() > 1).map(|v| v.len()).sum();
     let with_deps = deps.iter().filter(|s| !s.is_empty()).count();
-    let mut rdeps: Vec<Vec<u32>> = vec![Vec::new(); ndoc];
+    let mut rdeps: Vec<Vector<u32>> = vec![rerail_blocks::vector::Vector::new(); ndoc];
     for &(d, m) in &dep_edges {
         rdeps[m as usize].push(d);
     }
@@ -1431,7 +1432,7 @@ pub(crate) fn main(dir: &str, gold: &str) {
         let mut all = vec![Ty::default(); b.gn];
         let mut evals = 0;
         for l in 0..nlayers {
-            let comps: Vec<usize> = (0..dcomps.len()).filter(|&i| layer[i] == l).collect();
+            let comps: Vector<usize> = (0..dcomps.len()).filter(|&i| layer[i] == l).collect();
             // Components of one layer are independent; run them in parallel.
             let out: Vec<(usize, Vec<(usize, Vec<Ty>)>)> = crate::code_rule_dsl::logic::profile::on_cores(|| {
                 comps
@@ -1443,7 +1444,7 @@ pub(crate) fn main(dir: &str, gold: &str) {
                         let mut rounds = 0;
                         loop {
                             rounds += 1;
-                            let before: Vec<u64> = dcomps[ci].iter().map(|&d| digest(d as usize, &all, &over)).collect();
+                            let before: Vector<u64> = dcomps[ci].iter().map(|&d| digest(d as usize, &all, &over)).collect();
                             res.clear();
                             for &d in &dcomps[ci] {
                                 let vals = eval_doc(d as usize, &all, &over, extra);
@@ -1455,7 +1456,7 @@ pub(crate) fn main(dir: &str, gold: &str) {
                                 }
                                 res.push((d as usize, vals));
                             }
-                            let after: Vec<u64> = dcomps[ci].iter().map(|&d| digest(d as usize, &all, &over)).collect();
+                            let after: Vector<u64> = dcomps[ci].iter().map(|&d| digest(d as usize, &all, &over)).collect();
                             if single || before == after {
                                 break;
                             }
@@ -1521,7 +1522,7 @@ pub(crate) fn main(dir: &str, gold: &str) {
     };
     // Edit A: a body change whose value reaches no return slot (a node with no flow successors).
     let body = docs[mstar].l2g.iter().copied().find(|&v| (v as usize) < n && tg.outs(v as usize).is_empty() && b.ty_seed[v as usize].0.len() == 1).unwrap();
-    let (dn, cn, ms, _) = rederive(&HashMap::from([(body, Ty(vec![edit_sym]))]));
+    let (dn, cn, ms, _) = rederive(&HashMap::from([(body, Ty(rerail_blocks::vector![edit_sym]))]));
     println!("edit A (body, interface unchanged): {dn} module re-derived, {cn} digest changed, {ms:.1} ms");
     // Edit B: the exported function of M* that flows into the most other files gains a return type.
     let mut uses: HashMap<u32, usize> = HashMap::new();
@@ -1533,7 +1534,7 @@ pub(crate) fn main(dir: &str, gold: &str) {
         }
     }
     if let Some((&slot, &cnt)) = uses.iter().max_by_key(|x| *x.1) {
-        let extra = HashMap::from([(slot, Ty(vec![edit_sym]))]);
+        let extra = HashMap::from([(slot, Ty(rerail_blocks::vector![edit_sym]))]);
         let (dn, cn, ms, ret) = rederive(&extra);
         let (full, _, fms) = run_layers(&extra);
         let same = (0..b.gn).all(|v| ret[v] == full[v]);

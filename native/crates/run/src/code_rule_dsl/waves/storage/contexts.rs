@@ -1,5 +1,6 @@
 //! Stable SQLite backing with exact data bindings (D's `storage/contexts.rs`). Scope changes are
 //! data writes, never DDL.
+use rerail_blocks::vector::Vector;
 use super::{Connection, Result, quote};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 const BINDINGS: &str = "__execution_bindings";
@@ -407,7 +408,7 @@ impl Contexts {
         Ok(())
     }
     fn remove_batch(&mut self, db: &Connection, keys: &BTreeSet<(String, usize)>) -> Result<()> {
-        let mut groups = BTreeMap::<&str, Vec<usize>>::new();
+        let mut groups = BTreeMap::<&str, Vector<usize>>::new();
         for (slot, id) in keys {
             if self.data.get(&(slot.clone(), *id)).is_some_and(|d| d.dirty) {
                 groups.entry(slot).or_default().push(*id);

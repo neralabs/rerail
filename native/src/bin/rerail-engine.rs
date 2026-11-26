@@ -23,10 +23,17 @@ fn main() -> ExitCode {
     if let Some(ms) = std::env::var("RERAIL_START_PAUSE_MS").ok().and_then(|v| v.parse::<u64>().ok()) {
         std::thread::sleep(std::time::Duration::from_millis(ms));
     }
+    // A macOS whose allocator is known to abort the engine's work is named first.
+    rerail_engine::os_warning::warn();
     // Before any thread starts: a stop signal or `RERAIL_DEADLINE` dumps the run first (decision 0084).
     rerail_engine::tools::watch();
     // Before any block is made: the one block policy. The command's machine: its pool, of the most threads the
     // process uses (`RERAIL_THREADS`), this thread one of them (decision 0442).
+    // Before any file is mapped: the folders the run maps files from are the user's alone (`launch_checks`).
+    if let Err(e) = rerail_engine::tools::launch_checks() {
+        eprintln!("rerail-engine: {e}");
+        return ExitCode::FAILURE;
+    }
     rerail_engine::threads::configure();
     let machine = rerail_engine::threads::Machine::here();
     let args: Vec<String> = std::env::args().skip(1).collect();

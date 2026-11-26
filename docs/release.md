@@ -25,9 +25,12 @@ test-installs it on each platform before publishing.
    - A Windows kernel importing the Visual C++ runtime is rejected. The kernels link it statically, so a clean Windows
      install needs no redistributable.
 2. Smoke-test native loading and device storage on each host.
-3. Build the runtime and bundled UI; pack only if all six `native/*.node` files are present.
-4. Install the tarball into a scratch prefix; check `rerail --help`, the bundled UI and `nativeHealth()`.
-5. On Windows x64, Linux x64 and macOS arm64, install it as a user would and exercise the managed runtime:
+3. Compile the fixed GPU kernels ahead of time for every target a release ships (decision 0645), without a GPU:
+   Metal's tiers on macOS, CUDA's (NVRTC 13, and 12 for the V100) and AMD's (ROCm's hiprtc) on Linux, CUDA's on
+   Windows. They are packed in `native/rerail-kernels/`, beside the engines.
+4. Build the runtime and bundled UI; pack only if all six `native/*.node` files are present.
+5. Install the tarball into a scratch prefix; check `rerail --help`, the bundled UI and `nativeHealth()`.
+6. On Windows x64, Linux x64 and macOS arm64, install it as a user would and exercise the managed runtime:
    `scripts/host/windows-install-smoke.ps1` on Windows, the environment matrix's `scripts/host/azure/guest.sh` through
    `matrix.mjs local` on Linux and macOS. Nothing publishes unless all three pass.
 
@@ -61,9 +64,9 @@ rule pack bumps ([docs/pack-format.md](pack-format.md#release)).
   request, is named in a warning not to merge: published so, no released Rerail could load it.
 - The tag is pushed with the `neralabs-ci` app's token.
 - **Anything core ships:** every path except packs, documentation, CI, changesets and pending changelog entries, tests,
-  fixtures, corpora, benchmarks, development and release scripts, and repository files npm does not pack.
-  `package-lock.json` counts only when more than its pack entries moved (`NOT_SHIPPED` in
-  `scripts/release/core-paths.mjs`).
+  fixtures, corpora, benchmarks, development and release scripts, and repository files npm does not pack. The `.rerail`
+  rule library under `docs/rule-syntax/lib/` ships with core, so it counts. `package-lock.json` counts only when more
+  than its pack entries moved (`NOT_SHIPPED` and `SHIPPED_FROM_NOT_SHIPPED` in `scripts/release/core-paths.mjs`).
 
 </details>
 
@@ -96,8 +99,8 @@ releases. Nothing in CI reads them: the checklist is the merger's word (`BEFORE_
 Merging publishes the release to `next`; nothing reaches `latest` until a person approves its promotion. First:
 
 - **End-user testing.** One hour using the release the way a user does. `rerail update --channel next` installs its
-  core and lists the newer versions of your installed packs on `next`, with the `rerail packs add` command for each:
-  run them, so the packs under test are the release's too.
+  core, then updates your installed packs to their newest versions on `next`, so the packs under test are the
+  release's too.
 
 If testing finds a problem, fix it on `main` as any pull request. The next Release pull request releases the fix as the
 next version on `next`, and that version is the one to test and promote. The version that failed stays on `next` and

@@ -115,7 +115,7 @@ pub struct Inventory {
     pub selection: String,
     /// The memo plans the runs that made it recorded manifests of, under `manifest_root`: a run that reuses it owns
     /// them again for its scope (`own_recorded_manifests`), as it would by running them.
-    pub plans: Vec<[u8; 32]>,
+    pub plans: rerail_blocks::vector::Vector<[u8; 32]>,
     pub manifest_root: String,
 }
 
@@ -1256,6 +1256,38 @@ pub fn read_bounded(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
             return Err(io::Error::from(io::ErrorKind::FileTooLarge));
         }
         Ok(verified_blob(repo, id)?.data.clone())
+    })?
+}
+
+/// Where a read's bytes go: `len` bytes, written once by the fill it is given, in the home it makes for them (the
+/// engine's: a slab's room where a device reads them, decision 0353 step 7).
+pub type Placer<'a> = &'a (dyn Fn(usize, &mut dyn FnMut(&mut [u8]) -> io::Result<()>) -> io::Result<rerail_tape_format::home::Home> + Sync);
+
+/// `read`, its bytes written once where `place` puts them: the file read straight into its home, or a blob decoded
+/// into it. A file that grows while it is read is refused (its stat names another content).
+pub fn read_placed(path: impl AsRef<Path>, place: Placer<'_>) -> io::Result<rerail_tape_format::home::Home> {
+    use std::io::Read as _;
+    let path = path.as_ref();
+    let Some(v) = view(path) else {
+        let mut file = std::fs::File::open(path)?;
+        let len = usize::try_from(file.metadata()?.len()).map_err(error)?;
+        let home = place(len, &mut |out| file.read_exact(out))?;
+        let mut more = [0u8; 1];
+        if file.read(&mut more)? != 0 {
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "the file grew while it was read"));
+        }
+        return Ok(home);
+    };
+    let Entry::File(id) = v.entry(path)? else {
+        return Err(io::Error::from(io::ErrorKind::IsADirectory));
+    };
+    v.with_repo(|repo, _, _| {
+        let blob = verified_blob(repo, id)?;
+        place(blob.data.len(), &mut |out| {
+            // copy: load (the object decoded into the bytes its readers read)
+            out.copy_from_slice(&blob.data);
+            Ok(())
+        })
     })?
 }
 

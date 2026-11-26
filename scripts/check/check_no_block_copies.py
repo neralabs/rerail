@@ -31,10 +31,12 @@ DIRS = (
     "native/src/code_rule_dsl/residency/",
     "native/crates/lang/src/code_rule_dsl/tape.rs",
     "native/crates/metal/src/",
+    "native/crates/slabs/src/",
     "native/crates/blocks/src/",
     "native/crates/facts/src/",
     "native/crates/device_metal/src/",
     "accel/src/gpu/",
+    "accel/gpu/src/gpu/",
 )
 # A directory of the engine's module tree is in every crate that keeps a part of it (native/crates/*/src/...), as well
 # as in the engine's own native/src: each crate's sources are in its own src/.

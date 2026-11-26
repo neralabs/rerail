@@ -39,9 +39,12 @@ system-allocator = ["rerail-facts/system-allocator", "rerail-lang/system-allocat
 code-rule-profile = ["rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile"]
 p-anchor-corpus = ["rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus"]
 metal-tests = ["rerail-facts/metal-tests", "rerail-lang/metal-tests"]
-test-hooks = ["rerail-program-image/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "dep:tempfile", "rerail-compiler/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-rr-parser/test-hooks"]
+test-hooks = ["rerail-program-image/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "dep:tempfile", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-blocks/test-hooks", "rerail-observe/test-hooks"]
 
 [dependencies]
+# Its structures lie in blocks (`rerail_blocks::vector::Vector`, `maps`), as the engine\'s do.
+rerail-blocks = { path = "../blocks" }
+rerail-section = { path = "../section" }
 base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
 ast-grep-core = "=0.51.0"
@@ -84,17 +87,16 @@ tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-
 tree-sitter = "=0.27.1"
 bitlex = { path = "../../../tools/bitlex", default-features = false }
 unicode-normalization = "=0.1.26"
-zstd = "=0.14.3"
+zstd = "=0.14.4"
 tempfile = { version = "=3.27.0", optional = true }
 rerail-facts = { path = "../facts", default-features = false }
 rerail-lang = { path = "../lang", default-features = false }
 rerail-prof = { path = "../prof" }
 rerail-rr-syntax = { path = "../rr_syntax" }
 rerail-program-image = { path = "../program_image" }
-rerail-store = { path = "../store" }
+# The store's records and interface (rerail-store-base, re-exported), and git.
+rerail-observe = { path = "../observe" }
 rerail-accel = { path = "../../../accel" }
-rerail-compiler = { path = "../compiler" }
-rerail-rr-parser = { path = "../rr_parser" }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }

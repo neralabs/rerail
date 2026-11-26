@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use super::*;
 
 fn relation(columns: &[&str], rows: &[&[i64]]) -> Arc<Relation> {
@@ -5,8 +6,8 @@ fn relation(columns: &[&str], rows: &[&[i64]]) -> Arc<Relation> {
     rows.iter().for_each(|row| r.push(row));
     Arc::new(r)
 }
-fn ints(db: &Connection, sql: &str) -> Result<Vec<i64>> {
-    db.prepare(sql)?.query_map([], |r| r.get(0))?.collect()
+fn ints(db: &Connection, sql: &str) -> Result<Vector<i64>> {
+    db.prepare(sql)?.query_map([], |r| r.get::<_, i64>(0))?.collect()
 }
 
 #[test]
@@ -52,7 +53,7 @@ fn plan_signatures_distinguish_empty_and_populated_sources() {
 fn lookups_use_the_index_and_agree_with_sqlite() -> Result<()> {
     let db = Connection::open_in_memory()?;
     let modules = Modules::default();
-    let rows: Vec<[i64; 2]> = (0..200).map(|i| [i % 50, i]).collect();
+    let rows: Vector<[i64; 2]> = (0..200).map(|i| [i % 50, i]).collect();
     let mut r = Relation::new(&["k", "n"]);
     rows.iter().for_each(|row| r.push(row));
     modules.bind(&db, "rel", Arc::new(r))?;
@@ -114,7 +115,7 @@ fn several_equalities_probe_once_and_agree_with_sqlite() -> Result<()> {
     let db = Connection::open_in_memory()?;
     let modules = Modules::default();
     // `a` has 4 values, `b` 50, `c` 2000: no single column but `c` is selective; `a` and `b` together are.
-    let rows: Vec<[i64; 3]> = (0..2000).map(|i| [i % 4, (i / 4) % 50, i]).collect();
+    let rows: Vector<[i64; 3]> = (0..2000).map(|i| [i % 4, (i / 4) % 50, i]).collect();
     let mut r = Relation::new(&["a", "b", "c"]);
     rows.iter().for_each(|row| r.push(row));
     modules.bind(&db, "probe", Arc::new(r))?;
@@ -154,10 +155,10 @@ fn several_equalities_probe_once_and_agree_with_sqlite() -> Result<()> {
 fn a_relations_fenced_search_finds_what_a_whole_search_finds() {
     let mut r = Relation::new(&["k", "n"]);
     // 1,000 rows, keys 0..300 step 3 with runs of up to 9 (a run spans fences), out of order.
-    let keys: Vec<i64> = (0..1000).map(|i| (i * 7919 % 1000) as i64 / 10 * 3).collect();
+    let keys: Vector<i64> = (0..1000).map(|i| (i * 7919 % 1000) as i64 / 10 * 3).collect();
     keys.iter().enumerate().for_each(|(i, &k)| r.push(&[k, i as i64]));
-    let whole = |lo: i64, hi: i64| -> Vec<usize> {
-        let mut rows: Vec<usize> = (0..1000).filter(|&i| (lo..=hi).contains(&keys[i])).collect();
+    let whole = |lo: i64, hi: i64| -> Vector<usize> {
+        let mut rows: Vector<usize> = (0..1000).filter(|&i| (lo..=hi).contains(&keys[i])).collect();
         rows.sort_unstable();
         rows
     };
@@ -178,20 +179,20 @@ fn a_relations_fenced_search_finds_what_a_whole_search_finds() {
 #[test]
 fn a_column_pushed_in_order_answers_as_its_sorted_index_does() {
     // `n` in order with repeats, `l` out of order.
-    let rows: Vec<[i64; 2]> = (0..300).map(|i| [i / 3, (i * 37) % 101]).collect();
+    let rows: Vector<[i64; 2]> = (0..300).map(|i| [i / 3, (i * 37) % 101]).collect();
     let mut r = Relation::new(&["n", "l"]);
     rows.iter().for_each(|row| r.push(row));
     assert!(r.ordered(0) && !r.ordered(1));
     for column in 0..2 {
-        let sorted = |lo: i64, hi: i64| -> Vec<usize> {
-            let mut want: Vec<usize> = (0..rows.len()).filter(|&i| (lo..=hi).contains(&rows[i][column])).collect();
+        let sorted = |lo: i64, hi: i64| -> Vector<usize> {
+            let mut want: Vector<usize> = (0..rows.len()).filter(|&i| (lo..=hi).contains(&rows[i][column])).collect();
             want.sort_by_key(|&i| rows[i][column]);
             want
         };
         for v in [-1, 0, 7, 50, 99, 100, 200] {
             assert_eq!(r.lookup(column, &[v]).unwrap(), sorted(v, v), "column {column}, {v}");
             // A probe's slice (no list made) holds the same rows: the ids of an ordered column's run, or the index's.
-            let slice: Vec<usize> = r.sorted_rows(column, v).unwrap().iter().map(|&i| i as usize).collect();
+            let slice: Vector<usize> = r.sorted_rows(column, v).unwrap().iter().map(|&i| i as usize).collect();
             assert_eq!(slice, sorted(v, v), "sorted_rows, column {column}, {v}");
         }
         assert!(r.sorts_rows(column));

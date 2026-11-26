@@ -1,6 +1,7 @@
 //! A `.rerail` file's reading of its core.rerail facts (`core_rr::DialectFacts`): its literals as the rule engine reads them,
 //! its syntax error the one running it gives.
 
+use crate::code_rule_dsl::facts::core::FactsIn;
 use super::core_rr::{DialectFacts, Literal};
 use crate::code_rule_dsl::facts::core::Facts;
 
@@ -25,7 +26,7 @@ impl DialectFacts for RrFacts {
         Some(out)
     }
     /// The error running the file gives (`logic::rr::syntax_error`).
-    fn verdict(&self, f: &Facts) -> Option<Result<Option<(u32, String)>, String>> {
+    fn verdict(&self, f: FactsIn<'_>) -> Option<Result<Option<(u32, String)>, String>> {
         Some(Ok(f.syntax_errors().then(|| crate::code_rule_dsl::logic::rr::syntax_error(&f.source)).flatten().map(|(line, message)| (line as u32, message))))
     }
 }

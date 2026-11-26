@@ -1,0 +1,110 @@
+.policy "django-practice-settings-module-import" revision 1
+.description "Read settings through django.conf.settings, not by importing the project's settings module."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. A value imported from the settings module is the one written in that file:
+// override_settings, the test settings and whichever settings module DJANGO_SETTINGS_MODULE names at run time are not
+// seen. A project settings module is recognised from the run's files: a module that assigns INSTALLED_APPS at
+// module level, one that DJANGO_SETTINGS_MODULE names (os.environ.setdefault in manage.py, wsgi.py, ...), and,
+// through `from … import *`, the modules that star-import one of those or that one of those star-imports. Module
+// names are matched under the importing file's source root (`netbox/netbox/settings.py` is `netbox.settings` to
+// `netbox/utilities/x.py`). It matches, outside settings modules, settings files, manage/wsgi/asgi and tests:
+//   from myproject.settings import DEBUG           reported (an upper-case name from a settings module)
+//   from ...settings import WEBHOOK_TIMEOUT        reported (relative imports resolve)
+//   from myproject import settings                 reported (the settings module itself)
+//   import myproject.settings                      reported
+//   from django.conf import settings               not reported
+//   from rest_framework.settings import api_settings   not reported: an app's own defaults module, no INSTALLED_APPS
+//   from myproject.settings import env_bool        not reported: a lower-case helper, not a setting
+
+#include "lib/django.rerail"
+
+.violation SettingsModuleImport(at: node, module: symbol, read: symbol) "This imports from the project settings module `{module}` directly, so `override_settings`, test settings and whichever settings module Django was started with are not seen. Use `from django.conf import settings` and read {read} instead."
+SettingsModuleImport(a, m, cat("`settings.", cat(x, "`"))) :- import_alias(i, a, m, x, _), match("[A-Z][A-Z0-9_]*", x),
+    smi_names(i, m, _), smi_reported_doc(i).
+SettingsModuleImport(a, n, "its values as `settings.NAME`") :- import_alias(i, a, m, x, _), x != "", n = @dot(m, x),
+    smi_names(i, n, _), smi_reported_doc(i).
+SettingsModuleImport(a, m, "its values as `settings.NAME`") :- import_alias(i, a, m, "", _), smi_names(i, m, _),
+    smi_reported_doc(i).
+
+// smi_doc(d): document d is a project settings module.
+.decl smi_doc(d: number)
+smi_doc(d) :- kind(a, k), (k = "assignment" ; k = "augmented_assignment"), field(a, "left", l), text(l, "INSTALLED_APPS"),
+    nearest(a, s, scope), kind(s, "module"), docof(a, d).
+smi_doc(d) :- smi_dsm(c, v), docof(c, dc), smi_mod(dc, mc), smi_resolves(mc, v, q), smi_mod(d, q).
+smi_doc(d) :- smi_star(i, m), smi_names(i, m, _), docof(i, d).
+smi_doc(d) :- smi_star(i, m), docof(i, d0), smi_doc(d0), smi_mod(d0, mi), smi_resolves(mi, m, q), smi_mod(d, q).
+// smi_dsm(c, v): c sets DJANGO_SETTINGS_MODULE to v: `os.environ.setdefault("DJANGO_SETTINGS_MODULE", "x.settings")`.
+.decl smi_dsm(c: node, v: symbol)
+smi_dsm(c, v) :- str(k, "DJANGO_SETTINGS_MODULE"), posarg(c, 0, k), posarg(c, 1, s), str(s, v).
+smi_dsm(a, v) :- str(k, "DJANGO_SETTINGS_MODULE"), kind(t, "subscript"), field(t, "subscript", k), kind(a, "assignment"),
+    field(a, "left", t), field(a, "right", s), str(s, v).
+// smi_star(i, m): i is `from m import *`.
+.decl smi_star(i: node, m: symbol)
+smi_star(i, m) :- kind(i, "import_from_statement"), child(i, w, _), kind(w, "wildcard_import"), module_text(i, m).
+// smi_names(i, n, d): import statement i names module n, which is settings module d.
+.decl smi_names(i: node, n: symbol, d: number)
+smi_names(i, n, d) :- smi_imported(i, n), docof(i, di), smi_mod(di, mi), smi_resolves(mi, n, q), smi_mod(d, q), smi_doc(d).
+.decl smi_imported(i: node, n: symbol)
+smi_imported(i, m) :- import_alias(i, _, m, _, _).
+smi_imported(i, @dot(m, x)) :- import_alias(i, _, m, x, _), x != "".
+smi_imported(i, m) :- smi_star(i, m).
+// smi_mod(d, m): m names document d: its module as Python imports it (from its package root), or its path's name. The
+// two differ below a source root, and a folder there with no `__init__.py` (a namespace package) keeps its path's
+// name: in `src/`, `shop/views.py` (a package) is "shop.views", `config/prod.py` is "src.config.prod", and
+// `from config.prod import X` finds it only as "config.prod" under the source root "src" of "src.shop.views".
+.decl smi_mod(d: number, m: symbol)
+smi_mod(d, m) :- doc(d, _, m), m != "".
+smi_mod(d, m) :- doc(d, p, _), m = @replace_all(@replace_all(p, "(/__init__)?\\.pyi?$", ""), "/", "."), m != "".
+// smi_resolves(mi, n, q): to a file named mi, the absolute module name n is the run's module q: n itself, or n under a
+// source root that mi sits under (to `netbox/utilities/x.py`, named "netbox.utilities.x" by its path, `netbox.settings`
+// is "netbox.netbox.settings").
+.decl smi_query(mi: symbol, n: symbol)
+smi_query(mi, n) :- smi_imported(i, n), docof(i, d), smi_mod(d, mi).
+smi_query(mc, v) :- smi_dsm(c, v), docof(c, d), smi_mod(d, mc).
+.decl smi_root(mi: symbol, r: symbol)
+smi_root(mi, r) :- smi_query(mi, _), r = @pkg_up(mi, 1), r != "".
+smi_root(mi, r) :- smi_root(mi, r0), r = @pkg_up(r0, 1), r != "".
+.decl smi_resolves(mi: symbol, n: symbol, q: symbol)
+smi_resolves(mi, n, n) :- smi_query(mi, n), smi_mod(_, n).
+smi_resolves(mi, n, q) :- smi_query(mi, n), smi_root(mi, r), q = @dot(r, n), smi_mod(_, q).
+// smi_reported_doc(i): import i is in a file the rule reads: not a settings module or settings file, not
+// manage.py/wsgi.py/asgi.py, not test code.
+.decl smi_reported_doc(i: node)
+smi_reported_doc(i) :- docof(i, d), !smi_doc(d), !path_part(d, "settings"), file_name(d, s), !glob("*settings*.py", s),
+    s != "manage.py", s != "wsgi.py", s != "asgi.py", !dj_test_doc(d).
+
+// The cases, `cases/django-practice-settings-module-import/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "manage.py" from "../cases/django-practice-settings-module-import/manage.py"
+    .fixture "src/config/prod.py" from "../cases/django-practice-settings-module-import/src/config/prod.py"
+    .fixture "src/deploy/__init__.py" from "../cases/django-practice-settings-module-import/src/deploy/__init__.py"
+    .fixture "src/deploy/asgi.py" from "../cases/django-practice-settings-module-import/src/deploy/asgi.py"
+    .fixture "src/deploy/config.py" from "../cases/django-practice-settings-module-import/src/deploy/config.py"
+    .fixture "src/myproject/__init__.py" from "../cases/django-practice-settings-module-import/src/myproject/__init__.py"
+    .fixture "src/myproject/settings/__init__.py" from "../cases/django-practice-settings-module-import/src/myproject/settings/__init__.py"
+    .fixture "src/myproject/settings/base.py" from "../cases/django-practice-settings-module-import/src/myproject/settings/base.py"
+    .fixture "src/myproject/settings/helpers.py" from "../cases/django-practice-settings-module-import/src/myproject/settings/helpers.py"
+    .fixture "src/myproject/settings/local.py" from "../cases/django-practice-settings-module-import/src/myproject/settings/local.py"
+    .fixture "src/myproject/urls.py" from "../cases/django-practice-settings-module-import/src/myproject/urls.py"
+    .fixture "src/myproject/wsgi.py" from "../cases/django-practice-settings-module-import/src/myproject/wsgi.py"
+    .fixture "src/shop/__init__.py" from "../cases/django-practice-settings-module-import/src/shop/__init__.py"
+    .fixture "src/shop/settings.py" from "../cases/django-practice-settings-module-import/src/shop/settings.py"
+    .fixture "src/shop/tests/test_settings.py" from "../cases/django-practice-settings-module-import/src/shop/tests/test_settings.py"
+    .fixture "src/shop/utils.py" from "../cases/django-practice-settings-module-import/src/shop/utils.py"
+    .fixture "src/shop/views.py" from "../cases/django-practice-settings-module-import/src/shop/views.py"
+    .expect _ at "src/myproject/urls.py":1
+    .expect _ at "src/myproject/urls.py":2
+    .expect _ at "src/shop/utils.py":1
+    .expect _ at "src/shop/utils.py":2
+    .expect _ at "src/shop/utils.py":3
+    .expect _ at "src/shop/utils.py":4
+    .expect _ at "src/shop/views.py":5
+    .expect _ at "src/shop/views.py":7
+    .expect _ at "src/shop/views.py":10
+    .expect _ at "src/shop/views.py":11
+    .expect _ at "src/shop/views.py":12
+    .expect _ at "src/shop/views.py":18
+.end

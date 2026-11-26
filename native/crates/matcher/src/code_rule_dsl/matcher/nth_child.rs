@@ -335,7 +335,7 @@ impl Positions {
                 let scopes = super::FileScopeSlot::install(
                     Vec::new(),
                     None,
-                    !tape.syntax_error_ranges().is_empty(),
+                    tape.has_syntax_error(),
                 );
                 (ast_grep_core::AstGrep::doc(tape.clone()), scopes)
             })
@@ -400,7 +400,7 @@ impl Positions {
 pub struct SiblingPositions {
     positions:
         std::sync::Mutex<std::collections::HashMap<Option<String>, std::sync::Arc<Positions>>>,
-    answers: std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<Vec<u64>>>>,
+    answers: std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<rerail_blocks::vector::Vector<u64>>>>,
     /// The answers written in a batch's fact block (`Fact::found`, Q289): each one's byte offset there.
     placed: std::sync::Mutex<std::collections::HashMap<String, usize>>,
 }
@@ -438,8 +438,8 @@ impl SiblingPositions {
     pub(in crate::code_rule_dsl) fn answer(
         &self,
         question: &str,
-        answer: impl FnOnce() -> Vec<u64>,
-    ) -> std::sync::Arc<Vec<u64>> {
+        answer: impl FnOnce() -> rerail_blocks::vector::Vector<u64>,
+    ) -> std::sync::Arc<rerail_blocks::vector::Vector<u64>> {
         if let Some(found) = self.answers.lock().expect("nthChild answers").get(question) {
             return std::sync::Arc::clone(found);
         }

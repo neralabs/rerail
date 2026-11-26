@@ -39,13 +39,13 @@ system-allocator = ["rerail-facts/system-allocator", "rerail-lang/system-allocat
 code-rule-profile = ["rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile", "rerail-rr/code-rule-profile"]
 p-anchor-corpus = ["rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus", "rerail-rr/p-anchor-corpus"]
 metal-tests = ["rerail-facts/metal-tests", "rerail-lang/metal-tests", "rerail-rr/metal-tests"]
-test-hooks = ["rerail-logic-core/test-hooks", "rerail-setfix/test-hooks", "rerail-planner/test-hooks", "rerail-typing/test-hooks", "rerail-corpus-memo/test-hooks", "rerail-corpus-prep/test-hooks", "rerail-json-rules/test-hooks", "rerail-blocks/test-hooks", "rerail-program-image/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-rr/test-hooks", "dep:tempfile", "rerail-compiler/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-rr-parser/test-hooks"]
+test-hooks = ["rerail-logic-core/test-hooks", "rerail-setfix/test-hooks", "rerail-planner/test-hooks", "rerail-typing/test-hooks", "rerail-corpus-memo/test-hooks", "rerail-corpus-prep/test-hooks", "rerail-json-rules/test-hooks", "rerail-blocks/test-hooks", "rerail-program-image/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-rr/test-hooks", "dep:tempfile", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks"]
 
 [dependencies]
 # `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).
 dunce = "=1.0.5"
 libc = "0.2.189"
-arc-swap = "=1.9.3"
+arc-swap = "=1.9.5"
 base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
 ast-grep-core = "=0.51.0"
@@ -92,7 +92,7 @@ tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-
 tree-sitter = "=0.27.1"
 bitlex = { path = "../../../tools/bitlex", default-features = false }
 unicode-normalization = "=0.1.26"
-zstd = "=0.14.3"
+zstd = "=0.14.4"
 tempfile = { version = "=3.27.0", optional = true }
 rerail-facts = { path = "../facts", default-features = false }
 # The logic language's core, under the planner (the crate split, step 5).
@@ -115,8 +115,6 @@ rerail-accel = { path = "../../../accel" }
 # Blocks (decision 0266): the outputs file's images are frozen blocks (0295 step 3); setfix's relations are measured
 # against blocks' (`setfix::blocks_compare_tests`).
 rerail-blocks = { path = "../blocks" }
-rerail-compiler = { path = "../compiler" }
-rerail-rr-parser = { path = "../rr_parser" }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }

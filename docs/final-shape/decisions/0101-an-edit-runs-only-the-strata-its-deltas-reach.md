@@ -1,7 +1,7 @@
 # 0101: An edit runs only the strata its deltas reach
 
-Status: draft (2026-11-09), a spec. §1 and §2 are built (2026-11-10, "Built: §1 and §2" below); §3 is built
-(2026-11-12, "Built: §3" below).
+Status: built (audited 2026-11-23). Draft (2026-11-09), a spec. §1 and §2 are built (2026-11-10, "Built: §1 and §2"
+below); §3 is built (2026-11-12, "Built: §3" below).
 
 ## Intro
 

@@ -31,11 +31,10 @@ UKL_INLINE void UKL_SCAN_NAME(ukl_scan_tile_sum)(UKL_SCAN_SPACE const uint32_t* 
         sums[tile] = t;
 }
 
-// Tile `tile` scanned from its offset (`offsets[tile]` where `a.hasOffsets`, else 0) into `out` (which may be `in`:
-// each thread writes only the values it read, after reading them); the last tile's last thread writes the total at
-// `out[a.n]`.
-UKL_INLINE void UKL_SCAN_NAME(ukl_scan_tile)(UKL_SCAN_SPACE const uint32_t* in, UKL_SCAN_SPACE uint32_t* out, UKL_SCAN_SPACE const uint32_t* offsets, UklScanArgs a,
-                                             UKL_LOCAL uint32_t* scratch, uint32_t tile, uint32_t lid, uint32_t lsz __UKL_PARAMS)
+// Tile `tile` scanned from `base` into `out` (which may be `in`: each thread writes only the values it read, after
+// reading them); the last tile's last thread writes the total at `out[a.n]`.
+UKL_INLINE void UKL_SCAN_NAME(ukl_scan_tile_from)(UKL_SCAN_SPACE const uint32_t* in, UKL_SCAN_SPACE uint32_t* out, uint32_t base, UklScanArgs a,
+                                                  UKL_LOCAL uint32_t* scratch, uint32_t tile, uint32_t lid, uint32_t lsz __UKL_PARAMS)
 {
     uint64_t first = ukl_scan_first(tile, lid, lsz);
     uint32_t v[UKL_SCAN_ITEMS];
@@ -45,7 +44,6 @@ UKL_INLINE void UKL_SCAN_NAME(ukl_scan_tile)(UKL_SCAN_SPACE const uint32_t* in, 
         s += v[k];
     }
     UklScan r = ukl_tg_exclusive_sum(s, lid, lsz, scratch __UKL_ARGS);
-    uint32_t base = a.hasOffsets != 0u ? offsets[tile] : 0u;
     uint32_t run = base + r.exclusive;
     for (uint32_t k = 0u; k < UKL_SCAN_ITEMS; k++) {
         if (first + k < a.n)
@@ -57,6 +55,13 @@ UKL_INLINE void UKL_SCAN_NAME(ukl_scan_tile)(UKL_SCAN_SPACE const uint32_t* in, 
     uint32_t lastTile = a.n == 0u ? 0u : (a.n - 1u) / tileValues;
     if (tile == lastTile && lid == lsz - 1u)
         out[a.n] = base + r.total;
+}
+
+// Tile `tile` scanned from its offset (`offsets[tile]` where `a.hasOffsets`, else 0).
+UKL_INLINE void UKL_SCAN_NAME(ukl_scan_tile)(UKL_SCAN_SPACE const uint32_t* in, UKL_SCAN_SPACE uint32_t* out, UKL_SCAN_SPACE const uint32_t* offsets, UklScanArgs a,
+                                             UKL_LOCAL uint32_t* scratch, uint32_t tile, uint32_t lid, uint32_t lsz __UKL_PARAMS)
+{
+    UKL_SCAN_NAME(ukl_scan_tile_from)(in, out, a.hasOffsets != 0u ? offsets[tile] : 0u, a, scratch, tile, lid, lsz __UKL_ARGS);
 }
 
 #undef UKL_SCAN_NAME

@@ -1,4 +1,5 @@
 //! Shared immutable syntax facts. SQL retains all policy decisions.
+use rerail_blocks::vector::Vector;
 use super::{Result, invalid, source, sql_error};
 use crate::code_rule_dsl::{
     eval, language::GrammarDialect, lines::LineTable, model::FileInput, tape::TapeDoc,
@@ -65,10 +66,10 @@ pub trait Source: Send + Sync {
         _column: usize,
         _lower: Option<(&Value, bool)>,
         _upper: Option<(&Value, bool)>,
-    ) -> rusqlite::Result<Option<Vec<usize>>> {
+    ) -> rusqlite::Result<Option<rerail_blocks::vector::Vector<usize>>> {
         Ok(None)
     }
-    fn lookup(&self, column: usize, values: &[Value]) -> rusqlite::Result<Option<Vec<usize>>>;
+    fn lookup(&self, column: usize, values: &[Value]) -> rusqlite::Result<Option<rerail_blocks::vector::Vector<usize>>>;
     fn column(&self, row: usize, column: usize, ctx: &mut Context) -> rusqlite::Result<()>;
     fn charge(&self, count: usize) -> rusqlite::Result<()>;
 }
@@ -80,7 +81,7 @@ pub(in crate::code_rule_dsl) struct Counters {
     pub columns: AtomicU64,
 }
 struct OwnerIndex {
-    values: Vec<u32>,
+    values: Vector<u32>,
     postings: Postings,
     distinct: usize,
 }
@@ -88,7 +89,7 @@ type Selections = parking_lot::Mutex<HashMap<(Vec<String>, bool), Arc<Selection>
 pub struct Facts {
     doc: TapeDoc,
     lines: Arc<LineTable>,
-    rows: Vec<u32>,
+    rows: Vector<u32>,
     positions: Vec<Option<usize>>,
     packed: Columns,
     children: Postings,
@@ -120,13 +121,13 @@ impl Facts {
             eval::file_language(file).ok_or_else(|| invalid("syntax source has no grammar"))?;
         let (doc, lines) = eval::file_tape(language, file)?
             .ok_or_else(|| invalid("syntax source was not parsed"))?;
-        if !doc.syntax_error_ranges().is_empty() {
+        if doc.has_syntax_error() {
             return Err(invalid("syntax source is incomplete"));
         }
         let packed = Columns::build(&doc)?;
-        let rows = (0..doc.transducer_len() as u32)
+        let rows: Vector<u32> = (0..doc.transducer_len() as u32)
             .filter(|&id| packed.flags[id as usize] & 1 != 0)
-            .collect::<Vec<_>>();
+            .collect();
         let mut positions = vec![None; doc.transducer_len()];
         for (row, &id) in rows.iter().enumerate() {
             positions[id as usize] = Some(row);
@@ -168,10 +169,10 @@ impl Facts {
             return Ok(Arc::clone(rows));
         }
         let mut selected = Selection {
-            rows: Vec::new(),
+            rows: rerail_blocks::vector::Vector::new(),
             reverse: vec![None; self.rows.len()],
-            ordinal: Vec::new(),
-            visible: Arc::new(Vec::new()),
+            ordinal: rerail_blocks::vector::Vector::new(),
+            visible: Arc::new(rerail_blocks::vector::Vector::new()),
         };
         let mut ordinals = HashMap::new();
         for (r, &id) in self.rows.iter().enumerate() {
@@ -238,7 +239,7 @@ impl Facts {
         let _span = crate::code_rule_dsl::profile::trace::Span::start("syntax-owners", &owner.kind);
         #[cfg(feature = "code-rule-profile")]
         let _index = crate::code_rule_dsl::profile::sql::index_build(self.rows.len());
-        let mut values = Vec::with_capacity(self.rows.len());
+        let mut values = rerail_blocks::vector::Vector::with_capacity(self.rows.len());
 
         for &id in &self.rows {
             if crate::code_rule_dsl::budget::step_budget_exhausted() {
@@ -280,14 +281,14 @@ impl Facts {
     pub fn subtree_ends(&self) -> &[u32] {
         &self.packed.subtree_end
     }
-    fn visible(&self, excludes: &[String]) -> Result<Arc<Vec<u32>>> {
+    fn visible(&self, excludes: &[String]) -> Result<Arc<Vector<u32>>> {
         Ok(Arc::clone(&self.select(excludes, false)?.visible))
     }
 }
 
 type PoolKey = (usize, GrammarDialect);
 struct PoolEntry {
-    source: Arc<String>,
+    source: Arc<crate::code_rule_dsl::tape::Text>,
     facts: Arc<Facts>,
 }
 #[derive(Default)]
@@ -391,10 +392,10 @@ enum Column {
     Owner(Arc<OwnerIndex>),
 }
 struct Selection {
-    rows: Vec<usize>,
+    rows: Vector<usize>,
     reverse: Vec<Option<usize>>,
-    ordinal: Vec<usize>,
-    visible: Arc<Vec<u32>>,
+    ordinal: Vector<usize>,
+    visible: Arc<Vector<u32>>,
 }
 struct Meter {
     work: Arc<AtomicUsize>,
@@ -480,7 +481,7 @@ impl Source for Nodes {
         c: usize,
         lower: Option<(&Value, bool)>,
         upper: Option<(&Value, bool)>,
-    ) -> rusqlite::Result<Option<Vec<usize>>> {
+    ) -> rusqlite::Result<Option<rerail_blocks::vector::Vector<usize>>> {
         if !self.range_indexed(c) {
             return Ok(None);
         }
@@ -522,7 +523,7 @@ impl Source for Nodes {
                 .collect(),
         ))
     }
-    fn lookup(&self, c: usize, values: &[Value]) -> rusqlite::Result<Option<Vec<usize>>> {
+    fn lookup(&self, c: usize, values: &[Value]) -> rusqlite::Result<Option<rerail_blocks::vector::Vector<usize>>> {
         let mut rows = Vec::new();
         for value in values {
             self.charge(1)?;
@@ -580,7 +581,7 @@ impl Source for Nodes {
         let mut rows = rows
             .into_iter()
             .filter_map(|r| self.selected.reverse[r])
-            .collect::<Vec<_>>();
+            .collect::<Vector<_>>();
         rows.sort_unstable();
         rows.dedup();
         Ok(Some(rows))
@@ -818,7 +819,7 @@ fn load_one(spec: &Spec, path: &str, facts: Arc<Facts>, meter: Arc<Meter>) -> Re
 
 struct Union {
     sources: Vec<Nodes>,
-    offsets: Vec<usize>,
+    offsets: Vector<usize>,
 }
 impl Source for Union {
     fn columns(&self) -> Vec<String> {
@@ -844,8 +845,8 @@ impl Source for Union {
         c: usize,
         lo: Option<(&Value, bool)>,
         hi: Option<(&Value, bool)>,
-    ) -> rusqlite::Result<Option<Vec<usize>>> {
-        let mut result = Vec::new();
+    ) -> rusqlite::Result<Option<rerail_blocks::vector::Vector<usize>>> {
+        let mut result = rerail_blocks::vector::Vector::new();
         for (i, s) in self.sources.iter().enumerate() {
             match s.range_lookup(c, lo, hi)? {
                 Some(rows) => result.extend(rows.into_iter().map(|r| r + self.offsets[i])),
@@ -860,8 +861,8 @@ impl Source for Union {
     fn charge(&self, n: usize) -> rusqlite::Result<()> {
         self.sources[0].charge(n)
     }
-    fn lookup(&self, c: usize, v: &[Value]) -> rusqlite::Result<Option<Vec<usize>>> {
-        let mut result = Vec::new();
+    fn lookup(&self, c: usize, v: &[Value]) -> rusqlite::Result<Option<rerail_blocks::vector::Vector<usize>>> {
+        let mut result = rerail_blocks::vector::Vector::new();
         for (i, s) in self.sources.iter().enumerate() {
             match s.lookup(c, v)? {
                 Some(rows) => result.extend(rows.into_iter().map(|r| r + self.offsets[i])),
@@ -899,8 +900,8 @@ impl Source for Empty {
     fn indexed(&self, _: usize) -> bool {
         false
     }
-    fn lookup(&self, _: usize, _: &[Value]) -> rusqlite::Result<Option<Vec<usize>>> {
-        Ok(Some(Vec::new()))
+    fn lookup(&self, _: usize, _: &[Value]) -> rusqlite::Result<Option<rerail_blocks::vector::Vector<usize>>> {
+        Ok(Some(rerail_blocks::vector::Vector::new()))
     }
     fn column(&self, _: usize, _: usize, _: &mut Context) -> rusqlite::Result<()> {
         Err(rusqlite::Error::InvalidQuery)
@@ -987,7 +988,7 @@ pub(super) fn sources(
     }
     let mut output = Vec::new();
     for (name, sources) in names.iter().zip(families) {
-        let mut offsets = vec![0];
+        let mut offsets = rerail_blocks::vector![0];
         for s in &sources {
             offsets.push(offsets.last().unwrap() + s.len())
         }

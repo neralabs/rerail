@@ -1,6 +1,8 @@
 # 0115: What a run keeps for the next: rows where a maintained reader needs them, digests elsewhere
 
-Status: draft (2026-11-11), for review. Only the measurements and one fix (below) are built.
+Status: partly built (audited 2026-11-23). Left: digest-only kept relations; derived frames split by document granule;
+inputs referenced from the memo, not kept twice. Draft (2026-11-11), for review. Only the measurements and one fix
+(below) are built.
 
 ## Intro
 

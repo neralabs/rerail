@@ -1,9 +1,9 @@
 # 0158: A JSON file's comments are read by simdjson, in a second read
 
-Status: accepted (user, 2026-11-13: "take a look at O-jsonc-simdjson and figure out what can be done
-(even as a second path when we detect a syntax error caused by a comment) to deal with those");
-amended (user, 2026-11-13, trailing commas: "please do number 2. Our goal is to be relatively permissive as
-rerail is designed to analyze source as it's being written incrementally")
+Status: built (audited 2026-11-23). Accepted (user, 2026-11-13: "take a look at O-jsonc-simdjson and figure out what
+can be done (even as a second path when we detect a syntax error caused by a comment) to deal with those"); amended
+(user, 2026-11-13, trailing commas: "please do number 2. Our goal is to be relatively permissive as rerail is designed
+to analyze source as it's being written incrementally")
 
 ## Intro
 

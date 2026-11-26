@@ -1,6 +1,6 @@
 # 0063: A long-lived run keeps the program compiled and each file's rows; an edit reruns what it changed
 
-Status: accepted (2026-11-07; built and measured in the explorer)
+Status: built (audited 2026-11-23). Accepted (2026-11-07; built and measured in the explorer)
 
 ## Intro
 

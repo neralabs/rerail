@@ -2,6 +2,7 @@
 //!
 //! Ordinary non-query GREEDY branches retain their multiplicity contract. Operand
 //! and cycle validation run first. This proof never changes words or query results.
+use rerail_blocks::vector::Vector;
 use super::{CAPTURE, EMIT, Error, FORK, GOTO, GREEDY, NEXT, REPEAT_BUMP, REPEAT_END, STOP, split};
 
 fn successors(words: &[u32], pc: usize) -> [Option<usize>; 2] {
@@ -25,7 +26,7 @@ pub fn ordered_headers(words: &[u32]) -> Result<Vec<(usize, usize)>, Error> {
     if !words.iter().any(|&w| matches!(split(w), (FORK, GREEDY, _))) {
         return Ok(Vec::new());
     }
-    let mut predecessors = vec![Vec::new(); words.len()];
+    let mut predecessors = vec![rerail_blocks::vector::Vector::new(); words.len()];
     let mut reaches_capture = vec![false; words.len()];
     let mut pending = Vec::new();
     for (pc, &instruction) in words.iter().enumerate() {
@@ -111,7 +112,7 @@ pub fn ordered_headers(words: &[u32]) -> Result<Vec<(usize, usize)>, Error> {
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn acyclic_joins(program: &super::Program) -> Vec<(usize, usize)> {
     let words = &program.words;
-    let mut predecessors = vec![Vec::new(); words.len()];
+    let mut predecessors = vec![rerail_blocks::vector::Vector::new(); words.len()];
     for pc in 0..words.len() {
         for next in successors(words, pc).into_iter().flatten() {
             predecessors[next].push(pc);
@@ -151,7 +152,7 @@ pub fn acyclic_joins(program: &super::Program) -> Vec<(usize, usize)> {
 
 // Iterative Kosaraju traversal avoids a call stack proportional to Program size.
 // Both passes visit every instruction and edge a bounded number of times.
-fn components(words: &[u32], predecessors: &[Vec<usize>]) -> Vec<usize> {
+fn components(words: &[u32], predecessors: &[Vector<usize>]) -> Vector<usize> {
     let mut visited = vec![false; words.len()];
     let mut finished = Vec::with_capacity(words.len());
     for root in 0..words.len() {
@@ -175,7 +176,7 @@ fn components(words: &[u32], predecessors: &[Vec<usize>]) -> Vec<usize> {
             }
         }
     }
-    let mut components = vec![usize::MAX; words.len()];
+    let mut components = rerail_blocks::vector![usize::MAX; words.len()];
     let mut component = 0;
     for root in finished.into_iter().rev() {
         if components[root] != usize::MAX {

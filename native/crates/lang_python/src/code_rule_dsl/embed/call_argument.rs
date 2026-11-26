@@ -119,7 +119,7 @@ fn program<D: Doc>(dialect: GrammarDialect, value: &Node<'_, D>, source: &str, b
         return None;
     }
     segments.index();
-    let parse = super::Parse::read(dialect, &text, budget)?;
+    let parse = super::Parse::read_program(dialect, &text, &segments, budget)?;
     // It stands at the argument, the string or the concatenation, as a rule names it (`parsed(s, "html", p)`).
     Some(Program { dialect, parse, text, segments, host_errors: Vec::new(), at: Some(value.range()) })
 }

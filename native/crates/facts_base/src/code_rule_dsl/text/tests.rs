@@ -221,6 +221,7 @@ fn backreferences_run_once_per_string() {
 /// Every regex of serverplan_quality's port lowers, and the productions they take (decision 0042's
 /// census by form): `--ignored --nocapture` prints the distribution.
 #[test]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn serverplan_quality_s_regexes_lower() {
     let relative = "packs/data-layer/upstream/lint/authored/final-shape/data-layer-serverplan-quality.json";
     let path = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..").join("..").join(relative);

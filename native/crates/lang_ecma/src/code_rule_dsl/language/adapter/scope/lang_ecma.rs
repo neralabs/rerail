@@ -79,7 +79,7 @@ impl ScopeRules for Ecma {
         let definitions = table.scopes[scope as usize]
             .bindings
             .get(name)
-            .map_or(0, Vec::len);
+            .map_or(0, |c| c.len());
         let value = binding
             .site
             .value

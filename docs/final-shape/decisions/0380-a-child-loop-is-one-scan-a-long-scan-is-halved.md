@@ -1,6 +1,6 @@
 # 0380. A child loop is one scan of the subtree, a long scan is halved, and a captured `desc` marks its range
 
-Status: accepted (2026-11-17)
+Status: built (audited 2026-11-23). Accepted (2026-11-17)
 
 ## Intro
 

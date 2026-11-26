@@ -28,7 +28,7 @@ struct LatticeDecl<'v> {
 }
 
 fn native<'v>(f: &Fields<'v>, rel: &str) -> Option<Native<'v>> {
-    use super::super::program_image::NativeSpec as S;
+    use super::super::program_image::ArchivedNativeSpec as S;
     let (r, t) = (|x| f.rel_name(x), |x| f.text(x));
     f.native(rel).map(|n| match &n.spec {
         S::DfsFirst { edge, target, roots } => Native::DfsFirst { edge: r(*edge), target: r(*target), roots: roots.map(r) },
@@ -36,10 +36,10 @@ fn native<'v>(f: &Fields<'v>, rel: &str) -> Option<Native<'v>> {
         S::Components { edge, own } => Native::Components { edge: r(*edge), own: r(*own) },
         S::Reach { seed, edge } => Native::Reach { seed: r(*seed), edge: r(*edge) },
         S::ReachThrough { reach, map } => Native::ReachThrough { reach: r(*reach), map: r(*map) },
-        S::Rank { query, counted, group, op } => Native::Rank { query: r(*query), counted: r(*counted), group: *group, op: t(*op) },
+        S::Rank { query, counted, group, op } => Native::Rank { query: r(*query), counted: r(*counted), group: *group as usize, op: t(*op) },
         S::Python { kind, input, targets } => Native::Python { kind: t(*kind), input: r(*input), targets: targets.map(r) },
         S::PythonCandidates { input, targets, context, member } => Native::PythonCandidates { input: r(*input), targets: r(*targets), context: t(*context), member: t(*member) },
-        S::TextTest { input, column, op, patterns } => Native::TextTest { input: r(*input), column: *column, op: t(*op), patterns: patterns.iter().map(|&p| t(p)).collect() },
+        S::TextTest { input, column, op, patterns } => Native::TextTest { input: r(*input), column: *column as usize, op: t(*op), patterns: patterns.iter().map(|&p| t(p)).collect() },
     })
 }
 

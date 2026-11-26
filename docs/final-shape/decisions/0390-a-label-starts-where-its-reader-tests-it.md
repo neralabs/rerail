@@ -1,6 +1,6 @@
 # 0390. A label starts only where the rule that reads it can hold; a nested `inside` stays a range
 
-Status: accepted (2026-11-17)
+Status: built (audited 2026-11-23). Accepted (2026-11-17)
 
 ## Intro
 

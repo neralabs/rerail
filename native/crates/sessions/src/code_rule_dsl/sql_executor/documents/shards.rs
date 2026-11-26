@@ -1,4 +1,5 @@
 //! Per-family document indexes with cached subtree estimates and dense native row ids.
+use rerail_blocks::vector::Vector;
 use super::{
     tree::{Link, Measure, Node},
     *,
@@ -102,7 +103,7 @@ fn domains(name: &str) -> (&'static [usize], &'static [usize]) {
     match name {
         "node" => (&[1], &[0]),
         "core_node" => (&[2], &[0]),
-        "child" | "within" | "span_within" | "next_sibling" => (&[0, 1], &[]),
+        "child" | "within" | "span_within" | "next_sibling" | "def_unit" => (&[0, 1], &[]),
         "field" => (&[0, 2], &[]),
         "tape" => (&[0, 1], &[]),
         "docof" => (&[0], &[1]),
@@ -269,16 +270,16 @@ impl Family {
         }
         None
     }
-    fn collect(&self, probe: impl Fn(&dyn Source) -> Option<Vec<usize>>) -> Option<Vec<usize>> {
+    fn collect(&self, probe: impl Fn(&dyn Source) -> Option<rerail_blocks::vector::Vector<usize>>) -> Option<rerail_blocks::vector::Vector<usize>> {
         self.collect_in(0, u32::MAX, probe)
     }
     fn collect_in(
         &self,
         lo: u32,
         hi: u32,
-        probe: impl Fn(&dyn Source) -> Option<Vec<usize>>,
-    ) -> Option<Vec<usize>> {
-        let mut rows = vec![];
+        probe: impl Fn(&dyn Source) -> Option<rerail_blocks::vector::Vector<usize>>,
+    ) -> Option<rerail_blocks::vector::Vector<usize>> {
+        let mut rows = rerail_blocks::vector![];
         let mut indexed = true;
         Self::visit(
             &self.root,
@@ -342,11 +343,11 @@ impl Source for Family {
     fn kept_to_doc(&self, c: usize) -> bool {
         self.stats().is_some_and(|s| s.columns[c].no_doc == 0)
     }
-    fn lookup(&self, c: usize, values: &[i64]) -> Option<Vec<usize>> {
+    fn lookup(&self, c: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         let location = self.locations.contains(&c);
         let document = self.documents.contains(&c) || self.doc == Some(c);
         if (location || document) && values.iter().all(|&v| v >= 0) {
-            let mut rows = vec![];
+            let mut rows = rerail_blocks::vector![];
             for &v in values {
                 let encoded = if location { v >> 32 } else { v };
                 if let Ok(key) = u32::try_from(encoded)
@@ -364,12 +365,12 @@ impl Source for Family {
             self.collect(|s| s.lookup(c, values))
         }
     }
-    fn lookup_in(&self, c: usize, values: &[i64], doc: i64) -> Option<Vec<usize>> {
+    fn lookup_in(&self, c: usize, values: &[i64], doc: i64) -> Option<rerail_blocks::vector::Vector<usize>> {
         let Ok(key) = u32::try_from(doc) else {
-            return Some(vec![]);
+            return Some(rerail_blocks::vector![]);
         };
         let Some((p, base)) = self.get(key) else {
-            return Some(vec![]);
+            return Some(rerail_blocks::vector![]);
         };
         Some(
             p.source
@@ -384,7 +385,7 @@ impl Source for Family {
         c: usize,
         lo: Option<(i64, bool)>,
         hi: Option<(i64, bool)>,
-    ) -> Option<Vec<usize>> {
+    ) -> Option<rerail_blocks::vector::Vector<usize>> {
         let location = self.locations.contains(&c);
         let document = self.documents.contains(&c) || self.doc == Some(c);
         if (location || document)
@@ -394,7 +395,7 @@ impl Source for Family {
             let key = |v: i64| if location { v >> 32 } else { v };
             let lower = key(lo.unwrap().0);
             if lower > i64::from(u32::MAX) {
-                return Some(vec![]);
+                return Some(rerail_blocks::vector![]);
             }
             let upper = hi
                 .map_or(i64::from(u32::MAX), |(v, _)| key(v))
@@ -436,7 +437,7 @@ pub mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct Counted {
-        row: Vec<i64>,
+        row: Vector<i64>,
         probes: Arc<AtomicUsize>,
     }
     impl Source for Counted {
@@ -460,25 +461,25 @@ pub mod tests {
             c: usize,
             lo: Option<(i64, bool)>,
             hi: Option<(i64, bool)>,
-        ) -> Option<Vec<usize>> {
+        ) -> Option<rerail_blocks::vector::Vector<usize>> {
             self.probes.fetch_add(1, Ordering::Relaxed);
             let v = self.row[c];
             Some(
                 if lo.is_none_or(|(b, inclusive)| v > b || inclusive && v == b)
                     && hi.is_none_or(|(b, inclusive)| v < b || inclusive && v == b)
                 {
-                    vec![0]
+                    rerail_blocks::vector![0]
                 } else {
-                    vec![]
+                    rerail_blocks::vector![]
                 },
             )
         }
-        fn lookup(&self, c: usize, values: &[i64]) -> Option<Vec<usize>> {
+        fn lookup(&self, c: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
             self.probes.fetch_add(1, Ordering::Relaxed);
             Some(if values.contains(&self.row[c]) {
-                vec![0]
+                rerail_blocks::vector![0]
             } else {
-                vec![]
+                rerail_blocks::vector![]
             })
         }
         fn value(&self, _: usize, c: usize) -> i64 {
@@ -498,7 +499,7 @@ pub mod tests {
             ] {
                 let probes = Arc::new(AtomicUsize::new(0));
                 let make = |d: u32| {
-                    let mut row = vec![7; width];
+                    let mut row = rerail_blocks::vector![7; width];
                     row[0] = i64::from(d);
                     for &c in &locations {
                         row[c] = (i64::from(d) << 32) | 1;

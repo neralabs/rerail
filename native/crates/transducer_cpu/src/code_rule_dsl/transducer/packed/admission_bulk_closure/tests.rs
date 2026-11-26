@@ -179,7 +179,7 @@
     }
     fn linear_program(body: &[u32]) -> Program {
         let exit = (7 + body.len()) as u16;
-        let mut words = vec![
+        let mut words = rerail_blocks::vector![
             word(CAPTURE, 0, 0),
             word(REPEAT_BEGIN, 0, 0),
             word(REPEAT_BUMP, 0, 0),
@@ -197,8 +197,8 @@
             words,
             vec![b"a".to_vec(), b"b".to_vec()],
             vec![],
-            vec![0, 1],
-            vec![],
+            rerail_blocks::vector![0, 1],
+            rerail_blocks::vector![],
         )
         .unwrap()
         .with_tree_sitter_query_semantics()
@@ -222,12 +222,12 @@
             pc: 3,
             node: siblings[0],
             cursors: vec![Some(0)],
-            repeats: vec![0],
+            repeats: rerail_blocks::vector![0],
             captures: vec![(0, expression, 0, 1), (1, expression, 0, 1)],
         };
         let mut frontier = (0..8)
             .map(|index| Item {
-                position: vec![index],
+                position: rerail_blocks::vector![index],
                 state: base.clone(),
                 kind: Kind::Active,
             })
@@ -270,11 +270,11 @@
         ));
         let mut pending = frontier;
         pending.push(Item {
-            position: vec![9],
+            position: rerail_blocks::vector![9],
             state: State { pc: 7, ..base },
             kind: Kind::Greedy {
-                body: vec![9, 0],
-                last_offer: vec![9],
+                body: rerail_blocks::vector![9, 0],
+                last_offer: rerail_blocks::vector![9],
             },
         });
         assert!(matches!(
@@ -288,7 +288,7 @@
         for body_guard in [word(FLAGS, 0, 0), word(SIZE, 2, 4)] {
             for exit_size in 2..=5 {
                 let program = Program::new(
-                    vec![
+                    rerail_blocks::vector![
                         word(CAPTURE, 0, 0),
                         word(REPEAT_BEGIN, 0, 0),
                         word(FORK, 0, 6),
@@ -307,8 +307,8 @@
                     ],
                     vec![b"prefix".to_vec()],
                     vec![],
-                    vec![0],
-                    vec![],
+                    rerail_blocks::vector![0],
+                    rerail_blocks::vector![],
                 )
                 .unwrap()
                 .with_tree_sitter_query_semantics()
@@ -369,12 +369,12 @@
         let program = linear_program(&[]);
         let tape = document(&"# a\n".repeat(MAX_CELLS + 1));
         let frontier = [Item {
-            position: vec![],
+            position: rerail_blocks::vector![],
             state: State {
                 pc: 3,
                 node: 1,
                 cursors: vec![],
-                repeats: vec![0],
+                repeats: rerail_blocks::vector![0],
                 captures: vec![],
             },
             kind: Kind::Active,
@@ -443,7 +443,7 @@
             ordinary.execute_roots(&tape, [1])
         );
         let mut invalid = ordinary;
-        invalid.words = vec![word(FORK, GREEDY, u16::MAX)];
+        invalid.words = rerail_blocks::vector![word(FORK, GREEDY, u16::MAX)];
         assert_eq!(
             closure_proof::regions(&invalid),
             invalid.validate().map(|()| vec![])
@@ -459,17 +459,17 @@
         let tape = document("#a\nx\n#aa\n");
         let comment = tape.transducer_kind(1);
         let guards = [
-            (word(KIND, 0, comment), vec![]),
-            (word(FIELD, 0, 0), vec![]),
-            (word(FIELD, 0, 1), vec![]),
-            (word(FLAGS, NAMED, 0), vec![]),
-            (word(FLAGS, 0, u16::from(NAMED)), vec![]),
-            (word(SIZE, 0, 3), vec![]),
-            (word(SIZE, 1, 3), vec![]),
-            (word(SIZE, 2, 3), vec![]),
-            (word(SIZE, SIZE_LONG, 0), vec![3]),
-            (word(SIZE, SIZE_LONG | 1, 0), vec![u64::MAX]),
-            (word(SIZE, SIZE_LONG | 2, 0), vec![u64::MAX]),
+            (word(KIND, 0, comment), rerail_blocks::vector![]),
+            (word(FIELD, 0, 0), rerail_blocks::vector![]),
+            (word(FIELD, 0, 1), rerail_blocks::vector![]),
+            (word(FLAGS, NAMED, 0), rerail_blocks::vector![]),
+            (word(FLAGS, 0, u16::from(NAMED)), rerail_blocks::vector![]),
+            (word(SIZE, 0, 3), rerail_blocks::vector![]),
+            (word(SIZE, 1, 3), rerail_blocks::vector![]),
+            (word(SIZE, 2, 3), rerail_blocks::vector![]),
+            (word(SIZE, SIZE_LONG, 0), rerail_blocks::vector![3]),
+            (word(SIZE, SIZE_LONG | 1, 0), rerail_blocks::vector![u64::MAX]),
+            (word(SIZE, SIZE_LONG | 2, 0), rerail_blocks::vector![u64::MAX]),
         ];
         let mut comparisons = 0;
         for (guard, longs) in guards {

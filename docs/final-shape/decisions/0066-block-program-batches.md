@@ -1,8 +1,8 @@
 # 0066: Block programs run a batch of files in one launch
 
-Status: accepted (user, 2026-11-07: "the vast majority of our launches will launch a batch of
-files, with potentially different languages, against a group of bitlex programs (one for each
-file). This is the shape that we should implement.")
+Status: built (audited 2026-11-23). Accepted (user, 2026-11-07: "the vast majority of our launches will launch a batch
+of files, with potentially different languages, against a group of bitlex programs (one for each file). This is the
+shape that we should implement.")
 
 ## Intro
 

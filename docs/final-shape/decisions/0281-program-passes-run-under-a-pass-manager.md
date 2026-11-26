@@ -1,12 +1,13 @@
 # 0281: Program passes run under a pass manager: rule rewriters and program edits over cached, maintained analyses
 
-Status: accepted (2026-11-15); steps 1–4 built (step 4, the run reads versions, done 2026-11-16); step 5 under way:
-(a) and (b) done, step 5 (c) storage done (2026-11-16; §6's keyed steps), its use on the preparation path and the
-ep2 measurement after the remaining passes are ported (see Path and Alignment).
-Builds on 0173 §9 (a pass is an edit or a derivation, and a derived rule records its sources), 0225 §5 and 0246 §3
-(the whole-program questions are rules over the image), 0266 (blocks: a writer, a merged view, base + delta), 0269
-(a step's decisions are rows of what it made), 0275 (a step is rederived until its key hits) and 0276 (one form from
-the tape on, written through `ProgramW`).
+Status: partly built (audited 2026-11-23). Left: §3's parallel-by-morsel rule passes (stateless RulePass split across
+the pool); analyses as rules for program writers' incrementality. Accepted (2026-11-15); steps 1–4 built (step 4, the
+run reads versions, done 2026-11-16); step 5 under way: (a) and (b) done, step 5 (c) storage done (2026-11-16; §6's
+keyed steps), its use on the preparation path and the ep2 measurement after the remaining passes are ported (see Path
+and Alignment). Builds on 0173 §9 (a pass is an edit or a derivation, and a derived rule records its sources), 0225 §5
+and 0246 §3 (the whole-program questions are rules over the image), 0266 (blocks: a writer, a merged view, base +
+delta), 0269 (a step's decisions are rows of what it made), 0275 (a step is rederived until its key hits) and 0276
+(one form from the tape on, written through `ProgramW`).
 
 ## Intro
 

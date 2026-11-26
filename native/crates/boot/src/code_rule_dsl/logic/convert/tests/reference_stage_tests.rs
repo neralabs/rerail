@@ -120,7 +120,7 @@ pub(super) fn w_side(files: &[(String, String)]) -> Side {
     for (path, source) in files.iter().filter(|(p, _)| p.ends_with(".py") || p.ends_with(".pyi")) {
         let (tape, _) = crate::code_rule_dsl::fixtures::document(source, GrammarDialect::Python);
         let module = (!packages.is_empty()).then(|| python_module_in(path, |d| packages.contains(d))).flatten();
-        let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new(source.clone()), module.as_ref(), None, "references").unwrap();
+        let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new(source.clone().into()), module.as_ref(), None, "references").unwrap();
         let module = file.module.as_deref();
         let has_errors = !crate::code_rule_dsl::soundness::SyntaxErrors::of_doc(&tape).is_empty();
         let root = ast_grep_core::AstGrep::doc(tape.clone());

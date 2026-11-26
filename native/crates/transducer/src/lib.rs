@@ -16,7 +16,8 @@
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
-pub use rerail_transducer_cpu::{content_store, git_access, git_workspace};
+pub use rerail_transducer_cpu::{git_access, git_workspace};
+pub use rerail_store::content_store;
 #[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_transducer_cpu::code_rule_dsl::*;
@@ -103,6 +104,13 @@ pub mod code_rule_dsl {
         }
     }
 }
+// cratify: mounts end
+
+// The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
+// host's umask of `002` made a fixture's folder `775`, which the mapped files' rules refuse.
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;
 
 /// This crate's own test binary, which boot does not load: the compiled CPU executor its tests run is registered as the
 /// binary loads, as boot registers it (`install_devices`).

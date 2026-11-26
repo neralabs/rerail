@@ -1,42 +1,44 @@
-//! The checkout this engine runs from: where it reads its own `.rerail` files as it runs (the builtin
-//! typing programs under `native/src/code_rule_dsl/typing/programs`, the rule library under
-//! `docs/rule-syntax/lib`), and where the tests that read the engine's sources find them (`source_paths`).
+//! Where this engine reads its own `.rerail` files as it runs (the builtin typing programs under
+//! `native/src/code_rule_dsl/typing/programs`, the rule library under `docs/rule-syntax/lib`): its checkout, or the
+//! installed package that ships those files at the same paths; and where the tests that read the engine's sources find
+//! them (`source_paths`).
 //!
 //! It is found as the program runs, not written into the build (decision 0224). A crate that wrote
 //! its checkout's path in (`env!("CARGO_MANIFEST_DIR")`) was a different crate in every checkout, and
 //! so was every crate above it: a compiler cache shared by the checkouts could reuse none of them.
-use rerail_store::Canonical as _;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-/// The checkout's root: the directory that holds `native/Cargo.toml` and `docs/rule-syntax`. The first
-/// found of:
+/// The rule library, under the root.
+const LIBRARY: &str = "docs/rule-syntax/lib";
+/// The engine's builtin typing programs, under the root.
+const PROGRAMS: &str = "native/src/code_rule_dsl/typing/programs";
+
+/// The root the engine's `.rerail` files are read under: a checkout (the directory that holds `native/Cargo.toml`
+/// and `docs/rule-syntax`), or an installed package (the directory that holds the library's `core.rerail` and the
+/// typing programs' `sources.rerail`, as `@neralabs/rerail` ships them). The first found of:
 ///
 /// - `RERAIL_SOURCE_ROOT`;
-/// - a directory above the file this code was loaded from: the program, a test binary, or the Node
-///   addon, each built into its checkout's `target/`;
-/// - one above the package `cargo run` or `cargo test` runs (`CARGO_MANIFEST_DIR`, as the program runs);
-/// - one above the working directory.
+/// - a checkout or an installed package above the file this code was loaded from: the program, a test binary, or
+///   the Node addon, built into its checkout's `target/` or installed in its package's `native/`;
+/// - a checkout above the package `cargo run` or `cargo test` runs (`CARGO_MANIFEST_DIR`, as the program runs);
+/// - a checkout above the working directory.
 ///
-/// `None` outside a checkout: an installed engine has no source tree.
+/// `None` when none is found.
 ///
-/// Found once a run (`setting`), as `native` and `rule_library` are; outside a run, at each call. Each is a search (a
-/// canonical path, a walk up the directories): asked at each call, the rule library alone was searched for 791 times
-/// in a reach test's 23 runs.
+/// Found once a run (`setting`), as `native` and `rule_library` are; outside a run, at each call. Each is a search (the
+/// loader's lookup, a canonical path, a walk up the directories): asked at each call, the rule library alone was
+/// searched for 791 times in a reach test's 23 runs. A caller that makes many paths finds the directories once and
+/// hands them on (`phase0::Dirs`).
 pub fn root() -> Option<PathBuf> {
-    rerail_prof::code_rule_dsl::logic::profile::setting(find)
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| {
+        find(std::env::var_os("RERAIL_SOURCE_ROOT"), image(), [std::env::var_os("CARGO_MANIFEST_DIR").map(PathBuf::from), std::env::current_dir().ok()])
+    })
 }
 
-/// The checkout's or installed package's `native/` directory.
+/// The root's `native/` directory: `native` (as the working directory has it) when no root is found, so that what
+/// is read from it is not found, as before.
 pub fn native() -> PathBuf {
-    rerail_prof::code_rule_dsl::logic::profile::setting(find_native)
-}
-
-fn find_native() -> PathBuf {
-    if std::env::var_os("RERAIL_SOURCE_ROOT").is_none()
-        && let Some(native) = beside_image("native", "src/code_rule_dsl/typing/programs/sources.rerail")
-    {
-        return native;
-    }
     root().map_or_else(|| PathBuf::from("native"), |root| root.join("native"))
 }
 
@@ -67,39 +69,40 @@ pub fn source_file(path: &str) -> PathBuf {
     source_paths(path).into_iter().find(|p| p.is_file()).unwrap_or_else(|| native().join("src").join(path))
 }
 
-/// The `.rerail` library from a source checkout or from the package that contains the addon.
+/// The rule library `#include` reads from, under the root: `docs/rule-syntax/lib` (as the working directory has it)
+/// when no root is found.
 pub fn rule_library() -> PathBuf {
-    rerail_prof::code_rule_dsl::logic::profile::setting(find_rule_library)
+    root().map_or_else(|| PathBuf::from(LIBRARY), |root| root.join(LIBRARY))
 }
 
-fn find_rule_library() -> PathBuf {
-    const LIBRARY: &str = "docs/rule-syntax/lib";
-    if let Some(root) = std::env::var_os("RERAIL_SOURCE_ROOT") {
-        return PathBuf::from(root).join(LIBRARY);
-    }
-    beside_image(LIBRARY, "core.rerail")
-        .unwrap_or_else(|| root().map_or_else(|| PathBuf::from(LIBRARY), |root| root.join(LIBRARY)))
-}
-
-fn beside_image(directory: &str, marker: &str) -> Option<PathBuf> {
-    let image = image()?;
-    let image = image.canonical().unwrap_or(image);
-    image.ancestors().map(|dir| dir.join(directory)).find(|dir| dir.join(marker).is_file())
-}
-
-fn find() -> Option<PathBuf> {
-    if let Some(root) = std::env::var_os("RERAIL_SOURCE_ROOT") {
+/// `root()` from what it reads: the override, the loaded image, and the other places a checkout is looked for above.
+fn find(source_root: Option<OsString>, image: Option<PathBuf>, others: [Option<PathBuf>; 2]) -> Option<PathBuf> {
+    if let Some(root) = source_root {
         return Some(PathBuf::from(root));
     }
-    let starts = [image(), std::env::var_os("CARGO_MANIFEST_DIR").map(PathBuf::from), std::env::current_dir().ok()];
-    starts.into_iter().flatten().find_map(|start| {
-        let start = dunce::canonicalize(&start).unwrap_or(start);
-        start.ancestors().find(|dir| is_root(dir)).map(Path::to_owned)
-    })
+    let from_image = image.and_then(|image| above(&image, is_root_or_installed));
+    from_image.or_else(|| others.into_iter().flatten().find_map(|start| above(&start, is_root)))
+}
+
+/// The nearest directory at or above `start` (canonical) that passes `test`.
+fn above(start: &Path, test: impl Fn(&Path) -> bool) -> Option<PathBuf> {
+    let start = dunce::canonicalize(start).unwrap_or_else(|_| start.to_owned());
+    start.ancestors().find(|dir| test(dir)).map(Path::to_owned)
 }
 
 fn is_root(dir: &Path) -> bool {
     dir.join("native/Cargo.toml").is_file() && dir.join("docs/rule-syntax").is_dir()
+}
+
+/// A checkout's root (`is_root`) or an installed package's (`is_installed`). `docs/rule-syntax` is asked first, as
+/// both hold it: a directory that is neither costs one look, as it does `is_root`.
+fn is_root_or_installed(dir: &Path) -> bool {
+    dir.join("docs/rule-syntax").is_dir() && (dir.join("native/Cargo.toml").is_file() || is_installed(dir))
+}
+
+/// An installed package's root: the library and the typing programs, at the paths the package ships them.
+fn is_installed(dir: &Path) -> bool {
+    dir.join(LIBRARY).join("core.rerail").is_file() && dir.join(PROGRAMS).join("sources.rerail").is_file()
 }
 
 /// The file this code was loaded from (a program, or a library loaded into one): the process's to the end, so
@@ -186,7 +189,25 @@ fn loaded_from(address: usize) -> Option<PathBuf> {
     Some(PathBuf::from(std::ffi::OsStr::from_bytes(name.to_bytes())))
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn loaded_from(address: usize) -> Option<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::LibraryLoader::{GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, GetModuleFileNameW, GetModuleHandleExW};
+    let mut module = std::ptr::null_mut();
+    let flags = GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT;
+    // SAFETY: with `FROM_ADDRESS` the name argument is only an address to look up, and `module` is written on success;
+    // `UNCHANGED_REFCOUNT` takes no reference, so there is nothing to free.
+    if unsafe { GetModuleHandleExW(flags, address as *const u16, &mut module) } == 0 {
+        return None;
+    }
+    // The longest path Windows names (32,767 characters and the NUL).
+    let mut name = vec![0u16; 32_768];
+    // SAFETY: `name` holds `name.len()` characters, the size handed over; `module` is a module the loader holds.
+    let length = unsafe { GetModuleFileNameW(module, name.as_mut_ptr(), name.len() as u32) } as usize;
+    (length > 0 && length < name.len()).then(|| PathBuf::from(std::ffi::OsString::from_wide(&name[..length])))
+}
+
+#[cfg(not(any(unix, windows)))]
 fn loaded_from(_address: usize) -> Option<PathBuf> {
     std::env::current_exe().ok()
 }
@@ -210,5 +231,63 @@ mod tests {
         assert_eq!(dunce::canonicalize(&found).unwrap(), dunce::canonicalize(&exe).unwrap());
         assert!(took < std::time::Duration::from_millis(5), "{took:?}");
         assert_eq!(super::loaded_from(0), None, "an address no image holds");
+    }
+
+    /// A directory laid out as a checkout, as an installed package (the addon in `native/`), or as neither.
+    fn layout(dir: &std::path::Path, files: &[&str]) {
+        for file in files {
+            let path = dir.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "").unwrap();
+        }
+    }
+    const CHECKOUT: &[&str] = &["native/Cargo.toml", "docs/rule-syntax/lib/core.rerail", "native/src/code_rule_dsl/typing/programs/sources.rerail", "target/debug/addon.node"];
+    const INSTALLED: &[&str] = &["package.json", "docs/rule-syntax/lib/core.rerail", "native/src/code_rule_dsl/typing/programs/sources.rerail", "native/addon.node"];
+
+    fn canonical(path: std::path::PathBuf) -> std::path::PathBuf {
+        dunce::canonicalize(path).unwrap()
+    }
+
+    #[test]
+    fn an_installed_package_is_the_root_above_its_addon_and_nowhere_else() {
+        let dir = tempfile::tempdir().unwrap();
+        layout(dir.path(), INSTALLED);
+        let addon = dir.path().join("native/addon.node");
+        assert_eq!(super::find(None, Some(addon.clone()), [None, None]), Some(canonical(dir.path().to_owned())));
+        // Not from the working directory or the package cargo runs: only the engine's own files are its library.
+        assert_eq!(super::find(None, None, [Some(dir.path().to_owned()), Some(dir.path().join("native"))]), None);
+        // A package missing either half of what it ships is not one.
+        std::fs::remove_file(dir.path().join("native/src/code_rule_dsl/typing/programs/sources.rerail")).unwrap();
+        assert_eq!(super::find(None, Some(addon), [None, None]), None);
+    }
+
+    #[test]
+    fn a_checkout_is_the_root_above_its_build_its_package_or_the_working_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        layout(dir.path(), CHECKOUT);
+        let root = Some(canonical(dir.path().to_owned()));
+        assert_eq!(super::find(None, Some(dir.path().join("target/debug/addon.node")), [None, None]), root);
+        assert_eq!(super::find(None, None, [Some(dir.path().join("native")), None]), root);
+        assert_eq!(super::find(None, Some(std::path::PathBuf::from("/")), [None, Some(dir.path().join("docs"))]), root);
+    }
+
+    #[test]
+    fn the_nearest_root_above_the_addon_is_taken() {
+        // The package installed inside a checkout reads its own files, which match its build.
+        let dir = tempfile::tempdir().unwrap();
+        layout(dir.path(), CHECKOUT);
+        let package = dir.path().join("node_modules/@neralabs/rerail");
+        layout(&package, INSTALLED);
+        assert_eq!(super::find(None, Some(package.join("native/addon.node")), [Some(dir.path().to_owned()), None]), Some(canonical(package)));
+    }
+
+    #[test]
+    fn neither_layout_is_no_root_and_the_override_is_taken_as_given() {
+        let dir = tempfile::tempdir().unwrap();
+        layout(dir.path(), &["native/addon.node", "docs/rule-syntax/lib/core.rerail"]);
+        let addon = dir.path().join("native/addon.node");
+        assert_eq!(super::find(None, Some(addon.clone()), [Some(dir.path().to_owned()), None]), None);
+        let named = std::ffi::OsString::from("/no/such/checkout");
+        assert_eq!(super::find(Some(named), Some(addon), [Some(dir.path().to_owned()), None]), Some(std::path::PathBuf::from("/no/such/checkout")));
     }
 }

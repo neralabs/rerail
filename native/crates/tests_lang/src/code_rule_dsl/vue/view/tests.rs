@@ -362,7 +362,7 @@
             let tree = parse(&source);
             let image =
                 TapeImage::encode(tree.root_node(), &grammar, &source, &|| false).expect("encodes");
-            let host = TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false)
+            let host = TapeDoc::restore(Arc::new(source.clone().into()), grammar, &image, &|| false)
                 .expect("restores");
             let program = host.guests().expect("owned")[0].doc.clone();
             let dialect = *ast_grep_core::Doc::get_lang(&program);

@@ -1,4 +1,5 @@
 //! Bounded CTE fusion. A dependency crosses a statement boundary only when a group is full.
+use rerail_blocks::vector::Vector;
 use super::*;
 
 const MAX_ARMS: usize = 400;
@@ -6,7 +7,7 @@ const MAX_EXPANSION: usize = phase::Phase::EXPANSION_BUDGET;
 
 #[derive(Default)]
 pub struct Group {
-    pub nodes: Vec<usize>,
+    pub nodes: Vector<usize>,
     pub dependencies: BTreeSet<usize>,
     pub inputs: BTreeSet<String>,
     pub outputs: Vec<(String, usize)>,
@@ -197,7 +198,7 @@ impl Plan {
                 ordered.push(id);
             }
         }
-        let mut components = BTreeMap::<usize, Vec<usize>>::new();
+        let mut components = BTreeMap::<usize, Vector<usize>>::new();
         for id in ordered {
             components.entry(root(&parent, id)).or_default().push(id);
         }

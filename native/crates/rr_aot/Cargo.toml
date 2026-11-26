@@ -7,12 +7,19 @@ description = "The .rerail parser as Rust, written by the Bitlex compiler from t
 
 [features]
 # The test-only items of the crates below, for the tests above them (native/Cargo.toml, `test-hooks`).
-test-hooks = ["rerail-tape-format/test-hooks"]
+test-hooks = ["rerail-tape-format/test-hooks", "rerail-rr-syntax?/test-hooks"]
+# The speed tool (`rr-aot-speed`): it writes each tape through the `.rerail` parser's own sink (`lean::Sink16`).
+speed = ["dep:rerail-rr-syntax"]
 
 [dependencies]
 # Stage 1 of tier 1 on simdjson's backends, as the lean lexer's (`bitlex_lex_rust`).
 rerail-simd8 = { path = "../simd8" }
 rerail-tape-format = { path = "../tape_format" }
+rerail-rr-syntax = { path = "../rr_syntax", optional = true }
+
+[[bin]]
+name = "rr-aot-speed"
+required-features = ["speed"]
 
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).

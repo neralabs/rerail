@@ -9,6 +9,7 @@
 //! rule — affected outputs are the forward closure of the changed keys, recomputed from the
 //! unaffected boundary — with the read sets recorded by the queries as they run, not derived by
 //! hand per stage.
+use rerail_blocks::vector::Vector;
 use super::intern::{hash_str, Interner, Sym};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::BinaryHeap;
@@ -218,7 +219,7 @@ pub enum V {
     /// field_class: (member class, lo, hi)
     Field(Vec<(Sym, i32, i32)>),
     Body(Box<Body>),
-    Link(Box<[u32]>),
+    Link(Vector<u32>),
 }
 
 impl V {
@@ -233,7 +234,7 @@ impl V {
     }
 
     /// The value as words (memos store values this way: one allocation per memo).
-    pub fn encode(&self, out: &mut Vec<u32>) {
+    pub fn encode(&self, out: &mut Vector<u32>) {
         match self {
             V::BaseClass(None) => out.push(0),
             V::BaseClass(Some((None, s))) => out.extend([1, *s]),
@@ -290,13 +291,13 @@ impl V {
 /// One memo in one allocation: [n_ins | n_qs << 16, ins as (lo, hi) word pairs, qs, value].
 #[derive(Clone, PartialEq, Eq)]
 pub struct Memo {
-    data: Box<[u32]>,
+    data: Vector<u32>,
 }
 
 impl Memo {
     pub fn new(ins: &[u64], qs: &[QId], val: &[u32]) -> Memo {
         assert!(ins.len() < 1 << 16 && qs.len() < 1 << 16, "memo read set over 65535");
-        let mut d = Vec::with_capacity(1 + 2 * ins.len() + qs.len() + val.len());
+        let mut d = Vector::with_capacity(1 + 2 * ins.len() + qs.len() + val.len());
         d.push(ins.len() as u32 | (qs.len() as u32) << 16);
         for &k in ins {
             d.extend([k as u32, (k >> 32) as u32]);
@@ -405,7 +406,7 @@ pub struct Anomalies {
 }
 
 struct Frame {
-    ins: Vec<u64>,
+    ins: Vector<u64>,
     qs: Vec<QId>,
 }
 
@@ -488,14 +489,14 @@ impl<'a> Ctx<'a> {
         if q.kind == K_LINK {
             self.work.link_nodes += 1;
         }
-        self.frames.push(Frame { ins: Vec::new(), qs: Vec::new() });
+        self.frames.push(Frame { ins: rerail_blocks::vector::Vector::new(), qs: Vec::new() });
         let v = super::link::exec(self, q);
         let mut f = self.frames.pop().unwrap();
         f.ins.sort_unstable();
         f.ins.dedup();
         f.qs.sort_unstable();
         f.qs.dedup();
-        let mut words = Vec::new();
+        let mut words = rerail_blocks::vector::Vector::new();
         v.encode(&mut words);
         let m = Memo::new(&f.ins, &f.qs, &words);
         // A re-run that reproduces the entry below (value and reads) leaves nothing in the delta:

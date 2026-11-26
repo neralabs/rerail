@@ -1,6 +1,6 @@
 # 0018: execution ranges packed to a byte budget; count programs run as walks
 
-Status: accepted (2026-10-31)
+Status: built (audited 2026-11-23). Accepted (2026-10-31)
 
 ## Context
 

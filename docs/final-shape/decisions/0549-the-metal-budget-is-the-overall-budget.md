@@ -1,7 +1,8 @@
 # 0549. The Metal budget is the overall budget
 
-Status: accepted (2026-11-20). Changes 0126's default for the Metal budget; the flags, the variables and the way the
-parts scale are unchanged.
+Status: partly built (audited 2026-11-23). Left: Remove each thread's own resident copies and sorts of the same
+relations, so the Metal budget can come back down. Accepted (2026-11-20). Changes 0126's default for the Metal budget;
+the flags, the variables and the way the parts scale are unchanged.
 
 ## Intro
 

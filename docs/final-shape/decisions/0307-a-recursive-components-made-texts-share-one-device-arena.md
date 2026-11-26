@@ -1,7 +1,7 @@
 # 0307: A recursive component's made texts share one device arena, interned at its end
 
-Status: decided (the user, 2026-11-16); built the same day. In a session, `hierarchy` reached the device once it
-made levels (decision 0311).
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-16); built the same day. In a session, `hierarchy`
+reached the device once it made levels (decision 0311).
 
 ## Intro
 

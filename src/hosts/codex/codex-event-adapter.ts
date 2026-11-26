@@ -42,6 +42,7 @@ export function codexHookEvents(input: CodexHookInput): readonly AdapterEvent[] 
       session: descriptor,
       toolName: requiredText(input, "tool_name"),
       input: input.tool_input,
+      cwd: descriptor.cwd,
     }];
   }
   if (hook === "PostToolUse") {

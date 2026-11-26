@@ -1,7 +1,7 @@
 # 0384. A relation is one relation, written in place
 
-Status: decided (2026-11-17), built (steps 1–8, 2026-11-18). The user picked it over two other forms: relations of many parts with
-an index per part, and nesting only the fixpoint's runs in blocks.
+Status: built (audited 2026-11-23). Decided (2026-11-17), built (steps 1–8, 2026-11-18). The user picked it over two
+other forms: relations of many parts with an index per part, and nesting only the fixpoint's runs in blocks.
 
 ## Intro
 
@@ -252,3 +252,5 @@ heads written into their own tail and the heads given a relation of their own.
   part.
 - Exports are filed in chunk order on the run's thread, so an export's row ids, and the order its readers see,
   stay fixed for a given input.
+
+**2026-11-23:** `BlockVec` is folded into `Vector` (decision 0628 §8). A relation's arrays are `Vector`s in its home's room (`Home::room`, `rows::vector_in`); the ledger check, borrowed rows (`rows::shared`) and the chunk hand-off (`InRelations::into_chunk`, `rows::from_chunk`) are `Vector`'s and its region's. Where this record says `BlockVec`, read that.

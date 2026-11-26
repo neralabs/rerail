@@ -1,6 +1,7 @@
 # 0479: The generated Rust read against the lean parser's, and the gaps closed in turn
 
-Status: decided (2026-11-19). Numbered 0431 on Swift-Kotlin-Scala-support (renumbered in the roll-up: the
+Status: superseded by 0565, 0569 (Rust from the grammar: 0560, 0562) (audited 2026-11-23). Decided (2026-11-19).
+Numbered 0431 on Swift-Kotlin-Scala-support (renumbered in the roll-up: the
 hub has its own 0431). Follows 0429 ("the generated Rust beside the lean parser's") and
 0430. The user: "evaluate the Rust code generated. Is it reasonably idiomatic and does it have
 the same structure as the known-performant lean code? Address the gaps."

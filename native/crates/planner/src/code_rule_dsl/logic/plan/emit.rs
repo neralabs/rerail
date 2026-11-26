@@ -20,6 +20,7 @@
 //! A wave's own program reads its chunk's batch (`waves::matches`): its inputs are batch inputs,
 //! read from their sources and planned from their row estimates, with no statistics (`batch`).
 
+use rerail_blocks::vector::Vector;
 use super::*;
 use super::body::RuleKey;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
@@ -39,7 +40,7 @@ pub struct Emitted {
     /// The program's inputs, which its statements may read.
     pub inputs: Vec<String>,
     /// Integer-domain constants can bind immutable roots without cold SQL scratch tables.
-    pub constant_rows: std::sync::Arc<BTreeMap<String, Vec<Vec<i64>>>>,
+    pub constant_rows: std::sync::Arc<BTreeMap<String, Vec<Vector<i64>>>>,
 }
 
 impl Emitted {
@@ -209,8 +210,8 @@ pub fn emit_inputs(placed: super::body::Placed, db:&Connection, name:&str, count
         if scc.iter().all(|r| views.contains(r)) {
             continue;
         }
-        let rules: Vec<RuleKey> = scc.iter().flat_map(|rel| keys_by.get(rel.as_str()).into_iter().flatten().copied()).collect();
-        let profile_key = super::super::profile::on().then(||format!("{name} stratum {stratum}: {}",scc.iter().cloned().collect::<Vec<_>>().join(",")));
+        let rules: Vec<RuleKey> = scc.iter().flat_map(|rel| keys_by.get(rel).into_iter().flatten().copied()).collect();
+        let profile_key = super::super::profile::on().then(||format!("{name} stratum {stratum}: {}",scc.iter().map(str::to_owned).collect::<Vec<_>>().join(",")));
         let record = |rule: RuleKey, kind: &str, x: Option<super::super::profile::RulePlan>, took: f64| {
             if let (Some(key),Some(x)) = (&profile_key,x) {
                 let number = rule.number();
@@ -239,7 +240,7 @@ pub fn emit_inputs(placed: super::body::Placed, db:&Connection, name:&str, count
             step(b.rel(b.head()), stratum, reads, &query.render(), Some(query));
         }
         if recursive {
-            model.stats.solve(scc.clone());
+            model.stats.solve(rerail_section::TextSet::of(scc.iter()));
             for (&rule, (b, _)) in rules.iter().zip(&planned) {
                 for i in 0..b.len() {
                     let Some(a) = b.plain_atom(i).filter(|&a| own_lit(b, Lit::Atom(a))) else { continue };
@@ -251,14 +252,14 @@ pub fn emit_inputs(placed: super::body::Placed, db:&Connection, name:&str, count
                     step(b.rel(b.head()), stratum, vec![b.rel(a).to_string()], &query.render(), Some(query));
                 }
             }
-            model.stats.solve(BTreeSet::new());
+            model.stats.solve(Default::default());
         }
     }
     let lattices = ProgramFields::lattice(prog).into_iter().filter(|(rel, _)| derived(rel)).map(|(rel, l)| (rel, l.keys, super::super::native::TOP)).collect();
     let columns = |rel: &str| decls.iter().find(|(r, _)| r == rel).map_or(&[][..], |(_, c)| c.as_slice());
     Ok(Emitted {
         constant_rows: std::sync::Arc::new(facts.iter()
-            .filter_map(|(rel,rows)|rows.iter().map(|row|row.iter().map(Value::integer).collect::<Option<Vec<_>>>()).collect::<Option<Vec<_>>>().map(|rows|(rel.clone(),rows))).collect()),
+            .filter_map(|(rel,rows)|rows.iter().map(|row|row.iter().map(Value::integer).collect::<Option<Vector<_>>>()).collect::<Option<Vec<_>>>().map(|rows|(rel.clone(),rows))).collect()),
         value_types: std::sync::Arc::new(decls.iter().map(|(r,c)|(r.clone(),c.iter().map(|(_,t)|t.clone()).collect())).collect()),
         analysis,
         program: schedule::Program { name: name.to_owned(), column_types:relations.iter().map(|(rel,_)|(rel.clone(),columns(rel).iter().map(|(_,ty)|if !atoms && ty=="sym" {"TEXT".into()} else {"INTEGER".into()}).collect())).collect(), relations, steps, file_local: false, partitions: Vec::new(), lattices, lattice_operations:BTreeMap::new() },
@@ -275,7 +276,7 @@ pub fn emit_program(
     prog: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
     name: &str,
     batch: &HashMap<String, (Source, f64)>,
-    intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>,
+    intern: &mut dyn FnMut(&[&str]) -> Result<Vector<u32>>,
 ) -> Result<Emitted> {
     let lowered = lower::lowered(prog, crate::code_rule_dsl::language::GrammarDialect::Python, intern)?;
     emit(&lowered, &Connection::open_in_memory()?, "main", name, None, batch)
@@ -380,7 +381,7 @@ pub fn single(emitted: Emitted, output: &str) -> Result<Emitted> {
 pub fn outputs(
     lowered: &lower::Lowered,
     db: &Connection,
-) -> Result<(BTreeMap<String, Vec<Vec<String>>>, BTreeMap<String, Vec<usize>>)> {
+) -> Result<(BTreeMap<String, Vec<Vec<String>>>, BTreeMap<String, Vector<usize>>)> {
     // Read from the program's version (its fields), as the run reads it.
     let placed = lowered.placed()?;
     let f = placed.fields()?;

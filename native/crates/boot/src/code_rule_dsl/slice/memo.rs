@@ -17,7 +17,7 @@ use crate::code_rule_dsl::facts::observe::path_name;
 use crate::code_rule_dsl::facts::vtab::syntax::Document;
 use crate::code_rule_dsl::language::label_of_path;
 use crate::code_rule_dsl::waves::owner::Lease;
-use crate::content_store::kept_facts::{BlockFlat, KeptPut, KeptSpace, KeptWhat, holder_put};
+use crate::content_store::kept_facts::{KeptPut, KeptSpace, filled_put, holder_put};
 use crate::content_store::{ContentStore, StoreResult};
 use rerail_blocks::kept::{FactKey, KeptRead as _};
 use sha2::{Digest as _, Sha256};
@@ -64,7 +64,7 @@ fn content(store: &ContentStore, scope: &str, document: &Document) -> StoreResul
 }
 
 /// The memo's kept entries, opened once for a run's lookups (`lookup`).
-pub(super) fn open(store: &ContentStore) -> StoreResult<Option<KeptSpace>> {
+pub(super) fn open(store: &ContentStore) -> StoreResult<Option<std::sync::Arc<KeptSpace>>> {
     store.kept_space(&space())
 }
 
@@ -141,30 +141,9 @@ pub(super) fn remember(lease: &Lease<'_>, store: &ContentStore, scope: &str, rul
     Ok(())
 }
 
-/// `rel`'s rows of partition `part`: `n` rows of `types.len()` words, which `fill` gives row by row, written into a
-/// block of their own as they are given (`BlockFlat`, never a heap vector) and digested there; with none, the
-/// partition's rows gone. A fill that gives other than `n` whole rows (the lease's rows changed under it) is refused.
+/// `rel`'s rows of partition `part` (`kept_facts::filled_put`).
 fn put(rel: &str, part: i64, types: &[u8], n: usize, fill: impl FnOnce(&mut dyn FnMut(i64)) -> rusqlite::Result<()>) -> StoreResult<KeptPut> {
-    let width = types.len();
-    let (what, digest) = if n == 0 {
-        (KeptWhat::Gone, 0)
-    } else {
-        let mut block = BlockFlat::new(n, width, true);
-        let mut h = Sha256::new();
-        let mut given = 0;
-        fill(&mut |v| {
-            if given < n * width {
-                block.put(given / width, given % width, v);
-                h.update(v.to_le_bytes());
-            }
-            given += 1;
-        })?;
-        if given != n * width {
-            return Err(crate::content_store::StoreError::Invalid(format!("{rel}: {given} values for {n} rows of {width}")));
-        }
-        (KeptWhat::Picked(Box::new(block)), u64::from_le_bytes(h.finalize()[..8].try_into().expect("8 bytes")))
-    };
-    Ok(KeptPut { rel: rel.to_owned(), ident: ident(rel), part, digest, reads: Vec::new(), types: types.to_vec(), what })
+    filled_put(rel, ident(rel), part, types, n, fill)
 }
 
 /// How long a plan stays live after the last wave that wrote under it (`hold`).

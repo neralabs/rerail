@@ -227,15 +227,39 @@ function checkoutRules(database: RerailDatabase, checkout: CheckoutContext): rea
     .rules;
 }
 
-/** The rules that are on in `checkout`, at any folder of its repository, as its own and its parents' settings leave them. */
+/**
+ * Whether a rule switched on runs: not when its options do not apply (`configError`) or this Rerail no longer runs its
+ * pack's document (`notRun`), as the compiled catalog the session note counts leaves both out.
+ */
+const runs = (rule: EffectiveRule): boolean => rule.on && rule.configError === null && rule.notRun === null;
+
+/** The rules that are on and run in `checkout`, at any folder of its repository, as its own and its parents' settings leave them. */
 export function onRuleCount(database: RerailDatabase, checkout: CheckoutContext): number {
-  return checkoutRules(database, checkout).filter(rule => rule.on).length;
+  return checkoutRules(database, checkout).filter(runs).length;
 }
 
 /** {@link onRuleCount}, and how many rules and packs that are on there run in Log waiting for a person's approval. */
 export function checkoutRuleCounts(database: RerailDatabase, checkout: CheckoutContext): { on: number; awaitingApproval: number } {
   const rules = checkoutRules(database, checkout);
-  return { on: rules.filter(rule => rule.on).length, awaitingApproval: awaitingApprovalOf(rules) };
+  return { on: rules.filter(runs).length, awaitingApproval: awaitingApprovalOf(rules) };
+}
+
+/**
+ * The packs whose rules on in `checkout` this Rerail does not run (`EffectiveRule.notRun`), each with how many: with
+ * {@link onRuleCount}, they add up to the rules switched on there.
+ */
+export function checkoutRulesNotRun(database: RerailDatabase, checkout: CheckoutContext): { name: string; version: string | null; ruleCount: number }[] {
+  const catalog = loadRuleCatalog();
+  const byPack = new Map<string, Set<string>>();
+  for (const rule of checkoutRules(database, checkout)) {
+    const packId = catalog.packOf.get(rule.document.rule.id);
+    if (!rule.on || rule.notRun === null || packId === undefined) continue;
+    byPack.set(packId, (byPack.get(packId) ?? new Set()).add(rule.document.rule.id));
+  }
+  return [...catalog.packs.values()].flatMap(pack => {
+    const ids = byPack.get(pack.id);
+    return ids === undefined ? [] : [{ name: pack.name, version: pack.version, ruleCount: ids.size }];
+  });
 }
 
 /** Start or stop a repository as a whole: its own value, with every checkout's own setting cleared. */

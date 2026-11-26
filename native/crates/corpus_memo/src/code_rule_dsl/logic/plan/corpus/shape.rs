@@ -21,35 +21,44 @@ pub struct Shape {
 }
 
 impl Shape {
+    /// One walk of the rules by relation id; each relation named once, at the end (named per atom, a set's string
+    /// made and compared per atom, it was 16 ms of a warm run).
     pub fn of(v: &Version) -> Shape {
-        let mut s = Shape::default();
+        use std::collections::{HashMap, HashSet};
+        let (mut positive, mut reads_of): (HashSet<_>, HashMap<_, HashSet<_>>) = Default::default();
         for r in v.rules() {
-            let head = v.rel_name(r.head().rel()).to_owned();
-            let mut reads: BTreeSet<String> = BTreeSet::new();
+            let reads = reads_of.entry(r.head().rel()).or_default();
             for l in r.body() {
-                match l.view() {
-                    Lit::Atom(a) => {
-                        let rel = v.rel_name(a.rel());
-                        if !a.neg() {
-                            s.positive.insert(rel.to_owned());
-                        }
-                        reads.insert(rel.to_owned());
-                    }
-                    Lit::Agg { atom, .. } => {
-                        let rel = v.rel_name(atom.rel());
-                        if !atom.neg() {
-                            s.positive.insert(rel.to_owned());
-                        }
-                        reads.insert(rel.to_owned());
-                    }
-                    _ => {}
+                let atom = match l.view() {
+                    Lit::Atom(a) => a,
+                    Lit::Agg { atom, .. } => atom,
+                    _ => continue,
+                };
+                if !atom.neg() {
+                    positive.insert(atom.rel());
                 }
+                reads.insert(atom.rel());
             }
-            s.read.extend(reads.iter().cloned());
-            s.reads_of.entry(head.clone()).or_default().extend(reads);
-            s.made.insert(head);
         }
-        s
+        let names = |rels: &mut dyn Iterator<Item = &_>| -> BTreeSet<String> { rels.map(|&r| v.rel_name(r).to_owned()).collect() };
+        let read: HashSet<_> = reads_of.values().flatten().copied().collect();
+        Shape {
+            made: names(&mut reads_of.keys()),
+            read: names(&mut read.iter()),
+            positive: names(&mut positive.iter()),
+            reads_of: reads_of.iter().map(|(&h, rs)| (v.rel_name(h).to_owned(), names(&mut rs.iter()))).collect(),
+        }
     }
+}
 
+/// An analysis of the version (`manager::analysis`): made once a version, held by it, and shared by the readers that
+/// ask it of the same version (the constants' fold, the phases, the combine's): each made it anew, each a decode of
+/// every rule (28 ms of a warm run's 0.36 s). Not kept for the store: it is asked before the run reads its kept plans
+/// (whose entry is the prepared program's, made after it), so a warm run would make it and write it again.
+impl crate::code_rule_dsl::logic::program_image::manager::Analysis for Shape {
+    const NAME: &'static str = "corpus shape";
+    const READS: crate::code_rule_dsl::logic::program_image::manager::Reads = crate::code_rule_dsl::logic::program_image::manager::Reads::RULES;
+    fn compute(cx: &crate::code_rule_dsl::logic::program_image::manager::Cx<'_>) -> Result<Shape, String> {
+        Ok(Shape::of(cx.v()))
+    }
 }

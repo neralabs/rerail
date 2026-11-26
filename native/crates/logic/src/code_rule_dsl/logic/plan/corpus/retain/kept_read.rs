@@ -4,6 +4,7 @@
 //! (`KeptSource`), its values read where they lie. No row is decoded or copied (0353), but for a relation whose levels
 //! the entry keeps (decision 0090): those are packed beside its rows, and the relation is read in with them.
 
+use rerail_blocks::vector::Vector;
 use super::kept_source::KeptSource;
 use crate::code_rule_dsl::logic::native::component::InRel;
 use crate::content_store::atoms::Atoms;
@@ -52,8 +53,21 @@ impl Bound {
 
     /// The entry of `rel` (its name and identity) at partition `part`, if the space keeps one.
     pub(in crate::code_rule_dsl) fn entry(self: &Arc<Self>, rel: &str, ident: &[u8; 32], part: i64) -> Option<Entry> {
-        let kept = self.view().entry(&FactKey { rel, ident, part })?;
-        let (rows, digest, types, atoms_max): (*const rerail_blocks::packed::Packed, u64, Vec<u8>, Option<i64>) = (kept.rows, kept.digest, kept.types.to_vec(), kept.atoms_max);
+        let found = self.view().entry(&FactKey { rel, ident, part })?;
+        self.held(found, ident)
+    }
+
+    /// `rel`'s (its name and identity) entries, for reads of several of its partitions (`Keyed::entry`): its name
+    /// searched once a file of the chain, not once a partition.
+    pub(in crate::code_rule_dsl) fn keyed(self: &Arc<Self>, rel: &str, ident: &[u8; 32]) -> Keyed {
+        Keyed { bound: Arc::clone(self), spans: self.view().spans(rel, ident), ident: *ident }
+    }
+
+    /// `found`, an entry of `ident`'s, held past the view's borrow, and named in the run's reader record.
+    fn held(self: &Arc<Self>, found: Kept<'_>, ident: &[u8; 32]) -> Option<Entry> {
+        // SAFETY: what it borrows (its rows, key, types and reads) lies in the read-only mappings `self` holds, which
+        // the entry holds too (`bound`), as `rows` was held before; `kept` gives it back borrowed from the entry.
+        let kept: Kept<'static> = unsafe { std::mem::transmute::<Kept<'_>, Kept<'static>>(found) };
         // Found: the run's program reads it, and its reader record names it (decision 0401 step 8). A miss keeps
         // nothing; what the run puts in its place, its puts' record names.
         crate::code_rule_dsl::logic::profile::with_bound::<KeptReader, _>(|r| {
@@ -61,7 +75,22 @@ impl Bound {
                 log.asked(&self.id, ident, |key| self.view().get(&FactKey { rel: READERS, ident: key, part: 0 }).map(|k| record_idents(&k).collect()).unwrap_or_default());
             }
         });
-        Some(Entry { bound: Arc::clone(self), rel: rel.to_owned(), ident: *ident, part, rows, digest, types, atoms_max })
+        Some(Entry { bound: Arc::clone(self), kept })
+    }
+}
+
+/// One relation's entries in a bound space (`Bound::keyed`).
+pub(in crate::code_rule_dsl) struct Keyed {
+    bound: Arc<Bound>,
+    spans: Vec<(usize, usize)>,
+    ident: [u8; 32],
+}
+
+impl Keyed {
+    /// Its entry at partition `part`, as `Bound::entry` finds it.
+    pub(in crate::code_rule_dsl) fn entry(&self, part: i64) -> Option<Entry> {
+        let found = self.bound.view().entry_in(&self.spans, part)?;
+        self.bound.held(found, &self.ident)
     }
 }
 
@@ -70,41 +99,36 @@ impl Bound {
 #[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Entry {
     bound: Arc<Bound>,
-    rel: String,
-    ident: [u8; 32],
-    part: i64,
-    /// Its rows, in `bound`'s mapping.
-    rows: *const rerail_blocks::packed::Packed,
-    /// What the lookup found of it, read where a run checks it: not looked up in the chain again (each of an edit's
-    /// 20,217 kept granules was looked up twice, `gathered` asking each one's types).
-    digest: u64,
-    types: Vec<u8>,
-    /// The greatest atom its rows hold, as their write recorded it (`KeptEntry::atoms_max`).
-    atoms_max: Option<i64>,
+    /// The entry as found, its rows resolved, in `bound`'s mappings: read again per question, each a search of
+    /// every file of the chain (a warm run asks a thousand entries their digests, types and reads).
+    kept: Kept<'static>,
 }
 
-// SAFETY: `rows` lies in a read-only mapping `bound` holds, shared by every thread that reads it.
+// SAFETY: `kept` lies in a read-only mapping `bound` holds, shared by every thread that reads it.
 unsafe impl Send for Entry {}
 unsafe impl Sync for Entry {}
 
 impl Entry {
     fn kept(&self) -> Kept<'_> {
-        self.bound.view().entry(&FactKey { rel: &self.rel, ident: &self.ident, part: self.part }).expect("an entry of its space")
+        self.kept
+    }
+    fn rows(&self) -> *const rerail_blocks::packed::Packed {
+        std::ptr::from_ref(self.kept.rows)
     }
     /// Its rows where they lie.
     pub(in crate::code_rule_dsl) fn packed(&self) -> &rerail_blocks::packed::Packed {
         // SAFETY: as above: the mapping lives as long as `bound`, which this holds.
-        unsafe { &*self.rows }
+        unsafe { &*self.rows() }
     }
     pub(in crate::code_rule_dsl) fn digest(&self) -> u64 {
-        self.digest
+        self.kept.digest
     }
     pub(in crate::code_rule_dsl) fn reads(&self) -> Vec<(String, u64)> {
         self.kept().reads().map(|(r, d)| (r.to_owned(), d)).collect()
     }
     /// Its columns' value types as kept (`s` an atom).
     pub(in crate::code_rule_dsl) fn types(&self) -> Vec<u8> {
-        self.types.clone()
+        self.kept.types.to_vec()
     }
     pub(in crate::code_rule_dsl) fn len(&self) -> usize {
         self.packed().len()
@@ -115,7 +139,7 @@ impl Entry {
     /// Its rows as an engine relation, its types the engine's (an atom an integer); `None` when its atoms are not
     /// this process's numbering (`readable`).
     pub(in crate::code_rule_dsl) fn rel(&self, atoms: &Atoms) -> Option<Arc<InRel>> {
-        let types = self.types.iter().map(|&t| if t == b's' { b'i' } else { t }).collect();
+        let types = self.kept.types.iter().map(|&t| if t == b's' { b'i' } else { t }).collect();
         self.rel_as(types, atoms)
     }
     /// `rel`, held under the engine's `types` (its own, of the entry's width): a view of the entry where it lies
@@ -127,15 +151,15 @@ impl Entry {
             return None;
         }
         let Some(levels) = rows.levels() else {
-            return Some(InRel::over_source(Arc::new(KeptSource::new(Arc::clone(&self.bound), vec![self.rows])), types));
+            return Some(InRel::over_source(Arc::new(KeptSource::new(Arc::clone(&self.bound), vec![self.rows()])), types));
         };
         // copy: load: the rows and their levels into the run's relation, which maintains a recursive stratum by them.
         let n = rows.len();
-        let mut flat = Vec::with_capacity(n * k);
+        let mut flat = Vector::with_capacity(n * k);
         for i in 0..n {
             flat.extend((0..k).map(|c| rows.get(i, c)));
         }
-        let mut level = Vec::with_capacity(n);
+        let mut level = Vector::with_capacity(n);
         levels.for_each(|v| level.push(v as u32));
         InRel::from_flat_levels(flat, n, types, level)
     }
@@ -145,7 +169,7 @@ impl Entry {
         let rows = self.packed();
         let (k, n) = (rows.arity as usize, rows.len());
         // copy: not block data: a batch of decoded values handed to the reader, never kept.
-        let mut buf: Vec<i64> = Vec::with_capacity(4096.min(n) * k);
+        let mut buf: Vector<i64> = rerail_blocks::vector::Vector::with_capacity(4096.min(n) * k);
         for i in 0..n {
             buf.extend((0..k).map(|c| rows.get(i, c)));
             if buf.len() >= 4096 * k.max(1) {
@@ -167,11 +191,11 @@ impl Entry {
 /// relation, its types the engine's: a view of the granules where they lie, one after another; `None` when one's
 /// atoms are not this process's numbering.
 pub(in crate::code_rule_dsl) fn gathered(parts: &[Entry], width: usize, atoms: &Atoms) -> Option<Arc<InRel>> {
-    let Some(first) = parts.first() else { return Some(InRel::from_flat(Vec::new(), 0, vec![b'i'; width])) };
+    let Some(first) = parts.first() else { return Some(InRel::from_flat(rerail_blocks::vector::Vector::new(), 0, vec![b'i'; width])) };
     if parts.iter().any(|p| p.width() != width || !Arc::ptr_eq(&p.bound, &first.bound) || !readable(p, atoms)) {
         return None;
     }
-    let source = KeptSource::new(Arc::clone(&first.bound), parts.iter().map(|p| p.rows).collect());
+    let source = KeptSource::new(Arc::clone(&first.bound), parts.iter().map(Entry::rows).collect());
     Some(InRel::over_source(Arc::new(source), vec![b'i'; width]))
 }
 
@@ -184,11 +208,11 @@ fn readable(kept: &Entry, atoms: &Atoms) -> bool {
     }
     // The greatest atom its write recorded: its rows are not read (each of an edit's 20,217 kept granules had its atom
     // columns scanned for it).
-    let Some(max) = kept.atoms_max else { return true };
+    let Some(max) = kept.kept.atoms_max else { return true };
     match atoms.reads_in_place(max) {
         Ok(true) => true,
         _ => {
-            crate::code_rule_dsl::logic::profile::decision("a kept entry past a fork (decision 0170)", || format!("{}: its atoms are another numbering's; derived again", kept.rel));
+            crate::code_rule_dsl::logic::profile::decision("a kept entry past a fork (decision 0170)", || format!("{}: its atoms are another numbering's; derived again", kept.kept.key.rel));
             false
         }
     }

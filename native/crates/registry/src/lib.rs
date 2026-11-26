@@ -136,18 +136,24 @@ impl<K: Copy + Eq + fmt::Debug + Send + Sync, V: Copy + Send + Sync> Registry<K,
 }
 
 /// The one provider of an abstraction that has exactly one (a formatter, a reader of one kind of file).
+///
+/// Its read takes no lock: a slot is read on hot paths (the run's room, at every structure made), and its one value,
+/// once registered, never changes.
 pub struct Slot<V: 'static> {
     inner: Registry<(), V>,
+    value: std::sync::OnceLock<V>,
 }
 
 impl<V: Copy + Send + Sync> Slot<V> {
     pub const fn new(what: &'static str) -> Self {
-        Self { inner: Registry::new(what) }
+        Self { inner: Registry::new(what), value: std::sync::OnceLock::new() }
     }
 
-    /// Registers the provider. Panics as `Registry::register` does.
+    /// Registers the provider. Panics as `Registry::register` does: a second registration is refused, so the value
+    /// set here is the only one.
     pub fn register(&self, provider: &'static str, value: V) {
         self.inner.register((), provider, value);
+        let _ = self.value.set(value);
     }
 
     pub fn seal(&self) {
@@ -156,12 +162,12 @@ impl<V: Copy + Send + Sync> Slot<V> {
 
     /// The provider.
     pub fn get(&self) -> Result<V, Missing> {
-        self.inner.try_get(()).ok_or_else(|| Missing { registry: self.inner.what, key: "its provider".to_owned(), registered: Vec::new() })
+        self.try_get().ok_or_else(|| Missing { registry: self.inner.what, key: "its provider".to_owned(), registered: Vec::new() })
     }
 
     /// The provider, if one is registered.
     pub fn try_get(&self) -> Option<V> {
-        self.inner.try_get(())
+        self.value.get().copied()
     }
 
     /// Who registered the provider.

@@ -1,6 +1,6 @@
 # 0043: Every rule the engine runs is written in `.rr`
 
-Status: accepted (user, 2026-11-05)
+Status: built (audited 2026-11-23). Accepted (user, 2026-11-05)
 
 ## Intro
 

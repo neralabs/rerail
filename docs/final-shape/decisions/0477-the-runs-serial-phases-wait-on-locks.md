@@ -1,6 +1,7 @@
 # 0477. The run's serial phases wait on locks the pool's threads share
 
-Status: accepted (2026-11-19). Follows 0465 §1 (Q334's second item) and 0471. Numbered 0472 on final-rerail-shape (renumbered in the roll-up: the hub has its own 0472).
+Status: built (audited 2026-11-23). Accepted (2026-11-19). Follows 0465 §1 (Q334's second item) and 0471. Numbered
+0472 on final-rerail-shape (renumbered in the roll-up: the hub has its own 0472).
 
 ## Intro
 

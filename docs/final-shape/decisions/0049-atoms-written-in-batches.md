@@ -1,7 +1,7 @@
 # 0049: Atoms are stored as segments of the in-memory arena, written with the rows that use them
 
-Status: accepted (2026-11-06; amended the same day with the segment shape and crash recovery; built and measured,
-with the lease as file locks, §5)
+Status: built (audited 2026-11-23). Accepted (2026-11-06; amended the same day with the segment shape and crash
+recovery; built and measured, with the lease as file locks, §5)
 
 ## Intro
 

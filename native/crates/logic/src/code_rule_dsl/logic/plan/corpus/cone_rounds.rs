@@ -20,6 +20,7 @@
 //! A run with nothing kept runs the gated fixpoint, recording its answers, and then one closing round over them,
 //! which is kept for the next run (and asks nothing new, or the rounds are not kept).
 
+use rerail_blocks::vector::Vector;
 use super::{Result, lower, maintained, retain};
 use crate::code_rule_dsl::facts::vtab::{Modules, Source};
 use crate::code_rule_dsl::logic::plan::body::Placed;
@@ -193,7 +194,7 @@ impl RoundProgram {
     }
 
     /// Its components, dependencies first.
-    pub(in crate::code_rule_dsl) fn components(&self) -> &[BTreeSet<String>] {
+    pub(in crate::code_rule_dsl) fn components(&self) -> &crate::code_rule_dsl::logic::front::Components {
         &self.sccs
     }
 
@@ -216,8 +217,8 @@ impl RoundProgram {
 
 }
 
-pub(in crate::code_rule_dsl) fn of_rows<'a>(width: usize, rows: impl Iterator<Item = &'a Vec<i64>>) -> Arc<dyn Source> {
-    let mut columns: Vec<Vec<i64>> = vec![Vec::new(); width];
+pub(in crate::code_rule_dsl) fn of_rows<'a>(width: usize, rows: impl Iterator<Item = &'a [i64]>) -> Arc<dyn Source> {
+    let mut columns: Vec<Vector<i64>> = vec![rerail_blocks::vector::Vector::new(); width];
     for row in rows {
         for (c, v) in row.iter().enumerate() {
             columns[c].push(*v);
@@ -226,7 +227,7 @@ pub(in crate::code_rule_dsl) fn of_rows<'a>(width: usize, rows: impl Iterator<It
     crate::code_rule_dsl::logic::native::component::columns_source((0..width).map(|c| format!("c{c}")).collect(), columns.into_iter().map(Some).collect())
 }
 
-fn rows(source: &dyn Source) -> Vec<Vec<i64>> {
+fn rows(source: &dyn Source) -> Vec<Vector<i64>> {
     let width = source.columns().len();
     (0..source.len()).map(|i| (0..width).map(|c| source.value(i, c)).collect()).collect()
 }
@@ -251,7 +252,7 @@ pub(in crate::code_rule_dsl) struct LoadLedger {
     pub(in crate::code_rule_dsl) documents: HashMap<i64, i64>,
     /// The files the rounds took back, which the answering thread has not yet unloaded (`World::unload`): their
     /// places in the load budget are free again.
-    pub(in crate::code_rule_dsl) taken_back: Vec<i64>,
+    pub(in crate::code_rule_dsl) taken_back: Vector<i64>,
     /// The rounds are asking (set by the cone's thread while they run): their loads are answered at once, not in
     /// the budget's levels.
     pub(in crate::code_rule_dsl) rounds: bool,
@@ -273,11 +274,139 @@ impl Inputs<'_> {
     }
 }
 
-/// What the answers gave: each request asked and the rows answers added, by relation.
+/// Rows of any width, flat: their values in one block, each row's end in another. A run's answers are kept so: a
+/// list a row, and a name and a list a key asked, were 1.31 M arrays of cold PostHog's log (`Answers::record`).
+#[derive(Default)]
+pub(in crate::code_rule_dsl) struct FlatRows {
+    values: Vector<i64>,
+    ends: Vector<u32>,
+}
+
+impl FlatRows {
+    fn push(&mut self, row: &[i64]) {
+        self.values.extend_from_slice(row);
+        self.ends.push(u32::try_from(self.values.len()).expect("a log under 2^32 values"));
+    }
+    fn len(&self) -> usize {
+        self.ends.len()
+    }
+    fn row(&self, i: usize) -> &[i64] {
+        let from = if i == 0 { 0 } else { self.ends[i - 1] as usize };
+        &self.values[from..self.ends[i] as usize]
+    }
+    fn iter(&self) -> impl Iterator<Item = &[i64]> + '_ {
+        (0..self.len()).map(|i| self.row(i))
+    }
+    fn append(&mut self, other: &FlatRows) {
+        for r in other.iter() {
+            self.push(r);
+        }
+    }
+    /// Keeps the rows `keep` holds, in order, moved down in place.
+    fn retain(&mut self, mut keep: impl FnMut(&[i64]) -> bool) {
+        let (mut from, mut to, mut kept) = (0usize, 0usize, 0usize);
+        for i in 0..self.ends.len() {
+            let end = self.ends[i] as usize;
+            if keep(&self.values[from..end]) {
+                self.values.copy_within(from..end, to);
+                to += end - from;
+                self.ends[kept] = to as u32;
+                kept += 1;
+            }
+            from = end;
+        }
+        self.values.truncate(to);
+        self.ends.truncate(kept);
+    }
+}
+
+/// A set of keys of any width, flat (`FlatRows`), found by their hash with no key made to test one; a key taken out is
+/// marked, and put back where it was if added again.
+#[derive(Default)]
+pub(in crate::code_rule_dsl) struct KeySet {
+    keys: FlatRows,
+    gone: Vec<bool>,
+    at: hashbrown::HashTable<u32>,
+    live: usize,
+}
+
+impl KeySet {
+    fn hash(k: &[i64]) -> u64 {
+        use std::hash::BuildHasher as _;
+        foldhash::fast::FixedState::with_seed(0).hash_one(k)
+    }
+    fn find(&self, k: &[i64]) -> Option<usize> {
+        self.at.find(Self::hash(k), |&i| self.keys.row(i as usize) == k).map(|&i| i as usize)
+    }
+    fn contains(&self, k: &[i64]) -> bool {
+        self.find(k).is_some_and(|i| !self.gone[i])
+    }
+    fn insert(&mut self, k: &[i64]) {
+        match self.find(k) {
+            Some(i) => {
+                if std::mem::replace(&mut self.gone[i], false) {
+                    self.live += 1;
+                }
+            }
+            None => {
+                let i = self.keys.len() as u32;
+                self.keys.push(k);
+                self.gone.push(false);
+                self.live += 1;
+                let keys = &self.keys;
+                self.at.insert_unique(Self::hash(k), i, |&j| Self::hash(keys.row(j as usize)));
+            }
+        }
+    }
+    fn remove(&mut self, k: &[i64]) {
+        if let Some(i) = self.find(k)
+            && !std::mem::replace(&mut self.gone[i], true)
+        {
+            self.live -= 1;
+        }
+    }
+    fn retain(&mut self, mut keep: impl FnMut(&[i64]) -> bool) {
+        for i in 0..self.keys.len() {
+            if !self.gone[i] && !keep(self.keys.row(i)) {
+                self.gone[i] = true;
+                self.live -= 1;
+            }
+        }
+    }
+    fn iter(&self) -> impl Iterator<Item = &[i64]> + '_ {
+        (0..self.keys.len()).filter(|&i| !self.gone[i]).map(|i| self.keys.row(i))
+    }
+    fn len(&self) -> usize {
+        self.live
+    }
+}
+
+/// What the answers gave: each request's keys asked, and the rows answers added, by relation.
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct Answers {
-    asked: HashSet<(String, Vec<i64>)>,
-    rows: BTreeMap<String, Vec<Vec<i64>>>,
+    asked: BTreeMap<String, KeySet>,
+    rows: BTreeMap<String, FlatRows>,
+}
+
+impl Answers {
+    /// Whether `rel`'s key `k` was asked.
+    fn was_asked(&self, rel: &str, k: &[i64]) -> bool {
+        self.asked.get(rel).is_some_and(|s| s.contains(k))
+    }
+    /// `rel`'s keys asked, made the first time.
+    fn asked_of(&mut self, rel: &str) -> &mut KeySet {
+        if !self.asked.contains_key(rel) {
+            self.asked.insert(rel.to_owned(), KeySet::default());
+        }
+        self.asked.get_mut(rel).expect("inserted")
+    }
+    /// `rel`'s rows, made the first time.
+    fn rows_of(&mut self, rel: &str) -> &mut FlatRows {
+        if !self.rows.contains_key(rel) {
+            self.rows.insert(rel.to_owned(), FlatRows::default());
+        }
+        self.rows.get_mut(rel).expect("inserted")
+    }
 }
 
 impl Answers {
@@ -286,31 +415,35 @@ impl Answers {
     /// per-file relations located at their files' documents (`documents`, as the answers recorded them; by
     /// `per_file`'s location column). Nothing is matched by value. Their documents go into `withdrawn`; the relations
     /// whose rows changed are returned.
-    fn withdraw(&mut self, stale: &[Vec<i64>], asked_now: &HashSet<Vec<i64>>, per_file: &[(String, Arc<dyn Source>, usize)], ledger: &mut LoadLedger, withdrawn: &mut HashSet<i64>) -> BTreeSet<String> {
+    fn withdraw(&mut self, stale: &[Vector<i64>], asked_now: &HashSet<Vector<i64>>, per_file: &[(String, Arc<dyn Source>, usize)], ledger: &mut LoadLedger, withdrawn: &mut HashSet<i64>) -> BTreeSet<String> {
         let live: HashSet<(i64, i64)> = asked_now.iter().filter(|k| k.len() == 3).map(|k| (k[1], k[2])).collect();
         let gone: HashSet<(i64, i64)> = stale.iter().filter(|k| k.len() == 3).map(|k| (k[1], k[2])).filter(|mg| !live.contains(mg)).collect();
-        for k in stale {
-            self.asked.remove(&(super::world::LOAD.to_owned(), k.clone()));
+        if let Some(loads) = self.asked.get_mut(super::world::LOAD) {
+            for k in stale {
+                loads.remove(k);
+            }
         }
-        let files: HashSet<i64> = self.rows.get(super::world::LOADED).into_iter().flatten().filter(|r| r.len() == 3 && gone.contains(&(r[1], r[2]))).map(|r| r[0]).collect();
+        let files: HashSet<i64> = self.rows.get(super::world::LOADED).into_iter().flat_map(FlatRows::iter).filter(|r| r.len() == 3 && gone.contains(&(r[1], r[2]))).map(|r| r[0]).collect();
         // Their documents, as the answers recorded them. A file loaded under a module still asked keeps its `loaded`
         // row and its document.
         let at: HashMap<&str, usize> = per_file.iter().map(|(r, _, at)| (r.as_str(), *at)).collect();
-        let still: HashSet<i64> = self.rows.get(super::world::LOADED).into_iter().flatten().filter(|r| r.len() == 3 && !gone.contains(&(r[1], r[2]))).map(|r| r[0]).collect();
-        let taken: Vec<i64> = files.iter().filter(|f| !still.contains(*f)).copied().collect();
+        let still: HashSet<i64> = self.rows.get(super::world::LOADED).into_iter().flat_map(FlatRows::iter).filter(|r| r.len() == 3 && !gone.contains(&(r[1], r[2]))).map(|r| r[0]).collect();
+        let taken: Vector<i64> = files.iter().filter(|f| !still.contains(*f)).copied().collect();
         let docs: HashSet<i64> = taken.iter().filter_map(|f| ledger.documents.get(f).copied()).collect();
         ledger.taken_back.extend(taken);
         // A load this run asked and was not given (past the budget, say) is asked again: a place may be free now.
-        let given: HashSet<(i64, i64)> = self.rows.get(super::world::LOADED).into_iter().flatten().filter(|r| r.len() == 3 && !gone.contains(&(r[1], r[2]))).map(|r| (r[1], r[2])).collect();
+        let given: HashSet<(i64, i64)> = self.rows.get(super::world::LOADED).into_iter().flat_map(FlatRows::iter).filter(|r| r.len() == 3 && !gone.contains(&(r[1], r[2]))).map(|r| (r[1], r[2])).collect();
         if !docs.is_empty() {
-            self.asked.retain(|(rel, k)| !(rel == super::world::LOAD && k.len() == 3 && !given.contains(&(k[1], k[2]))));
+            if let Some(loads) = self.asked.get_mut(super::world::LOAD) {
+                loads.retain(|k| !(k.len() == 3 && !given.contains(&(k[1], k[2]))));
+            }
         }
         withdrawn.extend(docs.iter().copied());
         let mut touched = BTreeSet::new();
         for (rel, rows) in self.rows.iter_mut() {
             let before = rows.len();
-            let of_doc = |r: &Vec<i64>| at.get(rel.as_str()).is_some_and(|c| r.get(*c).is_some_and(|v| docs.contains(&super::memo::document_of(*v))));
-            let loaded_gone = |r: &Vec<i64>| rel == super::world::LOADED && r.len() == 3 && gone.contains(&(r[1], r[2]));
+            let of_doc = |r: &[i64]| at.get(rel.as_str()).is_some_and(|c| r.get(*c).is_some_and(|v| docs.contains(&super::memo::document_of(*v))));
+            let loaded_gone = |r: &[i64]| rel == super::world::LOADED && r.len() == 3 && gone.contains(&(r[1], r[2]));
             rows.retain(|r| !(loaded_gone(r) || of_doc(r)));
             if rows.len() != before {
                 touched.insert(rel.clone());
@@ -320,11 +453,21 @@ impl Answers {
     }
 
     /// Records an answer: `rel`'s `keys` asked, and what was given.
-    pub(in crate::code_rule_dsl) fn record(&mut self, rel: &str, keys: &[Vec<i64>], given: &[(String, Vec<Vec<i64>>)]) {
-        self.asked.extend(keys.iter().map(|k| (rel.to_owned(), k.clone())));
-        for (r, rows) in given {
-            self.rows.entry(r.clone()).or_default().extend(rows.iter().cloned());
-        }
+    pub(in crate::code_rule_dsl) fn record(&mut self, rel: &str, keys: &crate::code_rule_dsl::logic::native::component::Asked, given: &[(String, Vec<Vector<i64>>)]) {
+        // The keys answered so far, across rounds: a set the rounds test against (derived, not the request's rows).
+        // Both live the run: made in the thread's long room (decision 0342, amended 2026-11-24).
+        rerail_blocks::maps::long(|| {
+            let asked = self.asked_of(rel);
+            for k in keys.iter() {
+                asked.insert(&k);
+            }
+            for (r, rows) in given {
+                let held = self.rows_of(r);
+                for row in rows {
+                    held.push(row);
+                }
+            }
+        })
     }
 }
 
@@ -347,10 +490,10 @@ pub(in crate::code_rule_dsl) struct Done {
     /// Rows written back to the frames.
     pub(in crate::code_rule_dsl) written: usize,
     /// Each produced relation's rows as the last round bound them (what the rest of the cross part reads).
-    pub(in crate::code_rule_dsl) produced: Vec<(String, Vec<Vec<i64>>)>,
+    pub(in crate::code_rule_dsl) produced: Vec<(String, Vec<Vector<i64>>)>,
     /// Each relation the run keeps (`On::keep`) that the rounds hold as a view of an input's columns (Q37) and so never
     /// keep (`retain::cut`'s views): its rows made from the input as the last round bound it, one per input row.
-    pub(in crate::code_rule_dsl) views: Vec<(String, Vec<Vec<i64>>)>,
+    pub(in crate::code_rule_dsl) views: Vec<(String, Vec<Vector<i64>>)>,
     /// Requests answered (by relation, keys).
     pub(in crate::code_rule_dsl) answered: BTreeMap<String, usize>,
 }
@@ -382,7 +525,7 @@ pub(in crate::code_rule_dsl) struct On<'a> {
     pub(in crate::code_rule_dsl) modes: &'a str,
     /// Whether a carried request of the file system (`rr::WORLD`) still has the answer the last run kept: the
     /// journal names no change at its path since (decision 0105). Such a key is not asked again.
-    pub(in crate::code_rule_dsl) still: Option<&'a dyn Fn(&str, &[i64], &[&Vec<i64>]) -> bool>,
+    pub(in crate::code_rule_dsl) still: Option<&'a dyn Fn(&str, &[i64], &[&Vector<i64>]) -> bool>,
     /// The run's text tests (`plan::Hooks::texts`).
     pub(in crate::code_rule_dsl) texts: &'a Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
 }
@@ -399,7 +542,7 @@ pub(in crate::code_rule_dsl) enum Start {
     /// From the last run's final round.
     Kept(retain::Retained),
     /// The closing round over the gated fixpoint's answers, every gate's keys open: each ask relation's rows.
-    Closing(BTreeMap<String, Vec<Vec<i64>>>),
+    Closing(BTreeMap<String, Vec<Vector<i64>>>),
 }
 
 impl RoundProgram {
@@ -410,29 +553,30 @@ impl RoundProgram {
         inputs: &Inputs<'_>,
         start: Start,
         mut answers: Answers,
-        answer: &mut dyn FnMut(&str, &[Vec<i64>]) -> Result<Vec<(String, Vec<Vec<i64>>)>>,
+        answer: &mut dyn FnMut(&str, &crate::code_rule_dsl::logic::native::component::Asked) -> Result<Vec<(String, Vec<Vector<i64>>)>>,
     ) -> std::result::Result<Done, Gave> {
         let (kept, closing) = match start {
             Start::Kept(k) => (Some(k), None),
             Start::Closing(asks) => (None, Some(asks)),
         };
         // The answers recorded before the rounds (the gated fixpoint's), kept where the rounds keep them.
-        answers.rows = std::mem::take(&mut answers.rows).into_iter().fold(BTreeMap::new(), |mut m: BTreeMap<String, Vec<Vec<i64>>>, (r, rows)| {
-            m.entry(self.kept_as(&r)).or_default().extend(rows);
+        answers.rows = std::mem::take(&mut answers.rows).into_iter().fold(BTreeMap::new(), |mut m: BTreeMap<String, FlatRows>, (r, rows)| {
+            m.entry(self.kept_as(&r)).or_default().append(&rows);
             m
         });
-        let mut provisional: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
+        let mut provisional: BTreeMap<String, Vec<Vector<i64>>> = BTreeMap::new();
         let mut still_n = 0;
         // The documents loaded this run and taken back (`Answers::withdraw`).
         let mut withdrawn: HashSet<i64> = HashSet::new();
-        let mut carried: HashSet<(String, Vec<i64>)> = HashSet::new();
+        // The last run's keys of each request, by request: tested by the key alone, no pair made to test one.
+        let mut carried: HashMap<String, KeySet> = HashMap::new();
         // Each gate's keys open: the last run's, or (closing) every key the fixpoint asked.
-        let mut open: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
+        let mut open: BTreeMap<String, Vec<Vector<i64>>> = BTreeMap::new();
         if let Some(asks) = &closing {
             for (done, ask) in &self.gates {
                 open.insert(done.clone(), match ask {
                     Some(ask) => asks.get(ask).cloned().unwrap_or_default(),
-                    None => vec![vec![0; self.width(done)]],
+                    None => vec![rerail_blocks::vector![0; self.width(done)]],
                 });
             }
         }
@@ -454,7 +598,7 @@ impl RoundProgram {
             let no_locations = retain::Locations::new();
             // A granule the store no longer holds: the last run's round is not as kept, and the rounds give up (the
             // fixpoint derives the part again), not the run.
-            let rows = |read: std::result::Result<Option<Vec<Vec<i64>>>, String>| read.map(Option::unwrap_or_default).map_err(Gave::Up);
+            let rows = |read: std::result::Result<Option<Vec<Vector<i64>>>, String>| read.map(Option::unwrap_or_default).map_err(Gave::Up);
             for (done, _) in &self.gates {
                 open.insert(done.clone(), rows(k.read_input(on.store, program, &no_locations, done, None)?)?);
             }
@@ -469,7 +613,10 @@ impl RoundProgram {
                 provisional.insert(rel.clone(), got.into_iter().filter(|r| loaded(super::memo::document_of(r[*at]))).collect());
             }
             for (req, _) in &self.requests {
-                carried.extend(k.read_derived(on.store, req)?.unwrap_or_default().into_iter().map(|r| (req.clone(), r)));
+                let keys = carried.entry(req.clone()).or_default();
+                for r in k.read_derived(on.store, req)?.unwrap_or_default() {
+                    keys.insert(&r);
+                }
             }
             // A request of the file system the journal names no change for keeps its answer: its rows of the kept
             // answers are its answer again, and it is not asked.
@@ -477,10 +624,10 @@ impl RoundProgram {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "rounds/answers the journal keeps".into());
                 // A request of several columns (a language's: `Answerer::read_set`) keeps its answer while every file
                 // the answer read is unchanged, as a file's request does.
-                let mut read_by: HashMap<&str, HashMap<&[i64], Vec<i64>>> = HashMap::new();
+                let mut read_by: HashMap<&str, HashMap<&[i64], Vector<i64>>> = HashMap::new();
                 for a in crate::code_rule_dsl::language::answerers().iter().filter(|a| a.key_width() > 1) {
                     let n = a.key_width();
-                    let mut by: HashMap<&[i64], Vec<i64>> = HashMap::new();
+                    let mut by: HashMap<&[i64], Vector<i64>> = HashMap::new();
                     for r in a.read_set().and_then(|rel| provisional.get(&self.kept_as(rel))).into_iter().flatten().filter(|r| r.len() > n) {
                         by.entry(&r[..n]).or_default().push(r[r.len() - 1]);
                     }
@@ -490,7 +637,7 @@ impl RoundProgram {
                 }
                 // Any other request keeps its answer as the run's `still` says, given the kept rows of its key (a Git
                 // object's stamp is among them).
-                let kept_key = |q: &str, k: &[i64], rows: &[&Vec<i64>]| -> bool {
+                let kept_key = |q: &str, k: &[i64], rows: &[&Vector<i64>]| -> bool {
                     match read_by.get(q) {
                         Some(by) => still(q, &k[..1], &[]) && by.get(k).into_iter().flatten().all(|p| still("rr_file_req", std::slice::from_ref(p), &[])),
                         None => still(q, k, rows),
@@ -500,18 +647,20 @@ impl RoundProgram {
                     let produced = self.kept_as(answer_relation);
                     let Some(rows) = provisional.get(&produced) else { continue };
                     let width = self.width(req);
-                    let mut by: HashMap<&[i64], Vec<&Vec<i64>>> = HashMap::new();
+                    let mut by: HashMap<&[i64], Vec<&Vector<i64>>> = HashMap::new();
                     for row in rows.iter().filter(|row| row.len() >= width) {
                         by.entry(&row[..width]).or_default().push(row);
                     }
-                    let candidates: Vec<_> = carried.iter().filter_map(|(q, key)| {
-                        (q == req && key.len() == width).then_some(key)
-                    }).collect();
-                    let keys: Vec<_> = candidates.into_iter().filter(|key| kept_key(req, key, by.get(key.as_slice()).map_or(&[], Vec::as_slice))).collect();
-                    let given: Vec<_> = keys.iter().flat_map(|key| by.get(key.as_slice()).into_iter().flatten().map(|row| (*row).clone())).collect();
+                    let keys: Vec<&[i64]> = carried.get(req).into_iter().flat_map(KeySet::iter).filter(|key| key.len() == width).filter(|key| kept_key(req, key, by.get(key).map_or(&[], |v| v.as_slice()))).collect();
                     still_n += keys.len();
-                    answers.asked.extend(keys.into_iter().map(|k| ((*req).to_owned(), k.clone())));
-                    answers.rows.entry(produced).or_default().extend(given);
+                    let asked = answers.asked_of(req);
+                    for key in &keys {
+                        asked.insert(key);
+                    }
+                    let held = answers.rows_of(&produced);
+                    for row in keys.iter().flat_map(|key| by.get(key).into_iter().flatten()) {
+                        held.push(row);
+                    }
                 }
             }
         }
@@ -523,7 +672,7 @@ impl RoundProgram {
         // first) are made and bound again.
         let mut bound: BTreeMap<String, (Arc<dyn Source>, u64)> = BTreeMap::new();
         let mut dirty: BTreeSet<String> = self.inputs.iter().cloned().collect();
-        let corpus_rows: BTreeMap<&str, Vec<Vec<i64>>> = inputs.per_file.iter().map(|(r, s, _)| (r.as_str(), rows(s.as_ref()))).collect();
+        let corpus_rows: BTreeMap<&str, Vec<Vector<i64>>> = inputs.per_file.iter().map(|(r, s, _)| (r.as_str(), rows(s.as_ref()))).collect();
         loop {
             rounds += 1;
             if rounds > LIMIT {
@@ -536,10 +685,10 @@ impl RoundProgram {
                 let source = if let Some(c) = inputs.constants.get(&rel) {
                     Arc::clone(c)
                 } else if let Some(keys) = open.get(&rel) {
-                    of_rows(width, keys.iter())
+                    of_rows(width, keys.iter().map(|r| &r[..]))
                 } else {
-                    let mut seen: HashSet<&Vec<i64>> = HashSet::new();
-                    let all = corpus_rows.get(rel.as_str()).into_iter().flatten().chain(provisional.get(&rel).into_iter().flatten()).chain(answers.rows.get(&rel).into_iter().flatten()).filter(|r| seen.insert(*r));
+                    let mut seen: HashSet<&[i64]> = HashSet::new();
+                    let all = corpus_rows.get(rel.as_str()).into_iter().flatten().map(|r| &r[..]).chain(provisional.get(&rel).into_iter().flatten().map(|r| &r[..])).chain(answers.rows.get(&rel).into_iter().flat_map(FlatRows::iter)).filter(|r| seen.insert(*r));
                     of_rows(width, all)
                 };
                 let digest = retain::digest(source.as_ref(), &retain::cells_of(&atoms, &self.placed, domains, &rel, width));
@@ -557,11 +706,11 @@ impl RoundProgram {
             let next = ran.next;
             let _s = crate::code_rule_dsl::logic::profile::span(|| "rounds/requests".into());
             // What the round asks that is not answered, by request; and of that, what is not carried.
-            let mut unanswered: Vec<(String, Vec<Vec<i64>>, Vec<Vec<i64>>)> = Vec::new();
+            let mut unanswered: Vec<(String, Vec<Vector<i64>>, Vec<Vector<i64>>)> = Vec::new();
             for (req, _) in &self.requests {
                 let asked = next.read_derived(on.store, req)?.ok_or_else(|| Gave::Up(format!("{req} is not kept")))?;
-                let all: Vec<Vec<i64>> = asked.iter().filter(|r| !answers.asked.contains(&(req.clone(), (*r).clone()))).cloned().collect();
-                let fresh: Vec<Vec<i64>> = all.iter().filter(|r| provisional.is_empty() || !carried.contains(&(req.clone(), (*r).clone()))).cloned().collect();
+                let all: Vec<Vector<i64>> = asked.into_iter().filter(|r| !answers.was_asked(req, r)).collect();
+                let fresh: Vec<Vector<i64>> = all.iter().filter(|r| provisional.is_empty() || !carried.get(req).is_some_and(|c| c.contains(&r[..]))).cloned().collect();
                 unanswered.push((req.clone(), all, fresh));
             }
             if closing && unanswered.iter().any(|(_, all, _)| !all.is_empty()) {
@@ -571,13 +720,15 @@ impl RoundProgram {
             let is_load = |req: &str| req == super::world::LOAD;
             // New directory and file requests first, then new loads; once the run is quiet, the carried keys still
             // asked, answered for real (the same order).
-            let pick = |fresh: bool, loads: bool| -> Vec<(String, Vec<Vec<i64>>)> {
+            let pick = |fresh: bool, loads: bool| -> Vec<(String, Vec<Vector<i64>>)> {
                 unanswered.iter().filter(|(r, ..)| is_load(r) == loads).map(|(r, all, f)| (r.clone(), if fresh { f.clone() } else { all.clone() })).filter(|(_, k)| !k.is_empty()).collect()
             };
             let batch = [pick(true, false), pick(true, true), pick(false, false), pick(false, true)].into_iter().find(|b| !b.is_empty());
             if let Some(batch) = batch {
                 for (req, keys) in batch {
-                    let given: Vec<(String, Vec<Vec<i64>>)> = answer(&req, &keys)?.into_iter().map(|(r, rows)| (self.kept_as(&r), rows)).collect();
+                    // The keys the rounds chose (rows they made), asked.
+                    let keys = crate::code_rule_dsl::logic::native::component::Asked::rows(keys);
+                    let given: Vec<(String, Vec<Vector<i64>>)> = answer(&req, &keys)?.into_iter().map(|(r, rows)| (self.kept_as(&r), rows)).collect();
                     if inputs.ledger.lock().unwrap_or_else(|e| e.into_inner()).bound {
                         return Err(Gave::Up("a load past the budget: where it binds, the loads are taken level by level, in a fresh cone".into()));
                     }
@@ -603,15 +754,15 @@ impl RoundProgram {
                 continue;
             }
             let next = kept.as_ref().expect("a round ran");
-            let mut opened: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
+            let mut opened: BTreeMap<String, Vec<Vector<i64>>> = BTreeMap::new();
             for (done, ask) in &self.gates {
                 let keys = match ask {
                     Some(ask) => next.read_derived(on.store, ask)?.ok_or_else(|| Gave::Up(format!("{ask} is not kept")))?,
-                    None => vec![vec![0; self.width(done)]],
+                    None => vec![rerail_blocks::vector![0; self.width(done)]],
                 };
                 opened.insert(done.clone(), keys);
             }
-            let same = |a: &BTreeMap<String, Vec<Vec<i64>>>, b: &BTreeMap<String, Vec<Vec<i64>>>| {
+            let same = |a: &BTreeMap<String, Vec<Vector<i64>>>, b: &BTreeMap<String, Vec<Vector<i64>>>| {
                 a.len() == b.len() && a.iter().all(|(k, v)| b.get(k).is_some_and(|w| v.iter().collect::<BTreeSet<_>>() == w.iter().collect::<BTreeSet<_>>()))
             };
             if same(&opened, &open) {
@@ -619,8 +770,8 @@ impl RoundProgram {
                 // asked from the last run's rows or gates alone. It is taken back, with every row its answer gave
                 // (those naming its file or a node of it), and the rounds run on to quiet: what only it asked for
                 // goes in turn.
-                let asked_now: HashSet<Vec<i64>> = next.read_derived(on.store, super::world::LOAD)?.unwrap_or_default().into_iter().collect();
-                let stale: Vec<Vec<i64>> = answers.asked.iter().filter(|(r, k)| r == super::world::LOAD && !asked_now.contains(k)).map(|(_, k)| k.clone()).collect();
+                let asked_now: HashSet<Vector<i64>> = next.read_derived(on.store, super::world::LOAD)?.unwrap_or_default().into_iter().collect();
+                let stale: Vec<Vector<i64>> = answers.asked.get(super::world::LOAD).into_iter().flat_map(KeySet::iter).filter(|k| !asked_now.contains(*k)).map(Vector::from).collect();
                 if stale.is_empty() {
                     break;
                 }
@@ -638,8 +789,8 @@ impl RoundProgram {
             open = opened;
         }
         let mut answered: BTreeMap<String, usize> = BTreeMap::new();
-        for (req, _) in &answers.asked {
-            *answered.entry(req.clone()).or_insert(0) += 1;
+        for (req, keys) in answers.asked.iter().filter(|(_, k)| k.len() > 0) {
+            answered.insert(req.clone(), keys.len());
         }
         let next = kept.expect("a round ran");
         // Written back as any kept part is (t33 K4): each relation whose rows or reads differ from its frame, each
@@ -648,19 +799,19 @@ impl RoundProgram {
             Some(was) => {
                 let derived: BTreeSet<String> = self.placed.v.rules().map(|r| self.placed.v.rel_name(r.head().rel()).to_owned()).collect();
                 let clean = derived.into_iter().filter(|r| next.kept(r).is_none()).collect();
-                let cut = retain::Cut { clean, strata: (0, 0), changed: Vec::new(), views: BTreeSet::new() };
+                let cut = retain::Cut { clean, strata: (0, 0), changed: Vec::new(), views: BTreeSet::new(), idle: BTreeSet::new() };
                 let sources: Vec<(String, Arc<dyn Source>)> = bound.iter().map(|(r, (s, _))| (r.clone(), Arc::clone(s))).collect();
                 let digests: std::collections::HashMap<String, u64> = bound.iter().map(|(r, (_, d))| (r.clone(), *d)).collect();
                 next.write_kept(on.store, was, &self.placed, &self.domains, &retain::Locations::new(), &self.sccs, &cut, &sources, &digests, &BTreeSet::new(), &HashMap::new(), HashMap::new(), None, &HashMap::new(), &BTreeMap::new())?
             }
             None => 0,
         };
-        let mut produced: Vec<(String, Vec<Vec<i64>>)> = self.produced.iter().filter(|(rel, _)| !self.fs.iter().any(|(_, i)| i == rel)).map(|(rel, _)| (rel.clone(), bound.get(rel).map(|(s, _)| rows(s.as_ref())).unwrap_or_default())).collect();
+        let mut produced: Vec<(String, Vec<Vector<i64>>)> = self.produced.iter().filter(|(rel, _)| !self.fs.iter().any(|(_, i)| i == rel)).map(|(rel, _)| (rel.clone(), bound.get(rel).map(|(s, _)| rows(s.as_ref())).unwrap_or_default())).collect();
         // The file system's answers as the last round derived them: each request's rows of the file system.
         for (answer, _) in &self.fs {
             produced.push((answer.clone(), next.read_derived(on.store, answer)?.ok_or_else(|| Gave::Up(format!("{answer} is not kept")))?));
         }
-        let views: Vec<(String, Vec<Vec<i64>>)> = on.keep.iter().filter(|rel| !next.keeps(rel)).filter_map(|rel| {
+        let views: Vec<(String, Vec<Vector<i64>>)> = on.keep.iter().filter(|rel| !next.keeps(rel)).filter_map(|rel| {
             let (input, at) = self.input_view(rel)?;
             let (source, _) = bound.get(&input)?;
             Some((rel.clone(), rows(source.as_ref()).into_iter().map(|row| at.iter().map(|&c| row[c]).collect()).collect()))
@@ -671,7 +822,7 @@ impl RoundProgram {
 
     /// The input `rel` is a view of by the rounds' rules (`plan::input_view_shape`: its one rule copies the input's
     /// columns), and the input's column of each of its columns.
-    fn input_view(&self, rel: &str) -> Option<(String, Vec<usize>)> {
+    fn input_view(&self, rel: &str) -> Option<(String, Vector<usize>)> {
         let v = &self.placed.v;
         let mut rules = v.rules().filter(|r| v.rel_name(r.head().rel()) == rel);
         let (Some(rule), None) = (rules.next(), rules.next()) else { return None };
@@ -687,5 +838,52 @@ impl RoundProgram {
     /// The ask relations, by gate.
     pub(in crate::code_rule_dsl) fn asks(&self) -> impl Iterator<Item = &String> {
         self.gates.iter().filter_map(|(_, a)| a.as_ref())
+    }
+}
+
+#[cfg(test)]
+mod flat_tests {
+    use super::{FlatRows, KeySet};
+
+    /// Rows of any widths read back as pushed; retain keeps the rows it holds, in order, moved down in place.
+    #[test]
+    fn flat_rows_keep_their_widths_and_order_through_retain() {
+        let mut r = FlatRows::default();
+        let rows: [&[i64]; 5] = [&[1, 2, 3], &[4], &[], &[5, 6], &[7, 8, 9, 10]];
+        for x in rows {
+            r.push(x);
+        }
+        assert_eq!(r.iter().collect::<Vec<_>>(), rows.to_vec());
+        r.retain(|x| x.len() != 1 && x.len() != 3);
+        assert_eq!(r.iter().collect::<Vec<_>>(), vec![&[][..], &[5, 6][..], &[7, 8, 9, 10][..]]);
+        let mut s = FlatRows::default();
+        s.push(&[11]);
+        s.append(&r);
+        assert_eq!(s.len(), 4);
+        assert_eq!(s.row(3), &[7, 8, 9, 10]);
+    }
+
+    /// A key set tests keys by value; a key taken out is gone until added again, once.
+    #[test]
+    fn key_sets_test_take_out_and_put_back_by_value() {
+        let mut k = KeySet::default();
+        for x in [[1, 2, 3], [1, 2, 4], [1, 2, 3]] {
+            k.insert(&x);
+        }
+        assert_eq!(k.len(), 2);
+        assert!(k.contains(&[1, 2, 3]) && k.contains(&[1, 2, 4]) && !k.contains(&[1, 2]));
+        k.remove(&[1, 2, 3]);
+        assert!(!k.contains(&[1, 2, 3]));
+        assert_eq!(k.len(), 1);
+        k.insert(&[1, 2, 3]);
+        assert!(k.contains(&[1, 2, 3]));
+        assert_eq!(k.len(), 2);
+        k.retain(|x| x[2] == 4);
+        assert_eq!(k.iter().collect::<Vec<_>>(), vec![&[1, 2, 4][..]]);
+        for i in 0..1000 {
+            k.insert(&[i, i + 1]);
+        }
+        assert!((0..1000).all(|i| k.contains(&[i, i + 1])));
+        assert_eq!(k.len(), 1001);
     }
 }

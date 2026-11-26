@@ -1,6 +1,6 @@
 # 0167: A computed value waits for the joins that narrow its arguments
 
-Status: decided (2026-11-13)
+Status: built (audited 2026-11-23). Decided (2026-11-13)
 
 ## Intro
 

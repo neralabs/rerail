@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::language::dialect_by_label;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
@@ -6,7 +7,7 @@ use crate::code_rule_dsl::logic::rr::parse_version as parse;
 use std::sync::Arc;
 
 /// `v` lowered for `dialect`, `intern` giving the name atoms (`lower_version`).
-fn lowered(v: &Arc<Version>, dialect: GrammarDialect, intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>) -> Arc<Version> {
+fn lowered(v: &Arc<Version>, dialect: GrammarDialect, intern: &mut dyn FnMut(&[&str]) -> Result<Vector<u32>>) -> Arc<Version> {
     lower_version(v.clone(), dialect, intern).unwrap().0
 }
 

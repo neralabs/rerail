@@ -1,7 +1,7 @@
-# Tape format 16's choices for tape tag 16 (brace-format), decisions 0293 §3 and 0626. Written by the lab from the grammar:
-#   tape16 table <tags…> (native/lab/tape16/src/table.rs)
-# 68 codes; no node types declared: the grammar's list is the bound.
-revision	2
+# Tape format 16's choices for tape tag 16 (brace-format), decisions 0293 §3, 0626 and 0631. Written by the lab from the grammar:
+#   tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)
+# 68 codes; no node types declared: the grammar's list is the bound; no file of it counted: in the grammar's order.
+revision	4
 widths	1	1	1
 code	1	0	0	-	-
 code	2	0	0	-	-
@@ -71,3 +71,47 @@ code	19	0	4	-	-
 code	20	0	4	-	-
 code	21	0	4	-	-
 code	22	0	4	-	-
+kind	1	1	format
+kind	2	1	literal
+kind	3	1	field
+kind	4	1	field_name
+kind	5	1	auto
+kind	6	1	index
+kind	7	1	name
+kind	8	1	attribute
+kind	9	1	element_index
+kind	10	1	conversion
+kind	11	1	format_spec
+kind	12	1	fill
+kind	13	1	align
+kind	14	1	sign
+kind	15	1	alternate
+kind	16	1	zero
+kind	17	1	width
+kind	18	1	grouping
+kind	19	1	precision
+kind	20	1	type
+kind	21	1	spec_error
+kind	22	1	error
+lookup	1	format	1
+lookup	1	literal	2
+lookup	1	field	3
+lookup	1	field_name	4
+lookup	1	auto	5
+lookup	1	index	6
+lookup	1	name	7
+lookup	1	attribute	8
+lookup	1	element_index	9
+lookup	1	conversion	10
+lookup	1	format_spec	11
+lookup	1	fill	12
+lookup	1	align	13
+lookup	1	sign	14
+lookup	1	alternate	15
+lookup	1	zero	16
+lookup	1	width	17
+lookup	1	grouping	18
+lookup	1	precision	19
+lookup	1	type	20
+lookup	1	spec_error	21
+lookup	1	error	22

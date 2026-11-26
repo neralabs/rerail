@@ -1,14 +1,15 @@
 //! Functional dependencies over symbolic columns. Filters preserve keys; projections can lose them.
+use rerail_blocks::vector::Vector;
 use super::Decision;
 use std::collections::{BTreeMap, BTreeSet};
 
-pub type Keys = BTreeMap<String, Vec<Vec<usize>>>;
+pub type Keys = BTreeMap<String, Vec<Vector<usize>>>;
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct Input {
     pub relation: String,
     pub columns: Vec<String>,
-    pub keys: Vec<Vec<usize>>,
+    pub keys: Vec<Vector<usize>>,
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize)]
@@ -91,8 +92,8 @@ impl Projection {
     }
 
     /// A bounded, conservative minimal key, rather than an exponential search for all keys.
-    pub fn key(&self) -> Option<Vec<usize>> {
-        let mut key: Vec<_> = (0..self.outputs.len()).collect();
+    pub fn key(&self) -> Option<rerail_blocks::vector::Vector<usize>> {
+        let mut key: Vector<usize> = (0..self.outputs.len()).collect();
         if !self.prove(&key).decision.proven {
             return None;
         }
@@ -100,7 +101,7 @@ impl Projection {
             return Some(key);
         }
         for i in (0..self.outputs.len()).rev() {
-            let candidate: Vec<_> = key.iter().copied().filter(|k| *k != i).collect();
+            let candidate: Vector<usize> = key.iter().copied().filter(|k| *k != i).collect();
             if self.prove(&candidate).decision.proven {
                 key = candidate;
             }

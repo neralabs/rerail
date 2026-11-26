@@ -29,7 +29,6 @@ pub mod device;
 pub mod os;
 pub mod rows;
 pub mod store;
-pub mod grid;
 
 /// A plain value a buffer can be viewed as: any bit pattern is a value, no padding read as data, no pointers.
 ///
@@ -71,11 +70,14 @@ pub mod shared {
         SHARED.get().and_then(Option::as_ref)
     }
 
-    /// The process's device and queue: `None` without a device. The CPU's when `RERAIL_GPU=cpu`
+    /// The process's device and queue: `None` without a device, and with `RERAIL_GPU=none`. The CPU's when `RERAIL_GPU=cpu`
     /// (`device::cpu_chosen`), an OpenCL GPU's when `RERAIL_GPU=opencl`, else the target's GPU's.
     pub fn get() -> Option<&'static Shared> {
         SHARED
             .get_or_init(|| {
+                if crate::device::none_chosen() {
+                    return None;
+                }
                 // A measurement aid: `RERAIL_DEVICE_TRACE` prints where the process first opens the device.
                 if std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
                     eprintln!("RERAIL_DEVICE_TRACE the device opened at:\n{}", std::backtrace::Backtrace::force_capture());
@@ -137,12 +139,23 @@ pub mod shared {
     /// OpenCL's (`OpenCL.dll`, the ICD loader every GPU driver installs): an Intel GPU, or an AMD one without HIP.
     #[cfg(windows)]
     fn open() -> Option<Shared> {
-        open_cuda().or_else(|| opencl().ok())
+        open_cuda().or_else(|| opencl().ok()).or_else(say_needs)
     }
 
     #[cfg(target_os = "linux")]
     fn open() -> Option<Shared> {
-        open_cuda()
+        open_cuda().or_else(say_needs)
+    }
+
+    /// A process left without a GPU says what the user must install for one, where it found a GPU it could not use
+    /// (decision 0645: no GPU compiler ships with Rerail; `compute_kernel_cuda::needs`). Once a process: the device
+    /// is opened once.
+    #[cfg(not(target_os = "macos"))]
+    fn say_needs() -> Option<Shared> {
+        if let Some(needs) = crate::compute_kernel_cuda::needs() {
+            eprintln!("rerail: GPU support: {needs}");
+        }
+        None
     }
 
     #[cfg(not(target_os = "macos"))]

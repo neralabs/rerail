@@ -16,6 +16,8 @@ pub(crate) use rerail_boot::code_rule_dsl::prof::{lower_hex, purge_allocator_pag
 mod test_watchdog;
 #[path = "../../../src/test_flush.rs"]
 mod test_flush;
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;
 
 /// The program, booted as the engine boots it (`boot::install`), with this binary's own build identities.
 pub(crate) fn install_store_functions() {
@@ -253,3 +255,9 @@ pub mod code_rule_dsl {
         use crate::code_rule_dsl::search_index::persist_search_index_batch;
     }
 }
+
+// The engine's allocator (`rerail_prof::heap::Sampled`, as `rerail-engine`'s `lib.rs` declares it): without it the
+// test binary ran on the system allocator, which no build of the engine runs on.
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+#[global_allocator]
+static GLOBAL: rerail_prof::heap::Sampled = rerail_prof::heap::Sampled;

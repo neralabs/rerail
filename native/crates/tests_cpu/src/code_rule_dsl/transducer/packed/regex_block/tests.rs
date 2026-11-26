@@ -1,10 +1,11 @@
+use rerail_blocks::vector::Vector;
     use super::*;
 
     /// Every byte after which some substring ending there matches the pattern whole: the exact set Parabix marks.
-    fn brute(re: &str, text: &str) -> Vec<usize> {
+    fn brute(re: &str, text: &str) -> Vector<usize> {
         let whole = regex::Regex::new(&format!("^(?:{re})$")).unwrap();
         let b = text.as_bytes();
-        let mut out = Vec::new();
+        let mut out = rerail_blocks::vector::Vector::new();
         for e in 1..=b.len() {
             if !text.is_char_boundary(e) {
                 continue;
@@ -17,11 +18,11 @@
     }
 
     /// The ends of the matches the host finds (`find_iter`), as marks.
-    fn found(re: &str, text: &str) -> Vec<usize> {
+    fn found(re: &str, text: &str) -> Vector<usize> {
         regex::Regex::new(re).unwrap().find_iter(text).filter(|m| m.end() > m.start()).map(|m| m.end() - 1).collect()
     }
 
-    fn marks(p: &SpanPrefilter, text: &str) -> Vec<usize> {
+    fn marks(p: &SpanPrefilter, text: &str) -> Vector<usize> {
         let ends = p.ends(text.as_bytes());
         (0..text.len()).filter(|&i| ends.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1)).collect()
     }
@@ -101,7 +102,7 @@
         use std::sync::Arc;
         let filters: Vec<Arc<SpanPrefilter>> = ["SEC\\d+", "(?m)^class\\s+(?<c>\\w+)", "[\\p{Alphabetic}\\p{N}]+"].iter().map(|re| Arc::new(SpanPrefilter::compile(re, false).unwrap())).collect();
         let long = "x = 1  # SEC12\nclass Foo:\n    pass\n".repeat(500);
-        let sources: Vec<Arc<String>> = TEXTS.iter().copied().chain([long.as_str()]).map(|t| Arc::new(t.to_owned())).collect();
+        let sources: Vec<Arc<crate::code_rule_dsl::tape::Text>> = TEXTS.iter().copied().chain([long.as_str()]).map(|t| Arc::new(t.into())).collect();
         let files: Vec<(usize, usize)> = (0..sources.len()).flat_map(|d| (0..filters.len()).map(move |f| (d, f))).collect();
         let ex = |device| crate::code_rule_dsl::logic::lanes::executor_for(device);
         let gpu = cfg!(any(target_os = "macos", target_os = "linux", windows)) && ex(true).lanes().contains(&rerail_accel::Lane::Gpu);
@@ -152,7 +153,7 @@
         let filters: Vec<Arc<SpanPrefilter>> = ["QZV\\d{2}k", "(?m)^def\\s+qzv_\\w+"].iter().map(|re| Arc::new(SpanPrefilter::compile(re, false).unwrap())).collect();
         let natives: Vec<&crate::code_rule_dsl::transducer::packed::native_ir::BlockNative> = filters.iter().map(|f| f.native()).collect();
         let long = "QZV12k = 1\ndef qzv_a():\n    QZV9k\n".repeat(300);
-        let sources: Vec<Arc<String>> = TEXTS.iter().copied().chain([long.as_str()]).map(|t| Arc::new(t.to_owned())).collect();
+        let sources: Vec<Arc<crate::code_rule_dsl::tape::Text>> = TEXTS.iter().copied().chain([long.as_str()]).map(|t| Arc::new(t.into())).collect();
         let files: Vec<(usize, usize)> = (0..sources.len()).flat_map(|d| (0..filters.len()).map(move |f| (d, f))).collect();
         let check = |what: &str, on: RanOn| {
             let (got, ran) = super::ends_on(&ex, &filters, &sources, &files, true, Some(rerail_accel::Lane::Gpu)).unwrap();

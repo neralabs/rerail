@@ -2,8 +2,8 @@
 
 (Numbered 0239 where it was written.)
 
-Status: decided (user, 2026-11-14: "please do both of these", on lean parsers for Markdown's inline
-grammar and for Vue).
+Status: built (audited 2026-11-23). Decided (user, 2026-11-14: "please do both of these", on lean parsers for
+Markdown's inline grammar and for Vue).
 
 ## Intro
 

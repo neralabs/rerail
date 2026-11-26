@@ -1,6 +1,6 @@
 # 0356: The starts after a run are in a slot of their own
 
-Status: decided (the user, 2026-11-17: "go ahead with 2 then 1", item 1). Follows 0355.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-17: "go ahead with 2 then 1", item 1). Follows 0355.
 
 ## Intro
 

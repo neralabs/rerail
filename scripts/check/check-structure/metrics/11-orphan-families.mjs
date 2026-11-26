@@ -13,7 +13,7 @@
 //   - `simdjson-stage1`: simdjson's stage-1 structural indexes on recorded files of several kinds, the oracle of the
 //     hand-written stage 1 (`stage1.rir`), not tied to a language.
 
-import { finding, isRuleDoc, packIds, sortFindings } from "../lib.mjs";
+import { finding, isPackRerailFile, isRuleDoc, packIds, sortFindings } from "../lib.mjs";
 
 export const id = 11;
 export const title = "No orphan fixture families or packs";
@@ -36,7 +36,7 @@ export function check(repo) {
   }
   for (const pack of packIds(repo)) {
     const holdsRules = repo.files.some(
-      (path) => (path.startsWith(`packs/${pack}/rules/`) || path.startsWith(`packs/${pack}/candidates/rules/`)) && isRuleDoc(repo, path),
+      (path) => (path.startsWith(`packs/${pack}/rules/`) || path.startsWith(`packs/${pack}/candidates/rules/`)) && (isRuleDoc(repo, path) || isPackRerailFile(path)),
     );
     if (!holdsRules) findings.push(finding(`packs/${pack}`, "pack holds no rule documents in rules/ or candidates/rules/"));
   }

@@ -180,7 +180,7 @@ fn execute(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, 
     let mut reused = Vec::new();
     let entries = if changed.is_empty() { None } else { memo::open(store)? };
     for document in changed {
-        match prof::time("slice.memo_lookup", || memo::lookup(store, entries.as_ref(), scope, &rules.digest, &document))? {
+        match prof::time("slice.memo_lookup", || memo::lookup(store, entries.as_deref(), scope, &rules.digest, &document))? {
             Some(rows) => reused.push((document, rows)),
             None => evaluate.push(document),
         }

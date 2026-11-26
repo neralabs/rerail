@@ -19,6 +19,8 @@
 //! check these rows equal theirs. Rows are in core ids here; `facts::vtab::syntax` maps them to the
 //! wave's node ids and serves them.
 
+use crate::code_rule_dsl::facts::core::FactsIn;
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::facts::core::{Facts, NONE, kind_atom};
 use crate::code_rule_dsl::language::KindCatalog;
 
@@ -53,7 +55,7 @@ enum Role {
 pub struct Grammar {
     tag: u8,
     roles: Vec<Role>,
-    calls: Vec<u32>,
+    calls: Vector<u32>,
     function: u16,
     body: u16,
     object: u16,
@@ -102,7 +104,7 @@ impl Grammar {
     pub(crate) fn tag(&self) -> u8 {
         self.tag
     }
-    fn role(&self, f: &Facts, id: u32) -> Role {
+    fn role(&self, f: FactsIn<'_>, id: u32) -> Role {
         self.atom_role(f.kind(id))
     }
     fn atom_role(&self, atom: u32) -> Role {
@@ -113,21 +115,21 @@ impl Grammar {
 /// One document's rows, in core ids (`NONE`: none). `kind` and `spread` index [`CONTEXTS`] and [`SPREADS`].
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct Rows {
-    pub call: Vec<[u32; 2]>,
-    pub site: Vec<[u32; 3]>,
-    pub context: Vec<[u32; 3]>,
-    pub arg: Vec<[u32; 6]>,
-    pub attribute: Vec<[u32; 3]>,
+    pub call: Vector<[u32; 2]>,
+    pub site: Vector<[u32; 3]>,
+    pub context: Vector<[u32; 3]>,
+    pub arg: Vector<[u32; 6]>,
+    pub attribute: Vector<[u32; 3]>,
 }
 
 /// The first child of `id` under `field` (the tape's `child_by_field_id`).
-fn field(f: &Facts, id: u32, field: u16) -> Option<u32> {
+fn field(f: FactsIn<'_>, id: u32, field: u16) -> Option<u32> {
     (field != 0).then(|| f.children(id).into_iter().find(|&c| f.field(c) == field)).flatten()
 }
 
 /// `node` less transparent parens: a parenthesized expression's first named child that is not a comment
 /// or line continuation, repeatedly.
-pub(crate) fn unparen(g: &Grammar, f: &Facts, mut node: u32) -> u32 {
+pub(crate) fn unparen(g: &Grammar, f: FactsIn<'_>, mut node: u32) -> u32 {
     while g.role(f, node) == Role::Parens {
         match f.children(node).iter().copied().find(|&c| f.named(c) && !matches!(g.role(f, c), Role::Comment | Role::Continuation)) {
             Some(child) => node = child,
@@ -138,7 +140,7 @@ pub(crate) fn unparen(g: &Grammar, f: &Facts, mut node: u32) -> u32 {
 }
 
 /// A named node that is not a comment (`call_batch::named`).
-fn named(g: &Grammar, f: &Facts, id: u32) -> bool {
+fn named(g: &Grammar, f: FactsIn<'_>, id: u32) -> bool {
     f.named(id) && g.role(f, id) != Role::Comment
 }
 
@@ -150,11 +152,11 @@ pub(crate) struct Contexts {
     /// `(start, end, owner, kind)`.
     bodies: Vec<(u32, u32, u32, u32)>,
     /// The body each body lies in, as an index; `usize::MAX` for one at the module's level.
-    within: Vec<usize>,
+    within: Vector<usize>,
 }
 
 impl Contexts {
-    pub(crate) fn of(g: &Grammar, f: &Facts) -> Self {
+    pub(crate) fn of(g: &Grammar, f: FactsIn<'_>) -> Self {
         let mut bodies = Vec::new();
         for (code, &role) in g.roles.iter().enumerate() {
             if !matches!(role, Role::Function | Role::Class | Role::Lambda) {
@@ -172,7 +174,7 @@ impl Contexts {
             }
         }
         bodies.sort_unstable();
-        let (mut within, mut open) = (Vec::with_capacity(bodies.len()), Vec::<usize>::new());
+        let (mut within, mut open) = (Vector::with_capacity(bodies.len()), Vec::<usize>::new());
         for (i, &(start, ..)) in bodies.iter().enumerate() {
             while open.last().is_some_and(|&o| bodies[o].1 <= start) {
                 open.pop();
@@ -198,10 +200,10 @@ impl Contexts {
 }
 
 /// The rows of one document's facts, from its calls' postings.
-pub fn rows(g: &Grammar, f: &Facts) -> Rows { collect_rows(g,f,true) }
-pub fn structure(g: &Grammar, f: &Facts) -> Rows { collect_rows(g,f,false) }
-fn collect_rows(g: &Grammar, f: &Facts, with_arguments: bool) -> Rows {
-    let mut calls: Vec<u32> = g.calls.iter().flat_map(|&atom| f.of_kind(atom)).collect();
+pub fn rows(g: &Grammar, f: FactsIn<'_>) -> Rows { collect_rows(g,f,true) }
+pub fn structure(g: &Grammar, f: FactsIn<'_>) -> Rows { collect_rows(g,f,false) }
+fn collect_rows(g: &Grammar, f: FactsIn<'_>, with_arguments: bool) -> Rows {
+    let mut calls: Vector<u32> = g.calls.iter().flat_map(|&atom| f.of_kind(atom)).collect();
     calls.sort_unstable();
     let mut out = Rows::default();
     let contexts = Contexts::of(g, f);
@@ -243,12 +245,12 @@ pub(crate) fn digest(rows: &Rows) -> [u8; 32] {
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 /// Extract only calls requested by the consumer; no all-call scan or context calculation.
-pub fn arguments(g:&Grammar,f:&Facts,calls:&[u32])->Vec<[u32;6]> {
+pub fn arguments(g:&Grammar,f: FactsIn<'_>,calls:&[u32])->Vector<[u32;6]> {
     let mut out=Rows::default();
     for &call in calls { if g.role(f,call)==Role::Call { append_arguments(g,f,call,&mut out); } }
     out.arg
 }
-fn append_arguments(g:&Grammar,f:&Facts,call:u32,out:&mut Rows) {
+fn append_arguments(g:&Grammar,f: FactsIn<'_>,call:u32,out:&mut Rows) {
         let Some(arguments) = field(f, call, g.arguments) else { return };
         if g.role(f, arguments) == Role::Generator {
             out.arg.push([call, arguments, 0, NONE, 0, arguments]);
@@ -273,7 +275,7 @@ fn append_arguments(g:&Grammar,f:&Facts,call:u32,out:&mut Rows) {
         }
 }
 
-pub(crate) fn qualification_chain(g:&Grammar,f:&Facts,n:u32)->Option<(String,Vec<String>)> {
+pub(crate) fn qualification_chain(g:&Grammar,f: FactsIn<'_>,n:u32)->Option<(String,Vec<String>)> {
     let mut n=unparen(g,f,n); let mut tail=Vec::new();
     while g.role(f,n)==Role::Attribute {
         let a=field(f,n,g.attribute)?;

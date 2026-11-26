@@ -1,5 +1,7 @@
 # 0486: the preprocessor's rooms sized from what a refused run used
 
+Status: built (audited 2026-11-23).
+
 (Was 0478 on Go-C-and-C-support; renumbered at its roll-up into the hub, roll-up 21, past 0484. 0489 on rr-align
 at its roll-up 21, 0503 on investigate-bend-vs-datalog.)
 

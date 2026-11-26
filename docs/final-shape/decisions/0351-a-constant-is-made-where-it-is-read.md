@@ -1,6 +1,6 @@
 # 0351: A constant is made where it is read
 
-Status: decided (the user, 2026-11-17, item 1: the token loop's cost a token, read against
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-17, item 1: the token loop's cost a token, read against
 the lean lexer). Follows 0350. Keeps 0069.
 
 ## Intro

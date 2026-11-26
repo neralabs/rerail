@@ -1,10 +1,10 @@
 # 0512. A file read for its programs is shown as a file; its tree is a guest of it
 
-Status: decided (2026-11-20), by the user ("go ahead"), on Q385. The user's two requirements: what a rule sees is a
-generic mechanism, not one made for Python ("why do we have ANNOTATION_KEYS? Shouldn't this be a more generic
-mechanism, not Python-only?"), and "rules need to know line numbers and text in the host so that they can report
-properly". Builds 0470 step 2; keeps 0058 §1 (what a rule sees is a bound on keys) and 0431 §4 (a program's nodes are
-its file's).
+Status: built (audited 2026-11-23). Decided (2026-11-20), by the user ("go ahead"), on Q385. The user's two
+requirements: what a rule sees is a generic mechanism, not one made for Python ("why do we have ANNOTATION_KEYS?
+Shouldn't this be a more generic mechanism, not Python-only?"), and "rules need to know line numbers and text in the
+host so that they can report properly". Builds 0470 step 2; keeps 0058 §1 (what a rule sees is a bound on keys) and
+0431 §4 (a program's nodes are its file's).
 
 ## Intro
 

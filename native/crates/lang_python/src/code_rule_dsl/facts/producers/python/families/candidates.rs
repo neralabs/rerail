@@ -1,4 +1,6 @@
 //! Typed call candidates over core posting ranges. Exact semantics and findings remain consumers.
+use crate::code_rule_dsl::facts::core::FactsIn;
+use rerail_blocks::vector::Vector;
 use super::*;
 use std::collections::BTreeSet;
 #[derive(Default, serde::Serialize)]
@@ -15,11 +17,11 @@ pub(crate) struct Work {
 /// Production uses async-body ranges where available and exact context checks for every selected call.
 pub(crate) fn collect(
     g: &Grammar,
-    f: &Facts,
+    f: FactsIn<'_>,
     context_kind: u32,
     members: &BTreeSet<String>,
     admits: impl FnMut(u32) -> bool,
-) -> (Vec<[u32; 6]>, Work) {
+) -> (Vector<[u32; 6]>, Work) {
     collect_shaped(
         g,
         f,
@@ -36,25 +38,25 @@ pub(crate) fn collect(
 #[cfg(any(test, feature = "test-hooks"))]
 pub(crate) fn experiment(
     g: &Grammar,
-    f: &Facts,
+    f: FactsIn<'_>,
     context_kind: u32,
     members: &BTreeSet<String>,
     mode: &str,
     admits: impl FnMut(u32) -> bool,
-) -> (Vec<[u32; 6]>, Work) {
+) -> (Vector<[u32; 6]>, Work) {
     collect_shaped(g, f, context_kind, members, mode, admits)
 }
 /// Rows: call, report, reference, receiver, flags, execution owner, all core IDs.
 fn collect_shaped(
     g: &Grammar,
-    f: &Facts,
+    f: FactsIn<'_>,
     context_kind: u32,
     members: &BTreeSet<String>,
     mode: &str,
     mut admits: impl FnMut(u32) -> bool,
-) -> (Vec<[u32; 6]>, Work) {
+) -> (Vector<[u32; 6]>, Work) {
     let mut work = Work::default();
-    let mut out = Vec::new();
+    let mut out = rerail_blocks::vector::Vector::new();
     work.posting_calls = g.calls.iter().map(|&kind| f.of_kind(kind).len()).sum();
     let mut classify = |report: u32, work: &mut Work| {
         let reference = matches!(g.role(f, report), Role::Name | Role::Attribute)
@@ -181,7 +183,7 @@ fn collect_shaped(
 /// Preserve the reference's Known / NotApplicable / Unknown distinction on core facts.
 pub fn eligibility(
     g: &Grammar,
-    f: &Facts,
+    f: FactsIn<'_>,
     requested: u32,
 ) -> crate::code_rule_dsl::facts::producers::python::python_facts::Fact<
     crate::code_rule_dsl::facts::producers::python::python_facts::QualificationChain,

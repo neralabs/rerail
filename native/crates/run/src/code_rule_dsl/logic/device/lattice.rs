@@ -1,5 +1,6 @@
 //! A flat-lattice system and its solution on the device (`SolverDevice::lattice`).
 
+use rerail_blocks::vector::Vector;
 /// A flat-lattice system: per cell its seed (`BOT` where none), its copy sources, and transfers
 /// `(cell, op, left, right)` (`op` an ASCII byte: `+`, `-`, `*`, else TOP).
 pub struct System<'a> {
@@ -12,7 +13,7 @@ pub struct System<'a> {
 /// The solved values, the launches the queue took, the cells evaluated, and the evaluations
 /// pushed again because another worker was publishing their cell.
 pub struct Solved {
-    pub values: Vec<i64>,
+    pub values: Vector<i64>,
     pub launches: usize,
     pub visits: u64,
     pub retries: u64,

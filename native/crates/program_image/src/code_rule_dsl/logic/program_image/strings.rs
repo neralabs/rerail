@@ -4,6 +4,7 @@
 //!
 //! A bucket is eight words: seven (tag << 32 | id) slots, then (next overflow bucket + 1) << 32 | count.
 
+use rerail_blocks::vector::Vector;
 pub const SLOTS: usize = 7;
 /// Mean entries a bucket before the table grows by one.
 const LOAD: u64 = 5;
@@ -16,8 +17,8 @@ pub fn hash(bytes: &[u8]) -> u64 {
 
 #[derive(Clone)]
 pub struct Table {
-    pub buckets: Vec<[u64; 8]>,
-    pub over: Vec<[u64; 8]>,
+    pub buckets: Vector<[u64; 8]>,
+    pub over: Vector<[u64; 8]>,
     pub level: u32,
     pub split: u32,
     pub count: u64,
@@ -25,7 +26,7 @@ pub struct Table {
 
 impl Default for Table {
     fn default() -> Self {
-        Table { buckets: vec![[0; 8]; 1 << START_LEVEL], over: Vec::new(), level: START_LEVEL, split: 0, count: 0 }
+        Table { buckets: rerail_blocks::vector![[0; 8]; 1 << START_LEVEL], over: rerail_blocks::vector::Vector::new(), level: START_LEVEL, split: 0, count: 0 }
     }
 }
 
@@ -133,8 +134,8 @@ impl Table {
 #[derive(Clone, Default)]
 pub struct Strings {
     bytes: Vec<u8>,
-    ends: Vec<u32>,
-    hashes: Vec<u64>,
+    ends: Vector<u32>,
+    hashes: Vector<u64>,
     table: Table,
 }
 

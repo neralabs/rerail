@@ -117,7 +117,7 @@ pub struct Report {
 
 pub fn run(files: &[&File]) -> Report {
     let (codes, widths) = lang_widths(files);
-    let read = |f: &File| crate::v15::read(&f.image).unwrap_or_else(|e| panic!("{}: {e}", f.path));
+    let read = |f: &File| crate::captured::read(&f.image).unwrap_or_else(|e| panic!("{}: {e}", f.path));
     let dicts = files.len() >= 16;
     let (mut train, mut test): (Vec<[Vec<Arr>; 2]>, Vec<[Vec<Arr>; 2]>) = (Vec::new(), Vec::new());
     let mut nodes = 0u64;

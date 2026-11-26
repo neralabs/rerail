@@ -1,7 +1,6 @@
 # 0011: Composite matchers lower to node-label passes plus positive walking programs
 
-Status: accepted
-Date: 2026-10-29
+Status: built (audited 2026-11-23). Accepted Date: 2026-10-29
 
 ## Question
 06-first-slice S1: how does W's composite matcher lower to packed transducer programs? The matcher

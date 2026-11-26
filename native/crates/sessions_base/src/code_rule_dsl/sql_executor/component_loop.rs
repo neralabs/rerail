@@ -1,6 +1,7 @@
 //! Development comparison of component scheduling and one recursive SQL statement.
 //! Both strategies use the same SQL transition and immutable native storage.
 //! This does not replace retained incremental maintenance.
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::facts::vtab::Modules;
 use crate::code_rule_dsl::logic::analysis::stages::{Components, loops::Analysis};
@@ -11,7 +12,7 @@ pub mod arena;
 pub struct Plan {
     analysis: Arc<Analysis>,
     members: Vec<String>,
-    widths: Vec<usize>,
+    widths: Vector<usize>,
     steps: Vec<(schedule::Step, Query)>,
 }
 pub fn eligibility(e: &plan::emit::Emitted, members: &BTreeSet<String>) -> (Analysis, Option<Plan>) {

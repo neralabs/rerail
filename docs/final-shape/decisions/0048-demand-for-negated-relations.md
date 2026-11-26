@@ -1,6 +1,6 @@
 # 0048: Relations that rules only negate are computed for the keys the rules reach
 
-Status: accepted (2026-11-06)
+Status: built (audited 2026-11-23). Accepted (2026-11-06)
 
 ## Intro
 

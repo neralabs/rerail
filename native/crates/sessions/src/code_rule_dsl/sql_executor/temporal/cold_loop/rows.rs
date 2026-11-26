@@ -141,8 +141,8 @@ impl<A: Roots + 'static> Source for Rows<A> {
     fn composite(&self) -> bool {
         true
     }
-    fn lookup(&self, _: usize, _: &[i64]) -> Option<Vec<usize>> {
-        Some(vec![])
+    fn lookup(&self, _: usize, _: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
+        Some(rerail_blocks::vector![])
     }
     fn value(&self, _: usize, _: usize) -> i64 {
         unreachable!("version rows require a state and slot")

@@ -1,6 +1,6 @@
 # 0025: the tape format becomes v9np
 
-Status: accepted (2026-11-01, user decision)
+Status: superseded by 0156 / 0340 (format 16) (audited 2026-11-23). Accepted (2026-11-01, user decision)
 
 ## Context
 

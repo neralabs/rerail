@@ -32,7 +32,7 @@
 #define CLIF_T_LINE_COUNT 100u
 #define CLIF_T_PRESENCE 120u
 
-// ---- the formats (`view::F16_*`, `F15_*`; `rerail_tape_format::newlines`) ---------------------------------------
+// ---- the formats (`view::F16_*`; `rerail_tape_format::newlines`) ------------------------------------------------
 #define CLIF_T_NONE 4294967295u
 #define CLIF_T_F16Z_FORMAT 1016u
 // Format 16: a checkpoint every K nodes, side lists in parts of PART nodes, of SUB blocks of BLOCK nodes.
@@ -40,9 +40,6 @@
 #define CLIF_T_BLOCK 256u
 #define CLIF_T_PART 1024u
 #define CLIF_T_SUB 4u
-// Format 15: a checkpoint every 16 nodes; tails measured from the node's own start.
-#define CLIF_T_F15_STRIDE_SHIFT 4u
-#define CLIF_T_F15_TAIL_FROM_START 4096u
 // Format 16's newline index: its first fields' bytes; every 256th zero and one of its high bits sampled.
 #define CLIF_T_LINES_HEAD 20u
 #define CLIF_T_LINES_SAMPLE_SHIFT 8u
@@ -52,7 +49,7 @@
 #define CLIF_T_Z_PIECES 4u
 // In an entry: the block's view at SLOT_VIEW, its bytes from SLOT_BYTES, and SLACK bytes of room after them.
 #define CLIF_T_SLOT_VIEW 16u
-#define CLIF_T_SLOT_BYTES 144u
+#define CLIF_T_SLOT_BYTES 160u
 #define CLIF_T_SLACK 64u
 // A piece's kind: its bytes, one LZ4 block, or a repeat of the piece its payload names.
 #define CLIF_T_RAW 0u
@@ -146,8 +143,8 @@ UKL_INLINE uint32_t clif_t_select_in_word(uint64_t x, uint32_t r)
 // ---- the reads no format changes ----------------------------------------------------------------------------------
 
 // Whether the tape's block `block` (its nodes `PART * block ..`; NONE: the whole document) has a node of kind
-// `kind`, by its presence (the view's `presence`, decision 0434 §4): 1 where the tape has none to tell by (format 15,
-// or one stored without it), and the document's answer where its blocks' presences are not held.
+// `kind`, by its presence (the view's `presence`, decision 0434 §4): 1 where the tape has none to tell by (one stored
+// without it), and the document's answer where its blocks' presences are not held.
 UKL_INLINE uint32_t clif_tape_has_kind(CLIF_T_ARGS, uint32_t block, uint32_t kind)
 {
     uint32_t at = clif_view(v, CLIF_T_PRESENCE);

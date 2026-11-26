@@ -1,16 +1,17 @@
 //! Decision 0478 step 5 (R2, R5): a relation's index is in its block, the one the device finds and builds, and the
 //! CPU probes it there. Its dead rows are its block's.
 
+use rerail_blocks::vector::Vector;
 use super::InRel;
 
 /// `n` rows of two columns: `(id % 7, id)`.
-fn rows(n: usize) -> Vec<i64> {
+fn rows(n: usize) -> Vector<i64> {
     (0..n as i64).flat_map(|id| [id % 7, id]).collect()
 }
 
 /// The rows a probe of column 0 by `v` finds, by their column 1.
-fn probed(rel: &InRel, v: i64) -> Vec<i64> {
-    let mut got = Vec::new();
+fn probed(rel: &InRel, v: i64) -> Vector<i64> {
+    let mut got = rerail_blocks::vector::Vector::new();
     rel.probe_each(&[0], &[v], &mut |row| got.push(row(1)));
     got.sort_unstable();
     got
@@ -61,7 +62,7 @@ fn a_probe_skips_the_dead_rows_of_the_blocks_index() {
     // A run of its own (decision 0442): its open blocks and counts are the run's.
     let _run = crate::code_rule_dsl::logic::profile::test_run();
     let n: usize = 700;
-    let mut dead = vec![0u64; n.div_ceil(64)];
+    let mut dead = rerail_blocks::vector![0u64; n.div_ceil(64)];
     for id in (0..n).filter(|id| id % 3 == 0) {
         dead[id / 64] |= 1 << (id % 64);
     }
@@ -202,7 +203,7 @@ fn an_order_made_at_a_probe_is_in_the_blocks_directory() {
     rest.extend_from_slice(&rows(n)[n..]);
     rows_.append_part(rest.parts().last().expect("its rows' part").clone());
     let rows_ = rows_.freeze(n);
-    let rel = InRel::held(rows_, n, vec![b'i'; 2], Vec::new());
+    let rel = InRel::held(rows_, n, vec![b'i'; 2], rerail_blocks::vector::Vector::new());
     assert!(rel.rows.in_one_block().is_none(), "two parts");
     let before = rel.rows.last_in_block().unwrap().relation().orders().count();
     let mut got = Vec::new();
@@ -217,12 +218,13 @@ fn an_order_made_at_a_probe_is_in_the_blocks_directory() {
 fn an_inputs_value_counts_and_statistics_are_in_a_block() {
     // A run of its own (decision 0442): its open blocks and counts are the run's.
     let _run = crate::code_rule_dsl::logic::profile::test_run();
+    use crate::code_rule_dsl::facts::rows::InRelations;
     use crate::code_rule_dsl::facts::vtab::Source;
     let n = 700;
     let rel = std::sync::Arc::new(InRel::from_flat(rows(n), n, vec![b'i'; 2]));
     let src = super::Derived::source(std::sync::Arc::clone(&rel), None);
     let want = |v: i64| (0..n as i64).filter(|id| id % 7 == v).count() as i64;
-    assert_eq!(src.value_counts(&[(0, 3), (0, 6), (0, 9)]), Some(vec![want(3), want(6), 0]));
+    assert_eq!(src.value_counts(&[(0, 3), (0, 6), (0, 9)]), Some(rerail_blocks::vector![want(3), want(6), 0]));
     {
         let counted = rel.counted.lock().unwrap();
         assert_eq!(counted.len(), 1, "one column counted");
@@ -230,4 +232,82 @@ fn an_inputs_value_counts_and_statistics_are_in_a_block() {
     }
     assert!(src.statistics().is_some());
     assert!(rel.measured.get().is_some_and(|m| m.facts().is_some() && m.len() == 2), "a column's statistics each, in a block");
+}
+
+/// Decision 0694 step 1: a test of a derived input by one node column reads a bit in the relation's node-keyed index,
+/// in its block, and answers as its probe; one with dead rows has none, and is probed as before.
+#[test]
+fn a_test_by_one_node_column_reads_the_blocks_node_bits() {
+    let _run = crate::code_rule_dsl::logic::profile::test_run();
+    let node = |doc: i64, l: i64| doc << 32 | l;
+    let n = 900usize;
+    let flat: Vector<i64> = (0..n as i64).flat_map(|id| [node(id % 3, 10 + id / 3 * 2), id]).collect();
+    let rel = InRel::from_flat(flat.clone(), n, vec![b'i'; 2]);
+    let ix = rel.index(&[0]);
+    let mut hint = 0;
+    // Decision 0706 §5: a reader never builds it; with none built ahead it probes as before.
+    assert_eq!(rel.index(&[0, 1]).node_bits_has(&rel, node(0, 10), &mut hint), None, "none built ahead: none read");
+    assert!(rel.in_block().unwrap().relation().find_node_bits(0, n as u32).is_none(), "and the reader built none");
+    // Built ahead, as the level's batch builds it.
+    rel.in_block().unwrap().own_node_bits(0).expect("room");
+    for doc in 0..4 {
+        for l in 0..700 {
+            let v = node(doc, l);
+            assert_eq!(ix.node_bits_has(&rel, v, &mut hint), Some(!probed(&rel, v).is_empty()), "document {doc} node {l}");
+        }
+    }
+    let ib = rel.in_block().unwrap();
+    assert!(ib.relation().find_node_bits(0, n as u32).is_some(), "in the relation's block");
+    assert_eq!(super::run_counts().node_bits[0].load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(super::run_counts().node_bits[1].load(std::sync::atomic::Ordering::Relaxed), 1, "the index on both columns had none");
+    let mut dead = rerail_blocks::vector![0u64; n.div_ceil(64)];
+    dead[0] = 1;
+    let rel = InRel::held(crate::code_rule_dsl::facts::rows::Rows::frozen(2, flat, n), n, vec![b'i'; 2], dead);
+    assert_eq!(rel.index(&[0]).node_bits_has(&rel, node(0, 10), &mut hint), None, "dead rows: probed as before");
+}
+
+/// Decision 0706 step 1 (E2): a membership test by two columns reads the filter its level built ahead, and answers as
+/// its probe; a reader builds none; the run's observed use is keyed by the one `Access` of its columns; and the build
+/// ahead makes a filter only where that use pays for it.
+#[test]
+fn a_test_by_two_columns_reads_the_filter_built_ahead() {
+    use crate::code_rule_dsl::logic::access::{self, Access, Kind, Use};
+    let _run = crate::code_rule_dsl::logic::profile::test_run();
+    let n = 2_000usize;
+    let flat: Vector<i64> = (0..n as i64).flat_map(|id| [id * 7 % 1_000, id % 13]).collect();
+    let rel = InRel::from_flat(flat, n, vec![b'i'; 2]);
+    let _ = rel.name.set("held".into());
+    let ix = rel.index(&[1, 0]);
+    let held: std::collections::BTreeSet<(i64, i64)> = (0..n).map(|r| (rel.at(r).at(0), rel.at(r).at(1))).collect();
+    assert!(!ix.filter_rejects(&rel, &[3, 5]), "none built ahead: nothing rejected");
+    assert!(rel.in_block().unwrap().own_filter(&[0, 1], false).is_none(), "and the reader built none");
+    // A run whose tests mostly missed: the build ahead makes it, for a level reading the relation.
+    let a = Access::membership("held", [1, 0]);
+    assert_eq!(a.kind, Kind::Filter(vec![0, 1]));
+    super::access::seed_observed(a.clone(), Use { tests: 1_000_000, found: 1_000 });
+    assert!(access::pays(&a.kind, n as u64, Use { tests: 1_000_000, found: 1_000 }));
+    let reads = std::iter::once("held".to_owned()).collect();
+    assert_eq!(super::access::prefetch(&reads, |name| (name == "held").then(|| rel.clone())), (1, 1));
+    assert_eq!(super::access::prefetch(&reads, |name| (name == "held").then(|| rel.clone())), (0, 0), "built once");
+    // A fresh index (another plan) finds it; each key it rejects is in no row, and it rejects most absent keys.
+    let ix = rel.index(&[1, 0]);
+    let (mut absent, mut rejected) = (0, 0);
+    for a in 0..1_200i64 {
+        for b in 0..15i64 {
+            let r = ix.filter_rejects(&rel, &[b, a]);
+            if held.contains(&(a, b)) {
+                assert!(!r, "held ({a}, {b}) rejected");
+            } else {
+                absent += 1;
+                rejected += i32::from(r);
+            }
+        }
+    }
+    assert!(rejected * 100 > absent * 95, "{rejected} of {absent} absent keys rejected");
+    // Use that does not pay builds nothing.
+    let other = InRel::from_flat((0..n as i64).flat_map(|id| [id, id]).collect(), n, vec![b'i'; 2]);
+    let _ = other.name.set("hit".into());
+    super::access::seed_observed(Access::membership("hit", [0, 1]), Use { tests: 100, found: 100 });
+    let reads = std::iter::once("hit".to_owned()).collect();
+    assert_eq!(super::access::prefetch(&reads, |name| (name == "hit").then(|| other.clone())), (0, 0));
 }

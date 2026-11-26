@@ -2,6 +2,7 @@
 //! substitution / substituted-summary / name-table rows of `reference_edges.sql`, for one path.
 //! A path's block is a function of (path, content, the package directories among its ancestors)
 //! only; every join in these stages is on path equality.
+use rerail_blocks::vector::Vector;
 use super::intern::{Interner, Sym};
 use super::summary::{RawDef, Summary, VRows};
 use rustc_hash::FxHashSet;
@@ -88,7 +89,7 @@ pub const CLASS: u32 = 2;
 pub const SHADOWED: u32 = 64;
 
 /// Each def's occurrence among the path's defs of the same name (defs in idx order).
-pub fn occurrences(defs: &[SDef]) -> Vec<u32> {
+pub fn occurrences(defs: &[SDef]) -> Vector<u32> {
     let mut seen: rustc_hash::FxHashMap<Sym, u32> = Default::default();
     defs.iter()
         .map(|d| {

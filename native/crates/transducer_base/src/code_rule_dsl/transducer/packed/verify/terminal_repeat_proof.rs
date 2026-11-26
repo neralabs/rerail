@@ -1,5 +1,6 @@
 //! Terminal repetition proof: disjoint static node alternatives, nonempty
 //! captures on every iteration, and one unconditional terminal continuation.
+use rerail_blocks::vector::Vector;
 use super::*;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -7,12 +8,12 @@ pub struct TerminalRepeat {
     pub begin: usize,
     pub children: bool,
     pub named: bool,
-    pub guards: Vec<usize>,
-    pub prefix: Vec<usize>,
-    pub suffix: Vec<usize>,
-    pub paths: Vec<Vec<usize>>,
-    pub initial_work: Vec<Vec<usize>>,
-    pub repeating_work: Vec<Vec<usize>>,
+    pub guards: Vector<usize>,
+    pub prefix: Vector<usize>,
+    pub suffix: Vector<usize>,
+    pub paths: Vec<Vector<usize>>,
+    pub initial_work: Vec<Vector<usize>>,
+    pub repeating_work: Vec<Vector<usize>>,
     /// Closing END and complete terminal continuation, including EMIT.
     pub suffix_work: usize,
     pub emit: usize,
@@ -25,10 +26,10 @@ fn guard(op: u8) -> bool {
     )
 }
 
-type BodyPaths = Vec<(Vec<usize>, Vec<usize>)>;
+type BodyPaths = Vec<(Vector<usize>, Vector<usize>)>;
 
 fn paths(program: &Program, start: usize, header: usize, repeat: u16) -> Option<BodyPaths> {
-    let mut pending = vec![(start, Vec::new(), BTreeSet::new(), Vec::new())];
+    let mut pending = vec![(start, rerail_blocks::vector::Vector::new(), BTreeSet::new(), rerail_blocks::vector::Vector::new())];
     let mut output = Vec::new();
     while let Some((mut pc, mut path, mut seen, mut instructions)) = pending.pop() {
         loop {
@@ -109,8 +110,8 @@ pub fn prove(program: &Program) -> Option<TerminalRepeat> {
     if begin > 64 {
         return None;
     }
-    let mut guards = Vec::new();
-    let mut prefix = Vec::new();
+    let mut guards = rerail_blocks::vector::Vector::new();
+    let mut prefix = rerail_blocks::vector::Vector::new();
     let mut saved = false;
     for pc in 0..begin {
         let (op, _, arg) = split(program.words[pc]);
@@ -165,7 +166,7 @@ pub fn prove(program: &Program) -> Option<TerminalRepeat> {
         return None;
     }
     let mut pc = exit + 1;
-    let mut suffix = Vec::new();
+    let mut suffix = rerail_blocks::vector::Vector::new();
     let mut restored = false;
     let mut visited = BTreeSet::new();
     let mut suffix_work = 1;

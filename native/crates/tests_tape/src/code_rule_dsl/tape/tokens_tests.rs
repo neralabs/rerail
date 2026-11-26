@@ -11,7 +11,7 @@ fn tape(lang: GrammarDialect, source: &str) -> TapeDoc {
     let native = ast_grep_core::tree_sitter::StrDoc::new(source, lang);
     let grammar = Grammar::new(lang).unwrap();
     let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
-    TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap()
+    TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap()
 }
 
 /// The texts of the tape's anonymous nodes, in preorder.

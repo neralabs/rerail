@@ -346,10 +346,13 @@ checked before code generation, and refused if:
 So a loop over single bytes cannot be generated, and neither can a call out to the
 host.
 
-**Still open.** Tier 2 on Metal. The preprocessing words run there (decision 0408): their
-Cranelift IR is printed as MSL (`clif_msl`), one TU a thread. They equal the interpreter on the
-corpus, but a thread runs about 9 µs a token, 400× a CPU core, so the device does not pay for a
-serial machine per input.
+**Still open.** Tier 2 on the device, part of the generated parsers' campaign (the Bitlex
+parsers' device code). The preprocessing words run there (decision 0408): their Cranelift IR is
+printed as UKL (`clif_ukl`, once MSL's `clif_msl`), one TU a thread. They equal the interpreter on
+the corpus, but a thread runs about 9 µs a token, 400× a CPU core, so the device does not pay for
+a serial machine per input. No product path runs them: the preprocessor's device path is 0448's.
+Before the campaign closes, that code (`pp_on`, `clif_ukl`) is used by a tier 2 that pays, or
+removed, probably removed (0348, "Open").
 
 ## 7. Checking generated code: the corpus
 

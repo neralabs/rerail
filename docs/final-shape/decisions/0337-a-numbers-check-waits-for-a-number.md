@@ -1,6 +1,6 @@
 # 0337: A number's check waits for a number
 
-Status: decided (2026-11-17); landed on the CPU. Follows 0335.
+Status: built (audited 2026-11-23). Decided (2026-11-17); landed on the CPU. Follows 0335.
 
 ## Intro
 

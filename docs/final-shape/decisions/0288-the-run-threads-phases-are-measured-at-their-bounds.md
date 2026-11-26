@@ -1,7 +1,7 @@
 # 0288. The run's thread is measured phase by phase, and in the profile by span
 
-Status: decided (2026-11-15). Follows 0282, which found the strata loop is a small part of a run's wall, and the run
-thread's serial phases most of it.
+Status: built (audited 2026-11-23). Decided (2026-11-15). Follows 0282, which found the strata loop is a small part of
+a run's wall, and the run thread's serial phases most of it.
 
 ## Intro
 

@@ -5,11 +5,12 @@ use crate::code_rule_dsl::{
     waves::schedule,
 };
 
-fn program_for(run: &Run<'_, '_>, rels: &BTreeSet<String>) -> Result<schedule::Program> {
+/// `rels`, sorted by name.
+fn program_for(run: &Run<'_, '_>, rels: &[&str]) -> Result<schedule::Program> {
     let f = run.fields();
     let mut operations = BTreeMap::new();
     let mut lattices_meta = Vec::new();
-    for rel in rels {
+    for &rel in rels {
         if let Some(l) = f.lattice_decl(rel) {
             let lattice = f.text(l.lattice);
             let top = if lattice == "flat" {
@@ -19,17 +20,17 @@ fn program_for(run: &Run<'_, '_>, rels: &BTreeSet<String>) -> Result<schedule::P
                     lattices::registered(&run.db, lattice).map_err(|e| Error::Plan(e.reason))?;
                 ops.after = l.widen;
                 let top = ops.top;
-                operations.insert(rel.clone(), ops);
+                operations.insert(rel.to_owned(), ops);
                 top
             };
-            lattices_meta.push((rel.clone(), l.keys, top));
+            lattices_meta.push((rel.to_owned(), l.keys, top));
         }
     }
     Ok(schedule::Program {
         name: "corpus-sql".into(),
         relations: rels
             .iter()
-            .map(|r| (r.clone(), f.width(r)))
+            .map(|&r| (r.to_owned(), f.width(r)))
             .collect(),
         steps: vec![],
         file_local: false,
@@ -38,9 +39,9 @@ fn program_for(run: &Run<'_, '_>, rels: &BTreeSet<String>) -> Result<schedule::P
         lattice_operations: operations,
         column_types: rels
             .iter()
-            .map(|r| {
+            .map(|&r| {
                 (
-                    r.clone(),
+                    r.to_owned(),
                     f.types(r)
                         .iter()
                         .map(|t| {
@@ -58,7 +59,7 @@ fn program_for(run: &Run<'_, '_>, rels: &BTreeSet<String>) -> Result<schedule::P
 }
 
 pub(super) fn merge(run: &Run<'_, '_>, rel: &str, select: &str) -> Result<usize> {
-    let mut p = program_for(run, &BTreeSet::from([rel.into()]))?;
+    let mut p = program_for(run, &[rel])?;
     p.steps.push(schedule::Step {
         output: rel.into(),
         stratum: 0,
@@ -75,11 +76,11 @@ pub(super) fn merge(run: &Run<'_, '_>, rel: &str, select: &str) -> Result<usize>
 
 pub(super) fn component(
     run: &mut Run<'_, '_>,
-    scc: &BTreeSet<String>,
+    scc: &crate::code_rule_dsl::logic::front::Comp,
     planned: &[(super::body::RuleKey, Vec<Step>)],
     recursive: bool,
 ) -> Result<u32> {
-    let mut p = program_for(run, scc)?;
+    let mut p = program_for(run, &scc.iter().collect::<Vec<_>>())?;
     let mut queries = Vec::new();
     let vs = std::sync::Arc::clone(&run.versions);
     let pf = vs.whole(run.version);
@@ -95,7 +96,7 @@ pub(super) fn component(
         queries.push(Some(q));
     }
     if recursive {
-        run.model.stats.solve(scc.clone());
+        run.model.stats.solve(rerail_section::TextSet::of(scc.iter()));
         for (rule, _) in planned {
             let b = vs.at(*rule);
             for i in 0..b.len() {
@@ -116,7 +117,7 @@ pub(super) fn component(
                 }
             }
         }
-        run.model.stats.solve(BTreeSet::new());
+        run.model.stats.solve(Default::default());
     }
     let f = vs.whole(run.version);
     // In the lattices' order (by name).

@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -420,7 +421,7 @@ pub enum SqlAstNode {
     },
     DemandScan {
         source: PhysicalRelation,
-        producer_ids: Vec<u64>,
+        producer_ids: Vector<u64>,
         projection: Vec<SqlProjection>,
         predicates: Vec<SqlExpression>,
     },
@@ -1219,7 +1220,7 @@ pub mod tests {
             relation(2),
             SqlAstNode::DemandScan {
                 source: PhysicalRelation::Capture,
-                producer_ids: vec![3, 7],
+                producer_ids: rerail_blocks::vector![3, 7],
                 projection: Vec::new(),
                 predicates: Vec::new(),
             },

@@ -1,12 +1,13 @@
 //! Indexed, connection-local facts. Updates require an idle connection, so cursors see stable rows.
+use rerail_blocks::vector::Vector;
 use super::*;
 use parking_lot::RwLock;
 
 #[derive(Default)]
 struct Rows {
     revision:u64,
-    values: Vec<Vec<i64>>,
-    positions: BTreeMap<Vec<i64>, usize>,
+    values: Vec<Vector<i64>>,
+    positions: BTreeMap<Vector<i64>, usize>,
     indexes: Vec<BTreeMap<i64, BTreeSet<usize>>>,
 }
 pub struct Live {
@@ -14,7 +15,7 @@ pub struct Live {
     rows: RwLock<Rows>,
 }
 impl Rows {
-    fn insert(&mut self, row: Vec<i64>) {
+    fn insert(&mut self, row: Vector<i64>) {
         if self.positions.contains_key(&row) {
             return;
         }
@@ -59,7 +60,7 @@ impl Live {
             (0..source.len()).map(|i| (0..width).map(|c| source.value(i, c)).collect()),
         )
     }
-    pub fn from_rows(columns: Vec<String>, values: impl IntoIterator<Item = Vec<i64>>) -> Self {
+    pub fn from_rows(columns: Vec<String>, values: impl IntoIterator<Item = Vector<i64>>) -> Self {
         let mut rows = Rows {
             indexes: vec![BTreeMap::new(); columns.len()],
             ..Rows::default()
@@ -74,9 +75,9 @@ impl Live {
     }
     pub fn changes(
         &self,
-        insert: &BTreeSet<Vec<i64>>,
-        delete: &BTreeSet<Vec<i64>>,
-    ) -> (Vec<Vec<i64>>, Vec<Vec<i64>>) {
+        insert: &BTreeSet<Vector<i64>>,
+        delete: &BTreeSet<Vector<i64>>,
+    ) -> (Vec<Vector<i64>>, Vec<Vector<i64>>) {
         let rows = self.rows.read();
         (
             insert
@@ -91,7 +92,7 @@ impl Live {
                 .collect(),
         )
     }
-    pub fn apply(&self, insert: &[Vec<i64>], delete: &[Vec<i64>]) {
+    pub fn apply(&self, insert: &[Vector<i64>], delete: &[Vector<i64>]) {
         let mut rows = self.rows.write();
         for r in delete {
             rows.delete(r);
@@ -122,7 +123,7 @@ impl Source for Live {
     fn indexed(&self, _: usize) -> bool {
         true
     }
-    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         let r = self.rows.read();
         Some(
             values

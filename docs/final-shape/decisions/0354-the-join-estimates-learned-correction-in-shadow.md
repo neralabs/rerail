@@ -1,8 +1,9 @@
 # 0354. The join estimates' learned correction, in shadow
 
-Status: step 1 built (2026-11-17): samples kept, the model trained and compared, not used. Work queue Q82. Builds on
-decisions 0100 §14 (the learned cost model: `rerail-forest`'s regression forests, the cost store) and 0203 §2 (the
-batch prediction a round of choices asks: `joins::Pricer`).
+Status: partly built (audited 2026-11-23). Left: the model as default pricer; samples of orders not kept; step-0
+estimates; sample volume; membership correction. Step 1 built (2026-11-17): samples kept, the model trained and
+compared, not used. Work queue Q82. Builds on decisions 0100 §14 (the learned cost model: `rerail-forest`'s regression
+forests, the cost store) and 0203 §2 (the batch prediction a round of choices asks: `joins::Pricer`).
 
 ## Intro
 

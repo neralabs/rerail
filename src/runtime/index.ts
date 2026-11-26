@@ -62,8 +62,8 @@ export {
   SqliteSessionReader,
   SqliteSessionStore,
 } from "./session-store.js";
-export { DAEMON_KEEPS_RUNNING, type RepositorySetupIo, onRuleCount } from "./repository-start.js";
-export { CommandTimeoutError, type NpmRunner, runNpm } from "./npm.js";
+export { DAEMON_KEEPS_RUNNING, type RepositorySetupIo, checkoutRulesNotRun, onRuleCount } from "./repository-start.js";
+export { CommandTimeoutError, KILL_GRACE_MS, type NpmRunner, runNpm } from "./npm.js";
 export { type Progress } from "./progress.js";
 export {
   addRemote,

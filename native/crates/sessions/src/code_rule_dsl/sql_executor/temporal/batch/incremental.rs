@@ -1,4 +1,5 @@
 //! SQL finds affected heads and rechecks their support against current inputs.
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::logic::analysis::{Decision, deltas};
 use crate::code_rule_dsl::logic::plan::estimates::{InputChange, ProjectionCost};
@@ -27,7 +28,7 @@ struct Atom {
     input: Input,
     current: Rel,
     fields: Vec<String>,
-    positions: Vec<usize>,
+    positions: Vector<usize>,
     plus: usize,
     minus: usize,
     superset: usize,
@@ -250,13 +251,13 @@ pub fn affected(
                     return None;
                 }
                 let (visible, projected) = match &old.relation {
-                    Rel::Input { .. } => (full.clone(), (0..full.len()).collect()),
+                    Rel::Input { .. } => (full.clone(), (0..full.len()).collect::<Vector<_>>()),
                     Rel::Batch { source, .. } if !source.batched => {
                         let projected = source
                             .columns
                             .iter()
                             .map(|c| full.iter().position(|field| field == c))
-                            .collect::<Option<Vec<_>>>()?;
+                            .collect::<Option<Vector<_>>>()?;
                         let visible = if source.positional {
                             (0..projected.len()).map(|c| format!("c{c}")).collect()
                         } else {

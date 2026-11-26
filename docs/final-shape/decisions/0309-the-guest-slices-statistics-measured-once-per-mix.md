@@ -1,8 +1,8 @@
 # 0309. The guest slice's statistics measured once per mix, as the run's are
 
-Status: decided (2026-11-16). Found by reading a cold PostHog run's profile for its wall: the chunk phase keeps about
-10.5 cores busy, so it is bound by its work, and that work's largest span with nothing inside it was the guest
-slice's statistics.
+Status: built (audited 2026-11-23). Decided (2026-11-16). Found by reading a cold PostHog run's profile for its wall:
+the chunk phase keeps about 10.5 cores busy, so it is bound by its work, and that work's largest span with nothing
+inside it was the guest slice's statistics.
 
 ## Intro
 

@@ -1,7 +1,7 @@
 # 0367: No slot holds a value the IR has
 
-Status: decided (the user, 2026-11-17: "just fix the shape of the generated code"). Follows 0366.
-Amends 0347's "The stack arrays, read again".
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-17: "just fix the shape of the generated code").
+Follows 0366. Amends 0347's "The stack arrays, read again".
 
 ## Intro
 

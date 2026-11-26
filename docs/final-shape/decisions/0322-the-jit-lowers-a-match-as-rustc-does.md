@@ -1,7 +1,7 @@
 # 0322: The JIT lowers a `match` as rustc does
 
-Status: decided (2026-11-16); landed for tier 1 and tier 2 on the CPU.
-Part of 0177's token loop.
+Status: built (audited 2026-11-23). Decided (2026-11-16); landed for tier 1 and tier 2 on the CPU. Part of 0177's
+token loop.
 
 ## Intro
 

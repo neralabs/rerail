@@ -20,11 +20,12 @@
 //! rule's slots, a binding's fresh variable after them. Each program the trials make is a dependency graph, not a
 //! program: what `analyses::strata` reads of one.
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::logic::front::{Edges, Error, tarjan};
 use crate::code_rule_dsl::logic::front::ast::{Gate, Report};
 use crate::code_rule_dsl::logic::plan::body::{VarSet, atom_vars, lit_vars, term_vars};
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
-use crate::code_rule_dsl::logic::program_image::{About, AggRef, AtomRef, Cell, CmpOp, Lit, LitRef, Rewrite, RuleBuilder, RuleRef, Slot, T, TermRef, Version, t_of};
+use crate::code_rule_dsl::logic::program_image::{About, AggRef, AtomRef, Cell, CmpOp, Lit, LitRef, Rewrite, Rows, RuleBuilder, RuleRef, Slot, T, TermRef, Version, t_of};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -384,7 +385,7 @@ impl<'v> Ctx<'v, '_> {
                 order.push(l);
                 continue;
             }
-            let pos: Vec<usize> = (0..rest.len()).filter(|&i| rest[i].positive(v).is_some()).collect();
+            let pos: Vector<usize> = (0..rest.len()).filter(|&i| rest[i].positive(v).is_some()).collect();
             if pos.is_empty() {
                 return None;
             }
@@ -399,7 +400,7 @@ impl<'v> Ctx<'v, '_> {
                 None => !matches!(rest[i], M::True),
             };
             let derived = |i: usize| self.idb.contains(rest[i].positive(v).expect("a positive atom"));
-            let joined: Vec<usize> = pos.iter().copied().filter(|&i| !rest[i].vars(r).is_disjoint(&bound)).collect();
+            let joined: Vector<usize> = pos.iter().copied().filter(|&i| !rest[i].vars(r).is_disjoint(&bound)).collect();
             let lowest = |ix: &[usize], key: &dyn Fn(usize) -> i64| {
                 ix.iter().copied().fold(None, |best: Option<usize>, i| match best {
                     Some(b) if key(b) <= key(i) => Some(b),
@@ -487,7 +488,7 @@ impl<'v> Ctx<'v, '_> {
 
 /// A trial's program's dependency graph, stratified (`analyses::strata`): its components, dependencies first, and its
 /// edges by name.
-fn strata(v: &Version, about: &About, rules: &[Made<'_>]) -> Result<(Vec<BTreeSet<String>>, Edges), Error> {
+fn strata(v: &Version, about: &About, rules: &[Made<'_>]) -> Result<(crate::code_rule_dsl::logic::front::Components, Edges), Error> {
     let head_of = |m: &Made<'_>| -> String { m.head.as_ref().map_or_else(|| v.rel_name(m.rule.head().rel()).to_owned(), |(rel, _)| rel.clone()) };
     let heads: Vec<String> = rules.iter().map(head_of).collect();
     let mut names: Vec<&str> = heads.iter().map(String::as_str).collect();
@@ -654,7 +655,7 @@ impl ProgramDemand {
         full.extend(v.rules().filter(|r| r.body().any(|l| matches!(l.view(), Lit::Agg { .. }))).map(|r| v.rel_name(r.head().rel()).to_owned()));
         let originals: Vec<Made<'_>> = v.rules().map(|rule| Made { rule, head: None, body: rule.body().map(M::Own).collect() }).collect();
         let (sccs, _) = strata(v, about, &originals).map_err(|e| e.to_string())?;
-        let level: BTreeMap<String, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.clone(), i))).collect();
+        let level: BTreeMap<String, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.to_owned(), i))).collect();
         let (mut cyc, mut why) = (Vec::new(), Vec::new());
         let made = loop {
             let mut cx2 = Ctx { v, about, by: &by, idb: &idb, level: &level, answered: BTreeMap::new() };
@@ -708,27 +709,27 @@ impl ProgramDemand {
             b.fields().declare(rel, &cols);
         }
         b.fields().declare("magic_true", &[("k", "int")]);
-        let mut rows: Vec<Vec<Cell>> = input.find("magic_true").and_then(|a| input.facts(a)).map(|f| f.rows().map(|r| r.collect()).collect()).unwrap_or_default();
-        rows.push(vec![Cell::Int(0)]);
+        let mut rows = input.find("magic_true").and_then(|a| input.facts(a)).map(|f| Rows::of_cells(f.rows())).unwrap_or_default();
+        rows.push([Cell::Int(0)]);
         b.fields().set_fact_cells("magic_true", rows);
         // No demand left, and only the gates this demand made.
         for name in ["demand", "gate", "gate_src", "gate_quiet", "gate_dep"] {
             if !b.about_rows(name).is_empty() {
-                b.fields().set_about_rows(name, Vec::new());
+                b.fields().set_about_rows(name, Rows::new());
             }
         }
         let pc = super::demand::about_p(b);
         // The gates, as the program keeps them (`gate`, `gate_src`, `gate_quiet`, `gate_dep`).
-        let (mut gate, mut src, mut quiet, mut deps) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let (mut gate, mut src, mut quiet, mut deps) = (Rows::new(), Rows::new(), Rows::new(), Rows::new());
         for (k, (key, g)) in trial.gates.iter().enumerate() {
             let (key, rel) = (b.atom(key), b.atom(&g.rel));
-            gate.push(vec![pc, Cell::Int(k as i64), Cell::Str(key), Cell::Str(rel), Cell::Int(g.level as i64)]);
+            gate.push([pc, Cell::Int(k as i64), Cell::Str(key), Cell::Str(rel), Cell::Int(g.level as i64)]);
             if let Some(s) = &g.src {
-                src.push(vec![pc, Cell::Int(k as i64), Cell::Str(b.atom(s))]);
+                src.push([pc, Cell::Int(k as i64), Cell::Str(b.atom(s))]);
             }
             for (out, items) in [(&mut quiet, &g.quiet), (&mut deps, &g.deps)] {
                 for (i, rel) in items.iter().enumerate() {
-                    out.push(vec![pc, Cell::Int(k as i64), Cell::Int(i as i64), Cell::Str(b.atom(rel))]);
+                    out.push([pc, Cell::Int(k as i64), Cell::Int(i as i64), Cell::Str(b.atom(rel))]);
                 }
             }
         }
@@ -738,12 +739,12 @@ impl ProgramDemand {
             }
         }
         // The report, as the program keeps it (`Program::magic_report`: `magic_report` and `report_list`).
-        b.fields().set_about_rows("magic_report", vec![vec![pc, Cell::Int(report.magic_rules as i64), Cell::Int(report.extras_kept as i64), Cell::Int(report.gates as i64)]]);
-        let mut list = Vec::new();
+        b.fields().set_about_rows("magic_report", Rows::from_iter([[pc, Cell::Int(report.magic_rules as i64), Cell::Int(report.extras_kept as i64), Cell::Int(report.gates as i64)]]));
+        let mut list = Rows::new();
         for (name, items) in [("adornments", &report.adornments), ("full", &report.full), ("full_for_negation", &report.full_for_negation), ("reasons", &report.reasons)] {
             for (k, item) in items.iter().enumerate() {
                 let (n, x) = (b.atom(name), b.atom(item));
-                list.push(vec![pc, Cell::Str(n), Cell::Int(k as i64), Cell::Str(x)]);
+                list.push([pc, Cell::Str(n), Cell::Int(k as i64), Cell::Str(x)]);
             }
         }
         b.fields().set_about_rows("report_list", list);
@@ -812,8 +813,8 @@ impl ProgramPass for KeyDemand {
                     b.fields().declare(rel, &cols);
                 }
                 b.fields().declare("magic_true", &[("k", "int")]);
-                let mut rows: Vec<Vec<Cell>> = input.find("magic_true").and_then(|a| input.facts(a)).map(|f| f.rows().map(|r| r.collect()).collect()).unwrap_or_default();
-                rows.push(vec![Cell::Int(0)]);
+                let mut rows = input.find("magic_true").and_then(|a| input.facts(a)).map(|f| Rows::of_cells(f.rows())).unwrap_or_default();
+                rows.push([Cell::Int(0)]);
                 b.fields().set_fact_cells("magic_true", rows);
                 self.extras = Some(*extras);
             }
@@ -825,12 +826,12 @@ impl ProgramPass for KeyDemand {
         }
         // The demand left, what was dropped and the extras kept, as the program keeps them.
         let pc = super::demand::about_p(b);
-        let rows = demand.iter().enumerate().map(|(k, r)| vec![pc, Cell::Int(k as i64), Cell::Str(b.atom(r))]).collect();
+        let rows: Rows = demand.iter().enumerate().map(|(k, r)| [pc, Cell::Int(k as i64), Cell::Str(b.atom(r))]).collect();
         b.fields().set_about_rows("demand", rows);
-        let rows = dropped.iter().enumerate().map(|(k, (r, why))| vec![pc, Cell::Int(k as i64), Cell::Str(b.atom(r)), Cell::Str(b.atom(why))]).collect();
+        let rows: Rows = dropped.iter().enumerate().map(|(k, (r, why))| [pc, Cell::Int(k as i64), Cell::Str(b.atom(r)), Cell::Str(b.atom(why))]).collect();
         b.fields().set_about_rows("demand_dropped", rows);
         if let Some(n) = self.extras {
-            b.fields().set_about_rows("magic_extras", vec![vec![pc, Cell::Int(n as i64)]]);
+            b.fields().set_about_rows("magic_extras", Rows::from_iter([[pc, Cell::Int(n as i64)]]));
         }
         Ok(())
     }
@@ -845,7 +846,7 @@ fn keys_once<'v>(v: &'v Version, about: &About, demand: &[String]) -> Result<Opt
     }
     let originals: Vec<Made<'_>> = v.rules().map(|rule| Made { rule, head: None, body: rule.body().map(M::Own).collect() }).collect();
     let (sccs, _) = strata(v, about, &originals)?;
-    let comp: BTreeMap<&str, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.as_str(), i))).collect();
+    let comp: BTreeMap<&str, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r, i))).collect();
     let demanded = |r: &str| demand.iter().any(|d| d == r);
     let (mut rules, mut magic): (Vec<Made<'v>>, Magic<'v>) = (Vec::new(), Vec::new());
     for rule in v.rules() {
@@ -1104,7 +1105,7 @@ fn attempt<'v>(cx: &mut Ctx<'v, '_>, full_in: &BTreeSet<String>, gate: bool) -> 
         Ok(out)
     };
     let about = cx.about;
-    let settle = |cx: &mut Ctx<'v, '_>, keep: &[Vec<bool>]| -> Result<((Vec<BTreeSet<String>>, Edges), Trial<'v>), (Error, Vec<Made<'v>>)> {
+    let settle = |cx: &mut Ctx<'v, '_>, keep: &[Vec<bool>]| -> Result<((crate::code_rule_dsl::logic::front::Components, Edges), Trial<'v>), (Error, Vec<Made<'v>>)> {
         let made = build(keep).map_err(|e| (e, Vec::new()))?;
         match strata(v, about, &made) {
             Ok(s) => Ok((s, Trial { made, ..Trial::default() })),
@@ -1140,9 +1141,9 @@ fn attempt<'v>(cx: &mut Ctx<'v, '_>, full_in: &BTreeSet<String>, gate: bool) -> 
     // edges are all such keeps the program stratified, as that check found it, and is kept without building and
     // stratifying the program again. Any other literal is checked whole, as before (and every one is with gates,
     // which a positive edge can unsettle). `RERAIL_MAGIC_CHECK=1` checks every one whole too.
-    let places = |settled: &(Vec<BTreeSet<String>>, Edges)| -> (BTreeMap<String, usize>, BTreeSet<usize>) {
+    let places = |settled: &(crate::code_rule_dsl::logic::front::Components, Edges)| -> (BTreeMap<String, usize>, BTreeSet<usize>) {
         let (sccs, edges) = settled;
-        let comp: BTreeMap<String, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.clone(), i))).collect();
+        let comp: BTreeMap<String, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.to_owned(), i))).collect();
         let negated = edges.iter().filter_map(|(x, ws)| comp.get(x).map(|c| (*c, ws))).filter(|(c, ws)| ws.iter().any(|(w, neg)| *neg && comp.get(w) == Some(c))).map(|(c, _)| c).collect();
         (comp, negated)
     };

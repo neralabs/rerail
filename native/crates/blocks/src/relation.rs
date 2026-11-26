@@ -38,6 +38,12 @@ pub const REWRITTEN: u32 = 8;
 /// lies in the same block at `base_off` from it (`try_continue`); every read of a row by its id goes there for them
 /// (`rel_get`), so a reader binds it as one relation of `base_rows + own` rows.
 pub const CONTINUES: u32 = 16;
+/// Its rows are another relation's of the same block, where they lie (`try_link`): its row directories are that
+/// relation's, so its release gives none of them back (that relation's holder does).
+pub const ALIASED: u32 = 32;
+/// A continuation whose base lies in another block (`try_link`, decision 0353 step 6): `base_off` is the base's
+/// descriptor's offset from that block's start, which a reader binds beside its own (`rel_get`'s `far`).
+pub const FAR_BASE: u32 = 64;
 /// A key's columns at most: the device's probes' (decision 0325 step 5).
 pub const MAX_KEY: usize = 8;
 /// Indexes and sorted orders a relation can be given after it is made (`try_add_index`, `try_add_order`): its
@@ -126,6 +132,16 @@ pub const ORDER: u32 = 2;
 /// `Index::ordered`: a sorted order of the rows `lo..hi` themselves, already in the key's order (`mask` holds
 /// `lo << 32 | hi`), so no list of them is kept.
 pub const ORDER_ROWS: u32 = 3;
+/// `Index::ordered`: a node-keyed index of one column (`try_add_node_bits`, decision 0694): `rows` its groups'
+/// directory, `fences` their bits, `mask` the rows it holds. No hashed index's or order's finder finds it.
+pub const NODE_BITS: u32 = 4;
+/// `Index::ordered`: a membership filter on `key` (`try_add_filter`, decision 0706 E2): `fences` its words, in
+/// `bloom`'s format (decision 0488, the reads written once in CLIF), `mask` the rows it holds. A key it answers "no" for is in no row; one it answers
+/// "maybe" for is probed. No hashed index's or order's finder finds it.
+pub const FILTER: u32 = 5;
+/// A membership filter's bits a row (`try_add_filter`): a power of two of `bloom`'s words at least this many bits a
+/// row, so about one absent key in 400 passes (`bloom::K` bits a key).
+pub const FILTER_BITS: usize = 16;
 
 /// A chunk of a relation's block an order is given (`Relation::try_add_order`): its offset, its items, and the bytes
 /// its chunk keeps (0: one it does not own, given back by its owner).
@@ -181,6 +197,15 @@ structure! {
         pub pend_used: AtomicU64,
         /// A continuation's base (`CONTINUES`): its descriptor's offset from this one's, in the same block; 0 for none.
         pub base_off: AtomicI64,
+        /// A continuation's jump: an ancestor down its chain in the same block (Myers' skew-binary jumps), its
+        /// descriptor's offset from this one's; 0 for none (a relation of its own, or a base in another block). A read
+        /// of an id below `jump_rows` goes there at once, so a read down a chain of `n` takes O(log n) steps, and a
+        /// chain needs no length bound (decision 0353 step 6: none of it is merged).
+        pub jump_off: AtomicI64,
+        /// The jump's `base_rows`: an id below them lies at or past the jump.
+        pub jump_rows: u32,
+        /// Its depth in its block's chain: 0 for a relation that continues none here (a full one, or a far base's link).
+        pub depth: u32,
         /// Its row ranges known to be in an order already (decision 0180), written once when it is frozen into an
         /// input (decision 0478 step 5c), in row order; and the bytes of their chunk, given back at its release.
         pub known: Span<Known>,
@@ -288,8 +313,75 @@ impl Relation {
         }
         let off = std::ptr::from_ref(base) as i64 - std::ptr::from_ref(rel) as i64;
         rel.base_off.store(off, Release);
+        // Its jump (Myers 1983): the base's jump's jump when the base's two jumps are as long, else the base. A base
+        // with none (depth 0) jumps to itself.
+        let jump = |r: &Relation| -> *const Relation {
+            let o = r.jump_off.load(Relaxed);
+            if o == 0 { r } else { std::ptr::from_ref(r).cast::<u8>().wrapping_offset(o as isize).cast() }
+        };
+        // SAFETY: a chain's jumps lie in its block, before it (each made with its base there).
+        let (j, depth_of) = (jump(base), |p: *const Relation| unsafe { (*p).depth });
+        let jj = unsafe { jump(&*j) };
+        let to = if base.depth - depth_of(j) == depth_of(j) - depth_of(jj) && base.depth > 0 { jj } else { std::ptr::from_ref(base) };
+        // SAFETY: just made, this caller's alone; `to` is a descriptor of the chain in this block.
+        unsafe {
+            let me = std::ptr::from_ref(rel).cast_mut();
+            (*me).depth = base.depth + 1;
+            (*me).jump_rows = (*to).base_rows;
+        }
+        rel.jump_off.store(to as i64 - std::ptr::from_ref(rel) as i64, Release);
         rel.flags.fetch_or(DELTA | CONTINUES, Release);
         Some(rel)
+    }
+
+    /// A relation of `block` that reads a relation of several parts as one, nothing copied (decision 0353 step 6):
+    /// rows `0..base_rows` its base's, read down the base's chain (`base`: the base and the block it lies in, this
+    /// one or another, `FAR_BASE`; none for a first part, `base_rows` 0), then `rows_of`'s first `len` own rows, where
+    /// they lie in `block` (`ALIASED`). `None` when `block` cannot hold its descriptor, or `rows_of` is not `block`'s.
+    pub fn try_link<'b>(block: &'b Block, spec: &Spec, base: Option<(&Block, &Relation)>, base_rows: u32, rows_of: &Relation, len: u32) -> Option<&'b Relation> {
+        if !block.holds(std::ptr::from_ref(rows_of)) || len > rows_of.rows.len() || rows_of.rows.ncols as usize != spec.widths.len() {
+            return None;
+        }
+        let rel = match base {
+            None if base_rows == 0 => Relation::try_create(block, spec, None)?,
+            None => return None,
+            Some((home, b)) if std::ptr::eq(home, block) => Relation::try_continue(block, spec, b, base_rows)?,
+            Some((home, b)) => {
+                let full = b.base_rows == 0 && !b.is_delta();
+                let at = home.offset_of(std::ptr::from_ref(b));
+                if !(full || b.continues()) || base_rows > b.len_all() || !home.holds(std::ptr::from_ref(b)) || at == 0 {
+                    return None;
+                }
+                let rel = Relation::try_create(block, spec, None)?;
+                // SAFETY: just made, this caller's alone.
+                unsafe { (*std::ptr::from_ref(rel).cast_mut()).base_rows = base_rows };
+                rel.base_off.store(at as i64, Release);
+                rel.flags.fetch_or(DELTA | CONTINUES | FAR_BASE, Release);
+                rel
+            }
+        };
+        // Its rows: `rows_of`'s directories, read where they lie; none of its own (its own directories, made with
+        // its descriptor, stay unused and go back with it).
+        // SAFETY: just made, this caller's alone; `rows_of` is frozen at `len` rows for as long as this lives (its
+        // holder keeps it).
+        unsafe {
+            let me = std::ptr::from_ref(rel).cast_mut();
+            let (src, dst) = (&rows_of.rows, &mut (*me).rows);
+            dst.min_log = src.min_log;
+            dst.ncols = src.ncols;
+            dst.nchunks.store(src.nchunks.load(Acquire), Relaxed);
+            dst.reserved.store(len, Relaxed);
+            dst.len.store(len, Release);
+            Span::set(&dst.cols, src.cols.as_ptr(), src.cols.len());
+        }
+        rel.flags.fetch_or(ALIASED | FROZEN, Release);
+        Some(rel)
+    }
+
+    /// Whether its base lies in another block (`try_link`).
+    #[inline]
+    pub fn far_base(&self) -> bool {
+        self.flags.load(Relaxed) & FAR_BASE != 0
     }
 
     /// Whether it continues another relation's rows (`try_continue`).
@@ -301,8 +393,9 @@ impl Relation {
     /// The relation it continues (`try_continue`).
     pub fn base(&self) -> Option<&Relation> {
         let off = self.base_off.load(Acquire);
-        // SAFETY: a continuation's base lies in its block at `off`, kept while it is (its holder's).
-        (self.continues() && off != 0).then(|| unsafe { &*(std::ptr::from_ref(self).cast::<u8>().offset(off as isize).cast::<Relation>()) })
+        // SAFETY: a continuation's base lies in its block at `off`, kept while it is (its holder's). A base in another
+        // block is read through that block (`far_base`).
+        (self.continues() && off != 0 && !self.far_base()).then(|| unsafe { &*(std::ptr::from_ref(self).cast::<u8>().offset(off as isize).cast::<Relation>()) })
     }
 
     /// Rows it reads by id: its own, and a continuation's base's first `base_rows` before them.
@@ -315,14 +408,30 @@ impl Relation {
     /// its own rows from `base_rows` on (a delta's own ids count from its base's too).
     #[inline]
     pub fn get(&self, id: u32, c: usize) -> i64 {
+        self.get_far(None, id, c)
+    }
+
+    /// `get`, a base in another block (`FAR_BASE`) read in `far`, the block it lies in (`rel_get`'s `far`).
+    #[inline]
+    pub fn get_far(&self, far: Option<&Block>, id: u32, c: usize) -> i64 {
         let mut rel = self;
         loop {
             let off = rel.base_off.load(Relaxed);
             if id >= rel.base_rows || off == 0 {
                 break;
             }
-            // SAFETY: a continuation's base lies in its block `off` bytes from it, kept while it is (its holder's).
-            rel = unsafe { &*std::ptr::from_ref(rel).cast::<u8>().offset(off as isize).cast::<Relation>() };
+            let jump = rel.jump_off.load(Relaxed);
+            rel = if jump != 0 && id < rel.jump_rows {
+                // SAFETY: its jump lies in its block `jump` bytes from it, an ancestor its holder keeps.
+                unsafe { &*std::ptr::from_ref(rel).cast::<u8>().offset(jump as isize).cast::<Relation>() }
+            } else if rel.far_base() {
+                let far = far.expect("a relation whose base lies in another block, read with that block");
+                // SAFETY: its base's descriptor lies `off` bytes into `far`, kept while it is (its holder's).
+                unsafe { &*far.ptr::<Relation>(off as usize) }
+            } else {
+                // SAFETY: a continuation's base lies in its block `off` bytes from it, kept while it is (its holder's).
+                unsafe { &*std::ptr::from_ref(rel).cast::<u8>().offset(off as isize).cast::<Relation>() }
+            };
         }
         rel.rows.get(id.wrapping_sub(rel.base_rows), c)
     }
@@ -381,7 +490,9 @@ impl Relation {
     /// # Safety
     /// It lies in `block`, and no one reads or writes it after (its last holder's).
     pub unsafe fn release(&self, block: &Block) -> usize {
-        let given = unsafe { self.rows.release(block) + self.killed.release(block) };
+        // Aliased rows are their own relation's, given back with it.
+        let own_rows = if self.flags.load(Acquire) & ALIASED != 0 { 0 } else { unsafe { self.rows.release(block) } };
+        let given = own_rows + unsafe { self.killed.release(block) };
         let kept = self.known_kept.load(Acquire) as usize;
         if kept > 0 {
             block.free_chunk_fit(block.offset_of(self.known.as_ptr()), kept);
@@ -694,6 +805,279 @@ impl Relation {
         }
     }
 
+    /// Gives this relation a node-keyed index on column `col` of its rows `0..n` (decision 0694 step 1), laid out as
+    /// a node's id is (`packed::ID_SPLIT`): its document's key (the high 32 bits), then its low 32 bits, a granule's
+    /// slot above an index in the granule. Each document is held in the smaller of two forms:
+    /// - **bits**: its slots from its least to its greatest, each a slot entry giving its bits, from its least
+    ///   index's word to its greatest's. A test is the slot's entry and one bit.
+    /// - **lows**: its distinct low halves, sorted. A test is a search of them.
+    ///
+    /// Either is at most a hashed index's bytes (lows: 4 a distinct value); a document takes bits when they are at
+    /// most twice its lows' bytes. Its number; `None` when its directory is full or `block` has no room.
+    ///
+    /// Its `rows` (`u32`s): the documents' count; each document's key, its form's first field, its second, and where
+    /// its form starts; then the forms. A document of bits has its least slot and its slots; their entries, two a
+    /// slot, are its words' offset and its first word's number above its words' count (0 for a slot of none). A
+    /// document of lows has `LOWS` and its lows' count, then its lows. Its `fences`: the words.
+    ///
+    /// # Safety
+    /// As `try_reserve_index`'s: this relation's descriptor is the caller's to change, its rows `0..n` written.
+    pub unsafe fn try_add_node_bits(&self, block: &Block, col: u16, n: u32) -> Option<usize> {
+        use crate::packed::ID_SPLIT;
+        if n == 0 || col as usize >= self.rows.ncols as usize {
+            return None;
+        }
+        // The distinct values, by document then low half (scratch of the build).
+        let mut vals: Vec<u64> = (0..n).map(|id| self.get(id, col as usize) as u64).collect();
+        vals.sort_unstable();
+        vals.dedup();
+        /// A document's values, `vals[a..b]`, and its form: bits (its least slot, its slots, its words) or lows.
+        struct Doc {
+            hi: u32,
+            a: usize,
+            b: usize,
+            bits: Option<(u32, u32, u32)>,
+        }
+        let (mut docs, mut a) = (Vec::new(), 0usize);
+        while a < vals.len() {
+            let hi = (vals[a] >> 32) as u32;
+            let b = a + vals[a..].iter().take_while(|&&v| (v >> 32) as u32 == hi).count();
+            let slot = |v: u64| (v as u32) >> ID_SPLIT;
+            let (s0, s1) = (slot(vals[a]), slot(vals[b - 1]));
+            // Each slot's words: its least index's word to its greatest's.
+            let mut words = 0u32;
+            let mut i = a;
+            while i < b {
+                let s = slot(vals[i]);
+                let j = i + vals[i..b].iter().take_while(|&&v| slot(v) == s).count();
+                let x = |v: u64| (v as u32 & ((1 << ID_SPLIT) - 1)) / 64;
+                words += x(vals[j - 1]) - x(vals[i]) + 1;
+                i = j;
+            }
+            let bits_bytes = 8 * (s1 - s0 + 1) as usize + 8 * words as usize;
+            let bits = (bits_bytes <= 2 * 4 * (b - a)).then_some((s0, s1 - s0 + 1, words));
+            docs.push(Doc { hi, a, b, bits });
+            a = b;
+        }
+        const LOWS: u32 = u32::MAX;
+        let form: usize = docs.iter().map(|d| d.bits.map_or(d.b - d.a, |(_, slots, _)| 2 * slots as usize)).sum();
+        let words: usize = docs.iter().filter_map(|d| d.bits).map(|(_, _, w)| w as usize).sum();
+        let dir = 1 + 4 * docs.len() + form;
+        let (d_at, d_kept) = block.try_alloc_chunk_fit(4 * dir, 8)?;
+        let Some((w_at, w_kept)) = block.try_alloc_chunk_fit(8 * words.max(1), 8) else {
+            block.free_chunk_fit(d_at, d_kept);
+            return None;
+        };
+        let (d, w) = (block.ptr::<u32>(d_at), block.ptr::<i64>(w_at));
+        // SAFETY: both chunks were just allocated, this index's alone until it is marked built.
+        unsafe {
+            std::ptr::write_bytes(d, 0, dir);
+            std::ptr::write_bytes(w, 0, words.max(1));
+            d.write(docs.len() as u32);
+            let (mut at, mut off) = ((1 + 4 * docs.len()) as u32, 0u32);
+            for (k, doc) in docs.iter().enumerate() {
+                let e = d.add(1 + 4 * k);
+                e.write(doc.hi);
+                e.add(3).write(at);
+                let values = &vals[doc.a..doc.b];
+                match doc.bits {
+                    None => {
+                        e.add(1).write(LOWS);
+                        e.add(2).write(values.len() as u32);
+                        for (i, &v) in values.iter().enumerate() {
+                            d.add(at as usize + i).write(v as u32);
+                        }
+                        at += values.len() as u32;
+                    }
+                    Some((s0, slots, _)) => {
+                        e.add(1).write(s0);
+                        e.add(2).write(slots);
+                        let mut i = 0;
+                        while i < values.len() {
+                            let low = values[i] as u32;
+                            let s = low >> ID_SPLIT;
+                            let j = i + values[i..].iter().take_while(|&&v| (v as u32) >> ID_SPLIT == s).count();
+                            let x = |v: u64| v as u32 & ((1 << ID_SPLIT) - 1);
+                            let (w0, w1) = (x(values[i]) / 64, x(values[j - 1]) / 64);
+                            let t = d.add(at as usize + 2 * (s - s0) as usize);
+                            t.write(off);
+                            t.add(1).write(w0 << 16 | (w1 - w0 + 1));
+                            for &v in &values[i..j] {
+                                *w.add((off + x(v) / 64 - w0) as usize) |= 1 << (x(v) % 64);
+                            }
+                            off += w1 - w0 + 1;
+                            i = j;
+                        }
+                        at += 2 * slots;
+                    }
+                }
+            }
+        }
+        // SAFETY: the caller's: this relation's descriptor is ours to change.
+        unsafe {
+            let Some(i) = self.next_entry(block) else {
+                block.free_chunk_fit(d_at, d_kept);
+                block.free_chunk_fit(w_at, w_kept);
+                return None;
+            };
+            let ix = std::ptr::from_ref(&self.indexes.as_slice()[i]).cast_mut();
+            (*ix).ncols = 0;
+            (*ix).from = 0;
+            (*ix).state = 0;
+            let mut key = [0u16; MAX_KEY];
+            key[0] = col;
+            (*ix).key = key;
+            (*ix).ordered = NODE_BITS;
+            (*ix).mask = u64::from(n);
+            (*ix).offs.off.store(0, Relaxed);
+            (*ix).offs.len.store(0, Relaxed);
+            (*ix).tags.off.store(0, Relaxed);
+            (*ix).tags.len.store(0, Relaxed);
+            (*ix).prints.off.store(0, Relaxed);
+            (*ix).prints.len.store(0, Relaxed);
+            Span::set(&raw mut (*ix).rows, d, dir);
+            Span::set(&raw mut (*ix).fences, w, words.max(1));
+            (*ix).held = [d_kept as u64, w_kept as u64, 0, 0];
+            self.nindex.fetch_max(i as u32 + 1, Release);
+            std::sync::atomic::fence(Release);
+            std::ptr::write_volatile(&raw mut (*ix).ncols, 1);
+            Some(i)
+        }
+    }
+
+    /// Gives this relation a membership filter on `cols` of its rows `0..n` (decision 0706 E2): a blocked Bloom filter
+    /// in `bloom`'s format, `FILTER_BITS` a row at least (its words a power of two), each row's key placed by
+    /// `bloom::key` of its `cols`, in order. A probe whose key it rejects reads no row. Its number; `None` when its
+    /// directory is full or `block` has no room.
+    ///
+    /// # Safety
+    /// As `try_reserve_index`'s: this relation's descriptor is the caller's to change, its rows `0..n` written.
+    pub unsafe fn try_add_filter(&self, block: &Block, cols: &[u16], n: u32) -> Option<usize> {
+        if n == 0 || cols.is_empty() || cols.len() > MAX_KEY || cols.iter().any(|&c| c as usize >= self.rows.ncols as usize) {
+            return None;
+        }
+        let words = (n as usize * FILTER_BITS).div_ceil(64).next_power_of_two();
+        let (w_at, w_kept) = block.try_alloc_chunk_fit(8 * words, 8)?;
+        let w = block.ptr::<u64>(w_at);
+        // SAFETY: the chunk was just allocated, this index's alone until it is marked built.
+        unsafe {
+            std::ptr::write_bytes(w, 0, words);
+            let mut key = [0i64; MAX_KEY];
+            for id in 0..n {
+                for (k, &c) in key.iter_mut().zip(cols) {
+                    *k = self.get(id, c as usize);
+                }
+                let (i, mask) = crate::bloom::place(crate::bloom::key(&key[..cols.len()]), words);
+                *w.add(i) |= mask;
+            }
+        }
+        // SAFETY: the caller's: this relation's descriptor is ours to change.
+        unsafe {
+            let Some(i) = self.next_entry(block) else {
+                block.free_chunk_fit(w_at, w_kept);
+                return None;
+            };
+            let ix = std::ptr::from_ref(&self.indexes.as_slice()[i]).cast_mut();
+            (*ix).ncols = 0;
+            (*ix).from = 0;
+            (*ix).state = 0;
+            let mut key = [0u16; MAX_KEY];
+            key[..cols.len()].copy_from_slice(cols);
+            (*ix).key = key;
+            (*ix).ordered = FILTER;
+            (*ix).mask = u64::from(n);
+            (*ix).offs.off.store(0, Relaxed);
+            (*ix).offs.len.store(0, Relaxed);
+            (*ix).tags.off.store(0, Relaxed);
+            (*ix).tags.len.store(0, Relaxed);
+            (*ix).prints.off.store(0, Relaxed);
+            (*ix).prints.len.store(0, Relaxed);
+            Span::set(&raw mut (*ix).rows, w.cast::<u32>(), 0);
+            Span::set(&raw mut (*ix).fences, w.cast::<i64>(), words);
+            (*ix).held = [0, w_kept as u64, 0, 0];
+            self.nindex.fetch_max(i as u32 + 1, Release);
+            std::sync::atomic::fence(Release);
+            std::ptr::write_volatile(&raw mut (*ix).ncols, cols.len() as u32);
+            Some(i)
+        }
+    }
+
+    /// The membership filter on `cols` over its rows `0..rows` (`try_add_filter`), built: its number.
+    pub fn find_filter(&self, cols: &[u16], rows: u32) -> Option<usize> {
+        let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
+        let ix = self.indexes.as_slice();
+        // SAFETY: as `find_index`'s.
+        let built = |i: usize| unsafe { std::ptr::read_volatile(&raw const ix[i].ncols) } as usize;
+        let found = (0..n).find(|&i| ix[i].ordered == FILTER && built(i) == cols.len() && ix[i].key[..cols.len()] == *cols && ix[i].mask == u64::from(rows));
+        std::sync::atomic::fence(Acquire);
+        found
+    }
+
+    /// Whether filter `i` (`find_filter`) may hold the key `bloom::key` places at `h`: `false` is certain (no row has
+    /// it), `true` is to be probed.
+    #[inline]
+    pub fn filter_may_hold(&self, i: usize, h: u64) -> bool {
+        let f = self.index_at(i).fences.as_slice();
+        let (w, mask) = crate::bloom::place(h, f.len());
+        f[w] as u64 & mask == mask
+    }
+
+    /// The node-keyed index on `col` over its rows `0..rows` (`try_add_node_bits`), built: its number.
+    pub fn find_node_bits(&self, col: u16, rows: u32) -> Option<usize> {
+        let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
+        let ix = self.indexes.as_slice();
+        // SAFETY: as `find_index`'s.
+        let built = |i: usize| unsafe { std::ptr::read_volatile(&raw const ix[i].ncols) } as usize;
+        let found = (0..n).find(|&i| ix[i].ordered == NODE_BITS && built(i) == 1 && ix[i].key[0] == col && ix[i].mask == u64::from(rows));
+        std::sync::atomic::fence(Acquire);
+        found
+    }
+
+    /// Whether node-keyed index `i` (`find_node_bits`) holds value `v`: its document found (`hint` the last one, tried
+    /// first, then the one after it), and then its slot's entry and bit, or a search of its lows.
+    #[inline]
+    pub fn node_bits_has(&self, i: usize, v: i64, hint: &mut u32) -> bool {
+        use crate::packed::ID_SPLIT;
+        let ix = self.index_at(i);
+        let dir = ix.rows.as_slice();
+        let (hi, low) = ((v >> 32) as u32, v as u32);
+        let docs = dir[0] as usize;
+        let at = |k: usize| 1 + 4 * k;
+        let h = *hint as usize;
+        let k = if h < docs && dir[at(h)] == hi {
+            h
+        } else if h + 1 < docs && dir[at(h + 1)] == hi {
+            h + 1
+        } else {
+            let (mut lo, mut top) = (0usize, docs);
+            loop {
+                if lo >= top {
+                    return false;
+                }
+                let mid = (lo + top) / 2;
+                match dir[at(mid)].cmp(&hi) {
+                    Ordering::Less => lo = mid + 1,
+                    Ordering::Greater => top = mid,
+                    Ordering::Equal => break mid,
+                }
+            }
+        };
+        *hint = k as u32;
+        let (first, second, start) = (dir[at(k) + 1], dir[at(k) + 2], dir[at(k) + 3] as usize);
+        if first == u32::MAX {
+            return dir[start..start + second as usize].binary_search(&low).is_ok();
+        }
+        let s = (low >> ID_SPLIT).wrapping_sub(first);
+        if s >= second {
+            return false;
+        }
+        let e = start + 2 * s as usize;
+        let (off, fw) = (dir[e], dir[e + 1]);
+        let x = low & ((1 << ID_SPLIT) - 1);
+        let word = (x / 64).wrapping_sub(fw >> 16);
+        word < fw & 0xffff && ix.fences.as_slice()[(off + word) as usize] >> (x % 64) & 1 != 0
+    }
+
     /// Room for an index on `cols` of rows `0..n` in `block`, which holds this relation: its directory's entry, its
     /// `2^log` buckets (`n`'s power of two at least) and its rows, which a builder fills (`build_index`, or the
     /// device's), then marks built (`index_built`). Its number, its buckets' and rows' offsets in the block, and its
@@ -933,8 +1317,8 @@ impl Relation {
                 unsafe { (*std::ptr::from_ref(ix).cast_mut()).state = 0 };
                 continue;
             }
-            if ix.ordered == ORDER || ix.ordered == ORDER_ROWS {
-                // A sorted order's chunks, each as it was given (`try_add_order`).
+            if ix.ordered == ORDER || ix.ordered == ORDER_ROWS || ix.ordered == NODE_BITS || ix.ordered == FILTER {
+                // A sorted order's chunks, each as it was given (`try_add_order`), and a node-keyed index's.
                 let spans = [(ix.rows.as_ptr().cast::<u8>(), ix.held[0]), (ix.fences.as_ptr().cast(), ix.held[1]), (ix.tags.as_ptr().cast(), ix.held[2]), (ix.prints.as_ptr().cast(), ix.held[3])];
                 for (p, kept) in spans {
                     if kept > 0 {

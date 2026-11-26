@@ -1,0 +1,50 @@
+[package]
+name = "rerail-accel-gpu"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The accelerator's device side: the GPU lane's kernels and device joins, and the learned models rerail-forest trains on the device, registered as the engine boots."
+
+[features]
+default = ["gpu"]
+# The GPU lane (rerail-accel's `gpu` feature: its pool and ledger).
+gpu = ["rerail-accel/gpu"]
+# The test hooks of the crates below.
+test-hooks = ["rerail-accel/test-hooks"]
+
+[dependencies]
+rerail-accel = { path = ".." }
+# The forests, trained and walked on the device (decision 0100 §14, 0354).
+rerail-forest = { path = "../../forest" }
+# The process's device, and Metal's awaited GPU seconds.
+rerail-device = { path = "../../gpu/device" }
+rustc-hash = "=2.1.3"
+# The compiled kernels' store: its keys (`gpu::kernels`), and the process's memory and files.
+sha2 = "0.10"
+libc = "0.2.189"
+rerail-context = { path = "../../native/crates/context" }
+rerail-blocks = { path = "../../native/crates/blocks" }
+# A kernel that takes UKL's library (the reads written once in CLIF) preprocessed before the Metal front end
+# (`gpu::kernels::msl`, decision 0440 §3.3).
+rerail-ukl = { path = "../../native/crates/ukl" }
+
+# The device layer, where it is (macOS, Linux and Windows): the GPU lane's targets (`gpu_lane`, `build.rs`).
+[target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
+# Kernels on a device other than Metal, compiled from UKL by the device layer (`gpu::kernels::function`, 0440 step C).
+rerail-gpu = { path = "../../gpu" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Metal's own tier: its pipelines and binary archives, its command buffers' timeline (decision 0440 step E).
+metal = "0.33.0"
+objc = "0.2.7"
+block = "0.1.6"
+core-foundation-sys = "0.8.7"
+
+[lints.rust]
+# objc 0.2's `msg_send!` tests a `cargo-clippy` feature in the calling crate.
+# `gpu_lane`: the `gpu` feature on a target with the device layer (`build.rs`).
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))', 'cfg(gpu_lane)'] }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-accel-gpu = { path = ".", features = ["test-hooks"] }

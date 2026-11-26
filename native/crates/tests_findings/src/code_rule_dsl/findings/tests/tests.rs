@@ -17,7 +17,7 @@ fn parsed(sources: &[String]) -> Vec<AstGrep<TapeDoc>> {
             let image = TapeImage::encode(doc.tree.root_node(), &grammar, s, &|| false).unwrap();
             AstGrep::doc(
                 TapeDoc::restore(
-                    std::sync::Arc::new(s.clone()),
+                    std::sync::Arc::new(s.clone().into()),
                     std::sync::Arc::clone(&grammar),
                     &image,
                     &|| false,
@@ -624,7 +624,7 @@ fn complete_async_family_producer_profile() {
         for (iteration, times) in runs.iter_mut().enumerate() {
             let posting = || {
                 let start = cpu_ns();
-                let rows = families::rows(&grammar, &facts);
+                let rows = facts.alone(|f| families::rows(&grammar, f));
                 (rows, cpu_ns()-start)
             };
             let reference = || {

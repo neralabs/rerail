@@ -1,4 +1,5 @@
 //! Atomic batches of fact changes and retained-result maintenance.
+use rerail_blocks::vector::Vector;
 use super::maintenance::{self, Delta, Work};
 use super::*;
 
@@ -15,8 +16,8 @@ pub struct Prepared {
     pub name: String,
     pub source: Arc<dyn Source>,
     pub live: Option<Arc<live::Live>>,
-    pub plus: Vec<Vec<i64>>,
-    pub minus: Vec<Vec<i64>>,
+    pub plus: Vec<Vector<i64>>,
+    pub minus: Vec<Vector<i64>>,
     pub migrated: bool,
 }
 
@@ -50,7 +51,7 @@ impl CodeRuleSqlExecutor {
         let names: Vec<&str> = names.into_iter().collect();
         let atoms = self.store.intern_atoms(&names).map_err(error)?;
         let symbols: BTreeMap<_, _> = names.into_iter().zip(atoms).collect();
-        let mut wanted = BTreeMap::<String, (BTreeSet<Vec<i64>>, BTreeSet<Vec<i64>>)>::new();
+        let mut wanted = BTreeMap::<String, (BTreeSet<Vector<i64>>, BTreeSet<Vector<i64>>)>::new();
         for patch in &patches {
             if !self.mutable_inputs.contains(&patch.name) {
                 return Err(error(format!(
@@ -59,14 +60,14 @@ impl CodeRuleSqlExecutor {
                 )));
             }
             let (arity, types) = &self.input_shapes[&patch.name];
-            let convert = |rows: &[Vec<Value>]| -> Result<BTreeSet<Vec<i64>>> {
+            let convert = |rows: &[Vec<Value>]| -> Result<BTreeSet<Vector<i64>>> {
                 rows.iter()
                     .map(|r| {
                         if r.len() != *arity {
                             return Err(error("changed fact row has the wrong logical arity"));
                         }
                         if *arity == 0 {
-                            return Ok(vec![1]);
+                            return Ok(rerail_blocks::vector![1]);
                         }
                         r.iter()
                             .enumerate()

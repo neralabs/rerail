@@ -304,7 +304,7 @@ struct Cursor {
     base: rusqlite::ffi::sqlite3_vtab_cursor,
     shared: Shared,
     range: Range<usize>,
-    selected: Option<Vec<usize>>,
+    selected: Option<rerail_blocks::vector::Vector<usize>>,
     position: usize,
 }
 impl Cursor {
@@ -415,7 +415,7 @@ unsafe impl VTabCursor for Cursor {
             };
             self.selected = self.shared.source.lookup(column, &values)?;
         }
-        let count = self.selected.as_ref().map_or(self.range.len(), Vec::len);
+        let count = self.selected.as_ref().map_or(self.range.len(), |v| v.len());
         self.shared
             .stats
             .candidates

@@ -182,7 +182,7 @@ Types covered: bigint, boolean, number, null, string, symbol, RegExp, undefined.
 
 ### `typescript-eslint-no-invalid-void-type`
 
-Port of typescript-eslint `no-invalid-void-type`. void is allowed as a return type (and as the annotation of non-identifier bindings, mirroring the rule's grandparent test); in a union whose members are all void, never, or generics with a void argument; in a union inside a function or method implementation that has overload signatures of the same name (an anonymous `export default function` has them when the module has an `export default function` signature; method names compared like getStaticMemberAccessValue, two names without a static value treated as equal); and, with allowInGenericTypeArguments (default true), as a generic type argument outside a call or as a type parameter default.
+Port of typescript-eslint `no-invalid-void-type`. void is allowed as a return type (and as the annotation of non-identifier bindings, mirroring the rule's grandparent test); in a union whose members are all void, never, or generics with a void argument; in a union inside a function or method implementation that has overload signatures of the same name (an anonymous `export default function` has them when the module has an `export default function` signature; method names compared like getStaticMemberAccessValue, two names without a static value treated as equal); and, with allowInGenericTypeArguments (default true), as a generic type argument or as a type parameter default. Unlike upstream, which reports `void` as a call's type argument even with that option, the port allows it there too (`Promise.withResolvers<void>()`, `expectTypeOf(x).toEqualTypeOf<void>()`), since the steer to undefined breaks such code; the array form of the option still allows only the listed generic types.
 
 ### `typescript-eslint-no-magic-numbers`
 
@@ -262,7 +262,7 @@ Flags every `any` type. Default options (`ignoreRestArgs` and `fixToUnknown` off
 
 ### `typescript-eslint-no-invalid-this`
 
-Standalone port (extends ESLint's no-invalid-this). Flags `this` whose nearest non-arrow function scope is the module top level or a function ESLint's isDefaultThisBinding treats as called without a receiver. Strictness and the global `this` come from the case's language options: a script's top level and a non-strict function's `this` are valid. `this` in a type predicate (`this is T`, `asserts this`) is no use of `this`; `typeof this` is.
+Standalone port (extends ESLint's no-invalid-this). Flags `this` whose nearest non-arrow function scope is the module top level or a function ESLint's isDefaultThisBinding treats as called without a receiver. Strictness and the global `this` come from the case's language options: a script's top level and a non-strict function's `this` are valid. `this` in a type predicate (`this is T`, `asserts this`) is no use of `this`; `typeof this` is. A `function` passed directly as a call or `new` argument is reported where upstream reports it, under the same code, but many callees bind its `this` (Mocha tests and hooks, Cypress commands, library callbacks), so its message says to keep the `function` and declare `this` as its first parameter (`function (this: Mocha.Context)`, which upstream and the port accept), or else to pass the value in as a parameter; it never says to make it an arrow function, which would lose that `this`.
 
 ### `typescript-eslint-no-shadow`
 

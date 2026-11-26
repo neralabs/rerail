@@ -69,12 +69,19 @@ pub struct Decided {
     pub fit: usize,
 }
 
+/// Windows a filed chunk's measure sizes past it (`Schedule::horizon`): built, evaluating, and evaluated.
+const HORIZON: usize = 3;
+
 /// The run's chunk sizes, by the chunks' order.
 #[derive(Debug)]
 pub struct Schedule {
     first: usize,
     most: usize,
-    window: usize,
+    /// How far past the chunk filed its measure sizes (`HORIZON` windows): as far as the builder may cut ahead of the
+    /// filing, each chunk cut, built, evaluated, then filed in order. One window (the plans') held the builder to
+    /// 8 chunks past the last filed, shared by those built, evaluating and evaluated: cold PostHog's chunks ran 2-4
+    /// at once of 8, the main thread waiting 16 s for the next chunk's size.
+    horizon: usize,
     at_most: usize,
     /// Three quarters of the limit, less the run's start.
     room: usize,
@@ -96,11 +103,12 @@ impl Schedule {
     /// of that many nodes.
     pub fn new(first: usize, most: usize, window: usize, at_most: usize, limit: usize, start: usize, fixed: Option<usize>) -> Schedule {
         let first = first.min(most).max(1);
+        let window = window.max(at_most).max(1);
         let base = start.div_ceil(BASE_STEP) * BASE_STEP;
         Schedule {
             first,
             most,
-            window: window.max(at_most).max(1),
+            horizon: HORIZON * window,
             at_most: at_most.max(1),
             room: (limit / 4 * 3).saturating_sub(base),
             sizes: vec![Some((first, By::First))],
@@ -128,7 +136,7 @@ impl Schedule {
         }
         // Past the chunk growth stopped at, and before the window's first decision, the size it stopped at.
         let s = self.stopped?;
-        (n >= s && n < s + self.window).then(|| self.sizes[s].expect("the size growth stopped at").0)
+        (n >= s && n < s + self.horizon).then(|| self.sizes[s].expect("the size growth stopped at").0)
     }
 
     /// The next chunk is cut: its number.
@@ -169,7 +177,7 @@ impl Schedule {
                 (n + 1, sized)
             }
             // Growth stopped: the most when the room holds it, else what it holds.
-            Some(_) => (n + self.window, if self.most <= fit { (self.most, By::Most) } else { (fit, By::Room) }),
+            Some(_) => (n + self.horizon, if self.most <= fit { (self.most, By::Most) } else { (fit, By::Room) }),
         };
         let nodes = nodes.clamp(self.first, self.most);
         if self.sizes.len() <= chunk {
@@ -212,7 +220,7 @@ mod tests {
     }
 
     /// Growth stops at the caller's most, and then as many chunks evaluate at once as the room holds, each sized by
-    /// the chunk a window before it.
+    /// the chunk `HORIZON` windows before it.
     #[test]
     fn growth_stops_at_the_most_and_then_chunks_run_beside_each_other() {
         let mut s = schedule(300);
@@ -221,12 +229,12 @@ mod tests {
         let d = s.file(1, wrote(131_072, 30));
         assert_eq!((d.chunk, d.nodes, d.by), (2, MOST, By::Most));
         assert!(d.at_once > 1 && d.at_once <= 8, "{d:?}");
-        for n in 2..10 {
+        for n in 2..26 {
             assert_eq!(s.size(n), Some(MOST), "chunk {n} is sized by growth's stop");
         }
-        assert_eq!(s.size(10), None, "chunk 10 is sized by chunk 2");
+        assert_eq!(s.size(26), None, "chunk 26 is sized by chunk 2");
         let d = s.file(2, wrote(MOST, 60));
-        assert_eq!((d.chunk, d.nodes), (10, MOST));
+        assert_eq!((d.chunk, d.nodes), (26, MOST));
     }
 
     /// A chunk whose growth a node would not fit `GROWTH` times its size is held to what the room holds, alone.

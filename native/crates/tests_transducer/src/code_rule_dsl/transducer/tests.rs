@@ -18,7 +18,7 @@
         let native = StrDoc::new(source, GrammarDialect::Python);
         let image =
             TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
-        TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap()
+        TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap()
     }
 
     fn identifier_program(text: &str) -> Program {
@@ -510,7 +510,7 @@
             let started = Instant::now();
             let image =
                 TapeImage::encode(doc.tree.root_node(), &grammar, &source, &|| false).unwrap();
-            let tape = TapeDoc::restore(Arc::new(source), Arc::clone(&grammar), &image, &|| false)
+            let tape = TapeDoc::restore(Arc::new(source.into()), Arc::clone(&grammar), &image, &|| false)
                 .unwrap();
             encode_restore_time += started.elapsed();
             native.push(AstGrep::doc(doc));

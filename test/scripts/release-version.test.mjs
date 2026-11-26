@@ -133,6 +133,39 @@ describe.runIf(NPM_RUNS)("release-version.mjs, each released pack's rules", () =
     expect(changelog).toContain("- `tagged-new` (starts in Steer): What tagged-new wants.");
     expect(changelog).not.toContain("`tagged-old`");
   });
+
+  /** Writes pack `id` at 0.1.0 with its rules written in `.rerail`, `{ id: [mode, description as written] }`. */
+  function writeRerailPack({ write }, id, rules) {
+    write(`packs/${id}/package.json`, `${JSON.stringify({ name: packName(id), version: "0.1.0" }, null, 2)}\n`);
+    write(`packs/${id}/pack.json`, `${JSON.stringify({ rules: Object.keys(rules).map((rule) => ({ id: rule, document: `rules/${rule}.rerail` })) }, null, 2)}\n`);
+    for (const [rule, [mode, description]] of Object.entries(rules)) {
+      const header = [`.policy "${rule}" revision 1`, `.description "${description}"`, '.language python', `.mode ${mode}`, '.scope include "**/*.py"'];
+      write(`packs/${id}/rules/${rule}.rerail`, `${header.join("\n")}\n// .mode block, in a comment, is not the rule's mode.\n`);
+    }
+  }
+
+  it("reads the mode and description of a rule written in .rerail, its escapes undone", () => {
+    const repo = repository();
+    writeRerailPack(repo, "written", { "written-steer": ["steer", 'Call \\"exists()\\", not count().'], "written-log": ["log", "Back\\\\slash and \\u{e9}t\\u00e9."] });
+    commit(repo, "the pack");
+    releaseVersion(repo);
+    const changelog = readFileSync(join(repo.root, "packs/written/CHANGELOG.md"), "utf8");
+    expect(changelog).toContain("2 rules, all on by default.");
+    expect(changelog).toContain('- `written-steer` (starts in Steer): Call "exists()", not count().');
+    expect(changelog).toContain("- `written-log` (starts in Log): Back\\slash and été.");
+  });
+
+  it("compares a .rerail rule's mode at the pack's last release with its mode now", () => {
+    const repo = repository();
+    writeRerailPack(repo, "moved", { "moved-rule": ["steer", "What moved-rule wants."] });
+    commit(repo, "the pack");
+    repo.git("tag", `${packName("moved")}@0.1.0`);
+    writeRerailPack(repo, "moved", { "moved-rule": ["log", "What moved-rule wants."] });
+    commit(repo, "the rule starts in Log");
+    releaseVersion(repo);
+    const changelog = readFileSync(join(repo.root, "packs/moved/CHANGELOG.md"), "utf8");
+    expect(changelog).toContain("- `moved-rule` now starts in Log (was in Steer).");
+  });
 });
 
 describe.runIf(NPM_RUNS)("release-version.mjs, a released pack's core range", () => {

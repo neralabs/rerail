@@ -6,11 +6,11 @@ rules are one lookup"; renumbered 0442 when merged, and 0456 when that number tu
 renumbered it 0417 at its own hub merge (c8ec6ba92); merged back (535cc2c8b), it is 0456 in both, and a citation of
 0417 or 0442 for the kept facts on either branch is this decision.
 
-Status: decided by the user (2026-11-18: "I would prefer a single format if possible … We certainly shouldn't be
-storing 8-byte quantities … please go ahead and design and build this"). Replaces 0401 F1, F2 and F6's copy of a
-run's relation as it lies (8-byte cells in doubling chunks, its hash indexes, a cumulative delta). Keeps 0401's
-intent (F3–F5): the store's kept facts are blocks in mapped files, SQLite holds only which files, and readers
-read them through a virtual table. Steps 1–7 built (2026-11-18).
+Status: built (audited 2026-11-23). Decided by the user (2026-11-18: "I would prefer a single format if possible … We
+certainly shouldn't be storing 8-byte quantities … please go ahead and design and build this"). Replaces 0401 F1, F2
+and F6's copy of a run's relation as it lies (8-byte cells in doubling chunks, its hash indexes, a cumulative delta).
+Keeps 0401's intent (F3–F5): the store's kept facts are blocks in mapped files, SQLite holds only which files, and
+readers read them through a virtual table. Steps 1–7 built (2026-11-18).
 
 ## Intro
 

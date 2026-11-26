@@ -1,6 +1,6 @@
 # 0406: Errors in one vector round the loop
 
-Status: decided (the user, 2026-11-18: "deal with this", the per-block mask of the UTF-8
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-18: "deal with this", the per-block mask of the UTF-8
 error that 0405 left). Follows 0347, 0402 (its rejected item 2) and 0405.
 
 ## Intro

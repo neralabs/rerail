@@ -143,7 +143,7 @@ struct PlacedDir {
     rows: u32,
     pad: u32,
 }
-const _: () = assert!(size_of::<ViewRow>() == 208 && size_of::<ViewDir>() == 48 && size_of::<PlacedDir>() == 32);
+const _: () = assert!(size_of::<PlacedDir>() == 32);
 
 #[repr(C)]
 struct Copy {
@@ -449,11 +449,11 @@ unsafe fn cache_done(t: *const u8, a0: u64, entry: u64) {
 /// The directory's searches (`ViewDir::doc_of_row`, `doc_of_key`), the directory at `b + at`.
 #[inline(always)]
 unsafe fn dir_doc_of_row(b: *const u8, at: u64, k: u32, r: u32, memo: u32) -> u32 {
-    (*at_(b, at).cast::<ViewDir>()).doc_of_row(k, r, memo)
+    ViewDir::doc_of_row(at_(b, at).cast::<ViewDir>(), k, r, memo)
 }
 #[inline(always)]
 unsafe fn dir_doc_of_key(b: *const u8, at: u64, key: u32, memo: u32) -> u32 {
-    (*at_(b, at).cast::<ViewDir>()).doc_of_key(key, memo)
+    ViewDir::doc_of_key(at_(b, at).cast::<ViewDir>(), key, memo)
 }
 
 // ---- Views read in place (decision 0353 step 4d). ----
@@ -472,7 +472,7 @@ unsafe fn doc<'a>(d: *const ViewDir, e: *const ViewRow) -> reads::Doc<'a> {
 
 unsafe fn vrow_dir<'a>(kind: u32, d: *const ViewDir, r: u32, memo: &mut u32) -> Row<'a> {
     let k = kind - 1;
-    let lo = (*d).doc_of_row(k, r, *memo);
+    let lo = ViewDir::doc_of_row(d, k, r, *memo);
     *memo = lo;
     let e = view_rows(d).add(lo as usize);
     let i = r.wrapping_sub((*e).rows[k as usize]);

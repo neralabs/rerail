@@ -1,7 +1,7 @@
 # 0264. Rule images ship with the engine; a store per build holds the rest
 
-Status: decided (2026-11-15, the user's choice). Builds on 0246 (rules load as module images), 0263 (a library's
-relations are closed), 0173 (the program image) and 0131 (a store per project and build).
+Status: built (audited 2026-11-23). Decided (2026-11-15, the user's choice). Builds on 0246 (rules load as module
+images), 0263 (a library's relations are closed), 0173 (the program image) and 0131 (a store per project and build).
 
 ## Intro
 

@@ -1,6 +1,7 @@
 # 0241. A maintained stratum's form is a derivation of the run's version
 
-Status: decided (2026-11-15). Continues decisions 0173 (§7) and 0215 for t36 item 7, step 7.
+Status: superseded by 0364 (audited 2026-11-23). Decided (2026-11-15). Continues decisions 0173 (§7) and 0215 for t36
+item 7, step 7.
 
 ## Intro
 

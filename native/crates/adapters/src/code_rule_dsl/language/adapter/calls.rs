@@ -205,7 +205,7 @@ pub mod kit {
         let image = TapeImage::parse(&grammar, source, &|| false)
             .expect("parses")
             .expect("encodes");
-        let doc = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
+        let doc = TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false)
             .expect("restores");
         // A file's calls are its own tree's, or its embedded program's (`calls_document`).
         let read = crate::code_rule_dsl::calls::calls_document(doc, dialect)

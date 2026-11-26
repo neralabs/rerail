@@ -1,6 +1,6 @@
 # 0086: A token's syntax is checked in tier 2, as simdjson's stage 2 parses a number
 
-Status: accepted (user, 2026-11-07: "keep it as close to simdjson as possible").
+Status: built (audited 2026-11-23). Accepted (user, 2026-11-07: "keep it as close to simdjson as possible").
 
 ## Intro
 

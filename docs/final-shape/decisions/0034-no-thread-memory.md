@@ -1,6 +1,6 @@
 # 0034: The device keeps no per-thread memory; walks run in pools with device stacks
 
-Status: accepted (2026-11-04, list step 28, O39)
+Status: built (audited 2026-11-23). Accepted (2026-11-04, list step 28, O39)
 
 ## Intro
 

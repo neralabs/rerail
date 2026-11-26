@@ -30,7 +30,7 @@
         let image =
             TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
         let tape =
-            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+            TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap();
         let root = AstGrep::doc(tape);
         let pattern = Pattern::try_new("last", GrammarDialect::TypeScript).unwrap();
         let node = root

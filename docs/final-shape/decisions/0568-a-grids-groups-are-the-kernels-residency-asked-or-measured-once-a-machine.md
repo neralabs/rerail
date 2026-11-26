@@ -1,7 +1,10 @@
 # 0568. A grid's groups are its kernel's residency, asked or measured once a machine
 
-Status: accepted (2026-11-21, the user: "do A (but cached per machine, and ideally calling APIs) and C"). Changes how
-0468 §4 finds G; the grid, its barrier and its join are unchanged.
+Status: built (audited 2026-11-23). Accepted (2026-11-21, the user: "do A (but cached per machine, and ideally calling
+APIs) and C"). Changes how 0468 §4 finds G; the grid, its barrier and its join are unchanged.
+
+> **Superseded by 0653 (2026-11-23):** there is no persistent grid, so no residency to ask or measure; the device
+> crate's residency module and its kept measures are removed.
 
 ## Intro
 

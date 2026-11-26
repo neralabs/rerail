@@ -20,9 +20,13 @@ export interface ProcessResult {
 /** Runs `command` with `args`, writing `input` to its stdin; the system store takes one so tests need no keychain. */
 export type ProcessRunner = (command: string, args: readonly string[], input?: string) => Promise<ProcessResult>;
 
+/**
+ * Credential Manager through Windows PowerShell. Each cmdlet is named with its module, so PowerShell loads that module by
+ * its name and reads no other installed module to find it (`windowsStartedAt` in process-liveness.ts).
+ */
 const WINDOWS_CREDENTIAL_SCRIPT = `
 $ErrorActionPreference = "Stop"
-Add-Type -TypeDefinition @"
+Microsoft.PowerShell.Utility\\Add-Type -TypeDefinition @"
 using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
@@ -100,7 +104,7 @@ public static class RerailCredentialManager {
   }
 }
 "@
-$request = [Console]::In.ReadToEnd() | ConvertFrom-Json
+$request = [Console]::In.ReadToEnd() | Microsoft.PowerShell.Utility\\ConvertFrom-Json
 switch ($request.operation) {
   "read" {
     $value = [RerailCredentialManager]::Read($request.target)
@@ -108,7 +112,7 @@ switch ($request.operation) {
       [Console]::Out.Write('{"found":false}')
     } else {
       $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($value))
-      [Console]::Out.Write((@{ found = $true; value = $encoded } | ConvertTo-Json -Compress))
+      [Console]::Out.Write((@{ found = $true; value = $encoded } | Microsoft.PowerShell.Utility\\ConvertTo-Json -Compress))
     }
   }
   "write" {

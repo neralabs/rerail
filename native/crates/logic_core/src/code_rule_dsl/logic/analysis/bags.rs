@@ -1,4 +1,5 @@
 //! Summary storage compatibility across rules. Outer lookup identities remain local.
+use rerail_blocks::vector::Vector;
 use super::scalars::{self, Expression, Kind, Scalar};
 use std::collections::BTreeMap;
 #[derive(Clone, Debug, serde::Serialize)]
@@ -15,7 +16,7 @@ pub struct Analysis {
 }
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct Partition {
-    pub members: Vec<usize>,
+    pub members: Vector<usize>,
     pub reason: &'static str,
 }
 pub fn analyze(
@@ -54,11 +55,11 @@ pub fn analyze(
                     .or_insert_with(|| input.value.clone());
             }
         }
-        let mut values = BTreeMap::<Option<Expression>, Vec<usize>>::new();
+        let mut values = BTreeMap::<Option<Expression>, Vector<usize>>::new();
         for i in members {
             let s = &result.bags.inputs[i];
             if !s.same_bag(s).proven {
-                append(&mut result, vec![i]);
+                append(&mut result, rerail_blocks::vector![i]);
                 continue;
             }
             let value = if s.kind == Kind::Count {
@@ -78,7 +79,7 @@ pub fn analyze(
     result.bags.families.sort_by_key(|f| f.members[0]);
     result
 }
-fn append(result: &mut Analysis, members: Vec<usize>) {
+fn append(result: &mut Analysis, members: Vector<usize>) {
     let mut analysis = scalars::analyze_bags(
         members
             .iter()

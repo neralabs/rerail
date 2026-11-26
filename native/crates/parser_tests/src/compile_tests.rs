@@ -2,6 +2,7 @@
 //! (`tools/bitlex`): each named mask of the compiled block program equals the evaluator's mask on
 //! every input and every executor (`docs/parser-generators/13-tape-on-the-gpu.md` §7, step 2).
 
+use rerail_blocks::vector::Vector;
 use crate::block_tests::{Executors, inputs, runs};
 #[allow(unused_imports)]
 use rerail_compiler::*;
@@ -11,7 +12,7 @@ use rerail_compiler::program::Words as Program;
 use rerail_rir::rir_asm as rir;
 use rerail_bitlex::bitlex_masks as bitlex_compile;
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-use rerail_metal as metal_program_backend;
+use rerail_metal_programs as metal_program_backend;
 
 /// The masks the compiler handles so far: classes, logic, `prev`, `starts`, `after`, `span`,
 /// `toggle`, `after_odd_run` and `fill`.
@@ -55,7 +56,7 @@ fn evaluated(stmts: &[::bitlex::syntax::Stmt], bytes: &[u8], names: &[&str]) -> 
         .collect()
 }
 
-fn cut(mut words: Vec<u64>, n: usize) -> Vec<u64> {
+fn cut(mut words: Vector<u64>, n: usize) -> Vector<u64> {
     words.truncate(n.div_ceil(64));
     if !n.is_multiple_of(64)
         && let Some(last) = words.last_mut()
@@ -529,12 +530,12 @@ fn the_cpu_executors_take_a_batch() {
     let want: Vec<_> = files.iter().map(|f| blocks[f.program].run(f.bytes)).collect();
     // The rows the CPU's tier 1 does not store (0406): a total no one reads by its rows is its
     // flag only, compared below.
-    let unstored: Vec<Vec<usize>> = blocks.iter().map(|b| rerail_compiler::block_native::BlockNative::lower(b).cpu_unstored()).collect();
+    let unstored: Vec<Vector<usize>> = blocks.iter().map(|b| rerail_compiler::block_native::BlockNative::lower(b).cpu_unstored()).collect();
     for (name, got) in [("interpreter", block::run_batch(&blocks, &files)), ("cranelift", native_cpu_block::run_batch(&compiled, &files))] {
         assert_eq!(got.len(), files.len());
         for (k, (got, want)) in got.iter().zip(&want).enumerate() {
             let what = format!("{name}: file {k} ({} bytes, program {})", files[k].bytes.len(), files[k].program);
-            let rows = |r: &block::BlockRun| -> Vec<Vec<u64>> {
+            let rows = |r: &block::BlockRun| -> Vec<Vector<u64>> {
                 r.outputs.iter().enumerate().filter(|&(o, _)| name == "interpreter" || !unstored[files[k].program].contains(&o)).map(|(_, w)| w.clone()).collect()
             };
             assert_eq!(rows(got), rows(want), "{what}");
@@ -1107,7 +1108,7 @@ fn json_compiled_text(json: &str) -> Result<(Program, bitlex_compile::Compiled),
 }
 
 /// A node as ids: kind, field, supertypes (sorted), start, end, size.
-type IdNode = (u16, u16, Vec<u16>, usize, usize, usize);
+type IdNode = (u16, u16, Vector<u16>, usize, usize, usize);
 
 /// The reference parser's nodes for `bytes` as ids, or `None` where the file goes to tree-sitter.
 fn reference_nodes(stmts: &[::bitlex::syntax::Stmt], bytes: &[u8]) -> Option<Vec<IdNode>> {
@@ -1126,7 +1127,7 @@ fn reference_nodes(stmts: &[::bitlex::syntax::Stmt], bytes: &[u8]) -> Option<Vec
             .iter()
             .map(|n| {
                 let field = n.field.as_deref().map_or(0, |f| grammar.field_id_for_name(f).expect("a field").get());
-                let mut supers: Vec<u16> = n.supertypes.iter().map(|s| kind(s)).collect();
+                let mut supers: Vector<u16> = n.supertypes.iter().map(|s| kind(s)).collect();
                 supers.sort_unstable();
                 (kind(&n.kind), field, supers, n.start, n.end, n.size)
             })
@@ -1164,7 +1165,7 @@ fn tier2_nodes(p: &Program, bytes: &[u8]) -> Option<Vec<IdNode>> {
             .map(|n| {
                 let mut supers = n.supers;
                 supers.sort_unstable();
-                (n.kind, n.field, supers, n.start as usize, n.end as usize, n.size as usize)
+                (n.kind, n.field, Vector::from(&supers[..]), n.start as usize, n.end as usize, n.size as usize)
             })
             .collect(),
     )
@@ -1240,17 +1241,17 @@ fn json_compiled_path_equals_the_interpreters() {
             "tier 1: {}",
             String::from_utf8_lossy(f)
         );
-        let want = stream::run(&p, f, &want1).map_err(|r| r.pc);
-        let got = tier2.run(f, &got1).map_err(|r| r.pc);
-        assert_eq!(got, want, "tier 2: {}", String::from_utf8_lossy(f));
+        let (got, want) = tier2.against(f, &got1, stream::run(&p, f, &want1));
+        assert!(got == want, "tier 2: {}: {:?} against {:?}", String::from_utf8_lossy(f), got.as_ref().map(Vec::len), want.as_ref().map(Vec::len));
     }
 }
 
 /// Tier 2 in clusters (`native_cpu_clusters`, `native_cpu_stream::compile_cut`): JSON cut by
 /// its traffic into small clusters, and with every word a cluster of its own. Each run equals
-/// the one function's, refusals at the same word.
+/// the interpreter's (and so the one function's): the same tape, or a refusal at the same word.
 #[test]
 fn json_in_clusters_equals_one_function() {
+    use rerail_compiler::stream_analysis::Mem;
     let (p, _) = json_compiled();
     let native = native_ir::lower(&p, 0, 0).expect("lowers");
     assert_eq!(native.structural.len(), p.words.len(), "a word is lowered at its place");
@@ -1267,18 +1268,18 @@ fn json_in_clusters_equals_one_function() {
         ("a function a rule, optimized", native_cpu_clusters::Cut { speed: true, ..native_cpu_clusters::by_rules(&native) }),
         ("a word a cluster", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: rerail_compiler::native_cpu_clusters::Pick::Tree, pick_traffic: Default::default(), near: false, unsigned: false, calls: false }),
         // The state in registers: every field, in clusters and in the one function.
-        ("by traffic, the state in registers", native_cpu_clusters::Cut { held: (0..23).collect(), ..native_cpu_clusters::by_traffic(&native, &traffic, 40) }),
-        ("a word a cluster, the state in registers", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: (0..23).collect(), reload: true, inline_span: true, pass: Vec::new(), speed: false, pick: rerail_compiler::native_cpu_clusters::Pick::Tree, pick_traffic: Default::default(), near: false, unsigned: false, calls: false }),
-        ("one function, the state in registers", native_cpu_clusters::Cut { held: (0..23).collect(), ..native_cpu_clusters::Cut::one(n) }),
+        ("by traffic, the state in registers", native_cpu_clusters::Cut { held: (0..Mem::Depth as u32 + 1).collect(), ..native_cpu_clusters::by_traffic(&native, &traffic, 40) }),
+        ("a word a cluster, the state in registers", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: (0..Mem::Depth as u32 + 1).collect(), reload: true, inline_span: true, pass: Vec::new(), speed: false, pick: rerail_compiler::native_cpu_clusters::Pick::Tree, pick_traffic: Default::default(), near: false, unsigned: false, calls: false }),
+        ("one function, the state in registers", native_cpu_clusters::Cut { held: (0..Mem::Depth as u32 + 1).collect(), ..native_cpu_clusters::Cut::one(n) }),
         ("one function, ctx at each word", native_cpu_clusters::Cut { reload: true, ..native_cpu_clusters::Cut::one(n) }),
         ("by traffic, ctx at each word", native_cpu_clusters::Cut { reload: true, ..native_cpu_clusters::by_traffic(&native, &traffic, 40) }),
-        ("by traffic, the span inline, the token's state held", native_cpu_clusters::Cut { inline_span: true, held: vec![10, 13, 14, 15, 16, 17, 21, 22], ..native_cpu_clusters::by_traffic(&native, &traffic, 40) }),
+        ("by traffic, the span inline, the token's state held", native_cpu_clusters::Cut { inline_span: true, held: [Mem::Taken, Mem::End, Mem::Limit, Mem::LastEnd, Mem::Nodes, Mem::Open, Mem::Depth].map(|m| m as u32).to_vec(), ..native_cpu_clusters::by_traffic(&native, &traffic, 40) }),
         ("one function, arms weighted", native_cpu_clusters::Cut { pick: native_cpu_clusters::Pick::Weighted, pick_traffic: traffic.clone(), ..native_cpu_clusters::Cut::one(n) }),
         ("one function, arms by a table", native_cpu_clusters::Cut { pick: native_cpu_clusters::Pick::Table, ..native_cpu_clusters::Cut::one(n) }),
         ("one function, optimized", native_cpu_clusters::Cut { speed: true, ..native_cpu_clusters::Cut::one(n) }),
         ("by traffic, optimized", native_cpu_clusters::Cut { speed: true, ..native_cpu_clusters::by_traffic(&native, &traffic, 40) }),
         ("a state a function, direct and unsigned, entries by the profile", native_cpu_clusters::Cut { near: true, unsigned: true, pick_traffic: traffic.clone(), speed: true, ..native_cpu_clusters::by_states(&native) }),
-        ("a state a function, four fields passed", native_cpu_clusters::Cut { inline_span: true, reload: true, held: vec![10, 13, 14, 21, 22], pass: vec![10, 13, 14, 21], ..native_cpu_clusters::by_states(&native) }),
+        ("a state a function, four fields passed", native_cpu_clusters::Cut { inline_span: true, reload: true, held: [Mem::Taken, Mem::End, Mem::Limit, Mem::Depth].map(|m| m as u32).to_vec(), pass: [Mem::Taken, Mem::End, Mem::Limit, Mem::Depth].map(|m| m as u32).to_vec(), ..native_cpu_clusters::by_states(&native) }),
     ];
     for (name, cut) in cuts {
         let tier2 = native_cpu_stream::compile_cut(&native, &cut).unwrap_or_else(|e| panic!("{name}: {e:?}"));
@@ -1286,7 +1287,9 @@ fn json_in_clusters_equals_one_function() {
         assert!(cut.count == 1 || (tier2.clusters > 1 && tier2.crossings > 0), "{name}: in clusters");
         for f in &files {
             let t1 = tier1.extract(f);
-            assert_eq!(tier2.run(f, &t1).map_err(|r| r.pc), one.run(f, &t1).map_err(|r| r.pc), "{name}: {}", String::from_utf8_lossy(f));
+            let want = stream::run(&p, f, &p.block_programs[0].run_files(&[f]).remove(0));
+            let (got, want) = tier2.against(f, &t1, want);
+            assert!(got == want, "{name}: {}: {:?} against {:?}", String::from_utf8_lossy(f), got.as_ref().map(Vec::len), want.as_ref().map(Vec::len));
         }
     }
 }

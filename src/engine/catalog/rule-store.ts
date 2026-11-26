@@ -3,6 +3,7 @@ import { openRerailDatabase, type RerailDatabase } from "../storage/database.js"
 import { readStoredCodeRule, reportQuarantinedRule, type QuarantinedRule } from "./rule-quarantine.js";
 import { storableCodeRule } from "../code-rule/code-rule-compile.js";
 import type { CodeRule } from "../code-rule/code-rule-schema.js";
+import type { RerailRule } from "./rerail-rules/rerail-rule.js";
 import { RULE_MODES, type RuleMode } from "./rule-mode.js";
 import { assertEngineRegexes } from "./rule-regexes.js";
 import { parseConversationRule, type ConversationRule, type SampleBoundary } from "./rule-schema.js";
@@ -30,8 +31,25 @@ export interface StoredConversationRule extends StoredRuleBase {
 
 export type StoredRule = StoredCodeRule | StoredConversationRule;
 
-/** A rule body with its kind, as bundled with the package or dumped by `rerail rules export`. */
-export type RuleDocument = { kind: "code"; rule: CodeRule } | { kind: "conversation"; rule: ConversationRule };
+/**
+ * A rule body with its kind, as a pack ships it or `rerail rules export` dumps it. A `rerail` rule is a pack's rule
+ * written in `.rerail` (`rerail-rule.ts`); it checks source files, so its rule kind is `code` (`ruleKindOf`).
+ */
+export type RuleDocument =
+  | { kind: "code"; rule: CodeRule }
+  | { kind: "conversation"; rule: ConversationRule }
+  | { kind: "rerail"; rule: RerailRule };
+
+/** The kind of rule `document` is, code or conversation, whatever language it is written in. */
+export function ruleKindOf(document: RuleDocument): RuleKind {
+  return document.kind === "conversation" ? "conversation" : "code";
+}
+
+/**
+ * A rule document written in JSON, the only kind a rule created by you, a worktree's own rule or a rules dump holds:
+ * a `.rerail` rule exists only in a pack.
+ */
+export type JsonRuleDocument = Exclude<RuleDocument, { kind: "rerail" }>;
 
 export interface RuleWriteOptions {
   enabled?: boolean;

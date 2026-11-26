@@ -157,23 +157,23 @@ pub const SAMPLE: usize = 1 << SAMPLE_SHIFT;
 pub const HEAD: usize = 20;
 
 /// The index of `source`'s lines as `terminators` end them: its bytes, without the room a region keeps after them.
-pub fn index(source: &[u8], terminators: Terminators) -> Vec<u8> {
-    let mut out = Vec::new();
+pub fn index(source: &[u8], terminators: Terminators) -> crate::Vector<u8> {
+    let mut out = crate::Vector::new();
     index_into(&mut out, source, terminators);
     out
 }
 
 /// `index`, into `out` (its bytes replaced): a scan of the source for its terminators, each one's last byte.
-pub fn index_into(out: &mut Vec<u8>, source: &[u8], terminators: Terminators) {
-    let mut ends = Vec::new();
+pub fn index_into(out: &mut crate::Vector<u8>, source: &[u8], terminators: Terminators) {
+    let mut ends = crate::Vector::<u64>::new();
     terminators.each(source, |at, length| ends.push((at + length - 1) as u64));
-    index_of(out, source.len() as u64, ends.len() as u64, ends.into_iter());
+    index_of(out, source.len() as u64, ends.len() as u64, ends.iter().copied());
 }
 
 /// The index of `m` newlines at `offsets` (ascending) in a source of `u` bytes, into `out` (its bytes replaced, its
 /// room kept): made in place, one pass over the offsets, so a producer that has the newlines (tier 1's bits) needs no
 /// scan of the source.
-pub fn index_of(out: &mut Vec<u8>, u: u64, m: u64, offsets: impl Iterator<Item = u64>) {
+pub fn index_of(out: &mut crate::Vector<u8>, u: u64, m: u64, offsets: impl Iterator<Item = u64>) {
     let len = index_len(u, m);
     out.clear();
     out.resize(len + 8, 0);
@@ -301,14 +301,14 @@ pub fn len_of(index: &[u8]) -> Option<usize> {
 /// The lines of a text no tape holds (a rule file, a preprocessor's input): an index of its own in the tape's format,
 /// read by the tape's reads (`reads::f16::line`, `line_start`), so its lines are a tape's lines (decision 0612).
 pub struct Lines {
-    /// The index, then a word's room.
-    index: Vec<u8>,
+    /// The index, then a word's room, in the run's room (a block).
+    index: crate::Vector<u8>,
     len: u32,
 }
 
 impl Lines {
     pub fn of(source: &[u8], terminators: Terminators) -> Self {
-        let mut index = Vec::new();
+        let mut index = crate::Vector::new();
         index_into(&mut index, source, terminators);
         index.resize(index.len() + 8, 0);
         Self { index, len: u32::try_from(source.len()).expect("a text within 4 GB") }
@@ -409,7 +409,7 @@ pub(crate) mod tests {
                     bits[0] |= 1;
                 }
                 let (m, offsets) = bits_of(s.len() as u64, delay, words, |w| bits[w]);
-                let mut got = vec![0xa5; 3];
+                let mut got = crate::Vector::from([0xa5u8; 3]);
                 index_of(&mut got, s.len() as u64, m, offsets);
                 assert_eq!(got, want, "{} bytes, delay {delay}", s.len());
             }

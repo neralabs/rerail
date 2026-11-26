@@ -244,7 +244,7 @@ fn file(source: &str, dialect: GrammarDialect) -> TapeDoc {
     let image = TapeImage::parse(&grammar, source, &|| false)
         .expect("parses")
         .expect("encodes");
-    TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).expect("restores")
+    TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).expect("restores")
 }
 
 /// The document of a file of `source` in `dialect` its family's semantics read: the program the

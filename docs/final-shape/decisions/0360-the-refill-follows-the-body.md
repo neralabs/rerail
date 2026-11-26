@@ -1,6 +1,6 @@
 # 0360: The refill follows the body
 
-Status: decided (the user, 2026-11-17: "go ahead with 2 then 1": what tier 1 computes that
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-17: "go ahead with 2 then 1": what tier 1 computes that
 simdjson does not). Follows 0349 and 0355–0358. (Numbered 0359 at first; 0359 was another worktree's.)
 
 ## Intro

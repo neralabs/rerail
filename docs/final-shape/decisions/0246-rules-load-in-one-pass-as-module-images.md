@@ -1,9 +1,11 @@
 # 0246. Rules load in one pass: each module read once into its image, a pack linked from them
 
-Status: draft (2026-11-15), for review. Makes decision 0225 §7 (a prepared program kept per module) specific for
-loading, on decision 0173's program image as Typing-support builds it (the builder, views, overlays and derivations
-of decisions 0215, 0241 and 0244). Builds on 0089 (a library is a module, held once), 0061 and 0162 (a rule file has
-a tape, read in place), 0058 (hiding), 0131 (a store per project and build).
+Status: partly built (audited 2026-11-23). Left: stage 3 linking from module images replacing combine_read; lowering
+writing clauses into the builder; analyses as rules per module. Draft (2026-11-15), for review. Makes decision 0225 §7
+(a prepared program kept per module) specific for loading, on decision 0173's program image as Typing-support builds
+it (the builder, views, overlays and derivations of decisions 0215, 0241 and 0244). Builds on 0089 (a library is a
+module, held once), 0061 and 0162 (a rule file has a tape, read in place), 0058 (hiding), 0131 (a store per project
+and build).
 
 ## Intro
 
@@ -423,7 +425,7 @@ Both steps are built.
    its digest (each file looked at once for the call, however many graphs name it). A newly derived graph is kept
    in the build's image store and exported into the bundle. A seed's key names the seed, not what its graph
    reached, so an edited library gives a key another graph: the store keeps the first under the key
-   (`keep_graph_image` looks first), and a run finds it no longer holds and derives the graph again.
+   (`keep_graph_images` looks first), and a run finds it no longer holds and derives the graph again.
 
 The image store is opened once for a call's seeds. Opened once per seed, its 316 opens cost 3.2 G, more than the
 derivation they replaced.

@@ -19,6 +19,7 @@
 //! branches apart, and a recursion's other facts a proof (0361: "recursion keeps a fact only when it is declared, or
 //! proved by the base case and the step"). An aggregate's, a native's, a request's answer or the program's facts take
 //! their declared facts alone.
+use rerail_blocks::vector::Vector;
 use super::RelId;
 use super::about::About;
 use super::analyses::Strata;
@@ -54,7 +55,7 @@ impl Layouts {
     /// The facts of `v`'s relations: each relation's declared ones, and, in dependency order, what its one rule gives
     /// from the facts of the relations it reads.
     pub fn infer(v: &Version, about: &About, strata: &Strata) -> Layouts {
-        let mut out: BTreeMap<RelId, Vec<(LayoutFact, Origin)>> = about.layouts.iter().map(|(rel, facts)| (*rel, facts.iter().map(|f| (f.clone(), Origin::Declared)).collect())).collect();
+        let mut out: BTreeMap<RelId, Vec<(LayoutFact, Origin)>> = about.layouts.iter().map(|e| (e.0, e.1.iter().map(|f| (<LayoutFact as rerail_section::Decode>::decode(f, &rerail_section::Names::NONE), Origin::Declared)).collect())).collect();
         // An input the transducer makes from a kind set (an axis's, `nearest`'s) has the engine's facts, where none
         // are declared (decision 0361 step 5): the planner sizes the rules over it with the program.
         for rel in v.inputs().filter_map(|a| v.rel_of(a)) {
@@ -78,11 +79,9 @@ impl Layouts {
             let rules: Vec<RuleRef<'_>> = scc.iter().flat_map(|r| v.heads(*r)).collect();
             if recursive || rules.len() > 1 {
                 // A union is local where each branch is; a recursion where each rule is, supposing its component is
-                // (by induction on the rounds: the base rules read none of it). No other fact is carried.
-                let mut supposed = out.clone();
-                for r in scc {
-                    supposed.entry(*r).or_default().push((LayoutFact::Local, Origin::Declared));
-                }
+                // (by induction on the rounds: the base rules read none of it). No other fact is carried. The
+                // supposition is read beside the facts (`Known`), not written into a copy of them all.
+                let supposed = Known { facts: &out, supposed: &**scc, local: LayoutFact::Local };
                 if !rules.is_empty() && rules.iter().all(|r| infer_rule(v, *r, &supposed).contains(&LayoutFact::Local)) {
                     for r in scc {
                         let facts = out.entry(*r).or_default();
@@ -96,7 +95,7 @@ impl Layouts {
             let rel = &scc[0];
             let [rule] = rules.as_slice() else { continue };
             let rule = *rule;
-            let inferred = infer_rule(v, rule, &out);
+            let inferred = infer_rule(v, rule, &Known { facts: &out, supposed: &[], local: LayoutFact::Local });
             if inferred.is_empty() {
                 continue;
             }
@@ -154,9 +153,25 @@ fn vars_of(t: TermRef<'_>, into: &mut BTreeSet<Var>) {
     }
 }
 
+/// The facts known of each relation, and the relations supposed local besides: a recursive component's or a union's,
+/// supposed while its rules are inferred (`Layouts::infer`).
+struct Known<'a> {
+    facts: &'a BTreeMap<RelId, Vec<(LayoutFact, Origin)>>,
+    supposed: &'a [RelId],
+    /// `LayoutFact::Local`, which a supposed relation's facts end with.
+    local: LayoutFact,
+}
+
+impl Known<'_> {
+    /// `rel`'s facts: its known ones, and `Local` where it is supposed.
+    fn of(&self, rel: RelId) -> impl Iterator<Item = &LayoutFact> + '_ {
+        self.facts.get(&rel).into_iter().flatten().map(|(f, _)| f).chain(self.supposed.contains(&rel).then_some(&self.local))
+    }
+}
+
 /// What one rule gives its head, from the facts known of the relations its body reads (`known`).
-fn infer_rule(v: &Version, r: RuleRef<'_>, known: &BTreeMap<RelId, Vec<(LayoutFact, Origin)>>) -> Vec<LayoutFact> {
-    let facts_of = |rel: RelId| known.get(&rel).into_iter().flatten().map(|(f, _)| f);
+fn infer_rule(v: &Version, r: RuleRef<'_>, known: &Known<'_>) -> Vec<LayoutFact> {
+    let facts_of = |rel: RelId| known.of(rel);
     let head: Vec<TermRef<'_>> = r.head().args().collect();
     let mut head_vars = BTreeSet::new();
     head.iter().for_each(|t| vars_of(*t, &mut head_vars));
@@ -238,7 +253,7 @@ fn infer_rule(v: &Version, r: RuleRef<'_>, known: &BTreeMap<RelId, Vec<(LayoutFa
     };
     // Whether `vs`, all in the head, fix the head's row; and their places there.
     let fixes = |vs: &BTreeSet<Var>| vs.is_subset(&head_vars) && head_vars.is_subset(&closure(vs));
-    let places = |vs: &[Var]| -> Option<Vec<usize>> { vs.iter().map(|s| place.get(s).copied()).collect() };
+    let places = |vs: &[Var]| -> Option<rerail_blocks::vector::Vector<usize>> { vs.iter().map(|s| place.get(s).copied()).collect() };
     let one = |args: &[TermRef<'_>], c: usize| args.get(c).and_then(|t| t.var());
     let many = |args: &[TermRef<'_>], cols: &[usize]| -> Option<Vec<Var>> { cols.iter().map(|&c| one(args, c)).collect() };
     let mut out: Vec<LayoutFact> = Vec::new();
@@ -311,11 +326,11 @@ fn infer_rule(v: &Version, r: RuleRef<'_>, known: &BTreeMap<RelId, Vec<(LayoutFa
 
 /// Whether a rule's rows are local: every atom is, every node the head holds is an atom's, and the atoms that hold
 /// nodes are one group, joined by their shared nodes or by `nearest`.
-fn local(v: &Version, head_rel: RelId, atoms: &[(RelId, Vec<TermRef<'_>>)], nearest: &[(Var, Var)], head: &[TermRef<'_>], known: &BTreeMap<RelId, Vec<(LayoutFact, Origin)>>) -> bool {
+fn local(v: &Version, head_rel: RelId, atoms: &[(RelId, Vec<TermRef<'_>>)], nearest: &[(Var, Var)], head: &[TermRef<'_>], known: &Known<'_>) -> bool {
     let node_col = |rel: RelId, c: usize| v.decl_of(v.rel_name(rel)).and_then(|d| d.cols().nth(c)).is_some_and(|(_, t)| matches!(v.text(t), "node" | "loc"));
     // Local: stated or inferred, or by its shape: a relation of one node column at most crosses no documents.
     let is_local = |rel: RelId| {
-        known.get(&rel).is_some_and(|fs| fs.iter().any(|(f, _)| *f == LayoutFact::Local))
+        known.of(rel).any(|f| *f == LayoutFact::Local)
             || v.decl_of(v.rel_name(rel)).is_some_and(|d| (0..d.cols().len()).filter(|&c| node_col(rel, c)).count() <= 1)
     };
     if atoms.is_empty() || !atoms.iter().all(|(rel, _)| is_local(*rel)) {
@@ -330,7 +345,7 @@ fn local(v: &Version, head_rel: RelId, atoms: &[(RelId, Vec<TermRef<'_>>)], near
         return false;
     }
     // One group: grow from the first atom with nodes through shared node variables and `nearest`.
-    let with: Vec<usize> = (0..atoms.len()).filter(|&k| !nodes[k].is_empty()).collect();
+    let with: Vector<usize> = (0..atoms.len()).filter(|&k| !nodes[k].is_empty()).collect();
     let Some(&first) = with.first() else { return true };
     let mut reached: BTreeSet<Var> = nodes[first].clone();
     let mut joined: BTreeSet<usize> = BTreeSet::from([first]);

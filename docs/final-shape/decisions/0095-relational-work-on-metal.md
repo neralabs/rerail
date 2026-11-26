@@ -1,6 +1,8 @@
 # 0095: The logic engine's relational work on Metal: one plan, device waves, generated row code
 
-Status: draft (2026-11-09). A plan for review; nothing in it is built.
+Status: partly built (audited 2026-11-23). Left: Aggregates and recursion on the device, device waves (§5), text tests
+on device, the cross-file part, planner pricing of tile. Draft (2026-11-09). A plan for review; nothing in it is
+built.
 
 ## Intro
 

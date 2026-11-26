@@ -142,6 +142,9 @@ pub enum StructuralOperation {
     /// The node made last at the innermost open node's level and the nodes inside it, read by
     /// reading `reading` (`RETAG m=3`, `reread`).
     Reread { reading: u16 },
+    /// A test: the node made last at the innermost open node's level is of `kind`: run the
+    /// next word; else skip it (`RETAG m=4`, `ending`).
+    MadeIs { kind: u16 },
     /// A node of `kind` around the node last made at this level, open: it takes that node's
     /// field and start (docs/parser-generators/24-rr-and-bitlex-plan.md §2.5).
     Wrap { kind: u16 },
@@ -176,9 +179,16 @@ pub enum StructuralOperation {
     /// `SETTLE m=19`, and `m=20+f` with flag `f` set: where gap pattern `pattern` holds at the
     /// token, the file refused (a mark's `refuses`).
     RefuseIf { pattern: u16, flag: Option<u16> },
+    /// `SETTLE m=36`, and `m=37+f` with flag `f` set: where gap pattern `pattern` holds at the
+    /// token, the first extra pending of no width at the next one's start (a mark's `loses
+    /// since`).
+    MoveFirst { pattern: u16, flag: Option<u16> },
     /// To switch on this token again (`again`), or to take the next.
     Return { again: bool },
     Accept,
+    /// A statement starts (`STATEMENT`, decision 0650): the one before ends, and this one is marked, to be cut back to
+    /// where it fails by its syntax.
+    Statement,
 }
 
 /// What `FLAG` does with its flag.
@@ -237,6 +247,7 @@ impl StructuralOperation {
             Self::Row { mask } => (ROW, 0, mask),
             Self::Retag { kind, on } => (RETAG, on as u8, kind),
             Self::Reread { reading } => (RETAG, 3, reading),
+            Self::MadeIs { kind } => (RETAG, 4, kind),
             Self::Wrap { kind } => (WRAP, 0, kind),
             Self::Merge { kind, fold } => (MERGE, u8::from(fold), kind),
             Self::NodeField { field, on } => (NODE_FIELD, on as u8, field),
@@ -250,8 +261,10 @@ impl StructuralOperation {
             Self::DropLast { pattern } => (crate::program::SETTLE, 1, pattern),
             Self::LoseLast { pattern, flag } => (crate::program::SETTLE, flag.map_or(2, |f| 3 + f as u8), pattern),
             Self::RefuseIf { pattern, flag } => (crate::program::SETTLE, flag.map_or(crate::program::SETTLE_REFUSE, |f| crate::program::SETTLE_REFUSE + 1 + f as u8), pattern),
+            Self::MoveFirst { pattern, flag } => (crate::program::SETTLE, flag.map_or(crate::program::SETTLE_MOVE, |f| crate::program::SETTLE_MOVE + 1 + f as u8), pattern),
             Self::Return { again } => (RETURN, u8::from(again), 0),
             Self::Accept => (ACCEPT, 0, 0),
+            Self::Statement => (crate::program::STATEMENT, 0, 0),
             Self::Text { .. } | Self::Assert { .. } => {
                 unreachable!("native lowering created an invalid function reference")
             }
@@ -372,7 +385,7 @@ pub struct Structure {
     pub has_repeats: bool,
     pub maximum_cursor_slot: u32,
     pub reservation_sites: Vec<ReservationSite>,
-    pub longs: Vec<u64>,
+    pub longs: rerail_blocks::vector::Vector<u64>,
     pub strings: Vec<Vec<u8>>,
     /// Tier 2's switch tables (`SWITCH`).
     pub switches: Vec<crate::stream_ir::ByteSwitch>,
@@ -384,6 +397,8 @@ pub struct Structure {
     pub extras: Vec<(u8, u16)>,
     /// The token marks (`Words::token_marks`).
     pub token_marks: Vec<crate::program::TokenMark>,
+    /// Where a statement that fails resumes (`Words::recover`, decision 0650): empty where none recovers.
+    pub recover: Vec<crate::program::Recover>,
     /// The marks done where each mark is taken (`Words::taken`), by order: 64 at most.
     pub taken: Vec<u64>,
     /// The gap patterns (`Words::gap_patterns`).
@@ -397,6 +412,8 @@ pub struct Structure {
     pub block_programs: Vec<BlockNative>,
     pub output: FunctionRef,
     pub reduction: FunctionRef,
+    /// A padded root (`ACCEPT m=1`, `whole padded`): its start its first token's or comment's.
+    pub padded: bool,
 }
 
 pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> Result<Structure, LoweringError> {
@@ -500,6 +517,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             },
             ROW => StructuralOperation::Row { mask: operand },
             RETAG if mode == 3 => StructuralOperation::Reread { reading: operand },
+            RETAG if mode == 4 => StructuralOperation::MadeIs { kind: operand },
             RETAG => StructuralOperation::Retag { kind: operand, on: On::of(mode) },
             WRAP => StructuralOperation::Wrap { kind: operand },
             MERGE => StructuralOperation::Merge { kind: operand, fold: mode == 1 },
@@ -517,12 +535,14 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             },
             crate::program::CHECK => StructuralOperation::Check { check: operand },
             crate::program::SETTLE if mode == 1 => StructuralOperation::DropLast { pattern: operand },
+            crate::program::SETTLE if mode >= crate::program::SETTLE_MOVE => StructuralOperation::MoveFirst { pattern: operand, flag: (mode > crate::program::SETTLE_MOVE).then(|| u16::from(mode - crate::program::SETTLE_MOVE - 1)) },
             crate::program::SETTLE if mode >= crate::program::SETTLE_REFUSE => StructuralOperation::RefuseIf { pattern: operand, flag: (mode > crate::program::SETTLE_REFUSE).then(|| u16::from(mode - crate::program::SETTLE_REFUSE - 1)) },
             crate::program::SETTLE if mode >= 2 => StructuralOperation::LoseLast { pattern: operand, flag: (mode > 2).then(|| u16::from(mode - 3)) },
             crate::program::SETTLE => StructuralOperation::SettleBefore { mark: operand },
             crate::program::COUNT => StructuralOperation::Count { count: operand, up: mode == 0, max: program.counts[usize::from(operand)] },
             RETURN => StructuralOperation::Return { again: mode != 0 },
             ACCEPT => StructuralOperation::Accept,
+            crate::program::STATEMENT => StructuralOperation::Statement,
             _ => {
                 return Err(LoweringError::InvalidOpcode { position, opcode });
             }
@@ -571,11 +591,13 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
         word_kinds: program.word_kinds.clone(),
         extras: program.extras.clone(),
         token_marks: program.token_marks.clone(),
+        recover: program.recover.clone(),
         taken: (0..64u8).map(|k| program.taken(k)).collect(),
         gap_patterns: program.gap_patterns.clone(),
         local_checks: program.local_checks.clone(),
         block_programs: program.block_programs.iter().map(BlockNative::lower).collect(),
         output: FunctionRef::Output,
         reduction: FunctionRef::Reduction,
+        padded: program.words.iter().any(|&w| split(w) == (ACCEPT, 1, 0)),
     })
 }

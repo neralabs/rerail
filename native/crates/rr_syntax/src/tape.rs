@@ -352,33 +352,50 @@ pub fn kind_field(key: u32) -> (u16, u16) {
     if key >> 16 & u32::from(rerail_tape_format::CODE_ERROR) != 0 { (ERROR, 0) } else { ((key & 0x3ff) as u16, (key >> 10 & 0x3f) as u16) }
 }
 
-/// The engine's tape of `nodes` (this parser's, in preorder) over `src`: its bytes, as the
-/// engine encodes a `.rerail` file (`code_rule_dsl::tape`). Each node given to the writer in order and
-/// closed where the next is not inside it. The lean parser's tape is checked against it.
-pub fn image(nodes: &[Node], src: &str) -> Vec<u8> {
-    use rerail_tape_format::{Redo, Widths, Writer};
-    let mut widths = Widths::guess(src.len());
-    loop {
-        let mut w = Writer::new(rerail_tape_format::RR_TAG, widths, nodes.len());
-        let mut open: Vec<(usize, u32)> = Vec::new();
-        for (i, n) in nodes.iter().enumerate() {
-            while let Some(&(o, end)) = open.last() {
-                if n.parent == Some(o as u32) {
-                    break;
-                }
-                w.close(o, end);
-                open.pop();
-            }
-            w.push(code(n.kind, n.field, n.extra), n.start);
-            open.push((i, n.end));
+/// A key's entry in the `.rerail` language's table (format 16, decision 0631): its kind, field and flags (`code`'s);
+/// a `.rerail` node is in no supertype.
+pub fn entry(key: u32) -> rerail_tape_format::tape::Entry {
+    let kf = (key & 0xffff) as u16;
+    let kind_mask = (1u16 << rerail_tape_format::KIND_BITS) - 1;
+    rerail_tape_format::tape::Entry { kind: kf & kind_mask, field: kf >> rerail_tape_format::KIND_BITS, flags: (key >> 16 & 7) as u8, alias: None, classes: Vec::new() }
+}
+
+/// An entry's kind and field, as `kind_field` reads them off its key: ERROR's for an error.
+pub fn entry_kind_field(e: rerail_tape_format::tape::EntryRef<'_>) -> (u16, u16) {
+    if e.flags & rerail_tape_format::CODE_ERROR != 0 { (ERROR, 0) } else { (e.kind, e.field) }
+}
+
+/// The `.rerail` language's format 16 table (tag `RR_TAG`, made from this grammar: decision 0631).
+pub fn lang() -> &'static rerail_tape_format::f16::Lang {
+    rerail_tape_format::f16::lang(rerail_tape_format::RR_TAG).expect("the .rerail language's format 16 table")
+}
+
+/// A key's number in the `.rerail` table (`entry`): `None` for a code the table lacks.
+pub fn number(key: u32) -> Option<u32> {
+    lang().number(&entry(key))
+}
+
+/// The engine's tape of `nodes` (this parser's, in preorder) over `src`, in format 16 (decision 0631): each node's
+/// code numbered in the `.rerail` table, its subtree the nodes whose parent chain reaches it, written by format 16's
+/// ops in one pass with each block's presence (`f16::write_present`), as a parser's run writes it. The lean parser's
+/// tape is checked against it.
+pub fn image(nodes: &[Node], src: &str) -> Result<rerail_tape_format::f16::Tape16, String> {
+    // Each node's subtree end: past its last descendant, a node's after its children's.
+    let mut ends: Vec<usize> = (1..=nodes.len()).collect();
+    for i in (0..nodes.len()).rev() {
+        if let Some(p) = nodes[i].parent {
+            ends[p as usize] = ends[p as usize].max(ends[i]);
         }
-        while let Some((o, end)) = open.pop() {
-            w.close(o, end);
-        }
-        match w.finish(src.as_bytes()) {
-            Ok(bytes) => return bytes,
-            Err(Redo(x)) => widths = x,
-        }
+    }
+    let mut numbers = Vec::with_capacity(nodes.len());
+    for n in nodes {
+        let key = code(n.kind, n.field, n.extra);
+        numbers.push(number(key).ok_or_else(|| format!("key {key:#x}: a code the .rerail table lacks"))?);
+    }
+    let node = |i: usize| rerail_tape_format::f16::Node { number: numbers[i], start: u64::from(nodes[i].start), end: u64::from(nodes[i].end), subtree_end: ends[i] };
+    match rerail_tape_format::f16::write_present(lang(), nodes.len(), src.as_bytes(), crate::syntax::TERMINATORS, rerail_tape_format::RR_TAG, false, node)? {
+        rerail_tape_format::f16::Written::F16(t) => Ok(t),
+        rerail_tape_format::f16::Written::F16Z(_) => unreachable!("16z was not asked for"),
     }
 }
 
@@ -427,13 +444,16 @@ pub fn flatten(tree: &Tree, comments: &[(usize, usize)]) -> Vec<Node> {
     walk.out
 }
 
-/// The nodes of a `.rerail` image (`image`, or the lean parser's `lean::tape`): `image`'s inverse.
-pub fn nodes(bytes: &[u8]) -> Result<Vec<Node>, String> {
-    Ok(rerail_tape_format::decode(bytes)?
-        .into_iter()
-        .map(|d| {
-            let (kind, field) = kind_field(d.key);
-            Node { kind, field, start: d.start, end: d.end, parent: d.parent, extra: d.key >> 16 & u32::from(rerail_tape_format::CODE_EXTRA) != 0 }
+/// The nodes of a `.rerail` tape (`image`, or the lean parser's `lean::tape`), read in place: `image`'s inverse.
+pub fn nodes(t: &rerail_tape_format::f16::Tape16) -> Result<Vec<Node>, String> {
+    use rerail_tape_format::tape::Tape as _;
+    let r = t.reader(lang())?;
+    Ok((0..r.len())
+        .map(|i| {
+            let e = r.table().entry(r.code(i));
+            let (kind, field) = entry_kind_field(e);
+            let extra = e.flags & rerail_tape_format::CODE_EXTRA != 0;
+            Node { kind, field, start: r.start(i) as u32, end: r.end(i) as u32, parent: r.parent(i).map(|p| p as u32), extra }
         })
         .collect())
 }

@@ -1,6 +1,7 @@
 # Plan: the engine in crates, without moving files
 
-Status: plan, revision 2. Code surveyed: the hub, `final-shape-serverplan-quality` at 251f0b85f
+Status: built (the split landed; `incremental-plan.md` builds on it). Left: the questions of §7. Plan revision 2.
+Code surveyed: the hub, `final-shape-serverplan-quality` at 251f0b85f
 (2026-11-11 06:43). This builds on the crate-split proposal (`../crate-split.md`, the seam map at 91c2df886).
 
 Requirements:

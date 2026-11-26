@@ -68,7 +68,7 @@ impl Connections {
                 let mut db = Connection::open(path)?;
                 if let Some(arena) = arena { Atoms::share_memory(&db, arena)?; }
                 // Its own store's atoms, guarded at commit (decision 0049); a kept connection already is.
-                crate::content_store::atoms::Atoms::install(&mut db)?;
+                crate::content_store::install_atoms(&mut db)?;
                 Ok(db)
             }
         }
@@ -116,7 +116,7 @@ impl Cone {
         let mut db = Connection::open(path)?;
         if let Some(arena) = arena { Atoms::share_memory(&db, arena)?; }
         // The atoms guarded at commit, as the run's connection's (decision 0049).
-        crate::content_store::atoms::Atoms::install(&mut db)?;
+        crate::content_store::install_atoms(&mut db)?;
         crate::code_rule_dsl::logic::native::register(&db)?;
         crate::code_rule_dsl::logic::native::register_symbols(&db)?;
         Ok(db)

@@ -1,6 +1,7 @@
 # 0531: The ladders are cut to their grammars
 
-Status: decided (the user, 2026-11-20: "yes, remove the other ladders too", after Kotlin's, 0484). Follows 0484.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-20: "yes, remove the other ladders too", after
+Kotlin's, 0484). Follows 0484.
 
 ## Intro
 

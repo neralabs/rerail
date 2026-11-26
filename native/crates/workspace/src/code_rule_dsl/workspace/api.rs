@@ -922,7 +922,7 @@ impl CodeRuleDslWorkspace {
             .filter(|file| !file.stays_resident())
             .map(|file| {
                 let mut input = file.input.clone();
-                input.source = Arc::new(String::new());
+                input.source = Arc::new(String::new().into());
                 (documents::FileVersion::of(file), input)
             })
             .collect::<Vec<_>>();
@@ -1645,7 +1645,7 @@ impl WorkspaceApplyTask {
                         file.stored = Some(stored);
                         file.unpublished = false;
                         CrossFileScheduler::mark_persisted(file);
-                        file.input.source = Arc::new(String::new());
+                        file.input.source = Arc::new(String::new().into());
                         file.tape = None;
                     }
                 }
@@ -1921,7 +1921,7 @@ fn publish_unpublished(
                 file.stored = Some(stored);
                 file.unpublished = false;
                 CrossFileScheduler::mark_persisted(file);
-                file.input.source = Arc::new(String::new());
+                file.input.source = Arc::new(String::new().into());
                 file.tape = None;
             }
         }

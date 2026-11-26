@@ -2,12 +2,13 @@
 
 Numbered 0400 where it was written (renumbered at the merge of Native-and-GPU-strata, whose 0400 is the small root's).
 
-Status: draft (2026-11-18); the four questions of §9 answered by the user the same day (recorded there, and folded
-into §3.3, §5, §7 and §8). The user asked for Rerail to
-run on any GPU, starting with CUDA, "without rewriting all of the kernels over and over again", by way of MLDB's
-UKL (the Ugly Kernel Language). It covers the platform layer, the kernel language, subroutines, the C
-preprocessor, a library of primitives (prefix sums and the like), and memory: shared against partitioned, GPUs
-with little RAM, and several GPUs and hosts. Amends 0353 between memory domains (§7.2).
+Status: partly built (audited 2026-11-23). Left: step 10 block directory/coherency across domains, 11 partitioned
+memory on discrete GPU, 12 multi-GPU/host; ROCm/HIP and WebGPU backends. Draft (2026-11-18); the four questions of §9
+answered by the user the same day (recorded there, and folded into §3.3, §5, §7 and §8). The user asked for Rerail to
+run on any GPU, starting with CUDA, "without rewriting all of the kernels over and over again", by way of MLDB's UKL
+(the Ugly Kernel Language). It covers the platform layer, the kernel language, subroutines, the C preprocessor, a
+library of primitives (prefix sums and the like), and memory: shared against partitioned, GPUs with little RAM, and
+several GPUs and hosts. Amends 0353 between memory domains (§7.2).
 
 ## Intro
 

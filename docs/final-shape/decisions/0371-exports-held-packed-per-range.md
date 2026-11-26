@@ -1,5 +1,7 @@
 # 0371. The exports are held packed: canonical order, each column per range, node ids split at the granule
 
+Status: superseded by 0325 (Exports held where they lie, taken at the phased-facts merge) (audited 2026-11-23).
+
 Numbered 0365 where it was written (0365 is also two other records). Date: 2026-11-17. Status: superseded
 (user, 2026-11-17) by 0325's "Exports held where they lie" (Q156, Q83 at 837f4b40d), taken at the merge of
 final-rerail-shape-phased-facts.

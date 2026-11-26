@@ -298,7 +298,7 @@ describe("audit controls", () => {
   it("records and interrupts audits without claiming another session's work", async () => {
     const { controls, sessionStore: sessionStore } = await fixture();
     const owner = controls.registerOwner("a", "next-event");
-    const queued = controls.requestAudit("a", { scope: "repository" });
+    const queued = (await controls.requestAudit("a", { scope: "repository" }));
     expect(queued.mode).toBe("log");
     expect(controls.claim("b", owner)).toBeUndefined();
     expect(controls.claim("a", owner)).toMatchObject({ id: queued.id, status: "running" });
@@ -329,7 +329,7 @@ describe("audit controls", () => {
     await writeFile(join(root, "untracked.ts"), "export const added = true;\n");
     const owner = controls.registerOwner("a", "next-event");
 
-    const queued = controls.requestAudit("a", { scope: "git-diff" });
+    const queued = (await controls.requestAudit("a", { scope: "git-diff" }));
 
     expect(queued).toMatchObject({
       scope: "touched-files",
@@ -355,7 +355,7 @@ describe("audit controls", () => {
     execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-m", "baseline"], { cwd: root });
     execFileSync("git", ["mv", "before.ts", "after.ts"], { cwd: root });
 
-    expect(controls.requestAudit("a", { scope: "git-diff" }).paths).toEqual(["after.ts"]);
+    expect((await controls.requestAudit("a", { scope: "git-diff" })).paths).toEqual(["after.ts"]);
     controls.close(); sessionStore.close();
   });
 
@@ -391,7 +391,7 @@ describe("audit controls", () => {
     }
     controls.registerOwner("a", "next-event");
 
-    expect(controls.requestAudit("a", { scope: "git-diff" }).paths)
+    expect((await controls.requestAudit("a", { scope: "git-diff" })).paths)
       .toEqual(["nested", "recorded/kept.ts", "vendor/sub/added.ts", "vendor/sub/lib.ts"]);
     controls.close(); sessionStore.close();
   });
@@ -399,7 +399,7 @@ describe("audit controls", () => {
   it("isolates replacement owners and interrupts work stranded by a prior owner", async () => {
     const { controls, sessionStore: sessionStore } = await fixture();
     const first = controls.registerOwner("a", "next-event");
-    const queued = controls.requestAudit("a", { scope: "repository" });
+    const queued = (await controls.requestAudit("a", { scope: "repository" }));
     controls.releaseOwner("a", first);
     const replacement = controls.registerOwner("a", "background");
     expect(controls.claim("a", first)).toBeUndefined();

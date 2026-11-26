@@ -1,6 +1,6 @@
 # 0428: The lone low surrogate is checked in tier 2, from the tokens before it
 
-Status: decided (the user, 2026-11-18: "please do this", on 0423's next step: move the
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-18: "please do this", on 0423's next step: move the
 surrogate check into tier 2, as 0399 moved the hex digits). Follows 0398, 0399 and 0423.
 
 ## Intro

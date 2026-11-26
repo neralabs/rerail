@@ -4,6 +4,7 @@
 //! the SQL's, with two documented exceptions in `link_result`: no `link_reach` demand cut (a
 //! link is evaluated where a caller needs it, at the caller's hops) and hop sets instead of
 //! `[lo, hi]` tuples (equal while no range has lo < 0 ≤ hi; counted in `Anomalies`).
+use rerail_blocks::vector::Vector;
 use super::engine::*;
 use super::intern::Sym;
 use super::path::{last, parent, CLASS};
@@ -87,9 +88,9 @@ fn reference_class(cx: &mut Ctx, short: &str) -> Option<Sym> {
 }
 
 /// `method_def` rows of key `k`: (path, idx) of the non-class by_name entries.
-fn method_defs(cx: &mut Ctx, k: &str) -> Vec<u32> {
+fn method_defs(cx: &mut Ctx, k: &str) -> Vector<u32> {
     let rows = cx.rows(T_BYNAME, k);
-    let mut out = Vec::new();
+    let mut out = rerail_blocks::vector::Vector::new();
     for r in rows.iter().filter(|r| !cls_flag(r)) {
         out.push(cx.defs.id(r.0[0], r.0[3], r.0[1]));
     }
@@ -629,7 +630,7 @@ fn supers_refusal(cx: &mut Ctx, c: Sym) -> V {
     if rows.is_empty() {
         return V::Bool(false);
     }
-    let mut paths: Vec<u32> = rows.iter().map(|r| r.0[0]).collect();
+    let mut paths: Vector<u32> = rows.iter().map(|r| r.0[0]).collect();
     paths.sort_unstable();
     paths.dedup();
     if paths.len() > 1 {
@@ -882,7 +883,7 @@ fn link(cx: &mut Ctx, n: Sym, h: u32) -> V {
     let body = cx.get(q(K_BODY, n, 0));
     let V::Body(body) = &*body else { unreachable!() };
     let hi32 = h as i32;
-    let mut out: Vec<u32> = body.terms.iter().filter(|t| t.1 <= hi32 && hi32 <= t.2).map(|t| t.0).collect();
+    let mut out: Vector<u32> = body.terms.iter().filter(|t| t.1 <= hi32 && hi32 <= t.2).map(|t| t.0).collect();
     for &(kid, delta, chk, lo, hi) in &body.kids {
         if !(lo <= hi32 && hi32 <= hi) {
             continue;

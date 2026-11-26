@@ -1,7 +1,8 @@
 # 0202: The forms work ran without are recorded per machine, and ranked for compiling
 
-Status: draft (2026-11-14); the record is built (`rerail_accel::forms`, table `kernel_forms`). The compilers it
-ranks, of the four kinds below, are open (O162–O165). Drafted as 0191; renumbered past another worktree's 0191.
+Status: partly built (audited 2026-11-23). Left: O163: IR forms of clauses lower refuses and of the logic natives.
+Draft (2026-11-14); the record is built (`rerail_accel::forms`, table `kernel_forms`). The compilers it ranks, of the
+four kinds below, are open (O162–O165). Drafted as 0191; renumbered past another worktree's 0191.
 
 ## Intro
 

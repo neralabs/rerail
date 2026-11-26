@@ -50,7 +50,7 @@ want(b, "braces") :- option("option2", "consistent"), link(t, b), chain_braces(t
 want(b, "none")   :- option("option2", "consistent"), link(t, b), !chain_braces(t).
 
 // The findings sit on the body, as ESLint's do.
-.violation MISSING_BRACES(at: node, after: symbol) code "curly" "Expected { after {after}."
+.violation MISSING_BRACES(at: node, after: symbol) code "curly" "Expected {{ after {after}."
     fix add_braces "Wrap the body in braces"
     suppress eslint "curly"
     suppress oxlint "curly"
@@ -58,7 +58,7 @@ want(b, "none")   :- option("option2", "consistent"), link(t, b), !chain_braces(
 MISSING_BRACES(b, p) :- checked(b, p), want(b, "braces"), !braced(b).
 add_braces(b, _) => replace(b, `{$b}`).
 
-.violation EXTRA_BRACES(at: node, after: symbol) code "curly" "Unnecessary { after {after}."
+.violation EXTRA_BRACES(at: node, after: symbol) code "curly" "Unnecessary {{ after {after}."
     fix drop_braces "Remove the braces"
     suppress eslint "curly"
     suppress oxlint "curly"

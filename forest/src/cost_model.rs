@@ -289,6 +289,12 @@ impl std::fmt::Debug for CostModel {
 impl CostModel {
     /// Trains on the successful samples (cold ones too: coldness is a feature).
     pub fn train(samples: &[CostSample], config: &CostConfig) -> Result<CostModel, String> {
+        Self::train_unless(samples, config, &|| false)?.ok_or_else(|| "stopped".into())
+    }
+
+    /// `train`, `None` once `stop` says so between its forests (its wall's, then its CPU's): a fit an upkeep step runs
+    /// stops there for a run, or for a process waiting to exit.
+    pub fn train_unless(samples: &[CostSample], config: &CostConfig, stop: &dyn Fn() -> bool) -> Result<Option<CostModel>, String> {
         let used: Vec<&CostSample> = samples.iter().filter(|s| s.ok && s.wall.is_finite() && s.cpu.is_finite() && s.units.is_finite()).collect();
         if used.is_empty() {
             return Err("no successful samples to train on".into());
@@ -299,14 +305,20 @@ impl CostModel {
         let ln = |v: f64| v.max(MIN_SECONDS).ln() as f32;
         let wall_targets: Vec<f32> = used.iter().map(|s| ln(s.wall)).collect();
         let cpu_targets: Vec<f32> = used.iter().map(|s| ln(s.cpu)).collect();
+        if stop() {
+            return Ok(None);
+        }
         let (wall, wall_scale) = train_regression_flat(fs.clone(), &wall_targets, None, None, &config.forest)?;
+        if stop() {
+            return Ok(None);
+        }
         let (cpu, cpu_scale) = train_regression_flat(fs.clone(), &cpu_targets, None, None, &config.forest)?;
         let mut known: HashMap<(String, String), u32> = HashMap::new();
         for s in used.iter().filter(|s| !s.cold) {
             *known.entry((s.lane.clone(), s.forms.clone())).or_default() += 1;
         }
         let rules = BucketRules::new(&fs)?;
-        Ok(CostModel {
+        Ok(Some(CostModel {
             index: Index::new(&known, config.min_samples, &rules),
             rules,
             wall_scale,
@@ -318,7 +330,7 @@ impl CostModel {
             host_batch: config.host_batch,
             trained_on: used.len(),
             device: OnceLock::new(),
-        })
+        }))
     }
 
     /// A job's lane and names as the model knows them (`None`: it does not price them), found once by the caller and

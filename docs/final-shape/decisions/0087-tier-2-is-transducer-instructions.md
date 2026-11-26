@@ -1,7 +1,7 @@
 # 0087: Tier 2 is the transducer's own instructions
 
-Status: accepted (user, 2026-11-07: "use the transducer pipeline for lowering, not a new code
-generator. You may add instructions if necessary").
+Status: built (audited 2026-11-23). Accepted (user, 2026-11-07: "use the transducer pipeline for lowering, not a new
+code generator. You may add instructions if necessary").
 
 ## Intro
 

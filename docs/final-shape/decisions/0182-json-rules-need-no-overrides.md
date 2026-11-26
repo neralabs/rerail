@@ -1,6 +1,7 @@
 # 0182: Main's JSON rules need no hand-written overrides, and the Rust translator is the only one
 
-Status: decided (2026-11-13, in the work to run main's rules directly: "do all these / retire the translator").
+Status: built (audited 2026-11-23). Decided (2026-11-13, in the work to run main's rules directly: "do all these /
+retire the translator").
 
 ## Intro
 

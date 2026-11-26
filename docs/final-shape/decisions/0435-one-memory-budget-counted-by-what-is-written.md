@@ -1,5 +1,7 @@
 # 0435. One memory budget, counted by what is written; chunks grow from small
 
+Status: built (audited 2026-11-23).
+
 Date: 2026-11-18. Status: decided (user, 2026-11-18, after the t49 spike); built in steps below.
 
 ## Intro

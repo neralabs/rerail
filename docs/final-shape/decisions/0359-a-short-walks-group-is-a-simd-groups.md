@@ -1,6 +1,6 @@
 # 0359. A short walk's group of 64 nodes is a SIMD group's; the device's parent stays a climb
 
-Status: accepted (2026-11-17)
+Status: built (audited 2026-11-23). Accepted (2026-11-17)
 
 ## Intro
 

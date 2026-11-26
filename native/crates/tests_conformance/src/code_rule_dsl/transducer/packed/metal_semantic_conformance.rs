@@ -1,5 +1,6 @@
 //! Metal's semantic fixtures against the CPU interpreter: the packed JIT over the tape (decision 0324 retired the
 //! grid machine they were written for; its kernel-specific checks went with it).
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::tape::{Grammar, TapeImage};
 use ast_grep_core::tree_sitter::StrDoc;
@@ -17,7 +18,7 @@ fn tape(source: &str) -> TapeDoc {
 pub(super) fn metal_packed(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: Option<&[u32]>,
 ) -> Result<PackedExecution, Error> {
     device::matcher().ok_or(Error::UnsupportedBackend)?.execute_packed(device::Engine::Jit, programs, files, anchors, result_limits, crate::code_rule_dsl::transducer::packed::Budget::current())
@@ -101,7 +102,7 @@ fn pinned_corpus_optional_body_and_injection_differential() {
         serde_json::json!({
             "patterns": programs.len(), "files": files.len(), "error": format!("{:?}", result.as_ref().err()),
             "launches": trace.len(), "last": trace.last(),
-            "cpuMatches": expected.iter().flatten().map(Vec::len).sum::<usize>(),
+            "cpuMatches": expected.iter().flatten().map(|v| v.len()).sum::<usize>(),
         })
     );
     let actual = result.expect(
@@ -205,7 +206,7 @@ impl FixtureDocument for crate::code_rule_dsl::tape::TapeSource {
 fn assert_fixture<F: FixtureDocument>(
     programs: &[Program],
     files: &[F],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
 ) {
     let files = files
         .iter()
@@ -550,7 +551,7 @@ pub mod retained_grid_runtime {
                     .map(|_| (0..file.transducer_len() as u32).collect())
                     .collect()
             })
-            .collect::<Vec<Vec<Vec<u32>>>>();
+            .collect::<Vec<Vec<Vector<u32>>>>();
         assert_fixture(&programs, &files, &anchors);
     }
     #[test]
@@ -814,7 +815,7 @@ pub mod retained_grid_runtime {
         assert!(
             expected
                 .iter()
-                .all(|file| file[16..].iter().all(Vec::is_empty))
+                .all(|file| file[16..].iter().all(|v| v.is_empty()))
         );
         assert_fixture(&programs, &files, &anchors);
     }
@@ -1181,7 +1182,7 @@ pub mod retained_grid_runtime {
         assert_eq!(
             expected
                 .iter()
-                .map(|file| file.iter().map(Vec::len).collect::<Vec<_>>())
+                .map(|file| file.iter().map(|v| v.len()).collect::<Vec<_>>())
                 .collect::<Vec<_>>(),
             [
                 vec![1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0],
@@ -1435,7 +1436,7 @@ pub mod retained_grid_runtime {
                     .map(|_| (0..file.transducer_len() as u32).collect())
                     .collect()
             })
-            .collect::<Vec<Vec<Vec<u32>>>>();
+            .collect::<Vec<Vec<Vector<u32>>>>();
         assert_fixture(&programs, &files, &anchors);
     }
     #[test]
@@ -1689,7 +1690,7 @@ pub mod retained_grid_runtime {
                         .map(|_| (0..file.transducer_len() as u32).collect())
                         .collect()
                 })
-                .collect::<Vec<Vec<Vec<u32>>>>();
+                .collect::<Vec<Vec<Vector<u32>>>>();
             assert_fixture(&programs, &files, &anchors);
         }
     }
@@ -1754,7 +1755,7 @@ pub mod retained_grid_runtime {
                     .map(|_| (0..file.transducer_len() as u32).collect())
                     .collect()
             })
-            .collect::<Vec<Vec<Vec<u32>>>>();
+            .collect::<Vec<Vec<Vector<u32>>>>();
         assert_fixture(&programs, &files, &anchors);
     }
     #[test]
@@ -1807,10 +1808,10 @@ pub mod retained_grid_runtime {
             let anchors = files
                 .iter()
                 .map(|_| programs.iter().map(|_| vec![0]).collect())
-                .collect::<Vec<Vec<Vec<u32>>>>();
+                .collect::<Vec<Vec<Vector<u32>>>>();
             let expected = execute_batch(&programs, &files, Some(&anchors)).unwrap();
             assert_eq!(
-                expected[0].iter().map(Vec::len).collect::<Vec<_>>(),
+                expected[0].iter().map(|v| v.len()).collect::<Vec<_>>(),
                 [0, 2, 0, 2]
             );
             assert_fixture(&programs, &files, &anchors);
@@ -1911,7 +1912,7 @@ pub mod retained_grid_runtime {
                     })
                     .collect()
             })
-            .collect::<Vec<Vec<Vec<u32>>>>();
+            .collect::<Vec<Vec<Vector<u32>>>>();
         let expected = execute_batch(&programs, &files, Some(&anchors)).unwrap();
         for (index, file) in expected.iter().enumerate().take(cases.len()) {
             assert!(!file[index].is_empty(), "case {index}");
@@ -1956,7 +1957,7 @@ pub mod retained_grid_runtime {
                     .map(|_| (0..file.transducer_len() as u32).collect())
                     .collect()
             })
-            .collect::<Vec<Vec<Vec<u32>>>>();
+            .collect::<Vec<Vec<Vector<u32>>>>();
         assert_fixture(&programs, &files, &anchors);
     }
     #[test]
@@ -2132,7 +2133,7 @@ pub mod retained_grid_runtime {
                     .map(|_| (0..file.transducer_len() as u32).collect())
                     .collect()
             })
-            .collect::<Vec<Vec<Vec<u32>>>>();
+            .collect::<Vec<Vec<Vector<u32>>>>();
         assert_fixture(&programs, &files, &anchors);
     }
     #[test]
@@ -2163,7 +2164,7 @@ pub mod retained_grid_runtime {
                 let anchors = files
                     .iter()
                     .map(|file| vec![(0..file.transducer_len() as u32).collect()])
-                    .collect::<Vec<Vec<Vec<u32>>>>();
+                    .collect::<Vec<Vec<Vector<u32>>>>();
                 assert_fixture(&programs, &files, &anchors);
             }
         }
@@ -2277,7 +2278,7 @@ pub mod retained_grid_runtime {
                     .map(|_| (0..file.transducer_len() as u32).collect())
                     .collect()
             })
-            .collect::<Vec<Vec<Vec<u32>>>>();
+            .collect::<Vec<Vec<Vector<u32>>>>();
         assert_fixture(&programs, &files, &anchors);
     }
     #[test]
@@ -2383,7 +2384,7 @@ pub mod retained_grid_runtime {
         let anchors = files
             .iter()
             .map(|file| vec![(0..file.transducer_len() as u32).collect()])
-            .collect::<Vec<Vec<Vec<u32>>>>();
+            .collect::<Vec<Vec<Vector<u32>>>>();
         assert_fixture(&programs, &files, &anchors);
     }
     #[test]
@@ -2566,7 +2567,7 @@ pub mod retained_grid_runtime {
         }
     }
     /// The fixture, `RERAIL_PACKED_CONTEXT_REPRO_REPEAT` times (once by default), each within the launch limit.
-    fn assert_saved_context_fixture_repeats(programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>]) {
+    fn assert_saved_context_fixture_repeats(programs: &[Program], files: &[TapeDoc], anchors: &[Vec<rerail_blocks::vector::Vector<u32>>]) {
         let repetitions = std::env::var("RERAIL_PACKED_CONTEXT_REPRO_REPEAT")
             .map(|value| value.parse::<usize>().unwrap())
             .unwrap_or(1);
@@ -2732,7 +2733,7 @@ pub mod retained_grid_runtime {
         let anchors = files
             .iter()
             .map(|file| vec![(0..file.transducer_len() as u32).collect()])
-            .collect::<Vec<Vec<Vec<u32>>>>();
+            .collect::<Vec<Vec<Vector<u32>>>>();
         assert_fixture(&programs, &files, &anchors);
     }
     #[test]
@@ -2771,7 +2772,7 @@ pub mod retained_grid_runtime {
                     .map(|_| (0..file.transducer_len() as u32).collect())
                     .collect()
             })
-            .collect::<Vec<Vec<Vec<u32>>>>();
+            .collect::<Vec<Vec<Vector<u32>>>>();
         {
             assert_fixture(&programs, &files, &anchors);
         }
@@ -2917,7 +2918,7 @@ pub mod retained_grid_runtime {
                     .map(|_| (0..file.transducer_len() as u32).collect())
                     .collect()
             })
-            .collect::<Vec<Vec<Vec<u32>>>>();
+            .collect::<Vec<Vec<Vector<u32>>>>();
         let expected = execute_batch(&programs, &files, Some(&anchors)).unwrap();
         assert_eq!(
             crate::code_rule_dsl::transducer::packed::execute_with_backend(
@@ -3033,7 +3034,7 @@ pub mod retained_grid_runtime {
 
 pub mod retained_grid_frontier_runtime {
     use super::*;
-    fn program(words: Vec<u32>) -> Program {
+    fn program(words: Vector<u32>) -> Program {
         Program::new(
             words,
             vec![b"root".to_vec(), b"child".to_vec()],
@@ -3052,7 +3053,7 @@ pub mod retained_grid_frontier_runtime {
                     .map(|_| (0..file.transducer_len() as u32).collect())
                     .collect()
             })
-            .collect::<Vec<Vec<Vec<u32>>>>();
+            .collect::<Vec<Vec<Vector<u32>>>>();
         assert_fixture(programs, files, &anchors);
     }
     #[test]
@@ -4157,7 +4158,7 @@ fn an_evaluation_over_its_budget_keeps_its_finished_roots() {
         Vec::new(),
     )
     .unwrap();
-    let roots: Vec<u32> = (0..files[0].transducer_len() as u32).collect();
+    let roots: Vector<u32> = (0..files[0].transducer_len() as u32).collect();
     let (whole, steps) = program.execute_roots_budgeted(&files[0], roots.iter().copied(), usize::MAX).unwrap();
     assert!(!whole.is_empty() && steps > 0);
     let mut partial = Partial::default();

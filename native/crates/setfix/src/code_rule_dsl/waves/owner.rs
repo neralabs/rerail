@@ -12,7 +12,7 @@ pub mod sql;
 
 pub use database::Database;
 use crate::code_rule_dsl::facts::vtab::Source;
-use crate::content_store::{ContentStore, StoreResult};
+use crate::content_store::{FactStore, StoreResult};
 use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
 use std::{
     cell::{OnceCell, RefCell},
@@ -29,7 +29,7 @@ const RETAINED_BYTES: usize = 4 * 1024 * 1024;
 #[derive(Default, Clone)]
 pub struct Backing(Arc<Mutex<Option<Database>>>);
 struct Inner<'s> {
-    store: &'s ContentStore,
+    store: &'s dyn FactStore,
     db: OnceCell<Database>,
 }
 #[derive(Clone)]
@@ -40,7 +40,7 @@ pub struct Scope<'s> {
     backing: ArcMutexGuard<RawMutex, Option<Database>>,
 }
 impl Backing {
-    pub fn enter<'s>(&self, store: &'s ContentStore) -> Scope<'s> {
+    pub fn enter<'s>(&self, store: &'s dyn FactStore) -> Scope<'s> {
         let mut backing = self.0.lock_arc();
         let pool = Pool(Rc::new(Inner { store, db: OnceCell::new() }));
         if let Some(db) = backing.take()
@@ -76,7 +76,7 @@ pub struct Lease<'s> {
     pins: RefCell<Vec<String>>,
 }
 impl<'s> Pool<'s> {
-    pub(in crate::code_rule_dsl) fn store(&self) -> &'s ContentStore {
+    pub(in crate::code_rule_dsl) fn store(&self) -> &'s dyn FactStore {
         self.0.store
     }
     pub fn invalidate(&self) {

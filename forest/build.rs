@@ -3,11 +3,12 @@
 //! `rerail-ukl` does it in-process (decision 0440 §4), with the same predefines and search order, so the build
 //! needs no C compiler and no Metal toolchain (the gpu lane compiles the source on the device at run time).
 
-use rerail_ukl::{Backend, Preprocess};
+use rerail_ukl::Target;
 use std::path::PathBuf;
 
-/// The Metal language version the shims see. They test only that it is defined (`ukl_shim.h` picks the Metal shim).
-const METAL_VERSION: u32 = 310;
+/// The target the text is prepared for (decision 0645): Metal's baseline tier, which every Apple GPU runs. The
+/// forest's kernels test no tier's feature, so a later tier's text would be the same.
+const TARGET: &str = "apple7";
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -18,7 +19,9 @@ fn main() {
     let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src");
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR")).join("randomforest_kernels.metal");
     let main = root.join("mldb/plugins/jml/randomforest_kernels_ukl.h");
-    let text = Preprocess::new(Backend::Metal { version: METAL_VERSION })
+    let text = Target::named(TARGET)
+        .expect("a Metal tier")
+        .preprocess()
         .dir(root.to_string_lossy())
         .run(&main.to_string_lossy())
         .unwrap_or_else(|e| panic!("preprocessing the forest's kernels: {e}"));

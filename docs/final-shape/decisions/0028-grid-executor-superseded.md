@@ -1,6 +1,6 @@
 # 0028: G's grid executor is superseded; four of its ideas are kept
 
-Status: accepted (2026-11-02, user decision); closes O33
+Status: built (audited 2026-11-23). Accepted (2026-11-02, user decision); closes O33
 
 ## Context
 

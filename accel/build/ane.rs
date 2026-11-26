@@ -56,7 +56,7 @@ pub fn run() {
 
 fn build_one(src: &Path, work: &Path, i: usize) -> Result<PathBuf, String> {
     let bytes = std::fs::read(src).map_err(|e| e.to_string())?;
-    let (rows, words, data) = package::read_constant(&bytes)?;
+    let (rows, words, data) = package::read_constant::<Vec<u64>>(&bytes)?;
     let t = package::plan(rows, words, &data, package::TILE_ROWS)?;
     let pkg = work.join(format!("m{i}.mlpackage"));
     package::write_package(&pkg, &t, words, &data).map_err(|e| e.to_string())?;

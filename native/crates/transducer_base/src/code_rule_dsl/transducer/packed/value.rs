@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use super::{
     CapturePredicate, Error, LuaItem, LuaMatcher, LuaPattern, LuaRepetition, LuaSetMember,
     TextPredicate,
@@ -29,26 +30,26 @@ pub enum CaptureProgram {
     },
     AnyOf {
         capture: u16,
-        strings: Vec<u16>,
+        strings: Vector<u16>,
         negated: bool,
         any: bool,
     },
     Kind {
         capture: u16,
-        kinds: Vec<u16>,
+        kinds: Vector<u16>,
         negated: bool,
         any: bool,
         empty_all: bool,
     },
     Contains {
         capture: u16,
-        strings: Vec<u16>,
+        strings: Vector<u16>,
         negated: bool,
         any: bool,
     },
     Relation {
         capture: u16,
-        kinds: Vec<u16>,
+        kinds: Vector<u16>,
         ancestor: bool,
         negated: bool,
     },
@@ -102,7 +103,7 @@ impl CaptureProgram {
                 any,
             } => Self::Kind {
                 capture: *capture,
-                kinds: vec![*kind],
+                kinds: rerail_blocks::vector![*kind],
                 negated: *negated,
                 any: *any,
                 empty_all: false,
@@ -629,8 +630,8 @@ impl LuaProgram {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ByteDfa {
     start: u32,
-    transitions: Vec<[u32; 256]>,
-    eoi: Vec<u32>,
+    transitions: Vector<[u32; 256]>,
+    eoi: Vector<u32>,
     matches: Vec<bool>,
     dead: Vec<bool>,
     quit: Vec<bool>,
@@ -649,8 +650,8 @@ impl ByteDfa {
         let mut queue = VecDeque::new();
         indexes.insert(start, 0);
         queue.push_back(start);
-        let mut transitions = Vec::new();
-        let mut eoi = Vec::new();
+        let mut transitions = rerail_blocks::vector::Vector::new();
+        let mut eoi = rerail_blocks::vector::Vector::new();
         let mut matches = Vec::new();
         let mut dead = Vec::new();
         let mut quit = Vec::new();
@@ -725,8 +726,8 @@ struct NfaRun<'a> {
     /// The generation each state was last added in: added this step where it is `generation`.
     seen: &'a mut [u32],
     generation: u32,
-    consuming: &'a mut Vec<u32>,
-    pending: &'a mut Vec<u32>,
+    consuming: &'a mut Vector<u32>,
+    pending: &'a mut Vector<u32>,
     work: &'a mut usize,
 }
 
@@ -741,7 +742,7 @@ pub struct ByteNfa {
 pub enum NfaState {
     Bytes(Vec<(u8, u8, u32)>),
     Look { kind: Look, next: u32 },
-    Split(Vec<u32>),
+    Split(Vector<u32>),
     Capture { slot: u32, next: u32 },
     Fail,
     Match,
@@ -810,7 +811,7 @@ impl ByteNfa {
                         .collect(),
                 ),
                 State::BinaryUnion { alt1, alt2 } => {
-                    NfaState::Split(vec![alt1.as_usize() as u32, alt2.as_usize() as u32])
+                    NfaState::Split(rerail_blocks::vector![alt1.as_usize() as u32, alt2.as_usize() as u32])
                 }
                 State::Capture { next, slot, .. } => NfaState::Capture {
                     slot: slot.as_usize() as u32,
@@ -1007,7 +1008,7 @@ impl ByteNfa {
         work: &mut usize,
         look: &LookMatcher,
     ) -> Result<bool, Error> {
-        let (mut current, mut next, mut pending) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut current, mut next, mut pending) = (rerail_blocks::vector::Vector::new(), rerail_blocks::vector::Vector::new(), rerail_blocks::vector::Vector::new());
         let mut seen = vec![0_u32; self.states.len()];
         let generation = 1;
         if self.add_state(

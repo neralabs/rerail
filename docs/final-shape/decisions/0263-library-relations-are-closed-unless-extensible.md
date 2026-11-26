@@ -1,7 +1,7 @@
 # 0263. A library's relations are closed, unless declared `extensible`
 
-Status: decided (2026-11-15). Builds on 0089 (a library is held once; a program that adds to a library relation
-asks of it) and 0246 (a pack is linked from module images).
+Status: built (audited 2026-11-23). Decided (2026-11-15). Builds on 0089 (a library is held once; a program that adds
+to a library relation asks of it) and 0246 (a pack is linked from module images).
 
 ## Intro
 

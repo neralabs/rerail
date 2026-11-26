@@ -6,7 +6,7 @@ fn per(v: f64, n: u64) -> f64 {
     if n == 0 { 0.0 } else { v / n as f64 }
 }
 
-pub const GRID_HEADER: &str = "| solution | B/node | ×v15 stored | ×v15 trained | ×source stored | entropy B/node | placement B/node | dict KB | dup % | enc ins/node | enc ns/node | dec ins/node | dec ns/node | positions ns/node | random read µs | errors |";
+pub const GRID_HEADER: &str = "| solution | B/node | ×image stored | ×image trained | ×source stored | entropy B/node | placement B/node | dict KB | dup % | enc ins/node | enc ns/node | dec ins/node | dec ns/node | positions ns/node | random read µs | errors |";
 
 pub fn grid_row(r: &Row, t: &Lang) -> String {
     let n = t.nodes;
@@ -14,8 +14,8 @@ pub fn grid_row(r: &Row, t: &Lang) -> String {
         "| {} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} | {:.3} | {} | {:.1} | {:.0} | {:.1} | {:.0} | {:.1} | {:.1} | {:.2} | {} |",
         r.solution,
         per((t.stored + t.placement) as f64, n),
-        (t.stored + t.placement) as f64 / t.v15_stored.max(1) as f64,
-        (t.stored + t.placement) as f64 / t.v15_trained.max(1) as f64,
+        (t.stored + t.placement) as f64 / t.image_stored.max(1) as f64,
+        (t.stored + t.placement) as f64 / t.image_trained.max(1) as f64,
         (t.stored + t.placement) as f64 / t.source_stored.max(1) as f64,
         per(t.entropy, n),
         per(t.placement as f64, n),
@@ -41,7 +41,7 @@ pub fn print_grid(rows: &[Row]) {
 
 pub fn print_langs(r: &Row) {
     println!("\n{} by language\n", r.solution);
-    println!("| language | files | nodes | source KB | v15 raw B/node | v15 stored B/node | v15 trained B/node | laid B/node | stored B/node | source stored B/node | blocks |");
+    println!("| language | files | nodes | source KB | image raw B/node | image stored B/node | image trained B/node | laid B/node | stored B/node | source stored B/node | blocks |");
     println!("|---|---|---|---|---|---|---|---|---|---|---|");
     for (name, l) in &r.by_lang {
         let n = l.nodes;
@@ -50,9 +50,9 @@ pub fn print_langs(r: &Row) {
             l.files,
             n,
             l.source_bytes / 1024,
-            per(l.v15_raw as f64, n),
-            per(l.v15_stored as f64, n),
-            per(l.v15_trained as f64, n),
+            per(l.image_raw as f64, n),
+            per(l.image_stored as f64, n),
+            per(l.image_trained as f64, n),
             per(l.laid as f64, n),
             per((l.stored + l.placement) as f64, n),
             per(l.source_stored as f64, n),
@@ -61,15 +61,15 @@ pub fn print_langs(r: &Row) {
     }
 }
 
-/// Stored B/node (blocks and placement) per language, one row per solution, with format 15 stored first.
+/// Stored B/node (blocks and placement) per language, one row per solution, with the captured tape stored first.
 pub fn print_lang_matrix(rows: &[Row]) {
     let Some(first) = rows.first() else { return };
     let langs: Vec<&String> = first.by_lang.keys().collect();
-    println!("\nStored B/node by language (v15 = format 15 as the store keeps it)\n");
+    println!("\nStored B/node by language (image = the captured tape, format 16, as the store keeps it)\n");
     println!("| solution | {} |", langs.iter().map(|l| l.as_str()).collect::<Vec<_>>().join(" | "));
     println!("|---|{}", "---|".repeat(langs.len()));
     let cell = |l: &Lang, v: u64| format!("{:.2}", per(v as f64, l.nodes));
-    println!("| v15 | {} |", langs.iter().map(|k| cell(&first.by_lang[*k], first.by_lang[*k].v15_stored)).collect::<Vec<_>>().join(" | "));
+    println!("| image | {} |", langs.iter().map(|k| cell(&first.by_lang[*k], first.by_lang[*k].image_stored)).collect::<Vec<_>>().join(" | "));
     for r in rows {
         let cells: Vec<String> = langs.iter().map(|k| r.by_lang.get(*k).map_or("-".into(), |l| cell(l, l.stored + l.placement))).collect();
         println!("| {} | {} |", r.solution, cells.join(" | "));

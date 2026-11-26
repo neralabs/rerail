@@ -1,7 +1,6 @@
 # 0015: Short label programs run as micro walks, one thread per (pass, start); workspaces are untouched by the host
 
-Status: accepted
-Date: 2026-10-31
+Status: built (audited 2026-11-23). Accepted Date: 2026-10-31
 
 ## Question
 O28: the wave's labels on Metal were barely faster than on the CPU, and Metal's process peaked at

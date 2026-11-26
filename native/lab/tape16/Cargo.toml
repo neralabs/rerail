@@ -8,6 +8,11 @@ description = "Spikes for tape format 16 (decision 0156): candidate encodings me
 # Its own workspace: the lab builds optimized in the dev profile (below) without changing the engine's profiles.
 [workspace]
 
+# The vendored crates the engine's crates are built with (the repository's Cargo.toml): a job carries its maker's
+# run to the thread that steals it (native/vendor/rayon-core-1.13.0/PATCHES.md).
+[patch.crates-io]
+rayon-core = { path = "../../vendor/rayon-core-1.13.0" }
+
 [dependencies]
 zstd = { version = "=0.14.3", features = ["zdict_builder"] }
 sha2 = "0.10"

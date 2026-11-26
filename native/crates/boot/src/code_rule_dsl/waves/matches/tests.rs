@@ -493,7 +493,7 @@ fn findings_gate(store: &ContentStore, paths: &[String], policies: &[(String, cr
     let names = clauses.iter().map(|c| c.name.clone()).collect::<BTreeSet<_>>();
     let tapes = paths.iter().map(|path| Families::stored(store, WS, path).unwrap().unwrap()).collect::<Vec<_>>();
     let file = |path: &String, tape: &Arc<crate::code_rule_dsl::facts::families::Tape>| {
-        json!({ "language": "python", "path": path, "source": ast_grep_core::Doc::get_source(&tape.doc) })
+        json!({ "language": "python", "path": path, "source": ast_grep_core::Doc::get_source(&tape.doc).as_str() })
     };
     let snapshot = |files: Vec<serde_json::Value>| json!({ "facts": [], "files": files, "format": "rerail.repository-snapshot/v1", "revision": 0 }).to_string();
     let snapshots = if together {

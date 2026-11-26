@@ -1,11 +1,11 @@
 # 0334. Work budgets and result limits never change results
 
-Status: decided (2026-11-17); the replanning is built (packed batches, the label sweep, the wave's root walks, the
-memory restart); `replan` as the default is what remains (Progress). After 0324 (the grid retired). The user, on Q49: "Allow a mode where we let the kernels run over. The goal
-of stopping them is for a horribly misplanned kernel to not spend minutes or hours churning when replanning could
-make it fast (we need planning to be very fast, so we will not be able to always do it right). We need to re-plan
-over-long jobs, not just re-run them elsewhere. We still need to be able to do that. Help me think through the
-correct design".
+Status: built (audited 2026-11-23). Decided (2026-11-17); the replanning is built (packed batches, the label sweep,
+the wave's root walks, the memory restart); `replan` as the default is what remains (Progress). After 0324 (the grid
+retired). The user, on Q49: "Allow a mode where we let the kernels run over. The goal of stopping them is for a
+horribly misplanned kernel to not spend minutes or hours churning when replanning could make it fast (we need planning
+to be very fast, so we will not be able to always do it right). We need to re-plan over-long jobs, not just re-run
+them elsewhere. We still need to be able to do that. Help me think through the correct design".
 
 ## Intro
 

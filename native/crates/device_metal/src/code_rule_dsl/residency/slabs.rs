@@ -77,15 +77,15 @@ fn table_of(head: &[u8], codes: usize) -> Result<Table, Error> {
 /// `tape` bytes long as stored.
 fn planned(head: &[u8], tape: usize, source: usize) -> Result<Plan, Error> {
     let stored = resident::stored(head).map_err(invalid)?;
-    // Every format's header states its source's length at the same place: the tape's reads hold every span to it,
-    // so it must be the source the document holds (decision 0463).
-    const AT: usize = crate::code_rule_dsl::tape::header::SOURCE_LEN;
+    // Format 16's and 16z's headers state the source's length at the same place: the tape's reads hold every span
+    // to it, so it must be the source the document holds (decision 0463).
+    const AT: usize = rerail_tape_format::f16::head::SOURCE_LEN;
     let stated = head.get(AT..AT + 8).map(|b| u64::from_le_bytes(b.try_into().expect("8 bytes")));
     if stated != Some(source as u64) {
         return Err(invalid(format!("a tape whose header states a source of {stated:?} bytes, held with one of {source}")));
     }
     // Format 16's and 16z's headers agree on where the node count is.
-    let nodes = head.get(24..32).ok_or_else(|| invalid("a short format 16 header"))?;
+    let nodes = head.get(rerail_tape_format::f16::head::NODES..rerail_tape_format::f16::head::NODES + 8).ok_or_else(|| invalid("a short format 16 header"))?;
     let nodes = usize::try_from(u64::from_le_bytes(nodes.try_into().expect("8 bytes"))).map_err(invalid)?;
     let codes = resident::lang_of(head).map_err(invalid)?.table().len();
     let table = table_of(head, codes)?;
@@ -119,25 +119,74 @@ pub fn admit(
     resident(digests)
 }
 
-/// The documents of in-memory tapes, resident, in order: hits from the residency, misses copied
-/// from each document's image and source (a batch whose tapes were restored before it ran).
+/// The documents of in-memory tapes, resident, in order: hits from the residency, misses taken where their tapes and
+/// sources lie (decision 0353 step 7, row 13): each in a slab's room (`TapeDoc::in_place`, a document's constructor
+/// houses both, `TapeImage::housed` and `placed::housed`), its view naming them there. Nothing is copied: a document
+/// held apart (no device room, or format 15) is refused, and read where it is, on the CPU.
 pub fn admit_docs(docs: &[crate::code_rule_dsl::tape::TapeDoc]) -> Result<Vec<Arc<Resident>>, Error> {
-    // A digest not known yet serializes the image: a miss's admission copies those bytes.
-    let (digests, mut images): (Vec<_>, Vec<_>) = docs.iter().map(|doc| doc.tape_digest_and_image().map_err(invalid)).collect::<Result<Vec<_>, _>>()?.into_iter().unzip();
+    let digests = docs.iter().map(|doc| doc.tape_digest_and_image().map(|(digest, _)| digest).map_err(invalid)).collect::<Result<Vec<_>, _>>()?;
     let missing = misses(&digests)?;
     if !missing.is_empty() {
-        let mut owned = Vec::with_capacity(missing.len());
+        let mut lying = Vec::with_capacity(missing.len());
         for digest in &missing {
             let at = digests.iter().position(|candidate| candidate == digest).expect("a miss is one of the digests");
-            let (image, source, grammar) = docs[at].resident_parts(images[at].take()).map_err(invalid)?;
-            let plan = planned(&image, image.len(), source.len())?;
-            owned.push((*digest, plan, Arc::clone(grammar), image, source));
+            let doc = &docs[at];
+            let Some((room, stored, source)) = doc.in_place() else {
+                crate::code_rule_dsl::prof::count("residency.apart", 1);
+                return Err(Error::BackendCapacity);
+            };
+            let (Some((slab, _, _)), Some(source_room)) = (crate::code_rule_dsl::tape::placed::slab_room(room), source.home().room().and_then(crate::code_rule_dsl::tape::placed::slab_room)) else {
+                crate::code_rule_dsl::prof::count("residency.apart", 1);
+                return Err(Error::BackendCapacity);
+            };
+            let plan = planned(stored, stored.len(), source.len())?;
+            lying.push((*digest, plan, Arc::clone(doc.grammar()), slab, stored, source_room, source.as_bytes()));
         }
-        // The hits' images, serialized for their digests, are not copied.
-        drop(images);
-        insert_parts(&digests, owned.iter().map(|(digest, plan, grammar, image, source)| (*digest, plan, &**grammar, Parts::Bytes(image, source.as_bytes()))).collect())?;
+        insert_lying(
+            lying
+                .iter()
+                .map(|(digest, plan, grammar, slab, stored, (source_slab, source_at, _), source)| -> Lying<'_> {
+                    let digest = *digest;
+                    let place = move |table: TableAt| place_lying(slab, stored, (source_slab, *source_at, source), table, &digest, plan, grammar);
+                    (digest, Arc::clone(slab), plan.table, Box::new(place))
+                })
+                .collect(),
+        )?;
     }
     resident(&digests)
+}
+
+/// A document taken where its tape and source lie (`admit_docs`): `stored`, the tape as stored in `slab`, and its
+/// source in its slab at its offset. Its view names the tape at its own place (the document's first byte) and the
+/// source by its offset from there, an i64: in another slab it is the slabs' device addresses apart (0471), as a
+/// batch reaches a document in another slab. Its language's table is its slab's (`slab_table`): nothing is derived
+/// beside it.
+fn place_lying(
+    slab: &Arc<Slab>,
+    stored: &[u8],
+    (source_slab, source_at, source): (&Arc<Slab>, usize, &[u8]),
+    table: TableAt,
+    digest: &[u8; 32],
+    plan: &Plan,
+    grammar: &Grammar,
+) -> Result<Placed, Error> {
+    let offset = (stored.as_ptr() as usize).checked_sub(slab.host() as usize).filter(|&at| at + stored.len() <= slab.byte_length()).ok_or_else(|| invalid("a placed tape outside its slab"))?;
+    let source_offset = if source_slab.id == slab.id {
+        source_at as i64 - offset as i64
+    } else {
+        let (Some(from), Some(to)) = (slab.device_buffer().device_address(), source_slab.device_buffer().device_address()) else {
+            return Err(Error::BackendCapacity);
+        };
+        (to as i64).wrapping_sub(from as i64).wrapping_add(source_at as i64).wrapping_sub(offset as i64)
+    };
+    let mut document = describe(slab, offset, stored, source, source_offset, table, plan, grammar)?;
+    document.document.digest = *digest;
+    // Its range: the tape (all its view's parts but the source).
+    document.document.len = stored.len();
+    document.document.source = (source_slab.id != slab.id).then(|| Arc::clone(source_slab));
+    // Its tape and source are their rooms' (the tapes' pool): it takes no resident bytes of its own.
+    document.document.bytes = [0; 3];
+    Ok(document)
 }
 
 /// Places the misses' parts, keeping the slabs of every document `digests` reads.
@@ -145,26 +194,24 @@ fn insert_parts(digests: &[[u8; 32]], parts: Vec<([u8; 32], &Plan, &Grammar, Par
     let placements = parts
         .into_iter()
         .map(|(digest, plan, grammar, parts)| -> Placement<'_> {
-            (digest, plan.bytes(), Some(plan.table), Box::new(move |slab: &Arc<Slab>, offset: usize, table: Option<TableAt>| place(slab, offset, table, &digest, parts, plan, grammar)))
+            (digest, plan.bytes(), plan.table, Box::new(move |slab: &Arc<Slab>, offset: usize, table: TableAt| place(slab, offset, table, &digest, parts, plan, grammar)))
         })
         .collect();
     insert(digests, placements)
 }
 
-/// Writes a document's parts into `slab` at `offset` (`plan.bytes()` of room), checked.
-/// Where a document's bytes come from: a store's frames, decompressed into the slab, or an image
-/// and source already in memory, copied.
+/// Where a document's bytes come from: a store's frames, decompressed into the slab (a document in memory is taken
+/// where it lies, `place_lying`).
 #[derive(Clone, Copy)]
 enum Parts<'a> {
     Frames(&'a crate::content_store::ResidentFrames),
-    Bytes(&'a [u8], &'a [u8]),
 }
 
 /// A format 16 document's language table is the slab's (`table`): written here where the slab does not hold it yet.
 fn place(
     slab: &Arc<Slab>,
     offset: usize,
-    table: Option<TableAt>,
+    table: TableAt,
     digest: &[u8; 32],
     parts: Parts<'_>,
     plan: &Plan,
@@ -192,23 +239,29 @@ fn place(
                 return Err(invalid("a resident tape's digest"));
             }
         }
-        // A document in memory: its digest was made from these same bytes (`TapeDoc::tape_digest`), so
-        // there is nothing read to check them against.
-        // copy (0353 step 7): an in-memory tape and its source copied into a slab (row 13). It goes: a parse writes
-        // its tape into its room (step 4a), and the residency takes that room as it lies.
-        Parts::Bytes(image, text) => {
-            const INTO_SLAB: rerail_prof::copies::Site = rerail_prof::copies::Site::new(13, "7", "an in-memory tape and its source copied into a slab (residency::place)");
-            INTO_SLAB.time(|| {
-                // copy (0353 step 7): the tape (row 13).
-                tape.copy_from_slice(image);
-                // copy (0353 step 7): its source (row 13).
-                source.copy_from_slice(text);
-                ((), image.len() + text.len())
-            });
-        }
     }
-    let tape = &*tape;
-    let source = &*source;
+    let source_offset = (source_at - tape_at) as i64;
+    let mut placed = describe(slab, offset, tape, source, source_offset, table, plan, grammar)?;
+    placed.document.digest = *digest;
+    placed.document.bytes = [aligned(plan.tape), aligned(plan.source), 0];
+    placed.document.len = plan.bytes();
+    Ok(placed)
+}
+
+/// A document's view and record, its tape at `offset` of `slab` (its first byte) and its source `source_offset` from
+/// there.
+#[allow(clippy::too_many_arguments)]
+fn describe(
+    slab: &Arc<Slab>,
+    offset: usize,
+    tape: &[u8],
+    source: &[u8],
+    source_offset: i64,
+    table: TableAt,
+    plan: &Plan,
+    grammar: &Grammar,
+) -> Result<Placed, Error> {
+    let tape_at = offset;
     if std::str::from_utf8(source).is_err() {
         return Err(invalid("a resident source that is not UTF-8"));
     }
@@ -268,27 +321,27 @@ fn place(
             view.codes = slab_table(table, lang, grammar, plan, offset, &mut new_table)?;
         }
     }
-    view.source = at(source_at)?;
+    view.set_source_offset(source_offset);
     view.source_len = count(plan.source)?;
     view.code_count = count(plan.codes)?;
     crate::code_rule_dsl::prof::count("residency.decompressed_kb", (plan.tape + plan.source) >> 10);
     let document = Resident {
-        digest: *digest,
+        digest: [0; 32],
         slab: Arc::clone(slab),
+        source: None,
         view,
         at: offset,
-        len: plan.bytes(),
-        bytes: [aligned(plan.tape), aligned(plan.source), 0],
+        len: plan.tape,
+        bytes: [0; 3],
         tape_length: plan.tape,
-        table: Some(plan.table),
+        table: plan.table,
     };
     Ok(Placed { document, table: new_table })
 }
 
 /// A format 16 or 16z document's language table: the slab's (`table`), made into `new_table` where the slab does
 /// not hold it yet (decision 0336 §7); its offset from the document's start.
-fn slab_table(table: Option<TableAt>, lang: &crate::code_rule_dsl::tape::f16::Lang, grammar: &Grammar, plan: &Plan, offset: usize, new_table: &mut Option<Vec<u8>>) -> Result<u32, Error> {
-    let table = table.ok_or_else(|| invalid("a format 16 document without its language's table"))?;
+fn slab_table(table: TableAt, lang: &crate::code_rule_dsl::tape::f16::Lang, grammar: &Grammar, plan: &Plan, offset: usize, new_table: &mut Option<Vec<u8>>) -> Result<u32, Error> {
     if !table.held {
         let codes = resident::device_codes_of(lang.table(), grammar).map_err(invalid)?;
         if codes.len() != plan.codes {

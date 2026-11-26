@@ -208,7 +208,7 @@ fn tree_sitter_error(source: &str) -> bool {
 /// (the tape's `syntax_error(d)`) against it, for the choice between the two. Another exception `ast.parse` raises
 /// is its class at line 1 on both sides (the oracle's `[None, class]`; the engine's `Raised`).
 #[test]
-#[ignore]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn syntax_error_parity() {
     for python in pythons() {
         println!("CPython {} ({python})", version(&python));
@@ -280,7 +280,7 @@ fn annotation_names(tree: &crate::code_rule_dsl::literal::SubTree) -> Vec<String
 /// (none expected), and the strings at an annotation that the engine does not read as type definitions (a `Literal`
 /// argument, `Annotated` metadata).
 #[test]
-#[ignore]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn string_annotation_parity() {
     use crate::code_rule_dsl::facts::vtab::syntax::annotation::string_annotations;
     for python in pythons() {
@@ -296,7 +296,7 @@ fn string_annotation_parity() {
                     .zip(&texts)
                     .map(|((_, shown), s)| {
                         let s = s.as_ref()?;
-                        let file = crate::code_rule_dsl::model::FileInput::new(shown.clone(), "python".to_owned(), std::sync::Arc::new(s.clone()), None, None, "core").ok()?;
+                        let file = crate::code_rule_dsl::model::FileInput::new(shown.clone(), "python".to_owned(), std::sync::Arc::new(s.clone().into()), None, None, "core").ok()?;
                         let (_, tape) = crate::code_rule_dsl::facts::core::build_with_tape(&file, true).ok()?;
                         let tape = tape?;
                         let found = string_annotations(&tape).ok()?;
@@ -350,7 +350,7 @@ fn string_annotation_parity() {
 /// oracle's `names` mode, whose span is the identifier as written), its id against `@nfkc` of its source text. The
 /// non-ASCII ones, where normalization can do anything, are counted apart.
 #[test]
-#[ignore]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn nfkc_identifier_parity() {
     for python in pythons() {
         println!("CPython {} ({python})", version(&python));
@@ -384,7 +384,7 @@ fn nfkc_identifier_parity() {
 /// separators=(",", ":"))`, or none where either raises, against the engine's, by span and class. The expressions with a
 /// value are counted apart.
 #[test]
-#[ignore]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn literal_json_parity() {
     use super::literal::{Class, literals};
     for python in pythons() {
@@ -442,7 +442,7 @@ fn literal_json_parity() {
 /// counted apart, and apart again those whose CPython text holds a lone surrogate, which no UTF-8 text is: the engine
 /// gives none), the sha256 of `ast.dump`, and a def's hashes as W's worker made them.
 #[test]
-#[ignore]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn printed_parity() {
     use super::printed::{Printed, Want, printed};
     let want_all = Want { unparse: true, dump: false, dump_sha256: true, body_sha256: true, signature_sha256: true };

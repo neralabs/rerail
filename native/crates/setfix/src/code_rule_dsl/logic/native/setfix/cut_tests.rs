@@ -1,10 +1,11 @@
 //! Decision 0206: a probe's work budget, its cut at a delta row, and the wave going on from there.
+use rerail_blocks::vector::Vector;
 use super::spec::hex;
 use super::*;
 
 fn connection() -> Connection {
     let path = crate::code_rule_dsl::fixtures::temp();
-    drop(crate::code_rule_dsl::fixtures::open(&path));
+    drop(crate::content_store::ContentStore::open(&path).unwrap());
     let db = Connection::open(path).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
     db
@@ -62,18 +63,18 @@ fn a_probe_cut_at_its_budget_hands_its_rows_left_to_another_order() {
     assert!(take_cut(&db, "cut").unwrap().is_some_and(|c| c.left > 0));
     // Decision 0207: trials over a sample of the rows the cut left. Both orders make the same rows from it, at their
     // own work; a budget under that work cuts the trial. Nothing is added, and the probe's counts are as they were.
-    let other_spec = JoinSpec::parse(&edge_first).unwrap();
+    let other_spec = JoinSpec::parse(&edge_first).unwrap().encode();
     // Read (and so reset) the counts first: trials leave them at nothing.
     step_counts(&db, "cut").unwrap();
     let own = trial(&db, "cut", 0, None, None, 64, u64::MAX / 2).unwrap().expect("a trial of its own body");
-    let swapped = trial(&db, "cut", 0, Some(&other_spec), None, 64, u64::MAX / 2).unwrap().expect("the delta is placed in the other order");
+    let swapped = trial(&db, "cut", 0, Some(other_spec.get()), None, 64, u64::MAX / 2).unwrap().expect("the delta is placed in the other order");
     assert!(!own.cut && !swapped.cut && own.rows == swapped.rows && own.rows <= 64 && own.rows > 0, "{own:?} {swapped:?}");
     assert_eq!(own.made, swapped.made, "the same rows from the same sample: {own:?} {swapped:?}");
     assert_ne!(own.work, swapped.work);
-    let short = trial(&db, "cut", 0, Some(&other_spec), None, 64, swapped.work / 2).unwrap().unwrap();
+    let short = trial(&db, "cut", 0, Some(other_spec.get()), None, 64, swapped.work / 2).unwrap().unwrap();
     assert!(short.cut && short.work <= swapped.work / 2 + 1, "{short:?}");
     assert!(step_counts(&db, "cut").unwrap()[0].iter().all(|&(a, b)| a == 0 && b == 0), "the probe's counts are as they were");
-    let other = Reprobe::Join(std::sync::Arc::new(JoinSpec::parse(&edge_first).unwrap()));
+    let other = Reprobe::Join(JoinSpec::parse(&edge_first).unwrap().encode());
     reprobe_spec(&db, "cut", 0, &other).unwrap();
     assert_eq!(run(&db, "cut", 0).unwrap().split_whitespace().last(), Some("1"));
     close(&db, "cut").unwrap();
@@ -114,14 +115,14 @@ fn a_whole_plan_is_cut_and_a_finished_trial_keeps_its_rows() {
     assert_eq!(run(&db, "wcut", 1).unwrap().split_whitespace().last(), Some("5"));
     let cut = take_cut(&db, "wcut").unwrap().expect("a cut");
     assert!(cut.whole && cut.led && cut.left > 64, "{cut:?}");
-    let other_spec = JoinSpec::parse(&other).unwrap();
+    let other_spec = JoinSpec::parse(&other).unwrap().encode();
     let own = trial(&db, "wcut", 0, None, None, 32, u64::MAX / 2).unwrap().expect("its whole body");
-    let swapped = trial(&db, "wcut", 0, Some(&other_spec), None, 32, u64::MAX / 2).unwrap().expect("placed");
+    let swapped = trial(&db, "wcut", 0, Some(other_spec.get()), None, 32, u64::MAX / 2).unwrap().expect("placed");
     assert_eq!(own.made, swapped.made, "{own:?} {swapped:?}");
     let kept = keep_trial_rows(&db, "wcut").unwrap();
     assert_eq!(kept, own.made, "the first finished trial's rows");
     assert_eq!(keep_trial_rows(&db, "wcut").unwrap(), 0, "kept once");
-    reprobe_spec(&db, "wcut", 0, &Reprobe::Whole(std::sync::Arc::new(other_spec))).unwrap();
+    reprobe_spec(&db, "wcut", 0, &Reprobe::Whole(other_spec.clone())).unwrap();
     assert_eq!(run(&db, "wcut", 0).unwrap().split_whitespace().last(), Some("1"));
     close(&db, "wcut").unwrap();
     assert_eq!(rows(&db), unlimited, "the fixpoint is the unlimited run's");
@@ -141,11 +142,11 @@ fn a_whole_plans_step_histograms_are_read_in_its_whole_join() {
     let whole = format!("pos {node} v2\npos {input} v1 v2\npos c0 v0 v1\nhead v0 v2");
     open(&db, &format!("name whist\nrel path ii\njoin 0 0 {} {}", hex(&delta), hex(&whole))).unwrap();
     // Step 0 by column 0: the whole plan's is `node` (one column, 2 rows); the delta join's is `path` (3 rows).
-    let of = |whole: bool, wanted: &[(usize, Vec<usize>)]| step_histograms(&db, "whist", 0, whole, wanted, 1 << 20).unwrap();
-    assert_eq!(of(true, &[(0, vec![0])])[0].as_ref().map(|h| h.0), Some(2));
-    assert_eq!(of(false, &[(0, vec![0])])[0].as_ref().map(|h| h.0), Some(3));
+    let of = |whole: bool, wanted: &[(usize, Vector<usize>)]| step_histograms(&db, "whist", 0, whole, wanted, 1 << 20).unwrap();
+    assert_eq!(of(true, &[(0, rerail_blocks::vector![0])])[0].as_ref().map(|h| h.0), Some(2));
+    assert_eq!(of(false, &[(0, rerail_blocks::vector![0])])[0].as_ref().map(|h| h.0), Some(3));
     // The whole plan's step 2 is `path`, by its second column: in the delta join that step is `node`, of one column.
-    assert_eq!(of(true, &[(2, vec![1])])[0].as_ref().map(|h| (h.0, h.1.len())), Some((3, 2)));
+    assert_eq!(of(true, &[(2, rerail_blocks::vector![1])])[0].as_ref().map(|h| (h.0, h.1.len())), Some((3, 2)));
     close(&db, "whist").unwrap();
 }
 
@@ -409,6 +410,64 @@ fn a_profiled_walk_times_each_step_and_its_heads_rows() {
     crate::code_rule_dsl::logic::profile::set(false);
 }
 
+/// t56 step 1: a probe that makes something inside it (a batch's rows, an index, a solve: a span) does not charge
+/// that to its step. The span has the make, and the step has the reads alone. Before, a step was charged everything
+/// its probes ran, and `text`'s 709 ns a row on `all` was mostly the batch made inside its first probe.
+#[test]
+fn a_make_inside_a_probe_is_its_spans_not_the_steps() {
+    use crate::code_rule_dsl::facts::vtab::{Relation, Source};
+    use crate::code_rule_dsl::logic::profile;
+    /// Spins until this thread has taken `seconds` of CPU.
+    fn burn(seconds: f64) {
+        let start = profile::now();
+        let mut x = 0u64;
+        while profile::now() - start < seconds {
+            x = std::hint::black_box(x.wrapping_mul(6364136223846793005).wrapping_add(1));
+        }
+    }
+    /// A relation whose first probe makes something first, in a span (as `Batch::ensure` makes the batch's rows).
+    struct Slow(Relation, std::sync::OnceLock<()>);
+    impl Slow {
+        fn made(&self) {
+            profile::once(&self.1, "test: made inside a probe", || burn(0.2));
+        }
+    }
+    impl Source for Slow {
+        fn columns(&self) -> Vec<String> { self.0.columns() }
+        fn len(&self) -> usize { self.0.len() }
+        fn estimated_matches(&self, column: usize, batch: bool) -> usize { self.0.estimated_matches(column, batch) }
+        fn indexed(&self, column: usize) -> bool { self.0.indexed(column) }
+        fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
+            self.made();
+            self.0.lookup(column, values)
+        }
+        fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
+            self.made();
+            self.0.lookup_read(column, value, columns, each)
+        }
+        fn value(&self, row: usize, column: usize) -> i64 { self.0.value(row, column) }
+    }
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    profile::set(true);
+    let mut r = Relation::new(&["c0", "c1"]);
+    for i in 0..300i64 {
+        r.push(&[i, i + 1]);
+    }
+    let db = connection();
+    db.execute_batch(&format!("CREATE TABLE edge(c0, c1); INSERT INTO edge VALUES {};", (0..300).map(|i| format!("({i}, {})", (i * 7) % 300)).collect::<Vec<_>>().join(", "))).unwrap();
+    hold_source(&db, "slow", Arc::new(Slow(r, std::sync::OnceLock::new())), b"ii".to_vec());
+    let input = format!("t:b:{}:{}:ii", hex("edge"), hex("c0, c1"));
+    let body = format!("pos {input} v0 v1\npos r:{} v1 v2\nhead v0 v2", hex("slow"));
+    open(&db, &format!("name probed\nrel probed_out ii empty\nnowrite\nseed 0 {}", hex(&body))).unwrap();
+    run(&db, "probed", 0).unwrap();
+    let steps: f64 = step_cpu(&db, "probed").unwrap().iter().flatten().sum();
+    close(&db, "probed").unwrap();
+    let made = profile::merged().spans.iter().filter(|(p, _)| p.ends_with("test: made inside a probe")).map(|(_, t)| t.total).sum::<f64>();
+    profile::set(false);
+    assert!(made >= 0.18, "the make is its span's: {made} s");
+    assert!(steps < 0.1, "the steps are charged their reads, not the make inside a probe: {steps} s");
+}
+
 /// A literal that makes two steps (`$k = @sub(@strlen($d), 1)`) is one plan step: its counts are the bindings into
 /// its first step and out of its last, its CPU both steps'; the head's computed terms' steps go to the head, and a
 /// plan step that made no step passes its rows on. Zipped by place, the steps after it were their neighbours'.
@@ -421,7 +480,7 @@ fn counts_and_cpu_are_reported_by_the_plan_step_that_made_the_steps() {
     let cpu = [1.0, 2.0, 4.0, 8.0, 16.0, 32.0];
     assert_eq!(plan_cpu(&from, 4, &cpu), vec![1.0, 6.0, 0.0, 8.0, 48.0]);
     // A spec read from text: each step its own plan step.
-    let from: Vec<usize> = (0..3).collect();
+    let from: Vector<usize> = (0..3).collect();
     assert_eq!(plan_counts(&from, 3, &counts[..3]), counts[..3].to_vec());
 }
 
@@ -443,7 +502,7 @@ fn a_fused_step_past_the_bound_head_stops_at_its_first_witness() {
     let db = connection();
     setup(&db);
     open(&db, &format!("name wit\nrel r i empty\nseed 0 {}", hex(&join))).unwrap();
-    assert!(matches!(&component(&db, "wit").unwrap().lock().unwrap().probes[0].body, Body::Join(j) if j.fused.iter().any(Option::is_some)), "a step is fused");
+    assert!(matches!(&component(&db, "wit").unwrap().lock().unwrap().probes[0].body, Body::Join(j) if j.fused.iter().any(|f| f.is_some())), "a step is fused");
     walks_whole(|| run(&db, "wit", 0).unwrap());
     let counts = step_counts(&db, "wit").unwrap();
     close(&db, "wit").unwrap();

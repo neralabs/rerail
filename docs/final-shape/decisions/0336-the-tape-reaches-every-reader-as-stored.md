@@ -1,9 +1,10 @@
 # 0336. The tape reaches every reader as stored: blocks decompressed on the GPU as it goes, full decompression the planner's choice, format 15 retired after a side-by-side run
 
-Status: decided in part (the user, 2026-11-17): §2 and §3 decided, §1 settled by 0156, §4 open but for the header's
-starts (built), §5 built. Survey and
-scenarios: notes/t42. Builds on 0156 (format 16), 0293 (one tape API, read in place), 0310 (the reads written once
-in CLIF for Rust, MSL and the JIT) and 0289 §4 (a document's offsets count from its place in its block).
+Status: partly built (audited 2026-11-23). Left: the planner's choice between per-block and whole decompression (Q65);
+whether the stored header is the view (axis A). Decided in part (the user, 2026-11-17): §2 and §3 decided, §1 settled
+by 0156, §4 open but for the header's starts (built), §5 built. Survey and scenarios: notes/t42. Builds on 0156
+(format 16), 0293 (one tape API, read in place), 0310 (the reads written once in CLIF for Rust, MSL and the JIT) and
+0289 §4 (a document's offsets count from its place in its block).
 
 ## Intro
 

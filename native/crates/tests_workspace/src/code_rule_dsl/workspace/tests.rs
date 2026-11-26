@@ -233,7 +233,7 @@ fn poisoned_state_rejections_and_close_release_resident_sources() {
     let request = json!({ "revision": 1, "files": [], "removed": [] }).to_string();
     for _ in 0..128 {
         let mut workspace = CodeRuleDslWorkspace::new();
-        let source = Arc::new(String::from("poisoned resident source"));
+        let source = Arc::new(crate::code_rule_dsl::tape::Text::from("poisoned resident source"));
         let retained = Arc::downgrade(&source);
         {
             let mut state = workspace.state.lock().unwrap();
@@ -525,7 +525,7 @@ fn close_cancels_busy_owner_without_waiting_for_its_lock() {
 fn close_and_lease_release_handoff_drops_resident_sources() {
     for _ in 0..128 {
         let workspace = Arc::new(CodeRuleDslWorkspace::new());
-        let source = Arc::new(String::from("resident source"));
+        let source = Arc::new(crate::code_rule_dsl::tape::Text::from("resident source"));
         let retained = Arc::downgrade(&source);
         {
             let mut state = workspace.state.lock().unwrap();

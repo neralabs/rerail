@@ -18,6 +18,7 @@
 //! reader that finds neither decodes the stored tape. New paths are pushed in chunks (`push`), so
 //! a cold scan holds a chunk's tapes, not the scope's.
 
+use crate::code_rule_dsl::facts::core::FactsIn;
 use super::Graph;
 use super::core::{self, Facts};
 use super::observe::{Push, observe_root, path_name};
@@ -139,11 +140,11 @@ pub fn derived_inputs(
 }
 
 /// A file's (kind atom, count) and (class atom, count), each sorted by atom.
-pub(crate) fn histogram(f: &Facts) -> (Vec<(u32, u32)>, Vec<(u32, u32)>) {
+pub(crate) fn histogram(f: FactsIn<'_>) -> (Vec<(u32, u32)>, Vec<(u32, u32)>) {
     f.histogram()
 }
 
-pub(crate) fn histogram_digest(f: &Facts) -> [u8; 32] {
+pub(crate) fn histogram_digest(f: FactsIn<'_>) -> [u8; 32] {
     let (kinds, classes) = histogram(f);
     let mut hash = Sha256::new();
     hash.update(b"rerail.kind-histogram/v1\0");
@@ -165,12 +166,12 @@ pub fn blob_source_id(graph: &(impl Graph + ?Sized), digest: [u8; 32]) -> StoreR
 }
 
 /// The source of the blob a path name binds, as stored.
-pub(crate) fn blob_source(graph: &(impl Graph + ?Sized), digest: [u8; 32]) -> StoreResult<Option<Arc<String>>> {
+pub(crate) fn blob_source(graph: &(impl Graph + ?Sized), digest: [u8; 32]) -> StoreResult<Option<Arc<crate::code_rule_dsl::tape::Text>>> {
     let Some(source) = blob_source_id(graph, digest)? else {
         return Ok(None);
     };
     let bytes = graph.store().get_source(source)?;
-    Ok(String::from_utf8(bytes).ok().map(Arc::new))
+    Ok(String::from_utf8(bytes).ok().map(|s| Arc::new(s.into())))
 }
 
 /// A path's dialect, where it has one with a tape.
@@ -210,7 +211,7 @@ pub struct Families {
     /// Prefilter rows built in this recomputation, published together.
     rows: Vec<TapePrefilter>,
     /// Sources parsed ahead, in parallel, by `parse_ahead`: each its text and its parse.
-    parsed: HashMap<SourceId, (Arc<String>, Option<Result<FileImage, String>>)>,
+    parsed: HashMap<SourceId, (Arc<crate::code_rule_dsl::tape::Text>, Option<Result<FileImage, String>>)>,
     pub parses: Parses,
 }
 
@@ -345,7 +346,7 @@ impl Families {
                 continue;
             }
             let Ok(source) = String::from_utf8(store.get_source(source_id)?) else { continue };
-            sources.push((source_id, language, Arc::new(source)));
+            sources.push((source_id, language, Arc::new(tape::Text::from(source))));
         }
         let parsed = crate::code_rule_dsl::logic::profile::on_cores(|| {
             sources
@@ -384,7 +385,7 @@ impl Families {
                 let Ok(source) = String::from_utf8(store.get_source(source_id)?) else {
                     return Ok(None);
                 };
-                let source = Arc::new(source);
+                let source = Arc::new(tape::Text::from(source));
                 let parse = TapeImage::parse(&grammar, &source, &|| false);
                 (source, parse)
             }
@@ -417,7 +418,7 @@ impl Families {
         let Ok(source) = String::from_utf8(store.get_source(source_id)?) else {
             return Ok(None);
         };
-        let source = Arc::new(source);
+        let source = Arc::new(tape::Text::from(source));
         let Some(bytes) = store.get_tapes_bulk(&[id])?.remove(&id) else {
             return Ok(None);
         };
@@ -575,7 +576,7 @@ impl Families {
             output: kinds_name(scope, path),
             producer: kinds_producer(),
             inputs: vec![DerivationInput { name: Some(name), digest: read }],
-            digest: facts.as_deref().map_or(ABSENT, histogram_digest),
+            digest: facts.as_deref().map_or(ABSENT, |f| f.alone(histogram_digest)),
             status: 0,
             cost: 1,
         })

@@ -1,4 +1,5 @@
 //! One summary store per proven bag, with independent context lookups for its consumers.
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::logic::analysis::{bags, scalars};
 #[derive(Clone, Default)]
@@ -65,7 +66,7 @@ pub fn combine(plans: &mut Plans, queries: &[Option<Query>]) {
         if !family.lookup.proven {
             continue;
         }
-        let mut locals = BTreeMap::<(String, usize), Vec<usize>>::new();
+        let mut locals = BTreeMap::<(String, usize), Vector<usize>>::new();
         for &i in &family.members {
             let (out, rule, _) = &paths[i];
             locals.entry((out.clone(), *rule)).or_default().push(i);
@@ -151,7 +152,7 @@ pub type Cache = BTreeMap<(usize, String), Cached>;
 #[derive(Clone)]
 pub enum Cached {
     Native(versions::Version),
-    Rows(usize, Vec<Vec<i64>>),
+    Rows(usize, Vec<Vector<i64>>),
     Empty,
 }
 pub fn recalled(w: &mut Work<'_>, group: &str) -> Result<Option<Option<(String, u64)>>> {
@@ -189,7 +190,7 @@ pub fn remember(
                 .query_map([], |r| {
                     (0..width)
                         .map(|c| r.get::<_, i64>(c))
-                        .collect::<rusqlite::Result<Vec<_>>>()
+                        .collect::<rusqlite::Result<Vector<_>>>()
                 })
                 .map_err(error)?
                 .collect::<rusqlite::Result<Vec<_>>>()

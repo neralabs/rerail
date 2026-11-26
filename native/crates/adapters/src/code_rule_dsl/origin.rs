@@ -191,18 +191,89 @@ impl<'t> InFile<'t> {
     }
 }
 
+/// The program bytes guest node `id` (over its span `range`) stands for in its host: from the first of its tokens
+/// that stands for host bytes to the last (`SegmentMap::stands_for`); a node none of whose tokens does, from its first
+/// token to its last; a node with none, its span. Its tokens are its stored leaves and, in the gaps they leave in its
+/// span, the runs of text that are not white space: the implied tokens the tape stores no node for (RER-131: Blade's
+/// `echo`, the `;` Vue's programs start with). A node's span may run past them: a root's holds the white space after
+/// its last statement, which stands for nothing of the node's. Read off the tape from each end until a token stands,
+/// never stored. `None` past the tape's nodes.
+fn extent(doc: &TapeDoc, segments: &crate::code_rule_dsl::embed::segments::SegmentMap, id: usize, range: Range<usize>) -> Option<Range<usize>> {
+    let id = u32::try_from(id).ok().filter(|&id| (id as usize) < doc.transducer_len())?;
+    let text = doc.get_source().as_bytes();
+    let end = doc.transducer_descendants(id).end;
+    let leaf = |i: u32| doc.transducer_descendants(i).end == i + 1;
+    let white = |at: usize| text.get(at).is_none_or(u8::is_ascii_whitespace);
+    // Its tokens from the front: each leaf, after the runs in the gap before it.
+    let mut front = None::<Range<usize>>;
+    let mut first_any = None::<Range<usize>>;
+    let mut at = range.start;
+    let mut take = |token: Range<usize>, first_any: &mut Option<Range<usize>>| -> bool {
+        first_any.get_or_insert(token.clone());
+        segments.stands_for(token.clone()).then(|| front = Some(token)).is_some()
+    };
+    'front: for i in (id..end).filter(|&i| leaf(i)).map(Some).chain([None]) {
+        let (gap_end, token) = match i {
+            Some(i) => { let span = doc.transducer_span(i); (span.start.max(at), Some(span)) }
+            None => (range.end, None),
+        };
+        let mut from = at;
+        while from < gap_end {
+            if white(from) { from += 1; continue; }
+            let to = (from..gap_end).find(|&b| white(b)).unwrap_or(gap_end);
+            if take(from..to, &mut first_any) { break 'front; }
+            from = to;
+        }
+        if let Some(span) = token {
+            at = at.max(span.end);
+            if span.start < span.end && take(span, &mut first_any) { break; }
+        }
+    }
+    // Its tokens from the back: each leaf, before the runs in the gap after it.
+    let mut back = None::<Range<usize>>;
+    let mut last_any = None::<Range<usize>>;
+    let mut at = range.end;
+    let mut take = |token: Range<usize>, last_any: &mut Option<Range<usize>>| -> bool {
+        last_any.get_or_insert(token.clone());
+        segments.stands_for(token.clone()).then(|| back = Some(token)).is_some()
+    };
+    'back: for i in (id..end).rev().filter(|&i| leaf(i)).map(Some).chain([None]) {
+        let (gap_start, token) = match i {
+            Some(i) => { let span = doc.transducer_span(i); (span.end.min(at), Some(span)) }
+            None => (range.start, None),
+        };
+        let mut to = at;
+        while to > gap_start {
+            if white(to - 1) { to -= 1; continue; }
+            let from = (gap_start..to).rev().find(|&b| white(b)).map_or(gap_start, |b| b + 1);
+            if take(from..to, &mut last_any) { break 'back; }
+            to = from;
+        }
+        if let Some(span) = token {
+            at = at.min(span.start);
+            if span.start < span.end && take(span, &mut last_any) { break; }
+        }
+    }
+    let (start, stop) = match (front, back, first_any, last_any) {
+        (Some(front), Some(back), _, _) => (front.start, back.end),
+        (_, _, Some(first), Some(last)) => (first.start, last.end),
+        _ => return Some(range),
+    };
+    Some(if start < stop { start..stop } else { range })
+}
+
 /// A host's bytes are the file's; a guest's program text stands for the file ranges its segments
 /// map it to (`SegmentMap::file_ranges`), and a guest node for those of its extent, from its first
-/// leaf standing for file bytes to its last (`node_extents`), white space between its ranges
+/// byte standing for file bytes to its last (`SegmentMap::extent`), white space between its ranges
 /// included, as a tree's node holds the white space between its tokens (`FileRanges::bridged`).
 impl Origin for TapeDoc {
     fn of_node(&self, id: usize, range: Range<usize>) -> Option<FileRanges> {
         Some(match &self.host {
             None => FileRanges::one(range),
             Some(link) => {
-                let (start, end) = *link.extents.get(id)?;
+                let extent = extent(self, &link.segments, id, range)?;
                 link.segments
-                    .file_ranges(start as usize..end as usize)
+                    .file_ranges(extent)
                     .bridged(&link.host.source)
             }
         })
@@ -219,8 +290,8 @@ impl Origin for TapeDoc {
         Some(match &self.host {
             None => range,
             Some(link) => {
-                let (start, end) = *link.extents.get(id)?;
-                link.segments.bounds(start as usize..end as usize)
+                let extent = extent(self, &link.segments, id, range)?;
+                link.segments.bounds(extent)
             }
         })
     }

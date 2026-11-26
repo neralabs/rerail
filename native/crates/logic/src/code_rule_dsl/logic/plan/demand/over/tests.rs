@@ -97,7 +97,7 @@
         let k = (0..placed.len()).find(|&k| R::of(&placed, k).head() == "named").unwrap();
         let r = R::of(&placed, k);
         let atom = |rel: &str| (0..r.lits.len()).find_map(|i| r.plain(i).filter(|a| r.rel(*a) == rel)).unwrap();
-        assert_eq!(view_of(&f, atom("kind")), Some(("node".to_owned(), vec![1, 2])), "kind's columns are node's 1 and 2");
+        assert_eq!(view_of(&f, atom("kind")), Some(("node".to_owned(), rerail_blocks::vector![1, 2])), "kind's columns are node's 1 and 2");
         assert!(base(&f, "kind", atom("kind")), "a view of an input is a base relation");
         assert_eq!(view_of(&f, atom("field")), None, "an input is no view");
         let n = (0..placed.len()).find(|&k| R::of(&placed, k).head() == "out").unwrap();
@@ -168,12 +168,12 @@
         let f = Fields::of(&placed).unwrap();
         let model = |fan: Option<f64>| {
             let inputs = Inputs { facts: "main.".into(), stats: "main.".into(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
-            let derived: HashSet<String> = ["kind", "tail", "read"].into_iter().map(str::to_owned).collect();
-            let mut m = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&f), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+            let derived = rerail_section::TextSet::of(["kind", "tail", "read"]);
+            let mut m = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&f), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived };
             m.stats.nodes = 1_000_000.0;
             m.stats.card.insert("node", 1_000_000.0);
             m.stats.card.insert("child", 1_000_000.0);
-            m.stats.memo.insert("node".into(), HashMap::from([(("kind".to_owned(), Constant::Int(7)), 30), (("kind".to_owned(), Constant::Int(5)), 200_000)]));
+            m.stats.memo.insert("node", "kind", std::sync::Arc::new([(Constant::Int(7), 30), (Constant::Int(5), 200_000)].into_iter().collect()));
             if let Some(fan) = fan {
                 m.stats.fan.insert(("child", 0), fan);
             }

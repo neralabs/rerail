@@ -40,6 +40,33 @@ pub mod content_store {
     pub mod observer_store {
         pub mod base;
     }
+    /// The records the store's readers hold: objects, tapes, programs, derivations (`stored.rs`).
+    pub mod stored;
+    pub use stored::*;
+    /// A tape's prefilter rows, as their builder hands them over.
+    pub mod prefilter {
+        pub mod base;
+        pub use base::*;
+    }
+    pub use prefilter::{TapePrefilter, VOCABULARY_REGEX, VOCABULARY_TEXT, VocabularyTest};
+    /// A tape's positional search index and its lookups.
+    pub mod positional_search {
+        pub mod base;
+        pub use base::*;
+    }
+    /// The name a queued write goes by.
+    pub mod write_back {
+        pub mod base;
+        pub use base::*;
+    }
+    /// The content store as the facts reach it (`FactStore`), which the store implements.
+    pub mod fact_store;
+    pub use fact_store::{AtomTable, FactStore};
+    /// A SQLite file's upkeep job (`SqliteFile`).
+    pub mod upkeep {
+        pub mod base;
+        pub use base::*;
+    }
     pub mod bounded_insert;
     pub mod compression;
     pub use compression::{compress, decompress, decompress_chunks, decompress_head, decompress_into};

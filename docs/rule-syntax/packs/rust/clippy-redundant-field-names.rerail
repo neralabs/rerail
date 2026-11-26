@@ -14,7 +14,7 @@
 // Not under #[clippy::msrv] older than 1.17. Clippy also lints a macro_rules! body's `S { v: v }`; token
 // trees are not read here (divergences.json lists it).
 .violation redundant_field_names(at: node) code "redundant_field_names"
-    "Use field init shorthand here, e.g. Point { x } instead of Point { x: x }."
+    "Use field init shorthand here, e.g. Point {{ x }} instead of Point {{ x: x }}."
     suppress clippy "clippy::redundant_field_names", "clippy::all", "clippy::style", "warnings"
 redundant_field_names(f) :- kind(f, "field_initializer"), field(f, "field", n), field(f, "value", v),
     kind(v, "identifier"), bare_name(n, x), bare_name(v, x), !msrv_older(f, "1.17").
