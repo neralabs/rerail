@@ -742,8 +742,8 @@ call: `open`, `stat`, `index`, `kills_mut`, `seal`, `sketch`. `freeze_layer` and
 its lints are `deny` in `layer_write` (allowed in the rest of blocks). A `Mutex` added there was refused by clippy,
 and a `static` and a lock by the shape script, which checks the module with the twins' patterns.
 
-**A layer keeps its kills once.** They are in its rows' change (`changed`) and in `gone(part, id)`, read by
-partition. The shape script checks that a Layer is exactly its bytes, head, rows, parts and gone, that `gone` is
+**A layer keeps its kills in two places, and no more** (made one, below). They are in its rows' change
+(`changed`) and in `gone(part, id)`, read by partition. The shape script checks that a Layer is exactly its bytes, head, rows, parts and gone, that `gone` is
 `(I32, 4)` sorted on its partition, and that the twins make two relations and one layer, whatever they are named.
 
 **B2's random chains, at the plan's size.** The plan asks for "24 rounds of pushes and kills, 7 seeds".
@@ -875,8 +875,39 @@ Checks:
 - Relax, local: `rerail-delta-exec --lib` 35 of 35, nothing skipped; `rerail-delta-device --lib` 3 of 3;
   `rerail-blocks --lib` 123 of 123.
 - All three check scripts.
-- Clippy: clean over blocks, the twins and delta_exec before the device crate. After it, `cargo clippy` fails in
-  the installed farm wrapper: on a crate it compiled within two hours, it puts its remap flags before the `rustc`
-  argument that clippy-driver takes first, and clippy-driver then reads that path as an input file. The fix is in
-  `scripts/build/farm/farm.py` (the remaps go after that argument). It is not installed, so clippy did not run on
-  this step.
+- Clippy: at first it failed in the installed farm wrapper. On a crate it compiled within two hours (its "hot"
+  marker), the wrapper puts its remap flags before the `rustc` argument that clippy-driver takes first, and
+  clippy-driver then reads that path as an input file. Each failed attempt refreshes the marker. The fix is in
+  `scripts/build/farm/farm.py` (the remaps go after that argument), not installed. With this worktree's markers of
+  the four crates aged, clippy ran over blocks, the twins, delta_exec and delta_device, libraries and tests: clean
+  (after the step below).
+
+**A layer's kills are kept once** (the audit's item 4, finished). Before, they were kept twice: in its rows'
+relation's change (`changed`, ascending) and in `gone(part, id)`, the form B2 names. Now they are in `gone` alone:
+
+- `layer_write::open` lays out no change, and `kills_mut` is gone. `seal` refuses a layer whose rows record a change.
+- consolidate and merge lose `ksort`, `kpasses` and `kplace`, the three phases that sorted the kills into the
+  change, so they are now 19 phases. `parts` writes `gone` from the rows out, as before.
+- A layer's kills are read by partition, each partition's run ascending:
+  - `Layer::kills()` is `gone`'s id column; `kill_runs`, a run a partition; `kills_within`, a partition range's kills
+    among a range of ids.
+  - Liveness (`chain_live_word`): each layer's rows in the word are a range of partitions, read from the rows'
+    partition column (the canonical order leads with it), and each is searched in the layers above.
+  - `killed_above` searches the row's own partition's kills.
+  - A scan's cursor holds the row's partition's kills, and is placed again by one search when the layer's rows reach
+    the next partition.
+  - Flips merge their runs through a heap (`bistate::Flips`), since a layer gives a run a partition.
+- The shape script refuses a layer change laid out or written, a read of one in `layer.rs`, and a second sort of
+  the kills in the twins.
+
+Two checks of the change:
+
+- **Cost.** The first liveness read searched the union of the partitions of all the word's layers, and the B2
+  random test ran in 9.0 s against the committed code's 5.3 s (warm, at loads of 58 to 68). Reading each layer's own
+  run brought it to 4.1 s at a load of 73.
+- **Dedup off.** Both breaks were run again on this code: the kill search reading only the newest layer, and
+  liveness, scans and searches reading only the newest layer's kills. B2's random test (24 rounds, 7 seeds) failed
+  under each, and passed once each was restored.
+
+Checks (Relax, local): `rerail-delta-exec --lib` 35 of 35, `rerail-blocks --lib` 123 of 123,
+`rerail-delta-device --lib` 3 of 3; the check scripts; clippy as above.

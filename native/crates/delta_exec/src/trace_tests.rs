@@ -564,14 +564,20 @@ fn a_restriction_reads_only_its_partitions_rows() {
     let whole = t.state(&table, heads[5]).unwrap();
     let rows_total: usize = whole.layers().map(|(_, l)| l.n()).sum();
     // The partition index (`parts`): each partition's range is its own rows exactly, its kills its kills of rows below.
+    // The kills are kept once (`gone`): the layer's rows record no change, and its kills, as runs, are a partition's
+    // each, ascending.
     for (_, l) in whole.layers() {
+        assert!(l.rows.changed.as_slice().is_empty(), "a layer's kills are kept once, in gone");
+        let runs: Vec<&[u32]> = l.kill_runs().collect();
+        assert_eq!(runs.iter().map(|r| r.len()).sum::<usize>(), l.kills().len(), "its runs are its kills");
+        assert!(runs.iter().all(|r| r.windows(2).all(|w| w[0] < w[1]) && r.iter().all(|&id| whole.get(id, 0) == whole.get(r[0], 0))), "a run a partition, ascending");
         for p in (0..7).chain([50, 99, 1_000]) {
             let r = l.part_rows(p);
             assert!(r.clone().all(|id| l.get(id, 0) == p), "partition {p}'s range holds its rows only");
             assert_eq!(r.len(), (l.start()..l.end()).filter(|&id| l.get(id, 0) == p).count(), "and all of them");
             let k = l.part_kills(p);
             assert_eq!(k.len(), l.kills().iter().filter(|&&id| whole.get(id, 0) == p).count(), "partition {p}'s kills");
-            assert!(k.windows(2).all(|w| w[0] < w[1]) && k.iter().all(|id| l.kills().binary_search(id).is_ok()));
+            assert!(k.windows(2).all(|w| w[0] < w[1]) && k.iter().all(|id| l.kills().contains(id)));
         }
     }
     let s = whole.counted(&reads).restrict(50);

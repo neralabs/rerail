@@ -196,8 +196,6 @@ struct Work {
     net: usize,
     sgn: usize,
     kid: usize,
-    ks: usize,
-    ks2: usize,
     abefore: usize,
     st: usize,
     pstart: usize,
@@ -215,10 +213,8 @@ const W_NADD: usize = 24;
 const W_NGONE: usize = 32;
 const W_REFUSED: usize = 40;
 const W_BLOOM: usize = 48;
-/// The kills' sort's width and array; the scan's carry (rows out, rows added); the partitions numbered so far.
-const W_KWIDTH: usize = W_BLOOM + 8 * MAX_IX;
-const W_KWHICH: usize = W_KWIDTH + 8;
-const W_SCAN: usize = W_KWHICH + 8;
+/// The scan's carry (rows out, rows added); the partitions numbered so far.
+const W_SCAN: usize = W_BLOOM + 8 * MAX_IX;
 const W_NPART: usize = W_SCAN + 16;
 const W_END: usize = W_NPART + 8;
 
@@ -245,8 +241,6 @@ fn work(cap: usize) -> Work {
         net: next(4 * cap),
         sgn: next(4 * cap),
         kid: next(4 * cap),
-        ks: next(4 * cap),
-        ks2: next(4 * cap),
         abefore: next(4 * (cap + 1)),
         st: next(4 * cap),
         pstart: next(4 * (cap + 1)),
@@ -481,9 +475,9 @@ fn open<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let rows = Relation::try_continue_far(&block, &rs, below_layer.map(|(id, l)| (id, l.head.rows as usize, l.rows, l.end()))).expect("room for the layer");
     let parts = Relation::try_create(&block, &parts_spec(n_out), None).expect("room for the layer's partitions");
     let gone = Relation::try_create(&block, &gone_spec(n_gone), None).expect("room for the layer's kills by partition");
-    assert!(layer_write::open(pin, rows, &rs, n_gone, true), "room for the layer's freeze");
-    assert!(layer_write::open(pin, parts, &parts_spec(n_out), 0, false), "room for the partitions' freeze");
-    assert!(layer_write::open(pin, gone, &gone_spec(n_gone), 0, false), "room for the kills' freeze");
+    assert!(layer_write::open(pin, rows, &rs, true), "room for the layer's freeze");
+    assert!(layer_write::open(pin, parts, &parts_spec(n_out), false), "room for the partitions' freeze");
+    assert!(layer_write::open(pin, gone, &gone_spec(n_gone), false), "room for the kills' freeze");
     // An Open layer's rows are its relation's; an encoded one's lie in its encoded form (`encode`), beside it.
     let enc = if shape.encoding == ENC_OPEN {
         rows.claim_own(pin, n_add as u32).expect("room for the layer's rows");
@@ -642,9 +636,6 @@ fn n_out<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
     work_word::<O>(c, W_NOUT) as u32
 }
 
-fn n_gone<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
-    work_word::<O>(c, W_NGONE) as u32
-}
 
 fn kills<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     let table = c.table;
@@ -711,81 +702,6 @@ fn one_level<O: Op>(v: &View<'_>, chain: &relation::View<'_>, o: usize) -> bool 
         let lv = chain.get(id.get(), level);
         same.iter().any(|&q| sgn[q] < 0 && v.src.get(net[q] as usize, level) == lv)
     })
-}
-
-/// The kills' sort, first phase: each chunk of the rows out's kill ids (none for a row added: `NONE`, sorted last)
-/// into `ks`, sorted by itself.
-fn ksort<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
-    if refused_so_far::<O>(c) {
-        return;
-    }
-    let v = view::<O>(c);
-    let n = v.n_out();
-    set_word::<u64>(v.work, W_KWIDTH, CHUNK as u64);
-    set_word::<u64>(v.work, W_KWHICH, 0);
-    let (kid, ks) = (v.w.kid, v.w.ks);
-    let (lo, rest) = v.work.split_at_mut(ks);
-    let src: &[u32] = words(lo, kid, n.max(1));
-    let dst = words_mut::<u32>(rest, 0, n.max(1));
-    for k in t.items() {
-        let r = k * CHUNK..((k + 1) * CHUNK).min(n);
-        dst[r.clone()].copy_from_slice(&src[r]);
-    }
-    sort_chunks(&mut dst[..n], t, |x, y| x.cmp(&y));
-}
-
-fn kpass_items<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
-    if refused_so_far::<O>(c) {
-        return 0;
-    }
-    let n = n_out::<O>(c) as usize;
-    let width = work_word::<O>(c, W_KWIDTH) as usize;
-    if more(n, width) { pairs(n, width) } else { 0 }
-}
-
-/// A merge pass of the kills' sort: pairs of runs, between `ks` and `ks2`.
-fn kpass<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
-    let v = view::<O>(c);
-    let (n, width, which) = (v.n_out(), v.word(W_KWIDTH) as usize, v.word(W_KWHICH));
-    let (a, b) = v.work[v.w.ks..].split_at_mut(v.w.ks2 - v.w.ks);
-    let (a, b) = (words_mut::<u32>(a, 0, n), words_mut::<u32>(b, 0, n));
-    let cmp = |x: u32, y: u32| x.cmp(&y);
-    if which == 0 { merge_pairs(a, b, t, width, cmp) } else { merge_pairs(b, a, t, width, cmp) }
-}
-
-fn kpass_next<O: Op>(c: &mut Ctx<'_, '_, '_>) -> bool {
-    let v = view::<O>(c);
-    let n = v.n_out();
-    let width = v.word(W_KWIDTH) as usize;
-    if !more(n, width) {
-        return false;
-    }
-    set_word::<u64>(v.work, W_KWIDTH, 2 * width as u64);
-    set_word::<u64>(v.work, W_KWHICH, 1 - v.word(W_KWHICH));
-    more(n, 2 * width)
-}
-
-/// The sorted kills into the layer's change, a chunk an item: its first `ngone` (the rest are `NONE`).
-fn kplace<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
-    if refused_so_far::<O>(c) {
-        return;
-    }
-    let (lo, hi) = (t.lo as usize * CHUNK, t.hi as usize * CHUNK);
-    let tile: Vec<u32> = {
-        let v = view::<O>(c);
-        let ng = v.word(W_NGONE) as usize;
-        let at = if v.word(W_KWHICH) == 0 { v.w.ks } else { v.w.ks2 };
-        let sorted: &[u32] = words(v.work, at, ng.max(1));
-        sorted[lo.min(ng)..hi.min(ng)].to_vec() // copy: not block data (this tile's kills, between two places in one block)
-    };
-    let (block, head) = out_block(c);
-    let rows = rel(&block, head.rows);
-    let ks = layer_write::kills_mut(c.pin_mut(OUT), rows);
-    ks[lo..lo + tile.len()].copy_from_slice(&tile);
-}
-
-fn kplace_items<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
-    chunks(n_gone::<O>(c) as usize)
 }
 
 // ---- the partitions' change: a partition an item ------------------------------------------------------------------
@@ -1026,11 +942,17 @@ fn sketch<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
         for id in own.ids() {
             s.add(own.get(id, col));
         }
-        for &id in rows.changed.as_slice() {
+        for &id in gone_ids(&block, &head) {
             s.remove(chain.get(id, col));
         }
         assert!(layer_write::sketch(pin, rows, col, &s.encode()), "room for the layer's statistics");
     }
+}
+
+/// The layer's kills, kept once: its `gone` relation's id column (by partition, ascending within each).
+fn gone_ids<'b>(block: &'b Block, head: &LayerHead) -> &'b [u32] {
+    let g = rel(block, head.gone);
+    if g.rows.is_empty() { &[] } else { g.rows.col_chunks_u32(1).next().expect("a layer's kills, in one chunk") }
 }
 
 fn arity_items<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
@@ -1050,7 +972,7 @@ fn seal<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
         let (block, mut head) = out_block(c);
         let (rows, pr) = (rel(&block, head.rows), rel(&block, head.parts));
         head.added = OwnRows::in_block(&block, &head, rows).n();
-        head.ngone = rows.changed.len() as u32;
+        head.ngone = rel(&block, head.gone).rows.len();
         head.nparts = pr.rows.len();
         head.digest = pr.ids().fold(0u64, |d, id| d.wrapping_add(pr.own(id, 1) as u64));
         head.blooms = blooms;
@@ -1134,9 +1056,6 @@ macro_rules! pipeline {
             TwinPhase { name: "encode", items: encode_items::<$o>, run: encode::<$o>, again: None },
             TwinPhase { name: "perm", items: perm_items::<$o>, run: perm::<$o>, again: None },
             TwinPhase { name: "kills", items: n_out::<$o>, run: kills::<$o>, again: None },
-            TwinPhase { name: "ksort", items: |c| chunks(n_out::<$o>(c) as usize), run: ksort::<$o>, again: None },
-            TwinPhase { name: "kpasses", items: kpass_items::<$o>, run: kpass::<$o>, again: Some(kpass_next::<$o>) },
-            TwinPhase { name: "kplace", items: kplace_items::<$o>, run: kplace::<$o>, again: None },
             TwinPhase { name: "pstarts", items: n_out::<$o>, run: pstarts::<$o>, again: None },
             TwinPhase { name: "pscan", items: pscan_items::<$o>, run: pscan::<$o>, again: None },
             TwinPhase { name: "parts", items: parts_items::<$o>, run: parts::<$o>, again: None },

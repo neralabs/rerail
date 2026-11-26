@@ -260,9 +260,18 @@ def b2(failures: list) -> None:
     if "vec![crate::rows::I32, 8, 4, 4, 4, 4]" not in lcode:
         failures.append(f"{layer.relative_to(ROOT)}: parts is (part, digest, added, gone, first, kills_at), the partition index")
     hits(layer, lcode, r"leading\(self\.(rows|gone)\b", "a partition found by a search of the layer's rows or kills, not its index", failures)
-    # A layer's kills are kept twice and no more: its change (`changed`, ascending, the chain's liveness) and its
-    # partition index's `gone(part, id)` (P§: "a range of the block, by the partition's index"). The layer holds three
-    # relations; `gone` is (partition, id); the twins make exactly those three.
+    # A layer's kills are kept once: its partition index's `gone(part, id)` (P§: "a range of the block, by the
+    # partition's index"), read by partition for liveness, scans and flips alike. Its rows' relation records no change
+    # (`layer_write` lays out none, `seal` refuses one, and nothing writes it); the layer holds three relations; `gone`
+    # is (partition, id); the twins make exactly those three.
+    lw = strip_rust((crates / "blocks/src/relation/layer_write.rs").read_text())
+    if "kills_mut" in lw or "rel.changed.as_slice().is_empty()" not in lw:
+        failures.append("blocks/src/relation/layer_write.rs: a layer's change is laid out or written (its kills are gone's alone)")
+    if "self.rows.changed" in lcode:
+        failures.append(f"{layer.relative_to(ROOT)}: a layer's kills read from its rows' change, not gone")
+    twins_code = strip_rust((TWINS / "src/trace.rs").read_text())
+    if re.search(r"\bchanged\b", twins_code) or re.search(r"\bks2?\b|W_KWIDTH|fn ksort|fn kplace", twins_code):
+        failures.append("the twins' trace.rs writes or sorts a second copy of the kills (they are gone's alone)")
     m = re.search(r"pub struct Layer<'a> \{(.*?)\}", lcode, re.S)
     fields = re.findall(r"pub (\w+):", m.group(1)) if m else []
     # `own` is the reader of its rows where they lie (its relation's, or its encoded form's), not a store.

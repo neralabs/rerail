@@ -37,7 +37,7 @@ const fn ph(name: &'static str, found: Found, unit: Unit, inside: Inside, across
 /// - the partitions' change (8): each row out's start flag, the starts numbered (in order), then a partition an item;
 /// - the freeze where the layer lies: a column's range a lane, a hashed index (18) a group, the seal (one group);
 /// - its orders and Bloom filters (18), an index a group; its statistics (9), a column a lane; the header, last.
-static PIPELINE: [Phase; 22] = {
+static PIPELINE: [Phase; 19] = {
     use Found::*;
     use Output::*;
     use Unit::*;
@@ -53,9 +53,6 @@ static PIPELINE: [Phase; 22] = {
         ph("encode", Fixed, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
         ph("perm", Fixed, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
         ph("kills", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
-        ph("ksort", Indirect, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
-        ph("kpasses", Indirect, Threadgroup, Inside::Nothing, Across::Rounds, ByIndex, PASSES),
-        ph("kplace", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
         ph("pstarts", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
         ph("pscan", Indirect, Threadgroup, Inside::Nothing, Across::Ordered, ByScan, &[]),
         ph("parts", Indirect, Partition, Inside::Nothing, Across::Nothing, ByIndex, &[]),

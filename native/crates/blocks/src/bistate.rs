@@ -298,6 +298,9 @@ pub fn stats_of<R: Read>(state: &R, c: ColumnIndex) -> ColStats {
 pub struct Flips<'s> {
     // copy: not block data (a handle and a cursor a version)
     runs: Vec<(&'s [u32], u32)>,
+    /// Each run's next id, smallest first: a trace's layer gives a run a partition it changed, so there can be many.
+    heads: std::collections::BinaryHeap<std::cmp::Reverse<(u32, u32)>>,
+    started: bool,
     last: Option<u32>,
 }
 
@@ -315,7 +318,16 @@ impl<'s> Flips<'s> {
 
     /// Whether no id flipped.
     pub fn is_empty(&self) -> bool {
-        self.runs.iter().all(|(r, at)| r.len() == *at as usize)
+        self.heads.is_empty() && self.runs.iter().all(|(r, at)| r.len() == *at as usize)
+    }
+
+    /// Run `k`'s next id onto the heap.
+    fn advance(&mut self, k: usize) {
+        let (run, at) = &mut self.runs[k];
+        if let Some(&id) = run.get(*at as usize) {
+            *at += 1;
+            self.heads.push(std::cmp::Reverse((id, k as u32)));
+        }
     }
 }
 
@@ -323,10 +335,15 @@ impl Iterator for Flips<'_> {
     type Item = RowId;
 
     fn next(&mut self) -> Option<RowId> {
+        if !self.started {
+            self.started = true;
+            for k in 0..self.runs.len() {
+                self.advance(k);
+            }
+        }
         loop {
-            let k = (0..self.runs.len()).filter(|&k| (self.runs[k].1 as usize) < self.runs[k].0.len()).min_by_key(|&k| self.runs[k].0[self.runs[k].1 as usize])?;
-            let id = self.runs[k].0[self.runs[k].1 as usize];
-            self.runs[k].1 += 1;
+            let std::cmp::Reverse((id, k)) = self.heads.pop()?;
+            self.advance(k as usize);
             if self.last != Some(id) {
                 self.last = Some(id);
                 return Some(RowId::new(id));

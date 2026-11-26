@@ -12,9 +12,9 @@
 //!
 //! **A layer** (P§12: "a layer is one `blocks::relation::Relation`: rows added, kills of rows below, its indexes, its
 //! partition digests, its statistics"; P§13: `Relation` "Keep"): in its block, a `Relation` whose own rows are the rows
-//! the layer added, in the trace's canonical order, and whose `changed` are its kills of rows below; it continues the
-//! layer below by that block's id and its descriptor's offset there (`Relation::try_continue_far`), so its ids follow
-//! the ones below. Its indexes are the relation's: the row index and a hashed index per `Hash` (`build_indexes`),
+//! the layer added, in the trace's canonical order (its relation records no change: its kills of rows below are
+//! `gone`'s); it continues the layer below by that block's id and its descriptor's offset there
+//! (`Relation::try_continue_far`), so its ids follow the ones below. Its indexes are the relation's: the row index and a hashed index per `Hash` (`build_indexes`),
 //! sorted orders per `Order` (`Relation::add_order`, `blocks::order`'s search), Bloom filters per `Bloom` (in the
 //! block). Its statistics are each column's `blocks::sketch` of the state it ends (`Relation::sketches`). Beside it,
 //! two small relations: `parts` (each partition it changed: its digest's move and counts) and `gone` (its kills by
@@ -506,7 +506,7 @@ pub struct LayerHead {
     pub magic: u32,
     pub state: u32,
     /// The layer (P§12: "a layer is one `blocks::relation::Relation`"): its own rows are the rows it added, in the
-    /// trace's canonical order; its `changed` its kills of rows below; it continues the layer below by block id and
+    /// trace's canonical order, its change empty (its kills are `gone`'s); it continues the layer below by block id and
     /// offset (`Relation::try_continue_far`); its indexes and statistics are its own.
     pub rows: u64,
     /// `parts(part, digest, added, gone, first, kills_at)`: one row a partition the layer changed, sorted on the
@@ -775,9 +775,40 @@ impl<'a> Layer<'a> {
         self.own.get(id, c)
     }
 
-    /// Its kills: rows of the layers below, ascending.
+    /// Its kills, kept once: `gone`'s id column, by partition (`gone(part, id)` is sorted on both), so each
+    /// partition's kills are ascending, and all of them when the trace has no partition. Its rows' relation records no
+    /// change of its own.
     pub fn kills(&self) -> &'a [u32] {
-        self.rows.changed.as_slice()
+        if self.gone.rows.is_empty() {
+            return &[];
+        }
+        self.gone.rows.col_chunks_u32(1).next().expect("a layer's kills by partition, in one chunk")
+    }
+
+    /// Its kills as ascending runs, one a partition it changed (`parts`' `kills_at`, `gone`).
+    pub fn kill_runs(&self) -> impl Iterator<Item = &'a [u32]> + '_ {
+        let base = self.parts.base_rows;
+        (0..self.parts.rows.len()).map(move |e| self.part_kills_at(base + e)).filter(|r| !r.is_empty())
+    }
+
+    /// Own row `id`'s partition: its value in the partition column (0 when the trace has none).
+    pub fn part_of(&self, id: u32) -> i64 {
+        self.head.shape.partition().map_or(0, |c| self.get(id, c))
+    }
+
+    /// Its kills among `ids` of rows whose partitions lie in `parts`, ascending within each partition: by the
+    /// partition index, each partition's kills a search (the rows of a word, `View::chain_live_word`).
+    pub fn kills_within(&self, parts: std::ops::RangeInclusive<i64>, ids: std::ops::Range<u32>, mut f: impl FnMut(u32)) {
+        let (base, n) = (self.parts.base_rows, self.parts.rows.len());
+        let mut e = partition_point(n as usize, |i| self.parts.own(base + i as u32, 0) < *parts.start()) as u32;
+        while e < n && self.parts.own(base + e, 0) <= *parts.end() {
+            let ks = self.part_kills_at(base + e);
+            let from = ks.partition_point(|&x| x < ids.start);
+            for &x in ks[from..].iter().take_while(|&&x| x < ids.end) {
+                f(x);
+            }
+            e += 1;
+        }
     }
 
     /// Partition `p`'s row of `parts`, the partition index: found by a search of the index's entries (one a
@@ -806,7 +837,14 @@ impl<'a> Layer<'a> {
 
     /// Partition `p`'s kills, ascending: a slice of `gone`'s id column, by the partition index.
     pub fn part_kills(&self, p: i64) -> &'a [u32] {
-        let Some(e) = self.part_at(p) else { return &[] };
+        match self.part_at(p) {
+            Some(e) => self.part_kills_at(e),
+            None => &[],
+        }
+    }
+
+    /// The kills of the partition at entry `e` of `parts`.
+    fn part_kills_at(&self, e: u32) -> &'a [u32] {
         let (at, n) = (self.parts.own(e, 5) as usize, self.parts.own(e, 3) as usize);
         if n == 0 {
             return &[];
@@ -1005,19 +1043,13 @@ impl<'a> View<'a> {
         }
     }
 
-    /// Layer `l`'s kills of this state's rows: its partition's alone when restricted.
-    fn kills_of(&self, l: &Layer<'a>) -> &'a [u32] {
-        match self.part {
-            None => l.kills(),
-            Some(p) => l.part_kills(p),
-        }
-    }
-
     /// Whether row `id`, of layer `l`, is killed by a layer above `l`, up to this state's: a search of each one's
     /// kills (its partition's, when restricted: a row of one is killed only by a kill of it), each step a counted read.
     fn killed_above(&self, l: &Layer<'a>, id: u32) -> bool {
+        // A kill of a row is a kill of its partition's: the row's (the restriction's, when restricted).
+        let p = self.part.unwrap_or_else(|| l.part_of(id));
         self.layers().map(|(_, k)| k).take_while(|k| !std::ptr::eq(k.rows, l.rows)).any(|k| {
-            let ks = self.kills_of(&k);
+            let ks = k.part_kills(p);
             let at = partition_point(ks.len(), |i| {
                 self.touch(1);
                 ks[i] < id
@@ -1046,6 +1078,11 @@ impl<'a> View<'a> {
             return 0;
         }
         let (mut live, mut killed) = (0u64, 0u64);
+        // The word's rows, a run a layer (at most a few: a word is 64 ids), each with its partitions: a layer's own rows
+        // lie in the canonical order, its partition first, so its rows in the word are a range of partitions (the
+        // restriction's alone, when restricted).
+        let mut runs: [(u32, u32, i64, i64); 4] = [(0, 0, 0, 0); 4];
+        let mut nruns = 0;
         for (_, l) in self.layers() {
             if l.end() <= first {
                 break;
@@ -1054,25 +1091,48 @@ impl<'a> View<'a> {
             let (lo, hi) = (s.start.max(first), s.end.min(last));
             if lo < hi {
                 live |= if hi - lo == 64 { u64::MAX } else { ((1u64 << (hi - lo)) - 1) << (lo - first) };
+                let (a, b) = self.part.map_or_else(|| (l.part_of(lo), l.part_of(hi - 1)), |p| (p, p));
+                if nruns < runs.len() {
+                    runs[nruns] = (lo, hi, a, b);
+                } else {
+                    // More layers in one word than room: the last run covers them all.
+                    let r = &mut runs[runs.len() - 1];
+                    *r = (lo.min(r.0), hi.max(r.1), a.min(r.2), b.max(r.3));
+                }
+                nruns = (nruns + 1).min(runs.len());
             }
-            let k = l.kills();
-            let from = k.partition_point(|&x| x < first);
-            for &x in k[from..].iter().take_while(|&&x| x < last) {
-                killed |= 1u64 << (x - first);
+        }
+        // Each run's kills by the layers above its own (a layer kills only rows below it), by its partitions.
+        for (_, k) in self.layers() {
+            if k.start() <= first {
+                break;
+            }
+            for &(lo, hi, a, b) in runs[..nruns].iter().filter(|r| r.0 < k.start()) {
+                k.kills_within(a..=b, lo..hi, |x| killed |= 1u64 << (x - first));
             }
         }
         live & !killed
     }
 
+    /// Its top layer's kills as one ascending run: restricted, its partition's; else when it changed one partition
+    /// at most. Otherwise none (`chain_flips_since` gives them, a run a partition).
     pub(crate) fn chain_since(&self) -> Option<Since<'_>> {
         let l = self.layer(self.head?);
-        Some(Since { end: RowId::new(l.start()), flips: self.kills_of(&l) })
+        let flips = match self.part {
+            Some(p) => l.part_kills(p),
+            None if l.parts.rows.len() <= 1 => l.kills(),
+            None => return None,
+        };
+        Some(Since { end: RowId::new(l.start()), flips })
     }
 
     pub(crate) fn chain_flips_since(&self, before: Option<&View<'a>>) -> Option<Flips<'_>> {
         let mut f = Flips::default();
         for l in self.above(before)? {
-            f.push(self.kills_of(&l));
+            match self.part {
+                Some(p) => f.push(l.part_kills(p)),
+                None => l.kill_runs().for_each(|r| f.push(r)),
+            }
         }
         Some(f)
     }
@@ -1224,16 +1284,21 @@ impl Iterator for ProbeIter<'_> {
 }
 
 /// A trace's state's live rows in canonical order: a merge of its layers' runs (each layer lies in the order), as many
-/// as it has. A layer's ids come in ascending order, so whether one is killed above is a merge too: a cursor a layer
-/// above into its kills (its partition's, when restricted), each moving forward only. A scan reads its rows and the
-/// kills above them once each, and one search a layer pair to place the cursors.
+/// as it has. A layer's ids come in ascending order, its partitions too (the canonical order leads with the
+/// partition), so whether one is killed above is a merge too: a cursor a layer above into the kills of the row's
+/// partition (`gone(part, id)`, ascending within a partition), each moving forward only, and placed again by one
+/// search when the layer's rows reach the next partition. A scan reads its rows and the kills above them once each.
 pub struct Scan<'a> {
     chain: View<'a>,
     // copy: not block data (a cursor a layer: its handle and its place)
     heads: Vec<(Layer<'a>, u32, u32)>,
-    // copy: not block data (a cursor a pair of layers: layer k's place in the kills of layer j above it, j < k)
-    at: Vec<Vec<usize>>,
+    // copy: not block data (a cursor a pair of layers, j < k)
+    at: Vec<Vec<KillCursor<'a>>>,
 }
+
+/// Layer k's cursor into the kills of layer j above it: the partition it reads (of k's last row asked), that
+/// partition's kills in layer j, and its place in them.
+type KillCursor<'a> = (Option<i64>, &'a [u32], usize);
 
 impl<'a> Scan<'a> {
     fn new(chain: &View<'a>) -> Scan<'a> {
@@ -1244,33 +1309,31 @@ impl<'a> Scan<'a> {
                 (l, s.start, s.end)
             })
             .collect();
-        let at = (0..heads.len())
-            .map(|k| {
-                (0..k)
-                    .map(|j| {
-                        let ks = chain.kills_of(&heads[j].0);
-                        partition_point(ks.len(), |i| {
-                            chain.touch(1);
-                            ks[i] < heads[k].1
-                        })
-                    })
-                    .collect()
-            })
-            .collect();
+        let at = (0..heads.len()).map(|k| vec![(None, &[][..], 0); k]).collect();
         Scan { chain: *chain, heads, at }
     }
 
-    /// Whether layer `k`'s row `id` is killed above it, its cursors moved to `id`.
+    /// Whether layer `k`'s row `id` is killed above it, its cursors moved to `id` (placed again, by a search, in the
+    /// kills of `id`'s partition when it is not the last row's).
     fn killed(&mut self, k: usize, id: u32) -> bool {
+        let p = self.chain.part.unwrap_or_else(|| self.heads[k].0.part_of(id));
         let mut gone = false;
         for j in 0..k {
-            let ks = self.chain.kills_of(&self.heads[j].0);
             let c = &mut self.at[k][j];
-            while *c < ks.len() && ks[*c] < id {
-                self.chain.touch(1);
-                *c += 1;
+            if c.0 != Some(p) {
+                let ks = self.heads[j].0.part_kills(p);
+                let chain = &self.chain;
+                *c = (Some(p), ks, partition_point(ks.len(), |i| {
+                    chain.touch(1);
+                    ks[i] < id
+                }));
             }
-            gone |= ks.get(*c) == Some(&id);
+            let (_, ks, at) = c;
+            while *at < ks.len() && ks[*at] < id {
+                self.chain.touch(1);
+                *at += 1;
+            }
+            gone |= ks.get(*at) == Some(&id);
         }
         gone
     }

@@ -3,10 +3,9 @@
 //! through the write pin of its slot. Each function is one item of a phase, independent of the phase's other items:
 //!
 //! - `open`: the freeze's directories, laid out once (the phase that opens the layer): its columns' statistics, its
-//!   index directory, its sketches' directory, its change (`changed`, room for its kills);
+//!   index directory and its sketches' directory (its change stays empty: its kills are its `gone` relation's);
 //! - `stat`: one column's range;
 //! - `index`: one of its spec's hashed indexes (`build_indexes`' builder, one index a call), after its columns' ranges;
-//! - `kills_mut`: its change's ids, which the kills' sort writes in place;
 //! - `encode_open`, `encode_col`, `encode_perm`: its own rows in its shape's encoding (P§12: Packed, Dict, Ranged),
 //!   laid out once, then a column a call and a permutation index a call, read where the rows lie;
 //! - `seal`: the relation frozen (its sort column, its directory's count, its live rows), its rows' every other item
@@ -37,9 +36,9 @@ fn check_open(pin: &BlockPin, rel: &Relation) {
 }
 
 /// Lays out the freeze's directories of an open layer `rel` of `spec`: a range a column (`stat`), the index directory
-/// (`spec.indexes`, and room for the orders added after it is frozen), a sketch a column when `sketched` (`sketch`),
-/// and its change, room for `kills` ids (`kills_mut`). False when the block has no room.
-pub fn open(pin: &mut BlockPin, rel: &Relation, spec: &Spec, kills: usize, sketched: bool) -> bool {
+/// (`spec.indexes`, and room for the orders added after it is frozen), and a sketch a column when `sketched`
+/// (`sketch`). False when the block has no room. A layer records no change of its own: its kills are its `gone` relation's.
+pub fn open(pin: &mut BlockPin, rel: &Relation, spec: &Spec, sketched: bool) -> bool {
     check_open(pin, rel);
     let block = pin.block();
     let a = rel.arity as usize;
@@ -47,12 +46,6 @@ pub fn open(pin: &mut BlockPin, rel: &Relation, spec: &Spec, kills: usize, sketc
     let (Some(sp), Some(ixp)) = (block.try_alloc_t::<ColStats>(a.max(1)), block.try_alloc_t::<Index>(room)) else { return false };
     let sk = if sketched {
         let Some(p) = block.try_alloc_t::<Span<u8>>(a.max(1)) else { return false };
-        Some(p)
-    } else {
-        None
-    };
-    let cp = if kills > 0 {
-        let Some(p) = block.try_alloc_t::<u32>(kills) else { return false };
         Some(p)
     } else {
         None
@@ -66,9 +59,6 @@ pub fn open(pin: &mut BlockPin, rel: &Relation, spec: &Spec, kills: usize, sketc
         Span::set(&rel.indexes, ixp, room);
         if let Some(p) = sk {
             Span::set(&rel.sketches, p.cast::<u8>(), a * size_of::<Span<u8>>());
-        }
-        if let Some(p) = cp {
-            Span::set(&rel.changed, p, kills);
         }
     }
     true
@@ -149,22 +139,12 @@ pub fn encode_perm(pin: &mut BlockPin, rel: &Relation, at: usize, x: usize, rows
     unsafe { crate::packed::writer::write_perm(block, &*block.ptr::<crate::packed::Packed>(at), x, rows, scratch) }
 }
 
-/// The layer's change: room for its kills (`open`'s), written in place by the kills' sort, ascending, each once.
-#[allow(clippy::mut_from_ref)]
-pub fn kills_mut<'p>(pin: &'p mut BlockPin, rel: &Relation) -> &'p mut [u32] {
-    check_open(pin, rel);
-    // SAFETY: the open relation's change, laid out by `open` in the block `pin` holds to write; borrowed for as long as
-    // the pin is.
-    unsafe { std::mem::transmute::<&mut [u32], &'p mut [u32]>(rel.changed.as_mut_slice()) }
-}
-
 /// Freezes the layer: sorted on `spec.sort` (its rows were written in the trace's canonical order), its directory
 /// holding `spec.indexes` (each built, `index`), its `n` own rows live (its relation's, or its encoded form's). After
 /// every item of its other phases, and before its orders (`Relation::add_order`) and sketches (`sketch`).
 pub fn seal(pin: &mut BlockPin, rel: &Relation, spec: &Spec, n: u32) {
     check_open(pin, rel);
-    let ch = rel.changed.as_slice();
-    assert!(ch.windows(2).all(|w| w[0] < w[1]) && ch.last().is_none_or(|&k| k < rel.base_rows), "a layer's kills: rows below it, ascending, once");
+    assert!(rel.changed.as_slice().is_empty(), "a layer's kills are kept once, in its gone relation: its rows record no change");
     rel.set_sort_col(spec.sort.map(usize::from));
     rel.nindex.store(spec.indexes.len() as u32, Relaxed);
     assert!(rel.rows.is_empty() || rel.rows.len() == n, "a layer's rows are its relation's or its encoded form's");
