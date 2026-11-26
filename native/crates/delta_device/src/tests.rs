@@ -24,6 +24,8 @@ fn device() {
                 std::env::set_var("RERAIL_CPU_EXEC", "vec");
             }
         }
+        let d = Gpu::host().map(|g| g.devices());
+        eprintln!("the tests' device: {d:?} (RERAIL_GPU={:?})", std::env::var_os("RERAIL_GPU"));
     });
 }
 

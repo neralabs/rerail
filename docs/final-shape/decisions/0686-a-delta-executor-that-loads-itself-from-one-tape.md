@@ -867,8 +867,12 @@ twins, checked against them on ukl_vec; no Metal run"). There were four gaps:
 
   The shape script checks each of these, and that delta_exec does not depend on rerail-gpu.
 
-Not built: the CPU device's buffers stand for a discrete GPU's memory. No discrete GPU ran here, nor any GPU: there
-is no Metal run until the user lifts that. `Impl::Compiled` is refused ("compiled ahead, which is not built").
+On a GPU (the user's answer: run it on the farm's M3 host): `rerail-delta-device`'s three tests ran on an Apple M3
+Max's Metal GPU (`RERAIL_GPU=metal`; the tests print the device they opened, `Devices::METAL`), 3 of 3, in 0.43 s:
+the device table read by a kernel, the UKL `square` checked against its twin and run by `run_on`, and the same on
+replicas in domain 1, each a `DeviceCopy` in a Metal buffer of its own. No discrete GPU ran: an Apple GPU's memory
+is unified, so domain 1 there is the device's own buffers, as on the CPU backend. `Impl::Compiled` is refused
+("compiled ahead, which is not built").
 
 Checks:
 
