@@ -2180,66 +2180,6 @@
         }
       }
     },
-    "ruff-n813-camelcase-imported-as-lowercase": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 5
-        }
-      }
-    },
-    "ruff-n814-camelcase-imported-as-constant": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-n815-mixed-case-variable-in-class-scope": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 6,
-          "translationOnly": 4
-        }
-      }
-    },
-    "ruff-n816-mixed-case-variable-in-global-scope": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 5,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-n817-camelcase-imported-as-acronym": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 2
-        }
-      }
-    },
-    "ruff-n818-error-suffix-on-exception-name": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 4,
-          "translationOnly": 4
-        }
-      }
-    },
     "ruff-npy001-numpy-deprecated-type-alias": {
       "reason": "recorded by the suite, not yet explained",
       "right": "unknown",

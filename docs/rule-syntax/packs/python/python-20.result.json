@@ -1,0 +1,8 @@
+[
+  { "id": "ruff-n813-camelcase-imported-as-lowercase", "status": "same" },
+  { "id": "ruff-n814-camelcase-imported-as-constant", "status": "same" },
+  { "id": "ruff-n815-mixed-case-variable-in-class-scope", "status": "same" },
+  { "id": "ruff-n816-mixed-case-variable-in-global-scope", "status": "same" },
+  { "id": "ruff-n817-camelcase-imported-as-acronym", "status": "same" },
+  { "id": "ruff-n818-error-suffix-on-exception-name", "status": "same" }
+]
