@@ -168,6 +168,11 @@ interface AuditSource {
   readonly log: StoredListLog;
 }
 
+/** The place an audit's stored `column` is named under (`nameOnce`), one for every page that reads it, so one line names it. */
+function auditColumnPlace(auditId: string, column: string): string {
+  return `audit ${auditId} ${column}`;
+}
+
 /**
  * The line that names `row`'s audit and where its damaged `list` text is, once for each such text, on the error output
  * of the reader that read it: `daemon.log` for the API and a coding agent's `audits_list`, the command's own error
@@ -179,7 +184,7 @@ function sayUnreadable({ database, log }: AuditSource, row: AuditReadRow, list: 
   const { column, name, item } = STORED_LISTS[list];
   // The column and table names the schema gives, so the line names the place a person mends.
   const [where, place] = copy === null
-    ? [`audit ${row.auditId} ${column.name}`, `the ${column.name} of its own row`]
+    ? [auditColumnPlace(row.auditId, column.name), `the ${column.name} of its own row`]
     : [`copy ${copy}`, `${auditRuleProvenances.ruleProvenance.name} of ${getTableName(auditRuleProvenances)} row ${copy}, which every audit naming it reads,`];
   nameOnce(log, { file: database.$client.name, place: where }, `rerail: ${database.$client.name}: audit ${row.auditId} reads with no ${name}, and a failure `
     + `that says so: ${place} is not a JSON array of ${ITEMS[item]} (${why}).\n`);
@@ -544,6 +549,9 @@ function listRepositoryAudits(
   const { limit, offset } = paging(query);
   const workspaceRoot = query.workspaceRoot ?? null;
   const status = query.status ?? null;
+  // The page's filters, on its rows and in `lengths` on the repository audits they keep, so only the audits the page
+  // lists have their lists tested.
+  const keeps = (root: SQL, auditStatus: SQL) => sql`(${workspaceRoot} IS NULL OR ${root} = ${workspaceRoot}) AND (${status} IS NULL OR ${auditStatus} = ${status})`;
   // The audit's failures past those it lists; a file only older builds wrote has no such table.
   const unlisted = holdsUnlistedTable(database)
     ? sql`(SELECT ${auditUnlistedFailures.count} FROM ${auditUnlistedFailures} WHERE ${auditUnlistedFailures.auditId} = audit.audit_id)`
@@ -576,7 +584,8 @@ function listRepositoryAudits(
     ),
     lengths AS MATERIALIZED (
       SELECT ${audits.auditId} AS audit_id, ${listLengths()} FROM ${audits}
-      WHERE ${audits.auditId} IN (SELECT ${repositoryAudits.auditId} FROM ${repositoryAudits})
+      WHERE ${audits.auditId} IN (SELECT kept.audit_id FROM ${repositoryAudits} kept
+        WHERE kept.workspace_root IN (SELECT workspace_root FROM repositories) AND ${keeps(sql`kept.workspace_root`, sql`kept.status`)})
     )
     SELECT
       repositories.workspace_root AS workspaceRoot,
@@ -602,8 +611,7 @@ function listRepositoryAudits(
     LEFT JOIN ${repositoryAudits} repositoryAudit ON repositoryAudit.workspace_root = repositories.workspace_root
     LEFT JOIN ${audits} audit ON audit.audit_id = repositoryAudit.audit_id
     LEFT JOIN lengths ON lengths.audit_id = audit.audit_id
-    WHERE (${workspaceRoot} IS NULL OR repositories.workspace_root = ${workspaceRoot})
-      AND (${status} IS NULL OR repositoryAudit.status = ${status})
+    WHERE ${keeps(sql`repositories.workspace_root`, sql`repositoryAudit.status`)}
     ORDER BY repositories.workspace_root
     LIMIT ${limit} OFFSET ${offset}
   `);
@@ -848,12 +856,12 @@ function readableHistory(source: AuditSource, rows: readonly HistoryRow[]): Viol
   return entries;
 }
 
-/** The line that names an audit whose violations the history leaves out (`readableHistory`), once for each audit. */
+/** The line that names an audit whose violations the history leaves out (`readableHistory`), once for each audit (`auditColumnPlace`). */
 function sayHistoryLeftOut({ database, log }: AuditSource, auditId: string): void {
   const file = database.$client.name;
   // The column name the schema gives, so the line names the place a person mends.
   const column = audits.violations.name;
-  nameOnce(log, { file, place: `history audit ${auditId} ${column}` }, `rerail: ${file}: the violation history leaves out `
+  nameOnce(log, { file, place: auditColumnPlace(auditId, column) }, `rerail: ${file}: the violation history leaves out `
     + `violations of audit ${auditId}: the ${column} of its row holds no JSON object for them, which only a damaged file or a hand edit leaves.\n`);
 }
 

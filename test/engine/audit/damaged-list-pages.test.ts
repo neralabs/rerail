@@ -249,3 +249,66 @@ describe("the repository audit pages with an audit whose stored lists do not rea
     }
   });
 });
+
+describe("daemon.log with an audit both the history and the audits list read", () => {
+  it("names the audit's damaged violations_json in one line", async () => {
+    const path = await temporaryDatabase();
+    const auditIds = fourAudits(path);
+    damage(path, auditIds[2]!, "violations_json", '[{"ruleId":"x"');
+    const stderr = spyOnStderr();
+    const store = new SqliteAuditStore(path);
+    try {
+      expect(walk(store, 20)[0]!.ids).toHaveLength(9);
+      expect(store.list({ limit: 20 }).audits.find(audit => audit.auditId === auditIds[2])?.violations).toEqual([]);
+      expect(stderr.logged().split("\n").filter(line => line.includes(auditIds[2]!))).toHaveLength(1);
+    } finally {
+      store.close();
+      stderr.restore();
+    }
+  });
+});
+
+describe("the repository audits page's cost", () => {
+  it("tests the stored lists of the audits a filtered or scoped page lists, and of no other", async () => {
+    const path = await temporaryDatabase();
+    const auditIds = fourAudits(path);
+    const client = new Database(path);
+    client.prepare("UPDATE repository_audits SET status = 'running' WHERE workspace_root = '/w3'").run();
+    client.close();
+    const store = new SqliteAuditStore(path);
+    const probe = new Database(path, { readonly: true });
+    const reads = vi.spyOn(Object.getPrototypeOf(probe.prepare("SELECT 1")) as Database.Statement, "all");
+    let statements: Array<{ source: string; params: unknown[] }> = [];
+    try {
+      const pages = [store.listRepositoryAudits({ workspaceRoot: "/w2" }), store.listRepositoryAudits({ status: "running" }),
+        store.listRepositoryAudits({}, ["remote:github.com/acme/none"])];
+      expect(pages.map(page => page.repositories.map(repository => repository.workspaceRoot))).toEqual([["/w2"], ["/w3"], []]);
+      statements = reads.mock.contexts.map((statement, index) => ({ source: (statement as Database.Statement).source, params: reads.mock.calls[index]! }))
+        .filter(statement => statement.source.includes("lengths AS MATERIALIZED"));
+    } finally {
+      reads.mockRestore();
+      store.close();
+    }
+    // Each page's statement again, its `json_valid`, the first test of each list, keeping each text it tests.
+    try {
+      const violationsOf = new Map(auditIds.map(id => [id, probe.prepare("SELECT violations_json FROM audits WHERE audit_id = ?").pluck().get(id)]));
+      const tested = statements.map(({ source, params }) => {
+        const texts = new Set<unknown>();
+        probe.function("json_valid", (text: unknown) => {
+          texts.add(text);
+          try {
+            JSON.parse(String(text));
+            return 1;
+          } catch {
+            return 0;
+          }
+        });
+        probe.prepare(source).all(...params);
+        return auditIds.filter(id => texts.has(violationsOf.get(id)));
+      });
+      expect(tested).toEqual([[auditIds[1]], [auditIds[2]], []]);
+    } finally {
+      probe.close();
+    }
+  });
+});
