@@ -2142,3 +2142,13 @@ Checks (Relax, local, 130 of 130):
 - `the_residency_ages_out_a_runs_slabs_and_the_next_run_loads_again`: the run's slabs are aged out at their lapse,
   and the next run loads the live document from the store's objects, with no parse and an identity delta.
 - `a_content_answered_before_is_never_parsed_again`: aged out, the content is loaded, not parsed.
+
+### The Answerer in the blocks crate (P§12 item 7; 2026-11-26)
+
+P§12 puts its abstractions in the blocks crate, "beside the layer implementation they wrap". `Blobs` was there
+already. `AnswerKind`, `Answer` and the `Answerer` trait now are too, in `rerail_blocks::answer`. A world reader
+writes its leaves into the trait's `Leaves`. The engine's answerers (`Load`, `Parse`, `Intern`) implement it, with
+the run's layer of the world's leaves (`LeavesW`). The trace's layers and `View::chain` are in blocks as B2 built them,
+and `delta_exec::Trace` is the host's handle on them. The operation signature, the registry and `DeltaOp` stay in
+`delta_exec::op` and `contract`, where the rebuild plan's B1 and B3 place them. The shape script refuses a P§12
+abstraction defined in `delta_exec`. Relax, local: 130 of 130.

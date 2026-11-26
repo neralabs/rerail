@@ -563,6 +563,13 @@ def b6(failures: list) -> None:
         failures.append("dir.rs: a slab made without room under the residency's budget")
     if re.search(r"pub fn retire\(", files) or "docs.retire(" in boot:
         failures.append("files.rs/boot.rs: a run's own eager retirement (retirement is the residency's: rerail_slabs)")
+    # P§12: the abstractions live in the blocks crate, beside the layer they wrap: Blobs and Answerer there, the
+    # engine's homes and answerers implementing them.
+    for f, what in (("blob.rs", "pub trait Blobs"), ("answer.rs", "pub trait Answerer")):
+        if what not in (ROOT / "native/crates/blocks/src" / f).read_text():
+            failures.append(f"blocks/src/{f}: {what} missing (P§12: the abstractions live in the blocks crate)")
+    if re.search(r"pub (trait (Blobs|Answerer)|enum (Answer|AnswerKind))\b", files):
+        failures.append("files.rs: a P§12 abstraction defined in delta_exec (it lives in the blocks crate)")
     if "forget_dead(" not in boot:
         failures.append("boot.rs: a run keeps the blobs of slabs the residency let go")
     if "fn executed(" in dirs or "fn executed(" in residency:

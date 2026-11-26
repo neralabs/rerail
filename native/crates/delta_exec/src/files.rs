@@ -219,33 +219,8 @@ impl Store {
 pub const PARSE: i64 = 1;
 pub const INTERN: i64 = 2;
 
-/// P§12 item 7's kinds of answerer: what can change an answer between runs (P§7.2).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum AnswerKind {
-    /// The world, through a leaf the answer read: each leaf recorded, misses too (D3).
-    World,
-    /// Nothing: the key is the whole input; kept by key for every run and workspace (D4).
-    Pure,
-    /// The sub-run's own inputs.
-    SubRun,
-}
-
-/// An answer (P§12 item 7): a row, a blob, or a miss (a world reader's key with nothing there).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Answer {
-    Row(Vec<i64>),
-    Blob(BlobId),
-    Miss,
-}
-
-/// An answerer (P§12 item 7): maps a request's key to its answer, a row or a blob. Its kind says what can change the
-/// answer between runs.
-pub trait Answerer {
-    const KIND: AnswerKind;
-    /// One key. A world reader writes every leaf it read, misses too (D3), into `leaves`, the run's layer of the
-    /// world's leaves; a pure answerer reads no leaf.
-    fn answer(&mut self, key: &[i64], leaves: &mut LeavesW) -> Result<Answer, String>;
-}
+/// The answerers (P§12 item 7), the abstraction in the blocks crate; the engine's three below.
+pub use rerail_blocks::answer::{Answer, AnswerKind, Answerer};
 
 /// What an answerer reaches: the world, the registry, the trace's operations, the directory and the blobs.
 pub struct Reach<'a> {
@@ -266,6 +241,7 @@ pub struct Load<'a> {
 
 impl Answerer for Load<'_> {
     const KIND: AnswerKind = AnswerKind::World;
+    type Leaves = LeavesW;
     fn answer(&mut self, key: &[i64], leaves: &mut LeavesW) -> Result<Answer, String> {
         let a = self.named.iter().find(|a| a.d == key[0]).ok_or_else(|| format!("a load of document {}, which no request names", key[0]))?;
         let Reach { world, reg, ops, dir, blobs } = &mut self.at;
@@ -285,6 +261,7 @@ pub struct Parse<'a> {
 
 impl Answerer for Parse<'_> {
     const KIND: AnswerKind = AnswerKind::Pure;
+    type Leaves = LeavesW;
     fn answer(&mut self, key: &[i64], _: &mut LeavesW) -> Result<Answer, String> {
         let Reach { world, reg, ops, dir, blobs } = &mut self.at;
         let g = BlobId::of_words(&key[..4]);
@@ -310,6 +287,7 @@ pub struct Intern<'a> {
 
 impl Answerer for Intern<'_> {
     const KIND: AnswerKind = AnswerKind::Pure;
+    type Leaves = LeavesW;
     fn answer(&mut self, key: &[i64], _: &mut LeavesW) -> Result<Answer, String> {
         let a = self.named.iter().find(|a| a.d == key[0]).ok_or_else(|| format!("an intern of document {}, which no request names", key[0]))?;
         let Reach { world, reg, ops, dir, blobs } = &mut self.at;
