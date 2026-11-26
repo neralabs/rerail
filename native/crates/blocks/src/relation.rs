@@ -66,8 +66,9 @@ structure! {
         pub offs: Span<u32>,
         pub rows: Span<u32>,
         /// A sorted order's (`ORDER`, `ORDER_ROWS`; decision 0478 step 5b): the leading column's value at every
-        /// `FENCE`th row of the order, each row's tag (an order tagged by its lead's hash), each row's key print (an
-        /// order probed by whole keys). Empty when the order keeps none.
+        /// `FENCE`th row of the order, each row's key print (an order probed by whole keys). Empty when the order keeps
+        /// none. `tags` is always empty: orders sorted by their lead's hash are gone (decision 0187 P1), and the span
+        /// stays so an entry is laid out as kept files written before hold it.
         pub fences: Span<i64>,
         pub tags: Span<u16>,
         pub prints: Span<u8>,
@@ -114,13 +115,12 @@ pub enum OrderRows {
     Range(u32, u32),
 }
 
-/// An order given to a relation's directory (`Relation::try_add_order`): its rows, and its fences, tags and prints,
-/// each a chunk of the block written already.
+/// An order given to a relation's directory (`Relation::try_add_order`): its rows, and its fences and prints, each a
+/// chunk of the block written already.
 #[derive(Clone, Copy, Debug)]
 pub struct GivenOrder {
     pub rows: OrderRows,
     pub fences: Given,
-    pub tags: Given,
     pub prints: Given,
 }
 
@@ -704,7 +704,7 @@ impl Relation {
     /// it after.
     pub unsafe fn try_add_order(&self, block: &Block, cols: &[u16], order: GivenOrder) -> Option<usize> {
         assert!(!cols.is_empty() && cols.len() <= MAX_KEY, "a key of {} columns", cols.len());
-        let GivenOrder { rows, fences, tags, prints } = order;
+        let GivenOrder { rows, fences, prints } = order;
         // SAFETY: the caller's: this relation's descriptor is ours to change.
         unsafe {
             let i = self.next_entry(block)?;
@@ -747,9 +747,9 @@ impl Relation {
                 unsafe { Span::set(dst, block.ptr::<T>(g.at), g.len) }
             }
             set(block, &raw mut (*ix).fences, fences);
-            set(block, &raw mut (*ix).tags, tags);
+            clear(&raw mut (*ix).tags);
             set(block, &raw mut (*ix).prints, prints);
-            (*ix).held = [ids.kept as u64, fences.kept as u64, tags.kept as u64, prints.kept as u64];
+            (*ix).held = [ids.kept as u64, fences.kept as u64, 0, prints.kept as u64];
             self.nindex.fetch_max(i as u32 + 1, Release);
             std::sync::atomic::fence(Release);
             std::ptr::write_volatile(&raw mut (*ix).ncols, cols.len() as u32);

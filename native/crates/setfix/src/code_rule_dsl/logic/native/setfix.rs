@@ -802,7 +802,7 @@ impl Rel {
         let held = old.chains.first().is_some_and(|o| o.cols.len() == k && o.rows() == old.n) && old.sketches.len() == k;
         let made: Option<(Index, Vec<Sketch>)> = (!held).then(|| {
             let mut ix = Index::led((0..k).collect());
-            ix.add_run_in(&old.rows, k, 0, old.n, 0, &old.sorted.within(&ix.cols, k, 0, old.n as u32));
+            ix.add_run_in(&old.rows, k, 0, old.n, 0, &old.sorted.within(&ix.cols, 0, old.n as u32));
             let mut sketches = vec![Sketch::default(); k];
             for id in (0..old.n as u32).filter(|&id| !is_dead(&old.dead, id)) {
                 for (c, sk) in sketches.iter_mut().enumerate() {
@@ -923,7 +923,7 @@ impl Rel {
             // The rows already in runs: those before the delta as of wave 0, the delta's as of its wave; the rest are
             // indexed with the others' at the next `set_delta`.
             let lo = self.lo.min(self.indexed);
-            let known = |a: usize, b: usize| self.sorted.within(&ix.cols, k, a as u32, b as u32);
+            let known = |a: usize, b: usize| self.sorted.within(&ix.cols, a as u32, b as u32);
             let (first, second) = (known(0, lo), known(lo, self.indexed));
             ix.add_run_in(data, k, 0, lo, 0, &first);
             ix.add_run_in(data, k, lo, self.indexed, self.wave, &second);
@@ -1112,17 +1112,16 @@ impl Rel {
         if !keep.is_empty() && !placed.is_empty() {
             let slots = f.slots().expect("rows in a room");
             let cols = &self.idx[0].cols;
-            let tagged = runs::tagged(cols, k);
             let mut dev: Vec<(u32, u32)> = placed.iter().enumerate().flat_map(|(l, (p, _))| (0..p.len()).map(move |i| (l as u32, i))).collect();
             let row_of = |&(l, i): &(u32, u32)| placed[l as usize].0.row(i, k);
-            dev.sort_unstable_by(|a, b| runs::cmp_vals(cols, tagged, &row_of(a), &row_of(b)));
+            dev.sort_unstable_by(|a, b| runs::cmp_vals(cols, &row_of(a), &row_of(b)));
             let mut d = 0;
             keep.retain(|&q| {
                 let row = slots.row(q, k);
-                while d < dev.len() && runs::cmp_vals(cols, tagged, &row_of(&dev[d]), &row).is_lt() {
+                while d < dev.len() && runs::cmp_vals(cols, &row_of(&dev[d]), &row).is_lt() {
                     d += 1;
                 }
-                !(d < dev.len() && runs::cmp_vals(cols, tagged, &row_of(&dev[d]), &row).is_eq())
+                !(d < dev.len() && runs::cmp_vals(cols, &row_of(&dev[d]), &row).is_eq())
             });
         }
         let cpu = keep.len();
@@ -1247,7 +1246,7 @@ impl Rel {
         let split = lo.clamp(from, n);
         for ix in &mut self.idx {
             ix.settle(&self.data, k, w);
-            let known = |a: usize, b: usize| self.sorted.within(&ix.cols, k, a as u32, b as u32);
+            let known = |a: usize, b: usize| self.sorted.within(&ix.cols, a as u32, b as u32);
             let (first, second) = (known(from, split), known(split, n));
             ix.add_run_in(&self.data, k, from, split, self.wave, &first);
             ix.add_run_in(&self.data, k, split, n, w, &second);
@@ -1266,7 +1265,7 @@ impl Rel {
             return;
         }
         for ix in &mut self.idx {
-            let known = self.sorted.within(&ix.cols, k, from as u32, n as u32);
+            let known = self.sorted.within(&ix.cols, from as u32, n as u32);
             ix.add_run_in(&self.data, k, from, n, self.wave, &known);
         }
         self.indexed_to_n();
@@ -1277,7 +1276,7 @@ impl Rel {
         let (from, n, k) = (self.indexed, self.n, self.k);
         for ix in &mut self.idx {
             ix.settle(&self.data, k, u32::MAX);
-            let known = self.sorted.within(&ix.cols, k, from as u32, n as u32);
+            let known = self.sorted.within(&ix.cols, from as u32, n as u32);
             ix.add_run_in(&self.data, k, from, n, 0, &known);
             ix.tier(&self.data, k, FROZEN_RUNS);
         }
@@ -1773,7 +1772,7 @@ impl Fresh {
         if !self.lost && self.n > self.settled && runs::known_beyond_runs() {
             let cols = &rel.idx[0].cols;
             let last = self.slots().expect("its rows").row(self.end as u32 - 1, k);
-            if runs::cmp_vals(cols, runs::tagged(cols, k), &last, row).is_gt() {
+            if runs::cmp_vals(cols, &last, row).is_gt() {
                 self.breaks.push(self.end as u32);
                 // Out of order throughout: sorted whole, the breaks no longer kept.
                 if self.breaks.len() * IN_ORDER > self.n - self.settled + IN_ORDER * IN_ORDER {
@@ -1820,16 +1819,15 @@ impl Fresh {
         }
         let room = Arc::clone(self.room.as_ref().expect("rows in a room"));
         let data = Slots { room: &room, spans: &self.spans }.resolved(k);
-        // The first order's sort (`runs::cmp_vals`: tagged, by the leading value's tag first, then the columns).
+        // The first order's sort (`runs::cmp_vals`: the columns in turn).
         let cols = &rel.idx[0].cols;
-        let tagged = runs::tagged(cols, k);
         let cmp = |a: u32, b: u32| -> std::cmp::Ordering {
-            runs::cmp_ids(&data, k, cols, tagged, a, b)
+            runs::cmp_ids(&data, k, cols, a, b)
         };
         let mut order = self.live_from(settled);
         runs::presorted::site(runs::presorted::FRESH, order.len(), |i| cmp(order[i - 1], order[i]).is_gt());
         let sort = |v: &mut [u32]| {
-            runs::sort_keyed(v, tagged, cols.len(), |q, i| data.value(q, k, cols[i]), cmp, &mut runs::NoTags);
+            runs::sort_keyed(v, cols.len(), |q, i| data.value(q, k, cols[i]), cmp);
         };
         if self.lost || !runs::known_beyond_runs() {
             sort(&mut order);
@@ -5240,7 +5238,7 @@ impl Csr {
                 // which every probe gives.
                 let cols: Vector<usize> = self.cols.iter().copied().chain(self.then).collect();
                 let mut order = Index::printed_on(cols.clone(), if printed { self.cols.len() } else { 0 });
-                order.add_run_in(&rel.rows, rel.k, 0, rel.n, 0, &rel.sorted.within(&cols, rel.k, 0, rel.n as u32));
+                order.add_run_in(&rel.rows, rel.k, 0, rel.n, 0, &rel.sorted.within(&cols, 0, rel.n as u32));
                 run_counts().orders_made.fetch_add(1, AtomicOrdering::Relaxed);
                 loaded(1, thread_cpu() - c0, 0);
                 if env_set!("RERAIL_SPIKE_INDEX") {
@@ -7142,7 +7140,7 @@ impl InRel {
         let k = types.len();
         // Rows that lie in an order (a kept relation's canonical one) are known sorted: a scan of them for the next
         // step's probes is not sorted again (decision 0187).
-        let sorted = src.order().map_or_else(runs::Sorted::default, |cols| runs::Sorted::whole(src.len() as u32, k, &cols));
+        let sorted = src.order().map_or_else(runs::Sorted::default, |cols| runs::Sorted::whole(src.len() as u32, &cols));
         let view = View { src, cols: (0..k).collect(), ids: None, eqs: Vec::new() };
         Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted, sketches: Vec::new(), serves: Vec::new(), dead: crate::code_rule_dsl::facts::rows::vector_in(None, 0), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: crate::code_rule_dsl::facts::rows::vector_in(None, 0), stats: None })
     }
@@ -8815,19 +8813,17 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 Key::Slot(s) => From::Col(binds.iter().find(|&&(_, b)| b == s)?.0),
             });
         }
-        let tagged = index.is_tagged(k);
         // The scan's rows known sorted by the probes' key (decision 0187): its columns in turn (constants hold no
-        // order), tagged by the first when the next order is.
+        // order).
         let mut by: Vector<usize> = rerail_blocks::vector::Vector::new();
         for f in &from {
             if let From::Col(c) = *f && !by.contains(&c) {
                 by.push(c);
             }
         }
-        let tag = if tagged && let From::Col(c) = from[0] { Some(c) } else { None };
         let known: Vec<(usize, usize)> = if left.is_some() || !runs::known_beyond_runs() { Vec::new() } else { match rows {
-            Rows::In(r) => r.sorted.within_key(r.k, tag, &by, lo, hi),
-            Rows::Comp(r) => r.sorted.within_key(r.k, tag, &by, lo, hi),
+            Rows::In(r) => r.sorted.within(&by, lo, hi),
+            Rows::Comp(r) => r.sorted.within(&by, lo, hi),
             Rows::Source(_) => Vec::new(),
         }.into_iter().map(|(a, b)| ((a - lo) as usize, (b - lo) as usize)).collect() };
         if known == [(0, n)] {
@@ -8857,7 +8853,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             read(&mut vals, 0);
         }
         let cmp = |a: u32, b: u32| vals[a as usize * m..][..m].cmp(&vals[b as usize * m..][..m]);
-        let key_cmp = |a: u32, b: u32| (if tagged { runs::tag(vals[a as usize * m]).cmp(&runs::tag(vals[b as usize * m])) } else { std::cmp::Ordering::Equal }).then_with(|| cmp(a, b));
+        let key_cmp = cmp;
         // Rows a cut left come in the order their walk read them: in this key's order where the walk's order was
         // the same (one pass tells), and then they are read as they are.
         let known: Vec<(usize, usize)> = match left {
@@ -8872,7 +8868,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         runs::presorted::site(runs::presorted::SCAN, n, |i| key_cmp(i as u32 - 1, i as u32).is_gt());
         // The stretches not known sorted are sorted, then every piece merged (several in-order ranges are merged,
         // not sorted again).
-        let taken = runs::sort_pieces(&mut order, &known, |v| { runs::sort_keyed(v, tagged, m, |q, i| vals[q as usize * m + i], cmp, &mut runs::NoTags); }, |a, b| key_cmp(a, b).is_le());
+        let taken = runs::sort_pieces(&mut order, &known, |v| { runs::sort_keyed(v, m, |q, i| vals[q as usize * m + i], cmp); }, |a, b| key_cmp(a, b).is_le());
         runs::presorted::site_known(runs::presorted::SCAN, taken as u64);
         Some(order.into_iter().map(|q| id_at(q as usize)).collect())
     }
@@ -9973,10 +9969,8 @@ pub mod posted_tests {
         let old = InRel::moved(rel);
         assert!(old.chains.iter().all(|ix| ix.runs() <= FROZEN_RUNS), "a frozen order holds a few runs");
         for ix in &old.chains {
-            // The full-row order keeps a 16-bit tag an id instead of fences (`runs::tagged`); each order a print of
-            // its lead an id (`Index::led`, t56 step 7 C).
-            let most = if runs::tagged(&ix.cols, old.k) { 7.5 } else { 5.5 };
-            assert!((ix.bytes() as f64) < most * old.n as f64, "{:?}: {} bytes a row", ix.cols, ix.bytes() as f64 / old.n as f64);
+            // Each order an id and a print of its lead an id (`Index::led`, t56 step 7 C), and its fences.
+            assert!((ix.bytes() as f64) < 5.5 * old.n as f64, "{:?}: {} bytes a row", ix.cols, ix.bytes() as f64 / old.n as f64);
         }
         let based = Rel::based("t", b"iii", &old, None).expect("a kept relation to start from");
         for (ix, kept) in based.idx.iter().zip(&old.chains) {
@@ -10006,11 +10000,11 @@ pub mod posted_tests {
             let rows = if w == 2 { 2 * FRESH_BATCH + 999 } else { 6000 };
             let mut made = 0;
             while made < rows {
-                // A stretch in the first order (tagged: the leading value's tag, then the columns), then a few rows
+                // A stretch in the first order (the columns in turn), then a few rows
                 // as they come.
                 let mut stretch: Vec<Vector<i64>> = (0..100 + next(400)).map(|_| rerail_blocks::vector![next(60), next(30), next(25)]).collect();
                 let first = known.idx[0].cols.clone();
-                stretch.sort_by(|a, b| runs::cmp_vals(&first, true, a, b));
+                stretch.sort_by(|a, b| runs::cmp_vals(&first, a, b));
                 stretch.extend((0..next(4)).map(|_| rerail_blocks::vector![next(60), next(30), next(25)]));
                 for row in stretch.into_iter().take(rows - made) {
                     f.offer(&row, &known);
@@ -10273,7 +10267,7 @@ pub mod posted_tests {
         let r = InRel::moved(rel);
         let rows: Vector<[i64; 2]> = (0..r.n).map(|i| [r.at(i).at(0), r.at(i).at(1)]).collect();
         assert_eq!(rows, [[1, 1], [2, 3], [5, 0], [5, 1]]);
-        assert_eq!((r.ndead, r.sorted.within(&[0], 2, 0, r.n as u32)), (0, vec![(0, 4)]));
+        assert_eq!((r.ndead, r.sorted.within(&[0], 0, r.n as u32)), (0, vec![(0, 4)]));
     }
 
     /// Decision 0456 K7: a source whose rows lie in an order (`Source::order`, a kept relation read in place) is known
@@ -10294,11 +10288,10 @@ pub mod posted_tests {
         let cols = vec![Some(rerail_blocks::vector![1, 1, 2, 5]), Some(rerail_blocks::vector![3, 4, 0, 9])];
         let src = super::columns_source(vec!["a".into(), "b".into()], cols);
         let r = InRel::over_source(Arc::new(InOrder(src.clone())), b"ii".to_vec());
-        assert_eq!(r.sorted.within_key(2, None, &[0], 0, 4), vec![(0, 4)], "a scan by its first column");
-        // Not in the dedup order on both columns, which leads with a hash (`runs::tagged`).
-        assert!(r.sorted.within_key(2, Some(0), &[0, 1], 0, 4).is_empty(), "not in the dedup order");
-        assert!(r.sorted.within_key(2, None, &[1], 0, 4).is_empty(), "not by its second alone");
-        assert!(InRel::over_source(src, b"ii".to_vec()).sorted.within_key(2, None, &[0], 0, 4).is_empty(), "a source with no order");
+        assert_eq!(r.sorted.within(&[0], 0, 4), vec![(0, 4)], "a scan by its first column");
+        assert_eq!(r.sorted.within(&[0, 1], 0, 4), vec![(0, 4)], "in the order on both columns");
+        assert!(r.sorted.within(&[1], 0, 4).is_empty(), "not by its second alone");
+        assert!(InRel::over_source(src, b"ii".to_vec()).sorted.within(&[0], 0, 4).is_empty(), "a source with no order");
     }
 
 
@@ -10850,7 +10843,7 @@ pub mod fresh_tests {
             let mut rel = Rel::new("t", b"iiii");
             let old = rel.idx[0].cols.clone();
             let mut rows: Vector<[i64; 4]> = (0..500i64).map(|i| [i, (i * 7919) % 211, i % 3, 0]).collect();
-            rows.sort_by(|a, b| runs::cmp_vals(&old, runs::tagged(&old, 4), a, b));
+            rows.sort_by(|a, b| runs::cmp_vals(&old, a, b));
             let mut f = Fresh::default();
             for (i, r) in rows.iter().enumerate() {
                 f.offer(r, &rel);
@@ -10863,9 +10856,8 @@ pub mod fresh_tests {
             assert_ne!(cols, old, "the first order changed");
             assert!(rel.push_fresh(f, false));
             assert_eq!(rel.n, 500);
-            let t = runs::tagged(&cols, 4);
             for id in 1..rel.n as u32 {
-                assert!(runs::cmp_ids(&rel.data, 4, &cols, t, id - 1, id).is_le(), "settle first {settle_first}: rows {} and {id}", id - 1);
+                assert!(runs::cmp_ids(&rel.data, 4, &cols, id - 1, id).is_le(), "settle first {settle_first}: rows {} and {id}", id - 1);
             }
         }
     }
