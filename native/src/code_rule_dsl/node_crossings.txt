@@ -1,6 +1,4 @@
 # <pack> <relation>: relations of the cross-file part holding a node id (decision 0677) still to fix; the list only shrinks (src/code_rule_dsl/tools.rs, pack_split_tests).
-blade doc_code_kind
-blade php_truthy
 data-layer app_assign
 data-layer app_type
 data-layer ca_valid
@@ -192,13 +190,7 @@ django smi_doc
 django smi_names
 django smi_reported_doc
 django tam_task_call
-javascript allowed
-javascript code_string
-javascript excused
 javascript significant_bits
-javascript string_call
-javascript types_apart
-javascript unsorted
 node api_use
 node base
 node concat
@@ -210,10 +202,6 @@ node piece_slash
 node slash
 node spec_value
 node val
-php php_blocks
-php php_numbered
-php php_truthy
-php php_written_key
 python-main FAST003
 python-main fast003_alt_10
 python-main fast003_alt_13
@@ -221,20 +209,3 @@ python-main fast003_alt_2
 python-main fast003_call_has
 python-main fast003_fn_has
 python-main fast003_init_has
-react checked_prop
-rust dec_lit_repr
-rust lit_group
-sql AL05
-sql use
-typescript circular
-typescript deep_root
-typescript exempt
-typescript ignored
-typescript missing
-typescript out_of_name
-typescript reach
-typescript unwanted
-vue lacks_return
-vue vcompletes
-vue vfalls_off
-vue vtry_part_completes

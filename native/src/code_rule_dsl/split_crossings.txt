@@ -29,4 +29,3 @@ data-layer:alone vmi_backed
 django dar_non_atomic_wrapped
 django ghw_model_instance
 django tam_task_call
-javascript types_apart

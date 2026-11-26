@@ -89,6 +89,8 @@
 // the type of n's own value. value_type cannot say it: its key is the value's text, which "12" and 12 share, and a
 // container or bytes has no text in `value`.
 .decl value_type_of(n: node, t: symbol)                  // the type of n's value, containers and bytes included
+// static_value_type_of(n, t): the type of static_value's value of n, as value_type_of names it.
+.decl static_value_type_of(n: node, t: symbol)
 // fstring_piece(n, i, kind, v): the pieces of f-string n (a Python string, concatenated_string or format_specifier
 // whose value is a JoinedStr), in order from 0: in f'a{x!r:>10}b{y=}', (0, "literal", "a"), (1, "interpolation",
 // "x"), (1, "format_spec", ">10"), (2, "literal", "by="), (3, "interpolation", "y"), (3, "debug", "y="). A literal

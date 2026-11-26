@@ -68,13 +68,16 @@ php_word_const("true", "bool"). php_word_const("false", "bool"). php_word_const(
 php_array_spread(n) :- child(n, e, _), child(e, u, _), kind(u, "variadic_unpacking").
 
 .decl php_truthy(n: node, b: symbol)
-php_truthy(n, b) :- php_value(n, t, v), php_falsy(t, v), b = "false".
-php_truthy(n, "true") :- php_value(n, t, v), !php_falsy(t, v).
-// false, null, 0, -0, 0.0, "", "0" and [] are falsy; every other value is truthy.
-.decl php_falsy(t: symbol, v: symbol)
-php_falsy("bool", "false"). php_falsy("null", "null"). php_falsy("int", "0"). php_falsy("string", "").
-php_falsy("string", "0"). php_falsy("array", "[]").
-php_falsy("float", v) :- php_value(_, "float", v), match("-?[0_]*(\\.[0_]*)?([eE][-+]?[0-9_]+)?", v).
+php_truthy(n, "false") :- php_falsy(n).
+php_truthy(n, "true") :- php_value(n, _, _), !php_falsy(n).
+// php_falsy(n): n's value is false, null, 0, -0, 0.0, "", "0" or []; every other value is truthy. Keyed by the
+// node, not the value (decision 0677).
+.decl php_falsy(n: node)
+php_falsy(n) :- php_value(n, t, v), php_falsy_const(t, v).
+php_falsy(n) :- php_value(n, "float", v), match("-?[0_]*(\\.[0_]*)?([eE][-+]?[0-9_]+)?", v).
+.decl php_falsy_const(t: symbol, v: symbol)
+php_falsy_const("bool", "false"). php_falsy_const("null", "null"). php_falsy_const("int", "0").
+php_falsy_const("string", ""). php_falsy_const("string", "0"). php_falsy_const("array", "[]").
 
 .decl php_int(n: node, i: number)
 php_int(n, to_number(v)) :- php_value(n, "int", v).

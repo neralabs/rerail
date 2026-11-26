@@ -562,6 +562,14 @@ pub fn fragment(name: &str) -> Option<(GrammarDialect, &'static str)> {
         .map(|(_, dialect, start)| (*dialect, *start))
 }
 
+/// The one dialect an embedding of id `via` gives (`compiled-view`: a Blade template's PHP); `None` for another name,
+/// or an embedding of several.
+pub fn embedding_dialect(via: &str) -> Option<GrammarDialect> {
+    let mut of = GrammarDialect::ALL.iter().flat_map(|d| d.embeds().iter()).filter(|(v, _)| v.id() == via).map(|&(_, d)| d);
+    let first = of.next()?;
+    of.all(|d| d == first).then_some(first)
+}
+
 /// Whether `name` is a grammar a rule may name in `embed`, `sub_tape` or `parsed`: a supported dialect's label, a
 /// fragment (decision 0082), or an embedding's id (`script-block`: the program its embedder writes, decision 0222).
 /// A dialect this build leaves out is still a name.

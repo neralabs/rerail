@@ -194,9 +194,12 @@ vprop_name(c, x, k) :- vprops_call(c), field(c, "type_arguments", ta), child(ta,
     child(t, m, _), kind(m, "property_signature"), field(m, "name", k), key_static(k, x).
 // defineProps<Props>() with `interface Props { … }` or `type Props = { … }` in the same file.
 vprop_name(c, x, k) :- vprops_call(c), field(c, "type_arguments", ta), child(ta, t, 0), kind(t, "type_identifier"),
-    text(t, y), vprops_type(y, body), child(body, m, _), kind(m, "property_signature"), field(m, "name", k),
-    key_static(k, x).
-.decl vprops_type(y: symbol, body: node)
-vprops_type(y, b) :- kind(i, "interface_declaration"), vin_script(i), field(i, "name", n), text(n, y), field(i, "body", b).
-vprops_type(y, b) :- kind(i, "type_alias_declaration"), vin_script(i), field(i, "name", n), text(n, y),
-    field(i, "value", b), kind(b, "object_type").
+    text(t, y), docof(t, f), vprops_type(f, y, body), child(body, m, _), kind(m, "property_signature"),
+    field(m, "name", k), key_static(k, x).
+// vprops_type(f, y, body): document f's script declares type y with members body. By document: a type of another
+// file's is not this file's (decision 0677).
+.decl vprops_type(f: number, y: symbol, body: node)
+vprops_type(f, y, b) :- kind(i, "interface_declaration"), vin_script(i), field(i, "name", n), text(n, y),
+    field(i, "body", b), docof(i, f).
+vprops_type(f, y, b) :- kind(i, "type_alias_declaration"), vin_script(i), field(i, "name", n), text(n, y),
+    field(i, "value", b), kind(b, "object_type"), docof(i, f).

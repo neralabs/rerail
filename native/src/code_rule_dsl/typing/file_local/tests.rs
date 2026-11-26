@@ -1130,6 +1130,56 @@ outer2(f) :- uses(f, _), fl_outer(f, y), y != "self".
     }
 }
 
+/// Decision 0677: an export that joins a file's nodes with a constant (`fl_lookup`'s `modules`, facts alone) is a
+/// lookup made in the file, left as written. Handed on as parts, the constant's part and its key would be tables of
+/// every file's values, and the readers that join them at the file's nodes would go to the cross part. The same join
+/// with a derived relation (`fl_outer`'s `bound`) is handed on as parts as before.
+#[test]
+fn an_export_that_looks_a_files_nodes_up_in_a_constant_is_left_whole() {
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.input node, child, text
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), text(n, s).
+.decl uses(f: node, x: symbol)
+uses(f, x) :- node(_, f, "identifier", _, _), text(f, x), defined(x).
+.decl modules(s: symbol, m: symbol)
+modules("fs", "fs"). modules("fs", "node:fs"). modules("path", "path"). modules("path", "node:path").
+.decl star(e: node, s: symbol)
+star(e, s) :- node(_, e, "export_statement", _, _), child(e, c, _), text(c, s).
+.decl fl_lookup(e: node, m: symbol)
+fl_lookup(e, m) :- star(e, s), modules(s, m).
+.decl looked(e: node)
+.output looked
+looked(e) :- uses(e, x), fl_lookup(e, x).
+.decl encl(f: node, p: node)
+encl(f, p) :- node(_, p, "block", _, _), child(p, f, _).
+.decl bound(p: node, x: symbol)
+bound(p, x) :- node(_, p, "block", _, _), child(p, c, _), node(_, c, "assignment", _, _), text(c, x).
+.decl fl_outer(f: node, x: symbol)
+fl_outer(f, x) :- encl(f, p), bound(p, x).
+.decl outer(f: node, x: symbol)
+.output outer
+outer(f, x) :- uses(f, x), fl_outer(f, x).
+"#;
+    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+    let tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    let mut pass = FactorizeExports::new(true);
+    let mut p = Pipeline::new("test", v);
+    p.program(&mut pass);
+    let (out, _) = p.finish().unwrap();
+    assert_eq!(pass.lines.len(), 1, "{:?}", pass.lines);
+    assert!(pass.lines[0].starts_with("fl_outer: handed on as parts"), "{:?}", pass.lines);
+    let lookup: Vec<_> = out.rules().filter(|r| out.rel_name(r.head().rel()) == "fl_lookup").collect();
+    assert_eq!(lookup.len(), 1, "the lookup is left as written:\n{}", out.show());
+    let mut read: Vec<&str> = lookup[0].body().filter_map(|l| l.atom()).map(|a| out.rel_name(a.rel())).collect();
+    read.sort();
+    assert_eq!(read, ["modules", "star"], "{}", out.show());
+}
+
 /// The file-local joins of cross-file rules are pushed on a version as the tree pushes them: the same helpers
 /// (`fl<h>_<head>`, named from their content), the same program.
 #[test]

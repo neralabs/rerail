@@ -25,7 +25,7 @@ vstmt_parent("for_statement"). vstmt_parent("for_in_statement"). vstmt_parent("w
 vstmt_parent("do_statement").
 .decl vcompletes(s: node)
 // Plain statements complete; a return or throw never does.
-vcompletes(s) :- vstatement(s), kind(s, k), vplain_stmt(k).
+vcompletes(s) :- vplain_stmt(s).
 // A block completes when every statement does: walk its statements from the first.
 vcompletes(s) :- kind(s, "statement_block"), !vhas_stmt(s).
 vcompletes(s) :- kind(s, "statement_block"), vfirst_stmt(s, c), vcompletes_from(c).
@@ -50,8 +50,10 @@ vcompletes(s) :- kind(s, "switch_statement"), field(s, "body", b), vbreaks_out(b
 vcompletes(s) :- kind(s, "switch_statement"), field(s, "body", b), vlast_case(b, l), !field(l, "body", _).
 vcompletes(s) :- kind(s, "switch_statement"), field(s, "body", b), vlast_case(b, l), vfirst_stmt(l, c),
     vcompletes_from(c).
-.decl vplain_stmt(k: symbol)
-vplain_stmt(k) :- vstatement(s), kind(s, k), k != "return_statement", k != "throw_statement", !vcompound(k).
+// vplain_stmt(s): statement s is neither a return, a throw nor compound. Keyed by the statement, not its kind over
+// every file's kinds (decision 0677).
+.decl vplain_stmt(s: node)
+vplain_stmt(s) :- vstatement(s), kind(s, k), k != "return_statement", k != "throw_statement", !vcompound(k).
 .decl vcompound(k: symbol)
 vcompound("statement_block"). vcompound("if_statement"). vcompound("labeled_statement"). vcompound("try_statement").
 vcompound("for_statement"). vcompound("for_in_statement"). vcompound("while_statement"). vcompound("do_statement").

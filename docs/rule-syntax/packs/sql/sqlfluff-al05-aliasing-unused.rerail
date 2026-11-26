@@ -27,7 +27,7 @@ alias_key(n, v) :- ident_fold(n, v), quoted(n, "'").
 
 // use(u): identifier u can name a table alias.
 .decl use(u: node)
-use(u) :- column_ref(_, u, _).                                                  // foo.x
+use(u) :- column_ref(_, u, _), kind(u, _).                                     // foo.x
 use(u) :- kind(w, "all_fields"), child(w, o, _), field(o, "name", u).           // foo.*
 use(u) :- column_ref(_, q, u), unset(q).                                        // f(foo), a whole row
 use(u) :- kind(o, "object_reference"), child(r, o, _), kind(r, "relation"), field(o, "schema", u).   // foo.arr

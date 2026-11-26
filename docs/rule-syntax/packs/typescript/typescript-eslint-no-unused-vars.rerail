@@ -156,18 +156,19 @@ exempt(s, x) :- option("ignoreRestSiblings", "true"), variable(s, x, id, _), res
 exempt(s, x) :- option("ignoreRestSiblings", "true"), resolves(r, s, x), rest_sibling(r).
 // ignored(s, x): an ignore pattern matches the name, by the first declaration's kind.
 .decl ignored(s: node, x: symbol)
-ignored(s, x) :- first_decl(s, x, id, _), array_name(id), option("destructuredArrayIgnorePattern", p), finds(p, x).
+// An ignore pattern is a RegExp test (anywhere in the name), made in each rule at its own name (decision 0677).
+ignored(s, x) :- first_decl(s, x, id, _), array_name(id), option("destructuredArrayIgnorePattern", p),
+    match(cat(".*(?:", cat(p, ").*")), x).
 ignored(s, x) :- var(s, x), resolves(r, s, x), estree_parent(r, a), kind(a, "array_pattern"), first_decl(s, x, id, _),
-    kind(id, "identifier"), option("destructuredArrayIgnorePattern", p), finds(p, x).
-ignored(s, x) :- first_decl(s, x, _, "catch"), option("caughtErrorsIgnorePattern", p), finds(p, x).
-ignored(s, x) :- first_decl(s, x, id, k), arg_kind(k), kind(id, "identifier"), option("argsIgnorePattern", p), finds(p, x).
+    kind(id, "identifier"), option("destructuredArrayIgnorePattern", p), match(cat(".*(?:", cat(p, ").*")), x).
+ignored(s, x) :- first_decl(s, x, _, "catch"), option("caughtErrorsIgnorePattern", p),
+    match(cat(".*(?:", cat(p, ").*")), x).
+ignored(s, x) :- first_decl(s, x, id, k), arg_kind(k), kind(id, "identifier"), option("argsIgnorePattern", p),
+    match(cat(".*(?:", cat(p, ").*")), x).
 ignored(s, x) :- first_decl(s, x, id, k), k != "catch", !arg_kind(k), kind(id, "identifier"), option("varsIgnorePattern", p),
-    finds(p, x).
+    match(cat(".*(?:", cat(p, ").*")), x).
 .decl arg_kind(k: symbol)  // the kinds the rule calls args: a parameter, in a body or in a type signature
 arg_kind("param"). arg_kind("signature-param").
-.decl finds(p: symbol, x: symbol)  // RegExp p finds a match in x (test: anywhere)
-finds(p, x) :- option(o, p), (o = "varsIgnorePattern" ; o = "argsIgnorePattern" ; o = "caughtErrorsIgnorePattern" ;
-    o = "destructuredArrayIgnorePattern"), var(_, x), match(cat(".*(?:", cat(p, ").*")), x).
 .decl array_name(id: node)  // id is an element of an array pattern
 array_name(id) :- variable(_, _, id, _), estree_parent(id, a), kind(a, "array_pattern").
 // bare_param(id, f): parameter id of function f is a plain name (no default, no destructuring).

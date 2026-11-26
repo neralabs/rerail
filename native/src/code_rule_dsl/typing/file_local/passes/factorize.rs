@@ -160,6 +160,7 @@ impl ProgramPass for FactorizeExports {
         let f = Fields::over(v, &d);
         let split = cx.get::<FileLocal>()?;
         let local = &split.local;
+        let (_, constants) = split.found();
         let head_of = |r: RuleRef<'_>| v.rel_name(r.head().rel());
         let natives_read: BTreeSet<&str> = f.natives().iter().filter(|n| !local.contains(v.rel_name(n.rel))).flat_map(|n| n.reads.iter()).map(|&r| v.rel_name(r)).collect();
         let keys = relation_keys(v, f);
@@ -237,6 +238,15 @@ impl ProgramPass for FactorizeExports {
                 });
                 let head_holds_node = (0..rule.head().args().count()).any(|c| node_at(rel, c));
                 if key_is_node && !head_holds_node {
+                    break;
+                }
+                // A join of a file's nodes with a constant (`export_all(e, m) :- star_export(e, s), node_module(s, m)`):
+                // a lookup in the constant, made in the file. Handed on as parts, the constant's part and the key were
+                // tables of every file's values, and their readers, which join them at the file's nodes, went to the
+                // cross part (decision 0677).
+                let constant = |r: &str| constants.contains(r) || (f.has_facts(r) && !rules_of.contains_key(r));
+                let lookup = parts.iter().any(|p| part_lits(p).iter().all(|l| l.atom().is_none_or(|a| constant(v.rel_name(a.rel())))));
+                if head_holds_node && lookup {
                     break;
                 }
                 plan.push((key, parts));

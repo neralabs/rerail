@@ -47,9 +47,14 @@ const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 10] = [
 /// Views of base relations the lowering writes as rules.
 const VIEWS: [&str; 3] = ["kind", "docof", "precedes"];
 
-/// The grammar a guest's kinds are named in: a dialect label (`annotation` is Python's expression).
+/// The grammar a guest's kinds are named in: a dialect label (`annotation` is Python's expression), a fragment's
+/// dialect's, an embedding's one dialect's (`compiled-view`: a Blade template's PHP), else the grammar itself.
 pub(super) fn dialect_label(grammar: &str) -> &str {
-    if grammar == "annotation" { "python" } else { grammar }
+    use crate::code_rule_dsl::language::{embedding_dialect, fragment, label};
+    if grammar == "annotation" {
+        return "python";
+    }
+    fragment(grammar).and_then(|(d, _)| label(d)).or_else(|| embedding_dialect(grammar).and_then(label)).unwrap_or(grammar)
 }
 
 /// The bound of `prog`'s shown documents: files, and the run language's guests unless `.guests off`.
@@ -193,7 +198,11 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                 .iter()
                 .filter_map(|l| match l {
                     Literal::Atom(a) if !a.neg => match (a.rel.as_str(), a.args.as_slice()) {
-                        ("kind", [Term::Var(x), Term::Var(k)]) | ("node", [_, Term::Var(x), Term::Var(k), _, _]) => grammar_of(x.as_str()).map(|g| (k.to_string(), g)),
+                        // Only in a grammar whose kinds a dialect's label names: a name qualified by anything else is
+                        // not `qualified`, and was qualified again each round, without end (Blade's `compiled-view`).
+                        ("kind", [Term::Var(x), Term::Var(k)]) | ("node", [_, Term::Var(x), Term::Var(k), _, _]) => {
+                            grammar_of(x.as_str()).filter(|g| crate::code_rule_dsl::language::dialect_by_label(dialect_label(g)).is_some()).map(|g| (k.to_string(), g))
+                        }
                         _ => None,
                     },
                     _ => None,
@@ -1278,6 +1287,27 @@ pub mod tests {
         let p = wait.recv_timeout(std::time::Duration::from_secs(20)).expect("hide ends");
         let out = p.rules.iter().find(|r| r.head.rel == "out").unwrap().to_string();
         assert!(out.contains("rr_in_sql_0_none("), "{out}");
+    }
+    /// A kind compared over a Blade template's compiled view (`compiled-view`, built at the file's load) is named in
+    /// PHP, the one dialect the embedding gives (`dialect_label`). The embedding's own name is no dialect's label: a
+    /// kind qualified by it was not `qualified`, so each round qualified it again and hiding did not end (phpdoc's
+    /// stop set, `k != "comment"`, decision 0677).
+    #[test]
+    fn a_kind_compared_over_a_blade_view_is_phps_and_ends() {
+        let mut p = crate::code_rule_dsl::logic::rr::parse(concat!(
+            ".decl parsed(s: node, g: symbol, r: node)\n.input parsed\n",
+            ".decl out(p: node)\n.output out\n",
+            "out(p) :- parsed(_, \"compiled-view\", g), within(p, g), kind(p, k), k != \"comment\".\n",
+        ))
+        .unwrap();
+        let (done, wait) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            hide(&mut p, 1 << 30);
+            let _ = done.send(p);
+        });
+        let p = wait.recv_timeout(std::time::Duration::from_secs(20)).expect("hide ends");
+        let out: Vec<String> = p.rules.iter().filter(|r| r.head.rel == "out").map(|r| r.to_string()).collect();
+        assert!(!out.is_empty() && out.iter().all(|r| !r.contains("compiled-view:")), "{out:?}");
     }
     /// A copy for a guest in the run's own language (an annotation in a Python run, its guests shown) is its
     /// original: folded once the language is known, its reader reads the original and its clone repeats its rule.

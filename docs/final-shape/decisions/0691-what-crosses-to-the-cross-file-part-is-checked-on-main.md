@@ -353,6 +353,29 @@ Found on the way and fixed:
      every pack's split test; the rule files' own tests and `check_rr`; the rr, magic, file-local and plan tests.
    - Lists: split 33 → 31, node 273 → 239 (Python 33 → 0, React 2 → 1: `sandbox_token`, as on the branch). The
      executors' coverage loses the old privacy rule's `@replace_all` and `@contains`.
+14. **The other packs' value tables keyed by node, and three engine fixes** (the branch's 6c5dda1725, 0677 tail 4).
+   - Rules: the branch's 32 rule and library files of JavaScript, TypeScript, Vue, PHP, Rust, SQL, React and Next.
+     Main's Vue has no contexts (0597): the branch's `async_computed_in` is main's `async_computed`, and main's
+     `vns_step` is keyed by the element already (fix 6). Vue's `vplain_stmt(k)` was a table of every file's kinds,
+     read at a statement. On the branch the script's context holds it. Here it is keyed by the statement.
+   - The engine, in main's form:
+     - `static_value_type_of(n, t)`: the followed value's type (`static_value`'s), per node. no-implied-eval read
+       `static_value(a, v), value_type(v, "string")`, and `value_type` is every file's (value, type) pairs. W gives it
+       from the followed reading, and the literal path from the literal's type.
+     - Factorizing the exports (0099) leaves a join of a file's nodes with a constant whole: a lookup made in the
+       file. On main the split's check found the constant's part not file-local and left it whole already, in the
+       branch's test, so the check states up front what was its effect.
+     - Hiding (0058 §2) names a kind compared over a Blade view (`compiled-view`) in PHP, the one dialect the
+       embedding gives (`language::embedding_dialect`), and qualifies a kind only in a grammar a dialect's label names.
+       Before, `compiled-view:comment` was no dialect's, so each round qualified it again and hiding never ended
+       (PHPDoc's new stop set over a Blade view).
+     - Not ported: the branch's located output's unplaced check, which is not in the batch's code, and tail 5's
+       symbol-demand fix, which is in `product_demand` (main lacks it).
+   - Tests: `a_kind_compared_over_a_blade_view_is_phps_and_ends` (it does not end without the fix),
+     `an_export_that_looks_a_files_nodes_up_in_a_constant_is_left_whole`; the hiding, file-local and value-type tests;
+     every pack's split test; the rule files' own tests and `check_rr`; the executors' coverage (unchanged).
+   - Lists: split 31 → 30, node 239 → 210. JavaScript 7 → 1 (`significant_bits`, under the engine's
+     `radix__key_slice0`, as on the branch), TypeScript 8, PHP 4, Vue 4, Rust 2, SQL 2, Blade 2 and React 1 → 0.
 
 ## Consequences
 
@@ -364,4 +387,4 @@ Found on the way and fixed:
 ## Open
 
 - The split's gaps still to port: 0652's follow-up (`same_document_ties`: SIM113).
-- The packs' entries left after fix 13, and the data layer's (not in this pull request's scope, 2026-11-25).
+- The packs' entries left after fix 14, and the data layer's (not in this pull request's scope, 2026-11-25).

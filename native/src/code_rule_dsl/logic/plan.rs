@@ -4662,7 +4662,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "text" | "name" | "str" | "strprefix" | "node_text" | "comment" | "structural_before" | "structural_after" => &[&["n"], &["s", "n"]],
         // W's values (`facts::vtab::syntax::Extra`).
         "value" | "static_value" | "rr_value_lit" => &[&["n"], &["v", "n"]],
-        "value_type_of" => &[&["n"], &["t", "n"]],
+        "value_type_of" | "static_value_type_of" => &[&["n"], &["t", "n"]],
         "value_type" => &[&["v"], &["t", "v"]],
         "fstring_piece" => &[&["n"], &["v", "n"]],
         "fstring_template" => &[&["n"], &["v", "n"]],
