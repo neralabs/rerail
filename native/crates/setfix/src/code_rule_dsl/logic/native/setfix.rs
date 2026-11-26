@@ -4447,7 +4447,7 @@ unsafe impl VTabCursor for RelCursor {
 
 /// `@dot(a, b)` (`core.rerail`): `a.b`, and `b` when `a` is "".
 /// `cat(a, b)` as a rule's head computes it, with `conn`'s symbols (the recursive-maintenance spike's evaluator).
-pub fn cat_symbols(conn: &Connection, a: i64, b: i64) -> i64 {
+pub fn cat_symbols(conn: impl Scoped, a: i64, b: i64) -> i64 {
     let syms = symbols(conn).expect("the connection's symbols");
     let mut syms = syms.write().unwrap();
     cat(&mut syms, a, b)
@@ -5406,6 +5406,22 @@ pub fn retain_flat(conn: impl Scoped, table: &str, flat: &[i64], types: Vec<u8>)
     let n = order.len();
     let rows: Vector<i64> = order.iter().flat_map(|&i| row(i).iter().copied()).collect();
     let rel = InRel::from_flat(rows, n, types);
+    forgotten_on_close();
+    crate::code_rule_dsl::logic::profile::author_joins::observe(table, || rel.rows());
+    on(conn).derived.lock().insert(table.to_owned(), rel);
+    Ok(())
+}
+
+/// SPIKE (`spike_eval`): `retain` of rows held flat that are distinct already (`types.len()` values a row), kept in
+/// their order: copied once into the relation's rows, with no sort.
+pub fn retain_distinct(conn: impl Scoped, table: &str, flat: &[i64], types: Vec<u8>) -> Result<()> {
+    let conn = conn.db();
+    let k = types.len();
+    if k == 0 || !flat.len().is_multiple_of(k) {
+        return Err(err(format!("{table}: native result width differs from its declaration")));
+    }
+    let rows: Vector<i64> = flat.iter().copied().collect();
+    let rel = InRel::from_flat(rows, flat.len() / k, types);
     forgotten_on_close();
     crate::code_rule_dsl::logic::profile::author_joins::observe(table, || rel.rows());
     on(conn).derived.lock().insert(table.to_owned(), rel);

@@ -516,6 +516,11 @@ impl Layered {
     }
     /// The sources that may hold node `n`'s document: the chunk's batch's, then each admitted value's that names its
     /// key (a value's rows are keyed by its places' hosts too, so a host file's key names its guests' parts).
+    /// SPIKE (`spike_strata`): each admitted value's batch, in the order admitted.
+    pub fn value_batches(&self) -> Vec<Arc<super::Batch>> {
+        self.values.batches.read().clone()
+    }
+
     pub fn sources_of(&self, n: i64) -> Vec<Arc<dyn Source>> {
         let mut out = vec![Arc::clone(&self.base)];
         if let Some(p) = self.values.parts.load().get(&self.name) {

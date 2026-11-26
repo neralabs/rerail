@@ -5883,42 +5883,83 @@ impl Batch {
         self.node(n, memo).map(|(doc, local)| (self.nodes().at(doc) + local as usize) as u32)
     }
 
-    /// SPIKE (`spike_strata`): the batch's named tree by node row, read once off the projections, each value as its view
-    /// gives it: the node's id, parent row (`NONE` for a root), place among its siblings, kind (`kind`), field (`field`, `i64::MIN` for none), and
-    /// for a node of a kind in `texts` its text's atom (`text`; `i64::MIN` for another).
-    pub fn tree_arrays(&self, texts: &[i64]) -> TreeArrays {
+    /// SPIKE (`spike_eval`): the `text` of document `doc`'s local node `local`, as the `text` view gives it; `None`
+    /// where the view has no row of it.
+    pub fn text_at(&self, doc: usize, local: u32) -> Option<i64> {
+        let p = &self.docs[doc];
+        let x = p.node(local);
+        p.text_row_of(local, x)?;
+        Some(p.text_atom(&*self.atoms, local, x))
+    }
+
+    /// SPIKE (`spike_strata`): the batch's nodes by row, each value as its view gives it: the node's id, kind (`kind`),
+    /// and document (its place in the batch); each document's first row and file (the `node` view's `d`).
+    pub fn tree_core(&self) -> TreeCore {
         let n = self.nodes().total();
-        let mut t = TreeArrays { ids: Vec::with_capacity(n), parent: Vec::with_capacity(n), idx: Vec::with_capacity(n), kind: Vec::with_capacity(n), field: Vec::with_capacity(n), text: Vec::with_capacity(n) };
+        let mut t = TreeCore { ids: Vec::with_capacity(n), kind: Vec::with_capacity(n), doc: Vec::with_capacity(n), base: Vec::with_capacity(self.docs.len()), file: Vec::with_capacity(self.docs.len()) };
         for (doc, p) in self.docs.iter().enumerate() {
-            let base = self.nodes().at(doc) as u32;
             let d = &self.dialects[p.tag()];
+            t.base.push(self.nodes().at(doc) as u32);
+            t.file.push(i64::from(p.file()));
             for l in 0..p.len() {
                 let x = p.node(l);
+                t.doc.push(doc as u32);
                 t.ids.push(p.global(l));
+                t.kind.push(u32::try_from(d.kind(p.f(), x)).expect("a kind atom is 32 bits"));
+            }
+        }
+        t
+    }
+
+    /// SPIKE (`spike_strata`): the batch's named tree by node row: each node's parent row (`NONE` for a root), place
+    /// among its siblings (`child`'s `idx`) and field (`field`, `i64::MIN` for none).
+    pub fn tree_shape(&self) -> TreeShape {
+        let n = self.nodes().total();
+        let mut t = TreeShape { parent: Vec::with_capacity(n), idx: Vec::with_capacity(n), field: Vec::with_capacity(n) };
+        for (doc, p) in self.docs.iter().enumerate() {
+            let base = self.nodes().at(doc) as u32;
+            for l in 0..p.len() {
+                let x = p.node(l);
                 t.parent.push(match p.parent(l as usize) {
                     NONE => NONE,
                     up => base + up,
                 });
                 t.idx.push(p.idx(l as usize));
-                let k = d.kind(p.f(), x);
-                t.kind.push(k);
                 t.field.push(if l > 0 && p.ranks().is(Item::Field, x) { i64::from(field_atom(p.tag(), p.f().field(x))) } else { i64::MIN });
-                t.text.push(if texts.contains(&k) { p.text_atom(&*self.atoms, l, x) } else { i64::MIN });
             }
         }
         t
     }
+
+    /// SPIKE (`spike_strata`): each node row's span, the `node` view's `start` and `end`.
+    pub fn tree_spans(&self) -> (Vec<u32>, Vec<u32>) {
+        let n = self.nodes().total();
+        let (mut start, mut end) = (Vec::with_capacity(n), Vec::with_capacity(n));
+        for p in self.docs.iter() {
+            for l in 0..p.len() {
+                let x = p.node(l);
+                start.push(p.f().start(x));
+                end.push(p.f().end(x));
+            }
+        }
+        (start, end)
+    }
 }
 
-/// SPIKE: `Batch::tree_arrays`' arrays, one value a node row.
-pub struct TreeArrays {
+/// SPIKE: `Batch::tree_core`'s arrays, one value a node row (each document's, one a document).
+pub struct TreeCore {
     pub ids: Vec<i64>,
+    pub kind: Vec<u32>,
+    pub doc: Vec<u32>,
+    pub base: Vec<u32>,
+    pub file: Vec<i64>,
+}
+
+/// SPIKE: `Batch::tree_shape`'s arrays, one value a node row.
+pub struct TreeShape {
     pub parent: Vec<u32>,
-    /// Its place among its siblings (the `child` view's `idx`).
     pub idx: Vec<u32>,
-    pub kind: Vec<i64>,
     pub field: Vec<i64>,
-    pub text: Vec<i64>,
 }
 
 /// T's base relations over `documents` (`sources`) in `projection`'s shape and those of core.rerail's the program reads
