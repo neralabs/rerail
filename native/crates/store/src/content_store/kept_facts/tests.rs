@@ -667,3 +667,44 @@ fn a_reader_whose_files_a_commit_swept_reads_the_last_commits() {
     let err = KeptSpace::read(&path, &c, &SPACE).err().expect("a file the last commit names, gone");
     assert!(err.to_string().contains("a space's kept facts"), "{err}");
 }
+
+/// A collection sweeps the files its commit replaced once that commit is (`sweep_committed`), and another writer can
+/// commit between the two (another shared object's in this process: a pack's policies run over one store). Swept by
+/// the rows the collection committed, the other writer's newest file went, and every reader of the space found it
+/// gone from the rows the store names ("a space's kept facts: No such file or directory", the react pack's split test
+/// now and then). Swept by the store's last commit, read under its write lock, it stays; the files no commit names go.
+#[test]
+fn a_collections_sweep_keeps_what_a_later_commit_names() {
+    let (path, c) = store("later-commit");
+    write(&path, &c, vec![put("a", 0, 1, flat(&[1, 1]))]);
+    // The collection's commit: the rows it would sweep by.
+    let collected = chain_rows(&c, &SPACE).unwrap();
+    // Another writer's commit after it: its file is one the collection's rows do not name.
+    write(&path, &c, vec![put("b", 0, 2, flat(&[2, 2]))]);
+    let now = chain_rows(&c, &SPACE).unwrap();
+    let newest = &now.last().unwrap().1;
+    assert!(!collected.iter().any(|(_, name, _)| name == newest), "the later commit's file, which the collection's rows miss");
+    c.execute_batch("BEGIN IMMEDIATE").unwrap();
+    super::sweep_committed(&path, &c, &SPACE).unwrap();
+    c.execute_batch("COMMIT").unwrap();
+    let named: Vec<String> = now.iter().map(|(_, name, _)| name.clone()).collect();
+    let mut on_disk: Vec<String> = std::fs::read_dir(space_dir(&path, &SPACE)).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    on_disk.sort();
+    let mut want = named.clone();
+    want.sort();
+    assert_eq!(on_disk, want, "every file the last commit names, and no other");
+    let kept = KeptSpace::read(&path, &c, &SPACE).unwrap().expect("the space");
+    let rels: Vec<String> = kept.view().all().map(|k| k.key.rel.to_owned()).collect();
+    assert_eq!(rels, ["a", "b"]);
+    // A space whose chain is gone keeps its directory while a file is staged in it, and loses it after.
+    c.execute("DELETE FROM main.facts_chain WHERE space = ?1", [&SPACE[..]]).unwrap();
+    let staged = space_dir(&path, &SPACE).join("s-0000000000000001.blk");
+    super::staging().0.lock().unwrap().insert(staged.clone());
+    std::fs::write(&staged, b"staged").unwrap();
+    super::sweep_committed(&path, &c, &SPACE).unwrap();
+    assert!(staged.exists(), "a staged file stays, and its directory");
+    super::staging().0.lock().unwrap().remove(&staged);
+    super::sweep_committed(&path, &c, &SPACE).unwrap();
+    assert!(!space_dir(&path, &SPACE).exists(), "a space with no file left loses its directory");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}

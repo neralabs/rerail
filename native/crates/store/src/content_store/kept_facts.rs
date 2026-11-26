@@ -381,7 +381,6 @@ fn stage_space(store: &Path, space: &[u8; 32], puts: &[KeptPut], flush: rerail_b
     let io = |e: std::io::Error| StoreError::Io(e);
     let _span = rerail_prof::code_rule_dsl::logic::profile::span(|| "kept facts: a gather's rows staged".into());
     let dir = space_dir(store, space);
-    private_dir(&dir).map_err(io)?;
     let tag = loop {
         let t = new_tag();
         if t != 0 {
@@ -390,7 +389,10 @@ fn stage_space(store: &Path, space: &[u8; 32], puts: &[KeptPut], flush: rerail_b
     };
     let name = format!("s-{tag:016x}.blk");
     let path = dir.join(&name);
+    // Staged before its directory is made: a collection's sweep leaves a directory a file is staged in
+    // (`sweep_committed`).
     staging().0.lock().expect("the staged kept files").insert(path.clone());
+    private_dir(&dir).map_err(io)?;
     let reserve = puts.iter().map(|p| room_of(&p.what)).sum::<usize>() + (64 << 20);
     let mut w = KeptW::create(&path, tag, reserve).map_err(io)?;
     for p in puts {
@@ -566,19 +568,27 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
 
 /// Collection's roll-up of `space` in transaction `t` (decision 0401 F4): its next base, one file of the entries
 /// `keep` keeps, when it keeps fewer than the space holds; with none kept, the space is dropped (its rows; its files
-/// go once committed, `drop_space_files`). `None` when every entry stays.
+/// go once committed, `sweep_committed`). `None` when every entry stays.
 pub fn rewrite_space(store: &Path, t: &Connection, space: &[u8; 32], keep: &dyn Fn(&FactKey<'_>) -> bool) -> StoreResult<Option<ChainRows>> {
     write_chain(store, t, space, Vec::new(), None, Some(keep))
 }
 
-/// The files of a space collection dropped, removed once its commit is: a process mapping one keeps reading it.
-pub fn drop_space_files(store: &Path, space: &[u8; 32]) {
-    let _ = std::fs::remove_dir_all(space_dir(store, space));
-}
-
-/// The files of `space` its committed `rows` do not name, removed (`sweep`): those a collection's roll-up replaced.
-pub fn sweep_space(store: &Path, space: &[u8; 32], rows: &ChainRows) {
-    sweep(&space_dir(store, space), rows);
+/// The files of `space` the store's last commit does not name, removed (`sweep`), read in write transaction `t`: those
+/// a collection's roll-up replaced or dropped. Not by the rows the collection committed: another writer can commit
+/// after it (another shared object's in this process, or another process), and its chain's newest file, which those
+/// rows do not name, went with them; its readers then found it gone from the rows the store names ("a space's kept
+/// facts: No such file or directory"). A space left with no file loses its directory, where no file is staged in it.
+fn sweep_committed(store: &Path, t: &Connection, space: &[u8; 32]) -> StoreResult<()> {
+    let dir = space_dir(store, space);
+    sweep(&dir, &chain_rows(t, space)?);
+    // Under the staged files' lock, which a stager takes before it makes the directory (`stage_space`): fails where a
+    // file is left, a named or a staged one.
+    let staging = staging();
+    let pending = staging.0.lock().expect("the staged kept files");
+    if !pending.iter().any(|p| p.starts_with(&dir)) {
+        let _ = std::fs::remove_dir(&dir);
+    }
+    Ok(())
 }
 
 /// `write_space`, or with `keep`, `rewrite_space`.
@@ -1057,11 +1067,8 @@ impl super::ContentStore {
             })?;
             let Some(rows) = written else { continue };
             done += 1;
-            if rows.is_empty() {
-                drop_space_files(&path, &space);
-            } else {
-                sweep_space(&path, &space, &rows);
-            }
+            // Once committed (the transaction may roll back until then), and under the store's write lock again.
+            self.immediate_transaction(|t| sweep_committed(&path, t, &space))?;
             super::held::snapshot_kept(&path, |kept| {
                 if let Some(kept) = kept {
                     kept.insert(space, rows);
