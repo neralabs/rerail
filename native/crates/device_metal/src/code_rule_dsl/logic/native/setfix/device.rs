@@ -1488,6 +1488,9 @@ struct Run<'p> {
     /// count is `totals`' last word.
     uniq: Option<mj::Table>,
     uniq_cols: Vector<usize>,
+    /// Its head's rows left as its last stage wrote them, not made distinct (`uniq` none): a round's rule of a set
+    /// head, whose union is made distinct less the rows the head holds (`encode_live_tail`), once for every rule's.
+    raw: bool,
     /// Its head's rows' key in its relation's first order (t58 increment A, `run_key`), its parts its `uniq_cols`'
     /// columns: they are then made distinct by sorting, in that order, not by a hash table.
     key: Option<mj::SortKey>,
@@ -1804,7 +1807,7 @@ impl<'p> Run<'p> {
         if uniq_cols.len() > 16 {
             return Err("a head of more than 16 slots".into());
         }
-        Ok(Run { plan: Rc::new(plan.clone()), _plan: std::marker::PhantomData, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], places: vec![None; plan.stages.len()], screens: vec![None; plan.stages.len()], key: None, consts: vec![Vec::new(); plan.stages.len()], probes: vec![None; plan.stages.len()], uniq: None, uniq_cols, arena: None })
+        Ok(Run { plan: Rc::new(plan.clone()), _plan: std::marker::PhantomData, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], places: vec![None; plan.stages.len()], screens: vec![None; plan.stages.len()], key: None, consts: vec![Vec::new(); plan.stages.len()], probes: vec![None; plan.stages.len()], uniq: None, uniq_cols, raw: false, arena: None })
     }
 
     /// The space for stage `k`'s rows out, from its input's space.
@@ -1959,6 +1962,9 @@ impl<'p> Run<'p> {
     /// Encodes its head's rows made distinct, as the store keeps them (fewer rows back to the host), after its last
     /// stage.
     fn encode_head(&mut self, batch: &mut mj::Batch) -> Result<(), String> {
+        if self.raw {
+            return Ok(());
+        }
         let last = self.io.last().map_or(0, |io| io.1);
         let table = self.tables[last].as_ref().expect("the last table");
         // Its room: the guess while its batch runs, the rows the device wrote once it is done (a stage not run again).
@@ -3257,7 +3263,7 @@ pub(in crate::code_rule_dsl) fn reads_own(plan: &Plan) -> bool {
 /// over an own relation with no rows, or over an empty input (`reads_empty_input`), is not run (`None`).
 #[allow(clippy::too_many_arguments)]
 fn round_runs<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Interner, rep: &mut Report, batch: &mut mj::Batch, sizes: &HashMap<(usize, usize), usize>, store: &Store,
-                  bounds: &HashMap<usize, Vec<[i64; 2]>>) -> Result<Vec<Option<Run<'p>>>, String> {
+                  bounds: &HashMap<usize, Vec<[i64; 2]>>, set_head: &dyn Fn(usize) -> bool) -> Result<Vec<Option<Run<'p>>>, String> {
     let mut runs: Vec<Option<Run<'p>>> = Vec::with_capacity(rules.len());
     for (x, (plan, j, h)) in rules.iter().enumerate() {
         if !own.ready(plan) || super::reads_empty_input(j) {
@@ -3265,8 +3271,11 @@ fn round_runs<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: 
             continue;
         }
         let mut r = Run::new(plan)?;
+        // A set head's rule leaves its rows as its last stage wrote them: its head's union is made distinct less the
+        // rows the head holds, once (`encode_live_tail`), so made distinct here too its rows were made so twice.
+        r.raw = set_head(*h);
         // Its head's rows made distinct in its first order where its bounds pack it (t58 increment A).
-        r.key = bounds.get(h).and_then(|b| run_key(plan, &r.uniq_cols, &store.rels[*h], b));
+        r.key = bounds.get(h).and_then(|b| run_key(plan, &r.uniq_cols, &store.rels[*h], b)).filter(|_| !r.raw);
         // Its tables' rows as a program of rounds sized them (`device_rounds`), else guessed as it encodes.
         for (o, c) in r.caps.iter_mut().enumerate().skip(1) {
             if let Some(&n) = sizes.get(&(x, o)) {
@@ -3290,7 +3299,17 @@ fn union_of(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)], h: us
     let from: Vec<(usize, &Run<'_>)> = runs.iter().enumerate().filter_map(|(x, r)| r.as_ref().filter(|_| rules[x].2 == h).map(|r| (x, r))).collect();
     // A run not run again in a round a gate stopped keeps its rows of the finished batch: their room is the rows the
     // device wrote (`Table::room`), not the guess.
-    let cap: usize = from.iter().map(|(_, r)| r.uniq.as_ref().map_or(0, mj::Table::room)).sum();
+    // Each rule's head rows: made distinct (`Run::uniq`), or as its last stage wrote them (`Run::raw`); and their
+    // count's slot of its totals.
+    fn rows_of<'a>(r: &'a Run<'_>) -> Option<(&'a mj::Table, usize)> {
+        if r.raw {
+            let last = r.io.last().map_or(0, |io| io.1);
+            r.tables[last].as_ref().map(|t| (t, last))
+        } else {
+            r.uniq.as_ref().map(|u| (u, r.totals.len - 1))
+        }
+    }
+    let cap: usize = from.iter().map(|(_, r)| rows_of(r).map_or(0, |(t, _)| t.room())).sum();
     if cap == 0 {
         return Ok(None);
     }
@@ -3302,12 +3321,16 @@ fn union_of(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)], h: us
             // A shortlex_min value named as a constant: its text in the arena (decision 0307).
             Some(v) if col == k - 1 && text_head => mj::Col::Const(named[v]),
             Some(v) => mj::Col::Const(*v),
-            None => mj::Col::From(r.uniq_cols.iter().position(|u| u == s).unwrap_or(0)),
+            // The slot's column of its distinct rows; of its last stage's rows, the slot itself.
+            None => {
+                let at = r.uniq_cols.iter().position(|u| u == s).unwrap_or(0);
+                mj::Col::From(if r.raw { r.uniq_cols.get(at).copied().unwrap_or(0) } else { at })
+            }
         }).collect()
     }).collect();
     let srcs: Vec<(&mj::Table, usize, &mj::Words, usize, &[mj::Col])> = from.iter().zip(&cols).map(|((_, r), c)| {
-        let u = r.uniq.as_ref().expect("the head's rows");
-        (u, u.room(), &r.totals, r.totals.len - 1, c.as_slice())
+        let (t, slot) = rows_of(r).expect("the head's rows");
+        (t, t.room(), &r.totals, slot, c.as_slice())
     }).collect();
     batch.append_rows(&srcs, &union, (&words, 0)).map_err(|e| format!("{e:?}"))?;
     Ok(Some((union, words, cap)))
@@ -4292,7 +4315,8 @@ fn encode_round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], reads: Option<usize>
             lp.own.delta.insert(h, live_rel(&l.deltas[reads], l.slack, store.rels[h].k, (l.mapped < l.bound).then(|| (l.slack_mapped(), l.buckets())))?);
         }
     }
-    let runs = round_runs(rules, lp.own, names, lp.rep, batch, sizes, store, lp.bounds)?;
+    let lattices = &*lp.lattices;
+    let runs = round_runs(rules, lp.own, names, lp.rep, batch, sizes, store, lp.bounds, &|h| !lattices.contains_key(&h))?;
     // The other template's tables as this one's: every round of the program alike.
     for (x, r) in runs.iter().enumerate() {
         for (o, &c) in r.iter().flat_map(|r| r.caps.iter().enumerate().skip(1)) {
@@ -4389,7 +4413,7 @@ fn encode_live_tail(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)
             (Some(bits), Some(mut key)) => {
                 let mut from = rules.iter().zip(runs).filter_map(|(r, run)| run.as_ref().filter(|_| r.2 == h));
                 key.presorted = match (from.next(), from.next()) {
-                    (Some(run), None) => run.key.as_ref().is_some_and(|rk| rk.tagged == key.tagged && rk.bits == key.bits),
+                    (Some(run), None) => !run.raw && run.key.as_ref().is_some_and(|rk| rk.tagged == key.tagged && rk.bits == key.bits),
                     _ => false,
                 };
                 batch.dedup_sorted(&union, &all, 0, 2, &words, &fresh, Some(bits_at(bits)), &key).map_err(e)?;
