@@ -1405,7 +1405,10 @@ function countedClock(): CountedClock {
       used += ms;
     },
     spent: () => used,
-    read: async count => await new Promise<void>(resolve => waiting.push({ at: reads + count, resolve })),
+    read: async count => await new Promise<void>(resolve => {
+      if (count <= 0) resolve();
+      else waiting.push({ at: reads + count, resolve });
+    }),
     restore: () => clock.mockRestore(),
   };
 }
@@ -1519,11 +1522,16 @@ interface HeldGit {
 
 /** What a case does with the Gits of a call {@link heldBy} holds. */
 interface Holds {
-  /** The next `count` Gits the call starts, none of them let go, once it has started them or has answered. */
+  /**
+   * The next `count` Gits the call starts, none of them let go, once it has started them; once it has answered with
+   * fewer, an error that names the Gits it started.
+   */
   readonly next: (count: number) => Promise<HeldGit[]>;
   /**
-   * Moves the call's clock on by `ms`, then waits until the call has looked once at the time limit of each held Git that
-   * still runs, as it looks each second at each Git it waits on: one past its limit is ended there.
+   * Moves the call's clock on by `ms`, then waits for as many reads of that clock, from any part of the call, as Gits of
+   * the call still run, held or let go and not yet ended: about the second the call takes to look once at each Git it
+   * waits on. Both cases need no more: each Git of the call that answers stays within its limit, and the case whose
+   * status is never let go waits for that status's end itself.
    */
   readonly pass: (ms: number) => Promise<void>;
 }
@@ -1534,19 +1542,22 @@ const gitVerb = (args: readonly string[] | undefined): string | undefined => arg
 /**
  * `call`'s answer, with each Git it starts that does not block held until `drive` lets it go, on a clock that moves only
  * when `drive` says ({@link countedClock}): the time the machine takes to start and run each Git is no part of the call's.
+ * `signal` is the case's: once the case's time limit ends it, its failure says too what the call had done by then.
  */
-async function heldBy<T>(root: string, call: () => Promise<T>, drive: (holds: Holds) => Promise<void>): Promise<T> {
+async function heldBy<T>(root: string, call: () => Promise<T>, drive: (holds: Holds) => Promise<void>, signal: AbortSignal): Promise<T> {
   const program = join(root, "held.cjs");
   writeFileSync(program, HELD);
   const started = await import("node:child_process");
   const waiting: HeldGit[] = [];
   const running = new Set<childProcess.ChildProcess>();
   let gates = 0;
+  const verbs: string[] = [];
   let wake = (): void => undefined;
   vi.mocked(started.spawn).mockImplementation(((file: string, args: readonly string[], options: childProcess.SpawnOptions) => {
     // Only a Git is held: on Windows ending a Git's process tree starts `taskkill` too.
     if (!args.includes("-C")) return actualChildProcess.spawn(file, args, options);
     gates += 1;
+    verbs.push(gitVerb(args) ?? "");
     const gate = join(root, `gate-${gates}`);
     const child = actualChildProcess.spawn(process.execPath, [program, gate, file, ...args], options);
     running.add(child);
@@ -1565,12 +1576,23 @@ async function heldBy<T>(root: string, call: () => Promise<T>, drive: (holds: Ho
   };
   onTestFinished(restore);
   let answered = false;
+  let asked = 0;
+  const told = (): string => `Gits asked at once: ${asked}; started by the call: ${verbs.join(", ")}; answered: ${String(answered)}`;
+  // Vitest fails a case past its time limit with its own time-out alone; this stands beside it, since a Git that still
+  // runs then is one the case held and the call never ended.
+  signal.addEventListener("abort", () => {
+    expect.soft(running.size, `${told()}; Gits still running`).toBe(0);
+  });
   const next = async (count: number): Promise<HeldGit[]> => {
+    asked = count;
     while (waiting.length < count && !answered) {
       await new Promise<void>(resolve => {
         wake = resolve;
       });
     }
+    // A call that has answered starts no more Gits.
+    if (waiting.length < count) throw new Error(told());
+    asked = 0;
     return waiting.splice(0, count);
   };
   try {
@@ -1612,7 +1634,7 @@ describe("Rerail's diff of a checkout with submodules keeps the call's one time 
     ]);
   }, 60_000);
 
-  it("and answers where one Git would, with submodules whose every Git takes a tenth of it", async () => {
+  it("and answers where one Git would, with submodules whose every Git takes a tenth of it", async ({ signal }) => {
     const root = await folder();
     const work = await changedSubmodules(root, ["one", "two", "three", "four"]);
     await writeFile(join(work, "top.txt"), "changed\n");
@@ -1631,7 +1653,7 @@ describe("Rerail's diff of a checkout with submodules keeps the call's one time 
         await holds.pass(1_000);
         for (const git of gits) git.go();
       }
-    });
+    }, signal);
 
     // The diff, the index's submodules, the top folder and the config listing, then the statuses: five tenths on four
     // processors or more, what Git's own diff takes for itself and its four statuses in turn; the call's 8 Gits asked in
@@ -1653,7 +1675,7 @@ describe("Rerail's diff of a checkout with submodules keeps the call's one time 
     expect([most > 1, most <= availableParallelism()]).toEqual([true, true]);
   }, 120_000);
 
-  it("and ends at it, failing as a Git past its limit, when a submodule's Git does not answer", async () => {
+  it("and ends at it, failing as a Git past its limit, when a submodule's Git does not answer", async ({ signal }) => {
     const root = await folder();
     const work = await changedSubmodules(root, ["one"]);
     await runGitWithoutBlocking(work, AUDIT_DIFF);
@@ -1666,7 +1688,7 @@ describe("Rerail's diff of a checkout with submodules keeps the call's one time 
       turns.push(status.map(({ args }) => gitVerb(args) ?? ""));
       await holds.pass(2_000);
       await Promise.all(status.map(async ({ exited }) => await exited));
-    });
+    }, signal);
 
     expect(answer.error).toMatchObject({ code: "ETIMEDOUT", message: expect.stringMatching(/^spawnSync .* ETIMEDOUT$/u) });
     // Only the 2 s the case passed spent the limit, and the status was ended with its process.
