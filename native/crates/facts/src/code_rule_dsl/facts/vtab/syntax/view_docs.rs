@@ -71,12 +71,27 @@ impl ViewEntry {
             })
             .expect("a batch's block holds its entries")
         });
+        // SPIKE (shared strata work, A): each numbered node's tape node and id's low bits, by local id, one walk.
+        let node_table = (std::env::var("RERAIL_SPIKE_NODE_TABLE").as_deref() != Ok("off") && p.len() > 0).then(|| {
+            let n = p.len() as usize;
+            // copy: derived (each node's tape node and id low, computed once from the numbering)
+            Cells::build(block, n, |out: &mut [[u32; 2]]| {
+                for (l, x, low) in super::granules::ids(p.table(), p.ranks(), super::ranks::Item::Node, p.len()) {
+                    out[l as usize] = [x, if p.defs.is_none() { l } else { low }];
+                }
+                n
+            })
+            .expect("a batch's block holds its entries")
+        });
         let d = desc.as_ptr();
         // SAFETY: the entry is written by this alone (inside its projection's `OnceLock`), and its runs point at cells
         // of the same block (the numbering's descriptor among them), which live as long as it.
         unsafe {
             (*d).preorder = u32::from(p.defs.is_none());
             (*d).nodes = p.len();
+            if let Some(t) = &node_table {
+                Run::set(&raw mut (*d).node_table, t.as_ptr(), t.len());
+            }
             Run::set(&raw mut (*d).numbering, p.ranks().desc().cast::<rerail_clif::ids::Numbering>(), 1);
             Run::set(&raw mut (*d).kinds, kinds.as_ptr(), kinds.len());
             Run::set(&raw mut (*d).fields, fields.as_ptr(), fields.len());

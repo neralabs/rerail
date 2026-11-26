@@ -68,8 +68,11 @@ pub struct ViewDoc {
     /// anchor's is its rank among the anchors (`ids` item `ANCHOR_ITEM`).
     pub place: u32,
     pub pad: u32,
+    /// SPIKE (shared strata work, A): by local id, the numbered node's tape node and its id's low bits (`[u32; 2]`s),
+    /// derived once at the entry's making in its block; empty: read by the numbering (`num_select`, `num_low_of`).
+    pub node_table: Run,
 }
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 24 + 16 * 5 + 8);
+const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 24 + 16 * 5 + 8 + 16);
 
 /// `ViewDoc::place`'s kinds.
 pub const PLACE_NAMED: u32 = 1;
