@@ -1,6 +1,6 @@
 # 0032: Tapes resident in slabs, read in place by the device
 
-Status: accepted (2026-11-04, list step 28; scope chosen by the user: "Full §20 now")
+Status: built (audited 2026-11-23). Accepted (2026-11-04, list step 28; scope chosen by the user: "Full §20 now")
 
 ## Context
 

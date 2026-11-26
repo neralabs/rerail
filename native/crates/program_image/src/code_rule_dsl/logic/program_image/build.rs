@@ -17,7 +17,8 @@
 //! - **a fold** when the edit reaches half its parent: a new base of the result, keeping its atom and relation ids.
 //!
 //! A version's digest is made with it, from the parent's and the edit's hashes.
-use super::encoder::{self, CellText, Decl, Encoder, FactRel, Parts};
+use rerail_blocks::vector::Vector;
+use super::encoder::{self, CellText, Encoder, Parts, Rows, RowsRef};
 use super::handles::{AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef};
 use super::version::{Made, Version, max_ranges};
 use super::{ABOUT_BIT, AtomId, Cell, RelId, RuleId, Slot, kind};
@@ -83,7 +84,7 @@ pub struct Builder<'p> {
     /// The version whose ids this image's are: the parent, or the version a fold is of.
     ids: Option<&'p Version>,
     enc: Encoder<'p>,
-    removed: Vec<u32>,
+    removed: Vector<u32>,
     parts: Parts,
     /// Whether the edit states any part.
     parts_changed: bool,
@@ -94,7 +95,7 @@ pub struct Builder<'p> {
 impl Builder<'static> {
     /// A new base.
     pub fn base() -> Builder<'static> {
-        Builder { parent: None, ids: None, enc: Encoder::new(None), removed: Vec::new(), parts: Parts::default(), parts_changed: false, rows: 0 }
+        Builder { parent: None, ids: None, enc: Encoder::new(None), removed: rerail_blocks::vector::Vector::new(), parts: Parts::default(), parts_changed: false, rows: 0 }
     }
 
 }
@@ -109,20 +110,20 @@ impl Default for Builder<'static> {
 impl<'p> Builder<'p> {
     /// An edit of `parent`.
     pub fn on(parent: &'p Arc<Version>) -> Builder<'p> {
-        Builder { parent: Some(parent), ids: Some(parent), enc: Encoder::new(Some(parent)), removed: Vec::new(), parts: Parts::default(), parts_changed: false, rows: 0 }
+        Builder { parent: Some(parent), ids: Some(parent), enc: Encoder::new(Some(parent)), removed: rerail_blocks::vector::Vector::new(), parts: Parts::default(), parts_changed: false, rows: 0 }
     }
     /// A derivation of `input` (§7, §9): a new base under `input`'s atom and relation ids, holding all of `input`'s
     /// parts and none of its rules. A pass adds each rule it makes from one of `input`'s by `rewrite`, which records
     /// where the rule came from, and states the parts it changes.
     pub fn derive(input: &'p Version) -> Builder<'p> {
-        let mut b = Builder { parent: None, ids: Some(input), enc: Encoder::with_ids_of(input), removed: Vec::new(), parts: Parts::default(), parts_changed: false, rows: 0 };
+        let mut b = Builder { parent: None, ids: Some(input), enc: Encoder::with_ids_of(input), removed: rerail_blocks::vector::Vector::new(), parts: Parts::default(), parts_changed: false, rows: 0 };
         for d in input.decls() {
-            let cols = d.cols().map(|(n, t)| (n.0, t.0)).collect();
-            b.parts.decls.insert(d.name().0, Decl { cols, hash: d.hash() });
+            let cols: Vector<[u32; 2]> = d.cols().map(|(n, t)| [n.0, t.0]).collect();
+            b.parts.set_decl(d.name().0, &cols, d.hash());
         }
         for f in input.all_facts().into_iter().chain(input.about_facts()) {
-            let rows = f.rows().map(|r| r.collect()).collect();
-            b.parts.facts.insert(f.name().0 | if f.about() { ABOUT_BIT } else { 0 }, FactRel { rows, hash: f.hash() });
+            let rows = Rows::of_cells(f.rows());
+            b.parts.set_fact(f.name().0 | if f.about() { ABOUT_BIT } else { 0 }, rows.as_ref(), f.hash());
         }
         b.parts.inputs = Some((input.inputs().map(|a| a.0).collect(), input.inputs_hash()));
         b.parts.outputs = Some((input.outputs().map(|a| a.0).collect(), input.outputs_hash()));
@@ -133,7 +134,7 @@ impl<'p> Builder<'p> {
     /// relation ids, holding none of `input`'s rules or parts. What is not stated is empty. Finished with nothing
     /// stated, it is `input`'s names alone, which a maintained form overlays.
     pub fn under(input: &'p Version) -> Builder<'p> {
-        Builder { parent: None, ids: Some(input), enc: Encoder::with_ids_of(input), removed: Vec::new(), parts: Parts::default(), parts_changed: false, rows: 0 }
+        Builder { parent: None, ids: Some(input), enc: Encoder::with_ids_of(input), removed: rerail_blocks::vector::Vector::new(), parts: Parts::default(), parts_changed: false, rows: 0 }
     }
     /// A base of all of `v`, under `v`'s atom and relation ids: each rule copied as it is, its source kept.
     pub fn folding(v: &'p Version) -> Builder<'p> {
@@ -199,7 +200,7 @@ impl<'p> Builder<'p> {
 
     /// The edit's size: rules removed and added, and part rows stated.
     pub fn size(&self) -> usize {
-        self.removed.len() + self.enc.rules() as usize + self.parts.decls.len() + self.parts.decls_gone.len() + self.rows + self.parts.facts_gone.len()
+        self.removed.len() + self.enc.rules() as usize + self.parts.decl_count() + self.parts.decls_gone.len() + self.rows + self.parts.facts_gone.len()
     }
 
     /// Whether the edit states nothing: no rule removed or added, no part stated.
@@ -259,8 +260,8 @@ impl<'p> Builder<'p> {
         }
         let at = self.enc.begin_rule();
         let n = rule.nodes();
-        let vars: Vec<u32> = rule.vars().map(|a| a.0).collect();
-        self.enc.copy_nodes(from, rule.image(), n.start + 1..n.end, &vars, same);
+        let vars: Vector<u32> = rule.vars().map(|a| a.0).collect();
+        self.enc.copy_nodes(from, rule.image(), rule.map(), n.start + 1..n.end, &vars, same);
         self.enc.end_rule(at);
         id
     }
@@ -321,8 +322,9 @@ impl<'p> Builder<'p> {
         self.enc.set_from(id.0 - self.enc.rule_base(), source);
         id
     }
+    /// Whether `rule`'s ids are this builder's as its image holds them: a union's part's are mapped (`RuleRef::map`).
     fn same(&self, rule: RuleRef<'_>) -> bool {
-        self.ids.is_some_and(|v| v.holds_image(rule.image()))
+        rule.map().is_none() && self.ids.is_some_and(|v| v.holds_image(rule.image()))
     }
     /// Starts a rule written term by term.
     pub fn rule(&mut self) -> RuleBuilder<'_, 'p> {
@@ -474,9 +476,9 @@ impl<'p> Builder<'p> {
     }
     pub fn rewrite(&mut self, from: &Version, rule: RuleRef<'_>, rw: &mut impl Rewrite) -> RuleBuilder<'_, 'p> {
         let same = self.same(rule);
-        let vars: Vec<u32> = rule.vars().map(|a| a.0).collect();
+        let vars: Vector<u32> = rule.vars().map(|a| a.0).collect();
         let at = self.enc.begin_rule();
-        let mut w = Walk { enc: &mut self.enc, from, im: rule.image(), vars: &vars, same, prefix: Vec::new() };
+        let mut w = Walk { enc: &mut self.enc, from, im: rule.image(), map: rule.map(), vars: &vars, same, prefix: Vec::new() };
         w.atom(rule.head(), Site::Head(rule.head()), rw);
         for l in rule.body() {
             if rw.keep(l) {
@@ -496,26 +498,30 @@ impl<'p> Builder<'p> {
     pub(in crate::code_rule_dsl::logic::program_image) fn declare(&mut self, rel: &str, cols: &[(&str, &str)]) {
         let a = self.enc.atom(rel);
         self.enc.rel_of_atom(a);
-        let ids = cols.iter().map(|&(n, t)| (self.enc.atom(n), self.enc.atom(t))).collect();
+        let ids: Vector<[u32; 2]> = cols.iter().map(|&(n, t)| [self.enc.atom(n), self.enc.atom(t)]).collect();
         self.parts.decls_gone.remove(&a);
-        self.parts.decls.insert(a, Decl { cols: ids, hash: encoder::decl_hash(rel, cols.iter().copied()) });
+        self.parts.set_decl(a, &ids, encoder::decl_hash(rel, cols.iter().copied()));
         self.parts_changed = true;
     }
     /// Removes the parent's declaration of `rel`.
     pub(in crate::code_rule_dsl::logic::program_image) fn undeclare(&mut self, rel: &str) {
         let a = self.enc.atom(rel);
-        self.parts.decls.remove(&a);
+        self.parts.remove_decl(a);
         if self.parent.is_some_and(|p| p.decl(AtomId(a)).is_some()) {
-            self.parts.decls_gone.insert(a);
+            self.parts.decls_gone.put(a);
         }
         self.parts_changed = true;
     }
-    fn rows_of(&mut self, rows: &[List<Value>]) -> Vec<Vec<Cell>> {
-        rows.iter().map(|row| row.iter().map(|v| match v {
-            Value::Int(i) => Cell::Int(*i),
-            Value::Str(s) => Cell::Str(AtomId(self.enc.atom(s))),
-            Value::Branded(b) => Cell::Branded(*b),
-        }).collect()).collect()
+    fn rows_of(&mut self, rows: &[List<Value>]) -> Rows {
+        let mut out = Rows::new();
+        for row in rows {
+            out.push_cells(row.iter().map(|v| match v {
+                Value::Int(i) => Cell::Int(*i),
+                Value::Str(s) => Cell::Str(AtomId(self.enc.atom(s))),
+                Value::Branded(b) => Cell::Branded(*b),
+            }));
+        }
+        out
     }
     fn hash_rows(rel: &str, about: bool, rows: &[List<Value>]) -> u64 {
         encoder::facts_hash(rel, about, rows.iter().map(|row| row.iter().map(|v| match v {
@@ -530,30 +536,30 @@ impl<'p> Builder<'p> {
         self.enc.rel_of_atom(a);
         let cells = self.rows_of(rows);
         self.parts.facts_gone.remove(&a);
-        self.parts.facts.insert(a, FactRel { rows: cells, hash: Self::hash_rows(rel, false, rows) });
+        self.parts.set_fact(a, cells.as_ref(), Self::hash_rows(rel, false, rows));
         self.rows += rows.len().max(1);
         self.parts_changed = true;
     }
     /// Removes the parent's facts of `rel`.
     pub(in crate::code_rule_dsl::logic::program_image) fn drop_facts(&mut self, rel: &str) {
         let a = self.enc.atom(rel);
-        self.parts.facts.remove(&a);
+        self.parts.remove_fact(a);
         if self.parent.is_some_and(|p| p.facts(AtomId(a)).is_some()) {
-            self.parts.facts_gone.insert(a);
+            self.parts.facts_gone.put(a);
         }
         self.parts_changed = true;
     }
     /// States relation `rel`'s facts as cells of this builder's atoms, replacing the parent's.
-    pub(in crate::code_rule_dsl::logic::program_image) fn set_fact_cells(&mut self, rel: &str, rows: Vec<Vec<Cell>>) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn set_fact_cells(&mut self, rel: &str, rows: Rows) {
         let a = self.enc.atom(rel);
         self.enc.rel_of_atom(a);
-        let hash = self.hash_cells(rel, false, &rows);
+        let hash = self.hash_cells(rel, false, rows.as_ref());
         self.parts.facts_gone.remove(&a);
         self.rows += rows.len().max(1);
-        self.parts.facts.insert(a, FactRel { rows, hash });
+        self.parts.set_fact(a, rows.as_ref(), hash);
         self.parts_changed = true;
     }
-    fn hash_cells(&self, rel: &str, about: bool, rows: &[Vec<Cell>]) -> u64 {
+    fn hash_cells(&self, rel: &str, about: bool, rows: RowsRef<'_>) -> u64 {
         let enc = &self.enc;
         encoder::facts_hash(rel, about, rows.iter().map(|row| row.iter().map(|c| match *c {
             Cell::Int(i) => CellText::Int(i),
@@ -562,13 +568,13 @@ impl<'p> Builder<'p> {
         })))
     }
     /// The rows of about relation `name` this edit states, or its parent's (`about.rs` reads and writes them by type).
-    pub fn about_rows(&mut self, name: &str) -> Vec<Vec<Cell>> {
+    pub fn about_rows(&mut self, name: &str) -> Rows {
         self.own_about();
         let a = self.enc.atom(name);
-        self.parts.facts.get(&(a | ABOUT_BIT)).map(|f| f.rows.clone()).unwrap_or_default()
+        self.parts.fact(a | ABOUT_BIT).map(|(r, _)| r.to_rows()).unwrap_or_default()
     }
     /// States about relation `name`'s rows, every other about relation kept.
-    pub(in crate::code_rule_dsl::logic::program_image) fn set_about_rows(&mut self, name: &str, rows: Vec<Vec<Cell>>) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn set_about_rows(&mut self, name: &str, rows: Rows) {
         self.own_about();
         // The program's own row, which every field's reader asks for, is held by every version that states an about
         // row, whichever edit stated the first: a version from a tree has it (`about_of`), and one a pass's field or
@@ -576,14 +582,14 @@ impl<'p> Builder<'p> {
         // by it (Q358).
         if name != "program" && !rows.is_empty() {
             let program = self.enc.atom("program");
-            if !self.parts.facts.contains_key(&(program | ABOUT_BIT)) {
+            if !self.parts.has_fact(program | ABOUT_BIT) {
                 let p = Cell::Str(self.atom(super::ABOUT));
-                self.set_about_rows("program", vec![vec![p]]);
+                self.set_about_rows("program", Rows::from_iter([[p]]));
             }
         }
         let a = self.enc.atom(name);
         for &c in super::about::relation_columns(name) {
-            for row in &rows {
+            for row in rows.iter() {
                 if let Some(Cell::Str(x)) = row.get(c)
                     && !self.enc.text(x.0).is_empty()
                 {
@@ -592,10 +598,10 @@ impl<'p> Builder<'p> {
             }
         }
         if rows.is_empty() {
-            self.parts.facts.remove(&(a | ABOUT_BIT));
+            self.parts.remove_fact(a | ABOUT_BIT);
         } else {
-            let hash = self.hash_cells(name, true, &rows);
-            self.parts.facts.insert(a | ABOUT_BIT, FactRel { rows, hash });
+            let hash = self.hash_cells(name, true, rows.as_ref());
+            self.parts.set_fact(a | ABOUT_BIT, rows.as_ref(), hash);
         }
         self.parts_changed = true;
     }
@@ -606,8 +612,8 @@ impl<'p> Builder<'p> {
         }
         if let Some(p) = self.parent {
             for f in p.about_facts() {
-                let rows = f.rows().map(|r| r.collect()).collect();
-                self.parts.facts.insert(f.name().0 | ABOUT_BIT, FactRel { rows, hash: f.hash() });
+                let rows = Rows::of_cells(f.rows());
+                self.parts.set_fact(f.name().0 | ABOUT_BIT, rows.as_ref(), f.hash());
             }
         }
         self.parts.owns_about = true;
@@ -644,18 +650,18 @@ impl<'p> Builder<'p> {
         }
     }
     /// Relation `rel`'s fact rows as this edit states them, or its parent's (`None` where it has none).
-    pub fn fact_cells(&self, rel: &str) -> Option<Vec<Vec<Cell>>> {
+    pub fn fact_cells(&self, rel: &str) -> Option<Rows> {
         let a = self.enc.find(rel)?;
-        match self.parts.facts.get(&a) {
-            Some(f) => Some(f.rows.clone()),
-            None if self.parts.facts_gone.contains(&a) => None,
-            None => self.parent.and_then(|p| p.facts(AtomId(a))).map(|f| f.rows().map(|r| r.collect()).collect()),
+        match self.parts.fact(a) {
+            Some((f, _)) => Some(f.to_rows()),
+            None if self.parts.facts_gone.contains_key(&a) => None,
+            None => self.parent.and_then(|p| p.facts(AtomId(a))).map(|f| Rows::of_cells(f.rows())),
         }
     }
     /// Whether relation `rel` is declared, by this edit or its parent.
     pub fn declares(&self, rel: &str) -> bool {
         let Some(a) = self.enc.find(rel) else { return false };
-        self.parts.decls.contains_key(&a) || (!self.parts.decls_gone.contains(&a) && self.parent.is_some_and(|p| p.decl(AtomId(a)).is_some()))
+        self.parts.has_decl(a) || (!self.parts.decls_gone.contains_key(&a) && self.parent.is_some_and(|p| p.decl(AtomId(a)).is_some()))
     }
     /// States the fields edit `e` states (its declarations, facts, inputs, outputs and `.about` rows, by name), as
     /// this builder's: an edit staged against the same input (`fields::Edit`), its rules this builder's own.
@@ -666,19 +672,21 @@ impl<'p> Builder<'p> {
             Cell::Str(a) => Value::Str(e.enc.text(a.0).to_owned().into()),
             Cell::Branded(b) => Value::Branded(b),
         };
-        for (&a, d) in &e.parts.decls {
-            let cols: Vec<(String, String)> = d.cols.iter().map(|&(n, t)| (text(n), text(t))).collect();
+        for a in e.parts.decl_atoms() {
+            let (cols, _) = e.parts.decl(a).expect("a declaration of the parts");
+            let cols: Vec<(String, String)> = cols.iter().map(|&[n, t]| (text(n), text(t))).collect();
             let pairs: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
             self.declare(&text(a), &pairs);
         }
-        for &a in &e.parts.decls_gone {
+        for a in e.parts.decls_gone.keys_iter() {
             self.undeclare(&text(a));
         }
-        for (&k, f) in e.parts.facts.iter().filter(|(k, _)| *k & ABOUT_BIT == 0) {
-            let rows: Vec<List<Value>> = f.rows.iter().map(|row| row.iter().map(value).collect::<Vec<_>>().into()).collect();
+        for k in e.parts.fact_keys().into_iter().filter(|k| *k & ABOUT_BIT == 0) {
+            let (f, _) = e.parts.fact(k).expect("a fact relation of the parts");
+            let rows: Vec<List<Value>> = f.iter().map(|row| row.iter().map(value).collect::<Vec<_>>().into()).collect();
             self.set_facts(&text(k), &rows);
         }
-        for &a in &e.parts.facts_gone {
+        for a in e.parts.facts_gone.keys_iter() {
             self.drop_facts(&text(a));
         }
         if let Some((ids, _)) = &e.parts.inputs {
@@ -690,15 +698,18 @@ impl<'p> Builder<'p> {
         if e.parts.owns_about {
             let about: Vec<(String, Vec<List<Value>>)> = e
                 .parts
-                .facts
-                .iter()
-                .filter(|(k, _)| *k & ABOUT_BIT != 0)
-                .map(|(&k, f)| (text(k & !ABOUT_BIT), f.rows.iter().map(|row| row.iter().map(value).collect::<Vec<_>>().into()).collect()))
+                .fact_keys()
+                .into_iter()
+                .filter(|k| *k & ABOUT_BIT != 0)
+                .map(|k| (text(k & !ABOUT_BIT), e.parts.fact(k).expect("a fact relation of the parts").0.iter().map(|row| row.iter().map(value).collect::<Vec<_>>().into()).collect()))
                 .collect();
             self.own_about();
-            self.parts.facts.retain(|k, _| k & ABOUT_BIT == 0);
+            self.parts.retain_facts(|k| k & ABOUT_BIT == 0);
             for (name, rows) in about {
-                let cells: Vec<Vec<Cell>> = rows.iter().map(|row| row.iter().map(|v| self.cell(v)).collect()).collect();
+                let mut cells = Rows::new();
+                for row in &rows {
+                    cells.push_cells(row.iter().map(|v| self.cell(v)));
+                }
                 self.set_about_rows(&name, cells);
             }
         }
@@ -706,10 +717,10 @@ impl<'p> Builder<'p> {
     /// Relation `rel`'s declared columns (name, type), as this edit leaves them.
     pub fn columns_of(&self, rel: &str) -> Option<Vec<(String, String)>> {
         let a = self.enc.find(rel)?;
-        if let Some(d) = self.parts.decls.get(&a) {
-            return Some(d.cols.iter().map(|&(n, t)| (self.enc.text(n).to_owned(), self.enc.text(t).to_owned())).collect());
+        if let Some((cols, _)) = self.parts.decl(a) {
+            return Some(cols.iter().map(|&[n, t]| (self.enc.text(n).to_owned(), self.enc.text(t).to_owned())).collect());
         }
-        if self.parts.decls_gone.contains(&a) {
+        if self.parts.decls_gone.contains_key(&a) {
             return None;
         }
         self.parent.and_then(|p| p.columns_of(rel))
@@ -717,29 +728,35 @@ impl<'p> Builder<'p> {
     /// The declared relations' names, in name order, as this edit leaves them.
     pub fn declared_names(&self) -> Vec<String> {
         let mut names: std::collections::BTreeSet<String> = self.parent.map(|p| p.declared_names()).unwrap_or_default().into_iter().collect();
-        for a in &self.parts.decls_gone {
-            names.remove(self.enc.text(*a));
+        for a in self.parts.decls_gone.keys_iter() {
+            names.remove(self.enc.text(a));
         }
-        names.extend(self.parts.decls.keys().map(|&a| self.enc.text(a).to_owned()));
+        names.extend(self.parts.decl_atoms().iter().map(|&a| self.enc.text(a).to_owned()));
         names.into_iter().collect()
     }
     /// The relations with facts stated, in name order, as this edit leaves them.
     pub fn fact_names(&self) -> Vec<String> {
         let mut names: std::collections::BTreeSet<String> = self.parent.map(|p| p.fact_names()).unwrap_or_default().into_iter().collect();
-        for a in &self.parts.facts_gone {
-            names.remove(self.enc.text(*a));
+        for a in self.parts.facts_gone.keys_iter() {
+            names.remove(self.enc.text(a));
         }
-        names.extend(self.parts.facts.keys().filter(|&&k| k & ABOUT_BIT == 0).map(|&a| self.enc.text(a).to_owned()));
+        names.extend(self.parts.fact_keys().iter().filter(|&&k| k & ABOUT_BIT == 0).map(|&a| self.enc.text(a).to_owned()));
         names.into_iter().collect()
     }
     /// The rows of about relation `name` as this edit leaves them, read without taking them over (`about_rows`).
-    pub fn about_cells(&self, name: &str) -> Vec<Vec<Cell>> {
+    pub fn about_cells(&self, name: &str) -> Rows {
         if self.parts.owns_about {
-            let Some(a) = self.enc.find(name) else { return Vec::new() };
-            return self.parts.facts.get(&(a | ABOUT_BIT)).map(|f| f.rows.clone()).unwrap_or_default();
+            let Some(a) = self.enc.find(name) else { return Rows::new() };
+            return self.parts.fact(a | ABOUT_BIT).map(|(r, _)| r.to_rows()).unwrap_or_default();
         }
-        let Some(p) = self.parent else { return Vec::new() };
-        p.about_facts().into_iter().filter(|f| p.text(f.name()) == name).flat_map(|f| f.rows().map(|r| r.collect::<Vec<Cell>>()).collect::<Vec<_>>()).collect()
+        let Some(p) = self.parent else { return Rows::new() };
+        let mut out = Rows::new();
+        for f in p.about_facts().into_iter().filter(|f| p.text(f.name()) == name) {
+            for r in f.rows() {
+                out.push_cells(r);
+            }
+        }
+        out
     }
     /// Adds rows `rows` to relation `rel`'s facts, after the parent's.
     pub(in crate::code_rule_dsl::logic::program_image) fn add_facts(&mut self, rel: &str, rows: &[List<Value>]) {
@@ -747,17 +764,19 @@ impl<'p> Builder<'p> {
             return;
         }
         let a = self.atom(rel);
-        let mut cells: Vec<Vec<Cell>> = match self.parts.facts.get(&a.0) {
-            Some(f) => f.rows.clone(),
-            None if self.parts.facts_gone.contains(&a.0) => Vec::new(),
-            None => self.parent.and_then(|p| p.facts(a)).map(|f| f.rows().map(|r| r.collect()).collect()).unwrap_or_default(),
+        let mut cells: Rows = match self.parts.fact(a.0) {
+            Some((f, _)) => f.to_rows(),
+            None if self.parts.facts_gone.contains_key(&a.0) => Rows::new(),
+            None => self.parent.and_then(|p| p.facts(a)).map(|f| Rows::of_cells(f.rows())).unwrap_or_default(),
         };
-        cells.extend(rows.iter().map(|row| row.iter().map(|v| self.cell(v)).collect::<Vec<Cell>>()));
+        for row in rows {
+            cells.push_cells(row.iter().map(|v| self.cell(v)));
+        }
         self.set_fact_cells(rel, cells);
     }
     /// States the program's other fields (`about_of`), all of them.
     pub(in crate::code_rule_dsl::logic::program_image) fn set_about(&mut self, about: &Facts) {
-        self.parts.facts.retain(|k, _| k & ABOUT_BIT == 0);
+        self.parts.retain_facts(|k| k & ABOUT_BIT == 0);
         for (rel, rows) in about {
             let a = self.enc.atom(rel);
             let cells = self.rows_of(rows);
@@ -771,7 +790,7 @@ impl<'p> Builder<'p> {
                     }
                 }
             }
-            self.parts.facts.insert(a | ABOUT_BIT, FactRel { rows: cells, hash: Self::hash_rows(rel, true, rows) });
+            self.parts.set_fact(a | ABOUT_BIT, cells.as_ref(), Self::hash_rows(rel, true, rows));
         }
         self.parts.owns_about = true;
         self.parts_changed = true;
@@ -1024,10 +1043,10 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
     pub fn lit(mut self, from: &Version, rule: RuleRef<'_>, lit: LitRef<'_>) -> Self {
         self.body();
         let same = self.b.same(rule);
-        let vars: Vec<u32> = rule.vars().map(|a| a.0).collect();
+        let vars: Vector<u32> = rule.vars().map(|a| a.0).collect();
         let n = lit.node();
         let size = rule.image().node(n).1;
-        self.b.enc.copy_nodes(from, rule.image(), n..n + size, &vars, same);
+        self.b.enc.copy_nodes(from, rule.image(), rule.map(), n..n + size, &vars, same);
         self
     }
     /// A literal of `from`'s rule `rule`, copied through `rw` (its variables renamed, terms replaced): a literal of one
@@ -1035,8 +1054,8 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
     pub fn lit_with(mut self, from: &Version, rule: RuleRef<'_>, lit: LitRef<'_>, rw: &mut impl Rewrite) -> Self {
         self.body();
         let same = self.b.same(rule);
-        let vars: Vec<u32> = rule.vars().map(|a| a.0).collect();
-        let mut w = Walk { enc: &mut self.b.enc, from, im: rule.image(), vars: &vars, same, prefix: Vec::new() };
+        let vars: Vector<u32> = rule.vars().map(|a| a.0).collect();
+        let mut w = Walk { enc: &mut self.b.enc, from, im: rule.image(), map: rule.map(), vars: &vars, same, prefix: Vec::new() };
         w.lit(lit, rw);
         self
     }
@@ -1046,10 +1065,10 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
             self.failed = Some(super::bad("a rule with two heads"));
         }
         let same = self.b.same(rule);
-        let vars: Vec<u32> = rule.vars().map(|a| a.0).collect();
+        let vars: Vector<u32> = rule.vars().map(|a| a.0).collect();
         let n = atom.node();
         let size = rule.image().node(n).1;
-        self.b.enc.copy_nodes(from, rule.image(), n..n + size, &vars, same);
+        self.b.enc.copy_nodes(from, rule.image(), rule.map(), n..n + size, &vars, same);
         self.head = true;
         self
     }
@@ -1059,8 +1078,8 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
             self.failed = Some(super::bad("a rule with two heads"));
         }
         let same = self.b.same(rule);
-        let vars: Vec<u32> = rule.vars().map(|a| a.0).collect();
-        let mut w = Walk { enc: &mut self.b.enc, from, im: rule.image(), vars: &vars, same, prefix: Vec::new() };
+        let vars: Vector<u32> = rule.vars().map(|a| a.0).collect();
+        let mut w = Walk { enc: &mut self.b.enc, from, im: rule.image(), map: rule.map(), vars: &vars, same, prefix: Vec::new() };
         w.atom(atom, Site::Head(atom), rw);
         self.head = true;
         self
@@ -1206,6 +1225,8 @@ struct Walk<'a, 'e> {
     enc: &'a mut Encoder<'e>,
     from: &'a Version,
     im: &'a super::Image,
+    /// A union's part's ids in `from`'s (`RuleRef::map`).
+    map: Option<&'a super::handles::IdMap>,
     vars: &'a [u32],
     same: bool,
     prefix: Vec<T<'static>>,
@@ -1214,12 +1235,12 @@ struct Walk<'a, 'e> {
 impl Walk<'_, '_> {
     fn open_mapped(&mut self, n: u32) -> usize {
         let kd = self.im.node(n).0;
-        let v = self.enc.map_val(self.from, self.im, n, self.vars, self.same);
+        let v = self.enc.map_val(self.from, self.im, self.map, n, self.vars, self.same);
         self.enc.open(kd, v)
     }
     fn copy(&mut self, n: u32) {
         let size = self.im.node(n).1;
-        self.enc.copy_nodes(self.from, self.im, n..n + size, self.vars, self.same);
+        self.enc.copy_nodes(self.from, self.im, self.map, n..n + size, self.vars, self.same);
     }
     /// `copy`, each variable leaf renamed where `rw.var` names it.
     fn copy_renamed(&mut self, n: u32, rw: &mut impl Rewrite) {
@@ -1231,7 +1252,7 @@ impl Walk<'_, '_> {
                     let s = self.enc.slot_of(a.0);
                     self.enc.leaf(kind::VAR, s);
                 }
-                None => self.enc.copy_nodes(self.from, self.im, m..m + 1, self.vars, self.same),
+                None => self.enc.copy_nodes(self.from, self.im, self.map, m..m + 1, self.vars, self.same),
             }
         }
     }
@@ -1255,7 +1276,7 @@ impl Walk<'_, '_> {
         let mut k = 0;
         while c < end {
             if !rw.drop_arg(a, k) {
-                match (!matches!(site, Site::Head(_))).then(|| rw.arg(a, k, super::handles::term(self.im, c))).flatten() {
+                match (!matches!(site, Site::Head(_))).then(|| rw.arg(a, k, super::handles::term_in(self.im, c, self.map))).flatten() {
                     Some(t) => write_t(self.enc, &t),
                     None => self.term(c, site, rw),
                 }
@@ -1266,7 +1287,7 @@ impl Walk<'_, '_> {
         self.enc.close(at);
     }
     fn term(&mut self, n: u32, site: Site<'_>, rw: &mut impl Rewrite) {
-        let t = super::handles::term(self.im, n);
+        let t = super::handles::term_in(self.im, n, self.map);
         if let Some(t) = rw.term(site, t) {
             write_t(self.enc, &t);
             return;
@@ -1314,7 +1335,7 @@ impl Walk<'_, '_> {
                 let mut c = n + 1;
                 while c < n + size {
                     if self.im.node(c).0 & kind::MASK == kind::ATOM {
-                        let a = AtomRef::new(self.im, c);
+                        let a = AtomRef::mapped(self.im, c, self.map);
                         self.atom(a, Site::Atom(a), rw);
                     } else {
                         self.copy_renamed(c, rw);

@@ -6,6 +6,7 @@
 //! (decision 0276 step 6), and so is that form: a program kept as text alone, by a store written before images, is
 //! not read, and the run that wanted it compiles it again.
 
+use rerail_blocks::vector::Vector;
 use super::front::Value;
 use super::program_facts::{self, Facts};
 use crate::content_store::{ContentStore, HashKey, SourceId, StoreResult};
@@ -331,10 +332,10 @@ fn ids_text(ids: &[u32]) -> Value {
     str_value(&ids.iter().map(u32::to_string).collect::<Vec<_>>().join(","))
 }
 
-fn text_ids(v: &Value) -> Result<Vec<u32>, String> {
+fn text_ids(v: &Value) -> Result<Vector<u32>, String> {
     let Value::Str(s) = v else { return Err(bad("a stored run's ids are not text")) };
     if s.is_empty() {
-        return Ok(Vec::new());
+        return Ok(rerail_blocks::vector::Vector::new());
     }
     s.split(',').map(|x| x.parse::<u32>().map_err(bad)).collect()
 }
@@ -344,7 +345,7 @@ struct KeptRun {
     /// The images the store holds no copy of yet, as their versions hold them (decision 0464).
     images: Vec<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Image>>,
     /// The digests of those it was opened from: named, not copied (decision 0393).
-    held: Vec<[u8; 32]>,
+    held: Vector<[u8; 32]>,
     /// Its analyses' rows, one source apart from its facts, each analysis's encoded on its own (decision 0385): a run
     /// opened decodes those a pass asks for, not all.
     rows: Vec<u8>,
@@ -362,7 +363,7 @@ fn kept_run(run: &crate::code_rule_dsl::logic::program_image::manager::Run) -> K
     use crate::code_rule_dsl::logic::program_image::manager::StoredVersion;
     let parts = run.parts();
     let mut images: Vec<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Image>> = Vec::new();
-    let mut held: Vec<[u8; 32]> = Vec::new();
+    let mut held: Vector<[u8; 32]> = rerail_blocks::vector::Vector::new();
     let mut image = |at: usize, im: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Image>| -> [u8; 32] {
         let kept = parts.kept.get(at).copied().flatten();
         match kept {
@@ -390,6 +391,13 @@ fn kept_run(run: &crate::code_rule_dsl::logic::program_image::manager::Run) -> K
                 [int(i as i64), int(1), int(*parent as i64), str_value(&hex32(&image)), str_value("")]
             }
             StoredVersion::View { parent, removed } => [int(i as i64), int(2), int(*parent as i64), str_value(""), ids_text(removed)],
+            StoredVersion::Union { header, parts } => {
+                for (k, (part, keep)) in parts.iter().enumerate() {
+                    let keep: Vec<u32> = keep.iter().flat_map(|&(s, e)| [s, e]).collect();
+                    facts.entry("pipeline_run_union_part".into()).or_default().push([int(i as i64), int(k as i64), int(*part as i64), ids_text(&keep)].into());
+                }
+                [int(i as i64), int(3), int(*header as i64), str_value(""), str_value("")]
+            }
         };
         facts.entry("pipeline_run_version".into()).or_default().push(row.into());
     }
@@ -499,10 +507,10 @@ pub fn run_sources(store: &ContentStore, key: &[u8; 32]) -> Result<Option<Vec<So
 #[derive(serde::Serialize, serde::Deserialize)]
 struct RecordedRun {
     key: [u8; 32],
-    images: Vec<usize>,
+    images: Vector<usize>,
     /// The images the store holds already, by digest: named, not copied.
     #[serde(default)]
-    held: Vec<[u8; 32]>,
+    held: Vector<[u8; 32]>,
     /// Its analyses' rows' length (`KeptRun::rows`).
     #[serde(default)]
     rows: usize,
@@ -578,7 +586,7 @@ impl StoredRuns<'_> {
         // mapped, and opened over the mapping, not decompressed, hashed or copied (decision 0394).
         let digests: Vec<Option<[u8; 32]>> = by_index
             .iter()
-            .map(|r| if matches!(r[1], Value::Int(2)) { Ok(None) } else { text(&r[3]).and_then(|t| unhex32(&t).ok_or_else(|| bad("a stored run's image is not a digest"))).map(Some) })
+            .map(|r| if matches!(r[1], Value::Int(2) | Value::Int(3)) { Ok(None) } else { text(&r[3]).and_then(|t| unhex32(&t).ok_or_else(|| bad("a stored run's image is not a digest"))).map(Some) })
             .collect::<Result<_, String>>()?;
         let rows_digest = match rows("pipeline_run_rows").first() {
             Some(r) => Some(unhex32(&text(&r[0])?).ok_or_else(|| bad("a stored run's rows are not a digest"))?),
@@ -616,6 +624,18 @@ impl StoredRuns<'_> {
                     v
                 }
                 (2, None) => Version::view_without(&parent()?, &text_ids(&r[4])?)?,
+                (3, None) => {
+                    let header = parent()?;
+                    let at = int(&r[0])?;
+                    let mut parts: Vec<(i64, std::sync::Arc<crate::code_rule_dsl::logic::program_image::UnionPart>)> = Vec::new();
+                    for p in rows("pipeline_run_union_part").iter().filter(|p| int(&p[0]).ok() == Some(at)) {
+                        let part = usize::try_from(int(&p[2])?).ok().and_then(|k| versions.get(k).cloned()).ok_or_else(|| bad("a stored union names no part before it"))?;
+                        let keep: Vec<(u32, u32)> = text_ids(&p[3])?.chunks(2).map(|c| (c[0], c.get(1).copied().unwrap_or(c[0]))).collect();
+                        parts.push((int(&p[1])?, std::sync::Arc::new(crate::code_rule_dsl::logic::program_image::UnionPart::found_in(&header, part, keep)?)));
+                    }
+                    parts.sort_by_key(|(k, _)| *k);
+                    Version::union(header, parts.into_iter().map(|(_, p)| p).collect())?
+                }
                 _ => return Err(bad("a stored run's version is of no kind")),
             };
             if let Some(d) = image {

@@ -470,10 +470,10 @@ impl Renaming<'_> {
         if let Some(r) = self.d.read_of(self.pass, rel) {
             return Some(self.d.name_in(&r.source, &r.rel));
         }
-        if let Some(own) = self.own {
-            if own.contains(rel) {
-                return Some(instance(self.pass, rel));
-            }
+        if let Some(own) = self.own
+            && own.contains(rel)
+        {
+            return Some(instance(self.pass, rel));
         }
         // What the pass holds already that the host no longer does: a library's export a program's rule of the
         // context reads by its own name (`ann_in`), which the made library holds as the instance alone.
@@ -649,7 +649,12 @@ fn write(v: &Version, d: &Declared, plan: &Plan, b: &mut Builder<'_>) -> Result<
     let mut settings: Vec<(String, String)> = ProgramFields::settings(v).into_iter().filter(|(k, _)| k != "context" && k != "from").collect();
     for c in d.contexts.values().filter(|c| !c.made) {
         let exports: Vec<&str> = c.exports.iter().map(String::as_str).collect();
-        let reads: Vec<String> = d.reads.iter().filter(|r| r.reader == c.name).map(|r| d.name_in(&r.source, &r.rel)).collect();
+        // A set, as its exports are: the `.from` statements of two modules neither includes have no order, and the
+        // library's link (decision 0639) puts such modules in another order than their files' includes. In the order
+        // read, a program linked from its modules printed another `.pass` than its whole lowering (python/scopes and
+        // python/points-to's reads of `annotation`, decision 0677 fix 2).
+        let reads: std::collections::BTreeSet<String> = d.reads.iter().filter(|r| r.reader == c.name).map(|r| d.name_in(&r.source, &r.rel)).collect();
+        let reads: Vec<String> = reads.into_iter().collect();
         let reads = if reads.is_empty() { String::new() } else { format!(" reads {}", reads.join(", ")) };
         let holes = c.holes.as_ref().map_or(String::new(), |h| format!(" holes {}", d.name_in(&c.host, h)));
         settings.push(("pass".to_owned(), format!("{} of {} roots {}{holes} exports {}{reads}", c.name, c.host, d.name_in(&c.host, &c.roots), exports.join(", "))));
@@ -682,11 +687,18 @@ impl super::program_image::manager::ProgramPass for Passes {
     const NAME: &'static str = "0597's passes";
     fn run(&mut self, cx: &super::program_image::manager::Cx<'_>, w: &mut super::program_image::manager::ProgramW<'_>) -> Result<(), String> {
         let v = cx.v();
-        let d = declared(v).map_err(|e| e.to_string())?;
-        let plan = plan(v, &d);
+        let d = {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "0597's passes: the settings read (declared)".to_owned());
+            declared(v).map_err(|e| e.to_string())?
+        };
+        let plan = {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "0597's passes: what each pass makes its own (plan)".to_owned());
+            plan(v, &d)
+        };
         if !plan.work(&d) {
             return Ok(());
         }
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "0597's passes: the instances written (write)".to_owned());
         write(v, &d, &plan, w.derive()?).map_err(|e| e.to_string())
     }
 }
@@ -702,7 +714,12 @@ impl super::program_image::manager::ProgramPass for CrossingCycles {
         if d.contexts.is_empty() {
             return Ok(());
         }
-        refuse_crossing_cycles(v, &d).map_err(|e| e.to_string())?;
+        {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "0597's passes: the program's SCCs, none through two passes".to_owned());
+            refuse_crossing_cycles(v, &d).map_err(|e| e.to_string())?;
+        }
+        // Computed only in a profiled run (`profile::decision`), and spanned so, apart from the check.
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "0597's passes: rule 8's report (a profiled run's alone)".to_owned());
         crate::code_rule_dsl::logic::profile::decision("each made pass's relations by what they read (decision 0597 rule 8)", || {
             tape_local(v).iter().map(|(pass, (own, hosted))| format!("{pass}: {} read their tape alone ({}), {} a host's ({})", own.len(), own.iter().take(12).cloned().collect::<Vec<_>>().join(", "), hosted.len(), hosted.iter().take(12).cloned().collect::<Vec<_>>().join(", "))).collect::<Vec<_>>().join("; ")
         });
@@ -710,51 +727,14 @@ impl super::program_image::manager::ProgramPass for CrossingCycles {
     }
 }
 
-/// Each made pass's instance relations of program `v`, by what they read (decision 0597 rule 8): those whose rows are
-/// a function of the pass's own tape (their rules read the pass's views, constants and other such relations of the
-/// pass, and its nodes), and those that read a host's relation (a `.from` export, a host's node through `host_node`
-/// or `guest_of`, or any relation of the program not the pass's). Rule 8 keeps the first by the tape's key: the same
-/// for every string holding the text. The second is the host's place's.
+/// Each made pass's instance relations of program `v`, by what they read (decision 0597 rule 8), by pass name: those
+/// whose rows are a function of the pass's own tape, and those that read a host's (`preparation::kept::tape_local`).
 pub fn tape_local(v: &Version) -> BTreeMap<String, (BTreeSet<String>, BTreeSet<String>)> {
-    let passes: Vec<String> = super::passes_made::made(v).into_iter().map(|m| m.name).collect();
-    let derived = |x: &str| v.rel(x).is_some_and(|id| v.heads(id).next().is_some());
-    let pass_of = |rel: &str| passes.iter().find(|p| rel.contains(&format!("{}{p}_", super::passes_made::PREFIX))).cloned();
-    // A pass's node set: for a text root, its tape's own nodes.
-    let nodes_of = |rel: &str, pass: &str| [NODES, HELD].iter().any(|n| rel.ends_with(&instance(pass, n)));
     let mut out: BTreeMap<String, (BTreeSet<String>, BTreeSet<String>)> = BTreeMap::new();
-    let rels: BTreeSet<String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).filter(|h| pass_of(h).is_some()).collect();
-    let mut own: BTreeSet<String> = rels.iter().filter(|r| !nodes_of(r, &pass_of(r).unwrap())).cloned().collect();
-    loop {
-        let before = own.len();
-        let was = own.clone();
-        own.retain(|rel| {
-            let pass = pass_of(rel).unwrap();
-            let id = v.rel(rel).unwrap();
-            v.heads(id).all(|r| {
-                r.reads().all(|a| {
-                    let x = v.rel_name(a.rel());
-                    if HOSTS_NODE.iter().any(|(h, _)| *h == x) {
-                        return false;
-                    }
-                    // A view reads the tape in place, though a combined program derives it (`kind` from `node`).
-                    if !derived(x) || super::plan::corpus::hiding::VIEWS.contains(&x) {
-                        return true;
-                    }
-                    nodes_of(x, &pass) || (pass_of(x).as_deref() == Some(pass.as_str()) && was.contains(x))
-                })
-            })
-        });
-        if own.len() == before {
-            break;
-        }
-    }
-    for rel in rels {
-        let pass = pass_of(&rel).unwrap();
-        if nodes_of(&rel, &pass) {
-            continue;
-        }
-        let e = out.entry(pass).or_default();
-        if own.contains(&rel) { e.0.insert(rel) } else { e.1.insert(rel) };
+    for (pass, (own, hosted)) in super::plan::corpus::preparation::kept::tape_local(v) {
+        let e = out.entry(pass.name).or_default();
+        e.0.extend(own);
+        e.1.extend(hosted);
     }
     out
 }

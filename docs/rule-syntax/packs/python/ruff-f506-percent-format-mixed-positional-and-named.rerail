@@ -13,4 +13,4 @@
 .violation F506(at: node) code "F506"
     "Use only %(key) placeholders or only positional ones in this format string; Python cannot format a mix."
     suppress ruff "F506"
-F506(b) :- percent_fmt(b, _, _, v), pct_key(v, _), pct_positional(v, n), n > 0.
+F506(b) :- percent_fmt(b, _, _, _), pct_key(b, _), pct_positional(b, n), n > 0.

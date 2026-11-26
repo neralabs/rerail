@@ -20,6 +20,7 @@ struct Counts {
     inputs_hashed_whole: AtomicUsize,
     inputs_read_whole: AtomicUsize,
     drivers_unled: AtomicUsize,
+    join_work: AtomicUsize,
 }
 
 fn counts() -> std::sync::Arc<Counts> {
@@ -62,6 +63,10 @@ pub struct Shape {
     /// R2 (0353): a new process's changed inputs whose old rows `retain::Retained::load` read whole from the
     /// frames (copied into columns, every row hashed), not their changed documents' alone (`retain::OldInput`).
     pub inputs_read_whole: usize,
+    /// R4 at scale: the native joins' work, every line of every stratum the run ran, derived or maintained: the rows
+    /// into each step and those its last step made (`profile::plan_work`, as the planner prices a plan and keeps its
+    /// budget, decision 0122). What an edit costs, counted, not timed (0094 §8's gate sets a move's against an edit's).
+    pub join_work: usize,
 }
 
 pub fn now() -> Shape {
@@ -79,6 +84,7 @@ pub fn now() -> Shape {
         inputs_from_owners: c.inputs_from_owners.load(Relaxed),
         inputs_hashed_whole: c.inputs_hashed_whole.load(Relaxed),
         inputs_read_whole: c.inputs_read_whole.load(Relaxed),
+        join_work: c.join_work.load(Relaxed),
     }
 }
 
@@ -98,6 +104,7 @@ pub fn since(before: Shape) -> Shape {
         inputs_from_owners: n.inputs_from_owners - before.inputs_from_owners,
         inputs_hashed_whole: n.inputs_hashed_whole - before.inputs_hashed_whole,
         inputs_read_whole: n.inputs_read_whole - before.inputs_read_whole,
+        join_work: n.join_work - before.join_work,
     }
 }
 
@@ -133,6 +140,9 @@ pub fn measure_unkeyed() {
 }
 pub fn driver_unled() {
     counts().drivers_unled.fetch_add(1, Relaxed);
+}
+pub fn join_work(n: usize) {
+    counts().join_work.fetch_add(n, Relaxed);
 }
 /// Notes a relation held under `name`, if it is a maintenance name.
 pub fn held(name: &str) {

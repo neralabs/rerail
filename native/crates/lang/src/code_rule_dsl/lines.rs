@@ -107,7 +107,7 @@ impl LineTable {
     fn own(bytes: &[u8], terminators: Terminators, placed: bool) -> Self {
         use rerail_tape_format::newlines;
         let len = u32::try_from(bytes.len()).expect("a file within 4 GB");
-        let mut ends = Vec::new();
+        let mut ends = rerail_tape_format::Vector::<u64>::new();
         terminators.each(bytes, |at, length| ends.push((at + length - 1) as u64));
         let (u, m) = (u64::from(len), ends.len() as u64);
         let fill = |out: &mut [u8]| {
@@ -119,9 +119,9 @@ impl LineTable {
         let home = if placed {
             crate::code_rule_dsl::tape::placed::place(room, fill).expect("an index's room")
         } else {
-            let mut v = vec![0u8; room];
+            let mut v = rerail_blocks::vector![0u8; room];
             fill(&mut v).expect("an index");
-            rerail_tape_format::home::Home::Own(v)
+            rerail_tape_format::home::Home::from(v)
         };
         Self { home: Index::Own(home), at: 0, len }
     }

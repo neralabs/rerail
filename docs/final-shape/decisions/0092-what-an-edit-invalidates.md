@@ -1,7 +1,8 @@
 # 0092: What an edit invalidates: definition keys, symbol-keyed exports, and two classes of fact
 
-Status: accepted (2026-11-08). The frame that 0052, 0065, 0076, 0077, 0083 and 0090 are each a part of. Nothing new
-is built by this record; it orders the work of 0083 and 0090 (§6).
+Status: partly built (audited 2026-11-23). Left: Symbol-keyed exports and per-definition fact keys end to end; 0093's
+restriction on global facts. Accepted (2026-11-08). The frame that 0052, 0065, 0076, 0077, 0083 and 0090 are each a
+part of. Nothing new is built by this record; it orders the work of 0083 and 0090 (§6).
 
 ## Intro
 

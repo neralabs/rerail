@@ -182,7 +182,7 @@ b615_hex_revision(n) :- b615_ast_constant(n),
 .decl b615_bandit_truthy(n: node)
 b615_bandit_truthy(n) :- b615_ast_constant(n),
     ( value(n, v1), b615_truthy_value(n, "true")
-    ; value(n, v2), (value_type(v2, "boolean") ; value_type(v2, "NoneType"))
+    ; value(n, v2), (value_type_of(n, "boolean") ; value_type_of(n, "NoneType"))
     ).
 
 
@@ -270,17 +270,18 @@ b615_tok_has_5(n) :- node_text(n, g3), !child(n, _, _),
 
 // truthy_value: b is "true" when n's value is truthy (Python's bool(v)), "false" when it is falsy
 .decl b615_truthy_value(n: node, b: symbol)
-b615_truthy_value(n, "false") :- value(n, x), value_type(x, "NoneType").
-b615_truthy_value(n, b) :- value(n, x), value_type(x, "boolean"), b = x.
+b615_truthy_value(n, "false") :- value(n, x), value_type_of(n, "NoneType").
+b615_truthy_value(n, b) :- value(n, x), value_type_of(n, "boolean"), b = x.
 b615_truthy_value(n, "false") :- value(n, x),
-    (value_type(x, "int") ; value_type(x, "float")),
+    (value_type_of(n, "int") ; value_type_of(n, "float")),
     (x = "0" ; x = "0.0" ; x = "-0.0").
 b615_truthy_value(n, "true") :- value(n, x),
-    (value_type(x, "int") ; value_type(x, "float")), x != "0", x != "0.0", x != "-0.0".
+    (value_type_of(n, "int") ; value_type_of(n, "float")),
+    x != "0", x != "0.0", x != "-0.0".
 b615_truthy_value(n, "false") :- value(n, x),
-    (value_type(x, "str") ; value_type(x, "bytes")), x = "".
+    (value_type_of(n, "str") ; value_type_of(n, "bytes")), x = "".
 b615_truthy_value(n, "true") :- value(n, x),
-    (value_type(x, "str") ; value_type(x, "bytes")), x != "".
+    (value_type_of(n, "str") ; value_type_of(n, "bytes")), x != "".
 
 // tok_has_6(n): a child of n, a named node or an anonymous token, matches "^(revision|commit_id)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl b615_tok_has_6(n: node)

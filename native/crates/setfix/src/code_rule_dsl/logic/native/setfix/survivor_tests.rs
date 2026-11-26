@@ -1,4 +1,5 @@
 //! A maintained stratum's start from its kept relation (smoking gun 8, t34).
+use rerail_blocks::vector::Vector;
 use super::spec::hex;
 use super::*;
 
@@ -10,7 +11,7 @@ use super::*;
 #[test]
 fn a_maintained_relation_starts_from_its_kept_rows_without_copying_them() {
     let path = crate::code_rule_dsl::fixtures::temp();
-    drop(crate::code_rule_dsl::fixtures::open(&path));
+    drop(crate::content_store::ContentStore::open(&path).unwrap());
     let db = Connection::open(path).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
     db.execute_batch("CREATE TABLE gun8_s(c0, c1); CREATE TABLE gun8_kept(c0, c1); CREATE TABLE gun8_next(c0, c1);").unwrap();
@@ -46,15 +47,15 @@ fn a_maintained_relation_starts_from_its_kept_rows_without_copying_them() {
 #[test]
 fn a_start_from_a_relation_read_from_the_frames_shares_its_rows() {
     let path = crate::code_rule_dsl::fixtures::temp();
-    drop(crate::code_rule_dsl::fixtures::open(&path));
+    drop(crate::content_store::ContentStore::open(&path).unwrap());
     let db = Connection::open(path).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
     db.execute_batch("CREATE TABLE gun8f_kept(c0, c1); CREATE TABLE gun8f_gone(c0, c1); CREATE TABLE gun8f_next(c0, c1);").unwrap();
     let n = 5_000i64;
-    let flat: Vec<i64> = (0..n).flat_map(|i| [i, i % 13]).collect();
+    let flat: Vector<i64> = (0..n).flat_map(|i| [i, i % 13]).collect();
     let old = InRel::from_flat(flat, n as usize, b"ii".to_vec());
     adopt(&db, "gun8f_kept", Arc::clone(&old));
-    adopt(&db, "gun8f_gone", InRel::from_flat(vec![7, 7], 1, b"ii".to_vec()));
+    adopt(&db, "gun8f_gone", InRel::from_flat(rerail_blocks::vector![7, 7], 1, b"ii".to_vec()));
     open(&db, &format!("name gun8f_next\nrel gun8f_next ii base {} {}", hex("gun8f_kept"), hex("gun8f_gone"))).unwrap();
     let comp = super::on(&db).components.lock().get("gun8f_next").cloned().expect("the maintained component");
     let comp = comp.lock().unwrap();

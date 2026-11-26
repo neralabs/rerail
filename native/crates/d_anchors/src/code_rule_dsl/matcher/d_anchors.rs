@@ -700,7 +700,7 @@ pub struct FileAnchorIndex<'tree, D: Doc> {
 #[cfg(any(test, feature = "test-hooks"))]
 impl<'tree, D> FileAnchorIndex<'tree, D>
 where
-    D: Doc<Source = String, Lang = GrammarDialect>,
+    D: Doc<Lang = GrammarDialect, Source: std::ops::Deref<Target = str>>,
     D::Node<'tree>: AnchorNode<'tree>,
 {
     pub fn build(

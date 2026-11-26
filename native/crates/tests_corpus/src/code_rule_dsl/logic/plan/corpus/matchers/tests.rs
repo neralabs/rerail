@@ -66,7 +66,7 @@ unjoined(w) :- ast(d, w, {"language": "python", "rule": {"inside": {"kind": "cla
         let at = |needle: &str| matchers.iter().position(|(_, text, _)| text.contains(needle)).unwrap();
         let demand = demanded_by_roots(&image, &matchers);
         let word = at("identifier");
-        assert_eq!(demand[at("function_definition")], Some(vec![word]), "inner's node is ident's, which only the identifier matcher fills");
+        assert_eq!(demand[at("function_definition")], Some(rerail_blocks::vector![word]), "inner's node is ident's, which only the identifier matcher fills");
         assert_eq!(demand[at("\"call\"")], None, "free joins with nothing");
         assert_eq!(demand[word], None, "the identifier matcher is read where nothing bounds it");
         assert_eq!(demand[at("class_definition")], None, "a matcher one rule reads unjoined is bound everywhere");
@@ -117,6 +117,7 @@ unjoined(w) :- ast(d, w, {"language": "python", "rule": {"inside": {"kind": "cla
     /// A field's kinds and a kind's leafhood from the grammar: what a long-text twin is made for.
     #[test]
     fn field_kinds_and_leaves_from_the_grammar() {
+        use crate::code_rule_dsl::facts::grammar_shape::{field_kinds, leaf_kind};
         assert_eq!(field_kinds("attribute"), Some(BTreeSet::from(["identifier".to_owned()])));
         assert!(field_kinds("function").is_some_and(|k| k.contains("call") && k.contains("attribute")));
         assert_eq!(field_kinds("no_such_field"), None);

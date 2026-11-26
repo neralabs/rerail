@@ -96,10 +96,11 @@ pub fn started<T>(start: impl FnOnce() -> T) -> T {
 /// The switches a test sets for its own runs (`set`), each read through `profile::var` (or `var_os`, `vars`): bound in
 /// the test's context, which its runs and their jobs read, so no other test's run waits for them or sees them.
 const SCOPED: &[&str] = &[
-    "RERAIL_KEPT_PART", "RERAIL_CROSS_K4", "RERAIL_CROSS_DELTA_COUNTS", "RERAIL_DEVICE_BUDGET", "RERAIL_AGAIN", "RERAIL_AGAIN_MIN",
+    "RERAIL_KEPT_PART", "RERAIL_CROSS_K4", "RERAIL_DEVICE_BUDGET", "RERAIL_AGAIN", "RERAIL_AGAIN_MIN",
     "RERAIL_AGAIN_THETA", "RERAIL_WAVE0", "RERAIL_COPY_VIEWS", "RERAIL_ANCHORS", "RERAIL_SETS", "RERAIL_INLINE_ONLY", "RERAIL_AST_PARTS",
     "RERAIL_ASOF", "RERAIL_NODE_SOURCES", "RERAIL_ORDER_RAW", "RERAIL_NODE_IDS", "RERAIL_RACY_MS",
-    "RERAIL_PROGRAM_BUDGET", "RERAIL_PROGRAM_ARENA", "RERAIL_ROOMS_MAPPED",
+    "RERAIL_STACK_ROUNDS", "RERAIL_STACK_PHASES", "RERAIL_SCAN_OWN_TILES", "RERAIL_DEVICE_NARROW", "RERAIL_ONE_LAUNCH_CHECK", "RERAIL_PROGRAM_ARENA", "RERAIL_ROOMS_MAPPED",
+    "RERAIL_AST_DIRECT_CAPTURES", "RERAIL_CHUNK_COUNTS",
 ];
 
 /// The switches read off a run's context too (the store's path; the profile's and the heap sampler's, which their own

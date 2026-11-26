@@ -26,6 +26,7 @@
 //! 0155) named by its digest. The run's manifest names that source and the entry's plan (`named`), so collection keeps
 //! the entry while it keeps the run.
 
+use rerail_blocks::vector::Vector;
 use super::super::front::Value;
 use super::super::program_facts::Facts;
 use super::super::program_text;
@@ -135,17 +136,34 @@ impl Durable {
         let side = store.map(|s| -> Arc<Held> {
             let stored = read_all(&s, &prepared).unwrap_or_default();
             // The rewritten programs' images too, in one read: opened when looked up (`decode_chosen`).
-            let digests: Vec<[u8; 32]> = stored.values().filter_map(rewritten).collect();
+            let digests: Vector<[u8; 32]> = stored.values().filter_map(rewritten).collect();
             let images = program_text::stored(&s, &digests).unwrap_or_default();
             late.lock().expect("the late sources").extend(images.values().flat_map(|(_, ids)| ids.iter().copied()));
             let images = images.into_iter().map(|(d, (bytes, _))| (d, bytes)).collect();
-            // And the plans of its rules (decision 0116 step 2), for this thread's run to take.
-            let _span = super::super::profile::span(|| "kept plans, read from the store".into());
-            let (plans, ready) = read_plans(&s, &prepared).unwrap_or_default();
-            super::super::profile::decision("kept plans (decision 0116)", || format!("{} plans and {} versions' prepared plans read from the store", plans.len(), ready.len()));
-            super::take_stored_plans(Arc::new(plans));
-            super::take_stored_prepared(ready);
-            Arc::new((s, prepared, stored, images))
+            // Whether the store holds the plans: SQL, so asked here, before the run's first wave and its jobs.
+            let holds = { let _s = super::super::profile::span(|| "whether the store holds the kept plans".into()); held(&s, &prepared).unwrap_or(false) };
+            let held = Arc::new((s, prepared, stored, images));
+            // And the plans of its rules (decision 0116 step 2), for this thread's run to take where it first plans
+            // (t33 K4): a run that plans nothing, every file a memo hit and its cross part quiet, reads none. One whose
+            // waves may plan reads them before its first wave (`settle_stored`, decision 0104).
+            let reading = Arc::clone(&held);
+            let analysing = Arc::clone(&held);
+            super::defer_stored(
+                Box::new(move || {
+                    let _span = super::super::profile::span(|| "kept plans, read from the store".into());
+                    let (plans, ready) = if holds { read_plans_alone(&reading.0, &reading.1).unwrap_or_default() } else { Default::default() };
+                    super::super::profile::decision("kept plans (decision 0116)", || format!("{} plans and {} versions' prepared plans read from the store", plans.len(), ready.len()));
+                    (plans, ready)
+                }),
+                // The analyses apart: a run asks for one where it plans nothing (`the base relations' shapes`).
+                Box::new(move || {
+                    let _span = super::super::profile::span(|| "kept analyses, read from the store".into());
+                    let analyses = if holds { read_analyses(&analysing.0, &analysing.1).unwrap_or_default() } else { Default::default() };
+                    super::super::profile::decision("kept analyses (t33 K4)", || format!("{} analyses read from the store", analyses.len()));
+                    analyses
+                }),
+            );
+            held
         });
         Durable { _side: crate::code_rule_dsl::logic::profile::bind(DurableSide(side)) }
     }
@@ -157,6 +175,8 @@ impl Drop for Durable {
     fn drop(&mut self) {
         if let Some(held) = crate::code_rule_dsl::logic::profile::bound::<DurableSide>().0 {
             let (store, prepared) = (&held.0, held.1);
+            // A run that planned merges what it made with what the store kept: read now where it was not (t33 K4).
+            super::settle_if_planned();
             // Decision 0243: a one-shot run serves its waiting join searches here, within a share of its CPU, so their
             // proposals are written with the memo.
             super::joins::drain();
@@ -164,20 +184,23 @@ impl Drop for Durable {
             let notes = super::joins::to_store().map(note_rows);
             // And the prepared plans (decision 0361 step 5, Q228), where the run made any.
             let ready = super::prepared_to_store();
+            // And the analyses of the versions planned (t33 K4), where the run computed any.
+            let analyses = super::analyses_to_store();
             let changed = super::plans_to_store();
             // A warm run changes none of them: which did, named.
-            if changed.is_some() || notes.is_some() || ready.is_some() {
-                super::super::profile::warm_fault("the kept plans changed", || format!("plans: {}, join notes: {}, prepared plans: {}", changed.as_ref().map_or(0, |p| p.len()), notes.as_ref().map_or(0, |n| n.0.len()), ready.as_ref().map_or(0, |r| r.len())));
+            if changed.is_some() || notes.is_some() || ready.is_some() || analyses.is_some() {
+                super::super::profile::warm_fault("the kept plans changed", || format!("plans: {}, join notes: {}, prepared plans: {}, analyses: {}", changed.as_ref().map_or(0, |p| p.len()), notes.as_ref().map_or(0, |n| n.0.len()), ready.as_ref().map_or(0, |r| r.len()), analyses.as_ref().map_or(0, |a| a.len())));
             }
-            let Some(plans) = changed.or_else(|| (notes.is_some() || ready.is_some()).then(super::stored_plans).flatten()) else { return };
+            let Some(plans) = changed.or_else(|| (notes.is_some() || ready.is_some() || analyses.is_some()).then(super::stored_plans).flatten()) else { return };
             let notes = notes.unwrap_or_default();
             let ready = super::prepared::store_rows(&ready.unwrap_or_else(super::prepared_held));
+            let analyses = super::kept_analyses::store_rows(&analyses.unwrap_or_else(super::analyses_held));
             let _span = super::super::profile::span(|| "kept plans, queued for the store".into());
             let rows: Vec<Vec<Value>> = plans.iter().map(|(k, p)| super::StoredPlan::row(*k, p).into_iter().map(Value::Int).collect()).collect();
             super::super::profile::decision("kept plans (decision 0116)", || format!("{} plans and {} join notes queued for the store", rows.len(), notes.0.len()));
             // As kept facts behind the run, their atoms the store's (decision 0170); the small source holding them by
             // the store's writer.
-            keep_plans(store, &prepared, &plans_facts(&rows, &notes, &ready));
+            keep_plans(store, &prepared, &plans_facts(&rows, &notes, &ready, &analyses));
             store.record("the kept plans", vec![crate::content_store::write_back::Key::of(&[b"facts_memo/plans", &prepared])], &prepared, None, apply_plans);
         }
     }
@@ -347,6 +370,8 @@ const RAISED_REL: &str = "rr_join_raised";
 /// The prepared plans of the versions a run planned (decision 0361 step 5, Q228), in the same entry
 /// (`prepared::store_rows`).
 const PREPARED_REL: &str = "rr_prepared_plan";
+/// The analyses of the versions planned, by the version's identity (`kept_analyses`, t33 K4).
+const ANALYSES_REL: &str = "rr_kept_analysis";
 
 /// The join memo's notes and exact statistics read from `facts`, given to this process's memo.
 fn take_notes(facts: &Facts) {
@@ -380,8 +405,10 @@ fn take_notes(facts: &Facts) {
 /// The memo's rows for the entry.
 pub type NoteRows = (Vec<Vec<Value>>, Vec<Vec<Value>>, Vec<Vec<Value>>);
 
-pub fn note_rows((notes, exact, raised): super::joins::Stored) -> NoteRows {
-    let notes = notes.iter().map(|(k, n)| super::joins::note_row(*k, n).into_iter().map(Value::Int).collect()).collect();
+pub fn note_rows(stored: super::joins::Stored) -> NoteRows {
+    let notes = stored.iter().map(|(k, n)| super::joins::note_row(*k, n.get()).into_iter().map(Value::Int).collect()).collect();
+    let exact: Vec<_> = stored.iter().flat_map(|(k, n)| super::joins::exact_of(*k, n.get())).collect();
+    let raised: Vec<_> = stored.iter().flat_map(|(k, n)| super::joins::raised_of(*k, n.get()).map(|(k, r, c)| (k, r.to_owned(), c)).collect::<Vec<_>>()).collect();
     let exact = exact
         .iter()
         .map(|(k, rule, sig, c)| {
@@ -394,28 +421,55 @@ pub fn note_rows((notes, exact, raised): super::joins::Stored) -> NoteRows {
 }
 
 /// The plans kept under `prepared`: one read of the store.
-pub fn read_plans(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<(super::StoredPlans, super::prepared::ByVersion)> {
-    if !held(store, prepared)? {
+pub fn read_plans(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<(super::StoredPlans, super::prepared::ByVersion, super::kept_analyses::ByVersion)> {
+    if !{ let _s = super::super::profile::span(|| "whether the store holds them".into()); held(store, prepared)? } {
         return Ok(Default::default());
     }
-    let Some(facts) = PLANS.within(*prepared).get(store, 0) else { return Ok(Default::default()) };
-    take_notes(&facts);
+    read_plans_where(store, prepared, &|_| true)
+}
+
+/// The plans kept under `prepared`, and the join notes, without the analyses: what a run reads where it first plans
+/// (t33 K4, `RunPlans::settle`), maybe inside a wave: no SQL (decision 0104), the store's holding them checked by the
+/// caller before its first wave (`held`).
+fn read_plans_alone(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<(super::StoredPlans, super::prepared::ByVersion)> {
+    read_plans_where(store, prepared, &|rel| rel != ANALYSES_REL).map(|(plans, ready, _)| (plans, ready))
+}
+
+/// The analyses kept under `prepared` alone: what a run reads where it first asks for one (`kept_analyses`), apart
+/// from the plans; checked held as `read_plans_alone` is.
+fn read_analyses(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<super::kept_analyses::ByVersion> {
+    let Some(facts) = PLANS.within(*prepared).get_only(store, 0, &|rel| rel == ANALYSES_REL) else { return Ok(Default::default()) };
+    let analyses: Vec<Vec<Value>> = facts.get(ANALYSES_REL).into_iter().flatten().map(|row| row.as_slice().to_vec()).collect();
+    Ok(super::kept_analyses::of_store_rows(&analyses))
+}
+
+/// The plans entry's relations `rels` keeps, read in one read of the kept facts (no SQL), the store known to hold them.
+fn read_plans_where(store: &ContentStore, prepared: &[u8; 32], rels: &dyn Fn(&str) -> bool) -> StoreResult<(super::StoredPlans, super::prepared::ByVersion, super::kept_analyses::ByVersion)> {
+    // The plans' rows are numbers alone: each decoded from the block as it holds them, not through values (t33 K4:
+    // their values were most of a warm run's read of the entry).
+    let mut plans = super::StoredPlans::default();
+    let Some(facts) = ({
+        let _s = super::super::profile::span(|| "their entry, read".into());
+        PLANS.within(*prepared).get_numbers_only(store, 0, PLANS_REL, &mut |row| plans.extend(super::StoredPlan::of_row(row)), rels)
+    }) else {
+        return Ok(Default::default());
+    };
+    { let _s = super::super::profile::span(|| "the join notes, taken".into()); take_notes(&facts); }
+    let _s = super::super::profile::span(|| "the plans, decoded".into());
     let ready: Vec<Vec<Value>> = facts.get(PREPARED_REL).into_iter().flatten().map(|row| row.as_slice().to_vec()).collect();
-    let plans = facts
-        .get(PLANS_REL)
-        .into_iter()
-        .flatten()
-        .filter_map(|row| super::StoredPlan::of_row(&row.iter().map(|v| match v { Value::Int(i) => Some(*i), Value::Str(_) | Value::Branded(_) => None }).collect::<Option<Vec<_>>>()?))
-        .collect();
-    Ok((plans, super::prepared::of_store_rows(&ready)))
+    let analyses: Vec<Vec<Value>> = facts.get(ANALYSES_REL).into_iter().flatten().map(|row| row.as_slice().to_vec()).collect();
+    Ok((plans, super::prepared::of_store_rows(&ready), super::kept_analyses::of_store_rows(&analyses)))
 }
 
 /// The kept plans' and join notes' facts entry, made on the run's side (decision 0306).
-pub fn plans_facts(rows: &[Vec<Value>], notes: &NoteRows, ready: &[Vec<Value>]) -> Facts {
+pub fn plans_facts(rows: &[Vec<Value>], notes: &NoteRows, ready: &[Vec<Value>], analyses: &[Vec<Value>]) -> Facts {
     let mut facts = Facts::new();
     facts.insert(PLANS_REL.to_owned(), rows.iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
     if !ready.is_empty() {
         facts.insert(PREPARED_REL.to_owned(), ready.iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
+    }
+    if !analyses.is_empty() {
+        facts.insert(ANALYSES_REL.to_owned(), analyses.iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
     }
     if !notes.0.is_empty() {
         facts.insert(NOTES_REL.to_owned(), notes.0.iter().map(crate::code_rule_dsl::logic::front::List::from).collect());

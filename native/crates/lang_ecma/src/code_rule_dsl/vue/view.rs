@@ -122,7 +122,7 @@ impl View {
         if emitter.segments.is_empty() {
             return None;
         }
-        let parse = embed::Parse::read(dialect, &emitter.out, budget)?;
+        let parse = embed::Parse::read_program(dialect, &emitter.out, &emitter.segments, budget)?;
         let mut segments = emitter.segments;
         segments.index();
         Some(Self {
@@ -187,9 +187,9 @@ impl View {
         &self.segments
     }
 
-    /// A node's extent in the program: from the first of its leaves standing for file bytes to
-    /// the last; a node none of whose leaves does, from its first leaf to its last
-    /// (`tape::node_extents`).
+    /// A node's extent in the program, by its leaves: from the first standing for file bytes to the
+    /// last; a node none of whose leaves does, from its first leaf to its last. The tests' oracle for
+    /// the extent a guest's node is placed by (`SegmentMap::extent`, from its span).
     #[cfg(any(test, feature = "test-hooks"))]
     fn extent(&self, node: Node<'_>) -> Range<usize> {
         let mut leaves = Vec::new();

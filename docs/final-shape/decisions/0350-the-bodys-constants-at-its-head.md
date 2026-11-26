@@ -1,7 +1,7 @@
 # 0350: The body's constants are made at its head
 
-Status: decided (the user, 2026-11-17, item 2: "remove whatever simdjson doesn't compute").
-Follows 0349. Keeps 0069.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-17, item 2: "remove whatever simdjson doesn't
+compute"). Follows 0349. Keeps 0069.
 
 ## Intro
 

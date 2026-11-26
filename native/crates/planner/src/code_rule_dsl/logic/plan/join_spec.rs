@@ -2,9 +2,10 @@
 //! handles (decision 0173, t36 item 4): the rule's `Body` and its steps, in plan order, each step a `JoinItem` over
 //! numbered slots, then the head. A literal with no native step (an aggregate other than `count`, `sum`, `min`, `max`
 //! and `join`, a descent, a document range, top) has no spec: that rule stays SQL.
+use rerail_blocks::vector::Vector;
 use super::body::{Body, VarSet};
 use super::{Mode, Run, Step, sym_char};
-use super::super::native::component::spec::{Arg, Extreme, HeadTok, InputKey, JoinItem, JoinSpec, Source as JoinSource, Tok};
+use super::super::native::component::spec::{Arg, Extreme, HeadTok, InputKey, JoinItem, Join, JoinSpec, Source as JoinSource, Tok};
 use super::super::program_image::{AggRef, CmpOp, Lit, Slot, TermRef};
 use super::super::strings;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -151,6 +152,35 @@ fn expr<'v>(b: &Body<'v>, v: &Val<'v>, idx: usize, slots: &mut Slots, lines: &mu
     }
 }
 
+/// The variables step `s` of `b` binds, added to `bound`.
+fn binds(b: &Body<'_>, s: &Step, bound: &mut VarSet) {
+    let mut add = |t: TermRef<'_>| {
+        if let TermRef::Var(v) = t {
+            bound.insert(v);
+        }
+    };
+    match b.view(s.at) {
+        Lit::Atom(l) if !l.neg() => l.args().for_each(&mut add),
+        // `$s = @cat($m, $x)` with s bound splits s: m and x are bound too.
+        Lit::Cmp { l, op: CmpOp::Eq, r: TermRef::Call(f, args) } if b.v.text(f) == "cat" => {
+            add(l);
+            args.for_each(&mut add);
+        }
+        Lit::Cmp { l, op: CmpOp::Eq, r } => {
+            add(l);
+            add(r);
+        }
+        Lit::Nearest { n, a, .. } => {
+            bound.insert(n);
+            bound.insert(a);
+        }
+        Lit::Agg { var, .. } => {
+            bound.insert(var);
+        }
+        _ => {}
+    }
+}
+
 impl<'a> Run<'a, '_> {
     /// `join_spec` for a whole rule: `None` too when a head variable is bound by none of its steps (the native join
     /// would read past its slots). A prefix of a body (the probe for how far a body runs natively) is not checked.
@@ -160,38 +190,14 @@ impl<'a> Run<'a, '_> {
         steps: &[Step],
         at: Option<usize>,
         ri: &BTreeMap<String, usize>,
-        scc: &BTreeSet<String>,
+        scc: &crate::code_rule_dsl::logic::front::Comp,
         native_rels: &BTreeSet<String>,
-    ) -> Option<Arc<JoinSpec>> {
+    ) -> Option<Join> {
         let _span = super::super::profile::span(|| "a line's join spec".into());
         // A recheck's head is bound by its candidate (`Body::with_head_bound`).
         let mut bound = b.bound_before();
         for s in steps {
-            let mut add = |t: TermRef<'_>| {
-                if let TermRef::Var(v) = t {
-                    bound.insert(v);
-                }
-            };
-            match b.view(s.at) {
-                Lit::Atom(l) if !l.neg() => l.args().for_each(&mut add),
-                // `$s = @cat($m, $x)` with s bound splits s: m and x are bound too.
-                Lit::Cmp { l, op: CmpOp::Eq, r: TermRef::Call(f, args) } if b.v.text(f) == "cat" => {
-                    add(l);
-                    args.for_each(&mut add);
-                }
-                Lit::Cmp { l, op: CmpOp::Eq, r } => {
-                    add(l);
-                    add(r);
-                }
-                Lit::Nearest { n, a, .. } => {
-                    bound.insert(n);
-                    bound.insert(a);
-                }
-                Lit::Agg { var, .. } => {
-                    bound.insert(var);
-                }
-                _ => {}
-            }
+            binds(b, s, &mut bound);
         }
         let mut head_vars = Vec::new();
         for t in b.head().args() {
@@ -217,9 +223,9 @@ impl<'a> Run<'a, '_> {
         bare: bool,
         at: Option<usize>,
         ri: &BTreeMap<String, usize>,
-        scc: &BTreeSet<String>,
+        scc: &crate::code_rule_dsl::logic::front::Comp,
         native_rels: &BTreeSet<String>,
-    ) -> Option<Arc<JoinSpec>> {
+    ) -> Option<Join> {
         let pf = self.fields();
         let inputs = |d: &mut super::super::derived::Inputs| {
             // A recheck's spec starts from its head's variables bound (`Body::with_head_bound`), a mode line's from
@@ -259,11 +265,11 @@ impl<'a> Run<'a, '_> {
                     d.str(&self.model.relation(pf, rel, false).render());
                     d.u64(u64::from(self.inputs.contains(rel)) | u64::from(self.model.derived.contains(rel)) << 1 | u64::from(self.projections.contains_key(rel)) << 2);
                     match self.model.view_src.get(rel) {
-                        Some((base, cols)) => {
+                        Some(rerail_section::Tuple2(base, cols)) => {
                             d.str(base);
                             d.u64(cols.len() as u64);
-                            for c in cols {
-                                d.str(c.as_deref().unwrap_or("\u{0}"));
+                            for c in cols.iter() {
+                                d.str(c.as_ref().map_or("\u{0}", |c| c.as_str()));
                             }
                         }
                         None => d.u64(u64::MAX),
@@ -296,9 +302,9 @@ impl<'a> Run<'a, '_> {
         };
         // The maintain mode's joins read an input's version by name (`mode_reads`): made each time, never kept.
         if !self.mode_reads.is_empty() {
-            return self.join_spec_made(b, steps, bare, at, ri, scc, native_rels).map(Arc::new);
+            return self.join_spec_made(b, steps, bare, at, ri, scc, native_rels).map(|s| s.encode());
         }
-        super::super::derived::value("join spec", inputs, || self.join_spec_made(b, steps, bare, at, ri, scc, native_rels).map(Arc::new))
+        super::super::derived::value("join spec", inputs, || self.join_spec_made(b, steps, bare, at, ri, scc, native_rels).map(|s| s.encode()))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -309,7 +315,7 @@ impl<'a> Run<'a, '_> {
         bare: bool,
         at: Option<usize>,
         ri: &BTreeMap<String, usize>,
-        scc: &BTreeSet<String>,
+        scc: &crate::code_rule_dsl::logic::front::Comp,
         native_rels: &BTreeSet<String>,
     ) -> Option<JoinSpec> {
         let pf = self.fields();
@@ -396,19 +402,19 @@ impl<'a> Run<'a, '_> {
             if native_rels.contains(rel) {
                 return Some((JoinSource::Native(rel.to_string()), arg_toks(args, slots)?));
             }
-            let keep: Vec<usize> = (0..args.len()).filter(|&c| !is_const(args[c])).collect();
+            let keep: Vector<usize> = (0..args.len()).filter(|&c| !is_const(args[c])).collect();
             // A view that only projects an input (`kind($n, $k) :- node(_, $n, $k, _, _)`) is read from the input,
             // in place: its columns are the input's.
-            let projected = self.model.view_src.get(rel).filter(|(_, vc)| vc.iter().all(Option::is_some)).filter(|_| self.projections.contains_key(rel));
+            let projected = self.model.view_src.get(rel).filter(|v| v.1.iter().all(|c| c.is_some())).filter(|_| self.projections.contains_key(rel));
             let sql_col = |c: usize| match projected {
-                Some((_, vc)) => vc[c].clone().unwrap(),
+                Some(v) => v.1[c].as_ref().expect("a projected column").as_str().to_owned(),
                 None => self.model.col(rel, c),
             };
             let cols = keep.iter().map(|&c| sql_col(c)).collect::<Vec<_>>().join(", ");
             let cols = if cols.is_empty() { "1".to_owned() } else { cols };
             let mut wheres = Vec::new();
             // The view's own filters, on its input's columns.
-            if let Some((base, _)) = projected {
+            if let Some(rerail_section::Tuple2(base, _)) = projected {
                 for &(c, v) in &self.projections[rel] {
                     wheres.push(format!("{} = {v}", self.model.col(base, c)));
                 }
@@ -431,7 +437,7 @@ impl<'a> Run<'a, '_> {
                 .map(|&c| sym_char(&self.model.inputs, decl.get(c).unwrap_or_else(|| panic!("{rel} is declared with {} columns and read with {}", decl.len(), args.len())).1))
                 .collect();
             let types = if types.is_empty() { "i".to_owned() } else { types };
-            let mut sel = self.model.relation(pf, projected.map_or(rel, |(base, _)| base), false).render();
+            let mut sel = self.model.relation(pf, projected.map_or(rel, |v| v.0.as_str()), false).render();
             if !wheres.is_empty() {
                 sel += &format!(" WHERE {}", wheres.join(" AND "));
             }
@@ -450,14 +456,44 @@ impl<'a> Run<'a, '_> {
         let call_of = |t: TermRef<'_>, f: &str| matches!(t, TermRef::Call(g, _) if b.v.text(g) == f);
         let mut lines = Vec::new();
         // Per item, the plan step it was made for (`JoinSpec::from`).
-        let mut from: Vec<u32> = Vec::new();
+        let mut from: Vector<u32> = rerail_blocks::vector::Vector::new();
+        // A maintain mode's `docof($x, $d)`, `$d` bound and `$x` not, put after the next atom, which binds `$x`: then a
+        // test of `$x`'s document, which the engine reads as a range of that atom's column (`setfix::Ranged::doc`, the
+        // document's nodes' ids, decision 0083 §3), so no node of the document is walked. Read first, it walked every
+        // node of each document to probe the atom by each: the move's lines led by `rr_cx_reach`'s 15 changed pairs
+        // read 433 nodes for 50 of `qn`'s rows (decision 0094 §8).
+        let mut doc_after: Option<(TermRef<'_>, Slot, usize)> = None;
         for (idx, s) in steps.iter().enumerate() {
+            // A `docof` put after the next atom that the next step did not take: no spec, not a lost step.
+            if doc_after.is_some_and(|(_, _, at)| at + 1 < idx) {
+                return None;
+            }
             // The items the step before made are its (a literal can make several: `$k = @sub(@strlen($d), 1)`).
             from.resize(lines.len(), idx.saturating_sub(1) as u32);
             match b.view(s.at) {
                 Lit::Atom(l) => {
                     if s.mode == Some(Mode::Range) {
                         return None;
+                    }
+                    if !self.mode_reads.is_empty()
+                        && doc_after.is_none()
+                        && !l.neg()
+                        && b.rel(l) == "docof"
+                        && !self.mode_reads.contains_key(&s.at)
+                        && let [x @ TermRef::Var(xv), TermRef::Var(d)] = b.args(s.at)[..]
+                        && !slots.bound(x)
+                        && slots.bound(TermRef::Var(d))
+                        && let Some(next) = steps.get(idx + 1)
+                        && next.mode.is_none()
+                        && !self.mode_reads.contains_key(&next.at)
+                        && let Lit::Atom(nl) = b.view(next.at)
+                        && !nl.neg()
+                        && (scc.contains(b.rel(nl)) || native_rels.contains(b.rel(nl)) || !(self.inputs.contains(b.rel(nl)) || self.model.view_src.contains_key(b.rel(nl))))
+                        && b.args(next.at).iter().any(|t| matches!(t, TermRef::Var(v) if *v == xv))
+                    {
+                        doc_after = Some((x, d, idx));
+                        crate::code_rule_dsl::logic::profile::decision("a maintain mode's `docof` read as a range of the next atom (decision 0094 §8)", || format!("{}: {}", b.rel(b.head()), b.rel(nl)));
+                        continue;
                     }
                     // `docof(n, d)` as it was (a removal join's read of a changed input, decision 0364), its node
                     // bound: the node's document is its id's (decision 0083 §3), so `d` is computed from it. Read as
@@ -481,6 +517,10 @@ impl<'a> Run<'a, '_> {
                         None => atom(b.rel(l), b.args(s.at), Some(idx), &mut slots)?,
                     };
                     lines.push(JoinItem::Atom { neg: l.neg(), src, args });
+                    if let Some((x, d, _)) = doc_after.take() {
+                        let n = t_tok(b, x, &mut slots)?;
+                        lines.push(JoinItem::DocOf { out: var_tok(d, &mut slots), n });
+                    }
                 }
                 Lit::Cmp { l: TermRef::Call(fl, xl), op: op @ (CmpOp::Eq | CmpOp::Ne), r: TermRef::Call(fr, xr) }
                     if b.v.text(fl) == "doc" && b.v.text(fr) == "doc" && xl.count() == 1 && xr.count() == 1 =>
@@ -595,7 +635,7 @@ impl<'a> Run<'a, '_> {
                     let rel = b.rel(a);
                     let mut args: Vec<TermRef<'_>> = b.args(s.at).to_vec();
                     // The over-variable belongs to the bag even if an outer step bound the same name.
-                    let local: Vec<usize> = args.iter().enumerate().filter_map(|(c, t)| (over.is_some() && t.var() == over).then_some(c)).collect();
+                    let local: Vector<usize> = args.iter().enumerate().filter_map(|(c, t)| (over.is_some() && t.var() == over).then_some(c)).collect();
                     let count = matches!(op, AggRef::Count);
                     if atoms.is_none() && (!count || local.len() > 1) {
                         return None;
@@ -684,7 +724,7 @@ impl<'a> Run<'a, '_> {
                         bycols.push((rc(&args, c), sym(c)));
                     }
                     let x = (rc(&args, xc), sym(xc));
-                    let wild: Vec<usize> = local.iter().map(|&v| column(v)).collect::<Option<_>>()?;
+                    let wild: Vector<usize> = local.iter().map(|&v| column(v)).collect::<Option<_>>()?;
                     for c in wild {
                         args[c] = TermRef::Wild;
                     }
@@ -706,6 +746,9 @@ impl<'a> Run<'a, '_> {
                 }
                 _ => return None,
             }
+        }
+        if doc_after.is_some() {
+            return None;
         }
         // Each item's plan step, the last one's after the loop; then the head's computed terms' (`JoinSpec::from`).
         from.resize(lines.len(), steps.len().saturating_sub(1) as u32);
@@ -741,6 +784,6 @@ impl<'a> Run<'a, '_> {
         }
         from.resize(lines.len(), steps.len() as u32);
         lines.push(JoinItem::Head(head));
-        Some(JoinSpec { items: lines, from, plan_steps: steps.len() as u32, est: Default::default() })
+        Some(JoinSpec { items: lines, from, plan_steps: steps.len() as u32 })
     }
 }

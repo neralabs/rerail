@@ -1,7 +1,7 @@
 # 0068: The CPU tape writer: preorder from the masks, one packer
 
-Status: accepted (user, 2026-11-07: "complete all of this", the list item "The tape writer
-(steps 3–4)"; step 3 of `docs/parser-generators/13-tape-on-the-gpu.md` §7)
+Status: superseded by 0088 (audited 2026-11-23). Accepted (user, 2026-11-07: "complete all of this", the list item
+"The tape writer (steps 3–4)"; step 3 of `docs/parser-generators/13-tape-on-the-gpu.md` §7)
 
 ## Intro
 

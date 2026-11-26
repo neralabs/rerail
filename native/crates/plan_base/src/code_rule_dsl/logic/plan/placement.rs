@@ -74,8 +74,9 @@ impl Form {
 /// `device::fixpoint`; one that keeps levels is refused at open, named), and aggregates (count, sum, min, max folded
 /// per binding over the relation's sort by the keys), and text tests with constant patterns of a slot an input
 /// relation's column binds (verdicts per distinct symbol by the test's automaton, `text::table`; any other text test
+/// is refused at open, named), and string joins of names ordered by one number column (decision 0661; any other
 /// is refused at open, named). A stratum that needs any other form stays on the CPU, named in the profile.
-const DEVICE_FORMS: &[Form] = &[Form::Join, Form::Negation, Form::Comparison, Form::Recursion, Form::Aggregate, Form::TextTest];
+const DEVICE_FORMS: &[Form] = &[Form::Join, Form::Negation, Form::Comparison, Form::Recursion, Form::Aggregate, Form::TextTest, Form::StringJoin];
 
 /// A join step as the planner estimates it: the bindings it reads, the rows of the relation it reads, the rows it
 /// makes, its key columns, and whether it reads a range inside a document (`Mode::Range`).
@@ -194,6 +195,17 @@ const GPU_PER_SUBMISSION: f64 = 0.15e-3;
 /// with the more memory bandwidth, so the work it takes leaves the CPU's cores to the strata only they run. Before,
 /// the GPU had to be twice the cheaper (`MARGIN`, 2), against estimates 8 times off (decision 0320).
 pub(in crate::code_rule_dsl) const GPU_BIAS: f64 = 2.0;
+
+/// A device round's own cost, in seconds: a recursive component's round's phases, each a few microseconds in one
+/// group, whatever its rows (decision 0647). Measured on the M3 (0647, "A real run's recursive strata"): 1.0 ms a
+/// round for `py_minor`'s 44 rounds of a row or none, 1 to 3 ms for the deep strata's.
+const DEVICE_ROUND: f64 = 1.0e-3;
+
+/// The work (rows its stages make) under which a recursive component's round costs the CPU less than a device round
+/// (decision 0657): the device hands such a component back to the CPU at that round's end.
+pub fn narrow_round_work() -> f64 {
+    DEVICE_ROUND / CPU_PER_WORK
+}
 
 /// How long a stratum placed on the device may wait for the device's memory before it runs on the CPU instead (Q203):
 /// the CPU's price for its `work` units of planned work less the device's, at the prices it was placed by. Never
@@ -375,9 +387,7 @@ impl Shape {
     }
 
     /// Adds one planned rule: its steps in order (its head's terms the rule's) and its planned work.
-    /// `texts_kept`: its head is a `shortlex_min` lattice, whose value its recursive rounds make into one device arena
-    /// (decision 0307).
-    pub fn add(&mut self, order: Order<'_, '_>, work: f64, recursive: bool, texts_kept: bool) {
+    pub fn add(&mut self, order: Order<'_, '_>, work: f64, recursive: bool) {
         let (b, v) = (order.b, order.b.v);
         self.rules += 1;
         self.steps += order.len();
@@ -386,12 +396,9 @@ impl Shape {
             self.note(Form::Recursion, || "recursion".into());
         }
         // A cat of row terms in a head is made on the device (`mj::MAKE`), its text stored as a symbol after the run;
-        // not in a recursive stratum, whose rounds would join it before it is one, unless the stratum keeps its texts
-        // in one arena (0307: the device's compile takes them into the lattice's value only).
-        // A text function's text, likewise (the device's arena).
-        let recursive = recursive && !texts_kept;
-        let arena = |t: TermRef<'_>| if recursive { text_fn_in(v, t) } else { None };
-        if let Some(op) = b.head().args().filter(|&t| recursive || !is_cat_of_rows(v, t)).find_map(|t| not_row(v, t).or_else(|| arena(t))) {
+        // a text function's text, likewise (the device's arena). In a recursive stratum its rounds keep each made text
+        // one value a content in one arena (decision 0659), stored as symbols when the stratum ends.
+        if let Some(op) = b.head().args().filter(|&t| !is_cat_of_rows(v, t) && !is_made_cat(v, t)).find_map(|t| not_row(v, t)) {
             self.note(Form::Computed, || format!("{op} in a head"));
         }
         let tests = |t: TermRef<'_>| call(v, t).map(|(f, _)| f).filter(|f| crate::code_rule_dsl::logic::strings::TESTS.contains(f));
@@ -416,23 +423,17 @@ impl Shape {
                 }
                 // A cat's text compared with a name (`=`, `!=`): the device compares the names' bytes (`CATEQ`).
                 // The other side a constant or a variable: a comparison of names, or (a variable no atom binds) the
-                // text bound, made on the device when the head alone reads it; not in a recursive stratum, unless it
-                // keeps its texts (0307). A cat of made texts (`is_made_cat`) binds a variable only.
+                // text bound, made on the device when the head alone reads it; in a recursive stratum too, whose rounds
+                // keep each made text one value in their arena (0307 for a lattice's, 0661 for a set head's). A cat of
+                // made texts (`is_made_cat`) binds a variable only.
                 Lit::Cmp { l, op: CmpOp::Eq | CmpOp::Ne, r }
                     if [(l, r), (r, l)].into_iter().any(|(c, o)| {
-                        (is_cat_of_rows(v, c) || matches!(o, TermRef::Var(_)) && is_made_cat(v, c))
-                            && match o {
-                                TermRef::Var(x) => {
-                                    !recursive || order.steps.iter().any(|s| b.plain_atom(s.at).is_some_and(|a| !a.neg() && a.args().any(|t| t.var() == Some(x))))
-                                }
-                                TermRef::Call(..) => false,
-                                _ => true,
-                            }
+                        (is_cat_of_rows(v, c) || matches!(o, TermRef::Var(_)) && is_made_cat(v, c)) && !matches!(o, TermRef::Call(..))
                     }) =>
                 {
                     self.note(Form::Comparison, String::new);
                 }
-                Lit::Cmp { l, r, .. } => match [l, r].into_iter().find_map(|t| not_row(v, t).or_else(|| arena(t))) {
+                Lit::Cmp { l, r, .. } => match [l, r].into_iter().find_map(|t| not_row(v, t)) {
                     Some(op) => self.note(Form::Computed, || format!("{op} in a comparison")),
                     None => self.note(Form::Comparison, String::new),
                 },
@@ -766,7 +767,7 @@ pub mod tests {
         r.finish().expect("a rule");
         let made = b.finish().expect("a version").0;
         let b = crate::code_rule_dsl::logic::plan::body::nth(&made, 0);
-        shape.add(Order::new(&b, &steps), work, recursive, false);
+        shape.add(Order::new(&b, &steps), work, recursive);
     }
 
     #[test]
@@ -791,8 +792,8 @@ pub mod tests {
         assert!(p.gpu && p.missing.is_empty(), "{p:?}");
         assert!(!place(&plain).gpu, "the CPU binding keeps it");
         // `@doc(x) = @doc(y)` and `@in(x, {…})` are row code, and so is `z = cat(x, y)` (a text the device makes);
-        // `sha256(x)` is not, nor a cat or `lower(x)` in a recursive stratum (its rounds would join the text before it
-        // is a symbol); `lower(x)` is (a text the device makes into its arena).
+        // `sha256(x)` is not; `lower(x)` is (a text the device makes into its arena), and a cat or `lower(x)` in a
+        // recursive stratum too (decision 0661: its rounds keep each made text one value in their arena).
         let cmp = |l: T<'static>, r: T<'static>| Literal::Eq(l, r);
         let doc = |v: &'static str| T::Call("doc", vec![T::Var(v)]);
         let mut docs = Shape::default();
@@ -804,7 +805,8 @@ pub mod tests {
         assert!(cat.forms.contains(&Form::Comparison) && !cat.forms.contains(&Form::Computed), "{:?}", cat.forms);
         let mut rec = Shape::default();
         adds(&mut rec, &[atom("kind", false), made()], &[], 1.0, true);
-        assert!(rec.forms.contains(&Form::Computed));
+        // In a recursive stratum too: its rounds keep each made text one value in their arena (decision 0661).
+        assert!(rec.forms.contains(&Form::Comparison) && !rec.forms.contains(&Form::Computed), "{:?}", rec.forms);
         let lower = || cmp(T::Var("z"), T::Call("lower", vec![T::Var("x")]));
         let mut len = Shape::default();
         adds(&mut len, &[atom("kind", false), cmp(T::Var("z"), T::Call("sha256", vec![T::Var("x")]))], &[], 1.0, false);
@@ -814,7 +816,7 @@ pub mod tests {
         assert!(!low.forms.contains(&Form::Computed), "{:?}", low.forms);
         let mut low_rec = Shape::default();
         adds(&mut low_rec, &[atom("kind", false), lower()], &[], 1.0, true);
-        assert!(low_rec.forms.contains(&Form::Computed));
+        assert!(!low_rec.forms.contains(&Form::Computed), "{:?}", low_rec.forms);
         // A tiny stratum stays on the CPU: the submission costs more than the work, even under the Metal binding.
         let mut small = Shape::default();
         adds(&mut small, &[atom("kind", false)], &[], 10.0, false);

@@ -215,52 +215,65 @@ plp_plugin() :- !option("entryPoint", _).
 plp_explicit(f) :- decorator(f, e), short_name(e, x), (plp_name("PURE_DECORATOR_NAMES", x) ; x = "lazy").
 .decl plp_legacy(f: node)
 plp_legacy(f) :- decorator(f, e), short_name(e, x), plp_name("LEGACY_DECORATOR_NAMES", x).
-.decl plp_terminal(f: node)  // f targets or calls a plan-helper terminal
-plp_terminal(f) :- pc_edge(f, t, _), pc_qof(t, q), plp_name("PLAN_HELPER_TERMINAL_NAMES", q).
-plp_terminal(f) :- pc_rec(f), ast_walk(f, c), kind(c, "call"), short_name(c, x), plp_name("PLAN_HELPER_TERMINAL_NAMES", x).
-.decl plp_owner_seed(f: node)
-plp_owner_seed(f) :- pc_rec(f), def_name(f, x), suffix("_lazy", x), pc_param(f, p), !plp_name("receiver_names", p),
-    plp_name("RUNTIME_OWNER_PARAM_NAMES", p), plp_terminal(f).
+.decl plp_kterminal(k: symbol)  // k is a plan-helper terminal, by its qualname
+plp_kterminal(k) :- pc_sym(_, q, f), plp_name("PLAN_HELPER_TERMINAL_NAMES", q), pc_key(f, k).
+.decl plp_calls_terminal(k: symbol)  // k calls one by its name
+plp_calls_terminal(k) :- pc_rec(f), ast_walk(f, c), kind(c, "call"), short_name(c, x),
+    plp_name("PLAN_HELPER_TERMINAL_NAMES", x), pc_key(f, k).
+.decl plp_terminal(k: symbol)  // k targets or calls a plan-helper terminal
+plp_terminal(k) :- pc_edge(k, g, _), plp_kterminal(g).
+plp_terminal(k) :- plp_calls_terminal(k).
+// plp_owner_seed(k): a *_lazy record with an owner parameter (plp_owner_shape) that reaches a terminal.
+.decl plp_owner_shape(k: symbol)
+plp_owner_shape(k) :- pc_rec(f), def_name(f, x), suffix("_lazy", x), pc_param(f, p), !plp_name("receiver_names", p),
+    plp_name("RUNTIME_OWNER_PARAM_NAMES", p), pc_key(f, k).
+.decl plp_owner_seed(k: symbol)
+plp_owner_seed(k) :- plp_owner_shape(k), plp_terminal(k).
 // The files scan_paths reads (its shared-facts narrowing): those whose text has a pure-lazy trigger, those
 // defining a global-state factory, and those a seed reaches without a base class. When there is none, every file.
-// The walks are the linter's, over the records' ids (pc_sid): what crosses files is ids, and each file reads back
-// its own records' (decision 0693).
-.decl plp_shared(s: symbol)
-plp_shared(s) :- pc_sid(s, f), plp_explicit(f).
-plp_shared(s) :- pc_sid(s, f), plp_owner_seed(f).
-plp_shared(t) :- plp_shared(s), pc_sedge(s, t, 0).
+// The walks are the linter's, over the records' keys (purity-calls' pc_key, `module::qualname`): what crosses files is
+// keys, never a node (decision 0677), and each file reads back its own records' (decision 0693).
+.decl plp_shared(k: symbol)
+plp_shared(k) :- pc_key(f, k), plp_explicit(f).
+plp_shared(k) :- plp_owner_seed(k).
+plp_shared(g) :- plp_shared(k), pc_edge(k, g, 0).
 .decl plp_cand(d: number)
 plp_cand(d) :- source(d, sp), text(sp, t), plp_name("file_triggers", x), contains(x, t).
 plp_cand(d) :- pc_rec(f), def_name(f, x), docof(f, d), plp_name("global_state_factories", x).
-plp_cand(d) :- plp_shared(s), pc_sid(s, f), docof(f, d).
+plp_cand(d) :- plp_shared(k), pc_key(f, k), docof(f, d).
 .decl plp_anycand()
 plp_anycand() :- plp_cand(_).
 .decl plp_docin(d: number)
 plp_docin(d) :- plp_cand(d).
 plp_docin(d) :- doc(d, _, _), !plp_anycand().
-.decl plp_in_rec(f: node)
-plp_in_rec(f) :- pc_rec(f), docof(f, d), plp_docin(d).
-// plp_id_in(s, d): the record of id s is in file d, which scan_paths reads (the flag read in d's own part, decision
-// 0686); plp_id_legacy(s): it is a boundary.
-.decl plp_id_in(s: symbol, d: number)
-plp_id_in(s, d) :- pc_sid(s, f), plp_in_rec(f), docof(f, d).
-.decl plp_id_legacy(s: symbol)
-plp_id_legacy(s) :- pc_sid(s, f), plp_legacy(f).
-// plp_step(s, t): both walks step from record s to the record of id t it calls, when t is in a file scan_paths reads
-// and is no boundary. A call in one file joined to the record it reaches in another: a crossing meant (decision 0652).
-// The walks over it read names alone, and are staged (decision 0675).
-.decl plp_step(s: symbol, t: symbol) cross_file
-plp_step(s, t) :- pc_sedge(s, t, _), plp_id_in(t, _), !plp_id_legacy(t).
-.decl plp_colored_id(s: symbol)
-plp_colored_id(s) :- pc_sid(s, f), plp_in_rec(f), plp_explicit(f).
-plp_colored_id(t) :- plp_colored_id(s), plp_step(s, t).
-.decl plp_owner_id(s: symbol)
-plp_owner_id(s) :- pc_sid(s, f), plp_in_rec(f), plp_owner_seed(f).
-plp_owner_id(t) :- plp_owner_id(s), plp_step(s, t).
+// The flag (plp_docin, over every file's candidates) is read only where a record is its key and its document, never
+// at a node: chosen last over each file's rows (decision 0686), a node-keyed relation under it would carry its nodes
+// into the cross-file part (decision 0677). plp_krec(k, d): record k is in file d, each file's own.
+.decl plp_krec(k: symbol, d: number)
+plp_krec(k, d) :- pc_key(f, k), docof(f, d).
+.decl plp_kexplicit(k: symbol, d: number)
+plp_kexplicit(k, d) :- pc_key(f, k), plp_explicit(f), docof(f, d).
+// plp_id_in(k, d): the record of key k is in file d, which scan_paths reads (the flag read in d's own part, decision
+// 0686); plp_id_legacy(k): it is a boundary.
+.decl plp_id_in(k: symbol, d: number)
+plp_id_in(k, d) :- plp_krec(k, d), plp_docin(d).
+.decl plp_id_legacy(k: symbol)
+plp_id_legacy(k) :- pc_key(f, k), plp_legacy(f).
+// plp_step(k, g): both walks step from record k to the record g it calls, when g is in a file scan_paths reads and
+// is no boundary. A call in one file joined to the record it reaches in another: a crossing meant (decision 0652).
+// The walks over it read keys alone, and are staged (decision 0675).
+.decl plp_step(k: symbol, g: symbol) cross_file
+plp_step(k, g) :- pc_edge(k, g, _), plp_id_in(g, _), !plp_id_legacy(g).
+.decl plp_colored_id(k: symbol)
+plp_colored_id(k) :- plp_kexplicit(k, d), plp_docin(d).
+plp_colored_id(g) :- plp_colored_id(k), plp_step(k, g).
+.decl plp_owner_id(k: symbol)
+plp_owner_id(k) :- plp_owner_seed(k), plp_id_in(k, _).
+plp_owner_id(g) :- plp_owner_id(k), plp_step(k, g).
 .decl plp_colored(f: node)
-plp_colored(f) :- pc_sid(s, f), plp_colored_id(s).
+plp_colored(f) :- pc_key(f, k), plp_colored_id(k).
 .decl plp_owner(f: node)
-plp_owner(f) :- pc_sid(s, f), plp_owner_id(s).
+plp_owner(f) :- pc_key(f, k), plp_owner_id(k).
 
 // plp_an(f, strict, owner): f is analysed; strict: any receiver of a protected attribute counts; owner: only
 // PLP-001…005 are kept.
@@ -482,7 +495,7 @@ plp_find(f, n, "PLP-009", cat("pure-lazy global cache/state access requires sign
     ") via '", a, "'"), cat("global=", g, " category=", k, " access=", a)) :-
     plp_access(f, n, g, a), !plp_exempt(f, g, a), docof(f, d), plp_gcat(d, g, k).
 plp_find(g, g, "PLP-007", "exported public *_lazy functions must be decorated with @pure_lazy", "-") :-
-    !plp_src_mode(), plp_xres(_, t), pc_sid(t, g), pc_sym(_, q, g), !contains(".", q), suffix("_lazy", q),
+    !plp_src_mode(), plp_xres(_, t), pc_key(g, t), pc_sym(_, q, g), !contains(".", q), suffix("_lazy", q),
     !prefix("_", q), !plp_explicit(g).
 // plp_kept(f, c): owner-only defs keep PLP-001…005 only.
 .decl plp_kept(f: node, c: symbol)
@@ -509,12 +522,12 @@ plp_export(d, x) :- plp_all_first(d, v), child(v, e, _), str_const(e, x), !prefi
 plp_export(d, x) :- plp_dl_doc(d, _), !plp_all_first(d, _), modnode(d, mn), pc_imp(mn, x, _, "sym"), !prefix("_", x).
 plp_export(d, x) :- plp_dl_doc(d, _), !plp_all_first(d, _), pc_sym(d, x, _), !contains(".", x), !prefix("_", x).
 // plp_xq(s) asks where "module.name" s is defined, following re-exports; plp_xres(s, t) answers with the record's
-// id, as the linter's resolution does, and the finding is read back at the record (decision 0693). What each file
-// gives the resolution is names, each at its own document: plp_fqin(s, t, d), the record of id t has "module.name" s
+// key (pc_key), and the finding is read back at the record (decisions 0677, 0693). What each file
+// gives the resolution is names, each at its own document: plp_fqin(s, t, d), the record of key t has "module.name" s
 // in file d, which scan_paths reads; plp_reexp(s, q, d), module file d re-exports s's name from q. Each is placed
 // at its document, where the cross-file part reads the flag (decision 0686).
 .decl plp_fqin(s: symbol, t: symbol, d: number)
-plp_fqin(cat(m, ".", q), cat(m, "::", q), d) :- pc_sym(d, q, f), doc(d, _, m), m != "", plp_in_rec(f).
+plp_fqin(cat(m, ".", q), cat(m, "::", q), d) :- pc_sym(d, q, _), doc(d, _, m), m != "", plp_docin(d).
 .decl plp_reexp(s: symbol, q: symbol, d: number)
 plp_reexp(cat(pm, ".", nm), q, d) :- doc(d, _, pm), plp_docin(d), modnode(d, mn), pc_imp(mn, nm, q, "sym").
 // plp_xseed(s, d): data_layer module file d exports "module.name" s.

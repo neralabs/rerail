@@ -25,6 +25,7 @@
 //! (`FileLocal`); variables are read by name, so each choice, counter and name is fixed by the program; each round's
 //! program is a version of its own, split again to check the parts stay file-local.
 
+use rerail_blocks::vector::Vector;
 use super::super::FileLocal;
 use super::{BodyItem, Made, NOwned, Round, lit_vars, name, term_vars, write};
 use crate::code_rule_dsl::logic::plan::body;
@@ -47,7 +48,7 @@ impl FactorizeExports {
     }
 }
 
-type Keys = BTreeMap<String, Vec<Vec<usize>>>;
+type Keys = BTreeMap<String, Vec<Vector<usize>>>;
 
 /// The variables `lits` of `rule` determine from `known`: an atom whose relation has a key all of whose columns are
 /// known (or constants) determines its other variables; so does an equality, and a nearest ancestor its node.
@@ -115,13 +116,13 @@ fn relation_keys(v: &Version, f: Fields<'_>, roots: Option<&BTreeSet<String>>) -
         let at = |name: &str| columns.iter().position(|c| *c == name);
         if let ("child" | "field", Some(p), Some(c)) = (rel, at("p"), at("c")) {
             let other = (0..columns.len()).find(|&i| i != p && i != c);
-            keys.insert(rel.to_owned(), std::iter::once(vec![c]).chain(other.map(|o| vec![p, o])).collect());
+            keys.insert(rel.to_owned(), std::iter::once(rerail_blocks::vector![c]).chain(other.map(|o| rerail_blocks::vector![p, o])).collect());
             continue;
         }
         let Some(k) = at("n") else { continue };
         let others_nodes = types.iter().enumerate().any(|(i, (_, t))| i != k && (matches!(*t, "node" | "loc" | "span") || matches!(columns.get(i), Some(&("par" | "a" | "p" | "h")))));
         if !others_nodes {
-            keys.insert(rel.to_owned(), vec![vec![k]]);
+            keys.insert(rel.to_owned(), vec![rerail_blocks::vector![k]]);
         }
     }
     for l in f.lattices() {
@@ -160,7 +161,7 @@ fn relation_keys(v: &Version, f: Fields<'_>, roots: Option<&BTreeSet<String>>) -
         for (rel, rules) in &rules_of {
             let width = rules[0].head().args().count();
             for c in 0..width {
-                if keys.get(*rel).is_some_and(|ks| ks.contains(&vec![c])) {
+                if keys.get(*rel).is_some_and(|ks| ks.contains(&rerail_blocks::vector![c])) {
                     continue;
                 }
                 if let Some(&at) = tried.get(&(*rel, c))
@@ -180,7 +181,7 @@ fn relation_keys(v: &Version, f: Fields<'_>, roots: Option<&BTreeSet<String>>) -
                     lits.iter().all(|l| matches!(l.view(), L::Atom(_) | L::Cmp { .. } | L::Nearest { .. })) && head.is_subset(&determined(v, *r, &lits, start, &keys))
                 });
                 if proven {
-                    keys.entry((*rel).to_owned()).or_default().push(vec![c]);
+                    keys.entry((*rel).to_owned()).or_default().push(rerail_blocks::vector![c]);
                     found = true;
                     step += 1;
                     gained.insert((*rel).to_owned(), step);
@@ -195,7 +196,7 @@ fn relation_keys(v: &Version, f: Fields<'_>, roots: Option<&BTreeSet<String>>) -
 }
 
 /// Per relation handed on as parts, per rule: its key and its parts (literal places).
-type Plan = BTreeMap<String, Vec<(String, Vec<Vec<usize>>)>>;
+type Plan = BTreeMap<String, Vec<(String, Vec<Vector<usize>>)>>;
 
 /// Per relation factorized as an intermediate (decision 0488): its pair cache, where one was made (its guard, its
 /// pairs, the witness allowance), else none.
@@ -210,9 +211,10 @@ enum Scope<'a> {
 }
 
 /// `v`'s rules, each relation's reads (rule, literal) a part may stand in for, each relation's rules, and the plan
-/// for each relation the scope hands on as parts.
+/// for each relation the scope hands on as parts. `constants`: the relations the split holds constants (of facts and
+/// settings alone).
 #[allow(clippy::type_complexity)]
-fn choose<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>, keys: &Keys) -> (Vec<RuleRef<'v>>, BTreeMap<&'v str, Vec<(usize, usize)>>, BTreeMap<&'v str, Vec<RuleRef<'v>>>, Plan) {
+fn choose<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>, keys: &Keys, constants: &BTreeSet<String>) -> (Vec<RuleRef<'v>>, BTreeMap<&'v str, Vec<(usize, usize)>>, BTreeMap<&'v str, Vec<RuleRef<'v>>>, Plan) {
     let none = BTreeSet::new();
     let local = match scope {
         Scope::Exports(local) => local,
@@ -277,13 +279,40 @@ fn choose<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>, keys: &Keys) -> (
             let Some(head) = head.filter(|h| h.iter().collect::<BTreeSet<_>>().len() == h.len()) else { break };
             let Some((key, parts)) = crate::code_rule_dsl::logic::plan::keeps::factors_of(v, *rule) else { break };
             let lits: Vec<LitRef<'_>> = rule.body().collect();
-            let part_lits = |p: &Vec<usize>| p.iter().map(|&i| lits[i]).collect::<Vec<_>>();
-            let keyed = |p: &Vec<usize>| part_lits(p).iter().any(|l| matches!(l.view(), L::Atom(a) if !a.neg() && body::atom_vars(a).iter().any(|s| name(v, *rule, s) == key)));
+            let part_lits = |p: &Vector<usize>| p.iter().map(|&i| lits[i]).collect::<Vec<_>>();
+            let keyed = |p: &Vector<usize>| part_lits(p).iter().any(|l| matches!(l.view(), L::Atom(a) if !a.neg() && body::atom_vars(a).iter().any(|s| name(v, *rule, s) == key)));
             if !parts.iter().all(keyed) {
                 break;
             }
             let fans = parts.iter().filter(|p| !functional(v, *rule, &part_lits(p), &key, &head, keys)).count();
             if fans < 2 {
+                break;
+            }
+            // Decision 0677: no node crosses into the cross-file part. Its readers (an export's, or a pair cache's,
+            // whose guard counts the whole factors) join the parts in the cross part, so a key that is a node
+            // carries it there. A relation that holds no node is handed on whole, its rows symbols; one that does
+            // holds a node already, a crossing the check names, and is factorized as before until its family is
+            // keyed by symbols. `base_name(q, q0) :- base_expr(q, e), qn(e, q0)` (py_names) held `e` in the cross
+            // part, by its pair cache.
+            let node_at = |rel: &str, c: usize| f.columns(rel).and_then(|cols| cols.get(c).map(|(_, t)| super::super::node_crossings::NODE_TYPES.contains(t))).unwrap_or(false);
+            let key_is_node = lits.iter().any(|l| match l.view() {
+                L::Atom(a) if !a.neg() => a.args().enumerate().any(|(c, t)| matches!(t, TermRef::Var(s) if name(v, *rule, s) == key) && node_at(v.rel_name(a.rel()), c)),
+                _ => false,
+            });
+            let head_holds_node = (0..rule.head().args().count()).any(|c| node_at(rel, c));
+            if key_is_node && !head_holds_node {
+                break;
+            }
+            // A join of a file's nodes with a constant (`export_all(e, m) :- star_export(e, s), node_module(s, m)`):
+            // a lookup in the constant, made in the file. Handed on as parts, the constant's part and the key were
+            // tables of every file's values, and their readers, which join them at the file's nodes, went to the
+            // cross part (decision 0677), as the deferred joins' lookups did (`product_demand::deferred`). An earlier
+            // phase's or a stage's export (`phased::is_probed`, decision 0675) is one: every file reads the same rows,
+            // a placeless input. `node_module`, staged, was factorized, its part keyed by `star_export(_, s)` of every
+            // file, and `module_use` went to the cross part over the exports' nodes.
+            let constant = |r: &str| constants.contains(r) || (f.has_facts(r) && !rules_of.contains_key(r)) || crate::code_rule_dsl::logic::plan::phased::is_probed(r);
+            let lookup = parts.iter().any(|p| part_lits(p).iter().all(|l| l.atom().is_none_or(|a| constant(v.rel_name(a.rel())))));
+            if head_holds_node && lookup {
                 break;
             }
             plan.push((key, parts));
@@ -436,8 +465,8 @@ fn round<'v>(
             // The parts in the order their keys are chained (below): the fewest positive atoms first, so a part that is
             // itself a join (`mf_def($c, $f), mf_def($a, $f)`) has its keys found within the keys of the parts before
             // it, never on its own.
-            let positive = |part: &Vec<usize>| part.iter().filter(|&&i| matches!(lits[i].view(), L::Atom(a) if !a.neg())).count();
-            let mut parts: Vec<&Vec<usize>> = parts.iter().collect();
+            let positive = |part: &Vector<usize>| part.iter().filter(|&&i| matches!(lits[i].view(), L::Atom(a) if !a.neg())).count();
+            let mut parts: Vec<&Vector<usize>> = parts.iter().collect();
             parts.sort_by_key(|p| positive(p));
             for part in parts {
                 let part: Vec<LitRef<'_>> = part.iter().map(|&i| lits[i]).collect();
@@ -696,7 +725,8 @@ pub fn factorize_intermediates(v: &std::sync::Arc<Version>, first: bool, names: 
     let f = Fields::over(v, &d);
     // Its keys read in the named relations' rules alone (`choose`'s `functional`).
     let keys = relation_keys(v, f, Some(names));
-    let (rules, reads, rules_of, chosen) = choose(v, f, Scope::Intermediates(names), &keys);
+    // The deferred joins leave a lookup in a constant as written (`product_demand::deferred`): none is named here.
+    let (rules, reads, rules_of, chosen) = choose(v, f, Scope::Intermediates(names), &keys, &BTreeSet::new());
     if chosen.is_empty() {
         return Ok(None);
     }
@@ -723,7 +753,8 @@ impl ProgramPass for FactorizeExports {
         let f = Fields::over(v, &d);
         let split = cx.get::<FileLocal>()?;
         let keys = relation_keys(v, f, None);
-        let (rules, reads, rules_of, mut chosen) = choose(v, f, Scope::Exports(&split.local), &keys);
+        let (_, constants) = split.found();
+        let (rules, reads, rules_of, mut chosen) = choose(v, f, Scope::Exports(&split.local), &keys, &constants);
         // Made, checked by the split, and made again without the relations whose parts it does not find file-local.
         loop {
             if chosen.is_empty() {

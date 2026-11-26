@@ -1,8 +1,9 @@
 # 0225: An edit costs what it changes: rules keyed by module, and preparation's analyses on the image
 
-Status: draft (2026-11-14), for review. Revised the same day with the edit profile measured (below). Builds on
-decision 0173 (a program is a flat image) and 0089 (libraries held once). Stops decision 0210's line of work at its
-§12.
+Status: partly built (audited 2026-11-23). Left: §5 split and congruence as rules over the image; §4 interim
+numberings removed; §7 prepared program kept per module (0246 draft). Draft (2026-11-14), for review. Revised the same
+day with the edit profile measured (below). Builds on decision 0173 (a program is a flat image) and 0089 (libraries
+held once). Stops decision 0210's line of work at its §12.
 
 ## Intro
 

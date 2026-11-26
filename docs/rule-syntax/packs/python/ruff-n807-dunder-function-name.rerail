@@ -14,7 +14,7 @@
 .violation N807(at: node, x: symbol) code "N807"
     "Rename `{x}` without the leading and trailing double underscores and update its callers; only a method of a class should use such a name."
     suppress ruff "N807"
-N807(nm, x) :- kind(f, "function_definition"), field(f, "name", nm), text(nm, x), dunder(x),
-    nearest(f, s, scope), !kind(s, "class_definition"), !pep562(s, x), !naming_ignored(x).
+N807(nm, x) :- kind(f, "function_definition"), field(f, "name", nm), text(nm, x), dunder(nm, x),
+    nearest(f, s, scope), !kind(s, "class_definition"), !pep562(s, x), !naming_ignored(nm, x).
 .decl pep562(s: node, x: symbol)  // module-level __getattr__ / __dir__
 pep562(s, x) :- kind(s, "module"), (x = "__getattr__" ; x = "__dir__").

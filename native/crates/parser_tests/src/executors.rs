@@ -5,11 +5,12 @@
 //!
 //! Public so the engine's tests of its own block programs (`packed::regex_block`) use them too.
 
+use rerail_blocks::vector::Vector;
 use rerail_compiler::program::Words as Program;
 use rerail_compiler::{block, native_ir};
 use rerail_cpu_block::native_cpu_block;
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-use rerail_metal as metal_program_backend;
+use rerail_metal_programs as metal_program_backend;
 
 /// No device here that runs a block program: none at all (a Linux host without a GPU), or one whose SIMD groups are
 /// not 32 lanes (`block_program::ready`). A test's device runs are left out there; its CPU's are still held.
@@ -66,7 +67,7 @@ pub fn runs() -> Vec<Vec<u8>> {
 }
 
 /// Each executor's outputs on a file, by its name.
-pub type Runs = Vec<(String, Vec<Vec<u64>>)>;
+pub type Runs = Vec<(String, Vec<Vector<u64>>)>;
 
 /// A program's first block program, lowered and compiled once, for runs over many inputs.
 pub struct Executors<'a> {

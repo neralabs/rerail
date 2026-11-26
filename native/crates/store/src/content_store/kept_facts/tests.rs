@@ -86,7 +86,8 @@ fn read(path: &Path, c: &Connection) -> Vec<(String, i64, u64, Vec<Vec<i64>>)> {
 }
 
 fn files(path: &Path) -> Vec<String> {
-    let mut out: Vec<String> = std::fs::read_dir(space_dir(path, &SPACE)).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    // The space's kept files: not its staging lock, which a run staging rows made (`STAGING_LOCK`).
+    let mut out: Vec<String> = std::fs::read_dir(space_dir(path, &SPACE)).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).filter(|n| n != STAGING_LOCK).collect();
     out.sort();
     out
 }
@@ -329,7 +330,7 @@ fn a_waves_reader_records_of_one_program_are_one() {
 fn the_kept_relations_read_through_sql_equal_their_entries() {
     let (path, c) = store("entries");
     write(&path, &c, vec![put("q", 0, 2, KeptWhat::Rows(lent_dead(&[(1, 10), (2, 20), (3, 30)], &[1]))), put("p", 4, 3, flat(&[7, 70, 8, 80]))]);
-    crate::content_store::atoms::Atoms::attach(&c).unwrap();
+    crate::content_store::attach_atoms(&c).unwrap();
     let space = KeptSpace::open(&path, &SPACE, &chain_rows(&c, &SPACE).unwrap()).unwrap();
     let view = space.view();
     // An entry's relation, part, digest, row count and rows.
@@ -395,7 +396,7 @@ fn kept_facts_are_a_virtual_table() {
     let (path, c) = store("vtab");
     write(&path, &c, vec![put("p", 0, 1, flat(&[3, 30, 1, 10, 3, 31])), put("q", 0, 2, flat(&[5, 50])), put("g", 0, 3, flat(&[7, 70]))]);
     write(&path, &c, vec![put("q", 0, 4, flat(&[6, 60])), put("g", 0, 0, KeptWhat::Gone)]);
-    crate::content_store::atoms::Atoms::attach(&c).unwrap();
+    crate::content_store::attach_atoms(&c).unwrap();
     let rows = |sql: &str| -> Vec<Vec<Option<i64>>> {
         let mut st = c.prepare(sql).unwrap();
         st.query_map([&SPACE[..]], |r| (0..3).map(|i| r.get::<_, Option<i64>>(i)).collect()).unwrap().map(Result::unwrap).collect()
@@ -522,7 +523,7 @@ fn collection_rewrites_without_dead_entries() {
     };
     assert_eq!(records(&c, &SPACE), [(live, vec![mine, shared, asked]), (dead, vec![theirs, shared])], "each program's record: what it put and asked, grown");
     // The keep decision's: one program live, one dead.
-    c.execute("INSERT INTO corpus_plans(plan_digest, live) VALUES (?1, 1), (?2, 0)", rusqlite::params![&live[..], &dead[..]]).unwrap();
+    set_plans(&c, |_| None, &[(live, true), (dead, false)]);
     let before = read(&path, &c);
     assert_eq!(store.collect_kept_facts().unwrap(), 2, "the space rewritten, the other dropped");
     let after = read(&path, &c);
@@ -537,10 +538,25 @@ fn collection_rewrites_without_dead_entries() {
     // Nothing dead is left to collect: a second pass rewrites nothing.
     assert_eq!(store.collect_kept_facts().unwrap(), 0);
     // The live program dies too: what only it read goes; what no record names stays.
-    c.execute("UPDATE corpus_plans SET live=0", []).unwrap();
+    set_plans(&c, |_| Some(false), &[]);
     assert_eq!(store.collect_kept_facts().unwrap(), 1);
     assert_eq!(read(&path, &c).iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), ["l"]);
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+/// The keep decision's marks, by a test, with `c` (the corpus runs' kept form, `corpus_runs::kept`): each recorded
+/// plan as `all` says (none: as it was), then each of `plans`.
+fn set_plans(c: &Connection, all: impl Fn(&[u8; 32]) -> Option<bool>, plans: &[([u8; 32], bool)]) {
+    crate::content_store::corpus_runs::kept::write_at(c, |k, w| {
+        for (p, live) in k.plans() {
+            w.plan(p, Some(all(&p).unwrap_or(live)));
+        }
+        for &(p, live) in plans {
+            w.plan(p, Some(live));
+        }
+        Ok(())
+    })
+    .unwrap();
 }
 
 /// t33 step 3: a partition kept under a holder (`HOLDER`, a source's SHA-256 key) lives as long as the store keeps that
@@ -565,12 +581,22 @@ fn a_held_partition_goes_with_its_holder() {
     let kept = store.put_source_hashed(text, key, &[]).unwrap();
     store.queue_kept(SPACE, vec![put("planned", 9, 3, flat(&[3, 3])), holder_put(9, holder, Some(plan))]);
     store.written().unwrap();
-    c.execute("INSERT INTO corpus_plans(plan_digest, live) VALUES (?1, 1)", [&plan[..]]).unwrap();
+    set_plans(&c, |_| None, &[(plan, true)]);
     assert_eq!(store.collect_kept_facts().unwrap(), 0, "its plan live, its source kept");
-    c.execute("UPDATE corpus_plans SET live=0", []).unwrap();
+    set_plans(&c, |_| Some(false), &[]);
     assert_eq!(store.collect_kept_facts().unwrap(), 1);
     assert_eq!(read(&path, &c).iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), ["free"], "the plan's partition gone");
     assert!(store.source_by_hash(key).unwrap() == Some(kept), "its source stays");
+    // A partition held by a plan alone (`plan_holder_put`, no source) stays while its plan lives, and goes with it.
+    let alone = [0x44u8; 32];
+    store.queue_kept(SPACE, vec![put("alone", 10, 4, flat(&[4, 4])), crate::content_store::kept_facts::plan_holder_put(10, alone)]);
+    store.written().unwrap();
+    set_plans(&c, |_| None, &[(alone, true)]);
+    assert_eq!(store.collect_kept_facts().unwrap(), 0, "its plan live");
+    assert!(read(&path, &c).iter().any(|e| e.0 == "alone"));
+    set_plans(&c, |_| None, &[(alone, false)]);
+    assert_eq!(store.collect_kept_facts().unwrap(), 1);
+    assert_eq!(read(&path, &c).iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), ["free"], "the plan's partition gone");
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
@@ -613,4 +639,152 @@ fn rows_another_writer_replaced_open_as_the_last_commit() {
     let rels: Vec<String> = kept.view().all().map(|k| k.key.rel.to_owned()).collect();
     assert_eq!(rels, ["a", "b", "c"], "every entry the last commit keeps");
     assert_eq!(store.kept_row(&SPACE).unwrap(), Some(now), "the rows held are the last commit's");
+}
+
+/// The same, where the reader is inside a read transaction (a virtual table's statement reads the space as its
+/// statement's transaction finds it): its connection reads its snapshot's rows however often it reads them, so they
+/// are read on a connection of their own. Before, two policies' runs of one phase over one store failed now and then
+/// ("a space's kept facts: No such file or directory", `rule_files_pass_their_own_tests`, decision 0677's fix 2).
+#[test]
+fn a_reader_inside_a_transaction_whose_files_a_commit_swept_reads_the_last_commits() {
+    let (path, c) = store("swept-in-transaction");
+    write(&path, &c, vec![put("p", 0, 1, flat(&[1, 10]))]);
+    let reader = Connection::open(&path).unwrap();
+    reader.execute_batch("BEGIN").unwrap();
+    let stale = chain_rows(&reader, &SPACE).unwrap();
+    let big: Vec<i64> = (0..100_000i64).flat_map(|i| [(i * 7919) % 100_003, (i * 104_729) % 150_001]).collect();
+    write(&path, &c, vec![put("q", 0, 2, flat(&big))]);
+    write(&path, &c, vec![put("r", 0, 3, flat(&[2, 20]))]);
+    assert!(stale.iter().all(|(_, name, _)| !space_dir(&path, &SPACE).join(name).exists()), "the stale rows' file swept");
+    assert_eq!(chain_rows(&reader, &SPACE).unwrap(), stale, "the reader's snapshot names the swept file still");
+    let (rows, kept) = KeptSpace::settle(&path, &reader, &SPACE, stale).unwrap().expect("the space");
+    assert_eq!(rows, chain_rows(&c, &SPACE).unwrap(), "mapped by the last commit's rows");
+    let view = kept.view();
+    for (rel, digest) in [("p", 1), ("q", 2), ("r", 3)] {
+        assert_eq!(view.get(&FactKey { rel, ident: &ID, part: 0 }).map(|k| k.digest), Some(digest), "{rel}");
+    }
+    reader.execute_batch("COMMIT").unwrap();
+}
+
+/// A reader's rows can name a file a later commit swept: read before a write merged the chain into one file, and the
+/// write after removed the file they name. The space is read by the rows read again (`KeptSpace::settle`), as the
+/// store's last commit names its files; a file gone from the rows the store names still is corruption. Before, a
+/// reader of a store other threads wrote failed now and then ("a space's kept facts: No such file or directory",
+/// `rule_files_pass_their_own_tests`).
+#[test]
+fn a_reader_whose_files_a_commit_swept_reads_the_last_commits() {
+    let (path, c) = store("swept");
+    write(&path, &c, vec![put("p", 0, 1, flat(&[1, 10]))]);
+    let stale = chain_rows(&c, &SPACE).unwrap();
+    // As big as the chain: every file merged into one, and the next write sweeps the one `stale` names.
+    let big: Vec<i64> = (0..100_000i64).flat_map(|i| [(i * 7919) % 100_003, (i * 104_729) % 150_001]).collect();
+    write(&path, &c, vec![put("q", 0, 2, flat(&big))]);
+    write(&path, &c, vec![put("r", 0, 3, flat(&[2, 20]))]);
+    assert!(stale.iter().all(|(_, name, _)| !space_dir(&path, &SPACE).join(name).exists()), "the stale rows' file swept");
+    assert!(KeptSpace::open(&path, &SPACE, &stale).is_err(), "the stale rows name a file that is gone");
+    let (rows, kept) = KeptSpace::settle(&path, &c, &SPACE, stale).unwrap().expect("the space");
+    assert_eq!(rows, chain_rows(&c, &SPACE).unwrap(), "mapped by the last commit's rows");
+    let view = kept.view();
+    for (rel, digest) in [("p", 1), ("q", 2), ("r", 3)] {
+        assert_eq!(view.get(&FactKey { rel, ident: &ID, part: 0 }).map(|k| k.digest), Some(digest), "{rel}");
+    }
+    // A file the store's rows name, gone: corruption, not a loop.
+    std::fs::remove_file(space_dir(&path, &SPACE).join(&rows[0].1)).unwrap();
+    let err = KeptSpace::read(&path, &c, &SPACE).err().expect("a file the last commit names, gone");
+    assert!(err.to_string().contains("a space's kept facts"), "{err}");
+}
+
+/// A file staged ahead of its wave (`KeptStage`) outlives every sweep of its space until its commit, whatever context
+/// or process sweeps: it holds the space's `STAGING_LOCK`, a file lock, where a set kept in one context's shared object
+/// let a run in another context of the same process remove it, and its commit then named a file not there.
+#[test]
+fn a_staged_file_outlives_another_contexts_sweep_until_its_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = dir.path().join("store.sqlite");
+    let space = space_dir(&store, &[7; 32]);
+    std::fs::create_dir_all(&space).unwrap();
+    let staged = space.join(format!("{STAGED_PREFIX}00000000000000aa.blk"));
+    let unnamed = space.join("c1-00000000000000bb.blk");
+    std::fs::write(&staged, b"staged").unwrap();
+    std::fs::write(&unnamed, b"rolled back").unwrap();
+    let held = staging_lock(&space, true).unwrap();
+    held.lock_shared().unwrap();
+    // Another context's sweep (its own open of the lock, as another run's or process's is).
+    sweep(&space, &ChainRows::default());
+    assert!(staged.exists(), "a staged file whose run holds the lock is kept");
+    assert!(!unnamed.exists(), "an unnamed file not staged is swept as before");
+    drop_space_files(&store, &[7; 32]);
+    assert!(staged.exists(), "a sweep through a dropped space keeps it too");
+    drop(held);
+    sweep(&space, &ChainRows::default());
+    assert!(!staged.exists(), "with no run staging, a staged file no chain names is a crashed run's, swept");
+    assert!(space.join(STAGING_LOCK).exists(), "the lock itself is never swept");
+}
+
+/// A collection's sweep after its commit reads the chain as it is then, under the write lock (`sweep_committed`): a
+/// commit another context made after the collection's is named, and its file kept. Swept by the collection's own rows,
+/// it was removed.
+#[test]
+fn a_sweep_after_a_commit_keeps_a_later_commits_file() {
+    let (path, c) = store("sweep-committed");
+    write(&path, &c, vec![put("p", 0, 1, KeptWhat::Rows(lent(&[(1, 10)])))]);
+    let stale = chain_rows(&c, &SPACE).unwrap();
+    // Another context's commit, after the collection's: a file the stale rows do not name. Big enough to be a file of
+    // its own, not merged into the newest.
+    let big: Vec<i64> = (0..100_000i64).flat_map(|i| [(i * 7919) % 100_003, (i * 104_729) % 150_001]).collect();
+    write(&path, &c, vec![put("q", 0, 2, flat(&big))]);
+    let now = chain_rows(&c, &SPACE).unwrap();
+    let later: Vec<&String> = now.iter().map(|(_, n, _)| n).filter(|n| !stale.iter().any(|(_, s, _)| s == *n)).collect();
+    assert!(!later.is_empty(), "the later commit named a file of its own: {now:?} after {stale:?}");
+    let junk = space_dir(&path, &SPACE).join("c99-00000000000000cc.blk");
+    std::fs::write(&junk, b"rolled back").unwrap();
+    c.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let swept = sweep_committed(&path, &c, &SPACE).unwrap();
+    c.execute_batch("COMMIT").unwrap();
+    assert_eq!(swept, now, "the chain as it is now");
+    for name in &later {
+        assert!(space_dir(&path, &SPACE).join(name).exists(), "the later commit's {name} is kept");
+    }
+    assert!(!junk.exists(), "a file no row names is swept");
+    assert_eq!(read(&path, &c).len(), 2, "both commits' entries read");
+}
+
+/// In the writer's batch, a space written twice: the first job's write merges the space's newest file into a new one,
+/// uncommitted, and the second's sweeps by the chain as its transaction reads it only where it is the space's first
+/// write of the transaction (`first_write_of_space`). Swept by those rows, the merged file went while the committed
+/// chain still named it, and a reader on its own connection found it gone ("corrupt content store").
+#[test]
+fn a_second_write_in_one_batch_keeps_the_committed_chains_files() {
+    let (path, c) = store("batch-second-write");
+    write(&path, &c, vec![put("p", 0, 1, KeptWhat::Rows(lent(&[(1, 10)])))]);
+    let committed = chain_rows(&c, &SPACE).unwrap();
+    let cs = crate::content_store::ContentStore::open(&path).unwrap();
+    let readable = |rows: &ChainRows| KeptSpace::open(&path, &SPACE, rows).map(|_| ()).map_err(|e| e.to_string());
+    cs.in_one_transaction(|| {
+        for (rel, d) in [("q", 2), ("r", 3)] {
+            let mut connection = cs.connection.lock().unwrap();
+            let t = crate::content_store::connection::begin(&mut connection, rusqlite::TransactionBehavior::Immediate).unwrap();
+            write_space(&path, &t, &SPACE, vec![put(rel, 0, d, KeptWhat::Rows(lent(&[(d as i64, 1)])))], None).unwrap();
+            t.commit().unwrap();
+            // Another connection's reader: the last commit's chain, its files all there.
+            let other = Connection::open(&path).unwrap();
+            assert_eq!(chain_rows(&other, &SPACE).unwrap(), committed, "the batch has not committed");
+            assert_eq!(readable(&committed), Ok(()), "the committed chain's files, after the batch's write of {rel}");
+        }
+    })
+    .unwrap();
+    let now = chain_rows(&c, &SPACE).unwrap();
+    assert_ne!(now, committed, "the batch committed its writes");
+    assert_eq!(read(&path, &c).len(), 3, "every write's entry");
+    // The next transaction's first write sweeps what the batch replaced, by the chain it committed: what stays is that
+    // chain's and the write's own (the newest file it merged goes at the write after).
+    let batch: Vec<String> = now.iter().map(|(_, n, _)| n.clone()).collect();
+    write(&path, &c, vec![put("s", 0, 4, KeptWhat::Rows(lent(&[(4, 1)])))]);
+    let named: Vec<String> = chain_rows(&c, &SPACE).unwrap().into_iter().map(|(_, n, _)| n).collect();
+    for f in files(&path) {
+        assert!(named.contains(&f) || batch.contains(&f), "{f}: neither the chain's nor the batch's: {named:?} {batch:?}");
+    }
+    for (_, f, _) in &committed {
+        assert!(named.contains(f) || !space_dir(&path, &SPACE).join(f).exists(), "{f}, which the batch replaced, is swept");
+    }
 }

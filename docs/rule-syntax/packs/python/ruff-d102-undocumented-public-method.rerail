@@ -17,4 +17,4 @@
 .violation D102(at: node, x: symbol) code "D102"
     "Add a docstring as the first statement of method `{x}` describing what it does, its arguments and return value; if it overrides a documented base method, decorate it with `@override` instead."
     suppress ruff "D102"
-D102(nm, x) :- doc_missing(_, "method", nm, x), (!dunder(x) ; x = "__new__" ; x = "__call__").
+D102(nm, x) :- doc_missing(_, "method", nm, x), (!dunder(nm, x) ; x = "__new__" ; x = "__call__").

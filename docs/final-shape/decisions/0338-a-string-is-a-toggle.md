@@ -1,7 +1,7 @@
 # 0338: A string is a toggle, as simdjson's `prefix_xor`
 
-Status: decided (2026-11-17); landed. Follows 0337. Judged by the
-generated code's structure against simdjson's stage 1, not by counts.
+Status: built (audited 2026-11-23). Decided (2026-11-17); landed. Follows 0337. Judged by the generated code's
+structure against simdjson's stage 1, not by counts.
 
 ## Intro
 

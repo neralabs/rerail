@@ -13,7 +13,7 @@
         let image =
             TapeImage::encode(parsed.tree.root_node(), &grammar, source, &|| false).unwrap();
         AstGrep::doc(
-            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap(),
+            TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap(),
         )
     }
     #[allow(clippy::type_complexity)]

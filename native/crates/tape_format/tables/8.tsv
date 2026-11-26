@@ -1,4 +1,4 @@
-# Tape format 16's choices for tape tag 8 (blade), decisions 0293 §3 and 0626. Written by the lab from the grammar:
+# Tape format 16's choices for tape tag 8 (blade), decisions 0293 §3, 0626 and 0631. Written by the lab from the grammar:
 #   tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)
 # 2035 codes; no node types declared: the grammar's list is the bound; numbered by how often each is a node's over 15 files, 477 nodes (`rerail-engine code-counts`).
 revision	5
@@ -2038,3 +2038,161 @@ code	75	5	4	-	-
 code	75	6	4	-	-
 code	75	7	4	-	-
 code	75	8	4	-	-
+kind	1	1	document
+kind	2	1	text
+kind	3	1	element
+kind	4	1	component
+kind	5	1	slot
+kind	6	1	directive
+kind	7	1	directive_block
+kind	8	1	echo
+kind	9	1	raw_echo
+kind	10	1	triple_echo
+kind	11	1	comment
+kind	12	1	conditional_comment
+kind	13	1	bogus_comment
+kind	14	1	blade_comment
+kind	15	1	php_block
+kind	16	1	php_tag
+kind	17	1	verbatim
+kind	18	1	doctype
+kind	19	1	cdata
+kind	20	1	xml_declaration
+kind	21	1	processing_instruction
+kind	22	1	escape
+kind	23	1	stray_closing_tag
+kind	24	1	element_name
+kind	25	1	closing_element_name
+kind	26	1	attribute
+kind	27	1	jsx_attribute
+kind	28	1	attribute_whitespace
+kind	29	1	attribute_name
+kind	30	1	attribute_value
+kind	31	1	php
+kind	32	1	directive_name
+kind	33	1	comment_text
+kind	34	1	tag_name
+kind	35	1	doctype_value
+kind	36	1	jsx_attribute_value
+kind	37	1	jsx_shorthand_attribute
+kind	38	1	tsx_generic_type
+kind	39	1	conditional_comment_start
+kind	40	1	conditional_comment_end
+kind	41	1	bound_attribute_name
+kind	42	1	escaped_attribute_name
+kind	43	1	shorthand_attribute_name
+kind	44	1	processing_instruction_start
+kind	45	0	<
+kind	46	0	>
+kind	47	0	/
+kind	48	0	=
+kind	49	0	"
+kind	50	0	'
+kind	51	0	<!--
+kind	52	0	-->
+kind	53	0	<!DOCTYPE
+kind	54	0	@
+kind	55	0	{{
+kind	56	0	}}
+kind	57	0	{!!
+kind	58	0	!!}
+kind	59	0	{{{
+kind	60	0	}}}
+kind	61	0	(
+kind	62	0	)
+kind	63	0	@verbatim
+kind	64	0	@endverbatim
+kind	65	0	@php
+kind	66	0	@endphp
+kind	67	0	<?php
+kind	68	0	<?=
+kind	69	0	<?
+kind	70	0	?>
+kind	71	0	{{--
+kind	72	0	--}}
+kind	73	0	<![CDATA[
+kind	74	0	]]>
+kind	75	0	<?xml
+lookup	1	document	1
+lookup	1	text	2
+lookup	1	element	3
+lookup	1	component	4
+lookup	1	slot	5
+lookup	1	directive	6
+lookup	1	directive_block	7
+lookup	1	echo	8
+lookup	1	raw_echo	9
+lookup	1	triple_echo	10
+lookup	1	comment	11
+lookup	1	conditional_comment	12
+lookup	1	bogus_comment	13
+lookup	1	blade_comment	14
+lookup	1	php_block	15
+lookup	1	php_tag	16
+lookup	1	verbatim	17
+lookup	1	doctype	18
+lookup	1	cdata	19
+lookup	1	xml_declaration	20
+lookup	1	processing_instruction	21
+lookup	1	escape	22
+lookup	1	stray_closing_tag	23
+lookup	1	element_name	24
+lookup	1	closing_element_name	25
+lookup	1	attribute	26
+lookup	1	jsx_attribute	27
+lookup	1	attribute_whitespace	28
+lookup	1	attribute_name	29
+lookup	1	attribute_value	30
+lookup	1	php	31
+lookup	1	directive_name	32
+lookup	1	comment_text	33
+lookup	1	tag_name	34
+lookup	1	doctype_value	35
+lookup	1	jsx_attribute_value	36
+lookup	1	jsx_shorthand_attribute	37
+lookup	1	tsx_generic_type	38
+lookup	1	conditional_comment_start	39
+lookup	1	conditional_comment_end	40
+lookup	1	bound_attribute_name	41
+lookup	1	escaped_attribute_name	42
+lookup	1	shorthand_attribute_name	43
+lookup	1	processing_instruction_start	44
+lookup	0	<	45
+lookup	0	>	46
+lookup	0	/	47
+lookup	0	=	48
+lookup	0	"	49
+lookup	0	'	50
+lookup	0	<!--	51
+lookup	0	-->	52
+lookup	0	<!DOCTYPE	53
+lookup	0	@	54
+lookup	0	{{	55
+lookup	0	}}	56
+lookup	0	{!!	57
+lookup	0	!!}	58
+lookup	0	{{{	59
+lookup	0	}}}	60
+lookup	0	(	61
+lookup	0	)	62
+lookup	0	@verbatim	63
+lookup	0	@endverbatim	64
+lookup	0	@php	65
+lookup	0	@endphp	66
+lookup	0	<?php	67
+lookup	0	<?=	68
+lookup	0	<?	69
+lookup	0	?>	70
+lookup	0	{{--	71
+lookup	0	--}}	72
+lookup	0	<![CDATA[	73
+lookup	0	]]>	74
+lookup	0	<?xml	75
+field	1	name
+field	2	closing_name
+field	3	value
+field	4	arguments
+field	5	expression
+field	6	code
+field	7	start
+field	8	end

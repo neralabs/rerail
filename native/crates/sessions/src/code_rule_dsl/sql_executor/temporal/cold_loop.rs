@@ -1,6 +1,7 @@
 //! A cold positive graph constructs its complete retained trajectory in one SQL submission.
 //! SQLite evaluates signed context transitions and folds. Callbacks only build immutable
 //! storage and schedule the next gate from frontier lengths; they never execute SQL.
+use rerail_blocks::vector::Vector;
 use super::*;
 pub mod compile;
 pub mod execute;
@@ -65,7 +66,7 @@ fn sql_error(message: impl Into<String>) -> rusqlite::Error {
 #[derive(Clone)]
 struct State {
     roots: Vec<versions::Version>,
-    changed: Vec<usize>,
+    changed: Vector<usize>,
     initialized: Vec<bool>,
     empty_body: Vec<bool>,
     pending: BTreeSet<usize>,
@@ -77,12 +78,12 @@ struct State {
 struct Operator {
     seen: Vec<(String, usize, usize)>, // logical input, previous cursor, current source
     comparison: (usize, usize),
-    journals: Vec<usize>,
+    journals: Vector<usize>,
 }
 struct Stage {
     template: phase::Template,
-    snapshots: Vec<usize>,
-    outputs: Vec<usize>,
+    snapshots: Vector<usize>,
+    outputs: Vector<usize>,
     expansion: usize,
     arms: usize,
 }
@@ -142,7 +143,7 @@ pub struct Private {
     parent: i64,
     roots: Vec<(usize, versions::Version)>,
     counts: BTreeMap<String, phase::Counts>,
-    cleared: Vec<usize>,
+    cleared: Vector<usize>,
 }
 pub struct Arena {
     plan: Arc<Plan>,
@@ -242,7 +243,7 @@ fn selection(
     store: &versions::Store,
     ready: &BTreeSet<usize>,
 ) -> BTreeSet<usize> {
-    let mut groups = BTreeMap::<&BTreeSet<String>, Vec<usize>>::new();
+    let mut groups = BTreeMap::<&BTreeSet<String>, Vector<usize>>::new();
     for (id, (step, _)) in trace.steps.iter().enumerate() {
         groups
             .entry(&trace.components.members[&step.output])

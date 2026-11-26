@@ -1,6 +1,7 @@
 //! core.rerail's base relations the corpus runner binds beyond T's (`facts::vtab::syntax::Extra`), each against W's
 //! notion of it (`CodeRuleDslRuntime`, the matcher, the regex query) on fixture files.
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::model::{RegexLines, RegexOptions};
@@ -915,7 +916,7 @@ calls(p, l, c) :- kind(n, "call"), docof(n, d), doc(d, p, _), line(n, l), col(n,
 "#;
     let got = run(&dir, program, &["empty", "nodes_unset", "wrong", "undocumented", "calls"]);
     assert_eq!(got[0], [["-1"]]);
-    assert!(got[1..4].iter().all(Vec::is_empty), "{:?}", &got[1..4]);
+    assert!(got[1..4].iter().all(|v| v.is_empty()), "{:?}", &got[1..4]);
     assert_eq!(got[4], sorted(w_at(json!({ "kind": "call" }), &files)));
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1052,7 +1053,7 @@ later(r, c) :- kind(ret, "return_statement"), kind(call, "call"), earlier(ret, c
     let mut first: std::collections::BTreeMap<(i64, i64), i64> = std::collections::BTreeMap::new();
     let mut indexes = BTreeSet::new();
     for row in outputs.rows("visits") {
-        let f: Vec<i64> = row.values().map(|v| v.int().expect("a number")).collect();
+        let f: Vector<i64> = row.values().map(|v| v.int().expect("a number")).collect();
         assert!(indexes.insert(f[2]), "index {} twice", f[2]);
         let at = first.entry((f[0], f[1])).or_insert(f[2]);
         *at = (*at).min(f[2]);

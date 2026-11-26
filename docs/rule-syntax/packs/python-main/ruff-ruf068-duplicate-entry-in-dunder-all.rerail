@@ -17,7 +17,7 @@ RUF068(DUP, n) :- ruf068_dup_in_string(n, DUP),
 // plain_str(n): the JSON util `plain-str`, used where the JSON says `matches: "plain-str"`
 .decl ruf068_plain_str(n: node)
 ruf068_plain_str(n) :- (kind(n, "string") ; kind(n, "concatenated_string")), value(n, v1),
-    value_type(v1, "str"),
+    value_type_of(n, "str"),
     count : { has(n, c2, "string_start"), glob("**[fFtT]**", c2) } = 0.
 
 // current(n): the JSON util `current`, used where the JSON says `matches: "current"`
@@ -208,11 +208,11 @@ ruf068_stop_1(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
 //   FIRST: metavariable this relation binds for the calling rule
 .decl ruf068_alt_4(n: node, first: loc)
 ruf068_alt_4(n, FIRST) :- (kind(n, "string") ; kind(n, "concatenated_string")), value(n, v1),
-    value_type(v1, "str"),
+    value_type_of(n, "str"),
     count : { has(n, c2, "string_start"), glob("**[fFtT]**", c2) } = 0, node(_, n, _, _, _), FIRST = n.
 ruf068_alt_4(n, FIRST) :- kind(n, "parenthesized_expression"), within_stop(c3, n, ruf068_stop_1),
     (kind(c3, "string") ; kind(c3, "concatenated_string")), value(c3, v4),
-    value_type(v4, "str"),
+    value_type_of(c3, "str"),
     count : { has(c3, c5, "string_start"), glob("**[fFtT]**", c5) } = 0, node(_, c3, _, _, _), FIRST = c3.
 
 // alt_8(n): the JSON `any`: n matches if any one of these rules does

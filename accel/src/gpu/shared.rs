@@ -195,10 +195,10 @@ pub struct Shared {
     pub max_buffer: u64,
 }
 
-/// The process's device as Metal's, once something opened it, without opening it (`rerail_forest::gpu::shared::opened`).
+/// The process's device as Metal's, once something opened it, without opening it (`rerail_device::shared::opened`).
 #[cfg(target_os = "macos")]
 pub fn opened_device() -> Option<&'static metal::DeviceRef> {
-    rerail_forest::gpu::shared::opened().and_then(|s| s.device.metal()).map(|d| &**d)
+    rerail_device::shared::opened().and_then(|s| s.device.metal()).map(|d| &**d)
 }
 
 /// The process's device in the device layer, whatever its backend (decision 0440 step C): what the pool leases
@@ -217,8 +217,13 @@ pub struct Layer {
 /// The process's device in the device layer: `None` without one. On Metal, `RERAIL_GPU=cpu` or `=opencl`.
 pub fn layer() -> Option<Layer> {
     crate::blocks::install();
-    let one = rerail_forest::gpu::shared::get()?;
+    let one = rerail_device::shared::get()?;
     Some(Layer { device: &one.device, queue: &one.queue, max_buffer: one.device.max_buffer_length() })
+}
+
+/// The process's device in the device layer, whatever its backend.
+pub fn device() -> Result<&'static rerail_device::device::Device, String> {
+    layer().map(|l| l.device).ok_or_else(|| "no device".to_owned())
 }
 
 /// Holds what a queue's work reaches: the block or pooled lease each buffer lies in (by its contents' address), on
@@ -326,7 +331,7 @@ pub fn get() -> Option<&'static Shared> {
             crate::blocks::install();
             objc::rc::autoreleasepool(|| {
                 // The forest's (the lowest crate that uses Metal): one device and one queue for the process.
-                let one = rerail_forest::gpu::shared::get()?;
+                let one = rerail_device::shared::get()?;
                 // None when the process's kernels run elsewhere (`RERAIL_GPU=cpu`): the engine's lanes stay on the host.
                 let (device, queue): (Device, CommandQueue) = (one.device.metal()?.clone(), one.queue.metal()?.clone());
                 let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as usize;
@@ -910,9 +915,10 @@ pub struct Admitted {
 }
 
 impl Drop for Admitted {
+    /// In the thread's teardown (a reservation a thread-local held) its counts are gone: what it reserved is not.
     fn drop(&mut self) {
-        let left = RESERVE_LEFT.with(|r| r.replace(0));
-        ADMITTED.with(|a| a.set(0));
+        let left = RESERVE_LEFT.try_with(|r| r.replace(0)).unwrap_or(0);
+        let _ = ADMITTED.try_with(|a| a.set(0));
         dev().reserved.fetch_sub(left, std::sync::atomic::Ordering::Relaxed);
     }
 }
@@ -1065,12 +1071,6 @@ mod tests {
         let at = p.host() as usize;
         drop(p);
         assert!(rerail_blocks::ledger::of_address(at).is_none());
-    }
-
-    /// Held by each test that leases tens of MB at once: the budget test counts every live lease in the process.
-    fn big_leases() -> std::sync::MutexGuard<'static, ()> {
-        static BIG: Mutex<()> = Mutex::new(());
-        BIG.lock().unwrap_or_else(|p| p.into_inner())
     }
 
     /// A bounded lease is refused once relational work's leases would pass the Metal budget, and fits again once they
@@ -1358,6 +1358,9 @@ mod tests {
         let _big = big_leases();
         let dir = std::env::temp_dir().join(format!("rerail-deferrable-pool-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
+        // The user's alone, whatever the umask (a mapped file's folder: decision 0574).
+        #[cfg(unix)]
+        std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
         let live = || dev().live.load(std::sync::atomic::Ordering::Relaxed);
         let before = live();
         let d = match lease_deferrable(kind::JOURNAL, 1 << 20, &dir.join("seg-1")) {

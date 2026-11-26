@@ -1,6 +1,7 @@
 # 0434. Format 16 is block-major and written in one pass, with a presence structure beside it
 
-Status: accepted (2026-11-18)
+Status: built (audited 2026-11-23). Accepted (2026-11-18). **0631 (2026-11-22):** format 15 is removed; the writer
+described here is the only writer, and no edit makes a tape format 15's.
 
 Numbered 0399 where it was written (the hub's 0399 is "a `\u` escape's checks run at its token"). Numbered 0426 on
 django-bugs (until roll-up 7) and on CUDA-support (until roll-up 8).

@@ -17,13 +17,13 @@ YTT203(C, n) :- ytt203_in_string(n, C).
 
 // int_literal(n): the JSON util `int-literal`, used where the JSON says `matches: "int-literal"`
 .decl ytt203_int_literal(n: node)
-ytt203_int_literal(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int").
+ytt203_int_literal(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int").
 ytt203_int_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     ytt203_int_literal(c2).
 
 // one_literal(n): the JSON util `one-literal`, used where the JSON says `matches: "one-literal"`
 .decl ytt203_one_literal(n: node)
-ytt203_one_literal(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int"), v1 = 1.
+ytt203_one_literal(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int"), v1 = 1.
 ytt203_one_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     ytt203_one_literal(c2).
 

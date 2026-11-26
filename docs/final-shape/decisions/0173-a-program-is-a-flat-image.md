@@ -1,9 +1,9 @@
 # 0173: A program is a flat image, mapped and edited in place
 
-Status: draft (2026-11-13), for review; stage 1 built (see "Built"). Would replace `front::Program`'s tree as the form a program is stored,
-read, planned and changed in. Builds on decisions 0074 (rules as facts), 0140 and 0161 (the tape image), 0032 (slabs
-read in place by the device), 0111, 0160 and 0170 (the store's atoms), 0155 and 0162 (a stored program and its
-reader), and 0166 and 0172 (names and shared lists).
+Status: built (audited 2026-11-23). Draft (2026-11-13), for review; stage 1 built (see "Built"). Would replace
+`front::Program`'s tree as the form a program is stored, read, planned and changed in. Builds on decisions 0074 (rules
+as facts), 0140 and 0161 (the tape image), 0032 (slabs read in place by the device), 0111, 0160 and 0170 (the store's
+atoms), 0155 and 0162 (a stored program and its reader), and 0166 and 0172 (names and shared lists).
 
 ## Intro
 

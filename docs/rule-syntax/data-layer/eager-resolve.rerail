@@ -81,9 +81,10 @@ er_fn_kind("function_definition").
 .decl er_call(f: node, c: node, t: symbol)
 er_call(f, c, t) :- er_body(f, c), er_cid(c, x), docof(c, d), er_top(d, x, t).
 er_call(f, c, t) :- er_body(f, c), er_cattr(c, x, o), text(o, "self"), er_cls(f, cs), docof(c, d), er_method(d, cs, x, t).
-// er_edge(s, t): some def with symbol s calls t.
-.decl er_edge(s: symbol, t: symbol)
-er_edge(s, t) :- er_call(f, _, t), er_sym(f, s).
+// er_edge(p, s, t): some def with symbol s, in the file at path p, calls t. The path is the file's as it is: a symbol
+// built from it places a row in its file, but the split finds the row's document by the path (decision 0665).
+.decl er_edge(p: symbol, s: symbol, t: symbol)
+er_edge(p, s, t) :- er_call(f, _, t), er_sym(f, s), docof(f, d), doc(d, p, _).
 
 // ---- call shapes ------------------------------------------------------------------------------------------------
 // er_cid(c, x): `x(…)`. er_cattr(c, a, o): `o.a(…)`. er_noargs(c): `…()`.
@@ -129,6 +130,8 @@ er_param(f, x, a) :- er_sym(f, _), sig_param(f, _, nm, _, k, a, _), (k = "posonl
 .decl er_mentions(a: node, x: symbol)
 er_mentions(a, x) :- er_ann_part(a, n), kind(n, "identifier"), text(n, x).
 er_mentions(a, x) :- er_ann_part(a, n), kind(n, "attribute"), field(n, "attribute", m), text(m, x).
+// er_ann(a): an annotation. A parameter without one has the empty value, which places nothing: kind(a, _) leaves
+// it out (decision 0677).
 .decl er_ann(a: node)
 er_ann(a) :- er_param(_, _, a), kind(a, _).
 er_ann(t) :- assign_ann(_, t).
@@ -422,7 +425,7 @@ er_resolved(f, "resolved") :- sig_param(f, _, nm, i, "pos", _, _), text(nm, "res
 // phases: preprocess, lower and compile defs, and every def they reach by same-file calls.
 .decl er_phase(s: symbol, p: symbol)
 er_phase(s, p) :- er_sym(f, s), def_name(f, p), (p = "preprocess" ; p = "lower" ; p = "compile").
-er_phase(t, p) :- er_phase(s, p), er_edge(s, t).
+er_phase(t, p) :- er_phase(s, p), er_edge(_, s, t).
 er_site(d, l, cat(p, ":", k), s) :- er_phase(s, p), er_last_def(s, f), er_ph(f, n, k), line(n, l), docof(n, d).
 // er_last_def(s, f): the last def with symbol s, the one the linter's map by symbol keeps.
 .decl er_last_def(s: symbol, f: node)
@@ -433,25 +436,41 @@ er_last_def(s, f) :- er_sym(f, s), line(f, l), l = max a : { er_sym(g, s), line(
 .decl er_skip(s: symbol)
 er_skip(s) :- er_sym(_, s), (prefix("l2050_transaction.legacy_wrappers.", s) ;
     s = "l2070_batching.server_ref.deleted_planning_value_helper").
-.decl er_dirty(s: symbol, c: symbol)
-er_dirty(s, c) :- er_tr(f, k), c = cat("transitive:", k), er_sym(f, s), !er_skip(s), !er_exempt(f, s, c).
-er_dirty(s, cat("transitive:legacy-boundary-call:", x, "()")) :- er_boundary_call(f, t), er_sym(f, s), !er_skip(s),
-    match(".*\\.(?<x>[^.]*)", t).
-er_dirty(s, c) :- er_dirty(t, c), er_edge(s, t), !er_skip(s).
+// er_part(f, s): def f, with symbol s, takes part. The skip is tested in the file: the closure below runs in the
+// cross-file part, and reads no def (decision 0677).
+.decl er_part(f: node, s: symbol)
+er_part(f, s) :- er_sym(f, s), !er_skip(s).
+.decl er_dirty(p: symbol, s: symbol, c: symbol)  // p: s's file's path; the calls are same-file (er_edge)
+er_dirty(p, s, c) :- er_tr_dirty(p, s, c), !er_io_exempt(s, c).
+er_dirty(p, s, cat("transitive:legacy-boundary-call:", x, "()")) :- er_boundary_call(f, t), er_part(f, s),
+    match(".*\\.(?<x>[^.]*)", t), docof(f, d), doc(d, p, _).
+er_dirty(p, s, c) :- er_dirty(p, t, c), er_caller(p, s, t).
+// er_tr_dirty(p, s, c): def s, in the file at p, does pattern c itself, unless its own facts exempt it. Each file's.
+.decl er_tr_dirty(p: symbol, s: symbol, c: symbol)
+er_tr_dirty(p, s, c) :- er_tr(f, k), c = cat("transitive:", k), er_part(f, s), !er_exempt(f, s, c), docof(f, d),
+    doc(d, p, _).
+// er_caller(p, s, t): er_edge's calls whose caller takes part.
+.decl er_caller(p: symbol, s: symbol, t: symbol)
+er_caller(p, s, t) :- er_call(f, _, t), er_part(f, s), docof(f, d), doc(d, p, _).
 // er_exempt(f, s, c): a pattern f's own symbol is exempt from: resolve() in the non-lazy modules, result() in the
-// non-lazy symbols, eager I/O in a signed external-I/O boundary, the wrapper's own legacy helper.
+// non-lazy symbols, the wrapper's own legacy helper. er_io_exempt(s, c): eager I/O in a signed external-I/O boundary.
+// The signature is checked over the run's allowlist, in no file: each file states, by symbol, what an I/O-decorated
+// def of its own does (er_io_does), and the cross part tests the symbols (decision 0677).
 .decl er_exempt(f: node, s: symbol, c: symbol)
 er_exempt(f, s, "transitive:*.resolve()") :- er_sym(f, s), er_nonlazy_resolve_prefix(p), prefix(p, s).
 er_exempt(f, s, "transitive:*.result()") :- er_sym(f, s), er_nonlazy_result(s).
-er_exempt(f, s, c) :- er_sym(f, s), er_io_symbol(s), er_dec_base(f, x), er_io_dec(x), er_tr(f, k),
-    c = cat("transitive:", k), er_io_pattern(c).
 er_exempt(f, s, cat("transitive:", h, "()")) :- er_sym(f, s), er_wrapper(f, h).
+.decl er_io_does(s: symbol, c: symbol)
+er_io_does(s, c) :- er_sym(f, s), er_dec_base(f, x), er_io_dec(x), er_tr(f, k), c = cat("transitive:", k),
+    er_io_pattern(c).
+.decl er_io_exempt(s: symbol, c: symbol)
+er_io_exempt(s, c) :- er_io_does(s, c), er_io_symbol(s).
 // er_io_pattern(c): what a signed external-I/O boundary may do.
 .decl er_io_pattern(c: symbol)
 er_io_pattern(c) :- er_tr(_, k), c = cat("transitive:", k), (prefix("non-lazy-call:", k) ; k = "*.resolve()" ;
     k = "*.resolve_async()" ; k = "*.result()").
 // A dirty symbol is reported at its def (the last def of that name, as the linter's map keeps it).
-er_site(d, l, c, s) :- er_dirty(s, c), er_last_def(s, f), docof(f, d), line(f, l), !er_ignored(d, c, s).
+er_site(d, l, c, s) :- er_dirty(_, s, c), er_last_def(s, f), docof(f, d), line(f, l), !er_ignored(d, c, s).
 
 // io: external-I/O boundary definitions, in files that mention external_io_boundary_eager.
 er_site(d, l, cat("external-io-boundary:", x, "()"), s) :- er_sym(f, s), er_dec_base(f, b), er_io_dec(b),
@@ -464,13 +483,13 @@ er_site(d, l, cat("external-io-boundary:", x, "()"), s) :- er_sym(f, s), er_dec_
 er_facade_site(d, s) :- er_sym(f, s), docof(f, d), doc(d, p, _), (p = "l2055_lazy_result/lazy_result.py" ;
     p = "l2055_lazy_result/lazy_seq.py"), (er_facade(s) ; er_facade_prefix(q), prefix(q, s)).
 .decl er_ignored(d: number, c: symbol, s: symbol)
-er_ignored(d, c, s) :- er_dirty(s, c), er_facade_site(d, s).
-er_ignored(d, c, s) :- er_dirty(s, c), doc(d, "l2070_batching/server_ref.py", _), er_server_ref_slot(c).
-er_ignored(d, "transitive:*._ref_id", s) :- er_dirty(s, "transitive:*._ref_id"), doc(d, "l2070_batching/step.py", _),
+er_ignored(d, c, s) :- er_dirty(_, s, c), er_facade_site(d, s).
+er_ignored(d, c, s) :- er_dirty(_, s, c), doc(d, "l2070_batching/server_ref.py", _), er_server_ref_slot(c).
+er_ignored(d, "transitive:*._ref_id", s) :- er_dirty(_, s, "transitive:*._ref_id"), doc(d, "l2070_batching/step.py", _),
     prefix("l2070_batching.step.StepRef.", s).
-er_ignored(d, c, s) :- er_dirty(s, c), er_doc(d, _), !er_serverplan(d),
+er_ignored(d, c, s) :- er_dirty(_, s, c), er_doc(d, _), !er_serverplan(d),
     (contains("__dict__", c) ; contains("getattr_static(", c) ; prefix("transitive:peek_", c)).
-er_ignored(d, c, s) :- er_dirty(s, c), er_doc(d, _), er_io_symbol(s), er_io_pattern(c).
+er_ignored(d, c, s) :- er_dirty(_, s, c), er_doc(d, _), er_io_symbol(s), er_io_pattern(c).
 .decl er_text_ignored(d: number, c: symbol, s: symbol, t: symbol)
 er_text_ignored(d, c, s, t) :- er_hit(d, l, c), er_line_sym(d, l, s), src_line(d, l, sp), text(sp, t),
     ( er_facade_site(d, s) ;
@@ -519,10 +538,12 @@ allow_entry("eager_resolve", e) :- er_grand(e, _, _, _).
 
 .violation ER(at: span, c: symbol, s: symbol, t: symbol) code {c} "{c}: {s}: {t}"
 ER(@place(p, l), c, s, t) :- er_site(d, _, c, s), l = min a : { er_site(d, a, c, s) }, doc(d, p, _),
-    !er_grand(_, p, c, s), !er_io_site_signed(c, s), src_line(d, l, sp), text(sp, r),
+    !er_grand(_, p, c, s), !er_io_site_signed(d, c, s), src_line(d, l, sp), text(sp, r),
     match("\\s*(?<t>.*?)\\s*", r).
-.decl er_io_site_signed(c: symbol, s: symbol)
-er_io_site_signed(c, s) :- er_site(_, _, c, s), prefix("external-io-boundary:", c), er_io_symbol(s).
+// er_io_site_signed(d, c, s): document d's external-I/O site of s is signed. Keyed by the site's document, which ER
+// reads it at: a site of any document (`er_site(_, _, c, s)`) was a read of every file's sites (decision 0695).
+.decl er_io_site_signed(d: number, c: symbol, s: symbol)
+er_io_site_signed(d, c, s) :- er_site(d, _, c, s), prefix("external-io-boundary:", c), er_io_symbol(s).
 // An external-I/O entry that does not verify is reported where it stands.
 ER(@place("scripts/allowlists/lint_eager_resolve_external_io_boundaries.txt", n),
     "fabricated-allowlist-entry:external-io-boundary", s,

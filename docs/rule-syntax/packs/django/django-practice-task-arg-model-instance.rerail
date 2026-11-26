@@ -28,17 +28,11 @@ TaskArgModelInstance(a, t, x) :- tam_task_call(c, t), tam_arg(c, a), tam_instanc
 // tam_task_call(c, t): call c sends task t: `t.delay(...)`, `t.apply_async(...)`, `t.s(...)`, `t.si(...)`.
 .decl tam_send(m: symbol)
 tam_send("delay"). tam_send("apply_async"). tam_send("s"). tam_send("si").
-// Cross-file (decision 0652): a name resolved to its definition, in another file than the reference.
-.decl tam_task_call(c: node, t: symbol) cross_file
+.decl tam_task_call(c: node, t: symbol)
+// The task is a def of a module the call's file reads, decorated as a task (`@shared_task`, `@app.task(...)`,
+// `@task`): the phase py_names hands the run's tasks on by module (dj_task_def, decision 0677).
 tam_task_call(c, x) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, m), tam_send(m), sym_of(o, q),
-    qualname(f, q), tam_task_def(f), def_name(f, x).
-// tam_task_def(f): def f is decorated as a task: `@shared_task`, `@app.task(...)`, `@task`.
-.decl tam_task_def(f: node)
-tam_task_def(f) :- kind(f, "function_definition"), decorator(f, e), unparen(e, m), tam_task_decorator(m).
-.decl tam_task_decorator(e: node)
-tam_task_decorator(e) :- attr_of(e, _, "task").
-tam_task_decorator(e) :- sym_of(e, q), (split_dot(q, _, "task") ; split_dot(q, _, "shared_task")).
-tam_task_decorator(e) :- kind(e, "call"), field(e, "function", f), tam_task_decorator(f).
+    docof(c, d), doc(d, p, _), py_names__reads_at(p, mq), py_names__dj_task_def(mq, q), split_dot(q, _, x).
 
 // tam_arg(c, a): a is an argument the task receives: delay's and s's arguments, apply_async's args/kwargs items.
 .decl tam_arg(c: node, a: node)
@@ -49,29 +43,40 @@ tam_arg(c, a) :- field(c, "function", fn), attr_of(fn, _, "apply_async"), (posar
     kind(m, "dictionary"), child(m, p, _), kind(p, "pair"), field(p, "value", a).
 
 // tam_instance(a): expression a holds a model instance.
-// Cross-file (decision 0652): the model class of a proven type or an annotation is in another file.
-.decl tam_instance(a: node) cross_file
+.decl tam_instance(a: node)
 tam_instance(a) :- unparen(a, e), tam_instance_value(e).
 tam_instance(a) :- unparen(a, e), kind(e, "identifier"), text(e, "self"), look(e, "self", f), dj_model_method(_, f, _),
     param(f, "self", 0).
 tam_instance(a) :- unparen(a, e), kind(e, "identifier"), text(e, x), look(e, x, f), asg(f, x, v, _), unparen(v, w),
     tam_instance_value(w).
 // A value the type program proves is a model instance: `made = make_order()`, `make_order()` itself.
-tam_instance(a) :- unparen(a, e), proven_type(e, t), class_def(k, t), dj_model(k).
+tam_instance(a) :- unparen(a, e), proven_type(e, t), tam_model_type(e, t, m), (dj_model_base(t) ;
+    py_names__ancestor(m, t, b), dj_model_base(b)).
+tam_instance(a) :- unparen(a, e), proven_type(e, t), tam_model_type(e, t, m), py_names__member_call(m, t, x, f),
+    x != "output_field", split_dot(f, fm, y), dj_field_module(fm), (suffix("Field", y) ; dj_relation_class(y)),
+    !tam_expression(m, t).
+// tam_model_type(e, t, m): e's proven type t is a class of the run of module m, a module e's file reads (python/django's
+// dj_model_named, for a type: the type program's facts cross files, 0677's points-to crossing).
+.decl tam_model_type(e: node, t: symbol, m: symbol)
+tam_model_type(e, t, m) :- unparen(_, e), proven_type(e, t), docof(e, d), doc(d, p, _), py_names__reads_at(p, m),
+    py_names__class(m, t).
+.decl tam_expression(m: symbol, t: symbol)
+tam_expression(m, t) :- tam_model_type(_, t, m), py_names__ancestor(m, t, b), (prefix("django.db.models.expressions.", b) ;
+    prefix("django.db.models.functions.", b) ; prefix("django.db.models.aggregates.", b) ;
+    prefix("django.db.models.lookups.", b) ; dj_expression_base(b)).
 // A parameter annotated with a model class: `def notify(order: Order)`.
 tam_instance(a) :- unparen(a, e), kind(e, "identifier"), text(e, x), look(e, x, f), sig_param(f, _, nm, _, _, t, _),
-    text(nm, x), (m = t ; child(t, m, 0)), sym_of(m, q), class_def(k, q), dj_model(k).
+    text(nm, x), (m = t ; child(t, m, 0)), dj_model_named(m, _).
 tam_instance(a) :- unparen(a, e), kind(e, "identifier"), text(e, x), look(e, x, s), kind(l, "for_statement"),
     nearest(l, s, scope), field(l, "left", t), kind(t, "identifier"), text(t, x), field(l, "right", r), unparen(r, q),
     dj_qs(q), !tam_rows(q), field(l, "body", b), within(e, b).
 // tam_instance_value(v): v makes or fetches one model instance (python/django's dj_row_method).
-// Cross-file (decision 0652): a name resolved to its definition, in another file than the reference.
-.decl tam_instance_value(v: node) cross_file
+.decl tam_instance_value(v: node)
 tam_instance_value(v) :- dj_qs_call(v, m), dj_row_method(m), field(v, "function", f), attr_of(f, o, _), !tam_rows(o).
 // tam_rows(q): queryset q went through values()/values_list(), so its get() returns a dict or a tuple, not a model.
 .decl tam_rows(q: node)
 tam_rows(q) :- dj_qs_has(q, m), (m = "values" ; m = "values_list").
-tam_instance_value(v) :- kind(v, "call"), field(v, "function", f), sym_of(f, q), class_def(k, q), dj_model(k).
+tam_instance_value(v) :- kind(v, "call"), field(v, "function", f), dj_model_named(f, _).
 tam_instance_value(v) :- kind(v, "call"), field(v, "function", f), sym_of(f, "django.shortcuts.get_object_or_404").
 tam_instance_value(v) :- attr_of(v, o, "user"), unparen(o, r), (text(r, "request") ; attr_of(r, _, "request")).
 

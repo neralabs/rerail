@@ -16,6 +16,7 @@
 //!
 //! Tree structure is never a relation: `nearest($n, $s, set)` is a built-in over the tape (T's `rdl.py` docstring).
 
+use rerail_blocks::vector::Vector;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -26,7 +27,7 @@ pub use name::{List, Lists, Name};
 pub mod cycles;
 pub mod graph;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
-pub use ast::{AXIS, AggOp, Algo, Branded, Class, DESCENDANTS, EVERY_KIND, FEW, Fan, GLOBAL, LIBRARY, LatticeDecl, LayoutFact, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, SCOPE_NOT, Shape, ShapeWait, Size as LayoutSize, SpanIn, Value, Values as LayoutValues, add_layout, axis, carried_record, globals, is_axis, is_transduced, layout_facts, readers_of_heads, record_copy};
+pub use ast::{AXIS, AggOp, Algo, ArchivedAlgo, ArchivedLayoutFact, ArchivedSize as ArchivedLayoutSize, Branded, Class, DESCENDANTS, EVERY_KIND, FEW, Fan, GLOBAL, LIBRARY, LatticeDecl, LayoutFact, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, SCOPE_NOT, Shape, ShapeWait, Size as LayoutSize, SpanIn, Value, Values as LayoutValues, add_layout, axis, carried_record, globals, is_axis, is_transduced, layout_facts, readers_of_heads, record_copy};
 
 use ast::PUNCT;
 
@@ -276,13 +277,166 @@ pub fn columns_declared(prog: &(impl crate::code_rule_dsl::logic::program_image:
     Ok(())
 }
 
+/// The components, dependencies first, in the tree form's order, each by name (`components_by_name`): what the run's
+/// readers of a version's strata read (`Placed::components`).
+///
+/// A section (decision 0628 §4): each component's members sorted by name, found by a search of them.
+#[derive(Clone, PartialEq)]
+pub struct Components(rerail_section::Section<Comps>);
+
+/// `Components`' section: each component's members, sorted by name.
+#[derive(rerail_section::Archive, Default)]
+#[archive(derive(Debug, PartialEq), decode)]
+pub struct Comps {
+    pub comps: Vec<Vec<String>>,
+}
+
+/// A component of `Components`: its members' names, sorted, read in its section.
+#[derive(Debug, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+pub struct Comp([rerail_section::RelStr]);
+
+impl Comp {
+    fn of(c: &[rerail_section::RelStr]) -> &Comp {
+        // SAFETY: `Comp` is `repr(transparent)` over `[RelStr]`.
+        unsafe { &*(c as *const [rerail_section::RelStr] as *const Comp) }
+    }
+    /// The members' names, sorted.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &str> + DoubleEndedIterator + Clone + '_ {
+        self.0.iter().map(|m| m.as_str())
+    }
+    pub fn contains(&self, name: &str) -> bool {
+        self.0.binary_search_by(|m| m.as_str().cmp(name)).is_ok()
+    }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    /// The first member by name.
+    pub fn first(&self) -> Option<&str> {
+        self.0.first().map(|m| m.as_str())
+    }
+    /// The last member by name.
+    pub fn last(&self) -> Option<&str> {
+        self.0.last().map(|m| m.as_str())
+    }
+    /// The members as a set of names, for an error that names the component.
+    pub fn names(&self) -> BTreeSet<String> {
+        // copy: not block data: an error's or a tree form's set of names.
+        self.iter().map(str::to_owned).collect()
+    }
+}
+
+impl<'a> IntoIterator for &'a Comp {
+    type Item = &'a str;
+    type IntoIter = std::iter::Map<std::slice::Iter<'a, rerail_section::RelStr>, fn(&'a rerail_section::RelStr) -> &'a str>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter().map(rerail_section::RelStr::as_str as fn(&'a rerail_section::RelStr) -> &'a str)
+    }
+}
+
+impl Default for Components {
+    fn default() -> Components {
+        Components(rerail_section::Section::of(&Comps::default()))
+    }
+}
+
+impl std::fmt::Debug for Components {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
+impl Components {
+    /// The components of `comps`, in its order, each one's members sorted and each once.
+    pub fn of(mut comps: Vec<Vec<String>>) -> Components {
+        for c in &mut comps {
+            c.sort_unstable();
+            c.dedup();
+        }
+        Components(rerail_section::Section::of(&Comps { comps }))
+    }
+    /// The components named by `comps`, in its order.
+    pub fn of_names<'a, C: IntoIterator<Item = &'a str>>(comps: impl IntoIterator<Item = C>) -> Components {
+        Components::of(comps.into_iter().map(|c| c.into_iter().map(str::to_owned).collect()).collect())
+    }
+    /// `self`'s components in the order of `order`'s places.
+    pub fn reordered(&self, order: impl IntoIterator<Item = usize>) -> Components {
+        Components::of_names(order.into_iter().map(|i| self[i].iter()))
+    }
+    pub fn len(&self) -> usize {
+        self.0.comps.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.comps.is_empty()
+    }
+    /// The components, dependencies first.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &Comp> + DoubleEndedIterator + Clone {
+        self.0.comps.iter().map(|c| Comp::of(c.as_slice()))
+    }
+    pub fn get(&self, i: usize) -> Option<&Comp> {
+        self.0.comps.get(i).map(|c| Comp::of(c.as_slice()))
+    }
+    pub fn last(&self) -> Option<&Comp> {
+        self.0.comps.last().map(|c| Comp::of(c.as_slice()))
+    }
+    /// The components as the tree form's sets of names.
+    pub fn to_sets(&self) -> Vec<BTreeSet<String>> {
+        // copy: not block data: the tree form's sets, for a reader that compares against it.
+        self.iter().map(Comp::names).collect()
+    }
+}
+
+impl std::ops::Index<usize> for Components {
+    type Output = Comp;
+    fn index(&self, i: usize) -> &Comp {
+        Comp::of(self.0.comps[i].as_slice())
+    }
+}
+
+impl<'a> IntoIterator for &'a Components {
+    type Item = &'a Comp;
+    type IntoIter = std::iter::Map<std::slice::Iter<'a, rerail_section::RelList<rerail_section::RelStr>>, fn(&'a rerail_section::RelList<rerail_section::RelStr>) -> &'a Comp>;
+    fn into_iter(self) -> Self::IntoIter {
+        fn comp(c: &rerail_section::RelList<rerail_section::RelStr>) -> &Comp {
+            Comp::of(c.as_slice())
+        }
+        self.0.comps.iter().map(comp as fn(&'a rerail_section::RelList<rerail_section::RelStr>) -> &'a Comp)
+    }
+}
+
+/// One of shared `Components`, held by its place: a stratum a job runs, read in its section.
+#[derive(Clone)]
+pub struct CompAt(std::sync::Arc<Components>, usize);
+
+impl CompAt {
+    pub fn of(comps: &std::sync::Arc<Components>, at: usize) -> CompAt {
+        CompAt(std::sync::Arc::clone(comps), at)
+    }
+}
+
+impl std::ops::Deref for CompAt {
+    type Target = Comp;
+    fn deref(&self) -> &Comp {
+        &self.0[self.1]
+    }
+}
+
+impl std::fmt::Debug for CompAt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        (**self).fmt(f)
+    }
+}
+
 /// Dependency edges: head → {(dependency, negative)}; an aggregate's is negative, a gated negation's is not.
 pub type Edges = BTreeMap<String, BTreeSet<(String, bool)>>;
 
 /// `components_of` of a dependency graph read from a version (`program_image::analyses::components_by_name`): the
 /// derived relations' names, sorted; each one's dependencies by their places among them, with whether negative, sorted
 /// and each once; and the non-monotone aggregation edges. The components, their order and the error are the tree's.
-pub fn components_of_graph(names: Vec<&str>, succ: Vec<Vec<(u32, bool)>>, aggs: rustc_hash::FxHashSet<(u32, u32)>) -> Result<Vec<BTreeSet<String>>, Error> {
+pub fn components_of_graph(names: Vec<&str>, succ: Vec<Vec<(u32, bool)>>, aggs: rustc_hash::FxHashSet<(u32, u32)>) -> Result<Components, Error> {
     Graph { names, succ, aggs }.components()
 }
 
@@ -300,7 +454,7 @@ impl<'p> Graph<'p> {
 
 
     /// The components, dependencies first: an error if a negation or a non-monotone aggregate closes a cycle.
-    fn components(&self) -> Result<Vec<BTreeSet<String>>, Error> {
+    fn components(&self) -> Result<Components, Error> {
         let sccs = tarjan_ids(&self.succ);
         match self.first_unstratified(&sccs, true).into_iter().next() {
             Some(e) => Err(e),
@@ -308,12 +462,12 @@ impl<'p> Graph<'p> {
         }
     }
 
-    fn named(&self, sccs: &[Vec<u32>]) -> Vec<BTreeSet<String>> {
-        sccs.iter().map(|scc| scc.iter().map(|&r| self.names[r as usize].to_owned()).collect()).collect()
+    fn named(&self, sccs: &[Vector<u32>]) -> Components {
+        Components::of(sccs.iter().map(|scc| scc.iter().map(|&r| self.names[r as usize].to_owned()).collect()).collect())
     }
 
     /// The first error of each component a negative edge closes a cycle in (`first`: only the first component's).
-    fn first_unstratified(&self, sccs: &[Vec<u32>], first: bool) -> Vec<Error> {
+    fn first_unstratified(&self, sccs: &[Vector<u32>], first: bool) -> Vec<Error> {
         let mut at = vec![usize::MAX; self.names.len()];
         for (i, scc) in sccs.iter().enumerate() {
             for &r in scc {
@@ -359,7 +513,7 @@ pub fn unstratified_trace(head: &str, dep: &str, component: &BTreeSet<String>) {
 
 /// Strongly connected components on numbers (`tarjan`), dependencies first; each component's members in the order
 /// they leave the stack.
-fn tarjan_ids(succ: &[Vec<(u32, bool)>]) -> Vec<Vec<u32>> {
+fn tarjan_ids(succ: &[Vec<(u32, bool)>]) -> Vec<Vector<u32>> {
     const NONE: u32 = u32::MAX;
     let n = succ.len();
     let (mut index, mut low, mut on) = (vec![NONE; n], vec![0u32; n], vec![false; n]);
@@ -395,7 +549,7 @@ fn tarjan_ids(succ: &[Vec<(u32, bool)>]) -> Vec<Vec<u32>> {
                 low[parent as usize] = low[parent as usize].min(low[v as usize]);
             }
             if low[v as usize] == index[v as usize] {
-                let mut scc = Vec::new();
+                let mut scc = Vector::new();
                 loop {
                     let w = stack.pop().unwrap();
                     on[w as usize] = false;
@@ -454,7 +608,7 @@ pub fn tarjan(nodes: &BTreeSet<String>, edges: &Edges) -> Vec<BTreeSet<String>> 
     let names: Vec<&String> = nodes.iter().collect();
     let id: rustc_hash::FxHashMap<&str, u32> = names.iter().enumerate().map(|(i, n)| (n.as_str(), i as u32)).collect();
     // Each node's successors among the nodes, in the edges' order.
-    let succ: Vec<Vec<u32>> = names
+    let succ: Vec<Vector<u32>> = names
         .iter()
         .map(|v| edges.get(v.as_str()).into_iter().flatten().filter_map(|(w, _)| id.get(w.as_str()).copied()).collect())
         .collect();
@@ -528,6 +682,9 @@ pub fn document_column(relation: &str) -> Option<usize> {
         | "tape_of" | "rr_program" | "doc_grammar" | "host_node" => Some(0),
         // Decision 0431: a string's parsed nodes, by the string (its file's node).
         "docof" | "guest_of" | "guest_place" => Some(1),
+        // Decision 0597 rule 8: a pass's tape-local relations and their kept rows (`guests::TAPE`, `guests::KEPT`),
+        // each row led by its tape value's document.
+        _ if relation.ends_with("_rr_kept") || relation.ends_with("_rr_kd") => Some(0),
         _ => None,
     }
 }

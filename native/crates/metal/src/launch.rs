@@ -1,6 +1,6 @@
 //! The engine's launch budget, on Metal and the device layer: the evaluation's ledger is `rerail_accel`'s
 //! (`rerail_accel::gpu::launch`), which every submitter charges, the engine's commands (`crate::lane`) and the
-//! relational passes (`rerail_accel::gpu::join::Pass`) alike. Past the budget, or a launch outside an evaluation, is
+//! relational passes (`rerail_accel_gpu::gpu::join::Pass`) alike. Past the budget, or a launch outside an evaluation, is
 //! the hard failure (decision 0601): `rerail_accel::exec::OverBudget`, never an error to fall back on. Here: Metal's
 //! command-buffer times.
 pub use rerail_accel::gpu::launch::{
@@ -10,7 +10,7 @@ pub use rerail_accel::gpu::launch::{
 
 /// The host clock Metal's command-buffer times are in (mach absolute time on macOS), in seconds: `rerail_accel`'s.
 pub fn host_seconds() -> f64 {
-    rerail_accel::gpu::join::host_clock()
+    rerail_accel_gpu::gpu::join::host_clock()
 }
 
 /// A completed command's host-clock times, in seconds: `kernelStartTime` (the system began scheduling it),

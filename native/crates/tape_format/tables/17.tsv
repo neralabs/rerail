@@ -1,4 +1,4 @@
-# Tape format 16's choices for tape tag 17 (eslint-directive), decisions 0293 §3 and 0626. Written by the lab from the grammar:
+# Tape format 16's choices for tape tag 17 (eslint-directive), decisions 0293 §3, 0626 and 0631. Written by the lab from the grammar:
 #   tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)
 # 14 codes; no node types declared: the grammar's list is the bound; no file of it counted: in the grammar's order.
 revision	5
@@ -17,3 +17,11 @@ code	1	0	4	-	-
 code	2	0	4	-	-
 code	3	0	4	-	-
 code	4	0	4	-	-
+kind	1	1	directive
+kind	2	1	item
+kind	3	1	setting
+kind	4	1	description
+lookup	1	directive	1
+lookup	1	item	2
+lookup	1	setting	3
+lookup	1	description	4

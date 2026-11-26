@@ -13,8 +13,9 @@
 //! - **`str_part`** (Python): the str constants CPython builds from a literal, pieces split at an f-string's
 //!   fields.
 
+use crate::code_rule_dsl::facts::core::FactsIn;
+use rerail_blocks::vector::Vector;
 use super::{Dialect, Projected, Relation};
-use crate::code_rule_dsl::facts::core::Facts;
 
 /// What a family reads of its own documents' core.rerail facts, registered at load by the crate that knows it: the
 /// literals it decodes itself, its syntax verdict, and its strings' constant parts. Defaults: the common reading.
@@ -37,7 +38,7 @@ pub trait DialectFacts: Send + Sync {
         Vec::new()
     }
     /// A document's syntax verdict where the family gives its own (`verdict`); `None`: the tree's first error.
-    fn verdict(&self, f: &Facts) -> Option<Result<Option<(u32, String)>, String>> {
+    fn verdict(&self, f: FactsIn<'_>) -> Option<Result<Option<(u32, String)>, String>> {
         let _ = f;
         None
     }
@@ -103,7 +104,7 @@ impl Family {
     }
 }
 
-/// Punctuation `op_at` leaves out: brackets, quotes and separators are structure, not operators.
+/// Punctuation a node's tokens leave out (`tree_digest`'s): brackets, quotes and separators are structure, not operators.
 pub(super) fn is_punct(t: &str) -> bool {
     matches!(t, "(" | ")" | "[" | "]" | "{" | "}" | "," | ";" | ":" | "." | "\"" | "'" | "`")
 }
@@ -118,7 +119,7 @@ pub(super) fn is_unit(family: Family, kind: &str) -> bool {
 }
 
 /// A unit's name: the text of its first named child that is an identifier (Python's `def f`, `class C`).
-pub(super) fn unit_name<'a>(f: &'a Facts, dialect: &Dialect, id: u32) -> Option<&'a str> {
+pub(super) fn unit_name<'a>(f: FactsIn<'a>, dialect: &Dialect, id: u32) -> Option<&'a str> {
     f.children(id).iter().copied().find(|&c| f.named(c) && dialect.name(f, c) == "identifier").map(|c| f.text(c))
 }
 
@@ -173,7 +174,7 @@ pub struct Literal {
 
 /// Whether a node of `kind` with `children` has a part other than constant text (a Python `interpolation`, a PHP
 /// `encapsed_string`'s variable).
-fn interpolated(f: &Facts, dialect: &Dialect, kind: &str, children: &[u32]) -> bool {
+fn interpolated(f: FactsIn<'_>, dialect: &Dialect, kind: &str, children: &[u32]) -> bool {
     let named_child = |k: &dyn Fn(&str) -> bool| children.iter().any(|&c| f.named(c) && k(dialect.name(f, c)));
     match (dialect.family, kind) {
         (Family::Python, _) => named_child(&|k| k == "interpolation"),
@@ -184,12 +185,37 @@ fn interpolated(f: &Facts, dialect: &Dialect, kind: &str, children: &[u32]) -> b
 
 /// Tape node `id`'s string literal's content (`str(n, s)` in `core.rerail`'s shape), as `CoreRows::node` reads it: none
 /// for a comment or a node that is no string. What `str`'s answer on request reads (decision 0353 step 3, 0174).
-pub fn node_str(f: &Facts, dialect: &Dialect, id: u32) -> Option<String> {
+pub fn node_str(f: FactsIn<'_>, dialect: &Dialect, id: u32) -> Option<String> {
     let kind = dialect.name(f, id);
     if is_comment(kind) {
         return None;
     }
     literal(dialect.family, kind, f.text(id), interpolated(f, dialect, kind, &f.children(id))).str
+}
+
+/// Tape node `id`'s `name(n, s)` in `core.rerail`'s shape: an identifier's text, or a dotted chain's (`name`), or an
+/// rr `variable`'s text; none for a comment. What `CoreRows::node` makes and `@rr_node_name` reads (decision 0353 step 3).
+pub fn node_name(f: FactsIn<'_>, dialect: &Dialect, id: u32) -> Option<String> {
+    let (kind, text) = (dialect.name(f, id), f.text(id));
+    if is_comment(kind) {
+        return None;
+    }
+    name(kind, text).or_else(|| (dialect.family == Family::Rr && kind == "variable").then(|| text.to_owned()))
+}
+
+/// Tape node `id`'s `comment(n, s)`: a comment's text without its marker; none for another node (`@rr_node_comment`).
+pub fn node_comment<'f>(f: FactsIn<'f>, dialect: &Dialect, id: u32) -> Option<&'f str> {
+    is_comment(dialect.name(f, id)).then(|| comment_body(f.text(id)))
+}
+
+/// Tape node `id`'s `strprefix(n, p)`: a literal's prefix letters, lowercased; none for a comment or a node that is no
+/// literal with a prefix (`@rr_node_strprefix`).
+pub fn node_strprefix(f: FactsIn<'_>, dialect: &Dialect, id: u32) -> Option<String> {
+    let kind = dialect.name(f, id);
+    if is_comment(kind) {
+        return None;
+    }
+    literal(dialect.family, kind, f.text(id), interpolated(f, dialect, kind, &f.children(id))).prefix
 }
 
 /// The literal facts of a node of `kind` with source `text`; `interpolated` when it has a part other than
@@ -429,7 +455,7 @@ pub fn failure(path: &str, raised: &str) -> crate::content_store::StoreError {
 /// Without `python-syntax-error` (the browser build), Python's verdict is tree-sitter's, as for the other languages:
 /// it misses what tree-sitter accepts and CPython does not (Python 2's `print "x"`). `Err`: `ast.parse` raises no
 /// `SyntaxError` but another exception, which fails the batch (`python_syntax::failure`).
-pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Result<Option<(u32, String)>, String> {
+pub(super) fn verdict(f: FactsIn<'_>, dialect: &Dialect) -> Result<Option<(u32, String)>, String> {
     // A family's own verdict: Python's CPython's, a `.rerail` file's the one running it gives. A program no file of
     // its language is (a rule's pattern, decision 0495 §3) has its tape's.
     if !f.tape_verdict
@@ -442,7 +468,7 @@ pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Result<Option<(u32, Strin
 
 /// The first error of a document, in preorder: its line and message (`syntax_error/3`). tree-sitter's ERROR and
 /// MISSING nodes. Python uses its demanded, cached native grammar verdict instead.
-pub(super) fn first_error(f: &Facts, lines: &crate::code_rule_dsl::lines::LineTable, kind_name: &dyn Fn(u32) -> &'static str) -> Option<(u32, String)> {
+pub(super) fn first_error(f: FactsIn<'_>, lines: &crate::code_rule_dsl::lines::LineTable, kind_name: &dyn Fn(u32) -> &'static str) -> Option<(u32, String)> {
     if !f.syntax_errors() {
         return None;
     }
@@ -464,7 +490,7 @@ pub(super) struct CoreRows {
     pub(super) skip: Skip,
     /// The values of the format string document being read (decision 0176: `literal::format_tape::values`), by
     /// node id, with the document's source they were read off: one parse a document, not one a node.
-    format_values: Option<(std::sync::Arc<String>, Vec<Option<(String, &'static str)>>)>,
+    format_values: Option<(std::sync::Arc<crate::code_rule_dsl::tape::Text>, Vec<Option<(String, &'static str)>>)>,
     /// The node kinds whose `text` is made at any length (`Projection::long_text`).
     pub(super) long_text: BTreeSet<String>,
     /// Every node's `text` at any length (`Projection::long_text_any`).
@@ -472,38 +498,31 @@ pub(super) struct CoreRows {
     /// The nodes whose `text` is made (`Projection::text_nodes`): of these kinds, or in one of these fields of their
     /// parent. `None` every node.
     pub(super) text_nodes: Option<super::TextNodes>,
-    /// The nodes whose `op` and `op_at` rows are made (`Projection::op_nodes`); `None` every node.
-    pub(super) op_nodes: Option<super::TextNodes>,
-    /// `text_nodes` and `op_nodes` as the walked document's dialect's codes (`for_dialect`).
+    /// `text_nodes` as the walked document's dialect's codes (`for_dialect`).
     text_codes: Option<super::NodesOf>,
-    op_codes: Option<super::NodesOf>,
-    op_at: Vec<[i64; 3]>,
-    text: Vec<[i64; 2]>,
-    name: Vec<[i64; 2]>,
-    str: Vec<[i64; 2]>,
-    strprefix: Vec<[i64; 2]>,
+    text: Vector<[i64; 2]>,
+    name: Vector<[i64; 2]>,
+    str: Vector<[i64; 2]>,
+    strprefix: Vector<[i64; 2]>,
     /// `value(n, v)` with v's `value_type` t: (n, v, t).
-    value: Vec<[i64; 3]>,
-    comment: Vec<[i64; 2]>,
-    syntax_error: Vec<[i64; 3]>,
-    source: Vec<[i64; 2]>,
-    src_line: Vec<[i64; 3]>,
-    line_count: Vec<[i64; 2]>,
-    str_part: Vec<[i64; 5]>,
-    str_part_start: Vec<[i64; 4]>,
-    str_part_word: Vec<[i64; 5]>,
-    structural_before: Vec<[i64; 2]>,
-    structural_after: Vec<[i64; 2]>,
-    tree_digest: Vec<[i64; 2]>,
+    value: Vector<[i64; 3]>,
+    comment: Vector<[i64; 2]>,
+    syntax_error: Vector<[i64; 3]>,
+    source: Vector<[i64; 2]>,
+    src_line: Vector<[i64; 3]>,
+    line_count: Vector<[i64; 2]>,
+    str_part: Vector<[i64; 5]>,
+    str_part_start: Vector<[i64; 4]>,
+    str_part_word: Vector<[i64; 5]>,
     /// `def_digest(n, h)`: each definition unit's own-content hash (`digests`).
-    def_digest: Vec<[i64; 2]>,
-    ast_match: Vec<[i64; 4]>,
+    def_digest: Vector<[i64; 2]>,
+    ast_match: Vector<[i64; 4]>,
 }
 
 impl CoreRows {
     /// The bytes of its rows so far (a copy's size, decision 0353's row 7).
     pub(super) fn bytes(&self) -> usize {
-        std::mem::size_of_val(self.op_at.as_slice()) + std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.structural_before.as_slice()) + std::mem::size_of_val(self.structural_after.as_slice()) + std::mem::size_of_val(self.tree_digest.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
+        std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
     }
 }
 
@@ -514,28 +533,24 @@ impl CoreRows {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Visits {
     All,
-    /// Those whose text (`text`, `text_nodes`) or ops (`op`, `op_nodes`) a rule reads: `node` makes no other row.
-    Read { text: bool, op: bool },
+    /// Those whose text (`text`, `text_nodes`) a rule reads: `node` makes no other row.
+    Read,
     None,
 }
 
 #[derive(Default)]
 pub(super) struct Skip {
-    /// `op`, `op_at`.
-    pub(super) ops: bool,
     pub(super) comment: bool,
     pub(super) name: bool,
     /// `str`, `strprefix`, `value`, `static_value`, `value_type` (and `text` not read: a prefix makes a node token-like).
     pub(super) literal: bool,
     /// `str`'s strings, where the literals are read for another relation: each literal's contents interned.
     pub(super) str: bool,
-    /// The literal values (`value`, `static_value`, `value_type`, `rr_value_lit`), likewise.
+    /// The literal values (`value`, `static_value`, `static_value_type_of`, `value_type`, `rr_value_lit`), likewise.
     pub(super) literal_value: bool,
     /// `str`, `strprefix`, `value` rows themselves. `literal` may be off for `text` alone (a prefix makes a node
     /// token-like), which reads no literal's value: 139 k of execution_authority_bypass's strings were string values.
     pub(super) literal_rows: bool,
-    /// `structural_before`, `structural_after`.
-    pub(super) structural: bool,
 }
 
 /// Every match of `re` in `text`, each named group (and the whole match, group 0) that takes part: (match, group,
@@ -571,37 +586,45 @@ impl CoreRows {
         })
     }
 
-    /// Whether a rule reads node `id`'s `op` or `op_at` rows (`op_nodes`).
-    fn reads_op(&self, p: &Projected, dialect: &Dialect, id: u32) -> bool {
-        self.op_nodes.as_ref().is_none_or(|nodes| match self.op_codes.as_ref().filter(|c| c.is_of(dialect.tag)) {
-            Some(codes) => codes.reads(nodes, p, id, dialect),
-            None => nodes.reads(p, id, dialect),
-        })
-    }
-
-    /// `text_nodes` and `op_nodes` resolved to `dialect`'s codes, for a walk of one of its documents.
+    /// `text_nodes` resolved to `dialect`'s codes, for a walk of one of its documents.
     pub(super) fn for_dialect(&mut self, dialect: &Dialect) {
         if let Some(nodes) = &self.text_nodes && !self.text_codes.as_ref().is_some_and(|c| c.is_of(dialect.tag)) {
             self.text_codes = Some(nodes.of_dialect(dialect));
         }
-        if let Some(nodes) = &self.op_nodes && !self.op_codes.as_ref().is_some_and(|c| c.is_of(dialect.tag)) {
-            self.op_codes = Some(nodes.of_dialect(dialect));
-        }
     }
 
-    /// The nodes `node` visits. Where it makes no row but `text` and the ops, and the rules read only some nodes'
-    /// (`text_nodes`, `op_nodes`), those nodes; where it makes none, no node. A phase that reads a few names' text
-    /// (phase 1's imports) then makes its rows without a second walk of every node of every document (the main
-    /// phase's), and one reading the ops of a few kinds' nodes (`op(m, "|")` of a `binary_operator`) visits those.
+    /// The nodes `node` visits. Where it makes no row but `text`, and the rules read only some nodes' (`text_nodes`),
+    /// those nodes; where it makes none, no node. A phase that reads a few names' text (phase 1's imports) then makes
+    /// its rows without a second walk of every node of every document (the main phase's).
     pub(super) fn visits(&self, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) -> Visits {
         let s = &self.skip;
-        let only_these = s.structural && s.comment && s.name && s.literal_rows
+        // A literal's value (`rr_value_lit`, `value`'s eager half) is made at every node too: where `name` and
+        // `comment` are node reads (decision 0353 row 7) and only it is made, a walk of no node made none.
+        let only_these = s.comment && s.name && s.literal_rows && s.literal_value
             && !(wants_parts || wants_part_starts || wants_words);
-        let (text, op) = (wants_text, !s.ops);
-        if !only_these || text && self.text_nodes.is_none() || op && self.op_nodes.is_none() {
+        if !only_these || wants_text && self.text_nodes.is_none() {
             return Visits::All;
         }
-        if !text && !op { Visits::None } else { Visits::Read { text, op } }
+        if wants_text { Visits::Read } else { Visits::None }
+    }
+
+    /// The per-node relations the walk makes, as the profile names them (`node rows`' spans).
+    pub(super) fn making(&self, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool, long_texts: bool) -> String {
+        let s = &self.skip;
+        let named = [
+            (!s.comment, "comment"),
+            (!s.name, "name"),
+            (!s.literal, "literal"),
+            (!s.literal_rows, "literal rows"),
+            (!s.literal_value, "literal values"),
+            (wants_text, "text"),
+            (wants_parts, "parts"),
+            (wants_part_starts, "part starts"),
+            (wants_words, "words"),
+            (long_texts, "rr_long_text_node"),
+        ];
+        let made: Vec<&str> = named.iter().filter(|(on, _)| *on).map(|(_, n)| *n).collect();
+        if made.is_empty() { "none".into() } else { made.join(", ") }
     }
 
     /// Whether `visits` takes node `local` of `p`.
@@ -609,7 +632,7 @@ impl CoreRows {
         match visits {
             Visits::All => true,
             Visits::None => false,
-            Visits::Read { text, op } => text && self.reads_text(p, dialect, id) || op && self.reads_op(p, dialect, id),
+            Visits::Read => self.reads_text(p, dialect, id),
         }
     }
 
@@ -617,63 +640,24 @@ impl CoreRows {
     /// `id` is its tape node (`Projected::node`) and `n` its id (`Projected::global`), which the caller's walk holds.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn node(&mut self, p: &Projected, dialect: &Dialect, local: u32, id: u32, n: i64, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) {
-        let f = &*p.facts;
+        let f = p.f();
         let kind = dialect.name(f, id);
         let text = f.text(id);
         let children = f.children(id);
-        // `op_at`: the anonymous children the tape stores that are no punctuation, in order, Python's two-word
-        // operators as one ("not in", "is not"). `op`, every anonymous child and each two-word operator, is the
-        // projection's view (`View::Op`: `Item::Op`, `Item::OpPair`): no row is made.
-        let mut ops: Vec<String> = Vec::new();
-        let op_read = !self.skip.ops && self.reads_op(p, dialect, id);
-        for &c in children.iter().filter(|&&c| op_read && !f.named(c)) {
-            let t = dialect.name(f, c);
-            if !is_punct(t) {
-                let two = dialect.family == Family::Python && matches!((ops.last().map(String::as_str), t), (Some("not"), "in") | (Some("is"), "not"));
-                match ops.last_mut() {
-                    Some(last) if two => *last = format!("{last} {t}"),
-                    _ => ops.push(t.to_owned()),
-                }
-            }
-        }
-        for (i, t) in ops.iter().enumerate() {
-            self.op_at.push([n, i as i64, string(t) as i64]);
-        }
-        // `structural_before`, `structural_after`: the source between each stored child and its
-        // neighbours (the sibling before or after it, else the parent's edge); a root's, between
-        // it and the source's edges.
-        if !self.skip.structural {
-            let (start, end) = (f.start(id), f.end(id));
-            let between = |a: u32, b: u32| if a < b { &f.source[a as usize..b as usize] } else { "" };
-            // Only the root has no parent.
-            if id == 0 {
-                self.structural_before.push([n, string(between(0, start)) as i64]);
-                self.structural_after.push([n, string(between(end, f.source.len() as u32)) as i64]);
-            }
-            for (k, &c) in children.iter().enumerate() {
-                let local_c = p.local_of_node(c);
-                if local_c == crate::code_rule_dsl::facts::core::NONE {
-                    continue;
-                }
-                let a = if k == 0 { start } else { f.end(children[k - 1]) };
-                let b = children.get(k + 1).map_or(end, |&d| f.start(d));
-                let c_global = p.global(local_c);
-                self.structural_before.push([c_global, string(between(a, f.start(c))) as i64]);
-                self.structural_after.push([c_global, string(between(f.end(c), b)) as i64]);
-            }
-        }
+        // `op` is the projection's view (`View::Op`: `Item::Op`), `op_at` `tree::node_operators`': no row is made.
         let mut token_like = children.is_empty();
         if is_comment(kind) {
-            if !self.skip.comment {
-                self.comment.push([n, string(comment_body(text)) as i64]);
+            if !self.skip.comment
+                && let Some(body) = node_comment(f, dialect, id)
+            {
+                self.comment.push([n, string(body) as i64]);
             }
             token_like = true;
         } else {
-            if self.skip.name {
-            } else if let Some(s) = name(kind, text) {
+            if !self.skip.name
+                && let Some(s) = node_name(f, dialect, id)
+            {
                 self.name.push([n, string(&s) as i64]);
-            } else if dialect.family == Family::Rr && kind == "variable" {
-                self.name.push([n, string(text) as i64]);
             }
             // Where only `text` reads the literal (a prefix makes a node token-like), it is read only where that decides
             // whether the node has text: a node whose text a rule reads, past the inline bound, with children. Decoded
@@ -737,23 +721,46 @@ impl CoreRows {
                 }
             }
         }
-        if wants_text && self.reads_text(p, dialect, id) && (token_like || text.len() <= TEXT_INLINE || self.long_text_any || self.long_text.contains(kind)) {
+        if wants_text && self.keeps_text(p, dialect, id, kind, text, token_like) {
             self.text.push([n, string(text) as i64]);
         }
     }
 
+    /// Whether node `id`'s `text` row is made, given whether it is token-like (`token_like`): a node whose text a rule
+    /// reads, within the inline bound, or token-like, or of a kind read at any length.
+    fn keeps_text(&self, p: &Projected, dialect: &Dialect, id: u32, kind: &str, text: &str, token_like: bool) -> bool {
+        self.reads_text(p, dialect, id) && (token_like || text.len() <= TEXT_INLINE || self.long_text_any || self.long_text.contains(kind))
+    }
+
+    /// Whether node `id` is token-like as `node` finds it: no children, a comment, or a literal with a prefix.
+    fn token_like(&self, f: FactsIn<'_>, dialect: &Dialect, id: u32, kind: &str, text: &str) -> bool {
+        let children = f.children(id);
+        if children.is_empty() || is_comment(kind) {
+            return true;
+        }
+        !self.skip.literal && literal(dialect.family, kind, text, interpolated(f, dialect, kind, &children)).prefix.is_some()
+    }
+
+    /// Node `id`'s `text` row's text, read off its document's tape as `node` makes it (decision 0353 step 3): a
+    /// probe of `text` by node reads it, its document's node rows not made. `None`: the node has no `text` row.
+    pub(super) fn text_row<'p>(&self, p: &'p Projected, dialect: &Dialect, id: u32) -> Option<&'p str> {
+        let f = p.f();
+        let (kind, text) = (dialect.name(f, id), f.text(id));
+        self.keeps_text(p, dialect, id, kind, text, self.token_like(f, dialect, id, kind, text)).then_some(text)
+    }
+
     /// A withheld document's one row: its first error (`verdict`).
     pub(super) fn withheld(&mut self, p: &Projected, (l, msg): &(u32, String), string: &mut dyn FnMut(&str) -> usize) {
-        self.syntax_error.push([i64::from(p.key), i64::from(*l), string(msg) as i64]);
+        self.syntax_error.push([i64::from(p.key()), i64::from(*l), string(msg) as i64]);
     }
 
     /// A document's rows: its source-text spans (a file's own, `own_text`; a guest's text is part of its file's), and
-    /// its tokens (none for a text-only document, `dialect` `None`: it has no node).
+    /// its tokens (none for a text-only document: it has no node).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn document(&mut self, p: &Projected, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool, projection: &super::Projection) {
-        let f = &*p.facts;
+        let f = p.f();
         let x = p.extra.as_ref().expect("core.rerail's spans");
-        let key = i64::from(p.key);
+        let key = i64::from(p.key());
         let lines_span = crate::code_rule_dsl::logic::profile::span(|| "lines".into());
         if own_text {
             let source = p.len() + x.tokens;
@@ -803,7 +810,7 @@ impl CoreRows {
         if patterns.is_empty() {
             return;
         }
-        let f = &*p.facts;
+        let f = p.f();
         let mut at: std::collections::HashMap<(u32, u32, &str), u32> = std::collections::HashMap::new();
         for (local, id) in p.nodes() {
             at.entry((f.start(id), f.end(id), dialect.name(f, id))).or_insert(local);
@@ -838,98 +845,15 @@ impl CoreRows {
             }
         }
     }
-    /// `tree_digest(n, h)` (`@tree_digest(n)`): a structural hash of n's subtree, without
-    /// positions. This is not CPython ast.dump serialization. A node hashes its kind, and its children's field and hash in order; a leaf, or a literal with a
-    /// static value, its text or value. Comments and punctuation are left out, and a parenthesized expression is
-    /// the expression inside, so `(a)` and `a`, `'x'` and `"x"`, or `0x10` and `16`, hash the same. Made when a
-    /// program reads it: every node's hash is a 64-character symbol.
-    ///
     /// `def_digest(n, h)` (decision 0083 §0): one row per definition unit, the document's root and each node `is_unit`
-    /// names, hashing the unit's own code. It is `tree_digest`'s hash with each nested unit replaced by its kind and
-    /// name, so editing a method's body changes the method's digest and not its class's or its module's.
-    pub(super) fn digests(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, trees: bool, units: bool) {
-        use sha2::{Digest, Sha256};
-        let f = &*p.facts;
-        // Children have greater ids than their parent (preorder), so one pass from the end sees them first.
-        let mut hash: Vec<[u8; 32]> = vec![[0; 32]; f.len()];
-        // The same hash, each nested unit standing for its kind and name.
-        let mut own: Vec<[u8; 32]> = vec![[0; 32]; f.len()];
-        let unit = |id: u32| is_unit(dialect.family, dialect.name(f, id));
-        let placeholder = |id: u32| -> [u8; 32] {
-            let mut h = Sha256::new();
-            h.update(b"unit\0");
-            h.update(dialect.name(f, id).as_bytes());
-            h.update([0]);
-            h.update(unit_name(f, dialect, id).unwrap_or_default().as_bytes());
-            h.finalize().into()
-        };
-        for id in (0..f.len() as u32).rev() {
-            let kind = dialect.name(f, id);
-            let kept: Vec<u32> = f
-                .children(id)
-                .iter()
-                .copied()
-                .filter(|&c| {
-                    let k = dialect.name(f, c);
-                    !is_comment(k) && (f.named(c) || !is_punct(k))
-                })
-                .collect();
-            if kind == "parenthesized_expression" && kept.len() == 1 {
-                hash[id as usize] = hash[kept[0] as usize];
-                own[id as usize] = own[kept[0] as usize];
-                continue;
-            }
-            let interpolated = dialect.family == Family::Python
-                && kept.iter().any(|&c| f.named(c) && dialect.name(f, c) == "interpolation");
-            // Each hash only when its relation is read: a node's two SHA-256s were most of a projection that
-            // reads `def_digest` alone (struct's), 1.5 s of 2.8 s on 237 files.
-            let (mut h, mut o) = (trees.then(Sha256::new), units.then(Sha256::new));
-            for x in [h.as_mut(), o.as_mut()].into_iter().flatten() {
-                x.update(kind.as_bytes());
-                x.update([0]);
-            }
-            match literal(dialect.family, kind, f.text(id), interpolated).value {
-                Some((value, ty)) => {
-                    for x in [h.as_mut(), o.as_mut()].into_iter().flatten() {
-                        x.update(b"=");
-                        x.update(ty.as_bytes());
-                        x.update([0]);
-                        x.update(value.as_bytes());
-                    }
-                }
-                None if kept.is_empty() => {
-                    for x in [h.as_mut(), o.as_mut()].into_iter().flatten() {
-                        x.update(b"'");
-                        x.update(f.text(id).as_bytes());
-                    }
-                }
-                None => {
-                    for &c in &kept {
-                        if let Some(h) = h.as_mut() {
-                            h.update(f.field(c).to_le_bytes());
-                            h.update(hash[c as usize]);
-                        }
-                        if let Some(o) = o.as_mut() {
-                            o.update(f.field(c).to_le_bytes());
-                            o.update(if unit(c) { placeholder(c) } else { own[c as usize] });
-                        }
-                    }
-                }
-            }
-            if let Some(h) = h {
-                hash[id as usize] = h.finalize().into();
-            }
-            if let Some(o) = o {
-                own[id as usize] = o.finalize().into();
-            }
-        }
-        let hex = |h: &[u8; 32]| -> String { h.iter().map(|b| format!("{b:02x}")).collect() };
+    /// names, hashing the unit's own code (`digests`). `tree_digest` is a view of the tape (`tape_rows::TreeDigest`).
+    pub(super) fn def_digests(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize) {
+        let f = p.f();
+        let (_, own) = digests(f, dialect, false, true);
+        let mut text = [0u8; 64];
         for (local, id, n) in p.node_ids() {
-            if trees {
-                self.tree_digest.push([n, string(&hex(&hash[id as usize])) as i64]);
-            }
-            if units && (local == 0 || unit(id)) {
-                self.def_digest.push([n, string(&hex(&own[id as usize])) as i64]);
+            if local == 0 || is_unit(dialect.family, dialect.name(f, id)) {
+                self.def_digest.push([n, string(hex_into(&own[id as usize], &mut text)) as i64]);
             }
         }
     }
@@ -960,11 +884,11 @@ impl CoreRows {
         }
         let node_sym = |rows: &[[i64; 2]]| make(&["n", "s"], rows, [false, true], atom);
         let pair = |columns: &[&str; 2], rows: &[[i64; 2]]| make(columns, rows, [false, false], atom);
-        let value: Vec<[i64; 2]> = self.value.iter().map(|&[n, v, _]| [n, v]).collect();
-        let mut value_type: Vec<[i64; 2]> = self.value.iter().map(|&[_, v, t]| [v, t]).collect::<HashSet<_>>().into_iter().collect();
+        let value: Vector<[i64; 2]> = self.value.iter().map(|&[n, v, _]| [n, v]).collect();
+        let value_type_of: Vector<[i64; 2]> = self.value.iter().map(|&[n, _, t]| [n, t]).collect();
+        let mut value_type: Vector<[i64; 2]> = self.value.iter().map(|&[_, v, t]| [v, t]).collect::<HashSet<_>>().into_iter().collect();
         value_type.sort_unstable();
         vec![
-            ("op_at", make(&["n", "i", "s"], &self.op_at, [false, false, true], atom)),
             ("text", node_sym(&self.text)),
             ("name", node_sym(&self.name)),
             ("str", node_sym(&self.str)),
@@ -972,6 +896,7 @@ impl CoreRows {
             // Named as `Extra`'s W's values are, which a batch binds instead where the program reads them.
             ("value", make(&["n", "v"], &value, [false, true], atom)),
             ("static_value", make(&["n", "v"], &value, [false, true], atom)),
+            ("static_value_type_of", make(&["n", "t"], &value_type_of, [false, true], atom)),
             ("value_type", make(&["v", "t"], &value_type, [true, true], atom)),
             ("comment", node_sym(&self.comment)),
             ("syntax_error", make(&["d", "l", "msg"], &self.syntax_error, [false, false, true], atom)),
@@ -981,9 +906,6 @@ impl CoreRows {
             ("str_part", make(&["lit", "i", "v", "at", "spec"], &self.str_part, [false, false, true, false, false], atom)),
             ("str_part_word", make(&["lit", "i", "w", "at", "spec"], &self.str_part_word, [false, false, true, false, false], atom)),
             ("str_part_start", make(&["lit", "i", "l", "c"], &self.str_part_start, [false; 4], atom)),
-            ("structural_before", node_sym(&self.structural_before)),
-            ("structural_after", node_sym(&self.structural_after)),
-            ("tree_digest", node_sym(&self.tree_digest)),
             ("def_digest", node_sym(&self.def_digest)),
             ("ast_match", make(&["p", "n", "g", "c"], &self.ast_match, [true, false, true, false], atom)),
         ]
@@ -1014,4 +936,109 @@ pub fn single_metavars(pattern: &str) -> Vec<String> {
         i = k.max(i + 1);
     }
     out
+}
+
+/// `tree_digest(n, h)` (`@tree_digest(n)`): a structural hash of n's subtree, without
+/// positions. This is not CPython ast.dump serialization. A node hashes its kind, and its children's field and hash in order; a leaf, or a literal with a
+/// static value, its text or value. Comments and punctuation are left out, and a parenthesized expression is
+/// the expression inside, so `(a)` and `a`, `'x'` and `"x"`, or `0x10` and `16`, hash the same. Each node's hash
+/// (by tape node) is a 64-character symbol (`hex`); a hash not asked for is zeros.
+///
+/// `def_digest(n, h)` (decision 0083 §0): one row per definition unit, the document's root and each node `is_unit`
+/// names, hashing the unit's own code. It is `tree_digest`'s hash with each nested unit replaced by its kind and
+/// name, so editing a method's body changes the method's digest and not its class's or its module's.
+pub fn digests(f: FactsIn<'_>, dialect: &Dialect, trees: bool, units: bool) -> (Vector<[u8; 32]>, Vector<[u8; 32]>) {
+    use sha2::{Digest, Sha256};
+    // Children have greater ids than their parent (preorder), so one pass from the end sees them first.
+    // Each only when asked for: a node's 32 bytes each (the measure of `tree_digest` alone allocated both, and a
+    // child list and 32 strings a node: 252 MB of heap for 2 reads at the M3's 300-file run, ab220).
+    let mut hash: Vector<[u8; 32]> = if trees { rerail_blocks::vector![[0; 32]; f.len()] } else { Vector::new() };
+    // The same hash, each nested unit standing for its kind and name.
+    let mut own: Vector<[u8; 32]> = if units { rerail_blocks::vector![[0; 32]; f.len()] } else { Vector::new() };
+    let mut kept: Vector<u32> = Vector::new();
+    let unit = |id: u32| is_unit(dialect.family, dialect.name(f, id));
+    let placeholder = |id: u32| -> [u8; 32] {
+        let mut h = Sha256::new();
+        h.update(b"unit\0");
+        h.update(dialect.name(f, id).as_bytes());
+        h.update([0]);
+        h.update(unit_name(f, dialect, id).unwrap_or_default().as_bytes());
+        h.finalize().into()
+    };
+    for id in (0..f.len() as u32).rev() {
+        let kind = dialect.name(f, id);
+        kept.clear();
+        kept.extend(f.children(id).iter().copied().filter(|&c| {
+            let k = dialect.name(f, c);
+            !is_comment(k) && (f.named(c) || !is_punct(k))
+        }));
+        if kind == "parenthesized_expression" && kept.len() == 1 {
+            if trees {
+                hash[id as usize] = hash[kept[0] as usize];
+            }
+            if units {
+                own[id as usize] = own[kept[0] as usize];
+            }
+            continue;
+        }
+        let interpolated = dialect.family == Family::Python
+            && kept.iter().any(|&c| f.named(c) && dialect.name(f, c) == "interpolation");
+        // Each hash only when its relation is read: a node's two SHA-256s were most of a projection that
+        // reads `def_digest` alone (struct's), 1.5 s of 2.8 s on 237 files.
+        let (mut h, mut o) = (trees.then(Sha256::new), units.then(Sha256::new));
+        for x in [h.as_mut(), o.as_mut()].into_iter().flatten() {
+            x.update(kind.as_bytes());
+            x.update([0]);
+        }
+        match literal(dialect.family, kind, f.text(id), interpolated).value {
+            Some((value, ty)) => {
+                for x in [h.as_mut(), o.as_mut()].into_iter().flatten() {
+                    x.update(b"=");
+                    x.update(ty.as_bytes());
+                    x.update([0]);
+                    x.update(value.as_bytes());
+                }
+            }
+            None if kept.is_empty() => {
+                for x in [h.as_mut(), o.as_mut()].into_iter().flatten() {
+                    x.update(b"'");
+                    x.update(f.text(id).as_bytes());
+                }
+            }
+            None => {
+                for &c in &kept {
+                    if let Some(h) = h.as_mut() {
+                        h.update(f.field(c).to_le_bytes());
+                        h.update(hash[c as usize]);
+                    }
+                    if let Some(o) = o.as_mut() {
+                        o.update(f.field(c).to_le_bytes());
+                        o.update(if unit(c) { placeholder(c) } else { own[c as usize] });
+                    }
+                }
+            }
+        }
+        if let Some(h) = h {
+            hash[id as usize] = h.finalize().into();
+        }
+        if let Some(o) = o {
+            own[id as usize] = o.finalize().into();
+        }
+    }
+    (hash, own)
+}
+
+/// A digest's symbol: its 32 bytes in hex.
+pub fn hex(h: &[u8; 32]) -> String {
+    hex_into(h, &mut [0; 64]).to_owned()
+}
+
+/// A digest's symbol written into `out`, no allocation: its 32 bytes in hex.
+pub fn hex_into<'a>(h: &[u8; 32], out: &'a mut [u8; 64]) -> &'a str {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    for (i, b) in h.iter().enumerate() {
+        out[2 * i] = DIGITS[usize::from(b >> 4)];
+        out[2 * i + 1] = DIGITS[usize::from(b & 15)];
+    }
+    std::str::from_utf8(out).expect("hex digits")
 }

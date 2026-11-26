@@ -1,5 +1,6 @@
 //! The converter's run over the data-layer pack, and checks of what it writes.
 
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::model::{ClauseKind, Query};
 use crate::code_rule_dsl::test_support::{CAPABILITIES, pack_test_data};
@@ -574,7 +575,7 @@ fn pack_files(run: &[(String, Converted)]) -> BTreeMap<String, String> {
 
 /// The converter's run, written into the pack (`pack_files`).
 #[test]
-#[ignore = "writes the converted rules into the pack"]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md); was: writes the converted rules into the pack"]
 fn convert_the_data_layer_pack() {
     let out = pack().join("datalog");
     std::fs::create_dir_all(&out).unwrap();
@@ -591,6 +592,7 @@ fn convert_the_data_layer_pack() {
 /// policy has, which it then authors; and what the pack holds in `datalog` is the converter's run as it is now
 /// (`convert_the_data_layer_pack` writes it): every rule's merged program and `coverage.txt`, and no other `.rerail`.
 #[test]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn the_pack_holds_the_converters_run_over_every_authored_file() {
     let run = convert_pack();
     let ids: BTreeSet<&str> = run.iter().map(|(id, _)| id.as_str()).collect();
@@ -657,7 +659,7 @@ fn the_pack_holds_the_converters_run_over_every_authored_file() {
 /// One policy's conversion (`RERAIL_CONVERT_POLICY`: its file, or its rule id), under its authored file: each
 /// clause converted, authored or a gap, printed, and the program, printed or written to `RERAIL_CONVERT_OUT`.
 #[test]
-#[ignore = "converts one policy; RERAIL_CONVERT_POLICY, --ignored --nocapture"]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md); was: converts one policy; RERAIL_CONVERT_POLICY, --ignored --nocapture"]
 fn convert_one_policy() {
     let policy = std::env::var("RERAIL_CONVERT_POLICY").expect("RERAIL_CONVERT_POLICY");
     let path = Some(PathBuf::from(&policy))
@@ -1226,7 +1228,7 @@ fn event_ids(events: &[Event]) -> Vec<String> {
 /// printed (40); `RERAIL_REPLAY_SHOW` and `RERAIL_REPLAY_EXTRA` print relations' rows and add rules (`replay`).
 /// `a_sample_of_the_replay_gives_the_recorded_findings` runs a sample of it with the library's tests.
 #[test]
-#[ignore = "runs every recorded event through the corpus runner (about 17 minutes)"]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md); was: runs every recorded event through the corpus runner (about 17 minutes)"]
 fn converted_rules_give_the_recorded_findings() {
     let list = |var: &str| std::env::var(var).ok().map(|s| s.split(',').map(str::to_owned).collect::<Vec<_>>());
     let (checks, rules) = (list("RERAIL_REPLAY_CHECK"), list("RERAIL_REPLAY_RULE"));
@@ -1322,6 +1324,7 @@ const SAMPLED: usize = 2;
 /// oracle's findings exactly: a broken authored file, hand-written rule or converter fails here. The checks share a
 /// few threads, each keeping its own prepared programs.
 #[test]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn a_sample_of_the_replay_gives_the_recorded_findings() {
     // Every check's sampled events through its prepared programs: about 11 minutes on CI's 4-vCPU runner (2 cores,
     // hyperthreaded) beside the rest of its leg, past a test's 10. More than that, never hours.
@@ -1333,7 +1336,7 @@ fn a_sample_of_the_replay_gives_the_recorded_findings() {
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("replay-sample");
     let _ = std::fs::remove_dir_all(&root);
     // Per group and check, its events with findings to compare that the baseline records exact.
-    let mut by_check = BTreeMap::<(&str, &str), Vec<usize>>::new();
+    let mut by_check = BTreeMap::<(&str, &str), Vector<usize>>::new();
     for (k, (event, id)) in events.iter().zip(&ids).enumerate() {
         // `RERAIL_REPLAY_CHECK`: only the checks whose group or name holds it (one check, to time or profile it).
         let named = std::env::var("RERAIL_REPLAY_CHECK").map_or(true, |c| event.group.contains(&c) || event.check.contains(&c));
@@ -1470,6 +1473,7 @@ fn finding_keys(program: &str, dir: &Path) -> Result<Vec<(String, u64, String)>,
 /// parameters (a `has` within the `parameters` field) and the tag conditions (a `has` from the condition) are
 /// found as W finds them.
 #[test]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn has_filters_the_ancestor_by_its_own_kinds() {
     let path = "l2070_batching/executor.py";
     let source = "def run(step: ServerPlanStep, other: int):\n    if step_tags(step):\n        pass\n    if \"x\" in step_tags(step):\n        pass\n";
@@ -1574,6 +1578,7 @@ fn a_failed_clause_leaves_nothing() {
 /// Every converted program holds only what `violation` reaches: no rule, declaration, input or kind set of a
 /// clause that failed, or of a branch it did not use. Over every rule of the pack, many with failed clauses.
 #[test]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn converted_programs_hold_only_what_violation_reaches() {
     let mut failed = 0;
     for path in rule_files() {
@@ -1630,6 +1635,7 @@ violation("data-layer-serverplan-target-architecture", "required-contracts", "SP
 /// An authored clause replaces the converter's, a relational one is given, and a clause the run leaves out is
 /// dropped with its helpers.
 #[test]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn authored_clauses_replace_the_converters() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("authored");
     let _ = std::fs::remove_dir_all(&dir);
@@ -1657,6 +1663,7 @@ fn authored_clauses_replace_the_converters() {
 
 /// What an authored file may not do is a named error.
 #[test]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn overlay_errors_are_named() {
     let rule = rule_file(TARGET).unwrap();
     let c = convert_over(&rule, &Adjust::default(), None).unwrap();
@@ -1689,6 +1696,7 @@ fn overlay_errors_are_named() {
 /// `report_when: {count: {gt: k}}`, and nothing where the run drops it; an authored file gates on it, and the
 /// converter leaves a gated policy's clauses to the file.
 #[test]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn the_report_gate_is_given() {
     const ID: &str = "data-layer-sql-grammar-escape-hatches";
     let authored = format!(
@@ -1737,12 +1745,13 @@ violation("{ID}", "usage-0", "escape_hatch", p, l) :- usage_0_witness(p, l), !us
 /// whose matcher is under `when: {option: …}` is marked: `data-layer-transaction-patterns`' `category-1` is only
 /// for `oracleAnalyzer` on (off at the defaults), and lists its names in `category-LEGITIMATE`.
 #[test]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn the_options_are_given() {
     const ID: &str = "data-layer-transaction-patterns";
     let rule = rule_file("transaction_patterns").unwrap();
     let plain = convert_over(&rule, &Adjust::default(), None).unwrap();
     assert_eq!(plain.clauses.iter().find(|(c, _)| c == "category-1").map(|(_, r)| r.clone()), Some(Ok(Origin::Converted)));
-    assert_eq!(plain.when.get("category-1").map(Vec::as_slice), Some(&[r#"{"option":{"oracleAnalyzer":true}}"#.to_owned()][..]));
+    assert_eq!(plain.when.get("category-1").map(|v| v.as_slice()), Some(&[r#"{"option":{"oracleAnalyzer":true}}"#.to_owned()][..]));
     let authored = format!(
         r#"
 .decl in_scope(d: number)
@@ -1820,8 +1829,8 @@ impl Baseline {
                 Some(("count", rest)) => {
                     let mut parts = rest.splitn(3, " | ");
                     let (Some(group), Some(check), Some(numbers)) = (parts.next(), parts.next(), parts.next()) else { return Err(bad()) };
-                    let numbers: Vec<usize> = numbers.split_whitespace().map(str::parse).collect::<Result<_, _>>().map_err(|_| bad())?;
-                    out.counts.insert((group.to_owned(), check.to_owned()), numbers.try_into().map_err(|_| bad())?);
+                    let numbers: Vector<usize> = numbers.split_whitespace().map(str::parse::<usize>).collect::<Result<_, _>>().map_err(|_| bad())?;
+                    out.counts.insert((group.to_owned(), check.to_owned()), <[usize; 5]>::try_from(&numbers[..]).map_err(|_| bad())?);
                 }
                 Some((kind @ ("miss" | "error"), event)) => {
                     out.misses.insert(event.to_owned(), kind.to_owned());
@@ -2049,7 +2058,7 @@ fn measure_shape(corpus: &Path, rules: &str, mode: &str, label: &str) -> (usize,
 /// on disk (`RERAIL_MEASURE_CORPUS`), one run each. Prints each run's CPU (user + system) by phase, peak RSS, the
 /// violations, and the text tests' work (decision 0037): relations, distinct strings tested, their CPU.
 #[test]
-#[ignore = "a measurement over a corpus on disk"]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md); was: a measurement over a corpus on disk"]
 fn measure_converted_rules() {
     let corpus = PathBuf::from(std::env::var("RERAIL_MEASURE_CORPUS").expect("RERAIL_MEASURE_CORPUS"));
     let rules = std::env::var("RERAIL_MEASURE_RULES").expect("RERAIL_MEASURE_RULES");
@@ -2102,7 +2111,7 @@ const LIBRARY_FIXTURE: (&str, &str) = (
 /// `"python/calls.rerail"`): for each relation the closure declares, an overlay whose one clause reads it, converted,
 /// merged and run by the corpus runner over `LIBRARY_FIXTURE`. Prints, per relation, its rows' count or the error.
 #[test]
-#[ignore = "a report: which library relations lower and run through an overlay"]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md); was: a report: which library relations lower and run through an overlay"]
 fn library_relations_through_an_overlay_report() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("library-report");
     let _ = std::fs::remove_dir_all(&dir);
@@ -2151,6 +2160,7 @@ fn library_relations_through_an_overlay_report() {
 /// on `LIBRARY_FIXTURE` what the library says: a chained comparison's links, each parameter's kind, the last
 /// assignment before a read in CPython's order, owners' dotted paths, calls' names.
 #[test]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn an_overlay_includes_the_python_library() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("library-overlay");
     let _ = std::fs::remove_dir_all(&dir);
@@ -2219,6 +2229,7 @@ violation("{TARGET_ID}", "executor-parameters", cat("call ", x), p, l) :- call_n
 /// disjunction) survives the merge and its printing: the merged program prints them as the built-ins (not as
 /// relations `match_all_`), reads back to the same program, and the runner gives the clause's findings from it.
 #[test]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn authored_match_built_ins_print_and_run() {
     let re = r"step_tags\\((?P<arg>\\w+)\\)";
     let authored = format!(

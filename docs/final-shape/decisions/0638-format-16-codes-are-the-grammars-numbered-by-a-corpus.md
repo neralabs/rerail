@@ -4,7 +4,7 @@ Status: decided (2026-11-23), by the user: "you may ORDER the codes based on a c
 a 502-repo corpus and the ast-index-spike test corpus on this machine). You may just not not limit what is
 REPRESENTABLE; what is representable MUST come from the grammar."
 
-It amends decision 0626 (format 16 alone; every language's table from its grammar). What a table holds is unchanged:
+It amends decision 0631 (format 16 alone; every language's table from its grammar). What a table holds is unchanged:
 every code the grammar allows and no other, so a file of any shape is written in format 16. Only the numbering
 changes.
 

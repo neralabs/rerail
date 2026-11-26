@@ -18,8 +18,9 @@
 //! `git_*` and `signed_list` are not read yet (open item O80). `input_error`'s `missing` rows are made
 //! where the `.input` files are (`logic::plan::corpus::external_inputs`).
 
+use rerail_blocks::vector::Vector;
 use super::vtab::Relation;
-use crate::content_store::{ContentStore, StoreResult};
+use crate::content_store::{FactStore, StoreResult};
 use rerail_lang::code_rule_dsl::tsconfig;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -251,23 +252,26 @@ fn settings_key(root: &Path, packages: &BTreeMap<String, String>, configs: &BTre
 
 /// The kept settings rows (`KEPT_SETTINGS`, atoms) under `key` in `space`, where the disk answers each question their
 /// reading asked (`Probe`) as it did: then no configuration file is read.
-fn kept_settings(store: &ContentStore, space: &[u8; 32], key: &[u8; 32], disk: &Disk<'_>) -> StoreResult<Option<Vec<Vec<Vec<i64>>>>> {
-    let Some(kept) = store.kept_space(space)? else { return Ok(None) };
-    let view = kept.view();
-    let mut out = Vec::new();
-    for (k, (rel, _)) in KEPT_SETTINGS.iter().enumerate() {
-        let Some(entry) = view.entry(&rerail_blocks::kept::FactKey { rel, ident: key, part: 0 }) else { return Ok(None) };
-        if k == 0 && !entry.reads().all(|r| Probe::holds(r, disk)) {
-            return Ok(None);
+fn kept_settings(store: &dyn FactStore, space: &[u8; 32], key: &[u8; 32], disk: &Disk<'_>) -> StoreResult<Option<Vec<Vec<Vec<i64>>>>> {
+    let mut out: Option<Vec<Vec<Vec<i64>>>> = None;
+    store.kept().read(space, &mut |chain| {
+        let Some(chain) = chain else { return };
+        let mut rows = Vec::new();
+        for (k, (rel, _)) in KEPT_SETTINGS.iter().enumerate() {
+            let Some(entry) = chain.get(&rerail_blocks::kept::FactKey { rel, ident: key, part: 0 }) else { return };
+            if k == 0 && !entry.reads().all(|r| Probe::holds(r, disk)) {
+                return;
+            }
+            rows.push((0..entry.rows.len()).map(|i| entry.row(i)).collect());
         }
-        out.push((0..entry.rows.len()).map(|i| entry.row(i)).collect());
-    }
-    Ok(Some(out))
+        out = Some(rows);
+    });
+    Ok(out)
 }
 
 /// Keeps `rows` (`KEPT_SETTINGS`' relations, atoms) under `key` in `space`, with the questions their reading asked.
-fn keep_settings(store: &ContentStore, space: [u8; 32], key: [u8; 32], rows: &[Vec<Vec<i64>>], probes: &[Probe]) {
-    use crate::content_store::kept_facts::{BlockFlat, KeptPut, KeptWhat};
+fn keep_settings(store: &dyn FactStore, space: [u8; 32], key: [u8; 32], rows: &[Vec<Vec<i64>>], probes: &[Probe]) {
+    use crate::content_store::kept_facts::base::{BlockFlat, KeptPut, KeptWhat};
     use sha2::Digest as _;
     let reads: Vec<(String, u64)> = probes.iter().map(Probe::read).collect();
     let puts = KEPT_SETTINGS
@@ -289,7 +293,7 @@ fn keep_settings(store: &ContentStore, space: [u8; 32], key: [u8; 32], rows: &[V
             KeptPut { rel: rel.to_owned(), ident: key, part: 0, digest, reads: reads.clone(), types: vec![b's'; width], what: KeptWhat::Picked(Box::new(flat)) }
         })
         .collect();
-    store.queue_kept(space, puts);
+    store.kept().queue(space, puts, "the settings kept");
 }
 
 /// The names a project configuration has, the first found in a folder governing it.
@@ -315,7 +319,7 @@ fn join(dir: &str, rel: &str) -> String {
 }
 
 /// The files on disk below a root, by absolute `/`-separated path, as the shared `extends` resolver reads them
-/// (`tsconfig::ConfigFiles`, decision 0660).
+/// (`tsconfig::ConfigFiles`, decision 0670).
 struct Disk<'f> {
     base: String,
     /// The root with its symlinks resolved, as `real_path` resolves a path below it.
@@ -525,7 +529,7 @@ fn package_for_rows(docs: &[String], packages: &BTreeMap<String, String>, rows: 
 }
 
 /// The repository inputs a program reads (`reads`), interned in `store`, by relation.
-pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Value, reads: &dyn Fn(&str) -> bool, files: &mut dyn Files) -> StoreResult<Vec<(&'static str, Relation)>> {
+pub fn relations(store: &dyn FactStore, root: &Path, docs: &[String], opts: &Value, reads: &dyn Fn(&str) -> bool, files: &mut dyn Files) -> StoreResult<Vec<(&'static str, Relation)>> {
     let mut rows = Rows::default();
     if reads("option") || reads("option_item") {
         options(opts, &mut rows);
@@ -557,20 +561,20 @@ pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Valu
     let mut next = atoms.iter().map(|&a| i64::from(a));
     let mut sym = || next.next().expect("an atom per string");
     let mut out = Vec::new();
-    let mut make = |name: &'static str, columns: &[&str], rows: Vec<Vec<i64>>| {
+    let mut make = |name: &'static str, columns: &[&str], rows: Vec<Vector<i64>>| {
         let mut r = Relation::new(columns);
         rows.iter().for_each(|row| r.push(row));
         out.push((name, r));
     };
-    let option: Vec<Vec<i64>> = rows.option.iter().map(|_| vec![sym(), sym()]).collect();
+    let option: Vec<Vector<i64>> = rows.option.iter().map(|_| rerail_blocks::vector![sym(), sym()]).collect();
     make("option", &["name", "v"], option);
     let item = rows.option_item.iter().map(|(_, i, _)| {
         let name = sym();
-        vec![name, *i, sym()]
+        rerail_blocks::vector![name, *i, sym()]
     });
-    let item: Vec<Vec<i64>> = item.collect();
+    let item: Vec<Vector<i64>> = item.collect();
     make("option_item", &["name", "i", "v"], item);
-    let file: Vec<Vec<i64>> = rows.file.iter().map(|_| vec![sym()]).collect();
+    let file: Vec<Vector<i64>> = rows.file.iter().map(|_| rerail_blocks::vector![sym()]).collect();
     make("file", &["path"], file);
     let package: Vec<Vec<i64>> = rows.package.iter().map(|_| vec![sym(), sym()]).collect();
     let field: Vec<Vec<i64>> = rows.package_field.iter().map(|_| vec![sym(), sym(), sym()]).collect();
@@ -590,18 +594,20 @@ pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Valu
         keep_settings(store, space, key, &settings, &probes);
     }
     let [package, field, tsconfig, tpath]: [Vec<Vec<i64>>; 4] = settings.try_into().expect("the four settings relations");
-    make("package", &["dir", "name"], package);
-    make("package_field", &["dir", "key", "v"], field);
-    make("package_for", &["path", "dir"], pfor);
-    make("tsconfig", &["dir", "base_url"], tsconfig);
-    make("tsconfig_for", &["path", "dir"], tfor);
-    make("tsconfig_path", &["dir", "pattern", "target"], tpath);
+    let rows_of = |r: Vec<Vec<i64>>| -> Vec<Vector<i64>> { r.into_iter().map(|row| row.into_iter().collect()).collect() };
+    make("package", &["dir", "name"], rows_of(package));
+    make("package_field", &["dir", "key", "v"], rows_of(field));
+    make("package_for", &["path", "dir"], rows_of(pfor));
+    make("tsconfig", &["dir", "base_url"], rows_of(tsconfig));
+    make("tsconfig_for", &["path", "dir"], rows_of(tfor));
+    make("tsconfig_path", &["dir", "pattern", "target"], rows_of(tpath));
     Ok(out)
 }
 
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::content_store::ContentStore;
 
     #[test]
     fn options_flatten_as_rrlab_reads_them() {
@@ -657,7 +663,9 @@ pub mod tests {
         write("web/package.json", r#"{"name": "@a/web", "engines": {"node": ">=18"}}"#);
         write("web/tsconfig.json", r#"{"extends": "./base", "compilerOptions": {"paths": {"x": ["y"]}}}"#);
         write("web/src/a.ts", "");
-        let store = ContentStore::open(&tmp.path().join("store.db")).unwrap();
+        // The store's folder is the user's alone, whatever the umask (decision 0574).
+        rerail_blocks::mapped::make_folder(&tmp.path().join("store")).unwrap();
+        let store = ContentStore::open(&tmp.path().join("store").join("store.db")).unwrap();
         let docs = ["web/src/a.ts".to_owned()];
         let all = |_: &str| true;
         // The settings relations a run binds, by name, each as its sorted rows.
@@ -719,7 +727,7 @@ pub mod tests {
         assert_ne!(got["tsconfig"], rows["tsconfig"]);
     }
 
-    /// A project configuration is read as TypeScript reads it (decision 0660): JSONC, a chain of `extends` merged
+    /// A project configuration is read as TypeScript reads it (decision 0670): JSONC, a chain of `extends` merged
     /// beneath its own options (a relative base without `.json`, a package's configuration in `node_modules` by its
     /// `tsconfig` field), and each `baseUrl` from the configuration that sets it.
     #[test]

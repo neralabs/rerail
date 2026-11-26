@@ -19,7 +19,7 @@ YTT101(C, n) :- ytt101_in_string(n, C).
 
 // three_literal(n): the JSON util `three-literal`, used where the JSON says `matches: "three-literal"`
 .decl ytt101_three_literal(n: node)
-ytt101_three_literal(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int"), v1 = 3.
+ytt101_three_literal(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int"), v1 = 3.
 ytt101_three_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     ytt101_three_literal(c2).
 

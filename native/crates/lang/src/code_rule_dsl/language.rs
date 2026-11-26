@@ -562,10 +562,19 @@ pub fn fragments() -> &'static [(&'static str, GrammarDialect, &'static str, u8)
     FRAGMENTS
 }
 
-/// The grammar a guest's kinds are named in: a fragment's dialect's label, an on-demand embedding's one dialect's
-/// (`vue-expression`: TypeScript, decision 0597), else the grammar itself (a dialect's label).
+/// The grammar a guest's kinds are named in: a fragment's dialect's label, an embedding's one dialect's, built on
+/// demand (`vue-expression`: TypeScript, decision 0597) or at the file's load (`compiled-view`: a Blade template's
+/// PHP), else the grammar itself (a dialect's label).
 pub fn kinds_label(grammar: &str) -> &str {
-    fragment(grammar).and_then(|(dialect, _)| label(dialect)).or_else(|| demand_dialect(grammar).and_then(label)).unwrap_or(grammar)
+    fragment(grammar).and_then(|(dialect, _)| label(dialect)).or_else(|| embedding_dialect(grammar).and_then(label)).unwrap_or(grammar)
+}
+
+/// The one dialect an embedding of id `via` gives, built on demand or at its host's load; `None` for another name,
+/// or an embedding of several.
+fn embedding_dialect(via: &str) -> Option<GrammarDialect> {
+    let mut of = GrammarDialect::ALL.iter().flat_map(|d| d.embeds().iter().chain(d.demand_embeds())).filter(|(v, _)| v.id() == via).map(|&(_, d)| d);
+    let first = of.next()?;
+    of.all(|d| d == first).then_some(first)
 }
 
 /// The one dialect an on-demand embedding of id `via` gives (`GrammarDialect::demand_embeds`); `None` for another
@@ -1585,7 +1594,7 @@ pub mod tests {
         use sha2::{Digest, Sha256};
         let rows: Vec<_> = source_grammar_suffixes().collect();
         let version = Sha256::digest(serde_json::to_vec(&rows).unwrap());
-        assert_eq!(SOURCE_GRAMMAR_REGISTRY, crate::content_store::observe::hex(&version.into()));
+        assert_eq!(SOURCE_GRAMMAR_REGISTRY, rerail_observe::content_store::observe::hex(&version.into()));
     }
 
     /// The host reads the registry through `src/engine/code-rule/code-rule-language-registry.generated.ts`, which a script

@@ -1,8 +1,9 @@
 # 0458: The cross part reads the base relations off every file's tape
 
-Status: decided by the user (2026-11-19, Q285: "Read the tapes"), over the 2026-11-15 answer to Q2/Q5, whose
-widening (0286) stays for the requests it covers. Follows 0353 (a view is a read of the tape, never a relation);
-amends 0117 step 1 (the kept inputs) and 0401 F6 (what the keep writes) for base relations.
+Status: partly built (audited 2026-11-23). Left: documents made when first read (batch still makes every document);
+phase-run old sources read without SQL. Decided by the user (2026-11-19, Q285: "Read the tapes"), over the 2026-11-15
+answer to Q2/Q5, whose widening (0286) stays for the requests it covers. Follows 0353 (a view is a read of the tape,
+never a relation); amends 0117 step 1 (the kept inputs) and 0401 F6 (what the keep writes) for base relations.
 
 ## Intro
 
@@ -132,6 +133,16 @@ Each has its test before the code that meets it.
   made, counted; the next: none made, kept; an edit: 1 made, patched; outputs a fresh run's).
 - **Not yet:** a document is not yet made when first read: the corpus batch makes every document (on the 50 files'
   edit 0.45 s, most of what the batch adds over the memo's base rows); a session makes only the changed files'.
+- **The versions compared where their rows lie** (2026-11-24). Each version's rows were copied into a vector a row
+  and a set of them, to find which rows one version holds that the other does not. On corpus0's move (16 changed
+  files, 965,454 rows over the two versions of 17 relations) that took 0.99 s of the span's 1.35 s, more than the
+  whole of a cold run's statistics (0.26 s). Now each version is its rows' 64-bit hashes with their row ids, sorted
+  (`RowHashes`), each row read once where it lies; one merge of the two finds both `Plus` and `Minus`, and a row is
+  read again only to compare it with the other version's rows of its hash (364,297 pairs). The span is 0.63 s: 0.14 s
+  hashing, 0.10 s the merge, and 0.38 s making the changed files' documents and the corpus batch's views' directory,
+  which `Before` and the cross part read anyway. The profile names the parts (`a version's rows, hashed`, `the changed
+  documents' rows now`) and counts the rows (`logic.base_versions_rows`, `…_rows_compared`). Tests: the made batch's,
+  `input_delta`'s and the maintain tests (65, on Linux).
 
 ## Open
 

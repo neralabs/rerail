@@ -1,7 +1,7 @@
 //! What a project configuration (`tsconfig.json`, `jsconfig.json`) is read with, wherever its files come from: the
 //! JSON-with-comments it is written in (`strip_jsonc`) and the configuration an `extends` names (`extends_path`, as
 //! get-tsconfig resolves it). The repository reader (`facts::repository`) reads the files on disk below a root,
-//! the import resolver (`lang_ecma`'s `import_target::tsconfig`) a workspace's held files over them (decision 0660).
+//! the import resolver (`lang_ecma`'s `import_target::tsconfig`) a workspace's held files over them (decision 0670).
 
 use super::node_path as path;
 

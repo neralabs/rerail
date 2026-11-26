@@ -15,7 +15,7 @@
 .violation D412(at: span, k: symbol) code "D412"
     "Remove the blank lines between the `{k}` header and its content; keep one blank line only when the content is a reStructuredText directive (`.. `)."
     suppress ruff "D412"
-D412(at, v) :- doc_section(s, i, v, _, _, _), content(s, i, c, k), k > 0, !(doc_sphinx(s, c), k = 1), doc_at(s, i, at).
+D412(at, v) :- doc_section(s, i, v, _, _, _), content(s, i, c, k), k > 0, (!doc_sphinx(s, c) ; k != 1), doc_at(s, i, at).
 // content(s, i, c, k): the content of section i starts at line c, after k blank lines below the header (or below
 // its dashed underline). One blank line before a `.. ` directive is allowed.
 .decl content(s: node, i: number, c: number, k: number)

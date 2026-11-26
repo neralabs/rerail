@@ -14,8 +14,11 @@ use crate::code_rule_dsl::typing::file_local::Binding;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-/// Cross-file: identifiers of two files joined on their text, so the cross part reads its base relations (`kind`,
-/// `text`, `docof`) off the corpus batch, every file's documents.
+/// Cross-file: identifiers of two files joined on their text. Each side's `kind`, `text` and `docof` go into its
+/// file's chunk (the push's attributes, 7ff884a7aa), so the cross part reads no base relation: every file's document
+/// is in phase 1's corpus batch (`sources.rerail` reads `doc`), which `Ran::corpus` counts with the run's. (A
+/// cross-file `finding` would be decoded off the run's own batch, but its stratum runs again on a warm run by design,
+/// `kept_strata::Part`: the hosted tests below read it.)
 const PROGRAM: &str = r#"
 .decl named(t: symbol) cross_file
 named(t) :- kind(a, "identifier"), text(a, t), docof(a, d), kind(b, "identifier"), text(b, t), docof(b, e), d < e, contains("o", t).
@@ -58,6 +61,8 @@ struct Ran {
     /// The files built in the waves with a kept tape, and those parsed.
     waves: (usize, usize),
     rows: BTreeSet<Vec<String>>,
+    /// Phase 1's frame (`frame`): taken (`Some(true)`), made by its run (`Some(false)`), or none.
+    frame: Option<bool>,
 }
 
 impl Ran {
@@ -105,11 +110,11 @@ impl Corpus {
         let corpus = phases.iter().fold(report.corpus_docs, |a, (_, p)| CorpusDocs {
             from_tape: a.from_tape + p.from_tape,
             parsed: a.parsed + p.parsed,
-            held: a.held + p.held,
             made: a.made + p.made,
             documents: a.documents + p.documents,
         });
-        Ran { corpus, main: report.corpus_docs, phases, parsed_by: report.parsed, cross_kept: report.cross_kept, waves: report.file_tapes, rows }
+        let frame = report.phase_runs.iter().find(|p| p.name == "sources").and_then(|p| p.frame.as_ref()).map(|(_, made)| made.is_none());
+        Ran { corpus, main: report.corpus_docs, phases, parsed_by: report.parsed, cross_kept: report.cross_kept, waves: report.file_tapes, rows, frame }
     }
 
     /// A cold run, then the warm one over the same store after `edit` (none: the files as they were), and a cold run
@@ -152,6 +157,70 @@ fn a_warm_run_over_unchanged_files_parses_builds_and_makes_nothing() {
     assert_eq!(warm.corpus.parsed, 0, "Q332: no unchanged file is parsed for the corpus batch: {:?} (warm run: {warm:?})", warm.corpus);
     assert_eq!(warm.corpus.from_tape, 0, "Q332: no unchanged file's document is built from its tape: {:?} (warm run: {warm:?})", warm.corpus);
     assert_eq!(warm.corpus.made, 0, "Q332: no unchanged document's rows are made: {:?} (warm run: {warm:?})", warm.corpus);
+}
+
+/// A warm run with nothing to run (t33 K4: no input changed, no stratum run) still gives every output. Of a pack's
+/// policies linked in one run (each its own `p{i}_` part), where a library reads a guest (`parsed`), each violation is
+/// placed in the cross part (`rr_found_through`) and is its output too, handed on as its input: read where the run
+/// binds it, as a cold run gives it.
+#[test]
+fn a_warm_run_with_nothing_to_run_gives_the_per_file_outputs() {
+    let c = Corpus::of("nothing-to-run", PROGRAM, FILES, "named");
+    c.write("e.py", "def check(x):\n    assert x\n    return x\n");
+    c.write("pkg/__init__.py", "");
+    c.write("pkg/loader.py", "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n");
+    c.write("main.py", "from pkg.loader import load\nload(b'x')\n");
+    // As the CLI reads a pack's policy files.
+    let rules = crate::source_tree::native().join("../docs/rule-syntax/packs/python");
+    let paths: Vec<PathBuf> = ["bandit-b101-assert-used.rerail", "bandit-b301-pickle.rerail", "ruff-pyi019-custom-type-var-for-self.rerail"].iter().map(|r| rules.join(r)).collect();
+    let programs = crate::code_rule_dsl::logic::settings::program_texts_read(&paths.iter().map(PathBuf::as_path).collect::<Vec<_>>(), vec![None; paths.len()]).unwrap();
+    let texts: Vec<&str> = programs.iter().map(String::as_str).collect();
+    // Every output of a run over the store `store`, as `to_csv` writes them: by file, its lines sorted.
+    let run = |id: &str, store: &str| -> std::collections::BTreeMap<String, Vec<String>> {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(c.dir.join(store)));
+        let out = c.dir.join(id);
+        let report = super::run_all(&texts, &c.dir.join("src"), &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        if id == "warm" {
+            assert_eq!(report.cross_kept.map(|(ran, _)| ran), Some(0), "no cross-file stratum runs: {:?}", report.cross_kept);
+        }
+        let csv = c.dir.join(format!("{id}-csv"));
+        crate::code_rule_dsl::logic::plan::output::to_csv(&out, &csv).unwrap();
+        std::fs::read_dir(&csv).unwrap().map(|e| {
+            let e = e.unwrap();
+            let mut lines: Vec<String> = std::fs::read_to_string(e.path()).unwrap().lines().map(str::to_owned).collect();
+            lines.sort();
+            (e.file_name().to_string_lossy().into_owned(), lines)
+        }).collect()
+    };
+    let cold = run("cold", "kept.sqlite");
+    let warm = run("warm", "kept.sqlite");
+    let fresh = run("fresh", "fresh.sqlite");
+    assert!(fresh.iter().any(|(rel, lines)| rel.starts_with("p0_B101") && !lines.is_empty()), "B101 finds the assert: {fresh:?}");
+    assert_eq!(cold, fresh, "the cold run's outputs");
+    assert_eq!(warm, fresh, "the warm run's outputs are a cold run's");
+}
+
+/// Phase 1's run kept across processes (t33 K4, `frame`): a warm run over unchanged files takes its frame,
+/// every read of its run as it was, and does not run the phase; an edit hands it another file, so the run makes a new
+/// frame. Each run's outputs are a cold run's.
+#[test]
+fn phase_one_is_taken_from_its_frame_and_an_edit_runs_it_again() {
+    let mut c = Corpus::new("phase-frame");
+    let cold = c.run_over("kept.sqlite");
+    assert_eq!(cold.frame, Some(false), "the cold run runs phase 1 and makes its frame (cold run: {cold:?})");
+    let warm = c.run_over("kept.sqlite");
+    assert_eq!(warm.frame, Some(true), "the warm run takes phase 1's frame (warm run: {warm:?})");
+    let phase: Vec<&CorpusDocs> = warm.phases.iter().filter(|(name, _)| name == "sources").map(|(_, d)| d).collect();
+    assert!(phase.iter().all(|d| d.documents == 0 && d.parsed == 0), "phase 1 not run: no corpus batch of its own (warm run: {warm:?})");
+    assert_eq!(warm.rows, cold.rows, "the warm run's outputs are the cold run's");
+    c.write(EDIT.0, EDIT.1);
+    let edited = c.run_over("kept.sqlite");
+    assert_eq!(edited.frame, Some(false), "an edit hands phase 1 another file: it runs, and makes its frame (edited run: {edited:?})");
+    let again = c.run_over("kept.sqlite");
+    assert_eq!(again.frame, Some(true), "the run after the edit takes the edit's frame (run: {again:?})");
+    let fresh = c.run_over("fresh.sqlite").rows;
+    assert_eq!(edited.rows, fresh, "the edited run's outputs are a cold run's");
+    assert_eq!(again.rows, fresh, "the run after it gives the same");
 }
 
 /// A warm run after a one-file edit parses the changed file alone, and builds it alone in the waves.
@@ -197,9 +266,11 @@ fn a_warm_edits_own_batch_makes_the_changed_document_alone() {
 }
 
 /// A JavaScript run over the scripts HTML files hold (`.embedded on`, decision 0470 step 2): each name a script calls
-/// that `d.js` defines, at its line. The cross-file rule reads `line` of a node another file's rule found, so it reads
-/// the corpus batch's base relations, the host files' documents among them.
-const HOSTED: &str = ".language javascript\n.embedded on\n.decl called(c: node, x: symbol)\ncalled(c, x) :- kind(c, \"identifier\"), text(c, x).\n.decl defined(x: symbol)\ndefined(x) :- kind(d, \"function_declaration\"), field(d, \"name\", n), text(n, x).\n.decl named(x: symbol, l: number) cross_file\nnamed(x, l) :- called(c, x), defined(x), line(c, l).\n.output named\n";
+/// that `d.js` defines, at its line. `used` is cross-file (a call joined with another file's definition: declared, decision 0652). A node's
+/// `text` and `line` go with it into its file's chunk (the push's attributes, 7ff884a7aa; decision 0353 step 3), so
+/// `named` reads no base relation in the cross part. Its `finding` does, as a pack's does: a finding's node and file
+/// are decoded off the corpus batch (`node`, `doc`), the host files' documents among them.
+const HOSTED: &str = ".language javascript\n.embedded on\n.decl called(c: node, x: symbol)\ncalled(c, x) :- kind(c, \"identifier\"), text(c, x).\n.decl defined(x: symbol)\ndefined(x) :- kind(d, \"function_declaration\"), field(d, \"name\", n), text(n, x).\n.decl used(c: node) cross_file\nused(c) :- called(c, x), defined(x).\n.decl named(x: symbol, l: number)\nnamed(x, l) :- used(c), text(c, x), line(c, l).\n.decl finding(category: symbol, q: symbol, n: node)\nfinding(\"used\", x, c) :- used(c), text(c, x).\n.output named, finding\n";
 
 /// The host files, HTML files whose scripts call `foo`, and the script of the run's own grammar that defines it.
 const HOSTS: &[(&str, &str)] = &[

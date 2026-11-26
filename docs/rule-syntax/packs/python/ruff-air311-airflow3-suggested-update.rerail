@@ -30,12 +30,19 @@
     fix safe to_assets "Rename to `assets`"
 to_assets(at) => replace(at, `assets`).
 
-AIR311(at, x, m) :- air_ref(e, at, q), air311_new(q, m, x), !air_guarded(e, m, x).
-air_needs_guard(e, m, x) :- air_ref(e, _, q), air311_new(q, m, x).
+AIR311(at, x, m) :- air311_hit(e, at, m, x), !air_guarded(e, m, x).
+air_needs_guard(e, m, x) :- air311_hit(e, _, m, x).
+// air311_hit(e, at, m, x): reference e, reported at at, has an Airflow 3 spelling `x` in `m`. Keyed by the reference:
+// air311_new is a table of names alone, and a rule of it that took its names from every file's references made it
+// a table of every file's names, joined by name in the cross-file part (decision 0677).
+.decl air311_hit(e: node, at: node, m: symbol, x: symbol)
+air311_hit(e, at, m, x) :- air_ref(e, at, q), air311_new(q, m, x).
+air311_hit(e, at, "airflow.sdk.definitions.param", x) :- air_ref(e, at, q), prefix("airflow.models.", q),
+    split_dot(q, m, x), m != "", (x = "Param" ; x = "ParamsDict" ; x = "DagParam").
 AIR311_gone(at, q) :- air_ref(_, at, q), q = "airflow.datasets.DatasetAliasEvent".
-AIR311_arg(n, "sla_miss_callback") :- air_kw(c, "sla_miss_callback", n), air_call(c, q), air_dag(q).
+AIR311_arg(n, "sla_miss_callback") :- air_kw(c, "sla_miss_callback", n), air_dag(c).
 AIR311_datasets(n) :- air_kw(c, "datasets", n), call_q(c, "airflow.timetables.datasets.DatasetOrTimeSchedule").
-AIR311_arg(n, "sla") :- air_kw(c, "sla", n), air_call(c, q), air_kind(q, "operators", "Operator").
+AIR311_arg(n, "sla") :- air_kw(c, "sla", n), air_kind(c, "operators", "Operator").
 air_kind_ask("operators", "Operator").
 // air311_new(old, module, name): old's Airflow 3 spelling is `name` in `module`.
 .decl air311_new(old: symbol, m: symbol, x: symbol)
@@ -47,8 +54,6 @@ air311_new("airflow.io.store.attach", "airflow.sdk.io", "attach").
 air311_new("airflow.sensors.base.poke_mode_only", "airflow.sdk.bases.sensor", "poke_mode_only").
 air311_new("airflow.datasets.expand_alias_to_datasets", "airflow.models.asset", "expand_alias_to_assets").
 air311_new("airflow.timetables.datasets.DatasetOrTimeSchedule", "airflow.timetables.assets", "AssetOrTimeSchedule").
-air311_new(q, "airflow.sdk.definitions.param", x) :- air_ref(_, _, q), prefix("airflow.models.", q), split_dot(q, m, x), m != "",
-    (x = "Param" ; x = "ParamsDict" ; x = "DagParam").
 .decl air311_sdk(old: symbol, x: symbol)  // renamed, into airflow.sdk
 air311_sdk("airflow.Dataset", "Asset"). air311_sdk("airflow.datasets.Dataset", "Asset").
 air311_sdk("airflow.datasets.DatasetAlias", "AssetAlias"). air311_sdk("airflow.datasets.DatasetAll", "AssetAll").

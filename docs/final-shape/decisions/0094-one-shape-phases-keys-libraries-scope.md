@@ -1,7 +1,12 @@
 # 0094: One shape for phases, keys, libraries and scope
 
-Status: accepted (2026-11-08). A map, not a mechanism: it says which decision answers each question, settles where
-two disagreed, and keeps the numbers in one register.
+Status: partly built (audited 2026-11-23, corrected 2026-11-24). Left: the incremental layout-invariance gate (§8),
+written as a test (`a_moved_definition_costs_about_itself`, ignored until met) that counts the joins' work. A reach
+index made again has its delta (2026-11-24); left is the maintain mode's lines that a delta leads but that walk whole
+documents (0364 R4 at scale), edit-cost's work.
+§5's searches are 0144's demand rules (built); §6's stored answers and read record are t24's step 1 (built), keyed by
+the module graph since t25. Accepted (2026-11-08). A map, not a mechanism: it says which decision answers each question,
+settles where two disagreed, and keeps the numbers in one register.
 
 ## Intro
 
@@ -341,6 +346,112 @@ Phase 0 is being designed in its own session; note t23 records the constraints t
 - **Layout invariance, cold**: answers and work equal across layouts (t22's scripts). Holds today; a gate.
 - **Layout invariance, incremental**: a move costs about the moved definitions. Fails today (72.5 s for the cross
   part against 2.5 s warm); tracked as the target for P1–P3, not yet a gate.
+  - **Measured again (2026-11-23), and written as a test.** t22's move on corpus0's `conform` package (95 files;
+    8 definitions moved, the 8 that other files import by name most, since the Jedi recording is not at hand),
+    calls_cx, a farm M1 Max, profiling build. The scripts are `docs/rule-syntax/site/bench/layout-invariance`.
+    - Answers: `call_target` (1,279) and `call_open` (5,798) are equal across layouts once mapped back, warm and
+      cold. `type_of` differs in 158 rows, each a moved class's qualified name (`conform.conftest.RawSqlForTests`
+      against `conform._moved_3.RawSqlForTests`): the name a module gives it, which the move changes. Cold work is
+      equal across layouts (16–19 s CPU each).
+    - Work: warm with nothing changed, 0.1 s CPU. The move, warm on the original's store: 87 of 103 files from the
+      memo, as they should be, and 11.4 s CPU against a cold run's 16.2 s. Its cross part took 3.0 s against a cold
+      run's 1.7 s, and its statistics 1.2 s against 0.2 s. Of the program's 216 strata it maintained 123 and derived
+      62 again; 1.7 M rows of change were queued to the store.
+    - What the 62 strata derived again stood for, read again by `RERAIL_MODE_TRACE` (2026-11-24; the first reading,
+      of the same day before, gave a second cause that was wrong):
+      - 3 native operators' strata made again, and 15 readers of theirs. The move changes the import graph, so the
+        reach indexes over it (`rr_cx_reach`, `rr_cx_sees`, `rr_in_annotation_0_anc`, decision 0119) are made
+        again. Made in place, they keep no rows of the last run (`m.kept` is none in the level driver), so none
+        had a delta (`no_delta`), and each reader derived again: `rr_cx_reach changed without a version`
+        (10 strata), `rr_cx_sees` (4), `rr_in_annotation_0_anc` (1).
+      - 44 past the threshold (0090 §4), most by its priced clause (the mode's lines priced above a fresh derive),
+        not by the deltas' size. The deltas are not wider than the moved definitions: node ids are by definition
+        already (§2a: a granule's slot is a hash of its key, a document's of its path), and `kind`'s delta is the
+        moved definitions' nodes (11,268 rows). Many of the 44 are cheap to derive (`tvarq` 25 rows of work,
+        `mtvar` 30), and deriving them is right. Two of their deltas are wide for another reason: `node_order`'s
+        keys are run ranks (decision 0121), which a granule taken out of a file moves for every later granule
+        (77,454 rows changed), past θ's size clause for `shadowed`.
+      - Beside the strata: the base relations' versions for the changed documents (0458) took 1.05 s against the
+        whole of a cold run's statistics' 0.2 s; the file-local joins over the 16 changed files (`walk` 0.70 s,
+        `rotgt` 0.54 s) cost more than a cold run's over all 95 (0.17 s, 0.14 s); 1.7 M rows of change were queued
+        to the frames, before t33's K4 was merged.
+    - **A reach index made again has its delta (2026-11-24).** Made in place it keeps no rows (decision 0119 §3),
+      so its old index is made again from its reads' old rows (their versions, read in place), and its rows gone
+      and added are read only at the starts that can differ: those whose seeds changed, and those that reach,
+      before or after, the source of an edge gone or added (`plan::reach_was`, `Closed::changed_since`). A relation
+      through a reach (`rr_cx_sees`) the same way over its map. Its readers are maintained from that delta, the old
+      index given as their old rows. Decision 0331's case, old rows kept in memory, is unchanged.
+    - **The gate counts work, not strata.** A stratum derived again is not a cost: one cheap to derive is derived
+      (the priced clause), and the reach indexes are made again whenever the import graph changes. The test
+      counts the native joins' work (`shape::join_work`: the rows into each step and those its last step makes,
+      as the planner prices a plan), every line of the run's strata, and sets the move's against an edit of the
+      same definition in place and against a cold run. Its answers are a fresh run's (`fresh_tier`).
+    - The test (`maintain_tests::a_moved_definition_costs_about_itself`) is t22's move in small: calls_cx over 26
+      files, a definition 12 files call moved to `_moved_0.py` and re-exported, θ at its defaults. With the reach
+      indexes' delta and t33's K4 merged, the move derives nothing again but the two reach indexes, and maintains
+      145 strata. Its work: cold 61,264, the edit in place 17,738, the move 93,291. Four lines of the big recursive
+      component (`bv`, `pv` and their 39 companions) cost 58,623 of the move's, and 10,142 of the edit's. Each is
+      led by its delta, `docof`'s changed nodes, and then reads `rr_cx_reach` and `docof` by document: every node of
+      every file that imports the changed one, before `qv` binds the changed node to nothing (`bv(s, x, k, v) :-
+      ibind(s, x, q), qv(m9, q, k, v), docof(s, d9), docof(m9, e9), rr_cx_reach(d9, e9)`; `pv`'s through `litq`
+      and `qn` alike). That is 0364 R4 at scale: the order after the driver, priced. The test is ignored until the
+      move costs at most 3 times the edit in place and at most half a cold run.
+    - **corpus0 again (2026-11-24),** after the hub's roll-up 112 (K4) and the reach indexes' delta, same scripts and
+      host. Answers as before. Cold 9.3 s CPU (16.2 s before the roll-ups), warm 0.0 s, the move 12.6 s: its cross
+      part 7.7 s, against 3.0 s when the reach indexes' readers derived again. Of the move's 42.0 M rows of joins'
+      work, the big recursive component's maintain mode did 35.3 M; derived cold it does 202,510. Its heaviest lines
+      are led by `rr_cx_reach`'s delta (156 rows) and then scan `pann` whole before `docof` binds it to the
+      document (`bv(f, x, "inst", s) :- pann(f, x, t), pread(f, x), uinst(t, c), anc(s, c), docof(f, d9), docof(s,
+      e9), rr_cx_reach(d9, e9)`: 9.96 M each). 0090 §4's priced clause let it through: it priced the mode at
+      1.9e12 against a derive at 2.0e12, both far from the work done. So the reach index's delta is right, and its
+      readers' lines and their price are now the cost: 0364 R4 at scale and the clause's price, edit-cost's next.
+    - **The mode's lines priced under the floor (2026-11-24).** Under θ's floor (1,024 changed rows) a mode's line was
+      led by its delta and taken as the program planned it, unpriced: cheap whatever its order where the delta binds
+      the rest. The `bv` lines above bound only documents from `rr_cx_reach`'s 156 rows and read `pann` whole for
+      each; led by `pann`'s 37, others walked every reached document's nodes (`docof` from its document). Now a
+      line's delta-led order is priced with the run's sizes, and planned free to start, as past the floor, where
+      it is over `REPLAN_ROWS` or reads a relation whole a delta row; the cheaper is taken, and θ's price of the
+      mode prices it alike (`Model::under_floor_line`). And a stratum's own relations are sized and measured as
+      kept before its lines are planned (`kept_card`): unsized, `pv` read whole was priced nearly free (2,852 for
+      177,625 rows of work done), and the name walks' rechecks descended each scope (453,672 each).
+      - corpus0, M1 Max, loads 9 to 24, answers as before: the move's joins' work 42.0 M → 17.4 M → 7.7 M → 4.2 M,
+        against a cold run's 9.9 M; the big recursive component's mode 35.3 M → 0.28 M. CPU: cold 9.4 to 10.1 s,
+        the move 8.7 to 9.0 s; its cross part 3.1 to 3.4 s against cold's 2.1 s, of which the joins 1.2 s over
+        127 maintained strata, their opening 0.4 s, and the 62 strata derived again 0.7 s (3.3 M rows of work,
+        `attr_open` and its companions 0.75 M of them). Outside the cross part, the base relations' versions
+        (0458) take 1.35 s, against the whole of a cold run's statistics' 0.26 s: now the largest single piece.
+      - The test: cold 61,261, the edit in place 6,821, the move 24,658. The move is under half a cold run, and 3.6
+        times the edit in place, past the test's 3: its heaviest lines are led by `rr_cx_reach`'s 15 changed rows and
+        read the documents those pairs join, which an edit in place, changing no import, does not pay.
+    - **The test again, by its lines' rows (2026-11-24).** The trace now prints each heavy line's steps' rows in and
+      out, and each run of the test starts with a marker (`0094 §8 run: …`), so a run's lines are read apart.
+      - A mode line's `docof($n, $d)`, `$d` bound by `rr_cx_reach`'s pair and `$n` not, walked every node of the
+        document to probe the next atom by each: `pv`'s line read 433 nodes for 50 of `qn`'s rows. It is now put
+        after that atom, as a test of `$n`'s document, and the engine reads the atom's rows in the document's range
+        of ids, `[d << 32, (d + 1) << 32)`, in an order on that column alone (`setfix::Ranged::doc`,
+        `InRel::index_then` with no key): `pv` 523 → 105, `tsub` 562 → 144 twice, `rr_in_annotation_0_bv` 502 → 84,
+        `bknown` 300 → 104. A stratum's own relation (`bv`'s `qv`) is not read so yet.
+      - The sources phase's first run is not maintained: a stratum whose reads changed is derived whole. A path
+        added derived `sl_match` again, every path against every suffix (1,297). It now cuts each name at the
+        suffix lengths the registry has and looks the cut up (`sl_cut` 456 and `sl_match` 99).
+      - Cold 60,594, the edit in place 6,822, the move 21,994: 3.2 times the edit. The rest of the move's excess is
+        the import's: the callers' `pv` rows change with the moved name (24 gone and added, each probed into about
+        15 rules, and rechecked against each of `pv`'s), and the strata over imports (`run_import`, `ext_import`,
+        `open_sync`, `xknown`) are reached, which an edit in place does not reach.
+      - Then (2026-11-24): a stratum's own relation read the same way (`bv`'s `qv`: `Rel::scan_within` over an order
+        the plan asks for, led by the range's column); a row gone from a recursive component by levels is checked
+        again at the end only by the rules that read the component (one that reads lower strata alone derived it no
+        more then than now). The move 21,737, the edit 6,821.
+      - Where the rest is. The sources phase's cones run their gated fixpoint over kept strata, not their rounds
+        (decision 0145): with their gates ungated, the Python and C import programs do not stratify (`py_admitted`
+        reads `py_listed_above` negatively in its component). So a path added derives the source-language chain whole
+        (973 rows against the edit's 162). The cross part, 17,708 against 3,970, is proportional to what changed: its
+        maintain mode does 4.4 rows of work per delta row read in the move and 5.5 in the edit, and the move reads
+        4,062 delta rows against 720. Those are the moved definition's nodes (35 against the edit's 6, every relation
+        keyed by node), the callers' references to its new id (`pv`: node ids carry the document, §2a), and the
+        import's 15 pairs, each with what it derives. Its rechecks are 3,000 rows: each row gone tried by each rule of
+        its relation, most by rules that never derived it, where the run's deltas say nothing of where a body fails
+        (testing the changed reads' atoms first was tried and cost more).
 - O125's replay (`spike_o125_replay`): a session's answers equal a full run's on real commits.
 
 ### 9. One register for numbers

@@ -10,6 +10,7 @@
 //! held before the waves). The image is stored as made, not compressed (decision 0295 §2), and read where it is in
 //! its segment (`SegmentBytes`).
 
+use rerail_blocks::vector::Vector;
 use super::{Entry, Syms};
 use crate::code_rule_dsl::logic::plan::output::{Builder, Finished, Image, Rows, col};
 use crate::content_store::atoms::{Atoms, Sym};
@@ -61,18 +62,18 @@ pub(super) fn encode_parts(entry: &Entry, syms: &Syms, atoms: &Atoms) -> StoreRe
         }
     }
     let end = shown.keys().copied().max().map_or(0, |m| m + 1);
-    b.rows_as_is(SYMS, &[col::INT], vec![shown.len() as i64, end]);
-    b.rows_as_is(NODES, &[col::INT], vec![entry.nodes as i64]);
+    b.rows_as_is(SYMS, &[col::INT], rerail_blocks::vector![shown.len() as i64, end]);
+    b.rows_as_is(NODES, &[col::INT], rerail_blocks::vector![entry.nodes as i64]);
     for (key, (w, values)) in &entry.rows {
         let w = *w;
         let name = format!("r:{key}");
         if w == 0 {
-            b.rows_as_is(&name, &[], Vec::new());
+            b.rows_as_is(&name, &[], rerail_blocks::vector::Vector::new());
             continue;
         }
         let cols = syms.columns(key, w).filter(|c| c.len() == w).unwrap_or_else(|| vec![false; w]);
         let types: Vec<u8> = cols.iter().map(|&s| if s { col::TEXT } else { col::INT }).collect();
-        let mut rows = Vec::with_capacity(values.len());
+        let mut rows = rerail_blocks::vector::Vector::with_capacity(values.len());
         for row in values.chunks_exact(w) {
             for (c, &v) in row.iter().enumerate() {
                 if !cols[c] {
@@ -96,10 +97,10 @@ pub(super) fn encode_parts(entry: &Entry, syms: &Syms, atoms: &Atoms) -> StoreRe
     for (name, (nodes, rows)) in &entry.outputs {
         b.rows_as_is(&format!("c:{name}"), &[col::INT], nodes.iter().map(|&c| c as i64).collect());
         if rows.width() == 0 {
-            b.rows_as_is(&format!("n:{name}"), &[col::INT], vec![rows.len() as i64]);
+            b.rows_as_is(&format!("n:{name}"), &[col::INT], rerail_blocks::vector![rows.len() as i64]);
         }
         let types = rows.types();
-        let mut values = Vec::with_capacity(rows.len() * types.len());
+        let mut values = rerail_blocks::vector::Vector::with_capacity(rows.len() * types.len());
         for i in 0..rows.len() {
             for (c, &v) in rows.row(i).iter().enumerate() {
                 values.push(if types[c] == col::TEXT { i64::from(b.text(rows.text(v))) } else { v });
@@ -118,7 +119,7 @@ fn image(bytes: &SegmentBytes) -> StoreResult<Image> {
 
 /// Each string the symbol columns of the relations `keep` takes hold (by the image's index), as this process's atom.
 fn atoms_of(image: &Image, keep: &dyn Fn(&str) -> bool, atoms: &Atoms) -> StoreResult<HashMap<u32, i64>> {
-    let mut wanted: Vec<u32> = Vec::new();
+    let mut wanted: Vector<u32> = rerail_blocks::vector::Vector::new();
     for (name, rel) in image.relations() {
         let Some(key) = name.strip_prefix("r:") else { continue };
         if !keep(key) {
@@ -146,7 +147,7 @@ pub fn hold(entries: &[&SegmentBytes], atoms: &Atoms) -> StoreResult<usize> {
     let held = atoms.held_below();
     let images = entries.iter().map(|b| image(b)).collect::<StoreResult<Vec<_>>>()?;
     let mut strings: Vec<&str> = Vec::new();
-    let mut wanted: Vec<u32> = Vec::new();
+    let mut wanted: Vector<u32> = rerail_blocks::vector::Vector::new();
     let mut read = 0;
     for image in &images {
         let syms = image.rel(SYMS).map(|r| r.col(0));
@@ -193,7 +194,7 @@ pub fn decode(bytes: &SegmentBytes, keep: &dyn Fn(&str) -> bool, atoms: &Atoms) 
     let image = image(bytes)?;
     let ids = atoms_of(&image, keep, atoms)?;
     let mut entry = Entry::default();
-    let mut columns: HashMap<&str, Vec<usize>> = HashMap::new();
+    let mut columns: HashMap<&str, Vector<usize>> = HashMap::new();
     let mut counts: HashMap<&str, usize> = HashMap::new();
     for (name, rel) in image.relations() {
         if name == SYMS {
@@ -205,7 +206,7 @@ pub fn decode(bytes: &SegmentBytes, keep: &dyn Fn(&str) -> bool, atoms: &Atoms) 
                 continue;
             }
             let types = rel.types();
-            let mut values = Vec::with_capacity(rel.rows * rel.width);
+            let mut values = rerail_blocks::vector::Vector::with_capacity(rel.rows * rel.width);
             for i in 0..rel.rows {
                 for (c, &t) in types.iter().enumerate() {
                     let v = rel.col(c)[i];
@@ -221,7 +222,7 @@ pub fn decode(bytes: &SegmentBytes, keep: &dyn Fn(&str) -> bool, atoms: &Atoms) 
             // The output's texts, each once, in the order its rows name them.
             let types = rel.types().to_vec();
             let (mut texts, mut at): (Vec<String>, HashMap<u32, i64>) = (Vec::new(), HashMap::new());
-            let mut vals = Vec::with_capacity(rel.rows * rel.width);
+            let mut vals = rerail_blocks::vector::Vector::with_capacity(rel.rows * rel.width);
             for i in 0..rel.rows {
                 for (c, &t) in types.iter().enumerate() {
                     let v = rel.col(c)[i];

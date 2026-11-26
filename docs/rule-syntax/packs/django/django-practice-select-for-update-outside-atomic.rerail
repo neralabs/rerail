@@ -24,18 +24,40 @@
 #include "python/django.rerail"
 
 .violation SelectForUpdateOutsideAtomic(at: node, f: symbol, why: symbol) "`select_for_update()` in `{f}` runs outside transaction.atomic(): {why}. In autocommit mode Django raises TransactionManagementError here on PostgreSQL, MySQL and Oracle, though a TestCase (which wraps each test in a transaction) passes. Wrap the locking read and the writes that depend on it in `transaction.atomic()`, and give any try/except of a DatabaseError inside it its own nested `atomic()`."
-SelectForUpdateOutsideAtomic(c, x, why) :- sfu_site(c, f), def_name(f, x), sfu_exposed(f), sfu_why(f, why).
+SelectForUpdateOutsideAtomic(c, x, why) :- field(c, "function", e), attr_of(e, _, "select_for_update"), owner(c, f),
+    pt_tm(f, fq), pt_tm(c, ct), sfu_site(fq, ct), def_name(f, x), sfu_exposed(fq), sfu_why(fq, why).
 
-// sfu_site(c, f): call c is `<qs>.select_for_update(…)` in def f, outside tests and outside an atomic region.
-.decl sfu_site(c: node, f: node)
-sfu_site(c, f) :- kind(c, "call"), field(c, "function", e), attr_of(e, _, "select_for_update"), owner(c, f),
-    !sfu_in_atomic(c), !sfu_guarded(c), !sfu_built_for_atomic(c), docof(c, d), !dj_test_doc(d).
-// sfu_built_for_atomic(c): `qs = qs.select_for_update(…)` whose name the same function reads inside an atomic region:
-// the queryset is built first and evaluated in the transaction (`with transaction.atomic(): list(qs[:n])`).
-.decl sfu_built_for_atomic(c: node)
-sfu_built_for_atomic(c) :- kind(a, "assignment"), field(a, "right", r), (unparen(r, c) ; within(c, r)),
+// Across files, everything is by symbol (decision 0677): a def by its symbol (`pt_tm`, as `call_target` names it), a
+// call in it by its term there, and whether a node runs in a transaction as each file states it: for reasons of its
+// own file (`sfu_loc`), or because a context manager or a decorator of the run, by its symbol, opens one
+// (`sfu_via`). Which of those do is a fixpoint over symbols (`sfu_atomic`).
+
+// sfu_site(f, c): call c is `<qs>.select_for_update(…)` in def f, outside tests and outside an atomic region. Each file
+// states its candidates (sfu_site_cand) and the symbols that would put each in a transaction (sfu_site_via).
+// sfu_lock_call(c): c is `<qs>.select_for_update(…)`.
+.decl sfu_lock_call(c: node)
+sfu_lock_call(c) :- kind(c, "call"), field(c, "function", e), attr_of(e, _, "select_for_update").
+.decl sfu_site_cand(f: symbol, c: symbol)
+sfu_site_cand(fq, ct) :- sfu_lock_call(c), owner(c, f),
+    !sfu_loc(c), !sfu_guarded(c), !sfu_built_loc(c), docof(c, d), !dj_test_doc(d), pt_tm(f, fq), pt_tm(c, ct).
+.decl sfu_site_via(f: symbol, c: symbol, s: symbol)
+sfu_site_via(fq, ct, s) :- sfu_lock_call(c), owner(c, f),
+    (sfu_via(c, s) ; sfu_built_via(c, s)), pt_tm(f, fq), pt_tm(c, ct).
+.decl sfu_site(f: symbol, c: symbol)
+sfu_site(fq, ct) :- sfu_site_cand(fq, ct), !sfu_site_covered(fq, ct).
+.decl sfu_site_covered(f: symbol, c: symbol)
+sfu_site_covered(fq, ct) :- sfu_site_via(fq, ct, s), sfu_atomic(s).
+// sfu_built_loc(c), sfu_built_via(c, s): `qs = qs.select_for_update(…)` whose name the same function reads inside an
+// atomic region: the queryset is built first and evaluated in the transaction (`with transaction.atomic():
+// list(qs[:n])`).
+.decl sfu_built_read(c: node, i: node)
+sfu_built_read(c, i) :- sfu_lock_call(c), kind(a, "assignment"), field(a, "right", r), (unparen(r, c) ; within(c, r)),
     field(a, "left", l), kind(l, "identifier"), text(l, v), def_frame(c, fr), kind(i, "identifier"), text(i, v),
-    def_frame(i, fr), i != l, earlier(l, i), !bind_only(i), sfu_in_atomic(i).
+    def_frame(i, fr), i != l, earlier(l, i), !bind_only(i).
+.decl sfu_built_loc(c: node)
+sfu_built_loc(c) :- sfu_built_read(c, i), sfu_loc(i).
+.decl sfu_built_via(c: node, s: symbol)
+sfu_built_via(c, s) :- sfu_built_read(c, i), sfu_via(i, s).
 // sfu_guarded(c): c runs only when a test on atomicity holds: `if self.is_atomic: qs = qs.select_for_update()`,
 // `qs.select_for_update() if connection.in_atomic_block else qs`. The same flag opens the transaction.
 .decl sfu_guarded(c: node)
@@ -60,46 +82,39 @@ sfu_guarded(c) :- owner(c, f), kind(x, "conditional_expression"), child(x, t, 1)
 sfu_reads_param(t, f) :- param(f, x, _), x != "self", x != "cls", look(n, x, f), kind(n, "identifier"), text(n, x),
     (t = n ; within(n, t)).
 
-// sfu_in_atomic(n): n runs in a transaction: inside an atomic region or the body of a with whose item calls a wrapper
-// named like atomic (label-studio's `conditional_atomic(...)`; python/django's dj_in_transaction), in an atomic def
-// of the run's kinds (sfu_atomic_def), in a with-item after a `transaction.atomic()` item of the same with statement
-// (`with transaction.atomic(), self.lock_rows(qs):`), or in the body of a with whose item calls a context manager of
-// the run that yields inside a transaction (Weblate's `source_operation(component)`, whose `source_project_gate`
-// yields in `with transaction.atomic()`).
-.decl sfu_in_atomic(n: node)
-sfu_in_atomic(n) :- dj_in_transaction(n).
-sfu_in_atomic(n) :- sfu_atomic_def(f), field(f, "body", b), within_stop(n, b, dj_region_stop).
-sfu_in_atomic(n) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, wa, i),
+// n runs in a transaction: inside an atomic region or the body of a with whose item calls a wrapper named like atomic
+// (label-studio's `conditional_atomic(...)`; python/django's dj_in_transaction), in an atomic def of the run's kinds,
+// in a with-item after a `transaction.atomic()` item of the same with statement (`with transaction.atomic(),
+// self.lock_rows(qs):`), or in the body of a with whose item calls a context manager of the run that yields inside a
+// transaction (Weblate's `source_operation(component)`, whose `source_project_gate` yields in `with
+// transaction.atomic()`). sfu_loc(n): for a reason of n's own file. sfu_via(n, s): if s opens one, s a context
+// manager of the run (`cm:` and its symbol) or a decorator (`wrap:` and its name).
+.decl sfu_loc(n: node)
+sfu_loc(n) :- dj_in_transaction(n).
+sfu_loc(n) :- sfu_def_loc(f), field(f, "body", b), within_stop(n, b, dj_region_stop).
+sfu_loc(n) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, wa, i),
     kind(wa, "with_item"), field(wa, "value", v), (unparen(v, e) ; kind(v, "as_pattern"), child(v, v0, 0), unparen(v0, e)),
     dj_atomic(e), child(wc, wb, j), i < j, kind(wb, "with_item"), within_stop(n, wb, dj_region_stop).
-sfu_in_atomic(n) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, wi, _),
+.decl sfu_via(n: node, s: symbol)
+sfu_via(n, s) :- sfu_def_via(f, s), field(f, "body", b), within_stop(n, b, dj_region_stop).
+sfu_via(n, cat("cm:", gq)) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, wi, _),
     kind(wi, "with_item"), field(wi, "value", v), (unparen(v, e) ; kind(v, "as_pattern"), child(v, v0, 0), unparen(v0, e)),
-    kind(e, "call"), call_target(e, g), sfu_atomic_cm(g), field(w, "body", b), within_stop(n, b, dj_region_stop).
-// sfu_atomic_cm(g): def g (a `@contextmanager`) has a `yield` that runs in a transaction.
-.decl sfu_atomic_cm(g: node)
-sfu_atomic_cm(g) :- kind(y, "yield"), sfu_in_atomic(y), nearest(y, g, dj_region_stop), kind(g, "function_definition").
-// sfu_atomic_def(f): def f runs in a transaction it opens: `@transaction.atomic`, `@method_decorator(
-// transaction.atomic)`, a method of a class decorated `@method_decorator(transaction.atomic, name=x)` where x is
-// `dispatch` (it calls every handler) or f's name, or a decorator of the run whose wrapper calls the decorated function
-// in a transaction (Weblate's `@source_operation_method`: `with source_operation(component): return method(...)`), or
-// a context manager used as a decorator that opens one (saleor's `@traced_atomic_transaction()`).
-// Cross-file (decision 0652): a name resolved to its definition, in another file than the reference.
-.decl sfu_atomic_def(f: node) cross_file
-sfu_atomic_def(f) :- dj_atomic_def(f).
-sfu_atomic_def(f) :- kind(f, "function_definition"), decorator(f, e), sfu_method_atomic(e).
-sfu_atomic_def(f) :- kind(f, "function_definition"), nearest(f, k, scope), kind(k, "class_definition"), decorator(k, e),
+    kind(e, "call"), call_target(e, gq), field(w, "body", b), within_stop(n, b, dj_region_stop).
+// Def f runs in a transaction it opens: `@transaction.atomic`, `@method_decorator(transaction.atomic)`, a method of a
+// class decorated `@method_decorator(transaction.atomic, name=x)` where x is `dispatch` (it calls every handler) or
+// f's name (sfu_def_loc); or a decorator of the run whose wrapper calls the decorated function in a transaction
+// (Weblate's `@source_operation_method`: `with source_operation(component): return method(...)`), or a context
+// manager used as a decorator that opens one (saleor's `@traced_atomic_transaction()`) (sfu_def_via).
+.decl sfu_def_loc(f: node)
+sfu_def_loc(f) :- dj_atomic_def(f).
+sfu_def_loc(f) :- kind(f, "function_definition"), decorator(f, e), sfu_method_atomic(e).
+sfu_def_loc(f) :- kind(f, "function_definition"), nearest(f, k, scope), kind(k, "class_definition"), decorator(k, e),
     sfu_method_atomic(e), sfu_name_kw(e, x), sfu_wrapped_name(f, x).
-sfu_atomic_def(f) :- kind(f, "function_definition"), decorator(f, e), unparen(e, m), sym_of(m, q), qualname(d, q),
-    sfu_atomic_wrapper(d).
-sfu_atomic_def(f) :- kind(f, "function_definition"), decorator(f, e), unparen(e, m), kind(m, "call"),
-    call_target(m, g), sfu_atomic_cm(g).
-// sfu_atomic_wrapper(d): decorator d calls the function it receives (its first parameter) in a transaction.
-.decl sfu_atomic_wrapper(d: node)
-sfu_atomic_wrapper(d) :- kind(d, "function_definition"), param(d, x, 0), kind(c, "call"), field(c, "function", fn),
-    kind(fn, "identifier"), text(fn, x), look(fn, x, d), sfu_in_atomic(c).
-// sfu_name_kw(e, x): call e passes `name=x`, a string. A rule of its own, on e's document alone: sfu_atomic_def is
-// recursive through the run's call targets (python/points-to), and a string's text is read where the documents are
-// (decision 0174 §6).
+.decl sfu_def_via(f: node, s: symbol)
+sfu_def_via(f, cat("wrap:", q)) :- kind(f, "function_definition"), decorator(f, e), unparen(e, m), sym_of(m, q).
+sfu_def_via(f, cat("cm:", gq)) :- kind(f, "function_definition"), decorator(f, e), unparen(e, m), kind(m, "call"),
+    call_target(m, gq).
+// sfu_name_kw(e, x): call e passes `name=x`, a string.
 .decl sfu_name_kw(e: node, x: symbol)
 sfu_name_kw(e, x) :- kind(e, "call"), call_arg(e, -1, "name", nv), str(nv, x).
 .decl sfu_wrapped_name(f: node, x: symbol)
@@ -108,88 +123,142 @@ sfu_wrapped_name(f, x) :- def_name(f, x).
 .decl sfu_method_atomic(e: node)
 sfu_method_atomic(e) :- kind(e, "call"), field(e, "function", mf), sym_of(mf, "django.utils.decorators.method_decorator"),
     posarg(e, 0, a), unparen(a, m), dj_atomic(m).
+// sfu_atomic(s): s opens a transaction: a context manager g (`cm:`) whose `yield` runs in one, or a decorator d
+// (`wrap:` and its qualified name) that calls the function it receives (its first parameter) in one. Each file
+// states its own: for a reason of its own (sfu_sym_loc), or if another does (sfu_sym_via).
+.decl sfu_sym_loc(s: symbol)
+sfu_sym_loc(cat("cm:", gq)) :- kind(y, "yield"), sfu_loc(y), nearest(y, g, dj_region_stop),
+    kind(g, "function_definition"), pt_tm(g, gq).
+sfu_sym_loc(cat("wrap:", q)) :- sfu_wrapper_call(d, c), sfu_loc(c), qualname(d, q).
+.decl sfu_sym_via(s: symbol, t: symbol)
+sfu_sym_via(cat("cm:", gq), t) :- kind(y, "yield"), sfu_via(y, t), nearest(y, g, dj_region_stop),
+    kind(g, "function_definition"), pt_tm(g, gq).
+sfu_sym_via(cat("wrap:", q), t) :- sfu_wrapper_call(d, c), sfu_via(c, t), qualname(d, q).
+.decl sfu_wrapper_call(d: node, c: node)
+sfu_wrapper_call(d, c) :- kind(d, "function_definition"), param(d, x, 0), kind(c, "call"), field(c, "function", fn),
+    kind(fn, "identifier"), text(fn, x), look(fn, x, d).
+.decl sfu_atomic(s: symbol)
+sfu_atomic(s) :- sfu_sym_loc(s).
+sfu_atomic(s) :- sfu_sym_via(s, t), sfu_atomic(t).
 
+// sfu_plain(f): def f, outside tests, does not open a transaction around its whole body.
+.decl sfu_plain(f: symbol)
+sfu_plain(fq) :- sfu_def_cand(fq), !sfu_def_atomic(fq).
+.decl sfu_def_cand(f: symbol)
+sfu_def_cand(fq) :- kind(f, "function_definition"), !sfu_def_loc(f), docof(f, d), !dj_test_doc(d), pt_tm(f, fq).
+.decl sfu_def_via_at(f: symbol, s: symbol)
+sfu_def_via_at(fq, s) :- sfu_def_via(f, s), pt_tm(f, fq).
+.decl sfu_def_atomic(f: symbol)
+sfu_def_atomic(fq) :- sfu_def_via_at(fq, s), sfu_atomic(s).
 // sfu_up(f): def f holds a site, or calls a sfu_up def outside any atomic region: the only defs whose exposure
 // matters. (An atomic call site, or an atomic def, ends the walk up the callers.)
-.decl sfu_up(f: node)
-sfu_up(f) :- sfu_site(_, f), sfu_plain(f).
-sfu_up(g) :- sfu_up(f), call_target(c, f), owner(c, g), !sfu_in_atomic(c), sfu_plain(g).
-// sfu_exposed(f): def f may run with no transaction open.
-.decl sfu_exposed(f: node)
-sfu_exposed(f) :- sfu_entry(f).
-sfu_exposed(f) :- sfu_bare_call(_, f).
-// sfu_bare_call(c, f): call c, in a def that may run with no transaction open (or at module level), reaches f and
-// is not inside an atomic region.
-.decl sfu_bare_call(c: node, f: node)
-sfu_bare_call(c, f) :- sfu_up(f), call_target(c, f), owner(c, g), sfu_exposed(g), !sfu_in_atomic(c).
-sfu_bare_call(c, f) :- sfu_up(f), call_target(c, f), !owner(c, _), docof(c, d), !dj_test_doc(d).
-// sfu_plain(f): def f, outside tests, does not open a transaction around its whole body.
-.decl sfu_plain(f: node)
-sfu_plain(f) :- kind(f, "function_definition"), !sfu_atomic_def(f), docof(f, d), !dj_test_doc(d).
+.decl sfu_up(f: symbol)
+sfu_up(fq) :- sfu_site(fq, _), sfu_plain(fq).
+sfu_up(gq) :- sfu_up(fq), sfu_bare(gq, _, fq), sfu_plain(gq).
+// sfu_bare(g, c, f): call c, in def g, reaches f and is not inside an atomic region. Each file states its calls
+// (sfu_call_cand, sfu_call_via) and where they are (sfu_call_at).
+.decl sfu_call_cand(g: symbol, c: symbol, f: symbol)
+sfu_call_cand(gq, ct, fq) :- call_target(c, fq), owner(c, g), !sfu_loc(c), pt_tm(g, gq), pt_tm(c, ct).
+.decl sfu_call_via(g: symbol, c: symbol, s: symbol)
+sfu_call_via(gq, ct, s) :- call_target(c, _), owner(c, g), sfu_via(c, s), pt_tm(g, gq), pt_tm(c, ct).
+.decl sfu_call_at(g: symbol, c: symbol, gx: symbol, p: symbol, l: number)
+sfu_call_at(gq, ct, gx, p, l) :- call_target(c, _), owner(c, g), pt_tm(g, gq), pt_tm(c, ct), def_name(g, gx), line(c, l),
+    docof(c, d), doc(d, p, _).
+.decl sfu_call_covered(g: symbol, c: symbol)
+sfu_call_covered(gq, ct) :- sfu_call_via(gq, ct, s), sfu_atomic(s).
+.decl sfu_bare(g: symbol, c: symbol, f: symbol)
+sfu_bare(gq, ct, fq) :- sfu_call_cand(gq, ct, fq), !sfu_call_covered(gq, ct).
+// sfu_mod_call(f, l): a call at module level, outside tests, at line l reaches f.
+.decl sfu_mod_call(f: symbol, l: number)
+sfu_mod_call(fq, l) :- call_target(c, fq), !owner(c, _), docof(c, d), !dj_test_doc(d), line(c, l).
+// sfu_exposed(f): def f may run with no transaction open: an entry point, or called bare from a def that may, or from
+// module level.
+.decl sfu_exposed(f: symbol)
+sfu_exposed(fq) :- sfu_entry(fq).
+sfu_exposed(fq) :- sfu_up(fq), sfu_bare(gq, _, fq), sfu_exposed(gq).
+sfu_exposed(fq) :- sfu_up(fq), sfu_mod_call(fq, _).
 // sfu_entry(f): no code outside tests calls f, by a known or an unknown target, so a framework (a URL route, a task
 // queue, a command, a signal) does; a view is in a transaction when the project sets ATOMIC_REQUESTS. Test callers
 // do not count: they run in TestCase's transaction, and a task a test calls directly is still an entry point. f has
 // a shape a framework calls (sfu_framework_shape): an uncalled plain function is dead code or a helper for callers
 // outside the project, whose transaction is theirs.
-.decl sfu_entry(f: node)
-sfu_entry(f) :- sfu_up(f), !sfu_called(f), def_name(f, x), !sfu_open_name(x), !sfu_run_passed(x), !sfu_atomic_view(f),
-    !sfu_property(f), sfu_framework_shape(f).
+.decl sfu_entry(f: symbol)
+sfu_entry(fq) :- sfu_up(fq), !sfu_called(fq), sfu_name(fq, x), !sfu_open_name(x), !sfu_run_passed(x),
+    !sfu_atomic_view(fq), !sfu_property(fq), sfu_framework_shape(fq).
+.decl sfu_name(f: symbol, x: symbol)
+sfu_name(fq, x) :- kind(f, "function_definition"), def_name(f, x), pt_tm(f, fq).
 // sfu_property(f): f is a `@property` or `@cached_property`: read as an attribute, never called, so "no caller" says
 // nothing (saleor's `Reordering.ordered_node_map`).
-.decl sfu_property(f: node)
-sfu_property(f) :- sfu_up(f), decorator(f, e), unparen(e, m), leaf_name(m, x), (x = "property" ; x = "cached_property").
-.decl sfu_called(f: node)
-sfu_called(f) :- sfu_up(f), call_target(c, f), docof(c, d), !dj_test_doc(d).
+.decl sfu_property(f: symbol)
+sfu_property(fq) :- kind(f, "function_definition"), decorator(f, e), unparen(e, m), leaf_name(m, x),
+    (x = "property" ; x = "cached_property"), pt_tm(f, fq).
+.decl sfu_called(f: symbol)
+sfu_called(fq) :- call_target(c, fq), docof(c, d), !dj_test_doc(d).
 // sfu_open_name(x): a call outside tests whose target is unknown or unresolved is spelled `x(…)` or `<obj>.x(…)`, x a
 // sfu_up def's name.
 .decl sfu_open_name(x: symbol)
-sfu_open_name(x) :- sfu_up(f), def_name(f, x), call_open(c), field(c, "function", e),
-    (attr_of(e, _, x) ; kind(e, "identifier"), text(e, x)), docof(c, d), !dj_test_doc(d).
-sfu_open_name(x) :- sfu_up(f), def_name(f, x), kind(c, "call"), field(c, "function", e),
-    (attr_of(e, _, x) ; kind(e, "identifier"), text(e, x)), !call_target(c, _), docof(c, d), !dj_test_doc(d).
+sfu_open_name(x) :- sfu_up(fq), sfu_name(fq, x), sfu_open_spelled(x).
+.decl sfu_open_spelled(x: symbol)
+sfu_open_spelled(x) :- call_open(c), field(c, "function", e), (attr_of(e, _, x) ; kind(e, "identifier"), text(e, x)),
+    docof(c, d), !dj_test_doc(d).
+sfu_open_spelled(x) :- kind(c, "call"), field(c, "function", e), (attr_of(e, _, x) ; kind(e, "identifier"), text(e, x)),
+    !call_target(c, _), docof(c, d), !dj_test_doc(d).
 // sfu_run_passed(x) / sfu_framework_passed(x): a sfu_up def's name x (`f` or `<obj>.f`) is passed, outside tests,
 // as an argument to a function of the run, which then calls it (pontoon's `self.run_import(import_uploaded_file,
 // …)`), or to one outside the run (`path("x/", views.f)`, `app.task(f)`, `signal.connect(f)`): a framework entry.
-.decl sfu_passed(k: node, x: symbol)
-sfu_passed(k, x) :- sfu_up(f), def_name(f, x), call_arg(k, _, _, a), (kind(a, "identifier"), text(a, x) ; attr_of(a, _, x)),
-    docof(k, d), !dj_test_doc(d).
+.decl sfu_passed(x: symbol, to: symbol)
+sfu_passed(x, "run") :- call_arg(k, _, _, a), (kind(a, "identifier"), text(a, x) ; attr_of(a, _, x)), docof(k, d),
+    !dj_test_doc(d), call_target(k, _).
+sfu_passed(x, "framework") :- call_arg(k, _, _, a), (kind(a, "identifier"), text(a, x) ; attr_of(a, _, x)),
+    docof(k, d), !dj_test_doc(d), !call_target(k, _).
 .decl sfu_run_passed(x: symbol)
-sfu_run_passed(x) :- sfu_passed(k, x), call_target(k, _).
+sfu_run_passed(x) :- sfu_up(fq), sfu_name(fq, x), sfu_passed(x, "run").
 .decl sfu_framework_passed(x: symbol)
-sfu_framework_passed(x) :- sfu_passed(k, x), !call_target(k, _).
+sfu_framework_passed(x) :- sfu_up(fq), sfu_name(fq, x), sfu_passed(x, "framework").
 // sfu_framework_shape(f): f can be called by a framework: it is decorated (a task, a receiver, a view decorator), it
 // takes `request`, it is a method of a class other than a model or a model's mixin (a view's or a command's handler;
 // a model method nobody calls is an API for callers that hold the transaction, pretix's `LockModel.
 // refresh_for_update`), or its name is handed to a call outside the run.
-.decl sfu_framework_shape(f: node)
-sfu_framework_shape(f) :- sfu_up(f), decorator(f, _).
-sfu_framework_shape(f) :- sfu_up(f), param(f, "request", _).
-sfu_framework_shape(f) :- sfu_up(f), nearest(f, k, scope), kind(k, "class_definition"), !sfu_model_side(k).
-sfu_framework_shape(f) :- sfu_up(f), def_name(f, x), sfu_framework_passed(x).
+.decl sfu_framework_shape(f: symbol)
+sfu_framework_shape(fq) :- sfu_shaped(fq).
+sfu_framework_shape(fq) :- sfu_method_of(fq, kq), !sfu_model_side(kq).
+sfu_framework_shape(fq) :- sfu_up(fq), sfu_name(fq, x), sfu_framework_passed(x).
+.decl sfu_shaped(f: symbol)
+sfu_shaped(fq) :- kind(f, "function_definition"), decorator(f, _), pt_tm(f, fq).
+sfu_shaped(fq) :- kind(f, "function_definition"), param(f, "request", _), pt_tm(f, fq).
+.decl sfu_method_of(f: symbol, k: symbol)
+sfu_method_of(fq, kq) :- kind(f, "function_definition"), nearest(f, k, scope), class_def(k, kq), pt_tm(f, fq).
 // sfu_model_side(k): class k is a model, or a base of one of the run's models.
-.decl sfu_model_side(k: node)
-sfu_model_side(k) :- dj_model(k).
-sfu_model_side(k) :- class_def(k, kq), class_def(m, mq), dj_model(m), subclass(mq, kq).
+.decl sfu_model_side(k: symbol)
+sfu_model_side(kq) :- dj_model(k), class_def(k, kq).
+sfu_model_side(kq) :- sfu_model_side_of(mq), subclass(mq, kq).
+.decl sfu_model_side_of(m: symbol)
+sfu_model_side_of(mq) :- dj_model(m), class_def(m, mq).
 // sfu_atomic_view(f): the project wraps requests in transactions (python/django's dj_atomic_requests) and f is a
 // view: it takes `request`, or it is a method of a view class.
-.decl sfu_atomic_view(f: node)
-sfu_atomic_view(f) :- dj_atomic_requests(), (param(f, "request", _) ; dj_view_class(k), nearest(f, k, scope)).
+// (dj_view_class holds a class's node in the cross-file part, so this reads one, 0677's list.)
+.decl sfu_atomic_view(f: symbol)
+sfu_atomic_view(fq) :- dj_atomic_requests(), kind(f, "function_definition"), param(f, "request", _), pt_tm(f, fq).
+sfu_atomic_view(fq) :- dj_atomic_requests(), dj_view_class(k), nearest(f, k, scope), kind(f, "function_definition"),
+    pt_tm(f, fq).
 
-// sfu_why(f, why): how f runs outside a transaction.
-.decl sfu_why(f: node, why: symbol)
-sfu_why(f, "no code in the project calls it, so it is an entry point (a view, task, command or receiver) and nothing opens a transaction around it") :-
-    sfu_entry(f).
-sfu_why(f, cat("`", cat(g, cat("` calls it outside a transaction at ", cat(p, cat(":", to_string(l))))))) :-
-    sfu_first_bare(f, c), !sfu_entry(f), line(c, l), owner(c, h), def_name(h, g), docof(c, d), doc(d, p, _).
-// sfu_first_bare(f, c): the bare call a message names, of several: the first by order_key (its def's name, then its
-// place there), which an edit in another file does not move (decision 0695).
-.decl sfu_bare_key(f: node, q: symbol, i: number)
-sfu_bare_key(f, q, i) :- sfu_bare_call(c, f), order_key(c, q, i).
-.decl sfu_bare_after(f: node, q: symbol)
-sfu_bare_after(f, q) :- sfu_bare_key(f, q, _), sfu_bare_key(f, q2, _), q2 < q.
-.decl sfu_first_bare(f: node, c: node)
-sfu_first_bare(f, c) :- sfu_bare_key(f, q, _), !sfu_bare_after(f, q), i = min j : { sfu_bare_key(f, q, j) },
-    sfu_bare_call(c, f), order_key(c, q, i).
+// sfu_why(f, why): how f runs outside a transaction: an entry point, or its first bare call by a key an edit in another
+// file does not move (decision 0695): a module-level call first (it names no caller, so no reason is given), then the
+// exposed caller of the least symbol, then the call's line in that caller's file.
+.decl sfu_why(f: symbol, why: symbol)
+sfu_why(fq, "no code in the project calls it, so it is an entry point (a view, task, command or receiver) and nothing opens a transaction around it") :-
+    sfu_entry(fq).
+sfu_why(fq, cat("`", cat(g, cat("` calls it outside a transaction at ", cat(p, cat(":", to_string(l))))))) :-
+    sfu_exposed(fq), !sfu_entry(fq), !sfu_mod_bare(fq), sfu_first_caller(fq, gq),
+    l = min m : { sfu_bare(gq, c2, fq), sfu_call_at(gq, c2, _, _, m) }, sfu_bare(gq, ct, fq), sfu_call_at(gq, ct, g, p, l).
+.decl sfu_mod_bare(f: symbol)
+sfu_mod_bare(fq) :- sfu_up(fq), sfu_mod_call(fq, _).
+.decl sfu_bare_caller(f: symbol, g: symbol)
+sfu_bare_caller(fq, gq) :- sfu_bare(gq, _, fq), sfu_exposed(gq).
+.decl sfu_later_caller(f: symbol, g: symbol)
+sfu_later_caller(fq, gq) :- sfu_bare_caller(fq, gq), sfu_bare_caller(fq, hq), hq < gq.
+.decl sfu_first_caller(f: symbol, g: symbol)
+sfu_first_caller(fq, gq) :- sfu_bare_caller(fq, gq), !sfu_later_caller(fq, gq).
 
 // The cases, `cases/django-practice-select-for-update-outside-atomic/`, read as one repository: each line ending in `#
 // caught` is reported, and no other line.

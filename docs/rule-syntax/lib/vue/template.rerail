@@ -104,7 +104,7 @@ vlower(x, @lower(x)) :- vplain(_, _, x).
 //   <svg><foreignObject><div/></foreignObject></svg>       div is HTML
 .decl vns(e: node, n: symbol)
 vns(e, "html") :- vroot(e).
-vns(e, n) :- vel_parent(e, p), vns_in(p, c), vel_name(e, x), vns_step(c, x, n).
+vns(e, n) :- vel_parent(e, p), vns_in(p, c), vns_step(e, c, n).
 // vns_in(p, c): the insertion context p gives its children: "html", "svg", "math", "math-text" or "math-annotation".
 .decl vns_in(p: node, c: symbol)
 vns_in(p, "html") :- vns(p, "html").
@@ -113,17 +113,15 @@ vns_in(p, "math-text") :- vns(p, "math"), vel_name(p, x), vmath_text_point(x).
 vns_in(p, "html") :- vns(p, "math"), vel_name(p, "annotation-xml"), vannotation_html(p).
 vns_in(p, "math-annotation") :- vns(p, "math"), vel_name(p, "annotation-xml"), !vannotation_html(p).
 vns_in(p, "math") :- vns(p, "math"), vel_name(p, x), !vmath_text_point(x), x != "annotation-xml".
-.decl vns_step(c: symbol, x: symbol, n: symbol)
-vns_step(c, x, n) :- vns_ctx(c), vel_name(_, x), vns_rule(c, x, n).
-.decl vns_ctx(c: symbol)
-vns_ctx("html"). vns_ctx("svg"). vns_ctx("math"). vns_ctx("math-text"). vns_ctx("math-annotation").
-.decl vns_rule(c: symbol, x: symbol, n: symbol)
-vns_rule(c, x, n) :- (c = "html" ; c = "math-text", x != "mglyph", x != "malignmark"), vel_name(_, x),
+// vns_step(e, c, n): element e, in insertion context c, is in namespace n. Keyed by the element, not its name
+// (decision 0677).
+.decl vns_step(e: node, c: symbol, n: symbol)
+vns_step(e, c, n) :- (c = "html" ; c = "math-text"), vel_name(e, x), (c = "html" ; x != "mglyph", x != "malignmark"),
     (x = "svg", n = "svg" ; x = "math", n = "math" ; x != "svg", x != "math", n = "html").
-vns_rule("math-text", x, "math") :- vel_name(_, x), (x = "mglyph" ; x = "malignmark").
-vns_rule("svg", x, "svg") :- vel_name(_, x).
-vns_rule("math", x, "math") :- vel_name(_, x).
-vns_rule("math-annotation", x, n) :- vel_name(_, x), (x = "svg", n = "svg" ; x != "svg", n = "math").
+vns_step(e, "math-text", "math") :- vel_name(e, x), (x = "mglyph" ; x = "malignmark").
+vns_step(e, "svg", "svg") :- vel_name(e, _).
+vns_step(e, "math", "math") :- vel_name(e, _).
+vns_step(e, "math-annotation", n) :- vel_name(e, x), (x = "svg", n = "svg" ; x != "svg", n = "math").
 .decl vsvg_html_point(x: symbol)
 vsvg_html_point("foreignObject"). vsvg_html_point("desc"). vsvg_html_point("title").
 .decl vmath_text_point(x: symbol)

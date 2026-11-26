@@ -1,7 +1,7 @@
 # 0175: The engine reads JSON rules, through a translator that is part of it
 
-Status: decided (2026-11-13, the user: "I want the engine to be able to load the JSON rule files directly for
-backwards compatibility, so the translator needs to become part of the product").
+Status: built (audited 2026-11-23). Decided (2026-11-13, the user: "I want the engine to be able to load the JSON rule
+files directly for backwards compatibility, so the translator needs to become part of the product").
 
 ## Intro
 

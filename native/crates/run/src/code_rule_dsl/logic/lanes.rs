@@ -14,6 +14,7 @@
 //! scoreboard of its jobs (`rerail_accel::score`): `RERAIL_SCOREBOARD=<file>` traces every job, and the strata loop
 //! appends the scoreboard at each chunk's end.
 
+use rerail_blocks::vector::Vector;
 use rerail_accel::Executor;
 use rerail_accel::exec::{Backend, CpuBackend};
 use rerail_accel::sql::SqlBackend;
@@ -54,7 +55,7 @@ fn all() -> Arc<Executor> {
         // The statistics kept; their stored prices are read when the first job is priced (`costs::ready`).
         super::costs::start();
         // Every launch the executor's GPU lane makes is charged to the launch budget where it is made
-        // (`rerail_accel::gpu::GpuBackend::run`, decision 0100 §2).
+        // (`rerail_accel_gpu::gpu::GpuBackend::run`, decision 0100 §2).
         Arc::new(Executor::new())
     }))
 }
@@ -96,6 +97,7 @@ pub fn scores() -> Vec<(&'static str, rerail_accel::score::Score)> {
 /// Where no caller can wait (a component run through SQL, a lattice fixpoint, a test), the form runs its launches at
 /// once, as a batch of its own. `RERAIL_WAVES=off` does that everywhere, to measure what the waves save.
 pub mod wave {
+    use rerail_blocks::vector::Vector;
     use rerail_accel::{Batch, Kernel, Launch, Output};
     use std::cell::{Cell, RefCell};
     use std::collections::HashMap;
@@ -206,7 +208,7 @@ pub mod wave {
             self.0.len()
         }
 
-        pub fn tickets(&self) -> Vec<u64> {
+        pub fn tickets(&self) -> Vector<u64> {
             self.0.iter().map(|l| l.1).collect()
         }
     }
@@ -232,7 +234,7 @@ pub mod wave {
     pub struct Mark(usize, usize, u64, u64);
 
     pub fn mark() -> Mark {
-        Mark(QUEUED.with_borrow(Vec::len), DEFERRED.with_borrow(Vec::len), FLUSHES.get(), JOINED.get())
+        Mark(QUEUED.with_borrow(|v| v.len()), DEFERRED.with_borrow(|v| v.len()), FLUSHES.get(), JOINED.get())
     }
 
     /// A stratum's work went into this thread's wave (a device joins' submission, opening the wave or joining it): its
@@ -268,7 +270,7 @@ pub mod wave {
     /// Whether a submission was deferred to this thread's wave since `mark` (a device joins' command buffer,
     /// `setfix::device::submit`): it is this thread's, and cannot go to another's wave.
     pub fn deferred_since(mark: Mark) -> bool {
-        DEFERRED.with_borrow(Vec::len) > mark.1
+        DEFERRED.with_borrow(|v| v.len()) > mark.1
     }
 
     /// Queues another thread's launches (`take_queued`) on this one, for its next `flush`.
@@ -301,7 +303,7 @@ pub mod wave {
     }
 
     /// Queues `form`'s launches for the wave: their tickets, in order.
-    pub fn queue(form: &'static str, kernels: Vec<Kernel>) -> Vec<u64> {
+    pub fn queue(form: &'static str, kernels: Vec<Kernel>) -> Vector<u64> {
         QUEUED.with_borrow_mut(|q| {
             kernels
                 .into_iter()
@@ -334,7 +336,7 @@ pub mod wave {
         }
         let n = q.len();
         let form = if q.iter().all(|l| l.0 == q[0].0) { q[0].0 } else { "device wave (forms mixed)" };
-        let tickets: Vec<u64> = q.iter().map(|l| l.1).collect();
+        let tickets: Vector<u64> = q.iter().map(|l| l.1).collect();
         let batch = Batch(q.into_iter().map(|l| Launch::new(l.2)).collect());
         let (done, _) = super::prof::run(form, batch)?;
         super::prof::wave(n, strata);
@@ -404,7 +406,7 @@ mod wave_tests {
     /// finished there), what it queued and did not take goes to the outer wave, and the outer's are back.
     /// A launch to queue (a histogram of no codes): the scope test queues launches and never runs them.
     fn histogram() -> rerail_accel::Kernel {
-        rerail_accel::Kernel::Histogram { off: std::sync::Arc::from([0u32, 0]), codes: std::sync::Arc::from(Vec::<u16>::new()), width: 1 }
+        rerail_accel::Kernel::Histogram { off: std::sync::Arc::new(rerail_blocks::vector![0u32, 0]), codes: std::sync::Arc::new(rerail_blocks::vector::Vector::<u16>::new()), width: 1 }
     }
 
     /// Q90 (Native-and-GPU-strata), on 0386's scope: a thread waiting on a job runs another meanwhile, with a

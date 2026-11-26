@@ -1,8 +1,8 @@
 # 0249: A run is handed programs and rows, not text
 
-Status: draft (2026-11-15). Step 4 of decision 0239's plan: rules and facts, like outputs, never pass through text
-inside the engine. Agrees with the SQL index prototype's R23 (no SQL string interpolation; design index §22): code is
-built as structures, not by gluing strings.
+Status: built (audited 2026-11-23). Draft (2026-11-15). Step 4 of decision 0239's plan: rules and facts, like outputs,
+never pass through text inside the engine. Agrees with the SQL index prototype's R23 (no SQL string interpolation;
+design index §22): code is built as structures, not by gluing strings.
 
 ## Intro
 

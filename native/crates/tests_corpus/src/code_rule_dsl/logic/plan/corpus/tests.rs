@@ -286,13 +286,18 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
         let (first, expected) = run(texts, src, true);
         let (ran, all) = first.cross_kept.expect("a run with a store keeps its cross-file part");
         assert_eq!(ran, all, "the first run evaluates every stratum");
-        assert_eq!(run(texts, src, false).1, expected);
+        // Its states: the first run's, then each edit's (`fresh_tier`).
+        if super::fresh_tier::compared(0, edits.len() + 1) {
+            assert_eq!(run(texts, src, false).1, expected);
+        }
         let (mut maintained, mut recursive) = (0, 0);
-        for (path, text) in edits {
+        for (i, (path, text)) in edits.iter().enumerate() {
             std::fs::write(src.join(path), text).unwrap();
             let (report, got) = run(texts, src, true);
-            let (_, want) = run(texts, src, false);
-            assert_eq!(got, want, "after editing {path}, the findings are those of a run with an empty store");
+            if super::fresh_tier::compared(i + 1, edits.len() + 1) {
+                let (_, want) = run(texts, src, false);
+                assert_eq!(got, want, "after editing {path}, the findings are those of a run with an empty store");
+            }
             eprintln!("{path}: {:?} strata, {:?} maintained (recursive, derived again; {:?}); {} findings", report.cross_kept, report.cross_maintained, report.cross_again, got.len());
             maintained += report.cross_maintained.0;
             recursive += report.cross_maintained.1;
@@ -434,14 +439,20 @@ fn the_reach_index_is_derived_again_when_cycles_and_connections_change_in_a_new_
         findings()
     };
     let first = run(true);
-    assert_eq!(run(false), first);
+    // Its states: the first run's, then each edit's (`fresh_tier`).
+    let states = REACH_EDITS.len() + 1;
+    if super::fresh_tier::compared(0, states) {
+        assert_eq!(run(false), first);
+    }
     assert!(first.iter().any(|f| f.iter().any(|v| v.contains("CYC"))), "the first cycle's imports: {first:?}");
     let mut codes = std::collections::BTreeSet::new();
-    for (path, text, what) in REACH_EDITS {
+    for (i, (path, text, what)) in REACH_EDITS.iter().enumerate() {
         std::fs::write(src.join(path), text).unwrap();
         let got = run(true);
-        let want = run(false);
-        assert_eq!(got, want, "after editing {path} ({what}), the findings are those of a run with an empty store");
+        if super::fresh_tier::compared(i + 1, states) {
+            let want = run(false);
+            assert_eq!(got, want, "after editing {path} ({what}), the findings are those of a run with an empty store");
+        }
         codes.extend(got.iter().flat_map(|f| ["CYC", "INCYC", "TOF", "SEESE", "DIRECT"].into_iter().filter(|c| f.iter().any(|v| v.contains(c)))));
     }
     assert_eq!(codes.len(), 5, "every reader's findings appeared along the edits: {codes:?}");
@@ -651,6 +662,40 @@ fn the_cone_of_requests_is_kept_while_its_reads_and_answers_are() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The cone's strata are kept for every root (`kept_strata::cone_space_shared`, unless `RERAIL_CONE_SPACE=root`): a
+/// corpus's first run finds clean the strata another corpus's run over the same libraries kept, and loads what a run
+/// with nothing kept loads.
+#[test]
+fn a_corpus_first_run_reads_the_cone_strata_another_root_kept() {
+    if std::env::var("RERAIL_CONE_SPACE").is_ok_and(|v| v == "root") {
+        return;
+    }
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("cone-shared");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (a, b) = (dir.join("a"), dir.join("b"));
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    std::fs::write(a.join("main.py"), "import os\n").unwrap();
+    std::fs::write(b.join("tool.py"), "import os\nx = 1\n").unwrap();
+    let rule = dir.join("p.rerail");
+    std::fs::write(&rule, "#include \"python/modules.rerail\"\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n").unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    let run = |root: &std::path::Path, store: &str| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        let report = super::run(&text, root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let mut loaded = crate::code_rule_dsl::logic::plan::output::shown(&out, "n_loaded").unwrap();
+        loaded.sort();
+        (report.cone_kept, loaded)
+    };
+    run(&a, "kept.sqlite");
+    let (kept, loaded) = run(&b, "kept.sqlite");
+    let (evaluated, of) = kept.expect("a run with a store keeps its cone");
+    assert!(evaluated < of, "b's first run evaluates only the strata a's left unclean: {evaluated} of {of}");
+    assert_eq!(loaded, run(&b, "fresh.sqlite").1, "b's loads are a run's with nothing kept");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0145: the cone run as rounds from the last run's final round finds what the gated fixpoint over
 /// nothing kept finds, edit after edit: a new import, a library's own import, an import taken away (its load is
 /// not asked again), and a library file that goes.
@@ -685,13 +730,17 @@ fn the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads() {
         loaded.sort();
         (report.cone_rounds, loaded)
     };
+    // The edits below, each a state checked against a fresh run's in the full tier, the last in every tier (`fresh_tier`).
+    const EDITS: usize = 5;
     let both = |what: &str, want: &[&str]| {
         let (rounds, kept) = run("kept.sqlite");
         fresh.set(fresh.get() + 1);
-        let (none, again) = run(&format!("fresh-{}.sqlite", fresh.get()));
+        if super::fresh_tier::compared(fresh.get() - 1, EDITS) {
+            let (none, again) = run(&format!("fresh-{}.sqlite", fresh.get()));
+            assert_eq!(none, 0, "{what}: a run with nothing kept runs the fixpoint");
+            assert_eq!(kept, again, "{what}: rounds load what the fixpoint loads");
+        }
         assert!(rounds > 0, "{what}: the kept run runs rounds");
-        assert_eq!(none, 0, "{what}: a run with nothing kept runs the fixpoint");
-        assert_eq!(kept, again, "{what}: rounds load what the fixpoint loads");
         assert_eq!(kept, want, "{what}");
     };
     assert_eq!(run("kept.sqlite"), (0, vec!["a.pyi".to_owned(), "b.pyi".to_owned(), "builtins.pyi".to_owned()]), "the first run is the fixpoint");
@@ -974,12 +1023,15 @@ lone(f) :- unused(f), !used(f), def(f, q), !imp(_, q).
         ("c.py", "from b import g\ndef h():\n    pass\n"),
         ("b.py", "def g():\n    pass\n"),
     ];
+    let n = edits.len();
     for (i, (file, body)) in edits.into_iter().enumerate() {
         write(file, body);
         let (maintained, rows, pieces) = run("kept.sqlite");
         together += pieces;
-        let (_, fresh, _) = run(&format!("fresh{i}.sqlite"));
-        assert_eq!(rows, fresh, "after edit {i} ({file})");
+        if super::fresh_tier::compared(i, n) {
+            let (_, fresh, _) = run(&format!("fresh{i}.sqlite"));
+            assert_eq!(rows, fresh, "after edit {i} ({file})");
+        }
         assert!(maintained > 0, "edit {i}: a changed stratum maintained from the kept rows");
     }
     assert!(together > 0, "a stratum's pieces ran together, or the maintain mode ran it as one component");
@@ -1099,11 +1151,14 @@ named(n, @dot(q, q)) :- uses(n, f), def(f, q).
         ("c.py", "def h():\n    pass\n", "two uses gone: f's count falls, g's group empties"),
         ("b.py", "def g():\n    pass\n", "every use gone"),
     ];
+    let n = edits.len();
     for (i, (file, body, what)) in edits.into_iter().enumerate() {
         write(file, body);
         let (rows, mode) = run("kept.sqlite");
-        let (fresh, _) = run(&format!("fresh{i}.sqlite"));
-        assert_eq!(rows, fresh, "after {what}");
+        if super::fresh_tier::compared(i, n) {
+            let (fresh, _) = run(&format!("fresh{i}.sqlite"));
+            assert_eq!(rows, fresh, "after {what}");
+        }
         assert!(mode > 0, "after {what}: the maintain mode maintained strata");
     }
     let _ = std::fs::remove_dir_all(&dir);
@@ -1678,6 +1733,26 @@ fn the_run_after_a_cold_one_with_tape_values_writes_nothing() {
     cold_then_warm(temp.path(), Some(&c408), &files, &mut None);
 }
 
+/// The same through a phase (decision 0665's `tsx_names`): the phase's run is warm too, its program read from the
+/// store as the cold run kept it, and its exports handed on from its kept parts.
+#[test]
+fn the_run_after_a_cold_one_through_a_phase_writes_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    let program = temp.path().join("names.rerail");
+    std::fs::write(&program, ".language typescript\n#include \"tsx/names.rerail\"\n.decl used(n: node, q: symbol)\nused(n, q) :- sym_of(n, q).\n.output used\n").unwrap();
+    let files = [("a.ts", "import { g } from \"./b\";\ng();\n"), ("b.ts", "export function g() {}\n")];
+    cold_then_warm(&temp.path().join("w"), Some(&program), &files, &mut None);
+}
+
+/// The same policy over sources with no string annotation: no tape value.
+#[test]
+fn the_run_after_a_cold_one_of_a_names_policy_writes_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    let c408 = rerail_store::source_tree::native().join("../docs/rule-syntax/packs/python/ruff-c408-unnecessary-collection-call.rerail");
+    let files = [("pkg/__init__.py", ""), ("pkg/a.py", "from typing import List\n\na: dict = dict()\nb: List[int] = list()\n"), ("main.py", "c = tuple()\n")];
+    cold_then_warm(temp.path(), Some(&c408), &files, &mut None);
+}
+
 /// `cold_then_warm`'s sources by default: a small Python package and a file importing it.
 const PICKLE_PACKAGE: &[(&str, &str)] = &[("pkg/__init__.py", ""), ("pkg/loader.py", "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n"), ("main.py", "from pkg.loader import load\nload(b'x')\n")];
 
@@ -1712,6 +1787,7 @@ fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, fil
     super::test_store::begun(&store);
     let manifests = || -> Vec<(Vec<u8>, Vec<u8>)> {
         let db = rusqlite::Connection::open(&store).unwrap();
+        crate::content_store::install_kept_tables(&db).unwrap();
         let mut rows: Vec<(Vec<u8>, Vec<u8>)> = db.prepare("SELECT digest, sources FROM corpus_manifests").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().flatten().collect();
         rows.sort();
         rows
@@ -1797,8 +1873,13 @@ y = x{i} + 2
         }
         let output = super::switches::started(|| child.output()).unwrap();
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let fault: Vec<&str> = stderr.lines().skip_while(|l| !l.starts_with("rerail: RERAIL_SQL_STRICT")).take(200).collect();
-        assert!(output.status.success(), "the run's process: {}; {}", output.status, fault.join(" "));
+        let mut fault: Vec<&str> = stderr.lines().skip_while(|l| !l.starts_with("rerail: RERAIL_SQL_STRICT")).take(200).collect();
+        if fault.is_empty() {
+            // Another failure: its last lines.
+            let lines: Vec<&str> = stderr.lines().collect();
+            fault = lines[lines.len().saturating_sub(30)..].to_vec();
+        }
+        assert!(output.status.success(), "the run's process: {}; {}", output.status, fault.join("\n"));
     };
     run(&before, false);
     run(&edited, true);
@@ -1847,6 +1928,7 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
     super::test_store::begun(&store);
     let manifests = || -> Vec<(Vec<u8>, Vec<u8>)> {
         let db = rusqlite::Connection::open(&store).unwrap();
+        crate::content_store::install_kept_tables(&db).unwrap();
         let mut rows: Vec<(Vec<u8>, Vec<u8>)> = db.prepare("SELECT digest, sources FROM corpus_manifests").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().flatten().collect();
         rows.sort();
         rows
@@ -1919,6 +2001,7 @@ fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
 /// the undo then dropped the inputs they read (`rr_token_anon`, `rr_token_named`), and the combined run failed on an
 /// undeclared relation (Q67: these three of the data-layer pack, on any file).
 #[test]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn programs_hidden_alone_keep_their_attribute_copies_declared() {
     use crate::code_rule_dsl::typing::file_local::Binding;
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("token-copies");
@@ -1977,11 +2060,14 @@ passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
         ("b.py", "def g():\n    pass\n"),
     ];
     let mut tested = false;
+    let n = edits.len();
     for (i, (file, body)) in edits.into_iter().enumerate() {
         write(file, body);
         let (report, rows) = run("kept.sqlite");
-        let (_, fresh) = run(&format!("fresh{i}.sqlite"));
-        assert_eq!(rows, fresh, "after edit {i} ({file})");
+        if super::fresh_tier::compared(i, n) {
+            let (_, fresh) = run(&format!("fresh{i}.sqlite"));
+            assert_eq!(rows, fresh, "after edit {i} ({file})");
+        }
         // The program's one native is the text test.
         assert!(!report.cross_again.contains_key("a relation made natively"), "edit {i}: the text test is maintained, not derived again: {:?}", report.cross_again);
         tested |= report.text.0 > 0;
@@ -2454,7 +2540,7 @@ fn a_files_entry_is_kept_under_its_own_imports_resolution() {
         (report, rows)
     };
     let dir = make("tsx-names-memo", &[]);
-    let (first, rows) = run(&dir);
+    let (_, rows) = run(&dir);
     let row = |p: &str, q: &str| vec![p.to_owned(), q.to_owned()];
     assert_eq!(rows, [row("c.ts", "d#h")], "only h resolves, through the phase's exports, to d's own module: {rows:?}");
     std::fs::write(dir.join("ws").join(edit.0), edit.1).unwrap();
@@ -2761,6 +2847,491 @@ taken(n, f) :- kind(n, "call"), given(n, f).
     let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
     assert_eq!(outputs.get("free").map(|r| r.shown().len()), Some(2), "every call is free");
     assert_eq!(outputs.get("taken").map_or(0, |r| r.shown().len()), 0, "none is taken");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0677, fix 2: Python's names through the phase `py_names`. `sym_of` and `site_exported` read the phase's
+/// rows at their own file's path (or by a module those name), so they are file-local, and they find what the cross-file
+/// rules found before: those rules are written out here (`old_sym`, `old_public`) and run beside them. The workspace
+/// has a package re-exporting a class from a submodule, a chain of two re-exports, a star import under `__all__` and
+/// one without, a class's nested class and method read as its attributes, and a module outside the workspace.
+const PY_NAMES_FILES: [(&str, &str); 6] = [
+    ("pkg/__init__.py", "from .core import App\nfrom .more import *\nfrom .nall import *\n"),
+    ("pkg/core.py", "class App:\n    class Meta:\n        pass\n\n    def run(self):\n        pass\n"),
+    ("pkg/more.py", "__all__ = [\"helper\"]\n\n\ndef helper():\n    pass\n\n\ndef hidden():\n    pass\n"),
+    ("pkg/nall.py", "def visible():\n    pass\n\n\ndef _private():\n    pass\n"),
+    ("pkg/chain.py", "from pkg import App as Root\n"),
+    ("use.py", "import os\nfrom pkg import App, helper, visible\nfrom pkg.chain import Root\nApp.Meta\nApp.run\nRoot\nhelper\nvisible\nos.path.join\n"),
+];
+
+const PY_NAMES_PROGRAM: &str = r#".language python
+#include "python/names.rerail"
+.decl at(n: node, p: symbol, l: number)
+at(n, p, l) :- kind(e, "expression_statement"), child(e, n, 0), line(n, l), docof(n, d), doc(d, p, _).
+.decl used(p: symbol, l: number, q: symbol)
+used(p, l, q) :- at(n, p, l), sym_of(n, q).
+.output used
+.decl exported_at(p: symbol, x: symbol)
+exported_at(p, x) :- site_exported(site), binding(s, x, site, _), docof(s, d), doc(d, p, _).
+.output exported_at
+"#;
+
+/// The rules `py_names` replaced (python/names' `sym_of` rules 1 and 3, and `site_exported`, before 0677 fix 2): they
+/// read every file's rows.
+const PY_NAMES_OLD: &str = r#"
+.decl old_sym(n: node, q: symbol) cross_file
+old_sym(n, q) :- qn(n, q0), resolve_export(q0, q).
+export_query(q) :- qn(_, q).
+old_sym(n, q) :- look(n, x, s), defn(s, x, f), qualname(f, q).
+old_sym(n, q) :- attr_of(n, o, a), old_sym(o, c), class_def(_, c), q = @dot(c, a), qualname(_, q).
+old_sym(n, q) :- builtin_ref(n, x), q = @dot("builtins", x).
+.decl old_used(p: symbol, l: number, q: symbol)
+old_used(p, l, q) :- at(n, p, l), old_sym(n, q).
+.output old_used
+.decl old_exported_at(p: symbol, x: symbol)
+old_exported_at(p, x) :- binding(s, x, site, _), kind(s, "module"), module_of(s, m), public_name(m, x), docof(s, d), doc(d, p, _).
+.output old_exported_at
+"#;
+
+/// The workspace `files` (with `edits` written over them) in a fresh directory named for `name`.
+fn py_names_workspace(name: &str, edits: &[(&str, &str)]) -> std::path::PathBuf {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    for (path, text) in PY_NAMES_FILES.iter().chain(edits) {
+        let to = dir.join("ws").join(path);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::write(to, text).unwrap();
+    }
+    dir
+}
+
+/// `program` run over `dir`'s workspace: the report, and each output's rows, shown, by name.
+fn py_names_run(dir: &std::path::Path, program: &str) -> (super::Report, std::collections::BTreeMap<String, Vec<Vec<String>>>) {
+    crate::install_store_functions();
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, program).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let report = super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
+    let rows = ["used", "exported_at", "old_used", "old_exported_at"]
+        .into_iter()
+        .filter_map(|name| {
+            let mut rows: Vec<Vec<String>> = outputs.get(name).map(|r| r.shown())?;
+            rows.sort();
+            Some((name.to_owned(), rows))
+        })
+        .collect();
+    (report, rows)
+}
+
+#[test]
+fn python_names_through_the_phase_are_the_cross_file_rules_answers() {
+    let dir = py_names_workspace("py-names", &[]);
+    let (_, rows) = py_names_run(&dir, &format!("{PY_NAMES_PROGRAM}{PY_NAMES_OLD}"));
+    let row = |p: &str, l: i64, q: &str| vec![p.to_owned(), l.to_string(), q.to_owned()];
+    assert_eq!(
+        rows["used"],
+        [
+            row("use.py", 4, "pkg.App.Meta"),
+            row("use.py", 4, "pkg.core.App.Meta"),
+            row("use.py", 5, "pkg.App.run"),
+            row("use.py", 5, "pkg.core.App.run"),
+            row("use.py", 6, "pkg.core.App"),
+            row("use.py", 7, "pkg.more.helper"),
+            row("use.py", 8, "pkg.nall.visible"),
+            row("use.py", 9, "os.path.join"),
+        ],
+        "each name, re-exports and star imports followed, and each member of a class read as its attribute: {rows:?}"
+    );
+    assert_eq!(rows["used"], rows["old_used"], "sym_of finds what the cross-file rules found");
+    assert_eq!(rows["exported_at"], rows["old_exported_at"], "site_exported finds what the cross-file rule found");
+    let exported = |p: &str, x: &str| rows["exported_at"].contains(&vec![p.to_owned(), x.to_owned()]);
+    assert!(exported("pkg/more.py", "helper") && !exported("pkg/more.py", "hidden"), "__all__ names helper alone: {:?}", rows["exported_at"]);
+    assert!(exported("pkg/nall.py", "visible") && !exported("pkg/nall.py", "_private"), "without __all__, no leading _: {:?}", rows["exported_at"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0677, fix 2: an edit misses the files whose `py_names` rows changed. A body edit in pkg/core.py misses that
+/// file alone. A method added to `App` adds a row to pkg.core's `defined`: a file's entry is keyed by the rows its
+/// probes read (decision 0675 §3, each at the module and name a file looks up, the module itself read through
+/// `reads_at`), so core.py misses, and use.py, which reads `App`'s members; pkg/__init__.py and chain.py, which
+/// re-export `App` itself, and more.py and nall.py are read from the memo. The rows are a fresh run's.
+#[test]
+fn a_python_files_entry_is_kept_under_its_own_names_resolution() {
+    let body = ("pkg/core.py", "class App:\n    class Meta:\n        pass\n\n    def run(self):\n        return 1\n");
+    let method = ("pkg/core.py", "class App:\n    class Meta:\n        pass\n\n    def run(self):\n        return 1\n\n    def stop(self):\n        pass\n");
+    let dir = py_names_workspace("py-names-memo", &[]);
+    let (_, before) = py_names_run(&dir, PY_NAMES_PROGRAM);
+    std::fs::write(dir.join("ws").join(body.0), body.1).unwrap();
+    let (edited, rows) = py_names_run(&dir, PY_NAMES_PROGRAM);
+    assert_eq!(rows, before, "a body edit changes no name");
+    assert_eq!(edited.memo.0, edited.files - 1, "a body edit misses its own file alone: {:?} of {}", edited.memo, edited.files);
+    std::fs::write(dir.join("ws").join(method.0), method.1).unwrap();
+    let (edited, rows) = py_names_run(&dir, PY_NAMES_PROGRAM);
+    assert_eq!(edited.memo.0, edited.files - 2, "core.py and use.py, which reads App's members, alone miss: {:?} of {}", edited.memo, edited.files);
+    let fresh = py_names_workspace("py-names-memo-fresh", &[method]);
+    assert_eq!(rows, py_names_run(&fresh, PY_NAMES_PROGRAM).1, "the rows are a fresh run's");
+    let _ = std::fs::remove_dir_all(&fresh);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 0677 fix 3a: a class's ancestors through the phase `py_names` (`ancestor`, keyed by the class's module): a chain
+/// across three modules through a package's re-export, a library base through a module alias, an `enum` base, a
+/// builtin, and a base of the class's own module.
+const PY_CLASSES_FILES: [(&str, &str); 5] = [
+    ("models_base.py", "from django.db import models\n\n\nclass Base(models.Model):\n    pass\n"),
+    ("app/__init__.py", "from .base import Mid\n"),
+    ("app/base.py", "from models_base import Base\n\n\nclass Mid(Base):\n    pass\n"),
+    ("other.py", "import os\n\n\nclass Other(Exception):\n    pass\n"),
+    ("use.py", "import enum\nfrom app import Mid\n\n\nclass Leaf(Mid):\n    pass\n\n\nclass Color(enum.Enum):\n    pass\n\n\nclass Plain:\n    pass\n\n\nclass Local(Plain):\n    pass\n"),
+];
+
+const PY_CLASSES_PROGRAM: &str = r#".language python
+#include "python/names.rerail"
+.decl anc(p: symbol, q: symbol, b: symbol)
+anc(p, q, b) :- class_anc(c, b), class_def(c, q), docof(c, d), doc(d, p, _).
+.output anc
+.decl lib(p: symbol, q: symbol, b: symbol)
+lib(p, q, b) :- class_lib_anc(c, b), class_def(c, q), docof(c, d), doc(d, p, _).
+.output lib
+"#;
+
+/// The rule `class_anc` replaced for a class's own ancestry (python/scopes' `subclass`, a closure over every file's
+/// classes).
+const PY_CLASSES_OLD: &str = r#"
+.decl old_anc(p: symbol, q: symbol, b: symbol) cross_file
+old_anc(p, q, b) :- class_def(c, q), subclass(q, b), docof(c, d), doc(d, p, _).
+.output old_anc
+.decl old_lib(p: symbol, q: symbol, b: symbol) cross_file
+old_lib(p, q, b) :- class_def(c, q), subclass(q, b), !class_def(_, b), docof(c, d), doc(d, p, _).
+.output old_lib
+"#;
+
+/// The workspace `PY_CLASSES_FILES` (with `edits` written over them) in a fresh directory named for `name`.
+fn py_classes_workspace(name: &str, edits: &[(&str, &str)]) -> std::path::PathBuf {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    for (path, text) in PY_CLASSES_FILES.iter().chain(edits) {
+        let to = dir.join("ws").join(path);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::write(to, text).unwrap();
+    }
+    dir
+}
+
+/// `anc` and `old_anc`'s rows of a run of `program` over `dir`'s workspace.
+fn py_classes_run(dir: &std::path::Path, program: &str) -> (super::Report, std::collections::BTreeMap<String, Vec<Vec<String>>>) {
+    crate::install_store_functions();
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, program).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let report = super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
+    let rows = ["anc", "old_anc", "lib", "old_lib", "call", "kw", "ref", "meth", "dq", "df", "dk", "dm", "mg", "mc", "mu", "mo", "da", "mm", "hk", "rd"]
+        .into_iter()
+        .filter_map(|name| {
+            let mut rows: Vec<Vec<String>> = outputs.get(name).map(|r| r.shown())?;
+            rows.sort();
+            Some((name.to_owned(), rows))
+        })
+        .collect();
+    (report, rows)
+}
+
+#[test]
+fn python_class_ancestry_through_the_phase_is_the_cross_file_closures() {
+    let dir = py_classes_workspace("py-classes", &[]);
+    let (_, rows) = py_classes_run(&dir, &format!("{PY_CLASSES_PROGRAM}{PY_CLASSES_OLD}"));
+    let row = |p: &str, q: &str, b: &str| vec![p.to_owned(), q.to_owned(), b.to_owned()];
+    assert_eq!(
+        rows["anc"],
+        [
+            row("app/base.py", "app.base.Mid", "django.db.models.Model"),
+            row("app/base.py", "app.base.Mid", "models_base.Base"),
+            row("models_base.py", "models_base.Base", "django.db.models.Model"),
+            row("other.py", "other.Other", "builtins.Exception"),
+            row("use.py", "use.Color", "enum.Enum"),
+            row("use.py", "use.Leaf", "app.base.Mid"),
+            row("use.py", "use.Leaf", "django.db.models.Model"),
+            row("use.py", "use.Leaf", "models_base.Base"),
+            row("use.py", "use.Local", "use.Plain"),
+        ],
+        "each class's ancestors, re-exports followed, a library's base by its name: {rows:?}"
+    );
+    assert_eq!(rows["anc"], rows["old_anc"], "class_anc finds what the cross-file closure found");
+    assert_eq!(
+        rows["lib"],
+        [
+            row("app/base.py", "app.base.Mid", "django.db.models.Model"),
+            row("models_base.py", "models_base.Base", "django.db.models.Model"),
+            row("other.py", "other.Other", "builtins.Exception"),
+            row("use.py", "use.Color", "enum.Enum"),
+            row("use.py", "use.Leaf", "django.db.models.Model"),
+        ],
+        "each class's library ancestors: {rows:?}"
+    );
+    assert_eq!(rows["lib"], rows["old_lib"], "class_lib_anc finds what the cross-file rule found");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// What a class's ancestors of the run assign and define, by symbol (decision 0677 fix 3b: python/names' class_anc_call,
+/// class_anc_kw, class_anc_ref, class_anc_method): an ancestor's in a module the class's file never imports
+/// (models_base, for use.py's Leaf) included, a callee resolved through its file's imports, and a class's own members
+/// not among them.
+#[test]
+fn python_class_members_reach_each_subclass_through_the_phase() {
+    let edits = [
+        (
+            "models_base.py",
+            "from django.db import models\n\n\nclass Base(models.Model):\n    name = models.CharField(max_length=10, unique=True)\n\n    def label(self):\n        return self.name\n",
+        ),
+        ("app/base.py", "from django.db import models\nfrom models_base import Base\n\n\nclass Mid(Base):\n    objects = models.Manager()\n"),
+    ];
+    let dir = py_classes_workspace("py-members", &edits);
+    let program = r#".language python
+#include "python/names.rerail"
+.decl call(q: symbol, x: symbol, f: symbol)
+call(q, x, f) :- class_anc_call(c, x, f), class_def(c, q).
+.output call
+.decl kw(q: symbol, x: symbol, k: symbol, v: symbol)
+kw(q, x, k, v) :- class_anc_kw(c, x, k, v), class_def(c, q).
+.output kw
+.decl ref(q: symbol, x: symbol, s: symbol)
+ref(q, x, s) :- class_anc_ref(c, x, s), class_def(c, q), s = "django.db.models.Manager".
+.output ref
+.decl meth(q: symbol, x: symbol)
+meth(q, x) :- class_anc_method(c, x), class_def(c, q).
+.output meth
+"#;
+    let (_, rows) = py_classes_run(&dir, program);
+    let r = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+    assert_eq!(
+        rows["call"],
+        [
+            r(&["app.base.Mid", "name", "django.db.models.CharField"]),
+            r(&["use.Leaf", "name", "django.db.models.CharField"]),
+            r(&["use.Leaf", "objects", "django.db.models.Manager"]),
+        ],
+        "each class's ancestors' calls, its own not among them: {rows:?}"
+    );
+    assert_eq!(
+        rows["kw"],
+        [
+            r(&["app.base.Mid", "name", "max_length", "10"]),
+            r(&["app.base.Mid", "name", "unique", "True"]),
+            r(&["use.Leaf", "name", "max_length", "10"]),
+            r(&["use.Leaf", "name", "unique", "True"]),
+        ],
+        "{rows:?}"
+    );
+    assert_eq!(rows["ref"], [r(&["use.Leaf", "objects", "django.db.models.Manager"])], "{rows:?}");
+    assert_eq!(rows["meth"], [r(&["app.base.Mid", "label"]), r(&["use.Leaf", "label"])], "{rows:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A model class read by its symbol in another file (decision 0677 fix 3b: python/django's dj_model_named,
+/// dj_model_field, dj_model_field_kw, dj_model_has_method): a queryset in views.py starts at `Book`, defined in
+/// shop/models.py, and reads Book's own fields and method and those it inherits from `Base`, in a module views.py
+/// never imports, each at the queryset's own root.
+#[test]
+fn a_django_model_is_read_by_its_symbol_in_another_file() {
+    let edits = [
+        (
+            "models_base.py",
+            "from django.db import models\n\n\nclass Base(models.Model):\n    name = models.CharField(max_length=10, unique=True)\n",
+        ),
+        ("shop/__init__.py", ""),
+        (
+            "shop/models.py",
+            "from django.db import models\nfrom models_base import Base\n\n\nclass Book(Base):\n    pages = models.IntegerField()\n    author = models.ForeignKey(\"Author\", to_field=\"code\")\n\n    def label(self):\n        return self.pages\n",
+        ),
+        ("views.py", "from shop.models import Book\n\n\ndef count():\n    return Book.objects.filter(pages=1).count()\n"),
+    ];
+    let dir = py_classes_workspace("dj-models", &edits);
+    let program = r#".language python
+#include "python/django.rerail"
+.decl dq(p: symbol, mq: symbol)
+dq(p, mq) :- dj_qs_class(q, mq), docof(q, d), doc(d, p, _).
+.output dq
+.decl df(p: symbol, x: symbol, t: symbol)
+df(p, x, t) :- dj_qs_model(q, r), dj_model_field(r, x, t), docof(q, d), doc(d, p, _).
+.output df
+.decl dk(p: symbol, x: symbol, k: symbol, v: symbol)
+dk(p, x, k, v) :- dj_qs_model(q, r), dj_model_field_kw(r, x, k, v), docof(q, d), doc(d, p, _).
+.output dk
+.decl dm(p: symbol, x: symbol)
+dm(p, x) :- dj_qs_model(q, r), dj_model_has_method(r, x), docof(q, d), doc(d, p, _).
+.output dm
+"#;
+    let (_, rows) = py_classes_run(&dir, program);
+    let r = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+    assert_eq!(rows["dq"], [r(&["views.py", "shop.models.Book"])], "{rows:?}");
+    assert_eq!(
+        rows["df"],
+        [
+            r(&["views.py", "author", "ForeignKey"]),
+            r(&["views.py", "name", "CharField"]),
+            r(&["views.py", "pages", "IntegerField"]),
+        ],
+        "Book's own fields and Base's: {rows:?}"
+    );
+    assert_eq!(
+        rows["dk"],
+        [
+            r(&["views.py", "author", "to_field", "\"code\""]),
+            r(&["views.py", "name", "max_length", "10"]),
+            r(&["views.py", "name", "unique", "True"]),
+        ],
+        "{rows:?}"
+    );
+    assert_eq!(rows["dm"], [r(&["views.py", "label"])], "{rows:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A model's Meta options and managers read by its symbol in another file (decision 0677 fix 3c: the phase py_names'
+/// Django section, python/django's dj_model_group and the rest). views.py imports shop.models alone; the Meta options
+/// and the manager's methods come from models_base and shop.managers, which it never imports, each by Django's
+/// inheritance: Plank's Meta subclasses its abstract base's (`class Meta(Named.Meta)`), Board declares a Meta of its
+/// own and takes none of Named's, Part takes its concrete base's constraints, and Part's manager builds a queryset
+/// class that defines get_or_create.
+#[test]
+fn a_django_models_meta_and_managers_are_read_by_their_symbol_in_another_file() {
+    let edits = [
+        (
+            "models_base.py",
+            "from django.db import models\n\n\nclass Named(models.Model):\n    name = models.CharField(max_length=50)\n    owner = models.ForeignKey(\"auth.User\", on_delete=models.CASCADE)\n\n    class Meta:\n        abstract = True\n        unique_together = (\"name\", \"owner\")\n\n\nclass Coded(models.Model):\n    code = models.CharField(max_length=10)\n    kind = models.CharField(max_length=10)\n\n    class Meta:\n        constraints = [\n            models.UniqueConstraint(fields=[\"code\"], name=\"c\"),\n            models.UniqueConstraint(fields=[\"code\", \"kind\"], condition=models.Q(kind=\"a\"), name=\"d\"),\n        ]\n",
+        ),
+        ("shop/__init__.py", ""),
+        (
+            "shop/managers.py",
+            "from django.db import models\n\n\nclass SlugQuerySet(models.QuerySet):\n    def get_or_create(self, **kw):\n        return super().get_or_create(**kw)\n\n\nclass SlugManager(models.Manager):\n    def get_queryset(self):\n        return SlugQuerySet(self.model, using=self._db)\n",
+        ),
+        (
+            "shop/models.py",
+            "from django.db import models\nfrom django.db.models.functions import Lower\nfrom models_base import Coded, Named\nfrom shop.managers import SlugManager\n\n\nclass Plank(Named):\n    class Meta(Named.Meta):\n        ordering = [\"name\"]\n\n\nclass Board(Named):\n    class Meta:\n        managed = False\n\n\nclass Part(Coded):\n    objects = SlugManager()\n\n\nclass Tag(models.Model):\n    label = models.CharField(max_length=10)\n\n    class Meta:\n        constraints = [models.UniqueConstraint(Lower(\"label\"), name=\"l\")]\n",
+        ),
+        ("views.py", "from shop.models import Board, Part, Plank, Tag\n\n\ndef make():\n    Plank.objects.get_or_create(name=\"n\")\n    Board.objects.get_or_create(name=\"n\")\n    Part.objects.get_or_create(code=\"c\")\n    Tag.objects.get_or_create(label=\"l\")\n"),
+    ];
+    let dir = py_classes_workspace("dj-meta", &edits);
+    let program = r#".language python
+#include "python/django.rerail"
+.decl at_view(e: node, mq: symbol)
+at_view(e, mq) :- dj_qs_root(_, e), dj_model_named(e, mq), docof(e, d), doc(d, "views.py", _).
+.decl mg(mq: symbol, g: symbol, x: symbol)
+mg(mq, g, x) :- at_view(e, mq), dj_model_group(e, g, x).
+.output mg
+.decl mc(mq: symbol, g: symbol, x: symbol)
+mc(mq, g, x) :- at_view(e, mq), dj_model_cond_group(e, g, x).
+.output mc
+.decl mu(mq: symbol)
+mu(mq) :- at_view(e, mq), dj_model_unmanaged(e).
+.output mu
+.decl mo(mq: symbol)
+mo(mq) :- at_view(e, mq), dj_model_opaque(e).
+.output mo
+.decl da(p: symbol, mq: symbol)
+da(p, mq) :- dj_model_abstract(e), dj_model_named(e, mq), docof(e, d), doc(d, p, _).
+.output da
+.decl mm(mq: symbol, a: symbol, x: symbol)
+mm(mq, a, x) :- at_view(e, mq), dj_model_manager_method(e, a, x).
+.output mm
+"#;
+    let (_, rows) = py_classes_run(&dir, program);
+    let r = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+    assert_eq!(
+        rows["mg"],
+        [
+            r(&["shop.models.Part", "models_base.Coded#constraints.0", "code"]),
+            r(&["shop.models.Plank", "models_base.Named#unique_together", "name"]),
+            r(&["shop.models.Plank", "models_base.Named#unique_together", "owner"]),
+        ],
+        "Plank takes its abstract base's Meta, Board does not, Part its concrete base's: {rows:?}"
+    );
+    assert_eq!(
+        rows["mc"],
+        [r(&["shop.models.Part", "models_base.Coded#constraints.1", "code"]), r(&["shop.models.Part", "models_base.Coded#constraints.1", "kind"])],
+        "{rows:?}"
+    );
+    assert_eq!(rows["mu"], [r(&["shop.models.Board"])], "{rows:?}");
+    assert_eq!(rows["mo"], [r(&["shop.models.Tag"])], "an expression constraint: {rows:?}");
+    assert_eq!(rows["da"], [r(&["models_base.py", "models_base.Named"]), r(&["shop/models.py", "models_base.Named"])], "{rows:?}");
+    assert_eq!(rows["mm"], [r(&["shop.models.Part", "objects", "get_or_create"])], "{rows:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A model's hooks read by its symbol in another file (decision 0677 fix 3d: the phase py_names' Django section,
+/// python/django's dj_model_hook and dj_receiver_def). views.py imports shop.models alone. Book's save() is
+/// inherited from Stamped, in models_base, which views.py never imports; Book's receivers are connected in
+/// shop/signals.py, which nothing imports: a decorated def, and a def connected with `.connect`, both for sender Book.
+/// Note's save() only calls the base class's, so it is no hook. signals.py's own defs know they are receivers.
+#[test]
+fn a_django_models_hooks_are_read_by_their_symbol_in_another_file() {
+    let edits = [
+        (
+            "models_base.py",
+            "from django.db import models\n\n\nclass Stamped(models.Model):\n    class Meta:\n        abstract = True\n\n    def save(self, *args, **kwargs):\n        self.updated = None\n        super().save(*args, **kwargs)\n",
+        ),
+        ("shop/__init__.py", ""),
+        (
+            "shop/models.py",
+            "from django.db import models\nfrom models_base import Stamped\n\n\nclass Book(Stamped):\n    title = models.CharField(max_length=10)\n\n\nclass Note(models.Model):\n    def save(self, *args, **kwargs):\n        \"\"\"Just super.\"\"\"\n        return super().save(*args, **kwargs)\n",
+        ),
+        (
+            "shop/signals.py",
+            "from django.db.models.signals import post_save, pre_save\nfrom django.dispatch import receiver\n\nfrom .models import Book\n\n\n@receiver([pre_save, post_save], sender=Book)\ndef book_saved(sender, instance, **kwargs):\n    pass\n\n\ndef book_checked(sender, instance, **kwargs):\n    pass\n\n\npre_save.connect(book_checked, sender=Book)\n",
+        ),
+        ("views.py", "from shop.models import Book, Note\n\n\ndef bulk():\n    Book.objects.update(title=\"t\")\n    Note.objects.update(title=\"t\")\n"),
+    ];
+    let dir = py_classes_workspace("dj-hooks", &edits);
+    let program = r#".language python
+#include "python/django.rerail"
+.decl hk(mq: symbol, k: symbol, h: symbol)
+hk(mq, k, h) :- dj_qs_root(_, e), dj_model_named(e, mq), docof(e, d), doc(d, "views.py", _), dj_model_hook(e, k, h).
+.output hk
+.decl rd(p: symbol, f: symbol, mq: symbol)
+rd(p, x, mq) :- dj_receiver_def(f, mq), def_name(f, x), docof(f, d), doc(d, p, _).
+.output rd
+"#;
+    let (_, rows) = py_classes_run(&dir, program);
+    let r = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+    assert_eq!(
+        rows["hk"],
+        [
+            r(&["shop.models.Book", "save", "Stamped.save() (models_base.py:8)"]),
+            r(&["shop.models.Book", "save", "post_save/pre_save receiver `book_saved` (shop/signals.py:7)"]),
+            r(&["shop.models.Book", "save", "pre_save receiver `book_checked` (shop/signals.py:16)"]),
+        ],
+        "Book's inherited save() and its receivers; Note's bare save() is none: {rows:?}"
+    );
+    assert_eq!(
+        rows["rd"],
+        [r(&["shop/signals.py", "book_checked", "shop.models.Book"]), r(&["shop/signals.py", "book_saved", "shop.models.Book"])],
+        "{rows:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A body edit misses its own file alone; a changed base misses the files whose rules read an ancestry row that
+/// changes (decision 0675 §3's probes: the rows at the classes a file's rules ask about), not a file that reads none:
+/// other.py, which reaches no module of the hierarchy, and app/__init__.py, which defines no class.
+#[test]
+fn a_python_files_entry_is_kept_under_its_own_classes_ancestry() {
+    let body = ("app/base.py", "from models_base import Base\n\n\nclass Mid(Base):\n    x = 1\n");
+    let rebased = ("models_base.py", "from django.db import models\n\n\nclass Base(Exception):\n    pass\n");
+    let dir = py_classes_workspace("py-classes-memo", &[]);
+    let (_, before) = py_classes_run(&dir, PY_CLASSES_PROGRAM);
+    std::fs::write(dir.join("ws").join(body.0), body.1).unwrap();
+    let (edited, rows) = py_classes_run(&dir, PY_CLASSES_PROGRAM);
+    assert_eq!(rows, before, "a body edit changes no ancestry");
+    assert_eq!(edited.memo.0, edited.files - 1, "a body edit misses its own file alone: {:?} of {}", edited.memo, edited.files);
+    std::fs::write(dir.join("ws").join(rebased.0), rebased.1).unwrap();
+    let (edited, rows) = py_classes_run(&dir, PY_CLASSES_PROGRAM);
+    assert_eq!(edited.memo.0, 2, "other.py and app/__init__.py, which read no ancestry row, alone hit: {:?} of {}", edited.memo, edited.files);
+    let fresh = py_classes_workspace("py-classes-memo-fresh", &[body, rebased]);
+    assert_eq!(rows, py_classes_run(&fresh, PY_CLASSES_PROGRAM).1, "the rows are a fresh run's");
+    let _ = std::fs::remove_dir_all(&fresh);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -3536,7 +4107,8 @@ fn a_run_with_no_root_runs_no_stratum_of_the_context() {
     let none = ran("x = 1\ndef f(y: int): ...\n");
     assert!(none.is_empty(), "no root, no rule of the context runs: {none:?}");
     let some = ran("x: \"List[int]\" = []\n");
-    assert!(some.iter().any(|h| h.split('\t').nth(1) == Some("rr_pass_quoted_ann_ident")), "with a root they run: {some:?}");
+    // The pass's relation, kept by its tape (rule 8), is derived as `rr_pass_quoted_ann_ident_rr_kd`.
+    assert!(some.iter().any(|h| h.split('\t').nth(1).is_some_and(|h| h.starts_with("rr_pass_quoted_ann_ident"))), "with a root they run: {some:?}");
 }
 
 #[test]
@@ -3544,6 +4116,112 @@ fn a_run_with_no_root_runs_no_stratum_of_the_context() {
 fn context_root_child() {
     let source = std::env::var("CONTEXT_ROOT_SOURCE").unwrap();
     printed_run("pass-root", ("a.py", &source), ANNOTATION_PASS, "quoted_names");
+}
+
+/// 0597 rung 7.1 (rule 7 on the memo path): an edit that changes no root and nothing the context reads runs none of
+/// its strata. A comment added to a file whose annotation is unchanged leaves the context's roots (its values, keyed
+/// by their text) and its reads as they were: no stratum of the context runs. An edit of the annotation's text makes
+/// a new root, and they run. Each run is a child process (`context_edit_child`) into one store, its heads read from
+/// its profile's `heads.tsv`, as rung 2.10's are.
+#[test]
+fn a_memo_edit_that_changes_no_root_runs_no_stratum_of_the_context() {
+    let directory = tempfile::tempdir().unwrap();
+    let step = |k: &str, source: &str| -> (Vec<String>, Vec<Vec<String>>) {
+        let profile = directory.path().join(format!("profile-{k}"));
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::context_edit_child", "--ignored", "--nocapture"])
+            .env("RERAIL_PROFILE", &profile)
+            .env("CONTEXT_EDIT_DIR", directory.path())
+            .env("CONTEXT_EDIT_SOURCE", source);
+        let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
+        assert!(status.success(), "{k}");
+        let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap_or_default();
+        let ran = heads.lines().skip(1).filter_map(|l| l.split('\t').nth(1)).filter(|h| h.contains("rr_pass_quoted_")).map(str::to_owned).collect();
+        let rows = crate::code_rule_dsl::logic::plan::output::shown(&directory.path().join("out"), "quoted_names").unwrap_or_default();
+        (ran, rows)
+    };
+    let (cold, rows) = step("cold", "x: \"List[int]\" = []\n");
+    assert!(!cold.is_empty() && rows.contains(&vec!["List".to_owned()]), "a cold run runs the context: {cold:?} {rows:?}");
+    let (comment, rows) = step("comment", "# a comment\nx: \"List[int]\" = []\n");
+    assert!(comment.is_empty(), "a comment changes no root: no stratum of the context runs: {comment:?}");
+    assert!(rows.contains(&vec!["List".to_owned()]) && rows.contains(&vec!["int".to_owned()]), "the context's rows stand: {rows:?}");
+    let (text, rows) = step("text", "# a comment\nx: \"List[str]\" = []\n");
+    assert!(!text.is_empty(), "a new annotation text is a new root: the context runs");
+    assert!(rows.contains(&vec!["str".to_owned()]) && !rows.contains(&vec!["int".to_owned()]), "the new text's rows: {rows:?}");
+}
+
+#[test]
+#[ignore = "child process of a_memo_edit_that_changes_no_root_runs_no_stratum_of_the_context"]
+fn context_edit_child() {
+    let dir = std::path::PathBuf::from(std::env::var("CONTEXT_EDIT_DIR").unwrap());
+    std::fs::write(dir.join("a.py"), std::env::var("CONTEXT_EDIT_SOURCE").unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let path = dir.join("g.rerail");
+    std::fs::write(&path, ANNOTATION_PASS).unwrap();
+    let printed = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::copy(dir.join("a.py"), src.join("a.py")).unwrap();
+    super::run(&printed, &src, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// 0597 rung 7.2 (rule 8 across chunks): a text a later chunk places is given the pass's rows the first chunk kept
+/// under its value, and runs none of the pass's strata. Two files holding one annotation text, each a chunk of its
+/// own (`RERAIL_PROBE_NODES`, `RERAIL_CHUNK_NODES`), do the pass's work of one file; both files' rows stand. Each run
+/// is a child process (`context_chunks_child`), its heads read from its profile's `heads.tsv` (part, head, cpu_s,
+/// work, plans), as rung 2.10's are.
+#[test]
+fn a_text_a_later_chunk_places_runs_no_stratum_of_the_context() {
+    let run = |files: usize| -> (std::collections::BTreeMap<String, u64>, String, Vec<Vec<String>>) {
+        let directory = tempfile::tempdir().unwrap();
+        let profile = directory.path().join("profile");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::context_chunks_child", "--ignored", "--nocapture"])
+            .env("RERAIL_PROFILE", &profile)
+            .env("RERAIL_PROBE_NODES", "1")
+            .env("RERAIL_CHUNK_NODES", "1")
+            .env("RERAIL_CHUNKS_AT_ONCE", "1")
+            .env("CONTEXT_CHUNKS_DIR", directory.path())
+            .env("CONTEXT_CHUNKS_FILES", files.to_string());
+        let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
+        assert!(status.success(), "{files} files");
+        let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap_or_default();
+        let mut work: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+        for l in heads.lines().skip(1) {
+            let cols: Vec<&str> = l.split('\t').collect();
+            if let (Some(h), Some(w)) = (cols.get(1).filter(|h| h.contains("rr_pass_quoted_")), cols.get(3).and_then(|w| w.parse::<u64>().ok())) {
+                *work.entry((*h).to_owned()).or_default() += w;
+            }
+        }
+        let report = std::fs::read_to_string(profile.join("profile.txt")).unwrap_or_default();
+        let rows = crate::code_rule_dsl::logic::plan::output::shown(&directory.path().join("out"), "quoted_names").unwrap_or_default();
+        (work, report, rows)
+    };
+    let (one, _, rows) = run(1);
+    assert!(!one.is_empty() && rows.contains(&vec!["List".to_owned()]), "one file runs the context: {one:?} {rows:?}");
+    let (two, report, rows) = run(2);
+    assert!(report.contains("2 made in chunks"), "each file a chunk of its own: the text is a value of each");
+    assert_eq!(two, one, "the second chunk is given the first's rows: the pass's work is one file's");
+    assert!(rows.contains(&vec!["List".to_owned()]) && rows.contains(&vec!["int".to_owned()]), "the rows stand: {rows:?}");
+}
+
+#[test]
+#[ignore = "child process of a_text_a_later_chunk_places_runs_no_stratum_of_the_context"]
+fn context_chunks_child() {
+    let dir = std::path::PathBuf::from(std::env::var("CONTEXT_CHUNKS_DIR").unwrap());
+    let files: usize = std::env::var("CONTEXT_CHUNKS_FILES").unwrap().parse().unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let path = dir.join("g.rerail");
+    std::fs::write(&path, ANNOTATION_PASS).unwrap();
+    let printed = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    for i in 0..files {
+        std::fs::write(src.join(format!("f{i}.py")), format!("v{i}: \"List[int]\" = []\n")).unwrap();
+    }
+    super::run(&printed, &src, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
 }
 
 /// 0597 rung 2.12: one mechanism on the CPU and the device: 2.3's context views and 2.5's `.from` read give Metal's
@@ -3652,42 +4330,77 @@ names(x) :- names_in(x).
     assert_eq!(sorted(alone_and_together("vue-names", file, program, VUE_PLAIN, "names")), [row(&["count"]), row(&["inc"])]);
 }
 
-/// `first`'s relation `rel` over the one file `file`, run alone, and its findings (its rows of `violation`: path, line,
-/// column, sorted) alone and in a pack with `other`. A pack shows a policy's findings, not its own relations.
-fn findings_alone_and_together(name: &str, file: (&str, &str), first: &str, other: &str, rel: &str) -> (Vec<Vec<String>>, Vec<Vec<String>>, Vec<Vec<String>>) {
-    let id = first.lines().find_map(|l| l.strip_prefix(".policy \"")).and_then(|l| l.split('"').next()).unwrap_or_default().to_owned();
+/// A policy's id (its `.policy "<id>"` line).
+fn policy_id(program: &str) -> String {
+    program.lines().find_map(|l| l.strip_prefix(".policy \"")).and_then(|l| l.split('"').next()).unwrap_or_default().to_owned()
+}
+
+/// The rows of `violation` (policy, …, path, line, column, …) of `programs` run as one pack over `files` (path,
+/// text) under a directory of their own (`name`).
+fn pack_findings(name: &str, files: &[(String, &str)], programs: &[&str]) -> Vec<Vec<String>> {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    for (path, text) in files {
+        let at = dir.join(path);
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::fs::write(at, text).unwrap();
+    }
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let out = dir.join("out");
+    let ran = super::run_all(programs, &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    ran.unwrap_or_else(|e| panic!("{e}"));
+    let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    rows
+}
+
+/// `program`'s relation `rel` over the one file `file`, run alone, and its findings (its rows of `violation`: path,
+/// line, column, sorted).
+fn findings_alone(name: &str, file: (&str, &str), program: &str, rel: &str) -> (Vec<Vec<String>>, Vec<Vec<String>>) {
+    let id = policy_id(program);
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join(file.0), file.1).unwrap();
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
-    let run = |programs: &[&str], out: &str| {
-        let out = dir.join(out);
-        super::run_all(programs, &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
-        let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
-        let rows = read(&format!("p0_{rel}"));
-        let mut found: Vec<Vec<String>> = read("violation").into_iter().filter(|r| r.first() == Some(&id)).map(|r| r[3..].to_vec()).collect();
-        found.sort();
-        (if rows.is_empty() { read(rel) } else { rows }, found)
-    };
-    let (rows, alone) = run(&[first], "alone");
-    let (_, together) = run(&[first, other], "together");
+    let out = dir.join("alone");
+    let ran = super::run_all(&[program], &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    ran.unwrap_or_else(|e| panic!("{e}"));
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
+    let rows = read(&format!("p0_{rel}"));
+    let mut found: Vec<Vec<String>> = read("violation").into_iter().filter(|r| r.first() == Some(&id)).map(|r| r[3..].to_vec()).collect();
+    found.sort();
+    let rows = if rows.is_empty() { read(rel) } else { rows };
     let _ = std::fs::remove_dir_all(&dir);
-    (rows, alone, together)
+    (rows, found)
 }
 
 /// Each case of the Vue pack's tables: the policy, a component, its violation, and the last column of each finding
-/// (`*`: a finding, whatever it says). Each finds that alone and beside a policy of the other kind, as a pack runs
-/// them (rule 5: a relation has one meaning in every program): beside no-template-shadow, whose code is the contexts'
-/// alone, and no-template-shadow beside no-mutating-props, which reads both contexts.
+/// (`*`: a finding, whatever it says). Each finds that alone, and the same in the pack (rule 5: a relation has one
+/// meaning in every program): every case's policy run together, beside no-template-shadow, whose code is the
+/// contexts' alone, and no-mutating-props, which reads both contexts, over every case's component, each in a
+/// directory of its own (`case<k>/a.vue`). A case's findings in the pack are its policy's in its file.
 fn vue_pack_cases(cases: &[(&str, String, &str, Vec<&str>)]) {
     let read = |policy: &str| std::fs::read_to_string(crate::source_tree::native().join(format!("../docs/rule-syntax/packs/vue/eslint-plugin-vue-{policy}.rerail"))).unwrap();
+    let mut policies: Vec<&str> = cases.iter().map(|c| c.0).chain(["no-template-shadow", "no-mutating-props"]).collect();
+    policies.sort_unstable();
+    policies.dedup();
+    let texts: Vec<String> = policies.iter().map(|p| read(p)).collect();
+    let files: Vec<(String, &str)> = cases.iter().enumerate().map(|(k, c)| (format!("case{k}/a.vue"), c.1.as_str())).collect();
+    let pack = pack_findings("vue-pack-together", &files, &texts.iter().map(String::as_str).collect::<Vec<_>>());
     let mut wrong = Vec::new();
-    for (policy, text, rel, want) in cases {
+    for (k, (policy, text, rel, want)) in cases.iter().enumerate() {
         let program = read(policy);
-        let other = read(if *policy == "no-template-shadow" { "no-mutating-props" } else { "no-template-shadow" });
-        let run = std::panic::catch_unwind(|| findings_alone_and_together(&format!("vue-pack-{policy}"), ("a.vue", text.as_str()), &program, &other, rel));
-        let Ok((found, alone, together)) = run else {
+        let id = policy_id(&program);
+        let path = format!("case{k}/a.vue");
+        let mut together: Vec<Vec<String>> = pack
+            .iter()
+            .filter(|r| r.first() == Some(&id) && r.get(3) == Some(&path))
+            .map(|r| std::iter::once("a.vue".to_owned()).chain(r[4..].iter().cloned()).collect())
+            .collect();
+        together.sort();
+        let run = std::panic::catch_unwind(|| findings_alone(&format!("vue-pack-{policy}"), ("a.vue", text.as_str()), &program, rel));
+        let Ok((found, alone)) = run else {
             let e = run.err().unwrap();
             let e = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| (*s).to_owned())).unwrap_or_default();
             wrong.push(format!("{policy} on {text:?}: {e}"));
@@ -3696,7 +4409,7 @@ fn vue_pack_cases(cases: &[(&str, String, &str, Vec<&str>)]) {
         let mut got: Vec<String> = found.iter().map(|r| if want.first() == Some(&"*") { "*".to_owned() } else { r.last().cloned().unwrap_or_default() }).collect();
         got.sort();
         if got != *want || alone.len() != found.len() || together != alone {
-            wrong.push(format!("{policy} on {text:?}: {found:?} (findings {alone:?}, together {together:?}), wanted {want:?}"));
+            wrong.push(format!("{policy} on {text:?}: {found:?} (findings {alone:?}, in the pack {together:?}), wanted {want:?}"));
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
@@ -3852,4 +4565,34 @@ fn a_kept_texts_modules_stand_while_it_and_its_files_are_as_kept() {
     assert_eq!(shown(super::kept_texts::known(&store, &programs)), [kept[0].clone(), None, kept[2].clone()], "b.rerail changed: its includer is read again");
     drop(store);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A matcher whose captures are its root's field children (as `Absorb` writes them, decision 0106 §4) has its rows
+/// read from the tape at the transducer's roots (`ast_wave::field_captures`, t50 step 6): the same rows as W's matcher
+/// at each root (`RERAIL_AST_DIRECT_CAPTURES=off`), a capture in a field holding two kinds and a root with none.
+#[test]
+fn field_captures_read_from_the_tape_are_ws() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("field-captures");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "a.b.c\nx.y\nf(1).z\ng(h)\nk.m(n)\n").unwrap();
+    let program = ".language python\n.decl attr(t: symbol)\n.decl callee(t: symbol)\n.output attr, callee\n\
+                   attr(t) :- ast(d, r, {\"language\":\"python\",\"rule\":{\"all\":[{\"kind\":\"attribute\"},{\"has\":{\"field\":\"attribute\",\"kind\":\"identifier\",\"pattern\":\"$C1\",\"stopBy\":\"neighbor\"}}]}}, C1: x), text(x, t).\n\
+                   callee(t) :- ast(d, r, {\"language\":\"python\",\"rule\":{\"all\":[{\"kind\":\"call\"},{\"has\":{\"field\":\"function\",\"kind\":\"identifier\",\"pattern\":\"$C1\",\"stopBy\":\"neighbor\"}}]}}, C1: x), text(x, t).\n";
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let run = |out: &str| {
+        let out = dir.join(out);
+        super::run_all(&[program], &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+        let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
+        (read("attr"), read("callee"))
+    };
+    let direct = run("direct");
+    let by_w = {
+        let _off = super::switches::set(&[("RERAIL_AST_DIRECT_CAPTURES", "off")]);
+        run("by-w")
+    };
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(direct.0, [["b"], ["c"], ["m"], ["y"], ["z"]]);
+    assert_eq!(direct.1, [["f"], ["g"]]);
+    assert_eq!(direct, by_w, "the tape's field children are W's captures");
 }

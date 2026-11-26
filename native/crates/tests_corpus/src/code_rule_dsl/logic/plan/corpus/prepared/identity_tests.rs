@@ -55,7 +55,7 @@ fn prepared_identity_child() {
     let program = crate::code_rule_dsl::logic::settings::program_text(
         &crate::source_tree::native().join("src/code_rule_dsl/typing/programs/calls_p3.rerail")
     ).unwrap();
-    let text = format!("{program}\n.decl hit(c:node,f:node)\nhit(c,f) :- call_target(c,f).\n.output hit\n");
+    let text = format!("{program}\n.decl hit(c:symbol,f:symbol)\nhit(c,f) :- call_target(c,f).\n.output hit\n");
     let report = super::super::run_with_options(&[text.as_str()], &root, None, &out, "program", Binding::Cpu,
         1 << 18, &super::super::Typing::default(), &serde_json::json!({
             "inputFiles":["a.py","b.py"], "env":[format!("python.typeshed={}", root.join("typeshed").display())]

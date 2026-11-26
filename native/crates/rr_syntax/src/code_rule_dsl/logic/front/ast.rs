@@ -1,5 +1,6 @@
 //! Moved from `front.rs` by the crate split (tools/cratify/moves.tsv).
 
+use rerail_blocks::vector::Vector;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use crate::code_rule_dsl::logic::front::name::Name;
@@ -164,6 +165,9 @@ pub enum Fan {
     About(u32),
 }
 
+// A fan-out and a column's values are their own records in a section (`plan::shapes`, decision 0628 §4).
+rerail_section::plain_archive!(Fan, Values);
+
 /// The most a few-fan-out probe returns (decision 0361: "few (16 or fewer)").
 pub const FEW: u32 = 16;
 
@@ -181,9 +185,14 @@ impl Fan {
 
 /// A relation's size (`.layout r size(…)`, decision 0361): at most `n` rows per value of a column (`per n`, `<= 2 per
 /// n`), one per document or per kind, or small (a table of the rules' own).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, rerail_section::Archive)]
+#[archive(derive(Debug, PartialEq), decode)]
 pub enum Size {
-    Per { most: u32, col: usize },
+    Per {
+        most: u32,
+        #[archive(flat)]
+        col: usize,
+    },
     PerDocument,
     PerKind,
     Small,
@@ -209,32 +218,60 @@ pub enum Values {
 
 /// The native operator that makes a relation, where its rules' form does not show it (`.layout r by …`, decision
 /// 0361 item 4): an override a profiled run reports once the facts find it alone.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, rerail_section::Archive)]
+#[archive(derive(Debug, PartialEq), decode)]
 pub enum Algo {
     Reach,
     /// A walk along a tree relation.
     Walk(String),
     /// A running aggregate along a column ordered within a group.
-    Running { col: usize, within: Vec<usize> },
+    Running {
+        #[archive(flat)]
+        col: usize,
+        #[archive(flat)]
+        within: Vector<usize>,
+    },
 }
 
 /// One fact a relation's rows hold (`.layout`, decision 0361), its columns by place. A fact is about the rows, not
 /// a plan, so it holds for every form made from the relation's rules (their deltas', maintenance's and hiding's).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, rerail_section::Archive)]
+#[archive(derive(Debug, PartialEq), decode)]
 pub enum LayoutFact {
     /// The columns are a key: a probe on them returns at most one row.
-    Key(Vec<usize>),
+    Key(#[archive(flat)] Vector<usize>),
     /// A probe on `from` returns `fan` rows of `to`.
-    Fanout { from: Vec<usize>, to: Vec<usize>, fan: Fan },
+    Fanout {
+        #[archive(flat)]
+        from: Vector<usize>,
+        #[archive(flat)]
+        to: Vector<usize>,
+        fan: Fan,
+    },
     Size(Size),
     /// Every column that holds a node holds one of one document: no row crosses documents.
     Local,
     /// `col` is ordered within each group of `within`; dense: numbered 0, 1, 2, … in each.
-    Order { col: usize, within: Vec<usize>, dense: bool },
+    Order {
+        #[archive(flat)]
+        col: usize,
+        #[archive(flat)]
+        within: Vector<usize>,
+        dense: bool,
+    },
     /// `from -> to` is a forest: each `to` has at most one `from`, and no cycle.
-    Tree { from: usize, to: usize },
+    Tree {
+        #[archive(flat)]
+        from: usize,
+        #[archive(flat)]
+        to: usize,
+    },
     /// Column `col` holds `values` distinct values.
-    Values { col: usize, values: Values },
+    Values {
+        #[archive(flat)]
+        col: usize,
+        values: Values,
+    },
     By(Algo),
 }
 
@@ -282,7 +319,7 @@ pub fn layout_facts(text: &str, col: &dyn Fn(&str) -> Result<usize, String>) -> 
         *at = end + 1;
         Ok(words[start..end].to_vec())
     };
-    let cols = |ws: &[String]| -> Result<Vec<usize>, String> {
+    let cols = |ws: &[String]| -> Result<Vector<usize>, String> {
         let names: Vec<&String> = ws.iter().filter(|w| *w != ",").collect();
         if names.is_empty() {
             return Err("no column named".to_owned());
@@ -675,11 +712,11 @@ pub const NEAREST: &str = "rr_nearest_";
 pub fn made_from_a_kind_set(rel: &str) -> Option<Vec<LayoutFact>> {
     let ancestors = LayoutFact::Values { col: 1, values: Values::OneIn(4) };
     if rel.starts_with(NEAREST) {
-        Some(vec![LayoutFact::Key(vec![0]), LayoutFact::Local, ancestors])
+        Some(vec![LayoutFact::Key(rerail_blocks::vector![0]), LayoutFact::Local, ancestors])
     } else if rel.starts_with(AXIS) {
-        Some(vec![LayoutFact::Fanout { from: vec![0], to: vec![1], fan: Fan::About(2) }, LayoutFact::Local, ancestors])
+        Some(vec![LayoutFact::Fanout { from: rerail_blocks::vector![0], to: rerail_blocks::vector![1], fan: Fan::About(2) }, LayoutFact::Local, ancestors])
     } else if rel.starts_with(DESCENDANTS) {
-        Some(vec![LayoutFact::Fanout { from: vec![0], to: vec![1], fan: Fan::About(8) }, LayoutFact::Local, ancestors])
+        Some(vec![LayoutFact::Fanout { from: rerail_blocks::vector![0], to: rerail_blocks::vector![1], fan: Fan::About(8) }, LayoutFact::Local, ancestors])
     } else {
         None
     }

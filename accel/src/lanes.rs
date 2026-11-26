@@ -49,7 +49,7 @@ pub fn device_lanes_asked() -> usize {
 }
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub(crate) fn ask_device_lane() {
+pub fn ask_device_lane() {
     DEVICE_LANES_ASKED.with(|n| n.set(n.get() + 1));
 }
 

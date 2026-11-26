@@ -13,6 +13,7 @@ use rerail_store::Canonical as _;
 /// checks the identities the build script computes.
 #[cfg(test)]
 mod build_identity;
+
 /// `build.rs` generates the language tables with this file; the library builds it only for tests,
 /// so `cargo test` checks how the build validates the language registry. The rest is the build script's.
 #[cfg(test)]
@@ -27,6 +28,9 @@ mod test_watchdog;
 // The test binary's stores flush nothing (`RERAIL_FLUSH=none`, decision 0481) unless the environment says otherwise.
 #[cfg(test)]
 mod test_flush;
+// The test binary's folders are the user's alone (a umask of 077, decision 0574).
+#[cfg(test)]
+mod test_private_folders;
 #[cfg(test)]
 mod text_readers_guard_tests;
 #[cfg(all(test, not(windows)))]
@@ -52,6 +56,8 @@ mod model;
 pub use rerail_workspace::panic_boundary;
 mod path_owner;
 pub mod process;
+/// The warning on a macOS whose allocator aborts the engine's work (`bin/rerail-engine.rs`).
+pub mod os_warning;
 pub use rerail_logic::threads;
 /// The browser's long-lived engine: `rerail_command` and its buffers (wasm/README.md).
 #[cfg(target_family = "wasm")]
@@ -69,55 +75,11 @@ use std::path::Path;
 // (`rust_allocations_reach_the_profile_allocator` checks it).
 #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
 #[global_allocator]
-static GLOBAL: Sampled = Sampled;
+static GLOBAL: rerail_prof::heap::Sampled = rerail_prof::heap::Sampled;
 
 #[cfg(all(windows, not(feature = "system-allocator")))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
-/// jemalloc, with the heap sampler around it (`rerail_prof::heap`, `RERAIL_HEAP_SAMPLE`): off, one load more an
-/// allocation. Tree-sitter's allocations go to jemalloc directly and are not sampled.
-#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
-#[cfg_attr(test, allow(dead_code))]
-struct Sampled;
-
-// Every allocation of every crate calls these through the allocator shim (`__rust_alloc`): inlined into it, as
-// jemalloc's own are, they cost the shim one load more an allocation and not a call of their own.
-#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
-unsafe impl std::alloc::GlobalAlloc for Sampled {
-    #[inline]
-    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
-        let p = unsafe { tikv_jemallocator::Jemalloc.alloc(layout) };
-        if rerail_prof::heap::on() {
-            rerail_prof::heap::alloc(p as usize, layout.size());
-        }
-        p
-    }
-    #[inline]
-    unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
-        let p = unsafe { tikv_jemallocator::Jemalloc.alloc_zeroed(layout) };
-        if rerail_prof::heap::on() {
-            rerail_prof::heap::alloc(p as usize, layout.size());
-        }
-        p
-    }
-    #[inline]
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
-        if rerail_prof::heap::on() {
-            rerail_prof::heap::free(ptr as usize);
-        }
-        unsafe { tikv_jemallocator::Jemalloc.dealloc(ptr, layout) }
-    }
-    #[inline]
-    unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
-        let q = unsafe { tikv_jemallocator::Jemalloc.realloc(ptr, layout, new_size) };
-        if rerail_prof::heap::on() && !q.is_null() {
-            rerail_prof::heap::free(ptr as usize);
-            rerail_prof::heap::alloc(q as usize, new_size);
-        }
-        q
-    }
-}
 
 #[cfg(not(any(test, windows, target_family = "wasm")))]
 union JemallocConf {
@@ -947,15 +909,19 @@ pub struct ConversationEngine {
 
 #[napi]
 impl ConversationEngine {
+    /// The engine of the model at `model_path`. Its caller is the Node environment: its engines share one copy of each
+    /// model, held by the environment's object (`api::environment`, decision 0442).
     #[napi(factory, catch_unwind)]
-    pub fn load(model_path: String, max_input_tokens: u32) -> Result<Self> {
+    pub fn load(env: napi::Env, model_path: String, max_input_tokens: u32) -> Result<Self> {
         if max_input_tokens == 0 {
             return Err(Error::new(
                 Status::InvalidArg,
                 "max_input_tokens must be positive",
             ));
         }
-        let model = shared_model(Path::new(&model_path))?;
+        let environment = rerail_workspace::code_rule_dsl::workspace::api::environment(&env)?;
+        let models = environment.shared.get::<model::Models>();
+        let model = shared_model(&models, Path::new(&model_path))?;
         let dimensions = model.fingerprint.dimensions as usize;
         Ok(Self {
             encoder: ModelEncoder {

@@ -113,6 +113,8 @@
 // the type of n's own value. value_type cannot say it: its key is the value's text, which "12" and 12 share, and a
 // container or bytes has no text in `value`.
 .decl value_type_of(n: node, t: symbol)                  // the type of n's value, containers and bytes included
+// static_value_type_of(n, t): the type of static_value's value of n, as value_type_of names it.
+.decl static_value_type_of(n: node, t: symbol)
 // fstring_piece(n, i, kind, v): the pieces of f-string n (a Python string, concatenated_string or format_specifier
 // whose value is a JoinedStr), in order from 0: in f'a{x!r:>10}b{y=}', (0, "literal", "a"), (1, "interpolation",
 // "x"), (1, "format_spec", ">10"), (2, "literal", "by="), (3, "interpolation", "y"), (3, "debug", "y="). A literal
@@ -231,10 +233,10 @@
 // fields, and the policy's sibling links (`.references`, at the end). What dead-code and caller checks walk.
 // reference_edge(f, g, "self"): f's body refers to g, here as `self.g`. f and g are function_definition or
 // class_definition nodes; via is how: name, bare, unqualified, self, super, field, param_type, late or sibling.
-.decl reference_edge(src: node, dst: node, via: symbol)
+.decl reference_edge(src: node, dst: node, via: symbol) extensible  // a hook Python's library fills (python/references.rerail, decision 0263)
 // reference_open(f): f refers to something no static name denotes, or f's file does not parse: what f reaches
 // is not all known.
-.decl reference_open(n: node)
+.decl reference_open(n: node) extensible  // as reference_edge
 // Both are rules, not inputs (decision 0483): a program that reads them includes python/references.rerail, the one
 // file that derives them.
 
@@ -311,13 +313,15 @@
 // env(k, v): the run's settings (`rerail.env` at the corpus root, `--env k=v`). dir_entry(dir, name, is_dir) and
 // file_line(path, i, text) (from 1): the entries of a directory and the lines of a file, and file_digest(path, c):
 // its content's SHA-256 (hex), read only for a dir or path a rule binds, under the corpus root or a directory a
-// setting names. load(path, module, grammar): a rule asks for
+// setting names; file_interface(path, d), a rule file's interface's (its statements less its rules' bodies and its
+// includes, decision 0639 §4). load(path, module, grammar): a rule asks for
 // the file as a document, named as `module` (its resolution's answer); loaded(path, module, grammar): the documents
 // loaded, by canonical path. A loaded document is evaluated like any other; its rows are not the run's findings.
 .decl env(key: symbol, value: symbol) extensible
 .decl dir_entry(dir: symbol, name: symbol, is_dir: number)
 .decl file_line(path: symbol, i: number, text: symbol)
 .decl file_digest(path: symbol, c: symbol)
+.decl file_interface(path: symbol, d: symbol)
 .decl load(path: symbol, module: symbol, grammar: symbol) extensible
 .decl loaded(path: symbol, module: symbol, grammar: symbol)
 // Each answered by a native step (t33 K3): the request, then what its answer adds rows to. A file system request is
@@ -325,6 +329,7 @@
 .answer rr_dir_req -> dir_entry
 .answer rr_file_req -> file_line
 .answer rr_digest_req -> file_digest
+.answer rr_interface_req -> file_interface
 .answer load -> loaded
 // ---- a coding agent's tool calls (`tool-calls.md`) ----
 // tool_call(c, tool): a tool call the run is given (the `toolCalls` option, `run-policies --tool-calls`), by its id c,

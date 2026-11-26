@@ -128,14 +128,13 @@ nonempty_tuple(e) :- unparen(e, m), kind(m, "tuple"), child(m, c, _), !kind(c, "
     !kind(c, "line_continuation").
 
 
-// identifier(x): x, the value of some str literal or the text of a name, is a Python identifier (str.isidentifier)
-// that is not a keyword, as Ruff's is_identifier: an XID_Start character or `_`, then XID_Continue characters.
+// identifier_str(s): str literal s's value is a Python identifier (str.isidentifier) that is not a keyword, as Ruff's
+// is_identifier: an XID_Start character or `_`, then XID_Continue characters. Keyed by the literal, in its own file:
+// keyed by the value, it was a table of every file's strings and names, joined by value in the cross-file part
+// (decision 0677).
 //   "x_1", "ſ": identifier       "1x", "a-b": not       "class": not, a keyword
-.decl identifier(x: symbol)
-identifier(x) :- field_name(x), match("[_\\p{XID_Start}]\\p{XID_Continue}*", x), !py_keyword(x).
-.decl field_name(x: symbol)  // the strings identifier is asked about: every str literal's value, every name
-field_name(x) :- plain_str(_, x).
-field_name(x) :- kind(n, "identifier"), text(n, x).
+.decl identifier_str(s: node)
+identifier_str(s) :- plain_str(s, x), match("[_\\p{XID_Start}]\\p{XID_Continue}*", x), !py_keyword(x).
 
 // ---- 4. names ----------------------------------------------------------------------------------------------------
 // unbound_ref(n, x): n reads x and Ruff finds no binding for it. Ruff reads code in order and visits function
@@ -245,31 +244,33 @@ number(e, "1", "0") :- kind(e, "true").
 number(e, "0", "0") :- kind(e, "false").
 number(e, r, "0") :- (kind(e, "integer") ; kind(e, "float")), text(e, t), !match("[\\s\\S]*[jJ]", t), num_text(e, r).
 number(e, "0", i) :- (kind(e, "integer") ; kind(e, "float")), text(e, t), match("(?<b>[\\s\\S]*)[jJ]", t),
-    canon_number(b, i).
+    canon_number(e, b, i).
 number(e, r, i) :- kind(e, "unary_operator"), op(e, "-"), field(e, "argument", a), unparen(a, m),
-    number(m, r0, i0), negate(r0, r), negate(i0, i).
+    number(m, r0, i0), negate(m, r0, r), negate(m, i0, i).
 number(e, r, i) :- kind(e, "unary_operator"), op(e, "+"), field(e, "argument", a), unparen(a, m), number(m, r, i).
 // `a + bj` and `a - bj`: a real part and an imaginary literal. A complex's parts are floats, so an integer
 // part longer than a float holds exactly (15 digits) is kept apart: `2**53 + 1` is not `2**53 + 1 + 0j`.
 number(e, r, i) :- kind(e, "binary_operator"), field(e, "left", l), field(e, "right", rt), unparen(l, lm),
-    number(lm, r0, "0"), unparen(rt, rm), number(rm, "0", i0), (op(e, "+"), i = i0 ; op(e, "-"), negate(i0, i)),
+    number(lm, r0, "0"), unparen(rt, rm), number(rm, "0", i0), (op(e, "+"), i = i0 ; op(e, "-"), negate(rm, i0, i)),
     (strlen(r0) <= 15, r = r0 ; strlen(r0) > 15, r = cat(r0, "~float")).
-// negate(a, b): b is -a as canonical text; -0 is 0.
-.decl negate(a: symbol, b: symbol)
-negate("0", "0").
-negate(a, b) :- (number(_, a, _) ; number(_, _, a)), a != "0", prefix("-", a), b = @replace_all(a, "^-", "").
-negate(a, cat("-", a)) :- (number(_, a, _) ; number(_, _, a)), a != "0", !prefix("-", a).
+// negate(e, a, b): b is -a as canonical text, for a part a of number e; -0 is 0. Keyed by the number, as
+// canon_number below, so each is made in its literal's file: keyed by the text, both were tables of every file's
+// numbers, joined by text in the cross-file part (decision 0677).
+.decl negate(e: node, a: symbol, b: symbol)
+negate(e, "0", "0") :- (number(e, "0", _) ; number(e, _, "0")).
+negate(e, a, b) :- (number(e, a, _) ; number(e, _, a)), a != "0", prefix("-", a), b = @replace_all(a, "^-", "").
+negate(e, a, cat("-", a)) :- (number(e, a, _) ; number(e, _, a)), a != "0", !prefix("-", a).
 // num_text(e, r): an integer's value (core normalises `0x10` to "16"), or a float's canonical decimal text.
 .decl num_text(e: node, r: symbol)
 num_text(e, v) :- kind(e, "integer"), value(e, v).
-num_text(e, r) :- kind(e, "float"), (value(e, v) ; !value(e, _), text(e, v)), canon_number(v, r).
-// canon_number(t, r): decimal text without underscores, trailing fractional zeros or a bare leading dot:
-// "1.50" -> "1.5", "10.0" -> "10", ".5" -> "0.5", "1_000" -> "1000". Text with an exponent is kept.
-.decl canon_number(t: symbol, r: symbol)
-canon_number(t, r) :- num_source(t), u = @replace_all(t, "_", ""), match("[0-9]*\\.[0-9]*", u),
+num_text(e, r) :- kind(e, "float"), (value(e, v) ; !value(e, _), text(e, v)), canon_number(e, v, r).
+// canon_number(e, t, r): decimal text t of literal e without underscores, trailing fractional zeros or a bare leading
+// dot: "1.50" -> "1.5", "10.0" -> "10", ".5" -> "0.5", "1_000" -> "1000". Text with an exponent is kept.
+.decl canon_number(e: node, t: symbol, r: symbol)
+canon_number(e, t, r) :- num_source(e, t), u = @replace_all(t, "_", ""), match("[0-9]*\\.[0-9]*", u),
     s = @replace_all(@replace_all(u, "0+$", ""), "\\.$", ""),
     (prefix(".", s), r = cat("0", s) ; !prefix(".", s), r = s).
-canon_number(t, u) :- num_source(t), u = @replace_all(t, "_", ""), !match("[0-9]*\\.[0-9]*", u).
-.decl num_source(t: symbol)
-num_source(v) :- kind(e, "float"), (value(e, v) ; !value(e, _), text(e, v)).
-num_source(b) :- (kind(e, "integer") ; kind(e, "float")), text(e, t), match("(?<b>[\\s\\S]*)[jJ]", t).
+canon_number(e, t, u) :- num_source(e, t), u = @replace_all(t, "_", ""), !match("[0-9]*\\.[0-9]*", u).
+.decl num_source(e: node, t: symbol)
+num_source(e, v) :- kind(e, "float"), (value(e, v) ; !value(e, _), text(e, v)).
+num_source(e, b) :- (kind(e, "integer") ; kind(e, "float")), text(e, t), match("(?<b>[\\s\\S]*)[jJ]", t).

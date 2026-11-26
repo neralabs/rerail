@@ -40,7 +40,8 @@ pub mod code_rule_dsl {
         pub use rerail_rr::code_rule_dsl::logic::front;
         pub use rerail_program_image::code_rule_dsl::logic::program_facts;
         pub use rerail_facts::code_rule_dsl::logic::strings;
-        pub use rerail_logic_core::code_rule_dsl::logic::{analysis, bloom, costs, crypto, derived, join_size, liveness, reach_form, sql, version_trace};
+        pub use rerail_logic_core::code_rule_dsl::logic::{analysis, bloom, crypto, derived, join_size, liveness, reach_form, sql, version_trace};
+        pub use rerail_costs::code_rule_dsl::logic::costs;
         pub use rerail_setfix::code_rule_dsl::logic::{device, lanes, native, run, run_state};
         pub mod answers;
         /// The passes a program was made into (decision 0597): what the contexts (rerail-rr-root's) and the
@@ -158,8 +159,6 @@ pub mod code_rule_dsl {
     pub use rerail_prof::code_rule_dsl::prof;
     pub use rerail_facts::code_rule_dsl::search_index;
     pub use rerail_lang::code_rule_dsl::semver;
-    pub use rerail_facts::code_rule_dsl::sql_profile;
-    pub use rerail_facts::code_rule_dsl::sql_admission;
     pub mod stats {
         pub use rerail_facts::code_rule_dsl::stats::identity;
     }
@@ -224,3 +223,9 @@ mod test_load {
     #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
     static LOAD: extern "C" fn() = load;
 }
+
+// The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
+// host's umask of `002` made a fixture's folder `775`, which the mapped files' rules refuse (`output::tests`).
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;

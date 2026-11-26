@@ -440,6 +440,15 @@ impl SegmentMap {
             .map(|segment| segment.from as usize..segment.to as usize)
     }
 
+    /// The host bytes a program `len` bytes long is, where it is one stretch of them copied whole (a string's text with
+    /// no escape): its text then reads where the host's lies (decision 0353 step 4a).
+    pub fn whole_copy(&self, len: usize) -> Option<Range<usize>> {
+        match self.segments.as_slice() {
+            [s] if s.copied && s.at == 0 && s.end as usize == len && (s.to - s.from) as usize == len => Some(s.from as usize..s.to as usize),
+            _ => None,
+        }
+    }
+
     /// Each copied stretch: its program bytes and the host bytes they copy, in program order.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn copied_stretches(&self) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + '_ {

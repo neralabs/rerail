@@ -16,4 +16,4 @@
 
 .violation F523(at: node) code "F523" "`.format` call has unused arguments"
     suppress ruff "F523"
-F523(c) :- format_call(c, v), brace_auto(v, n), arg_pos(c, i, _), i >= n, !brace_index(v, i).
+F523(c) :- format_call(c, _), brace_auto(c, n), arg_pos(c, i, _), i >= n, !brace_index(c, i).

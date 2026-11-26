@@ -1,0 +1,33 @@
+# The relations of the cross-file part that still hold a node id (decision 0677), by pack: `<pack> <relation>`.
+# Read by `tools::pack_split_tests`. This list only shrinks: a fixed relation leaves it in the same commit.
+# Generated from the pack tests' failures (each prints `<pack> <relation>  under <crossing>`); the crossing each is under
+# is in decision 0677's table. `<pack>:alone` is the data layer's policies split one by one.
+data-layer exists_11
+data-layer rr_found_through
+data-layer violation
+data-layer:alone exists_1
+data-layer:alone exists_3
+data-layer:alone rr_found_through
+packs/django dar_non_atomic_wrapped
+packs/django rr_found_through
+packs/javascript exists_2
+packs/javascript rr_found_through
+packs/javascript significant_bits
+packs/node api_use
+packs/node env_global
+packs/node exists_9
+packs/node loader
+packs/node module_load
+packs/node rr_found_through
+packs/node spec_value
+packs/node val
+packs/python-main exists_1
+packs/python-main FAST003
+packs/python-main fast003_alt_10
+packs/python-main fast003_alt_13
+packs/python-main fast003_alt_2
+packs/python-main fast003_call_has
+packs/python-main fast003_fn_has
+packs/python-main fast003_init_has
+packs/python-main rr_found_through
+packs/typescript exists_6

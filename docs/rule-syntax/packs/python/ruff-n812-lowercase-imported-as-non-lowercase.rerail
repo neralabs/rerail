@@ -13,4 +13,5 @@
 .violation N812(at: node, x: symbol, a: symbol) code "N812"
     "Use a lowercase alias instead of `{a}` for `{x}` and update its uses; leave it if `{x}` is really a class or constant despite its lowercase name."
     suppress ruff "N812"
-N812(i, x, a) :- alias_import(i, x, a), cased_lower(x), !lower_name(a), !naming_ignored(x), !naming_ignored(a).
+N812(i, x, a) :- alias_import(i, x, a), cased_lower(i, x), !lower_name(i, a), !naming_ignored(i, x),
+    !naming_ignored(i, a).

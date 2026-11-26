@@ -2,6 +2,7 @@
 //! name, so each component, interface and helper name (`fl<h>_<head>`, from its content: `helper_name`) is fixed by
 //! the program; each round's program is a version of its own, split again to check the helpers stay file-local.
 
+use rerail_blocks::vector::Vector;
 use super::super::{FileLocal, close_under, push_equal_columns, var_equalities_in};
 use super::{BodyItem, Made, NOwned, Round, lit_vars, name, term_vars, write};
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
@@ -38,7 +39,10 @@ pub struct PushLocalJoins {
     pub rounds: usize,
 }
 
-const ATTRIBUTES: [&str; 8] = ["docof", "line", "end_line", "col", "visit_index", "node_order", "node", "doc"];
+/// A node's attributes (and a document's, `doc`): a row a node, read by its key. `text(n, s)` is one: a component of
+/// `text`, `docof` and a document's module (`rf_ref`'s) was a row for every node with text, 4.3 M on t50's product
+/// run, made and handed on by every chunk for a cross-file rule that reads a few of them.
+const ATTRIBUTES: [&str; 9] = ["docof", "line", "end_line", "col", "visit_index", "node_order", "node", "doc", "text"];
 
 /// All of `a`'s terms are variables or wildcards, each variable once.
 fn plain(v: &Version, rule: RuleRef<'_>, a: AtomRef<'_>) -> bool {
@@ -263,7 +267,7 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
             }
             let body: Vec<LitRef<'v>> = rule.body().collect();
             let candidate = |l: LitRef<'_>| matches!(l.view(), L::Atom(a) if !a.neg() && !f.lattice(v.rel_name(a.rel())) && (base(v.rel_name(a.rel())) || local.contains(v.rel_name(a.rel()))));
-            let idx: Vec<usize> = (0..body.len()).filter(|&j| candidate(body[j])).collect();
+            let idx: Vector<usize> = (0..body.len()).filter(|&j| candidate(body[j])).collect();
             let equal: Vec<(String, String)> = var_equalities_in(v, rule).into_iter().map(|(a, b)| (name(v, rule, a), name(v, rule, b))).collect();
             let mut comps: Vec<(BTreeSet<usize>, BTreeSet<String>)> = Vec::new();
             for &j in &idx {
@@ -297,10 +301,25 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 if node_groups(v, f, rule, &atoms, &equal).len() > 1 {
                     continue;
                 }
+                // The comparisons and negations the component takes with it (those over its variables alone): they
+                // filter its rows in the chunk.
+                let goes_with = |l: LitRef<'_>| match l.view() {
+                    L::Cmp { .. } => true,
+                    L::Atom(a) => a.neg() && !a.gated() && !f.lattice(rel(&a)) && (base(rel(&a)) || (at == 0 && local.contains(rel(&a)))),
+                    _ => false,
+                };
+                let filtered = body.iter().enumerate().any(|(j, l)| {
+                    let lv = lit_vars(v, rule, *l);
+                    !lits.contains(&j) && goes_with(*l) && !lv.is_empty() && lv.is_subset(&vars)
+                });
                 let attribute = |a: &AtomRef<'_>| ATTRIBUTES.contains(&rel(a)) && plain(v, rule, *a);
                 let rest: Vec<&AtomRef<'v>> = atoms.iter().filter(|a| !attribute(a)).collect();
+                // One plain atom and lookups of its nodes' attributes (`child(p, f, _), text(p, s)`) is a row a node the
+                // cross part reads as well where it is: left, unless a test of its variables goes with it
+                // (`!bound(p, s)`), which the chunk answers and the cross part would otherwise read whole.
                 if let [a] = rest[..]
                     && !must
+                    && !filtered
                     && plain(v, rule, *a)
                 {
                     let own: BTreeSet<String> = a.args().filter_map(|t| t.var()).map(|s| name(v, rule, s)).collect();
@@ -322,13 +341,8 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                     continue;
                 }
                 for (j, l) in body.iter().enumerate() {
-                    let with = match l.view() {
-                        L::Cmp { .. } => true,
-                        L::Atom(a) => a.neg() && !a.gated() && !f.lattice(rel(&a)) && (base(rel(&a)) || (at == 0 && local.contains(rel(&a)))),
-                        _ => false,
-                    };
                     let lv = lit_vars(v, rule, *l);
-                    if with && !lv.is_empty() && lv.is_subset(&vars) {
+                    if goes_with(*l) && !lv.is_empty() && lv.is_subset(&vars) {
                         lits.insert(j);
                     }
                 }
@@ -340,9 +354,14 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                     }
                 }
                 // A bound (`$x < k`) is the reader's, its variable handed on: two rules that differ only in their
-                // bounds (a narrow copy, its original and its candidates, decision 0575) then push one join.
+                // bounds (a narrow copy, its original and its candidates, decision 0575) then push one join. Not a
+                // bound of an id's range, as lowering writes it (`$f < 6917529027641081856`, `$d < 1610612736`): every
+                // copy has the same, so it stays with the join, and a node or document the reader needs for nothing
+                // else is not handed on to the cross part (decision 0677; eager-resolve's `er_dirty`).
                 for &j in &lits {
-                    if let L::Cmp { op: CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge, l: TermRef::Var(_), r: TermRef::Int(_) } = body[j].view() {
+                    if let L::Cmp { op: CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge, l: TermRef::Var(_), r: TermRef::Int(c) } = body[j].view()
+                        && c.unsigned_abs() < 1 << 30
+                    {
                         outside.extend(lit_vars(v, rule, body[j]));
                     }
                 }

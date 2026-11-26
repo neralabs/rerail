@@ -15,6 +15,8 @@ rerail-ukl = { path = "../native/crates/ukl" }
 rerail-ukl-vec = { path = "../native/crates/ukl_vec" }
 
 [dev-dependencies]
+# The auxiliary index's builder is held to the crate's (`aux_index::build`), over its sample document (decision 0656).
+rerail-tape-format = { path = "../native/crates/tape_format", features = ["test-hooks"] }
 # A block's device buffer read and written in place by a kernel, on each backend (decision 0440 step B).
 rerail-blocks = { path = "../native/crates/blocks" }
 # The LZ4 block compressor the tapes' 16z pieces are made with: the library's decoder is tested on its blocks.

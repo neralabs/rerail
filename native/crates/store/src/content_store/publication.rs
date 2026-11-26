@@ -599,6 +599,7 @@ fn prepare_object_pass(
                             tape_format_version: payload.tape_format_version,
                             bytes: document.tape,
                             documents: &[],
+                            whole: false,
                         },
                         document_tape_place,
                     ));
@@ -677,17 +678,17 @@ fn prepare_object_pass(
     }
 
     let mut tape_sql = String::from(
-        "WITH input(source_algorithm,source_lane0,source_lane1,source_lane2,source_lane3,tape_algorithm,tape_lane0,tape_lane1,tape_lane2,tape_lane3,grammar_id,grammar_version,format_version,raw_length,seg,seg_at,seg_len) AS (VALUES ",
+        "WITH input(source_algorithm,source_lane0,source_lane1,source_lane2,source_lane3,tape_algorithm,tape_lane0,tape_lane1,tape_lane2,tape_lane3,grammar_id,grammar_version,format_version,raw_length,seg,seg_at,seg_len,programs) AS (VALUES ",
     );
-    let mut tape_values = Vec::with_capacity(tape_rows.len() * 17);
+    let mut tape_values = Vec::with_capacity(tape_rows.len() * 18);
     if tape_rows.is_empty() {
-        tape_sql.push_str("(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)) SELECT 0,0,0,0,0,0,0,0,0,0,0,0 WHERE 0");
+        tape_sql.push_str("(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)) SELECT 0,0,0,0,0,0,0,0,0,0,0,0,0 WHERE 0");
     } else {
         for (index, (source, hash, payload, place)) in tape_rows.into_iter().enumerate() {
             if index != 0 {
                 tape_sql.push(',');
             }
-            tape_sql.push_str("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+            tape_sql.push_str("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
             tape_values.extend(
                 hash_params(source)
                     .into_iter()
@@ -709,12 +710,19 @@ fn prepare_object_pass(
                     .into(),
             );
             tape_values.extend(place_values(place));
+            // Its programs' count where its documents are all of them (decision 0431 step 6), else not known.
+            let programs = if payload.whole {
+                i64::try_from(payload.documents.len()).map_err(|_| StoreError::Invalid("too many derived documents".to_owned()))?
+            } else {
+                -1
+            };
+            tape_values.push(programs.into());
         }
         tape_sql.push_str(
-            ") INSERT OR IGNORE INTO tape_objects(source_id,canonical_hash_id,grammar_id,grammar_version,tape_format_version,codec_id,raw_length,frame,created_generation,seg,seg_at,seg_len) \
+            ") INSERT OR IGNORE INTO tape_objects(source_id,canonical_hash_id,grammar_id,grammar_version,tape_format_version,codec_id,raw_length,frame,created_generation,seg,seg_at,seg_len,programs) \
              SELECT so.source_id,th.hash_id,i.grammar_id,i.grammar_version,i.format_version,\
              0,i.raw_length,x'',(SELECT generation FROM store_state WHERE singleton=1),\
-             CASE WHEN i.seg=0 THEN (SELECT max(seg) FROM object_segments) ELSE i.seg END,i.seg_at,i.seg_len FROM input i \
+             CASE WHEN i.seg=0 THEN (SELECT max(seg) FROM object_segments) ELSE i.seg END,i.seg_at,i.seg_len,i.programs FROM input i \
              JOIN hashes sh INDEXED BY hashes_by_prefix ON sh.algorithm_id=i.source_algorithm AND sh.lane0=i.source_lane0 \
              AND sh.lane1=i.source_lane1 AND sh.lane2=i.source_lane2 AND sh.lane3=i.source_lane3 \
              JOIN source_objects so ON so.canonical_hash_id=sh.hash_id \

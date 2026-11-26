@@ -1,7 +1,7 @@
 # 0472. A lowered program's plans are its store's: they do not move across stores
 
-Status: accepted (2026-11-19), Q291's decision. Made in the work queue's order, by the agent doing the work; the
-user may overrule it.
+Status: built (audited 2026-11-23). Accepted (2026-11-19), Q291's decision. Made in the work queue's order, by the
+agent doing the work; the user may overrule it.
 
 ## Intro
 

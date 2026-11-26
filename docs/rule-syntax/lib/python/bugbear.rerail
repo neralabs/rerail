@@ -10,7 +10,7 @@
 //                 (counts and keywords: python/ruff's call_nargs, call_nkwargs, call_kw, call_star, call_kwsplat)
 //                 bb_expr_stmt(e)           e is a whole expression statement (`setattr(o, "x", 1)` on its own line)
 //   2. Literals:  ruff_literal(e)           Ruff's is_literal_expr: a str, bytes, number, bool, None or `...`
-//                 bb_mangled(v)             such an identifier is name-mangled in a class: `__x`, not `__x__`
+//                 bb_mangled(s)             str literal s is such an identifier, name-mangled in a class: `__x`, not `__x__`
 //                 bb_mutable(e)             Ruff's is_mutable_expr: a list, dict or set display or comprehension, or a
 //                                           call of `list`, `dict`, `set` or a mutable collections class
 //                 bb_immutable_call(c)      call c (its callee subscripts off) returns a value Ruff knows is immutable:
@@ -57,8 +57,8 @@ bb_expr_stmt(e) :- kind(s, "expression_statement"), child(s, e, 0), !child(s, _,
 // not one; `-1` is a unary operation, not a literal.
 .decl ruff_literal(e: node)
 ruff_literal(e) :- unparen(e, m), py_literal(m).
-.decl bb_mangled(v: symbol)
-bb_mangled(v) :- identifier(v), prefix("__", v), !suffix("__", v).
+.decl bb_mangled(s: node)
+bb_mangled(s) :- identifier_str(s), plain_str(s, v), prefix("__", v), !suffix("__", v).
 
 // Mutability, after ruff_python_semantic's typing helpers. A call Ruff cannot resolve is neither.
 .decl bb_callee(c: node, q: symbol)

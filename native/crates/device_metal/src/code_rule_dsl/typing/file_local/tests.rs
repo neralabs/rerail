@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use crate::code_rule_dsl::logic::program_image::manager::{self, Pipeline};
@@ -101,25 +102,43 @@ fn source_relations_keep_their_document_location() {
     }
 }
 
-/// A relation whose rows name no document (`aware()`, as data-layer's `ma_branch_aware`), handed on to a cross-file
-/// reader (`found`, as `MA033` over `ma_owner(_)`), is moved to the cross-file part with its file-local readers
-/// (decision 0290), so `locate_all` leaves every row the chunks hand on located.
+/// A relation whose rows name no document (`spot(at)`, a place in a file that may be a node or not, as node's
+/// `unpublished_bin(at)` of `program_start(d, at)`), handed on to a cross-file reader (`found`, a count over every file) and read by a
+/// file-local rule too (`seen`, through `docof`), which a relay of it would not serve, is moved to the cross-file
+/// part with its file-local readers (decision 0290), so `locate_all` leaves every row the chunks hand on located.
 #[test]
 fn a_relation_naming_no_document_moves_to_the_cross_file_part() {
-    let text = ".decl doc(d: number, p: symbol, x: number)\n.input doc\n.decl owner(d: number)\nowner(d) :- doc(d, \"a.py\", _).\n\
-                .decl aware()\naware() :- owner(d), d > 0.\n.decl found(k: number)\nfound(1) :- owner(_), !aware().\n.output found\n";
+    let text = ".decl doc(d: number, p: symbol, x: number)\n.input doc\n.decl node(d: number, n: node, k: symbol, p: node, e: number)\n.input node\n\
+                .decl docof(n: loc, d: number)\n.input docof\n.decl owner(d: number)\nowner(d) :- doc(d, \"a.py\", _).\n\
+                .decl first(d: number, at: loc)\nfirst(d, n) :- node(d, n, \"program\", _, _).\nfirst(d, @place(p, 1)) :- doc(d, p, _), !node(d, _, \"program\", _, _).\n\
+                .decl spot(at: loc)\nspot(at) :- owner(d), first(d, at).\n.decl seen(d: number)\nseen(d) :- spot(v), docof(v, d).\n.output seen\n\
+                .decl found(k: number)\nfound(n) :- n = count : { spot(_) }.\n.output found\n";
     let v = read(text);
-    assert!(split_of(&v).local.contains("aware"), "the case: aware is file-local before the move");
+    assert!(split_of(&v).local.contains("spot"), "the case: spot is file-local before the move: {:?}", split_of(&v).local);
     let (v, found) = located(v);
     let found = found.expect("every row the chunks hand on located");
-    assert_eq!(moved(&v), ["aware"]);
+    assert_eq!(moved(&v), ["spot"], "located {found:?}, local {:?}", split_of(&v).local);
     let parts = split_of(&v);
-    assert!(!parts.local.contains("aware") && !parts.local.contains("found") && parts.local.contains("owner"), "{:?}, located {found:?}", parts.local);
-    assert_eq!(parts.causes["aware"], "its rows name no document (moved by `locate`)");
+    assert!(!parts.local.contains("spot") && !parts.local.contains("found") && parts.local.contains("owner"), "{:?}, located {found:?}", parts.local);
+    assert_eq!(parts.causes["spot"], "its rows name no document (moved by `locate`)");
     // Located again, nothing more moves.
     let (v, found) = located(v);
     found.unwrap();
-    assert_eq!(moved(&v), ["aware"]);
+    assert_eq!(moved(&v), ["spot"]);
+}
+
+/// A derived relation's column that every rule fills from a document column names a row's document as `doc`'s does
+/// (`owner(d)` of `doc(d, …)`, as node's `pkg_bin_file(d)` and an existence read's `exists_N(d)`): `aware()`, which
+/// binds `d` through it, is located by it, and nothing moves. Moved instead, node's `unpublished_bin` carried its
+/// nodes into the cross-file part.
+#[test]
+fn a_relation_over_a_derived_document_column_is_located() {
+    let text = ".decl doc(d: number, p: symbol, x: number)\n.input doc\n.decl owner(d: number)\nowner(d) :- doc(d, \"a.py\", _).\n\
+                .decl aware()\naware() :- owner(d), d > 0.\n.decl found(k: number)\nfound(1) :- owner(_), !aware().\n.output found\n";
+    let (v, found) = located(read(text));
+    let found = found.expect("every row the chunks hand on located");
+    assert!(moved(&v).is_empty(), "nothing moves: {:?}", moved(&v));
+    assert!(found.iter().any(|r| r == "aware"), "aware is located: {found:?}");
 }
 
 /// An earlier phase's export is placeless (decision 0675, amending 0083 §2.3): a rule that joins it is file-local, and
@@ -163,7 +182,7 @@ fn a_join_by_a_files_own_path_stays_per_file() {
     for rel in ["line_of", "last", "lead"] {
         assert!(split.local.contains(rel), "{rel}: {:?} {:?}", split.local, split.causes);
         assert_eq!(split.locations[rel], Vec::<usize>::new(), "{rel}: a path is no location: {:?}", split.locations);
-        assert_eq!(split.path_keys.get(rel).map(Vec::as_slice), Some(&[0][..]), "{rel}: its path is a key: {:?}", split.path_keys);
+        assert_eq!(split.path_keys.get(rel).map(|c| c.as_slice()), Some(&[0][..]), "{rel}: its path is a key: {:?}", split.path_keys);
     }
     assert!(split.constants.contains("same_pkg"), "settings alone: {:?} {:?}", split.constants, split.causes);
     assert!(split.local.contains("named"), "one path written twice: {:?} {:?}", split.local, split.causes);
@@ -207,9 +226,46 @@ fn a_symbol_built_from_a_files_module_stays_per_file() {
     for rel in ["mod_of", "sym", "last_def"] {
         assert!(split.local.contains(rel), "{rel}: {:?} {:?}", split.local, split.causes);
     }
-    assert_eq!(split.path_keys.get("sym").map(Vec::as_slice), Some(&[1][..]), "the symbol is a key: {:?}", split.path_keys);
+    assert_eq!(split.path_keys.get("sym").map(|c| c.as_slice()), Some(&[1][..]), "the symbol is a key: {:?}", split.path_keys);
     assert_eq!(split.locations["sym"], vec![0], "and no location: {:?}", split.locations);
     assert!(!split.local.contains("last_tail"), "a symbol the module does not lead: {:?}", split.local);
+}
+
+/// A name built from a file's path (`cat(p, "::", q)`) places a row in that file, but `doc` holds no such name, so
+/// `locate` finds a row's document by a key that is the path as it is (`FileLocal::paths`, decision 0665). A relation
+/// keyed by both, which per-file rules and a cross-file rule read, is relayed by its path: by the built name, every
+/// row was looked up in `doc` and found in no document, and the cross-file part read none (data-layer's
+/// `plp_find_k`, 0677 fix 3f). One keyed by the built name alone is not relayed by it, and moves to the cross-file part;
+/// its rule then reads the relayed relation from there, in a later round, through the relay already made (it was
+/// blocked, and moved too: eager-resolve's `er_edge`).
+#[test]
+fn a_row_is_located_by_its_path_not_a_name_built_from_it() {
+    let text = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n.decl qual(f: node, q: symbol)\n.input qual\n\
+                .decl docof(n: node, d: number)\n.input docof\n\
+                .decl keyed(k: symbol, p: symbol)\nkeyed(cat(p, \"::\", q), p) :- qual(f, q), docof(f, d), doc(d, p, _).\n\
+                .decl copied(k: symbol, p: symbol)\ncopied(k, p) :- keyed(k, p).\n\
+                .decl mine(p: symbol)\nmine(p) :- copied(_, p).\n.output mine\n\
+                .decl pair(k: symbol, j: symbol)\npair(k, j) :- copied(k, _), copied(j, _), k != j.\n.output pair\n\
+                .decl kpair(k: symbol, j: symbol)\nkpair(k, j) :- keyed(k, _), keyed(j, _), k != j.\n.output kpair\n\
+                .decl built(k: symbol)\nbuilt(k) :- keyed(k, _).\n\
+                .decl own(k: symbol)\nown(k) :- built(k).\n.output own\n\
+                .decl any(k: symbol)\nany(k) :- built(k), built(j), k != j.\n.output any\n";
+    let v = read(text);
+    let split = split_of(&v);
+    for rel in ["keyed", "copied"] {
+        assert_eq!(split.path_keys.get(rel).map(|c| c.as_slice()), Some(&[0, 1][..]), "{rel}: both place its row: {:?}", split.path_keys);
+        assert_eq!(split.paths.get(rel).map(|c| c.as_slice()), Some(&[1][..]), "{rel}: the path alone is one: {:?}", split.paths);
+    }
+    assert_eq!(split.path_keys.get("built").map(|c| c.as_slice()), Some(&[0][..]), "{:?}", split.path_keys);
+    assert!(!split.paths.contains_key("built"), "a built name is no path: {:?}", split.paths);
+    let (out, found) = located(v);
+    let relay: Vec<String> = out.rules().filter(|r| out.rel_name(r.head().rel()).starts_with("copied_at")).map(|r| out.show_rule(r)).collect();
+    assert!(found.is_ok() && relay.len() == 1, "{found:?} {relay:?}");
+    assert!(relay[0].contains("doc($__located_d, $__c1"), "found through the path, column 1: {relay:?}");
+    assert!(moved(&out).iter().any(|r| r == "built"), "not relayed by the built name: {:?}", moved(&out));
+    assert!(!moved(&out).iter().any(|r| r == "keyed" || r == "copied"), "relayed, not moved: {:?}", moved(&out));
+    let built: Vec<Vec<String>> = rules_of(&out, "built").into_iter().map(|r| reads(&out, r)).collect();
+    assert!(built.iter().all(|r| r.iter().any(|a| a.starts_with("keyed_at"))), "the moved rule reads the relay: {built:?}");
 }
 
 /// Module resolution handed on by a phase (decision 0665, tsx/names.rerail over the phase `tsx_names`): the phase's
@@ -790,15 +846,15 @@ missing(c, v) :- call_str(c, v), design(_), !codes(v).
 /// │   └ 3 function
 /// └ 4 other
 /// ```
-fn chunk() -> (Vec<u32>, Vec<i64>) {
-    (vec![NONE, 0, 1, 2, 0, NONE, 5, 6], vec![1, 2, 3, 2, 3, 1, 3, 2])
+fn chunk() -> (Vector<u32>, Vector<i64>) {
+    (rerail_blocks::vector![NONE, 0, 1, 2, 0, NONE, 5, 6], rerail_blocks::vector![1, 2, 3, 2, 3, 1, 3, 2])
 }
 
 #[test]
 fn nearest_is_each_nodes_closest_ancestor_in_the_set() {
     let (parent, kind) = chunk();
     let trees = Trees { parent: &parent, kind: &kind };
-    let sets = [vec![1], vec![2], vec![1, 2]];
+    let sets = [rerail_blocks::vector![1], rerail_blocks::vector![2], rerail_blocks::vector![1, 2]];
     let got = nearest(&trees, &sets, Binding::Cpu).unwrap();
     assert_eq!(got[0], [NONE, 0, 0, 0, 0, NONE, 5, 5]);
     assert_eq!(got[1], [NONE, NONE, 1, 1, NONE, NONE, NONE, NONE]);
@@ -816,7 +872,7 @@ fn the_device_finds_the_cpus_nearest() {
         kind.push(i64::from(i % 5));
     }
     let trees = Trees { parent: &parent, kind: &kind };
-    let sets = [vec![1], vec![2, 3], vec![4]];
+    let sets = [rerail_blocks::vector![1], rerail_blocks::vector![2, 3], rerail_blocks::vector![4]];
     let cpu = nearest(&trees, &sets, Binding::Cpu).unwrap();
     let metal = nearest(&trees, &sets, Binding::Metal).unwrap();
     assert_eq!(cpu, metal);
@@ -847,9 +903,9 @@ fn nearest_costs_by_solver() {
 fn nearest_costs(cap: usize) {
     let n = 172_000usize;
     // Preorder forest: 80 documents; a node's parent is the open node on top of a stack that grows and shrinks.
-    let mut parent = Vec::with_capacity(n);
+    let mut parent = rerail_blocks::vector::Vector::with_capacity(n);
     let mut kind = Vec::with_capacity(n);
-    let mut stack: Vec<u32> = Vec::new();
+    let mut stack: Vector<u32> = rerail_blocks::vector::Vector::new();
     let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
     let mut rand = || {
         x ^= x << 13;
@@ -870,7 +926,7 @@ fn nearest_costs(cap: usize) {
         stack.push(i as u32);
     }
     let depth = (0..n).map(|mut v| { let mut d = 0; while parent[v] != NONE { v = parent[v] as usize; d += 1; } d }).max().unwrap();
-    let sets = vec![vec![7]];
+    let sets = vec![rerail_blocks::vector![7]];
     let trees = Trees { parent: &parent, kind: &kind };
     let sys = system(&trees, &sets).unwrap();
     let t = std::time::Instant::now();
@@ -895,7 +951,7 @@ fn nearest_costs(cap: usize) {
     use crate::code_rule_dsl::transducer::packed::metal_nearest;
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     for how in [metal_nearest::Buffers::Fresh, metal_nearest::Buffers::Blocks, metal_nearest::Buffers::Fresh, metal_nearest::Buffers::Blocks] {
-        let target: Vec<u32> = parent.clone();
+        let target: Vector<u32> = parent.clone();
         let done: Vec<u8> = parent.iter().map(|&p| u8::from(p == NONE || sets[0].contains(&kind[p as usize]))).collect();
         for round in 0..4 {
             // `RERAIL_NEAREST_IDLE_MS`: the GPU left idle before each call, as between a run's chunks.
@@ -1050,6 +1106,34 @@ named(t) :- node(_, a, "identifier", _, _), text(a, t), docof(a, d), node(_, b, 
     assert!(!parts.base.iter().any(|b| b == "text" || b == "docof"), "the cross part reads no base relation: {:?}", parts.base);
 }
 
+/// A bound of an id's range, as lowering writes it (`$d < 1610612736`, `$n < 6917529027641081856`), goes with the
+/// pushed join: every row of the right kind of id passes it, so it hands on no node or document that the reader needs
+/// for nothing else (decision 0677; eager-resolve's `er_dirty` handed its def and document to the cross part).
+#[test]
+fn an_id_range_bound_goes_with_the_pushed_join() {
+    let text = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl docof(n: node, d: number)
+.input doc, node, field, text, docof
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), field(n, "name", c), text(c, s).
+.decl called(s: symbol)
+.output called
+called(s) :- node(_, n, "call", _, _), field(n, "function", c), text(c, s), docof(n, d), d < 1610612736, n < 6917529027641081856, !defined(s).
+"#;
+    let (v, made) = pushed(read(text));
+    assert_eq!(made.len(), 1, "{made:?}");
+    let join = rules_of(&v, &made[0])[0];
+    let shown = v.show_rule(join);
+    assert_eq!(join.head().args().count(), 1, "the name alone is handed on: {shown}");
+    assert!(shown.contains("1610612736") && shown.contains("6917529027641081856"), "the bounds go with it: {shown}");
+    let called = rules_of(&v, "called");
+    assert_eq!(reads(&v, called[0]), [made[0].as_str(), "defined"], "{}", v.show_rule(called[0]));
+}
+
 /// Position comparisons must retain the semantic candidate filters. Document equality alone
 /// does not make their Cartesian product a bounded per-file producer.
 #[test]
@@ -1134,10 +1218,10 @@ same_ann(f, g) :- ann_of(f, a), ann_of(g, a), f != g.
 "#);
     let split = split_of(&v);
     assert_eq!(split.locations["ann_of"], [0], "{:?}", split.locations);
-    assert_eq!(split.nullable.get("ann_of").map(Vec::as_slice), Some(&[1][..]), "{:?}", split.nullable);
+    assert_eq!(split.nullable.get("ann_of").map(|c| c.as_slice()), Some(&[1][..]), "{:?}", split.nullable);
     assert!(split.local.contains("ann_head"), "{:?} {:?}", split.local, split.causes);
     assert!(!split.local.contains("same_ann"), "two -1s are of any documents: {:?}", split.local);
-    assert_eq!(split.same_doc.get("ann_of").map(Vec::as_slice), Some(&[0][..]), "{:?}", split.same_doc);
+    assert_eq!(split.same_doc.get("ann_of").map(|c| c.as_slice()), Some(&[0][..]), "{:?}", split.same_doc);
 }
 
 /// An undeclared crossing is refused (decision 0652): a rule joining two documents by a value names its relation,
@@ -1315,7 +1399,7 @@ agg(o, r) :- dem(o, r), val(o, r, s), !nr(s).
     let mut p = Pipeline::new("test", read(&text));
     let before = p.get::<FileLocal>().unwrap();
     assert!(before.covered.contains("nr") && before.filters.contains("nr"), "{:?} {:?}", before.covered, before.causes);
-    assert_eq!(before.row_documents.get("agg"), Some(&vec![0, 1]), "{:?}", before.row_documents);
+    assert_eq!(before.row_documents.get("agg"), Some(&rerail_blocks::vector![0, 1]), "{:?}", before.row_documents);
     struct DropOther;
     impl ProgramPass for DropOther {
         const NAME: &'static str = "drop other0";
@@ -1353,7 +1437,7 @@ uses(n, f) :- node(_, n, "ref", _, _), text(n, x), node(_, f, "def", _, _), text
 "#,
     ));
     assert!(!split.local.contains("pair") && !split.local.contains("named"), "{:?}", split.causes);
-    assert_eq!(split.row_documents.get("pair"), Some(&vec![0, 1]), "{:?}", split.row_documents);
+    assert_eq!(split.row_documents.get("pair"), Some(&rerail_blocks::vector![0, 1]), "{:?}", split.row_documents);
     assert!(!split.row_documents.contains_key("uses"), "{:?}", split.row_documents);
 }
 
@@ -1812,6 +1896,53 @@ outer2(f) :- uses(f, _), fl_outer(f, y), y != "self".
     assert!(!key_rules.is_empty() && key_rules.iter().all(|l| l.contains("encl(")), "{key_rules:?}\n{shown}");
 }
 
+/// Decision 0677: an export that joins a file's nodes with a constant (`fl_lookup`'s `modules`, facts alone) is a
+/// lookup made in the file, left as written. Handed on as parts, the constant's part and its key would be tables of
+/// every file's values, and the readers that join them at the file's nodes would go to the cross part. The same join
+/// with a derived relation (`fl_outer`'s `bound`) is handed on as parts as before.
+#[test]
+fn an_export_that_looks_a_files_nodes_up_in_a_constant_is_left_whole() {
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.input node, child, text
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), text(n, s).
+.decl uses(f: node, x: symbol)
+uses(f, x) :- node(_, f, "identifier", _, _), text(f, x), defined(x).
+.decl modules(s: symbol, m: symbol)
+modules("fs", "fs"). modules("fs", "node:fs"). modules("path", "path"). modules("path", "node:path").
+.decl star(e: node, s: symbol)
+star(e, s) :- node(_, e, "export_statement", _, _), child(e, c, _), text(c, s).
+.decl fl_lookup(e: node, m: symbol)
+fl_lookup(e, m) :- star(e, s), modules(s, m).
+.decl looked(e: node)
+.output looked
+looked(e) :- uses(e, x), fl_lookup(e, x).
+.decl encl(f: node, p: node)
+encl(f, p) :- node(_, p, "block", _, _), child(p, f, _).
+.decl bound(p: node, x: symbol)
+bound(p, x) :- node(_, p, "block", _, _), child(p, c, _), node(_, c, "assignment", _, _), text(c, x).
+.decl fl_outer(f: node, x: symbol)
+fl_outer(f, x) :- encl(f, p), bound(p, x).
+.decl outer(f: node, x: symbol)
+.output outer
+outer(f, x) :- uses(f, x), fl_outer(f, x).
+"#;
+    let mut pass = FactorizeExports::new(true);
+    let mut p = Pipeline::new("test", read(text));
+    p.program(&mut pass);
+    let (out, _) = p.finish().unwrap();
+    assert_eq!(pass.lines.len(), 1, "{:?}", pass.lines);
+    assert!(pass.lines[0].starts_with("fl_outer: handed on as parts"), "{:?}", pass.lines);
+    let lookup = rules_of(&out, "fl_lookup");
+    assert_eq!(lookup.len(), 1, "the lookup is left as written:\n{}", out.show());
+    let mut read = reads(&out, lookup[0]);
+    read.sort();
+    assert_eq!(read, ["modules", "star"], "{}", out.show_rule(lookup[0]));
+}
+
 /// The file-local joins of cross-file rules are pushed on a version: helpers named from their content
 /// (`fl<h>_<head>`), each derived by the chunks and read in place of the join.
 #[test]
@@ -2001,8 +2132,8 @@ mark(at) :- kind(at, "call"), "a" = "b".
 "#;
     let split = split_of(&read(text));
     assert!(split.local.contains("rx_at") && split.local.contains("mark"), "{:?}", split.causes);
-    assert_eq!(split.locations.get("rx_at").map(Vec::as_slice), Some(&[0, 1][..]), "{:?}", split.locations.get("rx_at"));
-    assert_eq!(split.locations.get("mark").map(Vec::as_slice), Some(&[0][..]), "{:?} {:?}", split.locations.get("mark"), split.nullable.get("mark"));
+    assert_eq!(split.locations.get("rx_at").map(|c| &c[..]), Some(&[0, 1][..]), "{:?}", split.locations.get("rx_at"));
+    assert_eq!(split.locations.get("mark").map(|c| &c[..]), Some(&[0][..]), "{:?} {:?}", split.locations.get("mark"), split.nullable.get("mark"));
     assert!(split.crossings.is_empty(), "{:?}", split.crossings);
 }
 
@@ -2093,4 +2224,200 @@ either(n) :- either(m), shared(n), named(n, x), named(m, x).
     let (_, last) = FileLocal::flags_applied_last(&read(&remote)).unwrap();
     assert!(!last.flags.contains_key("docin"), "{:?}", last.flags);
     assert!(last.refused.get("docin").is_some_and(|c| c.contains("remote")), "{:?}", last.refused);
+}
+
+/// `core.rerail` and program text `rules` after it, as a version.
+fn with_core(rules: &str) -> Arc<Version> {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
+    read(&format!("{prelude}\n{rules}"))
+}
+
+/// A scope `nearest` finds is a location: `nearest(f, s, scope)` places `s` in `f`'s document, so a relation it fills
+/// (`rdefn(s, x, f)`, Python's names) is located there and its readers stay per-file. Before, only the join through
+/// `nearest` counted, not its variables: `rdefn`'s scope column was no location, and every relation of Python's name
+/// resolution read it "with no location" (`ibind`, `bound_in`, `look`, `qn`), so the policies reading a name's node
+/// read `text` as rows in the cross-file part.
+#[test]
+fn a_scope_nearest_finds_is_a_location() {
+    let v = with_core(
+        r#"
+.decl scope(k: symbol)
+scope("module").
+scope("function_definition").
+.decl rd(s: node, x: symbol, f: node)
+rd(s, x, f) :- kind(f, "function_definition"), field(f, "name", nm), text(nm, x), nearest(f, s, scope).
+.decl bound(s: node, x: symbol)
+bound(s, x) :- rd(s, x, _).
+.decl resolved(n: node, s: node)
+resolved(n, s) :- kind(n, "identifier"), text(n, x), nearest(n, s, scope), bound(s, x).
+.output resolved
+"#,
+    );
+    let split = split_of(&v);
+    assert_eq!(split.locations["rd"], [0, 2], "{:?}", split.causes);
+    assert_eq!(split.locations["bound"], [0], "{:?}", split.causes);
+    for rel in ["rd", "bound", "resolved"] {
+        assert!(split.local.contains(rel), "{rel}: {:?}", split.causes);
+    }
+    crossings_checked(&programs_of(v).unwrap()).unwrap();
+}
+
+/// A view of values read at values its readers make (`canon_number(t, r) :- num_source(t), …`, `num_source` the
+/// numbers' texts of every file): each reader holds the body of one of `num_source`'s rules, tests and all, at the
+/// value it asks, so `num_source` holds there in the reader's own chunk and the view derived per chunk answers it as
+/// over every file. A reader asking at a value no rule of `num_source` makes in it (a string's text), or one whose
+/// body lacks a rule's test (the `j` suffix), asks of other files' rows: the view and its readers are cross-file.
+#[test]
+fn a_value_view_read_where_its_readers_make_its_values_is_per_file() {
+    let base = r#"
+.decl src(t: symbol)
+src(v) :- kind(e, "float"), text(e, v).
+src(b) :- kind(e, "integer"), text(e, t), match("(?<b>[\\s\\S]*)[jJ]", t).
+.decl canon(t: symbol, r: symbol)
+canon(t, r) :- src(t), r = @replace_all(t, "_", "").
+.decl num(e: node, r: symbol)
+num(e, r) :- kind(e, "float"), text(e, v), canon(v, r).
+num(e, r) :- kind(e, "integer"), text(e, t), match("(?<b>[\\s\\S]*)[jJ]", t), canon(b, r).
+.output num
+"#;
+    let v = with_core(base);
+    let split = split_of(&v);
+    assert!(split.covered.contains("canon") && split.local.contains("num"), "{:?} {:?}", split.covered, split.causes);
+    crossings_checked(&programs_of(v).unwrap()).unwrap();
+    for (other, why) in [
+        ("num(e, r) :- kind(e, \"string\"), text(e, v), canon(v, r).", "a value no rule of src makes in the reader"),
+        ("num(e, r) :- kind(e, \"integer\"), text(e, t), canon(t, r).", "a reader without src's test"),
+    ] {
+        let split = split_of(&with_core(&format!("{base}{other}\n")));
+        assert!(!split.covered.contains("canon") && !split.local.contains("num"), "{why}: {:?}", split.causes);
+    }
+}
+
+/// A view whose rules are a disjunction's branches over two reads (`negate(a, b) :- (number(_, a, _) ;
+/// number(_, _, a)), …`): a reader holding one read covers the other branch too, since both test the head's values
+/// alike. Where the branches test differently (`a != "0"` in one only), the other is not covered: cross-file.
+#[test]
+fn a_views_branches_cover_each_other_where_they_test_alike() {
+    let base = r#"
+.decl val(e: node, a: symbol, b: symbol)
+val(e, a, b) :- kind(e, "pair"), field(e, "l", l), text(l, a), field(e, "r", r), text(r, b).
+.decl neg(a: symbol, b: symbol)
+neg(a, b) :- (val(_, a, _) ; val(_, _, a)), b = cat("-", a).
+.decl out(e: node, x: symbol)
+out(e, x) :- val(e, a, _), neg(a, x).
+.output out
+"#;
+    let v = with_core(base);
+    let split = split_of(&v);
+    assert!(split.covered.contains("neg") && split.local.contains("out"), "{:?} {:?}", split.covered, split.causes);
+    crossings_checked(&programs_of(v).unwrap()).unwrap();
+    let apart = base.replace("(val(_, a, _) ; val(_, _, a))", "(val(_, a, _), a != \"0\" ; val(_, _, a))");
+    assert_ne!(apart, base);
+    let split = split_of(&with_core(&apart));
+    assert!(!split.covered.contains("neg") && !split.local.contains("out"), "{:?}", split.causes);
+}
+
+/// A keyed family of values (`brace_value(v)` and the parse of each format string `v`: `brace_rest(v, r, i)`,
+/// `!brace_bad(v)`, `count : { brace_arg(v, …) }`): each member's rows at a key follow from its root's row there, the
+/// root a file-local relation of one column (`fval(v) :- call_fmt(c, v)`). A reader that
+/// holds the root's row at the key it reads (`call_fmt(c, v)`) reads the family per chunk as over every file,
+/// aggregates included. One that reads it at a value no root rule makes in it (a string's text) does not.
+#[test]
+fn a_keyed_family_read_where_its_root_holds_is_per_file() {
+    let base = r#"
+.decl call_fmt(c: node, v: symbol)
+call_fmt(c, v) :- kind(c, "call"), field(c, "function", f), text(f, v).
+.decl fval(v: symbol)
+fval(v) :- call_fmt(c, v).
+.decl rest(v: symbol, r: symbol, i: number)
+rest(v, v, 0) :- fval(v).
+rest(v, x, i + 1) :- rest(v, r, i), match("[^{]*\\{(?<x>[\\s\\S]*)", r).
+.decl bad(v: symbol)
+bad(v) :- rest(v, r, _), contains("}}", r).
+.decl ok(v: symbol)
+ok(v) :- fval(v), !bad(v).
+.decl pieces(c: node, n: number)
+pieces(c, n) :- call_fmt(c, v), ok(v), n = count : { rest(v, _, _) }.
+.output pieces
+"#;
+    let split = split_of(&with_core(base));
+    assert!(split.local.contains("fval"), "{:?}", split.causes);
+    for rel in ["rest", "bad", "ok"] {
+        assert!(split.covered.contains(rel), "{rel}: {:?} {:?}", split.covered, split.causes);
+    }
+    assert!(split.local.contains("pieces"), "{:?}", split.causes);
+    let other = format!("{base}.decl odd(c: node)\nodd(c) :- kind(c, \"string\"), text(c, v), ok(v).\n.output odd\n");
+    let split = split_of(&with_core(&other));
+    assert!(!split.covered.contains("ok") && !split.local.contains("odd"), "{:?}", split.causes);
+}
+
+
+/// No node id crosses into the cross-file part (decision 0677). `target(r, d)` pairs a reference with another file's
+/// definition by their nodes, and `keyed(k)` makes a value of a definition's node (`d + 1`): both are named, with the
+/// column and the read that brought the node. `in_node_doc(d)` holds a document key, but its rule binds an export's
+/// node to make it: the export carries the node across. `placed(n)` reads a cross-file answer by its symbol, but
+/// places it on an export's node in the cross-file part: the node enters there (0677 §3 places it in the file's own
+/// rules). `in_doc(d)` reads a document key the file's own rule made (`def_doc`, by `@doc(n)`), which may cross, and
+/// `resolved(s)` relates symbols alone: neither is. A relation that reads its node from one named follows it, and
+/// goes per file with it (`callee(d)` follows `target`, `key_doc` follows `keyed`). A finding is not (`uncalled`,
+/// `unresolved`); nor is a per-file relation. A phase's export read by its node column is (`sig_at`), as every file reads it.
+#[test]
+fn a_node_carried_into_the_cross_file_part_is_named() {
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.input node, text
+.decl types__sig(f: symbol, at: node)
+.input types__sig
+.decl def_name(n: node, s: symbol)
+def_name(n, s) :- node(_, n, "def", _, _), text(n, s).
+.decl ref_name(n: node, s: symbol)
+ref_name(n, s) :- node(_, n, "ref", _, _), text(n, s).
+.decl target(r: node, d: node) cross_file
+target(r, d) :- ref_name(r, s), def_name(d, s).
+.decl callee(d: node)
+callee(d) :- target(_, d).
+.decl uncalled(d: node)
+uncalled(d) :- def_name(d, _), !callee(d).
+.output uncalled
+.decl resolved(s: symbol) cross_file
+resolved(s) :- ref_name(_, s), def_name(_, s).
+.decl unresolved(r: node)
+unresolved(r) :- ref_name(r, s), !resolved(s).
+.output unresolved
+.decl placed(n: node)
+placed(n) :- resolved(s), def_name(n, s).
+.decl used_def(n: node)
+used_def(n) :- placed(n), node(_, n, _, _, _).
+.output used_def
+.decl keyed(k: number) cross_file
+keyed(k) :- def_name(d, s), ref_name(_, s), k = d + 1.
+.decl in_node_doc(d: number) cross_file
+in_node_doc(d) :- def_name(n, s), ref_name(_, s), d = @doc(n).
+.decl def_doc(d: number, s: symbol)
+def_doc(d, s) :- def_name(n, s), d = @doc(n).
+.decl in_doc(d: number) cross_file
+in_doc(d) :- def_doc(d, s), ref_name(_, s).
+.decl key_doc(k: number, d: number)
+key_doc(k, d) :- keyed(k), in_doc(d), in_node_doc(d).
+.decl counted(s: symbol)
+counted(s) :- key_doc(_, _), resolved(s).
+.output counted
+.decl sig_at(n: node, f: symbol)
+sig_at(n, f) :- text(n, f), types__sig(f, n).
+.output sig_at
+"#;
+    let p = programs_of(read(text)).unwrap();
+    let named: std::collections::BTreeMap<&str, &str> = p.nodes.iter().map(|c| (c.rel.as_str(), c.why.as_str())).collect();
+    assert!(named.get("target").is_some_and(|w| w.contains("target.r") && w.contains("target.d") && w.contains("reads ref_name's column 0")), "{named:#?}");
+    assert!(named.get("keyed").is_some_and(|w| w.contains("keyed.k")), "a value made of a node: {named:#?}");
+    assert!(named.get("sig_at").is_some_and(|w| w.contains("types__sig")), "a phase's export by its node: {named:#?}");
+    assert!(named.get("placed").is_some_and(|w| w.contains("placed.n") && w.contains("reads def_name's column 0")), "{named:#?}");
+    assert!(named.get("in_node_doc").is_some_and(|w| w.starts_with("reads a node")), "{named:#?}");
+    for kept in ["resolved", "in_doc", "def_doc", "counted", "uncalled", "unresolved", "def_name", "ref_name", "callee", "key_doc", "used_def"] {
+        assert!(!named.contains_key(kept), "{kept}: {named:#?}");
+    }
+    // Reported, not refused, until the offenders are fixed; refused under `RERAIL_STRICT_NODES`.
+    let refused = nodes_checked(&p.nodes, true).unwrap_err();
+    assert!(refused.contains("decision 0677") && refused.contains("  target: holds a node in target.r, target.d"), "{refused}");
 }

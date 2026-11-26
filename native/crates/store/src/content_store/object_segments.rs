@@ -8,7 +8,7 @@
 //! one segment and queued as one job, its tapes read there meanwhile ([`QueuedTape`]).
 
 use super::rows::{generation, intern_hash};
-use super::segments::{ALIGN, Place, SealedSegments, SegmentBytes, SegmentMaps, SegmentWriter};
+use super::segments::{ALIGN, Place, SealedSegments, SegmentMaps, SegmentWriter};
 use super::write_back::{Closed, Gather, Held, Key, Kind, Syms, Work};
 use super::{ContentStore, HashKey, SourceId, StoreError, StoreResult, TapeId, TapePayload};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -27,123 +27,24 @@ pub(super) fn object_dir(database: &Path) -> PathBuf {
 }
 
 /// What the store at `from` keeps beside its file, copied beside the store at `to` (in place of any there): its atoms
-/// blocks and its object segments. For a store file copied whole (a capture's, a replay's copy of it): without them
-/// its rows name blocks and segments that are not there.
+/// blocks, its kept facts and its object segments. For a store file copied whole (a capture's, a replay's copy of
+/// it): without them its rows name blocks, facts and segments that are not there.
 pub fn copy_beside(from: &Path, to: &Path) -> std::io::Result<()> {
     super::atoms::copy_blocks(from, to)?;
+    super::kept_facts::copy_facts(from, to)?;
     let (segments, into) = (object_dir(from), object_dir(to));
     if into.exists() {
         std::fs::remove_dir_all(&into)?;
     }
     let Ok(entries) = std::fs::read_dir(&segments) else { return Ok(()) };
-    std::fs::create_dir_all(&into)?;
+    crate::content_store::prepare_cache_directory(&into)?;
     for e in entries.flatten() {
         super::atoms::clone_file(&e.path(), &into.join(e.file_name()))?;
     }
     Ok(())
 }
 
-/// A tape's bytes where they live, which the writer takes as they are (decision 0353 step 4a: a tape's home, a
-/// slab's room).
-pub type TapeBytes = Arc<dyn TapeHeld>;
-
-/// What holds a tape's bytes: any byte owner, which its maker can find again (`Any`: the engine's tape home, whose
-/// room a later read of the queued tape reads in place).
-pub trait TapeHeld: AsRef<[u8]> + std::any::Any + Send + Sync {}
-impl<T: AsRef<[u8]> + std::any::Any + Send + Sync> TapeHeld for T {}
-
-/// A stored object's bytes: decompressed into memory (a row of its own), or where they are in a segment, mapped.
-#[derive(Clone)]
-pub enum ObjectBytes {
-    Heap(Arc<Vec<u8>>),
-    Mapped(SegmentBytes),
-    /// A tape queued for the writer, in its home (decision 0353 step 4a: a slab's room, read there).
-    Tape(TapeBytes),
-}
-
-impl std::ops::Deref for ObjectBytes {
-    type Target = [u8];
-    fn deref(&self) -> &[u8] {
-        match self {
-            ObjectBytes::Heap(b) => b,
-            ObjectBytes::Mapped(b) => b.bytes(),
-            ObjectBytes::Tape(b) => (**b).as_ref(),
-        }
-    }
-}
-
-impl ObjectBytes {
-    /// Its bytes as a vector of its own: a decompressed one as it is, a mapped one copied.
-    pub fn into_vec(self) -> Vec<u8> {
-        match self {
-            ObjectBytes::Heap(b) => Arc::try_unwrap(b).unwrap_or_else(|b| (*b).clone()),
-            ObjectBytes::Mapped(b) => b.bytes().to_vec(),
-            ObjectBytes::Tape(b) => (*b).as_ref().to_vec(),
-        }
-    }
-}
-
-impl AsRef<[u8]> for ObjectBytes {
-    fn as_ref(&self) -> &[u8] {
-        self
-    }
-}
-
-impl ObjectBytes {
-    /// Whether they are read where a segment holds them, mapped: not decompressed, hashed or copied.
-    pub fn in_place(&self) -> bool {
-        matches!(self, ObjectBytes::Mapped(_))
-    }
-}
-
-impl std::fmt::Debug for ObjectBytes {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ObjectBytes({} bytes)", self.len())
-    }
-}
-
-/// A stored object as its row names it: its bytes as they are, in a segment of `<store>.objects/`, mapped. Every
-/// source and tape is kept so (decision 0295 step 5; no row holds an object's bytes since floor 7, 2026-11-19).
-#[derive(Clone)]
-pub struct ObjectFrame(SegmentBytes);
-
-impl std::fmt::Debug for ObjectFrame {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ObjectFrame({} bytes)", self.len())
-    }
-}
-
-impl ObjectFrame {
-    /// Its bytes where they are.
-    pub fn segment(&self) -> &SegmentBytes {
-        &self.0
-    }
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-    /// Its bytes, read in place: refused where they are not `raw_length` long, as its row says.
-    pub fn bytes(&self, raw_length: usize) -> std::io::Result<ObjectBytes> {
-        if self.0.len() != raw_length {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "an object's length"));
-        }
-        Ok(ObjectBytes::Mapped(self.0.clone()))
-    }
-    /// Its first `n` bytes.
-    pub fn head(&self, n: usize) -> &[u8] {
-        &self.0.bytes()[..n.min(self.0.len())]
-    }
-    /// Its bytes into `out`, which is their length: a load from the segment into the object's home (a slab's room).
-    pub fn copy_into(&self, out: &mut [u8]) -> std::io::Result<()> {
-        if self.0.len() != out.len() {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "an object's length"));
-        }
-        out.copy_from_slice(self.0.bytes());
-        Ok(())
-    }
-}
+pub use rerail_store_base::content_store::{ObjectBytes, ObjectFrame, TapeBytes, TapeHeld};
 
 /// A row's object: the range of a segment it names (`seg`, `seg_at`, `seg_len`). `None` when that segment is not
 /// there or holds no such range (`seg` -1: it went missing): the object is absent, made again.
@@ -151,7 +52,7 @@ pub(super) fn row_frame(maps: &mut SegmentMaps, seg: i64, at: i64, len: i64) -> 
     if seg <= 0 {
         return None;
     }
-    maps.at(Place { seg, at: at as u64, len: len as usize }).map(ObjectFrame)
+    maps.at(Place { seg, at: at as u64, len: len as usize }).map(ObjectFrame::of)
 }
 
 /// Objects a writer outside a run's waves stores (a standalone build's file, a publication's, a test's), as they
@@ -217,6 +118,18 @@ impl ObjectMaps {
     }
 }
 
+/// Where a source's bytes lie (`ContentStore::pinned_sources_placed`): its segment, the range there, its length, and
+/// when its pin ends; read with no statement (`ContentStore::source_at`).
+#[derive(Clone, Copy, Debug)]
+pub struct SourcePlace {
+    pub id: SourceId,
+    length: i64,
+    seg: i64,
+    at: i64,
+    len: i64,
+    pub lease_until: i64,
+}
+
 /// A tape (with its source) this process queued and the store has not written: read in memory until it is placed,
 /// then in its segment (`ContentStore::queued_tape`).
 pub struct QueuedTape(pub ObjectBytes);
@@ -228,7 +141,7 @@ pub(super) struct Item {
     grammar_id: i64,
     grammar_version: i64,
     tape_format_version: i64,
-    source: Arc<String>,
+    source: Arc<rerail_tape_format::home::Text>,
     tape: TapeBytes,
     tape_identity: HashKey,
     /// Whether the run's manifest names the source once written (`ContentStore::name_sources`).
@@ -369,7 +282,7 @@ impl ContentStore {
     /// written (`name_sources`).
     /// Where the queue is full a lone write is dropped, and the next run parses the file again.
     #[allow(clippy::too_many_arguments)]
-    pub fn queue_source_and_tape(&self, key: Key, canonical: HashKey, grammar_id: i64, grammar_version: i64, tape_format_version: i64, source: &Arc<String>, tape: TapeBytes, named: bool, documents: Option<Arc<[super::QueuedDocument]>>) -> StoreResult<()> {
+    pub fn queue_source_and_tape(&self, key: Key, canonical: HashKey, grammar_id: i64, grammar_version: i64, tape_format_version: i64, source: &Arc<rerail_tape_format::home::Text>, tape: TapeBytes, named: bool, documents: Option<Arc<[super::QueuedDocument]>>) -> StoreResult<()> {
         let tape_identity = HashKey::tape_identity(canonical, (*tape).as_ref());
         let mut item = Some(Item { key, canonical, grammar_id, grammar_version, tape_format_version, source: Arc::clone(source), tape, tape_identity, named, documents });
         let dir = object_dir(&self.database_path);
@@ -414,7 +327,7 @@ impl ContentStore {
             let mut ids = Vec::with_capacity(rows.len());
             for (i, row) in rows.iter().enumerate() {
                 let source = put_source_placed_tx(t, row.canonical, row.source_len, place(2 * i), created)?;
-                let tape = TapePayload { grammar_id: row.grammar_id, grammar_version: row.grammar_version, tape_format_version: row.tape_format_version, bytes: &[], documents: &[] };
+                let tape = TapePayload { grammar_id: row.grammar_id, grammar_version: row.grammar_version, tape_format_version: row.tape_format_version, bytes: &[], documents: &[], whole: false };
                 let tape_id = put_tape_placed_tx(t, source, tape, row.tape_len, row.tape_identity, place(2 * i + 1), created)?;
                 // A file that holds no program records so with its tape (decision 0431 step 6), in this transaction;
                 // one that holds some has them written after (`put_programs`).
@@ -499,6 +412,11 @@ impl ContentStore {
     /// (`ObjectBytes::in_place`): not decompressed, hashed or copied, its segment's check (when mapped) the check.
     /// `None` where no source has the alias, or its segment is gone.
     pub fn sources_by_alias_in_place(&self, aliases: &[HashKey]) -> StoreResult<Vec<Option<ObjectBytes>>> {
+        Ok(self.sources_by_alias_with_ids(aliases)?.into_iter().map(|s| s.map(|(bytes, _)| bytes)).collect())
+    }
+
+    /// `sources_by_alias_in_place`, each with its source's id (for its lease).
+    pub fn sources_by_alias_with_ids(&self, aliases: &[HashKey]) -> StoreResult<Vec<Option<(ObjectBytes, SourceId)>>> {
         let rows: Vec<Option<(i64, [i64; 3], i64)>> = {
             let connection = self.connection.lock().expect("content store mutex poisoned");
             let mut st = connection.prepare_cached(
@@ -519,12 +437,12 @@ impl ContentStore {
         };
         // Archived ones (decision 0450 step 4) are placed back first, then read in place.
         if self.placed_again(rows.iter().flatten().map(|&(_, [seg, ..], source)| (super::reclamation::OBJECT_SOURCE, source, seg)))? {
-            return self.sources_by_alias_in_place(aliases);
+            return self.sources_by_alias_with_ids(aliases);
         }
         let mut maps = SegmentMaps::new(object_dir(&self.database_path));
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
-            let Some((raw_length, [seg, seg_at, seg_len], _)) = row else {
+            let Some((raw_length, [seg, seg_at, seg_len], source)) = row else {
                 out.push(None);
                 continue;
             };
@@ -533,9 +451,37 @@ impl ContentStore {
                 out.push(None);
                 continue;
             };
-            out.push(Some(frame.bytes(length).map_err(|e| StoreError::Corrupt(format!("a source's bytes: {e}")))?));
+            out.push(Some((frame.bytes(length).map_err(|e| StoreError::Corrupt(format!("a source's bytes: {e}")))?, SourceId(source))));
         }
         Ok(out)
+    }
+
+    /// Every source `owner` pins, under each of its aliases, and where its bytes lie in their segment, with when the
+    /// pin ends: one statement, read before a run's waves, so a source found inside them is read where it lies
+    /// (`source_at`) with none (decision 0104). An archived source (decision 0450 step 4) is not placed: it has no
+    /// place here.
+    pub fn pinned_sources_placed(&self, owner: &str) -> StoreResult<Vec<(HashKey, SourcePlace)>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut st = connection.prepare_cached(
+            "SELECT h.algorithm_id, h.lane0, h.lane1, h.lane2, h.lane3, s.source_id, s.raw_length, s.seg, s.seg_at, s.seg_len, p.lease_until \
+             FROM object_pins p JOIN strings o ON o.string_id = p.owner_string_id \
+             JOIN source_objects s ON s.source_id = p.object_id \
+             JOIN source_aliases a ON a.source_id = s.source_id JOIN hashes h ON h.hash_id = a.alias_hash_id \
+             WHERE p.object_kind_id = ?1 AND o.domain_id = ?2 AND o.value = ?3 AND s.seg > 0",
+        )?;
+        let rows = st.query_map(params![super::reclamation::OBJECT_SOURCE, super::STRING_OWNER, owner], |r| {
+            let key = HashKey { algorithm: r.get(0)?, lanes: [r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?] };
+            Ok((key, SourcePlace { id: SourceId(r.get(5)?), length: r.get(6)?, seg: r.get(7)?, at: r.get(8)?, len: r.get(9)?, lease_until: r.get(10)? }))
+        })?;
+        rows.collect::<Result<_, _>>().map_err(StoreError::from)
+    }
+
+    /// The bytes of the source at `place` (`pinned_sources_placed`), read where its segment, a block, lies, mapped: no
+    /// statement. `None` where the segment is not there, or holds no such range (reclaimed or moved since).
+    pub fn source_at(&self, place: &SourcePlace) -> Option<ObjectBytes> {
+        let mut maps = SegmentMaps::new(object_dir(&self.database_path));
+        let frame = row_frame(&mut maps, place.seg, place.at, place.len)?;
+        frame.bytes(usize::try_from(place.length).ok()?).ok()
     }
 
     /// The source `alias` names, read where the store holds it (`sources_by_alias_in_place`).
@@ -760,7 +706,7 @@ mod tests {
     }
 
     /// A test's files: its sources, each with its tape.
-    type Files = [(Arc<String>, Arc<Vec<u8>>)];
+    type Files = [(Arc<rerail_tape_format::home::Text>, Arc<Vec<u8>>)];
 
     fn key(i: usize) -> Key {
         Key::of(&[b"a test's tape", &[i as u8]])
@@ -804,7 +750,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
         let big = write_back::gather_cap() + 1;
-        let files: Vec<(Arc<String>, Arc<Vec<u8>>)> = (0..4).map(|i| (Arc::new(format!("source {i}\n")), Arc::new(vec![i as u8 + 1; if i == 3 { big } else { 100 + i }]))).collect();
+        let files: Vec<(Arc<rerail_tape_format::home::Text>, Arc<Vec<u8>>)> = (0..4).map(|i| (Arc::new(format!("source {i}\n").into()), Arc::new(vec![i as u8 + 1; if i == 3 { big } else { 100 + i }]))).collect();
         queue(&store, &files);
         store.written().unwrap();
         let ids: Vec<SourceId> = files.iter().map(|(source, _)| store.source_by_hash(HashKey::sha256(source.as_bytes())).unwrap().expect("stored")).collect();

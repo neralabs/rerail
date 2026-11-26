@@ -15,8 +15,10 @@
 
 /// The items a rank index marks: numbered nodes, tokens, nodes under a field, nodes after a numbered sibling, spread
 /// nodes, the token order's (the lexical tokens, the places with a token, one before, one after), and `op`'s (a
-/// numbered node's anonymous children; `Item`'s numbers).
-pub const ITEMS: u32 = 10;
+/// numbered node's anonymous children), and the nodes with a numbered tape parent (and the root: `structural_before`'s, `rr_token_named`'s; `Item`'s numbers).
+pub const ITEMS: u32 = 11;
+/// `op`'s item (the engine's `ranks::Item::Op`): a numbered node's anonymous children, which `view_op` selects.
+pub const OP_ITEM: u32 = 9;
 /// A group's words: one of bits an item, then the counts before it, two to a word.
 pub const WORDS: u32 = ITEMS + ITEMS.div_ceil(2);
 /// Items a select sample stands for: 16, so a select's sample is nearly always its item's group or the one before
@@ -106,7 +108,7 @@ pub struct Numbering {
     /// granule is searched between two of them.
     pub jumps: [Run; 2],
 }
-const _: () = assert!(std::mem::size_of::<Numbering>() == 56 + 16 * 29);
+const _: () = assert!(std::mem::size_of::<Numbering>() == 56 + 16 * 30);
 
 /// No number, no node, no granule: a read's answer for none (the CLIF's `NONE`).
 pub const NONE: u32 = u32::MAX;
@@ -420,7 +422,7 @@ impl Numbering {
     #[inline]
     pub unsafe fn number_of(&self, low: u32) -> Option<(u32, u32)> {
         // SAFETY: the caller's.
-        unsafe { self.number_of_near(low, &mut NONE) }
+        unsafe { self.number_of_near(low, &mut { NONE }) }
     }
 
     /// `number_of`, its slot's entry first looked for at `hint` (the last one's, which a probe's cursor keeps): ids

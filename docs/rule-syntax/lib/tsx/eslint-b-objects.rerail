@@ -36,29 +36,44 @@
 // identifiers are decoded (hex_char); a name with another escape has no row.
 .decl id_value(n: node, x: symbol)
 id_value(n, x) :- id_kind(n), text(n, x), !contains("\\", x).
-id_value(n, x) :- id_kind(n), text(n, s), contains("\\", s), unescape(s, x), !contains("\\", x).
+id_value(n, x) :- unescape(n, x), !contains("\\", x).
 .decl id_kind(n: node)
 id_kind(n) :- (kind(n, "identifier") ; kind(n, "property_identifier") ; kind(n, "shorthand_property_identifier") ;
     kind(n, "shorthand_property_identifier_pattern") ; kind(n, "private_property_identifier")).
-// unescape(s, t): t is s with its escapes decoded: a\u{62}\u0063 → abc. s splits into pieces (a run of plain
-// text, one escape, or a lone backslash), each decoded on its own and joined in order; a piece that does not decode
-// keeps its backslash, so id_value has no row. One step, not one escape per round: no value grows by recursion.
-.decl unescape(s: symbol, t: symbol)
-unescape(s, t) :- escaped_id(s), t = join d by o : { unescape_piece(s, o, d) }.
-.decl escaped_id(s: symbol)
-escaped_id(s) :- id_kind(n), text(n, s), contains("\\", s).
-.decl escape_piece(s: symbol, o: number, p: symbol)
-escape_piece(s, o, p) :- escaped_id(s), match_all("(?<p>\\\\u\\{[0-9a-fA-F]+\\}|\\\\u[0-9a-fA-F]{4}|[^\\\\]+|\\\\)", s, o, _, _).
-.decl unescape_piece(s: symbol, o: number, d: symbol)
-unescape_piece(s, o, p) :- escape_piece(s, o, p), !contains("\\", p).
-unescape_piece(s, o, d) :- escape_piece(s, o, p), hex_piece(p, d).
-unescape_piece(s, o, p) :- escape_piece(s, o, p), contains("\\", p), !hex_decodes(p).
-.decl hex_piece(p: symbol, d: symbol)  // \u0061 and \u{61} → a
-hex_piece(p, d) :- escape_piece(_, _, p), match("\\\\u(?<H>[0-9a-fA-F]{4})", p), hex_char(@lower(H), d).
-hex_piece(p, d) :- escape_piece(_, _, p), match("\\\\u\\{0*(?<H>[0-9a-fA-F]{1,4})\\}", p),
+// unescape(n, t): t is identifier n's text with its escapes decoded: a\u{62}c → abc. The text splits into pieces
+// (a run of plain text, one escape, or a lone backslash), each decoded on its own and joined in order of its column; a
+// piece that does not decode keeps its backslash, so id_value has no row. One step, not one escape per round: no value
+// grows by recursion. Each relation is keyed by the identifier, and its pieces are spans of it (`match_all` over the
+// node), so all of it is made in the identifier's own file: keyed by the text, these were tables of every file's
+// escaped names, and the `match_all` over a text a native table of texts, joined by text in the cross-file part
+// (decision 0677).
+.decl unescape(n: node, t: symbol)
+unescape(n, t) :- escape_piece(n, _, _), t = join d by o : { unescape_piece(n, o, d) }.
+.decl escaped_id(n: node)
+escaped_id(n) :- id_kind(n), text(n, s), contains("\\", s).
+.decl escape_piece(n: node, o: number, p: symbol)  // the piece of n's text at column o
+// One rule per kind: `match_all` over a node scans the node's kind, and a kind is read off a `kind` atom of the rule (a
+// node a derived relation alone binds, id_kind's, is scanned nowhere: 0677 § Open).
+escape_piece(n, o, x) :- kind(n, "identifier"), escaped_id(n),
+    match_all("\\\\u\\{[0-9a-fA-F]+\\}|\\\\u[0-9a-fA-F]{4}|[^\\\\]+|\\\\", n, m), col(m, o), text(m, x).
+escape_piece(n, o, x) :- kind(n, "property_identifier"), escaped_id(n),
+    match_all("\\\\u\\{[0-9a-fA-F]+\\}|\\\\u[0-9a-fA-F]{4}|[^\\\\]+|\\\\", n, m), col(m, o), text(m, x).
+escape_piece(n, o, x) :- kind(n, "shorthand_property_identifier"), escaped_id(n),
+    match_all("\\\\u\\{[0-9a-fA-F]+\\}|\\\\u[0-9a-fA-F]{4}|[^\\\\]+|\\\\", n, m), col(m, o), text(m, x).
+escape_piece(n, o, x) :- kind(n, "shorthand_property_identifier_pattern"), escaped_id(n),
+    match_all("\\\\u\\{[0-9a-fA-F]+\\}|\\\\u[0-9a-fA-F]{4}|[^\\\\]+|\\\\", n, m), col(m, o), text(m, x).
+escape_piece(n, o, x) :- kind(n, "private_property_identifier"), escaped_id(n),
+    match_all("\\\\u\\{[0-9a-fA-F]+\\}|\\\\u[0-9a-fA-F]{4}|[^\\\\]+|\\\\", n, m), col(m, o), text(m, x).
+.decl unescape_piece(n: node, o: number, d: symbol)
+unescape_piece(n, o, p) :- escape_piece(n, o, p), !contains("\\", p).
+unescape_piece(n, o, d) :- hex_piece(n, o, d).
+unescape_piece(n, o, p) :- escape_piece(n, o, p), contains("\\", p), !hex_decodes(n, o).
+.decl hex_piece(n: node, o: number, d: symbol)  // a and \u{61} → a
+hex_piece(n, o, d) :- escape_piece(n, o, p), match("\\\\u(?<H>[0-9a-fA-F]{4})", p), hex_char(@lower(H), d).
+hex_piece(n, o, d) :- escape_piece(n, o, p), match("\\\\u\\{0*(?<H>[0-9a-fA-F]{1,4})\\}", p),
     h = cat("000", @lower(H)), hex_char(@slice(h, strlen(h) - 4, strlen(h)), d).
-.decl hex_decodes(p: symbol)
-hex_decodes(p) :- hex_piece(p, _).
+.decl hex_decodes(n: node, o: number)
+hex_decodes(n, o) :- hex_piece(n, o, _).
 .decl hex_char(h: symbol, c: symbol)  // four lower-case hex digits and the ASCII identifier character they code
 hex_char("0061", "a"). hex_char("0062", "b"). hex_char("0063", "c"). hex_char("0064", "d"). hex_char("0065", "e").
 hex_char("0066", "f"). hex_char("0067", "g"). hex_char("0068", "h"). hex_char("0069", "i"). hex_char("006a", "j").
@@ -176,7 +191,9 @@ cannot_touch(a, b) :- touch_pair(a, b), (suffix("+", a), prefix("+", b) ; suffix
 .decl touch_pair(a: symbol, b: symbol) extensible  // filled by the including rule: the token texts its fix puts side by side
 
 // ---- natural order -------------------------------------------------------------------------------------------------
-// natural_key(s, k): natural-compare 1.4 orders strings by a remapped alphabet: the control characters and
+// natural_key(n, s, k): natural-compare 1.4's key k of string s, which node n asks for (nat_ask(n, s)). Keyed by
+// the asker, not the string, so each file orders its own strings (decision 0677). natural-compare orders strings
+// by a remapped alphabet: the control characters and
 // ' ' … ',' first, then '.', '/', ':' … '@', '[' … '`', '{' … '~', DEL, '-', the digits, 'A' … 'Z', 'a' … 'z',
 // and other characters by code; and a run of digits that starts with 1-9 compares as a number when both strings
 // have one at the same place:
@@ -185,19 +202,20 @@ cannot_touch(a, b) :- touch_pair(a, b), (suffix("+", a), prefix("+", b) ; suffix
 // non-ASCII character as "9" and itself (after all ASCII, then by code point). A number run is "07", its length
 // in two digits, then its digits: it sorts between "066" ('0') and "076" ('A'), as natural-compare's codes for
 // the digits do, and two runs compare by length, then digit by digit, which is by value.
-.decl nat_ask(s: symbol) extensible  // filled by the including rule
-.decl natural_key(s: symbol, k: symbol)
+.decl nat_ask(n: node, s: symbol) extensible  // filled by the including rule
+.decl natural_key(n: node, s: symbol, k: symbol)
 // The pieces of s, each encoded on its own and joined in order: one step, so no value grows by recursion.
-natural_key(s, k) :- nat_ask(s), k = join x by o : { nat_piece(s, o, x) }.
-// nat_part(s, o, p): piece o of s, a run of digits that starts with 1-9 (leftmost, longest) or one character.
-.decl nat_part(s: symbol, o: number, p: symbol)
-nat_part(s, o, p) :- nat_ask(s), match_all("(?<p>[1-9][0-9]*|(?s:.))", s, o, _, _).
-.decl nat_piece(s: symbol, o: number, x: symbol)
-nat_piece(s, o, cat("07", cat(w, p))) :- nat_part(s, o, p), match("[1-9][0-9]*", p),
-    n = cat("0", to_string(strlen(p))), w = @slice(n, strlen(n) - 2, strlen(n)).
-nat_piece(s, o, x) :- nat_part(s, o, p), nat_code(p, x).
-nat_piece(s, o, x) :- nat_part(s, o, p), nat_control(re, x), match(re, p).
-nat_piece(s, o, cat("9", p)) :- nat_part(s, o, p), !match("[1-9].*", p), !nat_code(p, _), !match("[\\x00-\\x1f\\x7f]", p).
+natural_key(n, s, k) :- nat_ask(n, s), k = join x by o : { nat_piece(n, s, o, x) }.
+// nat_part(n, s, o, p): piece o of s, a run of digits that starts with 1-9 (leftmost, longest) or one character.
+.decl nat_part(n: node, s: symbol, o: number, p: symbol)
+nat_part(n, s, o, p) :- nat_ask(n, s), match_all("(?<p>[1-9][0-9]*|(?s:.))", s, o, _, _).
+.decl nat_piece(n: node, s: symbol, o: number, x: symbol)
+nat_piece(n, s, o, cat("07", cat(w, p))) :- nat_part(n, s, o, p), match("[1-9][0-9]*", p),
+    l = cat("0", to_string(strlen(p))), w = @slice(l, strlen(l) - 2, strlen(l)).
+nat_piece(n, s, o, x) :- nat_part(n, s, o, p), nat_code(p, x).
+nat_piece(n, s, o, x) :- nat_part(n, s, o, p), nat_control(re, x), match(re, p).
+nat_piece(n, s, o, cat("9", p)) :- nat_part(n, s, o, p), !match("[1-9].*", p), !nat_code(p, _),
+    !match("[\\x00-\\x1f\\x7f]", p).
 // nat_control(re, x): the control characters, as a regex for the one character and its code: 0-31 keep their own
 // code (natural-compare maps every code below 45 to itself), DEL (127) becomes 64. `{"\x01a": 1, " b": 2}` sorts
 // \x01a first.

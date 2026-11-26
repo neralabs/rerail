@@ -357,6 +357,11 @@ fn metal() -> bool {
     false
 }
 
+/// A line of the coverage matrix or ledger, hand-kept documents of tab-separated cells: its cells.
+fn ledger_cells(line: &str) -> Vec<&str> {
+    line.split('\t').collect()
+}
+
 /// The second ledger, `packs.tsv`: each gap the matrix records (a probe not native, or not on the device), by how
 /// many shipped programs of each pack use its operations: which gaps the packs meet, and how often. Written and
 /// compared with the matrix (`RERAIL_BLESS_COVERAGE=1`).
@@ -372,9 +377,9 @@ fn packs_ledger(all: &[Probe], matrix: &str) {
         }
         if f.contains("/programs/data_layer/") { "data-layer (engine)".into() } else { "engine".into() }
     };
-    let cells: BTreeMap<&str, (&str, &str)> = matrix.lines().filter(|l| !l.starts_with('#')).filter_map(|l| {
-        let mut c = l.split('\t');
-        Some((c.next()?, (c.next()?, c.next()?)))
+    let cells: BTreeMap<&str, (&str, &str)> = matrix.lines().filter(|l| !l.starts_with('#')).filter_map(|l| match ledger_cells(l)[..] {
+        [probe, a, b, ..] => Some((probe, (a, b))),
+        _ => None,
     }).collect();
     let mut rows: Vec<(usize, String)> = Vec::new();
     for pr in all {
@@ -482,14 +487,13 @@ fn every_operation_runs_on_every_executor() {
     let rows = if metal() {
         rows
     } else {
-        // A ledger row's four cells (probe, native, device, rules), read in one place for the ledger and the rows.
-        fn cells(l: &str) -> Option<[&str; 4]> {
-            l.split('\t').collect::<Vec<_>>().try_into().ok()
-        }
-        let device: BTreeMap<&str, &str> = had.lines().filter_map(|l| cells(l).map(|c| (c[0], c[2]))).collect();
-        rows.lines().map(|l| match cells(l).and_then(|c| device.get(c[0]).map(|d| (c, d))) {
-            Some((c, d)) => format!("{}\t{}\t{d}\t{}\n", c[0], c[1], c[3]),
-            None => format!("{l}\n"),
+        let device: BTreeMap<&str, &str> = had.lines().filter_map(|l| { let c = ledger_cells(l); (c.len() == 4).then(|| (c[0], c[2])) }).collect();
+        rows.lines().map(|l| {
+            let c = ledger_cells(l);
+            match (c.len(), device.get(c[0])) {
+                (4, Some(d)) => format!("{}\t{}\t{d}\t{}\n", c[0], c[1], c[3]),
+                _ => format!("{l}\n"),
+            }
         }).collect()
     };
     if std::env::var_os("RERAIL_BLESS_COVERAGE").is_some() {

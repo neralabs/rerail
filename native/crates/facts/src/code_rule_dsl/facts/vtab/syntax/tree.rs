@@ -31,9 +31,18 @@
 //! a dictionary's keys before its values; `a if t else b`'s test first. Nodes with no `ast` node of their own
 //! (wrappers) are numbered where they open. Rows hold string indexes, as `Batch::build`'s do.
 
+use crate::code_rule_dsl::facts::core::FactsIn;
+use rerail_blocks::vector::Vector;
 use super::{Dialect, Projected, Relation};
 use crate::code_rule_dsl::facts::core::{Facts, NONE};
 use std::collections::BTreeSet;
+
+/// Tape node `x`'s operators, `op_at`'s in order: its children in field `operator` or `operators`, each its token
+/// ("<", "not in"). What `op_at`'s rows hold and `@rr_node_op_at` reads (decision 0353 step 3).
+pub(super) fn node_operators<'f>(f: FactsIn<'f>, dialect: &'f Dialect, x: u32) -> impl Iterator<Item = &'f str> + 'f {
+    let fields = [dialect.operator, dialect.operators];
+    f.children(x).into_iter().filter(move |&c| f.field(c) != 0 && fields.contains(&Some(f.field(c)))).map(move |c| dialect.name(f, c))
+}
 
 #[derive(Default)]
 pub(super) struct Tree {
@@ -41,15 +50,12 @@ pub(super) struct Tree {
     prev_token: bool,
     token: bool,
     /// `token` answered on request (decision 0174): its anonymous children's rows (`rr_token_anon`, their text their
-    /// kind) and its named children's by node (`rr_token_named(p, i, c, start, end)`, the text `node_text`'s).
+    /// kind). Its named children's (`rr_token_named`) are a view of the tape (`tape_rows::NamedChild`).
     token_parts: bool,
-    visit_index: bool,
-    op_ats: Vec<[i64; 3]>,
-    prev_tokens: Vec<[i64; 2]>,
-    tokens: Vec<[i64; 5]>,
-    anon_tokens: Vec<[i64; 5]>,
-    named_tokens: Vec<[i64; 5]>,
-    visit_indexes: Vec<[i64; 2]>,
+    op_ats: Vector<[i64; 3]>,
+    prev_tokens: Vector<[i64; 2]>,
+    tokens: Vector<[i64; 5]>,
+    anon_tokens: Vector<[i64; 5]>,
 }
 
 impl Tree {
@@ -59,42 +65,36 @@ impl Tree {
             op_at: read("op_at"),
             prev_token: read("prev_token"),
             token: read("token"),
-            token_parts: read("rr_token_anon") || read("rr_token_named"),
-            visit_index: read("visit_index"),
+            token_parts: read("rr_token_anon"),
             ..Self::default()
         }
     }
 
-    /// `op_at` of `p`'s nodes. A guest's (a string annotation's comparison, `x: "123 is not y"`) are made too: this
+    /// `op_at` of `p`'s nodes (`node_operators`). A guest's (a string annotation's comparison, `x: "123 is not y"`) are made too: this
     /// `op_at` stands in for `core_rr`'s, which holds every node's, the guests' included.
     pub(super) fn operators(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize) {
         if !self.op_at {
             return;
         }
-        let f = &*p.facts;
-        let fields = [dialect.operator, dialect.operators];
+        let f = p.f();
         for (_, id, n) in p.node_ids() {
-            let kids = f.children(id);
-            let operators = kids.iter().filter(|&&c| f.field(c) != 0 && fields.contains(&Some(f.field(c))));
-            for (i, &c) in operators.enumerate() {
-                self.op_ats.push([n, i as i64, string(dialect.name(f, c)) as i64]);
+            for (i, t) in node_operators(f, dialect, id).enumerate() {
+                self.op_ats.push([n, i as i64, string(t) as i64]);
             }
         }
     }
 
-    /// Document `p`'s rows (`python`: it is Python's). A text document (no `dialect`) has none.
-    pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, python: bool, string: &mut dyn FnMut(&str) -> usize) {
-        let f = &*p.facts;
+    /// Document `p`'s rows. A text document (no `dialect`) has none.
+    pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, string: &mut dyn FnMut(&str) -> usize) {
+        let f = p.f();
         let Some(dialect) = dialect else { return };
         self.operators(p, dialect, string);
         if self.token_parts {
             for (_, id, n) in p.node_ids() {
                 for (i, &c) in f.children(id).iter().enumerate() {
                     let (a, b) = (i64::from(f.start(c)), i64::from(f.end(c)));
-                    let at = p.local_of_node(c);
-                    if f.named(c) && at != NONE {
-                        self.named_tokens.push([n, i as i64, p.global(at), a, b]);
-                    } else {
+                    // A named child a node is: `rr_token_named`'s, a view (`tape_rows::NamedChild`).
+                    if !(f.named(c) && p.local_of_node(c) != NONE) {
                         // A named child no node is (a comment, a withheld node) keeps its text here.
                         let text = if f.named(c) { f.text(c) } else { dialect.name(f, c) };
                         self.anon_tokens.push([n, i as i64, string(text) as i64, a, b]);
@@ -122,91 +122,85 @@ impl Tree {
                 }
             }
         }
-        self.visits(p, dialect, python);
-    }
-
-    /// `visit_index` of `p`'s nodes (`python`: in CPython's order). A guest's too: a program's nodes (a Vue
-    /// component's script, decision 0597) are a document of their own, which `earlier` orders.
-    pub(super) fn visits(&mut self, p: &Projected, dialect: &Dialect, python: bool) {
-        if self.visit_index && let Some(&root) = p.nodes().next().map(|(_, x)| x).as_ref() {
-            let first = self.visit_indexes.len();
-            Order { f: &p.facts, dialect, p, python, next: 0, out: &mut self.visit_indexes }.run(root);
-            keys_by_run(&mut self.visit_indexes[first..]);
-        }
     }
 
     /// The relations read, their strings as atoms (`atom` of a string index).
     pub(super) fn relations(self, atom: &dyn Fn(i64) -> i64, relation: super::Make) -> Vec<(&'static str, Relation)> {
         let mut out = Vec::new();
         if self.op_at {
-            out.push(("op_at", relation(&["n", "i", "s"], &mut self.op_ats.iter().map(|&[n, i, s]| vec![n, i, atom(s)]))));
+            out.push(("op_at", relation(&["n", "i", "s"], &mut self.op_ats.iter().map(|&[n, i, s]| rerail_blocks::vector![n, i, atom(s)]))));
         }
         if self.prev_token {
-            out.push(("prev_token", relation(&["n", "s"], &mut self.prev_tokens.iter().map(|&[n, s]| vec![n, atom(s)]))));
+            out.push(("prev_token", relation(&["n", "s"], &mut self.prev_tokens.iter().map(|&[n, s]| rerail_blocks::vector![n, atom(s)]))));
         }
         if self.token {
-            out.push(("token", relation(&["p", "i", "s", "start", "end_"], &mut self.tokens.iter().map(|&[p, i, s, a, b]| vec![p, i, atom(s), a, b]))));
+            out.push(("token", relation(&["p", "i", "s", "start", "end_"], &mut self.tokens.iter().map(|&[p, i, s, a, b]| rerail_blocks::vector![p, i, atom(s), a, b]))));
         }
         if self.token_parts {
-            out.push(("rr_token_anon", relation(&["p", "i", "s", "start", "end_"], &mut self.anon_tokens.iter().map(|&[p, i, s, a, b]| vec![p, i, atom(s), a, b]))));
-            out.push(("rr_token_named", relation(&["p", "i", "c", "start", "end_"], &mut self.named_tokens.iter().map(|r| r.to_vec()))));
-        }
-        if self.visit_index {
-            out.push(("visit_index", relation(&["n", "i"], &mut self.visit_indexes.iter().map(|r| r.to_vec()))));
+            out.push(("rr_token_anon", relation(&["p", "i", "s", "start", "end_"], &mut self.anon_tokens.iter().map(|&[p, i, s, a, b]| rerail_blocks::vector![p, i, atom(s), a, b]))));
         }
         out
     }
 }
 
-/// CPython's visit order over one Python document's tape (the module doc), with a stack rather than recursion: a
-/// chain of 10,000 `+` is that deep.
-/// `visit_index`'s values for one document's rows, in visit order (as `Order` pushes them, each its place from 0): the
-/// rank of its *run*, a stretch of nodes consecutive in the visit order that are one granule's (its id's slot), then
-/// its index among its granule's nodes in that order (decision 0121's key, in the language's visit order rather than
-/// preorder). An edit inside a granule moves no other granule's values; one that adds or removes a granule moves the
-/// ranks after it. Past the key's bits (more runs, or a granule's more nodes), the places from 0 stay: one scheme a
-/// document, so its values still compare.
-fn keys_by_run(rows: &mut [[i64; 2]]) {
-    use rerail_clif::ids::{INDEX_BITS, ORDER_INDEX_BITS};
+/// `visit_index`'s values for one document, `order` its nodes' local ids in visit order and `out` each one's place
+/// from 0 (as `visit_order` gives them): the rank of its *run*, a stretch of nodes consecutive in the visit order that
+/// are one granule's (its id's slot, `slot`), then its index among its granule's nodes in that order (decision 0121's
+/// key, in the language's visit order rather than preorder). An edit inside a granule moves no other granule's
+/// values; one that adds or removes a granule moves the ranks after it. Past the key's bits (more runs, or a
+/// granule's more nodes), the places from 0 stay: one scheme a document, so its values still compare.
+pub fn keys_by_run(order: &[u32], slot: impl Fn(u32) -> u32, out: &mut [u32]) {
+    use rerail_clif::ids::ORDER_INDEX_BITS;
     let mut index: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
-    let mut keys = Vec::with_capacity(rows.len());
     let (mut rank, mut last) = (0u32, None);
-    for r in rows.iter() {
-        let slot = (r[0] as u32) >> INDEX_BITS;
-        if last.is_some_and(|l| l != slot) {
+    for (k, &l) in order.iter().enumerate() {
+        let s = slot(l);
+        if last.is_some_and(|x| x != s) {
             rank += 1;
         }
-        last = Some(slot);
-        let i = index.entry(slot).or_default();
+        last = Some(s);
+        let i = index.entry(s).or_default();
         if rank >> (32 - ORDER_INDEX_BITS) != 0 || *i >> ORDER_INDEX_BITS != 0 {
+            // Past the key's bits: every place from 0 again.
+            for (k, &l) in order[..k].iter().enumerate() {
+                out[l as usize] = k as u32;
+            }
             return;
         }
-        keys.push(i64::from(rank << ORDER_INDEX_BITS | *i));
+        out[l as usize] = rank << ORDER_INDEX_BITS | *i;
         *i += 1;
-    }
-    for (r, k) in rows.iter_mut().zip(keys) {
-        r[1] = k;
     }
 }
 
+/// The visit order over one document's tape (CPython's in a Python document), with a stack rather than recursion: a
+/// chain of 10,000 `+` is that deep.
 struct Order<'a> {
-    f: &'a Facts,
+    f: FactsIn<'a>,
     dialect: &'a Dialect,
     p: &'a Projected,
     /// CPython's order; else the tape's.
     python: bool,
-    next: i64,
-    out: &'a mut Vec<[i64; 2]>,
+    next: u32,
+    each: &'a mut dyn FnMut(u32, u32),
+}
+
+/// `visit_index`'s numbering of a document `p`, a file's own or a guest's (a Vue component's script, decision 0597):
+/// each node of the projection with its place in the visit order (CPython's where `python`, else the tape's),
+/// `(local, i)`, in that order (`tape_rows::VisitIndex` reads it).
+pub fn visit_order(p: &Projected, dialect: &Dialect, python: bool, each: &mut dyn FnMut(u32, u32)) {
+    if let Some((_, root)) = p.nodes().next() {
+        Order { f: p.f(), dialect, p, python, next: 0, each }.run(root);
+    }
 }
 
 /// What the order does next: number a node and take its children (with a definition's decorators), or number it only.
 enum Step {
-    Visit(u32, Vec<u32>),
+    Visit(u32, Vector<u32>),
     Number(u32),
 }
 
 fn visit(id: u32) -> Step {
-    Step::Visit(id, Vec::new())
+    Step::Visit(id, rerail_blocks::vector::Vector::new())
 }
 
 impl Order<'_> {
@@ -227,7 +221,7 @@ impl Order<'_> {
             };
             let local = self.p.local_of_node(id);
             if local != NONE {
-                self.out.push([self.p.global(local), self.next]);
+                (self.each)(local, self.next);
                 self.next += 1;
             }
             if let Some(decorators) = decorators {
@@ -237,7 +231,7 @@ impl Order<'_> {
     }
 
     /// `id`'s children in CPython's order; `decorators`: a definition's, from the `decorated_definition` around it.
-    fn children(&self, id: u32, decorators: Vec<u32>) -> Vec<Step> {
+    fn children(&self, id: u32, decorators: Vector<u32>) -> Vec<Step> {
         let children = self.f.children(id);
         if !self.python {
             return children.iter().copied().map(visit).collect();
@@ -245,7 +239,7 @@ impl Order<'_> {
         let with_field = |names: &[&str]| children.iter().copied().filter(|&c| names.contains(&self.field(c))).map(visit).collect::<Vec<_>>();
         match self.kind(id) {
             "decorated_definition" => {
-                let (definition, decorators): (Vec<u32>, Vec<u32>) = children.iter().copied().filter(|&c| self.f.named(c)).partition(|&c| self.field(c) == "definition");
+                let (definition, decorators): (Vector<u32>, Vector<u32>) = children.iter().copied().filter(|&c| self.f.named(c)).partition(|&c| self.field(c) == "definition");
                 // Anything else (tokens) has no `ast` place: it goes first.
                 let mut out: Vec<Step> = children.iter().copied().filter(|c| !definition.contains(c) && !decorators.contains(c)).map(visit).collect();
                 out.extend(definition.into_iter().map(|d| Step::Visit(d, decorators.clone())));
@@ -266,7 +260,7 @@ impl Order<'_> {
             }
             "argument_list" => {
                 let keyword = |c: &u32| matches!(self.kind(*c), "keyword_argument" | "dictionary_splat");
-                let (keywords, positional): (Vec<u32>, Vec<u32>) = children.iter().copied().partition(keyword);
+                let (keywords, positional): (Vector<u32>, Vector<u32>) = children.iter().copied().partition(keyword);
                 positional.into_iter().chain(keywords).map(visit).collect()
             }
             "parameters" | "lambda_parameters" => self.parameters(&children),
@@ -293,7 +287,7 @@ impl Order<'_> {
                 out
             }
             "conditional_expression" => {
-                let named: Vec<u32> = children.iter().copied().filter(|&c| self.f.named(c)).collect();
+                let named: Vector<u32> = children.iter().copied().filter(|&c| self.f.named(c)).collect();
                 match named.as_slice() {
                     [body, test, orelse] => vec![visit(*test), visit(*body), visit(*orelse)],
                     _ => named.into_iter().map(visit).collect(),
@@ -316,7 +310,7 @@ impl Order<'_> {
             match self.kind(c) {
                 "default_parameter" | "typed_default_parameter" => {
                     out.push(Step::Number(c));
-                    let (values, rest): (Vec<u32>, Vec<u32>) = self.f.children(c).iter().copied().partition(|&k| self.field(k) == "value");
+                    let (values, rest): (Vector<u32>, Vector<u32>) = self.f.children(c).iter().copied().partition(|&k| self.field(k) == "value");
                     out.extend(rest.into_iter().map(visit));
                     if keyword_only { &mut kw_defaults } else { &mut defaults }.extend(values.into_iter().map(visit));
                 }

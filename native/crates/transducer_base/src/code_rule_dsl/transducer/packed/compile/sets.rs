@@ -27,6 +27,7 @@
 //! A program outside this fragment (a next-sibling step, a repetition, a capture other than the
 //! last, a branch that moves and does not come back) is not a formula, and runs as a walk.
 
+use rerail_blocks::vector::Vector;
 use super::*;
 use super::compile_micro::CLOSURE;
 use crate::code_rule_dsl::tape::{DERIVED_CLASS_BASE, TapeDoc};
@@ -67,9 +68,9 @@ pub enum Set {
 /// input), and the labels it reads (by index, past `DERIVED_CLASS_BASE`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct DeviceFormula {
-    pub words: Vec<u32>,
+    pub words: Vector<u32>,
     pub depth: u32,
-    pub labels: Vec<u32>,
+    pub labels: Vector<u32>,
     /// A text test's row by its slot (`TEXT`'s `arg`): each slot's key (`Micro::slot_key`), set by whoever lowered
     /// the walk; the device reads the row the walk reads (every node where there is none, for an anchor). Part of
     /// the formula's identity: two walks' slot 0 are different texts.
@@ -169,7 +170,7 @@ impl Set {
     /// roots pass's or a targets pass's image (`Reached`): a text test reads its slot's row (`DeviceFormula::texts`,
     /// set by the caller), and only an anchor reads every node where there is none.
     pub fn device(&self) -> Option<DeviceFormula> {
-        let mut formula = DeviceFormula { words: Vec::new(), depth: 0, labels: Vec::new(), texts: Vec::new() };
+        let mut formula = DeviceFormula { words: rerail_blocks::vector::Vector::new(), depth: 0, labels: rerail_blocks::vector::Vector::new(), texts: Vec::new() };
         formula.depth = self.emit(&mut formula)?;
         formula.labels.sort_unstable();
         formula.labels.dedup();
@@ -359,8 +360,8 @@ impl Set {
     }
 
     /// The labels this set reads (from `DERIVED_CLASS_BASE`), as their ids.
-    pub fn labels(&self) -> Vec<u16> {
-        let found = std::cell::RefCell::new(Vec::new());
+    pub fn labels(&self) -> Vector<u16> {
+        let found = std::cell::RefCell::new(rerail_blocks::vector::Vector::new());
         self.clone().map_tests(&|test| {
             if let Set::Class(class) = test
                 && class >= DERIVED_CLASS_BASE
@@ -679,9 +680,9 @@ pub struct Index {
     fields: OnceLock<Postings>,
     flags: OnceLock<Vec<u8>>,
     /// Grammar supertypes asked for, by class.
-    classes: Mutex<HashMap<u16, Arc<Vec<u64>>>>,
+    classes: Mutex<HashMap<u16, Arc<Vector<u64>>>>,
     /// Steps over every node asked for (`Reader::over_all`), by step.
-    over_all: Mutex<HashMap<Set, Arc<Vec<u64>>>>,
+    over_all: Mutex<HashMap<Set, Arc<Vector<u64>>>>,
     /// What W's facts that are node sets keep of the tape (the matcher's sibling positions and `nthChild` answers),
     /// made by the lowered matcher on its first read (`compile_matcher::siblings`).
     pub facts: OnceLock<Box<dyn std::any::Any + Send + Sync>>,
@@ -690,13 +691,13 @@ pub struct Index {
 /// A column's nodes by value, in order: `nodes[offsets[value]..offsets[value + 1]]`. Built by a
 /// counting sort, two passes over the column.
 struct Postings {
-    offsets: Vec<u32>,
-    nodes: Vec<u32>,
+    offsets: Vector<u32>,
+    nodes: Vector<u32>,
 }
 
 impl Postings {
     fn of(len: u32, value: impl Fn(u32) -> u16) -> Self {
-        let mut offsets = Vec::<u32>::new();
+        let mut offsets = Vector::<u32>::new();
         for node in 0..len {
             let value = usize::from(value(node));
             if offsets.len() < value + 2 {
@@ -708,7 +709,7 @@ impl Postings {
             offsets[at] += offsets[at - 1];
         }
         let mut next = offsets.clone();
-        let mut nodes = vec![0_u32; len as usize];
+        let mut nodes = rerail_blocks::vector![0_u32; len as usize];
         for node in 0..len {
             let value = usize::from(value(node));
             nodes[next[value] as usize] = node;
@@ -731,9 +732,9 @@ pub struct Reader<'a> {
     pub tape: &'a TapeDoc,
     pub index: &'a Index,
     /// The labels so far, by class less `DERIVED_CLASS_BASE`.
-    pub labels: &'a [Vec<u64>],
+    pub labels: &'a [Vector<u64>],
     /// The program's text rows, by slot.
-    pub texts: &'a [Vec<u64>],
+    pub texts: &'a [Vector<u64>],
 }
 
 impl Reader<'_> {
@@ -741,8 +742,8 @@ impl Reader<'_> {
         self.tape.transducer_len().div_ceil(64)
     }
 
-    fn postings(&self, nodes: &[u32]) -> Vec<u64> {
-        let mut bits = vec![0_u64; self.words()];
+    fn postings(&self, nodes: &[u32]) -> Vector<u64> {
+        let mut bits = rerail_blocks::vector![0_u64; self.words()];
         for &node in nodes {
             bits[node as usize / 64] |= 1 << (node % 64);
         }
@@ -754,7 +755,7 @@ impl Reader<'_> {
     }
 
     /// The members of `set`, a row of the tape's words.
-    pub fn eval(&self, set: &Set) -> Vec<u64> {
+    pub fn eval(&self, set: &Set) -> Vector<u64> {
         let mut bits = self.row(set).into_vec();
         bits.resize(self.words(), 0);
         bits
@@ -764,12 +765,12 @@ impl Reader<'_> {
     /// the index keeps it, else made. A row may be shorter than the tape's words: the rest are 0 (`has`).
     fn row(&self, set: &Set) -> Row<'_> {
         match set {
-            Set::Class(class) if *class >= DERIVED_CLASS_BASE => Row::Borrowed(self.labels.get(usize::from(class - DERIVED_CLASS_BASE)).map_or(&[], Vec::as_slice)),
-            Set::Text(slot) => Row::Borrowed(self.texts.get(usize::from(*slot)).map_or(&[], Vec::as_slice)),
+            Set::Class(class) if *class >= DERIVED_CLASS_BASE => Row::Borrowed(self.labels.get(usize::from(class - DERIVED_CLASS_BASE)).map_or(&[], |v| v.as_slice())),
+            Set::Text(slot) => Row::Borrowed(self.texts.get(usize::from(*slot)).map_or(&[], |v| v.as_slice())),
             Set::Class(class) => Row::Shared(self.class(*class)),
             Set::Child { of, .. } | Set::Descendant { of, .. } | Set::Following { of, .. } | Set::Parent(of) if **of == Set::All => Row::Shared(self.over_all(set)),
             Set::Or(parts) => {
-                let mut bits = vec![0_u64; self.words()];
+                let mut bits = rerail_blocks::vector![0_u64; self.words()];
                 for part in parts {
                     self.or_into(part, &mut bits);
                 }
@@ -797,7 +798,7 @@ impl Reader<'_> {
 
     /// A conjunction's members: its tests first, then its other parts, each step tested only at the members so far
     /// (`within`, as the device's `within`), until none is left.
-    fn and(&self, parts: &[Set]) -> Vec<u64> {
+    fn and(&self, parts: &[Set]) -> Vector<u64> {
         let rank = |part: &Set| match part {
             Set::All | Set::Kind(_) | Set::Field(_) | Set::Flags { .. } | Set::Class(_) | Set::Text(_) => 0,
             Set::Or(_) | Set::And(_) => 1,
@@ -859,10 +860,10 @@ impl Reader<'_> {
     }
 
     /// A grammar supertype's members, made once a labelling (`Index::classes`).
-    fn class(&self, class: u16) -> Arc<Vec<u64>> {
+    fn class(&self, class: u16) -> Arc<Vector<u64>> {
         let mut classes = self.index.classes.lock().expect("class sets");
         Arc::clone(classes.entry(class).or_insert_with(|| {
-            let mut bits = vec![0_u64; self.words()];
+            let mut bits = rerail_blocks::vector![0_u64; self.words()];
             for node in 0..self.tape.transducer_len() as u32 {
                 if self.tape.transducer_has_supertype(node, class) {
                     put(&mut bits, node);
@@ -874,7 +875,7 @@ impl Reader<'_> {
 
     /// A step over every node (a node with a child, a later sibling, a parent), made once a labelling
     /// (`Index::over_all`): a column of the tape's shape, which every anchor whose labels were read as every node asks.
-    fn over_all(&self, step: &Set) -> Arc<Vec<u64>> {
+    fn over_all(&self, step: &Set) -> Arc<Vector<u64>> {
         if let Some(bits) = self.index.over_all.lock().expect("steps over every node").get(step) {
             return Arc::clone(bits);
         }
@@ -884,12 +885,12 @@ impl Reader<'_> {
     }
 
     /// The members of a test or step `set`, made over the tape.
-    fn made(&self, set: &Set) -> Vec<u64> {
+    fn made(&self, set: &Set) -> Vector<u64> {
         let words = self.words();
         let len = self.tape.transducer_len();
         match set {
             Set::All => {
-                let mut bits = vec![u64::MAX; words];
+                let mut bits = rerail_blocks::vector![u64::MAX; words];
                 if !len.is_multiple_of(64)
                     && let Some(last) = bits.last_mut()
                 {
@@ -900,7 +901,7 @@ impl Reader<'_> {
             Set::Kind(kind) => self.postings(self.kinds().get(*kind)),
             Set::Field(field) => self.postings(self.fields().get(*field)),
             Set::Flags { mode, arg } => {
-                let mut bits = vec![0_u64; words];
+                let mut bits = rerail_blocks::vector![0_u64; words];
                 for (node, &flags) in self.flags().iter().enumerate() {
                     if flags & mode == *mode && flags & arg == 0 {
                         bits[node / 64] |= 1 << (node % 64);
@@ -911,7 +912,7 @@ impl Reader<'_> {
             Set::Class(_) | Set::Text(_) | Set::And(_) | Set::Or(_) => self.eval(set),
             Set::Child { named, of } => {
                 let of = self.row(of);
-                let mut bits = vec![0_u64; words];
+                let mut bits = rerail_blocks::vector![0_u64; words];
                 // One pass in preorder, each node's parent the subtree open around it: no parent is searched for.
                 for (node, parent) in (0..self.tape.transducer_len() as u32).zip(self.tape.transducer_parents()) {
                     let Some(parent) = parent else { continue };
@@ -924,7 +925,7 @@ impl Reader<'_> {
             }
             Set::Descendant { named, of } => {
                 let of = self.row(of);
-                let mut bits = vec![0_u64; words];
+                let mut bits = rerail_blocks::vector![0_u64; words];
                 // One pass in preorder: a member marks the subtrees open around it (its ancestors), up to the first
                 // already marked, whose own ancestors are.
                 let mut open: Vec<(u32, u32)> = Vec::new();
@@ -946,7 +947,7 @@ impl Reader<'_> {
             }
             Set::Parent(of) => {
                 let of = self.row(of);
-                let mut bits = vec![0_u64; words];
+                let mut bits = rerail_blocks::vector![0_u64; words];
                 for node in ones(&of) {
                     for child in self.tape.transducer_children(node) {
                         bits[child as usize / 64] |= 1 << (child % 64);
@@ -957,7 +958,7 @@ impl Reader<'_> {
             Set::Following { named, of } => {
                 // Each member's parent's children, last first: a child is in once a later one is.
                 let of = self.row(of);
-                let mut bits = vec![0_u64; words];
+                let mut bits = rerail_blocks::vector![0_u64; words];
                 let mut parents = vec![0_u64; words];
                 let mut children = Vec::new();
                 for node in ones(&of) {
@@ -982,7 +983,7 @@ impl Reader<'_> {
                 // In reverse preorder a node's children come before it: `has` is complete when the
                 // node is reached.
                 let (through, to) = (self.row(through), self.row(to));
-                let mut reached = vec![0_u64; words];
+                let mut reached = rerail_blocks::vector![0_u64; words];
                 for node in (0..len as u32).rev() {
                     let ends = has(&to, node) || (has(&through, node) && get(&reached, node));
                     if ends
@@ -996,7 +997,7 @@ impl Reader<'_> {
             }
             Set::Reached { step, named, from } => {
                 let from = self.row(from);
-                let mut bits = vec![0_u64; words];
+                let mut bits = rerail_blocks::vector![0_u64; words];
                 match step {
                     Step::Child => {
                         for node in ones(&from) {
@@ -1109,8 +1110,8 @@ fn members_in(bits: &[u64], from: u32, to: u32) -> impl Iterator<Item = u32> + '
 /// A set's members as `Reader::row` gives them: a row read where it is, one an index keeps, or one made.
 enum Row<'a> {
     Borrowed(&'a [u64]),
-    Shared(Arc<Vec<u64>>),
-    Owned(Vec<u64>),
+    Shared(Arc<Vector<u64>>),
+    Owned(Vector<u64>),
 }
 
 impl std::ops::Deref for Row<'_> {
@@ -1126,10 +1127,10 @@ impl std::ops::Deref for Row<'_> {
 
 impl Row<'_> {
     /// The members as a row of their own: a made one as it is, a read one as the formula's answer.
-    fn into_vec(self) -> Vec<u64> {
+    fn into_vec(self) -> Vector<u64> {
         match self {
             Row::Owned(bits) => bits,
-            row => row.to_vec(),
+            row => Vector::from(&*row),
         }
     }
 }
@@ -1234,9 +1235,9 @@ pub mod tests {
         assert_eq!(formula.words, vec![d::KIND | 4 << 8, d::KIND | 5 << 8, d::CHILD_IN]);
         assert_eq!(formula.depth, 3);
         let moved = Set::anchor(&moved, &|_| true).device().unwrap();
-        assert_eq!((moved.words, moved.depth), (vec![d::HAS_BELOW, d::KIND | 2 << 8, d::OR | 2 << 8], 2));
+        assert_eq!((moved.words, moved.depth), (rerail_blocks::vector![d::HAS_BELOW, d::KIND | 2 << 8, d::OR | 2 << 8], 2));
         let labelled = Set::anchor(&has, &|_| true).device().unwrap();
-        assert_eq!((labelled.words, labelled.depth, labelled.labels), (vec![d::CLASS | u32::from(label) << 8, d::DESCENDANT], 2, vec![3]));
+        assert_eq!((labelled.words, labelled.depth, labelled.labels), (rerail_blocks::vector![d::CLASS | u32::from(label) << 8, d::DESCENDANT], 2, rerail_blocks::vector![3]));
         // A text test without its row is dropped.
         assert_eq!(Set::anchor(&[w(KIND, 1), w(TEXT, 0), w(EMIT, 1)], &|_| false), Set::Kind(1));
         assert_eq!(Set::anchor(&[w(KIND, 1), w(TEXT, 0), w(EMIT, 1)], &|_| true), Set::And(vec![Set::Kind(1), Set::Text(0)]));
@@ -1284,11 +1285,11 @@ pub mod tests {
         use device_ops as d;
         let class = d::CLASS | u32::from(label) << 8;
         let image = Set::targets(&inside, Set::All).unwrap().device().unwrap();
-        assert_eq!((image.words, image.depth), (vec![class, d::REACH_DESCENDANT], 2));
+        assert_eq!((image.words, image.depth), (rerail_blocks::vector![class, d::REACH_DESCENDANT], 2));
         let image = Set::targets(&chain, Set::Kind(7)).unwrap().device().unwrap();
-        assert_eq!((image.words, image.depth), (vec![d::KIND | 7 << 8, class, d::REACH_CHAIN], 4));
+        assert_eq!((image.words, image.depth), (rerail_blocks::vector![d::KIND | 7 << 8, class, d::REACH_CHAIN], 4));
         let named = [w(SUPERTYPE, label), word(CHILD, NAMED, 0), w(CAPTURE, 0), w(EMIT, 1)];
         let image = Set::targets(&named, Set::All).unwrap().device().unwrap();
-        assert_eq!((image.words, image.depth), (vec![class, d::PARENT, d::FLAGS | u32::from(NAMED) << 8, d::AND | 2 << 8], 2));
+        assert_eq!((image.words, image.depth), (rerail_blocks::vector![class, d::PARENT, d::FLAGS | u32::from(NAMED) << 8, d::AND | 2 << 8], 2));
     }
 }

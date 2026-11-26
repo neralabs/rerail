@@ -4,6 +4,7 @@
 //! text runs them (`rr::link_library_versions`, `rr::link_seeded_version`); their tree forms went with the tree's
 //! lowering (decision 0276 step 5).
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::logic::plan::body::{Body, VarSet, lit_vars};
 use crate::code_rule_dsl::logic::program_image::build::T;
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
@@ -28,7 +29,7 @@ pub struct WidenCyclicContexts {
 
 /// A widened rule: its kept literals by node, in order, and the head variables then ranged over `node`.
 struct Widened {
-    lits: Vec<u32>,
+    lits: Vector<u32>,
     nodes: Vec<Slot>,
 }
 
@@ -36,7 +37,6 @@ impl ProgramPass for WidenCyclicContexts {
     const NAME: &'static str = "widen the cyclic contexts";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v = cx.v();
-        let ctx_prefix = format!("{}ctx", crate::code_rule_dsl::logic::front::RESERVED);
         let about = cx.get::<crate::code_rule_dsl::logic::program_image::About>()?;
         let errors = crate::code_rule_dsl::logic::program_image::analyses::unstratified(v, &about);
         let sccs: Vec<BTreeSet<String>> = errors.iter().filter_map(|e| e.unstratified().map(|(scc, _)| scc.clone())).collect();
@@ -48,7 +48,7 @@ impl ProgramPass for WidenCyclicContexts {
         for scc in &sccs {
             for rule in v.rules() {
                 let head = v.rel_name(rule.head().rel());
-                if !head.starts_with(&ctx_prefix) || !scc.contains(head) {
+                if crate::code_rule_dsl::logic::rr::lower::helper_stem(head) != Some("ctx") || !scc.contains(head) {
                     continue;
                 }
                 let in_cycle = |l: &L<'_>| match l {
@@ -65,7 +65,7 @@ impl ProgramPass for WidenCyclicContexts {
                 for l in kept.iter().filter(|l| binds(&l.view())) {
                     bound.extend(&lit_vars(*l));
                 }
-                let mut lits: Vec<u32> = kept.iter().filter(|l| binds(&l.view())).map(|l| l.node()).collect();
+                let mut lits: Vector<u32> = kept.iter().filter(|l| binds(&l.view())).map(|l| l.node()).collect();
                 let mut rest: Vec<_> = kept.into_iter().filter(|l| !binds(&l.view())).collect();
                 let body = Body::of(v, rule);
                 loop {
@@ -156,11 +156,11 @@ impl ProgramPass for LiteralsOnce {
     const NAME: &'static str = "each literal of a body once";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v = cx.v();
-        let mut once: BTreeMap<RuleId, Vec<u32>> = BTreeMap::new();
+        let mut once: BTreeMap<RuleId, Vector<u32>> = BTreeMap::new();
         for rule in v.rules() {
             let shown: Vec<(u32, String)> = rule.body().map(|l| (l.node(), v.show_lit(rule, l))).collect();
             let mut seen: BTreeSet<&str> = BTreeSet::new();
-            let kept: Vec<u32> = shown.iter().filter(|(_, s)| seen.insert(s.as_str())).map(|(n, _)| *n).collect();
+            let kept: Vector<u32> = shown.iter().filter(|(_, s)| seen.insert(s.as_str())).map(|(n, _)| *n).collect();
             if kept.len() < shown.len() {
                 once.insert(rule.id(), kept);
             }
@@ -298,7 +298,7 @@ struct DemandRule {
     demand: String,
     src: RuleId,
     agg: u32,
-    positions: Vec<usize>,
+    positions: Vector<usize>,
     body: Vec<Item>,
 }
 
@@ -306,7 +306,7 @@ struct DemandRule {
 #[derive(Default)]
 struct Placement {
     /// A helper's rule: the demand it reads first, over its head's columns `positions`.
-    prefix: BTreeMap<RuleId, (String, Vec<usize>)>,
+    prefix: BTreeMap<RuleId, (String, Vector<usize>)>,
     demands: Vec<DemandRule>,
     decls: Vec<(String, Vec<(String, String)>)>,
 }
@@ -531,7 +531,7 @@ impl ProgramPass for AggregateDemand {
         for r in v.rules() {
             for l in r.body() {
                 if let L::Agg { atom, .. } = l.view()
-                    && v.rel_name(atom.rel()).contains("rr_agg")
+                    && crate::code_rule_dsl::logic::rr::lower::holds_helper(v.rel_name(atom.rel()), &["agg"])
                 {
                     names.insert(v.rel_name(atom.rel()).to_owned());
                 }
@@ -579,7 +579,7 @@ impl ProgramPass for AggregateDemand {
             if v.has_output(name) || v.has_input(name) || natives.contains_key(name.as_str()) || ProgramFields::states_facts(v, name) || v.declares(&demand) || p.decls.iter().any(|(d, _)| *d == demand) {
                 continue;
             }
-            let mut mask: Option<Vec<usize>> = None;
+            let mut mask: Option<rerail_blocks::vector::Vector<usize>> = None;
             let mut made: Vec<DemandRule> = Vec::new();
             let mut refused = false;
             'readers: for reader in readers.get(name).into_iter().flatten() {
@@ -606,7 +606,7 @@ impl ProgramPass for AggregateDemand {
                         refused = true;
                         break 'readers;
                     };
-                    let positions: Vec<usize> = atom
+                    let positions: rerail_blocks::vector::Vector<usize> = atom
                         .args()
                         .enumerate()
                         .filter_map(|(k, t)| match t {
@@ -1150,7 +1150,7 @@ struct AxisLit {
     node: u32,
     rel: String,
     nearest: Option<(Slot, Slot)>,
-    args: Vec<usize>,
+    args: Vector<usize>,
     neg: bool,
 }
 
@@ -1223,15 +1223,15 @@ impl ProgramPass for KindSets {
             for r in v.rules().filter(|r| !gone.contains(v.rel_name(r.head().rel()))) {
                 for l in r.body() {
                     let (set, helper, nearest, args, neg) = match l.view() {
-                        L::Nearest { n, a, kindset } if derived.contains(v.text(kindset)) => (v.text(kindset).to_owned(), "near", Some((n, a)), vec![], false),
+                        L::Nearest { n, a, kindset } if derived.contains(v.text(kindset)) => (v.text(kindset).to_owned(), "near", Some((n, a)), Vector::new(), false),
                         L::Atom(x) => match axis(v.rel_name(x.rel())) {
                             Some((set, has)) if derived.contains(set) => {
                                 let xs: Vec<TermRef<'_>> = x.args().collect();
-                                let all: Vec<usize> = (0..xs.len()).collect();
+                                let all: Vector<usize> = (0..xs.len()).collect();
                                 let (helper, args) = match (has, xs.as_slice()) {
                                     (false, [_, TermRef::Wild]) => ("near", all),
                                     (false, _) => ("anc", all),
-                                    (true, [TermRef::Wild, _]) => ("above", vec![1]),
+                                    (true, [TermRef::Wild, _]) => ("above", rerail_blocks::vector![1]),
                                     (true, _) => ("desc", all),
                                 };
                                 (set.to_owned(), helper, None, args, x.neg())
@@ -1676,35 +1676,6 @@ impl ProgramPass for ThreeValued {
                 b.rewrite(&input, r, &mut Side { v: &input, three: &three, must: true }).finish()?;
             }
             b.rewrite(&input, r, &mut Side { v: &input, three: &three, must: false }).finish()?;
-        }
-        Ok(())
-    }
-}
-
-/// A module's program linked onto the scope's (`lower::append_fields`):
-/// its header added to the input's, its rules copied after the input's. Its settings: the module's version (by
-/// digest) and the counts of inputs stated first.
-pub struct AppendModule {
-    pub own: std::sync::Arc<Version>,
-    pub stated: usize,
-    pub own_stated: usize,
-}
-
-impl ProgramPass for AppendModule {
-    const NAME: &'static str = "append a module";
-    fn settings(&self) -> Vec<u8> {
-        format!("{} {} {} {}", self.own.digest(), self.own.size(), self.stated, self.own_stated).into_bytes()
-    }
-    fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
-        let mut stated = self.stated;
-        let input = std::sync::Arc::clone(w.input());
-        let b = w.derive()?;
-        crate::code_rule_dsl::logic::rr::lower::append_fields(&mut b.fields(), &*self.own, &mut stated, self.own_stated);
-        for r in input.rules() {
-            b.keep(&input, r);
-        }
-        for r in self.own.rules() {
-            b.copy(&self.own, r);
         }
         Ok(())
     }

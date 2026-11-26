@@ -5,6 +5,7 @@
 //! Each reading here was the tree's (`plan::ready`, `plan::is_join`, the digests and the text), stated over handles:
 //! a plan searched over a `Body` is the plan the tree's search made, and its keys (`Body::digest`,
 //! `Body::observed_key`) are the tree's keys (decision 0276).
+use rerail_blocks::vector::Vector;
 use super::super::program_image::{AggRef, AtomRef, Builder, CmpOp, Lit, LitRef, RelId, RuleId, RuleRef, Slot, TermRef, Version};
 use super::{Constant, Error, Result};
 use std::cell::OnceCell;
@@ -21,11 +22,11 @@ pub const DEFERRED_PAIRS: &str = "rr_deferred_pairs_";
 
 /// A set of a rule's variables, by slot.
 #[derive(Clone, Default, PartialEq, Eq, Hash, Debug)]
-pub struct VarSet(Vec<u64>);
+pub struct VarSet(Vector<u64>);
 
 impl VarSet {
     pub fn new() -> VarSet {
-        VarSet(Vec::new())
+        VarSet(rerail_blocks::vector::Vector::new())
     }
     pub fn of(slots: impl IntoIterator<Item = Slot>) -> VarSet {
         let mut s = VarSet::new();
@@ -368,7 +369,7 @@ impl<'v> Body<'v> {
     /// The relations the planner reads statistics of (`Model::read_by`): none for a body of one positive atom of
     /// distinct variables, which is planned without them.
     pub fn reads_statistics(&self) -> Vec<&'v str> {
-        let pos: Vec<usize> = (0..self.len()).filter(|&i| self.atom(i).is_some_and(|a| !a.neg())).collect();
+        let pos: Vector<usize> = (0..self.len()).filter(|&i| self.atom(i).is_some_and(|a| !a.neg())).collect();
         let plain = pos.len() == 1 && {
             let args = self.args(pos[0]);
             let vars: Vec<Slot> = args.iter().filter_map(|t| t.var()).collect();
@@ -380,6 +381,14 @@ impl<'v> Body<'v> {
         (0..self.len()).filter_map(|i| self.atom(i)).map(|a| self.rel(a)).collect()
     }
     /// The signature of literal `i`'s atom with `bound` bound, under which its fanouts are observed (T's `atom_sig`).
+    /// `sig`'s key (`super::sig_key`), made without the signature.
+    pub fn sig_key(&self, i: usize, bound: &VarSet) -> u64 {
+        let consts: Vec<(usize, Option<super::Constant>)> = self.args(i).iter().enumerate().filter_map(|(c, &t)| match t {
+            TermRef::Var(v) if bound.contains(v) => Some((c, None)),
+            _ => self.constant(t).map(|k| (c, Some(k))),
+        }).collect();
+        super::sig_key_of(self.rel(self.atom(i).expect("an atom")), consts.iter().map(|(c, k)| (*c, k.as_ref())))
+    }
     pub fn sig(&self, i: usize, bound: &VarSet) -> super::Sig {
         let cols = self.args(i).iter().enumerate().filter_map(|(c, &t)| match t {
             TermRef::Var(v) if bound.contains(v) => Some((c, None)),

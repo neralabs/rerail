@@ -2,6 +2,7 @@
 //! construct (lower.rs), simplified (simplify.rs, fold.rs), given shared metavariable columns (share.rs) and
 //! demand (demand.rs), then printed: notes, declarations, rules, the library part and the helpers.
 
+use rerail_blocks::vector::Vector;
 use super::demand::{demand, hoist_ancestor_steps, node_demand, unroll_negative};
 use super::lower::{R, col, fix_edits, grouped, ident, lower, mv, render_util, snake, transform_lits, transform_targets, violation_columns, violation_lines};
 use super::program::{Entry, PRule, Program, Vars};
@@ -78,7 +79,7 @@ fn chars(s: &str) -> Vec<char> {
 }
 
 fn common_prefix(xs: &[Vec<char>]) -> Vec<char> {
-    let mut n = xs.iter().map(Vec::len).min().unwrap_or(0);
+    let mut n = xs.iter().map(|v| v.len()).min().unwrap_or(0);
     for x in &xs[1..] {
         n = n.min(xs[0].iter().zip(x).take_while(|(a, b)| a == b).count());
     }
@@ -123,7 +124,7 @@ fn fold_messages(px: &Patterns, prog: &mut Program, body: Vec<Item>) -> Vec<Item
         let mut pre = common_prefix(&msgs);
         let rev: Vec<Vec<char>> = msgs.iter().map(|x| x.iter().rev().cloned().collect()).collect();
         let mut suf: Vec<char> = common_prefix(&rev).into_iter().rev().collect();
-        let short = msgs.iter().map(Vec::len).min().unwrap_or(0);
+        let short = msgs.iter().map(|v| v.len()).min().unwrap_or(0);
         if pre.len() + suf.len() > short {
             suf = suf[pre.len() + suf.len() - short..].to_vec();
         }
@@ -132,7 +133,7 @@ fn fold_messages(px: &Patterns, prog: &mut Program, body: Vec<Item>) -> Vec<Item
             pre.truncate(cut);
         }
         if !suf.is_empty() && !" ,.;:)".contains(suf[0]) && msgs.iter().any(|x| x.len() > suf.len() && x[x.len() - suf.len() - 1] != ' ') {
-            let found: Vec<usize> = " ,.;:)".chars().filter_map(|c| suf.iter().position(|x| *x == c)).collect();
+            let found: Vector<usize> = " ,.;:)".chars().filter_map(|c| suf.iter().position(|x| *x == c)).collect();
             let cut = found.into_iter().min().unwrap_or(suf.len());
             suf = suf[cut..].to_vec();
         }
@@ -449,7 +450,7 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
     }
 
     // simplify.rs: duplicate helpers, helpers used once, grounding atoms something else provides
-    let mut entries: Vec<usize> = body.iter().filter_map(|i| if let Item::Rule(e) = i { Some(*e) } else { None }).collect();
+    let mut entries: Vector<usize> = body.iter().filter_map(|i| if let Item::Rule(e) = i { Some(*e) } else { None }).collect();
     let mut protected = seen_rel.clone();
     for &e in &entries {
         if prog.arena[e].head.contains(',') {
@@ -463,7 +464,7 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
         // A relation is read where it is named: called, or passed as an argument (`within_stop(c, p, stop_40)`).
         let words = regex::Regex::new(r"[A-Za-z_][A-Za-z0-9_]*").expect("a regex");
         let mut calls: BTreeMap<String, Set> = BTreeMap::new();
-        let ids: Vec<usize> = entries.iter().copied().chain(prog.rules.iter().filter_map(|r| if let PRule::Rule(id) = r { Some(*id) } else { None })).collect();
+        let ids: Vector<usize> = entries.iter().copied().chain(prog.rules.iter().filter_map(|r| if let PRule::Rule(id) = r { Some(*id) } else { None })).collect();
         for &e in &ids {
             let en = &prog.arena[e];
             calls.entry(en.name().to_owned()).or_default().extend(words.find_iter(&masked(px, &en.lits.join(", "))).map(|m| m.as_str().to_owned()));
@@ -498,7 +499,7 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
     body.retain(|i| !matches!(i, Item::Rule(e) if !keep.contains(e)));
 
     // helper relations share the JSON's metavariables with their callers
-    let entries: Vec<usize> = body.iter().filter_map(|i| if let Item::Rule(e) = i { Some(*e) } else { None }).collect();
+    let entries: Vector<usize> = body.iter().filter_map(|i| if let Item::Rule(e) = i { Some(*e) } else { None }).collect();
     let mut helper_entries = Vec::new();
     for r in prog.rules.clone() {
         if let PRule::Rule(id) = r {
@@ -507,7 +508,7 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
         }
     }
     let helpers: Set = prog.decls.keys().cloned().collect();
-    let mut all: Vec<usize> = entries.clone();
+    let mut all: Vector<usize> = entries.clone();
     all.extend(helper_entries.iter().copied());
     let mut shared = share_metavariables(px, &mut prog, &all, &helpers);
     for (name, ps) in &shared.order {
@@ -552,7 +553,7 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
     }
     let (unrolled, empty) = unroll_negative(px, &mut prog, &all, &helpers, &mut shared.inputs);
     body.extend(unrolled.iter().map(|&e| Item::Rule(e)));
-    let live: Vec<usize> = all.iter().chain(&unrolled).copied().filter(|&e| !prog.arena[e].drop).collect();
+    let live: Vector<usize> = all.iter().chain(&unrolled).copied().filter(|&e| !prog.arena[e].drop).collect();
     hoist_ancestor_steps(px, &mut prog, &live);
     for (name, decl) in empty {
         prog.lib.insert(name.clone(), (decl, vec![format!("// {name}: level -1 of an unrolled recursion, empty")], Vec::new()));

@@ -1,15 +1,16 @@
 //! Numeric columns and CSR postings. Host names are dictionaries, never node payloads.
+use rerail_blocks::vector::Vector;
 use super::*;
 pub(in crate::code_rule_dsl) const NONE: u32 = u32::MAX;
 #[derive(Default)]
 pub struct Columns {
-    pub parent: Vec<u32>,
-    pub subtree_end: Vec<u32>,
-    pub kind: Vec<u32>,
-    pub field: Vec<u32>,
-    pub start: Vec<u32>,
-    pub end: Vec<u32>,
-    pub flags: Vec<u32>,
+    pub parent: Vector<u32>,
+    pub subtree_end: Vector<u32>,
+    pub kind: Vector<u32>,
+    pub field: Vector<u32>,
+    pub start: Vector<u32>,
+    pub end: Vector<u32>,
+    pub flags: Vector<u32>,
     pub kind_names: Vec<String>,
     pub kind_ids: HashMap<String, u32>,
 }
@@ -60,13 +61,13 @@ impl Columns {
 }
 #[derive(Default)]
 pub struct Postings {
-    pub offsets: Vec<u32>,
-    pub values: Vec<u32>,
+    pub offsets: Vector<u32>,
+    pub values: Vector<u32>,
 }
 impl Postings {
     pub fn build(keys: usize, pairs: impl IntoIterator<Item = (u32, usize)>) -> Result<Self> {
         let pairs = pairs.into_iter().collect::<Vec<_>>();
-        let mut offsets = vec![
+        let mut offsets = rerail_blocks::vector![
             0_u32;
             keys.checked_add(1)
                 .ok_or_else(|| invalid("posting capacity"))?
@@ -85,7 +86,7 @@ impl Postings {
                 .ok_or_else(|| invalid("posting capacity"))?;
         }
         let mut cursors = offsets.clone();
-        let mut values = vec![0; pairs.len()];
+        let mut values = rerail_blocks::vector![0; pairs.len()];
         for (key, value) in pairs {
             let at = &mut cursors[key as usize];
             values[*at as usize] = u32::try_from(value).map_err(|_| invalid("posting capacity"))?;
@@ -100,9 +101,9 @@ impl Postings {
     }
 }
 pub struct Fields {
-    offsets: Vec<u32>,
-    codes: Vec<u32>,
-    nodes: Vec<u32>,
+    offsets: Vector<u32>,
+    codes: Vector<u32>,
+    nodes: Vector<u32>,
 }
 impl Fields {
     pub fn build(c: &Columns) -> Result<Self> {

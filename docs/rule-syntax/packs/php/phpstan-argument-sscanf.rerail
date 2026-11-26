@@ -6,7 +6,7 @@
 .scope exclude "**/*.blade.php"
 
 #include "php/format.rerail"
-//   scanf_assigns(s, k), scanf_invalid(s)    what format string s assigns, as PHP 8 parses it
+//   scanf_assigns(f, k), scanf_invalid(f)    what format argument f assigns, as PHP 8 parses it
 //   (php/names) php_call, php_arg, php_arg_count, php_spread_call; (php/values) php_value
 
 // PHPStan's PrintfParametersRule, sscanf half (argument.sscanf, level 0): sscanf($str, $format, &$vars…) with
@@ -18,12 +18,12 @@
 .violation argument_sscanf(at: node, msg: symbol) code "argument.sscanf" "{msg}"
     suppress phpstan "argument.sscanf"
 argument_sscanf(c, "Pass sscanf() one output variable for each placeholder in its format, or remove the extra placeholders.") :-
-    sscanf_format(c, s, n), scanf_assigns(s, k), k > n.
+    sscanf_format(c, f, n), scanf_assigns(f, k), k > n.
 argument_sscanf(c, "Remove the extra output variables passed to sscanf(), or add placeholders to fill them.") :-
-    sscanf_format(c, s, n), scanf_assigns(s, k), k < n.
+    sscanf_format(c, f, n), scanf_assigns(f, k), k < n.
 argument_sscanf(c, "Fix the invalid placeholder in this sscanf() format, or write a literal percent sign as %%.") :-
-    sscanf_format(c, s, _), scanf_invalid(s).
-// sscanf_format(c, s, n): sscanf call c has format s and n > 0 output variables.
-.decl sscanf_format(c: node, s: symbol, n: number)
-sscanf_format(c, s, k - 2) :- php_call(c, "sscanf"), php_arg(c, 1, f), php_value(f, "string", s),
+    sscanf_format(c, f, _), scanf_invalid(f).
+// sscanf_format(c, f, n): sscanf call c has format argument f, of a known string, and n > 0 output variables.
+.decl sscanf_format(c: node, f: node, n: number)
+sscanf_format(c, f, k - 2) :- php_call(c, "sscanf"), php_arg(c, 1, f), php_value(f, "string", _),
     php_arg_count(c, k), k > 2, !php_spread_call(c).

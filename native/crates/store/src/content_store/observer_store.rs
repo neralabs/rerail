@@ -19,6 +19,20 @@ impl Store for Provider {
     fn own_recorded_manifests(&self, path: &Path, root: &str, plans: &[[u8; 32]], owner: &AnalysisOwner, now: i64) -> StoreResult<usize> {
         ContentStore::open(path)?.own_recorded_manifests(root, plans, owner, now)
     }
+
+    fn file_read(&self, db: &rusqlite::Connection, path: &Path, space: &[u8; 32], f: &mut dyn FnMut(Option<&dyn KeptRead>)) -> StoreResult<()> {
+        // The rows and the files they name read as one commit's (`KeptSpace::read`): a commit between the two that
+        // swept the files is read again, not failed.
+        match super::kept_facts::KeptSpace::read(path, db, space)? {
+            Some(kept) => f(Some(&kept.view())),
+            None => f(None),
+        }
+        Ok(())
+    }
+
+    fn file_write(&self, t: &rusqlite::Connection, path: &Path, space: &[u8; 32], puts: Vec<KeptPut>) -> StoreResult<()> {
+        super::kept_facts::write_space(path, t, space, puts, None).map(drop)
+    }
 }
 
 impl Kept for ContentStore {
@@ -30,7 +44,7 @@ impl Kept for ContentStore {
         self.atom_value(atom).ok().flatten()
     }
 
-    fn intern(&self, texts: &[&str]) -> Option<Vec<u32>> {
+    fn intern(&self, texts: &[&str]) -> Option<rerail_blocks::vector::Vector<u32>> {
         self.intern_atoms(texts).ok()
     }
 

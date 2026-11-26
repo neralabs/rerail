@@ -100,7 +100,11 @@ vmi_projection(c, e) :- vmi_ctor(c), field(c, "arguments", al), child(al, k, _),
 
 .violation VMI001(at: loc, caller: symbol) "Expected merged constructor is absent. Caller: {caller}."
 // The linter reports it at line 0 of the steps directory; the recording puts it at line 1.
-VMI001(@place("impl/common/l2070_server_plan/steps", 1), s) :- vmi_expected(s), !vmi_caller(_, s, _).
+VMI001(@place("impl/common/l2070_server_plan/steps", 1), s) :- vmi_expected(s), !vmi_seen(s).
+// vmi_seen(s): some file has a constructor of caller s. By name: each file's callers, relayed, so the test of an
+// expected caller absent from every file reads no file's nodes (decision 0677).
+.decl vmi_seen(s: symbol)
+vmi_seen(s) :- vmi_caller(_, s, _).
 // vmi_finding(c, k, s): constructor c, of caller s, is found by VMI00k, in its own file. vmi_found(s, k, l, d): its
 // caller and line, given by its file d. Only where the plugin reports it (vmi_report_path, a path of another file
 // where two files' callers are one) is across files: a caller's name joined to a path, no position (decision 0695).

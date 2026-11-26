@@ -1,13 +1,13 @@
 # 0324. The grid machine is retired
 
-Status: decided (2026-11-16). Step 5 of 0293, after Metal's packed interpreter and JIT (5e91e374d). This decision
-first planned to move the grid onto the tape, under the file name `0324-the-grid-machine-reads-the-tape.md`
-(0fe2562d6). The user chose to retire the grid instead: "Retire it". The option, as put to the user: "Delete the
-grid backend, its kernels, its tests and PackedBatch's node-record layout (Layout::Packed, the child index, named
-order, the grid contract). Every Metal path left reads the tape. Its tests that check semantics on Metal move to the
-packed interpreter/JIT where they still apply." Both choices sit under the user's terms for the track: "I want the
-kernels to operate over the tape directly, either compressed or decompressed, and format 15 or 16. There must be no
-intermediate 'decompress to an array of nodes' step."
+Status: built (audited 2026-11-23). Decided (2026-11-16). Step 5 of 0293, after Metal's packed interpreter and JIT
+(5e91e374d). This decision first planned to move the grid onto the tape, under the file name
+`0324-the-grid-machine-reads-the-tape.md` (0fe2562d6). The user chose to retire the grid instead: "Retire it". The
+option, as put to the user: "Delete the grid backend, its kernels, its tests and PackedBatch's node-record layout
+(Layout::Packed, the child index, named order, the grid contract). Every Metal path left reads the tape. Its tests
+that check semantics on Metal move to the packed interpreter/JIT where they still apply." Both choices sit under the
+user's terms for the track: "I want the kernels to operate over the tape directly, either compressed or decompressed,
+and format 15 or 16. There must be no intermediate 'decompress to an array of nodes' step."
 
 ## Intro
 

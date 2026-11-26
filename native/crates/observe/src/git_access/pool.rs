@@ -41,6 +41,9 @@ struct Root {
     stuck: bool,
 }
 
+/// The process's opens of each root that have not ended. It stays the process's (decision 0442, `global-state.txt`):
+/// it holds no caller's data, and a thread stuck in the OS on a hung disk is the process's whoever asked, so every
+/// caller's later open of that root fails at once rather than strand another.
 static ROOTS: Mutex<Option<HashMap<PathBuf, Root>>> = Mutex::new(None);
 
 fn roots<R>(change: impl FnOnce(&mut HashMap<PathBuf, Root>) -> R) -> R {

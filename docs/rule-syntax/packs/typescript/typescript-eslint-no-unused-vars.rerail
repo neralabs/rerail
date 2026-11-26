@@ -156,18 +156,19 @@ exempt(s, x) :- option("ignoreRestSiblings", "true"), variable(s, x, id, _), res
 exempt(s, x) :- option("ignoreRestSiblings", "true"), resolves(r, s, x), rest_sibling(r).
 // ignored(s, x): an ignore pattern matches the name, by the first declaration's kind.
 .decl ignored(s: node, x: symbol)
-ignored(s, x) :- first_decl(s, x, id, _), array_name(id), option("destructuredArrayIgnorePattern", p), finds(p, x).
+// An ignore pattern is a RegExp test (anywhere in the name), made in each rule at its own name (decision 0677).
+ignored(s, x) :- first_decl(s, x, id, _), array_name(id), option("destructuredArrayIgnorePattern", p),
+    match(cat(".*(?:", cat(p, ").*")), x).
 ignored(s, x) :- var(s, x), resolves(r, s, x), estree_parent(r, a), kind(a, "array_pattern"), first_decl(s, x, id, _),
-    kind(id, "identifier"), option("destructuredArrayIgnorePattern", p), finds(p, x).
-ignored(s, x) :- first_decl(s, x, _, "catch"), option("caughtErrorsIgnorePattern", p), finds(p, x).
-ignored(s, x) :- first_decl(s, x, id, k), arg_kind(k), kind(id, "identifier"), option("argsIgnorePattern", p), finds(p, x).
+    kind(id, "identifier"), option("destructuredArrayIgnorePattern", p), match(cat(".*(?:", cat(p, ").*")), x).
+ignored(s, x) :- first_decl(s, x, _, "catch"), option("caughtErrorsIgnorePattern", p),
+    match(cat(".*(?:", cat(p, ").*")), x).
+ignored(s, x) :- first_decl(s, x, id, k), arg_kind(k), kind(id, "identifier"), option("argsIgnorePattern", p),
+    match(cat(".*(?:", cat(p, ").*")), x).
 ignored(s, x) :- first_decl(s, x, id, k), k != "catch", !arg_kind(k), kind(id, "identifier"), option("varsIgnorePattern", p),
-    finds(p, x).
+    match(cat(".*(?:", cat(p, ").*")), x).
 .decl arg_kind(k: symbol)  // the kinds the rule calls args: a parameter, in a body or in a type signature
 arg_kind("param"). arg_kind("signature-param").
-.decl finds(p: symbol, x: symbol)  // RegExp p finds a match in x (test: anywhere)
-finds(p, x) :- option(o, p), (o = "varsIgnorePattern" ; o = "argsIgnorePattern" ; o = "caughtErrorsIgnorePattern" ;
-    o = "destructuredArrayIgnorePattern"), var(_, x), match(cat(".*(?:", cat(p, ").*")), x).
 .decl array_name(id: node)  // id is an element of an array pattern
 array_name(id) :- variable(_, _, id, _), estree_parent(id, a), kind(a, "array_pattern").
 // bare_param(id, f): parameter id of function f is a plain name (no default, no destructuring).
@@ -222,3 +223,34 @@ array_cue(id) :- array_name(id), option("destructuredArrayIgnorePattern", _).
 global_read(c, x) :- global_item(c, x, _, _), docof(c, d), unresolved(r, x), docof(r, d), reads(r).
 .decl script_declared(c: node, x: symbol)  // a script's top level declares x: that is the global's definition
 script_declared(c, x) :- global_item(c, x, _, _), docof(c, d), program(d, p), source_type(d, "script"), variable(p, x, _, _).
+
+// `/* global */` comments, item by item (lib/tsx/eslint-b-scope's global_item): an item with a setting (`b: readonly`)
+// is b, an `off` item declares nothing, and an item after a line break of the comment is on that line. Two files: each
+// comment's items are its own file's.
+.test global_comment_items_are_read_in_their_file exactly
+    .fixture "src/one.js" ```
+        /* global Array */
+        /* globals a, b: readonly,
+           c:off */
+        var a = 1;
+        var b = 2;
+        var c = 3;
+        /*global d*/
+        function d() {}
+        ```
+    .fixture "src/two.js" ```
+        /* global Map, e */
+        var e;
+        let Map = 1;
+        ```
+    .expect _ at "src/one.js":1
+    .expect _ at "src/one.js":2
+    .expect _ at "src/one.js":4
+    .expect _ at "src/one.js":5
+    .expect _ at "src/one.js":6
+    .expect _ at "src/one.js":7
+    .expect _ at "src/one.js":8
+    .expect _ at "src/two.js":1
+    .expect _ at "src/two.js":2
+    .expect _ at "src/two.js":3
+.end

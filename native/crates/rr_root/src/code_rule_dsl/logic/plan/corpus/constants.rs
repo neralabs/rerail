@@ -21,11 +21,13 @@
 //! changed constant (another Python version) misses the memo, as it must. What the constants' run read is part of
 //! the run's consulted record (`Report::consulted`).
 //!
-//! The constants' rows are kept among phase 0's run records (`constants:<key>`), under the programs, the relations, the run's
-//! options (but which documents it runs over: the constants read none), the root and the engine, with what their run
-//! consulted. A later run whose consulted things are as they were (`World::still`) takes them as they are: an edit to
-//! a workspace file derives no constant again.
+//! The constants' rows are kept as a frame (`frame`, t33 K4), under the programs, the relations, the run's options (but
+//! which documents it runs over: the constants read none), the root and the engine, with what their run consulted
+//! and the plans it used; the outer run's manifest names it. A later run whose leaves are as they were
+//! (`leaves::still`) takes them as they are: an edit to a workspace file derives no constant again. In a revision,
+//! the constants are kept by what their run read there (`revision_record`), among the observer's planned records.
 
+use rerail_blocks::vector::Vector;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -51,39 +53,62 @@ pub(super) fn foldable_of(v: &std::sync::Arc<Version>) -> Result<BTreeSet<String
     // A language's answer is a constant where its request is (as `foldable`'s, 0327 mode (b)); not in the split's
     // constants (`constant_relations` reads no requests). Not the engine's other answers (Git's, the references'):
     // their requests can be derived from documents and other answers.
-    let request_of = |rel: &str| crate::code_rule_dsl::logic::rr::WORLD.iter().find(|(r, q)| *r == rel && !world(r) && crate::code_rule_dsl::language::answerer(q).is_some()).map(|(_, q)| *q);
+    // Found once a name: each was a search of the world's relations and an answerer's lookup, per atom read.
+    let requests: std::collections::HashMap<&str, &str> = crate::code_rule_dsl::logic::rr::WORLD.iter().rev().filter(|(r, q)| !world(r) && crate::code_rule_dsl::language::answerer(q).is_some()).map(|&(r, q)| (r, q)).collect();
+    let request_of = |rel: &str| requests.get(rel).copied();
     let mut heads: std::collections::HashMap<&str, Vec<RuleRef<'_>>> = std::collections::HashMap::new();
     for r in v.rules() {
         heads.entry(v.rel_name(r.head().rel())).or_default().push(r);
     }
     let candidates: std::collections::HashSet<&str> = heads.keys().copied().filter(|r| !natives.contains_key(*r) && !lattice.contains_key(*r) && !inputs.contains(r)).collect();
     // The greatest fixpoint of the candidates whose every rule reads only those left, relations `given` holds, and
-    // comparisons.
-    let fixpoint = |given: &dyn Fn(&str) -> bool, requests: bool| -> BTreeSet<String> {
-        let mut fold = candidates.clone();
-        let reads = |fold: &std::collections::HashSet<&str>, rel: &str| fold.contains(rel) || given(rel) || (requests && request_of(rel).is_some_and(|q| fold.contains(q) || given(q)));
-        loop {
-            let out: Vec<&str> = fold
+    // comparisons: by a worklist, each candidate checked once and again only when a relation it reads (or the
+    // request of one) leaves (each round of every candidate's rules was 5 ms of a warm run).
+    // Each candidate's rules as the relations their bodies read, decoded once for both fixpoints: `None` a literal
+    // that is neither an atom, an aggregate nor a comparison.
+    let bodies: rustc_hash::FxHashMap<&str, Vec<Vec<Option<&str>>>> = candidates
+        .iter()
+        .map(|&head| {
+            let rules = heads[head]
                 .iter()
-                .copied()
-                .filter(|rel| {
-                    !heads[rel].iter().all(|r| {
-                        r.body().all(|l| match l.view() {
-                            Lit::Atom(a) => reads(&fold, v.rel_name(a.rel())),
-                            Lit::Agg { atom, .. } => reads(&fold, v.rel_name(atom.rel())),
-                            Lit::Cmp { .. } => true,
-                            _ => false,
+                .map(|r| {
+                    r.body()
+                        .filter_map(|l| match l.view() {
+                            Lit::Atom(a) => Some(Some(v.rel_name(a.rel()))),
+                            Lit::Agg { atom, .. } => Some(Some(v.rel_name(atom.rel()))),
+                            Lit::Cmp { .. } => None,
+                            _ => Some(None),
                         })
-                    })
+                        .collect()
                 })
                 .collect();
-            if out.is_empty() {
-                return fold.into_iter().map(str::to_owned).collect();
-            }
-            for rel in out {
-                fold.remove(rel);
+            (head, rules)
+        })
+        .collect();
+    let fixpoint = |given: &dyn Fn(&str) -> bool, requests: bool| -> BTreeSet<String> {
+        let mut fold = candidates.clone();
+        // The candidates reading each relation, and those reading a relation whose request it is.
+        let mut readers: rustc_hash::FxHashMap<&str, Vec<&str>> = rustc_hash::FxHashMap::default();
+        for (&head, rules) in &bodies {
+            for read in rules.iter().flatten().flatten().copied() {
+                readers.entry(read).or_default().push(head);
+                if requests && let Some(q) = request_of(read) {
+                    readers.entry(q).or_default().push(head);
+                }
             }
         }
+        // `given` asked once a relation read (or request), not at each check of each rule.
+        let given: rustc_hash::FxHashSet<&str> = readers.keys().copied().filter(|r| given(r)).collect();
+        let reads = |fold: &std::collections::HashSet<&str>, rel: &str| fold.contains(rel) || given.contains(rel) || (requests && request_of(rel).is_some_and(|q| fold.contains(q) || given.contains(q)));
+        let holds = |fold: &std::collections::HashSet<&str>, rel: &str| bodies[rel].iter().all(|body| body.iter().all(|read| read.is_some_and(|r| reads(fold, r))));
+        let mut queue: Vec<&str> = candidates.iter().copied().collect();
+        while let Some(rel) = queue.pop() {
+            if fold.contains(rel) && !holds(&fold, rel) {
+                fold.remove(rel);
+                queue.extend(readers.get(rel).into_iter().flatten().copied().filter(|r| fold.contains(r)));
+            }
+        }
+        fold.into_iter().map(str::to_owned).collect()
     };
     // A relation the run states whole (`run_stated`: its settings, its options once stated) is given, none or some:
     // `py_version_text` of a run with no `env` row is the default's (decision 0665).
@@ -93,7 +118,7 @@ pub(super) fn foldable_of(v: &std::sync::Arc<Version>) -> Result<BTreeSet<String
     // options and phases' exports, no request) are derived in both parts already.
     let constant = fixpoint(&|rel| option_input(rel) || (super::phases::is_phased(rel) && inputs.contains(rel)) || fact(rel), false);
     fold.retain(|r| !constant.contains(r));
-    let shape = super::shape::Shape::of(v);
+    let shape = crate::code_rule_dsl::logic::program_image::manager::analysis::<super::shape::Shape>(v).unwrap_or_else(|_| std::sync::Arc::new(super::shape::Shape::of(v)));
     let read_outside: BTreeSet<&str> =
         shape.reads_of.iter().filter(|(h, _)| !fold.contains(h.as_str())).flat_map(|(_, reads)| reads.iter().map(String::as_str)).chain(outputs.iter().map(String::as_str)).collect();
     Ok(fold.into_iter().filter(|r| read_outside.contains(r.as_str())).collect())
@@ -280,7 +305,7 @@ pub fn fold(
     chunk_nodes: usize,
     typing: &Typing,
     options: &serde_json::Value,
-) -> Result<(Vec<(String, String, String)>, Vec<[u8; 32]>, BTreeSet<String>)> {
+) -> Result<(Vec<(String, String, String)>, Vector<[u8; 32]>, Option<[u8; 32]>)> {
     if options.get(OWN).is_some() {
         return Ok(Default::default());
     }
@@ -291,7 +316,12 @@ pub fn fold(
     let _span = crate::code_rule_dsl::logic::profile::span(|| "fold the run's constants".into());
     let key = key(programs, added, root, options, &wanted);
     let revision = crate::git_workspace::snapshot::contains(root);
-    let was_kept = if revision { kept_revision(&key, root, v) } else { kept(&key, root, v)? };
+    // The frame the constants are kept as, outside a revision: the outer run's manifest names it.
+    let frame = (!revision).then(|| frame_key(&key));
+    let was_kept = match &frame {
+        Some(frame) => kept(frame, root, v),
+        None => kept_revision(&key, root, v),
+    };
     let reused = was_kept.is_some();
     // The plans the constants' run used, for the outer run's record (`Report::plans`): kept with the constants, so a
     // run that reuses them names the plans the run that derived them did, and records the same manifest (0252).
@@ -299,10 +329,12 @@ pub fn fold(
         Some(kept) => kept,
         None => {
             let (mut derived, mut plans) = derive(programs, read, root, modes, binding, chunk_nodes, typing, options, &wanted)?;
-            if revision {
-                if let Some(owner) = keep_revision(&key, root, &mut derived, &plans) { plans.push(owner); }
-            } else {
-                keep(&key, &derived.0, &derived.1, &plans)?;
+            match &frame {
+                Some(frame) => keep(frame, &derived, &plans),
+                None => {
+                    let owner = keep_revision(&key, root, &mut derived, &plans);
+                    plans.extend(owner);
+                }
             }
             (derived, plans)
         }
@@ -340,7 +372,7 @@ pub fn fold(
     crate::code_rule_dsl::logic::profile::decision("the run's constants (decision 0094 §6)", || {
         format!("{} relations made from no document, {} and given as facts: {}", wanted.len(), if reused { "kept from an earlier run (what they read is as it was)" } else { "derived first" }, wanted.iter().cloned().collect::<Vec<_>>().join(", "))
     });
-    Ok((consulted, plans, wanted))
+    Ok((consulted, plans, frame))
 }
 
 /// The constants' outputs (one base image of the wanted relations' copies) and what their run
@@ -360,7 +392,7 @@ fn derive(
     typing: &Typing,
     options: &serde_json::Value,
     wanted: &BTreeSet<String>,
-) -> Result<(Derived, Vec<[u8; 32]>)> {
+) -> Result<(Derived, Vector<[u8; 32]>)> {
     let mut own = if options.is_object() { options.clone() } else { serde_json::json!({}) };
     own[OWN] = serde_json::Value::Array(wanted.iter().map(|r| serde_json::Value::String(r.clone())).collect());
     own["inputFiles"] = serde_json::json!([]);
@@ -407,32 +439,31 @@ fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &se
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The record the constants of `key` are kept under, among phase 0's run records (`content_store::observe`): read
-/// with the observer's other records before the run, written behind it by the observer's writer (decision 0104).
+/// The frame the constants of `key` are kept as.
+fn frame_key(key: &str) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(format!("rerail.constants-frame\0{key}").as_bytes()).into()
+}
+
+/// The constants kept as the frame `frame`, when every leaf their run read is as it was, with the plans their run
+/// used, for the outer run's manifest.
+fn kept(frame: &[u8; 32], root: &Path, prog: &Version) -> Option<(Derived, Vector<[u8; 32]>)> {
+    let kept = super::phases::reading_store().and_then(|store| super::frame::get(&store, frame))?;
+    let mut leaves = super::leaves::Leaves::new(root, prog);
+    kept.reads.iter().all(|c| leaves.still(c)).then(|| ((kept.image, kept.reads), kept.plans))
+}
+
+/// Keeps the constants' rows and their run's leaves and plans as the frame `frame`.
+fn keep(frame: &[u8; 32], (image, reads): &Derived, plans: &[[u8; 32]]) {
+    if let Some(store) = super::phases::reading_store() {
+        super::frame::put(&store, frame, &super::frame::Frame { reads: reads.clone(), plans: plans.iter().copied().collect(), image: image.clone(), ..Default::default() });
+    }
+}
+
+/// The family the constants of `key` in a revision are kept under, among the observer's planned records
+/// (`content_store::observe`): read before the run, written behind it by the observer's writer (decision 0104).
 fn record_key(key: &str) -> String {
     format!("constants:{key}")
-}
-
-/// The constants kept under `key`, when what their run consulted is as it was, with the plans their run used: the
-/// record's `plan` lines, for collection (`observe::collect` drops the record once none is live) and for the outer
-/// run's manifest.
-fn kept(key: &str, root: &Path, prog: &Version) -> Result<Option<(Derived, Vec<[u8; 32]>)>> {
-    let Some((consulted, rows)) = super::observe(|o| o.run_record(&record_key(key))) else { return Ok(None) };
-    let Some(consulted) = super::reuse::decode_consulted(&consulted) else { return Ok(None) };
-    let (plans, consulted): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == "plan");
-    let plans: Vec<[u8; 32]> = plans.iter().filter_map(|c| crate::content_store::observe::unhex(&c.2)).collect();
-    if !super::world::World::new(root, prog).still(&consulted) {
-        return Ok(None);
-    }
-    Ok(Some(((rows, consulted), plans)))
-}
-
-fn keep(key: &str, image: &[u8], consulted: &[(String, String, String)], plans: &[[u8; 32]]) -> Result<()> {
-    let mut record = consulted.to_vec();
-    record.extend(plans.iter().map(|p| ("plan".to_owned(), String::new(), crate::content_store::observe::hex(p))));
-    let consulted = super::reuse::encode_consulted(&record);
-    super::observe(|o| o.put_run_record(&record_key(key), &consulted, image));
-    Ok(())
 }
 
 type Observation = (String, String, String);
@@ -458,7 +489,7 @@ fn revision_record(base: &str, reads: &[Observation]) -> (String, [u8; 32]) {
     (name, owner)
 }
 
-fn kept_revision(base: &str, root: &Path, program: &Version) -> Option<(Derived, Vec<[u8; 32]>)> {
+fn kept_revision(base: &str, root: &Path, program: &Version) -> Option<(Derived, Vector<[u8; 32]>)> {
     let mut world = super::world::World::new(root, program);
     let samples = super::observe(|o| o.run_record_samples(&record_key(base)));
     'sample: for sample in samples {
@@ -487,7 +518,7 @@ fn kept_revision(base: &str, root: &Path, program: &Version) -> Option<(Derived,
             super::observe(|o| o.store_run_record(&name, &encoded, &image));
         }
         let mut plans = recorded.iter().filter(|(k, _, _)| k == "plan")
-            .map(|(_, _, s)| crate::content_store::observe::unhex(s)).collect::<Option<Vec<_>>>()?;
+            .map(|(_, _, s)| crate::content_store::observe::unhex(s)).collect::<Option<Vector<_>>>()?;
         plans.push(owner);
         return Some(((image, reads), plans));
     }

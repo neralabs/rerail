@@ -209,7 +209,7 @@ fixed text waits in the tool-pack's `publish/`, which CI lays over the pulled ar
 - TypeScript's `triple-slash-reference` bound a regex capture over a node as a symbol; the captures are spans,
   read as text.
 - The node and react packs read `tsconfig_for`, which core declares and nothing made (O80). The repository reader
-  makes them now: decision 0660. A library's own `.input` that core does not make and no fact gives (`npm_ignored`,
+  makes them now: decision 0670. A library's own `.input` that core does not make and no fact gives (`npm_ignored`,
   "until core has it") is bound empty, under its declared columns, where a cross-file rule reads it.
 - Next's `default_component` ran `match_all` over a field's node, which the span binder did not know: a field's node
   binds spans as a child's does.

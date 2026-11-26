@@ -40,12 +40,12 @@ pub enum Piece {
 /// The embedder of one kind of piece (`Via::VueScript`, `Via::VueExpression`, …).
 pub struct VueCode(pub Piece);
 
-pub static SCRIPT: VueCode = VueCode(Piece::Script);
-pub static EXPRESSION: VueCode = VueCode(Piece::Expression);
-pub static STATEMENTS: VueCode = VueCode(Piece::Statements);
-pub static PARAMS: VueCode = VueCode(Piece::Params);
-pub static FOR_ALIAS: VueCode = VueCode(Piece::ForAlias);
-pub static FOR_SOURCE: VueCode = VueCode(Piece::ForSource);
+pub const SCRIPT: VueCode = VueCode(Piece::Script);
+pub const EXPRESSION: VueCode = VueCode(Piece::Expression);
+pub const STATEMENTS: VueCode = VueCode(Piece::Statements);
+pub const PARAMS: VueCode = VueCode(Piece::Params);
+pub const FOR_ALIAS: VueCode = VueCode(Piece::ForAlias);
+pub const FOR_SOURCE: VueCode = VueCode(Piece::ForSource);
 
 /// One piece found: its kind, the code's bytes, and the host node's bytes it stands at.
 struct Found {

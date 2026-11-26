@@ -120,6 +120,29 @@ impl<'b> Kept<'b> {
     pub fn row(&self, i: usize) -> Vec<i64> {
         (0..self.rows.arity as usize).map(|c| self.rows.get(i, c)).collect()
     }
+
+    /// Every row in canonical order, handed to `f` one at a time: each column resolved for reads once (`Col::dec`),
+    /// not per cell as `row` resolves it, and decoded a chunk of rows at a time as it goes (`ColDec::fill`, a run's
+    /// value once per run), the row read into one buffer the rows share.
+    pub fn each_row(&self, mut f: impl FnMut(&[i64])) {
+        use crate::packed::FILL;
+        let cols: Vec<crate::packed::ColDec<'_>> = (0..self.rows.arity as usize).map(|c| self.rows.col(c).dec()).collect();
+        let (k, n) = (cols.len(), self.rows.len());
+        let mut chunk = vec![0i64; k * FILL];
+        let mut row = vec![0i64; k];
+        for at in (0..n).step_by(FILL) {
+            let m = (n - at).min(FILL);
+            for (c, col) in cols.iter().enumerate() {
+                col.fill(at, &mut chunk[c * FILL..c * FILL + m]);
+            }
+            for i in 0..m {
+                for (c, v) in row.iter_mut().enumerate() {
+                    *v = chunk[c * FILL + i];
+                }
+                f(&row);
+            }
+        }
+    }
 }
 
 /// What reads a space's kept facts.
@@ -262,6 +285,20 @@ impl<B: Borrow<Block>> KeptFacts<B> {
         Some((self.key_of(e), self.entry(e)))
     }
 
+    /// The entries of `rel` under `ident`: their range, by one search of the name's bytes and the identity.
+    fn span(&self, rel: &str, ident: &[u8; 32]) -> (usize, usize) {
+        let (es, want) = (self.entries(), (rel.as_bytes(), ident));
+        let lo = es.partition_point(|e| (self.rel_bytes(e), &e.ident) < want);
+        (lo, lo + es[lo..].partition_point(|e| (self.rel_bytes(e), &e.ident) == want))
+    }
+
+    /// The entry of partition `part` among `span`'s (`span`), by its part alone.
+    fn find_in(&self, (lo, hi): (usize, usize), part: i64) -> Option<(FactKey<'_>, Found<'_>)> {
+        let es = &self.entries()[lo..hi];
+        let e = &es[es.binary_search_by_key(&part, |e| e.part).ok()?];
+        Some((self.key_of(e), self.entry(e)))
+    }
+
     /// The entries of `rel`, by a binary search for their range.
     fn range(&self, rel: &str) -> impl Iterator<Item = (FactKey<'_>, Found<'_>)> + '_ {
         let es = self.entries();
@@ -273,6 +310,11 @@ impl<B: Borrow<Block>> KeptFacts<B> {
 
     fn every(&self) -> impl Iterator<Item = (FactKey<'_>, Found<'_>)> + '_ {
         self.entries().iter().map(move |e| (self.key_of(e), self.entry(e)))
+    }
+
+    /// The entries of partition `part`, in key order: the directory's entries tested by their part alone.
+    fn of_part(&self, part: i64) -> impl Iterator<Item = (FactKey<'_>, Found<'_>)> + '_ {
+        self.entries().iter().filter(move |e| e.part == part).map(move |e| (self.key_of(e), self.entry(e)))
     }
 }
 
@@ -383,6 +425,12 @@ impl<B: Borrow<Block>> KeptChain<'_, B> {
         out
     }
 
+    /// Every entry of partition `part`, across the files, each key's newest resolved, in key order: a partition's
+    /// read merges its own entries, not every one of the chain.
+    pub fn of_part(&self, part: i64) -> Vec<Kept<'_>> {
+        self.merged(move |f| f.of_part(part))
+    }
+
     /// The bytes of the files.
     pub fn bytes(&self) -> usize {
         self.files.iter().map(|f| f.bytes()).sum()
@@ -394,6 +442,21 @@ impl<'a, B: Borrow<Block>> KeptChain<'a, B> {
     pub fn entry(&self, key: &FactKey) -> Option<Kept<'a>> {
         let files: &'a [KeptFacts<B>] = self.files;
         let mut found = files.iter().rev().filter_map(|f| f.find(key));
+        let (own, first) = found.next()?;
+        resolve(own, first, found.map(|(_, f)| f))
+    }
+
+    /// The entries of `rel` under `ident` in each file, oldest first (`entry_in`): a reader of many of one
+    /// relation's partitions searches its name once a file, then each part by its number.
+    pub fn spans(&self, rel: &str, ident: &[u8; 32]) -> Vec<(usize, usize)> {
+        self.files.iter().map(|f| f.span(rel, ident)).collect()
+    }
+
+    /// The entry of partition `part` among `spans` (`spans`, of these files): `entry` of the key they are of.
+    pub fn entry_in(&self, spans: &[(usize, usize)], part: i64) -> Option<Kept<'a>> {
+        let files: &'a [KeptFacts<B>] = self.files;
+        debug_assert_eq!(files.len(), spans.len(), "the spans of another chain");
+        let mut found = files.iter().zip(spans).rev().filter_map(|(f, s)| f.find_in(*s, part));
         let (own, first) = found.next()?;
         resolve(own, first, found.map(|(_, f)| f))
     }
@@ -512,27 +575,15 @@ impl KeptW {
         })
     }
 
-    /// `n` rows of `a` columns written by `fill` straight into the calling thread's scratch (column-major, and each
-    /// row's level where `levels`), then prepared and packed as `put_cols` does: a relation's rows read where they lie
-    /// in its block, never staged on the heap.
-    pub fn put_filled<E: From<io::Error>>(&mut self, meta: Meta, n: usize, a: usize, levels: bool, given: crate::packed::Order, fill: impl FnOnce(&mut [i64], Option<&mut [u32]>) -> Result<(), E>) -> Result<Put, E> {
+    /// `rows`, read where they lie (decision 0353 step 8), packed as `put_cols` packs columns: nothing is read into
+    /// columns first.
+    pub fn put_rows(&mut self, meta: Meta, rows: &dyn crate::packed::RowsIn, levels: Option<&[u32]>, given: crate::packed::Order) -> io::Result<Put> {
+        let a = rows.arity();
         let order = (0..a.min(MAX_ORDER) as u16).collect();
         let spec = crate::relation::Spec { widths: vec![8; a], order, indexes: Vec::new(), min_log: 0 };
         crate::scratch::with(|s| {
-            let raw: &mut [i64] = s.take(n * a);
-            let lv: Option<&mut [u32]> = levels.then(|| s.take(n));
-            let lv = match lv {
-                Some(l) => {
-                    fill(raw, Some(&mut *l))?;
-                    Some(&*l)
-                }
-                None => {
-                    fill(raw, None)?;
-                    None
-                }
-            };
-            let prepared = crate::packed::prepare(s, raw, n, a, &spec, lv, given);
-            Ok(self.put(meta, &prepared)?)
+            let prepared = crate::packed::prepare_rows(s, rows, &spec, levels, given);
+            self.put(meta, &prepared)
         })
     }
 
@@ -675,7 +726,7 @@ mod tests {
     fn dir(name: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("rerail-kept-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
+        crate::mapped::make_folder(&d).unwrap();
         d
     }
 

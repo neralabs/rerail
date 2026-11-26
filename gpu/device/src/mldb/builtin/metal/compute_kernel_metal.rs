@@ -111,6 +111,16 @@ fn get_kernel_type_from_data_type(data_type: MTLDataType) -> Result<KernelBaseTy
     })
 }
 
+/// The name of the device's target (decision 0645, `rerail_ukl::Target`): Metal's highest tier the device has,
+/// `apple10` on Apple's GPU family 10 (the M5: Metal 4's `matmul2d`), else `apple7`. `RERAIL_METAL_MATRIX_UNITS=0`
+/// takes `apple7` on any device (`RERAIL_METAL_UNITS` is decision 0571's).
+pub fn target_name(device: &DeviceRef) -> &'static str {
+    let off = std::env::var("RERAIL_METAL_MATRIX_UNITS").is_ok_and(|v| v == "0");
+    // `MTLGPUFamilyApple10` (1010), which the metal crate does not name.
+    let apple10: bool = !off && unsafe { msg_send![device, supportsFamily: 1010_i64] };
+    if apple10 { "apple10" } else { "apple7" }
+}
+
 // `StructMemberRef::struct_type`/`array_type` and `ArrayTypeRef::element_struct_type`/`element_array_type` in the
 // metal crate return the (uninhabited) Objective-C types by value; these ask for the same properties by reference.
 fn member_struct_type(m: &metal::StructMemberRef) -> &StructTypeRef {
@@ -255,6 +265,48 @@ pub struct MetalComputeFunctionLibrary {
 }
 
 impl MetalComputeFunctionLibrary {
+    /// The names of the AIR intrinsics `preprocessed_source` compiles to, one a line, for a test to read which
+    /// instructions a kernel took (decision 0617, R7): the source compiled as a dynamic library, serialized to a
+    /// file, and the `air.` names read from its bitcode's string table. (A Mac with no Metal toolchain has no
+    /// `xcrun metal` to print the IR; the device's compiler is the one to ask.)
+    pub fn native_code(device: &DeviceRef, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Option<String>, String> {
+        static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("rerail-native-code-{}-{n}.metallib", std::process::id()));
+        let bytes = objc::rc::autoreleasepool(|| -> Result<Vec<u8>, String> {
+            let options = metal::CompileOptions::new();
+            options.set_library_type(metal::MTLLibraryType::Dynamic);
+            options.set_install_name(&format!("@executable_path/{}", path.file_name().unwrap().to_string_lossy()));
+            let lib = device.new_library_with_source(preprocessed_source, &options).map_err(|e| format!("compiling {file_name_to_appear_in_error_messages} as a dynamic library: {e}"))?;
+            let dylib = device.new_dynamic_library(&lib).map_err(|e| format!("{file_name_to_appear_in_error_messages}'s dynamic library: {e}"))?;
+            // `serializeToURL:error:` sent here: metal-rs's `URL::new_with_string` owns an autoreleased NSURL, and
+            // its release with the pool's crashed. This NSURL is the pool's alone.
+            let file = std::ffi::CString::new(path.to_string_lossy().as_bytes()).map_err(|e| e.to_string())?;
+            let ok: bool = unsafe {
+                use objc::runtime::Object;
+                let s: *mut Object = objc::msg_send![objc::class!(NSString), stringWithUTF8String: file.as_ptr()];
+                let url: *mut Object = objc::msg_send![objc::class!(NSURL), fileURLWithPath: s];
+                let mut err: *mut Object = std::ptr::null_mut();
+                let done: objc::runtime::BOOL = objc::msg_send![&*dylib, serializeToURL: url error: &mut err];
+                done != objc::runtime::NO
+            };
+            if !ok {
+                return Err(format!("serializing {file_name_to_appear_in_error_messages}'s dynamic library failed"));
+            }
+            std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))
+        });
+        let _ = std::fs::remove_file(&path);
+        let bytes = bytes?;
+        let mut names: Vec<String> = bytes
+            .split(|b| !(b.is_ascii_alphanumeric() || *b == b'.' || *b == b'_'))
+            .filter_map(|w| std::str::from_utf8(w).ok())
+            .filter_map(|w| w.find("air.").map(|at| w[at..].to_owned()))
+            .collect();
+        names.sort();
+        names.dedup();
+        Ok(Some(names.join("\n")))
+    }
+
     /// Compiles (preprocessed) source on the device.
     pub fn compile_from_source(device: &DeviceRef, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         // A measurement aid: `RERAIL_DEVICE_TRACE` prints where each library is compiled.
@@ -271,8 +323,15 @@ impl MetalComputeFunctionLibrary {
         }
         let lib = objc::rc::autoreleasepool(|| device.new_library_with_source(preprocessed_source, &metal::CompileOptions::new()));
         let mtl_library = lib.map_err(|e| format!("Error compiling Metal library from source ({file_name_to_appear_in_error_messages}): {e}"))?;
-        // Compiled: the device layer keeps no Metal form (the engine's Metal kernels are `rerail_accel::gpu::kernels`').
+        // Compiled: the device layer keeps no Metal form (the engine's Metal kernels are `rerail_accel_gpu::gpu::kernels`').
         crate::store::count(false);
+        Ok(MetalComputeFunctionLibrary { mtl_library })
+    }
+
+    /// A library of AIR compiled ahead of time for a tier this device runs (decision 0645: a shipped kernel).
+    pub fn from_compiled(device: &DeviceRef, code: &[u8]) -> Result<Self, String> {
+        let mtl_library = objc::rc::autoreleasepool(|| device.new_library_with_data(code)).map_err(|e| format!("a compiled Metal library does not load: {e}"))?;
+        crate::store::count(true);
         Ok(MetalComputeFunctionLibrary { mtl_library })
     }
 
@@ -280,6 +339,46 @@ impl MetalComputeFunctionLibrary {
         let function = self.mtl_library.get_function(function_name, None).map_err(|e| format!("Error getting function '{function_name}' from Metal library ({}): {e}", self.mtl_library.function_names().join(", ")))?;
         MetalComputeFunction::new(device, function)
     }
+}
+
+/// The Metal language standard a text prepared for `__METAL_VERSION__` `version` is compiled with ahead of time, and
+/// the oldest macOS its library loads on. The device's own compile takes the newest its system has: a text of
+/// `apple7` (310) uses Metal 3.2's coherent memory and thread scopes (UKL's atomics), so Metal 3.2 and macOS 15;
+/// `apple10`'s (400) Metal 4 and macOS 26.
+fn standard(version: u32) -> (&'static str, &'static str) {
+    if version >= 400 { ("metal4.0", "26.0") } else { ("metal3.2", "15.0") }
+}
+
+/// Compiles Metal source (prepared for `__METAL_VERSION__` `version`) ahead of time to a library of AIR, without a
+/// device (decision 0645 step 3), by Xcode's Metal compiler (`xcrun metal`, `xcrun metallib`).
+pub fn compile_offline(version: u32, source: &str, name: &str) -> Result<Vec<u8>, String> {
+    let (std, macos) = standard(version);
+    let stem: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let dir = std::env::temp_dir().join(format!("rerail-ship-{}-{}-{stem}", std::process::id(), crate::store::unique()));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let (src, air, lib) = (dir.join("k.metal"), dir.join("k.air"), dir.join("k.metallib"));
+    let run = |args: &[&std::ffi::OsStr]| -> Result<(), String> {
+        let out = std::process::Command::new("xcrun").args(args).output().map_err(|e| format!("xcrun: {e} (shipping Metal kernels needs Xcode's Metal compiler)"))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            let err = String::from_utf8_lossy(&out.stderr);
+            let lines: Vec<&str> = err.lines().filter(|l| l.contains("error")).take(20).collect();
+            Err(format!("{name} ({std}): {} (the Metal Toolchain: `xcodebuild -downloadComponent MetalToolchain`)", if lines.is_empty() { err.trim().to_owned() } else { lines.join("\n") }))
+        }
+    };
+    let result = std::fs::write(&src, source).map_err(|e| e.to_string()).and_then(|()| {
+        let (std, min) = (format!("-std={std}"), format!("-mmacosx-version-min={macos}"));
+        // The device's compile (`newLibraryWithSource:`) includes Metal's standard library itself; a prepared text
+        // leaves it to the compiler (UKL's shim, under `__UKL_METAL_PREPROCESSING`).
+        let args: [&std::ffi::OsStr; 12] =
+            ["-sdk".as_ref(), "macosx".as_ref(), "metal".as_ref(), std.as_ref(), min.as_ref(), "-include".as_ref(), "metal_stdlib".as_ref(), "-c".as_ref(), src.as_os_str(), "-o".as_ref(), air.as_os_str(), "-w".as_ref()];
+        run(&args)?;
+        run(&["-sdk".as_ref(), "macosx".as_ref(), "metallib".as_ref(), air.as_os_str(), "-o".as_ref(), lib.as_os_str()])?;
+        std::fs::read(&lib).map_err(|e| e.to_string())
+    });
+    let _ = std::fs::remove_dir_all(&dir);
+    result
 }
 
 /// A queue of operations on the shared device (`MetalComputeQueue`): kernel launches, each in its own compute
@@ -295,6 +394,8 @@ pub struct MetalComputeQueue {
     /// The command buffer's staging memory for `enqueue_copy_from_host` (filled up, then another), and how much is
     /// used: one allocation a command buffer, not one a copy. The command buffer keeps it until it completes.
     staging: std::cell::RefCell<Option<(metal::Buffer, u64)>>,
+    /// The compute encoders it opened: what a launch made resident (`use_buffer`) stays so for the open one's life.
+    encoders: std::cell::Cell<u64>,
 }
 
 /// A command buffer's open encoder.
@@ -378,7 +479,7 @@ fn pooled<R>(f: impl FnOnce() -> R) -> R {
 
 impl MetalComputeQueue {
     pub fn new(queue: &metal::CommandQueueRef) -> Self {
-        MetalComputeQueue { queue: queue.to_owned(), command_buffer: pooled(|| queue.new_command_buffer().to_owned()), open: std::cell::RefCell::new(Open::None), staging: Default::default() }
+        MetalComputeQueue { queue: queue.to_owned(), command_buffer: pooled(|| queue.new_command_buffer().to_owned()), open: std::cell::RefCell::new(Open::None), staging: Default::default(), encoders: std::cell::Cell::new(0) }
     }
 
     /// The open compute encoder (ending an open blit encoder first).
@@ -390,7 +491,14 @@ impl MetalComputeQueue {
         Self::end(&mut open);
         let e = pooled(|| self.command_buffer.new_compute_command_encoder().to_owned());
         *open = Open::Compute(e.clone());
+        self.encoders.set(self.encoders.get() + 1);
         e
+    }
+
+    /// The compute encoders it opened so far: a buffer made resident for a launch stays resident for the launches
+    /// after it while this is the same (Metal's `useResource` holds for its encoder's life).
+    pub fn encoders(&self) -> u64 {
+        self.encoders.get()
     }
 
     /// The open blit encoder (ending an open compute encoder first).

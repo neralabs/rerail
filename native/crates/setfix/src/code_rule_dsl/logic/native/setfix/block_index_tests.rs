@@ -1,16 +1,17 @@
 //! Decision 0478 step 5 (R2, R5): a relation's index is in its block, the one the device finds and builds, and the
 //! CPU probes it there. Its dead rows are its block's.
 
+use rerail_blocks::vector::Vector;
 use super::InRel;
 
 /// `n` rows of two columns: `(id % 7, id)`.
-fn rows(n: usize) -> Vec<i64> {
+fn rows(n: usize) -> Vector<i64> {
     (0..n as i64).flat_map(|id| [id % 7, id]).collect()
 }
 
 /// The rows a probe of column 0 by `v` finds, by their column 1.
-fn probed(rel: &InRel, v: i64) -> Vec<i64> {
-    let mut got = Vec::new();
+fn probed(rel: &InRel, v: i64) -> Vector<i64> {
+    let mut got = rerail_blocks::vector::Vector::new();
     rel.probe_each(&[0], &[v], &mut |row| got.push(row(1)));
     got.sort_unstable();
     got
@@ -61,7 +62,7 @@ fn a_probe_skips_the_dead_rows_of_the_blocks_index() {
     // A run of its own (decision 0442): its open blocks and counts are the run's.
     let _run = crate::code_rule_dsl::logic::profile::test_run();
     let n: usize = 700;
-    let mut dead = vec![0u64; n.div_ceil(64)];
+    let mut dead = rerail_blocks::vector![0u64; n.div_ceil(64)];
     for id in (0..n).filter(|id| id % 3 == 0) {
         dead[id / 64] |= 1 << (id % 64);
     }
@@ -171,7 +172,7 @@ fn a_frozen_relations_dead_rows_are_its_blocks_and_the_devices() {
         rel.push(r);
     }
     for id in (0..n as u32).step_by(5) {
-        if super::kill(&mut rel.dead, id) {
+        if rel.kill_row(id) {
             rel.ndead += 1;
         }
     }
@@ -202,7 +203,7 @@ fn an_order_made_at_a_probe_is_in_the_blocks_directory() {
     rest.extend_from_slice(&rows(n)[n..]);
     rows_.append_part(rest.parts().last().expect("its rows' part").clone());
     let rows_ = rows_.freeze(n);
-    let rel = InRel::held(rows_, n, vec![b'i'; 2], Vec::new());
+    let rel = InRel::held(rows_, n, vec![b'i'; 2], rerail_blocks::vector::Vector::new());
     assert!(rel.rows.in_one_block().is_none(), "two parts");
     let before = rel.rows.last_in_block().unwrap().relation().orders().count();
     let mut got = Vec::new();
@@ -217,12 +218,13 @@ fn an_order_made_at_a_probe_is_in_the_blocks_directory() {
 fn an_inputs_value_counts_and_statistics_are_in_a_block() {
     // A run of its own (decision 0442): its open blocks and counts are the run's.
     let _run = crate::code_rule_dsl::logic::profile::test_run();
+    use crate::code_rule_dsl::facts::rows::InRelations;
     use crate::code_rule_dsl::facts::vtab::Source;
     let n = 700;
     let rel = std::sync::Arc::new(InRel::from_flat(rows(n), n, vec![b'i'; 2]));
     let src = super::Derived::source(std::sync::Arc::clone(&rel), None);
     let want = |v: i64| (0..n as i64).filter(|id| id % 7 == v).count() as i64;
-    assert_eq!(src.value_counts(&[(0, 3), (0, 6), (0, 9)]), Some(vec![want(3), want(6), 0]));
+    assert_eq!(src.value_counts(&[(0, 3), (0, 6), (0, 9)]), Some(rerail_blocks::vector![want(3), want(6), 0]));
     {
         let counted = rel.counted.lock().unwrap();
         assert_eq!(counted.len(), 1, "one column counted");

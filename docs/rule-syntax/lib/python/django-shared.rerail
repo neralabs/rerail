@@ -1,0 +1,43 @@
+// python/django-shared: what python/django and the phase py_names' Django section (decision 0677 fix 3) both read,
+// one definition for both: the classes outside the run that Django's rules take for models, which documents are test
+// code, and a queryset chain's manager and root. The phase includes neither python/names nor python/django.
+// dj_model_base(q): classes outside the run that are models: Django's own and common third-party bases.
+.decl dj_model_base(q: symbol)
+dj_model_base("django.db.models.Model"). dj_model_base("django.db.models.base.Model").
+dj_model_base("django.contrib.auth.models.AbstractUser"). dj_model_base("django.contrib.auth.models.AbstractBaseUser").
+dj_model_base("django.contrib.auth.base_user.AbstractBaseUser"). dj_model_base("django.contrib.auth.models.PermissionsMixin").
+dj_model_base("django.contrib.auth.models.User"). dj_model_base("django.contrib.auth.models.Group").
+dj_model_base("mptt.models.MPTTModel"). dj_model_base("polymorphic.models.PolymorphicModel").
+dj_model_base("treebeard.mp_tree.MP_Node"). dj_model_base("treebeard.ns_tree.NS_Node").
+dj_model_base("treebeard.al_tree.AL_Node"). dj_model_base("model_utils.models.TimeStampedModel").
+dj_model_base("django_extensions.db.models.TimeStampedModel"). dj_model_base("wagtail.models.Page").
+// dj_test_doc(d): DefectDojo keeps its tests in `unittests/`, netbox its test helpers in `utilities/testing/`.
+.decl dj_test_doc(d: number)
+dj_test_doc(d) :- doc(d, _, _), (path_part(d, "tests") ; path_part(d, "test") ; path_part(d, "testing") ;
+    path_part(d, "unittests")).
+dj_test_doc(d) :- file_name(d, s), (glob("test_*.py", s) ; glob("*_tests.py", s) ; glob("*_test.py", s) ; s = "tests.py" ;
+    s = "test.py" ; s = "conftest.py").
+// ---- querysets ---------------------------------------------------------------------------------------------------
+.decl dj_manager_name(x: symbol)
+dj_manager_name("objects"). dj_manager_name("_default_manager"). dj_manager_name("_base_manager").
+.decl dj_manager(e: node)
+dj_manager(e) :- attr_of(e, _, x), dj_manager_name(x).
+// dj_qs_method(m): QuerySet methods that return a QuerySet (Django's "Methods that return new QuerySets").
+.decl dj_qs_method(m: symbol)
+dj_qs_method("all"). dj_qs_method("filter"). dj_qs_method("exclude"). dj_qs_method("annotate").
+dj_qs_method("alias"). dj_qs_method("order_by"). dj_qs_method("reverse"). dj_qs_method("distinct").
+dj_qs_method("values"). dj_qs_method("values_list"). dj_qs_method("none"). dj_qs_method("union").
+dj_qs_method("intersection"). dj_qs_method("difference"). dj_qs_method("select_related").
+dj_qs_method("prefetch_related"). dj_qs_method("extra"). dj_qs_method("defer"). dj_qs_method("only").
+dj_qs_method("using"). dj_qs_method("select_for_update"). dj_qs_method("raw").
+.decl dj_qs(e: node)
+dj_qs(e) :- dj_manager(e).
+dj_qs(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), dj_qs_method(m), dj_qs(o).
+dj_qs(p) :- kind(p, "parenthesized_expression"), unparen(p, e), dj_qs(e).
+// dj_qs_root(q, r): queryset chain q starts at the manager of expression r (through parentheses, as dj_qs).
+//   Book.objects.filter(a=1).all()                  dj_qs_root(<the chain>, <Book>)
+//   (Book.objects.filter(a=1)).first()             dj_qs_root(<(Book.objects.filter(a=1))>, <Book>)
+.decl dj_qs_root(q: node, r: node)
+dj_qs_root(q, o) :- dj_manager(q), attr_of(q, o, _).
+dj_qs_root(q, r) :- dj_qs(q), kind(q, "call"), field(q, "function", f), attr_of(f, o, _), dj_qs_root(o, r).
+dj_qs_root(p, r) :- kind(p, "parenthesized_expression"), unparen(p, e), dj_qs_root(e, r).

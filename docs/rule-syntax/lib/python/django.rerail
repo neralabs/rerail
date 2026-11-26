@@ -13,10 +13,10 @@
 //                  dj_fk(c, x)                 field x of model c holds one related object (ForeignKey, OneToOneField,
 //                                              ParentalKey), so `obj.x_id` holds its key
 //                  dj_fk_class(t)              field class t (a dj_field's t) holds one related object
-//                  dj_model_super(c, b)        class b of the run is among model c's bases, directly or not
-//                  dj_has_field(c, x, call, t) as dj_field, for a field model c declares or inherits from a class of
-//                                              the run among its bases
-//                  dj_attname(c, a, call)      a row of model c holds field call's value in attribute a: the field's
+//                  dj_has_field(c, x, t)       model c has field x of field class t: declared in its body or in a
+//                                              class of the run among its ancestors (by symbol, 0677 fix 3b)
+//                  dj_field_kw(c, x, k, v)     a declaration of model c's field x passes keyword argument k, of text v
+//                  dj_attname(c, a, x)         a row of model c holds field x's value in attribute a: the field's
 //                                              name, and `x_id` for a ForeignKey or OneToOneField x
 //                  dj_number_field(t)          field class t holds a number (IntegerField, DecimalField, ...)
 //                  dj_model_method(c, f, x)    f is method x defined directly in model c's body
@@ -86,18 +86,9 @@
 //         if Book.objects.count() > 0:                  py_empty_cmp(<the comparison>, <the count() call>)
 #include "python/ast.rerail"
 #include "python/calls.rerail"   // call_arg, posarg: its syntax helpers only
+#include "python/django-shared.rerail"  // dj_model_base, dj_test_doc: the phase py_names reads them too
 
 // ---- models ------------------------------------------------------------------------------------------------------
-// dj_model_base(q): classes outside the run that are models: Django's own and common third-party bases.
-.decl dj_model_base(q: symbol)
-dj_model_base("django.db.models.Model"). dj_model_base("django.db.models.base.Model").
-dj_model_base("django.contrib.auth.models.AbstractUser"). dj_model_base("django.contrib.auth.models.AbstractBaseUser").
-dj_model_base("django.contrib.auth.base_user.AbstractBaseUser"). dj_model_base("django.contrib.auth.models.PermissionsMixin").
-dj_model_base("django.contrib.auth.models.User"). dj_model_base("django.contrib.auth.models.Group").
-dj_model_base("mptt.models.MPTTModel"). dj_model_base("polymorphic.models.PolymorphicModel").
-dj_model_base("treebeard.mp_tree.MP_Node"). dj_model_base("treebeard.ns_tree.NS_Node").
-dj_model_base("treebeard.al_tree.AL_Node"). dj_model_base("model_utils.models.TimeStampedModel").
-dj_model_base("django_extensions.db.models.TimeStampedModel"). dj_model_base("wagtail.models.Page").
 // dj_field_module(m): the modules model field classes are imported from (`models.CharField`, `JSONField`, ...).
 .decl dj_field_module(m: symbol)
 dj_field_module("django.db.models"). dj_field_module("django.db.models.fields").
@@ -119,12 +110,6 @@ dj_fk_class("ForeignKey"). dj_fk_class("OneToOneField"). dj_fk_class("ParentalKe
 dj_class_field(c, x, call, t) :- kind(c, "class_definition"), field(c, "body", b), body_stmt(b, s, _),
     kind(s, "expression_statement"), child(s, a, 0), kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"),
     text(l, x), field(a, "right", call), dj_field_call(call, t).
-// dj_model_q(q): q names a model class: a known base, or a class of the run with a model class among its bases. A
-// linear closure seeded from the bases: python/names' subclass is a quadratic one over every class of the run,
-// which does not finish on a large repository.
-.decl dj_model_q(q: symbol)
-dj_model_q(q) :- dj_model_base(q).
-dj_model_q(q) :- class_def(c, q), class_base(c, b), dj_model_q(b).
 // dj_expression(c): class c is a query expression, which declares fields (`output_field = models.TextField()`) but
 // is no model: a direct base under django.db.models' expressions, functions, aggregates or lookups modules, or one
 // of their classes as django.db.models exports them.
@@ -141,33 +126,121 @@ dj_expression_base("django.db.models.ExpressionWrapper"). dj_expression_base("dj
 dj_expression_base("django.db.models.Window").
 // A field declared in the body is model evidence, except a query expression's `output_field`.
 .decl dj_model(c: node)
-dj_model(c) :- class_def(c, q), dj_model_q(q).
+// A model class: a known base itself, or a class with one among its ancestors (python/names' class_anc, the phase
+// py_names' linear closure keyed by the class's module, 0677 fix 3a; a closure over every file's classes here did not
+// finish on a large repository as python/scopes' subclass, and took c into the cross-file part).
+dj_model(c) :- class_def(c, q), dj_model_base(q).
+dj_model(c) :- class_anc(c, b), dj_model_base(b).
 dj_model(c) :- dj_class_field(c, x, _, _), x != "output_field", !dj_expression(c).
 .decl dj_field(c: node, x: symbol, call: node, t: symbol)
 dj_field(c, x, call, t) :- dj_model(c), dj_class_field(c, x, call, t).
 .decl dj_fk(c: node, x: symbol)
 dj_fk(c, x) :- dj_field(c, x, _, t), dj_fk_class(t).
-// dj_model_super(c, b): class b of the run is among model c's bases, directly or through other classes of the run:
-// the classes whose fields c inherits. A linear closure from the models, as dj_model_q.
-//   class Novel(Book): ...                          dj_model_super(<Novel>, <Book>)
-// Cross-file (decision 0652): a base class is often in another file than its model.
-.decl dj_model_super(c: node, b: node) cross_file
-dj_model_super(c, b) :- dj_model(c), class_base(c, q), class_def(b, q).
-dj_model_super(c, b) :- dj_model_super(c, m), class_base(m, q), class_def(b, q).
-// dj_has_field(c, x, call, t): model c has field x, a call of field class t, declared in its body or in a class of
-// the run among its bases (dj_field reads c's own body only).
+// ---- a model, by symbol, from any file (decision 0677 fix 3b) ------------------------------------------------------
+// A model class in another file is read by its symbol, in the rows the phase py_names hands on for the modules a file
+// reads (python/names): its ancestry and the members of its body and its ancestors'. Each is read at a node of the
+// reading file, so none pairs it with the class's node in its own file. The tests are dj_model's.
+// dj_model_ref(e, mq, m): node e names class mq of the run (sym_of), or is that class, of module m, a module e's file
+// reads.
+.decl dj_model_ref(e: node, mq: symbol, m: symbol)
+dj_model_ref(e, mq, m) :- sym_of(e, mq), docof(e, d), doc(d, p, _), py_names__reads_at(p, m), py_names__class(m, mq).
+dj_model_ref(c, mq, m) :- class_def(c, mq), docof(c, d), doc(d, p, _), py_names__reads_at(p, m), py_names__class(m, mq).
+// dj_model_named(e, mq): that class is a model: a known base itself or among its ancestors, or one whose own body
+// declares a field, a query expression's `output_field` aside (dj_model_class_is, by symbol alone).
+//   from shop.models import Book; Book.objects.all()    dj_model_named(<Book>, "shop.models.Book")
+.decl dj_model_named(e: node, mq: symbol)
+dj_model_named(e, mq) :- dj_model_ref(e, mq, _), docof(e, d), dj_model_at(d, mq).
+// dj_model_at(d, mq): class mq of a module document d reads is a model, by the same tests: what a rule asks of a class
+// it knows by name alone (a proven type, a view's `model =`).
+.decl dj_model_at(d: number, mq: symbol)
+dj_model_at(d, mq) :- dj_class_at(d, _, mq), dj_model_base(mq).
+dj_model_at(d, mq) :- dj_class_at(d, m, mq), py_names__ancestor(m, mq, b), dj_model_base(b).
+dj_model_at(d, mq) :- dj_class_at(d, m, mq), py_names__member_call(m, mq, x, f), x != "output_field",
+    split_dot(f, fm, t), dj_field_module(fm), (suffix("Field", t) ; dj_relation_class(t)), !dj_expression_at(d, mq).
+.decl dj_class_at(d: number, m: symbol, mq: symbol)
+dj_class_at(d, m, mq) :- doc(d, p, _), py_names__reads_at(p, m), py_names__class(m, mq).
+.decl dj_expression_at(d: number, mq: symbol)
+dj_expression_at(d, mq) :- dj_class_at(d, m, mq), py_names__ancestor(m, mq, b),
+    (prefix("django.db.models.expressions.", b) ; prefix("django.db.models.functions.", b) ;
+    prefix("django.db.models.aggregates.", b) ; prefix("django.db.models.lookups.", b) ; dj_expression_base(b)).
+// dj_model_field(e, x, t): the model e names has field x of field class t, declared in its body or an ancestor's of
+// the run. dj_model_field_kw(e, x, k, v): a declaration of it passes keyword argument k, of text v.
+// dj_model_has_method(e, x): its body, or an ancestor's of the run, defines method x.
+.decl dj_model_field(e: node, x: symbol, t: symbol)
+dj_model_field(e, x, t) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names__member_call(m, mq, x, f),
+    split_dot(f, fm, t), dj_field_module(fm), (suffix("Field", t) ; dj_relation_class(t)).
+dj_model_field(e, x, t) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names__anc_call(m, mq, x, f),
+    split_dot(f, fm, t), dj_field_module(fm), (suffix("Field", t) ; dj_relation_class(t)).
+.decl dj_model_field_kw(e: node, x: symbol, k: symbol, v: symbol)
+dj_model_field_kw(e, x, k, v) :- dj_model_field(e, x, _), dj_model_named(e, mq), dj_model_ref(e, mq, m),
+    (py_names__member_kw(m, mq, x, k, v) ; py_names__anc_kw(m, mq, x, k, v)).
+.decl dj_model_has_method(e: node, x: symbol)
+dj_model_has_method(e, x) :- dj_model_named(e, mq), dj_model_ref(e, mq, m),
+    (py_names__member_method(m, mq, x) ; py_names__anc_method(m, mq, x)).
+// A model's Meta options and managers, by symbol (0677 fix 3c): the phase py_names' Django section reads each model's
+// Meta, its abstract and concrete bases' as Django inherits them, and the manager classes its attributes name, and
+// hands them on under the model's module. Read at a node e of the reading file that names the model (dj_model_ref).
+//   dj_model_group(e, g, x)       field x is in group g, kept unique together (unique_together, a UniqueConstraint's
+//                                 fields= without a condition)
+//   dj_model_cond_group(e, g, x)  the same of a UniqueConstraint with a condition
+//   dj_model_opaque(e)            a uniqueness option of its Meta is not read (not a literal, an expression constraint)
+//   dj_model_unmanaged(e)         its Meta options set `managed` to anything but True
+//   dj_model_abstract(e)          its own Meta says `abstract = True`
+//   dj_model_manager_method(e, a, x)  its manager attribute a's class (or its get_queryset()'s class) of the run
+//                                 defines or inherits x, get_or_create or update_or_create
+.decl py_names__dj_group(m: symbol, q: symbol, g: symbol, x: symbol)
+.decl py_names__dj_cond_group(m: symbol, q: symbol, g: symbol, x: symbol)
+.decl py_names__dj_opaque(m: symbol, q: symbol)
+.decl py_names__dj_unmanaged(m: symbol, q: symbol)
+.decl py_names__dj_abstract(m: symbol, q: symbol)
+.decl py_names__dj_manager_method(m: symbol, q: symbol, a: symbol, x: symbol)
+.decl dj_model_group(e: node, g: symbol, x: symbol)
+dj_model_group(e, g, x) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names__dj_group(m, mq, g, x).
+.decl dj_model_cond_group(e: node, g: symbol, x: symbol)
+dj_model_cond_group(e, g, x) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names__dj_cond_group(m, mq, g, x).
+.decl dj_model_opaque(e: node)
+dj_model_opaque(e) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names__dj_opaque(m, mq).
+.decl dj_model_unmanaged(e: node)
+dj_model_unmanaged(e) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names__dj_unmanaged(m, mq).
+.decl dj_model_abstract(e: node)
+dj_model_abstract(e) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names__dj_abstract(m, mq).
+// A model's hooks, by symbol (0677 fix 3d), from the phase's Django section:
+//   dj_model_hook(e, k, h)        a hook of kind k ("save" or "delete") that a bulk write on the model e names skips,
+//                                 h its description: its save()/delete(), or an ancestor's of the run, doing more than
+//                                 call the base class's; a pre_save/post_save receiver for it in any file
+//   dj_receiver_def(f, mq)        def f of the reading file is connected, in any file, as a pre_save/post_save receiver
+//                                 for sender mq
+.decl py_names__dj_hook(m: symbol, q: symbol, k: symbol, h: symbol)
+.decl py_names__dj_receiver_fn(m: symbol, f: symbol, q: symbol)
+.decl dj_model_hook(e: node, k: symbol, h: symbol)
+dj_model_hook(e, k, h) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names__dj_hook(m, mq, k, h).
+.decl dj_receiver_def(f: node, mq: symbol)
+dj_receiver_def(f, mq) :- kind(f, "function_definition"), qualname(f, fq), docof(f, d), doc(d, p, _),
+    py_names__reads_at(p, m), py_names__dj_receiver_fn(m, fq, mq).
+.decl dj_model_manager_method(e: node, a: symbol, x: symbol)
+dj_model_manager_method(e, a, x) :- dj_model_named(e, mq), dj_model_ref(e, mq, m),
+    py_names__dj_manager_method(m, mq, a, x).
+// dj_has_field(c, x, t): model c has field x of field class t, declared in its body (dj_field) or in a class of the
+// run among its ancestors: python/names' class_anc_call, the phase py_names' join of each ancestor's body to the class
+// by symbol (0677 fix 3b). Pairing c with the ancestor's class node in its own file took both into the cross-file part.
 //   class Novel(Book): pages = models.IntegerField()
-//                                                   dj_has_field(<Novel>, "pages", _, "IntegerField"),
-//                                                   dj_has_field(<Novel>, "author", _, "ForeignKey")
-.decl dj_has_field(c: node, x: symbol, call: node, t: symbol)
-dj_has_field(c, x, call, t) :- dj_field(c, x, call, t).
-dj_has_field(c, x, call, t) :- dj_model_super(c, b), dj_class_field(b, x, call, t).
-// dj_attname(c, a, call): a row of model c holds the value of field call (dj_has_field) in attribute a: the field's
-// name, and for a ForeignKey, OneToOneField or ParentalKey x also `x_id`, where Django keeps its key.
-//   author = models.ForeignKey(Author, ...)         dj_attname(<Book>, "author", <call>), dj_attname(<Book>, "author_id", <call>)
-.decl dj_attname(c: node, a: symbol, call: node)
-dj_attname(c, x, call) :- dj_has_field(c, x, call, _).
-dj_attname(c, cat(x, "_id"), call) :- dj_has_field(c, x, call, t), dj_fk_class(t).
+//                                                   dj_has_field(<Novel>, "pages", "IntegerField"),
+//                                                   dj_has_field(<Novel>, "author", "ForeignKey")
+.decl dj_has_field(c: node, x: symbol, t: symbol)
+dj_has_field(c, x, t) :- dj_field(c, x, _, t).
+dj_has_field(c, x, t) :- dj_model(c), class_anc_call(c, x, f), split_dot(f, m, t), dj_field_module(m),
+    (suffix("Field", t) ; dj_relation_class(t)).
+// dj_field_kw(c, x, k, v): a declaration of model c's field x passes keyword argument k, whose value's text is v.
+//   author = models.ForeignKey(Author, to_field="code")   dj_field_kw(<Book>, "author", "to_field", "\"code\"")
+.decl dj_field_kw(c: node, x: symbol, k: symbol, v: symbol)
+dj_field_kw(c, x, k, v) :- dj_field(c, x, call, _), call_arg(call, -1, k, w), node_text(w, v).
+dj_field_kw(c, x, k, v) :- dj_has_field(c, x, _), class_anc_kw(c, x, k, v).
+// dj_attname(c, a, x): a row of model c holds the value of field x (dj_has_field) in attribute a: the field's name,
+// and for a ForeignKey, OneToOneField or ParentalKey x also `x_id`, where Django keeps its key.
+//   author = models.ForeignKey(Author, ...)         dj_attname(<Book>, "author", "author"), dj_attname(<Book>, "author_id", "author")
+.decl dj_attname(c: node, a: symbol, x: symbol)
+dj_attname(c, x, x) :- dj_has_field(c, x, _).
+dj_attname(c, cat(x, "_id"), x) :- dj_has_field(c, x, t), dj_fk_class(t).
 // dj_number_field(t): the field classes whose values are numbers a counter is kept in (DurationField aside).
 .decl dj_number_field(t: symbol)
 dj_number_field("IntegerField"). dj_number_field("SmallIntegerField"). dj_number_field("BigIntegerField").
@@ -178,40 +251,18 @@ dj_model_method(c, f, x) :- dj_model(c), kind(f, "function_definition"), nearest
     within(f, b), def_name(f, x).
 
 // ---- querysets ---------------------------------------------------------------------------------------------------
-.decl dj_manager_name(x: symbol)
-dj_manager_name("objects"). dj_manager_name("_default_manager"). dj_manager_name("_base_manager").
-.decl dj_manager(e: node)
-dj_manager(e) :- attr_of(e, _, x), dj_manager_name(x).
-// dj_qs_method(m): QuerySet methods that return a QuerySet (Django's "Methods that return new QuerySets").
-.decl dj_qs_method(m: symbol)
-dj_qs_method("all"). dj_qs_method("filter"). dj_qs_method("exclude"). dj_qs_method("annotate").
-dj_qs_method("alias"). dj_qs_method("order_by"). dj_qs_method("reverse"). dj_qs_method("distinct").
-dj_qs_method("values"). dj_qs_method("values_list"). dj_qs_method("none"). dj_qs_method("union").
-dj_qs_method("intersection"). dj_qs_method("difference"). dj_qs_method("select_related").
-dj_qs_method("prefetch_related"). dj_qs_method("extra"). dj_qs_method("defer"). dj_qs_method("only").
-dj_qs_method("using"). dj_qs_method("select_for_update"). dj_qs_method("raw").
-.decl dj_qs(e: node)
-dj_qs(e) :- dj_manager(e).
-dj_qs(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), dj_qs_method(m), dj_qs(o).
-dj_qs(p) :- kind(p, "parenthesized_expression"), unparen(p, e), dj_qs(e).
+// dj_manager, dj_qs, dj_qs_root: python/django-shared (the phase py_names reads a view's queryset too).
 .decl dj_qs_call(c: node, m: symbol)
 dj_qs_call(c, m) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), dj_qs(o).
-// dj_qs_root(q, r): queryset chain q starts at the manager of expression r (through parentheses, as dj_qs).
-//   Book.objects.filter(a=1).all()                  dj_qs_root(<the chain>, <Book>)
-//   (Book.objects.filter(a=1)).first()             dj_qs_root(<(Book.objects.filter(a=1))>, <Book>)
-.decl dj_qs_root(q: node, r: node)
-dj_qs_root(q, o) :- dj_manager(q), attr_of(q, o, _).
-dj_qs_root(q, r) :- dj_qs(q), kind(q, "call"), field(q, "function", f), attr_of(f, o, _), dj_qs_root(o, r).
-dj_qs_root(p, r) :- kind(p, "parenthesized_expression"), unparen(p, e), dj_qs_root(e, r).
-// dj_qs_model(q, c): queryset chain q starts at `M.objects` with M model class c of the run, so its rows are c's.
+// dj_qs_model(q, r): queryset chain q starts at `M.objects` with r, in q's own file, naming M, a model class of the
+// run (dj_model_named), so its rows are M's: what a user reads of M it reads through r (dj_model_field, …).
 // dj_qs_class(q, mq): the same, by the model class's qualified name.
-//   Book.objects.filter(a=1)                        dj_qs_model(<the chain>, <class Book>),
+//   Book.objects.filter(a=1)                        dj_qs_model(<the chain>, <Book>),
 //                                                   dj_qs_class(<the chain>, "shop.models.Book")
-// Cross-file (decision 0652): a name resolved to its definition, in another file than the reference.
-.decl dj_qs_model(q: node, c: node) cross_file
-dj_qs_model(q, c) :- dj_qs_root(q, r), sym_of(r, mq), class_def(c, mq), dj_model(c).
+.decl dj_qs_model(q: node, r: node)
+dj_qs_model(q, r) :- dj_qs_root(q, r), dj_model_named(r, _).
 .decl dj_qs_class(q: node, mq: symbol)
-dj_qs_class(q, mq) :- dj_qs_model(q, c), class_def(c, mq).
+dj_qs_class(q, mq) :- dj_qs_root(q, r), dj_model_named(r, mq).
 // dj_qs_has(q, m): queryset chain q calls method m somewhere along it (q's own last call included).
 //   Book.objects.values("id").filter(a=1)          dj_qs_has(<the chain>, "values"), dj_qs_has(_, "filter")
 .decl dj_qs_has(q: node, m: symbol)
@@ -238,13 +289,12 @@ dj_instance_class(r, h, mq) :- kind(r, "identifier"), text(r, "self"), dj_model_
     class_def(k, mq).
 dj_instance_class(r, h, mq) :- kind(r, "identifier"), text(r, o), look(r, o, h), asg(h, o, v, _),
     dj_instance_value(v, mq).
-// dj_instance_value(v, mq): expression v makes or fetches one instance of model class mq.
-// Cross-file (decision 0652): a name resolved to its definition, in another file than the reference.
-.decl dj_instance_value(v: node, mq: symbol) cross_file
+// dj_instance_value(v, mq): expression v makes or fetches one instance of model class mq. A model's constructor names
+// the model by symbol (dj_model_named), in any file, so no class node of another file is paired with v (decision 0677).
+.decl dj_instance_value(v: node, mq: symbol)
 dj_instance_value(v, mq) :- unparen(v, c), dj_fetch_call(c, mq).
 dj_instance_value(v, mq) :- unparen(v, w), kind(w, "await"), child(w, c, 0), dj_fetch_call(c, mq).
-dj_instance_value(v, mq) :- unparen(v, c), kind(c, "call"), field(c, "function", fn), sym_of(fn, mq), class_def(k, mq),
-    dj_model(k).
+dj_instance_value(v, mq) :- unparen(v, c), kind(c, "call"), field(c, "function", fn), dj_model_named(fn, mq).
 
 // ---- transactions ------------------------------------------------------------------------------------------------
 .decl dj_atomic(e: node)
@@ -329,28 +379,37 @@ dj_message(m) :- kind(m, "call"), field(m, "function", f), sym_of(f, q), dj_mess
 // `tasks.notify_order`, `current_app`), other than a plain function of the run with no decorator, or a call on one
 // (`notify_order.s(1)`, `task.using(priority=1)`). A parameter or local (`client.delay(2.0)`) is not one.
 .decl dj_task_ref(t: node)
-dj_task_ref(t) :- sym_of(t, q), !dj_plain_def(q).
+dj_task_ref(t) :- sym_of(t, q), docof(t, d), !dj_plain_at(d, q).
 dj_task_ref(t) :- attr_of(t, o, _), unparen(o, u), dj_task_ref(u).
 dj_task_ref(t) :- kind(t, "call"), field(t, "function", f), attr_of(f, o, _), unparen(o, u), dj_task_ref(u).
-.decl dj_plain_def(q: symbol)
-dj_plain_def(q) :- kind(g, "function_definition"), qualname(g, q), !decorator(g, _).
+// dj_plain_at(d, q): q is a def with no decorator, of a module document d reads (the phase py_names' plain_def).
+.decl dj_plain_at(d: number, q: symbol)
+dj_plain_at(d, q) :- doc(d, p, _), py_names__reads_at(p, m), py_names__plain_def(m, q).
 // dj_task_waits_for_commit(c): c is `t.delay(...)`/`t.apply_async(...)` on a task t of the run whose decorator names
 // a task class `base=X`, where X's own (or inherited) apply_async or delay calls transaction.on_commit (pretix's
 // TransactionAwareTask); or the run's Celery app makes such a class every task's class (addons-server's AMOTask,
-// `Celery(..., task_cls=AMOTask)`). Such a call already waits for the commit.
-// Cross-file (decision 0652): the task's definition, and the app, are in other files than the call.
-.decl dj_task_waits_for_commit(c: node) cross_file
+// `Celery(..., task_cls=AMOTask)`). Such a call already waits for the commit. The task, its class and the app are in
+// any file: the phase py_names joins them by symbol (dj_deferred_task, dj_app_defers), read through the modules the
+// call's file reads (decision 0677).
+.decl py_names__dj_deferred_task(m: symbol, f: symbol)
+.decl py_names__dj_app_defers(m: symbol)
+// py_names__dj_view_model(m, q, s): class q of module m, or an ancestor of the run, says `model = S` or
+// `queryset = S.objects…` in its body (get-handler-writes' view over S).
+.decl py_names__dj_view_model(m: symbol, q: symbol, s: symbol)
+// py_names__dj_task_def(m, f): function f of module m is decorated as a Celery task (`@shared_task`, `@app.task(...)`,
+// `@task`).
+.decl py_names__dj_task_def(m: symbol, f: symbol)
+// py_names__dj_anc_clean_call(m, q, x): a class of the run among class q's ancestors calls `self.x()`, x a clean_…
+// method (django-practice-clean-field-returns-value).
+.decl py_names__dj_anc_clean_call(m: symbol, q: symbol, x: symbol)
+.decl dj_task_waits_for_commit(c: node)
 dj_task_waits_for_commit(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m),
-    (m = "delay" ; m = "apply_async"), sym_of(o, q), kind(g, "function_definition"), qualname(g, q), decorator(g, e),
-    kind(e, "call"), call_arg(e, _, "base", bv), sym_of(bv, bq), dj_deferring_task_class(bq).
+    (m = "delay" ; m = "apply_async"), sym_of(o, q), docof(c, d), doc(d, p, _), py_names__reads_at(p, mq),
+    py_names__dj_deferred_task(mq, q).
 dj_task_waits_for_commit(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m),
-    (m = "delay" ; m = "apply_async"), dj_app_defers(_).
-.decl dj_deferring_task_class(cq: symbol)
-dj_deferring_task_class(cq) :- mro_method(cq, m, h), (m = "delay" ; m = "apply_async"), kind(oc, "call"), within(oc, h),
-    field(oc, "function", of), sym_of(of, "django.db.transaction.on_commit").
-.decl dj_app_defers(k: node)
-dj_app_defers(k) :- kind(k, "call"), field(k, "function", f), sym_of(f, "celery.Celery"), call_arg(k, _, "task_cls", v),
-    sym_of(v, bq), dj_deferring_task_class(bq).
+    (m = "delay" ; m = "apply_async"), docof(c, d), dj_app_defers(d).
+.decl dj_app_defers(d: number)
+dj_app_defers(d) :- doc(d, p, _), py_names__reads_at(p, m), py_names__dj_app_defers(m).
 // dj_dispatch_in_failing_handler(c): side effect c sits in an except handler that always re-raises
 // (py_reraising_handler): the transaction rolls back, so an on_commit callback would never run (a failure mail or
 // error task belongs there).
@@ -365,33 +424,25 @@ dj_dispatch_result_used(c) :- dj_side_effect(c, _), kind(a, "assignment"), field
     def_frame(i, fr), i != l, earlier(l, i), !bind_only(i).
 
 // ---- views -------------------------------------------------------------------------------------------------------
-.decl dj_view_base(q: symbol)
-dj_view_base(q) :- class_base(_, q), prefix("django.views.", q).
-dj_view_base(q) :- class_base(_, q), prefix("django.contrib.auth.views.", q), suffix("View", q).
-dj_view_base(q) :- class_base(_, q), (prefix("rest_framework.views.", q) ; prefix("rest_framework.generics.", q) ;
-    prefix("rest_framework.viewsets.", q)).
-// dj_view_lib(q): a view class Django or DRF defines. Their `…Mixin` classes supply parts of a view and are not
-// views themselves.
-//   django.views.generic.TemplateView               dj_view_lib
-//   django.views.generic.base.ContextMixin          not dj_view_lib
-.decl dj_view_lib(q: symbol)
-dj_view_lib(q) :- dj_view_base(q), !suffix("Mixin", q).
-.decl dj_view_q(q: symbol)
-dj_view_q(q) :- dj_view_lib(q).
-dj_view_q(q) :- class_def(c, q), class_base(c, b), dj_view_q(b).
+// dj_view_class(c): class c is a view: among its ancestors (python/names' class_lib_anc, through the run's classes in
+// any file) is a view class Django or DRF defines (dj_lib_view). Their `…Mixin` classes supply parts of a view and
+// are not views themselves.
+//   django.views.generic.TemplateView               a view
+//   django.views.generic.base.ContextMixin          not a view
+// dj_drf_view_class(c): the same of a DRF view class.
 .decl dj_view_class(c: node)
-dj_view_class(c) :- class_def(c, q), class_base(c, b), dj_view_q(b).
+dj_view_class(c) :- dj_lib_view(c, _).
+.decl dj_drf_view_class(c: node)
+dj_drf_view_class(c) :- dj_lib_view(c, b), prefix("rest_framework.", b).
+.decl dj_lib_view(c: node, b: symbol)
+dj_lib_view(c, b) :- class_lib_anc(c, b), !suffix("Mixin", b), (prefix("django.views.", b) ;
+    prefix("django.contrib.auth.views.", b), suffix("View", b) ; prefix("rest_framework.views.", b) ;
+    prefix("rest_framework.generics.", b) ; prefix("rest_framework.viewsets.", b)).
 
 // ---- files and settings ------------------------------------------------------------------------------------------
 .decl dj_migration_doc(d: number)
 dj_migration_doc(d) :- class_def(c, _), def_name(c, "Migration"), class_base(c, "django.db.migrations.Migration"),
     docof(c, d).
-// dj_test_doc(d): DefectDojo keeps its tests in `unittests/`, netbox its test helpers in `utilities/testing/`.
-.decl dj_test_doc(d: number)
-dj_test_doc(d) :- doc(d, _, _), (path_part(d, "tests") ; path_part(d, "test") ; path_part(d, "testing") ;
-    path_part(d, "unittests")).
-dj_test_doc(d) :- file_name(d, s), (glob("test_*.py", s) ; glob("*_tests.py", s) ; glob("*_test.py", s) ; s = "tests.py" ;
-    s = "test.py" ; s = "conftest.py").
 // dj_django_doc(d): document d imports Django or Django REST framework (an `import` or `from … import`, a star import
 // included), so names such as `request.user` or `X.objects` in it are likely Django's: a gate for rules whose shapes
 // other frameworks share (Starlette's `request.user`, mongoengine's `Document.objects`). A relative import

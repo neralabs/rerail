@@ -16,17 +16,16 @@ use std::sync::Arc;
 const SMALL: usize = crate::code_rule_dsl::logic::join_size::EXACT;
 const REGISTERS: usize = 256;
 const DENSE_WIDTH: usize = 4096;
-use super::rows::BlockVec;
 
 /// `n` zeros in a block (decision 0478 step 6c: a sketch's arrays are block arrays, not the heap's).
-fn zeros<T: rerail_blocks::Pod + Copy + Default>(n: usize) -> BlockVec<T> {
-    let mut v = BlockVec::new();
+fn zeros<T: rerail_blocks::Pod + Copy + Default>(n: usize) -> rerail_blocks::vector::Vector<T> {
+    let mut v = crate::code_rule_dsl::facts::rows::vector_in(None, 0);
     v.resize(n, T::default());
     v
 }
 
 #[derive(Clone)]
-struct Dense { base:i64, counts:BlockVec<u32>, ndv:usize, sq:u64 }
+struct Dense { base:i64, counts:rerail_blocks::vector::Vector<u32>, ndv:usize, sq:u64 }
 impl Dense {
     fn add(&mut self, v:i64)->bool {
         let Some(i)=v.checked_sub(self.base).and_then(|n|usize::try_from(n).ok()).filter(|&i|i<DENSE_WIDTH) else {return false};
@@ -48,7 +47,7 @@ const SPARSE_FIRST:usize=128;
 const NO_VALUE:i64=-1;
 /// A label set's exact counts, open addressing in a block: each slot `[value, rows]`, `[NO_VALUE, 0]` for none.
 #[derive(Clone)]
-struct Sparse { slots:BlockVec<[i64;2]>, len:usize, sq:u64 }
+struct Sparse { slots:rerail_blocks::vector::Vector<[i64;2]>, len:usize, sq:u64 }
 impl Sparse {
     fn slot(&self, v:i64)->usize {
         let m=self.slots.len()-1;
@@ -59,7 +58,7 @@ impl Sparse {
     /// Room for one more value: its slots doubled, each entry placed again, while its values pass half of them.
     fn room(&mut self) {
         if 2*(self.len+1)<=self.slots.len() || self.slots.len()>=SPARSE_SLOTS {return;}
-        let mut grown=Self {slots:BlockVec::new(),len:0,sq:self.sq};
+        let mut grown=Self {slots:crate::code_rule_dsl::facts::rows::vector_in(None, 0),len:0,sq:self.sq};
         grown.slots.resize(self.slots.len()*2,[NO_VALUE,0]);
         for e in self.slots.iter().filter(|e| e[0]!=NO_VALUE) {
             let at=grown.slot(e[0]);
@@ -69,7 +68,7 @@ impl Sparse {
         *self=grown;
     }
     fn from_counts(values:impl IntoIterator<Item=(i64,u32)>)->Self {
-        let mut s=Self {slots:BlockVec::new(),len:0,sq:0};
+        let mut s=Self {slots:crate::code_rule_dsl::facts::rows::vector_in(None, 0),len:0,sq:0};
         s.slots.resize(SPARSE_FIRST,[NO_VALUE,0]);
         for (v,n) in values {
             s.room();
@@ -100,7 +99,7 @@ impl Sparse {
 }
 
 pub(super) struct Sketch {
-    registers: BlockVec<u8>,
+    registers: rerail_blocks::vector::Vector<u8>,
     /// Its join-size counters and, while it has at most `SMALL` values, each one's rows (`join_size::Counts`, in a
     /// block): this sketch is their one writer; the planner's join sizes and the statistics' keys read them there.
     counts: Arc<Counts>,
@@ -255,10 +254,10 @@ impl Sketch {
     }
 
     /// Each value's rows, while they are exact: read from the sketch's arrays.
-    pub(super) fn exact_counts(&self) -> Option<Vec<(i64,u32)>> {
-        if let Some(s)=self.counts.few() {return Some(s.map(|e|(e[0],e[1] as u32)).collect());}
-        if let Some(s)=&self.sparse {return Some(s.counts().collect());}
-        self.dense.as_ref().map(|d|d.counts.iter().enumerate().filter(|(_,n)| **n>0).map(|(i,&n)|(d.base+i as i64,n)).collect())
+    pub(super) fn exact_counts(&self) -> Option<rerail_blocks::vector::Vector<[i64; 2]>> {
+        if let Some(s)=self.counts.few() {return Some(s.map(|e|[e[0],e[1] as u32 as i64]).collect());}
+        if let Some(s)=&self.sparse {return Some(s.counts().map(|(v,n)|[v,i64::from(n)]).collect());}
+        self.dense.as_ref().map(|d|d.counts.iter().enumerate().filter(|(_,n)| **n>0).map(|(i,&n)|[d.base+i as i64,i64::from(n)]).collect())
     }
 
     /// Its filter made again at twice its keys where they outgrew it (`Kept::outgrown`), from `all`: every value it
@@ -309,12 +308,13 @@ pub mod tests {
     #[test]
     fn a_sketchs_arrays_are_in_blocks() {
         let mut s = Sketch::default();
-        assert!(s.registers.facts().is_some() && s.counts.in_blocks());
+        use rerail_blocks::maps::Placed;
+        assert!(s.registers.place().is_some() && s.counts.in_blocks());
         for i in 0..100 { s.add(i); }
-        assert!(s.dense.as_ref().is_some_and(|d| d.counts.facts().is_some()), "a page of counts");
+        assert!(s.dense.as_ref().is_some_and(|d| d.counts.place().is_some()), "a page of counts");
         let mut t = Sketch::default();
         for i in 0..100 { t.add(i * 9_999); }
-        assert!(t.sparse.as_ref().is_some_and(|x| x.slots.facts().is_some() && x.len == 100), "a label set's slots");
+        assert!(t.sparse.as_ref().is_some_and(|x| x.slots.place().is_some() && x.len == 100), "a label set's slots");
         assert_eq!(t.ndv(), 100);
     }
 
@@ -338,6 +338,7 @@ pub mod tests {
         let mut c = s.clone();
         assert!(Arc::ptr_eq(&c.counts, &s.counts) && Arc::strong_count(&s.sharing) == 2, "a clone reads them");
         c.add(10);
+        assert!(!Arc::ptr_eq(&c.counts, &s.counts), "a clone writes its own once it adds");
         assert_eq!((counts.join(&ten).rows, c.counts().join(&ten).rows), (1.0, 2.0));
         // Past its few values, the counters, still the sketch's own.
         for v in 11..1_000 {
@@ -455,7 +456,7 @@ pub mod tests {
         for value in 0..200 { for _ in 0..value+1 { s.add(value); } sq+=(value as u64+1).pow(2); }
         assert_eq!(s.ndv(),200,"bounded labels must retain exact cardinality");
         assert_eq!(s.sq(),sq,"bounded labels must retain exact posting counts");
-        assert_eq!(s.exact_counts().unwrap().iter().copied().collect::<std::collections::HashMap<_,_>>()[&137],138);
+        assert_eq!(s.exact_counts().unwrap().iter().map(|&[v,n]|(v,n)).collect::<std::collections::HashMap<_,_>>()[&137],138);
         assert!(s.bytes()<20_000,"histogram memory must be bounded");
         s.add(1_i64<<40);
         assert!(s.exact_counts().is_none(),"an escaped domain must fall back, not claim a complete histogram");

@@ -6,6 +6,7 @@
 //! measurement aids); this is its core, for a program run many times over growing inputs: the cone's rounds
 //! (decision 0145).
 
+use rerail_blocks::vector::Vector;
 use super::{Result, held_rows, lower, maintain, retain};
 use crate::code_rule_dsl::facts::vtab::{Modules, Source, syntax};
 use crate::code_rule_dsl::logic::native::component::{self, InRel};
@@ -102,7 +103,7 @@ pub(in crate::code_rule_dsl) fn run_with(
     }
     let frames = kept.as_mut().and_then(retain::Retained::take_frames);
     let by_name: HashMap<&str, &Arc<dyn Source>> = inputs.iter().map(|(r, s, ..)| (r.as_str(), s)).collect();
-    let mut input_docs: HashMap<String, Arc<retain::DocDigests>> = HashMap::new();
+    let mut input_docs: HashMap<String, Arc<retain::Docs>> = HashMap::new();
     // An input's delta, found from its old rows by document: hashed by content, as the frames hold its documents'.
     let atoms = store.map_or_else(|| crate::content_store::atoms::Atoms::for_connection(db), |s| s.atoms_handle());
     let mut given = |rel: &str| -> Option<(Arc<dyn Source>, Arc<dyn Source>)> {
@@ -129,6 +130,9 @@ pub(in crate::code_rule_dsl) fn run_with(
             super::driven_part(&cut, prog, &mut given)?
         } else {
             // No kept part, or gates: the cut's strata derived again from their reads (decision 0364: no forms).
+            if std::env::var_os("RERAIL_MODE_TRACE").is_some() {
+                eprintln!("RERAIL_MODE_TRACE *: {} ({} strata; kept part {}, gated {gated})", maintain::NOT_WALKED, cut.strata.0, kept.is_some());
+            }
             (maintain::Maintained::again(cut.program(prog)?, cut.strata.0), Vec::new(), BTreeSet::new())
         }
     };
@@ -257,7 +261,7 @@ pub(in crate::code_rule_dsl) fn run_with(
             Ok((rel.clone(), width, held))
         })
         .collect::<Result<Vec<_>>>()?;
-    let outputs: BTreeMap<String, (std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>, Vec<usize>)> = got.outputs.iter().map(|(rel, rows)| (rel.clone(), (std::sync::Arc::clone(rows), got.nodes[rel].clone()))).collect();
+    let outputs: BTreeMap<String, (std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>, Vector<usize>)> = got.outputs.iter().map(|(rel, rows)| (rel.clone(), (std::sync::Arc::clone(rows), got.nodes[rel].clone()))).collect();
     drop(s);
     let _s = span("retain");
     super::kept_statistics(lazies, &mut measured_kept);

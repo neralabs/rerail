@@ -376,9 +376,15 @@ la_ffind("LA-011", f, l) :- la_fact(f, d, _, _, x), la_server_phase(x), la_in(d,
 la_ffind("LA-011", f, l) :- la_fact(f, d, _, _, _), la_in(d, "server_plan"), la_first(f, "hydrate", l).
 la_ffind("LA-012", f, l) :- la_fact(f, _, _, _, _), !la_legacy(f), la_first(f, "lazy_resolve", l).
 // *_lazy without @pure_lazy, deferring to a delegate whose own calls do plan I/O: at the first such deferral.
-la_ffind("LA-009", f, l) :- la_fact(f, _, _, _, x), suffix("_lazy", x), !la_pure(f),
-    i = min j : { la_deferred(f, c2, s2), la_eager_delegate(s2), visit_index(c2, j) },
-    la_deferred(f, c, s), la_eager_delegate(s), visit_index(c, i), line(c, l).
+// la_defer(d, s, k, j, l, t): such a fact, of file d, allowlist symbol s and line k, defers to symbol t at the call
+// of visit index j and line l. Found in the fact's file; the delegate, maybe another file's, is joined by its
+// symbol in the cross-file part, and the finding is a document key and a line (decision 0677), a hit the budget
+// counts (la_hit, decision 0695).
+.decl la_defer(d: number, s: symbol, k: number, j: number, l: number, t: symbol)
+la_defer(d, s, k, j, l, t) :- la_fact(f, d, s, _, x), suffix("_lazy", x), !la_pure(f), line(f, k),
+    la_deferred(f, c, t), visit_index(c, j), line(c, l).
+la_hit("LA-009", d, l, s) :- la_defer(d, s, k, i, l, t), la_eager_delegate(t),
+    i = min j : { la_defer(d, s, k, j, _, t2), la_eager_delegate(t2) }.
 la_ffind("LA-002", f, l) :- la_at(f, "intent", _), la_at(f, "io", l).
 la_ffind("LA-003", f, l) :- la_fact(f, d, _, _, _), la_in(d, "feature"), la_is(f, "public"), !la_lazy(f),
     la_at(f, "io", l), !la_at(f, "intent", _).

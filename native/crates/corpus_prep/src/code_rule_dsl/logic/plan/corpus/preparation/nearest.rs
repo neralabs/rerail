@@ -4,6 +4,7 @@
 //! (`nearest_<set>`, and the tree axes' `rr_inside_<set>` and `rr_has_<set>`), each with its set's kind atoms. A pass
 //! of preparation, before the program's run.
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::logic::front::{AXIS, DESCENDANTS, NEAREST, is_axis};
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
 use crate::code_rule_dsl::logic::program_image::Builder;
@@ -15,7 +16,7 @@ use std::collections::BTreeSet;
 pub struct Nearest {
     /// The relations the run makes, with their sets' kind atoms: the axes first, in the inputs' order, then each
     /// `nearest_<set>` by its set's name.
-    pub sets: Vec<(String, Vec<i64>)>,
+    pub sets: Vec<(String, Vector<i64>)>,
     used: BTreeSet<String>,
 }
 
@@ -56,7 +57,7 @@ impl RulePass for Nearest {
         let v = cx.v();
         let d = cx.get::<FieldsData>()?;
         let f = Fields::over(v, &d);
-        let kinds = |set: &str| -> Vec<i64> { f.kindset(set).into_iter().flatten().filter_map(|&k| v.text(k).parse::<i64>().ok()).collect() };
+        let kinds = |set: &str| -> Vector<i64> { f.kindset(set).into_iter().flatten().filter_map(|&k| v.text(k).parse::<i64>().ok()).collect() };
         let mut inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).collect();
         for rel in inputs.iter().filter(|r| is_axis(r)) {
             let set = rel.strip_prefix(AXIS).or_else(|| rel.strip_prefix(DESCENDANTS)).expect("an axis");

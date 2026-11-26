@@ -103,7 +103,7 @@ fn read(view: &View, file: &str, depth: usize) -> Option<Entries> {
     Some(options)
 }
 
-/// The view's files, as the shared `extends` resolver reads them (decision 0660).
+/// The view's files, as the shared `extends` resolver reads them (decision 0670).
 impl rerail_lang::code_rule_dsl::tsconfig::ConfigFiles for View {
     fn base(&self) -> &str {
         View::base(self)
@@ -118,7 +118,7 @@ impl rerail_lang::code_rule_dsl::tsconfig::ConfigFiles for View {
         View::real_path(self, path)
     }
     fn text(&self, path: &str) -> Option<String> {
-        View::text(self, path).map(|text| (*text).clone())
+        View::text(self, path).map(|text| text.as_str().to_owned())
     }
 }
 

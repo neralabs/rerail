@@ -158,10 +158,12 @@ fn r3_an_edit_reads_the_changed_files_old_and_new_rows() {
         ("b.py", "from a import f\nfrom a import k\n\ndef g(y):\n    return f(y)\n"),
         ("a.py", "def k():\n    pass\n"),
     ];
-    for (file, body) in edits {
+    for (i, (file, body)) in edits.iter().enumerate() {
         c.write(file, body);
         let (_, rows) = c.run();
-        assert_eq!(rows, c.fresh(), "after {file}'s edit, the outputs are a cold run's");
+        if super::fresh_tier::compared(i, edits.len()) {
+            assert_eq!(rows, c.fresh(), "after {file}'s edit, the outputs are a cold run's");
+        }
     }
 }
 
@@ -219,12 +221,12 @@ fn r4_a_base_relations_statistics_are_kept_and_patched_by_an_edit() {
     assert!(all(&edit, "patched by the changed documents", "patched by the changed documents") || inside, "an edit patches them, but inside another run's waves: {edit:?}");
 }
 
-/// A session (0077) holds its corpus batch from run to run, its changed files' documents replaced (decision 0458), and
-/// keeps its base relations' statistics as the kept route does: its first run counts them and makes every document,
-/// the run after it makes none and takes them as kept, and an edit makes the changed file's documents alone and patches
-/// the statistics by its old and new ones. Its outputs are a fresh run's.
+/// A session's runs are its store's (t33 step 3): its corpus batch is the kept route's (decision 0458), and it keeps
+/// its base relations' statistics as the kept route does: its first run counts them and makes every document, the run
+/// after it makes none and takes them as kept, and an edit makes the changed file's documents alone and patches the
+/// statistics by its old and new ones. Its outputs are a fresh run's.
 #[test]
-fn a_session_holds_its_corpus_batch_and_keeps_its_base_statistics() {
+fn a_session_keeps_its_corpus_batch_and_its_base_statistics() {
     use crate::code_rule_dsl::logic::profile;
     let mut c = Corpus::new("session-batch");
     let handle = super::session::Handle::open(&c.dir.join("session")).unwrap();
@@ -248,11 +250,12 @@ fn a_session_holds_its_corpus_batch_and_keeps_its_base_statistics() {
     let (edit, edit_batch, rows) = run(&mut c);
     profile::set(false);
     assert!(cold_counted(&cold), "a session's first run counts them: {cold:?}");
-    assert_eq!(cold_batch, BTreeSet::from(["4 documents made, none held".to_owned()]), "and makes every document");
+    assert_eq!(cold_batch, BTreeSet::from(["4 documents made".to_owned()]), "and makes every document");
     assert!(all(&warm, "kept", "kept"), "the run after it takes them as kept: {warm:?}");
-    assert_eq!(warm_batch, BTreeSet::from(["0 documents made, 4 held from the session's last run".to_owned()]), "and makes none");
+    let made = |batch: &BTreeSet<String>, n: usize| batch.len() == 1 && batch.iter().all(|x| x.starts_with(&format!("{n} documents made")));
+    assert!(made(&warm_batch, 0), "and makes none: {warm_batch:?}");
     assert!(all(&edit, "patched by the changed documents", "patched by the changed documents"), "an edit patches them: {edit:?}");
-    assert_eq!(edit_batch, BTreeSet::from(["1 documents made, 3 held from the session's last run".to_owned()]), "and makes the changed file's alone");
+    assert!(made(&edit_batch, 1), "and makes the changed file's alone: {edit_batch:?}");
     every_output_has_rows(&rows);
     assert_eq!(rows, c.fresh(), "the session's outputs after the edit are a fresh run's");
 }
@@ -548,5 +551,7 @@ fn a_sessions_edit_takes_its_unchanged_groups_from_the_last_run() {
 /// structure, which makes no row (`Source::statistics`).
 fn cold_counted(made: &BTreeSet<String>) -> bool {
     let own = ": the source's own, from its structure (no row made)";
-    !made.is_empty() && made.iter().all(|x| x.ends_with(": counted") || x.ends_with(": counted at the held nodes") || x.ends_with(own))
+    // Counted by the chunks where their rows lay (decision 0458's statistics), or off the batch.
+    let how = [": counted", ": counted at the held nodes", ": counted by the chunks, where their rows lay", ": counted by the chunks at their held nodes", own];
+    !made.is_empty() && made.iter().all(|x| how.iter().any(|h| x.ends_with(h)))
 }

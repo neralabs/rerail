@@ -1,6 +1,7 @@
 # 0081: Span captures over a node's own text, and span regexes as block programs
 
-Status: accepted (2026-11-08). §1–§3 built; §3's programs run on Metal under the device binding.
+Status: built (audited 2026-11-23). Accepted (2026-11-08). §1–§3 built; §3's programs run on Metal under the device
+binding.
 
 (Parser-generators' tier-2 decisions are 0085 to 0088 on wolfeel.)
 

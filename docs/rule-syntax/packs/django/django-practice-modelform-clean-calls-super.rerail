@@ -50,15 +50,20 @@ mcs_base("django.contrib.auth.forms.UserCreationForm"). mcs_base("django.contrib
 mcs_base("django.contrib.auth.forms.UserChangeForm"). mcs_base("django.contrib.flatpages.forms.FlatpageForm").
 mcs_base("wagtail.admin.forms.WagtailAdminModelForm"). mcs_base("wagtail.admin.forms.models.WagtailAdminModelForm").
 mcs_base("wagtail.admin.forms.WagtailAdminPageForm"). mcs_base("wagtail.admin.forms.pages.WagtailAdminPageForm").
-// Other packages' model forms are named so: i18nfield's I18nModelForm, parler's TranslatableModelForm; and Django
-// re-exports its formsets elsewhere (django.contrib.admin.options.BaseInlineFormSet).
-mcs_base(q) :- class_base(_, q), !class_def(_, q), split_dot(q, _, x),
-    (suffix("ModelForm", x) ; suffix("ModelFormSet", x) ; prefix("django.", q), suffix("InlineFormSet", x)).
+// mcs_lib_base(c, b): b is among class c's library ancestors (python/names' class_lib_anc), and a model form or
+// formset by name: other packages' model forms are named so (i18nfield's I18nModelForm, parler's
+// TranslatableModelForm), and Django re-exports its formsets elsewhere (django.contrib.admin.options.BaseInlineFormSet).
+.decl mcs_lib_base(c: node, b: symbol)
+mcs_lib_base(c, b) :- class_lib_anc(c, b), mcs_base(b).
+mcs_lib_base(c, b) :- class_lib_anc(c, b), split_dot(b, _, x),
+    (suffix("ModelForm", x) ; suffix("ModelFormSet", x) ; prefix("django.", b), suffix("InlineFormSet", x)).
 .decl mcs_model_form(c: node)
-mcs_model_form(c) :- class_def(c, q), subclass(q, b), mcs_base(b).
+mcs_model_form(c) :- class_anc(c, b), mcs_base(b).
+mcs_model_form(c) :- mcs_lib_base(c, _).
 // mcs_formset(c): c is a model formset (a base whose name holds `FormSet`).
 .decl mcs_formset(c: node)
-mcs_formset(c) :- class_def(c, q), subclass(q, b), mcs_base(b), split_dot(b, _, x), contains("FormSet", x).
+mcs_formset(c) :- class_anc(c, b), mcs_base(b), split_dot(b, _, x), contains("FormSet", x).
+mcs_formset(c) :- mcs_lib_base(c, b), split_dot(b, _, x), contains("FormSet", x).
 
 // mcs_calls_parent(f): in f's own body, `super().clean(...)`, `super(C, self).clean(...)` or `X.clean(self, ...)`.
 .decl mcs_calls_parent(f: node)

@@ -7,6 +7,7 @@
 //! On the version, as `product_demand`'s other steps (decision 0276): each rewrite is a derivation of the program
 //! (`Program`), and the pass publishes the last as an edit of its input.
 
+use rerail_blocks::vector::Vector;
 use super::{DEFERRED_PAIRS, PREFIX, Program, plain, rewritten, same, upstream};
 use crate::code_rule_dsl::logic::plan::body::{VarSet, atom_vars, lit_vars, term_vars};
 use crate::code_rule_dsl::logic::plan::corpus::preparation::Deferral;
@@ -33,7 +34,8 @@ pub struct Plans {
     pub cross: Vec<String>,
     /// The joins left as written because the split holds them constants (decision 0665): of facts and settings alone,
     /// the same for every file and made once. Read by a file's rule, the requests would be the files', and the
-    /// constant would read every file's rows. A constant only constants read is driven as any join is.
+    /// constant would read every file's rows. A constant only constants read is driven as any join is. And the joins
+    /// of a file's nodes one of whose two parts is a constant: a lookup in it, made in each file, not a product.
     pub constants: Vec<String>,
     pub cached: bool,
     pub author: Vec<Join>,
@@ -60,7 +62,7 @@ fn guard(v: &Version, rule: RuleRef<'_>) -> Option<usize> {
 /// guard left out), each part reading the key: its key's name and the parts by place. `None` for a rule whose head
 /// is not two variables, whose body holds anything but positive atoms of plain terms and comparisons other than `=`,
 /// or that splits otherwise.
-fn split(v: &Version, rule: RuleRef<'_>) -> Option<(String, Vec<Vec<usize>>)> {
+fn split(v: &Version, rule: RuleRef<'_>) -> Option<(String, Vec<Vector<usize>>)> {
     let head: Vec<TermRef<'_>> = rule.head().args().collect();
     let [TermRef::Var(a), TermRef::Var(b)] = head.as_slice() else {
         return None;
@@ -75,7 +77,7 @@ fn split(v: &Version, rule: RuleRef<'_>) -> Option<(String, Vec<Vec<usize>>)> {
     }
     let (key, parts) = crate::code_rule_dsl::logic::plan::keeps::factors_without(v, rule, guard(v, rule))?;
     let lits: Vec<_> = rule.body().collect();
-    let keyed = |part: &Vec<usize>| part.iter().any(|&i| matches!(lits[i].view(), Lit::Atom(x) if atom_vars(x).iter().any(|s| v.text(rule.var(s)) == key)));
+    let keyed = |part: &Vector<usize>| part.iter().any(|&i| matches!(lits[i].view(), Lit::Atom(x) if atom_vars(x).iter().any(|s| v.text(rule.var(s)) == key)));
     (parts.len() == 2 && parts.iter().all(keyed)).then_some((key, parts))
 }
 
@@ -213,7 +215,7 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
     // The join relations by the readers they could be driven by, read off the program before any rewrite (a guard
     // inserted moves the places).
     // Each relation one document's in every row, with its location columns: a request keeps their tie.
-    let mut same_doc: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    let mut same_doc: BTreeMap<String, rerail_blocks::vector::Vector<usize>> = BTreeMap::new();
     let (pairs, mut guarded, mut broad, mut open_readers, recursive) = {
         let v = p.v();
         let rules: Vec<RuleRef<'_>> = v.rules().collect();
@@ -279,9 +281,10 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
             return Ok(plans);
         };
         let recursive: BTreeSet<String> = sccs
-            .into_iter()
+            .iter()
             .filter(|c| c.len() > 1)
             .flatten()
+            .map(str::to_owned)
             .chain(rules.iter().filter(|r| r.body().any(|l| l.atom().is_some_and(|a| a.rel() == r.head().rel()))).map(|r| p.head_rel(*r).to_owned()))
             .collect();
         let mut pairs: Vec<(String, &'static [usize], bool)> = Vec::new();
@@ -324,6 +327,25 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
             pairs.retain(|(rel, _, _)| {
                 // A constant a file's rule reads (decision 0665): its requests would be the files'.
                 if split.constants.contains(rel) && readers[rel.as_str()].iter().any(|&(i, _)| !split.constants.contains(p.head_rel(rules[i]))) {
+                    plans.constants.push(rel.clone());
+                    return false;
+                }
+                // A join of a file's nodes with a constant (`async_sleep_call(c, x) :- async_call(c, _, q),
+                // async_sleep_arg(q, _, x)`): a lookup in the constant, made in the file. Driven by its readers'
+                // requests, its keys were a table of every file's values, and its factors and pair cache held the
+                // file's nodes, all in the cross-file part (decision 0677). A join with no node (`deps_on(dir, r)`, by
+                // a package's directory) is driven as before: its requests carry no node.
+                let nodes = p.columns(rel).unwrap_or_default().iter().any(|(_, t)| matches!(t.as_str(), "node" | "loc" | "span"));
+                let lookup = nodes && rules.iter().find(|r| p.head_rel(**r) == rel).and_then(|r| self::split(v, *r).map(|(_, parts)| (*r, parts))).is_some_and(|(r, parts)| {
+                    let lits: Vec<_> = r.body().collect();
+                    // A constant: of facts and settings alone (the split's), or facts and no rule.
+                    let constant = |rel: &str| {
+                        split.constants.contains(rel)
+                            || (crate::code_rule_dsl::logic::program_image::fields::ProgramFields::states_facts(v, rel) && !rules.iter().any(|d| p.head_rel(*d) == rel))
+                    };
+                    parts.iter().any(|part| part.iter().all(|&i| lits[i].atom().is_none_or(|a| constant(v.rel_name(a.rel())))))
+                });
+                if lookup {
                     plans.constants.push(rel.clone());
                     return false;
                 }

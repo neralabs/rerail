@@ -334,7 +334,7 @@ impl View {
         }
         // The lean parser first; tree-sitter-php where it refuses (one behavior: tree-sitter's
         // tape, or a refusal).
-        let program = Parse::read(GrammarDialect::Php, &emitter.out, budget);
+        let program = Parse::read_program(GrammarDialect::Php, &emitter.out, &emitter.segments, budget);
         let view = program.map(|program| {
             let mut segments = emitter.segments;
             segments.index();

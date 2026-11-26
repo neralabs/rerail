@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
     use super::super::thread_cpu;
     use rusqlite::Connection;
     use std::path::Path;
@@ -112,8 +113,8 @@
                         device.strata_cpu += cpu;
                         device.strata_gpu += r.gpu_seconds * 1e3;
                         device.strata_submissions += r.submissions as usize;
-                        println!("    device: {} ({cpu:.1} ms process CPU, GPU {:.2} ms, {} submissions, {} rules, {} stages, uploads {}, read in place {})",
-                            if ok { "same" } else { "DIFF" }, r.gpu_seconds * 1e3, r.submissions, r.rules, r.stages, r.uploads, r.in_place);
+                        println!("    device: {} ({cpu:.1} ms process CPU, GPU {:.2} ms, {} submissions, {} rules, {} stages, read in place {})",
+                            if ok { "same" } else { "DIFF" }, r.gpu_seconds * 1e3, r.submissions, r.rules, r.stages, r.in_place);
                     }
                     Some(r) => {
                         device.strata_refused += 1;
@@ -177,7 +178,7 @@
     struct Device { strata: usize, strata_same: usize, strata_refused: usize, strata_cpu: f64, strata_cpu_host: f64, strata_gpu: f64, strata_submissions: usize, probe: Probe, sort_cpu: f64, sort_same: usize, joins: usize, joins_same: usize, pairs: usize, tile_pairs: usize, compared: u64, join_cpu: f64, join_gpu: f64, tile_host: f64, cases: usize, same: usize, unsupported: usize, rows: usize, passed: usize, cpu: f64, gpu: f64, bytes: usize, wide: usize, forms: [usize; 3] }
 
     /// The device's sort and probe joins: joins run and right, sorts and the joins that found theirs resident, GPU and
-    /// host CPU (the uploads, the sorts' and probes' encoding and the pairs' read), and the keys' bytes.
+    /// host CPU (the sorts' and probes' encoding and the pairs' read), and the keys' bytes.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     #[derive(Default)]
     struct Probe { upload: f64, submissions: usize, joins: usize, same: usize, off: usize, sorts: usize, resident: usize, sort_gpu: f64, probe_gpu: f64, host: f64, right_host: f64, bytes: usize, wide: usize }
@@ -215,7 +216,7 @@
             use crate::code_rule_dsl::transducer::packed::metal_rows::{Form, Joined, Resident, tile_join};
             use crate::code_rule_dsl::transducer::packed::metal_sort::{Column, Keyed, probe};
             use crate::code_rule_dsl::transducer::packed::rows_sort;
-            let same = |got: &[(u32, u32)], case: &super::super::TileCase, how: &str| -> bool {
+            let same = |got: &[[u32; 2]], case: &super::super::TileCase, how: &str| -> bool {
                 let mut pairs = got.to_vec();
                 pairs.sort_unstable();
                 let mut want = case.pairs.clone();
@@ -231,8 +232,8 @@
                 let k = case.left.len();
                 self.pairs += case.pairs.len();
                 self.join_cpu += case.cpu_seconds;
-                let l: Vec<&[i64]> = case.left.iter().map(Vec::as_slice).collect();
-                let r: Vec<&[i64]> = case.right.iter().map(Vec::as_slice).collect();
+                let l: Vec<&[i64]> = case.left.iter().map(|v| v.as_slice()).collect();
+                let r: Vec<&[i64]> = case.right.iter().map(|v| v.as_slice()).collect();
                 // The CPU's sort join: the right radix-sorted by key 0 on the host once a capture, the left per join,
                 // their runs merged.
                 let c0 = process_cpu();
@@ -283,7 +284,7 @@
                 // By chunk, when key 0 is a node column of one chunk on both sides: the first key that is.
                 let t0 = process_cpu();
                 let order = (0..k).find_map(|k0| {
-                    let mut keys: Vec<usize> = vec![k0];
+                    let mut keys: Vector<usize> = rerail_blocks::vector![k0];
                     keys.extend((0..k).filter(|&x| x != k0));
                     let l: Vec<&[i64]> = keys.iter().map(|&x| case.left[x].as_slice()).collect();
                     let r: Vec<&[i64]> = keys.iter().map(|&x| case.right[x].as_slice()).collect();
@@ -294,7 +295,7 @@
                     (l.forms[0] == Form::Low16 && r.forms[0] == Form::Low16).then_some((l, r))
                 });
                 let Some((lr, rr)) = order else { continue };
-                let keys: Vec<usize> = (0..k).collect();
+                let keys: Vector<usize> = (0..k).collect();
                 let got: Result<Joined, _> = tile_join(&lr, &keys, &rr, &keys);
                 self.tile_host += process_cpu() - t0;
                 let Ok(got) = got else { continue };

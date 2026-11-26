@@ -14,7 +14,7 @@ use std::sync::Arc;
 struct Held(Arc<HeldFiles>);
 
 impl HeldForResolution for Held {
-    fn hold(&mut self, path: &str, source: &Arc<String>, root: Option<&Path>) -> bool {
+    fn hold(&mut self, path: &str, source: &Arc<crate::code_rule_dsl::tape::Text>, root: Option<&Path>) -> bool {
         Arc::make_mut(&mut self.0).hold(path, source, root)
     }
     fn release(&mut self, path: &str, root: Option<&Path>) -> bool {

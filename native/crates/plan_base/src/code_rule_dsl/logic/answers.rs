@@ -20,6 +20,7 @@
 //! Both passes are made on the program's version (decision 0241's form), reading its rules by their handles and its
 //! fields, never a tree.
 
+use rerail_blocks::vector::Vector;
 use super::front::{Edges, path, tarjan};
 use super::front::ast::Gate;
 use super::plan::body::Placed;
@@ -68,7 +69,7 @@ impl Rewrite for Gated<'_> {
 enum Out {
     Copy(usize),
     DoneAll(String),
-    Done(String, Vec<usize>, usize),
+    Done(String, Vector<usize>, usize),
     Gated(usize),
 }
 
@@ -215,7 +216,7 @@ impl RulePass for GateRules<'_> {
             }
             // The key: a negated atom's columns that are not wild, all bound by the literals before it; an
             // aggregate's that they bind (a constant's too), its group.
-            let at: Vec<usize> = a
+            let at: Vector<usize> = a
                 .args()
                 .enumerate()
                 .filter(|(_, t)| match t {
@@ -242,8 +243,24 @@ impl RulePass for GateRules<'_> {
                 // earlier negation or aggregate of the component gated, not read raw).
                 let args: Vec<TermRef<'_>> = a.args().collect();
                 let key: Vec<T<'_>> = at.iter().map(|&k| t_of(v, r, args[k])).collect();
+                // A key variable the literals before bind none of, a later positive one binds (the rule is safe): the
+                // ask reads the later positive atoms and comparisons too, never a negation or an aggregate. Each holds
+                // wherever the rule does, so the keys asked are the rule's own.
+                let unbound = at.iter().any(|&k| matches!(args[k], TermRef::Var(s) if !at_bound.contains(&s)));
+                let late: Vec<Out> = if unbound {
+                    (i + 1..lits.len())
+                        .filter(|&j| match lits[j].view() {
+                            Lit::Atom(b) => !b.neg(),
+                            Lit::Cmp { .. } | Lit::Nearest { .. } => true,
+                            _ => false,
+                        })
+                        .map(Out::Copy)
+                        .collect()
+                } else {
+                    Vec::new()
+                };
                 let mut rb = out.rule().head(ask.as_str(), &key);
-                for o in &outs {
+                for o in outs.iter().chain(&late) {
                     rb = write(v, r, &lits, rb, o);
                 }
                 rb.finish()?;

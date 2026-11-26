@@ -18,8 +18,8 @@
 // component when the file has none.
 .violation async_computed(at: node, msg: symbol) code "vue/no-async-in-computed-properties" "{msg}"
     suppress eslint "vue/no-async-in-computed-properties"
-async_computed_in(at, m) :- getter(f, x), op(f, "async"), report_at(f, at), says("async", x, m).
-async_computed_in(n, m) :- getter(f, x), action(n, w), nearest(n, f, vfn_kind), says(w, x, m).
+async_computed_in(at, m) :- getter(f, _), op(f, "async"), report_at(f, at), says(f, "async", m).
+async_computed_in(n, m) :- getter(f, _), action(n, w), nearest(n, f, vfn_kind), says(f, w, m).
 
 // getter(f, x): x is the computed's name, "" for a computed() getter.
 .decl getter(f: node, x: symbol)
@@ -64,10 +64,11 @@ root_step(e, r) :- (kind(e, "member_expression") ; kind(e, "subscript_expression
     deparen(w, o), root_step(o, r).
 root_step(e, r) :- kind(e, "call_expression"), field(e, "function", w), deparen(w, f), root_step(f, r).
 
-// says(w, x, m): the message for kind w in computed x ("" for a computed() getter).
-.decl says(w: symbol, x: symbol, m: symbol)
-says(w, x, cat(a, x, b)) :- getter(_, x), x != "", named(w, a, b).
-says(w, "", m) :- composition(w, m).
+// says(f, w, m): the message for kind w in getter f, named for its computed x ("" for a computed() getter). Keyed by
+// the getter, not the name (decision 0677).
+.decl says(f: node, w: symbol, m: symbol)
+says(f, w, cat(a, x, b)) :- getter(f, x), x != "", named(w, a, b).
+says(f, w, m) :- getter(f, ""), composition(w, m).
 .decl named(w: symbol, pre: symbol, post: symbol)
 named("async", "Make the \"", "\" computed getter synchronous and move the async work into a watcher or method.").
 named("await", "Remove this await from the \"", "\" computed and load the value in a watcher or method instead.").

@@ -35,6 +35,70 @@ fn sizes(n: i64, bytes: u64) -> Sizes {
     s
 }
 
+/// t33 step 3: a store that kept its runs in the eight `corpus_*` tables has them as kept facts once opened: read by
+/// the store's readers and, the tables gone, through virtual tables of their names; a scope's membership of a
+/// manifest stays (the table's drop would have cascaded into it).
+#[test]
+fn an_old_stores_corpus_tables_become_kept_facts() {
+    let (path, store) = store("corpus-tables-upgrade");
+    drop(store);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch(
+        "PRAGMA foreign_keys=OFF;
+         CREATE TABLE corpus_roots (root_id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE) STRICT;
+         CREATE TABLE corpus_manifests (manifest_id INTEGER PRIMARY KEY, root_id INTEGER NOT NULL REFERENCES corpus_roots(root_id),
+             last_run INTEGER NOT NULL, last_time INTEGER NOT NULL, grammar_version INTEGER NOT NULL, tape_format INTEGER NOT NULL,
+             plan_digest BLOB NOT NULL, digest BLOB NOT NULL, sources BLOB NOT NULL, lane BLOB, policy BLOB, UNIQUE (root_id, digest)) STRICT;
+         CREATE TABLE corpus_live (source_id INTEGER NOT NULL, grammar_version INTEGER NOT NULL, tape_format INTEGER NOT NULL,
+             PRIMARY KEY (source_id, grammar_version, tape_format)) STRICT, WITHOUT ROWID;
+         CREATE TABLE corpus_plans (plan_digest BLOB PRIMARY KEY, live INTEGER NOT NULL) STRICT, WITHOUT ROWID;
+         CREATE TABLE corpus_plan_relations (plan_digest BLOB NOT NULL, relation TEXT NOT NULL, columns TEXT NOT NULL,
+             PRIMARY KEY (plan_digest, relation)) STRICT, WITHOUT ROWID;
+         CREATE TABLE corpus_state (singleton INTEGER PRIMARY KEY, run INTEGER NOT NULL, history_bytes INTEGER NOT NULL,
+             due INTEGER NOT NULL, archive_due INTEGER NOT NULL DEFAULT 0) STRICT;
+         CREATE TABLE corpus_decided (singleton INTEGER PRIMARY KEY, run INTEGER NOT NULL, time INTEGER NOT NULL,
+             swept INTEGER NOT NULL DEFAULT 0) STRICT;
+         CREATE TABLE corpus_manifest_plans (manifest_id INTEGER NOT NULL, plan_digest BLOB NOT NULL,
+             PRIMARY KEY (manifest_id, plan_digest)) STRICT, WITHOUT ROWID;
+         DROP TABLE analysis_scope_manifest;
+         CREATE TABLE analysis_scope_manifest (scope TEXT NOT NULL,
+             manifest_id INTEGER NOT NULL REFERENCES corpus_manifests(manifest_id) ON DELETE CASCADE,
+             acquired_at INTEGER NOT NULL DEFAULT 0, acquisition INTEGER NOT NULL DEFAULT 0, recorded_run INTEGER NOT NULL DEFAULT 0,
+             PRIMARY KEY(scope, manifest_id)) STRICT, WITHOUT ROWID;
+         INSERT INTO corpus_roots VALUES (4, '/old/root');
+         INSERT INTO corpus_live VALUES (3, 1, 1), (5, 1, 1), (9, 1, 1);
+         INSERT INTO corpus_state VALUES (1, 5, 0, 1, 0);
+         INSERT INTO corpus_decided VALUES (1, 3, 100, 3);
+         INSERT INTO analysis_scope_manifest VALUES ('named:old', 2, 0, 0, 5);",
+    )
+    .unwrap();
+    let (plan, named) = ([7u8; 32], [8u8; 32]);
+    db.execute(
+        "INSERT INTO corpus_manifests VALUES (2, 4, 5, 200, 1, 1, ?1, ?2, ?3, NULL, NULL)",
+        rusqlite::params![&plan[..], &[6u8; 32][..], encode_ids(&[3, 5, 9])],
+    )
+    .unwrap();
+    db.execute("INSERT INTO corpus_manifest_plans VALUES (2, ?1)", [&named[..]]).unwrap();
+    db.execute("INSERT INTO corpus_plans VALUES (?1, 1), (?2, 1), (?3, 0)", rusqlite::params![&plan[..], &named[..], &[9u8; 32][..]]).unwrap();
+    db.execute("INSERT INTO corpus_plan_relations VALUES (?1, 'rel_a', '[]')", [&plan[..]]).unwrap();
+    drop(db);
+    let store = ContentStore::open(&path).unwrap();
+    assert_eq!(store.corpus_run_of("/old/root").unwrap(), Some((plan, vec![3, 5, 9], vec![("rel_a".to_owned(), "[]".to_owned())])));
+    assert_eq!(store.corpus_run_also("/old/root").unwrap(), vec![named]);
+    assert_eq!(store.live_plans().unwrap(), HashSet::from([plan, named]));
+    assert!(store.corpus_collection_due().unwrap(), "its state kept");
+    let c = store.connection.lock().unwrap();
+    let one = |sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(one("SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name GLOB 'corpus_*'"), 0, "the tables gone");
+    assert_eq!(one("SELECT run FROM corpus_state"), 5);
+    assert_eq!(one("SELECT swept FROM corpus_decided"), 3);
+    assert_eq!(one("SELECT count(*) FROM corpus_live"), 3);
+    assert_eq!(one("SELECT count(*) FROM corpus_manifests m JOIN corpus_roots r USING (root_id) WHERE r.path = '/old/root'"), 1);
+    assert_eq!(one("SELECT count(*) FROM corpus_plans WHERE live = 0"), 1);
+    assert_eq!(one("SELECT count(*) FROM analysis_scope_manifest WHERE manifest_id = 2"), 1, "the scope's membership kept");
+    assert!(!c.query_row("SELECT sql FROM sqlite_schema WHERE name = 'analysis_scope_manifest'", [], |r| r.get::<_, String>(0)).unwrap().contains("REFERENCES"));
+}
+
 #[test]
 fn source_ids_round_trip_as_delta_varints() {
     let ids = vec![1, 2, 130, 20_000, 1 << 40];
@@ -779,7 +843,8 @@ fn migrating_directory_membership_freezes_the_existing_manifest_order() {
     }
     drop(store);
     let db = rusqlite::Connection::open(&path).unwrap();
-    db.execute_batch("CREATE TEMP TABLE old_rows AS SELECT scope,manifest_id,acquired_at FROM analysis_scope_manifest;
+    db.execute_batch("PRAGMA foreign_keys=OFF;
+        CREATE TEMP TABLE old_rows AS SELECT scope,manifest_id,acquired_at FROM analysis_scope_manifest;
         DROP TABLE analysis_scope_manifest;
         CREATE TABLE analysis_scope_manifest (
             scope TEXT NOT NULL, manifest_id INTEGER NOT NULL REFERENCES corpus_manifests(manifest_id) ON DELETE CASCADE,

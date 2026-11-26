@@ -39,9 +39,12 @@ system-allocator = ["rerail-facts/system-allocator", "rerail-lang/system-allocat
 code-rule-profile = ["rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile", "rerail-rules/code-rule-profile"]
 p-anchor-corpus = ["rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus", "rerail-rules/p-anchor-corpus"]
 metal-tests = ["rerail-facts/metal-tests", "rerail-lang/metal-tests"]
-test-hooks = ["rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-rules/test-hooks", "dep:tempfile", "rerail-compiler/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-rr-parser/test-hooks"]
+test-hooks = ["rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-rules/test-hooks", "dep:tempfile", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-blocks/test-hooks"]
 
 [dependencies]
+# Its structures lie in blocks (`rerail_blocks::vector::Vector`, `maps`), as the engine\'s do.
+rerail-blocks = { path = "../blocks" }
+rerail-section = { path = "../section" }
 # `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).
 dunce = "=1.0.5"
 base64 = "=0.22.1"
@@ -95,8 +98,6 @@ rerail-rr-syntax = { path = "../rr_syntax" }
 rerail-store = { path = "../store" }
 rerail-rules = { path = "../rules", default-features = false }
 rerail-accel = { path = "../../../accel" }
-rerail-compiler = { path = "../compiler" }
-rerail-rr-parser = { path = "../rr_parser" }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
@@ -124,6 +125,8 @@ metal = "0.33.0"
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 
 [dev-dependencies]
+# The ECMAScript dialects' lean parser, registered in the parser router as the test binary loads (`test_load`).
+rerail-lean-tapes = { path = "../lean_tapes", features = ["test-hooks"] }
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-lang-ecma = { path = ".", features = ["test-hooks"] }
 ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }

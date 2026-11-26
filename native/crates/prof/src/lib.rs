@@ -668,6 +668,52 @@ pub mod heap {
         }
     }
 
+    /// jemalloc, with the heap sampler around it (`RERAIL_HEAP_SAMPLE`): off, one load more an allocation. The
+    /// global allocator of every binary of the engine: the engine's own (`rerail-engine`'s `lib.rs`) and each test
+    /// crate's. A test crate that declared none ran on the system allocator, which the engine never runs on (on glibc,
+    /// a mapping made and unmapped for each large allocation, its pages faulted in again each time).
+    /// Tree-sitter's allocations go to jemalloc directly and are not sampled.
+    #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+    pub struct Sampled;
+
+    // Every allocation of every crate calls these through the allocator shim (`__rust_alloc`): inlined into it, as
+    // jemalloc's own are, they cost the shim one load more an allocation and not a call of their own.
+    #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
+    unsafe impl std::alloc::GlobalAlloc for Sampled {
+        #[inline]
+        unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+            let p = unsafe { tikv_jemallocator::Jemalloc.alloc(layout) };
+            if on() {
+                alloc(p as usize, layout.size());
+            }
+            p
+        }
+        #[inline]
+        unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
+            let p = unsafe { tikv_jemallocator::Jemalloc.alloc_zeroed(layout) };
+            if on() {
+                alloc(p as usize, layout.size());
+            }
+            p
+        }
+        #[inline]
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+            if on() {
+                free(ptr as usize);
+            }
+            unsafe { tikv_jemallocator::Jemalloc.dealloc(ptr, layout) }
+        }
+        #[inline]
+        unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
+            let q = unsafe { tikv_jemallocator::Jemalloc.realloc(ptr, layout, new_size) };
+            if on() && !q.is_null() {
+                free(ptr as usize);
+                alloc(q as usize, new_size);
+            }
+            q
+        }
+    }
+
     /// The live samples' bytes by span id: a sample of `size` stands for `size` bytes when big, else for
     /// `size / (1 - e^(-size / INTERVAL))` (the expected bytes a sample of a byte-countdown stands for).
     pub fn snapshot() -> Vec<(u32, u64)> {
@@ -881,22 +927,11 @@ extern crate self as rerail_prof;
 pub mod code_rule_dsl {
     #[path = "logic"]
     pub mod logic {
-        pub mod front {
-            pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
-            pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
-            #[allow(unused_imports)]
-            use std::collections::{BTreeMap, BTreeSet};
-            #[allow(unused_imports)]
-            use std::fmt;
-            #[allow(unused_imports)]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::name::Name;
-            #[allow(unused_imports)]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, AggOp, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, SCOPE_NOT, SpanIn, Value, axis, globals, is_axis, is_transduced};
-        }
         pub mod profile;
     }
     pub mod phase_clock;
     pub mod prof;
+    pub mod sql_frame;
     #[allow(unused_imports)]
     use napi::Result;
     #[allow(unused_imports)]

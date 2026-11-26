@@ -32,14 +32,14 @@ DefaultCalledOnce(c, q) :- dco_value(f, v), (c = v ; within_stop(c, v, dco_stop)
 dco_value(f, v) :- dco_field(f, _), call_arg(f, -1, k, v), (k = "default" ; k = "limit_choices_to"), unparen(v, u),
     !kind(u, "lambda").
 // dco_field(f, t): call f constructs a model field whose Django class is t: a Django field class, or a class of the
-// run derived from one (dco_field_q, a linear closure from the Django classes).
+// run derived from one (its library ancestors, from the phase py_names).
 .decl dco_field(f: node, t: symbol)
 dco_field(f, t) :- dj_field_call(f, t).
-dco_field(f, t) :- kind(f, "call"), field(f, "function", e), sym_of(e, q), dco_field_q(q, t).
-.decl dco_field_q(q: symbol, t: symbol)
-dco_field_q(q, t) :- class_def(c, q), class_base(c, b), split_dot(b, m, t), dj_field_module(m),
+// A call of a field class of the run: a class whose ancestors, through the run's classes in any file, include Django's
+// field class t. The phase py_names hands on each class's library ancestors under its module (decision 0677).
+dco_field(f, t) :- kind(f, "call"), field(f, "function", e), sym_of(e, q), docof(f, d), doc(d, p, _),
+    py_names__reads_at(p, m), py_names__library_ancestor(m, q, b), split_dot(b, bm, t), dj_field_module(bm),
     (suffix("Field", t) ; dj_relation_class(t)).
-dco_field_q(q, t) :- class_def(c, q), class_base(c, b), dco_field_q(b, t).
 // dco_stop: code in a lambda or def runs when it is called, not at import.
 .decl dco_stop(k: symbol)
 dco_stop("lambda"). dco_stop("function_definition").

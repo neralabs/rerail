@@ -304,7 +304,10 @@ impl<'v> Printer<'v> {
                 let coordinates: Vec<_> = (0..).map(|i| format!("rr_position{i}")).filter(|v| !groups.contains(v) && v != &s).take(if *positions { 3 } else { 0 }).map(|v| var(&v)).collect();
                 let args = std::iter::once(var(&s)).chain(groups.iter().map(|g| var(g))).chain(coordinates.iter().cloned()).collect::<Vec<_>>().join(", ");
                 let matched = std::iter::once(quote(pattern)).chain(std::iter::once(var(&s))).chain(coordinates).collect::<Vec<_>>().join(", ");
-                format!("{}({args}) :- {}({}), match_all({matched}).", relation(head_rel), relation(input), var(&s))
+                // The input's other columns place each text in its file (`lower::text_matches`), left unread.
+                let places = self.v.decl_of(input).map_or(1, |d| d.cols().count()).saturating_sub(1);
+                let read = std::iter::once(var(&s)).chain(std::iter::repeat_n("_".to_owned(), places)).collect::<Vec<_>>().join(", ");
+                format!("{}({args}) :- {}({read}), match_all({matched}).", relation(head_rel), relation(input))
             }
         })
     }

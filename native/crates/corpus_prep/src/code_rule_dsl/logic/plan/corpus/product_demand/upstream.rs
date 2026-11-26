@@ -1,6 +1,7 @@
 //! Projected reader demand around a product. An optional restriction is installed only when every read supplies
 //! the selected columns independently and the new demand sits outside the relation's dependency component.
 
+use rerail_blocks::vector::Vector;
 use super::{Context, PREFIX as PRODUCT, Part, Program, connect, plain, rewritten, same, value, write_demand};
 use crate::code_rule_dsl::logic::front::name::List;
 use crate::code_rule_dsl::logic::front::Value;
@@ -188,7 +189,7 @@ struct Ask<'a> {
     prefix: &'a str,
     /// Each relation one document's in every row, with its location columns (`FileLocal::row_documents`): a demand
     /// keeps the tie its dropped read made between them (`same_document_ties`).
-    same_doc: Option<&'a BTreeMap<String, Vec<usize>>>,
+    same_doc: Option<&'a BTreeMap<String, rerail_blocks::vector::Vector<usize>>>,
 }
 
 /// A restriction `install` writes, planned on the program as it is: `rel`'s guard `name` at its columns `cols`, the
@@ -387,7 +388,7 @@ pub fn install_requests(
     program: &mut Program<'_>,
     requests: &[(String, &[usize])],
     prefix: &str,
-    same_doc: &BTreeMap<String, Vec<usize>>,
+    same_doc: &BTreeMap<String, rerail_blocks::vector::Vector<usize>>,
     restricts: &dyn Fn(&str, &[usize], &Version, &[Proof]) -> bool,
 ) -> Result<Vec<bool>, String> {
     let none = BTreeSet::new();
@@ -431,7 +432,7 @@ pub fn install_requests(
     Ok(installed)
 }
 
-fn node_columns(program: &Program<'_>, rel: &str) -> Vec<usize> {
+fn node_columns(program: &Program<'_>, rel: &str) -> Vector<usize> {
     program
         .columns(rel)
         .unwrap_or_default()
@@ -447,6 +448,7 @@ pub fn restrict(program: &mut Program<'_>, rel: &str, products: &BTreeSet<String
         return Ok(false);
     }
     let nodes = node_columns(program, rel);
+    let of_nodes = !nodes.is_empty();
     if tuple && nodes.len() > 1 && install(program, rel, &nodes, products, require_anchor)? {
         return Ok(true);
     }
@@ -455,8 +457,12 @@ pub fn restrict(program: &mut Program<'_>, rel: &str, products: &BTreeSet<String
             return Ok(true);
         }
     }
-    // A symbol can also bound a read, for example a requested qualified name.
-    let symbols: Vec<usize> = program
+    // A symbol can also bound a read, for example a requested qualified name. Of a relation of a file's nodes, only
+    // where what asks is constants (`asked_by_constants`): a demand fed by a file's rows is a table of every file's
+    // values, and the relation's rules, reading it at their nodes, went to the cross part (decision 0677, the data
+    // layer's `vmi_callee(f, x)` asked for by each file's aliases).
+    let facts = program.f.facts.clone();
+    let symbols: Vector<usize> = program
         .columns(rel)
         .unwrap_or_default()
         .iter()
@@ -465,11 +471,32 @@ pub fn restrict(program: &mut Program<'_>, rel: &str, products: &BTreeSet<String
         .map(|(i, _)| i)
         .collect();
     for i in symbols {
-        if install(program, rel, &[i], products, true)? {
+        let installed = if of_nodes {
+            install_alone(program, rel, &[i], &Ask { products, require_anchor: true, prefix: PREFIX, same_doc: None }, &|v, proofs| asked_by_constants(v, proofs, &facts))?
+        } else {
+            install(program, rel, &[i], products, true)?
+        };
+        if installed {
             return Ok(true);
         }
     }
     Ok(false)
+}
+
+/// Whether a demand's rules read constants alone: relations of stated facts no rule derives, and comparisons. Such a
+/// demand is the same in every file.
+fn asked_by_constants(v: &Version, proofs: &[Proof], facts: &BTreeSet<String>) -> bool {
+    let derived: BTreeSet<&str> = v.rules().filter(|r| r.body().next().is_some()).map(|r| v.rel_name(r.head().rel())).collect();
+    proofs.iter().all(|proof| {
+        let rule = v.rule(proof.rule).expect("a reader of the version");
+        proof.parts.iter().all(|part| match *part {
+            Part::Guard => false,
+            Part::Lit(j) => rule.body().nth(j).and_then(|l| l.atom()).is_none_or(|a| {
+                let r = v.rel_name(a.rel());
+                facts.contains(r) && !derived.contains(r)
+            }),
+        })
+    })
 }
 
 /// Anchor the readers of a mandatory product before its own demand is derived.

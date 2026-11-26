@@ -396,7 +396,7 @@ pub(super) fn restore_persisted_file(
 /// frame by the tape's read (`tape_has_kind`, the kernels' too), rules out every candidate clause: none of a clause's
 /// root kinds is in the tape, as the search index's `Absent` says. A tape with an error node (its kind `ERROR_CODE`'s
 /// bit) rules out none, as the index's syntax errors do not. `None` where the presence cannot tell and the search index
-/// is asked: a tape that holds none (format 15's, or a store's from before layout 5), a clause over a derived
+/// is asked: a tape that holds none (a store's from before layout 5), a clause over a derived
 /// document, a clause with project evidence, or one with no root kinds.
 fn presence_selects(store: &crate::content_store::ContentStore, source: crate::content_store::SourceId, grammar_id: i64, file: &FileState, code_rules: &[Arc<CompiledCodeRule>]) -> Option<bool> {
     let frames = store.tape_frames_for(&[source], grammar_id, grammar_version(), i64::from(tape::formats::stored_version())).ok()?;
@@ -780,11 +780,22 @@ pub(super) fn persist_files(
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
+    // Whether each file's documents are its whole record of programs (`programs_are_the_parse`), so the store keeps
+    // their count with its tape (decision 0431 step 6), as the engine's writer does.
+    let whole: Vec<bool> = prepared
+        .iter()
+        .map(|(file, ..)| {
+            file.tape.as_ref().is_some_and(|_| {
+                file_language(&file.input).and_then(|language| tape::Grammar::embedded(language).ok()).is_some_and(|grammar| crate::code_rule_dsl::facts::core::programs_are_the_parse(&grammar))
+            })
+        })
+        .collect();
     let publications = prepared
         .iter()
         .zip(&documents)
+        .zip(&whole)
         .map(
-            |((file, tape_bytes, grammar_id, aliases, _), documents)| {
+            |(((file, tape_bytes, grammar_id, aliases, _), documents), whole)| {
                 OverlayFilePublication {
                     path: &file.input.path,
                     state_id: i64::from(file.source_revision),
@@ -796,6 +807,7 @@ pub(super) fn persist_files(
                         tape_format_version: i64::from(tape::formats::stored_version()),
                         bytes,
                         documents,
+                        whole: *whole,
                     }),
                 }
             },

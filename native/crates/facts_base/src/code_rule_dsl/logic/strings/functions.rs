@@ -22,6 +22,9 @@ pub enum Kind {
     Number,
 }
 
+// A kind is its own record in a section (a native join's plan, decision 0628 §4).
+rerail_section::plain_archive!(Kind);
+
 use Kind::{Number, Text};
 
 /// Each function: its name, its arguments and its result.
@@ -133,6 +136,17 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     // A node's string literal's content (the syntax table's `LongTexts::str_any`): `str`'s answer (decisions 0174,
     // 0353 step 3).
     ("rr_node_str", &[Number], Text),
+    // `core.rerail`'s per-node values of a node (the syntax table's `LongTexts::core_read`), each read where a rule binds
+    // the node instead of a row a node (decision 0353 step 3): `name`, `comment`, `strprefix`.
+    ("rr_node_name", &[Number], Text),
+    ("rr_node_comment", &[Number], Text),
+    ("rr_node_strprefix", &[Number], Text),
+    // `op_at(n, i, s)`'s `s`: node `n`'s operator at place `i`, `""` past its last (`core_rr::node_ops`).
+    ("rr_node_op_at", &[Number, Number], Text),
+    // T's `text`, `intval` and `op` (`op_t` in core.rerail's shape) of a node (`syntax::TRel`).
+    ("rr_node_t_text", &[Number], Text),
+    ("rr_node_intval", &[Number], Number),
+    ("rr_node_op_t", &[Number], Text),
     // `.rerail`'s `substr(s, i, n)`: n characters from the i-th, counted from 0, as SQL's `substr(s, i + 1, n)` gives
     // them (`substr`).
     ("rr_substr", &[Text, Number, Number], Text),
@@ -198,9 +212,11 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
     let data = crate::code_rule_dsl::facts::vtab::connection_data(db);
     for name in NODE_READS {
         let data = std::sync::Arc::clone(&data);
-        db.create_scalar_function(name, 1, FunctionFlags::SQLITE_UTF8, move |ctx| {
-            let text = ctx.get::<Option<i64>>(0)?.and_then(|n| node_read(name, crate::code_rule_dsl::facts::vtab::bound_source_in(&data, LONG_TEXT_NODES).as_deref(), n));
-            Ok(text.map_or(Value::Null, Value::Text))
+        let arity = signature(name).map_or(1, |(_, args, _)| args.len());
+        db.create_scalar_function(name, i32::try_from(arity).expect("few arguments"), FunctionFlags::SQLITE_UTF8, move |ctx| {
+            let more: Vec<i64> = (1..arity).map(|i| ctx.get::<Option<i64>>(i).map(Option::unwrap_or_default)).collect::<rusqlite::Result<_>>()?;
+            let text = ctx.get::<Option<i64>>(0)?.and_then(|n| node_read(name, crate::code_rule_dsl::facts::vtab::bound_source_in(&data, LONG_TEXT_NODES).as_deref(), n, &more));
+            Ok(node_read_value(name, text))
         })?;
     }
     db.create_aggregate_function("rr_product", 1, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, Product)?;
@@ -210,8 +226,18 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
 /// A node read (`vtab::NODE_READS`) of node `n`: `@rr_node_text`'s text past `text`'s inline bound,
 /// `@rr_node_text_any`'s text at any length, `@rr_node_value`'s value, read through `nodes`, the run's binding of the
 /// long-text nodes with their batch (`syntax::LongTexts`); none without one. Its value is the run's, so `eval` has none.
-pub fn node_read(name: &str, nodes: Option<&dyn crate::code_rule_dsl::facts::vtab::Source>, n: i64) -> Option<String> {
-    nodes?.node_read(name, n)
+pub fn node_read(name: &str, nodes: Option<&dyn crate::code_rule_dsl::facts::vtab::Source>, n: i64, more: &[i64]) -> Option<String> {
+    nodes?.node_read(name, n, more)
+}
+
+/// A node read's answer as the value its signature returns: a number's (`@rr_node_intval`) from its decimal, else the
+/// text; NULL for none.
+pub fn node_read_value(name: &str, read: Option<String>) -> Value {
+    match (read, signature(name).map(|(_, _, ret)| ret)) {
+        (None, _) => Value::Null,
+        (Some(t), Some(Kind::Number)) => t.parse::<i64>().map_or(Value::Null, Value::Integer),
+        (Some(t), _) => Value::Text(t),
+    }
 }
 
 /// `product x : {…}` as the SQL aggregate `rr_product(x)`: the product of the integers, saturating at i64's range;
@@ -378,7 +404,7 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         "rr_to_string" => Some(numbers[0].to_string()),
         "zero_pad" => Some(format!("{:0w$}", numbers[0], w = usize::try_from(numbers[1].clamp(0, 64)).unwrap_or(0))),
         // Read through the run's binding of its batch (`node_read`), never by value alone.
-        "rr_node_text" | "rr_node_text_any" | "rr_node_value" | "rr_node_str" => None,
+        name if NODE_READS.contains(&name) => None,
         "rr_substr" => Some(substr(t(0), numbers[0], numbers[1])),
         "semver_valid" => return Value::Integer(i64::from(crate::code_rule_dsl::semver::Range::parse(t(0)).is_some())),
         "semver_subset" => {

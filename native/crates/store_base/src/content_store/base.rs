@@ -383,6 +383,9 @@ pub struct TapePayload<'a> {
     /// is stored as a source and a tape of its own, with this tape's grammar version and format,
     /// in the transaction that stores this tape. Empty for a single-language file.
     pub documents: &'a [DocumentPayload<'a>],
+    /// `documents` are every program of the file (decision 0431 step 6), so their count is stored with the tape (its
+    /// `programs`); otherwise it is stored as not known (-1) and recorded where the programs are made.
+    pub whole: bool,
 }
 
 /// A document derived from a file's primary one, published with the primary's tape.
@@ -412,7 +415,8 @@ pub struct QueuedDocument {
     pub parent_ordinal: i64,
     pub role_id: i64,
     pub via_id: i64,
-    pub source: std::sync::Arc<String>,
+    /// The document's source as it holds it, in its room (decision 0353 step 7, row 13): read there, not copied.
+    pub source: std::sync::Arc<rerail_tape_format::home::Text>,
     pub grammar_id: i64,
     pub tape: Vec<u8>,
     pub source_map: Vec<u8>,

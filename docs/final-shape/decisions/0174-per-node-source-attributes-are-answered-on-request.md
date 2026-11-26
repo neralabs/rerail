@@ -1,8 +1,9 @@
 # 0174: A node's source attributes are answered on request, by rules
 
-Status: draft (2026-11-13), for review; step 1 built (§7). It applies decision 0145's shape ("Building on it": a relation answered by a
-native step) to the per-node relations the projection makes eagerly today, and replaces the Rust demand analysis
-of decisions 0109 and 0108 §1 with rules.
+Status: partly built (audited 2026-11-23). Left: step 3: long text on request, removing the twins, rr_long_text_node
+and text_kind_demand; step 4 measure inline text. Draft (2026-11-13), for review; step 1 built (§7). It applies
+decision 0145's shape ("Building on it": a relation answered by a native step) to the per-node relations the
+projection makes eagerly today, and replaces the Rust demand analysis of decisions 0109 and 0108 §1 with rules.
 
 ## Intro
 

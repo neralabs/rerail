@@ -17,8 +17,8 @@
 .violation N806(at: node, x: symbol) code "N806"
     "Rename `{x}` to lowercase snake_case and update its uses; keep the name if it holds a class."
     suppress ruff "N806"
-N806(n, x) :- store_name(n, x, f), kind(f, "function_definition"), !lower_name(x), !global_name(f, x),
-    !type_store(n), !model_import(n, x), !naming_ignored(x).
+N806(n, x) :- store_name(n, x, f), kind(f, "function_definition"), !lower_name(n, x), !global_name(f, x),
+    !type_store(n), !model_import(n, x), !naming_ignored(n, x).
 .decl global_name(f: node, x: symbol)  // `global x` in f (not `nonlocal x`)
 global_name(f, x) :- decl(f, x, m), kind(m, "module").
 .decl type_store(n: node)

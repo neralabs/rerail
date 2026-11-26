@@ -304,9 +304,17 @@ thread_local! {
     static PHASES: std::cell::RefCell<Vec<(&'static str, u64, f64, f64)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// This thread's phases, given to `f`; nothing in the thread's teardown, once they are gone: a batch held in a
+/// thread-local (a wave left open) waits for its work as it is dropped there, with no job to count it to. Read then,
+/// they aborted the process at its exit ("cannot access a Thread Local Storage value during or after destruction",
+/// t50 step 9: one run of four on Metal at 512 MB).
+fn phases(f: impl FnOnce(&mut Vec<(&'static str, u64, f64, f64)>)) {
+    let _ = PHASES.try_with(|p| f(&mut p.borrow_mut()));
+}
+
 /// Adds `cpu` and `wall` seconds to this thread's job under `name`.
 pub fn add(name: &'static str, cpu: f64, wall: f64) {
-    PHASES.with_borrow_mut(|p| match p.iter_mut().find(|e| e.0 == name) {
+    phases(|p| match p.iter_mut().find(|e| e.0 == name) {
         Some(e) => {
             e.1 += 1;
             e.2 += cpu;
@@ -321,7 +329,7 @@ pub fn count(name: &'static str, n: u64) {
     if n == 0 {
         return;
     }
-    PHASES.with_borrow_mut(|p| match p.iter_mut().find(|e| e.0 == name) {
+    phases(|p| match p.iter_mut().find(|e| e.0 == name) {
         Some(e) => e.1 += n,
         None => p.push((name, n, 0.0, 0.0)),
     });
@@ -337,7 +345,9 @@ pub fn phase<R>(name: &'static str, f: impl FnOnce() -> R) -> R {
 
 /// This thread's phases so far, taken (a job's start clears them, its end takes them).
 pub fn take_phases() -> Vec<(&'static str, u64, f64, f64)> {
-    PHASES.with_borrow_mut(std::mem::take)
+    let mut taken = Vec::new();
+    phases(|p| taken = std::mem::take(p));
+    taken
 }
 
 /// A finished job, for the cost statistics (decision 0100 §14): what it was, what the price expected, and what it
@@ -803,6 +813,33 @@ impl Scoreboard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A value held in a thread-local that counts a phase as it is dropped (a batch waiting for its work, a wave left
+    /// open) is dropped in the thread's teardown, after the phases may be gone: its count is lost, and the thread ends.
+    /// Read regardless, the phases' thread-local aborted the process at its exit.
+    #[test]
+    fn a_phase_counted_in_a_threads_teardown_is_dropped() {
+        struct CountsOnDrop;
+        impl Drop for CountsOnDrop {
+            fn drop(&mut self) {
+                add("teardown", 0.0, 1.0);
+                count("teardown events", 1);
+                crate::exec::command_committed();
+            }
+        }
+        thread_local! {
+            static HELD: std::cell::RefCell<Option<CountsOnDrop>> = const { std::cell::RefCell::new(None) };
+        }
+        std::thread::spawn(|| {
+            // Held first, the phases after: their destructors run in the reverse order, the phases' first.
+            HELD.with_borrow_mut(|h| *h = Some(CountsOnDrop));
+            add("before", 0.0, 1.0);
+            assert_eq!(take_phases().len(), 1, "counted while the thread runs");
+            add("before", 0.0, 1.0);
+        })
+        .join()
+        .expect("the thread ends, its teardown's count dropped");
+    }
 
     /// A job's estimate is outstanding from its queueing to its end, and its counts land on its lane and form.
     #[test]

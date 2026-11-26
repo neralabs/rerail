@@ -390,6 +390,8 @@ impl AtomsW {
         if let Some(f) = self.block.mapped_file().map(std::fs::File::try_clone).transpose()? {
             drop(self);
             crate::block::cut(&f, len)?;
+            // Frozen: read-only on disk too (`mapped`, decision 0574).
+            crate::mapped::mark_frozen(&f)?;
         }
         #[cfg(not(any(unix, windows)))]
         if let Some(f) = &self.file {
@@ -695,7 +697,7 @@ mod tests {
     fn dir(name: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("rerail-atoms-block-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
+        crate::mapped::make_folder(&d).unwrap();
         d
     }
 

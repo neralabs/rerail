@@ -24,14 +24,14 @@ const TOP: i64 = 1 << 62;
 
 /// The flat-lattice system: seeds, and copies `(cell, source)`.
 pub struct System {
-    pub seeds: Vec<i64>,
+    pub seeds: Vector<i64>,
     pub copies: Vec<(u32, u32)>,
 }
 
-pub fn system(trees: &Trees<'_>, sets: &[Vec<i64>]) -> StoreResult<System> {
+pub fn system(trees: &Trees<'_>, sets: &[Vector<i64>]) -> StoreResult<System> {
     let n = trees.parent.len();
     let cells = n.checked_mul(sets.len()).filter(|&c| c < u32::MAX as usize).ok_or_else(|| StoreError::Invalid(format!("nearest: {n} nodes in {} sets", sets.len())))?;
-    let mut seeds = vec![BOT; cells];
+    let mut seeds = rerail_blocks::vector![BOT; cells];
     let mut copies = Vec::new();
     for (k, set) in sets.iter().enumerate() {
         let base = k * n;
@@ -51,12 +51,12 @@ pub fn system(trees: &Trees<'_>, sets: &[Vec<i64>]) -> StoreResult<System> {
 
 /// The system's least fixpoint on the CPU: a cell's value is its seed joined with its sources', evaluated
 /// again whenever a source rises.
-pub fn solve_cpu(system: &System) -> Vec<i64> {
+pub fn solve_cpu(system: &System) -> Vector<i64> {
     let n = system.seeds.len();
     // Sources and dependents as CSR (a cell has one source here; the solver does not rely on it).
-    let csr = |edges: &mut Vec<(u32, u32)>| -> (Vec<u32>, Vec<u32>) {
+    let csr = |edges: &mut Vec<(u32, u32)>| -> (Vector<u32>, Vector<u32>) {
         edges.sort_unstable();
-        let mut start = vec![0_u32; n + 1];
+        let mut start = rerail_blocks::vector![0_u32; n + 1];
         for &(a, _) in edges.iter() {
             start[a as usize + 1] += 1;
         }
@@ -69,7 +69,7 @@ pub fn solve_cpu(system: &System) -> Vec<i64> {
     let (dependent_start, dependents) = csr(&mut system.copies.iter().map(|&(cell, source)| (source, cell)).collect());
     let join = |a: i64, b: i64| if a == BOT { b } else if b == BOT || a == b { a } else { TOP };
     let mut values = system.seeds.clone();
-    let mut work: Vec<u32> = (0..n as u32).filter(|&c| values[c as usize] != BOT).collect();
+    let mut work: Vector<u32> = (0..n as u32).filter(|&c| values[c as usize] != BOT).collect();
     while let Some(cell) = work.pop() {
         for &dependent in &dependents[dependent_start[cell as usize] as usize..dependent_start[cell as usize + 1] as usize] {
             let d = dependent as usize;
@@ -88,12 +88,14 @@ pub fn solve_cpu(system: &System) -> Vec<i64> {
 const CELLS: usize = 1 << 18;
 
 /// Per set, per node of `trees`: its nearest strict ancestor whose kind is in the set, or `NONE`.
-pub fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<Vec<Vec<u32>>> {
+use rerail_blocks::vector::Vector;
+
+pub fn nearest(trees: &Trees<'_>, sets: &[Vector<i64>], binding: Binding) -> StoreResult<Vec<Vector<u32>>> {
     let n = trees.parent.len();
     if n == 0 || sets.is_empty() {
-        return Ok(vec![Vec::new(); sets.len()]);
+        return Ok((0..sets.len()).map(|_| Vector::new()).collect());
     }
-    let mut out = vec![Vec::with_capacity(n); sets.len()];
+    let mut out: Vec<Vector<u32>> = (0..sets.len()).map(|_| Vector::with_capacity(n)).collect();
     let per = (CELLS / sets.len()).max(1);
     let mut start = 0;
     while start < n {
@@ -102,7 +104,7 @@ pub fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreR
         while end < n && trees.parent[end] != NONE {
             end += 1;
         }
-        let parent: Vec<u32> = trees.parent[start..end].iter().map(|&p| if p == NONE { NONE } else { p - start as u32 }).collect();
+        let parent: Vector<u32> = trees.parent[start..end].iter().map(|&p| if p == NONE { NONE } else { p - start as u32 }).collect();
         let piece = Trees { parent: &parent, kind: &trees.kind[start..end] };
         for (set, found) in out.iter_mut().zip(solve(&piece, sets, binding)?) {
             set.extend(found.into_iter().map(|a| if a == NONE { NONE } else { a + start as u32 }));
@@ -116,7 +118,7 @@ pub fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreR
 /// starts at the parent and jumps to its target's target until final (`metal_nearest`). On the CPU: one pass in
 /// preorder, where a node reads its parent's answer once; the worklist over the lattice system where a parent does
 /// not precede its children.
-fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<Vec<Vec<u32>>> {
+fn solve(trees: &Trees<'_>, sets: &[Vector<i64>], binding: Binding) -> StoreResult<Vec<Vector<u32>>> {
     use crate::code_rule_dsl::logic::profile;
     let n = trees.parent.len();
     let member = |k: usize, node: u32| sets[k].contains(&trees.kind[node as usize]);
@@ -124,8 +126,8 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
     if let Some(dev) = crate::code_rule_dsl::logic::device::solver().filter(|_| binding == Binding::Metal) {
         let _span = profile::span(|| "nearest on Metal (pointer jumping)".into());
         profile::decision("nearest ancestors", || format!("solved per piece of at most {CELLS} cells on Metal by pointer jumping, one dispatch and one wait"));
-        let mut target = Vec::with_capacity(n * sets.len());
-        let mut done = Vec::with_capacity(n * sets.len());
+        let mut target: Vector<u32> = Vector::with_capacity(n * sets.len());
+        let mut done: Vector<u8> = Vector::with_capacity(n * sets.len());
         for k in 0..sets.len() {
             for &p in trees.parent {
                 target.push(p);
@@ -141,7 +143,7 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
                 profile::device(kernel, solved.launches as u64, solved.gpu, solved.wall, target.len() as u64);
                 profile::device_phases(kernel, solved.phases, solved.made, solved.reused);
                 crate::code_rule_dsl::prof::count("nearest.device_steps", solved.rounds as usize);
-                return Ok(solved.targets.chunks(n.max(1)).map(<[u32]>::to_vec).collect());
+                return Ok(solved.targets.chunks(n.max(1)).map(Vector::from).collect());
             }
             Err(Refused::NoDevice) => {
                 profile::decision("fallback", || "nearest ancestors: the Metal binding found no device and solved on the CPU".into());
@@ -156,7 +158,7 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
         profile::decision("nearest ancestors", || format!("solved per piece of at most {CELLS} cells on the CPU, one pass in preorder"));
         return Ok((0..sets.len())
             .map(|k| {
-                let mut found = vec![NONE; n];
+                let mut found: Vector<u32> = rerail_blocks::vector![NONE; n];
                 for v in 0..n {
                     let p = trees.parent[v];
                     if p != NONE {
@@ -185,6 +187,9 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
 
 mod on_version;
 pub use on_version::{FLAG_COPY, FileLocal, LastFlags, flag_copy};
+pub use on_version::reads_a_node;
+mod node_crossings;
+pub use node_crossings::{NodeColumns, NodeCrossing, crossings_under, node_crossings, nodes_checked, strict_nodes};
 mod passes;
 pub use passes::{FactorCaches, FactorizeExports, Locate, MoveCrossFile, PushLocalJoins, RequestsFileLocal, factorize_intermediates, locate_all};
 #[cfg(any(test, feature = "test-hooks"))]
@@ -216,20 +221,25 @@ pub fn option_input(rel: &str) -> bool {
 /// document; which rows a file's results can read, and so its memo entry's key, is `corpus::memo::settings_scopes`'.
 /// An earlier phase's export is placeless too (decision 0675, `plan::phased::is_probed`), its readers' memo entries
 /// keyed by the rows of it their probes read (`memo::StageDigests`): `tsx_names`' module resolution among them.
+/// `npm_ignored(path)` is a package's too: the paths npm leaves out of it, by its package.json `files` and its
+/// .npmignore (lib/tsx/node-package.rerail). Read with no place, node's unpublished checks carried the importing
+/// files' nodes into the cross-file part (decision 0677).
 pub fn setting_input(rel: &str) -> bool {
-    matches!(rel, "package" | "package_field" | "package_export" | "tsconfig" | "tsconfig_path" | "package_for" | "tsconfig_for" | "env")
+    matches!(rel, "package" | "package_field" | "package_export" | "tsconfig" | "tsconfig_path" | "package_for" | "tsconfig_for" | "env" | "npm_ignored")
         || SETTINGS_BY_PATH.iter().any(|(r, _)| *r == rel)
         || SETTINGS_BY_FOLDER.contains(&rel)
 }
 
 /// The settings with a row per file (decision 0665), keyed by its path in column 0, and the column that names the
 /// folder (`package_for(path, dir)`, `tsconfig_for(path, dir)`) whose rows it reads. `SETTINGS_BY_FOLDER` holds those
-/// keyed by such a folder, in column 0.
-pub const SETTINGS_BY_PATH: [(&str, usize); 2] = [("package_for", 1), ("tsconfig_for", 1)];
+/// keyed by such a folder, in column 0. A phase's exports (`tsx_names`, `py_names`, `points_to`) are none of these: a
+/// file's entry is keyed by the rows of them its rules read, at its probes (decision 0675).
+pub const SETTINGS_BY_PATH: [(&str, Option<usize>); 2] = [("package_for", Some(1)), ("tsconfig_for", Some(1))];
 pub const SETTINGS_BY_FOLDER: [&str; 4] = ["package", "package_field", "tsconfig", "tsconfig_path"];
 
-/// The folder or target column of a setting keyed by a file's path (`SETTINGS_BY_PATH`).
-pub fn setting_by_path(rel: &str) -> Option<usize> {
+/// The folder column of a setting keyed by a file's path (`SETTINGS_BY_PATH`): `None` when the relation is not one,
+/// `Some(None)` when it is and names none.
+pub fn setting_by_path(rel: &str) -> Option<Option<usize>> {
     SETTINGS_BY_PATH.iter().find(|(r, _)| *r == rel).map(|(_, c)| *c)
 }
 
@@ -314,9 +324,9 @@ pub struct Programs {
     pub exports: Vec<String>,
     pub base: Vec<String>,
     /// Each derived relation's location columns (`FileLocal::locations`).
-    pub locations: std::collections::BTreeMap<String, Vec<usize>>,
+    pub locations: std::collections::BTreeMap<String, Vector<usize>>,
     /// The same-document columns of each file-local or base relation (`FileLocal::same_doc`): what a cross-file hop reads.
-    pub same_doc: std::collections::BTreeMap<String, Vec<usize>>,
+    pub same_doc: std::collections::BTreeMap<String, Vector<usize>>,
     /// What the split found, and the parts are made of (`assemble`): the file-local relations, and the relations of
     /// constants derived in both parts. A prepared program keeps these, not the two parts: each is the program's own
     /// rules, a part of them, so the parts are made from the program again when it is read.
@@ -338,6 +348,8 @@ pub struct Programs {
     pub positions: Vec<(String, String)>,
     /// The split's undeclared crossings (`FileLocal::crossings`, decision 0652).
     pub crossings: std::collections::BTreeMap<String, String>,
+    /// The cross part's relations that hold or read a node id (decision 0677, `node_crossings`).
+    pub nodes: Vec<NodeCrossing>,
 }
 
 /// The relations a node's place in its document is (decision 0649): an edit moves them for every node after it, so
@@ -345,12 +357,18 @@ pub struct Programs {
 pub const POSITIONS: &[&str] = &["visit_index", "node_order", "line", "col", "end_line", "ast_depth"];
 
 /// The cross part's rules that read a position (`POSITIONS`), but for those whose head is one of the program's
-/// outputs: a finding is placed by its line and column, once, where it is written.
+/// outputs: a finding is placed by its line and column, once, where it is written. A piece of an output's rule a pass
+/// made (a pushed join's `fl…_violation`) places the same finding, and so does `locate`'s relay of either
+/// (`violation_at`, `fl…_violation_at`).
 fn position_reads(cross: &crate::code_rule_dsl::logic::program_image::Version, outputs: &std::collections::BTreeSet<&str>) -> Vec<(String, String)> {
     let mut out: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();
+    let placing = |h: &str| {
+        let h = h.strip_suffix("_at").filter(|r| cross.rel(r).is_some()).unwrap_or(h);
+        outputs.contains(h) || lowering_source(cross, h).is_some_and(|s| outputs.contains(s.as_str()))
+    };
     for r in cross.rules() {
         let head = cross.rel_name(r.head().rel());
-        if outputs.contains(head) {
+        if placing(head) {
             continue;
         }
         for l in r.body() {
@@ -397,6 +415,8 @@ pub fn programs_of(version: std::sync::Arc<crate::code_rule_dsl::logic::program_
     let mut programs = assemble(version, local, constants, split.views(), split.locations.clone(), split.same_doc.clone())?;
     programs.causes = split.causes.clone();
     programs.crossings = split.crossings.clone();
+    crossings_under(&programs.program, &mut programs.nodes, &programs.causes);
+    nodes_checked(&programs.nodes, strict_nodes())?;
     Ok(programs)
 }
 
@@ -409,8 +429,8 @@ pub fn assemble(
     local: std::collections::BTreeSet<String>,
     constants: std::collections::BTreeSet<String>,
     views: std::collections::BTreeSet<String>,
-    locations: std::collections::BTreeMap<String, Vec<usize>>,
-    same_doc: std::collections::BTreeMap<String, Vec<usize>>,
+    locations: std::collections::BTreeMap<String, Vector<usize>>,
+    same_doc: std::collections::BTreeMap<String, Vector<usize>>,
 ) -> Result<Programs, String> {
     let placed = crate::code_rule_dsl::logic::plan::body::Placed::whole(version.clone());
     let f = placed.fields().map_err(|e| e.to_string())?;
@@ -448,7 +468,13 @@ pub fn assemble(
     let outputs: std::collections::BTreeSet<&str> = f.outputs().collect();
     let positions = position_reads(&versions.cross, &outputs);
     positions_checked(&positions)?;
-    Ok(Programs { exports, base, locations, same_doc, file_local: local, constants, views, versions, program: version, causes: Default::default(), positions, crossings: Default::default() })
+    // No node id crosses into the cross part (decision 0677): found here, reported (and refused under
+    // `RERAIL_STRICT_NODES`) where the program is split from its source (`programs_of`), by the causes found there.
+    let nodes = {
+        let _step = crate::code_rule_dsl::logic::profile::span(|| "the cross-file part's node ids (decision 0677)".into());
+        node_crossings(&version, &f, &versions.cross, &local)
+    };
+    Ok(Programs { exports, base, locations, same_doc, file_local: local, constants, views, versions, program: version, causes: Default::default(), positions, crossings: Default::default(), nodes })
 }
 
 /// Whether the factorized store is on (decision 0099): it is, unless `RERAIL_FACTORIZE=off` or the run's option
@@ -547,7 +573,8 @@ pub fn semijoin_bases(cross: &crate::code_rule_dsl::logic::program_image::Versio
     // A relation with no node column reaches no node.
     let reaches_nodes = |rel: &str| types_of(rel).is_none_or(|ts| ts.iter().any(|t| matches!(*t, "node" | "loc" | "span")));
     let is_base = |rel: &str| base.iter().any(|b| b == rel);
-    let natives = crate::code_rule_dsl::logic::program_image::About::of(v).natives;
+    let about = crate::code_rule_dsl::logic::program_image::About::of(v);
+    let natives = &about.natives;
     let outputs: Vec<&str> = v.outputs().map(|a| v.text(a)).collect();
     // The attributes still taken as semi-joins (by their base relation), and the relations whose nodes may not trace
     // back to an export.
@@ -557,7 +584,7 @@ pub fn semijoin_bases(cross: &crate::code_rule_dsl::logic::program_image::Versio
         let (semi_before, tainted_before) = (semi.len(), tainted.len());
         // A source of tainted nodes: a base relation that reaches nodes and is no attribute, or a tainted relation.
         let source = |a: AtomRef<'_>, tainted: &BTreeSet<String>| !a.neg() && !key.contains_key(name(a)) && (tainted.contains(name(a)) || (is_base(name(a)) && reaches_nodes(name(a))));
-        for native in &natives {
+        for native in natives.iter() {
             for r in native.reads.iter().map(|r| v.rel_name(*r)) {
                 if key.contains_key(r) {
                     semi.remove(&root(r));
@@ -657,7 +684,7 @@ pub fn crossings_checked(p: &Programs) -> Result<(), String> {
     let mut refused: Vec<String> = p.crossings.iter().filter(|(rel, _)| !meant(rel)).map(|(rel, why)| crossing_shown(v, rel, why)).collect();
     for rel in moved_in(&f) {
         // A function of strings (`match_all`) moved for a cross-file reader joins no documents.
-        let functional = f.native(rel).is_some_and(|nat| matches!(nat.spec, crate::code_rule_dsl::logic::program_image::NativeSpec::MatchAll { .. })) || f.qualified(rel, STRATEGY);
+        let functional = f.native(rel).is_some_and(|nat| matches!(nat.spec, crate::code_rule_dsl::logic::program_image::ArchivedNativeSpec::MatchAll { .. })) || f.qualified(rel, STRATEGY);
         if !functional && !placement_only(v, &f, rel) && !meant(rel) {
             refused.push(crossing_shown(v, rel, "its rows name no document (moved by `locate`), and are read on"));
         }
@@ -682,7 +709,12 @@ fn placement_only(v: &crate::code_rule_dsl::logic::program_image::Version, f: &c
 /// One refused relation: its name, the relation of the source that reads it when the lowering made it (`rr_…`), and
 /// why, with its rule.
 fn crossing_shown(v: &crate::code_rule_dsl::logic::program_image::Version, rel: &str, why: &str) -> String {
-    let of = match lowering_source(v, rel) {
+    crossing_shown_with(lowering_source(v, rel).as_deref(), rel, why)
+}
+
+/// A refused relation shown (`crossing_shown`), its lowering's source relation `source` found.
+fn crossing_shown_with(source: Option<&str>, rel: &str, why: &str) -> String {
+    let of = match source {
         Some(s) => format!(" (made by the lowering of {s})"),
         None => String::new(),
     };
@@ -692,6 +724,11 @@ fn crossing_shown(v: &crate::code_rule_dsl::logic::program_image::Version, rel: 
 /// For a relation the lowering made (`rr_…`, under a program's prefix), the first relation, reader by reader, that it
 /// did not make; `None` for a relation of the source.
 fn lowering_source(v: &crate::code_rule_dsl::logic::program_image::Version, rel: &str) -> Option<String> {
+    lowering_source_in(v, rel, &|r: &str| v.rules().filter(|x| x.body().filter_map(|l| l.atom()).any(|a| v.rel_name(a.rel()) == r)).map(|x| v.rel_name(x.head().rel()).to_owned()).collect())
+}
+
+/// `lowering_source`, each relation's readers' heads given by `readers` (an index made once, for many relations).
+fn lowering_source_in(v: &crate::code_rule_dsl::logic::program_image::Version, rel: &str, readers: &dyn Fn(&str) -> Vec<String>) -> Option<String> {
     // `rr_…` under a program's prefix (`p3_rr_…`), and the passes' helpers by their hashed prefixes (`helper_name`):
     // a factor `fz…_`, its key `fzk…_`, a pushed join's `fl…_`, an export's `xd_`.
     let hashed = |r: &str| ["fzk", "fz", "fl"].iter().any(|p| r.strip_prefix(p).and_then(|x| x.split_once('_')).is_some_and(|(h, _)| !h.is_empty() && h.bytes().all(|b| b.is_ascii_digit())));
@@ -701,9 +738,13 @@ fn lowering_source(v: &crate::code_rule_dsl::logic::program_image::Version, rel:
             || hashed(r)
             || r.split_once('_').is_some_and(|(p, rest)| p.len() > 1 && p.starts_with(['p', 'q']) && p[1..].bytes().all(|b| b.is_ascii_digit()) && (rest.starts_with("rr_") || hashed(rest)))
     };
+    // A relation of the source names itself: no reader is read for it.
+    if !made(rel) {
+        return None;
+    }
     // A guest's copy of a relation (`rr_in_<label>_<rel>`, `hide.rs`), or a context's (`rr_pass_<context>_<rel>`,
     // decision 0597), copies of copies too: that relation, its rows over the guest's or the context's documents.
-    if made(rel) && let Some(rest) = rel.split_once("rr_in_").or_else(|| rel.split_once("rr_pass_")).map(|(_, r)| r) {
+    if let Some(rest) = rel.split_once("rr_in_").or_else(|| rel.split_once("rr_pass_")).map(|(_, r)| r) {
         let copied = rest.match_indices('_').map(|(i, _)| &rest[i + 1..]).find(|r| v.rel(r).is_some() && !made(r));
         if let Some(r) = copied {
             return Some(r.to_owned());
@@ -715,17 +756,20 @@ fn lowering_source(v: &crate::code_rule_dsl::logic::program_image::Version, rel:
     if hashed(named) && let Some((_, r)) = named.split_once('_') && v.rel(r).is_some() && !made(r) {
         return Some(r.to_owned());
     }
-    // The first relation, reader by reader, that the lowering did not make.
+    // The first relation, reader by reader, that the lowering did not make (the least by name of the first round
+    // that has one).
     let mut source = None;
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::from([rel.to_owned()]);
     let mut round = vec![rel.to_owned()];
     while source.is_none() && !round.is_empty() {
         let mut next = Vec::new();
         for r in &round {
-            for rule in v.rules().filter(|x| x.body().filter_map(|l| l.atom()).any(|a| v.rel_name(a.rel()) == r)) {
-                let h = v.rel_name(rule.head().rel()).to_owned();
+            for h in readers(r) {
                 if !made(&h) {
-                    source.get_or_insert(h);
+                    // The least of the round's: the same whichever order the readers are found in.
+                    if source.as_ref().is_none_or(|s: &String| h < *s) {
+                        source = Some(h);
+                    }
                 } else if seen.insert(h.clone()) {
                     next.push(h);
                 }
@@ -733,6 +777,6 @@ fn lowering_source(v: &crate::code_rule_dsl::logic::program_image::Version, rel:
         }
         round = next;
     }
-    source.filter(|_| made(rel))
+    source
 }
 

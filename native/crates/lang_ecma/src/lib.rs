@@ -504,8 +504,6 @@ pub mod code_rule_dsl {
     pub use rerail_facts::code_rule_dsl::search_index;
     pub use rerail_lang::code_rule_dsl::semver;
     pub use rerail_rules::code_rule_dsl::soundness;
-    pub use rerail_facts::code_rule_dsl::sql_profile;
-    pub use rerail_facts::code_rule_dsl::sql_admission;
     #[path = "suppress"]
     pub mod suppress {
         pub use rerail_rules::code_rule_dsl::suppress::*;
@@ -646,3 +644,36 @@ pub mod code_rule_dsl {
     use std::sync::Arc;
 }
 // cratify: mounts end
+
+/// This crate's own test binary, which the engine does not load: ECMAScript's and Vue's language packs and the
+/// dialects' lean parser are registered as the binary loads, as the engine registers them (`boot::install_languages`),
+/// so its tests parse with their terminators (decision 0612), and a script, whole or embedded (`embed::Parse::read`),
+/// is read by the lean parser, as the engine reads one.
+#[cfg(test)]
+mod test_load {
+    extern "C" fn load() {
+        use crate::code_rule_dsl::language::{self, Family, GrammarDialect, adapter::{ecma::Ecma, pack::{Pack, register}, vue::Vue}};
+        register(Family::Ecma, &Pack::<Ecma>::NEW);
+        language::register_base(Family::Ecma, &Pack::<Ecma>::NEW);
+        register(Family::Vue, &Pack::<Vue>::NEW);
+        language::register_base(Family::Vue, &Pack::<Vue>::NEW);
+        use crate::code_rule_dsl::tape::{ParserImpl, install_parsers};
+        use rerail_lean_tapes::code_rule_dsl::tape::ecma_lean::{JAVASCRIPT, TSX, TYPESCRIPT};
+        install_parsers(vec![
+            ParserImpl { dialect: GrammarDialect::JavaScript, name: "lean JavaScript parser", rank: 0, runs: true, parser: &JAVASCRIPT },
+            ParserImpl { dialect: GrammarDialect::TypeScript, name: "lean TypeScript parser", rank: 0, runs: true, parser: &TYPESCRIPT },
+            ParserImpl { dialect: GrammarDialect::Tsx, name: "lean TSX parser", rank: 0, runs: true, parser: &TSX },
+        ]);
+    }
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
+    #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
+}
+
+// The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
+// host's umask of `002` made a fixture's folder `775`, which the mapped files' rules refuse.
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;

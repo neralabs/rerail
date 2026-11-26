@@ -62,7 +62,6 @@ fn run(root: &Path, out: &Path) -> (Value, Keys) {
             "memo":report.memo,"prepared":report.prepared,
             "crossStrata":report.cross_strata,"crossMaintained":report.cross_maintained,
             "crossChanged":report.cross_changed,"crossAgain":report.cross_again,
-            "crossDeltaCounts":report.cross_delta_counts,
             "typing":format!("{:?}",report.typing),
             "phaseRunCount":report.phase_runs.len(),
             "observed":{"stats":report.files_observed.stats,"hashed":report.files_observed.hashed,
@@ -286,7 +285,7 @@ fn empty_required_input_avoids_expansion_and_resumes_after_growth() {
     setfix::run(&db,"empty_guard",0).unwrap();
     let counts=setfix::step_counts(&db,"empty_guard").unwrap();
     assert_eq!(counts.iter().flatten().map(|(n,_)|*n).sum::<i64>(),0,"the empty positive input must prevent the scan: {counts:?}");
-    setfix::add(&db,"empty_guard","ready",&[vec![9]]).unwrap();
+    setfix::add(&db,"empty_guard","ready",&[rerail_blocks::vector![9]]).unwrap();
     setfix::run(&db,"empty_guard",0).unwrap();
     let result:Vec<i64>=db.prepare("SELECT c0 FROM result ORDER BY c0").unwrap().query_map([],|r|r.get(0)).unwrap().collect::<Result<_,_>>().unwrap();
     assert_eq!(result,vec![1,2,3],"an input that grows must wake the join");

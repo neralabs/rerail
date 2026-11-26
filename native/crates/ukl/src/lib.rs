@@ -38,7 +38,11 @@ include!("carried.rs");
 
 /// The Metal front end's own headers, which it includes in every source itself: empty when a source that names them
 /// (a hand-written MSL kernel that takes the library's headers) is preprocessed ahead of it.
-const METAL_OWN: &[&str] = &["metal_stdlib", "metal_atomic"];
+const METAL_OWN: &[&str] = &["metal_stdlib", "metal_atomic", "metal_tensor", METAL_MPP];
+
+/// Metal 4's tensor operations (`matmul2d`, decision 0617's M5 form): a header of the front end's that it does not
+/// include by itself, so a preprocessed text that included it names it again, first (`Preprocess::run`).
+const METAL_MPP: &str = "MetalPerformancePrimitives/MetalPerformancePrimitives.h";
 
 /// A fingerprint of everything a kernel can include from here (the shims and the library): a kernel's text names its
 /// headers, not their contents, so a store of compiled kernels keys a kernel by its text and this.
@@ -56,12 +60,12 @@ pub fn takes_library(text: &str) -> bool {
     text.contains("#include <ukl")
 }
 
-/// A Metal source that takes the library (`takes_library`), preprocessed for the Metal front end: the library's
-/// headers in place, the source's own text and macros as written. A hand-written MSL kernel includes the generated
-/// reads so (decision 0440 §3.3) until it is UKL itself.
-pub fn metal_source(name: &str, text: &str) -> Result<String, Error> {
+/// A Metal source that takes the library (`takes_library`), preprocessed for the Metal front end and `target` (a
+/// Metal tier, `Target`): the library's headers in place, the source's own text and macros as written. A
+/// hand-written MSL kernel includes the generated reads so (decision 0440 §3.3) until it is UKL itself.
+pub fn metal_source(target: &Target, name: &str, text: &str) -> Result<String, Error> {
     let path = format!("/<kernels>/{name}");
-    Preprocess::new(Backend::Metal { version: 310 }).file(&path, text).run(&path)
+    target.preprocess().file(&path, text).run(&path)
 }
 
 /// A GPU backend a kernel is preprocessed for.
@@ -81,6 +85,16 @@ pub enum Backend {
     /// OpenCL: OpenCL C 1.2 for the device's driver (`ukl_opencl_shim.h`). The device's SIMD width is a define
     /// (`UKL_SIMD_WIDTH`, 32 by default: emulated through threadgroup memory on a device without subgroups).
     OpenCl,
+    /// The CPU's vector code (`rerail-ukl-vec`, decision 0567): C whose every UKL operation is one `__ukl_*` intrinsic
+    /// (`ukl_vec_shim.h`, `ukl/backend.h`'s `UKL_VEC` section), which its compiler knows by name.
+    Vec,
+}
+
+impl Backend {
+    /// Whether the backend's language is C (OpenCL C, the vector code's): every other's is C++.
+    pub fn is_c(self) -> bool {
+        matches!(self, Backend::OpenCl | Backend::Vec)
+    }
 }
 
 impl Backend {
@@ -97,6 +111,7 @@ impl Backend {
             Backend::Cuda { .. } | Backend::Hip { .. } => "cuda",
             Backend::Cpu => "cpu",
             Backend::OpenCl => "opencl",
+            Backend::Vec => "vec",
         }
     }
 
@@ -138,6 +153,7 @@ impl Backend {
                 d("__OPENCL_C_VERSION__", "120".into()),
                 d("__UKL_OPENCL_PREPROCESSING", "1".into()),
             ],
+            Backend::Vec => vec![d("__UKL_VEC_PREPROCESSING", "1".into())],
         }
     }
 }
@@ -262,14 +278,18 @@ impl Preprocess {
 
     /// `main` preprocessed: the backend's source text, with line markers to the original files.
     pub fn run(&self, main: &str) -> Result<String, Error> {
-        let (text, _) = self.pass(main, TextSink::default())?;
-        Ok(String::from_utf8_lossy(&text.out).into_owned())
+        let (text, paths) = self.pass(main, TextSink::default())?;
+        let text = String::from_utf8_lossy(&text.out).into_owned();
+        if matches!(self.backend, Backend::Metal { .. }) && paths.iter().any(|p| p.ends_with(METAL_MPP)) {
+            return Ok(format!("#include <metal_tensor>\n#include <{METAL_MPP}>\n{text}"));
+        }
+        Ok(text)
     }
 
     /// `main` preprocessed for a frontend (decision 0327, mode (b)): the expanded text, the C parser's tokens over
     /// it and where each part came from (no line markers), and the paths of the files those name, by file id.
     pub fn expanded(&self, main: &str) -> Result<(rerail_c_pp::tokens::Expanded, Vec<String>), Error> {
-        let (tokens, paths) = self.pass(main, rerail_c_pp::tokens::TokenSink::new(self.backend != Backend::OpenCl))?;
+        let (tokens, paths) = self.pass(main, rerail_c_pp::tokens::TokenSink::new(!self.backend.is_c()))?;
         Ok((tokens.finish(), paths))
     }
 
@@ -289,7 +309,7 @@ impl Preprocess {
     /// One pass of the preprocessor over `main` into `sink`: the sink, and the paths of the files, by file id.
     fn pass<S: Sink>(&self, main: &str, sink: S) -> Result<(S, Vec<String>), Error> {
         // OpenCL C is C (C99 with clang's extensions); every other backend's language is C++.
-        let mut cfg = if self.backend == Backend::OpenCl {
+        let mut cfg = if self.backend.is_c() {
             Config::new(Options::c(99, true))
         } else {
             let mut c = Config::new(Options::cpp(20, true));
@@ -341,6 +361,8 @@ impl Preprocess {
 }
 
 pub mod split;
+pub mod target;
+pub use target::Target;
 
 #[cfg(test)]
 mod tests;

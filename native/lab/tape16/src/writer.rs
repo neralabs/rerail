@@ -1,28 +1,24 @@
-//! E6: what format 16's writer costs, against format 15's, on the lean `.rerail` parser's path.
+//! E6: what the lab's one-pass event writer costs on the lean `.rerail` parser's path. Per file:
 //!
-//! The lean parser pushes and closes nodes into `tape_format::Writer`, and the writer finishes the image.
-//! A format-16 writer would take the same pushes and closes, and finish events instead. So per file:
+//! - **A**: the lean parse and its format 16 write (`lean::tape`), the engine as it is;
+//! - **C**: the lab's events writer alone from the file's node list: events, then byte planes, checked against
+//!   the lab's general path (`events_writer_reference`).
 //!
-//! - **A**: the lean parse and its format-15 write (`lean::tape`), the engine as it is;
-//! - **B**: format 15's writer alone from the node list (`preorder_image`: its pushes, closes and finish);
-//! - **C**: format 16's writer alone from the same node list: events, then byte planes.
-//!
-//! Format 16's writer is then A − B + C. B and C need no parser, so they run on any captured tapes.
+//! C needs no parser, so it runs on any captured tapes.
 
 use crate::blocks::Block;
 use crate::events::{BACK, Events, Open};
 use crate::layout::{self, Extras, Layout};
+use crate::tree::Tree;
 
-/// A captured image's nodes as `preorder_image` takes them: key, start, end, subtree size.
-pub fn records(image: &[u8]) -> Result<Vec<(u32, u32, u32, u32)>, String> {
-    let d = rerail_tape_format::decode(image)?;
-    let mut size = vec![1u32; d.len()];
-    for i in (0..d.len()).rev() {
-        if let Some(p) = d[i].parent {
-            size[p as usize] += size[i];
-        }
-    }
-    Ok(d.iter().zip(&size).map(|(n, &s)| (n.key, n.start, n.end, s)).collect())
+/// A captured tree's nodes as the events writer takes them: key (kind, field << 10, flags << 16), start, end,
+/// subtree size.
+pub fn records(tree: &Tree) -> Vec<(u32, u32, u32, u32)> {
+    tree.nodes
+        .iter()
+        .zip(&tree.size)
+        .map(|(n, &s)| (u32::from(n.kind & 1023) | u32::from(n.field & 63) << 10 | u32::from(n.flags) << 16, n.start as u32, n.end as u32, s))
+        .collect()
 }
 
 fn delta(to: u64, from: u64) -> u32 {

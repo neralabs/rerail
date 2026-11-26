@@ -15,7 +15,7 @@
 //! lattice column, its rule without `!L`, and a dropped `L` left out (`lower_module_seeded_written`). `RERAIL_FIRST=off` leaves the shape as written, for measuring.
 use super::super::check::{clause_body, clause_reads};
 use super::super::clause::{At, L, LitAt, Reads, T};
-use super::super::from_tape::{RrFile, S, Stmt};
+use super::super::from_tape::{RrFile, S, Statements, Stmt};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The order a later-relation states, and the lattice that keeps its first.
@@ -207,7 +207,7 @@ fn typed_for(order: Order, ty: &str) -> bool {
 }
 
 /// The module's first-of-a-group relations, read off its statements' tapes.
-pub fn recognize(statements: &[Stmt]) -> Vec<First> {
+pub fn recognize(statements: &Statements) -> Vec<First> {
     if std::env::var("RERAIL_FIRST").is_ok_and(|v| v == "off") {
         return Vec::new();
     }

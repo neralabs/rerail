@@ -39,64 +39,65 @@
 #include "python/calls.rerail"
 #include "python/types.rerail"
 
-.violation GetHandlerWrites(at: node, x: symbol, what: symbol, p: symbol, o: node)
-    "`{x}` answers a safe method (GET/HEAD) but writes to the database: `{what}` at {p}:{o.line}. Safe methods must be side-effect free; CSRF protection does not cover them. Move the write to a POST handler."
-GetHandlerWrites(f, x, what, p, o) :- ghw_own(k, f), ghw_handler(k, f, x), ghw_first_write(f, o),
-    ghw_write(o, _, what), docof(o, d), doc(d, p, _).
-.violation GetHandlerWritesVia(at: node, x: symbol, g: symbol, what: symbol, p: symbol, o: node)
-    "`{x}` answers a safe method (GET/HEAD) but writes to the database in `{g}()`, which it calls: `{what}` at {p}:{o.line}. Safe methods must be side-effect free; CSRF protection does not cover them. Move the write to a POST handler."
-GetHandlerWritesVia(f, x, y, what, p, o) :- ghw_own(k, f), ghw_handler(k, f, x), !ghw_write(_, f, _),
-    ghw_first(k, f, o), ghw_hit(k, f, o, h), ghw_write(o, h, what), def_name(h, y), docof(o, d), doc(d, p, _).
-.violation GetHandlerWritesInherited(at: node, kx: symbol, x: symbol, g: symbol, what: symbol, p: symbol, o: node)
-    "`{kx}` answers a safe method (GET/HEAD) with the inherited `{x}`, which for this class writes to the database in `{g}()`: `{what}` at {p}:{o.line}. Safe methods must be side-effect free; CSRF protection does not cover them. Move the write to a POST handler."
-GetHandlerWritesInherited(k, kx, x, y, what, p, o) :- ghw_handler(k, f, x), !ghw_own(k, f),
-    ghw_first_new(k, f, o), ghw_hit(k, f, o, h), ghw_write(o, h, what), def_name(h, y), def_name(k, kx),
-    docof(o, d), doc(d, p, _).
+// The walk is over definitions' symbols (decision 0677: no node crosses files): a handler is its class's and its
+// def's symbols (the class's `class_def` name, the def's `pt_tm`, as `call_target` names it), the call graph is
+// `ghw_edge`'s, and each def's first write is stated in its own file (`ghw_wrote`). A finding reads the handler's
+// node in its own file, and names the write by its path and line.
+.violation GetHandlerWrites(at: node, x: symbol, what: symbol, p: symbol, l: number)
+    "`{x}` answers a safe method (GET/HEAD) but writes to the database: `{what}` at {p}:{l}. Safe methods must be side-effect free; CSRF protection does not cover them. Move the write to a POST handler."
+GetHandlerWrites(f, x, what, p, l) :- ghw_own(kq, fq), ghw_handler(kq, fq, x), ghw_wrote(fq, _, what, p, l),
+    pt_def(f, fq).
+.violation GetHandlerWritesVia(at: node, x: symbol, g: symbol, what: symbol, p: symbol, l: number)
+    "`{x}` answers a safe method (GET/HEAD) but writes to the database in `{g}()`, which it calls: `{what}` at {p}:{l}. Safe methods must be side-effect free; CSRF protection does not cover them. Move the write to a POST handler."
+GetHandlerWritesVia(f, x, y, what, p, l) :- ghw_own(kq, fq), ghw_handler(kq, fq, x), !ghw_wrote(fq, _, _, _, _),
+    ghw_first_hit(kq, fq, hq), ghw_wrote(hq, y, what, p, l), pt_def(f, fq).
+.violation GetHandlerWritesInherited(at: node, kx: symbol, x: symbol, g: symbol, what: symbol, p: symbol, l: number)
+    "`{kx}` answers a safe method (GET/HEAD) with the inherited `{x}`, which for this class writes to the database in `{g}()`: `{what}` at {p}:{l}. Safe methods must be side-effect free; CSRF protection does not cover them. Move the write to a POST handler."
+GetHandlerWritesInherited(k, kx, x, y, what, p, l) :- ghw_handler(kq, fq, x), !ghw_own(kq, fq), ghw_first_new(kq, fq, hq),
+    ghw_wrote(hq, y, what, p, l), class_def(k, kq), def_name(k, kx).
 
-// The write a message names, of several: the first by order_key (its def's name, then its place there), which an edit
-// in another file does not move (decision 0695). ghw_first_write(h, o): h's own; ghw_first(k, f, o): of those f runs;
-// ghw_first_new(k, f, o): of those only k's overrides make.
-.decl ghw_first_write(h: node, o: node)
-ghw_first_write(h, o) :- ghw_write(o, h, _), order_key(o, _, i), i = min j : { ghw_write(y, h, _), order_key(y, _, j) }.
-.decl ghw_hit_key(k: node, f: node, q: symbol, i: number)
-ghw_hit_key(k, f, q, i) :- ghw_hit(k, f, o, _), order_key(o, q, i).
-.decl ghw_hit_after(k: node, f: node, q: symbol)
-ghw_hit_after(k, f, q) :- ghw_hit_key(k, f, q, _), ghw_hit_key(k, f, q2, _), q2 < q.
-.decl ghw_first(k: node, f: node, o: node)
-ghw_first(k, f, o) :- ghw_hit_key(k, f, q, _), !ghw_hit_after(k, f, q), i = min j : { ghw_hit_key(k, f, q, j) },
-    ghw_hit(k, f, o, _), order_key(o, q, i).
-.decl ghw_new_key(k: node, f: node, q: symbol, i: number)
-ghw_new_key(k, f, q, i) :- ghw_new(k, f, o), order_key(o, q, i).
-.decl ghw_new_after(k: node, f: node, q: symbol)
-ghw_new_after(k, f, q) :- ghw_new_key(k, f, q, _), ghw_new_key(k, f, q2, _), q2 < q.
-.decl ghw_first_new(k: node, f: node, o: node)
-ghw_first_new(k, f, o) :- ghw_new_key(k, f, q, _), !ghw_new_after(k, f, q), i = min j : { ghw_new_key(k, f, q, j) },
-    ghw_new(k, f, o), order_key(o, q, i).
-
-// ghw_handler(k, f, x): f, named x, answers only safe methods: in view class k (its own method or an inherited
+// ghw_handler(k, f, x): def f, named x, answers only safe methods: in view class k (its own method or an inherited
 // one), or as a function view (k = f).
-.decl ghw_handler(k: node, f: node, x: symbol)
-ghw_handler(k, f, x) :- dj_view_class(k), class_def(k, kq), ghw_safe_action(kq, x), mro_method(kq, x, f), docof(k, d),
-    !dj_test_doc(d).
-ghw_handler(f, f, x) :- kind(f, "function_definition"), decorator(f, e), ghw_safe_decorator(e), def_name(f, x),
-    docof(f, d), !dj_test_doc(d).
+.decl ghw_handler(k: symbol, f: symbol, x: symbol)
+ghw_handler(kq, fq, x) :- ghw_view(kq), ghw_safe_action(kq, x), mro_method_sym(kq, x, fq).
+ghw_handler(fq, fq, x) :- ghw_fn_view(fq, x).
+.decl ghw_fn_view(f: symbol, x: symbol)
+ghw_fn_view(fq, x) :- kind(f, "function_definition"), decorator(f, e), ghw_safe_decorator(e), def_name(f, x),
+    docof(f, d), !dj_test_doc(d), pt_def(f, fq).
+.decl ghw_view(kq: symbol)
+ghw_view(kq) :- dj_view_class(k), class_def(k, kq), docof(k, d), !dj_test_doc(d).
 // ghw_own(k, f): handler f is written in k's body, or is a function view.
-.decl ghw_own(k: node, f: node)
-ghw_own(f, f) :- ghw_handler(f, f, _).
-ghw_own(k, f) :- ghw_handler(k, f, _), nearest(f, k, scope).
-// ghw_hit(k, f, o, h): handler f, for class k, runs function h, which writes at o. ghw_new: a write k's inherited
-// handler makes that the handler does not make for the view class that defines it.
-.decl ghw_hit(k: node, f: node, o: node, h: node)
-ghw_hit(k, f, o, h) :- ghw_run(k, f, h), ghw_write(o, h, _).
-.decl ghw_new(k: node, f: node, o: node)
-ghw_new(k, f, o) :- ghw_hit(k, f, o, _), !ghw_own(k, f), nearest(f, b, scope), !ghw_hit(b, f, o, _).
+.decl ghw_own(k: symbol, f: symbol)
+ghw_own(fq, fq) :- ghw_handler(fq, fq, _).
+ghw_own(kq, fq) :- ghw_handler(kq, fq, x), method_sym(kq, x, fq).
+// ghw_hit(k, f, h): handler f, for class k, runs function h, which writes. ghw_new: a def that k's inherited
+// handler runs and writes, and that the handler does not run for the view class that defines it. One of each is
+// named, the least symbol (a `min` over symbols would order their ids).
+.decl ghw_hit(k: symbol, f: symbol, h: symbol)
+ghw_hit(kq, fq, hq) :- ghw_run(kq, fq, hq), ghw_wrote(hq, _, _, _, _).
+.decl ghw_first_hit(k: symbol, f: symbol, h: symbol)
+ghw_first_hit(kq, fq, hq) :- ghw_hit(kq, fq, hq), !ghw_later_hit(kq, fq, hq).
+.decl ghw_later_hit(k: symbol, f: symbol, h: symbol)
+ghw_later_hit(kq, fq, hq) :- ghw_hit(kq, fq, hq), ghw_hit(kq, fq, gq), gq < hq.
+.decl ghw_new(k: symbol, f: symbol, h: symbol)
+ghw_new(kq, fq, hq) :- ghw_hit(kq, fq, hq), !ghw_own(kq, fq), ghw_handler(kq, fq, x), method_sym(bq, x, fq),
+    !ghw_hit(bq, fq, hq).
+.decl ghw_first_new(k: symbol, f: symbol, h: symbol)
+ghw_first_new(kq, fq, hq) :- ghw_new(kq, fq, hq), !ghw_later_new(kq, fq, hq).
+.decl ghw_later_new(k: symbol, f: symbol, h: symbol)
+ghw_later_new(kq, fq, hq) :- ghw_new(kq, fq, hq), ghw_new(kq, fq, gq), gq < hq.
+// ghw_wrote(h, y, what, p, l): def h, named y, writes rows: its first write, `what`, at line l of path p. Stated in
+// h's own file.
+.decl ghw_wrote(h: symbol, y: symbol, what: symbol, p: symbol, l: number)
+ghw_wrote(hq, y, what, p, l) :- ghw_write(_, h, _), o = min v : { ghw_write(v, h, _) }, ghw_write(o, h, what),
+    pt_def(h, hq), def_name(h, y), line(o, l), docof(o, d), doc(d, p, _).
 // ghw_safe_action(kq, x): view class kq answers a safe method with its method x: get and head on any view, list and
 // retrieve on a DRF class only (its viewsets route GET to them; Django's View.dispatch never does).
 .decl ghw_safe_action(kq: symbol, x: symbol)
 ghw_safe_action(kq, x) :- class_def(_, kq), (x = "get" ; x = "head").
 ghw_safe_action(kq, x) :- ghw_drf_q(kq), (x = "list" ; x = "retrieve").
 // ghw_drf_q(q): q is a rest_framework class, a vendored copy's `ViewSetMixin` (taiga's taiga.base.api), or a class of
-// the run deriving from one (a linear closure, as dj_view_q).
+// the run deriving from one (a linear closure).
 .decl ghw_drf_q(q: symbol)
 ghw_drf_q(q) :- class_base(_, q), prefix("rest_framework.", q).
 ghw_drf_q(q) :- class_base(_, q), split_dot(q, _, "ViewSetMixin").
@@ -127,7 +128,7 @@ ghw_write_method(m) :- (b = "create" ; b = "update" ; b = "delete" ; b = "get_or
 // knows, or an expression the type program proves is a model.
 .decl ghw_model_instance(r: node, h: node)
 ghw_model_instance(r, h) :- ghw_instance_class(r, h, _).
-ghw_model_instance(r, h) :- proven_type(r, t), class_def(k, t), dj_model(k), owner(r, h).
+ghw_model_instance(r, h) :- proven_type(r, t), owner(r, h), docof(r, d), dj_model_at(d, t).
 // ghw_instance_class(r, h, q): identifier r, in function h, holds an instance of model class q: python/django's
 // dj_instance_class (`self` in q's method, a name bound to `Q(...)` or to a fetch from Q's manager, awaited or not),
 // a name h assigns from `get_object_or_404(Q, …)` or `self.get_object()` in a view class over Q, or a for-loop
@@ -148,47 +149,51 @@ ghw_instance_value(v, h, q) :- asg(h, _, v, _), unparen(v, w), kind(w, "await"),
 ghw_fetch_call(c, h, q) :- kind(c, "call"), owner(c, h), field(c, "function", fn),
     sym_of(fn, "django.shortcuts.get_object_or_404"), posarg(c, 0, a), ghw_model_ref(a, q).
 ghw_fetch_call(c, h, q) :- kind(c, "call"), owner(c, h), field(c, "function", fn), attr_of(fn, s, "get_object"),
-    kind(s, "identifier"), text(s, "self"), nearest(h, k, scope), kind(k, "class_definition"), class_def(k, kq),
-    ghw_view_model(kq, q).
+    kind(s, "identifier"), text(s, "self"), nearest(h, k, scope), kind(k, "class_definition"), ghw_view_model(k, q).
 // ghw_model_ref(a, q): a names model class q, or a queryset over it.
-// Cross-file (decision 0652): a name resolved to its definition, in another file than the reference.
-.decl ghw_model_ref(a: node, q: symbol) cross_file
-ghw_model_ref(a, q) :- sym_of(a, q), class_def(k, q), dj_model(k).
+.decl ghw_model_ref(a: node, q: symbol)
+ghw_model_ref(a, q) :- dj_model_named(a, q).
 ghw_model_ref(a, q) :- dj_qs_class(a, q).
-// ghw_view_model(kq, q): view class kq, or a base of the run, says `model = Q` or `queryset = Q.objects…`.
-.decl ghw_view_model(kq: symbol, q: symbol)
-ghw_view_model(kq, q) :- class_def(k, kq), ghw_view_attr(k, q).
-ghw_view_model(kq, q) :- class_def(_, kq), subclass(kq, b), class_def(k, b), ghw_view_attr(k, q).
-.decl ghw_view_attr(k: node, q: symbol)
-ghw_view_attr(k, q) :- kind(k, "class_definition"), (x = "model" ; x = "queryset"), rasg(k, x, v, _), unparen(v, e),
-    ghw_model_ref(e, q).
-// ghw_model_call(c, g): call c, `o.m(...)` with o a model instance of class q, runs q's method m, g. Only where the
-// call program has no target for c.
-.decl ghw_model_call(c: node, g: node)
-ghw_model_call(c, g) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, r, m), owner(c, h),
-    ghw_instance_class(r, h, q), !call_target(c, _), mro_method(q, m, g).
+// ghw_view_model(k, q): view class k, or a base of the run in any file, says `model = Q` or `queryset = Q.objects…`,
+// Q a model: the phase py_names hands each class's on by symbol (dj_view_model, decision 0677).
+.decl ghw_view_model(k: node, q: symbol)
+ghw_view_model(k, q) :- class_def(k, kq), docof(k, d), doc(d, p, _), py_names__reads_at(p, m),
+    py_names__dj_view_model(m, kq, q), dj_model_at(d, q).
+// ghw_model_call(x, g, how): a call in def x, `o.m(...)` with o a model instance of class q, runs q's method m, g.
+// Only where the call program has no target for the call.
+.decl ghw_model_call(x: symbol, g: symbol, how: symbol)
+ghw_model_call(xq, gq, how) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, r, m), owner(c, h),
+    ghw_instance_class(r, h, q), !call_target(c, _), mro_method_sym(q, m, gq), pt_def(h, xq), ghw_site(h, c, how).
 // ghw_run(k, f, h): handler f, for class k, may run function h. A call `self.m()` in a method of k or of one of its
-// bases runs on k's instance, so it goes to what k resolves m to (mro_method), not to every override the call
+// bases runs on k's instance, so it goes to what k resolves m to (mro_method_sym), not to every override the call
 // program allows (a late-bound self may be any subclass, whose override does not run for this view). Other calls
 // follow the call program, plus model method calls.
-.decl ghw_run(k: node, f: node, h: node)
-ghw_run(k, f, f) :- ghw_handler(k, f, _).
-ghw_run(k, f, h) :- ghw_run(k, f, x), ghw_self_site(x, _, m), ghw_own_method(k, x), class_def(k, kq),
-    mro_method(kq, m, h).
-ghw_run(k, f, h) :- ghw_run(k, f, x), owner(c, x), ghw_target(c, h), kind(h, "function_definition"),
-    !ghw_self_bound(k, x, c).
-.decl ghw_target(c: node, g: node)
-ghw_target(c, g) :- call_target(c, g).
-ghw_target(c, g) :- ghw_model_call(c, g).
-// ghw_self_site(x, c, m): call c, in method x, is `self.m(...)`.
+.decl ghw_run(k: symbol, f: symbol, h: symbol)
+ghw_run(kq, fq, fq) :- ghw_handler(kq, fq, _).
+ghw_run(kq, fq, hq) :- ghw_run(kq, fq, xq), ghw_self_call(xq, m), ghw_own_method(kq, xq), mro_method_sym(kq, m, hq).
+ghw_run(kq, fq, hq) :- ghw_run(kq, fq, xq), ghw_edge(xq, hq, "call"), ghw_function(hq).
+ghw_run(kq, fq, hq) :- ghw_run(kq, fq, xq), ghw_edge(xq, hq, "self"), ghw_function(hq), !ghw_own_method(kq, xq).
+// ghw_edge(x, h, how): def x calls h, at a `self.m(...)` site (`self`) or another (`call`): the call program's edges,
+// stated in x's own file (ghw_call), and model method calls.
+.decl ghw_edge(x: symbol, h: symbol, how: symbol)
+ghw_edge(xq, hq, how) :- ghw_call(xq, hq, how).
+ghw_edge(xq, hq, how) :- ghw_model_call(xq, hq, how).
+.decl ghw_call(x: symbol, h: symbol, how: symbol)
+ghw_call(xq, hq, how) :- owner(c, x), call_target(c, hq), pt_def(x, xq), ghw_site(x, c, how).
+.decl ghw_site(x: node, c: node, how: symbol)
+ghw_site(x, c, "self") :- ghw_self_site(x, c, _).
+ghw_site(x, c, "call") :- owner(c, x), !ghw_self_site(x, c, _).
+.decl ghw_function(h: symbol)
+ghw_function(hq) :- kind(h, "function_definition"), pt_def(h, hq).
+// ghw_self_site(x, c, m): call c, in method x, is `self.m(...)`. ghw_self_call: by x's symbol.
 .decl ghw_self_site(x: node, c: node, m: symbol)
 ghw_self_site(x, c, m) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, r, m), kind(r, "identifier"),
     text(r, "self"), owner(c, x), look(r, "self", x).
+.decl ghw_self_call(x: symbol, m: symbol)
+ghw_self_call(xq, m) :- ghw_self_site(x, _, m), pt_def(x, xq).
 // ghw_own_method(k, x): x is a method of view class k or of one of its bases.
-.decl ghw_own_method(k: node, x: node)
-ghw_own_method(k, x) :- ghw_handler(k, _, _), class_def(k, kq), method(bq, _, x), (bq = kq ; subclass(kq, bq)).
-.decl ghw_self_bound(k: node, x: node, c: node)
-ghw_self_bound(k, x, c) :- ghw_self_site(x, c, _), ghw_own_method(k, x).
+.decl ghw_own_method(k: symbol, x: symbol)
+ghw_own_method(kq, xq) :- ghw_handler(kq, _, _), method_sym(bq, _, xq), (bq = kq ; subclass(kq, bq)).
 
 // The cases, `cases/django-practice-get-handler-writes/`, read as one repository: each line ending in `# caught` is
 // reported, and no other line.
