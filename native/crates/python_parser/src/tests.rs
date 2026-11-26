@@ -146,8 +146,10 @@ fn match_statements_are_the_lean_parsers() {
     same(&["match a:\n    case X(b=c, d=e):\n        f\n    case X(1, 2):\n        g\n", "def f():\n    match a:\n        case 1:\n            b\n    return c\n"]);
     // The body from the end of the record before its first `case`: the `:`'s, or a comment's.
     same(&["match a:   \n    case 1: b\n", "match a:  # c\n    case 1:\n        b\n"]);
-    // `match` as a name.
-    same(&["match = 1\n", "match(a)\n", "match.group(1)\nif a:\n    b\n", "x = match\n", "for _ in a:\n    b\n", "_ = 1\n"]);
+    same(&["match a:\n    case X(value=int() | float() as v):\n        b\n", "match a:\n    case X(value=1 | 2):\n        b\n", "match a:\n    case X(value=[b]):\n        c\n"]);
+    same(&["match a:\n    case [b as c]:\n        d\n", "match a:\n    case 1, 2:\n        b\n", "match a, b:\n    case c:\n        d\n"]);
+    // `match` as a name, an annotation's too.
+    same(&["match: int = 1\n", "match = 1\n", "match(a)\n", "match.group(1)\nif a:\n    b\n", "x = match\n", "for _ in a:\n    b\n", "_ = 1\n"]);
 }
 
 #[test]

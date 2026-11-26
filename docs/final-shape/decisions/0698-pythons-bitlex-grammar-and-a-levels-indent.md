@@ -233,3 +233,6 @@ statements and blocks end.
     lowered there yet.
 48. **A run's `~(…)` takes `with M` and `without M`** (syntax, evaluator and tier 2): any other token, with or
     without the mark. Decision 0673 step 4 had them on a run of kinds and words only.
+49. **A match's subjects and a keyword pattern's union**: `match a, b:` has a `subject` field on each, and a
+    keyword pattern's value may be a union, its `as` wrapping the keyword pattern. `match` before its `:`
+    (`match: int = 1`) is an annotation's name (`unless before "match" ":"`).

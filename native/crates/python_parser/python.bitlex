@@ -314,7 +314,7 @@ mark target_paren = tokens "(" | "[" (~("def"))* nest ("(" | "[" | "{" to ")" | 
 # Alone (`[*a]`) it is a primary's, as an expression list's (tree-sitter reads it so).
 mark l_many     = tokens after "[" "*" (~("def"))* nest ("(" | "[" | "{" to ")" | "]" | "}") ","
 # `match` before an expression and a `:` on its line: a match statement's soft word, not a name.
-mark m_stmt     = tokens "match" (~("def") without newline)* nest ("(" | "[" | "{" to ")" | "]" | "}") ":"
+mark m_stmt     = tokens "match" (~("def") without newline)* nest ("(" | "[" | "{" to ")" | "]" | "}") ":", unless before "match" ":"
 # A name before `=` in a class pattern's arguments: a keyword pattern's.
 mark kw_pat     = tokens identifier "="
 # `type` before a name: a type alias's keyword, not a name.
@@ -350,14 +350,14 @@ tree python {
   node as_pattern_target = primary_expression
   # `match`: its soft word no leaf (`m_stmt`), its `:` a leaf; its body a block from the end of
   # the record before its first `case` (`attached`), as tree-sitter's.
-  node match_statement  = m_stmt 'match' subject: expression ':' indent body: match_block
+  node match_statement  = m_stmt 'match' subject: expression (',' subject: expression)* ':' indent body: match_block
   node match_block nested attached = retag block (alternative: case_clause)+
   node case_clause      = 'case' case_item (',' case_item)* [guard: if_clause] ':' consequence: suite
   # A case's pattern, in a `case_pattern` (a union's alternatives not); `p as x`: a
   # `case_pattern` around an `as_pattern` of the pattern's and the name. `_` alone: none inside.
   choice case_item      = case_pattern [wrap case_pattern _ wrap as_pattern _ 'as' identifier]
   node case_pattern     = '_' | kw_pat keyword_pattern | case_simple [wrap union_pattern _ ('|' case_simple)+]
-  node keyword_pattern  = identifier '=' case_simple
+  node keyword_pattern  = identifier '=' case_simple [wrap union_pattern _ ('|' case_simple)+]
   choice case_simple    = dotted_name [wrap class_pattern _ '(' [case_item (',' case_item)*] ')']
                         | '-' (real integer as float | integer) | real integer as float | integer
                         | string [wrap concatenated_string _ string+]
@@ -618,7 +618,8 @@ tree python {
   implied list_splat '*'
   implied star_splat '*'
   implied type_alias_statement 'type' '='
-  implied match_statement 'match'
+  implied match_statement 'match' ','
+  implied keyword_pattern '|'
   implied case_clause 'case' ','
   implied case_item 'as'
   implied case_pattern '_' '|'
