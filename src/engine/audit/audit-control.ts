@@ -167,6 +167,10 @@ function storedRequest(row: RequestRow): AuditRequest | UnreadList {
   if (typeof auditIds === "string") return { column: auditRequests.auditIds.name, why: auditIds };
   return auditRequestSchema.parse({ ...row, paths, auditIds });
 }
+/** A request's status as its checkout's repository audit records it: one still queued or running was interrupted. */
+function settledStatus(status: AuditRequest["status"]): "completed" | "failed" | "interrupted" {
+  return status === "queued" || status === "running" ? "interrupted" : status;
+}
 /** The line that names a request left out of its session's scans (`storedRequest`), once for each request. */
 function sayRequestUnread(file: string, row: RequestRow, { column, why }: UnreadList): void {
   // The table name the schema gives, so the line names the place a person mends.
@@ -694,28 +698,21 @@ export class SqliteAuditControlStore {
       this.#database.update(auditRequests).set({ auditIds: [...auditIds] })
         .where(and(eq(auditRequests.id, id), eq(auditRequests.status, "interrupted"))).run();
     }
+    this.#recordRepositoryAudit(id);
+  }
+  /**
+   * Records the request `id` names as its checkout's repository audit, by the last audit it produced, once it has
+   * started and finished; a request that does not read (`#readRequest`) records none.
+   */
+  #recordRepositoryAudit(id: string): void {
     const request = this.#request(id);
     const auditId = request?.auditIds.at(-1);
-    if (request === undefined || auditId === undefined || request.startedAt === null || request.finishedAt === null) return;
-    this.#database.insert(repositoryAudits).values({
-      workspaceRoot: request.workspaceRoot,
-      sessionId: request.sessionId,
-      auditId: auditId,
-      status: request.status === "queued" || request.status === "running" ? "interrupted" : request.status,
-      startedAt: request.startedAt,
-      finishedAt: request.finishedAt,
-      error: request.error,
-    }).onConflictDoUpdate({
-      target: repositoryAudits.workspaceRoot,
-      set: {
-        sessionId: request.sessionId,
-        auditId: auditId,
-        status: request.status === "queued" || request.status === "running" ? "interrupted" : request.status,
-        startedAt: request.startedAt,
-        finishedAt: request.finishedAt,
-        error: request.error,
-      },
-    }).run();
+    if (request === undefined || auditId === undefined) return;
+    const { sessionId, startedAt, finishedAt, error } = request;
+    if (startedAt === null || finishedAt === null) return;
+    const set = { sessionId, auditId, status: settledStatus(request.status), startedAt, finishedAt, error };
+    this.#database.insert(repositoryAudits).values({ workspaceRoot: request.workspaceRoot, ...set })
+      .onConflictDoUpdate({ target: repositoryAudits.workspaceRoot, set }).run();
   }
   interrupt(sessionId: string): void { this.#interruptOwned(sessionId, "Session closed before scan could complete"); }
   close(): void { this.#database.$client.close(); }
