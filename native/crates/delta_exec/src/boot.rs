@@ -13,15 +13,24 @@
 //! answer (B5) into the run's globals; the set moves to its next state, the document's old row retracted where the
 //! set keeps it (`drop_parts`) and its new row added; an unchanged document is the identity (no layer).
 //!
-//! `run` reads l0, then steps L1 over the document set since `last`. A trace has two states, the committed one and
-//! the run's open layer on it (0686, "B2's trace: two states"), so `Pins` are where the last run left each trace,
-//! and hold nothing back: a cold run (`last = None`) has every bistate from ∅ (L2), its outputs emptied first; a
-//! later run is given the last run's pins (L3), and pins of any other state are refused. The instance's cache is
-//! read as ∅ unless it names the run's before (L5). A run starts by retiring what the document set no longer names
-//! (`DocSet::retire`), once the set moved since it last did: the slabs and symbols blocks that hold no blob of its
-//! committed state, the run's before, as the residency retires its slabs whole after an execution. The last run's two
-//! states stay readable until the next run starts. The rest of B§8's run (the loop, loads, the program's δ) comes
-//! after the target.
+//! `run` is B§8's first two lines under demand (P§7.1). The run's productions (l0's K-form) are L1's want. L1 asks of
+//! the document set what it needs, and the world answers what is asked, through the three answerers
+//! (`files::Load`, `Parse`, `Intern`). Their leaves go into the run's one layer of the world's leaves, and what
+//! nothing asks for any more is let go. A run is rounds of L1's step and the world's answers, ending at the first round
+//! that moves nothing.
+//!
+//! A trace has two states, the committed one and the run's open layer on it (0686, "B2's trace: two states"). So
+//! `Pins` are where the last run left each trace, and hold nothing back.
+//! - A cold run (`last = None`) has every bistate from ∅ (L2), and L1's traces are emptied first.
+//! - A later run is given the last run's pins (L3). Pins of any other state are refused.
+//!
+//! The instance's cache is read as ∅ unless it names the run's before (L5). Slabs are the residency's:
+//! - it retires the least recently used slab whole, past its budget;
+//! - it drops all of them `DROP_AFTER` an execution;
+//! - a document whose slab went is loaded again from the store's objects where its places say (`DocSet::resident`).
+//!
+//! B§8's later lines (the loop over the program's levels, its loads and its δ) are the rest of the rebuild plan's
+//! Figure 1, past the milestones of its §4, which build L1 and what it stands on.
 //!
 //! As agreed in B4, l0 is named by its path, which the file layer reads, not by a blob id the caller already holds; its
 //! module is named by the caller, as the engine's load names it.
