@@ -9,19 +9,19 @@ checkout of the branch, or download it with the file view's "Download raw file" 
 
 | Page | What it is | As of |
 |---|---|---|
-| [survey-of-the-bend-and-oscar-branches.md](survey-of-the-bend-and-oscar-branches.md) | How the bend and oscar branches enforce the invariants, against main's split. The survey this port started from. | 2026-11-25, before the port |
-| [cross-file-offenders.html](cross-file-offenders.html) | Every pack's offenders on main at `d54013c841`, in three buckets: fixed on oscar (port), fix known, needs a redesign. | 2026-11-25, main before the port |
+| [survey-of-the-bend-and-oscar-branches.md](survey-of-the-bend-and-oscar-branches.md) | Background: how the invariants were worked out, and how main's split compared. | 2026-11-25, before this work |
+| [cross-file-offenders.html](cross-file-offenders.html) | Every pack's offenders on main at `d54013c841`, in three buckets by how each is fixed. | 2026-11-25, before this work |
 | [per-file-cross-file-rules.html](per-file-cross-file-rules.html) | For rule authors, and for models that write rules: the two parts of a program, the three rules, how rules break them, a fix for each kind of break, and how to check. | 2026-11-25; still current |
-| [split-port-decisions.html](split-port-decisions.html) | Two choices the port needed: points-to (the branch's fix 3e) and a producer for `spec_resolved`. Both were then built in this pull request (fixes 11 and 12). | 2026-11-25, after fix 10 |
+| [split-port-decisions.html](split-port-decisions.html) | Two design choices: Python's points-to as a phase, and a producer for `spec_resolved`. Both were built as recommended. | 2026-11-25 |
 
-## Runtime against the merge base
+## Runtime, with and without this work
 
-Measured on 2026-11-26, at `60736390bd` against the merge base `d54013c841`. Both ran the CLI as a profiling build,
+Measured on 2026-11-26: main with this work against main without it (at `d54013c841`; main's later commits touch neither the rules nor the split). Both ran the CLI as a profiling build,
 each reading its own tree's libraries and rules, from a fresh store, over the same files. Every pack's policies ran
-as one batch, two rounds each. The policies a side cannot run (main's 25 failing ones) were left out of both. The
+as one batch, two rounds each. The policies a side cannot run (the 25 that fail without this work) were left out of both. The
 machine was shared, so the instructions retired are compared, not wall time.
 
-| Pack | Files | Instructions, base → this branch | Peak MB, base → this branch | Findings |
+| Pack | Files | Instructions, without → with | Peak MB, without → with | Findings |
 |---|---|---|---|---|
 | rust | 117 | 98.3 → 40.2 G (−59%) | 933 → 592 | 267 = 267 |
 | next | 120 | 77.5 → 47.5 G (−39%) | 640 → 448 | 1 = 1 |
@@ -42,8 +42,6 @@ machine was shared, so the instructions retired are compared, not wall time.
 - **TypeScript's two fewer findings** were false findings on main. A local arrow function named `settings` was
   reported as an exported one.
 - **Complexity's 7%** is mostly phase 1's constants fold: a nested run of about 16 ms on a cold store, which keeps
-  its result (see fixes 18 and 19 in the decision). The four packs that are slower each take under 3 s of CPU.
-- **python-main** is not in the table. Its whole batch passes 8 GB on both sides, even over 15 files, and one shard
-  stops with `no declaration of within` on both.
-- **Before fixes 18 and 19**, Django was 45% slower than the merge base and rerail 52% slower. Both now run faster
-  than the merge base.
+  its result (see the decision). The four packs that are slower each take under 3 s of CPU.
+- **python-main** is not in the table. Its whole batch passes 8 GB with and without this work, even over 15 files, and one shard
+  stops with `no declaration of within` with and without this work.
