@@ -166,10 +166,13 @@ them.
    earlier one's mask past its word steps a word behind it, that mask in a ring of four words; `code` is the region
    tokens' spans not yet passed (`code_spans`), each word in a ring too. The test build keeps `code_l` and holds each
    word to it. The product's `lex` makes no vector of the file but its records (`lv` too is the test build's).
+18. **A rule that is no level ends with the level it is in** (`follow_taken`, `exits_ending`): a mark that follows it
+   only where the level it is in ends is that level's, so a call in it keeps the caller's `asks`; only a mark a
+   caller takes after it sets them. The precedence ladder's operands no longer set `asks` (12 did): tier 2 switches
+   it in 30 places, true where a statement or a class member starts (2) and false at a bracket, a condition, a
+   parameter, an annotation or a template (28), as the lean parser switches `stmt` in 30 (true at 6, where its
+   statements, a block, a class's or an enum's body, a lambda or a `when`'s body start).
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
-`nl`) and `real` (its real literal's kind, a count of a number's bytes). Tier 2 switches `asks` at 27 calls and in 22
-levels and contexts (49), where a bracket, a condition or a body starts; the lean parser switches `stmt` so in 30
-(`level(stmt, …)` at 29, and one of its own). Tier 2 sets `asks` true at 22 places, 12 of them the precedence ladder's
-operand levels, where the lean parser sets `stmt` true at 6, where a body starts: tier 2 decides it of what may follow
-each call in the grammar. The lookahead of `as_split` and `is_split` stays a function a state (`next_*`).
+`nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`
+stays a function a state (`next_*`).

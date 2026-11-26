@@ -133,6 +133,8 @@ struct G<'a> {
     fields: std::cell::RefCell<std::collections::BTreeMap<String, u16>>,
     /// Each rule's follow (`follow`), once found.
     follows: std::cell::RefCell<Option<HashMap<String, Vec<usize>>>>,
+    /// Of `follows`, the marks a caller takes after a rule (`follow_taken`): not those where a level it is in ends.
+    follows_taken: std::cell::RefCell<Option<HashMap<String, Vec<usize>>>>,
     /// Where `open_mark` can hold (`open_mark_words`), for the token takes that need not ask it (`moves::takes`): the words a mark no
     /// rule takes may hold at, and the token kinds whose test (`at_K`) passes at none of them. None: a mark may hold at
     /// any token.
@@ -353,7 +355,7 @@ impl<'a> G<'a> {
                 refusing.clear();
             }
         }
-        G { x, rules, order, flags, readings, remember, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default(), peek_marks: Default::default(), anon: Default::default(), recognizers, leaf_refuses, leaf_call: Default::default(), cuts: Default::default(), scans: Default::default(), marked_read: Default::default(), names: Default::default(), inline: Default::default(), methods: Default::default(), ladder_of: Default::default() }
+        G { x, rules, order, flags, readings, remember, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), follows: Default::default(), follows_taken: Default::default(), mark_words: Default::default(), call_saves: Default::default(), peek_marks: Default::default(), anon: Default::default(), recognizers, leaf_refuses, leaf_call: Default::default(), cuts: Default::default(), scans: Default::default(), marked_read: Default::default(), names: Default::default(), inline: Default::default(), methods: Default::default(), ladder_of: Default::default() }
     }
 
     fn mark_of(&self, name: &str) -> Option<usize> {
@@ -987,8 +989,13 @@ impl<'a> G<'a> {
         let (fr, may_end) = self.rest_first(rest)?;
         let mut out: Vec<(usize, bool)> = fr.iter().filter_map(|t| if let Test::Mark(m) = t.0 { Some((m, false)) } else { None }).collect();
         if may_end {
+            // A level ends at what follows it. A rule that is none ends with the level it is in, which takes a mark after
+            // it only where a caller takes it (`follow_taken`): elsewhere the level it is in ends there, as the lean
+            // parser's `stmt` is its caller's through a level's loop (decision 0703 step 18).
             let end = self.nested(rule);
-            out.extend(self.follow(rule)?.into_iter().map(|m| (m, end)));
+            let f = self.follow(rule)?;
+            let taken = self.follows_taken.borrow().as_ref().and_then(|t| t.get(rule).cloned()).unwrap_or_default();
+            out.extend(f.into_iter().map(|m| (m, end || !taken.contains(&m))));
         }
         out.sort_unstable();
         out.dedup_by_key(|e| e.0);
@@ -1176,7 +1183,29 @@ impl<'a> G<'a> {
                     break;
                 }
             }
+            // The marks taken after it: a caller's after the call, or after a caller that is no level of its own.
+            let mut taken: HashMap<String, Vec<usize>> = HashMap::new();
+            loop {
+                let mut changed = false;
+                for (callee, marks, may_end, caller) in &sites {
+                    let mut add = marks.clone();
+                    if *may_end && !self.nested(caller) {
+                        add.extend(taken.get(caller).cloned().unwrap_or_default());
+                    }
+                    let f = taken.entry(callee.clone()).or_default();
+                    for m in add {
+                        if !f.contains(&m) {
+                            f.push(m);
+                            changed = true;
+                        }
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
             *self.follows.borrow_mut() = Some(follows);
+            *self.follows_taken.borrow_mut() = Some(taken);
         }
         let mut f = self.follows.borrow().as_ref().and_then(|f| f.get(rule).cloned()).unwrap_or_default();
         f.sort_unstable();
