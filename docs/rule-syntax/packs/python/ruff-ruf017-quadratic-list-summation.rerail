@@ -5,26 +5,67 @@
 .scope include "**/*"
 
 // Ruff RUF017: `sum(lists, [])` flattens by adding lists one at a time, copying the total at each step:
-// quadratic. The builtin sum, a positional iterable, and an empty list, `[]` or `list()`, as `start` (second
-// or `start=`). Strings Ruff parses as types (annotations, `cast("…", x)`, …) are checked too.
+// quadratic. The builtin sum with a first positional argument (`*xs` too), and an empty list, `[]` or `list()`,
+// as `start`: the keyword `start=` when given, else the second positional argument. Strings Ruff parses as types
+// (annotations, `cast("…", x)`, …) are checked too.
 //   sum([x, y], [])              ← RUF017  `list(itertools.chain.from_iterable([x, y]))`
 //   sum([x, y], start=[])        ← RUF017
+//   sum(*xs, start=[])           ← RUF017
 //   sum(x, list())               ← RUF017
 //   a: "list[sum(x, [])]" = 1    ← RUF017
 //   sum([x, y])                  not reported
-//   sum(iterable=x, start=[])    not reported: Ruff wants the iterable positional
+//   sum(x, [], start=[1])        not reported: the keyword is the start
+//   sum(iterable=x, start=[])    not reported: Ruff wants a positional first argument
 #include "python/ruff.rerail"
 #include "python/python-02.rerail"
-param_slot("builtins.sum", "iterable", 0). param_slot("builtins.sum", "start", 1).
 
 .violation RUF017(at: node) code "RUF017"
     "Replace `sum(lists, [])` with `list(itertools.chain.from_iterable(lists))`; summing onto a list copies it at every step (quadratic). Leave it when the input is only a few short lists."
     suppress ruff "RUF017"
-RUF017(c) :- ruff_arg(c, 0, _), call_param(c, "start", s), empty_literal(s, "list").
-RUF017(c) :- tstr_node(c, _), kind(c, "call"), child(c, f, 0), tstr_qual(f, "builtins.sum"), tstr_arg(c, 0, _),
-    (tstr_arg(c, 1, s) ; tstr_kwarg(c, "start", s)), tstr_empty_list(s).
+RUF017(c) :- kind(c, "call"), field(c, "function", f), ruff_builtin(f, "sum"), (call_item(c, a, _), pos_item(a) ;
+    ruff_arg(c, 0, _)), (call_kwarg(c, "start", s) ; !call_kwarg(c, "start", _), ruff_arg(c, 1, s)), empty_list(s).
+RUF017(c) :- tstr_node(c, _), kind(c, "call"), child(c, f, 0), tstr_own(f, "builtins.sum"), tstr_item(c, a, _),
+    tstr_pos(a), (tstr_kwarg(c, "start", s) ; !tstr_kwarg(c, "start", _), tstr_arg(c, 1, s)), tstr_empty_list(s).
+// empty_list(s): `[]`, or `list()` with no arguments and the builtin list.
+.decl empty_list(s: node)
+empty_list(s) :- list_like(s, "list"), empty_literal(s, "list").
+empty_list(s) :- unparen(s, m), kind(m, "call"), call_nargs(m, 0), call_nkwargs(m, 0), field(m, "function", f),
+    ruff_builtin(f, "list").
 // tstr_empty_list(s): `[]` or `list()` in a type string.
 .decl tstr_empty_list(s: node)
 tstr_empty_list(s) :- unparen(s, m), kind(m, "list"), count : { child(m, x, _), !kind(x, "comment") } = 0.
 tstr_empty_list(s) :- unparen(s, m), kind(m, "call"), count : { tstr_item(m, _, _) } = 0, child(m, f, 0),
-    tstr_qual(f, "builtins.list").
+    tstr_own(f, "builtins.list").
+
+// Tests: the review's counterexamples (review/python-02.review.md), each Ruff 0.17.6's lines.
+.test a_starred_first_argument_counts exactly
+    .fixture "r017-star.py" ```
+        sum(*xs, start=[])
+        a: "sum(*xs, start=[])" = 1
+        ```
+    .expect RUF017 at "r017-star.py":1
+    .expect RUF017 at "r017-star.py":2
+.end
+
+.test the_start_keyword_overrides_the_second_argument exactly
+    .fixture "r017-precedence.py" ```
+        sum(x, [], start=[1])
+        a: "sum(x, [], start=[1])" = 1
+        sum(x, [1], start=[])
+        ```
+    .expect RUF017 at "r017-precedence.py":3
+.end
+
+.test class_bodies_and_defaults_resolve_names_in_source_order exactly
+    .fixture "r017-class-shadow.py" ```
+        class C:
+            value = sum(x, [])
+
+        def f(a=sum(x, [])):
+            return sum(x, [])
+
+        sum = 0
+        ```
+    .expect RUF017 at "r017-class-shadow.py":2
+    .expect RUF017 at "r017-class-shadow.py":4
+.end

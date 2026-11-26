@@ -1,26 +1,46 @@
-// python/python-02: expressions inside the strings Ruff parses as types, for Ruff's expression rules (RUF017, RUF020,
-// RUF021, RUF026).
+// python/python-02: expressions inside the strings Ruff parses as types, for Ruff's expression rules (RUF017, RUF019,
+// RUF020, RUF021, RUF026), and names read where Ruff reads them (RUF017, RUF020).
 //
 // Interface
+//   ruff_type_ctx(n)     n is in a type definition as Ruff's checker visits one (below)
+//   tstr_parsed(s, h)    Ruff parses type string s; h is the outermost one, a string of the file (s itself or one
+//                        s is nested in)
 //   tstr_node(e, s)      e is in the tree Ruff parses from type string s: s's own tree, not the trees of strings
 //                        nested in it (those are strings of their own)
 //   tstr_in(e, h)        e is in the tree of a type string nested at any depth in h, a type string of a file
 //   tstr_simple(s)       s is a simple string annotation: one literal and no escapes (Ruff's AnnotationKind::Simple)
 //   tstr_qual(e, q)      the name or `a.b` attribute e in a type string resolves to q ("builtins.sum",
-//                        "collections.defaultdict"), looked up from where the outermost string stands
+//                        "collections.defaultdict"), looked up from where the outermost string stands, as Ruff's
+//                        resolve_qualified_name: in a complex string, by the last name that resolves (below)
+//   tstr_own(e, q)       the same, e's own lookup: what Ruff's builtin matching (match_builtin_expr) reads
 //   tstr_item(c, a, j)   a is the j-th item of call c's argument list (comments aside); c in a type string
+//   tstr_pos(a)          that item is positional (`*xs` too)
 //   tstr_arg(c, i, a)    a is call c's i-th positional argument (none after a `*args`)
 //   tstr_kwarg(c, x, v)  call c passes keyword x with value v
 //   tstr_nargs(c, n)     call c has n positional arguments
+//   ruff_builtin(e, x)   e is the name x and Ruff reads the builtin x there (python/ruff's resolves_builtin, plus
+//                        source order where Ruff reads at once: a class body, a default, a decorator)
+//   deferred_in(n, s)    name n is in a def's or lambda's body inside scope s: Ruff reads it after s
+//   last_not_import(s, x)  the last binding of x in scope s is not an import
+//   late_rebound(e)      name e (an attribute chain's root) is read last and its scope's last binding is no import
 //
 // Python and Ruff background
-//   - Ruff parses a string as a type wherever it reads a type (python/typing's type_ctx): an annotation,
-//     `cast("…", x)`'s first argument, a TypeVar's bound, `List["…"]`, the value of `X: TypeAlias = "…"`; and a
-//     string inside such a tree too. Ruff's expression rules then run on that tree as on any code; its names are
-//     resolved where the string stands.
+//   - Ruff's checker starts a type definition at an annotation, at the value of `X: TypeAlias = …` and `type X = …`,
+//     at the arguments of a generic subscript (python/typing's type_root), and at what its special callables read as
+//     types: `cast`'s first argument or `typ=`, a TypeVar's constraints, `bound=` and `default=`, NewType's base or
+//     `tp=`, TypeAliasType's value, TypeForm's argument, a functional NamedTuple's or TypedDict's field types and
+//     TypedDict's `extra_items=`, mypy_extensions' `Arg(T)` and relatives, and a TypedDict class's `extra_items=`.
+//     Below, everything is a type except Literal's arguments, Annotated's metadata and the arguments of any other
+//     call: in `x: f("a or b")` the string is a value.
+//   - Ruff parses a string in a type definition, and its tree is one too; its expression rules then run on that tree
+//     as on any code; its names are resolved where the string stands. A string nested in a complex one (implicitly
+//     concatenated, or with escapes) is not parsed.
+//   - In a complex string every node of Ruff's tree has the whole string's range. Ruff records resolved names by
+//     range, so each name reads as the last one that resolves (resolve_qualified_name), and parentheses go unseen.
 //   - names' parsed_in resolves the names of annotations only; tstr_qual covers every type string.
-//   - The arguments are read through child rather than through python/ruff's call_item: in a parsed string's
-//     tree, a kind test on a node reached through field finds nothing (packs/python/NOTES-python-02.md).
+//   - The engine reaches a type string's tree only from parsed: a clause finds its nodes when it starts from
+//     tstr_in or tstr_node (an unanchored `kind(n, k)` sees the files' nodes only), and an aggregate does not see
+//     them. So the arguments are counted here over derived rows, read through child.
 //
 //   from typing import cast
 //   from collections import defaultdict
@@ -28,29 +48,124 @@
 //       tstr_qual(<defaultdict>, "collections.defaultdict"), tstr_kwarg(<call>, "default_factory", <int>),
 //       tstr_nargs(<call>, 0)
 //   a: "list[sum(x, [])]" = 1        tstr_qual(<sum>, "builtins.sum"), tstr_arg(<sum(…)>, 1, <[]>)
+//   b: f("a or b")                   no ruff_type_ctx for the string: an ordinary call's argument
+//   class C:
+//       v = sum(x, [])               ruff_builtin(<sum>, "sum"): Ruff reads the class body before `sum = 0`
+//   sum = 0
+#include "python/ruff.rerail"
 #include "python/typing.rerail"
 
+// rtype_root(t): where Ruff's checker starts a type definition (Checker::visit_expr's Expr::Call for the callables).
+.decl rtype_root(t: node)
+rtype_root(t) :- type_root(t).
+rtype_root(v) :- tcall(c, "cast"), call_kwarg(c, "typ", v).
+rtype_root(v) :- typevar_call(c, "TypeVar"), call_kwarg(c, "default", v).
+rtype_root(v) :- tcall(c, "NewType"), call_kwarg(c, "tp", v).
+rtype_root(a) :- tcall(c, "TypeAliasType"), src_item(c, 1, a), pos_item(a).
+rtype_root(v) :- tcall(c, "TypeAliasType"), (call_kwarg(c, "value", v) ; call_kwarg(c, "type_params", v)).
+rtype_root(a) :- tcall(c, "TypeForm"), parg(c, 0, a).
+rtype_root(t) :- tcall(c, "NamedTuple"), parg(c, i, l), i > 0, pair_display(l, f), child(f, t, 1).
+rtype_root(v) :- tcall(c, "NamedTuple"), call_kwarg(c, _, v).
+rtype_root(v) :- (tcall(c, "NamedTuple") ; tcall(c, "TypedDict")), call_item(c, s, _), kind(s, "dictionary_splat"),
+    child(s, d0, 0), unparen(d0, d), kind(d, "dictionary"), child(d, p, _), kind(p, "pair"), field(p, "value", v).
+rtype_root(v) :- tcall(c, "TypedDict"), parg(c, i, a), i > 0, unparen(a, d), kind(d, "dictionary"), child(d, p, _),
+    kind(p, "pair"), field(p, "value", v).
+rtype_root(v) :- tcall(c, "TypedDict"), call_kwarg(c, "extra_items", v).
+rtype_root(v) :- tcall(c, "TypedDict"), call_kwarg(c, x, v), x != "total", x != "extra_items", !targets(13),
+    legacy_fields(c).
+rtype_root(v) :- tcall(c, "TypedDict"), call_item(c, s, _), kind(s, "dictionary_splat"), child(s, v, 0).
+rtype_root(a) :- mypy_arg(c), parg(c, 0, a).
+rtype_root(v) :- mypy_arg(c), !parg(c, 0, _), call_kwarg(c, "type", v).
+rtype_root(v) :- kind(k, "class_definition"), field(k, "superclasses", al), child(al, kw, _), kind(kw, "keyword_argument"),
+    field(kw, "name", n), text(n, "extra_items"), field(kw, "value", v), typed_dict_class(k).
+.decl tcall(c: node, x: symbol)
+tcall(c, x) :- kind(c, "call"), field(c, "function", f), typing_sym(f, x).
+// parg(c, i, a): the i-th positional argument, `*xs` counted. src_item(c, i, a): the i-th argument in source order.
+.decl parg(c: node, i: number, a: node)
+parg(c, i, a) :- call_item(c, a, j), pos_item(a), i = count : { call_item(c, b, j2), j2 < j, pos_item(b) }.
+.decl src_item(c: node, i: number, a: node)
+src_item(c, i, a) :- call_item(c, a, j), i = count : { call_item(c, _, j2), j2 < j }.
+// pair_display(l, f): f is a two-item list or tuple in list or tuple l: NamedTuple's `("a", int)`.
+.decl pair_display(l: node, f: node)
+pair_display(l, f) :- unparen(l, m), (kind(m, "list") ; kind(m, "tuple")), child(m, f0, _), unparen(f0, f),
+    (kind(f, "list") ; kind(f, "tuple")), count : { child(f, x, _), !kind(x, "comment") } = 2.
+// legacy_fields(c): before Python 3.13 `TypedDict("A", x=int)` and `TypedDict("A", None, x=int)` declare fields.
+.decl legacy_fields(c: node)
+legacy_fields(c) :- tcall(c, "TypedDict"), count : { parg(c, _, _) } = 1.
+legacy_fields(c) :- tcall(c, "TypedDict"), count : { parg(c, _, _) } = 2, parg(c, 1, a), unparen(a, m), kind(m, "none").
+.decl mypy_arg(c: node)
+mypy_arg(c) :- call_q(c, q), split_dot(q, "mypy_extensions", x),
+    (x = "Arg" ; x = "DefaultArg" ; x = "NamedArg" ; x = "DefaultNamedArg" ; x = "VarArg" ; x = "KwArg").
+// typed_dict_class(k): a base of class k is TypedDict, directly, through classes of the file, or through a name
+// bound to `TypedDict(…)`.
+.decl typed_dict_class(k: node)
+typed_dict_class(k) :- class_ancestor(k, q), (q = "typing.TypedDict" ; q = "typing_extensions.TypedDict").
+typed_dict_class(k) :- kind(k, "class_definition"), field(k, "superclasses", al), child(al, b, _), kind(b, "identifier"),
+    look(b, x, s), binding(s, x, a, "assign"), binding_value(a, v), unparen(v, c), tcall(c, "TypedDict").
+
+.decl ruff_type_ctx(n: node)
+ruff_type_ctx(t) :- rtype_root(t).
+ruff_type_ctx(r) :- ruff_type_ctx(s), str_node(s), parsed(s, "annotation", r).
+ruff_type_ctx(c) :- ruff_type_ctx(p), child(p, c, _), !type_stop(p, c), !call_args(p, c).
+.decl call_args(p: node, c: node)  // c holds call p's arguments
+call_args(p, c) :- kind(p, "call"), child(p, c, i), i > 0.
+
+// tstr_parsed(s, h): Ruff parses type string s, nested in the outermost one h (or h itself). It parses a string
+// nested in another one only when that one is simple: in `x: "List['defaultdict(...)']" ""` it reads nothing of
+// the inner string. An implicit concatenation is one string, not its pieces.
+.decl tstr_parsed(s: node, h: node)
+tstr_parsed(h, h) :- ruff_type_ctx(h), str_node(h), !concat_part(h), docof(h, d), doc_role(d, "primary"),
+    parsed(h, "annotation", _).
+tstr_parsed(s, h) :- tstr_parsed(p, h), tstr_simple(p), parsed(p, "annotation", r), within(s, r), ruff_type_ctx(s),
+    str_node(s), !concat_part(s), parsed(s, "annotation", _), !guest_value(s, r).
+// guest_value(s, r): string s in the tree r of a type string is an ordinary call's argument there. ruff_type_ctx's
+// stop at calls does not see a guest's calls (an unanchored call_args), so they are found from the parse.
+.decl guest_value(s: node, r: node)
+guest_value(s, r) :- ruff_type_ctx(s0), str_node(s0), parsed(s0, "annotation", r), within(s, r), str_node(s), within(s, c),
+    kind(c, "call"), child(c, al, i), i > 0, (s = al ; within(s, al)).
 .decl tstr_in(e: node, h: node)
-tstr_in(e, h) :- type_ctx(h), str_node(h), docof(h, d), doc_role(d, "primary"), parsed(h, "annotation", r),
-    (e = r ; within(e, r)).
-tstr_in(e, h) :- tstr_in(s, h), type_ctx(s), str_node(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
+tstr_in(e, h) :- tstr_parsed(s, h), parsed(s, "annotation", r), (e = r ; within(e, r)).
 .decl tstr_node(e: node, s: node)
-tstr_node(e, s) :- type_ctx(s), str_node(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
+tstr_node(e, s) :- tstr_parsed(s, _), parsed(s, "annotation", r), (e = r ; within(e, r)).
 .decl tstr_simple(s: node)
-tstr_simple(s) :- type_ctx(s), kind(s, "string"), !has(s, _, "escape_sequence").
+tstr_simple(s) :- tstr_parsed(s, _), kind(s, "string"), !has(s, _, "escape_sequence").
 
 // tstr_walk(e, x, s): the lookup of name x, read at e, visits scope s: from the scope around the outermost string
-// outwards, class bodies skipped past the first, as names' walk.
+// outwards, class bodies skipped past the first, as names' walk. Ruff reads type strings last, so a name is the
+// import its scope binds it to last: `from typing import Never` and a later `Never = int` give no "typing.Never".
 .decl tstr_name(e: node, x: symbol)
 tstr_name(e, x) :- tstr_in(e, _), nameref(e, x).
 .decl tstr_walk(e: node, x: symbol, s: node)
 tstr_walk(e, x, s) :- tstr_name(e, x), tstr_in(e, h), nearest(h, s, lscope).
 tstr_walk(e, x, p) :- tstr_walk(e, x, s), !bound_in(s, x), nearest(s, p, lfscope).
+// tstr_own(e, q): the qualified name e's own lookup gives: what Ruff's builtin matching reads (match_builtin_expr,
+// by the name's text), complex string or not.
+.decl tstr_own(e: node, q: symbol)
+tstr_own(e, q) :- tstr_walk(e, x, s), ibind(s, x, q), !last_not_import(s, x).
+tstr_own(e, @dot("builtins", x)) :- tstr_walk(e, x, m), kind(m, "module"), !bound_in(m, x), builtin(x).
+// In a complex string (concatenated or with escapes) every node of Ruff's tree has the whole string's range, and
+// Ruff records a resolved name by its range: each name then reads as the last one in the string that resolves.
+//   y: "Never | " "int"     both names are builtins.int: not reported by RUF020
+//   z: "Never | " "Foo"     Foo is undefined: both are typing.Never
 .decl tstr_qual(e: node, q: symbol)
-tstr_qual(e, q) :- tstr_walk(e, x, s), ibind(s, x, q).
-tstr_qual(e, @dot("builtins", x)) :- tstr_walk(e, x, m), kind(m, "module"), !bound_in(m, x), builtin(x).
+tstr_qual(e, q) :- tstr_own(e, q), tstr_in(e, h), tstr_simple(h).
+tstr_qual(e, q) :- tstr_name(e, _), tstr_in(e, h), !tstr_simple(h), tstr_last(h, l), tstr_own(l, q).
 tstr_qual(e, @dot(q, a)) :- tstr_in(e, _), kind(e, "attribute"), child(e, o, 0), child(e, n, 1), text(n, a), tstr_qual(o, q).
 tstr_qual(e, q) :- tstr_in(e, _), kind(e, "parenthesized_expression"), child(e, m, 0), tstr_qual(m, q).
+// tstr_last(h, l): l is the last name of complex string h that resolves (Ruff visits it in source order).
+.decl tstr_last(h: node, l: node)
+tstr_last(h, l) :- tstr_res(h, l, p), count : { tstr_res(h, _, p2), p2 > p } = 0.
+.decl tstr_res(h: node, l: node, p: number)
+tstr_res(h, l, p) :- tstr_in(l, h), !tstr_simple(h), tstr_walk(l, x, s), (bound_in(s, x) ; kind(s, "module"), builtin(x)),
+    node(_, l, _, p, _).
+// last_not_import(s, x): the last binding of x in scope s is not an import.
+.decl last_not_import(s: node, x: symbol)
+last_not_import(s, x) :- binding(s, x, b, f), f != "import", count : { binding(s, x, b2, _), b2 > b } = 0.
+// late_rebound(e): name e (an attribute chain's root) is read last, in a def's or lambda's body, and its scope's
+// last binding of it is not an import: `def f(): return Never | int` then `Never = int`.
+.decl late_rebound(e: node)
+late_rebound(e) :- unparen(e, m), chain_root(m, r), deferred_in(r, s), text(r, x), last_not_import(s, x).
+late_rebound(e) :- unparen(e, m), kind(m, "identifier"), deferred_in(m, s), text(m, x), last_not_import(s, x).
 
 .decl tstr_item(c: node, a: node, j: number)
 tstr_item(c, a, j) :- tstr_in(c, _), kind(c, "call"), child(c, al, 1), kind(al, "argument_list"), child(al, a, j),
@@ -65,3 +180,14 @@ tstr_arg(c, i, a) :- tstr_item(c, a, j), tstr_pos(a), !kind(a, "list_splat"),
 tstr_kwarg(c, x, v) :- tstr_item(c, a, _), kind(a, "keyword_argument"), child(a, n, 0), text(n, x), child(a, v, 1).
 .decl tstr_nargs(c: node, n: number)
 tstr_nargs(c, n) :- tstr_in(c, _), kind(c, "call"), n = count : { tstr_item(c, a, _), tstr_pos(a) }.
+
+// ruff_builtin(e, x): the name x read where no binding of x in its scope comes before it, and not in a def's or
+// lambda's body inside that scope (Ruff visits those after the scope, when every binding is there).
+.decl ruff_builtin(e: node, x: symbol)
+ruff_builtin(e, x) :- unparen(e, m), resolves_builtin(m, x).
+ruff_builtin(e, x) :- unparen(e, m), kind(m, "identifier"), look(m, x, s), builtin(x), ast_name(m, x), expr_ctx(m, "load"),
+    !deferred_in(m, s), count : { binding(s, x, b, _), b < m } = 0.
+// deferred_in(n, s): n is in the body of a def or lambda inside scope s.
+.decl deferred_in(n: node, s: node)
+deferred_in(n, s) :- kind(n, "identifier"), look(n, _, s), (kind(f, "function_definition") ; kind(f, "lambda")),
+    field(f, "body", b), within(n, b), within(f, s).

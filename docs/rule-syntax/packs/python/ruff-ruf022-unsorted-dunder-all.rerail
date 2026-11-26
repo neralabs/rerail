@@ -5,40 +5,149 @@
 .scope include "**/*"
 
 // Ruff RUF022: a module's `__all__` list or tuple of strings that is not in isort order: SCREAMING_CASE
-// constants, then CamelCase classes, then the rest, each in natural order (digit runs by number). Checked:
-// `__all__ = …` (one target), `__all__: T = …`, `__all__ += …` and `__all__.extend(…)` at module level (in an
-// `if` too), when every element is a string and there are two or more. Reported at the sequence.
-// "At module level" is Ruff's current scope: a `.extend(…)` call in a default, a decorator, a lambda's default
-// or a comprehension's first iterable counts; one in a def's annotations or type parameters, a class's bases or
-// keywords, a `type` statement, a class body or a comprehension's own code does not.
+// constants, then CamelCase classes, then the rest, each in natural order (digit runs by number; python/ruff-sort-keys
+// for Unicode case and lengths). Checked: `__all__ = …` (one target), `__all__: T = …`, `__all__ += …` and
+// `__all__.extend(…)` at module level (in an `if` too), the name parenthesised or not, when every element is a
+// string and there are two or more. Reported at the sequence.
+// "At module level" is Ruff's current scope: a `.extend(…)` call in a default, a decorator, a lambda's default,
+// a comprehension's first iterable or a module-level annotation string counts; one in a def's annotations or type
+// parameters, a class's bases or keywords, a `type` statement, a class body or a comprehension's own code does not.
 //   __all__ = ["b", "a"]                ← RUF022
+//   (__all__) = ["b", "a"]              ← RUF022
 //   def f(x=__all__.extend(["b", "a"])): ...        ← RUF022
+//   x: "__all__.extend(['b', 'a'])"     ← RUF022
+//   __all__ = ["A", "É"]                ← RUF022: "É" is two bytes, so a constant
 //   __all__ = ["APRIL", "Day", "f"]     not reported
 //   __all__ = ["a01", "a1"]             not reported: a run starting with 0 compares digit by digit
 //   __all__ = {"b", "a"}                not reported: a set has no order
 //   [x for y in z for x in __all__.extend(["b", "a"])]   not reported: the comprehension's scope
-#include "python/ruff-sorting.rerail"
+#include "python/ruff-sort-keys.rerail"
+#include "python/python-02.rerail"
 
 .violation RUF022(at: node) code "RUF022"
     "Sort `__all__`: SCREAMING_CASE constants first, then CamelCase classes, then the rest, each in natural order (digit runs by number). Leave it if other code relies on the current order."
     suppress ruff "RUF022"
-RUF022(m) :- all_checked(v), unsorted(v, "isort"), unparen(v, m).
+RUF022(m) :- all_checked(v), isort_unsorted(v), unparen(v, m).
+RUF022(m) :- all_checked(v), tstr_in(v, _), guest_unsorted(v), unparen(v, m).
+// guest_item(v, i, s): in a type string's tree, element i of v is the str s. ruff-sorting's seq_item reads
+// python/ast's value, which has no rows there (str has), and an aggregate does not see a guest's nodes, so the
+// elements are counted over derived rows.
+.decl guest_el(v: node, e: node, j: number)
+guest_el(v, e, j) :- all_checked(v0), tstr_in(v0, _), unparen(v0, v), child(v, e, j), !kind(e, "comment").
+.decl guest_item(v: node, i: number, s: symbol)
+guest_item(v, i, s) :- guest_el(v, e, j), kind(e, "string"), string_form(e, "str"), !fstring(e), str(e, s),
+    i = count : { guest_el(v, _, j0), j0 < j }.
+isort_ask(s) :- guest_item(_, _, s).
+.decl guest_unsorted(v0: node)
+guest_unsorted(v0) :- all_checked(v0), unparen(v0, v), guest_item(v, i, a), guest_item(v, i + 1, b), isort_key(a, ka),
+    isort_key(b, kb), ka > kb, n = count : { guest_el(v, _, _) }, n >= 2, guest_n(v, n).
+.decl guest_n(v: node, n: number)
+guest_n(v, n) :- guest_item(v, _, _), n = count : { guest_item(v, _, _) }.
 
 sort_ask(v, "isort") :- all_checked(v).
-// all_checked(v): ruff-sorting's all_seq, with its `.extend(…)` calls taken at Ruff's module scope instead.
+// all_checked(v): ruff-sorting's all_seq, with its `.extend(…)` calls taken at Ruff's module scope instead, and
+// the name in parentheses too.
 .decl all_checked(v: node)
 all_checked(v) :- all_seq(v), !extend_arg(v).
 all_checked(v) :- extend_arg(v), extend_call(c, v), run_scope(c, _, "module"), !type_scope(c), ordered(v).
+all_checked(v) :- kind(a, "assignment"), field(a, "left", l), paren_all(l), field(a, "right", v), one_target(a),
+    nearest(a, m, scope), kind(m, "module"), ordered(v).
+all_checked(v) :- kind(a, "augmented_assignment"), op(a, "+="), field(a, "left", l), paren_all(l), field(a, "right", v),
+    nearest(a, m, scope), kind(m, "module"), ordered(v).
+all_checked(v) :- tstr_node(c, s), kind(c, "call"), child(c, f, 0), kind(f, "attribute"), child(f, o, 0), unparen(o, n),
+    text(n, "__all__"), child(f, x, 1), text(x, "extend"), tstr_item(c, v, 0), !tstr_item(c, _, 1), tstr_pos(v),
+    ordered(v), tstr_parsed(s, h), run_scope(h, _, "module"), !type_scope(h).
 .decl extend_call(c: node, v: node)
-extend_call(c, v) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "extend"), text(o, "__all__"), call_only(c, v).
+extend_call(c, v) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "extend"), unparen(o, n), text(n, "__all__"),
+    call_only(c, v).
 .decl extend_arg(v: node)
 extend_arg(v) :- extend_call(_, v).
+// paren_all(l): l is `(__all__)` (tree-sitter's one-item tuple_pattern without a comma), parentheses nested too.
+.decl paren_all(l: node)
+paren_all(l) :- (kind(l, "tuple_pattern") ; kind(l, "parenthesized_expression")), child(l, c, _), !kind(c, "comment"),
+    count : { child(l, x, _), !kind(x, "comment") } = 1, (kind(c, "identifier"), text(c, "__all__") ; paren_all(c)),
+    text(l, t), !match("(?s).*,(\\s|#[^\\n]*)*\\)", t).
 // type_scope(c): c is where Ruff visits in a scope of type parameters: a def's annotations and type parameters,
 // a class's type parameters and argument list, a `type` statement.
 .decl type_scope(c: node)
-type_scope(c) :- extend_call(c, _), within(c, a), type_part(a).
+type_scope(c) :- (extend_call(c, _) ; tstr_parsed(_, c)), within(c, a), type_part(a).
 .decl type_part(a: node)
 type_part(t) :- (kind(p, "typed_parameter") ; kind(p, "typed_default_parameter")), field(p, "type", t).
 type_part(t) :- kind(f, "function_definition"), (field(f, "return_type", t) ; field(f, "type_parameters", t)).
 type_part(t) :- kind(c, "class_definition"), (field(c, "superclasses", t) ; field(c, "type_parameters", t)).
 type_part(s) :- kind(s, "type_alias_statement").
+
+// Tests: the review's counterexamples (review/python-02.review.md), each Ruff 0.17.6's lines.
+.test a_parenthesised_name_is_the_name exactly
+    .fixture "r022-parenthesized-name.py" ```
+        (__all__) = ["b", "a"]
+        (__all__) += ["b", "a"]
+        (__all__).extend(["b", "a"])
+        (__all__): list = ["b", "a"]
+        ((__all__)) = ["b", "a"]
+        (__all__,) = ["b", "a"]
+        ```
+    .expect RUF022 at "r022-parenthesized-name.py":1
+    .expect RUF022 at "r022-parenthesized-name.py":2
+    .expect RUF022 at "r022-parenthesized-name.py":3
+    .expect RUF022 at "r022-parenthesized-name.py":4
+    .expect RUF022 at "r022-parenthesized-name.py":5
+.end
+
+.test a_constant_is_more_than_one_byte_long exactly
+    .fixture "r022-byte-length.py" ```
+        __all__ = ["A", "É"]
+        __all__ = ["É", "A"]
+        __all__ = ["ℂ", "b"]
+        __all__ = ["b", "ℂ"]
+        ```
+    .expect RUF022 at "r022-byte-length.py":1
+    .expect RUF022 at "r022-byte-length.py":4
+.end
+
+.test unicode_lowercase_makes_no_constant exactly
+    .fixture "r022-unicode-lowercase.py" ```
+        __all__ = ["ΩΩ", "Éé"]
+        __all__ = ["Éé", "ΩΩ"]
+        __all__ = ["Aª", "AB"]
+        __all__ = ["Aß", "AB"]
+        ```
+    .expect RUF022 at "r022-unicode-lowercase.py":2
+    .expect RUF022 at "r022-unicode-lowercase.py":3
+    .expect RUF022 at "r022-unicode-lowercase.py":4
+.end
+
+.test titlecase_is_not_uppercase exactly
+    .fixture "r022-titlecase.py" ```
+        __all__ = ["b", "ǅǅ"]
+        __all__ = ["ǅǅ", "b"]
+        ```
+    .expect RUF022 at "r022-titlecase.py":2
+.end
+
+.test digit_runs_of_any_length exactly
+    .fixture "r022-long-digits.py" ```
+        __all__ = ["a9999999999", "a10000000000"]
+        __all__ = ["a10000000000", "a9999999999"]
+        __all__ = ["a1234567890", "a:"]
+        __all__ = ["a:", "a1234567890"]
+        __all__ = ["a1 2", "a12"]
+        __all__ = ["a12", "a1 2"]
+        __all__ = ["a0x", "a00"]
+        __all__ = ["a1", "a01"]
+        ```
+    .expect RUF022 at "r022-long-digits.py":2
+    .expect RUF022 at "r022-long-digits.py":4
+    .expect RUF022 at "r022-long-digits.py":6
+    .expect RUF022 at "r022-long-digits.py":8
+.end
+
+.test extend_in_an_annotation_string exactly
+    .fixture "r022-type-string.py" ```
+        x: "__all__.extend(['b', 'a'])"
+        def f(a: "__all__.extend(['b', 'a'])"): ...
+        class C:
+            y: "__all__.extend(['b', 'a'])"
+        ```
+    .expect RUF022 at "r022-type-string.py":1
+.end

@@ -5,46 +5,76 @@
 .scope include "**/*"
 
 // Ruff RUF019: `k in d and d[k]` read as a condition, which `d.get(k)` says in one lookup. Exactly two
-// operands, the same key and dict on both sides (Ruff's ComparableExpr: `d['a']` matches `"a" in d`), and no
-// side effect in either (a call, a subscript, an operator on non-literals, …), since the two evaluations could
-// then differ. `d[x, y]` and `d[*x]` index with a tuple, so they match `(x, y) in d` and `(*x,) in d`; the
-// empty builtin initializers (`list()`, `(dict)()`, `set(  # c\n)`) are no side effect and compare as `list()`.
+// operands, the same key and dict on both sides (Ruff's ComparableExpr: `d['a']` matches `"a" in d`, `1j` matches
+// `1.0j`, `f"a" "b"` matches `f"ab"`), and no side effect in either (a call, a subscript, an operator on
+// non-literals, …), since the two evaluations could then differ. `d[x, y]` and `d[*x]` index with a tuple, so
+// they match `(x, y) in d` and `(*x,) in d`; the empty builtin initializers (`list()`, `(dict)()`,
+// `set(  # c\n)`) are no side effect and compare as `list()`. A condition is also the first argument of `bool(…)`
+// (more arguments too), and conditions in strings Ruff parses as types are checked as well.
 //   if k in d and d[k]: ...           ← RUF019  `if d.get(k):`
 //   if (x, y) in d and d[x, y]: ...   ← RUF019
+//   x: "[a for a in [] if k in d and d[k]]"   ← RUF019
 //   v = k in d and d[k]               not reported: the value, not a condition
 //   if f() in d and d[f()]: ...       not reported: a call
 //   if a + b in d and d[a + b]: ...   not reported: `+` may run `__add__`
+//   if f"{x=}" in d and d[f"{x =}"]: ...   not reported: different debug text
 #include "python/ruff.rerail"
-#include "python/compare.rerail"
+#include "python/python-02.rerail"
+#include "python/compare-literals.rerail"
 
 .violation RUF019(at: node, dt: symbol, kt: symbol) code "RUF019"
     "If `{dt}` is a dict, use `{dt}.get({kt})` instead of testing `{kt} in {dt}` before reading `{dt}[{kt}]`; leave it if `{dt}` is not a mapping."
     suppress ruff "RUF019"
 RUF019(t, dt, kt) :- key_check(t, k1, d1, s, d2), cmp_same(d1, d2), same_key(k1, s), !key_effect(d1),
     !key_effect(k1), text(d2, dt), text(k1, kt).
-// key_check(t, k1, d1, s, d2): the test `k1 in d1 and d2[…]`, two operands; s is the subscript.
+// key_check(t, k1, d1, s, d2): the test `k1 in d1 and d2[…]`, two operands; s is the subscript. Read through
+// child, not field, so that the trees of type strings are read too (python/python-02's note).
 .decl key_check(t: node, k1: node, d1: node, s: node, d2: node)
-key_check(t, k1, d1, s, d2) :- bool_top(t, "and"), bool_test(t), count : { bool_operand(t, _, v), !kind(v, "comment") } = 2,
-    field(t, "left", l), field(t, "right", r), unparen(l, c), cmp(c, "in", k1, d1), unparen(r, s), kind(s, "subscript"),
-    field(s, "value", d2).
+key_check(t, k1, d1, s, d2) :- key_test(t), bool_top(t, "and"), count : { bool_operand(t, _, v), !kind(v, "comment") } = 2,
+    code_child(t, 0, l), code_child(t, 1, r), unparen(l, c), cmp(c, "in", k1, d1), unparen(r, s), kind(s, "subscript"),
+    child(s, d2, 0).
 cmp_same_ask(d1, d2) :- key_check(_, _, d1, _, d2).
+// key_test(t): Ruff's boolean test, and the first positional argument of `bool(…)` whatever follows it. In a type
+// string's tree only what starts from tstr_in is found, so its tests are listed again from there.
+.decl key_test(t: node)
+key_test(t) :- bool_test(t).
+key_test(m) :- call_q(c, "builtins.bool"), call_item(c, a, j), pos_item(a), count : { call_item(c, _, j0), j0 < j } = 0,
+    unparen(a, m).
+key_test(m) :- tstr_in(s, _), kind(s, k), (k = "if_clause", i = 0 ; k = "conditional_expression", i = 1 ;
+    k = "not_operator", i = 0), child(s, c, i), unparen(c, m).
+key_test(m) :- tstr_in(c, _), kind(c, "call"), child(c, f, 0), tstr_qual(f, "builtins.bool"), tstr_item(c, a, 0),
+    tstr_pos(a), unparen(a, m).
+key_test(m) :- key_test(t), kind(t, "boolean_operator"), child(t, c, _), unparen(c, m).
+// code_child(x, i, c): the i-th child of x that is not a comment.
+.decl code_child(x: node, i: number, c: node)
+code_child(t, i, c) :- bool_top(t, "and"), child(t, c, j), !kind(c, "comment"),
+    i = count : { child(t, c0, j0), j0 < j, !kind(c0, "comment") }.
 // sub_key(s, i, k): the i-th key of subscript s; tuple_key(s): Ruff reads s's keys as one tuple (`d[x, y]`,
-// `d[*x]`, `d[x,]`; the tape keeps no commas of a subscript, so a trailing one is read from its text).
+// `d[*x]`, `d[x,]`; the tape keeps no commas of a subscript, so a trailing one is read from its text: a comma
+// followed by nothing but blanks and comments up to the `]`, and not itself in a comment or a string).
 .decl sub_key(s: node, i: number, k: node)
 sub_key(s, i, k) :- key_check(_, _, _, s, _), child(s, k, j), j > 0, !kind(k, "comment"),
     i = count : { child(s, c, j0), j0 > 0, j0 < j, !kind(c, "comment") }.
 .decl tuple_key(s: node)
 tuple_key(s) :- sub_key(s, 1, _).
 tuple_key(s) :- sub_key(s, _, k), kind(k, "list_splat").
-tuple_key(s) :- sub_key(s, _, _), text(s, t), match("(?s).*,\\s*(#[^\\n]*\\s*)*\\]", t).
+tuple_key(s) :- sub_key(s, _, _), text(s, t),
+    match("(?s)(.*\\n)?([^#\"'\\n]|\"([^\"\\\\\\n]|\\\\.)*\"|'([^'\\\\\\n]|\\\\.)*')*,(\\s|#[^\\n]*)*\\]", t).
 .decl tup_item(u: node, i: number, e: node)
 tup_item(u, i, e) :- key_check(_, k1, _, s, _), tuple_key(s), unparen(k1, u), kind(u, "tuple"), child(u, e, j),
     !kind(e, "comment"), i = count : { child(u, c, j0), j0 < j, !kind(c, "comment") }.
-cmp_same_ask(k1, k2) :- key_check(_, k1, _, s, _), !tuple_key(s), sub_key(s, 0, k2).
-cmp_same_ask(e, k) :- key_check(_, k1, _, s, _), tuple_key(s), unparen(k1, u), tup_item(u, i, e), sub_key(s, i, k).
+// key_same(a, b): Ruff's ComparableExpr: literals by value (python/compare-literals), the rest by python/compare.
+.decl key_ask(a: node, b: node)
+key_ask(k1, k2) :- key_check(_, k1, _, s, _), !tuple_key(s), sub_key(s, 0, k2).
+key_ask(e, k) :- key_check(_, k1, _, s, _), tuple_key(s), unparen(k1, u), tup_item(u, i, e), sub_key(s, i, k).
+lit_same_ask(a, b) :- key_ask(a, b).
+cmp_same_ask(a, b) :- key_ask(a, b), !lit_one(a), !lit_one(b).
+.decl key_same(a: node, b: node)
+key_same(a, b) :- key_ask(a, b), lit_same(a, b).
+key_same(a, b) :- key_ask(a, b), !lit_one(a), !lit_one(b), cmp_same(a, b).
 // same_key(k1, s): k1 is the key subscript s reads.
 .decl same_key(k1: node, s: node)
-same_key(k1, s) :- key_check(_, k1, _, s, _), !tuple_key(s), sub_key(s, 0, k2), cmp_same(k1, k2).
+same_key(k1, s) :- key_check(_, k1, _, s, _), !tuple_key(s), sub_key(s, 0, k2), key_same(k1, k2).
 same_key(k1, s) :- key_check(_, k1, _, s, _), !tuple_key(s), sub_key(s, 0, k2), empty_init(k1, f1), empty_init(k2, f2),
     cmp_same(f1, f2).
 same_key(k1, s) :- key_check(_, k1, _, s, _), tuple_key(s), unparen(k1, u), kind(u, "tuple"), key_n(s, n),
@@ -55,7 +85,7 @@ key_n(s, n) :- tuple_key(s), n = count : { sub_key(s, _, _) }.
 tup_n(u, n) :- tup_item(u, _, _), n = count : { tup_item(u, _, _) }.
 .decl same_n(u: node, s: node, n: number)
 same_n(u, s, n) :- key_check(_, k1, _, s, _), tuple_key(s), unparen(k1, u), tup_item(u, _, _),
-    n = count : { tup_item(u, i, e), sub_key(s, i, k), cmp_same(e, k) }.
+    n = count : { tup_item(u, i, e), sub_key(s, i, k), key_same(e, k) }.
 // empty_init(e, f): e is a call of f with nothing but comments between its parentheses; compare's leaves count
 // the comment as a child, so `list(  # c\n)` and `list()` are compared here.
 .decl empty_init(e: node, f: node)
@@ -69,3 +99,119 @@ key_effect(e) :- key_check(_, k1, d1, _, _), (e = k1 ; e = d1), ruff_effect_node
 paren_init(x) :- kind(x, "call"), call_nargs(x, 0), call_nkwargs(x, 0), field(x, "function", f0),
     kind(f0, "parenthesized_expression"), unparen(f0, f), kind(f, "identifier"), resolves_builtin(f, n),
     (n = "list" ; n = "tuple" ; n = "set" ; n = "dict" ; n = "frozenset").
+
+// Tests: the review's counterexamples (review/python-02.review.md), each Ruff 0.17.6's lines.
+.test adjacent_f_string_and_bytes_pieces_are_one_value exactly
+    .fixture "r019-fstring-concat.py" ```
+        d = {}
+        x = 1
+        if f"a" "b" in d and d[f"ab"]:
+            pass
+        if b"a" b"b" in d and d[b"ab"]:
+            pass
+        if f"{x}" "a" f"b{x}" in d and d[f"{x}ab{x}"]:
+            pass
+        if f'\x41' in d and d[f"A"]:
+            pass
+        if f"a" "b" in d and d["ab"]:
+            pass
+        ```
+    .expect RUF019 at "r019-fstring-concat.py":3
+    .expect RUF019 at "r019-fstring-concat.py":5
+    .expect RUF019 at "r019-fstring-concat.py":7
+    .expect RUF019 at "r019-fstring-concat.py":9
+.end
+
+.test f_string_debug_text_and_conversions_count exactly
+    .fixture "r019-debug.py" ```
+        d = {}
+        x = 1
+        if f"{x=}" in d and d[f"{x =}"]:
+            pass
+        if f"{x=}" in d and d[f"x={x!r}"]:
+            pass
+        if f"{x!r}" in d and d[f"{x}"]:
+            pass
+        if f"{x=}" in d and d[f"{x=}"]:
+            pass
+        if f"{ x }" in d and d[f"{x}"]:
+            pass
+        ```
+    .expect RUF019 at "r019-debug.py":9
+    .expect RUF019 at "r019-debug.py":11
+.end
+
+.test imaginary_numbers_compare_by_value exactly
+    .fixture "r019-imaginary.py" ```
+        d = {}
+        if 1j in d and d[1.0j]:
+            pass
+        if 1e3j in d and d[1000J]:
+            pass
+        if (1j, 2) in d and d[1.0j, 2]:
+            pass
+        if -1j in d and d[-1.0j]:
+            pass
+        ```
+    .expect RUF019 at "r019-imaginary.py":2
+    .expect RUF019 at "r019-imaginary.py":4
+    .expect RUF019 at "r019-imaginary.py":6
+    .expect RUF019 at "r019-imaginary.py":8
+.end
+
+.test ints_beyond_64_bits_compare_by_their_token exactly
+    .fixture "r019-bigint.py" ```
+        d = {}
+        if 0x10000000000000000 in d and d[18446744073709551616]:
+            pass
+        if 100_000_000_000_000_000_000 in d and d[100000000000000000000]:
+            pass
+        if 0x1_0000_0000_0000_0000 in d and d[0x10000000000000000]:
+            pass
+        if 18446744073709551615 in d and d[0xFFFFFFFFFFFFFFFF]:
+            pass
+        ```
+    .expect RUF019 at "r019-bigint.py":4
+    .expect RUF019 at "r019-bigint.py":8
+.end
+
+.test a_comma_in_a_comment_is_no_trailing_comma exactly
+    .fixture "r019-comment-comma.py" ```
+        d = {}
+        k = 1
+        if k in d and d[k  # a,
+        ]:
+            pass
+        if k in d and d[k,  # a
+        ]:
+            pass
+        if (k,) in d and d[k,  # a
+        ]:
+            pass
+        ```
+    .expect RUF019 at "r019-comment-comma.py":3
+    .expect RUF019 at "r019-comment-comma.py":9
+.end
+
+.test key_checks_in_type_strings exactly
+    .fixture "r019-type-string.py" ```
+        from typing import cast
+        d = {}
+        k = 1
+        x: "[a for a in [] if k in d and d[k]]"
+        y = cast("[a for a in [] if k in d and d[k]]", 1)
+        ```
+    .expect RUF019 at "r019-type-string.py":4
+    .expect RUF019 at "r019-type-string.py":5
+.end
+
+.test the_first_argument_of_bool_is_a_test_whatever_follows exactly
+    .fixture "r019-bool-extra.py" ```
+        d = {}
+        k = 1
+        value = bool(k in d and d[k], 1)
+        other = bool(k in d and d[k])
+        ```
+    .expect RUF019 at "r019-bool-extra.py":3
+    .expect RUF019 at "r019-bool-extra.py":4
+.end

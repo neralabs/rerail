@@ -3510,66 +3510,6 @@
         }
       }
     },
-    "ruff-ruf017-quadratic-list-summation": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 4,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-ruf018-assignment-in-assert": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 5
-        }
-      }
-    },
-    "ruff-ruf019-unnecessary-key-check": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 4,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-ruf020-never-union": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-ruf021-parenthesize-chained-operators": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-ruf022-unsorted-dunder-all": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 6
-        }
-      }
-    },
     "ruff-ruf023-unsorted-dunder-slots": {
       "reason": "recorded by the suite, not yet explained",
       "right": "unknown",
@@ -3586,26 +3526,6 @@
       "counts": {
         "fixtures": {
           "originalOnly": 0,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-ruf026-default-factory-kwarg": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 6,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-ruf028-invalid-formatter-suppression-comment": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
           "translationOnly": 3
         }
       }
