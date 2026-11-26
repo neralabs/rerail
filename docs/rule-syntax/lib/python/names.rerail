@@ -228,9 +228,16 @@ gbind(s, x, t) :- decl(s, x, m), kind(m, "module"), tgt(t), kind(t, "identifier"
 .decl cls_late(n: node, x: symbol, s: node)
 cls_late(n, x, s) :- wstart(n, s), kind(s, "class_definition"), nameref(n, x), bound_in(s, x), !cls_early(n, x, s),
     !otgt(s, x), !ibind(s, x, _), x != "__qualname__", x != "__module__".
+// As `cls_early`: from each (class, name) bound, every name read in the class was listed, 2.4 M rows for 13 k.
+.shape bound_in after wstart
 .decl cls_early(n: node, x: symbol, s: node)
 cls_early(n, x, s) :- wstart(n, s), kind(s, "class_definition"), nameref(n, x), defn(s, x, f), f < n.
 cls_early(n, x, s) :- wstart(n, s), kind(s, "class_definition"), nameref(n, x), asg(s, x, _, a), a < n, !within(n, a).
+// A class's names once each, their definitions looked up by (class, name): from each definition, every name read in
+// its class (`wstart` by `$s`) was tested for its text, 3.3 M rows for 58 (decision 0137; the statistics price a
+// class's names as an average scope's).
+.shape defn after wstart
+.shape asg after wstart
 // wstart(n, s): where the lookup of n starts: its nearest scope or comprehension, except that a comprehension's
 // first iterable is looked up from the scope around the comprehension. (One level: an iterable nested in another
 // comprehension's first iterable starts at the outer comprehension.) A name in a string annotation's tree starts

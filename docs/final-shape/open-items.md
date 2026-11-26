@@ -5571,3 +5571,15 @@ tape's writers) instead of returning rows for a pass over them. A pass over the 
 a call to any other function. The assertion now says that: every callee in tier 2's IR
 (`fnK = colocated u0:N`) is one of the tape's four. The runs below it run again, and tier 1 and
 tier 2 equal the interpreters on every file.
+
+## O-class-scope-names. The statistics price a class's names as an average scope's (2026-11-26, decision 0137)
+
+Open. `names.rerail`'s `cls_early` and `cls_late` listed, for each (class, name) a definition or binding gives, every
+name read in the class (`wstart($n, $s)` by `$s`), and tested each one's text: 3.3 M and 2.4 M rows for 58 and 13 k on
+`all`. Their directives (`.shape defn after wstart`, `.shape asg after wstart`, `.shape bound_in after wstart`) take
+each class's names once and look their definitions up by (class, name): 1.13 s to 0.50 s and 0.61 s to 0.31 s of CPU.
+The cause is a fanout by a value a constant filter selects (`kind($s, class_definition)`): a class holds about 140
+names its lookups start at, where an average scope holds a few, and `wstart`'s fanout by `$s` is the average.
+Heavy values (0209) or the constant's own fanout would price it; then the directives are reported as no longer
+needed and come out. The same shape priced `tp_ref` (`within($n, $o)` by `$o`, 1.2 M rows for 20 k), where a
+directive made it worse: the names by their text read 1.7 M.

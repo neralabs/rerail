@@ -1192,7 +1192,12 @@ fn shapes_hold(version: &crate::code_rule_dsl::logic::program_image::Version, sh
     };
     for (shape, line) in shapes {
         let rules: Vec<RuleRef<'_>> = version.rules().filter(|r| version.rel_name(r.head().rel()) == shape.head).collect();
-        let reads = |rel: &str| rules.iter().any(|r| r.body().filter_map(|l| l.atom()).any(|a| version.rel_name(a.rel()) == rel));
+        // A `nearest(n, a, set)` literal reads the relation preparation makes of it (`rr_nearest_<set>`), the name the
+        // planner joins and EXPLAIN prints.
+        let reads = |rel: &str| rules.iter().any(|r| r.body().any(|l| match l.view() {
+            crate::code_rule_dsl::logic::program_image::Lit::Nearest { kindset, .. } => rel.strip_prefix(crate::code_rule_dsl::logic::front::NEAREST) == Some(version.text(kindset)),
+            _ => l.atom().is_some_and(|a| version.rel_name(a.rel()) == rel),
+        }));
         let missing = match &shape.wait {
             _ if !reads(&shape.lit) => Some(format!("no rule of `{}` reads `{}`", shape.head, shape.lit)),
             ShapeWait::After(a) if !reads(a) => Some(format!("no rule of `{}` reads `{a}`", shape.head)),
