@@ -69,16 +69,20 @@ pub enum Incoming {
     Closed,
 }
 
-/// Sends every valid line as a state, skips an invalid one with a note on `diagnostics`, and sends `Closed` once at
-/// end of input or on a read error, which also gets a note. The tray passes stderr, which lands in `daemon.log`.
+/// Sends every valid line as a state, skips an invalid one (not UTF-8, or not a state) with a note on `diagnostics`,
+/// and sends `Closed` once at end of input or on a read error, which also gets a note. The tray passes stderr, which
+/// lands in `daemon.log`.
 pub fn read_states(
-    input: impl BufRead,
+    mut input: impl BufRead,
     mut diagnostics: impl Write,
     mut send: impl FnMut(Incoming),
 ) {
-    for line in input.lines() {
-        let line = match line {
-            Ok(line) => line,
+    let mut bytes = Vec::new();
+    loop {
+        bytes.clear();
+        match input.read_until(b'\n', &mut bytes) {
+            Ok(0) => break,
+            Ok(_) => {}
             Err(error) => {
                 // A note that cannot be written has nowhere else to go.
                 let _ = writeln!(
@@ -87,11 +91,22 @@ pub fn read_states(
                 );
                 break;
             }
+        }
+        // Read as bytes, not `lines()`, whose error for a line that is not UTF-8 would end the input.
+        let line = match std::str::from_utf8(&bytes) {
+            Ok(line) => line,
+            Err(error) => {
+                let _ = writeln!(
+                    diagnostics,
+                    "rerail-tray: skipped a menu state that is not UTF-8: {error}"
+                );
+                continue;
+            }
         };
         if line.trim().is_empty() {
             continue;
         }
-        match serde_json::from_str::<MenuState>(&line) {
+        match serde_json::from_str::<MenuState>(line) {
             Ok(state) => send(Incoming::State(state)),
             Err(error) => {
                 let _ = writeln!(
@@ -228,6 +243,23 @@ mod tests {
             notes,
             "rerail-tray: stopped reading menu states: pipe broke\n"
         );
+    }
+
+    #[test]
+    fn read_states_skips_a_line_that_is_not_utf8() {
+        let mut input = b"\xff\xfe\n".to_vec();
+        input.extend_from_slice(format!("{FULL}\r\n{FULL}").as_bytes());
+        let (seen, notes) = collect(input.as_slice());
+        assert_eq!(notes.lines().count(), 1, "{notes:?}");
+        assert!(
+            notes.starts_with("rerail-tray: skipped a menu state that is not UTF-8: "),
+            "{notes:?}"
+        );
+        // The line after it, and a last line with no newline, are still read.
+        assert_eq!(seen.len(), 3);
+        assert!(matches!(seen[0], Incoming::State(_)));
+        assert!(matches!(seen[1], Incoming::State(_)));
+        assert_eq!(seen[2], Incoming::Closed);
     }
 
     #[test]
