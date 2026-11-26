@@ -106,9 +106,10 @@ impl Directory {
         self.entries.get(id.0 as usize).map_or(Vec::new(), |e| e.held.iter().map(|(r, _)| *r).collect())
     }
 
-    /// Block `from` refers to block `to` from now on: written in `from`'s reference table, and `to` held while `from`
-    /// is. Refused for a `to` that is not frozen, or a `from` that is.
-    pub fn refer(&mut self, from: BlockId, to: BlockId) -> Result<(), String> {
+    /// Block `from` refers to what lies at `at` in block `to` from now on (O§2: by block id and offset): written in
+    /// `from`'s reference table, and `to` held while `from` is. Refused for a `to` that is not frozen, or a `from` that
+    /// is.
+    pub fn refer(&mut self, from: BlockId, to: BlockId, at: usize) -> Result<(), String> {
         let target = self.block(to).ok_or_else(|| format!("a reference to {to}, which nothing holds"))?;
         if target.is_writable() {
             return Err(format!("a reference from {from} to {to}, a block not frozen"));
@@ -117,7 +118,7 @@ impl Directory {
             return Err(format!("a reference from {from}, a block frozen: its references are written while it is open"));
         };
         let mut w = pin_block(src, "refer", true).map_err(|e| format!("a reference from {from}: {e}"))?;
-        gens::add_ref(w.bytes_mut().expect("a write pin"), to.0).map_err(|e| format!("{from}: {e}"))?;
+        gens::add_ref(w.bytes_mut().expect("a write pin"), to.0, at).map_err(|e| format!("{from}: {e}"))?;
         drop(w);
         let frozen = match &self.entry(to)?.own {
             Own::Frozen(f) => f.clone(),

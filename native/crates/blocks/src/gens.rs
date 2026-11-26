@@ -1,9 +1,10 @@
 //! Generations by reference, and the descriptor table a launch reads them through (decision 0686; *0686: Operations*
 //! §2, E2).
 //!
-//! **References.** A block an operation uses refers to other blocks by **block id**, in its reference table, which
-//! lies at a fixed place right after the engine's header (`REFS_AT`): the header itself is the engine's, read by every
-//! block, and stays as it is. A block refers only to frozen blocks, so the one-writer rule holds across references;
+//! **References.** A block an operation uses refers to other blocks by **block id and offset** (O§2: "A block refers to
+//! another by block id and offset, in its header"), in its reference table, which lies at a fixed place right after
+//! the engine's header (`REFS_AT`): the header itself is the engine's, read by every block, and stays as it is. The
+//! offset is where, in the block referred to, the structure referred to lies (a layer's header, at `BODY_AT`). A block refers only to frozen blocks, so the one-writer rule holds across references;
 //! the host's directory (`rerail_delta_exec::dir`) checks that, keeps a `Frozen` handle for each reference, and read-
 //! pins what a block refers to whenever the block is read.
 //!
@@ -32,13 +33,26 @@ pub const REFS_AT: usize = 64;
 /// The most blocks one block refers to directly (a layer refers to the one below it; a merged layer to the one below
 /// the merged ones).
 pub const MAX_REFS: usize = 30;
-/// Where an operation block's body starts: after the reference table, on a cache line.
-pub const BODY_AT: usize = 192;
+/// Where an operation block's body starts: after the reference table (its mark and count, then `MAX_REFS` references),
+/// on a cache line.
+pub const BODY_AT: usize = 320;
+const _: () = assert!(REFS_AT + 8 + MAX_REFS * size_of::<Ref>() <= BODY_AT);
 /// The reference table's mark: a block made without one (the engine's other blocks) refers to nothing.
 pub const REFS_MAGIC: u32 = u32::from_le_bytes(*b"REF0");
 
 /// A block id: the directory's handle of a block, the same on every device; each device's table gives its address.
 pub type Id = u32;
+
+/// A reference: a block's id and the offset in it of what is referred to (32 bits: a block's offsets fit).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Ref {
+    pub id: Id,
+    pub at: u32,
+}
+
+// SAFETY: two u32s, no padding.
+unsafe impl Pod for Ref {}
 
 /// A run of `n` `T`s at byte `at` of `bytes`, read in place. Panics, naming the run, past the bytes or misaligned.
 #[inline]
@@ -74,13 +88,14 @@ pub fn set_word<T: Pod>(bytes: &mut [u8], at: usize, v: T) {
     words_mut::<T>(bytes, at, 1)[0] = v;
 }
 
-/// The reference table of a block, read in place: the ids it refers to. A block without one refers to nothing.
-pub fn refs(bytes: &[u8]) -> &[Id] {
+/// The reference table of a block, read in place: what it refers to, each a block id and an offset in it. A block
+/// without one refers to nothing.
+pub fn refs(bytes: &[u8]) -> &[Ref] {
     if bytes.len() < BODY_AT || word::<u32>(bytes, REFS_AT) != REFS_MAGIC {
         return &[];
     }
     let n = word::<u32>(bytes, REFS_AT + 4) as usize;
-    words::<u32>(bytes, REFS_AT + 8, n.min(MAX_REFS))
+    words::<Ref>(bytes, REFS_AT + 8, n.min(MAX_REFS))
 }
 
 /// Lays an empty reference table out in a new block's bytes.
@@ -89,8 +104,9 @@ pub fn init_refs(bytes: &mut [u8]) {
     set_word::<u32>(bytes, REFS_AT + 4, 0);
 }
 
-/// Adds a reference to block `id`: `Err` past `MAX_REFS`, or in a block without a table.
-pub fn add_ref(bytes: &mut [u8], id: Id) -> Result<(), String> {
+/// Adds a reference to what lies at `at` in block `id`: `Err` past `MAX_REFS`, or in a block without a table.
+pub fn add_ref(bytes: &mut [u8], id: Id, at: usize) -> Result<(), String> {
+    let at = u32::try_from(at).map_err(|_| format!("a reference to block #{id} at {at}, past 32 bits"))?;
     if word::<u32>(bytes, REFS_AT) != REFS_MAGIC {
         return Err("a block made without a reference table".into());
     }
@@ -98,7 +114,7 @@ pub fn add_ref(bytes: &mut [u8], id: Id) -> Result<(), String> {
     if n == MAX_REFS {
         return Err(format!("a block refers to at most {MAX_REFS} blocks"));
     }
-    set_word::<u32>(bytes, REFS_AT + 8 + 4 * n, id);
+    set_word(bytes, REFS_AT + 8 + size_of::<Ref>() * n, Ref { id, at });
     set_word::<u32>(bytes, REFS_AT + 4, n as u32 + 1);
     Ok(())
 }

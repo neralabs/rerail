@@ -586,8 +586,6 @@ Not built yet, each still the plan's:
 
 - `relation::View` and `Chain` are two definitions; the plan's B2 asks for one (View generalized to n layers).
 - E1 on a device: GPU uses pinned through fences, and replicas made by the directory where a device needs them.
-- The directory's references between blocks are block ids; only a layer's reference to the relation below carries
-  its offset too.
 - consolidate's kills search each row's key in every layer below (a binary search a layer, by its order); its cost
   is not measured.
 - Clippy with the twins' `clippy.toml` was not run on this code (no cargo or clippy runs are allowed here), so it is
@@ -608,3 +606,10 @@ Then (the same day), two of the items above:
   re-export in blocks.
 
 Checks (Relax, local): `rerail-delta-exec --lib` 26 of 26 (all but the device test, which compiles; no Metal here).
+
+And references by block id and offset (O§2: "A block refers to another by block id and offset, in its header"): a
+block's reference table holds `gens::Ref { id, at }`, the offset (32 bits) of what it refers to in that block; 30 of
+them move the body from 192 to 320 bytes. `Directory::refer` takes the offset; a layer refers to the layer below's
+header (`BODY_AT`), and a chain refuses a layer whose relation continues one it does not refer to. Checks (Relax,
+local): `rerail-delta-exec --lib` 26 of 26; `rerail-blocks --lib -- gens:: layer:: bistate:: relation:: rows::` 21 of
+21.

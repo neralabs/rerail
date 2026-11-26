@@ -183,7 +183,7 @@ impl Trace {
         }
         let out = dir.make_room(kind::FACTS, out_bytes(n), layer_room(&self.shape, n));
         if let Some(h) = self.head {
-            dir.refer(out, h)?;
+            dir.refer(out, h, BODY_AT)?;
         }
         let ctl = dir.make(kind::CONTROL, CONTROL_BYTES);
         let mut params = vec![0u8; ConsolidateP::SIZE];
@@ -233,7 +233,7 @@ impl Trace {
         };
         let out = dir.make_room(kind::FACTS, out_bytes(rows), layer_room(&self.shape, rows));
         if let Some(b) = below {
-            dir.refer(out, BlockId(b))?;
+            dir.refer(out, BlockId(b), BODY_AT)?;
         }
         let mut params = vec![0u8; MergeP::SIZE];
         MergeP { head: head.0, count, below: below.unwrap_or(NONE), pad: 0 }.write(&mut params);
@@ -313,7 +313,7 @@ pub fn merge_case<'r>(shape: &'r Shape, runs: &'r [Vec<(Vec<i64>, i32)>], count:
         let total: usize = runs[runs.len() - count as usize..].iter().map(Vec::len).sum();
         let out = dir.make_room(kind::FACTS, out_bytes(total), layer_room(t.shape(), total));
         if let Some(b) = below {
-            dir.refer(out, b).expect("frozen");
+            dir.refer(out, b, BODY_AT).expect("frozen");
         }
         let mut params = vec![0u8; MergeP::SIZE];
         MergeP { head: head.0, count, below: below.map_or(NONE, |b| b.0), pad: 0 }.write(&mut params);

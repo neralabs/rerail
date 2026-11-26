@@ -752,6 +752,12 @@ impl<'a> Chain<'a> {
             if l.head.shape.arity() != arity || l.rows.arity as usize != arity {
                 return Err(format!("layer #{id} has {} columns, not {arity}", l.head.shape.arity()));
             }
+            // Its reference to the layer below (O§2: block id and offset, the layer's header) is its relation's.
+            if let Some((b, _)) = l.below()
+                && !crate::gens::refs(l.bytes).contains(&crate::gens::Ref { id: b, at: BODY_AT as u32 })
+            {
+                return Err(format!("layer #{id} continues #{b} and does not refer to it"));
+            }
             at = l.below().map(|(b, o)| (b, Some(o)));
         }
         Ok(c)

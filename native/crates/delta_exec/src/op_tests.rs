@@ -7,6 +7,7 @@
 
 use super::*;
 use rerail_blocks::block::kind;
+use rerail_blocks::gens::{BODY_AT, Ref};
 use rerail_blocks::region::{pin_block, whole};
 use rerail_delta_twins::samples::{self, EVENS, MERGE as MERGE2, REACH, SORT, SQUARE};
 use rerail_delta_twins::{NoParams, TwinPhase};
@@ -259,13 +260,13 @@ fn references_are_to_frozen_blocks_and_reading_one_pins_what_it_refers_to() {
     let a = values_block(&mut dir, &[1, 2, 3]);
     let open = dir.make(kind::FACTS, 64);
     let b = dir.make(kind::FACTS, 64);
-    let e = dir.refer(b, open).unwrap_err();
+    let e = dir.refer(b, open, BODY_AT).unwrap_err();
     assert!(e.contains("not frozen"), "{e}");
-    dir.refer(b, a).unwrap();
+    dir.refer(b, a, BODY_AT).unwrap();
     dir.freeze(b).unwrap();
     let c = dir.make(kind::FACTS, 64);
-    dir.refer(c, b).unwrap();
-    let e = dir.refer(b, a).unwrap_err();
+    dir.refer(c, b, BODY_AT).unwrap();
+    let e = dir.refer(b, a, BODY_AT).unwrap_err();
     assert!(e.contains("a block frozen"), "a frozen block's references are fixed: {e}");
 
     let ab = dir.block(a).unwrap();
@@ -274,7 +275,7 @@ fn references_are_to_frozen_blocks_and_reading_one_pins_what_it_refers_to() {
         let t = l.table();
         assert_eq!(t.rows().iter().map(|d| d.id).collect::<Vec<_>>(), vec![a.0, b.0, c.0], "the table: c and what it reaches");
         assert_eq!(samples::vals(t.block(a.0).unwrap()), &[1, 2, 3], "a reached block read by id, in place");
-        assert_eq!(rerail_blocks::gens::refs(t.block(c.0).unwrap()), &[b.0], "c's reference table names b");
+        assert_eq!(rerail_blocks::gens::refs(t.block(c.0).unwrap()), &[Ref { id: b.0, at: BODY_AT as u32 }], "c's reference table names b, and where in it");
         assert_eq!(whole(&ab).region().cpu_reads(), 1, "reading c read-pinned a, which b refers to");
     }
     assert_eq!(whole(&ab).region().cpu_reads(), 0, "the launch's pins went with it");
@@ -287,7 +288,7 @@ fn references_are_to_frozen_blocks_and_reading_one_pins_what_it_refers_to() {
     assert_eq!(t.rows().iter().map(|d| d.id).collect::<Vec<_>>(), vec![a.0, b.0, c.0, out.0], "the table: its slots and what they reach");
     assert!(t.is_written(out.0) && !t.is_written(c.0));
     assert!(t.block(out.0).is_none(), "a written slot is read through its pin");
-    assert_eq!(rerail_blocks::gens::refs(t.block(c.0).unwrap()), &[b.0], "a slot read, by id");
+    assert_eq!(rerail_blocks::gens::refs(t.block(c.0).unwrap())[0].id, b.0, "a slot read, by id");
     assert_eq!(t.row(out.0).unwrap().addr, l.slots[1].addr() as u64, "the written slot's row is its pin's");
 }
 
@@ -452,11 +453,11 @@ fn a_kernel_follows_references_through_the_device_table() {
     let a = values_block(&mut dir, &(0..1000).map(|i| i * 3 + 1).collect::<Vec<_>>());
     let b = values_block(&mut dir, &(0..500).map(|i| -i).collect::<Vec<_>>());
     let c = dir.make(kind::FACTS, 64);
-    dir.refer(c, a).unwrap();
-    dir.refer(c, b).unwrap();
+    dir.refer(c, a, BODY_AT).unwrap();
+    dir.refer(c, b, BODY_AT).unwrap();
     dir.freeze(c).unwrap();
     let top = dir.make(kind::FACTS, 64);
-    dir.refer(top, c).unwrap();
+    dir.refer(top, c, BODY_AT).unwrap();
     let l = dir.read("device probe", &[top]).unwrap();
     let t = l.table();
     let dt = rerail_blocks::gens::device_table(&t, &l.pins(), &shared.device).unwrap();
