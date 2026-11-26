@@ -972,3 +972,31 @@ fail, each on its own law and no other: one drops its kills (L1), one writes a r
 reads its input when nothing changed (L4), one drops its kills when its cache reads as ∅ (L5). A cache left open or
 naming another state reads as ∅; the reference on a hand-made pair of states; an identity run's work, output and
 cache. The shape script's `contract` section; clippy over the crate, clean.
+
+**B4: l0's tape through the file layer** (2026-11-26; `delta_exec::files`).
+
+- The pieces this crate could reach without the old engine's higher crates: the observer (`rerail-observe`: its
+  digest step, its placed read, its counts), the tape's home (`rerail-tape-format`: `Home`, `home::Text`) and the
+  slabs' rooms (`rerail-slabs`). Not reachable: the placer, in `lang`, and a parser that writes its tape into a room
+  (format 16's writer grew a vector of its own, which `lang` copied into a room, `place_stored`). Two changes to
+  existing crates, put to the user and agreed: the placer (`place`, `placer`, `home_of`, `slab_room`, the slab room)
+  moved from `lang` to `rerail_slabs::placed`, `lang` re-exporting it (a vector-only `place` where there is no
+  device layer); and format 16's writer takes a room for its tape's bytes (`Sixteen::room`, `Writer::out_in`,
+  `Sink16::in_room`, `rerail_rr_syntax::tape_in`), every other writer as it was (`room: None`). A block kind for a
+  tape (`kind::TAPE`).
+- A document is named by its path relative to the root, its module from the answer (the path without `.rerail`).
+  `Files::answer` asks the observer's digest step, which reuses its answer on an unchanged stat under the racy rule; a
+  file it must read is read once by its placed read into the slabs' placer's home and its digest recorded; the rr
+  parser writes the tape into a tape block's room (`InBlock`), where it lies. The document, its source and tape, is a
+  blob named by its content (`Blobs`, sha256 of both). The tape port (`Doc`) is ∅ → tape on the first answer, the
+  identity while the digest is unchanged (read again or not), the old tape → the new one when it changed. A file
+  that cannot be read, is not UTF-8 or does not parse is refused, naming its path.
+- `Text` holds its source where the read placed it (`home::Text`), not a String; a source in hand (a test's, the
+  bootstrap's own) is made a home of its own (`text`).
+
+Checks (Relax, local, `rerail-delta-exec --lib -- files` 6 of 6): an unchanged file gives the identity, and the
+observer's counts since show no byte read (one answer reused on its stat); an edited file is read once and placed once
+(the observer hashed one file); a file that does not parse, and one that is not there, are refused, naming the path;
+the tape lies in a tape block; a cold answer names the path and its module. The shape script's `B4` section (and its
+file rule: a test may write the files it answers, and reads none). Clippy over slabs, tape_format, rr_syntax and
+delta_exec, clean.

@@ -32,6 +32,11 @@ pub fn tape(src: &str) -> Result<rerail_tape_format::f16::Tape16, String> {
     lean::tape(src)
 }
 
+/// [`tape`], written in `room` (`lean::tape_in`): the tape lies where the parser wrote it.
+pub fn tape_in(src: &str, room: std::sync::Arc<dyn rerail_tape_format::VectorRoom>) -> Result<rerail_tape_format::f16::Tape16, String> {
+    lean::tape_in(src, room)
+}
+
 /// `text` as the lean parser and the engine read what a checker's parser (the generated parser) read, its leaves
 /// `(start, end)`: where a string leaf holds a `\\u` escape, its `u` a backslash (an escaped backslash, of the
 /// escape's length), and an integer leaf past an `i64` its digits `0…01`. The lean parser writes `Bad` for a `\\u`

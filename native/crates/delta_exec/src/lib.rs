@@ -18,9 +18,9 @@
 //! - `kform`: K-form's relations;
 //! - `k0`: L1's walk of a K0 tape into K-form rows.
 //!
-//! Files are not read here: loads are answered through the engine's file layer (the observer, its placed read into a
-//! residency slab, content-addressed sources and tapes), as *0686: Operations* §9 sets out. `Text` is a source given
-//! in memory (the bootstrap's own files and tests).
+//! Files are not read here: a document is answered through the engine's file layer (`files`: the observer, its
+//! placed read into the placer's home, the rr parser's tape written into a tape block, a blob named by its content),
+//! as *0686: Operations* §9 sets out. `text` makes a document of a source given in memory (tests).
 //!
 //! The milestones toward one boot operation, L1 (the rebuild plan's §4), come after: the operator contract (B3), l0's
 //! tape through the file layer (B4), symbols (B5) and L1 itself (B6).
@@ -28,6 +28,7 @@
 pub mod cache;
 pub mod contract;
 pub mod dir;
+pub mod files;
 pub mod k0;
 pub mod kform;
 pub mod op;
@@ -46,6 +47,7 @@ pub const L0: &str = include_str!("../rerail/bootstrap-l0.rerail");
 
 /// A text parsed, for callers holding a source.
 pub fn text(src: &str) -> Arc<Text> {
-    // copy: load (a source's bytes)
-    Arc::new(Text::parse(src.to_string()).expect("an rr file that parses"))
+    // copy: load (a source in hand: a test's literal, the bootstrap's own file)
+    let home = rerail_rr_syntax::tape_format::home::Home::Own(rerail_rr_syntax::tape_format::Vector::from(src.as_bytes()));
+    Arc::new(Text::parse(rerail_rr_syntax::tape_format::home::Text::new(home).expect("UTF-8")).expect("an rr file that parses"))
 }

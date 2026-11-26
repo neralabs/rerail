@@ -623,7 +623,16 @@ pub struct Sink16 {
 impl Sink16 {
     pub fn new(z: bool, blocks: bool) -> Self {
         let number = std::sync::Arc::new(crate::tape::number);
-        Sink16 { target: rerail_tape_format::Sixteen { lang: crate::tape::lang(), terminators: crate::syntax::TERMINATORS, tag: rerail_tape_format::RR_TAG, z, blocks, number } }
+        Sink16 { target: rerail_tape_format::Sixteen { room: None, lang: crate::tape::lang(), terminators: crate::syntax::TERMINATORS, tag: rerail_tape_format::RR_TAG, z, blocks, number } }
+    }
+}
+
+impl Sink16 {
+    /// `new`, the tape's bytes written in `room` (`Sixteen::room`): the tape lies where the parser wrote it.
+    pub fn in_room(z: bool, blocks: bool, room: std::sync::Arc<dyn rerail_tape_format::VectorRoom>) -> Self {
+        let mut s = Sink16::new(z, blocks);
+        s.target.room = Some(room);
+        s
     }
 }
 
@@ -650,6 +659,15 @@ impl Finish for Sink16 {
 /// `crate::engine_tape(src)`). `Err` only for a code the language's table lacks, or a tape past format 16's bounds.
 pub fn tape(src: &str) -> Result<rerail_tape_format::f16::Tape16, String> {
     match tape_into(src, &mut Sink16::new(false, true))?.tape {
+        rerail_tape_format::f16::Written::F16(t) => Ok(t),
+        rerail_tape_format::f16::Written::F16Z(_) => unreachable!("16z was not asked for"),
+    }
+}
+
+/// [`tape`], its bytes written in `room` as the parser commits them (decision 0686, B4): the tape lies where it was
+/// written, with no copy into a home after.
+pub fn tape_in(src: &str, room: std::sync::Arc<dyn rerail_tape_format::VectorRoom>) -> Result<rerail_tape_format::f16::Tape16, String> {
+    match tape_into(src, &mut Sink16::in_room(false, true, room))?.tape {
         rerail_tape_format::f16::Written::F16(t) => Ok(t),
         rerail_tape_format::f16::Written::F16Z(_) => unreachable!("16z was not asked for"),
     }

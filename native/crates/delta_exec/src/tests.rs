@@ -73,7 +73,7 @@ fn views_over_a_three_line_tape() {
     for &c in &clauses {
         assert_eq!(probe(&node, &[0, 1], &[1, c], 2), vec![s("clause")]);
         let (start, end) = (probe(&node, &[0, 1], &[1, c], 3)[0], probe(&node, &[0, 1], &[1, c], 4)[0]);
-        assert_eq!(probe(&txt, &[0, 1], &[1, c], 2), vec![s(&t.src[start as usize..end as usize])]);
+        assert_eq!(probe(&txt, &[0, 1], &[1, c], 2), vec![s(&t.src.as_str()[start as usize..end as usize])]);
     }
     assert_eq!(probe(&node, &[0, 2], &[1, s("clause")], 1), clauses, "node's kind column answers as kind's");
     // Another document's key finds nothing here.

@@ -20,26 +20,37 @@ use rerail_blocks::bistate::{ColumnIndex, ColumnRead, Read, RowId, WordIndex, be
 use rerail_blocks::table::{Run, Runs, Table};
 use rerail_rr_syntax::tape::{FIELD_NAMES, FIRST_ANONYMOUS, KIND_NAMES, Kind, entry_kind_field};
 use rerail_rr_syntax::tape_format::f16::{F16, Tape16};
+use rerail_rr_syntax::tape_format::home;
 use rerail_rr_syntax::tape_format::tape::Tape as _;
 
-/// A document's text: its source, loaded from disk, and its tape, made by the rr parser.
+/// A document's text: its source, where the file layer's read placed it (or a source given in memory), and its tape,
+/// as the rr parser wrote it. Neither is copied: a view reads both where they lie.
 pub struct Text {
-    // copy: load (the file's bytes, which the tape's spans are read from)
-    pub src: String,
+    pub src: home::Text,
     pub tape: Tape16,
 }
 
 impl Text {
-    /// `src` parsed: refused when a statement does not parse (the parser writes it as an ERROR leaf, and a file the
-    /// engine refuses to run still has a tape).
-    pub fn parse(src: String) -> Result<Text, String> {
-        let tape = rerail_rr_syntax::tape(&src)?;
-        let text = Text { src, tape };
-        let r = Reads::of(&text);
+    /// `src` parsed, its tape in the parser's own vector (a source in hand: the bootstrap's own files and tests).
+    pub fn parse(src: home::Text) -> Result<Text, String> {
+        let tape = rerail_rr_syntax::tape(src.as_str())?;
+        Text { src, tape }.checked()
+    }
+
+    /// `src` parsed, its tape written by the parser in `room` (a tape block's, `files`).
+    pub fn parse_in(src: home::Text, room: std::sync::Arc<dyn rerail_rr_syntax::tape_format::VectorRoom>) -> Result<Text, String> {
+        let tape = rerail_rr_syntax::tape_in(src.as_str(), room)?;
+        Text { src, tape }.checked()
+    }
+
+    /// Refused when a statement does not parse (the parser writes it as an ERROR leaf, and a file the engine refuses
+    /// to run still has a tape).
+    fn checked(self) -> Result<Text, String> {
+        let r = Reads::of(&self);
         if let Some(i) = (0..r.len()).find(|&i| r.node(i).0 == rerail_rr_syntax::tape::ERROR) {
             return Err(format!("a statement that does not parse: {:?}", r.text(i)));
         }
-        Ok(text)
+        Ok(self)
     }
 }
 
@@ -116,7 +127,7 @@ impl<'t> Reads<'t> {
             .tape
             .reader(rerail_rr_syntax::tape::lang())
             .expect("an rr tape read with the rr table");
-        Reads { r, src: &text.src }
+        Reads { r, src: text.src.as_str() }
     }
 
     pub fn len(&self) -> usize {

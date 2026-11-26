@@ -38,6 +38,8 @@ pub mod kind {
     pub const CONTROL: u32 = 10;
     /// An operator cache's header (P§11.3): the state it describes and its open mark, mutated in place.
     pub const CACHE: u32 = 11;
+    /// A document's tape, as the rr parser wrote it (decision 0686, B4): a blob, read where it lies.
+    pub const TAPE: u32 = 12;
 }
 
 structure! {

@@ -78,6 +78,10 @@ def m0(failures: list) -> None:
     for path in sorted((CRATE / "src").rglob("*.rs")):
         code = strip_rust(path.read_text())
         for pattern, why in forbidden:
+            # A test may make the files it answers (write them, stamp them, remove them), and reads none.
+            if path.name.endswith("_tests.rs") and "std::fs::" in pattern:
+                pattern, why = (r"\bWorld\b|fs::read|File::open|read_to_string|read_dir",
+                                "a test's file read (a test writes the files the file layer answers, and reads none)")
             hits(path, code, pattern, why, failures)
     for path in sorted(CRATE.rglob("*.rerail")):
         code = strip_rerail(path.read_text())
@@ -243,6 +247,13 @@ def b2(failures: list) -> None:
         allowed = {"rerail_blocks", "rerail_rr_syntax", "rerail_delta_twins", "rerail_delta_exec"}
         if path.name.endswith("tests.rs"):
             allowed.add("rerail_gpu")
+        # B4: a document is answered through the engine's file layer (the observer, the slabs' placer), in `files`
+        # alone.
+        if path.name in ("files.rs", "files_tests.rs"):
+            allowed |= {"rerail_observe", "rerail_slabs"}
+        # Its tests narrow the observer's racy window, through the context's switches, as the engine's do.
+        if path.name == "files_tests.rs":
+            allowed.add("rerail_context")
         for name in sorted(set(re.findall(r"\b(rerail_[a-z0-9_]+)\b", code)) - allowed):
             failures.append(f"{path.relative_to(ROOT)}: names {name} (B§7: blocks and rr_syntax alone)")
     blocks_lib = crates / "blocks/src/lib.rs"
@@ -382,6 +393,29 @@ def contract(failures: list) -> None:
             failures.append(f"contract_tests.rs: no toy built to break {law} ({flaw})")
 
 
+def b4(failures: list) -> None:
+    """B4: a document through the engine's file layer. The observer's digest step answers a path; a changed file is read
+    once by the placed read, into the slabs' placer's home; the rr parser writes the tape into a tape block's room; the
+    document is a blob named by its content; `Text` holds no String."""
+    p = CRATE / "src/files.rs"
+    if not p.exists():
+        failures.append("native/crates/delta_exec/src/files.rs is missing (B4)")
+        return
+    text = strip_rust(p.read_text())
+    for pattern, why in ((r"\.digest_step\(", "the observer's digest step"), (r"\.digest_read\(", "the read recorded"),
+                         (r"read_placed\(&rerail_slabs::placed::placer\)", "the placed read, through the slabs' placer"),
+                         (r"Text::parse_in\(", "the tape written by the parser into a room"),
+                         (r"kind::TAPE", "a tape block"), (r"blobs\.house\(", "a blob named by its content")):
+        if not re.search(pattern, text):
+            failures.append(f"files.rs: no {why}")
+    tape = strip_rust((CRATE / "src/tape.rs").read_text())
+    m = re.search(r"pub struct Text \{([^}]*)\}", tape)
+    if not m or "String" in m.group(1):
+        failures.append("tape.rs: Text holds a String (B4: its source where the file layer placed it)")
+    if (ROOT / "native/crates/lang/src/code_rule_dsl/tape/placed.rs").read_text().count("fn place(") > 1:
+        failures.append("lang's placed.rs: a placer of its own beside the slabs' (one definition, rerail_slabs::placed)")
+
+
 def reach(failures: list) -> None:
     """The twins' rules reach the blocks code the twins call to write a layer (decision 0686): relation::layer_write,
     where the twins' clippy lints are denied (blocks' clippy.toml lists the twins' paths, and the two lists agree),
@@ -475,14 +509,14 @@ def e1(failures: list) -> None:
 
 def main() -> int:
     failures: list = []
-    for check in (m0, b1, b2, axes, bounds, cache, contract, reach, e1):
+    for check in (m0, b1, b2, axes, bounds, cache, contract, b4, reach, e1):
         check(failures)
     for f in failures:
         print(f)
     if failures:
         print(f"{len(failures)} shape check(s) failed (decision 0686, the rebuild plan)")
         return 1
-    print("delta_exec shape: every check holds (M0, B1, B2, axes, bounds, cache, contract, reach, E1)")
+    print("delta_exec shape: every check holds (M0, B1, B2, axes, bounds, cache, contract, B4, reach, E1)")
     return 0
 
 

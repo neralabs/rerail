@@ -44,6 +44,8 @@
 #![cfg(any(target_os = "macos", target_os = "linux", windows))]
 
 pub use rerail_error::Error;
+pub mod placed;
+
 use sha2::{Digest as _, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex};
