@@ -10,11 +10,13 @@ import { startDaemon, stopDaemon } from "../../../src/runtime/index.js";
 import {
   acquireMainInstance,
   assertContentStoreOwner,
+  contentStoreProblem,
   forgetMainInstanceHolder,
   MAIN_INSTANCE_HOLDER_FILE,
   MAIN_INSTANCE_LOCK_FILE,
   MainInstanceConflictError,
   mainInstanceLockHeld,
+  ownedContentStorePath,
   type MainInstanceLease,
   type MainRerailBuild,
 } from "../../../src/engine/native/main-instance.js";
@@ -129,6 +131,27 @@ describe("the single main instance", () => {
     assertContentStoreOwner(mainStore);
     lease.release();
     expect(() => assertContentStoreOwner(mainStore)).toThrow(/belongs to the main Rerail daemon/);
+  });
+
+  it("names why this process's code rules can open no content store, and nothing once they can", async () => {
+    const home = await temporaryDirectory();
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("USERPROFILE", home);
+    // No store named: this checkout's tests are a dev build, with the checkout's own store.
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", "");
+    expect(contentStoreProblem()).toBeUndefined();
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", join(home, "named", "content-v1.sqlite"));
+    expect(contentStoreProblem()).toBeUndefined();
+
+    const mainStore = join(mainContentStoreDirectory(), "content-v1.sqlite");
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", mainStore);
+    expect(contentStoreProblem()).toMatch(/^The machine-wide Rerail content store .* belongs to the main Rerail daemon/);
+    const lease = acquireMainInstance(build);
+    leases.push(lease);
+    expect(contentStoreProblem()).toBeUndefined();
+    expect(ownedContentStorePath()).toBe(mainStore);
+    lease.release();
+    expect(() => ownedContentStorePath()).toThrow(/belongs to the main Rerail daemon/);
   });
 
   it("starts a checkout's daemon while the main instance runs, without touching its lock", async () => {
