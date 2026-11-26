@@ -171,6 +171,16 @@ describe("a read of where a folder's repository is, whose Git gives no answer", 
     expect(owners.ownerOf(join(top, "a.txt"))?.checkoutRoot).toBe(physicalPath(top));
   });
 
+  it("gives a walk no owner for a file in a checkout whose ask failed, keeps none, and finds it next", () => {
+    const top = checkout();
+    const owners = new CheckoutOwners();
+    next.ending = "never-ran";
+    // A walk asks this for a path it reached through folders alone, whose real path is not looked up again.
+    expect(owners.ownerOfReal(join(top, "a.txt"))).toBeUndefined();
+    expect(next.ending).toBeUndefined();
+    expect(owners.ownerOfReal(join(top, "a.txt"))?.checkoutRoot).toBe(top);
+  });
+
   it("names no owner for a checkout in another whose own ask failed, not the one around it, and finds it next", () => {
     const inner = checkout(checkout());
     const owners = new CheckoutOwners();

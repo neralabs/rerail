@@ -92,6 +92,11 @@ function lstatStamp(path: string): string {
 const UNANSWERED = Symbol("unanswered");
 type Unanswered = typeof UNANSWERED;
 
+/** `owner` as a caller outside the map gets it: no owner where Git gave no answer ({@link UNANSWERED}). */
+function answered(owner: CheckoutOwner | Unanswered | undefined): CheckoutOwner | undefined {
+  return owner === UNANSWERED ? undefined : owner;
+}
+
 function within(root: string, candidate: string): boolean {
   const path = relative(root, candidate);
   return path === "" || (!isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`));
@@ -183,8 +188,7 @@ export class CheckoutOwners {
    * differ (a symlink into another checkout) or when the real path leaves the owner (a symlink escaping it).
    */
   ownerOf(absolute: string): CheckoutOwner | undefined {
-    const owner = this.#ownerOf(absolute);
-    return owner === UNANSWERED ? undefined : owner;
+    return answered(this.#ownerOf(absolute));
   }
 
   /** {@link ownerOf}, or {@link UNANSWERED} when Git gave no answer for the folder that would name the owner. */
@@ -196,16 +200,17 @@ export class CheckoutOwners {
 
   /**
    * `ownerOf` for a path that is its own real path: a file or folder a walk reached through folders alone (never a
-   * link) from a folder whose place it checked. Its real path is not looked up again.
+   * link) from a folder whose place it checked. Its real path is not looked up again. Undefined where Git gave no
+   * answer, as from `ownerOf`.
    */
   ownerOfReal(path: string): CheckoutOwner | undefined {
     this.#revalidate();
     const real = resolve(path);
-    return this.#ownerAt(real, real);
+    return answered(this.#ownerAt(real, real));
   }
 
-  /** The checkout holding `lexical`, whose real path is `real` (see `ownerOf`). */
-  #ownerAt(lexical: string, real: string): CheckoutOwner | undefined {
+  /** The checkout holding `lexical`, whose real path is `real` (see `ownerOf`), or {@link UNANSWERED} as `#ownerOf` gives it. */
+  #ownerAt(lexical: string, real: string): CheckoutOwner | Unanswered | undefined {
     const root = this.#rootOf(lexical, real);
     if (root === undefined || root === UNANSWERED) return root;
     if (!within(root, real)) return undefined;
