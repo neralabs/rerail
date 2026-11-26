@@ -1,0 +1,34 @@
+[
+  {
+    "id": "ruff-pth101-os-chmod",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pth106-os-rmdir",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pth107-os-remove",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pth108-os-unlink",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pth109-os-getcwd",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pth110-os-path-exists",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pth111-os-path-expanduser",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pth124-py-path",
+    "status": "same"
+  }
+]
