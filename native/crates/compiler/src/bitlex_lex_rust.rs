@@ -233,6 +233,71 @@ pub struct Reader {
 /// A mask's field in `Masks`: a grammar name's own, else the reader's `rd{r}_{role}`. One mask is
 /// one field, whichever readers read it: `all` holds each field made so far by its expression,
 /// and the reader that makes a field first lists it in `masks`.
+/// The names among `e`'s terms of `|` (a row's run: `prev(hex_at) | hx`'s `hx`).
+fn or_names(e: &Expr) -> Vec<String> {
+    match e {
+        Expr::Or(a, b) => {
+            let mut v = or_names(a);
+            v.extend(or_names(b));
+            v
+        }
+        Expr::Name(n) => vec![n.clone()],
+        _ => Vec::new(),
+    }
+}
+
+/// Escape `e`'s anchor: a factor `X` (offset 0) or `prev(X)` (offset 1) of it, `X` made of last bytes of runs
+/// (`Y & ~next(Y)`: their `Y`s), each narrowed or joined (`&`, `|`). Such an escape holds only at a run's last byte, or
+/// the byte after: the last byte of a token whose rule runs `Y`, as the lean lexer's number reader refuses at its end.
+fn anchor(e: &Expr, defs: &HashMap<String, Expr>) -> Option<(Vec<String>, u8)> {
+    fn lasts(x: &Expr, defs: &HashMap<String, Expr>, depth: usize) -> Option<Vec<String>> {
+        if depth > 16 {
+            return None;
+        }
+        match x {
+            Expr::Name(n) => lasts(defs.get(n)?, defs, depth + 1),
+            Expr::And(a, b) => {
+                // `Y & ~next(Y)`.
+                if let (Expr::Name(y), Expr::Not(nx)) = (&**a, &**b)
+                    && matches!(&**nx, Expr::Call(f, args) if f == "next" && matches!(args.as_slice(), [Arg::E(Expr::Name(z))] if z == y))
+                {
+                    return Some(vec![y.clone()]);
+                }
+                lasts(a, defs, depth + 1).or_else(|| lasts(b, defs, depth + 1))
+            }
+            Expr::Or(a, b) => {
+                let mut v = lasts(a, defs, depth + 1)?;
+                v.extend(lasts(b, defs, depth + 1)?);
+                Some(v)
+            }
+            _ => None,
+        }
+    }
+    fn factors<'a>(e: &'a Expr, defs: &'a HashMap<String, Expr>, out: &mut Vec<&'a Expr>, depth: usize) {
+        match e {
+            Expr::And(a, b) => {
+                factors(a, defs, out, depth);
+                factors(b, defs, out, depth);
+            }
+            // A name that is a run's last byte stays whole (`n_last`), else its factors.
+            Expr::Name(n) if depth < 4 && lasts(e, defs, 0).is_none() && defs.get(n).is_some_and(|d| matches!(d, Expr::And(..))) => factors(&defs[n], defs, out, depth + 1),
+            _ => out.push(e),
+        }
+    }
+    let mut fs = Vec::new();
+    factors(e, defs, &mut fs, 0);
+    for f in &fs {
+        if let Expr::Call(p, args) = f
+            && p == "prev"
+            && let [Arg::E(x)] | [Arg::E(x), Arg::N(1)] = args.as_slice()
+            && let Some(ys) = lasts(x, defs, 0)
+        {
+            return Some((ys, 1));
+        }
+    }
+    fs.iter().find_map(|f| lasts(f, defs, 0).map(|ys| (ys, 0)))
+}
+
 fn field_of(e: &Expr, r: usize, role: &str, masks: &mut Vec<(String, Expr)>, all: &mut Vec<(String, String)>) -> String {
     let key = format!("{e:?}");
     if let Some((f, _)) = all.iter().find(|(_, k)| *k == key) {
@@ -1198,7 +1263,8 @@ struct Gen<'a> {
     lookup: Option<crate::bitlex_pair_lookup::Lookup>,
     /// The escapes over the bytes outside every region token, tested over each token of code's
     /// bytes: each its reason and its mask there.
-    code_checks: Vec<(String, String, Expr)>,
+    /// … and its anchor (`anchor`): the runs whose last byte it holds at, and its offset from it in the mask.
+    code_checks: Vec<(String, String, Expr, Option<(Vec<String>, i64)>)>,
     /// Each class's bytes.
     class_bytes: HashMap<String, [bool; 256]>,
     /// The regions (`regions H { … }`) and the name of their hidden bytes.
@@ -4699,7 +4765,10 @@ impl Gen<'_> {
             }
             let v = simplify(v);
             let name = self.val(&v)?;
-            self.code_checks.push((why.to_owned(), name, v));
+            // The mask is shifted back by its `prev`'s distance: its anchor too, where every term's is one.
+            let js: Vec<i64> = out.iter().map(|(j, _)| *j).collect();
+            let at = anchor(e, &self.defs).filter(|_| js.windows(2).all(|w| w[0] == w[1])).map(|(ys, a)| (ys, i64::from(a) - js.first().copied().unwrap_or(0)));
+            self.code_checks.push((why.to_owned(), name, v, at));
             return Ok(true);
         }
         let mut code = Vec::new();
@@ -4835,7 +4904,8 @@ impl Gen<'_> {
         }
         if let Some(v) = outside {
             let name = self.val(&v)?;
-            self.code_checks.push((why.to_owned(), name, v));
+            let at = anchor(e, &self.defs).map(|(ys, a)| (ys, i64::from(a)));
+            self.code_checks.push((why.to_owned(), name, v, at));
         }
         Ok(true)
     }
@@ -6398,15 +6468,37 @@ impl Gen<'_> {
                 let in_token: [bool; 256] = std::array::from_fn(|i| sb[i] || tb[i]);
                 let mut at_tail = Ctx::of(tb);
                 at_tail.0[3] = in_token.into();
-                for (why, v, e) in &self.code_checks {
+                // The row's run's terms: the masks whose last byte is its token's last (`anchor`).
+                let run_terms: Vec<String> = match rule {
+                    Some(TokenRule::Run(r) | TokenRule::RunOnce(r, _)) => or_names(r),
+                    _ => Vec::new(),
+                };
+                for (why, v, e, at) in &self.code_checks {
                     let first = self.may_hold(e, &Ctx::of(sb));
                     let after = (0..256).any(|i| tb[i]) && self.may_hold(e, &at_tail);
                     let test = match (first, after) {
-                        (false, false) => continue,
-                        (true, false) => format!("bit(&{v}, s)"),
-                        (false, true) => format!("any_in(&{v}, s + 1, l)"),
-                        (true, true) => format!("any_in(&{v}, s, l)"),
+                        (false, false) => None,
+                        (true, false) => Some(format!("bit(&{v}, s)")),
+                        (false, true) => Some(format!("any_in(&{v}, s + 1, l)")),
+                        (true, true) => Some(format!("any_in(&{v}, s, l)")),
                     };
+                    // One anchored at a run's last byte (`anchor`): tested there, once, in the rows whose run that is,
+                    // as the lean lexer's number reader refuses at the number's end. Elsewhere it holds at none of a
+                    // token's bytes: not proved, a test build checks it.
+                    if let Some((ys, off)) = at {
+                        if ys.iter().any(|y| run_terms.contains(y)) {
+                            let at = match off {
+                                0 => format!("bit(&{v}, l)"),
+                                k if *k > 0 => format!("l + {k} < n && bit(&{v}, l + {k})"),
+                                k => format!("l >= {0} && bit(&{v}, l - {0})", -k),
+                            };
+                            let _ = write!(hits, "            // {why}: at the token's end, where it may hold\n            if {at} {{\n                refused = true;\n                break;\n            }}\n");
+                        } else if let Some(t) = test {
+                            let _ = write!(hits, "            // {why}: at no byte of this token (it holds at a run's end), not proved: a test build checks it.\n            #[cfg(feature = \"test-hooks\")]\n            assert!(!({t}), \"escape at a token not its anchor's: {}\");\n", why.replace('"', "'").replace('\\', ""));
+                        }
+                        continue;
+                    }
+                    let Some(test) = test else { continue };
                     let _ = write!(hits, "            // {why}\n            if {test} {{\n                refused = true;\n                break;\n            }}\n");
                 }
             }

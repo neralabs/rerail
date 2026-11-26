@@ -392,6 +392,8 @@ impl<'a> Bytes<'a> {
         };
         Ok(match e {
             Expr::Empty => "0u64".to_owned(),
+            // The window's bits a range test asks of (`live_fn`).
+            Expr::Name(n) if n == LIVE => "live".to_owned(),
             Expr::Name(n) => {
                 if self.classes.contains_key(n.as_str()) {
                     let f = format!("cls_{}", ident(n));
@@ -751,6 +753,23 @@ impl<'a> Bytes<'a> {
         Ok((format!("|p: isize, esc: &mut u64| unsafe {{ {f}::<S>(src, n, p, esc) }}"), esc))
     }
 
+    /// The window function of the local `m` for a test of bytes `..=b` from the window's first (`l_m`), written once:
+    /// `live`, the bits it asks of, ANDed into the first test of each side (`with_live`), so a side whose first test holds
+    /// at none of the token's bytes reads no further, as the lean lexer tests only the bytes it read.
+    fn live_fn(&mut self, m: &str, b: &str) -> Result<String, String> {
+        let f = format!("l_{m}");
+        if !self.written.contains(&f) {
+            let e = with_live(&self.expr(m)?);
+            let bits = self.win(&e, 0, 0)?;
+            self.written.push(f.clone());
+            let _ = write!(
+                self.code,
+                "/// `{m}`'s bits in the 64 bytes from `p` that `live` holds, from the bytes.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\n#[allow(unused_variables)]\nunsafe fn {f}<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> u64 {{\n    {bits}\n}}\n\n"
+            );
+        }
+        Ok(format!("|p: isize, esc: &mut u64| unsafe {{ {f}::<S>(src, n, p, esc, upto(p, {})) }}", b.trim()))
+    }
+
     /// One read (`name(args)`) of the loop as the bytes' form.
     fn read(&mut self, name: &str, args: &[String], line: &str) -> Result<Option<String>, String> {
         let mask = |a: &str| a.trim().strip_prefix('&').map(|m| m.strip_suffix("[..made]").unwrap_or(m).to_owned());
@@ -823,9 +842,19 @@ impl<'a> Bytes<'a> {
             }
             ("last_in", 3) if self.partial => format!("wlast_in({}, {}, {})", args[1].trim(), args[2].trim(), self.window_fn(&m)?.0),
             ("first_bit", 2) => format!("wfirst_bit(n, {}, {})", args[1].trim(), windowed(self, &args[1])?),
-            ("count_in", 3) => format!("wcount_in(n, {}, {}, {})", args[1].trim(), args[2].trim(), windowed(self, &args[1])?),
-            ("first_in", 3) => format!("wfirst_in(n, {}, {}, {})", args[1].trim(), args[2].trim(), windowed(self, &args[1])?),
-            ("any_in", 3) => format!("wfirst_in(n, {}, {}, {}).is_some()", args[1].trim(), args[2].trim(), windowed(self, &args[1])?),
+            // A test of a range: its windows ask only of its bytes (`live_fn`).
+            ("count_in", 3) => {
+                windowed(self, &args[1])?;
+                format!("wcount_in(n, {}, {}, {})", args[1].trim(), args[2].trim(), self.live_fn(&m, &args[2])?)
+            }
+            ("first_in", 3) => {
+                windowed(self, &args[1])?;
+                format!("wfirst_in(n, {}, {}, {})", args[1].trim(), args[2].trim(), self.live_fn(&m, &args[2])?)
+            }
+            ("any_in", 3) => {
+                windowed(self, &args[1])?;
+                format!("wfirst_in(n, {}, {}, {}).is_some()", args[1].trim(), args[2].trim(), self.live_fn(&m, &args[2])?)
+            }
             ("first_clear", 3) => format!("wfirst_clear(n, {}, {}, {})", args[1].trim(), args[2].trim(), windowed(self, &args[1])?),
             ("run_last", 2) => format!("wrun_last(n, {}, {})", args[1].trim(), windowed(self, "s")?),
             ("run_once_last", 3) => {
@@ -1326,6 +1355,19 @@ pub(super) fn lit(x: u8) -> String {
     }
 }
 
+/// The name of the bits a range test asks of (`live_fn`), in a mask's expression.
+const LIVE: &str = "\u{0}live";
+
+/// `e` with the range's bits (`LIVE`) ANDed into the first test of each side: down an `And`'s first operand, into both
+/// of an `Or`'s. Every early exit (`win`'s `And`) then asks only of them.
+fn with_live(e: &Expr) -> Expr {
+    match e {
+        Expr::And(a, b) => Expr::And(Box::new(with_live(a)), b.clone()),
+        Expr::Or(a, b) => Expr::Or(Box::new(with_live(a)), Box::new(with_live(b))),
+        _ => Expr::And(Box::new(Expr::Name(LIVE.to_owned())), Box::new(e.clone())),
+    }
+}
+
 fn ident(n: &str) -> String {
     n.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect()
 }
@@ -1401,9 +1443,12 @@ pub(super) fn fuse_tests(code: &str, escapes: &HashMap<String, String>) -> Strin
     // A test's head: its indent, its span and its window function.
     let head = |l: &str| -> Option<(usize, String, String)> {
         let ind = l.len() - l.trim_start().len();
-        let rest = l.trim_start().strip_prefix("if wcount_in(n, ")?.strip_suffix("::<S>(src, n, p, esc) }) >= 1 {")?;
+        let rest = l.trim_start().strip_prefix("if wcount_in(n, ")?;
         let (span, f) = rest.split_once(", |p: isize, esc: &mut u64| unsafe { ")?;
-        (f.starts_with("w_") && !f.contains(' ')).then(|| (ind, span.to_owned(), f.to_owned()))
+        // A range's test (`live_fn`, `l_`), or one over every byte of its windows (`w_`).
+        let b = span.split_once(", ")?.1;
+        let f = f.strip_suffix("::<S>(src, n, p, esc) }) >= 1 {").or_else(|| f.strip_suffix(&format!("::<S>(src, n, p, esc, upto(p, {b})) }}) >= 1 {{")))?;
+        ((f.starts_with("w_") || f.starts_with("l_")) && !f.contains(' ')).then(|| (ind, span.to_owned(), f.to_owned()))
     };
     // The line after a test's block, from its head at `i`.
     let end = |i: usize, ind: usize| -> Option<usize> {
@@ -1443,14 +1488,15 @@ pub(super) fn fuse_tests(code: &str, escapes: &HashMap<String, String>) -> Strin
         let pad = " ".repeat(ind);
         // Tests that read the escapes of one mask find them once a window, with one carry, as the lean lexer's string
         // reader passes each escape once.
-        let of: Vec<Option<&String>> = tests.iter().map(|(_, f)| escapes.get(f)).collect();
+        let of: Vec<Option<&String>> = tests.iter().map(|(_, f)| escapes.get(&format!("w_{}", &f[2..]))).collect();
+        let b = span.split_once(", ").map_or("", |(_, b)| b);
         let shared = of.iter().all(|o| o.is_some() && *o == of[0]);
         let _ = writeln!(out, "{pad}// The token's tests of its bytes, in one window loop: their classes loaded once a window.");
         if let (true, Some(Some(b))) = (shared, of.first()) {
-            let calls: Vec<String> = tests.iter().map(|(_, f)| format!("e_{}::<S>(src, n, p, escaped)", f.trim_start_matches("w_"))).collect();
+            let calls: Vec<String> = tests.iter().map(|(_, f)| format!("e_{}::<S>(src, n, p, escaped)", &f[2..])).collect();
             let _ = writeln!(out, "{pad}let hit = wany_in(n, {span}, |p: isize, esc: &mut [u64; {}]| unsafe {{ let escaped = escaped_step({}, &mut esc[0]); [{}] }});", tests.len(), in_unsafe(b), calls.join(", "));
         } else {
-            let calls: Vec<String> = tests.iter().enumerate().map(|(k, (_, f))| format!("{f}::<S>(src, n, p, &mut esc[{k}])")).collect();
+            let calls: Vec<String> = tests.iter().enumerate().map(|(k, (_, f))| if f.starts_with("l_") { format!("{f}::<S>(src, n, p, &mut esc[{k}], upto(p, {b}))") } else { format!("{f}::<S>(src, n, p, &mut esc[{k}])") }).collect();
             let _ = writeln!(out, "{pad}let hit = wany_in(n, {span}, |p: isize, esc: &mut [u64; {}]| unsafe {{ [{}] }});", tests.len(), calls.join(", "));
         }
         for (k, line) in lines.iter().enumerate().take(last).skip(i) {
@@ -1740,6 +1786,14 @@ fn wfirst_bit(n: usize, from: usize, mut w: impl FnMut(isize, &mut u64) -> u64) 
         p += 64;
     }
     None
+}
+
+/// The bits of the window from `p` in bytes `..=b`: a range test's (`wfirst_in`, `wcount_in`), whose windows start
+/// at its first byte.
+#[inline(always)]
+fn upto(p: isize, b: usize) -> u64 {
+    let left = b as isize - p + 1;
+    if left >= 64 { !0 } else if left <= 0 { 0 } else { (1u64 << left) - 1 }
 }
 
 /// The first byte in `a..=b` a mask holds, its windows `w` from `a` on.

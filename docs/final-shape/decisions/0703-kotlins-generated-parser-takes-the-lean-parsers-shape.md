@@ -213,6 +213,16 @@ them.
    0`, as the lean parser's `modifier(code)`) is a load, where the compiler makes the `matches!` of four words under
    128 a test of a constant mask; renumbering them into a run breaks the classes' runs that hotter tests are (a
    statement's start, a name's). Kept as the `matches!`.
+25. **A token's window tests ask only its own bytes**: a test over a token's bytes (`count_in`, `first_in`, `any_in`)
+   calls its window function with the token's range as a mask (`upto(p, l)`), ANDed into its first conjunct before the
+   early exit, so a byte in the window past the token starts no fill. Measured alone on the corpus (491 files, 3.6
+   MB, same run, best of 15): tier 1 743 ms against 735 ms before 0703, no change.
+26. **An escape at a number's end is tested there, once**: an escape with a factor that is a run's last byte (`Y &
+   ~next(Y)`, joined or narrowed), or `prev` of one, holds only at that byte or the next. It is tested by bytes at the
+   token's end (`l`, `l + 1`) in the rows whose run is `Y`, as the lean lexer's number reader refuses at the number's
+   end. Kotlin's three (a digit after a binary number, a word touching a real number, a number that ends in `_`) leave
+   the name arm; the other rows assert, in a test build, that it holds at none of their bytes. rr and JSON have none.
+   Measured (same run): tier 1 243 ms against 735 ms before 0703 (3.0×), the AOT parse 507 ms against 982 ms (1.9×).
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`
