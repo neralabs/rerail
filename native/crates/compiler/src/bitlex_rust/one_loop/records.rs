@@ -499,7 +499,12 @@ pub(super) fn tier2_calls(x: &Input<'_>) -> Result<(String, u32), String> {
     let g = G::new(x);
     let (hot, saves) = refusers(&g);
     *g.call_saves.borrow_mut() = Some((saves, word_setters(&g)));
-    let made = g.order.iter().map(|name| Ok((super::super::rule_fn(name), g.rule(name, !hot.contains(*name))?))).collect::<Result<Vec<_>, String>>()?;
+    // The operator ladders' loops, one method each (`G::ladders`, decision 0703), before the levels that call them.
+    let ladders = g.ladders()?;
+    let mut made = g.order.iter().map(|name| Ok((super::super::rule_fn(name), g.rule(name, !hot.contains(*name))?))).collect::<Result<Vec<_>, String>>()?;
+    for (f, rule, star, levels) in &ladders {
+        made.push((f.clone(), g.ladder(f, rule, star, levels.iter().all(|l| !hot.contains(l.as_str())))?));
+    }
     let made = g.inlined(made);
     let rules: String = g.printed(made).concat();
     let root = *g.order.first().ok_or("tier 2 as calls: no rule")?;

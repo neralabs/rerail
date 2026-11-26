@@ -144,6 +144,8 @@ struct G<'a> {
     inline: std::cell::RefCell<HashMap<String, Block>>,
     /// The rules' methods' names, in the order `inlined` gives their moves.
     methods: std::cell::RefCell<Vec<String>>,
+    /// Each level of an operator ladder (`ladders`): the ladder's method and the set of its operators the level takes.
+    ladder_of: std::cell::RefCell<HashMap<String, (String, u64)>>,
     /// What a level's call saves of its caller's, where only some levels change it (`records`' calls form): the levels
     /// that may refuse a mark or that a rule refusing one calls, and those whose code may set the level's word. None:
     /// every call saves both.
@@ -235,6 +237,18 @@ fn ident(name: &str) -> String {
 
 fn upper(name: &str) -> String {
     ident(name).to_ascii_uppercase()
+}
+
+/// A ladder's operator's guard (`G::ladders`): a flag named `#i`, which no grammar's name is, holds where the
+/// ladder's `set` has bit `i`.
+const LADDER_BIT: char = '#';
+
+/// The guard of an `unless F` alternative: taken where flag `F` is clear; a ladder's operator where its level takes it.
+fn flag_cond(f: &str) -> Cond {
+    match f.strip_prefix(LADDER_BIT) {
+        Some(i) => Cond::text(format!("set >> {i} & 1 != 0")),
+        None => Cond::Flag(format!("FLAG_{}", upper(f))),
+    }
 }
 
 /// A rule's function name: the rule's, apart from Rust's keywords and the runtime's own.
@@ -337,7 +351,7 @@ impl<'a> G<'a> {
                 refusing.clear();
             }
         }
-        G { x, rules, order, flags, readings, remember, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default(), peek_marks: Default::default(), anon: Default::default(), recognizers, leaf_refuses, leaf_call: Default::default(), cuts: Default::default(), scans: Default::default(), marked_read: Default::default(), names: Default::default(), inline: Default::default(), methods: Default::default() }
+        G { x, rules, order, flags, readings, remember, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default(), peek_marks: Default::default(), anon: Default::default(), recognizers, leaf_refuses, leaf_call: Default::default(), cuts: Default::default(), scans: Default::default(), marked_read: Default::default(), names: Default::default(), inline: Default::default(), methods: Default::default(), ladder_of: Default::default() }
     }
 
     fn mark_of(&self, name: &str) -> Option<usize> {
@@ -534,7 +548,7 @@ impl<'a> G<'a> {
             Test::Kind(k) => self.kind_cond(k),
         };
         match &t.1 {
-            Some(f) => Cond::Group(Box::new(Cond::And(vec![Cond::Flag(format!("FLAG_{}", upper(f))), base]))),
+            Some(f) => Cond::Group(Box::new(Cond::And(vec![flag_cond(f), base]))),
             None => base,
         }
     }
@@ -649,7 +663,7 @@ impl<'a> G<'a> {
         }
         marks.sort_by_key(|x| x.0);
         let guard = |f: &Option<String>, c: Cond| match f {
-            Some(f) => Cond::And(vec![Cond::Flag(format!("FLAG_{}", upper(f))), c]),
+            Some(f) => Cond::And(vec![flag_cond(f), c]),
             None => c,
         };
         let mut mg: Vec<(Vec<Cond>, usize)> = Vec::new();
@@ -686,8 +700,13 @@ impl<'a> G<'a> {
             let pats: Vec<String> = words.iter().filter(|x| x.1.is_none() && x.2 == t).map(|x| format!("w::{}", self.word_const(x.0))).collect();
             wg.push((Pat::words(pats), t));
         }
+        // A guarded arm's words one pattern, its guard once (a ladder's arm, `ladders`).
         for (w, f, t) in words.iter().filter(|x| x.1.is_some()) {
-            wg.push((Pat { words: vec![format!("w::{}", self.word_const(*w))], guard: Some(Cond::Flag(format!("FLAG_{}", upper(f.as_deref().unwrap_or_default())))) }, *t));
+            let p = format!("w::{}", self.word_const(*w));
+            match wg.iter_mut().find(|(pat, tt)| tt == t && pat.guard == Some(flag_cond(f.as_deref().unwrap_or_default()))) {
+                Some((pat, _)) => pat.words.push(p),
+                None => wg.push((Pat { words: vec![p], guard: Some(flag_cond(f.as_deref().unwrap_or_default())) }, *t)),
+            }
         }
         let mut kg: Vec<(Vec<Cond>, usize)> = Vec::new();
         for (k, f, t) in &kinds {
@@ -1473,7 +1492,7 @@ impl<'a> G<'a> {
                 out.push(line("self.flags = flags;"));
                 out
             }
-            Gram::Unless { flag, body } => vec![Op::If { arms: vec![(Cond::Flag(format!("FLAG_{}", upper(flag))), self.code(body, rest, rule)?)], els: None }],
+            Gram::Unless { flag, body } => vec![Op::If { arms: vec![(flag_cond(flag), self.code(body, rest, rule)?)], els: None }],
             Gram::Reread { reading, body } => {
                 if !self.readings.contains_key(reading.as_str()) {
                     return Err(format!("rule {rule}: no reading `{reading}`"));
@@ -1711,6 +1730,13 @@ impl<'a> G<'a> {
                 }
             }
             let mut c = self.code(body, &[], name)?;
+            // A ladder's level: its operators' loop the ladder's, called with the set it takes (`ladders`).
+            if let Some((f, set)) = self.ladder_of.borrow().get(name) {
+                match c.last_mut() {
+                    Some(op @ Op::Loop(_)) => *op = line(format!("self.{f}({set:#x})?;")),
+                    _ => return Err(format!("rule {name}: a ladder's level whose code ends in no loop")),
+                }
+            }
             c.extend(self.ending_code(name)?);
             // Its code where its one caller calls it (`inlined`): the node opened and closed there, as the lean
             // parser's `statement` opens `Include` in place. Not a level's that counts the depth or keeps the caller's word:
@@ -1745,6 +1771,91 @@ impl<'a> G<'a> {
         }
         out.push_str("    }\n\n");
         blk.push(Op::Line(out));
+        Ok(blk)
+    }
+
+    /// The grammar's operator ladders (decision 0703): three or more nested choices `H (op | …)*` of one head `H`, as
+    /// a grammar writes precedence levels, each its own set of operators. The lean parser has one loop with a minimum
+    /// precedence (`expr(min)`); a ladder's levels' sets need not nest (a level may take an operator a looser one does
+    /// not), so here the one loop takes the set: every level's operators in one order each level's keeps, each
+    /// guarded by its bit (an `unless` of the ladder's, `flag_cond`). Levels whose loops end differently (their exits,
+    /// the marks after them) are no ladder, nor are operators whose tests have guards of their own. A grammar whose
+    /// levels each have their own head (rr's `term`, `product`) has none: each level stays its own loop.
+    /// Each: the ladder's method, a level whose context its loop takes, its loop, and its levels.
+    pub(crate) fn ladders(&self) -> Result<Vec<(String, String, Gram, Vec<String>)>, String> {
+        // By head, and by how the loop ends (its exits, the marks after it): one loop is one ending.
+        type Ends = (Vec<(usize, bool)>, Vec<usize>);
+        let mut groups: Vec<(String, Ends, Vec<(&str, Vec<Gram>)>)> = Vec::new();
+        for &name in self.order.iter().skip(1) {
+            let Some(Stmt::Choice { body: Gram::Seq(v), nested: true, .. }) = self.rules.get(name) else { continue };
+            let [Gram::Sym(h), Gram::Star(a)] = v.as_slice() else { continue };
+            let alts = match &**a {
+                Gram::Alt(gs) => gs.clone(),
+                g => vec![g.clone()],
+            };
+            let ends = (self.exits_ending(&[], name)?, self.after_mark(&[], name)?);
+            match groups.iter_mut().find(|g| g.0 == *h && g.1 == ends) {
+                Some(g) => g.2.push((name, alts)),
+                None => groups.push((h.clone(), ends, vec![(name, alts)])),
+            }
+        }
+        if std::env::var_os("RERAIL_BITLEX_LADDERS").is_some() {
+            for g in &groups {
+                eprintln!("ladder group {} {:?}: {:?}", g.0, g.1, g.2.iter().map(|l| (l.0, l.1.len())).collect::<Vec<_>>());
+            }
+        }
+        let mut out = Vec::new();
+        'group: for (head, _, levels) in groups.into_iter().filter(|g| g.2.len() >= 3) {
+            // Every level's operators in one order: the widest level's, each other's inserted after the operator it
+            // follows in its level; then each level's order checked against it.
+            let widest = levels.iter().max_by_key(|l| l.1.len()).expect("levels");
+            let mut union: Vec<Gram> = widest.1.clone();
+            for (_, alts) in &levels {
+                for (i, a) in alts.iter().enumerate() {
+                    if union.contains(a) {
+                        continue;
+                    }
+                    let at = if i == 0 { 0 } else { union.iter().position(|u| *u == alts[i - 1]).expect("placed") + 1 };
+                    union.insert(at, a.clone());
+                }
+            }
+            if union.len() > 64 {
+                continue;
+            }
+            for (_, alts) in &levels {
+                let at: Vec<usize> = alts.iter().map(|a| union.iter().position(|u| u == a).expect("in the union")).collect();
+                if !at.windows(2).all(|p| p[0] < p[1]) {
+                    continue 'group;
+                }
+            }
+            for a in &union {
+                if self.first(a)?.0.iter().any(|f| f.1.is_some()) {
+                    continue 'group;
+                }
+            }
+            let f = format!("{}_ladder", rule_fn(&head));
+            for (name, alts) in &levels {
+                let set = alts.iter().fold(0u64, |s, a| s | 1 << union.iter().position(|u| u == a).expect("in the union"));
+                self.ladder_of.borrow_mut().insert((*name).to_owned(), (f.clone(), set));
+            }
+            let guarded = union.into_iter().enumerate().map(|(i, a)| Gram::Unless { flag: format!("{LADDER_BIT}{i}"), body: Box::new(a) }).collect();
+            out.push((f, levels[0].0.to_owned(), Gram::Star(Box::new(Gram::Alt(guarded))), levels.iter().map(|l| l.0.to_owned()).collect()));
+        }
+        Ok(out)
+    }
+
+    /// A ladder's method (`ladders`): its operators' loop, each taken where `set` has its bit, as the lean parser's
+    /// `expr(min)` loop takes an operator of `min`'s precedence or tighter.
+    /// `nf`: every level runs with no mark refused (`rule`'s).
+    pub(crate) fn ladder(&self, f: &str, rule: &str, star: &Gram, nf: bool) -> Result<Block, String> {
+        let mut code = self.code(star, &[], rule)?;
+        if nf {
+            moves::no_refusing(&mut code);
+        }
+        let mut blk = Block::new();
+        blk.push(Op::Line(format!("    /// The operators' loop of the levels of `{}` (an operator ladder): each operator where `set` has its bit.\n    fn {f}(&mut self, set: u64) -> R {{\n", f.trim_end_matches("_ladder"))));
+        blk.push(Op::At("        ".into(), code));
+        blk.push(Op::Line("        Ok(())\n    }\n\n".to_owned()));
         Ok(blk)
     }
 
@@ -3279,7 +3390,11 @@ impl<'a> G<'a> {
 
     fn source(&self) -> Result<String, String> {
         // Every rule's moves, then each printed (`rule`).
-        let made = self.order.iter().map(|name| Ok((rule_fn(name), self.rule(name, false)?))).collect::<Result<Vec<_>, String>>()?;
+        let ladders = self.ladders()?;
+        let mut made = self.order.iter().map(|name| Ok((rule_fn(name), self.rule(name, false)?))).collect::<Result<Vec<_>, String>>()?;
+        for (f, rule, star, _) in &ladders {
+            made.push((f.clone(), self.ladder(f, rule, star, false)?));
+        }
         let made = self.inlined(made);
         let rules: String = self.printed(made).concat();
         let entry = rule_fn(self.order.first().ok_or("no rule")?);

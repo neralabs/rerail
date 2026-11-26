@@ -3284,102 +3284,8 @@ impl<L: Layout> P<'_, L> {
         self.asks = asks & 0x8 | 0x0;
         self.unary_tight()?;
         self.asks = asks;
-        loop {
-            self.ask_semi(true)?;
-            if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                break;
-            } else if self.m_as_split() {
-                self.as_op()?;
-            } else if self.m_is_split() {
-                self.check_op()?;
-            } else if self.m_generic() || self.m_gen_nav() {
-                self.gen_op()?;
-            } else {
-                match self.word() {
-                    w::AS_1 => {
-                        self.as_op()?;
-                    }
-                    w::STAR_31 | w::SLASH_65 | w::PERCENT_66 => {
-                        self.mul_op()?;
-                    }
-                    w::PLUS_63 | w::MINUS_64 => {
-                        self.add_op()?;
-                    }
-                    w::DOT_DOT_45 | w::DOT_DOT_LT_46 => {
-                        self.range_op()?;
-                    }
-                    _ if INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::FILE_72 | w::BY_77) => {
-                        self.infix_op()?;
-                    }
-                    w::QUEST_COLON_47 => {
-                        self.elvis_op()?;
-                    }
-                    w::BANG_48 | w::IN_12 | w::IS_23 => {
-                        self.check_op()?;
-                    }
-                    w::LT_38 | w::GT_39 | w::LT_EQ_61 => {
-                        self.cmp_op()?;
-                    }
-                    w::EQ_EQ_59 | w::BANG_EQ_57 | w::EQ_EQ_EQ_60 | w::BANG_EQ_EQ_58 => {
-                        self.eq_op()?;
-                    }
-                    w::AMP_AMP_49 => {
-                        self.conj_op()?;
-                    }
-                    w::BAR_BAR_50 => {
-                        self.wrap(k::DISJUNCTION_EXPRESSION, 0)?;
-                        self.implied()?;
-                        let asks = self.asks;
-                        self.asks = asks & 0x0 | 0x8;
-                        self.disj_operand()?;
-                        self.asks = asks;
-                        self.close()?;
-                        self.marked = false;
-                    }
-                    _ if self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME => {
-                        self.infix_op()?;
-                    }
-                    _ => {
-                        break;
-                    }
-                }
-            }
-        }
+        self.unary_tight_ladder(0x1fbf)?;
         self.depth -= 1;
-        self.marked = false;
-        Ok(())
-    }
-
-    /// `gen_op`.
-    fn gen_op(&mut self) -> R {
-        if self.m_generic() {
-            self.mark_generic()?;
-            self.wrap(k::CALL_EXPRESSION, 0)?;
-            self.generic_suffix()?;
-            self.close()?;
-            self.part_2()?;
-        } else if self.m_gen_nav() {
-            self.mark_gen_nav()?;
-            self.wrap(k::NAVIGATION_EXPRESSION, 0)?;
-            self.generic_nav()?;
-            self.close()?;
-            self.part_2()?;
-        } else {
-            return self.refuse();
-        }
-        self.marked = false;
-        Ok(())
-    }
-
-    /// `mul_op`.
-    fn mul_op(&mut self) -> R {
-        self.wrap(k::MULTIPLICATIVE_EXPRESSION, 0)?;
-        self.tk_as(matches!(self.word(), w::STAR_31 | w::SLASH_65 | w::PERCENT_66), ANON[self.word() as usize], 0)?;
-        let asks = self.asks;
-        self.asks = asks & 0x0 | 0x8;
-        self.as_operand()?;
-        self.asks = asks;
-        self.close()?;
         self.marked = false;
         Ok(())
     }
@@ -3524,43 +3430,8 @@ impl<L: Layout> P<'_, L> {
         self.asks = asks & 0x8 | 0x0;
         self.unary_tight()?;
         self.asks = asks;
-        loop {
-            self.ask_semi(true)?;
-            if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                break;
-            } else if self.m_as_split() || self.word() == w::AS_1 {
-                self.as_op()?;
-            } else {
-                break;
-            }
-        }
+        self.unary_tight_ladder(0x2)?;
         self.depth -= 1;
-        self.marked = false;
-        Ok(())
-    }
-
-    /// `add_op`.
-    fn add_op(&mut self) -> R {
-        self.wrap(k::ADDITIVE_EXPRESSION, 0)?;
-        self.tk_as(matches!(self.word(), w::PLUS_63 | w::MINUS_64), ANON[self.word() as usize], 0)?;
-        let asks = self.asks;
-        self.asks = asks & 0x0 | 0x8;
-        self.add_operand()?;
-        self.asks = asks;
-        self.close()?;
-        self.marked = false;
-        Ok(())
-    }
-
-    /// `range_op`.
-    fn range_op(&mut self) -> R {
-        self.wrap(k::RANGE_EXPRESSION, 0)?;
-        self.tk_as(matches!(self.word(), w::DOT_DOT_45 | w::DOT_DOT_LT_46), ANON[self.word() as usize], 0)?;
-        let asks = self.asks;
-        self.asks = asks & 0x0 | 0x8;
-        self.range_operand()?;
-        self.asks = asks;
-        self.close()?;
         self.marked = false;
         Ok(())
     }
@@ -3572,19 +3443,6 @@ impl<L: Layout> P<'_, L> {
         let asks = self.asks;
         self.asks = asks & 0x0 | 0x8;
         self.infix_operand()?;
-        self.asks = asks;
-        self.close()?;
-        self.marked = false;
-        Ok(())
-    }
-
-    /// `elvis_op`.
-    fn elvis_op(&mut self) -> R {
-        self.wrap(k::ELVIS_EXPRESSION, 0)?;
-        self.p(w::QUEST_COLON_47)?;
-        let asks = self.asks;
-        self.asks = asks & 0x0 | 0x8;
-        self.elvis_operand()?;
         self.asks = asks;
         self.close()?;
         self.marked = false;
@@ -3676,32 +3534,6 @@ impl<L: Layout> P<'_, L> {
         Ok(())
     }
 
-    /// `eq_op`.
-    fn eq_op(&mut self) -> R {
-        self.wrap(k::EQUALITY_EXPRESSION, 0)?;
-        self.tk_as(matches!(self.word(), w::EQ_EQ_59 | w::BANG_EQ_57 | w::EQ_EQ_EQ_60 | w::BANG_EQ_EQ_58), ANON[self.word() as usize], 0)?;
-        let asks = self.asks;
-        self.asks = asks & 0x0 | 0x8;
-        self.eq_operand()?;
-        self.asks = asks;
-        self.close()?;
-        self.marked = false;
-        Ok(())
-    }
-
-    /// `conj_op`.
-    fn conj_op(&mut self) -> R {
-        self.wrap(k::CONJUNCTION_EXPRESSION, 0)?;
-        self.p(w::AMP_AMP_49)?;
-        let asks = self.asks;
-        self.asks = asks & 0x0 | 0x8;
-        self.conj_operand()?;
-        self.asks = asks;
-        self.close()?;
-        self.marked = false;
-        Ok(())
-    }
-
     /// `add_operand`.
     fn add_operand(&mut self) -> R {
         self.deeper()?;
@@ -3709,26 +3541,7 @@ impl<L: Layout> P<'_, L> {
         self.asks = asks & 0x8 | 0x0;
         self.unary_tight()?;
         self.asks = asks;
-        loop {
-            self.ask_semi(true)?;
-            if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                break;
-            } else if self.m_as_split() {
-                self.as_op()?;
-            } else {
-                match self.word() {
-                    w::AS_1 => {
-                        self.as_op()?;
-                    }
-                    w::STAR_31 | w::SLASH_65 | w::PERCENT_66 => {
-                        self.mul_op()?;
-                    }
-                    _ => {
-                        break;
-                    }
-                }
-            }
-        }
+        self.unary_tight_ladder(0x6)?;
         self.depth -= 1;
         self.marked = false;
         Ok(())
@@ -3741,29 +3554,7 @@ impl<L: Layout> P<'_, L> {
         self.asks = asks & 0x8 | 0x0;
         self.unary_tight()?;
         self.asks = asks;
-        loop {
-            self.ask_semi(true)?;
-            if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                break;
-            } else if self.m_as_split() {
-                self.as_op()?;
-            } else {
-                match self.word() {
-                    w::AS_1 => {
-                        self.as_op()?;
-                    }
-                    w::STAR_31 | w::SLASH_65 | w::PERCENT_66 => {
-                        self.mul_op()?;
-                    }
-                    w::PLUS_63 | w::MINUS_64 => {
-                        self.add_op()?;
-                    }
-                    _ => {
-                        break;
-                    }
-                }
-            }
-        }
+        self.unary_tight_ladder(0xe)?;
         self.depth -= 1;
         self.marked = false;
         Ok(())
@@ -3776,32 +3567,7 @@ impl<L: Layout> P<'_, L> {
         self.asks = asks & 0x8 | 0x0;
         self.unary_tight()?;
         self.asks = asks;
-        loop {
-            self.ask_semi(true)?;
-            if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                break;
-            } else if self.m_as_split() {
-                self.as_op()?;
-            } else {
-                match self.word() {
-                    w::AS_1 => {
-                        self.as_op()?;
-                    }
-                    w::STAR_31 | w::SLASH_65 | w::PERCENT_66 => {
-                        self.mul_op()?;
-                    }
-                    w::PLUS_63 | w::MINUS_64 => {
-                        self.add_op()?;
-                    }
-                    w::DOT_DOT_45 | w::DOT_DOT_LT_46 => {
-                        self.range_op()?;
-                    }
-                    _ => {
-                        break;
-                    }
-                }
-            }
-        }
+        self.unary_tight_ladder(0x1e)?;
         self.depth -= 1;
         self.marked = false;
         Ok(())
@@ -3814,35 +3580,7 @@ impl<L: Layout> P<'_, L> {
         self.asks = asks & 0x8 | 0x0;
         self.unary_tight()?;
         self.asks = asks;
-        loop {
-            self.ask_semi(true)?;
-            if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                break;
-            } else if self.m_as_split() {
-                self.as_op()?;
-            } else {
-                match self.word() {
-                    w::AS_1 => {
-                        self.as_op()?;
-                    }
-                    w::STAR_31 | w::SLASH_65 | w::PERCENT_66 => {
-                        self.mul_op()?;
-                    }
-                    w::PLUS_63 | w::MINUS_64 => {
-                        self.add_op()?;
-                    }
-                    w::DOT_DOT_45 | w::DOT_DOT_LT_46 => {
-                        self.range_op()?;
-                    }
-                    _ if INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::FILE_72 | w::BY_77) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME => {
-                        self.infix_op()?;
-                    }
-                    _ => {
-                        break;
-                    }
-                }
-            }
-        }
+        self.unary_tight_ladder(0x3e)?;
         self.depth -= 1;
         self.marked = false;
         Ok(())
@@ -3855,41 +3593,7 @@ impl<L: Layout> P<'_, L> {
         self.asks = asks & 0x8 | 0x0;
         self.unary_tight()?;
         self.asks = asks;
-        loop {
-            self.ask_semi(true)?;
-            if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                break;
-            } else if self.m_as_split() {
-                self.as_op()?;
-            } else {
-                match self.word() {
-                    w::AS_1 => {
-                        self.as_op()?;
-                    }
-                    w::STAR_31 | w::SLASH_65 | w::PERCENT_66 => {
-                        self.mul_op()?;
-                    }
-                    w::PLUS_63 | w::MINUS_64 => {
-                        self.add_op()?;
-                    }
-                    w::DOT_DOT_45 | w::DOT_DOT_LT_46 => {
-                        self.range_op()?;
-                    }
-                    _ if INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::FILE_72 | w::BY_77) => {
-                        self.infix_op()?;
-                    }
-                    w::QUEST_COLON_47 => {
-                        self.elvis_op()?;
-                    }
-                    _ if self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME => {
-                        self.infix_op()?;
-                    }
-                    _ => {
-                        break;
-                    }
-                }
-            }
-        }
+        self.unary_tight_ladder(0xbe)?;
         self.depth -= 1;
         self.marked = false;
         Ok(())
@@ -3902,57 +3606,7 @@ impl<L: Layout> P<'_, L> {
         self.asks = asks & 0x8 | 0x0;
         self.unary_tight()?;
         self.asks = asks;
-        loop {
-            self.ask_semi(true)?;
-            if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                break;
-            } else if self.m_as_split() {
-                self.as_op()?;
-            } else if self.m_is_split() {
-                self.check_op()?;
-            } else if self.pat_as_kwi_0_0(self.i, self.n) {
-                self.wrap(k::INFIX_EXPRESSION, 0)?;
-                self.kw_name()?;
-                let asks = self.asks;
-                self.asks = asks & 0x0 | 0x8;
-                self.infix_operand()?;
-                self.asks = asks;
-                self.close()?;
-                self.marked = false;
-            } else if self.m_generic() || self.m_gen_nav() {
-                self.gen_op()?;
-            } else {
-                match self.word() {
-                    w::AS_1 => {
-                        self.as_op()?;
-                    }
-                    w::STAR_31 | w::SLASH_65 | w::PERCENT_66 => {
-                        self.mul_op()?;
-                    }
-                    w::PLUS_63 | w::MINUS_64 => {
-                        self.add_op()?;
-                    }
-                    w::DOT_DOT_45 | w::DOT_DOT_LT_46 => {
-                        self.range_op()?;
-                    }
-                    _ if INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::FILE_72 | w::BY_77) => {
-                        self.infix_op()?;
-                    }
-                    w::QUEST_COLON_47 => {
-                        self.elvis_op()?;
-                    }
-                    w::BANG_48 | w::IN_12 | w::IS_23 => {
-                        self.check_op()?;
-                    }
-                    _ if self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME => {
-                        self.infix_op()?;
-                    }
-                    _ => {
-                        break;
-                    }
-                }
-            }
-        }
+        self.unary_tight_ladder(0x1ff)?;
         self.depth -= 1;
         self.marked = false;
         Ok(())
@@ -3965,51 +3619,7 @@ impl<L: Layout> P<'_, L> {
         self.asks = asks & 0x8 | 0x0;
         self.unary_tight()?;
         self.asks = asks;
-        loop {
-            self.ask_semi(true)?;
-            if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                break;
-            } else if self.m_as_split() {
-                self.as_op()?;
-            } else if self.m_is_split() {
-                self.check_op()?;
-            } else if self.m_generic() || self.m_gen_nav() {
-                self.gen_op()?;
-            } else {
-                match self.word() {
-                    w::AS_1 => {
-                        self.as_op()?;
-                    }
-                    w::STAR_31 | w::SLASH_65 | w::PERCENT_66 => {
-                        self.mul_op()?;
-                    }
-                    w::PLUS_63 | w::MINUS_64 => {
-                        self.add_op()?;
-                    }
-                    w::DOT_DOT_45 | w::DOT_DOT_LT_46 => {
-                        self.range_op()?;
-                    }
-                    _ if INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::FILE_72 | w::BY_77) => {
-                        self.infix_op()?;
-                    }
-                    w::QUEST_COLON_47 => {
-                        self.elvis_op()?;
-                    }
-                    w::BANG_48 | w::IN_12 | w::IS_23 => {
-                        self.check_op()?;
-                    }
-                    w::LT_38 | w::GT_39 | w::LT_EQ_61 => {
-                        self.cmp_op()?;
-                    }
-                    _ if self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME => {
-                        self.infix_op()?;
-                    }
-                    _ => {
-                        break;
-                    }
-                }
-            }
-        }
+        self.unary_tight_ladder(0x3bf)?;
         self.depth -= 1;
         self.marked = false;
         Ok(())
@@ -4022,54 +3632,7 @@ impl<L: Layout> P<'_, L> {
         self.asks = asks & 0x8 | 0x0;
         self.unary_tight()?;
         self.asks = asks;
-        loop {
-            self.ask_semi(true)?;
-            if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                break;
-            } else if self.m_as_split() {
-                self.as_op()?;
-            } else if self.m_is_split() {
-                self.check_op()?;
-            } else if self.m_generic() || self.m_gen_nav() {
-                self.gen_op()?;
-            } else {
-                match self.word() {
-                    w::AS_1 => {
-                        self.as_op()?;
-                    }
-                    w::STAR_31 | w::SLASH_65 | w::PERCENT_66 => {
-                        self.mul_op()?;
-                    }
-                    w::PLUS_63 | w::MINUS_64 => {
-                        self.add_op()?;
-                    }
-                    w::DOT_DOT_45 | w::DOT_DOT_LT_46 => {
-                        self.range_op()?;
-                    }
-                    _ if INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::FILE_72 | w::BY_77) => {
-                        self.infix_op()?;
-                    }
-                    w::QUEST_COLON_47 => {
-                        self.elvis_op()?;
-                    }
-                    w::BANG_48 | w::IN_12 | w::IS_23 => {
-                        self.check_op()?;
-                    }
-                    w::LT_38 | w::GT_39 | w::LT_EQ_61 => {
-                        self.cmp_op()?;
-                    }
-                    w::EQ_EQ_59 | w::BANG_EQ_57 | w::EQ_EQ_EQ_60 | w::BANG_EQ_EQ_58 => {
-                        self.eq_op()?;
-                    }
-                    _ if self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME => {
-                        self.infix_op()?;
-                    }
-                    _ => {
-                        break;
-                    }
-                }
-            }
-        }
+        self.unary_tight_ladder(0x7bf)?;
         self.depth -= 1;
         self.marked = false;
         Ok(())
@@ -4082,57 +3645,7 @@ impl<L: Layout> P<'_, L> {
         self.asks = asks & 0x8 | 0x0;
         self.unary_tight()?;
         self.asks = asks;
-        loop {
-            self.ask_semi(true)?;
-            if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                break;
-            } else if self.m_as_split() {
-                self.as_op()?;
-            } else if self.m_is_split() {
-                self.check_op()?;
-            } else if self.m_generic() || self.m_gen_nav() {
-                self.gen_op()?;
-            } else {
-                match self.word() {
-                    w::AS_1 => {
-                        self.as_op()?;
-                    }
-                    w::STAR_31 | w::SLASH_65 | w::PERCENT_66 => {
-                        self.mul_op()?;
-                    }
-                    w::PLUS_63 | w::MINUS_64 => {
-                        self.add_op()?;
-                    }
-                    w::DOT_DOT_45 | w::DOT_DOT_LT_46 => {
-                        self.range_op()?;
-                    }
-                    _ if INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::FILE_72 | w::BY_77) => {
-                        self.infix_op()?;
-                    }
-                    w::QUEST_COLON_47 => {
-                        self.elvis_op()?;
-                    }
-                    w::BANG_48 | w::IN_12 | w::IS_23 => {
-                        self.check_op()?;
-                    }
-                    w::LT_38 | w::GT_39 | w::LT_EQ_61 => {
-                        self.cmp_op()?;
-                    }
-                    w::EQ_EQ_59 | w::BANG_EQ_57 | w::EQ_EQ_EQ_60 | w::BANG_EQ_EQ_58 => {
-                        self.eq_op()?;
-                    }
-                    w::AMP_AMP_49 => {
-                        self.conj_op()?;
-                    }
-                    _ if self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME => {
-                        self.infix_op()?;
-                    }
-                    _ => {
-                        break;
-                    }
-                }
-            }
-        }
+        self.unary_tight_ladder(0xfbf)?;
         self.depth -= 1;
         self.marked = false;
         Ok(())
@@ -5270,6 +4783,138 @@ impl<L: Layout> P<'_, L> {
         }
         self.p_stored(w::COMMA_36, k::COMMA)?;
         self.marked = false;
+        Ok(())
+    }
+
+    /// The operators' loop of the levels of `unary_tight` (an operator ladder): each operator where `set` has its bit.
+    fn unary_tight_ladder(&mut self, set: u64) -> R {
+        loop {
+            self.ask_semi(true)?;
+            if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                break;
+            } else if set >> 1 & 1 != 0 && self.m_as_split() {
+                self.as_op()?;
+            } else if set >> 8 & 1 != 0 && self.m_is_split() {
+                self.check_op()?;
+            } else if set >> 6 & 1 != 0 && self.pat_as_kwi_0_0(self.i, self.n) {
+                self.wrap(k::INFIX_EXPRESSION, 0)?;
+                self.kw_name()?;
+                let asks = self.asks;
+                self.asks = asks & 0x0 | 0x8;
+                self.infix_operand()?;
+                self.asks = asks;
+                self.close()?;
+                self.marked = false;
+            } else if set >> 0 & 1 != 0 && self.m_generic() || set >> 0 & 1 != 0 && self.m_gen_nav() {
+                if self.m_generic() {
+                    self.mark_generic()?;
+                    self.wrap(k::CALL_EXPRESSION, 0)?;
+                    self.generic_suffix()?;
+                    self.close()?;
+                    self.part_2()?;
+                } else if self.m_gen_nav() {
+                    self.mark_gen_nav()?;
+                    self.wrap(k::NAVIGATION_EXPRESSION, 0)?;
+                    self.generic_nav()?;
+                    self.close()?;
+                    self.part_2()?;
+                } else {
+                    return self.refuse();
+                }
+                self.marked = false;
+            } else {
+                match self.word() {
+                    w::AS_1 if set >> 1 & 1 != 0 => {
+                        self.as_op()?;
+                    }
+                    w::STAR_31 | w::SLASH_65 | w::PERCENT_66 if set >> 2 & 1 != 0 => {
+                        self.wrap(k::MULTIPLICATIVE_EXPRESSION, 0)?;
+                        self.tk_as(matches!(self.word(), w::STAR_31 | w::SLASH_65 | w::PERCENT_66), ANON[self.word() as usize], 0)?;
+                        let asks = self.asks;
+                        self.asks = asks & 0x0 | 0x8;
+                        self.as_operand()?;
+                        self.asks = asks;
+                        self.close()?;
+                        self.marked = false;
+                    }
+                    w::PLUS_63 | w::MINUS_64 if set >> 3 & 1 != 0 => {
+                        self.wrap(k::ADDITIVE_EXPRESSION, 0)?;
+                        self.tk_as(matches!(self.word(), w::PLUS_63 | w::MINUS_64), ANON[self.word() as usize], 0)?;
+                        let asks = self.asks;
+                        self.asks = asks & 0x0 | 0x8;
+                        self.add_operand()?;
+                        self.asks = asks;
+                        self.close()?;
+                        self.marked = false;
+                    }
+                    w::DOT_DOT_45 | w::DOT_DOT_LT_46 if set >> 4 & 1 != 0 => {
+                        self.wrap(k::RANGE_EXPRESSION, 0)?;
+                        self.tk_as(matches!(self.word(), w::DOT_DOT_45 | w::DOT_DOT_LT_46), ANON[self.word() as usize], 0)?;
+                        let asks = self.asks;
+                        self.asks = asks & 0x0 | 0x8;
+                        self.range_operand()?;
+                        self.asks = asks;
+                        self.close()?;
+                        self.marked = false;
+                    }
+                    _ if (INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::FILE_72 | w::BY_77)) && set >> 5 & 1 != 0 => {
+                        self.infix_op()?;
+                    }
+                    w::QUEST_COLON_47 if set >> 7 & 1 != 0 => {
+                        self.wrap(k::ELVIS_EXPRESSION, 0)?;
+                        self.implied()?;
+                        let asks = self.asks;
+                        self.asks = asks & 0x0 | 0x8;
+                        self.elvis_operand()?;
+                        self.asks = asks;
+                        self.close()?;
+                        self.marked = false;
+                    }
+                    w::BANG_48 | w::IN_12 | w::IS_23 if set >> 8 & 1 != 0 => {
+                        self.check_op()?;
+                    }
+                    w::LT_38 | w::GT_39 | w::LT_EQ_61 if set >> 9 & 1 != 0 => {
+                        self.cmp_op()?;
+                    }
+                    w::EQ_EQ_59 | w::BANG_EQ_57 | w::EQ_EQ_EQ_60 | w::BANG_EQ_EQ_58 if set >> 10 & 1 != 0 => {
+                        self.wrap(k::EQUALITY_EXPRESSION, 0)?;
+                        self.tk_as(matches!(self.word(), w::EQ_EQ_59 | w::BANG_EQ_57 | w::EQ_EQ_EQ_60 | w::BANG_EQ_EQ_58), ANON[self.word() as usize], 0)?;
+                        let asks = self.asks;
+                        self.asks = asks & 0x0 | 0x8;
+                        self.eq_operand()?;
+                        self.asks = asks;
+                        self.close()?;
+                        self.marked = false;
+                    }
+                    w::AMP_AMP_49 if set >> 11 & 1 != 0 => {
+                        self.wrap(k::CONJUNCTION_EXPRESSION, 0)?;
+                        self.implied()?;
+                        let asks = self.asks;
+                        self.asks = asks & 0x0 | 0x8;
+                        self.conj_operand()?;
+                        self.asks = asks;
+                        self.close()?;
+                        self.marked = false;
+                    }
+                    w::BAR_BAR_50 if set >> 12 & 1 != 0 => {
+                        self.wrap(k::DISJUNCTION_EXPRESSION, 0)?;
+                        self.implied()?;
+                        let asks = self.asks;
+                        self.asks = asks & 0x0 | 0x8;
+                        self.disj_operand()?;
+                        self.asks = asks;
+                        self.close()?;
+                        self.marked = false;
+                    }
+                    _ if set >> 5 & 1 != 0 && self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::NULL_26).contains(&self.word()) || set >> 5 & 1 != 0 && self.kind() == t::BACKTICK_NAME => {
+                        self.infix_op()?;
+                    }
+                    _ => {
+                        break;
+                    }
+                }
+            }
+        }
         Ok(())
     }
 

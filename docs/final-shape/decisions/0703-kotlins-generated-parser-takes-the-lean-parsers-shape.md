@@ -33,3 +33,14 @@ them.
    list. Kotlin's 673 lists are each `!(w::AS_1..=w::NULL_26).contains(&word)`, tier 2's Rust 1.74 MB to 1.52 MB. The
    runs of kinds that make a keyword's leaf one add (`word_kind`) are within a row, so they stay. rr's and JSON's code
    changes only in its word numbers.
+2. **An operator ladder is one loop** (`G::ladders`, `G::ladder`). Three or more nested choices `H (op | …)*` of one
+   head whose loops end alike (their exits, the marks after them) are one method, `H_ladder(set)`. It is the loop over
+   every level's operators in one order that keeps each level's, each operator's tests guarded by its bit of `set` (an
+   `unless` of the ladder's: a flag named `#i`, `flag_cond`), so an operator a level does not take falls through to the
+   next arm as the level's own decision did. Each level keeps its head's call and its depth, then calls the ladder
+   with its set. The lean parser's `expr(min)` takes a minimum, since its levels nest. Kotlin's do not (`gen_op` and
+   `kw_infix_op` are some middle levels' only), so the set is a bit set. Kotlin's eleven levels of `unary_tight` are
+   one ladder. rr's levels each have their own head (`term` over `product`, `product` over `primary`), as rr's lean
+   parser has them, so it has no ladder, and neither does JSON. Their code is unchanged. Both of tier 2's Rust forms
+   that call methods (`source`, `tier2_calls`) take the ladders; the one loop's form (rr's `tier2_loop`) has none.
+   `RERAIL_BITLEX_LADDERS` prints the candidate groups.
