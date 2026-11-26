@@ -3568,12 +3568,19 @@ impl Batch {
             }
             debug_assert!(std::ptr::eq(from, f), "the sort ends where `sorted` says");
             prog.rooms.sorts.extend(sort_room.take());
-            // Its rows placed, and beside them its buckets' offsets, a thread a bucket (decision 0647).
-            job_phase(prog, &[(JobKind::Index, PK_IX_PLACE, |j| j.count), (JobKind::Index, PK_IX_OFFS, |j| j.buckets + 1)]);
-            // Its marks (decision 0671), of its rows and buckets placed.
+            // Its buckets' offsets, a thread a bucket (decision 0647).
+            job_phase(prog, &[(JobKind::Index, PK_IX_OFFS, |j| j.buckets + 1)]);
+            // Its marks (decision 0671), of its buckets placed: each row's tag where its key's pass left it, in its
+            // rows' room, so no tag reads a row again; then its rows placed there, beside the dedups' and maps' first
+            // work (none of which reads an index).
             job_phase(prog, &[(JobKind::Index, PK_IX_MARK, |j| j.count)]);
         }
-        job_phase(prog, &[(JobKind::Dedup, PK_DEDUP_CLEAR, |j| j.clear), (JobKind::Dedup, PK_DEDUP_KEY, |j| j.wide), (JobKind::Map, PK_MAP, |j| j.count)]);
+        job_phase(prog, &[
+            (JobKind::Index, PK_IX_PLACE, |j| j.count),
+            (JobKind::Dedup, PK_DEDUP_CLEAR, |j| j.clear),
+            (JobKind::Dedup, PK_DEDUP_KEY, |j| j.wide),
+            (JobKind::Map, PK_MAP, |j| j.count),
+        ]);
         job_phase(prog, &[(JobKind::Dedup, PK_DEDUP_CLAIM, |j| j.claim)]);
         // The wide sort's passes (t58 increment A), as the index sort's: each pass's tiles' histograms, their scan,
         // its tiles' keys and places at their places.

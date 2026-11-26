@@ -196,8 +196,8 @@ where
 }
 
 /// Rows `t0..t1` of an index's relation (rows in its block, no view): each one's key hash, masked, plus `kb`, at
-/// `eb + t` of `out`, as `ix_key`'s.
-pub(super) unsafe fn ix_keys_lanes<const N: usize>(bb: *const u8, far: *const u8, out: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32)
+/// `eb + t` of `out`, and its tag at `t` of `tags`, as `ix_key`'s.
+pub(super) unsafe fn ix_keys_lanes<const N: usize>(bb: *const u8, far: *const u8, out: *mut u32, tags: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32)
 where
     LaneCount<N>: SupportedLaneCount,
 {
@@ -214,6 +214,8 @@ where
         }
         let k: [u32; N] = ((h & U::splat(p.mask)).cast::<u32>() + sr(kb)).to_array();
         core::ptr::copy_nonoverlapping(k.as_ptr(), out.add((eb + t) as usize), n as usize);
+        let g: [u32; N] = ((h >> U::splat(32)).cast::<u32>() & sr(!MARK_SAME)).to_array();
+        core::ptr::copy_nonoverlapping(g.as_ptr(), tags.add(t as usize), n as usize);
         t += n;
     }
 }

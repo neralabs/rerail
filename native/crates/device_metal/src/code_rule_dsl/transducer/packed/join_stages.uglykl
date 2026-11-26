@@ -2162,17 +2162,22 @@ UKL_INLINE uint64_t ix_hash(JSPACE const uint8_t* B, JSPACE const uint8_t* B_far
     return h;
 }
 
-UKL_INLINE void ix_key_one(JSPACE const uint8_t* B, JSPACE uint32_t* out, JSPACE uint32_t* places, JSPACE const IxP* p, JSPACE const uint8_t* B_far, uint32_t kb, uint32_t eb, uint32_t t)
+// Its tag (decision 0671) at its own place in the index's rows' room, `rows`: its marks read it there
+// (`ix_mark_one`), before its rows are placed (`ix_place_one`), so no tag reads a row again.
+UKL_INLINE void ix_key_one(JSPACE const uint8_t* B, JSPACE uint32_t* out, JSPACE uint32_t* places, JSPACE uint32_t* rows, JSPACE const IxP* p, JSPACE const uint8_t* B_far, uint32_t kb, uint32_t eb, uint32_t t)
 {
     // A live index's keys are its rows as claimed (decision 0603 step 5e): the level's sort holds them only.
     if (t >= ix_rows(B, p)) return;
+    uint64_t h = ix_hash(B, B_far, p, t);
     places[eb + t] = eb + t;
-    out[eb + t] = kb + (uint32_t)(ix_hash(B, B_far, p, t) & p->mask);
+    out[eb + t] = kb + (uint32_t)(h & p->mask);
+    rows[t] = (uint32_t)(h >> 32) & ~MARK_SAME;
 }
 
 // The index's rows written into its relation's block, from the level's keys sorted (stably) with their places: its
 // sorted place `t` is the level's `eb + t`, its row's id the place it came from less `eb`, past the relation's first
-// row `from` (so a bucket's rows are in id order, as the host's builder places them). `rows` the rows.
+// row `from` (so a bucket's rows are in id order, as the host's builder places them). `rows` the rows. After its
+// marks, which read its rows' tags there (`ix_key_one`).
 UKL_INLINE void ix_place_one(JSPACE const uint8_t* B, JSPACE const uint32_t* places, JSPACE uint32_t* rows, JSPACE const IxP* p, uint32_t eb, uint32_t t)
 {
     if (t >= ix_rows(B, p)) return;
@@ -2196,23 +2201,21 @@ UKL_INLINE void ix_offs_one(JSPACE const uint8_t* B, JSPACE const uint32_t* keys
 }
 
 
-// The index's marks (decision 0671, `rerail_blocks::relation::fill_marks`), once its rows and buckets are placed: its
-// place `t`'s key's tag, and `MARK_SAME` where its bucket's previous place of the tag, among the `MARK_REACH` before
-// it, holds its key. Its marks lie after its rows' room, `n` of them.
+// The index's marks (decision 0671, `rerail_blocks::relation::fill_marks`), once its buckets are placed and before
+// its rows are: its place `t`'s key's tag, and `MARK_SAME` where its bucket's previous place of the tag, among the
+// `MARK_REACH` before it, holds its key. A place's row is its sorted place's (`places`), its tag at the row's own
+// place in the rows' room (`ix_key_one`'s). Its marks lie after its rows' room, `n` of them.
 #define MARK_REACH 8u
-UKL_INLINE uint32_t ix_tag(JSPACE const uint8_t* B, JSPACE const uint8_t* B_far, JSPACE const IxP* p, uint32_t t) {
-    return (uint32_t)(ix_hash(B, B_far, p, t) >> 32) & ~MARK_SAME;
-}
-UKL_INLINE void ix_mark_one(JSPACE const uint8_t* B, JSPACE const uint32_t* keys, JSPACE const uint32_t* offs, JSPACE uint32_t* rows,
+UKL_INLINE void ix_mark_one(JSPACE const uint8_t* B, JSPACE const uint32_t* keys, JSPACE const uint32_t* places, JSPACE const uint32_t* offs, JSPACE uint32_t* rows,
                             JSPACE const IxP* p, JSPACE const uint8_t* B_far, uint32_t kb, uint32_t eb, uint32_t t)
 {
     if (t >= ix_rows(B, p)) return;
-    uint32_t lo = offs[keys[eb + t] - kb], rt = rows[t] - p->from, tag = ix_tag(B, B_far, p, rt);
+    uint32_t lo = offs[keys[eb + t] - kb], rt = places[eb + t] - eb, tag = rows[rt];
     uint32_t same = 0u;
     for (uint32_t u = t; u > lo && t - u < MARK_REACH;) {
         u--;
-        uint32_t ru = rows[u] - p->from;
-        if (ix_tag(B, B_far, p, ru) != tag) continue;
+        uint32_t ru = places[eb + u] - eb;
+        if (rows[ru] != tag) continue;
         same = 1u;
         uint32_t mu = NONE, mt = NONE;
         for (uint32_t i = 0; i < (p->ncols & ~IX_LIVE) && i < 8; i++)
@@ -2619,9 +2622,9 @@ UKL_INLINE void round_one(JSPACE const RoundP* p, UKL_GLOBAL uint32_t* ctl, uint
 #define PK_GATE 27u
 #define PK_ROUND 28u
 #define PK_SIZE 29u
-// An index's buckets' offsets (`ix_offs_one`), a thread a bucket, beside its rows placed (`PK_IX_PLACE`).
+// An index's buckets' offsets (`ix_offs_one`), a thread a bucket, before its marks.
 #define PK_IX_OFFS 30u
-// An index's marks (decision 0671), of its rows and buckets placed (`PK_IX_PLACE`, `PK_IX_OFFS`).
+// An index's marks (decision 0671), of its buckets placed (`PK_IX_OFFS`), before its rows are (`PK_IX_PLACE`).
 #define PK_IX_MARK 31u
 #define PK_DEDUP_KEY 32u
 
@@ -2859,10 +2862,10 @@ UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
     for (uint32_t pass = 0u; pass < JOIN_TURNS; pass++) {
     switch (kind) {
         case PK_COPY: rows_copy_one((JSPACE const uint8_t*)L, (JSPACE uint8_t*)O, j->totals, (JSPACE const Copy*)j->P, j->RF != 0 ? j->RF : (JSPACE const uint8_t*)L, t); break;
-        case PK_IX_KEY: ix_key_one((JSPACE const uint8_t*)L, H, (JSPACE uint32_t*)j->S, (JSPACE const IxP*)j->P, j->RF != 0 ? j->RF : (JSPACE const uint8_t*)L, JOB_WORD(jw, kb), JOB_WORD(jw, eb), t); break;
+        case PK_IX_KEY: ix_key_one((JSPACE const uint8_t*)L, H, (JSPACE uint32_t*)j->S, j->counters, (JSPACE const IxP*)j->P, j->RF != 0 ? j->RF : (JSPACE const uint8_t*)L, JOB_WORD(jw, kb), JOB_WORD(jw, eb), t); break;
         case PK_IX_PLACE: ix_place_one((JSPACE const uint8_t*)L, (JSPACE const uint32_t*)j->VC, j->counters, (JSPACE const IxP*)j->P, JOB_WORD(jw, eb), t); break;
         case PK_IX_OFFS: ix_offs_one((JSPACE const uint8_t*)L, (JSPACE const uint32_t*)V, j->A, (JSPACE const IxP*)j->P, JOB_WORD(jw, kb), JOB_WORD(jw, eb), t); break;
-        case PK_IX_MARK: ix_mark_one((JSPACE const uint8_t*)L, (JSPACE const uint32_t*)V, j->A, j->counters, (JSPACE const IxP*)j->P, j->RF != 0 ? j->RF : (JSPACE const uint8_t*)L, JOB_WORD(jw, kb), JOB_WORD(jw, eb), t); break;
+        case PK_IX_MARK: ix_mark_one((JSPACE const uint8_t*)L, (JSPACE const uint32_t*)V, (JSPACE const uint32_t*)j->VC, j->A, j->counters, (JSPACE const IxP*)j->P, j->RF != 0 ? j->RF : (JSPACE const uint8_t*)L, JOB_WORD(jw, kb), JOB_WORD(jw, eb), t); break;
         case PK_DEDUP_CLEAR: dedup_clear_one(H, j->totals, j->dd, t); break;
         case PK_DEDUP_CLAIM: dedup_claim_one(L, j->totals, H, j->dd, t); break;
         // A sorted dedup's (t58 increment A): `H` its keys in, `W[0]` its places in; `W[1]`, `W[2]` its keys and places
