@@ -33,6 +33,23 @@ pub(super) struct Bytes<'a> {
     class_code: HashMap<String, String>,
     /// Whether the line read is in a region's row: its reads go from the opener, as the lean lexer's micro-lexers.
     in_region: bool,
+    /// Whether a read with no form of the bytes stays as it is (`partial_windows`), its mask in `failed`.
+    partial: bool,
+    /// The run the last token's `run_last` read forward (`forward_run`): its mask and its terms. A test at its last
+    /// byte `l` takes them there: the mask holds at `l`, at `l + 1` it and its terms do not, and its terms at `l` are
+    /// those the run ended in (`end_last`).
+    fwd: Option<(Expr, Vec<Expr>)>,
+    /// Whether a run was read forward: the loop's blocks then hold `end_last`.
+    fwd_used: bool,
+    pub(super) failed: std::collections::HashSet<String>,
+    /// The fills' and escapes' windows and tests written (`wf_*`, `af_*`).
+    wmemo: HashMap<Expr, String>,
+    /// Whether `code` is a closure's question of a byte (`code(q)`), as tier 2 asks it of its records (`code_at`): the
+    /// tests then take it, and are named apart (`ca_*`).
+    pub(super) code_fn: bool,
+    /// A prefix of the tests' names (`at_*`, `ca_*`, `af_*`), where two sets of them are in one file.
+    pub(super) tag: &'static str,
+    amemo: std::cell::RefCell<HashMap<Expr, String>>,
     /// The operators' pairs masks the loop reads (`k_pair_K`): each row's pairs of bytes, a pair's first byte's bit where
     /// the second is the byte after (lean's `pair`), made of the block's classes too.
     pub(super) pairs: Vec<(String, Vec<(u8, u8)>)>,
@@ -63,8 +80,8 @@ pub(super) struct Bytes<'a> {
 }
 
 /// The calls of the loop that read a mask: their name, and how many of their first arguments are masks.
-const READS: [(&str, usize); 9] =
-    [("run_once_last", 2), ("run_once_hit", 2), ("first_clear", 1), ("first_bit", 1), ("count_in", 1), ("first_in", 1), ("run_last", 1), ("any_in", 1), ("bit", 1)];
+const READS: [(&str, usize); 11] =
+    [("run_once_last", 2), ("run_once_hit", 2), ("first_clear", 1), ("first_bit", 1), ("count_in", 1), ("first_in", 1), ("run_last", 1), ("any_in", 1), ("bit", 1), ("put", 1), ("last_in", 1)];
 
 impl<'a> Bytes<'a> {
     pub(super) fn new(stmts: &'a [Stmt], locals: HashMap<String, Expr>, class_code: HashMap<String, String>) -> Self {
@@ -83,7 +100,35 @@ impl<'a> Bytes<'a> {
                 _ => {}
             }
         }
-        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default(), scalar: Default::default(), row_firsts: HashMap::new(), row: None }
+        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default(), scalar: Default::default(), row_firsts: HashMap::new(), row: None, partial: false, failed: Default::default(), wmemo: HashMap::new(), amemo: Default::default(), code_fn: false, tag: "", fwd: None, fwd_used: false }
+    }
+
+    /// `code` with each read of the masks it has (`locals`) in the windows' form, no block's words (decision 0703): a
+    /// read of another mask, or one with no such form, stays as it is, the mask then in `failed`.
+    /// Reads with no form of the bytes stay as they are (`partial_windows`), and each mask's test is written once.
+    pub(super) fn set_partial(&mut self) {
+        self.partial = true;
+    }
+
+    /// The tests written once (`at_*`, `af_*`, `ca_*`), for the file.
+    pub(super) fn named_code(&self) -> String {
+        self.named.borrow().iter().map(|x| x.1.as_str()).collect()
+    }
+
+    pub(super) fn partial_windows(&mut self, code: &str) -> String {
+        self.partial_line(code, true)
+    }
+
+    /// `partial_windows` of a line of the token loop: a token of code's (`in_region` false) reads a mask with no escapes
+    /// from its block's word (`k_M`, made once a block, as the lean lexer's `lex_blocks` reads its block's masks), then
+    /// windows past the block.
+    pub(super) fn partial_line(&mut self, code: &str, in_region: bool) -> String {
+        self.in_region = in_region;
+        self.partial = true;
+        let out = self.rewrite_line(code, code).unwrap_or_else(|_| code.to_owned());
+        self.partial = false;
+        self.in_region = false;
+        out
     }
 
     /// Class `n` tested of byte `b` (`src[i]`) by its bit in the byte's `CLASS` entry, as the lean lexer tests a class:
@@ -248,13 +293,42 @@ impl<'a> Bytes<'a> {
 
     /// `e` at byte `at` (Rust, a `usize`), a test of the bytes there: none past the file or before it. At a token's
     /// first byte (`s`) the byte is in the file.
-    fn at(&self, e: &Expr, at: &str, depth: usize) -> Result<String, String> {
+    pub(super) fn at(&self, e: &Expr, at: &str, depth: usize) -> Result<String, String> {
+        // A fill's or an escape's test written once (`af_*`), where a read may stay as it is (`partial_windows`).
+        if self.partial && matches!(e, Expr::Call(f, _) if f == "fill" || f == "escaped") {
+            let got = self.amemo.borrow().get(e).cloned();
+            let f = match got {
+                Some(f) => f,
+                None => {
+                    let body = self.at_raw(e, "q", depth)?;
+                    let f = format!("{}{}af_{}", self.tag, if self.code_fn { "c" } else { "" }, self.amemo.borrow().len());
+                    self.amemo.borrow_mut().insert(e.clone(), f.clone());
+                    let param = if self.code_fn { ", code: &dyn Fn(usize) -> bool" } else { "" };
+                    let code = format!("/// Whether a fill or an escape holds at byte `q`, from the bytes.\n#[inline]\n#[allow(unused_variables, dead_code)]\nfn {f}(src: &[u8], n: usize, q: usize{param}) -> bool {{\n    {body}\n}}\n\n");
+                    self.named.borrow_mut().push((f.clone(), code));
+                    f
+                }
+            };
+            return Ok(format!("{f}(src, n, {at}{})", if self.code_fn { ", code" } else { "" }));
+        }
+        self.at_raw(e, at, depth)
+    }
+
+    fn at_raw(&self, e: &Expr, at: &str, depth: usize) -> Result<String, String> {
         if depth > 64 {
             return Err("a mask's definition reads itself".into());
         }
         Ok(match e {
             Expr::Empty => "false".to_owned(),
+            // A term of a run read forward (`forward_run`): whether it held at the byte before.
+            Expr::Name(n) if let Some(k) = n.strip_prefix("\u{0}last") => format!("(last >> {k} & 1 == 1)"),
+            // A term of the run read forward that ended at the token's last byte: whether the run ended in it.
+            Expr::Name(n) if let Some(k) = n.strip_prefix("\u{0}end") => format!("(end_last >> {k} & 1 == 1)"),
             Expr::Name(n) => {
+                // Asked of the records (`code_at`), where tier 2 asks it.
+                if self.code_fn && n == "code" {
+                    return Ok(format!("code({at})"));
+                }
                 if let Some(rs) = self.classes.get(n.as_str()) {
                     let test = |b: &str| if self.lean && rs.iter().map(|&(lo, hi)| hi + 1 - lo).sum::<u32>() > 1 { self.class_bit(n, b) } else { pattern_test(b, rs) };
                     if at == "s" {
@@ -264,7 +338,48 @@ impl<'a> Bytes<'a> {
                         format!("({i} < n && {})", test(&format!("src[{i}]")))
                     }
                 } else if let Some(d) = self.defs.get(n) {
-                    self.at(d, at, depth + 1)?
+                    if self.partial {
+                        // Each mask's test written once (`at_M`), as the lean lexer writes a read once.
+                        let f = format!("{}{}_{}", self.tag, if self.code_fn { "ca" } else { "at" }, ident(n));
+                        if !self.named.borrow().iter().any(|x| x.0 == f) {
+                            self.named.borrow_mut().push((f.clone(), String::new()));
+                            let byte = |c: &str| self.classes.get(c).and_then(|rs| match rs {
+                                [(lo, hi)] if lo == hi => u8::try_from(*lo).ok(),
+                                _ => None,
+                            });
+                            // A set of texts, or one and another test (`two & ~escaped(two)`): the set's tables first.
+                            let tabled = texts_table(&f, d, &byte).or_else(|| match d {
+                                Expr::And(a, b) => [(a, b), (b, a)].into_iter().find_map(|(t, o)| {
+                                    let tt = texts_table(&f, t, &byte)?;
+                                    let (st, test) = tt.strip_prefix('\u{0}')?.split_once('\u{0}')?;
+                                    let other = self.at(o, "q", depth + 1).ok()?;
+                                    Some(format!("\u{0}{st}\u{0}({test}) && {other}"))
+                                }),
+                                _ => None,
+                            });
+                            match tabled.map(Ok).unwrap_or_else(|| self.at(&d.clone(), "q", depth + 1)) {
+                                Ok(body) => {
+                                    let param = if self.code_fn { ", code: &dyn Fn(usize) -> bool" } else { "" };
+                                    // A set of texts' tables before its test (`texts_table`).
+                                    let (statics, body) = match body.strip_prefix('\u{0}').and_then(|b| b.split_once('\u{0}')) {
+                                        Some((st, b)) => (st.to_owned(), b.to_owned()),
+                                        None => (String::new(), body),
+                                    };
+                                    let code = format!("{statics}/// Whether mask `{n}` holds at byte `q`, from the bytes.\n#[inline]\n#[allow(unused_variables, dead_code)]\nfn {f}(src: &[u8], n: usize, q: usize{param}) -> bool {{\n    {body}\n}}\n\n");
+                                    if let Some(x) = self.named.borrow_mut().iter_mut().find(|x| x.0 == f) {
+                                        x.1 = code;
+                                    }
+                                }
+                                Err(e) => {
+                                    self.named.borrow_mut().retain(|x| x.0 != f);
+                                    return Err(e);
+                                }
+                            }
+                        }
+                        format!("{f}(src, n, {at}{})", if self.code_fn { ", code" } else { "" })
+                    } else {
+                        self.at(d, at, depth + 1)?
+                    }
                 } else {
                     return Err(format!("`{n}` is no class or mask of the bytes"));
                 }
@@ -274,6 +389,23 @@ impl<'a> Bytes<'a> {
             Expr::And(a, b) => format!("({} && {})", self.at(a, at, depth + 1)?, self.at(b, at, depth + 1)?),
             Expr::Or(a, b) => format!("({} || {})", self.at(a, at, depth + 1)?, self.at(b, at, depth + 1)?),
             Expr::Xor(a, b) => format!("({} != {})", self.at(a, at, depth + 1)?, self.at(b, at, depth + 1)?),
+            // An escaped byte: after an odd run of the escaping bytes (`partial_windows`).
+            Expr::Call(f, args) if f == "escaped" && self.partial && let [Arg::E(b)] = args.as_slice() => {
+                let t = self.at(b, "q", depth + 1)?;
+                format!("(esc_back(({at}) as isize, |q: usize| {t}) == 1)")
+            }
+            // A fill's byte (`partial_windows`): its run read back from the byte to its nearest start or end.
+            Expr::Call(f, args) if f == "fill" && self.partial && let [Arg::E(st), Arg::E(e)] = args.as_slice() => {
+                let (st, e) = (self.at(st, "q", depth + 1)?, self.at(e, "q", depth + 1)?);
+                format!("(fill_back(({at}) as isize + 1, |q: usize| {st}, |q: usize| {e}) == 1)")
+            }
+            // `text(T)`: the bytes from here are `T`'s.
+            Expr::Call(f, args) if f == "text" && let [Arg::S(t)] = args.as_slice() && !t.is_empty() => {
+                let i = if at == "s" { "s".to_owned() } else { at.to_owned() };
+                let tests: Vec<String> = t.iter().enumerate().map(|(k, c)| if k == 0 { format!("src[{i}] == {c:#04x}") } else { format!("src[{i} + {k}] == {c:#04x}") }).collect();
+                // At a token's first byte the byte is in the file.
+                if i == "s" && t.len() == 1 { tests.join("") } else { format!("({i} + {} <= n && {})", t.len(), tests.join(" && ")) }
+            }
             Expr::Call(f, args) => match Self::shift(f, args) {
                 Some((a, k)) if k < 0 => format!("({at} >= {} && {})", -k, self.at(&a, &format!("({at} - {})", -k), depth + 1)?),
                 Some((a, k)) => self.at(&a, &format!("({at} + {k})"), depth + 1)?,
@@ -286,6 +418,29 @@ impl<'a> Bytes<'a> {
     /// `e`'s bits in the 64 bytes from byte `p + off`: none past the file or before it. `escaped`: the search's
     /// carried escapes (`esc`), from its first byte.
     fn win(&mut self, e: &Expr, off: i64, depth: usize) -> Result<String, String> {
+        // A fill's or an escape's window written once (`wf_*`), where a read may stay as it is (`partial_windows`).
+        if self.partial && matches!(e, Expr::Call(f, _) if f == "fill" || f == "escaped") {
+            let f = match self.wmemo.get(e) {
+                Some(f) => f.clone(),
+                None => {
+                    let body = self.win_raw(e, 0, depth)?;
+                    let f = format!("wf_{}", self.wmemo.len());
+                    self.wmemo.insert(e.clone(), f.clone());
+                    let _ = write!(self.code, "/// A fill's or an escape's bits in the 64 bytes from `p`, from the bytes.\n#[inline]\n#[allow(unused_variables, dead_code)]\nunsafe fn {f}(src: &[u8], n: usize, p: isize) -> u64 {{\n    {body}\n}}\n\n");
+                    f
+                }
+            };
+            let p = match off {
+                0 => "p".to_owned(),
+                o if o < 0 => format!("(p - {})", -o),
+                o => format!("(p + {o})"),
+            };
+            return Ok(format!("unsafe {{ {f}(src, n, {p}) }}"));
+        }
+        self.win_raw(e, off, depth)
+    }
+
+    fn win_raw(&mut self, e: &Expr, off: i64, depth: usize) -> Result<String, String> {
         if depth > 64 {
             return Err("a mask's definition reads itself".into());
         }
@@ -296,6 +451,8 @@ impl<'a> Bytes<'a> {
         };
         Ok(match e {
             Expr::Empty => "0u64".to_owned(),
+            // The window's bits a range test asks of (`live_fn`).
+            Expr::Name(n) if n == LIVE => "live".to_owned(),
             Expr::Name(n) => {
                 if self.classes.contains_key(n.as_str()) {
                     let f = format!("cls_{}", ident(n));
@@ -316,7 +473,7 @@ impl<'a> Bytes<'a> {
                         }
                         let _ = write!(
                             self.code,
-                            "/// Class `{n}`'s bits in the 64 bytes from `p`: none past the file or before it.\n#[inline(always)]\nunsafe fn {f}(src: &[u8], n: usize, p: isize) -> u64 {{\n    let Some((v, q)) = (unsafe {{ window(src, n, p) }}) else {{ return 0 }};\n{lines}    // SAFETY: the caller's.\n    let b = unsafe {{ {code} }};\n    {held}\n}}\n\n"
+                            "/// Class `{n}`'s bits in the 64 bytes from `p`: none past the file or before it.\n#[inline(always)]\nunsafe fn {f}(src: &[u8], n: usize, p: isize) -> u64 {{\n    let Some((v, q)) = (unsafe {{ window(src, n, p) }}) else {{ return 0 }};\n{lines}    let b = {code};\n    {held}\n}}\n\n"
                         );
                     }
                     if !self.cls.contains(&f) {
@@ -333,7 +490,7 @@ impl<'a> Bytes<'a> {
                             .collect();
                         let _ = write!(
                             self.code,
-                            "/// Class `{n}`'s bits in the 64 bytes from `p`: none past the file or before it.\n#[inline(always)]\nunsafe fn {f}(src: &[u8], n: usize, p: isize) -> u64 {{\n    let Some((v, q)) = (unsafe {{ window(src, n, p) }}) else {{ return 0 }};\n    // SAFETY: the caller's.\n    let b = unsafe {{ {} }};\n    {held}\n}}\n\n",
+                            "/// Class `{n}`'s bits in the 64 bytes from `p`: none past the file or before it.\n#[inline(always)]\nunsafe fn {f}(src: &[u8], n: usize, p: isize) -> u64 {{\n    let Some((v, q)) = (unsafe {{ window(src, n, p) }}) else {{ return 0 }};\n    let b = {};\n    {held}\n}}\n\n",
                             if bits.is_empty() { "0".to_owned() } else { bits.join(" | ") }
                         );
                     }
@@ -357,7 +514,18 @@ impl<'a> Bytes<'a> {
                         _ => format!("unsafe {{ {f}(src, n, {p}) }}"),
                     }
                 } else if let Some(d) = self.defs.get(n).cloned() {
-                    self.win(&d, off, depth + 1)?
+                    if self.partial {
+                        // Each mask's window written once (`d_M`), at any byte.
+                        let f = format!("d_{}", ident(n));
+                        if !self.written.contains(&f) {
+                            self.written.push(f.clone());
+                            let body = self.win(&d, 0, depth + 1).inspect_err(|_| self.written.retain(|w| *w != f))?;
+                            let _ = write!(self.code, "/// Mask `{n}`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.\n#[inline]\n#[allow(unused_variables, dead_code)]\nunsafe fn {f}(src: &[u8], n: usize, p: isize) -> u64 {{\n    {body}\n}}\n\n");
+                        }
+                        format!("unsafe {{ {f}(src, n, {p}) }}")
+                    } else {
+                        self.win(&d, off, depth + 1)?
+                    }
                 } else {
                     return Err(format!("`{n}` is no class or mask of the bytes"));
                 }
@@ -368,7 +536,10 @@ impl<'a> Bytes<'a> {
                 // A test of several windows after one that rarely holds (a `\u` escape's digits after its `\u`): read
                 // only where the first holds, as the lean lexer unescapes a string only when it saw a `\u`. A side
                 // that carries escapes is always read, its carry the next window's.
-                if b.matches("cls_").count() >= 3 && !b.contains("esc)") {
+                // A mask made of the bytes (`d_`) or a fill (`wf_`) is many classes' tests: read only where the first holds,
+                // as the lean lexer decodes a character only at a byte past ASCII.
+                let cost = b.matches("cls_").count() + 3 * (b.matches("unsafe { d_").count() + b.matches("unsafe { wf_").count());
+                if cost >= 3 && !b.contains("esc)") {
                     format!("{{ let a = {a}; if a == 0 {{ 0 }} else {{ a & {b} }} }}")
                 } else {
                     format!("({a} & {b})")
@@ -376,6 +547,26 @@ impl<'a> Bytes<'a> {
             }
             Expr::Or(a, b) => format!("({} | {})", self.win(a, off, depth + 1)?, self.win(b, off, depth + 1)?),
             Expr::Xor(a, b) => format!("({} ^ {})", self.win(a, off, depth + 1)?, self.win(b, off, depth + 1)?),
+            // A read from anywhere (`partial_windows`): the window's carry read back from the bytes, the run of the
+            // escaping bytes that ends before it (odd: the window's first byte is escaped), as simdjson's carry is.
+            Expr::Call(f, args) if f == "escaped" && self.partial => {
+                let Some(Arg::E(b)) = args.first() else { return Err("`escaped` of no mask".into()) };
+                let at = self.at(b, "q", depth + 1)?;
+                let b = self.win(b, off, depth + 1)?;
+                format!("{{ let mut c = esc_back({p}, |q: usize| {at}); escaped_step({b}, &mut c) }}")
+            }
+            // A fill from anywhere (`partial_windows`): stage 1's add, its carry the fill at the byte before the
+            // window, read back over the run to its nearest start (in) or end (out), as the lean lexer reads a run.
+            Expr::Call(f, args) if f == "fill" && self.partial && let [Arg::E(st), Arg::E(e)] = args.as_slice() => {
+                let (sa, ea) = (self.at(st, "q", depth + 1)?, self.at(e, "q", depth + 1)?);
+                let (sw, ew) = (self.win(st, off, depth + 1)?, self.win(e, off, depth + 1)?);
+                format!("{{ let (fs, fe) = ({sw}, {ew}); let c = fill_back({p}, |q: usize| {sa}, |q: usize| {ea}); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, {p}) }}")
+            }
+            // `text(T)`: each of `T`'s bytes in its window, `k` bytes on.
+            Expr::Call(f, args) if f == "text" && self.partial && let [Arg::S(t)] = args.as_slice() && !t.is_empty() => {
+                let terms: Vec<String> = t.iter().enumerate().map(|(k, c)| format!("unsafe {{ wbyte(src, n, {}, {c:#04x}) }}", if off + k as i64 == 0 { "p".to_owned() } else { format!("(p + {})", off + k as i64) })).collect();
+                format!("({})", terms.join(" & "))
+            }
             Expr::Call(f, args) if f == "escaped" && off == 0 => {
                 let Some(Arg::E(b)) = args.first() else { return Err("`escaped` of no mask".into()) };
                 let b = self.win(b, 0, depth + 1)?;
@@ -624,13 +815,220 @@ impl<'a> Bytes<'a> {
         Ok((format!("|p: isize, esc: &mut u64| unsafe {{ {f}(src, n, p, esc) }}"), esc))
     }
 
+    /// The last byte of the run of local `m` from byte `s0`, read forward as the lean lexer reads a number (its `digits`,
+    /// its `exponent`): `m` is a union of terms, each a fill (`fill(S, E)`) or a test of the bytes, where a term's
+    /// `prev` of another term is whether that one held at the byte before (`last`, a bit a term). At each byte the terms
+    /// that hold there: a fill where it starts or held before and `E` holds not. Where one fill alone holds, its stop a
+    /// class's complement (`~decd`), and no other term may start in that class's run (the byte not of its class, or a
+    /// `prev` of a term that is not this one), the run of the class at once, as lean's `class_end`. `None` where `m` is
+    /// not of that form.
+    fn forward_run(&mut self, m: &str, s0: &str) -> Option<String> {
+        let e = self.expr(m).ok()?;
+        let mut terms: Vec<(Option<String>, Expr)> = Vec::new();
+        fn ors(e: &Expr, out: &mut Vec<Expr>) {
+            match e {
+                Expr::Or(a, b) => {
+                    ors(a, out);
+                    ors(b, out);
+                }
+                e => out.push(e.clone()),
+            }
+        }
+        let mut flat = Vec::new();
+        ors(&e, &mut flat);
+        if flat.len() < 2 || flat.len() > 32 {
+            return None;
+        }
+        for t in flat {
+            match &t {
+                Expr::Name(n) if let Some(d) = self.locals.get(n).or_else(|| self.defs.get(n)) => terms.push((Some(n.clone()), d.clone())),
+                _ => terms.push((None, t)),
+            }
+        }
+        // A term's expression, its names resolved where they are no class.
+        let full: Vec<Expr> = terms.iter().map(|t| t.1.clone()).collect();
+        // `prev(T)` of terms `T` (one, or a union of them) as their bits at the byte before; `None` where a term is read
+        // but through `prev`.
+        fn sub(me: &Bytes, e: &Expr, full: &[Expr], depth: usize, top: bool) -> Option<Expr> {
+            if depth > 48 {
+                return None;
+            }
+            fn bits(me: &Bytes, x: &Expr, full: &[Expr], depth: usize) -> Option<Expr> {
+                if depth > 48 {
+                    return None;
+                }
+                if let Some(k) = full.iter().position(|t| t == x) {
+                    return Some(Expr::Name(format!("\u{0}last{k}")));
+                }
+                match x {
+                    Expr::Name(n) if !me.classes.contains_key(n.as_str()) => bits(me, me.locals.get(n).or_else(|| me.defs.get(n))?, full, depth + 1),
+                    Expr::Or(a, b) => Some(Expr::Or(Box::new(bits(me, a, full, depth + 1)?), Box::new(bits(me, b, full, depth + 1)?))),
+                    _ => None,
+                }
+            }
+            if !top && full.iter().any(|t| t == e) {
+                return None;
+            }
+            Some(match e {
+                Expr::Call(f, args) if f == "prev" && matches!(args.as_slice(), [Arg::E(_)] | [Arg::E(_), Arg::N(1)]) => {
+                    let Arg::E(x) = &args[0] else { return None };
+                    match bits(me, x, full, 0) {
+                        Some(b) => b,
+                        None => Expr::Call(f.clone(), vec![Arg::E(sub(me, x, full, depth + 1, false)?)]),
+                    }
+                }
+                Expr::Name(n) if !me.classes.contains_key(n.as_str()) && let Some(d) = me.locals.get(n).or_else(|| me.defs.get(n)) => {
+                    if full.iter().any(|t| t == d) {
+                        return None;
+                    }
+                    if reads_terms(me, d, full, 0) { sub(me, d, full, depth + 1, false)? } else { e.clone() }
+                }
+                Expr::Name(_) => e.clone(),
+                Expr::Not(a) => Expr::Not(Box::new(sub(me, a, full, depth + 1, false)?)),
+                Expr::And(a, b) => Expr::And(Box::new(sub(me, a, full, depth + 1, false)?), Box::new(sub(me, b, full, depth + 1, false)?)),
+                Expr::Or(a, b) => Expr::Or(Box::new(sub(me, a, full, depth + 1, false)?), Box::new(sub(me, b, full, depth + 1, false)?)),
+                Expr::Xor(a, b) => Expr::Xor(Box::new(sub(me, a, full, depth + 1, false)?), Box::new(sub(me, b, full, depth + 1, false)?)),
+                Expr::Call(f, args) => Expr::Call(
+                    f.clone(),
+                    args.iter()
+                        .map(|a| match a {
+                            Arg::E(x) => sub(me, x, full, depth + 1, false).map(Arg::E),
+                            a => Some(a.clone()),
+                        })
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+                Expr::Empty | Expr::Test { .. } => e.clone(),
+            })
+        }
+        // Each term: its start (a fill's `S`, else the term), and a fill's stop.
+        let mut parts: Vec<(Expr, Option<Expr>)> = Vec::new();
+        for (_, t) in &terms {
+            match t {
+                Expr::Call(f, args) if f == "fill" && let [Arg::E(st), Arg::E(stop)] = args.as_slice() => {
+                    parts.push((sub(self, st, &full, 0, false)?, Some(sub(self, stop, &full, 0, false)?)));
+                }
+                Expr::Call(f, _) if f == "fill" || f == "escaped" => return None,
+                t => parts.push((sub(self, t, &full, 0, true)?, None)),
+            }
+        }
+        // `e` as one test of the byte at an offset from the byte asked (`prev`, `next` of a set of bytes).
+        fn single(me: &Bytes, e: &Expr, depth: usize) -> Option<(i64, [bool; 256])> {
+            if depth > 48 {
+                return None;
+            }
+            match e {
+                Expr::Name(n) if n.starts_with('\u{0}') => None,
+                Expr::Name(n) => match me.classes.get(n.as_str()) {
+                    Some(rs) => Some((0, std::array::from_fn(|c| rs.iter().any(|&(lo, hi)| (lo..=hi).contains(&(c as u32)))))),
+                    None => single(me, me.locals.get(n).or_else(|| me.defs.get(n))?, depth + 1),
+                },
+                Expr::Call(f, args) if matches!(f.as_str(), "prev" | "next") => {
+                    let (x, k) = Bytes::shift(f, args)?;
+                    let (o, set) = single(me, &x, depth + 1)?;
+                    Some((o + k, set))
+                }
+                Expr::Not(a) => single(me, a, depth + 1).map(|(o, set)| (o, set.map(|x| !x))),
+                Expr::And(a, b) | Expr::Or(a, b) => {
+                    let ((oa, sa), (ob, sb)) = (single(me, a, depth + 1)?, single(me, b, depth + 1)?);
+                    if oa != ob {
+                        return None;
+                    }
+                    let and = matches!(e, Expr::And(..));
+                    Some((oa, std::array::from_fn(|c| if and { sa[c] && sb[c] } else { sa[c] || sb[c] })))
+                }
+                _ => None,
+            }
+        }
+        // Whether `e`, read at offset `off` from a byte, may hold where that byte and the one before are of `set` and
+        // `last` (the terms at the byte before) holds term `k` alone.
+        fn may(me: &Bytes, e: &Expr, set: &[bool; 256], k: usize, off: i64, depth: usize) -> bool {
+            if depth > 48 {
+                return true;
+            }
+            if let Some((o, held)) = single(me, e, 0) {
+                return !matches!(off + o, 0 | -1) || (0..256).any(|c| set[c] && held[c]);
+            }
+            match e {
+                Expr::Name(n) if let Some(j) = n.strip_prefix("\u{0}last") => off != 0 || j.parse() == Ok(k),
+                Expr::Name(n) if !me.classes.contains_key(n.as_str()) => {
+                    me.locals.get(n).or_else(|| me.defs.get(n)).is_none_or(|d| may(me, d, set, k, off, depth + 1))
+                }
+                Expr::Call(f, args) if matches!(f.as_str(), "prev" | "next") => match Bytes::shift(f, args) {
+                    Some((x, d)) => may(me, &x, set, k, off + d, depth + 1),
+                    None => true,
+                },
+                Expr::And(a, b) => may(me, a, set, k, off, depth + 1) && may(me, b, set, k, off, depth + 1),
+                Expr::Or(a, b) => may(me, a, set, k, off, depth + 1) || may(me, b, set, k, off, depth + 1),
+                _ => true,
+            }
+        }
+        let mut tests = String::new();
+        let mut jumps = String::new();
+        for (k, (st, stop)) in parts.iter().enumerate() {
+            let start = self.at(st, "q", 0).ok()?;
+            let test = match stop {
+                Some(stop) => format!("{start} || (last >> {k} & 1 == 1 && !{})", self.at(stop, "q", 0).ok()?),
+                None => start,
+            };
+            let why = match stop {
+                Some(Expr::Not(c)) if let Expr::Name(cn) = &**c => format!(": a run of `{cn}`"),
+                Some(_) => ": a fill".to_owned(),
+                None => ": a byte".to_owned(),
+            };
+            let _ = write!(tests, "            // Term {k}{why}.\n            if {test} {{\n                now |= 1 << {k};\n            }}\n");
+            // A fill whose stop is a class's complement, where no other term starts in the class's run.
+            if let Some(Expr::Not(c)) = stop
+                && let Expr::Name(cn) = &**c
+                && let Some(rs) = self.classes.get(cn.as_str())
+            {
+                let set: [bool; 256] = std::array::from_fn(|b| rs.iter().any(|&(lo, hi)| (lo..=hi).contains(&(b as u32))));
+                let alone = parts.iter().enumerate().all(|(j, (sj, _))| j == k || !may(self, sj, &set, k, 0, 0));
+                if alone {
+                    let cls = self.win(c, 0, 0).ok()?;
+                    let here = self.at(c, "q", 0).ok()?;
+                    let _ = write!(jumps, "            // `{cn}`'s run: term {k} alone holds over it (the lean lexer's `class_end`).\n            if now == 1 << {k} && {here} {{\n                last = now;\n                q = wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| {cls}).unwrap_or(n);\n                continue;\n            }}\n");
+                }
+            }
+        }
+        self.fwd = Some((self.norm(&e, 0), full.iter().map(|t| self.norm(t, 0)).collect()));
+        self.fwd_used = true;
+        Some(format!("{{\n        // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).\n        let mut q = {s0};\n        let mut last = 0u32;\n        while q < n {{\n            let mut now = 0u32;\n{tests}            if now == 0 && q > {s0} {{\n                break;\n            }}\n{jumps}            last = now;\n            q += 1;\n        }}\n        end_last = last;\n        q.saturating_sub(1)\n    }}"))
+    }
+
+    /// The window function of the local `m` for a test of bytes `..=b` from the window's first (`l_m`), written once:
+    /// `live`, the bits it asks of, ANDed into the first test of each side (`with_live`), so a side whose first test holds
+    /// at none of the token's bytes reads no further, as the lean lexer tests only the bytes it read.
+    fn live_fn(&mut self, m: &str, b: &str) -> Result<String, String> {
+        let f = format!("l_{m}");
+        if !self.written.contains(&f) {
+            let e = with_live(&self.expr(m)?);
+            let bits = self.win(&e, 0, 0)?;
+            self.written.push(f.clone());
+            let _ = write!(
+                self.code,
+                "/// `{m}`'s bits in the 64 bytes from `p` that `live` holds, from the bytes.\n#[inline(always)]\n#[allow(unused_variables)]\nunsafe fn {f}(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> u64 {{\n    {bits}\n}}\n\n"
+            );
+        }
+        Ok(format!("|p: isize, esc: &mut u64| unsafe {{ {f}(src, n, p, esc, upto(p, {})) }}", b.trim()))
+    }
+
     /// One read (`name(args)`) of the loop as the bytes' form.
     fn read(&mut self, name: &str, args: &[String], line: &str) -> Result<Option<String>, String> {
         let mask = |a: &str| a.trim().strip_prefix('&').map(|m| m.strip_suffix("[..made]").unwrap_or(m).to_owned());
+        // A forward mask's bits made the mask's (`put(&mut V, &M, a, b)`): of its windows.
+        if self.partial && name == "put" && args.len() == 4 {
+            let Some(m) = mask(&args[1]).filter(|m| self.locals.contains_key(m)) else { return Ok(None) };
+            let (f, _) = self.window_fn(&m)?;
+            return Ok(Some(format!("wput({}, {}, {}, {f})", args[0].trim(), args[2].trim(), args[3].trim())));
+        }
         let Some(m) = mask(&args[0]) else { return Ok(None) };
+        // A token's run, read another way than forward: the tests at its end take nothing of the last one's.
+        if name.contains("run_") && !line.contains("assert") {
+            self.fwd = None;
+        }
         // The test build's checks read the walk's masks, which stay the walk's.
         if !self.locals.contains_key(&m) {
-            return if line.contains("assert") { Ok(None) } else { Err(format!("`{m}` is no mask of the bytes")) };
+            return if line.contains("assert") || self.partial { Ok(None) } else { Err(format!("`{m}` is no mask of the bytes")) };
         }
         let from_start = |a: &str| matches!(a.trim(), "s" | "s + 1");
         let windowed = |me: &mut Self, from: &str| -> Result<String, String> {
@@ -643,7 +1041,7 @@ impl<'a> Bytes<'a> {
         // A token's one-byte test at its start (`first_clear(&M, s, s + 1)`, `bit(&M, s)`): a bit of the block's mask,
         // as lean's masks of its one `Window`, where the mask reads no escapes.
         let one = name == "first_clear" && args.len() == 3 && args[1].trim() == "s" && args[2].trim() == "s + 1";
-        if (one || (name == "bit" && args.len() == 2 && args[1].trim() == "s")) && !self.in_region && !self.window_fn(&m)?.1 {
+        if (one || (name == "bit" && args.len() == 2 && args[1].trim() == "s")) && !self.in_region && !self.partial && !self.window_fn(&m)?.1 {
             let k = self.block_word(&m);
             let holds = format!("({k} >> (s - base) & 1 == 1)");
             return Ok(Some(if one { format!("(!{holds}).then_some(s)") } else { holds }));
@@ -654,8 +1052,10 @@ impl<'a> Bytes<'a> {
             let a = args[1].trim();
             return Ok(Some(format!("(!{}).then_some({a})", self.at(&e, a, 0)?)));
         }
-        // A mask with no escapes: its block's word first, made once a block (`k_M`), then windows past the block.
-        if name != "bit" && !self.in_region && !self.window_fn(&m)?.1 {
+        // A mask with no escapes: its block's word first, made once a block (`k_M`), then windows past the block. In the
+        // token loop (`partial_line`), a mask of a few classes alone, as the lean lexer's block masks (a word's, a blank's,
+        // a line end's): one of fills or many classes is read where a token asks it.
+        if name != "bit" && !self.in_region && !self.window_fn(&m)?.1 && (!self.partial || self.expr(&m).is_ok_and(|e| self.few_classes(&e, 0).is_some_and(|k| k <= 4))) {
             let k = self.block_word(&m);
             let (f, _) = self.window_fn(&m)?;
             return Ok(Some(match (name, args.len()) {
@@ -677,6 +1077,14 @@ impl<'a> Bytes<'a> {
                 _ => return Err(format!("`{name}` with {} arguments has no form of the bytes", args.len())),
             }));
         }
+        // A run of terms read forward from the token's first byte, as the lean lexer reads a number (`forward_run`).
+        if self.partial
+            && name == "run_last"
+            && args.len() == 2
+            && let Some(r) = self.forward_run(&m, args[1].trim())
+        {
+            return Ok(Some(r));
+        }
         if self.lean
             && name != "bit"
             && let Some(r) = self.lean_read(name, args, &m)?
@@ -686,12 +1094,24 @@ impl<'a> Bytes<'a> {
         Ok(Some(match (name, args.len()) {
             ("bit", 2) => {
                 let e = self.expr(&m)?;
+                let e = self.at_run_end(&e, args[1].trim()).unwrap_or(e);
                 format!("({})", self.at(&e, args[1].trim(), 0)?)
             }
+            ("last_in", 3) if self.partial => format!("wlast_in({}, {}, {})", args[1].trim(), args[2].trim(), self.window_fn(&m)?.0),
             ("first_bit", 2) => format!("wfirst_bit(n, {}, {})", args[1].trim(), windowed(self, &args[1])?),
-            ("count_in", 3) => format!("wcount_in(n, {}, {}, {})", args[1].trim(), args[2].trim(), windowed(self, &args[1])?),
-            ("first_in", 3) => format!("wfirst_in(n, {}, {}, {})", args[1].trim(), args[2].trim(), windowed(self, &args[1])?),
-            ("any_in", 3) => format!("wfirst_in(n, {}, {}, {}).is_some()", args[1].trim(), args[2].trim(), windowed(self, &args[1])?),
+            // A test of a range: its windows ask only of its bytes (`live_fn`).
+            ("count_in", 3) => {
+                windowed(self, &args[1])?;
+                format!("wcount_in(n, {}, {}, {})", args[1].trim(), args[2].trim(), self.live_fn(&m, &args[2])?)
+            }
+            ("first_in", 3) => {
+                windowed(self, &args[1])?;
+                format!("wfirst_in(n, {}, {}, {})", args[1].trim(), args[2].trim(), self.live_fn(&m, &args[2])?)
+            }
+            ("any_in", 3) => {
+                windowed(self, &args[1])?;
+                format!("wfirst_in(n, {}, {}, {}).is_some()", args[1].trim(), args[2].trim(), self.live_fn(&m, &args[2])?)
+            }
             ("first_clear", 3) => format!("wfirst_clear(n, {}, {}, {})", args[1].trim(), args[2].trim(), windowed(self, &args[1])?),
             ("run_last", 2) => format!("wrun_last(n, {}, {})", args[1].trim(), windowed(self, "s")?),
             ("run_once_last", 3) => {
@@ -742,13 +1162,34 @@ impl<'a> Bytes<'a> {
         let mut out = String::new();
         let mut rest = text;
         'scan: while !rest.is_empty() {
+            // A word of a mask (`M[i]`, `prev(&M, i, k)`, `next(&M, i, k)`) in a pass over the words: its window there.
+            if self.partial && !out.chars().next_back().is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.') {
+                if let Some(r) = self.word_read(rest)? {
+                    out.push_str(&r.0);
+                    rest = &rest[r.1..];
+                    continue 'scan;
+                }
+            }
             for (name, _) in READS {
+                // `put` only where a read may stay as it is (`partial_windows`).
+                if (name == "put" || name == "last_in") && !self.partial {
+                    continue;
+                }
                 let pat = format!("{name}(&");
                 if rest.starts_with(&pat) && !out.chars().next_back().is_some_and(|c| c.is_alphanumeric() || c == '_') {
                     let inner = &rest[name.len() + 1..];
                     let Some(close) = closing(inner) else { return Err(format!("an unclosed call in `{}`", line.trim())) };
                     let args: Vec<String> = split_args(&inner[..close]).into_iter().map(|a| self.rewrite_line(&a, line)).collect::<Result<_, _>>()?;
-                    match self.read(name, &args, line)? {
+                    let read = match self.read(name, &args, line) {
+                        Err(_) if self.partial => {
+                            if let Some(m) = args.get(usize::from(name == "put")).and_then(|a| a.trim().strip_prefix('&')) {
+                                self.failed.insert(m.to_owned());
+                            }
+                            None
+                        }
+                        r => r?,
+                    };
+                    match read {
                         Some(r) => out.push_str(&r),
                         None => {
                             let _ = write!(out, "{name}({})", args.join(","));
@@ -763,6 +1204,196 @@ impl<'a> Bytes<'a> {
             rest = &rest[c.len_utf8()..];
         }
         Ok(out)
+    }
+
+    /// A word of a mask at the start of `rest`, read as its window, and the length read: `M[i]`, `prev(&M, i, k)` or
+    /// `next(&M, i, k)`, `i` a name.
+    fn word_read(&mut self, rest: &str) -> Result<Option<(String, usize)>, String> {
+        let name_len = |t: &str| t.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(t.len());
+        for (f, sign) in [("prev(&", "-"), ("next(&", "+")] {
+            if let Some(t) = rest.strip_prefix(f) {
+                let m = &t[..name_len(t)];
+                let Some(close) = closing(t) else { return Ok(None) };
+                let args = split_args(&t[..close]);
+                if !self.locals.contains_key(m) || args.len() != 3 || args[0].trim() != m {
+                    return Ok(None);
+                }
+                let (i, k) = (args[1].trim(), args[2].trim());
+                if name_len(i) != i.len() || k.parse::<u32>().is_err() {
+                    return Ok(None);
+                }
+                let m = m.to_owned();
+                if let Err(e) = self.window_fn(&m) {
+                    self.failed.insert(m);
+                    let _ = e;
+                    return Ok(None);
+                }
+                return Ok(Some((format!("unsafe {{ w_{m}(src, n, ({i} * 64) as isize {sign} {k}, &mut 0) }}"), f.len() + close + 1)));
+            }
+        }
+        let l = name_len(rest);
+        let m = &rest[..l];
+        if l == 0 || !self.locals.contains_key(m) || !rest[l..].starts_with('[') {
+            return Ok(None);
+        }
+        let t = &rest[l + 1..];
+        let Some(e) = t.find(']') else { return Ok(None) };
+        let i = &t[..e];
+        if i.is_empty() || name_len(i) != i.len() {
+            return Ok(None);
+        }
+        let m = m.to_owned();
+        if self.window_fn(&m).is_err() {
+            self.failed.insert(m);
+            return Ok(None);
+        }
+        Ok(Some((format!("unsafe {{ w_{m}(src, n, ({i} * 64) as isize, &mut 0) }}"), l + 1 + e + 1)))
+    }
+
+    /// The classes `e` reads, where it is made of classes and their shifts alone (no fill, no escape).
+    fn few_classes(&self, e: &Expr, depth: usize) -> Option<usize> {
+        if depth > 16 {
+            return None;
+        }
+        match e {
+            Expr::Name(n) if self.classes.contains_key(n.as_str()) => Some(1),
+            Expr::Name(n) => self.few_classes(self.defs.get(n).or_else(|| self.locals.get(n))?, depth + 1),
+            Expr::Not(a) => self.few_classes(a, depth + 1),
+            Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => Some(self.few_classes(a, depth + 1)? + self.few_classes(b, depth + 1)?),
+            Expr::Call(f, args) if matches!(f.as_str(), "prev" | "next") => match args.first() {
+                Some(Arg::E(x)) => self.few_classes(x, depth + 1),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The block words the loop reads (`block_word`), each made of its window at the block's first byte.
+    pub(super) fn block_decls(&self) -> String {
+        let mut out: String = self.block.iter().map(|m| format!("        let k_{m} = unsafe {{ w_{m}(src, n, base as isize, &mut 0) }};\n")).collect();
+        if self.fwd_used {
+            out.push_str("        // The terms a run read forward ended in (`forward_run`), at its token's last byte.\n        #[allow(unused_assignments)]\n        let mut end_last = 0u32;\n");
+        }
+        out
+    }
+
+    /// `e` at `at`, a byte from the last of the run the token read forward (`l`, `l + k`), with what the run tells of
+    /// its bytes in place: the run's mask holds at `l`, at `l + 1` neither it nor its terms hold, and its terms at `l`
+    /// are those it ended in. `None` where no run was read forward, or `at` is no byte from its last.
+    fn at_run_end(&self, e: &Expr, at: &str) -> Option<Expr> {
+        let (run, terms) = self.fwd.as_ref()?;
+        let off: i64 = match at {
+            "l" => 0,
+            a => match a.strip_prefix("l + ").or_else(|| a.strip_prefix("l - ").map(|_| "")) {
+                Some("") => return None,
+                Some(k) => k.parse().ok()?,
+                None => return None,
+            },
+        };
+        let mut full = terms.clone();
+        full.push(run.clone());
+        let all = Expr::Not(Box::new(Expr::Empty));
+        fn go(me: &Bytes, e: &Expr, off: i64, run: &Expr, terms: &[Expr], full: &[Expr], all: &Expr, depth: usize) -> Expr {
+            if depth > 48 {
+                return e.clone();
+            }
+            if e == run {
+                return match off {
+                    0 => all.clone(),
+                    1 => Expr::Empty,
+                    _ => e.clone(),
+                };
+            }
+            if let Some(k) = terms.iter().position(|t| t == e) {
+                return match off {
+                    0 => Expr::Name(format!("\u{0}end{k}")),
+                    1 => Expr::Empty,
+                    _ => e.clone(),
+                };
+            }
+            let r = |x: &Expr, o: i64| Box::new(go(me, x, o, run, terms, full, all, depth + 1));
+            match e {
+                Expr::Name(n) if !me.classes.contains_key(n.as_str()) => match me.locals.get(n).or_else(|| me.defs.get(n)) {
+                    Some(d) if reads_terms(me, d, full, 0) => go(me, d, off, run, terms, full, all, depth + 1),
+                    _ => e.clone(),
+                },
+                Expr::Call(f, args) if matches!(f.as_str(), "prev" | "next") => match Bytes::shift(f, args) {
+                    Some((x, k)) if reads_terms(me, &x, full, 0) => {
+                        let inner = go(me, &x, off + k, run, terms, full, all, depth + 1);
+                        if inner == Expr::Empty || inner == *all || !reads_terms(me, &x, full, 0) {
+                            inner
+                        } else {
+                            Expr::Call(f.clone(), vec![Arg::E(inner), Arg::N(k.unsigned_abs())])
+                        }
+                    }
+                    _ => e.clone(),
+                },
+                Expr::Not(a) => Expr::Not(r(a, off)),
+                Expr::And(a, b) => Expr::And(r(a, off), r(b, off)),
+                Expr::Or(a, b) => Expr::Or(r(a, off), r(b, off)),
+                Expr::Xor(a, b) => Expr::Xor(r(a, off), r(b, off)),
+                _ => e.clone(),
+            }
+        }
+        Some(fold(go(self, &self.norm(e, 0), off, run, terms, &full, &all, 0)))
+    }
+
+    /// `e` with every name of a mask in place, down to the classes: one form of a mask however the loop's locals or the
+    /// grammar name it.
+    fn norm(&self, e: &Expr, depth: usize) -> Expr {
+        if depth > 64 {
+            return e.clone();
+        }
+        let r = |x: &Expr| Box::new(self.norm(x, depth + 1));
+        match e {
+            Expr::Name(n) if self.classes.contains_key(n.as_str()) || n.starts_with('\u{0}') => e.clone(),
+            Expr::Name(n) => {
+                let k = n.strip_prefix("s1.").unwrap_or(n);
+                match self.locals.get(k).or_else(|| self.defs.get(k)).or_else(|| self.locals.get(&format!("m_{k}"))) {
+                    Some(d) => self.norm(d, depth + 1),
+                    None => e.clone(),
+                }
+            }
+            Expr::Not(a) => Expr::Not(r(a)),
+            // A union's term that holds at no byte the other side can (`(word | high) & digit`): left out.
+            Expr::And(a, b) => {
+                let (a, b) = (self.norm(a, depth + 1), self.norm(b, depth + 1));
+                let narrow = |u: Expr, by: &Expr| -> Expr {
+                    let Some(set) = self.byte_set(by, 0) else { return u };
+                    let mut ts = Vec::new();
+                    fn ors(e: Expr, out: &mut Vec<Expr>) {
+                        match e {
+                            Expr::Or(a, b) => {
+                                ors(*a, out);
+                                ors(*b, out);
+                            }
+                            e => out.push(e),
+                        }
+                    }
+                    if !matches!(u, Expr::Or(..)) {
+                        return u;
+                    }
+                    ors(u, &mut ts);
+                    let kept: Vec<Expr> = ts.into_iter().filter(|t| self.byte_set(t, 0).is_none_or(|x| (0..256).any(|c| x[c] && set[c]))).collect();
+                    kept.into_iter().reduce(|x, y| Expr::Or(Box::new(x), Box::new(y))).unwrap_or(Expr::Empty)
+                };
+                let a2 = narrow(a.clone(), &b);
+                let b2 = narrow(b, &a);
+                Expr::And(Box::new(a2), Box::new(b2))
+            }
+            Expr::Or(a, b) => Expr::Or(r(a), r(b)),
+            Expr::Xor(a, b) => Expr::Xor(r(a), r(b)),
+            Expr::Call(f, args) => Expr::Call(
+                f.clone(),
+                args.iter()
+                    .map(|a| match a {
+                        Arg::E(x) => Arg::E(self.norm(x, depth + 1)),
+                        a => a.clone(),
+                    })
+                    .collect(),
+            ),
+            _ => e.clone(),
+        }
     }
 
     /// The block's word of mask `m` (`k_m`), made once a block.
@@ -1045,7 +1676,7 @@ impl<'a> Bytes<'a> {
 }
 
 /// The index of the `)` that closes the call whose arguments start `s`.
-fn closing(s: &str) -> Option<usize> {
+pub(super) fn closing(s: &str) -> Option<usize> {
     let mut depth = 0i32;
     for (i, c) in s.char_indices() {
         match c {
@@ -1083,7 +1714,7 @@ fn in_unsafe(call: &str) -> &str {
 }
 
 /// A byte's test of a class's ranges.
-fn pattern_test(b: &str, rs: &[(u32, u32)]) -> String {
+pub(super) fn pattern_test(b: &str, rs: &[(u32, u32)]) -> String {
     if rs.is_empty() {
         return "false".to_owned();
     }
@@ -1124,6 +1755,104 @@ pub(super) fn lit(x: u8) -> String {
         b'\'' => "b'\\''".to_owned(),
         0x20..=0x7e => format!("b'{}'", x as char),
         _ => format!("{x:#04x}"),
+    }
+}
+
+/// The name of the bits a range test asks of (`live_fn`), in a mask's expression.
+const LIVE: &str = "\u{0}live";
+
+/// `e` with the range's bits (`LIVE`) ANDed into the first test of each side: down an `And`'s first operand, into both
+/// of an `Or`'s. Every early exit (`win`'s `And`) then asks only of them.
+/// The tests of a set of texts (a `pairs` mask: `text("->") | text("==") | …`) as the lean lexer's pair tables: for
+/// each length, a table a byte position, each byte's bits the texts with it there (`FIRST[c] & FOLLOW[d]`), so a text
+/// holds where every position's bits meet. With the tables (statics) before the test, by the test's name `f`. `None`
+/// where `d` is no set of four texts or more, of at most 64 of a length.
+fn texts_table(f: &str, d: &Expr, byte: &dyn Fn(&str) -> Option<u8>) -> Option<String> {
+    // A text: `text(T)`, or a pair's bytes (`pair_byte_2d & next(pair_byte_3e)`, classes of one byte, one at each offset).
+    fn texts(e: &Expr, out: &mut Vec<Vec<u8>>, byte: &dyn Fn(&str) -> Option<u8>) -> Option<()> {
+        match e {
+            Expr::Or(a, b) => {
+                texts(a, out, byte)?;
+                texts(b, out, byte)
+            }
+            Expr::Call(c, args) if c == "text" && let [Arg::S(t)] = args.as_slice() && !t.is_empty() => {
+                out.push(t.clone());
+                Some(())
+            }
+            Expr::And(..) => {
+                fn at(e: &Expr, out: &mut Vec<(i64, u8)>, byte: &dyn Fn(&str) -> Option<u8>) -> Option<()> {
+                    match e {
+                        Expr::And(a, b) => {
+                            at(a, out, byte)?;
+                            at(b, out, byte)
+                        }
+                        Expr::Name(c) => {
+                            out.push((0, byte(c)?));
+                            Some(())
+                        }
+                        Expr::Call(f, args) if f == "next" => match args.as_slice() {
+                            [Arg::E(Expr::Name(c))] => {
+                                out.push((1, byte(c)?));
+                                Some(())
+                            }
+                            [Arg::E(Expr::Name(c)), Arg::N(k)] => {
+                                out.push((*k as i64, byte(c)?));
+                                Some(())
+                            }
+                            _ => None,
+                        },
+                        _ => None,
+                    }
+                }
+                let mut bs = Vec::new();
+                at(e, &mut bs, byte)?;
+                bs.sort_unstable();
+                if !bs.iter().enumerate().all(|(k, (o, _))| *o == k as i64) {
+                    return None;
+                }
+                out.push(bs.into_iter().map(|(_, b)| b).collect());
+                Some(())
+            }
+            _ => None,
+        }
+    }
+    let mut ts = Vec::new();
+    texts(d, &mut ts, byte)?;
+    if ts.len() < 4 {
+        return None;
+    }
+    let mut lens: Vec<usize> = ts.iter().map(Vec::len).collect();
+    lens.sort_unstable();
+    lens.dedup();
+    let mut statics = String::new();
+    let mut tests = Vec::new();
+    for len in lens {
+        let of: Vec<&Vec<u8>> = ts.iter().filter(|t| t.len() == len).collect();
+        if of.len() > 64 {
+            return None;
+        }
+        let ty = if of.len() <= 32 { "u32" } else { "u64" };
+        let mut reads = Vec::new();
+        for k in 0..len {
+            let mut tab = [0u64; 256];
+            for (bit, t) in of.iter().enumerate() {
+                tab[usize::from(t[k])] |= 1 << bit;
+            }
+            let name = format!("{}_{len}_{k}", f.to_uppercase());
+            let row: Vec<String> = tab.iter().map(|b| format!("{b:#x}")).collect();
+            let _ = writeln!(statics, "/// `{f}`'s texts of {len} bytes: each byte's bits the texts with it at their byte {k}.\nstatic {name}: [{ty}; 256] = [{}];", row.join(", "));
+            reads.push(if k == 0 { format!("{name}[usize::from(src[q])]") } else { format!("{name}[usize::from(src[q + {k}])]") });
+        }
+        tests.push(format!("(q + {len} <= n && {} != 0)", if reads.len() == 1 { reads[0].clone() } else { format!("({})", reads.join(" & ")) }));
+    }
+    Some(format!("\u{0}{statics}\u{0}{}", tests.join(" || ")))
+}
+
+fn with_live(e: &Expr) -> Expr {
+    match e {
+        Expr::And(a, b) => Expr::And(Box::new(with_live(a)), b.clone()),
+        Expr::Or(a, b) => Expr::Or(Box::new(with_live(a)), Box::new(with_live(b))),
+        _ => Expr::And(Box::new(Expr::Name(LIVE.to_owned())), Box::new(e.clone())),
     }
 }
 
@@ -1202,9 +1931,12 @@ pub(super) fn fuse_tests(code: &str, escapes: &HashMap<String, String>) -> Strin
     // A test's head: its indent, its span and its window function.
     let head = |l: &str| -> Option<(usize, String, String)> {
         let ind = l.len() - l.trim_start().len();
-        let rest = l.trim_start().strip_prefix("if wcount_in(n, ")?.strip_suffix("(src, n, p, esc) }) >= 1 {")?;
+        let rest = l.trim_start().strip_prefix("if wcount_in(n, ")?;
         let (span, f) = rest.split_once(", |p: isize, esc: &mut u64| unsafe { ")?;
-        (f.starts_with("w_") && !f.contains(' ')).then(|| (ind, span.to_owned(), f.to_owned()))
+        // A range's test (`live_fn`, `l_`), or one over every byte of its windows (`w_`).
+        let b = span.split_once(", ")?.1;
+        let f = f.strip_suffix("(src, n, p, esc) }) >= 1 {").or_else(|| f.strip_suffix(&format!("(src, n, p, esc, upto(p, {b})) }}) >= 1 {{")))?;
+        ((f.starts_with("w_") || f.starts_with("l_")) && !f.contains(' ')).then(|| (ind, span.to_owned(), f.to_owned()))
     };
     // The line after a test's block, from its head at `i`.
     let end = |i: usize, ind: usize| -> Option<usize> {
@@ -1244,14 +1976,15 @@ pub(super) fn fuse_tests(code: &str, escapes: &HashMap<String, String>) -> Strin
         let pad = " ".repeat(ind);
         // Tests that read the escapes of one mask find them once a window, with one carry, as the lean lexer's string
         // reader passes each escape once.
-        let of: Vec<Option<&String>> = tests.iter().map(|(_, f)| escapes.get(f)).collect();
+        let of: Vec<Option<&String>> = tests.iter().map(|(_, f)| escapes.get(&format!("w_{}", &f[2..]))).collect();
+        let b = span.split_once(", ").map_or("", |(_, b)| b);
         let shared = of.iter().all(|o| o.is_some() && *o == of[0]);
         let _ = writeln!(out, "{pad}// The token's tests of its bytes, in one window loop: their classes loaded once a window.");
         if let (true, Some(Some(b))) = (shared, of.first()) {
-            let calls: Vec<String> = tests.iter().map(|(_, f)| format!("e_{}(src, n, p, escaped)", f.trim_start_matches("w_"))).collect();
+            let calls: Vec<String> = tests.iter().map(|(_, f)| format!("e_{}(src, n, p, escaped)", &f[2..])).collect();
             let _ = writeln!(out, "{pad}let hit = wany_in(n, {span}, |p: isize, esc: &mut [u64; {}]| unsafe {{ let escaped = escaped_step({}, &mut esc[0]); [{}] }});", tests.len(), in_unsafe(b), calls.join(", "));
         } else {
-            let calls: Vec<String> = tests.iter().enumerate().map(|(k, (_, f))| format!("{f}(src, n, p, &mut esc[{k}])")).collect();
+            let calls: Vec<String> = tests.iter().enumerate().map(|(k, (_, f))| if f.starts_with("l_") { format!("{f}(src, n, p, &mut esc[{k}], upto(p, {b}))") } else { format!("{f}(src, n, p, &mut esc[{k}])") }).collect();
             let _ = writeln!(out, "{pad}let hit = wany_in(n, {span}, |p: isize, esc: &mut [u64; {}]| unsafe {{ [{}] }});", tests.len(), calls.join(", "));
         }
         for (k, line) in lines.iter().enumerate().take(last).skip(i) {
@@ -1402,6 +2135,79 @@ fn valid(n: usize, p: isize) -> u64 {
     if p < 0 { hi & (!0u64 << (-p).min(63)) } else { hi }
 }
 
+/// The escape carry of the window from `p`, from the bytes: the parity of the run of bytes `t` holds that ends before
+/// it.
+#[inline(always)]
+fn esc_back(p: isize, t: impl Fn(usize) -> bool) -> u64 {
+    let mut c = 0;
+    let mut q = p;
+    while q > 0 && t((q - 1) as usize) {
+        c ^= 1;
+        q -= 1;
+    }
+    c
+}
+
+/// A fill's carry at the window from `p`, from the bytes: whether it holds at the byte before, the nearest byte back
+/// its start `s` or its end `e` holds at deciding.
+#[inline(always)]
+fn fill_back(p: isize, s: impl Fn(usize) -> bool, e: impl Fn(usize) -> bool) -> u64 {
+    let mut q = p;
+    while q > 0 {
+        let j = (q - 1) as usize;
+        if s(j) {
+            return 1;
+        }
+        if e(j) {
+            return 0;
+        }
+        q -= 1;
+    }
+    0
+}
+
+/// Byte `c`'s bits in the 64 bytes from `p`: none past the file or before it.
+#[inline(always)]
+unsafe fn wbyte(src: &[u8], n: usize, p: isize, c: u8) -> u64 {
+    let Some((v, q)) = (unsafe { window(src, n, p) }) else { return 0 };
+    held(s::eq_mask(v, c), q, n, p)
+}
+
+/// The last byte of `a..=b` the windows `w` give, from `b`'s word back.
+#[inline(always)]
+fn wlast_in(a: usize, b: usize, mut w: impl FnMut(isize, &mut u64) -> u64) -> Option<usize> {
+    if a > b {
+        return None;
+    }
+    let mut q = b / 64;
+    loop {
+        let lo = if q == a / 64 { !0u64 << (a % 64) } else { !0 };
+        let hi = if q == b / 64 { !0u64 >> (63 - b % 64) } else { !0 };
+        let m = w((q * 64) as isize, &mut 0) & lo & hi;
+        if m != 0 {
+            return Some(q * 64 + 63 - m.leading_zeros() as usize);
+        }
+        if q == a / 64 {
+            return None;
+        }
+        q -= 1;
+    }
+}
+
+/// `v`'s bits at bytes `a..=b` made those of the windows `w` gives (`put`'s).
+#[inline(always)]
+fn wput(v: &mut [u64], a: usize, b: usize, mut w: impl FnMut(isize, &mut u64) -> u64) {
+    let mut i = a;
+    let mut esc = 0;
+    while i <= b {
+        let (q, r) = (i / 64, i % 64);
+        let k = (b + 1 - i).min(64 - r);
+        let m = (if k == 64 { !0 } else { (1u64 << k) - 1 }) << r;
+        v[q] = v[q] & !m | w((q * 64) as isize, &mut esc) & m;
+        i += k;
+    }
+}
+
 /// One window's escaped bytes (`escaped`), each after an odd run of `bs`'s; `carry`, the run's escape over the window
 /// before.
 #[inline(always)]
@@ -1460,6 +2266,14 @@ fn wfirst_bit(n: usize, from: usize, mut w: impl FnMut(isize, &mut u64) -> u64) 
         p += 64;
     }
     None
+}
+
+/// The bits of the window from `p` in bytes `..=b`: a range test's (`wfirst_in`, `wcount_in`), whose windows start
+/// at its first byte.
+#[inline(always)]
+fn upto(p: isize, b: usize) -> u64 {
+    let left = b as isize - p + 1;
+    if left >= 64 { !0 } else if left <= 0 { 0 } else { (1u64 << left) - 1 }
 }
 
 /// The first byte in `a..=b` a mask holds, its windows `w` from `a` on.
@@ -1781,4 +2595,57 @@ fn cover(packs: &mut Vec<Vec<(u16, u16)>>, set: &[bool; 256]) -> Option<(usize, 
         packs[p].push(r);
     }
     Some((p, bits))
+}
+
+/// Whether `e` reads one of the terms `full` (where a name must be expanded to see the term's `prev`).
+fn reads_terms(me: &Bytes, e: &Expr, full: &[Expr], depth: usize) -> bool {
+    if depth > 48 {
+        return true;
+    }
+    if full.iter().any(|t| t == e) {
+        return true;
+    }
+    match e {
+        Expr::Name(n) if !me.classes.contains_key(n.as_str()) => me.locals.get(n).or_else(|| me.defs.get(n)).is_some_and(|d| reads_terms(me, d, full, depth + 1)),
+        Expr::Not(a) => reads_terms(me, a, full, depth + 1),
+        Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => reads_terms(me, a, full, depth + 1) || reads_terms(me, b, full, depth + 1),
+        Expr::Call(_, args) => args.iter().any(|a| matches!(a, Arg::E(x) if reads_terms(me, x, full, depth + 1))),
+        _ => false,
+    }
+}
+
+/// Whether `e` reads a fill (a scan back from its byte).
+fn reads_fill(e: &Expr) -> bool {
+    match e {
+        Expr::Call(f, _) if f == "fill" || f == "escaped" => true,
+        Expr::Call(_, args) => args.iter().any(|a| matches!(a, Arg::E(x) if reads_fill(x))),
+        Expr::Not(a) => reads_fill(a),
+        Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => reads_fill(a) || reads_fill(b),
+        _ => false,
+    }
+}
+
+/// `e` with its constants folded (`simplify`) at every node, a call's arguments too; of an `&`, the side that reads no
+/// fill first, so a fill is read where the bytes' tests hold, as the lean lexer tests a byte before it reads on.
+fn fold(e: Expr) -> Expr {
+    let f = |a: Box<Expr>| Box::new(fold(*a));
+    super::simplify(match e {
+        Expr::Not(a) => Expr::Not(f(a)),
+        Expr::And(a, b) => {
+            let (a, b) = (f(a), f(b));
+            if reads_fill(&a) && !reads_fill(&b) { Expr::And(b, a) } else { Expr::And(a, b) }
+        }
+        Expr::Or(a, b) => Expr::Or(f(a), f(b)),
+        Expr::Xor(a, b) => Expr::Xor(f(a), f(b)),
+        Expr::Call(g, args) => Expr::Call(
+            g,
+            args.into_iter()
+                .map(|a| match a {
+                    Arg::E(x) => Arg::E(fold(x)),
+                    a => a,
+                })
+                .collect(),
+        ),
+        e => e,
+    })
 }
