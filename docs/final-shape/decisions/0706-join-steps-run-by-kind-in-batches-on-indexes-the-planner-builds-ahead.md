@@ -144,6 +144,29 @@ On `all` (m1max, load 7–10, two runs each, same rows): 18.9 M rows in 139,778 
 129.6 / 127.6 s before, 124.3 / 124.1 s after; instructions 1,408 / 1,409 G before, 1,368 / 1,367 G after; peak
 2,319 / 2,350 MB before, 2,291 / 2,341 MB after. W: 48.8 s, 477 G.
 
+### Step 3 (E3, grouped aggregates), as built
+
+What the scalar steps did on `all` (`RERAIL_SCALAR_TRACE`): almost every probe missed the pool's memo and folded
+its group (`public_len`: 330,631 probes, 318,886 folds, a row a group; `rf_fn_at`'s count: 481,713 probes, 448,132
+folds over 21,473 rows a chunk), each fold two write locks, a candidates lookup and its rows.
+
+- `scalars::Pool::build_whole`: a bag's every group over its input's live rows, folded in one pass into each
+  shard's memo for the input's version, marked whole. A probe of a whole memo reads its group, and a key with none
+  is the empty group (count 0, no minimum): nothing is folded.
+- The catalogue: a bag is `Kind::Summary` (its group columns, its tests and value column). `access::observe` adds a
+  scalar step's probes and its input's rows (`Use { tests: probes, found: rows }`); `pays` prices a summary by
+  probes a row held, a fold at 1,000 ns against a probe of a whole summary at 60 and a build at 30 a row.
+- `scalars::build_ahead`, at each component run's start: every scalar step over a complete input (held, not a
+  view) whose observed use pays, built whole in parallel before any walk. Readers fold only what is not built.
+- Tests: `a_whole_summary_gives_each_groups_fold_and_empty_groups` (setfix), `a_summary_pays_by_its_probes_a_row`
+  (logic-core), `aggregates_over_summaries_built_ahead_give_each_groups_rows` (tests_corpus, 120 files in chunks of
+  64 nodes, the counts and minima against the source).
+
+On `all` (m1max, load 9–14, two runs each, same rows): CPU 127.5 / 129.4 s before, 125.7 / 126.6 s after;
+instructions 1,366 / 1,371 G before, 1,361 / 1,360 G after. Folds left: each bag's first chunk (`public_len` 48,380,
+`import_start` 46,645), priced before any use is observed; the first chunk prices by the search's estimates with
+§3.
+
 ## Consequences
 
 - 0694's node bits are made by the build batch, not at a key's first test.

@@ -1787,3 +1787,34 @@ not_calls(p, l, k) :- kind(c, "expression_statement"), child(c, n, _), node(_, n
     let want: BTreeSet<(String, i64, String)> = (0..400).map(|i| ("a.py".to_owned(), 2 * i + 1, "assignment".to_owned())).collect();
     assert_eq!(not_calls, want, "{:?}", &got[1][..got[1].len().min(4)]);
 }
+
+/// Decision 0706 E3: an aggregate over a relation an earlier stratum derived, run over many chunks: once the run has
+/// seen its probes cover the relation's rows, its summary is built whole ahead of the stratum, and each group's count
+/// and minimum are the source's (a file with `i % 5 + 1` calls, the first on line `i % 3 + 1`).
+#[test]
+fn aggregates_over_summaries_built_ahead_give_each_groups_rows() {
+    use crate::code_rule_dsl::logic::native::component::summaries_built_whole;
+    let sources: Vec<(String, String)> = (0..120).map(|i| (format!("f{i:03}.py"), format!("{}{}", "x = 1\n".repeat(i % 3), "f()\n".repeat(i % 5 + 1)))).collect();
+    let files: Vec<(&str, &str)> = sources.iter().map(|(p, s)| (p.as_str(), s.as_str())).collect();
+    let dir = corpus("summaries-ahead", &files);
+    let program = r#"
+.decl calls(d: number, l: number)
+calls(d, l) :- kind(n, "call"), docof(n, d), line(n, l).
+.decl ncalls(p: symbol, c: number)
+ncalls(p, c) :- doc(d, p, _), c = count : { calls(d, _) }.
+.decl first(p: symbol, l: number)
+first(p, l) :- doc(d, p, _), l = min x : { calls(d, x) }.
+.output ncalls, first
+"#;
+    let before = summaries_built_whole();
+    let out = dir.join(".out");
+    super::run(program, &dir, None, &out, "program", Binding::Cpu, 64).unwrap();
+    let got = shown_of(&Outputs::open(&out).unwrap(), &["ncalls", "first"]);
+    assert!(summaries_built_whole() > before, "summaries built ahead");
+    let file = |p: &str| p.rsplit('/').next().unwrap_or(p).trim_matches('"').to_owned();
+    let of = |rows: &Vec<Vec<String>>| rows.iter().map(|r| (file(&r[0]), r[1].parse::<i64>().unwrap())).collect::<BTreeSet<_>>();
+    let want_n: BTreeSet<(String, i64)> = (0..120).map(|i| (format!("f{i:03}.py"), (i % 5 + 1) as i64)).collect();
+    let want_l: BTreeSet<(String, i64)> = (0..120).map(|i| (format!("f{i:03}.py"), (i % 3 + 1) as i64)).collect();
+    assert_eq!(of(&got[0]), want_n);
+    assert_eq!(of(&got[1]), want_l);
+}

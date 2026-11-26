@@ -3,6 +3,9 @@
 //! (`prefetch`): each index that its readers' use pays for, built in parallel into its relation's block before the
 //! level runs. A reader only finds one (`Csr::filter`, `Csr::bits`); none builds one.
 //!
+//! E3 (grouped aggregates): a scalar step's probes of its bag, and its input's rows, priced against a whole summary
+//! built in one pass (`scalars::build_ahead`).
+//!
 //! E2 (membership): node bits for a test by one column (decision 0694), a filter for one by several, read before the
 //! exact probe. A test the filter rejects reads no row.
 
@@ -15,6 +18,12 @@ use std::sync::{Arc, Mutex};
 /// by each level's build ahead. The run's own (decision 0442).
 #[derive(Default)]
 pub(super) struct Observed(Mutex<BTreeMap<Access, Use>>);
+impl Observed {
+    /// What the run's readers of `a` have done so far.
+    pub(super) fn use_of(&self, a: &Access) -> Option<Use> {
+        self.0.lock().unwrap().get(a).copied()
+    }
+}
 
 /// What the build batches made in the run: indexes built, by kind (node bits, filters), and the rows they read.
 #[derive(Default)]
@@ -49,6 +58,14 @@ pub(super) fn observe(j: &JoinRule, counts: &[(u64, u64)]) {
             if name == "kind" {
                 eprintln!("RERAIL_KIND_TRACE steps kind first {} neg {neg} keys {} binds {} tests {} fused {} ranged {} batchable {} in {tests} out {out}", i == 0, keys.len(), binds.len(), t.len(), j.fused[i].is_some(), j.ranges[i].is_some(), super::kinds::kind_test(j, i).is_some());
             }
+        }
+        // A scalar step over a complete input (E3): its probes, and the rows its input held, for its summary's price.
+        if let Step::Scalar { src: Src::In(rel, _), bag, bound: None, .. } = &j.steps[i] {
+            let rel = j.bound(rel);
+            if let (Some(name), None, Some(bag)) = (rel.name.get(), rel.view.as_ref(), bag.as_ref()) {
+                seen.push((Access { rel: name.clone(), kind: j.bound(bag).access() }, Use { tests, found: rel.len() as u64 }));
+            }
+            continue;
         }
         let Some((a, neg)) = needs(j, i) else {
             if trace() && let Step::Atom { src: Src::In(rel, ix), neg, binds, keys, tests } = &j.steps[i] {

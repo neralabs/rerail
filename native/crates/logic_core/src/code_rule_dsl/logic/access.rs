@@ -74,7 +74,9 @@ impl Available {
     }
 }
 
-/// What the steps reading an `Access` did over a run's chunks: membership tests made, and those that found a row.
+/// What the steps reading an `Access` did over a run's chunks: membership tests made, and those that found a row. For
+/// a summary (`Kind::Summary`): its probes, and the rows its relation held at each step's count (`found`), so the
+/// probes a row is the ratio, whatever a chunk's size.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Use {
     pub tests: u64,
@@ -98,6 +100,13 @@ pub const FILTER_BUILD_NS: f64 = 6.0;
 pub const NODE_BITS_BUILD_NS: f64 = 40.0;
 /// Node bits' test (a document found, its slot's entry, one bit), in ns.
 pub const NODE_BITS_TEST_NS: f64 = 12.0;
+/// A scalar step's probe of a bag folded as asked (its memo missed: two write locks, its candidates found and read),
+/// in ns (decision 0706 E3: the step's 1,474 ns a row in on `all`, its probes nearly all misses).
+pub const SUMMARY_FOLD_NS: f64 = 1_000.0;
+/// A probe of a summary built whole (a read lock, one hash lookup), in ns.
+pub const SUMMARY_HIT_NS: f64 = 60.0;
+/// A whole summary's build, in ns a row (the row's group key read, hashed, its group's summary updated).
+pub const SUMMARY_BUILD_NS: f64 = 30.0;
 /// The share of absent keys a filter lets through (`blocks::relation::FILTER_BITS`, 5 bits a key).
 pub const FILTER_PASS: f64 = 0.003;
 
@@ -107,6 +116,7 @@ pub fn build_ns(kind: &Kind, rows: u64) -> f64 {
         * match kind {
             Kind::Filter(_) => FILTER_BUILD_NS,
             Kind::NodeBits(_) => NODE_BITS_BUILD_NS,
+            Kind::Summary { .. } => SUMMARY_BUILD_NS,
             _ => f64::INFINITY,
         }
 }
@@ -126,7 +136,11 @@ pub fn saves_ns(kind: &Kind, u: Use) -> f64 {
 /// Whether `kind` over a relation of `rows` pays for its build, its readers having done `u` (decision 0706 §4): its
 /// savings past its cost, as `keeps` decides a relation.
 pub fn pays(kind: &Kind, rows: u64, u: Use) -> bool {
-    saves_ns(kind, u) > build_ns(kind, rows)
+    match kind {
+        // A summary's use is by the rows its relation held: its probes over those rows against a build over them.
+        Kind::Summary { .. } => u.tests as f64 * (SUMMARY_FOLD_NS - SUMMARY_HIT_NS) > build_ns(kind, u.found.max(1)),
+        _ => saves_ns(kind, u) > build_ns(kind, rows),
+    }
 }
 
 #[cfg(test)]
@@ -150,5 +164,14 @@ mod tests {
         assert_eq!(a.share(&k), Some(300.0), "a scheduled build shared by its readers");
         a.0.insert(k.clone(), State::Built);
         assert_eq!(a.share(&k), Some(0.0));
+    }
+
+    /// Decision 0706 E3: a summary pays when its probes are not few against its relation's rows, whatever its size.
+    #[test]
+    fn a_summary_pays_by_its_probes_a_row() {
+        let k = Kind::Summary { group: vec![0, 1], agg: String::new() };
+        assert!(pays(&k, 1, Use { tests: 330_631, found: 330_607 }), "public_len's: a probe a row");
+        assert!(pays(&k, 1, Use { tests: 481_713, found: 21_473 * 40 }), "rf_fn_at's count: 12 probes a row held");
+        assert!(!pays(&k, 1, Use { tests: 36, found: 64_799 }), "rf_owner's: 36 probes of one group, whose fold reads what a build would");
     }
 }

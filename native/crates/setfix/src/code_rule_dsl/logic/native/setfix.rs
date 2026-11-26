@@ -110,6 +110,8 @@ mod cands;
 mod kinds;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use kinds::{batched_rows_for_tests as kind_batched_rows, force_for_tests as kind_batches_forced};
+#[cfg(any(test, feature = "test-hooks"))]
+pub use scalars::built_whole_for_tests as summaries_built_whole;
 pub mod access;
 mod sorted_hash;
 pub mod table;
@@ -2921,6 +2923,8 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             if let Body::Join(join)=&probe.body {scalars::register(join,Some(&store));}
             if let Some(join)=&probe.whole {scalars::register(join,Some(&store));}
         }
+        let plans = comp.probes.iter().flat_map(|p| [match &p.body { Body::Join(j) => Some(&**j), _ => None }, p.whole.as_ref()]).flatten();
+        scalars::build_ahead(plans);
     }
     let mut stmts = Vec::new();
     for p in &comp.probes { stmts.push(match &p.body { Body::Sql(sql) => Some(conn.sql()?.prepare(sql)?), Body::Join(_) | Body::Unplanned => None }); }
@@ -9318,6 +9322,14 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     pool.evaluate(bag, &cx.key, epoch, build)
                 } else { build(*col) };
                 if counting { table::spent(&j.forms[i], j, i, walked.get()); }
+                if scalars::trace() {
+                    let (name, n) = match src {
+                        Src::In(rel, _) => { let r = j.bound(rel); (format!("in {}{}", r.name.get().cloned().unwrap_or_default(), if r.view.is_some() { " (view)" } else { "" }), r.len()) }
+                        Src::Full(r) | Src::FullMulti(r, _) => (format!("full #{r}"), store.rels[*r].n),
+                        Src::Delta(r) => (format!("delta #{r}"), store.rels[*r].hi - store.rels[*r].lo),
+                    };
+                    scalars::note(|| format!("{name} {kind:?} keys {} bag {} counted {}", keys.len(), bag.is_some(), counting), 1, u64::from(walked.get() > 0), walked.get(), n as u64);
+                }
                 if *kind==ScalarKind::Sum && *bind {
                     cx.pending.retain(|(slot,_)|slot!=out);
                     if let Ok(value)=i64::try_from(summary.sum) {slots[*out]=value;}
