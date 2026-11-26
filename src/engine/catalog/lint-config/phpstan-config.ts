@@ -357,7 +357,7 @@ class PhpstanConfig implements LinterConfig {
     if (this.#level.value >= from) return { on: true, explicit: false, because: this.#level.because };
     const other = this.#registered[0];
     if (other !== undefined) return { on: "unknown", because: `${other.because} ${other.rule ?? "a rule"} registers a rule Rerail does not read, which may report ${identifiers.join(", ")}` };
-    return { on: false, explicit: false, because: `${this.#level.because} does not turn it on (PHPStan reports ${identifiers.join(", ")} from level ${from})` };
+    return { on: false, explicit: false, because: `${this.#level.because}: PHPStan reports ${identifiers.join(", ")} from level ${from}` };
   }
 }
 
