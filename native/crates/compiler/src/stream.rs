@@ -44,7 +44,9 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         // The word is the record's (its code), so the program's strings are the records' words.
         WORD_IS => mode <= 1 && program.strings.get(usize::from(operand)).is_some_and(|s| !s.is_empty() && s.len() <= 64) && records.is_some_and(|r| r.words == program.strings),
         // A level's word's kind (`REMEMBERED`) only as a moved or relabelled node's.
-        OPEN | NODE_SUPER => mode == 0 && operand != REMEMBERED,
+        OPEN => mode == 0 && operand != REMEMBERED,
+        // `m=1`: the moved node's slot, after a `WRAP`.
+        NODE_SUPER => mode <= 1 && operand != 0 && operand != REMEMBERED,
         // `m=1`: an extra's leaf, deferred; `m=2`: an extra's leaf placed now, never the node
         // made last at its level.
         // `m=3`: a token the grammar implies, no node.
@@ -884,9 +886,10 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             WRAP => {
                 let Some(Some((r, base))) = lasts_made.last().copied() else { refuse!('step, pc - 1, "a wrap with no node before it") };
                 let w = nodes.len();
-                let (field, start) = (nodes[r].field, nodes[r].start);
+                // The wrapper stands where the moved node stood: its field and its slot.
+                let (field, start, slot) = (nodes[r].field, nodes[r].start, std::mem::take(&mut nodes[r].supers));
                 nodes[r].field = 0;
-                nodes.push(Node { kind: operand, field, supers: vec![], start, end: 0, size: 0 });
+                nodes.push(Node { kind: operand, field, supers: slot, start, end: 0, size: 0 });
                 wraps.insert(w);
                 if let Some(h) = head.insert(base, w) {
                     link.insert(w, h);
@@ -968,7 +971,14 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             }
             NODE_FIELD if mode == 1 => nodes[moved].field = operand,
             NODE_FIELD => nodes.last_mut().expect("a node before its field").field = operand,
-            NODE_SUPER => nodes.last_mut().expect("a node before its supertype").supers.push(operand),
+            // A node's slot (decision 0698): its first `NODE_SUPER`; its classes are filled in at the end.
+            NODE_SUPER if mode == 1 => nodes[moved].supers = vec![operand],
+            NODE_SUPER => {
+                let n = nodes.last_mut().expect("a node before its supertype");
+                if n.supers.is_empty() {
+                    n.supers.push(operand);
+                }
+            }
             PUSH => {
                 // Calls nested at most `DEPTH` deep, as tier 2's runs and simdjson's `DEFAULT_MAX_DEPTH` (0537).
                 if returns.len() >= DEPTH as usize {
@@ -1050,6 +1060,12 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 }
                 nodes[at].end = bytes.len() as u32;
                 nodes[at].size = (nodes.len() - at) as u32;
+                // Each node's supertypes: its slot's and its kind's.
+                for n in &mut nodes {
+                    if let Some(&s) = n.supers.first() {
+                        n.supers = program.classes_of(s, n.kind);
+                    }
+                }
                 if head.is_empty() && !dead {
                     return Ok(nodes);
                 }

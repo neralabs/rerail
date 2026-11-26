@@ -664,11 +664,14 @@ impl Emit<'_> {
                     }
                     continue;
                 }
-                Act::Wrap { kind, field, moved } => {
-                    // The wrap takes the moved node's field; then the moved node gets its own.
+                Act::Wrap { kind, field, moved, slot } => {
+                    // The wrap takes the moved node's field and slot; then the moved node gets its own.
                     self.push("WRAP", 0, Arg::Kind(kind));
                     if field != 0 {
                         self.push("NODE_FIELD", 1, Arg::Field(field));
+                    }
+                    if slot != 0 {
+                        self.push("NODE_SUPER", 1, Arg::Kind(slot));
                     }
                     if moved != 0 {
                         self.push("RETAG", 1, Arg::Kind(moved));
@@ -679,7 +682,9 @@ impl Emit<'_> {
             if field != 0 {
                 self.push("NODE_FIELD", 0, Arg::Field(field));
             }
-            for s in supers {
+            // A node's slot: the outermost supertype it is reached through; its classes are the
+            // slot's and its kind's (`Words::super_classes`, decision 0698).
+            if let Some(&s) = supers.first() {
                 self.push("NODE_SUPER", 0, Arg::Kind(s));
             }
         }

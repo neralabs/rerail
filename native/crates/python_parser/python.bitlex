@@ -163,7 +163,7 @@ keywords identifier {
   "except" "finally" "for" "from" "global" "if" "import" "in" "is" "lambda" "nonlocal" "not" "or"
   "pass" "raise" "return" "try" "while" "with" "yield"
 } soft {
-  "async" "await" "match" "case" "type" "print" "exec"
+  "async" "await" "match" "case" "type" "print" "exec" "__future__"
 }
 keywords punct { "(" ")" "[" "]" "{" "}" "," ":" ";" "." "=" "+" "-" "*" "/" "%" "&" "|" "^" "~" "<" ">" "@" "!" "**" "//" "==" "!=" "<=" ">=" "<<" ">>" "->" "+=" "-=" "*=" "/=" "%=" "&=" "|=" "^=" "@=" ":=" "<>" "**=" "//=" "<<=" ">>=" } required
 
@@ -182,6 +182,12 @@ mark newline    = lf & code & ~in_br, end, ends
 # INDENT and DEDENT.
 mark indent     = lf & code & ~in_br, deeper
 mark dedent     = lf & code & ~in_br, end, shallower, ends
+# A list's trailing comma, before its closer: the lean parser keeps it and the closer.
+mark trail      = tokens "," ")" | "]" | "}"
+# `from __future__`: a statement of its own.
+mark future     = tokens "from" "__future__"
+# A name before `[`: in a type, a generic type's (tree-sitter-python's `generic_type`).
+mark generic    = tokens identifier "["
 
 tree python {
   node module whole padded = statement*
@@ -196,11 +202,68 @@ tree python {
   # indent), to the first line less deep than its own: its first token's column.
   node block nested     = statement+
   indented block
-  choice simple_statement = expression_statement | pass_statement
-  node expression_statement = expression
-  node pass_statement = 'pass'
+  choice simple_statement = expression_statement | pass_statement | return_statement | raise_statement
+                        | delete_statement | assert_statement | global_statement | nonlocal_statement
+                        | break_statement | continue_statement | import_statement | import_from_statement
+                        | future_import_statement
+  # An assignment's target is read as an expression, then moved into its `left` (a pattern).
+  node expression_statement = expression [assign_tail]
+  choice assign_tail    = wrap assignment left in pattern assign_rest
+                        | wrap augmented_assignment left in pattern operator: aug_op right: rhs
+  choice assign_rest    = '=' right: rhs | ':' type: type ['=' right: rhs]
+  choice rhs nested     = expression [wrap expression_list _ in expression (',' [expression])+
+                                    | wrap assignment left in pattern '=' right: rhs]
+  choice aug_op         = '+=' | '-=' | '*=' | '/=' | '%=' | '&=' | '|=' | '^=' | '@=' | '**=' | '//=' | '<<=' | '>>='
+  # A type: a generic type, or an expression.
+  node type             = generic_type | expression
+  node generic_type     = generic identifier type_parameter
+  node type_parameter   = '[' type (',' type)* (trail_bracket | ']')
+  node pass_statement   = 'pass'
+  node return_statement = 'return' [expressions]
+  node raise_statement  = 'raise' [expressions] ['from' cause: expression]
+  node delete_statement = 'del' expressions
+  node assert_statement = 'assert' expression [',' expression]
+  node global_statement = 'global' identifier (',' identifier)*
+  node nonlocal_statement = 'nonlocal' identifier (',' identifier)*
+  node break_statement  = 'break'
+  node continue_statement = 'continue'
+  # One expression, or a list of them (tree-sitter-python's `_expressions`).
+  choice expressions    = expression [wrap expression_list _ in expression (',' [expression])+]
+  # --- Imports
+  node import_statement = 'import' import_name (',' import_name)*
+  choice import_name    = name: dotted_name [wrap aliased_import name 'as' alias: identifier]
+  node dotted_name nested = identifier ('.' identifier)*
+  node import_from_statement = 'from' module_name: module_path 'import' from_list
+  choice module_path    = relative_import | dotted_name
+  node relative_import  = import_prefix [dotted_name]
+  node import_prefix    = '.'+
+  choice from_list      = wildcard_import | import_names
+  choice import_names   = import_name (',' import_name)* | '(' import_name (',' import_name)* (trail_paren | ')')
+  node wildcard_import  = '*'
+  node future_import_statement = future 'from' '__future__' 'import' import_names
+  # --- Expressions
   choice expression supertype expression = primary_expression
-  choice primary_expression supertype primary_expression = identifier | integer | string
+  # A primary and its postfix operations, each a wrap of the primary so far.
+  choice primary_expression supertype primary_expression = atom postfix*
+  choice postfix        = wrap attribute object in primary_expression '.' attribute: identifier
+                        | wrap call function in primary_expression arguments: argument_list
+                        | wrap subscript value in primary_expression '[' subscript: expression (',' subscript: expression)* ']'
+  choice atom           = identifier | integer | string | list | parenthesized_expression
+                        | 'True' as true | 'False' as false | 'None' as none
+  # The patterns an assignment's target is in (tree-sitter-python's `pattern`).
+  choice pattern supertype pattern = identifier | attribute | subscript
+  node argument_list    = '(' [argument (',' argument)*] (trail_paren | ')')
+  choice argument       = expression [wrap keyword_argument name '=' value: expression] | list_splat | dictionary_splat
+  node list_splat       = '*' expression
+  node dictionary_splat = '**' expression
+  node list             = '[' [expression (',' expression)*] (trail_bracket | ']')
+  # `(a)`, or a tuple: `()`, `(a,)`, `(a, b)`.
+  node parenthesized_expression = '(' (retag tuple ')' | expression (')' | retag tuple paren_more))
+  choice paren_more     = (',' expression)+ (trail_paren | ')') | trail_paren
+  # A trailing comma: the lean parser leaves a list's tokens out only where they are the ones the
+  # grammar implies, so after one the `,` and the closer are leaves.
+  choice trail_paren    = trail ',' ')'
+  choice trail_bracket  = trail ',' ']'
   # A string: its start (prefix, quote, a triple's two more quotes: one leaf), its content (its
   # text and escapes), its end.
   node string           = str_prefix merge string_start string_start string_rest
@@ -209,7 +272,7 @@ tree python {
   # A backslash that starts no escape is a leaf of its own (lean's `Backslash`); a raw string's
   # are its text.
   node string_content   = (str_text | escape_sequence | '\\')+
-  hidden newline indent dedent
+  hidden newline indent dedent trail future generic
   # The tokens tree-sitter's grammar implies: no leaf on the tape.
   implied pass_statement 'pass'
   implied string_content str_text
@@ -217,5 +280,31 @@ tree python {
   implied elif_clause 'elif' ':'
   implied else_clause 'else' ':'
   implied while_statement 'while' ':'
+  implied assign_rest '=' ':'
+  implied rhs ',' '='
+  implied expressions ','
+  implied return_statement 'return'
+  implied raise_statement 'raise' 'from'
+  implied delete_statement 'del'
+  implied assert_statement 'assert' ','
+  implied global_statement 'global' ','
+  implied nonlocal_statement 'nonlocal' ','
+  implied break_statement 'break'
+  implied continue_statement 'continue'
+  implied import_statement 'import' ','
+  implied dotted_name '.'
+  implied import_name 'as'
+  implied import_from_statement 'from'
+  # An import list's `(` is a leaf: it is not the only way on after `import`.
+  implied import_names ',' ')'
+  implied postfix '.' '[' ']' ','
+  implied argument_list '(' ')' ','
+  implied argument '='
+  implied list_splat '*'
+  implied dictionary_splat '**'
+  implied list '[' ']' ','
+  implied type_parameter '[' ']' ','
+  implied parenthesized_expression '(' ')'
+  implied paren_more ',' ')'
   extra comment
 }

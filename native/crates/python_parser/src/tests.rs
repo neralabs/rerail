@@ -66,6 +66,29 @@ fn strings_are_the_lean_parsers() {
 }
 
 #[test]
+fn statements_are_the_lean_parsers() {
+    same(&["return\n", "return x\n", "raise X from e\n", "raise\n", "del a, b\n", "del a,\n", "assert x, y\n", "global a, b\n", "nonlocal a\n", "break\n", "continue\n", "return a, b\n"]);
+    // Assignments: the target moved into `left`, a pattern.
+    same(&["x = y = 1\n", "a = b = c\n", "a: int = 1\n", "a: int\n", "a += 1\n", "a.b[0] = 1\n", "x = 'a'\n", "x = a, b\n"]);
+    // An annotation's type: a generic type (a name before `[`), else an expression.
+    same(&["x: list[str]\n", "x: a.b\n", "x: Optional[a.B] = None\n", "x: dict[str, int]\n", "x: \"str\"\n", "x: list[str,]\n", "x: f()\n", "x = a[b]\n"]);
+}
+
+#[test]
+fn imports_are_the_lean_parsers() {
+    same(&["import a\n", "import a.b as c, d\n", "from a.b import c as d, e\n", "from . import x\n", "from ..a import (b, c,)\n", "from a import *\n"]);
+    same(&["from __future__ import annotations\n", "from a import (\n    b,\n    c,\n)\n", "from a import (b)\n", "from a import b, c\n", "import __future__\n"]);
+}
+
+#[test]
+fn primaries_are_the_lean_parsers() {
+    // A primary's postfix operations: each wraps the primary so far, which moves into its slot.
+    same(&["a.b.c\n", "f(x, y=1, *a, **k)\n", "a[1]\n", "a.b(c)[d]\n", "f(x=1)\n", "print(a)\n", "f()\n"]);
+    // A trailing comma and its closer are leaves.
+    same(&["f(a,)\n", "f(a, b,)\n", "x = [a, b,]\n", "x = (a, b,)\n", "x = (a,)\n", "x = ()\n", "x = (a)\n", "x = []\n", "x = True, False, None\n"]);
+}
+
+#[test]
 fn what_the_grammar_does_not_read_is_refused() {
     refused(&["x.5\n", "0x1f\n", "x\\\n", "\tx\n"]);
     // An f-string, a `\N{…}`, a raw string of backslashes only (its end starts at them), an open

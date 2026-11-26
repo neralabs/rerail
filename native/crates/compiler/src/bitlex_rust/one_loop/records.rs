@@ -287,7 +287,7 @@ impl Rl<'_, '_> {
             }
             Gram::Field(f, a) => self.walk(a, rest, rule, then(vec![Op::Field(self.g.field_const(f)?)], k))?,
             Gram::Retag(kind, a) => then(vec![line(format!("self.retag({});", self.g.kind_const(kind)?))], self.walk(a, rest, rule, k)?),
-            Gram::Wrap { kind, field, moved, body } => {
+            Gram::Wrap { kind, field, moved, body, .. } => {
                 let f = match field {
                     Some(f) if f != "_" => self.g.field_const(f)?,
                     _ => "0".to_owned(),

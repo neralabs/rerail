@@ -663,8 +663,9 @@ pub enum Gram {
     Merge(String, Box<Gram>),
     /// `wrap K F [as M] REST…`: a node `K` around the node just made at this level (the last
     /// child of the innermost open node) and what `REST` matches. `K` takes the moved node's
-    /// field; the moved node takes field `F` (`_`: none) and, with `as M`, kind `M`.
-    Wrap { kind: String, field: Option<String>, moved: Option<String>, body: Box<Gram> },
+    /// field and its slot; the moved node takes field `F` (`_`: none), with `as M` kind `M`, and
+    /// with `in S`: the moved node's slot, supertype `S` (none without it; decision 0698).
+    Wrap { kind: String, field: Option<String>, moved: Option<String>, slot: Option<String>, body: Box<Gram> },
     /// `balanced K OPEN CLOSE`: one leaf of kind `K` from an `OPEN` token through its matching
     /// `CLOSE` (pairs inside counted), every token between part of its text.
     Balanced { kind: String, open: String, close: String },
@@ -1481,14 +1482,15 @@ impl P {
     fn gram_seq(&mut self) -> R<Gram> {
         let mut items = vec![];
         while matches!(self.peek(), Some(Tok::Str(_) | Tok::Ident(_) | Tok::P("(") | Tok::P("["))) {
-            // `wrap K F [as M]`: the rest of the sequence is its body.
+            // `wrap K F [as M] [in S]`: the rest of the sequence is its body.
             if matches!(self.peek(), Some(Tok::Ident(w)) if w == "wrap") {
                 self.i += 1;
                 let kind = self.ident()?;
                 let field = Some(self.ident()?).filter(|f| f != "_");
                 let moved = if self.eat_kw("as") { Some(self.kind()?) } else { None };
+                let slot = if self.eat_kw("in") { Some(self.ident()?) } else { None };
                 let body = Box::new(self.gram_seq()?);
-                items.push(Gram::Wrap { kind, field, moved, body });
+                items.push(Gram::Wrap { kind, field, moved, slot, body });
                 break;
             }
             // `relabel F [as M]`: the rest of the sequence is its body.
@@ -2859,7 +2861,7 @@ pub fn desugar_leaves(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
             Gram::Retag(k, a) => Gram::Retag(k.clone(), Box::new(d(a)?)),
             Gram::Merge(k, a) => Gram::Merge(k.clone(), Box::new(d(a)?)),
             Gram::As(k, a) => Gram::As(k.clone(), Box::new(d(a)?)),
-            Gram::Wrap { kind, field, moved, body } => Gram::Wrap { kind: kind.clone(), field: field.clone(), moved: moved.clone(), body: Box::new(d(body)?) },
+            Gram::Wrap { kind, field, moved, slot, body } => Gram::Wrap { kind: kind.clone(), field: field.clone(), moved: moved.clone(), slot: slot.clone(), body: Box::new(d(body)?) },
             Gram::Relabel { field, moved, inner, body } => Gram::Relabel { field: field.clone(), moved: moved.clone(), inner: inner.clone(), body: Box::new(d(body)?) },
             Gram::Fold { kind, body } => Gram::Fold { kind: kind.clone(), body: Box::new(d(body)?) },
             Gram::Reread { reading, body } => Gram::Reread { reading: reading.clone(), body: Box::new(d(body)?) },

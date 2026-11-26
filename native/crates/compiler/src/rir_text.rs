@@ -63,6 +63,17 @@ pub fn mark_column_rows(out: &mut String, mark_columns: &[(u8, u8)]) {
     }
 }
 
+/// A node's supertypes by its slot and kind: `superclass #S #K #C…` (`Words::super_classes`).
+pub fn super_class_rows(out: &mut String, rows: &[(u16, u16, Vec<u16>)]) {
+    for (s, k, cs) in rows {
+        let _ = write!(out, "  superclass #{s} #{k}");
+        for c in cs {
+            let _ = write!(out, " #{c}");
+        }
+        out.push('\n');
+    }
+}
+
 /// The marks each mark passes: `markpasses K MASK` (`Words::mark_passes`).
 pub fn mark_pass_rows(out: &mut String, mark_passes: &[(u8, u64)]) {
     use std::fmt::Write as _;

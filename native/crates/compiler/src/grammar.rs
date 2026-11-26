@@ -81,9 +81,10 @@ pub enum Act {
     ExtraNow,
     /// The innermost open node becomes a `kind` (`retag K A`).
     Retag { kind: u16 },
-    /// A node of `kind` around the node just made at this level, open (`wrap K F [as M]`): it
-    /// takes that node's field, which takes `field` and, when `moved` is not 0, kind `moved`.
-    Wrap { kind: u16, field: u16, moved: u16 },
+    /// A node of `kind` around the node just made at this level, open (`wrap K F [as M] [in S]`):
+    /// it takes that node's field and slot; that node takes `field`, when `moved` is not 0 kind
+    /// `moved`, and slot `slot` (0: none; decision 0698).
+    Wrap { kind: u16, field: u16, moved: u16, slot: u16 },
     /// The node just made at this level takes `field` and, when `moved` is not 0, kind `moved`;
     /// when `inner` is not 0, the node its wrap holds first takes field `inner` (`relabel F [as M]
     /// [inner G]`).
@@ -166,8 +167,11 @@ pub fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
                     let as_kind = if *kind == 0 { String::new() } else { format!(" as {kind}") };
                     let _ = write!(acts, " leaf{as_kind}{}", marks(*field, supers));
                 }
-                Act::Wrap { kind, field, moved } => {
+                Act::Wrap { kind, field, moved, slot } => {
                     let _ = write!(acts, " wrap {kind} f {field} as {moved}");
+                    if *slot != 0 {
+                        let _ = write!(acts, " in {slot}");
+                    }
                 }
                 Act::Relabel { field, moved, inner } => {
                     let _ = write!(acts, " relabel f {field} as {moved} inner {inner}");
@@ -222,9 +226,9 @@ enum Wrap {
     Super(u16),
     /// `retag K`: entered, the innermost open node becomes a `K`.
     Retag(u16),
-    /// `wrap K F [as M]`: entered, a node around the node just made at this level; left, it
-    /// closes.
-    Wrapped { kind: u16, field: u16, moved: u16 },
+    /// `wrap K F [as M] [in S]`: entered, a node around the node just made at this level; left,
+    /// it closes.
+    Wrapped { kind: u16, field: u16, moved: u16, slot: u16 },
     /// `relabel F [as M]`: entered, the node just made at this level takes field `F` and kind
     /// `M`; no node, so nothing closes.
     Relabel { field: u16, moved: u16, inner: u16 },
@@ -292,6 +296,106 @@ pub struct Ids<'a> {
     pub marks: &'a [u16],
 }
 
+/// The supertypes of a node in a slot (decision 0698): for each supertype `S` and each kind `K`
+/// a node in `S`'s slot may be, the supertypes from `S` down to `K` by the grammar's choices
+/// (`superclass S K C…`). A node of a kind no row names for its slot is in no supertype: a wrap
+/// that is no member of the slot it takes (a `keyword_argument` where an expression was). A kind
+/// a supertype reaches two ways with other supertypes on them is refused: its classes would be
+/// the path's, which the slot does not keep.
+pub fn super_classes(stmts: &[Stmt], ids: &Ids<'_>) -> Result<Vec<(u16, u16, Vec<u16>)>, String> {
+    let choices: HashMap<&str, (Option<&str>, &Gram)> = stmts.iter().filter_map(|s| if let Stmt::Choice { name, supertype, body, .. } = s { Some((name.as_str(), (supertype.as_deref(), body))) } else { None }).collect();
+    // The kinds a node's rule may retag it to (`retag K`): they stand where the node does.
+    fn retags(g: &Gram, out: &mut Vec<String>) {
+        match g {
+            Gram::Retag(k, a) => {
+                out.push(k.clone());
+                retags(a, out);
+            }
+            Gram::Seq(gs) | Gram::Alt(gs) => gs.iter().for_each(|g| retags(g, out)),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) => retags(a, out),
+            Gram::Flag { body, .. } | Gram::Unless { body, .. } => retags(body, out),
+            _ => {}
+        }
+    }
+    let retagged: HashMap<&str, Vec<String>> = stmts
+        .iter()
+        .filter_map(|s| {
+            let Stmt::Node { kind, body, .. } = s else { return None };
+            let mut out = Vec::new();
+            retags(body, &mut out);
+            Some((kind.as_str(), out))
+        })
+        .collect();
+    // The kinds a node standing where `g` is may be, each with the supertypes below the slot's on
+    // the way to it: the symbols `g` is, not what they hold (a wrap's body is its node's).
+    fn heads<'a>(g: &'a Gram, choices: &HashMap<&str, (Option<&'a str>, &'a Gram)>, retagged: &HashMap<&str, Vec<String>>, through: &mut Vec<&'a str>, out: &mut Vec<(String, Vec<&'a str>)>) -> Result<(), String> {
+        match g {
+            Gram::Sym(n) => match choices.get(n.as_str()) {
+                Some(&(sup, body)) => {
+                    if through.contains(&n.as_str()) {
+                        return Ok(());
+                    }
+                    through.push(n);
+                    let at = out.len();
+                    heads(body, choices, retagged, through, out)?;
+                    through.pop();
+                    if let Some(s) = sup {
+                        for h in &mut out[at..] {
+                            h.1.insert(0, s);
+                        }
+                    }
+                }
+                None => {
+                    out.push((n.clone(), vec![]));
+                    out.extend(retagged.get(n.as_str()).into_iter().flatten().map(|k| (k.clone(), vec![])));
+                }
+            },
+            Gram::Seq(items) => {
+                for i in items {
+                    heads(i, choices, retagged, through, out)?;
+                }
+            }
+            Gram::Alt(alts) => {
+                for a in alts {
+                    heads(a, choices, retagged, through, out)?;
+                }
+            }
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) => heads(a, choices, retagged, through, out)?,
+            Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => heads(body, choices, retagged, through, out)?,
+            Gram::Lit(k) | Gram::Merge(k, _) | Gram::As(k, _) | Gram::Leaf { kind: k, .. } | Gram::Balanced { kind: k, .. } | Gram::Wrap { kind: k, .. } => out.push((k.clone(), vec![])),
+            _ => {}
+        }
+        Ok(())
+    }
+    let mut rows: Vec<(u16, u16, Vec<u16>)> = Vec::new();
+    for (name, &(sup, body)) in &choices {
+        let Some(s) = sup else { continue };
+        let mut out = Vec::new();
+        heads(body, &choices, &retagged, &mut vec![*name], &mut out)?;
+        let sid = (ids.kind)(s)?;
+        let mut seen: HashMap<u16, Vec<u16>> = HashMap::default();
+        for (k, below) in out {
+            let Ok(kid) = (ids.kind)(&k) else { continue };
+            let mut cs = vec![sid];
+            for b in below {
+                cs.push((ids.kind)(b)?);
+            }
+            cs.sort_unstable();
+            cs.dedup();
+            match seen.get(&kid) {
+                Some(was) if *was != cs => return Err(format!("supertype `{s}` reaches `{k}` two ways, through other supertypes")),
+                Some(_) => {}
+                None => {
+                    seen.insert(kid, cs);
+                }
+            }
+        }
+        rows.extend(seen.into_iter().map(|(k, cs)| (sid, k, cs)));
+    }
+    rows.sort_unstable();
+    Ok(rows)
+}
+
 /// The level a `balanced` leaf's name: its kind, then a byte no name holds.
 const BALANCED: char = '\0';
 
@@ -321,7 +425,7 @@ fn desugar(g: &Gram, levels: &mut Vec<(String, String, String)>, tokens: &[Strin
         Gram::Merge(k, a) => Gram::Merge(k.clone(), Box::new(d(a))),
         Gram::As(k, a) => Gram::As(k.clone(), Box::new(d(a))),
         Gram::Any(except) => Gram::Alt(tokens.iter().filter(|t| !except.contains(t)).map(|t| Gram::Sym(t.clone())).collect()),
-        Gram::Wrap { kind, field, moved, body } => Gram::Wrap { kind: kind.clone(), field: field.clone(), moved: moved.clone(), body: Box::new(d(body)) },
+        Gram::Wrap { kind, field, moved, slot, body } => Gram::Wrap { kind: kind.clone(), field: field.clone(), moved: moved.clone(), slot: slot.clone(), body: Box::new(d(body)) },
         Gram::Relabel { field, moved, inner, body } => Gram::Relabel { field: field.clone(), moved: moved.clone(), inner: inner.clone(), body: Box::new(d(body)) },
         Gram::Fold { kind, body } => Gram::Fold { kind: kind.clone(), body: Box::new(d(body)) },
         Gram::Reread { reading, body } => Gram::Reread { reading: reading.clone(), body: Box::new(d(body)) },
@@ -431,11 +535,12 @@ impl Builder<'_> {
             Gram::Plus(a) => E::Seq(vec![self.expand(level, a, inlining)?, E::Star(Box::new(self.expand(level, a, inlining)?))]),
             Gram::Field(f, a) => E::Wrap(Wrap::Field((self.ids.field)(f)?), Box::new(self.expand(level, a, inlining)?)),
             Gram::Retag(k, a) => E::Wrap(Wrap::Retag((self.ids.kind)(k)?), Box::new(self.expand(level, a, inlining)?)),
-            Gram::Wrap { kind, field, moved, body } => {
+            Gram::Wrap { kind, field, moved, slot, body } => {
                 let w = Wrap::Wrapped {
                     kind: (self.ids.kind)(kind)?,
                     field: field.as_deref().map(|f| (self.ids.field)(f)).transpose()?.unwrap_or(0),
                     moved: moved.as_deref().map(|m| self.kind(m)).transpose()?.unwrap_or(0),
+                    slot: slot.as_deref().map(|s| (self.ids.kind)(s)).transpose()?.unwrap_or(0),
                 };
                 E::Wrap(w, Box::new(self.expand(level, body, inlining)?))
             }
@@ -635,7 +740,7 @@ impl Pending {
                 Wrap::Field(f) => self.field = f,
                 Wrap::Super(s) => self.supers.push(s),
                 Wrap::Retag(kind) => acts.push(Act::Retag { kind }),
-                Wrap::Wrapped { kind, field, moved } => acts.push(Act::Wrap { kind, field, moved }),
+                Wrap::Wrapped { kind, field, moved, slot } => acts.push(Act::Wrap { kind, field, moved, slot }),
                 Wrap::Relabel { field, moved, inner } => acts.push(Act::Relabel { field, moved, inner }),
                 Wrap::Fold(kind) => acts.push(Act::Fold { kind }),
                 Wrap::Reread(reading) => acts.push(Act::Reread { reading }),
@@ -1219,6 +1324,12 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
     // `leaf K R`: its rule read again, every token merged into one leaf (`desugar_leaves`).
     let stmts = &::bitlex::syntax::desugar_leaves(stmts)?;
     let (mut rules, mut choices, mut nested_choices, balanced) = gather(stmts, ids.tokens);
+    // A name is one rule's or one choice's: two bodies of one name have no one meaning.
+    let mut names: Vec<&str> = rules.iter().map(|r| r.kind.as_str()).chain(nested_choices.iter().map(|r| r.kind.as_str())).chain(choices.iter().map(|c| c.0.as_str())).collect();
+    names.sort_unstable();
+    if let Some(w) = names.windows(2).find(|w| w[0] == w[1]) {
+        return Err(format!("`{}` names two rules or choices", w[0]));
+    }
     // The rules shared by calls (`shared`): levels of their own, as if marked `nested`.
     let calls = shared(&rules, &choices, &nested_choices, stmts, by_rules);
     // A call keeps the rule's meaning: a rule not `nested` takes its caller's follow (Bitlex's

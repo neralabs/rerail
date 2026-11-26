@@ -3739,7 +3739,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             readings.maps.push(r);
         }
     }
-    let (states, mut arms, whole, by_rules, desugared) = {
+    let (states, mut arms, whole, by_rules, desugared, super_classes) = {
         let is_token = |name: &str| {
             token_rows.iter().any(|t| t.0 == name && !required.contains(&t.0))
                 || is_keyword_kind(&low.keywords, name)
@@ -3770,7 +3770,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             Shape::Auto => machine.0.len() > MACHINE_STATES,
         };
         let (st, ar, wh) = if rules { grammar::build_shaped(&low.tree, &ids, true)? } else { machine };
-        (st, ar, wh, rules, grammar::desugared(&low.tree, &tokens))
+        (st, ar, wh, rules, grammar::desugared(&low.tree, &tokens), grammar::super_classes(&low.tree, &ids)?)
     };
     low.tree_desugared = desugared;
     low.shape = if by_rules { Shape::Rules } else { Shape::Machine };
@@ -4619,6 +4619,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // The words, once the fallback's totals are known: each must be zero.
     let mut lowered = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, (whole, padded), false, by_rules, token_extras, &counts, &check_kinds, recover)?;
     crate::rir_text::count_rows(&mut lowered.text, &count_most);
+    crate::rir_text::super_class_rows(&mut lowered.text, &super_classes);
     // The extras' kinds: the node table flags their nodes (comments).
     readings.extras = low.extra.iter().map(|k| id(k)).collect::<Result<_, _>>()?;
     crate::rir_text::reading_rows(&mut lowered.text, &readings);

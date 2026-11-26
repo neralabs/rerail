@@ -319,6 +319,10 @@ pub struct Words {
     /// holds only where its token's column is past the level's indent (`C` = 1, `, deeper`) or
     /// less than it (`C` = 2, `, shallower`). Rising by mark.
     pub mark_columns: Vec<(u8, u8)>,
+    /// A node's supertypes by its slot and kind (`superclass #S #K #C…`, decision 0698): a node
+    /// of kind `K` in slot `S` (its first `NODE_SUPER`) is in each `C`. A kind no row names for
+    /// its slot is in none. Rising by slot, then kind.
+    pub super_classes: Vec<(u16, u16, Vec<u16>)>,
     /// Each keyword's node kind (`wordkind sW #K`): a token whose record names string `W` makes a
     /// leaf of kind `K` where a `LEAF` names `stream_ir::WORD_KIND`. Rising by string.
     pub word_kinds: Vec<(u16, u16)>,
@@ -354,6 +358,14 @@ pub struct Words {
 }
 
 impl Words {
+    /// The supertypes of a node of kind `kind` in slot `slot` (0: none; `super_classes`), ascending.
+    pub fn classes_of(&self, slot: u16, kind: u16) -> Vec<u16> {
+        match self.super_classes.binary_search_by(|r| (r.0, r.1).cmp(&(slot, kind))) {
+            Ok(i) => self.super_classes[i].2.clone(),
+            Err(_) => Vec::new(),
+        }
+    }
+
     /// What mark `order` asks of its token's column (`mark_columns`): 0 nothing, 1 past the
     /// level's indent, 2 less than it.
     pub fn column(&self, order: u8) -> u8 {

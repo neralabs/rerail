@@ -1428,7 +1428,7 @@ impl<'a> G<'a> {
                 out.extend(self.code(a, rest, rule)?);
                 out
             }
-            Gram::Wrap { kind, field, moved, body } => {
+            Gram::Wrap { kind, field, moved, body, .. } => {
                 let f = match field {
                     Some(f) if f != "_" => self.field_const(f)?,
                     _ => "0".to_owned(),

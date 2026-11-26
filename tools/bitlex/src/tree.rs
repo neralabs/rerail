@@ -738,7 +738,7 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
-            Gram::Wrap { kind, field, moved, body } => {
+            Gram::Wrap { kind, field, moved, body, .. } => {
                 // The node just made at this level: the innermost open node's last child.
                 let c = self.last_made()?;
                 let was = (self.out[c].field.clone(), self.out[c].kind.clone());
