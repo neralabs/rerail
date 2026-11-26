@@ -2123,3 +2123,22 @@ Checks (Relax, local, 129 of 129):
 - `a_declared_tree_and_order_give_their_keys_and_are_checked` names `f`'s tree, probed by the child.
 - `a_recursion_along_a_declared_tree_runs_in_one_wave_with_the_rounds_levels`: `by("anc", "wave")` takes the wave,
   and its trace equals the rounds'. With the override ignored, it fails.
+
+### Slabs are leased (P§11.4; 2026-11-26)
+
+P§11.4 keeps sources and tapes "leased; never versioned", and pure answers "aged out by lease". Before this, the
+residency dropped every slab at once `DROP_AFTER` after the last execution (`executed`): one deadline for all, not
+a lease. Now each slab is held on a lease of its own. Every use renews it (`hold`, `touch`), and it lapses
+`DROP_AFTER` after the slab's last use (one definition with `rerail_slabs`). `age_out` then releases the
+residency's hold on the slab. The residency's thread runs it at the earliest lapse, and a reader's hold outlives
+it. Past the budget, the least recently used slab no reader holds is still retired early, to make room. A slab
+gone keeps its content hit: its documents are loaded from the store's objects, not parsed. `executed` is removed.
+
+Checks (Relax, local, 130 of 130):
+- `the_residency_ages_out_a_slab_when_its_lease_lapses_and_a_use_renews_it`, at given instants. Nothing is aged out
+  within the leases. At the first lease's lapse, the slab used since stays, and the one a reader holds reads on
+  until its reader lets go. Then the residency's thread ages a 20 ms lease out unasked. Without the renewal on use,
+  it fails.
+- `the_residency_ages_out_a_runs_slabs_and_the_next_run_loads_again`: the run's slabs are aged out at their lapse,
+  and the next run loads the live document from the store's objects, with no parse and an identity delta.
+- `a_content_answered_before_is_never_parsed_again`: aged out, the content is loaded, not parsed.

@@ -1,7 +1,7 @@
 //! B4's checks: l0's tape through the file layer.
 
 use super::*;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 /// A root of its own for test `name`, holding a copy of l0, its stat older than the racy window (a file written in
 /// the window's tick is read again, as git's racy rule has it), and the store beside it: the root and the store.
@@ -307,11 +307,9 @@ fn a_content_answered_before_is_never_parsed_again() {
     let b = w.answer("copy.rerail").unwrap();
     assert_eq!(b.after, a.after);
     assert_eq!((w.world.asked.parses, w.world.asked.loads), (1, 0), "a resident hit");
-    // Its slab dropped (the residency's drop after an execution): loaded from the store's objects, not parsed.
-    w.dir = std::mem::take(&mut w.dir).with_residency(1 << 40, Duration::from_millis(20));
-    w.dir.executed();
-    std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(w.dir.residency().1, 1, "dropped");
+    // Its slab aged out (its lease lapsed): loaded from the store's objects, not parsed.
+    w.dir = std::mem::take(&mut w.dir).with_residency(1 << 40, Duration::from_secs(3600));
+    assert_eq!(w.dir.age_out(Instant::now() + Duration::from_secs(3601)), 1, "aged out");
     assert!(w.blobs.get(&w.dir, &a.after.tape).unwrap().is_none(), "no longer resident");
     write(&w.root.join("third.rerail"), crate::L0, 30);
     let c = w.answer("third.rerail").unwrap();
@@ -331,6 +329,47 @@ fn a_content_answered_before_is_never_parsed_again() {
     let d = later.answer("bootstrap-l0.rerail").unwrap();
     assert_eq!(d.after, a.after);
     assert_eq!((later.world.asked.parses, later.world.asked.loads), (0, 1));
+}
+
+/// P§11.4's lease: a slab is held on a lease its every use renews, and aged out when it lapses, a slab used since kept;
+/// a reader's hold outlives it; a document whose slab aged out keeps its content hit (loaded, not parsed).
+#[test]
+fn the_residency_ages_out_a_slab_when_its_lease_lapses_and_a_use_renews_it() {
+    let (reg, mut blobs, dir) = fresh();
+    let lease = Duration::from_secs(3600);
+    let mut dir = dir.with_slab_bytes(1).with_residency(1 << 40, lease);
+    let src = |k: usize| format!("e({k}, 2).\n// {}\n", "x".repeat(1000 * (k + 1)));
+    let docs: Vec<DocIds> = (0..3).map(|k| doc_of(&reg, &reg.1, &mut dir, &mut blobs, &src(k)).unwrap()).collect();
+    let slab = |dir: &Directory, blobs: &BlobRows, d: &DocIds| blobs.get(dir, &d.tape).unwrap().map(|p| p.block);
+    let blocks: Vec<BlockId> = docs.iter().map(|d| slab(&dir, &blobs, d).unwrap()).collect();
+    assert_eq!(dir.slabs().len(), 3);
+    // Within every lease: nothing aged out.
+    let mid = Instant::now();
+    assert_eq!(dir.age_out(mid + lease / 2), 0);
+    // The second used after `mid`, its lease renewed; the third held by a reader.
+    std::thread::sleep(Duration::from_millis(2));
+    dir.touch(blocks[1]);
+    let reader = dir.block(blocks[2]).unwrap();
+    // At `mid`'s lapse: the first and third lapsed, the second's runs on.
+    assert_eq!(dir.age_out(mid + lease), 2);
+    assert_eq!(dir.residency(), (0, 2), "aged out, none retired");
+    assert!(slab(&dir, &blobs, &docs[0]).is_none(), "the first aged out");
+    assert!(slab(&dir, &blobs, &docs[1]).is_some(), "the second's lease renewed by its use");
+    assert!(slab(&dir, &blobs, &docs[2]).is_some(), "aged out, but a reader's hold reads on");
+    drop(reader);
+    assert!(slab(&dir, &blobs, &docs[2]).is_none(), "the third gone once its reader let go");
+    // Past the second's lapse too: none held.
+    assert_eq!(dir.age_out(Instant::now() + lease + Duration::from_secs(1)), 1);
+    assert!(dir.slabs().is_empty());
+    // The residency's own thread ages a slab out at its lapse, unasked.
+    let mut dir = dir.with_residency(1 << 40, Duration::from_millis(20));
+    let d = doc_of(&reg, &reg.1, &mut dir, &mut blobs, &src(7)).unwrap();
+    let t0 = Instant::now();
+    while slab(&dir, &blobs, &d).is_some() && t0.elapsed() < Duration::from_secs(10) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(slab(&dir, &blobs, &d).is_none(), "aged out by the residency's thread");
+    assert_eq!(dir.residency().1, 4);
 }
 
 /// The residency's policy (`rerail_slabs`, as it is): a slab is retired only while what is held and a new one pass the

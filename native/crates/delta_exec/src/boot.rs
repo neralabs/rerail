@@ -34,8 +34,8 @@
 //! - A later run is given the last run's pins (L3). Pins of any other state are refused.
 //!
 //! The instance's cache is read as ∅ unless it names the run's before (L5). Slabs are the residency's:
+//! - it holds each on a lease, renewed by every use, and ages it out `DROP_AFTER` after its last (P§11.4);
 //! - it retires the least recently used slab whole, past its budget;
-//! - it drops all of them `DROP_AFTER` an execution;
 //! - a document whose slab went is loaded again from the store's objects where its places say (`DocSet::resident`).
 //!
 //! The loop is `phase::Levels`: each level is Δphase over the program the one before exported (L1's P2 first) and its
@@ -204,8 +204,8 @@ impl DocSet {
     }
 
     /// Every document of the set resident (B§8's `world.tape`: a tape read where the residency holds it), its slabs
-    /// used now: one whose source and tape the residency no longer holds (retired under the budget, dropped after an
-    /// execution, or a process started since) is loaded from the store where its places say.
+    /// used now: one whose source and tape the residency no longer holds (retired under the budget, aged out when its
+    /// lease lapsed, or a process started since) is loaded from the store where its places say.
     pub fn resident(&mut self, bench: &mut Bench) -> Result<(), String> {
         let rows = crate::contract::rows_at(&bench.dir, &self.tape, self.tape.head())?;
         for r in &rows {
@@ -489,8 +489,6 @@ pub fn run(l1: &L1, inst: &mut Instance, levels: &mut Levels, l0: &str, module: 
     let committed = docs.world.commit_leaves(&bench.reg, &bench.traces, &mut bench.dir, leaves);
     docs.world.end();
     let ran = committed.and(ran);
-    // An execution ended: the residency drops everything `DROP_AFTER` from now, unless another run comes first.
-    bench.dir.executed();
     let (doc, work, count) = ran?;
     let pins = Pins { tape: docs.tape.head(), outs: inst.heads(), atoms: Global { block: globals.0, count }, world: docs.world.heads(), blobs: bench.blobs.head(), want: inst.want.head(), asks: inst.ask_heads(), levels: levels.pins() };
     if bench.dir.lasting() == crate::dir::PLACE_KEPT {

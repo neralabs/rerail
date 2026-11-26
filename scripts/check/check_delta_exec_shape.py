@@ -544,16 +544,18 @@ def b6(failures: list) -> None:
     if not re.search(r"alloc::block\(&need\)", dirs) or "Device::May" not in dirs:
         failures.append("dir.rs: a documents' slab not made by the block policy, as the device may read it (Need::SLAB, Device::May)")
     boot = (CRATE / "src/boot.rs").read_text()
-    # Retirement is the residency's policy, as it is (rerail_slabs; the user, 2026-11-26): the least recently used slab
-    # only while the budget is short, all dropped DROP_AFTER after an execution; never a run's own eager retirement,
-    # which threw the content hit away.
+    # Retirement is the residency's policy (rerail_slabs; the user, 2026-11-26), on P§11.4's leases: each slab held on
+    # a lease its every use renews, aged out DROP_AFTER after its last; the least recently used slab retired early only
+    # while the budget is short; never a run's own eager retirement, which threw the content hit away.
     residency = strip_rust((CRATE / "src/residency.rs").read_text())
     for want, why in (
-        ("min_by_key(|(_, s)| s.2)", "the least recently used slab retired"),
+        ("min_by_key(|(_, s)| s.clock)", "the least recently used slab retired"),
         ("held + bytes <= limit", "retired only while the budget is short"),
         ("rerail_accel::budget::resident()", "the residency's share of the budget, one definition with rerail_slabs"),
-        ("rerail_accel::budget::DROP_AFTER", "all dropped DROP_AFTER after an execution"),
-        ("Arc::strong_count(&s.1) == 1", "a slab a reader holds is not retired"),
+        ("rerail_accel::budget::DROP_AFTER", "a lease of DROP_AFTER"),
+        ("now < h.used + lease", "a slab aged out when its lease lapsed (P§11.4: leased)"),
+        ("s.used = Instant::now()", "a lease renewed by every use"),
+        ("Arc::strong_count(&s.slab) == 1", "a slab a reader holds is not retired"),
     ):
         if want not in residency:
             failures.append(f"residency.rs: not the residency's policy: {why} ({want} missing)")
@@ -561,8 +563,12 @@ def b6(failures: list) -> None:
         failures.append("dir.rs: a slab made without room under the residency's budget")
     if re.search(r"pub fn retire\(", files) or "docs.retire(" in boot:
         failures.append("files.rs/boot.rs: a run's own eager retirement (retirement is the residency's: rerail_slabs)")
-    if "bench.dir.executed();" not in boot or "forget_dead(" not in boot:
-        failures.append("boot.rs: a run that does not end an execution (the residency's drop), or keeps the blobs of slabs it let go")
+    if "forget_dead(" not in boot:
+        failures.append("boot.rs: a run keeps the blobs of slabs the residency let go")
+    if "fn executed(" in dirs or "fn executed(" in residency:
+        failures.append("dir.rs/residency.rs: everything dropped at once after an execution (P§11.4: each slab leased)")
+    if "fn the_residency_ages_out_a_slab_when_its_lease_lapses_and_a_use_renews_it" not in (CRATE / "src/files_tests.rs").read_text():
+        failures.append("files_tests.rs: the lease's test is missing")
     interned = (TWINS / "src/intern.rs").read_text()
     if re.search(r"is_leaf\(n\)\s*\{\s*put\(", interned):
         failures.append("delta_twins/src/intern.rs: every leaf interned (intern names only identifiers and strings)")

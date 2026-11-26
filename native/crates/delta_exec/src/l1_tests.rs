@@ -338,7 +338,7 @@ fn l1s_cache_sizes_its_runs_and_dropped_costs_an_attempt_not_an_answer() {
 /// The residency's policy, as it is (`rerail_slabs`): a run retires nothing while the slabs fit the budget; past it,
 /// the least recently used slab goes, the live document's last of all (each run asks for it). A document whose slab
 /// went keeps its content hit: back to an earlier text, it is loaded from the store's objects, not parsed. All of it
-/// is dropped `DROP_AFTER` after the last run, and the next run loads the live document again.
+/// ages out when its lease lapses, and the next run loads the live document again.
 #[test]
 fn a_run_retires_the_least_recently_used_slab_past_the_budget_and_keeps_the_content_hit() {
     let mut bench = Bench::new().unwrap();
@@ -382,19 +382,19 @@ fn a_run_retires_the_least_recently_used_slab_past_the_budget_and_keeps_the_cont
     assert_eq!(rules(&disk, &bench), 14);
 }
 
-/// Everything resident is dropped `DROP_AFTER` after the last run (the residency's drop); the next run finds the live
-/// document gone and loads it from the store's objects (no read past its stat, no parse), and its delta is the
-/// identity.
+/// Every slab a run used ages out when its lease lapses (P§11.4: leased); the next run finds the live document gone
+/// and loads it from the store's objects (no read past its stat, no parse), and its delta is the identity.
 #[test]
-fn the_residency_drops_all_after_a_run_and_the_next_run_loads_again() {
+fn the_residency_ages_out_a_runs_slabs_and_the_next_run_loads_again() {
     let _racy = racy_window();
     let mut bench = Bench::new().unwrap();
-    bench.dir = Directory::default().with_residency(1 << 40, std::time::Duration::from_millis(30));
+    let lease = std::time::Duration::from_secs(3600);
+    bench.dir = Directory::default().with_residency(1 << 40, lease);
     let mut disk = Disk::new(&mut bench, "b6-drop");
     past_racy_window();
     disk.run(&mut bench).unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(400));
-    assert_eq!(bench.dir.residency().1, 1, "dropped after the run");
+    assert_eq!(bench.dir.age_out(std::time::Instant::now() + lease / 2), 0, "within the lease");
+    assert!(bench.dir.age_out(std::time::Instant::now() + lease) >= 1, "aged out at its lapse");
     assert!(bench.dir.slabs().is_empty(), "no slab held");
     let asked = disk.docs.world.asked;
     let (doc, work) = disk.run(&mut bench).unwrap();

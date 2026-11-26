@@ -363,7 +363,7 @@ impl Directory {
         let id = self.adopt_new(b, 8, None);
         let b = self.block(id).expect("just made");
         self.entries[id.0 as usize].sealed.set(b.used());
-        // The residency holds it, not the directory: retired, or dropped, it goes once no reader holds it.
+        // The residency holds it on a lease, not the directory: aged out, or retired, it goes once no reader holds it.
         let e = &mut self.entries[id.0 as usize];
         let Own::Open(held) = std::mem::replace(&mut e.own, Own::Released) else { unreachable!("just made") };
         self.residency.hold(id, held);
@@ -382,19 +382,19 @@ impl Directory {
         self.residency.touch(id);
     }
 
-    /// A full execution ended: the residency drops every slab `DROP_AFTER` from now, unless another ends first.
-    pub fn executed(&mut self) {
-        self.residency.executed();
+    /// Ages out every slab whose lease lapsed by `now` (the residency's thread does at each lapse): the count.
+    pub fn age_out(&self, now: std::time::Instant) -> u64 {
+        self.residency.age_out(now)
     }
 
-    /// The residency's counts: slabs retired, and drops.
+    /// The residency's counts: slabs retired past the budget, and aged out.
     pub fn residency(&self) -> (u64, u64) {
         self.residency.counts()
     }
 
-    /// The directory with a residency of `bytes`, which drops all `after` an execution (a test's).
-    pub fn with_residency(self, bytes: usize, after: std::time::Duration) -> Directory {
-        Directory { residency: self.residency.limited(bytes, after), ..self }
+    /// The directory with a residency of `bytes` and leases of `lease` (a test's).
+    pub fn with_residency(self, bytes: usize, lease: std::time::Duration) -> Directory {
+        Directory { residency: self.residency.limited(bytes, lease), ..self }
     }
 
     /// The directory with documents' slabs of `bytes` (a test's, to fill one in a few documents).
