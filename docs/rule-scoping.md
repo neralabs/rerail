@@ -136,7 +136,7 @@ It reads ESLint, oxlint, Biome, Ruff, Bandit, Clippy, PHPStan, Psalm, PHP_CodeSn
 - **A flat config Rerail cannot read.** If the flat config is more than data (defines a function, runs a loop, changes something), is a symlink, or exceeds 1 MiB, every rule Rerail ports from ESLint keeps the pack's value, and set-up says why. A single entry whose value needs the config run (a call's result, an imported variable) leaves only that port to the pack.
 - **Configs not read.** An `.eslintrc.js`, `.eslintrc.cjs` or YAML config is named as not read and changes nothing.
 - **Your choices win.** A rule you already set, in that folder, keeps your setting. "Skip, I'll pick packs" takes nothing from the lint config, even for the packs you then pick.
-- **The confirm screen** lists each rule a config names, and counts the rest by reason (`87 rules start off  eslint.config.js does not turn it on`).
+- **The confirm screen** lists each rule a config names, and counts the rest by reason (`87 rules start off  not turned on in eslint.config.js`).
 
 A port matches an upstream rule by the names its document honours suppression comments for. So `custom/no-console`, another plugin's rule, leaves the port of ESLint's `no-console` alone. A rule with no such names (Blade's, the complexity pack's) keeps the pack's value.
 
