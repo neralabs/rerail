@@ -1,7 +1,6 @@
 {
   "name": "@neralabs/rerail-pack-pydantic",
   "version": "0.1.0",
-  "private": true,
   "description": "Rerail rule pack: Rerail's own Pydantic rules, from the Pydantic v2 docs and migration guide, for correct models, validators and serialization.",
   "keywords": [
     "rerail",
@@ -31,5 +30,8 @@
     "@neralabs/rerail": {
       "optional": true
     }
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

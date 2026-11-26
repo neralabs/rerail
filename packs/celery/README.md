@@ -2,9 +2,6 @@
 
 Rerail's own Celery rules, from the Celery docs and maintainers' review advice, for idempotent, serializable tasks dispatched after commit.
 
-This pack is private while its rules are written and reviewed: it is not published to npm, and is installed from
-a checkout with `rerail packs add packs/celery`.
-
 ## Rules
 
 In the order a team should read them: what it loses when the rule is missing comes first.

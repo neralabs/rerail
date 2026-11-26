@@ -7,8 +7,9 @@ package at the repository root. Packs that port a linter are
 > Status: pre-release (below 1.0.0). Every pack here is published to npm, public like core, except a private one
 > (`"private": true` in its `package.json`; today `rerail`), which is never published, is left out of core's pack
 > list, and is installed from a checkout with `rerail packs add packs/<id>`. Core ships none of them: set-up and
-> `rerail packs add` install them into `$RERAIL_HOME/packs`. The packs here: `python`, `php`, `blade`, `rust`,
-> `typescript`, `javascript`, `react`, `vue`, `node`, `next`, `django`, `sql`, `complexity` and `rerail`. Every rule
+> `rerail packs add` install them into `$RERAIL_HOME/packs`. The packs here: `python`, `python-practice`,
+> `python-security`, `php`, `blade`, `rust`, `typescript`, `javascript`, `react`, `vue`, `node`, `next`, `django`, `drf`,
+> `fastapi`, `pydantic`, `sqlalchemy`, `alembic`, `celery`, `pytest`, `sql`, `complexity` and `rerail`. Every rule
 > document Rerail ships lives in a pack; core has no rules of its own, and lists the published packs by name only
 > (`src/engine/catalog/pack-list.generated.ts`).
 

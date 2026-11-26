@@ -1,7 +1,6 @@
 {
   "name": "@neralabs/rerail-pack-pytest",
   "version": "0.1.0",
-  "private": true,
   "description": "Rerail rule pack: Rerail's own pytest rules, from the pytest docs and maintainers' review advice, for isolated tests, sound fixtures and mocks that check what they claim.",
   "keywords": [
     "rerail",
@@ -32,5 +31,8 @@
     "@neralabs/rerail": {
       "optional": true
     }
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

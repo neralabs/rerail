@@ -1,8 +1,7 @@
 {
   "name": "@neralabs/rerail-pack-python-practice",
   "version": "0.1.0",
-  "private": true,
-  "description": "Rerail rule pack: Rerail's own Python rules, from the Python docs and core developers' review advice, for correct async code, exceptions, typing and packaging.",
+  "description": "Rerail rule pack: Rerail's own Python rules for async code, cancellation, timeouts, retries and resource cleanup.",
   "keywords": [
     "rerail",
     "rerail-pack",
@@ -30,5 +29,8 @@
     "@neralabs/rerail": {
       "optional": true
     }
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

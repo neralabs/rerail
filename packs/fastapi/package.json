@@ -1,7 +1,6 @@
 {
   "name": "@neralabs/rerail-pack-fastapi",
   "version": "0.1.0",
-  "private": true,
   "description": "Rerail rule pack: Rerail's own FastAPI rules, from the FastAPI docs and maintainers' review advice, for safe dependencies, response models and async endpoints.",
   "keywords": [
     "rerail",
@@ -31,5 +30,8 @@
     "@neralabs/rerail": {
       "optional": true
     }
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

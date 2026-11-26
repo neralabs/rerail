@@ -2,9 +2,6 @@
 
 Rerail's own Django REST framework rules, from the DRF docs and maintainers' review advice, for safe serializers, permissions, querysets and pagination.
 
-This pack is private while its rules are written and reviewed: it is not published to npm, and is installed from
-a checkout with `rerail packs add packs/drf`.
-
 ## Rules
 
 In reading order, by the harm each prevents. Precision is the share of read corpus matches a reviewer would ask to

@@ -2,9 +2,6 @@
 
 Rerail's own Python security rules, from OWASP and the frameworks' security docs, for untrusted input that reaches SQL, shells, URLs, files or deserializers.
 
-This pack is private while its rules are written and reviewed: it is not published to npm, and is installed from
-a checkout with `rerail packs add packs/python-security`.
-
 ## Rules
 
 Listed by worst outcome: the injection rules first, then authentication, files, outgoing requests and ORM lookups.

@@ -1,7 +1,6 @@
 {
   "name": "@neralabs/rerail-pack-alembic",
   "version": "0.1.0",
-  "private": true,
   "description": "Rerail rule pack: Alembic migrations that lock live PostgreSQL tables, fail at deploy, lose data or drift from the models.",
   "keywords": [
     "rerail",
@@ -32,5 +31,8 @@
     "@neralabs/rerail": {
       "optional": true
     }
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

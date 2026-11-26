@@ -2,9 +2,6 @@
 
 Rerail's own SQLAlchemy rules, from the SQLAlchemy 2.0 docs and migration guide, for safe sessions, transactions, queries and relationship loading.
 
-This pack is private while its rules are written and reviewed: it is not published to npm, and is installed from
-a checkout with `rerail packs add packs/sqlalchemy`.
-
 ## Rules
 
 In reading order: by the harm each prevents and the trust its corpus numbers earn.

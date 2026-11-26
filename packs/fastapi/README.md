@@ -2,9 +2,6 @@
 
 Rerail's own FastAPI rules, from the FastAPI docs and maintainers' review advice, for safe dependencies, response models and async endpoints.
 
-This pack is private while its rules are written and reviewed: it is not published to npm, and is installed from
-a checkout with `rerail packs add packs/fastapi`.
-
 ## Rules
 
 | Rule | Mode | Catches |

@@ -2,9 +2,6 @@
 
 Rerail's own Python rules for async code, cancellation, timeouts, retries and resource cleanup.
 
-This pack is private while its rules are written and reviewed: it is not published to npm, and is installed from
-a checkout with `rerail packs add packs/python-practice`.
-
 Its core is async safety that no linter in a Python team's toolchain sees: a cancellation swallowed in a coroutine,
 and a blocking call or a second event loop reached from one through helpers in other modules. Around it: HTTP calls on
 a requests Session without a timeout, retries that never give up, coroutines that never run, and context managers

@@ -1153,7 +1153,23 @@ describe("the core range the release writes", () => {
 
   // react ships a utility named `stored`, which is no rule key: its range stays.
   it("is due for the packs holding a rule off, shipping a rule in a language or with an ast rule key added since, shipping a .rerail rule, or giving rules dimensions", () => {
-    expect(floors.map(({ id }) => id)).toEqual(["complexity", "django", "javascript", "python", "rerail", "typescript"]);
+    expect(floors.map(({ id }) => id)).toEqual([
+      "alembic",
+      "celery",
+      "complexity",
+      "django",
+      "drf",
+      "fastapi",
+      "javascript",
+      "pydantic",
+      "pytest",
+      "python",
+      "python-practice",
+      "python-security",
+      "rerail",
+      "sqlalchemy",
+      "typescript",
+    ]);
     expect(floors.filter(({ ruleKeys }) => ruleKeys.length > 0).map(({ id, ruleKeys }) => [id, ruleKeys])).toEqual([
       ["javascript", ["stored"]],
       ["python", ["stored"]],

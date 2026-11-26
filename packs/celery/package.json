@@ -1,7 +1,6 @@
 {
   "name": "@neralabs/rerail-pack-celery",
   "version": "0.1.0",
-  "private": true,
   "description": "Rerail rule pack: Rerail's own Celery rules, from the Celery docs and maintainers' review advice, for idempotent, serializable tasks dispatched after commit.",
   "keywords": [
     "rerail",
@@ -31,5 +30,8 @@
     "@neralabs/rerail": {
       "optional": true
     }
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

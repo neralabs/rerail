@@ -2,9 +2,6 @@
 
 Rerail's own Pydantic rules, from the Pydantic v2 docs and migration guide, for correct models, validators and serialization.
 
-This pack is private while its rules are written and reviewed: it is not published to npm, and is installed from
-a checkout with `rerail packs add packs/pydantic`.
-
 ## Rules
 
 | Rule | Mode | On | Catches |

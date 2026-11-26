@@ -1,7 +1,6 @@
 {
   "name": "@neralabs/rerail-pack-drf",
   "version": "0.1.0",
-  "private": true,
   "description": "Rerail rule pack: Rerail's own Django REST framework rules, from the DRF docs and maintainers' review advice, for safe serializers, permissions, querysets and pagination.",
   "keywords": [
     "rerail",
@@ -32,5 +31,8 @@
     "@neralabs/rerail": {
       "optional": true
     }
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

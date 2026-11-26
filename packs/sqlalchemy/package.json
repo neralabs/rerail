@@ -1,7 +1,6 @@
 {
   "name": "@neralabs/rerail-pack-sqlalchemy",
   "version": "0.1.0",
-  "private": true,
   "description": "Rerail rule pack: Rerail's own SQLAlchemy rules, from the SQLAlchemy 2.0 docs and migration guide, for safe sessions, transactions, queries and relationship loading.",
   "keywords": [
     "rerail",
@@ -31,5 +30,8 @@
     "@neralabs/rerail": {
       "optional": true
     }
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

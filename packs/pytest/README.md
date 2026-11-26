@@ -2,9 +2,6 @@
 
 Rerail's own pytest rules, from the pytest docs and maintainers' review advice, for isolated tests, sound fixtures and mocks that check what they claim.
 
-This pack is private while its rules are written and reviewed: it is not published to npm, and is installed from
-a checkout with `rerail packs add packs/pytest`.
-
 ## Rules
 
 In reading order: first the tests that pass without testing anything (precise, the first cross-file), then shared
