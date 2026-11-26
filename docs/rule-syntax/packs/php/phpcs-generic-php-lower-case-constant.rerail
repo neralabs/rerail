@@ -13,6 +13,10 @@
 // named_type or primitive_type, and the other names are `name` nodes, so none of them is a candidate.
 .violation lower_case_constant(at: node) code "Generic.PHP.LowerCaseConstant" "TRUE, FALSE and NULL must be lowercase"
     suppress phpcs "Generic.PHP.LowerCaseConstant.Found"
-lower_case_constant(n) :- (kind(n, "boolean") ; kind(n, "null")), glob("*[A-Z]*", n).
+lower_case_constant(n) :- (kind(n, "boolean") ; kind(n, "null")), glob("*[A-Z]*", n), !class_scope(n).
 lower_case_constant(n) :- kind(n, "qualified_name"), text(n, t), match("\\\\(?<w>[A-Za-z]+)", t), glob("*[A-Z]*", w),
     (@lower(w) = "true" ; @lower(w) = "false" ; @lower(w) = "null").
+// tree-sitter-php reads `Null::TYPE` (a class named Null) as the keyword `null` in an ERROR with the `::`; PHP_CodeSniffer
+// tokenizes a class name there, which the sniff leaves alone.
+.decl class_scope(n: node)
+class_scope(n) :- child(p, n, _), kind(p, "ERROR"), op(p, "::").
