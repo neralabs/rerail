@@ -1,0 +1,25 @@
+// python/references_w: the Python reference graph from W's Rust, core.rerail's reference_edge and reference_open as
+// python/references.rerail derives them by rules (decision 0483), for comparing the two.
+//
+// The engine builds the graph as W did (6970a3e539): each Python file summarized from its tape as the run builds its
+// document (`calls::summarize`), the summaries linked once every file is built (`Graph::link_references`), under the
+// program's `.references` setting (its sibling links, constructor fields and scope; none: every .py and .pyi file).
+// It binds the two inputs below in the cross-file part (`logic::plan::corpus::w_references`).
+//
+// A program includes this file in place of python/references.rerail, or a run maps that include here with
+// RERAIL_REFERENCES=rust (`rr::include_switched`): the program is otherwise the same, so the two runs differ only in
+// how the graph is made.
+
+// The engine's inputs, and the graph derived from them `cross_file` (decision 0652): its rows join definitions of
+// any files. An input is per-document to the split whatever it is declared; its one reader here, derived across files,
+// keeps it in the cross-file part, where the engine binds it, as the rules' graph is derived there.
+.decl w_reference_edge(src: node, dst: node, via: symbol)
+.decl w_reference_open(n: node)
+.input w_reference_edge, w_reference_open
+.decl w_edge(src: node, dst: node, via: symbol) cross_file
+w_edge(s, d, v) :- w_reference_edge(s, d, v).
+.decl w_open(n: node) cross_file
+w_open(n) :- w_reference_open(n).
+
+reference_edge(s, d, v) :- w_edge(s, d, v).
+reference_open(n) :- w_open(n).

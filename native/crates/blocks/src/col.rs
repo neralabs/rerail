@@ -119,6 +119,32 @@ pub trait Vals: Sync {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    /// The values from `from` on into `out` (`out.len()` of them): a pass's chunk read in one call, so values read
+    /// where they lie through a reader (`packed::Part`) cost a call a chunk, not one a value.
+    #[inline]
+    fn read(&self, from: usize, out: &mut [i64]) {
+        for (j, o) in out.iter_mut().enumerate() {
+            *o = self.at(from + j);
+        }
+    }
+}
+
+/// Values a pass reads at a time (`each_in`).
+pub(crate) const CHUNK: usize = 256;
+
+/// `v`'s values at `r`, in order, read a chunk at a time (`Vals::read`): `f(i, value)` each.
+#[inline]
+pub(crate) fn each_in<V: Vals + ?Sized>(v: &V, r: std::ops::Range<usize>, mut f: impl FnMut(usize, i64)) {
+    let mut buf = [0i64; CHUNK];
+    let mut i = r.start;
+    while i < r.end {
+        let k = (r.end - i).min(CHUNK);
+        v.read(i, &mut buf[..k]);
+        for (j, &x) in buf[..k].iter().enumerate() {
+            f(i + j, x);
+        }
+        i += k;
+    }
 }
 
 impl Vals for [i64] {
@@ -129,6 +155,10 @@ impl Vals for [i64] {
     #[inline]
     fn at(&self, i: usize) -> i64 {
         self[i]
+    }
+    #[inline]
+    fn read(&self, from: usize, out: &mut [i64]) {
+        out.copy_from_slice(&self[from..from + out.len()]);
     }
 }
 
@@ -141,6 +171,10 @@ impl Vals for Vec<i64> {
     fn at(&self, i: usize) -> i64 {
         self[i]
     }
+    #[inline]
+    fn read(&self, from: usize, out: &mut [i64]) {
+        out.copy_from_slice(&self[from..from + out.len()]);
+    }
 }
 
 impl<V: Vals + ?Sized> Vals for &V {
@@ -151,6 +185,10 @@ impl<V: Vals + ?Sized> Vals for &V {
     #[inline]
     fn at(&self, i: usize) -> i64 {
         (**self).at(i)
+    }
+    #[inline]
+    fn read(&self, from: usize, out: &mut [i64]) {
+        (**self).read(from, out)
     }
 }
 
@@ -214,10 +252,12 @@ fn pack_fixed<const B: usize, const L: bool, V: Vals + ?Sized>(out: &mut [u64], 
     };
     let n = r.len();
     let groups = n / 64;
+    let mut buf = [0i64; 64];
     for g in 0..groups {
         let o: &mut [u64] = &mut out[g * B..g * B + B];
-        for j in 0..64 {
-            let x = res(v.at(from + g * 64 + j));
+        v.read(from + g * 64, &mut buf);
+        for (j, &x) in buf.iter().enumerate() {
+            let x = res(x);
             let bit = j * B;
             let (w, sh) = (bit / 64, bit % 64);
             o[w] |= x << sh;
@@ -226,8 +266,10 @@ fn pack_fixed<const B: usize, const L: bool, V: Vals + ?Sized>(out: &mut [u64], 
             }
         }
     }
-    for i in groups * 64..n {
-        let x = res(v.at(from + i));
+    let tail = &mut buf[..n - groups * 64];
+    v.read(from + groups * 64, tail);
+    for (i, &x) in (groups * 64..n).zip(tail.iter()) {
+        let x = res(x);
         let bit = i * B;
         let (w, sh) = (bit / 64, bit % 64);
         out[w] |= x << sh;
@@ -349,12 +391,12 @@ fn line_fit<V: Vals + ?Sized>(v: &V, slope: i64, bits: u32, lo: i64, hi: i64, sa
         if small {
             let (v0, slope) = (v.at(0), slope);
             let (mut lo, mut hi, mut t) = (i64::MAX, i64::MIN, r.start as i64 * slope);
-            for x in r.map(|i| v.at(i)) {
+            each_in(v, r, |_, x| {
                 let d = x - (v0 + (t >> 16));
                 lo = lo.min(d);
                 hi = hi.max(d);
                 t += slope;
-            }
+            });
             (lo as i128, hi as i128)
         } else {
             r.map(resid).fold((i128::MAX, i128::MIN), |(a, b), d| (a.min(d), b.max(d)))
@@ -372,11 +414,9 @@ fn line_fit<V: Vals + ?Sized>(v: &V, slope: i64, bits: u32, lo: i64, hi: i64, sa
 /// The least and greatest of `v`'s values at `r` (not empty).
 #[inline]
 fn range_of<V: Vals + ?Sized>(v: &V, r: std::ops::Range<usize>) -> (i64, i64) {
-    let first = v.at(r.start);
-    r.fold((first, first), |(a, b), i| {
-        let x = v.at(i);
-        (a.min(x), b.max(x))
-    })
+    let (mut a, mut b) = (i64::MAX, i64::MIN);
+    each_in(v, r, |_, x| (a, b) = (a.min(x), b.max(x)));
+    (a, b)
 }
 
 /// The groups of `GROUP` values in `r` (`r.start` a multiple of `GROUP`), each its range of positions.
@@ -387,8 +427,16 @@ fn groups_of(r: std::ops::Range<usize>) -> impl Iterator<Item = std::ops::Range<
 
 /// The runs that start in `r`: a position whose value differs from the one before it, and position 0.
 fn runs_in<V: Vals + ?Sized>(v: &V, r: std::ops::Range<usize>) -> usize {
-    let from = r.start.max(1);
-    (r.start == 0) as usize + (from..r.end).filter(|&i| v.at(i) != v.at(i - 1)).count()
+    if r.is_empty() {
+        return 0;
+    }
+    let mut before = if r.start == 0 { None } else { Some(v.at(r.start - 1)) };
+    let mut runs = 0;
+    each_in(v, r, |_, x| {
+        runs += usize::from(before != Some(x));
+        before = Some(x);
+    });
+    runs
 }
 
 /// The smallest encoding of `v`: one pass for the range and the runs, one for the line's residuals (when a sample
@@ -419,19 +467,93 @@ fn dict_limit(n: usize, bits: u32, best: usize) -> usize {
 }
 
 /// `v`'s distinct values, sorted, where there are `limit` or fewer (`None` past it: the count stops there).
-fn distinct_upto<V: Vals + ?Sized>(v: &V, limit: usize) -> Option<Vec<i64>> {
+/// `v`'s distinct values while there are at most `limit` of them, in an open table of frame `fr` (`Distinct`).
+fn distinct_upto<'f, V: Vals + ?Sized>(fr: &'f crate::frame::Frame, v: &V, limit: usize) -> Option<Distinct<'f>> {
     if limit < 2 {
         return None;
     }
-    let mut seen = rustc_hash::FxHashSet::default();
-    for x in (0..v.len()).map(|i| v.at(i)) {
-        if seen.insert(x) && seen.len() > limit {
-            return None;
+    let cap = (2 * limit + 2).next_power_of_two();
+    let mut d = Distinct { slots: fr.zeroed(cap), full: fr.zeroed(cap), values: fr.vec_with(limit + 1), mask: cap - 1 };
+    let mut i = 0;
+    let mut buf = [0i64; CHUNK];
+    while i < v.len() {
+        let k = (v.len() - i).min(CHUNK);
+        v.read(i, &mut buf[..k]);
+        for &x in &buf[..k] {
+            if d.insert(x) && d.values.len() > limit {
+                return None;
+            }
         }
+        i += k;
     }
-    let mut d: Vec<i64> = seen.into_iter().collect();
-    d.sort_unstable();
     Some(d)
+}
+
+/// A column's distinct values, each once, in an open table of a frame: each slot a value's place in `values` (as
+/// found), `full` marking a slot taken.
+struct Distinct<'f> {
+    slots: &'f mut [u32],
+    full: &'f mut [u8],
+    values: crate::frame::FrameVec<'f, i64>,
+    mask: usize,
+}
+impl Distinct<'_> {
+    fn hash(x: i64) -> usize {
+        ((x as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) as usize
+    }
+    /// Whether `x` is new.
+    fn insert(&mut self, x: i64) -> bool {
+        let mut i = Self::hash(x) & self.mask;
+        while self.full[i] != 0 {
+            if self.values[self.slots[i] as usize] == x {
+                return false;
+            }
+            i = (i + 1) & self.mask;
+        }
+        self.full[i] = 1;
+        self.slots[i] = self.values.len() as u32;
+        self.values.push(x);
+        true
+    }
+    fn len(&self) -> usize {
+        self.values.len()
+    }
+    /// The values sorted, each slot then its value's rank among them (`code`).
+    fn sort(&mut self, fr: &crate::frame::Frame) {
+        let mut order = fr.collect(0..self.values.len() as u32);
+        order.sort_unstable_by_key(|&k| self.values[k as usize]);
+        let rank = fr.zeroed::<u32>(order.len());
+        for (r, &k) in order.iter().enumerate() {
+            rank[k as usize] = r as u32;
+        }
+        for (s, &f) in self.slots.iter_mut().zip(self.full.iter()) {
+            if f != 0 {
+                *s = rank[*s as usize];
+            }
+        }
+        self.values.sort_unstable();
+    }
+    /// Once sorted, its codes: plain slices, read by the pieces in parallel.
+    fn codes(&self) -> Codes<'_> {
+        Codes { slots: self.slots, values: &self.values, mask: self.mask }
+    }
+}
+
+/// A sorted `Distinct`'s table, read: each value's rank among the values.
+#[derive(Clone, Copy)]
+struct Codes<'a> {
+    slots: &'a [u32],
+    values: &'a [i64],
+    mask: usize,
+}
+impl Codes<'_> {
+    fn code(&self, x: i64) -> u64 {
+        let mut i = Distinct::hash(x) & self.mask;
+        while self.values[self.slots[i] as usize] != x {
+            i = (i + 1) & self.mask;
+        }
+        u64::from(self.slots[i])
+    }
 }
 
 fn choose_with<V: Vals + ?Sized>(v: &V, max_runs: usize, dict: bool) -> Choice {
@@ -478,11 +600,13 @@ fn choose_with<V: Vals + ?Sized>(v: &V, max_runs: usize, dict: bool) -> Choice {
     let runs = if nruns > max_runs { (usize::MAX / 4, usize::MAX / 4) } else { runs };
     let best = pack_words.min(runs.0 + runs.1).min(line_words).min(groups.0 + groups.1);
     // `DICT`, counted only up to the values past which it could not be smaller than `best`.
-    if dict && let Some(d) = distinct_upto(v, dict_limit(n, bits, best)) {
-        let cb = bits_for(d.len() as u64 - 1);
-        let (dw, vw) = (words(n, cb), words(d.len(), bits));
+    // The count alone, its values in a frame of their own.
+    let distinct = if dict { crate::frame::op(|fr| distinct_upto(fr, v, dict_limit(n, bits, best)).map(|d| d.len())) } else { None };
+    if let Some(d) = distinct {
+        let cb = bits_for(d as u64 - 1);
+        let (dw, vw) = (words(n, cb), words(d, bits));
         if dw + vw < best {
-            return Choice { tag: DICT, bits, rbits: cb, nruns: d.len() as u32, base: lo, slope: 0, rmin: 0, n, data_words: dw, runs_words: vw };
+            return Choice { tag: DICT, bits, rbits: cb, nruns: d as u32, base: lo, slope: 0, rmin: 0, n, data_words: dw, runs_words: vw };
         }
     }
     if best == groups.0 + groups.1 && best < pack_words.min(runs.0 + runs.1).min(line_words) {
@@ -639,15 +763,13 @@ pub fn write<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mut [
                     wv.push(x.wrapping_sub(c.base) as u64);
                     ws.push(i as u64);
                 };
-                if r.start == 0 {
-                    push(0, v.at(0));
-                }
-                for i in r.start.max(1)..r.end {
-                    let x = v.at(i);
-                    if x != v.at(i - 1) {
+                let mut before = if r.start == 0 { None } else { Some(v.at(r.start - 1)) };
+                each_in(v, r, |i, x| {
+                    if before != Some(x) {
                         push(i, x);
                     }
-                }
+                    before = Some(x);
+                });
                 wv.flush();
                 ws.flush();
             });
@@ -658,17 +780,18 @@ pub fn write<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mut [
 /// `DICT`'s words: the distinct values, sorted, less `base` into `runs`; then in pieces in parallel each row's index
 /// among them into `data` (a piece is `PIECE` values, so its codes start on a word of their own).
 fn write_dict<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mut [u64]) {
-    let d = distinct_upto(v, c.nruns as usize).expect("as chosen");
-    let vals: Vec<u64> = d.iter().map(|&x| x.wrapping_sub(c.base) as u64).collect();
-    pack_into(runs, &vals, c.bits);
-    let code: rustc_hash::FxHashMap<i64, u64> = d.iter().enumerate().map(|(k, &x)| (x, k as u64)).collect();
-    let out = atomics(data);
-    over_pieces(v.len(), |r| {
-        let mut w = BitW::new(out, r.start * c.rbits as usize, c.rbits);
-        for i in r {
-            w.push(code[&v.at(i)]);
-        }
-        w.flush();
+    crate::frame::op(|fr| {
+        let mut d = distinct_upto(fr, v, c.nruns as usize).expect("as chosen");
+        d.sort(fr);
+        let vals = fr.collect(d.values.iter().map(|&x| x.wrapping_sub(c.base) as u64));
+        pack_into(runs, &vals, c.bits);
+        let out = atomics(data);
+        let d = d.codes();
+        over_pieces(v.len(), |r| {
+            let mut w = BitW::new(out, r.start * c.rbits as usize, c.rbits);
+            each_in(v, r, |_, x| w.push(d.code(x)));
+            w.flush();
+        });
     });
 }
 
@@ -705,9 +828,7 @@ fn write_groups<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mu
             ents.push((offs[k] as u64) << WIDTH_BITS | w as u64);
             if w > 0 {
                 let mut out = BitW::new(d, offs[k], w);
-                for i in k * GROUP..((k + 1) * GROUP).min(n) {
-                    out.push(v.at(i).wrapping_sub(gmin) as u64);
-                }
+                each_in(v, k * GROUP..((k + 1) * GROUP).min(n), |_, x| out.push(x.wrapping_sub(gmin) as u64));
                 out.flush();
             }
         }
@@ -1137,6 +1258,7 @@ impl Dec<'_> {
                 }
             }
             GROUPS => out.iter_mut().enumerate().for_each(|(j, o)| *o = self.grp(lo + j)),
+            DICT => out.iter_mut().enumerate().for_each(|(j, o)| *o = self.dct(lo + j)),
             _ => out.iter_mut().enumerate().for_each(|(j, o)| *o = self.on_line(lo + j)),
         }
     }
@@ -1318,6 +1440,12 @@ mod tests {
             write(&c, v, data, runs);
             let col = unsafe { &*p };
             assert!((0..v.len()).all(|i| col.get(i) == v[i] && col.dec().get(i) == v[i]), "a value read back");
+            // A window at once (`Dec::fill`, the packer's ranged read): a dictionary's codes, not read as a line.
+            for (lo, m) in [(0, v.len()), (1, v.len() - 1), (v.len() / 3, v.len() / 3), (v.len() - 1, 1)] {
+                let mut out = vec![0i64; m];
+                col.dec().fill(lo, &mut out);
+                assert_eq!(&out[..], &v[lo..lo + m], "a window from {lo}");
+            }
             let mut each = Vec::new();
             col.for_each(|x| each.push(x));
             assert_eq!(&each, v);

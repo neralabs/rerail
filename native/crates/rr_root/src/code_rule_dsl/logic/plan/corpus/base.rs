@@ -114,6 +114,9 @@ pub struct Report {
     /// Of the files the memo held, those read as partial hits (decision 0225 §2): their entries kept but the
     /// relations an edit changed, which their chunk derives again.
     pub memo_partial: usize,
+    /// The digest of the project's settings rows the run bound (decision 0665, `memo::SettingsDigests`): a source
+    /// file's edit leaves it, an edit of a configuration file changes it. `None`: the file-local part reads none.
+    pub settings: Option<[u8; 32]>,
     /// Of the files the memo held, those read for their outputs alone (decision 0117 step 1), and the values of
     /// their export and base rows decoded all the same: none, as the kept inputs hold those rows.
     pub memo_kept: (usize, usize),
@@ -1995,7 +1998,9 @@ pub fn default_store() -> &'static std::path::PathBuf {
 /// project) of several. Another build's files there, unused for a day, are removed (with their `-wal`, `-shm` and
 /// lock files, which start with the same name), unless a live process owns their store (`owner::remove_unowned`):
 /// looked for when this build's store there is new. Another build's files go stale when a new build comes, so its
-/// first store sweeps them; each run looked at every file there (510 in the images' directory, 18 ms a run).
+/// first store sweeps them; each run looked at every file there (510 in the images' directory, 18 ms a run). The
+/// sweep runs beside the caller: nothing it removes is this build's, and on the bench's first run of a new build it
+/// was 1.65 s of `remove_dir_all` on the main thread, in phase 0 (`sample`, the M1 Max).
 pub fn build_store(dir: &str, key: Option<&str>) -> std::path::PathBuf {
     use std::hash::{Hash, Hasher};
     let dir = std::env::temp_dir().join(dir);
@@ -2023,7 +2028,11 @@ pub fn build_store(dir: &str, key: Option<&str>) -> std::path::PathBuf {
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .filter(|name| !name.starts_with(build))
         .collect();
-    owner::remove_unowned(&dir, &old);
+    if !old.is_empty() {
+        let swept = dir.clone();
+        // Without a thread they are left for the next new build's first store.
+        let _ = rerail_accel::exec::service("rerail-sweep-builds", None, move || owner::remove_unowned(&swept, &old));
+    }
     path
 }
 
@@ -2229,7 +2238,7 @@ pub fn scoped(mut found: CorpusFiles, prog: &(impl ProgramFields + ?Sized), opti
 
 /// A digest as lowercase hex.
 pub fn hex(digest: &[u8]) -> String {
-    digest.iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(&digest[..])
 }
 
 /// A reader's refusal of one of a run's programs, named by the program's `.policy` (a run reads texts, not files).

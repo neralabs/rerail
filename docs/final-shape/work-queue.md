@@ -11526,3 +11526,13 @@ asks for the new check), c-directives eval::tests 50.
 
 - 0679 (a program cut from another runs once that one is whole): a clean merge; device-metal checks with 0 errors under Relax.
 - Its test (a_program_cut_from_one_that_parks_reads_its_rows) is Metal-only: not run here (no Metal on this Mac); it goes with the farm Metal checks.
+
+### Q555. Roll-up 127 (Native-and-GPU-strata ee7e841be7 onto Pulling-it-all-together): what the merge chose
+
+- Native-and-GPU-strata, pinned at ee7e841be7 (143 commits), by the user's direction: up to before the uglykl SIMD work entered it. The 11 commits from f760cdbcba on (t58 A's column bounds, the radix-sort, sorted-runs and narrowest-integer spikes, the sorted heads) are copies of uglykl-CPU-SIMD-parallelization's, which the user holds out; the commits above them (865a576421, 71f8fdffb1, 102d71d1b1) are past the pin too.
+- What it brings: final-rerail-shape at 2d42bd82ec (t57 E4, E6/E10, E7 as 0694, §9; t60 step 5's allocations from django-bugs; 0687's operation frame and 0342's long room from Typing-support; 0684; RERAIL_GPU=none), and its own 0665, 0676, 0680, 0689, 0670 (a project configuration read once), 0287 §2 and 0353 row 7 (text read where its source lies, on the CPU and the device), a run without the memo evaluating its chunks at once (0254 §6), and the cross-file rank's memo on again.
+- The merge applied without conflicts. Two places held one job twice:
+  - closure::recognize's lattice guard: the hub's (cd8c2ce6f2) and django-bugs' (27ec1d5fde). One kept.
+  - 0652's crossing check: django-bugs' d7ec54c12f exempted every `magic_…` relation, beside the hub's `magic::same_documents` (the user's choice A at the green pass, where this exemption was option B and not taken). The exemption is removed; a demand set is checked as any relation, and keeps its document by A.
+- 0342 and 0628 already carry Typing-support's long room (the owners' rooms gone). Option C's measurement is now of the stack with the long room.
+- Checked with Relax, RERAIL_GPU=cpu: check over boot, device-metal, tests-corpus, tests-logic, tests-lang, tests-tape, tests-rr, tests-sql, tests-cpu, tests-admission, adapters and json-rules: 0 errors.

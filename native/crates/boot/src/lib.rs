@@ -21,11 +21,6 @@ extern crate cranelift_jit_wasm as cranelift_jit;
 // jemalloc's per-thread counters, which the composition hands the facts' accounting (`boot::heap_net`).
 #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
 extern crate tikv_jemalloc_ctl;
-/// The tests allocate as the engine does: through jemalloc, whose per-thread counters the profile's spans read (the
-/// bytes a span allocated, `profile::SpanTotal::alloc`; note t57's cost tests pin them).
-#[cfg(all(test, not(any(windows, target_family = "wasm", feature = "system-allocator"))))]
-#[global_allocator]
-static TEST_ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 pub use rerail_store::content_store;
 pub use rerail_store::git_access;
 pub use rerail_store::git_workspace;
@@ -46,6 +41,11 @@ mod test_watchdog;
 #[cfg(test)]
 #[path = "../../../src/test_flush.rs"]
 mod test_flush;
+// Its test binary's allocator, the engine's (`rerail_prof::heap::Sampled`, as `rerail-engine`'s `lib.rs` and every test
+// crate declare it): a library declares none for its users, so without it its own tests ran on the system allocator.
+#[cfg(all(test, not(any(windows, target_family = "wasm", feature = "system-allocator"))))]
+#[global_allocator]
+static GLOBAL: rerail_prof::heap::Sampled = rerail_prof::heap::Sampled;
 #[cfg(test)]
 #[path = "../../../src/test_private_folders.rs"]
 mod test_private_folders;

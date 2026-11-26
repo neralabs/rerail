@@ -4981,6 +4981,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-adapters",
  "rerail-blocks",
  "rerail-corpus-memo",
  "rerail-corpus-prep",
@@ -4996,6 +4997,7 @@ dependencies = [
  "rerail-rr",
  "rerail-rr-root",
  "rerail-rr-syntax",
+ "rerail-rules-base",
  "rerail-section",
  "rerail-setfix",
  "rerail-store",
@@ -5645,6 +5647,7 @@ dependencies = [
  "rerail-context",
  "rerail-prof",
  "rerail-section",
+ "rerail-vector",
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_text_size",
@@ -6528,6 +6531,7 @@ dependencies = [
  "rerail-simd8",
  "rerail-tape-format",
  "rerail-vector",
+ "rustc-hash",
  "sha2 0.11.1",
 ]
 

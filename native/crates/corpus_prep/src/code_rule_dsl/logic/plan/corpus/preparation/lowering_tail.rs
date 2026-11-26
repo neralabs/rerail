@@ -1394,7 +1394,7 @@ impl ProgramPass for KindSets {
             // `members`.
             match kinds_of(v, &head, library, &gone, &set, &mut BTreeSet::new()) {
                 Some(kinds) => drop(kindsets.insert(set, kinds)),
-                None if matches!(head.columns_of(&set).as_deref(), Some([(_, t)]) if t == "sym") => drop(derived.insert(set)),
+                None if matches!(head.columns_of(&set).as_deref(), Some([(_, t)]) if matches!(t.as_str(), "sym" | "symbol")) => drop(derived.insert(set)),
                 None => return Err(Error::Syntax(format!("the kind set {set} is not a relation of kinds (one column of facts, or rules `{set}(k) :- s(k)` over such sets)")).to_string()),
             }
         }

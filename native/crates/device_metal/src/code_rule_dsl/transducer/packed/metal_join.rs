@@ -157,8 +157,15 @@ pub(in crate::code_rule_dsl) const TEXTFN_STR_BETWEEN: u32 = 12;
 /// `pkg_up(x, k)`: X less its last key 5 dotted parts; empty past its first.
 pub(in crate::code_rule_dsl) const TEXTFN_PKG_UP: u32 = 13;
 /// `rx_group(x, re, name)`: the range of X that regex `re`'s group `name` captures, by its program (the stage's
-/// automaton, `text::table::GroupProgram`, decision 0668); no row where `re` does not match or the group took no part.
+/// automaton, `text::table::GroupProgram`, decision 0688); no row where `re` does not match or the group took no part.
 pub(in crate::code_rule_dsl) const TEXTFN_RX_GROUP: u32 = 14;
+/// A node's text (key 5's node), read where its document's source lies through the stage's `node` view (decision
+/// 0287 §2): `rr_node_text_any`'s at any length; `rr_node_text`'s past `text`'s inline bound alone, no row shorter. A
+/// node the directory does not hold (another batch's, a comment span) sets `TEXTFN_UNHELD`: the stratum on the host.
+pub(in crate::code_rule_dsl) const TEXTFN_NODE_TEXT_ANY: u32 = 15;
+pub(in crate::code_rule_dsl) const TEXTFN_NODE_TEXT: u32 = 16;
+// `row_text_one`'s bound for `TEXTFN_NODE_TEXT` (its `256u`) is `text`'s inline bound.
+const _: () = assert!(crate::code_rule_dsl::facts::vtab::syntax::core_rr::TEXT_INLINE == 256);
 pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;
 /// A `ROW_VERDICT` stage met a symbol the atoms directory does not hold: the stratum runs on the host.
 pub(in crate::code_rule_dsl) const TEXTFN_UNHELD: u32 = 4;
@@ -2348,7 +2355,7 @@ impl Batch {
             // Either is kept by the batch until its work, which builds the index into it, completes (Q265: a fresh
             // relation dropped with its stage's handle gave back its index while the GPU built it).
             if let Some(view) = &rel.view {
-                crate::code_rule_dsl::prof::count_named(format!("device.index of a view in a fresh home (its home's room taken): {} rows keyed by {cols:?}", rel.rows), 1);
+                crate::code_rule_dsl::prof::count_named_args(format_args!("device.index of a view in a fresh home (its home's room taken): {} rows keyed by {cols:?}", rel.rows), 1);
                 if !may_move {
                     return Err(Error::BackendCapacity);
                 }
@@ -4482,7 +4489,7 @@ impl Kit {
                 }
                 Ok(None) => {}
                 Err(why) => {
-                    crate::code_rule_dsl::prof::count_named(format!("device.a gate's room not grown: {why}"), 1);
+                    crate::code_rule_dsl::prof::count_named_args(format_args!("device.a gate's room not grown: {why}"), 1);
                     return Ok(false);
                 }
             }

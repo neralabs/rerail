@@ -1123,12 +1123,13 @@ calls(n) :- later(n, _).
 
 /// A recursive relation with facts whose every rule joins an empty relation of a lower stratum keeps its facts: the
 /// stratum has no rule to run, but its relations are not held empty (`native_stratum_`; the data-layer pack's
-/// `conditional_derived`, a fact and a rule over the classes' bases, where no class has one).
+/// `conditional_derived`, a fact and a rule over the classes' bases, where no class has one). `e` pairs values of any
+/// two files: a crossing, declared (decisions 0652, 0680).
 #[test]
 fn a_stratum_whose_rules_join_nothing_keeps_its_facts() {
     let dir = corpus("facts-empty-joins", &[TREE]);
     let program = ".decl s(x: number)\ns(n) :- node(_, _, k, n, _), k = \"no_such_kind\".\n\
-                   .decl e(x: number, y: number)\ne(x, y) :- s(x), s(y).\n\
+                   .decl e(x: number, y: number) cross_file\ne(x, y) :- s(x), s(y).\n\
                    .decl d(x: number)\nd(7).\nd(y) :- d(x), e(x, y).\n\
                    .decl out(x: number)\nout(x) :- d(x).\n.output out\n";
     assert_eq!(run(&dir, program, &["out"]), [[["7"]]]);

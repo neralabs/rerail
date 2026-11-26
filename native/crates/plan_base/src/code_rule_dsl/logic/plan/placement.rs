@@ -434,18 +434,12 @@ impl Shape {
                 }
                 // A cat's text compared with a name (`=`, `!=`): the device compares the names' bytes (`CATEQ`).
                 // The other side a constant or a variable: a comparison of names, or (a variable no atom binds) the
-                // text bound, made on the device (in a recursive stratum too, its rounds keeping their texts one value
-                // a content, decision 0661). A cat of made texts (`is_made_cat`) binds a variable only.
+                // text bound, made on the device when the head alone reads it; in a recursive stratum too, whose rounds
+                // keep each made text one value in their arena (0307 for a lattice's, 0661 for a set head's). A cat of
+                // made texts (`is_made_cat`) binds a variable only.
                 Lit::Cmp { l, op: CmpOp::Eq | CmpOp::Ne, r }
                     if [(l, r), (r, l)].into_iter().any(|(c, o)| {
-                        (is_cat_of_rows(v, c) || matches!(o, TermRef::Var(_)) && is_made_cat(v, c))
-                            && match o {
-                                // In a recursive stratum too, as a head's cat: the rounds keep each made text one value a
-                                // content (decision 0661), and an atom keyed by it finds the atom it is (0666).
-                                TermRef::Var(_) => true,
-                                TermRef::Call(..) => false,
-                                _ => true,
-                            }
+                        (is_cat_of_rows(v, c) || matches!(o, TermRef::Var(_)) && is_made_cat(v, c)) && !matches!(o, TermRef::Call(..))
                     }) =>
                 {
                     self.note(Form::Comparison, String::new);
@@ -809,8 +803,9 @@ pub mod tests {
         assert!(p.gpu && p.missing.is_empty(), "{p:?}");
         assert!(!place(&plain).gpu, "the CPU binding keeps it");
         // `@doc(x) = @doc(y)` and `@in(x, {…})` are row code, and so is `z = cat(x, y)` (a text the device makes);
-        // `sha256(x)` is not, nor `lower(x)` in a recursive stratum; a cat in one is (its rounds keep their texts one
-        // value a content, decision 0661); `lower(x)` is (a text the device makes into its arena).
+        // `sha256(x)` is not; a cat in a recursive stratum is (its rounds keep their texts one value a content,
+        // decision 0661), and so is `lower(x)`, there or not (a text the device makes into the component's arena,
+        // decision 0659: `setfix::device` refuses a made text only in a lattice).
         let cmp = |l: T<'static>, r: T<'static>| Literal::Eq(l, r);
         let doc = |v: &'static str| T::Call("doc", vec![T::Var(v)]);
         let mut docs = Shape::default();
@@ -822,7 +817,8 @@ pub mod tests {
         assert!(cat.forms.contains(&Form::Comparison) && !cat.forms.contains(&Form::Computed), "{:?}", cat.forms);
         let mut rec = Shape::default();
         adds(&mut rec, &[atom("kind", false), made()], &[], 1.0, true);
-        assert!(!rec.forms.contains(&Form::Computed), "{:?}", rec.forms);
+        // In a recursive stratum too: its rounds keep each made text one value in their arena (decision 0661).
+        assert!(rec.forms.contains(&Form::Comparison) && !rec.forms.contains(&Form::Computed), "{:?}", rec.forms);
         let lower = || cmp(T::Var("z"), T::Call("lower", vec![T::Var("x")]));
         let mut len = Shape::default();
         adds(&mut len, &[atom("kind", false), cmp(T::Var("z"), T::Call("sha256", vec![T::Var("x")]))], &[], 1.0, false);
@@ -832,7 +828,7 @@ pub mod tests {
         assert!(!low.forms.contains(&Form::Computed), "{:?}", low.forms);
         let mut low_rec = Shape::default();
         adds(&mut low_rec, &[atom("kind", false), lower()], &[], 1.0, true);
-        assert!(low_rec.forms.contains(&Form::Computed));
+        assert!(!low_rec.forms.contains(&Form::Computed), "{:?}", low_rec.forms);
         // A tiny stratum stays on the CPU: the submission costs more than the work, even under the Metal binding.
         let mut small = Shape::default();
         adds(&mut small, &[atom("kind", false)], &[], 10.0, false);

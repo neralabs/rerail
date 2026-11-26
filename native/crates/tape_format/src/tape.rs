@@ -352,6 +352,12 @@ impl CodeTable {
     /// Code `number`'s entry.
     #[inline(always)]
     #[inline]
+    /// Code `number`'s kind, field and flags (`entry`'s), read from its record alone: no alias or classes looked up.
+    #[inline]
+    pub fn kind_field(&self, number: u32) -> (u16, u16, u8) {
+        let r = self.rec(number);
+        (r[0] as u16, (r[0] >> 16) as u16, r[1] as u8)
+    }
     pub fn entry(&self, number: u32) -> EntryRef<'_> {
         let r = self.rec(number);
         let alias = (r[1] >> 8 & 1 != 0).then(|| {

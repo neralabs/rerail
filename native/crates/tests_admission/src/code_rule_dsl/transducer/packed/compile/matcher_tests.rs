@@ -2227,3 +2227,29 @@ fn not_inside_a_field_of_any_parent_finds_ws_roots() {
     assert_eq!(found[0][0], expected, "the wave's formula roots are W's");
     assert_eq!(program.roots(&tape).unwrap(), expected);
 }
+
+/// A kind domain's nodes are listed from the tape's codes 64 at a time, against its kinds' codes, a block whose
+/// presence holds none of its kinds not read (`Domain::kind_nodes`): the same nodes, in order, as a read of each
+/// node's kind. The tape spans many presence blocks and its classes lie in its last lines alone, so blocks are
+/// left out.
+#[test]
+fn a_kind_domains_nodes_are_listed_from_the_codes_as_each_nodes_kind_reads() {
+    let mut source = String::new();
+    for i in 0..400 {
+        source.push_str(&format!("def f{i}(a, b):\n    return g(a, b + {i}) or 'x{i}'\n"));
+    }
+    source.push_str("class C:\n    def m(self):\n        return h(self)\n");
+    let tape = python_tape(&source);
+    let kind = |name: &str| ast_grep_language::LanguageExt::get_ts_language(&GrammarDialect::Python).id_for_node_kind(name, true);
+    for names in [&["class_definition"][..], &["call", "class_definition"], &["string"], &["module"]] {
+        let mut kinds: Vector<u16> = names.iter().map(|&n| kind(n)).collect();
+        kinds.sort_unstable();
+        let d = super::compile_matcher::Domain::Kinds(kinds);
+        let listed: Vec<u32> = domain(&d, &tape, &[]).collect();
+        let read: Vec<u32> = (0..tape.transducer_len() as u32).filter(|&node| d.admits_kind(tape.transducer_kind(node))).collect();
+        assert!(!read.is_empty(), "{names:?}: the tape holds such nodes");
+        assert_eq!(listed, read, "{names:?}");
+        assert_eq!(d.kind_nodes(&tape).map(|nodes| nodes.len()), Some(read.len()), "{names:?}");
+    }
+    assert!(tape.transducer_len() > 4 * rerail_tape_format::f16::Z as usize, "the tape spans several blocks");
+}

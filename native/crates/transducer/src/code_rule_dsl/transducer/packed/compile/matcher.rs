@@ -188,6 +188,24 @@ impl Domain {
         }
     }
 
+    /// The nodes of `view` whose kind it admits, in order, found 64 at a time from the tape's codes against the set of
+    /// its kinds' codes, a block whose presence holds none of its kinds not read (`TapeDoc::transducer_nodes_where_in`,
+    /// the kernels' read); `None` where it admits every kind (every node, or a label's). A scan read each node's kind
+    /// on its own, a decode of its 16z block each (t56's corpus: 2.7 s of the matcher waves' kind reads).
+    pub fn kind_nodes(&self, view: &TapeDoc) -> Option<Vector<u32>> {
+        let (Domain::Kinds(kinds) | Domain::Within(Some(kinds), _)) = self else { return None };
+        let mut out = Vector::new();
+        view.transducer_nodes_where_in(|kind, _| kinds.binary_search(&kind).is_ok(), &|b| kinds.iter().any(|&kind| view.block_may_have_kind(b as usize, kind)), &mut out);
+        Some(out)
+    }
+
+    /// The nodes of `view` its kinds admit (`kind_nodes`, every node where it admits every kind), in order.
+    pub fn admitted<'a>(&self, view: &'a TapeDoc) -> impl Iterator<Item = u32> + use<'a> {
+        let listed = self.kind_nodes(view);
+        let all = if listed.is_none() { view.transducer_len() as u32 } else { 0 };
+        listed.into_iter().flatten().chain(0..all)
+    }
+
     /// A demand's set (`Within`), which a pass's anchor holds its starts to.
     pub fn demand(&self) -> Option<&super::compile_sets::Set> {
         match self {
@@ -736,9 +754,7 @@ impl LoweredMatcher {
     /// past its entry. Where its labels went to W's matcher, they are W's candidates.
     fn unlabelled_candidates<'a>(&'a self, view: &'a TapeDoc) -> impl Iterator<Item = u32> + 'a {
         let entry = Entry::of(&self.program);
-        (0..view.transducer_len() as u32)
-            .filter(move |&node| self.domain.admits_kind(view.transducer_kind(node)))
-            .filter(move |&node| entry.admits(view, node))
+        self.domain.admitted(view).filter(move |&node| entry.admits(view, node))
     }
 
     /// A label's set on each tape of the batch.
@@ -2350,7 +2366,7 @@ fn write_census(file: &std::sync::Mutex<std::fs::File>, level: &[(&LoweredMatche
             let tape = &tapes[*at];
             starts += match domain {
                 None | Some(Domain::All) => tape.transducer_len(),
-                Some(domain @ (Domain::Kinds(_) | Domain::Within(..))) => (0..tape.transducer_len() as u32).filter(|&node| domain.admits_kind(tape.transducer_kind(node))).count(),
+                Some(domain @ (Domain::Kinds(_) | Domain::Within(..))) => domain.kind_nodes(tape).map_or(tape.transducer_len(), |nodes| nodes.len()),
                 Some(Domain::Label(of)) => sets[*at].get(usize::from(of - LABEL_BASE)).map_or(0, |bits| bits.iter().map(|word| word.count_ones() as usize).sum()),
             };
         }
@@ -2446,8 +2462,8 @@ fn sweep_programs<'a>(levels: &[Vec<(&'a LoweredMatcher, u16)>], tape: &TapeDoc)
         .filter_map(|&(clause, id)| match clause.labels.def(id) {
             Label::Roots(program, starts) | Label::Targets(program, starts) if Micro::of(program).is_none() => {
                 let entry = Entry::of(program);
-                let size = (0..tape.transducer_len() as u32)
-                    .filter(|&node| starts.admits_kind(tape.transducer_kind(node)))
+                let size = starts
+                    .admitted(tape)
                     .filter(|&node| entry.admits(tape, node))
                     .map(|node| {
                         let span = tape.transducer_span(node);
@@ -2948,10 +2964,10 @@ fn walked_with(label: &Label, walk: &Micro, texts: &[Vector<u64>], tape: &TapeDo
 
 /// The nodes of `tape` in `domain`, in preorder.
 pub fn domain<'a>(domain: &'a Domain, tape: &'a TapeDoc, sets: &'a [Vector<u64>]) -> impl Iterator<Item = u32> + 'a {
-    (0..tape.transducer_len() as u32).filter(move |&node| match domain {
-        Domain::All => true,
-        Domain::Kinds(_) | Domain::Within(..) => domain.admits_kind(tape.transducer_kind(node)),
+    // A kind domain's nodes found from the codes (`Domain::kind_nodes`); a label's from its set.
+    domain.admitted(tape).filter(move |&node| match domain {
         Domain::Label(label) => has(sets, *label, node),
+        _ => true,
     })
 }
 

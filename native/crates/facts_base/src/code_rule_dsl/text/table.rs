@@ -350,7 +350,7 @@ impl Replacer {
 /// The most states a capture group's program holds (its scratch is a group's, about 32 bytes a state).
 pub const GROUP_MAX_STATES: usize = 2048;
 
-/// A regex's capture group on the device (`rx_group`, decision 0668): the regex's Thompson NFA, the very one
+/// A regex's capture group on the device (`rx_group`, decision 0688): the regex's Thompson NFA, the very one
 /// `regex_automata` compiles for Rust's `regex` (whose captures the CPU reads), as a program the device's Pike VM
 /// walks (`rx_group_range` in `join_stages.uglykl`), as `regex_automata`'s `PikeVM` walks it: leftmost-first, its
 /// threads in priority order. `bytes`: a header of eight words (states, the group's start slot, the start state, the

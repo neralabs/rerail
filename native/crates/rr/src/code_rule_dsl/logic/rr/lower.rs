@@ -593,7 +593,7 @@ pub fn holds_helper(name: &str, stems: &[&str]) -> bool {
 /// The first 128 bits of `bytes`' SHA-256, in hex: a helper's name's digest (decision 0639, Collisions 1).
 fn name_digest(bytes: &[u8]) -> String {
     use sha2::Digest;
-    sha2::Sha256::digest(bytes)[..16].iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(&sha2::Sha256::digest(bytes)[..16])
 }
 
 /// A module's own digest, as its walk wrote it: its rules (each head and template), its declarations, its header's
@@ -949,7 +949,11 @@ impl Given {
             })
             .collect();
         let inputs = F::input_names(p).into_iter().filter(|r| !helpers.contains(r)).collect();
-        Given { decls, inputs, natives: F::natives(p), kindsets: F::kindsets(p), lattice: F::lattice(p), tapes: F::tapes(p), qualifiers: F::qualifiers(p) }
+        // A helper is the module's own, numbered by its walk: an includer's helper of the same name is another, whose
+        // qualifiers `unseed` would take for the include's (`misc-seen`'s `rr_cover4` lost its `no_inline` to
+        // `version`'s).
+        let qualifiers = F::qualifiers(p).into_iter().filter(|(r, _)| !helpers.contains(r)).collect();
+        Given { decls, inputs, natives: F::natives(p), kindsets: F::kindsets(p), lattice: F::lattice(p), tapes: F::tapes(p), qualifiers }
     }
 }
 

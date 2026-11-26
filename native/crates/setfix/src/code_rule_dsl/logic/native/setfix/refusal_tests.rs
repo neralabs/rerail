@@ -39,6 +39,49 @@ fn a_refused_seed_reads_the_relations_it_was_parsed_with() {
     assert!(!Arc::ptr_eq(ix, &unindexed), "an index made, not the device's unindexed one");
 }
 
+/// A refused seed's count over an input gets its index too, its keys in that index's column order (t50 step 9). Only
+/// its atoms did: a count kept the device's unindexed probe, which finds no rows, so every count was 0 (on Metal,
+/// `up_argc`'s arguments counted 0, and the bench gave 829 and 711 rows for 463).
+#[test]
+fn a_refused_seeds_count_reads_its_inputs_index() {
+    let path = crate::code_rule_dsl::fixtures::temp();
+    drop(crate::content_store::ContentStore::open(&path).unwrap());
+    let db = Connection::open(&path).unwrap();
+    crate::code_rule_dsl::logic::native::register(&db).unwrap();
+    hold_rows(&db, "t", vec![b'i', b'i'], rerail_blocks::vector![1, 10, 2, 20], 2);
+    hold_rows(&db, "r", vec![b'i', b'i'], rerail_blocks::vector![1, 10, 1, 10, 2, 20, 2, 21], 4);
+    let r_rel = on(&db).derived.lock().get("r").cloned().expect("r held");
+    // Another join made `r`'s index by its columns in the other order first: a probe reads its key in that order.
+    let first = r_rel.index(&[1, 0]);
+    let (t, r) = (format!("r:{}", hex("t")), format!("r:{}", hex("r")));
+    let spec = JoinSpec::parse(&format!("pos {t} v0 v1\ncount {r} v0 v1 v2\nhead v0 v2")).unwrap().encode();
+    let shared = symbols(&db).unwrap();
+    let mut syms = Interner::for_loading(&shared);
+    let mut j = join_rule_with(&db, &spec, &mut syms, false).unwrap();
+    j.indexed();
+    let store = Store { rels: Vec::new(), syms: shared };
+    let Step::Scalar { src: src @ Src::In(rel, ix), keys, kind: ScalarKind::Count, .. } = &j.steps[1] else { panic!("a count of an input") };
+    let (rel, ix) = j.src_in(rel, ix);
+    assert!(Arc::ptr_eq(rel, &r_rel));
+    assert!(Arc::ptr_eq(ix, &first), "the count has the relation's index of its key");
+    assert_eq!(keys.iter().map(|&(c, _)| c).collect::<Vec<_>>(), ix.cols, "its keys in the index's column order");
+    // Each of `t`'s rows' counts in `r`, read through that index as the step reads it.
+    for (key, want) in [([1i64, 10], 2usize), ([2, 20], 1)] {
+        let mut probe = [0i64; 2];
+        for (at, &(c, _)) in keys.iter().enumerate() {
+            probe[at] = key[c];
+        }
+        let (rows, cands) = cands::candidates(&j, src, &store, &probe, keys, &mut [0; runs::HINTS], &mut LastProbe::default(), 0, None, false);
+        let mut n = 0;
+        cands.any(|id| {
+            let row = rows.row(id);
+            n += usize::from(row.at(0) == key[0] && row.at(1) == key[1]);
+            false
+        });
+        assert_eq!(n, want, "the count of {key:?}");
+    }
+}
+
 /// An aggregate's input gets its index too: left with the device's unindexed one (whose `get` holds no rows), a
 /// refused stratum's `min` over it found nothing, and its head lost every row of a chunk (t50 step 9, Metal at 512 MB:
 /// `rf_dec_code`, empty in the chunks whose device run was refused).

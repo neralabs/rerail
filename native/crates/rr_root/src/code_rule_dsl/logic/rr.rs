@@ -627,9 +627,32 @@ impl Library {
 
     /// The modules a program whose library files are `files` reads: those all of whose files it includes, in order,
     /// with their keys.
+    /// Both lists spelled once (`one_spelling`): a pack's table beside the library is `lib/../packs/…` as phase 0
+    /// plans it and `packs/…` in a run's canonical list, and spelled two ways it was in no program's scope.
     pub fn scope(&self, files: &[PathBuf]) -> (Vec<&lower::Module>, Vec<crate::content_store::HashKey>) {
+        let files: BTreeSet<PathBuf> = files.iter().map(|f| one_spelling(f)).collect();
         self.modules.iter().zip(&self.files).zip(&self.keys).filter(|((_, fs), _)| fs.iter().all(|f| files.contains(f))).map(|((m, _), k)| (m, *k)).unzip()
     }
+}
+
+/// `path` spelled once: its `.` and `..` taken out by its text, as the library's directory is canonical and only an
+/// include's own `..` is left (`lib/../packs/…` is `packs/…`). A relative path is as written.
+pub fn one_spelling(path: &Path) -> PathBuf {
+    use std::path::Component;
+    if !path.is_absolute() || !path.components().any(|c| matches!(c, Component::CurDir | Component::ParentDir)) {
+        return path.to_path_buf();
+    }
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// The library files `paths` (canonical, includes first, as `Modules::files` lists them) as one program, lowered
@@ -722,8 +745,11 @@ fn declared_in(statements: &Statements) -> impl Iterator<Item = (String, bool)> 
 /// file declaring each and whether it is extensible.
 fn closed_heads(file: &str, statements: &Statements, open: &std::collections::HashMap<String, (&Path, bool)>) -> Result<(), Error> {
     let own: BTreeSet<String> = declared_in(statements).map(|(n, _)| n).collect();
+    // A relation `core.rerail` declares that one library file derives (`DERIVED_BY`, decision 0483:
+    // `python/references.rerail`'s `reference_edge`) is that file's to derive, as `check_names` allows it.
+    let derives = |h: &str| DERIVED_BY.iter().any(|(rel, by)| *rel == h && library().join(by).canonical().is_ok_and(|by| by == Path::new(file)));
     for s in statements {
-        for h in s.heads().into_iter().filter(|h| !own.contains(*h)) {
+        for h in s.heads().into_iter().filter(|h| !own.contains(*h) && !derives(h)) {
             if let Some((home, false)) = open.get(h) {
                 return Err(Error::Syntax(format!(
                     "{file}:{}: `{h}` is declared in {}, and not `extensible`: a file that includes it adds no rules or facts to it (decision 0263)",
@@ -759,7 +785,8 @@ pub fn library_modules_planned(paths: &[PathBuf]) -> Result<(Vec<lower::Module>,
     let mut keys = Vec::with_capacity(plan.len());
     for m in &plan {
         modules.push(m.module()?);
-        files.push(m.files.lines().map(PathBuf::from).collect());
+        // Spelled once, as `Library::scope` compares them.
+        files.push(m.files.lines().map(|f| one_spelling(Path::new(f))).collect());
         keys.push(planned_key(&m.key).ok_or_else(|| Error::Syntax(format!("{}: no module key", m.key)))?);
     }
     Ok((modules, files, keys))
@@ -901,7 +928,7 @@ pub fn interface_digest(path: &Path) -> Option<String> {
         h.update((s.text().len() as u64).to_le_bytes());
         h.update(s.text().as_bytes());
     }
-    Some(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+    Some(rerail_prof::code_rule_dsl::prof::lower_hex(&h.finalize()[..]))
 }
 pub const LOWERED: &str = "p0_module_lowered";
 
@@ -940,7 +967,7 @@ pub fn planned_key(key: &str) -> Option<crate::content_store::HashKey> {
 
 fn image_digest(bytes: &[u8]) -> String {
     use sha2::Digest as _;
-    sha2::Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(&sha2::Sha256::digest(bytes)[..])
 }
 
 /// The module of plan key `key`, with its image's digest, as this process made or read it for the store the run
@@ -1082,23 +1109,10 @@ pub fn planned_modules_held(keys: &[&str]) -> Vec<bool> {
     held
 }
 
-/// Phase 0's answer to a module's lowering (`p0_lower_req`): the module of plan key `key`, whose files are `files`
-/// (paths, one a line) and whose scope's keys are `scope` (comma-separated), lowered against its scope's images and
-/// kept under its key; or found held by the process or the store. Its image's digest.
-///
-/// Answered inside the run's waves, so it runs no statement (decision 0104: SQL only before the first wave, writes
-/// behind the run): a module the store keeps is read in its segment, where the run's read before its first wave
-/// found it (`images_ahead`), and a module neither the process nor the store holds is lowered, its image kept behind
-/// the run. Its scope's modules rank below it in the same wave's requests, answered first, so they are held.
-pub fn lower_planned_module(key: &str, files: &str, scope: &str, reached: &str) -> Result<String, Error> {
-    if let Some((_, digest)) = held_or_ahead(key) {
-        return Ok(digest);
-    }
-    let k = planned_key(key).ok_or_else(|| Error::Syntax(format!("{key}: no module key")))?;
-    let _s = crate::code_rule_dsl::logic::profile::span(|| "a module lowered for phase 0's plan".to_owned());
-    let scope: Vec<lower::Module> = scope.split(',').filter(|s| !s.is_empty()).map(|s| held_or_ahead(s).map(|(m, _)| m).ok_or_else(|| Error::Syntax(format!("module {key}: its scope's module {s} is not lowered")))).collect::<Result<_, _>>()?;
-    // Each file adds to no relation of its scope's files but their `extensible` ones (decision 0263); files that include
-    // each other are one module, and write each other's relations.
+/// The statements of a module's files (`files`, paths one a line), their includes left out, each file checked to add to
+/// no relation of the files its scope reaches (`reached`, one a line) but their `extensible` ones (decision 0263);
+/// files that include each other are one module, and write each other's relations. `lower_planned_module`'s.
+pub fn module_statements(files: &str, reached: &str) -> Result<Statements, Error> {
     let mut open = std::collections::HashMap::new();
     let reached: Vec<(PathBuf, Statements)> = reached.lines().filter(|f| !f.is_empty()).map(|f| Ok((PathBuf::from(f), read(Path::new(f))?.0))).collect::<Result<_, Error>>()?;
     for (path, statements) in &reached {
@@ -1112,6 +1126,28 @@ pub fn lower_planned_module(key: &str, files: &str, scope: &str, reached: &str) 
         closed_heads(f, &statements, &open)?;
         own.extend(statements.into_iter().filter(|s| !is_include(s)));
     }
+    Ok(own)
+}
+
+/// Phase 0's answer to a module's lowering (`p0_lower_req`): the module of plan key `key`, whose files are `files`
+/// (paths, one a line) and whose scope's keys are `scope` (comma-separated), lowered against its scope's images and
+/// kept under its key; or found held by the process or the store. Its image's digest.
+///
+/// Answered inside the run's waves, so it runs no statement (decision 0104: SQL only before the first wave, writes
+/// behind the run): a module the store keeps is read in its segment, where the run's read before its first wave
+/// found it (`images_ahead`), and a module neither the process nor the store holds is lowered, its image kept behind
+/// the run. Its scope's modules rank below it in the same wave's requests, answered first, so they are held.
+pub fn lower_planned_module(key: &str, files: &str, scope: &str, reached: &str) -> Result<String, Error> {
+    if let Some((_, digest)) = held_or_ahead(key) {
+        return Ok(digest);
+    }
+    let k = planned_key(key).ok_or_else(|| Error::Syntax(format!("{key}: no module key")))?;
+    if std::env::var_os("RERAIL_PHASE0_TRACE").is_some() {
+        eprintln!("rerail: phase 0 lowers module {key}: {}", files.lines().collect::<Vec<_>>().join(", "));
+    }
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "a module lowered for phase 0's plan".to_owned());
+    let scope: Vec<lower::Module> = scope.split(',').filter(|s| !s.is_empty()).map(|s| held_or_ahead(s).map(|(m, _)| m).ok_or_else(|| Error::Syntax(format!("module {key}: its scope's module {s} is not lowered")))).collect::<Result<_, _>>()?;
+    let own = module_statements(files, reached)?;
     let refs: Vec<&lower::Module> = scope.iter().collect();
     let m = lower::lower_module_in_written(own, &refs).map_err(|e| match e {
         Error::Syntax(m) => Error::Syntax(format!("{}: {m}", files.lines().next().unwrap_or_default())),
@@ -1740,9 +1776,13 @@ fn resolve_shared(statements: Statements) -> Result<(SharedFiles, Statements, Ve
     // The plan holds every file the text reads, each in one module.
     let planned: BTreeSet<&Path> = plan.iter().flat_map(|m| m.files.lines().map(Path::new)).collect();
     if let Some((path, digest, _)) = files.iter().find(|(p, _, _)| !planned.contains(p.as_path())) {
-        let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
-        let modules: Vec<&String> = g.plan.keys().collect();
-        return Err(Error::Syntax(format!("{}: in no module of phase 0's plan (decision 0639 §1): its digest {hex}, the plan's modules {modules:?}", path.display())));
+        let hex: String = rerail_prof::code_rule_dsl::prof::lower_hex(&digest[..]);
+        let modules: Vec<String> = g.plan.iter().map(|(name, m)| format!("{name} (rank {})", m.rank)).collect();
+        return Err(Error::Syntax(format!(
+            "{}: in no module of phase 0's plan (decision 0639 §1): its digest {hex}, the plan's modules {modules:?}, their files {planned:?}, the graph's digests of {:?}",
+            path.display(),
+            g.digests.keys().collect::<Vec<_>>()
+        )));
     }
     Ok((files, own, plan))
 }
@@ -1772,7 +1812,7 @@ impl PlannedModule {
 /// Graph `g`'s modules in link order (decision 0639 §1: by rank, then by name), each as its lowering request names it.
 fn plan_of(g: &super::plan::corpus::phase0::Graph) -> Result<Vec<PlannedModule>, Error> {
     use super::plan::corpus::phase0::PlanModule;
-    let hex = |d: &[u8; 32]| d.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let hex = |d: &[u8; 32]| rerail_prof::code_rule_dsl::prof::lower_hex(&d[..]);
     // Each digest's files, by path: a module's name lists its files' digests.
     let mut at: std::collections::BTreeMap<String, Vec<&Path>> = std::collections::BTreeMap::new();
     for (p, d) in &g.digests {
@@ -1916,7 +1956,7 @@ pub(in crate::code_rule_dsl) fn includes_and_phases(src: &str) -> Result<(Vec<(i
     let mut names = Vec::new();
     for st in &statements {
         if let Some(S::Include(name)) = st.what() {
-            names.push((st.start() as i64, name));
+            names.push((st.start() as i64, include_switched(&name)));
         }
     }
     Ok((names, t_shape(&statements), phases_named(&statements)))
@@ -2024,7 +2064,7 @@ impl LibraryFile {
     #[allow(dead_code)]
     pub fn fact(&self) -> Option<String> {
         let hash = self.sha256?;
-        let hex = hash.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let hex = rerail_prof::code_rule_dsl::prof::lower_hex(&hash[..]);
         Some(format!("library_file({}, \"sha256:{hex}\").", quote(&self.path.to_string_lossy())))
     }
 }
@@ -2038,7 +2078,25 @@ impl LibraryFile {
 /// The relations `core.rerail` declares for libraries to derive for the engine to read: the documents they load (t21 E2).
 pub const LIBRARY_DERIVED: [&str; 1] = ["load"];
 /// The relations `core.rerail` declares that one library file derives, and that file (decision 0483: the reference graph).
-pub const DERIVED_BY: [(&str, &str); 2] = [("reference_edge", "python/references.rerail"), ("reference_open", "python/references.rerail")];
+/// `python/references_w.rerail` derives them from W's Rust graph instead, which the engine binds (`RERAIL_REFERENCES`).
+pub const DERIVED_BY: [(&str, &str); 4] = [
+    ("reference_edge", "python/references.rerail"),
+    ("reference_open", "python/references.rerail"),
+    ("reference_edge", REFERENCES_W),
+    ("reference_open", REFERENCES_W),
+];
+
+/// The library file whose `reference_edge` and `reference_open` are W's Rust graph (`corpus::w_references`).
+pub const REFERENCES_W: &str = "python/references_w.rerail";
+
+/// An include's name as the run reads it: `python/references.rerail` is `REFERENCES_W` where `RERAIL_REFERENCES=rust`
+/// (the reference graph made by W's Rust, not the rules; for comparing the two on one program), else itself.
+pub(in crate::code_rule_dsl) fn include_switched(name: &str) -> String {
+    if name == "python/references.rerail" && std::env::var("RERAIL_REFERENCES").is_ok_and(|v| v == "rust") {
+        return REFERENCES_W.to_owned();
+    }
+    name.to_owned()
+}
 /// The library's programs the engine adds to a run itself (decision 0076's import components).
 const ENGINE_FILES: [&str; 1] = ["components.rerail"];
 
@@ -2607,7 +2665,7 @@ fn t_shape(statements: &Statements) -> bool {
 
 /// Each `#include`'s name and line, in order.
 fn include_names(statements: &Statements) -> Vec<(String, usize)> {
-    statements.iter().filter_map(|s| if let Some(S::Include(name)) = s.what() { Some((name.to_owned(), s.line())) } else { None }).collect()
+    statements.iter().filter_map(|s| if let Some(S::Include(name)) = s.what() { Some((include_switched(&name), s.line())) } else { None }).collect()
 }
 
 /// `path` and what it includes, each once (`seen`), includes first, added to `out`; every library file read or

@@ -148,25 +148,29 @@ pub fn build<T: Tape + ?Sized>(t: &T, source: &[u8], digest: u64, codes: &CodeSe
     }
     let want = want.closed();
     let blocks = n.div_ceil(BLOCK as usize);
-    let leaf = |i: usize| t.subtree_end(i) == i + 1;
-    let is_named = |i: usize| bit(named, t.code(i));
-    let leaves: Vec<u32> = (0..n).filter(|&i| leaf(i)).map(|i| i as u32).collect();
+    // One pass over the tape: each node's code, the leaves, and each code's count (a code's slot, not a map's).
+    let code: Vec<u32> = (0..n).map(|i| t.code(i)).collect();
+    let is_named = |i: usize| bit(named, code[i]);
+    let leaves: Vec<u32> = (0..n).filter(|&i| t.subtree_end(i) == i + 1).map(|i| i as u32).collect();
+    let mut count = vec![0u32; code.iter().max().map_or(0, |&c| c as usize + 1)];
+    code.iter().for_each(|&c| count[c as usize] += 1);
+    // The codes of the document's nodes, ascending, with their counts.
+    let counted = || count.iter().enumerate().filter(|&(_, &x)| x > 0).map(|(c, &x)| (c as u32, x));
     let mut sections: Vec<(Kind, u32, Vec<u8>)> = Vec::new();
     let mut terms_count = 0u32;
     if want.has(Kind::Leaves) {
         let mut s = head([blocks as u32, (16 + blocks * 32) as u32, 0, 0]);
+        let mut words = vec![[0u64; 4]; blocks];
+        for &i in &leaves {
+            let i = i as usize;
+            words[i / BLOCK as usize][(i % 256) / 64] |= 1 << (i % 64);
+        }
         let mut bases = Vec::with_capacity(blocks + 1);
         let mut before = 0u32;
-        for b in 0..blocks {
+        for w in &words {
             bases.push(before);
-            let mut words = [0u64; 4];
-            for i in b * BLOCK as usize..((b + 1) * BLOCK as usize).min(n) {
-                if leaf(i) {
-                    words[(i % 256) / 64] |= 1 << (i % 64);
-                    before += 1;
-                }
-            }
-            words.iter().for_each(|w| s.extend_from_slice(&w.to_le_bytes()));
+            before += w.iter().map(|x| x.count_ones()).sum::<u32>();
+            w.iter().for_each(|x| s.extend_from_slice(&x.to_le_bytes()));
         }
         bases.push(before);
         bases.iter().for_each(|x| s.extend_from_slice(&x.to_le_bytes()));
@@ -174,7 +178,7 @@ pub fn build<T: Tape + ?Sized>(t: &T, source: &[u8], digest: u64, codes: &CodeSe
     }
     if want.has(Kind::Names) {
         // Each leaf's text, by its first occurrence; then numbered by count, the most frequent first (ties by first).
-        let mut first: std::collections::HashMap<&[u8], u32> = std::collections::HashMap::new();
+        let mut first: rustc_hash::FxHashMap<&[u8], u32> = rustc_hash::FxHashMap::default();
         let mut terms: Vec<(u32, u32, u32)> = Vec::new(); // (count, start, len) by first occurrence
         let mut of_leaf = Vec::with_capacity(leaves.len());
         for &i in &leaves {
@@ -189,7 +193,8 @@ pub fn build<T: Tape + ?Sized>(t: &T, source: &[u8], digest: u64, codes: &CodeSe
             of_leaf.push(k);
         }
         let mut order: Vec<u32> = (0..terms.len() as u32).collect();
-        order.sort_by_key(|&k| (std::cmp::Reverse(terms[k as usize].0), k));
+        // Keys end in the term's own number, so no two are equal: unstable sorts give the stable order.
+        order.sort_unstable_by_key(|&k| (std::cmp::Reverse(terms[k as usize].0), k));
         let mut number = vec![0u32; terms.len()];
         order.iter().enumerate().for_each(|(r, &k)| number[k as usize] = r as u32);
         terms_count = terms.len() as u32;
@@ -221,7 +226,7 @@ pub fn build<T: Tape + ?Sized>(t: &T, source: &[u8], digest: u64, codes: &CodeSe
             s.extend_from_slice(&terms[k as usize].2.to_le_bytes());
         }
         let mut by_hash: Vec<u32> = (0..order.len() as u32).collect();
-        by_hash.sort_by_key(|&r| (hashes[r as usize], r));
+        by_hash.sort_unstable_by_key(|&r| (hashes[r as usize], r));
         by_hash.iter().for_each(|r| s.extend_from_slice(&r.to_le_bytes()));
         sections.push((Kind::Vocab, 0, s));
     }
@@ -239,7 +244,7 @@ pub fn build<T: Tape + ?Sized>(t: &T, source: &[u8], digest: u64, codes: &CodeSe
                         comments_before.push(q);
                     }
                     k += 1;
-                    q += u32::from(bit(&codes.comments, t.code(c)));
+                    q += u32::from(bit(&codes.comments, code[c]));
                 }
                 c = t.subtree_end(c);
             }
@@ -251,17 +256,11 @@ pub fn build<T: Tape + ?Sized>(t: &T, source: &[u8], digest: u64, codes: &CodeSe
         });
         sections.push((Kind::Siblings, 0, s));
     }
-    let counts = || {
-        let mut m = std::collections::BTreeMap::<u32, u32>::new();
-        (0..n).for_each(|i| *m.entry(t.code(i)).or_default() += 1);
-        m
-    };
     if want.has(Kind::Counts) {
-        let m = counts();
         // The named nodes under a parent that is not: a projection of the named leaves their subtrees out.
         let strays = (0..n).filter(|&p| !is_named(p)).map(|p| crate::tape::children(t, p).filter(|&c| is_named(c)).count() as u32).sum();
-        let mut s = head([m.len() as u32, strays, 0, 0]);
-        m.iter().for_each(|(c, x)| {
+        let mut s = head([counted().count() as u32, strays, 0, 0]);
+        counted().for_each(|(c, x)| {
             s.extend_from_slice(&c.to_le_bytes());
             s.extend_from_slice(&x.to_le_bytes());
         });
@@ -269,16 +268,18 @@ pub fn build<T: Tape + ?Sized>(t: &T, source: &[u8], digest: u64, codes: &CodeSe
     }
     if want.has(Kind::Rare) {
         let limit = rare_limit(n);
-        let rare: Vec<(u32, u32)> = counts().into_iter().filter(|&(_, x)| x <= limit).collect();
-        let mut at = std::collections::HashMap::new();
+        let rare: Vec<(u32, u32)> = counted().filter(|&(_, x)| x <= limit).collect();
+        // Each rare code's next slot among the nodes; `NONE` a code that is not rare.
+        let mut at = vec![NONE; count.len()];
         let mut start = 0u32;
         for &(c, x) in &rare {
-            at.insert(c, start);
+            at[c as usize] = start;
             start += x;
         }
         let mut nodes = vec![0u32; start as usize];
-        for i in 0..n {
-            if let Some(a) = at.get_mut(&t.code(i)) {
+        for (i, &c) in code.iter().enumerate() {
+            let a = &mut at[c as usize];
+            if *a != NONE {
                 nodes[*a as usize] = i as u32;
                 *a += 1;
             }
@@ -401,6 +402,16 @@ impl<'a> AuxIndex<'a> {
             }
         }
         Ok(AuxIndex { b, at })
+    }
+
+    /// Its sections' offsets, by kind, as `read` found them.
+    pub(crate) fn sections_at(&self) -> [u32; 9] {
+        self.at
+    }
+    /// The index `b` holds whose sections lie at `at` (`sections_at` of a `read` of these very bytes): nothing read
+    /// again.
+    pub(crate) fn at(b: &'a [u8], at: [u32; 9]) -> Self {
+        AuxIndex { b, at }
     }
 
     pub fn bytes(&self) -> &'a [u8] {

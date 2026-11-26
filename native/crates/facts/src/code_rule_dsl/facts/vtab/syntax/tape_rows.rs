@@ -304,25 +304,30 @@ impl<R: TapeRows> Source for RowsView<R> {
         if !self.rows.keyed(column) {
             return None;
         }
-        let firsts = self.firsts();
         let mut rows = Vector::new();
-        for &v in values {
-            self.rows.find(&self.batch, column, v, &mut |doc, x| {
-                let per = self.per(doc);
-                let at = self.at(doc);
-                let rank = match per.rows {
-                    Rows::Ranked { .. } => per.rows.rank(at.p(), x),
-                    Rows::Doc => (x == 0).then_some(0),
-                    Rows::None => None,
-                };
-                if let Some(k) = rank {
-                    rows.push(firsts.at(doc) + k as usize);
-                }
-            });
-        }
+        self.found(column, values, &mut |r| rows.push(r));
         rows.sort_unstable();
         rows.dedup();
         Some(rows)
+    }
+    /// `lookup`'s rows in its order, sorted in the probe's frame: a list made a probe was 2.07 M on cold PostHog.
+    fn lookup_each(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) -> bool {
+        if !self.rows.keyed(column) {
+            return false;
+        }
+        rerail_blocks::frame::op(|fr| {
+            let mut rows = fr.vec::<u64>();
+            self.found(column, values, &mut |r| rows.push(r as u64));
+            rows.sort_unstable();
+            let mut last = None;
+            for &r in rows.iter() {
+                if last != Some(r) {
+                    each(r as usize);
+                    last = Some(r);
+                }
+            }
+        });
+        true
     }
 }
 
@@ -735,7 +740,13 @@ impl TapeRows for DocRow {
     /// By its key, its document; by its path or module, the documents the batch's interned paths and modules name.
     fn find(&self, batch: &Batch, column: usize, value: i64, each: &mut dyn FnMut(usize, u32)) {
         let keys = match column {
-            0 => u32::try_from(value).ok().into_iter().collect(),
+            // By its key: the one document, no list made (a list of the key a probe was 2.06 M on cold PostHog).
+            0 => {
+                if let Ok(k) = u32::try_from(value) && let Some(doc) = batch.docs.position(k) {
+                    each(doc, 0);
+                }
+                return;
+            }
             1 => batch.keys_of_paths(&[value]).unwrap_or_default(),
             _ => batch.keys_of_modules(&[value]).unwrap_or_default(),
         };
@@ -750,9 +761,9 @@ impl TapeRows for DocRow {
     }
 }
 
-/// `visit_index(n, i)`: node `n`'s place in the language's visit order, from 0 per document (`tree::visit_order`:
-/// CPython's `ast` order in a Python document, the tape's elsewhere), of every document with a grammar, a guest's too
-/// (decision 0597). A row a node (`Item::Node`); the order is a walk of the tape that the tape holds no index of: each
+/// `visit_index(n, i)`: node `n`'s key in the language's visit order, by granule run (`tree::keys_by_run`), in
+/// `tree::visit_order`'s order (CPython's `ast` order in a Python document, the tape's elsewhere), of every document
+/// with a grammar, a guest's too (decision 0597). A row a node (`Item::Node`); the order is a walk of the tape that the tape holds no index of: each
 /// node's place is kept, 4 bytes a node of the projection, made on the document's first read (`// copy: derived`).
 /// Made as rows it was 13.7 MB of each chunk's block of sources at the M3's 300-file peak (ab200), `n` and `i` a row
 /// each.
@@ -765,10 +776,15 @@ impl VisitIndex {
             let dialect = at.batch.dialects.get(p.tag()).expect("a document with rows has a grammar");
             let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python) == Some(p.tag());
             let n = p.len() as usize;
-            // copy: derived (each node's place in the visit order, a walk the tape holds no index of)
+            // copy: derived (each node's key in the visit order, a walk the tape holds no index of)
             Cells::build(p.block(), n.max(1), |out: &mut [u32]| {
                 out.fill(NONE);
-                super::tree::visit_order(p, dialect, python, &mut |l, i| out[l as usize] = i);
+                let mut order = Vec::with_capacity(n);
+                super::tree::visit_order(p, dialect, python, &mut |l, i| {
+                    out[l as usize] = i;
+                    order.push(l);
+                });
+                super::tree::keys_by_run(&order, |l| (p.global(l) as u32) >> rerail_clif::ids::INDEX_BITS, out);
                 n.max(1)
             })
             .expect("a projection's block holds a view's places")
@@ -863,5 +879,26 @@ impl TapeRows for TreeDigest {
     fn row(&self, at: &At, _: &(), _: u32, k: u32, out: &mut [i64]) {
         out[0] = at.p().global(k);
         out[1] = i64::from(Self::atoms(at)[k as usize]);
+    }
+}
+
+impl<R: TapeRows> RowsView<R> {
+    /// The rows `find` gives of `values` on `column` (a keyed one), each given to `each`, unsorted and maybe twice.
+    fn found(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) {
+        let firsts = self.firsts();
+        for &v in values {
+            self.rows.find(&self.batch, column, v, &mut |doc, x| {
+                let per = self.per(doc);
+                let at = self.at(doc);
+                let rank = match per.rows {
+                    Rows::Ranked { .. } => per.rows.rank(at.p(), x),
+                    Rows::Doc => (x == 0).then_some(0),
+                    Rows::None => None,
+                };
+                if let Some(k) = rank {
+                    each(firsts.at(doc) + k as usize);
+                }
+            });
+        }
     }
 }

@@ -172,6 +172,15 @@ impl Slab {
     fn room(&self, bytes: usize) -> Option<usize> {
         self.block.try_alloc(bytes, ALIGN)
     }
+
+    /// A room's (`tape_room`'s, `bytes` long at `at`) tail past its first `keep` bytes given back to the slab, where no
+    /// room came after it: whether it was. Its taker reads the tail no more; it is zeroed first, as the block's
+    /// next room takes its memory as zero.
+    pub fn give_back(&self, at: usize, bytes: usize, keep: usize) -> bool {
+        // SAFETY: `at + keep..at + bytes` is the taker's room, inside the slab's mapping, read by no one else.
+        unsafe { std::ptr::write_bytes(self.host().add(at + keep), 0, bytes - keep) };
+        self.block.shrink_last(at, bytes, keep)
+    }
 }
 
 /// A resident document: its slab (held: a lease) and where its parts are.

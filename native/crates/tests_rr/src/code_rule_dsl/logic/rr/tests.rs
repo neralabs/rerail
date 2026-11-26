@@ -4635,6 +4635,26 @@ fn walk_rr(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// Decision 0263 against decision 0483: `python/references.rerail` derives `core.rerail`'s `reference_edge`
+/// (`DERIVED_BY`), so its module passes the check phase 0's lowering of a module makes against the files its scope
+/// reaches (`module_statements`, `lower_planned_module`'s). It was refused there, while the whole program's check
+/// (`check_names`) allowed it: a run of a program file reading the reference graph (`all`'s) failed before it began.
+/// Another file deriving it is still refused. (Ported from the hub's e292486a32.)
+#[test]
+fn a_module_derives_the_core_relation_its_file_is_named_for() {
+    let lib = super::library();
+    let path = |f: &str| lib.join(f).canonical().unwrap().to_string_lossy().into_owned();
+    let (references, core) = (path("python/references.rerail"), path("core.rerail"));
+    let checked = super::module_statements(&references, &core);
+    assert!(checked.is_ok(), "{:?}", checked.err());
+    let dir = tempfile::tempdir().unwrap();
+    let other = dir.path().join("other.rerail");
+    std::fs::write(&other, "reference_edge(a, a, \"x\") :- kind(a, \"call\").\n").unwrap();
+    let other = other.canonical().unwrap().to_string_lossy().into_owned();
+    let refused = super::module_statements(&other, &core).map(|_| ()).expect_err("another file derives no reference_edge");
+    assert!(refused.to_string().contains("`reference_edge` is declared in") && refused.to_string().contains("decision 0263"), "{refused}");
+}
+
 /// Decision 0263: a library's relations are closed. A program adds no rules or facts to a relation a library file it
 /// includes declares, unless the declaration says `extensible` (`cmp_same_ask`, a request of `python/compare.rerail`).
 #[test]
@@ -6663,13 +6683,17 @@ fn every_module_lowers_alike_against_its_scopes_headers() {
 fn every_library_file_a_pack_includes_is_a_planned_module() {
     let lib = crate::code_rule_dsl::logic::rr::library();
     let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
+    // A program that does not read is no evidence either way: named, with its error, where the tables are missed.
+    let mut unread: Vec<String> = Vec::new();
     for path in walk_rr(&lib.join("../packs/python")) {
         let Ok(src) = std::fs::read_to_string(&path) else { continue };
-        if let Ok(Some(m)) = super::modules(&src) {
-            paths.extend(m.files.into_iter().map(|(p, _, _)| p));
+        match super::modules(&src) {
+            Ok(Some(m)) => paths.extend(m.files.into_iter().map(|(p, _, _)| p)),
+            Ok(None) => {}
+            Err(e) => unread.push(format!("{}: {e}", path.display())),
         }
     }
-    assert!(paths.iter().any(|p| p.to_string_lossy().ends_with(".stdlib.rerail")), "a pack's table among the library files: {paths:?}");
+    assert!(paths.iter().any(|p| p.to_string_lossy().ends_with(".stdlib.rerail")), "a pack's table among the library files: {paths:?}\nprograms that do not read: {unread:#?}");
     let plan = super::planned_library(&paths.iter().cloned().collect::<Vec<_>>()).unwrap();
     let canonical = |p: &Path| dunce::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     let planned: BTreeSet<PathBuf> = plan.iter().flat_map(|m| m.files.lines().filter(|f| !f.is_empty()).map(|f| canonical(Path::new(f))).collect::<Vec<_>>()).collect();

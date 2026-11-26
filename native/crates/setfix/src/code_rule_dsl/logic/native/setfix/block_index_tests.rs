@@ -233,3 +233,29 @@ fn an_inputs_value_counts_and_statistics_are_in_a_block() {
     assert!(src.statistics().is_some());
     assert!(rel.measured.get().is_some_and(|m| m.facts().is_some() && m.len() == 2), "a column's statistics each, in a block");
 }
+
+/// Decision 0694 step 1: a test of a derived input by one node column reads a bit in the relation's node-keyed index,
+/// in its block, and answers as its probe; one with dead rows has none, and is probed as before.
+#[test]
+fn a_test_by_one_node_column_reads_the_blocks_node_bits() {
+    let _run = crate::code_rule_dsl::logic::profile::test_run();
+    let node = |doc: i64, l: i64| doc << 32 | l;
+    let n = 900usize;
+    let flat: Vector<i64> = (0..n as i64).flat_map(|id| [node(id % 3, 10 + id / 3 * 2), id]).collect();
+    let rel = InRel::from_flat(flat.clone(), n, vec![b'i'; 2]);
+    let ix = rel.index(&[0]);
+    let mut hint = 0;
+    for doc in 0..4 {
+        for l in 0..700 {
+            let v = node(doc, l);
+            assert_eq!(ix.node_bits_has(&rel, v, &mut hint), Some(!probed(&rel, v).is_empty()), "document {doc} node {l}");
+        }
+    }
+    let ib = rel.in_block().unwrap();
+    assert!(ib.relation().find_node_bits(0, n as u32).is_some(), "in the relation's block");
+    assert_eq!(super::run_counts().node_bits[0].load(std::sync::atomic::Ordering::Relaxed), 1);
+    let mut dead = rerail_blocks::vector![0u64; n.div_ceil(64)];
+    dead[0] = 1;
+    let rel = InRel::held(crate::code_rule_dsl::facts::rows::Rows::frozen(2, flat, n), n, vec![b'i'; 2], dead);
+    assert_eq!(rel.index(&[0]).node_bits_has(&rel, node(0, 10), &mut hint), None, "dead rows: probed as before");
+}

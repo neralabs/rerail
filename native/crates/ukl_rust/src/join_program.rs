@@ -131,7 +131,9 @@ struct ViewRow {
     entry: u64,
     tape: u64,
     lines: u64,
-    homes: [u32; 2],
+    /// Its source's place in its home (`homes[2]`): where a node's text is read (decision 0287 §2).
+    source: u64,
+    homes: [u32; 3],
     key: u32,
     rows: [u32; 27],
     view: [u32; 34],
@@ -163,7 +165,8 @@ struct PlacedDir {
     rows: u32,
     pad: u32,
 }
-const _: () = assert!(size_of::<ViewRow>() == 288 && size_of::<ViewDir>() == 168 && size_of::<PlacedDir>() == 32);
+const _: () = assert!(size_of::<ViewRow>() == 296 && size_of::<ViewDir>() == 168 && size_of::<PlacedDir>() == 32);
+const _: () = assert!(core::mem::offset_of!(ViewRow, source) == 24 && core::mem::offset_of!(ViewRow, homes) == 32 && core::mem::offset_of!(ViewRow, view) == 156);
 
 #[repr(C)]
 struct Copy {
@@ -402,8 +405,8 @@ macro_rules! rel_read {
 }
 
 /// The views' reads, as `join_stages`' `vread_dir` calls them: the node, child, field, core, line, loc_line, loc_end,
-/// loc_col, loc_docof, tape, depth and order views.
-const VIEW_READS: [usize; 12] = [52, 53, 54, 55, 56, 57, 58, 59, 60, 77, 78, 79];
+/// loc_col, loc_docof, tape, depth, order and op views.
+const VIEW_READS: [usize; 13] = [52, 53, 54, 55, 56, 57, 58, 59, 60, 77, 78, 79, 80];
 
 impl Reads {
     rel_read!(rows_len, 28, () -> u32);
@@ -413,7 +416,7 @@ impl Reads {
     rel_read!(rel_len, 32, () -> u32);
     rel_read!(rel_group, 33, (index: u32, h: u64) -> u64);
     rel_read!(rel_group_row, 34, (index: u32, q: u32) -> u32);
-    rel_read!(rel_group_mark, 84, (index: u32, q: u32) -> u32);
+    rel_read!(rel_group_mark, 85, (index: u32, q: u32) -> u32);
     rel_read!(rel_key_mix, 35, (h: u64, v: u64) -> u64);
     rel_read!(bloom_hash, 36, (key: u64) -> u64);
     rel_read!(bloom_may, 38, (h: u64) -> u32);
@@ -421,7 +424,7 @@ impl Reads {
     // Its result an address (`reads::addresses`): the symbol's bytes.
     rel_read!(atoms_at, 67, (v: u32) -> u64);
     // The `k`th atom whose slot has hash `h`'s high half and whose string is `len` bytes (decision 0666), else NONE.
-    rel_read!(atoms_find, 85, (h: u64, len: u32, k: u32) -> u32);
+    rel_read!(atoms_find, 86, (h: u64, len: u32, k: u32) -> u32);
     rel_read!(verdict_get, 68, (test: u32, v: u32) -> u32);
     rel_read!(verdict_put, 69, (test: u32, v: u32, verdict: u32) -> u32);
     // Their results an address, its low two bits what was found.
@@ -429,8 +432,10 @@ impl Reads {
     rel_read!(text_open, 71, (f: u32, sym: u32, len: u32) -> u64);
     // Its parameter an address: the entry.
     rel_read!(cache_done, 72, (entry: u64) -> u32);
-    rel_read!(dir_doc_of_row, 80, (k: u32, r: u32, memo: u32) -> u32);
-    rel_read!(dir_doc_of_key, 81, (key: u32, memo: u32) -> u32);
+    rel_read!(dir_doc_of_row, 81, (k: u32, r: u32, memo: u32) -> u32);
+    rel_read!(dir_doc_of_key, 82, (key: u32, memo: u32) -> u32);
+    // A source's terminator's length at byte `at` (its home's address summed with the source's place).
+    rel_read!(lines_terminator_length, 90, (at: u32) -> u32);
 
     /// View read `i` (`READS`' place) of document entry `e` of directory `d`: its row `r`, column `col`.
     #[inline]
@@ -440,10 +445,18 @@ impl Reads {
         f((b as u64).wrapping_add((*e).entry), t as u64, (*e).view.as_ptr() as u64, l as u64, r, col)
     }
 
-    /// A view's walk read `i` (`child_first`, `child_next`, `number`, `up`, `end`) of node `x`.
+    /// A view's walk read `i` (`child_first`, `child_next`, `number`, `up`, `end`, `line_terminated`) of node `x`.
     #[inline]
     unsafe fn walk(self, i: usize, d: *const ViewDir, e: *const ViewRow, x: u32) -> u32 {
         let f: unsafe extern "C" fn(u64, u64, u64, u64, u32) -> u32 = core::mem::transmute(*self.0.add(i));
+        let (b, t, l) = view_parts(d, e);
+        f((b as u64).wrapping_add((*e).entry), t as u64, (*e).view.as_ptr() as u64, l as u64, x)
+    }
+
+    /// `walk`'s of a read whose answer is a span (`text_span`, `line_span`): its two ends, the first in the high half.
+    #[inline]
+    unsafe fn walk64(self, i: usize, d: *const ViewDir, e: *const ViewRow, x: u32) -> u64 {
+        let f: unsafe extern "C" fn(u64, u64, u64, u64, u32) -> u64 = core::mem::transmute(*self.0.add(i));
         let (b, t, l) = view_parts(d, e);
         f((b as u64).wrapping_add((*e).entry), t as u64, (*e).view.as_ptr() as u64, l as u64, x)
     }
@@ -469,6 +482,9 @@ const CHILD_NEXT: usize = 64;
 const NUMBER: usize = 65;
 const UP: usize = 75;
 const END: usize = 76;
+const TEXT_SPAN: usize = 87;
+const LINE_SPAN: usize = 88;
+const LINE_TERMINATED: usize = 89;
 
 // ---- Views read in place (decision 0353 step 4d). ----
 
@@ -493,7 +509,7 @@ unsafe fn vread_dir(rd: Reads, kind: u32, d: *const ViewDir, r: u32, col: u32, m
     *memo = lo;
     let e = view_rows(d).add(lo as usize);
     let i = r.wrapping_sub((*e).rows[k as usize]);
-    rd.view(VIEW_READS[(k as usize).min(11)], d, e, i, col) as i64
+    rd.view(VIEW_READS[(k as usize).min(12)], d, e, i, col) as i64
 }
 
 unsafe fn vread(rd: Reads, kind: u32, d: *const ViewDir, r: u32, col: u32, memo: &mut u32) -> i64 {
@@ -1150,6 +1166,52 @@ unsafe fn sym_text(rd: Reads, d: *const u8, v: i64, unheld: &mut bool) -> (*cons
 }
 
 /// Mode 7's test of pattern `x`'s bytes [xs, xs + lx) against subject `y`: by op 0 equal, 1 a prefix, 2 a suffix.
+/// Why a node's text is none (`node_txt`).
+enum NoText {
+    /// A node the directory does not hold (another batch's, a comment span, a match's span, no node): the stratum runs
+    /// on the host (`TEXTFN_UNHELD`).
+    Unheld,
+    /// A line's span read by the long-text twin (`rr_node_text`), which has no row of a line: no row.
+    Line,
+}
+
+/// Node `key`'s text, read where its document's source lies (`join_stages`' `node_txt`, decision 0287 §2): its document
+/// by the directory's search on its key (`dir_doc_of_key`), its numbered node (`number`), its bytes' range in its own
+/// source (`text_span`), read at the source's home. The stage's `node` view binds the directory (`Stage::v_dir`). With
+/// `lines` (`rr_node_text_any`'s), a document's `source` span or a `src_line` span (decision 0353 row 7) is its line's
+/// bytes there (`line_span`), less its terminator where it has one (`line_terminated`, `lines_terminator_length`).
+unsafe fn node_txt(rd: Reads, s: &Stage, key: i64, lines: bool) -> Result<Txt, NoText> {
+    let d = s.v_dir;
+    if key < 0 || d.is_null() || (*d).ndocs == 0 {
+        return Err(NoText::Unheld);
+    }
+    let m = rd.dir_doc_of_key(view_block(d), (*d).at, ((key as u64) >> 32) as u32, NONE);
+    if m == NONE {
+        return Err(NoText::Unheld);
+    }
+    let e = view_rows(d).add(m as usize);
+    let low = key as u64 as u32;
+    let source = view_home(d, (*e).homes[2], (*e).source);
+    let line = rd.walk64(LINE_SPAN, d, e, low);
+    if line != u64::MAX {
+        if !lines {
+            return Err(NoText::Line);
+        }
+        let (from, mut to) = ((line >> 32) as u32, line as u32);
+        if rd.walk(LINE_TERMINATED, d, e, low) != 0 {
+            to = to.wrapping_sub(rd.lines_terminator_length(view_home(d, (*e).homes[2], 0), (*e).source, to.wrapping_sub(1)));
+        }
+        return Ok(Txt::raw(source.add(from as usize), to.saturating_sub(from)));
+    }
+    let l = rd.walk(NUMBER, d, e, low);
+    if l == NONE {
+        return Err(NoText::Unheld);
+    }
+    let span = rd.walk64(TEXT_SPAN, d, e, l);
+    let (from, to) = ((span >> 32) as u32, span as u32);
+    Ok(Txt::raw(source.add(from as usize), to.saturating_sub(from)))
+}
+
 unsafe fn textop_one(op: u32, x: &Txt, xs: u32, lx: u32, y: &Txt, ly: u32) -> bool {
     let fits = if op == 0 { lx == ly } else { ly >= lx };
     fits && x.same(xs, y, if op >= 2 { ly - lx } else { 0 }, lx)
@@ -2929,12 +2991,30 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
     }
     // The regex group's thread lists (`rx_group_range`), grown to its program's states.
     let mut rx_scratch = Vec::new();
+    // A node's text (`TEXTFN_NODE_TEXT_ANY`, `TEXTFN_NODE_TEXT`): X is key 5's node's, read where its source lies.
+    let fnk = (s.agg[0] >> 16) & 255;
+    let node_text = op == 4 && (fnk == 15 || fnk == 16);
     let mut row = sg;
     while row < n {
         let r = row;
         row += groups;
         let mut unheld = false;
-        let x = st.txt_of(r, d, a, 0, s.agg[1] & 15, &mut unheld);
+        let x = if node_text {
+            match node_txt(st.rd, s, st.key_value(r, 5), fnk == 15) {
+                Ok(x) => x,
+                Err(NoText::Unheld) => {
+                    unheld = true;
+                    Txt::raw(d, 0)
+                }
+                Err(NoText::Line) => {
+                    *vv.add(r as usize) = -1;
+                    *counts.add(r as usize) = 0;
+                    continue;
+                }
+            }
+        } else {
+            st.txt_of(r, d, a, 0, s.agg[1] & 15, &mut unheld)
+        };
         if unheld {
             counter(4);
             *vv.add(r as usize) = -1;
@@ -2966,7 +3046,7 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
                 continue;
             }
         }
-        let y = st.txt_of(r, d, a, 2, (s.agg[1] >> 4) & 15, &mut unheld);
+        let y = if node_text { x } else { st.txt_of(r, d, a, 2, (s.agg[1] >> 4) & 15, &mut unheld) };
         let f = (s.agg[0] >> 16) & 255;
         let lx = x.len();
         // How the text is made, and its length.
@@ -3034,6 +3114,15 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
                 continue;
             };
             (Make::Range(from), to - from)
+        } else if f == 15 || f == 16 {
+            // A node's text whole; `rr_node_text`'s only past `text`'s inline bound (`core_rr::TEXT_INLINE`, 256 bytes):
+            // no row for a shorter one, as the host's `long_text` has none.
+            if f == 16 && lx <= 256 {
+                *vv.add(r as usize) = -1;
+                *counts.add(r as usize) = 0;
+                continue;
+            }
+            (Make::Range(0), lx)
         } else if f == 6 {
             let y = st.txt_of(r, d, a, 2, 0, &mut unheld);
             let z = st.txt_of(r, d, a, 4, 0, &mut unheld);
@@ -3727,7 +3816,7 @@ mod tests {
             ("rel_len", 32),
             ("rel_group", 33),
             ("rel_group_row", 34),
-            ("rel_group_mark", 84),
+            ("rel_group_mark", 85),
             ("rel_key_mix", 35),
             ("bloom_hash", 36),
             ("bloom_may", 38),
@@ -3743,12 +3832,13 @@ mod tests {
             ("view_tape", super::VIEW_READS[9]),
             ("view_depth", super::VIEW_READS[10]),
             ("view_order", super::VIEW_READS[11]),
+            ("view_op", super::VIEW_READS[12]),
             ("view_child_first", super::CHILD_FIRST),
             ("view_child_next", super::CHILD_NEXT),
             ("view_number", super::NUMBER),
             ("atoms_len", 66),
             ("atoms_at", 67),
-            ("atoms_find", 85),
+            ("atoms_find", 86),
             ("verdict_get", 68),
             ("verdict_put", 69),
             ("text_find", 70),
@@ -3756,8 +3846,12 @@ mod tests {
             ("cache_done", 72),
             ("view_up", super::UP),
             ("view_end", super::END),
-            ("dir_doc_of_row", 80),
-            ("dir_doc_of_key", 81),
+            ("dir_doc_of_row", 81),
+            ("dir_doc_of_key", 82),
+            ("view_text_span", super::TEXT_SPAN),
+            ("view_line_span", super::LINE_SPAN),
+            ("view_line_terminated", super::LINE_TERMINATED),
+            ("lines_terminator_length", 90),
         ];
         for (name, at) in places {
             assert_eq!(rerail_clif::reads::READS[at].name, name, "READS[{at}]");

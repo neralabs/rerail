@@ -1,5 +1,7 @@
-//! A census of the anonymous room's regions (`RERAIL_ANON_CENSUS=path`): for each region its type, bytes, the
-//! stack that asked for it, the thread, and when it went (in regions handed out since, and in time). Written to the
+//! A census of the run's rooms' regions (`RERAIL_ANON_CENSUS=path`): the threads' stacks', their large rooms' and their
+//! long-lived rooms' (`STACK`, `LARGE`, `LONG`). For each region its type, bytes, room, the stack that asked for it, the
+//! thread, and when it went (in regions handed out since, and in time). Events: `[region, thread << 3 | room << 1 |
+//! gone, bytes | site << 40]`. Written to the
 //! path at exit, the stacks as raw addresses with the image's slide, for `atos`. A measuring tool, off by default.
 
 use std::collections::HashMap;
@@ -60,6 +62,7 @@ pub(crate) struct Token {
     bytes: u64,
     seq: u64,
     thread: u64,
+    kind: u64,
     at: std::time::Instant,
 }
 
@@ -69,7 +72,7 @@ impl Drop for Token {
         let lived = c.seq.load(Relaxed).saturating_sub(self.seq).max(1);
         let us = (self.at.elapsed().as_micros() as u64).max(1);
         let mut s = c.sites.lock().unwrap_or_else(|e| e.into_inner());
-        c.events.lock().unwrap_or_else(|e| e.into_inner()).push([self.seq, thread_id() << 1 | 1, self.bytes]);
+        c.events.lock().unwrap_or_else(|e| e.into_inner()).push([self.seq, thread_id() << 3 | self.kind << 1 | 1, self.bytes]);
         if let Some(site) = s.get_mut(&self.key) {
             site.freed += 1;
             site.freed_bytes += self.bytes;
@@ -82,8 +85,13 @@ impl Drop for Token {
     }
 }
 
-/// A region of `bytes` for `name` handed out now: its token, when the census runs.
-pub(crate) fn counted(name: &'static str, bytes: usize) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
+/// The rooms a region of the census lies in (its events' `kind`).
+pub(crate) const STACK: u64 = 0;
+pub(crate) const LARGE: u64 = 1;
+pub(crate) const LONG: u64 = 3;
+
+/// A region of `bytes` for `name` handed out now from a room of `kind`: its token, when the census runs.
+pub(crate) fn counted(kind: u64, name: &'static str, bytes: usize) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
     let c = census()?;
     let mut buf = [std::ptr::null_mut::<libc::c_void>(); DEPTH];
     // SAFETY: a buffer of DEPTH frames.
@@ -99,11 +107,11 @@ pub(crate) fn counted(name: &'static str, bytes: usize) -> Option<Arc<dyn std::a
         let mut s = c.sites.lock().unwrap_or_else(|e| e.into_inner());
         let no = s.len() as u64;
         let site = s.entry(key).or_insert_with(|| Site { name, no, stack, ..Default::default() });
-        c.events.lock().unwrap_or_else(|e| e.into_inner()).push([seq, thread_id() << 1, bytes as u64 | site.no << 40]);
+        c.events.lock().unwrap_or_else(|e| e.into_inner()).push([seq, thread_id() << 3 | kind << 1, bytes as u64 | site.no << 40]);
         site.n += 1;
         site.bytes += bytes as u64;
     }
-    Some(Arc::new(Token { key, bytes: bytes as u64, seq, thread: thread_id(), at: std::time::Instant::now() }))
+    Some(Arc::new(Token { key, bytes: bytes as u64, seq, thread: thread_id(), kind, at: std::time::Instant::now() }))
 }
 
 impl Census {

@@ -126,7 +126,7 @@ fn key_parts(programs: &[&str], root: &Path, options: &serde_json::Value, typing
     if std::env::var_os("RERAIL_REUSE_TRACE").is_none() {
         return String::new();
     }
-    let short = |b: &[u8]| Sha256::digest(b).iter().take(3).map(|b| format!("{b:02x}")).collect::<String>();
+    let short = |b: &[u8]| rerail_prof::code_rule_dsl::prof::lower_hex(&Sha256::digest(b)[..3]);
     let texts: Vec<u8> = programs.iter().flat_map(|p| p.bytes()).collect();
     format!(
         "texts {}, root {} ({}), typing {}, handed down {}, switches {}, options {}",
@@ -178,7 +178,7 @@ fn graphs_line(graphs: &[Option<[u8; 32]>]) -> String {
             None => h.update([0]),
         }
     }
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(&h.finalize()[..])
 }
 
 /// The root's settings (`<root>/rerail.env`, the `env` option), as the rows the run adds (decision 0249).

@@ -201,14 +201,14 @@ up032_alt_4(n) :- !kind(n, "keyword_argument"), up032_multiline(n).
 .decl up032_alt_7(n: node)
 up032_alt_7(n) :- kind(n, "field"), F1 = n, has(n, c1, "name"), H1 = c1, precedes(n, s2),
     kind(s2, "field"), has(s2, c3, "name"), F2 = s2, value(F1, t4), value(F2, t4),
-    guest_of(n, h7), inside(h7, p8, "call"),
-    field(p8, "arguments", c9), child(c9, c10, _), kind(c10, "keyword_argument"),
-    up032_effectful(c10), field(c10, "name", c11), node(_, c11, _, _, _), KN = c11, text(H1, t12), text(KN, t12).
-up032_alt_7(n) :- kind(n, "field"), F1 = n, has(n, c14, "index"), H1 = c14, precedes(n, s15),
-    kind(s15, "field"), has(s15, c16, "index"), F2 = s15,
-    value(F1, t17), value(F2, t17), guest_of(n, h20),
-    inside(h20, p21, "call"), field(p21, "arguments", c22), child(c22, c23, _),
-    !kind(c23, "keyword_argument"), up032_effectful(c23).
+    guest_of(n, h6), inside(h6, p7, "call"), field(p7, "arguments", c8),
+    child(c8, c9, _), kind(c9, "keyword_argument"), up032_effectful(c9),
+    field(c9, "name", c10), node(_, c10, _, _, _), KN = c10, text(H1, t11), text(KN, t11).
+up032_alt_7(n) :- kind(n, "field"), F1 = n, has(n, c13, "index"), H1 = c13, precedes(n, s14),
+    kind(s14, "field"), has(s14, c15, "index"), F2 = s14,
+    value(F1, t16), value(F2, t16), guest_of(n, h18), inside(h18, p19, "call"),
+    field(p19, "arguments", c20), child(c20, c21, _), !kind(c21, "keyword_argument"),
+    up032_effectful(c21).
 
 // alt_9(n): the JSON `any`: n matches if any one of these rules does
 .decl up032_alt_9(n: node)

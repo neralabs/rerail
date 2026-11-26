@@ -35,7 +35,7 @@ pub struct GuestRows {
     unparse_of: Vector<[i64; 2]>,
 }
 
-fn hex(digest: &[u8; 32]) -> String {
+fn hex(digest: &[u8; 32]) -> super::TapeHex {
     super::tape_hex(digest)
 }
 
@@ -194,17 +194,17 @@ impl GuestRows {
 
     pub(super) fn relations(&self, atom: &dyn Fn(i64) -> i64, rel: super::Make) -> Vec<(&'static str, Relation)> {
         vec![
-            ("rr_program", rel(&["d", "file", "grammar"], &mut self.program.iter().map(|&[d, f, s]| rerail_blocks::vector![d, f, atom(s)]))),
-            ("doc_grammar", rel(&["d", "g"], &mut self.grammar.iter().map(|&[d, g]| rerail_blocks::vector![d, atom(g)]))),
-            ("tape_of", rel(&["d", "t"], &mut self.tape.iter().map(|&[d, t]| rerail_blocks::vector![d, atom(t)]))),
-            ("parsed", rel(&["s", "grammar", "root"], &mut self.parsed.iter().map(|&[s, g, r]| rerail_blocks::vector![s, atom(g), r]))),
-            ("sub_tape", rel(&["at", "grammar", "t"], &mut self.sub_tape.iter().map(|&[a, g, t]| rerail_blocks::vector![a, atom(g), atom(t)]))),
-            ("host_node", rel(&["n", "h"], &mut self.host_node.iter().map(|r| r.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()))),
-            ("guest_of", rel(&["n", "s"], &mut self.guest_of.iter().map(|r| r.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()))),
-            ("guest_place", rel(&["n", "s", "l", "c"], &mut self.guest_place.iter().map(|r| r.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()))),
-            ("parse_of", rel(&["x", "g", "t"], &mut self.parse_of.iter().map(|&[x, g, t]| rerail_blocks::vector![atom(x), atom(g), atom(t)]))),
-            ("splice_of", rel(&["t", "n", "t2", "t3"], &mut self.splice_of.iter().map(|&[t, n, t2, t3]| rerail_blocks::vector![atom(t), n, atom(t2), atom(t3)]))),
-            ("unparse_of", rel(&["t", "x"], &mut self.unparse_of.iter().map(|&[t, x]| rerail_blocks::vector![atom(t), atom(x)]))),
+            ("rr_program", rel(&["d", "file", "grammar"], &mut self.program.iter().map(|&[d, f, s]| rerail_facts_base::row![d, f, atom(s)]))),
+            ("doc_grammar", rel(&["d", "g"], &mut self.grammar.iter().map(|&[d, g]| rerail_facts_base::row![d, atom(g)]))),
+            ("tape_of", rel(&["d", "t"], &mut self.tape.iter().map(|&[d, t]| rerail_facts_base::row![d, atom(t)]))),
+            ("parsed", rel(&["s", "grammar", "root"], &mut self.parsed.iter().map(|&[s, g, r]| rerail_facts_base::row![s, atom(g), r]))),
+            ("sub_tape", rel(&["at", "grammar", "t"], &mut self.sub_tape.iter().map(|&[a, g, t]| rerail_facts_base::row![a, atom(g), atom(t)]))),
+            ("host_node", rel(&["n", "h"], &mut self.host_node.iter().map(|r| r.iter().copied().collect::<rerail_facts_base::code_rule_dsl::facts::vtab::Row>()))),
+            ("guest_of", rel(&["n", "s"], &mut self.guest_of.iter().map(|r| r.iter().copied().collect::<rerail_facts_base::code_rule_dsl::facts::vtab::Row>()))),
+            ("guest_place", rel(&["n", "s", "l", "c"], &mut self.guest_place.iter().map(|r| r.iter().copied().collect::<rerail_facts_base::code_rule_dsl::facts::vtab::Row>()))),
+            ("parse_of", rel(&["x", "g", "t"], &mut self.parse_of.iter().map(|&[x, g, t]| rerail_facts_base::row![atom(x), atom(g), atom(t)]))),
+            ("splice_of", rel(&["t", "n", "t2", "t3"], &mut self.splice_of.iter().map(|&[t, n, t2, t3]| rerail_facts_base::row![atom(t), n, atom(t2), atom(t3)]))),
+            ("unparse_of", rel(&["t", "x"], &mut self.unparse_of.iter().map(|&[t, x]| rerail_facts_base::row![atom(t), atom(x)]))),
         ]
     }
 }

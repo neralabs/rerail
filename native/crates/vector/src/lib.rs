@@ -1,10 +1,16 @@
 //! Plain values, the rooms structures take their regions from, and the growable array over them (decision 0628 §3).
 //!
 //! Below the tape format, so that its writer's columns, like every crate's arrays, lie in the blocks the run's room
-//! gives (`rerail_blocks` implements `Room` over its blocks and installs the run's, `install_default_room`: the calling
-//! thread's stack, decision 0342). A crate's own tests, run without it, take their regions from the heap.
+//! gives (`rerail_blocks` implements `Room` over its blocks and installs the run's, `install_default_room`: the
+//! calling thread's stack, decision 0342). A crate's own tests, run without it, take their regions from the heap.
 
 pub mod vector;
+/// An operation's own memory: the thread's bump frame and the stack's short arrays (decision 0687).
+pub mod frame;
+#[doc(hidden)]
+pub mod probe;
+
+pub use frame::{Frame, FrameVec, InlineVec, op};
 
 use std::any::Any;
 use std::sync::Arc;
@@ -37,7 +43,12 @@ pub struct Region {
     len: usize,
     owner: Box<dyn Any + Send + Sync>,
     guard: Option<(Arc<dyn Guard>, usize)>,
+    /// The guard's count of queued device uses (`Guard::queued`), read where the region is read: a CPU access calls
+    /// the guard only while the device has uses queued. Null with no guard; else it lives as long as `guard`'s Arc.
+    queued: *const std::sync::atomic::AtomicUsize,
     share: Option<fn(&Region) -> Region>,
+    /// PROBE (to remove): the scratch survey's tag.
+    pub(crate) tag: probe::Tag,
 }
 
 /// The check of the CPU's reads and writes of a block's bytes against the device's queued uses of them (decision 0487
@@ -45,6 +56,8 @@ pub struct Region {
 pub trait Guard: Send + Sync {
     fn cpu_read(&self, at: usize, len: usize);
     fn cpu_write(&self, at: usize, len: usize);
+    /// The device's queued uses of the block: none, and no CPU access needs the check.
+    fn queued(&self) -> &std::sync::atomic::AtomicUsize;
 }
 
 // SAFETY: the region's bytes are its holder's alone, written through `&mut self` or as atomics.
@@ -57,11 +70,12 @@ impl Region {
     /// # Safety
     /// `ptr..ptr + len` is writable, aligned as asked, and this region's alone while `owner` lives.
     pub unsafe fn new(ptr: *mut u8, len: usize, owner: Box<dyn Any + Send + Sync>) -> Region {
-        Region { ptr, len, owner, guard: None, share: None }
+        Region { ptr, len, owner, guard: None, queued: std::ptr::null(), share: None, tag: probe::Tag::default() }
     }
 
     /// It, each CPU read and write checked by `guard`, its first byte at `at` of the guard's block.
     pub fn guarded(mut self, guard: Arc<dyn Guard>, at: usize) -> Region {
+        self.queued = guard.queued();
         self.guard = Some((guard, at));
         self
     }
@@ -70,6 +84,14 @@ impl Region {
     pub fn shared_by(mut self, share: fn(&Region) -> Region) -> Region {
         self.share = Some(share);
         self
+    }
+
+    /// Whether the device has uses of its block queued: only then does a CPU access ask its guard (an inline load,
+    /// not a call through the guard).
+    #[inline(always)]
+    pub fn device_queued(&self) -> bool {
+        // SAFETY: `queued` is the guard's, which `self.guard` keeps alive.
+        !self.queued.is_null() && unsafe { (*self.queued).load(std::sync::atomic::Ordering::Relaxed) } != 0
     }
 
     /// Its guard and its first byte's offset in the guard's block.
@@ -84,7 +106,8 @@ impl Region {
     }
 
     /// What holds it, taken: a room's region handed on whole (its chunk to a relation's directory).
-    pub fn into_owner(self) -> Box<dyn Any + Send + Sync> {
+    pub fn into_owner(mut self) -> Box<dyn Any + Send + Sync> {
+        self.tag.handed();
         self.owner
     }
     #[inline]
@@ -156,10 +179,21 @@ pub fn install_default_room(provider: &'static str, room: fn() -> Arc<dyn Room>)
     DEFAULT_ROOM.register(provider, room);
 }
 
-/// The room of the run under way (the blocks crate's, once installed), else the heap's.
+/// The room of the run under way (the blocks', once installed), else the heap's.
 pub fn default_room() -> Arc<dyn Room> {
-    match DEFAULT_ROOM.try_get() {
+    // The provider, kept a thread once found: the slot's lock is every thread's, and a vector's every growth asks.
+    // Registered once, at load, and never taken back, so a found one stays right.
+    thread_local! {
+        static FOUND: std::cell::Cell<Option<fn() -> Arc<dyn Room>>> = const { std::cell::Cell::new(None) };
+    }
+    let found = FOUND.try_with(|f| f.get()).ok().flatten();
+    let room: Arc<dyn Room> = match found.or_else(|| {
+        let room = DEFAULT_ROOM.try_get();
+        let _ = FOUND.try_with(|f| f.set(room));
+        room
+    }) {
         Some(room) => room(),
         None => Arc::new(HeapRoom),
-    }
+    };
+    if probe::on() { Arc::new(probe::ProbeRoom(room)) } else { room }
 }

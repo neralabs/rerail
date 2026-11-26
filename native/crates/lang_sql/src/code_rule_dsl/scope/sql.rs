@@ -164,7 +164,7 @@ pub(crate) fn visit<D: Doc>(
             .scope(scope)
             .bindings
             .get(binding.folded.as_str())
-            .map_or(0, Vec::len);
+            .map_or(0, |c| c.len());
         let mut bound = TableBinding::new(
             binding.name.start as usize,
             VALUE,

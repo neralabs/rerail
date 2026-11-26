@@ -1,6 +1,6 @@
 //! The reads layer of a batch's views' directory (decision 0353 step 3 on the CPU): each document's row written on
 //! its document's first read through the views, beside its search layer (`made::directory`). A row names its entry
-//! (`ViewDoc`), its tape and its lines where they lie (its homes, `2i` and `2i + 1`) and its tape's view; the host's
+//! (`ViewDoc`), its tape, its lines and its source where they lie (its homes, `3i` to `3i + 2`) and its tape's view; the host's
 //! reads (`rerail_tape_format::view_reads::Doc`) and the device's (`device_chunk::views_in_place`) read the same row.
 //! Nothing here holds a view's rows: a row is read off the tape.
 
@@ -21,10 +21,11 @@ pub struct RowReads {
     pub nodes: bool,
     /// Whether its `Loc` rows are the reads' (`ViewEntry::locs`, its tape read).
     pub locs: bool,
-    /// Whether the device reads its tape, and its lines, where they lie (each in a slab).
+    /// Whether the device reads its tape, its lines, and its source, where they lie (each in a slab).
     pub tape_device: bool,
     pub lines_device: bool,
-    /// The slabs its tape and its lines lie in, which a pass that reads them makes resident.
+    pub source_device: bool,
+    /// The slabs its tape, its lines and its source lie in, which a pass that reads them makes resident.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub slabs: Vec<rerail_device::device::Buffer>,
 }
@@ -33,7 +34,7 @@ pub struct RowReads {
 pub(super) struct Layer {
     rows: Box<[OnceLock<Result<RowReads, &'static str>>]>,
     /// The 16z documents' cache (decision 0353 step 4b, `view::cache`): the batch's (`Docs::cache`), which the host's
-    /// reads of its tapes decode into, home `2n` of the directory from the first 16z row: every reader shares it.
+    /// reads of its tapes decode into, home `3n` of the directory from the first 16z row: every reader shares it.
     cache: OnceLock<Option<ZCache>>,
 }
 
@@ -76,7 +77,7 @@ impl Docs {
     }
 
     /// The 16z cache the rows share: the batch's (`Docs::cache`, made with the batch: `syntax::batch_cache`, in the
-    /// device's memory where there is a device), named by the directory (`ViewDir::cache`, home `2n`) from the first
+    /// device's memory where there is a device), named by the directory (`ViewDir::cache`, home `3n`) from the first
     /// 16z row. None where the batch has none, or its entries are smaller than `entry` bytes.
     pub fn zcache(&self, entry: usize) -> Option<&ZCache> {
         self.layer
@@ -89,16 +90,16 @@ impl Docs {
                 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
                 let buffer = None;
                 let cache = ZCache { cache: Arc::clone(cache), buffer, entry: cache.entry_size() };
-                // Its home, `2n`: the directory names it (`ViewDir::cache`, its number + 1).
-                let n = self.len();
+                // Its home, `3n`: the directory names it (`ViewDir::cache`, its number + 1).
+                let n = super::HOMES * self.len();
                 let host = cache.cache.at() as u64;
                 let gpu = cache.buffer.as_ref().and_then(|b| b.device_address()).unwrap_or(0);
                 let dir = self.dir().cast_mut();
-                // SAFETY: the directory's home `2n` and its `cache` field, in the batch's block: the reads layer's,
+                // SAFETY: the directory's home `3n` and its `cache` field, in the batch's block: the reads layer's,
                 // which no reader reads before a 16z row (written after this) names it.
                 unsafe {
-                    ViewDir::homes_mut(dir).add(2 * n).write(ViewHome { host, gpu });
-                    (&raw mut (*dir).cache).write(2 * n as u64 + 1);
+                    ViewDir::homes_mut(dir).add(n).write(ViewHome { host, gpu });
+                    (&raw mut (*dir).cache).write(n as u64 + 1);
                 }
                 Some(cache)
             })
@@ -106,7 +107,7 @@ impl Docs {
             .filter(|c| c.entry >= entry)
     }
 
-    /// Document `i`'s row written: its entry, its tape and lines in their homes, its view.
+    /// Document `i`'s row written: its entry, its tape, lines and source in their homes, its view.
     fn write_row(&self, i: usize) -> Result<RowReads, &'static str> {
         let p = &self[i];
         let b = &self.context.block;
@@ -132,6 +133,7 @@ impl Docs {
             locs: false,
             tape_device: false,
             lines_device: false,
+            source_device: false,
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             slabs: Vec::new(),
         };
@@ -155,10 +157,15 @@ impl Docs {
         let table = p.extra.as_deref().map_or(&p.facts.lines, |x| x.place_lines());
         let line_bytes = table.index();
         let lines_home = placed::home_of(table.room(), line_bytes);
+        // Its own source, read where it lies (a node's text: `view_text_span`, decision 0287 §2): in a slab's room
+        // where it was loaded there (0353 step 7, row 13), else a home of its own no device reads.
+        let source = &p.facts.source;
+        let source_home = placed::home_of(source.home().room(), source.as_bytes());
         #[cfg(any(target_os = "macos", target_os = "linux"))]
-        let (tape_gpu, lines_gpu) = (tape_home.device.as_ref().map_or(0, |d| d.0), lines_home.device.as_ref().map_or(0, |d| d.0));
+        let device_of = |h: &placed::HomeOf| h.device.as_ref().map_or(0, |d| d.0);
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-        let (tape_gpu, lines_gpu) = (0u64, 0u64);
+        let device_of = |_: &placed::HomeOf| 0u64;
+        let (tape_gpu, lines_gpu, source_gpu) = (device_of(&tape_home), device_of(&lines_home), device_of(&source_home));
         // A 16z tape's reads decode its blocks into the batch's cache: its entry size in the view, its reads checked
         // (shared), and the device's offset of the cache from the tape (the kernels read the view where it lies).
         if view.format == rerail_clif::view::F16Z_FORMAT {
@@ -170,29 +177,32 @@ impl Docs {
                 (view.side[0], view.side[1]) = (rel as u32, (rel >> 32) as u32);
             }
         }
-        let entry = ViewEntry::new(b, p, &self.context.dialects[p.tag()]);
+        let entry = ViewEntry::new(b, p, &self.context.dialects[p.tag()], self.names());
         let dir = self.dir().cast_mut();
-        // SAFETY: row `i` and its homes `2i`, `2i + 1`, in the batch's block: the reads layer's fields, which only this
-        // write writes (once, in the row's `OnceLock`), and the search layer's readers do not read.
+        // SAFETY: row `i` and its homes `3i` to `3i + 2`, in the batch's block: the reads layer's fields, which only
+        // this write writes (once, in the row's `OnceLock`), and the search layer's readers do not read.
         unsafe {
-            let homes = ViewDir::homes_mut(dir);
-            homes.add(2 * i).write(ViewHome { host: tape_home.host, gpu: tape_gpu });
-            homes.add(2 * i + 1).write(ViewHome { host: lines_home.host, gpu: lines_gpu });
+            let homes = ViewDir::homes_mut(dir).add(super::HOMES * i);
+            homes.write(ViewHome { host: tape_home.host, gpu: tape_gpu });
+            homes.add(1).write(ViewHome { host: lines_home.host, gpu: lines_gpu });
+            homes.add(2).write(ViewHome { host: source_home.host, gpu: source_gpu });
             let at = ViewDir::block_rows(dir).add(i);
             (&raw mut (*at).entry).write(b.offset_of(entry.desc()) as u64);
             (&raw mut (*at).tape).write(tape_home.at);
             (&raw mut (*at).lines).write(lines_home.at);
+            (&raw mut (*at).source).write(source_home.at);
             (&raw mut (*at).view).write(view);
             (&raw mut (*at).bytes).write(u32::try_from(bytes.len()).map_err(|_| "views.refused.tape_past_4g")?);
         }
         #[cfg(any(target_os = "macos", target_os = "linux"))]
-        let slabs: Vec<rerail_device::device::Buffer> = [&tape_home, &lines_home].into_iter().filter_map(|h| h.device.as_ref().map(|d| d.1.clone())).collect();
+        let slabs: Vec<rerail_device::device::Buffer> = [&tape_home, &lines_home, &source_home].into_iter().filter_map(|h| h.device.as_ref().map(|d| d.1.clone())).collect();
         Ok(RowReads {
             entry: Some(entry),
             nodes,
             locs,
             tape_device: tape_gpu != 0,
             lines_device: lines_gpu != 0,
+            source_device: source_gpu != 0,
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             slabs,
         })
@@ -224,7 +234,7 @@ impl Docs {
                 0 => std::ptr::null(),
                 k => (*homes.add(k as usize - 1)).host as *const u8,
             };
-            Some(Doc { entry, tape: Tape::new(tape, &row.view, cache), lines, source: self[i].facts.source.as_bytes() })
+            Some(Doc::new(entry, Tape::new(tape, &row.view, cache), lines, self[i].facts.source.as_bytes()))
         }
     }
 }

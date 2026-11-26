@@ -125,6 +125,31 @@ pub trait RowsIn: Sync {
     fn n(&self) -> usize;
     fn arity(&self) -> usize;
     fn get(&self, r: usize, c: usize) -> i64;
+    /// Column `c`'s values at the rows `at` names, into `out` (one a row, `out.len()` of them): the packer's passes
+    /// read a chunk in one call, not a call a value. By default each through `get`, which this body calls directly.
+    #[inline]
+    fn read(&self, c: usize, at: At<'_>, out: &mut [i64]) {
+        match at {
+            At::From(r) => {
+                for (j, o) in out.iter_mut().enumerate() {
+                    *o = self.get(r + j, c);
+                }
+            }
+            At::Rows(rows) => {
+                for (o, &r) in out.iter_mut().zip(rows) {
+                    *o = self.get(r as usize, c);
+                }
+            }
+        }
+    }
+}
+
+/// The rows a chunked read reads (`RowsIn::read`): those from a position on, or those at the positions given (rows
+/// read in canonical order, a sort's).
+#[derive(Clone, Copy)]
+pub enum At<'a> {
+    From(usize),
+    Rows(&'a [u32]),
 }
 
 /// Where a part's values are read: column-major values (`n` rows, column `c` at `raw[c * n..]`), or rows read where
@@ -142,6 +167,27 @@ impl Src<'_> {
             Src::Cols { raw, n } => raw[c * n + r],
             Src::Rows(rows) => rows.get(r, c),
         }
+    }
+
+    /// Column `c` at `at`, into `out` (`RowsIn::read`).
+    #[inline]
+    fn read(&self, c: usize, at: At<'_>, out: &mut [i64]) {
+        match (self, at) {
+            (Src::Cols { raw, n }, At::From(r)) => out.copy_from_slice(&raw[c * n + r..c * n + r + out.len()]),
+            (Src::Cols { raw, n }, At::Rows(rows)) => {
+                for (o, &r) in out.iter_mut().zip(rows) {
+                    *o = raw[c * n + r as usize];
+                }
+            }
+            (Src::Rows(rows), at) => rows.read(c, at, out),
+        }
+    }
+
+    /// Column `c` at the rows `order` holds from `from` (all from `from` with none), into `out`.
+    #[inline]
+    fn read_in(&self, c: usize, order: Option<&[u32]>, from: usize, out: &mut [i64]) {
+        let at = order.map_or(At::From(from), |o| At::Rows(&o[from..from + out.len()]));
+        self.read(c, at, out)
     }
 }
 
@@ -177,8 +223,34 @@ impl crate::col::Vals for Part<'_> {
     fn at(&self, i: usize) -> i64 {
         let r = self.order.map_or(i, |o| o[i] as usize);
         let x = self.src.get(r, self.c);
-        let b = if matches!(self.form, Form::RelWhole | Form::RelHi | Form::RelLo) { self.src.get(r, 0) } else { 0 };
+        let b = if self.relative() { self.src.get(r, 0) } else { 0 };
         form_of(self.form, x, b)
+    }
+    /// A chunk read where it lies (`Src::read`), column 0's beside it for a relative form, then each made its form.
+    #[inline]
+    fn read(&self, from: usize, out: &mut [i64]) {
+        self.src.read_in(self.c, self.order, from, out);
+        if self.form == Form::Whole {
+            return;
+        }
+        let mut b = [0i64; crate::col::CHUNK];
+        for (k, o) in out.chunks_mut(crate::col::CHUNK).enumerate() {
+            let b = &mut b[..o.len()];
+            if self.relative() {
+                self.src.read_in(0, self.order, from + k * crate::col::CHUNK, b);
+            }
+            for (x, &b) in o.iter_mut().zip(b.iter()) {
+                *x = form_of(self.form, *x, b);
+            }
+        }
+    }
+}
+
+impl Part<'_> {
+    /// Whether its form is less column 0's value at the row.
+    #[inline]
+    fn relative(&self) -> bool {
+        matches!(self.form, Form::RelWhole | Form::RelHi | Form::RelLo)
     }
 }
 
@@ -202,6 +274,13 @@ impl crate::col::Vals for JobVals<'_> {
         match self {
             JobVals::Part(p) => crate::col::Vals::at(p, i),
             JobVals::Made(v) => v[i],
+        }
+    }
+    #[inline]
+    fn read(&self, from: usize, out: &mut [i64]) {
+        match self {
+            JobVals::Part(p) => crate::col::Vals::read(p, from, out),
+            JobVals::Made(v) => out.copy_from_slice(&v[from..from + out.len()]),
         }
     }
 }
@@ -259,12 +338,22 @@ fn plan_col<'s>(src: Src<'s>, order: Option<&'s [u32]>, n: usize, c: usize, may_
         let before = (r.start > 0).then(|| read(r.start - 1));
         let mut st: Vec<Stats> = forms.iter().zip(&ends).map(|(&f, &(first, last))| Stats::piece(first, last, n, before.map(|(x, b)| form_of(f, x, b)))).collect();
         let mut wraps = false;
-        for i in r {
-            let (x, b) = read(i);
-            for (k, &f) in forms.iter().enumerate() {
-                st[k].push(i, form_of(f, x, b));
+        // A chunk of the column, and of column 0 beside it where a relative form is tried, read where they lie.
+        let (mut xs, mut bs) = ([0i64; crate::col::CHUNK], [0i64; crate::col::CHUNK]);
+        let mut i = r.start;
+        while i < r.end {
+            let k = (r.end - i).min(crate::col::CHUNK);
+            src.read_in(c, order, i, &mut xs[..k]);
+            if rel {
+                src.read_in(0, order, i, &mut bs[..k]);
             }
-            wraps |= rel && x.checked_sub(b).is_none();
+            for (j, (&x, &b)) in xs[..k].iter().zip(&bs[..k]).enumerate() {
+                for (s, &f) in st.iter_mut().zip(forms) {
+                    s.push(i + j, form_of(f, x, b));
+                }
+                wraps |= rel && x.checked_sub(b).is_none();
+            }
+            i += k;
         }
         (st, wraps)
     });
@@ -531,16 +620,77 @@ pub struct Prepared<'s> {
 }
 
 /// Whether `src`'s `n` rows are strictly increasing in `key`'s order: in canonical order, distinct.
+/// A chunk of each key column is read at a time (`Src::read`), the row before a chunk kept from the last.
 fn in_canonical_order(src: Src<'_>, n: usize, key: &[usize]) -> bool {
-    (1..n).all(|i| {
-        for &c in key {
-            let (x, y) = (src.get(i - 1, c), src.get(i, c));
-            if x != y {
-                return x < y;
+    use crate::col::CHUNK;
+    let w = key.len();
+    let mut cols = vec![0i64; w * CHUNK];
+    let mut before: Option<Vec<i64>> = None;
+    let mut i = 0;
+    while i < n {
+        let k = (n - i).min(CHUNK);
+        for (j, &c) in key.iter().enumerate() {
+            src.read(c, At::From(i), &mut cols[j * CHUNK..j * CHUNK + k]);
+        }
+        let got = &cols;
+        for r in 0..k {
+            let row = |r: usize| (0..w).map(move |j| got[j * CHUNK + r]);
+            let ord = match (r, &before) {
+                (0, None) => None,
+                (0, Some(b)) => Some(b.iter().copied().cmp(row(0))),
+                _ => Some(row(r - 1).cmp(row(r))),
+            };
+            if ord.is_some_and(|o| o != std::cmp::Ordering::Less) {
+                return false;
             }
         }
-        false
-    })
+        before = Some((0..w).map(|j| cols[j * CHUNK + k - 1]).collect());
+        i += k;
+    }
+    true
+}
+
+/// For each of the rows `ids` names, in order, whether it equals the one before it in `key`'s columns: a chunk of
+/// each key column read at a time.
+fn repeats(src: Src<'_>, ids: &[u32], key: &[usize]) -> Vec<bool> {
+    use crate::col::CHUNK;
+    let (n, w) = (ids.len(), key.len());
+    let mut out = vec![false; n];
+    let mut cols = vec![0i64; w * CHUNK];
+    let mut before: Option<Vec<i64>> = None;
+    let mut i = 0;
+    while i < n {
+        let k = (n - i).min(CHUNK);
+        for (j, &c) in key.iter().enumerate() {
+            src.read(c, At::Rows(&ids[i..i + k]), &mut cols[j * CHUNK..j * CHUNK + k]);
+        }
+        for r in 0..k {
+            out[i + r] = match (r, &before) {
+                (0, None) => false,
+                (0, Some(b)) => (0..w).all(|j| b[j] == cols[j * CHUNK]),
+                _ => (0..w).all(|j| cols[j * CHUNK + r] == cols[j * CHUNK + r - 1]),
+            };
+        }
+        before = Some((0..w).map(|j| cols[j * CHUNK + k - 1]).collect());
+        i += k;
+    }
+    out
+}
+
+/// Column `c`'s least and greatest values over `n` rows (`(i64::MAX, i64::MIN)` for none), read a chunk at a time.
+fn col_range(src: Src<'_>, n: usize, c: usize) -> (i64, i64) {
+    let mut buf = [0i64; crate::col::CHUNK];
+    let (mut lo, mut hi) = (i64::MAX, i64::MIN);
+    let mut i = 0;
+    while i < n {
+        let k = (n - i).min(crate::col::CHUNK);
+        src.read(c, At::From(i), &mut buf[..k]);
+        for &v in &buf[..k] {
+            (lo, hi) = (lo.min(v), hi.max(v));
+        }
+        i += k;
+    }
+    (lo, hi)
 }
 
 /// The order `prepare` lays rows out in.
@@ -586,22 +736,25 @@ fn prepare_src<'s>(s: &'s Scratch, src: Src<'s>, n: usize, a: usize, spec: &Spec
         });
         (None, lv, n)
     } else {
-        let range = |c: usize| (0..n).fold((i64::MAX, i64::MIN), |(a, b), r| {
-            let v = src.get(r, c);
-            (a.min(v), b.max(v))
-        });
-        let (lo, hi): (Vec<i64>, Vec<i64>) = (0..a).map(range).unzip();
+        let (lo, hi): (Vec<i64>, Vec<i64>) = (0..a).map(|c| col_range(src, n, c)).unzip();
         let ids: &mut [u32] = s.take(n);
         for (i, id) in ids.iter_mut().enumerate() {
             *id = i as u32;
         }
         let keys = sort_rows(s, src, n, &key, &lo, &hi, ids);
+        // Each sorted row equal to the one before it, by the packed keys, or read a chunk at a time where they
+        // do not name rows.
+        let same_rows = match keys {
+            Some(_) => None,
+            None => Some(repeats(src, ids, &key)),
+        };
         let order: &mut [u32] = s.take(n);
         let mut m = 0;
         for p in 0..n {
-            let same = p > 0 && match keys {
-                Some(k) => k[p] == k[p - 1],
-                None => key.iter().all(|&c| src.get(ids[p] as usize, c) == src.get(ids[p - 1] as usize, c)),
+            let same = p > 0 && match (keys, &same_rows) {
+                (Some(k), _) => k[p] == k[p - 1],
+                (None, Some(r)) => r[p],
+                (None, None) => unreachable!("repeats read where the keys do not name rows"),
             };
             if !same {
                 order[m] = ids[p];
@@ -645,13 +798,20 @@ fn sort_rows<'s>(scratch: &'s Scratch, src: Src<'_>, n: usize, key: &[usize], lo
         return None;
     }
     let keys: &mut [u64] = scratch.take(m);
-    for (k, &i) in keys.iter_mut().zip(ids.iter()) {
-        let mut x = 0u64;
-        for (j, &c) in key.iter().enumerate() {
-            // A column of one value takes no bits; `checked_shl` keeps a 64-bit shift of an empty key defined.
-            x = x.checked_shl(kbits[j]).unwrap_or(0) | (src.get(i as usize, c) as i128 - lo[c] as i128) as u64;
+    keys.fill(0);
+    let mut buf = [0i64; crate::col::CHUNK];
+    for (&c, &kb) in key.iter().zip(&kbits) {
+        // Each key column read a chunk of ids at a time, where its rows lie, and shifted into the keys.
+        let mut i = 0;
+        while i < m {
+            let k = (m - i).min(crate::col::CHUNK);
+            src.read(c, At::Rows(&ids[i..i + k]), &mut buf[..k]);
+            for (x, &v) in keys[i..i + k].iter_mut().zip(&buf[..k]) {
+                // A column of one value takes no bits; `checked_shl` keeps a 64-bit shift of an empty key defined.
+                *x = x.checked_shl(kb).unwrap_or(0) | (v as i128 - lo[c] as i128) as u64;
+            }
+            i += k;
         }
-        *k = x;
     }
     let (tk, ti) = (scratch.take::<u64>(m), scratch.take::<u32>(m));
     crate::sort::radix_pairs(keys, ids, packed_bits, tk, ti);

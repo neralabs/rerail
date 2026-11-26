@@ -65,7 +65,7 @@ mod native {
     }
 }
 
-/// The backend `RERAIL_GPU` chooses, lower case: "cpu", "opencl", or "" for the target's GPU.
+/// The backend `RERAIL_GPU` chooses, lower case: "cpu", "opencl", "none" (no device), or "" for the target's GPU.
 pub(crate) fn chosen() -> &'static str {
     static CHOSEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     CHOSEN.get_or_init(|| std::env::var("RERAIL_GPU").map(|v| v.to_ascii_lowercase()).unwrap_or_default())
@@ -74,6 +74,12 @@ pub(crate) fn chosen() -> &'static str {
 /// Whether this process runs its kernels on the CPU (`RERAIL_GPU=cpu`).
 pub fn cpu_chosen() -> bool {
     chosen() == "cpu"
+}
+
+/// Whether this process opens no device at all (`RERAIL_GPU=none`): no kernel runs, on a GPU or on the CPU's backend
+/// (UKL's), and every caller takes its path for a machine without one.
+pub fn none_chosen() -> bool {
+    chosen() == "none"
 }
 
 /// Whether this process runs its kernels on an OpenCL GPU (`RERAIL_GPU=opencl`).

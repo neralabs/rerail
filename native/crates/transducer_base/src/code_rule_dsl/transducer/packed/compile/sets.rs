@@ -681,6 +681,9 @@ pub struct Index {
     flags: OnceLock<Vec<u8>>,
     /// Grammar supertypes asked for, by class.
     classes: Mutex<HashMap<u16, Arc<Vector<u64>>>>,
+    /// A kind's or field's nodes as a row, made the first time a formula reads it (`Reader::posted`): made at each
+    /// read they were a row of the tape each (1.72 M on cold PostHog).
+    posted: Mutex<HashMap<(bool, u16), Arc<Vector<u64>>>>,
     /// Steps over every node asked for (`Reader::over_all`), by step.
     over_all: Mutex<HashMap<Set, Arc<Vector<u64>>>>,
     /// What W's facts that are node sets keep of the tape (the matcher's sibling positions and `nthChild` answers),
@@ -777,6 +780,8 @@ impl Reader<'_> {
                 Row::Owned(bits)
             }
             Set::And(parts) => Row::Owned(self.and(parts)),
+            Set::Kind(kind) => Row::Shared(self.posted(false, *kind)),
+            Set::Field(field) => Row::Shared(self.posted(true, *field)),
             set => Row::Owned(self.made(set)),
         }
     }
@@ -860,6 +865,15 @@ impl Reader<'_> {
     }
 
     /// A grammar supertype's members, made once a labelling (`Index::classes`).
+    /// Kind `id`'s nodes (a field's, `field`) as a row, kept in the index once made.
+    fn posted(&self, field: bool, id: u16) -> Arc<Vector<u64>> {
+        if let Some(row) = self.index.posted.lock().expect("posted sets").get(&(field, id)) {
+            return Arc::clone(row);
+        }
+        let row = Arc::new(self.postings(if field { self.fields().get(id) } else { self.kinds().get(id) }));
+        Arc::clone(self.index.posted.lock().expect("posted sets").entry((field, id)).or_insert(row))
+    }
+
     fn class(&self, class: u16) -> Arc<Vector<u64>> {
         let mut classes = self.index.classes.lock().expect("class sets");
         Arc::clone(classes.entry(class).or_insert_with(|| {

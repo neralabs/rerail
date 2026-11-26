@@ -92,12 +92,12 @@ pub fn terminators(tag: u8) -> rerail_tape_format::newlines::Terminators {
     }
 }
 
-/// Every table's revision: 4 since the grammars' tables are numbered by the counts of two corpora, the spike's and
-/// 520 repositories' HEAD trees (decision 0638); 3 was the spike's alone; 2 the grammar's order (decision 0631); 1
-/// was ordered by captures and bounded by them.
+/// Every table's revision: 5 since the grammars' tables are numbered by 520 repositories' HEAD trees and the rule
+/// files (decision 0638); 4 added the spike's counts, 3 was the spike's alone; 2 the grammar's order (decision 0631);
+/// 1 was ordered by captures and bounded by them.
 pub fn revision(tag: u8) -> u8 {
     let _ = tag;
-    4
+    5
 }
 pub const MARK_LONG: u8 = 255;
 
