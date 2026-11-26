@@ -30,6 +30,9 @@ pub trait SolverDevice: Device {
     fn submit(&self, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner) -> Result<Option<u64>, String>;
     /// Finishes the joins `submit` sent with ticket `ticket`: their rows into `fresh`, per rule the rows made.
     fn resume(&self, ticket: u64, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String>;
+    /// The indexes the stages of `plans` probe their relations by, built in one batch of their own, done before it
+    /// returns: the strata that run the plans find each built (decision 0707). How many it built.
+    fn build_indexes(&self, plans: &[&JoinPlan]) -> Result<usize, String>;
     /// Whether the plan reads its own component's relations (a delta join of a recursive component).
     fn reads_own(&self, plan: &JoinPlan) -> bool;
     /// A recursive component's fixpoint on the device: the `seeds` once, then the `deltas` round by round until no

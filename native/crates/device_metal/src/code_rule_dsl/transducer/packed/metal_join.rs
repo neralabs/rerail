@@ -1963,11 +1963,20 @@ impl Batch {
             // Either is kept by the batch until its work, which builds the index into it, completes (Q265: a fresh
             // relation dropped with its stage's handle gave back its index while the GPU built it).
             if let Some(view) = &rel.view {
-                crate::code_rule_dsl::prof::count_named(format!("device.index of a view in a fresh home (its home's room taken): {} rows keyed by {cols:?}", rel.rows), 1);
                 if !may_move {
                     return Err(Error::BackendCapacity);
                 }
-                let fresh = std::rc::Rc::new(DevRel::view(rel.cols, rel.rows, view.clone())?);
+                // Its source's home, made again with room for more (`rows::IndexHome::grow`), which every later stratum
+                // takes: its index built there is found again. A home no source keeps, or one at the most indexes,
+                // gives a home of the batch's own.
+                let grown = view.grows.as_ref().zip(rel.part.as_ref()).and_then(|(home, had)| home.grow(had));
+                if grown.is_none() {
+                    crate::code_rule_dsl::prof::count_named(format!("device.index of a view in a fresh home (its home's room taken): {} rows keyed by {cols:?}", rel.rows), 1);
+                }
+                let fresh = std::rc::Rc::new(match grown {
+                    Some(home) => DevRel::view_in(home, rel.cols, rel.rows, view.clone())?,
+                    None => DevRel::view(rel.cols, rel.rows, view.clone())?,
+                });
                 let mut ix = self.index_of(&fresh, cols, false)?;
                 ix.cols = cols.to_vec();
                 return Ok(DevIndex { moved: Some(fresh), ..ix });

@@ -1916,6 +1916,44 @@ fn on_lane<R>(form: &'static str, rules: usize, f: impl FnOnce() -> Result<R, St
     })
 }
 
+/// Decision 0707: the indexes the stages of `plans` probe their relations by, built before the strata that run them,
+/// in one batch of their own, done before it returns: each stratum then finds each built (`find_index_from`), and
+/// none builds its own. Concurrent strata each built the index no committed batch had, one given back when both
+/// were done (12.2 M of the 44 M rows indexed over the data layer's 50 files). A relation not read where it lies (its
+/// stratum's upload, a copy of its own) is left to its stratum. How many indexes it built.
+pub(in crate::code_rule_dsl) fn build_indexes(plans: &[&Plan]) -> Result<usize, String> {
+    on_lane("index builds", plans.len(), || {
+        let _in = in_device();
+        let mut batch = direct_batch(None)?;
+        let mut rep = Report::default();
+        let mut held = Vec::new();
+        for s in plans.iter().flat_map(|p| &p.stages) {
+            let Kind::Atom { rel, cols } = &s.kind else { continue };
+            if cols.is_empty() || !read_in_place(rel) {
+                continue;
+            }
+            // One its stratum cannot read either is refused there, with why.
+            if let Ok(r) = resident(rel, &right_cols(&s.desc), cols, true, &mut batch, &mut rep) {
+                held.push(r);
+            }
+        }
+        batch.finish().map_err(|e| format!("{e:?}"))?;
+        drop(held);
+        Ok(rep.sorts as usize)
+    })
+}
+
+/// Whether a stage reads `rel` where it lies (`resident`): in its block, or a whole view its directory reads.
+fn read_in_place(rel: &Arc<InRel>) -> bool {
+    if placed(rel).is_some() {
+        return true;
+    }
+    match &rel.view {
+        Some(v) if rel.ndead == 0 && v.whole() => v.src.device_view().is_some_and(|d| d.rows == rel.len() && d.in_place.is_some()),
+        _ => false,
+    }
+}
+
 /// The rules that can make rows (none of them reads an empty input, `reads_empty_input`), by their places.
 fn live(rules: &[(&Plan, &JoinRule, usize)]) -> Vec<usize> {
     (0..rules.len()).filter(|&k| !super::reads_empty_input(rules[k].1)).collect()

@@ -3802,7 +3802,7 @@ struct Viewed {
     view: View,
     /// The view's relation of no columns, its indexes' block, for a view the device reads in place (decision 0478 step
     /// 3): made the first time it is read there. `None` inside when no block could be had.
-    home: std::sync::OnceLock<Option<crate::code_rule_dsl::facts::rows::Part>>,
+    home: std::sync::OnceLock<Option<Arc<crate::code_rule_dsl::facts::rows::IndexHome>>>,
 }
 impl Viewed {
     fn columns(view: View) -> &'static [&'static str] {
@@ -3956,12 +3956,17 @@ impl Source for Viewed {
             return None;
         }
         #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-        let home = in_place.as_ref().and_then(|_| self.home.get_or_init(|| {
+        let mut in_place = in_place;
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+        let home = in_place.as_mut().and_then(|v| {
             // Room for an index of each key the strata probe a view by, found again by every later binding: with room
             // for one, each binding probing it by another key made a fresh home of its own, never found again (133 of
-            // 3.4 MB in each of pth_unpack's fixpoints, its 49 lines by kind pair; ab138).
-            crate::code_rule_dsl::facts::rows::Part::for_device_indexed(0, self.len(), crate::code_rule_dsl::facts::rows::AXIS_KEYS).ok()
-        }).clone());
+            // 3.4 MB in each of pth_unpack's fixpoints, its 49 lines by kind pair; ab138). More, as probes ask
+            // (`rows::IndexHome::grow`).
+            let home = self.home.get_or_init(|| crate::code_rule_dsl::facts::rows::IndexHome::new(self.len(), crate::code_rule_dsl::facts::rows::AXIS_KEYS)).clone()?;
+            v.grows = Some(Arc::clone(&home));
+            Some(home.part())
+        });
         #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
         let home = None;
         Some(crate::code_rule_dsl::facts::vtab::DeviceView {

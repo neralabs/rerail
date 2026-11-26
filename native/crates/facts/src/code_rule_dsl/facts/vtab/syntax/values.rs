@@ -177,7 +177,7 @@ pub(super) struct Dir {
     /// home is of the batch's rows alone: an index of the layered rows was never found there, and with its room taken
     /// by the base's indexes, each stratum built its own into a fresh home (the data-layer rules over 50 files: about
     /// 2,000 builds of `child`'s index of 58-70 K rows, 47 of the join program's 61 s, 2026-11-25).
-    homes: [std::sync::OnceLock<Option<(usize, crate::code_rule_dsl::facts::rows::Part)>>; 16],
+    homes: [std::sync::OnceLock<Option<(usize, Arc<crate::code_rule_dsl::facts::rows::IndexHome>)>>; 16],
     _batches: Vec<Arc<super::Batch>>,
 }
 
@@ -374,13 +374,26 @@ pub struct Layered {
     /// For a base made on lookup, whose rows grow as it is read: the parts' rows, made as they are looked up.
     made: Option<parking_lot::Mutex<Made>>,
     width: usize,
+    /// A placed base's relation over the values' directory (`view_over`), by its rows: made again when values are
+    /// admitted, else kept, so its indexes are found again by every stratum that reads it.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    over: parking_lot::Mutex<Option<(usize, Arc<super::places::Over>)>>,
 }
 
 impl Layered {
     pub fn new(name: &str, base: Arc<dyn Source>, values: Arc<Values>) -> Self {
         let made = base.made_on_lookup().then(|| parking_lot::Mutex::new(Made::default()));
         let width = base.columns().len();
-        Layered { name: name.to_owned(), base, base_len: std::sync::OnceLock::new(), values, made, width }
+        Layered {
+            name: name.to_owned(),
+            base,
+            base_len: std::sync::OnceLock::new(),
+            values,
+            made,
+            width,
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+            over: parking_lot::Mutex::new(None),
+        }
     }
     /// The batch's rows, where a value's rows are numbered past them (never for a base made on lookup, whose values'
     /// rows are at `MADE_AT`).
@@ -460,12 +473,21 @@ impl Layered {
         let dv_ref = dv.as_mut()?;
         // A view not read in place is made from the chunk's batch alone: it holds none of the values' rows.
         let v = dv_ref.in_place.as_mut()?;
-        // A placed base (`places::Places`: the view's rows, then its spans') is no view of one directory: its rows
-        // and the values' are in no order one directory holds. Its `PlacedDir` is not the values' directory, which a
-        // read of its kind would take for one.
-        if v.kind & super::places::VIEW_PLACED != 0 {
-            return None;
-        }
+        // A placed base (`places::Places`: the view's rows, then its spans') is read as a placed relation of the
+        // values' directory: its view's rows every document's there, then the base's spans. A value's own spans
+        // would be rows of no one relation: none read so.
+        let placed = v.kind & super::places::VIEW_PLACED != 0;
+        let places = match placed {
+            true => {
+                let p = self.base.as_any()?.downcast_ref::<super::places::Places>()?;
+                let spanless = |s: &Arc<dyn Source>| s.as_any().and_then(|a| a.downcast_ref::<super::places::Places>()).is_none_or(|p| p.spans_len() == 0);
+                if !self.parts(|ps| ps.list.iter().all(|x| spanless(&x.src))).unwrap_or(true) {
+                    return None;
+                }
+                Some(p)
+            }
+            false => None,
+        };
         let dir = self.values.dir(&batch)?;
         let views = &dir.views;
         let loc = (super::device_chunk::VIEW_LOC_LINE..=super::device_chunk::VIEW_LOC_DOCOF).contains(&dv_ref.view);
@@ -475,15 +497,36 @@ impl Layered {
         }
         // The base's kind, the directory of every document as the join programs here read it (the host's, where
         // they run on the host).
-        *v = crate::code_rule_dsl::facts::vtab::ViewInPlace { kind: v.kind, ..views.read_of(dv_ref.view, Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>)? };
+        *v = crate::code_rule_dsl::facts::vtab::ViewInPlace { kind: v.kind & !super::places::VIEW_PLACED, ..views.read_of(dv_ref.view, Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>)? };
         let rows = self.len();
         dv_ref.rows = rows;
+        if let Some(p) = places {
+            let over = {
+                let mut held = self.over.lock();
+                match held.as_ref() {
+                    Some((n, over)) if *n == rows => Arc::clone(over),
+                    _ => {
+                        let over = Arc::new(p.over(v.dir, rows - p.spans_len())?);
+                        *held = Some((rows, Arc::clone(&over)));
+                        over
+                    }
+                }
+            };
+            over.apply(v)?;
+            v.keep = Arc::new((Arc::clone(&dir), Arc::clone(&over)));
+            v.grows = Some(over.home());
+            dv_ref.home = Some(over.home().part());
+            return dv;
+        }
         // Its own home, of its own rows (`Dir::homes`), not the base's.
-        let make = || crate::code_rule_dsl::facts::rows::Part::for_device_indexed(0, rows, crate::code_rule_dsl::facts::rows::AXIS_KEYS).ok();
-        dv_ref.home = match dir.homes.get(dv_ref.view as usize)?.get_or_init(|| make().map(|part| (rows, part))) {
-            Some((n, part)) if *n == rows => Some(part.clone()),
+        use crate::code_rule_dsl::facts::rows::{AXIS_KEYS, IndexHome, Part};
+        dv_ref.home = match dir.homes.get(dv_ref.view as usize)?.get_or_init(|| IndexHome::new(rows, AXIS_KEYS).map(|home| (rows, home))) {
+            Some((n, home)) if *n == rows => {
+                v.grows = Some(Arc::clone(home));
+                Some(home.part())
+            }
             // Rows of another count than the first reader's: a home of its own, as each was before.
-            _ => make(),
+            _ => Part::for_device_indexed(0, rows, AXIS_KEYS).ok(),
         };
         dv
     }

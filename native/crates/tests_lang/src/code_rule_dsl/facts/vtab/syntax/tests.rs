@@ -2901,6 +2901,65 @@ fn a_value_admitted_into_the_batch_matches_no_file_again() {
     assert_eq!(seen, ["m1.py", "m2.py"], "the started files matched once, and none again when a value is admitted");
 }
 
+/// Decision 0707: a chunk with a value admitted (decision 0431 §8: `values::Layered`, its base the chunk's batch and
+/// its parts the value's) is read where it lies by the host's join programs: `within` is the axis solved on the host
+/// into one relation in its block, the batch's rows then the value's, and `docof`, a placed relation (the `Loc` view's
+/// rows, then its spans'), is a placed read over the values' directory. Each was refused in place before, and each
+/// stratum that read it uploaded every row: 1 GB of `within` and 284 MB of `docof` over the data layer's 50 files.
+#[test]
+fn a_chunks_axis_and_places_with_a_value_admitted_are_read_where_they_lie_on_the_host() {
+    struct NoWave;
+    impl AstWave for NoWave {
+        fn len(&self) -> usize {
+            0
+        }
+        fn matched(
+            &self,
+            _: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
+            _: &[Option<&Projected>],
+            _: crate::code_rule_dsl::facts::nearest::Binding,
+            _: &crate::content_store::atoms::Atoms,
+        ) -> StoreResult<Vec<(String, Relation)>> {
+            Ok(Vec::new())
+        }
+    }
+    let store = ContentStore::open(&temp("values-in-place")).unwrap();
+    let matchers = Matchers::new(Arc::new(NoWave) as Arc<dyn AstWave>);
+    let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
+    let binding = crate::code_rule_dsl::facts::nearest::Binding::Cpu;
+    let reads = ["node", "child", "within", "line", "docof", "source", "src_line"];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let file = |k: u32| document(k, &format!("m{k}.py"), "python", &format!("# a comment\ndef f{k}(x):\n    return [x for y in x]\n"));
+    let (sources, mut grower) = Grower::start(&store, vec![file(1), file(2)], &[], &matchers, &tests, binding, &projection, &HashMap::new()).unwrap();
+    // Each source the chunk binds, layered over its values, as the corpus run binds them.
+    let values = Arc::new(values::Values::default());
+    let src = |name: &str| -> Arc<dyn Source> {
+        let (_, s) = sources.iter().find(|(n, _)| n == name).unwrap_or_else(|| panic!("{name} is bound"));
+        Arc::new(values::Layered::new(name, Arc::clone(s), Arc::clone(&values)))
+    };
+    let (within, docof) = (src("within"), src("docof"));
+    let before = (within.len(), docof.len());
+    // A tape value, as a string annotation is (decision 0431 §8): a guest, so no `Extra` span of its own (a value's
+    // spans would be rows of no one relation, and a layered read refuses them).
+    let mut value = document(3, "m3.py", "python", "List[int]");
+    let whole = Placement::Copied { delta: 0, within: [0, 9] };
+    value.guest = Some(Arc::new(Guest { host: 1, file: 1, at: 1 << 32, grammar: "python".to_owned(), role: "annotation".to_owned(), root: 0, place: whole.clone(), in_file: whole, made: Made::Tape { places: Vec::new() } }));
+    values.add(&[3], grower.admit(&store, value, &[], &tests, binding, &projection).unwrap());
+    assert!(within.len() > before.0 && docof.len() > before.1, "the value's rows are the chunk's too: {before:?}");
+    let _host = rerail_accel::gpu::shared::on_host();
+    let solved = within.in_block().expect("within: the axis solved on the host into one relation in its block");
+    assert!(solved.rows as usize >= within.len(), "within: every pair, the value's too ({} of {})", solved.rows, within.len());
+    let (_, base) = sources.iter().find(|(n, _)| n == "docof").unwrap();
+    let base_view = base.device_view().expect("docof: the chunk's view read through the views");
+    let base_read = base_view.in_place.as_ref().expect("docof: the chunk's view read in place");
+    assert!(base_read.kind & places::VIEW_PLACED != 0, "docof: the chunk's spans past its view's rows");
+    let view = docof.device_view().expect("docof: read through the views");
+    let read = view.in_place.as_ref().expect("docof: read where it lies, not uploaded");
+    assert!(read.kind & places::VIEW_PLACED != 0, "docof: its spans past the view's rows");
+    assert_eq!(view.rows, docof.len(), "docof: every row, the value's too");
+    assert!(view.home.is_some() && read.grows.is_some(), "docof: a home its source keeps, for its indexes");
+}
+
 /// Q216 (decision 0353 step 3): where a program reads spans, a node's and a token's places are the `Loc` view's, and
 /// the place rows made are the spans' alone. The bound relation is the view's rows, then the spans', and a span's
 /// place is read by its id: a line's own line, its start's column 0.

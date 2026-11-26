@@ -214,7 +214,7 @@ impl ViewsInPlace {
         } else {
             (self.dir?, self.buffers.clone(), self.cache.clone())
         };
-        let mut read = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir, kind: read_kind(view), buffers, cache, failed: 0, format: self.format, keep };
+        let mut read = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir, kind: read_kind(view), buffers, cache, failed: 0, format: self.format, keep, grows: None };
         read.failed = read.cache_failed();
         Some(read)
     }

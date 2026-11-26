@@ -82,6 +82,9 @@ pub struct ViewInPlace {
     /// Its batch's tape format (`ViewsInPlace::format`; 0: several), which the stages reading it are compiled for.
     pub format: u32,
     pub keep: Arc<dyn std::any::Any + Send + Sync>,
+    /// The view's home where its source keeps it (`rows::IndexHome`), made again with more room when a probe's index has
+    /// none in it: `None` for a home no source keeps.
+    pub grows: Option<Arc<super::rows::IndexHome>>,
 }
 
 /// A `has` axis read off the tape (`Source::has_walk`): its batch's `node` view in place, of `nodes` rows, through which

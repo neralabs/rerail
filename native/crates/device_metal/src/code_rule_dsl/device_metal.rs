@@ -103,6 +103,11 @@ impl SolverDevice for Metal {
         joins::resume(ticket, &plans(rules)?, store, names, fresh)
     }
 
+    fn build_indexes(&self, plans: &[&JoinPlan]) -> Result<usize, String> {
+        let plans: Vec<&joins::Plan> = plans.iter().map(|p| p.0.downcast_ref::<joins::Plan>().ok_or_else(|| "a join plan of another device".to_owned())).collect::<Result<_, _>>()?;
+        joins::build_indexes(&plans)
+    }
+
     fn reads_own(&self, plan: &JoinPlan) -> bool {
         plan.0.downcast_ref::<joins::Plan>().is_some_and(joins::reads_own)
     }
