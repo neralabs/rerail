@@ -241,7 +241,7 @@ struct Shared {
     instance: OwnedFd,
     /// The buffer events are read into, held by the thread for one read and the reports of what it
     /// read, and by a take's flush from its count to its last read, so events are reported in the
-    /// kernel's order, and a take waits for the thread's read in flight and for no read after it.
+    /// kernel's order, and a take waits only while the thread holds it for one of its reads.
     reading: Mutex<Vec<u8>>,
     notices: Arc<Notices>,
     watches: Mutex<Watches>,
@@ -605,9 +605,9 @@ impl Backend for Inotify {
         self.shared.watches().root_count()
     }
 
-    /// Waits for the thread's read in flight, then reads what the kernel still holds: a change is
-    /// queued as its syscall returns, and by the take the thread may not have woken, or may be
-    /// reporting what it read.
+    /// Waits while the thread holds the buffer for a read, then reads what the kernel still holds:
+    /// a change is queued as its syscall returns, and by the take the thread may not have woken, or
+    /// may be reporting what it read.
     fn flush(&mut self) {
         let shared = &self.shared;
         flush_queued(shared, |descriptor, mask, name| {
