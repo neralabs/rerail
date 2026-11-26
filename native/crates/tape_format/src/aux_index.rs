@@ -141,17 +141,75 @@ const _: () = assert!(
 /// `codes`: the language's named codes and comment codes (`CodeSets`), which NAMED and COMMENTS hold and SIBLINGS and
 /// COMMENTS count by.
 pub fn build<T: Tape + ?Sized>(t: &T, source: &[u8], digest: u64, codes: &CodeSets, want: Sections) -> Result<Vec<u8>, String> {
-    let named: &[u64] = &codes.named;
     let n = t.len();
+    if n >= NONE as usize || source.len() >= NONE as usize {
+        return Err(format!("a document of {n} nodes and {} bytes: past an auxiliary index's u32s", source.len()));
+    }
+    let mut nodes = Nodes::default();
+    for i in 0..n {
+        let (code, end) = t.code_and_end(i);
+        let (start, stop) = if end == i + 1 { t.span(i) } else { (0, 0) };
+        nodes.push(code, end as u32, start as u32, stop as u32);
+    }
+    build_from(&nodes, source, digest, codes, want)
+}
+
+/// A document's nodes as an auxiliary index is laid from them (`build_from`), in preorder: each one's code, the id
+/// just past its subtree, and a leaf's start and end (an inner node's are not read). A format 16 writer keeps them as
+/// its ops are given the nodes (`f16::Writer`), so the index of a tape it writes is laid with no read of the tape;
+/// `build` reads them off a tape.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Nodes {
+    pub code: Vec<u32>,
+    pub end: Vec<u32>,
+    pub start: Vec<u32>,
+    pub stop: Vec<u32>,
+}
+
+impl Nodes {
+    /// The nodes.
+    pub fn len(&self) -> usize {
+        self.code.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.code.is_empty()
+    }
+    /// The next node.
+    pub fn push(&mut self, code: u32, end: u32, start: u32, stop: u32) {
+        self.code.push(code);
+        self.end.push(end);
+        self.start.push(start);
+        self.stop.push(stop);
+    }
+    /// Room for `n` more nodes.
+    pub fn reserve(&mut self, n: usize) {
+        self.code.reserve(n);
+        self.end.reserve(n);
+        self.start.reserve(n);
+        self.stop.reserve(n);
+    }
+    /// No nodes, the room kept.
+    pub fn clear(&mut self) {
+        self.code.clear();
+        self.end.clear();
+        self.start.clear();
+        self.stop.clear();
+    }
+}
+
+/// `build` of the nodes `nodes` (`Nodes`): the same bytes as of a tape that holds them.
+pub fn build_from(nodes: &Nodes, source: &[u8], digest: u64, codes: &CodeSets, want: Sections) -> Result<Vec<u8>, String> {
+    let named: &[u64] = &codes.named;
+    let n = nodes.len();
     if n >= NONE as usize || source.len() >= NONE as usize {
         return Err(format!("a document of {n} nodes and {} bytes: past an auxiliary index's u32s", source.len()));
     }
     let want = want.closed();
     let blocks = n.div_ceil(BLOCK as usize);
-    // One pass over the tape: each node's code, the leaves, and each code's count (a code's slot, not a map's).
-    let code: Vec<u32> = (0..n).map(|i| t.code(i)).collect();
+    let (code, end) = (&nodes.code, &nodes.end);
+    let subtree_end = |i: usize| end[i] as usize;
     let is_named = |i: usize| bit(named, code[i]);
-    let leaves: Vec<u32> = (0..n).filter(|&i| t.subtree_end(i) == i + 1).map(|i| i as u32).collect();
+    let leaves: Vec<u32> = (0..n).filter(|&i| subtree_end(i) == i + 1).map(|i| i as u32).collect();
     let mut count = vec![0u32; code.iter().max().map_or(0, |&c| c as usize + 1)];
     code.iter().for_each(|&c| count[c as usize] += 1);
     // The codes of the document's nodes, ascending, with their counts.
@@ -182,8 +240,7 @@ pub fn build<T: Tape + ?Sized>(t: &T, source: &[u8], digest: u64, codes: &CodeSe
         let mut terms: Vec<(u32, u32, u32)> = Vec::new(); // (count, start, len) by first occurrence
         let mut of_leaf = Vec::with_capacity(leaves.len());
         for &i in &leaves {
-            let (s, e) = t.span(i as usize);
-            let (s, e) = (s as usize, e as usize);
+            let (s, e) = (nodes.start[i as usize] as usize, nodes.stop[i as usize] as usize);
             let text = source.get(s..e).ok_or_else(|| format!("leaf {i}'s span {s}..{e} past the source's {} bytes", source.len()))?;
             let k = *first.entry(text).or_insert_with(|| {
                 terms.push((0, s as u32, (e - s) as u32));
@@ -235,7 +292,7 @@ pub fn build<T: Tape + ?Sized>(t: &T, source: &[u8], digest: u64, codes: &CodeSe
     let mut comments_before = Vec::new();
     if want.has(Kind::Siblings) {
         for p in 0..n {
-            let end = t.subtree_end(p);
+            let end = subtree_end(p);
             let (mut c, mut k, mut q) = (p + 1, 0u32, 0u32);
             while c < end {
                 if is_named(c) {
@@ -246,7 +303,7 @@ pub fn build<T: Tape + ?Sized>(t: &T, source: &[u8], digest: u64, codes: &CodeSe
                     k += 1;
                     q += u32::from(bit(&codes.comments, code[c]));
                 }
-                c = t.subtree_end(c);
+                c = subtree_end(c);
             }
         }
         let mut s = head([pairs.len() as u32, 0, 0, 0]);
@@ -258,7 +315,15 @@ pub fn build<T: Tape + ?Sized>(t: &T, source: &[u8], digest: u64, codes: &CodeSe
     }
     if want.has(Kind::Counts) {
         // The named nodes under a parent that is not: a projection of the named leaves their subtrees out.
-        let strays = (0..n).filter(|&p| !is_named(p)).map(|p| crate::tape::children(t, p).filter(|&c| is_named(c)).count() as u32).sum();
+        let named_children = |p: usize| {
+            let (mut c, mut k) = (p + 1, 0u32);
+            while c < subtree_end(p) {
+                k += u32::from(is_named(c));
+                c = subtree_end(c);
+            }
+            k
+        };
+        let strays = (0..n).filter(|&p| !is_named(p)).map(named_children).sum();
         let mut s = head([counted().count() as u32, strays, 0, 0]);
         counted().for_each(|(c, x)| {
             s.extend_from_slice(&c.to_le_bytes());

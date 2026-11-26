@@ -848,6 +848,30 @@ impl<'a> StoredPresence<'a> {
 /// What a writer's `finish` gives: the tape, its presence laid in its home after it (decision 0434 §4, step 6).
 pub struct Finished {
     pub tape: Written,
+    /// Its nodes as its writer's ops were given them (`aux_index::Nodes`), what its auxiliary index is laid from;
+    /// `None` where they were not all given through them.
+    pub nodes: Option<crate::aux_index::Nodes>,
+    /// Its source's SHA-256, where its writer took it.
+    pub digest: Option<SourceDigest>,
+}
+
+/// The SHA-256 of the bytes a writer read (`Finished::digest`), and where they lay.
+#[derive(Clone, Copy, Debug)]
+pub struct SourceDigest {
+    pub sha256: [u8; 32],
+    at: (usize, usize),
+}
+
+impl SourceDigest {
+    /// The digest of `bytes`, read where they lie.
+    pub fn of(bytes: &[u8]) -> SourceDigest {
+        SourceDigest { sha256: sha2::Digest::finalize(sha2::Digest::chain_update(sha2::Sha256::default(), bytes)).into(), at: (bytes.as_ptr() as usize, bytes.len()) }
+    }
+    /// The digest, where it was taken of `source` itself (the same bytes where they lie): a parser given another text
+    /// of the same length (a template's view) was given other bytes.
+    pub fn of_source(&self, source: &[u8]) -> Option<[u8; 32]> {
+        (self.at == (source.as_ptr() as usize, source.len())).then_some(self.sha256)
+    }
 }
 
 impl Written {
@@ -3527,12 +3551,22 @@ mod tests {
             while let Some((_, end)) = ends.pop() {
                 w.close(end);
             }
-            match w.finish().unwrap().tape {
-                Written::F16(t) => assert_eq!(t.as_bytes(), want.as_bytes(), "16 retagged"),
+            let f = w.finish().unwrap();
+            // The writer's nodes, its edits in them, lay the index the tape's read does; its digest is the source's.
+            let codes = crate::aux_index::CodeSets { named: crate::aux_index::named_codes(600, |c| c % 2 == 0), comments: crate::aux_index::named_codes(600, |c| c % 5 == 0) };
+            let all = crate::aux_index::Sections::ALL;
+            let laid = crate::aux_index::build_from(f.nodes.as_ref().expect("every node given through the ops"), &source, 7, &codes, all).unwrap();
+            assert_eq!(f.digest.and_then(|d| d.of_source(&source)), Some(sha2::Digest::finalize(sha2::Digest::chain_update(sha2::Sha256::default(), &source)).into()), "the source's digest");
+            match f.tape {
+                Written::F16(t) => {
+                    assert_eq!(t.as_bytes(), want.as_bytes(), "16 retagged");
+                    assert_eq!(laid, crate::aux_index::build(&t.reader(&lang).unwrap(), &source, 7, &codes, all).unwrap(), "16: the writer's index");
+                }
                 Written::F16Z(t) => {
                     let mut d = vec![0u8; t.decoded_len()];
                     t.decode_into(&mut d).unwrap();
                     assert_eq!(d, want.as_bytes(), "16z retagged");
+                    assert_eq!(laid, crate::aux_index::build(&t.reader(&lang, Some(&ZCache::of([&t]))).unwrap(), &source, 7, &codes, all).unwrap(), "16z: the writer's index");
                 }
             }
         }

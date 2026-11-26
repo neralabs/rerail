@@ -327,6 +327,84 @@ pub struct Sixteen {
     pub z: bool,
     pub blocks: bool,
     pub number: std::sync::Arc<dyn Fn(u32) -> Option<u32> + Send + Sync>,
+    /// The writers a parse takes its format 16 writer from and gives it back to (`Writers`); `None`, a writer of its
+    /// own.
+    pub writers: Option<std::sync::Arc<Writers>>,
+}
+
+/// Each language's keys' numbers in its table, by the names a lean crate gives them (`f16::Lang::number_named`): the
+/// machine's value (decision 0442), a table a tag and naming, so a key is numbered by its names once, not once a
+/// document.
+#[derive(Default)]
+pub struct KeyNumbers(std::sync::Mutex<Vec<(u8, usize, std::sync::Arc<KeyTable>)>>);
+
+impl KeyNumbers {
+    /// The table of tag `tag`'s keys as `names` names them.
+    pub fn of(&self, tag: u8, names: fn(u32) -> Option<KeyNames>) -> std::sync::Arc<KeyTable> {
+        let mut tables = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let at = names as usize;
+        if let Some((.., t)) = tables.iter().find(|(g, n, _)| *g == tag && *n == at) {
+            return std::sync::Arc::clone(t);
+        }
+        let t = std::sync::Arc::new(KeyTable::default());
+        tables.push((tag, at, std::sync::Arc::clone(&t)));
+        t
+    }
+}
+
+/// A language's keys' numbers (`KeyNumbers`), each found at its first sight: pages of `KEY_PAGE` keys, a page made at
+/// its first key. A key past the pages is found each time.
+pub struct KeyTable {
+    pages: Box<[std::sync::OnceLock<Box<[std::sync::atomic::AtomicU32]>>]>,
+}
+
+/// The keys a page of a `KeyTable` holds, and its pages: keys below 2^20, every lean crate's.
+const KEY_PAGE: usize = 1 << 10;
+const KEY_PAGES: usize = 1 << 10;
+/// A key not yet numbered, and one its table lacks.
+const KEY_UNSEEN: u32 = u32::MAX;
+const KEY_LACKED: u32 = u32::MAX - 1;
+
+impl Default for KeyTable {
+    fn default() -> Self {
+        KeyTable { pages: (0..KEY_PAGES).map(|_| std::sync::OnceLock::new()).collect() }
+    }
+}
+
+impl KeyTable {
+    /// `key`'s number: the table's, else `find`'s, kept.
+    pub fn number(&self, key: u32, find: impl FnOnce() -> Option<u32>) -> Option<u32> {
+        use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
+        let Some(page) = self.pages.get(key as usize / KEY_PAGE) else { return find() };
+        let slot = &page.get_or_init(|| (0..KEY_PAGE).map(|_| AtomicU32::new(KEY_UNSEEN)).collect())[key as usize % KEY_PAGE];
+        match slot.load(Relaxed) {
+            KEY_UNSEEN => {
+                let n = find();
+                debug_assert!(n.is_none_or(|n| n < KEY_LACKED), "a number past a table's");
+                slot.store(n.unwrap_or(KEY_LACKED), Relaxed);
+                n
+            }
+            KEY_LACKED => None,
+            n => Some(n),
+        }
+    }
+}
+
+/// A machine's format 16 writers not in use (the machine's value, decision 0442): a parse takes one (`Writer::to`)
+/// and gives it back once its tape is finished, so a writer is made once a parse worker, not once a document, and its
+/// parts' room is not made and zeroed again (`f16::Writer::begin` grows only a part that is short).
+#[derive(Default)]
+pub struct Writers(std::sync::Mutex<Vec<f16::Writer>>);
+
+impl Writers {
+    /// A writer not in use, if any.
+    pub fn take(&self) -> Option<f16::Writer> {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).pop()
+    }
+    /// `w` given back.
+    pub fn give(&self, w: f16::Writer) {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(w);
+    }
 }
 
 /// A node's key named as its grammar names it: what a parser without the grammar (a lean parser's own tests and
@@ -357,6 +435,7 @@ impl Named {
             z: false,
             blocks: true,
             number: std::sync::Arc::new(move |key| lang.number_named(&name(key)?)),
+            writers: None,
         });
         Named { target }
     }
@@ -446,6 +525,16 @@ struct Passing {
     bad: Option<String>,
     /// A node read after its commit that the window no longer holds (`Writer::passed_node`).
     lost: std::cell::Cell<Option<usize>>,
+    /// Where `w` is given back when the parse is done with it, finished or not (`Writers`).
+    writers: Option<std::sync::Arc<Writers>>,
+}
+
+impl Drop for Passing {
+    fn drop(&mut self) {
+        if let Some(writers) = self.writers.take() {
+            writers.give(std::mem::replace(&mut self.w, f16::Writer::empty()));
+        }
+    }
 }
 
 /// A node passed to format 16's ops before its close: what the parse may still read of it, and its close.
@@ -624,8 +713,14 @@ impl<L: Layout> Writer<L> {
                 return self;
             }
         };
-        let w = f16::Writer::new(t.lang, src, t.terminators, t.tag, t.z, t.blocks, self.cap);
-        self.sixteen = Ok(Box::new(Passing { w, number: t.number, numbers: Vector::new(), open: Vector::new(), bad: None, lost: Default::default() }));
+        let w = match t.writers.as_ref().and_then(|writers| writers.take()) {
+            Some(mut w) => {
+                w.begin(t.lang, src, t.terminators, t.tag, t.z, t.blocks, self.cap);
+                w
+            }
+            None => f16::Writer::new(t.lang, src, t.terminators, t.tag, t.z, t.blocks, self.cap),
+        };
+        self.sixteen = Ok(Box::new(Passing { w, number: t.number, numbers: Vector::new(), open: Vector::new(), bad: None, lost: Default::default(), writers: t.writers }));
         // The columns hold the window: the nodes since the last commit (more grow it).
         if self.cap > WINDOW {
             let (cap, widths) = (WINDOW, self.layout.widths());
@@ -1550,7 +1645,7 @@ mod tests {
             let (kind, field) = (k & 0x3ff, k >> KIND_BITS & 0x3f);
             (k >> 16 == 0 && kind < 16 && field < 8).then_some(kind + 16 * field)
         };
-        Ok(Sixteen { lang: lang(), terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: std::sync::Arc::new(number) })
+        Ok(Sixteen { lang: lang(), terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: std::sync::Arc::new(number), writers: None })
     }
 
     /// The rows of the tape `w` finishes.
@@ -1654,7 +1749,7 @@ mod tests {
             f16::Lang::new(CodeTable::new(entries), [1, 1, 1], 1).unwrap()
         });
         let number = |k: u32| (k >> 16 == 0 && k & 0x3ff < 16 && k >> 10 < 8).then(|| (k & 0x3ff) + 16 * (k >> 10));
-        let target = || Ok(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z: false, blocks: true, number: std::sync::Arc::new(number) });
+        let target = || Ok(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z: false, blocks: true, number: std::sync::Arc::new(number), writers: None });
         let src = vec![b' '; 200_000];
         // 0: the calls joined; 1: the joined calls; 2: the plain ones (no chain, no node passed on).
         let build = |way: u8| {

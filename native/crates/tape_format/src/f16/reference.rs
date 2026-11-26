@@ -548,7 +548,7 @@ impl<'l> Writer<'l> {
             let tape = z.finish(p, self.tag, mark, self.source_len, &lines)?;
             let mut out = crate::Vector::from(tape.as_bytes());
             super::presence::lay(&mut out, &presence);
-            return Ok(Finished { tape: Written::F16Z(Tape16Z::from_bytes(out)?) });
+            return Ok(Finished { tape: Written::F16Z(Tape16Z::from_bytes(out)?), nodes: None, digest: None });
         }
         // The last block's columns down to its rows.
         if count > 0 {
@@ -587,7 +587,7 @@ impl<'l> Writer<'l> {
         debug_assert_eq!(buf.len(), p.end);
         p.head_into(&mut buf, MAGIC16, self.tag, mark, self.source_len)?;
         super::presence::lay(&mut buf, &presence);
-        Ok(Finished { tape: Written::F16(Tape16::from_bytes(buf)?) })
+        Ok(Finished { tape: Written::F16(Tape16::from_bytes(buf)?), nodes: None, digest: None })
     }
 }
 

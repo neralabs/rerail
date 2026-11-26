@@ -174,7 +174,7 @@ fn rewritten(image: &TapeImage, source: &str, edit: impl Fn(usize, &mut rerail_t
         edit(i, &mut x);
         x
     })?;
-    TapeImage::written_16(rerail_tape_format::f16::Finished { tape }, image.language, source, None, &|| false)
+    TapeImage::written_16(rerail_tape_format::f16::Finished { tape, nodes: None, digest: None }, image.language, source, None, &|| false)
 }
 
 /// `image`'s stored bytes edited, then read back: `Err` where the format's reading refuses them.

@@ -92,6 +92,14 @@ pub struct Writer {
     /// The tape `finish` gave out: its buffer's address and the bytes of it written (its length before it was cut to
     /// the tape's), which `recycle` takes back as they are.
     given: (usize, usize),
+    /// Each node as the ops were given it, its edits included (`retag`, `set_start`): what its auxiliary index is laid
+    /// from (`Finished::nodes`), so the tape is not read back for it. A producer that writes its nodes through the
+    /// state itself (`state_address`) leaves it short, and its index is read off its tape.
+    nodes: crate::aux_index::Nodes,
+    /// The nodes opened and not yet closed, innermost last.
+    opened: Vec<u32>,
+    /// The source's SHA-256, taken at `begin`, where the newline index reads the source.
+    digest: Option<super::SourceDigest>,
     /// A part held at its capacity (a test's: the device's region, which the host does not grow).
     #[cfg(test)]
     fixed: Option<(u32, u64)>,
@@ -112,7 +120,7 @@ impl Writer {
 
     /// A writer of no document yet, its parts empty: `begin` starts each.
     pub fn empty() -> Self {
-        Writer { state: Box::default(), parts: Default::default(), presence_words: (0, 0), keep_blocks: false, z: false, given: (0, 0), #[cfg(test)] fixed: None, #[cfg(test)] jit: None }
+        Writer { state: Box::default(), parts: Default::default(), presence_words: (0, 0), keep_blocks: false, z: false, given: (0, 0), nodes: Default::default(), opened: Vec::new(), digest: None, #[cfg(test)] fixed: None, #[cfg(test)] jit: None }
     }
 
     /// The next document, in this writer: as `new`, its parts' buffers kept from the documents before (each grown only
@@ -134,6 +142,11 @@ impl Writer {
         let mut index = std::mem::take(&mut self.parts[part::LINES as usize]);
         lines(&mut index);
         let lines = index;
+        // The source's digest, read with it as the newline index was: the document's one hash of its source.
+        self.digest = Some(super::SourceDigest::of(source));
+        self.nodes.clear();
+        self.nodes.reserve(nodes);
+        self.opened.clear();
         let newlines = crate::newlines::count(&lines).unwrap_or(0);
         let (kind_words, field_words) = lang.presence_words();
         let w3 = [wd[0] as u32, wd[1] as u32, wd[2] as u32];
@@ -423,6 +436,8 @@ impl Writer {
         let desc = self.desc();
         // SAFETY: the state's parts lie in their buffers, each with the room the op can need, reserved above.
         call!(self, w_open(desc, number, start));
+        self.nodes.push(number, u32::MAX, start as u32, 0);
+        self.opened.push(i as u32);
         i
     }
 
@@ -468,6 +483,11 @@ impl Writer {
         let desc = self.desc();
         // SAFETY: as `open`'s.
         call!(self, w_close(desc, end));
+        if let Some(i) = self.opened.pop() {
+            let n = self.nodes.len() as u32;
+            self.nodes.end[i as usize] = n;
+            self.nodes.stop[i as usize] = end as u32;
+        }
     }
 
     /// A closed node with no children.
@@ -477,6 +497,7 @@ impl Writer {
         let desc = self.desc();
         // SAFETY: as `open`'s.
         call!(self, w_leaf(desc, number, start, end));
+        self.nodes.push(number, i as u32 + 1, start as u32, end as u32);
         i
     }
 
@@ -494,6 +515,9 @@ impl Writer {
         let desc = self.desc();
         // SAFETY: as `open`'s; a code's entry takes no room past its list's.
         call!(self, w_retag(desc, i as u32, number));
+        if let Some(c) = self.nodes.code.get_mut(i) {
+            *c = number;
+        }
     }
 
     /// Node `i`'s start made `start` (`w_set_start`): an edit of a node not yet final.
@@ -501,6 +525,9 @@ impl Writer {
         let desc = self.desc();
         // SAFETY: as `open`'s.
         call!(self, w_set_start(desc, i as u32, start));
+        if let Some(s) = self.nodes.start.get_mut(i) {
+            *s = start as u32;
+        }
     }
 
     /// The failure the ops kept, as a code and its node.
@@ -519,7 +546,12 @@ impl Writer {
         self.given = (out.as_ptr() as usize, out.len());
         out.truncate(end);
         let (low, high) = self.parts.split_at_mut(part::ERRORS as usize);
-        finished(out, &low[part::PRESENCE as usize], &mut high[0][..faults], self.presence_words, self.keep_blocks.then_some(count), self.z)
+        let mut f = finished(out, &low[part::PRESENCE as usize], &mut high[0][..faults], self.presence_words, self.keep_blocks.then_some(count), self.z)?;
+        // The nodes as the ops had them, where every node was given through them.
+        let whole = self.nodes.len() == self.state.n as usize && self.opened.is_empty();
+        f.nodes = whole.then(|| std::mem::take(&mut self.nodes));
+        f.digest = self.digest.take();
+        Ok(f)
     }
 
     /// `finish`'s ops, each with the room it can need reserved first.
@@ -571,7 +603,7 @@ fn finished(mut out: crate::Vector<u8>, presence: &[u8], faults: &mut [u8], word
     in_preorder(faults);
     super::presence::lay_words(&mut out, words, count, &mut (0..(words.0 + words.1) * count).map(word), faults);
     let tape = if z { Written::F16Z(Tape16Z::from_bytes(out)?) } else { Written::F16(Tape16::from_bytes(out)?) };
-    Ok(Finished { tape })
+    Ok(Finished { tape, nodes: None, digest: None })
 }
 
 

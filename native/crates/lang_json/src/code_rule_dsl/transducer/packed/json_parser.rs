@@ -76,7 +76,7 @@ pub fn image(src: &str) -> Option<crate::code_rule_dsl::tape::f16::Finished> {
     let c = compiled().ok()?;
     let (lang, _, z) = crate::code_rule_dsl::tape::formats::run_16(GrammarDialect::Json).ok()?;
     let tape = c.parser.image16(src.as_bytes(), crate::code_rule_dsl::lines::terminators(GrammarDialect::Json), lang, &c.numbers, z).ok()?;
-    Some(crate::code_rule_dsl::tape::f16::Finished { tape })
+    Some(crate::code_rule_dsl::tape::f16::Finished { tape, nodes: None, digest: None })
 }
 
 /// Why the grammar did not compile, if it did not.

@@ -623,7 +623,7 @@ pub struct Sink16 {
 impl Sink16 {
     pub fn new(z: bool, blocks: bool) -> Self {
         let number = std::sync::Arc::new(crate::tape::number);
-        Sink16 { target: rerail_tape_format::Sixteen { lang: crate::tape::lang(), terminators: crate::syntax::TERMINATORS, tag: rerail_tape_format::RR_TAG, z, blocks, number } }
+        Sink16 { target: rerail_tape_format::Sixteen { lang: crate::tape::lang(), terminators: crate::syntax::TERMINATORS, tag: rerail_tape_format::RR_TAG, z, blocks, number, writers: None } }
     }
 }
 
