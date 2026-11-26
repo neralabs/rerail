@@ -11613,3 +11613,15 @@ asks for the new check), c-directives eval::tests 50.
   observe, boot, tests-conformance); clif 19 (the reads' headers), tape-format 53, tests-tape 115, tests-lang
   facts::vtab 104, ukl-rust 5, tests-rr json_rules 9, store content_store::tests 69 (one, multiple processes, passed
   on its second run: its children aborted under Relax the first). Not run here: the Metal device tests (slabs).
+
+### Q561. Roll-up 133 (django-bugs 18f0e81d40 onto Pulling-it-all-together): what the merge chose
+
+- django-bugs' t60 line (4 commits, 18f0e81d40, below its two spikes): chunks evaluate as many at once as allowed, not
+  as many as are unfiled; a batch's uncounted documents made on the cores before its first rows; an empty log a word.
+- Chunk sizing, with phased-facts' (ee7dde4233, every chunk sized a window ahead, growth included, the first window's
+  known before any is filed): while chunks grow, chunk `n + window` is sized by chunk `n`; once growth stops, chunk
+  `n + HORIZON * window` (t60: the builder builds a window ahead of those evaluating). At the stop, the chunks up to the
+  first a later filing decides take the stop's size, so each chunk's size is decided once, before the builder reaches
+  it (Q314), with no fallback in `size`.
+- Relax: check 0 errors (corpus-memo, logic, facts); corpus-memo 19 (sizing 7); tests-lang facts::vtab 104; tests-logic
+  corpus 2 (both failed once while the disk was full, and pass).
