@@ -68,12 +68,20 @@ entry_step(q, n) :- entry_step(q, m), !entry(_, m, _), next_sibling(m, n).
 order(o) :- option("option", o).
 order("asc") :- !option("option", _).
 .decl sort_key(x: symbol, k: symbol)
-sort_key(x, k) :- named(x), !option("natural", "true"), cased(x, k).
-sort_key(x, k) :- named(x), option("natural", "true"), cased(x, c), natural_key(c, k).
-nat_ask(c) :- named(x), option("natural", "true"), cased(x, c).
+sort_key(x, k) :- named(x), !option("natural", "true"), cased(x, c), units(c, k).
+sort_key(x, k) :- named(x), option("natural", "true"), cased(x, c), units(c, u), natural_key(u, k).
+nat_ask(u) :- named(x), option("natural", "true"), cased(x, c), units(c, u).
 .decl cased(x: symbol, c: symbol)
 cased(x, x) :- named(x), !option("caseSensitive", "false").
 cased(x, @lower(x)) :- named(x), option("caseSensitive", "false").
+// units(c, u): JavaScript's `<` and natural-compare compare UTF-16 code units, `<` here code points. They differ
+// where a character above U+FFFF (two units, D800-DFFF) meets one in U+E000-U+FFFF: { "\uE000": 1, "😀": 2 } is
+// reported, '😀' before '\uE000'. u puts U+D7FF before each character above U+FFFF, so it sorts after every unit
+// below D800 and before U+E000, as its first unit does; between two of them the code points decide, as the units do.
+.decl units(c: symbol, u: symbol)
+units(c, c) :- cased(_, c), !match("[\\s\\S]*[\\x{10000}-\\x{10FFFF}][\\s\\S]*", c).
+units(c, @replace_all(c, "([\\x{10000}-\\x{10FFFF}])", "\u{D7FF}$1")) :- cased(_, c),
+    match("[\\s\\S]*[\\x{10000}-\\x{10FFFF}][\\s\\S]*", c).
 .decl named(x: symbol)
 named(x) :- pname(_, x, _).
 .decl wording(o: symbol, w: symbol)  // "natural insensitive asc"
