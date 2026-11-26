@@ -1,0 +1,10 @@
+[
+  {
+    "id": "ruff-c420-unnecessary-dict-comprehension-for-iterable",
+    "status": "same"
+  },
+  {
+    "id": "ruff-c901-complex-structure",
+    "status": "same"
+  }
+]
