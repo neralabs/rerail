@@ -352,7 +352,7 @@ fn count(c: &mut Ctx<'_, '_, '_>, tile: Tile) {
 fn scan(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let items = statement_items(c) as usize;
     // Control, then each relation's runs block.
-    let ([], mut v) = c.views([], std::array::from_fn::<usize, { R + 1 }, _>(|i| if i == 0 { CONTROL } else { RUNS + i - 1 }));
+    let ([], v) = c.views([], std::array::from_fn::<usize, { R + 1 }, _>(|i| if i == 0 { CONTROL } else { RUNS + i - 1 }));
     let control = &mut *v[0];
     if word::<u64>(control, REFUSED_NODE) != u64::MAX {
         return;

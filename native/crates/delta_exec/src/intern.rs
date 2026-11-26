@@ -2,7 +2,7 @@
 //! reference, and the call that runs it over a changed document. Its layout and its twin are
 //! `rerail_delta_twins::intern`.
 
-use crate::dir::{BlockId, Directory};
+use crate::dir::Directory;
 use crate::files::{BlobId, Blobs, Doc, Placed};
 use crate::op::{Across, Found, Independence, Inside, Mode, OpId, Output, ParamsLayout, Phase, Registry, Signature, SlotSpec, Tiling, Unit, Version, run_cpu};
 use crate::sym::Atoms;
@@ -13,8 +13,12 @@ use rerail_blocks::region::pin_block;
 use rerail_delta_twins::Params;
 use rerail_delta_twins::intern::{self as twin, InternP};
 
-/// One phase, one item: the whole document, its new ids in node order (a hash build, then a scan).
-static INTERN_PHASE: [Phase; 1] = [Phase { name: "intern", found: Found::Fixed, unit: Unit::Threadgroup, inside: Inside::Nothing, across: Across::Nothing, output: Output::InPlace, bounds: &[] }];
+/// *0686: Operations* §10's shape: a hash build (shape 18: an item a node, each name probed in the atoms' hash table,
+/// found ids written in place), then a scan for new ids (shape 10: in node order, after the hash phase).
+static INTERN_PHASE: [Phase; 2] = [
+    Phase { name: "hash", found: Found::Fixed, unit: Unit::Threadgroup, inside: Inside::Nothing, across: Across::Nothing, output: Output::InPlace, bounds: &[] },
+    Phase { name: "scan", found: Found::Fixed, unit: Unit::Threadgroup, inside: Inside::Nothing, across: Across::Ordered, output: Output::ByScan, bounds: &[] },
+];
 
 /// `intern`: read the document's source and tape (their blocks, which may be one) · rw the atoms · rw the document's
 /// symbols block.
@@ -66,6 +70,12 @@ impl InternOps {
 /// frozen and housed as a blob.
 #[allow(clippy::too_many_arguments)]
 pub fn intern(reg: &Registry, ops: &InternOps, dir: &mut Directory, blobs: &mut Blobs, atoms: Atoms, src: Placed, tape: Placed, path: &str, module: &str) -> Result<BlobId, String> {
+    intern_at(reg, ops, dir, blobs, atoms, src, tape, path, module, Tiling::WHOLE)
+}
+
+/// `intern` with its hash phase's items run in tiles of `tiling` (its scan is one item, in node order).
+#[allow(clippy::too_many_arguments)]
+pub fn intern_at(reg: &Registry, ops: &InternOps, dir: &mut Directory, blobs: &mut Blobs, atoms: Atoms, src: Placed, tape: Placed, path: &str, module: &str, tiling: Tiling) -> Result<BlobId, String> {
     let n = crate::files::nodes(dir, src, tape)?;
     let body = twin::syms_bytes(n, path, module);
     let id = dir.make(kind::FACTS, body);
@@ -77,7 +87,7 @@ pub fn intern(reg: &Registry, ops: &InternOps, dir: &mut Directory, blobs: &mut 
         }
         let mut p = vec![0u8; InternP::SIZE];
         InternP { src_at: src.at as u64, src_len: src.len as u64, tape_at: tape.at as u64, tape_len: tape.len as u64 }.write(&mut p);
-        run_cpu(reg, dir, ops.intern, &[src.block, tape.block, atoms.0, id], &p, Tiling::WHOLE)?;
+        run_cpu(reg, dir, ops.intern, &[src.block, tape.block, atoms.0, id], &p, tiling)?;
         dir.freeze(id)?;
         blobs.house(reg, dir, Placed { block: id, at: BODY_AT, len: body })
     })();

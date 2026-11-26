@@ -96,3 +96,30 @@ fn intern_names_only_identifiers_and_strings() {
     assert!(texts(&fx, &doc).iter().any(|(t, s)| t == "!=" && *s == ne));
     assert!(texts(&fx, &doc).iter().all(|(t, _)| !t.starts_with(['"', '1', '6'])), "no literal's text");
 }
+
+/// `intern` is *0686: Operations* §10's two phases, a hash build and then a scan: at every tiling of the hash phase
+/// a document's symbols and the atoms are the same, and its new names take ids in node order.
+#[test]
+fn interns_hash_then_scan_alike_at_every_tiling_new_ids_in_node_order() {
+    let src = "zeta(alpha, \"mid\") :- beta(alpha, gamma), !zeta(gamma, \"mid\"), alpha != gamma.\n";
+    let run = |tiling: Tiling| {
+        let mut fx = Fx::new();
+        fx.doc("e(1, 2).\n", "first.rerail");
+        let ids = crate::files::doc_of(&fx.reg, &mut fx.dir, &mut fx.blobs, src).unwrap();
+        let (s, t) = (fx.place(&ids.source), fx.place(&ids.tape));
+        let syms = intern_at(&fx.reg, &fx.ops, &mut fx.dir, &mut fx.blobs, fx.atoms, s, t, "two.rerail", "two", tiling).unwrap();
+        let names: Vec<String> = (1..=fx.atoms.count(&fx.dir)).map(|id| fx.atoms.name(&fx.dir, i64::from(id))).collect();
+        (syms, names)
+    };
+    let whole = run(Tiling::WHOLE);
+    for tile in [1, 2, 7] {
+        for seed in [0, 3] {
+            assert_eq!(run(Tiling { tile, seed }), whole, "tiles of {tile}, seed {seed}");
+        }
+    }
+    let at = |n: &str| whole.1.iter().position(|x| x == n).unwrap();
+    // The path and module first, then the document's new names as its nodes give them.
+    let order = ["two.rerail", "two", "zeta", "alpha", "mid", "beta", "gamma"];
+    assert!(order.windows(2).all(|w| at(w[0]) < at(w[1])), "{:?}", &whole.1[whole.1.len() - order.len()..]);
+    assert_eq!(whole.1.len() - at("two.rerail"), order.len(), "each new name once");
+}

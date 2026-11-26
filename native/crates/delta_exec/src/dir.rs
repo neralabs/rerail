@@ -41,8 +41,10 @@ impl std::fmt::Display for BlockId {
 /// A referenced block, held: a frozen one, or a slab, whose sealed rooms are fixed while the slab takes more.
 #[derive(Clone)]
 enum Held {
-    Frozen(Frozen),
-    Slab(Arc<Block>),
+    /// Held only so the generation lives while its referrer does: never read through.
+    Frozen(#[expect(dead_code, reason = "a holder: its drop lets the generation go")] Frozen),
+    /// Held only so the slab lives while a referrer points into its sealed rooms.
+    Slab(#[expect(dead_code, reason = "a holder: its drop lets the slab go")] Arc<Block>),
 }
 
 enum Own {

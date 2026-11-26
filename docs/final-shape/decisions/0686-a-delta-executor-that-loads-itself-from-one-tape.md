@@ -1403,3 +1403,27 @@ Checks (Relax, local, 78 of 78):
     current one);
   - going back to l0, whose blobs were retired, reads it again, and its 14 rules are the cold run's.
 - The shape script refuses a run that does not retire.
+
+## The plan, built whole (2026-11-26)
+
+The comparison of what was built against the pages found seven departures and called three missing pieces
+"deferred by the plan". The user agrees to no deferrals: every piece the pages give is built here.
+
+**`intern` in its shape** (*Operations* §10: a hash build (18), then a scan (10) for new ids). It was one phase
+with one item. Now:
+
+- **hash** (an item a node, in place): probes each node's names in the atoms' hash table and writes the ids it
+  finds. A name it does not find is marked for the scan: new for an identifier, variable or string, and to be found
+  for an operator's token, which the scan finds and never makes. This phase writes no atom.
+- **scan** (one item, ordered): interns the language's names on the first run that misses them, then the path and
+  the module, then each marked name in node order, so new ids follow node order.
+- Clippy's leftovers went too: two unused imports, an unused parameter, and the directory's holders marked as such.
+
+Checks (Relax, local): `interns_hash_then_scan_alike_at_every_tiling_new_ids_in_node_order`. At tiles of 1, 2 and
+7, shuffled and not, the symbols and the atoms equal the whole run's, and new names take ids in node order. B5's
+four tests pass.
+
+**Per-column stats of a chained view** were listed as open (the rebuild plan's B2: "Not built: per-column stats").
+They were built on 2026-11-25 (`996f410a59`, `View::chain_stats`: the bounds over the layers, and the sketch of the
+state's head), and `a_random_trace_reads_as_its_set` checks rows, distinct values and bounds at every state. The
+comparison that listed them as open was wrong.

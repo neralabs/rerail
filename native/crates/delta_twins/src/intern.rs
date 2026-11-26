@@ -107,12 +107,55 @@ fn put(atoms: &mut [u8], s: &str) -> u32 {
     find_in(atoms, s, h).or_else(|| append_in(atoms, s, h)).expect("room in the atoms block")
 }
 
-/// `intern`'s one item: the document's names, then every node's, in node order (new ids by that order).
-fn intern(c: &mut Ctx<'_, '_, '_>, _: Tile) {
+/// A node's symbol the hash phase did not find: a name the scan makes, in node order.
+const NEW: u32 = u32::MAX;
+/// An operator's token the hash phase did not find: the scan finds it once the language's names are in (never made).
+const FIND: u32 = u32::MAX - 1;
+
+/// The document's source and tape, read where they lie.
+fn reads<'b>(source: &'b [u8], tape: &'b [u8], p: &InternP) -> Reads<'b> {
+    let src = std::str::from_utf8(&source[p.src_at as usize..(p.src_at + p.src_len) as usize]).expect("a source the file layer checked is UTF-8");
+    Reads::in_place(&tape[p.tape_at as usize..(p.tape_at + p.tape_len) as usize], src).expect("a tape the parser wrote")
+}
+
+/// Node `n`'s two names to intern: its text's (an identifier's or a variable's, made when new; an operator's, found)
+/// and its value's (a string's).
+fn names_of<'r>(r: &'r Reads<'_>, n: usize) -> (Option<(&'r str, bool)>, Option<String>) {
+    let k = r.node(n).0;
+    let t = if k == Kind::Identifier as u16 || k == Kind::Variable as u16 {
+        Some((r.text(n), true))
+    } else if k >= FIRST_ANONYMOUS && r.is_leaf(n) {
+        Some((r.text(n), false))
+    } else {
+        None
+    };
+    (t, r.string(n))
+}
+
+/// The hash phase (shape 18, a hash build: an item a node): each node's names probed in the atoms' hash table, the
+/// found ones' ids written, the rest marked for the scan (`NEW`, `FIND`). It writes no atom.
+fn hash(c: &mut Ctx<'_, '_, '_>, tile: Tile) {
+    let p = <InternP as crate::Params>::read(c.params);
+    let ([source, tape, atoms], [syms]) = c.views([SOURCE, TAPE, ATOMS], [SYMS]);
+    let r = reads(source, tape, &p);
+    assert_eq!(count(syms), r.len(), "a symbols block of the tape's nodes");
+    let find = |s: &str| find_in(atoms, s, hash_bytes(s.as_bytes()));
+    for n in tile.items() {
+        let (t, v) = names_of(&r, n);
+        let t = t.map_or(0, |(s, make)| find(s).unwrap_or(if make { NEW } else { FIND }));
+        let v = v.map_or(0, |s| find(&s).unwrap_or(NEW));
+        let at = node_at(syms, n);
+        set_word::<u32>(syms, at, t);
+        set_word::<u32>(syms, at + 4, v);
+    }
+}
+
+/// The scan (shape 10, ordered, one item): the language's names on the first run that finds them missing, the
+/// document's path and module, then every name the hash phase marked, in node order: new ids by that order.
+fn scan(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let p = <InternP as crate::Params>::read(c.params);
     let ([source, tape], [atoms, syms]) = c.views([SOURCE, TAPE], [ATOMS, SYMS]);
-    let src = std::str::from_utf8(&source[p.src_at as usize..(p.src_at + p.src_len) as usize]).expect("a source the file layer checked is UTF-8");
-    let r = Reads::in_place(&tape[p.tape_at as usize..(p.tape_at + p.tape_len) as usize], src).expect("a tape the parser wrote");
+    let r = reads(source, tape, &p);
     let language = || KIND_NAMES.iter().chain(rerail_rr_syntax::tape::FIELD_NAMES).chain(&STEP_KINDS).filter(|n| !n.is_empty());
     let last = language().last().expect("the language's names");
     if find_in(atoms, last, hash_bytes(last.as_bytes())).is_none() {
@@ -126,24 +169,26 @@ fn intern(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     };
     set_word::<u32>(syms, PATH_SYM_AT, ps);
     set_word::<u32>(syms, MODULE_SYM_AT, ms);
-    assert_eq!(count(syms), r.len(), "a symbols block of the tape's nodes");
     for n in 0..r.len() {
-        let k = r.node(n).0;
-        let t = if k == Kind::Identifier as u16 || k == Kind::Variable as u16 {
-            put(atoms, r.text(n))
-        } else if k >= FIRST_ANONYMOUS && r.is_leaf(n) {
-            // An operator: its token's name, the language's.
-            let s = r.text(n);
-            find_in(atoms, s, hash_bytes(s.as_bytes())).unwrap_or(0)
-        } else {
-            0
-        };
-        let v = r.string(n).map_or(0, |s| put(atoms, &s));
         let at = node_at(syms, n);
-        set_word::<u32>(syms, at, t);
-        set_word::<u32>(syms, at + 4, v);
+        let (t, v) = (word::<u32>(syms, at), word::<u32>(syms, at + 4));
+        if t != NEW && t != FIND && v != NEW {
+            continue;
+        }
+        let (tn, vn) = names_of(&r, n);
+        if let Some((s, _)) = tn.filter(|_| t == NEW || t == FIND) {
+            let id = if t == NEW { put(atoms, s) } else { find_in(atoms, s, hash_bytes(s.as_bytes())).unwrap_or(0) };
+            set_word::<u32>(syms, at, id);
+        }
+        if let Some(s) = vn.filter(|_| v == NEW) {
+            set_word::<u32>(syms, at + 4, put(atoms, &s));
+        }
     }
 }
 
-/// `intern`: one item, the whole document (its new ids in node order).
-pub const INTERN: &[TwinPhase] = &[TwinPhase { name: "intern", items: |_| 1, run: intern, again: None }];
+/// `intern` (*0686: Operations* §10: a hash build, then a scan for new ids): the hash phase an item a node, then the
+/// ordered scan, one item.
+pub const INTERN: &[TwinPhase] = &[
+    TwinPhase { name: "hash", items: |c| count(c.read(SYMS)) as u32, run: hash, again: None },
+    TwinPhase { name: "scan", items: |_| 1, run: scan, again: None },
+];

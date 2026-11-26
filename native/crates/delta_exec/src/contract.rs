@@ -579,7 +579,7 @@ pub type Chain = Vec<Vec<Vec<(Vec<i64>, i32)>>>;
 pub fn harness<O: DeltaOp>(op: &O, chain: &Chain, drop_at: usize) -> Result<(), Broken> {
     let setup = |e: String| Broken { law: "setup", step: 0, what: e };
     let mut bench = Bench::new().map_err(setup)?;
-    let (mut ins, heads) = inputs(op, &mut bench, chain).map_err(setup)?;
+    let (mut ins, heads) = inputs::<O>(&mut bench, chain).map_err(setup)?;
     let globals = vec![Vec::new(); heads.len()];
     harness_on(op, &mut bench, &mut ins, &heads, &globals, drop_at)
 }
@@ -610,7 +610,7 @@ impl Bench {
 /// The input traces of a chain of row changes, a trace a port, every state kept (a layer a step, none rolled up), and
 /// each step's heads.
 #[allow(clippy::type_complexity)]
-fn inputs<O: DeltaOp>(op: &O, bench: &mut Bench, chain: &Chain) -> Result<(Vec<Trace>, Vec<Vec<Option<BlockId>>>), String> {
+fn inputs<O: DeltaOp>(bench: &mut Bench, chain: &Chain) -> Result<(Vec<Trace>, Vec<Vec<Option<BlockId>>>), String> {
     let Bench { reg, dir, traces, .. } = &mut *bench;
     let mut ins: Vec<Trace> = ports_of::<O>()?.ins.iter().map(|p| Trace::new(&p.shape).map(|t| t.with_roll_up(RollUp::Never))).collect::<Result<_, _>>()?;
     let mut heads: Vec<Vec<Option<BlockId>>> = vec![vec![None; ins.len()]];

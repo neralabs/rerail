@@ -25,7 +25,6 @@ use rerail_blocks::bistate::{ColumnIndex, ColumnRead, Read, RowId, WordIndex, be
 use rerail_blocks::table::{Run, Runs, Table};
 use rerail_rr_syntax::tape_format::f16::Tape16;
 use rerail_rr_syntax::tape_format::home;
-use rerail_rr_syntax::tape_format::tape::Tape as _;
 
 /// A document's text: its source, where the file layer's read placed it, and its tape, as the rr parser wrote it, both
 /// in the document's tape block (`files`). Neither is copied: a view reads both where they lie.
