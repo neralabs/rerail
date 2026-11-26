@@ -1,4 +1,4 @@
-.policy "ruff-ann201-missing-return-type-undocumented-public-function" revision 2
+.policy "ruff-ann201-missing-return-type-undocumented-public-function" revision 3
 .description "Add a return type annotation to public functions and methods so callers and type checkers know what they return."
 .language python
 .mode steer
@@ -13,9 +13,9 @@
 //   class C:
 //       def pub(self): ...          ← ANN201
 //   def _helper(): ...              not reported here: private (ANN202)
-#include "python/annotations.rerail"
+#include "python/python-26.rerail"
 
 .violation ANN201(at: node, name: symbol) code "ANN201"
     "Add a return type annotation to `{name}` (for example `-> None` if it returns nothing)."
     suppress ruff "ANN201"
-ANN201(nm, x) :- ann_missing_return(f, "ANN201"), field(f, "name", nm), text(nm, x).
+ANN201(nm, x) :- p26_ann_missing_return(f, "ANN201"), field(f, "name", nm), text(nm, x).

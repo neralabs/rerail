@@ -1,4 +1,4 @@
-.policy "ruff-ann202-missing-return-type-private-function" revision 2
+.policy "ruff-ann202-missing-return-type-private-function" revision 3
 .description "Add a return type annotation to private and nested functions so type checkers can verify what they return."
 .language python
 .mode steer
@@ -13,9 +13,9 @@
 //   def outer() -> None:
 //       def inner(): ...            ← ANN202: nested
 //   def __dunder__(): ...           ← ANN202: a module-level dunder is not a method
-#include "python/annotations.rerail"
+#include "python/python-26.rerail"
 
 .violation ANN202(at: node, name: symbol) code "ANN202"
     "Add a return type annotation to `{name}` (for example `-> None` if it returns nothing)."
     suppress ruff "ANN202"
-ANN202(nm, x) :- ann_missing_return(f, "ANN202"), field(f, "name", nm), text(nm, x).
+ANN202(nm, x) :- p26_ann_missing_return(f, "ANN202"), field(f, "name", nm), text(nm, x).
