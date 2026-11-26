@@ -1,0 +1,5 @@
+{
+  "name": "admin-ui",
+  "private": true,
+  "dependencies": { "react": "19.0.0", "@acme/rpc-hooks": "^1.0.0" }
+}

@@ -1,0 +1,5 @@
+{
+  "name": "jobs-cli",
+  "private": true,
+  "dependencies": { "commander": "^12.0.0" }
+}

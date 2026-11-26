@@ -1,0 +1,5 @@
+{
+  "name": "apollo-ssr",
+  "private": true,
+  "dependencies": { "@apollo/client": "^3.11.0", "express": "^4.21.0" }
+}

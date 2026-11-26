@@ -39,15 +39,25 @@
 // something that happened later (an external call finished, a delay passed), not a copy of the cache.
 // Gaps: a value computed by a call (`data.pages.flatMap(…)`, `data.map(…)`) is not followed; nor is a hook that
 // returns the data inside an object (`return { todos: data }`), a query result passed in as a prop, a setter of a
-// store (Jotai, Zustand) rather than useState, or an alias other than `@/` and `~/`. The engine evaluates .ts and
+// store (Jotai, Zustand) rather than useState, or an alias other than `@/`, `~/` and `#/`. The engine evaluates .ts and
 // .tsx files apart, so a component in a .tsx file does not see a custom hook declared in a .ts file (the most
 // common layout, `use-todos.ts`) until it joins them.
 
 #include "tsx/react-compiler.rerail"
 
 .violation QueryDataCopiedToState(at: node, msg: symbol) "{msg}"
-QueryDataCopiedToState(a, m) :- qdc_initial(a, s), !qdc_set_elsewhere(s), !qdc_effect_copy(_, s), qdc_says("initial", m).
-QueryDataCopiedToState(k, m) :- qdc_effect_copy(k, s), !qdc_set_elsewhere(s), qdc_says("effect", m).
+QueryDataCopiedToState(a, m) :- qdc_initial(a, s), !qdc_set_elsewhere(s), !qdc_effect_copy(_, s), qdc_says("initial", m),
+    docof(a, d), qdc_tq_pkg(d).
+QueryDataCopiedToState(k, m) :- qdc_effect_copy(k, s), !qdc_set_elsewhere(s), qdc_says("effect", m), docof(k, d),
+    qdc_tq_pkg(d).
+// qdc_tq_pkg(d): document d's package (its nearest package.json; the workspace root's for a file under no other)
+// depends on TanStack Query (`@tanstack/react-query`, v3's `react-query`) or tRPC's React Query integration, so an
+// `x.y.useQuery()` there is tRPC's TanStack hook and not another SDK's.
+.decl qdc_tq_pkg(d: number)
+qdc_tq_pkg(d) :- doc(d, f, _), package_for(f, dir), qdc_tq_dep(dir).
+.decl qdc_tq_dep(dir: symbol)
+qdc_tq_dep(dir) :- package_field(dir, k, _),
+    match("(dependencies|devDependencies|peerDependencies)/(@tanstack~1react-query|react-query|@trpc~1(react-query|tanstack-react-query|next))", k).
 
 .decl qdc_says(id: symbol, m: symbol)
 qdc_says("initial", "This useState copies query data once, on the first render: the copy is undefined if the query had no data yet, and it never follows a refetch, an invalidation or setQueryData. Read the query's `data` where you use it, deriving values during render or with the query's `select`. If the state must keep the first value on purpose (a snapshot to compare against, a draft seeded once), move it into a child component that takes the value as a prop (`<Editor initial={data} key={data.id} />`) and render the child once the data is there; that form is not reported.").
@@ -175,7 +185,7 @@ qdc_in_copying_effect(r, s) :- qdc_effect_copy(k, s), qdc_effect_cb(cb), within(
 // tsx/names' sym_of needs the tsconfig facts (tsconfig_for, tsconfig_path), and alias-by-package package_for, which
 // the .rerail runner does not bind; this is the rule's own. A specifier names a workspace module by:
 //   "./hooks", "../x"   the importing file's folder joined with it, then .ts/.tsx/.js/… and index files
-//   "@/x", "~/x"        x, or src/x, under the importing file's folder or any folder above it (where tsconfig
+//   "@/x", "~/x", "#/x" x, or src/x, under the importing file's folder or any folder above it (where tsconfig
 //                       `paths` most often points: "@/*": ["./src/*"] or ["./*"])
 // Other aliases and workspace packages are not followed. The engine evaluates .ts and .tsx files apart, so a
 // module only resolves to a file of the same kind.
@@ -188,7 +198,7 @@ qdc_target(d, s, t) :- docof(i, d), import_spec(i, s), qdc_alias(s, rest), qdc_r
 qdc_target(d, s, t) :- docof(i, d), import_spec(i, s), qdc_alias(s, rest), qdc_root(d, a),
     resolve_base(@join(@join(a, "src"), rest), t).
 .decl qdc_alias(s: symbol, rest: symbol)
-qdc_alias(s, substr(s, 2, strlen(s) - 2)) :- import_spec(_, s), (prefix("@/", s) ; prefix("~/", s)).
+qdc_alias(s, substr(s, 2, strlen(s) - 2)) :- import_spec(_, s), (prefix("@/", s) ; prefix("~/", s) ; prefix("#/", s)).
 // qdc_root(d, a): a is the folder of document d, which imports an alias, or a folder above it.
 .decl qdc_root(d: number, a: symbol)
 qdc_root(d, @dir(p)) :- docof(i, d), import_spec(i, s), qdc_alias(s, _), doc(d, p, _).
@@ -211,6 +221,8 @@ qdc_mod_def(t, x, g) :- kind(e, "export_statement"), docof(e, d), doc(d, _, t), 
 // in `// caught` is reported, and no other line.
 .test cases exactly
     .fixture "package.json" from "../cases/tanstack-query-practice-query-data-copied-to-state/package.json"
+    .fixture "tools/admin-ui/package.json" from "../cases/tanstack-query-practice-query-data-copied-to-state/tools/admin-ui/package.json"
+    .fixture "tools/admin-ui/src/post-feed.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/tools/admin-ui/src/post-feed.tsx"
     .fixture "tsconfig.json" from "../cases/tanstack-query-practice-query-data-copied-to-state/tsconfig.json"
     .fixture "src/components/apollo-user.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/apollo-user.tsx"
     .fixture "src/components/draft-list.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/draft-list.tsx"
@@ -227,6 +239,7 @@ qdc_mod_def(t, x, g) :- kind(e, "export_statement"), docof(e, d), doc(d, _, t), 
     .fixture "src/components/verify-email.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/verify-email.tsx"
     .fixture "src/components/purchases-ready.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/purchases-ready.tsx"
     .fixture "src/components/first-seen.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/first-seen.tsx"
+    .fixture "src/components/user-badge.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/user-badge.tsx"
     .fixture "src/features/todos/api.ts" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/features/todos/api.ts"
     .fixture "src/features/projects/use-projects.ts" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/features/projects/use-projects.ts"
     .fixture "src/components/project-list.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/project-list.tsx"
@@ -246,4 +259,5 @@ qdc_mod_def(t, x, g) :- kind(e, "export_statement"), docof(e, d), doc(d, _, t), 
     .expect _ at "src/components/verify-email.tsx":17
     .expect _ at "src/components/verify-email.tsx":18
     .expect _ at "src/components/first-seen.tsx":8
+    .expect _ at "src/components/user-badge.tsx":12
 .end

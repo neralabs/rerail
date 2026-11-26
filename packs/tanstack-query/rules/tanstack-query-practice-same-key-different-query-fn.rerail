@@ -186,7 +186,12 @@ skd_open(o, h) :- skd_fetcher(o, h), skd_prop(o, "queryFn", f), skd_callee(f, f)
 // skd_ready(o, t, k, pk): a definition with a template, a known fetcher and no parameter call, in package pk.
 .decl skd_ready(o: node, t: symbol, k: symbol, pk: symbol)
 skd_ready(o, t, k, pk) :- skd_key(o, t), skd_kind(o, k), skd_fetcher(o, _), skd_prop(o, "queryFn", f), !skd_param(f),
-    docof(o, d), doc(d, p, _), package_for(p, pk).
+    docof(o, d), doc(d, p, _), package_for(p, pk), skd_tq_dep(pk).
+// skd_tq_dep(dir): the package in dir (its package.json) depends on TanStack Query (any `@tanstack/*query*` package,
+// v3's `react-query`) or tRPC's React Query integration; `{ queryKey, queryFn }` objects elsewhere are not its queries.
+.decl skd_tq_dep(dir: symbol)
+skd_tq_dep(dir) :- package_field(dir, k, _),
+    match("(dependencies|devDependencies|peerDependencies)/(@tanstack~1[a-z0-9-]*query[a-z0-9-]*|react-query|@trpc~1(react-query|tanstack-react-query|next))", k).
 .decl skd_pair(a: node, b: node)
 skd_pair(a, b) :- skd_ready(a, t, k, pk), skd_ready(b, t, k, pk), a != b.
 // skd_shared(a, b): a and b reach a common fetcher, and do not call it with different strings only.
@@ -227,6 +232,8 @@ skd_conflict(a, b) :- skd_pair(a, b), !skd_shared(a, b).
     .fixture "apps/web/src/lib/keys.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/lib/keys.ts"
     .fixture "apps/web/tsconfig.json" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/tsconfig.json"
     .fixture "package.json" from "../cases/tanstack-query-practice-same-key-different-query-fn/package.json"
+    .fixture "tools/report-cache/package.json" from "../cases/tanstack-query-practice-same-key-different-query-fn/tools/report-cache/package.json"
+    .fixture "tools/report-cache/src/reports.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/tools/report-cache/src/reports.ts"
     .expect _ at "apps/web/src/features/billing/use-billing-user.ts":7
     .expect _ at "apps/web/src/features/boards/use-board-summary.ts":7
     .expect _ at "apps/web/src/features/boards/use-boards.ts":12

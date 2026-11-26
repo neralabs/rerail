@@ -1,7 +1,7 @@
 {
   "name": "@neralabs/rerail-pack-tanstack-query",
   "version": "0.1.0",
-  "description": "Rerail rule pack: TanStack Query practice rules for query keys, query functions, the QueryClient and server rendering.",
+  "description": "Rerail rule pack: TanStack Query practice rules for query data, query functions and query keys.",
   "keywords": [
     "rerail",
     "rerail-pack",

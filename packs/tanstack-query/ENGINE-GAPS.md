@@ -12,7 +12,7 @@ what was inferred and not run.
 |---|---|---|---|
 | 1 | `tsconfig_for`/`tsconfig_path` have no producer, so tsx/names' cross-file `target`/`sym_of` are refused | all 9 cross-file rules (each resolves imports itself) | Closed by `engine-tsconfig` |
 | 2 | Every TypeScript document's module is `""` | server-action-as-query-fn; any rule using tsx/names symbols | Closed by `engine-tsconfig` |
-| 3 | `.ts` and `.tsx` files run in separate lanes and never join | all cross-file rules; false reports in cache-key-matches-no-query | Partly addressed by `engine-ts-lanes` (text only); open for joins that read the other file's tree |
+| 3 | `.ts` and `.tsx` files run in separate lanes and never join | all cross-file rules; false reports in cache-key-matches-no-query | Partly addressed by `engine-ts-lanes` (text only, confirmed in the debug engine; cache-key-matches-no-query and module-query-client-in-ssr read the other lane's lines); open for joins that read the other file's tree |
 | 4 | A world read whose path is derived from `doc` or `file` is refused | module-query-client-in-ssr, query-client-factory-called-in-render, infinite-and-plain-share-key | Open (by design, decision 0065 §2a); gap 1's producers remove the need for tsconfig reading |
 | 5 | The same world read fed by a recursive relation gives no rows, or fails on statistics | module-query-client-in-ssr | Open |
 | 6 | A disjunction binding a variable used by a functor in an atom argument fails to plan | module-query-client-in-ssr | Open |
@@ -23,7 +23,7 @@ what was inferred and not run.
 | 11 | `match_all` positions bound only in a rule body give one row with an empty value | query-fn-input-hidden-from-key | Open |
 | 12 | `!fn_param(f, _, i)` on a node of another file held for parameters that exist | query-fn-input-hidden-from-key | Not confirmed |
 | 13 | A negation after `key_static` in a body is ignored | infinite-and-plain-share-key | Open |
-| 14 | `package_field` (and, by one report, `package_for`) unbound in `.rerail` runs | infinite-and-plain-share-key | Not confirmed: same-key-different-query-fn reads `package_for` and it works |
+| 14 | `package_field` (and, by one report, `package_for`) unbound in `.rerail` runs | infinite-and-plain-share-key | Not reproduced: `package_for`, `package` and `package_field` give rows in `test-rr` and `run-rr`; infinite-and-plain-share-key now takes its packages from them |
 | 15 | A message cannot hold `{` or `}` literally | infinite-and-plain-share-key | Open |
 | 16 | "content store hard limit rejects new payloads" on the largest repos | infinite-and-plain-share-key | Open |
 | 17 | `.scope exclude` removes a file's facts, not only its findings | cache-key-matches-no-query | Open (may be intended; then document it) |
@@ -31,6 +31,8 @@ what was inferred and not run.
 | 19 | A demand set recursive with a cross-file lookup costs about 4x | query-fn-input-hidden-from-key | Cost note |
 | 20 | Engine panic "rows past 96 chunks" (`blocks/src/rows.rs`) on supabase | query-fn-input-hidden-from-key | Open |
 | 21 | `run-rr` and `test-rr` do not apply `rerail-ignore` to a `.rerail` rule's findings | query-data-copied-to-state (message) | Not confirmed for audits |
+| 22 | `has(n, x, k)` with the kind `k` unbound (then tested in a disjunction) gives no rows | infinite-and-plain-share-key | Open; one `has` per kind is the workaround |
+| 23 | The pack's run over the largest test-set app (lobe-chat) ran out of memory; teable (held-out) went past 7 GB | the whole pack (10 rules on at the time) | Open; no per-rule memory profile |
 
 ---
 
@@ -88,7 +90,7 @@ them.
 
 | Rule | Effect |
 |---|---|
-| cache-key-matches-no-query | False reports: 37 of 40 dev-subset matches (openship 28, umami 4, nodedr 4, ever-teams 1). Starts off until this is closed |
+| cache-key-matches-no-query | Was: false reports, 37 of 40 dev-subset matches (openship 28, umami 4, nodedr 4, ever-teams 1). Now worked around by reading the other lane's lines as text; the partial re-run on openship, umami and nodedr left none of them |
 | server-action-as-query-fn | Misses 2 of 6 real sites the text scan found (workout-cool `add-exercise-modal.tsx`, `users-table.tsx`); a `'use client'` `.tsx` component calling a `.ts` action is the common App Router shape |
 | query-data-copied-to-state | Misses every component using a custom query hook in a `.ts` file (all of umami's and ever-teams'); recall unknown |
 | query-fn-input-hidden-from-key | 8 of 224 key-factory query sites in formbricks and ever-teams unresolved (`.tsx` site, `.ts` factory) |
@@ -100,11 +102,11 @@ set-query-data-mutates-cache and dehydrated-state-json-stringify read one file a
 
 **Status.** `engine-ts-lanes` (`409baf3a61`) makes each dialect's run read the other dialects' files in scope as text
 documents: `doc`, path, source text and lines, no tree; a finding in another dialect's file is dropped by the run that
-read it as text. From its description (not confirmed by a run of these rules on it), that closes the gap for a join
-that reads only another file's path or text, and not for these rules, whose cross-file halves read the other file's
-tree (declarations, exports, string literals, calls). Each would need either a tree-level join across dialects or its
-cross-file half rewritten over text. cache-key-matches-no-query is the nearest to text: it asks whether a key root
-occurs as a string anywhere, which a search of the other files' lines could answer.
+read it as text. Confirmed with the debug engine (2026-11-25): in a `.ts` run, `doc(d, "b.tsx", _), split_line(d, _,
+t)` gives `b.tsx`'s lines. Two rules now read the other lane's lines: cache-key-matches-no-query counts a key root
+quoted on a line of a file with no tree in the run (`!kind(_, "program")` in it), and module-query-client-in-ssr's
+test for a server-side cache fill searches every line of the package. The other rules' cross-file halves read the
+other file's tree (declarations, exports, calls) and still need a tree-level join across dialects.
 
 ## 4. A world read whose path is derived from `doc` or `file` is refused
 
@@ -285,7 +287,7 @@ credential-name exemption): the same panic after 265 s.
 
 ```
 mkdir -p /tmp/qfh-panic/tmp && TMPDIR=/tmp/qfh-panic/tmp nice -n 19 ./target/profiling/rerail-engine run-rr \
-  packs/tanstack-query/rules/tanstack-query-practice-query-fn-input-hidden-from-key.rerail \
+  packs/tanstack-query/candidates/rules/tanstack-query-practice-query-fn-input-hidden-from-key.rerail \
   <corpus>/supabase__supabase /tmp/qfh-panic/out --memory-mb 4096
 ```
 
@@ -310,3 +312,30 @@ and run `rerail-engine test-rr` on the rule: the line is still reported.
 **Rules affected.** query-data-copied-to-state told the agent to "say so in a comment and keep it"; no comment
 silenced it, so the message now advises the prop-seeded child component, which the rule does not report. A message
 should name `rerail-ignore` only once it is shown to silence a `.rerail` rule.
+
+## 22. `has` with an unbound kind gives no rows
+
+**Symptom.** `has(c, n, k), (k = "identifier" ; k = "property_identifier"), text(n, "pages")` never holds, with no
+error, while `(has(c, n, "identifier") ; has(c, n, "property_identifier")), text(n, "pages")` holds for the same
+call.
+
+**Repro.** infinite-and-plain-share-key's `tqis_paged(c)` written the first way: the cases' `setQueryData<InfiniteData<…>>(…,
+(old) => old && { ...old, pages: … })` was reported as a flat write.
+
+**Rules affected and workaround.** infinite-and-plain-share-key spells one `has` per kind. The runner should either bind
+the kind column or refuse the atom as unplaceable.
+
+## 23. Memory on the largest apps of the test and held-out sets
+
+**Symptom.** On the frozen test set (2026-11-26), one `run-policies` of the pack over lobehub/lobe-chat (`58a93517`)
+with its 10 rules then on was killed after 1,155 s (exit 143) when the shared 12 GiB pod ran out of memory; the runs
+after it on that pod ended the same way. The re-run on a fleet workspace skipped lobe-chat as too large for that
+workspace. So the pack's test-set numbers cover 19 of the 20 apps. On the held-out set, teableio/teable (`42d9ac5`)
+was killed at 221 s (exit 137) with the engine past 7 GB, and on the corpus re-run Infisical the same way at 250 s.
+
+**Repro.** `run-policies` of `packs/tanstack-query` over a lobe-chat clone at `58a93517` (or teable at `42d9ac5`) on a
+host with 12 GiB or less, as `/tmp/rer133/testset-base-packs.sh` and the fleet run did.
+
+**Rules affected.** Not attributed: each run held the whole pack, so which rule's relations grew is unmeasured.
+query-data-copied-to-state, fetch-without-ok-check and same-key-different-query-fn have no result on lobe-chat or
+teable. A run that outgrows its memory should end with a resource message naming the rule (or spill), like gap 20.

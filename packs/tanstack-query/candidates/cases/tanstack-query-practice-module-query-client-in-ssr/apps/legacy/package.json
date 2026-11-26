@@ -1,0 +1,9 @@
+{
+  "name": "@acme/legacy",
+  "private": true,
+  "dependencies": {
+    "next": "12.3.0",
+    "react": "17.0.2",
+    "react-query": "^3.39.0"
+  }
+}
