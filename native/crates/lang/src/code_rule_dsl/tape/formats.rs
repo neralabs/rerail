@@ -280,6 +280,7 @@ impl TapeImage {
     /// parse computed it (simdjson's kernels), else computed here.
     pub fn written_16(written: f16::Finished, language: GrammarDialect, source: &str, digest: Option<[u8; 32]>, budget: &dyn Fn() -> bool) -> Result<Self, String> {
         // The digest the parse had, else the writer's (taken as it read the source), else taken here.
+        let written_from = Some((source.as_ptr() as usize, source.len()));
         let digest = match digest.or_else(|| written.digest.and_then(|d| d.of_source(source.as_bytes()))) {
             Some(d) => d,
             None => super::source_digest(source, &budget)?,
@@ -291,7 +292,7 @@ impl TapeImage {
             f16::Written::F16Z(t) => Held::F16Z(Arc::new(t)),
         };
         let index_at = Self::index_at(&held)?;
-        Ok(TapeImage { held, language, source_len: source.len(), source_digest: Some(digest), index_at })
+        Ok(TapeImage { held, language, source_len: source.len(), source_digest: Some(digest), written_from, index_at })
     }
 
     /// The language's table.

@@ -394,6 +394,9 @@ pub struct TapeImage {
     /// The source's SHA-256 where the image was encoded from it; not stored (v12), so `None` for
     /// an image read from bytes, whose store pairs it with its source.
     pub source_digest: Option<[u8; 32]>,
+    /// The source this process's writer wrote it from, where it lay (its address and length): restored over those
+    /// very bytes, the tape is not walked again (`restore_tree`). `None` for an image read from bytes.
+    written_from: Option<(usize, usize)>,
     /// Where its auxiliary index's sections lie in its home, read once when it is made (`doc_index`).
     index_at: rerail_tape_format::doc_index::IndexAt,
 }
@@ -1320,7 +1323,7 @@ impl TapeImage {
         };
         // Its index, which every reader reads (`doc_index`).
         let index_at = Self::index_at(&held)?;
-        let image = Self { held, language: grammar.lang, source_len: usize::try_from(source_len).map_err(|_| "source length overflow")?, source_digest: None, index_at };
+        let image = Self { held, language: grammar.lang, source_len: usize::try_from(source_len).map_err(|_| "source length overflow")?, source_digest: None, written_from: None, index_at };
         if image.node_count() == 0 {
             return Err("an empty tape".into());
         }
@@ -1378,7 +1381,7 @@ impl TapeImage {
             let home = self.place_stored()?;
             if home.placed() {
                 let mut placed = Self::from_home(home, grammar)?;
-                placed.source_digest = self.source_digest;
+                (placed.source_digest, placed.written_from) = (self.source_digest, self.written_from);
                 return Ok(placed);
             }
         }
@@ -2072,9 +2075,15 @@ impl TapeDoc {
     ) -> Result<Self, String> {
         read!("docs restored");
         read!("nodes restored", image.node_count());
-        // The image is checked node by node and held as it is: the document reads its tape in place (decision
-        // 0293), so nothing is copied out of it.
-        let (digest, _) = validated::visit(&source, &grammar, image, budget, |_, _| {})?;
+        // The image is held as it is: the document reads its tape in place (decision 0293), so nothing is copied out of
+        // it. A tape this process's writer wrote from these very bytes (`written_16`: their address and length, while
+        // the run holds them) is not walked again, and its source's digest is the writer's. Any other, one read from
+        // the store or the wire or restored over another text, is checked node by node.
+        let bytes = source.as_bytes();
+        let digest = match (image.source_digest, image.written_from) {
+            (Some(d), Some(at)) if image.language == grammar.lang && at == (bytes.as_ptr() as usize, bytes.len()) => d,
+            _ => validated::visit(&source, &grammar, image, budget, |_, _| {})?.0,
+        };
         checked(budget)?;
         // Held where a device reads it, the source and the tape alike: the residency takes both as they lie (decision
         // 0353 step 7, row 13). A placed image is shared, not copied.

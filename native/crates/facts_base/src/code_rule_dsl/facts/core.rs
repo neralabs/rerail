@@ -1180,13 +1180,31 @@ impl<'a> FactsIn<'a> {
 pub fn digest(f: &Facts) -> [u8; 32] {
     use sha2::{Digest as _, Sha256};
     let mut hash = Sha256::new();
-    hash.update(b"rerail.core-facts/v2\0");
+    hash.update(b"rerail.core-facts/v3\0");
+    let image = f.tape.as_ref().map(|t| t.image());
+    // The source by its digest: the one its tape's writer took as it read the source (`TapeImage::source_digest`),
+    // else (a tape read from the store, or none) taken here.
+    let source: [u8; 32] = match image.and_then(|i| i.source_digest) {
+        Some(d) => d,
+        None => {
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, f.source.len() as u64);
+            Sha256::digest(f.source.as_bytes()).into()
+        }
+    };
     hash.update((f.source.len() as u64).to_le_bytes());
-    hash.update(f.source.as_bytes());
-    let tape = f.tape.as_ref().and_then(|t| t.image().to_bytes().ok()).unwrap_or_default();
-    hash.update((tape.len() as u64).to_le_bytes());
-    hash.update(&tape);
-    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, (f.source.len() + tape.len()) as u64);
+    hash.update(source);
+    // The tape by what makes it from its source, as the store keys it (`queued_tape`): its dialect's tag, the grammar
+    // and the tape format, and the format it is held in. Its bytes are not read.
+    match image {
+        Some(i) => {
+            let tag = tape_tag(i.language).map_or(u16::MAX, u16::from);
+            hash.update(tag.to_le_bytes());
+            hash.update(crate::code_rule_dsl::build_ids::grammar_version().to_le_bytes());
+            hash.update(crate::code_rule_dsl::tape::formats::stored_version().to_le_bytes());
+            hash.update(i.format().name().as_bytes());
+        }
+        None => hash.update([0xff; 2]),
+    }
     hash.finalize().into()
 }
 
