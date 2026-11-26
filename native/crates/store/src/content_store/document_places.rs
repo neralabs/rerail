@@ -143,15 +143,13 @@ impl ContentStore {
         (HashKey::sha256(frame.segment().bytes()) == HashKey::from_sha256_digest(places.sha256)).then(|| Arc::new(CachedBytes::mapped(frame.segment().clone())))
     }
 
-    /// The tape `places` names, read where it lies with no SQL: `None` unless its segment holds a tape of its hash
-    /// there (`HashKey::tape_identity` of its source's sha256 and its bytes).
+    /// The tape `places` names, read where it lies with no SQL: `None` unless its segment holds a frame of its length
+    /// there (its identity names what made it, not its bytes: `HashKey::tape_identity`).
     pub fn placed_tape(&self, places: &DocumentPlaces) -> Option<TapeFrame> {
         let [seg, at, len] = places.tape;
         let mut maps = SegmentMaps::new(object_dir(&self.database_path));
         let frame = row_frame(&mut maps, seg, at, len)?;
-        let [algorithm, l0, l1, l2, l3] = places.tape_hash;
-        let kept = HashKey { algorithm, lanes: [l0, l1, l2, l3] };
-        (HashKey::tape_identity(HashKey::from_sha256_digest(places.sha256), frame.segment().bytes()) == kept).then(|| TapeFrame::new(places.tape_length, frame))
+        (i64::try_from(frame.segment().len()).ok() == Some(places.tape_length)).then(|| TapeFrame::new(places.tape_length, frame))
     }
 }
 

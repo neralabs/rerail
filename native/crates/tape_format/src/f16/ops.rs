@@ -69,7 +69,8 @@ const ZBLOCK_MAX: usize = 4 * PIECE_MAX + w::lz4_bound(PIECE_MAX as u64) as usiz
 const FRESH: u8 = if cfg!(test) { 0xa5 } else { 0 };
 
 /// What a writer writes a tape of (`Writer::begin_with`): a document of `source` in `lang`, of about `nodes` nodes,
-/// the producer's `tag`, in 16z where `z`, with each block's presence where `blocks`.
+/// the producer's `tag`, in 16z where `z`, with each block's presence where `blocks`. `sha256`: the source's digest
+/// where its reader took it already (the observer's, as it read the file), so the writer takes none of its own.
 pub struct Document<'a> {
     pub lang: &'a Lang,
     pub source: &'a [u8],
@@ -77,6 +78,7 @@ pub struct Document<'a> {
     pub z: bool,
     pub blocks: bool,
     pub nodes: usize,
+    pub sha256: Option<[u8; 32]>,
 }
 
 /// Format 16 or 16z written in one pass as a parser goes (decision 0434 §2), by the writer's ops in CLIF (§6)
@@ -129,21 +131,25 @@ impl Writer {
     /// part kept is filled with `FRESH`, so a byte read before it is written shows).
     /// The line index is of the source's lines as its language's `terminators` end them (decision 0612).
     pub fn begin(&mut self, lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) {
-        self.begin_with(&Document { lang, source, tag, z, blocks, nodes }, |out| crate::newlines::index_into(out, source, terminators));
+        self.begin_with(&Document { lang, source, tag, z, blocks, nodes, sha256: None }, |out| crate::newlines::index_into(out, source, terminators));
     }
 
     /// `begin`, the newline index written into its part by `lines` (`newlines::index_of`), in the part's own buffer: a
     /// producer that has the source's newlines (tier 1's bits) makes it with no scan of the source.
     pub fn begin_with(&mut self, doc: &Document<'_>, lines: impl FnOnce(&mut crate::Vector<u8>)) {
-        let &Document { lang, source, tag, z, blocks, nodes } = doc;
+        let &Document { lang, source, tag, z, blocks, nodes, sha256 } = doc;
         let source_len = source.len() as u64;
         let wd = lang.widths;
         let cw = bytes_for(source_len);
         let mut index = std::mem::take(&mut self.parts[part::LINES as usize]);
         lines(&mut index);
         let lines = index;
-        // The source's digest, read with it as the newline index was: the document's one hash of its source.
-        self.digest = Some(super::SourceDigest::of(source));
+        // The source's digest: its reader's, else read with it as the newline index was: the document's one hash of
+        // its source.
+        self.digest = Some(match sha256 {
+            Some(sha256) => super::SourceDigest::taken(sha256, source),
+            None => super::SourceDigest::of(source),
+        });
         self.nodes.clear();
         self.nodes.reserve(nodes);
         self.opened.clear();
@@ -416,6 +422,12 @@ impl Writer {
     /// The state's address: what code that calls the ops itself passes them (`reserve_run` first).
     pub fn state_address(&mut self) -> *mut u8 {
         std::ptr::from_mut::<State>(&mut self.state).cast::<u8>()
+    }
+
+    /// The state's address and the record of the nodes, for a walk that writes both itself
+    /// (`writer16::Cursor::recording`): its tape's auxiliary index is then laid from the record (`Finished::nodes`).
+    pub fn cursor_parts(&mut self) -> (*mut u8, *mut crate::aux_index::Nodes) {
+        (std::ptr::from_mut::<State>(&mut self.state).cast::<u8>(), &raw mut self.nodes)
     }
 
     /// The nodes so far.

@@ -415,7 +415,8 @@ pub fn install_languages(tests: bool) {
         }
         if cfg!(feature = "lang-json") {
             // simdjson where it builds (not wasm: tree-sitter-json there; on MSVC it is compiled by
-            // clang-cl); the Bitlex parser (`json_parser::tape::Bitlex`) is not yet the product's.
+            // clang-cl); the Bitlex parser (`json_parser::tape::Bitlex`, the generated Rust) reads what simdjson
+            // refuses, as its fallback (`json_parser::fallback`), not as a registered parser.
             #[cfg(not(target_family = "wasm"))]
             parsers.extend(transducer::packed::json_parser::simdjson::registrations());
         }

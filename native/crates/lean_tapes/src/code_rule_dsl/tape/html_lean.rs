@@ -7,22 +7,28 @@
 //! construct it does not read) goes to tree-sitter-html.
 
 use rerail_blocks::vector::Vector;
-use crate::code_rule_dsl::tape::{FileImage, Grammar, TapeImage, TemplateError, TreeParser};
+use crate::code_rule_dsl::tape::{FileImage, Grammar, TapeImage, TemplateError, TreeParser, Source};
 
 /// `source`'s tape from the lean parser: `Err` where it refuses the file; `Ok(Err)` where the tape
 /// cannot be made.
-pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_html_lean::Refusal> {
+pub fn encode<'s>(grammar: &Grammar, source: impl Into<Source<'s>>, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_html_lean::Refusal> {
+    let source: Source<'s> = source.into();
+    let source = &source;
     encode_from(grammar, source, "document", budget).expect("a document is a start")
 }
 
 /// [`encode`] from the node kind `start` (decision 0466): `None` for a kind the parser does not start at.
-pub fn encode_from(grammar: &Grammar, source: &str, start: &str, budget: &dyn Fn() -> bool) -> Option<Result<Result<TapeImage, String>, rerail_html_lean::Refusal>> {
+pub fn encode_from<'s>(grammar: &Grammar, source: impl Into<Source<'s>>, start: &str, budget: &dyn Fn() -> bool) -> Option<Result<Result<TapeImage, String>, rerail_html_lean::Refusal>> {
+    let source: Source<'s> = source.into();
+    let source = &source;
     encode_omitting(grammar, source, start, Vector::new(), budget)
 }
 
 /// [`encode_from`] of an embedded program, its placeholders `omit` (`SegmentMap::omissions`) left out as it is
 /// written (`Writer::omitting`).
-pub fn encode_omitting(grammar: &Grammar, source: &str, start: &str, omit: Vector<[u32; 2]>, budget: &dyn Fn() -> bool) -> Option<Result<Result<TapeImage, String>, rerail_html_lean::Refusal>> {
+pub fn encode_omitting<'s>(grammar: &Grammar, source: impl Into<Source<'s>>, start: &str, omit: Vector<[u32; 2]>, budget: &dyn Fn() -> bool) -> Option<Result<Result<TapeImage, String>, rerail_html_lean::Refusal>> {
+    let source: Source<'s> = source.into();
+    let source = &source;
     rerail_html_lean::tape_from_into(source.as_bytes(), start, &mut super::formats::lean_named(grammar, source, budget, rerail_html_lean::names).omitting(omit))
 }
 
@@ -36,17 +42,17 @@ impl TreeParser for Lean {
 
     /// An embedded page's text (a string or a template that holds HTML).
     fn program(&self, grammar: &Grammar, text: &str, omit: Vector<[u32; 2]>, budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {
-        encode_omitting(grammar, text, "document", omit, budget).expect("a document is a start").ok()
+        encode_omitting(grammar, &Source::text(text), "document", omit, budget).expect("a document is a start").ok()
     }
 
     /// One element (decision 0466). Its scripts and styles are its `raw_text`: a fragment's tape is one image, and no
     /// program is made from them (a rule asks for one by its own embed).
-    fn parse_from(&self, grammar: &Grammar, source: &str, start: &str, budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {
+    fn parse_from(&self, grammar: &Grammar, source: &Source<'_>, start: &str, budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "lean HTML parse of a fragment".into());
         encode_from(grammar, source, start, budget)?.ok()
     }
 
-    fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
+    fn parse(&self, grammar: &Grammar, source: &Source<'_>, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
         let span = crate::code_rule_dsl::logic::profile::span(|| "lean HTML parse and tape".into());
         match encode(grammar, source, &budget) {
             Ok(image) => {

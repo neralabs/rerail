@@ -8,11 +8,13 @@
 //! (any syntax error, which tree-sitter recovers from; a construct it does not read) goes to
 //! tree-sitter-scala.
 
-use crate::code_rule_dsl::tape::{FileImage, Grammar, TapeImage, TemplateError, TreeParser};
+use crate::code_rule_dsl::tape::{FileImage, Grammar, TapeImage, TemplateError, TreeParser, Source};
 
 /// `source`'s tape from the lean parser: `Err` where it refuses the file; `Ok(Err)` where the tape
 /// cannot be made.
-pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_scala_lean::Refusal> {
+pub fn encode<'s>(grammar: &Grammar, source: impl Into<Source<'s>>, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_scala_lean::Refusal> {
+    let source: Source<'s> = source.into();
+    let source = &source;
     rerail_scala_lean::tape_into(source.as_bytes(), &mut super::formats::lean_named(grammar, source, budget, rerail_scala_lean::names))
 }
 
@@ -20,7 +22,7 @@ pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Res
 pub struct Lean;
 
 impl TreeParser for Lean {
-    fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
+    fn parse(&self, grammar: &Grammar, source: &Source<'_>, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
         if !matches!(crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(grammar.lang)).parse_input(source), std::borrow::Cow::Borrowed(_))
         {
             return None;

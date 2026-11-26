@@ -140,6 +140,9 @@ const _: () = assert!(
 /// `digest` is the tape's content id, as the store keys it, kept in the header so an auxiliary index is matched to its tape.
 /// `codes`: the language's named codes and comment codes (`CodeSets`), which NAMED and COMMENTS hold and SIBLINGS and
 /// COMMENTS count by.
+/// A test's oracle only: an engine's tape's index is laid from its writer's record (`build_from`, decision 0703), the
+/// tape never read back for it.
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn build<T: Tape + ?Sized>(t: &T, source: &[u8], digest: u64, codes: &CodeSets, want: Sections) -> Result<Vec<u8>, String> {
     let n = t.len();
     if n >= NONE as usize || source.len() >= NONE as usize {

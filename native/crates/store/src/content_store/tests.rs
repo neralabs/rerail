@@ -537,10 +537,10 @@ fn source_and_tape_objects_deduplicate_and_round_trip() {
             assert!(seg > 0, "{table}: in a segment");
         }
     }
-    assert!(matches!(
-        store.put_tape(first, 1, 45, 1, b"different tape"),
-        Err(StoreError::Corrupt(_))
-    ));
+    // A tape's identity is what made it (its source, grammar and format; `HashKey::tape_identity`), not its bytes: a
+    // second put under the same is the tape stored already, its bytes as first written.
+    assert_eq!(store.put_tape(first, 1, 45, 1, b"different tape").unwrap(), tape);
+    assert_eq!(&**store.get_tape(tape).unwrap(), b"compact tape");
 }
 
 #[test]

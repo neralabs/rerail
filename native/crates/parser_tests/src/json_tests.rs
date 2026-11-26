@@ -1223,7 +1223,16 @@ fn json_rust() -> (String, String) {
     let symbols = rerail_bitlex::bitlex_masks::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let c = rerail_bitlex::bitlex_masks::compile_shaped(&stmts, &[rerail_bitlex::bitlex_masks::FALLBACK], Some(&symbols), rerail_bitlex::bitlex_masks::Shape::Auto).expect("compiles");
     let tier1 = c.lexer_rust.expect("a tree section").unwrap_or_else(|e| panic!("tier 1 as Rust: {e}"));
-    let tier2 = c.rust_loop.expect("a tree section").unwrap_or_else(|e| panic!("tier 2 as one loop: {e}"));
+    let mut tier2 = c.rust_loop.expect("a tree section").unwrap_or_else(|e| panic!("tier 2 as one loop: {e}"));
+    // The ids' names, so that a writer of another language (the engine's JSON, tree-sitter-json's ids) numbers
+    // `ENTRIES` by name (`rerail_json_aot::parse_numbered`).
+    let (kinds, fields) = ids.names();
+    let table = |names: std::collections::HashMap<u16, String>| {
+        let mut v: Vec<(u16, String)> = names.into_iter().collect();
+        v.sort();
+        v.iter().map(|(i, n)| format!("    ({i}, {n:?}),\n")).collect::<String>()
+    };
+    tier2.push_str(&format!("\n/// The names of `ENTRIES`' kinds, by id.\npub const KIND_NAMES: &[(u16, &str)] = &[\n{}];\n\n/// The names of `ENTRIES`' fields, by id.\npub const FIELD_NAMES: &[(u16, &str)] = &[\n{}];\n", table(kinds), table(fields)));
     (tier1, tier2)
 }
 
@@ -1408,7 +1417,7 @@ fn json_tier2_is_walks_shape() {
     assert!(!tier2.contains("i += 1;\ne = end;\nleaf("), "a token's leaf written out at a place");
     // The nodes stored through the walk's hold on the tape, a local of `run` (`Cursor`, the lean parser's `Walk`), not
     // the writer's ops on its state.
-    assert_eq!(tier2.matches("let mut cursor = unsafe { Cursor::<Cells>::begin(state) };").count(), 1, "one cursor, the walk's");
+    assert_eq!(tier2.matches("let mut cursor = unsafe { Cursor::<Cells>::recording(state, nodes, numbers) };").count(), 1, "one cursor, the walk's, recording its nodes");
     for op in ["w_open_with", "w_leaf_with", "w_close_with", "w_leaf_in_with", "d: *mut u8"] {
         assert!(!tier2.contains(op), "tier 2 still has `{op}`");
     }

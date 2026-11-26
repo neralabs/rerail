@@ -138,7 +138,7 @@ impl Survey {
         let view = crate::code_rule_dsl::language::parse_input(dialect, source);
         let Some(tree) = reader.parser.parse(view.as_ref(), None) else { return };
         let error = tree.root_node().has_error();
-        let ours = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| lean.parse(&grammar, source, &|| false)));
+        let ours = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| lean.parse(&grammar, &source.into(), &|| false)));
         let theirs = TapeImage::encode(tree.root_node(), &grammar, &view, &|| false);
         let (outcome, detail) = match ours {
             Err(panic) => {

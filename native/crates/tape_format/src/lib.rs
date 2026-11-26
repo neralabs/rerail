@@ -330,6 +330,10 @@ pub struct Sixteen {
     /// The writers a parse takes its format 16 writer from and gives it back to (`Writers`); `None`, a writer of its
     /// own.
     pub writers: Option<std::sync::Arc<Writers>>,
+    /// The source's SHA-256 where its reader took it, and the bytes it was taken of (`f16::SourceDigest::taken`): a
+    /// writer given those very bytes takes none of its own (`f16::Document::sha256`). A parser that writes from
+    /// another text (a template's masked view) still hashes its own.
+    pub sha256: Option<f16::SourceDigest>,
 }
 
 /// Each language's keys' numbers in its table, by the names a lean crate gives them (`f16::Lang::number_named`): the
@@ -436,6 +440,7 @@ impl Named {
             blocks: true,
             number: std::sync::Arc::new(move |key| lang.number_named(&name(key)?)),
             writers: None,
+            sha256: None,
         });
         Named { target }
     }
@@ -713,13 +718,9 @@ impl<L: Layout> Writer<L> {
                 return self;
             }
         };
-        let w = match t.writers.as_ref().and_then(|writers| writers.take()) {
-            Some(mut w) => {
-                w.begin(t.lang, src, t.terminators, t.tag, t.z, t.blocks, self.cap);
-                w
-            }
-            None => f16::Writer::new(t.lang, src, t.terminators, t.tag, t.z, t.blocks, self.cap),
-        };
+        let doc = f16::Document { lang: t.lang, source: src, tag: t.tag, z: t.z, blocks: t.blocks, nodes: self.cap, sha256: t.sha256.and_then(|d| d.of_source(src)) };
+        let mut w = t.writers.as_ref().and_then(|writers| writers.take()).unwrap_or_else(f16::Writer::empty);
+        w.begin_with(&doc, |out| newlines::index_into(out, src, t.terminators));
         self.sixteen = Ok(Box::new(Passing { w, number: t.number, numbers: Vector::new(), open: Vector::new(), bad: None, lost: Default::default(), writers: t.writers }));
         // The columns hold the window: the nodes since the last commit (more grow it).
         if self.cap > WINDOW {
@@ -1645,7 +1646,7 @@ mod tests {
             let (kind, field) = (k & 0x3ff, k >> KIND_BITS & 0x3f);
             (k >> 16 == 0 && kind < 16 && field < 8).then_some(kind + 16 * field)
         };
-        Ok(Sixteen { lang: lang(), terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: std::sync::Arc::new(number), writers: None })
+        Ok(Sixteen { lang: lang(), terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: std::sync::Arc::new(number), writers: None, sha256: None })
     }
 
     /// The rows of the tape `w` finishes.
@@ -1749,7 +1750,7 @@ mod tests {
             f16::Lang::new(CodeTable::new(entries), [1, 1, 1], 1).unwrap()
         });
         let number = |k: u32| (k >> 16 == 0 && k & 0x3ff < 16 && k >> 10 < 8).then(|| (k & 0x3ff) + 16 * (k >> 10));
-        let target = || Ok(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z: false, blocks: true, number: std::sync::Arc::new(number), writers: None });
+        let target = || Ok(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z: false, blocks: true, number: std::sync::Arc::new(number), writers: None, sha256: None });
         let src = vec![b' '; 200_000];
         // 0: the calls joined; 1: the joined calls; 2: the plain ones (no chain, no node passed on).
         let build = |way: u8| {

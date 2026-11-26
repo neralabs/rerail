@@ -867,6 +867,10 @@ impl SourceDigest {
     pub fn of(bytes: &[u8]) -> SourceDigest {
         SourceDigest { sha256: sha2::Digest::finalize(sha2::Digest::chain_update(sha2::Sha256::default(), bytes)).into(), at: (bytes.as_ptr() as usize, bytes.len()) }
     }
+    /// `sha256`, the digest its reader took of `bytes`, where they lie.
+    pub fn taken(sha256: [u8; 32], bytes: &[u8]) -> SourceDigest {
+        SourceDigest { sha256, at: (bytes.as_ptr() as usize, bytes.len()) }
+    }
     /// The digest, where it was taken of `source` itself (the same bytes where they lie): a parser given another text
     /// of the same length (a template's view) was given other bytes.
     pub fn of_source(&self, source: &[u8]) -> Option<[u8; 32]> {
@@ -4213,8 +4217,10 @@ mod tests {
                     c.reserve_run(2 * ops.len(), 41);
                     c.final_as_written();
                     {
-                        // SAFETY: `c`'s state, its room reserved for every node and level, written by the cursor alone.
-                        let mut cur = unsafe { Cursor::<X>::begin(c.state_address()) };
+                        // SAFETY: `c`'s state and record, its room reserved for every node and level, written by the cursor
+                        // alone.
+                        let (state, record) = c.cursor_parts();
+                        let mut cur = unsafe { Cursor::<X>::recording(state, record, &[]) };
                         for &op in &ops {
                             // SAFETY: as `begin`'s; each close is an open's.
                             unsafe {
@@ -4231,6 +4237,8 @@ mod tests {
                     let (a, b, c) = (a.finish().unwrap(), b.finish().unwrap(), c.finish().unwrap());
                     assert!(a.tape.extent() == b.tape.extent(), "widths {widths:?}, seed {seed}, 16z {z}: the constant widths' bytes");
                     assert!(a.tape.extent() == c.tape.extent(), "widths {widths:?}, seed {seed}, 16z {z}: the cursor's bytes");
+                    // The cursor's record is the ops': its tape's auxiliary index is laid from it, not read back.
+                    assert!(c.nodes.is_some() && a.nodes == c.nodes, "widths {widths:?}, seed {seed}, 16z {z}: the cursor's record");
                 }
             }
             edges

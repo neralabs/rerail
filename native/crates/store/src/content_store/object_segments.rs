@@ -283,7 +283,7 @@ impl ContentStore {
     /// Where the queue is full a lone write is dropped, and the next run parses the file again.
     #[allow(clippy::too_many_arguments)]
     pub fn queue_source_and_tape(&self, key: Key, canonical: HashKey, grammar_id: i64, grammar_version: i64, tape_format_version: i64, source: &Arc<rerail_tape_format::home::Text>, tape: TapeBytes, named: bool, documents: Option<Arc<[super::QueuedDocument]>>) -> StoreResult<()> {
-        let tape_identity = HashKey::tape_identity(canonical, (*tape).as_ref());
+        let tape_identity = HashKey::tape_identity(canonical, grammar_id, grammar_version, tape_format_version);
         let mut item = Some(Item { key, canonical, grammar_id, grammar_version, tape_format_version, source: Arc::clone(source), tape, tape_identity, named, documents });
         let dir = object_dir(&self.database_path);
         let make = || ObjectGather { dir: dir.clone(), items: Vec::new(), at: HashMap::new(), bytes: 0 };

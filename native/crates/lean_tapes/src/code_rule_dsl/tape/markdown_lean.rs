@@ -9,11 +9,13 @@
 //! syntax error, which tree-sitter recovers from; a construct it does not read) goes to
 //! tree-sitter-md.
 
-use crate::code_rule_dsl::tape::{FileImage, Grammar, TapeImage, TemplateError, TreeParser};
+use crate::code_rule_dsl::tape::{FileImage, Grammar, TapeImage, TemplateError, TreeParser, Source};
 
 /// `source`'s tape from the lean parser: `Err` where it refuses the file; `Ok(Err)` where the tape
 /// cannot be made.
-pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_markdown_lean::Refusal> {
+pub fn encode<'s>(grammar: &Grammar, source: impl Into<Source<'s>>, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_markdown_lean::Refusal> {
+    let source: Source<'s> = source.into();
+    let source = &source;
     rerail_markdown_lean::tape_into(source.as_bytes(), &mut super::formats::lean_named(grammar, source, budget, rerail_markdown_lean::names))
 }
 
@@ -21,7 +23,7 @@ pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Res
 pub struct Lean;
 
 impl TreeParser for Lean {
-    fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
+    fn parse(&self, grammar: &Grammar, source: &Source<'_>, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
         let span = crate::code_rule_dsl::logic::profile::span(|| "lean Markdown parse and tape".into());
         match encode(grammar, source, &budget) {
             Ok(image) => {

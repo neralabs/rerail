@@ -12,7 +12,7 @@
 //! tree-sitter.
 
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::tape::{FileImage, Grammar, TapeImage, TemplateError, TreeParser};
+use crate::code_rule_dsl::tape::{FileImage, Grammar, TapeImage, TemplateError, TreeParser, Source};
 
 /// The parser's dialect for `grammar`'s language (`None`: neither C nor C++).
 fn dialect(grammar: &Grammar) -> Option<rerail_c_lean::Dialect> {
@@ -25,7 +25,9 @@ fn dialect(grammar: &Grammar) -> Option<rerail_c_lean::Dialect> {
 
 /// `source`'s tape from the lean parser, in `grammar`'s dialect (C or C++): `Err` where it refuses
 /// the file; `Ok(Err)` where the tape cannot be made.
-pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_c_lean::Refusal> {
+pub fn encode<'s>(grammar: &Grammar, source: impl Into<Source<'s>>, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_c_lean::Refusal> {
+    let source: Source<'s> = source.into();
+    let source = &source;
     let Some(dialect) = dialect(grammar) else { return Ok(Err(format!("the lean C parser reads no {:?}", grammar.lang))) };
     rerail_c_lean::tape_into(source.as_bytes(), dialect, &mut super::formats::lean_named(grammar, source, budget, rerail_c_lean::names))
 }
@@ -34,7 +36,7 @@ pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Res
 pub struct Lean;
 
 impl TreeParser for Lean {
-    fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
+    fn parse(&self, grammar: &Grammar, source: &Source<'_>, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
         if !matches!(crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(grammar.lang)).parse_input(source), std::borrow::Cow::Borrowed(_))
         {
             return None;

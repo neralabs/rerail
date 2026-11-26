@@ -541,8 +541,9 @@ fn build_in_wave_as(
             let parse = crate::code_rule_dsl::logic::profile::span(|| "tape parse".into());
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, file.source().len() as u64);
             let parsed = match fragment {
-                Some(f) => TapeImage::parse_from(&grammar, file.source(), f.start, &|| false),
-                None => TapeImage::parse(&grammar, file.source(), &|| false),
+                // The source's digest, taken as it was read: the tape's writer takes none of its own.
+                Some(f) => TapeImage::parse_from(&grammar, tape::Source { text: file.source(), sha256: Some(digest) }, f.start, &|| false),
+                None => TapeImage::parse(&grammar, tape::Source { text: file.source(), sha256: Some(digest) }, &|| false),
             };
             let Some(image) = parsed else {
                 return Ok((Built::Unparsed, None));
@@ -1180,7 +1181,7 @@ impl<'a> FactsIn<'a> {
 pub fn digest(f: &Facts) -> [u8; 32] {
     use sha2::{Digest as _, Sha256};
     let mut hash = Sha256::new();
-    hash.update(b"rerail.core-facts/v3\0");
+    hash.update(b"rerail.core-facts/v4\0");
     let image = f.tape.as_ref().map(|t| t.image());
     // The source by its digest: the one its tape's writer took as it read the source (`TapeImage::source_digest`),
     // else (a tape read from the store, or none) taken here.
@@ -1192,18 +1193,14 @@ pub fn digest(f: &Facts) -> [u8; 32] {
         }
     };
     hash.update((f.source.len() as u64).to_le_bytes());
-    hash.update(source);
-    // The tape by what makes it from its source, as the store keys it (`queued_tape`): its dialect's tag, the grammar
-    // and the tape format, and the format it is held in. Its bytes are not read.
+    // The tape by its identity, the store's key (`TapeImage::identity`: the source, its tag, the grammar and its
+    // format); with none, the source alone. Its bytes are not read.
     match image {
-        Some(i) => {
-            let tag = tape_tag(i.language).map_or(u16::MAX, u16::from);
-            hash.update(tag.to_le_bytes());
-            hash.update(crate::code_rule_dsl::build_ids::grammar_version().to_le_bytes());
-            hash.update(crate::code_rule_dsl::tape::formats::stored_version().to_le_bytes());
-            hash.update(i.format().name().as_bytes());
+        Some(i) => hash.update(i.identity(&source)),
+        None => {
+            hash.update(source);
+            hash.update([0xff; 2]);
         }
-        None => hash.update([0xff; 2]),
     }
     hash.finalize().into()
 }

@@ -4597,6 +4597,7 @@ dependencies = [
  "rerail-cpu-block",
  "rerail-cpu-stream",
  "rerail-facts",
+ "rerail-json-aot",
  "rerail-lang",
  "rerail-lang-json",
  "rerail-prof",

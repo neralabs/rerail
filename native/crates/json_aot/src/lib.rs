@@ -16,6 +16,8 @@ mod tier2;
 pub use tier1::{Lexed, PADDING, lex};
 /// The code table tier 2's numbers are of: each number's kind, field and supertypes.
 pub use tier2::{ENTRIES, WIDTHS};
+/// The names of `ENTRIES`' kinds and fields, by id (the generator's ids).
+pub use tier2::{FIELD_NAMES, KIND_NAMES};
 
 /// The tape of `buf[..n]` into `w` (a format 16 writer of a language whose table is `ENTRIES`), or the byte the parser
 /// refused it at (0: tier 1 sends it to tree-sitter). `buf` is the file padded, as simdjson's: `PADDING` spaces after
@@ -24,9 +26,14 @@ pub fn parse(buf: &[u8], n: usize, w: &mut rerail_tape_format::f16::Writer) -> R
     parse_lexed(buf, &tier1::lex(buf, n), w)
 }
 
+/// `parse`, into a writer of another language: `numbers` is its number of each of `ENTRIES`'.
+pub fn parse_numbered(buf: &[u8], n: usize, w: &mut rerail_tape_format::f16::Writer, numbers: &[u32]) -> Result<(), u32> {
+    tier2::parse(buf, &tier1::lex(buf, n), w, numbers)
+}
+
 /// `parse`'s tier 2 alone, on tier 1's records of `buf` (`lex`).
 pub fn parse_lexed(buf: &[u8], lexed: &Lexed, w: &mut rerail_tape_format::f16::Writer) -> Result<(), u32> {
-    tier2::parse(buf, lexed, w)
+    tier2::parse(buf, lexed, w, &[])
 }
 
 /// `src` padded for `parse`: a buffer of it and `PADDING` spaces (a caller that reads files makes its buffer so).
