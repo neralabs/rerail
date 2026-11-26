@@ -303,6 +303,20 @@ them.
    backslashes (`escaped(bs)`), as the lean lexer's `string_end` matches the byte it stopped at; a one-`$` opener in a
    `$$` string holds at no stop, and its branch is not written (`drop_never`). The token loop reads a fill back once:
    `a ; after a line break and a comment`.
+37. **A `;` after a line break and a comment is the loop's, as the lean lexer's gap**: the token loop keeps a fill as
+   each token's last-byte value where its start `X` holds in no region, or at a region token's first byte alone; there
+   `X` is read as the loop knows it at a token's start (`at_start`), with the region and its opener's bytes known
+   (`opener_start`). So is a stop at a region token's first byte. A mask of the regions that a fill reads at the byte
+   before (`prev(code)` in `r_first`) is kept as a fill's `X` is (`fill(prev(M), empty)`, its `X` alone: `xl_I` at a
+   token's last byte, `xs_I = s > at || xl_I` before the next, where `M` holds at every skipped byte); a test over a
+   token's bytes reads no such fill. A mask at a token's first or last byte tests no bound (`s`, `l` are in the
+   file), and `X` at a token's last byte is of its bytes where it is the same at each. The grammar's escape is as it
+   was: written of the region openers (`o_line | o_block`), the masks' prover proves none of the blank marks it proves
+   with `r_first`. `fill(lf & code, …)` is the lean lexer's `nl` in `skip`, `fill(cmt_on_lf, …)` its comment after
+   it: a comment's row sets `fill_13 = (xs_3 && fs_9) || fs_13` and keeps a line break through it (`fill_9 = !xs_3
+   && fs_9`), a token of code clears both, and the `;` row tests `src[s] == b';' && fs_13`, where the code pass read
+   the fill back (`rcaf_5`). What the code pass still reads back is two masks: `as_lt` (a fill) and `number`
+   (`rca_as_lt`, `rca_number`).
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`

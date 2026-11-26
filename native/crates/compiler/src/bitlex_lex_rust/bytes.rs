@@ -374,7 +374,8 @@ impl<'a> Bytes<'a> {
                     return Err(format!("`{n}` is no class or mask of the bytes"));
                 }
             }
-            Expr::Not(a) if at == "s" => format!("!{}", self.at(a, at, depth + 1)?),
+            // A token's first or last byte is in the file.
+            Expr::Not(a) if at == "s" || at == "l" => not(&self.at(a, at, depth + 1)?),
             Expr::Not(a) => format!("({at} < n && !{})", self.at(a, at, depth + 1)?),
             Expr::And(a, b) => format!("({} && {})", self.at(a, at, depth + 1)?, self.at(b, at, depth + 1)?),
             Expr::Or(a, b) => format!("({} || {})", self.at(a, at, depth + 1)?, self.at(b, at, depth + 1)?),
@@ -678,6 +679,7 @@ impl<'a> Bytes<'a> {
                     _ => go(d, at)?,
                 }
             }
+            Expr::Not(a) if at == "s" || at == "l" => not(&go(a, at)?),
             Expr::Not(a) => format!("({at} < n && !{})", go(a, at)?),
             Expr::And(a, b) => format!("({} && {})", go(a, at)?, go(b, at)?),
             Expr::Or(a, b) => format!("({} || {})", go(a, at)?, go(b, at)?),
@@ -2796,5 +2798,14 @@ fn no_byte(e: &Expr) -> bool {
         Expr::Not(a) => no_byte(a),
         Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => no_byte(a) && no_byte(b),
         _ => false,
+    }
+}
+
+/// `!t`, of a test `t` at a byte in the file.
+fn not(t: &str) -> String {
+    match t {
+        "false" => "true".to_owned(),
+        "true" => "false".to_owned(),
+        _ => format!("!{t}"),
     }
 }
