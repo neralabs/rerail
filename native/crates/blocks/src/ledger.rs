@@ -71,6 +71,9 @@ struct State {
     lists: Vec<std::collections::BTreeSet<usize>>,
     /// A bit a page: given to the OS, and marked in use again when a chunk handed out reaches it.
     given: Vec<u64>,
+    /// The free bytes its lists kept in memory when they were last given back (`KEEP_MAX`): pieces of pages a live
+    /// chunk shares, which no give takes. The next give waits until `KEEP_MAX` more are kept.
+    kept_floor: usize,
 }
 
 /// A block's ledger. The block holds it, and so does every fence with a use of the block, so its memory outlives the
@@ -111,6 +114,10 @@ const G: usize = 1 << MIN_LOG;
 /// relation's chunks, which interleave with a live neighbour's and so never merge: `rows`' Q76 test), or a small one
 /// whose merge reaches it, goes back at once, as before.
 pub(crate) const GIVE_MIN: usize = 256 << 10;
+
+/// The free chunks' bytes a block keeps in memory on its lists at most past what its last give left (`GIVE_MIN`'s
+/// small ones, kept for the next of their class): past it, a free gives every free chunk's whole pages back.
+pub(crate) const KEEP_MAX: usize = 256 << 10;
 
 fn bits_range(bits: &[u64], from: usize, to: usize, mut each: impl FnMut(u64, u64) -> bool) -> bool {
     // Calls `each(word, mask)` over the words covering bits `from..to`; stops at the first `false`.
@@ -437,7 +444,19 @@ impl Ledger {
         if give && !s.listed {
             given += self.give_free_pages(s, at, len);
         }
+        // Past `KEEP_MAX` more kept on its lists than the last give left, every free chunk's whole pages go (`trim`'s).
+        let kept = |l: &Self| l.ext.free.load(Relaxed).saturating_sub(l.ext.given.load(Relaxed));
+        if give && s.listed && kept(self) > s.kept_floor + KEEP_MAX {
+            given += self.give_all_free(s);
+            s.kept_floor = kept(self);
+        }
         given
+    }
+
+    /// Every free chunk's whole pages with no live byte, to the OS (`trim`'s, under its lock).
+    fn give_all_free(&self, s: &mut State) -> usize {
+        let chunks: Vec<(usize, usize)> = s.lists.iter().enumerate().flat_map(|(c, l)| l.iter().map(move |&at| (at, 1usize << (MIN_LOG as usize + c)))).collect();
+        chunks.into_iter().map(|(at, size)| self.give_free_pages(s, at, size)).sum()
     }
 
     /// The CPU is about to write `len` bytes at `at` (R4: no GPU use of them is queued).
@@ -1158,6 +1177,33 @@ mod tests {
         b.free_chunk(w + (per - 1) * size, 4 * PAGE);
         for k in 0..per {
             assert!(!crate::mem::tests::modified(b.ptr::<u8>(w + k * size)), "merged to GIVE_MIN: given back");
+        }
+    }
+
+    /// `KEEP_MAX`: small frees whose buddies stay live never merge to `GIVE_MIN`, and kept their pages until the
+    /// run's end (615 MB of the `all` corpus's peak on the M3); past `KEEP_MAX` kept, a free gives their whole pages
+    /// back, and a live chunk's stay.
+    #[test]
+    fn small_frees_keep_their_pages_up_to_keep_max() {
+        let b = listed();
+        let bytes = 4 * PAGE;
+        let size = crate::free::class_of(bytes).1;
+        let n = 4 * KEEP_MAX / size + 4;
+        let chunks: Vec<usize> = (0..2 * n).map(|_| b.try_alloc_chunk(bytes, 64).unwrap()).collect();
+        for &c in &chunks {
+            unsafe { std::ptr::write_bytes(b.ptr::<u8>(c), 0xcd, bytes) };
+        }
+        let ext = b.meter().upgrade().expect("its extent");
+        let kept = || ext.free.load(Relaxed).saturating_sub(ext.given.load(Relaxed));
+        // Every other one freed: each beside a live buddy, so none merges.
+        for &c in chunks.iter().step_by(2) {
+            b.free_chunk(c, bytes);
+            assert!(kept() <= KEEP_MAX + size, "{} bytes kept on the lists", kept());
+        }
+        assert!(kept() < n * size, "some given back: {} of {} kept", kept(), n * size);
+        #[cfg(target_vendor = "apple")]
+        for &c in chunks.iter().skip(1).step_by(2) {
+            assert!(crate::mem::tests::modified(b.ptr::<u8>(c)), "a live chunk's pages stay");
         }
     }
 
