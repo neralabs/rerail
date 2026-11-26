@@ -17,7 +17,11 @@ const CIRCLE_SIZE: u32 = 32;
 const NO_HOST: &str =
     "no system tray host on this desktop (GNOME needs the AppIndicator extension)";
 
-/// Runs the tray until stdin closes. The icon appears with the first menu state.
+/// What the tray says as it exits because the icon's D-Bus service stopped under it.
+const SERVICE_STOPPED: &str = "the tray icon's D-Bus service stopped, so the icon is gone";
+
+/// Runs the tray until stdin closes, or until the icon's D-Bus service stops, which the next menu state finds. The icon
+/// appears with the first menu state.
 pub fn run() -> ! {
     let base = art::decode_png(ICON);
     let mut handle: Option<Handle<RerailTray>> = None;
@@ -25,8 +29,12 @@ pub fn run() -> ! {
         match incoming {
             Incoming::State(state) => match &handle {
                 Some(handle) => {
-                    // None only once the service has stopped, and then there is nothing left to update.
-                    let _ = handle.update(|tray| tray.show(state, &base));
+                    // None once ksni's service has stopped: the icon is gone, and no later state brings it back, so
+                    // the tray exits with the reason, which the daemon logs once, rather than run on with no icon.
+                    if handle.update(|tray| tray.show(state, &base)).is_none() {
+                        eprintln!("rerail-tray: {SERVICE_STOPPED}");
+                        std::process::exit(1)
+                    }
                 }
                 None => match RerailTray::new(state, &base).spawn() {
                     Ok(spawned) => handle = Some(spawned),
