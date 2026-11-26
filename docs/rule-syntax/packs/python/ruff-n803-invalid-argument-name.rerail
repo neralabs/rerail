@@ -1,20 +1,29 @@
-.policy "ruff-n803-invalid-argument-name" revision 2
+.policy "ruff-n803-invalid-argument-name" revision 3
 .description "Name function parameters in lowercase snake_case, as PEP 8 recommends, so they read differently from classes and constants."
 .language python
 .mode steer
 .scope include "**/*"
 
-// Ruff N803 (pep8-naming): a parameter of a def or lambda whose name has an uppercase letter. A method marked
-// `@override` is exempt (its signature follows the base class); `@override` on a plain function is not.
-// Names matching `pep8-naming.ignore-names` are exempt.
+// Ruff N803 (pep8-naming): a parameter of a def or lambda whose name, NFKC-normalised, has a letter that is not
+// lowercase (str::is_lowercase: `A`, `日`). A method marked `@override` is exempt (its signature follows the base
+// class); `@override` on a plain function is not. Names matching `pep8-naming.ignore-names` are exempt.
 //   def f(a, A): ...                 ← N803 at `A`
 //   class C(B):
 //       @override
 //       def m(self, A): ...          not reported
-#include "python/naming.rerail"
+//   def g(*  # a comment
+//         args): ...                 not reported: the name is `args`, not the comment before it
+#include "python/python-19.rerail"
 
 .violation N803(at: node, x: symbol) code "N803"
     "Rename argument `{x}` to lowercase snake_case and update its uses in the body; keep the name if callers pass it by keyword."
     suppress ruff "N803"
-N803(nm, x) :- (kind(f, "function_definition") ; kind(f, "lambda")), sig_param(f, _, nm, _, _, _, _), text(nm, x),
-    !lower_name(x), !naming_ignored(x), !(in_class(f, _), typing_dec(f, "override")).
+N803(nm, x) :- n803_param(f, nm), pep8_name(nm, x), !pep8_lower(x), !pep8_ignored(x),
+    !(in_class(f, _), typing_dec(f, "override")).
+// n803_param(f, nm): nm names a parameter of def or lambda f. sig_param reads a splat's first child as its name,
+// which is a comment in `*  # c` + newline + `args`; the name is the splat's identifier then.
+.decl n803_param(f: node, nm: node)
+n803_param(f, nm) :- (kind(f, "function_definition") ; kind(f, "lambda")), sig_param(f, _, nm, _, _, _, _),
+    kind(nm, "identifier").
+n803_param(f, nm) :- (kind(f, "function_definition") ; kind(f, "lambda")), sig_param(f, _, c, _, _, _, _),
+    kind(c, "comment"), child(s, c, _), child(s, nm, _), kind(nm, "identifier").
