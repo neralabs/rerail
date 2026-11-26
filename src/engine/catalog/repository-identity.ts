@@ -40,7 +40,7 @@ import {
   type RemoteAddress,
   type RemoteSource,
 } from "./checkouts/kept-remote.js";
-import { LEGACY_ID_ARGS, LOCATE_ARGS, legacyIdAnswer, locateAnswer } from "./checkouts/git-locate.js";
+import { type GitCouldNotAnswerError, LEGACY_ID_ARGS, LOCATE_ARGS, legacyIdAnswer, locateAnswer } from "./checkouts/git-locate.js";
 import { openNoFollowSync } from "../no-follow.js";
 import { GitUnavailableError, runGit, runGitAsync, sharedRead, type GitReadOptions, type GitReads, type GitResult, type SharedRead } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
@@ -58,6 +58,12 @@ export interface RepositoryIdentityLocation {
   main: boolean;
   /** Set only outside Git, on a linked worktree whose Git folder was gone as this answer was read ({@link worktreeGitFolderGone}). */
   gitFolderGone?: true;
+  /**
+   * Set only outside Git, when the Git asked gave no answer (it could not start, ran past its time limit, was killed or
+   * failed otherwise): the folder reads as outside Git for this ask alone, and whatever would record or keep an answer
+   * from it refuses to ({@link resolveCloneId}, the map of which checkout owns a file).
+   */
+  unanswered?: GitCouldNotAnswerError;
 }
 
 function nonGitLocation(requested: string, gitFolderGone = false): RepositoryIdentityLocation {
@@ -70,13 +76,16 @@ export const GIT_IDENTITY_FILE = "rerail-repository-id";
 
 /**
  * Where `requested` is by Git's answer `result` ({@link locateAnswer}), or by the disk where no Git ran (`result`
- * undefined: Git would find none, `none`, or is not installed). Throws `locateAnswer`'s error where Git ran and gave no
- * answer, except in a read its owner stopped (`signal` aborted), which reads as outside Git and is kept by nothing.
+ * undefined: Git would find none, `none`, or is not installed). Where Git ran and gave no answer it is outside Git for
+ * this ask, carrying `locateAnswer`'s error ({@link RepositoryIdentityLocation.unanswered}); a read its owner stopped
+ * (`signal` aborted) reads as outside Git with none, as before, and is kept by nothing.
  */
 function locatedFrom(requested: string, result: GitResult | undefined, none: "outside" | "gone" | undefined, signal?: AbortSignal): RepositoryIdentityLocation {
   const stopped = signal?.aborted === true && result?.status !== 0;
-  const printed = result === undefined || stopped ? undefined : locateAnswer(requested, result);
-  return printed === undefined ? nonGitLocation(requested, none === "gone") : gitLocation(requested, printed);
+  const answer = result === undefined || stopped ? undefined : locateAnswer(requested, result);
+  if (answer?.kind === "placed") return gitLocation(requested, answer.printed);
+  const outside = nonGitLocation(requested, none === "gone");
+  return answer?.kind === "no-answer" ? { ...outside, unanswered: answer.error } : outside;
 }
 
 /**
@@ -120,9 +129,9 @@ function gitPlaced(common: string): boolean {
  * linked worktree, or `.rerail/repository-id` outside Git (or when Git is not installed). A folder that holds a `.git`
  * entry is answered as Git last answered while what Git reads there is unchanged, and a linked worktree of a repository
  * Git placed a checkout of is answered from its files ({@link linkedWorktreeFromFiles}); every other folder, and every
- * case those files do not decide, is asked of Git. Outside Git is Git's own answer only: where the Git asked gives none
- * (it could not start, ran past its time limit, was killed or failed otherwise) this throws `GitCouldNotAnswerError`
- * (`checkouts/git-locate.ts`) and keeps nothing, so the next call asks Git again.
+ * case those files do not decide, is asked of Git. Where the Git asked gives no answer (it could not start, ran past
+ * its time limit, was killed or failed otherwise) the folder reads as outside Git for this call, nothing is kept, and
+ * the answer carries the reason ({@link RepositoryIdentityLocation.unanswered}), so the next call asks Git again.
  */
 export function repositoryIdentityLocation(workspace: string): RepositoryIdentityLocation {
   return placed(resolve(workspace), false);
@@ -858,6 +867,8 @@ export function resolveCloneId(
 ): { cloneId: string; location: RepositoryIdentityLocation } {
   const location = repositoryIdentityLocation(workspace);
   if (location.git) return { cloneId: gitCloneId(location), location };
+  // No identity is made for a folder Git gave no answer for: it may be a checkout, and Git is asked again next time.
+  if (location.unanswered !== undefined) throw location.unanswered;
   const directory = dirname(location.identityPath);
   // Created first, so two processes recording the same folder at once both succeed; whichever made it, it must be a
   // real directory, never a symlink (lstat).

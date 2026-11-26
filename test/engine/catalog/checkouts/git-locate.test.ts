@@ -2,10 +2,11 @@
  * The three reads that ask Git where a folder's repository is (`repositoryIdentityLocation`, `placeWithoutBlocking`,
  * `repositoryIdentityLocationAsync`) when the Git asked gives no answer: a Git that never ran (Windows' 0xC0000142,
  * as CI saw it on a loaded runner; on Linux the loader's exit 127), one ended at its time limit, and one that failed
- * for another reason (exit 1). Each such ask fails with the ending named, the folder is not taken for one outside Git,
- * and the next ask, whose Git answers, places it. Git's own answer that a folder is outside a repository still reads
- * as one, in a person's language too. The read of a clone's legacy id from Git's config takes the same rule: a clone
- * whose config holds one gets no new id when that Git gives no answer.
+ * for another reason (exit 1). Each such ask reads the folder as outside Git for that ask alone, as before, with the
+ * ending named on the answer; recording the checkout and the map of which checkout owns a file refuse to keep it, and
+ * the next ask, whose Git answers, places it. Git's own answer that a folder is outside a repository still reads as
+ * one, in a person's language too. The read of a clone's legacy id from Git's config fails on every ending but Git's
+ * answers: a clone whose config holds one gets no new id when that Git gives no answer.
  *
  * The stand-in is a real process, this Node running a script, started in place of the one Git that is asked where the
  * folder is, or for the config's legacy id ({@link STAND_IN}); every other Git is the machine's, and each one a case
@@ -15,22 +16,25 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { physicalPath } from "../../../../src/engine/catalog/checkout-control.js";
+import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js";
 import { placeWithoutBlocking, repositoryIdentityLocation, repositoryIdentityLocationAsync } from "../../../../src/engine/catalog/repository-identity.js";
 import { recordCheckout } from "../../../../src/engine/catalog/repository-registry.js";
 import { openRerailDatabase } from "../../../../src/engine/storage/database.js";
 import { removeFolderSync } from "../../../support/platform/remove-folder.js";
 import { runProgram } from "../../../support/processes/run-program.js";
 
-/** The ending the next ask takes, the argument that names that ask, and the script that plays it. */
-const next = vi.hoisted(() => ({ ending: undefined as string | undefined, ask: "--show-toplevel", script: "" }));
+/** The ending the next asks take, how many of them, the argument that names that ask, and the script that plays it. */
+const next = vi.hoisted(() => ({ ending: undefined as string | undefined, asks: 1, ask: "--show-toplevel", script: "" }));
 
 vi.mock("../../../../src/engine/child-process.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../../../../src/engine/child-process.js")>();
-  /** The program and arguments to start: the stand-in, once, for the next ask `next.ask` names. */
+  /** The program and arguments to start: the stand-in, for the next `next.asks` asks `next.ask` names. */
   const started = (file: string, args: readonly string[]): [string, string[]] => {
     const ending = next.ending;
     if (ending === undefined || !args.includes(next.ask)) return [file, [...args]];
-    next.ending = undefined;
+    next.asks -= 1;
+    if (next.asks === 0) next.ending = undefined;
     return [process.execPath, [next.script, ending]];
   };
   const spawn = ((file: string, args: readonly string[], options: object) => actual.spawn(...started(file, args), options)) as typeof actual.spawn;
@@ -73,6 +77,7 @@ let made = 0;
 
 afterEach(() => {
   next.ending = undefined;
+  next.asks = 1;
   next.ask = "--show-toplevel";
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
@@ -115,24 +120,29 @@ const READS = {
 describe("a read of where a folder's repository is, whose Git gives no answer", () => {
   for (const [name, read] of Object.entries(READS)) {
     for (const ending of Object.keys(SAID)) {
-      it(`fails ${name} when that Git ends so (${ending}), and the next ask places the checkout`, async () => {
+      it(`answers ${name} outside Git for that ask alone when that Git ends so (${ending}), naming it, and the next ask places the checkout`, async () => {
         const top = checkout();
         const write = vi.spyOn(process.stderr, "write");
         next.ending = ending;
-        await expect(read(top)).rejects.toThrow(SAID[ending]!);
+        const first = await read(top);
+        expect(first).toMatchObject({ git: false, workspaceRoot: top });
+        expect(first?.unanswered?.message).toMatch(SAID[ending]!);
+        expect(first?.unanswered?.message).toContain(`Git could not say where the repository of ${top} is: `);
         expect(next.ending).toBeUndefined();
-        // Only the daemon writes the line: here the thrown error is the line.
+        // Only the daemon writes the line.
         expect(write).not.toHaveBeenCalled();
         await expect(read(top)).resolves.toMatchObject({ git: true, main: true, workspaceRoot: top });
       }, 30_000);
     }
   }
 
-  it("records nothing for a checkout whose ask failed: no repository, checkout row or identity in its folder", () => {
+  it("records nothing for a checkout whose asks failed: no repository, checkout row or identity in its folder", () => {
     const top = checkout();
     const database = openRerailDatabase(join(root, `record-${made}.sqlite`));
     try {
+      // Recording asks twice: whether the folder is one Rerail may record, then where its clone id lives.
       next.ending = "never-ran";
+      next.asks = 2;
       expect(() => recordCheckout(database, top)).toThrow(SAID["never-ran"]!);
       expect(existsSync(join(top, ".rerail"))).toBe(false);
       expect(database.$client.prepare("select count(*) as n from checkouts").get()).toEqual({ n: 0 });
@@ -143,6 +153,15 @@ describe("a read of where a folder's repository is, whose Git gives no answer", 
     }
   });
 
+  it("keeps no owner for a checkout whose ask failed: the next lookup asks Git again and finds it", () => {
+    const top = checkout();
+    const owners = new CheckoutOwners();
+    next.ending = "never-ran";
+    expect(owners.ownerOf(join(top, "a.txt"))).toBeUndefined();
+    expect(next.ending).toBeUndefined();
+    expect(owners.ownerOf(join(top, "a.txt"))?.checkoutRoot).toBe(physicalPath(top));
+  });
+
   it("reads a stopped read as outside Git, as before, and says nothing", async () => {
     const top = checkout();
     const write = vi.spyOn(process.stderr, "write");
@@ -150,7 +169,9 @@ describe("a read of where a folder's repository is, whose Git gives no answer", 
     next.ending = "past-limit";
     const asked = repositoryIdentityLocationAsync(top, stop.signal);
     stop.abort();
-    await expect(asked).resolves.toMatchObject({ git: false });
+    const location = await asked;
+    expect(location).toMatchObject({ git: false });
+    expect(location.unanswered).toBeUndefined();
     expect(write).not.toHaveBeenCalled();
   }, 30_000);
 });
@@ -230,9 +251,12 @@ describe("Git's own answer that a folder is outside any repository", () => {
   it("reads a folder whose Git dies for any reason of its own (128) as outside Git, whatever line it prints", async () => {
     const top = checkout();
     next.ending = "git-refuses";
-    expect(repositoryIdentityLocation(top)).toMatchObject({ git: false, workspaceRoot: top });
+    const placed = repositoryIdentityLocation(top);
+    expect(placed).toMatchObject({ git: false, workspaceRoot: top });
+    // Git's own answer: nothing refuses to record it.
+    expect(placed.unanswered).toBeUndefined();
     next.ending = "git-refuses";
-    await expect(repositoryIdentityLocationAsync(top)).resolves.toMatchObject({ git: false });
+    expect((await repositoryIdentityLocationAsync(top)).unanswered).toBeUndefined();
   });
 
   it("reads a folder whose .git file Git cannot read as one as outside Git", () => {
@@ -259,7 +283,7 @@ describe("the daemon's line for an ask Git gave no answer", () => {
     const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const fail = async (ending: string): Promise<void> => {
       next.ending = ending;
-      await expect(identity.repositoryIdentityLocationAsync(top)).rejects.toThrow(SAID[ending]!);
+      expect((await identity.repositoryIdentityLocationAsync(top)).unanswered?.message).toMatch(SAID[ending]!);
     };
     await fail("failed");
     await fail("failed");

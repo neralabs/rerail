@@ -234,20 +234,21 @@ export class CheckoutOwners {
   #gitRoot(lexical: string): string | undefined {
     const unresolved: string[] = [];
     let directory = lexical;
-    let root: string | undefined;
     for (;;) {
-      if (this.#roots.has(directory)) {
-        root = this.#roots.get(directory);
-        break;
-      }
+      if (this.#roots.has(directory)) return this.#rootFor(unresolved, this.#roots.get(directory));
       unresolved.push(directory);
-      root = this.#confirm(directory);
-      if (root !== undefined) break;
+      const root = this.#confirm(directory);
+      // A folder whose Git gave no answer kept nothing (#confirm), and decides nothing for the folders below it.
+      if (!this.#confirmed.has(directory)) return root;
       const parent = dirname(directory);
-      if (parent === directory) break;
+      if (root !== undefined || parent === directory) return this.#rootFor(unresolved, root);
       directory = parent;
     }
-    for (const folder of unresolved) this.#roots.set(folder, root);
+  }
+
+  /** Keeps `root` as the checkout root of each of `folders`, and gives it. */
+  #rootFor(folders: readonly string[], root: string | undefined): string | undefined {
+    for (const folder of folders) this.#roots.set(folder, root);
     return root;
   }
 
@@ -264,7 +265,14 @@ export class CheckoutOwners {
       this.#forgetWithin(directory);
     }
     const gitEntry = gitEntryAt(directory);
-    const root = gitEntry === undefined ? undefined : topLevelAt(directory);
+    const asked = gitEntry === undefined ? { root: undefined, answered: true } : topLevelAt(directory);
+    // A Git that gave no answer decides nothing: this lookup finds no checkout there, and the next asks Git again.
+    if (!asked.answered) return undefined;
+    return this.#keep(directory, gitEntry, asked.root);
+  }
+
+  /** Keeps `root` as the answer for `directory`, and its `.git` entry while Git did not take it for a top level. */
+  #keep(directory: string, gitEntry: GitEntry | undefined, root: string | undefined): string | undefined {
     this.#confirmed.set(directory, root);
     if (gitEntry !== undefined && root === undefined) this.#unconfirmedGitEntries.set(directory, gitEntry);
     else this.#unconfirmedGitEntries.delete(directory);
@@ -304,9 +312,12 @@ export class CheckoutOwners {
   }
 }
 
-/** The physical top level of the checkout whose `.git` entry `directory` holds, when Git takes `directory` for it. */
-function topLevelAt(directory: string): string | undefined {
+/**
+ * The physical top level of the checkout whose `.git` entry `directory` holds, when Git takes `directory` for it; and
+ * whether Git answered at all (the location's `unanswered`).
+ */
+function topLevelAt(directory: string): { root: string | undefined; answered: boolean } {
   const location = repositoryIdentityLocation(directory);
   const top = location.git ? physicalPath(location.workspaceRoot) : undefined;
-  return top !== undefined && top === physicalPath(directory) ? top : undefined;
+  return { root: top !== undefined && top === physicalPath(directory) ? top : undefined, answered: location.unanswered === undefined };
 }

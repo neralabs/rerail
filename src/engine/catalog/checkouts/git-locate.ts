@@ -2,11 +2,11 @@
  * What Git answers when asked where a folder's repository is ({@link LOCATE_ARGS}). Git exits 0 and prints the top
  * level, common and Git folders. Git answers that it places the folder in no repository it works in by dying: exit
  * 128, its `die()`, whatever the reason it gives (none found, a `.git` file that leads to none, another account's, a
- * bare one, a config it cannot read) and in whatever language it gives it. Every other ending is no answer from Git,
- * and the ask fails with a {@link GitCouldNotAnswerError} that names it: a Git Windows could not start (0xC0000142),
- * one ended at its time limit or by a signal, one a wrapper ran that failed. The read of a clone's legacy id from
- * Git's config ({@link LEGACY_ID_ARGS}) takes the same rule with Git's answers for it: exit 0, the value; exit 1, no
- * such key.
+ * bare one, a config it cannot read) and in whatever language it gives it. Every other ending is no answer from Git:
+ * a Git Windows could not start (0xC0000142), one ended at its time limit or by a signal, one a wrapper ran that
+ * failed. Such an ask is named by a {@link GitCouldNotAnswerError}, which the location carries, so whatever would keep
+ * or record from it refuses to. The read of a clone's legacy id from Git's config ({@link LEGACY_ID_ARGS}) takes the
+ * same rule with Git's answers for it, exit 0 the value and exit 1 no such key, and fails on every other ending.
  */
 import { gitLivesOnHere, type GitResult } from "../../git.js";
 
@@ -29,7 +29,7 @@ interface Ask {
 const LOCATE: Ask = { none: 128, question: folder => `where the repository of ${folder} is` };
 const LEGACY_ID: Ask = { none: 1, question: folder => `which clone id the config of the repository of ${folder} holds` };
 
-/** Git could not answer a question about a folder's repository: the ask failed, and its message names how Git ended. */
+/** Git could not answer a question about a folder's repository, and the message names how Git ended. */
 export class GitCouldNotAnswerError extends Error {
   constructor(readonly folder: string, readonly ending: string, question = LOCATE.question(folder)) {
     super(`Git could not say ${question}: ${ending}`);
@@ -37,42 +37,52 @@ export class GitCouldNotAnswerError extends Error {
   }
 }
 
+/** Git's answer to where a folder's repository is: placed, with what Git printed; outside any; or none at all. */
+export type LocateAnswer =
+  | { readonly kind: "placed"; readonly printed: string }
+  | { readonly kind: "outside" }
+  | { readonly kind: "no-answer"; readonly error: GitCouldNotAnswerError };
+
 /** For each folder whose ask failed in this process, the line last said; it goes once an ask there is answered. */
 const said = new Map<string, string>();
 
 /**
- * Git's answer for `requested` in `result`: what Git printed when it placed the folder, undefined when Git says the
- * folder is outside any repository. Throws {@link GitCouldNotAnswerError} for every other ending; in the daemon, whose
- * error output is `daemon.log`, it is written there too, once for each folder and ending until an ask there is answered.
+ * Git's answer for `requested` in `result` ({@link LocateAnswer}). For an ask Git gave no answer to, the daemon, whose
+ * error output is `daemon.log`, writes the error's line there, once for each folder and line until an ask there is
+ * answered.
  */
-export function locateAnswer(requested: string, result: GitResult): string | undefined {
-  return answered(requested, result, LOCATE) ? result.stdout : undefined;
+export function locateAnswer(requested: string, result: GitResult): LocateAnswer {
+  const error = noAnswer(requested, result, LOCATE);
+  if (error !== undefined) return { kind: "no-answer", error };
+  return result.status === 0 ? { kind: "placed", printed: result.stdout } : { kind: "outside" };
 }
 
 /**
  * The legacy clone id Git's config holds for `requested`'s repository in `result` ({@link LEGACY_ID_ARGS}), "" when
- * the key is not set. Throws {@link GitCouldNotAnswerError} for every other ending, as {@link locateAnswer} does, so
- * the clone gets no new id in place of the one its config holds.
+ * the key is not set. Throws {@link GitCouldNotAnswerError} for every other ending, so the clone gets no new id in
+ * place of the one its config holds; the daemon says it as {@link locateAnswer} does.
  */
 export function legacyIdAnswer(requested: string, result: GitResult): string {
-  return answered(requested, result, LEGACY_ID) ? result.stdout.trim() : "";
+  const error = noAnswer(requested, result, LEGACY_ID);
+  if (error !== undefined) throw error;
+  return result.status === 0 ? result.stdout.trim() : "";
 }
 
 /**
- * Whether Git gave what `ask` asks for (exit 0) rather than its answer that there is nothing (`ask.none`). Every other
- * ending throws, and the daemon writes the line once for each folder and line until an ask there is answered.
+ * Undefined when Git answered `ask`: exit 0, or `ask.none`, its answer that there is nothing. Else the error naming
+ * how Git ended, its line written by the daemon once for each folder and line until an ask there is answered.
  */
-function answered(requested: string, result: GitResult, ask: Ask): boolean {
+function noAnswer(requested: string, result: GitResult, ask: Ask): GitCouldNotAnswerError | undefined {
   if (result.status === 0 || result.status === ask.none) {
     said.delete(requested);
-    return result.status === 0;
+    return undefined;
   }
   const error = new GitCouldNotAnswerError(requested, endingOf(result), ask.question(requested));
   if (gitLivesOnHere() && said.get(requested) !== error.message) {
     said.set(requested, error.message);
     process.stderr.write(`rerail: ${error.message}\n`);
   }
-  throw error;
+  return error;
 }
 
 /** How `result` ended: its exit status in decimal and hex, or why it has none; its signal; the first line of its stderr. */
