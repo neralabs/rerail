@@ -21,6 +21,7 @@
 //! - `k0`: `k0_pass`, L1's reading of a K0 tape into K-form rows (its twin, the twins' `k0`);
 //! - `residency`: the slabs' residency, `rerail_slabs`'s policy (the budget's least recently used, the drop after a
 //!   run);
+//! - `answer`: Δanswer's operations, `answer_load` (the file layer as it is) and `parse` (the rr parser), host versions;
 //! - `boot`: B§8's run, its first two lines: the tape as a world read, then L1;
 //! - `l1`: L1, the boot operation: a delta operator of one tape, no program, K-form as its production and the symbols
 //!   as facts in.
@@ -32,6 +33,7 @@
 //! The milestones toward one boot operation, L1 (the rebuild plan's §4), come after: the operator contract (B3), l0's
 //! tape through the file layer (B4), symbols (B5) and L1 itself (B6).
 
+pub mod answer;
 pub mod boot;
 pub mod cache;
 pub mod contract;

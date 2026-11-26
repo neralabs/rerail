@@ -28,6 +28,7 @@ pub(crate) struct Fx {
     pub drops: crate::drop::DropOps,
     pub traces: TraceOps,
     pub caches: CacheOps,
+    pub answers: crate::answer::AnswerOps,
     pub dir: Directory,
     pub blobs: BlobRows,
     pub atoms: Atoms,
@@ -47,9 +48,10 @@ impl Fx {
         let drops = crate::drop::DropOps::declare(&mut reg).unwrap();
         let traces = TraceOps::declare(&mut reg).unwrap();
         let caches = CacheOps::declare(&mut reg).unwrap();
+        let answers = crate::answer::AnswerOps::declare(&mut reg).unwrap();
         let mut dir = Directory::default();
         let atoms = Atoms::new(&mut dir);
-        Fx { reg, ops, k0, drops, traces, caches, dir, blobs: BlobRows::new(&traces), atoms }
+        Fx { reg, ops, k0, drops, traces, caches, answers, dir, blobs: BlobRows::new(&traces), atoms }
     }
 
     pub fn l1(&self) -> L1 {
@@ -58,7 +60,7 @@ impl Fx {
 
     /// A document of `src` answered at `path`, interned: its blobs and its symbols blob.
     pub fn doc(&mut self, src: &str, path: &str) -> D {
-        let ids = doc_of(&self.reg, &mut self.dir, &mut self.blobs, src).expect("a document");
+        let ids = doc_of(&self.reg, &self.answers, &mut self.dir, &mut self.blobs, src).expect("a document");
         let module = path.strip_suffix(".rerail").unwrap_or(path);
         let (s, t) = (self.place(&ids.source), self.place(&ids.tape));
         let syms = intern(&self.reg, &self.ops, &mut self.dir, &mut self.blobs, self.atoms, s, t, path, module).expect("interned");

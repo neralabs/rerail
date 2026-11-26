@@ -106,7 +106,7 @@ fn interns_hash_then_scan_alike_at_every_tiling_new_ids_in_node_order() {
     let run = |tiling: Tiling| {
         let mut fx = Fx::new();
         fx.doc("e(1, 2).\n", "first.rerail");
-        let ids = crate::files::doc_of(&fx.reg, &mut fx.dir, &mut fx.blobs, src).unwrap();
+        let ids = crate::files::doc_of(&fx.reg, &fx.answers, &mut fx.dir, &mut fx.blobs, src).unwrap();
         let (s, t) = (fx.place(&ids.source), fx.place(&ids.tape));
         let syms = intern_at(&fx.reg, &fx.ops, &mut fx.dir, &mut fx.blobs, fx.atoms, s, t, "two.rerail", "two", tiling).unwrap();
         let names: Vec<String> = (1..=fx.atoms.count(&fx.dir)).map(|id| fx.atoms.name(&fx.dir, i64::from(id))).collect();

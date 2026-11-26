@@ -321,6 +321,11 @@ pub struct OpId(u32);
 pub enum Impl {
     /// The Rust twin (`rerail_delta_twins`): the reference every other version is checked against.
     Twin(Twin),
+    /// A host version (*0686: Operations* §10's host work: `answer_load`, the file layer as it is; `parse`, the rr
+    /// parser, host for now): its phases run on the CPU over the slots as a twin's do, written in this crate because
+    /// they call what the twins may not (the observer, the store's objects, the parser). The reference until a device
+    /// version registers, checked against it.
+    Host(Twin),
     /// UKL `source`, its kernels named from `entry` (`Kernels`): phase `p`'s `<entry>_<p>`, a thread an item; its item
     /// count's `<entry>_<p>_items`, and, for a phase by rounds, whether it runs again, `<entry>_<p>_again`.
     Ukl { source: &'static str, entry: &'static str },
@@ -391,6 +396,11 @@ pub struct Version {
 }
 
 impl Version {
+    /// An operation's host version as its reference (`Impl::Host`), running the work as the signature's shape.
+    pub fn host(op: OpId, name: &'static str, phases: Twin, shape: &'static [Phase]) -> Version {
+        Version { imp: Impl::Host(phases), ..Version::twin(op, name, phases, shape) }
+    }
+
     /// An operation's twin as its reference version, running the work as the signature's shape.
     pub fn twin(op: OpId, name: &'static str, twin: Twin, shape: &'static [Phase]) -> Version {
         Version {
@@ -520,10 +530,10 @@ impl Registry {
         self.versions.iter().find(|v| v.op == op && v.status == Status::Default && matches!(v.imp, Impl::Ukl { .. }) && v.devices.has(device.devices()))
     }
 
-    /// An operation's reference: its twin, registered first and once.
+    /// An operation's reference: its twin (or, for host work, its host version), registered first and once.
     pub fn register_reference(&mut self, v: Version) -> Result<(), String> {
         let sig = *self.ops.get(v.op.0 as usize).ok_or("a version of an operation not declared")?;
-        let Impl::Twin(twin) = v.imp else {
+        let (Impl::Twin(twin) | Impl::Host(twin)) = v.imp else {
             return Err(format!("{}: {} is a reference but not the twin", sig.name, v.name));
         };
         if v.status != Status::Reference {
@@ -564,7 +574,7 @@ impl Registry {
 
     /// The version the CPU executor runs: a default twin when one is registered, else the reference.
     fn cpu_version(&self, op: OpId) -> Option<&Version> {
-        let twin = |status| self.versions.iter().find(|v| v.op == op && v.status == status && matches!(v.imp, Impl::Twin(_)));
+        let twin = |status| self.versions.iter().find(|v| v.op == op && v.status == status && matches!(v.imp, Impl::Twin(_) | Impl::Host(_)));
         twin(Status::Default).or_else(|| twin(Status::Reference))
     }
 
@@ -584,7 +594,7 @@ impl Registry {
         let sig = *self.ops.get(candidate.op.0 as usize).ok_or("a version of an operation not declared")?;
         let reference = self.reference(candidate.op).ok_or_else(|| format!("{}: no reference to check against", sig.name))?;
         match candidate.imp {
-            Impl::Twin(twin) => Self::fits(sig, candidate, twin)?,
+            Impl::Twin(twin) | Impl::Host(twin) => Self::fits(sig, candidate, twin)?,
             Impl::Ukl { .. } => Self::fits_shape(sig, candidate)?,
             Impl::Compiled(_) => return Err(format!("{}: {} is compiled ahead, which is not built", sig.name, candidate.name)),
         }
@@ -766,7 +776,7 @@ fn execute(sig: &Signature, v: &Version, dir: &Directory, slots: &[BlockId], par
     loop {
         let mut launch = dir.launch(sig.name, &modes)?;
         let drove = match v.imp {
-            Impl::Twin(twin) => {
+            Impl::Twin(twin) | Impl::Host(twin) => {
                 let mut meter = Meter { capacity: slots.iter().map(|&id| dir.capacity(id)).collect(), ..Meter::default() };
                 let (pins, table) = launch.parts();
                 let mut slot_views: Vec<Slot<'_>> = pins.iter_mut().map(|p| if p.writes() { Slot::Write(p) } else { Slot::Read(p) }).collect();

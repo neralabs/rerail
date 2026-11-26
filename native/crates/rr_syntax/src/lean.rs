@@ -600,6 +600,8 @@ struct Parser<'s, L: Layout> {
     out: Writer<L>,
     /// The open nodes: each its place in `out` and where its children start in `kids`.
     open: Vec<(u32, u32)>,
+    /// The deepest `open` has been: the parse's stack depth, which a caller bounds (the `parse` operation's).
+    deepest: usize,
     /// The open nodes' children, by place in `out`.
     kids: Vec<u32>,
     comments: &'s [(u32, u32)],
@@ -667,8 +669,14 @@ pub fn tape(src: &str) -> Result<rerail_tape_format::f16::Tape16, String> {
 /// [`tape`], its bytes written in `room` as the parser commits them (decision 0686, B4): the tape lies where it was
 /// written, with no copy into a home after.
 pub fn tape_in(src: &str, room: std::sync::Arc<dyn rerail_tape_format::VectorRoom>) -> Result<rerail_tape_format::f16::Tape16, String> {
-    match tape_into(src, &mut Sink16::in_room(false, true, room))?.tape {
-        rerail_tape_format::f16::Written::F16(t) => Ok(t),
+    tape_in_deep(src, room).map(|t| t.0)
+}
+
+/// [`tape_in`], with the deepest the parser's stack went (an operation that parses bounds it).
+pub fn tape_in_deep(src: &str, room: std::sync::Arc<dyn rerail_tape_format::VectorRoom>) -> Result<(rerail_tape_format::f16::Tape16, u32), String> {
+    let (out, deepest) = tape_into_deep(src, &mut Sink16::in_room(false, true, room));
+    match out?.tape {
+        rerail_tape_format::f16::Written::F16(t) => Ok((t, deepest)),
         rerail_tape_format::f16::Written::F16Z(_) => unreachable!("16z was not asked for"),
     }
 }
@@ -685,6 +693,11 @@ pub fn tape_to(src: &str, z: bool, blocks: bool) -> Result<rerail_tape_format::f
 /// [`tape`], the writer writing to `finish`'s target and finished by it: format 16 or 16z, written by its ops as the
 /// statements are committed (`Writer::finish_16`, decision 0434).
 pub fn tape_into<F: Finish>(src: &str, finish: &mut F) -> F::Out {
+    tape_into_deep(src, finish).0
+}
+
+/// [`tape_into`], with the deepest the parser's stack of open nodes went.
+pub fn tape_into_deep<F: Finish>(src: &str, finish: &mut F) -> (F::Out, u32) {
     let lexed = lex(src);
     let mut widths = Widths::guess(src.len());
     loop {
@@ -698,12 +711,12 @@ pub fn tape_into<F: Finish>(src: &str, finish: &mut F) -> F::Out {
 }
 
 /// `tape` at `layout`'s widths, the lexer's tokens given.
-fn tape_at<L: Layout, F: Finish>(src: &str, lexed: &Lexed, layout: L, finish: &mut F) -> Result<F::Out, Redo> {
+fn tape_at<L: Layout, F: Finish>(src: &str, lexed: &Lexed, layout: L, finish: &mut F) -> Result<(F::Out, u32), Redo> {
     let Lexed { toks, n, comments } = lexed;
     let mut out = Writer::new(layout, n + n / 2 + comments.len() + 8).to(finish.target(), src.as_bytes());
     out.push(code(Kind::SourceFile as u16, 0, false), 0);
     let next_comment = comments.first().map_or(u32::MAX, |c| c.0);
-    let mut p = Parser { b: src.as_bytes(), t: toks, n: *n, i: 0, no_named: false, out, open: vec![(0, 0)], kids: Vec::with_capacity(64), comments, comment: 0, next_comment };
+    let mut p = Parser { b: src.as_bytes(), t: toks, n: *n, i: 0, no_named: false, out, open: vec![(0, 0)], deepest: 1, kids: Vec::with_capacity(64), comments, comment: 0, next_comment };
     while p.kind() != EOF {
         let save = p.mark();
         if p.statement().is_err() {
@@ -715,10 +728,17 @@ fn tape_at<L: Layout, F: Finish>(src: &str, lexed: &Lexed, layout: L, finish: &m
     // Comments after the last statement are the file's.
     p.comments_before(0, u32::MAX);
     p.out.close(0, src.len() as u32);
-    finish.finish(p.out)
+    let deepest = p.deepest as u32;
+    finish.finish(p.out).map(|out| (out, deepest))
 }
 
 impl<L: Layout> Parser<'_, L> {
+    /// A node opened: on the stack of open nodes, its depth recorded.
+    fn push_open(&mut self, node: (u32, u32)) {
+        self.open.push(node);
+        self.deepest = self.deepest.max(self.open.len());
+    }
+
     // Tokens.
 
     fn kind_at(&self, k: usize) -> u8 {
@@ -806,7 +826,7 @@ impl<L: Layout> Parser<'_, L> {
         let id = self.out.push(code(kind, 0, false), start) as u32;
         self.kids.push(id);
         if open {
-            self.open.push((id, self.kids.len() as u32));
+            self.push_open((id, self.kids.len() as u32));
         } else {
             self.out.close(id as usize, end);
         }
@@ -823,7 +843,7 @@ impl<L: Layout> Parser<'_, L> {
         let id = self.out.push(code(kind, 0, false), start) as u32;
         self.kids.push(id);
         if open {
-            self.open.push((id, self.kids.len() as u32));
+            self.push_open((id, self.kids.len() as u32));
         } else {
             self.out.close(id as usize, end);
             if self.next_comment < end {
@@ -882,7 +902,7 @@ impl<L: Layout> Parser<'_, L> {
             let _ = x;
             let id = self.out.push(code(kind as u16, 0, false), 0) as u32;
             self.kids.push(id);
-            self.open.push((id, self.kids.len() as u32));
+            self.push_open((id, self.kids.len() as u32));
             return;
         };
         // The operand's field is the new node's; the new node goes before it.
@@ -895,7 +915,7 @@ impl<L: Layout> Parser<'_, L> {
             *c += 1;
         }
         self.kids.insert(at, k);
-        self.open.push((k, at as u32 + 1));
+        self.push_open((k, at as u32 + 1));
     }
 
     fn mark(&self) -> Mark {

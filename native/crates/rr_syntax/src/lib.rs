@@ -53,6 +53,11 @@ pub fn tape_in(src: &str, room: std::sync::Arc<dyn rerail_tape_format::VectorRoo
     lean::tape_in(src, room)
 }
 
+/// [`tape_in`], with the deepest the parser's stack of open nodes went (the `parse` operation bounds it).
+pub fn tape_in_deep(src: &str, room: std::sync::Arc<dyn rerail_tape_format::VectorRoom>) -> Result<(rerail_tape_format::f16::Tape16, u32), String> {
+    lean::tape_in_deep(src, room)
+}
+
 /// `text` as the lean parser and the engine read what a checker's parser (the generated parser) read, its leaves
 /// `(start, end)`: where a string leaf holds a `\\u` escape, its `u` a backslash (an escaped backslash, of the
 /// escape's length), and an integer leaf past an `i64` its digits `0…01`. The lean parser writes `Bad` for a `\\u`

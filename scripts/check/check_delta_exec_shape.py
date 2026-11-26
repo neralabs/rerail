@@ -251,7 +251,7 @@ def b2(failures: list) -> None:
             allowed.add("rerail_gpu")
         # B4: a document is answered through the engine's file layer (the observer, the slabs' placer), in `files`
         # alone.
-        if path.name in ("files.rs", "files_tests.rs", "l1_tests.rs"):
+        if path.name in ("files.rs", "files_tests.rs", "l1_tests.rs", "answer.rs", "answer_tests.rs"):
             allowed.add("rerail_observe")
         # The store's objects (sources and tapes by content, a tape by its grammar) and documents' places, kept as is
         # (*0686: Operations* §5; the user, 2026-11-26: "the objects store, documents' places and the journal"), in
@@ -422,13 +422,30 @@ def b4(failures: list) -> None:
         failures.append("native/crates/delta_exec/src/files.rs is missing (B4)")
         return
     text = strip_rust(p.read_text())
-    for pattern, why in ((r"\.digest_step\(", "the observer's digest step"), (r"\.digest_read\(", "the read recorded"),
-                         (r"\.read_placed\(&place\)", "the placed read, through a placer"),
-                         (r"fn place_in\(", "the placer: a room of the document's tape block"),
-                         (r"Text::parse_in\(", "the tape written by the parser into a room"),
-                         (r"kind::TAPE", "a tape block"), (r"blobs\.house\(", "a blob named by its content")):
-        if not re.search(pattern, text):
+    for pattern, why in ((r"fn place_in\(", "the placer: a room of the document's tape block"),
+                         (r"kind::TAPE", "a tape block"), (r"blobs\.house\(", "a blob named by its content"),
+                         (r"answer_load\(reg, &self\.ops", "the world's documents through the answer_load operation"),
+                         (r"parse_sources\(reg, &self\.ops", "the world's new contents through the parse operation"),
+                         (r"fn doc_of\((?:(?!\n\}\n).)*parse_sources\(", "a document in hand through the parse operation")):
+        if not re.search(pattern, text, re.S):
             failures.append(f"files.rs: no {why}")
+    # Δanswer as operations (*0686: Operations* §10): answer_load (the file layer as it is) and parse (the rr parser),
+    # each declared with its slots and registered, as host versions, the one place the observer and parser are called.
+    a = CRATE / "src/answer.rs"
+    atext = strip_rust(a.read_text()) if a.exists() else ""
+    for pattern, why in ((r"pub static ANSWER_LOAD: Signature", "answer_load declared as an operation"),
+                         (r"pub static PARSE: Signature", "parse declared as an operation"),
+                         (r"Version::host\(load,", "answer_load's host version registered"),
+                         (r"Version::host\(parse,", "parse's host version registered"),
+                         (r"\.digest_step\(", "the observer's digest step"), (r"\.digest_read\(", "the read recorded"),
+                         (r"\.read_placed\(&place\)", "the placed read, through a placer"),
+                         (r"tape_in_deep\(src, Arc::new\(InBlock\(", "the tape written by the parser into a room of the slab"),
+                         (r"c\.depth\(deepest\)", "the parser's stack depth metered")):
+        if not re.search(pattern, atext):
+            failures.append(f"answer.rs: no {why}")
+    for f in sorted((CRATE / "src").glob("*.rs")):
+        if f.name not in ("answer.rs", "answer_tests.rs") and not f.name.endswith("tests.rs"):
+            hits(f, strip_rust(f.read_text()), r"\.digest_step\(|\.read_placed\(|\btape_in(_deep)?\(|Text::parse_in\(", "the file layer or the parser called outside Δanswer's operations", failures)
     tape = strip_rust((CRATE / "src/tape.rs").read_text())
     m = re.search(r"pub struct Text \{([^}]*)\}", tape)
     if not m or "String" in m.group(1):

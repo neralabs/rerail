@@ -599,6 +599,8 @@ pub struct Bench {
     pub blobs: BlobRows,
     pub traces: TraceOps,
     pub caches: CacheOps,
+    /// Δanswer's operations (`answer_load`, `parse`).
+    pub answers: crate::answer::AnswerOps,
 }
 
 impl Bench {
@@ -607,7 +609,8 @@ impl Bench {
         let mut reg = Registry::default();
         let traces = TraceOps::declare(&mut reg)?;
         let caches = CacheOps::declare(&mut reg)?;
-        Ok(Bench { reg, dir: Directory::default(), blobs: BlobRows::new(&traces), traces, caches })
+        let answers = crate::answer::AnswerOps::declare(&mut reg)?;
+        Ok(Bench { reg, dir: Directory::default(), blobs: BlobRows::new(&traces), traces, caches, answers })
     }
 
     /// A bench over the kept blocks in folder `kept` (a store's, `files::Store::kept`): each mapped where it lies, at

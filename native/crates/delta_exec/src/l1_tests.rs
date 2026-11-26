@@ -31,7 +31,7 @@ impl Disk {
     fn new(bench: &mut Bench, name: &str) -> Disk {
         let (root, store) = root(name);
         let atoms = Atoms::new(&mut bench.dir);
-        let world = World::new(root.clone(), store, &bench.dir, [None; 3]).unwrap();
+        let world = World::new(root.clone(), store, bench.answers, &bench.dir, [None; 3]).unwrap();
         Disk::over(bench, root, world, atoms, None)
     }
 
@@ -336,7 +336,7 @@ fn a_later_process_starts_where_the_last_run_left_off() {
         let store = Store::open(&folder).unwrap();
         let (mut bench, pins) = Bench::open(&store.kept()).unwrap();
         let atoms = Atoms::open(&mut bench.dir, &store.atoms()).unwrap();
-        let world = World::new(root.clone(), store, &bench.dir, pins.as_ref().map_or([None; 3], |p| p.1.world)).unwrap();
+        let world = World::new(root.clone(), store, bench.answers, &bench.dir, pins.as_ref().map_or([None; 3], |p| p.1.world)).unwrap();
         let disk = Disk::over(&mut bench, root.clone(), world, atoms, pins);
         (bench, disk)
     };

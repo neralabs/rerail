@@ -1523,3 +1523,51 @@ Checks (Relax, local, 84 of 84):
   - `roll_up_run` replaces `settle`.
 - Clippy is clean on `delta_exec` and the twins, the earlier warnings included.
 
+
+### Δanswer as operations: `answer_load` and `parse` (Operations §10)
+
+Δanswer is now `answer_load` → `parse` → `intern`, three registered operations, each run by the executor over its
+slots. `World::answer` is the host loop around them: it lays out the load plan, gives the slab, and reads the facts.
+
+- **Host versions.** `op::Impl::Host(Twin)` is a version whose phases run on the CPU over the slots as a twin's do. It
+  is written in `delta_exec` because it calls what the twins may not: the observer, the store's objects and the parser.
+  `Version::host` registers one as the operation's reference. `cpu_version`, `execute`, `register_reference` and
+  `check` treat it as a twin, so a GPU version of `parse` registers and is checked against it.
+- **`answer_load`.**
+  - Slots: plan (read, `CONTROL`), tapes (read-write, the residency slab), control (read-write) and facts (write).
+  - One phase, a path an item. It is `Not` independent: one observer, its answers under one lock.
+  - The item does the observer's digest step and, for a changed file, the placed read into a room of the slab, with
+    the digest recorded. Its fact is `(d, code, found, digest, source's offset, length, need)`, where the code is one
+    of `SAME` (no δ), `READ`, `KNOWN` (answered by stat, a new digest), `MISS`, `NO_ROOM` or `UNREAD`.
+  - A source placed promises its tape's room (control word 1), so a later source leaves it free. A file past the
+    slab's room is `NO_ROOM` with the room it needs. The host takes a slab with that room and asks again.
+  - A `KNOWN` digest that no home holds is asked again with `READ_ANYWAY`.
+- **`parse`.**
+  - Slots: tapes (read-write) and control (read-write).
+  - Shape 22, one document per item. `Inside::Stacks` with `Bound::StackDepth(4096)`; `Output::Claim` with
+    `Bound::Capacity(Refuse)`. The source's load promised the room its tape claims.
+  - The rr parser writes the tape into a room of the slab the source lies in (`tape_in_deep` into `InBlock`). It now
+    reports the deepest its stack of open nodes went (`lean::Parser::push_open`), and the item meters that with
+    `Ctx::depth`.
+  - A source that is not UTF-8 is `NOT_UTF8`, and a refusal is `REFUSED`.
+- **Who calls them.** `World::load` is `World::answer` for one path. `doc_of`, a source in hand, goes through `parse`
+  too. `Text::parse_in` had no caller left and is removed.
+
+Checks (Relax, local, 86 of 86):
+
+- `answer_load_answers_each_path_of_its_plan`:
+  - two files are read and placed where the fact says, under the digest of their bytes, and a missing path is a miss;
+  - asked again past the racy window, within a run's bounds (the observer's `begin` and `flush`), there is no δ and
+    nothing is read;
+  - a slab with no room gives `NO_ROOM`, with the room the file needs.
+- `parse_gives_the_same_tapes_at_every_tiling`: the tapes are the same whole and at tiles 1 and 2 in shuffled orders,
+  and a non-UTF-8 source is refused.
+- Every earlier check passes through the operations: the world's, L1's, the harness's and the restart's.
+- The shape script's B4 check now requires these in `answer.rs`:
+  - both signatures, and both host versions registered;
+  - the digest step, the recorded read and the placed read;
+  - the parser writing into the slab, with its depth metered.
+
+  It requires `World` and `doc_of` to go through `answer_load` and `parse`, and refuses the file layer or the parser
+  called anywhere else in the crate.
+- Clippy is clean on `delta_exec`, the twins and `rr_syntax`.

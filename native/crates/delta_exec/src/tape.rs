@@ -33,24 +33,6 @@ pub struct Text {
     pub tape: Tape16,
 }
 
-impl Text {
-    /// `src` parsed, its tape written by the parser in `room` (a tape block's, `files`).
-    pub fn parse_in(src: home::Text, room: std::sync::Arc<dyn rerail_rr_syntax::tape_format::VectorRoom>) -> Result<Text, String> {
-        let tape = rerail_rr_syntax::tape_in(src.as_str(), room)?;
-        Text { src, tape }.checked()
-    }
-
-    /// Refused when a statement does not parse (the parser writes it as an ERROR leaf, and a file the engine refuses
-    /// to run still has a tape).
-    fn checked(self) -> Result<Text, String> {
-        let r = reads(&self);
-        if let Some(i) = (0..r.len()).find(|&i| r.node(i).0 == rerail_rr_syntax::tape::ERROR) {
-            return Err(format!("a statement that does not parse: {:?}", r.text(i)));
-        }
-        Ok(self)
-    }
-}
-
 /// The views, by name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum View {
