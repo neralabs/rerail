@@ -2647,3 +2647,16 @@ fn speed_against_lean() {
         eprintln!("{form:>11}: CPU best {:7.2} ms, median {:7.2} ms; wall best {:7.2} ms, median {:7.2} ms; {:6.1} MB/s; {:.2}x lean's CPU", cb * 1e3, cm * 1e3, wb * 1e3, wm * 1e3, bytes as f64 / cb / 1e6, cb / lean_cpu);
     }
 }
+
+/// Texts across many blocks, as the lean parser reads them: stage 1 is made as the token loop comes to its blocks
+/// (decision 0703 step 6), a scan of a mask past the blocks made makes them as it goes (a string, a comment, a name, a
+/// raw string's template, longer than the blocks made at a time), and a file of many statements.
+#[test]
+fn texts_across_many_blocks_are_the_lean_parsers() {
+    let string = format!("val s = \"{}\"\n", "a".repeat(3000));
+    let comment = format!("/*{}*/\nval a = 1\n", "x ".repeat(2000));
+    let name = format!("val {} = 1\n", "b".repeat(2500));
+    let raw = format!("val r = \"\"\"{}${{a}}\"\"\"\n", "y\n".repeat(1500));
+    let lines: String = (0..300).map(|i| format!("val v{i} = f(a, \"s{i}\") + {i} // c\n")).collect();
+    same(&[&string, &comment, &name, &raw, &lines]);
+}

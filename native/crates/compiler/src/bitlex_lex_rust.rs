@@ -26,6 +26,8 @@ use std::fmt::Write;
 // Mounted by `rerail-bitlex` from the compiler's folder (`#[path]`): its submodule is found beside it.
 #[path = "bitlex_lex_rust/bytes.rs"]
 mod bytes;
+#[path = "bitlex_lex_rust/interleave.rs"]
+mod interleave;
 
 /// What the generator reads: the lexer's statements and the compiler's tables.
 pub struct Input<'a> {
@@ -4743,7 +4745,7 @@ impl Gen<'_> {
         let v = self.val(&x);
         let lines = std::mem::replace(&mut self.body, before);
         let v = v?;
-        let _ = write!(self.code_after, "{lines}    // {}\n    refused |= any(&{v});\n", why.replace('\n', "\\n"));
+        let _ = write!(self.code_after, "{lines}    // {}\n    refused |= any(&{v});\n", why.replace('\n', "\\n").replace('\r', "\\r"));
         Ok(true)
     }
 
@@ -8339,7 +8341,7 @@ fn toggle(x: &[u64]) -> Vec<u64> {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), nest: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), ends: None, fill_proofs: Default::default(), region_values: Default::default(), opener_at: [Bytes::ALL; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), shapes: Default::default(), regional_ids: Default::default(), opener_ids: Default::default(), def_ids: Default::default(), end_names: Default::default(), shape_ids: Default::default(), name_strs: Default::default(), name_ids: Default::default(), kept: Default::default(), cube_tangled: Default::default(), opener_cache: Default::default(), cube_open: Default::default(), tangles: Default::default(), cube_read: Default::default() }.source()
+    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), nest: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), ends: None, fill_proofs: Default::default(), region_values: Default::default(), opener_at: [Bytes::ALL; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), shapes: Default::default(), regional_ids: Default::default(), opener_ids: Default::default(), def_ids: Default::default(), end_names: Default::default(), shape_ids: Default::default(), name_strs: Default::default(), name_ids: Default::default(), kept: Default::default(), cube_tangled: Default::default(), opener_cache: Default::default(), cube_open: Default::default(), tangles: Default::default(), cube_read: Default::default() }.source().map(|t| interleave::interleave(&t).unwrap_or(t))
 }
 
 /// Whether `e` names `n`.

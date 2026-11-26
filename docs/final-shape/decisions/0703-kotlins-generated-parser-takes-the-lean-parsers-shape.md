@@ -58,12 +58,6 @@ them.
    and a mask a later loop reads is kept as a vector as well. Kotlin's are two loops, with one vector (`t108`, read two
    bytes ahead). rr and JSON have no escape made of `code`. A check's reason with a line break in it is written with
    `\n` in its comment.
-
-What stays: Kotlin's tier 1 keeps its two passes. Stage 1 keeps the 144 masks its token loop reads, for the whole
-file, and tier 1 computes the token's marks into its code (its line breaks, the semicolons, `as_open`, ...). Its
-strings trip every condition of 0619's one pass: templates that resume a string (`tail ... or t_dollar resumes str`),
-a fill kept over a region (`assume ... at ends t_brace`), and strings that tier 2 reads in parts, from tier 1's
-masks (`rd1_open`). The lookahead of `as_split` and `is_split` stays a function a state (`next_*`).
 5. **The gap marks of one mask are one bit** (`DERIVED`, `derived`, `carried`). Gap marks whose tests in tier 1 are
    one (one accumulator, mask or record test) have one carrier, the one of the lowest bit with no `unless after`, and
    tier 1 writes its bit alone. Tier 2 asks the others where a rule reads one: the carrier's bit at the token, and the
@@ -73,3 +67,20 @@ masks (`rd1_open`). The lookahead of `as_split` and `is_split` stays a function 
    not derived. Kotlin's `head_ctor`, `by_lf`, `ann_lf` and `semi` (`lf & code`) are one bit, `head_ctor`'s: the lean
    lexer's `nl`, of which the lean parser asks `asi`. Kotlin's test of tier 1's records against the interpreter's
    checks each derived bit as tier 2 asks it. rr's marks are each their own (`DERIVED` 0), and JSON has none.
+6. **Stage 1 is made as the token loop comes to its blocks** (`bitlex_lex_rust/interleave.rs`). The two-pass form's
+   stage 1 is one pass over the blocks with carries. Its carries are now a state (`Stage1Run`), and the pass runs a
+   step at a time from it (`stage1(src, st, o, upto)`, dispatched as before), writing its masks into `Stage1`. Each
+   block of the token loop makes stage 1 through the next block, 16 blocks more at a time; a scan of a mask forward
+   (`first_bit`, `run_last`) makes blocks as it comes to ones not made (`s1_first_bit`, `s1_run_last`); after the
+   loop, stage 1 is made to the file's end, for its escapes (which now join the refusal there) and the passes after
+   the loop. Every other read of the loop is at or before the token's last byte, which a scan found, or a few bytes
+   past it. So tier 1 reads the bytes once, each block's masks made just before the loop reads them, as the lean
+   lexer's `Blocks::of`. The test build's walk of the regions reads a stage 1 of its own, made whole. Kotlin's is the
+   only tier 1 of the two-pass form; rr's and JSON's are unchanged. A check's reason with a carriage return in it is
+   written with `\r`.
+
+What stays: stage 1 keeps the 144 masks the token loop reads, each a vector of the file's words, where the lean
+lexer keeps 5 in one, and tier 1 computes seven marks into the token's code. Its
+strings trip every condition of 0619's one pass: templates that resume a string (`tail ... or t_dollar resumes str`),
+a fill kept over a region (`assume ... at ends t_brace`), and strings that tier 2 reads in parts, from tier 1's
+masks (`rd1_open`). The lookahead of `as_split` and `is_split` stays a function a state (`next_*`).
