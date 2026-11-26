@@ -1,1 +1,0 @@
-`rerail daemon start`, a coding agent's session start and other Rerail commands no longer fail with "database is locked" while another Rerail process holds the database's write lock for more than 5 s, as `rerail scrub` or `rerail reset` can: opening a database already at this version's shape now only reads it.
