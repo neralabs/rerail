@@ -56,7 +56,7 @@ function health(overrides: Partial<DaemonHealth> = {}): DaemonHealth {
 
 /** A repository the daemon knows, named `name`, set up and on unless `overrides` say otherwise. */
 function repository(name: string, overrides: Partial<TrayRepository> = {}): TrayRepository {
-  return { key: `key:${name}`, name, setUp: true, started: true, total: 0, on: 0, ...overrides };
+  return { key: `key:${name}`, name, setUp: true, state: "started", total: 0, on: 0, ...overrides };
 }
 
 describe("trayGate", () => {
@@ -202,10 +202,10 @@ describe("trayMenuState", () => {
     const section = menu({ repositories: [
       repository("rerail", { on: 44, total: 47 }),
       repository("nerling", { on: 1, total: 1 }),
-      repository("website", { started: false, on: 0, total: 9 }),
+      repository("website", { state: "stopped", on: 0, total: 9 }),
       repository("empty", { on: 0, total: 0 }),
       repository("quiet", { on: 0, total: 3 }),
-      repository("scratch", { setUp: false, on: 0, total: 0 }),
+      repository("scratch", { setUp: false, state: "not-set-up", on: 0, total: 0 }),
       repository("big", { on: 1234, total: 1234 }),
     ] }).repositories;
     expect(section).toEqual({
@@ -886,7 +886,7 @@ describe("the daemon's tray service", () => {
     } finally {
       database.$client.close();
     }
-    expect(given.repositories()).toEqual([{ key: "remote:github.com/acme/web", name: "web", setUp: true, started: true, total: 0, on: 0 }]);
+    expect(given.repositories()).toEqual([{ key: "remote:github.com/acme/web", name: "web", setUp: true, state: "started", total: 0, on: 0 }]);
     expect(close).not.toHaveBeenCalled();
 
     given.stop();

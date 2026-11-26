@@ -305,6 +305,20 @@ export function ruleConfigurationVersionReader(db: RerailDatabase): () => string
   return () => JSON.stringify(statement.get());
 }
 
+/**
+ * {@link ruleConfigurationVersionReader}'s text, and each repository's name and on/off, which that leaves out: it
+ * differs whenever any process changed what a repository's rules for the repository alone ({@link listRepositoryRules}
+ * without a checkout) or its listing read. A session's records leave it as it is, unlike the database's own version.
+ */
+export function repositoryRulesVersionReader(db: RerailDatabase): () => string {
+  const rules = ruleConfigurationVersionReader(db);
+  const listed = db.select({
+    repositories: sql<string>`(SELECT json_group_array(json_array(${repositories.repositoryKey}, ${repositories.displayName},
+      ${repositories.started})) FROM ${repositories})`,
+  }).from(sql`(SELECT 1)`).prepare();
+  return () => `${rules()}|${listed.get()?.repositories ?? ""}`;
+}
+
 /** A rule present at a path, before its settings are applied. */
 interface Presence {
   readonly document: RuleDocument;

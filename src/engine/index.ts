@@ -53,6 +53,7 @@ export {
   addAttachment,
   listRepositoryRules,
   removeAttachment,
+  repositoryRulesVersionReader,
   ruleConfigurationSignature,
   setRuleSetting,
   setUpRepository,

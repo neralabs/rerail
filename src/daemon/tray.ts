@@ -21,6 +21,7 @@ import { spawn } from "../engine/child-process.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { NATIVE_ENGINE_SYSTEMS, nativeTrayFileName, resolveNativeTrayPath } from "../engine/native/native.js";
 import { isMainRerailBuild } from "../engine/native/rerail-build.js";
+import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { experimentEnabled } from "../engine/experimental-features.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { BROWSER_OFF_NOTE, DAEMON_LOG_FILE, launchDetached, openInBrowser, type DaemonHealth, type DaemonMachine } from "../runtime/daemon-control.js";
@@ -44,9 +45,8 @@ export type TrayGateFacts = {
 /**
  * Whether the daemon puts up a tray icon. Every gate must hold: the experiment on (`RERAIL_EXPERIMENTAL_TRAY_ICON`),
  * a main build or `RERAIL_TRAY=1`, no `CI`, a loopback daemon, no SSH, on Linux a display and a session bus, and the
- * binary. Tests, CI and a
- * daemon reached over SSH never put an icon up. A failed gate is silent, but for a missing binary on a system that
- * should have one, whose `log` line the daemon writes once.
+ * binary. Tests, CI and a daemon reached over SSH never put an icon up. A failed gate is silent, but for a missing
+ * binary on a system that should have one, whose `log` line the daemon writes once.
  */
 export function trayGate(facts: TrayGateFacts): { start: true; trayPath: string } | { start: false; log?: string } {
   const { platform, architecture, trayPath } = facts;
@@ -109,7 +109,8 @@ export interface TrayRepository {
   key: string;
   name: string;
   setUp: boolean;
-  started: boolean;
+  /** Whether its rules run (`stateOf`): `started`, `stopped` while it is off, or `not-set-up`. */
+  state: RepositoryStartState;
   /** How many rules it has, one per rule id, and how many of them run (`repositoryRuleCounts`). */
   total: number;
   on: number;
@@ -140,7 +141,7 @@ export function repositorySection(repositories: readonly TrayRepository[]): Tray
     rows: shown.map(repository => ({
       key: repository.key,
       label: `${cut(repository.name)} · ${repositoryTag(repository)}`,
-      running: repository.setUp && repository.started && repository.on > 0,
+      running: repository.state === "started" && repository.on > 0,
     })),
     more: repositories.length === 0
       ? { label: "No repositories yet", enabled: false }
@@ -155,7 +156,7 @@ export function repositorySection(repositories: readonly TrayRepository[]): Tray
 export function repositoryTag(repository: TrayRepository): string {
   if (!repository.setUp) return "Not set up";
   if (repository.total === 0) return "No rules added";
-  if (!repository.started) return `Off · ${count(repository.total)} ${plural(repository.total, "rule")}`;
+  if (repository.state === "stopped") return `Off · ${count(repository.total)} ${plural(repository.total, "rule")}`;
   return `${count(repository.on)} ${plural(repository.on, "rule")} on`;
 }
 
@@ -247,7 +248,10 @@ function updateItem(
 /** What the tray needs of the running daemon. */
 export interface TrayDaemon {
   health(): DaemonHealth;
-  /** Every repository the daemon knows, as the dashboard lists them; read every few seconds, so cheap while none change. */
+  /**
+   * Every repository the daemon knows, as the dashboard lists them. Read every few seconds: its rules are counted again
+   * only once the repositories or their rules changed, never for a session's records alone.
+   */
   repositories(): readonly TrayRepository[];
   /**
    * The dashboard link with the access token, for this user's browser (`dashboardLink`): at the dashboard's `view`

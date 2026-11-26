@@ -43,6 +43,7 @@ import type { ChangeFeedOptions } from "../api/change-feed.js";
 import { nativeHealth as loadNativeHealth, type NativeHealth } from "../engine/native/native.js";
 import { modelStatus } from "../engine/native/model-status.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
+import { repositoryRulesVersionReader } from "../engine/catalog/rule-configuration.js";
 import { defaultRerailDatabasePath, type RerailDatabase } from "../engine/storage/database.js";
 import { moveRuleProvenancesInWorker } from "../engine/storage/rule-provenance-move.js";
 import { enabledExperiments, mergeAssistExperimentEnabled, remoteSinkEnabled } from "../engine/experimental-features.js";
@@ -72,7 +73,7 @@ const API_BODY_LIMIT_BYTES = 4 * 1024 * 1024;
  */
 const NATIVE_BODY_LIMIT_BYTES = 256 * 1024 * 1024;
 
-/** {@link RerailDaemon.repositories}' last answer, with the database version and rule catalog it was read at. */
+/** {@link RerailDaemon.repositories}' last answer, and the version of the rules and the rule catalog it was read at. */
 interface RepositoriesRead {
   readonly version: string;
   readonly catalog: ReturnType<RerailApiStores["ruleCatalog"]>;
@@ -580,8 +581,10 @@ export class RerailDaemon {
   #untakenFolder: string | undefined;
   /** What `RerailDaemonOptions.statusLines` started: stopped first on close, while the stores it reads are open. */
   #statusLines: { stop(): Promise<void> } | undefined;
-  /** What {@link repositories} last read, and the database version and rule catalog it read them at. */
+  /** What {@link repositories} last read, and the version of the rules and the rule catalog it read them at. */
   #repositoriesRead: RepositoriesRead | undefined;
+  /** What {@link repositories} keys its last answer on, read on the daemon's own connection once the database exists. */
+  #repositoriesVersion: (() => string) | undefined;
 
   private constructor({
     server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken, mergeAssist,
@@ -891,13 +894,15 @@ export class RerailDaemon {
 
   /**
    * Every repository Rerail knows on this machine, as the dashboard lists them, with how many of its rules run. The
-   * answer is read again only once the database has a commit since (`dataVersion`) or the installed packs changed (the
-   * cached catalog is another object), so a caller that asks every few seconds costs a version read while nothing moves.
-   * Before the database exists there is no repository, and asking does not create it.
+   * answer is counted again only once any process changed the repositories or their rules
+   * (`repositoryRulesVersionReader`) or the installed packs changed (the cached catalog is another object): a session
+   * recording its work changes neither, so a caller that asks every few seconds costs one read of the rule settings
+   * while only sessions run. Before the database exists there is no repository, and asking does not create it.
    */
   repositories(): RepositoriesRead["list"] {
-    const version = this.#stores.historyVersion();
-    if (version === undefined) return [];
+    if (!existsSync(this.#databasePath)) return [];
+    this.#repositoriesVersion ??= repositoryRulesVersionReader(this.#stores.database());
+    const version = this.#repositoriesVersion();
     const catalog = this.#stores.ruleCatalog();
     const read = this.#repositoriesRead;
     if (read !== undefined && read.version === version && read.catalog === catalog) return read.list;
@@ -1705,7 +1710,7 @@ async function runRerailDaemon(argv: readonly string[], services: RerailDaemonSe
         key: repository.repositoryKey,
         name: repository.name,
         setUp: repository.setUp,
-        started: repository.started,
+        state: repository.state,
         total: counts.total,
         on: counts.on,
       })),
