@@ -158,17 +158,6 @@ data-layer:alone violation
 data-layer:alone vmi_backed
 django dar_non_atomic_wrapped
 javascript significant_bits
-node api_use
-node base
-node concat
-node env_global
-node export_all
-node loader
-node module_load
-node piece_slash
-node slash
-node spec_value
-node val
 python-main FAST003
 python-main fast003_alt_10
 python-main fast003_alt_13

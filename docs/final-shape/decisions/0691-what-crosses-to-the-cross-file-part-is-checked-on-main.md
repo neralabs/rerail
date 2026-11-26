@@ -393,6 +393,30 @@ Found on the way and fixed:
    - Tests: `a_coarser_demand_keeps_no_literal_only_the_demanded_atom_tied`, `t_programs_transform_like_t`; Django's
      27 rule tests; the typing tests; every pack's split test; the rule files' own tests and `check_rr`.
    - Lists: split 30 → 28, node 210 → 177 (Django 34 → 1, `dar_non_atomic_wrapped`, as on the branch).
+16. **Node: an `extensible` table nothing states is stated empty, and the specifier tables keyed by the target**
+   (the branch's 9ad7172f4c, 0677 tail 7).
+   - Every Node entry hung off `node_module` or `node_global`, which read node-trace's `module_global(g, m, x)`, an
+     `extensible` table whose rows the policies naming globals state. A program naming none states no row, and in a
+     batch each stating policy's rows go to its own copy (`q<k>_module_global`). Never stated, it was a base relation
+     of no location to the split, so every reader of a value through it went to the cross part.
+   - The engine, in main's form: the lowering keeps `extensible` as a qualifier word of a library relation (not core's:
+     `env`, `option`, `load` are the engine's), and a printed program reads it back. Where the whole program is known,
+     at both ends of `combine_read`, each one that nothing states, that is no input and that has only value columns,
+     is stated empty: a run constant (decision 0263: its rows come only from the files that include its own). The
+     split does not decide it, since a library module planned alone (0639) does not see its includer's rows.
+   - Rules: the branch's node-resolve and Node pack files. `spec_kind`, `spec_package` and `spec_allowed` are keyed
+     by the target node; checkPublish is split into a file's targets under its document and the cross part's answer
+     by document (`pkg_unpublished_file`, `pkg_dev_only`); n-handle-callback-err tests the option's name at the
+     function. `spec_resolved` stays the phase `node_resolve`'s (fix 11).
+   - Not ported: locate leaving a request where it is asked (C's configuration tables; main has no C library), and
+     binding a per-file part's own empty inputs (its case, `spec_resolved`, is the phase's answer here).
+   - Tests: `a_programs_facts_of_a_library_relation_ask_of_the_library` (the shared `lit_repr_threshold` is stated
+     empty); the rr, corpus and file-local tests; every pack's split test; the rule files' own tests and `check_rr`;
+     Django's rule tests; the executors' coverage (unchanged). The corpus tests that run `git add -A` are refused by
+     this machine's sandbox, as before.
+   - Lists: node 177 → 166 (Node 11 → 0). Outside the data layer the lists now hold only what the branch keeps:
+     Django's `dar_non_atomic_wrapped` (both lists), JavaScript's `significant_bits` (under the engine's
+     `radix__key_slice0`), and python-main's 7 (FAST003).
 
 ## Consequences
 
@@ -404,4 +428,4 @@ Found on the way and fixed:
 ## Open
 
 - The split's gaps still to port: 0652's follow-up (`same_document_ties`: SIM113).
-- The packs' entries left after fix 15, and the data layer's (not in this pull request's scope, 2026-11-25).
+- The data layer's entries (not in this pull request's scope, 2026-11-25).

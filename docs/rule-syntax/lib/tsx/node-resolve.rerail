@@ -7,8 +7,9 @@
 //                         (the global require, aliases followed), the source of import, export … from and import();
 //                         name is its value up to a "!" (a loader prefix); style is "require", "import", or "type"
 //                         for `import type` and `export type … from`
-//   spec_kind(name, k)    "relative" ./x ../x, "absolute" /x, "node", "data", "http", "npm" or "unknown"
-//   spec_package(name, m) the package a name loads: "@a/b/c" gives "@a/b", "lodash/fp" "lodash", a built-in its
+//   spec_kind(n, k)       target n's name is "relative" ./x ../x, "absolute" /x, "node", "data", "http", "npm" or
+//                         "unknown"
+//   spec_package(n, m)    the package target n loads: "@a/b/c" gives "@a/b", "lodash/fp" "lodash", a built-in its
 //                         module ("node:fs/promises" gives "fs"); relative names have none
 //   spec_resolved(n, file)    the file n resolves to, from n's document, as the plugin's resolver finds it (below);
 //                         no row when resolution fails
@@ -22,11 +23,18 @@
 //   spec_ts_alias(n)      hasTSAlias: a TypeScript file whose tsconfig `paths` has a key (without its trailing /*)
 //                         that the name starts with
 //   allow_module(m)       the allowModules option lists m
-//   spec_allowed(name)    allowModules lists the package name loads
+//   spec_allowed(n)       allowModules lists the package target n loads
 //   spec_type_skipped(n)  ignoreTypeImport is on and n is the source of an `import type` (not `export type`)
-//   spec_unpublished(n, style, msg)  the plugin's checkPublish: in a file npm publishes (and, with ignorePrivate,
-//                         the default, a package not "private": true), n names a file npm leaves out (or one
-//                         outside the package), or a package that is only a devDependency
+//   the plugin's checkPublish, in two halves a rule joins (decision 0677: what npm publishes is a fact of other
+//   files, answered by document and path, and n stays in its own file's part):
+//   spec_publish_file(n, style, d, f)  target n, in document d, names file f (no built-in, no package)
+//   spec_publish_dep(n, style, d, m)   target n, in document d, names package m (no built-in)
+//   pkg_unpublished_file(d, f)  d is a file npm publishes (with ignorePrivate, the default, of a package not
+//                         "private": true), and npm leaves f out, or f is outside d's package
+//   pkg_dev_only(d, m)    d is such a file, and m is only a devDependency of its package, and not allowModules'
+//   spec_unpublished_says(why, msg)  the message for "file" and for "dev"
+//       unpublished(n, msg) :- spec_publish_file(n, _, d, f), pkg_unpublished_file(d, f), spec_unpublished_says("file", msg).
+//       unpublished(n, msg) :- spec_publish_dep(n, _, d, m), pkg_dev_only(d, m), spec_unpublished_says("dev", msg).
 //
 // Examples:
 //   n/no-missing-require       require("./nope")        failed
@@ -60,7 +68,9 @@ node_global("require"). node_global("global"). node_global("globalThis").   // g
 api_known("require"). api_known("require.resolve").
 
 .decl node_target(n: node, name: symbol, style: symbol)
-node_target(s, x, st) :- spec_value(s, v, st), spec_unbang(v, x).
+// "style-loader!./a.css" names "style-loader": the plugin keeps what comes before a "!".
+node_target(s, v, st) :- spec_value(s, v, st), !contains("!", v).
+node_target(s, x, st) :- spec_value(s, v, st), match("(?<x>[^!]*)!.*", v).
 .decl spec_value(s: node, v: symbol, style: symbol)
 spec_value(s, v, "require") :- (api_use(c, "require", "call") ; api_use(c, "require.resolve", "call")), first_arg(c, s),
     const_str(s, v).
@@ -68,39 +78,36 @@ spec_value(s, v, st) :- kind(i, k), (k = "import_statement" ; k = "export_statem
     kind(s, "string"), value(s, v), (op(i, "type"), st = "type" ; !op(i, "type"), st = "import").
 spec_value(s, v, "import") :- kind(c, "call_expression"), field(c, "function", f), kind(f, "import"), first_arg(c, s),
     kind(s, "string"), value(s, v).
-// spec_unbang(v, x): "style-loader!./a.css" names "style-loader": the plugin keeps what comes before a "!".
-.decl spec_unbang(v: symbol, x: symbol)
-spec_unbang(v, v) :- spec_value(_, v, _), !contains("!", v).
-spec_unbang(v, x) :- spec_value(_, v, _), match("(?<x>[^!]*)!.*", v).
-
-.decl spec_kind(name: symbol, k: symbol)
-spec_kind(x, "relative") :- node_target(_, x, _), match("\\.{1,2}([\\\\/].*)?", x).
-spec_kind(x, "absolute") :- node_target(_, x, _), !match("\\.{1,2}([\\\\/].*)?", x), match("[\\\\/].*", x).
-spec_kind(x, k) :- node_target(_, x, _), !match("\\.{1,2}([\\\\/].*)?", x), !match("[\\\\/].*", x), spec_bare_kind(x, k).
-.decl spec_bare_kind(name: symbol, k: symbol)
-spec_bare_kind(x, "node") :- node_target(_, x, _), builtin_spec(x).
-spec_bare_kind(x, "data") :- node_target(_, x, _), !builtin_spec(x), prefix("data:", x).
-spec_bare_kind(x, "http") :- node_target(_, x, _), !builtin_spec(x), !prefix("data:", x), match("https?://.*", x).
-spec_bare_kind(x, "npm") :- node_target(_, x, _), !builtin_spec(x), !prefix("data:", x), !match("https?://.*", x),
+// The kind and the package of a target, tested at the target: a table of every file's names, read at a node,
+// carried the node into the cross-file part (decision 0677).
+.decl spec_kind(n: node, k: symbol)
+spec_kind(n, "relative") :- node_target(n, x, _), match("\\.{1,2}([\\\\/].*)?", x).
+spec_kind(n, "absolute") :- node_target(n, x, _), !match("\\.{1,2}([\\\\/].*)?", x), match("[\\\\/].*", x).
+spec_kind(n, k) :- node_target(n, x, _), !match("\\.{1,2}([\\\\/].*)?", x), !match("[\\\\/].*", x), spec_bare_kind(n, k).
+.decl spec_bare_kind(n: node, k: symbol)
+spec_bare_kind(n, "node") :- node_target(n, x, _), builtin_spec(x).
+spec_bare_kind(n, "data") :- node_target(n, x, _), !builtin_spec(x), prefix("data:", x).
+spec_bare_kind(n, "http") :- node_target(n, x, _), !builtin_spec(x), !prefix("data:", x), match("https?://.*", x).
+spec_bare_kind(n, "npm") :- node_target(n, x, _), !builtin_spec(x), !prefix("data:", x), !match("https?://.*", x),
     match("(@[\\w~-][\\w.~-]*/)?[\\w~-][\\w.~-]*.*", x).
-spec_bare_kind(x, "unknown") :- node_target(_, x, _), !builtin_spec(x), !prefix("data:", x), !match("https?://.*", x),
+spec_bare_kind(n, "unknown") :- node_target(n, x, _), !builtin_spec(x), !prefix("data:", x), !match("https?://.*", x),
     !match("(@[\\w~-][\\w.~-]*/)?[\\w~-][\\w.~-]*.*", x).
 
-.decl spec_package(name: symbol, m: symbol)
-spec_package(x, m) :- spec_kind(x, "npm"), match("(?<m>@[^/]*/[^/]*).*", x), prefix("@", x).
-spec_package(x, x) :- spec_kind(x, "npm"), prefix("@", x), !contains("/", x).
-spec_package(x, m) :- spec_kind(x, "npm"), !prefix("@", x), match("(?<m>[^/]*).*", x).
-spec_package(x, m) :- spec_kind(x, "node"), match("(node:)?(?<m>[^/]*).*", x).
+.decl spec_package(n: node, m: symbol)
+spec_package(n, m) :- spec_kind(n, "npm"), node_target(n, x, _), match("(?<m>@[^/]*/[^/]*).*", x), prefix("@", x).
+spec_package(n, x) :- spec_kind(n, "npm"), node_target(n, x, _), prefix("@", x), !contains("/", x).
+spec_package(n, m) :- spec_kind(n, "npm"), node_target(n, x, _), !prefix("@", x), match("(?<m>[^/]*).*", x).
+spec_package(n, m) :- spec_kind(n, "node"), node_target(n, x, _), match("(node:)?(?<m>[^/]*).*", x).
 
 .decl spec_failed(n: node)
 spec_failed(n) :- node_target(n, _, _), !spec_resolved(n, _), !spec_as_is(n).
 .decl spec_as_is(n: node)  // a data: or http(s): import, whose name is its file
-spec_as_is(n) :- node_target(n, x, "import"), (spec_kind(x, "data") ; spec_kind(x, "http")).
+spec_as_is(n) :- node_target(n, _, "import"), (spec_kind(n, "data") ; spec_kind(n, "http")).
 .decl node_target_file(n: node, file: symbol)
 node_target_file(n, f) :- node_target(n, _, _), spec_resolved(n, f).
-node_target_file(n, @join(@dir(p), x)) :- node_target(n, x, _), !spec_resolved(n, _), spec_kind(x, "relative"), docof(n, d),
+node_target_file(n, @join(@dir(p), x)) :- node_target(n, x, _), !spec_resolved(n, _), spec_kind(n, "relative"), docof(n, d),
     doc(d, p, _).
-node_target_file(n, x) :- node_target(n, x, _), !spec_resolved(n, _), spec_kind(x, "absolute").
+node_target_file(n, x) :- node_target(n, x, _), !spec_resolved(n, _), spec_kind(n, "absolute").
 
 // pkg_lists(d, m): getPackageNames of d's package.json and of its workspace root's.
 .decl pkg_lists(d: number, m: symbol)
@@ -138,19 +145,33 @@ spec_ts_alias(n) :- node_target(n, x, _), docof(n, d), doc(d, p, _), (suffix(".t
 
 .decl allow_module(m: symbol)
 allow_module(m) :- option_item("allowModules", _, m).
-.decl spec_allowed(x: symbol)
-spec_allowed(x) :- spec_package(x, m), allow_module(m).
+.decl spec_allowed(n: node)
+spec_allowed(n) :- spec_package(n, m), allow_module(m).
 .decl spec_type_skipped(n: node)
 spec_type_skipped(n) :- option("ignoreTypeImport", "true"), field(i, "source", n), kind(i, "import_statement"),
     op(i, "type").
 
-.decl spec_unpublished(n: node, style: symbol, msg: symbol)
-spec_unpublished(n, st, "npm does not publish this file, so the published package cannot load it.") :-
-    pkg_checked_file(d, dir), node_target(n, x, st), docof(n, d), !builtin_spec(x), !spec_package(x, _), node_target_file(n, f),
-    (npm_ignored(f) ; pkg_outside(dir, f)).
-spec_unpublished(n, st, "This package is only a devDependency, so the published package cannot load it.") :-
-    pkg_checked_file(d, dir), node_target(n, x, st), docof(n, d), !builtin_spec(x), spec_package(x, m), pkg_dep(dir, "devDependencies", m),
-    !pkg_runtime_dep(dir, m), !allow_module(m).
+// checkPublish's halves (the interface above). Each file names its targets' files and packages under its document;
+// whether npm publishes them reads other files (package.json, what npm ignores), so it is answered by document and
+// path, and a rule's finding joins the two.
+.decl spec_publish_file(n: node, style: symbol, d: number, f: symbol)
+spec_publish_file(n, st, d, f) :- node_target(n, x, st), !builtin_spec(x), !spec_package(n, _), node_target_file(n, f),
+    docof(n, d).
+.decl spec_publish_dep(n: node, style: symbol, d: number, m: symbol)
+spec_publish_dep(n, st, d, m) :- node_target(n, x, st), !builtin_spec(x), spec_package(n, m), docof(n, d).
+.decl spec_target_in(d: number, f: symbol)  // document d names file f
+spec_target_in(d, f) :- spec_publish_file(_, _, d, f).
+.decl pkg_unpublished_file(d: number, f: symbol)
+pkg_unpublished_file(d, f) :- spec_target_in(d, f), pkg_checked_file(d, _), npm_ignored(f).
+// f is not inside d's package (the plugin counts a "../" path as unpublished).
+pkg_unpublished_file(d, f) :- spec_target_in(d, f), pkg_checked_file(d, dir), dir != "", !prefix(cat(dir, "/"), f).
+pkg_unpublished_file(d, f) :- spec_target_in(d, f), pkg_checked_file(d, ""), prefix("../", f).
+.decl pkg_dev_only(d: number, m: symbol)
+pkg_dev_only(d, m) :- pkg_checked_file(d, dir), pkg_dep(dir, "devDependencies", m), !pkg_runtime_dep(dir, m),
+    !allow_module(m).
+.decl spec_unpublished_says(why: symbol, msg: symbol)
+spec_unpublished_says("file", "npm does not publish this file, so the published package cannot load it.").
+spec_unpublished_says("dev", "This package is only a devDependency, so the published package cannot load it.").
 .decl pkg_runtime_dep(dir: symbol, m: symbol)
 pkg_runtime_dep(dir, m) :- pkg_dep(dir, f, m), f != "devDependencies".
 // pkg_checked_file(d, dir): a file npm publishes, of package dir that ignorePrivate does not skip.
@@ -158,7 +179,3 @@ pkg_runtime_dep(dir, m) :- pkg_dep(dir, f, m), f != "devDependencies".
 pkg_checked_file(d, dir) :- pkg_file(d, dir, _), doc(d, f, _), !npm_ignored(f), !pkg_private_skip(dir).
 .decl pkg_private_skip(dir: symbol)
 pkg_private_skip(dir) :- package_field(dir, "private", "true"), !option("ignorePrivate", "false").
-// pkg_outside(dir, f): f is not inside package dir (the plugin counts a "../" path as unpublished).
-.decl pkg_outside(dir: symbol, f: symbol)
-pkg_outside(dir, f) :- node_target_file(_, f), pkg_file(_, dir, _), dir != "", !prefix(cat(dir, "/"), f).
-pkg_outside("", f) :- node_target_file(_, f), pkg_file(_, "", _), prefix("../", f).

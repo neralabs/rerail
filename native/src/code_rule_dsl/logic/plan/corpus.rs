@@ -1521,6 +1521,7 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
         requests_file_local(&mut one);
         same_relations(&mut one);
         answers_where_documents_are(&mut one);
+        extensible_stated(&mut one);
         return Ok(one);
     }
     let axis = crate::code_rule_dsl::logic::front::AXIS;
@@ -1715,7 +1716,31 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
         )
     });
     same_relations(&mut all);
+    extensible_stated(&mut all);
     Ok(all)
+}
+
+/// Each `extensible` relation of the whole program `prog` (a word of its qualifiers) that nothing states, stated empty.
+/// Its rows come only from the files that include its own (decision 0263), and the program is all of them: no stated
+/// rows, it has none but its rules'. Stated, it is a run constant, as stated rows are; unstated, the split takes it for
+/// a base relation of no location, as it must in a library module planned alone (decision 0639, whose includer's rows
+/// it does not see), and every reader of a value through it went to the cross-file part (decision 0677): node-trace's
+/// `module_global` in a program that names no global, or in a batch, where each policy's rows go to its own copy
+/// (`q<k>_module_global`). A derived one stays derived: the split reads a stated relation as a constant only where no
+/// rule heads it. Not core's (`env`, `option`, `load`: the engine gives them), not an input, and not one with a node
+/// column, which places its readers' nodes however many rows it has.
+fn extensible_stated(prog: &mut front::Program) {
+    let core = crate::code_rule_dsl::logic::rr::core_names();
+    let empty: Vec<String> = prog
+        .qualifiers
+        .iter()
+        .filter(|(rel, words)| words.contains("extensible") && !core.contains(*rel) && !prog.facts.contains_key(rel.as_str()) && !prog.inputs.iter().any(|i| i == *rel))
+        .filter(|(rel, _)| prog.decls.get(rel.as_str()).is_some_and(|cols| cols.iter().all(|(_, t)| !matches!(t.as_str(), "node" | "loc" | "tape"))))
+        .map(|(rel, _)| rel.clone())
+        .collect();
+    for rel in empty {
+        prog.facts.insert(rel.into(), Vec::new());
+    }
 }
 
 /// The requests `sources_on_request` made, narrowed where the split finds them cross-file to the asked node's own

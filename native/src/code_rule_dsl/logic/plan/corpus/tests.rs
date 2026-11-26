@@ -943,6 +943,10 @@ fn a_programs_facts_of_a_library_relation_ask_of_the_library() {
     assert!(!read.iter().any(|r| r == "dec_lit_repr"), "p0_hit reads the library's dec_lit_repr: {read:?}");
     let threshold = copy.replace("_dec_lit_repr", "_lit_repr_threshold");
     assert_eq!(prog.facts.get(&threshold).map(Vec::len), Some(1), "{threshold}: {:?}", prog.facts.keys().filter(|k| k.contains("threshold")).collect::<Vec<_>>());
+    // The library's own `lit_repr_threshold`, which its own rules still read, is stated empty: a run constant, not a
+    // relation of no location that would take every reader through it to the cross-file part (decision 0677,
+    // node-trace's `module_global`).
+    assert_eq!(prog.facts.get("lit_repr_threshold").map(Vec::len), Some(0), "the shared one stated empty: {:?}", prog.facts.keys().filter(|k| k.contains("threshold")).collect::<Vec<_>>());
 }
 
 /// A library's kind set that a program reads by `nearest` (ruff-n807's `nearest(f, s, scope)` over python/names.rerail's
