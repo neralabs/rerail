@@ -1672,6 +1672,20 @@ pub mod presorted {
     struct Counts {
         orders: [[AtomicU64; 7]; 2],
         sites: [[AtomicU64; 5]; 3],
+        settles: [AtomicU64; SETTLE.len()],
+    }
+    /// What a wave's batch settle (`Fresh::settle`) did, each counted over the run: its parts, in the order `settle`
+    /// takes them.
+    pub const SETTLE: [&str; 9] = ["settles", "sorted whole", "rows in", "distinct", "checked one by one (rows pushed since the last wave)",
+                                   "held", "settled rows merged", "rows out", "runs searched a row (beyond one)"];
+    /// A settle's counts (`SETTLE`'s), when measuring.
+    pub fn settled(v: [u64; SETTLE.len()]) {
+        if counting() {
+            let all = counts();
+            for (a, x) in all.settles.iter().zip(v) {
+                a.fetch_add(x, Relaxed);
+            }
+        }
     }
     fn counts() -> std::sync::Arc<Counts> {
         rerail_prof::code_rule_dsl::logic::profile::local::<Counts>()
@@ -1760,7 +1774,8 @@ pub mod presorted {
             format!("; {name}: {} sorts ({} wholly in order), {} rows, {} in order in stretches of 64+ ({:.0}%), {} known sorted", v[0], v[2], v[1], v[3], v[3] as f64 * 100.0 / v[1].max(1) as f64, v[4])
         }).collect::<String>();
         let f = |v: &[u64]| format!("{} runs ({} wholly in order), {} rows, {} in order in {} stretches of 64+ ({:.0}%); built in {:.1} ms; {} rows taken in place, known sorted", v[0], v[2], v[1], v[3], v[4], v[3] as f64 * 100.0 / v[1].max(1) as f64, v[5] as f64 / 1e6, v[6]);
-        format!("derived-input orders: {}; component orders: {}{sites}", f(&d), f(&o))
+        let settles = SETTLE.iter().zip(&all.settles).map(|(name, a)| format!("{} {name}", a.load(Relaxed))).collect::<Vec<_>>().join(", ");
+        format!("derived-input orders: {}; component orders: {}{sites}; wave settles: {settles}", f(&d), f(&o))
     }
 }
 

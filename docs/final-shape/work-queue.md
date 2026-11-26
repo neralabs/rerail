@@ -11567,3 +11567,17 @@ asks for the new check), c-directives eval::tests 50.
 - Relax: observe 13, store 22 (git_workspace), module_graph 22, rir 8, the wave golden, context_tests 75; check 0 errors
   over the changed crates. tsc clean; the catalog suites green but for a stale engine addon and an unbuilt dist.
   Red under Relax only: store-base's `the_image_is_the_one_the_loader_names` (no image holds JIT code).
+
+### Q558. Roll-up 130 (Typing-support-final-shape dfb7957259 onto Pulling-it-all-together): what the merge chose
+
+- Typing-support (3 commits, dfb7957259): t57 E6 for kind, a view keyed by its node answers a fused row program's
+  chunk of tests (`Source::holds_each`, `reads_tests_by`; `RERAIL_VIEW_TESTS=off`); the wave's settle reads its slots
+  through pointers resolved once a span (SlotRuns, its counts under the existing RERAIL_SPIKE_PRESORTED); the step
+  clock takes its switches off each step; and a third copy of the closure form's lattice guard.
+- Kept beside each other: the hub's `Source::test_at` (b234bc9d87, a membership step's test of one bound node) and
+  E6's `holds_each` (a fused row program's chunk of them). Each source has both; they answer different steps. E6's
+  read takes the hub's slot hint (`node_hint`'s fourth argument); its parts lookup is by `&str` (the map's `Arc<str>`).
+- The lattice guard once: the hub's.
+- `Part::read_range` (hub) and `Part::run` (SlotRuns) both kept.
+- Relax: check 0 errors (blocks, facts-base, facts, setfix, tests-lang); blocks 114, facts-base 86, setfix 141; the two
+  kind-test tests; typed_corpus_reads_declarations_and_dependency_summaries; tests-corpus base_tests 43.
