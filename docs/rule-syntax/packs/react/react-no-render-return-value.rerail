@@ -4,11 +4,15 @@
 .mode steer
 .scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 
-// react/no-render-return-value: ReactDOM.render(…) whose value is kept: the call is (parentheses aside) a variable's
-// initializer, a property value, a returned value, an arrow's body or an assignment's right side.
+// react/no-render-return-value: ReactDOM.render(…) whose value is kept: the call's ESTree parent (parentheses aside)
+// is a VariableDeclarator, a Property (its value or its computed key), a ReturnStatement, an arrow (its body) or an
+// AssignmentExpression. The callee is a MemberExpression on the identifier ReactDOM whose property's `.name` is
+// render: `ReactDOM.render`, `(ReactDOM.render)`, and `ReactDOM[render]`, whose property is the identifier.
 //   const inst = ReactDOM.render(<App />, root);     reported, at the callee
+//   const o = { [ReactDOM.render(<App />, root)]: 1 };   reported
 //   ReactDOM.render(<App />, root);                  not: the value is dropped
 //   const h = ReactDOM?.render(<App />, root);       not: ESTree wraps an optional chain in a ChainExpression
+//   const t = ReactDOM.render`<div/>`;               not: a tagged template is no CallExpression
 // For React 0.13 and 0.14 the plugin also checks React.render; the recording assumes the latest React.
 #include "tsx/react-class.rerail"
 
@@ -17,10 +21,40 @@
     "Stop using the return value of ReactDOM.render(); put a callback ref on the root element to get the instance."
     suppress eslint "react/no-render-return-value"
     suppress oxlint "no-render-return-value"
-no_render_return_value(f) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "member_expression"),
-    field(f, "object", o), kind(o, "identifier"), text(o, "ReactDOM"), field(f, "property", p), text(p, "render"),
-    !field(f, "optional_chain", _), !field(c, "optional_chain", _), estree_parent(c, q), kind(q, k), keeps_value(k),
+no_render_return_value(f) :- called(c, f), render_callee(f), !field(c, "optional_chain", _), kept(c),
     docof(c, d), react_doc(d).
+.decl render_callee(f: node)
+render_callee(f) :- kind(f, "member_expression"), !field(f, "optional_chain", _), field(f, "property", p),
+    estree_name(p, "render"), field(f, "object", w), deparen(w, o), kind(o, "identifier"), text(o, "ReactDOM").
+render_callee(f) :- kind(f, "subscript_expression"), !field(f, "optional_chain", _), field(f, "index", i),
+    deparen(i, p), kind(p, "identifier"), text(p, "render"), field(f, "object", w), deparen(w, o),
+    kind(o, "identifier"), text(o, "ReactDOM").
+.decl kept(c: node)
+kept(c) :- estree_parent(c, q), kind(q, k), keeps_value(k).
+// A computed key's parent is the Property: a pair, a pair in a pattern, or a method of an object literal.
+kept(c) :- estree_parent(c, q), kind(q, "computed_property_name"), child(m, q, _),
+    (kind(m, "pair") ; kind(m, "pair_pattern") ; kind(m, "method_definition"), child(o, m, _), kind(o, "object")).
 .decl keeps_value(k: symbol)
 keeps_value("variable_declarator"). keeps_value("pair"). keeps_value("return_statement").
 keeps_value("arrow_function"). keeps_value("assignment_expression"). keeps_value("augmented_assignment_expression").
+
+// Review (react-04): the call as a computed key and `ReactDOM[render]` keep the value (ESLint reports both); a
+// tagged template is no CallExpression.
+.test review_kept_values exactly
+    .fixture "src/rr-computed-key.jsx" ```
+        import ReactDOM from "react-dom";
+        const byInstance = { [ReactDOM.render(<App />, root)]: true };
+        ```
+    .fixture "src/rr-computed-member.jsx" ```
+        import ReactDOM from "react-dom";
+        const render = "render";
+        const inst = ReactDOM[render](<App />, root);
+        const opt = ReactDOM?.[render](<App />, root);
+        ```
+    .fixture "src/rr-tagged.jsx" ```
+        import ReactDOM from "react-dom";
+        const x = ReactDOM.render`<div/>`;
+        ```
+    .expect "react/no-render-return-value" at "src/rr-computed-key.jsx":2
+    .expect "react/no-render-return-value" at "src/rr-computed-member.jsx":3
+.end

@@ -37,9 +37,10 @@ rename_prop(a, _) :- checked_prop(a, _, n, _), !only_on(n, _), standard(n, std),
 .decl checked_prop(a: node, x: symbol, n: symbol, tg: symbol)
 checked_prop(a, x, n, tg) :- react_open(_, o), html_tag(o, tg), jsx_prop(o, x, a), normal(x, n),
     !data_prop(n), !aria_property(n).
-// <div>, <svg>: a plain lower-case tag without `-` and without an `is` prop (both mark a custom element).
+// <div>, <svg>: a plain lower-case tag without `-` and without an `is` prop (both mark a custom element). The
+// JavaScript grammar gives <this> the kind `this`; ESTree's JSXIdentifier is "this", lower-case.
 .decl html_tag(o: node, tg: symbol)
-html_tag(o, tg) :- field(o, "name", t), kind(t, "identifier"), text(t, tg), match("[a-z][^-]*", tg),
+html_tag(o, tg) :- field(o, "name", t), (kind(t, "identifier") ; kind(t, "this")), text(t, tg), match("[a-z][^-]*", tg),
     tg != "fbt", tg != "fbs", count : { jsx_prop(o, "is", i), child(i, k, 0), kind(k, "property_identifier") } = 0.
 .decl normal(x: symbol, n: symbol)
 normal(x, n) :- jsx_prop(_, x, _), any_case(n), @lower(n) = @lower(x).
@@ -52,3 +53,11 @@ imatch_data_xml(n) :- normal(_, n), iprefix("data-xml", n).
 .decl standard(n: symbol, std: symbol)
 standard(n, std) :- normal(_, n), dom_attribute(n, std).
 standard(n, p) :- normal(_, n), !dom_attribute(n, _), dom_property(p), @lower(p) = @lower(n).
+
+// Review (react-04): <this …> in a JavaScript file is a lower-case tag (ESLint reports it).
+.test review_this_tag exactly
+    .fixture "src/up-this.jsx" ```
+        export function f() { return <this foo="x" />; }
+        ```
+    .expect "react/no-unknown-property" at "src/up-this.jsx":1
+.end

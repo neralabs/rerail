@@ -50,18 +50,20 @@ member_named(k, x, m) :- class_component(k), field(k, "body", b), child(b, m, _)
 member_named(k, x, m) :- create_class(k), child(k, m, _), method_key(m, x).
 member_named(k, x, m) :- create_class(k), child(k, m, _), kind(m, "shorthand_property_identifier"), text(m, x).
 // method_key: ESLint's `ancestor.key.name`, which an identifier key has, and a private one (`#x` has name x), and a
-// computed one holding an identifier (`[x]`); a string key has none.
+// computed one holding an identifier (`[x]`, `[(x)]`); a string key has none. A TypeScript overload signature and
+// an abstract method are MethodDefinitions too (TSAbstractMethodDefinition), with the same key.
 //   { componentDidMount() {} }   class A { componentDidMount = () => {} }   pair key `componentDidMount: …`
 .decl method_key(m: node, x: symbol)
-method_key(m, x) :- (kind(m, "method_definition") ; kind(m, "field_definition") ; kind(m, "public_field_definition")),
+method_key(m, x) :- (kind(m, "method_definition") ; kind(m, "field_definition") ; kind(m, "public_field_definition") ;
+    kind(m, "method_signature") ; kind(m, "abstract_method_signature")),
     (field(m, "name", n) ; field(m, "property", n)), estree_name(n, x).
 method_key(m, x) :- (kind(m, "pair") ; kind(m, "pair_pattern")), field(m, "key", n), estree_name(n, x).
 // estree_name(n, x): ESTree's `.name` of key or property node n.
 .decl estree_name(n: node, x: symbol)
 estree_name(n, x) :- kind(n, "property_identifier"), text(n, x).
 estree_name(n, x) :- kind(n, "private_property_identifier"), text(n, t), x = substr(t, 1, strlen(t) - 1).
-estree_name(n, x) :- kind(n, "computed_property_name"), child(n, i0, 0), deparen(i0, i), kind(i, "identifier"),
-    text(i, x).   // [x] and [(x)]: ESTree has no parentheses
+estree_name(n, x) :- kind(n, "computed_property_name"), child(n, e, _), !not_stmt(e), deparen(e, i),
+    kind(i, "identifier"), text(i, x).
 
 // ---- values -----------------------------------------------------------------------------------------------------
 .decl fresh_kind(k: symbol)
