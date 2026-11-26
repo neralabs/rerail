@@ -128,6 +128,10 @@ fn stream_probe<'a>(v: &'a View, cols: &'a [usize], lead: usize, key: &[i64], la
 pub(super) fn exact_cols(j: &JoinRule, src: &Src, membership: bool) -> u64 {
     let Src::In(rel, ix) = src else { return 0 };
     let (rel, ix) = j.src_in(rel, ix);
+    // A probe by value (`candidates`) gives the key's rows alone.
+    if ix.by_value_kind() && ix.by_value(rel, 0, &mut [0; 2]).is_some() {
+        return 1 << ix.cols[0];
+    }
     if let Some(index) = ix.runs(rel) {
         return index.cols.iter().take_while(|c| ix.cols.contains(c)).fold(0, |m, &c| m | 1 << c);
     }
@@ -167,6 +171,13 @@ pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, ke
             let settings = last.settings();
             if settings.noted && !keys.is_empty() { probed::note(rel.name.get().map_or("?input", String::as_str), ix.cols.iter().copied()); }
             if keys.is_empty() { scan_within(Rows::In(rel), 0, rel.len() as u32, within) }
+            // A one-column key's rows by its value-keyed index (the shape kernel's keyed read): found by position,
+            // each probe walking on from where the last ended, not by searching the runs' tagged order.
+            else if keys.len() == 1 && ix.by_value_kind()
+                && let Some(ids) = ix.by_value(rel, key[0], <&mut [u32; 2]>::try_from(&mut hints[..2]).expect("two hints"))
+            {
+                (Rows::In(rel), Cands::Slice(ids))
+            }
             else if let Some(index) = ix.runs(rel) {
                 // An order answering the key's columns, or leading with some of them (`chain_lead`: every key
                 // is checked): the key's values in the order's column order.
@@ -368,6 +379,12 @@ pub(super) fn holds(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], ask
 /// run's setting) probes as before.
 pub(super) fn node_bits_on() -> bool {
     rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_NODE_BITS").map_or(true, |v| v != "off"))
+}
+
+/// Whether a one-column probe of a derived input reads its value-keyed rows index (`Csr::by_value`):
+/// `RERAIL_BY_VALUE=off` (a measurement aid, the run's setting) probes as before.
+pub(super) fn by_value_on() -> bool {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_BY_VALUE").map_or(true, |v| v != "off"))
 }
 
 /// Whether a test of a derived input's whole key asks its sorted hash: `RERAIL_SORTED_HASH=off` (a measurement aid,

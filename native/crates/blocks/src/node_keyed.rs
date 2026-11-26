@@ -316,6 +316,37 @@ mod tests {
         }
     }
 
+    /// The relation's value-keyed rows index (`Relation::try_add_node_rows`, the shape kernel's keyed read): a probe of
+    /// any value gives the rows whose column holds it, in row order, as the hashed index's group filtered by it, in
+    /// probes in order (a merge, its hint walking on), out of order, and of values no row holds; found by its column
+    /// and rows only.
+    #[test]
+    fn a_relations_rows_by_value_are_its_hashed_indexs() {
+        let block = Block::anon(kind::FACTS, 64 << 20);
+        let mut s = 7u64;
+        let node = |doc: u32, l: u32| (i64::from(doc) << 32) | i64::from(l);
+        // Repeats: 3,000 rows over about 1,000 values of 9 documents.
+        let held: Vec<i64> = (0..3_000).map(|_| node(lcg(&mut s) % 9 * 2, lcg(&mut s) % 120)).collect();
+        let (rel, ix) = relation(&block, 1, &held);
+        let n = rel.rows.len();
+        // SAFETY: one thread; the rows are written.
+        let rows = unsafe { rel.try_add_node_rows(&block, 0, n) }.expect("room");
+        assert_eq!(rel.find_node_rows(0, n), Some(rows));
+        assert_eq!(rel.find_node_rows(0, n + 1), None);
+        assert_eq!(rel.find_node_bits(0, n), None, "no node bits found for it");
+        let hashed = |v: i64| { let mut r: Vec<u32> = rel.group(ix, crate::key_hash(&[v])).iter().copied().filter(|&r| rel.rows.get(r, 0) == v).collect(); r.sort_unstable(); r };
+        let mut hint = [0u32; 2];
+        let in_order: Vec<i64> = (0..20).flat_map(|d| (0..130).map(move |l| node(d, l))).collect();
+        for &v in &in_order {
+            assert_eq!(rel.node_rows(rows, v, &mut hint), &hashed(v)[..], "in order: {v:#x}");
+        }
+        for k in 0..in_order.len() {
+            let v = in_order[k * 7919 % in_order.len()];
+            assert_eq!(rel.node_rows(rows, v, &mut hint), &hashed(v)[..], "out of order: {v:#x}");
+        }
+        assert!(rel.node_rows(rows, node(u32::MAX, 0), &mut hint).is_empty());
+    }
+
     /// A `ONE` gives each node its value; the same value again is no new row, another breaks the key and says where.
     #[test]
     fn a_one_keeps_a_value_a_node_and_reports_a_broken_key() {

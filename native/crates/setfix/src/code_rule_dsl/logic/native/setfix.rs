@@ -5137,8 +5137,25 @@ pub struct Csr { cols: Vector<usize>, source: bool, sorted: bool, chain: Option<
                  hashed: OnceLock<sorted_hash::SortedHash>,
                  /// A one-column key's node-keyed index in its relation's block (decision 0694 step 1): a test of a bound
                  /// value is one bit there. Found or built at its first test; `None` when it has none.
-                 bits: OnceLock<Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)>> }
+                 bits: OnceLock<Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)>>,
+                 /// A one-column key's value-keyed rows index in its relation's block (`Relation::try_add_node_rows`):
+                 /// a probe's rows by position. Found or built at its first probe; `None` when it has none.
+                 by_value: OnceLock<Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)>> }
 impl Csr {
+    /// The rows of `rel` whose one key column holds `v`, by its value-keyed index (`node_rows`), `hint` where the last
+    /// probe ended: `None` when it has none (a view, dead rows, rows in several parts, a key of several columns).
+    pub(super) fn by_value<'a>(&'a self, rel: &InRel, v: i64, hint: &mut [u32; 2]) -> Option<&'a [u32]> {
+        if !self.by_value_kind() {
+            return None;
+        }
+        let (ib, i) = self.by_value.get_or_init(|| {
+            let ix = if cands::by_value_on() { rel.node_rows(self.cols[0]) } else { None };
+            ix
+        }).as_ref()?;
+        // SAFETY of the lifetime: the index's rows lie in its block, which `ib` keeps as long as this index.
+        let rows: &[u32] = ib.relation().node_rows(*i, v, hint);
+        Some(unsafe { std::slice::from_raw_parts(rows.as_ptr(), rows.len()) })
+    }
     /// Whether `rel`'s rows hold `v` in this index's one column, by its node-keyed index (decision 0694 step 1):
     /// `None` when it has none (a view, dead rows, rows in several parts).
     fn node_bits_has(&self, rel: &InRel, v: i64, hint: &mut u32) -> Option<bool> {
@@ -5153,6 +5170,11 @@ impl Csr {
             bits
         }).as_ref()?;
         Some(ib.relation().node_bits_has(*i, v, hint))
+    }
+    /// Whether a probe of it may read its rows by value (`by_value`): a one-column key, not a lattice's keyed rows, a
+    /// composite's, or a ranged order's.
+    pub(super) fn by_value_kind(&self) -> bool {
+        self.cols.len() == 1 && !self.keyed && !self.composite && self.then.is_none()
     }
     /// The sorted hash of `rel`'s rows by this index's columns, made at its first ask.
     fn hashed(&self, rel: &InRel) -> &sorted_hash::SortedHash {
@@ -7261,7 +7283,7 @@ impl InRel {
         let mut idx = self.idx.lock().unwrap();
         idx.entry(mask).or_insert_with(|| {
             run_counts().orders_opened.fetch_add(1, AtomicOrdering::Relaxed);
-            Arc::new(Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: Some(false), order: OnceLock::new(), block: None, then: Some(c), hashed: OnceLock::new(), bits: OnceLock::new() })
+            Arc::new(Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: Some(false), order: OnceLock::new(), block: None, then: Some(c), hashed: OnceLock::new(), bits: OnceLock::new(), by_value: OnceLock::new() })
         }).clone()
     }
     /// Its rows' index on `cols` in their block (decision 0478 step 5, R2): the one the device finds and builds, over
@@ -7269,6 +7291,15 @@ impl InRel {
     /// `build` and none is; `None` for a view, rows in several parts, or a block with no room for it.
     /// Its rows' node-keyed index on column `col` in their block (decision 0694 step 1): found, or built now. `None`
     /// for a view, dead rows, or rows in several parts.
+    /// Its value-keyed rows index on `col` in its block (`InBlock::own_node_rows`), as `node_bits`.
+    fn node_rows(&self, col: usize) -> Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)> {
+        if self.view.is_some() || self.k == 0 || self.ndead != 0 || col >= self.k {
+            return None;
+        }
+        let ib = self.rows.in_one_block().filter(|b| b.rows as usize == self.n)?;
+        let i = ib.own_node_rows(col as u16)?;
+        Some((ib, i))
+    }
     fn node_bits(&self, col: usize) -> Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)> {
         if self.view.is_some() || self.k == 0 || self.ndead != 0 || col >= self.k {
             return None;
@@ -7328,7 +7359,7 @@ impl InRel {
             let (t0, c0) = (Instant::now(), thread_cpu());
             // No key columns: the step reads every row, not an index.
             let path = |i: usize| { run_counts().index_paths[i].fetch_add(1, AtomicOrdering::Relaxed); };
-            let empty = |source, sorted| Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source, sorted, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None, hashed: OnceLock::new(), bits: OnceLock::new() };
+            let empty = |source, sorted| Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source, sorted, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None, hashed: OnceLock::new(), bits: OnceLock::new(), by_value: OnceLock::new() };
             let m = if cols.is_empty() {
                 path(0); empty(false, false)
             } else if let Some(b) = self.block_index(cols, false) {
@@ -8240,7 +8271,7 @@ fn join_rule_bound(conn: impl Scoped, spec: &ArchivedJoinSpec, syms: &mut Intern
     use steps::{Src, Step};
     use rerail_section::Bound;
     let conn = conn.db();
-    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None, hashed: OnceLock::new(), bits: OnceLock::new() });
+    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None, hashed: OnceLock::new(), bits: OnceLock::new(), by_value: OnceLock::new() });
     let mut bound: Vec<bool> = Vec::new();
     for &s in pre {
         if bound.len() <= s { bound.resize(s + 1, false) }

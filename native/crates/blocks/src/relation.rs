@@ -135,6 +135,9 @@ pub const ORDER_ROWS: u32 = 3;
 /// `Index::ordered`: a node-keyed index of one column (`try_add_node_bits`, decision 0694): `rows` its groups'
 /// directory, `fences` their bits, `mask` the rows it holds. No hashed index's or order's finder finds it.
 pub const NODE_BITS: u32 = 4;
+/// `Index::ordered`: a value-keyed index of one column's rows (`try_add_node_rows`): `rows` its documents' directory,
+/// their distinct values, and each value's rows, `mask` the rows it holds. No other finder finds it.
+pub const NODE_ROWS: u32 = 5;
 
 /// A chunk of a relation's block an order is given (`Relation::try_add_order`): its offset, its items, and the bytes
 /// its chunk keeps (0: one it does not own, given back by its owner).
@@ -938,6 +941,161 @@ impl Relation {
         }
     }
 
+    /// Gives this relation an index of column `col`'s rows over its rows `0..n`, keyed by value as a node's id is laid
+    /// out (`try_add_node_bits`): the shape kernel's keyed read (the design's layer 5), a probe by a node its rows,
+    /// found by position, not by searching an order's runs by a hashed tag.
+    ///
+    /// Its `rows` (`u32`s): the documents' count `D`, the values' count `T`; each document's key (the high 32 bits),
+    /// its first value's place and its values' count (`3 D`); the values' low halves, sorted by document then value
+    /// (`T`); each value's first row's place in the rows, and the end (`T + 1`); the rows, by value, each value's in
+    /// row order (`n`). A probe finds its document (as `node_bits_has`), then its value from where the last probe
+    /// ended (`node_rows`): a probe sequence in node order walks each document's values once, a merge.
+    ///
+    /// Its number; `None` when its directory is full or `block` has no room.
+    ///
+    /// # Safety
+    /// As `try_add_node_bits`'s.
+    pub unsafe fn try_add_node_rows(&self, block: &Block, col: u16, n: u32) -> Option<usize> {
+        if n == 0 || col as usize >= self.rows.ncols as usize {
+            return None;
+        }
+        // The rows by value (scratch of the build): (value, row).
+        let mut by: Vec<(u64, u32)> = (0..n).map(|id| (self.get(id, col as usize) as u64, id)).collect();
+        by.sort_unstable();
+        let t = 1 + by.windows(2).filter(|w| w[0].0 != w[1].0).count();
+        let d = 1 + by.windows(2).filter(|w| w[0].0 >> 32 != w[1].0 >> 32).count();
+        let dir = 2 + 3 * d + t + (t + 1) + n as usize;
+        let (d_at, d_kept) = block.try_alloc_chunk_fit(4 * dir, 8)?;
+        let p = block.ptr::<u32>(d_at);
+        // SAFETY: the chunk was just allocated, this index's alone until it is marked built.
+        unsafe {
+            p.write(d as u32);
+            p.add(1).write(t as u32);
+            let (docs, lows) = (p.add(2), p.add(2 + 3 * d));
+            let (offs, ids) = (lows.add(t), lows.add(2 * t + 1));
+            let (mut doc, mut val) = (0usize, 0usize);
+            for (r, &(v, id)) in by.iter().enumerate() {
+                ids.add(r).write(id);
+                if r > 0 && by[r - 1].0 == v {
+                    continue;
+                }
+                if r == 0 || by[r - 1].0 >> 32 != v >> 32 {
+                    let e = docs.add(3 * doc);
+                    e.write((v >> 32) as u32);
+                    e.add(1).write(val as u32);
+                    e.add(2).write(0);
+                    doc += 1;
+                }
+                let e = docs.add(3 * (doc - 1) + 2);
+                e.write(e.read() + 1);
+                lows.add(val).write(v as u32);
+                offs.add(val).write(r as u32);
+                val += 1;
+            }
+            offs.add(t).write(n);
+            debug_assert_eq!((doc, val), (d, t), "its documents and values counted");
+        }
+        // SAFETY: the caller's: this relation's descriptor is ours to change.
+        unsafe {
+            let Some(i) = self.next_entry(block) else {
+                block.free_chunk_fit(d_at, d_kept);
+                return None;
+            };
+            let ix = std::ptr::from_ref(&self.indexes.as_slice()[i]).cast_mut();
+            (*ix).ncols = 0;
+            (*ix).from = 0;
+            (*ix).state = 0;
+            let mut key = [0u16; MAX_KEY];
+            key[0] = col;
+            (*ix).key = key;
+            (*ix).ordered = NODE_ROWS;
+            (*ix).mask = u64::from(n);
+            (*ix).offs.off.store(0, Relaxed);
+            (*ix).offs.len.store(0, Relaxed);
+            (*ix).tags.off.store(0, Relaxed);
+            (*ix).tags.len.store(0, Relaxed);
+            (*ix).prints.off.store(0, Relaxed);
+            (*ix).prints.len.store(0, Relaxed);
+            (*ix).fences.off.store(0, Relaxed);
+            (*ix).fences.len.store(0, Relaxed);
+            Span::set(&raw mut (*ix).rows, p, dir);
+            (*ix).held = [d_kept as u64, 0, 0, 0];
+            self.nindex.fetch_max(i as u32 + 1, Release);
+            std::sync::atomic::fence(Release);
+            std::ptr::write_volatile(&raw mut (*ix).ncols, 1);
+            Some(i)
+        }
+    }
+
+    /// The value-keyed index of `col`'s rows over rows `0..rows` (`try_add_node_rows`), built: its number.
+    pub fn find_node_rows(&self, col: u16, rows: u32) -> Option<usize> {
+        let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
+        let ix = self.indexes.as_slice();
+        // SAFETY: as `find_index`'s.
+        let built = |i: usize| unsafe { std::ptr::read_volatile(&raw const ix[i].ncols) } as usize;
+        let found = (0..n).find(|&i| ix[i].ordered == NODE_ROWS && built(i) == 1 && ix[i].key[0] == col && ix[i].mask == u64::from(rows));
+        std::sync::atomic::fence(Acquire);
+        found
+    }
+
+    /// The rows of value-keyed index `i` (`find_node_rows`) whose column holds `v`, in row order. `hint` is where the
+    /// last probe ended (its document, its value): the document tried there and after it, then searched; the value
+    /// tried there and after it, then searched from there (`gallop`), so probes in order walk the values once.
+    #[inline]
+    pub fn node_rows(&self, i: usize, v: i64, hint: &mut [u32; 2]) -> &[u32] {
+        let p = self.index_at(i).rows.as_slice();
+        let (d, t) = (p[0] as usize, p[1] as usize);
+        let (hi, low) = ((v >> 32) as u32, v as u32);
+        let doc = |k: usize| &p[2 + 3 * k..5 + 3 * k];
+        let h = hint[0] as usize;
+        let k = if h < d && doc(h)[0] == hi {
+            h
+        } else if h + 1 < d && doc(h + 1)[0] == hi {
+            h + 1
+        } else {
+            let (mut lo, mut top) = (0usize, d);
+            loop {
+                if lo >= top {
+                    return &[];
+                }
+                let mid = (lo + top) / 2;
+                match doc(mid)[0].cmp(&hi) {
+                    Ordering::Less => lo = mid + 1,
+                    Ordering::Greater => top = mid,
+                    Ordering::Equal => break mid,
+                }
+            }
+        };
+        let (first, count) = (doc(k)[1] as usize, doc(k)[2] as usize);
+        let lows = &p[2 + 3 * d..2 + 3 * d + t];
+        let vals = &lows[first..first + count];
+        // From the last probe's value when it is this document's and not past `low`: a gallop forward.
+        let from = if hint[0] as usize == k && (hint[1] as usize) >= first && (hint[1] as usize) < first + count && lows[hint[1] as usize] <= low { hint[1] as usize - first } else { 0 };
+        let at = if vals[from] == low {
+            from
+        } else {
+            let mut step = 1usize;
+            let mut lo = from;
+            while lo + step < count && vals[lo + step] < low {
+                lo += step;
+                step *= 2;
+            }
+            let top = (lo + step + 1).min(count);
+            match vals[lo..top].binary_search(&low) {
+                Ok(x) => lo + x,
+                Err(x) => {
+                    *hint = [k as u32, (first + (lo + x).min(count - 1)) as u32];
+                    return &[];
+                }
+            }
+        };
+        let x = first + at;
+        *hint = [k as u32, x as u32];
+        let offs = &p[2 + 3 * d + t..2 + 3 * d + 2 * t + 1];
+        let ids = &p[2 + 3 * d + 2 * t + 1..];
+        &ids[offs[x] as usize..offs[x + 1] as usize]
+    }
+
     /// The node-keyed index on `col` over its rows `0..rows` (`try_add_node_bits`), built: its number.
     pub fn find_node_bits(&self, col: u16, rows: u32) -> Option<usize> {
         let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
@@ -1233,7 +1391,7 @@ impl Relation {
                 unsafe { (*std::ptr::from_ref(ix).cast_mut()).state = 0 };
                 continue;
             }
-            if ix.ordered == ORDER || ix.ordered == ORDER_ROWS || ix.ordered == NODE_BITS {
+            if ix.ordered == ORDER || ix.ordered == ORDER_ROWS || ix.ordered == NODE_BITS || ix.ordered == NODE_ROWS {
                 // A sorted order's chunks, each as it was given (`try_add_order`), and a node-keyed index's.
                 let spans = [(ix.rows.as_ptr().cast::<u8>(), ix.held[0]), (ix.fences.as_ptr().cast(), ix.held[1]), (ix.tags.as_ptr().cast(), ix.held[2]), (ix.prints.as_ptr().cast(), ix.held[3])];
                 for (p, kept) in spans {
