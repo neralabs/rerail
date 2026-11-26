@@ -4851,6 +4851,18 @@ async function withWorktree(root: string, place: string, branch = "other") {
   return { worktree, roots, extra };
 }
 
+/**
+ * Starts the walk of the other worktrees that `bridge`'s last boundary asked for and waits until `gate` holds it. That
+ * walk waits out its gap, as long as the session's last walk took: a machine that stood still in that walk holds this
+ * one as long again, past a case's time limit. A settle starts it at once (`settleWorktreeWalk`). `settled` is that
+ * settle, which ends once the walk is released and each walk asked for meanwhile is taken.
+ */
+async function worktreeWalkHeld(bridge: CodeRuleBridge, gate: DiscoveryGate): Promise<{ settled: Promise<void> }> {
+  const settled = bridge.settleWorktreeWalk();
+  await gate.entered;
+  return { settled };
+}
+
 const once = (oldString: string, newString: string): TextEdit => ({ oldString, newString, replaceAll: false });
 const everywhere = (oldString: string, newString: string): TextEdit => ({ oldString, newString, replaceAll: true });
 
@@ -6158,11 +6170,11 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     // The walk reads each level whole before the next, so this gate holds it after it has read `top.py`.
     const walk = holdDiscovery("directories", join(worktree, "deep", "deeper"));
     await bridge.checkpoint("turn");
-    await walk.entered;
+    const { settled } = await worktreeWalkHeld(bridge, walk);
     await writeFile(join(worktree, "top.py"), "old\nviolation\n");
     await bridge.checkpoint("turn");
     walk.release();
-    await bridge.settleWorktreeWalk();
+    await settled;
     expect(auditedPaths(auditGeneratedEdits)).toEqual([repositoryPath(root, join(worktree, "top.py"))]);
   });
 
@@ -6345,12 +6357,12 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     const { bridge, auditGeneratedEdits } = await opened(root, extra);
     const walk = holdDiscovery("directories", join(worktree, "deep"));
     await bridge.checkpoint("turn");
-    await walk.entered;
+    const { settled } = await worktreeWalkHeld(bridge, walk);
     git(root, "worktree", "remove", "--force", worktree);
     roots.length = 0;
     await bridge.checkpoint("turn");
     walk.release();
-    await bridge.settleWorktreeWalk();
+    await settled;
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
 
@@ -6375,13 +6387,13 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     roots.push(nested);
     const walk = holdDiscovery("directories", deepest);
     await bridge.checkpoint("turn");
-    await walk.entered;
+    const { settled } = await worktreeWalkHeld(bridge, walk);
     git(root, "worktree", "remove", "--force", nested);
     roots.splice(roots.indexOf(nested), 1);
     // The session folder's walk finds the worktree gone: the held walk no longer takes its files as a baseline.
     await bridge.checkpoint("turn");
     walk.release();
-    await bridge.settleWorktreeWalk();
+    await settled;
     await bridge.checkpoint("turn");
     await bridge.settleWorktreeWalk();
     // No one wrote these files. A walk that kept their text recorded each one created, then deleted; a session that kept
@@ -6416,10 +6428,10 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     // The walk reads each level whole before the next, so this gate holds it once it has read every file there.
     const walk = holdDiscovery("directories", join(worktree, "deep", "deeper"));
     await bridge.checkpoint("turn");
-    await walk.entered;
+    const { settled } = await worktreeWalkHeld(bridge, walk);
     await rm(join(worktree, ".git"));
     walk.release();
-    await bridge.settleWorktreeWalk();
+    await settled;
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
 
@@ -6978,11 +6990,11 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     const { bridge, auditGeneratedEdits } = await opened(root, extra);
     const walk = holdDiscovery("directories", join(worktree, "src"));
     await bridge.checkpoint("turn");
-    await walk.entered;
+    const { settled } = await worktreeWalkHeld(bridge, walk);
     git(root, "worktree", "remove", worktree);
     roots.length = 0;
     walk.release();
-    await bridge.settleWorktreeWalk();
+    await settled;
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
 });
