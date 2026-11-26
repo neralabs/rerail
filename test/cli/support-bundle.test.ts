@@ -617,6 +617,21 @@ describe("rerail support-bundle", () => {
     expect((await run(world)).bundle.session?.steers).toEqual([{ mechanism: "message", requested: "steer", ruleIds: ["eslint-eqeqeq"], text: STEER }]);
   });
 
+  it("keeps the ledger's steers when delivery entries of another shape sit among them, each costing only itself", async () => {
+    const world = await fixture();
+    recordSession(world, SESSION, 1_000);
+    writeLedger(world, SESSION);
+    const ledger = join(world.repo, ".rerail", "sessions", createHash("sha256").update(SESSION).digest("hex"), "events.jsonl");
+    const delivery = { sessionId: SESSION, requested: "steer", mechanism: "message", content: STEER, ruleIds: ["eslint-eqeqeq"], rules: [] };
+    const misshapen = [{ content: null }, { content: 7 }, { ruleIds: "eslint-eqeqeq" }].map(field => ({ type: "delivery", delivery: { ...delivery, ...field } }));
+    const entries = [...misshapen, { type: "delivery", delivery: null }, null, { type: "delivery", delivery }];
+    writeFileSync(ledger, entries.map(entry => `${JSON.stringify(entry)}\n`).join(""), { flag: "a" });
+    const { bundle } = await run(world);
+    const steer = { mechanism: "message", requested: "steer", ruleIds: ["eslint-eqeqeq"], text: STEER };
+    expect(bundle.session?.steers).toEqual([steer, steer]);
+    expect(bundle.problems).toEqual([]);
+  });
+
   it("says so when the session steered and the steers' ledger is gone", async () => {
     const world = await fixture();
     recordSession(world, SESSION, 1_000);

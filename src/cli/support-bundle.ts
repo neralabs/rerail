@@ -520,6 +520,7 @@ function ledgerSteers(path: string): SupportBundleSteer[] | undefined {
     take(eachLineSync(descriptor, take).text);
     return steers;
   } catch {
+    // Only the read throws here: `deliveredSteer` returns for every line, so a misshapen entry costs only its own steer.
     return undefined;
   } finally {
     closeSync(descriptor);
@@ -529,15 +530,26 @@ function ledgerSteers(path: string): SupportBundleSteer[] | undefined {
 /** The steer a ledger line records (a `delivery` entry), its text cut at `MAX_STEER_CHARACTERS`; undefined for any other line. */
 function deliveredSteer(line: string): SupportBundleSteer | undefined {
   if (line === "") return undefined;
-  let entry: { type?: unknown; delivery?: { mechanism: string; requested: string; ruleIds: string[]; content: string } };
+  let entry: unknown;
   try {
-    entry = JSON.parse(line) as typeof entry;
+    entry = JSON.parse(line);
   } catch {
     return undefined;
   }
-  if (entry.type !== "delivery" || entry.delivery === undefined) return undefined;
-  const { mechanism, requested, ruleIds, content } = entry.delivery;
+  const delivery = steerDelivery(entry);
+  if (delivery === undefined) return undefined;
+  const { mechanism, requested, ruleIds, content } = delivery;
   return { mechanism, requested, ruleIds, text: content.length > MAX_STEER_CHARACTERS ? `${content.slice(0, MAX_STEER_CHARACTERS)}…` : content };
+}
+
+/**
+ * The `delivery` of a ledger entry that records a steer; undefined for any other entry, and for one whose `content` is no
+ * text or whose `ruleIds` is no list, which is skipped as a line that is no JSON is.
+ */
+function steerDelivery(entry: unknown): { mechanism: string; requested: string; ruleIds: string[]; content: string } | undefined {
+  const { type, delivery } = (entry ?? {}) as { type?: unknown; delivery?: { mechanism: string; requested: string; ruleIds: unknown; content: unknown } | null };
+  if (type !== "delivery" || typeof delivery?.content !== "string" || !Array.isArray(delivery.ruleIds)) return undefined;
+  return { mechanism: delivery.mechanism, requested: delivery.requested, ruleIds: delivery.ruleIds, content: delivery.content };
 }
 
 function reportedPath(path: string | undefined): string | null {
