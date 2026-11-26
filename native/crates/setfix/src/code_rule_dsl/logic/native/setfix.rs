@@ -1411,10 +1411,12 @@ impl LastProbe {
 
     /// A join's steps' probe states, their cursors sharing one node memo (`ProbeCursor::node`): a rule's body probes
     /// several views by the same node in turn, each step from inside the read of the step before.
-    fn for_steps(n: usize) -> Vec<LastProbe> {
+    /// SPIKE (local fixes, 4): each boxed, so that a step takes its state out and puts it back as a pointer, not the
+    /// state's bytes (two memmoves of it a step entered were 1% of the walker's samples).
+    fn for_steps(n: usize) -> Vec<Option<Box<LastProbe>>> {
         let node = std::rc::Rc::new(std::cell::Cell::new(crate::code_rule_dsl::facts::vtab::NodeMemo::default()));
         (0..n)
-            .map(|_| LastProbe { cursor: crate::code_rule_dsl::facts::vtab::ProbeCursor { node: Some(node.clone()), ..Default::default() }, ..Default::default() })
+            .map(|_| Some(Box::new(LastProbe { cursor: crate::code_rule_dsl::facts::vtab::ProbeCursor { node: Some(node.clone()), ..Default::default() }, ..Default::default() })))
             .collect()
     }
     #[inline]
@@ -3839,6 +3841,46 @@ pub fn step_cpu(conn: impl Scoped, name: &str) -> Result<Vec<Vector<f64>>> {
         }
         Body::Sql(_) | Body::Unplanned => rerail_blocks::vector::Vector::new(),
     }).collect())
+}
+
+/// SPIKE (join shapes): per probe of component `name`, by plan step (as `step_counts`'s), the shape of the step made
+/// first for it (`shape_token`); empty for a probe that is not a join.
+pub fn step_shapes(conn: impl Scoped, name: &str) -> Result<Vec<Vec<String>>> {
+    let conn = conn.db();
+    let comp = component(conn, name)?;
+    let comp = comp.lock().unwrap();
+    Ok(comp.probes.iter().map(|p| match &p.body {
+        Body::Join(j) => (0..j.plan_steps).map(|k| j.step_of(k).map_or_else(|| "-".to_owned(), |s| shape_token(&j.steps[s]))).collect(),
+        Body::Sql(_) | Body::Unplanned => Vec::new(),
+    }).collect())
+}
+
+/// SPIKE (join shapes): a step's kind as a shape names it: an atom's source (`in` an input relation, `full` a computed
+/// one, `delta`, `multi`), its access (`scan`: no key; `probeN`: N key columns; `exists`: binds nothing, a semi-join;
+/// `neg`) and its binds and tests (`bN`, `tN`); any other step by its kind.
+fn shape_token(s: &Step) -> String {
+    let src_of = |src: &Src| match src { Src::In(..) => "in", Src::Full(_) => "full", Src::Delta(_) => "delta", Src::FullMulti(..) => "multi" };
+    match s {
+        Step::Atom { src, neg, keys, binds, tests } => {
+            let mode = if *neg { "neg".to_owned() } else if keys.is_empty() { "scan".to_owned() } else { format!("probe{}", keys.len()) };
+            let ex = if !*neg && binds.is_empty() { "-exists" } else { "" };
+            format!("{}:{mode}{ex}:b{}t{}", src_of(src), binds.len(), tests.len())
+        }
+        Step::StrJoin { src, keys, .. } => format!("strjoin:{}:probe{}", src_of(src), keys.len()),
+        Step::Scalar { src, keys, .. } => format!("scalar:{}:probe{}", src_of(src), keys.len()),
+        Step::Func { name, bind, .. } => format!("func:{name}{}", if *bind { ":bind" } else { "" }),
+        Step::Test { op, .. } => format!("test:{op}"),
+        Step::Unused { .. } => "unused".to_owned(),
+        Step::Cat { .. } => "cat".to_owned(),
+        Step::Split { .. } => "split".to_owned(),
+        Step::Eq { .. } => "eq".to_owned(),
+        Step::Lt { .. } => "lt".to_owned(),
+        Step::Let { .. } => "let".to_owned(),
+        Step::Ne { .. } => "ne".to_owned(),
+        Step::Doc { .. } => "doc".to_owned(),
+        Step::DocOf { .. } => "docof".to_owned(),
+        Step::In { .. } => "inset".to_owned(),
+    }
 }
 
 /// Per probe of component `name`, by plan step (as `step_counts`'s), whether the CPU's probe there reads only the
@@ -8629,7 +8671,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                      /// Each step's last probe of a source's lookup and the candidates it gave: the step's keys come
                      /// sorted where they can, so a key the step probed just before is answered by its candidates
                      /// again, not by the source (a held `kind` probed by kind reads every document of the language).
-                     last: Vec<LastProbe>,
+                     last: Vec<Option<Box<LastProbe>>>,
                      collect: Option<&'c mut Vector<i64>>,
                      /// The row the first step is at (a count table's counts per row are by it).
                      at0: u32,
@@ -8916,7 +8958,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 let within: Within = j.ranges[i].map(|r| (r.col, r.lo.map(|(k, eq)| (val(slots, k), eq)), r.hi.map(|(k, eq)| (val(slots, k), eq))));
                 // The step's probe state, held apart from `cx` while the step runs: its probe is read into the join as
                 // found (`Cands::Stream`), inside which the steps after it use `cx`. Put back at the step's end.
-                let mut last = std::mem::take(&mut cx.last[i]);
+                let mut last = cx.last[i].take().expect("the step's probe state, put back after each entry");
                 let (rows, mut cands) = given.unwrap_or_else(|| candidates(j, src, store, &cx.key, keys, &mut cx.hints[i], &mut last, need, within, true));
                 // A scan's rows in the next step's key order: its probes are then one sorted batch (decision 0112).
                 // A morsel's rows are in that order already (`morsels`).
@@ -9035,7 +9077,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     s.columns.iter_mut().for_each(|c| c.clear());
                     cx.scratch[i] = s;
                     if reads_delta { cx.only = only; }
-                    cx.last[i] = last;
+                    cx.last[i] = Some(last);
                     return;
                 }
                 // An atom that binds nothing (`ann_root(_)`, a key all bound) is a test: every row it matches leads to
@@ -9082,7 +9124,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     i >= cx.cut_from && cx.n > made
                 });
                 if reads_delta { cx.only = only; }
-                cx.last[i] = last;
+                cx.last[i] = Some(last);
                 if exists && found != *neg { go(cx, i + 1, slots); }
             }
             Step::Scalar { src, keys, tests, col, kind, out, bind, bound: Some((limit, strict)), .. } => {
@@ -9092,7 +9134,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
                 let (limit, max) = (val(slots, *limit), *kind == ScalarKind::Max);
                 let Some(c) = *col else { return };
-                let (rows, cands) = candidates(j, src, store, &cx.key, keys, &mut cx.hints[i], &mut cx.last[i], 0, None, false);
+                let (rows, cands) = candidates(j, src, store, &cx.key, keys, &mut cx.hints[i], cx.last[i].as_deref_mut().expect("the step's probe state"), 0, None, false);
                 let mut best: Option<i64> = None;
                 let mut inspected = 0;
                 cands.any(|id| {
@@ -9175,7 +9217,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 enum Sortable { Number(i64), Text(String) }
                 cx.key.clear();
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
-                let (rows, cands) = candidates(j, src, store, &cx.key, keys, &mut cx.hints[i], &mut cx.last[i], 0, None, false);
+                let (rows, cands) = candidates(j, src, store, &cx.key, keys, &mut cx.hints[i], cx.last[i].as_deref_mut().expect("the step's probe state"), 0, None, false);
                 let mut got: Vec<(Vec<Sortable>, String)> = Vec::new();
                 let syms = &cx.syms;
                 let sortable = |v: i64, sym: bool| if sym { Sortable::Text(syms.name(v).to_string()) } else { Sortable::Number(v) };

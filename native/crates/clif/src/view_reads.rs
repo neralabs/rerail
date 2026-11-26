@@ -71,8 +71,12 @@ pub struct ViewDoc {
     /// SPIKE (shared strata work, A): by local id, the numbered node's tape node and its id's low bits (`[u32; 2]`s),
     /// derived once at the entry's making in its block; empty: read by the numbering (`num_select`, `num_low_of`).
     pub node_table: Run,
+    /// SPIKE (local fixes, 1): the numbered nodes' local ids by their place among every granule's own nodes, in
+    /// granule order (`Numbering::own_place_of`, `own_numbers`), derived once with `node_table`: an id's local is the
+    /// numbering's slot entry and then one load, not a search of the granule's children. Empty where `node_table` is.
+    pub node_by_id: Run,
 }
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 24 + 16 * 5 + 8 + 16);
+const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 24 + 16 * 5 + 8 + 16 + 16);
 
 /// `ViewDoc::place`'s kinds.
 pub const PLACE_NAMED: u32 = 1;
