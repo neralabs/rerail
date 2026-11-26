@@ -104,7 +104,7 @@ unsafe fn span_on<S: rerail_simd8::Simd8x64>(src: &[u8], k: u8, s: usize) -> Opt
                 return None;
             }
             let c = wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t6::<S>(src, n, p, esc) })?;
-            Some(Span { k, s, c, last: if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 0 } })
+            Some(Span { k, s, c, last: if (((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{')))) { c + 1 } else { c + 0 } })
         }
         2 => {
             // `rstr`
@@ -112,7 +112,7 @@ unsafe fn span_on<S: rerail_simd8::Simd8x64>(src: &[u8], k: u8, s: usize) -> Opt
                 return None;
             }
             let c = wfirst_bit(n, s + 3, |p: isize, esc: &mut u64| unsafe { w_t4::<S>(src, n, p, esc) })?;
-            Some(Span { k, s, c, last: if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 0 } else { c + 2 } } })
+            Some(Span { k, s, c, last: if (((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{')))) { c + 1 } else { if (((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{')))) { c + 0 } else { c + 2 } } })
         }
         5 => {
             // `str2`
@@ -120,7 +120,7 @@ unsafe fn span_on<S: rerail_simd8::Simd8x64>(src: &[u8], k: u8, s: usize) -> Opt
                 return None;
             }
             let c = wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t10::<S>(src, n, p, esc) })?;
-            Some(Span { k, s, c, last: if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 2 } else { if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 0 } } })
+            Some(Span { k, s, c, last: if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 2 } else { if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 1 } else { c + 0 } } })
         }
         4 => {
             // `rstr2`
@@ -128,7 +128,7 @@ unsafe fn span_on<S: rerail_simd8::Simd8x64>(src: &[u8], k: u8, s: usize) -> Opt
                 return None;
             }
             let c = wfirst_bit(n, s + 3, |p: isize, esc: &mut u64| unsafe { w_t8::<S>(src, n, p, esc) })?;
-            Some(Span { k, s, c, last: if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 2 } else { if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 2 } } })
+            Some(Span { k, s, c, last: if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 2 } else { if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 1 } else { c + 2 } } })
         }
         8 => {
             // `tail`
@@ -136,7 +136,7 @@ unsafe fn span_on<S: rerail_simd8::Simd8x64>(src: &[u8], k: u8, s: usize) -> Opt
                 return None;
             }
             let c = wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t6::<S>(src, n, p, esc) })?;
-            Some(Span { k, s, c, last: if (((c < n && (src[c] == b'"')) && (c < n && !af_1(src, n, c)))) { c + 0 } else if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 0 } })
+            Some(Span { k, s, c, last: if ((c < n && (src[c] == b'"'))) { c + 0 } else if (((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{')))) { c + 1 } else { c + 0 } })
         }
         9 => {
             // `rtail`
@@ -144,7 +144,7 @@ unsafe fn span_on<S: rerail_simd8::Simd8x64>(src: &[u8], k: u8, s: usize) -> Opt
                 return None;
             }
             let c = wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t4::<S>(src, n, p, esc) })?;
-            Some(Span { k, s, c, last: if ((at_dq3(src, n, c) && (c < n && !(c + 3 < n && (src[c + 3] == b'"'))))) { c + 2 } else if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 0 } else { c + 2 } } })
+            Some(Span { k, s, c, last: if ((((c < n && (src[c] == b'"')) && (c + 1 < n && (src[c + 1] == b'"'))) && (c + 2 < n && (src[c + 2] == b'"')))) { c + 2 } else if (((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{')))) { c + 1 } else { if (((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{')))) { c + 0 } else { c + 2 } } })
         }
         10 => {
             // `tail2`
@@ -152,7 +152,7 @@ unsafe fn span_on<S: rerail_simd8::Simd8x64>(src: &[u8], k: u8, s: usize) -> Opt
                 return None;
             }
             let c = wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t10::<S>(src, n, p, esc) })?;
-            Some(Span { k, s, c, last: if (((c < n && (src[c] == b'"')) && (c < n && !af_1(src, n, c)))) { c + 0 } else if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 2 } else { if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 0 } } })
+            Some(Span { k, s, c, last: if ((c < n && (src[c] == b'"'))) { c + 0 } else if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 2 } else { if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 1 } else { c + 0 } } })
         }
         11 => {
             // `rtail2`
@@ -160,7 +160,7 @@ unsafe fn span_on<S: rerail_simd8::Simd8x64>(src: &[u8], k: u8, s: usize) -> Opt
                 return None;
             }
             let c = wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t8::<S>(src, n, p, esc) })?;
-            Some(Span { k, s, c, last: if ((at_dq3(src, n, c) && (c < n && !(c + 3 < n && (src[c + 3] == b'"'))))) { c + 2 } else if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 2 } else { if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 2 } } })
+            Some(Span { k, s, c, last: if ((((c < n && (src[c] == b'"')) && (c + 1 < n && (src[c + 1] == b'"'))) && (c + 2 < n && (src[c + 2] == b'"')))) { c + 2 } else if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 2 } else { if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 1 } else { c + 2 } } })
         }
         6 => {
             // `chr`
@@ -5148,7 +5148,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `"`: read str parts, to its closer
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t6::<S>(src, n, p, esc) })) {
                         Some(c) => {
-                            if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) {
+                            if (((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{')))) {
                                 template = 3;
                                 if depth == 4 {
                                     refused = true;
@@ -5164,7 +5164,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                                 opened += 1;
                             }
                             {
-                            let last = if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 0 };
+                            let last = if (((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{')))) { c + 1 } else { c + 0 };
                             // a `$` after a `$` and backslashes
                             if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t71::<S>(src, n, p, esc, upto(p, c - 1)) })).is_some() {
                                 refused = true;
@@ -5199,7 +5199,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `"`: read rstr parts, to its closer
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 3, |p: isize, esc: &mut u64| unsafe { w_t4::<S>(src, n, p, esc) })) {
                         Some(c) => {
-                            if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) {
+                            if (((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{')))) {
                                 template = 2;
                                 if depth == 4 {
                                     refused = true;
@@ -5215,7 +5215,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                                 opened += 1;
                             }
                             {
-                            let last = if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 0 } else { c + 2 } };
+                            let last = if (((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{')))) { c + 1 } else { if (((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{')))) { c + 0 } else { c + 2 } };
                             // a `$` before a quote or a `$` in a raw string
                             if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t69::<S>(src, n, p, esc, upto(p, c - 1)) })).is_some() {
                                 refused = true;
@@ -5250,7 +5250,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `"`: read str2 parts, to its closer
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t10::<S>(src, n, p, esc) })) {
                         Some(c) => {
-                            if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) {
+                            if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) {
                                 template = 5;
                                 if depth == 4 {
                                     refused = true;
@@ -5266,7 +5266,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                                 opened += 1;
                             }
                             {
-                            let last = if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 2 } else { if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 0 } };
+                            let last = if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 2 } else { if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 1 } else { c + 0 } };
                             // a `$` after a `$` and backslashes
                             if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t71::<S>(src, n, p, esc, upto(p, c - 1)) })).is_some() {
                                 refused = true;
@@ -5296,7 +5296,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `"`: read rstr2 parts, to its closer
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 3, |p: isize, esc: &mut u64| unsafe { w_t8::<S>(src, n, p, esc) })) {
                         Some(c) => {
-                            if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) {
+                            if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) {
                                 template = 4;
                                 if depth == 4 {
                                     refused = true;
@@ -5312,7 +5312,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                                 opened += 1;
                             }
                             {
-                            let last = if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 2 } else { if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 2 } };
+                            let last = if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 2 } else { if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 1 } else { c + 2 } };
                             // a `$` before a quote or a `$` in a raw string
                             if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t69::<S>(src, n, p, esc, upto(p, c - 1)) })).is_some() {
                                 refused = true;
@@ -5343,7 +5343,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t6::<S>(src, n, p, esc) })) {
                         Some(c) => {
                             close = c;
-                            let last = if (((c < n && (src[c] == b'"')) && (c < n && !af_1(src, n, c)))) { c + 0 } else if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 0 };
+                            let last = if ((c < n && (src[c] == b'"'))) { c + 0 } else if (((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{')))) { c + 1 } else { c + 0 };
                             // an empty `${}`
                             if ((s >= 1 && (s - 1 < n && (src[s - 1] == b'{')))) {
                                 refused = true;
@@ -5387,7 +5387,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                         _ => {
                             // SAFETY: record `held[opened - 1]` is written (`< len`).
                             unsafe { (*out.add(held[opened - 1])).last = l as u32 };
-                            if (((((close < n && (src[close] == b'$')) && (close + 1 < n && (src[close + 1] == b'{'))) && (close < n && !af_1(src, n, close))) && (close < n && !(close >= 1 && at_esc_dollar(src, n, (close - 1)))))) {
+                            if (((close < n && (src[close] == b'$')) && (close + 1 < n && (src[close + 1] == b'{')))) {
                                 if depth == 4 {
                                     refused = true;
                                     break 'tokens;
@@ -5414,7 +5414,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t4::<S>(src, n, p, esc) })) {
                         Some(c) => {
                             close = c;
-                            let last = if ((at_dq3(src, n, c) && (c < n && !(c + 3 < n && (src[c + 3] == b'"'))))) { c + 2 } else if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 0 } else { c + 2 } };
+                            let last = if ((((c < n && (src[c] == b'"')) && (c + 1 < n && (src[c + 1] == b'"'))) && (c + 2 < n && (src[c + 2] == b'"')))) { c + 2 } else if (((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{')))) { c + 1 } else { if (((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{')))) { c + 0 } else { c + 2 } };
                             // an empty `${}`
                             if ((s >= 1 && (s - 1 < n && (src[s - 1] == b'{')))) {
                                 refused = true;
@@ -5458,7 +5458,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                         _ => {
                             // SAFETY: record `held[opened - 1]` is written (`< len`).
                             unsafe { (*out.add(held[opened - 1])).last = l as u32 };
-                            if (((((close < n && (src[close] == b'$')) && (close + 1 < n && (src[close + 1] == b'{'))) && (close < n && !af_1(src, n, close))) && (close < n && !(close >= 1 && at_esc_dollar(src, n, (close - 1)))))) {
+                            if (((close < n && (src[close] == b'$')) && (close + 1 < n && (src[close + 1] == b'{')))) {
                                 if depth == 4 {
                                     refused = true;
                                     break 'tokens;
@@ -5485,7 +5485,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t10::<S>(src, n, p, esc) })) {
                         Some(c) => {
                             close = c;
-                            let last = if (((c < n && (src[c] == b'"')) && (c < n && !af_1(src, n, c)))) { c + 0 } else if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 2 } else { if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 0 } };
+                            let last = if ((c < n && (src[c] == b'"'))) { c + 0 } else if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 2 } else { if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 1 } else { c + 0 } };
                             // an empty `${}`
                             if ((s >= 1 && (s - 1 < n && (src[s - 1] == b'{')))) {
                                 refused = true;
@@ -5524,17 +5524,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                         _ => {
                             // SAFETY: record `held[opened - 1]` is written (`< len`).
                             unsafe { (*out.add(held[opened - 1])).last = l as u32 };
-                            if (((((close < n && (src[close] == b'$')) && (close + 1 < n && (src[close + 1] == b'{'))) && (close < n && !af_1(src, n, close))) && (close < n && !(close >= 1 && at_esc_dollar(src, n, (close - 1)))))) {
-                                if depth == 4 {
-                                    refused = true;
-                                    break 'tokens;
-                                }
-                                nest[depth] = 5;
-                                depth += 1;
-                                template = 5;
-                            } else {
-                                opened -= 1;
-                            }
+                            opened -= 1;
                         }
                     }
                     at = l + 1;
@@ -5551,7 +5541,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t8::<S>(src, n, p, esc) })) {
                         Some(c) => {
                             close = c;
-                            let last = if ((at_dq3(src, n, c) && (c < n && !(c + 3 < n && (src[c + 3] == b'"'))))) { c + 2 } else if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 2 } else { if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 2 } };
+                            let last = if ((((c < n && (src[c] == b'"')) && (c + 1 < n && (src[c + 1] == b'"'))) && (c + 2 < n && (src[c + 2] == b'"')))) { c + 2 } else if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 2 } else { if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 1 } else { c + 2 } };
                             // an empty `${}`
                             if ((s >= 1 && (s - 1 < n && (src[s - 1] == b'{')))) {
                                 refused = true;
@@ -5590,17 +5580,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                         _ => {
                             // SAFETY: record `held[opened - 1]` is written (`< len`).
                             unsafe { (*out.add(held[opened - 1])).last = l as u32 };
-                            if (((((close < n && (src[close] == b'$')) && (close + 1 < n && (src[close + 1] == b'{'))) && (close < n && !af_1(src, n, close))) && (close < n && !(close >= 1 && at_esc_dollar(src, n, (close - 1)))))) {
-                                if depth == 4 {
-                                    refused = true;
-                                    break 'tokens;
-                                }
-                                nest[depth] = 4;
-                                depth += 1;
-                                template = 4;
-                            } else {
-                                opened -= 1;
-                            }
+                            opened -= 1;
                         }
                     }
                     at = l + 1;

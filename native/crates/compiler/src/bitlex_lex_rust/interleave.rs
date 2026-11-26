@@ -785,8 +785,32 @@ fn drop_never(text: &str) -> String {
                 continue;
             }
         }
+        // `if (false) { … } else { B }` over lines: `B`, a level less in.
+        if lines[i].trim() == "if (false) {" {
+            let ind = lines[i].len() - lines[i].trim_start().len();
+            let at = |j: usize, t: &str| lines[j].len() - lines[j].trim_start().len() == ind && lines[j].trim() == t;
+            if let Some(m) = (i + 1..lines.len()).find(|&j| at(j, "} else {") || at(j, "}"))
+                && at(m, "} else {")
+                && let Some(e) = (m + 1..lines.len()).find(|&j| at(j, "}"))
+            {
+                for l in &lines[m + 1..e] {
+                    out.push(l.strip_prefix("    ").unwrap_or(l));
+                }
+                i = e + 1;
+                continue;
+            }
+        }
         out.push(lines[i]);
         i += 1;
     }
-    out.join("\n")
+    // A branch the bytes' form showed holds nowhere: `if (false) { X } else ` is its `else`'s.
+    let mut t = out.join("\n");
+    while let Some(a) = t.find("if (false) { ") {
+        let Some(e) = t[a..].find(" } else ").map(|e| a + e) else { break };
+        if t[a + "if (false) { ".len()..e].contains(['{', '}']) {
+            break;
+        }
+        t.replace_range(a..e + " } else ".len(), "");
+    }
+    t
 }

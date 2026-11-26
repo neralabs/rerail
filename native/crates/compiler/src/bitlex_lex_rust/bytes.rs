@@ -42,6 +42,11 @@ pub(super) struct Bytes<'a> {
     /// Of each term of that run, a fill stopped by a class's complement: the class, the byte after the run's last being
     /// none of it where the run ended in that term.
     fwd_stops: Vec<Option<[bool; 256]>>,
+    /// The mask the last scan for a stop found (`first_bit`), whose byte the row names `c`: a test at `c` is of a byte
+    /// where it holds.
+    found: Option<Expr>,
+    /// The same of `close`, the byte a template's tail closes at (`close = c`).
+    found_close: Option<Expr>,
     /// Whether a run was read forward: the loop's blocks then hold `end_last`.
     fwd_used: bool,
     pub(super) failed: std::collections::HashSet<String>,
@@ -103,7 +108,7 @@ impl<'a> Bytes<'a> {
                 _ => {}
             }
         }
-        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default(), scalar: Default::default(), row_firsts: HashMap::new(), row: None, partial: false, failed: Default::default(), wmemo: HashMap::new(), amemo: Default::default(), code_fn: false, tag: "", fwd: None, fwd_stops: Vec::new(), fwd_used: false }
+        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default(), scalar: Default::default(), row_firsts: HashMap::new(), row: None, partial: false, failed: Default::default(), wmemo: HashMap::new(), amemo: Default::default(), code_fn: false, tag: "", fwd: None, fwd_stops: Vec::new(), found: None, found_close: None, fwd_used: false }
     }
 
     /// `code` with each read of the masks it has (`locals`) in the windows' form, no block's words (decision 0703): a
@@ -128,6 +133,9 @@ impl<'a> Bytes<'a> {
     pub(super) fn partial_line(&mut self, code: &str, in_region: bool) -> String {
         self.in_region = in_region;
         self.partial = true;
+        if code.trim() == "close = c;" {
+            self.found_close = self.found.clone();
+        }
         let out = self.rewrite_line(code, code).unwrap_or_else(|_| code.to_owned());
         self.partial = false;
         self.in_region = false;
@@ -1015,6 +1023,10 @@ impl<'a> Bytes<'a> {
         if name.contains("run_") && !line.contains("assert") {
             self.fwd = None;
         }
+        // A scan for a stop: the byte it finds holds its mask (`at_found`).
+        if !line.contains("assert") && matches!(name, "first_bit" | "first_in" | "first_clear" | "any_in" | "count_in" | "last_in") && args.len() >= 2 {
+            self.found = if name == "first_bit" { self.expr(&m).ok().map(|e| self.norm(&e, 0)) } else { None };
+        }
         // The test build's checks read the walk's masks, which stay the walk's.
         if !self.locals.contains_key(&m) {
             return if line.contains("assert") || self.partial { Ok(None) } else { Err(format!("`{m}` is no mask of the bytes")) };
@@ -1084,6 +1096,11 @@ impl<'a> Bytes<'a> {
             ("bit", 2) => {
                 let e = self.expr(&m)?;
                 let e = self.at_run_end(&e, args[1].trim()).unwrap_or(e);
+                let e = match args[1].trim() {
+                    "c" => self.at_found(&e, self.found.as_ref()).unwrap_or(e),
+                    "close" => self.at_found(&e, self.found_close.as_ref()).unwrap_or(e),
+                    _ => e,
+                };
                 format!("({})", self.at(&e, args[1].trim(), 0)?)
             }
             ("last_in", 3) if self.partial => format!("wlast_in({}, {}, {})", args[1].trim(), args[2].trim(), self.window_fn(&m)?.0),
@@ -1385,6 +1402,57 @@ impl<'a> Bytes<'a> {
             }
             e => e.clone(),
         }
+    }
+
+    /// `e` at the byte a scan for a stop found (`found`, a union of terms holding there): where `e` is one of its terms
+    /// and every other term is none at a byte where `e`'s tests of the bytes hold (a test of each of the same byte with
+    /// no byte in common), `e`'s tests of the bytes alone, as the lean lexer tells a stop by its byte (`string_end`'s
+    /// `match`). `None` where it is not so.
+    fn at_found(&self, e: &Expr, m: Option<&Expr>) -> Option<Expr> {
+        let m = m?;
+        let e = self.norm(e, 0);
+        let mut terms = Vec::new();
+        fn ors(e: &Expr, out: &mut Vec<Expr>) {
+            match e {
+                Expr::Or(a, b) => {
+                    ors(a, out);
+                    ors(b, out);
+                }
+                e => out.push(e.clone()),
+            }
+        }
+        ors(m, &mut terms);
+        let k = terms.iter().position(|t| *t == e);
+        let conj = |x: &Expr| {
+            let mut cs = Vec::new();
+            fn ands(e: &Expr, out: &mut Vec<Expr>) {
+                match e {
+                    Expr::And(a, b) => {
+                        ands(a, out);
+                        ands(b, out);
+                    }
+                    e => out.push(e.clone()),
+                }
+            }
+            ands(x, &mut cs);
+            cs
+        };
+        let mine: Vec<(Expr, (i64, [bool; 256]))> = conj(&e).into_iter().filter_map(|c| self.shifted_set(&c).map(|t| (c, t))).collect();
+        if mine.is_empty() {
+            return None;
+        }
+        // Each other term: a test of a byte that `e`'s tests of that byte hold none of. Where `e` is no term and each is
+        // apart, `e` holds at no byte the mask holds at.
+        let apart = terms.iter().enumerate().filter(|(j, _)| Some(*j) != k).all(|(_, t)| {
+            conj(t).iter().filter_map(|c| self.shifted_set(c)).any(|(o, set)| mine.iter().any(|(_, (mo, ms))| *mo == o && (0..256).all(|i| !(set[i] && ms[i]))))
+        });
+        if !apart {
+            return None;
+        }
+        if k.is_none() {
+            return Some(Expr::Empty);
+        }
+        mine.into_iter().map(|(c, _)| c).reduce(|a, b| Expr::And(Box::new(a), Box::new(b)))
     }
 
     /// `e` as one test of the byte at an offset from the byte asked: the offset and its bytes.

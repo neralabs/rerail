@@ -295,6 +295,14 @@ them.
    of no byte, so no `prev` or `next` reads them elsewhere. `a digit after a binary number` is then tested in the
    binary number's row alone, where a digit past `0`, `1` and `_` may follow; a decimal or hex number, whose digits
    hold every digit, ends at none, as the lean lexer's `digits`.
+36. **A stop a scan found is told by its bytes**: a region's reader scans for its next stop (`first_bit` of a union of
+   terms, its byte `c`, or `close` where a template's tail keeps it). A test at that byte, where it is one of the
+   union's terms and each other term has a test of a byte that the term's tests of that byte hold none of, is the
+   term's tests of the bytes alone (`at_found`); where it is no term and each term is so apart, it holds there at no
+   byte. The string readers' `${` is then `src[c] == b'$' && src[c + 1] == b'{'`, with no scan back over
+   backslashes (`escaped(bs)`), as the lean lexer's `string_end` matches the byte it stopped at; a one-`$` opener in a
+   `$$` string holds at no stop, and its branch is not written (`drop_never`). The token loop reads a fill back once:
+   `a ; after a line break and a comment`.
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`
