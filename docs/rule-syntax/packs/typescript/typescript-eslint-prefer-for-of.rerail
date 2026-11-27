@@ -25,22 +25,23 @@ prefer_for_of(f) :- counting(f, s, x, a), !other_use(f, s, x, a).
 .decl counting(f: node, s: node, x: symbol, a: symbol)
 counting(f, s, x, a) :- kind(f, "for_statement"), field(f, "initializer", d), index_decl(d, id, x), variable(s, x, id, _),
     field(f, "condition", c), deparen(c, b), kind(b, "binary_expression"), op(b, "<"), field(b, "left", l),
-    named(l, x), field(b, "right", r), deparen(r, m), length_of(m, o), !in_chain(m), deparen(o, ao), text(ao, a),
+    named(l, x), field(b, "right", r), deparen(r, m), length_of(m, o), !pfo_in_chain(m), deparen(o, ao), text(ao, a),
     field(f, "increment", i), step(i, x).
 // length_of(m, o): m reads the `length` of o: `o.length`, or `o[length]` (the rule tests the property's name, not
 // whether it is computed).
 .decl length_of(m: node, o: node)
 length_of(m, o) :- kind(m, "member_expression"), field(m, "property", p), text(p, "length"), field(m, "object", o).
 length_of(m, o) :- kind(m, "subscript_expression"), field(m, "index", i), named(i, "length"), field(m, "object", o).
-// in_chain(e): e is in an optional chain that runs up to it, so ESTree wraps it in a ChainExpression: `a?.length`,
+// pfo_in_chain(e): e is in an optional chain that runs up to it, so ESTree wraps it in a ChainExpression: `a?.length`,
 // `a?.b.length`, `a?.b!.length`, `f?.().length`. Parentheses close a chain: `(a?.b).length` and `f(a?.b).length`
-// are plain members.
-.decl in_chain(e: node)
-in_chain(e) :- (kind(e, "member_expression") ; kind(e, "subscript_expression") ; kind(e, "call_expression")),
+// are plain members. (tsx/ts-a's in_chain is another reading, for `delete`.)
+.decl pfo_in_chain(e: node)
+pfo_in_chain(e) :- (kind(e, "member_expression") ; kind(e, "subscript_expression") ; kind(e, "call_expression")),
     child(e, q, _), kind(q, "optional_chain").
-in_chain(e) :- (kind(e, "member_expression") ; kind(e, "subscript_expression")), field(e, "object", o), in_chain(o).
-in_chain(e) :- kind(e, "call_expression"), field(e, "function", o), in_chain(o).
-in_chain(e) :- kind(e, "non_null_expression"), child(e, o, 0), in_chain(o).
+pfo_in_chain(e) :- (kind(e, "member_expression") ; kind(e, "subscript_expression")), field(e, "object", o),
+    pfo_in_chain(o).
+pfo_in_chain(e) :- kind(e, "call_expression"), field(e, "function", o), pfo_in_chain(o).
+pfo_in_chain(e) :- kind(e, "non_null_expression"), child(e, o, 0), pfo_in_chain(o).
 // index_decl(d, id, x): `let i = 0` or `var i = 0`, one declarator, a plain name.
 .decl index_decl(d: node, id: node, x: symbol)
 index_decl(d, id, x) :- (kind(d, "variable_declaration") ; kind(d, "lexical_declaration"), var_decl(d, k), k != "const"),

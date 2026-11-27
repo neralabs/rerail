@@ -112,8 +112,15 @@ ref_controlled(g, c) :- checked(g), rc_own(c, g), inside(c, s, "switch_statement
     derived(g, t), !within(c, t).
 ref_controlled(g, c) :- checked(g), rc_own(c, g), kind(s, "if_statement"), rc_own(s, g), field(s, "condition", t),
     derived(g, t), has(s, r, return_kind), rc_own(r, g), node(_, s, _, _, e), node(_, c, _, i, _), e <= i,
-    count : { inside(c, b, rc_branch_kind), rc_own(b, g), node(_, b, _, j, _), e <= j } = 0,
-    count : { inside(c, b, "binary_expression"), rc_lazy(b), rc_own(b, g), node(_, b, _, j, _), e <= j } = 0.
+    !branch_after(g, c, e).
+// branch_after(g, c, e): c sits in a branch, or in a lazy `&&`/`||`, of g's own code that starts at or after
+// byte e, the end of an `if` of g. Over base relations only, so its negation stays out of derived's recursion (two
+// `count … = 0` there lowered to another program when printed and read again).
+.decl branch_after(g: node, c: node, e: number)
+branch_after(g, c, e) :- rc_own(c, g), kind(s, "if_statement"), rc_own(s, g), node(_, s, _, _, e),
+    inside(c, b, rc_branch_kind), rc_own(b, g), node(_, b, _, j, _), e <= j.
+branch_after(g, c, e) :- rc_own(c, g), kind(s, "if_statement"), rc_own(s, g), node(_, s, _, _, e),
+    inside(c, b, "binary_expression"), rc_lazy(b), rc_own(b, g), node(_, b, _, j, _), e <= j.
 .decl return_kind(k: symbol)  // a throw is no exit to the compiler's post-dominators
 return_kind("return_statement").
 

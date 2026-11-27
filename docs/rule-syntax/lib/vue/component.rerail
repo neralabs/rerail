@@ -42,13 +42,13 @@ vscript(p, s) :- kind(se, "script_element"), child(se, raw, _), kind(raw, "raw_t
 .decl vscript_setup(t: node)  // a start tag with a `setup` attribute: <script setup lang="ts">
 vscript_setup(t) :- kind(t, "start_tag"), child(t, a, _), kind(a, "attribute"), child(a, n, 0),
     kind(n, "attribute_name"), text(n, "setup").
-.decl vsetup_doc(d: number)  // document d has a <script setup>
+.decl vsetup_doc(d: number) extensible  // document d has a <script setup> (vue/vue-01 adds a view's)
 vsetup_doc(d) :- vscript(p, "true"), docof(p, d).
-.decl vin_setup(n: node)  // n is code of <script setup>
+.decl vin_setup(n: node) extensible  // n is code of <script setup>
 vin_setup(n) :- vscript(p, "true"), within(n, p).
 
 // ---- the component object ------------------------------------------------------------------------------------------
-.decl vcomp(o: node)
+.decl vcomp(o: node) extensible
 vcomp(o) :- kind(e, "export_statement"), field(e, "value", w), deparen(w, o), kind(o, "object"),
     vscript(p, "false"), child(p, e, _).  // `export default {} as X` is none (isVueComponentFile)
 vcomp(o) :- kind(c, "call_expression"), vdefiner(c), vlast_arg(c, o).
@@ -56,7 +56,7 @@ vcomp(o) :- kind(c, "new_expression"), field(c, "constructor", f), text(f, "Vue"
     kind(o, "object").
 vcomp(o) :- kind(o, "object"), vin_script(o), line(o, l), comment(k, s), contains("@vue/component", s),
     end_line(k, l - 1), docof(k, d), docof(o, d).
-.decl vin_script(n: node)
+.decl vin_script(n: node) extensible
 vin_script(n) :- vscript(p, _), within(n, p).
 // vunwrap(e, x): e without parentheses and TypeScript's `as` / `satisfies`: export default {} as Component.
 .decl vunwrap(e: node, x: node)
@@ -129,7 +129,7 @@ vgroup_value(o, g, r) :- vopt(o, g, h, v), vopt_fn(h, v, f), kind(f, "arrow_func
 // vshadowed_setter: `set x() {}` beside `get x() {}`. Each getter pairs with one setter, the first.
 .decl vshadowed_setter(c: node, p: node, x: symbol)
 vshadowed_setter(c, p, x) :- vaccessor(c, p, x, "set"), vaccessor(c, _, x, "get"), !vlater_setter(c, p, x).
-.decl vlater_setter(c: node, p: node, x: symbol)
+.decl vlater_setter(c: node, p: node, x: symbol) extensible
 vlater_setter(c, p, x) :- vaccessor(c, p, x, "set"), vaccessor(c, q, x, "set"), earlier(q, p).
 .decl vaccessor(c: node, p: node, x: symbol, w: symbol)
 vaccessor(c, p, x, w) :- vprop_key(c, p, x, _), kind(p, "method_definition"), op(p, w), (w = "get" ; w = "set").
@@ -190,7 +190,7 @@ vmacro(c, x) :- kind(c, "call_expression"), vin_setup(c), field(c, "function", f
     field(w, "function", g), text(g, "withDefaults"), call_arg(w, a, 0), deparen(a, c)).
 // vmacro_site(c): where a macro is looked for: the value of a top-level declarator, or a top-level expression
 // statement, of <script setup>. `let p; p = defineProps()` is none.
-.decl vmacro_site(c: node)
+.decl vmacro_site(c: node) extensible
 vmacro_site(c) :- vscript(p, "true"), child(p, st, _), (kind(st, "lexical_declaration") ;
     kind(st, "variable_declaration")), child(st, d, _), kind(d, "variable_declarator"), field(d, "value", w),
     deparen(w, c).

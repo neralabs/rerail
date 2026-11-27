@@ -490,7 +490,7 @@ ann_root(t) :- kind(a, "assignment"), field(a, "type", t).
 // s's scope. A string that is part of an implicit concatenation is parsed as the whole; strings in `Literal[...]`
 // are values, not types, and are not parsed.
 //   def f(x: "List['int']"): ...      parsed_in(<List>, <"List['int']">), parsed_in(<int>, <"List['int']">)
-.decl parsed_in(e: node, s: node)
+.decl parsed_in(e: node, s: node) extensible   // python/python-03 adds the trees of nested strings it reads
 .decl ann_ctx(s: node)  // s is an annotation root or inside one: where a string annotation can stand
 ann_ctx(s) :- ann_root(a), (s = a ; within(s, a)).
 parsed_in(e, s) :- !guest_policy("library", "off"), ann_ctx(s), ann_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).

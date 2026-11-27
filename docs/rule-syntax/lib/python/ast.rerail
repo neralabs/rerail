@@ -275,7 +275,7 @@ cmp_pair(c, i, o, l, r) :- kind(c, "comparison_operator"), child(c, l, i), j = i
 // fstring, string_form, plain_str_node: python/syntax.
 // plain_str(e, v): e is a str literal without interpolation (not bytes, not an f- or t-string), or adjacent
 // ones, and v its decoded value: `"a" 'b'` gives "ab". What Ruff calls a StringLiteral.
-.decl plain_str(e: node, v: symbol)
+.decl plain_str(e: node, v: symbol) extensible   // python/python-12 adds string annotations' strings
 plain_str(e, v) :- string_form(e, "str"), !fstring(e), value(e, v).
 plain_str(e, v) :- kind(e, "concatenated_string"),
     count : { child(e, s0, _), !kind(s0, "comment"), !string_form(s0, "str") } = 0,

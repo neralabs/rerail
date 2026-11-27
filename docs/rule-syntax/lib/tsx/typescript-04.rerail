@@ -53,8 +53,8 @@
 // ---- the chain ----
 .decl vcall(c: node)  // a CallExpression: not a tagged template
 vcall(c) :- kind(c, "call_expression"), field(c, "arguments", a), kind(a, "arguments").
-.decl tagged(c: node)
-tagged(c) :- kind(c, "call_expression"), field(c, "arguments", a), kind(a, "template_string").
+.decl vtagged(c: node)  // a tagged template (eslint-a-common's `tagged`, named apart: a vitest rule includes both)
+vtagged(c) :- kind(c, "call_expression"), field(c, "arguments", a), kind(a, "template_string").
 // vlink(c, e): e is in the callee chain of call c, from its function down to the head.
 .decl vlink(c: node, e: node)
 vlink(c, e) :- vcall(c), field(c, "function", f), deparen(f, e).
@@ -83,7 +83,7 @@ last_link(c, x) :- vsteps(c, 0), vroot(c, h), text(h, x).
 vbad(c) :- vstep(c, m), !vname(m, _, _).
 vbad(c) :- vroot(c, h), vstep(c, _), estree_parent(h, p), kind(p, "call_expression").
 vbad(c) :- last_link(c, "each"), field(c, "function", f), deparen(f, g), !kind(g, "call_expression").
-vbad(c) :- vroot(c, _), field(c, "function", f), deparen(f, g), tagged(g), !last_link(c, "each").
+vbad(c) :- vroot(c, _), field(c, "function", f), deparen(f, g), vtagged(g), !last_link(c, "each").
 vbad(c) :- vroot(c, _), estree_parent(c, p), (kind(p, "member_expression") ; kind(p, "subscript_expression") ; vcall(p)).
 vbad(c) :- vroot(c, _), estree_parent(c, a), kind(a, "arguments"), child(p, a, _), kind(p, "call_expression").
 

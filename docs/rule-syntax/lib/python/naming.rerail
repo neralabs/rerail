@@ -83,7 +83,7 @@ naming_default_ignore("failureException"). naming_default_ignore("longMessage").
 
 // ---- 3. decorators -----------------------------------------------------------------------------------------------
 // typing_dec(f, x): `@overload` / `@typing.override` / `@typing_extensions.overload` on f.
-.decl typing_dec(f: node, x: symbol)
+.decl typing_dec(f: node, x: symbol) extensible   // python/python-17 adds its decorator forms
 typing_dec(f, x) :- decorator(f, e), sym_of(e, q), split_dot(q, m, x), (m = "typing" ; m = "typing_extensions").
 // dec_target(f, e): the decorator e with a call taken off: `@validator("f")` gives `validator`.
 .decl dec_target(f: node, e: node)

@@ -45,7 +45,7 @@ block_scope("class").
 // and classes, the identifier for parameters, the specifier for imports. form says which construct it was.
 // space exists because TypeScript keeps two namespaces: `type T = …` and `const T = …` can coexist, and
 // `let x: T` looks T up among types while `f(T)` looks it up among values.
-.decl decl_site(s: node, x: symbol, site: node, form: symbol, space: symbol)
+.decl decl_site(s: node, x: symbol, site: node, form: symbol, space: symbol) extensible   // vue/vue-01: a view's
 // `var x = 1` anywhere in function f (even inside an if or a loop) declares x in f: var is function-scoped.
 decl_site(s, x, d, "var", "value")   :- kind(d, "variable_declarator"), field(d, "name", n), kind(n, "identifier"),
     text(n, x), child(v, d, _), kind(v, "variable_declaration"), nearest(d, s, fn_scope).
@@ -120,14 +120,14 @@ decl_site(s, x, sp, "import", "value") :- import_binding(sp, x, _, _), nearest(s
 decl_site(s, x, sp, "import", "type")  :- import_binding(sp, x, _, _), nearest(sp, s, "program").
 // pattern_name: in `const { a, b: [c] } = obj`, a and c are bound; b is a property key, not a binding.
 // a appears as shorthand_property_identifier_pattern, c as a plain identifier; keys sit in a "key" field.
-.decl pattern_name(p: node, x: symbol, d: node)  // a name bound by destructuring in declarator d
+.decl pattern_name(p: node, x: symbol, d: node) extensible  // a name bound by destructuring in declarator d (vue/vue-01 adds)
 pattern_name(p, x, d) :- kind(d, "variable_declarator"), field(d, "name", pat), kind(pat, k),
     (k = "object_pattern" ; k = "array_pattern"), within(p, pat), bound_name(p, x),
     nearest(p, f, fn_scope), nearest(d, f, fn_scope).   // not a parameter of a function in a default
 // bound_name(p, x): p is a name in a binding position of a pattern: directly in an object or array pattern, a pair's
 // value, a default's left side or a rest. Keys and default values are not: in `{ a: b = c }` only b is bound, and in
 // `{ a = g(c) }` c's parent is no pattern node. (Callers rule out patterns in functions nested inside a default.)
-.decl bound_name(p: node, x: symbol)
+.decl bound_name(p: node, x: symbol) extensible   // vue/vue-01 adds a view's
 bound_name(p, x) :- kind(p, pk), (pk = "shorthand_property_identifier_pattern" ; pk = "identifier"), text(p, x),
     child(par, p, _), kind(par, k), binding_parent(k), !field(par, "key", p), !field(par, "right", p).
 .decl binding_parent(kind: symbol)

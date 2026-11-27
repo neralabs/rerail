@@ -192,7 +192,7 @@ all_value(v) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, meth), (
 all_value(v) :- all_value(b), unparen(b, m), kind(m, "binary_operator"), op(m, "+"), child(m, v, _).
 all_value(v) :- all_value(c), unparen(c, m), kind(m, "call"), field(m, "function", f), dotted_expr(f, q),
     (q = "list" ; q = "tuple" ; q = "builtins.list" ; q = "builtins.tuple"), field(m, "arguments", al), child(al, v, 0).
-.decl all_entry(s: node, x: symbol)
+.decl all_entry(s: node, x: symbol) extensible   // python/python-17 adds `__all__ += […]` and its other forms
 all_entry(s, x) :- all_value(v), unparen(v, m), (kind(m, "list") ; kind(m, "tuple")), child(m, s, _), str(s, x).
 all_entry(s, x) :- all_value(s), str(s, x).                                      // __all__.append("e")
 

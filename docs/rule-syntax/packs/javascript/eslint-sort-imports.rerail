@@ -18,15 +18,16 @@ member(i, m, x) :- import_decl(i), kind(m, "import_specifier"), nearest(m, i, "i
     (field(m, "alias", a), text(a, x) ; !field(m, "alias", _), field(m, "name", n), text(n, x)).
 .decl member_at(i: node, m: node, k: number)  // m is i's k-th name
 member_at(i, m, k) :- member(i, m, _), k = count : { member(i, o, _), o < m }.
-// first_member(i, m, x): sort-imports sorts declarations by their first local name, x of member m. import_syntax(i,
+// first_member(i, m, x): sort-imports sorts declarations by their first local name, x of member m. member_syntax(i,
 // s): ESLint's usedMemberSyntax: "none" (import "m"), "all" (`* as ns` first; `import D, * as NS` is "multiple"),
-// "multiple" or "single".
+// "multiple" or "single", over this rule's members (`{ default as foo }` is one); tsx/modules' import_syntax reads
+// import_member.
 .decl first_member(i: node, m: node, x: symbol)
 first_member(i, m, x) :- member_at(i, m, 0), member(i, m, x).
-.decl import_syntax(i: node, s: symbol)
-import_syntax(i, "none") :- import_decl(i), !member(i, _, _).
-import_syntax(i, "all") :- member_at(i, m, 0), kind(m, "namespace_import").
-import_syntax(i, s) :- member_at(i, m, 0), !kind(m, "namespace_import"), n = count : { member(i, _, _) },
+.decl member_syntax(i: node, s: symbol)
+member_syntax(i, "none") :- import_decl(i), !member(i, _, _).
+member_syntax(i, "all") :- member_at(i, m, 0), kind(m, "namespace_import").
+member_syntax(i, s) :- member_at(i, m, 0), !kind(m, "namespace_import"), n = count : { member(i, _, _) },
     (n = 1, s = "single" ; n > 1, s = "multiple").
 
 // Options, all off by default: ignoreCase, ignoreDeclarationSort, ignoreMemberSort and allowSeparatedGroups
@@ -63,7 +64,7 @@ before(i, p) :- import_decl(i), node(d, i, _, si, _), j = max s : { import_decl(
     "Expected '{a}' syntax before '{b}' syntax: move this import above the one on line {p.line}."
     suppress eslint "sort-imports"
     suppress oxlint "sort-imports"
-sort_syntax(i, a, b, p) :- prev(i, p), import_syntax(i, a), import_syntax(p, b),
+sort_syntax(i, a, b, p) :- prev(i, p), member_syntax(i, a), member_syntax(p, b),
     syntax_pos(a, x), syntax_pos(b, y), x < y.
 
 // The same syntax: by first local name.
@@ -73,7 +74,7 @@ sort_syntax(i, a, b, p) :- prev(i, p), import_syntax(i, a), import_syntax(p, b),
     "Imports should be sorted alphabetically: '{x}' goes before '{y}' (line {p.line})."
     suppress eslint "sort-imports"
     suppress oxlint "sort-imports"
-sort_alpha(i, x, y, p) :- prev(i, p), import_syntax(i, s), import_syntax(p, s),
+sort_alpha(i, x, y, p) :- prev(i, p), member_syntax(i, s), member_syntax(p, s),
     first_member(i, a, x), first_member(p, b, y), key(a, kx), key(b, ky), kx < ky.
 
 // ---- members ----

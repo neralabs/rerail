@@ -59,11 +59,11 @@ global_method(c, f, o, x) :- method_call(c, f), field(f, "object", r), pr_global
 props(x, fn) :- dep_fn(x, fn), comp_fn(fn), text(x, t), props_param(fn, t), !memoized(fn).
 .decl props_param(fn: node, t: symbol)
 props_param(fn, t) :- kind(fn, "arrow_function"), field(fn, "parameter", p), kind(p, "identifier"), text(p, t).
-props_param(fn, t) :- field(fn, "parameters", ps), kind(ps, "formal_parameters"), first_named(ps, p), param_name(p, t),
+props_param(fn, t) :- field(fn, "parameters", ps), kind(ps, "formal_parameters"), first_named(ps, p), fd_param(p, t),
     !third_named(ps), !odd_second(ps).
-.decl param_name(p: node, t: symbol)  // an untyped or object-typed parameter without a default
-param_name(p, t) :- kind(p, "identifier"), text(p, t).
-param_name(p, t) :- kind(p, "required_parameter"), field(p, "pattern", i), kind(i, "identifier"), text(i, t),
+.decl fd_param(p: node, t: symbol)  // an untyped or object-typed parameter without a default (not tsx/names' param_name)
+fd_param(p, t) :- kind(p, "identifier"), text(p, t).
+fd_param(p, t) :- kind(p, "required_parameter"), field(p, "pattern", i), kind(i, "identifier"), text(i, t),
     !field(p, "value", _), !scalar_type(p).
 .decl scalar_type(p: node)
 scalar_type(p) :- field(p, "type", a), kind(a, "type_annotation"), child(a, y, _),
