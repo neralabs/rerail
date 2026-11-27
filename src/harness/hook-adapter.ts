@@ -10,9 +10,12 @@ import { RULE_MODES, steers } from "../engine/catalog/rule-mode.js";
 import { processState } from "../engine/process-liveness.js";
 import { asLateSteer } from "../engine/code-rule/rerail-steer.js";
 import { heldOnWindows, nameTaken, removeWithRetry } from "../engine/file-replace.js";
-import { REQUIRED_NODE_MAJOR } from "../engine/package-root.js";
+import { powershellLiteral, shellWord } from "../engine/command-line.js";
+import { ENTRY_POINTS, REQUIRED_NODE_MAJOR } from "../engine/package-root.js";
 import { scrubSecrets } from "../engine/secret-scrub.js";
 import { makeLedgerFolder, readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
+import { CURRENT_LINK, defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { launcherRecordedNode } from "./launcher-node.js";
 import { exitWhenParentGone, type ParentWatch } from "./parent-watch.js";
 
 export type HookInput = Record<string, unknown>;
@@ -507,38 +510,87 @@ function launchedDirectly(moduleUrl: string): boolean {
 }
 
 /**
- * A hook the recorded-first fallback started on an older `node` from PATH, once the node set-up recorded was gone,
- * does nothing and says so in one line on stderr, which the coding agents keep out of the session: a hook must never
- * break it.
+ * What a hook on a Node older than Rerail runs on tells the person to do. The `rerail` launcher runs the node set-up
+ * recorded while that file is there, whatever PATH holds, and `node` from PATH once it is gone. Gone, `rerail install
+ * --refresh` runs on the Node the person puts first on PATH and records it. Still there, as when an older Node replaced
+ * it at the same path (a package downgraded, Homebrew's link moved to an older formula), the launcher would start that
+ * Node again, so the line names the launcher's own command with `node` from PATH in its place.
+ */
+export function olderNodeStep(home: string = defaultRerailHome()): string {
+  const put = `Put Node ${REQUIRED_NODE_MAJOR} or newer first on PATH, then`;
+  const recorded = launcherRecordedNode(home);
+  if (recorded === undefined) return `${put} run rerail install --refresh.`;
+  const step = refreshStep(join(home, CURRENT_LINK, ENTRY_POINTS.cli));
+  return `${put} ${step}: the rerail command runs ${recorded} while that file is there, whatever PATH holds.`;
+}
+
+/**
+ * What cmd.exe or PowerShell reads as more than text inside double quotes, in a path: cmd's `%` and `!` (its variables;
+ * `!` once delayed expansion is on), PowerShell's `$` and backtick, and the typographic double quotes PowerShell ends a
+ * string at. A Windows path holds no `"`.
+ */
+const NOT_TEXT_IN_DOUBLE_QUOTES = /[%!$`“”„]/u;
+
+/**
+ * `run node <cli> install --refresh`, the path quoted for the shell a person types it in: a POSIX shell's quoting on
+ * macOS and Linux; on Windows double quotes, which cmd.exe and PowerShell both take, or for a path that double quotes
+ * cannot carry in both ({@link NOT_TEXT_IN_DOUBLE_QUOTES}), PowerShell's literal, and the step then names PowerShell.
+ */
+function refreshStep(cli: string): string {
+  const command = (path: string): string => `node ${path} install --refresh`;
+  if (process.platform !== "win32") return `run ${command(shellWord("posix", cli))}`;
+  return NOT_TEXT_IN_DOUBLE_QUOTES.test(cli) ? `in PowerShell run ${command(powershellLiteral(cli))}` : `run ${command(`"${cli}"`)}`;
+}
+
+/**
+ * A hook on an older Node, the recorded one or, once that is gone, the `node` the recorded-first fallback found on
+ * PATH, does nothing and says so in one line on stderr, which the coding agents keep out of the session: a hook must
+ * never break it.
  */
 export async function serveHook(
   run: (input: HookInput) => Promise<HookOutput>,
   streams: HookStreams = process,
   nodeVersion: string = process.versions.node,
 ): Promise<void> {
-  let output: HookOutput = {};
-  let serialized = "{}\n";
-  try {
-    const parsed = JSON.parse(await readStdin(streams.stdin)) as unknown;
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Hook stdin must be a JSON object");
-    if (Number.parseInt(nodeVersion, 10) >= REQUIRED_NODE_MAJOR) {
-      output = await run(parsed as HookInput);
-      serialized = `${JSON.stringify(output)}\n`;
-    } else {
-      streams.stderr.write(
-        `rerail hook: Rerail needs Node ${REQUIRED_NODE_MAJOR} or newer and this is Node ${nodeVersion}, so it is off in this session. `
-          + `Put Node ${REQUIRED_NODE_MAJOR} or newer first on PATH, then run rerail install --refresh.\n`,
-      );
-    }
-  } catch (error) {
-    output = {};
-    streams.stderr.write(`rerail hook: ${error instanceof Error ? error.message : String(error)}\n`);
-  }
+  const { output, serialized } = await hookAnswer(run, streams, nodeVersion);
   try {
     await emitSerializedHookOutput(output, serialized, streams.stdout);
   } catch (error) {
-    streams.stderr.write(`rerail hook: ${error instanceof Error ? error.message : String(error)}\n`);
+    sayHookFailed(streams, error);
   }
+}
+
+/** `run`'s answer to the event on stdin, serialized; `{}` where stdin is no JSON object, the Node is too old or `run` failed. */
+async function hookAnswer(
+  run: (input: HookInput) => Promise<HookOutput>,
+  streams: HookStreams,
+  nodeVersion: string,
+): Promise<{ output: HookOutput; serialized: string }> {
+  try {
+    const input = hookInput(await readStdin(streams.stdin));
+    if (Number.parseInt(nodeVersion, 10) < REQUIRED_NODE_MAJOR) {
+      streams.stderr.write(
+        `rerail hook: Rerail needs Node ${REQUIRED_NODE_MAJOR} or newer and this is Node ${nodeVersion}, so it is off in this session. `
+          + `${olderNodeStep()}\n`,
+      );
+      return { output: {}, serialized: "{}\n" };
+    }
+    const output = await run(input);
+    return { output, serialized: `${JSON.stringify(output)}\n` };
+  } catch (error) {
+    sayHookFailed(streams, error);
+    return { output: {}, serialized: "{}\n" };
+  }
+}
+
+function hookInput(stdin: string): HookInput {
+  const parsed = JSON.parse(stdin) as unknown;
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Hook stdin must be a JSON object");
+  return parsed as HookInput;
+}
+
+function sayHookFailed(streams: HookStreams, error: unknown): void {
+  streams.stderr.write(`rerail hook: ${error instanceof Error ? error.message : String(error)}\n`);
 }
 
 /** What a hook entry uses in place of this process's own: the parent watch's facts and the hook's streams. */

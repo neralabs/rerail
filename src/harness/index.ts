@@ -5,7 +5,8 @@
  * The public surface of this layer: what code outside `src/` imports from it (`scripts/check/check-boundaries.mjs`).
  */
 export { bindSteerReceipt, type HookInput, type HookOptions, type HookOutput, hookRerailStarted, serveHook } from "./hook-host.js";
-export { withPendingFileLock } from "./hook-adapter.js";
+export { olderNodeStep, withPendingFileLock } from "./hook-adapter.js";
+export { launcherRecordedNode } from "./launcher-node.js";
 export { hookFailureLines } from "./hook-failures.js";
 export { NativeSessionClient } from "./native-session-client.js";
 export { MANAGED_SKILL_MARKER } from "./rerail-command-files.js";
