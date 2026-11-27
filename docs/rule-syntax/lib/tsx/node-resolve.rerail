@@ -12,11 +12,13 @@
 //   spec_package(n, m)    the package target n loads: "@a/b/c" gives "@a/b", "lodash/fp" "lodash", a built-in its
 //                         module ("node:fs/promises" gives "fs"); relative names have none
 //   spec_resolved(n, file)    the file n resolves to, from n's document, as the plugin's resolver finds it (below);
-//                         no row when resolution fails
+//                         no row when resolution fails; the name itself where it resolves to no file (spec_no_file)
+//   spec_no_file(n)       n resolves, but to no file: a built-in's fallback or an alias to `false` (the resolver's
+//                         `Ignored`, answered as the name itself)
 //   spec_failed(n)        resolution fails (the plugin's resolveError): no file, and not a data: or http(s):
 //                         import, which the plugin takes as found
 //   node_target_file(n, file) the plugin's target.filePath: the resolved file; for a relative or absolute name
-//                         whose resolution fails, the path it names
+//                         whose resolution fails, the path it names; none where n resolves to no file
 //   pkg_lists(d, m)       document d's package.json names m: its own name, or a key of dependencies,
 //                         devDependencies, peerDependencies or optionalDependencies, there or in the workspace
 //                         root that lists d's package among its workspaces
@@ -104,8 +106,13 @@ spec_package(n, m) :- spec_kind(n, "node"), node_target(n, x, _), match("(node:)
 spec_failed(n) :- node_target(n, _, _), !spec_resolved(n, _), !spec_as_is(n).
 .decl spec_as_is(n: node)  // a data: or http(s): import, whose name is its file
 spec_as_is(n) :- node_target(n, _, "import"), (spec_kind(n, "data") ; spec_kind(n, "http")).
+// spec_no_file(n): the resolver answers a target that resolves to no file with its own name. A file it finds is a
+// path (in node_modules, or outside the root), never a bare name; a data: or http(s): import's file is its name.
+.decl spec_no_file(n: node)
+spec_no_file(n) :- node_target(n, x, _), spec_resolved(n, x), (spec_kind(n, "npm") ; spec_kind(n, "node") ;
+    spec_kind(n, "unknown")).
 .decl node_target_file(n: node, file: symbol)
-node_target_file(n, f) :- node_target(n, _, _), spec_resolved(n, f).
+node_target_file(n, f) :- node_target(n, _, _), spec_resolved(n, f), !spec_no_file(n).
 node_target_file(n, @join(@dir(p), x)) :- node_target(n, x, _), !spec_resolved(n, _), spec_kind(n, "relative"), docof(n, d),
     doc(d, p, _).
 node_target_file(n, x) :- node_target(n, x, _), !spec_resolved(n, _), spec_kind(n, "absolute").
