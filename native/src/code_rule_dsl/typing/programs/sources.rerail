@@ -26,7 +26,8 @@
 #include "c/compile-commands.rerail"
 
 .phase sources
-.export document, library
+// `source_library` is keyed by its path: a document of a reader that takes these (below) reads its own row.
+.export document, library, source_library by_path
 
 // The observer's facts (decision 0104, rule 1): each source file of the run's tree, its module, its grammar (by its
 // name) and its content's SHA-256, hex. Handed to this phase as an earlier phase's exports are: inputs of the run.
@@ -79,6 +80,14 @@ library_tape(q, f, t) :- library_key(q, f, _, _, _, _), loaded(l, q, "python"), 
 // with its module, grammar and content.
 .decl library(p: symbol, m: symbol, g: symbol, c: symbol)
 library(l, q, "python", c) :- library_key(q, f, c, _, _, _), library_tape(q, f, _), loaded(l, q, "python").
+
+// The library documents read from their source, a package's own `.py` files (python/modules.rerail's `untyped` layer,
+// only under `python.untyped = read`), by canonical path: no stub and no annotation declares what their functions
+// return, so a later phase that types bodies (`points_to`, P3) reads theirs as it reads the workspace's. A phase that
+// reads this export (`sources__source_library`) takes these documents as its own, and only these of the libraries;
+// one that reads `sources__library` takes every library document.
+.decl source_library(p: symbol)
+source_library(l) :- library_key(q, f, _, _, _, _), py_resolves(q, f, "untyped"), library_tape(q, f, _), loaded(l, q, "python").
 
 // ---- C's and C++'s headers (decision 0327) ---------------------------------------------------------------------
 // The files the run's translation units include, to the closure's fixed point (c/includes.rerail: every branch taken,

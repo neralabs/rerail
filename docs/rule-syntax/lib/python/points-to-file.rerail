@@ -618,6 +618,9 @@ pt_litq(n, "builtins.bytes") :- pt_bytes_lit(n).
 
 // ---- library values, by symbol (P2's exports) --------------------------------------------------------------------
 // pt_wsmod(q): a module of this phase's documents, the workspace's. A symbol whose module is another is a library's.
+// Where the analysis runs (python/points-to-solve, which reads sources' `source_library`), a library read from its
+// source (an untyped package under `python.untyped = read`) is among the documents, its definitions typed as the
+// workspace's are: its module is one of these.
 .decl pt_wsmod(q: symbol)
 pt_wsmod(q) :- pt_modname(_, q).
 // pt_lres(q, d): the qualified name q (an import, a dotted name read from one, a builtin) is symbol d: a module, else a

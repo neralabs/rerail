@@ -59,6 +59,9 @@ pub struct PhaseOne {
     pub documents: Vec<(String, String, String)>,
     /// The library documents the imports reached, `(canonical path, module, grammar, content)`.
     pub libraries: Vec<(String, String, String, String)>,
+    /// The canonical paths of those read from their source (`source_library`): a program that reads that export
+    /// takes these of the libraries as its documents.
+    pub source_libraries: std::collections::BTreeSet<String>,
     /// Its exports, as a reader of `sources__<export>` takes them.
     rows: BTreeMap<String, Vec<Vec<Value>>>,
 }
@@ -971,8 +974,9 @@ fn one_of_rows(root: &Path, label: &str, files: &[(String, String, String, Strin
         .collect();
     libraries.sort();
     libraries.dedup_by(|a, b| a.0 == b.0);
+    let source_libraries = rows.get("source_library").into_iter().flatten().filter_map(|r| r.first().and_then(text)).collect();
     let exports: Vec<(String, usize)> = declared.exports.iter().map(|e| (e.clone(), rows.get(e).map_or(0, |v| v.len()))).collect();
-    (PhaseOne { root: root.to_path_buf(), label: label.to_owned(), documents, libraries, rows }, exports)
+    (PhaseOne { root: root.to_path_buf(), label: label.to_owned(), documents, libraries, source_libraries, rows }, exports)
 }
 
 /// Whether phase program `program`'s fixed point, or an earlier phase's it reads, loads documents (a `load` rule,

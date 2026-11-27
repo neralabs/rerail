@@ -1203,7 +1203,8 @@ part solves over them alone, and the outputs are keyed by them. The design was a
     `declarations_and_installed_sources_type_calls_without_declared_ret_facts` was changed to expect that. 0083's lines
     on P1 reading no function body are a draft's (0083 is "Proposed"), not the user's, and its phase table leaves P2
     "inferred interfaces". The test's `str` is to be restored with the way an untyped library's bodies are typed; the
-    user chooses that way (open, 2026-11-27).
+    user chooses that way (open, 2026-11-27). The user chose the bodies typed as the workspace's ("do B"): built,
+    0083 § "Built: an untyped library's bodies are typed as the workspace's"; the test expects the `str` again.
   
   The engine tests that used `calls.rerail` as an input:
   - Phase 0's plan test has a program of T's shape of its own: library modules without `core.rerail`, as
