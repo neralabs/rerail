@@ -3,7 +3,7 @@
 Checked with ptcheck on `tbelanger/pack-translations-1120` plus this batch's files (engine `rerail-engine-1120`),
 every sample key against Ruff 0.17.6 (`ruff check --isolated --select <CODE> --no-cache`). ISC004, PD002, PD101,
 T203, TC006 and TC010 are `same` now; T201 and ISC001 differ only where Ruff agrees with the translation. The batch's
-library, `lib/python/type-string-names.rerail` (`p10_*`), is per file and keyed by node; with
+library, `lib/python/type-string-names.rerail` (`fwdref_*`, `stdio_value`, `seen_module_or_star`), is per file and keyed by node; with
 `RERAIL_STRICT_CROSSINGS`, `RERAIL_STRICT_NODES` and `RERAIL_STRICT_POSITIONS` the eight rules run.
 
 ## Code in string type definitions (`fwdref_call_q`, `fwdref_lookup`, `fwdref_kwarg`): T201, T203, TC006

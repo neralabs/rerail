@@ -78,9 +78,12 @@ air_vis(r, s, b) :- air_chain(r, y, s), !air_late(r, s), binding(s, y, b, _), b 
 air_vis(r, s, b) :- air_chain(r, y, s), air_late(r, s), binding(s, y, b, _), count : { binding(s, y, c, _), b < c } = 0.
 .decl air_hidden(r: node, s: node)
 air_hidden(r, s) :- air_vis(r, s, _), air_vis(r, s2, _), within(s2, s).
-// air_late(r, s): r is in the body of a function or lambda inside scope s, which Ruff visits once s is done.
+// air_late(r, s): r is in the body of a function or lambda inside scope s, which Ruff visits once s is done: any such
+// function around r, not only the innermost (a default of a def in an outer def's body is read with that body):
+//   def outer():
+//       def inner(op=BashOperator()): ...     read after the module: its later import
 .decl air_late(r: node, s: node)
-air_late(r, s) :- air_chain(r, _, s), nearest(r, f, air_fn), field(f, "body", b), within(r, b), within(f, s).
+air_late(r, s) :- air_chain(r, _, s), inside(r, f, air_fn), within(f, s), field(f, "body", b), (r = b ; within(r, b)).
 .decl air_fn(k: symbol)
 air_fn("function_definition"). air_fn("lambda").
 // air_site(b, base): import site b binds its name to base (`import a.b` "a", `import a.b as c` "a.b",

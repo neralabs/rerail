@@ -3,7 +3,7 @@
 All eight rules are `same` as their JSON originals on the examples, fixtures and samples-python (ptcheck on
 `tbelanger/pack-translations-1120` with this batch's files, engine `rerail-engine-1120`). Every difference the suite
 found before was the translation's error: Ruff 0.17.6 (`ruff check --select <CODE> --no-cache`) agrees with the
-original on each sample key. The rules now share a new library, `lib/python/visit-order-bindings.rerail` (`p07_*`),
+original on each sample key. The rules now share a new library, `lib/python/visit-order-bindings.rerail` (`visit_*`),
 because the fixes are each needed by two rules or more and touch relations of `misc2-args`, `logging`, `ruff` and
 `scopes`, which this batch may not edit. Everything there is per file, keyed by node; with `RERAIL_STRICT_CROSSINGS`,
 `RERAIL_STRICT_NODES` and `RERAIL_STRICT_POSITIONS` the eight rules run.

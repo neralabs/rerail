@@ -25,3 +25,18 @@
     suppress ruff "AIR312"
 AIR312(at, q, m) :- air_at(e, at, q), air312_moved(q, m, x), !air_safe(e, m, x).
 air_needs_guard(e, m, x) :- air_at(e, _, q), air312_moved(q, m, x).
+
+// Ruff 0.17.6: a module-level read sees the import above it; a read in a def nested in another def's body is read
+// once the module is done, so it sees the later provider import, a default of the inner def too.
+.test a_nested_defs_default_reads_the_later_import exactly
+    .fixture "a.py" ```
+        from airflow.operators.bash import BashOperator
+        BashOperator()
+        def outer():
+            def inner(op=BashOperator()):
+                pass
+            return inner
+        from airflow.providers.standard.operators.bash import BashOperator
+        ```
+    .expect AIR312 at "a.py":2
+.end

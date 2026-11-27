@@ -4,7 +4,7 @@ All seven rules are `same` as their JSON originals on the examples, fixtures and
 `tbelanger/pack-translations-1120` with this batch's files, engine `rerail-engine-1120`). Every difference the suite
 found before was the translation's error: Ruff 0.17.6 (`ruff check --select <CODE> --no-cache`) agrees with the
 original on each sample key. TRY002/TRY003 and INT001/INT002 each share a fix, so the batch has a new library,
-`lib/python/raise-and-gettext.rerail` (`p09_*`). Everything is per file, keyed by node; with
+`lib/python/raise-and-gettext.rerail` (`raise_value`, `raised_class`, `gettext_arg`, `guest_in_literal`). Everything is per file, keyed by node; with
 `RERAIL_STRICT_CROSSINGS`, `RERAIL_STRICT_NODES` and `RERAIL_STRICT_POSITIONS` the rules run.
 
 ## TRY002, TRY003: a raise continued with a backslash (`raise_value`)

@@ -24,4 +24,4 @@ The original was right. Ruff reports `a: "List['os.path.getctime(1)']"` at line 
 
 ## Library and engine gaps
 
-`python/python-22.rerail` is the shared library change. `typedef_node` supplies the correct parsed-tree domain, but the existing `pth_call`, `single_arg`, `unparen`, qualified-name and literal relations have only file-tree rows. The new `p22_*` relations repeat those operations with every step rooted in `typedef_node`; no new engine fact or primitive is needed.
+`python/python-22.rerail` is the shared library change. `typedef_node` supplies the correct parsed-tree domain, but the existing `pth_call`, `single_arg`, `unparen`, qualified-name and literal relations have only file-tree rows. The new `tdef_*` relations repeat those operations with every step rooted in `typedef_node`; no new engine fact or primitive is needed.

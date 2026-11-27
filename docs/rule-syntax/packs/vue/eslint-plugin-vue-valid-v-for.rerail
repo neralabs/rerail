@@ -24,9 +24,9 @@ valid_v_for(m, "'v-for' directives require no modifier.") :- vfor_dir(_, a), vmo
 valid_v_for(a, "'v-for' directives require that attribute value.") :- vfor_dir(_, a), !has_value(a).
 valid_v_for(v, msg) :- alias_text(a, _), vval(a, v), !option("allowEmptyAlias", "true"), empty_alias(a, w),
     empty_message(w, msg).
-valid_v_for(p, cat("Invalid alias '", t, "'.")) :- alias_item(a, _, t), docof(p, g),
-    (guest(g, _, _, "javascript") ; guest(g, _, _, "typescript") ; guest(g, _, _, "tsx")), host_node(p, h),
-    within(h, a), for_alias(p), text(p, t), !plain_alias(p).
+// A parameter is read through its guest document (docof, guest), as the view's kinds are read.
+valid_v_for(p, cat("Invalid alias '", t, "'.")) :- alias_param(_, p, n), (n = 1 ; n = 2), docof(p, g),
+    (guest(g, _, _, "javascript") ; guest(g, _, _, "typescript") ; guest(g, _, _, "tsx")), text(p, t), !plain_alias(p).
 valid_v_for(t, "Custom elements in iteration require 'v-bind:key' directives.") :- checked(_, e), vcustom(e),
     !vhas_dir(e, "bind", "key"), vel_tag(e, t).
 valid_v_for(k, "Expected 'v-bind:key' directive to use the variables which are defined by the 'v-for' directive.") :-
@@ -40,7 +40,8 @@ has_value(a) :- vval(a, v), text(v, t), match("[\\s\\S]*\\S[\\s\\S]*", t).
 .decl alias_text(a: node, s: symbol)
 alias_text(a, s) :- vfor_dir(_, a), vval(a, v), text(v, t), match("\\s*\\((?<s>[\\s\\S]*)\\)\\s+(?:in|of)\\s+\\S[\\s\\S]*", t).
 // empty_alias(a, w): in v-for a, alias w (value, key or index) is a hole; keyed by the directive (decision 0677). A trailing comma ends the list: `(a, b,)` has no index.
-// An item may hold one level of braces or brackets: `({ a, b }, , i)`.
+// An item may hold one level of braces or brackets: `({ a, b }, , i)`; a hole after an item nested two deep
+// (`({ a: { b } }, , i)`) is not seen. (The view's placeholder for a hole carries no mark a clause can read.)
 .decl empty_alias(a: node, w: symbol)
 empty_alias(a, "value") :- alias_text(a, s), match("\\s*,[\\s\\S]*", s).
 empty_alias(a, "key") :- alias_text(a, s), match("(?:[^,{}\\[\\]]|\\{[^{}]*\\}|\\[[^\\[\\]]*\\])*,\\s*,[\\s\\S]*", s).
@@ -50,16 +51,14 @@ empty_alias(a, "index") :- alias_text(a, s),
 empty_message("value", "Name the empty value alias in this v-for, such as `(item, index) in items`.").
 empty_message("key", "Name the empty key alias in this v-for, such as `(value, key) in object`.").
 empty_message("index", "Name the empty index alias in this v-for, such as `(value, key, index) in object`.").
-// alias_item(a, n, t): the alias in slot n (1: the key, 2: the index) of v-for a, as written, trimmed, holes counted:
-// `{k}` is slot 1 of `(v, {k})`, `i` slot 2 of `(v, , i)`. Its view parameter is the one with that text.
-.decl alias_item(a: node, n: number, t: symbol)
-alias_item(a, 1, t) :- alias_text(a, s),
-    match("(?:[^,{}\\[\\]]|\\{[^{}]*\\}|\\[[^\\[\\]]*\\])*,\\s*(?<t>(?:[^,{}\\[\\]]|\\{[^{}]*\\}|\\[[^\\[\\]]*\\])*?)\\s*(?:,[\\s\\S]*)?", s), t != "".
-alias_item(a, 2, t) :- alias_text(a, s),
-    match("(?:[^,{}\\[\\]]|\\{[^{}]*\\}|\\[[^\\[\\]]*\\])*,(?:[^,{}\\[\\]]|\\{[^{}]*\\}|\\[[^\\[\\]]*\\])*,\\s*(?<t>(?:[^,{}\\[\\]]|\\{[^{}]*\\}|\\[[^\\[\\]]*\\])*?)\\s*(?:,[\\s\\S]*)?", s), t != "".
-// for_alias(p): p is a parameter of a v-for's arrow; plain_alias(p): it is a name (ESTree's Identifier).
-.decl for_alias(p: node)
-for_alias(p) :- child(ps, p, _), kind(ps, "formal_parameters"), field(arr, "parameters", ps), for_arrow(arr).
+// alias_param(a, p, n): p is the parameter in slot n (0: the value, 1: the key, 2: the index) of v-for a's arrow in the
+// view, at any depth of destructuring: `{a: {b}}` is slot 1 of `(v, {a: {b}})`. The view writes a placeholder `_`, a
+// name, in each empty slot before the last (`(v, , i)`), so a slot's position is the file's.
+.decl alias_param(a: node, p: node, n: number)
+alias_param(a, p, n) :- vfor_dir(e, a), docof(arr, g),
+    (guest(g, _, _, "javascript") ; guest(g, _, _, "typescript") ; guest(g, _, _, "tsx")), host_node(arr, h),
+    (h = e ; vel_tag(e, h)), for_arrow(arr), field(arr, "parameters", ps), child(ps, p, n), !kind(p, "comment").
+// plain_alias(p): a v-for's parameter is a name (ESTree's Identifier).
 .decl plain_alias(p: node)
 plain_alias(p) :- kind(p, "identifier").
 plain_alias(p) :- kind(p, "required_parameter"), field(p, "pattern", i), kind(i, "identifier"), !field(p, "value", _).
@@ -158,6 +157,16 @@ local(r, k) :- reads(r, x), within(r, f), (field(f, "parameters", ps), within(n,
           </div>
         </template>
         ```
+    .fixture "v4.vue" ```
+        <template>
+          <div>
+            <li v-for="(item, {a: {b}}) in xs" :key="item" />
+            <li v-for="({a: {b}}, [c, [d]], i) in xs" :key="i" />
+            <li v-for="({a: {b}}, i) in xs" :key="i" />
+            <li v-for="(x, k, {j: [m]}) in xs" :key="x" />
+          </div>
+        </template>
+        ```
     .expect "vue/valid-v-for" at "v1.vue":4
     .expect "vue/valid-v-for" at "v1.vue":7
     .expect "vue/valid-v-for" at "v1.vue":9
@@ -173,4 +182,7 @@ local(r, k) :- reads(r, x), within(r, f), (field(f, "parameters", ps), within(n,
     .expect "vue/valid-v-for" at "v2.vue":14
     .expect "vue/valid-v-for" at "v3.vue":7
     .expect "vue/valid-v-for" at "v3.vue":8
+    .expect "vue/valid-v-for" at "v4.vue":3
+    .expect "vue/valid-v-for" at "v4.vue":4
+    .expect "vue/valid-v-for" at "v4.vue":6
 .end

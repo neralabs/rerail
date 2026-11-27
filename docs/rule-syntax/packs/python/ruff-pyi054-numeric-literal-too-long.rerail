@@ -8,7 +8,8 @@
 // annotations included. `-1234567890` is fine: the literal is the 10 digits. Inside a string type definition, the
 // number is found in its parsed tree; Ruff can place it only in a plain string (no escapes, no adjacent
 // pieces). Otherwise every node of the parsed tree has the whole string's range (python/type-string-places), so
-// Ruff measures that: any number in such a string written with more than 10 characters is reported, at the string.
+// Ruff measures the string: a number of any length in such a string is reported, at the string, when the string is
+// written with more than 10 characters.
 //   x: int = 12345678901        ← PYI054
 //   y: Literal[1_000_000_000]   ← PYI054
 //   z: "Literal[1]" ""          ← PYI054 at the string: its range is 15 characters
@@ -18,7 +19,7 @@
     suppress ruff "PYI054"
 PYI054(n, "Replace this long numeric literal with `...` in the stub; the exact value is an implementation detail that stubs should not pin.") :-
     long_number(n), stub_node(n), !unplaced(n).
-PYI054(s, "Write this string annotation as one plain string without escapes, and replace any numeric literal in it longer than ten characters with `...`; stubs should not pin exact values.") :-
+PYI054(s, "A number in this string annotation is measured by the whole string, which is longer than ten characters: write it as one plain string without escapes, or replace the number with `...`; stubs should not pin exact values.") :-
     str_node(s), stub_node(s), !simple_string(s), !unplaced(s), under(s, n), number_lit(n), text(s, t), strlen(t) > 10.
 .decl long_number(n: node)
 long_number(n) :- number_lit(n), text(n, t), strlen(t) > 10.
