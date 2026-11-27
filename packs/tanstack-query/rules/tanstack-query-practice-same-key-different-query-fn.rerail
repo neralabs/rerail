@@ -43,7 +43,7 @@
 //     definitions in different packages of a monorepo (different apps have different QueryClients);
 //   - a prefetch (`fetchQuery`, `prefetchQuery`, `ensureQueryData` and their infinite forms) in a file that calls
 //     TanStack Query's `dehydrate`: a server render filling the cache it hands to the browser, whose fetcher is the
-//     server's way to the data the browser's query fetches (`ssrApi.getDashboard` and `getDashboard`), so the two
+//     server's way to the data the browser's query fetches (`serverApi.getUser` and `getUser`), so the two
 //     have different fetchers by design.
 // Gaps: two wrappers around one endpoint in different files (`getUser` and `api.users.get`) are different
 // fetchers; the same fetcher with a transform outside `select` is the same one; `*` elements are not compared, so

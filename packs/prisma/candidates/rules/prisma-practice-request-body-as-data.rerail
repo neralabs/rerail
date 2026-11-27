@@ -120,7 +120,7 @@ pcg_member_named(s, x) :- kind(p, "required_parameter"), child(p, m, _), kind(m,
 // pcg_prisma_site(s): the binding or member at s is a Prisma client by its type or its value, or is the parameter of
 // a `$transaction` callback.
 .decl pcg_prisma_site(s: node)
-pcg_prisma_site(s) :- pcg_site_type(s, t), match("(?s).*(?:PrismaClient|TransactionClient|PrismaService|PrismaTx).*", t).
+pcg_prisma_site(s) :- pcg_site_type(s, t), match("(?s).*(?:PrismaClient|TransactionClient|PrismaService).*", t).
 pcg_prisma_site(s) :- pcg_site_value(s, v), text(v, t), (contains("PrismaClient", t) ; contains("$extends", t)).
 pcg_prisma_site(s) :- kind(t, "call_expression"), callee(t, m), static_prop(m, _, "$transaction"), call_arg(t, a, 0),
     deparen(a, f), (kind(f, "arrow_function") ; kind(f, "function_expression")),

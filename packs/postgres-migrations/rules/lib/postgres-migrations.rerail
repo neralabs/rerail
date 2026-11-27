@@ -141,8 +141,8 @@ pgm_declared(g, k) :- pgm_schema_of(g, ds), split_line(ds, _, t), match("\\s*pro
 pgm_declared(g, k) :- pgm_mig(_, g, _), pgm_dz_out(p, g), pgm_dz_kind(p, k).
 // pgm_schema_of(g, ds): `.prisma` document ds is the schema of migrations folder `<x>/migrations`: a file directly in
 // `<x>/` (`<x>/schema.prisma`) or under `<x>/schema/` (a multi-file schema). Another schema deeper under `<x>/` has a
-// migrations folder of its own: snagtime's `prisma/postgresql/schema.prisma` declares `prisma/postgresql/migrations`,
-// not the SQLite `prisma/migrations` beside it.
+// migrations folder of its own: `prisma/postgresql/schema.prisma` declares `prisma/postgresql/migrations`, not a
+// SQLite `prisma/migrations` beside it.
 .decl pgm_schema_of(g: symbol, ds: number)
 pgm_schema_of(g, ds) :- pgm_mig(_, g, _), match("(?<b>(?:.*/)?)migrations", g), doc(ds, sp, _), suffix(".prisma", sp),
     prefix(b, sp), r = @slice(sp, strlen(b), strlen(sp)), match("[^/]+\\.prisma|schema/.+\\.prisma", r).

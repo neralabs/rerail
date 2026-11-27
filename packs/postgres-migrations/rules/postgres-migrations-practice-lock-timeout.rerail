@@ -167,8 +167,8 @@ lt_config_sets(p) :- pgm_config(p), file_line(p, _, t),
     match("(?i).*lock_timeout(?:\\s*[=:]\\s*|%3D|\\s+to\\s+|['\"]\\s*,\\s*)['\"]?\\s*(?:0*\\.?0*[1-9]|[a-z_$]).*", t).
 // lt_runner_timeout(d): a migration runner sets the timeout on its connection: a JS/TS source file of the walk
 // (lt_runner_sets) sends a non-zero `SET lock_timeout` and names d's folder, either by a path that resolves to it,
-// wherever the file lies (lt_runner_path: launchstack's `packages/store/scripts/migrate.mjs` runs
-// `apps/web/drizzle`), or by its last segment (lt_runner_names) when it lies inside d's package (every folder above d
+// wherever the file lies (lt_runner_path: `packages/db/scripts/migrate.mjs` running `apps/web/drizzle`), or by its
+// last segment (lt_runner_names) when it lies inside d's package (every folder above d
 // that holds a package.json is above the file too): startup code that runs the root `migrations/` folder from
 // `apps/server/src/…`. Runtime code that sets a timeout for its own transactions names no migrations folder; a runner
 // of another package that names a folder only by its last segment does not run d.
