@@ -588,8 +588,9 @@ type MemberRows<'o> = Vec<std::collections::BTreeMap<String, Vec<crate::code_rul
 /// Each pack member's findings, and its rows.
 type MemberFindings<'o> = (Vec<Vec<serde_json::Value>>, MemberRows<'o>);
 
-/// Each member's findings and rows of each finding relation, by the policy each row names (its first column), every
-/// dialect's, less those the linters' comments drop. `None` when a finding names no member.
+/// Each member's findings, less those the linters' comments drop, and its rows of each finding relation, all of them
+/// as a policy run alone leaves its outputs: by the policy each row names (its first column), every dialect's. `None`
+/// when a finding names no member.
 fn pack_member_rows<'o>(
     group: &PolicyGroup,
     outputs: &'o [crate::code_rule_dsl::logic::plan::output::Outputs],
@@ -604,11 +605,10 @@ fn pack_member_rows<'o>(
         let dropped = suppressions.suppressed(root, &found.iter().map(|(_, row)| *row).collect::<Vec<_>>());
         for ((rel, row), dropped) in found.into_iter().zip(dropped) {
             let Some(at) = row.get(0).text().and_then(|id| group.ids.iter().position(|x| x == id)) else { return Ok(None) };
-            if dropped {
-                continue;
-            }
-            each[at].push(diagnostic(&row)?);
             rows[at].entry(rel.to_owned()).or_default().push(row);
+            if !dropped {
+                each[at].push(diagnostic(&row)?);
+            }
         }
     }
     Ok(Some((each, rows)))

@@ -2,9 +2,6 @@
   "format": "rerail.translation-equivalence/v1",
   "pack": "complexity",
   "equivalent": false,
-  "untranslated": {
-    "complexity-cyclomatic-blade": "failed: examples, fixtures: the translation failed: rerail-engine: docs/rule-syntax/packs/complexity/complexity-cyclomatic-blade.rerail: invalid native table name (exit 1)",
-    "complexity-cyclomatic-java": "no .rerail translation; recorded by the suite, not yet explained"
-  },
+  "untranslated": {},
   "different": {}
 }

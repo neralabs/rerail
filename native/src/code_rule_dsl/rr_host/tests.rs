@@ -186,3 +186,29 @@ fn suppress_lines_drop_the_findings_the_linters_comments_silence() {
     assert_eq!(lines(&together, "nosec.py"), [1, 4], "{together:#}");
     assert_eq!(lines(&alone, "eslint.js"), [1, 5], "{alone:#}");
 }
+
+/// A `suppress` line's `over {c}` is the node whose lines the linter reads its comments on (Bandit's: the node it
+/// visited), not the finding's `at`: a `# nosec` on a later line of the statement holding the call silences the call
+/// only through `over`.
+#[test]
+fn a_suppress_lines_over_node_is_where_its_comment_is_read() {
+    let source = "x = [\n    debug_run(1),\n]  # nosec\ndebug_run(2)\n";
+    let over = ".policy \"rr-host-over\" revision 1\n.language python\n.mode log\n\
+                .violation Found(at: node, s: node) code \"B201\" \"debug_run() is called here\"\n    suppress nosec \"B201\" over {s}\n\
+                Found(c, s) :- kind(c, \"call\"), field(c, \"function\", f), text(f, \"debug_run\"), inside(c, s, \"expression_statement\").\n";
+    let root = folder("rr-host-over", &[("over.py", source)]);
+    let rules = folder(
+        "rr-host-over-rules",
+        &[("at.rerail", &calls_of("rr-host-at", "python", "call", "debug_run", "B201", "nosec \"B201\"")), ("over.rerail", over)],
+    );
+    let at = run_over(&root, &[rules.join("at.rerail")]);
+    let by_over = run_over(&root, &[rules.join("over.rerail")]);
+    let _ = (std::fs::remove_dir_all(&root), std::fs::remove_dir_all(&rules));
+    let lines = |result: &Value| -> Vec<i64> {
+        let mut lines: Vec<i64> = result["findings"].as_array().unwrap().iter().map(|f| f["line"].as_i64().unwrap()).collect();
+        lines.sort_unstable();
+        lines
+    };
+    assert_eq!(lines(&at), [2, 4], "{at:#}");
+    assert_eq!(lines(&by_over), [4], "{by_over:#}");
+}

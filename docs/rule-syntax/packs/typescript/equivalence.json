@@ -2,37 +2,15 @@
   "format": "rerail.translation-equivalence/v1",
   "pack": "typescript",
   "equivalent": false,
-  "untranslated": {
-    "typescript-eslint-triple-slash-reference": "failed: examples, fixtures, rerail-typescript: the translation failed: rerail-engine: docs/rule-syntax/packs/typescript/typescript-eslint-triple-slash-reference.rerail: rule for triple_slash_reference($c, @concat(@concat(\"Remove this triple-slash types reference to \", $m), \"; the file already imports it.\")): the string \"types\" stands where an integer goes (exit 1)"
-  },
+  "untranslated": {},
   "different": {
-    "typescript-eslint-class-literal-property-style": {
+    "typescript-eslint-consistent-indexed-object-style": {
       "reason": "recorded by the suite, not yet explained",
       "right": "unknown",
       "counts": {
         "fixtures": {
           "originalOnly": 0,
           "translationOnly": 1
-        }
-      }
-    },
-    "typescript-eslint-class-methods-use-this": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 0
-        }
-      }
-    },
-    "typescript-eslint-consistent-indexed-object-style": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 5,
-          "translationOnly": 0
         }
       }
     },
@@ -42,21 +20,7 @@
       "counts": {
         "fixtures": {
           "originalOnly": 0,
-          "translationOnly": 3
-        }
-      }
-    },
-    "typescript-eslint-explicit-member-accessibility": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 229
-        },
-        "rerail-typescript": {
-          "originalOnly": 0,
-          "translationOnly": 58
+          "translationOnly": 2
         }
       }
     },
@@ -65,72 +29,22 @@
       "right": "unknown",
       "counts": {
         "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 383
-        }
-      }
-    },
-    "typescript-eslint-max-params": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 1
-        }
-      }
-    },
-    "typescript-eslint-no-confusing-non-null-assertion": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
+          "originalOnly": 1,
           "translationOnly": 0
         }
       }
     },
-    "typescript-eslint-no-magic-numbers": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 184
-        },
-        "rerail-typescript": {
-          "originalOnly": 0,
-          "translationOnly": 2553
-        }
-      }
-    },
-    "typescript-eslint-no-shadow": {
+    "typescript-eslint-no-invalid-void-type": {
       "reason": "recorded by the suite, not yet explained",
       "right": "unknown",
       "counts": {
         "fixtures": {
           "originalOnly": 0,
           "translationOnly": 1
-        }
-      }
-    },
-    "typescript-eslint-no-unnecessary-parameter-property-assignment": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
+        },
+        "rerail-typescript": {
           "originalOnly": 0,
-          "translationOnly": 7
-        }
-      }
-    },
-    "typescript-eslint-no-unused-private-class-members": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 7
+          "translationOnly": 113
         }
       }
     },
@@ -139,26 +53,8 @@
       "right": "unknown",
       "counts": {
         "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 16
-        },
-        "rerail-typescript": {
           "originalOnly": 0,
-          "translationOnly": 320
-        }
-      }
-    },
-    "typescript-eslint-no-use-before-define": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 1
-        },
-        "rerail-typescript": {
-          "originalOnly": 0,
-          "translationOnly": 9
+          "translationOnly": 6
         }
       }
     },
@@ -172,53 +68,13 @@
         }
       }
     },
-    "typescript-eslint-prefer-for-of": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 1
-        }
-      }
-    },
-    "typescript-eslint-prefer-function-type": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        }
-      }
-    },
-    "typescript-eslint-unified-signatures": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 129,
-          "translationOnly": 0
-        }
-      }
-    },
     "vitest-no-disabled-tests": {
       "reason": "recorded by the suite, not yet explained",
       "right": "unknown",
       "counts": {
-        "fixtures": {
+        "rerail-typescript": {
           "originalOnly": 0,
-          "translationOnly": 1
-        }
-      }
-    },
-    "vitest-no-focused-tests": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 1
+          "translationOnly": 5
         }
       }
     }

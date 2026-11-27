@@ -1194,6 +1194,27 @@ fn violations_at_places_and_their_lines_lower() {
     assert_eq!(p.settings, again.settings);
 }
 
+/// A `.violation`'s `suppress` line names a linter of `SUPPRESS_TOOLS` and, with `over {c}`, one of its columns: a
+/// linter of no other name, or a column it does not have, is refused when the policy is read.
+#[test]
+fn violation_suppress_lines_refuse_an_unknown_linter_or_column() {
+    let policy = |suppress: &str| {
+        format!(
+            ".policy \"p\" revision 1\n.decl doc(d: number, path: symbol, module: symbol)\n\
+             .decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl line(n: node, l: number)\n\
+             .input doc, node, line\n.violation V(at: loc, x: symbol) code \"a-b\" \"{{x}}\"\n    suppress {suppress}\n\
+             V(n, \"call\") :- node(_, n, \"call\", _, _).\n"
+        )
+    };
+    let refused = |suppress: &str| parse(&policy(suppress)).err().map(|e| e.to_string()).unwrap_or_default();
+    let e = refused("pylint \"a-b\"");
+    assert!(e.contains(".violation V: suppress pylint: no linter of that name (one of ruff, "), "{e}");
+    let e = refused("eslint \"a-b\" over {missing}");
+    assert!(e.contains(".violation V: no column missing"), "{e}");
+    let p = parse(&policy("eslint \"a-b\" over {x}")).unwrap();
+    assert!(p.settings.contains(&("suppress".to_owned(), "V eslint \"a-b\" over {x}".to_owned())), "{:?}", p.settings);
+}
+
 // ---- tree axes and node sets ----
 
 /// `has(a, n, set)` is the descendant axis, the set tested on n; a set of nodes is read as climbs up the tree
@@ -3430,15 +3451,17 @@ reach(a, c) :- reach(a, b), edge(b, c).
     ]);
 }
 
-/// core.rerail's `tsconfig`, `tsconfig_for` and `tsconfig_path` are the repository's (`facts::repository`, decision
-/// 0046 item 10), so a `.rerail` policy that reads them runs: each folder's `tsconfig.json` (before its
-/// `jsconfig.json`), read with comments and trailing commas, its `extends` chain merged beneath it (`.json` added),
-/// `baseUrl` from the root and `paths` targets as written; a document's nearest configuration governs it.
+/// `tsx/project.rerail`'s `tsconfig`, `tsconfig_for` and `tsconfig_path` are the repository's, read by ECMAScript's
+/// adapter (`import_target::project`, decision 0710), so a `.rerail` policy that reads them runs: each folder's
+/// `tsconfig.json` (before its `jsconfig.json`), read with comments and trailing commas, its `extends` chain merged
+/// beneath it (`.json` added), `baseUrl` from the root and `paths` targets as written; a document's nearest
+/// configuration governs it.
 #[test]
 fn tsconfig_inputs_are_the_repositorys() {
     let policy = r##".policy "t:tsconfig-inputs" revision 1
 .language typescript
 .scope include "**/*"
+#include "tsx/project.rerail"
 
 .violation Governed(at: node) code "governed" "a tsconfig governs this file"
 Governed(n) :- doc(d, p, _), tsconfig_for(p, _), doc_root(d, n).
@@ -3488,12 +3511,13 @@ Governed(n) :- doc(d, p, _), tsconfig_for(p, _), doc_root(d, n).
     assert_eq!(run_tests_of("rr-tsconfig-inputs", policy), [("configurations_are_read".to_owned(), Ok(vec![]))]);
 }
 
-/// A library's own `.input` that core does not make and no fact gives (`tsx/node-resolve.rerail`'s `spec_resolved`,
-/// "until core has it") is bound empty, so a policy whose rules read it runs: every module target fails to resolve,
-/// and a relative one is the path it names.
+/// `tsx/node-resolve.rerail`'s `spec_resolved` is the phase node_resolve's answer (decision 0710: the library's phase,
+/// read at the file's path): a relative target resolves to its file, one that does not resolve fails and is the path
+/// it names, and one the resolver answers with no file (a built-in's fallback, `domain/`) neither fails nor has a file,
+/// as eslint-plugin-n's `filePath`.
 #[test]
-fn an_unmade_library_input_is_bound_empty() {
-    let policy = r##".policy "t:unmade-library-input" revision 1
+fn node_resolves_targets_through_its_phase() {
+    let policy = r##".policy "t:node-resolve-phase" revision 1
 .language typescript
 .scope include "**/*"
 #include "tsx/node-resolve.rerail"
@@ -3501,9 +3525,11 @@ fn an_unmade_library_input_is_bound_empty() {
 .violation Target(at: node) code "target" "a module this file requires"
 Target(n) :- node_target(n, _, "require"), node_target_file(n, _).
 
-.test targets_fail_to_resolve
+.test targets_resolve
     .fixture "src/a.js" ```
         const u = require("./util");
+        const n = require("./nope");
+        const d = require("domain/");
         ```
     .fixture "src/util.js" ```
         module.exports = 1;
@@ -3512,12 +3538,14 @@ Target(n) :- node_target(n, _, "require"), node_target_file(n, _).
     failed(x) :- spec_failed(n), node_target(n, x, _).
     .decl file_of(x: symbol, f: symbol)
     file_of(x, f) :- node_target(n, x, _), node_target_file(n, f).
-    .expect only failed("./util")
-    .expect only file_of("./util", "src/util")
+    .expect only failed("./nope")
+    .expect only file_of("./util", "src/util.js")
+    .expect only file_of("./nope", "src/nope")
     .expect "target" at "src/a.js":1
+    .expect "target" at "src/a.js":2
 .end
 "##;
-    assert_eq!(run_tests_of("rr-unmade-library-input", policy), [("targets_fail_to_resolve".to_owned(), Ok(vec![]))]);
+    assert_eq!(run_tests_of("rr-node-resolve-phase", policy), [("targets_resolve".to_owned(), Ok(vec![]))]);
 }
 
 /// A tool call is a test's input (`.tool_call`, `docs/rule-syntax/tool-calls.md`): the run is given the test's calls,

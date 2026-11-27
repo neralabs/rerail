@@ -1,8 +1,9 @@
 // tsx/node-npm-01: what eslint-plugin-n's import rules read from the files on disk, written over the engine's
-// `file`, `dir_entry` and `file_line` until core gives it natively (node-resolve.rerail's spec_resolved and
-// node-package.rerail's npm_ignored are declared there with no rows): the file a module specifier resolves to, and
-// which files npm publishes. For n/no-missing-import, n/no-missing-require, n/no-unpublished-import,
-// n/no-unpublished-require, n/no-unpublished-bin and n/no-top-level-await.
+// `file`, `dir_entry` and `file_line`: the file a module specifier resolves to, and which files npm publishes. For
+// n/no-missing-import, n/no-missing-require, n/no-unpublished-import, n/no-unpublished-require, n/no-unpublished-bin
+// and n/no-top-level-await. It was written while node-resolve.rerail's `spec_resolved` and node-package.rerail's
+// `npm_ignored` had no rows; they have them now (the phase node_resolve, ECMAScript's npm reader), and these rules
+// still read this library's own resolution, which their checks are of.
 //
 // What a rule gets from this library:
 //   npm01_resolved(n, file)     string n (node_target) resolves to file (from the root), as the plugin's resolver

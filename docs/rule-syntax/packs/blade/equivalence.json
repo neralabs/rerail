@@ -2,11 +2,18 @@
   "format": "rerail.translation-equivalence/v1",
   "pack": "blade",
   "equivalent": false,
-  "untranslated": {
-    "bladestan-identical-always-true": "failed: examples, fixtures, samples-blade: the translation failed: rerail-engine: docs/rule-syntax/packs/blade/bladestan-identical-always-true.rerail: invalid native table name (exit 1)",
-    "bladestan-if-always-true": "failed: examples, fixtures, samples-blade: the translation failed: rerail-engine: docs/rule-syntax/packs/blade/bladestan-if-always-true.rerail: invalid native table name (exit 1)"
-  },
+  "untranslated": {},
   "different": {
+    "bladestan-identical-always-true": {
+      "reason": "An engine defect, not the translation's: in a Blade view's compiled PHP, php/values.rerail's integer value (`kind(n, \"integer\"), value(n, v)`) has rows or none depending on the reading rule's other literals, so `@if (1 === 1)` (bladestan's skeleton foo.blade.php:3) is not found. Plain PHP files have the rows (docs/rule-syntax/packs/PORT-1120.md, Checks).",
+      "right": "original",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 0
+        }
+      }
+    },
     "tlint-space-after-blade-directives": {
       "reason": "Control directives Blade leaves unpaired (`Lead @forelse($arg) Trail`, `@for($args)`, a bare `@while`) are reported by tlint, which matches directives line by line, and by the translation, which reads the template's directives; the original reads compiled structures, and the compiled view compiles no half of one. tlint v9.7.0's SpaceAfterBladeDirectives reports all 10 (and on fixtures and samples-blade reports exactly the translation's keys).",
       "right": "translation",

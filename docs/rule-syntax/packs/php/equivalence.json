@@ -14,30 +14,6 @@
         }
       }
     },
-    "phpstan-if-always-false": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-php": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        }
-      }
-    },
-    "phpstan-missing-function-return-type": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 10
-        },
-        "samples-php": {
-          "originalOnly": 2,
-          "translationOnly": 0
-        }
-      }
-    },
     "phpstan-random-int-parameters": {
       "reason": "recorded by the suite, not yet explained",
       "right": "unknown",
@@ -55,10 +31,6 @@
         "fixtures": {
           "originalOnly": 0,
           "translationOnly": 1
-        },
-        "samples-php": {
-          "originalOnly": 0,
-          "translationOnly": 15
         }
       }
     }
