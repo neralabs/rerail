@@ -359,10 +359,11 @@ fn level_of(k: u8) -> usize {
     }
 }
 
-/// Whether a lane's level of kind `k` (254: any) meets a level of kind `m`.
+/// Whether a lane's level of kind `k` (254: any; 252: any of the kinds below 252, a string reader's interpolations)
+/// meets a level of kind `m`.
 #[inline]
 fn meets(k: u8, m: u8) -> bool {
-    k == 254 || k == m
+    k == 254 || k == m || k == 252 && m < 252
 }
 
 /// One lane of a summary: what a range of chunks does for the entries at `at0` whose innermost `kcn` levels are `kc`
@@ -388,6 +389,9 @@ pub struct Lane {
     pub refused: bool,
     /// Whether it lexes a token: one that lexes none leaves its entry as it was.
     pub moved: bool,
+    /// The values of its entry it leaves as they were, which it never set (`Entry::carry`'s bits): its exit's are not
+    /// read.
+    pub keep: u8,
 }
 
 /// A range's summary: its lanes (an entry past the range's head, its first chunk, at one of its later chunks' places,
@@ -431,7 +435,7 @@ impl Summary {
     }
 }
 
-const NO_LANE: Lane = Lane { at0: 0, kc: [0; MAXD], kcn: 0, exact: false, need: 0, p: [0; MAXD], pn: 0, ph: [0; MAXD], high: 0, recs: 0, exit: Entry::START, refused: false, moved: false };
+const NO_LANE: Lane = Lane { at0: 0, kc: [0; MAXD], kcn: 0, exact: false, need: 0, p: [0; MAXD], pn: 0, ph: [0; MAXD], high: 0, recs: 0, exit: Entry::START, refused: false, moved: false, keep: 0 };
 
 /// The lanes of `b` a lane of the range before it goes on in: those entered where it leaves the next token, else the
 /// code's (a token from before `b` ends in its code).
@@ -462,6 +466,9 @@ fn then(a: &Lane, b: &Lane) -> Option<Lane> {
     }
     let mut l = *b;
     l.at0 = a.at0;
+    // What `b` keeps of its entry is `a`'s exit's, where `a` set it; what both keep, `a`'s entry's.
+    l.keep = a.keep & b.keep;
+    l.exit.carry(&a.exit, b.keep & !a.keep);
     if bn > pn {
         // `b` closes past what `a` left open: below `a`'s entry, where `a` read none (`exact`) there is none.
         // (No entry has more than `MAXD` levels open: the serial lexer refuses past them.)
@@ -570,10 +577,10 @@ pub fn apply(s: &Summary, e: &Entry, recs: usize) -> Option<(Entry, usize, bool)
     if s.transparent() || e.at >= s.end {
         return Some((*e, recs, false));
     }
-    let d = e.depth;
+    let (en, eh, d) = e.levels();
     let l = next_lanes(s, e.at).find(|l| {
         let kn = usize::from(l.kcn);
-        kn + usize::from(l.need) <= d && (0..kn).all(|i| meets(l.kc[i], kind_of(e.nest[d - 1 - i]))) && (!l.exact || d == kn)
+        kn + usize::from(l.need) <= d && (0..kn).all(|i| meets(l.kc[i], kind_of(en[d - 1 - i]))) && (!l.exact || d == kn)
     })?;
     if !l.moved {
         return Some((*e, recs, false));
@@ -584,27 +591,28 @@ pub fn apply(s: &Summary, e: &Entry, recs: usize) -> Option<(Entry, usize, bool)
         return Some((Entry::START, recs + l.recs, true));
     }
     let mut x = l.exit;
-    let strings = (0..rest).filter(|&i| e.nest[i] != usize::MAX).count();
-    x.nest = [usize::MAX; MAXD];
-    x.nest[..rest].copy_from_slice(&e.nest[..rest]);
-    x.held = [0; MAXD];
-    x.held[..strings].copy_from_slice(&e.held[..strings]);
-    x.opened = strings;
+    let strings = (0..rest).filter(|&i| en[i] != usize::MAX).count();
+    let mut nest = [usize::MAX; MAXD];
+    nest[..rest].copy_from_slice(&en[..rest]);
+    let mut held = [0; MAXD];
+    held[..strings].copy_from_slice(&eh[..strings]);
+    let mut opened = strings;
     for i in 0..usize::from(l.pn) {
-        x.nest[rest + i] = level_of(l.p[i]);
+        nest[rest + i] = level_of(l.p[i]);
         if l.p[i] != 255 {
-            x.held[x.opened] = if l.ph[i] >= INHERIT {
+            held[opened] = if l.ph[i] >= INHERIT {
                 // The string of the entry's level the lane closed `q`th: its record, the entry's.
                 let lv = d - 1 - (l.ph[i] - INHERIT);
-                e.held[(0..lv).filter(|&i| e.nest[i] != usize::MAX).count()]
+                eh[(0..lv).filter(|&i| en[i] != usize::MAX).count()]
             } else {
                 recs + l.ph[i]
             };
-            x.opened += 1;
+            opened += 1;
         }
     }
-    x.depth = rest + usize::from(l.pn);
-    x.template = if x.depth == 0 { usize::MAX } else { x.nest[x.depth - 1] };
+    x.set_levels(&nest, &held, opened, rest + usize::from(l.pn));
+    // What the lane keeps of its entry (`keep`): the entry's.
+    x.carry(e, l.keep);
     Some((x, recs + l.recs, l.refused))
 }
 
@@ -686,6 +694,34 @@ pub struct Entry {
 impl Entry {
     /// The file's first byte: in code, nothing open.
     pub const START: Entry = Entry { @INITS@};
+}
+
+// @NEST{
+impl Entry {
+    /// The nest: each level's value (`usize::MAX` a bracket, else its string's kind), the records of its strings in
+    /// order, and its depth.
+    #[inline]
+    fn levels(&self) -> ([usize; MAXD], [usize; MAXD], usize) {
+        (self.nest, self.held, self.depth)
+    }
+
+    /// `self` with the nest `nest[..depth]`, its strings' records `held[..opened]`.
+    #[inline]
+    fn set_levels(&mut self, nest: &[usize; MAXD], held: &[usize; MAXD], opened: usize, depth: usize) {
+        self.nest = *nest;
+        self.held = *held;
+        self.opened = opened;
+        self.depth = depth;
+        self.template = if depth == 0 { usize::MAX } else { nest[depth - 1] };
+    }
+
+    /// The values a lane keeps of its entry (`Lane::keep`), `from`'s: the loop keeps none apart from its nest.
+    #[inline]
+    fn carry(&mut self, _from: &Entry, _keep: u8) {}
+
+    /// What a lane assumes of its entry where its nest is given (`lanes_from`): nothing more.
+    #[inline]
+    fn lane_entry(&mut self, _src: &[u8]) {}
 
     /// The levels above the nest's depth and the strings past those open as at the start: no read reaches them before
     /// a write, so two entries the loop goes on from alike are equal.
@@ -720,6 +756,41 @@ pub struct Reads {
     pub kind_of: Option<usize>,
     pub low: usize,
     pub high: usize,
+    /// The values of the entry the run set (`Lane::keep`'s complement).
+    pub set: u8,
+}
+
+impl Reads {
+    /// A run whose reads are not asked (pass 2, the serial runs).
+    const NONE: Reads = Reads { bottom: false, kind_of: None, low: 0, high: 0, set: 0 };
+
+    /// A lane's, entered with the levels `k[..kd]` (`lanes_from`).
+    #[inline]
+    fn lane(_k: &[u8; MAXD], kd: usize) -> Reads {
+        Reads { low: kd, high: kd, ..Reads::NONE }
+    }
+
+    /// At the run's start, from its entry: nothing.
+    #[inline]
+    fn enter(&mut self, _e: &Entry) {}
+}
+
+/// The kinds a level of kind `k` a lane read the kind of is, one lane each: a level of no kind yet (254), any of them.
+#[inline]
+fn split_kinds(_k: u8) -> &'static [u8] {
+    &LEVEL_KINDS
+}
+
+/// Whether a level of kind `below` can be under one of kind `above`: any can.
+#[inline]
+fn may_hold(_below: u8, _above: u8) -> bool {
+    true
+}
+
+/// The nest a lane's run leaves (`levels`'), its reads aside.
+#[inline]
+fn exit_levels(e: &Entry, _r: &Reads) -> ([usize; MAXD], [usize; MAXD], usize) {
+    e.levels()
 }
 
 /// A read of `opened` (the strings open): none, the bottom (the lane's entry may have more); with a level of no kind
@@ -748,6 +819,7 @@ fn at_bottom(r: &mut Reads, depth: usize, template: usize) -> bool {
     }
     true
 }
+// }NEST@
 
 /// A first token the loop reads as given, not by its bytes: a region a chunk starts inside, read as its row reads it
 /// from a start `s` its closer's search starts past at the chunk's first byte, at level `lv` where it nests.
@@ -770,6 +842,7 @@ unsafe fn lex_range<const WRITE: bool, const ONE: bool>(src: &[u8], e: &mut Entr
     let nw = n.div_ceil(64);
     let mut refused = *refused_io;
     let mut len = *len_io;
+    reads.enter(e);
     let Entry { @MUTS@} = *e;
 @LOCALS@    let mut close: usize;
     let mut b = at / 64;
@@ -848,25 +921,26 @@ fn lanes_from(src: &[u8], s1: &mut Stage1, st1: &mut Stage1Run, starts: &[Entry]
         let e0 = starts[si];
         let at0 = e0.at;
         let mut e = e0;
-        e.nest = Entry::START.nest;
-        e.held = Entry::START.held;
-        e.opened = 0;
+        let (mut nest, mut held, mut opened) = ([usize::MAX; MAXD], [0usize; MAXD], 0usize);
         for d in 0..kd {
-            e.nest[d] = level_of(k[d]);
+            nest[d] = level_of(k[d]);
             if k[d] != 255 {
-                e.held[e.opened] = INHERIT + (kd - 1 - d);
-                e.opened += 1;
+                held[opened] = INHERIT + (kd - 1 - d);
+                opened += 1;
             }
         }
-        e.depth = kd;
-        e.template = if kd == 0 { usize::MAX } else { level_of(k[kd - 1]) };
-        let mut reads = Reads { bottom: false, kind_of: None, low: kd, high: kd };
+        e.set_levels(&nest, &held, opened, kd);
+        e.lane_entry(src);
+        let mut reads = Reads::lane(&k, kd);
         let (mut refused, mut len) = (false, 0usize);
         // SAFETY: no record written (`WRITE` false).
         unsafe { lex_range::<false, false>(src, &mut e, st1, s1, to, &mut refused, core::ptr::null_mut(), &mut len, &mut extras, &mut reads, None) };
         // It read the kind of a level it entered with none: one lane for each kind, not this one.
         if let Some(d) = reads.kind_of {
-            for &kind in &LEVEL_KINDS {
+            for &kind in split_kinds(k[d]) {
+                if d + 1 < kd && !may_hold(kind, k[d + 1]) || d > 0 && !may_hold(k[d - 1], kind) {
+                    continue;
+                }
                 let mut k2 = k;
                 k2[d] = kind;
                 todo.push((si, k2, kd));
@@ -882,14 +956,15 @@ fn lanes_from(src: &[u8], s1: &mut Stage1, st1: &mut Stage1Run, starts: &[Entry]
         }
         l.exact = reads.bottom;
         l.need = low as u8;
-        l.pn = (e.depth - low) as u8;
+        let (xn, xh, xd) = exit_levels(&e, &reads);
+        l.pn = (xd - low) as u8;
         // The templates' strings below `low` are the entry's; those above, the lane's, at the records it counted.
-        let below = (0..low).filter(|&d| e.nest[d] != usize::MAX).count();
+        let below = (0..low).filter(|&d| xn[d] != usize::MAX).count();
         let mut h = below;
-        for j in 0..e.depth - low {
-            l.p[j] = kind_of(e.nest[low + j]);
-            if e.nest[low + j] != usize::MAX {
-                l.ph[j] = e.held[h];
+        for j in 0..xd - low {
+            l.p[j] = kind_of(xn[low + j]);
+            if xn[low + j] != usize::MAX {
+                l.ph[j] = xh[h];
                 h += 1;
             }
         }
@@ -898,6 +973,7 @@ fn lanes_from(src: &[u8], s1: &mut Stage1, st1: &mut Stage1Run, starts: &[Entry]
         l.exit = e.without_nest();
         l.refused = refused;
         l.moved = e.at != at0 || refused;
+        l.keep = !reads.set;
         sum.push(l);
         // It read the bottom: one more lane, with a level more open below, of no kind until one is read.
         if reads.bottom && kd < MAXD {
@@ -931,7 +1007,7 @@ fn chunk_ends(src: &[u8], s1: &mut Stage1, from: usize, to: usize) -> Summary {
             let mut x = Entry::START;
             x.at = r;
             let (mut refused, mut len) = (false, 0usize);
-            let mut reads = Reads { bottom: false, kind_of: None, low: 0, high: 0 };
+            let mut reads = Reads::NONE;
             let mut extras = Vec::new();
             let mut st0 = stage1_at(src, s1, r / 64);
             while x.at < start && !refused {
@@ -942,7 +1018,7 @@ fn chunk_ends(src: &[u8], s1: &mut Stage1, from: usize, to: usize) -> Summary {
                     refused = true;
                 }
             }
-            if !refused && !reads.bottom && x.depth == 0 && x.at > start && x.at <= (64 * to).min(n) {
+            if !refused && !reads.bottom && x.levels().2 == 0 && x.at > start && x.at <= (64 * to).min(n) {
                 crossed = Some(x.without_nest());
             }
         }
@@ -967,7 +1043,7 @@ fn chunk_ends(src: &[u8], s1: &mut Stage1, from: usize, to: usize) -> Summary {
         // SAFETY: `p` is a byte of the file.
         while p < end && unsafe { w_m_ws(src, src.len(), p as isize, &mut 0) } & 1 == 0 {
             let (mut refused, mut len) = (false, 0usize);
-            let mut reads = Reads { bottom: false, kind_of: None, low: 0, high: 0 };
+            let mut reads = Reads::NONE;
             let mut extras = Vec::new();
             let mut first = Entry::START;
             first.at = p;
@@ -993,7 +1069,7 @@ fn chunk_ends(src: &[u8], s1: &mut Stage1, from: usize, to: usize) -> Summary {
         let mut e = Entry::START;
         e.at = s;
         let (mut refused, mut len) = (false, 0usize);
-        let mut reads = Reads { bottom: false, kind_of: None, low: 0, high: 0 };
+        let mut reads = Reads::NONE;
         let mut extras = Vec::new();
         // SAFETY: no record written (`WRITE` false).
         unsafe { lex_range::<false, true>(src, &mut e, &mut st1, s1, usize::MAX, &mut refused, core::ptr::null_mut(), &mut len, &mut extras, &mut reads, Some(Force { s, open, row, lv })) };
@@ -1027,7 +1103,7 @@ pub fn serial_entries(src: &[u8], blocks: usize) -> Vec<(Entry, usize)> {
         .into_iter()
         .map(|q| {
             let at = (e, len);
-            let mut reads = Reads { bottom: false, kind_of: None, low: 0, high: 0 };
+            let mut reads = Reads::NONE;
             // SAFETY: no record written (`WRITE` false).
             unsafe { lex_range::<false, false>(src, &mut e, &mut st1, &mut s1, q + blocks.max(1), &mut refused, core::ptr::null_mut(), &mut len, &mut extras, &mut reads, None) };
             out.push(());
@@ -1056,7 +1132,7 @@ pub fn lex_chunked(src: &[u8], blocks: usize) -> (Lexed, usize) {
         }
         let mut st1 = stage1_at(src, &mut s1, q);
         let mut len = recs.len();
-        let mut reads = Reads { bottom: false, kind_of: None, low: 0, high: 0 };
+        let mut reads = Reads::NONE;
         // SAFETY: room for a record a byte of the file (`n + 1`), each after the last.
         unsafe { lex_range::<true, false>(src, &mut e, &mut st1, &mut s1, q + blocks, &mut refused, recs.as_mut_ptr(), &mut len, &mut extras, &mut reads, None) };
         // SAFETY: `len` records written.
@@ -1181,6 +1257,18 @@ impl Entry {{
     fn at(at: usize) -> Entry {{
         Entry {{ at, ..Entry::START }}
     }}
+
+    /// The nest (`Entry::levels` as the core reads it): none.
+    #[inline]
+    fn levels(&self) -> ([usize; MAXD], [usize; MAXD], usize) {{
+        ([usize::MAX; MAXD], [0; MAXD], 0)
+    }}
+
+    #[inline]
+    fn set_levels(&mut self, _nest: &[usize; MAXD], _held: &[usize; MAXD], _opened: usize, _depth: usize) {{}}
+
+    #[inline]
+    fn carry(&mut self, _from: &Entry, _keep: u8) {{}}
 }}
 
 /// A chunk's places (`chunk_ends`): code, then one inside each region.
