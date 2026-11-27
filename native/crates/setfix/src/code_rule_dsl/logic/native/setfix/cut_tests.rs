@@ -630,19 +630,24 @@ fn a_closures_seed_is_cut_at_its_budget_and_goes_on_from_its_rows_left() {
 /// works keeps its time. Measured on the clock itself, one thread, in ticks.
 #[test]
 fn a_step_clocks_switches_are_no_steps_time() {
-    let cost = measure_switch_ticks();
-    assert!(cost > 0.0 && cost.is_finite(), "{cost}");
-    let fresh = || StepClock { ticks: rerail_blocks::vector![0; 4], switches: rerail_blocks::vector![0; 4], at: 3, last: ticks(), t0: 0, cpu0: 0.0, acc: crate::code_rule_dsl::logic::profile::accounted_ticks(), acc0: (0, 0.0), cost };
-    // Empty steps 0 and 1, entered in turn: their charge is the switches'.
-    let mut c = fresh();
-    for k in 0..200_000usize {
-        c.to(k & 1);
-    }
-    let raw = (c.ticks[0] + c.ticks[1]) as f64;
-    let own = c.own(0) + c.own(1);
+    let fresh = |cost: f64| StepClock { ticks: rerail_blocks::vector![0; 4], switches: rerail_blocks::vector![0; 4], at: 3, last: ticks(), t0: 0, cpu0: 0.0, acc: crate::code_rule_dsl::logic::profile::accounted_ticks(), acc0: (0, 0.0), cost };
+    // Empty steps 0 and 1, entered in turn: their charge is the switches'. They are made by the code the cost is
+    // measured on (`switch_between_empty`): a loop here costs what this module's code costs, and that time is between
+    // the switches, the steps' own. Ticks are the wall's: each round measures the cost just before its switches, and
+    // the round that kept least of its ticks is compared (a round the thread moved or was slowed in keeps more, never
+    // less).
+    let (raw, own, cost) = (0..8)
+        .map(|_| {
+            let cost = measure_switch_ticks();
+            assert!(cost > 0.0 && cost.is_finite(), "{cost}");
+            let mut c = fresh(cost);
+            switch_between_empty(&mut c, 25_000);
+            ((c.ticks[0] + c.ticks[1]) as f64, c.own(0) + c.own(1), cost)
+        })
+        .fold((1.0, f64::INFINITY, 0.0), |best, round| if round.1 / round.0 < best.1 / best.0 { round } else { best });
     assert!(raw > 0.0 && own <= 0.2 * raw, "empty steps: {own} of {raw} ticks kept (a switch {cost} ticks)");
     // Step 2 works between its switches: its time is kept.
-    let mut c = fresh();
+    let mut c = fresh(measure_switch_ticks());
     let mut x = 1u64;
     for _ in 0..2_000 {
         c.to(2);

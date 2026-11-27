@@ -109,6 +109,8 @@ pub const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/facts_base/src/code_rule_dsl/facts/rows.rs", "TOP", Carried, ""),
     ("crates/boot/src/code_rule_dsl/boot.rs", "COUNTERS", Thread, "jemalloc's counters of this thread's allocations"),
     ("crates/setfix/src/code_rule_dsl/logic/native/setfix.rs", "IN_MORSELS", Thread, "the walks this thread ran in morsels, read by tests"),
+    ("crates/setfix/src/code_rule_dsl/logic/native/setfix.rs", "WALK_ENTRY", Call, "the entry of the walk a caller starts on this thread (`RERAIL_PROF`): set by the caller, taken as the walk starts"),
+    ("crates/setfix/src/code_rule_dsl/logic/native/setfix.rs", "WALK_SEED", Call, "whether the walk a caller starts on this thread is a seed's (`RERAIL_PROF`): set by the caller, taken as the walk starts"),
     ("crates/setfix/src/code_rule_dsl/logic/native/setfix.rs", "VARIANTS", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("crates/setfix/src/code_rule_dsl/logic/native/setfix/closure.rs", "SEMI_NAIVE_HERE", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("crates/setfix/src/code_rule_dsl/logic/native/setfix/runs.rs", "INLINE", Call, "a lazy order's build under way on this thread (`runs::inline`): its sorts stay on the thread, never handed to the pool"),

@@ -211,6 +211,8 @@ const STATE: &[(&str, &str)] = &[
     // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
     ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
     ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
+    // The entry of the walk a caller starts (`RERAIL_PROF`): a switch the caller sets and the walk takes.
+    ("code_rule_dsl/logic/native/setfix.rs", "WALK_ENTRY"),
     // A test process's own tape cache path (`corpus::test_tape_cache`): where the store is, not a result kept.
     ("code_rule_dsl/logic/plan/corpus/base.rs", "PATH"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),

@@ -11907,3 +11907,24 @@ Tests:
 - tests-corpus `phases::` 18/18.
 - tests-lang: every test passes, its cost and census tests ignored as before. The run passed the cap at two threads with 189 ok, and the watchdog tests ran after it at one thread.
 - Not run: the device crate's other tests (Metal) and `all` (no farm).
+
+### Q576. Roll-up 148 (django-bugs ee5a13edbd onto Pulling-it-all-together): what the merge chose
+
+django-bugs' one new commit, b405c863a2: under `RERAIL_PROF`, the join walker's callers, calls and steps by plan and by shape, which `logic` prints at its end (`walk_report`). Its head, ee5a13edbd, also merges final-rerail-shape 140b9a97c9, which the hub took in roll-up 142.
+
+- **django's own resolution of 140b9a97c9 is not taken.** The hub resolved django's 0706 and final-rerail-shape's lookups in roll-ups 141 and 142, under the user's decision A (one batched own-row read, the calling loop's batching). django's merge resolved the same two lines again, its own way. So the ten files its merge conflicted on are the hub's. That includes three hunks that merged without a conflict: a 27-field reads table, `ViewDoc` at 272 bytes, and a whitespace change in `syntax.rs`. Everything else is b405's.
+- **b405's plan map is the run's, not a static.** `WALK_PLANS`, a process-wide `static Mutex<BTreeMap>`, would be a map in no list of decision 0104. It is now `WalkPlans`, the run's own value (`run::local`, decision 0442), as the profile's counts and access.rs's `Walked` are.
+- The walk's entry and seed mark (`WALK_ENTRY`, `WALK_SEED`) are switches a caller sets and the walk takes. They are listed in `run_state::STATE` (Call), and `WALK_ENTRY` in facts_only's `STATE`.
+- Three of b405's setfix hunks are placed on the hub's code by hand: the entry is taken in `run_join_in_each_unframed` (the hub frames the walk for `RERAIL_JOIN_FRAMES`), and both `Ctx`s take `tally`.
+
+Fixed on the way (red since roll-up 139):
+- **The step clock's test makes its switches with the code the cost is measured on.** `a_step_clocks_switches_are_no_steps_time` drove its empty steps with a loop of its own and compared what they kept with `measure_switch_ticks`' cost. Under Relax the test module's code is slower than the crate's: the same loop cost 6.2 ticks a switch there against 2.5 in setfix.rs, alone and at any load. That time falls between switches, so it is rightly the steps', and the test failed on it. `switch_between_empty` is now the one loop: the cost is measured on it, and the test makes its switches with it. Each round also measures the cost just before its switches, and the test compares the round that kept least. Three runs at four threads beside setfix's other tests: green.
+
+Checked with Relax: logic, setfix, planner, boot and tests-corpus build in their test runs (a `check -p rerail-boot` alone did not finish in 580 s).
+
+Tests:
+- logic 311/311 at two threads, with facts_only's `every_kept_map_is_state_or_listed`.
+- setfix 145/145, three runs.
+- planner 6/6, and boot `tools` without the split tests 10/10.
+- tests-corpus `a_text_the_walk_holds_is_joined_whatever_steps_batch` under `RERAIL_PROF=1`, so the walk's tallies run: 1/1.
+- Not run: the device crate's Metal tests and `all` (no farm).
