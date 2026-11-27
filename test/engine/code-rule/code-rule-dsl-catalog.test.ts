@@ -545,7 +545,7 @@ describe("checkout code-rule catalog of a checkout replaced at its path while it
     const ruleIds = (): string[] => catalog.snapshot().codeRules.map(({ id }) => id);
     expect(ruleIds()).toEqual(["test:replaced"]);
     removeFolderSync(replaced);
-    return { databasePath, replaced, replacedKey, other, otherKey, catalogs, catalog, ruleIds };
+    return { base, databasePath, replaced, replacedKey, other, otherKey, catalogs, catalog, ruleIds };
   }
 
   for (const [name, layout] of Object.entries(layouts)) {
@@ -564,13 +564,17 @@ describe("checkout code-rule catalog of a checkout replaced at its path while it
   }
 
   it("runs no rule in a checkout replaced by a clone Rerail has not recorded, the row at its path being the removed clone's", () => {
-    const { replaced, catalogs, catalog, ruleIds } = replacedAndOther(layouts["a main checkout"]!);
+    const { base, replaced, other, catalogs, catalog, ruleIds } = replacedAndOther(layouts["a main checkout"]!);
     try {
       cloneAt(replaced);
 
       expect(catalog.refresh()).toBe(true);
       expect(ruleIds()).toEqual([]);
       expect(catalogs.eligibility(replaced)).toBe("unrecorded");
+      // Read again beside a worktree of a started clone that the same read records, as a session knowing both reads them.
+      const added = join(base, "added");
+      gitIn(other, "worktree", "add", "-q", "-b", "added", added);
+      expect(catalogs.refreshAll([replaced, added])).toEqual(new Map([[replaced, "unrecorded"], [added, "ok"]]));
     } finally {
       catalogs.close();
     }

@@ -814,16 +814,16 @@ export class CheckoutCatalogs {
     return entry.checkout === undefined ? [] : [entry.checkout.checkoutPath, ...entry.parents];
   }
 
-  /** Re-read `root`'s record, start state and set-up, and whether its folder is still the clone recorded; returns its eligibility. */
+  /** Re-read `root`'s record, start state and set-up; returns its eligibility. */
   refresh(root: string): CheckoutEligibility {
     const entry = this.#entry(root, false);
-    this.#read([entry], true);
+    this.#read([entry], false);
     return entry.eligibility;
   }
 
   /**
    * `refresh` of every one of `roots`, the recorded ones read in one statement: what a session that knows every worktree
-   * of its repository asks at every event. Returns each root's eligibility. A folder is asked again only where its row
+   * of its repository asks at every event. Returns each root's eligibility. A folder is asked about only where its row
    * changed since the last read; whether it is still the clone recorded is read when its rules are (`#signature`).
    */
   refreshAll(roots: Iterable<string>): Map<string, CheckoutEligibility> {
