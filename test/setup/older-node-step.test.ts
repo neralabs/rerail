@@ -43,7 +43,10 @@ describe("the hook's step on a Node older than Rerail runs on", () => {
   it("names the launcher's command with node from PATH while the node set-up recorded is still there", async () => {
     const { home, node } = await homeRecording(["system", "bin", NODE]);
     const cli = join(home, "current", "dist", "cli", "cli.js");
-    expect(olderNodeStep(home)).toBe(`Put Node 24 or newer first on PATH, then run node ${cli} install --refresh: the rerail command runs ${node} while that file is there, whatever PATH holds.`);
+    // The path as a shell takes it: bare, or single-quoted where it holds a sign, as a temp folder such as
+    // C:\Users\RUNNER~1\AppData\Local\Temp does.
+    const steps = [cli, `'${cli}'`].map(word => `Put Node 24 or newer first on PATH, then run node ${word} install --refresh: the rerail command runs ${node} while that file is there, whatever PATH holds.`);
+    expect(steps).toContain(olderNodeStep(home));
   });
 
   it("names rerail install --refresh once the node set-up recorded is gone, since the launcher then runs node from PATH", async () => {
