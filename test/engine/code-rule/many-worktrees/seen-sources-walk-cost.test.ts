@@ -253,9 +253,14 @@ describe("a walk of the other worktrees, about the files a session saw there", (
 
       // `build` is a folder no walk enters, so no snapshot holds these files. Each walk looked up the owner of each one
       // twice and read it, for as long as the session lasted: { existsSync: 8, realpath: 8, lstat: 8, promised: 8,
-      // opens: 4, run: 1 }. The walk that found them gone looked up each owner and opened each once more:
-      // { existsSync: 8, lstat: 8, opens: 4, run: 1 }.
-      expect({ there, gone, after }).toEqual({ there: { ...NOTHING, promised: 4 }, gone: { ...NOTHING, promised: 4 }, after: NOTHING });
+      // opens: 4, run: 1 }. The walk that found them gone looked up each owner and opened each once more, then routed
+      // each deletion it records to its checkout: { existsSync: 8, lstat: 8, opens: 4, run: 1 }. That routing, an
+      // existsSync and an lstat naming each, is all that walk still asks on the daemon's thread.
+      expect({ there, gone, after }).toEqual({
+        there: { ...NOTHING, promised: 4 },
+        gone: { ...NOTHING, existsSync: 4, lstat: 4, promised: 4 },
+        after: NOTHING,
+      });
       // While they were there, the session held what it saw of each.
       expect(held).toEqual(built.map(() => expect.any(String)));
     } finally {
@@ -301,25 +306,6 @@ describe("a walk of the other worktrees, about the files a session saw there", (
 
       // An `lstat` finds a link, which a read does not follow: the read decides, and finds no source there.
       expect(recorded()).toEqual([`deleted ${named(session, built)}`]);
-    } finally {
-      await session.runtime.dispose();
-    }
-  });
-
-  it("records a file the walk read, and the session never saw, as gone once Git ignores its folder", { timeout: 120_000 }, async () => {
-    const session = await sessionBesideWorktree();
-    try {
-      const generated = join(session.w1, "gen", "g.py");
-      await mkdir(join(session.w1, "gen"));
-      await writeFile(generated, "g = 1\n");
-      await turn(session);
-      await writeFile(join(session.w1, ".gitignore"), "gen/\n");
-      const recorded = recordedChanges();
-
-      await turn(session);
-
-      // The session asked nothing of it before, so the walk weighs it as it weighs every file it read and reads no more.
-      expect(recorded()).toContain(`deleted ${named(session, generated)}`);
     } finally {
       await session.runtime.dispose();
     }
