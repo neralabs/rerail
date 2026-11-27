@@ -1387,6 +1387,8 @@ interface SourceWalk {
    * this up to date.
    */
   readonly withdrawn: Set<string>;
+  /** Waited on after each batch of looks (`WorktreeScan.pause`): only a walk of the other worktrees has one. */
+  readonly pause?: (() => Promise<void> | undefined) | undefined;
 }
 /** What a walk of `SourceDiscovery` compares its scan with, all read before it started. */
 interface WalkStart {
@@ -3776,6 +3778,7 @@ export class CodeRuleBridge {
       // Its findings serve every session watching the worktree, so only the records of them all spare a refusal its look.
       held: request.held,
       withdrawn: request.withdrawn,
+      pause: request.pause,
     });
     return abandoned() ? undefined : { ...scan, seen };
   }
@@ -4917,6 +4920,7 @@ export class CodeRuleBridge {
     while (!discovery.cancelled && stack.length > 0) {
       const wave = stack.splice(-OBSERVATION_CONCURRENCY);
       await Promise.all(wave.map(absolute => this.#observePath(walk, absolute)));
+      await walk.pause?.();
     }
   }
 

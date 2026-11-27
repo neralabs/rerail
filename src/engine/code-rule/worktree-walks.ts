@@ -198,6 +198,11 @@ export interface WorktreeScan {
    * reads the same whichever sessions take part.
    */
   readonly skip: ReadonlySet<string>;
+  /**
+   * Waited on after each batch of looks: while a hook or an agent waits for an answer (`AwaitedAnswers`), a promise that
+   * settles once none does, so the answer's reads are not queued behind the read's; undefined, the read goes on.
+   */
+  readonly pause?: () => Promise<void> | undefined;
 }
 
 /** A read of one worktree: what it found, and what it walked into and left out, which notices are weighed against. */
@@ -674,12 +679,14 @@ export class WorktreeWalks {
   #reads: Promise<void> = Promise.resolve();
   readonly #onWatching: ((watching: boolean) => void) | undefined;
   readonly #sessionWatch: (() => TreeWatch | undefined) | undefined;
+  readonly #answers: AwaitedAnswers | undefined;
 
   /**
    * `notices`: none by default, so every worktree is read on every walk; `RepositoryWorktreeWalks` gives each walk the
    * engine's. `looks`: what each walk looks at in a watched worktree (`WorktreeLooks`). `onWatching`: told `true` as a
    * first session starts watching, and `false` as the last stops. `sessionWatch`: a watch of a session folder through
-   * the engine watch the notices come from, none by default (`sessionWatch()`).
+   * the engine watch the notices come from, none by default (`sessionWatch()`). `answers`: the answers awaited now,
+   * which each read of a worktree lets go first (`WorktreeScan.pause`); none by default, so a read never pauses.
    */
   constructor(options: {
     gapMs?: number;
@@ -688,6 +695,7 @@ export class WorktreeWalks {
     looks?: WorktreeLooks;
     onWatching?: (watching: boolean) => void;
     sessionWatch?: () => TreeWatch | undefined;
+    answers?: AwaitedAnswers;
   } = {}) {
     this.#gapMs = options.gapMs ?? WORKTREE_WALK_GAP_MS;
     this.#fullWalkMs = options.fullWalkMs ?? WORKTREE_FULL_WALK_MS;
@@ -695,6 +703,7 @@ export class WorktreeWalks {
     this.#looks = options.looks ?? new WorktreeLooks();
     this.#onWatching = options.onWatching;
     this.#sessionWatch = options.sessionWatch;
+    this.#answers = options.answers;
   }
 
   /** A watch of a session folder through the engine watch these walks take their notices from; undefined without one. */
@@ -1253,6 +1262,7 @@ export class WorktreeWalks {
       startedAt: Math.min(...watchers.map(walk => walk.startedAt)),
       observedAt: read.observedAt,
       skip: begun.skip,
+      pause: () => this.#answers?.none(),
     };
     for (const walk of watchers) {
       const scan = await walk.scan(request);
@@ -1317,6 +1327,41 @@ export class WorktreeWalks {
 }
 
 /**
+ * The answers a hook or an agent waits for now, across every repository the daemon serves. The walk of the other
+ * worktrees, which no answer waits for, asks the disk nothing more while one is awaited (`WorktreeScan.pause`): its
+ * batches of looks would fill the thread pool and the event loop the answer's own reads wait in. It goes on once the
+ * last awaited answer settles, as a fact and not a time decides.
+ */
+export class AwaitedAnswers {
+  #awaited = 0;
+  #none: PromiseWithResolvers<void> | undefined;
+
+  /** Runs `answer`, which a hook or an agent waits for, as awaited until it settles. */
+  async during<T>(answer: () => Promise<T>): Promise<T> {
+    this.#awaited += 1;
+    try {
+      return await answer();
+    } finally {
+      this.#awaited -= 1;
+      if (this.#awaited === 0) this.#release();
+    }
+  }
+
+  /** Resolves once no answer is awaited; undefined while none is, so a walk goes on in the same turn. */
+  none(): Promise<void> | undefined {
+    if (this.#awaited === 0) return undefined;
+    this.#none ??= Promise.withResolvers<void>();
+    return this.#none.promise;
+  }
+
+  #release(): void {
+    const none = this.#none;
+    this.#none = undefined;
+    none?.resolve();
+  }
+}
+
+/**
  * One `WorktreeWalks` per repository, for the sessions of an engine service's runtimes or of one runtime. Sessions of
  * one repository share its walk; sessions of two repositories never share one, so a slow walk of one repository's
  * worktrees never holds back what another repository's sessions record. Every walk takes its notices from one engine
@@ -1335,10 +1380,13 @@ export class RepositoryWorktreeWalks {
    * a folder the catalog does not know is a repository of its own.
    */
   readonly #walks = new Map<string, WorktreeWalks>();
+  /** The answers hooks and agents wait for now, which every repository's walk lets go first. */
+  readonly answers: AwaitedAnswers;
 
-  constructor(options: { gapMs?: number; fullWalkMs?: number; treeWatch?: TreeWatch | undefined } = {}) {
-    const { treeWatch, ...walks } = options;
+  constructor(options: { gapMs?: number; fullWalkMs?: number; treeWatch?: TreeWatch | undefined; answers?: AwaitedAnswers } = {}) {
+    const { treeWatch, answers, ...walks } = options;
     this.#options = walks;
+    this.answers = answers ?? new AwaitedAnswers();
     this.#treeWatch = treeWatch === undefined ? undefined : new SharedTreeWatch(treeWatch);
     this.places = new FolderPlaces({ watch: this.#treeWatch?.user({ flagsOnly: true }) });
   }
@@ -1352,6 +1400,7 @@ export class RepositoryWorktreeWalks {
       notices: new WorktreeNotices({ treeWatch: this.#treeWatch?.user() }),
       // A session folder's watch is one more user of the engine watch the walks share (`SessionNotices`).
       sessionWatch: () => this.#treeWatch?.user(),
+      answers: this.answers,
       // A session handed this walk before it was dropped brings it back while no other took its place.
       onWatching: watching => {
         if (!watching && this.#walks.get(repository) === walks) this.#walks.delete(repository);
