@@ -7172,8 +7172,10 @@ impl Gen<'_> {
                 if tk != kind {
                     continue;
                 }
+                let ever = if *least == 1 && matches!(test, TokenTest::Count) { run_terms(v, rule, kind, x.assumed, &self.defs) } else { None };
                 let v = self.row_val(v, rule)?;
                 let holds = match test {
+                    TokenTest::Count if let Some(m) = ever => format!("ever_in(&{v}, s, l, {m:#b})"),
                     TokenTest::Count => format!("count_in(&{v}, s, l) >= {least}"),
                     TokenTest::Run => format!("l + 1 - s >= {least} && first_clear(&{v}, s, s + {least}).is_none()"),
                     TokenTest::All => format!("l + 1 - s >= {least} && first_clear(&{v}, s, l + 1).is_none()"),
@@ -7333,8 +7335,10 @@ impl Gen<'_> {
                 if tk != kind {
                     continue;
                 }
+                let ever = if *least == 1 && matches!(test, TokenTest::Count) { run_terms(expr, rule, kind, x.assumed, &self.defs) } else { None };
                 let v = self.row_val(expr, rule)?;
                 let holds = match test {
+                    TokenTest::Count if let Some(m) = ever => format!("ever_in(&{v}, s, l, {m:#b})"),
                     TokenTest::Count => format!("count_in(&{v}, s, l) >= {least}"),
                     TokenTest::Run => format!("l + 1 - s >= {least} && first_clear(&{v}, s, s + {least}).is_none()"),
                     TokenTest::All => format!("l + 1 - s >= {least} && first_clear(&{v}, s, l + 1).is_none()"),
@@ -9059,6 +9063,34 @@ pub fn reads_mask(e: &Expr, name: &str, defs: &HashMap<String, Expr>) -> bool {
     has(&e, &format!("{name}'"))
 }
 
+/// Where a token's rule is a run (`fill`'s terms, `|`ed) and `test` a union of its terms, both as its kind's assumptions
+/// read them (`in KIND`): the terms', a bit each in the order the run reads them (`Bytes::forward_run`). A test of
+/// one byte of `test` over the token is then whether the run read one of them, as the lean lexer knows it read a
+/// number's fraction (`ever_in`).
+fn run_terms(test: &Expr, rule: &Option<TokenRule>, kind: &str, assumed: &[(Option<String>, String, Expr, bool)], defs: &HashMap<String, Expr>) -> Option<u32> {
+    let Some(TokenRule::Run(r)) = rule else { return None };
+    let these: Vec<(&str, &Expr)> = assumed.iter().filter(|a| a.0.as_deref() == Some(kind)).map(|a| (a.1.as_str(), &a.2)).collect();
+    if these.is_empty() {
+        return None;
+    }
+    fn ors(e: &Expr, out: &mut Vec<Expr>) {
+        match e {
+            Expr::Or(a, b) => {
+                ors(a, out);
+                ors(b, out);
+            }
+            e => out.push(e.clone()),
+        }
+    }
+    let (mut terms, mut asked) = (Vec::new(), Vec::new());
+    ors(&substitute(r, &these, defs), &mut terms);
+    ors(&substitute(test, &these, defs), &mut asked);
+    if terms.len() < 2 || terms.len() > 32 {
+        return None;
+    }
+    asked.iter().try_fold(0u32, |m, a| terms.iter().position(|t| t == a).map(|k| m | 1 << k))
+}
+
 /// `e` with `assumed`'s masks read as their expressions (decision 0607's `in KIND`): each mask whose
 /// expression reads one of them, by `defs`, written out to where it does; the others kept by name.
 pub fn substitute(e: &Expr, assumed: &[(&str, &Expr)], defs: &HashMap<String, Expr>) -> Expr {
@@ -9541,6 +9573,13 @@ fn last_in(x: &[u64], a: usize, b: usize) -> Option<usize> {
         q -= 1;
         w = x.get(q).copied().unwrap_or(0);
     }
+}
+
+/// Whether `x` holds at a byte of `a..=b`, a union of terms `_terms` of the run over them (`run_terms`).
+#[inline(always)]
+#[allow(dead_code)]
+fn ever_in(x: &[u64], a: usize, b: usize, _terms: u32) -> bool {
+    count_in(x, a, b) >= 1
 }
 
 /// `x`'s bits in bytes `a..=b`, a word at a time.

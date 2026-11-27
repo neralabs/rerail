@@ -404,6 +404,39 @@ them.
    An `|`'s branches that differ in a term's bit alone are one test of their bits. The row's start is checked as the
    rows' choice is: the run's end against the rule over the file, in a test build (`assert_eq!(run_last(&R, s), l)`).
 
+45. **A digit after an exponent's sign starts no number, as the lean lexer's `exponent` reads it**: the grammar's
+   `num_start` held at the `5` of `1e+5`, so the run's term 0 had to exclude a `0x` or `0b` starting there (`1e+0x`),
+   which lean's `number` has no counterpart for. A digit after a sign after an `e` of code in no word now starts none
+   (`~prev(sign & prev(w & e_letter & ~word_span))`). `word_span` is a word's bytes from its first letter, read over the
+   bytes alone (stage 1's): a region's bytes at its start and end touch no word of code. The loop's `word_run` would
+   not do, as a fill the loop keeps is no mask of stage 1 outside the regions (`in_region`), and every mask read of it
+   would leave stage 1. `x1e+5` is `x1e + 5`, as in lean. Lean refuses `1e+5.5`, `1.5e+5.5`, `1e+5e5` and `1e-0x1`, and
+   the grammar now does too. It also refuses `1e+5e+5`, which lean reads as a number, `e` and `+5`. That is safe: the
+   file falls back (`tests::an_exponents_digits_start_no_number`).
+   - The two decimal kinds assume their bytes are in no word (`in integer_literal word_span = empty`, and the same for
+     `real_literal`), as they assume them code. A test build checks it.
+   - A kind's assumptions hold at each byte of its token, so where a run's term is read from the terms at the byte
+     before, they hold wherever the facts place a term of the run (`Facts::tok`): the term's own byte, and a `prev(T)`
+     of a term `T` it states (`e_sign`'s `prev(e_at)`). There a mask the kind assumes is decided as its assumption
+     (`decide_at`). So after the exponent's sign the `e` two bytes back is in no word, and no number starts: term 0
+     in the loop is `decd(q) && last0`, as lean's `digits`. The fill a run keeps of `fill(num_start, ~w)` starts at
+     no byte after the first and is cleared at a sign or a `.`. The `last >> 5` restart is gone.
+   - A fill's note is made where it is read (`fill_note`), with its row's kind: a read is kept only with its note.
+     Before, the note was made after every row was read, and one whose test was then not of the bytes was dropped
+     while its read stayed (`end_fills`, never set).
+   - A count of one byte over a run's token, of a union of the run's terms as the kind's assumptions read both
+     (`run_terms`), is the run's note: it is set where one of those terms holds at a byte the run reads
+     (`ever_in(&V, s, l, TERMS)`, `seen |= …` where `now & TERMS != 0`). So a decimal number's `real` is whether the
+     run read a fraction, an exponent or an `f`, as lean's `number` knows it, and not a count of a mask over the
+     token's bytes. A test build checks it against the count.
+   - The shipped answers are blessed again (`RERAIL_BLESS_ANSWERS=1`): a cold compile of the new masks does not fit the
+     default budget (decision 0646).
+
+   What this costs: the masks read from the bytes that read `num_start` carry the `word_span` fill. These are the
+   tests over a token's bytes of the escapes that read it (a `0x` or `0b` with no digit, at the integer and real rows;
+   at a hex or binary row's first byte with `num_start` written out, as before) and their windows. The generated
+   tier 1 has 42 KB more product code (646 KB against 604 KB) and 7 KB more checks.
+
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
-`nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`
+`nl`) and `real` (its real literal's kind, the run's note since step 45). The lookahead of `as_split` and `is_split`
 stays a function a state (`next_*`).

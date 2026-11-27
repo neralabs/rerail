@@ -53,7 +53,7 @@ pub(super) struct Bytes<'a> {
     /// which it notes as it reads them (`end_seen`, `seen_tests`); the last run's number, and the classes its jumps pass.
     fwd_seen: Vec<(String, Vec<Expr>)>,
     /// Each run's fills kept as it reads (`run_fill`): `X`, `E` and the fill's value at the run's first byte.
-    fwd_fills: Vec<Vec<(Expr, Expr, String)>>,
+    fwd_fills: Vec<Vec<(String, String, String)>>,
     /// Each run's terms (`forward_run`'s), by its marker's number.
     fwd_terms: Vec<Vec<Expr>>,
     fwd_id: Option<usize>,
@@ -96,20 +96,24 @@ pub(super) struct Bytes<'a> {
     row: Option<String>,
     /// Each row's start as its run reads it (`RowArm::start_read`): what holds at its token's first byte.
     pub(super) row_start: HashMap<String, Expr>,
+    /// Each kind's assumptions of its token's bytes (`assume … in KIND m = x`), by kind: what a byte of the token is.
+    kind_assumed: HashMap<String, Vec<(String, Expr)>>,
     /// The row whose arm the loop's rewrite is in (`rewrite`), by a row's comment.
     run_row: Option<String>,
 }
 
 /// The calls of the loop that read a mask: their name, and how many of their first arguments are masks.
-const READS: [(&str, usize); 12] =
-    [("run_fill", 2), ("run_once_last", 2), ("run_once_hit", 2), ("first_clear", 1), ("first_bit", 1), ("count_in", 1), ("first_in", 1), ("run_last", 1), ("any_in", 1), ("bit", 1), ("put", 1), ("last_in", 1)];
+const READS: [(&str, usize); 13] =
+    [("ever_in", 1), ("run_fill", 2), ("run_once_last", 2), ("run_once_hit", 2), ("first_clear", 1), ("first_bit", 1), ("count_in", 1), ("first_in", 1), ("run_last", 1), ("any_in", 1), ("bit", 1), ("put", 1), ("last_in", 1)];
 
 impl<'a> Bytes<'a> {
     pub(super) fn new(stmts: &'a [Stmt], locals: HashMap<String, Expr>, class_code: HashMap<String, String>) -> Self {
         let mut classes = HashMap::new();
         let mut defs = HashMap::new();
+        let mut kind_assumed: HashMap<String, Vec<(String, Expr)>> = HashMap::new();
         for s in stmts {
             match s {
+                Stmt::Assume { scope: Some(k), name, expr, .. } => kind_assumed.entry(k.clone()).or_default().push((name.clone(), expr.clone())),
                 Stmt::Class(n, rs) => {
                     classes.insert(n.as_str(), rs.as_slice());
                     defs.remove(n);
@@ -121,7 +125,7 @@ impl<'a> Bytes<'a> {
                 _ => {}
             }
         }
-        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default(), scalar: Default::default(), row_firsts: HashMap::new(), row: None, row_start: HashMap::new(), run_row: None, partial: false, failed: Default::default(), wmemo: HashMap::new(), amemo: Default::default(), code_fn: false, tag: "", fwd: None, fwd_stops: Vec::new(), found: None, found_close: None, fwd_used: false, fwd_seen: Vec::new(), fwd_fills: Vec::new(), fwd_terms: Vec::new(), fwd_id: None, fwd_jumps: Vec::new() }
+        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default(), scalar: Default::default(), row_firsts: HashMap::new(), row: None, row_start: HashMap::new(), kind_assumed, run_row: None, partial: false, failed: Default::default(), wmemo: HashMap::new(), amemo: Default::default(), code_fn: false, tag: "", fwd: None, fwd_stops: Vec::new(), found: None, found_close: None, fwd_used: false, fwd_seen: Vec::new(), fwd_fills: Vec::new(), fwd_terms: Vec::new(), fwd_id: None, fwd_jumps: Vec::new() }
     }
 
     /// `code` with each read of the masks it has (`locals`) in the windows' form, no block's words (decision 0703): a
@@ -523,16 +527,23 @@ impl<'a> Bytes<'a> {
     }
 
     /// `e` at a byte where term `t` held at the byte before: each test of it decided where `t` tells it.
-    fn given(&self, e: &Expr, t: &Expr, _terms: &[Expr], _depth: usize) -> Expr {
-        let facts = self.term_facts(t);
+    fn given(&self, e: &Expr, t: &Expr, terms: &[Expr], _depth: usize) -> Expr {
+        let facts = self.term_facts(t, terms);
         self.given_at(&self.norm(e, 0), &facts, 1)
     }
 
     /// What holds where term `t` holds (`facts_of`), and the bytes it may hold at there.
-    fn term_facts(&self, t: &Expr) -> Facts {
+    fn term_facts(&self, t: &Expr, terms: &[Expr]) -> Facts {
         let mut f = Facts::default();
         let t = self.norm(t, 0);
         self.facts_of(&t, 0, &mut f, 0);
+        // The token's bytes: the term's, and each where it states a term of the run held (`e_sign`'s `prev(e_at)`).
+        f.tok.push(0);
+        for (d, e, held) in &f.at {
+            if *held && !f.tok.contains(d) && terms.contains(e) {
+                f.tok.push(*d);
+            }
+        }
         let own = self.own_bytes(&t, 0);
         f.bytes.push((0, own));
         // A fill's byte before: its start's, or a byte of the fill.
@@ -599,6 +610,16 @@ impl<'a> Bytes<'a> {
     fn decide_at(&self, y: &Expr, facts: &Facts, d: i64, depth: usize) -> Option<bool> {
         if depth > 48 {
             return None;
+        }
+        if matches!(y, Expr::Empty) {
+            return Some(false);
+        }
+        // At a byte of the token, a mask its kind assumes there (`in KIND m = x`) is its `x`.
+        if facts.tok.contains(&d)
+            && let Some(kind) = &self.run_row
+            && let Some((_, x)) = self.kind_assumed.get(kind).into_iter().flatten().find(|(m, _)| self.norm(&Expr::Name(m.clone()), 0) == *y)
+        {
+            return self.decide_at(&self.norm(x, 0), facts, d, depth + 1);
         }
         if let Some(&(_, _, held)) = facts.at.iter().find(|(fd, fe, _)| *fd == d && fe == y) {
             return Some(held);
@@ -1688,9 +1709,14 @@ impl<'a> Bytes<'a> {
                 let eb = self.byte_set(&e, 0);
                 // A jump passes bytes of a class: `E` at none of them, and `X` at none after one of them.
                 let jumps_ok = self.fwd_jumps.iter().all(|c| eb.is_some_and(|eb| (0..256).all(|b| !(c[b] && eb[b]))) && self.none_after(&x, c));
-                if jumps_ok && self.at(&x, "q", 0).is_ok() && self.at(&e, "q", 0).is_ok() && self.fwd_fills[id].len() < 32 {
+                // The note's tests made here, with the row's kind (`run_row`) its assumptions are read by: a read is kept
+                // only with a note.
+                if jumps_ok
+                    && self.fwd_fills[id].len() < 32
+                    && let Some((xt, et)) = self.fill_note(id, &x, &e)
+                {
                     let k = self.fwd_fills[id].len();
-                    self.fwd_fills[id].push((x, e, args[2].clone()));
+                    self.fwd_fills[id].push((xt, et, args[2].clone()));
                     return Ok(Some(format!("(end_fills >> {k} & 1 == 1)")));
                 }
             }
@@ -1734,6 +1760,31 @@ impl<'a> Bytes<'a> {
             if k < 32 && self.at(&self.fwd_seen[id].1[k], "q", 0).is_ok() {
                 return Ok(Some(format!("(end_seen >> {k} & 1 == 1)")));
             }
+        }
+        // A union of a run's terms over its token (`ever_in(&V, s, l, TERMS)`, `run_terms`): where the run was read
+        // forward, noted as it reads each byte (`end_seen`) of the terms at it, as the lean lexer knows it read a
+        // number's fraction; else a count of `V`'s bits.
+        if name == "ever_in" && args.len() == 4 {
+            if !line.contains("assert")
+                && args[1].trim() == "s"
+                && args[2].trim() == "l"
+                && let Some(id) = self.fwd_id
+                && let Some(bits) = args[3].trim().strip_prefix("0b").and_then(|b| u32::from_str_radix(b, 2).ok())
+            {
+                let e = Expr::Name(format!("\u{0}terms{bits}"));
+                let k = match self.fwd_seen[id].1.iter().position(|x| *x == e) {
+                    Some(k) => k,
+                    None => {
+                        self.fwd_seen[id].1.push(e);
+                        self.fwd_seen[id].1.len() - 1
+                    }
+                };
+                if k < 32 {
+                    let v = args[0].trim();
+                    return Ok(Some(format!("{{ let x = end_seen >> {k} & 1 == 1; #[cfg(feature = \"test-hooks\")] assert_eq!(x, count_in({v}, s, l) >= 1, \"a union of the run's terms over its bytes, at byte {{s}}\"); x }}")));
+                }
+            }
+            return Ok(Some(format!("({} >= 1)", self.rewrite_line(&format!("count_in({}, {}, {})", args[0].trim(), args[1].trim(), args[2].trim()), line)?)));
         }
         // The test build's checks read the walk's masks, which stay the walk's.
         if !self.locals.contains_key(&m) {
@@ -2010,6 +2061,13 @@ impl<'a> Bytes<'a> {
                 }
             }
             for (k, e) in es.iter().enumerate().filter(|(k, _)| *k < 32) {
+                // The run's terms at the byte (`ever_in`), its first too.
+                if let Expr::Name(t) = e
+                    && let Some(bits) = t.strip_prefix("\u{0}terms")
+                {
+                    let _ = write!(notes, "            if now & {:#b} != 0 {{\n                seen |= 1 << {k};\n            }}\n", bits.parse::<u32>().unwrap_or(0));
+                    continue;
+                }
                 let test = match self.byte_set(e, 0) {
                     Some(b) => class_test_in("q", &b, &run),
                     None => match self.at(e, "q", 0) {
@@ -2020,16 +2078,7 @@ impl<'a> Bytes<'a> {
                 let _ = write!(notes, "            if q > {s0} && {test} {{\n                seen |= 1 << {k};\n            }}\n");
             }
             let mut pre = String::new();
-            for (k, (x, e, init)) in self.fwd_fills[id].iter().enumerate().filter(|(k, _)| *k < 32) {
-                let xt = match self.in_run_test(x, &self.fwd_terms[id]) {
-                    Some(t) => Ok(t),
-                    None => self.at(x, "q", 0),
-                };
-                let et = match self.byte_set(e, 0) {
-                    Some(b) => Ok(class_test_in("q", &b, &run)),
-                    None => self.at(e, "q", 0),
-                };
-                let (Ok(xt), Ok(et)) = (xt, et) else { continue };
+            for (k, (xt, et, init)) in self.fwd_fills[id].iter().enumerate().filter(|(k, _)| *k < 32) {
                 match init.trim() {
                     "false" => {}
                     "true" => {
@@ -2039,11 +2088,37 @@ impl<'a> Bytes<'a> {
                         let _ = write!(pre, "        if {init} {{\n            fills |= 1 << {k};\n        }}\n");
                     }
                 }
-                let _ = write!(notes, "            if q > {s0} {{\n                if {xt} {{\n                    fills |= 1 << {k};\n                }} else if {et} {{\n                    fills &= !(1 << {k});\n                }}\n            }}\n");
+                // No start in the run: its stop alone.
+                if xt == "false" {
+                    let _ = write!(notes, "            if q > {s0} && {et} {{\n                fills &= !(1 << {k});\n            }}\n");
+                } else {
+                    let _ = write!(notes, "            if q > {s0} {{\n                if {xt} {{\n                    fills |= 1 << {k};\n                }} else if {et} {{\n                    fills &= !(1 << {k});\n                }}\n            }}\n");
+                }
             }
             t = t.replace(&marker, &notes).replace(&format!("{SEEN}pre{id}\u{0}\n"), &pre);
         }
         t
+    }
+
+    /// A fill's note in run `id` (`run_fill`): its start `x` as the terms at the byte before tell it (`in_run_test`),
+    /// else at `q`; its stop `e` a class of the run's bytes, else at `q`.
+    fn fill_note(&self, id: usize, x: &Expr, e: &Expr) -> Option<(String, String)> {
+        let mut run = [false; 256];
+        for t in &self.fwd_terms[id] {
+            let o = self.own_bytes(t, 0);
+            for c in 0..256 {
+                run[c] |= o[c];
+            }
+        }
+        let xt = match self.in_run_test(x, &self.fwd_terms[id]) {
+            Some(t) => t,
+            None => self.at(x, "q", 0).ok()?,
+        };
+        let et = match self.byte_set(e, 0) {
+            Some(b) => class_test_in("q", &b, &run),
+            None => self.at(e, "q", 0).ok()?,
+        };
+        Some((xt, et))
     }
 
     pub(super) fn block_decls(&self) -> String {
@@ -3656,4 +3731,6 @@ struct OneByte {
 struct Facts {
     at: Vec<(i64, Expr, bool)>,
     bytes: Vec<(i64, [bool; 256])>,
+    /// The offsets where a term of the run holds: its token's bytes, where its kind's assumptions hold.
+    tok: Vec<i64>,
 }
