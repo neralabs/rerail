@@ -5,7 +5,7 @@
 //! every tiling and order.
 
 use super::*;
-use crate::op::{Registry, Status, Tiling};
+use crate::op::{Status, Tiling};
 use rerail_blocks::bistate::{ColumnIndex, Read, States, check};
 use rerail_blocks::layer::{ColType, RunsW};
 use rerail_blocks::region::pin_block;
@@ -21,14 +21,13 @@ fn shape() -> Shape {
 }
 
 /// A trace that keeps a layer a run (`RollUp::Never`): its tests read every state it was at, each a head kept.
-fn setup() -> (Registry, TraceOps, Directory, Trace) {
+fn setup() -> (crate::op::Runner, Directory, Trace) {
     setup_of(&shape())
 }
 
-fn setup_of(s: &Shape) -> (Registry, TraceOps, Directory, Trace) {
-    let mut reg = Registry::default();
-    let ops = TraceOps::declare(&mut reg).unwrap();
-    (reg, ops, Directory::default(), Trace::new(s).unwrap().with_roll_up(RollUp::Never))
+fn setup_of(s: &Shape) -> (crate::op::Runner, Directory, Trace) {
+    let reg = crate::op::Runner::new().unwrap();
+    (reg, Directory::default(), Trace::new(s).unwrap().with_roll_up(RollUp::Never))
 }
 
 fn rng(seed: u64) -> impl FnMut() -> u64 {
@@ -135,7 +134,7 @@ fn a_random_trace_reads_as_its_set() {
 }
 
 fn random_trace(s: &Shape, seed: u64, rounds: usize) {
-    let (reg, ops, mut dir, mut t) = setup_of(s);
+    let (reg, mut dir, mut t) = setup_of(s);
     let mut r = rng(seed);
     let mut sets: Vec<Rows> = vec![Rows::new()];
     let mut heads: Vec<Option<BlockId>> = vec![None];
@@ -146,7 +145,7 @@ fn random_trace(s: &Shape, seed: u64, rounds: usize) {
         let (pairs, next) = random_run_with_history(&mut r, &set, &gone_before);
         gone_before.extend(set.difference(&next).cloned());
         let id = runs(&mut dir, &t, &pairs);
-        let h = t.commit(&reg, &ops, &mut dir, id, tilings[step % tilings.len()]).unwrap_or_else(|e| panic!("seed {seed}, step {step}: {e}"));
+        let h = t.commit(&reg, &mut dir, id, tilings[step % tilings.len()]).unwrap_or_else(|e| panic!("seed {seed}, step {step}: {e}"));
         sets.push(next);
         heads.push(Some(h));
     }
@@ -221,14 +220,14 @@ fn random_trace(s: &Shape, seed: u64, rounds: usize) {
 /// identity; an inverse swaps gone and added.
 #[test]
 fn changes_compose_and_invert() {
-    let (reg, ops, mut dir, mut t) = setup();
+    let (reg, mut dir, mut t) = setup();
     let mut r = rng(5);
     let mut set = Rows::new();
     let mut heads = vec![None];
     for _ in 0..3 {
         let (pairs, next) = random_run(&mut r, &set);
         let id = runs(&mut dir, &t, &pairs);
-        heads.push(Some(t.commit(&reg, &ops, &mut dir, id, Tiling::WHOLE).unwrap()));
+        heads.push(Some(t.commit(&reg, &mut dir, id, Tiling::WHOLE).unwrap()));
         set = next;
     }
     let l = t.read(&dir, &[t.head()]).unwrap();
@@ -255,15 +254,15 @@ fn changes_compose_and_invert() {
 /// runs over it, and reads the same rows after.
 #[test]
 fn the_committed_state_is_readable_while_the_next_is_written() {
-    let (reg, ops, mut dir, mut t) = setup();
+    let (reg, mut dir, mut t) = setup();
     let mut r = rng(11);
     let (pairs, set) = random_run(&mut r, &Rows::new());
     let id = runs(&mut dir, &t, &pairs);
-    let h1 = t.commit(&reg, &ops, &mut dir, id, Tiling::WHOLE).unwrap();
+    let h1 = t.commit(&reg, &mut dir, id, Tiling::WHOLE).unwrap();
     let reader = t.read(&dir, &[Some(h1)]).unwrap();
     let (pairs, next) = random_run(&mut r, &set);
     let id = runs(&mut dir, &t, &pairs);
-    let h2 = t.commit(&reg, &ops, &mut dir, id, Tiling { tile: 3, seed: 1 }).expect("a commit beside a reader of the state below");
+    let h2 = t.commit(&reg, &mut dir, id, Tiling { tile: 3, seed: 1 }).expect("a commit beside a reader of the state below");
     let table = reader.table();
     assert_eq!(rows_of(&t.state(&table, Some(h1)).unwrap()), set, "the reader's state is as it was");
     drop(reader);
@@ -275,16 +274,16 @@ fn the_committed_state_is_readable_while_the_next_is_written() {
 /// added that is, a row's diffs past ±1; a run that outgrew its runs block is refused with the size to rerun at.
 #[test]
 fn consolidate_refuses_what_is_not_a_set_change() {
-    let (reg, ops, mut dir, mut t) = setup();
+    let (reg, mut dir, mut t) = setup();
     let id = runs(&mut dir, &t, &[(vec![1, 2, 3], 1), (vec![1, 2, 4], 1)]);
-    let h = t.commit(&reg, &ops, &mut dir, id, Tiling::WHOLE).unwrap();
+    let h = t.commit(&reg, &mut dir, id, Tiling::WHOLE).unwrap();
     for (pairs, why) in [
         (vec![(vec![1, 2, 5], -1)], "a row gone is not live"),
         (vec![(vec![1, 2, 3], 1)], "a row added is already live"),
         (vec![(vec![1, 2, 6], 1), (vec![1, 2, 6], 1)], "diffs sum past ±1"),
     ] {
         let id = runs(&mut dir, &t, &pairs);
-        let e = t.commit(&reg, &ops, &mut dir, id, Tiling::WHOLE).unwrap_err();
+        let e = t.commit(&reg, &mut dir, id, Tiling::WHOLE).unwrap_err();
         assert!(e.contains(why), "{e}");
         assert_eq!(t.head(), Some(h), "the head stays");
     }
@@ -297,7 +296,7 @@ fn consolidate_refuses_what_is_not_a_set_change() {
         assert!(w.push(&[1, 1, 2], 1).is_none(), "past its room a push is counted, not written");
         assert!(w.push(&[1, 1, 3], 1).is_none());
     }
-    let e = t.commit(&reg, &ops, &mut dir, id, Tiling::WHOLE).unwrap_err();
+    let e = t.commit(&reg, &mut dir, id, Tiling::WHOLE).unwrap_err();
     assert!(e.contains("rerun at 3"), "{e}");
     let l = t.read(&dir, &[t.head()]).unwrap();
     assert_eq!(rows_of(&t.state(&l.table(), t.head()).unwrap()), [vec![1, 2, 3], vec![1, 2, 4]].into_iter().collect());
@@ -308,19 +307,19 @@ fn consolidate_refuses_what_is_not_a_set_change() {
 /// holds it.
 #[test]
 fn a_roll_up_merges_layers_and_lets_the_merged_generations_go() {
-    let (reg, ops, mut dir, mut t) = setup();
+    let (reg, mut dir, mut t) = setup();
     let mut r = rng(77);
     let mut set = Rows::new();
     let mut heads = Vec::new();
     for _ in 0..4 {
         let (pairs, next) = random_run(&mut r, &set);
         let id = runs(&mut dir, &t, &pairs);
-        heads.push(t.commit(&reg, &ops, &mut dir, id, Tiling::WHOLE).unwrap());
+        heads.push(t.commit(&reg, &mut dir, id, Tiling::WHOLE).unwrap());
         set = next;
     }
     assert!(heads.iter().all(|&h| dir.alive(h)), "each generation lives: the head refers to the one below, and so on");
     let reader = t.read(&dir, &[Some(heads[3])]).unwrap();
-    let m = t.roll_up(&reg, &ops, &mut dir, 3, Tiling { tile: 2, seed: 8 }).unwrap();
+    let m = t.roll_up(&reg, &mut dir, 3, Tiling { tile: 2, seed: 8 }).unwrap();
     assert_eq!(dir.refs(m), vec![heads[0]], "the merged layer refers to the layer below the merged ones");
     assert!(dir.alive(heads[0]));
     assert!(dir.alive(heads[3]) && dir.alive(heads[1]), "a reader holds the merged generations");
@@ -335,7 +334,7 @@ fn a_roll_up_merges_layers_and_lets_the_merged_generations_go() {
     assert!(layer.n() <= set.len() + rows_of(&t.state(&table, Some(heads[0])).unwrap()).len(), "adds and their kills cancelled");
     check(&t.change(&table, Some(heads[0]), Some(m)).unwrap());
     drop(l);
-    let m2 = t.roll_up(&reg, &ops, &mut dir, 2, Tiling::WHOLE).unwrap();
+    let m2 = t.roll_up(&reg, &mut dir, 2, Tiling::WHOLE).unwrap();
     assert!(!dir.alive(heads[0]) && !dir.alive(m), "a referenced generation lives until its referrer is rolled up");
     let l = t.read(&dir, &[Some(m2)]).unwrap();
     assert_eq!(rows_of(&t.state(&l.table(), Some(m2)).unwrap()), set);
@@ -345,13 +344,12 @@ fn a_roll_up_merges_layers_and_lets_the_merged_generations_go() {
 /// check a version is registered by.
 #[test]
 fn consolidate_writes_the_same_layer_at_every_tiling() {
-    let mut reg = Registry::default();
-    let ops = TraceOps::declare(&mut reg).unwrap();
+    let mut reg = crate::op::Runner::new().unwrap();
     let mut r = rng(3);
     let (pairs, _) = random_run(&mut r, &Rows::new());
     let s = shape();
-    let tiled = Version { status: Status::Default, ..Version::twin(ops.consolidate, "consolidate, tiled", rerail_delta_twins::trace::CONSOLIDATE, &PIPELINE) };
-    let checked = reg.check(&tiled, &consolidate_case(&s, &pairs), &[Tiling::WHOLE, Tiling { tile: 1, seed: 2 }, Tiling { tile: 4, seed: 6 }]).unwrap();
+    let tiled = Version { status: Status::Default, ..Version::twin(reg.op(&CONSOLIDATE).unwrap(), "consolidate, tiled", rerail_delta_twins::trace::CONSOLIDATE, &PIPELINE) };
+    let checked = reg.registry().check(&tiled, &consolidate_case(&s, &pairs), &[Tiling::WHOLE, Tiling { tile: 1, seed: 2 }, Tiling { tile: 4, seed: 6 }]).unwrap();
     reg.register(tiled, checked).unwrap();
 }
 
@@ -405,8 +403,7 @@ fn every_index_kind_answers_its_probes() {
         IndexSpec::Hash(vec![2]),
         IndexSpec::Bloom(vec![1, 2]),
     ];
-    let mut reg = Registry::default();
-    let ops = TraceOps::declare(&mut reg).unwrap();
+    let reg = crate::op::Runner::new().unwrap();
     let mut dir = Directory::default();
     // A layer a run: probes across five layers, then three of them rolled up by hand.
     let mut t = Trace::new(&s).unwrap().with_roll_up(RollUp::Never);
@@ -424,7 +421,7 @@ fn every_index_kind_answers_its_probes() {
         }
         let next: Rows = if step == 0 { next.into_iter().chain((0..200).map(|k| vec![1, 7, k])).collect() } else { next };
         let id = runs(&mut dir, &t, &pairs);
-        t.commit(&reg, &ops, &mut dir, id, tilings[step % 3]).unwrap();
+        t.commit(&reg, &mut dir, id, tilings[step % 3]).unwrap();
         set = next;
     }
     let check_probes = |dir: &Directory, t: &Trace, set: &Rows| {
@@ -457,27 +454,27 @@ fn every_index_kind_answers_its_probes() {
         assert!(present > 0 && ruled_out > 900 * st.layers().count(), "most absent keys ruled out: {ruled_out}");
     };
     check_probes(&dir, &t, &set);
-    t.roll_up(&reg, &ops, &mut dir, 3, Tiling { tile: 2, seed: 9 }).unwrap();
+    t.roll_up(&reg, &mut dir, 3, Tiling { tile: 2, seed: 9 }).unwrap();
     check_probes(&dir, &t, &set);
 
     // The same indexed layer at every tiling and order.
     let (pairs, _) = random_run(&mut rng(8), &Rows::new());
-    let tiled = Version { status: Status::Default, ..Version::twin(ops.consolidate, "consolidate, tiled", rerail_delta_twins::trace::CONSOLIDATE, &PIPELINE) };
-    reg.check(&tiled, &consolidate_case(&s, &pairs), &[Tiling::WHOLE, Tiling { tile: 1, seed: 2 }, Tiling { tile: 5, seed: 6 }]).unwrap();
+    let tiled = Version { status: Status::Default, ..Version::twin(reg.op(&CONSOLIDATE).unwrap(), "consolidate, tiled", rerail_delta_twins::trace::CONSOLIDATE, &PIPELINE) };
+    reg.registry().check(&tiled, &consolidate_case(&s, &pairs), &[Tiling::WHOLE, Tiling { tile: 1, seed: 2 }, Tiling { tile: 5, seed: 6 }]).unwrap();
 }
 
 /// A chain of any depth is read whole: 14 layers with no roll-up scan, probe and change as their set does, and a
 /// roll-up of 12 layers into one keeps the state.
 #[test]
 fn a_deep_chain_reads_as_its_set() {
-    let (reg, ops, mut dir, mut t) = setup();
+    let (reg, mut dir, mut t) = setup();
     let mut r = rng(99);
     let mut sets = vec![Rows::new()];
     let mut heads = vec![None];
     for _ in 0..14 {
         let (pairs, next) = random_run(&mut r, sets.last().unwrap());
         let id = runs(&mut dir, &t, &pairs);
-        heads.push(Some(t.commit(&reg, &ops, &mut dir, id, Tiling::WHOLE).unwrap()));
+        heads.push(Some(t.commit(&reg, &mut dir, id, Tiling::WHOLE).unwrap()));
         sets.push(next);
     }
     {
@@ -493,7 +490,7 @@ fn a_deep_chain_reads_as_its_set() {
             assert_eq!(ps, changed(&sets[j], &sets[14]), "{j}→14 across {} layers", 14 - j);
         }
     }
-    t.roll_up(&reg, &ops, &mut dir, 12, Tiling { tile: 4, seed: 1 }).unwrap();
+    t.roll_up(&reg, &mut dir, 12, Tiling { tile: 4, seed: 1 }).unwrap();
     let l = t.read(&dir, &[t.head()]).unwrap();
     assert_eq!(rows_of(&t.state(&l.table(), t.head()).unwrap()), sets[14]);
 }
@@ -503,12 +500,12 @@ fn a_deep_chain_reads_as_its_set() {
 #[test]
 fn a_kill_search_past_64_layers_fails_its_bound() {
     for roll in [RollUp::Never, RollUp::Geometric] {
-        let (reg, ops, mut dir, t) = setup();
+        let (reg, mut dir, t) = setup();
         let mut t = t.with_roll_up(roll);
         let mut last = Ok(None);
         for k in 0..66 {
             let id = runs(&mut dir, &t, &[(vec![1, k, 0], 1)]);
-            last = t.commit(&reg, &ops, &mut dir, id, Tiling::WHOLE).map(Some);
+            last = t.commit(&reg, &mut dir, id, Tiling::WHOLE).map(Some);
             if last.is_err() {
                 assert_eq!((roll, k), (RollUp::Never, 65), "the 66th commit searches 65 layers");
                 break;
@@ -540,23 +537,22 @@ fn merge_writes_the_same_layer_at_every_tiling() {
         runs.push(pairs);
         set = next;
     }
-    let mut reg = Registry::default();
-    let ops = TraceOps::declare(&mut reg).unwrap();
-    let tiled = Version { status: Status::Default, ..Version::twin(ops.merge, "merge, tiled", rerail_delta_twins::trace::MERGE, &PIPELINE) };
+    let mut reg = crate::op::Runner::new().unwrap();
+    let tiled = Version { status: Status::Default, ..Version::twin(reg.op(&MERGE).unwrap(), "merge, tiled", rerail_delta_twins::trace::MERGE, &PIPELINE) };
     let tilings = [Tiling::WHOLE, Tiling { tile: 1, seed: 4 }, Tiling { tile: 3, seed: 17 }];
-    let checked = reg.check(&tiled, &merge_case(&s, &runs, 3), &tilings).unwrap();
+    let checked = reg.registry().check(&tiled, &merge_case(&s, &runs, 3), &tilings).unwrap();
     reg.register(tiled, checked).unwrap();
 }
 
 /// The trace of `runs` committed in turn: its heads, and each state's set.
-fn committed(runs_of: &[Vec<(Vec<i64>, i32)>]) -> (Registry, TraceOps, Directory, Trace, Vec<Option<BlockId>>) {
-    let (reg, ops, mut dir, mut t) = setup();
+fn committed(runs_of: &[Vec<(Vec<i64>, i32)>]) -> (crate::op::Runner, Directory, Trace, Vec<Option<BlockId>>) {
+    let (reg, mut dir, mut t) = setup();
     let mut heads = vec![None];
     for (k, pairs) in runs_of.iter().enumerate() {
         let id = runs(&mut dir, &t, pairs);
-        heads.push(Some(t.commit(&reg, &ops, &mut dir, id, Tiling { tile: 3, seed: k as u64 }).unwrap_or_else(|e| panic!("run {k}: {e}"))));
+        heads.push(Some(t.commit(&reg, &mut dir, id, Tiling { tile: 3, seed: k as u64 }).unwrap_or_else(|e| panic!("run {k}: {e}"))));
     }
-    (reg, ops, dir, t, heads)
+    (reg, dir, t, heads)
 }
 
 /// P§1, P§11: a restriction reads only its partition's rows. Over a trace of a thousand rows in seven partitions and
@@ -585,7 +581,7 @@ fn a_restriction_reads_only_its_partitions_rows() {
         set = next;
         sets.push(set.clone());
     }
-    let (_, _, dir, t, heads) = committed(&all);
+    let (_, dir, t, heads) = committed(&all);
     let l = t.read(&dir, &[heads[5]]).unwrap();
     let table = l.table();
     let reads = std::sync::atomic::AtomicU64::new(0);
@@ -649,7 +645,7 @@ fn is_identity_reads_a_layers_counts_only() {
     let cancel = vec![(vec![2, 5, 5], 1), (vec![2, 5, 5], -1)];
     let gone: Vec<Vec<i64>> = set.iter().take(4).cloned().collect();
     let kill_only: Vec<(Vec<i64>, i32)> = gone.iter().map(|x| (x.clone(), -1)).collect();
-    let (_, _, dir, t, heads) = committed(&[one, cancel, kill_only]);
+    let (_, dir, t, heads) = committed(&[one, cancel, kill_only]);
     let l = t.read(&dir, &[heads[3]]).unwrap();
     let table = l.table();
     let reads = std::sync::atomic::AtomicU64::new(0);
@@ -689,7 +685,7 @@ fn a_kill_search_reads_a_search_a_layer() {
         all.push(pairs);
         set = next;
     }
-    let (_, _, dir, t, heads) = committed(&all);
+    let (_, dir, t, heads) = committed(&all);
     let l = t.read(&dir, &[heads[8]]).unwrap();
     let table = l.table();
     let whole = t.state(&table, heads[8]).unwrap();
@@ -752,8 +748,7 @@ fn small_run(r: &mut impl FnMut() -> u64, set: &Rows, most: u64) -> (Vec<(Vec<i6
 /// live row's probe (consolidate's kill search) reads within its bound of a search a layer, on a few layers.
 #[test]
 fn a_geometric_trace_keeps_log_layers() {
-    let mut reg = Registry::default();
-    let ops = TraceOps::declare(&mut reg).unwrap();
+    let reg = crate::op::Runner::new().unwrap();
     let mut dir = Directory::default();
     let mut t = Trace::new(&shape()).unwrap();
     let mut r = rng(91);
@@ -765,7 +760,7 @@ fn a_geometric_trace_keeps_log_layers() {
         let (pairs, next) = if step == 0 { big_run(&mut r, 3000) } else { small_run(&mut r, &set, 60) };
         size += pairs.len() as u64;
         let id = runs(&mut dir, &t, &pairs);
-        t.commit(&reg, &ops, &mut dir, id, Tiling { tile: 3, seed: step }).unwrap_or_else(|e| panic!("step {step}: {e}"));
+        t.commit(&reg, &mut dir, id, Tiling { tile: 3, seed: step }).unwrap_or_else(|e| panic!("step {step}: {e}"));
         set = next;
         let l = t.read(&dir, &[t.head()]).unwrap();
         let table = l.table();
@@ -818,14 +813,13 @@ fn a_geometric_trace_keeps_log_layers() {
 fn levels_are_a_column_one_live_a_key() {
     let mut s = shape();
     s.levels = true;
-    let mut reg = Registry::default();
-    let ops = TraceOps::declare(&mut reg).unwrap();
+    let reg = crate::op::Runner::new().unwrap();
     let mut dir = Directory::default();
     let mut t = Trace::new(&s).unwrap();
     assert_eq!(t.shape().level_col(), Some(2));
     let commit = |t: &mut Trace, dir: &mut Directory, pairs: &[(Vec<i64>, i32)], tile: u32| {
         let id = runs(dir, t, pairs);
-        t.commit(&reg, &ops, dir, id, Tiling { tile, seed: 3 })
+        t.commit(&reg, dir, id, Tiling { tile, seed: 3 })
     };
     let first: Vec<(Vec<i64>, i32)> = (0..300).map(|k| (vec![k % 5, k, 0], 1)).collect();
     commit(&mut t, &mut dir, &first, 7).unwrap();
@@ -862,8 +856,7 @@ fn a_kept_trace_lies_in_its_files_and_opens_again() {
     rerail_blocks::mapped::make_folder(&folder).unwrap();
     let mut s = shape();
     s.placement = Placement::KeptFile;
-    let mut reg = Registry::default();
-    let ops = TraceOps::declare(&mut reg).unwrap();
+    let reg = crate::op::Runner::new().unwrap();
     let files = || -> Vec<u32> { rerail_blocks::kept::trace_folder::blocks(&folder).unwrap().into_iter().map(|(id, _)| id).collect() };
     let mut r = rng(17);
     let mut set = Rows::new();
@@ -871,12 +864,12 @@ fn a_kept_trace_lies_in_its_files_and_opens_again() {
         let mut dir = Directory::default();
         let mut t = Trace::new(&s).unwrap();
         let id = runs(&mut dir, &t, &[(vec![1, 2, 3], 1)]);
-        assert!(t.commit(&reg, &ops, &mut dir, id, Tiling::WHOLE).err().unwrap().contains("kept folder"));
+        assert!(t.commit(&reg, &mut dir, id, Tiling::WHOLE).err().unwrap().contains("kept folder"));
         let mut dir = Directory::default().with_kept(&folder);
         for step in 0..12u64 {
             let (pairs, next) = if step == 0 { big_run(&mut r, 2000) } else { small_run(&mut r, &set, 40) };
             let id = runs(&mut dir, &t, &pairs);
-            t.commit(&reg, &ops, &mut dir, id, Tiling { tile: 3, seed: step }).unwrap();
+            t.commit(&reg, &mut dir, id, Tiling { tile: 3, seed: step }).unwrap();
             set = next;
         }
         let l = t.read(&dir, &[t.head()]).unwrap();
@@ -898,7 +891,7 @@ fn a_kept_trace_lies_in_its_files_and_opens_again() {
     }
     let (pairs, next) = small_run(&mut r, &set, 40);
     let id = runs(&mut dir, &t, &pairs);
-    t.commit(&reg, &ops, &mut dir, id, Tiling::WHOLE).unwrap();
+    t.commit(&reg, &mut dir, id, Tiling::WHOLE).unwrap();
     {
         let l = t.read(&dir, &[t.head()]).unwrap();
         let table = l.table();
@@ -960,8 +953,7 @@ fn a_slab_trace_lies_in_its_slabs() {
     let (slabs, live) = test_slabs();
     let mut s = shape();
     s.placement = Placement::PinnedSlab;
-    let mut reg = Registry::default();
-    let ops = TraceOps::declare(&mut reg).unwrap();
+    let reg = crate::op::Runner::new().unwrap();
     let mut dir = Directory::default().with_slabs(slabs);
     let mut t = Trace::new(&s).unwrap();
     let mut r = rng(23);
@@ -969,7 +961,7 @@ fn a_slab_trace_lies_in_its_slabs() {
     for step in 0..10u64 {
         let (pairs, next) = if step == 0 { big_run(&mut r, 1500) } else { small_run(&mut r, &set, 40) };
         let id = runs(&mut dir, &t, &pairs);
-        t.commit(&reg, &ops, &mut dir, id, Tiling { tile: 2, seed: step }).unwrap();
+        t.commit(&reg, &mut dir, id, Tiling { tile: 2, seed: step }).unwrap();
         set = next;
         let l = t.read(&dir, &[t.head()]).unwrap();
         let table = l.table();
@@ -1004,16 +996,16 @@ fn every_encoding_reads_as_its_set() {
             random_trace(&s, seed, 10);
         }
         // Its layers lie encoded, their relations holding no rows; a probe on the permutation's column reads it.
-        let (reg, ops, mut dir, mut t) = setup_of(&s);
+        let (reg, mut dir, mut t) = setup_of(&s);
         let mut r = rng(4);
         let mut set = Rows::new();
         for step in 0..4u64 {
             let (pairs, next) = random_run(&mut r, &set);
             let id = runs(&mut dir, &t, &pairs);
-            t.commit(&reg, &ops, &mut dir, id, Tiling { tile: 2, seed: step }).unwrap();
+            t.commit(&reg, &mut dir, id, Tiling { tile: 2, seed: step }).unwrap();
             set = next;
         }
-        t.roll_up(&reg, &ops, &mut dir, 3, Tiling { tile: 3, seed: 1 }).unwrap();
+        t.roll_up(&reg, &mut dir, 3, Tiling { tile: 3, seed: 1 }).unwrap();
         let l = t.read(&dir, &[t.head()]).unwrap();
         let table = l.table();
         let st = t.state(&table, t.head()).unwrap();
@@ -1049,10 +1041,9 @@ fn every_encoding_reads_as_its_set() {
         // The version check: consolidate and merge write the same facts at every tiling.
         let tilings = [Tiling::WHOLE, Tiling { tile: 1, seed: 2 }, Tiling { tile: 4, seed: 6 }];
         let (pairs, _) = random_run(&mut r, &Rows::new());
-        let mut reg2 = Registry::default();
-        let ops2 = TraceOps::declare(&mut reg2).unwrap();
-        let tiled = Version { status: Status::Default, ..Version::twin(ops2.consolidate, "consolidate, tiled", rerail_delta_twins::trace::CONSOLIDATE, &PIPELINE) };
-        reg2.check(&tiled, &consolidate_case(&s, &pairs), &tilings).unwrap_or_else(|e| panic!("{enc:?}: {e}"));
+        let reg2 = crate::op::Runner::new().unwrap();
+        let tiled = Version { status: Status::Default, ..Version::twin(reg2.op(&CONSOLIDATE).unwrap(), "consolidate, tiled", rerail_delta_twins::trace::CONSOLIDATE, &PIPELINE) };
+        reg2.registry().check(&tiled, &consolidate_case(&s, &pairs), &tilings).unwrap_or_else(|e| panic!("{enc:?}: {e}"));
         let mut runs_of = Vec::new();
         let mut set = Rows::new();
         for _ in 0..4 {
@@ -1060,8 +1051,8 @@ fn every_encoding_reads_as_its_set() {
             runs_of.push(pairs);
             set = next;
         }
-        let tiled = Version { status: Status::Default, ..Version::twin(ops2.merge, "merge, tiled", rerail_delta_twins::trace::MERGE, &PIPELINE) };
-        reg2.check(&tiled, &merge_case(&s, &runs_of, 3), &tilings).unwrap_or_else(|e| panic!("{enc:?}: {e}"));
+        let tiled = Version { status: Status::Default, ..Version::twin(reg2.op(&MERGE).unwrap(), "merge, tiled", rerail_delta_twins::trace::MERGE, &PIPELINE) };
+        reg2.registry().check(&tiled, &merge_case(&s, &runs_of, 3), &tilings).unwrap_or_else(|e| panic!("{enc:?}: {e}"));
     }
 }
 
@@ -1076,8 +1067,7 @@ fn a_dict_column_past_its_scratch_grows_the_slot_and_runs_again() {
     s.indexes = vec![];
     let spread = [-(1i64 << 40), 7, 1 << 50, 3, i64::MAX - 5];
     let pairs: Vec<(Vec<i64>, i32)> = (0..3000i64).map(|i| (vec![i / 600, spread[(i * 7 % 5) as usize] + i % 3, i * 13 % 1000], 1)).collect();
-    let mut reg = Registry::default();
-    let ops = TraceOps::declare(&mut reg).unwrap();
+    let reg = crate::op::Runner::new().unwrap();
     let run = |small: bool| {
         let mut dir = Directory::default();
         let mut case = consolidate_case(&s, &pairs)(&mut dir);
@@ -1085,7 +1075,7 @@ fn a_dict_column_past_its_scratch_grows_the_slot_and_runs_again() {
             let big = dir.capacity(case.slots[3]);
             case.slots[3] = dir.make_capped(kind::SCRATCH, 0, 4096, big);
         }
-        run_cpu(&reg, &dir, ops.consolidate, &case.slots, &case.params, Tiling { tile: 1, seed: 3 }).unwrap();
+        reg.run(&dir, &CONSOLIDATE, &case.slots, &case.params, Tiling { tile: 1, seed: 3 }).unwrap();
         let l = dir.read("t", &[case.slots[1]]).unwrap();
         let facts = facts_of(&l.table(), 1, l.block(0));
         let tags: Vec<u32> = match Layer::new(l.block(0)).unwrap().own {

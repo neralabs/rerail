@@ -4,7 +4,7 @@
 //! a second runs block. L1's selection is one of them: which documents it retracts, which it reads, and its asks.
 
 use crate::dir::{BlockId, Directory};
-use crate::op::{Across, Found, Independence, Inside, OpId, Output, ParamsLayout, Phase, Registry, Signature, Tiling, Unit, Version, run_cpu};
+use crate::op::{Across, Found, Independence, Inside, Output, ParamsLayout, Phase, Registry, Runner, Signature, Tiling, Unit, Version};
 use rerail_blocks::gens::Table;
 use rerail_blocks::layer::Runs;
 use rerail_delta_twins::Params;
@@ -72,23 +72,16 @@ pub fn change_facts(_: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
     if slot == twin::C_PARTS { parts_facts(bytes) } else { runs_facts(bytes) }
 }
 
-#[derive(Clone, Copy)]
-pub struct SemiOps {
-    pub semi: OpId,
-    pub change: OpId,
-    pub replace: OpId,
-}
-
-impl SemiOps {
-    pub fn declare(reg: &mut Registry) -> Result<SemiOps, String> {
-        let semi = reg.declare(&SEMI_CHANGE)?;
-        reg.register_reference(Version::twin(semi, "semi_change twin", twin::SEMI_CHANGE, &SEMI_PHASE))?;
-        let change = reg.declare(&CHANGE_ROWS)?;
-        reg.register_reference(Version::twin(change, "change_rows twin", twin::CHANGE_ROWS, &CHANGE_PHASE))?;
-        let replace = reg.declare(&REPLACE_ROWS)?;
-        reg.register_reference(Version::twin(replace, "replace_rows twin", twin::REPLACE_ROWS, &REPLACE_PHASE))?;
-        Ok(SemiOps { semi, change, replace })
-    }
+/// The module's operations declared, each from its UKL interface, and their twins registered as references: the
+/// runner's registry (`Runner::new`), the one place they are registered.
+pub(crate) fn register(reg: &mut Registry) -> Result<(), String> {
+    let semi = reg.declare(&SEMI_CHANGE)?;
+    reg.register_reference(Version::twin(semi, "semi_change twin", twin::SEMI_CHANGE, &SEMI_PHASE))?;
+    let change = reg.declare(&CHANGE_ROWS)?;
+    reg.register_reference(Version::twin(change, "change_rows twin", twin::CHANGE_ROWS, &CHANGE_PHASE))?;
+    let replace = reg.declare(&REPLACE_ROWS)?;
+    reg.register_reference(Version::twin(replace, "replace_rows twin", twin::REPLACE_ROWS, &REPLACE_PHASE))?;
+    Ok(())
 }
 
 /// A trace between two heads (`None`: the empty state), its arity and the column it is joined on.
@@ -142,17 +135,17 @@ fn params(a: &Side, b: Option<&Side>, how: How) -> [u8; SemiP::SIZE] {
 /// change into the open runs block `keys` (with `b`). One launch; nothing when `A` is empty, or `B` is and every row
 /// must match (`parts` then lists none). With `B` empty under `neg`, every row of `A` is unmatched: `A`'s change alone.
 #[allow(clippy::too_many_arguments)]
-pub fn select(reg: &Registry, ops: &SemiOps, dir: &mut Directory, a: &Side, b: Option<(&Side, BlockId)>, how: How, rows: BlockId, parts: BlockId) -> Result<(), String> {
+pub fn select(ops: &Runner, dir: &mut Directory, a: &Side, b: Option<(&Side, BlockId)>, how: How, rows: BlockId, parts: BlockId) -> Result<(), String> {
     match (a.after, b) {
         // `B`'s keys' change is written with `A` empty too (the boot's first round asks for l0 of an empty set): an
         // empty `A` binds `B`'s head in its slot, and the launch reads it as `NONE`.
         (ah, Some((b, keys))) if b.after.is_some() => {
             let bh = b.after.expect("a head");
-            run_cpu(reg, dir, ops.semi, &[ah.unwrap_or(bh), bh, rows, parts, keys], &params(a, Some(b), how), Tiling::WHOLE)
+            ops.run(dir, &SEMI_CHANGE, &[ah.unwrap_or(bh), bh, rows, parts, keys], &params(a, Some(b), how), Tiling::WHOLE)
         }
         (None, _) => Ok(()),
         (Some(_), Some(_)) if !how.neg => Ok(()),
-        (Some(ah), _) => run_cpu(reg, dir, ops.change, &[ah, rows, parts], &params(a, None, how), Tiling::WHOLE),
+        (Some(ah), _) => ops.run(dir, &CHANGE_ROWS, &[ah, rows, parts], &params(a, None, how), Tiling::WHOLE),
     }
 }
 
@@ -161,11 +154,11 @@ pub fn select(reg: &Registry, ops: &SemiOps, dir: &mut Directory, a: &Side, b: O
 /// and it comes. Written into the open runs block `runs` by one launch; the block to commit, which is `given` itself
 /// when the state is empty (every given row comes, and nothing is read).
 #[allow(clippy::too_many_arguments)]
-pub fn replace(reg: &Registry, ops: &SemiOps, dir: &mut Directory, head: Option<BlockId>, arity: usize, key: usize, given: BlockId, runs: BlockId) -> Result<BlockId, String> {
+pub fn replace(ops: &Runner, dir: &mut Directory, head: Option<BlockId>, arity: usize, key: usize, given: BlockId, runs: BlockId) -> Result<BlockId, String> {
     let Some(h) = head else { return Ok(given) };
     let mut p = [0u8; ReplaceP::SIZE];
     ReplaceP { head: u64::from(h.0), arity: arity as u32, key: key as u32 }.write(&mut p);
-    run_cpu(reg, dir, ops.replace, &[h, given, runs], &p, Tiling::WHOLE)?;
+    ops.run(dir, &REPLACE_ROWS, &[h, given, runs], &p, Tiling::WHOLE)?;
     Ok(runs)
 }
 

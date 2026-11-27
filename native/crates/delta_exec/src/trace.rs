@@ -11,10 +11,7 @@
 //! descriptor table the state (`relation::View::chain`) and the change between two heads (`Bistate`), read where the layers lie.
 
 use crate::dir::{BlockId, Directory, Launch};
-use crate::op::{
-    Across, Bound, Found, Independence, Inside, OpId, Output, Over, ParamsLayout, Phase, Registry, Signature, Tiling, Unit,
-    Version, run_cpu,
-};
+use crate::op::{Across, Bound, Found, Independence, Inside, Output, Over, ParamsLayout, Phase, Registry, Runner, Signature, Tiling, Unit, Version};
 #[cfg(any(test, feature = "test-hooks"))]
 use crate::op::Case;
 use rerail_blocks::bistate::{Bistate, ColumnIndex, Read, RowId};
@@ -153,21 +150,14 @@ pub fn open_runs(dir: &mut Directory, shape: &ShapeW, cap: usize) -> BlockId {
     id
 }
 
-/// The trace operations, declared and their twins registered as references.
-#[derive(Clone, Copy)]
-pub struct TraceOps {
-    pub consolidate: OpId,
-    pub merge: OpId,
-}
-
-impl TraceOps {
-    pub fn declare(reg: &mut Registry) -> Result<TraceOps, String> {
-        let consolidate = reg.declare(&CONSOLIDATE)?;
-        reg.register_reference(Version::twin(consolidate, "consolidate twin", rerail_delta_twins::trace::CONSOLIDATE, &PIPELINE))?;
-        let merge = reg.declare(&MERGE)?;
-        reg.register_reference(Version::twin(merge, "merge twin", rerail_delta_twins::trace::MERGE, &PIPELINE))?;
-        Ok(TraceOps { consolidate, merge })
-    }
+/// The module's operations declared, each from its UKL interface, and their twins registered as references: the
+/// runner's registry (`Runner::new`), the one place they are registered.
+pub(crate) fn register(reg: &mut Registry) -> Result<(), String> {
+    let consolidate = reg.declare(&CONSOLIDATE)?;
+    reg.register_reference(Version::twin(consolidate, "consolidate twin", rerail_delta_twins::trace::CONSOLIDATE, &PIPELINE))?;
+    let merge = reg.declare(&MERGE)?;
+    reg.register_reference(Version::twin(merge, "merge twin", rerail_delta_twins::trace::MERGE, &PIPELINE))?;
+    Ok(())
 }
 
 /// When a trace's newest layers are merged (O5).
@@ -237,7 +227,7 @@ impl Trace {
     /// which is then frozen and becomes the head; then, by the trace's roll-up policy, the newest layers due to merge
     /// are merged (`roll_up`), and the merged layer is the head. The runs block is let go. Refused, with the head as it was, when
     /// the runs overflowed (rerun at the size it names) or `consolidate` refused the change.
-    pub fn commit(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, runs: BlockId, tiling: Tiling) -> Result<BlockId, String> {
+    pub fn commit(&mut self, ops: &Runner, dir: &mut Directory, runs: BlockId, tiling: Tiling) -> Result<BlockId, String> {
         let (n, needed) = {
             let l = dir.read("commit", &[runs])?;
             let r = Runs::new(l.block(0));
@@ -255,7 +245,7 @@ impl Trace {
         let scratch = scratch_slot(dir, n);
         let mut params = [0u8; ConsolidateP::SIZE];
         ConsolidateP { below: self.head.map_or(NONE, |h| h.0), pad: 0 }.write(&mut params);
-        let run = run_cpu(reg, dir, ops.consolidate, &[runs, out, ctl, scratch], &params, tiling);
+        let run = ops.run(dir, &CONSOLIDATE, &[runs, out, ctl, scratch], &params, tiling);
         let (code, due) = {
             let l = dir.read("commit", &[ctl])?;
             (refused(l.block(0)), due(l.block(0)))
@@ -283,14 +273,14 @@ impl Trace {
         }
         self.head = Some(out);
         if self.roll == RollUp::Geometric && due >= 2 {
-            return self.roll_up(reg, ops, dir, due as u32, tiling);
+            return self.roll_up(ops, dir, due as u32, tiling);
         }
         Ok(out)
     }
 
     /// Rolls the newest `count` layers up into one (`merge`), over the layer below them; the merged generations are let
     /// go, and live on only while a reader holds them.
-    pub fn roll_up(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, count: u32, tiling: Tiling) -> Result<BlockId, String> {
+    pub fn roll_up(&mut self, ops: &Runner, dir: &mut Directory, count: u32, tiling: Tiling) -> Result<BlockId, String> {
         let head = self.head.ok_or("a roll-up of an empty trace")?;
         let (rows, below) = {
             let l = dir.read("roll-up", &[head])?;
@@ -310,7 +300,7 @@ impl Trace {
         let scratch = scratch_slot(dir, rows);
         let mut params = [0u8; MergeP::SIZE];
         MergeP { head: head.0, count, below: below.unwrap_or(NONE), pad: 0 }.write(&mut params);
-        let run = run_cpu(reg, dir, ops.merge, &[head, out, scratch], &params, tiling);
+        let run = ops.run(dir, &MERGE, &[head, out, scratch], &params, tiling);
         dir.release(scratch);
         if let Err(e) = run {
             dir.release(out);
@@ -325,7 +315,7 @@ impl Trace {
     /// A run's end, for a trace a run reads as a chain (`RollUp::Never` while it runs: the run's before, `since`, a
     /// layer of it until its delta is read): the layers committed since `since` rolled up into one, then the geometric
     /// policy (`due_to_merge`) over the layers below, as a commit under `RollUp::Geometric` does. The head.
-    pub fn roll_up_run(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, since: Option<BlockId>, tiling: Tiling) -> Result<Option<BlockId>, String> {
+    pub fn roll_up_run(&mut self, ops: &Runner, dir: &mut Directory, since: Option<BlockId>, tiling: Tiling) -> Result<Option<BlockId>, String> {
         let Some(head) = self.head else { return Ok(None) };
         let count = {
             let l = dir.read("a run's roll-up", &[head])?;
@@ -340,7 +330,7 @@ impl Trace {
             k
         };
         if count >= 2 {
-            self.roll_up(reg, ops, dir, count, tiling)?;
+            self.roll_up(ops, dir, count, tiling)?;
         }
         let head = self.head.expect("rolled up");
         let due = {
@@ -351,7 +341,7 @@ impl Trace {
             rerail_delta_twins::trace::due_to_merge(&table, layer.below().map_or(NONE, |(b, _)| b), size)
         };
         if due >= 2 {
-            self.roll_up(reg, ops, dir, due as u32, tiling)?;
+            self.roll_up(ops, dir, due as u32, tiling)?;
         }
         Ok(self.head)
     }
@@ -496,8 +486,7 @@ pub fn consolidate_case<'r>(shape: &'r Shape, rows: &'r [(Vec<i64>, i32)]) -> im
 /// consolidate, whole), then its newest `count` layers merged over the layer below them.
 pub fn merge_case<'r>(shape: &'r Shape, runs: &'r [Vec<(Vec<i64>, i32)>], count: u32) -> impl Fn(&mut Directory) -> Case + 'r {
     move |dir: &mut Directory| {
-        let mut reg = Registry::default();
-        let ops = TraceOps::declare(&mut reg).expect("the trace's operations");
+        let ops = crate::op::Runner::new().expect("the engine's operations");
         // A layer a run: the merge's input as committed, not rolled up.
         let mut t = Trace::new(shape).expect("a storable shape").with_roll_up(RollUp::Never);
         let mut heads = Vec::new();
@@ -511,7 +500,7 @@ pub fn merge_case<'r>(shape: &'r Shape, runs: &'r [Vec<(Vec<i64>, i32)>], count:
                     w.push(r, *d).expect("room");
                 }
             }
-            heads.push(t.commit(&reg, &ops, dir, id, Tiling::WHOLE).expect("a set change"));
+            heads.push(t.commit(&ops, dir, id, Tiling::WHOLE).expect("a set change"));
         }
         let head = *heads.last().expect("a layer");
         let below = heads.len().checked_sub(count as usize + 1).map(|i| heads[i]);

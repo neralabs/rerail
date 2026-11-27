@@ -43,18 +43,17 @@ fn the_same_text_gets_the_same_symbol_across_runs() {
 #[test]
 fn an_unchanged_tape_interns_nothing() {
     let mut w = W::new("b5-same");
-    let iops = InternOps::declare(&mut w.reg).unwrap();
     let atoms = crate::sym::Atoms::new(&mut w.dir);
     let d = w.answer("bootstrap-l0.rerail").unwrap();
-    let s = w.world.intern_answer(&w.reg, &w.traces, &iops, &mut w.dir, &mut w.blobs, atoms, &d).unwrap();
+    let s = w.world.intern_answer(&w.ops, &mut w.dir, &mut w.blobs, atoms, &d).unwrap();
     let (runs, n) = (w.world.asked.interns, atoms.count(&w.dir));
     let again = w.answer("bootstrap-l0.rerail").unwrap();
     assert!(again.is_identity());
-    assert_eq!(w.world.intern_answer(&w.reg, &w.traces, &iops, &mut w.dir, &mut w.blobs, atoms, &again).unwrap(), s);
+    assert_eq!(w.world.intern_answer(&w.ops, &mut w.dir, &mut w.blobs, atoms, &again).unwrap(), s);
     assert_eq!((w.world.asked.interns, atoms.count(&w.dir)), (runs, n));
     // The same tape answered at another path: another key, interned.
     let other = crate::files::Doc { path: "elsewhere.rerail".into(), module: "elsewhere".into(), ..again };
-    assert_ne!(w.world.intern_answer(&w.reg, &w.traces, &iops, &mut w.dir, &mut w.blobs, atoms, &other).unwrap(), s);
+    assert_ne!(w.world.intern_answer(&w.ops, &mut w.dir, &mut w.blobs, atoms, &other).unwrap(), s);
     assert_eq!(w.world.asked.interns, runs + 1);
 }
 
@@ -106,9 +105,9 @@ fn interns_hash_then_scan_alike_at_every_tiling_new_ids_in_node_order() {
     let run = |tiling: Tiling| {
         let mut fx = Fx::new();
         fx.doc("e(1, 2).\n", "first.rerail");
-        let ids = crate::files::doc_of(&fx.reg, &fx.answers, &mut fx.dir, &mut fx.blobs, src).unwrap();
+        let ids = crate::files::doc_of(&fx.ops, &mut fx.dir, &mut fx.blobs, src).unwrap();
         let (s, t) = (fx.place(&ids.source), fx.place(&ids.tape));
-        let syms = intern_at(&fx.reg, &fx.ops, &mut fx.dir, &mut fx.blobs, fx.atoms, s, t, "two.rerail", "two", tiling).unwrap();
+        let syms = intern_at(&fx.ops, &mut fx.dir, &mut fx.blobs, fx.atoms, s, t, "two.rerail", "two", tiling).unwrap();
         let names: Vec<String> = (1..=fx.atoms.count(&fx.dir)).map(|id| fx.atoms.name(&fx.dir, i64::from(id))).collect();
         (syms, names)
     };

@@ -15,7 +15,7 @@
 //! Dropping a cache is always correct (L5): a new one is ∅, and its operator's answers do not change.
 
 use crate::dir::{BlockId, Directory};
-use crate::op::{Across, Bound, Found, Independence, Inside, OpId, Output, Over, ParamsLayout, Phase, Registry, Signature, Tiling, Unit, Version, run_cpu};
+use crate::op::{Across, Bound, Found, Independence, Inside, Output, Over, ParamsLayout, Phase, Registry, Runner, Signature, Tiling, Unit, Version};
 use rerail_blocks::block::kind;
 use rerail_blocks::gens::Table;
 use rerail_delta_twins::Params;
@@ -119,23 +119,16 @@ impl crate::contract::CacheBody for Orders {
     }
 }
 
-/// The cache operations, declared and their twins registered as references.
-pub struct CacheOps {
-    pub open: OpId,
-    pub commit: OpId,
-    pub order: OpId,
-}
-
-impl CacheOps {
-    pub fn declare(reg: &mut Registry) -> Result<CacheOps, String> {
-        let open = reg.declare(&CACHE_OPEN)?;
-        reg.register_reference(Version::twin(open, "cache_open twin", twin::CACHE_OPEN, &OPEN_PHASE))?;
-        let commit = reg.declare(&CACHE_COMMIT)?;
-        reg.register_reference(Version::twin(commit, "cache_commit twin", twin::CACHE_COMMIT, &COMMIT_PHASE))?;
-        let order = reg.declare(&ORDER)?;
-        reg.register_reference(Version::twin(order, "order twin", twin::ORDER, &ORDER_PHASE))?;
-        Ok(CacheOps { open, commit, order })
-    }
+/// The module's operations declared, each from its UKL interface, and their twins registered as references: the
+/// runner's registry (`Runner::new`), the one place they are registered.
+pub(crate) fn register(reg: &mut Registry) -> Result<(), String> {
+    let open = reg.declare(&CACHE_OPEN)?;
+    reg.register_reference(Version::twin(open, "cache_open twin", twin::CACHE_OPEN, &OPEN_PHASE))?;
+    let commit = reg.declare(&CACHE_COMMIT)?;
+    reg.register_reference(Version::twin(commit, "cache_commit twin", twin::CACHE_COMMIT, &COMMIT_PHASE))?;
+    let order = reg.declare(&ORDER)?;
+    reg.register_reference(Version::twin(order, "order twin", twin::ORDER, &ORDER_PHASE))?;
+    Ok(())
 }
 
 /// A cache block's first capacity, and its reservation (address space only: nothing is resident until written).
@@ -154,25 +147,25 @@ impl OpCache {
 
     /// A run begins: the header marked open, the cache reset to ∅ unless it holds `from`, the state the run starts
     /// from. True when it held it.
-    pub fn open(self, reg: &Registry, ops: &CacheOps, dir: &Directory, from: u64) -> Result<bool, String> {
+    pub fn open(self, ops: &Runner, dir: &Directory, from: u64) -> Result<bool, String> {
         let mut p = [0u8; CacheP::SIZE];
         CacheP { state: from }.write(&mut p);
-        run_cpu(reg, dir, ops.open, &[self.0], &p, Tiling::WHOLE)?;
+        ops.run(dir, &CACHE_OPEN, &[self.0], &p, Tiling::WHOLE)?;
         Ok(twin::held(dir.read("cache", &[self.0])?.block(0)))
     }
 
     /// A run ends: `to`, the state it made, in the header, and the mark cleared, last.
-    pub fn commit(self, reg: &Registry, ops: &CacheOps, dir: &Directory, to: u64) -> Result<(), String> {
+    pub fn commit(self, ops: &Runner, dir: &Directory, to: u64) -> Result<(), String> {
         let mut p = [0u8; CacheP::SIZE];
         CacheP { state: to }.write(&mut p);
-        run_cpu(reg, dir, ops.commit, &[self.0], &p, Tiling::WHOLE)
+        ops.run(dir, &CACHE_COMMIT, &[self.0], &p, Tiling::WHOLE)
     }
 
     /// Adds layer `layer`'s order by `cols` to the cache, unless it holds it (`order`).
-    pub fn order(self, reg: &Registry, ops: &CacheOps, dir: &Directory, layer: BlockId, cols: &[u16]) -> Result<(), String> {
+    pub fn order(self, ops: &Runner, dir: &Directory, layer: BlockId, cols: &[u16]) -> Result<(), String> {
         let mut p = [0u8; OrderP::SIZE];
         twin::order_params(layer.0, cols).write(&mut p);
-        run_cpu(reg, dir, ops.order, &[layer, self.0], &p, Tiling::WHOLE)
+        ops.run(dir, &ORDER, &[layer, self.0], &p, Tiling::WHOLE)
     }
 }
 

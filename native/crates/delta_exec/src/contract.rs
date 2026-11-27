@@ -28,14 +28,14 @@
 //! (`Out`) and committed by `consolidate`. One harness (`harness`) checks every law of any `DeltaOp` over a chain of
 //! edits.
 
-use crate::cache::{CacheOps, OpCache};
+use crate::cache::OpCache;
 #[cfg(any(test, feature = "test-hooks"))]
 use crate::cache::cache_facts;
 use std::marker::PhantomData;
 use crate::dir::{BlockId, Directory};
 use crate::files::BlobRows;
-use crate::op::{Registry, Tiling};
-use crate::trace::{RollUp, Trace, TraceOps};
+use crate::op::{Runner, Tiling};
+use crate::trace::{RollUp, Trace};
 use rerail_blocks::bistate::{Bistate, ColumnIndex, Read};
 use rerail_blocks::layer::{ColType, Runs, RunsW, Shape};
 use rerail_blocks::region::{BlockPin, pin_block};
@@ -185,15 +185,12 @@ impl GlobalIn {
     }
 }
 
-/// What an operator's run reaches: the registry its operations are declared in, the directory of their blocks, the
-/// blobs (P§11: with traces, the two kinds of stored thing; a row names a blob by its id), and the trace's and the
-/// cache's operations.
+/// What an operator's run reaches: the operations runner (every operation it runs, by the runner), the directory of
+/// their blocks and the blobs (P§11: with traces, the two kinds of stored thing; a row names a blob by its id).
 pub struct Cx<'c> {
-    pub reg: &'c Registry,
+    pub ops: &'c Runner,
     pub dir: &'c mut Directory,
     pub blobs: &'c BlobRows,
-    pub traces: &'c TraceOps,
-    pub caches: &'c CacheOps,
 }
 
 /// A bistate per input port of `P`, read where its layers lie, with the heads it is between (a frozen layer's block
@@ -450,7 +447,7 @@ impl<C: CacheBody> CacheW<C> {
     /// not hold the run's before.
     pub fn write(&mut self, cx: &mut Cx<'_>) -> Result<BlockId, String> {
         if !self.begun {
-            self.cache.open(cx.reg, cx.caches, cx.dir, self.from)?;
+            self.cache.open(cx.ops, cx.dir, self.from)?;
             self.begun = true;
         }
         Ok(self.cache.0)
@@ -537,7 +534,7 @@ impl Instance {
 
     /// Its want's layers since `since` rolled up (a run's end: its before is no longer read).
     pub fn roll_up_want(&mut self, cx: &mut Cx<'_>, since: Option<BlockId>) -> Result<(), String> {
-        self.want.roll_up_run(cx.reg, cx.traces, cx.dir, since, Tiling::WHOLE).map(drop)
+        self.want.roll_up_run(cx.ops, cx.dir, since, Tiling::WHOLE).map(drop)
     }
 
     /// The instance with its traces' layers placed at `place` (`dir::PLACE_KEPT`: they last across processes), at a
@@ -594,7 +591,7 @@ impl Instance {
         if n == 0 {
             return Ok((before, before));
         }
-        let after = push_with(cx.reg, cx.traces, cx.dir, &mut self.want, n, |dir, t, w| {
+        let after = push_with(cx.ops, cx.dir, &mut self.want, n, |dir, t, w| {
             t.reading(dir, before, |s| {
                 let mut room = true;
                 change(s, &mut |p, k, diff| room &= w.push(&[p as i64, k], diff).is_some());
@@ -705,11 +702,11 @@ impl Instance {
                 if n == 0 {
                     cx.dir.release(r);
                 } else {
-                    t.commit(cx.reg, cx.traces, cx.dir, r, Tiling::WHOLE)?;
+                    t.commit(cx.ops, cx.dir, r, Tiling::WHOLE)?;
                 }
             }
             if cache.begun() {
-                self.cache.commit(cx.reg, cx.caches, cx.dir, to)?;
+                self.cache.commit(cx.ops, cx.dir, to)?;
             }
             let mut work = work;
             if again > 0 {
@@ -767,7 +764,7 @@ pub fn apply<O: DeltaOp>(op: &O, cx: &mut Cx<'_>, ins: &[(&Trace, Option<BlockId
         }
         let mut rows = Vec::with_capacity(outs.len());
         for (t, &r) in outs.iter_mut().zip(&out.runs) {
-            let head = t.commit(cx.reg, cx.traces, cx.dir, r, Tiling::WHOLE)?;
+            let head = t.commit(cx.ops, cx.dir, r, Tiling::WHOLE)?;
             rows.push(oracle_rows(cx.dir, t, Some(head))?);
         }
         return Ok(rows);
@@ -821,26 +818,18 @@ pub fn harness_under<O: DeltaOp>(op: &O, chain: &Chain, drop_at: usize, wants: O
     harness_on(op, &mut bench, &mut ins, &heads, &globals, drop_at, wants)
 }
 
-/// What operators run in (a run's, a harness's): a registry with the trace's and the cache's operations (and any
-/// its operators' own), a directory and the blobs.
+/// What operators run in (a run's, a harness's): the operations runner, a directory and the blobs.
 pub struct Bench {
-    pub reg: Registry,
+    /// The operations runner: every operation declared, its twin registered.
+    pub ops: Runner,
     pub dir: Directory,
     pub blobs: BlobRows,
-    pub traces: TraceOps,
-    pub caches: CacheOps,
-    /// Δanswer's operations (`answer_load`, `parse`).
-    pub answers: crate::answer::AnswerOps,
 }
 
 impl Bench {
     /// A bench in the run's memory: nothing lasts past it.
     pub fn new() -> Result<Bench, String> {
-        let mut reg = Registry::default();
-        let traces = TraceOps::declare(&mut reg)?;
-        let caches = CacheOps::declare(&mut reg)?;
-        let answers = crate::answer::AnswerOps::declare(&mut reg)?;
-        Ok(Bench { reg, dir: Directory::default(), blobs: BlobRows::new(&traces), traces, caches, answers })
+        Ok(Bench { ops: Runner::new()?, dir: Directory::default(), blobs: BlobRows::new() })
     }
 
     /// A bench over the kept blocks in folder `kept` (a store's, `files::Store::kept`): each mapped where it lies, at
@@ -855,7 +844,7 @@ impl Bench {
             Directory::open_kept(kept, rerail_blocks::block::kind::FACTS)?
         };
         let pins = crate::boot::Pins::open(&bench.dir)?;
-        bench.blobs = BlobRows::new(&bench.traces).resumed(bench.dir.lasting(), pins.as_ref().and_then(|p| p.1.blobs));
+        bench.blobs = BlobRows::new().resumed(bench.dir.lasting(), pins.as_ref().and_then(|p| p.1.blobs));
         // What the newest pins reach, and the blocks their blobs lie in (the symbols blocks, the pure answers kept
         // by key): every other kept block is a state no run reads again (an older run's, a process stopped before
         // letting it go), released, its file removed.
@@ -869,13 +858,13 @@ impl Bench {
                 }
             }
         }
-        let Bench { reg, dir, blobs, .. } = &mut bench;
-        blobs.forget_dead(reg, dir)?;
+        let Bench { ops, dir, blobs, .. } = &mut bench;
+        blobs.forget_dead(ops, dir)?;
         Ok((bench, pins))
     }
 
     pub fn cx(&mut self) -> Cx<'_> {
-        Cx { reg: &self.reg, dir: &mut self.dir, blobs: &self.blobs, traces: &self.traces, caches: &self.caches }
+        Cx { ops: &self.ops, dir: &mut self.dir, blobs: &self.blobs }
     }
 }
 
@@ -884,7 +873,7 @@ impl Bench {
 /// each step's heads.
 #[allow(clippy::type_complexity)]
 fn inputs<O: DeltaOp>(bench: &mut Bench, chain: &Chain) -> Result<(Vec<Trace>, Vec<Vec<Option<BlockId>>>), String> {
-    let Bench { reg, dir, traces, .. } = &mut *bench;
+    let Bench { ops, dir, .. } = &mut *bench;
     let mut ins: Vec<Trace> = ports_of::<O>()?.ins.iter().map(|p| Trace::new(&p.shape).map(|t| t.with_roll_up(RollUp::Never))).collect::<Result<_, _>>()?;
     let mut heads: Vec<Vec<Option<BlockId>>> = vec![vec![None; ins.len()]];
     for step in chain {
@@ -893,7 +882,7 @@ fn inputs<O: DeltaOp>(bench: &mut Bench, chain: &Chain) -> Result<(Vec<Trace>, V
             if pairs.is_empty() {
                 continue;
             }
-            now[k] = Some(push_layer(reg, traces, dir, &mut ins[k], pairs)?);
+            now[k] = Some(push_layer(ops, dir, &mut ins[k], pairs)?);
         }
         heads.push(now);
     }
@@ -901,8 +890,8 @@ fn inputs<O: DeltaOp>(bench: &mut Bench, chain: &Chain) -> Result<(Vec<Trace>, V
 }
 
 /// Trace `t`'s next layer, of the `(row, ±1)` pairs `pairs`: its new head.
-pub fn push_layer<R: AsRef<[i64]>>(reg: &Registry, traces: &TraceOps, dir: &mut Directory, t: &mut Trace, pairs: &[(R, i32)]) -> Result<BlockId, String> {
-    push_with(reg, traces, dir, t, pairs.len(), |_, _, w| {
+pub fn push_layer<R: AsRef<[i64]>>(ops: &Runner, dir: &mut Directory, t: &mut Trace, pairs: &[(R, i32)]) -> Result<BlockId, String> {
+    push_with(ops, dir, t, pairs.len(), |_, _, w| {
         for (r, d) in pairs {
             w.push(r.as_ref(), *d).ok_or("room for the pairs")?;
         }
@@ -913,7 +902,7 @@ pub fn push_layer<R: AsRef<[i64]>>(reg: &Registry, traces: &TraceOps, dir: &mut 
 /// A layer of at most `n` pairs on `t`, committed: `fill` pushes them into its runs block, reading what it needs where
 /// it lies (a state of `t` itself among them: its layers are other blocks), so no pair is gathered first. The runs
 /// block is let go when `fill` fails.
-pub fn push_with(reg: &Registry, traces: &TraceOps, dir: &mut Directory, t: &mut Trace, n: usize, fill: impl FnOnce(&Directory, &Trace, &RunsW<'_>) -> Result<(), String>) -> Result<BlockId, String> {
+pub fn push_with(ops: &Runner, dir: &mut Directory, t: &mut Trace, n: usize, fill: impl FnOnce(&Directory, &Trace, &RunsW<'_>) -> Result<(), String>) -> Result<BlockId, String> {
     let id = t.open(dir, n.max(1));
     let filled = {
         let b = dir.block(id).expect("made");
@@ -925,7 +914,7 @@ pub fn push_with(reg: &Registry, traces: &TraceOps, dir: &mut Directory, t: &mut
         dir.release(id);
         return Err(e);
     }
-    t.commit(reg, traces, dir, id, Tiling::WHOLE)
+    t.commit(ops, dir, id, Tiling::WHOLE)
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
@@ -1030,7 +1019,7 @@ pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], head
                 let c = ports.ins[p].shape.partition.map_or(0, |c| c as usize);
                 let rows: Vec<(Vec<i64>, i32)> = oracle_rows(cx.dir, t, heads[k][p]).map_err(|e| fail("D1", k, e))?.into_iter().filter(|r| asked.contains(&r[c])).map(|r| (r, 1)).collect();
                 let mut n = Trace::new(&ports.ins[p].shape).map_err(|e| fail("D1", k, e))?.with_roll_up(RollUp::Never);
-                nheads.push(if rows.is_empty() { None } else { Some(push_layer(cx.reg, cx.traces, cx.dir, &mut n, &rows).map_err(|e| fail("D1", k, e))?) });
+                nheads.push(if rows.is_empty() { None } else { Some(push_layer(cx.ops, cx.dir, &mut n, &rows).map_err(|e| fail("D1", k, e))?) });
                 narrowed.push(n);
             }
             let mut j = 0;

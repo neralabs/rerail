@@ -28,12 +28,12 @@
 use crate::cache::Sizes;
 use crate::contract::{Asks, At, CacheW, Cx, DeltaOp, In, Out, Port, PortGlobal, PortIn, PortOut, PortSet, Ports, Work, outs};
 use crate::dir::{BlockId, Directory};
-use crate::drop::{DropOps, Parts, drop_parts};
-use crate::semi::{self, SemiOps, Side};
+use crate::drop::{Parts, drop_parts};
+use crate::semi::{self, Side};
 use crate::trace::open_runs;
 use rerail_blocks::layer::Runs;
 use crate::files::{BlobId, DocIds};
-use crate::k0::{DocsIn, K0Ops, RowCols, k0_pass, room_of};
+use crate::k0::{DocsIn, RowCols, k0_pass, room_of};
 use crate::kform::{self, RELATIONS};
 use rerail_blocks::bistate::{Bistate, Read};
 use rerail_blocks::layer::{ColType, Shape};
@@ -100,12 +100,8 @@ pub fn row_blobs(row: &[i64]) -> (DocIds, BlobId) {
     (DocIds { source: b(TAPE_SOURCE), tape: b(TAPE_TAPE) }, b(TAPE_SYMS))
 }
 
-/// L1: `k0_pass` over its tape port's changed documents.
-pub struct L1 {
-    pub ops: K0Ops,
-    pub drops: DropOps,
-    pub semis: SemiOps,
-}
+/// L1: `k0_pass` over its tape port's changed documents, its operations the runner's (`Cx::ops`).
+pub struct L1;
 
 /// The want rows' key column (`contract::want_shape`: `(port, key)`, partitioned by key): L1's is a document.
 const WANT_KEY: usize = 1;
@@ -140,7 +136,7 @@ impl L1 {
     fn pass(&self, cx: &mut Cx<'_>, atoms: BlockId, docs: &DocsIn, gone: Option<&Parts>, out: &Out<L1Ports>, cache: Option<BlockId>, work: &mut Work) -> Result<(), String> {
         let runs: [BlockId; RELATIONS.len()] = core::array::from_fn(|k| out.block(L1Ports::relation(k)));
         work.rows_read += docs.n as u64;
-        work.rows_written += k0_pass(cx.reg, &self.ops, cx.dir, atoms, docs, gone, 1, &runs, cache).map_err(|e| e.to_string())?;
+        work.rows_written += k0_pass(cx.ops, cx.dir, atoms, docs, gone, 1, &runs, cache).map_err(|e| e.to_string())?;
         Ok(())
     }
 }
@@ -161,7 +157,7 @@ impl DeltaOp for L1 {
         // The documents read: the selection's added rows, joined with the blobs' rows by `docs_of`; the directory binds
         // the blocks they name.
         let docs = Runs::new(cx.dir.read("L1's selection", &[sel.rows])?.block(0)).len();
-        let docs = DocsIn::of_rows(cx.reg, &self.ops, cx.dir, sel.rows, docs, DOC_COLS, cx.blobs.head());
+        let docs = DocsIn::of_rows(cx.ops, cx.dir, sel.rows, docs, DOC_COLS, cx.blobs.head());
         let docs = match docs {
             Ok(d) => d,
             Err(e) => {
@@ -188,7 +184,7 @@ impl DeltaOp for L1 {
                 return Err(e);
             }
         };
-        let docs = semi::select(cx.reg, &self.semis, cx.dir, &a, None, semi::How::RETRACTED, rows, none).and_then(|()| DocsIn::of_rows(cx.reg, &self.ops, cx.dir, rows, n, DOC_COLS, cx.blobs.head()));
+        let docs = semi::select(cx.ops, cx.dir, &a, None, semi::How::RETRACTED, rows, none).and_then(|()| DocsIn::of_rows(cx.ops, cx.dir, rows, n, DOC_COLS, cx.blobs.head()));
         cx.dir.release(rows);
         cx.dir.release(none);
         let docs = docs?;
@@ -220,7 +216,7 @@ impl L1 {
                 return Err(e);
             }
         };
-        let ran = semi::select(cx.reg, &self.semis, cx.dir, &a, b.as_ref().map(|(s, k)| (s, *k)), semi::How::RETRACTED, rows, parts).and_then(|()| {
+        let ran = semi::select(cx.ops, cx.dir, &a, b.as_ref().map(|(s, k)| (s, *k)), semi::How::RETRACTED, rows, parts).and_then(|()| {
             let r = Runs::new(cx.dir.read("L1's selection", &[rows])?.block(0)).needed();
             if r > 0 { Err(format!("L1's selection outgrew its room by {r} rows: its bound is wrong")) } else { Parts::sealed(cx.dir, parts) }
         });
@@ -245,7 +241,7 @@ impl L1 {
         // The room the run needs, from the cache's sizes (`room_of`): each gone document's kept rows, and each added
         // one's as they were, an eighth more for an edit that grew. A cache read as ∅ names none.
         if let Some(c) = cache.read(cx)? {
-            let need = room_of(cx.reg, &self.ops, cx.dir, c, parts, docs)?;
+            let need = room_of(cx.ops, cx.dir, c, parts, docs)?;
             for (k, n) in need.into_iter().enumerate() {
                 out.room(cx.dir, L1Ports::relation(k), n as usize)?;
             }
@@ -254,7 +250,7 @@ impl L1 {
         work.rows_read += parts.len() as u64;
         for k in outs::<L1Ports>() {
             if let Some(kept) = out.kept(k) {
-                work.rows_written += drop_parts(cx.reg, &self.drops, cx.dir, kept, parts, -1, out.block(k))?;
+                work.rows_written += drop_parts(cx.ops, cx.dir, kept, parts, -1, out.block(k))?;
             }
         }
         self.pass(cx, atoms, docs, Some(parts), out, Some(cache), &mut work)?;

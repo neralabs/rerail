@@ -1699,3 +1699,30 @@ Step 1, built:
 Checks: the 16 interfaces the build wrote are the 60 slots the hand-written signatures had, slot for slot (name,
 mode, kind; `delta_runs` the one rename); `tests::k0_pass_rows_by_hand` (Relax, 1 s), whose fixture declares every
 operation and runs `k0_pass`'s 13 slots; the shape check, now reading `k0_pass`'s cache slot from its declaration.
+
+Steps 2 and 3, built:
+
+- **`op::Runner`**, the operations runner. It holds the one registry. `Runner::new` declares every operation from its
+  interface and registers each twin as its reference, calling each module's `register` (trace, cache, answer,
+  intern, k0, drop, semi). The modules' operation-id structs (`K0Ops`, `TraceOps`, `SemiOps`, `DropOps`,
+  `InternOps`, `CacheOps`, `AnswerOps`) are gone. `Runner::run(dir, &SIGNATURE, slots, params, tiling)` finds the
+  operation by its signature (`Registry::find`), takes its implementation from the registry (the twin), pins its
+  slots, writes its table and runs it; `Runner::run_on` does the same on a device, its checked UKL version there,
+  else the twin. `Runner::register` takes a version checked against the reference (`Registry::check`).
+- `run_cpu` and `run_on` are `op.rs`'s (`pub(crate)`), called by the runner and the registry's own tests. A test's
+  own operations run through `Runner::of(reg)` (`test`, `test-hooks`: `delta_device`'s UKL check).
+- Every caller takes the runner where it took the registry and an id struct: `Bench::ops`, `Cx::ops`, `Reach::ops`,
+  the functions' `ops: &Runner`. `L1`, `DocSet`, `World` and `BlobRows` hold no operation ids.
+- The directory stays the caller's (`Bench::dir`): the blocks' owner, which callers make, read and release blocks
+  in around each run. My plan said the runner holds it; it does not, because a run reads the directory while its
+  caller holds blocks of it.
+- The shape check refuses `run_cpu` or `run_on` outside `op.rs` and its tests, and a `Registry::default()` outside
+  them: the runner's registry is the one.
+
+Checks (Relax, 2.65 s): `tests::k0_pass_rows_by_hand` (k0_pass through the runner);
+`trace::tests::consolidate_writes_the_same_layer_at_every_tiling` (a tiled version checked against the twin and
+registered through the runner); `l1::tests::a_document_no_longer_asked_goes_and_is_not_read` (L1's run through the
+bench's runner: `semi_change`, `drop_parts`, `docs_of`, `room_of`, `k0_pass`, `named_blocks`). `delta_exec` and
+`delta_device` compile with their tests; the shape check holds.
+
+Step 4 (the runner runs a UKL version where one is checked) is the device's, and is not built.

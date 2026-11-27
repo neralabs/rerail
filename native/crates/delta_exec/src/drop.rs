@@ -3,7 +3,7 @@
 //! block. L1 retracts a changed document's kept rows with it: read in its output trace, where they lie.
 
 use crate::dir::{BlockId, Directory};
-use crate::op::{Across, Found, Independence, Inside, OpId, Output, ParamsLayout, Phase, Registry, Signature, Tiling, Unit, Version, run_cpu};
+use crate::op::{Across, Found, Independence, Inside, Output, ParamsLayout, Phase, Registry, Runner, Signature, Tiling, Unit, Version};
 use rerail_blocks::block::kind;
 use rerail_blocks::gens::Table;
 use rerail_blocks::layer::Runs;
@@ -32,17 +32,12 @@ pub fn drop_facts(_: &Table<'_>, _: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
     rows
 }
 
-#[derive(Clone, Copy)]
-pub struct DropOps {
-    pub drop_parts: OpId,
-}
-
-impl DropOps {
-    pub fn declare(reg: &mut Registry) -> Result<DropOps, String> {
-        let drop_parts = reg.declare(&DROP_PARTS)?;
-        reg.register_reference(Version::twin(drop_parts, "drop_parts twin", twin::DROP_PARTS, &DROP_PHASE))?;
-        Ok(DropOps { drop_parts })
-    }
+/// The module's operations declared, each from its UKL interface, and their twins registered as references: the
+/// runner's registry (`Runner::new`), the one place they are registered.
+pub(crate) fn register(reg: &mut Registry) -> Result<(), String> {
+    let drop_parts = reg.declare(&DROP_PARTS)?;
+    reg.register_reference(Version::twin(drop_parts, "drop_parts twin", twin::DROP_PARTS, &DROP_PHASE))?;
+    Ok(())
 }
 
 /// A parts block: the partitions a run retracts (L1's documents gone), written where it lies as they are found, then
@@ -116,14 +111,14 @@ impl Parts {
 }
 
 /// Pushes every live row of the state at `head` in the partitions `parts` lists into `runs` with sign `diff`: how many.
-pub fn drop_parts(reg: &Registry, ops: &DropOps, dir: &mut Directory, head: BlockId, parts: &Parts, diff: i32, runs: BlockId) -> Result<u64, String> {
+pub fn drop_parts(ops: &Runner, dir: &mut Directory, head: BlockId, parts: &Parts, diff: i32, runs: BlockId) -> Result<u64, String> {
     if parts.is_empty() {
         return Ok(0);
     }
     let before = Runs::new(dir.read("drop_parts", &[runs])?.block(0)).head.claimed;
     let mut p = [0u8; DropP::SIZE];
     DropP { head: u64::from(head.0), diff: i64::from(diff) }.write(&mut p);
-    run_cpu(reg, dir, ops.drop_parts, &[head, parts.id(), runs], &p, Tiling::WHOLE)?;
+    ops.run(dir, &DROP_PARTS, &[head, parts.id(), runs], &p, Tiling::WHOLE)?;
     Ok(u64::from(Runs::new(dir.read("drop_parts", &[runs])?.block(0)).head.claimed - before))
 }
 

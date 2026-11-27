@@ -519,6 +519,11 @@ impl Registry {
         Ok(OpId(self.ops.len() as u32 - 1))
     }
 
+    /// The operation `sig` declares: the one declared by that signature.
+    pub fn find(&self, sig: &'static Signature) -> Option<OpId> {
+        self.ops.iter().position(|s| std::ptr::eq(*s, sig)).map(|i| OpId(i as u32))
+    }
+
     pub fn signature(&self, op: OpId) -> &'static Signature {
         self.ops[op.0 as usize]
     }
@@ -683,14 +688,71 @@ pub fn written_facts(sig: &Signature, dir: &Directory, slots: &[BlockId]) -> Res
     Ok(out)
 }
 
+/// The operations runner (0686, the runner's step 3): the one registry, every operation declared from its UKL interface
+/// and its twin registered (`Runner::new`). Nothing runs an operation but the runner: a caller asks it to run one by
+/// its signature (`run`), and it takes the operation's implementation from the registry (today the twin, on the
+/// CPU; a device's checked UKL version by `run_on`), pins its slots, writes its descriptor table and runs it.
+pub struct Runner {
+    reg: Registry,
+}
+
+impl Runner {
+    /// The engine's runner: each module's operations declared and their twins registered as references, here alone.
+    pub fn new() -> Result<Runner, String> {
+        let mut reg = Registry::default();
+        crate::trace::register(&mut reg)?;
+        crate::cache::register(&mut reg)?;
+        crate::answer::register(&mut reg)?;
+        crate::intern::register(&mut reg)?;
+        crate::k0::register(&mut reg)?;
+        crate::drop::register(&mut reg)?;
+        crate::semi::register(&mut reg)?;
+        Ok(Runner { reg })
+    }
+
+    /// A runner of a test's own registry (its own operations and versions).
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn of(reg: Registry) -> Runner {
+        Runner { reg }
+    }
+
+    /// Its registry: what is declared and registered (to check a version against the reference, to list versions).
+    pub fn registry(&self) -> &Registry {
+        &self.reg
+    }
+
+    /// A version other than the reference, checked against it (`Registry::check`), registered in the runner's
+    /// registry: a default one is what the runner runs from then on.
+    pub fn register(&mut self, v: Version, checked: Checked) -> Result<(), String> {
+        self.reg.register(v, checked)
+    }
+
+    /// The operation `sig` declares, by its place in the registry (a version of it names it); an operation never
+    /// declared is an error.
+    pub fn op(&self, sig: &'static Signature) -> Result<OpId, String> {
+        self.reg.find(sig).ok_or_else(|| format!("{}: not declared in the runner's registry", sig.name))
+    }
+
+    /// Runs the operation `sig` declares on the CPU (`run_cpu`): on the blocks `slots` name, with `params`' bytes,
+    /// its phases cut by `tiling`.
+    pub fn run(&self, dir: &Directory, sig: &'static Signature, slots: &[BlockId], params: &[u8], tiling: Tiling) -> Result<(), String> {
+        run_cpu(&self.reg, dir, self.op(sig)?, slots, params, tiling)
+    }
+
+    /// Runs the operation `sig` declares on `device` (`run_on`): its checked UKL version there, else its twin.
+    pub fn run_on(&self, dir: &Directory, sig: &'static Signature, device: &dyn Kernels, slots: &[BlockId], params: &[u8], tiling: Tiling) -> Result<(), String> {
+        run_on(&self.reg, dir, self.op(sig)?, device, slots, params, tiling)
+    }
+}
+
 /// Runs `op` on the CPU: its default twin, else its reference, on the blocks `slots` name, with `params`' bytes, its
-/// phases cut by `tiling`.
+/// phases cut by `tiling`. The runner's (`Runner::run`): nothing else calls it but the registry's own tests.
 ///
 /// Every slot is pinned first, by its mode, naming the operation, and every block a slot refers to is pinned to read;
 /// the CPU's descriptor table of those is written (`Directory::launch`). If any cannot be (a second writer, a writer
 /// beside a reader, a write of a frozen block, the wrong kind of block), the operation does not start, every pin
 /// taken so far is let go, and the `Err` names the operation, the slot and what holds its block.
-pub fn run_cpu(reg: &Registry, dir: &Directory, op: OpId, slots: &[BlockId], params: &[u8], tiling: Tiling) -> Result<(), String> {
+pub(crate) fn run_cpu(reg: &Registry, dir: &Directory, op: OpId, slots: &[BlockId], params: &[u8], tiling: Tiling) -> Result<(), String> {
     let sig = reg.signature(op);
     let v = reg.cpu_version(op).ok_or_else(|| format!("{}: no twin registered", sig.name))?;
     execute(sig, v, dir, slots, params, tiling, None)
@@ -698,8 +760,8 @@ pub fn run_cpu(reg: &Registry, dir: &Directory, op: OpId, slots: &[BlockId], par
 
 /// Runs `op` on `device`: its default UKL version for the device's processors (a version is registered only once
 /// checked against the twin), else its twin on the CPU (`run_cpu`). Its slots pinned and its descriptor table made as
-/// `run_cpu`'s, then handed to the device (E1, E2) until its work completes.
-pub fn run_on(reg: &Registry, dir: &Directory, op: OpId, device: &dyn Kernels, slots: &[BlockId], params: &[u8], tiling: Tiling) -> Result<(), String> {
+/// `run_cpu`'s, then handed to the device (E1, E2) until its work completes. The runner's (`Runner::run_on`).
+pub(crate) fn run_on(reg: &Registry, dir: &Directory, op: OpId, device: &dyn Kernels, slots: &[BlockId], params: &[u8], tiling: Tiling) -> Result<(), String> {
     let sig = reg.signature(op);
     match reg.device_version(op, device) {
         Some(v) => execute(sig, v, dir, slots, params, tiling, Some(device)),

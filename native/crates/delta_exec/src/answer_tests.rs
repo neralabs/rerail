@@ -3,10 +3,9 @@
 use super::*;
 use crate::files::tests::{root, write};
 
-fn ops() -> (Registry, AnswerOps, Directory) {
-    let mut reg = Registry::default();
-    let ops = AnswerOps::declare(&mut reg).unwrap();
-    (reg, ops, Directory::default())
+fn ops() -> (crate::op::Runner, Directory) {
+    let reg = crate::op::Runner::new().unwrap();
+    (reg, Directory::default())
 }
 
 /// `answer_load` answers each path of its plan as the file layer does: a changed file read once and placed in a room
@@ -16,7 +15,7 @@ fn answer_load_answers_each_path_of_its_plan() {
     let _racy = crate::files::tests::racy_window();
     let (root, store) = root("answer-load");
     write(&root.join("a.rerail"), "e(1, 2).\n", 30);
-    let (reg, ops, mut dir) = ops();
+    let (reg, mut dir) = ops();
     let observer = store.observer();
     // A run's bounds, as `World::begin` and `end` give them: the observer's answers kept at the end.
     let run = |f: &mut dyn FnMut()| {
@@ -31,7 +30,7 @@ fn answer_load_answers_each_path_of_its_plan() {
     let ask = |d, path: &str, before| Ask { d, path: path.into(), before, flags: 0 };
     let asks = [ask(1, "a.rerail", None), ask(2, "bootstrap-l0.rerail", None), ask(3, "missing.rerail", None)];
     let mut first = None;
-    run(&mut || first = Some(answer_load(&reg, &ops, &mut dir, slab, &root, &observer, &asks).unwrap()));
+    run(&mut || first = Some(answer_load(&reg, &mut dir, slab, &root, &observer, &asks).unwrap()));
     let (facts, reads) = first.unwrap();
     assert_eq!(reads, 2);
     assert_eq!(facts.iter().map(|f| (f[0], f[1])).collect::<Vec<_>>(), vec![(1, code::READ), (2, code::READ), (3, code::MISS)]);
@@ -48,14 +47,14 @@ fn answer_load_answers_each_path_of_its_plan() {
     let again = [ask(1, "a.rerail", Some(g(&facts[0]))), ask(2, "bootstrap-l0.rerail", Some(g(&facts[1])))];
     let (slab2, _) = dir.slab_room(kind::TAPE, room(0)).unwrap();
     let mut second = None;
-    run(&mut || second = Some(answer_load(&reg, &ops, &mut dir, slab2, &root, &observer, &again).unwrap()));
+    run(&mut || second = Some(answer_load(&reg, &mut dir, slab2, &root, &observer, &again).unwrap()));
     let (facts2, reads2) = second.unwrap();
     assert_eq!((reads2, facts2[0][1], facts2[1][1]), (0, code::SAME, code::SAME));
     // A slab with less room than a file needs: the fact asks for it, and nothing is placed.
     write(&root.join("big.rerail"), &"e(1, 2).\n".repeat(2000), 30);
     let mut small = Directory::default().with_slab_bytes(1);
     let (tiny, _) = small.slab_room(kind::TAPE, 8).unwrap();
-    let (facts3, _) = answer_load(&reg, &ops, &mut small, tiny, &root, &observer, &[ask(4, "big.rerail", None)]).unwrap();
+    let (facts3, _) = answer_load(&reg, &mut small, tiny, &root, &observer, &[ask(4, "big.rerail", None)]).unwrap();
     assert_eq!((facts3[0][1], facts3[0][9] as usize), (code::NO_ROOM, room(18000)));
 }
 
@@ -65,7 +64,7 @@ fn answer_load_answers_each_path_of_its_plan() {
 fn parse_gives_the_same_tapes_at_every_tiling() {
     let srcs: [&[u8]; 3] = [b"e(1, 2).\n", b"p(x) :- e(x, _).\n", b"\xff\xfe"];
     let run = |tiling: Tiling| {
-        let (reg, ops, mut dir) = ops();
+        let (reg, mut dir) = ops();
         let (slab, b) = dir.slab_room(kind::TAPE, room(64)).unwrap();
         let places: Vec<(usize, usize)> = srcs
             .iter()
@@ -80,7 +79,7 @@ fn parse_gives_the_same_tapes_at_every_tiling() {
             .collect();
         drop(b);
         let control = parse_control(&mut dir, &places).unwrap();
-        run_cpu(&reg, &dir, ops.parse, &[slab, control], &[], tiling).unwrap();
+        reg.run(&dir, &PARSE, &[slab, control], &[], tiling).unwrap();
         let l = dir.read("t", &[slab, control]).unwrap();
         (0..srcs.len())
             .map(|k| {

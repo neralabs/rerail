@@ -5,7 +5,7 @@
 use super::*;
 use crate::contract::push_layer;
 use crate::drop::Parts;
-use crate::trace::{RollUp, Trace, TraceOps};
+use crate::trace::{RollUp, Trace};
 use rerail_blocks::bistate::{ColumnIndex, Read, RowId};
 use rerail_blocks::change::{self, Sign};
 use rerail_blocks::layer::{ColType, Shape};
@@ -32,7 +32,7 @@ fn keys(dir: &Directory, t: &Trace, head: Option<BlockId>, col: u16) -> BTreeSet
 
 /// A trace of `(doc, value)` rows, partitioned by doc, and one of want rows `(port, doc)`, each over three layers; its
 /// heads, the empty state first.
-fn traces(reg: &Registry, ops: &TraceOps, dir: &mut Directory) -> (Trace, Vec<Option<BlockId>>, Trace, Vec<Option<BlockId>>) {
+fn traces(reg: &crate::op::Runner, dir: &mut Directory) -> (Trace, Vec<Option<BlockId>>, Trace, Vec<Option<BlockId>>) {
     let mut a = Trace::new(&Shape::run(vec![ColType::I32, ColType::I64], vec![0, 1], Some(0))).unwrap().with_roll_up(RollUp::Never);
     let mut b = Trace::new(&crate::contract::want_shape()).unwrap().with_roll_up(RollUp::Never);
     let r = |d: i64, v: i64| vec![d, v];
@@ -53,8 +53,8 @@ fn traces(reg: &Registry, ops: &TraceOps, dir: &mut Directory) -> (Trace, Vec<Op
     ];
     let (mut ah, mut bh) = (vec![None], vec![None]);
     for (x, y) in al.iter().zip(&bl) {
-        ah.push(Some(push_layer(reg, ops, dir, &mut a, x).unwrap()));
-        bh.push(Some(push_layer(reg, ops, dir, &mut b, y).unwrap()));
+        ah.push(Some(push_layer(reg, dir, &mut a, x).unwrap()));
+        bh.push(Some(push_layer(reg, dir, &mut b, y).unwrap()));
     }
     (a, ah, b, bh)
 }
@@ -78,10 +78,9 @@ fn written(dir: &Directory, rows: BlockId, parts: BlockId, keys: Option<BlockId>
 /// rows of `A`'s change alone and the docs of its gone rows.
 #[test]
 fn semi_change_is_the_change_forms_semi_join_over_every_pair_of_states() {
-    let mut reg = Registry::default();
-    let (tops, ops) = (TraceOps::declare(&mut reg).unwrap(), SemiOps::declare(&mut reg).unwrap());
+    let reg = crate::op::Runner::new().unwrap();
     let mut dir = Directory::default();
-    let (a, ah, b, bh) = traces(&reg, &tops, &mut dir);
+    let (a, ah, b, bh) = traces(&reg, &mut dir);
     let asks = Trace::new(&crate::contract::asks_shape()).unwrap();
     let pairs = |n: usize| (0..n).flat_map(move |i| (i..n).map(move |j| (i, j)));
     let mut checked = 0;
@@ -117,7 +116,7 @@ fn semi_change_is_the_change_forms_semi_join_over_every_pair_of_states() {
             let gone_docs = |rows: &BTreeSet<(Vec<i64>, i32)>| rows.iter().filter(|(_, d)| *d < 0).map(|(r, _)| r[0]).collect::<BTreeSet<i64>>();
 
             let (rows, parts, ks) = (a.open(&mut dir, 64), Parts::open(&mut dir, 16).unwrap(), asks.open(&mut dir, 16));
-            select(&reg, &ops, &mut dir, &sa, Some((&sb, ks)), How::RETRACTED, rows, parts).unwrap();
+            select(&reg, &mut dir, &sa, Some((&sb, ks)), How::RETRACTED, rows, parts).unwrap();
             let got = written(&dir, rows, parts, Some(ks));
             assert_eq!(got.0, want_rows, "rows, A {i}..{j}, B {bi}..{bj}");
             assert_eq!(got.1, gone_docs(&want_rows), "parts, A {i}..{j}, B {bi}..{bj}");
@@ -130,7 +129,7 @@ fn semi_change_is_the_change_forms_semi_join_over_every_pair_of_states() {
                 want_unmatched.clone_from(&want_all);
             }
             let (rows, parts, ks) = (a.open(&mut dir, 64), Parts::open(&mut dir, 16).unwrap(), asks.open(&mut dir, 16));
-            select(&reg, &ops, &mut dir, &sa, Some((&sb, ks)), How::UNMATCHED, rows, parts).unwrap();
+            select(&reg, &mut dir, &sa, Some((&sb, ks)), How::UNMATCHED, rows, parts).unwrap();
             let got = written(&dir, rows, parts, Some(ks));
             let added_docs = want_unmatched.iter().filter(|(_, d)| *d > 0).map(|(r, _)| r[0]).collect::<BTreeSet<i64>>();
             assert_eq!(got.0, want_unmatched, "unmatched rows, A {i}..{j}, B {bi}..{bj}");
@@ -138,7 +137,7 @@ fn semi_change_is_the_change_forms_semi_join_over_every_pair_of_states() {
             [rows, parts, ks].into_iter().for_each(|x| dir.release(x));
 
             let (rows, parts) = (a.open(&mut dir, 64), Parts::open(&mut dir, 16).unwrap());
-            select(&reg, &ops, &mut dir, &sa, None, How::RETRACTED, rows, parts).unwrap();
+            select(&reg, &mut dir, &sa, None, How::RETRACTED, rows, parts).unwrap();
             let got = written(&dir, rows, parts, None);
             assert_eq!(got.0, want_all, "change rows, A {i}..{j}");
             assert_eq!(got.1, gone_docs(&want_all), "change parts, A {i}..{j}");
@@ -153,8 +152,7 @@ fn semi_change_is_the_change_forms_semi_join_over_every_pair_of_states() {
 /// comes; a new key's row comes; over an empty state, the given block is the change itself.
 #[test]
 fn replace_rows_changes_each_key_whose_row_differs() {
-    let mut reg = Registry::default();
-    let (tops, ops) = (TraceOps::declare(&mut reg).unwrap(), SemiOps::declare(&mut reg).unwrap());
+    let reg = crate::op::Runner::new().unwrap();
     let mut dir = Directory::default();
     let mut t = Trace::new(&Shape::run(vec![ColType::I32, ColType::I64, ColType::I64], vec![0, 1, 2], Some(0))).unwrap().with_roll_up(RollUp::Never);
     let given = |dir: &mut Directory, t: &Trace, rows: &[[i64; 3]]| {
@@ -168,12 +166,12 @@ fn replace_rows_changes_each_key_whose_row_differs() {
     };
     let g = given(&mut dir, &t, &[[1, 10, 100], [2, 20, 200]]);
     let opened = t.open(&mut dir, 4);
-    assert_eq!(replace(&reg, &ops, &mut dir, None, 3, 1, g, opened).unwrap(), g);
+    assert_eq!(replace(&reg, &mut dir, None, 3, 1, g, opened).unwrap(), g);
     dir.release(opened);
-    t.commit(&reg, &tops, &mut dir, g, crate::op::Tiling::WHOLE).unwrap();
+    t.commit(&reg, &mut dir, g, crate::op::Tiling::WHOLE).unwrap();
     let g = given(&mut dir, &t, &[[1, 10, 100], [2, 21, 200], [3, 30, 300]]);
     let runs = t.open(&mut dir, 8);
-    assert_eq!(replace(&reg, &ops, &mut dir, t.head(), 3, 1, g, runs).unwrap(), runs);
+    assert_eq!(replace(&reg, &mut dir, t.head(), 3, 1, g, runs).unwrap(), runs);
     dir.release(g);
     let none = Parts::open(&mut dir, 0).unwrap();
     let got = written(&dir, runs, none, None).0;

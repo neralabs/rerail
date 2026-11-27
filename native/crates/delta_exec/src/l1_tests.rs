@@ -7,7 +7,6 @@ use crate::contract::{Bench, Global, Instance, harness_on, oracle_rows, referenc
 use crate::dir::Directory;
 use crate::files::{Doc, Store, World};
 use crate::files::tests::{past_racy_window, racy_window, root, write};
-use crate::intern::InternOps;
 use crate::sym::Atoms;
 use rerail_blocks::maps::hash_bytes;
 
@@ -36,20 +35,16 @@ impl Disk {
     fn new(bench: &mut Bench, name: &str) -> Disk {
         let (root, store) = root(name);
         let atoms = Atoms::new(&mut bench.dir);
-        let world = World::new(root.clone(), store, bench.answers, &bench.dir, [None; 3]).unwrap();
+        let world = World::new(root.clone(), store, &bench.dir, [None; 3]).unwrap();
         Disk::over(bench, root, world, atoms, None)
     }
 
     /// L1 over the document set of `world`, at `pins` and the pins block they lie in (a kept run's; `None`: none).
     fn over(bench: &mut Bench, root: PathBuf, world: World, atoms: Atoms, pins: Option<(BlockId, Pins)>) -> Disk {
-        let iops = InternOps::declare(&mut bench.reg).unwrap();
-        let ops = K0Ops::declare(&mut bench.reg).unwrap();
-        let drops = crate::drop::DropOps::declare(&mut bench.reg).unwrap();
-        let semis = crate::semi::SemiOps::declare(&mut bench.reg).unwrap();
-        let l1 = L1 { ops, drops, semis };
+        let l1 = L1;
         let place = bench.dir.lasting();
         let inst = Instance::new(&l1, &mut bench.dir).unwrap().resumed(place, pins.as_ref().map_or(&[][..], |p| &p.1.outs), pins.as_ref().and_then(|p| p.1.want), pins.as_ref().map_or(&[][..], |p| &p.1.asks));
-        let docs = DocSet::new(world, iops, drops, semis, &bench.dir, pins.as_ref().and_then(|p| p.1.tape), pins.as_ref().map(|p| p.0)).unwrap();
+        let docs = DocSet::new(world, &bench.dir, pins.as_ref().and_then(|p| p.1.tape), pins.as_ref().map(|p| p.0)).unwrap();
         let last = pins.map(|(_, p)| Pins { atoms: Global { block: atoms.0, ..p.atoms }, ..p });
         Disk { root, docs, atoms, l1, inst, last }
     }
@@ -58,7 +53,7 @@ impl Disk {
     fn answer(&mut self, bench: &mut Bench) -> Doc {
         let mut leaves = self.docs.world.leaves_w(&mut bench.dir);
         let doc = self.docs.read(bench, &mut leaves, self.atoms, PATH, MODULE).unwrap();
-        self.docs.world.commit_leaves(&bench.reg, &bench.traces, &mut bench.dir, leaves).unwrap();
+        self.docs.world.commit_leaves(&bench.ops, &mut bench.dir, leaves).unwrap();
         doc
     }
 
@@ -417,7 +412,7 @@ fn a_later_process_starts_where_the_last_run_left_off() {
         let store = Store::open(&folder).unwrap();
         let (mut bench, pins) = Bench::open(&store.kept()).unwrap();
         let atoms = Atoms::open(&mut bench.dir, &store.atoms()).unwrap();
-        let world = World::new(root.clone(), store, bench.answers, &bench.dir, pins.as_ref().map_or([None; 3], |p| p.1.world)).unwrap();
+        let world = World::new(root.clone(), store, &bench.dir, pins.as_ref().map_or([None; 3], |p| p.1.world)).unwrap();
         let disk = Disk::over(&mut bench, root.clone(), world, atoms, pins);
         (bench, disk)
     };

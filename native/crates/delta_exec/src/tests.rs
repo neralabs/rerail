@@ -3,13 +3,10 @@
 
 use crate::dir::Directory;
 use crate::files::{BlobId, BlobRows, DocIds, Placed, doc_of, reads};
-use crate::intern::{InternOps, intern};
-use crate::cache::CacheOps;
+use crate::intern::{intern};
 use crate::contract::{Cx, Global, apply, push_layer};
-use crate::k0::K0Ops;
 use crate::l1::{L1, tape_row, tape_shape};
-use crate::op::Registry;
-use crate::trace::{RollUp, Trace, TraceOps};
+use crate::trace::{RollUp, Trace};
 use crate::sym::{Atoms, Names};
 use crate::tape::{Reads, TapeView, View};
 use crate::{L0, kform::RELATIONS};
@@ -19,17 +16,10 @@ use std::collections::BTreeSet;
 
 type Rows = BTreeSet<Vec<i64>>;
 
-/// A registry with `intern`, `k0_pass` and the trace's and the cache's operations, a directory and its atoms:
+/// The operations runner, a directory and its atoms:
 /// documents of sources in hand, interned, read by L1.
 pub(crate) struct Fx {
-    pub reg: Registry,
-    pub ops: InternOps,
-    pub k0: K0Ops,
-    pub drops: crate::drop::DropOps,
-    pub semis: crate::semi::SemiOps,
-    pub traces: TraceOps,
-    pub caches: CacheOps,
-    pub answers: crate::answer::AnswerOps,
+    pub ops: crate::op::Runner,
     pub dir: Directory,
     pub blobs: BlobRows,
     pub atoms: Atoms,
@@ -43,29 +33,21 @@ pub(crate) struct D {
 
 impl Fx {
     pub fn new() -> Fx {
-        let mut reg = Registry::default();
-        let ops = InternOps::declare(&mut reg).unwrap();
-        let k0 = K0Ops::declare(&mut reg).unwrap();
-        let drops = crate::drop::DropOps::declare(&mut reg).unwrap();
-        let semis = crate::semi::SemiOps::declare(&mut reg).unwrap();
-        let traces = TraceOps::declare(&mut reg).unwrap();
-        let caches = CacheOps::declare(&mut reg).unwrap();
-        let answers = crate::answer::AnswerOps::declare(&mut reg).unwrap();
         let mut dir = Directory::default();
         let atoms = Atoms::new(&mut dir);
-        Fx { reg, ops, k0, drops, semis, traces, caches, answers, dir, blobs: BlobRows::new(&traces), atoms }
+        Fx { ops: crate::op::Runner::new().unwrap(), dir, blobs: BlobRows::new(), atoms }
     }
 
     pub fn l1(&self) -> L1 {
-        L1 { ops: self.k0, drops: self.drops, semis: self.semis }
+        L1
     }
 
     /// A document of `src` answered at `path`, interned: its blobs and its symbols blob.
     pub fn doc(&mut self, src: &str, path: &str) -> D {
-        let ids = doc_of(&self.reg, &self.answers, &mut self.dir, &mut self.blobs, src).expect("a document");
+        let ids = doc_of(&self.ops, &mut self.dir, &mut self.blobs, src).expect("a document");
         let module = path.strip_suffix(".rerail").unwrap_or(path);
         let (s, t) = (self.place(&ids.source), self.place(&ids.tape));
-        let syms = intern(&self.reg, &self.ops, &mut self.dir, &mut self.blobs, self.atoms, s, t, path, module).expect("interned");
+        let syms = intern(&self.ops, &mut self.dir, &mut self.blobs, self.atoms, s, t, path, module).expect("interned");
         D { ids, syms }
     }
 
@@ -90,10 +72,10 @@ impl Fx {
     /// L1's rows of `doc` as module `d`, by relation: its plain function over a tape port of the one document.
     pub fn rows(&mut self, doc: &D, d: i64) -> Result<[Rows; 8], String> {
         let mut t = Trace::new(&tape_shape())?.with_roll_up(RollUp::Never);
-        let ht = push_layer(&self.reg, &self.traces, &mut self.dir, &mut t, &[(tape_row(d, d, 0, &doc.ids, &doc.syms), 1)])?;
+        let ht = push_layer(&self.ops, &mut self.dir, &mut t, &[(tape_row(d, d, 0, &doc.ids, &doc.syms), 1)])?;
         let atoms = Global { block: self.atoms.0, count: u64::from(self.atoms.count(&self.dir)) };
         let l1 = self.l1();
-        let mut cx = Cx { reg: &self.reg, dir: &mut self.dir, blobs: &self.blobs, traces: &self.traces, caches: &self.caches };
+        let mut cx = Cx { ops: &self.ops, dir: &mut self.dir, blobs: &self.blobs };
         let rows = apply(&l1, &mut cx, &[(&t, Some(ht))], &[atoms])?;
         Ok(rows.try_into().expect("eight relations"))
     }
@@ -215,7 +197,7 @@ fn k_form_rows_are_stored_in_32_bits() {
     let mut fx = Fx::new();
     let doc = fx.doc("e(1, 2).\np(x, z) :- e(x, y), e(y, z), !q(y), x != z.\nq(\"s\") :- e(_, -3).\n", "k.rerail");
     let rows = fx.rows(&doc, 7).expect("K0");
-    let (reg, ops, dir) = (&fx.reg, &fx.traces, &mut fx.dir);
+    let (reg, dir) = (&fx.ops, &mut fx.dir);
     for (i, (name, arity)) in RELATIONS.iter().enumerate() {
         let shape = crate::kform::shape(i);
         let wide: Vec<usize> = (0..*arity).filter(|&c| shape.columns[c] == ColType::I64).collect();
@@ -231,7 +213,7 @@ fn k_form_rows_are_stored_in_32_bits() {
                 w.push(r, 1).unwrap();
             }
         }
-        let h = tr.commit(reg, ops, dir, runs, Tiling::WHOLE).unwrap();
+        let h = tr.commit(reg, dir, runs, Tiling::WHOLE).unwrap();
         let l = tr.read(dir, &[Some(h)]).unwrap();
         let table = l.table();
         let st = tr.state(&table, Some(h)).unwrap();
@@ -348,23 +330,23 @@ fn a_gone_document_is_retracted_from_the_kept_rows_not_its_old_tape() {
     let want = fx.rows(&b, d).unwrap();
     let mut t = Trace::new(&tape_shape()).unwrap().with_roll_up(RollUp::Never);
     let (ra, rb) = (tape_row(d, d, 0, &a.ids, &a.syms), tape_row(d, d, 0, &b.ids, &b.syms));
-    let h1 = push_layer(&fx.reg, &fx.traces, &mut fx.dir, &mut t, &[(ra, 1)]).unwrap();
-    let h2 = push_layer(&fx.reg, &fx.traces, &mut fx.dir, &mut t, &[(ra, -1), (rb, 1)]).unwrap();
+    let h1 = push_layer(&fx.ops, &mut fx.dir, &mut t, &[(ra, 1)]).unwrap();
+    let h2 = push_layer(&fx.ops, &mut fx.dir, &mut t, &[(ra, -1), (rb, 1)]).unwrap();
     let n = u64::from(fx.atoms.count(&fx.dir));
     let atoms = [GlobalIn { block: fx.atoms.0, before: Some(n), after: n }];
     let l1 = fx.l1();
     let mut inst = Instance::new(&l1, &mut fx.dir).unwrap();
-    let mut cx = Cx { reg: &fx.reg, dir: &mut fx.dir, blobs: &fx.blobs, traces: &fx.traces, caches: &fx.caches };
+    let mut cx = Cx { ops: &fx.ops, dir: &mut fx.dir, blobs: &fx.blobs };
     inst.step(&l1, &mut cx, &[(&t, None, Some(h1))], &atoms, None).unwrap();
     let kept: usize = inst.outs.iter().map(|o| oracle_rows(&fx.dir, o, o.head()).unwrap().len()).sum();
     assert!(kept > 0);
     // The new document's blobs alone.
-    let mut only_b = BlobRows::new(&fx.traces);
+    let mut only_b = BlobRows::new();
     for id in [b.ids.source, b.ids.tape, b.syms] {
         let p = fx.place(&id);
-        only_b.house(&fx.reg, &mut fx.dir, p).unwrap();
+        only_b.house(&fx.ops, &mut fx.dir, p).unwrap();
     }
-    let mut cx = Cx { reg: &fx.reg, dir: &mut fx.dir, blobs: &only_b, traces: &fx.traces, caches: &fx.caches };
+    let mut cx = Cx { ops: &fx.ops, dir: &mut fx.dir, blobs: &only_b };
     let work = inst.step(&l1, &mut cx, &[(&t, Some(h1), Some(h2))], &atoms, None).unwrap();
     let added: usize = want.iter().map(BTreeSet::len).sum();
     assert_eq!(work.rows_written as usize, kept + added, "the kept rows retracted, the new ones placed");
@@ -382,7 +364,7 @@ fn k0_doc(fx: &Fx, d: &D, module: i64) -> crate::k0::K0Doc {
 fn k0_rows(fx: &mut Fx, docs: &[crate::k0::K0Doc]) -> Result<Vec<Vec<Vec<i64>>>, crate::kform::Refused> {
     let runs: Vec<crate::dir::BlockId> = (0..RELATIONS.len()).map(|k| Trace::new(&crate::kform::shape(k)).unwrap().open(&mut fx.dir, 4096)).collect();
     let d = crate::k0::DocsIn::of(&mut fx.dir, docs).map_err(|why| crate::kform::Refused { module: -1, rule: -1, why })?;
-    let ran = crate::k0::k0_pass(&fx.reg, &fx.k0, &mut fx.dir, fx.atoms.0, &d, None, 1, &runs, None);
+    let ran = crate::k0::k0_pass(&fx.ops, &mut fx.dir, fx.atoms.0, &d, None, 1, &runs, None);
     d.release(&mut fx.dir);
     let got = runs
         .iter()
@@ -453,7 +435,7 @@ fn k0_pass_keeps_each_documents_sizes_and_a_gone_one_takes_its_entry() {
     let pass = |fx: &mut Fx, docs: &[crate::k0::K0Doc], gone: &[i64]| {
         let d = crate::k0::DocsIn::of(&mut fx.dir, docs).unwrap();
         let g = crate::drop::Parts::write(&mut fx.dir, gone.len(), |put| gone.iter().copied().for_each(put)).unwrap();
-        let n = crate::k0::k0_pass(&fx.reg, &fx.k0, &mut fx.dir, fx.atoms.0, &d, Some(&g), 1, &runs, Some(cache)).unwrap();
+        let n = crate::k0::k0_pass(&fx.ops, &mut fx.dir, fx.atoms.0, &d, Some(&g), 1, &runs, Some(cache)).unwrap();
         d.release(&mut fx.dir);
         g.release(&mut fx.dir);
         n

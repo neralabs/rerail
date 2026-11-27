@@ -115,7 +115,7 @@ impl DeltaOp for Toy {
         let a = x.after();
         let mut seen = 0;
         for layer in layers {
-            OpCache(c).order(cx.reg, cx.caches, cx.dir, layer, &[1])?;
+            OpCache(c).order(cx.ops, cx.dir, layer, &[1])?;
             let read = cache.body(cx, |orders| -> Result<(), String> {
                 let order = orders.order(layer, &[1]).ok_or("the order just added")?;
                 for &id in order.ids {
@@ -212,9 +212,7 @@ fn a_toy_whose_answer_hangs_on_its_cache_fails_the_dropped_cache() {
 /// The reference is the plain function run on both sides, diffed: a row in both is in neither side of the change.
 #[test]
 fn the_reference_is_both_sides_run_and_diffed() {
-    let mut reg = Registry::default();
-    let traces = TraceOps::declare(&mut reg).unwrap();
-    let caches = CacheOps::declare(&mut reg).unwrap();
+    let reg = crate::op::Runner::new().unwrap();
     let mut dir = Directory::default();
     let mut t = Trace::new(&in_shape()).unwrap().with_roll_up(RollUp::Never);
     let commit = |dir: &mut Directory, t: &mut Trace, pairs: &[(Vec<i64>, i32)]| {
@@ -223,11 +221,11 @@ fn the_reference_is_both_sides_run_and_diffed() {
         let pin = pin_block(&b, "test", true).unwrap();
         pairs.iter().for_each(|(r, d)| assert!(RunsW::new(&pin).push(r, *d).is_some()));
         drop(pin);
-        t.commit(&reg, &traces, dir, id, Tiling::WHOLE).unwrap()
+        t.commit(&reg, dir, id, Tiling::WHOLE).unwrap()
     };
     let h1 = commit(&mut dir, &mut t, &[(vec![1, 10], 1), (vec![2, 20], 1), (vec![3, 30], 1)]);
     let h2 = commit(&mut dir, &mut t, &[(vec![1, 10], -1), (vec![4, 40], 1), (vec![6, 60], 1)]);
-    let mut cx = Cx { reg: &reg, dir: &mut dir, blobs: &crate::files::BlobRows::new(&traces), traces: &traces, caches: &caches };
+    let mut cx = Cx { ops: &reg, dir: &mut dir, blobs: &crate::files::BlobRows::new() };
     let r = reference(&Toy(Flaw::None), &mut cx, &[(&t, Some(h1), Some(h2))], &[]).unwrap();
     assert_eq!(r[0].added, [vec![40, 4]].into_iter().collect());
     assert_eq!(r[0].gone, [vec![10, 1]].into_iter().collect());
@@ -236,9 +234,7 @@ fn the_reference_is_both_sides_run_and_diffed() {
 /// An instance's identity run writes nothing: no layer committed, the cache's header as it was, no work.
 #[test]
 fn an_identity_run_is_its_checks_alone() {
-    let mut reg = Registry::default();
-    let traces = TraceOps::declare(&mut reg).unwrap();
-    let caches = CacheOps::declare(&mut reg).unwrap();
+    let reg = crate::op::Runner::new().unwrap();
     let mut dir = Directory::default();
     let mut t = Trace::new(&in_shape()).unwrap().with_roll_up(RollUp::Never);
     let id = t.open(&mut dir, 2);
@@ -247,8 +243,8 @@ fn an_identity_run_is_its_checks_alone() {
         let pin = pin_block(&b, "test", true).unwrap();
         assert!(RunsW::new(&pin).push(&[1, 10], 1).is_some());
     }
-    let h = t.commit(&reg, &traces, &mut dir, id, Tiling::WHOLE).unwrap();
-    let mut cx = Cx { reg: &reg, dir: &mut dir, blobs: &crate::files::BlobRows::new(&traces), traces: &traces, caches: &caches };
+    let h = t.commit(&reg, &mut dir, id, Tiling::WHOLE).unwrap();
+    let mut cx = Cx { ops: &reg, dir: &mut dir, blobs: &crate::files::BlobRows::new() };
     let mut inst = Instance::new(&Toy(Flaw::None), cx.dir).unwrap();
     inst.step(&Toy(Flaw::None), &mut cx, &[(&t, None, Some(h))], &[], None).unwrap();
     let (heads, cache) = (inst.heads(), cache_facts(&cx.dir.read("t", &[inst.cache.0]).unwrap().table(), 0, cx.dir.read("t", &[inst.cache.0]).unwrap().block(0)));
@@ -262,17 +258,15 @@ fn an_identity_run_is_its_checks_alone() {
 /// run's before; and as the cache when it names that state.
 #[test]
 fn a_runs_cache_left_open_or_of_another_state_reads_as_empty() {
-    let mut reg = Registry::default();
-    let traces = TraceOps::declare(&mut reg).unwrap();
-    let caches = CacheOps::declare(&mut reg).unwrap();
+    let reg = crate::op::Runner::new().unwrap();
     let mut dir = Directory::default();
     let c = OpCache::new(&mut dir);
-    let cx = Cx { reg: &reg, dir: &mut dir, blobs: &crate::files::BlobRows::new(&traces), traces: &traces, caches: &caches };
-    c.open(cx.reg, cx.caches, cx.dir, 0).unwrap();
-    c.commit(cx.reg, cx.caches, cx.dir, 7).unwrap();
+    let cx = Cx { ops: &reg, dir: &mut dir, blobs: &crate::files::BlobRows::new() };
+    c.open(cx.ops, cx.dir, 0).unwrap();
+    c.commit(cx.ops, cx.dir, 7).unwrap();
     assert_eq!(CacheW::<()>::new(c, 7).read(&cx).unwrap(), Some(c.0));
     assert_eq!(CacheW::<()>::new(c, 8).read(&cx).unwrap(), None, "another state");
-    c.open(cx.reg, cx.caches, cx.dir, 7).unwrap();
+    c.open(cx.ops, cx.dir, 7).unwrap();
     assert_eq!(CacheW::<()>::new(c, 7).read(&cx).unwrap(), None, "left open");
 }
 

@@ -101,7 +101,7 @@ fn square_case(gpu: &Gpu, dir: &mut Directory) -> Case {
 
 /// E3 on a device: a UKL version is run by the executor (its launch pinned, its device table made, both handed to one
 /// fence, its phase's kernels launched by tiles in any order) and checked against the twin at every tiling before it
-/// is registered; a broken one is refused; `run_on` then runs the device's default version.
+/// is registered; a broken one is refused; the runner's `run_on` then runs the device's default version.
 fn a_ukl_version_checked_in(gpu: &Gpu) {
     let sig = square();
     let mut reg = Registry::default();
@@ -119,7 +119,7 @@ fn a_ukl_version_checked_in(gpu: &Gpu) {
 
     let mut dir = Directory::default();
     let c = square_case(gpu, &mut dir);
-    run_on(&reg, &dir, op, gpu, &c.slots, &[], Tiling { tile: 100, seed: 9 }).unwrap();
+    Runner::of(reg).run_on(&dir, sig, gpu, &c.slots, &[], Tiling { tile: 100, seed: 9 }).unwrap();
     let got = written_facts(sig, &dir, &c.slots).unwrap();
     let mut want: Vec<Vec<i64>> = (0..1000).map(|i: i64| (i * 7919 % 5000) - 2500).enumerate().map(|(k, x)| vec![k as i64, x * x]).collect();
     want.sort();

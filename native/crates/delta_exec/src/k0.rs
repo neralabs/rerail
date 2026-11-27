@@ -8,7 +8,7 @@ use crate::dir::{BlockId, Directory};
 use crate::drop::Parts;
 use crate::files::Placed;
 use crate::kform::{RELATIONS, Refused};
-use crate::op::{Across, Bound, Found, Over, Independence, Inside, OpId, Output, ParamsLayout, Phase, Registry, Signature, Tiling, Unit, Version, run_cpu};
+use crate::op::{Across, Bound, Found, Independence, Inside, Output, Over, ParamsLayout, Phase, Registry, Runner, Signature, Tiling, Unit, Version};
 use rerail_blocks::block::kind;
 use rerail_blocks::gens::Table;
 use rerail_blocks::layer::Runs;
@@ -83,9 +83,9 @@ pub fn room_of_facts(_: &Table<'_>, _: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
 
 /// The room each K-form relation's runs need for a run that retracts `gone` and reads `docs`, from L1's cache
 /// `cache` (holding the run's before): one launch of `room_of`.
-pub fn room_of(reg: &Registry, ops: &K0Ops, dir: &mut Directory, cache: BlockId, gone: &Parts, docs: &DocsIn) -> Result<[u64; RELATIONS.len()], String> {
+pub fn room_of(ops: &Runner, dir: &mut Directory, cache: BlockId, gone: &Parts, docs: &DocsIn) -> Result<[u64; RELATIONS.len()], String> {
     let room = dir.make(kind::CONTROL, 8 * RELATIONS.len());
-    let ran = run_cpu(reg, dir, ops.room_of, &[cache, gone.id(), docs.first, room], &[], Tiling::WHOLE).and_then(|()| Ok(twin::room(dir.read("room_of", &[room])?.block(0))));
+    let ran = ops.run(dir, &ROOM_OF, &[cache, gone.id(), docs.first, room], &[], Tiling::WHOLE).and_then(|()| Ok(twin::room(dir.read("room_of", &[room])?.block(0))));
     dir.release(room);
     ran
 }
@@ -110,7 +110,7 @@ pub fn named_facts(_: &Table<'_>, _: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
 /// at `blobs`, and its documents whose source or tape no blobs' row names (to load), each a sealed parts block: one
 /// launch of `named_blocks` over the set's `n` ids at most.
 #[allow(clippy::too_many_arguments)]
-pub fn named_blocks(reg: &Registry, ops: &K0Ops, dir: &mut Directory, set: BlockId, arity: usize, n: usize, blobs: BlockId, cols: RowCols) -> Result<(Parts, Parts), String> {
+pub fn named_blocks(ops: &Runner, dir: &mut Directory, set: BlockId, arity: usize, n: usize, blobs: BlockId, cols: RowCols) -> Result<(Parts, Parts), String> {
     let blocks = Parts::open(dir, 3 * n)?;
     let missing = match Parts::open(dir, n) {
         Ok(m) => m,
@@ -121,7 +121,7 @@ pub fn named_blocks(reg: &Registry, ops: &K0Ops, dir: &mut Directory, set: Block
     };
     let mut p = [0u8; NamedP::SIZE];
     NamedP { set: u64::from(set.0), blobs: u64::from(blobs.0), arity: arity as u32, module: cols.module as u32, source: cols.source as u32, tape: cols.tape as u32, syms: cols.syms as u32, pad: 0 }.write(&mut p);
-    let ran = run_cpu(reg, dir, ops.named_blocks, &[set, blobs, blocks, missing], &p, Tiling::WHOLE).and_then(|()| Ok((Parts::sealed(dir, blocks)?, Parts::sealed(dir, missing)?)));
+    let ran = ops.run(dir, &NAMED_BLOCKS, &[set, blobs, blocks, missing], &p, Tiling::WHOLE).and_then(|()| Ok((Parts::sealed(dir, blocks)?, Parts::sealed(dir, missing)?)));
     if ran.is_err() {
         dir.release(blocks);
         dir.release(missing);
@@ -146,26 +146,18 @@ pub fn k0_facts(table: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
     rows
 }
 
-#[derive(Clone, Copy)]
-pub struct K0Ops {
-    pub k0_pass: OpId,
-    pub docs_of: OpId,
-    pub room_of: OpId,
-    pub named_blocks: OpId,
-}
-
-impl K0Ops {
-    pub fn declare(reg: &mut Registry) -> Result<K0Ops, String> {
-        let k0_pass = reg.declare(&K0_PASS)?;
-        reg.register_reference(Version::twin(k0_pass, "k0_pass twin", twin::K0_PASS, &K0_PHASES))?;
-        let docs_of = reg.declare(&DOCS_OF)?;
-        reg.register_reference(Version::twin(docs_of, "docs_of twin", twin::DOCS_OF, &DOCS_OF_PHASE))?;
-        let room_of = reg.declare(&ROOM_OF)?;
-        reg.register_reference(Version::twin(room_of, "room_of twin", twin::ROOM_OF, &ROOM_OF_PHASE))?;
-        let named_blocks = reg.declare(&NAMED_BLOCKS)?;
-        reg.register_reference(Version::twin(named_blocks, "named_blocks twin", twin::NAMED_BLOCKS, &NAMED_PHASE))?;
-        Ok(K0Ops { k0_pass, docs_of, room_of, named_blocks })
-    }
+/// The module's operations declared, each from its UKL interface, and their twins registered as references: the
+/// runner's registry (`Runner::new`), the one place they are registered.
+pub(crate) fn register(reg: &mut Registry) -> Result<(), String> {
+    let k0_pass = reg.declare(&K0_PASS)?;
+    reg.register_reference(Version::twin(k0_pass, "k0_pass twin", twin::K0_PASS, &K0_PHASES))?;
+    let docs_of = reg.declare(&DOCS_OF)?;
+    reg.register_reference(Version::twin(docs_of, "docs_of twin", twin::DOCS_OF, &DOCS_OF_PHASE))?;
+    let room_of = reg.declare(&ROOM_OF)?;
+    reg.register_reference(Version::twin(room_of, "room_of twin", twin::ROOM_OF, &ROOM_OF_PHASE))?;
+    let named_blocks = reg.declare(&NAMED_BLOCKS)?;
+    reg.register_reference(Version::twin(named_blocks, "named_blocks twin", twin::NAMED_BLOCKS, &NAMED_PHASE))?;
+    Ok(())
 }
 
 /// One document for `k0_pass`: its module, where its source and its tape lie (each a blob, in a frozen block, which
@@ -263,7 +255,7 @@ impl DocsIn {
     /// blobs' rows at `blobs` lie: one launch of `docs_of` writes the docs block and the blocks it names, which the
     /// directory then binds. Refused, naming the document, when a blob a row names is in no blobs' row.
     #[allow(clippy::too_many_arguments)]
-    pub fn of_rows(reg: &Registry, ops: &K0Ops, dir: &mut Directory, rows: BlockId, cap: usize, cols: RowCols, blobs: Option<BlockId>) -> Result<DocsIn, String> {
+    pub fn of_rows(ops: &Runner, dir: &mut Directory, rows: BlockId, cap: usize, cols: RowCols, blobs: Option<BlockId>) -> Result<DocsIn, String> {
         let docs = dir.make(kind::CONTROL, twin::docs_bytes(cap.max(1)));
         let list = match docs_write(dir, docs, twin::open_docs).and_then(|()| Parts::open(dir, 3 * cap)) {
             Ok(l) => l,
@@ -276,7 +268,7 @@ impl DocsIn {
             if let (Some(b), true) = (blobs, cap > 0) {
                 let mut p = [0u8; DocsOfP::SIZE];
                 DocsOfP { blobs: u64::from(b.0), module: cols.module as u32, source: cols.source as u32, tape: cols.tape as u32, syms: cols.syms as u32 }.write(&mut p);
-                run_cpu(reg, dir, ops.docs_of, &[rows, b, docs, list], &p, Tiling::WHOLE)?;
+                ops.run(dir, &DOCS_OF, &[rows, b, docs, list], &p, Tiling::WHOLE)?;
             }
             let (n, missing) = {
                 let l = dir.read("k0_pass's docs", &[docs])?;
@@ -358,7 +350,7 @@ impl DocsIn {
 /// node order. With no cache (the plain function, which reads none) the sizes go to a block of the launch's own; with
 /// no `gone`, a parts block of none.
 #[allow(clippy::too_many_arguments)]
-pub fn k0_pass(reg: &Registry, ops: &K0Ops, dir: &mut Directory, atoms: BlockId, docs: &DocsIn, gone: Option<&Parts>, diff: i32, runs: &[BlockId], cache: Option<BlockId>) -> Result<u64, Refused> {
+pub fn k0_pass(ops: &Runner, dir: &mut Directory, atoms: BlockId, docs: &DocsIn, gone: Option<&Parts>, diff: i32, runs: &[BlockId], cache: Option<BlockId>) -> Result<u64, Refused> {
     let fail = |why: String| Refused { module: -1, rule: -1, why };
     if docs.is_empty() && gone.is_none_or(Parts::is_empty) {
         return Ok(0);
@@ -384,7 +376,7 @@ pub fn k0_pass(reg: &Registry, ops: &K0Ops, dir: &mut Directory, atoms: BlockId,
         (slots[twin::DOCS], slots[twin::ATOMS], slots[twin::GONE]) = (docs.first, atoms, gone.id());
         slots[twin::RUNS..twin::CACHE].copy_from_slice(runs);
         slots[twin::CACHE] = cache.or(own_cache).expect("a cache");
-        run_cpu(reg, dir, ops.k0_pass, &slots, &p, Tiling::WHOLE).map_err(fail)?;
+        ops.run(dir, &K0_PASS, &slots, &p, Tiling::WHOLE).map_err(fail)?;
         let l = dir.read("k0_pass", &[control]).map_err(fail)?;
         match twin::refused(l.block(0)) {
             Some((module, n, why)) => Err(Refused { module, rule: n as i64, why: why.to_string() }),

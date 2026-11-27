@@ -15,7 +15,7 @@
 //! facts.
 
 use crate::dir::{BlockId, Directory};
-use crate::op::{Across, Bound, Found, Over, Independence, Inside, OpId, Output, ParamsLayout, Phase, Registry, Signature, Tiling, Unit, Version, run_cpu};
+use crate::op::{Across, Bound, Found, Independence, Inside, Output, Over, ParamsLayout, Phase, Registry, Runner, Signature, Tiling, Unit, Version};
 use rerail_blocks::block::{Block, kind};
 use rerail_blocks::gens::{BODY_AT, Table};
 use rerail_blocks::maps::InBlock;
@@ -333,20 +333,14 @@ fn parse_facts(_: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
 
 // ---- the operations, declared; and their launches -----------------------------------------------------------------
 
-#[derive(Clone, Copy, Debug)]
-pub struct AnswerOps {
-    pub load: OpId,
-    pub parse: OpId,
-}
-
-impl AnswerOps {
-    pub fn declare(reg: &mut Registry) -> Result<AnswerOps, String> {
-        let load = reg.declare(&ANSWER_LOAD)?;
-        reg.register_reference(Version::host(load, "answer_load on the host (the file layer)", &LOAD, &LOAD_PHASE))?;
-        let parse = reg.declare(&PARSE)?;
-        reg.register_reference(Version::host(parse, "parse on the host (the rr parser)", &PARSER, &PARSE_PHASE))?;
-        Ok(AnswerOps { load, parse })
-    }
+/// The module's operations declared, each from its UKL interface, and their twins registered as references: the
+/// runner's registry (`Runner::new`), the one place they are registered.
+pub(crate) fn register(reg: &mut Registry) -> Result<(), String> {
+    let load = reg.declare(&ANSWER_LOAD)?;
+    reg.register_reference(Version::host(load, "answer_load on the host (the file layer)", &LOAD, &LOAD_PHASE))?;
+    let parse = reg.declare(&PARSE)?;
+    reg.register_reference(Version::host(parse, "parse on the host (the rr parser)", &PARSER, &PARSE_PHASE))?;
+    Ok(())
 }
 
 /// A control block of `bytes` body bytes, its words written by `fill` where they lie.
@@ -367,11 +361,11 @@ fn control_with(dir: &mut Directory, bytes: usize, fill: impl FnOnce(&mut [u8]))
 }
 
 /// `answer_load` over `asks`, its rooms in slab `slab`: each ask's fact, and how many files it read.
-pub fn answer_load(reg: &Registry, ops: &AnswerOps, dir: &mut Directory, slab: BlockId, root: &std::path::Path, observer: &std::path::Path, asks: &[Ask]) -> Result<(Vec<[i64; FACT_WORDS]>, u64), String> {
+pub fn answer_load(ops: &Runner, dir: &mut Directory, slab: BlockId, root: &std::path::Path, observer: &std::path::Path, asks: &[Ask]) -> Result<(Vec<[i64; FACT_WORDS]>, u64), String> {
     let plan = plan_block(dir, root, observer, asks)?;
     let control = control_with(dir, 16, |b| (0..2).for_each(|i| put_word(b, i, 0)))?;
     let facts = dir.make(kind::FACTS, 8 * FACT_WORDS * asks.len().max(1));
-    let ran = run_cpu(reg, dir, ops.load, &[plan, slab, control, facts], &[], Tiling::WHOLE).and_then(|()| {
+    let ran = ops.run(dir, &ANSWER_LOAD, &[plan, slab, control, facts], &[], Tiling::WHOLE).and_then(|()| {
         let l = dir.read("answer_load's facts", &[facts, control])?;
         let (f, c) = (l.block(0), l.block(1));
         let rows = (0..asks.len()).map(|k| std::array::from_fn(|i| word(f, FACT_WORDS * k + i))).collect();
@@ -387,9 +381,9 @@ pub fn answer_load(reg: &Registry, ops: &AnswerOps, dir: &mut Directory, slab: B
 pub type Parsed = Result<(usize, usize), i64>;
 
 /// `parse` over the sources at `sources` in slab `slab`: each one's tape, or its refusal.
-pub fn parse_sources(reg: &Registry, ops: &AnswerOps, dir: &mut Directory, slab: BlockId, sources: &[(usize, usize)]) -> Result<Vec<Parsed>, String> {
+pub fn parse_sources(ops: &Runner, dir: &mut Directory, slab: BlockId, sources: &[(usize, usize)]) -> Result<Vec<Parsed>, String> {
     let control = parse_control(dir, sources)?;
-    let ran = run_cpu(reg, dir, ops.parse, &[slab, control], &[], Tiling::WHOLE).and_then(|()| {
+    let ran = ops.run(dir, &PARSE, &[slab, control], &[], Tiling::WHOLE).and_then(|()| {
         let l = dir.read("parse's places", &[control])?;
         let c = l.block(0);
         Ok((0..sources.len())

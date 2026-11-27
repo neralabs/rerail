@@ -19,9 +19,7 @@ pub(crate) fn root(name: &str) -> (PathBuf, Store) {
 pub(crate) struct W {
     pub root: PathBuf,
     pub world: World,
-    pub reg: crate::op::Registry,
-    pub answers: crate::answer::AnswerOps,
-    pub traces: crate::trace::TraceOps,
+    pub ops: crate::op::Runner,
     pub blobs: BlobRows,
     pub dir: Directory,
     last: std::collections::BTreeMap<String, DocIds>,
@@ -34,11 +32,8 @@ impl W {
     }
 
     pub(crate) fn over(root: PathBuf, store: Store, dir: Directory) -> W {
-        let mut reg = crate::op::Registry::default();
-        let traces = crate::trace::TraceOps::declare(&mut reg).unwrap();
-        let answers = crate::answer::AnswerOps::declare(&mut reg).unwrap();
-        let world = World::new(root.clone(), store, answers, &dir, [None; 3]).unwrap();
-        W { root, world, reg, answers, blobs: BlobRows::new(&traces), traces, dir, last: Default::default() }
+        let world = World::new(root.clone(), store, &dir, [None; 3]).unwrap();
+        W { root, world, ops: crate::op::Runner::new().unwrap(), blobs: BlobRows::new(), dir, last: Default::default() }
     }
 
     /// The load answer for `path`, from its last one.
@@ -47,8 +42,8 @@ impl W {
         let module = path.strip_suffix(".rerail").unwrap_or(path);
         let before = self.last.get(path).copied();
         let mut leaves = self.world.leaves_w(&mut self.dir);
-        let doc = self.world.load(&self.reg, &self.traces, &mut self.dir, &mut self.blobs, &mut leaves, d, path, module, before);
-        self.world.commit_leaves(&self.reg, &self.traces, &mut self.dir, leaves)?;
+        let doc = self.world.load(&self.ops, &mut self.dir, &mut self.blobs, &mut leaves, d, path, module, before);
+        self.world.commit_leaves(&self.ops, &mut self.dir, leaves)?;
         let doc = doc?;
         self.last.insert(path.to_string(), doc.after);
         Ok(doc)
@@ -61,22 +56,9 @@ pub(crate) fn racy_window() -> rerail_context::Bound {
     rerail_context::bind(rerail_context::Switches(Arc::new(vec![("RERAIL_RACY_MS".into(), "100".into())])))
 }
 
-/// A registry with the trace's operations, no blob, and a directory (a document in hand's: no world).
-fn fresh() -> (Reg, BlobRows, Directory) {
-    let mut reg = crate::op::Registry::default();
-    let traces = crate::trace::TraceOps::declare(&mut reg).unwrap();
-    let answers = crate::answer::AnswerOps::declare(&mut reg).unwrap();
-    (Reg(reg, answers), BlobRows::new(&traces), Directory::default())
-}
-
-/// A registry and Δanswer's operations in it.
-pub(crate) struct Reg(pub crate::op::Registry, pub crate::answer::AnswerOps);
-
-impl std::ops::Deref for Reg {
-    type Target = crate::op::Registry;
-    fn deref(&self) -> &crate::op::Registry {
-        &self.0
-    }
+/// The operations runner, no blob, and a directory (a document in hand's: no world).
+fn fresh() -> (crate::op::Runner, BlobRows, Directory) {
+    (crate::op::Runner::new().unwrap(), BlobRows::new(), Directory::default())
 }
 
 pub(crate) fn past_racy_window() {
@@ -108,8 +90,7 @@ fn the_source_and_the_tape_are_blobs_in_sealed_rooms_of_a_slab() {
     use sha2::{Digest as _, Sha256};
     let mut w = W::new("room");
     let d = w.answer("bootstrap-l0.rerail").unwrap();
-    let W { reg, answers, mut blobs, mut dir, .. } = w;
-    let reg = Reg(reg, answers);
+    let W { ops: reg, mut blobs, mut dir, .. } = w;
     let (s, t) = (blobs.get(&dir, &d.after.source).unwrap().unwrap(), blobs.get(&dir, &d.after.tape).unwrap().unwrap());
     assert_eq!(s.block, t.block);
     assert!(dir.is_fixed(s.block, s.at + s.len) && dir.is_fixed(t.block, t.at + t.len), "a blob is never versioned");
@@ -122,7 +103,7 @@ fn the_source_and_the_tape_are_blobs_in_sealed_rooms_of_a_slab() {
         assert_eq!(d.after.tape.0, <[u8; 32]>::from(Sha256::digest(&b[t.at..t.at + t.len])));
     }
     // The same bytes housed again are the first blob.
-    let again = doc_of(&reg, &reg.1, &mut dir, &mut blobs, crate::L0).unwrap();
+    let again = doc_of(&reg, &mut dir, &mut blobs, crate::L0).unwrap();
     assert_eq!(again, d.after);
     assert_eq!(blobs.len(&dir).unwrap(), 2);
 }
@@ -132,8 +113,8 @@ fn the_source_and_the_tape_are_blobs_in_sealed_rooms_of_a_slab() {
 #[test]
 fn a_new_source_may_share_an_earlier_tape() {
     let (reg, mut blobs, mut dir) = fresh();
-    let a = doc_of(&reg, &reg.1, &mut dir, &mut blobs, "e(1, 2).\n").unwrap();
-    let b = doc_of(&reg, &reg.1, &mut dir, &mut blobs, "e(3, 4).\n").unwrap();
+    let a = doc_of(&reg, &mut dir, &mut blobs, "e(1, 2).\n").unwrap();
+    let b = doc_of(&reg, &mut dir, &mut blobs, "e(3, 4).\n").unwrap();
     assert_ne!(a.source, b.source);
     assert_eq!(a.tape, b.tape, "the tape holds the shape, not the text");
     let (s, t) = (blobs.get(&dir, &b.source).unwrap().unwrap(), blobs.get(&dir, &b.tape).unwrap().unwrap());
@@ -195,8 +176,8 @@ fn a_file_that_does_not_parse_is_refused_naming_its_path() {
 #[test]
 fn documents_share_a_slab_their_rooms_sealed_as_written() {
     let (reg, mut blobs, mut dir) = fresh();
-    let a = doc_of(&reg, &reg.1, &mut dir, &mut blobs, "e(1, 2).\n").unwrap();
-    let b = doc_of(&reg, &reg.1, &mut dir, &mut blobs, "p(x) :- e(x, _).\n").unwrap();
+    let a = doc_of(&reg, &mut dir, &mut blobs, "e(1, 2).\n").unwrap();
+    let b = doc_of(&reg, &mut dir, &mut blobs, "p(x) :- e(x, _).\n").unwrap();
     let place = |dir: &Directory, blobs: &BlobRows, id| blobs.get(dir, id).unwrap().unwrap();
     let (at, bt) = (place(&dir, &blobs, &a.tape), place(&dir, &blobs, &b.tape));
     assert_eq!(at.block, bt.block, "one slab");
@@ -206,7 +187,7 @@ fn documents_share_a_slab_their_rooms_sealed_as_written() {
     // A block may refer to a sealed room while the slab takes more, and a launch reads it there.
     let r = dir.make(kind::CONTROL, 8);
     dir.refer(r, at.block, at.at).unwrap();
-    let c = doc_of(&reg, &reg.1, &mut dir, &mut blobs, "q(y) :- p(y).\n").unwrap();
+    let c = doc_of(&reg, &mut dir, &mut blobs, "q(y) :- p(y).\n").unwrap();
     let ct = place(&dir, &blobs, &c.tape);
     assert_eq!(ct.block, at.block);
     {
@@ -215,7 +196,7 @@ fn documents_share_a_slab_their_rooms_sealed_as_written() {
     }
     // A source past the slab's room: a slab of its own size.
     let big = "e(1, 2).\n".repeat(crate::dir::SLAB_BYTES / 81 / 9 + 1);
-    let d = doc_of(&reg, &reg.1, &mut dir, &mut blobs, &big).unwrap();
+    let d = doc_of(&reg, &mut dir, &mut blobs, &big).unwrap();
     assert_ne!(place(&dir, &blobs, &d.tape).block, at.block, "the next slab");
 }
 
@@ -248,7 +229,6 @@ fn every_leaf_read_is_recorded_misses_too() {
 #[test]
 fn each_answerer_answers_one_key_its_leaves_one_layer_a_run() {
     let mut w = W::new("answerers");
-    let iops = crate::intern::InternOps::declare(&mut w.reg).unwrap();
     let atoms = crate::sym::Atoms::new(&mut w.dir);
     let (l0, gone) = (key_of("bootstrap-l0.rerail", |_| false), key_of("missing.rerail", |_| false));
     let named = [
@@ -258,10 +238,10 @@ fn each_answerer_answers_one_key_its_leaves_one_layer_a_run() {
     assert!(matches!((Load::KIND, Parse::KIND, Intern::KIND), (AnswerKind::World, AnswerKind::Pure, AnswerKind::Pure)));
     let mut leaves = w.world.leaves_w(&mut w.dir);
     let head = w.world.leaves.head();
-    let W { world, reg, traces, dir, blobs, .. } = &mut w;
+    let W { world, ops, dir, blobs, .. } = &mut w;
     macro_rules! at {
         () => {
-            Reach { world: &mut *world, reg, ops: traces, dir: &mut *dir, blobs: &mut *blobs }
+            Reach { world: &mut *world, ops, dir: &mut *dir, blobs: &mut *blobs }
         };
     }
     let source = match (Load { at: at!(), named: &named }).answer(&[l0], &mut leaves).unwrap() {
@@ -279,10 +259,10 @@ fn each_answerer_answers_one_key_its_leaves_one_layer_a_run() {
     assert_eq!((Parse { at: at!() }).answer(&BlobId::of(b"no home holds this").words(), &mut leaves).unwrap(), Answer::Miss);
     let Answer::Blob(t) = tape else { unreachable!() };
     let key: Vec<i64> = std::iter::once(l0).chain(source.words()).chain(t.words()).collect();
-    let syms = (Intern { at: at!(), iops: &iops, atoms, named: &named }).answer(&key, &mut leaves).unwrap();
+    let syms = (Intern { at: at!(), atoms, named: &named }).answer(&key, &mut leaves).unwrap();
     assert!(matches!(syms, Answer::Blob(_)));
-    assert_eq!((Intern { at: at!(), iops: &iops, atoms, named: &named }).answer(&key, &mut leaves).unwrap(), syms, "pure: by its key");
-    world.commit_leaves(reg, traces, dir, leaves).unwrap();
+    assert_eq!((Intern { at: at!(), atoms, named: &named }).answer(&key, &mut leaves).unwrap(), syms, "pure: by its key");
+    world.commit_leaves(ops, dir, leaves).unwrap();
     let layers = |w: &W| {
         let l = w.dir.read("t", &[w.world.leaves.head().unwrap()]).unwrap();
         rerail_blocks::layer::Layer::new(l.block(0)).unwrap().below().is_some()
@@ -341,7 +321,7 @@ fn the_residency_retires_the_least_recently_used_slab_only_past_its_budget() {
     // last one's slab has left, so each lies in a slab of its own.
     let mut dir = dir.with_slab_bytes(1);
     let src = |k: usize| format!("e({k}, 2).\n// {}\n", "x".repeat(1000 * (k + 1)));
-    let docs: Vec<DocIds> = (0..3).map(|k| doc_of(&reg, &reg.1, &mut dir, &mut blobs, &src(k)).unwrap()).collect();
+    let docs: Vec<DocIds> = (0..3).map(|k| doc_of(&reg, &mut dir, &mut blobs, &src(k)).unwrap()).collect();
     assert_eq!((dir.slabs().len(), dir.residency().0), (3, 0), "within the budget: nothing retired");
     // The budget: the three held and the fourth's slab, less a byte.
     let held: usize = dir.slabs().iter().map(|&b| dir.block(b).unwrap().reserved()).sum();
@@ -350,7 +330,7 @@ fn the_residency_retires_the_least_recently_used_slab_only_past_its_budget() {
     let slab = |dir: &Directory, blobs: &BlobRows, d: &DocIds| blobs.get(dir, &d.tape).unwrap().map(|p| p.block);
     // The first document asked for again: the second is the least recently used.
     dir.touch(slab(&dir, &blobs, &docs[0]).unwrap());
-    let d = doc_of(&reg, &reg.1, &mut dir, &mut blobs, &src(3)).unwrap();
+    let d = doc_of(&reg, &mut dir, &mut blobs, &src(3)).unwrap();
     assert_eq!(dir.residency().0, 1, "one retired, to make room");
     assert!(slab(&dir, &blobs, &docs[1]).is_none(), "the least recently used");
     assert!(slab(&dir, &blobs, &docs[0]).is_some() && slab(&dir, &blobs, &docs[2]).is_some() && slab(&dir, &blobs, &d).is_some());
@@ -359,7 +339,7 @@ fn the_residency_retires_the_least_recently_used_slab_only_past_its_budget() {
     dir.touch(slab(&dir, &blobs, &docs[0]).unwrap());
     dir.touch(slab(&dir, &blobs, &d).unwrap());
     dir.touch(slab(&dir, &blobs, &docs[0]).unwrap());
-    doc_of(&reg, &reg.1, &mut dir, &mut blobs, &src(4)).unwrap();
+    doc_of(&reg, &mut dir, &mut blobs, &src(4)).unwrap();
     assert!(slab(&dir, &blobs, &docs[2]).is_some(), "held by a reader");
     assert!(dir.residency().0 >= 2 && slab(&dir, &blobs, &d).is_none(), "the least recently used of those no reader holds");
     drop(held);

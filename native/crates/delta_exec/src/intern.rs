@@ -4,7 +4,7 @@
 
 use crate::dir::Directory;
 use crate::files::{BlobId, BlobRows, Placed};
-use crate::op::{Across, Found, Independence, Inside, OpId, Output, ParamsLayout, Phase, Registry, Signature, Tiling, Unit, Version, run_cpu};
+use crate::op::{Across, Found, Independence, Inside, Output, ParamsLayout, Phase, Registry, Runner, Signature, Tiling, Unit, Version};
 use crate::sym::Atoms;
 use rerail_blocks::atoms::{count_in, name_in};
 use rerail_blocks::block::kind;
@@ -47,29 +47,25 @@ pub fn intern_facts(_: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
     }
 }
 
-pub struct InternOps {
-    pub intern: OpId,
-}
-
-impl InternOps {
-    pub fn declare(reg: &mut Registry) -> Result<InternOps, String> {
-        let intern = reg.declare(&INTERN)?;
-        reg.register_reference(Version::twin(intern, "intern twin", twin::INTERN, &INTERN_PHASE))?;
-        Ok(InternOps { intern })
-    }
+/// The module's operations declared, each from its UKL interface, and their twins registered as references: the
+/// runner's registry (`Runner::new`), the one place they are registered.
+pub(crate) fn register(reg: &mut Registry) -> Result<(), String> {
+    let intern = reg.declare(&INTERN)?;
+    reg.register_reference(Version::twin(intern, "intern twin", twin::INTERN, &INTERN_PHASE))?;
+    Ok(())
 }
 
 /// Interns the document whose source and tape lie at `src` and `tape`, answered at `path` as
 /// `module`: its symbols block (node → symbol), made here where the directory keeps what lasts, written by `intern`
 /// (which adds its new names to `atoms`), frozen and housed as a blob.
 #[allow(clippy::too_many_arguments)]
-pub fn intern(reg: &Registry, ops: &InternOps, dir: &mut Directory, blobs: &mut BlobRows, atoms: Atoms, src: Placed, tape: Placed, path: &str, module: &str) -> Result<BlobId, String> {
-    intern_at(reg, ops, dir, blobs, atoms, src, tape, path, module, Tiling::WHOLE)
+pub fn intern(ops: &Runner, dir: &mut Directory, blobs: &mut BlobRows, atoms: Atoms, src: Placed, tape: Placed, path: &str, module: &str) -> Result<BlobId, String> {
+    intern_at(ops, dir, blobs, atoms, src, tape, path, module, Tiling::WHOLE)
 }
 
 /// `intern` with its hash phase's items run in tiles of `tiling` (its scan is one item, in node order).
 #[allow(clippy::too_many_arguments)]
-pub fn intern_at(reg: &Registry, ops: &InternOps, dir: &mut Directory, blobs: &mut BlobRows, atoms: Atoms, src: Placed, tape: Placed, path: &str, module: &str, tiling: Tiling) -> Result<BlobId, String> {
+pub fn intern_at(ops: &Runner, dir: &mut Directory, blobs: &mut BlobRows, atoms: Atoms, src: Placed, tape: Placed, path: &str, module: &str, tiling: Tiling) -> Result<BlobId, String> {
     let n = crate::files::nodes(dir, src, tape)?;
     let body = twin::syms_bytes(n, path, module);
     // Kept where the directory keeps what lasts: a pure answer, kept by key (D4) while the store's atoms keep their ids.
@@ -82,9 +78,9 @@ pub fn intern_at(reg: &Registry, ops: &InternOps, dir: &mut Directory, blobs: &m
         }
         let mut p = [0u8; InternP::SIZE];
         InternP { src_at: src.at as u64, src_len: src.len as u64, tape_at: tape.at as u64, tape_len: tape.len as u64 }.write(&mut p);
-        run_cpu(reg, dir, ops.intern, &[src.block, tape.block, atoms.0, id], &p, tiling)?;
+        ops.run(dir, &INTERN, &[src.block, tape.block, atoms.0, id], &p, tiling)?;
         dir.freeze(id)?;
-        blobs.house(reg, dir, Placed { block: id, at: BODY_AT, len: body })
+        blobs.house(ops, dir, Placed { block: id, at: BODY_AT, len: body })
     })();
     match made {
         Ok((s, new)) => {

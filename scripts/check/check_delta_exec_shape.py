@@ -456,8 +456,8 @@ def b4(failures: list) -> None:
     text = strip_rust(p.read_text())
     for pattern, why in ((r"fn place_in\(", "the placer: a room of the document's tape block"),
                          (r"kind::TAPE", "a tape block"), (r"blobs\.house\(", "a blob named by its content"),
-                         (r"answer_load\(reg, &self\.ops", "the world's documents through the answer_load operation"),
-                         (r"parse_sources\(reg, &self\.ops", "the world's new contents through the parse operation"),
+                         (r"answer_load\(ops, dir", "the world's documents through the answer_load operation"),
+                         (r"parse_sources\(ops, dir", "the world's new contents through the parse operation"),
                          (r"fn doc_of\((?:(?!\n\}\n).)*parse_sources\(", "a document in hand through the parse operation")):
         if not re.search(pattern, text, re.S):
             failures.append(f"files.rs: no {why}")
@@ -514,7 +514,7 @@ def b6(failures: list) -> None:
     l1 = CRATE / "src/l1.rs"
     code = strip_rust(l1.read_text())
     for pattern, why in [
-        (r"\brun_cpu\b|\brun_on\b|\breg\.(declare|run)", "an operation run but k0_pass (L1's Rust is its ports' wiring)"),
+        (r"\brun_cpu\b|\brun_on\b|\.run\(cx\.dir|\breg\.(declare|run)", "an operation run but k0_pass (L1's Rust is its ports' wiring)"),
         (r"\bout\.writer\(|\bRunsW\b|\bpush_layer\b", "a row written by L1's Rust (k0_pass writes them)"),
         (r"\bwalk\(|\bstatement\(|\bReads\b|\.children\(", "a tape walked on the host (k0_pass's twin walks it)"),
     ]:
@@ -531,23 +531,33 @@ def b6(failures: list) -> None:
         failures.append("l1.rs: k0_pass called at more than one place (one launch reads every changed tape)")
     if not re.search(r"pub fn k0_pass\([^)]*docs: &DocsIn,", k0):
         failures.append("k0.rs: k0_pass does not take every document of the run (one launch, its docs blocks)")
-    if len(re.findall(r"\brun_cpu\([^;]*ops\.k0_pass\b", strip_rust(k0))) != 1:
+    if len(re.findall(r"\bops\.run\(dir, &K0_PASS\b", strip_rust(k0))) != 1:
         failures.append("k0.rs: k0_pass launched at more than one place")
     # B6, only operations: the documents' entries are `docs_of`'s (the selection joined with the blobs' rows where they
     # lie); the host binds the blocks it lists, and reads no tape for a launch's room.
-    if "run_cpu(reg, dir, ops.docs_of" not in k0 or re.search(r"files::nodes|\bnodes:\s*usize", strip_rust(k0)):
+    if "ops.run(dir, &DOCS_OF" not in k0 or re.search(r"files::nodes|\bnodes:\s*usize", strip_rust(k0)):
         failures.append("k0.rs: a launch's documents are written, or its room counted, on the host (docs_of's; count grows control)")
     files = (CRATE / "src/files.rs").read_text()
     if not re.search(r"pub struct BlobRows \{[^}]*\brows: Trace\b[^}]*\}", files) or re.search(r"pub struct BlobRows \{[^}]*HashMap", files):
         failures.append("files.rs: the blobs are not rows in a trace, as the store's objects are (P§12 item 1)")
     l1 = (CRATE / "src/l1.rs").read_text()
     k0h = (CRATE / "src/k0.rs").read_text()
-    if not re.search(r"fn delta\([^)]*\bcache: &mut CacheW", l1) or "cache.write(cx)" not in l1 or "cache.read(cx)" not in l1 or "room_of(cx.reg, &self.ops" not in l1 or "type Cache = Sizes;" not in l1:
+    if not re.search(r"fn delta\([^)]*\bcache: &mut CacheW", l1) or "cache.write(cx)" not in l1 or "cache.read(cx)" not in l1 or "room_of(cx.ops" not in l1 or "type Cache = Sizes;" not in l1:
         failures.append("l1.rs: L1 keeps no cache, or reads none by room_of (Bootstrap, Figure 2: k0_pass rw L1's cache)")
     ops_ukl = (CRATE / "src/operations.uglykl").read_text()
     k0_decl = re.search(r"DECLARE_KERNEL2\(delta_exec, k0_pass,(.*?)\)\s*$", ops_ukl, re.S | re.M)
     if not k0_decl or not re.search(r"RWBUFFER, ukl_cache_block, cache,", k0_decl.group(1)):
         failures.append("operations.uglykl: k0_pass has no read-write slot for L1's cache")
+    # The operations runner (0686, the runner's steps 2 and 3): one registry, the runner's, every twin registered in it
+    # (`Runner::new`); nothing runs an operation but the runner (`run_cpu`, `run_on` are op.rs's, called by its tests).
+    for src in sorted((CRATE / "src").glob("*.rs")):
+        if src.name in ("op.rs", "op_tests.rs"):
+            continue
+        code = strip_rust(src.read_text())
+        if re.search(r"\brun_cpu\(|(?<![.\w])run_on\(", code):
+            failures.append(f"{src.name}: an operation run around the runner (run_cpu, run_on): ask the runner (Runner::run)")
+        if "Registry::default()" in code:
+            failures.append(f"{src.name}: a registry of its own: the runner's is the one (Runner::new)")
     # Every operation's interface is its UKL declaration (operations.uglykl, read by build.rs): a signature outside
     # the tests is `Signature::of` an interface, never slots written by hand.
     for src in sorted((CRATE / "src").glob("*.rs")):
@@ -573,7 +583,7 @@ def b6(failures: list) -> None:
     # is asked. Its selection is an operation (B6: only operations): `semi_change` of the tape port with the want, on
     # the document (`change_rows` with no want), writes the parts, the rows read and the asks where they lie; the
     # host neither reads the want nor pushes a row of its own.
-    if "const ASKED: &'static [usize] = &[0];" not in l1 or "asks.block(L1Ports::TAPE)" not in l1 or "semi::select(cx.reg, &self.semis" not in l1:
+    if "const ASKED: &'static [usize] = &[0];" not in l1 or "asks.block(L1Ports::TAPE)" not in l1 or "semi::select(cx.ops" not in l1:
         failures.append("l1.rs: L1's selection (its want, its asks of its tape port, P§7.1) is not the semi_change operation")
     if re.search(r"asks\.writer\(|\.push\(&\[d\]|Parts::write\(|fn (newly|dropped|moved|wanted)\(", strip_rust(l1)):
         failures.append("l1.rs: L1 selects on the host (the want read, asks pushed or parts written in Rust): the selection is semi_change's")
@@ -582,7 +592,7 @@ def b6(failures: list) -> None:
     l1_code = strip_rust(l1)
     delta = l1_code[l1_code.find("fn delta("):l1_code.find("fn run(")]
     hits(l1, delta, r"\bBTree\w*|\bHash(Map|Set)\b|\bVec\b|vec!|collect::<|\.collect\(\)|want_rows\(", "a set or list of L1's delta's own (read the want in place; write the parts and docs blocks as found)", failures)
-    if "self.select(cx" not in delta or "DocsIn::of_rows(cx.reg" not in delta or re.search(r"docs\.push\(|blobs\.get\(", delta):
+    if "self.select(cx" not in delta or "DocsIn::of_rows(cx.ops" not in delta or re.search(r"docs\.push\(|blobs\.get\(", delta):
         failures.append("l1.rs: L1's delta does not select by its operation and make its documents by docs_of")
     # Step 5 (0686): demand is the want trace; a want is named (`WantRows`: each row, and whether it holds one), its
     # change written into the trace's runs as found. The boot's run holds no set: its productions are every relation
@@ -592,7 +602,7 @@ def b6(failures: list) -> None:
         failures.append("contract.rs: set_want does not take a named want (WantRows)")
     hits(CRATE / "src/boot.rs", boot_code, r"\bBTree\w*|\bHash(Map|Set)\b", "a set of the boot run's own (productions as AtKey; demand is the want trace)", failures)
     boot = (CRATE / "src/boot.rs").read_text()
-    if "inst.asks_of(" not in boot or "docs.forget_unasked(bench, &l1.semis" not in boot or "inst.set_want(" not in boot:
+    if "inst.asks_of(" not in boot or "docs.forget_unasked(bench, asks" not in boot or "inst.set_want(" not in boot:
         failures.append("boot.rs: the run's demand does not reach the world as reads (P§7.1)")
     # B6, only operations: what nothing asks for is chosen by one launch (`semi_change`, the set ▷ its asks), never a
     # host loop over the set's rows testing each against the asks.
@@ -600,7 +610,7 @@ def b6(failures: list) -> None:
         failures.append("boot.rs: the documents nothing asks for are chosen on the host (the set ▷ its asks is semi_change's)")
     # B6: the blocks the set names and the documents to load are `named_blocks`' (the set joined with the blobs' rows),
     # never a host walk of the set's rows; the host touches and loads what it lists.
-    if "named_blocks(&bench.reg, k0" not in boot or re.search(r"for id in s\.live_ids\(\)|Row::of\(&s, id\)", strip_rust(boot)):
+    if "named_blocks(&bench.ops" not in boot or re.search(r"for id in s\.live_ids\(\)|Row::of\(&s, id\)", strip_rust(boot)):
         failures.append("boot.rs: the residency's documents are walked on the host (named_blocks lists them)")
     if "Asks::none()" in strip_rust((CRATE / "src/contract.rs").read_text()).split("pub fn none()")[-1]:
         failures.append("contract.rs: a driver runs an operator with no asks (P§7.1: demand out is a port)")

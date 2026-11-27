@@ -42,14 +42,13 @@
 
 use crate::contract::{Bench, Global, GlobalIn, Instance, Work};
 use crate::dir::{BlockId, Directory};
-use crate::drop::{DropOps, Parts, drop_parts};
+use crate::drop::{Parts, drop_parts};
 use crate::files::{Answer, Answerer, Doc, DocIds, Intern, Load, Load1, LeavesW, Parse, Reach, World, key_of, probe};
-use crate::intern::InternOps;
 use crate::kform::RELATIONS;
 use crate::contract::asks_shape;
-use crate::k0::{K0Ops, named_blocks};
+use crate::k0::named_blocks;
 use crate::l1::{DOC_COLS, L1, L1Ports, TAPE_ARITY, TAPE_PATH, row_blobs, tape_row, tape_shape};
-use crate::semi::{self, How, SemiOps, Side};
+use crate::semi::{self, How, Side};
 use crate::op::Tiling;
 use crate::sym::Atoms;
 use crate::trace::{RollUp, Row, Trace, open_runs};
@@ -61,9 +60,6 @@ use rerail_blocks::gens::BODY_AT;
 /// `intern`): L1's tape port, P§11.4's document set.
 pub struct DocSet {
     pub world: World,
-    pub iops: InternOps,
-    pub drops: DropOps,
-    pub semis: SemiOps,
     /// A row a document (`l1::tape_shape`): no roll-up while a run reads it (its before is a layer in its chain), then
     /// rolled up at the run's end (`Trace::roll_up_run`).
     pub tape: Trace,
@@ -74,9 +70,9 @@ pub struct DocSet {
 impl DocSet {
     /// The document set of `world`, at `head` (a kept run's; `None`: empty), placed where the directory keeps what
     /// lasts; `kept` the pins block that run left (let go when the next run keeps its own).
-    pub fn new(world: World, iops: InternOps, drops: DropOps, semis: SemiOps, dir: &Directory, head: Option<BlockId>, kept: Option<BlockId>) -> Result<DocSet, String> {
+    pub fn new(world: World, dir: &Directory, head: Option<BlockId>, kept: Option<BlockId>) -> Result<DocSet, String> {
         let tape = Trace::new(&tape_shape())?.with_roll_up(RollUp::Never).resumed(dir.lasting(), head);
-        Ok(DocSet { world, iops, drops, semis, tape, kept })
+        Ok(DocSet { world, tape, kept })
     }
 
     /// The row of the document at `path`, by its path's symbol (the set's index on its path), when it has one.
@@ -97,7 +93,7 @@ impl DocSet {
     /// launch of `semi_change`, the set read cold against the asks of it (`asks`: none, nothing is asked), its rows
     /// whose document no ask holds (`How::UNMATCHED`), their documents into a parts block; then each such document's
     /// rows retracted where the set keeps them, and its places, by `drop_parts` over that block.
-    pub fn forget_unasked(&mut self, bench: &mut Bench, semis: &SemiOps, asks: Option<&Trace>) -> Result<(), String> {
+    pub fn forget_unasked(&mut self, bench: &mut Bench, asks: Option<&Trace>) -> Result<(), String> {
         let Some(h) = self.tape.head() else { return Ok(()) };
         let n = self.tape.reading(&bench.dir, Some(h), |s| Read::end(s).get() as usize)?;
         let a = Side { before: None, after: Some(h), arity: TAPE_ARITY, col: 0 };
@@ -115,7 +111,7 @@ impl DocSet {
                 return Err(e);
             }
         };
-        let chosen = semi::select(&bench.reg, semis, &mut bench.dir, &a, b.as_ref().map(|b| (b, keys)), How::UNMATCHED, rows, parts).and_then(|()| Parts::sealed(&bench.dir, parts));
+        let chosen = semi::select(&bench.ops, &mut bench.dir, &a, b.as_ref().map(|b| (b, keys)), How::UNMATCHED, rows, parts).and_then(|()| Parts::sealed(&bench.dir, parts));
         release(&mut bench.dir);
         let parts = match chosen {
             Ok(p) => p,
@@ -137,11 +133,11 @@ impl DocSet {
         for t in [&mut self.tape, &mut self.world.places] {
             let Some(h) = t.head() else { continue };
             let runs = t.open(&mut bench.dir, 4);
-            if let Err(e) = drop_parts(&bench.reg, &self.drops, &mut bench.dir, h, parts, -1, runs) {
+            if let Err(e) = drop_parts(&bench.ops, &mut bench.dir, h, parts, -1, runs) {
                 bench.dir.release(runs);
                 return Err(e);
             }
-            t.commit(&bench.reg, &bench.traces, &mut bench.dir, runs, Tiling::WHOLE)?;
+            t.commit(&bench.ops, &mut bench.dir, runs, Tiling::WHOLE)?;
         }
         Ok(())
     }
@@ -159,10 +155,10 @@ impl DocSet {
         };
         let before = kept.as_ref().map(|r| row_blobs(r).0);
         let named = [Load1 { d, path: path.to_string(), module: module.to_string(), before }];
-        let Bench { reg, traces, dir, blobs, .. } = &mut *bench;
+        let Bench { ops, dir, blobs, .. } = &mut *bench;
         macro_rules! reach {
             () => {
-                Reach { world: &mut self.world, reg, ops: traces, dir, blobs }
+                Reach { world: &mut self.world, ops, dir, blobs }
             };
         }
         let source = match (Load { at: reach!(), named: &named }).answer(&[d], leaves)? {
@@ -185,8 +181,8 @@ impl DocSet {
         }
         let (s, t) = (doc.after.source.words(), doc.after.tape.words());
         let key = [d, s[0], s[1], s[2], s[3], t[0], t[1], t[2], t[3]];
-        let syms = blob((Intern { at: reach!(), iops: &self.iops, atoms, named: &named }).answer(&key, leaves)?, "intern")?;
-        self.world.place(&bench.reg, &bench.traces, &mut bench.dir, d, Some(doc.after.source))?;
+        let syms = blob((Intern { at: reach!(), atoms, named: &named }).answer(&key, leaves)?, "intern")?;
+        self.world.place(&bench.ops, &mut bench.dir, d, Some(doc.after.source))?;
         let p = atoms.find(&bench.dir, path).ok_or("the path, interned")?;
         // The answer, written once where it is made: the document's row of the set. Its change of the set (its old
         // row gone where it differs, its new row come) is `replace_rows`'.
@@ -199,7 +195,7 @@ impl DocSet {
                 let pin = rerail_blocks::region::pin_block(&b, "the document set's answer", true)?;
                 rerail_blocks::layer::RunsW::new(&pin).push(&tape_row(d, p, rerail_rr_syntax::grammar()[1], &doc.after, &syms), 1).ok_or("the document set's answer, full")?;
             }
-            semi::replace(&bench.reg, &self.semis, &mut bench.dir, self.tape.head(), TAPE_ARITY, 1, given, opened)
+            semi::replace(&bench.ops, &mut bench.dir, self.tape.head(), TAPE_ARITY, 1, given, opened)
         })();
         let runs = match written {
             Ok(r) => r,
@@ -210,7 +206,7 @@ impl DocSet {
         };
         // The one not committed let go: the opened runs, when the set was empty and the answer is its change.
         bench.dir.release(if runs == given { opened } else { given });
-        self.tape.commit(&bench.reg, &bench.traces, &mut bench.dir, runs, Tiling::WHOLE)?;
+        self.tape.commit(&bench.ops, &mut bench.dir, runs, Tiling::WHOLE)?;
         Ok(doc)
     }
 
@@ -219,12 +215,12 @@ impl DocSet {
     /// execution, or a process started since) is loaded from the store where its places say. Which documents those are,
     /// and which blocks the set names, is `named_blocks`' (the set joined with the blobs' rows, kept to the blocks the
     /// directory holds by the blob store's `forget_dead`); the loads are the file layer's and the touches the residency's.
-    pub fn resident(&mut self, bench: &mut Bench, k0: &K0Ops) -> Result<(), String> {
+    pub fn resident(&mut self, bench: &mut Bench) -> Result<(), String> {
         let Some(h) = self.tape.head() else { return Ok(()) };
-        bench.blobs.forget_dead(&bench.reg, &mut bench.dir)?;
+        bench.blobs.forget_dead(&bench.ops, &mut bench.dir)?;
         let n = self.tape.reading(&bench.dir, Some(h), |s| Read::end(s).get() as usize)?;
         let (blocks, missing) = match bench.blobs.head() {
-            Some(b) => named_blocks(&bench.reg, k0, &mut bench.dir, h, TAPE_ARITY, n, b, DOC_COLS)?,
+            Some(b) => named_blocks(&bench.ops, &mut bench.dir, h, TAPE_ARITY, n, b, DOC_COLS)?,
             // No blob at all: every document is to load (`change_rows` from ∅, the keys of the rows it adds).
             None => {
                 let none = Parts::open(&mut bench.dir, 0)?;
@@ -235,7 +231,7 @@ impl DocSet {
             for i in 0..missing.len() {
                 let d = nth(&bench.dir, &missing, i)?;
                 let row = probe(&bench.dir, &self.tape, &[d])?.ok_or("a document the set names, its row")?;
-                self.world.resident(&bench.reg, &mut bench.dir, &mut bench.blobs, d, row_blobs(&row).0)?;
+                self.world.resident(&bench.ops, &mut bench.dir, &mut bench.blobs, d, row_blobs(&row).0)?;
             }
             blocks.each(&bench.dir, &mut |b| bench.dir.touch(BlockId(b as u32)))
         })();
@@ -255,7 +251,7 @@ impl DocSet {
             }
         };
         let a = Side { before: None, after: Some(h), arity: TAPE_ARITY, col: 0 };
-        let ran = semi::select(&bench.reg, &self.semis, &mut bench.dir, &a, None, How { neg: false, parts_sign: 1 }, rows, parts).and_then(|()| Parts::sealed(&bench.dir, parts));
+        let ran = semi::select(&bench.ops, &mut bench.dir, &a, None, How { neg: false, parts_sign: 1 }, rows, parts).and_then(|()| Parts::sealed(&bench.dir, parts));
         bench.dir.release(rows);
         if ran.is_err() {
             bench.dir.release(parts);
@@ -387,7 +383,7 @@ pub fn run(l1: &L1, inst: &mut Instance, l0: &str, module: &str, globals: Atoms,
     let mut leaves = docs.world.leaves_w(&mut bench.dir);
     let ran = (|| {
         // The blobs of slabs the residency retired or dropped since, forgotten (their documents load again).
-        bench.blobs.forget_dead(&bench.reg, &mut bench.dir)?;
+        bench.blobs.forget_dead(&bench.ops, &mut bench.dir)?;
         // The run's productions: the want on L1's outputs. A request is answered by the spelling the run names it by.
         let d = docs.key(&bench.dir, globals, l0)?;
         let productions = crate::contract::AtKey { ports: RELATIONS.len(), key: d };
@@ -400,7 +396,7 @@ pub fn run(l1: &L1, inst: &mut Instance, l0: &str, module: &str, globals: Atoms,
             if round == MAX_ROUNDS {
                 return Err(format!("a run past {MAX_ROUNDS} rounds: each asked what the last answered"));
             }
-            docs.resident(bench, &l1.ops)?;
+            docs.resident(bench)?;
             let count = u64::from(globals.count(&bench.dir));
             let ins = [(&docs.tape, from.0, docs.tape.head())];
             let atoms = [GlobalIn { block: globals.0, before: from.1, after: count }];
@@ -417,7 +413,7 @@ pub fn run(l1: &L1, inst: &mut Instance, l0: &str, module: &str, globals: Atoms,
                 _ => None,
             };
             let key = |s: &rerail_blocks::relation::View<'_>, id| Read::get(s, id, ColumnIndex::new(0));
-            docs.forget_unasked(bench, &l1.semis, asks)?;
+            docs.forget_unasked(bench, asks)?;
             for k in sa.iter().flat_map(|s| s.live_ids().map(move |id| key(s, id))) {
                 if k != d {
                     return Err(format!("a request for document {k}, which the run names no path for"));
@@ -434,13 +430,13 @@ pub fn run(l1: &L1, inst: &mut Instance, l0: &str, module: &str, globals: Atoms,
         }
         // Its delta read, the run's before is no longer a layer the set needs: its layers rolled up (P§11.4's roll-up,
         // the document set's), so the next run's before is one head.
-        docs.tape.roll_up_run(&bench.reg, &bench.traces, &mut bench.dir, last.and_then(|p| p.tape), Tiling::WHOLE)?;
+        docs.tape.roll_up_run(&bench.ops, &mut bench.dir, last.and_then(|p| p.tape), Tiling::WHOLE)?;
         inst.roll_up_want(&mut bench.cx(), last.and_then(|p| p.want))?;
         let doc = doc.ok_or("l0 was not asked")?;
         Ok::<_, String>((doc, work, from.1.unwrap_or(0)))
     })();
     // The leaves the run read, its layer of the world's leaves (D3: misses too).
-    let committed = docs.world.commit_leaves(&bench.reg, &bench.traces, &mut bench.dir, leaves);
+    let committed = docs.world.commit_leaves(&bench.ops, &mut bench.dir, leaves);
     docs.world.end();
     let ran = committed.and(ran);
     // An execution ended: the residency drops everything `DROP_AFTER` from now, unless another run comes first.
