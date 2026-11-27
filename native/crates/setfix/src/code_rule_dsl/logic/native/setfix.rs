@@ -8989,7 +8989,7 @@ pub fn prefetch_joins(conn: &Connection, specs: &[Join]) -> Result<usize> {
 /// Decision 0707: the indexes the joins `specs` probe their relations by, built on the device before the strata that
 /// run them (`SolverDevice::build_indexes`), as the device would compile them (`host`: its join programs the host's).
 /// How many it built; none with no device.
-pub fn prefetch_device_indexes(conn: &Connection, specs: &[Join], host: bool) -> Result<usize> {
+pub fn prefetch_device_indexes(conn: &Connection, specs: &[&Join], host: bool) -> Result<usize> {
     let Some(dev) = solver().filter(|d| d.join_available()) else { return Ok(0) };
     let _host = host.then(rerail_accel::gpu::shared::on_host);
     let symbols = symbols(conn)?;

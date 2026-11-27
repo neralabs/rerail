@@ -457,7 +457,8 @@ impl<'a> Board<'a> {
             super::super::native::component::prefetch_tables(db, &wants)?;
         }
         if !specs.is_empty() {
-            super::indexes_first(db, &specs)?;
+            super::indexes_first(db, &specs.iter().map(|s| &s.0).collect::<Vec<_>>())?;
+            let specs: Vec<_> = specs.into_iter().filter_map(|(s, pairs)| pairs.then_some(s)).collect();
             let _wave = super::super::profile::span(|| "device wave (joins, issued components)".into());
             super::super::native::component::prefetch_joins(db, &specs)?;
         }

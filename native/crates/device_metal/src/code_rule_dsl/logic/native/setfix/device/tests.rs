@@ -2979,6 +2979,15 @@ use rerail_blocks::vector::Vector;
             assert_eq!(got[0], pairs, "by {by}: the CPU's rows are the host's lookups");
             assert_eq!(got[1], pairs, "by {by}: the device's rows are the CPU's");
         }
+        // The level's build ahead (decision 0707) over the same joins, of a containment not yet solved: walked, it has
+        // no index to build, and asking where its rows lie would solve the whole axis on the host before the level.
+        let fresh = Arc::new(Within::new(Arc::clone(&batch), Mode::Tree));
+        super::super::hold_source(&db, "within_u", Arc::clone(&fresh) as Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, b"ii".to_vec());
+        let u = format!("r:{}", hex("within_u"));
+        let joins: Vec<_> = [format!("pos {q} v0\npos {u} v0 v1\nhead v0 v1"), format!("pos {q} v1\npos {u} v0 v1\nhead v0 v1"), format!("pos {q2} v0 v1\npos {u} v0 v1\nhead v0 v1")]
+            .iter().map(|r| crate::code_rule_dsl::logic::native::setfix::spec::JoinSpec::parse(r).unwrap().encode()).collect();
+        let built = crate::code_rule_dsl::logic::native::setfix::prefetch_device_indexes(&db, &joins.iter().collect::<Vec<_>>(), false).unwrap();
+        assert!(!fresh.is_solved(), "the build ahead solved a walked containment ({built} indexes built)");
     }
 
     /// Decision 0287 §2: a node's text (`@rr_node_text_any`, at any length, and the long-text twin's `@rr_node_text`,

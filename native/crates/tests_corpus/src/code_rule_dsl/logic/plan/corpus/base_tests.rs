@@ -1854,6 +1854,41 @@ targets(p, l) :- field(a, "left", n), kind(a, "assignment"), at(n, p, l).
     assert_eq!(of(&got[2]), want);
 }
 
+/// Decision 0707, the index-aware design's step 1: a seed rule that reads a view of the tape (`field`) beside a derived
+/// relation has its indexes built ahead of its stratum, with the level's others, not by its stratum's own batch: the
+/// view is bound before the level runs. Left out of the build ahead (it read a relation not run natively), each
+/// stratum over a view built every index it probed. The rows are the source's: each line's assignment's left side.
+#[test]
+fn a_seed_over_a_view_has_its_indexes_built_ahead() {
+    let sources: Vec<(String, String)> = (0..40).map(|i| (format!("g{i:02}.py"), (0..(i % 4 + 1)).map(|k| format!("a{k} = b{k} + c{k}\n")).collect())).collect();
+    let files: Vec<(&str, &str)> = sources.iter().map(|(p, s)| (p.as_str(), s.as_str())).collect();
+    let dir = corpus("seed-over-a-view", &files);
+    let program = r#"
+.decl assigned(a: node)
+assigned(a) :- kind(a, "assignment").
+.decl targets(p: symbol, l: number)
+targets(p, l) :- assigned(a), field(a, "left", n), docof(n, d), doc(d, p, _), line(n, l).
+.output targets
+"#;
+    use rerail_device_metal::code_rule_dsl::device_metal::{index_builds_for_tests, stratum_index_builds_for_tests};
+    // Profiled, so each build is named by its stratum (the profile's path).
+    crate::code_rule_dsl::logic::profile::set(true);
+    let (before, had) = (index_builds_for_tests(), stratum_index_builds_for_tests().len());
+    let out = dir.join(".out");
+    super::run(program, &dir, None, &out, "program", Binding::Cpu, 8).unwrap();
+    let ahead = index_builds_for_tests()[0] - before[0];
+    // The program's own strata (`targets`, which the planner runs as `targets_at`, and `assigned`): the engine's
+    // programs around it (its requests, the source files' phase) build theirs as before.
+    let own: Vec<(String, String)> = stratum_index_builds_for_tests().split_off(had).into_iter().filter(|(_, at)| at.starts_with("targets") || at.starts_with("assigned")).collect();
+    let got = shown_of(&Outputs::open(&out).unwrap(), &["targets"]);
+    let file = |p: &str| p.rsplit('/').next().unwrap_or(p).trim_matches('"').to_owned();
+    let of = |rows: &Vec<Vec<String>>| rows.iter().map(|r| (file(&r[0]), r[1].parse::<i64>().unwrap())).collect::<BTreeSet<_>>();
+    let want: BTreeSet<(String, i64)> = (0..40).flat_map(|i| (1..=(i % 4 + 1) as i64).map(move |l| (format!("g{i:02}.py"), l))).collect();
+    assert_eq!(of(&got[0]), want, "targets: each line's assignment's left side");
+    assert!(ahead > 0, "indexes built ahead: {ahead}");
+    assert!(own.is_empty(), "no stratum of the program builds an index of its own ({ahead} built ahead): {own:?}");
+}
+
 /// A filter's prepare and apply: `kind(n, "identifier")` and its negation with `n` bound are answered by the bits of
 /// the kind's nodes the `node` view's source built ahead (`Source::build_value_bits`), one bit a test, once the run's
 /// first chunks have seen the tests pay. The rows are the source's: each line's assignment's and addition's left

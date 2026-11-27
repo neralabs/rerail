@@ -1442,7 +1442,7 @@ impl<'a> Run<'a, '_> {
 /// Decision 0707: the indexes the strata about to run probe by (their seed joins, `specs`), built before any of them
 /// runs, in one batch of the device's, where the strata run on the device (or its join programs on the host): each
 /// stratum finds each built, none builds its own beside another's.
-fn indexes_first(db: &Connection, specs: &[PlanJoin]) -> Result<()> {
+fn indexes_first(db: &Connection, specs: &[&PlanJoin]) -> Result<()> {
     if !placement::device_on() && !placement::host_joins() {
         return Ok(());
     }
@@ -2459,7 +2459,12 @@ impl<'a> Run<'a, '_> {
     /// 0100 §5): what a level's batch can pair before the stratum runs. Planned as the stratum will plan them
     /// (`plan_rule_reused` keeps the plan); a spec the stratum ends up planning otherwise is not found, and that seed
     /// runs by the host's walk.
-    fn seed_specs(&mut self, scc: &super::front::Comp, rules: &[RuleKey]) -> Vec<PlanJoin> {
+    /// Each with whether it reads only relations run natively (`true`: what the level's batch pairs). One whose other
+    /// atoms read relations bound as sources (the tape's views, an axis: decision 0707's index list, the index-aware
+    /// design's step 1) is there too (`false`): its indexes are built ahead of its stratum (`indexes_first`), its rows
+    /// left to it. Left out, every stratum that read a view built each index it probed itself (52 M of the 117 M rows
+    /// indexed on `all`, and the derived relations' it probed too, 2026-11-27).
+    fn seed_specs(&mut self, scc: &super::front::Comp, rules: &[RuleKey]) -> Vec<(PlanJoin, bool)> {
         let versions = Arc::clone(&self.versions);
         let pf = versions.whole(self.version);
         let f = self.fields();
@@ -2482,19 +2487,25 @@ impl<'a> Run<'a, '_> {
         // empty relations): not planned here either, nor its relations' statistics made (`runnable`).
         let runnable = self.runnable(scc, rules);
         left("left out, not runnable (an input empty)", rules.len() - runnable.len());
+        // A relation bound as a source (a view of the tape, an axis): its rows there before the level runs.
+        let db = self.db;
+        let bound = |rel: &str| crate::code_rule_dsl::facts::vtab::bound_source(db, rel).is_some();
+        let mut pairable: Vec<bool> = Vec::new();
         let seeds: Vec<RuleKey> = runnable.into_iter().filter(|&r| {
             let b = versions.at(r);
             if !recursive(&b, scc).is_empty() {
                 left("left out, recursive", 1);
                 return false;
             }
-            if let Some(a) = (0..b.len()).filter_map(|i| b.atom(i)).find(|&a| !self.native_rels.contains(b.rel(a))) {
+            let atoms = || (0..b.len()).filter_map(|i| b.atom(i));
+            if let Some(a) = atoms().find(|&a| !self.native_rels.contains(b.rel(a)) && !bound(b.rel(a))) {
                 if traced {
                     let rel: String = b.rel(a).chars().take(40).collect();
                     crate::code_rule_dsl::prof::count_named_args(format_args!("planner.seed_specs left out, reads {rel} (not yet native) @ {}", label()), 1);
                 }
                 return false;
             }
+            pairable.push(atoms().all(|a| self.native_rels.contains(b.rel(a))));
             true
         }).collect();
         let vs = Arc::clone(&self.versions);
@@ -2511,7 +2522,7 @@ impl<'a> Run<'a, '_> {
             return out;
         }
         plan_site("a level's seed joins");
-        for b in &bodies {
+        for (b, &pairs) in bodies.iter().zip(&pairable) {
             if self.model.late(pf, b, None, false).is_err() {
                 left("left out, late", 1);
                 continue;
@@ -2522,8 +2533,8 @@ impl<'a> Run<'a, '_> {
             };
             // The level batch keys its pairs by the spec's digest, as the stratum's join does.
             if let Some(spec) = self.whole_join_spec(b, &order, None, &ri, scc, &self.native_rels) {
-                left("offered", 1);
-                out.push(spec);
+                left(if pairs { "offered" } else { "offered, its indexes alone (reads a bound source)" }, 1);
+                out.push((spec, pairs));
             } else {
                 left("left out, no join spec", 1);
             }
@@ -7300,7 +7311,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                     }
                 }
                 let mut wants: BTreeSet<(String, Vector<usize>)> = BTreeSet::new();
-                let mut specs: Vec<PlanJoin> = Vec::new();
+                let mut specs: Vec<(PlanJoin, bool)> = Vec::new();
                 // Placed: held as kept (in memory, or left stored, unread), run as the base program's, or reached.
                 let mut base_strata: Vector<usize> = rerail_blocks::vector::Vector::new();
                 let mut reached_strata: Vec<(usize, Vec<RuleKey>, BTreeSet<String>)> = Vec::new();
@@ -7527,7 +7538,8 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                     }
                 }
                 if !specs.is_empty() {
-                    indexes_first(db, &specs)?;
+                    indexes_first(db, &specs.iter().map(|s| &s.0).collect::<Vec<_>>())?;
+                    let specs: Vec<PlanJoin> = specs.into_iter().filter_map(|(s, pairs)| pairs.then_some(s)).collect();
                     let _wave = super::profile::span(|| "level wave (joins, a maintained level)".into());
                     let sent = super::native::component::prefetch_joins(db, &specs)?;
                     if sent > 0 {
@@ -7986,11 +7998,12 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                 run.model.wants_strata(&vs, strata, &mut wanted)?;
                 run.model.make_statistics(f0, &wanted)?;
             }
-            let mut specs: Vec<PlanJoin> = native_ones.iter().flat_map(|&j| run.seed_specs(&sccs[j], &by_stratum[j])).collect();
-            let own = specs.len();
+            let mut specs: Vec<(PlanJoin, bool)> = native_ones.iter().flat_map(|&j| run.seed_specs(&sccs[j], &by_stratum[j])).collect();
+            let own = specs[..].iter().filter(|s| s.1).count();
             specs.extend(later.iter().flat_map(|&j| run.seed_specs(&sccs[j], &by_stratum[j])));
             if !specs.is_empty() {
-                indexes_first(db, &specs)?;
+                indexes_first(db, &specs.iter().map(|s| &s.0).collect::<Vec<_>>())?;
+                let specs: Vec<PlanJoin> = specs.into_iter().filter_map(|(s, pairs)| pairs.then_some(s)).collect();
                 let _wave = super::profile::span(|| "level wave (joins)".into());
                 let sent = super::native::component::prefetch_joins(db, &specs)?;
                 if sent > 0 {
