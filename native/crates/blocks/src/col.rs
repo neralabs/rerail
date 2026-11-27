@@ -912,6 +912,12 @@ mod tests {
             let mut each = Vec::new();
             col.for_each(|x| each.push(x));
             assert_eq!(&each, v);
+            // A run of values decoded at once (`Dec::fill`), from the start and from within.
+            for lo in [0, 1, v.len() / 2] {
+                let mut out = vec![0i64; (v.len() - lo).min(300)];
+                col.dec().fill(lo, &mut out);
+                assert_eq!(out, v[lo..lo + out.len()], "values {lo}.. filled");
+            }
         }
         // Sorted, it is a few runs, and `RUNS` is smaller: the same values written in the unsorted column's `DICT`
         // (the same values and count, so the same widths) are searched by their values.

@@ -404,6 +404,7 @@ impl Dec<'_> {
                 }
             }
             GROUPS => out.iter_mut().enumerate().for_each(|(j, o)| *o = self.grp(lo + j)),
+            DICT => out.iter_mut().enumerate().for_each(|(j, o)| *o = self.dct(lo + j)),
             _ => out.iter_mut().enumerate().for_each(|(j, o)| *o = self.on_line(lo + j)),
         }
     }
