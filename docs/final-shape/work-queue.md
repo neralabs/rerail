@@ -11809,3 +11809,11 @@ Tests:
 - tests-corpus `base_tests` 51/51, with the new test, E6's kind test and 0706's batch tests.
 - tests-logic `executor` and `kept_keys` 3/3.
 - Not measured: the user's no-farm rule leaves `all` unrun. The commit's own measure (m3, `all`): kind's lookup by `n` 288 to 14.5 ns a row, but the joins' samples no fewer.
+
+### Q571. Roll-up 143 (build-and-test-loop-time 769c7fe5d4 onto Pulling-it-all-together): what the merge chose
+
+build-and-test-loop-time's one new commit: the shared Relax only moves forward (`SERIAL`), and `std.patch` has the NEON std items of the installed Relax (0f54639368b4).
+
+- Taken whole: `scripts/dev/relax/build`, `std.patch` and README §23 (invariant 11). No engine code.
+- The NEON items (`vclzq_s8`, `vtstq`, `vld2q_u32`, …) come from the uglykl-CPU-SIMD-parallelization branch's Relax patch (b5acb69fa9). They are std declarations the installed Relax already carries: this roll-up's and the ones before it checked on that Relax. None of the SIMD branch's engine work comes in.
+- Nothing built or run: the shared Relax is not to be built from here.
