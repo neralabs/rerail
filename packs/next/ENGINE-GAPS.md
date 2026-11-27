@@ -1,22 +1,22 @@
 # Engine gaps found while writing the Next.js practice rules
 
-Found while writing the 11 `next-practice-*` rules and running them with `rerail-engine test-rr` and `run-rr` over the
+Found while writing the 12 `next-practice-*` rules and running them with `rerail-engine test-rr` and `run-rr` over the
 apps of [README.md](README.md#the-corpus), 2026-11-24. Each section gives the symptom, a minimal repro, the rules it
 affects and what they do instead. Rule names drop the `next-practice-` prefix.
 
-Two engine changes, on sub-branches of this work and not yet on main, address the first two gaps; they were not run
-against these rules, so what they close is read from their commit messages:
+The engine these packs need (Rerail 0.2.3) closes parts of the first three gaps; the rules still resolve imports by
+their own layout rules, and keep their workarounds until they move to it:
 
-- `…-engine-tsconfig` (`27c35a7edb`): the repository walk now makes core.rerail's `tsconfig`, `tsconfig_for`,
-  `tsconfig_path` and `package_export` inputs, and an ECMAScript document's module is its path without its extension.
-  It closes gap 1 and gap 3.
-- `…-engine-ts-lanes` (`409baf3a61`): a TypeScript rule's run for one dialect (`.ts`, `.tsx`, `.js`) also reads the
-  other dialects' files in scope as text documents (`doc`, path, source text and lines; no tree); a finding in another
-  dialect's file is left to that dialect's own run. It closes the part of gap 2 that needs only the other dialect's
-  file to exist or its text: an import resolved to a `.ts` file from a `.tsx` file by its path (every rule's resolver
-  checks `doc` paths), middleware-not-applied's `pageExtensions` check of a `next.config.mjs`, and
-  revalidate-unknown-tag's "the tag is written elsewhere" fallback. Joins that need the other dialect's syntax tree
-  (its imports, calls, writes, directives) stay open until the rules read those from text or the engine gives the tree.
+- engine-tsconfig: TypeScript's project reader makes `tsconfig`, `tsconfig_for` and `tsconfig_path` (decision 0710),
+  the repository walk makes `package_export`, and a document's module is its path without its extension
+  (`ts_module`, read by `tsx/names.rerail`'s `target` and `sym_of`). It closes gap 1 and gap 3.
+- engine-ts-lanes: a TypeScript rule's run for one dialect (`.ts`, `.tsx`, `.js`) also reads the other dialects' files
+  in scope as text documents (`doc`, path, source text and lines; no tree), and a finding in another dialect's file is
+  left to that dialect's own run (decision 0337). It closes the part of gap 2 that needs only the other dialect's file
+  to exist: an import resolved to a `.ts` file from a `.tsx` file by its path (every rule's resolver checks `doc`
+  paths). What reads the other dialect's tree stays open: its imports, calls, writes and directives, and
+  middleware-not-applied's `pageExtensions` check of a `next.config.mjs` and revalidate-unknown-tag's "the tag is
+  written elsewhere" fallback, which read tree facts (`property_identifier`, `string`) a text document has none of.
 
 | # | Gap | Rules affected | Closed by |
 |---|---|---|---|
@@ -61,7 +61,7 @@ workspace packages' `exports` through `package_field`. The single-file rules rea
 [NOTES-next.md](NOTES-next.md#library-proposed-ruleslibnextrerail); tsconfig `paths` other than `@/*` and `~/*`, and
 `baseUrl`-relative bare imports, are missed.
 
-**Closed by** engine-tsconfig (`27c35a7edb`); the rules keep their resolvers until they move to `target`/`sym_of`.
+**Closed by** engine-tsconfig (see the top); the rules keep their resolvers until they move to `target`/`sym_of`.
 
 ## 2. `.ts`, `.tsx` and `.js` files are separate runs
 
@@ -103,7 +103,7 @@ request-api-in-cache-scope's `src/components/greeting.tsx:6` (a `'use cache'` co
   lanes are `.tsx` → `.ts`. What it sees today (a `.tsx` → `.tsx` chain to a Node built-in) already fails `next
   build`, so the rule ships off until this gap closes.
 
-**Closed by** engine-ts-lanes (`409baf3a61`) for what needs only the other dialect's path or text (see the top); joins
+**Closed by** engine-ts-lanes (decision 0337) for what needs only the other dialect's path (see the top); joins
 over the other dialect's tree stay open. A rule-side route, core's `load(path, module, grammar)` for the other
 lane's files, was not tried.
 
@@ -115,8 +115,8 @@ lane's files, was not tried.
 
 **Repro.** `A(n, p, m) :- kind(n, "program"), docof(n, d), doc(d, p, m).` reports an empty module for every file.
 
-**Workaround.** The rule matches on paths (`nscp_file`). **Closed by** engine-tsconfig: an ECMAScript document's
-module is its path without its extension.
+**Workaround.** The rule matches on paths (`nscp_file`). **Closed by** engine-tsconfig: a document's module is its
+path without its extension (`ts_module`).
 
 ## 4. Findings outside code documents are reported once per language run
 

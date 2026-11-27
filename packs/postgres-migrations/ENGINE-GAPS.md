@@ -1,10 +1,10 @@
 # Engine gaps found by the postgres-migrations rules
 
 Gaps in the engine, its SQL grammar and test-rr that the rules of this pack ran into, each with a repro, the rules it
-affects and the workaround in use. The two engine sub-branches of this batch close none of them: `…-engine-ts-lanes`
-(409baf3a61) fixes the `.ts`/`.tsx` lane split and lets text-only documents join across lanes, and `…-engine-tsconfig`
-(27c35a7edb) adds the missing tsconfig producers; of this pack only `dropped-column-still-used` reads TypeScript, and its
-cases pass with or without them.
+affects and the workaround in use. The engine changes the full-stack TypeScript packs brought close none of them: each
+dialect's run reads the other dialects' files as text (decision 0337), and TypeScript's project files are read
+(`tsconfig`, `tsconfig_path`, `package_export`); of this pack only the candidate `dropped-column-still-used` reads
+TypeScript, and its cases pass with or without them.
 
 ## 1. test-rr withholds every rule that negates `git_rev`
 
@@ -72,9 +72,9 @@ whose lines (`line`, `end_line` of the match) hold it.
 ## 5. One policy cannot read SQL trees and TypeScript trees (G1)
 
 A policy has one `.language`. `dropped-column-still-used` must read Drizzle `pgTable` calls and raw SQL templates as
-TypeScript trees, so it reads the migrations and `*.prisma` files as text (`.scope text`), cannot include the pack's SQL
-library, and so has no Git-base gate: every migration is read, applied or pending, and a `DROP COLUMN` inside a
-comment within an `ALTER TABLE` statement would count.
+TypeScript trees, so it reads the migrations and `*.prisma` files as text (`.scope text`). It includes the pack's SQL
+library for its pending-migration gate (`pgm_pending`); its own text scan skips comments and string literals, but a
+`DROP COLUMN` inside a dollar-quoted function body counts.
 
 ## 6. A node kind cannot be read as a symbol
 

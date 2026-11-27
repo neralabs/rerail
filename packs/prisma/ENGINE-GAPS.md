@@ -2,10 +2,10 @@
 
 Found while writing the `prisma-practice-*` rules and running them with `rerail-engine test-rr` and `run-rr` (debug
 and optimized builds of this branch's engine, 2026-11-24). Each gap names the rules it affects and how they work
-around it. Two engine branches made since close some of them, without a rerun of these rules on them: the engine-ts-lanes
-branch (`409baf3a61`: a dialect's run reads the other dialects' files of its language as text documents, path and
-lines with no syntax tree) and the engine-tsconfig branch (`27c35a7edb`: the runner makes `tsconfig`, `tsconfig_for`,
-`tsconfig_path` and `package_export`, and an ECMAScript document's module is its path). The last column says which.
+around it. The engine these packs need (Rerail 0.2.3) closes some of them; the last column says which: engine-ts-lanes
+(decision 0337: a dialect's run reads the other dialects' files of its language as text documents, path and lines with
+no syntax tree) and engine-tsconfig (TypeScript's project reader makes `tsconfig`, `tsconfig_for` and `tsconfig_path`,
+the repository walk makes `package_export`, and a document's module is its path, `ts_module`).
 Only raw-unsafe-interpolation and query-in-loop ship; the other rules named here are candidates
 (`candidates/rules/`).
 
@@ -49,7 +49,7 @@ relative, `@/`/`~/`/`#/` and `@scope/pkg/x` by path suffix), side-effect-in-tran
 tsconfig `paths` read as text, monorepo packages by package.json name). Each misses tsconfig `paths` its layout
 guess does not cover ([NOTES-prisma.md](NOTES-prisma.md#library-candidates)).
 
-**Closed by** engine-tsconfig (`27c35a7edb`), which makes `tsconfig`, `tsconfig_for` and `tsconfig_path` from each
+**Closed by** engine-tsconfig (see the top), which makes `tsconfig`, `tsconfig_for` and `tsconfig_path` from each
 folder's tsconfig.json over its `extends` chain. The three resolvers can then go back to tsx/names; not done here.
 
 `package_for` and `package_field` were already bound: one-client's `UncachedNextClient` expectations fail when `"next"`
@@ -93,7 +93,7 @@ single-file form, and no code read for the other two rules had a cross-lane shap
 bulk-write-without-where and request-body-as-data join only the schema, read as text in every lane (their `.tsx`
 cases pass).
 
-**Partly closed by** engine-ts-lanes (`409baf3a61`): each dialect's run now reads the other dialects' files as text
+**Partly closed by** engine-ts-lanes (decision 0337): each dialect's run now reads the other dialects' files as text
 documents (path, source text and lines, no syntax tree). Joins that need the other file's tree (a helper's body, the
 `new PrismaClient({ omit })` call, a `'use client'` directive read from the tree) stay open [inference from the commit,
 not rerun].

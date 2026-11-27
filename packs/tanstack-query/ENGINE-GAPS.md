@@ -2,11 +2,11 @@
 
 Found while writing the `tanstack-query-practice-*` rules and running them over the corpus of
 [README.md](README.md#the-corpus) with `rerail-engine test-rr` and `run-rr` (debug and optimized builds, 2026-11-24).
-Each gap names its repro, the rules it affects and the workaround they use. Two engine branches made for this work
-address the first three: `engine-ts-lanes` (`409baf3a61`: a dialect's run reads its language's other dialects' files
-as text) and `engine-tsconfig` (`27c35a7edb`: core.rerail's tsconfig and package_export inputs are made, and an
-ECMAScript document's module is its path). The last column says what each does for the gap; "not confirmed" marks
-what was inferred and not run.
+Each gap names its repro, the rules it affects and the workaround they use. The engine these packs need (Rerail 0.2.3)
+addresses the first three: `engine-ts-lanes` (decision 0337: a dialect's run reads its language's other dialects'
+files as text) and `engine-tsconfig` (TypeScript's project reader makes the tsconfig inputs, the repository walk makes
+`package_export`, and a document's module is its path, `ts_module`). The last column says what each does for the gap;
+"not confirmed" marks what was inferred and not run.
 
 | # | Gap | Rules affected | Status |
 |---|---|---|---|
@@ -54,9 +54,9 @@ walk (the `tsr_` shim). dehydrated-state-json-stringify and same-key-different-q
 an import's binding (`import_binding`, `ref_site`) in the file only. The six resolvers are listed in
 [NOTES-tanstack-query.md](NOTES-tanstack-query.md#library-candidates).
 
-**Status.** `engine-tsconfig` (`27c35a7edb`) makes `tsconfig`, `tsconfig_for`, `tsconfig_path` and `package_export`
-in the repository walk that makes `package*`: each folder's tsconfig.json (else jsconfig.json) over its `extends`
-chain, `baseUrl`, `paths` targets, and a document's nearest configuration. With it the rules can drop their own
+**Status.** `engine-tsconfig` makes `tsconfig`, `tsconfig_for` and `tsconfig_path` (TypeScript's project reader,
+decision 0710: each folder's tsconfig.json, else jsconfig.json, over its `extends` chain, `baseUrl`, `paths` targets,
+and a document's nearest configuration) and `package_export` (the repository walk). With it the rules can drop their own
 resolvers for tsx/names' `target`/`sym_of`; that rewrite is not done.
 
 ## 2. Every TypeScript document's module is `""`
@@ -100,7 +100,7 @@ them.
 
 set-query-data-mutates-cache and dehydrated-state-json-stringify read one file at a time and are not affected.
 
-**Status.** `engine-ts-lanes` (`409baf3a61`) makes each dialect's run read the other dialects' files in scope as text
+**Status.** `engine-ts-lanes` (decision 0337) makes each dialect's run read the other dialects' files in scope as text
 documents: `doc`, path, source text and lines, no tree; a finding in another dialect's file is dropped by the run that
 read it as text. Confirmed with the debug engine (2026-11-25): in a `.ts` run, `doc(d, "b.tsx", _), split_line(d, _,
 t)` gives `b.tsx`'s lines. Two rules now read the other lane's lines: cache-key-matches-no-query counts a key root
