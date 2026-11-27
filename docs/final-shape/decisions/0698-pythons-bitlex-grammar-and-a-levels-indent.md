@@ -523,3 +523,17 @@ statements and blocks end.
     Two masks are now read as their bytes say, with the same answers:
     - `conv_at`'s `code & !` is `~hidden & !`;
     - an interpolation's `=` is `eq & ~prev(eq | bang | lt_gt)`, not inside `icode`, at the byte before its end.
+86. **A line break is a statement's end where the loop's bracket depth is 0.** The marks read `lf & code &
+    depth.eq(0)`, and `in_br` and its frame pass over the file go. The masks path reads `C.eq(k)` from the count's
+    planes. Tier 1 as Rust reads it as the lean lexer knows its depth at a line break:
+    - A gap mark `X & C.eq(k)` is `g_C == k && …X over the gap…`. `g_C` is the count as the token before left it:
+      no bit of the count is in a gap, and the token's own brackets count after its gap.
+    - The count goes on at a string token, where its `up` or `down` reads a region's opener, fill or hidden bytes where
+      they hold (Python's `o_t`, `prev(f_f | f_t)`; not rr's `~region`). It goes down one where `down`
+      holds at the token's start (a tail's `}`). It goes up one where `up` holds at its last byte, as each closer
+      leaves it (an interpolation's `{`). Neither may hold in its body or at its closer's other bytes; a closer that
+      holds at none of this region's closers is not one of its (as `closer_last` reads them).
+    - Its closer is kept (`close`) only where the count reads it.
+
+    A test has a line break straight before a closer, in code and in an interpolation; it fails where the gap reads
+    the count after the token.

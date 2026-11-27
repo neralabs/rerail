@@ -209,6 +209,9 @@ fn braces_raw_f_strings_and_line_breaks_in_interpolations_are_the_lean_parsers()
     same(&["x = rf\"a\\\\d{b}\\\\w\"\n", "x = fr\'{a}\\\\n\'\n", "x = rf\"{a}\\\\n{b}\\\\t\"\n", "x = rf\"{a}\" + f\"{b}\\\\n\"\n"]);
     same(&["x = f\"\"\"{\n    a\n}\"\"\"\n", "x = f\"\"\"a{\n  b(\n    c,\n  )\n}d\"\"\"\n", "def f():\n    x = f\"\"\"{\n        a\n    }\"\"\"\n    y\n"]);
     same(&["match a:\n    case X(b, c,):\n        d\n", "match a:\n    case X(\n        b=1,\n    ):\n        d\n"]);
+    // A line break straight before a closer: over its gap the bracket depth is the token before's, not its own (the
+    // lean lexer's count of its loop, decision 0698).
+    same(&["x = (\n)\ny\n", "f(\n  a,\n)\ny\n", "if a:\n    x = [\n    ]\n    y\n", "x = f\"\"\"{a(\n)}\"\"\"\ny\n", "x = [f\"\"\"{a\n}\"\"\",\n]\ny\n"]);
     refused(&["x = f\"a}}}\"\n"]);
 }
 

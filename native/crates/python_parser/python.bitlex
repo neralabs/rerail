@@ -5,7 +5,7 @@
 # (decision 0698).
 #
 # Layout (decision 0698): a line break outside brackets is a mark of no width (`newline`), which
-# ends a statement. Inside brackets a line break is a blank (`in_br`, from a bracket depth).
+# ends a statement. Inside brackets a line break is a blank (where the bracket depth is not 0).
 
 lexer python
 
@@ -217,17 +217,16 @@ token bad       = start bad_first pair empty
 
 # --- Layout ------------------------------------------------------------------------------------
 
-# The bracket depth over code: a line break inside brackets is a blank.
+# The bracket depth over code, the lean lexer's count of its loop: a line break inside brackets is a blank.
 # An interpolation's `{` and its tail's `}` are brackets too: a line break in it is a blank.
 scan depth      = count(code & opens | i_at, code & closes | o_t) max 31
-mask in_br      = depth.frame(code & opens | i_at)
 # A line break of code outside brackets, and the file's end: a statement's end.
-mark newline    = lf & code & ~in_br, end, settles, ends
+mark newline    = lf & code & depth.eq(0), end, settles, ends
 # The next line deeper than the level's indent: a block's start, after its header's `:`. Less
 # deep: the end of each block it is less than (decision 0698), as tree-sitter's scanner gives
 # INDENT and DEDENT.
-mark indent     = lf & code & ~in_br, deeper
-mark dedent     = lf & code & ~in_br, end, shallower, settles, ends
+mark indent     = lf & code & depth.eq(0), deeper
+mark dedent     = lf & code & depth.eq(0), end, shallower, settles, ends
 # A list's trailing comma, before its closer (a target list's, before its `=`): the lean parser
 # keeps it and the closer.
 mark trail      = tokens "," ")" | "]" | "}" | "="
