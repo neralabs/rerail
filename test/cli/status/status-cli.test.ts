@@ -97,6 +97,19 @@ describe("rerail status", () => {
     expect(lines[0], lines.join("\n")).toContain(`${current} is gone: Rerail does not run in Codex, so nothing is recorded`);
   }, 60_000);
 
+  it("with `current` itself removed, names Claude Code's missing scripts and set-up, since a refresh would register this package", async () => {
+    let current = "";
+    const { lines } = await statusOfConnected("claude-code", rerailHome => {
+      current = join(rerailHome, "current");
+      removeFolderSync(join(rerailHome, "versions"));
+      removeFolderSync(current);
+    });
+    const line = lines.find(text => text.startsWith("Claude Code's Rerail hooks run "));
+
+    expect(line, lines.join("\n")).toContain(join(current, "dist", "hosts", "claude"));
+    expect(line).toMatch(/ Run npx @neralabs\/rerail setup\.$/u);
+  }, 60_000);
+
   it("while `current` holds an install that lacks the scripts the settings name, as after an update, names the status line's script and install --refresh", async () => {
     const { lines, current } = await statusOfConnected("claude-code", () => undefined);
     const line = lines.find(text => text.startsWith("Claude Code's Rerail hooks run "));
