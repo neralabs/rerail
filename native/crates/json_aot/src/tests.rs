@@ -239,7 +239,7 @@ fn same_state(a: &crate::middle::At, b: &crate::middle::At) -> bool {
 
 #[test]
 fn tier2_entries_are_the_serial_walks() {
-    let (mut chunks, mut most, mut composed, mut per_record, mut states) = (0, 0, 0, 0, 0);
+    let (mut chunks, mut most, mut composed, mut per_record, mut states, mut read) = (0, 0, 0, 0, 0, 0);
     let all: Vec<Vec<u8>> = files().into_iter().chain(trees()).collect();
     let entries = crate::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
     let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), crate::WIDTHS, 1).expect("a language");
@@ -255,7 +255,14 @@ fn tier2_entries_are_the_serial_walks() {
         for size in [1, 2, 3, 16] {
             // Every pass's chunks and every scan round's in a random order.
             let order = shuffled((k * 31 + size) as u64);
-            let sums = crate::middle::summaries(&buf, &lx, size, &order);
+            // Stage 2: every token on its own, in a random order; pass 1 reads them, and is the walk that reads each
+            // token itself.
+            let ty = crate::lex_typed(&buf, f.len(), 16);
+            let toks = crate::middle::tokens(&buf, &lx, &ty.types, &order);
+            assert_eq!(toks, crate::middle::tokens(&buf, &lx, &ty.types, &crate::middle::in_order), "file {k}: the tokens in any order");
+            read += toks.iter().filter(|t| t.kind != crate::middle::NONE || t.err != crate::middle::NONE).count();
+            let sums = crate::middle::summaries(&buf, &lx, &toks, size, &order);
+            assert!(sums == crate::middle::summaries(&buf, &lx, &[], size, &order), "file {k}, chunks of {size}: pass 1 on the token pass's answers is pass 1 reading each token");
             let got = crate::middle::entries(&sums, &order);
             let want = crate::middle::serial_entries(&buf, &lx, size);
             assert_eq!(want.last().and_then(|a| a.end), Some(parsed), "file {k}: the chunks walked one after another are the serial walk");
@@ -284,7 +291,7 @@ fn tier2_entries_are_the_serial_walks() {
             }
         }
     }
-    eprintln!("{} files in chunks of 1, 2, 3 and 16 records ({chunks} chunks): the serial walk's states; at most {most} lanes a chunk, {composed} a composed summary, {per_record} entries a record; the states {states} levels and frames a record", all.len());
+    eprintln!("{} files in chunks of 1, 2, 3 and 16 records ({chunks} chunks, {read} tokens read by the token pass): the serial walk's states; at most {most} lanes a chunk, {composed} a composed summary, {per_record} entries a record; the states {states} levels and frames a record", all.len());
 }
 
 /// Pass 2: each chunk's nodes written from its state, every pass's chunks (and every scan round's) in order and in two
@@ -300,6 +307,7 @@ fn tier2_tape_from_the_middle_is_the_serial_tape() {
     for (k, f) in all.iter().enumerate() {
         let buf = padded(f);
         let lx = lex(&buf, f.len());
+        let types = crate::lex_typed(&buf, f.len(), 16).types;
         let mut w = writer(f);
         let parsed = crate::parse_lexed(&buf, &lx, &mut w);
         let want = parsed.ok().map(|()| w.finish().expect("the serial tape").tape.as_bytes().to_vec());
@@ -308,7 +316,7 @@ fn tier2_tape_from_the_middle_is_the_serial_tape() {
                 let mut m = writer(f);
                 let random = shuffled((k * 97 + size) as u64 * 3 + seed);
                 let order: crate::middle::Order<'_> = if seed == 0 { &crate::middle::in_order } else { &random };
-                let got = crate::middle::parse_middle(&buf, &lx, &mut m, size, order);
+                let got = crate::middle::parse_middle(&buf, &lx, &types, &mut m, size, order);
                 assert_eq!(got, parsed, "file {k}, chunks of {size}: the verdict");
                 if let Some(want) = &want {
                     let have = m.finish().expect("the tape from the middle").tape.as_bytes().to_vec();

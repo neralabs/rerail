@@ -24,16 +24,50 @@ pub(super) fn with_chunks(out: String, brackets: &[(u8, u8)]) -> Result<String, 
     let why = |s: &str| format!("tier 2 from the middle: {s}");
     // The helpers that take the cursor: generic over what they write through.
     let mut lines = String::new();
+    // The primitive (`value`'s alternatives that call no level): its name and its alternatives' count.
+    let mut prim: Option<(String, usize)> = None;
     for l in out.lines() {
         let fn_line = l.starts_with("fn ") || l.starts_with("unsafe fn ");
         if fn_line && l.contains("d: &mut Cursor<Cells>") {
             let at = l.find('(').ok_or_else(|| why("a helper's parameters"))?;
             let _ = writeln!(lines, "{}<D: Out>{}", &l[..at], l[at..].replace("d: &mut Cursor<Cells>", "d: &mut D"));
+            // A token's helper (it takes the next record): the token pass's answer, where the walk has it (stage 2).
+            if l.contains("ip: &mut usize") {
+                lines.push_str("if let Some(t) = d.known(*ip) {\nlet s = starts[*ip] as u64;\n*ip += 1;\n// SAFETY: as the helper's.\nreturn t.map(|t| unsafe { d.skip(s, t) });\n}\n");
+                let name = l[..at].rsplit(' ').next().unwrap_or("");
+                if name.ends_with("_primitive") {
+                    let k: String = l[at..].split("n: [u32; ").nth(1).unwrap_or("").chars().take_while(char::is_ascii_digit).collect();
+                    let k: usize = k.parse().map_err(|_| why("the primitive's alternatives"))?;
+                    if prim.replace((name.to_string(), k)).is_some() {
+                        return Err(why("more than one primitive"));
+                    }
+                }
+            }
         } else {
             let _ = writeln!(lines, "{l}");
         }
     }
     let out = lines;
+    let (prim, alts) = prim.ok_or_else(|| why("no primitive"))?;
+    // The primitive's tokens' first bytes: its arms' patterns.
+    let pf = out.find(&format!("fn {prim}<D: Out>")).ok_or_else(|| why("the primitive"))?;
+    // Its end: the blank line after it (its body's braces are at the line's start too).
+    let pe = pf + out[pf..].find("\n}\n\n").ok_or_else(|| why("the primitive's end"))?;
+    let mut firsts: Vec<(u8, u8)> = Vec::new();
+    for l in out[pf..pe].lines().filter(|l| l.starts_with("0x")) {
+        let pat = l.split(" if ").next().unwrap_or(l).split(" => ").next().unwrap_or(l);
+        for alt in pat.split(" | ") {
+            let byte = |b: &str| b.strip_prefix("0x").and_then(|b| u8::from_str_radix(b, 16).ok()).ok_or_else(|| why("a primitive's first byte"));
+            let (a, z) = match alt.split_once("..=") {
+                Some((a, z)) => (byte(a)?, byte(z)?),
+                None => (byte(alt)?, byte(alt)?),
+            };
+            firsts.push((a, z));
+        }
+    }
+    if firsts.is_empty() {
+        return Err(why("the primitive's first bytes"));
+    }
     // The serial walk's loop.
     let head = "unsafe fn run(src: &[u8], lx: &crate::tier1::Lexed, state: *mut u8) -> Result<(), u32> {\n";
     let f = out.find(head).ok_or_else(|| why("the walk"))?;
@@ -105,7 +139,10 @@ pub(super) fn with_chunks(out: String, brackets: &[(u8, u8)]) -> Result<String, 
         .replace("@CYCLES@", &list(&cycles))
         .replace("@SEPS@", &list(&seps))
         .replace("@OPENS@", &hex(&mut brackets.iter().map(|b| b.0)))
-        .replace("@CLOSES@", &hex(&mut brackets.iter().map(|b| b.1)));
+        .replace("@CLOSES@", &hex(&mut brackets.iter().map(|b| b.1)))
+        .replace("@PRIM@", &prim)
+        .replace("@ALTS@", &(0..alts).map(|k| k.to_string()).collect::<Vec<_>>().join(", "))
+        .replace("@FIRSTS@", &firsts.iter().map(|(a, z)| format!("({a:#04x}, {z:#04x})")).collect::<Vec<_>>().join(", "));
     Ok(out + &t)
 }
 
@@ -151,6 +188,102 @@ pub trait Out {
     unsafe fn leaf(&mut self, number: u32, start: u64, end: u64);
     unsafe fn leaf_in(&mut self, number: u32, child: u32, start: u64, cs: u64, ce: u64, end: u64);
     unsafe fn close(&mut self, end: u64);
+    /// The token pass's answer at record `i`, where this walk reads it (pass 1): the token, or the byte it is refused
+    /// at; `None` where the walk reads the token itself.
+    #[inline(always)]
+    fn known(&self, _i: usize) -> Option<Result<Token, u32>> {
+        None
+    }
+    /// Token `t`, its first byte at `start`, as its nodes would have been written: its end.
+    #[inline(always)]
+    unsafe fn skip(&mut self, _start: u64, t: Token) -> usize {
+        t.end as usize
+    }
+}
+
+/// Stage 2's answer at a token's record (decision 0726): its end, its first node's number among the primitive's
+/// alternatives (`kind`), its nodes and the last one's start; or the byte it is refused at (`err`, else `NONE`). A record
+/// that starts no token of the primitive's has `kind` `NONE` and `err` `NONE`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Token {
+    pub end: u32,
+    pub kind: u32,
+    pub nodes: u32,
+    pub last: u32,
+    pub err: u32,
+}
+
+impl Token {
+    /// A record that starts no token.
+    pub const NOT: Token = Token { end: 0, kind: NONE, nodes: 0, last: 0, err: NONE };
+}
+
+/// The first bytes of the primitive's tokens (its arms').
+pub const TOKEN_FIRSTS: &[(u8, u8)] = &[@FIRSTS@];
+
+/// What the token pass writes through: the first node's number, the nodes, the last one's start.
+#[derive(Default)]
+struct Tok {
+    kind: u32,
+    nodes: u32,
+    last: u32,
+}
+
+impl Tok {
+    #[inline(always)]
+    fn node(&mut self, number: u32, start: u64) {
+        if self.nodes == 0 {
+            self.kind = number;
+        }
+        self.nodes += 1;
+        self.last = start as u32;
+    }
+}
+
+impl Out for Tok {
+    #[inline(always)]
+    unsafe fn open(&mut self, number: u32, start: u64) {
+        self.node(number, start);
+    }
+    #[inline(always)]
+    unsafe fn leaf(&mut self, number: u32, start: u64, _: u64) {
+        self.node(number, start);
+    }
+    #[inline(always)]
+    unsafe fn leaf_in(&mut self, number: u32, _: u32, start: u64, cs: u64, _: u64, _: u64) {
+        self.node(number, start);
+        self.node(number, cs);
+    }
+    #[inline(always)]
+    unsafe fn close(&mut self, _: u64) {}
+}
+
+/// Stage 2, one token: the primitive read at record `r` on its own (each of its alternatives' nodes numbered by the
+/// alternative). Every token reads only its own bytes, so every token is read at once.
+pub fn token_at(src: &[u8], lx: &crate::tier1::Lexed, r: usize) -> Token {
+    let b = src[lx.starts[r] as usize];
+    if !TOKEN_FIRSTS.iter().any(|&(a, z)| a <= b && b <= z) {
+        return Token::NOT;
+    }
+    let mut d = Tok::default();
+    let mut i = r;
+    // SAFETY: the records and the padded source are tier 1's, as the serial walk's.
+    match unsafe { @PRIM@(src, &lx.starts, &mut d, &mut i, [@ALTS@]) } {
+        Ok(e) => Token { end: e as u32, kind: d.kind, nodes: d.nodes, last: d.last, err: NONE },
+        Err(x) => Token { err: x, ..Token::NOT },
+    }
+}
+
+/// Stage 2: every token, from each type's records (tier 1's `Typed::types`), each list's tokens in `order`: the token
+/// at each record.
+pub fn tokens(src: &[u8], lx: &crate::tier1::Lexed, types: &[Vec<u32>], order: Order<'_>) -> Vec<Token> {
+    let mut col = vec![Token::NOT; lx.count];
+    for list in types {
+        for (j, t) in each(list.len(), order, |j| token_at(src, lx, list[j] as usize)).into_iter().enumerate() {
+            col[list[j] as usize] = t;
+        }
+    }
+    col
 }
 
 impl<const MID: bool> Out for Cursor<Cells, MID> {
@@ -197,7 +330,9 @@ pub struct Touch {
 /// it knows (`base`, outermost first) and what it wrote into those below them (`touch`, innermost first), the frames
 /// of its entry it closed (`closed`), and the last node's start.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Shadow {
+pub struct Shadow<'a> {
+    /// The token pass's answers (none: the walk reads each token itself, as the serial walk).
+    pub toks: &'a [Token],
     pub n: u32,
     pub own: Vec<Frame>,
     pub base: Vec<Frame>,
@@ -206,7 +341,7 @@ pub struct Shadow {
     pub last_start: Option<u64>,
 }
 
-impl Shadow {
+impl Shadow<'_> {
     /// A node written at `start`: its parent's child.
     #[inline(always)]
     fn node(&mut self, start: u64) -> u32 {
@@ -232,7 +367,26 @@ impl Shadow {
     }
 }
 
-impl Out for Shadow {
+impl Out for Shadow<'_> {
+    #[inline(always)]
+    fn known(&self, i: usize) -> Option<Result<Token, u32>> {
+        let t = *self.toks.get(i)?;
+        if t.err != NONE {
+            Some(Err(t.err))
+        } else if t.kind == NONE {
+            None
+        } else {
+            Some(Ok(t))
+        }
+    }
+    /// The token's nodes as one child of the node open: the first a child, the rest inside it, the last at `t.last`.
+    #[inline(always)]
+    unsafe fn skip(&mut self, start: u64, t: Token) -> usize {
+        self.node(start);
+        self.n += t.nodes - 1;
+        self.last_start = Some(u64::from(t.last));
+        t.end as usize
+    }
     #[inline(always)]
     unsafe fn open(&mut self, _: u32, start: u64) {
         let i = self.node(start);
@@ -411,7 +565,7 @@ impl Refusal {
 impl Lane {
     /// A lane from where its walk stopped: its frames from what `sh` kept (where the file ends in it, only how many of
     /// its entry's it closes: what its state must hold, `keep`).
-    fn of(st0: u8, kc: Vec<u8>, p: Vec<u8>, exit: Entry, end: Option<Result<(), u32>>, sh: Shadow) -> Lane {
+    fn of(st0: u8, kc: Vec<u8>, p: Vec<u8>, exit: Entry, end: Option<Result<(), u32>>, sh: Shadow<'_>) -> Lane {
         let (fkc, touch, pf) = if end.is_some() {
             (sh.closed, vec![Touch::default(); sh.closed + 1], Vec::new())
         } else {
@@ -438,15 +592,15 @@ pub struct Summary {
 
 /// Pass 1: chunk `start..stop`'s summary, its first record at depth `depth0`: from each place its first record can be
 /// at, the walk forked where it closes a level below its entry, once for each place a level returns to.
-pub fn lanes(src: &[u8], lx: &crate::tier1::Lexed, start: usize, stop: usize, depth0: usize) -> Summary {
+pub fn lanes(src: &[u8], lx: &crate::tier1::Lexed, toks: &[Token], start: usize, stop: usize, depth0: usize) -> Summary {
     let places: &[u8] = if start == 0 { &[0] } else { CYCLES };
     // Deeper than the walk goes: the serial walk refused the file before this chunk.
     if depth0 > DEPTH {
         let lanes = places.iter().map(|&st0| Lane::of(st0, Vec::new(), Vec::new(), Entry::default(), Some(Err(lx.starts[start])), Shadow::default())).collect();
         return Summary { lanes, start, end: stop };
     }
-    let mut work: Vec<(u8, Vec<u8>, std::boxed::Box<[u8; DEPTH]>, usize, Entry, Shadow)> =
-        places.iter().map(|&st| (st, Vec::new(), std::boxed::Box::new([0u8; DEPTH]), depth0, Entry { i: start, e: 0, depth: depth0, st }, Shadow::default())).collect();
+    let mut work: Vec<(u8, Vec<u8>, std::boxed::Box<[u8; DEPTH]>, usize, Entry, Shadow<'_>)> =
+        places.iter().map(|&st| (st, Vec::new(), std::boxed::Box::new([0u8; DEPTH]), depth0, Entry { i: start, e: 0, depth: depth0, st }, Shadow { toks, ..Shadow::default() })).collect();
     let mut out = Summary { lanes: Vec::new(), start, end: stop };
     while let Some((st0, kc, mut ret, low, en, mut count)) = work.pop() {
         // SAFETY: the records and the padded source are tier 1's, as the serial walk's.
@@ -685,11 +839,12 @@ fn keep(mut a: At, s: &Summary) -> At {
     a
 }
 
-/// Every chunk's summary (pass 1), of chunks of about `size` records, in `order`.
-pub fn summaries(src: &[u8], lx: &crate::tier1::Lexed, size: usize, order: Order<'_>) -> Vec<Summary> {
+/// Every chunk's summary (pass 1), of chunks of about `size` records, in `order`, its tokens read by the token pass
+/// (`tokens`).
+pub fn summaries(src: &[u8], lx: &crate::tier1::Lexed, toks: &[Token], size: usize, order: Order<'_>) -> Vec<Summary> {
     let chunks = chunk_starts(src, lx, size, order);
     let ds = depths(src, lx, &chunks, order);
-    each(chunks.len(), order, |c| lanes(src, lx, chunks[c], chunks.get(c + 1).copied().unwrap_or(lx.count + 1), ds[c]))
+    each(chunks.len(), order, |c| lanes(src, lx, toks, chunks[c], chunks.get(c + 1).copied().unwrap_or(lx.count + 1), ds[c]))
 }
 
 /// The serial walk's state at each chunk's start, walked chunk after chunk from the file's, then at the file's end
@@ -746,7 +901,7 @@ pub unsafe fn write_range(src: &[u8], lx: &crate::tier1::Lexed, state: *mut u8, 
 /// a prefix scan of them (pass 3), then each chunk's nodes written from its state (pass 2): every pass's chunks, and
 /// each round of its scans, in the order `order` gives (each on its own: any order writes the same tape). Or the byte
 /// it was refused at.
-pub fn parse_middle(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer, size: usize, order: Order<'_>) -> Result<(), u32> {
+pub fn parse_middle(src: &[u8], lx: &crate::tier1::Lexed, types: &[Vec<u32>], w: &mut Writer, size: usize, order: Order<'_>) -> Result<(), u32> {
     if lx.refused {
         return Err(0);
     }
@@ -754,7 +909,8 @@ pub fn parse_middle(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer, size: 
         return Err(lx.len as u32);
     }
     let chunks = chunk_starts(src, lx, size, order);
-    let sums = summaries(src, lx, size, order);
+    let toks = tokens(src, lx, types, order);
+    let sums = summaries(src, lx, &toks, size, order);
     let ats = entries(&sums, order);
     let last = ats.last().cloned().flatten().ok_or(0u32)?;
     match last.end {

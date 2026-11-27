@@ -106,7 +106,20 @@ records' mask from their union, and their masks live in pass 2 alone (the serial
   the count, which would reach the next chunk's records.
 - `lex_chunked` is `lex_typed`'s records.
 
-### 4. Every chunk on its own, in any order
+### 4. Stage 2: every token on its own
+
+The token pass (`tokens`) reads each token of the primitive's (`value`'s alternatives that call no level: strings,
+words, numbers) from each type's records, in any order, each one on its own (`token_at`): the primitive run at the
+token's record through `Tok`, an `Out` that keeps its first node's number (the primitive's alternatives numbered 0..),
+its nodes and the last one's start, or the byte the token is refused at. The records it reads are those whose first
+byte is one of the primitive's arms' (`TOKEN_FIRSTS`, from the arms' patterns).
+
+Every helper that takes a token's record (`string`, the primitive) asks its `Out` first (`known`): pass 1's `Shadow`
+answers from the token pass and adds the token's nodes as one child of the open node (`skip`), so pass 1 reads no
+token's bytes. The writer's cursor answers `None`, so pass 2 writes each token's nodes as the serial walk does, and the
+oracle (`serial_entries`) reads each token itself.
+
+### 5. Every chunk on its own, in any order
 
 The user (2026-11-27): "run the blocks in random order (including the prefix sum). This should allow us to validate the
 shape." Every pass of both tiers runs its chunks in the order an `Order` gives (a permutation asked each time a pass
@@ -122,9 +135,8 @@ The tests run them in seeded random orders, a new permutation at each ask: the a
 chunk reads what another wrote but through a scan's rounds, and the shape is the device's: one launch a pass or a
 scan round, each chunk a thread or a group.
 
-### 5. Still to build (the design's stages)
+### 6. Still to build (the design's stages)
 
-- Stage 2's token pass, one thread a token from each type's records.
 - The greedy LZ4 encoder (`ukl/lz4_encode.h`) and the 16z pieces.
 - The UKL printers in `bitlex_lex_rust` and `one_loop`, the phases on the work queue, and Metal.
 
@@ -139,6 +151,7 @@ spans plus 8 a lane, and the states at most 4 levels and frames a record (the tr
 record in the cases). The tests peak at 27 and 15 MB (were 5.2 GB). `rerail-parser-tests`' `json_rust_is_current` holds the tier to the generator, its
 text checks on the serial walk. `tier2_tape_from_the_middle_is_the_serial_tape`: every file that parses, in chunks of 1, 3 and 16
 records, every pass in order and in two random orders (270 tapes, 13,800 chunks), gives the serial walk's tape byte for byte, and
-every refusal the serial one; the slot and length lists hold up to 991 entries a block there. `typed_records_are_the_records_split_by_type`: 390 files in chunks of
+every refusal the serial one; the slot and length lists hold up to 991 entries a block there. The entries test also runs the token pass in a random order (16,684 tokens): its answers are the same in any order,
+and every chunk's summary from them is the summary of pass 1 reading each token itself. `typed_records_are_the_records_split_by_type`: 390 files in chunks of
 1, 2, 3 and 16 blocks (8,784 records), every pass in a random order, the records `lex`'s and each type's the records split by their first byte.
 `rerail-clif`'s `the_writer_headers_constants_are_the_ops` holds `<ukl/writer.h>`'s side area to the ops'.

@@ -19,7 +19,7 @@ pub use tier2::{ENTRIES, WIDTHS};
 
 /// Tier 2 from the middle (decision 0726): the walk from any place, and the three passes over chunks of records.
 pub mod middle {
-    pub use crate::tier2::{At, CYCLES, Entry, Frame, Lane, NONE, NO_START, Out, RETS, Refusal, SEPS, Shadow, Stop, Summary, Touch, apply, chunk_starts, compose, depths, each, entries, in_order, lanes, parse_middle, run_range, scan, serial_entries, summaries, tree, write_range, Order};
+    pub use crate::tier2::{At, CYCLES, Entry, Frame, Lane, NONE, NO_START, Out, RETS, Refusal, SEPS, Shadow, Stop, Summary, TOKEN_FIRSTS, Token, Touch, apply, chunk_starts, compose, depths, each, entries, in_order, lanes, parse_middle, run_range, scan, serial_entries, summaries, token_at, tokens, tree, write_range, Order};
 }
 
 /// The tape of `buf[..n]` into `w` (a format 16 writer of a language whose table is `ENTRIES`), or the byte the parser
