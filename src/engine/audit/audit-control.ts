@@ -192,17 +192,37 @@ const claimsHereWithoutLock = new Set<string>();
 
 /**
  * The tokens of the claims this process asked for (`registerOwner`) that wait in its record writer for the lock: each
- * leaves once made or not made. A session reopened meanwhile keeps its claim by them (`holdsOwner`), whatever runtime
- * of this process reopens it, where a second claim, behind the first, would be refused once both were made.
+ * leaves once its write runs, or once the writer settles without it. A session reopened meanwhile keeps its claim by
+ * them (`holdsOwner`), whatever runtime of this process reopens it, where a second claim, behind the first, would be
+ * refused once both were made.
  */
 const claimsWaiting = new Set<string>();
 
-/** A kept claim that was not made: said with its session, and no longer this process's. */
-function claimNotMade(sessionId: string, token: string, error: unknown): void {
-  claimsWaiting.delete(token);
-  claimsHereWithoutLock.delete(token);
-  const reason = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`rerail: session ${sessionId} was not claimed, so this process does not own it: ${reason}\n`);
+/** A claim as `registerOwner` asks for it: made once every statement of its write has run. */
+interface AskedClaim {
+  readonly token: string;
+  made: boolean;
+}
+
+/**
+ * Follows a claim kept for the lock (`registerOwner`). Once no write of this process waits, the writer has made it or
+ * said on stderr why not (a refusal, a failure, a drop past what may wait): a claim not made is said with its
+ * session, leaves this process's claims and is told to `lost`.
+ */
+function followKeptClaim(
+  records: RecordWriter,
+  sessionId: string,
+  claim: AskedClaim,
+  lost: ((claim: PolicyOwnerClaim) => void) | undefined,
+): void {
+  claimsWaiting.add(claim.token);
+  void records.settled().then(() => {
+    if (claim.made) return;
+    claimsWaiting.delete(claim.token);
+    claimsHereWithoutLock.delete(claim.token);
+    process.stderr.write(`rerail: the claim on session ${sessionId} was not made, so this process does not own it\n`);
+    lost?.({ token: claim.token });
+  });
 }
 
 /**
@@ -475,7 +495,7 @@ export class SqliteAuditControlStore {
    * now when the lock is free and no write waits, throwing as it fails; else kept behind this process's waiting writes,
    * the session's row among them, and made once the lock is given back, so the session opens at once all the same. A
    * live runtime's claim is refused at once as the database holds it now, and again as the claim is made. A kept claim
-   * not made, refused or dropped, is said on stderr with its session and told to `lost`, so its runtime lets it go.
+   * not made, refused, failed or dropped, is said with its session and told to `lost`, so its runtime lets it go.
    */
   registerOwner(
     sessionId: string,
@@ -483,13 +503,12 @@ export class SqliteAuditControlStore {
     lockId?: string | undefined,
     lost?: (claim: PolicyOwnerClaim) => void,
   ): PolicyOwnerClaim {
-    const token = ownerToken(lockId);
+    const claim: AskedClaim = { token: ownerToken(lockId), made: false };
+    const { token } = claim;
     const held = ownerRow(this.#database, sessionId);
     if (held?.active && processIsLive(held.processId)) throw alreadyOwned(sessionId);
-    // Made at once or kept: only a kept claim waits.
-    let decided = false;
-    this.#recordWriter().write(database => {
-      decided = true;
+    const records = this.#recordWriter();
+    records.write(database => {
       claimsWaiting.delete(token);
       requireSession(database, sessionId);
       const owner = this.#owner(sessionId, database);
@@ -500,11 +519,9 @@ export class SqliteAuditControlStore {
       // The runtime opened the record just before this claim; another daemon's sweep may have ended it in between, as
       // the row this claim replaces was a writer's that ended (`endSessionsOfEndedOwners`). The session is open.
       database.update(sessions).set({ endedAt: null }).where(eq(sessions.sessionId, sessionId)).run();
-    }, 0, error => {
-      claimNotMade(sessionId, token, error);
-      lost?.({ token });
+      claim.made = true;
     });
-    if (!decided) claimsWaiting.add(token);
+    if (!claim.made) followKeptClaim(records, sessionId, claim, lost);
     if (lockId === undefined) claimsHereWithoutLock.add(token);
     return { token };
   }

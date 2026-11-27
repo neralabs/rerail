@@ -393,8 +393,10 @@ describe("The runtime's audit control polling", () => {
       await vi.waitFor(() => {
         expect(other.listAuditRequests("shared").find(request => request.id === queued.id)?.status).toBe("completed");
       }, { timeout: 10_000, interval: 50 });
-      expect(stderr.mock.calls.map(([text]) => String(text)).filter(text => text.includes("not claimed")))
-        .toEqual([expect.stringMatching(/^rerail: session shared was not claimed.*already owned by a live runtime/u)]);
+      expect(stderr.mock.calls.map(([text]) => String(text)).filter(text => text.includes("session shared"))).toEqual([
+        "rerail: record write failed: Rerail session shared is already owned by a live runtime\n",
+        "rerail: the claim on session shared was not made, so this process does not own it\n",
+      ]);
     } finally {
       if (holder.inTransaction) holder.exec("ROLLBACK");
       holder.close();
