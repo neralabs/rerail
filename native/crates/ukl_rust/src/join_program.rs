@@ -779,19 +779,55 @@ impl St<'_> {
     /// numbered node, its id checked (as a parent's is, `by_parent`), and its one row there, kept with its node as the
     /// stage's last (`row`), so its other keys and columns read it with no search; as the host's probe by a node's own
     /// id (`Batch::node_hint`). None where no node has the id (a `child` row: the root has none).
+    ///
+    /// A `Loc` view's (`line`, `end_line`, `col`, `docof`: views 5 to 8, the id column 0): the id's position
+    /// (`loc_number`), within the document's rows, its id read back.
     unsafe fn by_own(&self, kv: &[i64; 8]) -> Walk {
         let s = self.s;
         let none = Walk { lo: 0, hi: 0, how: 0, tag: 0 };
-        let Some(i) = (0..s.nkeys.min(8) as usize).find(|&i| s.key_rcol[i] == 1) else { return none };
+        let k = s.r_view - 1;
+        let loc = (5..=8).contains(&k);
+        let own = if loc { 0 } else { 1 };
+        let Some(i) = (0..s.nkeys.min(8) as usize).find(|&i| s.key_rcol[i] == own) else { return none };
+        if loc {
+            return self.by_own_loc(k, kv[i]);
+        }
         let Some((e, l)) = self.doc_node(kv[i]) else { return none };
         let d = doc(s.v_dir, e);
-        let k = s.r_view - 1;
         if d.node_id(l) != kv[i] as u64 || (k == 1 && l == 0) {
             return none;
         }
         let local = l - k;
         let r = (*e).rows[k as usize].wrapping_add(local);
         self.last.set((r, Some(Row::View(d.at(k, local)))));
+        Walk { lo: r, hi: r.wrapping_add(1), how: 0, tag: 0 }
+    }
+
+    /// `by_own` of `Loc` view `k` by id `key`: its document, its position there, its one row.
+    unsafe fn by_own_loc(&self, k: u32, key: i64) -> Walk {
+        let none = Walk { lo: 0, hi: 0, how: 0, tag: 0 };
+        let d = self.s.v_dir;
+        if key < 0 || (*d).ndocs == 0 {
+            return none;
+        }
+        let a = dir_doc_of_key(view_block(d), (*d).at, ((key as u64) >> 32) as u32, self.doc.get());
+        if a == NONE {
+            return none;
+        }
+        self.doc.set(a);
+        let e = view_rows(d).add(a as usize);
+        let dd = doc(d, e);
+        let p = dd.loc_number(key as u32);
+        let past = if a + 1 < (*d).ndocs { (*e.add(1)).rows[k as usize] } else { (*d).ends[k as usize] };
+        if p == NONE || p >= past.wrapping_sub((*e).rows[k as usize]) {
+            return none;
+        }
+        let at = dd.at(k, p);
+        if at.col(0) as i64 != key {
+            return none;
+        }
+        let r = (*e).rows[k as usize].wrapping_add(p);
+        self.last.set((r, Some(Row::View(at))));
         Walk { lo: r, hi: r.wrapping_add(1), how: 0, tag: 0 }
     }
 

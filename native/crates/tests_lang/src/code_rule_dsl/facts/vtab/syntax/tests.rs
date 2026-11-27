@@ -4496,7 +4496,7 @@ fn the_join_programs_view_reads_are_the_jits() {
     let jit = rerail_clif::jit::Reads::new();
     // SAFETY: each read's signature: the entry, the tape's base, its view, the lines' base, then its arguments.
     let rows: Vec<Row> = VIEWS.iter().map(|name| unsafe { std::mem::transmute::<*const u8, Row>(jit.function(name)) }).collect();
-    let walks: [Walk; 4] = ["view_child_first", "view_up", "view_end", "view_number"].map(|name| unsafe { std::mem::transmute::<*const u8, Walk>(jit.function(name)) });
+    let walks: [Walk; 5] = ["view_child_first", "view_up", "view_end", "view_number", "view_loc_number"].map(|name| unsafe { std::mem::transmute::<*const u8, Walk>(jit.function(name)) });
     let python = |k: u32| format!("import os\n@dec\ndef f{k}(a, b=2):\n    '''doc'''\n    return [x for x in a if g(x, {k})]\n\nclass C(B):\n    def m(self):\n        return self.x\n");
     let mut tried = 0usize;
     for format in Format::ALL {
@@ -4540,6 +4540,18 @@ fn the_join_programs_view_reads_are_the_jits() {
                             }
                         }
                     }
+                }
+                // Each `Loc` row's id (`docof`'s, view 8) read back to its position (`view_loc_number`), the JIT's;
+                // and ids of none.
+                let locs = firsts[m as usize + 1].rows[8] - firsts[m as usize].rows[8];
+                for r in 0..locs {
+                    // SAFETY: a row of the document's `docof`.
+                    let low = unsafe { doc.view(8, r, 0) } as u32;
+                    for q in [low, low ^ 1, u32::MAX - 1, 0x7fff_0000] {
+                        assert_eq!(unsafe { doc.loc_number(q) }, walks[4](e, t, v, l, q), "{at}: loc_number {q:#x}");
+                    }
+                    assert_eq!(unsafe { doc.loc_number(low) }, r, "{at}: loc_number of docof row {r}'s id {low:#x}");
+                    tried += 1;
                 }
                 let nodes = doc.e.nodes;
                 for x in 0..nodes {

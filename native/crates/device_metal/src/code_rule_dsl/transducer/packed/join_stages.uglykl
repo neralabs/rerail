@@ -319,14 +319,21 @@ UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_P
     *lo = first + c; *hi = NONE; *how = 2u;
 }
 
+// Whether view `k` is a `Loc` view (`line`, `end_line`, `col`, `docof`): its rows the document's positions (a node, a
+// token, a span), its id column 0.
+UKL_INLINE bool loc_view(uint32_t k) { return k >= 5u && k <= 8u; }
+
 // The `node` or `child` view probed by its id (`Stage::v_parent` 2, `join_program::St::by_own`): the id's document and
 // numbered node (`clif_view_number`), its id checked (as a parent's, `by_parent`), and its one row there; none where no
-// node has the id (a `child` row: the root has none). The other keys are checked on it (`matches`).
+// node has the id (a `child` row: the root has none). A `Loc` view's (`docof`'s): the id's position
+// (`clif_view_loc_number`), within the document's rows, its id read back. The other keys are checked on it (`matches`).
 UKL_INLINE void by_own(StageP s, UKL_PRIVATE const int64_t* kv, UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi) {
     UKL_GLOBAL const ViewDir* d = s->v_dir;
     *lo = 0u; *hi = 0u;
+    uint32_t k = s->r_view - 1u;
+    uint32_t own = loc_view(k) ? 0u : 1u;
     uint32_t i = 0u;
-    while (i < s->nkeys && i < 8u && s->key_rcol[i] != 1u) i++;
+    while (i < s->nkeys && i < 8u && s->key_rcol[i] != own) i++;
     if (i >= s->nkeys || i >= 8u) return;
     int64_t key = kv[i];
     if (key < 0 || d->ndocs == 0u) return;
@@ -337,9 +344,16 @@ UKL_INLINE void by_own(StageP s, UKL_PRIVATE const int64_t* kv, UKL_PRIVATE uint
     UKL_GLOBAL const uint8_t* t = view_tape(d, e);
     UKL_GLOBAL const uint8_t* ls = view_lines_base(d, e);
     uint64_t la = e->lines;
+    if (loc_view(k)) {
+        uint32_t p = clif_view_loc_number(ch, e->entry, t, e->view, ls, la, (uint32_t)((uint64_t)key & 0xfffffffful));
+        uint32_t past = a + 1u < d->ndocs ? view_rows(d)[a + 1u].rows[k] : d->ends[k];
+        if (p == NONE || p >= past - e->rows[k] || (int64_t)clif_view_loc_line(ch, e->entry, t, e->view, ls, la, p, 0u) != key) return;
+        *lo = e->rows[k] + p;
+        *hi = *lo + 1u;
+        return;
+    }
     uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, la, (uint32_t)((uint64_t)key & 0xfffffffful));
     if (l == NONE) return;
-    uint32_t k = s->r_view - 1u;
     if ((int64_t)clif_view_order(ch, e->entry, t, e->view, ls, la, l, 0u) != key || (k == 1u && l == 0u)) return;
     *lo = e->rows[k] + l - k;
     *hi = *lo + 1u;

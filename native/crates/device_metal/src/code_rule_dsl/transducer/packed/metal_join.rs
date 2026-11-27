@@ -2284,11 +2284,15 @@ impl Batch {
 
     /// `rel`, the `node` or `child` view read in place, probed by its id (column 1, with any others): no index of it is
     /// built, as a stage finds the id's document and node (`view_number`) and its one row there, the others checked on
-    /// it, as the host's probe by a node's own id (`Batch::node_hint`). `None` for any other relation or key.
+    /// it, as the host's probe by a node's own id (`Batch::node_hint`). A `Loc` view (`line`, `end_line`, `col`,
+    /// `docof`) by its id (column 0): the id's position (`view_loc_number`), its one row (decision 0706 step 0: `docof`
+    /// by `n`, or by `n` and `d`, is `d = file(n)`, read). `None` for any other relation or key.
     pub(in crate::code_rule_dsl) fn by_own(&self, rel: &DevRel, cols: &[usize]) -> Result<Option<DevIndex>, Error> {
-        use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::{VIEW_CHILD, VIEW_NODE};
+        use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::{VIEW_CHILD, VIEW_LOC_DOCOF, VIEW_LOC_LINE, VIEW_NODE};
         let Some(v) = &rel.view else { return Ok(None) };
-        if !(v.kind == 1 + VIEW_NODE || v.kind == 1 + VIEW_CHILD) || !cols.contains(&1) || rel.is_has() {
+        let loc = (1 + VIEW_LOC_LINE..=1 + VIEW_LOC_DOCOF).contains(&v.kind);
+        let own = if loc { 0 } else { 1 };
+        if !(v.kind == 1 + VIEW_NODE || v.kind == 1 + VIEW_CHILD || loc) || !cols.contains(&own) || rel.is_has() {
             return Ok(None);
         }
         let home = rel.home.clone().expect("a view's relation of no columns");

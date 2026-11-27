@@ -627,6 +627,35 @@ impl<'a> Doc<'a> {
         if l < self.e.nodes { l } else { NO_ROW }
     }
 
+    /// The `Loc` position (`loc_id`'s inverse: a node, a token, a span) whose id's low 32 bits are `low`, or `NO_ROW`
+    /// (`view_loc_number`): `low` itself where ids are local ids. Past the document's positions is the caller's to
+    /// refuse.
+    pub unsafe fn loc_number(&self, low: u32) -> u32 {
+        let e = self.e;
+        if self.local() {
+            return low;
+        }
+        let slot = low >> INDEX_BITS;
+        if slot >= (1 << SLOT_BITS) - SPAN_SLOTS {
+            let j = ((1 << SLOT_BITS) - 1 - slot) << INDEX_BITS | low & ((1 << INDEX_BITS) - 1);
+            return e.nodes.wrapping_add(e.tokens).wrapping_add(j);
+        }
+        if self.ids_tape() {
+            return if self.n.is(0, low) {
+                self.n.rank(0, low)
+            } else if self.n.is(1, low) {
+                e.nodes.wrapping_add(self.n.rank(1, low))
+            } else {
+                NO_ROW
+            };
+        }
+        match self.n.number_of(low) {
+            Some((0, l)) => l,
+            Some((1, t)) => e.nodes.wrapping_add(t),
+            _ => NO_ROW,
+        }
+    }
+
     /// Its node of local id `low`'s preorder key (`@rr_node_order`, `order`'s `k`: its key, its order in the
     /// document), or `None` where no node of it is numbered so.
     #[inline]
