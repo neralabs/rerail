@@ -1005,6 +1005,9 @@ pub(in crate::code_rule_dsl) struct ObservedShared {
     published: arc_swap::ArcSwapOption<Observed>,
     pending: parking_lot::Mutex<Vec<Observed>>,
     folding: parking_lot::Mutex<()>,
+    /// What threads observing outside a job observed since the last fold (`observing_into`): summed here as a job
+    /// sums its own, and folded in with the jobs' (`fold`), not each observation published as a copy of the run's.
+    outside: parking_lot::Mutex<Observed>,
     /// A chunk's (Q88, `chunk_observed`): what its jobs handed in over the run's as filed, apart, for the run's in the
     /// chunks' order (`file_observed`).
     made: Option<parking_lot::Mutex<Observed>>,
@@ -1040,7 +1043,11 @@ impl ObservedShared {
             let Some(g) = self.folding.try_lock() else { return };
             g
         };
-        let pending = std::mem::take(&mut *self.pending.lock());
+        let mut pending = std::mem::take(&mut *self.pending.lock());
+        let outside = std::mem::take(&mut *self.outside.lock());
+        if !outside.is_empty() {
+            pending.push(outside);
+        }
         if pending.is_empty() {
             return;
         }
@@ -1064,6 +1071,7 @@ impl ObservedShared {
         for p in std::mem::take(&mut *self.pending.lock()) {
             next.add(p);
         }
+        next.add(std::mem::take(&mut *self.outside.lock()));
         f(&mut next);
         self.published.store(Some(Arc::new(next)));
     }
@@ -1095,12 +1103,20 @@ fn observing_into(f: impl FnOnce(&mut Observed, Option<&Observed>)) {
         OBSERVED.with(|o| f(mine, o.borrow().as_deref()));
         None
     });
+    // Outside a job: into the observations of threads outside one (`ObservedShared::outside`), folded in with the
+    // jobs' before a choice reads them (`fold`), as a job's are; the run's as published read beside them.
     if let Some(f) = f {
-        OBSERVED.with(|o| o.0.change(|o| f(o, None)));
+        let run = share_observed();
+        let Some(now) = run.published.load_full() else { return };
+        f(&mut run.outside.lock(), Some(&now));
     }
 }
 
 impl Observed {
+    /// Whether nothing was observed.
+    fn is_empty(&self) -> bool {
+        self.rules.is_empty() && self.rels.is_empty() && self.steps.is_empty() && self.pooled.is_empty() && self.copies.is_empty() && self.inlined.is_empty()
+    }
     /// Adds `other` (a job's, `OWN_OBSERVED`) to these.
     fn add(&mut self, other: Observed) {
         for (k, (a, b)) in other.rules {

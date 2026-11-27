@@ -292,8 +292,16 @@ pub fn columns_declared(prog: &(impl crate::code_rule_dsl::logic::program_image:
 /// readers of a version's strata read (`Placed::components`).
 ///
 /// A section (decision 0628 §4): each component's members sorted by name, found by a search of them.
-#[derive(Clone, PartialEq)]
-pub struct Components(rerail_section::Section<Comps>);
+/// The analysis's (`program_image::analyses`) keep each relation with rules' key of its edges
+/// (`graph::head_edge_key`), what it is maintained by; two are equal by their components alone.
+#[derive(Clone)]
+pub struct Components(rerail_section::Section<Comps>, Option<std::sync::Arc<BTreeMap<String, u64>>>);
+
+impl PartialEq for Components {
+    fn eq(&self, other: &Components) -> bool {
+        self.0 == other.0
+    }
+}
 
 /// `Components`' section: each component's members, sorted by name.
 #[derive(rerail_section::Archive, Default)]
@@ -350,7 +358,7 @@ impl<'a> IntoIterator for &'a Comp {
 
 impl Default for Components {
     fn default() -> Components {
-        Components(rerail_section::Section::of(&Comps::default()))
+        Components(rerail_section::Section::of(&Comps::default()), None)
     }
 }
 
@@ -367,7 +375,15 @@ impl Components {
             c.sort_unstable();
             c.dedup();
         }
-        Components(rerail_section::Section::of(&Comps { comps }))
+        Components(rerail_section::Section::of(&Comps { comps }), None)
+    }
+    /// These, with each relation with rules' key of its edges (`graph::head_edge_key`).
+    pub fn keyed(self, keys: BTreeMap<String, u64>) -> Components {
+        Components(self.0, Some(std::sync::Arc::new(keys)))
+    }
+    /// Each relation with rules' key of its edges, where the analysis made these (`keyed`).
+    pub fn edge_keys(&self) -> Option<&BTreeMap<String, u64>> {
+        self.1.as_deref()
     }
     /// The components named by `comps`, in its order.
     pub fn of_names<'a, C: IntoIterator<Item = &'a str>>(comps: impl IntoIterator<Item = C>) -> Components {

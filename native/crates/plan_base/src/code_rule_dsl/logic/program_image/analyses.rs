@@ -275,7 +275,7 @@ pub fn accepts(v: &Version, about: &About) -> Result<bool, Error> {
 
 // ---- the analyses behind the pass manager's trait (decision 0281 §2) ----
 
-use super::manager::{Analysis, Cx, Reads, RelSet};
+use super::manager::{Analysis, Cx, Delta, Reads, RelSet};
 
 impl Analysis for About {
     const NAME: &'static str = "about";
@@ -357,7 +357,23 @@ impl Analysis for Components {
     const NAME: &'static str = "components";
     const READS: Reads = Reads::RULES.or(Reads::ABOUT);
     fn compute(cx: &Cx<'_>) -> Result<Components, String> {
-        components_by_name(cx.v(), &*cx.get::<About>()?).map_err(|e| e.to_string())
+        crate::code_rule_dsl::logic::front::graph::components_by_name_with_keys(cx.v(), &*cx.get::<About>()?).map_err(|e| e.to_string())
+    }
+    /// Kept over an edit that changes no edge of the graph: every relation whose rules it touched has rules before and
+    /// after, with the same edges (`graph::head_edge_key`): a body rewritten, a variable renamed, a filter inlined
+    /// or an atom dropped whose relation the rule still reads. The relations derived are the same, so the edges of
+    /// every other relation's rules are too, and the components, which read the graph and the names alone, are the
+    /// input's. Computed again where an edge or the `.about` rows changed.
+    fn maintain(&self, cx: &Cx<'_>, delta: &Delta) -> Option<Components> {
+        if delta.rebuilt || delta.touched.meets(Reads::ABOUT) {
+            return None;
+        }
+        let (heads, keys) = (delta.heads.as_ref()?, self.edge_keys()?);
+        let v = cx.v();
+        let about = cx.get::<About>().ok()?;
+        let derived = crate::code_rule_dsl::logic::front::graph::derived_of(v, &about);
+        let same = |h: &String| v.rel(h).and_then(|r| crate::code_rule_dsl::logic::front::graph::head_edge_key(v, &about, &derived, r)) == keys.get(h).copied();
+        heads.iter().all(same).then(|| self.clone())
     }
     /// One row per member, `(k, name)`, components in order (decision 0333 §4).
     fn rows(&self, _v: &Version) -> Option<Vec<super::manager::Row>> {

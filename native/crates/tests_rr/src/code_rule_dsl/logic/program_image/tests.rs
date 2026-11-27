@@ -1162,6 +1162,41 @@ fn every_placed_of_a_version_shares_its_analyses() {
     assert_eq!((v.analyses().computed("components"), v.analyses().computed("fields"), v.analyses().computed("about")), (1, 1, 1));
 }
 
+/// Adds rule `q(y) :- e(_, y), e(y, _).`, or with `edge`, `p(x) :- q(x).`.
+struct AddRule {
+    edge: bool,
+}
+impl super::manager::ProgramPass for AddRule {
+    const NAME: &'static str = "add a rule";
+    fn run(&mut self, _cx: &super::manager::Cx<'_>, w: &mut super::manager::ProgramW<'_>) -> Result<(), String> {
+        let (x, y) = (|| T::Var("x"), || T::Var("y"));
+        let b = w.on()?;
+        let made = match self.edge {
+            false => b.rule().head("q", &[y()]).atom("e", &[T::Wild, y()]).atom("e", &[y(), T::Wild]).finish(),
+            true => b.rule().head("p", &[x()]).atom("q", &[x()]).finish(),
+        };
+        made.map(|_| ()).map_err(|e| e.to_string())
+    }
+}
+
+/// The components are kept over an edit of rules that changes no edge of the graph (a rule added that reads what its
+/// relation's rules read already), and split again over one that adds an edge. A debug build checks the kept ones.
+#[test]
+fn components_are_kept_over_an_edit_that_changes_no_edge() {
+    use super::analyses::Components;
+    use super::manager::Pipeline;
+    let mut p = Pipeline::new("test", managed());
+    let c0 = p.get::<Components>().unwrap();
+    p.program(&mut AddRule { edge: false });
+    let c1 = p.get::<Components>().unwrap();
+    assert_eq!((p.store().computed("components"), &*c1), (0, &*c0), "no edge changed: kept");
+    p.program(&mut AddRule { edge: true });
+    let c2 = p.get::<Components>().unwrap();
+    assert_eq!(p.store().computed("components"), 1, "an edge added: split again");
+    let order: Vec<Vec<&str>> = c2.iter().map(|c| c.iter().collect()).collect();
+    assert!(order.iter().position(|c| c == &["q"]) < order.iter().position(|c| c == &["p"]), "{order:?}");
+}
+
 /// A rule pass that writes for a rule it says it kept fails its pipeline, named by the pass.
 #[test]
 fn a_pass_that_writes_for_a_kept_rule_fails() {
