@@ -20,6 +20,7 @@
 
 use crate::Pod;
 use crate::block::Backing;
+use rerail_delta_core::flat::{Arena, Bucket, Full, Region};
 use std::cell::{Cell, RefCell};
 
 /// Address space an anonymous scratch region reserves (nothing resident until written; on Windows nothing committed
@@ -44,6 +45,10 @@ pub struct Scratch {
     /// Its ledger: what a kernel's bind of its bytes holds (`Fence::uses_address`). None for a lent scratch (`lend`):
     /// its bytes are a block's, which keeps its own.
     ledger: Option<std::sync::Arc<crate::ledger::Ledger>>,
+    /// A lent scratch's arena: the phase bucket's (*Flat Views and Lifecycles* §2), its top in the slot's bytes, so a
+    /// kernel over the same slot claims room as the twin does. `'static` only inside: the scratch never leaves `lend`,
+    /// and `arena` gives it out for the borrow of the scratch.
+    arena: Option<Arena<'static>>,
 }
 
 fn ledger_of(base: *mut u8, len: usize) -> std::sync::Arc<crate::ledger::Ledger> {
@@ -55,28 +60,52 @@ impl Scratch {
     /// An anonymous region of `reserved` bytes of address space.
     pub fn anon(reserved: usize) -> Scratch {
         let p = crate::mem::reserve(reserved);
-        Scratch { base: p, len: reserved, top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: None, ledger: Some(ledger_of(p, reserved)) }
+        Scratch { base: p, len: reserved, top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: None, ledger: Some(ledger_of(p, reserved)), arena: None }
     }
 
     /// The region `backing` holds (a pooled slab): it may hold an earlier use's bytes.
     pub fn over(backing: Box<dyn Backing>) -> Scratch {
         let ledger = ledger_of(backing.base(), backing.len());
-        Scratch { base: backing.base(), len: backing.len(), top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: Some(backing), ledger: Some(ledger) }
+        Scratch { base: backing.base(), len: backing.len(), top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: Some(backing), ledger: Some(ledger), arena: None }
     }
 
-    /// `f` with a scratch over `bytes` (an operation's scratch slot's, where its block lies), for the call alone: its
-    /// takes are of those bytes (from their first 64-byte boundary), a bump of an offset. Nothing is allocated, mapped,
-    /// kept or given back: what a phase's call takes is its slot's bytes, as on a device.
+    /// `f` with a scratch over `bytes` (an operation's scratch slot's, where its block lies), for the call alone: a
+    /// phase arena (`Arena`, its header at their first 64-byte boundary), its takes one atomic add of its top. Nothing
+    /// is allocated, mapped, kept or given back: what a phase's call takes is its slot's bytes, as on a device.
     pub fn lend<R>(bytes: &mut [u8], f: impl FnOnce(&Scratch) -> R) -> R {
         let skip = bytes.as_ptr().align_offset(64).min(bytes.len());
         let bytes = &mut bytes[skip..];
-        let s = Scratch { base: bytes.as_mut_ptr(), len: bytes.len(), top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: None, ledger: None };
+        let (base, len) = (bytes.as_mut_ptr(), bytes.len());
+        // SAFETY: the bytes are borrowed for this call, and the scratch (with its arena) is dropped before it returns.
+        let arena = Arena::init(unsafe { Region::from_raw(base, len) }, Bucket::Phase).expect("a scratch slot of at least an arena's header");
+        let s = Scratch { base, len, top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: None, ledger: None, arena: Some(arena) };
         f(&s)
+    }
+
+    /// A lent scratch's arena, for structures in flat memory (`rerail_delta_core::flat`): their views live as long as
+    /// this borrow of the scratch. None for an owned scratch.
+    pub fn arena(&self) -> Option<&Arena<'_>> {
+        self.arena.as_ref()
+    }
+
+    /// `n` values of `T`, or the room that ran out (`Full`): a lent scratch's claim of its arena.
+    #[allow(clippy::mut_from_ref)]
+    pub fn try_take<T: Pod + Copy>(&self, part: u32, n: usize) -> Result<&mut [T], Full> {
+        let Some(a) = &self.arena else { return Ok(self.take(n)) };
+        let bytes = n.saturating_mul(size_of::<T>());
+        let at = a.claim_at(part, bytes, align_of::<T>().max(64))?;
+        self.high.set(self.high.get().max(a.used()));
+        // SAFETY: the arena's claim, in its region and aligned, which no other claim overlaps until a reset (`&mut
+        // self`); every bit pattern is a value of a `Pod` type.
+        Ok(unsafe { std::slice::from_raw_parts_mut(a.region().ptr(at).cast::<T>(), n) })
     }
 
     /// `n` values of `T`, their contents whatever the last use left.
     #[allow(clippy::mut_from_ref)]
     pub fn take<T: Pod + Copy>(&self, n: usize) -> &mut [T] {
+        if let Some(a) = &self.arena {
+            return self.try_take(0, n).unwrap_or_else(|f| panic!("scratch full: {} of {} bytes", f.wanted, a.cap()));
+        }
         let align = align_of::<T>().max(64);
         let start = self.top.get().div_ceil(align) * align;
         let end = start + n * size_of::<T>();
@@ -107,6 +136,9 @@ impl Scratch {
     pub fn reset(&mut self) {
         self.quiet("a reset");
         self.top.set(0);
+        if let Some(a) = &mut self.arena {
+            a.reset();
+        }
     }
 
     fn quiet(&self, what: &str) {
@@ -200,6 +232,27 @@ mod tests {
         assert_eq!(&bytes[at..at + 4], &7u32.to_ne_bytes(), "the use's writes stay in the owner's bytes");
         let full = std::panic::catch_unwind(|| Scratch::lend(&mut [0u8; 256], |s| s.take::<u64>(64).len()));
         assert!(full.is_err(), "a take past the lent bytes fails");
+    }
+
+    /// A lent scratch is the phase bucket's arena: its header in the slot's bytes, its takes and a flat structure's
+    /// claims one top, and a take past the room a value (`Full`) naming the part, never a write past the slot.
+    #[test]
+    fn a_lent_scratch_is_a_phase_arena_in_its_slot() {
+        let mut bytes = vec![0u8; 8192];
+        let (lo, hi) = (bytes.as_ptr() as usize, bytes.as_ptr() as usize + bytes.len());
+        Scratch::lend(&mut bytes, |s| {
+            let a = s.arena().expect("a lent scratch's arena");
+            assert_eq!(a.bucket(), Bucket::Phase);
+            assert!(a.region().addr() >= lo && a.region().addr() + a.region().len() <= hi);
+            let t = s.take::<u64>(8).as_ptr() as usize;
+            let c = a.claim_at(1, 16, 8).unwrap() + a.region().addr();
+            assert!(c >= t + 64, "the take and the claim share one top");
+            let Err(f) = s.try_take::<u64>(7, 10_000) else { panic!("a take past the slot") };
+            assert_eq!(f.part, 7);
+            assert_eq!(a.failure().map(|f| f.part), Some(7));
+            assert!(a.wanted() > a.cap());
+        });
+        assert!(Scratch::anon(1 << 20).arena().is_none());
     }
 
     /// Decision 0487 step 3 at a scratch region: a kernel's bind of its bytes holds it; a reset (or a use's end) with

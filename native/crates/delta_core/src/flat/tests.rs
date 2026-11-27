@@ -20,7 +20,7 @@ fn buf() -> std::boxed::Box<Buf> {
 }
 
 /// A `T` at byte `at` of the region (aligned by the caller).
-fn at<'r, T: crate::Pod>(r: &Region<'r>, off: usize) -> &'r T {
+fn at<'a, T: crate::Pod>(r: &'a Region<'_>, off: usize) -> &'a T {
     r.view::<T>(off).expect("a test's view")
 }
 

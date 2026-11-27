@@ -5,6 +5,9 @@
 //! - [`offset`]: how a reference inside a region is stored. An [`Offset`] is a type parameter: its word (16, 32 or 64
 //!   bits, signed or not) and its unit ([`Bits`], [`Bytes`], or the target's alignment, [`Aligned`]). [`R32`] is the
 //!   default.
+//! - [`arena`]: a region whose header holds its own top ([`Arena`]): room claimed by one atomic add, a failed claim a
+//!   value ([`Full`]), room given back whole, at a phase's or a launch's end or a round's ([`Mark`]). Each lifecycle
+//!   [`Bucket`] (phase, launch, out block, kept) is arenas.
 //! - [`rel`]: references relative to their own field ([`Rel`], [`RelSpan`], [`BitSpan`]), as the floor's `refs::Ptr`
 //!   and MLDB's `MappedPtr` are: a structure is correct at any address, and a method reaches its parts from `&self`.
 //!
@@ -16,10 +19,12 @@
 //! (`with_exposed_provenance`): a region exposes its pointer when it is made, so any byte of it may be reached from
 //! any view in it, as a self-relative reference must.
 
+pub mod arena;
 pub mod offset;
 pub mod rel;
 
 pub use offset::{Aligned, AtomicWord, B16, B32, Bit32, Bits, Bytes, F32, Off, Offset, R16, R32, R64, Unit, UnitKind};
+pub use arena::{Arena, ArenaHead, Bucket, Full, Mark};
 pub use rel::{BitSpan, Rel, RelSpan};
 
 use core::marker::PhantomData;
@@ -37,8 +42,9 @@ pub enum Refusal {
 
 /// The bytes one lifecycle bucket's structures lie in: where they start and how many there are. A bound and a
 /// provenance, not a reference: views into it are made by address, so many views (and their atomics' writers) may
-/// share it. Its lifetime is the memory's: no view outlives it (rule L3).
-#[derive(Clone, Copy, Debug)]
+/// share it. Its lifetime is the memory's, and a view's is at most the borrow of the region (or its arena) it came
+/// from (rule L3). Not `Copy`: one owner, so an arena over it is its only handle.
+#[derive(Debug)]
 pub struct Region<'r> {
     at: usize,
     len: usize,
@@ -92,7 +98,7 @@ impl<'r> Region<'r> {
     }
 
     /// The `T` at byte `off`: in bounds and aligned, or refused.
-    pub fn view<T: crate::Pod>(&self, off: usize) -> Result<&'r T, Refusal> {
+    pub fn view<T: crate::Pod>(&self, off: usize) -> Result<&T, Refusal> {
         let a = self.at.checked_add(off).ok_or(Refusal::Outside)?;
         if !self.holds(a, size_of::<T>()) {
             return Err(Refusal::Outside);
@@ -108,3 +114,5 @@ impl<'r> Region<'r> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_arena;
