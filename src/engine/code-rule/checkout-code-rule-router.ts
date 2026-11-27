@@ -267,6 +267,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   refreshCodeRules(): void {
     if (this.#closing) return;
     const ran = new Map([...this.#gitIgnore.keys()].map(root => [root, this.#mayRun(root)]));
+    this.#placeStartingAgain();
     for (const [root, eligibility] of this.#options.catalogs.refreshAll([...this.#eligibility.keys()])) this.#eligibility.set(root, eligibility);
     this.#refreshes += 1;
     this.#forgetGitIgnoreOfChanged(ran);
@@ -276,6 +277,18 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     if (!this.#rulesChanged(own)) return;
     this.#refreshAnsweredCatalogs();
     for (const lane of [...this.#lanes.values()]) this.#lane(lane.root);
+  }
+
+  /**
+   * Has the read of every checkout ask the session checkout's folder whether it is still the clone recorded there while
+   * its row reads stopped or not set up (`CheckoutCatalogs.placeAgain`): no lane reads its rules then, which asks it
+   * (`#signature`), so one replaced at its path by a started clone's worktree runs that clone's rules at this event. One
+   * unrecorded is read afresh by the read itself (`#recordWorktree`).
+   */
+  #placeStartingAgain(): void {
+    const starting = this.#options.startingCheckout;
+    const eligibility = this.#eligibility.get(starting);
+    if (eligibility === "stopped" || eligibility === "not-set-up") this.#options.catalogs.placeAgain(starting);
   }
 
   /**

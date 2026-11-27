@@ -382,20 +382,26 @@ function lookupAt(
   return repositoryKey === undefined ? undefined : contextOf(location, checkoutPath, repositoryKey, cloneId);
 }
 
-/**
- * The repository of the row recorded at `checkoutPath` when that row is the checkout's own: its clone id is the one
- * read there; a different id is a re-clone. Two folders have no id this read can find and the row still names them: a
- * linked worktree whose Git folder is gone, as {@link refusedCheckoutCloneId} takes it when recording, and a folder
- * whose Git gave no answer to where its repository is ({@link RepositoryIdentityLocation.unanswered}), read as outside
- * Git for that ask alone. Any other folder without an id file was not recorded, since recording writes the id: a row
- * at its path is a removed clone's, which {@link recordCheckout} records over as a re-clone.
- */
+/** The repository of the row recorded at `checkoutPath` when that row is the checkout's own ({@link isOwnRow}). */
 function recordedRepositoryAt(db: Reader, location: RepositoryIdentityLocation, checkoutPath: string, cloneId: string | null): RepositoryKey | undefined {
   const recorded = db.select({ key: checkouts.repositoryKey, cloneId: checkouts.cloneId }).from(checkouts)
     .where(eq(checkouts.checkoutPath, checkoutPath)).get();
-  if (recorded === undefined) return undefined;
-  const idUnread = location.gitFolderGone === true || location.unanswered !== undefined;
-  return recorded.cloneId === cloneId || (cloneId === null && idUnread) ? recorded.key : undefined;
+  return recorded !== undefined && isOwnRow(recorded.cloneId, { location, cloneId: cloneId ?? undefined }) ? recorded.key : undefined;
+}
+
+/**
+ * Whether the row recorded at a checkout's path with clone id `rowCloneId` is the checkout's own, the checkout being as
+ * `placed` read it: its clone id is the one read there; a different id is a re-clone. Two folders have no id this read
+ * can find and the row still names them: a linked worktree whose Git folder is gone, as {@link refusedCheckoutCloneId}
+ * takes it when recording, and a folder whose Git gave no answer to where its repository is
+ * ({@link RepositoryIdentityLocation.unanswered}), read as outside Git for that ask alone. Any other folder without an id
+ * file was not recorded, since recording writes the id: a row at its path is a removed clone's, which
+ * {@link recordCheckout} records over as a re-clone.
+ */
+export function isOwnRow(rowCloneId: string, placed: Pick<KeptLocation, "location" | "cloneId">): boolean {
+  const { location, cloneId } = placed;
+  if (cloneId !== undefined) return rowCloneId === cloneId;
+  return location.gitFolderGone === true || location.unanswered !== undefined;
 }
 
 /** The known repository the checkout's remote names (`remoteKey`); a folder outside git has none. */
@@ -416,13 +422,14 @@ interface KeptRemote {
 }
 
 /**
- * A Git location the resolver read for a workspace, with what was there then: the clone id at its identity path, the
- * identity of its top level's `.git` ({@link folderIdentity}; undefined where it could not be read), and the checkout's
- * remote once it was read ({@link keptRemoteKey}). Each workspace keeps its own, so a second folder of a checkout reads
- * the remote at its first read, which {@link readRemoteAddress} answers from Git's kept answer while the clone's config
- * files read the same.
+ * A location the resolver or a session's rule checks (`CheckoutCatalogs`) read for a workspace, with what was there then:
+ * the clone id at its identity path, the identity of its top level's `.git` ({@link folderIdentity}; undefined where it
+ * could not be read), and the checkout's remote once the resolver read it ({@link keptRemoteKey}); a location read
+ * afresh ({@link locationNow}) has none. Each workspace keeps its own, so a second folder of a checkout reads the remote
+ * at its first read, which {@link readRemoteAddress} answers from Git's kept answer while the clone's config files read
+ * the same.
  */
-interface KeptLocation {
+export interface KeptLocation {
   readonly location: RepositoryIdentityLocation;
   readonly cloneId: string | undefined;
   readonly gitEntry: string | undefined;
@@ -461,7 +468,7 @@ function keptRemoteKey(kept: KeptLocation): RepositoryKey | undefined {
  * folder without an id tells nothing by it: for those the `.git` at the top level must be the same entry too, as a
  * checkout made again at the path makes a new one.
  */
-function stillPlaces(kept: KeptLocation): boolean {
+export function stillPlaces(kept: KeptLocation): boolean {
   const { location } = kept;
   if (readCloneIdAt(location.identityPath) !== kept.cloneId) return false;
   const ownGitFolder = join(location.workspaceRoot, ".git");
@@ -469,12 +476,17 @@ function stillPlaces(kept: KeptLocation): boolean {
   return folderIdentity(ownGitFolder) === kept.gitEntry;
 }
 
-/** `workspace`'s location read afresh, with the clone id there, kept in `located` when it is in Git. */
-function locatedAfresh(located: Map<string, KeptLocation>, workspace: string): KeptLocation {
+/** `workspace`'s location read afresh, with the clone id there and the identity of its top level's `.git`. */
+export function locationNow(workspace: string): KeptLocation {
   const location = repositoryIdentityLocation(workspace);
   const gitEntry = location.git ? folderIdentity(join(location.workspaceRoot, ".git")) : undefined;
-  const kept: KeptLocation = { location, cloneId: readCloneIdAt(location.identityPath), gitEntry };
-  if (location.git) located.set(workspace, kept);
+  return { location, cloneId: readCloneIdAt(location.identityPath), gitEntry };
+}
+
+/** {@link locationNow}, kept in `located` when it is in Git. */
+function locatedAfresh(located: Map<string, KeptLocation>, workspace: string): KeptLocation {
+  const kept = locationNow(workspace);
+  if (kept.location.git) located.set(workspace, kept);
   else located.delete(workspace);
   return kept;
 }
