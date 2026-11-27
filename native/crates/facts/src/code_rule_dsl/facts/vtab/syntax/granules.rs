@@ -262,6 +262,7 @@ pub fn number(p: &Projected, dialect: &Dialect, tokens: &[u32], reference: Optio
         }
         let mut table = Table::new(p, &cut, &nodes, tokens);
         table.whole = fold == Fold::All;
+        table.fold = fold;
         return table;
     }
 }
@@ -598,6 +599,8 @@ pub struct Table {
     /// Every granule folded into the root (`Fold::All`): no definition starts one, so a node's definition unit is
     /// climbed on the tree (`units`).
     whole: bool,
+    /// How far its granules were folded: `keys` cuts them again so.
+    fold: Fold,
     /// Each granule's start and end as ranks, by item (`[nodes, tokens]`): the numbered items before its start and
     /// before its subtree's end. With them a numbered item's id is read from its number alone, no select.
     rank_starts: [Cells<u32>; 2],
@@ -715,6 +718,7 @@ impl Table {
             runs: placed(b, &runs),
             run_at: placed(b, &run_at),
             preorder_keys,
+            fold: Fold::None,
             whole: false,
             rank_starts: [placed(b, &rs0), placed(b, &rs1)],
             rank_ends: [placed(b, &re0), placed(b, &re1)],
@@ -786,6 +790,16 @@ impl Table {
     /// Granule `g`'s start (a tape node) and its parent granule (`None` for the root's).
     pub fn start_up(&self, g: usize) -> (u32, Option<usize>) {
         (self.starts[g], (self.parents[g] != u32::MAX).then_some(self.parents[g] as usize))
+    }
+    /// Each granule's key (`a.py/class_definition:C/function_definition:m#0` less its document's path; the root's is
+    /// empty), in the order of its starts: the document cut again as `p`'s numbering cut it (node paths' bases,
+    /// decision 0722).
+    pub fn keys(&self, p: &Projected, dialect: &Dialect) -> Vec<String> {
+        cut(p, dialect, self.fold).keys
+    }
+    /// The granules: their count (`start_up`'s `g`).
+    pub fn granules(&self) -> usize {
+        self.starts.len()
     }
     /// Whether every granule is folded into the root (`Fold::All`): no definition starts one.
     pub fn whole(&self) -> bool {

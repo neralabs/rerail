@@ -40,3 +40,122 @@ fn every_name_in_a_familys_path_tables_is_one_of_its_grammars() {
     }
     assert!(wrong.is_empty(), "names no grammar of the family has:\n{}", wrong.join("\n"));
 }
+
+use super::{Atoms, DocPaths, WORD_STEPS, is_path_child};
+use crate::code_rule_dsl::facts::core::{self, Built, Facts};
+use crate::code_rule_dsl::facts::vtab::syntax::{Dialect, Projected, Shape};
+use crate::code_rule_dsl::model::FileInput;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+/// A test's interning.
+#[derive(Default)]
+struct Interned(Mutex<(Vec<String>, HashMap<String, u32>)>);
+
+impl Atoms for Interned {
+    fn atom(&self, text: &str) -> u32 {
+        let mut t = self.0.lock().unwrap();
+        if let Some(&a) = t.1.get(text) {
+            return a;
+        }
+        let a = t.0.len() as u32;
+        t.0.push(text.to_owned());
+        t.1.insert(text.to_owned(), a);
+        a
+    }
+    fn text(&self, atom: u32) -> Option<String> {
+        self.0.lock().unwrap().0.get(atom as usize).cloned()
+    }
+}
+
+fn facts(label: &str, path: &str, source: &str) -> Arc<Facts> {
+    let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(source.to_owned().into()), None, None, "core").unwrap();
+    let Ok(Built::Facts(facts)) = core::build(&file) else { panic!("{label}: no facts") };
+    Arc::new(facts)
+}
+
+/// Each path child's word, by tape node, after checking that it decodes back to it.
+fn round_trip(label: &str, path: &str, source: &str, atoms: &Interned) -> (Arc<Facts>, HashMap<u32, u64>, usize) {
+    let facts = facts(label, path, source);
+    let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
+    let p = Projected::new(1, Arc::clone(&facts), Some(&dialect), Shape::Core, false, None);
+    let paths = DocPaths::new(&p, &dialect, path).expect("ids by definition");
+    let f = p.f();
+    let mut words = HashMap::new();
+    let mut anchored = 0;
+    for x in 0..f.len() as u32 {
+        // Only the root and nodes on path children all the way up: the paths' tree.
+        let mut up = x;
+        let mut reached = true;
+        while let Some(q) = f.parent(up) {
+            if !is_path_child(f, up) {
+                reached = false;
+                break;
+            }
+            up = q;
+        }
+        if !reached {
+            continue;
+        }
+        let word = paths.encode(&p, &dialect, atoms, x).unwrap_or_else(|| panic!("{label}: no path for node {x} ({})", dialect.name(f, x)));
+        assert!((word as u32).leading_zeros() >= 32 - WORD_STEPS - 1, "{label}: a word's steps");
+        anchored += usize::from(atoms.text((word >> 32) as u32).unwrap().contains("\t@"));
+        assert_eq!(paths.decode(&p, &dialect, atoms, word), Some(x), "{label}: node {x} ({}) from its path", dialect.name(f, x));
+        words.insert(x, word);
+    }
+    let mut distinct: Vec<u64> = words.values().copied().collect();
+    distinct.sort_unstable();
+    distinct.dedup();
+    assert_eq!(distinct.len(), words.len(), "{label}: a word a node");
+    (facts, words, anchored)
+}
+
+/// Every node the paths reach, in each language, decodes from its path to itself, and no two share a word; a deep
+/// tree and a long list are placed under anchors and still fit their words.
+#[test]
+fn a_node_path_decodes_to_its_node_in_every_language() {
+    let deep = format!("x = {}1{}\n", "(".repeat(300), ")".repeat(300));
+    let long = format!("y = [{}]\n", (0..70_000).map(|i| i.to_string()).collect::<Vec<_>>().join(", "));
+    let cases: &[(&str, &str, &str)] = &[
+        ("python", "pkg/a.py", "import os\nclass C:\n    x = 1\n    def m(self, a, b=2):\n        if a:\n            return b\n        elif b:\n            pass\n        else:\n            raise E()\n        # note\n        return [i for i in a]\n"),
+        ("python", "pkg/deep.py", &deep),
+        ("python", "pkg/long.py", &long),
+        ("typescript", "src/a.ts", "export function A(x: number): string { if (x) { return `${x}`; } return ''; }\nexport class Z { f() { return 1; } }\n"),
+        ("rust", "src/a.rs", "impl S { fn a(&self) -> u32 { match self.x { 1 => 2, _ => 3 } } }\nmod m { pub fn g() -> u32 { 1 } }\n"),
+        ("php", "a.php", "<?php\nfunction f($a) { if ($a) { return 1; } else { return 2; } }\nclass K { public function m() { echo 'x'; } }\n"),
+        ("c", "a.c", "int f(int a) { if (a) { return 1; } return 0; }\nstruct S { int x; };\n"),
+        ("go", "a.go", "package main\nfunc f(a int) int { if a > 0 { return 1 }; return 0 }\n"),
+        ("java", "A.java", "class A { int f(int a) { if (a > 0) { return 1; } return 0; } }\n"),
+        ("sql", "a.sql", "SELECT a, b FROM t WHERE a = 1;\nCREATE TABLE u (x INT);\n"),
+        ("json", "a.json", "{\"a\": [1, 2, {\"b\": null}], \"c\": \"d\"}\n"),
+    ];
+    let atoms = Interned::default();
+    for &(label, path, source) in cases {
+        let (_, words, anchored) = round_trip(label, path, source, &atoms);
+        assert!(words.len() > 5, "{label}: {} paths", words.len());
+        if path.contains("deep") || path.contains("long") {
+            assert!(anchored > 0, "{label} {path}: anchors placed");
+        }
+    }
+}
+
+/// An edit inside one function leaves every path of another function as it was: its granule's key and its steps.
+#[test]
+fn an_edit_in_one_function_leaves_another_functions_paths() {
+    let before = "def f(a):\n    x = a\n    return x\n\ndef g(b):\n    if b:\n        return b(1, 2)\n    return 0\n";
+    let after = "def f(a):\n    print(a)\n    x = a + 1\n    return x\n\ndef h():\n    pass\n\ndef g(b):\n    if b:\n        return b(1, 2)\n    return 0\n";
+    let atoms = Interned::default();
+    let (fa, wa, _) = round_trip("python", "m.py", before, &atoms);
+    let (fb, wb, _) = round_trip("python", "m.py", after, &atoms);
+    let in_g = |facts: &Facts, words: &HashMap<u32, u64>| {
+        let g_at = facts.source.find("def g").unwrap() as u32;
+        facts.alone(|f| {
+            let mut out: Vec<(u64, String)> = words.iter().filter(|&(&x, _)| f.span(x).0 >= g_at).map(|(&x, &w)| (w, f.text(x).to_owned())).collect();
+            out.sort();
+            out
+        })
+    };
+    let (ga, gb) = (in_g(&fa, &wa), in_g(&fb, &wb));
+    assert!(ga.len() > 8, "g's paths: {}", ga.len());
+    assert_eq!(ga, gb, "g's paths after an edit to f and a function added");
+}

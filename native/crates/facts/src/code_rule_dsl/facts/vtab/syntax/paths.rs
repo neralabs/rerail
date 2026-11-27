@@ -256,3 +256,374 @@ pub fn table_source(census: &Census, node_types: &[serde_json::Value], lists: &[
     out.push_str("    ]\n}\n");
     out
 }
+
+/// A path's steps as bits, the first step's first bit first.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Bits(pub Vec<bool>);
+
+impl Bits {
+    /// `v`'s low `n` bits, its highest first.
+    fn put(&mut self, v: u64, n: u32) {
+        self.0.extend((0..n).rev().map(|i| v >> i & 1 != 0));
+    }
+    /// `v` in Elias gamma: `v + 1`'s length less one in zeros, then `v + 1`.
+    fn gamma(&mut self, v: u32) {
+        let x = u64::from(v) + 1;
+        let n = u64::BITS - x.leading_zeros();
+        self.put(0, n - 1);
+        self.put(x, n);
+    }
+    pub fn len(&self) -> u32 {
+        self.0.len() as u32
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    /// As hex digits, padded with zero bits to a whole digit (an anchor's text: its length says where they end).
+    pub fn hex(&self) -> String {
+        self.0.chunks(4).map(|c| char::from_digit(c.iter().enumerate().fold(0, |a, (i, &b)| a | u32::from(b) << (3 - i)), 16).unwrap()).collect()
+    }
+    /// `hex`'s inverse: the first `n` bits of `digits`.
+    pub fn of_hex(digits: &str, n: u32) -> Option<Bits> {
+        let mut b = Bits::default();
+        for d in digits.chars() {
+            b.put(u64::from(d.to_digit(16)?), 4);
+        }
+        (b.len() >= n && b.len() < n + 4).then(|| {
+            b.0.truncate(n as usize);
+            b
+        })
+    }
+}
+
+/// Bits read from the first: `None` past the end.
+struct Reader<'a> {
+    bits: &'a [bool],
+    at: usize,
+}
+
+impl Reader<'_> {
+    fn get(&mut self, n: u32) -> Option<u64> {
+        let end = self.at.checked_add(n as usize).filter(|&e| e <= self.bits.len())?;
+        let v = self.bits[self.at..end].iter().fold(0u64, |a, &b| a << 1 | u64::from(b));
+        self.at = end;
+        Some(v)
+    }
+    fn gamma(&mut self) -> Option<u32> {
+        let mut zeros = 0;
+        while *self.bits.get(self.at)? == false {
+            zeros += 1;
+            self.at += 1;
+            if zeros > 32 {
+                return None;
+            }
+        }
+        u32::try_from(self.get(zeros + 1)? - 1).ok()
+    }
+    fn done(&self) -> bool {
+        self.at == self.bits.len()
+    }
+}
+
+/// A parent's path children as its steps read them: each child, its slot's index in the parent's codes (`None`: a
+/// slot the table lacks), its field and its kind code (ERROR's is the grammar's kind count).
+struct Children {
+    kids: Vec<(u32, Option<usize>, u16, u16)>,
+    escaped: bool,
+}
+
+fn children_of(f: FactsIn<'_>, dialect: &super::Dialect, q: u32) -> Children {
+    let parent = dialect.paths.parent(dialect.code(f, q));
+    let mut kids = Vec::new();
+    path_children(f, q, |c, field| {
+        let code = dialect.code(f, c);
+        let code = if code == u16::MAX { dialect.names.len() as u16 } else { code };
+        kids.push((c, parent.and_then(|p| p.slot(field)), field, code));
+    });
+    let escaped = kids.iter().any(|k| k.1.is_none());
+    Children { kids, escaped }
+}
+
+/// A parent's path children and each one's step (decision 0722 §2, as built), made in one pass: a slot's ordinals
+/// counted as they go, so a parent of many children costs one read of them, not one each. Its only child, where that
+/// step costs no bits (one child, in its kind's one slot, not kind-grouped): a path down a run of them codes how far it
+/// goes as one number (`DocPaths::down`), or the decoder could not tell a node from its only child. Steps are prefix
+/// free among siblings, so a step is read by its bits (`by_bits`).
+pub struct Steps {
+    pub kids: Vec<u32>,
+    pub bits: Vec<Bits>,
+    pub only: Option<u32>,
+    by_bits: HashMap<Vec<bool>, u32>,
+    index: HashMap<u32, u32>,
+    longest: usize,
+}
+
+impl Steps {
+    fn of(f: FactsIn<'_>, dialect: &super::Dialect, q: u32) -> Steps {
+        let codes = &dialect.paths;
+        let parent = codes.parent(dialect.code(f, q));
+        let n = parent.map_or(0, |p| p.slots.len());
+        let ch = children_of(f, dialect, q);
+        let w = width(if ch.escaped { n + 1 } else { n });
+        let mut held: HashMap<u16, u32> = HashMap::new();
+        for k in &ch.kids {
+            *held.entry(k.2).or_default() += 1;
+        }
+        let (mut in_slot, mut of_kind): (HashMap<u16, u32>, HashMap<(u16, u16), u32>) = Default::default();
+        let mut bits = Vec::with_capacity(ch.kids.len());
+        for &(_, slot, field, kind) in &ch.kids {
+            let mut b = Bits::default();
+            match slot {
+                Some(s) => b.put(s as u64, w),
+                None => {
+                    b.put(n as u64, w);
+                    b.put(u64::from(field), codes.field_bits);
+                }
+            }
+            let before = in_slot.entry(field).or_default();
+            let ordinal = *before;
+            *before += 1;
+            let before_kind = of_kind.entry((field, kind)).or_default();
+            let ordinal_kind = *before_kind;
+            *before_kind += 1;
+            match slot.and_then(|s| parent.map(|p| &p.slots[s])).filter(|s| s.grouped) {
+                Some(sc) => {
+                    let name = dialect.code_name(if usize::from(kind) == dialect.names.len() { u16::MAX } else { kind });
+                    match sc.rank.get(name) {
+                        Some(&r) => b.gamma(r),
+                        None => {
+                            b.gamma(sc.kinds.len() as u32);
+                            b.put(u64::from(kind), codes.kind_bits);
+                        }
+                    }
+                    b.gamma(ordinal_kind);
+                }
+                None if held[&field] > 1 => b.gamma(ordinal),
+                None => {}
+            }
+            bits.push(b);
+        }
+        let kids: Vec<u32> = ch.kids.iter().map(|k| k.0).collect();
+        let only = (kids.len() == 1 && bits[0].is_empty()).then(|| kids[0]);
+        let by_bits = kids.iter().zip(&bits).map(|(&c, b)| (b.0.clone(), c)).collect();
+        let longest = bits.iter().map(|b| b.0.len()).max().unwrap_or(0);
+        let index = kids.iter().enumerate().map(|(i, &c)| (c, i as u32)).collect();
+        Steps { kids, bits, only, by_bits, index, longest }
+    }
+    /// The step to child `c`.
+    pub fn to(&self, c: u32) -> Option<&Bits> {
+        self.index.get(&c).map(|&i| &self.bits[i as usize])
+    }
+    /// The child whose step `r`'s next bits are, the bits read.
+    fn read(&self, r: &mut Reader<'_>) -> Option<u32> {
+        for n in 1..=self.longest.min(r.bits.len() - r.at) {
+            if let Some(&c) = self.by_bits.get(&r.bits[r.at..r.at + n]) {
+                r.at += n;
+                return Some(c);
+            }
+        }
+        None
+    }
+}
+
+/// The steps a word holds past its stop bit: 31.
+pub const WORD_STEPS: u32 = 31;
+/// An anchor is placed at most this many bits below its base.
+pub const ANCHOR_REACH: u32 = 16;
+
+/// The atoms a path's bases are: the run's interning, or a test's.
+pub trait Atoms {
+    fn atom(&self, text: &str) -> u32;
+    fn text(&self, atom: u32) -> Option<String>;
+}
+
+/// One document's node paths (decision 0722): its granules' keys, found by key, and each granule's anchors, placed
+/// the first time a path of the granule is made. Made over a whole projection of the document (`Projected::new`), so
+/// its granules are the numbering's whatever a batch narrowed.
+pub struct DocPaths {
+    path: String,
+    keys: Vec<String>,
+    by_key: HashMap<String, u32>,
+    anchors: std::sync::Mutex<HashMap<u32, std::sync::Arc<std::collections::BTreeSet<u32>>>>,
+    /// Each parent's steps, made the first time a path passes it.
+    steps: std::sync::Mutex<HashMap<u32, std::sync::Arc<Steps>>>,
+}
+
+impl DocPaths {
+    /// `p`'s paths, the document at `path`; `None` where its ids are not by definition (`RERAIL_NODE_IDS=preorder`).
+    pub fn new(p: &super::Projected, dialect: &super::Dialect, path: &str) -> Option<DocPaths> {
+        let keys = p.table()?.keys(p, dialect);
+        let by_key = keys.iter().enumerate().map(|(g, k)| (k.clone(), g as u32)).collect();
+        Some(DocPaths { path: path.to_owned(), keys, by_key, anchors: Default::default(), steps: Default::default() })
+    }
+
+    /// Parent `q`'s steps.
+    pub fn steps(&self, f: FactsIn<'_>, dialect: &super::Dialect, q: u32) -> std::sync::Arc<Steps> {
+        let mut cache = self.steps.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        std::sync::Arc::clone(cache.entry(q).or_insert_with(|| std::sync::Arc::new(Steps::of(f, dialect, q))))
+    }
+
+    /// The steps from `from` down through `nodes` (each a path child of the one before): each node's step, but where a
+    /// node has an only child (`Steps::only`), how many nodes of that run the path takes, less one, in gamma.
+    pub fn down(&self, f: FactsIn<'_>, dialect: &super::Dialect, from: u32, nodes: &[u32]) -> Option<Bits> {
+        let mut b = Bits::default();
+        let (mut q, mut i) = (from, 0);
+        while i < nodes.len() {
+            let st = self.steps(f, dialect, q);
+            if st.only.is_some() {
+                let mut k = 0;
+                while i < nodes.len() && self.steps(f, dialect, q).only == Some(nodes[i]) {
+                    q = nodes[i];
+                    i += 1;
+                    k += 1;
+                }
+                if k == 0 {
+                    return None;
+                }
+                b.gamma(k - 1);
+            } else {
+                b.0.extend_from_slice(&st.to(nodes[i])?.0);
+                q = nodes[i];
+                i += 1;
+            }
+        }
+        Some(b)
+    }
+
+    /// The node `bits` name below `from` (`down`'s inverse): `None` where they name none.
+    fn read_down(&self, f: FactsIn<'_>, dialect: &super::Dialect, from: u32, bits: &Bits) -> Option<u32> {
+        let mut r = Reader { bits: &bits.0, at: 0 };
+        let mut x = from;
+        while !r.done() {
+            let st = self.steps(f, dialect, x);
+            if st.only.is_some() {
+                for _ in 0..r.gamma()? + 1 {
+                    x = self.steps(f, dialect, x).only?;
+                }
+            } else {
+                x = st.read(&mut r)?;
+            }
+        }
+        Some(x)
+    }
+
+    /// The text of granule `g`'s base atom: the document's path, a tab, its key.
+    fn base_text(&self, g: usize) -> String {
+        format!("{}\t{}", self.path, self.keys[g])
+    }
+
+    /// Node `x`'s path: its base's atom, then its stop bit and steps. `None` for a node no path reaches (an extra, an
+    /// anonymous node, one outside the document's granules).
+    pub fn encode(&self, p: &super::Projected, dialect: &super::Dialect, atoms: &dyn Atoms, x: u32) -> Option<u64> {
+        let (f, table) = (p.f(), p.table()?);
+        let g = table.granule_of(x)?;
+        let (start, _) = table.start_up(g);
+        // The chain from the granule's start down to x.
+        let mut chain = Vec::new();
+        let mut c = x;
+        while c != start {
+            if !is_path_child(f, c) {
+                return None;
+            }
+            chain.push(c);
+            c = f.parent(c)?;
+        }
+        chain.reverse();
+        let anchors = self.anchors(p, dialect, g);
+        let mut base = self.base_text(g);
+        let (mut from, mut at) = (start, 0);
+        for (i, &c) in chain.iter().enumerate() {
+            if anchors.contains(&c) {
+                let steps = self.down(f, dialect, from, &chain[at..=i])?;
+                base = format!("{base}\t@{}.{}", steps.hex(), steps.len());
+                (from, at) = (c, i + 1);
+            }
+        }
+        let steps = self.down(f, dialect, from, &chain[at..])?;
+        debug_assert!(steps.len() <= WORD_STEPS, "anchors keep a path's steps in its word");
+        let low = steps.0.iter().fold(1u64, |a, &b| a << 1 | u64::from(b));
+        Some(u64::from(atoms.atom(&base)) << 32 | low)
+    }
+
+    /// The node path `word` names in this document: `None` for another document's path, or one whose granule or
+    /// steps its tape no longer has.
+    pub fn decode(&self, p: &super::Projected, dialect: &super::Dialect, atoms: &dyn Atoms, word: u64) -> Option<u32> {
+        let (f, table) = (p.f(), p.table()?);
+        let mut text = atoms.text((word >> 32) as u32)?;
+        // Its anchors' steps, the outermost first.
+        let mut anchored = Vec::new();
+        while let Some(t) = text.rfind("\t@") {
+            let (digits, n) = text[t + 2..].split_once('.')?;
+            anchored.push(Bits::of_hex(digits, n.parse().ok()?)?);
+            text.truncate(t);
+        }
+        anchored.reverse();
+        let (path, key) = text.rsplit_once('\t')?;
+        if path != self.path {
+            return None;
+        }
+        let g = *self.by_key.get(key)? as usize;
+        let (mut x, _) = table.start_up(g);
+        let low = word as u32;
+        let n = (u32::BITS - 1).checked_sub(low.leading_zeros())?;
+        let mut own = Bits::default();
+        own.put(u64::from(low), n);
+        anchored.push(own);
+        for bits in &anchored {
+            x = self.read_down(f, dialect, x, bits)?;
+        }
+        Some(x)
+    }
+
+    /// Granule `g`'s anchors (decision 0722 §5): from its start, in preorder, a node whose steps from its base pass a
+    /// word's makes its deepest ancestor within `ANCHOR_REACH` bits of that base an anchor (the shallowest below it
+    /// where none is, itself at worst), again until its steps fit. A node's base is its nearest anchor at or above
+    /// it, else the granule's start. Nested granules' nodes are theirs.
+    fn anchors(&self, p: &super::Projected, dialect: &super::Dialect, g: usize) -> std::sync::Arc<std::collections::BTreeSet<u32>> {
+        if let Some(a) = self.anchors.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&(g as u32)) {
+            return std::sync::Arc::clone(a);
+        }
+        let (f, table) = (p.f(), p.table().expect("paths are made where ids are by definition"));
+        let (start, _) = table.start_up(g);
+        let mut anchors = std::collections::BTreeSet::new();
+        // The chain below the start to the node being placed, and which of it are anchors.
+        let (mut chain, mut marks): (Vec<u32>, Vec<bool>) = (Vec::new(), Vec::new());
+        let mut stack: Vec<(u32, usize)> = vec![(start, 0)];
+        // The bits from the base at chain index `base` (the start's where none) down to chain index `to`.
+        let length = |chain: &[u32], base: usize, to: usize| {
+            let from = if base == 0 { start } else { chain[base - 1] };
+            self.down(f, dialect, from, &chain[base..=to]).map_or(u32::MAX, |b| b.len())
+        };
+        while let Some((x, depth)) = stack.pop() {
+            chain.truncate(depth);
+            marks.truncate(depth);
+            if depth > 0 {
+                chain.push(x);
+                marks.push(false);
+                loop {
+                    let base = marks.iter().rposition(|&m| m).map_or(0, |b| b + 1);
+                    if base == chain.len() || length(&chain, base, chain.len() - 1) <= WORD_STEPS {
+                        break;
+                    }
+                    // Within reach of the base: the deepest strictly above x; else the shallowest below the base.
+                    let at = (base..chain.len() - 1).take_while(|&i| length(&chain, base, i) <= ANCHOR_REACH).last();
+                    let a = at.unwrap_or(base);
+                    marks[a] = true;
+                    anchors.insert(chain[a]);
+                }
+            }
+            path_children(f, x, |c, _| {
+                if table.granule_of(c) == Some(g) {
+                    stack.push((c, depth + 1));
+                }
+            });
+            // Children in order: the stack pops the first first.
+            let n = stack.iter().rev().take_while(|e| e.1 == depth + 1).count();
+            let len = stack.len();
+            stack[len - n..].reverse();
+        }
+        let anchors = std::sync::Arc::new(anchors);
+        self.anchors.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(g as u32, std::sync::Arc::clone(&anchors));
+        anchors
+    }
+}

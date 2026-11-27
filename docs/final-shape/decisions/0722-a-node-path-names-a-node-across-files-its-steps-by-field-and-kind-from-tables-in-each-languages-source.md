@@ -32,6 +32,11 @@ cross-file rules need the same as soon as they name nodes.
      that kind, gamma coded;
    - in any other slot, its ordinal in the slot, gamma coded, only where this node's slot holds more than one child.
      The tape shows that to both the encoder and the decoder.
+   - where a parent's only path child costs no bits by those rules (one child, in its kind's one slot, not
+     kind-grouped), a run of such only children is one number: how many nodes of the run the path takes, less one,
+     gamma coded. Without it a node and its only child had the same bits (found by the round-trip test: `import os`'s
+     `dotted_name` and its `identifier`). The design page's census charged those steps nothing, so its path lengths are
+     a little short.
    A slot or kind a table lacks has an escape: a code past the table's, then its grammar id. So every node has a
    path whatever the table says; a table out of date makes paths longer, never wrong.
 3. **The tables are in each language's source**, as its comment and paren kinds are: an `Adapter` const of its
@@ -110,3 +115,13 @@ does not have at run time). Both cost no stability, and both made paths shorter.
    CSS, HTML, Markdown, JSON, Vue and rule files; the format family's table is empty. Java and C# have 11 and 2
    files: their tables lean on the node types. The test `every_name_in_a_familys_path_tables_is_one_of_its_grammars`
    checks every parent, field, kind, list and label against the family's grammars.
+2. **The codec** (facts, `vtab/syntax/paths.rs`, `DocPaths`), over a whole projection of a document (a narrowed one
+   cuts its granules over fewer nodes). Keys are the numbering's own cut again (`granules::Table::keys`: the table
+   keeps how far it folded); a base's text is the document's path, a tab and the key; an anchor's, its base's text,
+   `\t@`, its steps in hex and their count. Each parent's steps are made once, in one pass, the first time a path
+   passes it (`Steps`), and a step is read back by its bits, which are prefix free among siblings; a granule's anchors
+   are placed once, measured by the same coding. The interning is the caller's (`Atoms`). Tests:
+   `a_node_path_decodes_to_its_node_in_every_language` (every node the paths reach in Python, TypeScript, Rust, PHP, C,
+   Go, Java, SQL and JSON decodes to itself, a word a node; a 300-deep expression and a 70,000-element list are placed
+   under anchors; 0.27 s), `an_edit_in_one_function_leaves_another_functions_paths` (a statement inserted in `f`, a
+   function added before `g`: `g`'s paths are the same words).
