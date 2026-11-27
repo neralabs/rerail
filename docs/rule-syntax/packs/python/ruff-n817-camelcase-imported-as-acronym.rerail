@@ -17,5 +17,5 @@
 .violation N817(at: node, x: symbol, a: symbol) code "N817"
     "Import `{x}` under its own name, or a descriptive CamelCase alias, instead of the acronym `{a}`, and update its uses; keep the alias if your project's convention requires it."
     suppress ruff "N817"
-N817(i, x, a) :- ruff_alias_import(i, x, a), ruff_camel(x), ruff_cased_upper(a), ruff_acronym(x, a),
-    !ruff_import_full(i, "xml.etree.ElementTree"), !ruff_ignored(x), !ruff_ignored(a).
+N817(i, x, a) :- ruff_alias_import(i, x, a), ruff_camel(i, x), ruff_cased_upper(i, a), ruff_acronym(i, x, a),
+    !ruff_import_full(i, "xml.etree.ElementTree"), !ruff_ignored(i, x), !ruff_ignored(i, a).
