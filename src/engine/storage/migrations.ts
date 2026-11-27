@@ -542,7 +542,7 @@ export function migrate(
   migrations: readonly Migration[],
 ): number {
   const pending = fresh ? [] : pendingMigrations(database, migrations);
-  for (const migration of pending) migration.up(database, say);
+  pending.forEach(migration => migration.up(database, say));
   for (const statement of statements) database.run(sql.raw(statement));
   const recorded = fresh ? migrations : pending;
   const appliedAt = Date.now();
