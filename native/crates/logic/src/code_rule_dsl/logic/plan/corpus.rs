@@ -460,16 +460,40 @@ pub(crate) fn changes(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Opti
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-/// Rows of values as a relation of atoms (`c0`, `c1`, …), the store's atoms for strings.
-fn atoms_source<'a>(store: &ContentStore, width: usize, rows: impl Iterator<Item = &'a Vec<front::Value>> + Clone) -> Result<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+/// Rows of values as a relation of atoms (`c0`, `c1`, …), the store's atoms for strings. A `node_path` column
+/// (`types`, as the reader declares its columns) holds a path as its outputs show it, `base\t/steps` (decision 0722):
+/// it is its word again, its base's atom the store's, the same atom the phase that made it interned.
+fn atoms_source<'a>(store: &ContentStore, types: &[(String, String)], rows: impl Iterator<Item = &'a Vec<front::Value>> + Clone) -> Result<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+    let width = types.len();
     let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
     let cols: Vec<&str> = names.iter().map(String::as_str).collect();
-    let texts: Vec<&str> = rows.clone().flatten().filter_map(|v| if let front::Value::Str(s) = v { Some(s.as_str()) } else { None }).collect();
-    let mut atoms = store.intern_atoms(&texts).map_err(|e| Error::Plan(e.to_string()))?.into_iter().map(i64::from);
+    let path: Vec<bool> = types.iter().map(|(_, t)| t == "node_path").collect();
+    let split = |s: &str| -> Result<(String, i64)> {
+        let (base, steps) = s.rsplit_once("\t/").ok_or_else(|| Error::Plan(format!("a node path's text holds no steps: {s:?}")))?;
+        let steps = u32::from_str_radix(steps, 16).map_err(|_| Error::Plan(format!("a node path's steps are not hex: {s:?}")))?;
+        Ok((base.to_owned(), i64::from(steps)))
+    };
+    let mut texts: Vec<String> = Vec::new();
+    for row in rows.clone() {
+        for (c, v) in row.iter().enumerate() {
+            if let front::Value::Str(s) = v {
+                texts.push(if path.get(c) == Some(&true) { split(s.as_str())?.0 } else { s.as_str().to_owned() });
+            }
+        }
+    }
+    let mut atoms = store.intern_atoms(&texts.iter().map(String::as_str).collect::<Vec<_>>()).map_err(|e| Error::Plan(e.to_string()))?.into_iter().map(i64::from);
     let mut relation = crate::code_rule_dsl::facts::vtab::Relation::new(&cols);
     for row in rows {
-        let row: Vector<i64> = row.iter().map(|v| match v { front::Value::Int(i) => *i, front::Value::Branded(a) => a.value(), front::Value::Str(_) => atoms.next().expect("an atom per string") }).collect();
-        relation.push(&row);
+        let mut out: Vector<i64> = Vector::with_capacity(row.len());
+        for (c, v) in row.iter().enumerate() {
+            out.push(match v {
+                front::Value::Int(i) => *i,
+                front::Value::Branded(a) => a.value(),
+                front::Value::Str(s) if path.get(c) == Some(&true) => atoms.next().expect("an atom per string") << 32 | split(s.as_str())?.1,
+                front::Value::Str(_) => atoms.next().expect("an atom per string"),
+            });
+        }
+        relation.push(&out);
     }
     Ok(Arc::new(relation))
 }
@@ -3364,11 +3388,12 @@ fn run_observed_within(
         let mut repository = repository;
         let phased_read: BTreeSet<&String> = phased.keys().filter(|rel| read.contains(*rel)).collect();
         for rel in phased_read {
-            let width = head.columns_of(rel).expect("a phase's export the program declares").len();
+            let types = head.columns_of(rel).expect("a phase's export the program declares");
+            let width = types.len();
             // Read as `syntax::measured` reads it: its statistics counted from its rows.
             let flat = |s: &dyn crate::code_rule_dsl::facts::vtab::Source| -> Vector<i64> { (0..s.len()).flat_map(|r| (0..width).map(move |c| (r, c))).map(|(r, c)| s.value(r, c)).collect() };
             let rows = &phased[rel];
-            let source = atoms_source(store, width, rows.iter())?;
+            let source = atoms_source(store, &types, rows.iter())?;
             let mut counts = crate::code_rule_dsl::logic::plan::statkeep::RelStats::new(source.columns());
             counts.delta(&flat(source.as_ref()), &[], width);
             let measured = counts.statistics(&|_| true);
@@ -6638,7 +6663,7 @@ fn run_observed_within(
             .collect::<BTreeSet<String>>()
             .into_iter()
             .filter(|r| phased.contains_key(r))
-            .map(|r| Ok((r.clone(), atoms_source(store, head.columns_of(&r).expect("a phase's export the program declares").len(), phased[&r].iter())?)))
+            .map(|r| Ok((r.clone(), atoms_source(store, &head.columns_of(&r).expect("a phase's export the program declares"), phased[&r].iter())?)))
             .collect::<Result<_>>()?;
         let (db_path, x_path, kept_in, world_in) = (path.clone(), cross_path.clone(), kept.clone(), world_inputs);
         // The cone's relations are kept like any (t33 K1), in a fact space of their own; its stratum that asks and

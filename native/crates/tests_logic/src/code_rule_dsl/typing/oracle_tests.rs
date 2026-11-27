@@ -453,15 +453,15 @@ fn python_type_relations_agree_with_the_runtime() {
 #[test]
 fn rules_read_the_python_program_through_lib_calls() {
     let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/calls/project");
-    // The program's rows are keyed by terms (`pt_tm`, decision 0677), the rule's by its own nodes; both read a
+    // The program's rows are keyed by node paths (decisions 0677, 0722), the rule's by its own nodes; both read a
     // target's definition by its symbol (`pt_def`). An edge pairs two files' nodes: this test's own output.
     let direct_keyed = "
 .decl edge(cp: symbol, cs: number, fp: symbol, fs: number) cross_file
-edge(cp, cs, fp, fs) :- kind(c, \"call\"), pt_tm(c, t), call_target(t, f), pt_def(g, f), node(d, c, _, cs, _), doc(d, cp, _), node(h, g, _, fs, _), doc(h, fp, _).
+edge(cp, cs, fp, fs) :- kind(c, \"call\"), t = @node_path(c), call_target(t, f), pt_def(g, f), node(d, c, _, cs, _), doc(d, cp, _), node(h, g, _, fs, _), doc(h, fp, _).
 .decl proven(np: symbol, ns: number, ne: number, t: symbol)
-proven(np, ns, ne, u) :- pt_vpos(n), pt_tm(n, t), proven_type(t, u), node(d, n, _, ns, ne), doc(d, np, _).
+proven(np, ns, ne, u) :- pt_vpos(n), t = @node_path(n), proven_type(t, u), node(d, n, _, ns, ne), doc(d, np, _).
 .decl unknown(cp: symbol, cs: number)
-unknown(cp, cs) :- kind(c, \"call\"), pt_tm(c, t), call_open(t), node(d, c, _, cs, _), doc(d, cp, _).
+unknown(cp, cs) :- kind(c, \"call\"), t = @node_path(c), call_open(t), node(d, c, _, cs, _), doc(d, cp, _).
 .output edge, proven, unknown
 ";
     let keyed = "
@@ -1314,21 +1314,23 @@ fn jedi_spans(name: &str) -> String {
     if name == "calls_p3" { P3_SPANS.to_owned() } else { JEDI_SPANS.to_owned() }
 }
 
-/// `calls_p3`'s: its rows are keyed by terms (`pt_tm`, decision 0677), a call's or a value position's, and a
-/// definition's symbol, so each span is keyed by its node's term.
+/// `calls_p3`'s: its rows are keyed by node paths (decisions 0677, 0722), a call's or a value position's, and by a
+/// scope's symbol (a definition's, a lambda's), so each span is keyed by the one its node is known by: a call's in
+/// `oracle_jedi_at`, a scope's in `oracle_jedi_def_at`, shown alike.
 const P3_SPANS: &str = "
-.decl oracle_jedi_cls(c: symbol, k: symbol)
+.decl oracle_jedi_cls(c: node_path, k: symbol)
 oracle_jedi_cls(c, k) :- pt_callee_t(c, e), pt_pv(e, \"cls\", k).
-.decl oracle_jedi_at(n: symbol, s: number, e: number)
-oracle_jedi_at(t, s, e) :- kind(n, \"call\"), pt_tm(n, t), node(_, n, _, s, e).
-oracle_jedi_at(t, s, e) :- kind(f, \"function_definition\"), pt_tm(f, t), node(_, f, _, s, e).
-oracle_jedi_at(t, s, e) :- kind(f, \"class_definition\"), pt_tm(f, t), node(_, f, _, s, e).
-oracle_jedi_at(t, s, e) :- kind(f, \"lambda\"), pt_tm(f, t), node(_, f, _, s, e).
-.decl oracle_jedi_path(n: symbol, p: symbol)
-oracle_jedi_path(t, p) :- oracle_jedi_kind(k), kind(n, k), pt_tm(n, t), docof(n, d), doc(d, p, _).
+.decl oracle_jedi_at(n: node_path, s: number, e: number)
+oracle_jedi_at(t, s, e) :- kind(n, \"call\"), t = @node_path(n), node(_, n, _, s, e).
+.decl oracle_jedi_def_at(n: symbol, s: number, e: number)
+oracle_jedi_def_at(t, s, e) :- oracle_jedi_kind(k), k != \"call\", kind(f, k), pt_scope_tm(f, t), node(_, f, _, s, e).
+.decl oracle_jedi_path(n: node_path, p: symbol)
+oracle_jedi_path(t, p) :- kind(n, \"call\"), t = @node_path(n), docof(n, d), doc(d, p, _).
+.decl oracle_jedi_def_path(n: symbol, p: symbol)
+oracle_jedi_def_path(t, p) :- oracle_jedi_kind(k), k != \"call\", kind(n, k), pt_scope_tm(n, t), docof(n, d), doc(d, p, _).
 .decl oracle_jedi_kind(k: symbol)
 oracle_jedi_kind(\"call\"). oracle_jedi_kind(\"function_definition\"). oracle_jedi_kind(\"class_definition\"). oracle_jedi_kind(\"lambda\").
-.output oracle_jedi_cls, oracle_jedi_at, oracle_jedi_path
+.output oracle_jedi_cls, oracle_jedi_at, oracle_jedi_def_at, oracle_jedi_path, oracle_jedi_def_path
 ";
 
 const JEDI_SPANS: &str = "
@@ -1372,15 +1374,19 @@ fn benchmark_python_calls_program_corpus() {
     let compare = crate::code_rule_dsl::logic::profile::span(|| "benchmark: compare with Jedi".to_owned());
     let outputs = Outputs::open(&out).unwrap();
     let rows = |rel: &str| -> Vec<Vec<String>> { outputs.get(rel).unwrap_or_else(|| panic!("no relation {rel}")).shown() };
-    let at: BTreeMap<String, (usize, usize)> =
-        outputs.rows("oracle_jedi_at").iter().map(|r| (r.get(0).to_string(), (r.get(1).int().unwrap() as usize, r.get(2).int().unwrap() as usize))).collect();
+    let at: BTreeMap<String, (usize, usize)> = ["oracle_jedi_at", "oracle_jedi_def_at"]
+        .iter()
+        .filter(|rel| outputs.get(rel).is_some())
+        .flat_map(|rel| outputs.rows(rel))
+        .map(|r| (r.get(0).to_string(), (r.get(1).int().unwrap() as usize, r.get(2).int().unwrap() as usize)))
+        .collect();
     // Each node's document, by the node as shown.
     let paths: BTreeMap<String, String> = ["oracle_jedi_at", "call_open", "call_lib", "call_target", "oracle_jedi_cls"]
         .iter()
         .flat_map(|rel| outputs.rows(rel))
         .flat_map(|r| r.values().filter_map(|v| Some((v.to_string(), v.path()?.to_owned()))).collect::<Vec<_>>())
         // calls_p3's terms carry no path of their own (`P3_SPANS`).
-        .chain(outputs.get("oracle_jedi_path").map(|r| r.shown()).unwrap_or_default().into_iter().map(|r| (r[0].clone(), r[1].clone())))
+        .chain(["oracle_jedi_path", "oracle_jedi_def_path"].iter().flat_map(|rel| outputs.get(rel).map(|r| r.shown()).unwrap_or_default()).map(|r| (r[0].clone(), r[1].clone())))
         .collect();
     let file = |node: &str| paths[node].clone();
     let mut sources: BTreeMap<String, String> = BTreeMap::new();
@@ -2087,5 +2093,11 @@ fn walk(dir: &Path) -> Vec<PathBuf> {
 
 /// Each `oracle_jedi_at` node's start, by the node as shown.
 fn jedi_starts(out: &Path) -> std::collections::HashMap<String, usize> {
-    Outputs::open(out).unwrap().rows("oracle_jedi_at").iter().map(|r| (r.get(0).to_string(), r.get(1).int().unwrap() as usize)).collect()
+    let outputs = Outputs::open(out).unwrap();
+    ["oracle_jedi_at", "oracle_jedi_def_at"]
+        .iter()
+        .filter(|rel| outputs.get(rel).is_some())
+        .flat_map(|rel| outputs.rows(rel))
+        .map(|r| (r.get(0).to_string(), r.get(1).int().unwrap() as usize))
+        .collect()
 }

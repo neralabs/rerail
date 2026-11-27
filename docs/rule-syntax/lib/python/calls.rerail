@@ -41,13 +41,13 @@ owner(c, f) :- kind(c, "call"), nearest(c, f, fdef).
 order_key(n, q, i) :- nearest(n, h, fdef), qualname(h, q), visit_index(h, a), visit_index(n, b), i = b - a.
 order_key(n, "", i) :- kind(n, _), !nearest(n, _, fdef), visit_index(n, i).
 // The call graph is over definitions' symbols (decision 0677: no node crosses files): `call_target`'s, and a def's
-// own by `pt_tm` (python/points-to-file). A rule reads a def's node in its own file: `pt_def(f, q)`.
+// own by `pt_scope_tm` (python/points-to-file). A rule reads a def's node in its own file: `pt_def(f, q)`.
 // calls(f, g): the call graph edge "f may call g".
 .decl calls(f: symbol, g: symbol)
-calls(q, g) :- owner(c, f), pt_tm(f, q), call_target(c, g).
+calls(q, g) :- owner(c, f), pt_scope_tm(f, q), call_target(c, g).
 // calls_open(f): f makes at least one call whose target is unknown, so its out-edges are incomplete.
 .decl calls_open(f: symbol)
-calls_open(q) :- owner(c, f), pt_tm(f, q), call_open(c).
+calls_open(q) :- owner(c, f), pt_scope_tm(f, q), call_open(c).
 // reach(f, g): f may call g, directly or through a chain of calls. Only the known side: a chain through a
 // calls_open function may reach more.
 .decl reach(f: symbol, g: symbol)
@@ -56,7 +56,7 @@ reach(f, h) :- reach(f, g), calls(g, h).
 // method_sym(cq, x, f): class cq defines method x, whose definition's symbol is f: `method` (python/scopes) by
 // symbol, so a rule that walks classes and calls across files holds no node.
 .decl method_sym(cq: symbol, x: symbol, f: symbol)
-method_sym(cq, x, q) :- method(cq, x, f), pt_tm(f, q).
+method_sym(cq, x, q) :- method(cq, x, f), pt_scope_tm(f, q).
 // mro_method_sym(cq, x, f): `mro_method` by symbol: cq's own method x, else each ancestor's.
 .decl mro_method_sym(cq: symbol, x: symbol, f: symbol)
 mro_method_sym(cq, x, q) :- method_sym(cq, x, q).

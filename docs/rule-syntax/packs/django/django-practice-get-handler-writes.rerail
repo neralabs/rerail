@@ -40,7 +40,7 @@
 #include "python/types.rerail"
 
 // The walk is over definitions' symbols (decision 0677: no node crosses files): a handler is its class's and its
-// def's symbols (the class's `class_def` name, the def's `pt_tm`, as `call_target` names it), the call graph is
+// def's symbols (the class's `class_def` name, the def's `pt_scope_tm`, as `call_target` names it), the call graph is
 // `ghw_edge`'s, and each def's first write is stated in its own file (`ghw_wrote`). A finding reads the handler's
 // node in its own file, and names the write by its path and line.
 .violation GetHandlerWrites(at: node, x: symbol, what: symbol, p: symbol, l: number)

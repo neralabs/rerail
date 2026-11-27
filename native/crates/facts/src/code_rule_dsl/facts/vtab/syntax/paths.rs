@@ -7,6 +7,7 @@
 
 use crate::code_rule_dsl::facts::core::FactsIn;
 use rerail_lang::code_rule_dsl::path_tables::PathTables;
+use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 
 /// The flags (`FactsIn::flags`) of a named node and of an extra.
@@ -311,7 +312,7 @@ impl Reader<'_> {
     }
     fn gamma(&mut self) -> Option<u32> {
         let mut zeros = 0;
-        while *self.bits.get(self.at)? == false {
+        while !*self.bits.get(self.at)? {
             zeros += 1;
             self.at += 1;
             if zeros > 32 {
@@ -353,8 +354,8 @@ pub struct Steps {
     pub kids: Vec<u32>,
     pub bits: Vec<Bits>,
     pub only: Option<u32>,
-    by_bits: HashMap<Vec<bool>, u32>,
-    index: HashMap<u32, u32>,
+    by_bits: FxHashMap<Vec<bool>, u32>,
+    index: FxHashMap<u32, u32>,
     longest: usize,
 }
 
@@ -478,9 +479,9 @@ pub struct DocPaths {
     path: String,
     keys: Vec<String>,
     by_key: HashMap<String, u32>,
-    anchors: std::sync::Mutex<HashMap<u32, std::sync::Arc<std::collections::BTreeSet<u32>>>>,
+    anchors: std::sync::Mutex<FxHashMap<u32, std::sync::Arc<std::collections::BTreeSet<u32>>>>,
     /// Each parent's steps, made the first time a path passes it.
-    steps: std::sync::Mutex<HashMap<u32, std::sync::Arc<Steps>>>,
+    steps: std::sync::Mutex<FxHashMap<u32, std::sync::Arc<Steps>>>,
 }
 
 impl DocPaths {
@@ -503,13 +504,16 @@ impl DocPaths {
         let mut b = Bits::default();
         let (mut q, mut i) = (from, 0);
         while i < nodes.len() {
-            let st = self.steps(f, dialect, q);
+            let mut st = self.steps(f, dialect, q);
             if st.only.is_some() {
                 let mut k = 0;
-                while i < nodes.len() && self.steps(f, dialect, q).only == Some(nodes[i]) {
+                while i < nodes.len() && st.only == Some(nodes[i]) {
                     q = nodes[i];
                     i += 1;
                     k += 1;
+                    if i < nodes.len() {
+                        st = self.steps(f, dialect, q);
+                    }
                 }
                 if k == 0 {
                     return None;

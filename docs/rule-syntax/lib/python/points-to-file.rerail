@@ -1,11 +1,12 @@
-// python/points-to-file: each file's part of Python's points-to (P3 of decision 0083 §1, note t28), and the term each
-// of its nodes is known by across files (decision 0677, note t55).
+// python/points-to-file: each file's part of Python's points-to (P3 of decision 0083 §1, note t28), and what each
+// of its scopes is known by across files (decisions 0677, 0722; any other node by its node path).
 //
 // Points-to answers what an expression may evaluate to (a function, a class, an instance of one, a module, `super()`)
 // and, from that, a call's targets and a value's types. Its rules are in three files:
 // - this one: what one file's syntax says (scopes and bindings, imports, decorators, annotations, the positions
-//   whose values are read), over its own nodes, and each node's term (`pt_tm`, at the end);
-// - python/points-to-solve: the rules that join files, over terms and symbols alone: no node crosses (0677);
+//   whose values are read), over its own nodes, and each scope's symbol (`pt_scope_tm`, at the end);
+// - python/points-to-solve: the rules that join files, over symbols and node paths alone: no node crosses (0677,
+//   0722);
 // - python/points-to: the interface a rule reads (`call_target`, `call_open`, `type_of`, ...), read back at the
 //   rule's own nodes from what the phase `points_to` (typing/programs/points_to.rerail) hands on.
 // Every relation here is per file. Its own names start `pt_`.
@@ -337,9 +338,9 @@ pt_aself(m) :- pt_q_aself(m).
 pt_look(n, x, s) :- pt_q_look(n, x, s).
 pt_qn(n, q) :- pt_q_qn(n, q).
 pt_builtin_ref(n, x) :- pt_q_builtin_ref(n, x).
-.context annotation of python roots ann_tree exports pt_aleaf, pt_ahead, pt_aarg, pt_dtype, pt_aself, pt_look, pt_qn, pt_builtin_ref, pt_gtm
+.context annotation of python roots ann_tree exports pt_aleaf, pt_ahead, pt_aarg, pt_dtype, pt_aself, pt_look, pt_qn, pt_builtin_ref
 .from python pt_hstart, pt_up, pt_bound_in, pt_ibind, pt_modnode, pt_star for annotation
-.from annotation pt_aleaf as pt_q_aleaf, pt_ahead as pt_q_ahead, pt_aarg as pt_q_aarg, pt_dtype as pt_q_dtype, pt_aself as pt_q_aself, pt_look as pt_q_look, pt_qn as pt_q_qn, pt_builtin_ref as pt_q_builtin_ref, pt_gtm as pt_q_gtm
+.from annotation pt_aleaf as pt_q_aleaf, pt_ahead as pt_q_ahead, pt_aarg as pt_q_aarg, pt_dtype as pt_q_dtype, pt_aself as pt_q_aself, pt_look as pt_q_look, pt_qn as pt_q_qn, pt_builtin_ref as pt_q_builtin_ref
 // Parameters: `x: T` and `x: T = v` (the default's own value is added as an assignment's is).
 .decl pt_pann(f: node, x: symbol, t: node)
 pt_pann(f, x, t) :- field(f, "parameters", ps), child(ps, p, _), kind(p, "typed_parameter"), child(p, id, 0), kind(id, "identifier"),
@@ -791,21 +792,19 @@ pt_cls_q(c, @dot(q, x)) :- pt_cls_q(o, q), pt_rdefn(o, x, c), kind(c, "class_def
 
 
 
-// ---- terms (decision 0677, note t55) ------------------------------------------------------------------------------
-// pt_tm(n, t): node n's term, the symbol python/points-to-solve knows it by. An edit renumbers nodes; a node's term
-// changes only with its own definition's code.
-// - A module: its name (its path, where it has none).
-// - A definition: its symbol, as P1 names it (struct.rerail's `sym`): `m.C.run`, and `m.f#1` for the second live
-//   definition of a name in its scope. A definition in a function is named so too (`m.f.inner`), as P1 does not.
-// - Any other node: its place in its nearest definition or module, relative to that one's start, with its length,
-//   and how many of its ancestors have both (`pt_tm_same`): `m.C.run@14+5^0`.
-// - A guest's node (a quoted annotation's code): its place in the guest's own document, which every string of that
-//   text shares: `~1825239168@0+4^1`.
-.decl pt_tm(n: node, t: symbol)
-.pragma "magic-transform" "pt_tm"
-// pt_scope_tm(s, q): a module's or a definition's term, made down from the module one scope at a time (`nearest`
-// up, so the recursion is bounded: the cycles rule 3). A definition a branch never taken holds (`py_dead_at`) is no
-// binding, so P1 numbers it not: it is named by its place, as any other node.
+// ---- terms (decisions 0677, 0722) ------------------------------------------------------------------------------
+// What python/points-to-solve knows a node by, so that it may cross into the cross-file part:
+// - a scope (a module, a definition, a lambda), its symbol, `pt_scope_tm`, which a workspace value is too
+//   (`pt_pv(e, "cls", q)`): a module's name (its path, where it has none); a live definition's symbol, as P1 names it
+//   (struct.rerail's `sym`): `m.C.run`, and `m.f#1` for the second live definition of a name in its scope, and one in
+//   a function so too (`m.f.inner`), as P1 does not; a lambda, or a definition a branch never taken holds, its node
+//   path spelled (`m.py::f/body.return.lambda`), as no symbol names it;
+// - any other node, its node path (`@node_path(n)`, decision 0722): a guest's node (a quoted annotation's code) too,
+//   rooted at its tape value, which every string of that text shares. A path changes only where its own granule's
+//   statements of its kind move.
+// pt_scope_tm(s, q): a scope's symbol, made down from the module one scope at a time (`nearest` up, so the recursion
+// is bounded: the cycles rule 3). A definition a branch never taken holds (`py_dead_at`) is no binding, so P1 numbers
+// it not: it is named by its path, as a lambda is.
 .decl pt_scope_tm(s: node, q: symbol)
 pt_scope_tm(m, q) :- pt_modname(m, q), q != "".
 pt_scope_tm(m, p) :- pt_modnode(d, m), doc(d, p, "").
@@ -817,31 +816,10 @@ pt_scope_tm(f, @dot(q, x)) :- kind(f, k), pt_tm_def(k), field(f, "name", nm), te
     pt_scope_tm(s, q), pt_tm_ord(f, 0).
 pt_scope_tm(f, cat(@dot(q, x), "#", to_string(i))) :- kind(f, k), pt_tm_def(k), field(f, "name", nm), text(nm, x),
     nearest(f, s, pt_scope), pt_scope_tm(s, q), pt_tm_ord(f, i), i > 0.
-pt_scope_tm(f, cat(q, "@", to_string(b - sb), "+", to_string(e - b), "^", to_string(c))) :- kind(f, k), pt_tm_def(k),
-    py_dead_at(f), nearest(f, s, pt_tm_scope), pt_scope_tm(s, q), node(_, f, _, b, e), node(_, s, _, sb, _), pt_tm_same(f, c).
-.decl pt_tm_scope(kind: symbol)
-pt_tm_scope("module"). pt_tm_scope("function_definition"). pt_tm_scope("class_definition").
-pt_tm(s, q) :- pt_scope_tm(s, q).
-pt_tm(n, cat(q, "@", to_string(b - sb), "+", to_string(e - b), "^", to_string(c))) :- node(_, n, k, b, e), !pt_tm_def(k),
-    k != "module", !host_node(n, _), nearest(n, s, pt_tm_scope), node(_, s, _, sb, _), pt_scope_tm(s, q), pt_tm_same(n, c).
-// A guest's node is the guest's own (its document a tape that equal texts share, decision 0431), whatever string
-// holds it: named by that document and its place there. Only the annotation context reads a guest's nodes (decision
-// 0597): `pt_gtm` is its, and the host reads it as `pt_q_gtm`.
-pt_tm(n, t) :- pt_q_gtm(n, t).
-.decl pt_gtm(n: node, t: symbol)
-pt_gtm(n, cat("~", to_string(d), "@", to_string(b), "+", to_string(e - b), "^", to_string(c))) :- node(d, n, _, b, e),
-    pt_tm_same(n, c).
-// pt_tm_same(n, c): c of n's ancestors span what n does (a `type` over its expression, an expression statement over
-// its call), counted up the parents: what tells n from them, as a place and a length do not. A node's kind is no
-// name, so not that.
-.decl pt_tm_same(n: node, c: number)
-.pragma "magic-transform" "pt_tm_same"
-pt_tm_same(n, 0) :- node(_, n, _, _, _), !child(_, n, _).
-pt_tm_same(n, 0) :- child(p, n, _), node(_, p, _, pb, _), node(_, n, _, b, _), pb != b.
-pt_tm_same(n, 0) :- child(p, n, _), node(_, p, _, _, pe), node(_, n, _, _, e), pe != e.
-pt_tm_same(n, c + 1) :- child(p, n, _), node(_, p, _, b, e), node(_, n, _, b, e), pt_tm_same(p, c).
+pt_scope_tm(f, @path_spelling(@node_path(f))) :- kind(f, k), pt_tm_def(k), py_dead_at(f).
+pt_scope_tm(f, @path_spelling(@node_path(f))) :- kind(f, "lambda").
 
-// pt_def(f, q): definition f is symbol q, pt_tm's rows for live definitions alone. A rule reads a definition by its
-// symbol through it (`call_target(c, q), pt_def(g, q)`), never through pt_tm, which would make every node's term.
+// pt_def(f, q): definition f is symbol q, pt_scope_tm's rows for live definitions alone. A rule reads a definition by
+// its symbol through it (`call_target(c, q), pt_def(g, q)`).
 .decl pt_def(f: node, q: symbol)
 pt_def(f, q) :- pt_rdefn(_, _, f), pt_scope_tm(f, q).
