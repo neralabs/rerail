@@ -1968,3 +1968,158 @@ impl ProgramPass for Declared {
 }
 
 // cratify: `tests` is rerail-logic's (it mounts it: it reads the language, `rr::parse_version`, or the corpus's root)
+
+/// Each place read by its value's type (decision 0724 step 3): a line's, a match's and a token's text, document, line
+/// and column are base relations of their own (`facts::core::TYPED_READS`), read over that type alone, as a node's
+/// `text`, `docof`, `line`, `end_line` and `col` are over nodes. The lowering, and a pass after it, write a read by its
+/// node name (core.rerail's `line_text(l, s)` is `text(l, s)` there); this pass writes it by its value's.
+///
+/// A variable's type is what makes its value: a `source` or `src_line` line, a regex's match (`rx_span`,
+/// `matchall_<k>`, `matchgroup_<k>`), a token read's token (`first_token`, `last_token`, `token_before`,
+/// `token_after`, a typed read of a token), and a derived relation's column the type its rules' heads put in it, to a
+/// fixpoint. A value no maker types is a node; one two makers type alike, either; one of two types (a column that holds
+/// both, which the type check refuses in a rule) keeps the node's name.
+pub struct TypedReads;
+
+/// The type the value in column `c` of an atom of `rel` is, where `rel` makes it.
+fn made_type(rel: &str, c: usize) -> Option<crate::code_rule_dsl::facts::core::PlaceType> {
+    use crate::code_rule_dsl::facts::core::{PlaceType as P, typed};
+    use crate::code_rule_dsl::logic::strings::{GROUPS, MATCHES};
+    if let Some((ty, node)) = typed(rel) {
+        return match c {
+            0 => Some(ty),
+            1 if matches!(node, "token_before" | "token_after") => Some(P::Token),
+            _ => None,
+        };
+    }
+    match (rel, c) {
+        ("source", 1) | ("src_line", 2) => Some(P::Line),
+        ("rx_span", 4) => Some(P::Match),
+        ("first_token" | "last_token" | "token_before" | "token_after", 1) => Some(P::Token),
+        _ if rel.starts_with(MATCHES) && c == 1 => Some(P::Match),
+        _ if rel.starts_with(GROUPS) && (c == 1 || c == 3) => Some(P::Match),
+        _ => None,
+    }
+}
+
+/// The types of rule `r`'s variables, by slot: what each positive atom of its body (an aggregate's too) makes of it, as
+/// `made_type` and the derived relations' column types `columns` say.
+fn var_types(
+    v: &Version,
+    r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>,
+    columns: &BTreeMap<(String, usize), BTreeSet<crate::code_rule_dsl::facts::core::PlaceType>>,
+) -> BTreeMap<Slot, BTreeSet<crate::code_rule_dsl::facts::core::PlaceType>> {
+    let mut out: BTreeMap<Slot, BTreeSet<_>> = BTreeMap::new();
+    for l in r.body() {
+        let a = match l.view() {
+            L::Atom(a) | L::Agg { atom: a, .. } if !a.neg() => a,
+            _ => continue,
+        };
+        let rel = v.rel_name(a.rel());
+        for (c, t) in a.args().enumerate() {
+            let TermRef::Var(s) = t else { continue };
+            if let Some(ty) = made_type(rel, c) {
+                out.entry(s).or_default().insert(ty);
+            } else if let Some(tys) = columns.get(&(rel.to_owned(), c)) {
+                out.entry(s).or_default().extend(tys.iter().copied());
+            }
+        }
+    }
+    out
+}
+
+/// Writes each place read of a rule by its subject's type (`TypedReads`).
+struct Retyped<'a> {
+    v: &'a Version,
+    columns: &'a BTreeMap<(String, usize), BTreeSet<crate::code_rule_dsl::facts::core::PlaceType>>,
+    types: BTreeMap<Slot, BTreeSet<crate::code_rule_dsl::facts::core::PlaceType>>,
+}
+
+/// The read atom `a` is written by, where its subject's type has a read of its own; `types` its rule's variables'.
+fn retyped(
+    v: &Version,
+    a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>,
+    types: &BTreeMap<Slot, BTreeSet<crate::code_rule_dsl::facts::core::PlaceType>>,
+) -> Option<&'static str> {
+    use crate::code_rule_dsl::facts::core::{PlaceType as P, counterpart, typed_read};
+    let node = counterpart(v.rel_name(a.rel()));
+    typed_read(P::Node, node)?;
+    let Some(TermRef::Var(s)) = a.args().next() else { return None };
+    let tys = types.get(&s)?;
+    let [ty] = tys.iter().copied().collect::<Vec<_>>()[..] else { return None };
+    typed_read(ty, node).filter(|r| *r != v.rel_name(a.rel()))
+}
+
+impl crate::code_rule_dsl::logic::program_image::build::Rewrite for Retyped<'_> {
+    fn begin(&mut self, r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>) -> bool {
+        self.types = var_types(self.v, r, self.columns);
+        r.body().any(|l| matches!(l.view(), L::Atom(a) | L::Agg { atom: a, .. } if retyped(self.v, a, &self.types).is_some()))
+    }
+    fn atom_as(&mut self, a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>) -> Option<(String, bool, bool)> {
+        retyped(self.v, a, &self.types).map(|r| (r.to_owned(), a.neg(), a.gated()))
+    }
+}
+
+impl ProgramPass for TypedReads {
+    const NAME: &'static str = "each place read by its value's type";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        let v: &Version = cx.v();
+        // The derived relations' column types, to a fixpoint (each round only adds; a column holds at most four).
+        let mut columns: BTreeMap<(String, usize), BTreeSet<crate::code_rule_dsl::facts::core::PlaceType>> = BTreeMap::new();
+        loop {
+            let mut changed = false;
+            for r in v.rules() {
+                let types = var_types(v, r, &columns);
+                let head = v.rel_name(r.head().rel()).to_owned();
+                for (c, t) in r.head().args().enumerate() {
+                    let TermRef::Var(s) = t else { continue };
+                    if let Some(tys) = types.get(&s) {
+                        let col = columns.entry((head.clone(), c)).or_default();
+                        let n = col.len();
+                        col.extend(tys.iter().copied());
+                        changed |= col.len() != n;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let mut reads: BTreeSet<&'static str> = BTreeSet::new();
+        for r in v.rules() {
+            let types = var_types(v, r, &columns);
+            for l in r.body() {
+                if let L::Atom(a) | L::Agg { atom: a, .. } = l.view()
+                    && let Some(read) = retyped(v, a, &types)
+                {
+                    reads.insert(read);
+                }
+            }
+        }
+        if reads.is_empty() {
+            return Ok(());
+        }
+        let input = std::sync::Arc::clone(w.input());
+        let mut inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).collect();
+        let b = w.derive()?;
+        // Each typed read is declared as its node counterpart is, an input of the program.
+        for read in &reads {
+            let node = crate::code_rule_dsl::facts::core::counterpart(read);
+            let names = crate::code_rule_dsl::facts::core::input_columns(read).ok_or_else(|| format!("{read}: no columns"))?;
+            let types: Vec<String> = match v.decl_of(node) {
+                Some(d) => d.cols().map(|(_, t)| v.text(t).to_owned()).collect(),
+                None => names.iter().map(|_| "node".to_owned()).collect(),
+            };
+            let cols: Vec<(&str, &str)> = names.iter().copied().zip(types.iter().map(String::as_str)).collect();
+            if v.decl_of(read).is_none() {
+                b.fields().declare(read, &cols);
+            }
+            if !inputs.iter().any(|i| i == read) {
+                inputs.push((*read).to_owned());
+            }
+        }
+        b.fields().set_inputs(&inputs);
+        b.rewrite_all(&input, &mut Retyped { v: &input, columns: &columns, types: BTreeMap::new() })?;
+        Ok(())
+    }
+}

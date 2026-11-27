@@ -5684,7 +5684,8 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
 
 /// T's facts file's indexes, which the base-relation vtabs' lookups mirror.
 pub fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
-    let lists: &[&[&str]] = match rel {
+    // A line's, a match's or a token's read is indexed as its node counterpart is (decision 0724 step 3).
+    let lists: &[&[&str]] = match crate::code_rule_dsl::facts::core::counterpart(rel) {
         "node" => &[&["n"], &["kind", "n"]],
         "child" => &[&["c"], &["p", "idx"]],
         "field" => &[&["p", "f"], &["c"]],

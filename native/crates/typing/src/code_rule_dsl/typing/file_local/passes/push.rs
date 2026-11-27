@@ -57,7 +57,8 @@ fn has_var(v: &Version, rule: RuleRef<'_>, a: AtomRef<'_>, x: &str) -> bool {
 /// Whether nothing in `atoms` narrows a node: each is a plain lookup of a node's attributes (no constant, no repeated
 /// variable) or has no node column, and some node is read.
 fn unrestricted(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, atoms: &[AtomRef<'_>]) -> bool {
-    let rel = |a: &AtomRef<'_>| v.rel_name(a.rel());
+    // A line's, a match's or a token's read is an attribute as its node counterpart is (decision 0724 step 3).
+    let rel = |a: &AtomRef<'_>| crate::code_rule_dsl::facts::core::counterpart(v.rel_name(a.rel()));
     atoms.iter().any(|a| matches!(rel(a), "docof" | "line" | "end_line" | "col" | "visit_index" | "node_order" | "node"))
         && atoms.iter().all(|a| {
             let attribute = ATTRIBUTES.contains(&rel(a));
@@ -76,7 +77,7 @@ fn descends(v: &Version, rule: RuleRef<'_>, atoms: &[AtomRef<'_>]) -> bool {
         match (v.rel_name(w.rel()), args.as_slice()) {
             ("within", [TermRef::Var(n), a]) if !matches!(a, TermRef::Var(m) if m == n) => {
                 let n = name(v, rule, *n);
-                atoms.iter().enumerate().filter(|(bi, b)| *bi != wi && has_var(v, rule, **b, &n)).all(|(_, b)| attribute(v.rel_name(b.rel())))
+                atoms.iter().enumerate().filter(|(bi, b)| *bi != wi && has_var(v, rule, **b, &n)).all(|(_, b)| attribute(crate::code_rule_dsl::facts::core::counterpart(v.rel_name(b.rel()))))
             }
             _ => false,
         }
@@ -111,7 +112,7 @@ fn domain<'v>(v: &'v Version, f: Fields<'v>, local: &BTreeSet<String>, of: &[Rul
                             && !a.gated()
                             && !f.lattice(rel)
                             && (f.is_input(rel) || local.contains(rel))
-                            && !(ATTRIBUTES.contains(&rel) && plain(v, r, a))
+                            && !(ATTRIBUTES.contains(&crate::code_rule_dsl::facts::core::counterpart(rel)) && plain(v, r, a))
                             && a.args().any(|t| matches!(t, TermRef::Var(s) if s == x))
                     }
                     _ => false,
@@ -127,7 +128,7 @@ fn node_groups(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, atoms: &[AtomRef<'
         .iter()
         .filter_map(|a| {
             let args: Vec<TermRef<'_>> = a.args().collect();
-            match (v.rel_name(a.rel()), args.as_slice()) {
+            match (crate::code_rule_dsl::facts::core::counterpart(v.rel_name(a.rel())), args.as_slice()) {
                 ("docof", [_, TermRef::Var(d)]) => Some(name(v, rule, *d)),
                 ("node" | "doc", [TermRef::Var(d), ..]) => Some(name(v, rule, *d)),
                 _ => None,
@@ -363,7 +364,7 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, split: &FileLocal, keep_unr
                     let lv = lit_vars(v, rule, *l);
                     !lits.contains(&j) && goes_with(*l) && !lv.is_empty() && lv.is_subset(&vars)
                 });
-                let attribute = |a: &AtomRef<'_>| ATTRIBUTES.contains(&rel(a)) && plain(v, rule, *a);
+                let attribute = |a: &AtomRef<'_>| ATTRIBUTES.contains(&crate::code_rule_dsl::facts::core::counterpart(rel(a))) && plain(v, rule, *a);
                 let rest: Vec<&AtomRef<'v>> = atoms.iter().filter(|a| !attribute(a)).collect();
                 // One plain atom and lookups of its nodes' attributes (`child(p, f, _), text(p, s)`) is a row a node the
                 // cross part reads as well where it is: left, unless a test of its variables goes with it

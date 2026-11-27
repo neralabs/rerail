@@ -206,7 +206,11 @@ impl Projection {
         crate::code_rule_dsl::logic::profile::decision("text of tokens", || if token_text { "made (a rule reads a token's text)".into() } else { "none (no rule reads a token's text)".into() });
         let shape = if core_shape { Shape::Core } else { Shape::T };
         let verdict = shape == Shape::T && error_triple;
-        let reads = reads.into_iter().filter(|r| !derived.contains(r)).collect();
+        let mut reads: BTreeSet<String> = reads.into_iter().filter(|r| !derived.contains(r)).collect();
+        // A typed read of a line, a match or a token is its node counterpart's relation (`places::typed`): made where
+        // either is read.
+        let counterparts: Vec<String> = reads.iter().filter_map(|r| crate::code_rule_dsl::facts::core::typed(r)).map(|(_, n)| n.to_owned()).collect();
+        reads.extend(counterparts);
         Projection { shape, reads: Some(reads), rx_spans, ast_patterns, text_spans: Some(spans), token_text, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial, verdict, derived, compiled_rx: CompiledSpans::default() }
     }
 
@@ -6227,6 +6231,7 @@ pub fn shaped(store: &dyn FactStore, documents: Vec<Document>, projection: &Proj
     let mut out: Vec<(&'static str, Arc<dyn Source>)> = made_sources(&batch).into_iter().filter_map(|(_, name, source)| Some((name?, source))).collect();
     out.extend(views(&batch));
     places::join(&mut out, &batch);
+    places::typed(&mut out);
     Ok(out)
 }
 
@@ -6639,6 +6644,7 @@ fn finish(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>, sets: &[(
     let viewing = crate::code_rule_dsl::logic::profile::span(|| "views".into());
     out.extend(views(&batch).into_iter().filter(|(name, _)| !projection.derived.contains(*name)).map(|(name, source)| (name.to_owned(), source)));
     places::join(&mut out, &batch);
+    places::typed(&mut out);
     drop(viewing);
     // The kind-set axes, made per looked-up node like containment (decision 0050): a set no join reads, and the nodes
     // no join binds, cost nothing. Their statistics come from the tree.

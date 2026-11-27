@@ -101,7 +101,7 @@ pub fn span_text_demand(v: &Version) -> (BTreeSet<SpanIn>, bool) {
     let mut requested = 0;
     for rule in v.rules() {
         let vars = span_vars(v, &columns, rule);
-        for atom in rule.body().filter_map(|l| l.atom()).filter(|a| v.rel_name(a.rel()) == "text") {
+        for atom in rule.body().filter_map(|l| l.atom()).filter(|a| crate::code_rule_dsl::facts::core::counterpart(v.rel_name(a.rel())) == "text") {
             if let Some(TermRef::Var(value)) = atom.args().next() {
                 requested |= vars.get(&value).copied().unwrap_or(0);
             }
@@ -770,7 +770,7 @@ pub fn node_anchors(v: &Version, settings: &[(String, String)], matchers: &Match
         "field" => Some(2),
         _ => None,
     };
-    let tree = |rel: &str| LOCAL.contains(&rel) || down(rel).is_some();
+    let tree = |rel: &str| LOCAL.contains(&crate::code_rule_dsl::facts::core::counterpart(rel)) || down(rel).is_some();
     // A matcher's root kind, where it reaches only below its root.
     let roots: HashMap<&str, Option<String>> = matchers
         .iter()

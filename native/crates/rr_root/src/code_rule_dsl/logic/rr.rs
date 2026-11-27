@@ -1587,6 +1587,8 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, declar
         }
         p.program(&mut lowering_tail::OrderNodes);
         p.program(&mut lowering_tail::DeclareAxes);
+        // Each place read by its value's type (decision 0724 step 3), once the findings' and core's reads are written.
+        p.program(&mut lowering_tail::TypedReads);
         // `finish`'s checks, on the version.
         let _checks = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail: finish_checks_given".to_owned());
         super::front::finish_checks_given(p.current().map_err(Error::Syntax)?, library.map(|l| &*l.version))?;

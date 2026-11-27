@@ -344,6 +344,20 @@ impl Source for Places {
     }
 }
 
+/// Each read of a line, a match and a token (`facts::core::TYPED_READS`, decision 0724 step 3) bound where `out` binds
+/// its node counterpart: the same relation, which answers a node's and a span's ids alike, until each type's ids are its
+/// own. A program reads it by its value's type (`lowering_tail::TypedReads`).
+pub fn typed<N: AsRef<str> + From<&'static str>>(out: &mut Vec<(N, Arc<dyn Source>)>) {
+    for (read, _, node) in crate::code_rule_dsl::facts::core::TYPED_READS {
+        if out.iter().any(|(n, _)| n.as_ref() == read) {
+            continue;
+        }
+        if let Some(source) = out.iter().find(|(n, _)| n.as_ref() == node).map(|(_, s)| Arc::clone(s)) {
+            out.push((N::from(read), source));
+        }
+    }
+}
+
 /// `out`'s place relations made as `Extra`'s span rows (core.rerail's shape), each bound with the `Loc` view of its
 /// nodes before them: the batch makes no node's place as a row.
 pub fn join<N: AsRef<str>>(out: &mut [(N, Arc<dyn Source>)], batch: &Arc<super::Batch>) {
