@@ -729,3 +729,84 @@ fn ruff_ruf013_finds_an_implicit_optional() {
     let lines: Vector<u64> = report["diagnostics"].as_array().unwrap().iter().map(|d| d["line"].as_u64().unwrap_or(0)).collect();
     assert_eq!(lines, [3], "{report:#}");
 }
+
+/// The library's rules read a node's nearest member and the member's child that holds it as one literal,
+/// `nearest(n, a, S, p)` (`rr_near_child_<set>`, one row a node), not as `nearest(n, a, S)`, `field(a, _, p)` (or
+/// `child(a, p, _)`) and `within(n, p)`: that chain lists every node under `p` (3 s of the joins' CPU of `all`). A
+/// lint over the library's text: each rule of the chain's shape is named, with the form to write.
+#[test]
+fn the_library_reads_a_nearest_members_child_as_one_literal() {
+    /// The positive top-level-or-grouped atoms of `body`: each `(relation, arguments)`, as written.
+    fn atoms(body: &str) -> Vec<(String, Vec<String>)> {
+        let (b, mut out, mut i) = (body.as_bytes(), Vec::new(), 0);
+        while i < b.len() {
+            let start = i;
+            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
+                i += 1;
+            }
+            if i > start && i < b.len() && b[i] == b'(' && (start == 0 || b[start - 1] != b'!') {
+                let (name, mut depth, from) = (&body[start..i], 0, i + 1);
+                let mut args = Vec::new();
+                let mut arg = from;
+                while i < b.len() {
+                    match b[i] {
+                        b'(' => depth += 1,
+                        b')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        b',' if depth == 1 => {
+                            args.push(body[arg..i].trim().to_owned());
+                            arg = i + 1;
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                args.push(body[arg..i.min(b.len())].trim().to_owned());
+                out.push((name.to_owned(), args));
+                i = from;
+            } else if i == start {
+                i += 1;
+            }
+        }
+        out
+    }
+    let lib = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../docs/rule-syntax/lib");
+    let mut files = Vec::new();
+    let mut dirs = vec![lib.clone()];
+    while let Some(d) = dirs.pop() {
+        for e in std::fs::read_dir(&d).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                dirs.push(p);
+            } else if p.extension().is_some_and(|x| x == "rerail") {
+                files.push(p);
+            }
+        }
+    }
+    assert!(files.len() > 20, "the library's rule files: {}", files.len());
+    let mut found = Vec::new();
+    for path in files {
+        let text: String = std::fs::read_to_string(&path).unwrap().lines().map(|l| l.split("//").next().unwrap_or("").trim_end()).collect::<Vec<_>>().join("\n");
+        for rule in text.split(".\n") {
+            let Some((head, body)) = rule.split_once(":-") else { continue };
+            let head = head.lines().last().unwrap_or(head);
+            let atoms = atoms(body);
+            let has = |rel: &str, a: &str, p: &str| atoms.iter().any(|(r, x)| r == rel && x.len() == 3 && ((rel == "field" && x[0] == a && x[2] == p) || (rel == "child" && x[0] == a && x[1] == p)));
+            for (rel, x) in &atoms {
+                if rel != "nearest" || x.len() != 3 {
+                    continue;
+                }
+                let (n, a) = (&x[0], &x[1]);
+                if let Some((_, w)) = atoms.iter().find(|(r, w)| r == "within" && w.len() == 2 && &w[0] == n && w[1] != *n && (has("field", a, &w[1]) || has("child", a, &w[1]))) {
+                    let p = &w[1];
+                    found.push(format!("{}: {}: write nearest({n}, {a}, {}, {p}) for within({n}, {p})", path.strip_prefix(&lib).unwrap().display(), head.trim(), x[2]));
+                }
+            }
+        }
+    }
+    assert!(found.is_empty(), "rules that list every node under a nearest member's child:\n{}", found.join("\n"));
+}
