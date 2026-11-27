@@ -303,6 +303,8 @@ pub fn lean_text(src: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod chunked_tests;
 
 /// Texts with a block comment that starts a line before a token that goes on the line before:
 /// lost where the lean parser asks for a semicolon there, any comment inside brackets (decision

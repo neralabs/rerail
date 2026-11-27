@@ -9,7 +9,7 @@
 
 /// The source with each string, byte string and char literal's contents blanked and each comment removed, lengths
 /// kept: the braces and calls left are the code's.
-fn code_only(src: &str) -> Vec<u8> {
+pub(super) fn code_only(src: &str) -> Vec<u8> {
     let b = src.as_bytes();
     let mut out = b.to_vec();
     let mut i = 0;
@@ -113,6 +113,12 @@ fn extent(c: &[u8], mut i: usize) -> usize {
 
 /// The code with every `#[cfg(feature = "test-hooks")]` item and statement taken out.
 fn product(c: &[u8]) -> Vec<u8> {
+    product_from(c, c)
+}
+
+/// `orig`'s bytes where `c` (its code, `code_only(orig)`, of its length) keeps them: every `#[cfg(feature =
+/// "test-hooks")]` item and statement taken out.
+fn product_from(c: &[u8], orig: &[u8]) -> Vec<u8> {
     const TAG: &[u8] = b"#[cfg(feature = \"test-hooks\")]";
     let mut out = Vec::with_capacity(c.len());
     let mut i = 0;
@@ -122,10 +128,16 @@ fn product(c: &[u8]) -> Vec<u8> {
             i = extent(c, i + TAG.len());
             continue;
         }
-        out.push(c[i]);
+        out.push(orig[i]);
         i += 1;
     }
     out
+}
+
+/// `src`'s product build as text, its literals and comments kept: every `#[cfg(feature = "test-hooks")]` item and
+/// statement taken out (as `whole_file_passes` reads it).
+pub(super) fn product_text(src: &str) -> String {
+    String::from_utf8(product_from(&code_only(src), src.as_bytes())).expect("cut at code bytes")
 }
 
 /// The product build's code of `src` (no literals, no comments, no `test-hooks` items or statements), and of it the

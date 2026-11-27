@@ -84,6 +84,57 @@ test builds only. Python's grammar did not compile under it:
   build reads. The generator's gate for `lv` now runs last in the chain (`interleave::lv_for_tests`) and asks the
   product build's code through the same stripping (`middle::product_after`).
 
+## Kotlin's token loop runs from the middle: three passes (2026-11-27)
+
+`bitlex_lex_rust::chunked` makes, from a tier 1 whose token loop keeps a nest (`nest`, `depth`, `template`, `held`,
+`opened`), the loop's chunked form, appended to the tier. Kotlin's is made; rr's, JSON's and Python's are not yet.
+
+- **Pass 1, one chunk each, writing nothing (`chunk_ends`).** A chunk's summary is its lanes: for each place the
+  chunk can be entered, and each class of nest below the entry that the lexing reads, where it leaves and what it
+  counted. A lane is a typed bracket sequence: the levels it closes (`kc`, innermost first, of a kind or of any), the
+  levels it needs below them and never reaches (`need`), whether it read the bottom (`exact`), and the levels it leaves
+  open (`p`), with their strings' records, its own or kept from a level it closed (`INHERIT`).
+  - **The places:**
+    - the code entry, past the blanks before the chunk;
+    - where a token of code the chunk starts in ends: lexed from the first byte of the run of bytes before the chunk,
+      and from each byte of the chunk's first run (blanks part code tokens);
+    - the end of each region the chunk can start inside: the region's row reads it as a token forced at the chunk's
+      first byte (`Force`, the table `REGIONS`, made from the loop's open and row matches), one entry a level for the
+      block comment's nesting.
+  - **The classes:** a lane that reads the bottom gets one more level below it, of no kind (`OPEN`), until a read of
+    `template` or `opened` asks the kind. Then it splits by kind. The splits go breadth first across all the places,
+    so where a chunk passes `L` (64) lanes, the deepest go.
+- **Pass 3, the prefix sum (`entries`): a single pass with decoupled look-back.**
+  - A chunk applies its predecessor's summary to its predecessor's entry when that entry is known. Otherwise it
+    composes the summaries back to the last known entry.
+  - Where a composition passes `L` lanes (`over`), it waits for its predecessor's entry instead, so a lost lane never
+    gives a wrong entry.
+  - `compose` is associative as a function of the entry. An entry at or past a range's end goes through it as it came.
+  - The Hillis–Steele scan over summaries was dropped: its long general ranges passed `L` and lost the right lane.
+- **Pass 2 (`lex_chunked`)** lexes each chunk from its entry, writing the records, and counts the chunks whose entry
+  was not the one the chunk before left.
+
+### Numbers (Kotlin)
+
+- **The test files** (1133 files at 1, 2, 3 and 16 blocks, 7780 chunks): the serial lexer's records, 0 chunks entered
+  again.
+- **The corpus** (495 files, 3.6 MB): the serial lexer's records at every size.
+
+| Chunk size (blocks) | Chunks | Entered again | Chunks past `L` | Pass 3's waits (32 in flight) |
+|---|---|---|---|---|
+| 1 | 57,029 | 0 | 725 | 900 |
+| 2 | 28,642 | 0 | 819 | 876 |
+| 16 | 3,815 | 0 | 381 | 213 |
+| 256 | 558 | 0 | 13 | 2 |
+
+Tests (`rerail-kotlin-parser`, `chunked_tests`):
+
+- `chunked_is_the_serial_lexer`;
+- `nested_templates_are_entered_where_the_serial_lexer_is`;
+- `summaries_compose_in_any_order` (the look-back against a left fold, and `(A·B)·C = A·(B·C)` on entries);
+- `corpus_chunked_is_the_serial_lexer` (ignored: `RERAIL_KOTLIN_CORPUS`);
+- `rerail-bitlex`'s `kotlins_loop_has_a_chunked_form`.
+
 ## Not yet (superseded at the merge above)
 
 The product build still walks the regions, for seven escapes tested over the file that read its

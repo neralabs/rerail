@@ -16,6 +16,8 @@ mod tier1;
 mod tier2;
 
 pub use tier1::{DERIVED, Lexed, Rec, SPANNED, carried, code_at, derived, lex, spanned};
+/// Lexing from the middle: a chunk's summary, its lanes, and the three passes.
+pub use tier1::{Entry, IN_FLIGHT, L, LEVEL_KINDS, Lane, MAXD, OPEN, Summary, apply, chunk_starts, compose, entries, entries_waits, lex_chunked, serial_entries, summaries};
 
 /// `src`'s tape, written to `finish`'s target and finished by it (decision 0434), or the byte the parser refused it at
 /// (0: tier 1 sends it to tree-sitter).

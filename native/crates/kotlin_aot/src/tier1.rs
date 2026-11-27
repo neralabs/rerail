@@ -4393,30 +4393,55 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
     let mut fill_14 = false;
     // The regions' masks as the walk makes them (`regions`), written as the loop reads each region: its opener, its
     // fill to its closer, and the bytes it hides.
+    #[cfg(feature = "test-hooks")]
     let mut lw_hidden = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_o_line = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_f_line = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_o_block = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_f_block = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_o_rstr = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_f_rstr = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_o_str = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_f_str = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_o_rstr2 = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_f_rstr2 = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_o_str2 = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_f_str2 = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_o_chr = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_f_chr = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_o_tick = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_f_tick = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_o_tail = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_f_tail = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_o_rtail = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_f_rtail = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_o_tail2 = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_f_tail2 = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_o_rtail2 = vec![0u64; nw];
+    #[cfg(feature = "test-hooks")]
     let mut lw_f_rtail2 = vec![0u64; nw];
     // The blocks of 64 bytes, and in each the bytes `skip` does not hold from the last token's end on: each a token's first byte (the lean lexer's `lex_blocks`).
     let mut b = at / 64;
@@ -4643,8 +4668,11 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                     let l = {
                         let c = s1_past(src, &mut st1, &mut s1, bfirst_bit(n, base, k_m_lf, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_lf(src, n, p, esc) })).unwrap_or(n);
                         let last = c - 1;
+                        #[cfg(feature = "test-hooks")]
                         set(&mut lw_o_line, s, s + 1);
+                        #[cfg(feature = "test-hooks")]
                         set(&mut lw_f_line, s, c);
+                        #[cfg(feature = "test-hooks")]
                         set(&mut lw_hidden, s + 1, c);
                         last
                     };
@@ -4704,8 +4732,11 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                             }
                             last
                         };
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_o_block, s, s + 1);
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_f_block, s, c);
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_hidden, s + 1, last + 1);
                             last
                         },
@@ -5478,8 +5509,11 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                             last
                         }
                         };
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_o_str, s, s + 1);
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_f_str, s, c);
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_hidden, s + 1, (c + 0) + 1);
                             last
                         },
@@ -5550,8 +5584,11 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                             last
                         }
                         };
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_o_rstr, s, s + 1);
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_f_rstr, s, c);
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_hidden, s + 1, (if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 0 } else { c + 2 }) + 1);
                             last
                         },
@@ -5617,8 +5654,11 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                             last
                         }
                         };
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_o_str2, s, s + 1);
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_f_str2, s, c);
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_hidden, s + 1, (if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 0 }) + 1);
                             last
                         },
@@ -5684,8 +5724,11 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                             last
                         }
                         };
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_o_rstr2, s, s + 1);
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_f_rstr2, s, c);
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_hidden, s + 1, (if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 2 }) + 1);
                             last
                         },
@@ -5745,8 +5788,11 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                             }
                             last
                         };
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_o_tail, s, s + 1);
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_f_tail, s, c);
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_hidden, s + 1, (c + 0) + 1);
                             last
                         },
@@ -5834,8 +5880,11 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                             }
                             last
                         };
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_o_rtail, s, s + 1);
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_f_rtail, s, c);
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_hidden, s + 1, (if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 0 } else { c + 2 }) + 1);
                             last
                         },
@@ -5918,8 +5967,11 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                             }
                             last
                         };
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_o_tail2, s, s + 1);
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_f_tail2, s, c);
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_hidden, s + 1, (if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 0 }) + 1);
                             last
                         },
@@ -5992,8 +6044,11 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                             }
                             last
                         };
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_o_rtail2, s, s + 1);
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_f_rtail2, s, c);
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_hidden, s + 1, (if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 2 }) + 1);
                             last
                         },
@@ -6096,8 +6151,11 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                             }
                             last
                         };
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_o_chr, s, s + 1);
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_f_chr, s, c);
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_hidden, s + 1, last + 1);
                             last
                         },
@@ -6141,8 +6199,11 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                             }
                             last
                         };
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_o_tick, s, s + 1);
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_f_tick, s, c);
+                            #[cfg(feature = "test-hooks")]
                             set(&mut lw_hidden, s + 1, last + 1);
                             last
                         },
@@ -8726,3 +8787,2382 @@ unsafe fn w_m_bt(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
     unsafe { cls_bt(src, n, p) }
 }
 
+
+// Lexing from the middle (the chunk-summaries design): the token loop's state between two tokens, the loop from any of
+// them to any block, and the three passes. Pass 1 lexes each chunk from each class of entries (`chunk_ends`), pass 3
+// composes the chunks' summaries by a prefix sum (`entries`), pass 2 lexes each chunk from its entry (`lex_chunked`).
+
+/// The token loop's state between two tokens: where the next token starts (`at`), the nest (`nest[..depth]`, its top
+/// `template`), the strings its templates hold open (`held[..opened]`, their records), and what the loop keeps of the
+/// token before. The serial lexer's at each chunk's start is that chunk's entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Entry {
+    pub at: usize,
+    pub pending: u32,
+    pub template: usize,
+    pub held: [usize; 4],
+    pub opened: usize,
+    pub nest: [usize; 4],
+    pub depth: usize,
+    pub acc_0: bool,
+    pub rec_0: bool,
+    pub xl_3: bool,
+    pub xl_5: bool,
+    pub fill_7: bool,
+    pub fill_10: bool,
+    pub fill_11: bool,
+    pub xl_11: bool,
+    pub fill_12: bool,
+    pub fill_13: bool,
+    pub fill_14: bool,
+}
+
+impl Entry {
+    /// The file's first byte: in code, nothing open.
+    pub const START: Entry = Entry { at: 0usize, pending: 0u32, template: usize::MAX, held: [0usize; 4], opened: 0usize, nest: [usize::MAX; 4], depth: 0usize, acc_0: false, rec_0: false, xl_3: false, xl_5: false, fill_7: false, fill_10: false, fill_11: false, xl_11: false, fill_12: false, fill_13: false, fill_14: false, };
+
+    /// The levels above the nest's depth and the strings past those open as at the start: no read reaches them before
+    /// a write, so two entries the loop goes on from alike are equal.
+    #[inline]
+    fn canonical(&mut self) {
+        for d in self.depth..self.nest.len() {
+            self.nest[d] = Entry::START.nest[d];
+        }
+        for h in self.opened..self.held.len() {
+            self.held[h] = Entry::START.held[h];
+        }
+    }
+
+    /// `self` with its nest and its strings as at the start: a lane's exit, whose nest its `p` holds.
+    #[inline]
+    fn without_nest(mut self) -> Entry {
+        self.nest = Entry::START.nest;
+        self.depth = Entry::START.depth;
+        self.template = Entry::START.template;
+        self.held = Entry::START.held;
+        self.opened = Entry::START.opened;
+        self
+    }
+}
+
+/// What a lane read of the nest below where it entered: that it read the bottom (`bottom`: a bracket with none open, a
+/// template's kind with none open, no string open), the kind of a level it entered with none (`kind_of`, the level), the
+/// lowest level it came to (`low`), and the deepest (`high`).
+#[derive(Clone, Copy, Debug)]
+pub struct Reads {
+    pub bottom: bool,
+    pub kind_of: Option<usize>,
+    pub low: usize,
+    pub high: usize,
+}
+
+/// A level the lane's entry has open, of a kind it has read none of yet: a bracket's or a template's.
+pub const OPEN: usize = usize::MAX - 1;
+
+/// A string's record a lane keeps from its entry (a tail resumes the string of the level it closes): `INHERIT + i`, the
+/// `i`th level the lane closes (innermost first), where a lane's own are the records it counts.
+pub const INHERIT: usize = 1 << 62;
+
+/// A read of `opened` (the strings open): none, the bottom (the lane's entry may have more); with a level of no kind
+/// yet below, which it counts as a string, that level's kind.
+#[inline(always)]
+fn opened_read(r: &mut Reads, nest: &[usize; MAXD], depth: usize, opened: usize) -> usize {
+    if opened == 0 {
+        r.bottom = true;
+    }
+    if r.kind_of.is_none()
+        && let Some(d) = (0..depth.min(MAXD)).rev().find(|&d| nest[d] == OPEN)
+    {
+        r.kind_of = Some(d);
+    }
+    opened
+}
+
+/// A read of `template` (the nest's top) at depth `depth`: at 0, the bottom (the lane's entry may have more open); of a
+/// level of no kind yet (`OPEN`), its kind.
+#[inline(always)]
+fn at_bottom(r: &mut Reads, depth: usize, template: usize) -> bool {
+    if depth == 0 {
+        r.bottom = true;
+    } else if template == OPEN && r.kind_of.is_none() {
+        r.kind_of = Some(depth - 1);
+    }
+    true
+}
+
+/// A first token the loop reads as given, not by its bytes: a region a chunk starts inside, read as its row reads it
+/// from a start `s` its closer's search starts past at the chunk's first byte, at level `lv` where it nests.
+#[derive(Clone, Copy, Debug)]
+struct Force {
+    s: usize,
+    open: usize,
+    row: usize,
+    lv: usize,
+}
+
+/// The token loop (`lex_on`'s, the product's) from `e` to block `to`: `e` where the next token starts after it, its
+/// records written where `WRITE` (pass 2) from `*len_io`, counted where not (pass 1), and its reads of the nest below
+/// its entry in `reads`. Its first token `force` where given; only that one where `ONE`.
+#[inline(always)]
+#[allow(unused_variables, unused_assignments, unused_mut, unused_labels, clippy::all)]
+unsafe fn lex_range<const WRITE: bool, const ONE: bool>(src: &[u8], e: &mut Entry, mut st1: &mut Stage1Run, mut s1: &mut Stage1, to: usize, refused_io: &mut bool, out: *mut Rec, len_io: &mut usize, extras: &mut Vec<Rec>, reads: &mut Reads, force: Option<Force>) {
+    let mut force = force;
+    let n = src.len();
+    let nw = n.div_ceil(64);
+    let mut refused = *refused_io;
+    let mut len = *len_io;
+    let Entry { mut at, mut pending, mut template, mut held, mut opened, mut nest, mut depth, mut acc_0, mut rec_0, mut xl_3, mut xl_5, mut fill_7, mut fill_10, mut fill_11, mut xl_11, mut fill_12, mut fill_13, mut fill_14, } = *e;
+    let mut from: usize = 0usize;
+    let mut from_record: usize = 0usize;
+    let mut before: u32 = 0u32;
+    let mut close: usize;
+    let mut b = at / 64;
+    'tokens: while b < nw.min(to) {
+        let base = b * 64;
+        // Stage 1 through the next block (the last a token of a few bytes reads), 16 more at a time.
+        if st1.t < b + 2 + 2 {
+            stage1_best(src, &mut st1, &mut s1, b + 2 + 2 + 16);
+        }
+        let k_m_lf = unsafe { w_m_lf(src, n, base as isize, &mut 0) };
+        let k_m_block_end = unsafe { w_m_block_end(src, n, base as isize, &mut 0) };
+        let k_t108 = unsafe { w_t108(src, n, base as isize, &mut 0) };
+        let k_t55 = unsafe { w_t55(src, n, base as isize, &mut 0) };
+        let k_m_high = unsafe { w_m_high(src, n, base as isize, &mut 0) };
+        let k_t218 = unsafe { w_t218(src, n, base as isize, &mut 0) };
+        let k_t97 = unsafe { w_t97(src, n, base as isize, &mut 0) };
+        let k_m_bt = unsafe { w_m_bt(src, n, base as isize, &mut 0) };
+        // The terms a run read forward ended in (`forward_run`), at its token's last byte, and those it read after its first.
+        #[allow(unused_assignments)]
+        let mut end_last = 0u32;
+        #[allow(unused_assignments)]
+        let mut end_seen = 0u32;
+        // The fills a run read forward kept as it read (`run_fill`), at its token's last byte.
+        #[allow(unused_assignments)]
+        let mut end_fills = 0u32;
+        let mut firsts = !unsafe { w_m_ws(src, n, (b * 64) as isize, &mut 0) } & (!0u64 << at.saturating_sub(base));
+        while firsts != 0 || force.is_some() {
+        let s = match force {
+            Some(f) => f.s,
+            None => base + firsts.trailing_zeros() as usize,
+        };
+        if s >= n {
+            break 'tokens;
+        }
+        // Whether `s1.m_lf` holds in the gap before the token.
+        let gap_m_lf = s > at && s1_past(src, &mut st1, &mut s1, bfirst_in(n, base, k_m_lf, at, s - 1, |p: isize, esc: &mut u64| unsafe { w_m_lf(src, n, p, esc) })).is_some();
+        // The last byte of the gap before the token where `s1.t90` holds.
+        let gap_last_t90 = if s > at { wlast_in(at, s - 1, |p: isize, esc: &mut u64| unsafe { w_t90(src, n, p, esc) }) } else { None };
+        // The token's first byte's group, by the dispatch tables (simdjson's `classify`).
+        let c = src[s];
+        let group = (DISPATCH_LO[usize::from(c & 15)] & DISPATCH_HI[usize::from(c >> 4)]).trailing_zeros();
+        // The region a token here opens, as the walk opens them: the first declared whose opener holds, a kind after others where the string the template is in (`template`) is one; of those whose opener may be the byte's.
+        let open = if let Some(f) = force { f.open } else { match group {
+            // `"`
+            5 => if ((at_dq3(src, n, s) && !at_q2(src, n, s))) {
+                2
+            } else if ((((src[s] == b'"') && !at_dq3(src, n, s)) && !at_q2(src, n, s))) {
+                3
+            } else if ((at_dq3(src, n, s) && at_q2(src, n, s))) {
+                4
+            } else if ((((src[s] == b'"') && !at_dq3(src, n, s)) && at_q2(src, n, s))) {
+                5
+            } else {
+                usize::MAX
+            },
+            // `'`
+            7 => 6,
+            // `/`
+            9 => if (((src[s] == b'/') && (s + 1 < n && (src[s + 1] == b'/')))) {
+                0
+            } else if (((src[s] == b'/') && (s + 1 < n && (src[s + 1] == b'*')))) {
+                1
+            } else {
+                usize::MAX
+            },
+            // ```
+            16 => 7,
+            // `}`
+            17 => if (at_bottom(reads, depth, template) && template == 3) {
+                8
+            } else if (at_bottom(reads, depth, template) && template == 2) {
+                9
+            } else if (at_bottom(reads, depth, template) && template == 5) {
+                10
+            } else if (at_bottom(reads, depth, template) && template == 4) {
+                11
+            } else {
+                usize::MAX
+            },
+            _ => usize::MAX,
+        } };
+        // The skipped bytes before the token, for the gap masks (none where there are none).
+        if (gap_m_lf) {
+            acc_0 = true;
+            rec_0 = true;
+        }
+        // a blank, a comment or a `\r` after a type the lean parser may split: at the gap's first byte
+        if at > 0 && at < n && fill_13 && ((at - 1 < n && (src[at - 1] == b'>'))) && ((((at + 1 <= n && src[at] == 0x20) || (at < n && (src[at] == b'/'))) || (at + 1 <= n && src[at] == 0x0d))) {
+            refused = true;
+            break 'tokens;
+        }
+        let mut hits = 0u32;
+        let (l, kind, extra, mut marks, word): (usize, u32, bool, u32, u32) = {
+            // The row: the first whose start holds, of those whose start may be the byte's.
+            let row = if let Some(f) = force { f.row } else { match group {
+                // `!#%&()*+,-:;<=>?@[\]^{|~`
+                0 | 1 | 2 | 3 | 4 => if {
+                // `assume … at starts p_start = (punct & ~(prev(two_start) | prev(two_start_three, 2))) & ~(((dot & next(digit)) & ~prev(word)) & ~prev(dot))`, not proved: a test build checks it.
+                
+                (((matches!(src[s], b'.' | b'*' | b'/' | b';' | b',' | b':' | b'(' | b')' | b'{' | b'}' | b'[' | b']' | b'<' | b'>' | b'=' | b'+' | b'-' | b'!' | b'?' | b'&' | b'|' | b'%' | b'^' | b'~' | b'@' | b'#' | b'$' | b'\\') && !((s >= 1 && at_two_start(src, n, (s - 1))) || (s >= 2 && at_two_start_three(src, n, (s - 2))))) && !((((src[s] == b'.') && (s + 1 < n && matches!(src[s + 1], b'0'..=b'9'))) && !(s >= 1 && (s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')))) && !(s >= 1 && (s - 1 < n && (src[s - 1] == b'.'))))))
+            } {
+                    18
+                } else {
+                    usize::MAX
+                },
+                // `"`
+                5 => if open == 3 {
+                    7
+                } else if open == 2 {
+                    8
+                } else if open == 5 {
+                    9
+                } else if open == 4 {
+                    10
+                } else {
+                    usize::MAX
+                },
+                // `$`
+                6 => if ((open == usize::MAX && ((((src[s] == b'$') && (s + 1 < n && (src[s + 1] == b'"'))) || (((src[s] == b'$') && (s + 1 < n && (src[s + 1] == b'$'))) && (s + 2 < n && (src[s + 2] == b'"')))))) && (!(s >= 1 && (s - 1 < n && (src[s - 1] == b'$'))))) {
+                    15
+                } else if {
+                // `assume … at starts p_start = (punct & ~(prev(two_start) | prev(two_start_three, 2))) & ~(((dot & next(digit)) & ~prev(word)) & ~prev(dot))`, not proved: a test build checks it.
+                
+                (((matches!(src[s], b'.' | b'*' | b'/' | b';' | b',' | b':' | b'(' | b')' | b'{' | b'}' | b'[' | b']' | b'<' | b'>' | b'=' | b'+' | b'-' | b'!' | b'?' | b'&' | b'|' | b'%' | b'^' | b'~' | b'@' | b'#' | b'$' | b'\\') && !((s >= 1 && at_two_start(src, n, (s - 1))) || (s >= 2 && at_two_start_three(src, n, (s - 2))))) && !((((src[s] == b'.') && (s + 1 < n && matches!(src[s + 1], b'0'..=b'9'))) && !(s >= 1 && (s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')))) && !(s >= 1 && (s - 1 < n && (src[s - 1] == b'.'))))))
+            } {
+                    18
+                } else {
+                    usize::MAX
+                },
+                // `'`
+                7 => 16,
+                // `.`
+                8 => if (((((src[s] == b'.') && (s + 1 < n && matches!(src[s + 1], b'0'..=b'9'))) && !(s >= 1 && ((s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (s - 1 < n && matches!(src[s - 1], 0x80..=0xff))))) && !(s >= 1 && (s - 1 < n && (src[s - 1] == b'.'))))) {
+                    4
+                } else if {
+                // `assume … at starts p_start = (punct & ~(prev(two_start) | prev(two_start_three, 2))) & ~(((dot & next(digit)) & ~prev(word)) & ~prev(dot))`, not proved: a test build checks it.
+                
+                (((matches!(src[s], b'.' | b'*' | b'/' | b';' | b',' | b':' | b'(' | b')' | b'{' | b'}' | b'[' | b']' | b'<' | b'>' | b'=' | b'+' | b'-' | b'!' | b'?' | b'&' | b'|' | b'%' | b'^' | b'~' | b'@' | b'#' | b'$' | b'\\') && !((s >= 1 && at_two_start(src, n, (s - 1))) || (s >= 2 && at_two_start_three(src, n, (s - 2))))) && !((((src[s] == b'.') && (s + 1 < n && matches!(src[s + 1], b'0'..=b'9'))) && !(s >= 1 && (s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')))) && !(s >= 1 && (s - 1 < n && (src[s - 1] == b'.'))))))
+            } {
+                    18
+                } else {
+                    usize::MAX
+                },
+                // `/`
+                9 => if open == 0 {
+                    0
+                } else if open == 1 {
+                    1
+                } else if {
+                // `assume … at starts p_start = (punct & ~(prev(two_start) | prev(two_start_three, 2))) & ~(((dot & next(digit)) & ~prev(word)) & ~prev(dot))`, not proved: a test build checks it.
+                
+                (((matches!(src[s], b'.' | b'*' | b'/' | b';' | b',' | b':' | b'(' | b')' | b'{' | b'}' | b'[' | b']' | b'<' | b'>' | b'=' | b'+' | b'-' | b'!' | b'?' | b'&' | b'|' | b'%' | b'^' | b'~' | b'@' | b'#' | b'$' | b'\\') && !((s >= 1 && at_two_start(src, n, (s - 1))) || (s >= 2 && at_two_start_three(src, n, (s - 2))))) && !((((src[s] == b'.') && (s + 1 < n && matches!(src[s + 1], b'0'..=b'9'))) && !(s >= 1 && (s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')))) && !(s >= 1 && (s - 1 < n && (src[s - 1] == b'.'))))))
+            } {
+                    18
+                } else {
+                    usize::MAX
+                },
+                // `0`
+                10 => if (((matches!(src[s], b'0'..=b'9') && !((src[s] == b'0') && ((s + 1 < n && matches!(src[s + 1], b'x' | b'X')) || (s + 1 < n && matches!(src[s + 1], b'b' | b'B'))))) && !(s >= 1 && ((s - 1 < n && (src[s - 1] == b'.')) && ((s - 1) < n && !((s - 1) >= 1 && (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'.')))))))) {
+                    3
+                } else if ((((src[s] == b'0') && (s + 1 < n && matches!(src[s + 1], b'x' | b'X'))) && !(s >= 1 && ((s - 1 < n && (src[s - 1] == b'.')) && ((s - 1) < n && !((s - 1) >= 1 && (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'.')))))))) {
+                    5
+                } else if ((((src[s] == b'0') && (s + 1 < n && matches!(src[s + 1], b'b' | b'B'))) && !(s >= 1 && ((s - 1 < n && (src[s - 1] == b'.')) && ((s - 1) < n && !((s - 1) >= 1 && (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'.')))))))) {
+                    6
+                } else {
+                    usize::MAX
+                },
+                // `123456789`
+                11 => if (((matches!(src[s], b'0'..=b'9') && !((src[s] == b'0') && ((s + 1 < n && matches!(src[s + 1], b'x' | b'X')) || (s + 1 < n && matches!(src[s + 1], b'b' | b'B'))))) && !(s >= 1 && ((s - 1 < n && (src[s - 1] == b'.')) && ((s - 1) < n && !((s - 1) >= 1 && (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'.')))))))) {
+                    3
+                } else {
+                    usize::MAX
+                },
+                // `ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff`
+                12 | 13 | 14 | 15 => 2,
+                // ```
+                16 => 17,
+                // `}`
+                17 => if open == 8 {
+                    11
+                } else if open == 9 {
+                    12
+                } else if open == 10 {
+                    13
+                } else if open == 11 {
+                    14
+                } else if {
+                // `assume … at starts p_start = (punct & ~(prev(two_start) | prev(two_start_three, 2))) & ~(((dot & next(digit)) & ~prev(word)) & ~prev(dot))`, not proved: a test build checks it.
+                
+                (((matches!(src[s], b'.' | b'*' | b'/' | b';' | b',' | b':' | b'(' | b')' | b'{' | b'}' | b'[' | b']' | b'<' | b'>' | b'=' | b'+' | b'-' | b'!' | b'?' | b'&' | b'|' | b'%' | b'^' | b'~' | b'@' | b'#' | b'$' | b'\\') && !((s >= 1 && at_two_start(src, n, (s - 1))) || (s >= 2 && at_two_start_three(src, n, (s - 2))))) && !((((src[s] == b'.') && (s + 1 < n && matches!(src[s + 1], b'0'..=b'9'))) && !(s >= 1 && (s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')))) && !(s >= 1 && (s - 1 < n && (src[s - 1] == b'.'))))))
+            } {
+                    18
+                } else {
+                    usize::MAX
+                },
+                _ => usize::MAX,
+            } };
+            let force_lv = force.map_or(0, |f| f.lv);
+            force = None;
+            // The nest: a bracket opens at a `{` where a level is open; the innermost closes at a `}` (a tail's row reads on past it).
+            if depth == 0 && (((src[s] == b'{')) || ((src[s] == b'}'))) {
+                reads.bottom = true;
+            }
+            if depth > 0 {
+                if ((src[s] == b'{')) {
+                    if depth == 4 {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    nest[depth] = usize::MAX;
+                    depth += 1;
+                    reads.high = reads.high.max(depth);
+                    template = usize::MAX;
+                } else if ((src[s] == b'}')) {
+                    depth -= 1;
+                    reads.low = reads.low.min(depth);
+                    template = if depth > 0 { nest[depth - 1] } else { usize::MAX };
+                }
+            }
+            match row {
+                0 => {
+                    // `line_comment`: read line
+                    // `code` at the byte before the token.
+                    let xs_3 = s > at || xl_3;
+                    // `fill(lf & code, (code & ~ws) | r_first)`: at the byte before the token.
+                    let fs_10 = fill_10 || (gap_m_lf);
+                    // `fill(cmt_on_lf, (code & ~ws) | (r_first & ~slash))`: at the byte before the token.
+                    let fs_14 = fill_14;
+                    let l = {
+                        let c = s1_past(src, &mut st1, &mut s1, bfirst_bit(n, base, k_m_lf, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_lf(src, n, p, esc) })).unwrap_or(n);
+                        let last = c - 1;
+                        
+                        
+                        
+                        last
+                    };
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    
+                    xl_3 = false;
+                    xl_5 = false;
+                    fill_7 = false;
+                    fill_10 = (!xs_3 && fs_10);
+                    fill_11 = false;
+                    xl_11 = false;
+                    fill_12 = false;
+                    fill_13 = false;
+                    fill_14 = ((xs_3 && fs_10) || fs_14);
+                    (l, 0, true, 0x800, 0)
+                }
+,
+                1 => {
+                    // `multiline_comment`: read block
+                        // `code` at the byte before the token.
+                        let xs_3 = s > at || xl_3;
+                        // `fill(lf & code, (code & ~ws) | r_first)`: at the byte before the token.
+                        let fs_10 = fill_10 || (gap_m_lf);
+                        // `fill(cmt_on_lf, (code & ~ws) | (r_first & ~slash))`: at the byte before the token.
+                        let fs_14 = fill_14;
+                    let l = match {
+                        // `block` nests: an opener in it opens a level, a closer closes the innermost.
+                        let mut q = s + 1;
+                        let mut lv = force_lv;
+                        loop {
+                            let Some(c) = s1_past(src, &mut st1, &mut s1, bfirst_bit(n, base, k_m_block_end, q, |p: isize, esc: &mut u64| unsafe { w_m_block_end(src, n, p, esc) })) else { break None };
+                            if let Some(o) = s1_past(src, &mut st1, &mut s1, wfirst_bit(n, q, |p: isize, esc: &mut u64| unsafe { w_t11(src, n, p, esc) })).filter(|&o| o < c) {
+                                if lv == 3 {
+                                    break None;
+                                } else {
+                                    lv += 1;
+                                }
+                                q = o + 1;
+                                continue;
+                            }
+                            if lv == 0 {
+                                break Some(c);
+                            }
+                            lv -= 1;
+                            q = c + 1;
+                        }
+                    } {
+                        Some(c) => {
+                            let last = {
+                            let last = c + 0;
+                            // a `*/*/` in a block comment
+                            if s1_past(src, &mut st1, &mut s1, bfirst_in(n, base, k_t108, s, c - 1, |p: isize, esc: &mut u64| unsafe { w_t108(src, n, p, esc) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            last
+                        };
+                            
+                            
+                            
+                            last
+                        },
+                        None => {
+                            refused = true;
+                            break 'tokens;
+                        }
+                    };
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    
+                    xl_3 = false;
+                    xl_5 = false;
+                    fill_7 = false;
+                    fill_10 = (!xs_3 && fs_10);
+                    fill_11 = false;
+                    xl_11 = false;
+                    fill_12 = false;
+                    fill_13 = false;
+                    fill_14 = ((xs_3 && fs_10) || fs_14);
+                    (l, 0, true, 0x1800, 0)
+                }
+,
+                2 => {
+                    // `simple_identifier`: run name_more, read as word | high (assumed)
+                    // `number` at the byte before the token.
+                    let xs_5 = s == at && xl_5;
+                    // `fill(num_start, ~w)`: at the byte before the token.
+                    let fs_7 = fill_7 && s == at;
+                    // `fill(prev(as_kw, 2), ~(code & ((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))))`: at the byte before the token.
+                    let fs_11 = if s > at { match gap_last_t90 { None => xl_11 || fill_11, Some(q) => q == at && xl_11 } } else { fill_11 };
+                    let xs_11 = s == at && xl_11;
+                    // `fill(as_run & dot, ~as_run)`: at the byte before the token.
+                    let fs_12 = fill_12 && fs_11;
+                    // `fill(as_dot & text("<"), ((~as_dot | text("?")) | text("<")) | (gt & prev(gt)))`: at the byte before the token.
+                    let fs_13 = fill_13 && fs_12;
+                    // a name's letter past ASCII touching a number
+                    if ((matches!(src[s], 0x80..=0xff)) && xs_5) {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    let l = s1_past(src, &mut st1, &mut s1, brun_last(n, base, k_t55, s, |p: isize, esc: &mut u64| unsafe { w_t55(src, n, p, esc) }));
+                    // Not proved: a test build checks it against the rule over the file.
+                    
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    
+                    xl_3 = { let x = true;  x };
+                    xl_5 = { let x = fs_7;  x };
+                    fill_7 = { let f = fs_7;  f };
+                    fill_10 = false;
+                    fill_11 = (xs_11 || fs_11);
+                    xl_11 = if l > s { ((l >= 1 && ((((l - 1 < n && matches!(src[l - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && ((l - 1) < n && !((l - 1) >= 1 && ((((l - 1) - 1) < n && matches!(src[((l - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((l - 1) - 1) < n && matches!(src[((l - 1) - 1)], 0x80..=0xff)))))) && (((l - 1) + 2 <= n && src[(l - 1)] == 0x61 && src[(l - 1) + 1] == 0x73) || ((l - 1) + 2 <= n && src[(l - 1)] == 0x69 && src[(l - 1) + 1] == 0x73))) && ((l - 1) < n && !((((l - 1) + 2) < n && matches!(src[((l - 1) + 2)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((l - 1) + 2) < n && matches!(src[((l - 1) + 2)], 0x80..=0xff))))))) } else { ((s >= 1 && ((((s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && ((s - 1) < n && !((s - 1) >= 1 && ((((s - 1) - 1) < n && matches!(src[((s - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((s - 1) - 1) < n && matches!(src[((s - 1) - 1)], 0x80..=0xff)))))) && (((s - 1) + 2 <= n && src[(s - 1)] == 0x61 && src[(s - 1) + 1] == 0x73) || ((s - 1) + 2 <= n && src[(s - 1)] == 0x69 && src[(s - 1) + 1] == 0x73))) && ((s - 1) < n && !((((s - 1) + 2) < n && matches!(src[((s - 1) + 2)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((s - 1) + 2) < n && matches!(src[((s - 1) + 2)], 0x80..=0xff))))))) };
+                    fill_12 = ((xs_11 || fs_11) && fs_12);
+                    fill_13 = (fill_12 && (xs_11 || fs_11) && fs_12 && fs_13);
+                    fill_14 = false;
+                    // a name's letter past ASCII touching a number: over the token's bytes after its first.
+                    if { let t = (fs_7 && s1_past(src, &mut st1, &mut s1, bfirst_in(n, base, k_m_high, s + 1, l, |p: isize, esc: &mut u64| unsafe { w_m_high(src, n, p, esc) })).is_some());
+                        
+                        t } {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    // a byte above 0x7f outside a comment, not a name's letter
+                    if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s, l, |p: isize, esc: &mut u64| unsafe { l_t107(src, n, p, esc, upto(p, l)) })).is_some() {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    // a `0x` or `0b` with no digit
+                    if ((((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') && matches!(src[s], b'0'..=b'9')) && !(s >= 1 && ((s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (s - 1 < n && matches!(src[s - 1], 0x80..=0xff))))) && !(s >= 1 && ((s - 1 < n && (src[s - 1] == b'.')) && ((s - 1) < n && !((s - 1) >= 1 && (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'.'))))))) && (src[s] == b'0')) && (s + 1 < n && matches!(src[s + 1], b'b' | b'B'))) && ((s + 2) < n && !(s + 2 < n && matches!(src[s + 2], b'0' | b'1' | b'_')))) || ((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') && matches!(src[s], b'0'..=b'9')) && !(s >= 1 && ((s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (s - 1 < n && matches!(src[s - 1], 0x80..=0xff))))) && !(s >= 1 && ((s - 1 < n && (src[s - 1] == b'.')) && ((s - 1) < n && !((s - 1) >= 1 && (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'.'))))))) && (src[s] == b'0')) && (s + 1 < n && matches!(src[s + 1], b'x' | b'X'))) && ((s + 2) < n && !(s + 2 < n && matches!(src[s + 2], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'_')))))) {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    // a digit after a binary number: at no byte of this token (it holds at a run's end), not proved: a test build checks it.
+                    
+                    // a word touching a real number: at no byte of this token (it holds at a run's end), not proved: a test build checks it.
+                    
+                    // a number that ends in `_`: at no byte of this token (it holds at a run's end), not proved: a test build checks it.
+                    
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, word_at(src, s, l + 1 - s))
+                }
+,
+                3 => {
+                    // `integer_literal`: run nb, read as ((((((t183 | ((dot & prev(t183)) & next(digit))) | (((dot & next(digit)) & ~prev(s1.t55)) & ~prev(dot))) | t185) | t189) | t192) | t190) | (f_letter & prev(t193)) (assumed)
+                    // `fill(prev(as_kw, 2), ~(code & ((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))))`: at the byte before the token.
+                    let fs_11 = if s > at { match gap_last_t90 { None => xl_11 || fill_11, Some(q) => q == at && xl_11 } } else { fill_11 };
+                    let xs_11 = s == at && xl_11;
+                    // `fill(as_run & dot, ~as_run)`: at the byte before the token.
+                    let fs_12 = fill_12 && fs_11;
+                    // `fill(as_dot & text("<"), ((~as_dot | text("?")) | text("<")) | (gt & prev(gt)))`: at the byte before the token.
+                    let fs_13 = fill_13 && fs_12;
+                    let l = {
+        // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).
+        let mut q = s;
+        let mut last = 0u32;
+        let mut seen = 0u32;
+        let mut fills = 0u32;
+        while q < n {
+            let mut now = 0u32;
+            // Term 0: a run of `decd`.
+            if (((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && !(((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'x' | b'X'))))) && (q < n && !(((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'b' | b'B'))))) || (last >> 0 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) {
+                now |= 1 << 0;
+            }
+            // Term 1: a byte.
+            if (((q < n && (src[q] == b'.')) && (last >> 0 & 1 == 1)) && (q + 1 < n && matches!(src[q + 1], b'0'..=b'9'))) {
+                now |= 1 << 1;
+            }
+            // Term 2: a byte.
+            if ((((q < n && (src[q] == b'.')) && (q + 1 < n && matches!(src[q + 1], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && (q - 1 < n && (src[q - 1] == b'.'))))) {
+                now |= 1 << 2;
+            }
+            // Term 3: a run of `decd`.
+            if ((last >> 1 & 1 == 1) || (last >> 2 & 1 == 1)) || (last >> 3 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) {
+                now |= 1 << 3;
+            }
+            // Term 4: a byte.
+            if (((q < n && matches!(src[q], b'e' | b'E')) && ((last >> 0 & 1 == 1) || (last >> 3 & 1 == 1))) && ((q + 1 < n && matches!(src[q + 1], b'0'..=b'9')) || ((q + 1 < n && matches!(src[q + 1], b'+' | b'-')) && (q + 2 < n && matches!(src[q + 2], b'0'..=b'9'))))) {
+                now |= 1 << 4;
+            }
+            // Term 5: a byte.
+            if ((q < n && matches!(src[q], b'+' | b'-')) && (last >> 4 & 1 == 1)) {
+                now |= 1 << 5;
+            }
+            // Term 6: a run of `decd`.
+            if (((last >> 4 & 1 == 1) && (q < n && matches!(src[q], b'0'..=b'9'))) || (last >> 5 & 1 == 1)) || (last >> 6 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) {
+                now |= 1 << 6;
+            }
+            // Term 7: a byte.
+            if ((q < n && matches!(src[q], b'f' | b'F')) && (((last >> 0 & 1 == 1) || (last >> 3 & 1 == 1)) || (last >> 6 & 1 == 1))) {
+                now |= 1 << 7;
+            }
+            if now == 0 && q > s {
+                break;
+            }
+            // `decd`'s run: term 0 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 0 && (q < n && matches!(src[q], b'0'..=b'9' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_decd(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            // `decd`'s run: term 3 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 3 && (q < n && matches!(src[q], b'0'..=b'9' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_decd(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            // `decd`'s run: term 6 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 6 && (q < n && matches!(src[q], b'0'..=b'9' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_decd(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            last = now;
+            q += 1;
+        }
+        end_last = last;
+        end_seen = seen;
+        end_fills = fills;
+        q.saturating_sub(1)
+    };
+                    // Not proved: a test build checks it against the rule over the file.
+                    
+                    let l = l.max(s);
+                    if wcount_in(n, s, l, |p: isize, esc: &mut u64| unsafe { l_t194(src, n, p, esc, upto(p, l)) }) >= 1 {
+                        hits |= 1 << 9;
+                    }
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    
+                    xl_3 = { let x = true;  x };
+                    xl_5 = { let x = true;  x };
+                    fill_7 = if l > s { (end_fills >> 0 & 1 == 1) } else { true };
+                    fill_10 = false;
+                    fill_11 = if l > s { (!(end_seen >> 0 & 1 == 1) && (xs_11 || fs_11)) } else { (xs_11 || fs_11) };
+                    xl_11 = false;
+                    fill_12 = (fill_11 && (((xs_11 || fs_11) && fs_12) || (end_seen >> 1 & 1 == 1)));
+                    fill_13 = (fill_12 && (xs_11 || fs_11) && fs_12 && fs_13);
+                    fill_14 = false;
+                    // a `0x` or `0b` with no digit
+                    if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s, l, |p: isize, esc: &mut u64| unsafe { l_t110(src, n, p, esc, upto(p, l)) })).is_some() {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    // a digit after a binary number, as `integer_literal`'s assumptions read it: not proved, a test build checks it.
+                    
+                    // a word touching a real number: at the token's end, where it may hold
+                    if ((!(end_last >> 0 & 1 == 1) && ((l + 1 < n && matches!(src[l + 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (l + 1 < n && matches!(src[l + 1], 0x80..=0xff))))) {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    // a number that ends in `_`, as `integer_literal`'s assumptions read it: not proved, a test build checks it.
+                    
+                    // a number that ends in `_`: at the token's end, where it may hold
+                    if (((((end_last >> 0 & 1 == 1) || (end_last >> 3 & 1 == 1)) || (end_last >> 6 & 1 == 1)) && (l < n && (src[l] == b'_')))) {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    // punct: a triple's last byte starts a pair: at no byte of this token (it holds at another's start), not proved: a test build checks it.
+                    
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, 0)
+                }
+,
+                4 => {
+                    // `real_literal`: run nb, read as ((((((t183 | ((dot & prev(t183)) & next(digit))) | s1.t198) | t185) | t189) | t192) | t190) | (f_letter & prev(t193)) (assumed)
+                    // `fill(prev(as_kw, 2), ~(code & ((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))))`: at the byte before the token.
+                    let fs_11 = if s > at { match gap_last_t90 { None => xl_11 || fill_11, Some(q) => q == at && xl_11 } } else { fill_11 };
+                    let xs_11 = s == at && xl_11;
+                    // `fill(as_run & dot, ~as_run)`: at the byte before the token.
+                    let fs_12 = fill_12 && fs_11;
+                    // `fill(as_dot & text("<"), ((~as_dot | text("?")) | text("<")) | (gt & prev(gt)))`: at the byte before the token.
+                    let fs_13 = fill_13 && fs_12;
+                    let l = {
+        // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).
+        let mut q = s;
+        let mut last = 0u32;
+        let mut seen = 0u32;
+        let mut fills = 0u32;
+        while q < n {
+            let mut now = 0u32;
+            // Term 0: a run of `decd`.
+            if (((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && !(((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'x' | b'X'))))) && (q < n && !(((((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff))) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) && (q < n && (src[q] == b'0'))) && (q + 1 < n && matches!(src[q + 1], b'b' | b'B'))))) || (last >> 0 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) {
+                now |= 1 << 0;
+            }
+            // Term 1: a byte.
+            if (((q < n && (src[q] == b'.')) && (last >> 0 & 1 == 1)) && (q + 1 < n && matches!(src[q + 1], b'0'..=b'9'))) {
+                now |= 1 << 1;
+            }
+            // Term 2: a byte.
+            if ((((q < n && (src[q] == b'.')) && (q + 1 < n && matches!(src[q + 1], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && (q - 1 < n && (src[q - 1] == b'.'))))) {
+                now |= 1 << 2;
+            }
+            // Term 3: a run of `decd`.
+            if ((last >> 1 & 1 == 1) || (last >> 2 & 1 == 1)) || (last >> 3 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) {
+                now |= 1 << 3;
+            }
+            // Term 4: a byte.
+            if (((q < n && matches!(src[q], b'e' | b'E')) && ((last >> 0 & 1 == 1) || (last >> 3 & 1 == 1))) && ((q + 1 < n && matches!(src[q + 1], b'0'..=b'9')) || ((q + 1 < n && matches!(src[q + 1], b'+' | b'-')) && (q + 2 < n && matches!(src[q + 2], b'0'..=b'9'))))) {
+                now |= 1 << 4;
+            }
+            // Term 5: a byte.
+            if ((q < n && matches!(src[q], b'+' | b'-')) && (last >> 4 & 1 == 1)) {
+                now |= 1 << 5;
+            }
+            // Term 6: a run of `decd`.
+            if (((last >> 4 & 1 == 1) && (q < n && matches!(src[q], b'0'..=b'9'))) || (last >> 5 & 1 == 1)) || (last >> 6 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'_')))) {
+                now |= 1 << 6;
+            }
+            // Term 7: a byte.
+            if ((q < n && matches!(src[q], b'f' | b'F')) && (((last >> 0 & 1 == 1) || (last >> 3 & 1 == 1)) || (last >> 6 & 1 == 1))) {
+                now |= 1 << 7;
+            }
+            if now == 0 && q > s {
+                break;
+            }
+            // `decd`'s run: term 0 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 0 && (q < n && matches!(src[q], b'0'..=b'9' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_decd(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            // `decd`'s run: term 3 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 3 && (q < n && matches!(src[q], b'0'..=b'9' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_decd(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            // `decd`'s run: term 6 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 6 && (q < n && matches!(src[q], b'0'..=b'9' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_decd(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            last = now;
+            q += 1;
+        }
+        end_last = last;
+        end_seen = seen;
+        end_fills = fills;
+        q.saturating_sub(1)
+    };
+                    // Not proved: a test build checks it against the rule over the file.
+                    
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    
+                    xl_3 = { let x = true;  x };
+                    xl_5 = { let x = true;  x };
+                    fill_7 = if l > s { (end_fills >> 0 & 1 == 1) } else { false };
+                    fill_10 = false;
+                    fill_11 = if l > s { (!(end_seen >> 0 & 1 == 1) && (xs_11 || fs_11)) } else { (xs_11 || fs_11) };
+                    xl_11 = false;
+                    fill_12 = (fill_11 && (xs_11 || fs_11 || (end_seen >> 1 & 1 == 1)));
+                    fill_13 = (fill_12 && (xs_11 || fs_11) && fs_13);
+                    fill_14 = false;
+                    // a `0x` or `0b` with no digit
+                    if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, l, |p: isize, esc: &mut u64| unsafe { l_t110(src, n, p, esc, upto(p, l)) })).is_some() {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    // a digit after a binary number, as `real_literal`'s assumptions read it: not proved, a test build checks it.
+                    
+                    // a word touching a real number: at the token's end, where it may hold
+                    if ((!(end_last >> 0 & 1 == 1) && ((l + 1 < n && matches!(src[l + 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (l + 1 < n && matches!(src[l + 1], 0x80..=0xff))))) {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    // a number that ends in `_`, as `real_literal`'s assumptions read it: not proved, a test build checks it.
+                    
+                    // a number that ends in `_`: at the token's end, where it may hold
+                    if (((((end_last >> 0 & 1 == 1) || (end_last >> 3 & 1 == 1)) || (end_last >> 6 & 1 == 1)) && (l < n && (src[l] == b'_')))) {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    // punct: a triple's last byte starts a pair: at no byte of this token (it holds at another's start), not proved: a test build checks it.
+                    
+                    (l, 8, false, 0x0, word_at(src, s, l + 1 - s))
+                }
+,
+                5 => {
+                    // `hex_literal`: run prev(hex_at) | hx, read as prev(t201) | t202 (assumed)
+                    // `fill(prev(as_kw, 2), ~(code & ((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))))`: at the byte before the token.
+                    let fs_11 = if s > at { match gap_last_t90 { None => xl_11 || fill_11, Some(q) => q == at && xl_11 } } else { fill_11 };
+                    let xs_11 = s == at && xl_11;
+                    // `fill(as_run & dot, ~as_run)`: at the byte before the token.
+                    let fs_12 = fill_12 && fs_11;
+                    // `fill(as_dot & text("<"), ((~as_dot | text("?")) | text("<")) | (gt & prev(gt)))`: at the byte before the token.
+                    let fs_13 = fill_13 && fs_12;
+                    let l = {
+        // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).
+        let mut q = s;
+        let mut last = 0u32;
+        let mut seen = 0u32;
+        let mut fills = 0u32;
+        while q < n {
+            let mut now = 0u32;
+            // Term 0: a byte.
+            if (q >= 1 && (((((((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff))) && (q - 1 < n && matches!(src[q - 1], b'0'..=b'9'))) && ((q - 1) < n && !((q - 1) >= 1 && ((((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], 0x80..=0xff)))))) && ((q - 1) < n && !((q - 1) >= 1 && ((((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')) && (((q - 1) - 1) < n && !(((q - 1) - 1) >= 1 && ((((q - 1) - 1) - 1) < n && (src[(((q - 1) - 1) - 1)] == b'.')))))))) && (q - 1 < n && (src[q - 1] == b'0'))) && (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'x' | b'X')))) {
+                now |= 1 << 0;
+            }
+            // Term 1: a run of `hexd`.
+            if ((q >= 2 && (((((((q - 2 < n && matches!(src[q - 2], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 2 < n && matches!(src[q - 2], 0x80..=0xff))) && (q - 2 < n && matches!(src[q - 2], b'0'..=b'9'))) && ((q - 2) < n && !((q - 2) >= 1 && ((((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], 0x80..=0xff)))))) && ((q - 2) < n && !((q - 2) >= 1 && ((((q - 2) - 1) < n && (src[((q - 2) - 1)] == b'.')) && (((q - 2) - 1) < n && !(((q - 2) - 1) >= 1 && ((((q - 2) - 1) - 1) < n && (src[(((q - 2) - 1) - 1)] == b'.')))))))) && (q - 2 < n && (src[q - 2] == b'0'))) && (((q - 2) + 1) < n && matches!(src[((q - 2) + 1)], b'x' | b'X')))) && (q < n && matches!(src[q], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'_'))) || (last >> 1 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'_')))) {
+                now |= 1 << 1;
+            }
+            if now == 0 && q > s {
+                break;
+            }
+            // `hexd`'s run: term 1 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 1 && (q < n && matches!(src[q], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_hexd(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            last = now;
+            q += 1;
+        }
+        end_last = last;
+        end_seen = seen;
+        end_fills = fills;
+        q.saturating_sub(1)
+    };
+                    // Not proved: a test build checks it against the rule over the file.
+                    
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    
+                    xl_3 = { let x = true;  x };
+                    xl_5 = { let x = true;  x };
+                    fill_7 = true;
+                    fill_10 = false;
+                    fill_11 = (xs_11 || fs_11);
+                    xl_11 = false;
+                    fill_12 = (fill_11 && (xs_11 || fs_11) && fs_12);
+                    fill_13 = (fill_12 && (xs_11 || fs_11) && fs_12 && fs_13);
+                    fill_14 = false;
+                    // a `0x` or `0b` with no digit
+                    if ((((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') && matches!(src[s], b'0'..=b'9')) && !(s >= 1 && ((s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (s - 1 < n && matches!(src[s - 1], 0x80..=0xff))))) && !(s >= 1 && ((s - 1 < n && (src[s - 1] == b'.')) && ((s - 1) < n && !((s - 1) >= 1 && (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'.'))))))) && (src[s] == b'0')) && (s + 1 < n && matches!(src[s + 1], b'b' | b'B'))) && ((s + 2) < n && !(s + 2 < n && matches!(src[s + 2], b'0' | b'1' | b'_')))) || ((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') && matches!(src[s], b'0'..=b'9')) && !(s >= 1 && ((s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (s - 1 < n && matches!(src[s - 1], 0x80..=0xff))))) && !(s >= 1 && ((s - 1 < n && (src[s - 1] == b'.')) && ((s - 1) < n && !((s - 1) >= 1 && (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'.'))))))) && (src[s] == b'0')) && (s + 1 < n && matches!(src[s + 1], b'x' | b'X'))) && ((s + 2) < n && !(s + 2 < n && matches!(src[s + 2], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'_')))))) {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    // a digit after a binary number, as `hex_literal`'s assumptions read it: not proved, a test build checks it.
+                    
+                    // a word touching a real number: at no byte of this token (it holds at a run's end), not proved: a test build checks it.
+                    
+                    // a number that ends in `_`, as `hex_literal`'s assumptions read it: not proved, a test build checks it.
+                    
+                    // a number that ends in `_`: at the token's end, where it may hold
+                    if (((end_last >> 1 & 1 == 1) && (l < n && (src[l] == b'_')))) {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    (l, 10, false, 0x0, 0)
+                }
+,
+                6 => {
+                    // `bin_literal`: run prev(bin_at) | bx, read as prev(t210) | t211 (assumed)
+                    // `fill(prev(as_kw, 2), ~(code & ((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))))`: at the byte before the token.
+                    let fs_11 = if s > at { match gap_last_t90 { None => xl_11 || fill_11, Some(q) => q == at && xl_11 } } else { fill_11 };
+                    let xs_11 = s == at && xl_11;
+                    // `fill(as_run & dot, ~as_run)`: at the byte before the token.
+                    let fs_12 = fill_12 && fs_11;
+                    // `fill(as_dot & text("<"), ((~as_dot | text("?")) | text("<")) | (gt & prev(gt)))`: at the byte before the token.
+                    let fs_13 = fill_13 && fs_12;
+                    let l = {
+        // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).
+        let mut q = s;
+        let mut last = 0u32;
+        let mut seen = 0u32;
+        let mut fills = 0u32;
+        while q < n {
+            let mut now = 0u32;
+            // Term 0: a byte.
+            if (q >= 1 && (((((((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff))) && (q - 1 < n && matches!(src[q - 1], b'0'..=b'9'))) && ((q - 1) < n && !((q - 1) >= 1 && ((((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], 0x80..=0xff)))))) && ((q - 1) < n && !((q - 1) >= 1 && ((((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')) && (((q - 1) - 1) < n && !(((q - 1) - 1) >= 1 && ((((q - 1) - 1) - 1) < n && (src[(((q - 1) - 1) - 1)] == b'.')))))))) && (q - 1 < n && (src[q - 1] == b'0'))) && (((q - 1) + 1) < n && matches!(src[((q - 1) + 1)], b'b' | b'B')))) {
+                now |= 1 << 0;
+            }
+            // Term 1: a run of `bind`.
+            if ((q >= 2 && (((((((q - 2 < n && matches!(src[q - 2], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 2 < n && matches!(src[q - 2], 0x80..=0xff))) && (q - 2 < n && matches!(src[q - 2], b'0'..=b'9'))) && ((q - 2) < n && !((q - 2) >= 1 && ((((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], 0x80..=0xff)))))) && ((q - 2) < n && !((q - 2) >= 1 && ((((q - 2) - 1) < n && (src[((q - 2) - 1)] == b'.')) && (((q - 2) - 1) < n && !(((q - 2) - 1) >= 1 && ((((q - 2) - 1) - 1) < n && (src[(((q - 2) - 1) - 1)] == b'.')))))))) && (q - 2 < n && (src[q - 2] == b'0'))) && (((q - 2) + 1) < n && matches!(src[((q - 2) + 1)], b'b' | b'B')))) && (q < n && matches!(src[q], b'0' | b'1' | b'_'))) || (last >> 1 & 1 == 1 && !(q < n && !(q < n && matches!(src[q], b'0' | b'1' | b'_')))) {
+                now |= 1 << 1;
+            }
+            if now == 0 && q > s {
+                break;
+            }
+            // `bind`'s run: term 1 alone holds over it (the lean lexer's `class_end`).
+            if now == 1 << 1 && (q < n && matches!(src[q], b'0' | b'1' | b'_')) {
+                last = now;
+                q = s1_past(src, &mut st1, &mut s1, wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| unsafe { cls_bind(src, n, p) })).unwrap_or(n);
+                continue;
+            }
+            last = now;
+            q += 1;
+        }
+        end_last = last;
+        end_seen = seen;
+        end_fills = fills;
+        q.saturating_sub(1)
+    };
+                    // Not proved: a test build checks it against the rule over the file.
+                    
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    
+                    xl_3 = { let x = true;  x };
+                    xl_5 = { let x = true;  x };
+                    fill_7 = true;
+                    fill_10 = false;
+                    fill_11 = (xs_11 || fs_11);
+                    xl_11 = false;
+                    fill_12 = (fill_11 && (xs_11 || fs_11) && fs_12);
+                    fill_13 = (fill_12 && (xs_11 || fs_11) && fs_12 && fs_13);
+                    fill_14 = false;
+                    // a `0x` or `0b` with no digit
+                    if ((((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') && matches!(src[s], b'0'..=b'9')) && !(s >= 1 && ((s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (s - 1 < n && matches!(src[s - 1], 0x80..=0xff))))) && !(s >= 1 && ((s - 1 < n && (src[s - 1] == b'.')) && ((s - 1) < n && !((s - 1) >= 1 && (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'.'))))))) && (src[s] == b'0')) && (s + 1 < n && matches!(src[s + 1], b'b' | b'B'))) && ((s + 2) < n && !(s + 2 < n && matches!(src[s + 2], b'0' | b'1' | b'_')))) || ((((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') && matches!(src[s], b'0'..=b'9')) && !(s >= 1 && ((s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (s - 1 < n && matches!(src[s - 1], 0x80..=0xff))))) && !(s >= 1 && ((s - 1 < n && (src[s - 1] == b'.')) && ((s - 1) < n && !((s - 1) >= 1 && (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'.'))))))) && (src[s] == b'0')) && (s + 1 < n && matches!(src[s + 1], b'x' | b'X'))) && ((s + 2) < n && !(s + 2 < n && matches!(src[s + 2], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' | b'_')))))) {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    // a digit after a binary number, as `bin_literal`'s assumptions read it: not proved, a test build checks it.
+                    
+                    // a digit after a binary number: at the token's end, where it may hold
+                    if l + 1 < n && ((((l + 1 < n && matches!(src[l + 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (l + 1 < n && matches!(src[l + 1], b'0'..=b'9'))) && (end_last >> 1 & 1 == 1))) {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    // a word touching a real number: at no byte of this token (it holds at a run's end), not proved: a test build checks it.
+                    
+                    // a number that ends in `_`, as `bin_literal`'s assumptions read it: not proved, a test build checks it.
+                    
+                    // a number that ends in `_`: at the token's end, where it may hold
+                    if (((end_last >> 1 & 1 == 1) && (l < n && (src[l] == b'_')))) {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    (l, 9, false, 0x0, 0)
+                }
+,
+                7 => {
+                    // `"`: read str parts, to its closer
+                    // `code` at the byte before the token.
+                    let xs_3 = s > at || xl_3;
+                    // `fill(lf & code, (code & ~ws) | r_first)`: at the byte before the token.
+                    let fs_10 = fill_10 || (gap_m_lf);
+                    // `fill(cmt_on_lf, (code & ~ws) | (r_first & ~slash))`: at the byte before the token.
+                    let fs_14 = fill_14;
+                    let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t6(src, n, p, esc) })) {
+                        Some(c) => {
+                            let last = {
+                            if (((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{')))) {
+                                template = 3;
+                                if depth == 4 {
+                                    refused = true;
+                                    break 'tokens;
+                                }
+                                nest[depth] = 3;
+                                depth += 1;
+                                reads.high = reads.high.max(depth);
+                                if opened == held.len() {
+                                    refused = true;
+                                    break 'tokens;
+                                }
+                                held[opened] = len;
+                                opened += 1;
+                            }
+                            {
+                            let last = if (((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{')))) { c + 1 } else { c + 0 };
+                            // a `$` after a `$` and backslashes
+                            if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t100(src, n, p, esc, upto(p, c - 1)) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            // a template's name with a byte past ASCII, not a name's letter
+                            if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t101(src, n, p, esc, upto(p, c - 1)) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            // a run of five `$`s or more in a string
+                            if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t104(src, n, p, esc, upto(p, c - 1)) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            last
+                        }
+                        };
+                            
+                            
+                            
+                            last
+                        },
+                        None => {
+                            refused = true;
+                            break 'tokens;
+                        }
+                    };
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    
+                    xl_3 = false;
+                    xl_5 = false;
+                    fill_7 = false;
+                    fill_10 = (!xs_3 && fs_10);
+                    fill_11 = false;
+                    xl_11 = false;
+                    fill_12 = false;
+                    fill_13 = false;
+                    fill_14 = (!xs_3 && fs_14);
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, 0)
+                }
+,
+                8 => {
+                    // `"`: read rstr parts, to its closer
+                    // `code` at the byte before the token.
+                    let xs_3 = s > at || xl_3;
+                    // `fill(lf & code, (code & ~ws) | r_first)`: at the byte before the token.
+                    let fs_10 = fill_10 || (gap_m_lf);
+                    // `fill(cmt_on_lf, (code & ~ws) | (r_first & ~slash))`: at the byte before the token.
+                    let fs_14 = fill_14;
+                    let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 3, |p: isize, esc: &mut u64| unsafe { w_t4(src, n, p, esc) })) {
+                        Some(c) => {
+                            let last = {
+                            if (((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{')))) {
+                                template = 2;
+                                if depth == 4 {
+                                    refused = true;
+                                    break 'tokens;
+                                }
+                                nest[depth] = 2;
+                                depth += 1;
+                                reads.high = reads.high.max(depth);
+                                if opened == held.len() {
+                                    refused = true;
+                                    break 'tokens;
+                                }
+                                held[opened] = len;
+                                opened += 1;
+                            }
+                            {
+                            let last = if (((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{')))) { c + 1 } else { if (((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{')))) { c + 0 } else { c + 2 } };
+                            // a `$` before a quote or a `$` in a raw string
+                            if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t98(src, n, p, esc, upto(p, c - 1)) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            // a template's name with a byte past ASCII, not a name's letter
+                            if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t101(src, n, p, esc, upto(p, c - 1)) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            // a run of five `$`s or more in a string
+                            if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t104(src, n, p, esc, upto(p, c - 1)) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            last
+                        }
+                        };
+                            
+                            
+                            
+                            last
+                        },
+                        None => {
+                            refused = true;
+                            break 'tokens;
+                        }
+                    };
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    
+                    xl_3 = false;
+                    xl_5 = false;
+                    fill_7 = false;
+                    fill_10 = (!xs_3 && fs_10);
+                    fill_11 = false;
+                    xl_11 = false;
+                    fill_12 = false;
+                    fill_13 = false;
+                    fill_14 = (!xs_3 && fs_14);
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, 0)
+                }
+,
+                9 => {
+                    // `"`: read str2 parts, to its closer
+                    // `code` at the byte before the token.
+                    let xs_3 = s > at || xl_3;
+                    // `fill(lf & code, (code & ~ws) | r_first)`: at the byte before the token.
+                    let fs_10 = fill_10 || (gap_m_lf);
+                    // `fill(cmt_on_lf, (code & ~ws) | (r_first & ~slash))`: at the byte before the token.
+                    let fs_14 = fill_14;
+                    let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t10(src, n, p, esc) })) {
+                        Some(c) => {
+                            let last = {
+                            if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) {
+                                template = 5;
+                                if depth == 4 {
+                                    refused = true;
+                                    break 'tokens;
+                                }
+                                nest[depth] = 5;
+                                depth += 1;
+                                reads.high = reads.high.max(depth);
+                                if opened == held.len() {
+                                    refused = true;
+                                    break 'tokens;
+                                }
+                                held[opened] = len;
+                                opened += 1;
+                            }
+                            {
+                            let last = if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 2 } else { if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 1 } else { c + 0 } };
+                            // a `$` after a `$` and backslashes
+                            if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t100(src, n, p, esc, upto(p, c - 1)) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            // a run of five `$`s or more in a string
+                            if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t104(src, n, p, esc, upto(p, c - 1)) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            last
+                        }
+                        };
+                            
+                            
+                            
+                            last
+                        },
+                        None => {
+                            refused = true;
+                            break 'tokens;
+                        }
+                    };
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    
+                    xl_3 = false;
+                    xl_5 = false;
+                    fill_7 = false;
+                    fill_10 = (!xs_3 && fs_10);
+                    fill_11 = false;
+                    xl_11 = false;
+                    fill_12 = false;
+                    fill_13 = false;
+                    fill_14 = (!xs_3 && fs_14);
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, 0)
+                }
+,
+                10 => {
+                    // `"`: read rstr2 parts, to its closer
+                    // `code` at the byte before the token.
+                    let xs_3 = s > at || xl_3;
+                    // `fill(lf & code, (code & ~ws) | r_first)`: at the byte before the token.
+                    let fs_10 = fill_10 || (gap_m_lf);
+                    // `fill(cmt_on_lf, (code & ~ws) | (r_first & ~slash))`: at the byte before the token.
+                    let fs_14 = fill_14;
+                    let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 3, |p: isize, esc: &mut u64| unsafe { w_t8(src, n, p, esc) })) {
+                        Some(c) => {
+                            let last = {
+                            if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) {
+                                template = 4;
+                                if depth == 4 {
+                                    refused = true;
+                                    break 'tokens;
+                                }
+                                nest[depth] = 4;
+                                depth += 1;
+                                reads.high = reads.high.max(depth);
+                                if opened == held.len() {
+                                    refused = true;
+                                    break 'tokens;
+                                }
+                                held[opened] = len;
+                                opened += 1;
+                            }
+                            {
+                            let last = if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 2 } else { if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 1 } else { c + 2 } };
+                            // a `$` before a quote or a `$` in a raw string
+                            if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t98(src, n, p, esc, upto(p, c - 1)) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            // a run of five `$`s or more in a string
+                            if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t104(src, n, p, esc, upto(p, c - 1)) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            last
+                        }
+                        };
+                            
+                            
+                            
+                            last
+                        },
+                        None => {
+                            refused = true;
+                            break 'tokens;
+                        }
+                    };
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    
+                    xl_3 = false;
+                    xl_5 = false;
+                    fill_7 = false;
+                    fill_10 = (!xs_3 && fs_10);
+                    fill_11 = false;
+                    xl_11 = false;
+                    fill_12 = false;
+                    fill_13 = false;
+                    fill_14 = (!xs_3 && fs_14);
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, 0)
+                }
+,
+                11 => {
+                    // `interpolation_expression_end`: read tail parts, to its closer
+                    // `code` at the byte before the token.
+                    let xs_3 = s > at || xl_3;
+                    // `fill(lf & code, (code & ~ws) | r_first)`: at the byte before the token.
+                    let fs_10 = fill_10 || (gap_m_lf);
+                    // `fill(cmt_on_lf, (code & ~ws) | (r_first & ~slash))`: at the byte before the token.
+                    let fs_14 = fill_14;
+                    let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t6(src, n, p, esc) })) {
+                        Some(c) => {
+                            close = c;
+                            let last = {
+                            let last = if ((c < n && (src[c] == b'"'))) { c + 0 } else if (((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{')))) { c + 1 } else { c + 0 };
+                            // an empty `${}`
+                            if ((s >= 1 && (s - 1 < n && (src[s - 1] == b'{')))) {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            // a `$` after a `$` and backslashes
+                            if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t100(src, n, p, esc, upto(p, c - 1)) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            // a template's name with a byte past ASCII, not a name's letter
+                            if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t101(src, n, p, esc, upto(p, c - 1)) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            // a run of five `$`s or more in a string
+                            if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t104(src, n, p, esc, upto(p, c - 1)) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            last
+                        };
+                            
+                            
+                            
+                            last
+                        },
+                        None => {
+                            refused = true;
+                            break 'tokens;
+                        }
+                    };
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    
+                    xl_3 = false;
+                    xl_5 = false;
+                    fill_7 = false;
+                    fill_10 = (!xs_3 && fs_10);
+                    fill_11 = false;
+                    xl_11 = false;
+                    fill_12 = false;
+                    fill_13 = false;
+                    fill_14 = (!xs_3 && fs_14);
+                    // Resumes the open string's record: no record of its own.
+                    match opened_read(reads, &nest, depth, opened) {
+                        0 => {
+                            refused = true;
+                            break 'tokens;
+                        }
+                        _ => {
+                            // SAFETY: record `held[opened - 1]` is written (`< len`).
+                            if WRITE {
+                                unsafe { (*out.add(held[opened - 1])).last = l as u32 };
+                            }
+                            if (((close < n && (src[close] == b'$')) && (close + 1 < n && (src[close + 1] == b'{')))) {
+                                if depth == 4 {
+                                    refused = true;
+                                    break 'tokens;
+                                }
+                                nest[depth] = 3;
+                                depth += 1;
+                                reads.high = reads.high.max(depth);
+                                template = 3;
+                            } else {
+                                opened -= 1;
+                            }
+                        }
+                    }
+                    at = l + 1;
+                    if at >= base + 64 {
+                        b = at / 64;
+                        continue 'tokens;
+                    }
+                    firsts &= !0u64 << (at - base);
+                    continue;
+                }
+,
+                12 => {
+                    // `interpolation_expression_end`: read rtail parts, to its closer
+                    // `code` at the byte before the token.
+                    let xs_3 = s > at || xl_3;
+                    // `fill(lf & code, (code & ~ws) | r_first)`: at the byte before the token.
+                    let fs_10 = fill_10 || (gap_m_lf);
+                    // `fill(cmt_on_lf, (code & ~ws) | (r_first & ~slash))`: at the byte before the token.
+                    let fs_14 = fill_14;
+                    let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t4(src, n, p, esc) })) {
+                        Some(c) => {
+                            close = c;
+                            let last = {
+                            let last = if ((((c < n && (src[c] == b'"')) && (c + 1 < n && (src[c + 1] == b'"'))) && (c + 2 < n && (src[c + 2] == b'"')))) { c + 2 } else if (((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{')))) { c + 1 } else { if (((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{')))) { c + 0 } else { c + 2 } };
+                            // an empty `${}`
+                            if ((s >= 1 && (s - 1 < n && (src[s - 1] == b'{')))) {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            // a `$` before a quote or a `$` in a raw string
+                            if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t98(src, n, p, esc, upto(p, c - 1)) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            // a template's name with a byte past ASCII, not a name's letter
+                            if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t101(src, n, p, esc, upto(p, c - 1)) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            // a run of five `$`s or more in a string
+                            if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t104(src, n, p, esc, upto(p, c - 1)) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            last
+                        };
+                            
+                            
+                            
+                            last
+                        },
+                        None => {
+                            refused = true;
+                            break 'tokens;
+                        }
+                    };
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    
+                    xl_3 = false;
+                    xl_5 = false;
+                    fill_7 = false;
+                    fill_10 = (!xs_3 && fs_10);
+                    fill_11 = false;
+                    xl_11 = false;
+                    fill_12 = false;
+                    fill_13 = false;
+                    fill_14 = (!xs_3 && fs_14);
+                    // Resumes the open string's record: no record of its own.
+                    match opened_read(reads, &nest, depth, opened) {
+                        0 => {
+                            refused = true;
+                            break 'tokens;
+                        }
+                        _ => {
+                            // SAFETY: record `held[opened - 1]` is written (`< len`).
+                            if WRITE {
+                                unsafe { (*out.add(held[opened - 1])).last = l as u32 };
+                            }
+                            if (((close < n && (src[close] == b'$')) && (close + 1 < n && (src[close + 1] == b'{')))) {
+                                if depth == 4 {
+                                    refused = true;
+                                    break 'tokens;
+                                }
+                                nest[depth] = 2;
+                                depth += 1;
+                                reads.high = reads.high.max(depth);
+                                template = 2;
+                            } else {
+                                opened -= 1;
+                            }
+                        }
+                    }
+                    at = l + 1;
+                    if at >= base + 64 {
+                        b = at / 64;
+                        continue 'tokens;
+                    }
+                    firsts &= !0u64 << (at - base);
+                    continue;
+                }
+,
+                13 => {
+                    // `interpolation_expression_end`: read tail2 parts, to its closer
+                    // `code` at the byte before the token.
+                    let xs_3 = s > at || xl_3;
+                    // `fill(lf & code, (code & ~ws) | r_first)`: at the byte before the token.
+                    let fs_10 = fill_10 || (gap_m_lf);
+                    // `fill(cmt_on_lf, (code & ~ws) | (r_first & ~slash))`: at the byte before the token.
+                    let fs_14 = fill_14;
+                    let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t10(src, n, p, esc) })) {
+                        Some(c) => {
+                            close = c;
+                            let last = {
+                            let last = if ((c < n && (src[c] == b'"'))) { c + 0 } else if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 2 } else { if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 1 } else { c + 0 } };
+                            // an empty `${}`
+                            if ((s >= 1 && (s - 1 < n && (src[s - 1] == b'{')))) {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            // a `$` after a `$` and backslashes
+                            if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t100(src, n, p, esc, upto(p, c - 1)) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            // a run of five `$`s or more in a string
+                            if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t104(src, n, p, esc, upto(p, c - 1)) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            last
+                        };
+                            
+                            
+                            
+                            last
+                        },
+                        None => {
+                            refused = true;
+                            break 'tokens;
+                        }
+                    };
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    
+                    xl_3 = false;
+                    xl_5 = false;
+                    fill_7 = false;
+                    fill_10 = (!xs_3 && fs_10);
+                    fill_11 = false;
+                    xl_11 = false;
+                    fill_12 = false;
+                    fill_13 = false;
+                    fill_14 = (!xs_3 && fs_14);
+                    // Resumes the open string's record: no record of its own.
+                    match opened_read(reads, &nest, depth, opened) {
+                        0 => {
+                            refused = true;
+                            break 'tokens;
+                        }
+                        _ => {
+                            // SAFETY: record `held[opened - 1]` is written (`< len`).
+                            if WRITE {
+                                unsafe { (*out.add(held[opened - 1])).last = l as u32 };
+                            }
+                            opened -= 1;
+                        }
+                    }
+                    at = l + 1;
+                    if at >= base + 64 {
+                        b = at / 64;
+                        continue 'tokens;
+                    }
+                    firsts &= !0u64 << (at - base);
+                    continue;
+                }
+,
+                14 => {
+                    // `interpolation_expression_end`: read rtail2 parts, to its closer
+                    // `code` at the byte before the token.
+                    let xs_3 = s > at || xl_3;
+                    // `fill(lf & code, (code & ~ws) | r_first)`: at the byte before the token.
+                    let fs_10 = fill_10 || (gap_m_lf);
+                    // `fill(cmt_on_lf, (code & ~ws) | (r_first & ~slash))`: at the byte before the token.
+                    let fs_14 = fill_14;
+                    let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t8(src, n, p, esc) })) {
+                        Some(c) => {
+                            close = c;
+                            let last = {
+                            let last = if ((((c < n && (src[c] == b'"')) && (c + 1 < n && (src[c + 1] == b'"'))) && (c + 2 < n && (src[c + 2] == b'"')))) { c + 2 } else if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 2 } else { if ((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{')))) { c + 1 } else { c + 2 } };
+                            // an empty `${}`
+                            if ((s >= 1 && (s - 1 < n && (src[s - 1] == b'{')))) {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            // a `$` before a quote or a `$` in a raw string
+                            if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t98(src, n, p, esc, upto(p, c - 1)) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            // a run of five `$`s or more in a string
+                            if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t104(src, n, p, esc, upto(p, c - 1)) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            last
+                        };
+                            
+                            
+                            
+                            last
+                        },
+                        None => {
+                            refused = true;
+                            break 'tokens;
+                        }
+                    };
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    
+                    xl_3 = false;
+                    xl_5 = false;
+                    fill_7 = false;
+                    fill_10 = (!xs_3 && fs_10);
+                    fill_11 = false;
+                    xl_11 = false;
+                    fill_12 = false;
+                    fill_13 = false;
+                    fill_14 = (!xs_3 && fs_14);
+                    // Resumes the open string's record: no record of its own.
+                    match opened_read(reads, &nest, depth, opened) {
+                        0 => {
+                            refused = true;
+                            break 'tokens;
+                        }
+                        _ => {
+                            // SAFETY: record `held[opened - 1]` is written (`< len`).
+                            if WRITE {
+                                unsafe { (*out.add(held[opened - 1])).last = l as u32 };
+                            }
+                            opened -= 1;
+                        }
+                    }
+                    at = l + 1;
+                    if at >= base + 64 {
+                        b = at / 64;
+                        continue 'tokens;
+                    }
+                    firsts &= !0u64 << (at - base);
+                    continue;
+                }
+,
+                15 => {
+                    // `string_prefix`: run dollar & next(dq)
+                    // `fill(prev(as_kw, 2), ~(code & ((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))))`: at the byte before the token.
+                    let fs_11 = if s > at { match gap_last_t90 { None => xl_11 || fill_11, Some(q) => q == at && xl_11 } } else { fill_11 };
+                    let xs_11 = s == at && xl_11;
+                    // `fill(as_run & dot, ~as_run)`: at the byte before the token.
+                    let fs_12 = fill_12 && fs_11;
+                    // `fill(as_dot & text("<"), ((~as_dot | text("?")) | text("<")) | (gt & prev(gt)))`: at the byte before the token.
+                    let fs_13 = fill_13 && fs_12;
+                    let l = s1_past(src, &mut st1, &mut s1, brun_last(n, base, k_t218, s, |p: isize, esc: &mut u64| unsafe { w_t218(src, n, p, esc) }));
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    
+                    xl_3 = true;
+                    xl_5 = false;
+                    fill_7 = false;
+                    fill_10 = false;
+                    fill_11 = if l > s { false } else { xs_11 };
+                    xl_11 = false;
+                    fill_12 = (fill_11 && xs_11 && fs_12);
+                    fill_13 = (fill_12 && xs_11 && fs_12 && fs_13);
+                    fill_14 = false;
+                    // a `$` outside a string
+                    if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s, l, |p: isize, esc: &mut u64| unsafe { l_t96(src, n, p, esc, upto(p, l)) })).is_some() {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    // a string's prefix of three `$`s or more
+                    if s1_past(src, &mut st1, &mut s1, bfirst_in(n, base, k_t97, s, l, |p: isize, esc: &mut u64| unsafe { w_t97(src, n, p, esc) })).is_some() {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    (l, 7, false, 0x0, 0)
+                }
+,
+                16 => {
+                    // `'`: read chr parts, to its closer
+                    // `code` at the byte before the token.
+                    let xs_3 = s > at || xl_3;
+                    // `fill(lf & code, (code & ~ws) | r_first)`: at the byte before the token.
+                    let fs_10 = fill_10 || (gap_m_lf);
+                    // `fill(cmt_on_lf, (code & ~ws) | (r_first & ~slash))`: at the byte before the token.
+                    let fs_14 = fill_14;
+                    let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_sq_close(src, n, p, esc) })) {
+                        Some(c) => {
+                            let last = {
+                            let last = c + 0;
+                            // a character or a backtick name over a line
+                            if s1_past(src, &mut st1, &mut s1, bfirst_in(n, base, k_m_lf, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_m_lf(src, n, p, esc) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            // a `\u` without four hex digits
+                            if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t105(src, n, p, esc, upto(p, c - 1)) })).is_some() || s1_past(src, &mut st1, &mut s1, wfirst_in(n, c, last, |p: isize, esc: &mut u64| unsafe { l_t105(src, n, p, esc, upto(p, last)) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            last
+                        };
+                            
+                            
+                            
+                            last
+                        },
+                        None => {
+                            refused = true;
+                            break 'tokens;
+                        }
+                    };
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    
+                    xl_3 = false;
+                    xl_5 = false;
+                    fill_7 = false;
+                    fill_10 = (!xs_3 && fs_10);
+                    fill_11 = false;
+                    xl_11 = false;
+                    fill_12 = false;
+                    fill_13 = false;
+                    fill_14 = (!xs_3 && fs_14);
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, 0)
+                }
+,
+                17 => {
+                    // `backtick_name`: read tick
+                    // `code` at the byte before the token.
+                    let xs_3 = s > at || xl_3;
+                    // `fill(lf & code, (code & ~ws) | r_first)`: at the byte before the token.
+                    let fs_10 = fill_10 || (gap_m_lf);
+                    // `fill(cmt_on_lf, (code & ~ws) | (r_first & ~slash))`: at the byte before the token.
+                    let fs_14 = fill_14;
+                    let l = match s1_past(src, &mut st1, &mut s1, bfirst_bit(n, base, k_m_bt, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_bt(src, n, p, esc) })) {
+                        Some(c) => {
+                            let last = {
+                            let last = c + 0;
+                            // a character or a backtick name over a line
+                            if s1_past(src, &mut st1, &mut s1, bfirst_in(n, base, k_m_lf, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { w_m_lf(src, n, p, esc) })).is_some() {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            last
+                        };
+                            
+                            
+                            
+                            last
+                        },
+                        None => {
+                            refused = true;
+                            break 'tokens;
+                        }
+                    };
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    
+                    xl_3 = false;
+                    xl_5 = false;
+                    fill_7 = false;
+                    fill_10 = (!xs_3 && fs_10);
+                    fill_11 = false;
+                    xl_11 = false;
+                    fill_12 = false;
+                    fill_13 = false;
+                    fill_14 = (!xs_3 && fs_14);
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x400, 0)
+                }
+,
+                18 => {
+                    // `punct`: pair
+                    // `fill(prev(as_kw, 2), ~(code & ((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))))`: at the byte before the token.
+                    let fs_11 = if s > at { match gap_last_t90 { None => xl_11 || fill_11, Some(q) => q == at && xl_11 } } else { fill_11 };
+                    let xs_11 = s == at && xl_11;
+                    // `fill(as_run & dot, ~as_run)`: at the byte before the token.
+                    let fs_12 = fill_12 && fs_11;
+                    // `fill(as_dot & text("<"), ((~as_dot | text("?")) | text("<")) | (gt & prev(gt)))`: at the byte before the token.
+                    let fs_13 = fill_13 && fs_12;
+                    // `fill(cmt_on_lf, (code & ~ws) | (r_first & ~slash))`: at the byte before the token.
+                    let fs_14 = fill_14;
+                    // a `;` after a line break and a comment
+                    if (((src[s] == b';')) && fs_14) {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    let l = pair_155(src, s);
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    
+                    xl_3 = { let x = true;  x };
+                    xl_5 = { let x = false;  x };
+                    fill_7 = false;
+                    fill_10 = false;
+                    fill_11 = if l > s { (!((l > s && !matches!(src[s + 1], b'.' | b'>')) || (l >= s + 2 && src[s + 2] == b'=')) && (xs_11 || (matches!(src[s], b'.' | b'<' | b'>' | b'?') && fs_11))) } else { (xs_11 || (matches!(src[s], b'.' | b'<' | b'>' | b'?') && fs_11)) };
+                    xl_11 = false;
+                    fill_12 = (fill_11 && (((xs_11 || (matches!(src[s], b'.' | b'<' | b'>' | b'?') && fs_11)) && (src[s] == b'.' || fs_12)) || (l > s && src[s + 1] == b'.')));
+                    fill_13 = ((fill_12 && (((xs_11 || (matches!(src[s], b'.' | b'<' | b'>' | b'?') && fs_11)) && (src[s] == b'.' || fs_12) && (src[s] == b'<' || (fs_13 && !(((src[s] == 0x3f || src[s] == 0x3c) || ((src[s] == b'>') && (s >= 1 && (s - 1 < n && (src[s - 1] == b'>'))))))))) || (l >= s + 2 && src[s + 2] == b'<')) && !(l >= s + 2 && ((((s + 2 + 1 <= n && src[s + 2] == 0x3f) || (s + 2 + 1 <= n && src[s + 2] == 0x3c)) || ((s + 2 < n && (src[s + 2] == b'>')) && (s + 2 >= 1 && (s + 2 - 1 < n && (src[s + 2 - 1] == b'>')))))))) || (fill_12 && l >= s + 2 && src[s + 2] == b'<'));
+                    fill_14 = false;
+                    // a `$` outside a string
+                    if (((src[s] == b'$') && !at_pre_at(src, n, s))) {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    // a string's prefix of three `$`s or more
+                    if ((((src[s] == b'$') && (s + 1 < n && (src[s + 1] == b'$'))) && (s + 2 < n && (src[s + 2] == b'$')))) {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    // a word touching a real number: at no byte of this token (it holds at a run's end), not proved: a test build checks it.
+                    
+                    // a name with a letter past ASCII before an `@`
+                    if (((src[s] == b'@') && (s >= 1 && (s - 1 < n && matches!(src[s - 1], 0x80..=0xff))))) {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    // punct: a triple's last byte starts a pair: at the token's first byte
+                    if ((at_two_start_three(src, n, s) && at_two_start_two(src, n, (s + 2)))) {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, word_at(src, s, l + 1 - s))
+                }
+,
+                _ => {
+                    // A byte no row takes: its group's tests, none of which holds.
+                    refused = true;
+                    break 'tokens;
+                }
+            }
+        }
+;
+        // The token marks: tier 2 tests the rest of each.
+        if extra {
+            // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.
+                if rec_0 {
+                    marks |= 1 << 0;
+                }
+            pending |= hits & 0xffff | hits >> 16;
+        } else {
+            let tested = pending | hits;
+                // `head_ctor`
+                if (tested >> 0 & 1 == 1 || acc_0) {
+                    marks |= 1 << 0;
+                }
+                // `by_lf`: its carrier's bit (`DERIVED`)
+                // `ann_lf`: its carrier's bit (`DERIVED`)
+                // `semi`: its carrier's bit (`DERIVED`)
+                // `semi_close`: its carrier's bit (`DERIVED`)
+                // `as_open`: tier 2 asks it of the spans between the records (`SPANNED`)
+                // `own_line`: tier 2 asks it of the spans between the records (`SPANNED`)
+                // `nl_end`: tier 2 asks it of the spans between the records (`SPANNED`)
+                // `apart`: tier 2 asks it of the spans between the records (`SPANNED`)
+                // `real`
+                if (tested >> 9 & 1 == 1) {
+                    marks |= 1 << 9;
+                }
+            from = s + 1;
+            before = word;
+            pending = hits >> 16;
+        }
+        from_record = s + 1;
+        // The gap mask `lf & code`: on after a token the grammar skips; else from this token's bytes after its start.
+        acc_0 = extra && acc_0;
+        rec_0 = false;
+        let rec = Rec { start: s as u32, last: l as u32, code: kind | word << 8 | marks << 16 };
+        if extra {
+            if WRITE {
+                extras.push(rec);
+            }
+        } else {
+            debug_assert!(len < n && l >= s, "a token a byte at most");
+            // SAFETY: `len < n`, the room reserved: a record's first byte is after the record before's last.
+            if WRITE {
+                unsafe { out.add(len).write(rec) };
+            }
+            len += 1;
+        }
+        at = l + 1;
+        if ONE {
+            break 'tokens;
+        }
+        if at >= base + 64 {
+            b = at / 64;
+            continue 'tokens;
+        }
+        firsts &= !0u64 << (at - base);
+        }
+        b += 1;
+    }
+    *e = Entry { at, pending, template, held, opened, nest, depth, acc_0, rec_0, xl_3, xl_5, fill_7, fill_10, fill_11, xl_11, fill_12, fill_13, fill_14 };
+    e.canonical();
+    (*refused_io, *len_io) = (refused, len);
+}
+
+/// What the serial lexer checks of its state at the file's end.
+#[allow(unused_variables, unused_mut, clippy::all)]
+fn finish(src: &[u8], e: &Entry, refused_io: &mut bool) {
+    let n = src.len();
+    let Entry { at, pending, template, held, opened, nest, depth, acc_0, rec_0, xl_3, xl_5, fill_7, fill_10, fill_11, xl_11, fill_12, fill_13, fill_14, } = *e;
+    let mut refused = *refused_io;
+    if !refused && at > 0 && at < n && fill_13 && ((at - 1 < n && (src[at - 1] == b'>'))) && ((((at + 1 <= n && src[at] == 0x20) || (at < n && (src[at] == b'/'))) || (at + 1 <= n && src[at] == 0x0d))) {
+        refused = true;
+    }
+    *refused_io = refused;
+}
+
+/// The regions a chunk can start inside (`Force`): each its number, its row, its closer's offset and its level.
+const REGIONS: [(usize, usize, usize, usize); 15] = [(0, 0, 1, 0), (1, 1, 1, 0), (1, 1, 1, 1), (1, 1, 1, 2), (1, 1, 1, 3), (2, 8, 3, 0), (3, 7, 1, 0), (4, 10, 3, 0), (5, 9, 1, 0), (6, 16, 1, 0), (7, 17, 1, 0), (8, 11, 1, 0), (9, 12, 1, 0), (10, 13, 1, 0), (11, 14, 1, 0)];
+
+/// The deepest the nest goes (the serial lexer refuses past it), and the kinds a level can be: a bracket's (255), then
+/// each template's string kind.
+pub const MAXD: usize = 4;
+pub const LEVEL_KINDS: [u8; 5] = [255, 3, 2, 5, 4];
+
+/// The lanes a summary holds at most; a chunk that needs more is unresolved (`Summary::over`): pass 2 enters it from the
+/// entry the chunks before it leave.
+pub const L: usize = 64;
+
+/// The blocks before a chunk's first that its stage 1 starts at: its windows and its carries are the serial run's again
+/// past them.
+pub const PRIME: usize = 8;
+
+/// A level's kind in a lane (`LEVEL_KINDS`, or 254: open, of no kind yet), its value in `nest`.
+#[inline]
+fn kind_of(k: usize) -> u8 {
+    match k {
+        usize::MAX => 255,
+        OPEN => 254,
+        k => k as u8,
+    }
+}
+
+#[inline]
+fn level_of(k: u8) -> usize {
+    match k {
+        255 => usize::MAX,
+        254 => OPEN,
+        k => usize::from(k),
+    }
+}
+
+/// Whether a lane's level of kind `k` (254: any) meets a level of kind `m`.
+#[inline]
+fn meets(k: u8, m: u8) -> bool {
+    k == 254 || k == m
+}
+
+/// One lane of a summary: what a range of chunks does for the entries at `at0` whose innermost `kcn` levels are `kc`
+/// (innermost first), all of them where `exact` (it read the bottom: "nothing open" below them). It leaves `p[..pn]`
+/// open (outermost first) above what is left of the entry, the strings of those that are templates at the records
+/// `ph` (from the range's first), and goes `high` levels above what is left. `exit`'s `at` and kept values are its
+/// end's; its nest fields are not read (`p` is).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Lane {
+    pub at0: usize,
+    pub kc: [u8; MAXD],
+    pub kcn: u8,
+    pub exact: bool,
+    /// The levels the entry has open below those the lane closes, which it never comes to: it holds for an entry with
+    /// at least these (a lane with fewer is another's, the one that read the bottom). None where `exact`.
+    pub need: u8,
+    pub p: [u8; MAXD],
+    pub pn: u8,
+    pub ph: [usize; MAXD],
+    pub high: u8,
+    pub recs: usize,
+    pub exit: Entry,
+    pub refused: bool,
+    /// Whether it lexes a token: one that lexes none leaves its entry as it was.
+    pub moved: bool,
+}
+
+/// A range's summary: its lanes; its bytes (`start..end`, from the first that lexes a token), an entry at or past whose
+/// end goes through it as it came; where its code lanes start (`code`: past the blanks before `start`, the lanes for an
+/// entry before it); and
+/// whether an entry may have gone on in a lane past `L` (`over`, how the range was made of its parts, not a fact of the
+/// range: its lanes are those).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Summary {
+    pub lanes: [Lane; L],
+    pub n: u8,
+    pub start: usize,
+    pub end: usize,
+    pub code: usize,
+    pub over: bool,
+}
+
+impl Summary {
+    fn push(&mut self, l: Lane) {
+        if self.lanes[..usize::from(self.n)].contains(&l) {
+            return;
+        }
+        if usize::from(self.n) == L {
+            self.over = true;
+            return;
+        }
+        self.lanes[usize::from(self.n)] = l;
+        self.n += 1;
+    }
+
+    pub fn lanes(&self) -> &[Lane] {
+        &self.lanes[..usize::from(self.n)]
+    }
+
+    /// Whether no lane lexes a token: every entry goes through it as it came (the chunk is blank past its code entry,
+    /// or inside a region to past its end).
+    pub fn transparent(&self) -> bool {
+        self.n > 0 && self.lanes().iter().all(|l| !l.moved)
+    }
+}
+
+const NO_LANE: Lane = Lane { at0: 0, kc: [0; MAXD], kcn: 0, exact: false, need: 0, p: [0; MAXD], pn: 0, ph: [0; MAXD], high: 0, recs: 0, exit: Entry::START, refused: false, moved: false };
+
+/// Stage 1 for a chunk from block `from`: started `PRIME` blocks before it (none at the file's start).
+fn stage1_at(src: &[u8], s1: &mut Stage1, from: usize) -> Stage1Run {
+    let mut st = Stage1Run::new();
+    if from > 0 {
+        st.t = from.saturating_sub(PRIME);
+        stage1_best(src, &mut st, s1, from);
+    }
+    st
+}
+
+/// Where the chunk from block `from` is entered in code: past the whitespace before its first byte (the token before
+/// ends there, or runs into the chunk).
+fn code_entry(src: &[u8], from: usize) -> usize {
+    let n = src.len();
+    let mut a = (64 * from).min(n);
+    // SAFETY: `a - 1` is a byte of the file.
+    while a > 0 && unsafe { w_m_ws(src, n, (a - 1) as isize, &mut 0) } & 1 == 1 {
+        a -= 1;
+    }
+    a
+}
+
+/// The backslashes before byte `at`.
+#[inline]
+fn run_before(src: &[u8], at: usize) -> usize {
+    let mut k = 0;
+    while k < at && src[at - 1 - k] == b'\\' {
+        k += 1;
+    }
+    k
+}
+
+/// The lanes from `e0` (its `at`, and what it keeps of the token before) to block `to`: one for each nest below its entry
+/// a lane reads, none first, and where a lane read the bottom, one more level below it of each kind, to `MAXD`.
+fn lanes_from(src: &[u8], s1: &mut Stage1, st1: &mut Stage1Run, starts: &[Entry], to: usize, sum: &mut Summary) {
+    let mut extras = Vec::new();
+    // The nests to enter each start with, outermost first: every start's of one depth before any start's deeper
+    // (where the lanes pass `L`, the deepest go).
+    let mut todo: Vec<(usize, [u8; MAXD], usize)> = (0..starts.len()).map(|si| (si, [0; MAXD], 0)).collect();
+    let mut deeper: Vec<(usize, [u8; MAXD], usize)> = Vec::new();
+    let mut i = 0;
+    loop {
+        if i == todo.len() {
+            if deeper.is_empty() {
+                break;
+            }
+            todo = core::mem::take(&mut deeper);
+            i = 0;
+        }
+        let (si, k, kd) = todo[i];
+        i += 1;
+        let e0 = starts[si];
+        let at0 = e0.at;
+        let mut e = e0;
+        e.nest = Entry::START.nest;
+        e.held = Entry::START.held;
+        e.opened = 0;
+        for d in 0..kd {
+            e.nest[d] = level_of(k[d]);
+            if k[d] != 255 {
+                e.held[e.opened] = INHERIT + (kd - 1 - d);
+                e.opened += 1;
+            }
+        }
+        e.depth = kd;
+        e.template = if kd == 0 { usize::MAX } else { level_of(k[kd - 1]) };
+        let mut reads = Reads { bottom: false, kind_of: None, low: kd, high: kd };
+        let (mut refused, mut len) = (false, 0usize);
+        // SAFETY: no record written (`WRITE` false).
+        unsafe { lex_range::<false, false>(src, &mut e, st1, s1, to, &mut refused, core::ptr::null_mut(), &mut len, &mut extras, &mut reads, None) };
+        // It read the kind of a level it entered with none: one lane for each kind, not this one.
+        if let Some(d) = reads.kind_of {
+            for &kind in &LEVEL_KINDS {
+                let mut k2 = k;
+                k2[d] = kind;
+                todo.push((si, k2, kd));
+            }
+            continue;
+        }
+        let low = reads.low;
+        let mut l = NO_LANE;
+        l.at0 = at0;
+        l.kcn = (kd - low) as u8;
+        for j in 0..kd - low {
+            l.kc[j] = k[kd - 1 - j];
+        }
+        l.exact = reads.bottom;
+        l.need = low as u8;
+        l.pn = (e.depth - low) as u8;
+        // The templates' strings below `low` are the entry's; those above, the lane's, at the records it counted.
+        let below = (0..low).filter(|&d| e.nest[d] != usize::MAX).count();
+        let mut h = below;
+        for j in 0..e.depth - low {
+            l.p[j] = kind_of(e.nest[low + j]);
+            if e.nest[low + j] != usize::MAX {
+                l.ph[j] = e.held[h];
+                h += 1;
+            }
+        }
+        l.high = (reads.high - low) as u8;
+        l.recs = len;
+        l.exit = e.without_nest();
+        l.refused = refused;
+        l.moved = e.at != at0 || refused;
+        sum.push(l);
+        // It read the bottom: one more lane, with a level more open below, of no kind until one is read.
+        if reads.bottom && kd < MAXD {
+            let mut k2 = [0u8; MAXD];
+            k2[0] = 254;
+            k2[1..=kd].copy_from_slice(&k[..kd]);
+            deeper.push((si, k2, kd + 1));
+        }
+    }
+}
+
+/// Pass 1: the chunk of blocks `from..to`, writing nothing: its lanes from its code entry (`code_entry`), then from the
+/// end of each region it can start inside (its row's read of it from the chunk's first byte, `Force`).
+fn chunk_ends(src: &[u8], s1: &mut Stage1, from: usize, to: usize) -> Summary {
+    let mut st1 = stage1_at(src, s1, from);
+    let mut e = Entry::START;
+    e.at = if from == 0 { 0 } else { code_entry(src, from) };
+    let start = 64 * from;
+    let mut sum = Summary { lanes: [NO_LANE; L], n: 0, start, end: (64 * to).min(src.len()).max(start), code: e.at, over: false };
+    // A token the chunk starts inside, of code: blanks part the tokens of code, so the serial lexer's tokens from the
+    // first byte of the run of bytes before the chunk (a block at most) are its, the last of them the one it starts in.
+    let mut crossed = None;
+    if from > 0 && e.at == start && start < src.len() {
+        let n = src.len();
+        let mut r = start;
+        // SAFETY: `r - 1` is a byte of the file.
+        while r > 0 && start - r < 64 && unsafe { w_m_ws(src, n, (r - 1) as isize, &mut 0) } & 1 == 0 {
+            r -= 1;
+        }
+        if r == 0 || start - r < 64 {
+            let mut x = Entry::START;
+            x.at = r;
+            let (mut refused, mut len) = (false, 0usize);
+            let mut reads = Reads { bottom: false, kind_of: None, low: 0, high: 0 };
+            let mut extras = Vec::new();
+            let mut st0 = stage1_at(src, s1, r / 64);
+            while x.at < start && !refused {
+                let was = x.at;
+                // SAFETY: no record written (`WRITE` false).
+                unsafe { lex_range::<false, true>(src, &mut x, &mut st0, s1, usize::MAX, &mut refused, core::ptr::null_mut(), &mut len, &mut extras, &mut reads, None) };
+                if x.at == was {
+                    refused = true;
+                }
+            }
+            if !refused && !reads.bottom && x.depth == 0 && x.at > start && x.at <= (64 * to).min(n) {
+                crossed = Some(x.without_nest());
+            }
+        }
+    }
+    let mut starts = vec![e];
+    // (The chunk may start after a token, too: a string's, whose run reads as an opener.)
+    if let Some(x) = crossed {
+        starts.push(x);
+    }
+    if from == 0 || start >= src.len() {
+        lanes_from(src, s1, &mut st1, &starts, to, &mut sum);
+        return sum;
+    }
+    // A token the chunk starts inside, of code: it ends where the code lane's first token does (a name's, a number's,
+    // a template's `{`), and the next starts there.
+    // The token's end is where one lexed from a byte of it ends: from each byte before the first blank, each end once.
+    // (And where the run's first byte is a region's closer, which reads as an opener from there.)
+    if e.at == start {
+        let end = (64 * to).min(src.len());
+        let mut ends: Vec<usize> = Vec::new();
+        let mut p = start;
+        // SAFETY: `p` is a byte of the file.
+        while p < end && unsafe { w_m_ws(src, src.len(), p as isize, &mut 0) } & 1 == 0 {
+            let (mut refused, mut len) = (false, 0usize);
+            let mut reads = Reads { bottom: false, kind_of: None, low: 0, high: 0 };
+            let mut extras = Vec::new();
+            let mut first = Entry::START;
+            first.at = p;
+            // SAFETY: no record written (`WRITE` false).
+            unsafe { lex_range::<false, true>(src, &mut first, &mut st1, s1, usize::MAX, &mut refused, core::ptr::null_mut(), &mut len, &mut extras, &mut reads, None) };
+            if !refused && first.at > start && first.at <= end && !ends.contains(&first.at) {
+                ends.push(first.at);
+                if !starts.iter().any(|x| x.at == first.at) {
+                    starts.push(first.without_nest());
+                }
+            }
+            p += 1;
+        }
+    }
+    // Inside a region: its closer's search from the chunk's first byte, or from the backslashes before it.
+    let from_byte = start - run_before(src, start);
+    let mut seen: Vec<usize> = Vec::new();
+    for &(open, row, k, lv) in &REGIONS {
+        if from_byte < k {
+            continue;
+        }
+        let s = from_byte - k;
+        let mut e = Entry::START;
+        e.at = s;
+        let (mut refused, mut len) = (false, 0usize);
+        let mut reads = Reads { bottom: false, kind_of: None, low: 0, high: 0 };
+        let mut extras = Vec::new();
+        // SAFETY: no record written (`WRITE` false).
+        unsafe { lex_range::<false, true>(src, &mut e, &mut st1, s1, usize::MAX, &mut refused, core::ptr::null_mut(), &mut len, &mut extras, &mut reads, Some(Force { s, open, row, lv })) };
+        if refused || seen.contains(&e.at) {
+            continue;
+        }
+        seen.push(e.at);
+        // (One start a place: the first, the code's before a region's.)
+        if !starts.iter().any(|x| x.at == e.at) {
+            starts.push(e.without_nest());
+        }
+    }
+    lanes_from(src, s1, &mut st1, &starts, to, &mut sum);
+    sum
+}
+
+/// The lanes of `b` a lane of the range before it goes on in: those entered where it leaves the next token, else the
+/// code's (a token from before `b` ends in its code).
+fn next_lanes(b: &Summary, at: usize) -> impl Iterator<Item = &Lane> {
+    // An entry before the range's first byte comes through blanks to where its code lanes start.
+    let at0 = if at < b.start { b.code } else { at };
+    b.lanes().iter().filter(move |l| l.at0 == at0)
+}
+
+/// Lane `a` then lane `b` (entered where `a` leaves), as typed bracket sequences: `b`'s closed levels matched against
+/// what `a` leaves open, the rest of them closed below `a`'s entry. None where they do not meet.
+fn then(a: &Lane, b: &Lane) -> Option<Lane> {
+    // `b` lexes no token: what `a` leaves goes through it.
+    if !b.moved {
+        return Some(*a);
+    }
+    if !a.moved {
+        let mut l = *b;
+        l.at0 = a.at0;
+        return Some(l);
+    }
+    let (an, bn, pn) = (usize::from(a.kcn), usize::from(b.kcn), usize::from(a.pn));
+    let j = bn.min(pn);
+    // `b`'s first `j` closed levels, innermost first, are `a`'s open ones, innermost last.
+    if (0..j).any(|i| !meets(b.kc[i], a.p[pn - 1 - i])) {
+        return None;
+    }
+    let mut l = *b;
+    l.at0 = a.at0;
+    if bn > pn {
+        // `b` closes past what `a` left open: below `a`'s entry, where `a` read none (`exact`) there is none.
+        // (No entry has more than `MAXD` levels open: the serial lexer refuses past them.)
+        if a.exact || an + bn - pn > MAXD {
+            return None;
+        }
+        l.kc = [0; MAXD];
+        l.kc[..an].copy_from_slice(&a.kc[..an]);
+        l.kc[an..an + bn - pn].copy_from_slice(&b.kc[pn..bn]);
+        l.kcn = (an + bn - pn) as u8;
+        l.exact = b.exact;
+        l.need = b.need.max(a.need.saturating_sub((bn - pn) as u8));
+    } else {
+        // `b` read the bottom with levels `a` left open below its own: no such entry.
+        if b.exact && pn > bn {
+            return None;
+        }
+        l.kc = a.kc;
+        l.kcn = a.kcn;
+        l.exact = a.exact || b.exact;
+        // `b` holds where `a` leaves at least `bn + b.need` open: `a`'s entry at least that less what `a` opens.
+        l.need = a.need.max((usize::from(b.need) + bn).saturating_sub(pn) as u8);
+    }
+    // An entry with exactly `kn` levels open can have none more below.
+    if l.exact && l.need > 0 {
+        return None;
+    }
+    let kn = usize::from(l.kcn);
+    // Open: `a`'s below what `b` closed, then `b`'s; `b`'s strings' records after `a`'s.
+    let keep = pn - j;
+    let mut p = [0u8; MAXD];
+    let mut ph = [0usize; MAXD];
+    p[..keep].copy_from_slice(&a.p[..keep]);
+    ph[..keep].copy_from_slice(&a.ph[..keep]);
+    let bp = usize::from(b.pn);
+    if keep + bp > MAXD {
+        return None;
+    }
+    for i in 0..bp {
+        p[keep + i] = b.p[i];
+        ph[keep + i] = if b.p[i] == 255 {
+            0
+        } else if b.ph[i] >= INHERIT {
+            // A record `b` keeps from a level it closes: `a`'s, where `a` left it open; else one below `a`'s entry.
+            let q = b.ph[i] - INHERIT;
+            if q < j { a.ph[pn - 1 - q] } else { INHERIT + an + q - pn }
+        } else {
+            b.ph[i] + a.recs
+        };
+    }
+    l.p = p;
+    l.ph = ph;
+    l.pn = (keep + bp) as u8;
+    // The deepest, above the combined base (the entry less its `kn` closed levels): `a` starts `kn - an` above it, and
+    // `b` where `a` leaves it, `kn + pn - an - bn` above it (none where `b` closes past `a`'s open levels).
+    let ha = usize::from(a.high) + (kn - an);
+    let hb = usize::from(b.high) + (kn + pn) - (an + bn);
+    l.high = ha.max(hb) as u8;
+    l.recs = a.recs + b.recs;
+    l.refused = a.refused || b.refused;
+    Some(l)
+}
+
+/// Two ranges' summaries, one after the other: each lane of the first, on through the lanes of the second it meets.
+/// Associative, so a prefix sum composes them in any tree.
+pub fn compose(a: &Summary, b: &Summary) -> Summary {
+    let (start, end) = (a.start, b.end);
+    if b.transparent() {
+        return Summary { start, end, over: a.over || b.over, ..*a };
+    }
+    if a.transparent() {
+        // Every entry goes through `a` as it came, to `b`: `b`'s lanes, an entry before `b` at its code lanes.
+        let _ = start;
+        return Summary { end, over: a.over || b.over, ..*b };
+    }
+    let mut s = Summary { lanes: [NO_LANE; L], n: 0, start, end, code: a.code, over: a.over };
+    for la in a.lanes() {
+        // A lane that leaves at or past `b`'s end goes through `b` as it is.
+        if la.exit.at >= b.end {
+            s.push(*la);
+            continue;
+        }
+        let mut met = false;
+        for lb in next_lanes(b, la.exit.at) {
+            if let Some(l) = then(la, lb) {
+                met = true;
+                s.push(l);
+            }
+        }
+        // A lane of `a` may go on in one `b` dropped.
+        s.over |= !met && b.over;
+    }
+    s
+}
+
+/// The entry a range leaves after entry `e` (`e` at its first byte, the records before it `recs`): its lane for `e`'s
+/// nest, and whether the file is refused on the way. None where no lane meets it (one past `L` would have).
+pub fn apply(s: &Summary, e: &Entry, recs: usize) -> Option<(Entry, usize, bool)> {
+    // Each lane holds for its class of entries, and the lanes of a range split them apart: a lane kept where others went
+    // past `L` still holds, and no other lane meets its entries.
+    if s.transparent() || e.at >= s.end {
+        return Some((*e, recs, false));
+    }
+    let d = e.depth;
+    let l = next_lanes(s, e.at).find(|l| {
+        let kn = usize::from(l.kcn);
+        kn + usize::from(l.need) <= d && (0..kn).all(|i| meets(l.kc[i], kind_of(e.nest[d - 1 - i]))) && (!l.exact || d == kn)
+    })?;
+    if !l.moved {
+        return Some((*e, recs, false));
+    }
+    let rest = d - usize::from(l.kcn);
+    // Past the deepest nest: the serial lexer refuses the file there.
+    if rest + usize::from(l.high) > MAXD || rest + usize::from(l.pn) > MAXD {
+        return Some((Entry::START, recs + l.recs, true));
+    }
+    let mut x = l.exit;
+    let strings = (0..rest).filter(|&i| e.nest[i] != usize::MAX).count();
+    x.nest = [usize::MAX; MAXD];
+    x.nest[..rest].copy_from_slice(&e.nest[..rest]);
+    x.held = [0; MAXD];
+    x.held[..strings].copy_from_slice(&e.held[..strings]);
+    x.opened = strings;
+    for i in 0..usize::from(l.pn) {
+        x.nest[rest + i] = level_of(l.p[i]);
+        if l.p[i] != 255 {
+            x.held[x.opened] = if l.ph[i] >= INHERIT {
+                // The string of the entry's level the lane closed `q`th: its record, the entry's.
+                let lv = d - 1 - (l.ph[i] - INHERIT);
+                e.held[(0..lv).filter(|&i| e.nest[i] != usize::MAX).count()]
+            } else {
+                recs + l.ph[i]
+            };
+            x.opened += 1;
+        }
+    }
+    x.depth = rest + usize::from(l.pn);
+    x.template = if x.depth == 0 { usize::MAX } else { x.nest[x.depth - 1] };
+    Some((x, recs + l.recs, l.refused))
+}
+
+/// The chunks pass 3 has in flight at once (`entries`): each composes the summaries of those before it in flight.
+pub const IN_FLIGHT: usize = 32;
+
+/// Pass 3: each chunk's entry and the records before it, by a single-pass prefix sum with decoupled look-back (Merrill
+/// and Garland's): a chunk whose predecessor's entry is known applies its predecessor's summary to it; one whose
+/// predecessor is still in flight composes the summaries back to the last known entry and applies that, and where the
+/// composition went past `L` lanes (`over`), waits for its predecessor's entry instead. None for a chunk no lane
+/// reaches; and the chunks that waited.
+pub fn entries_waits(ends: &[Summary]) -> (Vec<Option<(Entry, usize, bool)>>, usize) {
+    let after = |out: &[Option<(Entry, usize, bool)>], c: usize| out[c - 1].and_then(|(e, r, x)| if x { None } else { apply(&ends[c - 1], &e, r) });
+    let mut out: Vec<Option<(Entry, usize, bool)>> = Vec::with_capacity(ends.len());
+    let mut waits = 0;
+    let mut w = 0;
+    while w < ends.len() {
+        // The chunks `w..w + IN_FLIGHT` in flight. The last chunk whose entry is known (`k`: the wave's first, or one
+        // that waited), and the summaries composed from it.
+        let mut k = w;
+        let mut known = if w == 0 { Some((Entry::START, 0, false)) } else { after(&out, w) };
+        let top = (w + IN_FLIGHT).min(ends.len());
+        let mut agg: Option<Summary> = None;
+        out.push(known);
+        for c in w + 1..top {
+            let a = match agg {
+                None => ends[c - 1],
+                Some(a) => compose(&a, &ends[c - 1]),
+            };
+            agg = Some(a);
+            let e = match known {
+                Some((ke, kr, _)) if !a.over => apply(&a, &ke, kr),
+                _ => None,
+            };
+            let e = match e {
+                Some(e) => e,
+                None => {
+                    // Its predecessor's entry, when known: from it on, the chunks after look back to this one.
+                    waits += 1;
+                    let e = after(&out, c);
+                    (k, known, agg) = (c, e, None);
+                    out.push(e);
+                    continue;
+                }
+            };
+            let _ = k;
+            out.push(Some(e));
+        }
+        w = top;
+    }
+    (out, waits)
+}
+
+/// Pass 3's entries (`entries_waits`).
+pub fn entries(ends: &[Summary]) -> Vec<Option<(Entry, usize, bool)>> {
+    entries_waits(ends).0
+}
+
+/// The first block of each chunk of `blocks` blocks of a file of `n` bytes.
+pub fn chunk_starts(n: usize, blocks: usize) -> Vec<usize> {
+    (0..n.div_ceil(64).max(1)).step_by(blocks.max(1)).collect()
+}
+
+/// Pass 1 over `src`: each chunk of `blocks` blocks' summary (`chunk_ends`).
+pub fn summaries(src: &[u8], blocks: usize) -> Vec<Summary> {
+    let mut s1 = Stage1::new(src.len().div_ceil(64));
+    chunk_starts(src.len(), blocks).into_iter().map(|q| chunk_ends(src, &mut s1, q, q + blocks.max(1))).collect()
+}
+
+/// The serial lexer's entry at each chunk's start, and the records before it: what pass 3 gives where it is right.
+pub fn serial_entries(src: &[u8], blocks: usize) -> Vec<(Entry, usize)> {
+    let n = src.len();
+    let mut s1 = Stage1::new(n.div_ceil(64));
+    let mut st1 = Stage1Run::new();
+    let (mut e, mut refused, mut len, mut out) = (Entry::START, false, 0usize, Vec::new());
+    let mut extras = Vec::new();
+    chunk_starts(n, blocks)
+        .into_iter()
+        .map(|q| {
+            let at = (e, len);
+            let mut reads = Reads { bottom: false, kind_of: None, low: 0, high: 0 };
+            // SAFETY: no record written (`WRITE` false).
+            unsafe { lex_range::<false, false>(src, &mut e, &mut st1, &mut s1, q + blocks.max(1), &mut refused, core::ptr::null_mut(), &mut len, &mut extras, &mut reads, None) };
+            out.push(());
+            at
+        })
+        .collect()
+}
+
+/// `src` lexed in chunks of `blocks` blocks: pass 1, the prefix sum, then each chunk from its entry, which checks its
+/// exit is the next chunk's entry. The records, and the chunks entered again where pass 3's entry was not the one the
+/// chunk before left (or no lane gave one).
+pub fn lex_chunked(src: &[u8], blocks: usize) -> (Lexed, usize) {
+    let n = src.len();
+    let nw = n.div_ceil(64);
+    let blocks = blocks.max(1);
+    let starts = chunk_starts(n, blocks);
+    let ends = summaries(src, blocks);
+    let mut s1 = Stage1::new(nw);
+    let pred = entries(&ends);
+    let mut recs: Vec<Rec> = Vec::with_capacity(n + 1);
+    let mut extras: Vec<Rec> = Vec::new();
+    let (mut e, mut refused, mut again) = (Entry::START, false, 0usize);
+    for (c, &q) in starts.iter().enumerate() {
+        if pred[c].is_none_or(|(p, r, _)| p != e || r != recs.len()) {
+            again += 1;
+        }
+        let mut st1 = stage1_at(src, &mut s1, q);
+        let mut len = recs.len();
+        let mut reads = Reads { bottom: false, kind_of: None, low: 0, high: 0 };
+        // SAFETY: room for a record a byte of the file (`n + 1`), each after the last.
+        unsafe { lex_range::<true, false>(src, &mut e, &mut st1, &mut s1, q + blocks, &mut refused, recs.as_mut_ptr(), &mut len, &mut extras, &mut reads, None) };
+        // SAFETY: `len` records written.
+        unsafe { recs.set_len(len) };
+        if refused {
+            break;
+        }
+    }
+    if !refused {
+        finish(src, &e, &mut refused);
+    }
+    (Lexed { recs, extras, refused }, again)
+}

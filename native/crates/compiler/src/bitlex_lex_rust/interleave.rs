@@ -691,10 +691,28 @@ pub(super) fn code_pass_in_loop(text: &str) -> String {
     out
 }
 
+/// The regions' masks as the walk makes them (`lw_…`, `Gen::walk_writes`), the test build's alone: only its checks read
+/// them (that the loop's regions are the walk's), so the product neither makes nor writes them.
+fn lw_for_tests(out: String) -> String {
+    let cfg = "#[cfg(feature = \"test-hooks\")]";
+    let mut o = String::with_capacity(out.len());
+    let mut prev = "";
+    for l in out.split_inclusive('\n') {
+        let t = l.trim_start();
+        if (t.starts_with("set(&mut lw_") || t.starts_with("let mut lw_")) && prev.trim() != cfg {
+            let _ = write!(o, "{}{cfg}\n", &l[..l.len() - t.len()]);
+        }
+        o.push_str(l);
+        prev = l;
+    }
+    o
+}
+
 /// The file's word bits (`lv`, made over every word) a test build's alone, where the product reads none of them
 /// (`middle::product_after`: the test build's items and statements taken out): a lexer that runs from the middle
 /// makes no pass over the file before its token pass (`middle::whole_file_passes`).
 pub(super) fn lv_for_tests(out: String) -> String {
+    let out = lw_for_tests(out);
     let lv = "    // Each word's bits inside the file.\n    let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();\n";
     let read = super::middle::product_after(&out, "let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();");
     if out.matches(lv).count() == 1 && read.is_some_and(|r| !["lv[", "&lv)", "&lv,", "&lv;"].iter().any(|p| r.contains(p))) {
