@@ -228,36 +228,6 @@
         }
       }
     },
-    "ruff-td002-missing-todo-author": {
-      "reason": "The original is right. fixtures ruff/rerail/probes/FIX002-unicode-word-boundaries.py:3 (`# TODO→ arrow`): Ruff 0.17.6 takes the first word as a run of Unicode alphanumerics, so `→` ends it and TODO is a tag (TD002, TD003, TD004 at 3:3), as the original reports; misc2-todo's todo_tag and misc2-todo-span's todo_at allow only ASCII punctuation or a space after the tag. Fixed by one character class in those existing library files (proposed in NOTES-pt1120-python-08.md; checked on a box over fixtures and samples-python: exactly these keys are added), which this batch may not edit.",
-      "right": "original",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-td003-missing-todo-link": {
-      "reason": "The original is right. fixtures ruff/rerail/probes/FIX002-unicode-word-boundaries.py:3 (`# TODO→ arrow`): Ruff 0.17.6 takes the first word as a run of Unicode alphanumerics, so `→` ends it and TODO is a tag (TD002, TD003, TD004 at 3:3), as the original reports; misc2-todo's todo_tag and misc2-todo-span's todo_at allow only ASCII punctuation or a space after the tag. Fixed by one character class in those existing library files (proposed in NOTES-pt1120-python-08.md; checked on a box over fixtures and samples-python: exactly these keys are added), which this batch may not edit.",
-      "right": "original",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-td004-missing-todo-colon": {
-      "reason": "The original is right. fixtures ruff/rerail/probes/FIX002-unicode-word-boundaries.py:3 (`# TODO→ arrow`): Ruff 0.17.6 takes the first word as a run of Unicode alphanumerics, so `→` ends it and TODO is a tag (TD002, TD003, TD004 at 3:3), as the original reports; misc2-todo's todo_tag and misc2-todo-span's todo_at allow only ASCII punctuation or a space after the tag. Fixed by one character class in those existing library files (proposed in NOTES-pt1120-python-08.md; checked on a box over fixtures and samples-python: exactly these keys are added), which this batch may not edit.",
-      "right": "original",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        }
-      }
-    },
     "ruff-up006-non-pep585-annotation": {
       "reason": "Ruff 0.17.6 (py310) reports pyflakes/F401_0.py 44, 59 and 60 (Type[\"NamedTuple\"] in a class body; TypeVar bound=\"Dict\"; TypeVar constraints \"List\", \"Set\"): the translation does, the JSON original does not. Ruff also reports flake8_pyi/PYI036.pyi:82, `Type[BaseException]` in a stub method inside a function that does `from builtins import type as Type`: in a deferred annotation inside a function Ruff resolves the name to the module's typing.Type although the function rebinds it (also with a parameter or `List = list`, NOTES-python-10.md); the original follows Ruff, the translation follows Python's scoping.",
       "right": "neither",

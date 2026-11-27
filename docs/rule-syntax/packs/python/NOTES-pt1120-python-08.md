@@ -117,6 +117,13 @@ everywhere: `TODO：`, `TODO—`, `TODO€`, `TODO\u00a0x` and `TODO_x` are tags
 `translations:check`, which takes this checkout's library]. TD001 and TD005–TD007 read the same relations and would
 change with it too; they are not this batch's.
 
+Applied since (pt1120-rule-fixes), in both library files as proposed. The class is Ruff's own test: Ruff's
+`TodoDirective::from_comment` (crates/ruff_linter/src/directives.rs) trims `#`s, then `char::is_whitespace` (the
+regex's Unicode `\s`), takes the first word as the run before the first `!char::is_alphanumeric` character, and
+compares it lowercased; a piece without a tag moves on to the next `#`. `translations:check` over TD001–TD007:
+all seven `same` on fixtures and samples-python. Each of TD002–TD004 has the cases as a `.test`, checked against
+Ruff 0.17.6.
+
 ## Engine gaps
 
 None found.
