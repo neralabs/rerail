@@ -4,14 +4,19 @@
 //! 1. **Classes** (`classes`): each 64-byte block's bytes classified on `std::simd`'s interface (`rerail-simd`), a
 //!    mask a class, a bit a byte; the bytes a backslash escapes by simdjson's odd-run trick, one carry bit from
 //!    the block before.
-//! 2. **Regions** (`Text::regions`): comments and strings resolved in order. Each step takes the lowest opener
-//!    left in code (a `#`, or a quote no backslash escapes) and finds its terminator by one mask search: the line's
-//!    end, the quote's own mask, or for a triple the quote's mask and its two next bytes'. An f-string's
-//!    interiors are code read by the same steps, their bracket depth by popcounts between the steps. Out comes
-//!    `code`. An f-string inside an interior is refused, to tree-sitter.
-//! 3. **Depth** (`Text::depth`): the bracket depth after each byte of code, by the block's brackets' bits, with the
-//!    depth carried in (clamped at 0, as the lean lexer's counter is); out comes `depth0`. A block with no bracket
-//!    is one test. A depth past 31 is refused (a rule).
+//! 2. **Regions** (`Text::regions`): comments and strings, block by block, every step bit operations. The lowest
+//!    opener left in code is `live`'s lowest bit; its kind is which mask holds it; its prefix the run of prefix
+//!    letters below it (one count of leading zeros of a two-block window); its closer the lowest bit past it of one
+//!    mask (a line end; a quote no backslash escapes or a bare line end; a triple, the quote's mask and its two next
+//!    bytes'), selected by the kind's bits; its span goes into the block's mask, and the openers through it are
+//!    cleared. A region open at the block's end is carried. An f-string's text stops too at its interiors' `{` (the
+//!    last of an odd run of `{`) and at a lone `}` (the odd-run trick over the run of `}` from the text's start),
+//!    and its interiors' stops are one mask, their depth popcounts between the stops. Out come `code` and
+//!    `sstart`. An f-string inside an interior is refused, to tree-sitter.
+//! 3. **Depth** (`Text::depth`): the bracket depth after each byte of code, a prefix sum over the block's 64 lanes
+//!    (each register of 16 four shifted adds, then the registers' carries), the depth carried in; clamped at 0 as
+//!    the lean lexer's counter is by a prefix minimum where the sum goes below 0 (rare, one test). Out comes
+//!    `depth0`. A block with no bracket is one test. A depth past 31 is refused (a rule).
 //! 4. **Tokens** (`Walk`): the lean lexer's tokens and layout read from the masks: an item's start the next byte
 //!    past the blanks, a name's end its run's, a string's stops one mask of its own kind, and whether a line end
 //!    is inside brackets one bit of `depth0`, not a count.
@@ -49,6 +54,12 @@ struct B {
     ob: u64,
     /// `)`, `]`, `}`.
     cb: u64,
+    /// `{`, `}`: made only in a block that has a brace (one test of the two compares' lanes).
+    lb: u64,
+    rb: u64,
+    /// The `{` no `{` pairs with: of each run of `{`, the first of each pair and an odd run's last (the odd-run trick
+    /// over the runs of `{`, one carry bit from the block before).
+    lbu: u64,
     /// Stratum 2: not in a comment or a string (an f-string's interiors are in its string).
     code: u64,
     /// Stratum 3: the bracket depth after this byte is 0.
@@ -67,8 +78,8 @@ fn quotes(b: &B, q: u8) -> u64 {
     }
 }
 
-/// simdjson's escapes: the bytes after an odd run of backslashes. `prev` is whether the block's first byte is
-/// escaped, and becomes the next block's.
+/// simdjson's escapes: the bytes after an odd run of `bs`'s bits, and the bits of each run past its first, second
+/// and so on in pairs. `prev` is whether the block's first byte is escaped, and becomes the next block's.
 #[inline(always)]
 fn escaped(bs: u64, prev: &mut u64) -> u64 {
     const EVEN: u64 = 0x5555_5555_5555_5555;
@@ -88,13 +99,15 @@ fn block(v: V) -> B {
     // A letter is `b | 0x20` in `a..=z`; a digit `b - '0'` below 10 (wrapping).
     let alpha = ((v | s(0x20)) - s(b'a')).simd_lt(s(26));
     let digit = (v - s(b'0')).simd_lt(s(10));
-    let word = (alpha | digit | eq(b'_')).to_bitmask();
+    let word = alpha | digit | eq(b'_');
     let (space, lf) = (eq(b' ').to_bitmask(), eq(b'\n').to_bitmask());
     // Tabs, form feeds and `'\r'` are rare: one mask, and each its own only in a block that has one.
     let rare = (eq(b'\t') | eq(0x0c) | eq(b'\r')).to_bitmask();
     let (tab, ff, cr) = if rare == 0 { (0, 0, 0) } else { (eq(b'\t').to_bitmask(), eq(0x0c).to_bitmask(), eq(b'\r').to_bitmask()) };
+    let (lb, rb) = (eq(b'{'), eq(b'}'));
+    let (lbm, rbm) = if (lb | rb).any() { (lb.to_bitmask(), rb.to_bitmask()) } else { (0, 0) };
     B {
-        word,
+        word: word.to_bitmask(),
         space,
         sptab: space | tab,
         skip: space | tab | ff | lf,
@@ -107,20 +120,22 @@ fn block(v: V) -> B {
         bs: eq(b'\\').to_bitmask(),
         esc: 0,
         hash: eq(b'#').to_bitmask(),
-        ob: (eq(b'(') | eq(b'[') | eq(b'{')).to_bitmask(),
-        cb: (eq(b')') | eq(b']') | eq(b'}')).to_bitmask(),
+        ob: (eq(b'(') | eq(b'[') | lb).to_bitmask(),
+        cb: (eq(b')') | eq(b']') | rb).to_bitmask(),
+        lb: lbm,
+        rb: rbm,
+        lbu: 0,
         code: !0,
         depth0: 0,
         sstart: 0,
     }
 }
 
-/// Block `bi`'s bytes that are one of `xs`: made from its bytes where an f-string asks (its braces, an interior's
-/// `:` and `!`), not for every block.
+/// Block `bi`'s 64 bytes, zeros past the text's end.
 #[inline(always)]
-fn bytes_of<const K: usize>(src: &[u8], bi: usize, xs: [u8; K]) -> u64 {
+fn bytes(src: &[u8], bi: usize) -> V {
     let at = bi * 64;
-    let v = match src.get(at..at + 64) {
+    match src.get(at..at + 64) {
         Some(b) => V::from_slice(b),
         None => {
             let mut b = [0u8; 64];
@@ -128,7 +143,14 @@ fn bytes_of<const K: usize>(src: &[u8], bi: usize, xs: [u8; K]) -> u64 {
             b[..k].copy_from_slice(&src[at..at + k]);
             V::from_array(b)
         }
-    };
+    }
+}
+
+/// Block `bi`'s bytes that are one of `xs`: made from its bytes where an f-string's interior asks (its `:`), not
+/// for every block.
+#[inline(always)]
+fn bytes_of<const K: usize>(src: &[u8], bi: usize, xs: [u8; K]) -> u64 {
+    let v = bytes(src, bi);
     let mut m = v.simd_eq(V::splat(xs[0]));
     for &x in &xs[1..] {
         m |= v.simd_eq(V::splat(x));
@@ -142,7 +164,7 @@ fn bytes_of<const K: usize>(src: &[u8], bi: usize, xs: [u8; K]) -> u64 {
 fn classes(src: &[u8]) -> Vec<B> {
     let n = src.len();
     let mut out = Vec::with_capacity(n.div_ceil(64) + 1);
-    let (mut carry, mut cr_carry) = (0u64, 0u64);
+    let (mut carry, mut cr_carry, mut lb_carry) = (0u64, 0u64, 0u64);
     let mut at = 0;
     while at < n {
         let v = match src.get(at..at + 64) {
@@ -159,6 +181,7 @@ fn classes(src: &[u8]) -> Vec<B> {
         let esc_cr = b.bare_lf & b.esc;
         b.bare_lf = b.lf & !b.esc & !((esc_cr << 1) | cr_carry);
         cr_carry = esc_cr >> 63;
+        b.lbu = b.lb & !escaped(b.lb, &mut lb_carry);
         out.push(b);
         at += 64;
     }
@@ -166,30 +189,94 @@ fn classes(src: &[u8]) -> Vec<B> {
     out
 }
 
-/// One block's depths, by its brackets' bits (`up` and `down`, in code): the bits where the depth after the byte is
-/// 0, the depth carried out, and whether any is past the bound. Between two brackets the depth is the one after the
-/// first, so each bracket sets the bits of the run before it where that run's depth is 0, the depth clamped at 0 as
-/// the lean lexer's counter is. A few operations a bracket: fewer than a prefix sum over the block's 64 lanes.
-#[inline(always)]
-fn depth_bits(up: u64, down: u64, carry: i8) -> (u64, i8, bool) {
-    let (mut zero, mut d, mut from, mut deep) = (0u64, i32::from(carry), 0u32, false);
-    let mut m = up | down;
-    while m != 0 {
-        let k = m.trailing_zeros();
-        // Bytes `from..k` lie at depth `d`.
-        let run = (!0u64 << from) & !(!0u64 << k);
-        zero |= if d == 0 { run } else { 0 };
-        d = (d + if up >> k & 1 == 1 { 1 } else { -1 }).max(0);
-        deep |= d > i32::from(MAX_DEPTH);
-        from = k;
-        m &= m - 1;
-    }
-    zero |= if d == 0 { !0u64 << from } else { 0 };
-    (zero, d as i8, deep)
-}
-
 /// The bracket depth's bound: a file past it is refused (decision 0698, item 93).
 const MAX_DEPTH: i8 = 31;
+
+type L = Simd<u8, 16>;
+type D = Simd<i8, 16>;
+
+/// A block's mask as its 64 lanes, four registers of 16: -1 where the bit is set, else 0. Each byte of the mask is
+/// spread over 8 lanes by one table lookup, and each lane keeps its own bit.
+#[inline(always)]
+fn lanes(m: u64) -> [D; 4] {
+    let b = m.to_le_bytes();
+    let t = L::from_array([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], 0, 0, 0, 0, 0, 0, 0, 0]);
+    let bit = L::from_array([1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128]);
+    let r = |k: u8| {
+        let ix = L::from_array([2 * k, 2 * k, 2 * k, 2 * k, 2 * k, 2 * k, 2 * k, 2 * k, 2 * k + 1, 2 * k + 1, 2 * k + 1, 2 * k + 1, 2 * k + 1, 2 * k + 1, 2 * k + 1, 2 * k + 1]);
+        (t.swizzle_dyn(ix) & bit).simd_ne(L::splat(0)).to_int()
+    };
+    [r(0), r(1), r(2), r(3)]
+}
+
+/// A register's inclusive prefix sum: four shifted adds.
+#[inline(always)]
+fn prefix_sum(x: D) -> D {
+    let x = x + x.shift_elements_right::<1>(0);
+    let x = x + x.shift_elements_right::<2>(0);
+    let x = x + x.shift_elements_right::<4>(0);
+    x + x.shift_elements_right::<8>(0)
+}
+
+/// A register's inclusive prefix minimum: four shifted minimums.
+#[inline(always)]
+fn prefix_min(x: D) -> D {
+    let x = x.simd_min(x.shift_elements_right::<1>(i8::MAX));
+    let x = x.simd_min(x.shift_elements_right::<2>(i8::MAX));
+    let x = x.simd_min(x.shift_elements_right::<4>(i8::MAX));
+    x.simd_min(x.shift_elements_right::<8>(i8::MAX))
+}
+
+/// One block's depths (`up` and `down`, its brackets in code): the bits where the depth after the byte is 0, the
+/// depth carried out, and whether any is past the bound. The depth is a prefix sum over the block's 64 lanes, each
+/// register of 16 its own four shifted adds and then the registers' carries, the one carried in added first. Where
+/// the sum goes below 0 (a closer with none open, which the lean lexer's counter clamps at 0), a prefix minimum
+/// clamps it: rare, and one test of the sum skips it.
+#[inline(always)]
+fn depth_lanes(up: u64, down: u64, carry: i8) -> (u64, i8, bool) {
+    let (u, d) = (lanes(up), lanes(down));
+    let mut s = [D::splat(0); 4];
+    let mut c = D::splat(carry);
+    for k in 0..4 {
+        s[k] = prefix_sum(d[k] - u[k]) + c;
+        c = D::splat(s[k][15]);
+    }
+    let neg = (s[0].simd_min(s[1]).simd_min(s[2].simd_min(s[3]))).simd_lt(D::splat(0)).any();
+    if neg {
+        let mut m = D::splat(0);
+        for x in &mut s {
+            let pm = prefix_min(*x).simd_min(m);
+            m = D::splat(pm[15]);
+            *x -= pm;
+        }
+    }
+    let deep = (s[0].simd_max(s[1]).simd_max(s[2].simd_max(s[3]))).simd_gt(D::splat(MAX_DEPTH)).any();
+    let mut all = [0i8; 64];
+    for (k, x) in s.iter().enumerate() {
+        all[16 * k..16 * k + 16].copy_from_slice(x.as_array());
+    }
+    let zero = Simd::<i8, 64>::from_array(all).simd_eq(Simd::splat(0)).to_bitmask();
+    (zero, s[3][15], deep)
+}
+
+/// A block's prefix masks, made from its bytes where a string's quote has a word byte just below it: a string
+/// prefix's letters (`rRbBfFtTuU`), the format ones (`fFtT`), and the bytes that may not stand just below a prefix
+/// (`[A-Za-z0-9_]` or past ASCII).
+#[derive(Clone, Copy, Default)]
+struct Pfx {
+    pfx: u64,
+    fpfx: u64,
+    ident: u64,
+}
+
+#[inline(always)]
+fn prefix_masks(src: &[u8], bi: usize, word: u64) -> Pfx {
+    let v = bytes(src, bi);
+    let low = v | V::splat(0x20);
+    let leq = |x: u8| low.simd_eq(V::splat(x));
+    let fmt = leq(b'f') | leq(b't');
+    Pfx { pfx: (fmt | leq(b'r') | leq(b'b') | leq(b'u')).to_bitmask(), fpfx: fmt.to_bitmask(), ident: word | v.simd_ge(V::splat(0x80)).to_bitmask() }
+}
 
 /// The text and its blocks' masks.
 struct Text<'s> {
@@ -253,28 +340,6 @@ impl<'a> Masks<'a> {
         }
     }
 
-    /// The first byte from `at` whose bit is set in the mask `f` makes of a block's index, the block and the block
-    /// after it.
-    #[inline(always)]
-    fn next2_in(&self, at: usize, f: impl Fn(usize, &B, &B) -> u64) -> usize {
-        let n = self.src.len();
-        if at >= n {
-            return n;
-        }
-        let mut bi = at >> 6;
-        let mut m = f(bi, self.blk(bi), self.blk(bi + 1)) & (!0u64 << (at & 63));
-        loop {
-            if m != 0 {
-                return (bi * 64 + m.trailing_zeros() as usize).min(n);
-            }
-            bi += 1;
-            if bi * 64 >= n {
-                return n;
-            }
-            m = f(bi, self.blk(bi), self.blk(bi + 1));
-        }
-    }
-
     /// The first byte from `at` whose bit is set in the mask `f` makes of a block and its index.
     #[inline(always)]
     fn next_in(&self, at: usize, f: impl Fn(usize, &B) -> u64) -> usize {
@@ -303,44 +368,35 @@ impl<'a> Masks<'a> {
     }
 }
 
+/// What stratum 2's step is inside: the stack's frames, code at its bottom.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum F {
+    Code,
+    Comment,
+    /// A string's text: its quote, whether a triple, whether a format string.
+    Text { q: u8, triple: bool, format: bool },
+    /// An f-string's interior, its bracket depth so far.
+    Interior { depth: i32 },
+    /// A format specifier, after its interior's `:`.
+    Spec,
+}
+
+/// A bit window of two blocks: the one before `bi` below, `bi`'s above.
+#[inline(always)]
+fn win(lo: u64, hi: u64) -> u128 {
+    (u128::from(hi) << 64) | u128::from(lo)
+}
+
+/// Bits `[a, 64)`.
+#[inline(always)]
+fn from(a: u32) -> u64 {
+    if a >= 64 { 0 } else { !0u64 << a }
+}
+
 impl<'s> Text<'s> {
     #[inline(always)]
     fn m(&self) -> Masks<'_> {
         Masks { src: self.src, b: &self.b }
-    }
-
-    #[inline(always)]
-    fn at(&self, i: usize) -> u8 {
-        self.m().at(i)
-    }
-
-    #[inline(always)]
-    fn bit(&self, i: usize, f: impl Fn(&B) -> u64) -> bool {
-        self.m().bit(i, f)
-    }
-
-    #[inline(always)]
-    fn next(&self, at: usize, f: impl Fn(&B) -> u64) -> usize {
-        self.m().next(at, f)
-    }
-
-    /// How many bytes of `[a, b)` are set in a mask.
-    #[inline(always)]
-    fn count(&self, a: usize, b: usize, f: impl Fn(&B) -> u64) -> i32 {
-        if a >= b {
-            return 0;
-        }
-        let (ba, bb) = (a >> 6, (b - 1) >> 6);
-        let lo = !0u64 << (a & 63);
-        let hi = !0u64 >> (63 - ((b - 1) & 63));
-        if ba == bb {
-            return (f(&self.b[ba]) & lo & hi).count_ones() as i32;
-        }
-        let mut c = (f(&self.b[ba]) & lo).count_ones() + (f(&self.b[bb]) & hi).count_ones();
-        for x in &self.b[ba + 1..bb] {
-            c += f(x).count_ones();
-        }
-        c as i32
     }
 
     /// A string starts at `i`.
@@ -349,168 +405,340 @@ impl<'s> Text<'s> {
         self.b[i >> 6].sstart |= 1 << (i & 63);
     }
 
-    /// Bytes `[a, b)` are not code.
-    fn fill(&mut self, a: usize, b: usize) {
-        if a >= b {
-            return;
+    /// Where the string whose quote is bit `c` of block `bi` starts (its prefix's first letter), and whether it is a
+    /// format string. The prefix is the run of `pfx` just below the quote, where the byte below that run is not
+    /// `ident`: in a window of the block and the one before it, the highest bit below the quote that is not `pfx`
+    /// (one count of leading zeros), and the run above it.
+    #[inline(always)]
+    fn prefix(&self, bi: usize, c: u32) -> (usize, bool) {
+        let pw = if bi > 0 { self.b[bi - 1].word } else { 0 };
+        if (win(pw, self.b[bi].word) << 1) >> (64 + c) & 1 == 0 {
+            return (bi * 64 + c as usize, false);
         }
-        let (ba, bb) = (a >> 6, (b - 1) >> 6);
-        let lo = !0u64 << (a & 63);
-        let hi = !0u64 >> (63 - ((b - 1) & 63));
-        if ba == bb {
-            self.b[ba].code &= !(lo & hi);
-            return;
+        let b = prefix_masks(self.src, bi, self.b[bi].word);
+        let p = if bi > 0 { prefix_masks(self.src, bi - 1, pw) } else { Pfx::default() };
+        let below = (1u128 << (64 + c)) - 1;
+        let not_pfx = !win(p.pfx, b.pfx) & below;
+        if not_pfx == 0 {
+            return self.prefix_far(bi, c);
         }
-        self.b[ba].code &= !lo;
-        self.b[bb].code &= !hi;
-        for x in &mut self.b[ba + 1..bb] {
-            x.code = 0;
+        let h = 127 - not_pfx.leading_zeros();
+        let run = below & !((2u128 << h) - 1);
+        if run == 0 || win(p.ident, b.ident) >> h & 1 == 1 {
+            return (bi * 64 + c as usize, false);
         }
+        (bi * 64 + h as usize + 1 - 64, win(p.fpfx, b.fpfx) & run != 0)
     }
 
-    /// Stratum 2: each comment and string in turn, from the lowest opener left in code.
+    /// A prefix of more letters than a block holds: the blocks below read until one is not all letters (rare).
+    #[cold]
+    fn prefix_far(&self, bi: usize, c: u32) -> (usize, bool) {
+        let m = |k: usize| prefix_masks(self.src, k, self.b[k].word);
+        let mut k = bi - 1;
+        while k > 0 && m(k).pfx == !0 {
+            k -= 1;
+        }
+        let not_pfx = !m(k).pfx;
+        let h = if not_pfx == 0 { None } else { Some(k * 64 + 63 - not_pfx.leading_zeros() as usize) };
+        let start = h.map_or(0, |h| h + 1);
+        if h.is_some_and(|h| m(h >> 6).ident >> (h & 63) & 1 == 1) {
+            return (bi * 64 + c as usize, false);
+        }
+        let format = (start..bi * 64 + c as usize).any(|i| m(i >> 6).fpfx >> (i & 63) & 1 == 1);
+        (start, format)
+    }
+
+    /// Stratum 2: comments and strings, block by block. In each block a step takes the lowest event of what is open
+    /// (an opener in code; a comment's line end; a string's closer, an interior's `{`, a lone `}`; an interior's
+    /// stops) as one mask's lowest bit, and the masks of the bits past it; what is open at the block's end is
+    /// carried to the next, with an interior's depth (its brackets' popcounts) and a `}` run's escape bit. Out
+    /// come `code` and `sstart`.
     #[inline(never)]
     fn regions(&mut self) -> Result<(), Refusal> {
         let n = self.src.len();
-        let mut pos = 0;
-        loop {
-            let o = self.next(pos, |b| b.hash | ((b.sq | b.dq | b.bt) & !b.esc));
-            if o >= n {
-                return Ok(());
+        let blocks = n.div_ceil(64);
+        let mut stack: Vec<F> = Vec::with_capacity(8);
+        let mut top = F::Code;
+        // The first bit of the block not yet read; where the outermost region opened; the bits of the block a
+        // triple's closer from the block before takes; a `}` run's escape carried in a string's text.
+        let (mut p, mut open, mut taken, mut rbc) = (0u32, 0usize, 0u64, 0u64);
+        let mut nest = 0u32;
+        for bi in 0..blocks {
+            let (b, b1) = (self.b[bi], self.b[bi + 1]);
+            let base = bi * 64;
+            let mut nc = taken;
+            taken = 0;
+            // An interior's `:`, made where an interior reaches this block.
+            let mut colon: Option<u64> = None;
+            loop {
+                if p >= 64 {
+                    p -= 64;
+                    break;
+                }
+                if top == F::Code {
+                    // The plan's step, for comments and plain strings: the lowest opener left (`live`'s lowest
+                    // bit), its closer the lowest bit of one mask past it, its span into `nc`, and the openers
+                    // through it cleared. A format string goes on in the frames' step below.
+                    let mut live = (b.hash | ((b.sq | b.dq | b.bt) & !b.esc)) & from(p);
+                    let mut next = None;
+                    while live != 0 {
+                        let c = live.trailing_zeros();
+                        if b.hash >> c & 1 == 1 {
+                            let hits = b.eol & from(c);
+                            if hits == 0 {
+                                top = F::Comment;
+                                open = base + c as usize;
+                                stack.push(F::Code);
+                                break;
+                            }
+                            let e = hits.trailing_zeros();
+                            nc |= from(c) & !from(e);
+                            live &= from(e);
+                            continue;
+                        }
+                        let (start, format) = self.prefix(bi, c);
+                        self.mark(start);
+                        if start < base {
+                            self.b[bi - 1].code &= !(!0u64 << (start - (base - 64)));
+                        }
+                        let rel = start.max(base) - base;
+                        let (q, triple) = self.quote(&b, &b1, c);
+                        let k = if triple { 3 } else { 1 };
+                        if format {
+                            open = base + rel;
+                            stack.push(F::Code);
+                            top = F::Text { q, triple, format };
+                            rbc = 0;
+                            next = Some(c + k);
+                            break;
+                        }
+                        let (qm, q1) = (quotes(&b, q), quotes(&b1, q));
+                        let t = 0u64.wrapping_sub(u64::from(triple));
+                        let one = (qm & !b.esc) | b.bare_lf;
+                        let three = qm & !b.esc & (qm >> 1 | q1 << 63) & (qm >> 2 | q1 << 62);
+                        let hits = ((three & t) | (one & !t)) & from(c + k);
+                        if hits == 0 {
+                            open = base + rel;
+                            stack.push(F::Code);
+                            top = F::Text { q, triple, format };
+                            next = Some(c + k);
+                            break;
+                        }
+                        let e = hits.trailing_zeros();
+                        if b.bare_lf >> e & 1 == 1 && !triple {
+                            return Err(refuse(base + e as usize));
+                        }
+                        let end = e + k;
+                        nc |= from(rel as u32) & !from(end);
+                        if end > 64 {
+                            taken = !from(end - 64);
+                            next = Some(end);
+                            break;
+                        }
+                        live &= from(end);
+                    }
+                    match next {
+                        Some(x) => {
+                            p = x;
+                            continue;
+                        }
+                        None if top == F::Code => {
+                            p = 0;
+                            break;
+                        }
+                        None => {
+                            // A comment open past the block.
+                            p = 0;
+                            break;
+                        }
+                    }
+                }
+                let past = from(p);
+                let ev = match top {
+                    F::Code => b.hash | ((b.sq | b.dq | b.bt) & !b.esc),
+                    F::Comment => b.eol,
+                    F::Text { q, triple, format } => {
+                        let qm = quotes(&b, q);
+                        let q1 = quotes(&b1, q);
+                        // A one-line string's or a triple's closer, as a select of the two words by `triple`.
+                        let t = 0u64.wrapping_sub(u64::from(triple));
+                        let one = (qm & !b.esc) | b.bare_lf;
+                        let three = qm & !b.esc & (qm >> 1 | q1 << 63) & (qm >> 2 | q1 << 62);
+                        let close = (three & t) | (one & !t);
+                        if format { close | self.braces(&b, &b1, past, rbc).0 } else { close }
+                    }
+                    F::Interior { .. } => b.sq | b.dq | b.bt | b.hash | b.bs | b.rb | *colon.get_or_insert_with(|| bytes_of(self.src, bi, *b":")),
+                    F::Spec => b.lf | b.lb | b.rb,
+                } & past;
+                if ev == 0 {
+                    // Nothing more in the block: what is open is carried.
+                    match &mut top {
+                        F::Interior { depth } => *depth += (b.ob & past).count_ones() as i32 - (b.cb & past).count_ones() as i32,
+                        F::Text { format: true, .. } => rbc = self.braces(&b, &b1, past, rbc).1,
+                        _ => {}
+                    }
+                    p = 0;
+                    break;
+                }
+                let c = ev.trailing_zeros();
+                let at = base + c as usize;
+                let is = |m: u64| m >> c & 1 == 1;
+                match top {
+                    F::Code => {
+                        if is(b.hash) {
+                            stack.push(top);
+                            top = F::Comment;
+                            open = at;
+                            p = c + 1;
+                            continue;
+                        }
+                        let (start, format) = self.prefix(bi, c);
+                        self.mark(start);
+                        if start < base {
+                            self.b[bi - 1].code &= !(!0u64 << (start - (base - 64)));
+                        }
+                        open = start.max(base);
+                        let (q, triple) = self.quote(&b, &b1, c);
+                        stack.push(top);
+                        top = F::Text { q, triple, format };
+                        rbc = 0;
+                        p = c + if triple { 3 } else { 1 };
+                    }
+                    F::Comment => {
+                        top = stack.pop().expect("code");
+                        nc |= from((open - base.min(open)) as u32) & !from(c);
+                        p = c + 1;
+                    }
+                    F::Text { q, triple, .. } => {
+                        if !is(quotes(&b, q)) {
+                            // Not its closer: a one-line string's bare line end, or a format string's lone `}` or
+                            // interior's `{`.
+                            if is(b.bare_lf | b.rb) {
+                                return Err(refuse(at));
+                            }
+                            // `\N{...}`: an escape's name, not an interpolation (not read here).
+                            let w = win(if bi > 0 { self.b[bi - 1].bs & !self.b[bi - 1].esc } else { 0 }, b.bs & !b.esc) << 2;
+                            if w >> (64 + c) & 1 == 1 {
+                                let nm = win(if bi > 0 { bytes_of(self.src, bi - 1, *b"N") } else { 0 }, bytes_of(self.src, bi, *b"N")) << 1;
+                                if nm >> (64 + c) & 1 == 1 {
+                                    return Err(refuse(at));
+                                }
+                            }
+                            nest += 1;
+                            if nest > MAX_NESTING {
+                                return Err(refuse(at + 1));
+                            }
+                            stack.push(top);
+                            top = F::Interior { depth: 0 };
+                            p = c + 1;
+                            continue;
+                        }
+                        let k = if triple { 3 } else { 1 };
+                        top = stack.pop().expect("a frame");
+                        if top == F::Code {
+                            let end = c + k;
+                            nc |= from((open - base.min(open)) as u32) & !from(end);
+                            if end > 64 {
+                                taken = !from(end - 64);
+                            }
+                        }
+                        p = c + k;
+                    }
+                    F::Interior { depth } => {
+                        let span = past & !from(c);
+                        let depth = depth + (b.ob & span).count_ones() as i32 - (b.cb & span).count_ones() as i32;
+                        top = F::Interior { depth };
+                        p = c + 1;
+                        if is(b.hash | b.bs) {
+                            return Err(refuse(at));
+                        }
+                        if is(b.rb) {
+                            if depth == 0 {
+                                nest -= 1;
+                                top = stack.pop().expect("a string");
+                                rbc = 0;
+                            } else {
+                                top = F::Interior { depth: depth - 1 };
+                            }
+                        } else if is(b.sq | b.dq | b.bt) {
+                            // A string in the interior: a nested f-string is refused (to tree-sitter).
+                            let (start, format) = self.prefix(bi, c);
+                            if format {
+                                return Err(refuse(at));
+                            }
+                            self.mark(start);
+                            let (q, triple) = self.quote(&b, &b1, c);
+                            stack.push(top);
+                            top = F::Text { q, triple, format: false };
+                            p = c + if triple { 3 } else { 1 };
+                        } else if depth == 0 {
+                            // A `:` at the interior's depth 0: its format specifier.
+                            top = F::Spec;
+                        }
+                    }
+                    F::Spec => {
+                        p = c + 1;
+                        if is(b.lf) {
+                            return Err(refuse(at));
+                        }
+                        if is(b.rb) {
+                            nest -= 1;
+                            top = stack.pop().expect("a string");
+                            rbc = 0;
+                        } else {
+                            if (b.lb >> 1 | b1.lb << 63) >> c & 1 == 1 {
+                                return Err(refuse(at));
+                            }
+                            nest += 1;
+                            if nest > MAX_NESTING {
+                                return Err(refuse(at + 1));
+                            }
+                            stack.push(top);
+                            top = F::Interior { depth: 0 };
+                        }
+                    }
+                }
             }
-            if self.src[o] == b'#' {
-                let e = self.next(o, |b| b.eol);
-                self.fill(o, e);
-                pos = e;
-                continue;
+            if top != F::Code {
+                // The outermost region runs past the block.
+                nc |= from((open - base.min(open)) as u32);
+                open = base + 64;
             }
-            let (start, format) = self.prefix(o);
-            self.mark(start);
-            let end = self.string_end(o, format, 0)?;
-            self.fill(start, end);
-            pos = end;
+            self.b[bi].code = !nc;
+        }
+        match top {
+            F::Code | F::Comment => Ok(()),
+            _ => Err(refuse(n)),
         }
     }
 
-    /// Where the string whose quote is at `o` starts (its prefix's first letter), and whether it is a format
-    /// string: the run of prefix letters just below the quote (a few bytes read at the quote), where no word byte is
-    /// below it.
+    /// The quote at bit `c` of a block (by which mask holds it), and whether it opens a triple (the quote's mask at
+    /// the two next bytes).
     #[inline(always)]
-    fn prefix(&self, o: usize) -> (usize, bool) {
-        let pfx = |c: u8| matches!(c | 0x20, b'r' | b'b' | b'f' | b't' | b'u');
-        let mut j = o;
-        while j > 0 && pfx(self.src[j - 1]) {
-            j -= 1;
-        }
-        if j == o || (j > 0 && (crate::block::is_word(self.src[j - 1]) || self.src[j - 1] >= 0x80)) {
-            return (o, false);
-        }
-        (j, self.src[j..o].iter().any(|&c| matches!(c | 0x20, b'f' | b't')))
+    fn quote(&self, b: &B, b1: &B, c: u32) -> (u8, bool) {
+        let q = if b.sq >> c & 1 == 1 {
+            b'\''
+        } else if b.dq >> c & 1 == 1 {
+            b'"'
+        } else {
+            b'`'
+        };
+        let (qm, q1) = (quotes(b, q), quotes(b1, q));
+        (q, ((qm >> 1 | q1 << 63) & (qm >> 2 | q1 << 62)) >> c & 1 == 1)
     }
 
-    /// The end of the string whose quote is at `o`: its terminator found by one mask search a step. A format
-    /// string's text stops at a brace too, its interiors read as code (`interior_end`).
-    fn string_end(&mut self, o: usize, format: bool, nest: u32) -> Result<usize, Refusal> {
-        let n = self.src.len();
-        let q = self.src[o];
-        let triple = self.at(o + 1) == q && self.at(o + 2) == q;
-        let src = self.src;
-        let braces = |bi: usize| if format { bytes_of(src, bi, *b"{}") } else { 0 };
-        let mut j = o + if triple { 3 } else { 1 };
-        loop {
-            let c = if triple {
-                // A quote no backslash escapes, and the two bytes after it its quote.
-                self.m().next2_in(j, |bi, b, b1| {
-                    let (qm, q1) = (quotes(b, q), quotes(b1, q));
-                    (qm & !b.esc & (qm >> 1 | q1 << 63) & (qm >> 2 | q1 << 62)) | braces(bi)
-                })
-            } else {
-                self.m().next_in(j, |bi, b| (quotes(b, q) & !b.esc) | b.bare_lf | braces(bi))
-            };
-            if c >= n {
-                return Err(refuse(c));
-            }
-            match self.src[c] {
-                b'\n' => return Err(refuse(c)),
-                b'{' => {
-                    if self.at(c + 1) == b'{' {
-                        j = c + 2;
-                        continue;
-                    }
-                    // `\N{...}`: an escape's name, not an interpolation (not read here).
-                    if c >= 2 && self.src[c - 1] == b'N' && self.src[c - 2] == b'\\' && !self.bit(c - 2, |b| b.esc) {
-                        return Err(refuse(c));
-                    }
-                    j = self.interior_end(c + 1, nest + 1)?;
-                }
-                b'}' => {
-                    if self.at(c + 1) != b'}' {
-                        return Err(refuse(c));
-                    }
-                    j = c + 2;
-                }
-                _ => return Ok(c + if triple { 3 } else { 1 }),
-            }
-        }
-    }
-
-    /// The end of an interpolation whose code starts at `i`: the first `}` at its own depth 0 outside its own
-    /// strings, or a format specifier's end after a `:` at depth 0. The depth is the brackets' popcounts between
-    /// the stops.
-    fn interior_end(&mut self, mut i: usize, nest: u32) -> Result<usize, Refusal> {
-        if nest > MAX_NESTING {
-            return Err(refuse(i));
-        }
-        let n = self.src.len();
-        let mut depth = 0i32;
-        loop {
-            let src = self.src;
-            let c = self.m().next_in(i, |bi, b| b.sq | b.dq | b.bt | b.hash | b.bs | bytes_of(src, bi, *b"}:!"));
-            if c >= n {
-                return Err(refuse(c));
-            }
-            depth += self.count(i, c, |b| b.ob) - self.count(i, c, |b| b.cb);
-            i = c + 1;
-            match self.src[c] {
-                b'#' | b'\\' => return Err(refuse(c)),
-                b'}' => {
-                    if depth == 0 {
-                        return Ok(c + 1);
-                    }
-                    depth -= 1;
-                }
-                b':' if depth == 0 => return self.spec_end(c + 1, nest),
-                b':' | b'!' => {}
-                _ => {
-                    // A string in the interior: a nested f-string is refused (to tree-sitter).
-                    let (start, format) = self.prefix(c);
-                    if format {
-                        return Err(refuse(c));
-                    }
-                    self.mark(start);
-                    i = self.string_end(c, false, nest)?;
-                }
-            }
-        }
-    }
-
-    /// The end of a format specifier from `i` (after its `:`): its `}`, past its own interpolations.
-    fn spec_end(&mut self, mut i: usize, nest: u32) -> Result<usize, Refusal> {
-        let n = self.src.len();
-        loop {
-            let src = self.src;
-            let c = self.m().next_in(i, |bi, b| b.lf | bytes_of(src, bi, *b"{}"));
-            if c >= n || self.src[c] == b'\n' {
-                return Err(refuse(c));
-            }
-            if self.src[c] == b'}' {
-                return Ok(c + 1);
-            }
-            if self.at(c + 1) == b'{' {
-                return Err(refuse(c));
-            }
-            i = self.interior_end(c + 1, nest + 1)?;
-        }
+    /// An f-string's text's brace events from bit `past`'s first: an interior's `{` (the last of an odd run of `{`,
+    /// `lbu` past which no `{` follows) and a lone `}` (the odd-run trick over the run of `}` from the text's own
+    /// start, so that a run whose first `}` closes an interior pairs from its second; a `}` no `}` pairs with), and
+    /// the `}` escape bit carried out.
+    #[inline(always)]
+    fn braces(&self, b: &B, b1: &B, past: u64, rbc: u64) -> (u64, u64) {
+        let open = b.lbu & !(b.lb >> 1 | b1.lb << 63);
+        let rbt = b.rb & past;
+        let mut carry = rbc;
+        let e = escaped(rbt, &mut carry);
+        let lone = rbt & !e & !(b.rb >> 1 | b1.rb << 63);
+        (open | lone, carry)
     }
 
     /// Stratum 3: each block's `depth0`.
@@ -524,7 +752,7 @@ impl<'s> Text<'s> {
                 b.depth0 = if carry == 0 { !0 } else { 0 };
                 continue;
             }
-            let (zero, out, deep) = depth_bits(up, down, carry);
+            let (zero, out, deep) = depth_lanes(up, down, carry);
             if deep {
                 return Err(refuse(bi * 64));
             }
@@ -1053,7 +1281,7 @@ impl<'s> Walk<'s> {
         let mut content = false;
         let (quote, format) = (q.quote, q.format);
         loop {
-            let s = self.t.next_in(j, |bi, b| quotes(b, quote) | b.bs | b.lf | if format { bytes_of(src, bi, *b"{}") } else { 0 });
+            let s = self.t.next(j, |b| quotes(b, quote) | b.bs | b.lf | if format { b.lb | b.rb } else { 0 });
             if s >= src.len() {
                 return Err(refuse(s));
             }
@@ -1209,7 +1437,7 @@ impl<'s> Walk<'s> {
     fn spec(&mut self, mut i: usize) -> Result<usize, Refusal> {
         let src = self.t.src;
         loop {
-            let s = self.t.next_in(i, |bi, b| b.lf | bytes_of(src, bi, *b"{}"));
+            let s = self.t.next_in(i, |_, b| b.lf | b.lb | b.rb);
             if s >= src.len() || src[s] == b'\n' {
                 return Err(refuse(s));
             }
@@ -1351,7 +1579,7 @@ mod tests {
             }
             t.depth().unwrap();
             for (i, &w) in want.iter().enumerate() {
-                assert_eq!(t.bit(i, |b| b.depth0), w == 0, "byte {i}");
+                assert_eq!(t.m().bit(i, |b| b.depth0), w == 0, "byte {i}");
             }
         }
     }
