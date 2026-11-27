@@ -117,6 +117,14 @@ impl Docs {
         if !Arc::ptr_eq(p.block(), b) {
             return Err("views.refused.block");
         }
+        // Its row names its entry, whatever else it reads: a file of no tape read still has its `doc` row, read in its
+        // entry (`view_doc`: its key, its path's and module's atoms, which `tape_rows::derive` writes there, before or
+        // after this). The entry lies in the block from the projection's making; where no tape is read, no other view
+        // has a row of it, and the reads layer has no entry (`read`: None).
+        let dir = self.dir().cast_mut();
+        // SAFETY: row `i`'s entry field, in the batch's block: the reads layer's, written only here (once, in the row's
+        // `OnceLock`); the entry is the projection's, in the same block.
+        unsafe { (&raw mut (*ViewDir::block_rows(dir).add(i)).entry).write(b.offset_of(p.entry().0.as_ptr()) as u64) };
         let nodes = p.len() > 0;
         // The `Loc` rows are the reads' where the positions are a file's own tree's or a placement in the block.
         let locs = p.extra.is_some() && (p.locs() == 0 || ViewEntry::locs(p).is_some());
@@ -187,7 +195,6 @@ impl Docs {
             }
         }
         let entry = ViewEntry::new(b, p, Some(&self.context.dialects[p.tag()]));
-        let dir = self.dir().cast_mut();
         // SAFETY: row `i` and its homes `3i`, `3i + 1`, `3i + 2`, in the batch's block: the reads layer's fields, which
         // only this write writes (once, in the row's `OnceLock`), and the search layer's readers do not read.
         unsafe {
@@ -196,7 +203,7 @@ impl Docs {
             homes.add(3 * i + 1).write(ViewHome { host: lines_home.host, gpu: lines_gpu });
             homes.add(3 * i + 2).write(ViewHome { host: source_home.host, gpu: source_gpu });
             let at = ViewDir::block_rows(dir).add(i);
-            (&raw mut (*at).entry).write(b.offset_of(entry.desc()) as u64);
+            debug_assert_eq!((*at).entry, b.offset_of(entry.desc()) as u64, "a projection's entry is the one written above");
             (&raw mut (*at).tape).write(tape_home.at);
             (&raw mut (*at).lines).write(lines_home.at);
             (&raw mut (*at).source).write(source_home.at);
