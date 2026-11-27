@@ -59,7 +59,21 @@ test builds only. Python's grammar did not compile under it:
 - **A token of `pair empty` is one byte:** no byte after its first can be its (`row_tail_bytes`), so a gap mark's
   mask over the tokens of code is clear of Python's `bad` token.
 
-## Not yet
+## At the merge of Parser-generators 3ca03306c4 (2026-11-27)
+
+- **Raw strings: the reader's flags, not kinds of their own.** Python's strings are a reader (`read string { … }`,
+  0698), which Bitlex lowers to plain kinds (`s1` … `fd3`, the tails, `spec`). Rawness is a flag the reader keeps
+  on its template state in the loop, as the lean lexer's `Quote { raw, … }`. That keeps this decision's invariant (a
+  tail's rawness is its template's, never a fill a tail reads) another way, and the raw kinds above are gone. The
+  walk's layout sized by its grammar (`WalkLayout`, 32 kinds) and `O bytes N` stay.
+- **A count kept by the loop at region tokens: one stepper.** A grammar with a reader has its count stepped by the
+  reader's arms (`scan_regional`: down at a tail's start, up at an interpolation's `{`). A grammar without one keeps
+  this decision's form (`scan_starts`, stepped at each row that opens a region). They never both step a count.
+  A gap mark reads a count as `C.eq(k)` (0698) or by its frame (`cb_C`, above).
+- **The seven escapes below are the reader's refusals**, each tested where its place is (`refuse … at …`). Python's
+  product tier 1 has no whole-file pass: stage 1 and the walk are a test build's.
+
+## Not yet (superseded at the merge above)
 
 The product build still walks the regions, for seven escapes tested over the file that read its
 masks: `\N` in a bytes string, a raw string of backslashes only, an empty interpolation, a `}` alone,

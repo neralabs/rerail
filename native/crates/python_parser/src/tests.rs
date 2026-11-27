@@ -91,6 +91,11 @@ fn strings_are_the_lean_parsers() {
     // An `f'` or a word of prefix letters before a quote, in a string or a comment: no prefix.
     same(&["\"a f'\"\n", "x  # but's\n", "'(f'\n"]);
     same(&["\"#\"\n", "'''a'b''c'''\n", "'a'  # c\n", "\"\u{e9}\"\n", "Rb'x'\n", "u'x'\n", "r'a\\''\n", "r'a\\\\'\n"]);
+    // A prefix is the string's first bytes, one leaf with its quote (lean's `string_prefix`): one letter or two, raw
+    // and bytes together, before a triple, after an operator, in an f-string's interpolation; a name of prefix
+    // letters before no quote is a name.
+    same(&["rb''\n", "BR\"\\d\"\n", "f''\n", "rf'{a}'\n", "b'''x'''\n", "x=r'a'\n", "(u'a', b'b')\n", "f'{r\"x\"}'\n"]);
+    same(&["x = f\"{f'{a}'}\"\n", "x = f'{rb\"a\"}'\n", "rb = 1\n", "f(x)\n", "print(rb)\n", "x = br + u\n", "fr.x = 1\n"]);
 }
 
 #[test]
@@ -202,6 +207,9 @@ fn braces_raw_f_strings_and_line_breaks_in_interpolations_are_the_lean_parsers()
     same(&["x = rf\"a\\\\d{b}\\\\w\"\n", "x = fr\'{a}\\\\n\'\n", "x = rf\"{a}\\\\n{b}\\\\t\"\n", "x = rf\"{a}\" + f\"{b}\\\\n\"\n"]);
     same(&["x = f\"\"\"{\n    a\n}\"\"\"\n", "x = f\"\"\"a{\n  b(\n    c,\n  )\n}d\"\"\"\n", "def f():\n    x = f\"\"\"{\n        a\n    }\"\"\"\n    y\n"]);
     same(&["match a:\n    case X(b, c,):\n        d\n", "match a:\n    case X(\n        b=1,\n    ):\n        d\n"]);
+    // A line break straight before a closer: over its gap the bracket depth is the token before's, not its own (the
+    // lean lexer's count of its loop, decision 0698).
+    same(&["x = (\n)\ny\n", "f(\n  a,\n)\ny\n", "if a:\n    x = [\n    ]\n    y\n", "x = f\"\"\"{a(\n)}\"\"\"\ny\n", "x = [f\"\"\"{a\n}\"\"\",\n]\ny\n"]);
     refused(&["x = f\"a}}}\"\n"]);
 }
 
@@ -464,7 +472,7 @@ fn rust_is_current() {
 /// code.
 fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
     let run = c.program.block_programs[0].run(text.as_bytes());
-    let lx = rerail_python_aot::lex(text.as_bytes());
+    let lx = rerail_python_aot::lex(&rerail_python_aot::padded(text.as_bytes()), text.len());
     let refused = run.totals.first().is_some_and(|&t| t != 0);
     // An escape of `A & ~L` the lowering makes a local check of tier 2's at `A`'s token
     // (`pending_checks`): the interpreter refuses the file there, tier 1 as Rust where it reads
@@ -478,7 +486,17 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
     if refused {
         return None;
     }
-    let (starts, lasts) = (&run.positions[0], &run.positions[1]);
+    // The interpreter's tokens as its tier 2 reads them (`stream::tokens`): a string's records split in its pieces,
+    // which tier 1 as Rust writes (decision 0698). A piece after a string's first is its kind alone there, as the lean
+    // lexer's pieces are no tokens of code: the interpreter's give the words of their bytes, which its tier 2 takes
+    // but no lookahead of its reads (it reads the records).
+    let Some(tokens) = rerail_compiler::stream::tokens(&c.program, text.as_bytes(), &run) else { return Some("the interpreter's string with no closer".into()) };
+    let (starts, lasts, codes): (Vec<u32>, Vec<u32>, Vec<u32>) = tokens.iter().fold((Vec::new(), Vec::new(), Vec::new()), |mut v, &(s, l, c, piece)| {
+        v.0.push(s);
+        v.1.push(l);
+        v.2.push(if piece { c & 0xff } else { c });
+        v
+    });
     // Tier 1 as Rust keeps the comments apart from the tokens (as the lean lexer); the interpreter's records hold both,
     // by where they start.
     // A derived mark (`tier1::DERIVED`, decision 0703) is in no record: its bit is what tier 2 asks of the record's
@@ -509,7 +527,7 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
     }
     let n = starts.len().max(recs.len());
     for k in 0..n {
-        let theirs = (starts.get(k), lasts.get(k), run.codes.get(k));
+        let theirs = (starts.get(k), lasts.get(k), codes.get(k));
         let rec = recs.get(k);
         let ours = (rec.map(|r| &r.start), rec.map(|r| &r.last), rec.map(|r| &r.code));
         if theirs != ours {
@@ -532,7 +550,7 @@ fn aot_sink() -> rerail_tape_format::Named {
 /// `text`'s tape from the parser as Rust (`rerail_python_aot`: tier 1, then tier 2), as text: format 16 in Python's
 /// table, its keys numbered by their names (`aot_sink`).
 fn aot_text(text: &str) -> Result<String, u32> {
-    let tape = rerail_python_aot::parse(text.as_bytes(), &mut aot_sink())?.unwrap_or_else(|e| panic!("python_aot's tree is no format 16 tape of Python's table: {e}"));
+    let tape = rerail_python_aot::parse(&rerail_python_aot::padded(text.as_bytes()), text.len(), &mut aot_sink())?.unwrap_or_else(|e| panic!("python_aot's tree is no format 16 tape of Python's table: {e}"));
     Ok(image_text(&tape.tape).expect("a tape"))
 }
 

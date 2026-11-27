@@ -3476,6 +3476,16 @@ impl<'a> G<'a> {
                     ::bitlex::syntax::PartLen::Last(_) => 0,
                 };
                 let _ = write!(parts, "            // `{name}`\n            if let Some(e) = self.ffirst(crate::tier1::fields::{start}, sp, at).filter(|&e| e < c) {{\n                if part.is_none_or(|q| (e, {bytes}, {i}) < q) {{\n                    part = Some((e, {bytes}, {i}));\n                }}\n            }}\n");
+                // A part read by its check (`P = E check else K`): at `E`, the check's match is `P`, else `K` one byte, as
+                // the lean lexer's `backslash` reads an escape or a lone `\`.
+                if let Some((g, other)) = &rd.checks[i] {
+                    let f = crate::bitlex_lex_rust::ident(name);
+                    if !free.contains(&format!("fn check_{f}(")) {
+                        free.push_str(&crate::bitlex_check_rust::Checks::new(self.x.lexer, "tier 2 as Rust").check_fn(&f, name, g, false)?);
+                    }
+                    let _ = writeln!(lasts, "                        // `{name}` by its check, else `{other}`\n                        {i} => match check_{f}(&self.src[e..]) {{\n                            Some(n) => (e + n - 1, {}),\n                            None => (e, {}),\n                        }},", kind_or(piece(name, false), "e"), kind_or(piece(other, false), "e"));
+                    continue;
+                }
                 let l = match last {
                     Some(f) => format!("match self.ffirst(crate::tier1::fields::{f}, sp, e) {{\n                            Some(l) => l,\n                            None => return self.refuse(),\n                        }}"),
                     None => format!("e + {}", usize::from(bytes).saturating_sub(1)),
@@ -3537,7 +3547,12 @@ impl<'a> G<'a> {
                 let _ = write!(resume, "        if self.strings > 0 && let Some(p) = self.tail_at(from, {resumed_k}) {{\n            while (self.next_x as usize) < p {{\n                self.xi += 1;\n                self.next_x = self.xs.get(self.xi).map_or(u32::MAX, |x| x.start);\n            }}\n            self.known = 0;\n            self.resume_{r}(p)?;\n            self.cur = self.code_at(self.i);\n            return Ok(());\n        }}\n");
                 (format!("resume_{r}"), "at byte `s`, no record of its own: the string's parts after its template's `}`", format!("s: usize) -> R {{\n        let Some(sp) = crate::tier1::span(self.src, {resumed_k}, s) else {{\n            return self.refuse();\n        }};\n        self.sub.clear();\n        self.k = 0;\n        self.piece(s, s, {});", kind_or(own, "s")))
             } else {
-                (format!("split_{r}"), "record `j`", "j: usize, sp: crate::tier1::Span) -> R {\n        let s = self.recs[j].start as usize;\n        self.sub.clear();\n        self.k = 0;\n        self.sub.push((s as u32, s as u32, self.recs[j].code));".to_owned())
+                // Past a prefix (`open_last`): the first piece runs through the opener.
+                let (o, at, from) = match &rd.open_last {
+                    Some(f) => (format!("\n        let o = self.ffirst(crate::tier1::fields::{f}, sp, s).unwrap_or(s);"), "o", "\n        let s = o;"),
+                    None => (String::new(), "s", ""),
+                };
+                (format!("split_{r}"), "record `j`", format!("j: usize, sp: crate::tier1::Span) -> R {{\n        let s = self.recs[j].start as usize;{o}\n        self.sub.clear();\n        self.k = 0;\n        self.sub.push((s as u32, {at} as u32, self.recs[j].code));{from}"))
             };
             let _ = write!(
                 out,

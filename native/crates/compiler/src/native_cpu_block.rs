@@ -4031,6 +4031,38 @@ fn inside_or_past(f: &mut FunctionBuilder<'_>, inside: Value, to: cranelift_code
     past(f, l, end, args);
 }
 
+/// The first bit of output `o` at or after byte `from`, a word at a time, its words read while final (`bound`, else
+/// `past` to `end` with `args`): where a prefix's token reaches its region's opener (`records::Reader::open_last`).
+#[allow(clippy::too_many_arguments)]
+fn first_bit_at(f: &mut FunctionBuilder<'_>, rd: &Reads<'_>, c: &FileCols, from: Value, o: u16, limit: Option<Limit>, (end, args): (cranelift_codegen::ir::Block, &[BlockArg]), heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
+    let limit = rd.limit(o, limit);
+    let (scan, look, found) = (f.create_block(), f.create_block(), f.create_block());
+    f.append_block_param(scan, types::I64);
+    f.append_block_param(scan, types::I64);
+    f.append_block_param(found, types::I64);
+    let q = f.ins().ushr_imm(from, 6);
+    let sh = f.ins().band_imm(from, 63);
+    let ones = f.ins().iconst(types::I64, -1);
+    let m = f.ins().ishl(ones, sh);
+    f.ins().jump(scan, &[q.into(), m.into()]);
+    f.switch_to_block(scan);
+    heads.push((scan, Step::Word));
+    let (w, m) = (f.block_params(scan)[0], f.block_params(scan)[1]);
+    let inside = f.ins().icmp(IntCC::UnsignedLessThan, w, bound(c, limit));
+    inside_or_past(f, inside, look, limit, end, args);
+    f.switch_to_block(look);
+    let x = rd.word(f, c, w, o, heads);
+    let x = f.ins().band(x, m);
+    let w64 = f.ins().ishl_imm(w, 6);
+    let tz = f.ins().ctz(x);
+    let l = f.ins().iadd(w64, tz);
+    let w1 = f.ins().iadd_imm(w, 1);
+    let ones = f.ins().iconst(types::I64, -1);
+    f.ins().brif(x, found, &[l.into()], scan, &[w1.into(), ones.into()]);
+    f.switch_to_block(found);
+    f.block_params(found)[0]
+}
+
 /// The two common rules `rule_last` if-converts (decision 0177): the pair rule (`Next`) and the
 /// run rule whose word is in the block's registers (`runs`), each the rule most first bytes take
 /// of its form, where their tests are all by first-byte bits; where no token of the two can be
@@ -4154,7 +4186,7 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let mut parts: Vec<crate::records::ReadPart> = reader.parts.clone();
     parts.sort_by_key(|p| (p.bytes, p.start));
     let opener_limit = rd.limit(a.opener, limit);
-    let limit = if std::iter::once(a.closer).chain(a.last).chain(parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last))).all(|o| rd.bytewise(o)) { None } else { limit };
+    let limit = if std::iter::once(a.closer).chain(a.last).chain(reader.open_last).chain(parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last))).all(|o| rd.bytewise(o)) { None } else { limit };
     let (walk, join) = (f.create_block(), f.create_block());
     f.append_block_param(join, types::I64);
     f.append_block_param(join, types::I64);
@@ -4208,7 +4240,12 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         f.append_block_param(scan, types::I64);
     }
     f.append_block_param(after, types::I64);
-    let at0 = f.ins().iadd_imm(s, 1);
+    // Past a prefix: the parts from the byte after its opener (`Reader::open_last`).
+    let o = match reader.open_last {
+        Some(ol) => first_bit_at(f, rd, c, s, ol, limit, (none, &[]), heads),
+        None => s,
+    };
+    let at0 = f.ins().iadd_imm(o, 1);
     f.ins().jump(tok, &[cur.into(), at0.into()]);
     f.switch_to_block(tok);
     heads.push((tok, Step::Token));
@@ -5081,6 +5118,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                         inside_or_past(f, inside, ready, ol, ended, &[none.into(), untag.into(), nohits.into()]);
                         f.switch_to_block(ready);
                     }
+                    let open_limit = limit;
                     let limit = rd.limit(a.closer, limit);
                     let (arm, not) = (f.create_block(), f.create_block());
                     let bit = rd.bit_first(f, c, s, a.opener, Some(firsts), heads);
@@ -5089,7 +5127,15 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                     // A region read in parts (decision 0323): its token here is its opener's byte;
                     // the loop's tail walks its parts and its closer (`read_in_parts`).
                     if reader.parts_in_tier1() {
-                        f.ins().jump(ended, &[s.into(), tag.into(), nohits.into()]);
+                        // Past a prefix: its token runs through its opener (`Reader::open_last`).
+                        let o = match reader.open_last {
+                            Some(ol) => {
+                                let none = if r.skip.is_some() { s } else { f.ins().iadd_imm(s, -1) };
+                                first_bit_at(f, rd, c, s, ol, limit, (ended, &[none.into(), untag.into(), nohits.into()]), heads)
+                            }
+                            None => s,
+                        };
+                        f.ins().jump(ended, &[o.into(), tag.into(), nohits.into()]);
                         f.switch_to_block(not);
                         continue;
                     }

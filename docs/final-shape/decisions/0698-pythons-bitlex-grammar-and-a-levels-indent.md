@@ -459,3 +459,115 @@ statements and blocks end.
     are refused to the lean parser, which reads `....` as an ellipsis and a `.`. None is in the corpus.
 80. **The loop skips a class.** `skip ws`, as rr's, Kotlin's and JSON's, in place of `skip code & (blank | lf)`.
     Between tokens the loop is always in code: a region's bytes are its token's.
+81. **A string's escape is a part read by its check.** `check escape_sequence = '\\' (u_l hex hex hex hex | uu_l
+    hex hex hex hex hex hex hex hex | x_l hex hex | digit [digit [digit]] | esc_one)` is the lean lexer's `escape`,
+    one byte at a time. A reader's part `escape_sequence = esc check else '\\'` reads it at a backslash: where the
+    check matches, an escape through the match's last byte; where it does not, a lone `\`. The masks e2 to e_last
+    are gone.
+    - Bitlex (`Parts::checked`) makes two masks of the check: `P_ok`, where the check matches from, and `P_last`,
+      the last byte of each match. The masks path reads the two parts, `E & P_ok` through `P_last` and `E & ~P_ok`
+      one byte.
+    - A check read this way has no loop. A choice's arms start with distinct bytes, and a `[…]` is not first, so
+      the lexer reads each choice at the next byte without going back. Its `check` statement is the part's, not a
+      token's.
+    - The writers that read a part as the lexer does get the kind, the grammar and the other part from
+      `Parts::checked`.
+82. **Tier 2 as Rust reads a checked part as the lean lexer does.** A reader's checked part is one part at `E`
+    (`Reader::checks`). At it, `check_P(&src[e..])` gives the escape through its match's end, and none gives `K`'s
+    one byte, as the lean lexer's `backslash` calls `escape`. The check's function is `bitlex_check_rust`'s, the one
+    tier 1 uses for a token's check. Tier 1 gives tier 2 the `E` mask, not `E & P_ok`, `E & ~P_ok` and `P_last`, so
+    it no longer makes the check's masks.
+83. **A string is a reader in the regions, `read string { … }`.** It says what the lean lexer's `string` reads, and
+    Python's grammar no longer writes `or`, `resumes`, `after`, `level` or `nest`:
+    - `prefix pfx max 2 after word`: one or two letters starting a word, then a quote;
+    - `flags raw = raw_l, bytes = bytes_l, format = f_l, template = t_l`: a quote after a prefix with such a letter
+      (`raw_q`, `bytes_q`, `format_q`, `template_q`);
+    - `quotes sq | dq triple` and `escape bslash`: one quote or three, and a closer no backslash escapes;
+    - `interpolation format lbrace .. rbrace spec colon level …`: where `format` holds, the code from a lone `{`
+      to its `}`, a spec from a `:` at its level zero, and the level and nest of its code.
+
+    Bitlex (`string_reader`) lowers it to the kinds the walk reads: each quote's (`s1`, `d3`), the format ones
+    (`fs1`, closed at the `{` too), their tails (`ts1`, which resume them), `spec`, and their unions (`o_str`,
+    `f_str`, `o_f`, `f_f`, `o_t`, `f_t`). The masks path runs the same walk. `Regions::readers` keeps the reader
+    for the writers that read strings as the lean lexer does. Kotlin's templates keep `or` and `resumes`.
+84. **A string's token starts at its prefix.** `token string_start = start str_at prefix pfx max 2 read …` reads
+    the prefix letters as the string's own first bytes, as the lean lexer's `string_prefix` is one leaf with its
+    quote. `str_prefix` and the tree's `str_prefix merge string_start` are gone. `word_start` still excludes the
+    prefix letters (`~p1 & ~p2`).
+    - Bitlex (`Parts::prefix`, `Parts::reach`): each region's row starts where its opener is reached,
+      `o | next(o)&P | next(o, 2)&P&next(P)`, and its last is the opener. The content after it is `f_K & ~o_K`.
+      Without a prefix the rows stay as they were (`start & o_K`).
+    - The masks path: the reader's opener is that reach, and its closers exclude the openers, because the search
+      for a closer starts at the byte after the token's start, before the quote. `Reader::open_last` is the
+      openers' output. The first piece runs from the token's start to its first bit, and the parts start after it.
+      Every split reads it: `records::read_parts`, the JIT's `split_enter` and `read_in_parts`, tier 2 as Rust's
+      `split_R`. The JIT's depth bits of a template that nests (`Reader::nest`) are read at the opener, not at
+      the prefix, which lies in the outer template's code. It is renumbered to an output with the readers' other
+      masks and printed as `recopen K O`.
+    - Tier 1 as Rust reads the region from its opener (`first_bit(&o_K, s)`) and the record from the token's start.
+85. **The string reader writes a string's pieces, tokens and refusals.** Its clauses now say all that the lean
+    lexer's `string` decides, so a writer that reads strings as the lean lexer does reads them from one statement:
+    - `start K`: a triple's two more quotes, a piece. `text K`: the text. `close K`: the closing quotes.
+    - `escape K = E check else L unless F`: an escape read by `check K`, else an `L`; none in a raw string.
+    - `braces K`: `{{` and `}}`.
+    - `interpolation F K = O .. J = C level …`, `conversion K = B L`, `spec K = S`.
+    - `refuse "W" at A [if F | unless F] [X]`: what is not read, where `A` is: the opener, the fill, the text, an
+      escape, a raw string of backslashes only, a brace alone, an interpolation's code, its end, an empty one, its
+      spec, the spec's start, past the level's bounds. `X` is a mask of the bytes alone. A name `Q…` in it is each
+      quote's.
+
+    Bitlex (`string_reader`) writes what the grammar wrote, as text it reads after the regions: the pieces' masks
+    (`in_raw`, `t_open`, `s_body`, `body`, `esc`, `fb`, `i_at`, `icode`, `esc_ib`, `conv_at`) and an escape of each
+    refusal. `token K = start E read R` writes the four tokens (the string's in parts, the tail's, the spec's, the
+    conversion's) in its place, in the grammar's order of rows. Tier 2 as Rust is the same as before, word for word.
+    Two masks are now read as their bytes say, with the same answers:
+    - `conv_at`'s `code & !` is `~hidden & !`;
+    - an interpolation's `=` is `eq & ~prev(eq | bang | lt_gt)`, not inside `icode`, at the byte before its end.
+86. **A line break is a statement's end where the loop's bracket depth is 0.** The marks read `lf & code &
+    depth.eq(0)`, and `in_br` and its frame pass over the file go. The masks path reads `C.eq(k)` from the count's
+    planes. Tier 1 as Rust reads it as the lean lexer knows its depth at a line break:
+    - A gap mark `X & C.eq(k)` is `g_C == k && …X over the gap…`. `g_C` is the count as the token before left it:
+      no bit of the count is in a gap, and the token's own brackets count after its gap.
+    - The count goes on at a string token, where its `up` or `down` reads a region's opener, fill or hidden bytes where
+      they hold (Python's `o_t`, `prev(f_f | f_t)`; not rr's `~region`). It goes down one where `down`
+      holds at the token's start (a tail's `}`). It goes up one where `up` holds at its last byte, as each closer
+      leaves it (an interpolation's `{`). Neither may hold in its body or at its closer's other bytes; a closer that
+      holds at none of this region's closers is not one of its (as `closer_last` reads them).
+    - Its closer is kept (`close`) only where the count reads it.
+
+    A test has a line break straight before a closer, in code and in an interpolation; it fails where the gap reads
+    the count after the token.
+87. **Tier 1 as Rust reads a string reader's strings in its one pass, and writes their pieces as records.** A grammar
+    with `read R { … }` is lexed in one pass of the token loop (`bitlex_lex_rust/reader.rs`), as JSON's and rr's
+    are, and as the lean lexer's `string` reads a string, from stop to stop of stage 1's masks:
+    - The string's arm reads its prefix's flags at its quote and its triple, then its text to its closer or an
+      interpolation's `{`. Its stops are the quotes, the escape, and in a format string the braces.
+    - It writes each piece: the opener (its record, from the prefix to the quote), a triple's two more quotes, the
+      text, each escape by its check (else `\`), `{{` and `}}`, the closer or the interpolation's `{`. The first is
+      the loop's record, with its marks; the others are written after it, of their kind alone. A pause (stage 1 has
+      not made the blocks) writes nothing, and the token is read again.
+    - The reader's state is in the loop: the template open (its quote, its flags, its code's bracket level), the
+      templates around it (`nest`), every template's frames (`max`), and where the interpolation's code began.
+    - At a template's level 0, its `}`, its spec's `:` and its conversion's `!x` are the reader's rows, picked
+      before the rows' pick. The tail's `}` record has no word and no marks, and the gap is the next token's, as the
+      interpreter resumes it. A token of code in a template counts its brackets, as the walk does.
+    - Each refusal is tested in the arm where its place is: the opener, the fill and the text over each segment,
+      an escape, a raw string's backslashes, a `}` alone, the code since the `{` (to the file's end too), an end,
+      an empty one, the spec and its start, the bounds. A refusal by a mask first lets stage 1 make the blocks after;
+      a count's is the file's.
+    - The count of brackets (`depth`) goes up at the interpolation's `{` and down at its `}` in the arms.
+
+    A piece is no token of code, as the lean lexer's (`IOpen`, `Text`) are not: a lookahead counts no
+    interpolation's `{` as a bracket, and no `,` of a string's text. The interpreter's parts carry the words of
+    their bytes, which its tier 2 takes and no lookahead of its reads, because it reads the records.
+
+    Tier 2 as Rust reads the pieces as records: it no longer splits a string (`split_0`, `resume_1` and their masks
+    go). The interpreter's token stream is `stream::tokens`, which is `run_seen`'s split of the records, the parts'
+    codes the records' pass's. The tests compare tier 1's records with it, a piece after the first by its kind.
+    Tier 1 reads the source padded, as rr's: `parse(buf, n)`, `lex(buf, n)`, `padded`.
+
+    Three things the writer reads generically:
+    - A row's token test reads its kind's `in KIND` assumptions, as its run does. The integer's float test is
+      `dot | exp_l`, not the walk's `number`.
+    - A row's start reads a string reader's regions as none: its arms read them.
+    - The regions are numbered for the counts' reads, but the loop opens none.
