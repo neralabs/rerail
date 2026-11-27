@@ -238,6 +238,7 @@ fn rest_join_to(rest: Vec<Made>, out: Vec<Term>, nslots: usize, bound: &[usize])
         multi: Vec::new(),
         probes: Vec::new(),
         fused: (0..n).map(|_| None).collect(),
+        spans: Vec::new(),
         spec: 0,
         from: (0..n).collect(),
         plan_steps: n,

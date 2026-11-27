@@ -44,6 +44,9 @@ pub enum Word {
     /// Lookup test `k`'s (`Test::reads`) value of its input's column `c` for the row: the one row its key names, read
     /// as the test asks it.
     Look(usize, usize),
+    /// A slot bound before the atom, for a chunk that spans the rows of many bindings (`spanning`): each row's value
+    /// is its binding's (its document's, `doc`), gathered beside the atom's columns.
+    Bound { slot: usize, doc: bool },
 }
 
 /// A test fused as a computed column: the step (after the atom) whose atom it asks, and each slot its keys read with
@@ -94,6 +97,8 @@ pub struct Fused {
     pub(super) gather: Vec<(usize, usize)>,
     /// The tests asked of an input, in step order (`Word::Held`).
     pub tests: Vec<Test>,
+    /// A spanning fusion's bound slots (`Word::Bound`): (program column, slot, its document). Empty otherwise.
+    pub(super) bound: Vec<(usize, usize, bool)>,
 }
 
 #[derive(Clone, Copy)]
@@ -189,6 +194,17 @@ fn tests_on() -> bool {
 /// `ask`: whether a test of an input is fused (`Test`), which only the CPU's walk asks; `lookups`, per step of
 /// `after`, whether it is a lookup (`fuse`), fused as computed columns where `ask`.
 pub fn fused(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool]) -> Option<Fused> {
+    fused_in(binds, after, ask, lookups, false)
+}
+
+/// A probe's fusion for a chunk of many bindings' rows (the walk's keyed batch, decision 0706 E5): as `fused` (its
+/// tests asked), but each slot bound before the atom a column of the row's own binding (`Word::Bound`), not a
+/// parameter of the chunk. Its rows are many bindings' candidates gathered together, its program run once over them.
+pub fn spanning(binds: &[(usize, usize)], after: &[Step], lookups: &[bool]) -> Option<Fused> {
+    fused_in(binds, after, true, lookups, true)
+}
+
+fn fused_in(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool], span: bool) -> Option<Fused> {
     let mut env: Vec<(usize, Val)> = binds.iter().map(|&(c, s)| (s, Val::Row(Word::Col(c)))).collect();
     let mut b = Build::default();
     let mut acc: Option<u16> = None;
@@ -198,6 +214,7 @@ pub fn fused(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[boo
     for (at, step) in after.iter().enumerate() {
         let val = |env: &[(usize, Val)], k: Key| -> Val {
             match k {
+                Key::Slot(s) if span => env.iter().rev().find(|e| e.0 == s).map_or(Val::Row(Word::Bound { slot: s, doc: false }), |e| e.1),
                 Key::Slot(s) => env.iter().rev().find(|e| e.0 == s).map_or(Val::Param(Param { key: k, doc: false }), |e| e.1),
                 Key::Const(_) => Val::Param(Param { key: k, doc: false }),
             }
@@ -205,6 +222,7 @@ pub fn fused(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[boo
         let doc = |v: Val| -> Option<Val> {
             match v {
                 Val::Row(Word::Col(c)) => Some(Val::Row(Word::Doc(c))),
+                Val::Row(Word::Bound { slot, doc: false }) => Some(Val::Row(Word::Bound { slot, doc: true })),
                 Val::Param(Param { key, doc: false }) => Some(Val::Param(Param { key, doc: true })),
                 // A document's document: left to the step.
                 _ => None,
@@ -259,6 +277,12 @@ pub fn fused(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[boo
                                 row = true;
                                 slots.push((s, Bind::Column(usize::from(b.column(w)))));
                             }
+                            // A spanning chunk's bound slot: the walk sets each row's binding's slots before its test.
+                            Val::Row(w @ Word::Bound { slot, doc: false }) => {
+                                if slot != s {
+                                    slots.push((s, Bind::Column(usize::from(b.column(w)))));
+                                }
+                            }
                             Val::Param(p @ Param { doc: false, .. }) => {
                                 if p.key != Key::Slot(s) {
                                     slots.push((s, Bind::Param(usize::from(b.param(p)))));
@@ -292,6 +316,11 @@ pub fn fused(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[boo
                             Val::Row(w @ Word::Col(_)) => {
                                 row = true;
                                 slots.push((s, Bind::Column(usize::from(b.column(w)))));
+                            }
+                            Val::Row(w @ Word::Bound { slot, doc: false }) => {
+                                if slot != s {
+                                    slots.push((s, Bind::Column(usize::from(b.column(w)))));
+                                }
                             }
                             Val::Param(p @ Param { doc: false, .. }) => {
                                 // The slot itself, bound before the atom, needs nothing; another (a `let`'s) is set.
@@ -338,7 +367,7 @@ pub fn fused(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[boo
             keys.iter().any(|&(_, k)| k == Key::Slot(s))
         });
         if !binds.iter().all(|&(_, s)| read(s)) {
-            return fused(binds, after, false, lookups);
+            return fused_in(binds, after, false, lookups, span);
         }
     }
     // Only the binds the kept steps made, and the atom's.
@@ -370,9 +399,13 @@ pub fn fused(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[boo
     let program = BlockProgram::row_program(shape, b.ops, outputs, extracts).ok()?;
     let gather = b.columns.iter().enumerate().filter_map(|(k, w)| match *w {
         Word::Col(c) => Some((k, c)),
-        Word::Doc(_) | Word::Held(_) | Word::Look(..) => None,
+        Word::Doc(_) | Word::Held(_) | Word::Look(..) | Word::Bound { .. } => None,
     }).collect();
-    Some(Fused { steps, program, columns: b.columns, params: b.params, passed, last, binds: bind_list, gather, tests })
+    let bound = b.columns.iter().enumerate().filter_map(|(k, w)| match *w {
+        Word::Bound { slot, doc } => Some((k, slot, doc)),
+        _ => None,
+    }).collect();
+    Some(Fused { steps, program, columns: b.columns, params: b.params, passed, last, binds: bind_list, gather, tests, bound })
 }
 
 /// The slots the steps bind (`docof` into an unbound slot, `let`), in order.
@@ -393,6 +426,8 @@ pub(super) struct Scratch {
     pub(super) alive: Vector<u64>,
     /// Each fused test's probe state, kept from chunk to chunk.
     pub(super) asked: Vec<super::cands::Asked>,
+    /// A spanning chunk's rows' bindings: each row's place in the batch it was gathered from.
+    pub(super) from: Vector<u32>,
 }
 
 impl Fused {

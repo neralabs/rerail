@@ -1954,6 +1954,41 @@ counted(l, k) :- owner(n, f), seen(n, f), pair(f, g), line(g, l), line(n, k).
     assert_eq!(sets(&on), sets(&off));
 }
 
+/// A fused probe's keyed batch runs as one chunk (`rowcode::spanning`): `pair(f, g)` probed by `f` for a batch of
+/// `owner` rows, every row's candidates gathered together, and its filters (`n < g`, a slot bound before the probe
+/// against one it binds; `!seen(n, g)`, a negation asked of the chunk) run once over them. The rows are the same as
+/// each binding's chunk run alone.
+#[test]
+fn a_fused_probes_batch_runs_its_bindings_rows_as_one_chunk() {
+    use crate::code_rule_dsl::logic::native::component::{keyed_batches_forced, span_batches_forced, spanned_rows};
+    let body: String = (0..200).map(|i| format!("def f{i}(a, b):\n    return a{} + b\n", (i * 7) % 200)).collect();
+    let body_on = format!("{body}# on\n");
+    let (dir_off, dir_on) = (corpus("span-batch-off", &[("a.py", body.as_str())]), corpus("span-batch-on", &[("a.py", body_on.as_str())]));
+    let program = r#"
+.decl owner(n: number, f: number)
+owner(n, f) :- kind(f, "function_definition"), field(f, "body", b), within(n, b), kind(n, "identifier").
+.decl pair(f: number, g: number)
+pair(f, g) :- owner(n, f), owner(m, g), docof(f, d), docof(g, d), text(n, t), text(m, t), f != g.
+.decl seen(n: number, f: number)
+seen(n, f) :- kind(n, "identifier"), within(n, f), kind(f, "function_definition").
+.decl far(n: number, g: number)
+far(n, g) :- owner(n, f), pair(f, g), n < g, !seen(n, g).
+.output owner, pair, far
+"#;
+    keyed_batches_forced(Some(true));
+    span_batches_forced(Some(false));
+    let off = run(&dir_off, program, &["owner", "pair", "far"]);
+    span_batches_forced(Some(true));
+    let before = spanned_rows();
+    let on = run(&dir_on, program, &["owner", "pair", "far"]);
+    span_batches_forced(None);
+    keyed_batches_forced(None);
+    assert!(spanned_rows() > before + 256, "a fused probe's batch ran as chunks ({} rows)", spanned_rows() - before);
+    let sets = |g: &Vec<Vec<Vec<String>>>| g.iter().map(|rows| rows.iter().cloned().collect::<BTreeSet<_>>()).collect::<Vec<_>>();
+    assert!(!off[2].is_empty(), "far has rows");
+    assert_eq!(sets(&on), sets(&off));
+}
+
 /// Decision 0706 E5: `within(n, f)` with both nodes bound, and its negation, is asked a batch of pairs at a time
 /// (`within`'s interval walk). The rows are the same as each pair asked as it comes, and every identifier of a
 /// function's body is inside it, none outside.

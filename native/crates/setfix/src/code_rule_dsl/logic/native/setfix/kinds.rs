@@ -139,7 +139,9 @@ pub(super) fn keyed(j: &JoinRule, i: usize) -> Option<Keyed> {
     if binds.is_empty() {
         return None;
     }
-    if j.fused[i].is_some() {
+    // A fused probe is batched where it has a spanning form (`rowcode::spanning`): its batch's candidates, many
+    // bindings', are one chunk of its row program. `RERAIL_SPAN_BATCH=off` walks it a binding at a time.
+    if j.fused[i].is_some() && (j.span_at(i).is_none() || !span_enabled()) {
         if trace() { eprintln!("RERAIL_KIND_TRACE keyed refused: fused"); }
         return None;
     }
@@ -240,6 +242,18 @@ pub(super) fn batches(j: &JoinRule, on: bool, not: [Option<usize>; 2]) -> Vec<Op
         .collect()
 }
 
+/// Whether a fused probe's batch runs its candidates as one chunk (`RERAIL_SPAN_BATCH`, not `off`).
+pub(super) fn span_enabled() -> bool {
+    #[cfg(any(test, feature = "test-hooks"))]
+    match SPAN_FORCE.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => return false,
+        2 => return true,
+        _ => {}
+    }
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_SPAN_BATCH").map_or(true, |v| v != "off"));
+    *ON
+}
+
 /// Whether keyed probes are batched (`RERAIL_KEYED_BATCH`, not `off`).
 fn keyed_enabled() -> bool {
     #[cfg(any(test, feature = "test-hooks"))]
@@ -324,6 +338,27 @@ static KEYED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::n
 pub fn keyed_force_for_tests(on: Option<bool>) {
     KEYED_FORCE.store(match on { Some(false) => 1, Some(true) => 2, None => 0 }, std::sync::atomic::Ordering::Relaxed);
 }
+/// Tests: spanning chunks forced off (`Some(false)`), on (`Some(true)`), or as the environment says (`None`).
+#[cfg(any(test, feature = "test-hooks"))]
+static SPAN_FORCE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+#[cfg(any(test, feature = "test-hooks"))]
+static SPANNED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn span_force_for_tests(on: Option<bool>) {
+    SPAN_FORCE.store(match on { Some(false) => 1, Some(true) => 2, None => 0 }, std::sync::atomic::Ordering::Relaxed);
+}
+/// Tests: the candidate rows the process's spanning chunks ran.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn spanned_rows_for_tests() -> usize {
+    SPANNED.load(std::sync::atomic::Ordering::Relaxed)
+}
+#[cfg(any(test, feature = "test-hooks"))]
+pub(super) fn count_spanned_for_tests(n: usize) {
+    SPANNED.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+}
+#[cfg(not(any(test, feature = "test-hooks")))]
+#[inline(always)]
+pub(super) fn count_spanned_for_tests(_: usize) {}
 /// Tests: the rows the process's keyed probes probed in sorted batches.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn keyed_rows_for_tests() -> usize {

@@ -362,7 +362,7 @@ fn program(d: &mut mj::Stage, f: &rowcode::Fused, kind: u32) -> Result<(), Strin
         return Err("a row program larger than a stage holds".into());
     }
     for (k, w) in f.columns.iter().enumerate() {
-        let (c, doc) = match *w { rowcode::Word::Col(c) => (c, 0), rowcode::Word::Doc(c) => (c, 1), rowcode::Word::Held(_) | rowcode::Word::Look(..) => unreachable!("the device's fusion asks no input (`fused_at`)") };
+        let (c, doc) = match *w { rowcode::Word::Col(c) => (c, 0), rowcode::Word::Doc(c) => (c, 1), rowcode::Word::Held(_) | rowcode::Word::Look(..) | rowcode::Word::Bound { .. } => unreachable!("the device's fusion asks no input and spans no rows (`fused_at`)") };
         d.col_kind[k] = kind;
         d.col_idx[k] = c as u32;
         d.col_doc[k] = doc;
