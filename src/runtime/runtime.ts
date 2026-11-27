@@ -2998,9 +2998,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#sessions.delete(sessionId);
     this.#pollControlsWhileSessionsOpen();
     if (opened.ownerClaim !== undefined) {
-      this.#controls.interrupt(sessionId);
       this.#controls.interruptRepositoryAudit(sessionId);
-      this.#controls.releaseOwner(sessionId, opened.ownerClaim);
+      this.#controls.endOwnership(sessionId, opened.ownerClaim);
       this.#sessionStore.closeSession(sessionId);
     }
     try {

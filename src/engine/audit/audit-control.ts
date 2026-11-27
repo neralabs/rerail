@@ -731,7 +731,6 @@ export class SqliteAuditControlStore {
       },
     }).run();
   }
-  interrupt(sessionId: string): void { this.#interruptOwned(sessionId, "Session closed before scan could complete"); }
   close(): void {
     this.#records?.close();
     this.#database.$client.close();
