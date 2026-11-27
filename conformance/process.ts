@@ -65,3 +65,26 @@ export async function runChecked(runner: CommandRunner, argv: readonly string[],
   }
   return result.stdout;
 }
+
+/**
+ * The variables that point Git at another repository than the folder it runs in (a hook exports them): left out of a
+ * Git command that must work on its own folder.
+ */
+const REPOSITORY_VARIABLES: Record<string, true> = {
+  GIT_DIR: true,
+  GIT_WORK_TREE: true,
+  GIT_INDEX_FILE: true,
+  GIT_OBJECT_DIRECTORY: true,
+  GIT_ALTERNATE_OBJECT_DIRECTORIES: true,
+  GIT_COMMON_DIR: true,
+  GIT_PREFIX: true,
+};
+
+/**
+ * An environment for Git commands on a repository of their own: `base` (the process's by default) without the variables
+ * that name another repository, and with no user or system configuration read, plus `extra`.
+ */
+export function isolatedGitEnv(extra: NodeJS.ProcessEnv = {}, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const kept = Object.entries(base).filter(([name]) => !Object.hasOwn(REPOSITORY_VARIABLES, name));
+  return { ...Object.fromEntries(kept), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", ...extra };
+}

@@ -3,7 +3,6 @@
  * .rerail"): the engine's reading of each rule file (check 1), its proof (check 2), and its examples and `.test` blocks
  * run (check 3). pack-validation.ts calls these beside its checks on JSON rules.
  */
-import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, matchesGlob, relative, resolve, sep } from "node:path";
@@ -16,6 +15,7 @@ import {
   type RrDescription,
   type RuleMode,
 } from "../src/engine/index.js";
+import { isolatedGitEnv, ProcessCommandRunner, runChecked, type CommandRunner } from "./process.js";
 
 /** One example of a rule written in `.rerail`: its own file, and the other files of its repository. */
 export interface RerailExample {
@@ -87,10 +87,10 @@ function inScope(described: RerailDescription, path: string): boolean {
  * files are. A rule that reads `git_rev` (a migration rule asks which migrations have not run yet) is withheld where no
  * repository is readable, so without it such a rule's caught example could never fire.
  */
-function writeCorpus(path: string, example: RerailExample): string {
+async function writeCorpus(path: string, example: RerailExample, runner: CommandRunner): Promise<string> {
   const root = mkdtempSync(join(tmpdir(), "rerail-pack-example-"));
   try {
-    initEmptyRepository(root);
+    await initEmptyRepository(root, runner);
     for (const file of [{ path, text: example.text }, ...(example.with ?? [])]) {
       const target = resolve(root, file.path);
       const inside = relative(root, target);
@@ -105,30 +105,28 @@ function writeCorpus(path: string, example: RerailExample): string {
   }
 }
 
-/** `git init` and one empty commit in `root`, the same every time: no user or system config, no hooks, a fixed author and date. */
-function initEmptyRepository(root: string): void {
+/**
+ * `git init` and one empty commit in `root`, the same every time: no user or system config, no hooks, a fixed author
+ * and date, and none of the variables (a hook's `GIT_DIR`, …) that would point Git at another repository.
+ */
+async function initEmptyRepository(root: string, runner: CommandRunner): Promise<void> {
   const date = "2000-01-01T00:00:00Z";
-  const env = {
-    ...process.env,
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_CONFIG_NOSYSTEM: "1",
+  const env = isolatedGitEnv({
     GIT_AUTHOR_NAME: "rerail",
     GIT_AUTHOR_EMAIL: "rerail@example.invalid",
     GIT_AUTHOR_DATE: date,
     GIT_COMMITTER_NAME: "rerail",
     GIT_COMMITTER_EMAIL: "rerail@example.invalid",
     GIT_COMMITTER_DATE: date,
-  };
-  const git = (...args: string[]): void => {
-    execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", ...args], { cwd: root, env, stdio: "ignore" });
-  };
-  git("init", "-q", "-b", "main");
-  git("commit", "-q", "--allow-empty", "-m", "example base");
+  });
+  const git = (...args: string[]): Promise<string> => runChecked(runner, ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", ...args], { cwd: root, env });
+  await git("init", "-q", "-b", "main");
+  await git("commit", "-q", "--allow-empty", "-m", "example base");
 }
 
 /** The codes of the rule's findings on `path` in the example's repository, or why the run gave none to judge. */
-async function findingsOn(described: RerailDescription, path: string, example: RerailExample): Promise<{ codes: string[] } | { failure: string }> {
-  const root = writeCorpus(path, example);
+async function findingsOn(described: RerailDescription, path: string, example: RerailExample, runner: CommandRunner): Promise<{ codes: string[] } | { failure: string }> {
+  const root = await writeCorpus(path, example, runner);
   try {
     const outcome = await runRerailPolicies({ root, policies: [described.path] });
     if (outcome.status === "failed") return { failure: `the run failed: ${outcome.message}` };
@@ -147,22 +145,27 @@ function judged(id: string, described: RerailDescription, side: "caught" | "pass
 }
 
 /** Check 3 on one example of a `.rerail` rule: in scope, run, and judged on its own file only. */
-async function rerailExampleFailures(id: string, described: RerailDescription, side: "caught" | "passes", example: RerailExample): Promise<string[]> {
+async function rerailExampleFailures(id: string, described: RerailDescription, side: "caught" | "passes", example: RerailExample, runner: CommandRunner): Promise<string[]> {
   const path = example.path;
   if (path === undefined) return [`${id}: the ${side} example has no path`];
   if (!inScope(described, path)) return [`${id}: the ${side} example's path ${path} is outside the rule's scope`];
-  const found = await findingsOn(described, path, example);
+  const found = await findingsOn(described, path, example, runner);
   return "failure" in found ? [`${id}: the ${side} example (${path}): ${found.failure}`] : judged(id, described, side, path, found.codes);
 }
 
 /**
  * Check 3 on a `.rerail` rule's example pair, each run through the `.rerail` runner on a repository of its own file
  * (and the files `with` names): the caught example gives a finding of this rule on its file, with one of its codes,
- * and the passes example none.
+ * and the passes example none. Git, which makes each repository, runs through `runner`.
  */
-export async function rerailExamplePairFailures(id: string, described: RerailDescription, examples: Record<"caught" | "passes", RerailExample>): Promise<string[]> {
-  const caught = await rerailExampleFailures(id, described, "caught", examples.caught);
-  return [...caught, ...await rerailExampleFailures(id, described, "passes", examples.passes)];
+export async function rerailExamplePairFailures(
+  id: string,
+  described: RerailDescription,
+  examples: Record<"caught" | "passes", RerailExample>,
+  runner: CommandRunner = new ProcessCommandRunner(),
+): Promise<string[]> {
+  const caught = await rerailExampleFailures(id, described, "caught", examples.caught, runner);
+  return [...caught, ...await rerailExampleFailures(id, described, "passes", examples.passes, runner)];
 }
 
 /** Check 3 on a `.rerail` rule file's own `.test` blocks, each run by the engine (`rerail rules test <file>`): every one passes. */
