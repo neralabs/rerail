@@ -781,6 +781,17 @@ pub fn lease(bytes: usize) -> Result<Pooled, String> {
         leased(&b);
         return Ok(Pooled::of(b, false, true));
     }
+    // A CPU device's memory (the host's, or the process's device when it is the CPU) is the allocator's, which keeps
+    // what is given back for its next request and returns its pages to the system once they sit unused
+    // (`dirty_decay_ms`): a lease of it is made and given back, never kept idle here. Kept, the pool held the freed
+    // leases to the budget, their pages written and resident, on top of the allocator's: 1.4 GB of a 4.8 GB peak on
+    // all at an 8 GB budget, for about 1% of the run's instructions (2026-11-27, m3, the CPU device).
+    if shared.device.is_cpu() {
+        traced_new(class);
+        let b = crate::score::phase("new buffer", || rerail_device::device::alloc_uninitialized_array_sync::<u8>(shared.device, class));
+        leased(&b);
+        return Ok(Pooled::of(b, false, true));
+    }
     let st_ = dev();
     let mut p = st_.pool.lock().expect("the pool");
     if let Some(b) = p.take(class) {
@@ -1100,7 +1111,8 @@ mod tests {
     /// idle buffers the budget leaves room for stay.
     #[test]
     fn a_wrap_of_host_memory_leaves_the_metal_budget_unchanged() {
-        let Some(s) = layer() else { return };
+        // A device's own memory: a CPU device's leases are never idle (`lease`).
+        let Some(s) = layer().filter(|l| !l.device.is_cpu()) else { return };
         let _big = big_leases();
         drop(lease(64 << 20).unwrap());
         let idle = || held_bytes().1;
@@ -1120,6 +1132,21 @@ mod tests {
         assert!(lease_within(32 << 20).is_ok(), "a lease that fitted still fits");
         crate::budget::METAL_TEST.with(|m| m.set(0));
         drop((wrap, host));
+    }
+
+    /// A CPU device's lease is the allocator's memory: given back to it when dropped, never held idle by the pool
+    /// (2026-11-27: the pool's idle host leases were 1.4 GB of a run's 4.8 GB peak).
+    #[test]
+    fn a_cpu_devices_lease_is_not_kept_idle() {
+        if !layer().is_some_and(|l| l.device.is_cpu()) {
+            return;
+        }
+        // 23 MiB: a class (24 MiB) no other test leases.
+        let class = class(23 << 20);
+        let idle_of_class = || dev().pool.lock().unwrap().idle.get(&class).map_or(0, Vec::len);
+        let before = idle_of_class();
+        drop(lease(23 << 20).unwrap());
+        assert_eq!(idle_of_class(), before, "a CPU device's dropped lease is not idle in the pool");
     }
 
     #[test]
@@ -1162,7 +1189,8 @@ mod tests {
     fn a_block_in_a_slab_is_recycled_and_its_structures_read_fresh() {
         use rerail_blocks::block::kind;
         use rerail_blocks::relation::{self, RelW, Relation, Spec, View};
-        if layer().is_none() {
+        // A device's own memory: a CPU device's slab is the allocator's, given back to it (`lease`).
+        if !layer().is_some_and(|l| !l.device.is_cpu()) {
             return;
         }
         let _big = big_leases();
