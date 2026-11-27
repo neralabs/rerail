@@ -361,6 +361,17 @@ describe("/rerail-uninstall", () => {
     expect(notices).toEqual([{ message: "could not write ~/.claude/settings.json", level: "error" }]);
   });
 
+  it("says why the removal failed when the session's runtime cannot be given back either", async () => {
+    const root = await launcherPackage("printf 'could not write ~/.claude/settings.json\\n' >&2\nexit 1");
+    const reattach = vi.fn().mockRejectedValue(new Error("Rerail daemon exited with code 1 before it was ready"));
+    const { run, notices } = commandHarness({ packageRoot: root, cwd: () => root, detach: vi.fn(), reattach }, "Remove, keep a backup");
+    await run("rerail-uninstall");
+    expect(notices).toEqual([
+      { message: "could not write ~/.claude/settings.json", level: "error" },
+      { message: "/rerail-uninstall: Rerail daemon exited with code 1 before it was ready", level: "error" },
+    ]);
+  });
+
   it("gives the session its runtime back when the removal cannot even be launched", async () => {
     // A NUL byte makes the launch itself throw, before any process exists.
     const unlaunchable = join(tmpdir(), "rerail\0checkout");

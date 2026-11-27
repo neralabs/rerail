@@ -1,11 +1,12 @@
 name: Package
 
 # Builds the @neralabs/rerail package: native rules engines for every supported target, the TypeScript runtime,
-# and the bundled UI. Each engine is packed into an npm package of its own, and core (the runtime and the UI) into a
-# tarball that pins those six by version and integrity (scripts/release/engine/packages.mjs): npm's registry refuses
-# one tarball holding every engine. The seven tarballs and the engine packages' manifest (engine-packages.json) are
-# uploaded as the `rerail-package` artifact of the calling run. release.yml publishes what this builds; env-matrix.yml
-# installs it on Azure VMs. One build, so the environment matrix tests exactly what a release would ship.
+# and the bundled UI. Each engine is packed into an npm package of its own, with the tray icon program built for the
+# same system, and core (the runtime and the UI) into a tarball that pins those six by version and integrity
+# (scripts/release/engine/packages.mjs): npm's registry refuses one tarball holding every engine. The seven tarballs
+# and the engine packages' manifest (engine-packages.json) are uploaded as the `rerail-package` artifact of the calling
+# run. release.yml publishes what this builds; env-matrix.yml installs it on Azure VMs. One build, so the environment
+# matrix tests exactly what a release would ship.
 #
 # Each native build compiles through the Rust compile cache (.github/actions/rust-compile-cache): it starts from the
 # newest store release-cache.yml saved on main as an artifact for that target, and compiles cold without one. Nothing
@@ -106,6 +107,19 @@ jobs:
       - name: Build native engine
         run: node scripts/build/release-engine.mjs ${{ matrix.target }}
 
+      # The tray icon program, which the engine package carries beside the engine. A Linux one is built for musl, a
+      # static binary that runs on every Linux whatever its C library (scripts/build/release-tray.mjs). Its crates are
+      # pure Rust, so the runner's own linker links it with the C runtime the musl target ships, and no musl C
+      # toolchain (musl-tools) is installed, as in ci.yml's rust-tray job.
+      - name: Build tray program
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET" == *-unknown-linux-gnu ]]; then rustup target add "${TARGET%-gnu}-musl"; fi
+          node scripts/build/release-tray.mjs "$TARGET"
+
       # Node 24's own Linux binaries need glibc 2.28, the floor docs/installation.md states. The runner's glibc is
       # newer, so the smokes below cannot catch an engine that needs more, or one that leaves a symbol for the
       # loading machine to define.
@@ -113,12 +127,22 @@ jobs:
         if: runner.os == 'Linux'
         run: node scripts/check/check-linux-engine.mjs native/rerail_engine.*.node
 
-      # Runners ship the Visual C++ runtime, so the load smokes below cannot catch an engine
-      # that needs it; a clean Windows install does not have it.
-      - name: Check Windows engine has no Visual C++ runtime dependency
+      # The tray program runs on musl and glibc Linux alike only while it needs no loader or shared library. Rust links
+      # a musl binary static-pie, which `file` calls "static-pie linked" rather than "statically linked".
+      - name: Check Linux tray program is static
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          described="$(file native/rerail-tray.*)"
+          echo "$described"
+          grep -Eq "statically linked|static-pie linked" <<< "$described"
+
+      # Runners ship the Visual C++ runtime, so the load smokes below cannot catch an engine or a tray program that
+      # needs it; a clean Windows install does not have it.
+      - name: Check Windows engine and tray program have no Visual C++ runtime dependency
         if: endsWith(matrix.target, '-windows-msvc')
         shell: bash
-        run: node scripts/check/check-windows-runtime.mjs native/rerail_engine.*.node
+        run: node scripts/check/check-windows-runtime.mjs native/rerail_engine.*.node native/rerail-tray.*.exe
 
       - name: Smoke Windows rerail CLI install planning
         if: matrix.windows_runtime_smoke
@@ -169,11 +193,14 @@ jobs:
         if: matrix.windows_runtime_smoke
         run: ./node_modules/.bin/vitest run test/runtime/windows-daemon-launch.test.ts
 
-      - name: Upload native engine
+      # An artifact keeps no file mode: packing the engine package makes the tray program executable again.
+      - name: Upload native engine and tray program
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rerail-native-${{ matrix.target }}
-          path: native/*.node
+          path: |
+            native/*.node
+            native/rerail-tray.*
           if-no-files-found: error
 
   package:
@@ -212,7 +239,7 @@ jobs:
           npm run build:codex
           npm run build:ui
 
-      - name: Download native engines
+      - name: Download native engines and tray programs
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: rerail-native-*
@@ -224,10 +251,14 @@ jobs:
           set -euo pipefail
           for target in darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64-msvc win32-arm64-msvc; do
             test -f "native/rerail_engine.${target}.node" || { echo "missing native/rerail_engine.${target}.node" >&2; exit 1; }
+            tray="native/rerail-tray.${target}"
+            if [[ "$target" == win32-* ]]; then tray="$tray.exe"; fi
+            test -f "$tray" || { echo "missing $tray" >&2; exit 1; }
           done
 
-      # One npm package per engine, each at core's version, and their manifest. --all fails unless native/ holds all
-      # six: a core packed against fewer installs with no engine on the platforms left out.
+      # One npm package per engine, each at core's version and carrying its tray program, and their manifest. --all
+      # fails unless native/ holds all six engines and tray programs: a core packed against fewer engines installs with
+      # no engine on the platforms left out.
       - name: Pack the engine packages
         run: node scripts/release/engine/packages.mjs pack --all --out "$RUNNER_TEMP/rerail-package"
 
@@ -283,6 +314,20 @@ jobs:
             console.log(`entry points present: ${Object.keys(ENTRY_POINTS).join(", ")}`);
           ' "$installed"
           test -f "$installed/dist/ui/index.html"
+          # The runtime finds the tray program in the installed engine package, executable after the artifact, the
+          # pack and the install.
+          # shellcheck disable=SC2016 # the script is JavaScript; its template literals are not the shell's.
+          node --input-type=module --eval '
+            import { accessSync, constants } from "node:fs";
+            import { join } from "node:path";
+            import { pathToFileURL } from "node:url";
+            const root = process.argv[1];
+            const { resolveNativeTrayPath } = await import(pathToFileURL(join(root, "dist", "engine", "native", "native.js")).href);
+            const tray = resolveNativeTrayPath({ packageRoot: root });
+            if (tray === undefined) { console.error(`the Rerail at ${root} finds no tray program`); process.exit(1); }
+            accessSync(tray, constants.X_OK);
+            console.log(`tray program: ${tray}`);
+          ' "$installed"
           for notice in LICENSE NOTICE; do
             test -f "$installed/$notice" || { echo "missing $notice" >&2; exit 1; }
           done

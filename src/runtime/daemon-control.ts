@@ -1423,8 +1423,9 @@ async function foundStarting(home: string, machine: DaemonMachine): Promise<Comi
   const records = { home, stateFile: join(home, DAEMON_STATE_FILE), logFile: join(home, DAEMON_LOG_FILE), logOffset };
   const answering = await answeringDaemon(records.stateFile, pid, machine.platform);
   if (answering !== undefined) return { status: "running", ...answering };
-  const exitReason = (): string | undefined => (processAlive(pid, machine.kill) ? undefined : `(pid ${pid}) exited`);
-  return { status: "coming-up", pid, daemon: { pid, exitReason }, launched: false, records, deadline: Date.now() + START_TIMEOUT_MS };
+  const gone = (): boolean => !processAlive(pid, machine.kill);
+  const daemon: LaunchedDaemon = { pid, exitReason: () => (gone() ? `(pid ${pid}) exited` : undefined), exitCode: () => (gone() ? null : undefined) };
+  return { status: "coming-up", pid, daemon, launched: false, records, deadline: Date.now() + START_TIMEOUT_MS };
 }
 
 /**
@@ -1849,6 +1850,17 @@ export interface LaunchedDaemon {
   pid: number | undefined;
   /** Why the launched process is gone, the same each time it is asked once it is; undefined while it runs. */
   exitReason: () => string | undefined;
+  /**
+   * The launched process's exit code, the same each time it is asked once it is gone; undefined while it runs, and null
+   * once it is gone with no code: ended by a signal, never started, or gone where no handle kept its code.
+   */
+  exitCode: () => number | null | undefined;
+}
+
+/** How a launched process ended: its exit code, null where it has none, and why, as {@link LaunchedDaemon} says it. */
+interface LaunchedExit {
+  code: number | null;
+  reason: string;
 }
 
 function daemonArguments(control: DaemonControl, options: DaemonLaunchOptions, stateFile: string): string[] {
@@ -1884,14 +1896,14 @@ export interface DetachedLaunch {
 }
 
 /**
- * Why a process the native spawn started is gone, or undefined while it runs: its exit code, from the handle the native
+ * How a process the native spawn started ended, or undefined while it runs: its exit code, from the handle the native
  * module kept, which it closes once it has given the code, so a second read after the exit throws. A binary built before
- * it had no such handle, and there only a pid that no process holds says so.
+ * it had no such handle, and there only a pid that no process holds says it is gone, with no code.
  */
-function detachedExitReason(launched: NativeProcess, kill: ProcessSignal): string | undefined {
-  if (launched.exitCode === undefined) return processAlive(launched.pid, kill) ? undefined : "exited";
+function detachedExit(launched: NativeProcess, kill: ProcessSignal): LaunchedExit | undefined {
+  if (launched.exitCode === undefined) return processAlive(launched.pid, kill) ? undefined : { code: null, reason: "exited" };
   const code = launched.exitCode();
-  return code === null ? undefined : `exited with code ${code}`;
+  return code === null ? undefined : { code, reason: `exited with code ${code}` };
 }
 
 /**
@@ -1911,8 +1923,9 @@ export function launchDetached(launch: DetachedLaunch, machine: DaemonMachine = 
     const env = Object.fromEntries(Object.entries(launch.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
     const launched = machine.spawnDetached({ program, args: [...launch.args], cwd: launch.cwd ?? null, env, logFile: launch.logFile });
     // The native module closes the handle once it has given the exit code, and a later read throws: keep the answer.
-    let exited: string | undefined;
-    return { pid: launched.pid, exitReason: () => (exited ??= detachedExitReason(launched, machine.kill)) };
+    let exited: LaunchedExit | undefined;
+    const exit = (): LaunchedExit | undefined => (exited ??= detachedExit(launched, machine.kill));
+    return { pid: launched.pid, exitReason: () => exit()?.reason, exitCode: () => exit()?.code };
   }
   const log = openSync(launch.logFile, "a", 0o600);
   let child: StartedChild;
@@ -1921,15 +1934,15 @@ export function launchDetached(launch: DetachedLaunch, machine: DaemonMachine = 
   } finally {
     closeSync(log);
   }
-  let exited: string | undefined;
+  let exited: LaunchedExit | undefined;
   child.once("error", error => {
-    exited = `could not start: ${error.message}`;
+    exited = { code: null, reason: `could not start: ${error.message}` };
   });
   child.once("exit", code => {
-    exited = `exited with code ${code ?? "signal"}`;
+    exited = { code, reason: `exited with code ${code ?? "signal"}` };
   });
   child.unref();
-  return { pid: child.pid, exitReason: () => exited };
+  return { pid: child.pid, exitReason: () => exited?.reason, exitCode: () => exited?.code };
 }
 
 /**
@@ -2617,14 +2630,17 @@ export const BROWSER_OFF_NOTE = "BROWSER is set to none, so no browser opened.";
 
 /**
  * Hands the URL to the desktop's default browser, unless `BROWSER=none` ({@link browserOff}); whether it did. Returns
- * once the opener has been spawned.
+ * once the opener has been spawned. An opener that cannot start is said on stderr with the URL, for a person at a
+ * terminal to visit, unless `onError` handles it: the daemon's stderr is daemon.log, where a URL with an access token
+ * must not go.
  */
-export function openInBrowser(url: string, machine: DaemonMachine = THIS_MACHINE): boolean {
+export function openInBrowser(url: string, machine: DaemonMachine = THIS_MACHINE, options: { onError?: (error: Error) => void } = {}): boolean {
   if (browserOff(machine.env)) return false;
   const { command, args, cwd } = browserOpener(url, machine.platform, machine.env);
   const child = machine.spawnShown(command, args, { detached: true, stdio: "ignore", ...(cwd === undefined ? {} : { cwd }) });
-  child.once("error", () => {
-    process.stderr.write(`rerail: could not open a browser; visit ${url}\n`);
+  child.once("error", (error: Error) => {
+    if (options.onError !== undefined) options.onError(error);
+    else process.stderr.write(`rerail: could not open a browser; visit ${url}\n`);
   });
   child.unref();
   return true;

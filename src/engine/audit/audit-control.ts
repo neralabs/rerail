@@ -7,7 +7,7 @@ import { z } from "zod/v4";
 import { checkoutRealpath, earlierRealpath, physicalPath } from "../catalog/checkout-control.js";
 import { outsideGit } from "../catalog/repository-identity.js";
 import { openRerailDatabase, type RerailDatabase } from "../storage/database.js";
-import { requireRecordWritesMade } from "../storage/record-writes.js";
+import { openRecordWriter, type RecordWriter } from "../storage/record-writes.js";
 import { apartFromLockWaits } from "../storage/write-lock-wait.js";
 import { runGitWithoutBlocking } from "../git.js";
 import { processState } from "../process-liveness.js";
@@ -154,6 +154,16 @@ function request(row: typeof auditRequests.$inferSelect): AuditRequest {
 function processIsLive(processId: number): boolean {
   return processId === process.pid || processState(processId) !== "gone";
 }
+/** The session's owner row as `database` reads it, unchanged. */
+function ownerRow(database: RerailDatabase, sessionId: string) {
+  return database.select({
+    delivery: policySessionOwners.delivery, active: policySessionOwners.active,
+    processId: policySessionOwners.processId, token: policySessionOwners.token,
+  }).from(policySessionOwners).where(eq(policySessionOwners.sessionId, sessionId)).get();
+}
+function alreadyOwned(sessionId: string): Error {
+  return new Error(`Rerail session ${sessionId} is already owned by a live runtime`);
+}
 
 /** An open session with its owner row, as a start finds it, and when it was last heard from. */
 interface OwnedOpenSession {
@@ -179,6 +189,41 @@ function askedOnce<K, V>(answer: (key: K) => V): (key: K) => V {
  * claim made since then reads as made before the start. Holds one token per session this process holds under no lock.
  */
 const claimsHereWithoutLock = new Set<string>();
+
+/**
+ * The tokens of the claims this process asked for (`registerOwner`) that wait in its record writer for the lock: each
+ * leaves once its write runs, or once the writer settles without it. A session reopened meanwhile keeps its claim by
+ * them (`holdsOwner`), whatever runtime of this process reopens it, where a second claim, behind the first, would be
+ * refused once both were made.
+ */
+const claimsWaiting = new Set<string>();
+
+/** A claim as `registerOwner` asks for it: made once every statement of its write has run. */
+interface AskedClaim {
+  readonly token: string;
+  made: boolean;
+}
+
+/**
+ * Follows a claim kept for the lock (`registerOwner`). Once no write of this process waits, the writer has made it or
+ * said on stderr why not (a refusal, a failure, a drop past what may wait): a claim not made is said with its
+ * session, leaves this process's claims and is told to `lost`.
+ */
+function followKeptClaim(
+  records: RecordWriter,
+  sessionId: string,
+  claim: AskedClaim,
+  lost: ((claim: PolicyOwnerClaim) => void) | undefined,
+): void {
+  claimsWaiting.add(claim.token);
+  void records.settled().then(() => {
+    if (claim.made) return;
+    claimsWaiting.delete(claim.token);
+    claimsHereWithoutLock.delete(claim.token);
+    process.stderr.write(`rerail: the claim on session ${sessionId} was not made, so this process does not own it\n`);
+    lost?.({ token: claim.token });
+  });
+}
 
 /**
  * Whether the runtime that wrote `owner` has ended, so the session it holds is no one's: the process the row names is
@@ -216,20 +261,28 @@ export class SqliteAuditControlStore {
     return z.number().int().parse(this.#database.$client.pragma("data_version", { simple: true }));
   }
 
-  #interruptOwned(sessionId: string, error: string): void {
-    const update = { status: "interrupted" as const, finishedAt: Date.now(), error };
-    for (const status of ["queued", "running"] as const)
-      this.#database.update(auditRequests).set(update).where(and(eq(auditRequests.sessionId, sessionId), eq(auditRequests.status, status))).run();
+  /**
+   * This store's use of the database's record writer, taken at its first claim or release: a runtime's session store has
+   * the file's writer open by then, so no connection opens on the thread answering a hook, and a store that never claims
+   * takes none.
+   */
+  #records: RecordWriter | undefined;
+  #recordWriter(): RecordWriter {
+    this.#records ??= openRecordWriter(this.path);
+    return this.#records;
   }
-  #owner(sessionId: string): { delivery: "background" | "next-event"; active: boolean; processId: number; token: string } | undefined {
-    const owner = this.#database.select({
-      delivery: policySessionOwners.delivery, active: policySessionOwners.active,
-      processId: policySessionOwners.processId, token: policySessionOwners.token,
-    }).from(policySessionOwners).where(eq(policySessionOwners.sessionId, sessionId)).get();
+
+  #interruptOwned(sessionId: string, error: string, database = this.#database, finishedAt = Date.now()): void {
+    const update = { status: "interrupted" as const, finishedAt, error };
+    for (const status of ["queued", "running"] as const)
+      database.update(auditRequests).set(update).where(and(eq(auditRequests.sessionId, sessionId), eq(auditRequests.status, status))).run();
+  }
+  #owner(sessionId: string, database = this.#database): { delivery: "background" | "next-event"; active: boolean; processId: number; token: string } | undefined {
+    const owner = ownerRow(database, sessionId);
     if (owner === undefined || !owner.active) return owner;
     if (processIsLive(owner.processId)) return owner;
-    this.#interruptOwned(sessionId, "Owning runtime exited before scan could complete");
-    this.#database.update(policySessionOwners).set({ active: false, updatedAt: Date.now() }).where(eq(policySessionOwners.sessionId, sessionId)).run();
+    this.#interruptOwned(sessionId, "Owning runtime exited before scan could complete", database);
+    database.update(policySessionOwners).set({ active: false, updatedAt: Date.now() }).where(eq(policySessionOwners.sessionId, sessionId)).run();
     return { ...owner, active: false };
   }
 
@@ -426,33 +479,54 @@ export class SqliteAuditControlStore {
       eq(repositoryAudits.status, "running"),
     )).run();
   }
-  /** Every checkout audit the session still runs ends interrupted. */
+  /**
+   * Every checkout audit the session still runs ends interrupted, a record write like the session's other end writes
+   * (`endOwnership`). It reads first: an update takes the write lock even when it matches no row, and a session that
+   * runs no checkout audit, as nearly every one does, then takes none.
+   */
   interruptRepositoryAudit(sessionId: string): void {
-    this.#database.update(repositoryAudits).set({
-      status: "interrupted", finishedAt: Date.now(), error: "Session closed before repository diagnostic completed",
-    }).where(and(
-      eq(repositoryAudits.sessionId, sessionId),
-      eq(repositoryAudits.status, "running"),
-    )).run();
+    const running = and(eq(repositoryAudits.sessionId, sessionId), eq(repositoryAudits.status, "running"));
+    const finishedAt = Date.now();
+    const idle = (): boolean => this.#database.select({ sessionId: repositoryAudits.sessionId }).from(repositoryAudits)
+      .where(running).limit(1).get() === undefined;
+    this.#recordWriter().writeUnless(idle, database => database.update(repositoryAudits).set({
+      status: "interrupted", finishedAt, error: "Session closed before repository diagnostic completed",
+    }).where(running).run());
   }
 
-  /** Claims the session for this process, under the lock `lockId` of the engine service it runs in when it has one. */
-  registerOwner(sessionId: string, delivery: "background" | "next-event", lockId?: string | undefined): PolicyOwnerClaim {
-    const token = ownerToken(lockId);
-    // The session's row, just opened, may still wait in this process's record writer behind a holder of a moment; and the
-    // claim's reopen of the row must not commit ahead of a waiting close of it, so the claim fails as the lock does.
-    requireRecordWritesMade(this.path);
-    this.#transactionApart(() => {
-      requireSession(this.#database, sessionId);
-      const owner = this.#owner(sessionId);
-      if (owner?.active) throw new Error(`Rerail session ${sessionId} is already owned by a live runtime`);
-      if (owner !== undefined) this.#interruptOwned(sessionId, "Owning runtime was replaced before scan could complete");
-      this.#database.insert(policySessionOwners).values({ sessionId, delivery, active: true, processId: process.pid, token, updatedAt: Date.now() })
+  /**
+   * Claims the session for this process, under the lock `lockId` of the engine service it runs in when it has one. The
+   * claim is a record write (`openRecordWriter`), so it never waits on this thread for another process's write lock: made
+   * now when the lock is free and no write waits, throwing as it fails; else kept behind this process's waiting writes,
+   * the session's row among them, and made once the lock is given back, so the session opens at once all the same. A
+   * live runtime's claim is refused at once as the database holds it now, and again as the claim is made. A kept claim
+   * not made, refused, failed or dropped, is said with its session and told to `lost`, so its runtime lets it go.
+   */
+  registerOwner(
+    sessionId: string,
+    delivery: "background" | "next-event",
+    lockId?: string | undefined,
+    lost?: (claim: PolicyOwnerClaim) => void,
+  ): PolicyOwnerClaim {
+    const claim: AskedClaim = { token: ownerToken(lockId), made: false };
+    const { token } = claim;
+    const held = ownerRow(this.#database, sessionId);
+    if (held?.active && processIsLive(held.processId)) throw alreadyOwned(sessionId);
+    const records = this.#recordWriter();
+    records.write(database => {
+      claimsWaiting.delete(token);
+      requireSession(database, sessionId);
+      const owner = this.#owner(sessionId, database);
+      if (owner?.active) throw alreadyOwned(sessionId);
+      if (owner !== undefined) this.#interruptOwned(sessionId, "Owning runtime was replaced before scan could complete", database);
+      database.insert(policySessionOwners).values({ sessionId, delivery, active: true, processId: process.pid, token, updatedAt: Date.now() })
         .onConflictDoUpdate({ target: policySessionOwners.sessionId, set: { delivery, active: true, processId: process.pid, token, updatedAt: Date.now() } }).run();
       // The runtime opened the record just before this claim; another daemon's sweep may have ended it in between, as
       // the row this claim replaces was a writer's that ended (`endSessionsOfEndedOwners`). The session is open.
-      this.#database.update(sessions).set({ endedAt: null }).where(eq(sessions.sessionId, sessionId)).run();
+      database.update(sessions).set({ endedAt: null }).where(eq(sessions.sessionId, sessionId)).run();
+      claim.made = true;
     });
+    if (!claim.made) followKeptClaim(records, sessionId, claim, lost);
     if (lockId === undefined) claimsHereWithoutLock.add(token);
     return { token };
   }
@@ -469,15 +543,39 @@ export class SqliteAuditControlStore {
   }
   /**
    * Whether `claim` still owns the session for this process: the claim a suspended session kept, which its next open
-   * takes back without interrupting the scans queued for it. False once its owner was released or replaced.
+   * takes back without interrupting the scans queued for it. False once its owner was released or replaced. A claim
+   * still waiting for the lock in this process holds it: made, it is the owner row; not made, its runtime is told.
    */
   holdsOwner(sessionId: string, claim: PolicyOwnerClaim): boolean {
+    if (claimsWaiting.has(claim.token)) return true;
     const owner = this.#owner(sessionId);
     return owner?.active === true && owner.token === claim.token && owner.processId === process.pid;
   }
+  /**
+   * Lets the session go, a record write like its claim (`registerOwner`): a claim still waiting for the lock is made before
+   * its release, which made first would find no row of it and leave the session held once the claim landed.
+   */
   releaseOwner(sessionId: string, claim: PolicyOwnerClaim): void {
-    this.#database.update(policySessionOwners).set({ active: false, updatedAt: Date.now() })
-      .where(and(eq(policySessionOwners.sessionId, sessionId), eq(policySessionOwners.token, claim.token))).run();
+    const updatedAt = Date.now();
+    this.#recordWriter().write(database => database.update(policySessionOwners).set({ active: false, updatedAt })
+      .where(and(eq(policySessionOwners.sessionId, sessionId), eq(policySessionOwners.token, claim.token))).run());
+    claimsHereWithoutLock.delete(claim.token);
+  }
+  /**
+   * Ends `claim`'s hold on the session, as the session's end does: its queued and running scans end interrupted and its
+   * owner is let go, in one record write, so neither waits on this thread for another process's write lock and both
+   * come after the claim when it still waits for that lock. The owner row is read inside the write: a claim refused
+   * once the lock was given back finds another runtime's row there, and leaves that runtime's scans and row as they are.
+   */
+  endOwnership(sessionId: string, claim: PolicyOwnerClaim): void {
+    const at = Date.now();
+    this.#recordWriter().write(database => {
+      const owner = ownerRow(database, sessionId);
+      if (owner?.active !== true || owner.token !== claim.token) return;
+      this.#interruptOwned(sessionId, "Session closed before scan could complete", database, at);
+      database.update(policySessionOwners).set({ active: false, updatedAt: at })
+        .where(and(eq(policySessionOwners.sessionId, sessionId), eq(policySessionOwners.token, claim.token))).run();
+    });
     claimsHereWithoutLock.delete(claim.token);
   }
   /**
@@ -633,6 +731,8 @@ export class SqliteAuditControlStore {
       },
     }).run();
   }
-  interrupt(sessionId: string): void { this.#interruptOwned(sessionId, "Session closed before scan could complete"); }
-  close(): void { this.#database.$client.close(); }
+  close(): void {
+    this.#records?.close();
+    this.#database.$client.close();
+  }
 }
