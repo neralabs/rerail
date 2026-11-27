@@ -25,9 +25,11 @@ the one floor the release scripts knew for them.
 1. **A rule's options are the names it reads; nothing declares them.** `describeRr` lists the names the rule's
    `option("name", …)` and `option_item("name", …)` atoms read, its includes' among them. A name read through a
    variable is each text the rule's own facts give the variable (`limit_rule("max", 3).` beside the library's
-   `limit(o, k) :- limit_rule(o, d), option(o, v)`); where no fact gives it, the names cannot be listed, and the rule
-   takes any name from a setting (`anyOption`), while a pack's `config` and a linter's mapping reach only the listed
-   ones. The 123 hand translations
+   `limit(o, k) :- limit_rule(o, d), option(o, v)`): the texts of a relation of facts alone that the rule reads the
+   variable in, outside any aggregate. Where the policy states no fact of that relation, the read names nothing.
+   Where no such relation binds the variable (a rule derives it, a run gives it, or only an aggregate reads it), the
+   names cannot be listed, and the rule takes any name from a setting (`anyOption`), while a pack's `config` and a
+   linter's mapping reach only the listed ones. The 123 hand translations
    that read options are written so: none declares one, and each says what an option left unset means
    (`!option("option", _)`). A value comes from where a JSON rule's does: a rule setting's `config`, a pack's `config`
    in `.rerail/packs.json`, a port's options mapped from the repository's linter config. `configureBundledCodeRule`
