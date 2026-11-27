@@ -122,7 +122,7 @@ Packs never install into a project's `node_modules`: one Rerail serves every rep
 ### `rerail packs`
 
 - **`list`**: installed packs with versions, and any left out, with why.
-- **`add <id[@version]> …`**: installs a Rerail pack by id, or any pack by package name.
+- **`add <id[@version]> …`**: installs a Rerail pack by id, or any pack by package name, and adds it to the repository of the checkout it is run in.
 - **`remove <id | package> …`**: uninstalls a package by name, or every installed package holding a pack id.
 - **`update`**: moves each installed pack to the newest version the active core accepts; `rerail update` ends with it.
 - **`recommend [--repo <dir>]`**: runs set-up's discovery and prints what fits, or why nothing does; installs nothing.
@@ -133,6 +133,7 @@ Packs never install into a project's `node_modules`: one Rerail serves every rep
 
 - **`list`** names Rerail's packs by id and a third party's by package name.
 - **`add`** takes ids or package names (`@neralabs/rerail-pack-typescript`, `@acme/rerail-pack-sql`, `rerail-pack-lint`). It takes a version, range, dist-tag, or an existing tarball or folder; it refuses npm options, `npm:` aliases, git and URL specs. If a pack it installed is left out, or another stops loading, it puts the change back and fails with why.
+- **Where `add` adds it.** In a checkout Rerail knows, one it is set up or started in or a worktree of one, `add` adds each pack it names, for the whole repository, whether or not the install changed it: running it again adds a pack installed earlier. A repository not set up is set up with it, and Rerail is not started there. A pack added there already, in any folder, stays where it is. Anywhere else, a folder Rerail has never run in or a CI machine installing packs for `rerail scan --pack`, it only installs, and says so. From a coding agent's session it does not change a set-up repository, as `repository_attachments_set` refuses it.
 - **Updating a pack.** A pack is pinned to the version installed, so `add <id>` with no version leaves an installed pack where it is. `update` moves every pack; to move one, name the version (`add typescript@0.1.6`) or the tag (`add typescript@latest`).
 - **`update`** takes each pack npm installed up to the version under the update channel's tag, or `next`'s for a pack the channel has no version of, and installs the newest version in between whose core range takes the active core: a newest version made for a later core gives way to an older one that fits. A prerelease counts only when the tag's version is one. It never moves a pack to an older version (one installed from `next`, say), and leaves one from a folder or tarball alone. Each pack installs and is checked on its own: one that fails or does not load is put back alone, the others still move, and the command exits 1, naming why. A third party's new version runs in Log until you approve it. A pack npm cannot be asked about gets a `warning:` line.
 - **`remove`** refuses to remove, by name, the package holding an id (the one loading under it, or Rerail's own) while another holder stays. Repositories adding the id would then run the other.
@@ -332,7 +333,7 @@ Complexity is one plus a function's decision points, as lizard 1.24.0 counts the
 
 The pack matches the study's C arm: same tool semantics, same limit, only the functions the agent changed.
 
-1. **Add the `complexity` pack.** Set-up offers it for Python, TypeScript, JavaScript, PHP, Blade, Rust, Vue or Java source. Or run `rerail packs add complexity`, then `repository_attachments_set` (`PUT /api/repository/attachments`, body `{ "checkout": "<absolute path of a checkout>", "add": [{ "sourceKind": "pack", "sourceId": "complexity" }] }`, or `"repository": "<repository key>"` in place of `checkout`).
+1. **Add the `complexity` pack.** Set-up offers it for Python, TypeScript, JavaScript, PHP, Blade, Rust, Vue or Java source. Or run `rerail packs add complexity` in a checkout of the repository; elsewhere, install it with `rerail packs add complexity`, then `repository_attachments_set` (`PUT /api/repository/attachments`, body `{ "checkout": "<absolute path of a checkout>", "add": [{ "sourceKind": "pack", "sourceId": "complexity" }] }`, or `"repository": "<repository key>"` in place of `checkout`).
 2. **Keep the default `ai-output` audit scope**, which reports only functions the agent changed.
 
 <details>

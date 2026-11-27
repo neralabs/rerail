@@ -1,12 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { packAddSpec, runPacksCommand } from "../../../src/cli/packs-cli.js";
-import { openRerailDatabase, recordCheckout, setUpRepository } from "../../../src/engine/index.js";
+import { listRepositories, openRerailDatabase, recordCheckout, setUpRepository } from "../../../src/engine/index.js";
 import { setRepositoryStarted } from "../../../src/runtime/index.js";
 import { installedPackagesOf, type PackStore } from "../../../src/setup/index.js";
+import { attachedPacks } from "../../support/attached-packs.js";
 import { directoryPackStore } from "../../support/directory-pack-store.js";
 import { installPackDirectory, linkingPackStore, thirdPartyPack, withOlderTokenRule } from "../../support/installed-packs.js";
 import { fixturesPath, repositoryPath } from "../../support/oracles.js";
@@ -15,6 +16,7 @@ import { removeFolderSync } from "../../support/platform/remove-folder.js";
 const homes: string[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   for (const home of homes.splice(0)) removeFolderSync(home);
 });
 
@@ -93,6 +95,126 @@ describe("rerail packs add", () => {
     };
     await expect(runPacksCommand(["add", "typescript", "--ignore-scripts=false"], () => "usage", store)).rejects.toThrow("not npm options");
     expect(installs).toEqual([]);
+  });
+});
+
+describe("rerail packs add in a checkout", () => {
+  /** A Git checkout Rerail has recorded in `home`, set up (with no packs) unless `setUp` is false. */
+  function recordedCheckout(home: string, setUp = true): { checkout: string; repositoryKey: string } {
+    const checkout = realpathSync(mkdtempSync(join(tmpdir(), "rerail-packs-cli-checkout-")));
+    homes.push(checkout);
+    execFileSync("git", ["init", "-q"], { cwd: checkout });
+    const database = openRerailDatabase(join(home, "rerail.sqlite"));
+    try {
+      const { repositoryKey } = recordCheckout(database, checkout);
+      if (setUp) setUpRepository(database, repositoryKey, { packs: [] });
+      return { checkout, repositoryKey };
+    } finally {
+      database.$client.close();
+    }
+  }
+
+  /** The packs added to the repository of `checkout` (`attachedPacks`), and whether it is set up. */
+  function addedPacks(home: string, checkout: string, repositoryKey: string): { packs: string[]; setUp: boolean } {
+    const databasePath = join(home, "rerail.sqlite");
+    const database = openRerailDatabase(databasePath, { readonly: true });
+    try {
+      const listed = listRepositories(database).find(repository => repository.repositoryKey === repositoryKey);
+      return { packs: attachedPacks(checkout, databasePath), setUp: listed !== undefined && listed.configuredAt !== null };
+    } finally {
+      database.$client.close();
+    }
+  }
+
+  /** What `rerail packs add <args>` prints run in `checkout`. */
+  async function addIn(checkout: string, args: readonly string[], store: PackStore): Promise<string> {
+    vi.spyOn(process, "cwd").mockReturnValue(checkout);
+    return await packsOutput(["add", ...args], store);
+  }
+
+  it("adds a pack installed from a folder to the repository of the checkout it is run in, for the whole repository", async () => {
+    const home = temporaryHome();
+    const { checkout, repositoryKey } = recordedCheckout(home);
+    const folder = thirdPartyPack(join(home, "copies"), "rerail-pack-conventions", "conventions");
+
+    const text = await addIn(checkout, [folder], linkingPackStore(home, {}));
+
+    expect(addedPacks(home, checkout, repositoryKey)).toEqual({ packs: ["conventions"], setUp: true });
+    expect(text).toContain(`Added to ${basename(checkout)}, for the whole repository: conventions`);
+  });
+
+  it("adds a pack named again that is installed already, and changes nothing for one added already", async () => {
+    const home = temporaryHome();
+    const { checkout, repositoryKey } = recordedCheckout(home);
+    const folder = thirdPartyPack(join(home, "copies"), "rerail-pack-conventions", "conventions");
+    const store = linkingPackStore(home, { "@neralabs/rerail-pack-valid": fixturesPath("packs", "valid") });
+    // Installed before `packs add` added packs anywhere: in the home, added to no repository.
+    installPackDirectory(folder, "rerail-pack-conventions", home);
+
+    await addIn(checkout, [folder], store);
+    expect(addedPacks(home, checkout, repositoryKey).packs).toEqual(["conventions"]);
+
+    const text = await addIn(checkout, [folder, "valid@0.1.0"], store);
+    expect(addedPacks(home, checkout, repositoryKey).packs).toEqual(["conventions", "valid"]);
+    expect(text).toContain(`Added to ${basename(checkout)}, for the whole repository: valid`);
+    expect(text).toContain(`Added to ${basename(checkout)} already: conventions`);
+  });
+
+  it("sets a recorded repository that is not set up up with the pack, without starting Rerail there", async () => {
+    const home = temporaryHome();
+    const { checkout, repositoryKey } = recordedCheckout(home, false);
+    const store = linkingPackStore(home, { "@neralabs/rerail-pack-valid": fixturesPath("packs", "valid") });
+
+    const text = await addIn(checkout, ["valid@0.1.0"], store);
+
+    expect(addedPacks(home, checkout, repositoryKey)).toEqual({ packs: ["valid"], setUp: true });
+    expect(text).toContain(`Added to ${basename(checkout)}, for the whole repository: valid. ${basename(checkout)} is set up with it now.`);
+    expect(text).toContain("  Not running: Rerail is not on in this checkout. `rerail start` turns it on.");
+  });
+
+  it("adds a pack kept in the repository, named by a path relative to where it is run, from any folder of the checkout", async () => {
+    const home = temporaryHome();
+    const { checkout, repositoryKey } = recordedCheckout(home);
+    // The repository keeps one project's rules as a pack in that project's .rerail folder.
+    const project = join(checkout, "web-client");
+    const folder = thirdPartyPack(project, "rerail-pack-web-client", "web-client");
+    const pack = join(project, ".rerail");
+    execFileSync("mv", [folder, pack]);
+    const store = linkingPackStore(home, {});
+
+    const text = await addIn(checkout, ["./web-client/.rerail"], store);
+    expect(addedPacks(home, checkout, repositoryKey).packs).toEqual(["web-client"]);
+    expect(text).toContain(`Added to ${basename(checkout)}, for the whole repository: web-client`);
+    // Rerail is not on in the checkout; said of the checkout, not of the folder it was run in.
+    expect(text).toContain("  Not running: Rerail is not on in this checkout. `rerail start` turns it on.");
+
+    expect(await addIn(project, ["./.rerail"], store)).toContain(`Added to ${basename(checkout)} already: web-client`);
+  });
+
+  it("only installs outside a checkout Rerail knows, and says where the pack is added", async () => {
+    const home = temporaryHome();
+    const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), "rerail-packs-cli-elsewhere-")));
+    homes.push(elsewhere);
+    const store = linkingPackStore(home, { "@neralabs/rerail-pack-valid": fixturesPath("packs", "valid") });
+
+    const text = await addIn(elsewhere, ["valid@0.1.0"], store);
+
+    expect(store.installs).toEqual([["@neralabs/rerail-pack-valid@0.1.0"]]);
+    expect(text).toContain(`Not added to a repository: Rerail does not know ${elsewhere}.`);
+    // No database is made for it, as on a CI machine that installs packs for `rerail scan --pack`.
+    expect(existsSync(join(home, "rerail.sqlite"))).toBe(false);
+  });
+
+  it("is not added to a set-up repository from a coding agent's session, as the API refuses it", async () => {
+    const home = temporaryHome();
+    const { checkout, repositoryKey } = recordedCheckout(home);
+    vi.stubEnv("CLAUDECODE", "1");
+
+    const text = await addIn(checkout, ["valid@0.1.0"], linkingPackStore(home, { "@neralabs/rerail-pack-valid": fixturesPath("packs", "valid") }));
+
+    expect(addedPacks(home, checkout, repositoryKey).packs).toEqual([]);
+    expect(text).toContain(`Not added to ${basename(checkout)}: it is set up, so a coding agent can't add a pack to the whole repository (Claude Code runs this command, CLAUDECODE is set). `
+      + "Ask the person to add it on the dashboard's Rule packs page, or to run rerail packs add valid@0.1.0 in their own terminal.");
   });
 });
 

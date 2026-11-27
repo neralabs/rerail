@@ -86,19 +86,13 @@ To add a pack after set-up, first see the packs that fit this repository, and wh
 rerail packs recommend
 ```
 
-Install one into `~/.rerail/packs`:
+Install one into `~/.rerail/packs` and add it to this repository:
 
 ```sh
 rerail packs add complexity
 ```
 
-Then open the dashboard and add it to this repository on the **Rule packs** page:
-
-```sh
-rerail manage
-```
-
-`rerail packs add` installs a pack but turns it on nowhere; it runs only in the repositories you add it to.
+Run in a repository Rerail is set up or started in, `rerail packs add` adds the pack to that repository, for the whole repository, setting it up if it is not yet. Run anywhere else, it only installs the pack. A pack runs only in the repositories it is added to; add it to another one from that repository, or on the dashboard's **Rule packs** page (`rerail manage`).
 
 Packs that port a linter are [linter-equivalent](docs/rule-packs.md#linter-equivalent) to it.
 

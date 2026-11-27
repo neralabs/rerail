@@ -33,8 +33,8 @@ export type { RulePackMatch, RulePackSignal } from "./rule-pack-matcher.js";
  * own are `@neralabs/rerail-pack-<id>`), installed into the Rerail home and read by `rule-catalog.ts`. A pack's match
  * definition says which repositories it fits and why; a pack without a rule that starts on is never recommended. A pack
  * is a directory (`docs/pack-format.md`): `pack.json` lists each rule with the document in the pack's `rules/` that
- * defines it. A pack's rules run only in repositories that add it (`repository_attachments_set`); this module defines,
- * validates and recommends.
+ * defines it. A pack's rules run only in repositories that add it (`repository_attachments_set`, or `rerail packs add`
+ * in a checkout); this module defines, validates and recommends.
  */
 export const RULE_PACK_FORMAT = "rerail.rule-pack/v1" as const;
 export const RULE_PACK_CATEGORIES = ["language", "framework", "repository"] as const;

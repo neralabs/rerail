@@ -1,0 +1,1 @@
+`rerail packs add`, run in a repository Rerail is set up in, now adds the pack to that repository as well as installing it, so its rules run there without a trip to the dashboard; running it again adds a pack installed earlier. Run anywhere else, it only installs, as before, and says so.
