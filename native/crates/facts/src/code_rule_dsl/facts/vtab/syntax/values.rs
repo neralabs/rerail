@@ -870,6 +870,28 @@ impl Source for Layered {
         let p = parts.get(self.name.as_str())?;
         p.by_key.parts((n >> 32) as u32, p.list.len()).find_map(|i| p.list[i].src.node_read(name, n)).map(super::super::NodeRead::Value)
     }
+    /// Every node's text where it lies (`LongTexts::node_texts_in_place`), the chunk's documents' and its values': a
+    /// node is found through the directory over the chunk's batch and its values (`views_over`), each document's
+    /// source where it lies, as `node_read` finds it through the batch that holds its document.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn node_texts_in_place(&self) -> Option<crate::code_rule_dsl::facts::vtab::ViewInPlace> {
+        let why = |w: &'static str| crate::code_rule_dsl::logic::profile::decision("node texts read in place (rr_node_text_any)", || w.to_owned());
+        let Some(batch) = self.base.python_batch() else {
+            why("refused: a layered binding over no batch");
+            return None;
+        };
+        let Some(dir) = self.values.dir(&batch) else {
+            why("refused: a layered binding with no views' directory over its values");
+            return None;
+        };
+        if !super::device_chunk::ViewsInPlace::read_on_host() && !dir.views.sources {
+            why("refused: a document's source the device does not reach (a layered binding)");
+            return None;
+        }
+        let read = dir.views.read_of(super::device_chunk::VIEW_NODE, Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>);
+        why(if read.is_some() { "read in place (a layered binding)" } else { "refused: the layered directory on no device" });
+        read
+    }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }

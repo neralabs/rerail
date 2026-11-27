@@ -51,7 +51,7 @@ pub fn ukl() -> String {
         ("Run", "node_by_id", offset_of!(ViewDoc, node_by_id)),
     ];
     let mut s = format!(
-        "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint32_t homes[2];\n    uint32_t key;\n    uint32_t rows[{}];\n    uint32_t view[{}];\n    uint32_t bytes;\n}} ViewRow;\n\
+        "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint64_t source;\n    uint32_t homes[3];\n    uint32_t key;\n    uint32_t rows[{}];\n    uint32_t view[{}];\n    uint32_t bytes;\n}} ViewRow;\n\
          typedef struct ViewHome {{\n    uint64_t host;\n    UKL_GLOBAL const uint8_t* gpu;\n}} ViewHome;\n\
          typedef struct ViewDir {{\n    uint64_t at;\n    uint32_t ndocs;\n    uint32_t nhomes;\n    uint64_t rows;\n    uint64_t homes;\n    uint64_t cache;\n    uint64_t by_key;\n    uint32_t ends[{}];\n    uint32_t counted;\n    uint32_t pad;\n}} ViewDir;\n",
         ROWS,
@@ -72,6 +72,13 @@ pub fn ukl() -> String {
     s += "UKL_INLINE UKL_GLOBAL const ViewRow* view_rows(UKL_GLOBAL const ViewDir* d) { return (UKL_GLOBAL const ViewRow*)(view_block(d) + d->rows); }\n";
     s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_home(UKL_GLOBAL const ViewDir* d, uint32_t h, uint64_t at) { return ((UKL_GLOBAL const ViewHome*)(view_block(d) + d->homes))[h].gpu + at; }\n";
     s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_tape(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[0], e->tape); }\n";
+    // A row's source where it lies, in its own home (its third: `ViewRow::source`), a node's text its span of it
+    // (`@rr_node_text_any`, no text made); and its length, its view's.
+    s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_source(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[2], e->source); }\n";
+    s += &format!(
+        "UKL_INLINE uint32_t view_source_len(UKL_GLOBAL const ViewRow* e) {{ return e->view[{}]; }}\n",
+        std::mem::offset_of!(crate::view::TapeView, source_len) / 4
+    );
     // A document's lines by their home's base and their offset there (`ViewRow::lines`): a view read takes both (`ll`,
     // `la`), as a load's base must be 8-aligned and a tape's line index is 4-aligned in it (decision 0612).
     s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_lines_base(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[1], 0); }\n";

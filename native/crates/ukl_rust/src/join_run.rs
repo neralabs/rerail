@@ -892,9 +892,12 @@ impl St<'_> {
         }
     }
 
-    /// Text operand `k` of kind `kind` (0 a symbol, 1 `cat`'s, 2 `str_concat`'s, 3 an arena text).
+    /// Text operand `k` of kind `kind` (0 a symbol, 1 `cat`'s, 2 `str_concat`'s, 3 an arena text, 4 a node's text).
     unsafe fn txt_of(&self, t: u32, d: *const u8, a: *const u32, k: u32, kind: u32, unheld: &mut bool) -> Txt {
         let v = self.key_value(t, k);
+        if kind == 4 {
+            return node_text(self.s.v_dir, v, unheld);
+        }
         if kind == 3 {
             let off = ((v as u64) >> 24) & ((1u64 << 39) - 1);
             let len = (v & 0xff_ffff) as u32;
@@ -1198,6 +1201,22 @@ unsafe fn sym_text(d: *const u8, v: i64, unheld: &mut bool) -> (*const u8, u32) 
         return (d, 0);
     }
     (atoms_at(d, 0, v as u32) as *const u8, n)
+}
+
+/// Node `v`'s text (`@rr_node_text_any`, operand kind 4): its span of its document's source, read where it lies
+/// through the stage's node view `d` (`Stage::v_dir`: its document by key, its numbered node, its start and end), no
+/// text made. One no read here finds (a comment no node is, a node of no document of `d`'s) reads as empty and sets
+/// `unheld` (the stratum then runs on the host).
+unsafe fn node_text(d: *const ViewDir, v: i64, unheld: &mut bool) -> Txt {
+    if !d.is_null() && v >= 0 {
+        let m = ViewDir::doc_of_key(d, ((v as u64) >> 32) as u32, NONE);
+        if m != rerail_reads::views::NO_DOC
+            && let Some((p, n)) = reads::Doc::of(d, m).text_of(v as u32) {
+                return Txt::raw(p, n);
+            }
+    }
+    *unheld = true;
+    Txt::raw(core::ptr::NonNull::<u8>::dangling().as_ptr(), 0)
 }
 
 /// Mode 7's test of pattern `x`'s bytes [xs, xs + lx) against subject `y`: by op 0 equal, 1 a prefix, 2 a suffix.

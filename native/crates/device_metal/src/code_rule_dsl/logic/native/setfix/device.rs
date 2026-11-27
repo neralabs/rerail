@@ -164,6 +164,21 @@ fn dev_atoms(batch: &mut mj::Batch, names: &Interner) -> Result<(), String> {
     batch.kept(|| mj::DevKept::new(atoms.kept())).map_err(|e| format!("{e:?}: the rolling cache"))
 }
 
+/// The node view the binding of the long-text nodes `nodes` reads nodes' texts through
+/// (`Source::node_texts_in_place`), where it is in place.
+fn node_view(nodes: &super::NodeTexts) -> Option<crate::code_rule_dsl::facts::vtab::ViewInPlace> {
+    use crate::code_rule_dsl::facts::vtab::{Source, bound_source_in, syntax::LONG_TEXT_NODES};
+    let source = match nodes {
+        super::NodeTexts::Held(source) => Some(Arc::clone(source)),
+        super::NodeTexts::At(at) => at.upgrade().and_then(|d| bound_source_in(&d, LONG_TEXT_NODES)),
+    };
+    let Some(source) = source else {
+        crate::code_rule_dsl::logic::profile::decision("node texts read in place (rr_node_text_any)", || "refused: no long-text source bound".to_owned());
+        return None;
+    };
+    source.node_texts_in_place()
+}
+
 /// A `ROWTEXT` stage of op `op` (`mj::ROW_*`, with a test's verdict wanted at bit 8) over operands `x` and `y` (a
 /// symbol, a held cat's text, an arena text).
 fn row_stage(first: usize, op: u32, x: Key, y: Key, auto: RowAuto, deferred: &HashMap<usize, (Key, Key, u32)>, origin: &[Option<(Arc<InRel>, usize)>], known: &HashMap<usize, i64>) -> Result<PStage, String> {
@@ -232,6 +247,8 @@ fn text_function(name: &str) -> Option<(u32, usize, usize)> {
         PkgUp => mj::TEXTFN_PKG_UP,
         RxGroup => mj::TEXTFN_RX_GROUP,
         Replace => mj::TEXTFN_REPLACE,
+        // A node's text is read where it lies (`compile`'s own branch, `mj::OPND_NODE`), made by `TEXTFN_COPY` of it.
+        NodeText => mj::TEXTFN_COPY,
     };
     Some((f, texts, nums))
 }
@@ -312,6 +329,9 @@ pub(in crate::code_rule_dsl) struct Plan {
     /// Per stage, the rows the planner expects out of it (its last step's, `JoinRule::est`): its table's size before
     /// a growth has been seen.
     est: Vec<Option<f64>>,
+    /// The run's binding of the long-text nodes its nodes' texts are read through (`mj::OPND_NODE`), where a stage
+    /// reads one.
+    nodes: Option<Arc<super::NodeTexts>>,
 }
 
 fn step_name(s: &Step) -> &'static str {
@@ -526,6 +546,8 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
     // that bound the symbol, and the functions.
     // `cat`s held back, by the slot they bind: each read only by an `eq` or `ne` after, which compares names.
     let mut deferred: HashMap<usize, (Key, Key, u32)> = HashMap::new();
+    // The binding of the long-text nodes a node's text is read through (`Step::Func`'s `texts`).
+    let mut nodes: Option<Arc<super::NodeTexts>> = None;
     // The arena texts kept in the rolling cache: by slot, the source symbol's slot and the chain of functions.
     let mut kept_texts: HashMap<usize, (usize, String)> = HashMap::new();
     // Slots past the rule's own: texts the device makes that no step binds (a compared cat's).
@@ -882,15 +904,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 let finds = bind && j.probes.get(i).is_some_and(|p| p & super::PROBE_OUT != 0);
                 // Read as its parts: comparisons, and what reads a text a SIMD group a row (`ROWTEXT`: a text test by
                 // automaton, a regex's replacement, a cat).
-                let compares = |s: &&Step| {
-                    matches!(s, Step::Eq { .. } | Step::Ne { .. })
-                        || matches!(s, Step::Func { name, bind: true, .. } if matches!(name.as_str(), "str_cmp" | "rr_strlen"))
-                        || matches!(s, Step::Test { op, .. } if literal_test(op).is_some())
-                        || matches!(s, Step::Test { p, matcher: rerail_section::ArchivedOption::Some(_), .. } if !matches!(p, Key::Slot(x) if *x == out))
-                        || matches!(s, Step::Func { name, bind: true, .. } if matches!(name.as_str(), "replace_all" | "rx_replace") && arena_reader(s, out))
-                        || matches!(s, Step::Func { name, args, bind: true, .. } if name.as_str() == "str_between" && args.len() == 3 && arena_reader(s, out) && !matches!(args[0], Key::Slot(x) if x == out))
-                        || joined(s).is_some_and(|(o, ..)| o != out)
-                };
+                let compares = |s: &&Step| held_reader(s, out);
                 if made && !bind {
                     // A cat of a made text compared with a bound slot: made per row into the arena in a slot of its
                     // own (a stage that counts no step), then compared with it as texts (`TEXTOP`).
@@ -1020,6 +1034,58 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
             Step::Func { name, .. } if matches!(name.as_str(), "replace_all" | "rx_replace") => {
                 return Err(format!("the function {name} of a constant text, or of a regex or replacement not a constant, has no device form"));
             }
+            Step::Func { name, args, out, bind, texts, .. } if name.as_str() == "rr_node_text_any" => {
+                // A node's text: its numbered node's span of its document's source, read where both lie through the
+                // batch's node view (`mj::OPND_NODE`, decision 0353), never made where it is only compared. Held
+                // (`deferred`, as a cat's parts are) and read as an operand by each comparison, text test, text
+                // function and cat after; made into the arena (`TEXTFN_COPY` of it) only where the head or an
+                // atom's key reads it (its atom then, `ROW_FIND`, where it is a positive atom's key alone).
+                let (Some(h), [Key::Slot(n)]) = (texts.as_ref(), &args[..]) else { return Err(format!("the function {name} of no node slot, or with no node reads bound")) };
+                let n = *n;
+                if !bound.get(n).copied().unwrap_or(false) || is_arena(n) || deferred.contains_key(&n) {
+                    return Err(format!("the function {name} of a slot no node is bound in"));
+                }
+                let h = j.bound(h).clone();
+                if nodes.as_ref().is_some_and(|b| !Arc::ptr_eq(b, &h)) {
+                    return Err(format!("the function {name} through two bindings of the long-text nodes"));
+                }
+                nodes = Some(h);
+                let held = (Key::Slot(n), Key::Slot(n), mj::NODE_TEXT);
+                let later: Vec<&Step> = j.steps[i + 1..].iter().filter(|s| mentions(s, *out)).collect();
+                let in_head = j.out.iter().any(|t| matches!(*t, Term::Slot(s) if s == *out) || matches!(*t, Term::Cat(x, y) if x == *out || y == *out));
+                let finds = *bind && j.probes.get(i).is_some_and(|p| p & super::PROBE_OUT != 0);
+                // Read where it is: by the readers of a held cat's text, and a text function of it.
+                let reads_held = |s: &&Step| {
+                    held_reader(s, *out)
+                        || matches!(s, Step::Func { name, args, bind: true, .. } if text_function(name).is_some_and(|(_, nt, _)| nt > 0) && matches!(args.first(), Some(Key::Slot(x)) if x == out) && !args[1..].iter().any(|a| matches!(a, Key::Slot(x) if x == out)))
+                };
+                if !*bind {
+                    // Compared with its bound slot, as texts.
+                    let mut one = HashMap::new();
+                    one.insert(usize::MAX, held);
+                    stages.push(textop(i, mj::TEXT_EQ, true, Key::Slot(usize::MAX), Key::Slot(*out), &one, &origin, &known)?);
+                } else if !in_head && !finds && later.iter().all(reads_held) {
+                    deferred.insert(*out, held);
+                    stages.push(PStage { first: i, span: 1, kind: Kind::Pass, desc: mj::Stage::default(), npassed: 0 });
+                } else {
+                    if let Some(s) = later.iter().find(|s| !arena_reader(s, *out) && !(finds && matches!(s, Step::Atom { neg: false, .. }))) {
+                        return Err(format!("the function {name}'s text read by {} has no device form", step_name(s)));
+                    }
+                    let mut st = copy_stage(i, *out, Key::Slot(n), Key::Slot(n), mj::NODE_TEXT, &origin, &known)?;
+                    if finds {
+                        st.desc.agg[0] |= mj::ROW_FIND;
+                    }
+                    stages.push(st);
+                    if *out >= bound.len() {
+                        bound.resize(*out + 1, false);
+                    }
+                    bound[*out] = true;
+                    if !finds {
+                        ARENA.with_borrow_mut(|a| a.push(*out));
+                    }
+                }
+                i += 1;
+            }
             Step::Func { name, args, out, bind, .. } if text_function(name).is_some() => {
                 // A text function: its text made into the batch's arena (or a range of its argument's), its value
                 // where the text is. Read by text tests, `str_cmp`, `strlen`, other text functions and the head (as a
@@ -1059,7 +1125,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                             }
                             Key::Slot(x) if let Some(&(pa, pb, form)) = deferred.get(&x) => {
                                 keys.extend([pa, pb]);
-                                kinds[t] = if form == mj::CAT_PLAIN { mj::OPND_PLAIN } else { mj::OPND_DOT };
+                                kinds[t] = held_kind(form);
                             }
                             _ => keys.extend([a, a]),
                         }
@@ -1254,7 +1320,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
         h.finish()
     };
     let est = stages.iter().map(|s| j.from.get(s.first + s.span.max(1) - 1).and_then(|&p| j.est.get(p)).copied().filter(|e| e.is_finite() && *e >= 0.0)).collect();
-    Ok(Plan { stages, head, head_slots, head_from, arena, nslots, nsteps: j.steps.len(), key, est })
+    Ok(Plan { stages, head, head_slots, head_from, arena, nslots, nsteps: j.steps.len(), key, est, nodes })
 }
 
 /// Whether `step` binds slot `x`.
@@ -1296,7 +1362,7 @@ fn text_stage(mode: u32, first: usize, agg0: u32, x: Key, y: Key, deferred: &Has
     let operand = |k: Key| match k {
         Key::Slot(s) if deferred.contains_key(&s) => {
             let (a, b, form) = deferred[&s];
-            (a, b, if form == mj::CAT_PLAIN { mj::OPND_PLAIN } else { mj::OPND_DOT })
+            (a, b, held_kind(form))
         }
         Key::Slot(s) if is_arena(s) => (k, k, mj::OPND_ARENA),
         k => (k, k, mj::OPND_SYM),
@@ -1306,6 +1372,29 @@ fn text_stage(mode: u32, first: usize, agg0: u32, x: Key, y: Key, deferred: &Has
     let kind = text_keys(&mut d, &[xa, xb, ya, yb], origin, known, if mode == mj::TEXTOP { "a text test" } else { "a function of names" })?;
     d.agg = [agg0, xk | yk << 4];
     Ok(PStage { first, span: 1, kind, desc: d, npassed: 0 })
+}
+
+/// A held text's operand kind (`mj::OPND_*`) by its form: a cat's (`mj::CAT_DOT`, `mj::CAT_PLAIN`) or a node's text
+/// (`mj::NODE_TEXT`).
+fn held_kind(form: u32) -> u32 {
+    match form {
+        mj::CAT_PLAIN => mj::OPND_PLAIN,
+        mj::NODE_TEXT => mj::OPND_NODE,
+        _ => mj::OPND_DOT,
+    }
+}
+
+/// Whether `s` reads a held text in slot `out` where it is, as its operand (`deferred`): a comparison (`eq`, `ne`,
+/// a literal test, `str_cmp`, `strlen`), what reads a text a SIMD group a row (`ROWTEXT`: a text test by automaton, a
+/// regex's replacement, a cat).
+fn held_reader(s: &Step, out: usize) -> bool {
+    matches!(s, Step::Eq { .. } | Step::Ne { .. })
+        || matches!(s, Step::Func { name, bind: true, .. } if matches!(name.as_str(), "str_cmp" | "rr_strlen"))
+        || matches!(s, Step::Test { op, .. } if literal_test(op).is_some())
+        || matches!(s, Step::Test { p, matcher: rerail_section::ArchivedOption::Some(_), .. } if !matches!(p, Key::Slot(x) if *x == out))
+        || matches!(s, Step::Func { name, bind: true, .. } if matches!(name.as_str(), "replace_all" | "rx_replace") && arena_reader(s, out))
+        || matches!(s, Step::Func { name, args, bind: true, .. } if name.as_str() == "str_between" && args.len() == 3 && arena_reader(s, out) && !matches!(args[0], Key::Slot(x) if x == out))
+        || joined(s).is_some_and(|(o, ..)| o != out)
 }
 
 /// A text made of two names, unless it is bound already: its slot, the two parts, whether it binds, and its form
@@ -1348,7 +1437,7 @@ fn arena_reader(step: &Step, x: usize) -> bool {
 fn copy_stage(first: usize, out: usize, a: Key, b: Key, form: u32, origin: &[Option<(Arc<InRel>, usize)>], known: &HashMap<usize, i64>) -> Result<PStage, String> {
     let mut d = mj::Stage { mode: mj::ROWTEXT, ..mj::Stage::default() };
     let kind = text_keys(&mut d, &[a, b], origin, known, "cat")?;
-    d.agg = [mj::ROW_MAP | mj::TEXTFN_COPY << 16, if form == mj::CAT_PLAIN { mj::OPND_PLAIN } else { mj::OPND_DOT }];
+    d.agg = [mj::ROW_MAP | mj::TEXTFN_COPY << 16, held_kind(form)];
     d.bind_slot[0] = out as u32;
     Ok(PStage { first, span: 1, kind, desc: d, npassed: 0 })
 }
@@ -1922,6 +2011,11 @@ impl<'p> Run<'p> {
                     if reads_names(s.desc.mode) {
                         dev_atoms(batch, names)?;
                     }
+                    if mj::reads_node_texts(&s.desc) {
+                        let nodes = self.plan.nodes.as_deref().expect("a plan reading nodes' texts binds their reads");
+                        let view = node_view(nodes).ok_or("a node's text with no node view in place (its batch's directory on no device)")?;
+                        batch.node_texts(view).map_err(|e| format!("{e:?}: the node view"))?;
+                    }
                     let left = self.tables[i].as_ref().expect("the stage's input");
                     if s.desc.mode == mj::ROWTEXT {
                         // Its automaton, and its id in the one rolling cache: a test's (its verdicts) or the
@@ -2027,7 +2121,10 @@ impl<'p> Run<'p> {
         }
         let bit = |b: u32| self.plan.stages.iter().zip(&self.counter).any(|(s, c)| reads_names(s.desc.mode) && c.is_some_and(|c| self.counters.get(c) & b != 0));
         if bit(mj::TEXTFN_UNHELD) {
-            return Some("a text read of a symbol the atoms directory does not hold".to_owned());
+            // A node's text no tape read finds sets the same bit (`OPND_NODE`): a comment no node is, or a node of
+            // no document of the batch's.
+            let nodes = self.plan.stages.iter().zip(&self.counter).any(|(s, c)| mj::reads_node_texts(&s.desc) && c.is_some_and(|c| self.counters.get(c) & mj::TEXTFN_UNHELD != 0));
+            return Some(if nodes { "a node's text no read of its batch's tape finds (a comment no node is, or a node of no document of the batch's)" } else { "a text read of a symbol the atoms directory does not hold" }.to_owned());
         }
         if self.plan.stages.iter().zip(&self.counter).any(|(s, c)| s.desc.mode == mj::TEXTOP && c.is_some_and(|c| self.counters.get(c) & mj::TEXTFN_HOST != 0)) {
             return Some("a text test of a bound pattern holding the set separator (a set of patterns)".to_owned());

@@ -80,8 +80,9 @@ pub const PLACED_TABLE: u32 = 3;
 /// A document of a batch, as an executor finds its views' rows (decision 0353 step 4d, and step 3 on the CPU). The
 /// search layer, made with the batch from its documents' keys and counts alone (none made): its key and its first row
 /// in each view (`ROWS`). The reads layer, written when the batch's views are read in place: its entry's offset in
-/// the batch's block, its tape's and its lines' places (a home of the directory's, `ViewHome`, and an offset in it),
-/// and its tape's view (the reads' own). Nothing in it is an address: the host and the device read the same row.
+/// the batch's block, its tape's, its lines' and its source's places (a home of the directory's, `ViewHome`, and an
+/// offset in it), and its tape's view (the reads' own). A node's text is its span of the source, read there
+/// (`@rr_node_text_any`). Nothing in it is an address: the host and the device read the same row.
 ///
 /// The view's 16z cache offset (`TapeView::side`, the cache's address less the tape's) is the device's, as the
 /// kernels read the view where it lies; the host's reads take the view with their own, from the same homes
@@ -90,17 +91,18 @@ pub const PLACED_TABLE: u32 = 3;
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ViewRow {
     pub entry: u64,
-    /// Offsets in their homes (`homes`: the tape's, then the lines').
+    /// Offsets in their homes (`homes`: the tape's, the lines', then the source's).
     pub tape: u64,
     pub lines: u64,
-    pub homes: [u32; 2],
+    pub source: u64,
+    pub homes: [u32; 3],
     pub key: u32,
     pub rows: [u32; ROWS],
     pub view: crate::view::TapeView,
     /// The tape's length in bytes from `tape`: the host's reads read it as a slice (`rerail_tape_format::view_reads`).
     pub bytes: u32,
 }
-const _: () = assert!(std::mem::size_of::<ViewRow>() == (8 + 8 + 8 + 8 + 4 + 4 * ROWS + std::mem::size_of::<crate::view::TapeView>() + 4).next_multiple_of(8));
+const _: () = assert!(std::mem::size_of::<ViewRow>() == (8 + 8 + 8 + 8 + 12 + 4 + 4 * ROWS + std::mem::size_of::<crate::view::TapeView>() + 4).next_multiple_of(8));
 
 /// A row's first rows: one per view of `VIEWS`, then the views no kernel reads, the host's alone: `child`'s sibling
 /// view (`SIBLING`), the token views (`OP`, the token order's four, `TOK`), `spread` (`SPREAD`), `end_point`

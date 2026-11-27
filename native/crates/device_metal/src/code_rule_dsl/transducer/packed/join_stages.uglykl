@@ -686,15 +686,44 @@ UKL_INLINE JSPACE const uint8_t* sym_text(JSPACE const uint8_t* D, int64_t v, UK
     return D + clif_atoms_at(D, 0ul, (uint32_t)v);
 }
 
+// Node v's text (`@rr_node_text_any`, operand kind 4): its span of its document's source, read where it lies through
+// the stage's node view (`Stage::v_dir`: its document by key, `clif_dir_doc_of_key`; its numbered node,
+// `clif_view_number`; its start and end, `clif_view_node`), no text made. One no read here finds (a comment no node
+// is, a node of no document of the view's) reads as empty and sets `unheld` (the stratum then runs on the host).
+UKL_INLINE void node_text(StageP s, int64_t v, UKL_PRIVATE Txt* x, UKL_PRIVATE bool* unheld) {
+    UKL_GLOBAL const ViewDir* d = s->v_dir;
+    x->al = 0;
+    if (d == 0 || v < 0) { *unheld = true; return; }
+    uint32_t a = clif_dir_doc_of_key(view_block(d), d->at, (uint32_t)((uint64_t)v >> 32), NONE);
+    if (a == NONE) { *unheld = true; return; }
+    UKL_GLOBAL const ViewRow* e = &view_rows(d)[a];
+    UKL_GLOBAL const uint8_t* ch = view_block(d);
+    UKL_GLOBAL const uint8_t* t = view_tape(d, e);
+    UKL_GLOBAL const uint8_t* ls = view_lines_base(d, e);
+    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, e->lines, (uint32_t)((uint64_t)v & 0xfffffffful));
+    if (l == NONE) { *unheld = true; return; }
+    uint32_t from = (uint32_t)clif_view_node(ch, e->entry, t, e->view, ls, e->lines, l, 3u);
+    uint32_t to = (uint32_t)clif_view_node(ch, e->entry, t, e->view, ls, e->lines, l, 4u);
+    if (from > to || to > view_source_len(e)) { *unheld = true; return; }
+    x->a = (JSPACE const uint8_t*)(view_source(d, e) + from);
+    x->al = to - from;
+}
+
 // Operand kind 0: key k's symbol; 1: `cat`'s text of keys k and k + 1 (b's alone when a's is empty); 2:
-// `str_concat`'s; 3: key k's arena text. Symbols read in place through D (`sym_text`).
+// `str_concat`'s; 3: key k's arena text; 4: key k's node's text (`node_text`). Symbols read in place through D
+// (`sym_text`).
 UKL_INLINE Txt txt_of(StageP s, Longs L, uint32_t t, JSPACE const uint8_t* D, JSPACE uint32_t* A, uint32_t k, uint32_t kind,
                       UKL_PRIVATE bool* unheld) {
     Txt x;
+    x.a = D;
     x.b = D;
     x.bl = 0;
     x.dot = 0;
     int64_t v = key_value(s, L, t, k);
+    if (kind == 4) {
+        node_text(s, v, &x, unheld);
+        return x;
+    }
     if (kind == 3) {
         // A value with none (-1: the arena was full) reads as empty: the stage runs again.
         uint64_t off = ((uint64_t)v >> 24) & ((1ul << 39) - 1);

@@ -133,6 +133,8 @@ pub struct Doc<'a> {
     pub n: &'a Numbering,
     pub tape: Tape,
     pub lines: Lines,
+    /// Its source where it lies (its row's third home): a node's text is its span of it.
+    pub source: *const u8,
 }
 
 /// A view row found (`Doc::at`): its document, its view (`view_reads::VIEWS`), its row in the document and the tape
@@ -210,7 +212,7 @@ impl<'a> Doc<'a> {
             let rel = (home(d, ((*d).cache - 1) as u32, 0) as i64).wrapping_sub(t as i64);
             (v.side[0], v.side[1]) = (rel as u32, (rel >> 32) as u32);
         }
-        Doc { e, n: &*items::<Numbering>(&e.numbering), tape: Tape { t: InPlace::new(t), v }, lines: Lines(InPlace::new(home(d, row.homes[1], row.lines))) }
+        Doc { e, n: &*items::<Numbering>(&e.numbering), tape: Tape { t: InPlace::new(t), v }, lines: Lines(InPlace::new(home(d, row.homes[1], row.lines))), source: home(d, row.homes[2], row.source) }
     }
 
     /// Item `i` of the entry's run `r` (u32s).
@@ -513,6 +515,23 @@ impl<'a> Doc<'a> {
             }
         };
         if l < self.e.nodes { l } else { NO_ROW }
+    }
+
+    /// The text of the node whose id's low 32 bits are `low`: its numbered node's span of the source, where the
+    /// source lies (its row's home, `view_source`'s); `None` for no numbered node (a comment no node is, a token) or
+    /// a span past the source.
+    #[inline]
+    pub unsafe fn text_of(&self, low: u32) -> Option<(*const u8, u32)> {
+        let l = self.number(low);
+        if l == NO_ROW {
+            return None;
+        }
+        let x = self.tape_node(l);
+        let (s, e) = (self.tape.start(x), self.tape.end(x));
+        if s > e || e > self.tape.v.source_len {
+            return None;
+        }
+        Some((self.source.wrapping_add(s as usize), e - s))
     }
 }
 

@@ -164,6 +164,20 @@ pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;
 pub(in crate::code_rule_dsl) const TEXTFN_UNHELD: u32 = 4;
 /// An operand that is an arena text (a text function's value).
 pub(in crate::code_rule_dsl) const OPND_ARENA: u32 = 3;
+/// An operand that is a node's text (`@rr_node_text_any`): its span of its document's source, read where it lies
+/// through the batch's node view (`Batch::node_texts`, bound as the stage's `v_dir`), never made.
+pub(in crate::code_rule_dsl) const OPND_NODE: u32 = 4;
+/// Whether text stage `stage` (`TEXTOP`, `STRCMP`, `ROWTEXT`) has a node's text among its operands (`OPND_NODE`),
+/// read through the batch's node view (`Batch::node_texts`).
+pub(in crate::code_rule_dsl) fn reads_node_texts(stage: &Stage) -> bool {
+    let k = stage.agg[1];
+    // A string join's `agg[1]` is no operands' kinds (it reads its relation, by `v_dir` where that is a view).
+    let strjoin = stage.mode == ROWTEXT && stage.agg[0] & 15 == ROW_STRJOIN;
+    matches!(stage.mode, TEXTOP | STRCMP | ROWTEXT) && !strjoin && [k & 15, (k >> 4) & 15, (k >> 8) & 15].contains(&OPND_NODE)
+}
+
+/// A held text's form (`setfix::device`'s `deferred`, beside `CAT_DOT` and `CAT_PLAIN`): a node's text (`OPND_NODE`).
+pub(in crate::code_rule_dsl) const NODE_TEXT: u32 = 2;
 /// An arena text's value: the sign bit, its offset from bit 24, its length in the low 24 bits.
 pub(in crate::code_rule_dsl) const ARENA_TEXT: i64 = i64::MIN;
 
@@ -1759,6 +1773,8 @@ pub(in crate::code_rule_dsl) struct Batch {
     atoms: Option<std::rc::Rc<DevAtoms>>,
     /// The store's one rolling cache, for the verdicts and texts its text kernels keep (decision 0478 step 2e).
     kept: Option<std::rc::Rc<DevKept>>,
+    /// The node view its text stages read nodes' texts through (`OPND_NODE`): the node reads' batch's (`node_texts`).
+    node_texts: Option<DevRel>,
     /// The relations its work writes in their blocks, each with its rows' `needed` before (decision 0463): a row
     /// its kernels could not write, past the chunks its relation holds, fails the batch, named.
     written: Vec<Written>,
@@ -1810,6 +1826,32 @@ impl Batch {
         Ok(())
     }
 
+    /// The node view (`Source::node_texts_in_place`) its text stages read nodes' texts through (`OPND_NODE`): the one
+    /// it has where that is the same directory.
+    pub(in crate::code_rule_dsl) fn node_texts(&mut self, view: crate::code_rule_dsl::facts::vtab::ViewInPlace) -> Result<(), Error> {
+        if self.node_texts.as_ref().and_then(|v| v.view.as_ref()).is_some_and(|v| v.dir == view.dir) {
+            return Ok(());
+        }
+        self.node_texts = Some(DevRel::view(0, 0, view)?);
+        Ok(())
+    }
+
+    /// A text stage (`TEXTOP`, `STRCMP`, `ROWTEXT`) with a node's text among its operands (`OPND_NODE`): the
+    /// batch's node view bound as its `v_dir`, its buffers resident. A stage of no such operand is as it was.
+    fn bind_node_texts(&mut self, stage: &mut Stage) -> Result<(), Error> {
+        if !reads_node_texts(stage) {
+            return Ok(());
+        }
+        let Some(dir) = self.node_texts.as_ref().and_then(|v| v.view.as_ref()).map(|v| v.dir) else { return Err(Error::BackendCapacity) };
+        stage.v_dir = dir;
+        stage.r_view = 0;
+        self.open()?;
+        if let (Some(pass), Some(nodes)) = (self.pass.as_ref(), self.node_texts.as_ref()) {
+            nodes.resident_in(pass);
+        }
+        Ok(())
+    }
+
     pub(in crate::code_rule_dsl) fn new() -> Result<Batch, Error> {
         rerail_accel_gpu::gpu::join::device()?;
         Batch::with_arena(ARENA_START)
@@ -1837,6 +1879,7 @@ impl Batch {
             borrowed: Vec::new(),
             atoms: None,
             kept: None,
+            node_texts: None,
             written: Vec::new(),
             places: 0,
             floor: 0,
@@ -2510,6 +2553,7 @@ impl Batch {
             }
             None => self.dummy.buffer.clone(),
         };
+        self.bind_node_texts(&mut stage)?;
         let fbuf = self.screen(&mut stage, screen);
         // From one binding: a thread per candidate row (`scan_count`), its rows in the relation's order.
         let from_one = left.room() == 1 && !left.placed() && stage.mode == JOIN && right.is_some();
@@ -2662,6 +2706,7 @@ impl Batch {
             }
             None => self.dummy.buffer.clone(),
         };
+        self.bind_node_texts(&mut stage)?;
         let fbuf = self.screen(&mut stage, screen);
         stage.cap_in = left.room() as u32;
         stage.cap_out = out.room() as u32;

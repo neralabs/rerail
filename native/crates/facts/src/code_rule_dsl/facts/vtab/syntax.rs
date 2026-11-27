@@ -525,6 +525,25 @@ impl Source for LongTexts {
     fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
         Some(Arc::clone(&self.batch) as _)
     }
+    /// Its batch's `node` view in place: a node's text is its numbered node's span of the source, where both lie
+    /// (`text_any_ref`'s, for a node; a comment no node is reads none there).
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn node_texts_in_place(&self) -> Option<crate::code_rule_dsl::facts::vtab::ViewInPlace> {
+        let why = |w: &'static str| crate::code_rule_dsl::logic::profile::decision("node texts read in place (rr_node_text_any)", || w.to_owned());
+        let Some(v) = device_chunk::views_in_place(&self.batch) else {
+            why("refused: the batch has no views' directory in place");
+            return None;
+        };
+        // The host reads every source where it lies; the device those in slabs.
+        if !device_chunk::ViewsInPlace::read_on_host() && !v.sources {
+            crate::code_rule_dsl::prof::count("views.refused.not_on_device.node_texts", 1);
+            why("refused: a document's source the device does not reach");
+            return None;
+        }
+        let read = v.read_of(device_chunk::VIEW_NODE, Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>);
+        why(if read.is_some() { "read in place" } else { "refused: the directory on no device" });
+        read
+    }
     fn node_read(&self, name: &str, n: i64) -> Option<rusqlite::types::Value> {
         use rusqlite::types::Value;
         match name {

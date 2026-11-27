@@ -90,6 +90,9 @@ pub struct ViewsInPlace {
     /// placed in its host by its placement or its spans placed, its places' lines in the batch's block) and the device
     /// reads them, so the `Loc` views are read in place too.
     pub locs: bool,
+    /// Whether the device reads every document's source in place (each in a slab), so a node's text is read there
+    /// (`@rr_node_text_any`, `Source::node_texts_in_place`). The host reads every one.
+    pub sources: bool,
     /// The cache a 16z document's reads decode its blocks into (decision 0353 step 4b, `view::cache`), in the batch's
     /// block, which every reader of the batch's views shares, on the host and on the device: none where no tape is
     /// 16z.
@@ -204,7 +207,7 @@ fn build_views(batch: &Batch) -> Option<ViewsInPlace> {
     }
     // What the device reads: every tape of a document with nodes (else no stage reads the directory), every
     // document's lines (else the batch's `line` view is made, counted), its `Loc` rows.
-    let (mut on_device, mut lines, mut locs) = (device.is_some(), true, true);
+    let (mut on_device, mut lines, mut locs, mut sources) = (device.is_some(), true, true, true);
     // What the host reads of it: every document's `Loc` rows its reads hold, whatever the device refuses.
     let mut host_locs = true;
     let mut slabs: Vec<rerail_device::device::Buffer> = Vec::new();
@@ -229,6 +232,13 @@ fn build_views(batch: &Batch) -> Option<ViewsInPlace> {
             crate::code_rule_dsl::prof::count("views.refused.lines_unplaced", 1);
             (lines, locs) = (false, false);
         }
+        // A source the device cannot reach: no node's text is read in place on the device.
+        if !r.source_device && r.nodes && sources && device.is_some() {
+            crate::code_rule_dsl::prof::count("views.refused.source_unplaced", 1);
+            let placed = docs[i].facts.source.home().placed();
+            crate::code_rule_dsl::logic::profile::decision("node texts read in place (rr_node_text_any)", || format!("a document's source in no slab (in a room: {placed})"));
+            sources = false;
+        }
         for slab in &r.slabs {
             if !slabs.iter().any(|s| s.device_address() == slab.device_address()) {
                 slabs.push(slab.clone());
@@ -252,8 +262,9 @@ fn build_views(batch: &Batch) -> Option<ViewsInPlace> {
     }
     let lines = lines && dir_on_device.is_some();
     let locs = locs && dir_on_device.is_some();
+    let sources = sources && dir_on_device.is_some();
     let host = HostDir { dir: batch.block.base_ptr() as u64 + at as u64, lines: true, locs: host_locs };
-    Some(ViewsInPlace { at, dir: dir_on_device, buffers, lines, locs, caches: cache.into_iter().collect(), host, format: format.unwrap_or(0) })
+    Some(ViewsInPlace { at, dir: dir_on_device, buffers, lines, locs, sources, caches: cache.into_iter().collect(), host, format: format.unwrap_or(0) })
 }
 
 /// The one format of `so_far` and `next`, or 0 for several (decision 0576).
@@ -349,9 +360,10 @@ pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> 
     }
     let lines = dir_on_device.is_some() && own.iter().all(|o| o.lines);
     let locs = dir_on_device.is_some() && own.iter().all(|o| o.locs);
+    let sources = dir_on_device.is_some() && own.iter().all(|o| o.sources);
     let caches = own.iter().flat_map(|o| o.caches.iter().cloned()).collect();
     // The batches' one format, else 0, which the stages read whatever the format (decision 0576).
     let format = own.iter().map(|o| o.format).reduce(|a, b| same_format(Some(a), b)).unwrap_or(0);
     let host = HostDir { dir: b.base_ptr() as u64 + at as u64, lines: own.iter().all(|o| o.host.lines), locs: own.iter().all(|o| o.host.locs) };
-    Some(ViewsInPlace { at, dir: dir_on_device, buffers, lines, locs, caches, host, format })
+    Some(ViewsInPlace { at, dir: dir_on_device, buffers, lines, locs, sources, caches, host, format })
 }

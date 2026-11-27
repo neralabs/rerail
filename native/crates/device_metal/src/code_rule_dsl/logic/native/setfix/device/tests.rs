@@ -2172,6 +2172,131 @@ use rerail_blocks::vector::Vector;
         let _ = std::fs::remove_file(&store_path);
     }
 
+    /// A node's text read where its source lies (`mj::OPND_NODE`: the long-text nodes' node view in place, its
+    /// document by key, its numbered node, its span of the source; `reads::Doc::text_of`) is the host's
+    /// (`@rr_node_text_any`, `LongTexts::text_any_ref`) for every node of the batch, nothing made; and a node of no
+    /// document of the batch's has none.
+    #[test]
+    fn a_nodes_text_read_in_place_is_the_hosts() {
+        use crate::code_rule_dsl::facts::core::{self, Built};
+        use crate::code_rule_dsl::facts::vtab::NodeRead;
+        use crate::code_rule_dsl::facts::vtab::syntax::{Document, LONG_TEXT_NODES, device_chunk::ViewsInPlace, sources};
+        use crate::code_rule_dsl::model::FileInput;
+        use rerail_clif::view_reads::{NO_DOC, ViewDir};
+        use rerail_ukl_rust::join_run::reads::Doc;
+        use std::sync::Arc;
+        // Bound to the CPU, as a run is: the directory at the host's addresses, the join program's there
+        // (`ViewsInPlace::read_on_host`), whatever the process's device.
+        let _host = rerail_accel::gpu::shared::on_host();
+        assert!(ViewsInPlace::read_on_host());
+        let texts = ["import os\nx = f(1, y=2)  # one\n", "class C(B):\n    def m(self, a, *b):\n        return [a for a in b if a]\n", "s = 'αβ' + \"é\"\n", "", "def f(a, b:\n    return [a for\n"];
+        let docs: Vec<Document> = texts.iter().enumerate().map(|(at, source)| {
+            let path = format!("d{at}.py");
+            let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new((*source).to_owned().into()), None, None, "core").unwrap();
+            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
+            Document { key: (5 + 4 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
+        }).collect();
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let store_path = std::env::temp_dir().join(format!("rerail-node-texts-{}-{nonce}.sqlite", std::process::id()));
+        let store = crate::content_store::ContentStore::open(&store_path).unwrap();
+        let all = sources(&store, docs).unwrap();
+        let source = |name: &str| Arc::clone(&all.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1);
+        let (long, node) = (source(LONG_TEXT_NODES), source("node"));
+        let view = long.node_texts_in_place().expect("the node view in place, at the host's addresses");
+        let d = view.dir as *const ViewDir;
+        let read = |id: i64| -> Option<String> {
+            // SAFETY: the directory is the batch's, at the host's addresses, held by `view`.
+            unsafe {
+                let m = ViewDir::doc_of_key(d, (id as u64 >> 32) as u32, NO_DOC);
+                if m == NO_DOC {
+                    return None;
+                }
+                let (p, n) = Doc::of(d, m).text_of(id as u32)?;
+                Some(std::str::from_utf8(std::slice::from_raw_parts(p, n as usize)).unwrap().to_owned())
+            }
+        };
+        let mut seen = 0;
+        for r in 0..node.len() {
+            let id = node.value(r, 1);
+            let host = match long.node_read_ref("rr_node_text_any", id) {
+                Some(NodeRead::Text(t)) => t.to_owned(),
+                other => panic!("node {id:#x}: the host's text {:?}", other.is_some()),
+            };
+            assert_eq!(read(id).as_deref(), Some(host.as_str()), "node {id:#x}: its text read in place");
+            seen += 1;
+        }
+        assert!(seen > 40, "every node of the batch read: {seen}");
+        assert!(read(1000 << 32).is_none(), "a node of no document of the batch's has no text");
+        drop(view);
+        let _ = std::fs::remove_file(&store_path);
+    }
+
+    /// A chunk's layered binding of the long-text nodes (decision 0431 §8: the chunk's batch, then a tape value's
+    /// admitted after it) reads every node's text in place through the directory over both (`views_over`): the
+    /// value's nodes too, its document's source where it lies, as `node_read` finds them through the value's batch.
+    /// Read through the chunk's batch alone, 175 strata of the data layer were refused at run time.
+    #[test]
+    fn a_layered_nodes_text_read_in_place_is_the_hosts() {
+        use crate::code_rule_dsl::facts::core::{self, Built};
+        use crate::code_rule_dsl::facts::nearest::Binding;
+        use crate::code_rule_dsl::facts::vtab::Source;
+        use crate::code_rule_dsl::facts::vtab::syntax::values::{Layered, Values};
+        use crate::code_rule_dsl::facts::vtab::syntax::{Document, Grower, LONG_TEXT_NODES, Matchers, Projection, device_chunk::ViewsInPlace};
+        use crate::code_rule_dsl::model::FileInput;
+        use rerail_clif::view_reads::{NO_DOC, ViewDir};
+        use rerail_ukl_rust::join_run::reads::Doc;
+        use std::collections::HashMap;
+        use std::sync::Arc;
+        let _host = rerail_accel::gpu::shared::on_host();
+        assert!(ViewsInPlace::read_on_host());
+        crate::test_languages();
+        let doc = |key: u32, source: &str| {
+            let path = format!("d{key}.py");
+            let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new(source.to_owned().into()), None, None, "core").unwrap();
+            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
+            Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
+        };
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let store_path = std::env::temp_dir().join(format!("rerail-layered-texts-{}-{nonce}.sqlite", std::process::id()));
+        let content = crate::content_store::ContentStore::open(&store_path).unwrap();
+        let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
+        let projection = Projection::core();
+        let chunk = vec![doc(20, "import os\nx = f(1, y=[2, g(3)])\n"), doc(23, "class C(B):\n    def m(self, a, *b):\n        return [a for a in b]\n")];
+        let (sources, mut grower) = Grower::start(&content, chunk, &[], &Matchers::default(), &tests, Binding::Cpu, &projection, &HashMap::new()).unwrap();
+        let values = Arc::new(Values::default());
+        let admitted = grower.admit(&content, vec![doc(5, "def v(p, q='αβ'):\n    return h(p, *q)\n")], &[], &tests, Binding::Cpu, &projection).unwrap();
+        let value_node = Arc::clone(&admitted.iter().find(|(n, _)| n == "node").expect("the value's node view").1);
+        values.add(&[5], &[], admitted);
+        let find = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| n == name).unwrap_or_else(|| panic!("{name}")).1);
+        let long: Arc<dyn Source> = Arc::new(Layered::new(LONG_TEXT_NODES, find(LONG_TEXT_NODES), Arc::clone(&values)));
+        let view = long.node_texts_in_place().expect("the node view over the chunk and its value, in place");
+        let d = view.dir as *const ViewDir;
+        let read = |id: i64| -> Option<String> {
+            // SAFETY: the layered directory, at the host's addresses, held by `view`.
+            unsafe {
+                let m = ViewDir::doc_of_key(d, (id as u64 >> 32) as u32, NO_DOC);
+                if m == NO_DOC {
+                    return None;
+                }
+                let (p, n) = Doc::of(d, m).text_of(id as u32)?;
+                Some(std::str::from_utf8(std::slice::from_raw_parts(p, n as usize)).unwrap().to_owned())
+            }
+        };
+        let (chunk_node, mut seen) = (find("node"), [0usize; 2]);
+        for (k, node) in [&chunk_node, &value_node].into_iter().enumerate() {
+            for r in 0..node.len() {
+                let id = node.value(r, 1);
+                let host = long.node_read("rr_node_text_any", id).unwrap_or_else(|| panic!("node {id:#x}: the host's text"));
+                let rusqlite::types::Value::Text(host) = host else { panic!("node {id:#x}: a text") };
+                assert_eq!(read(id).as_deref(), Some(host.as_str()), "node {id:#x}: its text read in place");
+                seen[k] += 1;
+            }
+        }
+        assert!(seen[0] > 20 && seen[1] > 10, "the chunk's and the value's nodes read: {seen:?}");
+        drop(view);
+        let _ = std::fs::remove_file(&store_path);
+    }
+
     /// Q203: a stage's table before it runs is the planner's estimate of its rows with a margin, not its input
     /// doubled: rr_token_req's tables were 730,304 rows for 7,453 made, and refused past the device's budget. The
     /// growth a stage was seen to have still sizes it first, a scan holds its relation's rows at most, and a rule the
