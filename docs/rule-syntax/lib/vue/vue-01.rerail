@@ -55,8 +55,9 @@ vtop(e, s) :- vview_root(p), child(p, e, _), vblock(e, se), child(se, t, 0), (vs
 // vue/component's script relations, over the view.
 vin_script(n) :- vblock(n, _).
 vin_setup(n) :- vblock(n, se), child(se, t, 0), vscript_setup(t).
-vsetup_doc(d) :- doc_role(d, "program"), guest(d, h, _, _), kind(se, "script_element"), docof(se, h),
-    child(se, t, 0), vscript_setup(t).
+// The program's file is its root's host node's document (by node: guest rows join two documents, decision 0652).
+vsetup_doc(d) :- doc_role(d, "program"), doc_root(d, r), host_node(r, x), docof(x, h), kind(se, "script_element"),
+    docof(se, h), child(se, t, 0), vscript_setup(t).
 vcomp(o) :- vtop(e, "false"), kind(e, "export_statement"), field(e, "value", w), deparen(w, o), kind(o, "object").
 vmacro_site(c) :- vtop(st, "true"), (kind(st, "lexical_declaration") ; kind(st, "variable_declaration")),
     child(st, d, _), kind(d, "variable_declarator"), field(d, "value", w), deparen(w, c).
