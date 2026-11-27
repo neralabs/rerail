@@ -14,7 +14,7 @@ use rerail_blocks::gens::Table;
 use rerail_blocks::layer::Runs;
 use rerail_blocks::region::pin_block;
 use rerail_delta_twins::Params;
-use rerail_delta_twins::k0::{self as twin, DocsOfP, K0P};
+use rerail_delta_twins::k0::{self as twin, DocsOfP, K0P, NamedP};
 
 /// Control's reservation: the statements' places a launch can grow it to (address space, resident as written).
 const CONTROL_RESERVE: usize = 64 << 20;
@@ -121,6 +121,51 @@ pub fn room_of(reg: &Registry, ops: &K0Ops, dir: &mut Directory, cache: BlockId,
     ran
 }
 
+static NAMED_PHASE: [Phase; 1] = [ph("named_blocks", Across::Nothing, Output::ByScan)];
+
+/// `named_blocks`: read the document set and the blobs' rows (their heads; the layers below by reference) · write the
+/// blocks the set's documents' blobs lie in · write the documents whose source or tape no blobs' row names.
+pub static NAMED_BLOCKS: Signature = Signature::new(
+    "named_blocks",
+    &[
+        SlotSpec { name: "set", mode: Mode::Read, kind: kind::FACTS },
+        SlotSpec { name: "blobs", mode: Mode::Read, kind: kind::FACTS },
+        SlotSpec { name: "blocks", mode: Mode::Write, kind: kind::CONTROL },
+        SlotSpec { name: "missing", mode: Mode::Write, kind: kind::CONTROL },
+    ],
+    ParamsLayout::of::<NamedP>(),
+    &NAMED_PHASE,
+    Independence::Along("documents: a document's blobs are its own"),
+    named_facts,
+);
+
+pub fn named_facts(_: &Table<'_>, _: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
+    rerail_delta_twins::drop::parts(bytes).map(|p| vec![p]).collect() // copy: derived (a check's reading of facts)
+}
+
+/// The blocks the document set at `set` (`arity` columns, its documents' blobs at `cols`) names, by the blobs' rows
+/// at `blobs`, and its documents whose source or tape no blobs' row names (to load), each a sealed parts block: one
+/// launch of `named_blocks` over the set's `n` ids at most.
+#[allow(clippy::too_many_arguments)]
+pub fn named_blocks(reg: &Registry, ops: &K0Ops, dir: &mut Directory, set: BlockId, arity: usize, n: usize, blobs: BlockId, cols: RowCols) -> Result<(Parts, Parts), String> {
+    let blocks = Parts::open(dir, 3 * n)?;
+    let missing = match Parts::open(dir, n) {
+        Ok(m) => m,
+        Err(e) => {
+            dir.release(blocks);
+            return Err(e);
+        }
+    };
+    let mut p = [0u8; NamedP::SIZE];
+    NamedP { set: u64::from(set.0), blobs: u64::from(blobs.0), arity: arity as u32, module: cols.module as u32, source: cols.source as u32, tape: cols.tape as u32, syms: cols.syms as u32, pad: 0 }.write(&mut p);
+    let ran = run_cpu(reg, dir, ops.named_blocks, &[set, blobs, blocks, missing], &p, Tiling::WHOLE).and_then(|()| Ok((Parts::sealed(dir, blocks)?, Parts::sealed(dir, missing)?)));
+    if ran.is_err() {
+        dir.release(blocks);
+        dir.release(missing);
+    }
+    ran
+}
+
 /// The written slots' facts by meaning: control's refusal and rows placed; a relation's runs, its `(row, diff)`s; L1's
 /// cache, its entries.
 pub fn k0_facts(table: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
@@ -143,6 +188,7 @@ pub struct K0Ops {
     pub k0_pass: OpId,
     pub docs_of: OpId,
     pub room_of: OpId,
+    pub named_blocks: OpId,
 }
 
 impl K0Ops {
@@ -153,7 +199,9 @@ impl K0Ops {
         reg.register_reference(Version::twin(docs_of, "docs_of twin", twin::DOCS_OF, &DOCS_OF_PHASE))?;
         let room_of = reg.declare(&ROOM_OF)?;
         reg.register_reference(Version::twin(room_of, "room_of twin", twin::ROOM_OF, &ROOM_OF_PHASE))?;
-        Ok(K0Ops { k0_pass, docs_of, room_of })
+        let named_blocks = reg.declare(&NAMED_BLOCKS)?;
+        reg.register_reference(Version::twin(named_blocks, "named_blocks twin", twin::NAMED_BLOCKS, &NAMED_PHASE))?;
+        Ok(K0Ops { k0_pass, docs_of, room_of, named_blocks })
     }
 }
 

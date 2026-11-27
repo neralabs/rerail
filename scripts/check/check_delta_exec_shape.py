@@ -589,6 +589,10 @@ def b6(failures: list) -> None:
     # host loop over the set's rows testing each against the asks.
     if re.search(r"is_asked|for id in sd\.live_ids\(\)", strip_rust(boot)):
         failures.append("boot.rs: the documents nothing asks for are chosen on the host (the set ▷ its asks is semi_change's)")
+    # B6: the blocks the set names and the documents to load are `named_blocks`' (the set joined with the blobs' rows),
+    # never a host walk of the set's rows; the host touches and loads what it lists.
+    if "named_blocks(&bench.reg, k0" not in boot or re.search(r"for id in s\.live_ids\(\)|Row::of\(&s, id\)", strip_rust(boot)):
+        failures.append("boot.rs: the residency's documents are walked on the host (named_blocks lists them)")
     if "Asks::none()" in strip_rust((CRATE / "src/contract.rs").read_text()).split("pub fn none()")[-1]:
         failures.append("contract.rs: a driver runs an operator with no asks (P§7.1: demand out is a port)")
     if re.search(r"for drop_at in \[", (CRATE / "src/l1_tests.rs").read_text()):

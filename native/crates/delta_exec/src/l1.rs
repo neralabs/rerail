@@ -111,7 +111,7 @@ pub struct L1 {
 const WANT_KEY: usize = 1;
 
 /// Where a tape port row's module and its blobs lie: `k0::DocsIn::of_rows`'s columns.
-const DOC_COLS: RowCols = RowCols { module: 0, source: TAPE_SOURCE, tape: TAPE_TAPE, syms: TAPE_SYMS };
+pub const DOC_COLS: RowCols = RowCols { module: 0, source: TAPE_SOURCE, tape: TAPE_TAPE, syms: TAPE_SYMS };
 
 /// The tape port's arity (`tape_shape`).
 pub const TAPE_ARITY: usize = 15;

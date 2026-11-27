@@ -47,7 +47,8 @@ use crate::files::{Answer, Answerer, Doc, DocIds, Intern, Load, Load1, LeavesW, 
 use crate::intern::InternOps;
 use crate::kform::RELATIONS;
 use crate::contract::asks_shape;
-use crate::l1::{L1, L1Ports, TAPE_ARITY, TAPE_PATH, row_blobs, tape_row, tape_shape};
+use crate::k0::{K0Ops, named_blocks};
+use crate::l1::{DOC_COLS, L1, L1Ports, TAPE_ARITY, TAPE_PATH, row_blobs, tape_row, tape_shape};
 use crate::semi::{self, How, SemiOps, Side};
 use crate::op::Tiling;
 use crate::sym::Atoms;
@@ -215,24 +216,65 @@ impl DocSet {
 
     /// Every document of the set resident (B§8's `world.tape`: a tape read where the residency holds it), its slabs
     /// used now: one whose source and tape the residency no longer holds (retired under the budget, dropped after an
-    /// execution, or a process started since) is loaded from the store where its places say.
-    pub fn resident(&mut self, bench: &mut Bench) -> Result<(), String> {
-        let head = self.tape.head();
-        let l = self.tape.read(&bench.dir, &[head])?;
-        let table = l.table();
-        let s = self.tape.state(&table, head)?;
-        for id in s.live_ids() {
-            let r = Row::of(&s, id);
-            let (ids, syms) = row_blobs(&r);
-            self.world.resident(&bench.reg, &mut bench.dir, &mut bench.blobs, r[0], ids)?;
-            for b in [ids.source, ids.tape, syms] {
-                if let Some(p) = bench.blobs.get(&bench.dir, &b)? {
-                    bench.dir.touch(p.block);
-                }
+    /// execution, or a process started since) is loaded from the store where its places say. Which documents those are,
+    /// and which blocks the set names, is `named_blocks`' (the set joined with the blobs' rows, kept to the blocks the
+    /// directory holds by the blob store's `forget_dead`); the loads are the file layer's and the touches the residency's.
+    pub fn resident(&mut self, bench: &mut Bench, k0: &K0Ops) -> Result<(), String> {
+        let Some(h) = self.tape.head() else { return Ok(()) };
+        bench.blobs.forget_dead(&bench.reg, &mut bench.dir)?;
+        let n = self.tape.reading(&bench.dir, Some(h), |s| Read::end(s).get() as usize)?;
+        let (blocks, missing) = match bench.blobs.head() {
+            Some(b) => named_blocks(&bench.reg, k0, &mut bench.dir, h, TAPE_ARITY, n, b, DOC_COLS)?,
+            // No blob at all: every document is to load (`change_rows` from ∅, the keys of the rows it adds).
+            None => {
+                let none = Parts::open(&mut bench.dir, 0)?;
+                (Parts::sealed(&bench.dir, none)?, self.every_document(bench, h, n)?)
             }
-        }
-        Ok(())
+        };
+        let loaded = (|| {
+            for i in 0..missing.len() {
+                let d = nth(&bench.dir, &missing, i)?;
+                let row = probe(&bench.dir, &self.tape, &[d])?.ok_or("a document the set names, its row")?;
+                self.world.resident(&bench.reg, &mut bench.dir, &mut bench.blobs, d, row_blobs(&row).0)?;
+            }
+            blocks.each(&bench.dir, &mut |b| bench.dir.touch(BlockId(b as u32)))
+        })();
+        blocks.release(&mut bench.dir);
+        missing.release(&mut bench.dir);
+        loaded
     }
+
+    /// Every document of the set at `h` (of `n` ids at most), a sealed parts block.
+    fn every_document(&self, bench: &mut Bench, h: BlockId, n: usize) -> Result<Parts, String> {
+        let rows = self.tape.open(&mut bench.dir, n);
+        let parts = match Parts::open(&mut bench.dir, n) {
+            Ok(p) => p,
+            Err(e) => {
+                bench.dir.release(rows);
+                return Err(e);
+            }
+        };
+        let a = Side { before: None, after: Some(h), arity: TAPE_ARITY, col: 0 };
+        let ran = semi::select(&bench.reg, &self.semis, &mut bench.dir, &a, None, How { neg: false, parts_sign: 1 }, rows, parts).and_then(|()| Parts::sealed(&bench.dir, parts));
+        bench.dir.release(rows);
+        if ran.is_err() {
+            bench.dir.release(parts);
+        }
+        ran
+    }
+}
+
+/// The `i`th partition a sealed parts block lists, read where it lies.
+fn nth(dir: &Directory, parts: &Parts, i: usize) -> Result<i64, String> {
+    let mut v = None;
+    let mut k = 0;
+    parts.each(dir, &mut |p| {
+        if k == i {
+            v = Some(p);
+        }
+        k += 1;
+    })?;
+    v.ok_or_else(|| format!("a parts block's place {i}"))
 }
 
 /// Where a run left each trace it read or wrote (B§8's `Pins`): the document set's head, L1's outputs' heads, its
@@ -358,7 +400,7 @@ pub fn run(l1: &L1, inst: &mut Instance, l0: &str, module: &str, globals: Atoms,
             if round == MAX_ROUNDS {
                 return Err(format!("a run past {MAX_ROUNDS} rounds: each asked what the last answered"));
             }
-            docs.resident(bench)?;
+            docs.resident(bench, &l1.ops)?;
             let count = u64::from(globals.count(&bench.dir));
             let ins = [(&docs.tape, from.0, docs.tape.head())];
             let atoms = [GlobalIn { block: globals.0, before: from.1, after: count }];

@@ -565,3 +565,52 @@ fn room_of(c: &mut Ctx<'_, '_, '_>, _: Tile) {
 
 /// `room_of`: one item.
 pub const ROOM_OF: &[TwinPhase] = &[TwinPhase { name: "room_of", items: |_| 1, run: room_of, again: None }];
+
+crate::params! {
+    /// `named_blocks`: the document set's head and arity, the blobs' rows' head, and where a set row's document and
+    /// its source's, tape's and symbols' blob ids lie.
+    pub struct NamedP {
+        pub set: u64,
+        pub blobs: u64,
+        pub arity: u32,
+        pub module: u32,
+        pub source: u32,
+        pub tape: u32,
+        pub syms: u32,
+        pub pad: u32,
+    }
+}
+
+/// `named_blocks`' slots: the document set's head and the blobs' rows' head (read; each one's layers below by
+/// reference), the blocks its documents' blobs lie in (write: a parts block of block ids, each once) and the
+/// documents whose source or tape is in no blobs' row (write: a parts block of documents, each once: to load).
+pub const N_SET: usize = 0;
+pub const N_BLOBS: usize = 1;
+pub const N_BLOCKS: usize = 2;
+pub const N_MISSING: usize = 3;
+
+/// `named_blocks`' one item: every live row of the set, its blobs found by their names where the blobs' rows lie.
+fn named_blocks(c: &mut Ctx<'_, '_, '_>, _: Tile) {
+    let p = <NamedP as crate::Params>::read(c.params);
+    let set = View::chain(c.table, Some(p.set as u32), p.arity as usize).expect("the document set, its layers reached by reference");
+    let blobs = View::chain(c.table, Some(p.blobs as u32), BLOB_ARITY).expect("the blobs' rows, their layers reached by reference");
+    let ([], [blocks, missing]) = c.views([], [N_BLOCKS, N_MISSING]);
+    let words = |id, at: u32| core::array::from_fn::<i64, 4, _>(|k| Read::get(&set, id, ColumnIndex::new((at as usize + k) as u16)));
+    let (mut nb, mut nm) = (0usize, 0usize);
+    for id in Read::live_ids(&set) {
+        let found = [p.source, p.tape, p.syms].map(|at| blob_at(&blobs, words(id, at)));
+        for (b, _, _) in found.iter().flatten() {
+            crate::drop::put_part(blocks, nb, i64::from(*b));
+            nb += 1;
+        }
+        if found[0].is_none() || found[1].is_none() {
+            crate::drop::put_part(missing, nm, Read::get(&set, id, ColumnIndex::new(p.module as u16)));
+            nm += 1;
+        }
+    }
+    crate::drop::seal_parts(blocks, nb);
+    crate::drop::seal_parts(missing, nm);
+}
+
+/// `named_blocks`: one item.
+pub const NAMED_BLOCKS: &[TwinPhase] = &[TwinPhase { name: "named_blocks", items: |_| 1, run: named_blocks, again: None }];
