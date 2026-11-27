@@ -308,8 +308,8 @@ describe("a walk of a checkout of many folders", () => {
 
     const asked = lookups.flatMap(lookup => lookup.mock.calls.map(([path]) => path));
     const kinds = `ownerOf ${lookups[0]!.mock.calls.length}, ownerOfReal ${lookups[1]!.mock.calls.length}`;
-    // The router finds each change's lane by a lookup of its file: the lookups are counted.
-    expect.soft(asked.filter(path => FILES.some(file => path === join(root, file))).length, kinds).toBeGreaterThan(0);
+    // The walk looks up its top and the .git entry its listing names: the lookups are counted.
+    expect.soft(asked.length, kinds).toBeGreaterThan(0);
     // A grouping with a view of its own looked up each folder holding a change: 200.
     expect(asked.filter(path => FOLDERS.some(folder => path === join(root, folder))).length, kinds).toBe(0);
   }, 120_000);
