@@ -88,32 +88,35 @@ pub struct Ask {
     pub flags: i64,
 }
 
-/// The load plan's bytes: `[n, root (at, len), observer (at, len)]`, then an item a path, `[d, before's four words,
-/// has before, path (at, len), flags]`, then the strings; offsets from the body's start.
-pub fn plan_bytes(root: &std::path::Path, observer: &std::path::Path, asks: &[Ask]) -> Vec<u8> {
+/// The load plan, a control block: `[n, root (at, len), observer (at, len)]`, then an item a path, `[d, before's four
+/// words, has before, path (at, len), flags]`, then the strings; offsets from the body's start. Written where it lies.
+fn plan_block(dir: &mut Directory, root: &std::path::Path, observer: &std::path::Path, asks: &[Ask]) -> Result<BlockId, String> {
     const HEAD: usize = 5;
     const ITEM: usize = 9;
-    let mut words: Vec<i64> = vec![0; HEAD + ITEM * asks.len()]; // copy: derived (the plan, written once)
-    let mut strings: Vec<u8> = Vec::new(); // copy: derived (the plan's paths, written once)
-    let base = 8 * words.len();
-    let mut put = |s: &str| {
-        let at = base + strings.len();
-        strings.extend_from_slice(s.as_bytes());
-        (at as i64, s.len() as i64)
-    };
-    words[0] = asks.len() as i64;
-    (words[1], words[2]) = put(&root.to_string_lossy());
-    (words[3], words[4]) = put(&observer.to_string_lossy());
-    for (k, a) in asks.iter().enumerate() {
-        let w = &mut words[HEAD + ITEM * k..HEAD + ITEM * (k + 1)];
-        w[0] = a.d;
-        let b = a.before.map_or([0; 4], |g| rerail_blocks::blob::BlobId(g).words());
-        w[1..5].copy_from_slice(&b);
-        w[5] = i64::from(a.before.is_some());
-        (w[6], w[7]) = put(&a.path);
-        w[8] = a.flags;
-    }
-    words.iter().flat_map(|w| w.to_le_bytes()).chain(strings).collect()
+    let (root, observer) = (root.to_string_lossy(), observer.to_string_lossy());
+    let base = 8 * (HEAD + ITEM * asks.len());
+    let len = base + root.len() + observer.len() + asks.iter().map(|a| a.path.len()).sum::<usize>();
+    control_with(dir, len, |bytes| {
+        let mut at = base;
+        let mut put = |bytes: &mut [u8], s: &str| {
+            bytes[BODY_AT + at..BODY_AT + at + s.len()].copy_from_slice(s.as_bytes()); // copy: derived (a path, written once into the plan)
+            at += s.len();
+            ((at - s.len()) as i64, s.len() as i64)
+        };
+        put_word(bytes, 0, asks.len() as i64);
+        let (r, o) = (put(bytes, &root), put(bytes, &observer));
+        for (k, v) in [r.0, r.1, o.0, o.1].into_iter().enumerate() {
+            put_word(bytes, 1 + k, v);
+        }
+        for (k, a) in asks.iter().enumerate() {
+            let item = HEAD + ITEM * k;
+            let before = a.before.map_or([0; 4], |g| rerail_blocks::blob::BlobId(g).words());
+            let (pat, plen) = put(bytes, &a.path);
+            for (i, v) in [a.d, before[0], before[1], before[2], before[3], i64::from(a.before.is_some()), pat, plen, a.flags].into_iter().enumerate() {
+                put_word(bytes, item + i, v);
+            }
+        }
+    })
 }
 
 fn word(b: &[u8], i: usize) -> i64 {
@@ -274,12 +277,17 @@ pub const PARSE_WORDS: usize = 5;
 pub const NOT_UTF8: i64 = 1;
 pub const REFUSED: i64 = 2;
 
-/// The control block's bytes for parsing the sources at `sources` (each `(offset, length)` in the slab).
-pub fn parse_bytes(sources: &[(usize, usize)]) -> Vec<u8> {
-    std::iter::once(sources.len() as i64)
-        .chain(sources.iter().flat_map(|&(at, len)| [at as i64, len as i64, 0, 0, 0]))
-        .flat_map(|w| w.to_le_bytes())
-        .collect()
+/// The control block for parsing the sources at `sources` (each `(offset, length)` in the slab), written where it
+/// lies: their count, then each one's place, its tape's place and its code, none yet.
+pub fn parse_control(dir: &mut Directory, sources: &[(usize, usize)]) -> Result<BlockId, String> {
+    control_with(dir, 8 * (1 + PARSE_WORDS * sources.len()), |b| {
+        put_word(b, 0, sources.len() as i64);
+        for (k, &(at, len)) in sources.iter().enumerate() {
+            for (i, v) in [at as i64, len as i64, 0, 0, 0].into_iter().enumerate() {
+                put_word(b, 1 + PARSE_WORDS * k + i, v);
+            }
+        }
+    })
 }
 
 fn parse_items(c: &Ctx<'_, '_, '_>) -> u32 {
@@ -348,19 +356,27 @@ impl AnswerOps {
     }
 }
 
-/// A control block holding `bytes` in its body.
-fn control_of(dir: &mut Directory, bytes: &[u8]) -> Result<BlockId, String> {
-    let id = dir.make(kind::CONTROL, bytes.len().max(8));
+/// A control block of `bytes` body bytes, its words written by `fill` where they lie.
+fn control_with(dir: &mut Directory, bytes: usize, fill: impl FnOnce(&mut [u8])) -> Result<BlockId, String> {
+    let id = dir.make(kind::CONTROL, bytes.max(8));
     let b = dir.block(id).expect("just made");
-    let mut w = pin_block(&b, "a launch's control", true)?;
-    w.bytes_mut().expect("a write pin")[BODY_AT..BODY_AT + bytes.len()].copy_from_slice(bytes); // copy: derived (the launch's plan)
-    Ok(id)
+    match pin_block(&b, "a launch's control", true) {
+        Ok(mut w) => {
+            fill(w.bytes_mut().expect("a write pin"));
+            Ok(id)
+        }
+        Err(e) => {
+            drop(b);
+            dir.release(id);
+            Err(e)
+        }
+    }
 }
 
 /// `answer_load` over `asks`, its rooms in slab `slab`: each ask's fact, and how many files it read.
 pub fn answer_load(reg: &Registry, ops: &AnswerOps, dir: &mut Directory, slab: BlockId, root: &std::path::Path, observer: &std::path::Path, asks: &[Ask]) -> Result<(Vec<[i64; FACT_WORDS]>, u64), String> {
-    let plan = control_of(dir, &plan_bytes(root, observer, asks))?;
-    let control = control_of(dir, &[0; 16])?;
+    let plan = plan_block(dir, root, observer, asks)?;
+    let control = control_with(dir, 16, |b| (0..2).for_each(|i| put_word(b, i, 0)))?;
     let facts = dir.make(kind::FACTS, 8 * FACT_WORDS * asks.len().max(1));
     let ran = run_cpu(reg, dir, ops.load, &[plan, slab, control, facts], &[], Tiling::WHOLE).and_then(|()| {
         let l = dir.read("answer_load's facts", &[facts, control])?;
@@ -379,7 +395,7 @@ pub type Parsed = Result<(usize, usize), i64>;
 
 /// `parse` over the sources at `sources` in slab `slab`: each one's tape, or its refusal.
 pub fn parse_sources(reg: &Registry, ops: &AnswerOps, dir: &mut Directory, slab: BlockId, sources: &[(usize, usize)]) -> Result<Vec<Parsed>, String> {
-    let control = control_of(dir, &parse_bytes(sources))?;
+    let control = parse_control(dir, sources)?;
     let ran = run_cpu(reg, dir, ops.parse, &[slab, control], &[], Tiling::WHOLE).and_then(|()| {
         let l = dir.read("parse's places", &[control])?;
         let c = l.block(0);

@@ -131,10 +131,17 @@ impl BlobRows {
         if was.is_some_and(|w| dir.alive(w.block)) {
             return Ok((id, false));
         }
-        let row = |p: Placed| -> Vec<i64> { id.words().into_iter().chain([i64::from(p.block.0), p.at as i64, p.len as i64]).collect() }; // copy: derived (a blob's row, written once)
-        // A blob whose slab went, resident again: its row moves to where it lies now.
-        let pairs: Vec<(Vec<i64>, i32)> = was.map(|w| (row(w), -1)).into_iter().chain([(row(p), 1)]).collect(); // copy: derived (the row's change)
-        push_layer(reg, &self.ops, dir, &mut self.rows, &pairs)?;
+        let w = id.words();
+        let row = |p: Placed| -> [i64; 7] { [w[0], w[1], w[2], w[3], i64::from(p.block.0), p.at as i64, p.len as i64] };
+        // A blob whose slab went, resident again: its row moves to where it lies now. The change written into the
+        // layer's runs as it is made.
+        push_with(reg, &self.ops, dir, &mut self.rows, 2, |_, _, runs| {
+            if let Some(w) = was {
+                runs.push(&row(w), -1).ok_or("room for a blob's row")?;
+            }
+            runs.push(&row(p), 1).ok_or("room for a blob's row")?;
+            Ok(())
+        })?;
         Ok((id, true))
     }
 
@@ -240,10 +247,9 @@ pub enum AnswerKind {
     SubRun,
 }
 
-/// An answer (P§12 item 7): a row, a blob, or a miss (a world reader's key with nothing there).
+/// An answer (P§12 item 7): a blob, or a miss (a world reader's key with nothing there).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Answer {
-    Row(Vec<i64>),
     Blob(BlobId),
     Miss,
 }

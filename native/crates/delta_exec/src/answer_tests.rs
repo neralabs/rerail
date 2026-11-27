@@ -79,7 +79,7 @@ fn parse_gives_the_same_tapes_at_every_tiling() {
             })
             .collect();
         drop(b);
-        let control = control_of(&mut dir, &parse_bytes(&places)).unwrap();
+        let control = parse_control(&mut dir, &places).unwrap();
         run_cpu(&reg, &dir, ops.parse, &[slab, control], &[], tiling).unwrap();
         let l = dir.read("t", &[slab, control]).unwrap();
         (0..srcs.len())

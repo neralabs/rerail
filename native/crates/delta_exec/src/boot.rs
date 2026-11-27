@@ -130,7 +130,6 @@ impl DocSet {
         let source = match (Load { at: reach!(), named: &named }).answer(&[d], leaves)? {
             Answer::Blob(s) => s,
             Answer::Miss => return Err(format!("{path}: not a readable file")),
-            a => return Err(format!("{path}: the load answer is {a:?}")),
         };
         let blob = |a: Answer, what: &str| match a {
             Answer::Blob(b) => Ok(b),
@@ -146,7 +145,8 @@ impl DocSet {
         if doc.is_identity() {
             return Ok(doc);
         }
-        let key: Vec<i64> = std::iter::once(d).chain(doc.after.source.words()).chain(doc.after.tape.words()).collect(); // copy: derived (the intern answer's key)
+        let (s, t) = (doc.after.source.words(), doc.after.tape.words());
+        let key = [d, s[0], s[1], s[2], s[3], t[0], t[1], t[2], t[3]];
         let syms = blob((Intern { at: reach!(), iops: &self.iops, atoms, named: &named }).answer(&key, leaves)?, "intern")?;
         self.world.place(&bench.reg, &bench.traces, &mut bench.dir, d, Some(doc.after.source))?;
         let p = atoms.find(&bench.dir, path).ok_or("the path, interned")?;
@@ -223,28 +223,25 @@ const HEAD: usize = 10;
 const MAX_ROUNDS: usize = 4;
 
 impl Pins {
-    fn heads(&self) -> Vec<Option<BlockId>> {
-        [self.tape].into_iter().chain(self.world).chain([self.blobs, self.want]).chain(self.asks.iter().copied()).chain(self.outs.iter().copied()).collect()
+    fn heads(&self) -> impl Iterator<Item = Option<BlockId>> + '_ {
+        [self.tape].into_iter().chain(self.world).chain([self.blobs, self.want]).chain(self.asks.iter().copied()).chain(self.outs.iter().copied())
     }
 
     /// Kept: a frozen block, its words the pins and a reference to every head, where the directory keeps what lasts.
     /// Its id (a later one's is larger: the newest pins are the largest id's).
     pub fn keep(&self, dir: &mut Directory) -> Result<BlockId, String> {
-        let heads = self.heads();
-        let words: Vec<i64> = [PINS_MAGIC, self.atoms.count as i64, self.outs.len() as i64, self.asks.len() as i64]
-            .into_iter()
-            .chain(heads.iter().map(|h| h.map_or(-1, |b| i64::from(b.0))))
-            .collect(); // copy: derived (the pins' words, written once)
-        let id = dir.make_placed(dir.lasting(), kind::FACTS, 8 * words.len(), 0)?;
+        // Its words written where they lie: the magic, the atoms' count, the outputs' and requests' counts, each head.
+        let words = [PINS_MAGIC, self.atoms.count as i64, self.outs.len() as i64, self.asks.len() as i64].into_iter().chain(self.heads().map(|h| h.map_or(-1, |b| i64::from(b.0))));
+        let id = dir.make_placed(dir.lasting(), kind::FACTS, 8 * (HEAD + self.asks.len() + self.outs.len()), 0)?;
         {
             let b = dir.block(id).expect("just made");
             let mut w = rerail_blocks::region::pin_block(&b, "the run's pins", true)?;
             let bytes = w.bytes_mut().expect("a write pin");
-            for (i, x) in words.iter().enumerate() {
-                bytes[BODY_AT + 8 * i..BODY_AT + 8 * i + 8].copy_from_slice(&x.to_le_bytes()); // copy: derived (a word of the pins)
+            for (i, x) in words.enumerate() {
+                rerail_blocks::gens::set_word::<i64>(bytes, BODY_AT + 8 * i, x);
             }
         }
-        for h in heads.into_iter().flatten() {
+        for h in self.heads().flatten() {
             dir.refer(id, h, BODY_AT)?;
         }
         dir.freeze(id)?;
@@ -255,29 +252,35 @@ impl Pins {
     /// between keeping one and letting the last go): `None` when none was kept. The atoms' block is the store's own,
     /// opened by its path: its count is the pins'.
     pub fn open(dir: &Directory) -> Result<Option<(BlockId, Pins)>, String> {
-        let mut best: Option<(BlockId, Vec<i64>)> = None;
+        let word = |b: &[u8], i: usize| b.get(BODY_AT + 8 * i..BODY_AT + 8 * i + 8).map(|_| rerail_blocks::gens::word::<i64>(b, BODY_AT + 8 * i));
+        let mut best = None;
         for id in dir.unreferred() {
             let l = dir.read("the run's pins", &[id])?;
             let b = l.block(0);
-            let word = |i: usize| b.get(BODY_AT + 8 * i..BODY_AT + 8 * i + 8).map(|w| i64::from_le_bytes(w.try_into().expect("eight bytes")));
-            if word(0) != Some(PINS_MAGIC) {
+            if word(b, 0) != Some(PINS_MAGIC) {
                 continue;
             }
-            let n = word(2).unwrap_or(0) as usize + word(3).unwrap_or(0) as usize;
-            let words: Option<Vec<i64>> = (0..HEAD + n).map(word).collect(); // copy: derived (the pins' words)
-            best = Some((id, words.ok_or("a kept pins block, short")?));
+            let n = word(b, 2).unwrap_or(0) as usize + word(b, 3).unwrap_or(0) as usize;
+            if word(b, HEAD + n - 1).is_none() {
+                return Err("a kept pins block, short".to_string());
+            }
+            best = Some(id);
         }
-        let Some((id, w)) = best else { return Ok(None) };
+        let Some(id) = best else { return Ok(None) };
+        // Its words read where the block holds them.
+        let l = dir.read("the run's pins", &[id])?;
+        let b = l.block(0);
+        let w = |i: usize| word(b, i).expect("a kept pins block's word");
         let head = |x: i64| (x >= 0).then_some(BlockId(x as u32));
-        let asks = w[3] as usize;
+        let (outs, asks) = (w(2) as usize, w(3) as usize);
         Ok(Some((id, Pins {
-            tape: head(w[4]),
-            world: [head(w[5]), head(w[6]), head(w[7])],
-            blobs: head(w[8]),
-            want: head(w[9]),
-            asks: w[HEAD..HEAD + asks].iter().map(|&x| head(x)).collect(),
-            outs: w[HEAD + asks..].iter().map(|&x| head(x)).collect(),
-            atoms: Global { block: BlockId(u32::MAX), count: w[1] as u64 },
+            tape: head(w(4)),
+            world: [head(w(5)), head(w(6)), head(w(7))],
+            blobs: head(w(8)),
+            want: head(w(9)),
+            asks: (HEAD..HEAD + asks).map(|i| head(w(i))).collect(),
+            outs: (HEAD + asks..HEAD + asks + outs).map(|i| head(w(i))).collect(),
+            atoms: Global { block: BlockId(u32::MAX), count: w(1) as u64 },
         })))
     }
 }
