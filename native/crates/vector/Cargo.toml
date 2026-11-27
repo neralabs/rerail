@@ -7,6 +7,8 @@ description = "Plain values (`Pod`), the rooms structures take their regions fro
 
 
 [dependencies]
+# `Pod`: the floor's one definition (decision 0686), re-exported here.
+rerail-delta-core = { path = "../delta_core" }
 # The run's room, registered at load (`install_default_room`).
 rerail-registry = { path = "../registry" }
 rayon = "=1.12.0"

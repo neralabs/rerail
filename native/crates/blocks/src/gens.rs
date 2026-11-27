@@ -28,75 +28,10 @@
 use crate::Pod;
 use crate::region::BlockPin;
 
-/// Where a block's reference table lies: right after the engine's 64-byte header.
-pub const REFS_AT: usize = 64;
-/// The most blocks one block refers to directly (a layer refers to the one below it; a merged layer to the one below
-/// the merged ones).
-pub const MAX_REFS: usize = 30;
-/// Where an operation block's body starts: after the reference table (its mark and count, then `MAX_REFS` references),
-/// on a cache line.
-pub const BODY_AT: usize = 320;
-const _: () = assert!(REFS_AT + 8 + MAX_REFS * size_of::<Ref>() <= BODY_AT);
-/// The reference table's mark: a block made without one (the engine's other blocks) refers to nothing.
-pub const REFS_MAGIC: u32 = u32::from_le_bytes(*b"REF0");
-
-/// A block id: the directory's handle of a block, the same on every device; each device's table gives its address.
-pub type Id = u32;
-
-/// A reference: a block's id and the offset in it of what is referred to (32 bits: a block's offsets fit).
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Ref {
-    pub id: Id,
-    pub at: u32,
-}
-
-// SAFETY: two u32s, no padding.
-unsafe impl Pod for Ref {}
-
-/// A run of `n` `T`s at byte `at` of `bytes`, read in place. Panics, naming the run, past the bytes or misaligned.
-#[inline]
-pub fn words<T: Pod>(bytes: &[u8], at: usize, n: usize) -> &[T] {
-    let len = n * size_of::<T>();
-    assert!(at + len <= bytes.len(), "a run of {n} words at {at} past a block's {} bytes", bytes.len());
-    let p = bytes[at..].as_ptr();
-    assert!((p as usize).is_multiple_of(align_of::<T>()), "a run of words at {at}, not aligned to {}", align_of::<T>());
-    // SAFETY: in bounds and aligned (checked); `T: Pod` has no invalid bit patterns and holds no address.
-    unsafe { std::slice::from_raw_parts(p as *const T, n) }
-}
-
-/// `words`, to write.
-#[inline]
-pub fn words_mut<T: Pod>(bytes: &mut [u8], at: usize, n: usize) -> &mut [T] {
-    let len = n * size_of::<T>();
-    assert!(at + len <= bytes.len(), "a run of {n} words at {at} past a block's {} bytes", bytes.len());
-    let p = bytes[at..].as_mut_ptr();
-    assert!((p as usize).is_multiple_of(align_of::<T>()), "a run of words at {at}, not aligned to {}", align_of::<T>());
-    // SAFETY: as `words`, and the borrow is exclusive.
-    unsafe { std::slice::from_raw_parts_mut(p as *mut T, n) }
-}
-
-/// One `T` at byte `at`.
-#[inline]
-pub fn word<T: Pod + Copy>(bytes: &[u8], at: usize) -> T {
-    words::<T>(bytes, at, 1)[0]
-}
-
-/// Writes one `T` at byte `at`.
-#[inline]
-pub fn set_word<T: Pod>(bytes: &mut [u8], at: usize, v: T) {
-    words_mut::<T>(bytes, at, 1)[0] = v;
-}
-
-/// The reference table of a block, read in place: what it refers to, each a block id and an offset in it. A block
-/// without one refers to nothing.
-pub fn refs(bytes: &[u8]) -> &[Ref] {
-    if bytes.len() < BODY_AT || word::<u32>(bytes, REFS_AT) != REFS_MAGIC {
-        return &[];
-    }
-    let n = word::<u32>(bytes, REFS_AT + 4) as usize;
-    words::<Ref>(bytes, REFS_AT + 8, n.min(MAX_REFS))
-}
+// The reference table's format and where a body starts: the floor's one definition (`rerail_delta_core::block`).
+pub use rerail_delta_core::block::{BODY_AT, Id, MAX_REFS, REFS_AT, REFS_MAGIC, Ref, refs};
+// The typed words over a block's bytes: the floor's (`rerail_delta_core::pod`).
+pub use rerail_delta_core::pod::{set_word, word, words, words_mut};
 
 /// Lays an empty reference table out in a new block's bytes.
 pub fn init_refs(bytes: &mut [u8]) {

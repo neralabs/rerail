@@ -3277,6 +3277,7 @@ dependencies = [
  "rayon",
  "rerail-blocks",
  "rerail-context",
+ "rerail-delta-core",
  "rerail-device",
  "rerail-gpu",
  "rerail-vector",
@@ -3795,6 +3796,10 @@ dependencies = [
  "tempfile",
  "tree-sitter",
 ]
+
+[[package]]
+name = "rerail-delta-core"
+version = "0.1.0"
 
 [[package]]
 name = "rerail-delta-device"
@@ -8761,6 +8766,7 @@ name = "rerail-vector"
 version = "0.1.0"
 dependencies = [
  "rayon",
+ "rerail-delta-core",
  "rerail-registry",
  "serde",
 ]

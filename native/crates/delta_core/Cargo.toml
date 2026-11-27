@@ -1,0 +1,8 @@
+[package]
+name = "rerail-delta-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The floor under the delta executor (decision 0686): the block formats every reader and writer shares, no_std and with no allocator, so nothing built on them can hold rows on the heap."
+
+[dependencies]

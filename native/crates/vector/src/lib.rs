@@ -10,22 +10,8 @@ pub mod vector;
 use std::any::Any;
 use std::sync::Arc;
 
-/// A type whose bytes are its value: no pointers, no padding the compiler chose (`rerail_blocks::structure!` checks).
-///
-/// # Safety
-/// Implementors are `#[repr(C)]` with every byte a named field, and hold no address.
-pub unsafe trait Pod: 'static {}
-
-macro_rules! pod {
-    ($($t:ty),*) => {$(
-        unsafe impl Pod for $t {}
-    )*};
-}
-pod!(u8, u16, u32, u64, u128, i16, i32, i64, i128, f32, f64, usize, ());
-// A field that changes while its block is open (a counter, a chunk's offset, a span set at freeze) is an atomic:
-// written through a shared reference, which Rust allows only by interior mutability.
-pod!(std::sync::atomic::AtomicU32, std::sync::atomic::AtomicU64, std::sync::atomic::AtomicI64);
-unsafe impl<T: Pod, const N: usize> Pod for [T; N] {}
+/// A type whose bytes are its value: the floor's one definition (`rerail_delta_core::pod`), with its impls.
+pub use rerail_delta_core::Pod;
 
 /// What keeps a region's block, beside the region.
 pub type Keep = Option<Arc<dyn Any + Send + Sync>>;
