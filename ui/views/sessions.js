@@ -448,10 +448,10 @@ export const actions = {
   earlier: () => { const s = currentSession(); if (s) loadMore(() => loadEarlier(s.sessionId), "earlier events"); },
   resumetoggle: () => { ui.resumeOpen = !ui.resumeOpen; invalidate(); },
   slisttoggle: () => { listHidden = !listHidden; invalidate(); },
-  resumecopy: () => {
+  resumecopy: (_, button) => {
     const s = currentSession(); if (!s) return;
     const rc = resumeCommand(s);
-    copyText(rc.cmd ?? s.sessionId, document.getElementById("resumeText"), rc.cmd ? "Resume command copied. Run it in your terminal." : "Session id copied.");
+    copyText(rc.cmd ?? s.sessionId, { field: document.getElementById("resumeText"), message: rc.cmd ? "Resume command copied. Run it in your terminal." : "Session id copied.", button });
   },
 };
 
