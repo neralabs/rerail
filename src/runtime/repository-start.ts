@@ -152,7 +152,8 @@ export class RepositoryStartWatch {
 
   /**
    * The checkout whose start state this watch reads, looked up as `started` looks it up: in a Git repository Git runs
-   * once for the folder, then only the database is read. Undefined where Rerail records no checkout there.
+   * once for the folder, then only the database is read, with the config files of a checkout Rerail has not recorded,
+   * whose remote Git reads again once they change. Undefined where Rerail records no checkout there.
    */
   checkout(): CheckoutContext | undefined {
     return this.#resolveCheckout(this.#workspace);

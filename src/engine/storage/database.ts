@@ -235,6 +235,14 @@ function schemaRefusal(path: string, stamp: SchemaStamp, supported: number): str
   return undefined;
 }
 
+/** The file's stamp, which throws {@link schemaRefusal}'s refusal for a file this build cannot open. */
+function checkedStamp(database: RerailDatabase, path: string, supported: number): SchemaStamp {
+  const stamp = schemaStamp(database);
+  const refusal = schemaRefusal(path, stamp, supported);
+  if (refusal !== undefined) throw new Error(refusal);
+  return stamp;
+}
+
 /**
  * Open the Rerail database, creating the directory, file, and schema as needed.
  * Writers own the file mode (0600) and directory mode (0700) they create.
@@ -243,7 +251,8 @@ function schemaRefusal(path: string, stamp: SchemaStamp, supported: number): str
  * tables or a stamp no Rerail wrote, a file from before the migration baseline, and a file that is not SQLite at
  * all are refused, writable or read-only, and left untouched: a writable open checks the stamp before it sets
  * the file mode or switches the journal to WAL. Otherwise a writable open runs the migration steps the file has
- * not run and the current DDL, which is idempotent, and stamps the floor they reach (`migrations.ts`).
+ * not run and the current DDL, which is idempotent, and stamps the floor they reach (`migrations.ts`), under the
+ * write lock; a file already in this build's shape it only reads, taking no lock.
  *
  * A read-only open never writes its own connection. Its readers query this build's shape, so when an existing file
  * is in 0.1.0-next.1's shape (stamped 1), or still lacks steps that keep the floor (columns and tables older builds
@@ -307,31 +316,58 @@ function upgradeBeforeReading(path: string, database: RerailDatabase, migrations
   try {
     const stamp = schemaStamp(database);
     if (stamp.version < RERAIL_BASELINE_SCHEMA_VERSION && stamp.version !== 1) return undefined;
-    // A file stamped 1 passes the read-only open's checks only when adoptable; it has run no step.
-    const pending = pendingMigrations(database, migrations);
-    const ids = pending.map(migration => migration.id).join(", ");
-    const raising = pending.filter(migration => migration.floor !== undefined).map(migration => migration.id);
-    if (raising.length > 0) {
+    const change = shapeChange(database, stamp.version, migrations);
+    if (change !== undefined && change.raising.length > 0) {
       throw new Error(
-        `${path} needs this Rerail's schema steps (${ids}) before it can be read, and ${raising.join(", ")} raise its `
+        `${path} needs this Rerail's schema steps (${change.ids}) before it can be read, and ${change.raising.join(", ")} raise its `
           + "schema floor, which a read-only open does not do. Start Rerail first (rerail daemon start), which runs them.",
       );
     }
-    if (stamp.version === 1) return "adopting at the migration baseline";
-    if (pending.length > 0) return `this Rerail's schema steps (${ids})`;
-    // A table or index the DDL alone adds (no step needed) is also this build's shape.
-    const missing = missingSchemaObjects(database);
-    return missing.length === 0 ? undefined : `this Rerail's tables and indexes (${missing.join(", ")})`;
+    return change?.what;
   } catch (error) {
     database.$client.close();
     throw error;
   }
 }
 
+/** What a writer changes in a file before this build reads it: in a person's words, and the pending steps by id. */
+interface ShapeChange {
+  readonly what: string;
+  readonly ids: string;
+  /** The pending steps that raise the file's floor. */
+  readonly raising: readonly string[];
+}
+
+/**
+ * What a writer of this build must change in the file `database` holds, stamped `version` and past the refusals, or
+ * undefined when the file has this build's shape: every step recorded, and every table, index and trigger of the DDL.
+ */
+function shapeChange(database: RerailDatabase, version: number, migrations: readonly Migration[]): ShapeChange | undefined {
+  if (version === 0) return { what: "this Rerail's schema", ids: "", raising: [] };
+  // A file stamped 1 passes the checks only when adoptable; it has run no step.
+  const pending = pendingMigrations(database, migrations);
+  const ids = pending.map(migration => migration.id).join(", ");
+  const raising = pending.filter(migration => migration.floor !== undefined).map(migration => migration.id);
+  if (version === 1) return { what: "adopting at the migration baseline", ids, raising };
+  if (pending.length > 0) return { what: `this Rerail's schema steps (${ids})`, ids, raising };
+  // A table or index the DDL alone adds (no step needed) is also this build's shape.
+  const missing = missingSchemaObjects(database);
+  return missing.length === 0 ? undefined : { what: `this Rerail's tables and indexes (${missing.join(", ")})`, ids, raising };
+}
+
+const SCHEMA_OBJECT_NAME = /^CREATE (?:UNIQUE )?(?:TABLE|INDEX|TRIGGER) IF NOT EXISTS `([^`]+)`/u;
+
 /** The tables, indexes and triggers this build's DDL creates, by name. */
 const SCHEMA_OBJECTS = RERAIL_SCHEMA_STATEMENTS
-  .map(statement => /^CREATE (?:UNIQUE )?(?:TABLE|INDEX|TRIGGER) IF NOT EXISTS `([^`]+)`/u.exec(statement)?.[1])
+  .map(statement => SCHEMA_OBJECT_NAME.exec(statement)?.[1])
   .filter(name => name !== undefined);
+
+/**
+ * The statements of this build's DDL that create no table, index or trigger {@link SCHEMA_OBJECTS} names (a view, a
+ * seed row): the shape check cannot tell whether a file holds what they make, so while one is left every writable
+ * open runs the DDL under the write lock.
+ */
+export const UNNAMED_SCHEMA_STATEMENTS: readonly string[] = RERAIL_SCHEMA_STATEMENTS.filter(statement => !SCHEMA_OBJECT_NAME.test(statement));
 
 /** The tables, indexes and triggers of this build's DDL that the file lacks. */
 function missingSchemaObjects(database: RerailDatabase): string[] {
@@ -370,14 +406,20 @@ function checkBeforeWriting(database: RerailDatabase, path: string, supported: n
 
 /**
  * Migration steps, DDL and stamp run under one write lock, so concurrent openers agree on the file's shape and a
- * step that fails leaves the file as it was. `migrations` is undefined for a read-only open, which only checks.
+ * step that fails leaves the file as it was. A file already in this build's shape, read with its stamp as one
+ * snapshot, has nothing to change, so its open takes no lock and never waits behind another process's write; one that
+ * needs a change is read again under the lock, where another opener may have made it first. A statement the check
+ * cannot name ({@link UNNAMED_SCHEMA_STATEMENTS}) counts as a change on every file. `migrations` is undefined for a
+ * read-only open, which only checks.
  */
 function applySchema(database: RerailDatabase, path: string, migrations: readonly Migration[] | undefined, supported: number): void {
-  if (migrations !== undefined) database.run(sql.raw("BEGIN IMMEDIATE"));
-  const stamp = schemaStamp(database);
-  const refusal = schemaRefusal(path, stamp, supported);
-  if (refusal !== undefined) throw new Error(refusal);
-  if (migrations === undefined) return;
+  const change = database.$client.transaction(() => {
+    const { version } = checkedStamp(database, path, supported);
+    return migrations === undefined ? undefined : shapeChange(database, version, migrations);
+  })();
+  if (migrations === undefined || (change === undefined && UNNAMED_SCHEMA_STATEMENTS.length === 0)) return;
+  database.run(sql.raw("BEGIN IMMEDIATE"));
+  const stamp = checkedStamp(database, path, supported);
   const floor = migrate(database, { fresh: stamp.version === 0, floor: stamp.version }, RERAIL_SCHEMA_STATEMENTS, migrations);
   if (floor !== stamp.version) database.run(sql.raw(`PRAGMA user_version = ${floor}`));
   database.run(sql.raw("COMMIT"));

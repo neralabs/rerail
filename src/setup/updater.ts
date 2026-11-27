@@ -189,6 +189,11 @@ export function compareSemver(left: string, right: string): number {
   return coreComparison === 0 ? comparePrerelease(a.prerelease, b.prerelease) : coreComparison;
 }
 
+/** Whether the release `latest` is newer than the `running` one: the tray's update item; throws as `compareSemver` does. */
+export function isNewerRelease(latest: string, running: string): boolean {
+  return compareSemver(latest, running) > 0;
+}
+
 /** What an npm lockfile records of each package, by its location (`node_modules/<name>`); none where it cannot be read. */
 async function lockedPackages(lockfilePath: string): Promise<Record<string, { resolved?: unknown; integrity?: unknown } | undefined>> {
   try {

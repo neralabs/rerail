@@ -1681,3 +1681,45 @@ describe("CheckoutCodeRuleRouter lanes after review", () => {
     expect(auditor.ignoreRuleRoots()).toEqual([session, service, inner]);
   });
 });
+
+describe("CheckoutCodeRuleRouter in a session checkout that runs no rules, replaced at its path", () => {
+  // The session's checkout, `app`, is left in a stopped repository or started but not set up, so no lane reads its
+  // rules; it is then removed and a linked worktree of `other`, a started clone set up with `test:other`, added there.
+  const left: Record<string, (app: string, databasePath: string) => void> = {
+    "in a stopped repository": (app, databasePath) => {
+      const repositoryKey = setUpTestRepository(app, { library: [file(needle("test:app", "APP"))] }, databasePath);
+      const database = openRerailDatabase(databasePath);
+      try {
+        setRepositoryStarted(database, repositoryKey, false);
+      } finally {
+        database.$client.close();
+      }
+    },
+    "not set up": (app, databasePath) => {
+      startTestRepository(app, databasePath);
+    },
+  };
+
+  for (const [state, leave] of Object.entries(left)) {
+    it(`runs the rules of the clone now there at the next event when the session checkout was ${state}`, async () => {
+      const root = await temporaryRoot();
+      const databasePath = join(root, "rerail.sqlite");
+      const app = await repository(join(root, "app"));
+      leave(app, databasePath);
+      const other = await repository(join(root, "other"));
+      setUpTestRepository(other, { library: [file(needle("test:other", "OTHER"))] }, databasePath);
+      const { recorder, audits } = recordingAudits();
+      const auditor = router(app, databasePath, recorder);
+      await auditor.openWorkspace(state);
+      auditor.refreshCodeRules();
+      expect(auditor.acceptsPath("api/x.py")).toBe(false);
+
+      await removeFolder(app);
+      git(other, "worktree", "add", "--quiet", "-b", "side", app);
+      auditor.refreshCodeRules();
+      await edit(auditor, state, 1, "api/x.py");
+
+      expect(violations(audits)).toEqual([{ checkout: app, path: "api/x.py", code: "OTHER", mode: "block" }]);
+    });
+  }
+});

@@ -1,0 +1,1 @@
+In internal testing, Rerail shows an icon in the macOS menu bar, the Windows notification area or the Linux system tray while its daemon runs (`RERAIL_EXPERIMENTAL_TRAY_ICON`). Its menu shows Rerail's status, version and home and each repository's rules on, opens the dashboard, Settings or the documentation, and updates, restarts or stops Rerail.

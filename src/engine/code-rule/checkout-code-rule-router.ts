@@ -12,6 +12,7 @@
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
 import { FolderPlaces } from "../catalog/checkouts/folder-places.js";
+import { WalkFolderOwners } from "../catalog/checkouts/walk-folder-owners.js";
 import { placeWorktrees, placingWorktrees } from "../catalog/checkouts/checkout-placement.js";
 import { learnWorktreeList, worktreeRegistry, type WorktreeListLearning, type WorktreeRegistry } from "../catalog/repository-identity.js";
 import type { GitReads } from "../git.js";
@@ -266,6 +267,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   refreshCodeRules(): void {
     if (this.#closing) return;
     const ran = new Map([...this.#gitIgnore.keys()].map(root => [root, this.#mayRun(root)]));
+    this.#placeStartingAgain();
     for (const [root, eligibility] of this.#options.catalogs.refreshAll([...this.#eligibility.keys()])) this.#eligibility.set(root, eligibility);
     this.#refreshes += 1;
     this.#forgetGitIgnoreOfChanged(ran);
@@ -275,6 +277,18 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     if (!this.#rulesChanged(own)) return;
     this.#refreshAnsweredCatalogs();
     for (const lane of [...this.#lanes.values()]) this.#lane(lane.root);
+  }
+
+  /**
+   * Has the read of every checkout ask the session checkout's folder whether it is still the clone recorded there while
+   * its row reads stopped or not set up (`CheckoutCatalogs.placeAgain`): no lane reads its rules then, which asks it
+   * (`#signature`), so one replaced at its path by a started clone's worktree runs that clone's rules at this event. One
+   * unrecorded is read afresh by the read itself (`#recordWorktree`).
+   */
+  #placeStartingAgain(): void {
+    const starting = this.#options.startingCheckout;
+    const eligibility = this.#eligibility.get(starting);
+    if (eligibility === "stopped" || eligibility === "not-set-up") this.#options.catalogs.placeAgain(starting);
   }
 
   /**
@@ -351,31 +365,27 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   /**
    * `acceptsPath`, `ignoresPath` and `sourceRoot` for one walk. A path's full lookup (`#owner`) resolves its real path
    * and looks for `.git` on disk, about 0.4 ms on Windows, and the walk asks two questions of every file, and the
-   * grouping of what it found by checkout a third. A file the walk found is no link, so its checkout is its folder's:
-   * each folder gets the full lookup once, for itself and its files. A checkout recorded while the walk runs owns its
-   * files from the next walk.
+   * grouping of what it found by checkout a third. A file the walk found is no link, so its checkout is its folder's,
+   * and a folder whose listing named no `.git` entry takes its parent's (`WalkFolderOwners`): only the walk's top, each
+   * folder holding `.git` and each folder its parent's checkout ignores get the full lookup. A checkout recorded while
+   * the walk runs owns its files from the next walk.
    */
   walkView(root?: string): Required<WalkView> {
-    const folders = new Map<string, CheckoutOwner | undefined>();
     const real = this.#realBelow(root);
-    const folderOwner = (folder: string): CheckoutOwner | undefined => {
-      if (!folders.has(folder)) folders.set(folder, this.#owner(resolve(this.#sessionRoot, folder), real));
-      return folders.get(folder);
-    };
-    const fileOwner = (path: string): CheckoutOwner | undefined => {
-      const slash = path.lastIndexOf("/");
-      const owner = folderOwner(slash < 0 ? "" : path.slice(0, slash));
-      const name = path.slice(slash + 1);
-      return owner === undefined ? undefined : { checkoutRoot: owner.checkoutRoot, path: owner.path === "" ? name : `${owner.path}/${name}` };
-    };
+    const owners = new WalkFolderOwners(
+      folder => this.#owner(resolve(this.#sessionRoot, folder), real),
+      folder => this.#options.owners.plainRootAt(folder),
+    );
     // Git's ignore answers come from those every session's walks learnt of the checkout, checked once per walk against
     // the facts that end them (`GitIgnoreMatchers.look`); while they hold, a file's second question, whether a lane
     // reads it, takes the answer its first learnt.
     const look = this.#gitIgnoreMatchers.look();
     return {
-      acceptsPath: path => this.#accepts(fileOwner(path), look),
-      ignoresPath: (path, directory) => this.#ignores(directory ? folderOwner(path) : fileOwner(path), directory, look),
-      sourceRoot: path => fileOwner(path)?.checkoutRoot,
+      acceptsPath: path => this.#accepts(owners.file(path), look),
+      ignoresPath: (path, directory) =>
+        (directory ? owners.ignored(path, owner => this.#ignores(owner, true, look)) : this.#ignores(owners.file(path), false, look)),
+      sourceRoot: path => owners.file(path)?.checkoutRoot,
+      folderListed: (path, holdsGitEntry) => owners.listed(path, holdsGitEntry),
     };
   }
 

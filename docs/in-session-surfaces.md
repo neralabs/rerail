@@ -319,7 +319,7 @@ A hook never fails a tool call; the footer says `not running`.
 - In OMP and Pi, a Rerail tool hook releases the tool after 25 seconds regardless.
 - Codex, with no footer, shows `Rerail ✕ not running · start it with: rerail daemon start` once at session start.
 
-Events the OMP or Pi extension cannot hand to the daemon are recorded as a gap, not lost silently. Meanwhile the footer adds `Rerail: N session events dropped — daemon not answering` (not under `silent`), and the dashboard timeline counts the events that never arrived.
+Events the OMP or Pi extension cannot hand to the daemon are recorded as a gap, not lost silently. Meanwhile the footer adds `Rerail: N session events dropped — daemon not answering` (not under `silent`), and the dashboard timeline counts the events that never arrived. When the daemon could not start or answer at a session's start, the extension tries again after 1 second, doubling up to 30 seconds, until it attaches, and the session's events until then count the same way.
 
 </details>
 

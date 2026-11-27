@@ -771,6 +771,35 @@ function packagedEnginePath(lookup: EngineLookup, fileName: string): string {
   return addonPath;
 }
 
+/**
+ * The tray icon program's file for a platform, as each engine package carries it beside the engine
+ * (scripts/release/engine/packages.mjs, ENGINE_PACKAGES): the engine's suffix, and `.exe` on Windows.
+ */
+export function nativeTrayFileName(platform: NodeJS.Platform = process.platform, architecture: string = process.arch): string {
+  return `rerail-tray.${nativePlatformSuffix(platform, architecture)}${platform === "win32" ? ".exe" : ""}`;
+}
+
+/**
+ * The tray icon program Rerail runs, found as {@link resolveNativeBindingPath} finds the engine: in the package's own
+ * `native/` (a checkout's build), then in the system's engine package at Rerail's version. Undefined, never an error,
+ * where neither holds it: the icon is an extra, and Rerail runs without one.
+ */
+export function resolveNativeTrayPath(site: NativeEngineSite = {}): string | undefined {
+  const { packageRoot = PACKAGE_ROOT, platform = process.platform, architecture = process.arch } = site;
+  const fileName = nativeTrayFileName(platform, architecture);
+  const built = join(packageRoot, "native", fileName);
+  if (existsSync(built)) return built;
+  try {
+    const folder = installedPackageFolder(packageRoot, nativeEnginePackageName(platform, architecture));
+    if (folder === undefined || packageVersion(folder) !== packageVersion(packageRoot)) return undefined;
+    const packaged = join(folder, fileName);
+    return existsSync(packaged) ? packaged : undefined;
+  } catch {
+    // A package.json that cannot be read or parsed: no tray, as where none is installed.
+    return undefined;
+  }
+}
+
 function packageVersion(folder: string): string {
   return String((JSON.parse(readFileSync(join(folder, "package.json"), "utf8")) as { version?: unknown }).version);
 }

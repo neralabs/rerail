@@ -129,6 +129,11 @@ export interface WorktreeFindings {
   /** Subtrees the walk could not read. */
   readonly failedRoots: ReadonlySet<string>;
   /**
+   * What the read left out (`WorktreeRead.leftOut`): it read nothing at or below each of these paths, so the snapshot
+   * says nothing of a file there.
+   */
+  readonly leftOut: ReadonlySet<string>;
+  /**
    * Whether the read gave up on a path it met (`SourceScan.gaveUp`): a write there may be found only by the read that
    * tries again, so this one answers for no call's writes.
    */
@@ -1264,7 +1269,8 @@ export class WorktreeWalks {
       const listings = await listedFor(this.#git, { root, head: read.head, sources: snapshot.sources }, begun.firstSeen, scan.checkouts);
       const findings = {
         snapshot, texts, head: read.head, unmerged: read.unmerged, checkouts: scan.checkouts, ...listings,
-        failedRoots: scan.failedRoots, gaveUp: scan.gaveUp === true, errors: scan.errors, unread: scan.unread, readFrom: read.observedAt,
+        failedRoots: scan.failedRoots, leftOut: scan.seen.leftOut, gaveUp: scan.gaveUp === true, errors: scan.errors, unread: scan.unread,
+        readFrom: read.observedAt,
         changes,
       };
       return { findings, scan };

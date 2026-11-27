@@ -380,7 +380,10 @@ questions as text.
 Rerail runs the first safe `git` it finds, and the Node that ran set-up.
 
 After moving to another Node, run `rerail install --refresh` with it first on `PATH` to record it for the launcher,
-hooks and status line.
+hooks and status line. Where an older Node took the place of the recorded one at the same path (a package downgraded,
+Homebrew's `node` linked to an older formula), `rerail` still runs that path, so run
+`node ~/.rerail/current/dist/cli/cli.js install --refresh` instead, with Node 24 or newer first on `PATH`; the hooks'
+line gives it with your own path. On Windows run the line's command, since `cmd.exe` passes `~` to `node` as it is.
 
 <details>
 <summary>How Git is found</summary>
@@ -428,7 +431,8 @@ on). If that has happened, delete from `~/.claude/settings.json` each hook entry
 and whose `args` name `hook-launcher.js`.
 
 On a Node older than 24, the CLI and the daemon stop with set-up's message, the hooks do nothing, and a status line
-that starts Node says `needs Node 24 or newer`.
+that starts Node says `needs Node 24 or newer`. The launcher, the hooks and the status line run the recorded path while
+it is there, whatever its version: replacing the Node at that path with an older one leaves them on it.
 
 </details>
 
@@ -666,7 +670,8 @@ aside (or point `RERAIL_HOME` elsewhere), start again, then re-import your rules
 
 A newer Rerail that first opens the file (the daemon, `rerail start`, set-up, or a command, hook or status line that
 only reads) runs the pending migration steps in one transaction. A failing step leaves the file as it was. A process
-that cannot write the file gets an error naming those steps, and the file is left as it was.
+that cannot write the file gets an error naming those steps, and the file is left as it was. Once the file has this
+version's shape, an open only reads it, so it does not wait while another process writes, as `rerail scrub` does.
 
 Moving each audit's rule provenance to one shared copy is not part of a step: the step adds two tables and a column,
 and records the last audit the database holds; the daemon moves the provenance of the audits up to that one once it

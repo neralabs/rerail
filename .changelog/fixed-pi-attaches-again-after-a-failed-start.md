@@ -1,0 +1,1 @@
+In Pi, Rerail attaches again after the daemon failed to start at the session's start, trying after 1 second and doubling up to 30 seconds. Before, it stayed off for the rest of the session and each prompt failed with `received input before session_start`. Meanwhile the footer counts the session events dropped, and the session's history records them.

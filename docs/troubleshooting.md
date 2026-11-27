@@ -476,6 +476,19 @@ rerail hook: Rerail needs Node 24 or newer and this is Node 22.12.0, so it is of
 Put Node 24 or newer first on `PATH` and run `rerail install --refresh` (or `rerail update`). It records that Node in
 the launcher, every connected agent's hooks and the status line.
 
+If an older Node took the place of the recorded one at the same path (a package downgraded, Homebrew's `node` linked
+to an older formula), `rerail` still runs that path whatever `PATH` holds, and the hooks' line names the launcher's
+own command with `node` from `PATH` in its place:
+
+```text
+rerail hook: Rerail needs Node 24 or newer and this is Node 22.12.0, so it is off in this session. Put Node 24 or newer first on PATH, then run node /home/me/.rerail/current/dist/cli/cli.js install --refresh: the rerail command runs /usr/local/bin/node while that file is there, whatever PATH holds.
+```
+
+Run that with Node 24 or newer first on `PATH`; it records that Node as `rerail install --refresh` does. Putting Node
+24 or newer back at the recorded path works too. On Windows the line puts the path in double quotes, which `cmd.exe`
+and PowerShell both take; a path holding `%`, `!`, `$`, a backtick or a typographic double quote gets PowerShell's
+single quotes instead, and the line says to run it in PowerShell.
+
 <details>
 <summary>How Node is found, and no `node` at all</summary>
 
@@ -627,7 +640,8 @@ Agents load hooks and commands when a session starts. Open a new session after s
 
 ### `rerail status` says `Hooks run but nothing was recorded`
 
-A coding agent ran Rerail's hooks, and Rerail could not record their events. The line names the last event that
+A coding agent ran Rerail's hooks, and Rerail could not record their events (or the `rerail events` stream's, under
+its own names for them, such as `user-prompt`). The line names the last event that
 failed, the coding agent and its version, the Rerail version and the reason, such as `no Rerail daemon answered`
 (the daemon was down; the next hook starts it), `the Rerail daemon (pid …) is running but did not answer within 12 s`
 (it was busy, for example opening a large checkout, and the hook could not leave the event for it: the daemon is of an
