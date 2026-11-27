@@ -174,14 +174,16 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
     // An audit's `origin`: `ongoing`, or `scan` for one someone asked for, whose violations the dashboard leaves out.
     // The four triggers that derive history from `audits` are dropped, and the DDL right after creates them again
     // skipping scans. The scans a file already holds are marked where it still names them (`markRecordedScans`), and a
-    // scan request whose stored audit ids do not read is left out and named (`markRequestedScans`). No floor: an older
+    // scan request whose stored audit ids do not read is left out and named (`markRequestedScans`). The column goes in
+    // with the rows' CHECKs off (`withoutRowChecks`), so an audit a damaged file left fails no check. No floor: an older
     // build never reads the column, its inserts take the default, and it creates a trigger only when the trigger is
     // missing, so it keeps these.
     id: "audits-origin",
     up(database) {
       for (const trigger of ["audits_history_insert", "audits_history_violations_append", "audits_history_violations_update", "audits_history_rule_set_update"])
         database.run(sql.raw(`DROP TRIGGER IF EXISTS \`${trigger}\``));
-      addColumn(database, "audits", "origin", `text DEFAULT 'ongoing' NOT NULL CONSTRAINT "audits_origin" CHECK("audits"."origin" IN ('ongoing', 'scan'))`);
+      withoutRowChecks(database, () => addColumn(database, "audits", "origin",
+        `text DEFAULT 'ongoing' NOT NULL CONSTRAINT "audits_origin" CHECK("audits"."origin" IN ('ongoing', 'scan'))`));
       markRecordedScans(database);
     },
   },
@@ -451,6 +453,24 @@ export function addColumn(database: RerailDatabase, table: string, column: strin
   const columns = database.all<{ name: string }>(sql`SELECT name FROM pragma_table_info(${table})`);
   if (columns.length === 0 || columns.some(existing => existing.name === column)) return;
   database.run(sql.raw(`ALTER TABLE ${identifier(table)} ADD COLUMN ${identifier(column)} ${definition}`));
+}
+
+/**
+ * Runs `change` with this connection's CHECK constraints off, and puts the setting back: for an `ALTER TABLE ... ADD
+ * COLUMN` whose column has a CHECK of its own, for which SQLite checks every row against every CHECK of the table
+ * (`pragma_quick_check`). One row whose stored JSON a damaged file or a hand edit left fails such a CHECK, and with it
+ * the step and the open, at every open. The new column's default meets its own CHECK, and the other CHECKs are the
+ * rows' own, which no step changes: checking them adds only that failure.
+ */
+function withoutRowChecks(database: RerailDatabase, change: () => void): void {
+  const client = database.$client;
+  const before = client.pragma("ignore_check_constraints", { simple: true }) as number;
+  client.pragma("ignore_check_constraints = ON");
+  try {
+    change();
+  } finally {
+    client.pragma(`ignore_check_constraints = ${before === 1 ? "ON" : "OFF"}`);
+  }
 }
 
 /** The steps of `migrations` an existing file has not recorded, in list order; every step for a file without the record. */

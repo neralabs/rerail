@@ -714,11 +714,12 @@ the file, and a hook or the status line runs such steps itself. A step an older 
 floor. It waits for the new version's daemon or a command that writes; until then a hook or the status line says to
 run `rerail daemon start`.
 
-A scan request's audit ids, or an audit's violations or rule revisions, that are not a JSON array, which only a
-damaged file or a hand edit leaves, fail no step: the step that reads them leaves that row out, and the process that
-ran the step names the row once on its error output, which is `daemon.log` for the daemon and the terminal for a
-`rerail` command; a hook's error output reaches no one. The audits such a scan request names stay in its session's
-history, even once the row is mended, since each step runs once.
+A scan request or an audit whose stored JSON is not a JSON array, which only a damaged file or a hand edit leaves,
+fails no step. A step that reads that JSON (a scan request's audit ids, an audit's violations and rule revisions)
+leaves the row out of what it derives, and the process that ran the step names the row once on its error output, which
+is `daemon.log` for the daemon and the terminal for a `rerail` command; a hook's error output reaches no one. The
+audits such a scan request names stay in its session's history, even once the row is mended, since each step runs
+once.
 
 Storing each new audit's rule provenance once sets no floor, so coding agents on different Rerail versions keep
 sharing the file. An older Rerail reads an empty rule provenance for each audit a newer one wrote or moved, in its

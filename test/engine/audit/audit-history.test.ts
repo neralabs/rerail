@@ -539,6 +539,8 @@ describe("derived audit history", () => {
     ["every audit's lists read", undefined, undefined],
     ["one audit's violations are cut short", { violations_json: cutShort("violations_json") }, "violations_json"],
     ["one audit's rule revisions are cut short", { rule_revisions_json: cutShort("rule_revisions_json") }, "rule_revisions_json"],
+    // No step reads an audit's paths, but adding `audits.origin` with its CHECK makes SQLite check every row.
+    ["one audit's paths are cut short", { paths_json: cutShort("paths_json") }, undefined],
     ["one audit's violations and rule revisions each end with a string", {
       violations_json: "json_insert(violations_json, '$[#]', 'no violation')", rule_revisions_json: "json_insert(rule_revisions_json, '$[#]', 'no revision')",
     }, undefined],
@@ -585,6 +587,8 @@ describe("derived audit history", () => {
       // The open names the list it left out, once: the file, the audit, and the column to mend.
       expect(said.map(line => [line.startsWith(`rerail: ${path}: `), line.includes(` ${damagedAudit}: the ${named} of its audits row `)]))
         .toEqual(named === undefined ? [] : [[true, true]]);
+      // The writer the open returns checks every later write.
+      expect(database.$client.pragma("ignore_check_constraints", { simple: true })).toBe(0);
       // The oracle reads every audit's lists whole, so the damaged audit goes first, with what was derived from it: every
       // other audit's history is what reading every audit gives.
       if (damaged !== undefined) database.$client.prepare("DELETE FROM audits WHERE audit_id = ?").run(damagedAudit);
