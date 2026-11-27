@@ -965,6 +965,32 @@ describe("openDashboard", () => {
     expect(commands).toEqual([orca, desktopOpener]);
   });
 
+  it("says on stderr, with the link, when the browser opener cannot start, unless the caller handles that itself", async () => {
+    const failing = (): DaemonMachine => fakeMachine("linux", {
+      spawnShown: () => {
+        const child = Object.assign(new EventEmitter(), { unref() {} });
+        process.nextTick(() => child.emit("error", Object.assign(new Error("spawn xdg-open ENOENT"), { code: "ENOENT" })));
+        return child;
+      },
+    });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      // A person at a terminal (`rerail manage`) is shown the link to visit.
+      expect(openInBrowser(url, failing())).toBe(true);
+      await new Promise(resolve => setImmediate(resolve));
+      expect(stderr.mock.calls.map(([chunk]) => String(chunk))).toEqual([`rerail: could not open a browser; visit ${url}\n`]);
+
+      stderr.mockClear();
+      const errors: string[] = [];
+      expect(openInBrowser(url, failing(), { onError: error => void errors.push(error.message) })).toBe(true);
+      await new Promise(resolve => setImmediate(resolve));
+      expect(errors).toEqual(["spawn xdg-open ENOENT"]);
+      expect(stderr).not.toHaveBeenCalled();
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
   it("falls back to the desktop browser when orca fails", async () => {
     const { commands, machine } = opening(underOrca, child => child.emit("exit", 1, null));
     expect(await openDashboard(url, machine, candidates)).toBe("system-browser");
@@ -3642,6 +3668,21 @@ describe("the engine endpoint of a busy daemon", () => {
     );
     expect(probes).toBe(2);
   });
+
+  // The event stream's events after its first keep whichever daemon runs: after `rerail update` that is the newer
+  // package's, which a stream of the older one would otherwise stop and replace with its own.
+  it("takes a running daemon of another package as it is, starting nothing, when the caller may not replace it", async () => {
+    const state = stateFor({ url: "http://127.0.0.1:4791/" });
+    await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(state));
+    const asked = vi.fn(async (_url: string | URL, _init?: RequestInit) => Response.json({ status: "ok", pid: DEAD_PID }));
+    vi.stubGlobal("fetch", asked);
+    await holdHome(home, DEAD_PID);
+    // A replacement would ask this daemon to stop, then start one: this machine starts no process.
+    const machine = fakeMachine("linux", { env: { RERAIL_HOME: home, RERAIL_AUTOSTART: "1" }, kill: () => true, homeDaemonLockHeld: () => true });
+    expect(await runningDaemonEngineEndpoint(undefined, machine, false)).toEqual({ status: "running", endpoint: { socketPath: state.kernelSocketPath } });
+    // It was asked only for its health, never to stop.
+    expect(new Set(asked.mock.calls.map(([url]) => String(url)))).toEqual(new Set(["http://127.0.0.1:4791/healthz"]));
+  });
 });
 
 describe("launching the daemon", () => {
@@ -3670,8 +3711,9 @@ describe("launching the daemon", () => {
     const daemon = launchDetached({ args: ["daemon.js"], cwd: undefined, env: {}, logFile: join(home, DAEMON_LOG_FILE) }, machine);
     expect(daemon.exitReason()).toBeUndefined();
     expect(daemon.exitReason()).toBe("exited with code 3");
-    // Asked again once the handle is closed, it gives the same reason.
+    // Asked again once the handle is closed, it gives the same reason, and the code it read.
     expect(daemon.exitReason()).toBe("exited with code 3");
+    expect(daemon.exitCode()).toBe(3);
   });
 
   it("goes through the native spawn on Windows, whose hidden console the daemon's Git and npm share, never Node's detached spawn", () => {
@@ -3689,6 +3731,7 @@ describe("launching the daemon", () => {
     const daemon = launchDetached({ args: ["cli.js", "daemon", "start"], cwd: undefined, env: { A: "1", B: undefined }, logFile: log }, machine);
     expect(daemon.pid).toBe(process.pid);
     expect(daemon.exitReason()).toBe("exited");
+    expect(daemon.exitCode()).toBeNull();
     expect(launched).toEqual([{
       program: String.raw`C:\Program Files\nodejs\node.exe`, args: ["cli.js", "daemon", "start"], cwd: null, env: { A: "1" }, logFile: log,
     }]);
@@ -3988,12 +4031,18 @@ describe("autostartDaemon", () => {
 
   /**
    * A process of its own, as every hook is, that finds no daemon in `home`: it prints `ready`, and on each line on stdin
-   * calls autostartDaemon and prints how many processes it has launched, exiting after `calls` lines. Its machine counts
-   * launches and starts nothing; the launcher it reports is `launcher`, by default the test's own process, which runs for
-   * the whole test as a real launcher runs for its start, and null reports none. Its pid checks are real, but for
-   * `handOverFrom`: the autostart that, as this hook looks at it, hands its claim to `launcher` and exits.
+   * calls `launch` (autostartDaemon by default) and prints how many processes it has launched, exiting after `calls`
+   * lines. Its machine counts launches and starts nothing; the launcher it reports is `launcher`, by default the test's
+   * own process, which runs for the whole test as a real launcher runs for its start, and null reports none. Its pid
+   * checks are real, but for `handOverFrom`: the autostart that, as this hook looks at it, hands its claim to `launcher`
+   * and exits.
    */
-  function hookProcess(home: string, { calls = 1, launcher = process.pid, handOverFrom }: { calls?: number; launcher?: number | null; handOverFrom?: number } = {}): {
+  function hookProcess(home: string, { calls = 1, launcher = process.pid, handOverFrom, launch = "autostartDaemon" }: {
+    calls?: number;
+    launcher?: number | null;
+    handOverFrom?: number;
+    launch?: "autostartDaemon" | "launchAutostart";
+  } = {}): {
     child: ChildProcess;
     ready: Promise<void>;
     go: () => void;
@@ -4007,7 +4056,7 @@ describe("autostartDaemon", () => {
        import { writeFileSync } from "node:fs";
        import { join } from "node:path";
        import { createInterface } from "node:readline";
-       const { AUTOSTART_CLAIM_FILE, autostartDaemon } = await import(${JSON.stringify(daemonControlModule)});
+       const { AUTOSTART_CLAIM_FILE, ${launch} } = await import(${JSON.stringify(daemonControlModule)});
        let launches = 0;
        const launcher = ${launcher ?? "undefined"};
        const started = () => {
@@ -4036,7 +4085,7 @@ describe("autostartDaemon", () => {
        process.stdout.write("ready\\n");
        let calls = ${calls};
        for await (const _line of createInterface({ input: process.stdin })) {
-         autostartDaemon(machine);
+         ${launch}(machine);
          process.stdout.write("launches " + launches + "\\n");
          if (--calls === 0) process.exit(0);
        }`,
@@ -4179,6 +4228,25 @@ describe("autostartDaemon", () => {
       await Promise.all([own, other, late, hung].map(async home => await removeFolder(home!)));
     }
   }, 30_000);
+
+  it("launches again, from a process that hands many events to the daemon, once the launch it made has ended without a daemon", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rerail-autostart-"));
+    const claim = join(home, AUTOSTART_CLAIM_FILE);
+    // The event stream: one process for a whole session, which asks at each event that finds no daemon.
+    const stream = hookProcess(home, { calls: 3, launch: "launchAutostart" });
+    try {
+      await stream.ready;
+      expect(await stream.call()).toBe(1);
+      // Its launcher runs and holds the claim: the next event leaves the start to it.
+      expect(await stream.call()).toBe(1);
+      // That launch ended without a daemon, and its start ended the claim.
+      await rm(claim);
+      expect(await stream.call()).toBe(2);
+    } finally {
+      if (stream.child.exitCode === null && stream.child.signalCode === null) stream.child.kill("SIGKILL");
+      await removeFolder(home);
+    }
+  }, 60_000);
 
   it("launches at a later session start once the launch it left the start to has ended without a daemon", async () => {
     const home = await mkdtemp(join(tmpdir(), "rerail-autostart-"));

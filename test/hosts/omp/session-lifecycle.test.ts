@@ -11,6 +11,7 @@ import { CodeRuleBridge, type ConversationRule, defaultRerailDatabasePath, messa
 import { EVENTS_DROPPED_ENTRY_TYPE, MATCH_ENTRY_TYPE, RerailRuntime, SqliteSessionReader, TURN_ENTRY_TYPE } from "../../../src/runtime/index.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
+import { stopTestRepository } from "../../support/started-repository.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
 import { withExperiments } from "../../support/environment/experiments.js";
 
@@ -233,6 +234,96 @@ it("counts events that arrive while attach is failing and records them once atta
     await extension.emit("session_shutdown", {});
   }
 }, 30_000);
+
+it("counts Pi's events while its in-process start is failing, and records them once a retry starts it (#1131)", async () => {
+  const extension = await harness("pi");
+  const failure = new Error("Session store unavailable");
+  vi.spyOn(RerailRuntime.prototype, "openSession").mockRejectedValueOnce(failure);
+  const reader = new SqliteSessionReader(defaultRerailDatabasePath());
+  try {
+    await expect(extension.emit("session_start", {})).rejects.toThrow(failure.message);
+    // Until the retry a second later starts the session, Pi's events resolve without reaching Rerail and are counted.
+    await extension.emit("input", { type: "input", text: "Add a test." });
+    await extension.emit("message_update", delta("Guest checkout remains available. Next"));
+    expect(extension.messages).toEqual([]);
+    await vi.waitFor(() => {
+      expect(reader.events("original").filter(event => event.kind === "events-dropped").map(event => event.payload))
+        .toEqual([expect.objectContaining({ count: 2, kinds: { "user-prompt": 1, "assistant-delta": 1 } })]);
+    }, { timeout: 15_000, interval: 100 });
+    await extension.emit("message_update", delta("Guest checkout remains available. Next", "after-attach"));
+    expect(extension.messages).toEqual([
+      expect.objectContaining({ content: checkoutSteer("pi"), details: expect.objectContaining({ sessionId: "original" }) }),
+    ]);
+  } finally {
+    reader.close();
+    await extension.emit("session_shutdown", {});
+  }
+}, 30_000);
+
+describe("the gap of Pi's events while its in-process start was failing", () => {
+  const failure = new Error("Session store unavailable");
+  const dropTwo = async (extension: Awaited<ReturnType<typeof harness>>) => {
+    await expect(extension.emit("session_start", {})).rejects.toThrow(failure.message);
+    await extension.emit("input", { type: "input", text: "Add a test." });
+    await extension.emit("message_update", delta("Guest checkout remains available. Next"));
+  };
+  const markers = (extension: Awaited<ReturnType<typeof harness>>) =>
+    extension.entries.filter(entry => entry.customType === EVENTS_DROPPED_ENTRY_TYPE).map(entry => entry.data);
+  const final = expect.objectContaining({ count: 2, kinds: { "user-prompt": 1, "assistant-delta": 1 }, recovered: false });
+
+  it("keeps its final count in the session's marker when a retry finds Rerail stopped meanwhile", async () => {
+    const extension = await harness("pi");
+    vi.spyOn(RerailRuntime.prototype, "openSession").mockRejectedValue(failure);
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      await dropTwo(extension);
+      // Stopped as `/rerail-stop` leaves the repository: the next try attaches nothing that could record the gap.
+      stopTestRepository(extension.context.cwd);
+      await vi.waitFor(() => expect(markers(extension)).toHaveLength(2), { timeout: 15_000, interval: 100 });
+      expect(markers(extension)).toEqual([expect.objectContaining({ count: 1, recovered: false }), final]);
+    } finally {
+      await extension.emit("session_shutdown", {});
+    }
+  }, 30_000);
+
+  it("keeps its final count in the session's marker, not marked recovered, when the runtime that attached cannot record it", async () => {
+    const extension = await harness("pi");
+    vi.spyOn(RerailRuntime.prototype, "openSession").mockRejectedValueOnce(failure);
+    // Another process holds the database's write lock as the retry's runtime records the gap.
+    vi.spyOn(RerailRuntime.prototype, "recordDroppedEvents").mockImplementationOnce(() => { throw new Error("database is locked"); });
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      await dropTwo(extension);
+      await vi.waitFor(() => expect(markers(extension)).toHaveLength(2), { timeout: 15_000, interval: 100 });
+      expect(markers(extension)).toEqual([expect.objectContaining({ count: 1, recovered: false }), final]);
+      expect(stderr.mock.calls.filter(([line]) => String(line).startsWith("Rerail could not record 2 dropped session event(s)")))
+        .toEqual([[expect.stringContaining("database is locked")]]);
+    } finally {
+      await extension.emit("session_shutdown", {});
+    }
+  }, 30_000);
+
+  it("keeps the final count of the session Pi left out of the session it then attaches", async () => {
+    const extension = await harness("pi");
+    const openSession = RerailRuntime.prototype.openSession;
+    vi.spyOn(RerailRuntime.prototype, "openSession").mockImplementation(function (this: RerailRuntime, session) {
+      return session.sessionId === "original" ? Promise.reject(failure) : openSession.call(this, session);
+    });
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const replacement = { ...extension.context, sessionManager: { getSessionId: () => "replacement", getBranch: () => [] } } as unknown as Context;
+    const markersIn = (session: string) => (extension.entriesBySession.get(session) ?? [])
+      .filter(entry => entry.customType === EVENTS_DROPPED_ENTRY_TYPE).map(entry => entry.data);
+    try {
+      await dropTwo(extension);
+      await extension.emit("session_before_switch", { reason: "new" });
+      await extension.emit("session_start", { reason: "new" }, replacement);
+      expect(markersIn("original")).toEqual([expect.objectContaining({ count: 1, recovered: false }), final]);
+      expect(markersIn("replacement")).toEqual([]);
+    } finally {
+      await extension.emit("session_shutdown", {}, replacement);
+    }
+  }, 30_000);
+});
 
 it("counts an event that waited on the attach that failed, and records it once a retry attaches", async () => {
   const extension = await harness("omp");

@@ -47,7 +47,7 @@ import { binaryPrefix } from "./binary-prefix.js";
 import { sensitiveByName } from "../path-boundary.js";
 import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
-import { type LinkedFiles, type NoticedRead, SessionNotices, type SessionReads, type WorktreeRead } from "./worktree-notices.js";
+import { leftOutOn, type LinkedFiles, type NoticedRead, SessionNotices, type SessionReads, type WorktreeRead } from "./worktree-notices.js";
 import { WorktreeLooks } from "./worktree-look.js";
 import { type CallPlace, type CallPlacesOf, type CallsAsked, type CallsCounted, type EndedCalls, ToolCallWindows } from "./tool-call-windows.js";
 import { capturedOtherThanMade, placesBeforeWrite, type ReportedPreimage, reportedText, textBeforeWrite, unprovenCaptureBefore } from "./tool-result/reported-preimage.js";
@@ -735,6 +735,17 @@ async function openSource(absolute: string): Promise<FileHandle | undefined> {
   } catch (error) {
     if (hasErrorCode(error, "ELOOP")) return undefined;
     throw error;
+  }
+}
+/**
+ * What one `lstat` through the thread pool finds at `absolute`: a regular file, no entry ("gone"), or anything else (a
+ * link, a folder, a failure other than a missing entry), which only a read as `openSource` opens can judge.
+ */
+async function entryAt(absolute: string): Promise<"file" | "gone" | "other"> {
+  try {
+    return (await lstat(absolute)).isFile() ? "file" : "other";
+  } catch (error) {
+    return hasErrorCode(error, "ENOENT") ? "gone" : "other";
   }
 }
 /**
@@ -1431,6 +1442,12 @@ interface WalkStart {
    * records once for the repository (`WorktreeWalks`). Empty for the session folder's walk.
    */
   readonly records: ReadonlySet<string>;
+  /**
+   * The auditor's view the session folder's walk asked of what it found (`SourceWalk.view`), made as it starts, which
+   * groups the walk's paths by checkout too (`#byOwningCheckout`). None for the walk of the other worktrees, which one
+   * session's view reads for every session watching them (`#scanWorktree`).
+   */
+  readonly view?: WalkView | undefined;
 }
 /** A worktree whose walk a session takes: its root (physical), its path as the session names it, and what the walk found. */
 interface TakenWorktree {
@@ -1953,6 +1970,28 @@ function settleRefusals(scan: SourceScan, { withdrawn, unconfirmed }: Judged): v
 function scanGaps(errors: readonly ScanError[]): WalkGap[] {
   return byPath(errors.map(({ path, readError, unrecorded }): WalkGap => ({ path: path || ".", reason: readError, ...(unrecorded ? { unrecorded } : {}) })));
 }
+/**
+ * Whether a listed name may be the `.git` entry a lookup of its folder finds. Compared in upper case: Windows and macOS
+ * find `.GIT` as `.git`, and elsewhere such a name costs a lookup that finds none.
+ */
+function mayBeGitEntry(name: string): boolean {
+  return name.toUpperCase() === ".GIT";
+}
+
+/**
+ * Every entry of `listing`, the folder `folder`'s, read whole, the walk's view told whether one may be its `.git`
+ * (`WalkView.folderListed`) before the walk asks about any; none once the walk is cancelled.
+ */
+async function wholeListing(walk: SourceWalk, folder: string, listing: AsyncIterable<Dirent>): Promise<Dirent[]> {
+  const entries: Dirent[] = [];
+  for await (const entry of listing) {
+    if (walk.discovery.cancelled) return [];
+    entries.push(entry);
+  }
+  walk.view.folderListed?.(folder, entries.some(entry => mayBeGitEntry(entry.name)));
+  return entries;
+}
+
 /**
  * Whether Git ignores the folder `child` a listing named. One removed as the walk asks (its owner's lookup `vanished`) is
  * left to its own examination, which finds it gone (`goneWhenExamined`): it never fails the folder that listed it.
@@ -3644,7 +3683,8 @@ export class CodeRuleBridge {
 
   /**
    * The scan of a pass: of the paths `reads` names, else, or when one of them is a folder now, of the whole folder,
-   * with what the whole walk walked into and left out (`seen`), which the next notices are weighed against.
+   * with what the whole walk walked into and left out (`seen`), which the next notices are weighed against. Each
+   * traversal asks a view of its own, which the walk it returns keeps (`WalkStart.view`).
    */
   async #scanPass(
     discovery: SourceDiscovery,
@@ -3653,13 +3693,15 @@ export class CodeRuleBridge {
     reads: SessionReads,
   ): Promise<{ walk: WalkStart; scan: SourceScan; seen?: WorktreeRead }> {
     if (!reads.whole) {
-      const noticed = await this.#scanNoticed(discovery, walk, reads);
-      if (noticed !== undefined) return { walk: { ...walk, noticed: reads.paths }, scan: noticed };
+      const noticing: WalkStart = { ...walk, view: this.#auditor.walkView?.(discovery.root) };
+      const noticed = await this.#scanNoticed(discovery, noticing, reads);
+      if (noticed !== undefined) return { walk: { ...noticing, noticed: reads.paths }, scan: noticed };
       // The whole walk notes each linked file again: counted twice, they could reach the bound they are under.
       reads.linked.restart();
     }
-    const scan = await this.#scanSources(discovery, walk, worktrees, reads.linked);
-    return { walk, scan, seen: scan.seen };
+    const whole: WalkStart = { ...walk, view: this.#auditor.walkView?.(discovery.root) };
+    const scan = await this.#scanSources(discovery, whole, worktrees, reads.linked);
+    return { walk: whole, scan, seen: scan.seen };
   }
 
   async #scanSources(
@@ -3697,7 +3739,7 @@ export class CodeRuleBridge {
       buffers: new WalkReadBuffers(MAX_SOURCE_BYTES + 1),
       scan,
       stack: [], roots: new Set([discovery.root]),
-      view: this.#auditor.walkView?.(discovery.root) ?? this.#auditor,
+      view: walk.view ?? this.#auditor,
       held: path => this.#holdsRefusal(path),
       withdrawn: discovery.withdrawn,
     };
@@ -3762,10 +3804,11 @@ export class CodeRuleBridge {
     }
     const prefix = sessionPath(discovery.root, request.root);
     const named = (path: string): string => (path === "" ? prefix : `${prefix}/${path}`);
-    const asked = this.#auditor.walkView?.(request.root) ?? this.#auditor;
+    const asked: WalkView = this.#auditor.walkView?.(request.root) ?? this.#auditor;
     const view: WalkView = {
       acceptsPath: path => asked.acceptsPath(named(path)),
       ignoresPath: (path, directory) => asked.ignoresPath?.(named(path), directory) === true,
+      folderListed: (path, holdsGitEntry) => asked.folderListed?.(named(path), holdsGitEntry),
     };
     const abandoned = (): boolean => this.#abandoned(discovery);
     const scope: WalkScope = { root: request.root, startedAt: request.startedAt, get cancelled() { return abandoned(); } };
@@ -3941,6 +3984,7 @@ export class CodeRuleBridge {
     records: WorktreeRecords,
   ): Promise<WorktreeTake> {
     const previous = new Map<string, ObservedSource>();
+    const leftOut = new Map<string, ObservedSource>();
     const scan = emptyScan();
     const snapshots = new Map<string, WorktreeSnapshot>();
     const heads = new Map<string, string>();
@@ -3956,8 +4000,9 @@ export class CodeRuleBridge {
       if (!findings.gaveUp) readFrom.set(worktree, findings.readFrom);
       takeCheckouts(root, findings, { heads, unmerged, passed: scan.unmerged });
       if (discovery.worktrees.fresh.has(worktree)) takeFirstSightListings(findings, listedAtFirstSight);
-      this.#takeFindings(discovery, { root, worktree }, findings, kept.get(worktree) ?? [], { previous, scan });
+      this.#takeFindings(discovery, { root, worktree }, findings, kept.get(worktree) ?? [], { previous, scan, leftOut });
     }
+    const gone = await this.#lookLeftOut(discovery, start, leftOut, previous);
     const walk: WalkStart = {
       inSession: false, baseline: false, checkpoint: "edit", worktrees: new Set(snapshots.keys()), previous, versions: start.versions,
       heads, unmerged, callsEnded: start.callsEnded, observedAt, readFrom, listed: start.listed, listedAtFirstSight,
@@ -3969,6 +4014,8 @@ export class CodeRuleBridge {
     const views = await this.#readTakenTexts(discovery, walk, scan, found);
     // Not this take's to record: the session keeps what it saw of them (`#takeSnapshots`), and a record of one waits.
     for (const path of views.keys()) previous.delete(path);
+    // Found gone (`#lookLeftOut`): compared as any source gone is, with no read to ask again.
+    gone.forEach((before, path) => previous.set(path, before));
     discovery.worktrees.unrecorded = new Set();
     leaveRecords(discovery, walk, [...walk.records].filter(path => views.has(path)));
     return { walk, scan, snapshots, views };
@@ -3995,7 +4042,7 @@ export class CodeRuleBridge {
     { root, worktree }: { readonly root: string; readonly worktree: string },
     findings: WorktreeFindings,
     kept: readonly string[],
-    taken: { readonly previous: Map<string, ObservedSource>; readonly scan: SourceScan },
+    taken: { readonly previous: Map<string, ObservedSource>; readonly scan: SourceScan; readonly leftOut: Map<string, ObservedSource> },
   ): void {
     const next = findings.snapshot;
     const takes = takenFrom(root, discovery.root);
@@ -4004,11 +4051,44 @@ export class CodeRuleBridge {
       : changedPaths(this.#worktreeView.snapshot(worktree), next);
     for (const path of new Set([...paths.filter(takes).map(path => inWorktree(worktree, path)), ...kept])) {
       const before = this.#observedSource(path);
-      if (before !== undefined) taken.previous.set(path, before);
+      // A source the session saw itself under what the read left out (a folder Git ignores, one no walk enters, a link)
+      // is none of the read's: the walk asks only whether it is gone (`#lookLeftOut`).
+      if (before !== undefined) (this.#seenLeftOut(findings, worktree, path) ? taken.leftOut : taken.previous).set(path, before);
       const after = takenSource(worktree, findings, path);
       if (after !== undefined) taken.scan.sources.set(path, after);
     }
     takeGaps(worktree, findings, taken.scan, takes);
+  }
+
+  /** Whether the session saw `path` itself (`#observed`) and the read of `worktree` left out the path or a folder on its way. */
+  #seenLeftOut(findings: WorktreeFindings, worktree: string, path: string): boolean {
+    return this.#observed.has(path) && leftOutOn(findings.leftOut, path.slice(worktree.length + 1));
+  }
+
+  /**
+   * Asks one `lstat` through the thread pool of each source of `leftOut`, the sources the session saw that the read left
+   * out, in waves as the walk reads files, until the walk is abandoned; none while a shell command of the session runs
+   * through the walk, which leaves every source to the next walk (`#toolChanges`). A regular file there stays as the
+   * session saw it, out of the walk; one the `lstat` cannot judge (`entryAt`) goes into `previous`, for the read
+   * `#keepSeenStill` makes of each source the snapshot lacks. Returns those found gone.
+   */
+  async #lookLeftOut(
+    discovery: SourceDiscovery,
+    start: WorktreeStart,
+    leftOut: ReadonlyMap<string, ObservedSource>,
+    previous: Map<string, ObservedSource>,
+  ): Promise<Map<string, ObservedSource>> {
+    const gone = new Map<string, ObservedSource>();
+    if (discovery.toolCalls.commandSince(start.callsEnded) !== undefined) return gone;
+    const asked = [...leftOut];
+    while (asked.length > 0 && !this.#abandoned(discovery)) {
+      const wave = asked.splice(0, OBSERVATION_CONCURRENCY);
+      const entries = await Promise.all(wave.map(([path]) => entryAt(join(discovery.root, path))));
+      wave.forEach(([path, before], index) => {
+        if (entries[index] !== "file") (entries[index] === "gone" ? gone : previous).set(path, before);
+      });
+    }
+    return gone;
   }
 
   /**
@@ -4044,7 +4124,10 @@ export class CodeRuleBridge {
     found: ReadonlyMap<string, WorktreeFindings>,
   ): Promise<Map<string, ObservedSource | undefined>> {
     const kept = new Map<string, ObservedSource | undefined>();
-    if (!await this.#keepSeenStill(discovery, walk, scan, kept) || !await this.#rereadMissingTexts(discovery, walk, scan, kept)) return kept;
+    // A shell command of the session that ran through the walk leaves each source to the next walk whatever a read finds
+    // (`#toolChanges`): asking would cost an owner lookup of each on the daemon's thread at every walk it spans.
+    const unasked = discovery.toolCalls.commandSince(walk.callsEnded) !== undefined;
+    if (!await this.#keepSeenStill(discovery, { walk, scan, unasked }, kept) || !await this.#rereadMissingTexts(discovery, walk, scan, kept)) return kept;
     const listed = await this.#firstSeenInWorktrees(discovery, walk, scan, found);
     // A first sight Git lists puts the walk's observation back; the next walk shows these instead.
     for (const path of kept.keys()) scan.sources.delete(path);
@@ -4054,20 +4137,29 @@ export class CodeRuleBridge {
 
   /**
    * Puts into `kept` each source the session saw itself that the walk's snapshot lacks (its last snapshot held it) and
-   * a read finds still there, with what the session saw of it. Returns false once the discovery is abandoned.
+   * a read finds still there, with what the session saw of it; with `unasked`, each one without a read. Returns false
+   * once the discovery is abandoned.
    */
-  async #keepSeenStill(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan, kept: Map<string, ObservedSource | undefined>): Promise<boolean> {
+  async #keepSeenStill(
+    discovery: SourceDiscovery,
+    { walk, scan, unasked }: { readonly walk: WalkStart; readonly scan: SourceScan; readonly unasked: boolean },
+    kept: Map<string, ObservedSource | undefined>,
+  ): Promise<boolean> {
     for (const [path, before] of walk.previous) {
       // Only what the session saw itself: one its last snapshot held and this one lacks, a later read found gone.
       if (scan.sources.has(path) || !this.#observed.has(path)) continue;
       if (this.#abandoned(discovery)) return false;
-      if (await this.#stillThere(discovery.root, path)) kept.set(path, before);
+      if (await this.#stillThere(discovery.root, path, unasked)) kept.set(path, before);
     }
     return true;
   }
 
-  /** Whether a read of `path` finds a file there; a path the session does not read finds none. */
-  async #stillThere(root: string, path: string): Promise<boolean> {
+  /**
+   * Whether the walk keeps `path` as still there: with `unasked`, it does; else whether a read finds a file there, which
+   * a read of a path the session does not read never does.
+   */
+  async #stillThere(root: string, path: string, unasked: boolean): Promise<boolean> {
+    if (unasked) return true;
     const read = await this.#readSource(root, path);
     return read !== undefined && read.deleted !== true;
   }
@@ -4545,7 +4637,7 @@ export class CodeRuleBridge {
     uncaptured: Map<string, string>,
   ): Promise<{ own: CodeRuleEdit[]; notOwn: CodeRuleEdit[]; repository: CodeRuleEdit[] }> {
     const sorted: SortedWrites = { unwritten: [], notOwn: [], uncaptured };
-    const { owned, unowned } = this.#byOwningCheckout(discovery.root, edits, edit => edit.path, "walked");
+    const { owned, unowned } = this.#byOwningCheckout(discovery.root, edits, edit => edit.path, walk);
     sorted.unwritten.push(...unowned);
     for (const [checkout, group] of owned) {
       const listed = walk.listedAtFirstSight?.get(checkout);
@@ -4868,12 +4960,23 @@ export class CodeRuleBridge {
     // A first observation made after a shell write is not a trustworthy preimage.
     // Preserve it as an uncaptured change, never as newly generated source.
     if ((baselinePath && !changedSinceStart(discovery, after)) || sameSource(before, after)) {
-      if (after !== undefined) this.#observe(after);
+      this.#keepFound(path, after, baselinePath);
       return undefined;
     }
     if (after === undefined) return this.#deletedEdit(path, before);
     this.#observe(after);
     return uncapturedEdit(path, after, uncapturedPreimage(baselinePath, before));
+  }
+
+  /**
+   * Keeps what a walk found of `path` that is no edit: `after` as the session's observation. A file gone that the
+   * session never read (no digest: no rule reads it) is no edit either, and is forgotten as a read file gone is
+   * (`#deletedEdit`): kept, it would stay for the session's life, and each walk of its worktree would ask the disk after
+   * it. A baseline's gone file stays as it was.
+   */
+  #keepFound(path: string, after: Source | undefined, baselinePath: boolean): void {
+    if (after !== undefined) this.#observe(after);
+    else if (!baselinePath) this.#unobserve(path);
   }
 
   /**
@@ -4971,12 +5074,15 @@ export class CodeRuleBridge {
   /**
    * Folders Git ignores (when the session follows `.gitignore`) are never entered, so nothing below them is observed.
    * A folder's `.git` is not entered either, and marks the checkout that owns the folder's files (`SourceScan.checkouts`).
+   * The listing is read whole first, so the view learns whether it names a `.git` entry before any of its entries is
+   * asked about (`WalkView.folderListed`).
    */
   async #expandDirectory(walk: SourceWalk, absolute: string): Promise<void> {
     const listing = await opendir(absolute);
     const seen = walk.scan.seen;
-    seen?.folders.add(sessionPath(walk.discovery.root, absolute));
-    for await (const entry of listing) {
+    const folder = sessionPath(walk.discovery.root, absolute);
+    seen?.folders.add(folder);
+    for (const entry of await wholeListing(walk, folder, listing)) {
       if (walk.discovery.cancelled) return;
       if (entry.name === ".git") this.#noteCheckout(walk, join(absolute, entry.name));
       else if (this.#walksInto(walk, absolute, entry)) walk.stack.push(join(absolute, entry.name));
@@ -5234,20 +5340,21 @@ export class CodeRuleBridge {
   /**
    * `items` by the checkout that owns each one's path, whose Git holds its blobs (a worktree in the session's folder is
    * not the session's checkout); `unowned` has those no checkout owns, which no lane audits. A group holds its items in
-   * the order of `items`, and the groups come in the order of their first item. A walk's paths (`walked`) are files it
-   * found, which are no symbolic links, or files the session took before, which the router accepts only where a link
-   * stays in its folder's checkout (`acceptsPath`): the checkout of each is its folder's, looked up once a folder
-   * (`walkView`). Any other path is looked up whole.
+   * the order of `items`, and the groups come in the order of their first item. The paths of a walk (`walked`) are files
+   * it found, which are no symbolic links, or files the session took before, which the router accepts only where a link
+   * stays in its folder's checkout (`acceptsPath`): the checkout of each is its folder's, as the view that walk asked
+   * gives it (`WalkStart.view`), else a view made here, which looks each folder up once. Any other path is looked up
+   * whole.
    */
   #byOwningCheckout<T>(
     root: string,
     items: readonly T[],
     pathOf: (item: T) => string,
-    paths: "walked" | "named" = "named",
+    walked?: WalkStart,
   ): { owned: Map<string, T[]>; unowned: T[] } {
     const owned = new Map<string, T[]>();
     const unowned: T[] = [];
-    const checkoutOf = paths === "walked" ? this.#walkedCheckoutOf(root) : (path: string) => this.#owningCheckout(root, path);
+    const checkoutOf = walked === undefined ? (path: string) => this.#owningCheckout(root, path) : this.#walkedCheckoutOf(root, walked.view);
     for (const item of items) {
       const checkout = checkoutOf(pathOf(item));
       if (checkout === undefined) unowned.push(item);
@@ -5257,13 +5364,13 @@ export class CodeRuleBridge {
   }
 
   /**
-   * `#owningCheckout` of the paths a walk found, through a view of the auditor that looks each folder up once. An
-   * auditor that judges one folder owns every path at the session folder, whatever its view says, as it does a path it
-   * is named.
+   * `#owningCheckout` of the paths a walk found, through `asked`, the view the walk asked, else a view of the auditor
+   * that looks each folder up once. An auditor that judges one folder owns every path at the session folder, whatever
+   * its view says, as it does a path it is named.
    */
-  #walkedCheckoutOf(root: string): (path: string) => string | undefined {
+  #walkedCheckoutOf(root: string, asked: WalkView | undefined): (path: string) => string | undefined {
     if (this.#auditor.sourceRoot === undefined) return () => root;
-    const view = this.#auditor.walkView?.();
+    const view = asked ?? this.#auditor.walkView?.();
     return view?.sourceRoot === undefined ? path => this.#owningCheckout(root, path) : path => view.sourceRoot?.(path);
   }
 
@@ -5320,7 +5427,7 @@ export class CodeRuleBridge {
   async #firstSeenModifiedOrUntracked(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): Promise<string[]> {
     const firstSeen = [...scan.sources.keys()].filter(path => this.#firstSeen(discovery, walk, path));
     const listed: string[] = [];
-    for (const [checkout, paths] of this.#byOwningCheckout(discovery.root, firstSeen, path => path, "walked").owned) {
+    for (const [checkout, paths] of this.#byOwningCheckout(discovery.root, firstSeen, path => path, walk).owned) {
       const seen = new Set(paths);
       const changed = await discovery.git.run(signal => gitModifiedOrUntrackedPaths(checkout, { signal }));
       if (changed === undefined) {
