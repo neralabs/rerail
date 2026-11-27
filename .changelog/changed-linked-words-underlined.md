@@ -1,0 +1,1 @@
+Rerail's linked words are now underlined, so they read as links in terminals that draw a link like plain text until you point at it, such as iTerm2 without GPU rendering. That covers a steer's `why?`, a Merge Assist line's `open` and the footer's linked items. In iTerm2, ⌘-click opens them.
