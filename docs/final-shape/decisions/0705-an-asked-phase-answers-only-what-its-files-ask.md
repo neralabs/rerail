@@ -39,6 +39,12 @@ one run, and asks keyed per file.
   under each key named in their column `C`. `by_key`: rows keyed by column 0, read where a `by_path` row names the
   key. `by_key C`: those rows, and in turn every `by_key` row under each key named in their column `C`, to the
   closure. Key columns are symbols. An export with a key is a setting to the split (0665): placeless, read per file.
+- `whole` after an export (amended 2026-11-26): every file reads all its rows, and every reader's memo entry is keyed
+  by them (`memo::settings_scopes`, as a read through no key). py_names' `dj_app_defers whole` is the run's Celery
+  app. An export written with no key is no setting, which is a phase's ordinary export (`struct`, `types`, `values`).
+  So `dj_app_defers` was none once this record had each phase declare its keys. It had been on the split's hand
+  list, and its reader `dj_app_defers(d) :- doc(d, _, _), py_names__dj_app_defers(_)` went to the cross part with
+  `dj_task_waits_for_commit`, a node crossing (0677).
 - `R as E` hands on relation `R` as export `E` (`asks_at as asked_at by_path 1`): a phase hands a relation on under
   the name its readers read, where its program makes another of that name, as an included library's.
 - The project's settings are declared the same way, beside their declarations in the library's `core.rerail`:

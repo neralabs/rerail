@@ -232,6 +232,14 @@ pub fn setting_input(rel: &str) -> bool {
     crate::code_rule_dsl::logic::plan::phased::declared_key(rel).is_some()
 }
 
+/// An input placeless to the split: the run's options and the settings (`option_input`, `setting_input`), the same
+/// beside every chunk. A rule joining one stays per file, and a join of a file's nodes with one is a lookup made in
+/// the file, which the passes that hand a join on as parts leave whole (`passes::factorize`, the deferred joins):
+/// as parts, their readers joined the file's nodes in the cross-file part (decision 0677).
+pub fn placeless_input(rel: &str) -> bool {
+    option_input(rel) || setting_input(rel)
+}
+
 /// The folder, target, module or key column of a setting keyed by a file's path in column 0 (declared `by_path C`):
 /// `None` when the relation is not one, `Some(None)` when it is and names none (`points_to`'s answers, decision 0677,
 /// note t55: each row is about a node of the file at its path, and that file reads its own rows alone).

@@ -266,7 +266,7 @@ pub enum SettingsScope {
 /// path, a variable its head drops) is of every file's rows, and so is a memoised relation still keyed by one.
 pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, rels: &BTreeSet<String>) -> BTreeMap<String, SettingsScope> {
     use crate::code_rule_dsl::logic::program_image::TermRef;
-    use crate::code_rule_dsl::typing::file_local::{setting_by_folder, setting_by_path, setting_key_hop};
+    use crate::code_rule_dsl::typing::file_local::{setting_by_folder, setting_by_path, setting_key_hop, setting_input};
     /// A relation's reads of the settings: of any file's, of its own file's, and keyed by its columns' paths or folders.
     #[derive(Clone, Default, PartialEq)]
     struct Reach {
@@ -281,6 +281,9 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
             Some(Reach { folder: [0].into(), ..Reach::default() })
         } else if setting_by_path(rel).is_some() {
             Some(Reach { path: [0].into(), ..Reach::default() })
+        } else if setting_input(rel) {
+            // Keyed by nothing (`Keyed::Whole`: `env`, `py_names__dj_app_defers`): every file's rows.
+            Some(Reach { all: true, ..Reach::default() })
         } else {
             None
         }
