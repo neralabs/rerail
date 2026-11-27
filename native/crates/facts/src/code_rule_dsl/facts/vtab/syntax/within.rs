@@ -1135,6 +1135,33 @@ impl Source for Within {
         }
         Some(true)
     }
+    /// `read_one_at` of a chunk's values, on the batch's solve: its starts and rows taken once, each value's node
+    /// found with the search's hint carried from row to row.
+    fn read_many_at(&self, column: usize, values: &[i64], columns: &[usize], out: &mut [i64], alive: &mut [u64], _cursor: &mut super::super::ProbeCursor) -> Option<()> {
+        let n = values.len();
+        if self.row_column() != Some(column) || !self.reads_solved() || out.len() < columns.len() * n || alive.len() * 64 < n {
+            return None;
+        }
+        let (nodes, start, rows) = (self.batch.nodes(), self.starts(), self.solved_rows());
+        let mut memo = 0;
+        for w in 0..n.div_ceil(64) {
+            let (base, mut m) = (w * 64, alive[w]);
+            while m != 0 {
+                let r = m.trailing_zeros() as usize;
+                m &= m - 1;
+                let at = self.batch.node(values[base + r], &mut memo).map(|(doc, local)| nodes.at(doc) + local as usize);
+                match at {
+                    Some(row) if start[row] != start[row + 1] => {
+                        for (k, &c) in columns.iter().enumerate() {
+                            out[k * n + base + r] = rows.get(start[row], c.min(1));
+                        }
+                    }
+                    _ => alive[w] &= !(1u64 << r),
+                }
+            }
+        }
+        Some(())
+    }
     /// By `n` on the batch's solve: each of the node's rows with its values, read from the solve's rows as they are
     /// found. No list of rows is made, and no row's value is read again (`lookup` then `value`). An axis not solved
     /// for the batch gives nothing here (`false`), and its rows are made per lookup as before.

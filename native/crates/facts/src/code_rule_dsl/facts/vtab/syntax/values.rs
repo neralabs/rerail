@@ -995,6 +995,13 @@ impl Source for Layered {
     fn row_column(&self) -> Option<usize> {
         self.base.row_column()
     }
+    /// The base's read of the chunk where no part holds admitted values; else each value as `read_one_at` reads it.
+    fn read_many_at(&self, column: usize, values: &[i64], columns: &[usize], out: &mut [i64], alive: &mut [u64], cursor: &mut super::super::ProbeCursor) -> Option<()> {
+        if self.values.admitted.load(Ordering::Acquire) == 0 || self.values.parts.load().get(self.name.as_str()).is_none_or(|p| p.total == 0) {
+            return self.base.read_many_at(column, values, columns, out, alive, cursor);
+        }
+        super::super::read_many_each(self, column, values, columns, out, alive, cursor)
+    }
     /// The base's read, else the row of the part that holds the value (as `test_at` asks them: the base, then each
     /// part that may hold it, a value's rows are few). Made on lookup, `None` (the matches are read).
     fn read_one_at(&self, column: usize, value: i64, columns: &[usize], out: &mut [i64], cursor: &mut super::super::ProbeCursor) -> Option<bool> {

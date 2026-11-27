@@ -5265,7 +5265,7 @@ impl Csr {
         self.cols.len() == 1 && !self.keyed && !self.composite && self.then.is_none()
     }
     /// The sorted hash of `rel`'s rows by this index's columns, made at its first ask.
-    fn hashed(&self, rel: &InRel) -> &sorted_hash::SortedHash {
+    pub(super) fn hashed(&self, rel: &InRel) -> &sorted_hash::SortedHash {
         self.hashed.get_or_init(|| {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "probe: sorted hash of a derived input".into());
             let h = sorted_hash::SortedHash::new(rel.n, |id| {
@@ -5277,7 +5277,7 @@ impl Csr {
         })
     }
     /// Whether a probe of it walks an index's runs (`runs`): a derived input's order, or its kept chain.
-    fn runs_kind(&self) -> bool {
+    pub(super) fn runs_kind(&self) -> bool {
         self.ordered.is_some() || self.chain.is_some()
     }
     /// Whether `get` gives a key's rows alone (not a bucket's candidates).
@@ -8008,7 +8008,7 @@ impl JoinRule {
             forms: (0..n).map(|_| table::StepForm::default()).collect(),
             passed_over: Default::default(),
             step_ns: (0..=n).map(|_| Default::default()).collect(),
-            shapes: (0..n).map(|_| Default::default()).collect(),
+            shapes: (0..n).map(|_| std::array::from_fn(|_| Default::default())).collect(),
             est: Vector::new(),
             plan,
         }
@@ -8191,8 +8191,9 @@ impl Count {
 /// every ask of the step by the rows it matched (`20..23`: 0, 1, more), its keys and tests held (a test's first match
 /// ends it, so it counts as 1), its `Rows::each` calls and its one-row reads (a lookup's, a node-keyed bit's, a fused
 /// test's) alike; and of those asks, the one-row reads (`23`); and a fused chunk's rows passed on, by where they go
-/// (`24..27`: the head, a lookup, another step).
-pub const SHAPES: usize = 27;
+/// (`24..27`: the head, a lookup, another step); and a fused chunk's rows asked row by row, by why `ask_chunk` has no
+/// read for them (`27..34`, `cands::CHUNK_REFUSALS`).
+pub const SHAPES: usize = 34;
 /// A fused step's gather of its candidates into its chunk.
 const SITE_GATHER: usize = 0;
 /// The walk's step, a candidate at a time.
@@ -9354,7 +9355,11 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                             let at = i + 1 + test.at;
                             let step = &j.steps[at];
                             let lookup = j.lookups.get(at).copied().unwrap_or(false);
-                            let (none, one) = cands::ask_chunk(j, step, test, columns, alive, n, k, looks, &mut asked[t]).unwrap_or_else(|| {
+                            let (none, one) = cands::ask_chunk(j, step, test, columns, params, alive, n, k, looks, &mut asked[t]).unwrap_or_else(|| {
+                                if profiled && let Some(c) = j.shapes.get(at) {
+                                    let live: u32 = alive.iter().map(|w| w.count_ones()).sum();
+                                    c[27 + cands::chunk_refusal(j, step, test)].add(u64::from(live));
+                                }
                                 let (mut none, mut one) = (0u64, 0u64);
                                 let mut vals = [0i64; READ];
                                 for r in 0..n {
@@ -11135,7 +11140,8 @@ pub struct SetfixCounts {
     /// have none (a view, dead rows, rows in several parts): counted at a key's first test.
     pub node_bits: [std::sync::atomic::AtomicU64; 2],
     /// A fused chunk's tests asked of it at once (`cands::ask_chunk`): by a node-keyed bit, by value, by a view's read.
-    pub chunk_asks: [std::sync::atomic::AtomicU64; 3],
+    /// And a derived input's whole key by its hash (`cands::ask_derived_chunk`).
+    pub chunk_asks: [std::sync::atomic::AtomicU64; 4],
 }
 
 /// The run's `SetfixCounts`.

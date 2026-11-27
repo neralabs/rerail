@@ -125,6 +125,55 @@ impl ViewInPlace {
     }
 }
 
+/// `Source::read_many_at`'s default: each value read in turn by the source's one-row read (`read_one_at`, else
+/// `key_row` and `row_at`), inside the source.
+pub fn read_many_each<S: Source + ?Sized>(src: &S, column: usize, values: &[i64], columns: &[usize], out: &mut [i64], alive: &mut [u64], cursor: &mut ProbeCursor) -> Option<()> {
+    let n = values.len();
+    let mut got = [0i64; MANY_COLUMNS];
+    if columns.len() > MANY_COLUMNS || out.len() < columns.len() * n || alive.len() * 64 < n {
+        return None;
+    }
+    let got = &mut got[..columns.len()];
+    let own = src.row_column() == Some(column);
+    if !own && !src.keys_rows(column) {
+        return None;
+    }
+    let mut first = true;
+    for r in 0..n {
+        if alive[r / 64] >> (r % 64) & 1 == 0 {
+            continue;
+        }
+        let found = if own {
+            let f = src.read_one_at(column, values[r], columns, got, cursor);
+            // The source's read exists for these columns: answered at the first row, or nothing written.
+            if first && f.is_none() {
+                return None;
+            }
+            f.unwrap_or(false)
+        } else {
+            match src.key_row(column, values[r]) {
+                Some(row) => {
+                    src.row_at(row, columns, got);
+                    true
+                }
+                None => false,
+            }
+        };
+        first = false;
+        if found {
+            for (k, &v) in got.iter().enumerate() {
+                out[k * n + r] = v;
+            }
+        } else {
+            alive[r / 64] &= !(1u64 << (r % 64));
+        }
+    }
+    Some(())
+}
+
+/// The most columns `Source::read_many_at` reads of a row: a join step's (its `READ`).
+pub const MANY_COLUMNS: usize = 16;
+
 /// A join step's probe cursor (`Source::lookup_read_at`), kept by the step across its probes: where the last probe
 /// ended (`hint`: a view of the tape's document and granule), and the source's plan of what a match reads (`plan`),
 /// made on the step's first probe. A hint is checked, never trusted; a plan is kept only for the column and columns
@@ -375,6 +424,15 @@ pub trait Source: Send + Sync {
     /// reading a node's kind by its id reads it so, with no candidates found or rows handed on.
     fn read_one_at(&self, _column: usize, _value: i64, _columns: &[usize], _out: &mut [i64], _cursor: &mut ProbeCursor) -> Option<bool> {
         None
+    }
+    /// The one rows of many values at once (a join's chunk of rows, each asking one row by `column`): for each row `r`
+    /// set in `alive`, the row whose `column` is `values[r]`, its values of `columns` written to `out[k * values.len()
+    /// + r]` (one column of the chunk after another); a value with no row cleared in `alive`. `column` is the source's
+    /// `row_column` (`read_one_at`'s read) or a `keys_rows` column (`key_row`, `row_at`). `None` (nothing written)
+    /// where the source has no such read: the caller asks row by row. By default each value read in turn, inside the
+    /// source: one call a chunk, not one a row.
+    fn read_many_at(&self, column: usize, values: &[i64], columns: &[usize], out: &mut [i64], alive: &mut [u64], cursor: &mut ProbeCursor) -> Option<()> {
+        read_many_each(self, column, values, columns, out, alive, cursor)
     }
     /// `for_rows` over rows `range` alone, until `each` returns false: a join step's scan of a view reads its rows
     /// so (decision 0353 step 2), a view of a batch's documents walking the documents the range holds once, each row's

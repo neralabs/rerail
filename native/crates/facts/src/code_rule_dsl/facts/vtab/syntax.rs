@@ -5162,6 +5162,50 @@ impl Source for Viewed {
         }
         Some(true)
     }
+    /// `read_one_at` of a chunk's values: its plan made once; each word of 64 rows' nodes found in one pass (the
+    /// search's hints carried from row to row, a chunk's values mostly in the tape's order), then each column the plan
+    /// reads filled in a pass of its own over them, one op a loop.
+    fn read_many_at(&self, column: usize, values: &[i64], columns: &[usize], out: &mut [i64], alive: &mut [u64], cursor: &mut super::ProbeCursor) -> Option<()> {
+        use read_op::*;
+        let n = values.len();
+        if self.row_column() != Some(column) || out.len() < columns.len() * n || alive.len() * 64 < n {
+            return None;
+        }
+        let plan = self.plan_for(column, columns, cursor)?;
+        let b = &*self.batch;
+        let (mut doc, mut local, mut x, mut up) = ([0u32; 64], [0u32; 64], [NONE; 64], [0i64; 64]);
+        for w in 0..n.div_ceil(64) {
+            let (base, mut live) = (w * 64, alive[w]);
+            let mut m = live;
+            while m != 0 {
+                let r = m.trailing_zeros() as usize;
+                m &= m - 1;
+                let Some((d, l)) = b.node_nearer(values[base + r], &mut cursor.hint[0], &mut cursor.near[0]) else {
+                    live &= !(1u64 << r);
+                    continue;
+                };
+                let p = &b.docs[d];
+                (doc[r], local[r]) = (d as u32, l);
+                if plan.needs & NEED_X != 0 {
+                    x[r] = if p.tape_ids() { (values[base + r] & 0xffff_ffff) as u32 } else { p.node_near(l, &mut cursor.near[1]) };
+                }
+                if plan.needs & NEED_UP != 0 {
+                    up[r] = Self::parent_id_of(p, l, x[r]);
+                }
+            }
+            alive[w] = live;
+            for (k, &op) in plan.ops[..usize::from(plan.len)].iter().enumerate() {
+                let col = &mut out[k * n + base..];
+                let mut m = live;
+                while m != 0 {
+                    let r = m.trailing_zeros() as usize;
+                    m &= m - 1;
+                    col[r] = Self::op_value(b, &b.docs[doc[r] as usize], local[r], x[r], values[base + r], up[r], Known::default(), op);
+                }
+            }
+        }
+        Some(())
+    }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         self.lookup_docs(column, values, None)
     }

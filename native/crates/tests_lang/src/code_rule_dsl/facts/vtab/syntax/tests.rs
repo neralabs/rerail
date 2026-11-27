@@ -462,6 +462,61 @@ fn a_views_membership_test_is_its_rows() {
     assert!(tried >= 2, "views with a membership test: {tried}");
 }
 
+/// A view's rows of a chunk of values read at once (`Source::read_many_at`, a join chunk's lookups and tests) are each
+/// value's one row as the source reads it alone (`read_one_at` by its `row_column`, else `key_row` and `row_at` by a
+/// `keys_rows` column): every view, every column it reads by so, chunks of 300 values in key order, reversed and
+/// strided, every third row not asked and one id in ten absent. A row not asked stays so and is not written.
+#[test]
+fn a_views_rows_of_a_chunk_read_at_once_are_its_one_rows() {
+    use crate::code_rule_dsl::facts::vtab::ProbeCursor;
+    let store = ContentStore::open(&temp("read-many")).unwrap();
+    let mut tried = 0;
+    for (name, source) in sources(&store, documents().into_iter().take(4).collect()).unwrap() {
+        let (n, width) = (source.len(), source.columns().len());
+        if n == 0 {
+            continue;
+        }
+        for column in (0..width).filter(|&c| source.row_column() == Some(c) || source.keys_rows(c)) {
+            let others: Vec<usize> = (0..width).filter(|&c| c != column).collect();
+            let past = (0..n).map(|r| source.value(r, column)).max().unwrap() + 1;
+            let orders: [Vec<usize>; 3] = [(0..n).collect(), (0..n).rev().collect(), (0..n).map(|i| i * 7919 % n).collect()];
+            let mut read = false;
+            for order in &orders {
+                let mut cursor = ProbeCursor::default();
+                for chunk in order.chunks(300) {
+                    let values: Vec<i64> = chunk.iter().enumerate().map(|(i, &r)| if i % 10 == 9 { past + i as i64 } else { source.value(r, column) }).collect();
+                    let k = values.len();
+                    let asked: Vec<u64> = (0..k.div_ceil(64)).map(|w| (0..64).filter(|b| w * 64 + b < k && (w * 64 + b) % 3 != 2).fold(0, |m, b| m | 1 << b)).collect();
+                    let mut alive = asked.clone();
+                    let mut out = vec![i64::MIN; others.len() * k];
+                    if source.read_many_at(column, &values, &others, &mut out, &mut alive, &mut cursor).is_none() {
+                        continue;
+                    }
+                    read = true;
+                    for (r, &value) in values.iter().enumerate() {
+                        let was = asked[r / 64] >> (r % 64) & 1 != 0;
+                        let got = alive[r / 64] >> (r % 64) & 1 != 0;
+                        let row: Vec<i64> = others.iter().map(|&c| out[others.iter().position(|&x| x == c).unwrap() * k + r]).collect();
+                        if !was {
+                            assert!(!got && row.iter().all(|&v| v == i64::MIN), "{name} by {column}: row {r} not asked, not written");
+                            continue;
+                        }
+                        let mut one = vec![0i64; others.len()];
+                        let want = if source.row_column() == Some(column) {
+                            source.read_one_at(column, value, &others, &mut one, &mut ProbeCursor::default()).expect("its one-row read").then_some(one)
+                        } else {
+                            source.key_row(column, value).map(|q| others.iter().map(|&c| source.value(q, c)).collect())
+                        };
+                        assert_eq!(got.then_some(row), want, "{name} by {column}: value {value} (chunk row {r})");
+                    }
+                }
+            }
+            tried += usize::from(read);
+        }
+    }
+    assert!(tried >= 3, "views read a chunk at once: {tried}");
+}
+
 /// The statistics of a relation held as a view of `node` (decision 0329) are its rows' counts, made without reading
 /// them: per column, the distinct values, the squares of their counts and each value's count, as counting every row
 /// gives (`n`, the key: each value once, no counts).
@@ -2623,6 +2678,29 @@ fn a_solved_axis_reads_a_nodes_rows_as_it_finds_them() {
             }
         }
         assert!(read_rows > 0, "{name}: some node has a member ancestor");
+        // The nearest axis's rows of a chunk read at once (`read_many_at`): each node's `read_one_at`, every node in
+        // chunks of 200, every other one asked.
+        let ids: Vec<i64> = (0..nodes).map(|r| batch.id(r, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO })).collect();
+        for values in ids.chunks(200) {
+            let k = values.len();
+            let asked: Vec<u64> = (0..k.div_ceil(64)).map(|w| (0..64).filter(|b| w * 64 + b < k && b % 2 == 0).fold(0, |m, b| m | 1 << b)).collect();
+            let (mut alive, mut out) = (asked.clone(), vec![0i64; 2 * k]);
+            let many = source.read_many_at(0, values, &[1, 0], &mut out, &mut alive, &mut crate::code_rule_dsl::facts::vtab::ProbeCursor::default());
+            if axis != within::Axis::Nearest {
+                assert!(many.is_none(), "{name}: no one-row read, none of a chunk");
+                break;
+            }
+            assert!(many.is_some(), "{name}");
+            for (r, &n) in values.iter().enumerate() {
+                let mut one = [0i64; 2];
+                let want = source.read_one_at(0, n, &[1, 0], &mut one, &mut crate::code_rule_dsl::facts::vtab::ProbeCursor::default()).unwrap();
+                let was = asked[r / 64] >> (r % 64) & 1 != 0;
+                assert_eq!(alive[r / 64] >> (r % 64) & 1 != 0, was && want, "{name}: node {n}");
+                if was && want {
+                    assert_eq!([out[r], out[k + r]], one, "{name}: node {n}");
+                }
+            }
+        }
         assert!(!source.lookup_read(1, id, &[0], &mut |_, _| ()), "{name}: by `a`, the solve's rows are searched as before");
     }
 }
