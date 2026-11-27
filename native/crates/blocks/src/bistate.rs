@@ -36,14 +36,9 @@ pub trait ColumnRead {
     fn get(&self, id: RowId) -> i64;
 }
 
-/// What a state records of its change since its version (decision 0678 step 4): the version's end, and the
-/// version's ids whose liveness may differ now, ascending, each once (a superset is allowed: each is checked). Ids
-/// from `end` on are rows new since.
-#[derive(Clone, Copy, Debug)]
-pub struct Since<'s> {
-    pub end: RowId,
-    pub flips: &'s [u32],
-}
+// What a state records of its change since its version, and a column's statistics: the floor's one definitions
+// (`rerail_delta_core::trace`).
+pub use rerail_delta_core::trace::{ColStats, Since};
 
 /// A relation at one state, read where it lies.
 ///
@@ -109,7 +104,7 @@ pub trait Read {
     /// The ids from `before`'s end on that may be live, as ranges, ascending and apart (a trace's layers' own rows
     /// above `before`, a partition's alone when restricted): only these words are read for rows added. `None`: every
     /// id from `before`'s end to its own.
-    fn new_ranges(&self, _before: Option<&Self>) -> Option<Vec<(RowId, RowId)>> {
+    fn new_ranges(&self, _before: Option<&Self>) -> Option<rerail_delta_core::trace::Ranges> {
         None
     }
 
@@ -264,17 +259,6 @@ impl<F: Fn(WordIndex) -> u64> Iterator for Bits<F> {
     }
 }
 
-/// A column's statistics (P§12 `stats`; P§11.2: "per column min, max and counts"): its live rows' bounds (a trace's
-/// are an estimate: the bounds of every row added, gone ones included), and its `blocks::sketch` reading (rows,
-/// distinct values, the sum of each value's rows squared).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ColStats {
-    pub min: i64,
-    pub max: i64,
-    pub rows: u64,
-    pub ndv: u64,
-    pub sq: u64,
-}
 
 /// Column `c`'s statistics read from every live row of `state`: its bounds, and a sketch of its values
 /// (`blocks::sketch`, the one sketch), made for this read and let go.
@@ -302,9 +286,16 @@ pub struct Flips<'s> {
     heads: std::collections::BinaryHeap<std::cmp::Reverse<(u32, u32)>>,
     started: bool,
     last: Option<u32>,
+    /// A trace's state's flips, read by the floor's fixed cursors in place (`trace::ChainFlips`): no run is gathered.
+    chain: Option<rerail_delta_core::trace::ChainFlips<'s>>,
 }
 
 impl<'s> Flips<'s> {
+    /// A trace's state's flips (`trace::State::flips_since`).
+    pub fn chain(c: rerail_delta_core::trace::ChainFlips<'s>) -> Flips<'s> {
+        Flips { chain: Some(c), ..Flips::default() }
+    }
+
     pub fn one(run: &'s [u32]) -> Flips<'s> {
         let mut f = Flips::default();
         f.push(run);
@@ -318,6 +309,9 @@ impl<'s> Flips<'s> {
 
     /// Whether no id flipped.
     pub fn is_empty(&self) -> bool {
+        if let Some(c) = &self.chain {
+            return c.is_empty();
+        }
         self.heads.is_empty() && self.runs.iter().all(|(r, at)| r.len() == *at as usize)
     }
 
@@ -335,6 +329,9 @@ impl Iterator for Flips<'_> {
     type Item = RowId;
 
     fn next(&mut self) -> Option<RowId> {
+        if let Some(c) = &mut self.chain {
+            return c.next();
+        }
         if !self.started {
             self.started = true;
             for k in 0..self.runs.len() {
@@ -417,8 +414,10 @@ impl<S: Read> Bistate<S> {
     /// The ids past `lo`'s end live in `hi`, ascending: only the words of the ranges `hi` names, when it names them.
     fn new_ids(&self) -> impl Iterator<Item = RowId> + '_ {
         let hi = &self.hi;
-        let ranges = hi.new_ranges(self.lo.as_ref()).unwrap_or_else(|| vec![(self.lo_end(), hi.end())]);
-        ranges.into_iter().flat_map(move |(a, b)| bits_from(a, b, move |w| hi.live_word(w)))
+        match hi.new_ranges(self.lo.as_ref()) {
+            Some(r) => Either::L(r.flat_map(move |(a, b)| bits_from(a, b, move |w| hi.live_word(w)))),
+            None => Either::R(bits_from(self.lo_end(), hi.end(), move |w| hi.live_word(w))),
+        }
     }
 
     /// The ids live in `hi` and not `lo`, ascending.
@@ -657,7 +656,7 @@ impl Read for View<'_> {
         self.flips_from(before.map_or(RowId::ZERO, Read::end))
     }
 
-    fn new_ranges(&self, before: Option<&Self>) -> Option<Vec<(RowId, RowId)>> {
+    fn new_ranges(&self, before: Option<&Self>) -> Option<rerail_delta_core::trace::Ranges> {
         if self.is_chain() { self.chain_new_ranges(before) } else { None }
     }
 
@@ -711,18 +710,17 @@ impl Read for View<'_> {
 /// digests. A relation's view is one state: its empty state is the empty one of its columns.
 impl<'a> States for View<'a> {
     fn empty(&self) -> Self {
-        View { base: None, top: None, head: None, ..*self }
+        View { base: None, top: None, chain: self.chain.map(|s| s.empty()), ..*self }
     }
 
     fn same(&self, other: &Self) -> bool {
         let top = |v: &View<'_>| v.top.map(std::ptr::from_ref);
-        top(self) == top(other) && self.base.map(std::ptr::from_ref) == other.base.map(std::ptr::from_ref) && self.head == other.head && self.part == other.part && self.arity == other.arity
+        top(self) == top(other) && self.base.map(std::ptr::from_ref) == other.base.map(std::ptr::from_ref) && self.head() == other.head() && self.part() == other.part() && self.arity == other.arity
     }
 
     fn restrict(&self, p: i64) -> Self {
         assert!(self.is_chain() || self.top.is_none(), "a restriction of a trace's state");
-        assert!(self.part.is_none_or(|q| q == p), "a restriction of another partition's");
-        View { part: Some(p), ..*self }
+        View { chain: self.chain.map(|s| s.restrict(p)), ..*self }
     }
 
     fn changed_parts_since(&self, before: Option<&Self>, out: &mut dyn FnMut(i64)) -> bool {

@@ -26,6 +26,7 @@ pub mod col;
 pub mod hash;
 pub mod ids;
 pub mod kernel;
+pub mod layer;
 pub mod order;
 pub mod packed;
 pub mod pod;
@@ -35,6 +36,8 @@ pub mod relation;
 pub mod rows;
 pub mod runs;
 pub mod sketch;
+pub mod table;
+pub mod trace;
 
 pub use pod::{Pod, set_word, word, words, words_mut};
 

@@ -65,18 +65,9 @@ impl Atomic for std::sync::atomic::AtomicU32 {}
 impl Atomic for std::sync::atomic::AtomicU64 {}
 impl Atomic for std::sync::atomic::AtomicI64 {}
 
-/// One row of a descriptor table: a block a launch can reach, where it lies in the device's domain.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Desc {
-    pub id: Id,
-    pub kind: u32,
-    pub version: u64,
-    pub addr: u64,
-    pub len: u64,
-}
-
-unsafe impl Pod for Desc {}
+// A descriptor table's row and how a read follows a reference through one: the floor's one definition
+// (`rerail_delta_core::table`).
+pub use rerail_delta_core::table::{Desc, Reach};
 
 /// A descriptor table's bytes: its row count, then its rows, by id ascending.
 pub fn table_bytes(rows: &[Desc]) -> usize {
@@ -249,9 +240,7 @@ impl<'a> Table<'a> {
     /// what they refer to, transitively)"), and a host read of one through it finds none (its writer reads it through
     /// its own slot). Panics on a row neither holds.
     pub fn new(table: &'a BlockPin, at: usize, pins: &'a [BlockPin], written: &'a [u64]) -> Table<'a> {
-        let b = table.bytes();
-        let n = word::<u64>(b, at) as usize;
-        let rows = words::<Desc>(b, at + 8, n);
+        let rows = rerail_delta_core::table::rows_at(table.bytes(), at);
         for d in rows {
             assert!(
                 pins.iter().any(|p| p.addr() as u64 == d.addr && p.len() as u64 == d.len) || written.contains(&d.addr),
@@ -274,12 +263,19 @@ impl<'a> Table<'a> {
 
     /// Block `id`'s row.
     pub fn row(&self, id: Id) -> Option<&'a Desc> {
-        self.rows.binary_search_by_key(&id, |d| d.id).ok().map(|i| &self.rows[i])
+        rerail_delta_core::table::row(self.rows, id)
     }
 
     /// Block `id`'s bytes, in place: `None` when the launch cannot reach it.
     pub fn block(&self, id: Id) -> Option<&'a [u8]> {
         let d = self.row(id)?;
         self.pins.iter().find(|p| p.addr() as u64 == d.addr).map(|p| p.bytes())
+    }
+}
+
+/// The host's table as a read follows a reference (`Reach`): a block it pinned for the launch, in place.
+impl Reach for Table<'_> {
+    fn block(&self, id: Id) -> Option<&[u8]> {
+        Table::block(self, id)
     }
 }

@@ -18,7 +18,6 @@
 use crate::block::Block;
 use crate::col::{Choice, IntCol, IntColW, choose, write};
 use crate::refs::Span;
-use crate::structure;
 use rayon::prelude::*;
 
 // The format and its reads: the floor's one definition (`rerail_delta_core::ranged`).

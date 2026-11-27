@@ -1354,16 +1354,15 @@ pub struct View<'a> {
     pub top: Option<&'a Relation>,
     pub(crate) arity: u32,
     /// A trace's state: the launch's descriptor table its layers are reached through, and the top layer's block.
-    pub(crate) far: Option<&'a crate::gens::Table<'a>>,
-    pub(crate) head: Option<crate::gens::Id>,
-    pub(crate) part: Option<i64>,
-    pub(crate) reads: Option<&'a AtomicU64>,
+    /// A trace's state (`View::chain`): the floor's, its layers reached through the launch's descriptor table, its
+    /// restriction and its reads' count.
+    pub(crate) chain: Option<rerail_delta_core::trace::State<'a>>,
 }
 
 impl<'a> View<'a> {
     /// A delta and its base (or a full relation alone, `base` none).
     pub fn new(base: Option<&'a Relation>, top: &'a Relation) -> View<'a> {
-        View { base, top: Some(top), arity: top.arity, far: None, head: None, part: None, reads: None }
+        View { base, top: Some(top), arity: top.arity, chain: None }
     }
 
     pub fn full(r: &'a Relation) -> View<'a> {
@@ -1378,30 +1377,24 @@ impl<'a> View<'a> {
 
     /// The same state, its reads counted into `reads`.
     pub fn counted(self, reads: &'a AtomicU64) -> View<'a> {
-        View { reads: Some(reads), ..self }
+        View { chain: self.chain.map(|s| s.counted(reads)), ..self }
     }
 
-    #[inline]
-    pub(crate) fn touch(&self, n: usize) {
-        if let Some(r) = self.reads {
-            r.fetch_add(n as u64, Relaxed);
-        }
-    }
 
     /// Whether it is a trace's state (`chain`).
     #[inline]
     pub fn is_chain(&self) -> bool {
-        self.far.is_some()
+        self.chain.is_some()
     }
 
     /// A trace's state's top layer's block: `None` for the empty state and for a relation's view.
     pub fn head(&self) -> Option<crate::gens::Id> {
-        self.head
+        self.chain.and_then(|s| s.head())
     }
 
     /// The partition it is restricted to.
     pub fn part(&self) -> Option<i64> {
-        self.part
+        self.chain.and_then(|s| s.part())
     }
 
     #[inline]

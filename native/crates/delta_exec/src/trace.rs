@@ -42,7 +42,8 @@ static PIPELINE: [Phase; 19] = {
     use Unit::*;
     const PASSES: &[Bound] = &[Bound::Turns(32)];
     // A kill's search reads a layer a step; the geometric roll-up keeps a trace of n rows at O(log n) layers.
-    const KILL_STEPS: &[Bound] = &[Bound::Steps(64)];
+    // A commit's kill search reads at most the floor's `MAX_BELOW` layers below it (a trace's state's bound).
+    const KILL_STEPS: &[Bound] = &[Bound::Steps(rerail_blocks::layer::MAX_BELOW as u32)];
     [
         ph("sort", Fixed, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
         ph("passes", Indirect, Threadgroup, Inside::Nothing, Across::Rounds, ByIndex, PASSES),
@@ -129,7 +130,7 @@ pub fn facts_of(_: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
         out.extend(ix.prints.as_slice().iter().enumerate().map(|(i, &p)| vec![7, x as i64, i as i64, i64::from(p)]));
     }
     for c in 0..a {
-        let r = l.sketch(c).map(|s| s.reading()).unwrap_or_default();
+        let r = l.reading(c).unwrap_or_default();
         out.push(vec![8, c as i64, r.rows as i64, r.ndv as i64, r.sq as i64]);
     }
     let h = l.head;
