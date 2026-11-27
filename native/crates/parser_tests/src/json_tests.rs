@@ -1240,7 +1240,10 @@ fn json_rust_is_current() {
         }
         assert!(std::fs::read_to_string(&path).is_ok_and(|have| have == rust), "json_aot's {file} is not the compiler's: RERAIL_BLESS=1");
     }
-    let tier2 = json_rust().1;
+    let whole = json_rust().1;
+    assert!(whole.contains("pub unsafe fn run_range<D: Out>("), "tier 2 has its chunked form");
+    // The serial walk's text: before its chunked form (decision 0726), which walks the same loop from any place.
+    let tier2 = whole.split("\n// Parsing from the middle").next().expect("the tier").to_owned();
     // An empty object or array one leaf, at its call (decision 0553): at every call of each, a value's arm.
     for (opener, kind) in [("0x7b", "object"), ("0x5b", "array")] {
         // A call's arm: the depth's test, or first the root's closer's.

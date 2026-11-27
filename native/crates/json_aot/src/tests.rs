@@ -1,5 +1,6 @@
 //! Stage 1 from the middle (`lex_chunked`): a file lexed in chunks, each from every entry state at once, then joined,
-//! is the serial lexer's (`lex`), record for record.
+//! is the serial lexer's (`lex`), record for record. Tier 2 from the middle (`middle`, decision 0726): each chunk's
+//! state at its start, from its summaries composed, is the serial walk's there.
 
 use crate::{lex, lex_chunked, padded};
 
@@ -74,6 +75,60 @@ fn chunked_is_the_serial_lexer() {
     eprintln!("{} files, each in chunks of 1, 2, 3 and 16 blocks: the serial lexer's records", files.len());
 }
 
+/// A random order of `n` chunks at each ask (Fisher and Yates' shuffle, xorshift's numbers from `seed`): every pass, and
+/// each round of every scan, runs its chunks in a new one.
+fn shuffled(seed: u64) -> impl Fn(usize) -> Vec<usize> {
+    let state = std::cell::Cell::new(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
+    move |n| {
+        let mut v: Vec<usize> = (0..n).collect();
+        for i in (1..n).rev() {
+            let mut x = state.get();
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            state.set(x);
+            v.swap(i, (x % (i as u64 + 1)) as usize);
+        }
+        v
+    }
+}
+
+/// Pass 2 run twice (count, then write): the records are the serial lexer's, and each type's are the records split by
+/// their first byte (a string's quote, a punctuation byte, else a word), each a record's number in order.
+#[test]
+fn typed_records_are_the_records_split_by_type() {
+    let files = files();
+    let ty = |name: &str| crate::TYPE_NAMES.iter().position(|t| *t == name).unwrap_or_else(|| panic!("a type {name}"));
+    let (quote, punct, word) = (ty("\""), ty("punctuation"), ty("number"));
+    let mut records = 0;
+    for (k, f) in files.iter().enumerate() {
+        let buf = padded(f);
+        let want = lex(&buf, f.len());
+        for blocks in [1, 2, 3, 16] {
+            // Every pass's chunks and every scan round's in a random order, a seed a file and size.
+            let order = shuffled((k * 31 + blocks) as u64);
+            let got = crate::lex_typed_in(&buf, f.len(), blocks, &order);
+            assert_eq!(got.lexed.refused, want.refused, "file {k}, chunks of {blocks} blocks: refused");
+            if want.refused {
+                continue;
+            }
+            assert!(got.lexed.starts == want.starts, "file {k}, chunks of {blocks} blocks: the records");
+            let mut split: Vec<Vec<u32>> = vec![Vec::new(); crate::TYPES];
+            for r in 0..want.count {
+                let t = match buf[want.starts[r] as usize] {
+                    b'"' => quote,
+                    b'{' | b'}' | b'[' | b']' | b',' | b':' => punct,
+                    _ => word,
+                };
+                split[t].push(r as u32);
+            }
+            assert!(got.types == split, "file {k}, chunks of {blocks} blocks: the records of each type");
+            records += want.count;
+        }
+    }
+    eprintln!("{} files in chunks of 1, 2, 3 and 16 blocks ({records} records): each type's records the records split by type", files.len());
+}
+
 /// In the string, a chunk's lanes split by `in_string` never meet: both run to the chunk's end, and the join takes the
 /// one the chunk before ends in.
 #[test]
@@ -120,11 +175,14 @@ fn report_chunked_speed() {
             for _ in 0..5 {
                 let t = std::time::Instant::now();
                 for ((b, n), e) in bufs.iter().zip(&entries) {
-                    let mut s = Vec::with_capacity(n + 67);
+                    let mut s: Vec<u32> = Vec::with_capacity(n + 67);
+                    let mut t: Vec<Vec<u32>> = (0..crate::TYPES).map(|_| Vec::with_capacity(n + 67)).collect();
+                    let ptrs: [*mut u32; crate::TYPES] = core::array::from_fn(|k| t[k].as_mut_ptr());
+                    let mut at = [0usize; crate::TYPES + 1];
                     for (c, q) in (0..(n - off(b)).div_ceil(64)).step_by(blocks).enumerate() {
-                        _ = crate::stage1_from_best(b, *n, q, q + blocks, e[c], &mut s);
+                        _ = crate::stage1_from_best(b, *n, q, q + blocks, e[c], &mut at, s.as_mut_ptr(), ptrs, true);
                     }
-                    std::hint::black_box(s.len());
+                    std::hint::black_box(at[0]);
                 }
                 best = best.min(t.elapsed().as_secs_f64());
             }
@@ -132,4 +190,115 @@ fn report_chunked_speed() {
         };
         eprintln!("    pass 1 alone {:.2}x the serial time ({:.2} GB/s), pass 3 {:.3}x, pass 2 from the true entries {:.2}x", ends / serial, bytes as f64 / ends / 1e9, scan.max(0.0) / serial, from / serial);
     }
+}
+
+/// Trees whose levels cross chunks: lists of objects and of arrays, deep nests, empty levels, and the refusals tier 2
+/// makes of a level's closer, a separator and a value.
+fn trees() -> Vec<Vec<u8>> {
+    let mut out: Vec<String> = [
+        r#"{"a":{"b":[{"c":1},{"d":[2,3]}]},"e":[],"f":{},"g":[{},[],{"h":[[]]}]}"#,
+        r#"[[1,[2,[3,[4,{"k":[5,6]}]]]],7,{"x":{"y":{"z":"w"}}},8]"#,
+        r#"{"a": [1, 2}"#,
+        r#"[1, 2}"#,
+        r#"{"a": 1]"#,
+        r#"[1,]"#,
+        r#"{"a" 1}"#,
+        r#"[1]]"#,
+        r#"[[1], 2"#,
+        r#"{"a": 1,}"#,
+        r#"[1 2]"#,
+        r#"{"a":[{"b":1},{"b":2}],"c":[[1,2],[3,4]]}"#,
+        r#""just a string""#,
+        r#"[{"a":1},{"a":2},3]"#,
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    let deep = |n: usize| "[".repeat(n) + "1" + &",2]".repeat(n);
+    out.push(deep(40));
+    // Around the deepest the walk opens (`DEPTH`): refused past it.
+    out.push(deep(1023));
+    out.push(deep(1025));
+    out.push(format!("{{\"k\":{}}}", deep(30)));
+    // An array of records, and an object of arrays, long enough for many chunks.
+    let rows: Vec<String> = (0..60).map(|i| format!(r#"{{"id":{i},"tags":["a","b"],"m":{{"x":[{i},{{}}],"y":null}}}}"#)).collect();
+    out.push(format!("[{}]", rows.join(",")));
+    let cols: Vec<String> = (0..40).map(|i| format!(r#""c{i}":[{},[{i}],{{"n":true}}]"#, i * 3)).collect();
+    out.push(format!("{{{}}}", cols.join(",")));
+    out.into_iter().map(String::into_bytes).collect()
+}
+
+/// Two states the same: the place, the next record, the depth, the levels' places, the nodes before, the file's end
+/// (the last token's end is not read at a list's cycle place, where every chunk starts).
+fn same_state(a: &crate::middle::At, b: &crate::middle::At) -> bool {
+    a.end == b.end && a.nodes == b.nodes && a.prev_start == b.prev_start && (a.end.is_some() || (a.entry.i == b.entry.i && a.entry.depth == b.entry.depth && a.entry.st == b.entry.st && a.ret == b.ret && a.frames == b.frames))
+}
+
+#[test]
+fn tier2_entries_are_the_serial_walks() {
+    let (mut chunks, mut most) = (0, 0);
+    let all: Vec<Vec<u8>> = files().into_iter().chain(trees()).collect();
+    let entries = crate::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
+    let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), crate::WIDTHS, 1).expect("a language");
+    for (k, f) in all.iter().enumerate() {
+        let buf = padded(f);
+        let lx = lex(&buf, f.len());
+        if lx.refused || lx.count == 0 {
+            continue;
+        }
+        // The serial walk's verdict.
+        let mut w = rerail_tape_format::f16::Writer::new(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, 0, false, true, f.len() / 2 + 16);
+        let parsed = crate::parse_lexed(&buf, &lx, &mut w);
+        for size in [1, 2, 3, 16] {
+            // Every pass's chunks and every scan round's in a random order.
+            let order = shuffled((k * 31 + size) as u64);
+            let sums = crate::middle::summaries(&buf, &lx, size, &order);
+            let got = crate::middle::entries(&sums, &order);
+            let want = crate::middle::serial_entries(&buf, &lx, size);
+            assert_eq!(want.last().and_then(|a| a.end), Some(parsed), "file {k}: the chunks walked one after another are the serial walk");
+            assert_eq!(got.len(), want.len());
+            for (c, (g, w)) in got.iter().zip(&want).enumerate() {
+                let g = g.as_ref().unwrap_or_else(|| panic!("file {k}, chunks of {size}: no lane meets chunk {c}'s entry"));
+                assert!(same_state(g, w), "file {k}, chunks of {size}, chunk {c}: {g:?}, the serial walk's {w:?}");
+            }
+            chunks += sums.len();
+            most = most.max(sums.iter().map(|s| s.lanes.len()).max().unwrap_or(0));
+        }
+    }
+    eprintln!("{} files in chunks of 1, 2, 3 and 16 records ({chunks} chunks): the serial walk's states; at most {most} lanes a chunk", all.len());
+}
+
+/// Pass 2: each chunk's nodes written from its state, every pass's chunks (and every scan round's) in order and in two
+/// random orders, give the serial walk's tape,
+/// byte for byte.
+#[test]
+fn tier2_tape_from_the_middle_is_the_serial_tape() {
+    let all: Vec<Vec<u8>> = files().into_iter().chain(trees()).collect();
+    let entries = crate::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
+    let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), crate::WIDTHS, 1).expect("a language");
+    let writer = |f: &[u8]| rerail_tape_format::f16::Writer::new(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, 0, false, true, f.len() / 2 + 16);
+    let (mut tapes, mut chunks) = (0, 0);
+    for (k, f) in all.iter().enumerate() {
+        let buf = padded(f);
+        let lx = lex(&buf, f.len());
+        let mut w = writer(f);
+        let parsed = crate::parse_lexed(&buf, &lx, &mut w);
+        let want = parsed.ok().map(|()| w.finish().expect("the serial tape").tape.as_bytes().to_vec());
+        for size in [1, 3, 16] {
+            for seed in [0u64, 1, 2] {
+                let mut m = writer(f);
+                let random = shuffled((k * 97 + size) as u64 * 3 + seed);
+                let order: crate::middle::Order<'_> = if seed == 0 { &crate::middle::in_order } else { &random };
+                let got = crate::middle::parse_middle(&buf, &lx, &mut m, size, order);
+                assert_eq!(got, parsed, "file {k}, chunks of {size}: the verdict");
+                if let Some(want) = &want {
+                    let have = m.finish().expect("the tape from the middle").tape.as_bytes().to_vec();
+                    assert!(have == *want, "file {k}, chunks of {size}, order {seed}: the tape from the middle differs at byte {:?} of {}", have.iter().zip(want).position(|(a, b)| a != b), want.len());
+                    tapes += 1;
+                    chunks += crate::middle::chunk_starts(&buf, &lx, size, &crate::middle::in_order).len();
+                }
+            }
+        }
+    }
+    eprintln!("{tapes} tapes from the middle ({chunks} chunks), each the serial tape");
 }

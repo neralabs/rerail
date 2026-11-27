@@ -400,6 +400,24 @@ impl Writer {
         self.state.flags |= w::FINAL_AS_WRITTEN;
     }
 
+    /// Every block of a tape of `n` nodes made (`reserve_run` first), for cursors from the middle
+    /// (`writer16::Cursor::resume`, decision 0726), each writing a chunk of its nodes; then `end_middle`, then `finish`.
+    pub fn make_blocks(&mut self, n: usize) -> Result<(), String> {
+        let desc = self.desc();
+        // SAFETY: the parts' room is `reserve_run`'s; the state is the writer's own.
+        match unsafe { ops::w_make_blocks(desc, n as u32) } {
+            0 => Ok(()),
+            c => Err(format!("the blocks from the middle: failure {c}")),
+        }
+    }
+
+    /// The tape's `n` nodes written by cursors from the middle, the last one starting at `prev_start`: the state's.
+    pub fn end_middle(&mut self, n: usize, prev_start: u64) {
+        let desc = self.desc();
+        // SAFETY: the state is the writer's own.
+        unsafe { ops::w_end_middle(desc, n as u32, prev_start) };
+    }
+
     /// The state's address: what code that calls the ops itself passes them (`reserve_run` first).
     pub fn state_address(&mut self) -> *mut u8 {
         std::ptr::from_mut::<State>(&mut self.state).cast::<u8>()

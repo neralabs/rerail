@@ -873,7 +873,27 @@ impl Entry {
     fn at(at: usize) -> Entry {
         Entry { at, ..Entry::START }
     }
+
+    /// The nest (`Entry::levels` as the core reads it): none.
+    #[inline]
+    fn levels(&self) -> ([usize; MAXD], [usize; MAXD], usize) {
+        ([usize::MAX; MAXD], [0; MAXD], 0)
+    }
+
+    #[inline]
+    fn set_levels(&mut self, _nest: &[usize; MAXD], _held: &[usize; MAXD], _opened: usize, _depth: usize) {}
+
+    #[inline]
+    fn carry(&mut self, _from: &Entry, _keep: u8) {}
+
+    #[inline]
+    fn cond(&self) -> u8 {
+        0
+    }
 }
+
+/// No kept value is read by class (`Lane::cond`).
+const COND_KEEP: u8 = 0;
 
 /// A chunk's places (`chunk_ends`): code, then one inside each region.
 pub const LANES: usize = 7;
@@ -1312,10 +1332,29 @@ fn level_of(k: u8) -> usize {
     }
 }
 
-/// Whether a lane's level of kind `k` (254: any) meets a level of kind `m`.
+
+/// A level a lane leaves of no kind (open, or an interpolation of none): one it entered with, as it was.
+#[inline]
+fn wild(k: u8) -> bool {
+    k == 254 || k == 252
+}
+
+/// The kind of level both `k` and `m` are (254: any; 252: any of the kinds below 252), none where none is.
+#[inline]
+fn meet(k: u8, m: u8) -> Option<u8> {
+    if k == m || k == 254 || k == 252 && m < 252 {
+        Some(m)
+    } else if m == 254 || m == 252 && k < 252 {
+        Some(k)
+    } else {
+        None
+    }
+}
+
+/// Whether a lane's level of kind `k` meets a level of kind `m`: every level of kind `m` is one of `k`.
 #[inline]
 fn meets(k: u8, m: u8) -> bool {
-    k == 254 || k == m
+    meet(k, m) == Some(m)
 }
 
 /// One lane of a summary: what a range of chunks does for the entries at `at0` whose innermost `kcn` levels are `kc`
@@ -1341,6 +1380,11 @@ pub struct Lane {
     pub refused: bool,
     /// Whether it lexes a token: one that lexes none leaves its entry as it was.
     pub moved: bool,
+    /// The values of its entry it leaves as they were, which it never set (`Entry::carry`'s bits): its exit's are not
+    /// read.
+    pub keep: u8,
+    /// What it read of a value its entry keeps (`COND_KEEP`'s): the entries it holds for, by `Entry::cond` (0: any).
+    pub cond: u8,
 }
 
 /// A range's summary: its lanes (an entry past the range's head, its first chunk, at one of its later chunks' places,
@@ -1365,6 +1409,13 @@ impl Summary {
         if self.lanes[..usize::from(self.n)].contains(&l) {
             return;
         }
+        // The same lane for the other class of a kept value it read (`cond`: the classes are two): for every entry.
+        if l.cond != 0
+            && let Some(m) = self.lanes[..usize::from(self.n)].iter_mut().find(|m| m.cond != 0 && m.cond != l.cond && Lane { cond: l.cond, ..**m } == l)
+        {
+            m.cond = 0;
+            return;
+        }
         if usize::from(self.n) == L {
             self.over = true;
             return;
@@ -1384,7 +1435,7 @@ impl Summary {
     }
 }
 
-const NO_LANE: Lane = Lane { at0: 0, kc: [0; MAXD], kcn: 0, exact: false, need: 0, p: [0; MAXD], pn: 0, ph: [0; MAXD], high: 0, recs: 0, exit: Entry::START, refused: false, moved: false };
+const NO_LANE: Lane = Lane { at0: 0, kc: [0; MAXD], kcn: 0, exact: false, need: 0, p: [0; MAXD], pn: 0, ph: [0; MAXD], high: 0, recs: 0, exit: Entry::START, refused: false, moved: false, keep: 0, cond: 0 };
 
 /// The lanes of `b` a lane of the range before it goes on in: those entered where it leaves the next token, else the
 /// code's (a token from before `b` ends in its code).
@@ -1398,6 +1449,10 @@ fn next_lanes(b: &Summary, at: usize) -> impl Iterator<Item = &Lane> {
 /// Lane `a` then lane `b` (entered where `a` leaves), as typed bracket sequences: `b`'s closed levels matched against
 /// what `a` leaves open, the rest of them closed below `a`'s entry. None where they do not meet.
 fn then(a: &Lane, b: &Lane) -> Option<Lane> {
+    // `a` refuses the file: nothing past it is read.
+    if a.refused {
+        return Some(*a);
+    }
     // `b` lexes no token: what `a` leaves goes through it.
     if !b.moved {
         return Some(*a);
@@ -1409,12 +1464,41 @@ fn then(a: &Lane, b: &Lane) -> Option<Lane> {
     }
     let (an, bn, pn) = (usize::from(a.kcn), usize::from(b.kcn), usize::from(a.pn));
     let j = bn.min(pn);
-    // `b`'s first `j` closed levels, innermost first, are `a`'s open ones, innermost last.
-    if (0..j).any(|i| !meets(b.kc[i], a.p[pn - 1 - i])) {
-        return None;
+    // `b`'s first `j` closed levels, innermost first, are `a`'s open ones, innermost last. One `a` leaves of no kind
+    // (its entry's, `wild`) that `b` read the kind of: `a`'s class of it that kind (`refine`).
+    let (mut refine, mut nr) = ([(0usize, 0u8); MAXD], 0);
+    for i in 0..j {
+        let (k, m) = (b.kc[i], a.p[pn - 1 - i]);
+        match meet(k, m) {
+            Some(x) if x == m => {}
+            // (What `a`'s class knows of the level, which its wildcard does not say.)
+            Some(_) if wild(m) && pn - 1 - i < an => {
+                let at = an - 1 - (pn - 1 - i);
+                let Some(x) = meet(k, a.kc[at]) else { return None };
+                refine[nr] = (at, x);
+                nr += 1;
+            }
+            _ => return None,
+        }
     }
     let mut l = *b;
     l.at0 = a.at0;
+    // What `b` keeps of its entry is `a`'s exit's, where `a` set it; what both keep, `a`'s entry's.
+    l.keep = a.keep & b.keep;
+    l.exit.carry(&a.exit, b.keep & !a.keep);
+    // What `b` read of its entry's kept values (`cond`): `a`'s exit's where `a` set them, else `a`'s entry's.
+    l.cond = a.cond;
+    if b.cond != 0 {
+        if a.keep & COND_KEEP == 0 {
+            if a.exit.cond() != b.cond {
+                return None;
+            }
+        } else if a.cond != 0 && a.cond != b.cond {
+            return None;
+        } else {
+            l.cond = b.cond;
+        }
+    }
     if bn > pn {
         // `b` closes past what `a` left open: below `a`'s entry, where `a` read none (`exact`) there is none.
         // (No entry has more than `MAXD` levels open: the serial lexer refuses past them.)
@@ -1438,6 +1522,9 @@ fn then(a: &Lane, b: &Lane) -> Option<Lane> {
         // `b` holds where `a` leaves at least `bn + b.need` open: `a`'s entry at least that less what `a` opens.
         l.need = a.need.max((usize::from(b.need) + bn).saturating_sub(pn) as u8);
     }
+    for &(i, k) in &refine[..nr] {
+        l.kc[i] = k;
+    }
     // An entry with exactly `kn` levels open can have none more below.
     if l.exact && l.need > 0 {
         return None;
@@ -1454,7 +1541,12 @@ fn then(a: &Lane, b: &Lane) -> Option<Lane> {
         return None;
     }
     for i in 0..bp {
-        p[keep + i] = b.p[i];
+        // A level `b` leaves of no kind is its entry's: `a`'s, where `a` left it.
+        let ai = (i + pn).checked_sub(bn).filter(|&x| x < pn);
+        p[keep + i] = match ai {
+            Some(x) if wild(b.p[i]) => a.p[x],
+            _ => b.p[i],
+        };
         ph[keep + i] = if b.p[i] == 255 {
             0
         } else if b.ph[i] >= INHERIT {
@@ -1523,10 +1615,10 @@ pub fn apply(s: &Summary, e: &Entry, recs: usize) -> Option<(Entry, usize, bool)
     if s.transparent() || e.at >= s.end {
         return Some((*e, recs, false));
     }
-    let d = e.depth;
+    let (en, eh, d) = e.levels();
     let l = next_lanes(s, e.at).find(|l| {
         let kn = usize::from(l.kcn);
-        kn + usize::from(l.need) <= d && (0..kn).all(|i| meets(l.kc[i], kind_of(e.nest[d - 1 - i]))) && (!l.exact || d == kn)
+        kn + usize::from(l.need) <= d && (0..kn).all(|i| meets(l.kc[i], kind_of(en[d - 1 - i]))) && (!l.exact || d == kn) && (l.cond == 0 || l.cond == e.cond())
     })?;
     if !l.moved {
         return Some((*e, recs, false));
@@ -1537,27 +1629,29 @@ pub fn apply(s: &Summary, e: &Entry, recs: usize) -> Option<(Entry, usize, bool)
         return Some((Entry::START, recs + l.recs, true));
     }
     let mut x = l.exit;
-    let strings = (0..rest).filter(|&i| e.nest[i] != usize::MAX).count();
-    x.nest = [usize::MAX; MAXD];
-    x.nest[..rest].copy_from_slice(&e.nest[..rest]);
-    x.held = [0; MAXD];
-    x.held[..strings].copy_from_slice(&e.held[..strings]);
-    x.opened = strings;
+    let strings = (0..rest).filter(|&i| en[i] != usize::MAX).count();
+    let mut nest = [usize::MAX; MAXD];
+    nest[..rest].copy_from_slice(&en[..rest]);
+    let mut held = [0; MAXD];
+    held[..strings].copy_from_slice(&eh[..strings]);
+    let mut opened = strings;
     for i in 0..usize::from(l.pn) {
-        x.nest[rest + i] = level_of(l.p[i]);
+        // A level of no kind it leaves is one it entered with as it was: the entry's.
+        nest[rest + i] = if wild(l.p[i]) && rest + i < d { en[rest + i] } else { level_of(l.p[i]) };
         if l.p[i] != 255 {
-            x.held[x.opened] = if l.ph[i] >= INHERIT {
+            held[opened] = if l.ph[i] >= INHERIT {
                 // The string of the entry's level the lane closed `q`th: its record, the entry's.
                 let lv = d - 1 - (l.ph[i] - INHERIT);
-                e.held[(0..lv).filter(|&i| e.nest[i] != usize::MAX).count()]
+                eh[(0..lv).filter(|&i| en[i] != usize::MAX).count()]
             } else {
                 recs + l.ph[i]
             };
-            x.opened += 1;
+            opened += 1;
         }
     }
-    x.depth = rest + usize::from(l.pn);
-    x.template = if x.depth == 0 { usize::MAX } else { x.nest[x.depth - 1] };
+    x.set_levels(&nest, &held, opened, rest + usize::from(l.pn));
+    // What the lane keeps of its entry (`keep`): the entry's.
+    x.carry(e, l.keep);
     Some((x, recs + l.recs, l.refused))
 }
 

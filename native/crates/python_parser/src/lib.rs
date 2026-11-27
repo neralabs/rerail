@@ -312,4 +312,6 @@ pub fn lean_text(src: &str) -> Option<String> {
 }
 
 #[cfg(test)]
+mod chunked_tests;
+#[cfg(test)]
 mod tests;

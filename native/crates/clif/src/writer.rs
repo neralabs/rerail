@@ -32,9 +32,10 @@ pub const OPEN: u32 = 24;
 pub const TABLE: u32 = 16;
 /// A block's laid parts: four (start in `laid`, length), u32s.
 pub const LAID_AT: u32 = 32;
-/// A side area: four lists' entry counts (u32s), then each list's node offsets (u16s, `Z`) and values (u64s, `Z`).
+/// A side area: four lists' entry counts (u32s), then each list's node offsets (u16s, `Z`) and values (u64s, `Z`),
+/// then each list's rows as a mask (`Z` bits), which the writers from the middle count into (decision 0726).
 pub const SIDE_LIST: u32 = 2 * Z + 8 * Z;
-pub const SIDE_AREA: u32 = 16 + 4 * SIDE_LIST;
+pub const SIDE_AREA: u32 = 16 + 4 * SIDE_LIST + 4 * (Z / 8);
 
 /// An op's failures. A full part's is `FULL` plus the part's number (`State`'s order of parts).
 pub mod fail {

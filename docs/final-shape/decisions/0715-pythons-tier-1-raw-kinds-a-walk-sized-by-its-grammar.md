@@ -103,7 +103,7 @@ branch's generator the tier is 1931 lines (Parser-generators' own: 2269).
 ## Kotlin's token loop runs from the middle: three passes (2026-11-27)
 
 `bitlex_lex_rust::chunked` makes, from a tier 1 whose token loop keeps a nest (`nest`, `depth`, `template`, `held`,
-`opened`), the loop's chunked form, appended to the tier. Kotlin's is made; rr's, JSON's and Python's are not yet.
+`opened`), the loop's chunked form, appended to the tier. Kotlin's is made, and Python's (below); JSON's is not yet.
 
 - **Pass 1, one chunk each, writing nothing (`chunk_ends`).** A chunk's summary is its lanes: for each place the
   chunk can be entered, and each class of nest below the entry that the lexing reads, where it leaves and what it
@@ -169,6 +169,75 @@ Tests (`rerail-kotlin-parser`, `chunked_tests`):
 - `summaries_compose_in_any_order` (the look-back against a left fold, and `(A·B)·C = A·(B·C)` on entries);
 - `corpus_chunked_is_the_serial_lexer` (ignored: `RERAIL_KOTLIN_CORPUS`);
 - `rerail-bitlex`'s `kotlins_loop_has_a_chunked_form`.
+
+### Python's token loop from the middle: its nest is its string reader's (2026-11-27)
+
+`chunked_reader` makes Python's chunked form, on the template above. Python's loop has no stage 1 and keeps no
+`nest`: its nest is its string reader's state (`rd_on`, `rd_q`, `rd_fl`, `rd_level`, `rd_total`, `rd_around`,
+`rd_depth`) and the code's bracket count `c_depth`. The generator passes the reader's facts (`ReaderNest`: its quotes,
+its interpolation's flag, the flags a string may hold besides it, the opener's byte) from `reader_code` to
+`with_chunks`.
+
+- **The levels (`READER_NEST`).** A level is a bracket (255) or an interpolation, of its string's kind. Whether a
+  bracket is the code's or an interpolation's code's is its place: below every interpolation, or above one.
+  `Entry::levels` and `set_levels` map the reader's state to levels and back.
+- **The reads, made where the loop makes them (`instrument_reader`):**
+  - each step of `c_depth` a level pushed or popped;
+  - `rd_pick`'s read of the top (`rd_top`);
+  - a tail's reads of its interpolation's kind, bit by bit: its quote (`match qi`) and each flag it tests
+    (`fl & 0x01`, `0x02`, `0x80`). The format and template flags are the same for every interpolation, so they are
+    not reads;
+  - `g_depth == 0`, the count at the bottom.
+
+  Counts and bounds (`rd_level`, `rd_total`, `rd_depth`) are not reads: a lane's are relative, so it never refuses
+  where the serial lexer does not, and pass 2 refuses.
+- **A kind as far as it was read.** An interpolation's kind is partial: which of its bits (its quote, its free
+  flags) a lane read, and their values. That gives 80 kinds and 252 (none known); the 16 whole kinds are
+  `RD_KINDS`' indexes. A read of an unknown bit splits the level in two (`split_kinds`, by `Reads::bit`). Splitting
+  each tail's level into its 16 kinds at once put 102 lanes at one place.
+- **A kept value read by class (`Lane::cond`).** `rd_code`, where the outermost interpolation's code began, is a value
+  a lane keeps from its entry (keep bit 2). A lane reads only whether it is none. Such a lane runs again as two (none,
+  and one before the lane), and `cond` names the class of entries each holds for. Two lanes equal but for `cond` are
+  one, for every entry.
+- **A tail that opens the next interpolation** pushes the level it popped (`Reads::popped`), its kind as far as read.
+  Pushing it from the lane's own copy (`rd_kind(rd_q, rd_fl)`) made a whole kind of guessed bits: its tail then never
+  read the quote, walked to the other quote and refused.
+- **Places in a region:** each string kind's tail forced at the chunk's first byte (`RD_PLACES`); a spec, a
+  conversion and a comment. A forced token has no `}`, `:` or `!` of its own, so the checks of the token that opens
+  the row (an interpolation's `=`, an empty interpolation, a comment, an empty spec) are skipped (`forced`). A chunk
+  starting right after `value="` had refused there, at the `=`, and lost its place.
+- `L` is 128: at 64, 4 of the test files' chunks were entered again.
+
+The core (the template's and the summary's, for every form) changed with it:
+
+- **A wildcard in `p`** (an entered level the lane left as it was, its kind not whole) is the entry's level.
+  `apply` takes the entry's; `then` refines `a`'s class where `b` reads more of it, as the meet of `b`'s kind and
+  `a`'s class at that level (`meet`), and fails where they are disjoint. Meeting `b`'s kind with the wildcard alone
+  replaced what `a`'s class knew, and gave refused lanes to classes no lane held.
+- **The kinds' operations** (`meet`, `wild`, `split_kinds`) are the nest's (`KIND_OPS` for one kind a level).
+- **A refused lane ends the file:** `then` returns it as it is, and it keeps nothing past its class (its exit
+  START's, no levels, no records), so the lanes that refuse alike are one.
+- **An exit's kept values** take one form (START's), since they are not read.
+- **The crossed token's places:** lexed from the first byte of the run before the chunk in each class of nest
+  (`lanes_from`, stopped at the chunk's first block). The per-byte fallback, for a run that starts at a region's
+  closer, stops at its first end. Every byte of the chunk's first run had been a place: an f-string's code
+  (`{record_type.key}:{obj.pk}:{panel.key}`) has no blanks, so its chunk passed `L`.
+- **A summary's lane runs are at most `4 L`;** past them it is `over`, as past `L` lanes. The bound did not fire in
+  the tests.
+
+### Numbers (Python)
+
+- **The test files** (1614 files at 1, 2, 3 and 16 blocks, 11,407 chunks): the serial lexer's records, 0 chunks
+  entered again, 0 waits, 66 chunks past `L`.
+- **The corpus** (posthog's first 250 files in path order, 2.9 MB; `RERAIL_PYTHON_CORPUS_FILES`), before the last
+  three core fixes (the refinement, the crossed token's places, the tail's popped kind): the serial lexer's records
+  at 1, 2, 16 and 256 blocks, with 12,272, 5,307, 403 and 2 chunks entered again. After them, the miss report at 1
+  and 2 blocks (`report_the_corpus_entries_pass_3_misses`): 28 chunks with no lane, each after a chunk past `L`, and
+  no wrong entry. The four-size corpus run was not repeated after the fixes.
+
+Tests (`rerail-python-parser`, `chunked_tests`): `chunked_is_the_serial_lexer`, `summaries_compose_in_any_order`,
+`report_the_entries_pass_3_misses`, and, ignored (`RERAIL_PYTHON_CORPUS`), `corpus_chunked_is_the_serial_lexer` and
+`report_the_corpus_entries_pass_3_misses`; `rerail-bitlex`'s `pythons_loop_has_a_chunked_form`.
 
 ## Not yet (superseded at the merge above)
 

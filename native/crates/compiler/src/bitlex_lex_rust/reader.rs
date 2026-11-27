@@ -94,6 +94,17 @@ impl Gen<'_> {
             return Err("tier 1 as Rust: a string reader of more than 7 flags".into());
         }
         const TRIPLE: &str = "0x80";
+        // What the loop's chunked form needs of the reader (`chunked::ReaderNest`): its interpolation's flag, the flags a
+        // string may hold besides (but those refused at its opener), and the interpolation opener's byte.
+        if let Some(i) = &rd.interpolation
+            && let Some(format) = rd.flags.iter().position(|(g, _)| *g == i.flag)
+            && let Some(ob) = self.exact_bytes(&n(&i.open))
+            && let [open_byte] = (0..256u16).filter(|&c| ob.has(usize::from(c))).map(|c| c as u8).collect::<Vec<u8>>().as_slice()
+        {
+            let refused = |f: &str| rd.refusals.iter().any(|r| r.at == RefuseAt::Open && r.expr.is_none() && r.when.as_ref().is_some_and(|(on, g)| *on && g == f));
+            let free = rd.flags.iter().enumerate().filter(|(k, (f, _))| *k != format && !refused(f)).map(|(k, _)| 1u8 << k).chain(rd.triple.then_some(0x80)).collect();
+            *self.chunk_reader.borrow_mut() = Some(super::chunked::ReaderNest { quotes: rd.quotes.len() as u8, format: 1 << format, free, open_byte: *open_byte });
+        }
         // Its rows: the string's (its regions no tail's), its tail's, its spec's, its conversion's.
         let interp = rd.interpolation.clone();
         let tail_kinds: Vec<String> = interp.as_ref().map(|i| vec![i.close_kind.clone()]).unwrap_or_default();
@@ -294,13 +305,21 @@ impl Gen<'_> {
                     i += 2;
                     continue;
                 }
+                // Pass 1 of the loop's chunked form writes no record (`WRITE` false, `out` null): its writes are on where
+                // `WRITE`, as the loop's own are (`chunked::instrument_reader`).
+                if d.trim_start().starts_with("unsafe { out.add(len + 1 + more).write(") {
+                    let pad = &d[..d.len() - d.trim_start().len()];
+                    let _ = writeln!(b, "{pad}if WRITE {{\n{pad}    {}\n{pad}}}", d.trim_start());
+                    i += 1;
+                    continue;
+                }
                 let _ = writeln!(b, "{d}");
                 i += 1;
             }
             let shown: Vec<String> = [(0, "its text"), (1, "an escape"), (2, "a lone escape"), (3, "a brace pair"), (4, "its closer"), (5, "an interpolation's `{`")].iter().filter(|(i, _)| !kinds[*i].is_empty()).map(|(i, w)| format!("{i} {w}")).collect();
             let _ = write!(
                 text_fn,
-                "/// String reader `{}`'s text from its byte `o1` to its closer or an interpolation's `{{`, from stop to stop (the lean\n/// lexer's `string`'s loop), the string's quote `qi`, its flags `fl`, its region from `seg`: its pieces written after\n/// record `len` (`more` of them), each of its kind in `kinds` ({}). The closer's first and last byte, and whether it is\n/// a `{{`; none where the file is refused.\n#[inline(always)]\nunsafe fn string_text(src: &[u8], n: usize, out: *mut Rec, len: usize, more_io: &mut usize, qi: u8, fl: u8, seg: usize, o1: usize, kinds: [u32; 6]) -> Option<(usize, usize, bool)> {{\n    let mut more = *more_io;\n    let mut t0 = o1;\n{b}    *more_io = more;\n    Some((c, cl, to_code))\n}}\n\n",
+                "/// String reader `{}`'s text from its byte `o1` to its closer or an interpolation's `{{`, from stop to stop (the lean\n/// lexer's `string`'s loop), the string's quote `qi`, its flags `fl`, its region from `seg`: its pieces written after\n/// record `len` (`more` of them, written where `WRITE`), each of its kind in `kinds` ({}). The closer's first and last byte, and whether it is\n/// a `{{`; none where the file is refused.\n#[inline(always)]\nunsafe fn string_text<const WRITE: bool>(src: &[u8], n: usize, out: *mut Rec, len: usize, more_io: &mut usize, qi: u8, fl: u8, seg: usize, o1: usize, kinds: [u32; 6]) -> Option<(usize, usize, bool)> {{\n    let mut more = *more_io;\n    let mut t0 = o1;\n{b}    *more_io = more;\n    Some((c, cl, to_code))\n}}\n\n",
                 rd.name,
                 shown.join(", ")
             );
@@ -309,7 +328,7 @@ impl Gen<'_> {
         let mut marked = |k: &[String; 7]| -> String {
             let i = texts.len();
             let ks: Vec<String> = (0..6).map(|j| if k[j].is_empty() { "0".to_owned() } else { k[j].clone() }).collect();
-            texts.push(format!("                // Its text, from stop to stop (`string_text`, the lean lexer's `string`'s loop).\n                let Some((c, cl, to_code)) = (unsafe {{ string_text(src, n, out, len, &mut more, qi, fl, seg, o1, [{}]) }}) else {{\n                    refused = true;\n                    break 'tokens;\n                }};\n", ks.join(", ")));
+            texts.push(format!("                // Its text, from stop to stop (`string_text`, the lean lexer's `string`'s loop).\n                let Some((c, cl, to_code)) = (unsafe {{ string_text::<true>(src, n, out, len, &mut more, qi, fl, seg, o1, [{}]) }}) else {{\n                    refused = true;\n                    break 'tokens;\n                }};\n", ks.join(", ")));
             format!("{TEXT}{i}\u{0}\n                let mut t0 = o1;\n{}{TEXT_END}\n", text(k))
         };
         // The counts at an interpolation's `{` and a tail's `}` (`i_at`, `o_t`: the reader's masks of them).
