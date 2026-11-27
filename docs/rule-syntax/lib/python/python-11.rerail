@@ -47,8 +47,14 @@ td_walk(h, x, p) :- td_walk(h, x, s), !bound_in(s, x), nearest(s, p, lfscope).
 td_site(h, site) :- td_walk(h, x, s), bound_in(s, x), k = max i : { binding(s, x, st, _), visit_index(st, i) },
     binding(s, x, site, _), visit_index(site, k).
 .decl td_sym(e: node, q: symbol)
-td_sym(e, q) :- td_chain(e, q0, "import"), resolve_export(q0, q).
-td_sym(e, q0) :- td_chain(e, q0, "import"), !resolve_export(q0, _).
+td_sym(e, q) :- td_export(e, _, q).
+td_sym(e, q0) :- td_chain(e, q0, "import"), !td_export(e, q0, _).
+// td_export(e, q0, q): q0 ("m.x"), the qualified name e's chain spells, is module m's export x, q: the phase
+// py_names' exports, read at the path of the file the tree's string is in (upgrade's up_export; python/names'
+// export_at). Read per file: resolve_export's table of every file's names put e in the cross-file part (0677).
+.decl td_export(e: node, q0: symbol, q: symbol)
+td_export(e, q0, q) :- td_chain(e, q0, "import"), split_dot(q0, m, x), td_node(e, h), docof(h, d), doc(d, p, _),
+    py_names__reads_at(p, m), py_names__exports(m, x, q).
 td_sym(e, q) :- td_chain(e, q, "def").
 td_sym(e, @dot("builtins", x)) :- td_node(e, _), kind(e, "identifier"), head_ref(e, e, x), td_walk(e, x, m),
     kind(m, "module"), !bound_in(m, x), builtin(x).

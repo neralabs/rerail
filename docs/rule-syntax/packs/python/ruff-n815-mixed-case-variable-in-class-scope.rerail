@@ -23,5 +23,7 @@
     suppress ruff "N815"
 N815(n, x) :- ruff_store(n, x, c), kind(c, "class_definition"), ruff_mixed(n, x), !store_makes(n, "namedtuple"),
     !typed_dict(c), !ruff_ignored(n, x).
+// typed_dict(c): class c derives from TypedDict, at any depth (python/names' class_anc, by its own module's rows:
+// scopes' subclass, a table of every file's classes, put c in the cross-file part, decision 0677).
 .decl typed_dict(c: node)
-typed_dict(c) :- class_def(c, q), subclass(q, b), (b = "typing.TypedDict" ; b = "typing_extensions.TypedDict").
+typed_dict(c) :- class_anc(c, b), (b = "typing.TypedDict" ; b = "typing_extensions.TypedDict").

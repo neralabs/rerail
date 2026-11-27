@@ -89,11 +89,11 @@ after_any(c, s) :- after(c, c0), kind(c0, "comment"), after_any(c0, s).
 // cand(c, e): e ends where the sibling before c ends: s itself or a last descendant of it.
 .decl cand(c: node, e: node)
 cand(c, e) :- after_comments(c, s), node(_, s, _, _, se), (e = s ; within(e, s)), node(_, e, _, _, se).
-// entered(e): Ruff's visitor walks into e's parent (parentheses aside): a formatter comment starts in it. Some
-// text must follow the comment in the parent: tree-sitter takes a comment after a decorator's `)` into the
+// entered(e): Ruff's visitor walks into e's parent (parentheses aside): a formatter comment of the same file starts
+// in it. Some text must follow the comment in the parent: tree-sitter takes a comment after a decorator's `)` into the
 // decorator, where Ruff's range of it ends at the `)`.
 .decl entered(e: node)
-entered(e) :- cand(_, e), ast_up(e, p), node(_, p, _, ps, pe), fmt_comment(c2, _), node(_, c2, _, s2, ce2), s2 >= ps,
+entered(e) :- cand(_, e), ast_up(e, p), node(d, p, _, ps, pe), fmt_comment(c2, _), node(d, c2, _, s2, ce2), s2 >= ps,
     ce2 < pe.
 // indent(e, i): the indentation of e's line when e starts it, else 0 (Ruff's indentation_at_offset).
 .decl indent(e: node, i: number)
