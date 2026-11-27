@@ -2694,6 +2694,95 @@ use rerail_blocks::vector::Vector;
         }
     }
 
+    /// Containment (`within(n, a)`, `Mode::Tree`: `n` strictly below `a`) is `has` of every kind, read off the tape by
+    /// the device with no pair made or indexed: by its node, the node's numbered ancestors; by its ancestor, its
+    /// subtree; by both, the node's climb, each ancestor checked against the bound one. The rows are the CPU's, and
+    /// the CPU's the host's lookups; the pairs probed by both are the true ones and as many false ones (each reversed).
+    #[test]
+    fn containment_on_the_device_is_walked_on_the_tape() {
+        use crate::code_rule_dsl::facts::core::{self, Built};
+        use crate::code_rule_dsl::facts::vtab::Source as _;
+        use crate::code_rule_dsl::facts::vtab::syntax::within::{Mode, Within};
+        use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
+        use crate::code_rule_dsl::model::FileInput;
+        use std::sync::Arc;
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        crate::test_languages();
+        let texts = ["import os\nx = f(1, y=[2, g(3)])\n", "class C(B):\n    def m(self, a, *b):\n        return [a for a in b if a]\n", "", "@d\ndef g():\n    try:\n        h(1)\n    except E as e:\n        raise\n"];
+        let docs: Vec<Document> = texts.iter().enumerate().map(|(at, source)| {
+            let path = format!("d{at}.py");
+            let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new((*source).to_owned().into()), None, None, "core").unwrap();
+            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
+            Document { key: (7 + 3 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
+        }).collect();
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let content = crate::content_store::ContentStore::open(&std::env::temp_dir().join(format!("rerail-within-walk-{}-{nonce}.sqlite", std::process::id()))).unwrap();
+        let all = sources(&content, docs).unwrap();
+        let node = &all.iter().find(|(n, s)| *n == "node" && s.python_batch().is_some()).unwrap().1;
+        let batch = node.python_batch().expect("the batch");
+        let within: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(Within::new(Arc::clone(&batch), Mode::Tree));
+        assert!(within.has_walk().is_some_and(|w| w.every), "containment is walked as has of every kind");
+        let ids: Vec<i64> = (0..node.len()).map(|r| node.value(r, 1)).collect();
+        // The host's pairs, from its lookups by the node (column 0) and by the ancestor (column 1): the same pairs.
+        let expect = |col: usize| -> Vec<(i64, i64)> {
+            let mut rows: Vec<(i64, i64)> = ids.iter().flat_map(|&id| within.lookup(col, &[id]).unwrap_or_default()).map(|r| (within.value(r, 0), within.value(r, 1))).collect();
+            rows.sort_unstable();
+            rows.dedup();
+            rows
+        };
+        let pairs = expect(0);
+        assert_eq!(pairs, expect(1), "the host's lookups by either column give the same pairs");
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE q (c0); CREATE TEMP TABLE q2 (c0, c1);").unwrap();
+        for &id in &ids {
+            db.execute("INSERT INTO q VALUES (?1)", [id]).unwrap();
+        }
+        // Each true pair and its reverse, which no strict containment holds.
+        for &(n, a) in &pairs {
+            db.execute("INSERT INTO q2 VALUES (?1, ?2)", [n, a]).unwrap();
+            db.execute("INSERT INTO q2 VALUES (?1, ?2)", [a, n]).unwrap();
+        }
+        super::super::hold_source(&db, "within_t", Arc::clone(&within), b"ii".to_vec());
+        let q = format!("t:x:{}:{}:i", hex("temp.q"), hex("c0"));
+        let q2 = format!("t:x:{}:{}:ii", hex("temp.q2"), hex("c0, c1"));
+        let w = format!("r:{}", hex("within_t"));
+        // By the node, by the ancestor, by both.
+        for (by, rule) in [("n", format!("pos {q} v0\npos {w} v0 v1\nhead v0 v1")), ("a", format!("pos {q} v1\npos {w} v0 v1\nhead v0 v1")), ("n, a", format!("pos {q2} v0 v1\npos {w} v0 v1\nhead v0 v1"))] {
+            assert!(pairs.len() > 20, "{} pairs", pairs.len());
+            let mut got = Vec::new();
+            for device in [false, true] {
+                db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+                let mut spec = vec!["name within_test".to_owned()];
+                if device {
+                    spec.push("device".into());
+                }
+                spec.push("rel h0 ii empty".into());
+                spec.push(format!("seed 0 {}", hex(&rule)));
+                super::super::open(&db, &spec.join("\n")).unwrap();
+                super::super::run(&db, "within_test", 0).unwrap();
+                let report = super::take_report();
+                super::super::close(&db, "within_test").unwrap();
+                if device {
+                    let r = report.as_ref().expect("a device run");
+                    assert!(r.refused.is_none(), "by {by}: on the device: {r:?}");
+                    // None, though the host's lookups solved its pairs into a block (`placed`): they are not indexed.
+                    assert_eq!(r.sorts, 0, "by {by}: no index built of containment: {r:?}");
+                }
+                let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+                rows.sort_unstable();
+                got.push(rows);
+            }
+            assert_eq!(got[0], pairs, "by {by}: the CPU's rows are the host's lookups");
+            assert_eq!(got[1], pairs, "by {by}: the device's rows are the CPU's");
+        }
+    }
+
     /// Decision 0287 §2: a node's text (`@rr_node_text_any`, at any length, and the long-text twin's `@rr_node_text`,
     /// past `text`'s inline bound alone) is read by the device where its document's source lies, through the batch's
     /// `node` view, and made a text of the arena: the CPU's rows are the host's reads (`node_read`), and the device's

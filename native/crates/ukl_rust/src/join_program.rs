@@ -681,9 +681,13 @@ impl St<'_> {
         self.s.r_dead == 0 || rel_dead(self.r as *const u8, self.s.r_dead, r) == 0
     }
 
-    /// Whether node row `q`'s kind atom is in the stage's set (ascending).
+    /// Whether node row `q`'s kind atom is in the stage's set (ascending): every node where the set is every kind
+    /// (`HAS_EVERY`, containment).
     unsafe fn has_member(&self, q: u32) -> bool {
         let s = self.s;
+        if s.v_nset == HAS_EVERY {
+            return true;
+        }
         // A `has` stage's rows are `node`'s (`row`): a walk's candidate is the row it holds.
         let k = self.row(q).get(2);
         let set = core::slice::from_raw_parts(s.v_set, s.v_nset as usize);
@@ -695,12 +699,27 @@ impl St<'_> {
     unsafe fn matches(&self, r: u32, kv: &[i64; 8], key: bool) -> bool {
         let s = self.s;
         if s.v_has != 0 {
-            return s.ntests == 0 && (s.v_has == 1 || self.has_member(r));
+            // Probed by both columns: the node's climb, the ancestor the bound one (`has_other`).
+            let other = self.has_other();
+            return s.ntests == 0 && (s.v_has == 1 || self.has_member(r)) && other.is_none_or(|i| self.rget(r, 1) == kv[i]);
         }
         if !self.row_live(r) {
             return false;
         }
         (key || self.keys_are(r, kv)) && (0..s.ntests.min(8) as usize).all(|i| self.rget(r, s.test_a[i]) == self.rget(r, s.test_b[i]))
+    }
+
+    /// A `has` stage's key that its walk starts from: the node's (relation column 0) for a climb (`v_has` 1), the
+    /// ancestor's (1) for a subtree.
+    fn has_key(&self) -> usize {
+        let want = if self.s.v_has == 1 { 0 } else { 1 };
+        (0..self.s.nkeys.min(8) as usize).find(|&i| self.s.key_rcol[i] == want).unwrap_or(0)
+    }
+
+    /// A `has` stage's other key, checked on each candidate (probed by both columns), if it has one.
+    fn has_other(&self) -> Option<usize> {
+        let k = self.has_key();
+        (0..self.s.nkeys.min(8) as usize).find(|&i| i != k)
     }
 
     /// Whether a walk's candidates hold the binding's only key by their making: a parent's children (walk 2, a
@@ -760,7 +779,7 @@ impl St<'_> {
         let none = Walk { lo: 0, hi: 0, how: 0, tag: 0 };
         let d = s.v_dir;
         if s.v_has != 0 {
-            let Some((e, l)) = self.doc_node(kv[0]) else { return none };
+            let Some((e, l)) = self.doc_node(kv[self.has_key()]) else { return none };
             let first = (*e).rows[0];
             if s.v_has == 1 {
                 if !self.has_member(first.wrapping_add(l)) {
@@ -996,6 +1015,9 @@ struct Walk {
     /// An index group's (`how` 1): its key's tag (decision 0671), which its places' marks are read against.
     tag: u32,
 }
+
+/// A `has` stage's set size for a set of every kind (`metal_join::HAS_EVERY`): containment, `within`.
+const HAS_EVERY: u32 = u32::MAX;
 
 /// A mark's `MARK_SAME` (decision 0671, `rerail_blocks::relation::MARK_SAME`).
 const MARK_SAME: u32 = 1;
@@ -3815,10 +3837,41 @@ impl Prog {
         if !listed {
             it.group = group;
         }
-        if !self.item(it) {
+        let prof = crate::stage_prof::on();
+        let since = if prof { crate::stage_prof::counts() } else { [0; 2] };
+        let whole = self.item(it);
+        if prof {
+            let (kind, read, rows) = self.prof_key(it);
+            crate::stage_prof::add(kind, read, since, rows);
+        }
+        if !whole {
             *self.slots.add(ctl_at(self.ctl, 3).fetch_add(1, SeqCst) as usize) = item;
             ctl_at(self.ctl, 6).fetch_or(32, SeqCst);
         }
+    }
+
+    /// Item `it`'s kind, its stage's read and its rows, for `stage_prof`: a stage's mode, its view (0: a relation) at
+    /// bit 4, keyed at bit 9; an index's view at bit 4 and key columns (its rows once, at its keys' first group).
+    unsafe fn prof_key(&self, it: Item) -> (u32, u32, u64) {
+        let (kind, x) = (it.what >> 24, it.what & 0xff_ffff);
+        if matches!(kind, PK_IX_KEY | PK_IX_MARK | PK_IX_OFFS | PK_IX_PLACE) {
+            let p = &*((*self.jobs.add(x as usize)).p as *const IxP);
+            let rows = if kind == PK_IX_KEY && it.group == 0 { u64::from(p.n) } else { 0 };
+            return (kind, (p.kind as u32 & 31) << 4 | (p.ncols & !IX_LIVE).min(15), rows);
+        }
+        if !matches!(kind, PK_STAGE_COUNT | PK_SCAN_COUNT | PK_WITNESS_COUNT | PK_ROW_TEXT | PK_STAGE_SCATTER | PK_SCAN_SCATTER | PK_ROW_SCATTER | PK_COPY) {
+            return (kind, 0, 0);
+        }
+        let j = &*self.jobs.add(x as usize);
+        if kind == PK_COPY {
+            return (kind, (*(j.p as *const Copy)).r_view << 4, 0);
+        }
+        let s = if kind == PK_STAGE_SCATTER { j.ws } else { j.s };
+        if s.is_null() {
+            return (kind, 0, 0);
+        }
+        let s = &*s;
+        (kind, s.mode | s.r_view << 4 | u32::from(s.nkeys > 0) << 9, 0)
     }
 
     /// Item `it`'s work, every thread of the group's: whether it is whole (a size script that parked is not).

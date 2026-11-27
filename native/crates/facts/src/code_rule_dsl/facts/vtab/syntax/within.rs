@@ -638,6 +638,25 @@ impl Within {
         self.solved_over(views, keep).map(|c| Solved { start: Vector::new(), rows: c.rows, start_in_block: Some(c.start) })
     }
 
+    /// The walk of `has_walk` over `views` (the batch's views, or a layered source's over the batch and its values:
+    /// `values::Layered`), of `nodes` node rows, `keep` keeping them: for `has` and containment only.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    pub(super) fn walk_over(&self, views: &super::device_chunk::ViewsInPlace, nodes: usize, keep: Arc<dyn std::any::Any + Send + Sync>) -> Option<crate::code_rule_dsl::facts::vtab::HasWalk> {
+        let every = match self.mode {
+            Mode::Axis(Axis::Has) => false,
+            Mode::Tree => true,
+            _ => return None,
+        };
+        // The node view as the join programs here read it: at the host's addresses where they run on the host.
+        let view = views.read_of(super::device_chunk::VIEW_NODE, keep)?;
+        Some(crate::code_rule_dsl::facts::vtab::HasWalk { nodes, view, kinds: Arc::clone(&self.kinds), every })
+    }
+
+    /// Whether `other`'s walk is this one's (the same mode and set), so one walk reads both batches' nodes.
+    pub(super) fn walks_as(&self, other: &Within) -> bool {
+        self.mode == other.mode && self.kinds == other.kinds
+    }
+
     /// Its solve and those of the tape values `more` (decision 0431 §8), made on the device in one relation over
     /// `views`, the layered source's directory of the batch and its values (`values::Layered`, kept by `keep`): its
     /// rows, then each value's, as the device binds a layered source's.
@@ -1120,16 +1139,12 @@ impl Source for Within {
     }
     /// `has`, read by the device off the tape (decision 0353 step 5): where the batch's views are read in place, its
     /// `node` view, which a stage's walk reads a node's kind, ancestors and subtree through, and the set's atoms.
+    /// Containment (`within`, `Mode::Tree`) is `has` of every kind: by `n` its numbered ancestors, by `a` its subtree,
+    /// read the same way, no pair made.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn has_walk(&self) -> Option<crate::code_rule_dsl::facts::vtab::HasWalk> {
-        use super::device_chunk::{VIEW_NODE, views_in_place};
-        if self.mode != Mode::Axis(Axis::Has) {
-            return None;
-        }
-        let v = views_in_place(&self.batch)?;
-        // The node view as the join programs here read it: at the host's addresses where they run on the host.
-        let view = v.read_of(VIEW_NODE, Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>)?;
-        Some(crate::code_rule_dsl::facts::vtab::HasWalk { nodes: self.batch.nodes().total(), view, kinds: Arc::clone(&self.kinds) })
+        let v = super::device_chunk::views_in_place(&self.batch)?;
+        self.walk_over(v, self.batch.nodes().total(), Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>)
     }
     /// A kind-set axis or containment read whole (the device's keyed read, decision 0277): the batch's solve
     /// (decision 0143), one pass over the nodes, chosen from here on, so its `n` lookups read the same rows. Spans

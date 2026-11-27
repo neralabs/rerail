@@ -4953,6 +4953,10 @@ pub enum Ver {
 /// its probes name.
 pub struct View { pub src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vector<usize>, ids: Option<OnceLock<Vector<u32>>>, eqs: Vec<(usize, i64)>, of: Option<Arc<str>> }
 impl View {
+    /// The relation it is a view of, by name, where it was made for one (a measurement aid's label).
+    pub fn of(&self) -> Option<&str> {
+        self.of.as_deref()
+    }
     /// Its rows' places in the source, a view of some rows': found when first asked, for a filtered one.
     fn ids(&self) -> Option<&[u32]> {
         self.ids.as_ref().map(|ids| ids.get_or_init(|| self.filtered()).as_slice())

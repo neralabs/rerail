@@ -359,8 +359,13 @@ UKL_INLINE uint32_t child_next(StageP s, uint32_t r) {
 // (2), the numbered nodes of its subtree (`clif_view_end`), those in the set (`matches`). As the host's
 // `Within::containers_on` and `contained_on`.
 
-// Whether node row `q`'s kind atom is in the set (the stage's, ascending), by bisection.
+// A set of every kind (`Stage::v_nset`, `metal_join::HAS_EVERY`): containment, `within(n, a)`, whose walks read no kind.
+#define HAS_EVERY 0xffffffffu
+
+// Whether node row `q`'s kind atom is in the set (the stage's, ascending), by bisection; every node where the set is
+// every kind.
 UKL_INLINE bool has_member(StageP s, uint32_t q) {
+    if (s->v_nset == HAS_EVERY) return true;
     uint32_t memo = NONE;
     int64_t k = vread(1u, s->v_dir, q, 2u, &memo);
     uint32_t lo = 0u, hi = s->v_nset;
@@ -369,6 +374,19 @@ UKL_INLINE bool has_member(StageP s, uint32_t q) {
         if (s->v_set[m] < k) lo = m + 1u; else hi = m;
     }
     return lo < s->v_nset && s->v_set[lo] == k;
+}
+
+// The key a `has` stage's walk starts from: the node's (relation column 0) for a climb (`v_has` 1), the ancestor's
+// (1) for a subtree. Probed by both columns, the other is checked on each candidate (`has_other`, `matches`).
+UKL_INLINE uint32_t has_key(StageP s) {
+    uint32_t want = s->v_has == 1u ? 0u : 1u;
+    for (uint32_t i = 0u; i < s->nkeys && i < 8u; i++) if (s->key_rcol[i] == want) return i;
+    return 0u;
+}
+UKL_INLINE uint32_t has_other(StageP s) {
+    uint32_t k = has_key(s);
+    for (uint32_t i = 0u; i < s->nkeys && i < 8u; i++) if (i != k) return i;
+    return NONE;
 }
 
 // The candidates of node `key`: its document by the directory's search on its key (`clif_dir_doc_of_key`), its
@@ -425,7 +443,7 @@ UKL_INLINE uint32_t stage_rows(StageP s, RelB R) {
 UKL_INLINE void probe(StageP s, RelB R, UKL_PRIVATE const int64_t* kv, UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi,
                       UKL_PRIVATE uint32_t* how) {
     if (s->nkeys == 0) { *lo = s->r_from; *hi = s->r_from + stage_rows(s, R); *how = 0u; return; }
-    if (s->v_has != 0u) { by_has(s, kv[0], lo, hi, how); return; }
+    if (s->v_has != 0u) { by_has(s, kv[has_key(s)], lo, hi, how); return; }
     if (s->v_parent == 2u) { by_own(s, kv, lo, hi); *how = 0u; return; }
     if (s->v_parent != 0u) { by_parent(s, kv[0], lo, hi, how); return; }
     *how = 1u;
@@ -476,7 +494,11 @@ UKL_INLINE bool parent_known(StageP s, uint32_t how) {
 UKL_SHARED bool matches(StageP s, RelB R, uint32_t r, UKL_PRIVATE const int64_t* kv) {
     // A `has` walk's candidates hold its key by their making (`by_has`); a descendant is a row where it is in the set.
     // Its two columns are never one node (an ancestor is strict), so a test of them holds for no row.
-    if (s->v_has != 0u) return s->ntests == 0u && (s->v_has == 1u || has_member(s, r));
+    // Probed by both columns: the node's climb, each ancestor checked against the bound one (`has_other`).
+    if (s->v_has != 0u) {
+        uint32_t o = has_other(s), memo = NONE;
+        return s->ntests == 0u && (s->v_has == 1u || has_member(s, r)) && (o == NONE || vread(1u, s->v_dir, r, 1u, &memo) == kv[o]);
+    }
     return row_live(s, R, r) && keys_are(s, R, r, kv) && row_passes(s, R, r);
 }
 

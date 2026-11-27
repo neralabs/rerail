@@ -1505,6 +1505,34 @@ impl Source for Layered {
         }
         self.values.whole(&self.name).filter(|w| w.len() == self.len()).and_then(|w| w.in_block())
     }
+    /// `has` and containment off the tape (`Within::has_walk`): the chunk's, or with values admitted one walk over the
+    /// layered directory of the batch and its values (`views_over`), each value's axis the base's (its mode and set). A
+    /// pair is one document's (none crosses documents), so a node's walk is its own document's tape, whichever batch.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn has_walk(&self) -> Option<crate::code_rule_dsl::facts::vtab::HasWalk> {
+        if !self.has_parts() {
+            return self.base.has_walk();
+        }
+        // A measurement aid: why a layered walk is none.
+        let no = |why: &str| {
+            crate::code_rule_dsl::prof::count_named_args(format_args!("layered walk none: {} ({why})", self.name), 1);
+            None
+        };
+        let Some(base) = self.base.as_any().and_then(|a| a.downcast_ref::<super::within::Within>()) else { return no("base not within") };
+        let parts = self.values.parts.load();
+        let Some(p) = parts.get(self.name.as_str()) else { return no("no parts") };
+        let same = p.list.iter().all(|x| x.src.as_any().and_then(|a| a.downcast_ref::<super::within::Within>()).is_some_and(|w| base.walks_as(w)));
+        if !same {
+            return no("a part not the same walk");
+        }
+        let Some(dir) = self.values.dir(base.batch()) else { return no("no directory") };
+        if dir.batches.len() != p.list.len() {
+            return no("directory and parts differ");
+        }
+        let keep = Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>;
+        let (_, nodes) = dir.views.node_view(&base.batch().block, Arc::clone(&keep))?;
+        base.walk_over(&dir.views, nodes, keep)
+    }
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn device_view(&self) -> Option<DeviceView> {
         if !self.has_parts() {

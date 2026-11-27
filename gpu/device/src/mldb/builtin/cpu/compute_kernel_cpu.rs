@@ -1015,6 +1015,8 @@ impl CpuBindContext<'_> {
         let params = std::mem::take(&mut self.params);
         self.params = vec![Vec::new(); params.len()];
         let keep = std::mem::take(&mut self.keep);
+        // The launching thread's stratum (`stage_prof`, a measurement aid): the tag the threads running its groups take.
+        let tag = rerail_ukl_rust::stage_prof::tag();
         self.queue.push(move |w| {
             let _keep = keep;
             let grid = match grid {
@@ -1050,7 +1052,9 @@ impl CpuBindContext<'_> {
                         let l = rerail_ukl_rust::Launch { group: [x, y, z], block, groups: grid };
                         // SAFETY: `argv` holds the kernel's arguments as its rows bound them (each buffer's address,
                         // each value's bytes), and the shim's two; it outlives the launch's groups.
+                        let was = rerail_ukl_rust::stage_prof::set_tag(tag);
                         unsafe { k(argv.0.as_ptr(), &l) };
+                        rerail_ukl_rust::stage_prof::set_tag(was);
                     };
                     let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         // A launch of few groups on this thread: waking the pool's threads for it costs more than its
