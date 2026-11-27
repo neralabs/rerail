@@ -34,10 +34,14 @@ UP036_invalid(v) :- version_test(_, op, v), (op = "==" ; op = "!="), kind(v, "in
     match("[0-9]+", x), to_number(x) > 255.
 
 // version_test(t, op, v): the test t of an if or elif is `L op v`, L `sys.version_info`, a subscript of it or its
-// `.major`; v without parentheses.
+// `.major`; v without parentheses. A comment inside the comparison is no operand (`(sys.version_info >=  # c`).
 .decl version_test(t: node, op: symbol, v: node)
-version_test(t, op, v) :- py_if(_, t0, _), unparen(t0, t), cmp_pair(t, 0, op, l, r), !cmp_pair(t, 1, _, _, _),
-    unparen(l, l1), version_info(l1), unparen(r, v).
+version_test(t, op, v) :- py_if(_, t0, _), unparen(t0, t), kind(t, "comparison_operator"), operand(t, 0, l),
+    operand(t, 1, r), !operand(t, 2, _), op_at(t, 0, op), unparen(l, l1), version_info(l1), unparen(r, v).
+.decl operand(t: node, i: number, e: node)  // e is comparison t's i-th operand, comments not counted
+operand(t, i, e) :- kind(t, "comparison_operator"), child(t, e, j), !kind(e, "comment"),
+    !kind(e, "line_continuation"),
+    i = count : { child(t, o, j2), j2 < j, !kind(o, "comment"), !kind(o, "line_continuation") }.
 .decl version_info(e: node)
 version_info(e) :- sym_at(e, "sys.version_info").
 version_info(e) :- sym_at(e, "sys.version_info.major").

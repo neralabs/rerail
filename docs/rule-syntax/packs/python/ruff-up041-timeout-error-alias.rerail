@@ -6,7 +6,8 @@
 
 // Ruff UP041 (pyupgrade): an alias of the builtin TimeoutError: `socket.timeout` from Python 3.10 on, and
 // `asyncio.TimeoutError` from 3.11 on (the target, python/upgrade). Ruff looks where an exception is named:
-// an except clause, a `raise`, and the function of a call. In an except tuple the tuple is reported once.
+// an except clause, a `raise`, and the function of a call, parentheses off (`(socket.timeout)("m")`). In an except
+// tuple the tuple is reported once.
 //   except socket.timeout:                          ← UP041 (3.10+)
 //   except (asyncio.TimeoutError, KeyError):        ← UP041 at the tuple (3.11+)
 //   raise asyncio.TimeoutError                      ← UP041 (3.11+)
@@ -19,6 +20,9 @@
     suppress ruff "UP041"
 UP041(e, q) :- exc_site(e, _), timeout_alias(e, q).
 UP041(t, q) :- handler_tuple(t, e), timeout_alias(e, q).
+// exc_site's "call" takes the function as written; Ruff's AST has no parentheses.
+UP041(e, q) :- kind(c, "call"), field(c, "function", f), kind(f, "parenthesized_expression"), unparen(f, e),
+    timeout_alias(e, q).
 .decl timeout_alias(e: node, q: symbol)
 timeout_alias(e, q) :- up_qual(e, q), since(q, m), targets(m).
 .decl since(q: symbol, m: number)

@@ -4,40 +4,100 @@
 .mode steer
 .scope include "**/*"
 
-// Ruff UP034 (pyupgrade): a pair of parentheses directly inside another, `((x))` or `print(("x"))`: the
-// outer `(` is followed by the inner one, and the inner `)` by the outer one. The inner pair may not hold a
-// tuple (`((1, 2))`, `(())`) or a bare `yield`, which need it. A generator's own parentheses count as a pair:
-// `print((x for x in y))`. Ruff scans the tokens left to right and resumes after the inner pair of each
-// attempt, so only the outermost of nested doubles is reported (`print((("a")))` once), and nothing inside
-// an attempt that failed (`f(((1)), 2)` is not reported). The finding is at the inner `(`.
+// Ruff UP034 (pyupgrade): a pair of parentheses directly inside another, `((x))` or `print(("x"))`. Ruff scans
+// the tokens left to right, comments and line breaks skipped. At each `(` it tries a double: the next token is
+// a `(` (the inner one); the scan runs to its `)`, and fails at a `,` or `yield` directly inside it (a tuple,
+// `lambda a, b: 0`, `(v for a, b in c)`, `(yield)`); after the inner `)` the next token must be a `)`. Every
+// token the attempt read is passed over, so a `(` in it starts no attempt: only the outermost of nested doubles
+// is reported (`print((("a")))` once), a double inside an attempt that failed is not (`f(((1)), 2)`), but one
+// after the `,` that stopped an attempt is (`((lambda a, b=((1)): 0))`), and a `(` read as the token after an
+// inner `)` starts none (`f((a)((b)))` is not reported). A generator's own parentheses count as a pair
+// (`print((x for x in y))`), and so do a pattern's (`((x)) = 1`, `case P(((1))):`). The finding is at the inner `(`.
 //   x = ((1))          ← UP034 at the second `(`
+//   f(  # c
+//     (1))             ← UP034
 //   print((1,))        f((yield))        f((1), 2)        not reported
 #include "python/ast.rerail"
 
 .violation UP034(at: node) code "UP034"
     "Delete the highlighted inner pair of parentheses; the enclosing parentheses already group this expression, so the meaning is unchanged."
     suppress ruff "UP034"
-UP034(n) :- double(m, n), redundant(n), !scanned(m).
+UP034(x) :- up34_start(v), up34_double(v, x).
 
-// attempt(m, n): bracket node m opens with `(` and its next token opens n: where the scan tries a double.
-// double(m, n): the attempt succeeds: n's `)` is followed by m's `)`.
-// The tape leaves parentheses out where the grammar implies them (decision 0161), so the source around n says where
-// they stand: before m's first child n, `(` and blanks; after it, blanks and m's `)`.
-.decl attempt(m: node, n: node)
-attempt(m, n) :- bracket(m), child(m, n, 0), inner(n), structural_before(n, s), match("\\(\\s*", s).
-.decl double(m: node, n: node)
-double(m, n) :- attempt(m, n), structural_after(n, s), match("\\s*\\)", s).
-.decl bracket(m: node)  // nodes whose first token may be a `(` of their own
-bracket(m) :- kind(m, k), (k = "argument_list" ; k = "parenthesized_expression" ; k = "tuple" ;
-    k = "generator_expression" ; k = "parameters" ; k = "tuple_pattern").
-.decl inner(n: node)  // a node that is a pair of parentheses and what they hold
-inner(n) :- kind(n, k), (k = "parenthesized_expression" ; k = "tuple" ; k = "generator_expression"),
-    prefix("(", n).
-// redundant(n): removing n's parentheses keeps the meaning: not a tuple, not `(yield …)`.
-.decl redundant(n: node)
-redundant(n) :- inner(n), !kind(n, "tuple"), !yield_pair(n).
-.decl yield_pair(n: node)
-yield_pair(n) :- kind(n, "parenthesized_expression"), child(n, y, 0), kind(y, "yield").
-// scanned(m): m's `(` lies inside the inner pair of an earlier attempt, which the scan has passed over.
-.decl scanned(m: node)
-scanned(m) :- double(m, _), attempt(_, n0), (m = n0 ; within(m, n0)).
+// A `(` token is named by the first node after it, comments skipped: up34_lead(v) holds when only blanks and
+// comments stand between a `(` and v. The tape leaves the parentheses out (decision 0161), so the source between
+// stored nodes says where they stand.
+.decl up34_filler(c: node)  // comments and line continuations: no tokens for Ruff's scan
+up34_filler(c) :- kind(c, "comment").
+up34_filler(c) :- kind(c, "line_continuation").
+.decl up34_lead(v: node)
+up34_lead(v) :- structural_before(v, s), match("[\\s\\S]*\\(\\s*", s).
+up34_lead(v) :- child(p, v, i), i > 0, child(p, f, i - 1), up34_filler(f), up34_lead(f), structural_before(v, s),
+    match("\\s*", s).
+// up34_trail(v): after v, only blanks and comments before a `)`.
+.decl up34_trail(v: node)
+up34_trail(v) :- structural_after(v, s), match("\\s*\\)[\\s\\S]*", s).
+up34_trail(v) :- structural_after(v, s), match("\\s*", s), child(p, v, i), child(p, f, i + 1), up34_filler(f),
+    up34_trail(f).
+// up34_owner(x, u): x opens with a `(` of its own, and u is the first node after it.
+.decl up34_owner(x: node, u: node)
+up34_owner(x, u) :- kind(x, k), (k = "parenthesized_expression" ; k = "tuple" ; k = "generator_expression" ;
+    k = "tuple_pattern" ; k = "argument_list" ; k = "parameters"), child(x, f0, 0), structural_before(f0, s),
+    match("\\(\\s*", s), child(x, u, j), !up34_filler(u), up34_lead(u),
+    count : { child(x, o, j2), j2 < j, !up34_filler(o) } = 0.
+// up34_attempt(v, x, u): the `(` before v is followed by the `(` of x (x starts where v does): the inner pair is
+// x's. u names x's `(`.
+.decl up34_attempt(v: node, x: node, u: node)
+up34_attempt(v, x, u) :- up34_same_start(x, v), up34_lead(v), up34_owner(x, u).
+.decl up34_same_start(x: node, v: node)
+up34_same_start(x, x) :- up34_owner(x, _).
+up34_same_start(x, v) :- up34_same_start(x, y), child(v, y, 0), structural_before(y, "").
+// up34_double(v, x): the attempt succeeds: x is all of v, nothing stops the scan in it, and a `)` follows.
+.decl up34_double(v: node, x: node)
+up34_double(v, x) :- up34_attempt(v, x, _), text(x, t), text(v, t), up34_trail(v), !up34_cut(x, _).
+
+// What stops the scan in x: a `,` or `yield` directly inside it, outside any inner bracket. up34_flat(x, p): p's
+// own tokens are directly inside x's parentheses. up34_cut(x, k): one stops the scan at position k.
+.decl up34_flat(x: node, p: node)
+up34_flat(x, x) :- up34_owner(x, _).
+up34_flat(x, p) :- up34_flat(x, q), child(q, p, _), !up34_filler(p), kind(p, k), !up34_bracket(k).
+.decl up34_bracket(k: symbol)  // nodes whose children sit inside brackets of their own (or a string's quotes)
+up34_bracket("parenthesized_expression"). up34_bracket("tuple"). up34_bracket("generator_expression").
+up34_bracket("tuple_pattern"). up34_bracket("argument_list"). up34_bracket("parameters"). up34_bracket("list").
+up34_bracket("set"). up34_bracket("dictionary"). up34_bracket("list_comprehension").
+up34_bracket("set_comprehension"). up34_bracket("dictionary_comprehension"). up34_bracket("subscript").
+up34_bracket("list_pattern"). up34_bracket("dict_pattern"). up34_bracket("class_pattern").
+up34_bracket("type_parameter"). up34_bracket("string"). up34_bracket("concatenated_string").
+up34_bracket("interpolation").
+.decl up34_cut(x: node, k: number)
+up34_cut(x, l * 10000000 + c) :- up34_flat(x, p), child(p, a, _), structural_after(a, s), match("[^,]*,[\\s\\S]*", s),
+    end_point(a, e), line(e, l), col(e, c).
+up34_cut(x, l * 10000000 + c) :- up34_flat(x, p), p != x, kind(p, "yield"), line(p, l), col(p, c).
+// The source after a last child stops short of a trailing `,` the tape leaves out: a tuple has a `,` after its first
+// element always (`(1,)`), a pattern `(a,)` when its text ends so.
+up34_cut(x, l * 10000000 + c) :- up34_owner(x, u), kind(x, "tuple"), end_point(u, e), line(e, l), col(e, c).
+up34_cut(x, l * 10000000 + c) :- up34_owner(x, u), kind(x, "tuple_pattern"), text(x, t),
+    match("[\\s\\S]*,\\s*(#[^\\n]*\\s*)*\\)", t), end_point(u, e), line(e, l), col(e, c).
+
+// The scan's passes. up34_reads(v, w): the attempt at the `(` before v reads the `(` before w: x's own, one in x
+// before what stops the scan, or the token after x's `)` when that is a `(`.
+.decl up34_opener(w: node)
+up34_opener(w) :- up34_attempt(w, _, _).
+.decl up34_reads(v: node, w: node)
+up34_reads(v, w) :- up34_attempt(v, _, w), up34_opener(w).
+up34_reads(v, w) :- up34_attempt(v, x, _), up34_opener(w), within(w, x), !up34_cut(x, _).
+up34_reads(v, w) :- up34_attempt(v, x, _), up34_opener(w), within(w, x), k = min k2 : { up34_cut(x, k2) },
+    line(w, l), col(w, c), l * 10000000 + c < k.
+up34_reads(v, w) :- up34_attempt(v, x, _), !up34_cut(x, _), child(p, x, i), child(p, y, i + 1),
+    structural_after(x, s), match("\\s*", s), up34_same_start(z, y), up34_owner(z, w), up34_opener(w).
+// up34_start(v): the scan reaches the `(` before v unread. Whether an attempt runs depends on the attempts before
+// it, which is recursion through `!`; three alternating rounds take it (a `(` read by any attempt, by those not
+// read so far, ...), which settle every nesting Ruff's fixtures and the corpora hold.
+.decl up34_read1(w: node)
+up34_read1(w) :- up34_opener(v), up34_reads(v, w).
+.decl up34_read2(w: node)
+up34_read2(w) :- up34_opener(v), !up34_read1(v), up34_reads(v, w).
+.decl up34_read3(w: node)
+up34_read3(w) :- up34_opener(v), !up34_read2(v), up34_reads(v, w).
+.decl up34_start(v: node)
+up34_start(v) :- up34_opener(v), !up34_read3(v).

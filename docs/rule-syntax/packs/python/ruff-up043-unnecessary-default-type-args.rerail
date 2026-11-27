@@ -12,14 +12,47 @@
 //   def f() -> Generator[int, int, None]: ...      ← UP043: the return type can go
 //   def f() -> Generator[int, None, int]: ...      not reported: the last argument is not None
 //   async def f() -> AsyncGenerator[int, None]: ...← UP043
+//   def f() -> Generator[(int, None),]: ...        not reported: one argument, the tuple
+// In a string annotation too (`x: "Generator[int, None]"`), but not in one Ruff parses as "complex" (escaped, or
+// implicitly concatenated): there it resolves each name at the string's one position, so `Generator` reads the
+// last name resolved there, never typing's Generator.
 #include "python/upgrade-typing.rerail"
 //   sub_of(s, q), type_arg(s, i, a), up_type_nargs(s, k)   (python/upgrade-typing); targets(m), stub_file(d)
+#include "python/typing.rerail"
+//   tsub(s, h, i, a), pyi_sym(e, q); names' parsed_in(e, s)
 
 .violation UP043(at: node) code "UP043"
     "Omit the trailing `None` type arguments of this generator annotation (`Generator[int]` for `Generator[int, None, None]`); they are the defaults from Python 3.13 on."
     suppress ruff "UP043"
 UP043(s) :- sub_of(s, q), split_dot(q, m, x), generator_module(m), arity(x, k), up_type_nargs(s, k), k > 1,
-    type_arg(s, k - 1, a), kind(a, "none"), (targets(13) ; docof(s, d), stub_file(d)).
+    type_arg(s, k - 1, a), kind(a, "none"), (targets(13) ; docof(s, d), stub_file(d)), !one_tuple(s).
+// one_tuple(s): s has one item and a comma after it: the slice is a tuple of that one item (type_arg unpacks a
+// lone tuple item, `X[(a, b)]`, as Ruff does without the comma). The tape leaves the `,` out, so s's text says
+// it: after the item, a comma, then only blanks and comments before the `]`.
+.decl one_tuple(s: node)
+one_tuple(s) :- sub_of(s, _), count : { sub_item(s, _, _) } = 1, text(s, x),
+    match("[\\s\\S]*,\\s*(#[^\\n]*\\s*)*\\]", x).
+
+// In a string annotation's tree. upgrade-typing's subscripts do not read those trees (sub_of's sym_at resolves no
+// name there), so these are its copies that do, each reaching parsed_in: typing's tsub and pyi_sym.
+UP043(s) :- s_gen(s, k), k > 1, s_arg(s, k - 1, a), kind(a, "none"), (targets(13) ; docof(s, d), stub_file(d)).
+// s_gen(s, k): s is a Generator subscript with k arguments, k an arity of it.
+.decl s_gen(s: node, k: number)
+s_gen(s, k) :- parsed_in(s, h), !complex_str(h), tsub(s, v, 0, _), pyi_sym(v, q), split_dot(q, m, x),
+    generator_module(m), arity(x, k), count : { s_arg(s, _, _) } = k.
+// s_arg(s, i, a): a is s's i-th argument, a lone tuple's elements unpacked as type_arg does.
+.decl s_arg(s: node, i: number, a: node)
+s_arg(s, i, a) :- parsed_in(s, _), tsub(s, _, i, a), !s_lone(s, _).
+s_arg(s, i, a) :- s_lone(s, t), child(t, c, j), !kind(c, "comment"), unparen(c, a),
+    i = count : { child(t, c2, j2), j2 < j, !kind(c2, "comment") }.
+.decl s_lone(s: node, t: node)
+s_lone(s, t) :- parsed_in(s, _), tsub(s, _, 0, a), !tsub(s, _, 1, _), unparen(a, t), kind(t, "tuple"), text(s, x),
+    !match("[\\s\\S]*,\\s*(#[^\\n]*\\s*)*\\]", x).
+// complex_str(s): an annotation string Ruff parses as complex: implicitly concatenated, or with an escape (its
+// text differs from its value; a raw string's never does). As PYI030's.
+.decl complex_str(s: node)
+complex_str(s) :- parsed(s, "annotation", _), kind(s, "concatenated_string").
+complex_str(s) :- parsed(s, "annotation", _), kind(s, "string"), match("(?s)[^rR\"']*[\"'].*\\\\.*", s).
 .decl arity(x: symbol, k: number)  // the most arguments; all but the first default to None
 arity("Generator", 2). arity("Generator", 3). arity("AsyncGenerator", 2).
 .decl generator_module(m: symbol)
