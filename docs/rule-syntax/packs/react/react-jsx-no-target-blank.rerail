@@ -130,7 +130,7 @@ blank_exact(b) :- kind(b, "string"), str(b, "_blank").
         const a = <a target="_blan&#107;" href="https://x.example">x</a>;
         const b = <a target="_blank" href="https://x.example" rel="noreferrer&#32;noopener">x</a>;
         ```
-    .fixture "tb-extra.jsx" ````
+    .fixture "tb-extra.jsx" ```
         const a = <a target="_blank" href="https&#58;//x.example">x</a>;
         const b = <a target="_blank" href="&#x2f;/x.example">x</a>;
         const c = <a target="_blank" href="https://x.example" rel={"noopener&#32;noreferrer"}>x</a>;
@@ -145,7 +145,7 @@ blank_exact(b) :- kind(b, "string"), str(b, "_blank").
         const l = <a target="_blank" href="1:x">x</a>;
         const m = <a target="_blank" href="ab:x">x</a>;
         const n = <a target="_blank" href={`//x`} rel={(`noreferrer ${x}`)}>x</a>;
-        ````
+        ```
     .expect "react/jsx-no-target-blank" at "tb-paren.jsx":1
     .expect "react/jsx-no-target-blank" at "tb-paren.jsx":2
     .expect "react/jsx-no-target-blank" at "tb-paren.jsx":3
