@@ -1,0 +1,10 @@
+[
+  { "id": "ruff-arg002-unused-method-argument", "status": "same" },
+  { "id": "ruff-arg003-unused-class-method-argument", "status": "same" },
+  { "id": "ruff-arg004-unused-static-method-argument", "status": "same" },
+  { "id": "ruff-arg005-unused-lambda-argument", "status": "same" },
+  { "id": "ruff-g002-logging-percent-format", "status": "same" },
+  { "id": "ruff-g003-logging-string-concat", "status": "same" },
+  { "id": "ruff-g201-logging-exc-info", "status": "same" },
+  { "id": "ruff-g202-logging-redundant-exc-info", "status": "same" }
+]
