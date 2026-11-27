@@ -1681,6 +1681,93 @@ mod settings_tests {
         assert_eq!(report["diagnostics"].as_array().map(Vec::len), Some(1), "{report:#}");
     }
 
+    fn guest_policy(source: &str, file: &str, policy: &str) -> serde_json::Value {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join(file), source).unwrap();
+        let rule = dir.path().join("policy.rerail");
+        std::fs::write(&rule, policy).unwrap();
+        let args = ["run-policies".to_owned(), root.display().to_string(), dir.path().join("out").display().to_string(), rule.display().to_string()];
+        serde_json::from_str(&super::cli_in(&args, &mut Default::default()).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn parsed_annotations_keep_their_literal_values() {
+        let report = guest_policy(
+            r#"x: "'foo'.encode('utf-8')""#,
+            "a.py",
+            ".policy \"annotation-values\" revision 1\n.language python\n\
+             .violation Str(at: node, v: symbol) code \"str\" \"{v}\"\n\
+             Str(s, v) :- kind(s, \"string\"), parsed(s, \"annotation\", r), within(n, r), kind(n, \"string\"), value(n, v).\n",
+        );
+        let mut values: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|d| d["message"].as_str().unwrap()).collect();
+        values.sort_unstable();
+        assert_eq!(values, ["foo", "utf-8"], "{report:#}");
+    }
+
+    #[test]
+    fn a_trailing_comment_does_not_hide_the_annotation_wrapper() {
+        let report = guest_policy(
+            "x: \"\"\"\n    list[int] # Comment\"\"\"",
+            "a.pyi",
+            ".policy \"annotation-comment\" revision 1\n.language python\n\
+             .violation Parsed(at: node) code \"parsed\" \"parsed\"\n\
+             Parsed(s) :- kind(s, \"string\"), parsed(s, \"annotation\", r), kind(r, \"subscript\").\n",
+        );
+        assert_eq!(report["diagnostics"].as_array().unwrap().len(), 1, "{report:#}");
+    }
+
+    #[test]
+    fn a_kind_bound_through_a_field_matches_in_parsed_annotations() {
+        // `kind(c, "call"), field(c, "arguments", a), kind(a, "argument_list")` runs as one `ast` matcher
+        // (`corpus::matchers::absorb`): it matches the annotations' trees as `kind` and `field` hold them, each of two
+        // guests of one text (which share their facts) at its own line, and the file's call alone where no rule names
+        // the annotations.
+        let report = guest_policy(
+            "x: 'f(1)'\ny: 'f(1)'\nz = g(2)\n",
+            "a.py",
+            ".policy \"annotation-args\" revision 1\n.language python\n\
+             .violation Arg(at: node) code \"arg\" \"arg\"\n\
+             Arg(c) :- kind(s, \"string\"), parsed(s, \"annotation\", c), kind(c, \"call\"), field(c, \"arguments\", a), kind(a, \"argument_list\").\n\
+             .violation Host(at: node) code \"host\" \"host\"\n\
+             Host(c) :- kind(c, \"call\"), field(c, \"arguments\", a), kind(a, \"argument_list\").\n",
+        );
+        let mut found: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|d| (d["code"].as_str().unwrap().to_owned(), d["line"].as_u64().unwrap())).collect();
+        found.sort_unstable();
+        let want: Vec<(String, u64)> = vec![("arg".into(), 1), ("arg".into(), 2), ("host".into(), 3)];
+        assert_eq!(found, want, "{report:#}");
+    }
+
+    #[test]
+    fn python_parse_functor_rejects_prose_and_accepts_statements() {
+        let report = guest_policy(
+            "",
+            "a.py",
+            ".policy \"comment-parser\" revision 1\n.language python\n\
+             .decl sample(s: symbol)\n\
+             sample(\"SIM103 (but not fixable)\"). sample(\"(See: http://example.test/revision)\"). sample(\"x = 1\").\n\
+             .violation Code(at: node, s: symbol) code \"code\" \"{s}\"\n\
+             Code(n, s) :- kind(n, \"module\"), sample(s), @py_parses(s) = 1.\n",
+        );
+        let code: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|d| d["message"].as_str().unwrap()).collect();
+        assert_eq!(code, ["x = 1"], "{report:#}");
+    }
+
+    #[test]
+    fn blade_library_values_do_not_need_a_redundant_reader() {
+        let report = guest_policy(
+            "@if (1 === 1) x @endif",
+            "a.blade.php",
+            ".policy \"blade-values\" revision 1\n.language blade\n\
+             #include \"blade/values.rerail\"\n\
+             .violation I(at: node, v: symbol) code \"I\" \"{v}\"\n\
+             I(n, v) :- php_value(n, \"int\", v), blade_code(n).\n",
+        );
+        let values: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|d| d["message"].as_str().unwrap()).collect();
+        assert_eq!(values, ["1", "1"], "{report:#}");
+    }
+
     #[test]
     fn the_command_lines_runs_keep_their_outputs_with_or_without_options() {
         use serde_json::json;

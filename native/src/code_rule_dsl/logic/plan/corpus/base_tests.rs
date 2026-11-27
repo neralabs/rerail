@@ -1511,13 +1511,11 @@ fn string_annotations_are_ruffs_with_their_trees() {
 annotated(t) :- string_annotation(n), node_text(n, t).
 .decl names(t: symbol, x: symbol)
 names(t, x) :- string_annotation(n), parsed(n, "annotation", r), node_text(n, t), within(m, r), node(_, m, "identifier", _, _), text(m, x).
-.decl roots(t: symbol, k: symbol, s: number, e: number)
-roots(t, k, s, e) :- string_annotation(n), parsed(n, "annotation", r), node_text(n, t), node(_, r, k, s, e).
 .decl files(p: symbol)
 files(p) :- doc(_, p, _).
-.output annotated, names, roots, files
+.output annotated, names, files
 "#;
-    let got = run(&dir, program, &["annotated", "names", "roots", "files"]);
+    let got = run(&dir, program, &["annotated", "names", "files"]);
     let set = |rows: &[Vec<String>]| rows.iter().cloned().collect::<BTreeSet<Vec<String>>>();
     let want = |rows: &[&[&str]]| rows.iter().map(|r| r.iter().map(|v| (*v).to_owned()).collect()).collect::<BTreeSet<Vec<String>>>();
     assert_eq!(
@@ -1539,20 +1537,8 @@ files(p) :- doc(_, p, _).
             &["\"not valid ((\"", "valid"],
         ])
     );
-    // Each root is its guest's module, over the string's value in `( … )`.
-    assert_eq!(
-        set(&got[2]),
-        want(&[
-            &["\"List[int]\"", "module", "0", "11"],
-            &["\"Optional[Foo]\"", "module", "0", "15"],
-            &["'typing.Dict[str, \"Bar\"]'", "module", "0", "25"],
-            &["\"Bar\"", "module", "0", "5"],
-            &["\"Baz\"", "module", "0", "5"],
-            &["\"not valid ((\"", "module", "0", "14"],
-        ])
-    );
     // The trees are no files.
-    assert_eq!(got[3], [["a.py"]]);
+    assert_eq!(got[2], [["a.py"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

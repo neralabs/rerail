@@ -22,7 +22,9 @@
 //! - `embed_value`'s text, standing at `at`.
 //!
 //! A grammar name is a dialect label (`python`, `sql`, `typescript`, …) or `annotation`: Python's expression, parsed
-//! as `( … )` with the expression inside the parentheses as its root, as rrlab does. Its tape is the tape cache's,
+//! as `( … )` with the expression inside the parentheses as its root, as rrlab does. The `)` stands on a line of its
+//! own, so a comment ending the text does not hide it: Ruff parses a type string as a parenthesized expression,
+//! where a comment and line breaks are allowed (`Foo['''…]  # Comment''']`). Its tape is the tape cache's,
 //! keyed by its text, so equal texts in any file are parsed once.
 
 use crate::code_rule_dsl::facts::core::{self, Built};
@@ -358,20 +360,9 @@ impl Guests {
             return self.program(host, at, via, role, cache);
         }
         let Some((label, wrap)) = grammar(grammar_name) else { return Ok(None) };
-        let ids = self.numbering(host)?;
-        // A node id's low bits are its local id only under preorder ids (`syntax::Numbering`).
-        let Some(local) = ids.local((at & 0xffff_ffff) as u32) else { return Ok(None) };
-        let ids = &ids.nodes;
-        let placed = match text {
-            Some(text) => {
-                let Some(&(id, _)) = ids.get(local as usize) else { return Ok(None) };
-                Some((text, Placement::At([host.facts.start(id), host.facts.end(id)])))
-            }
-            None => host_text(host, ids, local),
-        };
-        let Some((text, place)) = placed else { return Ok(None) };
+        let Some((text, place)) = self.guest_text(host, at, text)? else { return Ok(None) };
         let (text, place) = if wrap { wrapped(text, place) } else { (text, place) };
-        let Some((facts, root, digest)) = parse(&host.path, label, wrap, text, cache)? else { return Ok(None) };
+        let Some(((facts, root, digest), tape)) = parse(&host.path, label, wrap, text, cache)? else { return Ok(None) };
         // Shown to rules that do not name it: code in the run's language. An annotation (a type expression, Python's
         // in a Python run) is not code: the rules that read one reach it through `parsed`. Shown, a string the
         // demand asked for only because its rule's inputs hold it (every string, for `type_ctx`) was code to every
@@ -392,8 +383,18 @@ impl Guests {
             facts,
             guest: Some(Arc::new(Guest { host: host_key, at, grammar: grammar_name.to_owned(), embedding: None, role: role.to_owned(), root, place, in_file, made: Made::Host })),
             module: host.module.clone(),
-            tape: None,
+            tape,
         }))
+    }
+
+    /// A requested node's source or decoded string, at the host's location.
+    fn guest_text(&mut self, host: &Document, at: i64, text: Option<String>) -> Result<Option<(String, Placement)>, String> {
+        let ids = self.numbering(host)?;
+        let Some(local) = ids.local((at & 0xffff_ffff) as u32) else { return Ok(None) };
+        Ok(match text {
+            Some(text) => ids.nodes.get(local as usize).map(|&(id, _)| (text, Placement::At([host.facts.start(id), host.facts.end(id)]))),
+            None => host_text(host, &ids.nodes, local),
+        })
     }
 
     /// The program host file `host` embeds through `via` (decision 0222): the embedder main registered for it
@@ -438,7 +439,7 @@ impl Guests {
         let path = files.first().and_then(|f| u32::try_from(*f).ok()).and_then(|f| by_key.get(&f)).map_or_else(String::new, |d| d.path.clone());
         let path = path.as_str();
         let (text, _) = if wrap { wrapped(text, Placement::At([0, 0])) } else { (text, Placement::At([0, 0])) };
-        let Some((facts, root, digest)) = parse(path, label, wrap, text, cache)? else { return Ok(None) };
+        let Some(((facts, root, digest), tape)) = parse(path, label, wrap, text, cache)? else { return Ok(None) };
         let key = key(&[b"value", grammar_name.as_bytes(), identity.as_bytes()], Range::Hidden, &mut self.taken);
         self.values.insert((known_as, identity), i64::from(key));
         self.files.insert(i64::from(key), files);
@@ -451,7 +452,7 @@ impl Guests {
             guest: Some(Arc::new(Guest { host: 0, at: 0, grammar: grammar_name.to_owned(), embedding: None, role: "value".to_owned(), root, place: Placement::At([0, 0]), in_file: Placement::At([0, 0]), made })),
             // A value is no module's: its text is a rule's, not a file's.
             module: None,
-            tape: None,
+            tape,
         }))
     }
 
@@ -494,14 +495,15 @@ impl Guests {
     }
 }
 
-/// A text in its wrapper `( … )`, and its placement one byte on.
+/// A text in its wrapper `( … )`, and its placement one byte on. The `)` follows a line break, so a comment ending
+/// the text is closed by it and does not swallow the `)`.
 fn wrapped(text: String, place: Placement) -> (String, Placement) {
     let place = match place {
         Placement::Copied { delta, within } => Placement::Copied { delta: delta - 1, within },
         Placement::Mapped { pieces, within } => Placement::Mapped { pieces: pieces.iter().map(|p| syntax::normalized::Piece { d: p.d + 1, ..*p }).collect(), within },
         at => at,
     };
-    (format!("({text})"), place)
+    (format!("({text}\n)"), place)
 }
 
 /// A guest's or value's tree: its facts, its root (a wrapped expression's), and the facts' digest.
@@ -511,37 +513,23 @@ type Parsed = (Arc<core::Facts>, u32, [u8; 32]);
 /// when the parser gives no facts. Kept for the process by grammar and text: a pack's guests repeat their texts (one
 /// annotation string in many files, the same guests in every chunk and round), and the facts are a function of the
 /// two alone, so each distinct text is looked up in the store, restored and digested once.
-fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&ContentStore>) -> Result<Option<Parsed>, String> {
-    use std::sync::{Mutex, OnceLock};
+fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&ContentStore>) -> Result<Option<(Parsed, Tape)>, String> {
+    use std::sync::{LazyLock, Mutex};
     /// The texts kept, in bytes, before the memo starts again (the facts kept are a small multiple of it).
     const KEPT_BYTES: usize = 8 << 20;
-    static KEPT: OnceLock<Mutex<(usize, HashMap<(String, bool, String), Option<Parsed>>)>> = OnceLock::new();
-    let kept = KEPT.get_or_init(Default::default);
+    static KEPT: LazyLock<Mutex<(usize, HashMap<(String, bool, String), Option<(Parsed, Tape)>>)>> = LazyLock::new(Default::default);
+    let kept = &*KEPT;
     let key = (label.to_owned(), wrap, text);
     if let Some(hit) = kept.lock().expect("the parsed guests").1.get(&key) {
         crate::code_rule_dsl::prof::count("guests.parse_kept", 1);
         return Ok(hit.clone());
     }
-    let file = crate::code_rule_dsl::facts::core::Source { language: label.to_owned(), source: Arc::new(key.2.clone()) };
-    // A guest is made in a wave, so no SQL is read or written for it (decision 0104): its tape is one this process
-    // queued, else it is parsed and its source and tape are the store's writer's, behind the run.
-    let built = match cache.map(|cache| core::build_in_wave(&file, cache, None, None, false)) {
-        Some(Ok(built)) => Ok(built),
-        Some(Err(_)) => {
-            crate::code_rule_dsl::prof::count("guests.cache_failed", 1);
-            core::build(&file)
-        }
-        None => core::build(&file),
-    }
-    .map_err(|e| format!("{path}: {e}"))?;
-    let parsed = match built {
-        Built::Facts(facts) => {
-            let root = if wrap { wrapped_root(&facts, label) } else { 0 };
-            let digest = core::digest(&facts);
-            Some((Arc::new(facts), root, digest))
-        }
-        _ => None,
-    };
+    // Keep the tape with every parsed document, as with an embedded program. Structural facts alone cannot answer
+    // W's value requests for literals inside a string annotation or an explicit @parse result.
+    let parsed = taped(path, label, key.2.clone(), cache)?.map(|((facts, _, digest), tape)| {
+        let root = if wrap { wrapped_root(&facts, label) } else { 0 };
+        ((facts, root, digest), tape)
+    });
     let mut kept = kept.lock().expect("the parsed guests");
     if kept.0 + key.2.len() > KEPT_BYTES {
         *kept = Default::default();
