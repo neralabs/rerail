@@ -1,0 +1,1 @@
+On Codex 0.124 and later, whose hooks show `apply_patch`, a Codex session that has run it no longer takes a change your editor or another session makes during a turn for its own, and is not steered for it. `$rerail-show-me` has Codex write with `apply_patch`. Until then, and on older Codex, its whole turn still counts as its own.

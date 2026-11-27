@@ -2787,10 +2787,10 @@ export class CodeRuleBridge {
    * A call the runtime answered without code rules while the evaluator was still opening: never begun, so nothing of it
    * is captured, but what it writes is the session's own. Its window is taken by the workspace as it opens, so the walk
    * credits what was stamped while it ran; its result reconciles nothing, and what it wrote is the next walk's. A host
-   * whose edit tool no hook shows opens one for each turn the same way, as its writes are seen by no call. `toolName`
-   * names the call's tool, none for a turn's window; `input` is its tool input, whose files the window names, so a later
-   * call's capture of one of them knows it holds an edit no walk has checked yet (`#unobservedOpeningEdit`). `cwd` is
-   * the folder it runs in, as its host's hook named it.
+   * whose edit tool may run with no hook (`editToolHookedSince`) opens one for each turn the same way, as such writes
+   * are seen by no call. `toolName` names the call's tool, none for a turn's window; `input` is its tool input, whose
+   * files the window names, so a later call's capture of one of them knows it holds an edit no walk has checked yet
+   * (`#unobservedOpeningEdit`). `cwd` is the folder it runs in, as its host's hook named it.
    */
   async unwatchedCall(
     toolCallId: string,

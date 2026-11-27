@@ -5,8 +5,8 @@
  * everywhere.
  */
 
-import type { CommandSigil, ObservedFileWrite } from "../engine/adapter-contract.js";
-import { powershellQuotesTwice, type Shell } from "../engine/command-line.js";
+import type { CommandSigil } from "../engine/adapter-contract.js";
+import type { Shell } from "../engine/command-line.js";
 
 export type RerailCommandName =
   | "rerail"
@@ -206,9 +206,7 @@ export interface ShowMeInstructionsInput {
   /** The shell-quoted launcher the agent runs. */
   cli: string;
   sigil: CommandSigil;
-  /** How the agent writes the demo file so the hooks see it: its capability profile's `observedFileWrite`. */
-  write: ObservedFileWrite;
-  /** The shell the agent runs commands in: PowerShell for Codex on Windows (`windowsCommandShell`), which has no heredoc. */
+  /** The shell the agent runs commands in: PowerShell for Codex and Cursor on Windows (`windowsCommandShell`). */
   shell?: Shell;
 }
 
@@ -217,13 +215,7 @@ export interface ShowMeInstructionsInput {
  * the file straight after so the steer reaches it (Claude Code and Cursor deliver it with the next tool call), fixes
  * it, and always runs `rerail show-me --cleanup`. The steer is recognised by the rule id, never faked.
  */
-export function showMeInstructions({ cli, sigil, write, shell = "posix" }: ShowMeInstructionsInput): string {
-  const example = shell === "powershell"
-    ? `\`Set-Content -NoNewline -LiteralPath '<file>' -Value @'\` … \`'@\`, with ${powershellQuotesTwice("`<file>`")}`
-    : "`cat > '<file>' <<'EOF'` … `EOF`";
-  const how = write === "shell"
-    ? `with one shell command, not a file-change, edit, write or apply_patch tool (for example ${example})`
-    : "with your file edit or write tool";
+export function showMeInstructions({ cli, sigil, shell = "posix" }: ShowMeInstructionsInput): string {
   return [
     "Show the person how Rerail works, on this repo, in under a minute: add a demo rule, break it on purpose, let Rerail",
     "steer you to the fix, then clean up.",
@@ -240,7 +232,7 @@ export function showMeInstructions({ cli, sigil, write, shell = "posix" }: ShowM
     "",
     "2. Tell the person, in one line: \"I'll add a demo rule, break it on purpose, and let Rerail steer me. Then I'll clean up.\"",
     "",
-    `3. Create \`file\` containing exactly the \`violating\` text, ${how}. Touch no other file.`,
+    "3. Create `file` containing exactly the `violating` text, with your file edit or write tool. Touch no other file.",
     "",
     "4. Do not end your turn or say that you are waiting. Straight after the write, make a separate read-only tool call that",
     "   reads `file`: Rerail's steer comes with the write's result or with that read, and names the rule `ruleId`.",

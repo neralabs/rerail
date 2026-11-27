@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { readLedger } from "../../scripts/host/host-lifecycle.js";
-import { hasCompletedViolation } from "../../scripts/host/host-smoke.js";
+import { codexPatchedRoute, hasCompletedViolation, isInconclusive } from "../../scripts/host/host-smoke.js";
 import {
   PARITY_HOSTS,
   REQUIRED_CAPABILITIES,
@@ -119,5 +119,25 @@ describe("live harness evidence", () => {
     expect(evidence(retry, { ...result, sessionId: "other" })).toBe(false);
     expect(evidence(result, retry)).toBe(false);
     expect(evidence({ ...retry, input: "read the file" }, { ...result, output: "cursor.execute" })).toBe(false);
+  });
+
+  it("finds Codex's completed apply_patch of api/route.py in its JSON stream, and nothing else", () => {
+    const patch = (item: Record<string, unknown>) => JSON.stringify({ type: "item.completed", item: { id: "item_1", type: "file_change", ...item } });
+    const route = { changes: [{ path: "/tmp/workspace/api/route.py", kind: "update" }], status: "completed" };
+    expect(codexPatchedRoute(`{"type":"turn.started"}\n${patch(route)}\n`)).toBe(true);
+    expect(codexPatchedRoute(patch({ ...route, status: "failed" }))).toBe(false);
+    expect(codexPatchedRoute(patch({ ...route, changes: [{ path: "/tmp/workspace/AGENTS.md", kind: "update" }] }))).toBe(false);
+    expect(codexPatchedRoute(JSON.stringify({ type: "item.completed", item: { id: "item_2", type: "command_execution", command: "api/route.py" } }))).toBe(false);
+    expect(codexPatchedRoute("not json")).toBe(false);
+  });
+
+  it("is inconclusive when Codex never wrote the violation with apply_patch, and fails when it did and Rerail missed it", () => {
+    const assertion = (name: string, passed: boolean) => ({ name, passed, detail: "" });
+    const notPatched = [assertion("violation reached the file", true), assertion("Codex patched api/route.py", false),
+      assertion("apply_patch hooks recorded", false), assertion("steered at the patch's own result", false)];
+    expect(isInconclusive(notPatched, 0)).toBe(true);
+    const patched = [assertion("Codex patched api/route.py", true), assertion("apply_patch hooks recorded", true),
+      assertion("steered at the patch's own result", false)];
+    expect(isInconclusive(patched, 0)).toBe(false);
   });
 });
