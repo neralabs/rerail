@@ -393,10 +393,17 @@ impl Submitted {
     /// `wait`, and whether the device ran it to the end: a submission the device failed (out of memory, a fault)
     /// completes too, its outputs partly written. A caller that keeps what it wrote must check.
     pub fn wait_ok(self) -> (f64, bool) {
+        let (seconds, ran) = self.wait_ran();
+        (seconds, ran == Ran::Whole)
+    }
+
+    /// `wait_ok`, and whether a submission that did not run to the end was stopped by the system, the work not at
+    /// fault (`Ran::Preempted`).
+    pub fn wait_ran(self) -> (f64, Ran) {
         // A watcher's wait on a submission its owner awaited already would count its device time twice.
         if self.watcher && self.event.is_complete() {
             // Its owner awaited it: whether the device ran it to the end is the event's, read again.
-            return (self.event.gpu_seconds(), self.event.event().await_().is_ok());
+            return (self.event.gpu_seconds(), Ran::of(&self.event.event().await_()));
         }
         let done = rerail_accel::score::phase("gpu wait", || self.event.await_());
         if let Err(why) = &done {
@@ -416,8 +423,41 @@ impl Submitted {
                 rerail_accel::score::add("gpu wake", 0.0, (returned - self.committed - run).max(0.0));
             }
         }
-        (self.event.gpu_seconds(), done.is_ok())
+        (self.event.gpu_seconds(), Ran::of(&done))
     }
+}
+
+/// How a submission ran (`Submitted::wait_ran`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ran {
+    /// To the end.
+    Whole,
+    /// Stopped by the system, the work not at fault: macOS's GPU watchdog ended it while the display waited
+    /// ("Impacting Interactivity", decision 0588). Its outputs are partly written; the same work may run again.
+    Preempted,
+    /// Failed (out of memory, a fault): its outputs partly written.
+    Failed,
+}
+
+impl Ran {
+    fn of(done: &Result<(), String>) -> Ran {
+        match done {
+            Ok(()) => Ran::Whole,
+            Err(why) if preempted(why) => Ran::Preempted,
+            Err(_) => Ran::Failed,
+        }
+    }
+}
+
+/// Whether a failed command's message says the system stopped it (the device's `PREEMPTED` mark, Metal's alone).
+pub fn preempted(why: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    return why.starts_with(rerail_device::compute_kernel_metal::PREEMPTED);
+    #[cfg(not(target_os = "macos"))]
+    return {
+        let _ = why;
+        false
+    };
 }
 
 /// Scratch slots.

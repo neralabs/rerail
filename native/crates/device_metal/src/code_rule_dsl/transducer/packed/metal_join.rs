@@ -2051,14 +2051,18 @@ impl Batch {
     /// later batch would find one half written).
     pub(in crate::code_rule_dsl) fn finish(&mut self) -> Result<Done, Error> {
         self.submit_open()?;
-        let mut failed = 0;
+        use rerail_accel_gpu::gpu::join::Ran;
+        // Its failures, and of them the submissions the system stopped (`Ran::Preempted`): a batch all of whose
+        // failures are those is the system's to blame, and may run again (`Error::BackendPreempted`).
+        let (mut failed, mut preempted) = (0, 0);
         // Its programs launched again while one's chain ended with phases left, or parked (an arena's), each chain a
         // launch the ledger counts (decisions 0601, 0674).
         loop {
             for s in self.committed.drain(..) {
-                let (seconds, ok) = s.wait_ok();
+                let (seconds, ran) = s.wait_ran();
                 self.done.gpu_seconds += seconds;
-                failed += usize::from(!ok);
+                failed += usize::from(ran != Ran::Whole);
+                preempted += usize::from(ran == Ran::Preempted);
             }
             if failed > 0 {
                 self.programs.clear();
@@ -2111,7 +2115,9 @@ impl Batch {
         // The indexes of other batches its stages read: one whose builder the device failed, or whose program stopped
         // before it, is half written.
         for (s, whole) in self.borrowed.drain(..) {
-            failed += usize::from(!s.wait_ok().1 || !whole());
+            let ran = s.wait_ran().1;
+            failed += usize::from(ran != Ran::Whole || !whole());
+            preempted += usize::from(ran == Ran::Preempted);
         }
         let overran = self.overran();
         self.written.clear();
@@ -2156,7 +2162,7 @@ impl Batch {
                 // SAFETY: the batch's work has completed, and no reader was given the index outside it.
                 unsafe { (*b.rel).give_back_index(&b.home.block, &b.room) };
             }
-            return Err(Error::BackendFailure);
+            return Err(if preempted == failed { Error::BackendPreempted } else { Error::BackendFailure });
         }
         let stopped = self.done.stopped;
         self.gated = false;
