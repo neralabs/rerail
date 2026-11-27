@@ -536,29 +536,45 @@ export async function serveHook(
   streams: HookStreams = process,
   nodeVersion: string = process.versions.node,
 ): Promise<void> {
-  let output: HookOutput = {};
-  let serialized = "{}\n";
+  const { output, serialized } = await hookAnswer(run, streams, nodeVersion);
   try {
-    const parsed = JSON.parse(await readStdin(streams.stdin)) as unknown;
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Hook stdin must be a JSON object");
-    if (Number.parseInt(nodeVersion, 10) >= REQUIRED_NODE_MAJOR) {
-      output = await run(parsed as HookInput);
-      serialized = `${JSON.stringify(output)}\n`;
-    } else {
+    await emitSerializedHookOutput(output, serialized, streams.stdout);
+  } catch (error) {
+    sayHookFailed(streams, error);
+  }
+}
+
+/** `run`'s answer to the event on stdin, serialized; `{}` where stdin is no JSON object, the Node is too old or `run` failed. */
+async function hookAnswer(
+  run: (input: HookInput) => Promise<HookOutput>,
+  streams: HookStreams,
+  nodeVersion: string,
+): Promise<{ output: HookOutput; serialized: string }> {
+  try {
+    const input = hookInput(await readStdin(streams.stdin));
+    if (Number.parseInt(nodeVersion, 10) < REQUIRED_NODE_MAJOR) {
       streams.stderr.write(
         `rerail hook: Rerail needs Node ${REQUIRED_NODE_MAJOR} or newer and this is Node ${nodeVersion}, so it is off in this session. `
           + `${olderNodeStep()}\n`,
       );
+      return { output: {}, serialized: "{}\n" };
     }
+    const output = await run(input);
+    return { output, serialized: `${JSON.stringify(output)}\n` };
   } catch (error) {
-    output = {};
-    streams.stderr.write(`rerail hook: ${error instanceof Error ? error.message : String(error)}\n`);
+    sayHookFailed(streams, error);
+    return { output: {}, serialized: "{}\n" };
   }
-  try {
-    await emitSerializedHookOutput(output, serialized, streams.stdout);
-  } catch (error) {
-    streams.stderr.write(`rerail hook: ${error instanceof Error ? error.message : String(error)}\n`);
-  }
+}
+
+function hookInput(stdin: string): HookInput {
+  const parsed = JSON.parse(stdin) as unknown;
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Hook stdin must be a JSON object");
+  return parsed as HookInput;
+}
+
+function sayHookFailed(streams: HookStreams, error: unknown): void {
+  streams.stderr.write(`rerail hook: ${error instanceof Error ? error.message : String(error)}\n`);
 }
 
 /** What a hook entry uses in place of this process's own: the parent watch's facts and the hook's streams. */

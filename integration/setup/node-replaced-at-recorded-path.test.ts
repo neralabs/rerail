@@ -106,7 +106,10 @@ interface Agent {
 
 const AGENTS: Agent[] = [{ id: "claude-code", settings: [".claude", "settings.json"] }, { id: "codex", settings: [".codex", "hooks.json"] }];
 
-/** The agent's SessionStart hook, run as the agent runs it, with the event on stdin: its start note, `{}` and its stderr. */
+/**
+ * The agent's SessionStart hook, run as the agent runs it, with the event on stdin: its start note, its answer and its
+ * stderr. With `RERAIL_AUTOSTART=0`, as every test runs, the note is the line that says no daemon runs.
+ */
 async function sessionStart(p: Place, agent: Agent, env: NodeJS.ProcessEnv): Promise<{ note: string; stdout: string; stderr: string }> {
   const settings = JSON.parse(await readFile(join(p.user, ...agent.settings), "utf8")) as { hooks: Record<string, Array<{ hooks: Array<{ command: string; args?: string[] }> }>> };
   const entry = settings.hooks.SessionStart?.[0]?.hooks[0];
@@ -116,8 +119,8 @@ async function sessionStart(p: Place, agent: Agent, env: NodeJS.ProcessEnv): Pro
     : WINDOWS ? ["powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", entry.command]] : ["/bin/sh", ["-c", entry.command]];
   const event = JSON.stringify({ session_id: `${agent.id}-session`, cwd: p.repo, hook_event_name: "SessionStart", source: "startup" });
   const ran = await run(command, args, p.repo, { ...env, CLAUDE_PROJECT_DIR: p.repo }, event);
-  const answer = JSON.parse(ran.stdout.trim() || "{}") as { hookSpecificOutput?: { additionalContext?: string } };
-  return { note: answer.hookSpecificOutput?.additionalContext ?? "", stdout: ran.stdout.trim(), stderr: ran.stderr };
+  const answer = JSON.parse(ran.stdout.trim() || "{}") as { hookSpecificOutput?: { additionalContext?: string }; systemMessage?: string };
+  return { note: answer.hookSpecificOutput?.additionalContext ?? answer.systemMessage ?? "", stdout: ran.stdout.trim(), stderr: ran.stderr };
 }
 
 /** The step a hook's line names, as a person copies it: the words after "then run", to the end of its sentence. */
@@ -139,7 +142,8 @@ describe("an older Node at the path set-up recorded", () => {
     const p = await place();
     const installed = await run(p.recorded, [join(PACKAGE_ROOT, ENTRY_POINTS.cli), "install", "--root", PACKAGE_ROOT, "--agents", agent.id], p.root, p.env);
     expect(installed.code, installed.stderr).toBe(0);
-    expect((await sessionStart(p, agent, p.env)).note).not.toBe("");
+    const atInstall = await sessionStart(p, agent, p.env);
+    expect(atInstall.note, `${atInstall.stdout}\n${atInstall.stderr}`).not.toBe("");
 
     const older = await olderAtRecorded(p);
     const off = await sessionStart(p, agent, older);
