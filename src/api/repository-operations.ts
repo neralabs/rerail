@@ -57,7 +57,7 @@ import { worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { approve, currentSubject, ruleSubject } from "../engine/catalog/rule-approval.js";
 import { checkouts, libraryRules, repositories, ruleAttachments, ruleSettings, RULE_KINDS } from "../engine/storage/schema.js";
 import { ruleKindOf, type RuleDocument } from "../engine/catalog/rule-store.js";
-import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
+import { ApiError, defineOperation, writtenWhenFree, type Operation, type RerailApiStores } from "./operation.js";
 import {
   approvalSubjectSchema,
   attachmentRecordSchema,
@@ -597,7 +597,7 @@ export const repositoryOperations: readonly Operation[] = [
     summary: "Turn rules or whole packs on or off, change their mode, or choose whether linters' suppression comments (eslint-disable, noqa, ...) silence them (suppressions: honour or ignore), for the repository or for one checkout (this worktree), optionally in one folder. config sets the option values of one code rule by Rerail over the whole repository (folder \"\"); an unknown option or a value the option does not allow is rejected. null clears a value so the next owner decides; an omitted value is kept. A coding agent may change checkout settings at any time, and the repository's only before it is set up.",
     body: settingsSetBodySchema,
     output: z.object({ settings: z.array(ruleSettingRecordSchema), ...blockNoteShape }),
-    handler: (stores, input, caller) => {
+    handler: async (stores, input, caller) => {
       const target = resolveTarget(stores, input, caller, true);
       const db = stores.database();
       let owner: RuleSetting["owner"];
@@ -616,8 +616,12 @@ export const repositoryOperations: readonly Operation[] = [
       refuseExperimentsOff(changes.map(change => settingModeWrite(db, owner, change)));
       const catalog = checkoutRuleCatalog(stores, target.checkout);
       for (const change of changes) checkSetting(stores, catalog, change);
-      const settings = changes.map(change => mergedSetting(db, owner, change));
-      for (const setting of settings) setRuleSetting(db, setting);
+      // Merged over the settings as the database holds them once the write lock is free, and saved in that transaction.
+      const settings = await writtenWhenFree(stores, database => {
+        const merged = changes.map(change => mergedSetting(database, owner, change));
+        for (const setting of merged) setRuleSetting(database, setting);
+        return merged;
+      });
       return { settings: settings.map(settingRecord), ...blockNote([input.mode]) };
     },
   }),

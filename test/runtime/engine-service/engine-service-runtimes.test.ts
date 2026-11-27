@@ -1046,6 +1046,75 @@ describe("the engine service's idle close", () => {
     }
   }, 30_000);
 
+  // Before, the end interrupted the session's checkout audit and its scans on the audit controls' own connection, which
+  // waited on the daemon's thread for the lock up to 5 s, every other session's hooks waiting too, then failed: the end
+  // answered the lock's error, and the session's record stayed open, owned by a runtime that had let it go.
+  it("ends a session at once while another process holds the write lock, and its record and owner once the lock is given back", async () => {
+    const { start, turnEnd, send, session, ended, live, databasePath } = await idleService({ needsRoom: () => false });
+    await start("a");
+    await start("b");
+    // The sessions' walks and checks, which run on after their starts, end before the lock is taken: a write of theirs
+    // would wait for it on the same thread.
+    await turnEnd("a", "turn");
+    await turnEnd("b", "turn");
+    const writer = new Database(databasePath);
+    try {
+      writer.exec("BEGIN IMMEDIATE");
+      const asked = performance.now();
+      await send({ kind: "session-end", eventId: "a:end", sessionId: "a", session: session("a") });
+      // This thread holds the lock's holder too: any wait for the lock here would last the 5 s busy timeout, then fail.
+      expect(performance.now() - asked).toBeLessThan(5_000);
+      expect(ended("a")).toBeNull();
+      writer.exec("ROLLBACK");
+      // The end's writes wait in this process's record writer until its lock wait finds the lock given back, which
+      // another connection learns only from the database.
+      await vi.waitFor(() => {
+        expect(ended("a")).not.toBeNull();
+        expect(live("a")).toBe(false);
+      }, { timeout: 10_000, interval: 20 });
+      expect(live("b")).toBe(true);
+    } finally {
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+    }
+  }, 30_000);
+
+  // Before, a session that ended while its claim still waited for the lock interrupted its scans on the audit controls'
+  // own connection, at once once the lock was free: ahead of the claim, which was then refused, so the end interrupted
+  // the scans of the runtime that owns the session.
+  it("leaves the owner's scans queued as a session ends while its claim waits for the write lock, once that claim is refused", async () => {
+    const { start, turnEnd, send, session, databasePath } = await idleService({ needsRoom: () => false });
+    await start("a");
+    await turnEnd("a", "turn");
+    const controls = new SqliteAuditControlStore(databasePath);
+    const writer = new Database(databasePath);
+    const lockWait = Promise.withResolvers<void>();
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      writer.exec("BEGIN IMMEDIATE");
+      lockWaitGate.held = lockWait.promise;
+      await start("b");
+      claimFirst(writer, "b");
+      writer.prepare("INSERT INTO audit_requests (id, session_id, workspace_root, scope, mode, paths_json, status, created_at, audit_ids_json) VALUES ('owner-scan', 'b', ?, 'repository', 'log', '[]', 'queued', 0, '[]')")
+        .run(dirname(databasePath));
+      writer.exec("COMMIT");
+      // The lock is free, and the record writer's wait has not seen it: `b`'s claim still waits as its end comes.
+      await send({ kind: "session-end", eventId: "b:end", sessionId: "b", session: session("b") });
+      lockWaitGate.held = undefined;
+      lockWait.resolve();
+      await vi.waitFor(() => expect(stderr.mock.calls.map(([text]) => String(text)))
+        .toContain("rerail: the claim on session b was not made, so this process does not own it\n"), { timeout: 10_000, interval: 20 });
+      expect(controls.listAuditRequests("b").find(request => request.id === "owner-scan")?.status).toBe("queued");
+    } finally {
+      stderr.mockRestore();
+      lockWaitGate.held = undefined;
+      lockWait.resolve();
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      controls.close();
+    }
+  }, 30_000);
+
   // Before, the wait went on, a worker thread with its own connection watching the database's log, until the lock was
   // given back, though nothing was left for it to open. An event of the session cannot open it while the lock is held.
   it("stops a quiet session's wait for the write lock its open for a scan met once the session's end comes", async () => {

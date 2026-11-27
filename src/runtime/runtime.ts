@@ -997,15 +997,14 @@ function heldCallsOf(restored: ReadonlyMap<string, RestoredCall>): HeldCall[] {
 }
 
 /**
- * Interrupts the session's queued and running scans and releases its owner while `claim` still holds it (`holdsOwner`).
- * A claim kept for the write lock and not made is told only to the open session of the runtime that asked for it
- * (`#claimNotMade`): a suspension, or a runtime made again that took it from one, still holds it, and ending it would
- * interrupt the scans of the runtime that owns the session.
+ * Interrupts the session's queued and running scans and releases its owner while `claim` still holds it, in one record
+ * write that reads the owner row as it is made (`endOwnership`): never on this thread while another process holds the
+ * write lock, and after the claim when that still waits for it. A claim kept for the lock and not made is told only to
+ * the open session of the runtime that asked for it (`#claimNotMade`): a suspension, or a runtime made again that took
+ * it from one, still holds it, and the write then finds another runtime's row and leaves that runtime's scans.
  */
 function endHeldOwnership(controls: SqliteAuditControlStore, sessionId: string, claim: PolicyOwnerClaim | undefined): void {
-  if (claim === undefined || !controls.holdsOwner(sessionId, claim)) return;
-  controls.interrupt(sessionId);
-  controls.releaseOwner(sessionId, claim);
+  if (claim !== undefined) controls.endOwnership(sessionId, claim);
 }
 
 /**

@@ -29,4 +29,13 @@ describe("a failure toast", () => {
     expect(failed("Couldn’t change the footer setting", error))
       .toBe("The change was made, but Rerail could not confirm it is on the disk: a power cut may still undo it, and trying it again may make it twice (EIO: i/o error, fsync).");
   });
+
+  it("says a change another process's write lock kept from being made in the daemon's words, after what failed", async () => {
+    const message = "the change was not made: another process held the database's write lock; try it again once that has finished";
+    vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ error: "database-busy", message }), { status: 503 }));
+    const error: unknown = await send("PUT", "/api/repository/settings", { mode: "log" }).then(() => undefined, (refusal: unknown) => refusal);
+    expect(failed("Couldn’t save", error))
+      .toBe("Couldn’t save. The change was not made: another process held the database's write lock; try it again once that has finished.");
+  });
 });

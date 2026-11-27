@@ -272,8 +272,8 @@ export class SqliteAuditControlStore {
     return this.#records;
   }
 
-  #interruptOwned(sessionId: string, error: string, database = this.#database): void {
-    const update = { status: "interrupted" as const, finishedAt: Date.now(), error };
+  #interruptOwned(sessionId: string, error: string, database = this.#database, finishedAt = Date.now()): void {
+    const update = { status: "interrupted" as const, finishedAt, error };
     for (const status of ["queued", "running"] as const)
       database.update(auditRequests).set(update).where(and(eq(auditRequests.sessionId, sessionId), eq(auditRequests.status, status))).run();
   }
@@ -479,14 +479,19 @@ export class SqliteAuditControlStore {
       eq(repositoryAudits.status, "running"),
     )).run();
   }
-  /** Every checkout audit the session still runs ends interrupted. */
+  /**
+   * Every checkout audit the session still runs ends interrupted, a record write like the session's other end writes
+   * (`endOwnership`). It reads first: an update takes the write lock even when it matches no row, and a session that
+   * runs no checkout audit, as nearly every one does, then takes none.
+   */
   interruptRepositoryAudit(sessionId: string): void {
-    this.#database.update(repositoryAudits).set({
-      status: "interrupted", finishedAt: Date.now(), error: "Session closed before repository diagnostic completed",
-    }).where(and(
-      eq(repositoryAudits.sessionId, sessionId),
-      eq(repositoryAudits.status, "running"),
-    )).run();
+    const running = and(eq(repositoryAudits.sessionId, sessionId), eq(repositoryAudits.status, "running"));
+    const finishedAt = Date.now();
+    const idle = (): boolean => this.#database.select({ sessionId: repositoryAudits.sessionId }).from(repositoryAudits)
+      .where(running).limit(1).get() === undefined;
+    this.#recordWriter().writeUnless(idle, database => database.update(repositoryAudits).set({
+      status: "interrupted", finishedAt, error: "Session closed before repository diagnostic completed",
+    }).where(running).run());
   }
 
   /**
@@ -554,6 +559,23 @@ export class SqliteAuditControlStore {
     const updatedAt = Date.now();
     this.#recordWriter().write(database => database.update(policySessionOwners).set({ active: false, updatedAt })
       .where(and(eq(policySessionOwners.sessionId, sessionId), eq(policySessionOwners.token, claim.token))).run());
+    claimsHereWithoutLock.delete(claim.token);
+  }
+  /**
+   * Ends `claim`'s hold on the session, as the session's end does: its queued and running scans end interrupted and its
+   * owner is let go, in one record write, so neither waits on this thread for another process's write lock and both
+   * come after the claim when it still waits for that lock. The owner row is read inside the write: a claim refused
+   * once the lock was given back finds another runtime's row there, and leaves that runtime's scans and row as they are.
+   */
+  endOwnership(sessionId: string, claim: PolicyOwnerClaim): void {
+    const at = Date.now();
+    this.#recordWriter().write(database => {
+      const owner = ownerRow(database, sessionId);
+      if (owner?.active !== true || owner.token !== claim.token) return;
+      this.#interruptOwned(sessionId, "Session closed before scan could complete", database, at);
+      database.update(policySessionOwners).set({ active: false, updatedAt: at })
+        .where(and(eq(policySessionOwners.sessionId, sessionId), eq(policySessionOwners.token, claim.token))).run();
+    });
     claimsHereWithoutLock.delete(claim.token);
   }
   /**

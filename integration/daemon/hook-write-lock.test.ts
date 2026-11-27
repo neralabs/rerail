@@ -1,8 +1,9 @@
 /**
  * The Claude Code hook against a daemon of this build while another process holds the Rerail database's write lock,
  * as `rerail reset`, `rerail scrub` or a newer Rerail's migration does for seconds: the hook's answers do not wait for
- * the lock, the steer still reaches the agent, a session started meanwhile opens with its note, and every record the
- * daemon took while the lock was held is in the database once it is released.
+ * the lock, the steer still reaches the agent, a session started meanwhile opens with its note, a session's end and a
+ * dashboard save answer without holding the other sessions' hooks, and every record the daemon took while the lock
+ * was held is in the database once it is released.
  */
 import { execFile, fork, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
@@ -248,4 +249,79 @@ describe("the Claude Code hook while another process holds the database's write 
     // which another process learns only from the database.
     await vi.waitFor(() => expect(openAndClaimed("started-held")).toBe(true), { timeout: 10_000, interval: 20 });
   }, 60_000);
+
+  // Before, the end interrupted the session's scans on a connection that waited for the lock on the daemon's thread, up
+  // to 5 s while every session's hooks waited too, then failed: the hook wrote the lock's error on stderr, and the
+  // session's record stayed open, owned by a daemon that had let it go.
+  it("ends a session while the lock is held at once, and ends its record and lets it go once the lock is released", async () => {
+    const event = (sessionId: string, input: Record<string, unknown>): Promise<HookAnswer> => hook({ session_id: sessionId, cwd: repo, ...input }, repo);
+    for (const sessionId of ["ended-free", "ended-held"]) await event(sessionId, { hook_event_name: "SessionStart", source: "startup" });
+    const end = (sessionId: string): Promise<HookAnswer> => event(sessionId, { hook_event_name: "SessionEnd", reason: "prompt_input_exit" });
+    const free = await end("ended-free");
+    const lock = await holdWriteLock(join(process.env.RERAIL_HOME!, "rerail.sqlite"));
+    let held;
+    try {
+      held = await end("ended-held");
+    } finally {
+      await lock.release();
+    }
+    const report = `lock free: ${String(free.ms)} ms; lock held: ${String(held.ms)} ms, stderr: ${held.stderr}`;
+    expect(held.stderr, report).toBe("");
+    expect(held.ms, report).toBeLessThan(free.ms + 1_000);
+    // The end's writes wait in the daemon's record writer until its lock wait finds the lock given back.
+    await vi.waitFor(() => expect(endedAndLetGo("ended-held")).toBe(true), { timeout: 10_000, interval: 20 });
+  }, 60_000);
+
+  // Before, the save waited for the lock on the daemon's thread up to 5 s, the hooks of every session waiting with it,
+  // then failed: the dashboard heard 500 and the change was not made.
+  it("saves a rule's mode asked in the dashboard while the lock is held once it is released, and answers a hook meanwhile", async () => {
+    const sessionId = "saved-beside";
+    await hook({ session_id: sessionId, cwd: repo, hook_event_name: "SessionStart", source: "startup" }, repo);
+    const read = (): Promise<HookAnswer> => hook({
+      session_id: sessionId, cwd: repo, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: `toolu_read_${String(performance.now())}`,
+      tool_input: { file_path: join(repo, "src", "app", "__init__.py") },
+    }, repo);
+    const free = await read();
+    const lock = await holdWriteLock(join(process.env.RERAIL_HOME!, "rerail.sqlite"));
+    let saving;
+    let held;
+    try {
+      saving = saveRuleMode("log");
+      held = await read();
+    } finally {
+      await lock.release();
+    }
+    const saved = await saving;
+    const report = `hook with the lock free: ${String(free.ms)} ms; beside the held save: ${String(held.ms)} ms; save: ${saved.status} ${saved.body}`;
+    expect(saved.status, report).toBe(200);
+    expect(JSON.parse(saved.body), report).toMatchObject({ settings: [{ mode: "log" }] });
+    expect(held.ms, report).toBeLessThan(free.ms + 1_000);
+    // The rule back to its start, as the other cases read it.
+    expect((await saveRuleMode(null)).status).toBe(200);
+  }, 60_000);
 });
+
+/** Whether the database holds `sessionId` now as ended and let go: its record ended, and its owner row not active. */
+function endedAndLetGo(sessionId: string): boolean {
+  const database = new Database(join(process.env.RERAIL_HOME!, "rerail.sqlite"), { readonly: true });
+  try {
+    const row = database.prepare(`
+      SELECT sessions.ended_at AS endedAt, owners.active AS active FROM sessions
+      JOIN policy_session_owners AS owners ON owners.session_id = sessions.session_id WHERE sessions.session_id = ?
+    `).get(sessionId) as { endedAt: number | null; active: number } | undefined;
+    return row !== undefined && row.endedAt !== null && row.active === 0;
+  } finally {
+    database.close();
+  }
+}
+
+/** The dashboard's save of `RULE`'s mode for the whole repository (`PUT /api/repository/settings`), as the daemon answers it. */
+async function saveRuleMode(mode: "log" | null): Promise<{ status: number; body: string }> {
+  const state = JSON.parse(await readFile(join(process.env.RERAIL_HOME!, DAEMON_STATE_FILE), "utf8")) as { url: string; accessToken: string };
+  const response = await fetch(new URL("/api/repository/settings", state.url), {
+    method: "PUT",
+    headers: { "content-type": "application/json", "x-rerail-access": state.accessToken },
+    body: JSON.stringify({ checkout: repo, owner: "repository", targets: [{ kind: "rule", id: RULE }], mode }),
+  });
+  return { status: response.status, body: await response.text() };
+}
