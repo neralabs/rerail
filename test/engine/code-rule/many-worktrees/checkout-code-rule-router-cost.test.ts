@@ -232,6 +232,8 @@ describe("CheckoutCodeRuleRouter in a repository with many worktrees", () => {
       expect(await costOf(6, lanes)).toEqual(few);
       // The checkout declares no submodules, so its ignore rules ask Git nothing.
       expect(few.gitProcesses).toBe(0);
+      // Counted, so a mock that stopped counting fails here: a tool call asks five, with lanes or without.
+      expect({ lanes, folderQuestions: few.folderQuestions }).toEqual({ lanes, folderQuestions: 5 });
     }
   }, 60_000);
 
