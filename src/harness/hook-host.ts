@@ -115,6 +115,14 @@ export interface HookOptions {
   daemonDeadline?: number;
   /** Epoch ms the hook's event arrived (`withDaemonDeadline`): an event left untaken is ordered by it. */
   arrivedAt?: number;
+  /**
+   * The hook waits for a daemon as a session's start does, starting one where none runs, instead of answering at once
+   * and losing its event: set by a hook on a machine where its coding agent sends no session start, a Cursor cloud
+   * agent's VM (`isCursorCloud`), so the first hooks there do not lose their events while the daemon boots. It says
+   * nothing of the session: what keys on `startsSession` (the line `answerAutostartOff` tells the person) keeps to the
+   * hook that starts one.
+   */
+  waitsForDaemon?: boolean;
 }
 
 /**
@@ -180,12 +188,12 @@ function autostartLine(error: unknown): string | undefined {
 
 /**
  * Runs a normal package hook against the engine service, or an explicit local test runtime. Only the hook that starts
- * a session (`startsSession`) waits for a daemon to start; any other hook that finds none running answers `{}` at
- * once, so a daemon that is down never stalls a tool call or shows as a hook error (design N11), records the lost event
- * in the hook failure log and starts a daemon in the background. One whose daemon runs but left its whole bounded wait
- * unanswered leaves the event in the home's untaken folder for the daemon to check when it reads again, and so does
- * every later hook while that event is still there, without asking the daemon (`leaveForDaemon`). A daemon that cannot
- * be reached throws
+ * a session (`startsSession`), or one told to wait (`HookOptions.waitsForDaemon`), waits for a daemon to start; any
+ * other hook that finds none running answers `{}` at once, so a daemon that is down never stalls a tool call or shows
+ * as a hook error (design N11), records the lost event in the hook failure log and starts a daemon in the background.
+ * One whose daemon runs but left its whole bounded wait unanswered leaves the event in the home's untaken folder for
+ * the daemon to check when it reads again, and so does every later hook while that event is still there, without
+ * asking the daemon (`leaveForDaemon`). A daemon that cannot be reached throws
  * `DaemonUnreachableError`, so a coding agent without a footer can say so. Every failure, `event` named as the coding
  * agent names it, goes to the hook failure log (`hook-failures.ts`), which `rerail status` reads. Under
  * `RERAIL_AUTOSTART=0` a hook that finds no daemon logs nothing and starts none, since the person runs it themselves;
@@ -269,6 +277,9 @@ interface HookRun {
 /**
  * The daemon a hook leaves its event for without asking it (`daemonLeftEventUntaken`). A session's start still asks:
  * it is the hook that starts a daemon and tells the person when none runs. A socket named outright is asked as named.
+ * A hook that waits for its daemon (`HookOptions.waitsForDaemon`) leaves its event too: an event left is not lost, as
+ * the daemon checks it before any event sent to it after, and that daemon is known not to be reading, so asking it
+ * would hold every tool call its whole wait for nothing.
  */
 async function untakenDaemon(options: HookOptions, startsSession: boolean): Promise<DaemonState | undefined> {
   if (startsSession || namedEngineSocket(options) !== undefined) return undefined;
@@ -391,14 +402,22 @@ function untakenForm(event: AdapterEvent): AdapterEvent {
   return scrubbed.kind === "result" ? { ...scrubbed, output: UNTAKEN_OUTPUT } : scrubbed;
 }
 
-/** The engine a hook sends its event to: the socket named outright, else the daemon's, or why no daemon takes it. */
+/**
+ * The engine a hook sends its event to: the socket named outright, else the daemon's, or why no daemon takes it. A
+ * session's start brings a daemon up and waits for it. So does a hook told to wait (`HookOptions.waitsForDaemon`) where
+ * none runs; one that runs but is busy past the wait is answered as any later hook's is, so its event is left untaken
+ * for it rather than failing the hook as the start's refusal to replace a live daemon would. Under `RERAIL_AUTOSTART=0`
+ * such a hook finds no daemon as any later hook does, which logs nothing and starts none.
+ */
 async function hookDaemon(options: HookOptions, startsSession: boolean): Promise<HookDaemon> {
   try {
     const named = namedEngineSocket(options);
     const { daemonDeadline } = options;
     if (named !== undefined) return { status: "running", endpoint: await engineEndpointAt(named, daemonDeadline) };
     if (startsSession) return { status: "running", endpoint: await daemonEngineEndpoint(true, daemonDeadline) };
-    return await runningDaemonEngineEndpoint(daemonDeadline);
+    const found = await runningDaemonEngineEndpoint(daemonDeadline);
+    if (options.waitsForDaemon !== true || found.status !== "absent" || autostartOff()) return found;
+    return { status: "running", endpoint: await daemonEngineEndpoint(true, daemonDeadline) };
   } catch (error) {
     throw new DaemonUnreachableError(error instanceof Error ? error.message : String(error), { cause: error });
   }

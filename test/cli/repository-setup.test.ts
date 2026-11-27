@@ -449,6 +449,43 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     expect(readsRepository).not.toHaveBeenCalled();
   });
 
+  it("with `--allow-sessions`, records the yes to sessions and installs and starts the picked packs in the same run", async () => {
+    const setup = await fixture();
+    const packs = countingStore(["typescript", "complexity"]);
+    const environment = fakeSetupEnvironment({ sessionsApproved: false, packs });
+    const complexity = repositoryPackVersions("complexity");
+    const asked = agentIo();
+    expect(await runSetup(asked, request(setup, environment, { allowSessions: true, answer: "pick-myself", repo: setup.repo, packs: complexity })))
+      .toMatchObject({ status: "started" });
+    expect(environment.sessionsApproved()).toBe(true);
+    expect(asked.text()).not.toContain("OK for Rerail to read");
+    expect(packs.installs).toEqual([[`@neralabs/rerail-pack-complexity@${complexity[0]!.version}`]]);
+    expect(attachedPacks(setup.repo, setup.databasePath)).toEqual(["complexity"]);
+    expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
+  });
+
+  it("with `--allow-sessions` and no `--packs`, records the yes and stops at the packs question", async () => {
+    const setup = await fixture();
+    const environment = fakeSetupEnvironment({ sessionsApproved: false, packs: countingStore(["typescript", "complexity"]) });
+    const asked = agentIo();
+    expect(await runSetup(asked, request(setup, environment, { allowSessions: true, answer: "pick-myself", repo: setup.repo }))).toEqual({ status: "waiting" });
+    expect(environment.sessionsApproved()).toBe(true);
+    expect(asked.text()).toContain("Which rule packs should Rerail start with in acme-api?");
+    expectUntouched(setup);
+  });
+
+  it("refuses `--allow-sessions` with the sessions question's own answers, before anything changes", async () => {
+    const setup = await fixture();
+    for (const answer of ["decline", "allow"]) {
+      const environment = fakeSetupEnvironment({ sessionsApproved: false });
+      await expect(runSetup(agentIo(), request(setup, environment, { allowSessions: true, answer, repo: setup.repo })))
+        .rejects.toThrow(`--allow-sessions already answers whether Rerail may read your sessions, so it can’t go with --answer ${answer}.`);
+      expect(environment.sessionsApproved()).toBe(false);
+      expect(environment.connections).toEqual([]);
+    }
+    expectUntouched(setup);
+  });
+
   it("checks each pack's core range against the active Rerail, not the package set-up runs from", async () => {
     const setup = await fixture();
     // `rerail update rollback` has made 0.0.9 active, older than any pack fits; this run is the newer package a coding agent's session loaded.

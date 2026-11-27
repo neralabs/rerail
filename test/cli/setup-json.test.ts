@@ -316,6 +316,40 @@ describe("rerail setup, the command", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect((JSON.parse(said[0]!) as SetupStep).step).toBe("read-repo");
   });
 
+  it("with `--allow-sessions`, sets a repository up in one run, and fails loudly where it stops at a question", async () => {
+    const { setup, context, said, io } = await commandFixture(false);
+    await context.updater.activateRoot(context.packageRoot);
+    const script = ["--allow-sessions", "--answer", "pick-myself", "--repo", setup.repo];
+    const stoppedLine = "Set-up stopped at the question above, so Rerail is not on yet. Answer it in the same command: add the --answer it names, and --packs for the rule packs.";
+
+    // Without `--packs` the run stops at the packs question: the yes is kept, but nothing is on, and the run fails.
+    expect(await runSetupCommand(script, context, io)).toBe(1);
+    expect(existsSync(join(context.home, "consent.json"))).toBe(true);
+    expect(said.join("\n")).toContain("Which rule packs should Rerail start with in acme api?");
+    expect(said.at(-1)).toBe(stoppedLine);
+    said.length = 0;
+    expect(await runSetupCommand(["--json", ...script], context, io)).toBe(1);
+    const step = JSON.parse(said[0]!) as SetupStep;
+    expect(step.step).toBe("pick-packs");
+    expect(step.screen.split("\n").at(-1)).toBe(stoppedLine);
+    expect(workspaceStartState(setup.repo, join(context.home, "rerail.sqlite"))).toBe("stopped");
+
+    // With them, the same command installs the packs and starts, exiting 0.
+    said.length = 0;
+    expect(await runSetupCommand([...script, "--packs", `typescript@${TYPESCRIPT[0]!.version}`], context, io)).toBe(0);
+    expect(said.join("\n")).not.toContain(stoppedLine);
+    expect(workspaceStartState(setup.repo, join(context.home, "rerail.sqlite"))).toBe("started");
+  });
+
+  it("refuses `--allow-sessions` with `--answer decline` before anything changes", async () => {
+    const { context, said, io } = await commandFixture(false);
+    const install = vi.spyOn(context.updater, "install").mockResolvedValue(undefined as never);
+    expect(await runSetupCommand(["--json", "--allow-sessions", "--answer", "decline"], context, io)).toBe(1);
+    expect(JSON.parse(said[0]!)).toMatchObject({ step: "error", screen: expect.stringContaining("can’t go with --answer decline"), question: null });
+    expect(install).not.toHaveBeenCalled();
+    expect(existsSync(join(context.home, "consent.json"))).toBe(false);
+  });
+
   it("says Rerail is installed only on the run that installed it", async () => {
     const installing = await commandFixture();
     const install = vi.spyOn(installing.context.updater, "install").mockResolvedValue(undefined as never);

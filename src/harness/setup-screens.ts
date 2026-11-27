@@ -79,8 +79,12 @@ const SETUP_COMMAND: SetupCommand = { words: ["rerail", "setup"], shell: "posix"
  * The flags the agent lane's answer commands use; set-up's argument parser reads the same ones. `relay` picks the
  * agent lane even when a coding agent runs commands in a terminal: `/rerail-start` and every answer pass it.
  * `powershell` says the coding agent runs them in PowerShell (Codex and Cursor on Windows), so they are written for it.
+ * `allowSessions` is set-up in a script: it agrees to session reading as `--answer allow` does without using up the
+ * run's `--answer`, and no answer command carries it, since the run that has it records the agreement for good.
  */
-export const SETUP_FLAGS = { answer: "--answer", repo: "--repo", agents: "--agents", packs: "--packs", relay: "--relay", powershell: "--powershell" } as const;
+export const SETUP_FLAGS = {
+  answer: "--answer", repo: "--repo", agents: "--agents", packs: "--packs", relay: "--relay", powershell: "--powershell", allowSessions: "--allow-sessions",
+} as const;
 
 /** Answer keys in the order each question numbers its answers (answer 1 is index 0). */
 export const READ_REPO_ANSWERS = ["yes", "other-folder", "pick-myself"] as const;

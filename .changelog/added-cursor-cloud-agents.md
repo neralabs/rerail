@@ -1,0 +1,1 @@
+`rerail start --cursor-cloud` sets up a Cursor cloud agent's VM: it writes Rerail's hooks into the repository's `.cursor/hooks.json`, keeps that file out of Git, and starts the daemon. Cloud agents load only project hooks and fire no session start, so before this Rerail recorded nothing there.

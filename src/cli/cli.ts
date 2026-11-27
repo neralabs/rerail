@@ -27,6 +27,7 @@ import {
 import { repositoryFolderName, repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
 import { gitExecutable, GitUnavailableError } from "../engine/git.js";
 import { checkSetupAnswer, setupAgents, setupPacks, startRerail } from "./repository-setup.js";
+import { CURSOR_CLOUD_FLAG, startForCursorCloud } from "./cursor-cloud-start.js";
 import { isPreSetupHealthCheck, skipsSessionsApproval, startForPreSetupHealthCheck } from "../runtime/pre-setup-health-check.js";
 import {
   assertHostBindable,
@@ -192,10 +193,10 @@ function selectedChannel(args: readonly string[]): string | undefined {
 function usage(): string {
   return [
     "Usage:",
-    "  rerail setup [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--repository] [--port <n>] [--json] [--relay] [--database <file>]",
+    "  rerail setup [--answer <answer>] [--allow-sessions] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--repository] [--port <n>] [--json] [--relay] [--database <file>]",
     "  rerail install [--root <package>] [--agents <list>] [--remove [--delete-data]] [--dry-run]",
     "  rerail install --refresh",
-    "  rerail start [--repo <dir>] [--repository] [--agents <list>] [--answer <answer>] [--json] [--relay] [--database <file>]",
+    "  rerail start [--repo <dir>] [--repository] [--agents <list>] [--answer <answer>] [--json] [--relay] [--database <file>] [--cursor-cloud]",
     "  rerail stop [<host> [<session-id>]] [--repo <dir>] [--repository] [--database <file>]",
     "  rerail state [--set-up] [--repo <dir>] [--database <file>]",
     "  rerail status",
@@ -758,10 +759,14 @@ function runStopCommand(args: readonly string[], positionals: readonly string[],
   return 0;
 }
 
+/**
+ * `rerail start`; with `--cursor-cloud`, on a Cursor cloud agent's VM, the same start and then what that VM needs for
+ * the agent's hooks to reach Rerail (`startForCursorCloud`).
+ */
 async function runStartCommand(args: readonly string[], context: SetupContext, io: ReturnType<typeof setupIo>): Promise<number> {
   const { flags, options } = parseArguments(
     args,
-    { flags: [SETUP_FLAGS.relay, ...CARRIED_FLAG_NAMES], options: ["--repo", "--agents", SETUP_FLAGS.packs, "--answer", "--database"] },
+    { flags: [SETUP_FLAGS.relay, CURSOR_CLOUD_FLAG, ...CARRIED_FLAG_NAMES], options: ["--repo", "--agents", SETUP_FLAGS.packs, "--answer", "--database"] },
     argument => `Unknown start option: ${argument}\n\n${usage()}`,
   );
   const workspace = resolve(options.get("--repo") ?? process.cwd());
@@ -771,7 +776,14 @@ async function runStartCommand(args: readonly string[], context: SetupContext, i
     return 0;
   }
   const carried = carriedFlags(({ flag }) => flags.has(flag));
-  const report = await startRerail(workspace, io, startOptions(args, carried, options, context, { lane: io.lane, workspace }));
+  const start = () => startRerail(workspace, io, startOptions(args, carried, options, context, { lane: io.lane, workspace }));
+  if (flags.has(CURSOR_CLOUD_FLAG)) {
+    await startForCursorCloud({
+      workspace, ...databasePathOption(options), root: registrationRoot(context.home, context.packageRoot), say: text => io.say(text), start,
+    });
+    return 0;
+  }
+  const report = await start();
   // The set-up's own summary ends on the dashboard link; ending its questions early is a failure.
   if (report.setUpRan) return report.cancelled ? 1 : 0;
   const page = await readRulesDashboard({ cwd: workspace });

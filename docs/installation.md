@@ -142,6 +142,25 @@ install made after set-up is swapped the same way, by `/rerail-start` again or t
 After set-up, run `omp plugin uninstall @neralabs/rerail` if you used `omp plugin install @neralabs/rerail`, then
 restart OMP. Set-up cannot replace OMP's copy, so both would load; set-up and `rerail update` remind you while it stays.
 
+### On Cursor cloud agents
+
+A Cursor cloud agent runs on a VM that Cursor prepares from the repository's `.cursor/environment.json`. It loads only
+the repository's own hooks, never `~/.cursor/hooks.json`, and fires no session start or end, so set-up alone records
+nothing there. Set Rerail up in `install`, and run `rerail start --cursor-cloud` there and in `start`:
+
+```json
+{
+  "install": "npx -y @neralabs/rerail@latest setup --agents cursor --repo \"$PWD\" --allow-sessions --answer pick-myself --packs <id@version,…> && ~/.rerail/bin/rerail start --cursor-cloud",
+  "start": "~/.rerail/bin/rerail start --cursor-cloud"
+}
+```
+
+`rerail start --cursor-cloud` writes Rerail's hooks into the repository's `.cursor/hooks.json` on that VM only, and
+keeps the file out of Git there, so an agent's pull request never carries it. It then starts the daemon, before the
+agent's first hook. The agent's session is recorded from its first hook, and the note a session's start gives comes
+with its first tool result. A first prompt Cursor sends before the VM is ready is not recorded; what the agent does
+after it is.
+
 ## Update
 
 Rerail updates only when you ask; nothing installs a version in the background. Once a day the daemon asks npm

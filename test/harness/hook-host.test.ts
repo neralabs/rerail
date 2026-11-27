@@ -30,28 +30,32 @@ import type { HookOptions } from "../../src/harness/hook-host.js";
 import { HOOK_FAILURES_FILE } from "../../src/harness/hook-failures.js";
 import { runClaudeHook } from "../../src/hosts/claude/index.js";
 import { runCodexHook } from "../../src/hosts/codex/index.js";
-import { runCursorHook } from "../../src/hosts/cursor/index.js";
+import { markCursorCloud, runCursorHook } from "../../src/hosts/cursor/index.js";
 import { hookOptions, serveText, temporaryDirectories, sessionDatabaseQuery } from "../support/hook-events.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { DEAD_PID } from "../support/processes/daemon-home.js";
 
 // The lookup of a named engine socket, a session start's lookup of the daemon, and a later hook's lookup of the running
-// daemon work as they do; a test stands in for one call of any of them at a time.
+// daemon work as they do; a test stands in for one call of any of them at a time. So does the background start a hook
+// that finds no daemon hands off, which would otherwise launch one.
 const lookups = vi.hoisted(() => ({
   engineEndpointAt: vi.fn<(socketPath: string, deadline?: number) => Promise<EngineEndpoint>>(),
   daemonEngineEndpoint: vi.fn<(replaceOtherPackage: boolean, deadline?: number) => Promise<EngineEndpoint>>(),
   runningDaemonEngineEndpoint: vi.fn<(deadline?: number) => Promise<unknown>>(),
+  autostartDaemon: vi.fn<() => void>(),
 }));
 vi.mock("../../src/runtime/daemon-control.js", async () => {
   const actual = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
   lookups.engineEndpointAt.mockImplementation((socketPath, deadline) => actual.engineEndpointAt(socketPath, deadline));
   lookups.daemonEngineEndpoint.mockImplementation((replace, deadline) => actual.daemonEngineEndpoint(replace, deadline));
   lookups.runningDaemonEngineEndpoint.mockImplementation(deadline => actual.runningDaemonEngineEndpoint(deadline));
+  lookups.autostartDaemon.mockImplementation(() => actual.autostartDaemon());
   return {
     ...actual,
     engineEndpointAt: lookups.engineEndpointAt,
     daemonEngineEndpoint: lookups.daemonEngineEndpoint,
     runningDaemonEngineEndpoint: lookups.runningDaemonEngineEndpoint,
+    autostartDaemon: lookups.autostartDaemon,
   };
 });
 
@@ -707,6 +711,57 @@ describe("a session's start where RERAIL_AUTOSTART keeps hooks from starting or 
     lookups.runningDaemonEngineEndpoint.mockClear().mockRejectedValueOnce(new OtherDaemonKeptError(reason));
     const { embedder: _testRuntime, ...daemonPath } = hookOptions(root);
     expect(await serveText(parsed => run(parsed, daemonPath), JSON.stringify(input(root)))).toEqual({ stdout: "{}\n", stderr: `rerail hook: ${reason}\n` });
+    expect(existsSync(join(process.env.RERAIL_HOME!, HOOK_FAILURES_FILE))).toBe(true);
+  });
+});
+
+describe("a Cursor hook that finds no daemon on a Cursor cloud agent's VM, where Cursor fires no sessionStart", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const toolResult = (cwd: string): HookInput => ({
+    workspace_roots: [cwd], conversation_id: "s", hook_event_name: "postToolUse", tool_use_id: "t1", tool_name: "Read", tool_output: "x = 1",
+  });
+
+  // Every hook there may be the session's first, and the daemon `rerail start --cursor-cloud` started may be booting or
+  // restarting: a hook that answered at once would lose the event, as no session start comes to wait for the daemon.
+  it("waits for the daemon it starts, as a session's start does, and sends it the session's start and its own event", { timeout: 20_000 }, async () => {
+    const root = await temporaryDirectory();
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    vi.stubEnv("RERAIL_AUTOSTART", "1");
+    const { embedder: _testRuntime, ...daemonPath } = hookOptions(root);
+    await markCursorCloud(daemonPath.databasePath);
+    const engine = await heldEngine(root);
+    engine.answerFirst();
+    try {
+      lookups.runningDaemonEngineEndpoint.mockClear().mockResolvedValueOnce({ status: "absent" });
+      lookups.daemonEngineEndpoint.mockClear().mockResolvedValueOnce({ socketPath: engine.socketPath });
+      lookups.autostartDaemon.mockClear().mockImplementationOnce(() => {});
+      const output = await runCursorHook(toolResult(root), daemonPath);
+      expect(lookups.daemonEngineEndpoint).toHaveBeenCalledTimes(1);
+      expect(lookups.daemonEngineEndpoint.mock.calls[0]![0]).toBe(true);
+      expect(engine.received).toEqual(["s:session-start", "s:tool-result:t1:Read:success"]);
+      // The first postToolUse carries the note the session's start owes.
+      expect(String(output.additional_context)).toContain("Rerail is on");
+      expect(lookups.autostartDaemon).not.toHaveBeenCalled();
+      expect(existsSync(join(process.env.RERAIL_HOME!, HOOK_FAILURES_FILE))).toBe(false);
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it("answers at once without the marker, logging the event lost and starting a daemon in the background", async () => {
+    const root = await temporaryDirectory();
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    vi.stubEnv("RERAIL_AUTOSTART", "1");
+    const { embedder: _testRuntime, ...daemonPath } = hookOptions(root);
+    lookups.runningDaemonEngineEndpoint.mockClear().mockResolvedValueOnce({ status: "absent" });
+    lookups.daemonEngineEndpoint.mockClear();
+    lookups.autostartDaemon.mockClear().mockImplementationOnce(() => {});
+    expect(await runCursorHook(toolResult(root), daemonPath)).toEqual({});
+    expect(lookups.daemonEngineEndpoint).not.toHaveBeenCalled();
+    expect(lookups.autostartDaemon).toHaveBeenCalledTimes(1);
     expect(existsSync(join(process.env.RERAIL_HOME!, HOOK_FAILURES_FILE))).toBe(true);
   });
 });

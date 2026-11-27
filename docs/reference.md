@@ -282,7 +282,8 @@ Prerequisites (set-up checks them before changing anything, and says what to do,
 
 `setup` installs under `~/.rerail/versions/<version>`, points `~/.rerail/current` and the launcher `~/.rerail/bin/rerail` at it, and adds `~/.rerail/bin` to `PATH`.
 
-- `rerail setup [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--port <n>] [--json] [--relay] [--powershell]` takes the answers as arguments. With `--powershell` each answer command is written for PowerShell (`& '<node>' '<rerail home>\current\dist\cli\cli.js' setup ...`), every value PowerShell would read in single quotes (`--packs 'typescript@0.1.1,complexity@0.1.1'`, which it would otherwise split at the comma), and carries `--powershell` on; Codex's and Cursor's `/rerail-start` pass it on Windows, where they run PowerShell. Without it the answers are written for a POSIX shell, Git Bash on Windows, where Claude Code runs them, starting with the sh launcher `rerail`. No answer runs `rerail.cmd`, since cmd.exe would read its arguments again: a `&` in a folder name would end the command there.
+- `rerail setup [--answer <answer>] [--allow-sessions] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--packs <id@version,…>] [--port <n>] [--json] [--relay] [--powershell]` takes the answers as arguments. With `--powershell` each answer command is written for PowerShell (`& '<node>' '<rerail home>\current\dist\cli\cli.js' setup ...`), every value PowerShell would read in single quotes (`--packs 'typescript@0.1.1,complexity@0.1.1'`, which it would otherwise split at the comma), and carries `--powershell` on; Codex's and Cursor's `/rerail-start` pass it on Windows, where they run PowerShell. Without it the answers are written for a POSIX shell, Git Bash on Windows, where Claude Code runs them, starting with the sh launcher `rerail`. No answer runs `rerail.cmd`, since cmd.exe would read its arguments again: a `&` in a folder name would end the command there.
+- `rerail setup --allow-sessions` agrees to session reading without using up `--answer`, so a script sets a repository up in one run: `npx -y @neralabs/rerail@latest setup --agents cursor --repo "$PWD" --allow-sessions --answer pick-myself --packs react@0.1.12,rerail-pack-team@0.1.0`. A run with it that stops at a question exits 1 and says which flags answer it; it can't go with `--answer allow` or `--answer decline` ([Set-up in one command](how-setup-works.md#set-up-in-one-command)).
 - `rerail install --agents <list> [--dry-run]` only connects coding agents.
 - `rerail install --remove` removes Rerail, keeping `rerail.sqlite` in a dated backup.
 - `rerail install --remove --delete-data` removes Rerail and deletes its data, backups and home.
@@ -935,6 +936,7 @@ Rerail is off in every repository until started. Rules belong to the repository;
 
 - `rerail start --repository` and `rerail stop --repository` (or the dashboard) act on every checkout.
 - Stopping applies immediately in OMP and Pi, and before the next one-shot Claude Code, Codex or Cursor hook. It survives restarts and keeps history, rules and the shared daemon.
+- `rerail start --cursor-cloud` is for a Cursor cloud agent's VM only ([below](#cursor-cloud-agents)).
 
 <details>
 <summary>What stopping does, inheritance and the footer</summary>
@@ -948,6 +950,19 @@ In a repository not set up, `/rerail-start` (or `rerail start`) runs set-up firs
 The Claude Code, OMP and Pi footer is not shown in a stopped checkout, or one Rerail was never started in. With a daemon running, it shows `R E R A I L ○ not set up · rerail start` in a started repository that isn't set up. `/rerail` and `rerail status` report the checkout's state.
 
 </details>
+
+##### Cursor cloud agents
+
+A Cursor cloud agent loads only its repository's own `.cursor/hooks.json`, never `~/.cursor/hooks.json`, and fires no `sessionStart` or `sessionEnd`. `rerail start --cursor-cloud [--repo <dir>] [--database <file>]` prepares its VM: it starts Rerail in the checkout as `rerail start` does, writes Rerail's hooks for all 8 Cursor events into `<checkout>/.cursor/hooks.json` with this VM's node and Rerail install (other entries in the file stay), keeps that file out of Git (listed in the clone's `info/exclude`, or marked `--skip-worktree` where the repository tracks its own), marks the VM as a cloud VM (`cursor-cloud.json` beside the database), and waits until the daemon answers. It opens no session: the agent starts its own, and Rerail records it from the agent's hooks. Run again, it changes nothing. In a repository that is not set up it exits 1 and writes nothing for Cursor. It refuses on Windows, and it is not for a local Cursor, whose hooks set-up already writes.
+
+It is meant for `.cursor/environment.json`, whose `install` runs once per Build and `start` on every agent boot:
+
+```json
+{
+  "install": "npx -y @neralabs/rerail@latest setup --agents cursor --repo \"$PWD\" --allow-sessions --answer pick-myself --packs <pack@version,...> && ~/.rerail/bin/rerail start --cursor-cloud",
+  "start": "~/.rerail/bin/rerail start --cursor-cloud"
+}
+```
 
 #### Scan and settings from the terminal
 

@@ -193,6 +193,11 @@ export interface SetupRequest extends RepositorySetupOptions {
   cwd: string;
   /** `--repo`: the folder the person named. Naming it is the go-ahead to read it. */
   repo?: string;
+  /**
+   * `--allow-sessions`: set-up in a script. The yes to reading sessions, recorded before anything else so the run's own
+   * `--answer` goes on to the next question instead of being used up on that one.
+   */
+  allowSessions?: boolean;
 }
 
 /**
@@ -954,21 +959,34 @@ async function noRepository(run: Run): Promise<SetupOutcome> {
   return repository === undefined ? halted(run.io) : setUpOneRepository(run, repository, true, undefined);
 }
 
-/** `--answer` must be one of the answer keys the questions print; callers check it before changing anything. */
-export function checkSetupAnswer(answer: string | undefined): string | undefined {
+/**
+ * `--answer` must be one of the answer keys the questions print; callers check it before changing anything. With
+ * `--allow-sessions`, which answers the sessions question itself, that question's own answers are refused: allow says
+ * it twice, and decline says the opposite.
+ */
+export function checkSetupAnswer(answer: string | undefined, allowSessions = false): string | undefined {
+  if (allowSessions && (SESSIONS_ANSWERS as readonly string[]).includes(answer ?? "")) {
+    throw new Error(`${SETUP_FLAGS.allowSessions} already answers whether Rerail may read your sessions, so it can’t go with ${SETUP_FLAGS.answer} ${answer}. Leave out one of them.`);
+  }
   if (answer === undefined || ANSWERS.includes(answer)) return answer;
   throw new Error(`Unknown answer: ${answer} (expected one of ${ANSWERS.join(", ")})`);
 }
 
-/** `rerail setup` after the install: T2b once, then steps 3 to 6 for the repository named or found, or E3 and E5 without one. */
+/**
+ * `rerail setup` after the install: T2b once, then steps 3 to 6 for the repository named or found, or E3 and E5 without
+ * one. `--allow-sessions` records the yes to T2b before anything else, so the run goes on with its own `--answer`, and
+ * its `--repo` is the go-ahead to read that folder as in any run that names one.
+ */
 export async function runSetup(io: RepositorySetupIo, request: SetupRequest): Promise<SetupOutcome> {
+  const checked = checkSetupAnswer(request.answer, request.allowSessions === true);
+  if (request.allowSessions === true) await request.environment.setSessionsApproved(true);
   const databasePath = request.databasePath ?? defaultRerailDatabasePath();
   // The allow answer's `--repo` is not the person's naming of it (below).
   const steps = request.repo === undefined
     ? stepsFor(request.environment, databasePath, repositoryHere(request.cwd), false)
     : stepsFor(request.environment, databasePath, repositoryAt(request.repo), request.answer !== "allow");
   const run: Run = { io, request, databasePath, steps };
-  const approval = await approveSessions(run, checkSetupAnswer(request.answer), request.repo);
+  const approval = await approveSessions(run, checked, request.repo);
   if ("status" in approval) return approval;
   const { answer } = approval;
   if (answer === "skip") return skip(run);

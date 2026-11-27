@@ -1,0 +1,1 @@
+`rerail setup --allow-sessions` agrees to Rerail reading your sessions without using up `--answer`, so a script sets Rerail up in one command, for example `--allow-sessions --answer pick-myself --packs …`. Such a run exits non-zero when it stops at a question.

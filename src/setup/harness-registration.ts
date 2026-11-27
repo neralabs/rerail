@@ -822,6 +822,17 @@ function planMutation(
   };
 }
 
+/**
+ * Where a JSON config file registration writes lives: the folder it must stay inside (`label` names it in the refusal),
+ * and whether a change backs the file up first. A coding agent's file in the home is backed up; a file in a checkout is
+ * not, since a backup beside it would show in `git status`, and Git keeps the file's committed text.
+ */
+interface JsonFilePlace {
+  container: string;
+  label: string;
+  backup: boolean;
+}
+
 /** `detail` may be a function, read after `transform`, for what the transform found. */
 async function planJsonFile(
   harness: Harness,
@@ -829,8 +840,9 @@ async function planJsonFile(
   context: Context,
   detail: string | (() => string),
   transform: (value: JsonObject) => JsonObject | Promise<JsonObject>,
+  place: JsonFilePlace = { container: context.home, label: "home", backup: true },
 ): Promise<Plan> {
-  assertInside(path, context.home, "home");
+  assertInside(path, place.container, place.label);
   const existing = await readJsonFile(path);
   const next = await transform(structuredClone(existing.value));
   const text = typeof detail === "string" ? detail : detail();
@@ -839,7 +851,7 @@ async function planJsonFile(
     return { change: { harness, path, action: "unchanged", detail: `${text}: ${reason}` } };
   }
   return planMutation(context, harness, path, writeAction(existing), text,
-    () => writeTextFile(path, `${JSON.stringify(next, null, 2)}\n`, existing));
+    () => writeTextFile(path, `${JSON.stringify(next, null, 2)}\n`, existing, place.backup));
 }
 
 function hooksObject(value: JsonObject, path: string): JsonObject {
@@ -1496,8 +1508,13 @@ async function planClaudeProjectSettings(workspace: string, context: Context): P
   return shared === undefined ? [] : [await planClaudeSettings(context, localPaths[0]!, shared)];
 }
 
-function planCursor(context: Context): Promise<Plan> {
-  const path = join(context.home, ".cursor", "hooks.json");
+/**
+ * Rerail's hook for every Cursor event ({@link CURSOR_HOOK_EVENTS}) in the Cursor hooks file at `path`, once Rerail's
+ * own older entries are taken out; every other entry, and `version`, stays. Local Cursor reads `~/.cursor/hooks.json`,
+ * the default; a Cursor cloud agent reads only its checkout's `.cursor/hooks.json` ({@link registerCursorProjectHooks}),
+ * which `place` says how to write.
+ */
+function planCursor(context: Context, path = join(context.home, ".cursor", "hooks.json"), place?: JsonFilePlace): Promise<Plan> {
   const command = context.platform === "win32"
     ? cursorPowershellHookCommand(context, ENTRY_POINTS.cursorHook)
     : hookCommand(context, ENTRY_POINTS.cursorHook);
@@ -1516,7 +1533,31 @@ function planCursor(context: Context): Promise<Plan> {
       hooks[event] = [...entries, { command }];
     }
     return { ...value, version: typeof value.version === "number" ? value.version : 1, hooks };
-  });
+  }, place);
+}
+
+/** What {@link registerCursorProjectHooks} writes from: this install's package root and recorded node, and the checkout. */
+export interface CursorProjectHooksOptions {
+  /** Installed package root containing package.json, dist/ and hooks/. */
+  root: string;
+  /** The checkout's top folder: Cursor runs project hooks from there, and reads `.cursor/hooks.json` there. */
+  checkout: string;
+  nodePath?: string;
+}
+
+/**
+ * Writes Rerail's Cursor hooks into the checkout's own `.cursor/hooks.json`, for a Cursor cloud agent: it loads project
+ * hooks only, never `~/.cursor/hooks.json` (docs/cursor-cloud-agents-prd.md, R1). The entries and how they merge are
+ * local Cursor's ({@link planCursor}): this install's absolute node and hook script, Rerail's older entries replaced,
+ * every other entry kept. The file is meant for the VM alone and kept out of Git there, so the absolute paths are this
+ * machine's. A file that already holds them is not written, so a second run leaves it byte for byte as it was.
+ */
+export async function registerCursorProjectHooks(options: CursorProjectHooksOptions): Promise<RegistrationChange> {
+  const checkout = resolve(options.checkout);
+  const context = newContext({ root: options.root, ...(options.nodePath === undefined ? {} : { nodePath: options.nodePath }) }, "register");
+  const plan = await planCursor(context, join(checkout, ".cursor", "hooks.json"), { container: checkout, label: "checkout", backup: false });
+  await plan.apply?.();
+  return plan.change;
 }
 
 /**

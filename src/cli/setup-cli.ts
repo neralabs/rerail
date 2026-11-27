@@ -1385,7 +1385,7 @@ export async function runSetupCommand(
     if (args.includes(JSON_FLAG)) {
       const step = await setupStep(args, context, machinePlace(context), nodeVersion);
       io.say(JSON.stringify(step));
-      return step.step === "error" ? 1 : 0;
+      return step.step === "error" || (step.question !== null && args.includes(SETUP_FLAGS.allowSessions)) ? 1 : 0;
     }
     return await setupText(args, context, io, nodeVersion);
   } finally {
@@ -1399,17 +1399,20 @@ interface SetupArguments extends SetupCarry {
   agentsError?: string;
   packs?: readonly PackVersion[];
   packsError?: string;
+  /** `--allow-sessions`: a script's run, never carried into an answer (`SetupRequest.allowSessions`). */
+  allowSessions?: boolean;
 }
 
 /** Checked before the install, so a typo changes nothing. */
 function setupArguments(args: readonly string[]): SetupArguments {
   const { flags, options } = parseArguments(
     args,
-    { flags: [JSON_FLAG, SETUP_FLAGS.relay, ...CARRIED_FLAG_NAMES], options: ["--answer", "--repo", "--agents", SETUP_FLAGS.packs, "--port", "--database"] },
+    { flags: [JSON_FLAG, SETUP_FLAGS.relay, SETUP_FLAGS.allowSessions, ...CARRIED_FLAG_NAMES], options: ["--answer", "--repo", "--agents", SETUP_FLAGS.packs, "--port", "--database"] },
     argument => `Unknown setup option: ${argument}`,
   );
   const port = options.get("--port");
-  const answer = checkSetupAnswer(options.get("--answer"));
+  const allowSessions = flags.has(SETUP_FLAGS.allowSessions);
+  const answer = checkSetupAnswer(options.get("--answer"), allowSessions);
   const repo = options.get("--repo");
   const agents = options.get("--agents");
   const database = options.get("--database");
@@ -1418,6 +1421,7 @@ function setupArguments(args: readonly string[]): SetupArguments {
     ...(database === undefined ? {} : { databasePath: resolve(database) }),
     ...carriedFlags(({ flag }) => flags.has(flag)),
     ...(answer === undefined ? {} : { answer }),
+    ...(allowSessions ? { allowSessions } : {}),
     ...(repo === undefined ? {} : { repo }),
     ...setupAgents(agents, answer),
     ...setupPacks(options.get(SETUP_FLAGS.packs), answer),
@@ -1475,6 +1479,7 @@ function setupRequest(context: SetupContext, parsed: SetupArguments, place: Setu
     ...(carry.databasePath === undefined ? {} : { databasePath: carry.databasePath }),
     ...(carry.repository === true ? { repository: true } : {}),
     ...(parsed.repo === undefined ? {} : { repo: parsed.repo }),
+    ...(parsed.allowSessions === true ? { allowSessions: true } : {}),
     ...(parsed.answer === undefined ? {} : { answer: parsed.answer }),
     ...(parsed.agents === undefined ? {} : { agents: parsed.agents }),
     ...(parsed.agentsError === undefined ? {} : { agentsError: parsed.agentsError }),
@@ -1515,8 +1520,18 @@ async function setupText(args: readonly string[], context: SetupContext, io: Set
   const pathLine = await launcherOnPath(context, io.lane);
   if (pathLine !== undefined) io.say(pathLine);
   const outcome = await runSetup(io, setupRequest(context, parsed, place, io.lane));
-  return outcome.status === "cancelled" ? 1 : 0;
+  if (outcome.status === "cancelled") return 1;
+  if (parsed.allowSessions !== true || outcome.status !== "waiting") return 0;
+  io.say(SCRIPT_STOPPED_AT_QUESTION);
+  return 1;
 }
+
+/**
+ * A script's run (`--allow-sessions`) that stopped at a question: no one is there to answer it, so the run fails and
+ * says how the same command answers it. The question above it names its `--answer` values.
+ */
+const SCRIPT_STOPPED_AT_QUESTION =
+  `Set-up stopped at the question above, so Rerail is not on yet. Answer it in the same command: add the ${SETUP_FLAGS.answer} it names, and ${SETUP_FLAGS.packs} for the rule packs.`;
 
 /** `rerail setup --json` as one step: what the CLI prints, and what an extension running Node calls in-process. */
 export function setupStep(args: readonly string[], context: SetupContext, place: SetupPlace, nodeVersion: string = process.versions.node): Promise<SetupStep> {
@@ -1534,8 +1549,9 @@ async function jsonSetupStep(args: readonly string[], context: SetupContext, pla
     const installedLine = await install(context, parsed, place.cwd, "json", origin);
     const pathLine = await launcherOnPath(context, "json");
     const step = await runSetupStep({ ...setupRequest(context, parsed, place, "json"), nextArgs: jsonNextArgs(carryOf(parsed, place)) });
+    const stopped = parsed.allowSessions === true && step.question !== null ? [SCRIPT_STOPPED_AT_QUESTION] : [];
     const opening = [wsl, installedLine, pathLine].filter(line => line !== undefined);
-    return opening.length === 0 ? step : { ...step, screen: [...opening, step.screen].join("\n") };
+    return opening.length + stopped.length === 0 ? step : { ...step, screen: [...opening, step.screen, ...stopped].join("\n") };
   } catch (error) {
     return errorStep(messageOf(error));
   }

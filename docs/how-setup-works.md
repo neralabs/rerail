@@ -64,13 +64,17 @@ their actions, the files they edit) to check them against your rules?
 
 - **Yes** (`--answer allow`): kept in `~/.rerail/consent.json`, never asked again.
 - **No** (`--answer decline`): stops set-up. Rerail stays installed and off.
+- **Yes, from a script** (`--allow-sessions`): kept as the yes is, without using up the run's `--answer`, so the run
+  goes on to the next question in the same command ([Set-up in one command](#set-up-in-one-command)).
 
 <details>
 <summary>Consent details</summary>
 
 - The question comes before set-up reads a repository or connects an agent. A yes also lets Rerail show the
   sessions' events in the dashboard.
-- A yes is kept with the run's folder (`--repo`). Reading that folder is still asked.
+- A yes is kept with the run's folder (`--repo`). Reading that folder is still asked. With `--allow-sessions` the
+  run's `--repo` is the go-ahead to read it, as in any other run that names one.
+- `--allow-sessions` with `--answer allow` or `--answer decline` is an error, and nothing changes.
 - A no connects and starts nothing new, and clears an earlier yes so the next set-up asks again. Agents connected
   before stay until `rerail install --remove`. `rerail` stays on `PATH`; the screen says `rerail install --remove`
   takes it off the computer.
@@ -310,6 +314,7 @@ Set-up asks as a terminal menu, as text a coding agent relays, or as JSON for a 
   Enter answers.
 - **Relay:** otherwise, or with `--relay`, each run prints the next question and exits 0. The agent reruns set-up
   with the person's answer as flags.
+- **Script:** with `--allow-sessions`, a run that stops at a question exits 1 instead and says which flags answer it.
 - **JSON:** `--json` on `rerail setup` and `rerail start` prints one `{ step, screen, question }` object per run.
 
 <details>
@@ -327,6 +332,8 @@ with one command per answer. Answer flags:
 - `--agents <ids>` (`omp,pi,claude-code,codex,cursor`): works on its own or with any answer; no question asks for it.
 - `--packs <id@version,…>`: the exact versions an answer installs; a third party's pack by its package name
   (`@acme/rerail-pack-sql@1.0.0`); `none` for none.
+- `--allow-sessions`: the yes to reading sessions, without using up `--answer`. Never in an answer command: the run
+  that has it records the yes for good.
 
 Each answer run starts from what it is told, so running one twice repeats no earlier step's side effect. Claude
 Code's, Cursor's and Codex's `/rerail-start` runs `rerail start --relay`, and every answer command carries `--relay`,
@@ -350,7 +357,8 @@ rest, and a `%NAME%` in one would expand.
 The JSON object is the only thing on stdout.
 
 - **`step`**: `sessions`, `read-repo`, `confirm-packs`, `pick-packs` or `no-repo` at a question, else `done`,
-  `stopped`, or `error` (exit 1).
+  `stopped`, or `error` (exit 1). With `--allow-sessions` a question exits 1 too, its `screen` ending with the line
+  that says set-up stopped there.
 - **`screen`**: plain text for the person.
 - **`question`**: each option carries its answer key, label, `detail`, and the arguments that give it (`next.args`,
   starting with `setup` and carrying `--json`). An answer that needs a folder or agent ids also carries `input`, the
@@ -374,6 +382,22 @@ questions as text.
 
 `rerail install` (see [Commands after set-up](#commands-after-set-up)) still connects coding agents on its own, with
 `--agents <list>`, `--root` and `--dry-run`.
+
+### Set-up in one command
+
+A script, such as the `install` of a Cursor cloud agent's `.cursor/environment.json`, sets a repository up in one run
+by giving every answer at once:
+
+```sh
+npx -y @neralabs/rerail@latest setup --agents cursor --repo "$PWD" --allow-sessions \
+  --answer pick-myself --packs react@0.1.12,rerail-pack-team@0.1.0
+```
+
+- `--allow-sessions` agrees to session reading; `--repo` names the repository and is the go-ahead to start there.
+- `--answer pick-myself --packs …` installs exactly those packs, reading no code; `--packs none` starts with none.
+- A run that starts Rerail exits 0. A run that still stops at a question (no `--packs`, or a pack or version npm
+  doesn't have, which asks for the packs again) exits 1, and its last line says set-up stopped at the question above
+  and which flags answer it.
 
 ## Which Git and Node Rerail runs
 

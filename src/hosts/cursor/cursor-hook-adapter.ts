@@ -6,6 +6,7 @@ import {
 } from "../../engine/adapter-contract.js";
 import { missedSteerDigestEnabled } from "../../engine/experimental-features.js";
 import { ingestCursorTranscript, transcriptCarriesText } from "./cursor-transcript.js";
+import { cloudSessionStart, owedCloudNote, recordCloudNoteGiven, recordLeftCloudStart } from "./cursor-cloud-session.js";
 import {
   deliveryRuleIds,
   deliveryRules,
@@ -209,44 +210,66 @@ export function cursorHookOutput(hook: string, deliveries: readonly AdapterDeliv
 /**
  * `lock` is the session's lock the hook holds, which a test that runs no hook leaves out. The transcript's sidecar is
  * read before its lines are checked and written after, so the hook keeps the lock through those checks: another hook of
- * the session writing the sidecar meanwhile would have its write undone.
+ * the session writing the sidecar meanwhile would have its write undone. `cloud` says the hook runs on a Cursor cloud
+ * agent's VM (`isCursorCloud`), where Cursor fires no `sessionStart`: the session's first hook then records its start
+ * before its own event (`cloudSessionStart`), and its first `postToolUse` gives the model the note the start owes.
  */
 export async function handleCursorEvent(
   input: CursorHookInput,
   eventLoop: RerailEventLoop,
   storageRoot: string,
   lock?: SessionLock,
+  cloud = false,
 ): Promise<CursorHookOutput> {
   const hook = requiredText(input, "hook_event_name");
   const event = cursorHookEvent(input);
   const descriptor = event.session ?? cursorSession(input);
   const path = pendingPath(storageRoot, "cursor", descriptor.sessionId);
+  const startLeft = cloud && hook !== "sessionStart" && await keptBy(lock, async () => await cloudSessionStart(descriptor, eventLoop, path));
   const transcriptOwnsText = hook !== "sessionStart" && await keptBy(lock, transcriptStep(input, descriptor, eventLoop, storageRoot));
   const deliveries = transcriptOwnsText && (hook === "afterAgentResponse" || hook === "stop")
     ? []
     : await eventLoop.ingest(event);
-  if (eventLoop.untaken === true) return await leftAnswer(input, descriptor, storageRoot);
-  return await answerCursorHook(input, { hook, descriptor, path, answered: answeredFacts(eventLoop) }, deliveries);
+  if (eventLoop.untaken === true) return await leftAnswer(input, descriptor, storageRoot, startLeft);
+  return await answerCursorHook(input, { hook, descriptor, path, answered: answeredFacts(eventLoop), cloud }, deliveries);
 }
 
 /**
  * The answer of a hook that left its event for a daemon that is not reading: one with nothing to deliver, the session's
  * held steers waiting in their file for the next hook the daemon answers. A `beforeSubmitPrompt` then records that the
  * session sends its own text (`transcriptCarriesText`), with its event left already: such a hook holds no session lock,
- * so it takes the lock for that write alone, and a lock it is not given fails the hook with its event kept. A
- * `sessionEnd` removes the held steers' file, as one the daemon answered does: no later hook of the session reads it.
+ * so it takes the lock for that write alone, and a lock it is not given fails the hook with its event kept. So does a
+ * Cursor cloud session's first hook, which left the session's start before its own event (`startLeft`), to record
+ * that start with the note it still owes (`recordLeftCloudStart`). A `sessionEnd` removes the held steers' file, as one
+ * the daemon answered does: no later hook of the session reads it.
  */
-async function leftAnswer(input: CursorHookInput, descriptor: AdapterSession, storageRoot: string): Promise<CursorHookOutput> {
+async function leftAnswer(input: CursorHookInput, descriptor: AdapterSession, storageRoot: string, startLeft: boolean): Promise<CursorHookOutput> {
   const hook = requiredText(input, "hook_event_name");
-  if (hook === "beforeSubmitPrompt") await withSessionLock(storageRoot, "cursor", descriptor.sessionId, async () => await transcriptCarriesText(input, descriptor, storageRoot));
-  if (hook === "sessionEnd") await rm(pendingPath(storageRoot, "cursor", descriptor.sessionId), { force: true });
+  const path = pendingPath(storageRoot, "cursor", descriptor.sessionId);
+  if (hook === "beforeSubmitPrompt" || startLeft) {
+    await withSessionLock(storageRoot, "cursor", descriptor.sessionId, async () => {
+      if (startLeft) await recordLeftCloudStart(path);
+      if (hook === "beforeSubmitPrompt") await transcriptCarriesText(input, descriptor, storageRoot);
+    });
+  }
+  if (hook === "sessionEnd") await rm(path, { force: true });
   return cursorHookOutput(hook, []);
+}
+
+/** Where a hook the daemon answered stands: its hook and session, the session's held steers' file and the answer's facts. */
+interface AnsweredHook {
+  hook: string;
+  descriptor: AdapterSession;
+  path: string;
+  answered: EventAnswerFacts;
+  /** The hook runs on a Cursor cloud agent's VM (`isCursorCloud`). */
+  cloud: boolean;
 }
 
 /** The answer of a hook the daemon answered with `deliveries`: the session's held steers routed through its file. */
 async function answerCursorHook(
   input: CursorHookInput,
-  at: { hook: string; descriptor: AdapterSession; path: string; answered: EventAnswerFacts },
+  at: AnsweredHook,
   deliveries: readonly AdapterDelivery[],
 ): Promise<CursorHookOutput> {
   const { hook, path } = at;
@@ -292,11 +315,12 @@ async function keptBy<T>(lock: SessionLock | undefined, work: () => Promise<T>):
 /**
  * What a hook answers Cursor with: the steers waiting for an event that can carry them, each linked to this checkout's
  * dashboard, and at a session's start the note only the model reads. The daemon's answer (`answered`) carries the
- * note's link and rules and the steers' links; an older daemon's is read after it.
+ * note's link and rules and the steers' links; an older daemon's is read after it. On a Cursor cloud agent's VM the
+ * note its session's start owes goes out with the session's first `postToolUse` instead (`owedCloudNote`).
  */
 async function cursorAnswer(
   input: CursorHookInput,
-  { hook, descriptor, path, answered }: { hook: string; descriptor: AdapterSession; path: string; answered: EventAnswerFacts },
+  { hook, descriptor, path, answered, cloud }: AnsweredHook,
   deliveries: readonly AdapterDelivery[],
 ): Promise<CursorHookOutput> {
   const available = await routeDeliveries(path, hook, linkedByAnswer(deliveries, answered), {
@@ -309,6 +333,13 @@ async function cursorAnswer(
     ...(missedSteerDigestEnabled() && loopCountSchema.parse(input.loop_count) < CURSOR_FOLLOWUP_LOOP_LIMIT ? { stop: true } : {}),
   });
   // The runtime records no links; the rules point at this checkout's dashboard only here.
-  const note = hook === "sessionStart" ? await presentedSessionStartNote(descriptor, answered) : undefined;
-  return cursorHookOutput(hook, await linkDeliveries(available, descriptor.cwd, answered), note);
+  return cursorHookOutput(hook, await linkDeliveries(available, descriptor.cwd, answered), await answerNote(hook, { descriptor, path, answered, cloud }));
+}
+
+/** The session-start note this hook's answer carries: at a session's start, or a Cursor cloud session's first `postToolUse`. */
+async function answerNote(hook: string, { descriptor, path, answered, cloud }: Omit<AnsweredHook, "hook">): Promise<string | undefined> {
+  if (hook === "postToolUse") return cloud ? await owedCloudNote(path, descriptor, answered) : undefined;
+  if (hook !== "sessionStart") return undefined;
+  if (cloud) await recordCloudNoteGiven(path);
+  return await presentedSessionStartNote(descriptor, answered);
 }
