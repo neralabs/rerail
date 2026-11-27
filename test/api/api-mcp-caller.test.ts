@@ -200,6 +200,36 @@ describe("MCP callers and the agent guard", () => {
     });
   });
 
+  /** A caller folder of `parent`'s checkout, and the folder `git init` then makes a repository of its own. */
+  const madeRepositories: Record<string, { readonly folder: readonly string[]; readonly top: readonly string[] }> = {
+    "the caller's folder": { folder: ["tools"], top: ["tools"] },
+    "a folder between the caller's folder and its top level": { folder: ["tools", "src", "lib"], top: ["tools"] },
+  };
+  for (const [made, layout] of Object.entries(madeRepositories)) {
+    it(`resolves a caller folder to the repository ${made} became, not recorded, at the next call`, async () => {
+      const folder = join(parent, ...layout.folder);
+      mkdirSync(folder, { recursive: true });
+      expect(await call("repository_context_get", {}, from(folder))).toMatchObject({
+        result: { repository: { repositoryKey: parentKey }, checkout: { checkoutPath: parent, folder: layout.folder.join("/") } },
+      });
+      // Its remote names the nested repository Rerail knows; no checkout is recorded at the new top level.
+      const top = gitRepository(join(parent, ...layout.top), "https://github.com/acme/lib.git");
+      expect(await call("repository_context_get", {}, from(folder))).toMatchObject({
+        result: { repository: { repositoryKey: nestedKey }, checkout: { checkoutPath: top, folder: layout.folder.slice(layout.top.length).join("/") } },
+      });
+    });
+  }
+
+  it("resolves a caller folder outside Git to the repository a folder above it became, not recorded, at the next call", async () => {
+    const folder = join(root, "loose", "notes");
+    mkdirSync(folder, { recursive: true });
+    expect((await call("repository_context_get", {}, from(folder))).result).toMatch(/^(?:checkout|repository)-not-found/u);
+    const top = gitRepository(join(root, "loose"), "https://github.com/acme/lib.git");
+    expect(await call("repository_context_get", {}, from(folder))).toMatchObject({
+      result: { repository: { repositoryKey: nestedKey }, checkout: { checkoutPath: top, folder: "notes" } },
+    });
+  });
+
   it("lets an agent change only a set-up repository's checkout settings, rules it just created, and copies it edits", async () => {
     const caller = from(join(parent, "web"));
     const repositoryOff = { owner: "repository", targets: [{ kind: "rule", id: "mock-no-console-log" }], on: false };

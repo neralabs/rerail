@@ -5,8 +5,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { checkoutRealpath, physicalPath } from "../engine/catalog/checkout-control.js";
 import { duplicateJsonKeyError } from "../engine/json-duplicate-keys.js";
 import { CALLER_CWD_HEADER, normalizeFolder, type ApiCaller } from "../engine/catalog/repository-model.js";
-import { repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
-import { recordedCheckoutsVersion } from "../engine/catalog/repository-registry.js";
+import { locationNow, recordedCheckoutsVersion, stillPlaces, type KeptLocation } from "../engine/catalog/repository-registry.js";
 import { allowedHost, type PublicHosts } from "./http.js";
 import { ApiError, invokeOperation, operationAvailable, type Operation, type RerailApiStores } from "./operation.js";
 import { operationInputShape } from "./operations.js";
@@ -68,12 +67,32 @@ const invalidParams = (id: unknown, message: string): Response =>
 const INVALID_CALLER = `${CALLER_CWD_HEADER} must be the URI-encoded absolute path of an existing folder`;
 
 /**
- * Checkout root of each caller folder already resolved; a bridge sends the same folder on every request. Forgotten
- * whenever the recorded checkouts change, so a folder that became a recorded checkout of its own resolves to it.
+ * Each caller folder in Git already resolved, with its location as the checkout resolver reads it ({@link locationNow})
+ * and the checkout root that location names; a bridge sends the same folder on every request. One serves while its
+ * location still places the folder ({@link stillPlaces}), so a folder made a repository of its own (`git init` in it
+ * or in a folder between it and its top level) resolves to that repository at its next request, at one lstat per
+ * folder between and with no Git process. All are forgotten whenever the recorded checkouts change, so a folder that
+ * became a recorded checkout of its own resolves to it.
  */
-const callerCheckouts = new Map<string, string>();
+const callerCheckouts = new Map<string, { readonly kept: KeptLocation; readonly checkout: string }>();
 const CALLER_CACHE_LIMIT = 1_024;
 let callerCacheVersion: string | undefined;
+
+/**
+ * The checkout root of the caller folder `real`: the kept one while its location still places the folder, else read
+ * afresh. As the checkout resolver does, only a location in Git is kept: a folder outside Git is read again at each
+ * request, so a later `git init` above it is seen, and so is the next answer after a Git that gave none.
+ */
+function callerCheckout(real: string): string {
+  const known = callerCheckouts.get(real);
+  if (known !== undefined && stillPlaces(known.kept)) return known.checkout;
+  const kept = locationNow(real);
+  const checkout = physicalPath(kept.location.workspaceRoot);
+  if (!kept.location.git) return checkout;
+  if (callerCheckouts.size >= CALLER_CACHE_LIMIT) callerCheckouts.clear();
+  callerCheckouts.set(real, { kept, checkout });
+  return checkout;
+}
 
 /**
  * The calling agent from {@link CALLER_CWD_HEADER}: the URI-encoded real path of the folder its bridge started in,
@@ -98,12 +117,7 @@ export function callerFromHeader(header: string | null, recordedVersion?: string
     return INVALID_CALLER;
   }
   try {
-    let checkout = callerCheckouts.get(real);
-    if (checkout === undefined) {
-      checkout = physicalPath(repositoryIdentityLocation(real).workspaceRoot);
-      if (callerCheckouts.size >= CALLER_CACHE_LIMIT) callerCheckouts.clear();
-      callerCheckouts.set(real, checkout);
-    }
+    const checkout = callerCheckout(real);
     const inside = within(checkout, real);
     return { kind: "agent", checkout, folder: inside === undefined ? "" : normalizeFolder(inside.split(sep).join("/")) };
   } catch {
