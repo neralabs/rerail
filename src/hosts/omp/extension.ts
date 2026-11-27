@@ -477,6 +477,8 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
           : resolve(currentContext?.cwd ?? process.cwd(), options.databasePath),
         // Uninstall retires this session's runtime before removing Rerail; reattach rebuilds it if the removal fails.
         detach: async () => {
+          // A detached OMP stays detached: a retry armed by a failed attach would start Rerail again while it is removed.
+          attachRetry.cancel();
           presentation.stop();
           await closeRuntime();
         },

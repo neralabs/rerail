@@ -12,6 +12,18 @@ vi.mock("../../../src/runtime/daemon-control.js", async () => {
       daemonRoute.start?.() ?? actual.startDaemonForPackage(...args),
   };
 });
+/** The detach the extension hands OMP's commands, which `/rerail-uninstall` runs before it removes Rerail. */
+const hostCommands = vi.hoisted(() => ({ detach: undefined as (() => Promise<void>) | undefined }));
+vi.mock("../../../src/harness/host-commands.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/harness/host-commands.js")>("../../../src/harness/host-commands.js");
+  return {
+    ...actual,
+    registerHostCommands: (...args: Parameters<typeof actual.registerHostCommands>) => {
+      hostCommands.detach = args[1].detach;
+      actual.registerHostCommands(...args);
+    },
+  };
+});
 import Database from "better-sqlite3";
 import type { CustomMessagePayload, ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { z } from "zod";
@@ -669,6 +681,21 @@ describe("OMP conversation-rules extension", () => {
       await vi.advanceTimersByTimeAsync(60_000);
       await settleIo();
       expect(daemon.initializes("omp-test-session")).toBe(2);
+      vi.useRealTimers();
+    });
+
+    it("tries no more to attach once OMP detaches for Rerail's removal, after a failed start armed a retry", async () => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      vi.useFakeTimers();
+      vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false })(harness.pi);
+      daemon.state.down.add("omp-test-session");
+      await expect(harness.handlers.get("session_start")!({ type: "session_start" }, harness.context)).rejects.toThrow();
+
+      await hostCommands.detach!();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(daemon.initializes("omp-test-session")).toBe(1);
       vi.useRealTimers();
     });
 

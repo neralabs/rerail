@@ -150,6 +150,8 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
     return session;
   };
   const close = async (): Promise<void> => {
+    // A detached Pi stays detached: a retry armed by a failed attach would start Rerail again while it is being removed.
+    attachRetry.cancel();
     try {
       await runtime.close();
     } finally {

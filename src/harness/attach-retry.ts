@@ -123,11 +123,16 @@ export class AttachRetry<Context> {
     this.#host.appendEntry(EVENTS_DROPPED_ENTRY_TYPE, { ...drops.gap, recovered: false });
   }
 
-  /** The host is shutting down in `context`: no try is made again, and the failing session's marker gets its final count. */
-  stop(context: Context): void {
+  /** No try is made again, as for a host that detaches from Rerail; what was dropped stays for the session's marker. */
+  cancel(): void {
     clearTimeout(this.#timer);
     this.#generation += 1;
     this.#failing = undefined;
+  }
+
+  /** The host is shutting down in `context`: no try is made again, and the failing session's marker gets its final count. */
+  stop(context: Context): void {
+    this.cancel();
     this.markFinal(context);
     this.#drops = undefined;
     this.#host.reportDropped(0);
