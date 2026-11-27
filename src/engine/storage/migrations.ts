@@ -452,7 +452,9 @@ function identifier(name: string): string {
  * Adds `column` to `table` with `definition` (`text`, `integer DEFAULT 0 NOT NULL`, ...), unless the table does
  * not exist yet or already has the column. SQLite adds a column in place without copying the table; a
  * `NOT NULL` column needs a `DEFAULT`, and a column with a CHECK a `DEFAULT` that meets it. The column goes in with
- * the rows' CHECKs off (`withoutRowChecks`), so one row a damaged file left fails no step.
+ * the rows' CHECKs off (`withoutRowChecks`), so one row a damaged file left fails no step. A column added with a
+ * CHECK therefore has its `DEFAULT` unchecked against the rows that exist, so a step that adds such a column checks
+ * them itself.
  */
 export function addColumn(database: RerailDatabase, table: string, column: string, definition: string): void {
   const columns = database.all<{ name: string }>(sql`SELECT name FROM pragma_table_info(${table})`);
