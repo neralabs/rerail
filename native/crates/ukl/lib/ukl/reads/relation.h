@@ -34,6 +34,8 @@ UKL_COLD uint32_t clif_dir_doc_of_row(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t
 UKL_COLD uint32_t clif_dir_doc_of_key(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2);
 UKL_INLINE uint32_t clif_rel_group_mark(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2);
 UKL_COLD uint32_t clif_atoms_find(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint64_t a1,uint32_t a2,uint32_t a3);
+UKL_INLINE uint32_t clif_dir_doc_of_id(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1);
+UKL_INLINE uint32_t clif_dir_local_of_id(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1);
 UKL_INLINE uint64_t clif_rows_col(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1){
  uint64_t v0=0;
  uint32_t v1=0;
@@ -3415,4 +3417,58 @@ UKL_COLD uint32_t clif_atoms_find(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,
   }
  }
  return v10;
+}
+UKL_INLINE uint32_t clif_dir_doc_of_id(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1){
+ uint64_t v0=0;
+ uint32_t v1=0;
+ uint32_t v11=0;
+ uint32_t v14=0;
+ v0=a0;
+ v1=a1;
+ uint64_t v2=((uint64_t)(*(CLIF_BLOCK_SPACE const uint64_t*)(t+v0)));
+ uint64_t v3=v0-v2;
+ uint64_t v4=((uint64_t)(*(CLIF_BLOCK_SPACE const uint64_t*)(t+(v0+((uint64_t)(((int64_t)(168))))))));
+ uint64_t v5=v3+v4;
+ uint64_t v6=v5+((uint64_t)(16ul));
+ uint32_t v7=((uint32_t)((uint32_t)(v1)>>(((uint32_t)(12))&31u)));
+ uint64_t v8=((uint64_t)(v7));
+ uint64_t v9=v8*((uint64_t)(8ul));
+ uint64_t v10=v6+v9;
+ v11=((uint32_t)(*(CLIF_BLOCK_SPACE const uint32_t*)(t+v10)));
+ uint32_t v12=((uint32_t)(*(CLIF_BLOCK_SPACE const uint32_t*)(t+(v0+((uint64_t)(((int64_t)(184))))))));
+ uint8_t v13=((uint8_t)((uint32_t)(v11)<(uint32_t)(v12)));
+ if(v13!=0){
+  uint64_t v15=((uint64_t)(*(CLIF_BLOCK_SPACE const uint64_t*)(t+v0)));
+  uint64_t v16=v0-v15;
+  uint64_t v17=((uint64_t)(*(CLIF_BLOCK_SPACE const uint64_t*)(t+(v0+((uint64_t)(((int64_t)(176))))))));
+  uint64_t v18=v16+v17;
+  uint64_t v19=((uint64_t)(v11));
+  uint64_t v20=v19*((uint64_t)(4ul));
+  uint64_t v21=v18+v20;
+  uint32_t v22=((uint32_t)(*(CLIF_BLOCK_SPACE const uint32_t*)(t+v21)));
+  {uint32_t t0=v22;v14=t0;}
+ }else{
+  uint32_t v23=((uint32_t)(4294967295ul));
+  {uint32_t t0=v23;v14=t0;}
+ }
+ return v14;
+}
+UKL_INLINE uint32_t clif_dir_local_of_id(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1){
+ uint64_t v0=0;
+ uint32_t v1=0;
+ v0=a0;
+ v1=a1;
+ uint64_t v2=((uint64_t)(*(CLIF_BLOCK_SPACE const uint64_t*)(t+v0)));
+ uint64_t v3=v0-v2;
+ uint64_t v4=((uint64_t)(*(CLIF_BLOCK_SPACE const uint64_t*)(t+(v0+((uint64_t)(((int64_t)(168))))))));
+ uint64_t v5=v3+v4;
+ uint64_t v6=v5+((uint64_t)(16ul));
+ uint32_t v7=((uint32_t)((uint32_t)(v1)>>(((uint32_t)(12))&31u)));
+ uint64_t v8=((uint64_t)(v7));
+ uint64_t v9=v8*((uint64_t)(8ul));
+ uint64_t v10=v6+v9;
+ uint32_t v11=((uint32_t)(*(CLIF_BLOCK_SPACE const uint32_t*)(t+(v10+((uint64_t)(((int64_t)(4))))))));
+ uint32_t v12=v1&((uint32_t)(4095ul));
+ uint32_t v13=v11+v12;
+ return v13;
 }

@@ -258,6 +258,11 @@ pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> 
             crate::code_rule_dsl::prof::count("views.refused.block", 1);
             return None;
         }
+        // One growth's ids (plan "Chunk node numbers"): the values' are numbered in the chunk's.
+        if !Arc::ptr_eq(s.docs.ids(), batch.docs.ids()) {
+            crate::code_rule_dsl::prof::count("views.refused.ids", 1);
+            return None;
+        }
         own.push(views_in_place(s)?);
     }
     // SAFETY: each source's directory, in the chunk's block, its rows' reads layers written (`views_in_place`), its
@@ -300,12 +305,30 @@ pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> 
         // SAFETY: `n` entries, just allocated in the chunk's block.
         unsafe { std::ptr::copy_nonoverlapping(order.as_ptr(), by_key, n) };
     }
+    // Its rows by their documents' numbers in the growth (`ViewDir::by_number`): each batch's rows past those before.
+    let count = batch.docs.ids().count() as usize;
+    let by_number: *mut u32 = b.alloc_t(count.max(1));
+    {
+        let mut k = 0u32;
+        // SAFETY: `count` entries, just allocated in the chunk's block; each document's number is below `count`.
+        unsafe {
+            for j in 0..count {
+                by_number.add(j).write(rerail_clif::view_reads::NO_DOC);
+            }
+            for s in &sources {
+                for i in 0..s.docs.len() {
+                    by_number.add(s.docs.number(i) as usize).write(k + i as u32);
+                }
+                k += s.docs.len() as u32;
+            }
+        }
+    }
     let at = b.offset_of(dir);
     // The chunk's batch's cache is the directory's; each value's rows name their own in their views (`TapeView::side`).
     // SAFETY: the chunk's batch's directory, as above.
     let cache = unsafe { (*batch.docs.dir()).cache };
     // SAFETY: the directory, just allocated in the chunk's block, made whole.
-    unsafe { dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes: nhomes as u32, rows: b.offset_of(rows) as u64, homes: b.offset_of(homes) as u64, cache, by_key: b.offset_of(by_key) as u64, ends: past, counted: 1, pad: 0 }) };
+    unsafe { dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes: nhomes as u32, rows: b.offset_of(rows) as u64, homes: b.offset_of(homes) as u64, cache, by_key: b.offset_of(by_key) as u64, ends: past, counted: 1, pad: 0, pages: batch.docs.ids().table_at() as u64, by_number: b.offset_of(by_number) as u64, numbered: count as u32, pad2: 0 }) };
     // The device's where it reads every batch's: the block's buffer made after the last allocation, so it covers
     // them, and each batch's slabs (a batch's first buffer is its block's, covered by this one).
     let device = crate::code_rule_dsl::tape::placed::device();

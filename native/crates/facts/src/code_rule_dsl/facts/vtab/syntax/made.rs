@@ -16,6 +16,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 mod reads;
 pub use reads::RowReads;
+mod ids;
+pub use ids::{Ids, Numbered};
 
 /// A document's views' counts (decision 0494): its nodes, fielded nodes, siblings after it, places, tokens, spread
 /// nodes (`spread`'s), the token order's places (`tokens`: with a token, one before, one after), `op`'s rows,
@@ -52,13 +54,26 @@ pub(super) fn view_counts(p: &Projected) -> ViewCounts {
 /// `i`'s tape in home `3i`, its lines in `3i + 1`, its source in `3i + 2`, the 16z cache in `3n` (`ViewDir::cache` is
 /// `3n + 1` once it is made). Beside it, each document's views' counts as the documents' table gave them (`Given`, `[counts, 1]`, or
 /// zeros where none was given). Its offset in the block, and the given counts'.
-pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<ViewCounts>)>, n: usize) -> (usize, usize) {
-    use rerail_clif::view_reads::{ViewDir, ViewHome, ViewRow};
+pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<ViewCounts>)>, n: usize, ids: &Ids, numbered: &[Arc<Numbered>]) -> (usize, usize) {
+    use rerail_clif::view_reads::{NO_DOC, ViewDir, ViewHome, ViewRow};
     let rows: *mut ViewRow = block.alloc_t(n.max(1));
     let given: *mut Given = block.alloc_t(n.max(1));
     let homes: *mut ViewHome = block.alloc_t(HOMES * n + 1);
     // Its documents are in key order (`Docs::new`, `Docs::grown`): their order by key is their rows'.
     let by_key: *mut u32 = block.alloc_t(n.max(1));
+    // Its rows by their documents' numbers in the growth (`ViewDir::by_number`): every number so far, its row here
+    // or `NO_DOC`.
+    let count = ids.count() as usize;
+    let by_number: *mut u32 = block.alloc_t(count.max(1));
+    // SAFETY: `count` entries, just allocated in `block`; each of its documents' numbers is below `count`.
+    unsafe {
+        for j in 0..count {
+            by_number.add(j).write(NO_DOC);
+        }
+        for (row, d) in numbered.iter().enumerate() {
+            by_number.add(d.number as usize).write(row as u32);
+        }
+    }
     let dir: *mut ViewDir = block.alloc_t(1);
     let mut k = 0;
     for (key, counts) in docs.take(n) {
@@ -85,7 +100,18 @@ pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<V
     let at = block.offset_of(dir);
     // SAFETY: the directory just allocated in `block`.
     unsafe {
-        dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes: (HOMES * n) as u32 + 1, rows: block.offset_of(rows) as u64, homes: block.offset_of(homes) as u64, by_key: block.offset_of(by_key) as u64, ..Default::default() })
+        dir.write(ViewDir {
+            at: at as u64,
+            ndocs: n as u32,
+            nhomes: (HOMES * n) as u32 + 1,
+            rows: block.offset_of(rows) as u64,
+            homes: block.offset_of(homes) as u64,
+            by_key: block.offset_of(by_key) as u64,
+            pages: ids.table_at() as u64,
+            by_number: block.offset_of(by_number) as u64,
+            numbered: count as u32,
+            ..Default::default()
+        })
     };
     (at, block.offset_of(given))
 }
@@ -111,6 +137,8 @@ pub struct Docs {
     made: AtomicUsize,
     /// The directory's reads layer, each row written on its document's first read through the views (`reads`).
     layer: reads::Layer,
+    /// Each document's number in the growth, and its ids once taken (plan "Chunk node numbers", `Ids`).
+    numbered: Vec<Arc<Numbered>>,
 }
 
 struct Slot {
@@ -214,6 +242,9 @@ pub(super) struct Context {
     /// The store's atoms, where the batch reads the `op` view: each entry's codes' names are interned into its table
     /// (`view_docs::ViewEntry::new`, `ViewDoc::names`). None where it does not, so no name is interned for it.
     pub(super) names: Option<Arc<dyn crate::content_store::AtomTable>>,
+    /// The growth's ids (plan "Chunk node numbers"): shared with the batches it grows into and the tape values
+    /// admitted to them, so an id is the same in each.
+    pub(super) ids: Arc<Ids>,
 }
 
 impl Docs {
@@ -228,10 +259,11 @@ impl Docs {
 
     /// `documents`, sorted by key and distinct, with the views' counts `given` of some, by key.
     pub(super) fn new(documents: Vec<Input>, context: Context, given: &HashMap<u32, ViewCounts>) -> Self {
-        let (dir, given) = directory(&context.block, documents.iter().map(|d| (d.key(), given.get(&d.key()).copied())), documents.len());
+        let numbered: Vec<Arc<Numbered>> = documents.iter().map(|d| context.ids.numbered(d.key())).collect();
+        let (dir, given) = directory(&context.block, documents.iter().map(|d| (d.key(), given.get(&d.key()).copied())), documents.len(), &context.ids, &numbered);
         let slots: Vec<Arc<Slot>> = documents.into_iter().map(|input| Arc::new(Slot { input, made: OnceLock::new() })).collect();
         let layer = reads::Layer::new(slots.len());
-        Self { slots, dir, given, context, made: AtomicUsize::new(0), layer }
+        Self { slots, dir, given, context, made: AtomicUsize::new(0), layer, numbered }
     }
     /// `prior`'s documents and `documents` (sorted by key, none of `prior`'s), in key order: `prior`'s shared, as
     /// made there (decision 0431 §6), `documents` unmade, with the views' counts `given` of some. Each one's index here
@@ -253,9 +285,10 @@ impl Docs {
                 j += 1;
             }
         }
-        let (dir, given) = directory(&context.block, slots.iter().map(|s| s.input.key()).zip(counts), slots.len());
+        let numbered: Vec<Arc<Numbered>> = slots.iter().map(|s| context.ids.numbered(s.input.key())).collect();
+        let (dir, given) = directory(&context.block, slots.iter().map(|s| s.input.key()).zip(counts), slots.len(), &context.ids, &numbered);
         let layer = reads::Layer::new(slots.len());
-        (Self { slots, dir, given, context, made: AtomicUsize::new(0), layer }, at)
+        (Self { slots, dir, given, context, made: AtomicUsize::new(0), layer, numbered }, at)
     }
     /// `documents` (sorted by key, distinct), those `held` holds as they are (key, digest and path) sharing its slots,
     /// as made there (decision 0616): their projections are not made again. Returned with each of `held`'s documents'
@@ -443,6 +476,13 @@ impl Docs {
     }
     /// Document `i`, made if it is not.
     pub(super) fn made(&self, i: usize) -> &MadeDoc {
+        let made = self.made_alone(i);
+        // Its ids, taken when it is first made in the growth (plan "Chunk node numbers"): making order.
+        self.base(i);
+        made
+    }
+    /// Document `i`'s projection, made if it is not, its ids not taken.
+    fn made_alone(&self, i: usize) -> &MadeDoc {
         self.slots[i].made.get_or_init(|| {
             self.made.fetch_add(1, Ordering::Relaxed);
             let made = self.project(i);
@@ -464,6 +504,38 @@ impl Docs {
             }
             made
         })
+    }
+    /// Document `i`'s number in its growth (`Ids`).
+    pub fn number(&self, i: usize) -> u32 {
+        self.numbered[i].number
+    }
+    /// The growth's ids, which every batch of the growth shares.
+    pub fn ids(&self) -> &Arc<Ids> {
+        &self.context.ids
+    }
+    /// Document `i`'s first id in its growth (plan "Chunk node numbers"): its nodes', tokens' and spans' local ids
+    /// (`Projected::locs`), then its source's span and its lines' (`src_line`), from it. Taken when it is first made
+    /// in the growth; `None` where its role's region has no room (the batch fails).
+    pub fn base(&self, i: usize) -> Option<u32> {
+        let d = &self.numbered[i];
+        let base = self.context.ids.base(d, || {
+            let p = &self.made_alone(i).p;
+            p.locs() + p.f().lines.count() as u32 + 1
+        });
+        if base.is_none() {
+            self.fail(format!("{}: its ids pass its role's region of the chunk's ids (plan \"Chunk node numbers\")", self.slots[i].input.path()));
+        }
+        base
+    }
+    /// Document `i`'s later spans (its comments no node is, then its matches: `ids` of them, made with its rows):
+    /// their first id and first local id, taken once in the growth.
+    pub fn later_ids(&self, i: usize, ids: u32) -> Option<(u32, u32)> {
+        self.base(i)?;
+        let later = self.context.ids.later(&self.numbered[i], ids);
+        if later.is_none() {
+            self.fail(format!("{}: its spans pass its role's region of the chunk's ids (plan \"Chunk node numbers\")", self.slots[i].input.path()));
+        }
+        later
     }
     /// Document `i`'s nodes as its projection would number them, by their codes as the `node` view reads them
     /// (`Dialect::code`): `(nodes, each code's nodes)`, read off its index (decision 0656 step 4) with none made.

@@ -157,6 +157,10 @@ struct ViewDir {
     ends: [u32; 27],
     counted: u32,
     pad: u32,
+    pages: u64,
+    by_number: u64,
+    numbered: u32,
+    pad2: u32,
 }
 #[repr(C)]
 struct PlacedDir {
@@ -166,7 +170,7 @@ struct PlacedDir {
     rows: u32,
     pad: u32,
 }
-const _: () = assert!(size_of::<ViewRow>() == 296 && size_of::<ViewDir>() == 168 && size_of::<PlacedDir>() == 32);
+const _: () = assert!(size_of::<ViewRow>() == 296 && size_of::<ViewDir>() == 192 && size_of::<PlacedDir>() == 32);
 const _: () = assert!(core::mem::offset_of!(ViewRow, source) == 24 && core::mem::offset_of!(ViewRow, homes) == 32 && core::mem::offset_of!(ViewRow, view) == 156);
 
 #[repr(C)]

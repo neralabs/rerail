@@ -187,6 +187,11 @@ pub const READS: &[Read] = &[
     Read { family: Family::View, name: "view_line_span", params: &[I32], ret: I64, hot: false, body: crate::view_reads::line_span },
     Read { family: Family::View, name: "view_line_terminated", params: &[I32], ret: I32, hot: false, body: crate::view_reads::line_terminated },
     Read { family: Family::Lines, name: "lines_terminator_length", params: &[I32], ret: I32, hot: false, body: terminator_length },
+    // An id's document and local id in a batch's numbering (plan "Chunk node numbers", step 1): its page's, in the
+    // views' directory's page table (the descriptor is the directory, as the searches' above). Last, so no other
+    // read's number moves.
+    Read { family: Family::Relation, name: "dir_doc_of_id", params: &[I32], ret: I32, hot: true, body: crate::view_reads::dir_doc_of_id },
+    Read { family: Family::Relation, name: "dir_local_of_id", params: &[I32], ret: I32, hot: true, body: crate::view_reads::dir_local_of_id },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by
