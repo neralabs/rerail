@@ -7,7 +7,7 @@
 95	functor @replace_all/3	not on the device: no computed term	lib 28, python-main 20, python 13, javascript 9, data-layer 6, typescript 5, react 3, next 2, node 2, django 1, engine 1, postgres-migrations 1, rust 1, sql 1, tanstack-query 1, vue 1
 37	builtin to_number/1	not on the device: no computed term	lib 13, python-main 10, python 7, javascript 4, data-layer 2, typescript 1
 37	function @to_number/1	not on the device: no computed term	lib 13, python-main 10, python 7, javascript 4, data-layer 2, typescript 1
-33	aggregate join	not on the device: no string join	lib 9, data-layer 6, django 4, javascript 3, python 3, node 2, typescript 2, next 1, postgres-migrations 1, prisma 1, tanstack-query 1
+34	aggregate join	not on the device: no string join	lib 9, data-layer 6, django 4, javascript 3, python 3, node 2, tanstack-query 2, typescript 2, next 1, postgres-migrations 1, prisma 1
 18	shipped functor @rx_matches/2	not native: sqlite: function @rx (the native engine declined: rule #0000: $v = @rx($a, $b) has no native step)	data-layer (engine) 18
 15	text test iglob: a bound pattern	not on the device: refused: the text test @iglob of a pattern that is not a constant has no device form	sql 4, data-layer 3, lib 3, php 3, django 1, python-main 1
 12	text test icontains: a bound pattern	not on the device: refused: the text test @icontains of a pattern that is not a constant has no device form	data-layer 7, lib 2, django 1, prisma 1, rerail 1
