@@ -62,11 +62,6 @@ fn host(need: &Need) -> Block {
     b
 }
 
-/// The bytes zeroed as blocks' memory was handed out again (`rerail_blocks::block::zeroed_bytes`).
-pub fn zeroed_bytes() -> u64 {
-    rerail_blocks::block::zeroed_bytes()
-}
-
 /// The bytes the host blocks' free lists keep resident: their free chunks less those whose pages went to the OS
 /// (`Extent::given`).
 pub fn host_free_resident() -> usize {

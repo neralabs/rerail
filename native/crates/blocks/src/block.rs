@@ -80,22 +80,25 @@ pub fn set_chunk_hook(hook: fn(usize, usize)) {
     let _ = CHUNK_HOOK.set(hook);
 }
 
-/// The bytes zeroed as blocks' memory was handed out again (a free list's chunk, a dirty block's allocation).
-pub fn zeroed_bytes() -> u64 {
-    rerail_context::with_local::<Zeroed, _>(|z| z.0.load(Relaxed))
-}
+/// A block never zeroes what it hands out: zeroing touched every page of a chunk taken again (up to twice the bytes
+/// asked, a class's), which kept them in memory where its holder wrote a part. Fresh memory (a reservation's pages
+/// never handed out) reads zero as the mapping gives it; anything else holds what was there, and its holder writes
+/// before it reads (`KernelField::empty` for a structure). In a debug build the bytes handed out again are filled
+/// with `POISON`, so a reader that counted on zero fails its tests.
+#[cfg(debug_assertions)]
+const POISON: u8 = 0xA5;
 
-/// The run's count (decision 0442: a measurement of the run's).
-#[derive(Default)]
-struct Zeroed(std::sync::atomic::AtomicU64);
-
-/// Zeroes `len` bytes at `p`, counted (`zeroed_bytes`).
+/// Marks `len` bytes at `p`, handed out again, as holding what was there (`POISON`, in a debug build).
 ///
 /// # Safety
-/// `p..p + len` is writable memory of a block.
-unsafe fn zero(p: *mut u8, len: usize) {
-    unsafe { std::ptr::write_bytes(p, 0, len) };
-    rerail_context::with_local::<Zeroed, _>(|z| z.0.fetch_add(len as u64, Relaxed));
+/// `p..p + len` is writable memory of a block, its taker's alone.
+#[inline]
+unsafe fn handed_again(p: *mut u8, len: usize) {
+    #[cfg(debug_assertions)]
+    unsafe {
+        std::ptr::write_bytes(p, POISON, len)
+    };
+    let _ = (p, len);
 }
 
 /// What a block has used, and holds free (its free list's bytes): shared with a ledger that counts live blocks
@@ -133,7 +136,7 @@ pub struct Block {
     writable: bool,
     /// A slab's owner, when the block lives in one: dropped with the block, which never unmaps it.
     backing: Option<Box<dyn Backing>>,
-    /// Its memory is not fresh (a recycled slab): every allocation is zeroed as it is made.
+    /// Its memory is not fresh (a recycled slab): no allocation reads zero.
     dirty: bool,
     /// It keeps a free list (decision 0342, its lists in its ledger): false for a bump block.
     listed: bool,
@@ -283,9 +286,15 @@ impl Block {
     }
 
     /// A chunk of `bytes` at `align`: in a block with a free list, of `bytes`' class (a power of two of at least
-    /// 64), taken from the list when one is there (zeroed); else from the front.
+    /// 64), taken from the list when one is there (holding what was there); else from the front. Never zeroed.
     pub fn try_alloc_chunk(&self, bytes: usize, align: usize) -> Option<usize> {
-        self.chunk(bytes, align, true)
+        self.chunk(bytes, align).map(|(at, _)| at)
+    }
+
+    /// `try_alloc_chunk`, and whether the chunk is fresh (reads zero, as the mapping gave it): a holder that needs a
+    /// clear state (a filter's bits, an index's counts) writes it only where it is not.
+    pub fn try_alloc_chunk_fresh(&self, bytes: usize, align: usize) -> Option<(usize, bool)> {
+        self.chunk(bytes, align)
     }
 
     /// Whether its chunks are told to a profile (`set_chunk_hook`): an anonymous block's with a free list, whose
@@ -294,28 +303,28 @@ impl Block {
         self.listed && self.backing.is_none() && self.file.is_none() && !self.mapped
     }
 
-    fn chunk(&self, bytes: usize, align: usize, zeroed: bool) -> Option<usize> {
-        let at = self.chunk_untold(bytes, align, zeroed)?;
+    fn chunk(&self, bytes: usize, align: usize) -> Option<(usize, bool)> {
+        let (at, fresh) = self.chunk_untold(bytes, align)?;
         if self.told()
             && let Some(hook) = CHUNK_HOOK.get()
         {
             hook(self.base as usize + at, crate::free::class_of(bytes).1);
         }
-        Some(at)
+        Some((at, fresh))
     }
 
-    fn chunk_untold(&self, bytes: usize, align: usize, zeroed: bool) -> Option<usize> {
+    /// A chunk (`try_alloc_chunk`'s), and whether it is fresh.
+    fn chunk_untold(&self, bytes: usize, align: usize) -> Option<(usize, bool)> {
         if !self.listed {
-            return self.alloc_filled(bytes, align, zeroed);
+            return self.alloc_fresh(bytes, align);
         }
         let (class, size) = crate::free::class_of(bytes);
         // The list's chunk, or a larger one split down; the pages the ledger gave back are marked in use as it hands
         // the chunk out.
         if let Some(at) = self.ledger.pop(class) {
-            if zeroed {
-                unsafe { zero(self.base.add(at), size) };
-            }
-            return Some(at);
+            // SAFETY: the chunk is the taker's, `bytes` of it asked.
+            unsafe { handed_again(self.base.add(at), bytes) };
+            return Some((at, false));
         }
         // From the front, aligned to its size up to `ALIGN_MAX` (decision 0342 as amended by 0494 step 6): the bytes
         // skipped to align it onto the list as pieces, each aligned to its own size.
@@ -323,16 +332,23 @@ impl Block {
         if at > from.next_multiple_of(64) {
             self.free_pieces(from.next_multiple_of(64), at - from.next_multiple_of(64));
         }
-        if self.dirty && zeroed {
-            unsafe { zero(self.base.add(at), size) };
+        if self.dirty {
+            // SAFETY: as above.
+            unsafe { handed_again(self.base.add(at), bytes) };
         }
-        Some(at)
+        Some((at, !self.dirty))
     }
 
-    /// `try_alloc_chunk` for a chunk written before it is read (a relation's rows): a chunk taken again is left as
-    /// it was, and a dirty block's is not zeroed.
-    pub fn try_alloc_chunk_any(&self, bytes: usize, align: usize) -> Option<usize> {
-        self.chunk(bytes, align, false)
+    /// Writes `len` bytes at `at` clear where they are not fresh (`try_alloc_chunk_fresh`): a structure's clear state
+    /// (counts it adds to, bits it sets) over memory it uses whole. Fresh memory reads zero already; its pages are not
+    /// touched.
+    ///
+    /// # Safety
+    /// `at..at + len` is the caller's, in this block.
+    pub unsafe fn clear_where_used(&self, at: usize, len: usize, fresh: bool) {
+        if !fresh {
+            unsafe { std::ptr::write_bytes(self.base.add(at), 0, len) };
+        }
     }
 
     /// Gives back a chunk `try_alloc_chunk` gave (`bytes` as asked): to the free list, when the block keeps one;
@@ -366,14 +382,19 @@ impl Block {
         self.ledger.push_never_live(at, bytes);
     }
 
-    /// A chunk of at least `bytes` at `align` that keeps little more (`try_alloc_chunk_any`'s, not zeroed): in a block
+    /// A chunk of at least `bytes` at `align` that keeps little more (`try_alloc_chunk`'s, never zeroed): in a block
     /// with a free list, `bytes` rounded up to an eighth of its class, the class's rest handed back to the list as
     /// smaller chunks at once (a class is up to twice what was asked). Its offset and the bytes kept, which
     /// `free_chunk_fit` takes back.
     pub fn try_alloc_chunk_fit(&self, bytes: usize, align: usize) -> Option<(usize, usize)> {
-        let at = self.chunk_untold(bytes, align, false)?;
+        self.try_alloc_chunk_fit_fresh(bytes, align).map(|(at, kept, _)| (at, kept))
+    }
+
+    /// `try_alloc_chunk_fit`, and whether the chunk is fresh (`try_alloc_chunk_fresh`).
+    pub fn try_alloc_chunk_fit_fresh(&self, bytes: usize, align: usize) -> Option<(usize, usize, bool)> {
+        let (at, fresh) = self.chunk_untold(bytes, align)?;
         if !self.listed {
-            return Some((at, bytes));
+            return Some((at, bytes, fresh));
         }
         let (_, size) = crate::free::class_of(bytes);
         let keep = self.fit_kept(bytes);
@@ -386,7 +407,7 @@ impl Block {
         // Never written: the pages they leave with no live byte go to the OS (a chunk taken again from the list may
         // have had them resident).
         self.free_pieces(at + keep, size - keep);
-        Some((at, keep))
+        Some((at, keep, fresh))
     }
 
     /// The bytes `try_alloc_chunk_fit` keeps of a chunk of `bytes`: what `free_chunk_fit` takes back, found again from
@@ -398,14 +419,6 @@ impl Block {
         let (_, size) = crate::free::class_of(bytes);
         let step = (size / 8).max(1 << crate::free::MIN_LOG);
         bytes.next_multiple_of(step).min(size)
-    }
-
-    /// `try_alloc_chunk_fit`, zeroed: what `try_alloc` gives, in a chunk the free list takes back.
-    pub fn try_alloc_chunk_fit_zeroed(&self, bytes: usize, align: usize) -> Option<(usize, usize)> {
-        let (at, kept) = self.try_alloc_chunk_fit(bytes, align)?;
-        // SAFETY: the chunk is the caller's, `kept` bytes at `at` in the block.
-        unsafe { zero(self.base.add(at), bytes) };
-        Some((at, kept))
     }
 
     /// `free_chunk`, its pages left resident: for a chunk the next of its size takes soon (an index built again), or
@@ -444,11 +457,12 @@ impl Block {
     }
 
     /// `over`, saying whether the backing may hold earlier bytes (`dirty`): a backing known to read zero (a new
-    /// file, a new buffer) is not zeroed as it is allocated.
+    /// file, a new buffer) hands out fresh memory.
     pub fn over_with(kind: u32, backing: Box<dyn Backing>, dirty: bool) -> Block {
         let (base, reserved) = (backing.base(), backing.len());
         assert!(reserved >= PAGE && (base as usize).is_multiple_of(64), "a backing of at least a page, 64-byte aligned");
-        unsafe { std::ptr::write_bytes(base, 0, size_of::<Header>()) };
+        // SAFETY: the backing's first bytes, its header's, are this block's alone.
+        unsafe { Header::write_empty(base.cast::<Header>()) };
         let mut b = Block::make(base, reserved, 0, None, true, Some(backing));
         b.dirty = dirty;
         b.init(kind);
@@ -557,18 +571,24 @@ impl Block {
         self.try_alloc(size, align).unwrap_or_else(|| panic!("block full: {} more bytes past {} of {}", size, self.used(), self.reserved))
     }
 
-    /// `size` bytes at `align`, or `None` when the block's reservation cannot hold them.
+    /// `size` bytes at `align`, or `None` when the block's reservation cannot hold them. Never zeroed: a dirty
+    /// block's are what was there (`try_alloc_fresh`).
     pub fn try_alloc(&self, size: usize, align: usize) -> Option<usize> {
-        self.alloc_filled(size, align, true)
+        self.alloc_fresh(size, align).map(|(at, _)| at)
     }
 
-    /// `try_alloc`; a dirty block's memory is zeroed only when `zeroed` asks it.
-    fn alloc_filled(&self, size: usize, align: usize, zeroed: bool) -> Option<usize> {
+    /// `try_alloc`, and whether its bytes are fresh (read zero): false in a dirty block.
+    pub fn try_alloc_fresh(&self, size: usize, align: usize) -> Option<(usize, bool)> {
+        self.alloc_fresh(size, align)
+    }
+
+    fn alloc_fresh(&self, size: usize, align: usize) -> Option<(usize, bool)> {
         let (start, _) = self.bump(size, align)?;
-        if self.dirty && zeroed {
-            unsafe { zero(self.base.add(start), size) };
+        if self.dirty {
+            // SAFETY: the bytes are the taker's.
+            unsafe { handed_again(self.base.add(start), size) };
         }
-        Some(start)
+        Some((start, !self.dirty))
     }
 
     /// `size` bytes at `align` from the front, handed out (`taken_front`): where, and the front before them.
@@ -608,12 +628,12 @@ impl Block {
         shrunk
     }
 
-    /// `n` zeroed `T`s, or `None` when the block cannot hold them.
+    /// Room for `n` `T`s, or `None` when the block cannot hold them: never zeroed (`try_alloc`).
     pub fn try_alloc_t<T>(&self, n: usize) -> Option<*mut T> {
         self.try_alloc(n * size_of::<T>(), align_of::<T>().max(8)).map(|at| self.ptr(at))
     }
 
-    /// `n` zeroed `T`s. Memory never written is zero, as the mapping gives it.
+    /// Room for `n` `T`s (`try_alloc_t`).
     pub fn alloc_t<T>(&self, n: usize) -> *mut T {
         self.ptr(self.alloc(n * size_of::<T>(), align_of::<T>().max(8)))
     }
@@ -959,7 +979,7 @@ impl Frozen {
 pub struct Cells<T: crate::Pod>(crate::region::Frozen<T>);
 
 impl<T: crate::Pod> Cells<T> {
-    /// Up to `capacity` `T`s, zero, filled by `fill`, which returns how many it used: the rest is given back to the
+    /// Up to `capacity` `T`s, as their memory held them (never zeroed), filled by `fill`, which returns how many it used: the rest is given back to the
     /// block when nothing was allocated after it (`region::Mutable::truncate`). `None` when the block cannot hold
     /// `capacity`.
     pub fn build(block: &Arc<Block>, capacity: usize, fill: impl FnOnce(&mut [T]) -> usize) -> Option<Self> {

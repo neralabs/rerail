@@ -1270,10 +1270,10 @@ mod tests {
         }
     }
 
-    /// A block in a slab: recycled with its device buffer, and its memory zeroed as each part is made, though the
-    /// slab holds the last block's bytes.
+    /// A block in a slab: recycled with its device buffer, holding the last block's bytes, which no part made is
+    /// zeroed of: a relation made there writes its every field, and reads fresh.
     #[test]
-    fn a_block_in_a_slab_is_recycled_and_reads_fresh() {
+    fn a_block_in_a_slab_is_recycled_and_its_structures_read_fresh() {
         use rerail_blocks::block::kind;
         use rerail_blocks::relation::{self, RelW, Relation, Spec, View};
         if layer().is_none() {
@@ -1296,9 +1296,7 @@ mod tests {
         let r = Relation::create(&b, &spec, None);
         assert_eq!(r.rows.len(), 0);
         assert!(!r.is_frozen(), "a new relation in a recycled slab reads fresh");
-        let at = b.alloc(1 << 20, 64);
-        // SAFETY: the block's own allocation, 1 MiB long.
-        assert!(unsafe { std::slice::from_raw_parts(b.ptr::<u8>(at), 1 << 20) }.iter().all(|&x| x == 0));
+        assert!(!b.try_alloc_fresh(1 << 20, 64).unwrap().1, "its memory is not fresh: a holder writes before it reads");
     }
 
     /// A lease handed to a command buffer goes back to the pool when it completes.
@@ -1403,8 +1401,8 @@ mod tests {
         let again = lease_deferrable(kind::JOURNAL, 1 << 20, &dir.join("seg-2")).unwrap();
         assert_eq!(pool_counts().2, reused + 1, "the archived file is reused");
         assert!(!dir.join("seg-1").exists() && dir.join("seg-2").exists(), "renamed to the new segment");
-        let off = again.block().alloc(4096, 64);
-        assert!(again.block().bytes(off, off + 4096).iter().all(|&b| b == 0), "a reused file reads zero where allocated");
+        let (_, fresh) = again.block().try_alloc_fresh(4096, 64).unwrap();
+        assert!(!fresh, "a reused file's allocation is not fresh (its holder writes before it reads)");
         drop(again);
         assert_eq!(live(), before, "dropped unsealed, it leaves the budget too");
         let _ = std::fs::remove_dir_all(&dir);

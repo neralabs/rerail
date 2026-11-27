@@ -405,9 +405,6 @@ pub(super) fn sampled_report(r: &mut String) {
     let accounted = heap_mb(t.resident) + reserved + leased + idle + host_resident + stacks + long;
     let _ = writeln!(r, "  by holder then (MB): heap live {}, heap resident beyond live {}; the device's own {} (device pool {}, relational leases {} + {} idle; of every ledger's memory {} MB in memory, anonymous blocks {} of it: facts {}, chunk {}, program {}, outputs {}, journal {}, scratch {}, atoms and kept {}, no kind {}); SQLite heap {}; host blocks {} used, {} of them in memory ({} live, {} free on their lists: {} in pages no live chunk reaches, {} in pages one shares; {} more free given back to the OS); the threads' stacks {} ({} under their tops), their long rooms {}; the rest {}; the Metal driver's count {} (no-copy wraps of host memory counted again)",
         heap_mb(t.live), heap_mb(t.resident.saturating_sub(t.live)), reserved + leased + idle, reserved, leased, idle, anon + leased_in_memory, anon, facts, chunk, program, outputs, journal, scratch, atoms_kept, k0, sqlite, host, host_resident, host_resident.saturating_sub(host_free_resident), host_free_resident, givable, pinned, host_free.saturating_sub(host_free_resident), stacks, stacks_used, long, heap_mb(t.footprint).saturating_sub(accounted), driver);
-    // Blocks' memory handed out again and zeroed for it (decision 0342): a free list's chunk asked zeroed (a
-    // descriptor), a recycled slab's allocation; a relation's rows are written before read and never zeroed.
-    let _ = writeln!(r, "  blocks: {} MB zeroed as their memory was handed out again", rerail_accel::blocks::zeroed_bytes() >> 20);
     if let Some(census) = width_census::report() {
         let _ = writeln!(r, "  {census}");
         for line in width_census::top_spans(30) {

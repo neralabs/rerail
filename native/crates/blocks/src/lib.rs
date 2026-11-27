@@ -88,6 +88,11 @@ pub use rerail_vector::Pod;
 /// `typedef`, its assertions `UKL_STATIC_ASSERT`s, for a kernel on every backend (decision 0440).
 pub trait KernelField {
     fn ty() -> String;
+    /// Its empty value (every number 0, every reference none): what a structure writes of itself where it is made,
+    /// since a block's memory is never zeroed for it (a chunk taken again holds what was there).
+    fn empty() -> Self
+    where
+        Self: Sized;
     fn decl(name: &str) -> String {
         format!("{} {}", Self::ty(), name)
     }
@@ -96,14 +101,19 @@ pub trait KernelField {
 
 macro_rules! scalar {
     ($($t:ty => $c:literal),*) => {$(
-        impl KernelField for $t { fn ty() -> String { $c.into() } }
+        impl KernelField for $t { fn ty() -> String { $c.into() } fn empty() -> Self { 0 } }
+    )*};
+}
+macro_rules! atomic {
+    ($($t:ty => $c:literal),*) => {$(
+        impl KernelField for $t { fn ty() -> String { $c.into() } fn empty() -> Self { <$t>::new(0) } }
     )*};
 }
 scalar!(u8 => "uint8_t", u16 => "uint16_t", u32 => "uint32_t", u64 => "uint64_t", i32 => "int32_t", i64 => "int64_t");
 // A field that changes while its block is open (a counter, a chunk's offset, a span set at freeze) is an atomic:
 // written through a shared reference, which Rust allows only by interior mutability. On ARM a relaxed load is a
 // plain load. UKL declares it as the plain type; a kernel that claims passes it to `ukl_atomic_add`.
-scalar!(std::sync::atomic::AtomicU32 => "uint32_t", std::sync::atomic::AtomicU64 => "uint64_t", std::sync::atomic::AtomicI64 => "int64_t");
+atomic!(std::sync::atomic::AtomicU32 => "uint32_t", std::sync::atomic::AtomicU64 => "uint64_t", std::sync::atomic::AtomicI64 => "int64_t");
 
 impl<T: KernelField, const N: usize> KernelField for [T; N] {
     fn ty() -> String {
@@ -111,6 +121,9 @@ impl<T: KernelField, const N: usize> KernelField for [T; N] {
     }
     fn decl(name: &str) -> String {
         format!("{} {}[{}]", T::ty(), name, N)
+    }
+    fn empty() -> Self {
+        std::array::from_fn(|_| T::empty())
     }
     fn deps(out: &mut Vec<String>) {
         T::deps(out)
@@ -140,6 +153,7 @@ macro_rules! structure {
         unsafe impl $crate::Pod for $name {}
         impl $crate::KernelField for $name {
             fn ty() -> String { stringify!($name).into() }
+            fn empty() -> Self { $name { $($f: <$t as $crate::KernelField>::empty()),* } }
             fn deps(out: &mut Vec<String>) {
                 $(<$t as $crate::KernelField>::deps(out);)*
                 let mut s = format!("typedef struct {} {{\n", stringify!($name));
@@ -149,6 +163,16 @@ macro_rules! structure {
                 $(s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF({0}, {1}) == {2}, \"{0}.{1}\");\n",
                     stringify!($name), stringify!($f), core::mem::offset_of!($name, $f));)*
                 if !out.contains(&s) { out.push(s); }
+            }
+        }
+        impl $name {
+            /// Writes it empty at `p` (`KernelField::empty`), every field: a structure made in a block's memory, which
+            /// is never zeroed for it.
+            ///
+            /// # Safety
+            /// `p` is writable, aligned, and nothing else reads or writes it meanwhile.
+            pub unsafe fn write_empty(p: *mut Self) {
+                unsafe { p.write(<$name as $crate::KernelField>::empty()) };
             }
         }
     };

@@ -265,6 +265,8 @@ impl Relation {
         let p: *mut Relation = block.ptr(at);
         let cols: *mut crate::rows::ColDir = block.ptr(at + Relation::DIRS_AT);
         unsafe {
+            // Every field written: the chunk holds what was there.
+            Relation::write_empty(p);
             (*p).arity = spec.widths.len() as u32;
             (*p).flags.store(if base.is_some() { DELTA } else { 0 }, Relaxed);
             (*p).base_rows = base.map_or(0, |b| {
@@ -675,7 +677,7 @@ impl Relation {
     /// As `try_reserve_index`'s: this relation's descriptor is the caller's to change.
     unsafe fn next_entry(&self, block: &Block) -> Option<usize> {
         if self.indexes.is_empty() {
-            let (at, _) = block.try_alloc_chunk_fit_zeroed(ADDED_INDEXES * size_of::<Index>(), 8)?;
+            let (at, _) = block.try_alloc_chunk_fit(ADDED_INDEXES * size_of::<Index>(), 8)?;
             let me = std::ptr::from_ref(self).cast_mut();
             // SAFETY: the caller's.
             unsafe { Span::set(&raw mut (*me).indexes, block.ptr::<Index>(at), ADDED_INDEXES) };
@@ -686,8 +688,14 @@ impl Relation {
         // An entry given back is taken first (`give_back_index`) when its room is the block's already; one that keeps
         // its room (a block of no free list) is left for an index that fits it (`dead_room`), and taken last.
         let dead = |i: usize, room: bool| ix[i].state == DEAD && (!ix[i].offs.is_empty()) == room;
-        // Its taker marks it live (`state` 0) once its room is had.
-        (0..n).find(|&i| dead(i, false)).or((n < ix.len()).then_some(n)).or_else(|| (0..n).find(|&i| dead(i, true)))
+        // Its taker marks it live (`state` 0) once its room is had. A new entry is written empty first: the directory's
+        // chunk holds what was there, and an entry past `nindex` is read by none.
+        let i = (0..n).find(|&i| dead(i, false)).or((n < ix.len()).then_some(n)).or_else(|| (0..n).find(|&i| dead(i, true)))?;
+        if i == n {
+            // SAFETY: the caller's: this relation's descriptor, its directory among it, is ours to change.
+            unsafe { Index::write_empty(std::ptr::from_ref(&ix[i]).cast_mut()) };
+        }
+        Some(i)
     }
 
     /// A dead entry whose room (kept: its block has no free list) holds `buckets` buckets and `n` rows: its number.
@@ -856,16 +864,18 @@ impl Relation {
         let form: usize = docs.iter().map(|d| d.bits.map_or(d.b - d.a, |(_, slots, _)| 2 * slots as usize)).sum();
         let words: usize = docs.iter().filter_map(|d| d.bits).map(|(_, _, w)| w as usize).sum();
         let dir = 1 + 4 * docs.len() + form;
-        let (d_at, d_kept) = block.try_alloc_chunk_fit(4 * dir, 8)?;
-        let Some((w_at, w_kept)) = block.try_alloc_chunk_fit(8 * words.max(1), 8) else {
+        let (d_at, d_kept, d_fresh) = block.try_alloc_chunk_fit_fresh(4 * dir, 8)?;
+        let Some((w_at, w_kept, w_fresh)) = block.try_alloc_chunk_fit_fresh(8 * words.max(1), 8) else {
             block.free_chunk_fit(d_at, d_kept);
             return None;
         };
         let (d, w) = (block.ptr::<u32>(d_at), block.ptr::<i64>(w_at));
         // SAFETY: both chunks were just allocated, this index's alone until it is marked built.
         unsafe {
-            std::ptr::write_bytes(d, 0, dir);
-            std::ptr::write_bytes(w, 0, words.max(1));
+            // Clear where reused: a slot of no value reads none, and the words' bits are set one by one; both read
+            // whole.
+            block.clear_where_used(d_at, 4 * dir, d_fresh);
+            block.clear_where_used(w_at, 8 * words.max(1), w_fresh);
             d.write(docs.len() as u32);
             let (mut at, mut off) = ((1 + 4 * docs.len()) as u32, 0u32);
             for (k, doc) in docs.iter().enumerate() {
@@ -1055,8 +1065,9 @@ impl Relation {
         assert!(!cols.is_empty() && cols.len() <= MAX_KEY, "a key of {} columns", cols.len());
         // SAFETY: the caller's: this relation's descriptor is ours to change.
         unsafe {
-            // Chunks the block's free list takes back when the index is forgotten (`forget_indexes`), zeroed as an
-            // allocation is.
+            // Chunks the block's free list takes back when the index is forgotten (`forget_indexes`). Its buckets
+            // written clear where the chunk was used before (the builders count into them); its rows and marks are
+            // its builder's to write, every one.
             let (ob, rb) = (4 * (cap + 1), index_rows_bytes(n as usize));
             // In a block of no free list, an index given back keeps its room for one that fits it (`give_back_index`).
             let reused = if block.has_free_list() || self.indexes.is_empty() { None } else { self.dead_room(cap + 1, n as usize) };
@@ -1067,23 +1078,23 @@ impl Relation {
             let (offs_at, rows_at) = if let Some(d) = reused {
                 let d = &self.indexes.as_slice()[d];
                 let (o, r) = (block.offset_of(d.offs.as_ptr()), block.offset_of(d.rows.as_ptr()));
-                // Zeroed, as a new chunk is (the builders count into the buckets).
-                block.ptr::<u8>(o).write_bytes(0, ob);
-                block.ptr::<u8>(r).write_bytes(0, rb);
+                block.clear_where_used(o, ob, false);
                 (o, r)
             } else if self.flags.load(Acquire) & REWRITTEN != 0 {
-                let o = block.try_alloc_chunk(ob, 8)?;
+                let (o, fresh) = block.try_alloc_chunk_fresh(ob, 8)?;
                 let Some(r) = block.try_alloc_chunk(rb, 8) else {
                     block.free_chunk(o, ob);
                     return None;
                 };
+                block.clear_where_used(o, ob, fresh);
                 (o, r)
             } else {
-                let (o, _) = block.try_alloc_chunk_fit_zeroed(ob, 8)?;
-                let Some((r, _)) = block.try_alloc_chunk_fit_zeroed(rb, 8) else {
+                let (o, _, fresh) = block.try_alloc_chunk_fit_fresh(ob, 8)?;
+                let Some((r, _)) = block.try_alloc_chunk_fit(rb, 8) else {
                     block.free_chunk_fit(o, block.fit_kept(ob));
                     return None;
                 };
+                block.clear_where_used(o, ob, fresh);
                 (o, r)
             };
             let (offs, rows): (*mut u32, *mut u32) = (block.ptr(offs_at), block.ptr(rows_at));
@@ -1123,7 +1134,7 @@ impl Relation {
             }
             let rb = index_rows_bytes(n as usize);
             let rewritten = self.flags.load(Acquire) & REWRITTEN != 0;
-            let r = if rewritten { block.try_alloc_chunk(rb, 8)? } else { block.try_alloc_chunk_fit_zeroed(rb, 8)?.0 };
+            let r = if rewritten { block.try_alloc_chunk(rb, 8)? } else { block.try_alloc_chunk_fit(rb, 8)?.0 };
             if rewritten {
                 block.free_chunk_resident(old, len);
             } else {
@@ -1645,7 +1656,11 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
         // One counting pass: each row's bucket, the buckets' sizes, then the rows placed in order.
         let bucket: &mut [u32] = scratch.take(live);
         let tags: &mut [u32] = scratch.take(live);
-        let bp: *mut u32 = block.alloc_t(cap + 1);
+        // Its buckets, counted into: written clear where the block's memory was used before.
+        let (b_at, fresh) = block.try_alloc_fresh(4 * (cap + 1), 8).unwrap_or_else(|| panic!("block full: an index's {} buckets", cap + 1));
+        // SAFETY: just taken, this build's alone.
+        unsafe { block.clear_where_used(b_at, 4 * (cap + 1), fresh) };
+        let bp: *mut u32 = block.ptr(b_at);
         // The rows, then their marks (decision 0671).
         let rp: *mut u32 = block.alloc_t(2 * live.max(1));
         let offs = unsafe { std::slice::from_raw_parts_mut(bp, cap + 1) };
