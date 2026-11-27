@@ -2273,8 +2273,8 @@ impl Extra {
     }
 
     /// `core_rr`'s literal values (n, v, v's type), of documents W reads no values of (`Dialect::values`), in the
-    /// value relations made here: `value` and `static_value` (no names to follow), `static_value_type_of` and
-    /// `value_type`.
+    /// value relations made here: `value` and `static_value` (no names to follow), `value_type_of`,
+    /// `static_value_type_of` and `value_type`.
     fn literal_values(&mut self, rows: impl Iterator<Item = [i64; 3]>) {
         for [n, v, t] in rows {
             if self.value {
@@ -2288,6 +2288,9 @@ impl Extra {
             }
             if self.static_value_type_of {
                 self.static_value_types_of.push([n, t]);
+            }
+            if self.value_type_of {
+                self.value_types_of.push([n, t]);
             }
             if self.value_type {
                 self.value_types.insert([v, t]);
@@ -2802,7 +2805,7 @@ impl Batch {
         // `core.rerail`'s (decision 0046).
         let mut c = core_rr::CoreRows::default();
         // Node identity/ancestry and line views do not require scalar rows or text interning.
-        let scalar_nodes=!core || ["text","name","str","strprefix","value","value_type","static_value","static_value_type_of","comment","spread","op","op_at","op_t","intval","next_sibling","str_part","str_part_start","str_part_word"]
+        let scalar_nodes=!core || ["text","name","str","strprefix","value","value_type","value_type_of","static_value","static_value_type_of","comment","spread","op","op_at","op_t","intval","next_sibling","str_part","str_part_start","str_part_word"]
             .into_iter().any(|r|projection.wants(r));
         let wants_any = |rels: &[&str]| rels.iter().any(|r| projection.wants(r));
         c.skip = core_rr::Skip {
@@ -2811,10 +2814,10 @@ impl Batch {
             comment: !projection.wants("comment"),
             spread: !projection.wants("spread"),
             name: !projection.wants("name"),
-            literal: !wants_any(&["str", "strprefix", "value", "static_value", "static_value_type_of", "value_type", "rr_value_lit", "text"]),
+            literal: !wants_any(&["str", "strprefix", "value", "static_value", "value_type_of", "static_value_type_of", "value_type", "rr_value_lit", "text"]),
             str: !projection.wants("str"),
-            literal_value: !wants_any(&["value", "static_value", "static_value_type_of", "value_type", "rr_value_lit"]),
-            literal_rows: !wants_any(&["str", "strprefix", "value", "static_value", "static_value_type_of", "value_type", "rr_value_lit"]),
+            literal_value: !wants_any(&["value", "static_value", "value_type_of", "static_value_type_of", "value_type", "rr_value_lit"]),
+            literal_rows: !wants_any(&["str", "strprefix", "value", "static_value", "value_type_of", "static_value_type_of", "value_type", "rr_value_lit"]),
             structural: !wants_any(&["structural_before", "structural_after"]),
         };
         let core_nodes = core && (scalar_nodes || !c.skip.structural);

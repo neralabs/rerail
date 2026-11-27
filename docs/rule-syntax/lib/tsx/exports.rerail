@@ -1,6 +1,6 @@
 // tsx/exports: what a file's import and export statements name, read off its own tree (no other file): the
 // specifiers' names, each statement's module, and the names an export statement exports or re-exports. Included by
-// tsx/names.rerail and by the phase `tsx_names` (typing/programs/tsx_names.rerail), which resolves them across files.
+// tsx/names.rerail and by the phase `tsx_names` (phases/tsx_names.rerail), which resolves them across files.
 
 // ts_module(d, m): document d's module, the name its symbols are qualified by ("src/util#f"): the one core names, else
 // (core names none for TypeScript or JavaScript) its path without its extension, `src/util.ts` -> "src/util". Each

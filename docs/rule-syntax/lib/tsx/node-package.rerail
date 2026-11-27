@@ -29,7 +29,7 @@
 //
 // Builds on core only: doc, package_for, package_field, kind, text, col, first_token, @join, @place.
 
-.decl npm_ignored(path: symbol)
+.decl npm_ignored(path: symbol) by_path
 .input npm_ignored
 
 .decl pkg_file(d: number, dir: symbol, rel: symbol)

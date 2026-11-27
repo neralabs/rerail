@@ -155,10 +155,10 @@ ghw_fetch_call(c, h, q) :- kind(c, "call"), owner(c, h), field(c, "function", fn
 ghw_model_ref(a, q) :- dj_model_named(a, q).
 ghw_model_ref(a, q) :- dj_qs_class(a, q).
 // ghw_view_model(k, q): view class k, or a base of the run in any file, says `model = Q` or `queryset = Q.objects…`,
-// Q a model: the phase py_names hands each class's on by symbol (dj_view_model, decision 0677).
+// Q a model: the phase dj_names hands each class's on by symbol (view_model, decision 0677).
 .decl ghw_view_model(k: node, q: symbol)
 ghw_view_model(k, q) :- class_def(k, kq), docof(k, d), doc(d, p, _), py_names__reads_at(p, m),
-    py_names__dj_view_model(m, kq, q), dj_model_at(d, q).
+    dj_names__view_model(m, kq, q), dj_model_at(d, q).
 // ghw_model_call(x, g, how): a call in def x, `o.m(...)` with o a model instance of class q, runs q's method m, g.
 // Only where the call program has no target for the call.
 .decl ghw_model_call(x: symbol, g: symbol, how: symbol)

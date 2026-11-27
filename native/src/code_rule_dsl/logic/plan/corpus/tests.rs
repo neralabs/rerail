@@ -2244,8 +2244,8 @@ dm(p, x) :- dj_qs_model(q, r), dj_model_has_method(r, x), docof(q, d), doc(d, p,
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A model's Meta options and managers read by its symbol in another file (decision 0677 fix 3c: the phase py_names'
-/// Django section, python/django's dj_model_group and the rest). views.py imports shop.models alone; the Meta options
+/// A model's Meta options and managers read by its symbol in another file (decision 0677 fix 3c: the phase dj_names,
+/// python/django's dj_model_group and the rest). views.py imports shop.models alone; the Meta options
 /// and the manager's methods come from models_base and shop.managers, which it never imports, each by Django's
 /// inheritance: Plank's Meta subclasses its abstract base's (`class Meta(Named.Meta)`), Board declares a Meta of its
 /// own and takes none of Named's, Part takes its concrete base's constraints, and Part's manager builds a queryset
@@ -2315,7 +2315,7 @@ mm(mq, a, x) :- at_view(e, mq), dj_model_manager_method(e, a, x).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A model's hooks read by its symbol in another file (decision 0677 fix 3d: the phase py_names' Django section,
+/// A model's hooks read by its symbol in another file (decision 0677 fix 3d: the phase dj_names,
 /// python/django's dj_model_hook and dj_receiver_def). views.py imports shop.models alone. Book's save() is
 /// inherited from Stamped, in models_base, which views.py never imports; Book's receivers are connected in
 /// shop/signals.py, which nothing imports: a decorated def, and a def connected with `.connect`, both for sender Book.
@@ -2491,8 +2491,8 @@ root(n) :- kind(n, "function_definition"), package_field(".", "type", "module").
 .decl none(n: node)
 none(n) :- kind(n, "function_definition").
 .output none
-.decl tsx_names__target_at(p: symbol, s: symbol, t: symbol)
-.decl tsx_names__exports(m: symbol, x: symbol, q: symbol)
+.decl tsx_names__target_at(p: symbol, s: symbol, t: symbol) by_path 2
+.decl tsx_names__exports(m: symbol, x: symbol, q: symbol) keyed
 .decl tgt(d: number, s: symbol, t: symbol)
 tgt(d, s, t) :- doc(d, p, _), tsx_names__target_at(p, s, t).
 .decl resolved(n: node, q: symbol)
@@ -2501,10 +2501,16 @@ resolved(n, q) :- kind(n, "identifier"), text(n, x), docof(n, d), tgt(d, s, t), 
 .decl other(n: node, q: symbol)
 other(n, q) :- kind(n, "identifier"), text(n, x), tsx_names__exports(_, x, q).
 .output other
+.decl mixed_tgt(d: number, s: symbol, t: symbol)
+mixed_tgt(d, s, t) :- doc(d, p, _), tsx_names__target_at(p, s, t).
+mixed_tgt(d, s, t) :- kind(n, "string"), text(n, s), docof(n, d), t = s.
+.decl mixed(n: node, q: symbol)
+mixed(n, q) :- kind(n, "identifier"), text(n, x), docof(n, d), mixed_tgt(d, s, t), tsx_names__exports(t, x, q).
+.output mixed
 "#).unwrap();
     let v = crate::code_rule_dsl::logic::program_image::Builder::of_program(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap().finish().unwrap().0;
     let placed = crate::code_rule_dsl::logic::plan::body::Placed::whole(v);
-    let rels = ["own", "any", "root", "none", "resolved", "other"].map(str::to_owned).into_iter().collect();
+    let rels = ["own", "any", "root", "none", "resolved", "other", "mixed"].map(str::to_owned).into_iter().collect();
     let scopes = settings_scopes(&placed, &rels);
     assert_eq!(scopes.get("own"), Some(&SettingsScope::OwnFile), "{scopes:?}");
     assert_eq!(scopes.get("any"), Some(&SettingsScope::All), "{scopes:?}");
@@ -2513,13 +2519,92 @@ other(n, q) :- kind(n, "identifier"), text(n, x), tsx_names__exports(_, x, q).
     // A target its own path's row names, carried by a derived relation (`tgt`), keys its exports' read as its own.
     assert_eq!(scopes.get("resolved"), Some(&SettingsScope::OwnFile), "{scopes:?}");
     assert_eq!(scopes.get("other"), Some(&SettingsScope::All), "{scopes:?}");
+    // A column one rule fills from the file's own row and another from its text (any string, another file's target
+    // too) is not the file's own key: its readers read every file's exports (review F3).
+    assert_eq!(scopes.get("mixed"), Some(&SettingsScope::All), "{scopes:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 
+/// Decision 0710: Python's module privacy (D1xx's `doc_public`, Ruff's `is_private_module`) walks the package's folders
+/// over `file`, a setting, at the file's own path: no engine table. A segment starting with `_` and no dunder makes a
+/// module private; a file outside every regular package (`__init__.py` or `__init__.pyi`) is named by its stem alone.
+#[test]
+fn a_python_modules_privacy_is_read_over_the_files_at_its_own_path() {
+    crate::install_store_functions();
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("py-privacy");
+    let _ = std::fs::remove_dir_all(&dir);
+    for path in [
+        "top.py",
+        "_top.py",
+        "__main__.py",
+        "pkg/__init__.py",
+        "pkg/_m.py",
+        "pkg/m.py",
+        "pkg/_impl/__init__.py",
+        "pkg/_impl/m.py",
+        "_loose/m.py",
+        "stubs/__init__.pyi",
+        "stubs/_s.pyi",
+    ] {
+        let to = dir.join("ws").join(path);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::write(to, "x = 1\n").unwrap();
+    }
+    let rule = dir.join("program.rerail");
+    std::fs::write(
+        &rule,
+        ".language python\n#include \"python/docstrings.rerail\"\n.decl public_module(p: symbol)\npublic_module(p) :- kind(m, \"module\"), doc_public(m), docof(m, d), doc(d, p, _).\n.output public_module\n",
+    )
+    .unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
+    let mut rows: Vec<String> = outputs.get("public_module").map(|r| r.shown()).unwrap_or_default().into_iter().flatten().collect();
+    rows.sort();
+    // `_loose/m.py` is in no package: its module is `m`, public. `pkg/_impl/m.py` is `pkg._impl.m` and
+    // `pkg/_impl/__init__.py` is `pkg._impl`, both private.
+    assert_eq!(rows, ["__main__.py", "_loose/m.py", "pkg/__init__.py", "pkg/m.py", "stubs/__init__.pyi", "top.py"].map(str::to_owned));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0710: an input nothing gives rows is an error naming it, not an empty relation a rule reads nothing from.
+/// An `extensible` relation nothing states is an extension with no members: stated empty, and the run goes on.
+#[test]
+fn an_input_nothing_produces_is_an_error_and_an_unstated_extension_is_empty() {
+    crate::install_store_functions();
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("unproduced");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("ws")).unwrap();
+    std::fs::write(dir.join("ws/a.py"), "x = 1\n").unwrap();
+    let run = |text: &str, out: &str| {
+        let rule = dir.join(format!("{out}.rerail"));
+        std::fs::write(&rule, text).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        super::run(&program, &dir.join("ws"), None, &dir.join(out), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18)
+    };
+    let missing = run(
+        ".language python\n.decl nobody_makes(path: symbol)\n.input nobody_makes\n.decl hit(p: symbol)\nhit(p) :- doc(_, p, _), nobody_makes(p).\n.output hit\n",
+        "missing",
+    );
+    let err = missing.err().expect("an input nothing produces fails the run").to_string();
+    assert!(err.contains("nobody_makes") && err.contains("nothing gives it rows"), "{err}");
+    let extension = run(
+        ".language python\n.decl members(path: symbol) extensible\n.decl hit(p: symbol)\nhit(p) :- doc(_, p, _), !members(p).\n.output hit\n",
+        "extension",
+    );
+    extension.expect("an unstated extension is empty");
+    let outputs = super::super::output::Outputs::open(&dir.join("extension")).unwrap();
+    let rows: Vec<String> = outputs.get("hit").map(|r| r.shown()).unwrap_or_default().into_iter().flatten().collect();
+    assert_eq!(rows, ["a.py"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `npm_ignored`, the repository input (`facts::repository`), as `package_manifest` reads a package: its `files` list
 /// decides where it has one (package.json always published); else its `.npmignore`; and a file under no package.json
-/// has no row. Read at each file's own path, it is a per-file setting (`SETTINGS_BY_PATH`).
+/// has no row. Read at each file's own path, it is a per-file setting (`by_path`, decision 0710).
 #[test]
 fn a_files_npm_leaves_out_are_npm_ignored() {
     crate::install_store_functions();
@@ -2611,5 +2696,75 @@ failed(p, x) :- spec_failed(n), node_target(n, x, _), docof(n, d), doc(d, p, _).
     let (resolved, failed) = run("out2");
     assert!(resolved.contains(&row(&["src/a.js", "./nope", "src/nope.js"])), "{resolved:?}");
     assert!(failed.is_empty(), "{failed:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A per-file relation reading a setting that is one value for the run (`file`, decision 0710) is memoised under that
+/// setting's rows: a file added or removed elsewhere changes what an unedited file finds (review B70). `under(d)`
+/// holds of a file with a `__init__.py` beside it, as Python's module privacy reads it.
+#[test]
+fn a_file_added_beside_an_unedited_file_changes_what_it_finds() {
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("file-setting");
+    let _ = std::fs::remove_dir_all(&dir);
+    let src = dir.join("src");
+    std::fs::create_dir_all(src.join("pkg")).unwrap();
+    std::fs::write(src.join("pkg/m.py"), "def f():\n    return 1\n").unwrap();
+    std::fs::write(src.join("other.py"), "def g():\n    return 2\n").unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let text = crate::code_rule_dsl::logic::rr::print(
+        &crate::code_rule_dsl::logic::rr::parse(
+            "#include \"core.rerail\"\n.decl under(p: symbol)\nunder(p) :- doc(_, p, _), contains(\"/\", p), d = @replace_all(p, \"/[^/]*$\", \"\"), file(cat(d, \"/__init__.py\")).\n.output under\n",
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let run = || crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::Value::Null).unwrap();
+    let under = || crate::code_rule_dsl::logic::plan::output::shown(&out, "under").unwrap();
+    run();
+    assert_eq!(under(), Vec::<Vec<String>>::new(), "no __init__.py: nothing");
+    std::fs::write(src.join("pkg/__init__.py"), "").unwrap();
+    run();
+    assert!(under().contains(&vec!["pkg/m.py".to_owned()]), "pkg/m.py is unedited, and its folder now has a __init__.py: {:?}", under());
+    std::fs::remove_file(src.join("pkg/__init__.py")).unwrap();
+    run();
+    assert_eq!(under(), Vec::<Vec<String>>::new(), "the __init__.py removed again: nothing");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Two package roots of one name (a monorepo's `s1/app/` and `s2/app/`, each with an `__init__.py`) make two files
+/// one module, `app.m`: a call at one place in each is still its own file's, and runs its own file's definition
+/// only (review F7). A file outside every package is named by its folders too (`tests/conftest.py` is
+/// `tests.conftest`), so two stems alone do not collide.
+#[test]
+fn two_modules_of_one_name_keep_their_own_call_targets() {
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    crate::install_store_functions();
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("same-stem");
+    let _ = std::fs::remove_dir_all(&dir);
+    let src = dir.join("src");
+    std::fs::create_dir_all(src.join("tests")).unwrap();
+    std::fs::write(src.join("conftest.py"), "def a():\n    pass\n\ndef go():\n    a()\n").unwrap();
+    std::fs::write(src.join("tests/conftest.py"), "def b():\n    pass\n\ndef go():\n    b()\n").unwrap();
+    for (root, def) in [("s1", "c"), ("s2", "e")] {
+        std::fs::create_dir_all(src.join(root).join("app")).unwrap();
+        std::fs::write(src.join(root).join("app/__init__.py"), "").unwrap();
+        std::fs::write(src.join(root).join("app/m.py"), format!("def {def}():\n    pass\n\ndef go():\n    {def}()\n")).unwrap();
+    }
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let text = crate::code_rule_dsl::logic::rr::print(
+        &crate::code_rule_dsl::logic::rr::parse(
+            "#include \"core.rerail\"\n#include \"python/points-to.rerail\"\n.decl tgt(p: symbol, f: symbol)\ntgt(p, f) :- call_target(c, f), docof(c, d), doc(d, p, _).\n.output tgt\n",
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::Value::Null).unwrap();
+    let mut tgt = crate::code_rule_dsl::logic::plan::output::shown(&out, "tgt").unwrap();
+    tgt.sort();
+    let row = |p: &str, f: &str| vec![p.to_owned(), f.to_owned()];
+    assert_eq!(tgt, vec![row("conftest.py", "conftest.a"), row("s1/app/m.py", "app.m.c"), row("s2/app/m.py", "app.m.e"), row("tests/conftest.py", "tests.conftest.b")]);
     let _ = std::fs::remove_dir_all(&dir);
 }

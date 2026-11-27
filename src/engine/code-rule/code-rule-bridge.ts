@@ -3392,7 +3392,10 @@ export class CodeRuleBridge {
     await this.#discovery?.idle;
   }
 
-  /** Waits for the worktree walk in flight or timed, if any, any walk a boundary asked for meanwhile, and their taking. */
+  /**
+   * Waits for the worktree walk in flight or timed, if any, any walk a boundary asked for meanwhile, and their taking; a
+   * walk this session asked for that waits out its gap starts at once (`WorktreeWatch.settled`).
+   */
   async settleWorktreeWalk(): Promise<void> {
     await this.#discovery?.worktrees.watch?.settled();
   }

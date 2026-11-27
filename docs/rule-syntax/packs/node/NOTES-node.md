@@ -77,7 +77,7 @@ never ran those rules on:
   the rule's clause for comment-declared globals never fires. ESLint gives several findings at one key for
   `export * from "fs"`, and the rule gives one.
 - **D6** resolution (`spec_resolved`) comes from the phase `node_resolve` (C1), and npm's published view
-  (`npm_ignored`) from the repository's walk (C2). The rule logic around them matches the plugin case by case: which
+  (`npm_ignored`) from ECMAScript's project reader (C2). The rule logic around them matches the plugin case by case: which
   specifiers, style, allowModules, the TS alias, devDependency-only, private.
 - **D7** no-path-concat: `path.sep` is taken as "/" (POSIX), as on the recording machine.
 - **D8** no-sync: the typed `ignores` entries (`{from: "file"|"lib"|"package"}`) need types and are not ported. String
@@ -94,7 +94,7 @@ never ran those rules on:
 ## Library and core change requests
 
 **C1. core: module resolution.** Done (decision 0691): the phase `node_resolve`
-(`native/src/code_rule_dsl/typing/programs/node_resolve.rerail`) resolves each file's specifiers through core's
+(`docs/rule-syntax/lib/phases/node_resolve.rerail`) resolves each file's specifiers through core's
 `module_target` request, answered by the engine's `import_target`, and `node-resolve.rerail` derives `spec_resolved` from
 its export at the file's own path. As first requested:
 
@@ -106,8 +106,8 @@ its export at the file's own path. As first requested:
 Today it is declared in `lib/tsx/node-resolve.rerail`, which also gives the options it needs: the conditions, the
 tryExtensions, the tsconfig paths and the .js->.ts map.
 
-**C2. core: npm's publish view.** Done (decision 0691): the repository's walk makes `npm_ignored` with
-`package_manifest`'s reader. As first requested:
+**C2. npm's publish view.** Done (decisions 0691, 0710): ECMAScript's project reader (`import_target::project`,
+registered with the repository's walk at load) makes `npm_ignored` with `package_manifest`'s reader. As first requested:
 
 ```
 .decl npm_ignored(path: symbol)   // npm leaves path out of the package: package.json `files`, else .npmignore,

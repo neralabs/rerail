@@ -272,6 +272,12 @@ live_asg(s, x, r) :- asg(s, x, r, a), !asgstmt(a, _).
 live_asg(s, x, r) :- asg(s, x, r, a), asgstmt(a, st), !shadowed(st).
 
 
+// class_asg(q, x, r): class q's own body assigns r to the name x (`objects = SlugManager()`): a statement of the body
+// itself, its left side a plain name.
+.decl class_asg(q: symbol, x: symbol, r: node)
+class_asg(q, x, r) :- class_def(c, q), field(c, "body", b), child(b, s, _), kind(s, "expression_statement"), child(s, a, 0),
+    kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "right", r).
+
 // attr_of(n, o, a): n is the attribute expression `o.a`.
 .decl attr_of(n: node, o: node, a: symbol)
 attr_of(n, o, a) :- kind(n, "attribute"), field(n, "object", o), field(n, "attribute", at), text(at, a).

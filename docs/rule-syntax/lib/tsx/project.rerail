@@ -1,0 +1,12 @@
+// TypeScript's project configurations (decision 0710): ECMAScript's adapter reads them (`import_target::project`),
+// as the resolver reads them: get-tsconfig's `extends` chain, JSONC as TypeScript reads it. Each is a setting: a
+// source file's edit changes none of them.
+//
+// tsconfig("web", "base/src") for web/tsconfig.json whose chain sets "baseUrl": "src" in base/: the base from the
+// root, the configuration's folder where none is set. A folder's tsconfig.json is read over its jsconfig.json.
+.decl tsconfig(dir: symbol, base_url: symbol) keyed
+// tsconfig_for("web/src/a.ts", "web"): the nearest configuration in or above a document's folder.
+.decl tsconfig_for(path: symbol, dir: symbol) by_path 1
+// "paths": {"@/*": ["src/*"]} in web/tsconfig.json gives tsconfig_path("web", "@/*", "src/*"), one row per target.
+.decl tsconfig_path(dir: symbol, pattern: symbol, target: symbol) keyed
+.input tsconfig, tsconfig_for, tsconfig_path

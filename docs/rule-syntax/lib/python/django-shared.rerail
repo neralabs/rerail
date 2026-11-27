@@ -1,4 +1,4 @@
-// python/django-shared: what python/django and the phase py_names' Django section (decision 0677 fix 3) both read,
+// python/django-shared: what python/django and the phase dj_names (decisions 0677 fix 3, 0710) both read,
 // one definition for both: the classes outside the run that Django's rules take for models, which documents are test
 // code, and a queryset chain's manager and root. The phase includes neither python/names nor python/django.
 #include "python/scopes.rerail"  // attr_of, and python/syntax's unparen: the queryset helpers read them
