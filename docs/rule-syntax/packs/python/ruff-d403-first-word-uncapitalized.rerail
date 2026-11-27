@@ -10,9 +10,10 @@
 //   def f():
 //       """return the total."""     ← D403
 #include "python/docstrings.rerail"
+#include "python/pt1120-python-05.rerail"
 
 .violation D403(at: node) code "D403"
     "Capitalize the first word of this docstring, for example `Return the total.` instead of `return the total.`"
     suppress ruff "D403"
-D403(s) :- doc_of(f, s), kind(f, "function_definition"), doc_checked(s), doc_body(s, b),
+D403(s) :- doc_of(f, s), kind(f, "function_definition"), py05_doc(s), doc_checked(s), doc_body(s, b),
     match("\\s*[a-z][a-zA-Z']*[.!?]*(\\s[\\s\\S]*)?", b).

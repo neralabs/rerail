@@ -1,0 +1,26 @@
+[
+  {
+    "id": "ruff-d212-multi-line-summary-first-line",
+    "status": "same"
+  },
+  {
+    "id": "ruff-d300-triple-single-quotes",
+    "status": "same"
+  },
+  {
+    "id": "ruff-d403-first-word-uncapitalized",
+    "status": "same"
+  },
+  {
+    "id": "ruff-d406-missing-new-line-after-section-name",
+    "status": "same"
+  },
+  {
+    "id": "ruff-d418-overload-with-docstring",
+    "status": "same"
+  },
+  {
+    "id": "ruff-d419-empty-docstring",
+    "status": "same"
+  }
+]
