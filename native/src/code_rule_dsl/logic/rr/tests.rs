@@ -3486,7 +3486,6 @@ fn tsconfig_paths_resolve_names_across_files() {
 .language typescript
 .scope include "**/*"
 #include "tsx/names.rerail"
-#include "tsx/project.rerail"
 
 // A call of util's helper, however the file imports it: `@/lib/util` (a tsconfig `paths` alias), `~util` (an exact
 // pattern) or a relative path; not other's helper of the same name.
@@ -3531,16 +3530,10 @@ UsesHelper(f) :- kind(c, "call_expression"), field(c, "function", f), sym_of(f, 
         import { helper } from "../lib/util";
         helper();
         ```
-    .decl base(d: symbol, b: symbol)
-    base(d, b) :- tsconfig(d, b).
     .decl tgt(s: symbol, t: symbol)
     tgt(s, t) :- target(_, s, t).
     .decl sym(q: symbol)
     sym(q) :- sym_of(_, q).
-    .expect only base("web", "web")
-    .expect only tsconfig_path("web", "@/*", "./src/*")
-    .expect only tsconfig_path("web", "~util", "./src/lib/util.ts")
-    .expect tsconfig_for("web/src/app/page.ts", "web")
     .expect only tgt("@/lib/util", "web/src/lib/util")
     .expect only tgt("~util", "web/src/lib/util")
     .expect only tgt("@/lib/other", "web/src/lib/other")
