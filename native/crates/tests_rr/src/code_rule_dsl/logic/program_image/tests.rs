@@ -6,6 +6,7 @@ use super::{AtomId, Builder, CmpOp, Extents, Grouped, Image, Lit, R, RelId, Rule
 use crate::code_rule_dsl::logic::front::{AggOp, LatticeDecl, Native, Value, ast::Gate};
 use crate::code_rule_dsl::logic::program_facts::Field;
 use std::collections::{BTreeMap, BTreeSet};
+use crate::code_rule_dsl::logic::profile::on_cores;
 use std::sync::Arc;
 use crate::code_rule_dsl::logic::program_image::manager::VersionAnalyses as _;
 
@@ -83,7 +84,10 @@ fn pack_programs() -> Vec<(std::path::PathBuf, Arc<Version>)> {
     use rayon::prelude::*;
     let files: Vec<_> = pack_files().into_iter().step_by(7).collect();
     crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(&files);
-    files.into_par_iter().filter_map(|p| Some((p.clone(), crate::code_rule_dsl::logic::rr::parse_file_version(&p).ok()?))).collect()
+    // On the cores (`on_cores`), as every parallel loop of the engine: each item runs in this test's run, so it finds
+    // the graphs `keep_files` kept. On rayon's own pool each read another object, and derived its own graph by a run of
+    // its own; a dozen such runs at once never finished.
+    on_cores(|| files.into_par_iter().filter_map(|p| Some((p.clone(), crate::code_rule_dsl::logic::rr::parse_file_version(&p).ok()?))).collect())
 }
 
 /// Every part of a program reads back from its image as written, and so does every sampled pack program: its image,
@@ -97,11 +101,11 @@ fn a_program_reads_back_from_its_image() {
     assert!(back.show().contains("$j = join $y by ($k, $sep) sep \", \" : { ast($y, $k, $sep) }"), "{}", back.show());
     use rayon::prelude::*;
     let programs = pack_programs();
-    programs.par_iter().for_each(|(path, prog)| {
+    on_cores(|| programs.par_iter().for_each(|(path, prog)| {
         let back = Version::open(prog.fold().unwrap().base_bytes().unwrap()).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         same(&back, prog);
         handles_agree(&back, prog);
-    });
+    }));
     let n = programs.len();
     assert!(n > 50, "{n}");
 }
@@ -685,7 +689,7 @@ fn normalizable_on(b: &mut Builder<'_>) {
 fn the_planners_passes_over_a_version_hold() {
     use rayon::prelude::*;
     let programs = pack_programs();
-    programs.par_iter().for_each(|(_, prog)| passes_hold(prog));
+    on_cores(|| programs.par_iter().for_each(|(_, prog)| passes_hold(prog)));
     let n = programs.len();
     assert!(n > 50, "{n}");
     let p = {
@@ -961,7 +965,7 @@ fn fields_agree(v: &Arc<Version>) {
 fn a_versions_fields_say_what_its_readers_say() {
     use rayon::prelude::*;
     let programs = pack_programs();
-    programs.par_iter().for_each(|(_, prog)| fields_agree(prog));
+    on_cores(|| programs.par_iter().for_each(|(_, prog)| fields_agree(prog)));
     let n = programs.len();
     assert!(n > 50, "{n}");
     fields_agree(&every_part());
@@ -2214,3 +2218,4 @@ fn a_made_steps_request_record_is_carried_by_its_own_rules() {
     let now = pipe.current().unwrap().clone();
     assert_eq!(now.asked().get("q"), Some(&vec![by("r2"), by("r3")]), "q's readers by its rules after the made step");
 }
+
