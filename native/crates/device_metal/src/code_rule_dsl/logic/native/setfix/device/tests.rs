@@ -1177,16 +1177,20 @@ use rerail_blocks::vector::Vector;
                 assert!(report.as_ref().is_some_and(|r| r.made > 1000), "texts made on the device: {report:?}");
             }
             let counts = super::super::step_counts(&db, "dev_text").unwrap();
+            let ranged = super::super::step_ranged(&db, "dev_text").unwrap();
             super::super::close(&db, "dev_text").unwrap();
             let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
             rows.sort_unstable();
-            got.push((rows, counts));
+            got.push((rows, counts, ranged));
         }
         assert!(got[0].0.len() > 500, "{} rows", got[0].0.len());
         let longest: i64 = db.query_row("SELECT max(length(CAST(c0 AS BLOB))) FROM temp.n", [], |r| r.get(0)).unwrap();
         assert!(longest > 64, "a name past two chunks: {longest} bytes");
         assert_eq!(got[1].0, got[0].0, "the device's text tests are the CPU's");
-        assert_eq!(got[1].1, got[0].1, "the device's counts per step are the CPU's");
+        // The device's counts per step are the CPU's, but where the CPU read an atom as a range (`counts_agree`).
+        if let Err(e) = counts_agree(&got[1].1, &got[0].1, &got[1].2) {
+            panic!("the device's counts per step are the CPU's: {e}");
+        }
     }
 
     /// Decision 0478 R3: a text test on the device reads and keeps its verdicts in the store's one rolling cache, the
@@ -1789,6 +1793,7 @@ use rerail_blocks::vector::Vector;
                     }
                 }
                 let counts = super::super::step_counts(&db, "dev_fn").unwrap();
+                let ranged = super::super::step_ranged(&db, "dev_fn").unwrap();
                 super::super::close(&db, "dev_fn").unwrap();
                 let mut rows: Vec<(String, i64)> = db
                     .prepare("SELECT sym_text(c0), c1 FROM temp.h0")
@@ -1798,11 +1803,14 @@ use rerail_blocks::vector::Vector;
                     .map(Result::unwrap)
                     .collect();
                 rows.sort_unstable();
-                got.push((rows, counts));
+                got.push((rows, counts, ranged));
             }
             assert!(got[0].0.len() > 100, "{case}: {} rows", got[0].0.len());
             assert_eq!(got[1].0, got[0].0, "{case}: the device's text functions are the CPU's");
-            assert_eq!(got[1].1, got[0].1, "{case}: the device's counts per step are the CPU's");
+            // The device's counts per step are the CPU's, but where the CPU read an atom as a range (`counts_agree`).
+            if let Err(e) = counts_agree(&got[1].1, &got[0].1, &got[1].2) {
+                panic!("{case}: the device's counts per step are the CPU's: {e}");
+            }
         }
     }
 

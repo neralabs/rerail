@@ -170,7 +170,8 @@ pub mod wave {
                 }
                 for f in deferred {
                     runs += 1;
-                    let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+                    // The launch budget's panic ends the process here: no waiter takes it, and the exit may run unwinding.
+                    let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(rerail_accel::exec::abort_over_budget);
                     panicked |= done.is_err();
                     if !matches!(done, Ok(Ok(()))) {
                         super::prof::count("device wave (decision 0386)", "a job's unflushed submission failed at its end", 1);

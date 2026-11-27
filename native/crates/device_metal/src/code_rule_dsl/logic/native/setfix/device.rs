@@ -1706,8 +1706,10 @@ fn one_launch(rep: &Report) {
         let ok = one && rep.dispatches == launches && rep.reruns == 0 && u64::from(rep.relaunches) <= rep.taken / budget + rep.programs as u64;
         if crate::code_rule_dsl::logic::profile::var("RERAIL_ONE_LAUNCH_CHECK").is_ok_and(|v| v == "log") {
             eprintln!("ONE_LAUNCH {} programs {} reruns {} arena_reruns {} texts {} rounds {} gpu_seconds {:.6}", if ok { "ok" } else { "breach" }, rep.programs, rep.reruns, rep.arena_reruns, rep.made, rep.rounds, rep.gpu_seconds);
-        } else {
-            assert!(ok, "a stratum past one launch and its budget's relaunches (decisions 0603, 0674): {rep:?}");
+        } else if !ok {
+            // The launch budget's payload, which every catch of a job's or a submission's panic raises again or ends
+            // the process on (`exec::OverBudget`): a plain panic was made the stratum's error, and the run went on.
+            std::panic::panic_any(rerail_accel::exec::OverBudget(format!("a stratum past one launch and its budget's relaunches (decisions 0603, 0674): {rep:?}")));
         }
     }
     let _ = rep;
@@ -3222,6 +3224,8 @@ fn encode_place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], stor
     let bounds = head_bounds(&rules[..runs.len()], store);
     let mut pre = PrePlaced { heads: Vector::new(), pending: Vec::new(), _hold: (Vec::new(), Vec::new()) };
     let mut made: Vec<(usize, mj::Table, Option<usize>, mj::Words, usize, bool)> = Vec::new();
+    // Whether a head's room is mapped as its rows reach it (`place_first`, `place_growth`).
+    let rooms = mj::rooms_mapped();
     for h in heads {
         let rel = &store.rels[h];
         let k = rel.k;
@@ -3230,11 +3234,15 @@ fn encode_place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], stor
             continue;
         }
         let guess: usize = from.iter().map(|&x| runs[x].uniq.as_ref().map_or(0, |u| u.cap)).sum();
-        // Its room: the rows it can reach, where they fit `PLACE_ROOM_BYTES`; else eight times the rows guessed (at least
-        // `PLACE_ROOM_MIN`), within it, the gate holding the rows to it.
+        // Its room: the rows it can reach, where they fit `PLACE_ROOM_BYTES`; else, where its room is mapped as its rows
+        // reach it, `PLACE_ROOM_BYTES` of rows (slots claimed, memory mapped as reached, the unwritten given back); else
+        // eight times the rows guessed (at least `PLACE_ROOM_MIN`), within it. The gate holds the rows to it: past it the
+        // program stops, and `place` places the head in a program of its own, a second launch (decision 0603). A guess
+        // is no bound: a node-text head guessed at 120 rows made 72,818, past `PLACE_ROOM_MIN`'s 65,536.
         let most = PLACE_ROOM_BYTES / (8 * k);
         let bound = match reaches.get(&h).copied() {
             Some(r) if r <= most => r,
+            _ if rooms.is_some() => most,
             _ => guess.saturating_mul(8).max(PLACE_ROOM_MIN).min(most),
         }
         .max(1);
@@ -3311,7 +3319,6 @@ fn encode_place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], stor
     }
     // Each head's room reserved: its bound, or where a mapped page is real memory (`mj::rooms_mapped`), its first room
     // (`place_first`), mapped further as its rows reach it.
-    let rooms = mj::rooms_mapped();
     let mut placed = Vec::new();
     for (h, rows, slot, words, bound, sorted) in made {
         let k = store.rels[h].k;
@@ -4886,8 +4893,6 @@ fn counted(r: &Run<'_>, plan: &Plan, j: &JoinRule, rep: &mut Report) -> Vec<(usi
         let c = &j.counts[0][0];
         c.set(c.get() + 1);
     }
-    // Each step's rows out, as the stages counted them.
-    let mut outs: Vec<Option<u64>> = vec![None; j.counts.len()];
     for (k, s) in plan.stages.iter().enumerate() {
         let (i, o) = r.io[k];
         let n_in = get(i);
@@ -4904,7 +4909,12 @@ fn counted(r: &Run<'_>, plan: &Plan, j: &JoinRule, rep: &mut Report) -> Vec<(usi
             _ => rerail_blocks::vector![n_out],
         };
         for (m, v) in vals.into_iter().enumerate() {
-            outs[s.first + m] = Some(v);
+            let at = s.first + m;
+            let c = &j.counts[at][1];
+            c.set(c.get() + v);
+            if let Some(next) = j.counts.get(at + 1) {
+                next[0].set(next[0].get() + v);
+            }
         }
         // The growth seen, for the next runs' guesses.
         if i != o && r.caps[i] > 0 {
@@ -4913,46 +4923,7 @@ fn counted(r: &Run<'_>, plan: &Plan, j: &JoinRule, rep: &mut Report) -> Vec<(usi
             grew.push((k, g));
         }
     }
-    as_ranged(j, &mut outs);
-    for (at, v) in outs.into_iter().enumerate() {
-        let Some(v) = v else { continue };
-        let c = &j.counts[at][1];
-        c.set(c.get() + v);
-        if let Some(next) = j.counts.get(at + 1) {
-            next[0].set(next[0].get() + v);
-        }
-    }
     grew
-}
-
-/// Each step's rows out (`outs`) as the CPU's walk counts them where it reads an atom as a range (`JoinRule::ranges`,
-/// `Found::within`): the comparisons right after the atom that bound its range's column (`Lt`, or a `DocOf` for a
-/// document's nodes) narrow the atom's candidates there, so the atom yields the rows they pass and they pass every
-/// row. The device reads the atom whole and filters after it; the rows are the same, the counts the CPU's.
-fn as_ranged(j: &JoinRule, outs: &mut [Option<u64>]) {
-    for (i, r) in j.ranges.iter().enumerate() {
-        let (Some(r), Some(Step::Atom { binds, .. })) = (r, j.steps.get(i)) else { continue };
-        let on_col = |k: &Key| matches!(*k, Key::Slot(x) if binds.iter().any(|&(c, s)| c == r.col && s == x));
-        let mut last = i;
-        while let Some(st) = j.steps.get(last + 1) {
-            let bounds = match st {
-                Step::Lt { a, b, .. } => !r.doc && (on_col(a) || on_col(b)),
-                Step::DocOf { n, bind: false, .. } => r.doc && on_col(n),
-                _ => false,
-            };
-            if !bounds {
-                break;
-            }
-            last += 1;
-        }
-        if let (true, Some(v)) = (last > i, outs.get(last).copied().flatten()) {
-            for out in &mut outs[i..last] {
-                if out.is_some() {
-                    *out = Some(v);
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]
