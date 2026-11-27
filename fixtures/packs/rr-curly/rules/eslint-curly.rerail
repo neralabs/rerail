@@ -4,10 +4,7 @@
 .mode steer
 .scope include "**/*"
 #include "tsx/statements.rerail"
-// A fixture rule (fixtures/packs/README.md): the translation of ESLint's curly, with the options it reads declared,
-// so a repository's settings, a pack's config and an ESLint config give them values.
-.options {"option": {"type": "string", "enum": ["all", "multi", "multi-line", "multi-or-nest"], "default": "all", "description": "Which bodies need braces: every one (all), only those that cannot do without (multi), those that span lines (multi-line), or those whose statement spans lines or follows a comment (multi-or-nest)."}, "option2": {"type": "string", "enum": ["consistent"], "nullable": true, "default": null, "description": "consistent: the if and else bodies of one chain all have braces, or none do."}}
-
+// A fixture rule (fixtures/packs/README.md): the translation of ESLint's curly as written, and a test.
 // ESLint's curly. `option` says which bodies of if, else, while, do and for need braces:
 //   "all" (the default)  every body             if (a) b();       → Expected { after 'if' condition.
 //   "multi"              only where needed      if (a) { b(); }   → Unnecessary { after 'if' condition.

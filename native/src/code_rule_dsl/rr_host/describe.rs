@@ -25,7 +25,7 @@ fn described(path: &Path) -> Result<Value, String> {
         "codes": codes(&program, &header.id).map_err(|e| format!("{}: {e}", path.display()))?,
         "tests": tests(path)?,
         "violations": violations(&program, &header.id),
-        "options": options(&program.settings).map_err(|e| format!("{}: {e}", path.display()))?,
+        "options": options(&program).map_err(|e| format!("{}: {e}", path.display()))?,
         "files": read_files(path, &files)?,
     }))
 }
@@ -78,21 +78,21 @@ fn fix_line(name: &str, line: &[(Tok<'_>, usize, usize)]) -> Option<Value> {
     (*v == name).then(|| json!(fix))
 }
 
-/// The options the policy's `.options` declare (one JSON object of declarations each), together, or `null` for none.
-/// A run's own settings (`run::RUN_SETTINGS`) share the object a run's option values come in, so no option takes the
-/// name of one.
-fn options(settings: &[(String, String)]) -> Result<Value, String> {
-    let mut declared = serde_json::Map::new();
-    for (_, text) in settings.iter().filter(|(key, _)| key == "options") {
-        let Value::Object(each) = serde_json::from_str::<Value>(text).map_err(|e| format!("`.options`: {e}"))? else {
-            return Err("`.options` is a JSON object of declarations".to_owned());
-        };
-        declared.extend(each);
+/// The options the policy takes: the names its rules, and those of the files it includes, read `option` or
+/// `option_item` by, sorted, each once. Nothing declares them: a rule says what an option left unset means
+/// (`!option("max", _)`). A run's own settings (`run::RUN_SETTINGS`) share the object a run's option values come in, so
+/// no option takes the name of one.
+fn options(program: &Program) -> Result<Vec<String>, String> {
+    let atoms = program.rules.iter().flat_map(|rule| rule.body.iter()).filter_map(|literal| literal.atom());
+    let read = atoms.filter(|atom| matches!(atom.rel.as_str(), "option" | "option_item")).filter_map(|atom| match atom.args.first() {
+        Some(Term::Str(name)) => Some(name.as_str().to_owned()),
+        _ => None,
+    });
+    let names: std::collections::BTreeSet<String> = read.collect();
+    if let Some(name) = names.iter().find(|name| super::run::RUN_SETTINGS.contains(&name.as_str())) {
+        return Err(format!("it reads an option named {name}, the name of a run's own setting; give the option another name"));
     }
-    if let Some(name) = declared.keys().find(|name| super::run::RUN_SETTINGS.contains(&name.as_str())) {
-        return Err(format!("`.options` declares {name}, the name of a run's own setting; give the option another name"));
-    }
-    Ok(if declared.is_empty() { Value::Null } else { Value::Object(declared) })
+    Ok(names.into_iter().collect())
 }
 
 /// The file read and checked as `check-rr` checks it (its reader, then its types): the error otherwise, naming the

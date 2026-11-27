@@ -379,8 +379,8 @@ export type RrDescription =
        * linter's comments that silence it: the tool and its rule names) and the fix relations its `fix` lines offer.
        */
       violations: { name: string; suppress: { tool: string; rules: string[] }[]; fixes: string[] }[];
-      /** The options its `.options` declares, as written (option name to declaration), or null when it declares none. */
-      options: Record<string, unknown> | null;
+      /** The options it takes: the names its rules read `option` and `option_item` by, sorted. Nothing declares them. */
+      options: string[];
       /** The rule file, then each file it includes: canonical path and the SHA-256 (hex) of its bytes. */
       files: { path: string; sha256: string }[];
     }
@@ -393,7 +393,7 @@ export interface RrRunRequest {
   out: string;
   /** Root-relative files the run reads alone; omitted: the whole corpus. */
   inputFiles?: string[];
-  /** Option values by policy (its absolute path, as in `policies`): a policy not named runs with its declared defaults. */
+  /** Option values by policy (its absolute path, as in `policies`): a policy not named runs with no option set. */
   options?: Record<string, Record<string, unknown>>;
 }
 

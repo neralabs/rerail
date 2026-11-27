@@ -1,8 +1,8 @@
 /**
- * A pack's rule written in `.rerail` that declares options, offers fixes and honours its tool's suppression comments
+ * A pack's rule written in `.rerail` that reads options, offers fixes and names its tool's suppression comments
  * (decision 0720), through the product's path: the fixture pack `fixtures/packs/rr-curly` ships the translation of
- * ESLint's curly. Its options are checked as a JSON rule's are and reach the run's `option` facts from a setting, a
- * pack's `config` or the repository's ESLint config; a finding's fix is the one a JSON rule's violation carries and a
+ * ESLint's curly. The options it takes are those its rules read, and their values reach the run's `option` facts from
+ * a setting, a pack's `config` or the repository's ESLint config; a finding's fix is the one a JSON rule's violation carries and a
  * steer shows; and its `suppress` lines make it a port of ESLint's curly, which check 2 lets it carry.
  */
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
@@ -59,14 +59,13 @@ function entry(config: RuleConfig | null): RerailRuleEntry {
 const SOURCE = "if (ready) { start(); }\nif (done) stop();\n";
 
 describe("a pack's .rerail rule with options, fixes and suppression comments", { timeout: CHILD_TIMEOUT }, () => {
-  it("is read with the options it declares and each violation's suppress and fix lines", () => {
+  it("is read with the options its rules read and each violation's suppress and fix lines", () => {
     const catalog = readRuleCatalog([PACK]);
     expect(catalog.skipped).toEqual([]);
     const document = catalog.documents.get(RULE);
     expect(document?.kind).toBe("rerail");
     if (document?.kind !== "rerail") return;
-    expect(Object.keys(document.rule.options)).toEqual(["option", "option2"]);
-    expect(document.rule.options.option).toMatchObject({ type: "string", default: "all" });
+    expect(document.rule.options).toEqual(["option", "option2"]);
     const suppress = [{ tool: "eslint", rules: ["curly"] }, { tool: "oxlint", rules: ["curly"] }, { tool: "biome", rules: ["lint/style/useBlockStatements"] }];
     expect(document.rule.violations).toEqual([
       { name: "MISSING_BRACES", suppress, fixes: ["add_braces"] },
@@ -74,12 +73,14 @@ describe("a pack's .rerail rule with options, fixes and suppression comments", {
     ]);
   });
 
-  it("takes option values its .options allows, from a setting, a pack's config or ESLint's config, and refuses others", () => {
+  it("takes values for the options it reads, from a setting, a pack's config or ESLint's config, and refuses any other name", () => {
     const catalog = readRuleCatalog([PACK]);
     expect(configureBundledCodeRule(catalog, RULE, { option: "multi", option2: "consistent" })).toMatchObject({ ok: true });
-    expect(configureBundledCodeRule(catalog, RULE, { option: "sometimes" })).toEqual({ ok: false, reason: "config.option: is not one of the option's enum values" });
-    expect(configureBundledCodeRule(catalog, RULE, { ceiling: 3 })).toEqual({ ok: false, reason: "config.ceiling: `ceiling` is not an option this rule declares" });
-    expect(configureBundledCodeRule(catalog, RULE, { toString: true })).toEqual({ ok: false, reason: "config.toString: `toString` is not an option this rule declares" });
+    expect(configureBundledCodeRule(catalog, RULE, { ceiling: 3 })).toEqual({ ok: false, reason: "config.ceiling: `ceiling` is not an option this rule reads" });
+    expect(configureBundledCodeRule(catalog, RULE, { toString: true })).toEqual({ ok: false, reason: "config.toString: `toString` is not an option this rule reads" });
+    // The rule states no allowed values, so a value it does not expect is accepted: the rule decides what it means.
+    expect(configureBundledCodeRule(catalog, RULE, { option: "sometimes" })).toMatchObject({ ok: true });
+    expect(configureBundledCodeRule(catalog, RULE, { option: Number.MAX_SAFE_INTEGER + 2 })).toEqual({ ok: false, reason: "config.option: must be text, a number, true, false or null, or a list of them" });
     const declared = { kind: "repository", path: "packs/rr-curly", config: { option: "multi" } } as const;
     expect(declaredPackRuleConfigs(catalog, declared, "rr-curly", ".rerail/packs.json")).toEqual([{ ruleId: RULE, config: { option: "multi" } }]);
     // ESLint's options for curly map onto the port's, through the names its `suppress eslint "curly"` line honours.
@@ -95,7 +96,7 @@ describe("a pack's .rerail rule with options, fixes and suppression comments", {
       expect(outcome.failures).toEqual([]);
       return rrViolations(outcome.findings, [entry(config)], () => true);
     };
-    // "all", the default: the unbraced body is reported, and the fix wraps it in braces.
+    // No option set, which the rule reads as "all": the unbraced body is reported, and the fix wraps it in braces.
     const all = await run(null);
     expect(all.map(({ code, path, span }) => [code, path, span?.startLine])).toEqual([["curly", "src/a.ts", 1]]);
     const body = SOURCE.indexOf("stop();");

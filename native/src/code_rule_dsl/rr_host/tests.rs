@@ -79,7 +79,7 @@ fn describe_reads_what_a_rule_states_and_names_why_a_file_is_refused() {
     assert_eq!([&row["id"], &row["revision"], &row["description"], &row["mode"], &row["language"]], [&json!("rr-host-shout"), &json!(2), &json!("Calls of shout()."), &json!("log"), &json!("python")]);
     assert_eq!(row["scope"], json!({"include": ["**/*.py"], "exclude": ["vendor/**"], "text": [], "toolCalls": false}));
     let violations = json!([{"name": "Shout", "suppress": [{"tool": "ruff", "rules": ["T201"]}], "fixes": []}]);
-    assert_eq!([&row["codes"], &row["tests"], &row["violations"], &row["options"]], [&json!(["Shout"]), &json!(1), &violations, &Value::Null]);
+    assert_eq!([&row["codes"], &row["tests"], &row["violations"], &row["options"]], [&json!(["Shout"]), &json!(1), &violations, &json!([])]);
     let files: Vec<&str> = row["files"].as_array().unwrap().iter().map(|file| file["path"].as_str().unwrap()).collect();
     assert!(files[0].ends_with("shout.rerail") && files.iter().any(|file| file.ends_with("lib/calls.rerail")), "{files:?}");
     let bad = rows[1]["error"].as_str().unwrap();
@@ -147,20 +147,19 @@ fn a_finding_at_a_line_spans_its_text_and_one_at_the_file_its_start() {
     assert!(file.span(None, 3).is_none());
 }
 
-/// Calls of shout(), named as the `loud` option says, with two fixes: one whose rule never holds, and one of two
-/// edits, the call's function and its arguments.
+/// Calls of shout(), named as the `loud` option says (unset: quietly), with two fixes: one whose rule never holds, and
+/// one of two edits, the call's function and its arguments.
 const QUIETEN: &str = ".policy \"rr-host-quieten\" revision 1
 .language python
 .mode log
 .scope include \"**/*.py\"
-.options {\"loud\": {\"type\": \"boolean\", \"default\": false}}
 
 #include \"lib/calls.rerail\"
 
 .violation Shout(at: node, name: symbol) \"{name}() is called here\"
     fix never \"Never offered\"
     fix quiet \"Call a quiet function instead\"
-Shout(c, \"shout\") :- shout_call(c), option(\"loud\", \"false\").
+Shout(c, \"shout\") :- shout_call(c), !option(\"loud\", \"true\").
 Shout(c, \"SHOUT\") :- shout_call(c), option(\"loud\", \"true\").
 never(c, _) :- text(c, \"never\") => replace(c, `never()`).
 quiet(c, n) :- field(c, \"function\", f), field(c, \"arguments\", a) => replace(f, `quiet_$n`), replace(a, `($a, loud=False)`).
@@ -177,17 +176,17 @@ fn run_with(root: &Path, policies: &[PathBuf], options: Value) -> Value {
     serde_json::from_str(&result).unwrap()
 }
 
-/// Decision 0720: a policy's options are its own in a run of several (its declared defaults and given values, each
-/// set of options a run of its own), and a finding carries the first of its fixes whose every edit applies, as one
-/// replacement with each placeholder filled.
+/// Decision 0720: a policy's option values are its own in a run of several (each set of values a run of its own), the
+/// options it takes are the names it reads, and a finding carries the first of its fixes whose every edit applies, as
+/// one replacement with each placeholder filled.
 #[test]
 fn a_policy_runs_with_its_own_options_and_its_findings_carry_their_fixes() {
     let text = "x = 1\nshout(1)\n";
     let root = folder("rr-host-fixes", &[("a.py", text)]);
-    // The same rule under another id, whose `loud` is true by default: run beside the first, it keeps its own default.
-    let louden = QUIETEN.replace("rr-host-quieten", "rr-host-louden").replace("\"default\": false", "\"default\": true");
-    let rules = folder("rr-host-fixes-rules", &[("lib/calls.rerail", CALLS), ("quieten.rerail", QUIETEN), ("louden.rerail", &louden), ("shout.rerail", SHOUT)]);
-    let policies = [rules.join("quieten.rerail"), rules.join("louden.rerail"), rules.join("shout.rerail")];
+    // The same rule under another id, given no value in either run: it reads the option unset beside one given a value.
+    let unset = QUIETEN.replace("rr-host-quieten", "rr-host-unset");
+    let rules = folder("rr-host-fixes-rules", &[("lib/calls.rerail", CALLS), ("quieten.rerail", QUIETEN), ("unset.rerail", &unset), ("shout.rerail", SHOUT)]);
+    let policies = [rules.join("quieten.rerail"), rules.join("unset.rerail"), rules.join("shout.rerail")];
     let quiet = run_with(&root, &policies, json!({}));
     let mut values = serde_json::Map::new();
     values.insert(rules.join("quieten.rerail").display().to_string(), json!({"loud": true}));
@@ -198,13 +197,13 @@ fn a_policy_runs_with_its_own_options_and_its_findings_carry_their_fixes() {
     let at = byte_offset(text, "shout(");
     let span = json!({"startByte": at, "endByte": at + "shout(1)".len(), "startLine": 1, "startColumn": 0, "endLine": 1, "endColumn": "shout(1)".len()});
     assert_eq!(finding(&quiet, "rr-host-quieten")["fix"], json!({"span": span, "text": "quiet_shout((1), loud=False)"}), "{quiet:#}");
-    assert_eq!(finding(&quiet, "rr-host-louden")["message"], "SHOUT() is called here", "{quiet:#}");
+    assert_eq!(finding(&loud, "rr-host-unset")["message"], "shout() is called here", "{loud:#}");
     assert_eq!(finding(&loud, "rr-host-quieten")["message"], "SHOUT() is called here", "{loud:#}");
     assert_eq!(finding(&loud, "rr-host-quieten")["fix"]["text"], "quiet_SHOUT((1), loud=False)", "{loud:#}");
     // The other policy, run beside it with no values of its own, offers no fix and finds as it did.
     assert_eq!(finding(&loud, "rr-host-shout")["fix"], Value::Null);
     let fixes = json!([{"name": "Shout", "suppress": [], "fixes": ["never", "quiet"]}]);
-    assert_eq!([&describe[0]["violations"], &describe[0]["options"]], [&fixes, &json!({"loud": {"type": "boolean", "default": false}})]);
+    assert_eq!([&describe[0]["violations"], &describe[0]["options"]], [&fixes, &json!(["loud"])]);
 }
 
 /// Calls of shout() with three fixes, the first two not offered: two edits that overlap (the call, and its function
@@ -243,9 +242,9 @@ fn a_finding_offers_no_fix_whose_edits_overlap_or_are_not_run() {
 /// An option takes no name the run's own settings have: the run reads its values from the same object.
 #[test]
 fn describe_refuses_an_option_named_as_a_run_setting() {
-    let rule = QUIETEN.replace("\"loud\": {", "\"dialect\": {");
+    let rule = QUIETEN.replace("\"loud\"", "\"dialect\"");
     let root = folder("rr-host-describe-options", &[("lib/calls.rerail", CALLS), ("q.rerail", &rule)]);
     let rows = describe::describe(&[root.join("q.rerail")]);
     let _ = std::fs::remove_dir_all(&root);
-    assert!(rows[0]["error"].as_str().is_some_and(|error| error.contains("`.options` declares dialect, the name of a run's own setting")), "{:#}", rows[0]);
+    assert!(rows[0]["error"].as_str().is_some_and(|error| error.contains("it reads an option named dialect, the name of a run's own setting")), "{:#}", rows[0]);
 }

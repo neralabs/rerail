@@ -3,13 +3,10 @@
 //! failure of its own and the others run without it.
 //!
 //! A run's options are its policies' option values (`facts::repository::options`, the `option` facts), beside the
-//! run's own settings (`RUN_SETTINGS`). The request gives each policy its values (decision 0720), over the defaults
-//! its `.options` declare: the policies that run with the same options run together, in a run of their own.
+//! run's own settings (`RUN_SETTINGS`). The request gives each policy its values (decision 0720): the policies given
+//! the same values run together, in a run of their own.
 
 use super::findings;
-use crate::code_rule_dsl::facts::repository::with_declared;
-use crate::code_rule_dsl::logic::rr;
-use rerail_rr_syntax::syntax::Item;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -70,36 +67,21 @@ fn run_groups(request: &Request) -> Result<Outcome, String> {
     Ok(outcome)
 }
 
-/// The request's policies, each group those that run with the same options (`run_with`); in the order of `policies`.
+/// The request's policies, each group those given the same option values (none: no option is set), in the order of
+/// `policies`. Policies run together read one set of `option` facts, so only those given the same values share a run.
 fn groups(request: &Request) -> Vec<(Map<String, Value>, Vec<PathBuf>)> {
     let mut groups: Vec<(Map<String, Value>, Vec<PathBuf>)> = Vec::new();
     for policy in &request.policies {
-        let options = run_with(request, policy);
-        match groups.iter_mut().find(|(other, _)| *other == options) {
+        let values = request.options.get(policy).cloned().unwrap_or_default();
+        match groups.iter_mut().find(|(other, _)| *other == values) {
             Some((_, members)) => members.push(policy.clone()),
-            None => groups.push((options, vec![policy.clone()])),
+            None => groups.push((values, vec![policy.clone()])),
         }
     }
     groups
 }
 
-/// The options `policy` runs with: the defaults its own `.options` declare, then the values the request gives it.
-/// Policies run together read one set of `option` facts, so only those with the same options share a run: a policy
-/// that declares none and is given none runs with every other such policy.
-fn run_with(request: &Request, policy: &Path) -> Map<String, Value> {
-    let declared: Vec<(String, String)> = rr::read(policy).map(|(statements, _)| statements).unwrap_or_default().into_iter().filter_map(|(item, _)| match item {
-        Item::Setting { key, text } if key == "options" => Some((key, text)),
-        _ => None,
-    }).collect();
-    let mut options = match with_declared(&declared, &Value::Null) {
-        Value::Object(defaults) => defaults,
-        _ => Map::new(),
-    };
-    options.extend(request.options.get(policy).cloned().unwrap_or_default());
-    options
-}
-
-/// The options of a run of one group: the group's options, and the request's files to read.
+/// The options of a run of one group: the group's option values, and the request's files to read.
 fn run_options(request: &Request, mut options: Map<String, Value>) -> Value {
     if let Some(files) = &request.input_files {
         options.insert("inputFiles".to_owned(), json!(files));

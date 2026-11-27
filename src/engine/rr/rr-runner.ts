@@ -20,7 +20,7 @@ export interface RrRun {
   policies: string[];
   /** Root-relative files the run reads alone; omitted: the whole checkout. */
   inputFiles?: string[];
-  /** Option values by policy (as in `policies`); a policy not named runs with the defaults its `.options` declares. */
+  /** Option values by policy (as in `policies`); a policy not named runs with no option set. */
   options?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
   /** This run's deadline, in place of the default; `RERAIL_RR_DEADLINE_MS`, when set, still wins (`rrBudgets`). */
   deadlineMs?: number;

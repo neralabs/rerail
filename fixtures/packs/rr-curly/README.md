@@ -1,8 +1,8 @@
 # rr-curly
 
 A fixture pack whose one rule, `eslint-curly`, is a copy of `docs/rule-syntax/packs/javascript/eslint-curly.rerail` as
-the rule translations write it: the translation of ESLint's `curly` rule, written in `.rerail`. To it the copy adds an
-`.options` line declaring the options the rule reads and a `.test` block. The rule offers a fix on each finding
+the rule translations write it: the translation of ESLint's `curly` rule, written in `.rerail`. To it the copy adds only
+a `.test` block. The rule reads two options (`option`, `option2`), offers a fix on each finding
 (`fix add_braces`, `fix drop_braces`) and names ESLint's, Oxlint's and Biome's suppression comments (`suppress eslint
 "curly"`, …). It includes the pack's own library file, `rules/tsx/statements.rerail`, a copy of the translations'
 library of that name.

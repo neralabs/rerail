@@ -802,21 +802,16 @@ describe("validatePack", () => {
         editRule(ASSERT, text => text.replace('runs with -O."\n', 'runs with -O."\n    suppress nosec "B101"\n')),
         {
           proof: ["rr-sample-assert: a violation sets suppress, and the rule ports no tool: give it a port entry in conformance.json, or drop the suppress lines"],
-          package: ["package.json: rerail.core is not set to a release version, and Rerail runs the options, fixes and linters' comments of rr-sample-assert from 0.2.3; set rerail.core to 0.2.3 or later"],
+          package: ["package.json: rerail.core is not set to a release version, and Rerail runs the fixes and linters' comments of rr-sample-assert from 0.2.3; set rerail.core to 0.2.3 or later"],
         },
       ],
       [
-        "a rule that declares options, in a pack that states an older core",
+        "a rule that offers a fix, in a pack that states an older core",
         directory => {
-          editRule(ASSERT, text => text.replace(".mode steer\n", '.mode steer\n.options {"strict": {"type": "boolean", "default": false}}\n'))(directory);
+          editRule(ASSERT, text => text.replace('runs with -O."\n', 'runs with -O."\n    fix use_raise "Raise instead"\n').replace('.test ', 'use_raise(a) => replace(a, `raise AssertionError()`).\n\n.test '))(directory);
           editJson(join(directory, "package.json"), manifest => ({ ...manifest, rerail: { core: "0.2.1" } }));
         },
-        { package: ["package.json: rerail.core is 0.2.1, and Rerail runs the options, fixes and linters' comments of rr-sample-assert from 0.2.3; set rerail.core to 0.2.3 or later"] },
-      ],
-      [
-        "a rule whose .options does not read as a define's",
-        editRule(ASSERT, text => text.replace(".mode steer\n", '.mode steer\n.options {"strict": {"type": "boolean"}}\n')),
-        { rules: ["rr-sample-assert: rules/rr-sample-assert.rerail cannot ship in a pack yet: its .options.strict.default: is required"] },
+        { package: ["package.json: rerail.core is 0.2.1, and Rerail runs the fixes and linters' comments of rr-sample-assert from 0.2.3; set rerail.core to 0.2.3 or later"] },
       ],
       [
         "a package.json whose rerail.core is no release version",

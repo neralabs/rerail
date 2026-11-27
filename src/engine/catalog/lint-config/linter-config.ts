@@ -48,14 +48,15 @@ export interface LinterNote {
 /** The kinds of a violation's `suppress` (`codeRuleSuppressSchema`), each naming one linter's rules. */
 export type SuppressKind = "eslint" | "noqa" | "nosec" | "oxlint" | "biome" | "phpstan" | "psalm" | "phpcs" | "clippy" | "sqlfluff";
 
-export type Declared = Readonly<Record<string, CodeRuleDslOptionDeclaration>>;
+/** The options a port takes, by name: a JSON rule's declaration of each; null for one a `.rerail` rule reads, which declares none. */
+export type Declared = Readonly<Record<string, CodeRuleDslOptionDeclaration | null>>;
 
 /** A port of a pack being set up: the upstream names it honours suppression comments for, per kind, over every clause. */
 export interface Port {
   readonly ruleId: string;
   /** Per suppress kind, its names in document order, each once; empty for a kind the document does not name. */
   readonly suppress: { readonly [K in SuppressKind]: readonly string[] };
-  /** The options its `define` clauses declare. */
+  /** The options it takes: those its `define` clauses declare, or those its `.rerail` rules read. */
   readonly declared: Declared;
   /** Whether the rule is on when its pack is added (`pack.json` `on`). */
   readonly startsOn: boolean;
@@ -238,12 +239,13 @@ function portOf(rule: RulePackRule, document: CodeRuleDslDocument): Port {
   return portWith(rule, names, declaredOptions(document), scope);
 }
 
-/** Pack rule `rule`, written in `.rerail`, as a port: its violations' `suppress` lines and its `.options`. A scope with no include takes any file. */
+/** Pack rule `rule`, written in `.rerail`, as a port: its violations' `suppress` lines and the options it reads. A scope with no include takes any file. */
 function rerailPortOf(rule: RulePackRule, document: RerailRule): Port {
   const lines = document.violations.flatMap(violation => violation.suppress);
   const names = (kind: SuppressKind): string[] => [...new Set(lines.filter(line => RERAIL_SUPPRESS_KEYS[line.tool] === kind).flatMap(line => line.rules))];
   const include = document.scope.include.length === 0 ? ["**/*"] : document.scope.include;
-  return portWith(rule, names, document.options, { include, exclude: document.scope.exclude });
+  const declared = Object.fromEntries(document.options.map(name => [name, null]));
+  return portWith(rule, names, declared, { include, exclude: document.scope.exclude });
 }
 
 /** The code rules of packs `packIds` as ports, each once; a conversation rule is no port. */

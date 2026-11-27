@@ -474,7 +474,7 @@ class ConfigurationResolver {
   /**
    * The option values settings give a code rule by Rerail, per option: the nearest owner's setting for the rule over
    * the whole repository (folder `""`) that sets the option. A library rule takes none. A rule written in `.rerail`
-   * takes those its `.options` declares (`configureBundledCodeRule` checks them).
+   * takes those its rules read (`configureBundledCodeRule` checks the names).
    */
   #config(presence: Presence): { config: RuleConfig | null; deciders: Record<string, Decider> } {
     if (presence.document.kind === "conversation" || presence.source.kind === "library_rule") return { config: null, deciders: {} };

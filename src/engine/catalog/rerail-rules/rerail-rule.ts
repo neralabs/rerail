@@ -1,12 +1,10 @@
 /**
  * A pack rule written in `.rerail` (docs/pack-format.md, "Rules written in .rerail"): the file is the rule. The engine
  * reads it with every file it includes and states what it says (`describeRerailRules`): its id and revision, mode,
- * description, language, scope, violation codes, the options its `.options` declares and each violation's `suppress`
- * and `fix` lines, none of which `pack.json` restates. Such a rule runs through the `.rerail` runner (`src/engine/rr/`),
- * never through the JSON engine; a repository's values for its options reach the run as `option` facts (decision 0720).
+ * description, language, scope, violation codes, the options its rules read and each violation's `suppress` and `fix`
+ * lines, none of which `pack.json` restates. Such a rule runs through the `.rerail` runner (`src/engine/rr/`), never
+ * through the JSON engine; a repository's values for its options reach the run as `option` facts (decision 0720).
  */
-import { codeRuleOptionDeclarations, CodeRuleOptionError } from "../../code-rule/code-rule-options.js";
-import type { CodeRuleDslOptionDeclaration } from "../../code-rule/code-rule.js";
 import { describeRerailPoliciesSync, type RrDescription } from "../../rr/rr-runner.js";
 import type { RuleMode } from "../rule-mode.js";
 
@@ -59,8 +57,11 @@ export interface RerailRule {
   readonly scope: RerailScope;
   /** The violation codes the file's own `.violation`s report. */
   readonly codes: readonly string[];
-  /** The options the file's `.options` declares, by name, as a JSON rule's define declares its own. */
-  readonly options: Readonly<Record<string, CodeRuleDslOptionDeclaration>>;
+  /**
+   * The options the rule takes: the names its rules, and those of the files it includes, read `option` and
+   * `option_item` by. Nothing declares them; the rule says what an option left unset means.
+   */
+  readonly options: readonly string[];
   /** The file's `.violation`s and those of the files it includes. */
   readonly violations: readonly RerailViolation[];
   /** The file's text. */
@@ -82,31 +83,14 @@ export type RerailDescriber = (paths: readonly string[]) => readonly RrDescripti
 /** Every path described by the engine, in a child process that runs nothing (`describeRerailPoliciesSync`). */
 export const describeRerailRules: RerailDescriber = paths => (paths.length === 0 ? [] : describeRerailPoliciesSync([...paths]));
 
-/** The options `described` declares, checked as a define's are; throws a `CodeRuleOptionError` for one that is not. */
-function declaredOptions(described: RerailDescription): Record<string, CodeRuleDslOptionDeclaration> {
-  return Object.fromEntries(codeRuleOptionDeclarations(described.options ?? {}));
-}
-
-/** Why the `.options` of `described` cannot be read, or undefined. */
-function optionsProblem(described: RerailDescription): string | undefined {
-  try {
-    declaredOptions(described);
-    return undefined;
-  } catch (error) {
-    if (!(error instanceof CodeRuleOptionError)) throw error;
-    return `its ${[".options", ...error.path.slice(1)].join(".")}: ${error.message}`;
-  }
-}
-
 /**
  * Why a `.rerail` rule cannot be one of a pack's rules yet, or undefined: what a finding of it carries or where it
- * reads must be something the product runs, and its options must read as a define's do. `entryMode` is the mode
- * `pack.json` starts it in, when it names one.
+ * reads must be something the product runs. `entryMode` is the mode `pack.json` starts it in, when it names one.
  */
 export function unsupportedRerailRule(described: RerailDescription, entryMode: RuleMode | undefined): string | undefined {
   if (described.mode === "block" || entryMode === "block") return "block mode is not supported yet for a .rerail rule; use steer or log";
   if (described.scope.toolCalls) return "a .rerail rule that reads tool calls (.scope tool_calls) is not supported yet in a pack";
-  return optionsProblem(described);
+  return undefined;
 }
 
 /** The rule `described` states, read from `source`, the text of the file at `described.path`. */
@@ -119,7 +103,7 @@ export function rerailRuleOf(described: RerailDescription, source: string): Rera
     language: described.language,
     scope: { include: described.scope.include, exclude: described.scope.exclude, text: described.scope.text },
     codes: described.codes,
-    options: declaredOptions(described),
+    options: described.options,
     violations: described.violations,
     source,
     path: described.path,

@@ -337,7 +337,7 @@ export interface RerailRuleEntry {
    * them first, since the runner reads the files from disk.
    */
   readonly files: readonly { readonly path: string; readonly sha256: string }[];
-  /** The repository's values for the options its `.options` declares (a rule setting's `config`); null: its defaults. */
+  /** The repository's values for the options it reads (a rule setting's `config`); null: none is set. */
   readonly config: RuleConfig | null;
   readonly placement: CodeRulePlacement;
   readonly provenance: RepositoryAuditRuleProvenance;

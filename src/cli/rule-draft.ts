@@ -984,23 +984,13 @@ function rerailRuleShown(database: RerailDatabase, ruleCatalog: RuleCatalog, bun
   return { draft: runningDocument(running, bundled), notes: [rerailRuleNote(id, name, presences)] };
 }
 
-/** What `rules show` says of the options a `.rerail` rule declares: each with its default, or nothing for none. */
-function rerailOptionsNote(rule: RerailRule): string[] {
-  const options = Object.entries(rule.options).map(([name, declaration]) => `${name} (default ${JSON.stringify(declaration.default)})`);
-  if (options.length === 0) return [];
-  return [`It takes the options its .options declares: ${options.join(", ")}. A setting's config, a pack's config in .rerail/packs.json or the repository's linter config gives them values.`];
-}
-
 /** A pack's rule written in `.rerail`, shown as its file's text: `rules add` cannot store a copy of one yet. */
 function rerailFileShown(rule: RerailRule, ruleCatalog: RuleCatalog): ShownRule {
   const packId = ruleCatalog.packOf.get(rule.id);
   const pack = packId === undefined ? undefined : ruleCatalog.packs.get(packId);
   return {
     source: rule.source,
-    notes: [
-      `${rule.id} is written in .rerail and ships in the rule pack ${pack?.name ?? packId}. Rules created by you are JSON, so rules add cannot store a copy of it yet; turn it on or off, or change its mode, in the dashboard.`,
-      ...rerailOptionsNote(rule),
-    ],
+    notes: [`${rule.id} is written in .rerail and ships in the rule pack ${pack?.name ?? packId}. Rules created by you are JSON, so rules add cannot store a copy of it yet; turn it on or off, or change its mode, in the dashboard.`],
   };
 }
 

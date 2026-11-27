@@ -322,10 +322,10 @@ export function rerailRules(packJson) {
 }
 
 /**
- * The first core release that runs what a pack's `.rerail` rule declares beyond its findings (decision 0720): the
- * options its `.options` declares, the fixes its `fix` lines offer and the suppression comments its `suppress` lines
- * honour. An older core refuses such a rule (a fix), or runs it without them, so a pack whose rules use them states
- * this release or a later one as the core it needs (`statedCore`); the pack validation's check 5 holds it to that.
+ * The first core release that runs what a pack's `.rerail` rule states beyond its findings (decision 0720): the fixes
+ * its `fix` lines offer and the suppression comments its `suppress` lines name. An older core refuses such a rule (a
+ * fix), or runs it without them, so a pack whose rules use them states this release or a later one as the core it
+ * needs (`statedCore`); the pack validation's check 5 holds it to that.
  */
 export const RERAIL_RULE_FEATURES_SINCE = "0.2.3";
 

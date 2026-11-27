@@ -132,7 +132,7 @@ describe("describeRerailPolicies", () => {
       codes: ["Shout"],
       tests: 1,
       violations: [{ name: "Shout", suppress: [{ tool: "ruff", rules: ["T201"] }], fixes: [] }],
-      options: null,
+      options: [],
       // The rule file first, then what it reads, as the engine read it: `core.rerail`, then its own library file.
       files: [
         { path: rule, sha256: sha256(SHOUT) },

@@ -55,10 +55,10 @@ function undeclaredOption(rules: ReadonlyArray<{ declared: ReadonlySet<string> }
   return new PacksFileError(`${label} sets config.${option} for ${name}, which no rule of that pack declares (${declared})`);
 }
 
-/** The names of the options rule `id` declares: a `.rerail` rule's `.options`, a JSON document's defines. */
+/** The names of the options rule `id` takes: those a `.rerail` rule reads, those a JSON document's defines declare. */
 function declaredOptions(catalog: RuleCatalog, id: string): ReadonlySet<string> {
   const document = catalog.documents.get(id);
-  if (document?.kind === "rerail") return new Set(Object.keys(document.rule.options));
+  if (document?.kind === "rerail") return new Set(document.rule.options);
   const source = catalog.sources.get(id);
   return source === undefined ? new Set<string>() : codeRuleDeclaredOptions(source);
 }

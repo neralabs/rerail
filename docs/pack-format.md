@@ -102,8 +102,8 @@ packs/<id>/
   reason raises the range too; the pack validation reads only the maps.
 - **`rerail.core`** (optional, `{ "rerail": { "core": "0.2.3" } }`): the first core release whose engine runs the
   pack's rules written in `.rerail` as they are written, when that is later than the release that first reads one. A
-  rule that reads a library relation or an engine feature newer than that says so here, and one that declares options,
-  offers fixes or names a linter's comments needs at least 0.2.3 (`RERAIL_RULE_FEATURES_SINCE`; check 5 holds the pack
+  rule that reads a library relation or an engine feature newer than that says so here, and one that offers fixes or
+  names a linter's comments needs at least 0.2.3 (`RERAIL_RULE_FEATURES_SINCE`; check 5 holds the pack
   to it). Core never reads the field: it is a floor for the core range, as the releases above are, so once core is at
   that release the pack validation fails a range that admits an older core, and the Release pull request raises it.
   Until then the range stays, so a checkout's own core still loads the pack.
@@ -283,7 +283,7 @@ survives shipping. Check 1 enforces this; the pack tests reject an id two docume
 A code rule may be a `.rerail` file instead of a JSON document: `"document": "rules/<id>.rerail"`. The file is the
 rule. Its `.policy` id is its file name and the entry's `id`. Core asks the engine to read it, with every file it
 includes, and takes from it what it says: its revision, `.description`, `.mode`, `.language`, `.scope`, the
-violation codes it reports, the options it declares and each violation's `suppress` and `fix` lines. `pack.json`
+violation codes it reports, the options its rules read and each violation's `suppress` and `fix` lines. `pack.json`
 restates none of it; `title`, `group`, `mode`, `on`, `heldOff`, `examples` and `dimensions` are given there as for
 every rule.
 
@@ -303,13 +303,14 @@ every rule.
   words, as a JSON rule that does not compile does.
 - **When it runs.** After a session's writes, once the checkout is quiet or the turn ends, and in every scan: see
   [Rules written in .rerail](reference.md#rules-written-in-rerail) in the reference.
-- **Options.** `.options { "<name>": <declaration>, … }` declares the options the rule reads, each declared as a JSON
-  rule's `define` declares one (`type`, `items`, `enum`, `nullable`, `default`, `description`). A setting's `config`,
-  a pack's `config` in `.rerail/packs.json` and a port's options in the repository's linter config give them values,
-  checked against the declarations as for a JSON rule; the run gives the rule its values, an option not set at its
-  `default`, as `option(name, v)` and, for a list, `option_item(name, i, v)` facts. A boolean is `"true"` or
-  `"false"`, a number is written as in JSON, and null is `"null"`. No option takes the name of a run's own setting
-  (`inputFiles`, `dialect`, `toolCalls`, …): the engine refuses the file.
+- **Options.** A rule takes the options its rules read: `option("max", v)`, and for a list `option_item("allow", i,
+  v)`. It declares nothing, and says itself what an option left unset means (`!option("max", _)`). A setting's
+  `config`, a pack's `config` in `.rerail/packs.json` and a port's options in the repository's linter config give them
+  values, and the run hands the rule its values as those facts: a boolean is `"true"` or `"false"`, a number is written
+  as in JSON, and null is `"null"`. A name the rule does not read is refused, as an option a JSON rule does not declare
+  is. A value is text, a number, true, false or null, or a list of them; the rule states no type or allowed values, so
+  it decides what a value it does not expect means. No option takes the name of a run's own setting (`inputFiles`,
+  `dialect`, `toolCalls`, …): the engine refuses the file.
 - **Fixes.** `fix [safe] F "title"` under a `.violation` offers fix F, whose rules end in edits:
   ``F(b, _) => replace(b, `{$b}`).`` A finding carries its first fix, in the order of the `fix` lines, one of whose rules
   gives each of its edits once, composed into one replacement, as a JSON rule's violation carries its `fix`: a steer
@@ -324,8 +325,8 @@ every rule.
   `oxlint` and `biome`; Ruff's `ruff`, `noqa` and `flake8`; Bandit's `nosec`; Clippy's, PHPStan's, Psalm's,
   PHP_CodeSniffer's and SQLFluff's their own. The lines also make it a port for set-up's reading of the repository's
   lint config, which turns it on or off and gives it options as it does a JSON port.
-- **Core.** A pack whose rules declare options, offer fixes or name linters' comments states `rerail.core` 0.2.3 or
-  later in `package.json` ([package.json](#packagejson)).
+- **Core.** A pack whose rules offer fixes or name linters' comments states `rerail.core` 0.2.3 or later in
+  `package.json` ([package.json](#packagejson)).
 
 <details>
 <summary>What a rule written in .rerail cannot do yet</summary>
@@ -837,7 +838,7 @@ conformance check (`npm run test:conformance`), not here.
    - Once core is at the release that first reads what the pack ships (`heldOff`, a language added since 0.1.0, a rule
      written in `.rerail`, `dimensions`, the core `rerail.core` states), the core range leaves every older core out.
    - `rerail`, where present, is `{ "core": "<major>.<minor>.<patch>" }`; `rerail.core`, where the pack's `.rerail` rules
-     declare options, offer fixes or name linters' comments, is 0.2.3 (`RERAIL_RULE_FEATURES_SINCE`) or later.
+     offer fixes or name linters' comments, is 0.2.3 (`RERAIL_RULE_FEATURES_SINCE`) or later.
    - Some way to satisfy `license` names exactly Apache-2.0 plus, per `licenses/<project>/UPSTREAM.md`, one way to
      satisfy the SPDX expression its `License:` line records. An `OR` there lets the package elect either side
      (`MIT OR Apache-2.0` with `Apache-2.0 AND MIT`); an `AND` must be named whole.

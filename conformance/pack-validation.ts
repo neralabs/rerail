@@ -1303,14 +1303,15 @@ export function statedCoreRangeFailure(range: string, stated: string | undefined
 
 /**
  * Why a pack's package.json states too old a core (`stated`, its `rerail.core`) for its rules written in `.rerail`
- * (`described`, by rule id), or undefined: a rule that declares options, offers a fix or honours a linter's comments
- * needs `RERAIL_RULE_FEATURES_SINCE`, the release that first runs them.
+ * (`described`, by rule id), or undefined: a rule that offers a fix or names a linter's comments needs
+ * `RERAIL_RULE_FEATURES_SINCE`, the release that first runs them. A rule that reads options needs none: an older core
+ * runs it with no option set, as it did.
  */
 export function rerailFeaturesCoreFailure(stated: string | undefined, described: ReadonlyMap<string, RerailDescription>): string | undefined {
-  const uses = (rule: RerailDescription): boolean => rule.options !== null || rule.violations.some(violation => violation.suppress.length > 0 || violation.fixes.length > 0);
+  const uses = (rule: RerailDescription): boolean => rule.violations.some(violation => violation.suppress.length > 0 || violation.fixes.length > 0);
   const using = [...described].filter(([, rule]) => uses(rule)).map(([id]) => id);
   if (using.length === 0 || (stated !== undefined && semver.gte(stated, RERAIL_RULE_FEATURES_SINCE))) return undefined;
-  return `package.json: rerail.core is ${stated ?? "not set to a release version"}, and Rerail runs the options, fixes and linters' comments of ${using.join(", ")} from ${RERAIL_RULE_FEATURES_SINCE}; set rerail.core to ${RERAIL_RULE_FEATURES_SINCE} or later`;
+  return `package.json: rerail.core is ${stated ?? "not set to a release version"}, and Rerail runs the fixes and linters' comments of ${using.join(", ")} from ${RERAIL_RULE_FEATURES_SINCE}; set rerail.core to ${RERAIL_RULE_FEATURES_SINCE} or later`;
 }
 
 /** package.json's `rerail`, which core never reads: the core the pack's `.rerail` rules need, a release version. */
@@ -1330,8 +1331,8 @@ function rerailDescriptions(compiled: ReadonlyMap<string, Compiled>): ReadonlyMa
 
 /**
  * Check 5 on the core range (`peerDependencies["@neralabs/rerail"]`): it admits no core that refuses the pack, nor
- * one older than its `rerail.core`, which states at least the core its `.rerail` rules' options, fixes and
- * suppression comments need.
+ * one older than its `rerail.core`, which states at least the core its `.rerail` rules' fixes and suppression
+ * comments need.
  */
 function checkCoreRange({ directory, options, fail }: Validation, manifest: PackPackage, { pack, compiled }: ReadPack): void {
   const range = manifest.peerDependencies["@neralabs/rerail"];

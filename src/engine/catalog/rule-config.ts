@@ -2,12 +2,12 @@
  * A repository's option values for a code rule by Rerail (a rule setting's `config`). A bundled document is stored
  * resolved, every `$option` reference already replaced by its option's value, so `config` is applied to the
  * document as written (`RuleCatalog.sources`) and that is resolved again, as the engine resolves options. A rule
- * written in `.rerail` is not rewritten: each value is checked against its `.options` declaration, and the run hands
- * the values to the engine as `option` facts (decision 0720).
+ * written in `.rerail` declares no options: `config` may name those its rules read, and the run hands the values to
+ * the engine as `option` facts (decision 0720).
  */
 import { ZodError } from "zod";
 import { CodeRuleCompileError, EngineUnavailableError, storableCodeRule } from "../code-rule/code-rule-compile.js";
-import { applyCodeRuleConfig, checkCodeRuleOptionValue, CodeRuleOptionError } from "../code-rule/code-rule-options.js";
+import { applyCodeRuleConfig, CodeRuleOptionError } from "../code-rule/code-rule-options.js";
 import { codeRuleSchema, type CodeRule } from "../code-rule/code-rule-schema.js";
 import { stableJsonText } from "../stable-json.js";
 import type { RerailRule } from "./rerail-rules/rerail-rule.js";
@@ -67,19 +67,26 @@ export function configureBundledCodeRule(ruleCatalog: RuleCatalog, ruleId: strin
   return outcome;
 }
 
-/** `rule` with `config`: each value one its `.options` declares, of a value the declaration allows. The rule is unchanged. */
+/** Whether `value` is one an `option` fact holds: text, a number JavaScript holds exactly, true, false or null. */
+function isFactValue(value: unknown): boolean {
+  if (typeof value === "number") return Number.isFinite(value) && (!Number.isInteger(value) || Number.isSafeInteger(value));
+  return value === null || typeof value === "string" || typeof value === "boolean";
+}
+
+/** Why `value` cannot be option `name` of `rule`, or undefined: the rule reads the option, and the value is one fact or a list of them. */
+function rerailOptionProblem(rule: RerailRule, name: string, value: unknown): string | undefined {
+  if (!rule.options.includes(name)) return `config.${name}: \`${name}\` is not an option this rule reads`;
+  const values = Array.isArray(value) ? value : [value];
+  return values.every(isFactValue) ? undefined : `config.${name}: must be text, a number, true, false or null, or a list of them`;
+}
+
+/**
+ * `rule` with `config`: each name an option the rule reads, each value one an `option` fact holds. The rule states no
+ * type or allowed values, so none is checked: it decides what a value it does not expect means. The rule is unchanged.
+ */
 function configuredRerail(rule: RerailRule, config: RuleConfig): ConfiguredCodeRule {
-  try {
-    for (const [name, value] of Object.entries(config)) {
-      // Only the rule's own declarations: `toString` is no option of a rule that declares none.
-      const declaration = Object.hasOwn(rule.options, name) ? rule.options[name] : undefined;
-      if (declaration === undefined) throw new CodeRuleOptionError(["config", name], `\`${name}\` is not an option this rule declares`);
-      checkCodeRuleOptionValue(declaration, value, ["config", name]);
-    }
-    return { ok: true, rule };
-  } catch (error) {
-    return { ok: false, reason: reasonOf(error) };
-  }
+  const problem = Object.entries(config).map(([name, value]) => rerailOptionProblem(rule, name, value)).find(found => found !== undefined);
+  return problem === undefined ? { ok: true, rule } : { ok: false, reason: problem };
 }
 
 /** {@link configureBundledCodeRule}, worked out. */

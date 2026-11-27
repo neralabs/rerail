@@ -256,11 +256,11 @@ describe("portsOf", () => {
       ["conversation", { kind: "conversation", rule: {} }],
       ["plain", { kind: "code", rule: { clauses: [{ violation: { suppress: {} } }], scope: { include: ["**/*.py"], exclude: ["tests/**"] } } }],
       ["define-only", code([{ define: { options: { c: { type: "string" } } } }])],
-      // Rules written in .rerail, as the catalog reads them: their violations' suppress lines, their `.options`.
+      // Rules written in .rerail, as the catalog reads them: their violations' suppress lines, the options they read.
       ["rerail-port", {
         kind: "rerail",
         rule: {
-          options: { option: { type: "string", default: "all" } },
+          options: ["option"],
           scope: { include: ["**/*.ts"], exclude: ["dist/**"], text: [] },
           violations: [
             { name: "A", suppress: [{ tool: "eslint", rules: ["curly"] }, { tool: "ruff", rules: ["E1"] }, { tool: "flake8", rules: ["E1", "E2"] }, { tool: "unknown", rules: ["x"] }], fixes: [] },
@@ -268,7 +268,7 @@ describe("portsOf", () => {
           ],
         },
       }],
-      ["rerail-anywhere", { kind: "rerail", rule: { options: {}, scope: { include: [], exclude: [], text: [] }, violations: [{ name: "C", suppress: [], fixes: [] }] } }],
+      ["rerail-anywhere", { kind: "rerail", rule: { options: [], scope: { include: [], exclude: [], text: [] }, violations: [{ name: "C", suppress: [], fixes: [] }] } }],
     ]),
   } as unknown as RuleCatalog;
 
@@ -288,12 +288,12 @@ describe("portsOf", () => {
     ]);
   });
 
-  it("ports a rule written in .rerail with the names of its suppress lines, by the tool each names, and its .options", () => {
+  it("ports a rule written in .rerail with the names of its suppress lines, by the tool each names, and the options it reads", () => {
     expect(portsOf(catalog, ["three"])).toEqual([
       {
         ruleId: "rerail-port",
         suppress: { ...NO_NAMES, eslint: ["curly"], noqa: ["E1", "E2"], oxlint: ["curly"] },
-        declared: { option: { type: "string", default: "all" } },
+        declared: { option: null },
         startsOn: true,
         scope: { include: ["**/*.ts"], exclude: ["dist/**"] },
       },
