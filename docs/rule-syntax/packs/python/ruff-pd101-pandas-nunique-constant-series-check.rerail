@@ -14,14 +14,14 @@
 //   data.nunique() >= 1                  not reported: tests non-empty
 //   {"hello": "world"}.nunique() == 1    not reported: not a series
 #include "python/type-string-names.rerail"
-//   p10_seen(d, m), seen_ask(m); python/ruff and python/names through it
+//   seen_module_or_star(d, m), seen_ask(m); python/ruff and python/names through it
 
 .violation PD101(at: node, alt: symbol) code "PD101"
     "Check a NumPy array, not `nunique()`, which scans every value: `a = s.to_numpy()`, then `{alt}`. Keep nunique if NaN handling matters or `s` isn't a pandas Series."
     suppress ruff "PD101"
 PD101(e, alt) :- kind(e, "comparison_operator"), op_at(e, 0, o), !op_at(e, 1, _), nunique_alt(o, alt),
     child(e, l, 0), unparen(l, c), field(c, "function", f), unparen(f, g), attr_of(g, v, "nunique"),
-    child(e, r, 1), ruff_int(r, "1"), series_like(v), docof(e, d), p10_seen(d, "pandas").
+    child(e, r, 1), ruff_int(r, "1"), series_like(v), docof(e, d), seen_module_or_star(d, "pandas").
 seen_ask("pandas").
 .decl nunique_alt(o: symbol, alt: symbol)
 nunique_alt("<=", "a.shape[0] == 0 or (a[0] == a).all()"). nunique_alt("==", "a.shape[0] > 0 and (a[0] == a).all()").

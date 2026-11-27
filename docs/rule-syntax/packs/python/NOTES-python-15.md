@@ -11,7 +11,7 @@ examples, fixtures and samples-python.
 Every one of these rules asks "is `list` (`tuple`, `sorted`, …) the builtin here?", and five of them check string
 type definitions. The library answers both:
 
-- `p15_builtin(n, x)`: Ruff's `has_builtin_binding` / `resolve_builtin_symbol`, in Ruff's walk order. It replaces
+- `lookup_builtin(n, x)`: Ruff's `has_builtin_binding` / `resolve_builtin_symbol`, in Ruff's walk order. It replaces
   comprehensions' `c4_call` / `c4_builtin` (python/upgrade's `builtin_at`) and `c4_builtin_here` in these rules,
   each of which differed from Ruff on a probe:
 
@@ -28,7 +28,7 @@ type definitions. The library answers both:
   Also as Ruff: `x: int` alone binds nothing; `del` under `if`, `while`, `match`, `except` or an `else` binds
   nothing (python/names' `del_site`); a for loop's iterable, an assignment's value and a walrus's value are read
   before the target is bound; a star import leaves the builtin.
-- `p15_str_call`, `p15_str_comp`, `p15_only`, `p15_first`, `p15_nkw0`, `p15_simple`: the same tests on the trees
+- `lookup_str_call`, `lookup_str_comp`, `lookup_only`, `lookup_first`, `lookup_nkw0`, `lookup_simple`: the same tests on the trees
   of string type definitions (python-01's `typedef_node`: annotations, `cast`'s type, generic arguments, not
   `Literal[…]`), whose names are looked up from where the string stands, after the whole module (Ruff defers them).
   They use no count and start from a node bound through `typedef_node` (engine gaps 1, 2 below).
@@ -78,5 +78,5 @@ parsed string's nodes escape: engine gap 2).
 
 ## Library changes proposed
 
-- python/comprehensions: `c4_call`, `c4_builtin`, `c4_builtin_here` as python-15's `p15_builtin` (above).
+- python/comprehensions: `c4_call`, `c4_builtin`, `c4_builtin_here` as python-15's `lookup_builtin` (above).
 - python/compare: `cmp_same` should take `[1, 2]` for `[1, 2,]` (it does for tuples and calls); C414 works around it.

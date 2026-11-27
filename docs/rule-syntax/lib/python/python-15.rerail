@@ -3,20 +3,20 @@
 // comprehensions of string type definitions, which Ruff checks as code.
 //
 // Interface
-//   p15_name(x)               extensible: the builtin names a rule asks about (`p15_name("tuple").`)
-//   p15_ask(n, x)             extensible: ask whether the name x, read at node n, is the builtin
-//   p15_builtin(n, x)         ... it is: no binding Ruff's lookup sees from n binds x
-//   p15_call(c, x)            c calls the name x (parentheses off), and x is the builtin there: `tuple(…)`, not
-//                             `builtins.tuple(…)` (c4_call); c in the file
-//   p15_builtin_call(c, x)    c's callee is the builtin x, by name or as `builtins.x` (c4_builtin); c in the file
-//   p15_str_call(c, x)        p15_call for a call c in a string type definition (python-01's typedef_node)
-//   p15_str_comp(e, k)        e is a comprehension (c4_comp's k) in a string type definition
-//   p15_only(c, a)            c4_only, on the trees of string type definitions too: one positional argument a,
-//                             parentheses off, nothing else
-//   p15_first(c, a)           c4_first likewise: a is c's first positional argument; none after a `*xs`
-//   p15_nkw0(c)               call c has no keyword argument and no `**kw`
-//   p15_simple(e, fc)         c4_simple likewise: one `for` clause fc, not `async`, and no `if`
-//   p15_comp_at(m)            m is a comprehension, in the file or in a string type definition
+//   lookup_name(x)              extensible: the builtin names a rule asks about (`lookup_name("tuple").`)
+//   lookup_ask(n, x)            extensible: ask whether the name x, read at node n, is the builtin
+//   lookup_builtin(n, x)        ... it is: no binding Ruff's lookup sees from n binds x
+//   lookup_call(c, x)           c calls the name x (parentheses off), and x is the builtin there: `tuple(…)`, not
+//                               `builtins.tuple(…)` (c4_call); c in the file
+//   lookup_builtin_call(c, x)   c's callee is the builtin x, by name or as `builtins.x` (c4_builtin); c in the file
+//   lookup_str_call(c, x)       lookup_call for a call c in a string type definition (python-01's typedef_node)
+//   lookup_str_comp(e, k)       e is a comprehension (c4_comp's k) in a string type definition
+//   lookup_only(c, a)           c4_only, on the trees of string type definitions too: one positional argument a,
+//                               parentheses off, nothing else
+//   lookup_first(c, a)          c4_first likewise: a is c's first positional argument; none after a `*xs`
+//   lookup_nkw0(c)              call c has no keyword argument and no `**kw`
+//   lookup_simple(e, fc)        c4_simple likewise: one `for` clause fc, not `async`, and no `if`
+//   lookup_comp_at(m)           m is a comprehension, in the file or in a string type definition
 //
 // Ruff background
 //   - Ruff walks the module in its own order and looks a name up as it goes. A scope offers the bindings above the
@@ -45,151 +45,154 @@
 #include "python/python-01.rerail"     // typedef_node, typedef_str
 
 // ---- the lookup --------------------------------------------------------------------------------------------------
-.decl p15_name(x: symbol) extensible
-.decl p15_ask(n: node, x: symbol) extensible
-.decl p15_builtin(n: node, x: symbol)
-p15_builtin(n, x) :- p15_ask(n, x), builtin(x), !p15_seen(n, x).
-.decl p15_seen(n: node, x: symbol)
-p15_seen(n, x) :- p15_chain(n, x, s), p15_bind(s, x, site, how), p15_sees(n, s, site, how).
-p15_seen(n, x) :- p15_ask(n, x), p15_file(n, p), tp_name(o, x), within(p, o), !p15_in_default(p, o).
+.decl lookup_name(x: symbol) extensible
+.decl lookup_ask(n: node, x: symbol) extensible
+.decl lookup_builtin(n: node, x: symbol)
+lookup_builtin(n, x) :- lookup_ask(n, x), builtin(x), !lookup_seen(n, x).
+.decl lookup_seen(n: node, x: symbol)
+lookup_seen(n, x) :- lookup_chain(n, x, s), lookup_bind(s, x, site, how), lookup_sees(n, s, site, how).
+lookup_seen(n, x) :- lookup_ask(n, x), lookup_file(n, p), tp_name(o, x), within(p, o), !lookup_in_default(p, o).
 
-// p15_at(n): a node whose scope is wanted: an asked one, and the nodes its scope is found through.
-.decl p15_at(n: node)
-p15_at(n) :- p15_ask(n, _).
-p15_at(c) :- p15_at(n), nearest(n, c, lscope), p15_outside(n, c).
-p15_at(h) :- p15_at(n), p15_host(n, h), !nearest(n, _, lscope).
-// p15_host(n, h): n is in the tree parsed from string type definition h (the innermost string).
-.decl p15_host(n: node, h: node)
-p15_host(n, h) :- type_ctx(h), typedef_str(h), parsed(h, "annotation", r), (n = r ; within(n, r)).
-// p15_file(n, p): p is n, or the file's string whose parse holds n: where n stands in the file.
-.decl p15_file(n: node, p: node)
-p15_file(n, n) :- p15_at(n), !typedef_node(n).
-p15_file(n, p) :- p15_at(n), p15_host(n, h), p15_file(h, p).
-// p15_run(n, s): the scope n is evaluated in: its nearest scope or comprehension, unless n is in a part of it that
-// runs in the scope around (p15_outside); in a parsed string with no comprehension around, the string's.
-.decl p15_run(n: node, s: node)
-p15_run(n, s) :- p15_at(n), nearest(n, s, lscope), !p15_outside(n, s).
-p15_run(n, s) :- p15_at(n), nearest(n, c, lscope), p15_outside(n, c), p15_run(c, s).
-p15_run(n, s) :- p15_at(n), p15_host(n, h), !nearest(n, _, lscope), p15_run(h, s).
-p15_at(h) :- p15_chain(_, _, s), kind(s, k), comp_scope(k), p15_host(s, h), !nearest(s, _, lscope).
-.decl p15_outside(n: node, c: node)
-p15_outside(n, c) :- first_for(c, fc), field(fc, "right", e), (n = e ; within(n, e)), nearest(n, c, lscope).
-p15_outside(n, f) :- field(f, "parameters", ps), within(n, ps), nearest(n, f, lscope).
-p15_outside(n, f) :- kind(f, "function_definition"), field(f, "return_type", t), (n = t ; within(n, t)),
+// lookup_at(n): a node whose scope is wanted: an asked one, and the nodes its scope is found through.
+.decl lookup_at(n: node)
+lookup_at(n) :- lookup_ask(n, _).
+lookup_at(c) :- lookup_at(n), nearest(n, c, lscope), lookup_outside(n, c).
+lookup_at(h) :- lookup_at(n), lookup_host(n, h), !nearest(n, _, lscope).
+// lookup_host(n, h): n is in the tree parsed from string type definition h (the innermost string).
+.decl lookup_host(n: node, h: node)
+lookup_host(n, h) :- type_ctx(h), typedef_str(h), parsed(h, "annotation", r), (n = r ; within(n, r)).
+// lookup_file(n, p): p is n, or the file's string whose parse holds n: where n stands in the file.
+.decl lookup_file(n: node, p: node)
+lookup_file(n, n) :- lookup_at(n), !typedef_node(n).
+lookup_file(n, p) :- lookup_at(n), lookup_host(n, h), lookup_file(h, p).
+// lookup_run(n, s): the scope n is evaluated in: its nearest scope or comprehension, unless n is in a part of it that
+// runs in the scope around (lookup_outside); in a parsed string with no comprehension around, the string's.
+.decl lookup_run(n: node, s: node)
+lookup_run(n, s) :- lookup_at(n), nearest(n, s, lscope), !lookup_outside(n, s).
+lookup_run(n, s) :- lookup_at(n), nearest(n, c, lscope), lookup_outside(n, c), lookup_run(c, s).
+lookup_run(n, s) :- lookup_at(n), lookup_host(n, h), !nearest(n, _, lscope), lookup_run(h, s).
+lookup_at(h) :- lookup_chain(_, _, s), kind(s, k), comp_scope(k), lookup_host(s, h), !nearest(s, _, lscope).
+.decl lookup_outside(n: node, c: node)
+lookup_outside(n, c) :- first_for(c, fc), field(fc, "right", e), (n = e ; within(n, e)), nearest(n, c, lscope).
+lookup_outside(n, f) :- field(f, "parameters", ps), within(n, ps), nearest(n, f, lscope).
+lookup_outside(n, f) :- kind(f, "function_definition"), field(f, "return_type", t), (n = t ; within(n, t)),
     nearest(n, f, lscope).
-p15_outside(n, c) :- kind(c, "class_definition"), field(c, "superclasses", b), within(n, b), nearest(n, c, lscope).
-.decl p15_in_default(p: node, o: node)  // p is in a parameter default of o
-p15_in_default(p, o) :- field(o, "parameters", ps), child(ps, q, _), field(q, "value", v), (p = v ; within(p, v)).
-// p15_chain(n, x, s): the scopes the lookup of x from n visits: n's, then outwards, class bodies passed over.
-.decl p15_chain(n: node, x: symbol, s: node)
-p15_chain(n, x, s) :- p15_ask(n, x), p15_run(n, s).
-p15_chain(n, x, p) :- p15_chain(n, x, s), nearest(s, p, lfscope).
-p15_chain(n, x, p) :- p15_chain(n, x, s), kind(s, k), comp_scope(k), !nearest(s, _, lscope), p15_host(s, h),
-    p15_run(h, q), p15_open(q, p).
-.decl p15_open(q: node, p: node)  // q, or the first scope around it that is not a class body
-p15_open(q, q) :- p15_chain(_, _, s), p15_host(s, h), p15_run(h, q), !kind(q, "class_definition").
-p15_open(q, p) :- p15_chain(_, _, s), p15_host(s, h), p15_run(h, q), kind(q, "class_definition"),
+lookup_outside(n, c) :- kind(c, "class_definition"), field(c, "superclasses", b), within(n, b), nearest(n, c, lscope).
+.decl lookup_in_default(p: node, o: node)  // p is in a parameter default of o
+lookup_in_default(p, o) :- field(o, "parameters", ps), child(ps, q, _), field(q, "value", v), (p = v ; within(p, v)).
+// lookup_chain(n, x, s): the scopes the lookup of x from n visits: n's, then outwards, class bodies passed over.
+.decl lookup_chain(n: node, x: symbol, s: node)
+lookup_chain(n, x, s) :- lookup_ask(n, x), lookup_run(n, s).
+lookup_chain(n, x, p) :- lookup_chain(n, x, s), nearest(s, p, lfscope).
+lookup_chain(n, x, p) :- lookup_chain(n, x, s), kind(s, k), comp_scope(k), !nearest(s, _, lscope), lookup_host(s, h),
+    lookup_run(h, q), lookup_open(q, p).
+.decl lookup_open(q: node, p: node)  // q, or the first scope around it that is not a class body
+lookup_open(q, q) :- lookup_chain(_, _, s), lookup_host(s, h), lookup_run(h, q), !kind(q, "class_definition").
+lookup_open(q, p) :- lookup_chain(_, _, s), lookup_host(s, h), lookup_run(h, q), kind(q, "class_definition"),
     nearest(q, p, lfscope).
-// p15_done(n, s): s is finished when n is read: a function or lambda on n's chain is inside s, or n is in a
+// lookup_done(n, s): s is finished when n is read: a function or lambda on n's chain is inside s, or n is in a
 // string type definition.
-.decl p15_done(n: node, s: node)
-p15_done(n, s) :- p15_chain(n, x, s), p15_chain(n, x, f), (kind(f, "function_definition") ; kind(f, "lambda")),
+.decl lookup_done(n: node, s: node)
+lookup_done(n, s) :- lookup_chain(n, x, s), lookup_chain(n, x, f), (kind(f, "function_definition") ; kind(f, "lambda")),
     within(f, s).
-p15_done(n, s) :- p15_chain(n, _, s), typedef_node(n).
+lookup_done(n, s) :- lookup_chain(n, _, s), typedef_node(n).
 
-// p15_bind(s, x, site, how): a binding of x in scope s, where it is written (no `global` moves it).
-.decl p15_bind(s: node, x: symbol, site: node, how: symbol)
-p15_bind(s, x, f, "def") :- rdefn(s, x, f).
-p15_bind(s, x, a, "assign") :- rasg(s, x, _, a).
-p15_bind(f, x, p, "param") :- param(f, x, i), field(f, "parameters", ps), child(ps, p, i).
-p15_bind(s, x, i, "import") :- import_site(i, x), nearest(i, s, scope).
-p15_bind(c, x, t, "comp") :- tgt(t), kind(t, "identifier"), text(t, x), tscope(t, c), kind(c, k), comp_scope(k).
-p15_bind(c, x, t, "comp") :- p15_chain(_, _, c), typedef_node(c), child(c, fc, _), kind(fc, "for_in_clause"),
-    field(fc, "left", l), p15_tname(l, t), text(t, x).
-.decl p15_tleft(l: node)  // a target in a string type definition's comprehension, and the patterns in it
-p15_tleft(l) :- p15_chain(_, _, c), typedef_node(c), child(c, fc, _), kind(fc, "for_in_clause"), field(fc, "left", l).
-p15_tleft(m) :- p15_tleft(l), kind(l, k), patkind(k), child(l, m, _).
-.decl p15_tname(l: node, t: node)
-p15_tname(l, l) :- p15_tleft(l), kind(l, "identifier").
-p15_tname(l, t) :- p15_tleft(l), kind(l, k), patkind(k), child(l, m, _), p15_tname(m, t).
-p15_bind(s, x, t, "except") :- tgt(t), kind(t, "identifier"), text(t, x), tscope(t, s), target_form(t, "except").
-p15_bind(s, x, t, "target") :- tgt(t), kind(t, "identifier"), text(t, x), tscope(t, s), kind(s, k), scope(k),
+// lookup_bind(s, x, site, how): a binding of x in scope s, where it is written (no `global` moves it).
+.decl lookup_bind(s: node, x: symbol, site: node, how: symbol)
+lookup_bind(s, x, f, "def") :- rdefn(s, x, f).
+lookup_bind(s, x, a, "assign") :- rasg(s, x, _, a).
+lookup_bind(f, x, p, "param") :- param(f, x, i), field(f, "parameters", ps), child(ps, p, i).
+lookup_bind(s, x, i, "import") :- import_site(i, x), nearest(i, s, scope).
+lookup_bind(c, x, t, "comp") :- tgt(t), kind(t, "identifier"), text(t, x), tscope(t, c), kind(c, k), comp_scope(k).
+lookup_bind(c, x, t, "comp") :- lookup_chain(_, _, c), typedef_node(c), child(c, fc, _), kind(fc, "for_in_clause"),
+    field(fc, "left", l), lookup_tname(l, t), text(t, x).
+.decl lookup_tleft(l: node)  // a target in a string type definition's comprehension, and the patterns in it
+lookup_tleft(l) :- lookup_chain(_, _, c), typedef_node(c), child(c, fc, _), kind(fc, "for_in_clause"),
+    field(fc, "left", l).
+lookup_tleft(m) :- lookup_tleft(l), kind(l, k), patkind(k), child(l, m, _).
+.decl lookup_tname(l: node, t: node)
+lookup_tname(l, l) :- lookup_tleft(l), kind(l, "identifier").
+lookup_tname(l, t) :- lookup_tleft(l), kind(l, k), patkind(k), child(l, m, _), lookup_tname(m, t).
+lookup_bind(s, x, t, "except") :- tgt(t), kind(t, "identifier"), text(t, x), tscope(t, s), target_form(t, "except").
+lookup_bind(s, x, t, "target") :- tgt(t), kind(t, "identifier"), text(t, x), tscope(t, s), kind(s, k), scope(k),
     !target_form(t, "except").
-p15_bind(s, x, g, "global") :- (kind(g, "global_statement") ; kind(g, "nonlocal_statement")), child(g, i, _),
+lookup_bind(s, x, g, "global") :- (kind(g, "global_statement") ; kind(g, "nonlocal_statement")), child(g, i, _),
     kind(i, "identifier"), text(i, x), nearest(g, s, scope), !kind(s, "module").
-p15_bind(s, x, st, "del") :- del_site(s, i, st), text(i, x).
+lookup_bind(s, x, st, "del") :- del_site(s, i, st), text(i, x).
 
-// p15_sees(n, s, site, how): the binding at site is above n in Ruff's order, or s is finished.
-.decl p15_sees(n: node, s: node, site: node, how: symbol)
-p15_sees(n, s, t, "comp") :- p15_chain(n, x, s), p15_bind(s, x, t, "comp"), field(s, "body", b), (n = b ; within(n, b)).
-p15_sees(n, s, t, "comp") :- p15_chain(n, x, s), p15_bind(s, x, t, "comp"), child(s, q, i), within(t, q),
+// lookup_sees(n, s, site, how): the binding at site is above n in Ruff's order, or s is finished.
+.decl lookup_sees(n: node, s: node, site: node, how: symbol)
+lookup_sees(n, s, t, "comp") :- lookup_chain(n, x, s), lookup_bind(s, x, t, "comp"), field(s, "body", b),
+    (n = b ; within(n, b)).
+lookup_sees(n, s, t, "comp") :- lookup_chain(n, x, s), lookup_bind(s, x, t, "comp"), child(s, q, i), within(t, q),
     child(s, q2, j), j > i, (n = q2 ; within(n, q2)).
 // A finished scope's `except … as x` binding is gone: a function defined in the handler, run later, does not see it.
-p15_sees(n, s, t, "except") :- p15_chain(n, x, s), p15_bind(s, x, t, "except"), !p15_done(n, s), p15_file(n, p),
-    nearest(t, h, "except_clause"), within(p, h).
-p15_sees(n, s, site, how) :- p15_chain(n, x, s), p15_bind(s, x, site, how), how != "comp", how != "except",
-    p15_done(n, s).
-p15_sees(n, s, site, how) :- p15_chain(n, x, s), p15_bind(s, x, site, how), how != "comp", how != "except",
-    !p15_done(n, s), p15_file(n, p), earlier(site, p), !within(p, site), !p15_late(p, site).
-// p15_late(p, t): Ruff binds target t after it evaluates p: the iterable of t's `for` loop, the value of t's walrus.
-.decl p15_late(p: node, t: node)
-p15_late(p, t) :- p15_file(_, p), nearest(t, f, "for_statement"), field(f, "right", e), (p = e ; within(p, e)),
+lookup_sees(n, s, t, "except") :- lookup_chain(n, x, s), lookup_bind(s, x, t, "except"), !lookup_done(n, s),
+    lookup_file(n, p), nearest(t, h, "except_clause"), within(p, h).
+lookup_sees(n, s, site, how) :- lookup_chain(n, x, s), lookup_bind(s, x, site, how), how != "comp", how != "except",
+    lookup_done(n, s).
+lookup_sees(n, s, site, how) :- lookup_chain(n, x, s), lookup_bind(s, x, site, how), how != "comp", how != "except",
+    !lookup_done(n, s), lookup_file(n, p), earlier(site, p), !within(p, site), !lookup_late(p, site).
+// lookup_late(p, t): Ruff binds target t after it evaluates p: the iterable of t's `for` loop, the value of t's walrus.
+.decl lookup_late(p: node, t: node)
+lookup_late(p, t) :- lookup_file(_, p), nearest(t, f, "for_statement"), field(f, "right", e), (p = e ; within(p, e)),
     field(f, "left", l), (t = l ; within(t, l)).
-p15_late(p, t) :- p15_file(_, p), kind(w, "named_expression"), field(w, "name", t), within(p, w).
+lookup_late(p, t) :- lookup_file(_, p), kind(w, "named_expression"), field(w, "name", t), within(p, w).
 
 // ---- calls -------------------------------------------------------------------------------------------------------
 // A relation over every node lists the file's nodes only; a parsed string's are reached from typedef_node. So
 // each relation here starts from a call or comprehension found either way, and uses no count (a count does not see
 // a parsed string's nodes either).
-// p15_callee(c, f, x): call c's callee, parentheses off, is the name f, x.
-.decl p15_callee(c: node, f: node, x: symbol)
-p15_callee(c, f, x) :- kind(c, "call"), field(c, "function", g), unparen(g, f), kind(f, "identifier"), text(f, x),
-    p15_name(x).
-p15_callee(c, f, x) :- typedef_node(c), kind(c, "call"), field(c, "function", g), unparen(g, f), kind(f, "identifier"),
-    text(f, x), p15_name(x).
-p15_ask(f, x) :- p15_callee(_, f, x).
-.decl p15_call(c: node, x: symbol)
-p15_call(c, x) :- p15_callee(c, f, x), !typedef_node(c), p15_builtin(f, x).
-.decl p15_builtin_call(c: node, x: symbol)
-p15_builtin_call(c, x) :- p15_call(c, x).
-p15_builtin_call(c, x) :- kind(c, "call"), field(c, "function", g), unparen(g, m), kind(m, "attribute"),
-    builtin_at(m, x), p15_name(x).
-.decl p15_str_call(c: node, x: symbol)
-p15_str_call(c, x) :- p15_callee(c, f, x), typedef_node(c), p15_builtin(f, x).
+// lookup_callee(c, f, x): call c's callee, parentheses off, is the name f, x.
+.decl lookup_callee(c: node, f: node, x: symbol)
+lookup_callee(c, f, x) :- kind(c, "call"), field(c, "function", g), unparen(g, f), kind(f, "identifier"), text(f, x),
+    lookup_name(x).
+lookup_callee(c, f, x) :- typedef_node(c), kind(c, "call"), field(c, "function", g), unparen(g, f),
+    kind(f, "identifier"), text(f, x), lookup_name(x).
+lookup_ask(f, x) :- lookup_callee(_, f, x).
+.decl lookup_call(c: node, x: symbol)
+lookup_call(c, x) :- lookup_callee(c, f, x), !typedef_node(c), lookup_builtin(f, x).
+.decl lookup_builtin_call(c: node, x: symbol)
+lookup_builtin_call(c, x) :- lookup_call(c, x).
+lookup_builtin_call(c, x) :- kind(c, "call"), field(c, "function", g), unparen(g, m), kind(m, "attribute"),
+    builtin_at(m, x), lookup_name(x).
+.decl lookup_str_call(c: node, x: symbol)
+lookup_str_call(c, x) :- lookup_callee(c, f, x), typedef_node(c), lookup_builtin(f, x).
 
 // ---- arguments ---------------------------------------------------------------------------------------------------
-.decl p15_ccall(c: node)  // the calls these relations know: of a p15_name, or of `builtins.x`
-p15_ccall(c) :- p15_callee(c, _, _).
-p15_ccall(c) :- p15_builtin_call(c, _).
-.decl p15_item(c: node, a: node, j: number)  // c's argument a at position j of its argument list, comments out
-p15_item(c, a, j) :- p15_ccall(c), field(c, "arguments", al), kind(al, "argument_list"), child(al, a, j),
+.decl lookup_ccall(c: node)  // the calls these relations know: of a lookup_name, or of `builtins.x`
+lookup_ccall(c) :- lookup_callee(c, _, _).
+lookup_ccall(c) :- lookup_builtin_call(c, _).
+.decl lookup_item(c: node, a: node, j: number)  // c's argument a at position j of its argument list, comments out
+lookup_item(c, a, j) :- lookup_ccall(c), field(c, "arguments", al), kind(al, "argument_list"), child(al, a, j),
     !kind(a, "comment").
-.decl p15_pos(a: node)  // a positional argument that is not `*xs`
-p15_pos(a) :- p15_item(_, a, _), !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat").
-.decl p15_two(c: node)
-p15_two(c) :- p15_item(c, _, i), p15_item(c, _, j), i < j.
-.decl p15_only(c: node, a: node)
-p15_only(c, m) :- p15_item(c, a, _), p15_pos(a), !p15_two(c), unparen(a, m).
-p15_only(c, g) :- p15_ccall(c), field(c, "arguments", g), kind(g, "generator_expression").
-.decl p15_first(c: node, a: node)
-p15_first(c, m) :- p15_item(c, a, j), p15_pos(a), !p15_earlier_arg(c, j), unparen(a, m).
-p15_first(c, g) :- p15_ccall(c), field(c, "arguments", g), kind(g, "generator_expression").
-.decl p15_earlier_arg(c: node, j: number)  // an argument before position j is positional or `*xs`
-p15_earlier_arg(c, j) :- p15_item(c, _, j), p15_item(c, b, i), i < j, (p15_pos(b) ; kind(b, "list_splat")).
-.decl p15_nkw0(c: node)
-p15_nkw0(c) :- p15_ccall(c), !p15_kw(c).
-.decl p15_kw(c: node)
-p15_kw(c) :- p15_item(c, a, _), (kind(a, "keyword_argument") ; kind(a, "dictionary_splat")).
+.decl lookup_pos(a: node)  // a positional argument that is not `*xs`
+lookup_pos(a) :- lookup_item(_, a, _), !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"),
+    !kind(a, "list_splat").
+.decl lookup_two(c: node)
+lookup_two(c) :- lookup_item(c, _, i), lookup_item(c, _, j), i < j.
+.decl lookup_only(c: node, a: node)
+lookup_only(c, m) :- lookup_item(c, a, _), lookup_pos(a), !lookup_two(c), unparen(a, m).
+lookup_only(c, g) :- lookup_ccall(c), field(c, "arguments", g), kind(g, "generator_expression").
+.decl lookup_first(c: node, a: node)
+lookup_first(c, m) :- lookup_item(c, a, j), lookup_pos(a), !lookup_earlier_arg(c, j), unparen(a, m).
+lookup_first(c, g) :- lookup_ccall(c), field(c, "arguments", g), kind(g, "generator_expression").
+.decl lookup_earlier_arg(c: node, j: number)  // an argument before position j is positional or `*xs`
+lookup_earlier_arg(c, j) :- lookup_item(c, _, j), lookup_item(c, b, i), i < j, (lookup_pos(b) ; kind(b, "list_splat")).
+.decl lookup_nkw0(c: node)
+lookup_nkw0(c) :- lookup_ccall(c), !lookup_kw(c).
+.decl lookup_kw(c: node)
+lookup_kw(c) :- lookup_item(c, a, _), (kind(a, "keyword_argument") ; kind(a, "dictionary_splat")).
 
 // ---- comprehensions ----------------------------------------------------------------------------------------------
-.decl p15_comp_at(m: node)  // a comprehension, in the file or in a string type definition
-p15_comp_at(m) :- kind(m, t), c4_comp_kind(t, _).
-p15_comp_at(m) :- typedef_node(m), kind(m, t), c4_comp_kind(t, _).
-.decl p15_str_comp(e: node, k: symbol)
-p15_str_comp(e, k) :- typedef_node(e), c4_comp(e, k).
-.decl p15_simple(e: node, fc: node)
-p15_simple(m, fc) :- p15_comp_at(m), child(m, fc, i), kind(fc, "for_in_clause"), !op(fc, "async"),
-    !p15_other_clause(m, i).
-.decl p15_other_clause(m: node, i: number)  // m has an `if` or `for` clause besides its child i
-p15_other_clause(m, i) :- p15_comp_at(m), child(m, fc, i), kind(fc, "for_in_clause"), child(m, o, j), j != i,
+.decl lookup_comp_at(m: node)  // a comprehension, in the file or in a string type definition
+lookup_comp_at(m) :- kind(m, t), c4_comp_kind(t, _).
+lookup_comp_at(m) :- typedef_node(m), kind(m, t), c4_comp_kind(t, _).
+.decl lookup_str_comp(e: node, k: symbol)
+lookup_str_comp(e, k) :- typedef_node(e), c4_comp(e, k).
+.decl lookup_simple(e: node, fc: node)
+lookup_simple(m, fc) :- lookup_comp_at(m), child(m, fc, i), kind(fc, "for_in_clause"), !op(fc, "async"),
+    !lookup_other_clause(m, i).
+.decl lookup_other_clause(m: node, i: number)  // m has an `if` or `for` clause besides its child i
+lookup_other_clause(m, i) :- lookup_comp_at(m), child(m, fc, i), kind(fc, "for_in_clause"), child(m, o, j), j != i,
     kind(o, k), c4_clause(k).

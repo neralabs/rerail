@@ -15,7 +15,7 @@
 //   [x for x in y if x]    [x for x, in y]   not reported
 // Only plain names are compared, as Ruff does. Its fix is unsafe; none here.
 #include "python/python-15.rerail"
-//   p15_comp_at(e), p15_simple(e, fc), p15_ask/p15_builtin(n, x); c4_comp_kind(t, k), dict_ref(n)
+//   lookup_comp_at(e), lookup_simple(e, fc), lookup_ask/lookup_builtin(n, x); c4_comp_kind(t, k), dict_ref(n)
 //   (python/comprehensions)
 
 .violation C416(at: node, kind: symbol, id: symbol, msg: symbol) code "C416" "{msg}"
@@ -32,14 +32,14 @@ C416(e, "dict", "dict-comprehension",
 
 // unchanged(e, k): e rebuilds its iterable, and k is the builtin at e.
 .decl unchanged(e: node, k: symbol)
-unchanged(e, k) :- same_items(e, k), p15_builtin(e, k).
-p15_ask(e, k) :- same_items(e, k).
+unchanged(e, k) :- same_items(e, k), lookup_builtin(e, k).
+lookup_ask(e, k) :- same_items(e, k).
 .decl same_items(e: node, k: symbol)
 // `[x for x in y]`: the element is the target, both plain names.
 same_items(e, k) :- comp(e, k, t, x), (k = "list" ; k = "set"), kind(t, "identifier"), kind(x, "identifier"),
     text(t, n), text(x, n).
 // `[(k, v) for k, v in d.items()]`, `[(k, v) for [k, v] in d.items()]`: only over a dict's items.
-same_items(e, k) :- comp(e, k, t, x), (k = "list" ; k = "set"), p15_simple(e, fc), field(fc, "right", i),
+same_items(e, k) :- comp(e, k, t, x), (k = "list" ; k = "set"), lookup_simple(e, fc), field(fc, "right", i),
     dict_items(i), (kind(t, "pattern_list") ; kind(t, "tuple_pattern") ; kind(t, "list_pattern")), kind(x, "tuple"),
     names2(t, a, b), names2(x, a, b).
 // `{k: v for k, v in y}`.
@@ -48,7 +48,7 @@ same_items(e, "dict") :- comp(e, "dict", t, p), (kind(t, "pattern_list") ; kind(
     text(vn, b).
 // comp(e, k, t, x): a one-`for` comprehension, its target t and element x, parentheses off.
 .decl comp(e: node, k: symbol, t: node, x: node)
-comp(e, k, t, x) :- p15_comp_at(e), kind(e, ek), c4_comp_kind(ek, k), k != "generator", p15_simple(e, fc),
+comp(e, k, t, x) :- lookup_comp_at(e), kind(e, ek), c4_comp_kind(ek, k), k != "generator", lookup_simple(e, fc),
     field(fc, "left", t0), untarget(t0, t), field(e, "body", b), unparen(b, x).
 // untarget(t0, t): a target without its parentheses. tree-sitter reads `((k, v))` as a tuple pattern holding the
 // pattern `(k, v)`; Ruff's tree has the tuple k, v.
@@ -56,7 +56,7 @@ comp(e, k, t, x) :- p15_comp_at(e), kind(e, ek), c4_comp_kind(ek, k), k != "gene
 untarget(t0, t0) :- target_at(t0), !paren_target(t0, _).
 untarget(t0, t) :- paren_target(t0, u), untarget(u, t).
 .decl target_at(t: node)
-target_at(t0) :- p15_comp_at(e), p15_simple(e, fc), field(fc, "left", t0).
+target_at(t0) :- lookup_comp_at(e), lookup_simple(e, fc), field(fc, "left", t0).
 target_at(u) :- paren_target(_, u).
 .decl paren_target(t0: node, u: node)  // `(u)`: a tuple pattern of one element and no trailing comma
 paren_target(t0, u) :- target_at(t0), kind(t0, "tuple_pattern"), child(t0, u, i), !kind(u, "comment"),

@@ -7,17 +7,17 @@ original on each sample key. TRY002/TRY003 and INT001/INT002 each share a fix, s
 `lib/python/raise-and-gettext.rerail` (`p09_*`). Everything is per file, keyed by node; with
 `RERAIL_STRICT_CROSSINGS`, `RERAIL_STRICT_NODES` and `RERAIL_STRICT_POSITIONS` the rules run.
 
-## TRY002, TRY003: a raise continued with a backslash (`p09_raise`)
+## TRY002, TRY003: a raise continued with a backslash (`raise_value`)
 
 tree-sitter keeps `\` as a `line_continuation` child of the raise statement, so in `raise \` / `    E("m")` the first
 child is the continuation. exceptions' `exc_raise` reads child 0 and finds no call. Counterexample
 `EM101-backslash-continuation-after-raise.py` (and its EM102 twin): Ruff TRY003 at lines 3, 8, 18; the old
-translation nothing. `p09_raise` takes the child that is no continuation, comment or cause; `p09_raised_class` is
+translation nothing. `raise_value` takes the child that is no continuation, comment or cause; `raised_class` is
 `exc_class` over it.
 
 **Library change proposed:** `exc_raise` (python/exceptions) should skip `line_continuation` children, and
-`misc2-messages`' `msg_raised_call` with it (python-30's `py30_msg_raised_call` works around the same gap); then
-`p09_raise` and `p09_raised_class` go.
+`misc2-messages`' `msg_raised_call` with it (python-30's `em_ruff_raised_call` works around the same gap); then
+`raise_value` and `raised_class` go.
 
 ## TRY002: the name where Ruff reads it
 
@@ -56,22 +56,22 @@ fields) makes each a part, with no tuple taken apart. `except KeyError, e:` stay
 **Library change proposed:** `bb_pos` and `bb_arg` (python/bugbear) should skip `line_continuation` as python/ruff's
 `call_item` does.
 
-## INT001, INT002: translation calls inside string type definitions (`p09_gettext_arg`)
+## INT001, INT002: translation calls inside string type definitions (`gettext_arg`)
 
 Ruff checks the code it parses from string annotations, `cast("…", x)`'s type and TypeVar bounds
 (`INT001-string-annotations.py`: lines 5, 6, 7, 11, 12; `INT002-string-annotations.py`: 4, 5, 6, 11). misc2-messages'
 `msg_arg` counts positional arguments in an aggregate, which does not see a guest tree's nodes, so it has no row
-there. `p09_gettext_arg` adds python-03's `tree_call_arg` for a `type_str_node` call.
+there. `gettext_arg` adds python-03's `tree_call_arg` for a `type_str_node` call.
 
 Literal strings: a guest tree's rows are reached only from its string, through `parsed`. names' `literal_str` starts
 from `kind(l, "subscript")`, so it finds no subscript of a guest tree, and the string in
 `x4: "Literal['_(f\"{a}\")']"` passes `ann_str` and is parsed as a type. Ruff does not (a Literal's string is a
-value): line 8 of the INT001 probe, line 9 of the INT002 one, were false findings of the first fix. `p09_in_literal`
+value): line 8 of the INT001 probe, line 9 of the INT002 one, were false findings of the first fix. `guest_in_literal`
 finds such subscripts from the guest's nodes (`type_str_node`) and leaves their strings' trees out.
 
 **Library change proposed:** names' `literal_str` (python/scopes) should be seeded from the guest's nodes too (a
-clause over `parsed_in`, as `p09_in_literal`); then the nested strings of a Literal are not parsed for any rule, and
-`p09_in_literal` goes. `msg_arg` could fall back to `tree_call_arg` on a `type_str_node`, and `p09_gettext_arg` go.
+clause over `parsed_in`, as `guest_in_literal`); then the nested strings of a Literal are not parsed for any rule, and
+`guest_in_literal` goes. `msg_arg` could fall back to `tree_call_arg` on a `type_str_node`, and `gettext_arg` go.
 
 ## Engine gaps
 

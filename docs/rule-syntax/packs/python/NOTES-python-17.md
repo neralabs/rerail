@@ -5,7 +5,7 @@ the Python examples, recorded fixtures and samples-python corpus.
 
 New library: `lib/python/python-17.rerail`, shared by D101, D102, D103, D105 and D107. It extends the existing
 interfaces without editing them: `all_entry` accepts bare tuples, set arguments and parenthesized entries;
-`typing_dec` and `doc_accessor` see transparent parentheses; and `python17_tuple_pseudodoc` identifies a one-string
+`typing_dec` and `doc_accessor` see transparent parentheses; and `tuple_pseudodoc` identifies a one-string
 tuple statement that `python/ast` currently accepts as a docstring.
 
 ## Per rule

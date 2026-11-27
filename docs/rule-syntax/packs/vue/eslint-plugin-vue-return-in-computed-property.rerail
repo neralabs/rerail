@@ -42,10 +42,10 @@ later_return(f, r) :- vown_return(f, r), vown_return(f, q), line(r, lr), line(q,
 report_at(f, f) :- getter(f, _), !kind(f, "method_definition").
 report_at(f, p) :- getter(f, _), kind(f, "method_definition"), field(f, "parameters", p).
 
-// ESLint 9.39.5, eslint-plugin-vue 10.11.1 (pt1120-vue-01): each expected line is ESLint's. Paths: a switch with a
+// ESLint 9.39.5, eslint-plugin-vue 10.11.1: each expected line is ESLint's. Paths: a switch with a
 // default, try/finally, while (true), do-while return on every path; `return;` last, a throw only, a nested
 // function's return, `for (;;)` with a break, a labelled break do not. A setter beside a getter is reported too.
-.test pt1120_getters_and_paths exactly
+.test getters_and_paths exactly
     .fixture "r1.vue" ```
         <script lang="ts">
         export default {

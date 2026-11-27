@@ -40,10 +40,10 @@ keeps(p) :- kind(p, "variable_declarator") ; kind(p, "assignment_expression") ;
     kind(p, "augmented_assignment_expression") ; kind(p, "call_expression") ; kind(p, "pair") ; kind(p, "array").
 keeps(p) :- kind(p, "arguments"), child(q, p, _), kind(q, "call_expression").
 
-// ESLint 9.39.5, eslint-plugin-vue 10.11.1 (pt1120-vue-01): each expected line is ESLint's. A kept handle (declared,
+// ESLint 9.39.5, eslint-plugin-vue 10.11.1: each expected line is ESLint's. A kept handle (declared,
 // assigned, `||=`, an argument or callee of a call, a property, an array element) is not reported; `new Use(watch())`,
 // a parenthesised statement and `await watch()` are. An await in the call's own arguments comes after it.
-.test pt1120_watch_handles_and_order exactly
+.test watch_handles_and_order exactly
     .fixture "x1.vue" ```
         <script>
         import { watch, watchEffect } from 'vue'

@@ -17,8 +17,8 @@
 .violation T201(at: node) code "T201"
     "Replace this `print` with a `logging` call (`logger.debug`, `logger.info`), or remove it if it was debug output; leave it where the program's job is to write to the terminal."
     suppress ruff "T201"
-T201(f) :- p10_call_q(c, "builtins.print"), field(c, "function", f), !print_elsewhere(c).
+T201(f) :- fwdref_call_q(c, "builtins.print"), field(c, "function", f), !print_elsewhere(c).
 
 // print_elsewhere(c): c passes `file=` a value other than None, sys.stdout or sys.stderr.
 .decl print_elsewhere(c: node)
-print_elsewhere(c) :- p10_kwarg(c, "file", v), !p10_stdio(v).
+print_elsewhere(c) :- fwdref_kwarg(c, "file", v), !stdio_value(v).

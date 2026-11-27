@@ -17,6 +17,6 @@
     suppress ruff "D105"
 D105(nm, x) :- doc_missing(_, "method", nm, x), dunder(nm, x),
     x != "__init__", x != "__new__", x != "__call__".
-D105(nm, x) :- doc_def(o, "method"), doc_public(o), python17_tuple_pseudodoc(o), !doc_ignored(o),
+D105(nm, x) :- doc_def(o, "method"), doc_public(o), tuple_pseudodoc(o), !doc_ignored(o),
     docof(o, d), !stub_file(d), doc_name(o, nm, x), !typing_dec(o, "overload"), !typing_dec(o, "override"),
     dunder(nm, x), x != "__init__", x != "__new__", x != "__call__".

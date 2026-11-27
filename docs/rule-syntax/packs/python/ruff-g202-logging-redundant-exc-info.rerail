@@ -15,4 +15,4 @@
 .violation G202(at: node) code "G202"
     "Remove this redundant `exc_info` argument: `exception(...)` already logs the active exception's traceback."
     suppress ruff "G202"
-G202(k) :- p07_log_call(c, "exception", _, _), p07_exc_info(c, k), p07_in_handler(c).
+G202(k) :- visit_log_call(c, "exception", _, _), visit_exc_info(c, k), visit_in_handler(c).

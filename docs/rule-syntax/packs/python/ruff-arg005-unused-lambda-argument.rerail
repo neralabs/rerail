@@ -18,4 +18,4 @@
 .violation ARG005(at: node, name: symbol) code "ARG005"
     "Remove `{name}` if no caller passes it, or prefix it with an underscore if the lambda must accept it; keep the name when callers pass it by keyword."
     suppress ruff "ARG005"
-ARG005(nm, x) :- p07_unused(_, nm, x, "ARG005").
+ARG005(nm, x) :- visit_unused(_, nm, x, "ARG005").

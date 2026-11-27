@@ -17,7 +17,7 @@
 #include "python/misc2-typecheck.rerail"
 //   tc_cast_type(c, t), stub_file(d)
 #include "python/type-string-names.rerail"
-//   p10_tq(e, q), p10_arg0(c, a), p10_kwarg(c, x, v); python-04's in_ann_tree, guest_file
+//   fwdref_lookup(e, q), fwdref_arg0(c, a), fwdref_kwarg(c, x, v); python-04's in_ann_tree, guest_file
 
 .violation TC006(at: node) code "TC006"
     "Quote the type expression passed to this `cast()` call, as in `cast(\"list[int]\", value)`."
@@ -26,8 +26,8 @@ TC006(t) :- tc_cast_type(_, t), !str_literal(t), docof(t, d), !stub_file(d).
 TC006(t) :- ann_cast_type(_, t), !str_literal(t), guest_file(t, d), !stub_file(d).
 // ann_cast_type(c, t): as tc_cast_type, for a cast in a type string's tree.
 .decl ann_cast_type(c: node, t: node)
-ann_cast_type(c, t) :- in_ann_tree(c), kind(c, "call"), field(c, "function", f), unparen(f, g), p10_tq(g, q),
-    (q = "typing.cast" ; q = "typing_extensions.cast"), (p10_arg0(c, t) ; p10_kwarg(c, "typ", t)).
+ann_cast_type(c, t) :- in_ann_tree(c), kind(c, "call"), field(c, "function", f), unparen(f, g), fwdref_lookup(g, q),
+    (q = "typing.cast" ; q = "typing_extensions.cast"), (fwdref_arg0(c, t) ; fwdref_kwarg(c, "typ", t)).
 // A str literal, adjacent ones included; an f-string or bytes literal is not one (Ruff's is_string_literal_expr).
 .decl str_literal(t: node)
 str_literal(t) :- string_form(t, "str").

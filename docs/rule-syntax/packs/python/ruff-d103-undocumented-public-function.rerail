@@ -16,5 +16,5 @@
     "Add a docstring as the first statement of function `{x}`, describing what it does, its arguments and its return value."
     suppress ruff "D103"
 D103(nm, x) :- doc_missing(_, "function", nm, x).
-D103(nm, x) :- doc_def(o, "function"), doc_public(o), python17_tuple_pseudodoc(o), !doc_ignored(o),
+D103(nm, x) :- doc_def(o, "function"), doc_public(o), tuple_pseudodoc(o), !doc_ignored(o),
     docof(o, d), !stub_file(d), doc_name(o, nm, x), !typing_dec(o, "overload").

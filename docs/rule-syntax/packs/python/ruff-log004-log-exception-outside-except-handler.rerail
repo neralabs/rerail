@@ -17,4 +17,4 @@
     "Call `error` instead of `exception` here: outside an except block there is no exception to attach. Leave it if this code only ever runs while an exception is being handled."
     suppress ruff "LOG004"
 LOG004(c) :- log_call(c, "exception", _, _), !log_in_handler(c).
-LOG004(c) :- python31_log_call(c, "exception", _), !python31_log_in_handler(c).
+LOG004(c) :- texpr_log_call(c, "exception", _), !texpr_log_in_handler(c).

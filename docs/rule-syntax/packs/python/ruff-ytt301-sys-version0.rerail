@@ -12,4 +12,4 @@
 .violation YTT301(at: node) code "YTT301"
     "Use `sys.version_info.major` (an int, so compare it to ints, not strings) instead of `sys.version[0]`, which is only the first digit of a two-digit major version."
     suppress ruff "YTT301"
-YTT301(v) :- py27_ytt_version_index(v, "0").
+YTT301(v) :- ytt_ruff_version_index(v, "0").

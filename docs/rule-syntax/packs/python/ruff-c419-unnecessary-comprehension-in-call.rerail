@@ -12,14 +12,14 @@
 //   a: "any([x for x in y])" = 1                         ← C419: a string type definition is code
 //   any(x.ok for x in xs)    any([await f(x) for x in xs])    sum([x for x in xs])    not reported
 #include "python/python-15.rerail"
-//   p15_builtin_call(c, x), p15_str_call(c, x), p15_nkw0(c), p15_first(c, a); c4_comp(e, k)
+//   lookup_builtin_call(c, x), lookup_str_call(c, x), lookup_nkw0(c), lookup_first(c, a); c4_comp(e, k)
 
 .violation C419(at: node, kind: symbol) code "C419"
     "Drop the comprehension's brackets or braces to pass a generator expression so the call can stop early; keep the comprehension only if every element must be evaluated for its side effects."
     suppress ruff "C419"
-C419(e, k) :- (p15_builtin_call(c, f) ; p15_str_call(c, f)), (f = "any" ; f = "all"), p15_nkw0(c), p15_first(c, e),
+C419(e, k) :- (lookup_builtin_call(c, f) ; lookup_str_call(c, f)), (f = "any" ; f = "all"), lookup_nkw0(c), lookup_first(c, e),
     c4_comp(e, k), (k = "list" ; k = "set"), field(e, "body", b), !kind(b, "await"), !has(b, _, "await"),
     !async_for(e).
-p15_name("any"). p15_name("all").
+lookup_name("any"). lookup_name("all").
 .decl async_for(e: node)  // `[x async for x in xs]`
-async_for(e) :- p15_first(_, e), child(e, fc, _), kind(fc, "for_in_clause"), op(fc, "async").
+async_for(e) :- lookup_first(_, e), child(e, fc, _), kind(fc, "for_in_clause"), op(fc, "async").

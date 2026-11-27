@@ -17,4 +17,4 @@
 .violation ANN204(at: node, name: symbol) code "ANN204"
     "Add a return type annotation to `{name}`, such as `-> None` for `__init__` or `-> str` for `__str__`."
     suppress ruff "ANN204"
-ANN204(nm, x) :- p26_ann_missing_return(f, "ANN204"), field(f, "name", nm), text(nm, x).
+ANN204(nm, x) :- ann_ruff_missing_return(f, "ANN204"), field(f, "name", nm), text(nm, x).

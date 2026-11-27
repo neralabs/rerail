@@ -1,0 +1,25 @@
+// python/docstrings-ruff-reads: which docstrings Ruff's D2xx-D4xx rules look at, beyond python/docstrings' doc_of.
+//
+// Interface
+//   ruff_doc(s)   docstring s (doc_of) is one Ruff reads: its statement is a lone string, not a one-string tuple, and
+//                 its file parses
+//
+// Ruff background
+//   - `"x",` is a tuple statement, not a docstring. tree-sitter's comma is no named child of the statement, so
+//     python/ast's doc_stmt takes it for a lone string; python/python-17's tuple_pseudodoc names it.
+//   - Ruff reports no lint finding in a file that does not parse (ruff 0.17.6: a valid `""" """` above an
+//     unterminated `"a` gives only the syntax error). core's syntax_error is CPython's verdict, but a policy that
+//     reads it withholds every syntax-error file from every policy of its run, not only its own; so a file that does
+//     not parse is told by tree-sitter's ERROR nodes here. A file whose only error tree-sitter recovers as a MISSING
+//     token is still read.
+//
+//   def f():
+//       "x",                  no ruff_doc: a tuple
+//   def g():
+//       """ """               no ruff_doc when the file holds an ERROR node anywhere, e.g. `x = (` at its end
+#include "python/python-17.rerail"
+
+.decl ruff_doc(s: node)
+ruff_doc(s) :- doc_of(o, s), !tuple_pseudodoc(o), docof(s, d), !unparsed_doc(d).
+.decl unparsed_doc(d: number)  // document d holds a tree-sitter ERROR node
+unparsed_doc(d) :- kind(n, "ERROR"), docof(n, d).

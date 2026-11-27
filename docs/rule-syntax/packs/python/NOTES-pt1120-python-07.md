@@ -8,7 +8,7 @@ because the fixes are each needed by two rules or more and touch relations of `m
 `scopes`, which this batch may not edit. Everything there is per file, keyed by node; with `RERAIL_STRICT_CROSSINGS`,
 `RERAIL_STRICT_NODES` and `RERAIL_STRICT_POSITIONS` the eight rules run.
 
-## Ruff's binding where a name is read (`p07_seen`, `p07_qual`): ARG002, ARG004, G002, G003
+## Ruff's binding where a name is read (`visit_seen`, `visit_qual`): ARG002, ARG004, G002, G003
 
 Ruff visits a scope in order, and a def's or lambda's body after the scope around it. `ruff_qual`'s `rebound` takes
 the latest binding before the reference in every case, ignores deletions, and lets an `except … as x` binding stand
@@ -25,24 +25,24 @@ after its clause. Counterexamples, Ruff's findings beside them:
   unbinds the import: a name again). `except Exception as log4: pass` then `log4.info(…)`: Ruff nothing (the import
   is back after the clause); the old translation reported it.
 
-`p07_seen(r, b, f)` is the latest candidate binding of the scope r's lookup lands on: those before r, or all of them
+`visit_seen(r, b, f)` is the latest candidate binding of the scope r's lookup lands on: those before r, or all of them
 when a def or lambda body lies between r and that scope; an `except` name only inside its clause; scopes' `del_site`
 (Ruff's unconditional `Deletion`) as form "deletion". An eager read with no binding yet is the builtin. Asked only
-for callees, their objects' roots and decorators (`p07_need`). `misc2-self`'s `slf_bind` is a near relative (latest
+for callees, their objects' roots and decorators (`visit_need`). `misc2-self`'s `slf_bind` is a near relative (latest
 before in its own scope, last in an outer one), but reads a class body's reference to the module as deferred, which
 Early's decorator shows wrong.
 
 **Library change proposed:** `ruff_qual` (python/ruff) should resolve through this binding, and logging's
-`logger_expr`/`local_def_chain` and misc2-args' `argt_dec` with it; then `p07_qual`, `p07_dec`, `p07_logger` and
-`p07_log_call` go.
+`logger_expr`/`local_def_chain` and misc2-args' `argt_dec` with it; then `visit_qual`, `visit_dec`, `visit_logger` and
+`visit_log_call` go.
 
-## Unused arguments (`p07_unused`): ARG002-ARG005
+## Unused arguments (`visit_unused`): ARG002-ARG005
 
 - **Annotated `*args: T` and `**kw: T`** (scopes' `param` misses them, so `argt_read` and `argt_rebound` never saw
   them): dask `highlevelgraph.py:617` `def merge(cls, *graphs: Graph)` reads `graphs`; pydantic `main.py` and dvc
   `**kwargs: Any` likewise; `PYI034.py:366`'s `__new__(…, **kwargs: Any)` passes it to `super().__new__`. Ruff
   reports none of them; the old translation reported all (8 ARG002 and 6 ARG003 samples, 1 ARG004 fixture). A
-  typed splat rebound in the body (`a = 1`) is not reported either. `p07_read` takes every `sig_param` name and
+  typed splat rebound in the body (`a = 1`) is not reported either. `visit_read` takes every `sig_param` name and
   a load in the body whose `walk` passes through f.
 - **Defaults are read outside**: `lam20 = lambda a, c=a: c` is ARG005 at `a` (Ruff); a read must be in f's body.
 - **`locals()` in a lambda** (`ARG005-lambda-locals-scopes.py`, 13 keys): it counts only in the lambda's own scope,
@@ -54,14 +54,14 @@ Early's decorator shows wrong.
 - **The variable stub with no names** (`ARG002-variable-stub-generator-argument.py`, lines 2 and 10): Ruff's
   `is_not_implemented_stub_with_variable` compares the assignment target's name with the raised argument's as
   `Option`s, so `self.msg = "…"; raise NotImplementedError(i for i in ())` (neither a name) is a stub, not reported.
-  `p07_raise_none` adds that case to `arg_stub`.
+  `visit_raise_none` adds that case to `arg_stub`.
 
 **Library change proposed:** scopes' `param` (and so `bound_in`, `binding`'s "param" sites, `bind_only`) should
 take the identifier inside a typed `list_splat_pattern`/`dictionary_splat_pattern`; misc2-args' `argt_read` should
 require the read in the body, `argt_locals` should take the lambda scope rules above, and `arg_stub` the `None ==
 None` case. ARG001 (not this batch) has the same defects in `arg_unused`.
 
-## Logging (`p07_log_msg`, `p07_in_handler`): G002, G003, G201, G202
+## Logging (`visit_log_msg`, `visit_in_handler`): G002, G003, G201, G202
 
 - **`msg=` first**: Ruff's `find_argument_value("msg", pos)` takes the keyword before the position.
   `logging.info("a" + str(x), msg="x")` (`G004-message-slot.py:13`): Ruff no G003; the old translation reported it.
@@ -71,7 +71,7 @@ None` case. ARG001 (not this batch) has the same defects in `arg_unused`.
   a def's default (13) and return annotation (16) are. logging's header says the flag "survives into functions
   defined in the handler"; Ruff 0.17.6 does not.
 
-**Library change proposed:** logging's `log_msg` keyword-first and `log_in_handler` as `p07_in_handler`.
+**Library change proposed:** logging's `log_msg` keyword-first and `log_in_handler` as `visit_in_handler`.
 
 ## Engine gaps
 

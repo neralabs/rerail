@@ -102,11 +102,11 @@ src_reads(r, x) :- reads(r, x), within(r, p), child(s, p, 0), kind(s, "sequence_
 local(r, k) :- reads(r, x), within(r, f), (field(f, "parameters", ps), within(n, ps), vv_binding(n) ;
     field(f, "parameter", n)), text(n, x), host_node(f, h), (h = k ; within(h, k)).
 
-// ESLint 9.39.5, eslint-plugin-vue 10.11.1 (pt1120-vue-01): each expected line is ESLint's. The same-name `:key`
+// ESLint 9.39.5, eslint-plugin-vue 10.11.1: each expected line is ESLint's. The same-name `:key`
 // reads its name; a :key's own arrow parameter is no v-for variable; slots 1 and 2 must be names (a multi-line alias
 // is reported on its own line); a keyless <template>'s children are checked against its v-for, unless their own
 // v-for's list reads its variables; self-closing elements (the view's arrow is placed at their tag).
-.test pt1120_keys_and_aliases exactly
+.test keys_and_aliases exactly
     .fixture "v1.vue" ```
         <template>
           <div>

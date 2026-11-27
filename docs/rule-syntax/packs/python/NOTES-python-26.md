@@ -34,7 +34,7 @@ class C:
     def __new__(cls): ...  # ANN001 for cls
 ```
 
-The old translation treated `cls` as a receiver. `p26_ann_param` uses the corrected decorator resolution.
+The old translation treated `cls` as a receiver. `ann_ruff_param` uses the corrected decorator resolution.
 
 ## `ruff-ann201-missing-return-type-undocumented-public-function`
 

@@ -4,17 +4,17 @@ Checked with `ptcheck --ref tbelanger/pack-translations-1120` (engine `rerail-en
 (`ruff check --select <CODE> --no-cache`). All six are `same` on examples, fixtures and samples-python. Every
 difference the baseline recorded was the translation's error.
 
-New library: `lib/python/pt1120-python-05.rerail`, `py05_doc(s)`: a docstring Ruff reads. Its statement is no
+New library: `lib/python/docstrings-ruff-reads.rerail`, `ruff_doc(s)`: a docstring Ruff reads. Its statement is no
 one-string tuple, and its file has no tree-sitter ERROR node. Every rule here requires it.
 
 | Rule | Baseline (fixtures) | Cause | Fix |
 |---|---|---|---|
 | ruff-d212-multi-line-summary-first-line | 3 original-only | the newline after the quotes was `\r?\n`; a lone `\r` breaks a line too | `[\r\n]` |
-| ruff-d300-triple-single-quotes | 3 translation-only | `"x",` read as a docstring (2); a docstring in a file that does not parse (1) | `py05_doc` |
-| ruff-d403-first-word-uncapitalized | 1 translation-only | `"x",` read as a docstring | `py05_doc` |
+| ruff-d300-triple-single-quotes | 3 translation-only | `"x",` read as a docstring (2); a docstring in a file that does not parse (1) | `ruff_doc` |
+| ruff-d403-first-word-uncapitalized | 1 translation-only | `"x",` read as a docstring | `ruff_doc` |
 | ruff-d406-missing-new-line-after-section-name | 2 translation-only | Google docstrings read as NumPy, through the library's `tie` | the rule's own `numpy_doc` |
 | ruff-d418-overload-with-docstring | 1 original-only | `from _typeshed import overload` not read as `overload` | `overload_dec` |
-| ruff-d419-empty-docstring | 1 translation-only | a docstring in a file that does not parse | `py05_doc` |
+| ruff-d419-empty-docstring | 1 translation-only | a docstring in a file that does not parse | `ruff_doc` |
 
 ## Per rule
 
@@ -23,11 +23,11 @@ one-string tuple, and its file has no tree-sitter ERROR node. Every rule here re
 - **D300, D403.** `probes/PYI058-tuple-expression-statements.py:19` (`"x",`) and
   `probes/RUF002-tuple-statement-is-not-docstring.py:2` (`"dоc",`). Ruff reports nothing: each is a tuple
   statement. python/ast's `doc_stmt` counts named children only, so it took the statement for a lone string.
-  python/python-17's `python17_tuple_pseudodoc` names the case, and `py05_doc` excludes it.
+  python/python-17's `tuple_pseudodoc` names the case, and `ruff_doc` excludes it.
 - **D300, D419: files that do not parse.** Ruff reports only the syntax error in such a file. A valid `""" """` above an
   unterminated `"a` gives no D419 (ruff 0.17.6, probed on a box). The cases: `flake8_implicit_str_concat/ISC_syntax_error.py:2`
   (`"a" "b`) and `ISC_syntax_error_2.py:2` (`'' '`). tree-sitter parses the first string as a statement and the rest
-  as an ERROR node. `py05_doc` drops docstrings in a file with an ERROR node.
+  as an ERROR node. `ruff_doc` drops docstrings in a file with an ERROR node.
   - Not core's `syntax_error`, CPython's verdict and the closer match: a policy that reads it withholds every
     syntax-error file from every policy of the same `run-policies` run, not just its own. Two probe policies run
     together showed it: the one that did not read it lost those files too. A pack run would change every other
@@ -55,7 +55,7 @@ one-string tuple, and its file has no tree-sitter ERROR node. Every rule here re
   "numpy", _) }, g = n, g > 0`. Every rule that reads `doc_style` or `doc_section` (D405-D417 and others) reads Google
   docstrings as NumPy too. D406's `numpy_doc` is then `doc_style(s, "numpy")` again.
 - `python/syntax.rerail`, `doc_stmt`: refuse a statement whose text ends in `,` (python-17's
-  `python17_tuple_pseudodoc`), so `docstring` itself is Ruff's. `py05_doc`'s first test then goes.
+  `tuple_pseudodoc`), so `docstring` itself is Ruff's. `ruff_doc`'s first test then goes.
 - `python/naming.rerail`, `typing_dec`: `_typeshed` with `typing` and `typing_extensions`, as Ruff's typing members.
 
 ## Engine gaps

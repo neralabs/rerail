@@ -14,5 +14,5 @@
 .violation YTT103(at: node) code "YTT103"
     "Compare `sys.version_info` to a tuple such as `sys.version_info >= (3, 9)` instead of ordering `sys.version` against a string; string order misjudges 3.10 as older than 3.9."
     suppress ruff "YTT103"
-YTT103(l) :- py27_single_cmp(_, l, o, r), ytt_order(o), py27_ytt_sys(l, "version"),
-    plain_str(r, _), !py27_one_byte_str(r).
+YTT103(l) :- ytt_ruff_single_cmp(_, l, o, r), ytt_order(o), ytt_ruff_sys(l, "version"),
+    plain_str(r, _), !ytt_ruff_one_byte_str(r).

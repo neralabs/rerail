@@ -3,15 +3,16 @@
 // star imports included, as its pandas-vet rules (PD002, PD101) ask.
 //
 // Interface
-//   p10_call_q(c, q)     call c's callee resolves to q: python/ruff's call_q in the file, the forward-reference
-//                        lookup below in a type string's tree (python-04's in_ann_tree)
-//   p10_qual(e, q)       e resolves to q, likewise (ruff_qual in the file)
-//   p10_tq(e, q)         the forward-reference lookup alone, for e in a type string's tree
-//   p10_kwarg(c, x, v)   call c passes keyword x with value v, parentheses off, in the file or a type string's tree
-//   p10_arg0(c, a)       a is the first positional argument of call c in a type string's tree, parentheses off
-//   p10_stdio(v)         v is None, sys.stdout or sys.stderr
-//   p10_seen(d, m)       misc-seen's seen_module(d, m), or document d has `from m import *` (or of a submodule of m);
-//                        m is one a rule lists in seen_ask
+//   fwdref_call_q(c, q)        call c's callee resolves to q: python/ruff's call_q in the file, the forward-reference
+//                              lookup below in a type string's tree (python-04's in_ann_tree)
+//   fwdref_qual(e, q)          e resolves to q, likewise (ruff_qual in the file)
+//   fwdref_lookup(e, q)        the forward-reference lookup alone, for e in a type string's tree
+//   fwdref_kwarg(c, x, v)      call c passes keyword x with value v, parentheses off, in the file or a type string's
+//                              tree
+//   fwdref_arg0(c, a)          a is the first positional argument of call c in a type string's tree, parentheses off
+//   stdio_value(v)             v is None, sys.stdout or sys.stderr
+//   seen_module_or_star(d, m)  misc-seen's seen_module(d, m), or document d has `from m import *` (or of a
+//                              submodule of m); m is one a rule lists in seen_ask
 //
 // Python and Ruff background
 //   - Ruff visits the code it parses from a string type definition (`x: "T"`, `cast("T", v)`, a TypeVar's bound or
@@ -36,50 +37,53 @@
 //
 //   from typing import cast
 //   import sys
-//   w = cast("print(1, file=sys.stderr)", 1)   p10_call_q(<print(…)>, "builtins.print"),
-//                                              p10_kwarg(<print(…)>, "file", <sys.stderr>), p10_stdio(<sys.stderr>)
-//   v = cast("cast(int, 1)", 2)                p10_call_q(<cast(int, 1)>, "typing.cast"), p10_arg0(<…>, <int>)
+//   w = cast("print(1, file=sys.stderr)", 1)   fwdref_call_q(<print(…)>, "builtins.print"),
+//                                              fwdref_kwarg(<print(…)>, "file", <sys.stderr>),
+//                                              stdio_value(<sys.stderr>)
+//   v = cast("cast(int, 1)", 2)                fwdref_call_q(<cast(int, 1)>, "typing.cast"),
+//                                              fwdref_arg0(<…>, <int>)
 #include "python/python-04.rerail"   // in_ann_tree, guest_file, ann_kwarg, ann_arg; python/ruff through it
 #include "python/misc-seen.rerail"   // seen_module, seen_ask; module_text (python/imports)
 
 // ---- names -------------------------------------------------------------------------------------------------------
-.decl p10_call_q(c: node, q: symbol)
-p10_call_q(c, q) :- call_q(c, q), !in_ann_tree(c).
-p10_call_q(c, q) :- in_ann_tree(c), kind(c, "call"), field(c, "function", f), unparen(f, g), p10_tq(g, q).
-.decl p10_qual(e: node, q: symbol)
-p10_qual(e, q) :- ruff_qual(e, q), !in_ann_tree(e).
-p10_qual(e, q) :- unparen(e, m), p10_tq(m, q).
-// p10_tq(e, q): the module's binding of the name first (here: its imports, when the module binds the name no other
-// way), else the builtin when the module does not bind the name, else the lookup from the string's place.
-.decl p10_tq(e: node, q: symbol)
-p10_tq(e, q) :- in_ann_tree(e), kind(e, "identifier"), text(e, x), p10_module(e, m), p10_mod_import(m, x, q).
-p10_tq(e, cat("builtins.", x)) :- in_ann_tree(e), kind(e, "identifier"), text(e, x), builtin(x), p10_module(e, m),
-    !bound_in(m, x).
-p10_tq(e, q) :- in_ann_tree(e), kind(e, "identifier"), text(e, x), !builtin(x), p10_module(e, m), !bound_in(m, x),
-    ruff_qual(e, q).
-p10_tq(e, @dot(q, a)) :- in_ann_tree(e), kind(e, "attribute"), field(e, "object", o), unparen(o, p), p10_tq(p, q),
-    field(e, "attribute", n), text(n, a).
-// p10_module(e, m): m is the module node of the file guest node e stands in.
-.decl p10_module(e: node, m: node)
-p10_module(e, m) :- guest_file(e, d), modnode(d, m).
-// p10_mod_import(m, x, q): module m binds x by imports alone, the import naming q.
-.decl p10_mod_import(m: node, x: symbol, q: symbol)
-p10_mod_import(m, x, q) :- ibind(m, x, q), count : { binding(m, x, _, f), f != "import" } = 0.
+.decl fwdref_call_q(c: node, q: symbol)
+fwdref_call_q(c, q) :- call_q(c, q), !in_ann_tree(c).
+fwdref_call_q(c, q) :- in_ann_tree(c), kind(c, "call"), field(c, "function", f), unparen(f, g), fwdref_lookup(g, q).
+.decl fwdref_qual(e: node, q: symbol)
+fwdref_qual(e, q) :- ruff_qual(e, q), !in_ann_tree(e).
+fwdref_qual(e, q) :- unparen(e, m), fwdref_lookup(m, q).
+// fwdref_lookup(e, q): the module's binding of the name first (here: its imports, when the module binds the name no
+// other way), else the builtin when the module does not bind the name, else the lookup from the string's place.
+.decl fwdref_lookup(e: node, q: symbol)
+fwdref_lookup(e, q) :- in_ann_tree(e), kind(e, "identifier"), text(e, x), fwdref_module(e, m),
+    fwdref_mod_import(m, x, q).
+fwdref_lookup(e, cat("builtins.", x)) :- in_ann_tree(e), kind(e, "identifier"), text(e, x), builtin(x),
+    fwdref_module(e, m), !bound_in(m, x).
+fwdref_lookup(e, q) :- in_ann_tree(e), kind(e, "identifier"), text(e, x), !builtin(x), fwdref_module(e, m),
+    !bound_in(m, x), ruff_qual(e, q).
+fwdref_lookup(e, @dot(q, a)) :- in_ann_tree(e), kind(e, "attribute"), field(e, "object", o), unparen(o, p),
+    fwdref_lookup(p, q), field(e, "attribute", n), text(n, a).
+// fwdref_module(e, m): m is the module node of the file guest node e stands in.
+.decl fwdref_module(e: node, m: node)
+fwdref_module(e, m) :- guest_file(e, d), modnode(d, m).
+// fwdref_mod_import(m, x, q): module m binds x by imports alone, the import naming q.
+.decl fwdref_mod_import(m: node, x: symbol, q: symbol)
+fwdref_mod_import(m, x, q) :- ibind(m, x, q), count : { binding(m, x, _, f), f != "import" } = 0.
 
 // ---- arguments ---------------------------------------------------------------------------------------------------
-.decl p10_kwarg(c: node, x: symbol, v: node)
-p10_kwarg(c, x, v) :- call_kwarg(c, x, v0), !in_ann_tree(c), unparen(v0, v).
-p10_kwarg(c, x, v) :- ann_kwarg(c, x, v0), unparen(v0, v).
-.decl p10_arg0(c: node, a: node)
-p10_arg0(c, a) :- ann_arg(c, 0, a0), unparen(a0, a).
-.decl p10_stdio(v: node)
-p10_stdio(v) :- kind(v, "none").
+.decl fwdref_kwarg(c: node, x: symbol, v: node)
+fwdref_kwarg(c, x, v) :- call_kwarg(c, x, v0), !in_ann_tree(c), unparen(v0, v).
+fwdref_kwarg(c, x, v) :- ann_kwarg(c, x, v0), unparen(v0, v).
+.decl fwdref_arg0(c: node, a: node)
+fwdref_arg0(c, a) :- ann_arg(c, 0, a0), unparen(a0, a).
+.decl stdio_value(v: node)
+stdio_value(v) :- kind(v, "none").
 // In a type string's tree the engine gives `None` no "none" row: cast("print(1, file=None)", x) is T201.
-p10_stdio(v) :- in_ann_tree(v), text(v, "None").
-p10_stdio(v) :- p10_qual(v, q), (q = "sys.stdout" ; q = "sys.stderr").
+stdio_value(v) :- in_ann_tree(v), text(v, "None").
+stdio_value(v) :- fwdref_qual(v, q), (q = "sys.stdout" ; q = "sys.stderr").
 
 // ---- modules a file imports --------------------------------------------------------------------------------------
-.decl p10_seen(d: number, m: symbol)
-p10_seen(d, m) :- seen_module(d, m).
-p10_seen(d, m) :- seen_ask(m), kind(i, "import_from_statement"), child(i, w, _), kind(w, "wildcard_import"),
+.decl seen_module_or_star(d: number, m: symbol)
+seen_module_or_star(d, m) :- seen_module(d, m).
+seen_module_or_star(d, m) :- seen_ask(m), kind(i, "import_from_statement"), child(i, w, _), kind(w, "wildcard_import"),
     module_text(i, q), (q = m ; prefix(cat(m, "."), q)), docof(i, d).

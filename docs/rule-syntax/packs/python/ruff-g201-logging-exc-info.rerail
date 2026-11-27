@@ -16,4 +16,4 @@
 .violation G201(at: node) code "G201"
     "Call `exception(...)` instead and drop `exc_info`: in an except block it logs the same traceback at ERROR level. Leave it if this object is not a standard logger."
     suppress ruff "G201"
-G201(at) :- p07_log_call(c, "error", at, _), p07_exc_info(c, _), p07_in_handler(c).
+G201(at) :- visit_log_call(c, "error", at, _), visit_exc_info(c, _), visit_in_handler(c).
