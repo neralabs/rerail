@@ -34,6 +34,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
 
 pub mod author_joins;
+pub mod dropped;
 pub mod analysis;
 pub mod analysis_report;
 pub mod kinds;
@@ -536,7 +537,7 @@ pub struct Stratum {
 
 /// One planned step: the literal, how it is read, from what, and the rows the planner expects after it; for a join,
 /// the joins it passed over there, each with the rows a binding it was priced at (why this one was taken).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct StepPlan {
     pub literal: String,
     pub access: String,
@@ -549,6 +550,9 @@ pub struct StepPlan {
     /// The rule the step's rows a binding were priced by (`plan_search`'s `atom_rows`): postings, observed,
     /// absence proof, membership, and the containment share applied, so a misprediction names its rule.
     pub basis: String,
+    /// The literal's variables, as it shows them (`$x`): what the rows-dropped analysis (`dropped`) reads to tell a
+    /// variable no later step reads and to write a rewrite's helper.
+    pub vars: Vec<String>,
 }
 
 /// A rule's plan as the planner chose it: estimated work and rows, and its search (subsets kept, candidates priced).
@@ -561,6 +565,9 @@ pub struct RulePlan {
     pub steps: Vec<StepPlan>,
     /// The join shape directives that held back a step of its search (`.shape`, O-join-shape-directives).
     pub shaped: Vec<String>,
+    /// The head as shown (`p($x, @f($y))`), and the variables it reads (`dropped`).
+    pub head: String,
+    pub head_vars: Vec<String>,
 }
 
 #[derive(Default)]
@@ -1719,7 +1726,7 @@ const INSIDE: u8 = 2;
 #[derive(Clone, Copy, Default)]
 struct Stage(u8);
 
-pub use rerail_context::{var, var_os, vars, Switches, AnyArc, Cores, is_main_thread, cores_scope, cores_spawn, cores_spawn_fifo, cores_threads, on_cores, Bound, Caller, Machine, bind, bind_here, bound, caller, holds, job_run, with_bound, RUN, RunOwn, RunValues, Shared, default_shared, engine_thread, enter, left_run, run_ended, local, local_if_any, machine, misses, run_own, setting, shared, shared_here, shared_object, starter_object, with_local, with_shared, within};
+pub use rerail_context::{var, var_os, vars, Switches, AnyArc, Cores, is_main_thread, cores_scope, cores_spawn, cores_spawn_fifo, cores_threads, on_cores, Bound, Caller, Machine, bind, bind_here, bound, caller, holds, job_run, with_bound, RUN, RunOwn, RunValues, Shared, default_shared, engine_pool, engine_thread, enter, left_run, run_ended, local, local_if_any, machine, misses, run_own, setting, shared, shared_here, shared_object, starter_object, with_local, with_shared, within};
 
 /// A run starts on this thread (`plan::corpus`): before its first wave, unless it is nested in a run inside its
 /// waves, until the guard drops.

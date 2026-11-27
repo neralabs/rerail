@@ -410,9 +410,11 @@ pub fn helped() -> f64 {
     HELPED.with(std::cell::Cell::get)
 }
 
-/// Whether this thread is one of the pool's.
+/// Whether this thread is one of the engine's pools' (`rerail_context::on_engine_pool`): only there does a wait run
+/// the pool's other jobs. A thread of a caller's own pool (rayon's global one) runs none of them in an engine's wait:
+/// the jobs it waits for are on the machine's cores (`cores_scope`), and its own pool's are the caller's.
 pub fn on_pool() -> bool {
-    rayon::current_thread_index().is_some()
+    rerail_context::on_engine_pool()
 }
 
 /// Waits until `poll` gives a value, running the pool's other jobs meanwhile when this is one of its threads, so a
@@ -973,7 +975,7 @@ fn lane_host<R>(lane: Lane, f: impl FnOnce() -> R) -> R {
     // SAFETY: see `Handed`: the caller is blocked for as long as the other thread holds it.
     unsafe impl<T> Send for Handed<T> {}
     let pools = pools();
-    match pools.lanes.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(|i| format!("rerail-lane-host {i}")).start_handler(|_| rerail_context::engine_thread()).build().ok()) {
+    match pools.lanes.get_or_init(|| rerail_context::engine_pool(rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(|i| format!("rerail-lane-host {i}")), |_| rerail_context::engine_thread()).build().ok()) {
         Some(pool) => {
             let f = Handed(f);
             let run = rerail_context::job_run();
@@ -1016,7 +1018,7 @@ pub fn lane_spawn<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> 
     let claimed = (0..SLOTS).find(|&i| pools.busy[i].compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed).is_ok());
     let pool = claimed.and_then(|i| {
         pools.slots[i]
-            .get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(move |t| format!("rerail-lane-slot {i}.{t}")).build().ok())
+            .get_or_init(|| rerail_context::engine_pool(rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(move |t| format!("rerail-lane-slot {i}.{t}")), |_| ()).build().ok())
             .as_ref()
             .map(|pool| (i, pool))
     });

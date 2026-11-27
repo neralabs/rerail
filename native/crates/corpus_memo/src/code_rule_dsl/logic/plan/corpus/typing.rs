@@ -120,6 +120,16 @@ pub fn facts(typing: &Typing, root: &Path, files: &[String], report: &mut Typing
     Ok((out, declared))
 }
 
+/// The relations the typing outputs read after the run, keyed by the function's symbol (decision 0677), with their
+/// widths: `returns(d, q, t)`, a return name function q of document d derives, and `functions(q)`, the corpus's
+/// functions.
+pub const HELD: [(&str, usize); 2] = [("returns", 3), ("functions", 1)];
+
+/// `rel`'s width, if the typing outputs read it after the run (`HELD`).
+pub fn held_width(rel: &str) -> Option<usize> {
+    HELD.iter().find(|(r, _)| *r == rel).map(|(_, w)| *w)
+}
+
 /// After the run: `type_of` as terms, the conflicts, and (with `summarize`) the summaries.
 #[allow(clippy::too_many_arguments)]
 pub fn outputs(
@@ -128,9 +138,8 @@ pub fn outputs(
     store: &ContentStore,
     root: &Path,
     type_of: Option<&[std::sync::Arc<crate::code_rule_dsl::logic::plan::output::Rows>]>,
-    returns: &[Vector<i64>],
+    held: &BTreeMap<String, Vec<Vector<i64>>>,
     declared: &BTreeMap<String, BTreeSet<String>>,
-    fn_q: Option<&dyn crate::code_rule_dsl::facts::vtab::Source>,
     report: &mut TypingReport,
 ) -> Result<()> {
     let text = |a: i64| -> Result<String> { store.atom_value(a as u32).map_err(|e| Error::Plan(e.to_string()))?.ok_or_else(|| Error::Plan(format!("no atom {a}"))) };
@@ -173,19 +182,19 @@ pub fn outputs(
         report.typed_nodes = per.len();
         report.terms = terms.len();
     }
-    // The corpus's functions: name → the return names it derived, from the export `fn_q` (`exports`), when the
-    // program has one.
-    let Some(fn_q) = fn_q else {
+    // The corpus's functions: name → the return names it derived (`HELD`, by the function's symbol), when the program
+    // has them.
+    let Some(names) = held.get("functions") else {
         return Ok(());
     };
-    let mut rets: BTreeMap<i64, BTreeSet<String>> = BTreeMap::new();
-    for r in returns {
-        rets.entry(r[0]).or_default().insert(text(r[1])?);
-    }
     let mut functions: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let pairs: Vec<(i64, i64)> = (0..fn_q.len()).map(|r| (fn_q.value(r, 0), fn_q.value(r, 1))).collect();
-    for (q, f) in pairs {
-        functions.entry(text(q)?).or_default().extend(rets.get(&f).cloned().unwrap_or_default());
+    for r in names {
+        functions.entry(text(r[0])?).or_default();
+    }
+    for r in held.get("returns").into_iter().flatten() {
+        if let Some(rets) = functions.get_mut(&text(r[1])?) {
+            rets.insert(text(r[2])?);
+        }
     }
     for (q, d) in declared {
         if let Some(have) = functions.get(q)

@@ -60,10 +60,12 @@
             subsets: 4,
             candidates: 6,
             steps: vec![
-                StepPlan { literal: "a($x)".into(), access: "scan".into(), source: "input".into(), rows: 5.0, all: 5.0, passed: Vec::new(), basis: "relation size".into() },
-                StepPlan { literal: "b($x)".into(), access: "lookup on (c0)".into(), source: "derived".into(), rows: 2.0, all: 2.0, passed: vec![("c($x)".into(), 7.0, "postings".into())], basis: "postings, containment 0.500".into() },
+                StepPlan { literal: "a($x)".into(), access: "scan".into(), source: "input".into(), rows: 5.0, all: 5.0, passed: Vec::new(), basis: "relation size".into(), vars: vec!["$x".into()] },
+                StepPlan { literal: "b($x)".into(), access: "lookup on (c0)".into(), source: "derived".into(), rows: 2.0, all: 2.0, passed: vec![("c($x)".into(), 7.0, "postings".into())], basis: "postings, containment 0.500".into(), vars: vec!["$x".into()] },
             ],
             shaped: Vec::new(),
+            head: "xrule($x)".into(),
+            head_vars: vec!["$x".into()],
         };
         planned("xstratum", "seed xrule", Some(3), &plan, 0.01, 0, Some(&[(1, 5), (5, 2)]), None);
         planned("xstratum", "seed xrule", Some(3), &plan, 0.01, 1, Some(&[(1, 4), (4, 1)]), None);

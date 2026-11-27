@@ -10,16 +10,20 @@
 // RERAIL_REFERENCES=rust (`rr::include_switched`): the program is otherwise the same, so the two runs differ only in
 // how the graph is made.
 
-// The engine's inputs, and the graph derived from them `cross_file` (decision 0652): its rows join definitions of
-// any files. An input is per-document to the split whatever it is declared; its one reader here, derived across files,
-// keeps it in the cross-file part, where the engine binds it, as the rules' graph is derived there.
-.decl w_reference_edge(src: node, dst: node, via: symbol)
-.decl w_reference_open(n: node)
+// The engine's inputs, by each definition's symbol as python/reference-defs.rerail's rf_sym spells it (`path:q#k`,
+// decision 0677): no node crosses into the cross-file part, where the engine binds them. Each is derived there
+// `cross_file` (decision 0652): its rows join definitions of any files. An input is per-document to the split whatever
+// it is declared; its one reader here, derived across files, keeps it in the cross-file part, as the rules' graph is
+// derived there.
+#include "python/reference-defs.rerail"
+
+.decl w_reference_edge(src: symbol, dst: symbol, via: symbol)
+.decl w_reference_open(s: symbol)
 .input w_reference_edge, w_reference_open
-.decl w_edge(src: node, dst: node, via: symbol) cross_file
+.decl w_edge(src: symbol, dst: symbol, via: symbol) cross_file
 w_edge(s, d, v) :- w_reference_edge(s, d, v).
-.decl w_open(n: node) cross_file
-w_open(n) :- w_reference_open(n).
+.decl w_open(s: symbol) cross_file
+w_open(s) :- w_reference_open(s).
 
 reference_edge(s, d, v) :- w_edge(s, d, v).
-reference_open(n) :- w_open(n).
+reference_open(s) :- w_open(s).

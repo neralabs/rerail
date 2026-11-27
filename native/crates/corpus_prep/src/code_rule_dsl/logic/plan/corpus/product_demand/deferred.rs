@@ -341,10 +341,14 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
                 let nodes = p.columns(rel).unwrap_or_default().iter().any(|(_, t)| matches!(t.as_str(), "node" | "place"));
                 let lookup = nodes && rules.iter().find(|r| p.head_rel(**r) == rel).and_then(|r| self::split(v, *r).map(|(_, parts)| (*r, parts))).is_some_and(|(r, parts)| {
                     let lits: Vec<_> = r.body().collect();
-                    // A constant: of facts and settings alone (the split's), or facts and no rule.
+                    // A constant: of facts and settings alone (the split's), facts and no rule, or an input placeless to
+                    // the split (`file_local::placeless_input`: an option, a setting): `class_anc(c, b) :- class_def(c,
+                    // q), …, py_names__own_at(p, q), py_names__ancestor(q, m, b)`, a lookup in py_names' setting by
+                    // the file's own class symbol, was handed on as parts and joined at c in the cross-file part.
                     let constant = |rel: &str| {
                         split.constants.contains(rel)
                             || (crate::code_rule_dsl::logic::program_image::fields::ProgramFields::states_facts(v, rel) && !rules.iter().any(|d| p.head_rel(*d) == rel))
+                            || crate::code_rule_dsl::typing::file_local::placeless_input(rel)
                     };
                     parts.iter().any(|part| part.iter().all(|&i| lits[i].atom().is_none_or(|a| constant(v.rel_name(a.rel())))))
                 });

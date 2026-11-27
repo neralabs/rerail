@@ -140,6 +140,7 @@ pub const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/vector/src/frame.rs", "ARENA", Thread, "this thread's frames' memory (decision 0687, `frame::op`): an operation's working memory, popped as it returns"),
     ("crates/vector/src/probe.rs", "BUSY", Thread, "this thread is in the allocation probe (a measuring aid, off by default)"),
     ("crates/prof/src/code_rule_dsl/logic/profile.rs", "COMMAND", Outermost, "the command's clocks, on the thread that runs it and its outermost run"),
+    ("crates/context/src/lib.rs", "ENGINE_POOL", Thread, "whether this thread is one of a pool the engine made, set as the thread starts (`engine_pool`): a fact of the thread, not of a run"),
     ("crates/context/src/lib.rs", "SEEN", Thread, "this thread's copy of the settings its run under way read, held with that run (decision 0442)"),
     ("crates/prof/src/code_rule_dsl/logic/profile.rs", "WARM_SCOPE", Thread, "the warm check's mark of the transaction a store writer has open on this thread; its commit hook runs on it"),
     ("crates/rr_root/src/code_rule_dsl/logic/rr.rs", "READS", Call, "the libraries read while `recording` runs; a job records its own and hands them back (`rr::recorded_on_worker`)"),

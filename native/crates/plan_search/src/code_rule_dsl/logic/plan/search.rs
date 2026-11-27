@@ -5191,7 +5191,7 @@ impl Model {
                     },
                 };
                 bound.extend(b.vars(s.at));
-                out.push(super::super::profile::StepPlan { literal: String::new(), access: access.to_owned(), source: source.to_owned(), rows: r, all: r, passed: Vec::new(), basis: by.to_owned() });
+                out.push(super::super::profile::StepPlan { literal: String::new(), access: access.to_owned(), source: source.to_owned(), rows: r, all: r, passed: Vec::new(), basis: by.to_owned(), vars: Vec::new() });
             }
             Some(out)
         };
@@ -5334,9 +5334,9 @@ impl Model {
                         _ => r *= b.filter_pass(s.at),
                     }
                     bound.extend(b.vars(s.at));
-                    steps.push(super::super::profile::StepPlan { literal: String::new(), access: String::new(), source: String::new(), rows: r, all: r, passed: Vec::new(), basis: String::new() });
+                    steps.push(super::super::profile::StepPlan { literal: String::new(), access: String::new(), source: String::new(), rows: r, all: r, passed: Vec::new(), basis: String::new(), vars: Vec::new() });
                 }
-                return super::super::profile::RulePlan { work, rows, subsets, candidates, steps, shaped: shaped.clone() };
+                return super::super::profile::RulePlan { work, rows, subsets, candidates, steps, shaped: shaped.clone(), ..Default::default() };
             }
             // The rows each step makes when every row is walked, past the bound head too (no witness cut, decision
             // 0229): what the device's breadth-first stages make (decision 0277).
@@ -5423,9 +5423,15 @@ impl Model {
                 };
                 r_all = walked.unwrap_or(if before > 0.0 { r_all * r / before } else { r_all });
                 bound.extend(b.vars(s.at));
-                steps.push(super::super::profile::StepPlan { literal: b.show(s.at), access, source: src, rows: r, all: r_all.max(r), passed, basis });
+                let vars = b.vars(s.at).iter().map(|v| format!("${}", b.var(v))).collect();
+                steps.push(super::super::profile::StepPlan { literal: b.show(s.at), access, source: src, rows: r, all: r_all.max(r), passed, basis, vars });
             }
-            super::super::profile::RulePlan { work, rows, subsets, candidates, steps, shaped: shaped.clone() }
+            let mut head_vars = VarSet::new();
+            for t in b.head().args() {
+                body::term_vars(t, &mut head_vars);
+            }
+            let head_vars = head_vars.iter().map(|v| format!("${}", b.var(v))).collect();
+            super::super::profile::RulePlan { work, rows, subsets, candidates, steps, shaped: shaped.clone(), head: b.show_head(), head_vars }
         });
         Ok(((order, work, rows), explained))
     }

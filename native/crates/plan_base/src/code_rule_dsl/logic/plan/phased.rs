@@ -80,7 +80,8 @@ pub enum Keyed {
     /// `c` names keys whose `ByKey` rows the file reads too (`resolved(k, q) by_key 1`: an ask's answer, the key of
     /// the facts about it).
     ByKey(Option<usize>),
-    /// Read whole by every file (`env`, `package_export`).
+    /// Read whole by every file (`env`, `package_export`; a phase's export declared `whole`, `py_names`'
+    /// `dj_app_defers`): every reader's memo entry is keyed by its rows.
     Whole,
 }
 
@@ -111,15 +112,16 @@ pub fn export_items(texts: &[String]) -> Vec<(String, String, Vec<String>)> {
         .collect()
 }
 
-/// The key `words` write (`by_path`, `by_path C`, `by_key`), or why they are none.
+/// The key `words` write (`by_path`, `by_path C`, `by_key`, `by_key C`, `whole`; none in `.keyed` is `whole`), or why
+/// they are none. An export written with no key is no setting (`declared_in`): a phase's ordinary export.
 pub fn key_of(words: &[String]) -> Result<Keyed, String> {
     match words.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-        [] => Ok(Keyed::Whole),
+        [] | ["whole"] => Ok(Keyed::Whole),
         ["by_key"] => Ok(Keyed::ByKey(None)),
         ["by_key", c] => c.parse().map(|c| Keyed::ByKey(Some(c))).map_err(|_| format!("{c} is no column")),
         ["by_path"] => Ok(Keyed::ByPath(None)),
         ["by_path", c] => c.parse().map(|c| Keyed::ByPath(Some(c))).map_err(|_| format!("{c} is no column")),
-        _ => Err(format!("`{}`: write `by_path`, `by_path C`, `by_key` or `by_key C`", words.join(" "))),
+        _ => Err(format!("`{}`: write `by_path`, `by_path C`, `by_key`, `by_key C` or `whole`", words.join(" "))),
     }
 }
 

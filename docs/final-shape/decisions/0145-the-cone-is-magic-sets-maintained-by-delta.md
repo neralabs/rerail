@@ -435,3 +435,48 @@ PYI001's component is not a demand's. `type_root` negates `typing_sym`, which re
 through `wstart`, which reads `parsed_in`: the program's own cycle through the request, gated per
 key. One of its rules gates two negations, and the second's ask leaves the first out
 (`an_ask_past_a_gated_negation_leaves_it_out`).
+
+### Built: a body starts where nothing is demanded (2026-11-27)
+
+`pt_tm` had `.pragma "magic-transform" "pt_tm"` and was never demanded: every program the points_to
+readers made computed every node's term. With nothing bound, the sideways order took "the lowest one
+in the strata", and in `pt_vpos_t(t) :- pt_vpos(n), pt_tm(n, t)` that was `pt_tm`, which sits below
+`pt_vpos`. Read first, it was read with nothing bound, so the transformation computed it in full.
+
+With nothing bound, the order now starts at the lowest atom whose relation is computed in full
+anyway: an input, a view, or a relation not listed. It starts at a demanded one only when no such atom
+is left. Under `*` every derived relation is demanded, so the order there is T's, inputs first: the
+goldens of T's five programs are unchanged.
+
+The profile says why a listed relation ends up computed in full. Under "the program's demand:
+computed in full, asked with nothing bound" it gives the relation, the pattern asked (`ff`, or a
+pattern on later columns that its rules do not answer) and the first rule that asked it so
+(`Report::free_readers`). That line found this cause. `RERAIL_DEMAND_DUMP` now appends every
+program, each under a line naming its outputs: it used to keep only the last.
+
+`pt_tm`'s pragma moved from python/points-to-file to python/points-to, which only the readers
+include. Demanded inside the phase, the solve asked nearly every node's term: it hands every node
+fact on by term. There `pt_tm` fell from 5.04 M to 4.11 M rows, and its 312 magic rules made
+54.7 M rows in 7.1 s.
+
+Measured on PostHog's 291 files with the three Django policies that read points_to (the run of the
+asked-points-to page), before and after, one Mac under load:
+
+| | Before | After |
+|---|---|---|
+| The readers' programs: join work | 61.6 M rows, 13.67 s | 49.8 M rows, 10.50 s |
+| Their `pt_tm`, `pt_tm_same` | 5.04 M, 14.25 M rows | 2.50 M, 6.52 M rows (and 4.2 M of demand) |
+| The phase points_to | 48.77 M rows | 48.76 M rows |
+| Run user CPU, peak | 48.5 s, 1.50 GB | 41.7 s, 1.51 GB |
+| Findings | 5 | the same 5 |
+
+Test: `a_body_starts_at_a_relation_computed_in_full` (it fails without the change: `tm: asked as
+ff by out($t) :- pos($n), tm($n, $t)`).
+
+Open, measured on bandit-b113 over the data layer's 224 files (the user chose to look at points_to's
+term making first). A demand by its call callees, through python/scopes listed for demand, made the
+main program slower: 2.47 s of join CPU became 6.1 s, and `walk` fell only from 606 k to 454 k rows.
+A demand by the policy's constant symbols (none of the 224 files imports requests or httpx) is not
+made. `answers` refuses a cycle of adornments on later columns, as the scope walk's (`walk_fbb`
+through `scope_up`). A demand relation fed by a file's rows (`py_names__asked_at`) is one table of
+every file, so 0677's split sends its readers to the cross-file part.

@@ -618,6 +618,9 @@ pt_litq(n, "builtins.bytes") :- pt_bytes_lit(n).
 
 // ---- library values, by symbol (P2's exports) --------------------------------------------------------------------
 // pt_wsmod(q): a module of this phase's documents, the workspace's. A symbol whose module is another is a library's.
+// Where the analysis runs (python/points-to-solve, which reads sources' `source_library`), a library read from its
+// source (an untyped package under `python.untyped = read`) is among the documents, its definitions typed as the
+// workspace's are: its module is one of these.
 .decl pt_wsmod(q: symbol)
 pt_wsmod(q) :- pt_modname(_, q).
 // pt_lres(q, d): the qualified name q (an import, a dotted name read from one, a builtin) is symbol d: a module, else a
@@ -802,7 +805,7 @@ pt_cls_q(c, @dot(q, x)) :- pt_cls_q(o, q), pt_rdefn(o, x, c), kind(c, "class_def
 // - A guest's node (a quoted annotation's code): its place in the guest's own document, which every string of that
 //   text shares: `~1825239168@0+4^1`.
 .decl pt_tm(n: node, t: symbol)
-.pragma "magic-transform" "pt_tm"
+// Demanded by the readers (python/points-to), not here: the phase's solve asks nearly every node's term.
 // pt_scope_tm(s, q): a module's or a definition's term, made down from the module one scope at a time (`nearest`
 // up, so the recursion is bounded: the cycles rule 3). A definition a branch never taken holds (`py_dead_at`) is no
 // binding, so P1 numbers it not: it is named by its place, as any other node.
@@ -813,12 +816,17 @@ pt_scope_tm(m, p) :- pt_modnode(d, m), doc(d, p, "").
 pt_tm_ord(f, k) :- pt_rdefn(s, x, f), node(_, f, _, b, _), k = count : { pt_rdefn(s, x, g), node(_, g, _, c, _), c < b }.
 .decl pt_tm_def(k: symbol)
 pt_tm_def("function_definition"). pt_tm_def("class_definition").
-pt_scope_tm(f, @dot(q, x)) :- kind(f, k), pt_tm_def(k), field(f, "name", nm), text(nm, x), nearest(f, s, pt_scope),
-    pt_scope_tm(s, q), pt_tm_ord(f, 0).
-pt_scope_tm(f, cat(@dot(q, x), "#", to_string(i))) :- kind(f, k), pt_tm_def(k), field(f, "name", nm), text(nm, x),
-    nearest(f, s, pt_scope), pt_scope_tm(s, q), pt_tm_ord(f, i), i > 0.
-pt_scope_tm(f, cat(q, "@", to_string(b - sb), "+", to_string(e - b), "^", to_string(c))) :- kind(f, k), pt_tm_def(k),
-    py_dead_at(f), nearest(f, s, pt_tm_scope), pt_scope_tm(s, q), node(_, f, _, b, e), node(_, s, _, sb, _), pt_tm_same(f, c).
+// Each definition's place under its scope, made once, outside the recursion: the recursive rules then join a new
+// scope's term to its definitions by the scope. Written inside them, a round's new terms were joined to every name
+// field first and `nearest` kept the few under the scope (4.2 M rows a round for 1,625 kept, 45% of the phase).
+.decl pt_tm_child(f: node, s: node, x: symbol, i: number)
+pt_tm_child(f, s, x, i) :- kind(f, k), pt_tm_def(k), field(f, "name", nm), text(nm, x), nearest(f, s, pt_scope), pt_tm_ord(f, i).
+.decl pt_tm_dead_child(f: node, s: node, o: number, l: number, c: number)
+pt_tm_dead_child(f, s, b - sb, e - b, c) :- kind(f, k), pt_tm_def(k), py_dead_at(f), nearest(f, s, pt_tm_scope),
+    node(_, f, _, b, e), node(_, s, _, sb, _), pt_tm_same(f, c).
+pt_scope_tm(f, @dot(q, x)) :- pt_scope_tm(s, q), pt_tm_child(f, s, x, 0).
+pt_scope_tm(f, cat(@dot(q, x), "#", to_string(i))) :- pt_scope_tm(s, q), pt_tm_child(f, s, x, i), i > 0.
+pt_scope_tm(f, cat(q, "@", to_string(o), "+", to_string(l), "^", to_string(c))) :- pt_scope_tm(s, q), pt_tm_dead_child(f, s, o, l, c).
 .decl pt_tm_scope(kind: symbol)
 pt_tm_scope("module"). pt_tm_scope("function_definition"). pt_tm_scope("class_definition").
 pt_tm(s, q) :- pt_scope_tm(s, q).

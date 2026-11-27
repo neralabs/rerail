@@ -69,9 +69,11 @@ fn ours_at(dir: &std::path::Path, out: &std::path::Path, setting: &str) -> Graph
 .scope include \"**/*.py\", \"**/*.pyi\"
 #include \"python/references.rerail\"
 .decl edge(sp: symbol, ss: number, se: number, tp: symbol, ts: number, te: number, via: symbol)
-edge(sp, ss, se, tp, ts, te, v) :- reference_edge(s, t, v), node(d, s, _, ss, se), doc(d, sp, _), node(e, t, _, ts, te), doc(e, tp, _).
+// The graph is by symbol (decision 0677): each definition placed on its node by reference_def.
+edge(sp, ss, se, tp, ts, te, v) :- reference_edge(s, t, v), reference_def(sn, s), node(d, sn, _, ss, se), doc(d, sp, _),
+    reference_def(tn, t), node(e, tn, _, ts, te), doc(e, tp, _).
 .decl open(p: symbol, s: number, e: number)
-open(p, s, e) :- reference_open(n), node(d, n, _, s, e), doc(d, p, _).
+open(p, s, e) :- reference_open(k), reference_def(n, k), node(d, n, _, s, e), doc(d, p, _).
 .output edge, open
 "
     );
@@ -327,20 +329,17 @@ fn reference_edge_matches_the_eager_graph_after_git_cache_reuse() {
 }
 
 /// A node as the outputs give it: its document's path and its local part (its preorder index).
-type At = (String, i64);
+/// A definition, by its symbol (`rf_sym`: `path:q#k`, decision 0677).
+type At = String;
 
 /// The graph a program of `head` (its settings) makes over the files under `dir` with `include`'s rules
 /// (`python/references.rerail`, or `python/references_w.rerail`: W's Rust), `reference_edge` and `reference_open`
-/// output as they are: no join locates their nodes, so the run is the graph's alone.
+/// output as they are, by symbol: no join places them, so the run is the graph's alone.
 fn bare_graph(head: &str, include: &str, dir: &std::path::Path, out: &std::path::Path) -> (BTreeSet<(At, At, String)>, BTreeSet<At>) {
     let program = format!("{head}\n#include \"{include}\"\n.output reference_edge, reference_open\n");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, dir, None, out, "program", Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
     let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(out).unwrap();
-    let at = |r: &crate::code_rule_dsl::logic::plan::output::Row<'_>, c: usize| {
-        let node = r.get(c).node().expect("a node column");
-        let (path, local) = node.at().unwrap_or_else(|| panic!("a node of a file of the run: {node:?}"));
-        (path.to_owned(), local)
-    };
+    let at = |r: &crate::code_rule_dsl::logic::plan::output::Row<'_>, c: usize| r.get(c).to_string();
     (
         outputs.rows("reference_edge").iter().map(|r| (at(r, 0), at(r, 1), r.get(2).to_string())).collect(),
         outputs.rows("reference_open").iter().map(|r| at(r, 0)).collect(),

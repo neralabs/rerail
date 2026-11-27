@@ -9,23 +9,28 @@ use crate::code_rule_dsl::typing::file_local::Binding;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-/// Cross-file: `uses` joins one file's imports with another's definitions, and each output reads base relations of
-/// the definitions used, so the split leaves those reads in the cross part.
+/// Cross-file: `uses` joins one file's imports with another's definitions, by the definition's qualified name (no
+/// node crosses, decision 0677), and each output reads base relations of the definitions used, so the split leaves
+/// those reads in the cross part.
 const PROGRAM: &str = r#"
 .decl def(n: node, q: symbol)
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node) cross_file
-uses(n, f) :- imp(n, q), def(f, q).
+.decl def_at(d: number, q: symbol)
+def_at(d, q) :- def(f, q), docof(f, d).
+.decl imp_at(d: number, q: symbol)
+imp_at(d, q) :- imp(n, q), docof(n, d).
+.decl uses(a: number, q: symbol) cross_file
+uses(a, q) :- imp_at(a, q), def_at(_, q).
 .decl shape(f: node, k: symbol, l: number, c: number)
-shape(f, k, l, c) :- uses(_, f), child(f, b, _), kind(b, k), node_line_number(b, l), node_start_column(b, c).
+shape(f, k, l, c) :- def(f, q), uses(_, q), child(f, b, _), kind(b, k), node_line_number(b, l), node_start_column(b, c).
 .decl named(f: node, t: symbol)
-named(f, t) :- uses(_, f), field(f, "name", c), text(c, t).
+named(f, t) :- def(f, q), uses(_, q), field(f, "name", c), text(c, t).
 .decl span(f: node, s: number, e: number)
-span(f, s, e) :- uses(_, f), node(_, f, _, s, e).
+span(f, s, e) :- def(f, q), uses(_, q), node(_, f, _, s, e).
 .decl home(u: node, p: symbol)
-home(u, p) :- uses(u, f), docof(f, d), doc(d, p, _).
+home(u, p) :- imp(u, q), docof(u, a), uses(a, q), def_at(d, q), doc(d, p, _).
 .output shape
 .output named
 .output span
@@ -266,7 +271,7 @@ fn a_session_keeps_its_corpus_batch_and_its_base_statistics() {
     assert_eq!(rows, c.fresh(), "the session's outputs after the edit are a fresh run's");
 }
 
-/// `line` and `col` read only at the nodes `uses` holds, each alone in its rule (a join of two would be pushed into the
+/// `line` and `col` read only at the definitions `uses` names, each alone in its rule (a join of two would be pushed into the
 /// file-local part whole), and a span read (`src_line`), which makes `line` and `col` rows of the batch's documents
 /// rather than views of the tape (`Extra::spans`), as the data layer's are; and `docof` joined in a maintained
 /// stratum, whose plan asks its estimate by a column (`setfix`'s lead), so each is a semi-join input whose first column is the node,
@@ -277,16 +282,20 @@ const AT_HELD: &str = r#"
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node) cross_file
-uses(n, f) :- imp(n, q), def(f, q).
+.decl def_at(d: number, q: symbol)
+def_at(d, q) :- def(f, q), docof(f, d).
+.decl imp_at(d: number, q: symbol)
+imp_at(d, q) :- imp(n, q), docof(n, d).
+.decl uses(a: number, q: symbol) cross_file
+uses(a, q) :- imp_at(a, q), def_at(_, q).
 .decl at_line(f: node, l: number)
-at_line(f, l) :- uses(_, f), node_line_number(f, l).
+at_line(f, l) :- def(f, q), uses(_, q), node_line_number(f, l).
 .decl at_col(f: node, c: number)
-at_col(f, c) :- uses(_, f), node_start_column(f, c).
+at_col(f, c) :- def(f, q), uses(_, q), node_start_column(f, c).
 .decl lines(d: number, l: number)
 lines(d, l) :- document_line(d, Rr_line2), line_number(Rr_line2, l).
 .decl at_home(u: node, p: symbol)
-at_home(u, p) :- uses(u, f), docof(f, d), doc(d, p, _).
+at_home(u, p) :- imp(u, q), docof(u, a), uses(a, q), def_at(d, q), doc(d, p, _).
 .output at_line
 .output at_col
 .output lines
@@ -418,25 +427,36 @@ fn a_semi_joins_estimates_scale_its_node_column_alone() {
 
 /// The fixture's program, and a string annotation's tree read across files (a guest, decision 0055; the data
 /// layer's `parsed` annotations): `ann_kids` reads `child` at a guest's root, of the files a file imports from, and
-/// `below` walks a guest's tree in the cross part, so `child` is read at nodes it derives, a base relation whole.
+/// `deep` reads `kind` at the nodes of a guest's tree, which each file's `below` walks (no node is in a cross-file
+/// stratum, decision 0677: the cross part reads a guest's nodes in the outputs alone), and `finding` places a
+/// finding at each of those nodes, decoded off the corpus batch.
 const GUESTS: &str = r#"
 .decl def(n: node, q: symbol)
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node) cross_file
-uses(n, f) :- imp(n, q), def(f, q).
+.decl def_at(d: number, q: symbol)
+def_at(d, q) :- def(f, q), docof(f, d).
+.decl imp_at(d: number, q: symbol)
+imp_at(d, q) :- imp(n, q), docof(n, d).
+.decl uses(a: number, q: symbol) cross_file
+uses(a, q) :- imp_at(a, q), def_at(_, q).
 .decl shape(f: node, k: symbol)
-shape(f, k) :- uses(_, f), child(f, b, _), kind(b, k).
+shape(f, k) :- def(f, q), uses(_, q), child(f, b, _), kind(b, k).
 .decl ann(d: number, r: node)
 ann(d, r) :- string_annotation(s), parsed(s, "annotation", r), docof(s, d).
 .decl ann_kids(u: node, k: symbol)
-ann_kids(u, k) :- uses(u, f), docof(f, d), ann(d, r), child(r, c, _), kind(c, k).
-.decl below(u: node, c: node)
-below(u, c) :- uses(u, f), docof(f, d), ann(d, r), child(r, c, _).
-below(u, c) :- below(u, b), child(b, c, _).
+ann_kids(u, k) :- imp(u, q), docof(u, a), uses(a, q), def_at(d, q), ann(d, r), child(r, c, _), kind(c, k).
+.decl below(r: node, c: node)   // each file's: the nodes of its guests' trees, under their roots
+below(r, c) :- ann(_, r), child(r, c, _).
+below(r, c) :- below(r, b), child(b, c, _).
 .decl deep(u: node, k: symbol)
-deep(u, k) :- below(u, c), kind(c, k).
+deep(u, k) :- imp(u, q), docof(u, a), uses(a, q), def_at(d, q), ann(d, r), below(r, c), kind(c, k).
+// A finding at a guest's node, decoded in the cross part (its node and file off the corpus batch, as a pack's are):
+// so the batch holds the guests' documents.
+.decl finding(category: symbol, k: symbol, n: node)
+finding("deep", k, c) :- imp(_, q), uses(_, q), def_at(d, q), ann(d, r), below(r, c), kind(c, k).
+.output finding
 .output shape
 .output ann_kids
 .output deep

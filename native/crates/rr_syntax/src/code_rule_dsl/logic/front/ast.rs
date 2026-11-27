@@ -754,6 +754,9 @@ pub struct Report {
     /// Why demand was changed to keep the program's components: each relation split, or computed in full, with the
     /// cycle demand would have made, each step's rule, and the rules moved (`magic::split`).
     pub reasons: Vec<String>,
+    /// Each listed relation computed in full because a reader asked it with nothing bound, or with only columns its
+    /// rules do not answer: the relation, the pattern asked and the first such reader.
+    pub free_readers: Vec<String>,
 }
 
 /// A gated negation's gate: `done` copies `src` (the negated relation's demand) once `quiet` is quiet, after the

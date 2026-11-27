@@ -78,6 +78,8 @@ struct Ctx<'v, 'a> {
     level: &'a BTreeMap<String, usize>,
     /// `answers`' results for the adornments asked at the top level, per `closure`.
     answered: BTreeMap<(String, String), bool>,
+    /// Per `closure`: each relation asked with nothing bound, and the first reader that asked so (`Report::free_readers`).
+    free_by: BTreeMap<String, String>,
 }
 
 fn fresh(r: RuleRef<'_>, n: u32) -> Slot {
@@ -375,7 +377,7 @@ impl<'v> Ctx<'v, '_> {
             }
             let mut body: Vec<M<'_>> = rule.body().map(M::Own).collect();
             body.extend(extra);
-            let Some(order) = self.sips(rule, &body, &bound) else {
+            let Some(order) = self.sips(rule, &body, &bound, full) else {
                 ok = false;
                 break;
             };
@@ -550,8 +552,11 @@ impl<'v> Ctx<'v, '_> {
     }
     /// The body in sideways order: filters as soon as they can run; then the left-most positive atom whose key is
     /// bound, an input before a derived one; else one sharing a bound variable (an input or view first); else the
-    /// lowest one in the strata (inputs first). `None` if no order binds the rest.
-    fn sips(&self, r: RuleRef<'v>, body: &[M<'v>], bound: &VarSet) -> Option<Vec<M<'v>>> {
+    /// lowest one in the strata (inputs first) of those computed in full (`full`, or not derived), and only then a
+    /// demanded one: a demanded relation read with nothing bound is computed in full, which its demand is there to
+    /// spare (`pt_vpos_t(t) :- pt_vpos(n), pt_tm(n, t)` started at `pt_tm`, below `pt_vpos` in the strata, and
+    /// made every node's term). `None` if no order binds the rest.
+    fn sips(&self, r: RuleRef<'v>, body: &[M<'v>], bound: &VarSet, full: &BTreeSet<String>) -> Option<Vec<M<'v>>> {
         let v = self.v;
         let (mut rest, mut order, mut bound) = (body.to_vec(), Vec::new(), bound.clone());
         while !rest.is_empty() {
@@ -590,6 +595,10 @@ impl<'v> Ctx<'v, '_> {
                 .find(|&i| first(i) && !derived(i))
                 .or_else(|| pos.iter().copied().find(|&i| first(i)))
                 .or_else(|| lowest(&joined, &|i| i64::from(derived(i))))
+                .or_else(|| {
+                    let undemanded: Vector<usize> = pos.iter().copied().filter(|&i| !derived(i) || full.contains(rest[i].positive(v).expect("a positive atom"))).collect();
+                    lowest(&undemanded, &|i| self.level.get(rest[i].positive(v).expect("a positive atom")).map_or(-1, |&l| l as i64))
+                })
                 .or_else(|| lowest(&pos, &|i| self.level.get(rest[i].positive(v).expect("a positive atom")).map_or(-1, |&l| l as i64)))
                 .expect("a positive atom");
             let l = rest.remove(pick);
@@ -603,7 +612,11 @@ impl<'v> Ctx<'v, '_> {
         let v = self.v;
         let (mut rules, mut magic, mut seen) = (Vec::new(), Vec::new(), BTreeSet::new());
         self.answered.clear();
+        self.free_by.clear();
         let mut todo: Vec<(String, String)> = v.outputs().map(|o| v.text(o)).filter(|o| self.idb.contains(o)).map(|o| (o.to_owned(), "f".repeat(self.arity(o)))).collect();
+        for (o, _) in &todo {
+            self.free_by.insert(o.clone(), "an output of the program".to_owned());
+        }
         while let Some((rel, mut ad)) = todo.pop() {
             if full.contains(&rel) {
                 ad = "f".repeat(self.arity(&rel));
@@ -623,7 +636,7 @@ impl<'v> Ctx<'v, '_> {
                     pre.push((g.clone(), false));
                     gd = Some(g);
                 }
-                let order = self.sips(rule, &body, &bound).ok_or_else(|| Error::Syntax(format!("no order binds the body of {}", v.show_rule(rule))))?;
+                let order = self.sips(rule, &body, &bound, full).ok_or_else(|| Error::Syntax(format!("no order binds the body of {}", v.show_rule(rule))))?;
                 for l in order {
                     if let Some(a) = l.own_atom()
                         && self.idb.contains(v.rel_name(a.rel()))
@@ -633,6 +646,10 @@ impl<'v> Ctx<'v, '_> {
                         // consumers' recursive component.
                         let ad2 = if full.contains(arel) || l.is_agg() { "f".repeat(self.arity(arel)) } else { self.adorn(a, &bound, full) };
                         let ad2 = coarse.get(&(arel.to_owned(), ad2.clone())).cloned().unwrap_or(ad2);
+                        if !ad2.contains('b') && !full.contains(arel) && !self.free_by.contains_key(arel) {
+                            let asked = if l.is_agg() { "in an aggregate".to_owned() } else { format!("as {}", self.pattern(a, &bound)) };
+                            self.free_by.insert(arel.to_owned(), format!("{asked} by {}", v.show_rule(rule)));
+                        }
                         if ad2.contains('b') {
                             let args: Vec<Tm<'_>> = a.args().zip(ad2.bytes()).filter(|(_, x)| *x == b'b').map(|(t, _)| Tm::Own(t)).collect();
                             let pre = self.tied(rule, arel, &ad2, &args, &pre);
@@ -836,7 +853,7 @@ impl ProgramDemand {
         let level: BTreeMap<String, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.to_owned(), i))).collect();
         let (mut cyc, mut why) = (Vec::new(), Vec::new());
         let made = loop {
-            let mut cx2 = Ctx { v, about, by: &by, idb: &idb, level: &level, answered: BTreeMap::new() };
+            let mut cx2 = Ctx { v, about, by: &by, idb: &idb, level: &level, answered: BTreeMap::new(), free_by: BTreeMap::new() };
             match attempt(&mut cx2, &full, self.gate) {
                 Ok(made) => break made,
                 Err(Attempt::Failed(e)) => return Err(e.to_string()),
@@ -1232,9 +1249,11 @@ fn attempt<'v>(cx: &mut Ctx<'v, '_>, full_in: &BTreeSet<String>, gate: bool) -> 
     // A relation demanded with every argument free anywhere is computed in full; an adornment binding a superset of
     // another's columns is answered through the other (`pv_bbb` through `pv_bbf`).
     let (mut full, mut coarse) = (full_in.clone(), BTreeMap::<(String, String), String>::new());
+    let mut free_readers = Vec::new();
     let (rules, magic, seen) = loop {
         let (rules, magic, seen) = cx.closure(&full, &coarse)?;
         let free: BTreeSet<String> = seen.iter().filter(|(_, a)| !a.contains('b')).map(|(r, _)| r.clone()).filter(|r| !full.contains(r)).collect();
+        free_readers.extend(free.iter().map(|r| format!("{r}: asked {}", cx.free_by.get(r).map_or("with nothing bound", String::as_str))));
         let mut more = BTreeMap::new();
         for (rel, ad) in &seen {
             let under = seen
@@ -1467,6 +1486,7 @@ fn attempt<'v>(cx: &mut Ctx<'v, '_>, full_in: &BTreeSet<String>, gate: bool) -> 
         gates: trial.gates.len(),
         full_for_negation: Vec::new(),
         reasons: Vec::new(),
+        free_readers,
     };
     Ok((trial, decls, report))
 }
