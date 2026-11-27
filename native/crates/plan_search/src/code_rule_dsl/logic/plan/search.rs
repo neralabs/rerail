@@ -2367,11 +2367,23 @@ impl Model {
     pub(crate) fn pass_at(&self, b: &Body<'_>, l: usize, is_bound: &dyn Fn(VarSlot) -> bool) -> f64 {
         if let Lit::Cmp { l: x, op: CmpOp::Eq, r: y } = b.view(l) {
             let tested = match (x, y) {
-                (TermRef::Call(..), TermRef::Var(v)) | (TermRef::Var(v), TermRef::Call(..)) => Some(v),
+                (call @ TermRef::Call(..), TermRef::Var(v)) | (TermRef::Var(v), call @ TermRef::Call(..)) => Some((v, call)),
                 _ => None,
             };
-            if let Some(v) = tested
+            // A test only where the call's own variables are bound too: `$r = @cat($x, $f)` with `$x` and `$f` unbound
+            // is a split, which binds them (a row or more for each `$r`), not a test of `$r`. Priced as one,
+            // `rf_class_field`'s `rf_hit` passed 0.3 rows of 6,209 (1/3,490 for `$r`), and its plan took a cross
+            // product with `rf_class_own`'s second part: 46.7 M rows where the run made 3,397.
+            fn all_bound(t: TermRef<'_>, is_bound: &dyn Fn(VarSlot) -> bool) -> bool {
+                match t {
+                    TermRef::Var(v) => is_bound(v),
+                    TermRef::Call(_, args) => args.into_iter().all(|a| all_bound(a, is_bound)),
+                    _ => true,
+                }
+            }
+            if let Some((v, call)) = tested
                 && is_bound(v)
+                && all_bound(call, is_bound)
             {
                 let ndv = (0..b.len())
                     .filter(|&j| b.is_join(j))

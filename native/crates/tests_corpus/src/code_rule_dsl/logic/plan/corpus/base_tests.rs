@@ -1925,6 +1925,41 @@ targets(p, l) :- field(a, "left", n), kind(a, "assignment"), at(n, p, l).
     assert_eq!(of(&got[2]), want);
 }
 
+/// A filter's prepare and apply: `kind(n, "identifier")` and its negation with `n` bound are answered by the bits of
+/// the kind's nodes the `node` view's source built ahead (`Source::build_value_bits`), one bit a test, once the run's
+/// first chunks have seen the tests pay. The rows are the source's: each line's assignment's and addition's left
+/// operands are identifiers, and of the right operands, the assignment's (an addition) alone is not. `kinds` reads
+/// `kind` unbound, so `kind` is the view, not rows made on demand for the tested nodes.
+#[test]
+fn kind_tests_by_a_bound_node_read_the_kinds_bits_built_ahead() {
+    use crate::code_rule_dsl::logic::native::component::value_bit_tests;
+    let sources: Vec<(String, String)> = (0..80).map(|i| (format!("g{i:02}.py"), (0..(i % 4 + 1)).map(|k| format!("a{k} = b{k} + c{k}\n")).collect())).collect();
+    let files: Vec<(&str, &str)> = sources.iter().map(|(p, s)| (p.as_str(), s.as_str())).collect();
+    let dir = corpus("kind-bits", &files);
+    let program = r#"
+.decl at(n: node, p: symbol, l: number)
+at(n, p, l) :- docof(n, d), doc(d, p, _), line(n, l).
+.decl lefts(p: symbol, l: number)
+lefts(p, l) :- field(_, "left", n), kind(n, "identifier"), at(n, p, l).
+.decl rights(p: symbol, l: number)
+rights(p, l) :- field(_, "right", n), !kind(n, "identifier"), at(n, p, l).
+.decl kinds(k: symbol)
+kinds(k) :- kind(_, k).
+.output lefts, rights, kinds
+"#;
+    let before = value_bit_tests();
+    let out = dir.join(".out");
+    super::run(program, &dir, None, &out, "program", Binding::Cpu, 64).unwrap();
+    let got = shown_of(&Outputs::open(&out).unwrap(), &["lefts", "rights"]);
+    assert!(value_bit_tests() > before + 100, "the kind's bits answered its tests ({})", value_bit_tests() - before);
+    let file = |p: &str| p.rsplit('/').next().unwrap_or(p).trim_matches('"').to_owned();
+    let of = |rows: &Vec<Vec<String>>| rows.iter().map(|r| (file(&r[0]), r[1].parse::<i64>().unwrap())).collect::<BTreeSet<_>>();
+    let want: BTreeSet<(String, i64)> = (0..80).flat_map(|i| (1..=(i % 4 + 1) as i64).map(move |l| (format!("g{i:02}.py"), l))).collect();
+    assert_eq!(of(&got[0]), want, "lefts: identifiers");
+    assert_eq!(of(&got[1]), want, "rights: the assignments' additions");
+    assert_eq!(got[1].len(), want.len(), "one right operand a line is not an identifier");
+}
+
 /// Decision 0706 E1: a node's text read as a symbol (`node_text(n, s)`, its value bound, compared with a constant,
 /// and joined on) is its leaf's term's atom, read with no hash of the text; and the rows are the text's: each file's
 /// identifiers by name, those named `hit`, and the pairs of lines that name one identifier.
@@ -2042,6 +2077,41 @@ counted(l, k) :- owner(n, f), seen(n, f), pair(f, g), line(g, l), line(n, k).
     assert!(keyed_batched_rows() > before + 256, "probed in sorted batches ({} rows)", keyed_batched_rows() - before);
     let sets = |g: &Vec<Vec<Vec<String>>>| g.iter().map(|rows| rows.iter().cloned().collect::<BTreeSet<_>>()).collect::<Vec<_>>();
     assert!(!off[0].is_empty() && !off[1].is_empty() && !off[2].is_empty(), "every relation has rows");
+    assert_eq!(sets(&on), sets(&off));
+}
+
+/// A fused probe's keyed batch runs as one chunk (`rowcode::spanning`): `pair(f, g)` probed by `f` for a batch of
+/// `owner` rows, every row's candidates gathered together, and its filters (`n < g`, a slot bound before the probe
+/// against one it binds; `!seen(n, g)`, a negation asked of the chunk) run once over them. The rows are the same as
+/// each binding's chunk run alone.
+#[test]
+fn a_fused_probes_batch_runs_its_bindings_rows_as_one_chunk() {
+    use crate::code_rule_dsl::logic::native::component::{keyed_batches_forced, span_batches_forced, spanned_rows};
+    let body: String = (0..200).map(|i| format!("def f{i}(a, b):\n    return a{} + b\n", (i * 7) % 200)).collect();
+    let body_on = format!("{body}# on\n");
+    let (dir_off, dir_on) = (corpus("span-batch-off", &[("a.py", body.as_str())]), corpus("span-batch-on", &[("a.py", body_on.as_str())]));
+    let program = r#"
+.decl owner(n: number, f: number)
+owner(n, f) :- kind(f, "function_definition"), field(f, "body", b), within(n, b), kind(n, "identifier").
+.decl pair(f: number, g: number)
+pair(f, g) :- owner(n, f), owner(m, g), docof(f, d), docof(g, d), text(n, t), text(m, t), f != g.
+.decl seen(n: number, f: number)
+seen(n, f) :- kind(n, "identifier"), within(n, f), kind(f, "function_definition").
+.decl far(n: number, g: number)
+far(n, g) :- owner(n, f), pair(f, g), n < g, !seen(n, g).
+.output owner, pair, far
+"#;
+    keyed_batches_forced(Some(true));
+    span_batches_forced(Some(false));
+    let off = run(&dir_off, program, &["owner", "pair", "far"]);
+    span_batches_forced(Some(true));
+    let before = spanned_rows();
+    let on = run(&dir_on, program, &["owner", "pair", "far"]);
+    span_batches_forced(None);
+    keyed_batches_forced(None);
+    assert!(spanned_rows() > before + 256, "a fused probe's batch ran as chunks ({} rows)", spanned_rows() - before);
+    let sets = |g: &Vec<Vec<Vec<String>>>| g.iter().map(|rows| rows.iter().cloned().collect::<BTreeSet<_>>()).collect::<Vec<_>>();
+    assert!(!off[2].is_empty(), "far has rows");
     assert_eq!(sets(&on), sets(&off));
 }
 

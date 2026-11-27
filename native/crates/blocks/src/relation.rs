@@ -218,6 +218,16 @@ impl<'a> NodeIndex<'a> {
         }
     }
 
+    /// A bits' chunk made by `node_bits_chunk` (no rows), read in place.
+    ///
+    /// # Safety
+    /// `base` is such a chunk, 8-aligned, unchanged for `'a`.
+    #[inline]
+    pub unsafe fn in_chunk(base: *const u8) -> Self {
+        // SAFETY: the caller's.
+        unsafe { Self::at(base, None) }
+    }
+
     /// Whether it holds `v`. `hint` is the group of the last probe: tried first, then the one after it, then searched.
     #[inline]
     pub fn has(&self, v: i64, hint: &mut u32) -> bool {
@@ -236,6 +246,84 @@ impl<'a> NodeIndex<'a> {
         let x = (self.rank[w] + (word & ((1u64 << b) - 1)).count_ones()) as usize;
         &self.ids[self.offs[x] as usize..self.offs[x + 1] as usize]
     }
+}
+
+/// A node-keyed index's bits' chunk in `block` over values `at(0..n)` (`try_add_node_index`'s, and a view's set of
+/// nodes by a constant, `NodeIndex::in_chunk`): its head, groups and words written, and with `ranked` room for each
+/// word's rank (left for the caller). Read where they lie, with no copy and no sort of them: once for each group's span
+/// (a group's values mostly lie together; only those runs are sorted and merged), once for the bits. Refused
+/// (`None`) where a value is negative, the groups or words would be more than `max_words`, or `block` has no room.
+/// Returns the chunk's place, its kept size and its bytes.
+pub fn node_bits_chunk(block: &Block, n: u32, at: impl Fn(u32) -> i64, ranked: bool, max_words: usize) -> Option<(usize, usize, usize)> {
+    if n == 0 {
+        return None;
+    }
+    // A group's runs as one, by key: at most one entry a group after.
+    fn merge(spans: &mut Vec<(i64, u32, u32)>) {
+        spans.sort_unstable_by_key(|s| s.0);
+        spans.dedup_by(|b, a| {
+            let same = a.0 == b.0;
+            if same {
+                (a.1, a.2) = (a.1.min(b.1), a.2.max(b.2));
+            }
+            same
+        });
+    }
+    // Each run of values of one group: its key, least and greatest low bits. Merged as they grow: more groups than
+    // the bound would take more words than it.
+    let mut spans: Vec<(i64, u32, u32)> = Vec::new();
+    let mut cap = 1024;
+    for r in 0..n {
+        let v = at(r);
+        if v < 0 {
+            return None;
+        }
+        let (key, l) = (v >> crate::packed::ID_SPLIT, node_low(v));
+        match spans.last_mut() {
+            Some(s) if s.0 == key => (s.1, s.2) = (s.1.min(l), s.2.max(l)),
+            _ => spans.push((key, l, l)),
+        }
+        if spans.len() == cap {
+            merge(&mut spans);
+            if spans.len() > max_words {
+                return None;
+            }
+            cap = (2 * spans.len()).max(1024);
+        }
+    }
+    merge(&mut spans);
+    let words: usize = spans.iter().map(|&(_, least, most)| (most - least) as usize / 64 + 1).sum();
+    if words > max_words {
+        return None;
+    }
+    let groups = spans.len();
+    let bytes = NodeIndex::bits_bytes(groups, words, ranked);
+    let (b_at, b_kept) = block.try_alloc_chunk_fit(bytes, 8)?;
+    let base = block.ptr::<u8>(b_at);
+    let (g_at, w_at) = NodeIndex::places(groups);
+    // SAFETY: the chunk was just allocated, `bytes` long and 8-aligned, the caller's alone until it is marked built;
+    // its head, groups and words lie apart.
+    let (group, w) = unsafe {
+        std::ptr::write_bytes(base, 0, bytes);
+        *base.cast::<NodeHead>() = NodeHead { groups: groups as u32, words: words as u32, values: 0, rows: n };
+        let group = std::slice::from_raw_parts_mut(base.add(g_at).cast::<NodeGroup>(), groups);
+        let w = std::slice::from_raw_parts_mut(base.add(w_at).cast::<u64>(), words);
+        (group, w)
+    };
+    let mut start = 0u32;
+    for (g, &(key, least, most)) in group.iter_mut().zip(&spans) {
+        *g = NodeGroup { key, base: least, start };
+        start += (most - least) / 64 + 1;
+    }
+    drop(spans);
+    let group = &*group;
+    // The group of the value before: the next value's most often.
+    let mut hint = 0u32;
+    for r in 0..n {
+        let (word, bit) = node_place(group, words, at(r), &mut hint).expect("every value has its place");
+        w[word] |= 1 << bit;
+    }
+    Some((b_at, b_kept, bytes))
 }
 
 /// Where value `v`'s bit lies among `groups` and their `words` words: its word and bit; `None` where no group holds
@@ -952,73 +1040,20 @@ impl Relation {
             return None;
         }
         let at = |r: u32| self.get(r, col as usize);
-        // A group's runs as one, by key: at most one entry a group after.
-        fn merge(spans: &mut Vec<(i64, u32, u32)>) {
-            spans.sort_unstable_by_key(|s| s.0);
-            spans.dedup_by(|b, a| {
-                let same = a.0 == b.0;
-                if same {
-                    (a.1, a.2) = (a.1.min(b.1), a.2.max(b.2));
-                }
-                same
-            });
-        }
-        // Each run of rows of one group: its key, least and greatest low bits. Merged as they grow: more groups than
-        // half the rows would take more words than the bound.
-        let mut spans: Vec<(i64, u32, u32)> = Vec::new();
-        let mut cap = 1024;
-        for r in 0..n {
-            let v = at(r);
-            if v < 0 {
-                return None;
-            }
-            let (key, l) = (v >> crate::packed::ID_SPLIT, node_low(v));
-            match spans.last_mut() {
-                Some(s) if s.0 == key => (s.1, s.2) = (s.1.min(l), s.2.max(l)),
-                _ => spans.push((key, l, l)),
-            }
-            if spans.len() == cap {
-                merge(&mut spans);
-                if 2 * spans.len() > n as usize {
-                    return None;
-                }
-                cap = (2 * spans.len()).max(1024);
-            }
-        }
-        merge(&mut spans);
-        let words: usize = spans.iter().map(|&(_, least, most)| (most - least) as usize / 64 + 1).sum();
-        if 2 * words > n as usize {
-            return None;
-        }
-        let groups = spans.len();
-        let bytes = NodeIndex::bits_bytes(groups, words, rows);
-        let (b_at, b_kept) = block.try_alloc_chunk_fit(bytes, 8)?;
+        let (b_at, b_kept, bytes) = node_bits_chunk(block, n, at, rows, n as usize / 2)?;
         let base = block.ptr::<u8>(b_at);
-        let (g_at, w_at) = NodeIndex::places(groups);
-        // SAFETY: the chunk was just allocated, `bytes` long and 8-aligned, this index's alone until it is marked
-        // built; its head, groups, words and ranks lie apart.
+        // SAFETY: the chunk is this index's alone until it is marked built (`node_bits_chunk`'s).
         let (head, group, w, rank) = unsafe {
-            std::ptr::write_bytes(base, 0, bytes);
             let head = &mut *base.cast::<NodeHead>();
-            *head = NodeHead { groups: groups as u32, words: words as u32, values: 0, rows: n };
-            let group = std::slice::from_raw_parts_mut(base.add(g_at).cast::<NodeGroup>(), groups);
-            let w = std::slice::from_raw_parts_mut(base.add(w_at).cast::<u64>(), words);
+            let (groups, words) = (head.groups as usize, head.words as usize);
+            let (g_at, w_at) = NodeIndex::places(groups);
+            let group = std::slice::from_raw_parts(base.add(g_at).cast::<NodeGroup>(), groups);
+            let w = std::slice::from_raw_parts(base.add(w_at).cast::<u64>(), words);
             let rank = std::slice::from_raw_parts_mut(base.add(w_at + 8 * words).cast::<u32>(), if rows { words } else { 0 });
             (head, group, w, rank)
         };
-        let mut start = 0u32;
-        for (g, &(key, least, most)) in group.iter_mut().zip(&spans) {
-            *g = NodeGroup { key, base: least, start };
-            start += (most - least) / 64 + 1;
-        }
-        drop(spans);
-        let group = &*group;
-        // The group of the row before: the next row's most often.
+        let words = w.len();
         let mut hint = 0u32;
-        for r in 0..n {
-            let (word, bit) = node_place(group, words, at(r), &mut hint).expect("every row's value has its place");
-            w[word] |= 1 << bit;
-        }
         let mut more = (0, 0);
         if rows {
             // Each word's rank: the values before it.

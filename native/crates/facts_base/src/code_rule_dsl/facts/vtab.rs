@@ -366,6 +366,16 @@ pub trait Source: Send + Sync {
     /// Decision 0706 E4: the source's value index of `column` (its rows by value, in its block) built now, ahead of
     /// its readers, where it keeps one: the rows read to build it. `None` where it keeps none, or had it built.
     fn build_value_index(&self, _column: usize) -> Option<usize> { None }
+    /// The prepare of a filter by a constant (`access::Kind::ValueBits`): the values of column `node`, the source's own
+    /// ids, of the rows that hold `value` in `column`, as node bits (`rerail_blocks::relation::node_bits_chunk`) in its
+    /// block, built now, ahead of its readers: the ids they hold. `None` where it keeps no such bits (`node` is not its
+    /// own column), or had them built.
+    fn build_value_bits(&self, _node: usize, _column: usize, _value: i64) -> Option<usize> { None }
+    /// The bits `build_value_bits` made for `node`, `column` and `value` (`ValueBits`), for a reader to keep while
+    /// its walk runs.
+    fn value_bits(&self, _node: usize, _column: usize, _value: i64) -> Option<ValueBits> { None }
+    /// Whether the source has built bits since it was made: 0 where it never has (no `value_bits` to ask).
+    fn value_bits_gen(&self) -> u32 { 0 }
     /// Decision 0706 E1: node read `name` of node `n` (`rr_node_text_any`) as its text's atom, read without its text
     /// where the source keeps the text's term (a leaf's, decision 0656: interned at the term's first read). `None`
     /// where it does not: the text is read (`node_read_ref`).
@@ -1231,6 +1241,20 @@ pub fn view_columns(db: &Connection, name: &str) -> Option<Vec<Vector<i64>>> {
     }
     Some(columns)
 }
+
+/// A source's node bits by a constant (`Source::value_bits`): the bits' chunk (`rerail_blocks::relation::NodeIndex::
+/// in_chunk`) in the source's block, which lives as long as the source; and the document keys, sorted, whose nodes
+/// the bits do not answer for (a layered source's parts' rows: a node of one is read as without the bits).
+#[derive(Clone)]
+pub struct ValueBits {
+    pub bits: *const u8,
+    pub others: Arc<[u32]>,
+}
+
+// SAFETY: the bits are read only, in a block that lives as long as the source that gave them.
+unsafe impl Send for ValueBits {}
+// SAFETY: as `Send`'s.
+unsafe impl Sync for ValueBits {}
 
 /// The source bound now to the table `name` on `db`'s connection, if one is.
 pub fn bound_source(db: impl Scoped, name: &str) -> Option<Arc<dyn Source>> {

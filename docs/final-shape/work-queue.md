@@ -12078,3 +12078,31 @@ default, and slower when on. A clean merge: the planner's and setfix's code for 
 Checked under Relax: rerail-planner 9, rerail-setfix 145, tests-logic native::tests 20 and plan::tests 115 (on one
 thread: its tests set RERAIL_SHAPE_LATEST, as under nextest's process per test, so two threads in one process
 cross them). No Metal or farm runs.
+
+### Q584. Roll-up 156 (django-bugs 16569e23e2 onto Pulling-it-all-together): what the merge chose
+
+django-bugs' four commits: a split of a bound value is no test of it (a call's equality passes 1/ndv only where its
+own variables are bound); RERAIL_PROF names how each step runs; a fused probe's keyed batch is one chunk (`spanning`,
+`Word::Bound`, decision 0706 E5); and 0723 step 1, a view's tests by a constant read the constant's node bits.
+
+Conflicts, resolved by invariant:
+- rowcode.rs: the hub reads a view's tests a chunk at a time (`fused_viewing`, its `view`), django-bugs spans a
+  chunk over many bindings (`spanning`, its `span`). One `fused_in` takes both: `fused` neither, `fused_viewing` the
+  view, `spanning` the span. A spanning chunk's bound slot is a column in the hub's viewed-test arm too, the slot
+  itself skipped as its parameter is. Scratch keeps the hub's view cursors and rows and django-bugs' `from`.
+- setfix.rs: the hub's `fuse` with its view, then django-bugs' spans; django-bugs' value-bits test and scratch-text
+  guard before the batch; `vbits` in both contexts, with the hub's `batches(j, on, screened, only)` arguments (the
+  `[_; 2]` form was the base's).
+
+Fixes the merge needed:
+- facts syntax.rs (no conflict, did not compile): django-bugs' `build_value_bits` read `by_kind` as (document, local,
+  _) triples; the hub's `by_kind` gives rows, so it reads each node's document and local id from `kind_matches`.
+- The bits did not reach the hub's fused view tests (t57 E6): a fused `kind(n, K)` read the view's rows a chunk at a
+  time, and kind_tests_by_a_bound_node_read_the_kinds_bits_built_ahead found no test answered by a bit. Decision
+  0723 has a fused chunk's tests read the bits, so a view test of the node against a constant and nothing else
+  (`ViewTest::bits`, as `value_bits_need` reads a step) is answered by the node's bit where the source built them,
+  found once a walk (`cands::view_bits`; `bit_of`, shared with the walker's `value_bits_test`), else read as before.
+
+Checked under Relax: rerail-setfix, logic joins::tests, tests-corpus base_tests, logic-core, tests-logic
+native::tests, rerail-facts, blocks relation, plan-search; device-metal compiles (its tests listed, none run). No
+Metal or farm runs.
