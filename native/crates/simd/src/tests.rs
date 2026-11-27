@@ -250,3 +250,16 @@ fn unsigned_saturating_ops_are_each_lanes() {
         assert_eq!((s[i], d[i]), (v[i].saturating_add(w[i]), v[i].saturating_sub(w[i])), "lane {i}");
     }
 }
+
+#[test]
+fn a_nibble_table_lookup_is_each_lanes_entry() {
+    let t: [u8; 16] = core::array::from_fn(|i| 200 + i as u8);
+    // Every byte value as an index: the table's entry below 16, 0 from 16 on (128 and past included).
+    for at in (0..256).step_by(64) {
+        let ix: [u8; 64] = core::array::from_fn(|i| (at + i) as u8);
+        let want: [u8; 64] = core::array::from_fn(|i| if ix[i] < 16 { t[ix[i] as usize] } else { 0 });
+        assert_eq!(Simd::<u8, 64>::from_array(ix).lookup16(Simd::from_array(t)).to_array(), want);
+        let ix16: [u8; 16] = core::array::from_fn(|i| ix[i]);
+        assert_eq!(Simd::<u8, 16>::from_array(ix16).lookup16(Simd::from_array(t)).to_array(), core::array::from_fn::<u8, 16, _>(|i| want[i]));
+    }
+}

@@ -259,7 +259,7 @@ fn lex_with(src: &[u8], joins: &[u32], outer: u32, metavariables: bool) -> Resul
 
 /// The keywords and soft keywords: each word, its token kind (a soft keyword is a name) and its
 /// soft keyword's code.
-const WORD_LIST: [(&[u8], T, u8); 41] = [
+pub(crate) const WORD_LIST: [(&[u8], T, u8); 41] = [
     (b"False", T::False, 0),
     (b"None", T::None, 0),
     (b"True", T::True, 0),

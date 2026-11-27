@@ -423,6 +423,42 @@ where
         }
         Simd(by_lane(|i| if (idxs.0[i] as usize) < N { self.0[idxs.0[i] as usize] } else { 0 }))
     }
+
+    /// Lane `i` is `table[self[i]]`, or 0 where `self[i]` is 16 or more: simdjson's nibble table, one 16-lane table
+    /// for every 16 lanes. On AArch64 a `tbl` of each 16 lanes; on x86-64 with SSSE3 a `pshufb` (an index past 15
+    /// moved to one with its high bit set first, which `pshufb` reads as 0).
+    #[inline(always)]
+    pub fn lookup16(self, table: Simd<u8, 16>) -> Self {
+        #[cfg(target_arch = "aarch64")]
+        if N.is_multiple_of(16) {
+            use core::arch::aarch64::*;
+            let mut o = [0u8; N];
+            // SAFETY: `N` bytes, a multiple of 16, and a table of 16.
+            unsafe {
+                let t = vld1q_u8(table.0.as_ptr());
+                for j in 0..N / 16 {
+                    vst1q_u8(o.as_mut_ptr().add(16 * j), vqtbl1q_u8(t, vld1q_u8(self.0.as_ptr().add(16 * j))));
+                }
+            }
+            return Simd(o);
+        }
+        #[cfg(all(target_arch = "x86_64", target_feature = "ssse3"))]
+        if N.is_multiple_of(16) {
+            use core::arch::x86_64::*;
+            let mut o = [0u8; N];
+            // SAFETY: `N` bytes, a multiple of 16, and a table of 16; SSSE3 is enabled.
+            unsafe {
+                let t = _mm_loadu_si128(table.0.as_ptr().cast());
+                let past = _mm_set1_epi8(0x70);
+                for j in 0..N / 16 {
+                    let ix = _mm_adds_epu8(_mm_loadu_si128(self.0.as_ptr().add(16 * j).cast()), past);
+                    _mm_storeu_si128(o.as_mut_ptr().add(16 * j).cast(), _mm_shuffle_epi8(t, ix));
+                }
+            }
+            return Simd(o);
+        }
+        Simd(by_lane(|i| if self.0[i] < 16 { table.0[self.0[i] as usize] } else { 0 }))
+    }
 }
 
 impl<T: SimdElement, const N: usize> Default for Simd<T, N>

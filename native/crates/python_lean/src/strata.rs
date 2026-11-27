@@ -60,6 +60,10 @@ struct B {
     /// The `{` no `{` pairs with: of each run of `{`, the first of each pair and an odd run's last (the odd-run trick
     /// over the runs of `{`, one carry bit from the block before).
     lbu: u64,
+    /// The bytes the run reads a token at by a step: a digit, a quote, a byte past ASCII, and a byte an operator
+    /// of two or three bytes may start at (the next byte is `=` or `>`, or the byte is one of `*/<>.` and the next
+    /// the same). A name that ends at one is read by a step too.
+    slow: u64,
     /// Stratum 2: not in a comment or a string (an f-string's interiors are in its string).
     code: u64,
     /// Stratum 3: the bracket depth after this byte is 0.
@@ -93,23 +97,109 @@ fn escaped(bs: u64, prev: &mut u64) -> u64 {
     (EVEN ^ (on_even << 1)) & follows
 }
 
-/// Stratum 1 of one block.
+/// Stratum 1's nibble tables (simdjson's): a byte's classes are `LO[its low nibble] & HI[its high nibble]`, each class
+/// a bit whose bytes are a rectangle of high and low nibbles. A mask that is a union of classes is one bit test.
+mod nib {
+    /// Of the first class byte: letters (two rectangles), digits, `_`, `(`, `[` `{`, `)`, `]` `}`.
+    pub const ALPHA1: u8 = 1;
+    pub const ALPHA2: u8 = 2;
+    pub const DIGIT: u8 = 4;
+    pub const UNDER: u8 = 8;
+    pub const LPAREN: u8 = 16;
+    pub const LSQ: u8 = 32;
+    pub const RPAREN: u8 = 64;
+    pub const RSQ: u8 = 128;
+    pub const WORD: u8 = ALPHA1 | ALPHA2 | DIGIT | UNDER;
+    pub const OPEN: u8 = LPAREN | LSQ;
+    pub const CLOSE: u8 = RPAREN | RSQ;
+    /// Of the second: a tab, form feed or `\r`; a backtick; `'` and `"`; a byte past ASCII; `*` `.` `/`; `<` `>`; `#`;
+    /// `{` `}`.
+    pub const RARE_WS: u8 = 1;
+    pub const TICK: u8 = 2;
+    pub const QUOTE: u8 = 4;
+    pub const HIGH: u8 = 8;
+    pub const DUP1: u8 = 16;
+    pub const DUP2: u8 = 32;
+    pub const HASH: u8 = 64;
+    pub const BRACE: u8 = 128;
+
+    const fn has(set: &[u8], x: u8) -> bool {
+        let mut i = 0;
+        while i < set.len() {
+            if set[i] == x {
+                return true;
+            }
+            i += 1;
+        }
+        false
+    }
+
+    /// The tables of classes given as (bit, high nibbles, low nibbles).
+    const fn tables(classes: &[(u8, &[u8], &[u8])]) -> ([u8; 16], [u8; 16]) {
+        let (mut lo, mut hi) = ([0u8; 16], [0u8; 16]);
+        let mut k = 0;
+        while k < classes.len() {
+            let (bit, his, los) = classes[k];
+            let mut n = 0;
+            while n < 16 {
+                if has(his, n as u8) {
+                    hi[n] |= bit;
+                }
+                if has(los, n as u8) {
+                    lo[n] |= bit;
+                }
+                n += 1;
+            }
+            k += 1;
+        }
+        (lo, hi)
+    }
+
+    const ALL: &[u8] = &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+    pub const T1: ([u8; 16], [u8; 16]) = tables(&[
+        (ALPHA1, &[4, 6], &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]),
+        (ALPHA2, &[5, 7], &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+        (DIGIT, &[3], &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+        (UNDER, &[5], &[15]),
+        (LPAREN, &[2], &[8]),
+        (LSQ, &[5, 7], &[11]),
+        (RPAREN, &[2], &[9]),
+        (RSQ, &[5, 7], &[13]),
+    ]);
+    pub const T2: ([u8; 16], [u8; 16]) = tables(&[
+        (RARE_WS, &[0], &[9, 12, 13]),
+        (TICK, &[6], &[0]),
+        (QUOTE, &[2], &[2, 7]),
+        (HIGH, &[8, 9, 10, 11, 12, 13, 14, 15], ALL),
+        (DUP1, &[2], &[10, 14, 15]),
+        (DUP2, &[3], &[12, 14]),
+        (HASH, &[2], &[3]),
+        (BRACE, &[7], &[11, 13]),
+    ]);
+}
+
+/// Stratum 1 of one block: two class bytes by nibble tables, then each mask one compare or bit test (`vn`: the
+/// bytes one on).
 #[inline(always)]
-fn block(v: V) -> B {
+fn block(v: V, vn: V) -> B {
     let s = V::splat;
     let eq = |x: u8| v.simd_eq(s(x));
-    // A letter is `b | 0x20` in `a..=z`; a digit `b - '0'` below 10 (wrapping).
-    let alpha = ((v | s(0x20)) - s(b'a')).simd_lt(s(26));
-    let digit = (v - s(b'0')).simd_lt(s(10));
-    let word = alpha | digit | eq(b'_');
+    let (lo, hi) = (v & s(0x0f), v >> s(4));
+    let t = |(l, h): ([u8; 16], [u8; 16])| lo.lookup16(Simd::from_array(l)) & hi.lookup16(Simd::from_array(h));
+    let (k1, k2) = (t(nib::T1), t(nib::T2));
+    let is = |k: V, bits: u8| (k & s(bits)).simd_ne(s(0));
     let (space, lf) = (eq(b' ').to_bitmask(), eq(b'\n').to_bitmask());
-    // Tabs, form feeds and `'\r'` are rare: one mask, and each its own only in a block that has one.
-    let rare = (eq(b'\t') | eq(0x0c) | eq(b'\r')).to_bitmask();
-    let (tab, ff, cr) = if rare == 0 { (0, 0, 0) } else { (eq(b'\t').to_bitmask(), eq(0x0c).to_bitmask(), eq(b'\r').to_bitmask()) };
-    let (lb, rb) = (eq(b'{'), eq(b'}'));
-    let (lbm, rbm) = if (lb | rb).any() { (lb.to_bitmask(), rb.to_bitmask()) } else { (0, 0) };
+    // Tabs, form feeds, `'\r'` and backticks are rare: one test, and each its own only in a block that has one.
+    let (tab, ff, cr, bt) = if is(k2, nib::RARE_WS | nib::TICK).any() {
+        (eq(b'\t').to_bitmask(), eq(0x0c).to_bitmask(), eq(b'\r').to_bitmask(), eq(b'`').to_bitmask())
+    } else {
+        (0, 0, 0, 0)
+    };
+    let (lbm, rbm) = if is(k2, nib::BRACE).any() { (eq(b'{').to_bitmask(), eq(b'}').to_bitmask()) } else { (0, 0) };
+    // The next byte `=` or `>`: one subtraction and compare.
+    let next_eq_gt = (vn - s(b'=')).simd_lt(s(2));
     B {
-        word: word.to_bitmask(),
+        word: is(k1, nib::WORD).to_bitmask(),
         space,
         sptab: space | tab,
         skip: space | tab | ff | lf,
@@ -118,20 +208,32 @@ fn block(v: V) -> B {
         bare_lf: cr,
         sq: eq(b'\'').to_bitmask(),
         dq: eq(b'"').to_bitmask(),
-        bt: eq(b'`').to_bitmask(),
+        bt,
         bs: eq(b'\\').to_bitmask(),
         esc: 0,
-        hash: eq(b'#').to_bitmask(),
-        ob: (eq(b'(') | eq(b'[') | lb).to_bitmask(),
-        cb: (eq(b')') | eq(b']') | rb).to_bitmask(),
+        hash: is(k2, nib::HASH).to_bitmask(),
+        ob: is(k1, nib::OPEN).to_bitmask() | lbm,
+        cb: is(k1, nib::CLOSE).to_bitmask() | rbm,
         lb: lbm,
         rb: rbm,
         lbu: 0,
+        slow: (is(k1, nib::DIGIT) | is(k2, nib::TICK | nib::QUOTE | nib::HIGH) | next_eq_gt | (v.simd_eq(vn) & is(k2, nib::DUP1 | nib::DUP2))).to_bitmask(),
         code: !0,
         depth0: 0,
         sstart: 0,
         send: 0,
     }
+}
+
+/// The 64 bytes from `at`, zeros past the text's end.
+#[cold]
+fn bytes_from(src: &[u8], at: usize) -> V {
+    let mut b = [0u8; 64];
+    let k = src.len().saturating_sub(at).min(64);
+    if k > 0 {
+        b[..k].copy_from_slice(&src[at..at + k]);
+    }
+    V::from_array(b)
 }
 
 /// Block `bi`'s 64 bytes, zeros past the text's end.
@@ -178,7 +280,12 @@ fn classes(src: &[u8]) -> Vec<B> {
                 V::from_array(b)
             }
         };
-        let mut b = block(v);
+        // The bytes one on: the next byte of each, for the operators' second bytes.
+        let vn = match src.get(at + 1..at + 65) {
+            Some(b) => V::from_slice(b),
+            None => bytes_from(src, at + 1),
+        };
+        let mut b = block(v, vn);
         b.esc = escaped(b.bs, &mut carry);
         // `bare_lf` held the block's `'\r'`s: a `'\n'` after an escaped one is escaped too.
         let esc_cr = b.bare_lf & b.esc;
@@ -1076,6 +1183,85 @@ const fn op_twice_eq(c: u8) -> Option<T> {
 }
 static OP_TWICE_EQ: [Option<T>; 128] = table!(op_twice_eq);
 
+/// A byte's operator alone and its length 1 (0: none), for every byte.
+static OP1L: [(T, u8); 256] = {
+    let mut t = [(T::Eof, 0u8); 256];
+    let mut c = 0;
+    while c < 128 {
+        if let Some(k) = op1(c as u8) {
+            t[c] = (k, 1);
+        }
+        c += 1;
+    }
+    t
+};
+
+/// A keyword's slot: its first 8 bytes, its length, its kind and soft keyword.
+#[derive(Clone, Copy)]
+struct Kw {
+    lo: u64,
+    len: u8,
+    kind: T,
+    soft: u8,
+}
+
+const KW_BITS: u32 = 8;
+
+/// The keywords' perfect hash: each one's 8 bytes times `KW_MULT`, the top `KW_BITS` bits its slot.
+const KW_MULT: u64 = {
+    let mut m: u64 = 0x9E37_79B9_7F4A_7C15;
+    loop {
+        let mut used = [false; 1 << KW_BITS];
+        let mut ok = true;
+        let mut i = 0;
+        while i < lex::WORD_LIST.len() {
+            let h = (kw_lo(lex::WORD_LIST[i].0).wrapping_mul(m) >> (64 - KW_BITS)) as usize;
+            if used[h] {
+                ok = false;
+                break;
+            }
+            used[h] = true;
+            i += 1;
+        }
+        if ok {
+            break m;
+        }
+        m = m.wrapping_add(0x6A09_E667_F3BC_C909) | 1;
+    }
+};
+
+const fn kw_lo(w: &[u8]) -> u64 {
+    let mut x = 0u64;
+    let mut i = 0;
+    while i < w.len() && i < 8 {
+        x |= (w[i] as u64) << (8 * i);
+        i += 1;
+    }
+    x
+}
+
+static KWS: [Kw; 1 << KW_BITS] = {
+    let mut t = [Kw { lo: 0, len: 0, kind: T::Name, soft: 0 }; 1 << KW_BITS];
+    let mut i = 0;
+    while i < lex::WORD_LIST.len() {
+        let (w, kind, soft) = lex::WORD_LIST[i];
+        assert!(w.len() <= 8, "a keyword past 8 bytes");
+        t[(kw_lo(w).wrapping_mul(KW_MULT) >> (64 - KW_BITS)) as usize] = Kw { lo: kw_lo(w), len: w.len() as u8, kind, soft };
+        i += 1;
+    }
+    t
+};
+
+/// The name `src[i..i + len]`'s kind and soft keyword (`lex::keyword`'s) without a branch: its first 8 bytes, one
+/// probe of the perfect hash, and the slot's bytes and length compared (a selection, not a branch).
+#[inline(always)]
+fn keyword_at(src: &[u8], i: usize, len: usize) -> (T, u8) {
+    let mask = if len >= 8 { !0u64 } else { (1u64 << (8 * len)) - 1 };
+    let lo = rerail_simd8::swar::load8(src, i) & mask;
+    let k = KWS[(lo.wrapping_mul(KW_MULT) >> (64 - KW_BITS)) as usize];
+    core::hint::select_unpredictable(k.lo == lo && usize::from(k.len) == len, (k.kind, k.soft), (T::Name, 0))
+}
+
 /// The operator at bytes `a`, `b`, `c` and its length, by the tables (the lean lexer's `operator_at`, the longest).
 #[inline(always)]
 fn operator(a: u8, b: u8, c: u8) -> Option<(T, usize)> {
@@ -1350,58 +1536,87 @@ impl<'s> Walk<'s> {
     fn run(&mut self, k: usize) -> Result<(T, usize), Refusal> {
         let src = self.t.src;
         let n = src.len();
-        let base = k & !63;
-        let b = self.t.blk(k >> 6);
-        let q0 = (k & 63) as u32;
-        let valid = if n - base >= 64 { !0u64 } else { (1u64 << (n - base)) - 1 };
-        let ff = b.skip & !b.sptab & !b.lf;
-        let stop = (!b.code | b.eol | ff | b.bs | !valid) & (!0u64 << q0);
-        let before_stop = if stop == 0 { !0u64 } else { stop.isolate_lowest_one() - 1 };
-        let mut starts = ((!b.skip & !(b.word & (b.word << 1)) & (!0u64 << q0)) | (1u64 << q0)) & before_stop;
         let mut last = (T::Eof, k);
-        while starts != 0 {
-            let q = starts.trailing_zeros();
-            let pos = base + q as usize;
-            let c = src[pos];
-            let end = match CLASS[usize::from(c)] {
-                C_NAME => {
-                    let words = (!(b.word >> q)).trailing_zeros() as usize;
-                    let mut end = pos + words;
-                    // On past the block, or into a character past ASCII: the name's whole read.
-                    if q as usize + words == 64 || self.at(end) >= 0x80 {
-                        end = self.name_end(pos)?;
-                    }
-                    let (kind, soft) = lex::keyword(src, pos, end);
-                    self.toks.push(Tok { kind, soft, start: pos as u32, end: end as u32 });
-                    last = (kind, pos);
-                    end
-                }
-                C_DIGIT => {
-                    let (kind, end) = lex::number_at(src, pos);
-                    self.toks.push(Tok { kind, soft: 0, start: pos as u32, end: end as u32 });
-                    last = (kind, pos);
-                    end
-                }
-                // A byte past ASCII (an odd blank, a name's character) or a quote: the walk's own path.
-                C_HIGH | C_QUOTE => break,
-                cls => {
-                    let (kind, end) = if cls == C_DOT && self.at(pos + 1).is_ascii_digit() {
-                        lex::number_at(src, pos)
-                    } else {
-                        let (kind, len) = operator(c, self.at(pos + 1), self.at(pos + 2)).ok_or_else(|| refuse(pos))?;
-                        (kind, pos + len)
-                    };
-                    self.toks.push(Tok { kind, soft: 0, start: pos as u32, end: end as u32 });
-                    last = (kind, pos);
-                    end
-                }
-            };
-            self.p = end;
-            let e = end - base;
-            if e >= 64 {
+        // Block by block while no stop is met: a run goes on into the next block (from the last token's end, which
+        // may lie in it).
+        let mut at = k;
+        'blocks: loop {
+            let base = at & !63;
+            if base >= n {
                 break;
             }
-            starts &= !0u64 << e;
+            let b = self.t.blk(base >> 6);
+            let q0 = (at & 63) as u32;
+            let valid = if n - base >= 64 { !0u64 } else { (1u64 << (n - base)) - 1 };
+            let ff = b.skip & !b.sptab & !b.lf;
+            let stop = (!b.code | b.eol | ff | b.bs | !valid) & (!0u64 << q0);
+            let before_stop = if stop == 0 { !0u64 } else { stop.isolate_lowest_one() - 1 };
+            let mut starts = ((!b.skip & !(b.word & (b.word << 1)) & (!0u64 << q0)) | (u64::from(at == k) << q0)) & before_stop;
+            // Each token's start is its bit of `starts`, and no token waits on the one before: a name ends at its run
+            // of word bits, an operator after its one byte (one of more bytes is at a `slow` bit). Which of the two it
+            // is, and a name's keyword, are selections, not branches.
+            while starts != 0 {
+                let q = starts.trailing_zeros();
+                starts &= starts - 1;
+                let pos = base + q as usize;
+                let c = src[pos];
+                let words = (!(b.word >> q)).trailing_zeros() as usize;
+                // The rare tokens, one branch: a number (a digit, or a `.` before one), a quote, a byte past ASCII, an
+                // operator of more than one byte, and a name past the block or to a `slow` byte.
+                let r = b.slow >> q;
+                let rare = r | (u64::from(c == b'.') & (r >> 1)) | u64::from(q as usize + words == 64) | (r >> words.min(63));
+                if rare & 1 != 0 {
+                    let end = match CLASS[usize::from(c)] {
+                        C_NAME => {
+                            let end = self.name_end(pos)?;
+                            let (kind, soft) = lex::keyword(src, pos, end);
+                            self.toks.push(Tok { kind, soft, start: pos as u32, end: end as u32 });
+                            last = (kind, pos);
+                            end
+                        }
+                        C_DIGIT => {
+                            let (kind, end) = lex::number_at(src, pos);
+                            self.toks.push(Tok { kind, soft: 0, start: pos as u32, end: end as u32 });
+                            last = (kind, pos);
+                            end
+                        }
+                        C_DOT | C_OP => {
+                            let (kind, end) = if c == b'.' && self.at(pos + 1).is_ascii_digit() {
+                                lex::number_at(src, pos)
+                            } else {
+                                let (kind, len) = operator(c, self.at(pos + 1), self.at(pos + 2)).ok_or_else(|| refuse(pos))?;
+                                (kind, pos + len)
+                            };
+                            self.toks.push(Tok { kind, soft: 0, start: pos as u32, end: end as u32 });
+                            last = (kind, pos);
+                            end
+                        }
+                        // A byte past ASCII (an odd blank, a name's character) or a quote: the walk's own path.
+                        _ => break 'blocks,
+                    };
+                    self.p = end;
+                    let e = end - base;
+                    if e >= 64 {
+                        break;
+                    }
+                    starts &= !0u64 << e;
+                    continue;
+                }
+                let (wk, ws) = keyword_at(src, pos, words);
+                let (ok, ol) = OP1L[usize::from(c)];
+                let name = (b.word >> q) & 1 != 0;
+                if !name && ol == 0 {
+                    return Err(refuse(pos));
+                }
+                let (kind, soft, end) = core::hint::select_unpredictable(name, (wk, ws, pos + words), (ok, 0, pos + 1));
+                self.toks.push(Tok { kind, soft, start: pos as u32, end: end as u32 });
+                last = (kind, pos);
+                self.p = end;
+            }
+            if stop != 0 {
+                break;
+            }
+            at = self.p.max(base + 64);
         }
         Ok(last)
     }
@@ -1959,7 +2174,27 @@ mod tests {
                 for &c in bytes {
                     let s = [a, b, c];
                     assert_eq!(operator(a, b, c).map(|(t, n)| (t as u8, n)), lex::operator_at(&s, 0).map(|(t, n)| (t as u8, n)), "{:?}", String::from_utf8_lossy(&s));
+                    let (t, n) = OP1L[usize::from(a)];
+                    assert_eq!((n > 0).then_some((t as u8, 1)), operator(a, 0, 0).map(|(t, n)| (t as u8, n)), "{:?}", String::from_utf8_lossy(&s));
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn keywords_by_the_perfect_hash_are_the_switchs() {
+        let mut names: Vec<Vec<u8>> = lex::WORD_LIST.iter().map(|w| w.0.to_vec()).collect();
+        for w in lex::WORD_LIST {
+            names.push([w.0, b"x"].concat());
+            names.push(w.0[..w.0.len() - 1].to_vec());
+            names.push([b"_", w.0].concat());
+        }
+        names.extend([b"x".to_vec(), b"continue_".to_vec(), b"continuex".to_vec(), b"__init__".to_vec(), b"self".to_vec()]);
+        for w in names.iter().filter(|w| !w.is_empty()) {
+            // The name in a text, and at its end.
+            for src in [[w.as_slice(), b" = 1"].concat(), w.clone()] {
+                let (k, s) = keyword_at(&src, 0, w.len());
+                assert_eq!((k as u8, s), { let (k, s) = lex::keyword(&src, 0, w.len()); (k as u8, s) }, "{:?}", String::from_utf8_lossy(w));
             }
         }
     }
