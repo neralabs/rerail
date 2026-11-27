@@ -328,8 +328,6 @@ struct Stage1 {
     t101: Vec<u64>,
     t102: Vec<u64>,
     t103: Vec<u64>,
-    t104: Vec<u64>,
-    t105: Vec<u64>,
     fw_rd0_close: Vec<u64>,
     fw_rd1_close: Vec<u64>,
     refused: bool,
@@ -542,8 +540,6 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
     let mut t101 = vec![0u64; nw];
     let mut t102 = vec![0u64; nw];
     let mut t103 = vec![0u64; nw];
-    let mut t104 = vec![0u64; nw];
-    let mut t105 = vec![0u64; nw];
     let mut fw_rd0_close = vec![0u64; nw];
     let mut fw_rd1_close = vec![0u64; nw];
     let mut lv_1 = 0u64;
@@ -917,11 +913,6 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             // empty
             v_t85 = 0;
             r_t85[q % RING] = v_t85;
-            // ~prev(dot)
-            let v_t102 = !(v_m_dot << 1 | p_m_dot >> 63) & lv;
-            if q < nw {
-                t102[q] = v_t102;
-            }
         }
         // The masks 1 block behind the classes.
         if t >= 1 && t - 1 <= nw {
@@ -1177,30 +1168,25 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             if q < nw {
                 t99[q] = v_t99;
             }
-            // next(dot)
-            let v_t100 = (p_m_dot >> 1 | v_m_dot << 63);
+            // ((dot & next(dot)) & next(dot, 2)) & ~prev(dot)
+            let v_t100 = p_m_dot & (p_m_dot >> 1 | v_m_dot << 63) & (p_m_dot >> 2 | v_m_dot << 62) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv);
             if q < nw {
                 t100[q] = v_t100;
             }
-            // next(dot, 2)
-            let v_t101 = (p_m_dot >> 2 | v_m_dot << 62);
+            // p1 | p2
+            let v_t101 = (v_m_p1 | v_m_p2);
             if q < nw {
                 t101[q] = v_t101;
             }
-            // p1 | p2
-            let v_t103 = (v_m_p1 | v_m_p2);
-            if q < nw {
-                t103[q] = v_t103;
-            }
             // prev(p2)
-            let v_t104 = (v_m_p2 << 1 | p_m_p2 >> 63) & lv;
+            let v_t102 = (v_m_p2 << 1 | p_m_p2 >> 63) & lv;
             if q < nw {
-                t104[q] = v_t104;
+                t102[q] = v_t102;
             }
             // next(conv_l)
-            let v_t105 = (p_m_conv_l >> 1 | v_m_conv_l << 63);
+            let v_t103 = (p_m_conv_l >> 1 | v_m_conv_l << 63);
             if q < nw {
-                t105[q] = v_t105;
+                t103[q] = v_t103;
             }
         }
         // The masks 2 blocks behind the classes.
@@ -1300,8 +1286,6 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
         t101,
         t102,
         t103,
-        t104,
-        t105,
         fw_rd0_close,
         fw_rd1_close,
         refused,
@@ -1323,7 +1307,7 @@ pub fn lex(src: &[u8]) -> Lexed {
     // Each word's bits inside the file.
     let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();
     // Stage 1: the masks the regions and the tokens read, and whether an escape holds.
-    let Stage1 { m_blank, m_lf, m_hash, m_word, m_alpha, m_digit, m_dot, m_opens, m_closes, m_quote, m_bslash, m_high, m_sq, m_dq, m_cr, m_lbrace, m_rbrace, m_colon, m_bang, m_eq, m_conv_l, m_esc_one, m_hex, m_x_l, m_u_l, m_uu_l, m_nn_l, m_bytes_esc, m_sign, m_zero, m_exp_l, m_punct, m_p1, m_p2, m_raw_q, t3, m_sq_c, m_dq_c, m_sq3_c, m_dq3_c, m_i_open, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, m_b_open, t39, t43, m_num_run, t45, t46, m_two_start, m_two_start_three, t60, t61, t65, t66, t67, t76, t83, t84, t86, t92, t93, t94, t95, t96, t97, t99, t100, t101, t102, t103, t104, t105, mut fw_rd0_close, mut fw_rd1_close, refused: escapes } = stage1_best(src);
+    let Stage1 { m_blank, m_lf, m_hash, m_word, m_alpha, m_digit, m_dot, m_opens, m_closes, m_quote, m_bslash, m_high, m_sq, m_dq, m_cr, m_lbrace, m_rbrace, m_colon, m_bang, m_eq, m_conv_l, m_esc_one, m_hex, m_x_l, m_u_l, m_uu_l, m_nn_l, m_bytes_esc, m_sign, m_zero, m_exp_l, m_punct, m_p1, m_p2, m_raw_q, t3, m_sq_c, m_dq_c, m_sq3_c, m_dq3_c, m_i_open, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, m_b_open, t39, t43, m_num_run, t45, t46, m_two_start, m_two_start_three, t60, t61, t65, t66, t67, t76, t83, t84, t86, t92, t93, t94, t95, t96, t97, t99, t100, t101, t102, t103, mut fw_rd0_close, mut fw_rd1_close, refused: escapes } = stage1_best(src);
     // regions hidden { … }: the first opener not hidden opens its region, to its closer.
     let mut m_hidden = vec![0u64; nw];
     // `i_deep`: a frame past the level's bound, a template past its nest, or a close with a template's frame on top.
@@ -2224,12 +2208,12 @@ pub fn lex(src: &[u8]) -> Lexed {
     refused |= any(&m_i_deep);
     // an interpolation's `=`
     refused |= any(&t77);
-    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (t87, t88, t90, t98, t106).
+    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (t87, t88, t90, t98, t104).
     let mut t87 = vec![0u64; nw];
     let mut t88 = vec![0u64; nw];
     let mut t90 = vec![0u64; nw];
     let mut t98 = vec![0u64; nw];
-    let mut t106 = vec![0u64; nw];
+    let mut t104 = vec![0u64; nw];
     {
         for i in 0..nw {
             let w_t87 = m_lf[i] & m_code[i] & (!m_in_br[i] & lv[i]);
@@ -2240,8 +2224,8 @@ pub fn lex(src: &[u8]) -> Lexed {
             t90[i] = w_t90;
             let w_t98 = (m_dot[i] & m_number[i] | m_exp_l[i] & m_number[i] & (!m_based_n[i] & lv[i]));
             t98[i] = w_t98;
-            let w_t106 = prev(&m_conv_at, i, 1);
-            t106[i] = w_t106;
+            let w_t104 = prev(&m_conv_at, i, 1);
+            t104[i] = w_t104;
         }
     }
     // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.
@@ -2358,54 +2342,6 @@ pub fn lex(src: &[u8]) -> Lexed {
         // The token's first byte's group, by the dispatch tables (simdjson's `classify`).
         let c = src[s];
         let group = (DISPATCH_LO[usize::from(c & 15)] & DISPATCH_HI[usize::from(c >> 4)]).trailing_zeros();
-        // The region a token here opens, as the walk opens them: the first declared whose opener holds, a kind after others where the string the template is in (`template`) is one; of those whose opener may be the byte's.
-        let open = match group {
-            // `"`
-            1 => if bit(&t9, s) {
-                2
-            } else if bit(&t11, s) {
-                4
-            } else if bit(&t14, s) {
-                6
-            } else if bit(&t18, s) {
-                8
-            } else {
-                usize::MAX
-            },
-            // `#`
-            2 => 0,
-            // `'`
-            8 => if bit(&t8, s) {
-                1
-            } else if bit(&t10, s) {
-                3
-            } else if bit(&t12, s) {
-                5
-            } else if bit(&t16, s) {
-                7
-            } else {
-                usize::MAX
-            },
-            // `:`
-            12 => if (template == 5 || template == 6 || template == 7 || template == 8) && flat {
-                13
-            } else {
-                usize::MAX
-            },
-            // `}`
-            18 => if (template == 5) && flat {
-                9
-            } else if (template == 6) && flat {
-                10
-            } else if (template == 7) && flat {
-                11
-            } else if (template == 8) && flat {
-                12
-            } else {
-                usize::MAX
-            },
-            _ => usize::MAX,
-        };
         let mut hits = 0u32;
         let (l, kind, extra, mut marks, word): (usize, u32, bool, u32, u32) = {
             // The row: the first whose start holds, of those whose start may be the byte's.
@@ -2424,13 +2360,13 @@ pub fn lex(src: &[u8]) -> Lexed {
                     usize::MAX
                 },
                 // `"`
-                1 => if open == 2 {
+                1 => if bit(&t9, s) {
                     8
-                } else if open == 4 {
+                } else if bit(&t11, s) {
                     10
-                } else if open == 6 {
+                } else if bit(&t14, s) {
                     12
-                } else if open == 8 {
+                } else if bit(&t18, s) {
                     14
                 } else {
                     usize::MAX
@@ -2449,21 +2385,19 @@ pub fn lex(src: &[u8]) -> Lexed {
                     usize::MAX
                 },
                 // `'`
-                8 => if open == 1 {
+                8 => if bit(&t8, s) {
                     7
-                } else if open == 3 {
+                } else if bit(&t10, s) {
                     9
-                } else if open == 5 {
+                } else if bit(&t12, s) {
                     11
-                } else if open == 7 {
+                } else if bit(&t16, s) {
                     13
                 } else {
                     usize::MAX
                 },
                 // `.`
-                9 => if ((((((!(open == 0) && !(((((open == 1 || open == 2) || open == 3) || open == 4) || (((open == 5 || open == 6) || open == 7) || open == 8)))) && !((((open == 9 || open == 10) || open == 11) || open == 12))) && !(open == 13)) && bit(&t100, s)) && bit(&t101, s)) && bit(&t102, s)) {
-                    4
-                } else if bit(&t97, s) {
+                9 => if bit(&t97, s) {
                     2
                 } else if {
                 // `assume … at starts p_start = (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))`, not proved: a test build checks it.
@@ -2472,6 +2406,8 @@ pub fn lex(src: &[u8]) -> Lexed {
                 bit(&t99, s)
             } {
                     3
+                } else if bit(&t100, s) {
+                    4
                 } else {
                     usize::MAX
                 },
@@ -2490,7 +2426,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     usize::MAX
                 },
                 // `:`
-                12 => if open == 13 {
+                12 => if (template == 5 || template == 6 || template == 7 || template == 8) && flat {
                     19
                 } else if {
                 // `assume … at starts p_start = (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))`, not proved: a test build checks it.
@@ -2509,21 +2445,21 @@ pub fn lex(src: &[u8]) -> Lexed {
                     usize::MAX
                 },
                 // `BFRTUbfrtu`
-                16 | 17 => if ((((bit(&t103, s) && !(open == 0)) && !(((((open == 1 || open == 2) || open == 3) || open == 4) || (((open == 5 || open == 6) || open == 7) || open == 8)))) && !((((open == 9 || open == 10) || open == 11) || open == 12))) && !(open == 13)) {
-                    6
-                } else if bit(&t94, s) {
+                16 | 17 => if bit(&t94, s) {
                     0
+                } else if bit(&t101, s) {
+                    6
                 } else {
                     usize::MAX
                 },
                 // `}`
-                18 => if open == 9 {
+                18 => if (template == 5) && flat {
                     15
-                } else if open == 10 {
+                } else if (template == 6) && flat {
                     16
-                } else if open == 11 {
+                } else if (template == 7) && flat {
                     17
-                } else if open == 12 {
+                } else if (template == 8) && flat {
                     18
                 } else if {
                 // `assume … at starts p_start = (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))`, not proved: a test build checks it.
@@ -2641,7 +2577,7 @@ pub fn lex(src: &[u8]) -> Lexed {
 ,
                 6 => {
                     // `str_prefix`: run prev(p2)
-                    let l = run_last(&t104, s);
+                    let l = run_last(&t102, s);
                     let l = l.max(s);
                     // a string prefix of three letters or more
                     if bit(&t65, s) {
@@ -3439,7 +3375,7 @@ pub fn lex(src: &[u8]) -> Lexed {
 ,
                 20 => {
                     // `type_conversion`: run prev(conv_at)
-                    let l = run_last(&t106, s);
+                    let l = run_last(&t104, s);
                     let l = l.max(s);
                     // a string prefix of three letters or more
                     if any_in(&t65, s + 1, l) {

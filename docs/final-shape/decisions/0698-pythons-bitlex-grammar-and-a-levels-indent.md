@@ -437,3 +437,11 @@ statements and blocks end.
     made. A test whose output is read from the rows, not from the bytes, read the token's last block before it was
     final. A float such as `1024.0` across a block's edge lost its `.` there. `tested` now takes the part's
     `Limit`: a token whose last block is not final waits for it, as a run's search past the final blocks does.
+77. **A token starts in code, and a quote or a `#` at a start opens its region.** These are rr's assumes:
+    - `code = ~empty`, `o_str = quote` and `o_cmt = hash` at starts;
+    - an ellipsis's start is three dots, the first after none, without `code`.
+
+    Tier 1 as Rust no longer works out, at each token, which region it opens: a row's start never asks again
+    whether a region opened there. A conversion's start (`conv_at`), a tail's `}` and a spec's `:` depend on the
+    interpolation's level. Tier 1 as Rust refuses an assume that reads a region's mask, so those wait for the
+    f-string reader.

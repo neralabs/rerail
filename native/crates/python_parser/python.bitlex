@@ -214,6 +214,9 @@ mask word_start = w & alpha & ~prev(w) & ~p1 & ~p2 & ~number & ~prev(conv_at)
 mask name_more  = fill(word_start, ~w) & ~word_start
 
 # Where a start reads them: no region's token starts there (the loop decides those first), and no row above does.
+assume "a token starts in code: the regions open only at a token's start" at starts code = ~empty
+assume "a quote at a start opens a string: any quote outside the regions opens one" at starts o_str = quote
+assume "a `#` at a start opens a comment" at starts o_cmt = hash
 assume "a name starts at a word's first letter that starts no string's prefix: a start is never in a word" at starts word_start = alpha & ~p1 & ~p2
 assume "a name runs over its word's bytes" in identifier name_more = word
 assume "a number starts at a digit, `0x`, `0o` and `0b` apart: a start is never in a word or a number's run" at starts int_start = digit & ~prev(dot) & ~(zero & next(x_any | o_any | b_any))
@@ -238,6 +241,7 @@ mask second     = (prev(two_start) | prev(two_start_three, 2)) & code
 mask ell_at     = code & dot & next(dot) & next(dot, 2) & ~prev(dot)
 mask ell        = ell_at | prev(ell_at) | prev(ell_at, 2)
 mask p_start    = code & punct & ~second & ~number & ~conv_at & ~ell
+assume "an ellipsis starts at the first of three dots" at starts ell_at = dot & next(dot) & next(dot, 2) & ~prev(dot)
 assume "an operator starts at its first byte, but an ellipsis's or a conversion's (a `!` with no `=`): a start is never a pair's second" at starts p_start = punct & ~(dot & next(dot) & next(dot, 2) & ~prev(dot)) & ~(bang & ~next(eq))
 token punct     = start p_start pair two_start
 token ellipsis  = start ell_at run ell
