@@ -280,7 +280,7 @@ pub enum SettingsScope {
 /// path, a variable its head drops) is of every file's rows, and so is a memoised relation still keyed by one.
 pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, rels: &BTreeSet<String>) -> BTreeMap<String, SettingsScope> {
     use crate::code_rule_dsl::logic::program_image::TermRef;
-    use crate::code_rule_dsl::typing::file_local::{setting_by_folder, setting_by_path, setting_key_hop, setting_input};
+    use crate::code_rule_dsl::logic::plan::phased::{Keyed, declared_key};
     /// A relation's reads of the settings: of any file's, of its own file's, and keyed by its columns' paths or folders.
     #[derive(Clone, Default, PartialEq)]
     struct Reach {
@@ -290,16 +290,18 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
         path: BTreeSet<usize>,
     }
     let v = &local.v;
-    let base = |rel: &str| -> Option<Reach> {
-        if setting_by_folder(rel) {
-            Some(Reach { folder: [0].into(), ..Reach::default() })
-        } else if setting_by_path(rel).is_some() {
-            Some(Reach { path: [0].into(), ..Reach::default() })
-        } else if setting_input(rel) {
-            // Keyed by nothing (`Keyed::Whole`: `env`, `py_names__dj_app_defers`): every file's rows.
-            Some(Reach { all: true, ..Reach::default() })
-        } else {
-            None
+    // Each relation's declared key (`phased::declared_key`, what `file_local::setting_input` and its kin read), looked
+    // up once: the fixpoints below read it for every atom of every rule, each round.
+    let keys: std::cell::RefCell<Vec<Option<Option<Keyed>>>> = std::cell::RefCell::new(vec![None; v.rel_end() as usize]);
+    let key = |a: &crate::code_rule_dsl::logic::program_image::AtomRef<'_>| -> Option<Keyed> {
+        keys.borrow_mut()[a.rel().0 as usize].get_or_insert_with(|| declared_key(v.rel_name(a.rel()))).clone()
+    };
+    let base = |k: Option<Keyed>| -> Option<Reach> {
+        match k? {
+            Keyed::ByKey(_) => Some(Reach { folder: [0].into(), ..Reach::default() }),
+            Keyed::ByPath(_) => Some(Reach { path: [0].into(), ..Reach::default() }),
+            // Keyed by nothing (`env`, `py_names__dj_app_defers`): every file's rows.
+            Keyed::Whole => Some(Reach { all: true, ..Reach::default() }),
         }
     };
     // A rule's own paths (its document's, `doc(d, p, _)`), and the folders or targets its own file's rows name: read
@@ -310,7 +312,10 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
         let own: HashSet<_> = atoms.iter().filter(|a| v.rel_name(a.rel()) == "doc").filter_map(|a| a.args().nth(1).and_then(|t| t.var())).collect();
         let mut folders: HashSet<_> = atoms
             .iter()
-            .filter_map(|a| setting_by_path(v.rel_name(a.rel())).flatten().map(|c| (a, c)))
+            .filter_map(|a| match key(a) {
+                Some(Keyed::ByPath(c)) => c.map(|c| (a, c)),
+                _ => None,
+            })
             .filter(|(a, _)| a.args().next().and_then(|t| t.var()).is_some_and(|p| own.contains(&p)))
             .filter_map(|(a, c)| a.args().nth(c).and_then(|t| t.var()))
             .collect();
@@ -324,7 +329,10 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
         loop {
             let more: Vec<_> = atoms
                 .iter()
-                .filter_map(|a| setting_key_hop(v.rel_name(a.rel())).map(|c| (a, c)))
+                .filter_map(|a| match key(a) {
+                    Some(Keyed::ByKey(c)) => c.map(|c| (a, c)),
+                    _ => None,
+                })
                 .filter(|(a, _)| a.args().next().and_then(|t| t.var()).is_some_and(|k| folders.contains(&k)))
                 .filter_map(|(a, c)| a.args().nth(c).and_then(|t| t.var()))
                 .filter(|x| !folders.contains(x))
@@ -364,7 +372,7 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
             let mut got = reach.get(head).cloned().unwrap_or_default();
             for a in &atoms {
                 let rel = v.rel_name(a.rel());
-                let Some(r) = base(rel).or_else(|| reach.get(rel).cloned()) else { continue };
+                let Some(r) = base(key(a)).or_else(|| reach.get(rel).cloned()) else { continue };
                 got.all |= r.all;
                 got.own |= r.own;
                 for (keys, by_folder) in [(&r.folder, true), (&r.path, false)] {
