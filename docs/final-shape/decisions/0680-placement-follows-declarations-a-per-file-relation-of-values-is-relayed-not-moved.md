@@ -137,7 +137,9 @@ Tests whose programs met the new placement:
 
 In `tests_corpus`, `a_cross_file_rank_of_values_keeps_the_memo_on`: p297's `refers` over three files. After one
 file's edit, the other two are read from the memo, and the rows are a fresh run's. Without the fix there are no memo
-hits.
+hits. (2026-11-27: since 0677's third tail keyed `brace_arg` by the call, the test's relation of values is its own,
+`field_of(v, k)`, ranked in the cross part as `slot`, declared `cross_file`. Its output is a relation of values too,
+`place(v, k, x)`, each file's arguments by text: under 0677 a rule that reads the rank holds no node.)
 
 In `tests_corpus`, `a_string_tests_inequality_runs_natively`: a strict run, in a process of its own, of a
 negated `inline` view of two string tests. Before the fix it stopped on "a stratum the native engine declined".

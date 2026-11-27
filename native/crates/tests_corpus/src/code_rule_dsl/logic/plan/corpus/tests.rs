@@ -2569,15 +2569,22 @@ fn a_file_read_from_the_memo_has_its_tape_values_for_a_cross_file_rule() {
 }
 
 /// A count below a bound over a relation of values (decision 0680): p297's `refers` (UP032), a format string's `{}`
-/// field takes the positional argument of its place among the string's `{}` fields. `brace_arg` is a relation of the
-/// strings' values, read by file-local rules too, so its rank (`rr_rank`, `rank_form`) is the cross part's.
+/// field takes the positional argument of its place among the string's `{}` fields. `field_of` is a relation of the
+/// strings' values, so its rank (`rr_rank`, `rank_form`) is the cross part's, `slot`. Since decision 0677 no node
+/// crosses into that part, and a file's rule that reads it is the part's too, so what it gives is a relation of values:
+/// each file's arguments by their texts (`arg_text`, a union of one file's values, per-file: 0680 §1) placed by the
+/// string's value. (The library's `brace_arg` is keyed by the call since 0677's third tail, 6d59c0b734.)
 const RANK_OF_VALUES: &str = r#"
 #include "core.rerail"
 #include "python/upgrade-format.rerail"
-.decl refers(c: node, k: number, e: node)
-refers(c, k, e) :- format_call(c, v), brace_arg(v, k, ""), r = count : { brace_arg(v, k2, ""), k2 < k }, call_pos(c, r, e).
-.decl place(c: node, k: number, e: symbol)
-place(c, k, x) :- refers(c, k, e), text(e, x).
+.decl field_of(v: symbol, k: number)
+field_of(v, k) :- format_call(c, v), brace_arg(c, k, "").
+.decl slot(v: symbol, k: number, r: number) cross_file
+slot(v, k, r) :- field_of(v, k), r = count : { field_of(v, k2), k2 < k }.
+.decl arg_text(v: symbol, r: number, x: symbol)
+arg_text(v, r, x) :- format_call(c, v), call_pos(c, r, e), text(e, x).
+.decl place(v: symbol, k: number, x: symbol) cross_file
+place(v, k, x) :- slot(v, k, r), arg_text(v, r, x).
 .output place
 "#;
 
