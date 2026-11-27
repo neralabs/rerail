@@ -695,7 +695,10 @@ describe("OMP conversation-rules extension", () => {
 
       await hostCommands.detach!();
       await vi.advanceTimersByTimeAsync(60_000);
-      expect(daemon.initializes("omp-test-session")).toBe(1);
+      // The next session start attaches behind any try in flight, so by its end every try made is counted.
+      daemon.state.down.delete("omp-test-session");
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+      expect(daemon.initializes("omp-test-session")).toBe(2);
       vi.useRealTimers();
     });
 
