@@ -50,6 +50,7 @@ function health(overrides: Partial<DaemonHealth> = {}): DaemonHealth {
     installedAt: null,
     experiments: [],
     update: null,
+    updateChannel: null,
     ...overrides,
   };
 }
