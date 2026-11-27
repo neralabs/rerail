@@ -56,6 +56,24 @@ pub fn mark_word_rows(out: &mut String, mark_words: &[(u8, u16)]) {
     }
 }
 
+/// The marks that ask their token's column: `markcolumn K C` (`Words::mark_columns`).
+pub fn mark_column_rows(out: &mut String, mark_columns: &[(u8, u8)]) {
+    for &(k, c) in mark_columns {
+        let _ = writeln!(out, "  markcolumn {k} {c}");
+    }
+}
+
+/// A node's supertypes by its slot and kind: `superclass #S #K #C…` (`Words::super_classes`).
+pub fn super_class_rows(out: &mut String, rows: &[(u16, u16, Vec<u16>)]) {
+    for (s, k, cs) in rows {
+        let _ = write!(out, "  superclass #{s} #{k}");
+        for c in cs {
+            let _ = write!(out, " #{c}");
+        }
+        out.push('\n');
+    }
+}
+
 /// The marks each mark passes: `markpasses K MASK` (`Words::mark_passes`).
 pub fn mark_pass_rows(out: &mut String, mark_passes: &[(u8, u64)]) {
     use std::fmt::Write as _;
@@ -134,6 +152,9 @@ fn elem_rows(out: &mut String, elems: &[crate::program::TokenElem]) {
             }
             if e.since {
                 out.push_str(" since");
+            }
+            if e.whole != 0 {
+                let _ = write!(out, " whole{:x}", e.whole);
             }
             if e.without != 0 {
                 let _ = write!(out, " w{:x}", e.without);

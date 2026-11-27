@@ -20,7 +20,7 @@ pub use sources::*;
 /// 0 (several), 16 and 16z, on a device other than Metal (`metal_join::program_pipe`): `join_run`, written by hand
 /// (`join_program`), which reads the views' format as the compiled reads do, so one Rust for each. Not `sources.rs`, which rerail-ukl-vec's tests write: device-metal's test (`join_rust`) holds these to
 /// the source.
-pub const JOIN_PROGRAM: [u64; 3] = [0x96b6cb0889471e08, 0x626fc2a44484006a, 0xbbd51a88a4afba31];
+pub const JOIN_PROGRAM: [u64; 3] = [0xe713e693075e49c6, 0xe6960f6d8c53b254, 0x8378e2089d0f0811];
 
 /// A group's launch, as a kernel's Rust reads it: its group's position, its threads' (each dimension's), and the
 /// groups'.

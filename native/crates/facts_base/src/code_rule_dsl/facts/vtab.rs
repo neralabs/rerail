@@ -208,7 +208,6 @@ pub const LONG_TEXT_NODES: &str = "rr_long_text_node";
 /// (decision 0353 step 3).
 pub const NODE_READS: [&str; 12] = ["rr_node_text", "rr_node_text_any", "rr_node_value", "rr_node_str", "rr_node_name", "rr_node_comment", "rr_node_strprefix", "rr_node_op_at", "rr_node_intval", "rr_node_op_t", "rr_node_t_text", "rr_node_order"];
 
-
 /// A row a producer hands a relation (`Relation::from_rows`, `staged`): its values on the stack, as the relation
 /// copies them into its block (decision 0687); a row past 8 columns goes on the heap.
 pub type Row = rerail_blocks::frame::InlineVec<i64, 8>;
@@ -289,6 +288,11 @@ pub trait Source: Send + Sync {
     /// `node_read`, a text lent where the source holds it, with none made: what a join's walk reads
     /// (`NodeRead::Text`).
     fn node_read_ref(&self, name: &str, n: i64, more: &[i64]) -> Option<NodeRead<'_>> { self.node_read(name, n, more).map(NodeRead::Value) }
+    /// Decision 0706 E1: node `n`'s text as `name` reads it, as its value, read where the text lies, no text made: the value `held` gives
+    /// it (the atom it has, or a value the reader gave it), else, with `make`, its atom made (as the `text` view's reads
+    /// make it). `None` where the source has no such read, or the text has no value and none is made (a reader then
+    /// reads it by `node_read`).
+    fn node_atom(&self, _name: &str, _n: i64, _make: bool, _held: &dyn Fn(&str) -> Option<i64>) -> Option<i64> { None }
     /// Column `c`'s rows a value, where the source knows them without reading its rows (`docof`'s documents: each
     /// one's nodes); `None` otherwise.
     fn column_counts(&self, _c: usize) -> Option<Vec<(i64, u64)>> { None }
@@ -327,6 +331,7 @@ pub trait Source: Send + Sync {
     /// Row `row`'s values of `columns`, into `out`: one value at a time by default; a source that finds a row's
     /// place first (a view of a batch's documents) finds it once.
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         for (o, &c) in out.iter_mut().zip(columns) {
             *o = self.value(row, c);
         }
@@ -356,10 +361,6 @@ pub trait Source: Send + Sync {
     fn lookup_read(&self, _column: usize, _value: i64, _columns: &[usize], _each: &mut dyn FnMut(usize, &[i64])) -> bool {
         false
     }
-    /// `lookup_read` from a probe cursor (`hint`, the step's, zeroed at its start): where the last probe of the step
-    /// ended, which a source may keep its place in (a view of the tape: the document and granule). Probes in key
-    /// order (a scan's rows sorted by the next key, decision 0112) then find their place without a search. A hint is
-    /// checked, never trusted: any value gives the same rows.
     /// Decision 0706 E1: for each of `values` of `column` (a row's own id: a node's, at most one row each), its row's
     /// values of the columns `reads` into `out` (`reads.len()` a value), and in `found` whether it has a row (1), has
     /// none (0), or the source cannot say in a batch (2: the caller probes it as one row). The batch's ids found first,
@@ -384,10 +385,10 @@ pub trait Source: Send + Sync {
     fn value_bits(&self, _node: usize, _column: usize, _value: i64) -> Option<ValueBits> { None }
     /// Whether the source has built bits since it was made: 0 where it never has (no `value_bits` to ask).
     fn value_bits_gen(&self) -> u32 { 0 }
-    /// Decision 0706 E1: node read `name` of node `n` (`rr_node_text_any`) as its text's atom, read without its text
-    /// where the source keeps the text's term (a leaf's, decision 0656: interned at the term's first read). `None`
-    /// where it does not: the text is read (`node_read_ref`).
-    fn node_text_atom(&self, _name: &str, _n: i64) -> Option<i64> { None }
+    /// `lookup_read` from a probe cursor (`hint`, the step's, zeroed at its start): where the last probe of the step
+    /// ended, which a source may keep its place in (a view of the tape: the document and granule). Probes in key
+    /// order (a scan's rows sorted by the next key, decision 0112) then find their place without a search. A hint is
+    /// checked, never trusted: any value gives the same rows.
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], _cursor: &mut ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         self.lookup_read(column, value, columns, each)
     }
@@ -421,7 +422,7 @@ pub trait Source: Send + Sync {
     /// after row with the row's number. A view of a batch's documents gives each document's rows its key, reading no
     /// row's id.
     fn documents_of(&self, column: usize, each: &mut dyn FnMut(usize, i64)) {
-        self.for_rows(&[column], &mut |r, row| each(r, if row[0] >= 1 << 32 { row[0] >> 32 } else { row[0] }));
+        self.for_rows(&[column], &mut |r, row| each(r, rerail_blocks::located::document_of(row[0])));
     }
     fn estimated_len(&self) -> usize {
         self.len()
@@ -2139,7 +2140,7 @@ impl Relation {
     /// the span's prints, then the rows whose print is the value's).
     fn equal(&self, column: usize, value: i64) -> Range<usize> {
         let ix = self.index(column);
-        let (s, e) = rerail_blocks::order::find(self.len(), &ix.fences, &[], &ix.prints, 1, &[value], |p, _| self.value(ix.row(p) as usize, column).cmp(&value));
+        let (s, e) = rerail_blocks::order::find(self.len(), &ix.fences, &ix.prints, 1, &[value], |p, _| self.value(ix.row(p) as usize, column).cmp(&value));
         s..e
     }
     /// The rows with values in `lo..=hi`, in value order.

@@ -209,14 +209,14 @@ where
         (kind, d, lim) = (kind & !VIEW_PLACED, (*pd).dir, t1.min((*pd).rows));
     }
     let (k, nk) = (kind - 1, (p.ncols & !IX_LIVE).min(8) as usize);
-    let (ndocs, rows) = ((*d).ndocs, view_rows(d));
+    let rows = view_rows(d);
     let (mut t, mut memo) = (t0, NONE);
     while t < lim {
         let a = ViewDir::doc_of_row(d, k, t, memo);
         memo = a;
         let e = rows.add(a as usize);
         let first = (*e).rows[k as usize];
-        let stop = if a + 1 < ndocs { (*rows.add(a as usize + 1)).rows[k as usize].min(lim) } else { lim };
+        let stop = super::view_rows_end(d, e, k as usize, lim).min(lim);
         if stop <= t {
             let h = ix_hash64(bb, far, p, t, &mut Found::new());
             *out.add((eb + t) as usize) = kb.wrapping_add((h & p.mask) as u32);

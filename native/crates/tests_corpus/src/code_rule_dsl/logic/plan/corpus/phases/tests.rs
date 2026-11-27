@@ -19,7 +19,7 @@
         let defs = || crate::code_rule_dsl::logic::plan::output::shown(&out, "defs").unwrap();
         let first = run();
         let sources = first.phase_runs.iter().find(|r| r.name == "sources").expect("phase 1 ran");
-        assert_eq!(sources.exports, vec![("document".to_owned(), 2), ("library".to_owned(), 0)], "each source file is a document of phase 1's, and no library is set");
+        assert_eq!(sources.exports, vec![("document".to_owned(), 2), ("library".to_owned(), 0), ("source_library".to_owned(), 0)], "each source file is a document of phase 1's, and no library is set");
         assert_eq!(defs(), [["f"], ["g"]]);
         std::fs::write(src.join("a.py"), "def h():\n    return 1\n").unwrap();
         let second = run();
@@ -60,7 +60,7 @@
         let first = run();
         assert_eq!(first.phase_runs.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["sources"]);
         let sources = first.phase_runs.iter().find(|r| r.name == "sources").expect("phase 1 ran");
-        assert_eq!(sources.exports, vec![("document".to_owned(), 1), ("library".to_owned(), 3)], "m, and builtins, a and b: c is imported by none");
+        assert_eq!(sources.exports, vec![("document".to_owned(), 1), ("library".to_owned(), 3), ("source_library".to_owned(), 0)], "m, and builtins, a and b: c is imported by none; each a stub");
         assert_eq!(rows("lib"), [["a"], ["b"], ["builtins"]]);
         assert_eq!(rows("defs"), [["fa"], ["fb"], ["own"]], "the libraries are the reader's documents");
         std::fs::write(lib.join("b.pyi"), "import c\ndef fb2() -> None: ...\n").unwrap();
@@ -69,6 +69,41 @@
         assert_eq!(rows("defs"), [["fa"], ["fb2"], ["fc"], ["own"]]);
         let sources = second.phase_runs.iter().find(|r| r.name == "sources").expect("phase 1 ran");
         assert_eq!(sources.report.memo.0, 3, "phase 1 reads m, builtins and a from the memo, and builds only the edited library and the new one");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A library read from its source (an installed package with neither stubs nor `py.typed`, under `python.untyped =
+    /// read`) is a `source_library` of phase 1's as well as a library. A program that reads `sources__source_library`
+    /// takes those documents as its own, and no other library's: typeshed's stub is not among them.
+    #[test]
+    fn a_reader_of_the_source_libraries_takes_those_alone() {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("sources-source-libraries");
+        let _ = std::fs::remove_dir_all(&dir);
+        let (src, lib, site) = (dir.join("src"), dir.join("ts/stdlib"), dir.join("venv/lib/python3.12/site-packages/u"));
+        for d in [&src, &lib, &site] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(src.join("rerail.env"), "python.typeshed = ../ts\npython.venv = ../venv\npython.untyped = read\n").unwrap();
+        std::fs::write(src.join("m.py"), "import a\nimport u\n\ndef own():\n    return 1\n").unwrap();
+        std::fs::write(lib.join("VERSIONS"), "builtins: 3.0-\na: 3.0-\n").unwrap();
+        std::fs::write(lib.join("builtins.pyi"), "class object: ...\n").unwrap();
+        std::fs::write(lib.join("a.pyi"), "def fa() -> None: ...\n").unwrap();
+        std::fs::write(site.join("__init__.py"), "def fu():\n    return 1\n").unwrap();
+        let out = dir.join("out");
+        crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        let reader = "#include \"core.rerail\"\n.decl sources__source_library(p: symbol)\n.decl srclib(p: symbol)\nsrclib(p) :- sources__source_library(p).\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output srclib, defs\n";
+        let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(reader).unwrap()).unwrap();
+        let report = crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::Value::Null).unwrap();
+        let rows = |rel: &str| {
+            let mut v: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+            v.sort();
+            v
+        };
+        let sources = report.phase_runs.iter().find(|r| r.name == "sources").expect("phase 1 ran");
+        assert_eq!(sources.exports, vec![("document".to_owned(), 1), ("library".to_owned(), 3), ("source_library".to_owned(), 1)], "m; builtins, a and u; u");
+        let srclib = rows("srclib");
+        assert!(srclib.len() == 1 && srclib[0][0].replace(std::path::MAIN_SEPARATOR, "/").ends_with("site-packages/u/__init__.py"), "{srclib:?}");
+        assert_eq!(rows("defs"), [["fu"], ["own"]], "u's source is the reader's document, a's stub is not");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -272,6 +307,143 @@ anc(s, a) :- anc(s, b), p1__base(b, a).
         let report = crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&reader], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
         assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "r").unwrap(), [["A", "strict"]]);
         assert_eq!(report.phase_runs.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["sources", "p1"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A constant folded first (`constants::fold`) whose listing a request reads, where another request reads the
+    /// files' rows: `stub_dir` lists `stubs` (one value for the run), and `listed` asks for each directory a hit names,
+    /// so the requests' cone reads `want`, each file's. The constants' run is over no documents, so its copy of
+    /// `stub_dir` is one set of rows for the run (`cross_file`, decision 0652), not a union of the files' rows: it was
+    /// none, and gamma's stubs were not found.
+    #[test]
+    fn a_constant_whose_listing_a_request_reads_is_the_runs_where_another_request_reads_the_files() {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("phases-constant-cone");
+        let _ = std::fs::remove_dir_all(&dir);
+        let (src, phases) = (dir.join("src"), dir.join("phases"));
+        std::fs::create_dir_all(src.join("stubs/types-gamma/gamma")).unwrap();
+        std::fs::create_dir_all(&phases).unwrap();
+        std::fs::write(src.join("main.py"), "import gamma\n").unwrap();
+        std::fs::write(src.join("stubs/types-gamma/gamma/__init__.pyi"), "def f() -> None: ...\n").unwrap();
+        std::fs::write(phases.join("s.rerail"), r#"#include "core.rerail"
+.phase s
+.export hit
+.decl want(q: symbol)
+want(q) :- kind(i, "import_statement"), field(i, "name", n), text(n, q).
+.decl stub_dir(b: symbol)
+stub_dir(b) :- dir_entry("stubs", w, 1), b = cat("stubs/", w).
+.decl hit(q: symbol, l: symbol, b: symbol)
+hit(q, "declarations", "") :- want(q).
+hit(q, "stubs", b) :- want(q), dir_entry(b, q, 1), stub_dir(b).
+.decl listed(d: symbol)
+listed(d) :- hit(_, "stubs", d), dir_entry(d, _, _).
+"#).unwrap();
+        let out = dir.join("out");
+        crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        let options = serde_json::json!({ "phase_dir": phases.to_string_lossy() });
+        let reader = "#include \"core.rerail\"\n.decl s__hit(q: symbol, l: symbol, b: symbol)\n.decl r(q: symbol, l: symbol, b: symbol)\nr(q, l, b) :- s__hit(q, l, b).\n.output r\n";
+        let reader = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(reader).unwrap()).unwrap();
+        crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&reader], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
+        assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "r").unwrap(), [["gamma", "declarations", ""], ["gamma", "stubs", "stubs/types-gamma"]]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A plain program whose `rerail.env` names a typeshed (`python.typeshed`): the library asks for the lines of its
+    /// `stdlib/VERSIONS`, which is not there, and an empty answer is kept as one, so its reader reads no rows. It was
+    /// not kept, and the reader failed with "no such table: file_line".
+    #[test]
+    fn a_file_that_is_not_there_has_no_lines_in_a_plain_run() {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("plain-missing-lines");
+        let _ = std::fs::remove_dir_all(&dir);
+        let src = dir.join("ws");
+        std::fs::create_dir_all(src.join("stubs/types-gamma/gamma")).unwrap();
+        std::fs::write(src.join("main.py"), "import gamma\n").unwrap();
+        std::fs::write(src.join("rerail.env"), "python.typeshed = stubs\n").unwrap();
+        let program = r#"#include "core.rerail"
+.decl want(q: symbol)
+want(q) :- kind(i, "import_statement"), q = "gamma".
+.decl sd(b: symbol)
+sd("stubs/types-gamma").
+.decl dbg_try(q: symbol, l: symbol, b: symbol, t: symbol)
+dbg_try(q, "stubs", b, q) :- want(q), dir_entry(b, q, 1), sd(b).
+dbg_try(q, "decl", "", q) :- want(q).
+.decl listed(d: symbol)
+listed(d) :- dbg_try(_, _, d, _), dir_entry(d, _, _).
+.output dbg_try
+"#;
+        let out = dir.join("out");
+        crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        crate::code_rule_dsl::logic::plan::corpus::run(program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        assert_eq!(
+            crate::code_rule_dsl::logic::plan::output::shown(&out, "dbg_try").unwrap(),
+            [["gamma", "decl", "", "gamma"], ["gamma", "stubs", "stubs/types-gamma", "gamma"]]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A plain program whose request reads a listing at a folder its files' rows name: `want` is each file's (its
+    /// import), `sd` one folder for the run, `dbg_try`'s stubs row joins them with that folder's listing, and `listed`
+    /// asks for the listing of each folder a `dbg_try` row names. The request reads `dbg_try`, so every rule of the
+    /// output is the cone of requests' and none the cross part's: the cross part still publishes its rows. It ran
+    /// only for rules or facts of its own, and `dbg_try` was written empty.
+    #[test]
+    fn an_output_whose_rules_are_all_the_cone_of_requests_is_published() {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("plain-listing-cone");
+        let _ = std::fs::remove_dir_all(&dir);
+        let src = dir.join("ws");
+        std::fs::create_dir_all(src.join("stubs/types-gamma/gamma")).unwrap();
+        std::fs::write(src.join("main.py"), "import gamma\n").unwrap();
+        let program = r#"#include "core.rerail"
+.decl want(q: symbol)
+want(q) :- kind(i, "import_statement"), q = "gamma".
+.decl sd(b: symbol)
+sd("stubs/types-gamma").
+.decl dbg_try(q: symbol, l: symbol, b: symbol, t: symbol)
+dbg_try(q, "stubs", b, q) :- want(q), dir_entry(b, q, 1), sd(b).
+dbg_try(q, "decl", "", q) :- want(q).
+.decl listed(d: symbol)
+listed(d) :- dbg_try(_, _, d, _), dir_entry(d, _, _).
+.output dbg_try
+"#;
+        let out = dir.join("out");
+        crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        crate::code_rule_dsl::logic::plan::corpus::run(program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        assert_eq!(
+            crate::code_rule_dsl::logic::plan::output::shown(&out, "dbg_try").unwrap(),
+            [["gamma", "decl", "", "gamma"], ["gamma", "stubs", "stubs/types-gamma", "gamma"]]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A phase's export whose rules are all the cone of requests' (a request reads it, as
+    /// `an_output_whose_rules_are_all_the_cone_of_requests_is_published`'s): its reader reads its rows.
+    #[test]
+    fn a_phases_export_whose_rules_are_all_the_cone_of_requests_is_handed_on() {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("phases-export-cone");
+        let _ = std::fs::remove_dir_all(&dir);
+        let (src, phases) = (dir.join("src"), dir.join("phases"));
+        std::fs::create_dir_all(src.join("stubs/types-gamma/gamma")).unwrap();
+        std::fs::create_dir_all(&phases).unwrap();
+        std::fs::write(src.join("main.py"), "import gamma\n").unwrap();
+        std::fs::write(phases.join("s2.rerail"), r#"#include "core.rerail"
+.phase s2
+.export dbg_try
+.decl dbg_try(q: symbol, l: symbol, b: symbol, t: symbol)
+.decl want(q: symbol)
+want(q) :- kind(i, "import_statement"), field(i, "name", n), text(n, q).
+.decl sd(b: symbol)
+sd(b) :- r = "stubs", dir_entry(r, w, 1), b = cat(r, "/", w).
+dbg_try(q, "declarations", "", q) :- want(q), q = "gamma".
+dbg_try(q, "stubs", b, q) :- want(q), dir_entry(b, q, 1), sd(b).
+.decl listed(d: symbol)
+listed(d) :- dbg_try(_, _, d, _), dir_entry(d, _, _).
+"#).unwrap();
+        let out = dir.join("out");
+        crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        let options = serde_json::json!({ "phase_dir": phases.to_string_lossy() });
+        let reader = "#include \"core.rerail\"\n.decl s2__dbg_try(q: symbol, l: symbol, b: symbol, t: symbol)\n.decl r(q: symbol, l: symbol, b: symbol)\nr(q, l, b) :- s2__dbg_try(q, l, b, _).\n.output r\n";
+        let reader = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(reader).unwrap()).unwrap();
+        crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&reader], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
+        assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "r").unwrap(), [["gamma", "declarations", ""], ["gamma", "stubs", "stubs/types-gamma"]]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -155,7 +155,7 @@ const AST_RULE_KEYS = ["pattern", "kind", "regex", "nthChild", "all", "any", "no
 const storedHasRegex = (rule: { stored?: string | undefined; regex?: string | undefined }): boolean => rule.stored === undefined || rule.regex !== undefined;
 const STORED_NEEDS_REGEX = { message: "stored says why a token a regex tests is stored: it needs a regex.", path: ["stored"] };
 /** The grammars `parse` applies and their kinds (the engine's `literal::Grammar`). */
-export const CODE_RULE_PARSE_GRAMMARS = ["percentFormat", "braceFormat", "annotation", "eslintDirective", "printfFormat", "scanfFormat", "phpDoc", "rustFormat", "identifierWords", "pythonFString"] as const;
+export const CODE_RULE_PARSE_GRAMMARS = ["percentFormat", "braceFormat", "annotation", "eslintDirective", "printfFormat", "scanfFormat", "phpDoc", "rustFormat", "identifierWords", "pythonFString", "regex"] as const;
 export const CODE_RULE_PARSE_KINDS: Record<(typeof CODE_RULE_PARSE_GRAMMARS)[number], readonly string[]> = {
   identifierWords: ["words", "word"],
   pythonFString: ["template", "literal", "interpolation"],
@@ -263,6 +263,7 @@ export const CODE_RULE_PARSE_KINDS: Record<(typeof CODE_RULE_PARSE_GRAMMARS)[num
     "description",
   ],
   rustFormat: ["format", "literal", "field", "auto", "index", "name", "format_spec", "type", "error"],
+  regex: ["regex", "alternation", "concatenation", "group", "name", "repetition", "class", "range", "class_name", "literal", "dot", "anchor", "escape", "flags", "unsupported", "error"],
 };
 /** The keys a rule over a parsed tree may use; one over an annotation, whose nodes are Python's, also these. */
 const PARSE_RULE_KEYS: readonly string[] = ["kind", "regex", "all", "any", "not", "inside", "has", "precedes", "follows", "count", "compare", "value", "capture", "host"];

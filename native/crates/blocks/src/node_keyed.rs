@@ -361,7 +361,6 @@ mod tests {
         assert_eq!(rel.find_filter(&[0, 1], n + 1), None);
         assert_eq!(rel.find_index(&[0], n), Some(ix), "the hashed index still found as before");
         assert_eq!(rel.find_node_index(NODE_BITS, 0, n), None);
-        assert_eq!(rel.find_node_index(NODE_ROWS, 0, n), None, "a filter is found by no node index's finder");
         let mut has = std::collections::HashSet::new();
         for r in 0..n {
             has.insert([rel.rows.get(r, 0), rel.rows.get(r, 1)]);

@@ -29,6 +29,10 @@ pub struct Filled {
     _placed: Option<Cells<u64>>,
     /// An embedder's program's segments (`ViewDoc::segments`).
     _segments: Option<Cells<u32>>,
+    /// Each node's tape node and id's low bits (`ViewDoc::node_table`), and the nodes by their id's place
+    /// (`ViewDoc::node_by_id`).
+    _node_table: Option<Cells<[u32; 2]>>,
+    _node_by_id: Option<Cells<u32>>,
 }
 
 impl ViewEntry {
@@ -67,11 +71,25 @@ impl ViewEntry {
             Cells::build(block, n.max(1), |out| {
                 for (l, o) in out.iter_mut().enumerate().take(n) {
                     let [s, e] = place.host(p.span(l as u32));
-                    *o = u64::from(s) << 32 | u64::from(e);
+                    *o = u64::from(s) << 32 | u64::from(e); // bits: a span's start and end
                 }
                 n
             })
             .expect("a batch's block holds its entries")
+        });
+        // copy: derived (an embedder's program's segments, as the reads find them: `SegmentMap::words`, written once
+        // in the batch's block beside the entry)
+        let segments = Self::locs(p).and_then(|x| match &x.host {
+            Some((_, Placement::Segments(map))) => Some(
+                Cells::build(block, (map.words().count() * 5).max(1), |out| {
+                    for (k, w) in map.words().flatten().enumerate() {
+                        out[k] = w;
+                    }
+                    map.words().count() * 5
+                })
+                .expect("a batch's block holds its entries"),
+            ),
+            _ => None,
         });
         // SPIKE (shared strata work, A): each numbered node's tape node and id's low bits, by local id, one walk.
         let node_table = (std::env::var("RERAIL_SPIKE_NODE_TABLE").as_deref() != Ok("off") && p.len() > 0).then(|| {
@@ -93,20 +111,6 @@ impl ViewEntry {
             // copy: derived (each node's number by its id's place, computed once from the numbering)
             Cells::build(block, places.max(1), |out: &mut [u32]| unsafe { num.own_numbers(out) })
                 .expect("a batch's block holds its entries")
-        });
-        // copy: derived (an embedder's program's segments, as the reads find them: `SegmentMap::words`, written once
-        // in the batch's block beside the entry)
-        let segments = Self::locs(p).and_then(|x| match &x.host {
-            Some((_, Placement::Segments(map))) => Some(
-                Cells::build(block, (map.words().count() * 5).max(1), |out| {
-                    for (k, w) in map.words().flatten().enumerate() {
-                        out[k] = w;
-                    }
-                    map.words().count() * 5
-                })
-                .expect("a batch's block holds its entries"),
-            ),
-            _ => None,
         });
         let d = desc.as_ptr();
         // SAFETY: the entry is written by this alone (inside its projection's `OnceLock`), and its runs point at cells
@@ -170,7 +174,7 @@ impl ViewEntry {
                 }
             }
         }
-        Filled { _names: names, _placed: placed, _segments: segments }
+        Filled { _names: names, _placed: placed, _segments: segments, _node_table: node_table, _node_by_id: node_by_id }
     }
 
     /// `p`'s positions where the views' reads answer its `Loc` rows: core.rerail's; a guest's through its host's

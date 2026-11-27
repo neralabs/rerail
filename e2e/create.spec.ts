@@ -44,13 +44,16 @@ for (const scenario of ["mature", "packs-no-session", "no-packs"] satisfies Scen
   });
 }
 
-test("the create command copies to the clipboard", async ({ page, rerail }) => {
+test("the create command copies to the clipboard, and its Copy reads Copied for a moment", async ({ page, rerail }) => {
   const url = await rerail.dashboard("mature", { hash: "create" });
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(url).origin });
   await page.goto(url);
+  const copy = page.locator('#content .cmd [data-act="cmdcopy"]').first();
 
-  await page.locator('#content .cmd [data-act="cmdcopy"]').first().click();
+  await copy.click();
 
-  await expect(page.locator("#toast")).toBeVisible();
+  await expect(copy).toHaveText("Copied");
+  await expect(page.locator("#toast")).toHaveText("Copied /rerail-create.");
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("/rerail-create");
+  await expect(copy).toHaveText("Copy");
 });

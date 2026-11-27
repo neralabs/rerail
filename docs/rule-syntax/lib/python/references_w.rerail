@@ -1,5 +1,5 @@
-// python/references_w: the Python reference graph from W's Rust, core.rerail's reference_edge and reference_open as
-// python/references.rerail derives them by rules (decision 0483), for comparing the two.
+// python/references_w: the Python reference graph from W's Rust, core.rerail's reference_def, reference_edge and
+// reference_open as python/references.rerail derives them by rules (decision 0483), for comparing the two.
 //
 // The engine builds the graph as W did (6970a3e539): each Python file summarized from its tape as the run builds its
 // document (`calls::summarize`), the summaries linked once every file is built (`Graph::link_references`), under the

@@ -251,6 +251,7 @@ fn native_calls_reach_distant_callees_in_both_directions() {
 #[test]
 fn the_writers_ops_reach_each_other_where_code_is_far_apart() {
     let mut module = separated_by(FAR_RESERVATION, FAR_SEPARATION);
-    rerail_clif::writer::define_ops(&mut module, Linkage::Local, false).unwrap();
+    let cc = module.isa().default_call_conv();
+    rerail_clif::writer::define_ops(&mut module, Linkage::Local, false, cc).unwrap();
     module.finalize_definitions().unwrap();
 }

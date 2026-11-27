@@ -50,6 +50,24 @@ pub fn is_phased(rel: &str) -> bool {
         || rel.split_once(SEP).is_some_and(|(p, e)| !p.is_empty() && !e.is_empty() && !p.starts_with("rr_") && !e.contains(SEP))
 }
 
+/// The prefix of a stage's name (decision 0709): a phase cut from the program it runs before, `staged_<digest>`.
+pub const STAGE: &str = "staged_";
+
+/// A stage's probe (decision 0709 §3): the values a reader of a phase's export fixes, per file.
+pub const PROBE: &str = "rr_probe_";
+
+/// Whether `rel` is a stage's export (`staged_<digest>__<relation>`, decision 0709).
+pub fn is_stage_export(rel: &str) -> bool {
+    rel.starts_with(STAGE) && is_phased(rel)
+}
+
+/// Whether `rel` is an earlier phase's export read by probes (decision 0709 §3): a stage's or a phase program's
+/// (`<phase>__<export>`), not phase 1's (`observer__…`: the run's files) nor the runner's other inputs. A reader
+/// takes it as a placeless input, and a file's memo entry is keyed by the rows of it its probes read.
+pub fn is_probed(rel: &str) -> bool {
+    is_phased(rel) && rel.split_once(SEP).is_some_and(|(p, _)| p != "observer" && p != "sources")
+}
+
 /// How a file's results read a setting, and so how it keys the file's memo entry (decisions 0665, 0705), as the
 /// setting's maker declares it: a phase after its export (`.export reads_at by_path 1, exports by_key`), the library
 /// for the project's settings (`core.rerail`'s `.keyed package_for by_path 1, package by_key, env`). A relation
@@ -146,6 +164,12 @@ fn declared_in(path: &std::path::Path, directive: &str) -> std::sync::Arc<Vec<(S
     let keys = std::sync::Arc::new(keys);
     files.0.lock().expect("the declared keys").insert(path.to_path_buf(), (stamp.0, stamp.1, std::sync::Arc::clone(&keys)));
     keys
+}
+
+/// The keys the `.export` line of the phase program at `path` declares, by export (`by_path`, `by_key`): none for a file
+/// that is not there or does not parse.
+pub fn declared_exports_in(path: &std::path::Path) -> std::sync::Arc<Vec<(String, Keyed)>> {
+    declared_in(path, "export")
 }
 
 /// The engine's own phase programs (`corpus::phases`): `<name>.rerail`.

@@ -77,9 +77,16 @@ function submoduleFacts(root: string): Facts | typeof NONE | undefined {
   return modules === undefined || inputs?.owned !== true ? undefined : factsOf(inputs, modules.text);
 }
 
+/**
+ * The facts: the placement, the index, and the Git folder itself, whose entries a split index's shared index is one of
+ * (`sharedindex.<id>`, written under a new name each time and removed or moved as an entry), as the owners' stamp of a
+ * submodule answer reads it (`submoduleStamp`); and `.gitmodules`' text.
+ */
 function factsOf(inputs: PlacementInputs, modules: string): Facts | undefined {
   const index = fileIdentity(join(inputs.gitFolder, "index"));
-  return index === undefined ? undefined : { text: [inputs.stamp, index, modules].join("\0"), common: inputs.realCommon };
+  const folder = fileIdentity(inputs.gitFolder);
+  if (index === undefined || folder === undefined) return undefined;
+  return { text: [inputs.stamp, index, folder, modules].join("\0"), common: inputs.realCommon };
 }
 
 /** A file's identity as a fact (device, file id, size and change time), "none" when nothing is there; undefined when unreadable. */
@@ -107,11 +114,20 @@ function submoduleStep(answers: readonly GitResult[]): SubmoduleStep {
   const paths = configured.status === 0 ? configured.stdout.split("\0").filter(Boolean).map(entry => entry.slice(entry.indexOf("\n") + 1)) : [];
   if (paths.length === 0) return { paths: [] };
   if (index === undefined) return { ask: ["--literal-pathspecs", "ls-files", "--stage", "-z", "--", ...paths] };
-  return { paths: index.status === 0 ? gitlinks(index.stdout) : [] };
+  return { paths: index.status === 0 ? gitlinks(index.stdout, paths) : [] };
 }
 
-function gitlinks(stdout: string): string[] {
-  return stdout.split("\0").filter(entry => entry.startsWith("160000 ")).map(entry => entry.slice(entry.indexOf("\t") + 1));
+/**
+ * The gitlinks `ls-files` gave at one of `paths` itself. A path is a pathspec to Git, which lists every entry below it
+ * too: a `.gitmodules` path `vendor` lists the gitlink `vendor/sub`, which that path does not declare.
+ */
+function gitlinks(stdout: string, paths: readonly string[]): string[] {
+  const configured = new Set(paths.map(path => path.replace(/\/+$/u, "")));
+  return stdout
+    .split("\0")
+    .filter(entry => entry.startsWith("160000 "))
+    .map(entry => entry.slice(entry.indexOf("\t") + 1))
+    .filter(path => configured.has(path));
 }
 
 /** The paths `answers` give, kept under `facts` only when Git answered each question to its end. */

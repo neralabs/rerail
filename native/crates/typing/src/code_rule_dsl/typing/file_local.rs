@@ -186,7 +186,7 @@ fn solve(trees: &Trees<'_>, sets: &[Vector<i64>], binding: Binding) -> StoreResu
 }
 
 mod on_version;
-pub use on_version::FileLocal;
+pub use on_version::{FLAG_COPY, FileLocal, LastFlags, flag_copy};
 pub use on_version::reads_a_node;
 mod node_crossings;
 pub use node_crossings::{NodeColumns, NodeCrossing, crossings_under, node_crossings, nodes_checked};
@@ -354,6 +354,8 @@ pub struct Programs {
     /// rules, a part of them, so the parts are made from the program again when it is read.
     pub file_local: std::collections::BTreeSet<String>,
     pub constants: std::collections::BTreeSet<String>,
+    /// The covered views of values, derived in each chunk and, those the cross part reads, there too (`assemble`).
+    pub views: std::collections::BTreeSet<String>,
     /// The parts' versions (decision 0244): each a view of the program's version, its fields overlaid. No part has a
     /// tree (decision 0281's path, step 4).
     pub versions: Parts,
@@ -378,19 +380,19 @@ pub struct Programs {
 /// a cross-file rule reading one reads the whole edited file's rows again.
 pub const POSITIONS: &[&str] = &["visit_index", "node_order", "line", "col", "end_line", "ast_depth"];
 
-/// `RERAIL_STRICT_POSITIONS=1`: a program whose cross part reads a position is refused (decision 0649). Read where a
-/// split is made, once per program version (no process-global state, decision 0442).
-fn strict_positions() -> bool {
-    std::env::var("RERAIL_STRICT_POSITIONS").is_ok_and(|v| !matches!(v.as_str(), "" | "0"))
-}
-
 /// The cross part's rules that read a position (`POSITIONS`), but for those whose head is one of the program's
-/// outputs: a finding is placed by its line and column, once, where it is written.
+/// outputs: a finding is placed by its line and column, once, where it is written. A piece of an output's rule a pass
+/// made (a pushed join's `fl…_violation`) places the same finding, and so does `locate`'s relay of either
+/// (`violation_at`, `fl…_violation_at`).
 fn position_reads(cross: &crate::code_rule_dsl::logic::program_image::Version, outputs: &std::collections::BTreeSet<&str>) -> Vec<(String, String)> {
     let mut out: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();
+    let placing = |h: &str| {
+        let h = h.strip_suffix("_at").filter(|r| cross.rel(r).is_some()).unwrap_or(h);
+        outputs.contains(h) || lowering_source(cross, h).is_some_and(|s| outputs.contains(s.as_str()))
+    };
     for r in cross.rules() {
         let head = cross.rel_name(r.head().rel());
-        if outputs.contains(head) {
+        if placing(head) {
             continue;
         }
         for l in r.body() {
@@ -406,19 +408,20 @@ fn position_reads(cross: &crate::code_rule_dsl::logic::program_image::Version, o
     out.into_iter().collect()
 }
 
-/// The cross part's position reads `positions` (`position_reads`) refused under `strict`, else reported: once per
-/// program version, as its split is made once (an analysis of the version; no process-global record of what was
-/// said, decision 0442).
-pub fn positions_checked(positions: &[(String, String)], strict: bool) -> Result<(), String> {
+/// The cross part's position reads `positions` (`position_reads`) refused: an edit moves a position for every node
+/// after it, so a cross-file rule reading one reads the whole edited file's rows again (decision 0649). Decision 0652
+/// item 5 made this an error once the engine kept every pack's and data-layer policy's positions per file (decision
+/// 0695); before, it was reported, and refused under `RERAIL_STRICT_POSITIONS`.
+pub fn positions_checked(positions: &[(String, String)]) -> Result<(), String> {
     if positions.is_empty() {
         return Ok(());
     }
     let line = positions.iter().map(|(h, p)| format!("{h} reads {p}")).collect::<Vec<_>>().join(", ");
-    if strict {
-        return Err(format!("RERAIL_STRICT_POSITIONS: the cross-file part reads positions, which every edit moves (decision 0649): {line}"));
-    }
-    eprintln!("rerail: the cross-file part reads positions, which every edit moves (decision 0649): {line}");
-    Ok(())
+    Err(format!(
+        "the cross-file part reads positions, which every edit moves (decisions 0649, 0652 item 5): {line}. Compare \
+         positions in the per-file part, or choose across files by a key an edit elsewhere does not move (`order_key`, \
+         decision 0695)"
+    ))
 }
 
 /// The versions of a split's parts (`Programs::versions`): the file-local and the cross-file part.
@@ -433,7 +436,7 @@ pub struct Parts {
 pub fn programs_of(version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Programs, String> {
     let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<FileLocal>(&version)?;
     let (local, constants) = split.found();
-    let mut programs = assemble(version, local, constants, split.locations.clone(), split.same_doc.clone())?;
+    let mut programs = assemble(version, local, constants, split.views(), split.locations.clone(), split.same_doc.clone())?;
     programs.causes = split.causes.clone();
     programs.crossings = split.crossings.clone();
     programs.moved_unions = split.moved_unions.clone();
@@ -442,19 +445,21 @@ pub fn programs_of(version: std::sync::Arc<crate::code_rule_dsl::logic::program_
     Ok(programs)
 }
 
-/// `prog` split at its file-local relations `local` (`programs_of`), deriving the relations of `constants` in both parts:
-/// the parts and what passes between them. What is costly to find is the arguments; this only selects (`programs_of`
+/// `prog` split at its file-local relations `local` (`programs_of`), deriving the relations of `constants` in both parts,
+/// and the covered views of values `views` the cross part reads in it too (`FileLocal::views`): the parts and what passes
+/// between them. What is costly to find is the arguments; this only selects (`programs_of`
 /// finds them, a prepared program keeps them).
 pub fn assemble(
     version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
     local: std::collections::BTreeSet<String>,
     constants: std::collections::BTreeSet<String>,
+    views: std::collections::BTreeSet<String>,
     locations: std::collections::BTreeMap<String, Vector<usize>>,
     same_doc: std::collections::BTreeMap<String, Vector<usize>>,
 ) -> Result<Programs, String> {
     let placed = crate::code_rule_dsl::logic::plan::body::Placed::whole(version.clone());
     let f = placed.fields().map_err(|e| e.to_string())?;
-    let on_version::Crossing { exports, base_read, base, projected } = on_version::crossing(&version, f, &local);
+    let on_version::Crossing { exports, base_read, base, projected } = on_version::crossing(&version, f, &local, &views);
     let is_local = |rel: &str| local.contains(rel);
     let in_cross = |rel: &str| !is_local(rel) || projected.contains(rel);
     // Each part's inputs and outputs; its rules and other fields are a view of the program's version (below), an
@@ -487,14 +492,14 @@ pub fn assemble(
     }
     let outputs: std::collections::BTreeSet<&str> = f.outputs().collect();
     let positions = position_reads(&versions.cross, &outputs);
-    positions_checked(&positions, strict_positions())?;
+    positions_checked(&positions)?;
     // No node id crosses into the cross part (decision 0677): found here, refused where the program is split from its
     // source (`programs_of`), named by the causes found there.
     let nodes = {
         let _step = crate::code_rule_dsl::logic::profile::span(|| "the cross-file part's node ids (decision 0677)".into());
         node_crossings(&version, &f, &versions.cross, &local)
     };
-    Ok(Programs { exports, base, locations, same_doc, file_local: local, constants, versions, program: version, causes: Default::default(), positions, crossings: Default::default(), moved_unions: Default::default(), nodes })
+    Ok(Programs { exports, base, locations, same_doc, file_local: local, constants, views, versions, program: version, causes: Default::default(), positions, crossings: Default::default(), moved_unions: Default::default(), nodes })
 }
 
 /// Whether the factorized store is on (decision 0099): it is, unless `RERAIL_FACTORIZE=off` or the run's option
@@ -697,8 +702,13 @@ pub fn crossings_checked(p: &Programs) -> Result<(), String> {
     // deferred join's factor of a relation declared `cross_file`. A `@place` finding's relation (`rr_place_…`, a path
     // and a line) is about the corpus by what `@place` says, as 0290 moves it.
     let declared = |rel: &str| f.qualified(rel, CROSS_FILE) && !f.qualified(rel, MOVED_CROSS_FILE);
+    // A stage's probe (decision 0709 §3) found cross-file keys no entry: its export is read whole.
     let meant = |rel: &str| {
-        (rel.starts_with("rr_place_") && placement_only(v, &f, rel)) || declared(rel) || lowering_source(v, rel).is_some_and(|s| declared(&s))
+        rel.starts_with(crate::code_rule_dsl::logic::plan::phased::PROBE)
+            || lowering_source(v, rel).is_some_and(|s| s.starts_with(crate::code_rule_dsl::logic::plan::phased::PROBE))
+            || (rel.starts_with("rr_place_") && placement_only(v, &f, rel))
+            || declared(rel)
+            || lowering_source(v, rel).is_some_and(|s| declared(&s))
     };
     let mut refused: Vec<String> = p.crossings.iter().filter(|(rel, _)| !meant(rel)).map(|(rel, why)| crossing_shown(v, rel, why)).collect();
     for rel in moved_in(&f) {

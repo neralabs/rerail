@@ -20,3 +20,7 @@ path = "../simd8"
 
 [dev-dependencies]
 rerail-python-lean = { path = ".", features = ["test-hooks"] }
+# The parser as Rust the example `compare_aot` times this one against, without its test builds' checks.
+rerail-python-aot = { path = "../python_aot" }
+# Its numbering of the AOT's keys (`aot_key_names`), as the JIT's.
+rerail-python-parser = { path = "../python_parser" }

@@ -27,4 +27,4 @@ rerail-kotlin-parser = { path = ".", features = ["test-hooks"] }
 rerail-blocks = { path = "../blocks", features = ["test-hooks"] }
 # Tier 2 as Rust, as the Bitlex compiler writes it (`tier2_rust`): every text the tests check is
 # read through it too.
-rerail-kotlin-aot = { path = "../kotlin_aot" }
+rerail-kotlin-aot = { path = "../kotlin_aot", features = ["test-hooks"] }

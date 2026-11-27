@@ -582,6 +582,8 @@ own(n) :- imp(n, _).
 /// the library callable it reaches, by the symbol P2 resolved it to, with where P1 read that definition
 /// (`struct__at`, a library file as the engine has it). The analysis phase reads no library node (decision 0677): a
 /// library value is a symbol (`pt_lv`). `oracle_lib_anc` is P2's ancestors of each library class a call makes.
+/// `oracle_target_at` places each call's target where P1 read it: a library read from its source is typed as the
+/// workspace is, so a call of its function is a target, not a library value.
 const LIB_SPANS: &str = "
 .decl struct__at(s: symbol, p: symbol, l: number)
 .decl types__anc(c: symbol, a: symbol)
@@ -593,7 +595,9 @@ oracle_lib_kind(\"fn\"). oracle_lib_kind(\"cls\").
 oracle_lib(c, s, p, l) :- pt_callee_t(c, e), pt_lv(e, k, s), oracle_lib_kind(k), struct__at(s, p, l).
 .decl oracle_lib_anc(k: symbol, a: symbol)
 oracle_lib_anc(k, a) :- pt_callee_t(_, e), pt_lv(e, \"cls\", k), types__anc(k, a).
-.output oracle_call_path, oracle_lib, oracle_lib_anc
+.decl oracle_target_at(f: symbol, p: symbol)
+oracle_target_at(f, p) :- call_target(_, f), struct__at(f, p, _).
+.output oracle_call_path, oracle_lib, oracle_lib_anc, oracle_target_at
 ";
 
 /// `calls_p3`'s calls into a library over the workspace at `project`: (call's path, symbol, definition's path, line),
@@ -677,15 +681,46 @@ fn declarations_and_installed_sources_type_calls_without_declared_ret_facts() {
     let text = output::shown(&out, "type_of").unwrap();
     let mut got: Vec<&str> = text.iter().map(|r| r[1].as_str()).filter(|t| *t != "module").collect();
     got.sort();
-    // make(): str, its declaration's; other.thing(): bytes | None. version(), in vendor's installed sources, is declared
-    // nothing, and its body is no library's interface: P1 reads an untyped library's `.py` files and no function's
-    // body (decision 0083 §1, §8), so its value is open.
-    assert_eq!(got, ["None", "bytes", "str"], "{text:?}");
+    // version() and make(): str; other.thing(): bytes | None. version() is declared nothing: its body, in vendor's
+    // installed sources, returns "1.0", and P3 types it as it types the workspace's (sources' `source_library`; the
+    // user, 2026-11-27: "do B"). No row is about vendor's own nodes (`return "1.0"` is a value position).
+    assert_eq!(got, ["None", "bytes", "str", "str"], "{text:?}");
     let reaches = |file: &str| targets.iter().any(|r| r.2.ends_with(file));
     assert!(reaches("world_decl/decls/vendor/core.pyi"), "{targets:?}");
     assert!(reaches("world_decl/decls/other.pyi"), "{targets:?}");
-    assert!(reaches("site-packages/vendor/__init__.py"), "{targets:?}");
+    // version() is a call of vendor's own `version`, read from site-packages: a target, placed where P1 read it.
+    let at = output::shown(&out, "oracle_target_at").unwrap();
+    assert!(
+        at.iter().any(|r| r[0] == "vendor.version" && r[1].replace(std::path::MAIN_SEPARATOR, "/").ends_with("site-packages/vendor/__init__.py")),
+        "{at:?} {targets:?}"
+    );
     let _ = std::fs::remove_dir_all(&out);
+}
+
+/// The same through the phase a rule reads (`points_to`, python/types): `version()`, a function of an untyped package
+/// read from its source, holds a str, as its body returns. The rule's documents are the workspace's: vendor's source is
+/// the phase's document, not the rule's, so no row is about one of its nodes.
+#[test]
+fn a_rule_reads_an_untyped_librarys_return_through_the_phase() {
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/typing/world_decl/app");
+    let rule_dir = crate::code_rule_dsl::fixtures::temp().with_extension("untyped-rule");
+    std::fs::create_dir_all(&rule_dir).unwrap();
+    let rule = rule_dir.join("rule.rerail");
+    std::fs::write(
+        &rule,
+        "#include \"python/types.rerail\"\n.decl ty(p: symbol, s: number, t: symbol)\nty(p, s, t) :- type_of(n, t), kind(n, \"call\"), node(d, n, _, s, _), doc(d, p, _).\n.decl docs(p: symbol)\ndocs(p) :- doc(_, p, _).\n.output ty, docs\n",
+    )
+    .unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let out = rule_dir.join("out");
+    let report = corpus::run(&text, &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    assert!(report.phase_runs.iter().any(|r| r.name == "points_to"), "the phase ran");
+    let mut ty = output::shown(&out, "ty").unwrap();
+    ty.sort();
+    // main.py: `a = version()` at byte 73, `b = make()` at 87, `c = other.thing()` at 98.
+    assert_eq!(ty, [["main.py", "73", "str"], ["main.py", "87", "str"], ["main.py", "98", "None"], ["main.py", "98", "bytes"]], "{ty:?}");
+    assert_eq!(output::shown(&out, "docs").unwrap(), [["main.py"]], "the rule's documents are the workspace's");
+    let _ = std::fs::remove_dir_all(&rule_dir);
 }
 
 #[test]

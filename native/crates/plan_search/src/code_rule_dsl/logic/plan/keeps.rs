@@ -74,6 +74,9 @@ pub const RULE_COPIES: usize = COPIES * 4;
 pub const SMALL: f64 = 1024.0;
 
 pub mod inline;
+pub mod latest;
+pub mod chain;
+pub mod fork;
 
 /// The relations inlined, and the program's version with them unfolded into their readers (an overlay of `base`);
 /// `None` when nothing is inlined. `Err` names a `.decl r(…) inline` that cannot be honoured.
@@ -236,6 +239,12 @@ pub fn choose(base: &Placed, model: &mut Model) -> Result<Option<(Vec<String>, P
     let mut inline: BTreeSet<String> = BTreeSet::new();
     let mut lines: Vec<String> = Vec::new();
     let mut refused_inline: Vec<String> = Vec::new();
+    // The design's S1 (`RERAIL_SHAPE_CHAIN=on`): a relation every reader reads by a key is made in its readers, as
+    // `.decl … inline` is; one refused is stored, not an error.
+    // Off by default: on idc_dbg each read made a call site cost more than the relation stored (`wstart` in its four
+    // readers 0.4-0.5% of the run; `rf_builtin` in its one, `rf_named`, about 1,000 samples): a reader that reads
+    // many more rows than the relation has recomputes it for each.
+    let chain: BTreeSet<String> = if chain::on() { chain::of(base).into_iter().map(|(name, _)| name).collect() } else { BTreeSet::new() };
     for (rel, ks) in &ids_of {
         let rel = *rel;
         if only.as_ref().is_some_and(|o| !o.iter().any(|x| x == rel)) {
@@ -245,14 +254,16 @@ pub fn choose(base: &Placed, model: &mut Model) -> Result<Option<(Vec<String>, P
             lines.push(format!("{rel}: stored, {why} (RERAIL_INLINE_ONLY)"));
             continue;
         }
-        let forced = f.qualified(rel, "inline") || only.is_some();
+        let forced = f.qualified(rel, "inline") || only.is_some() || chain.contains(rel);
         if f.qualified(rel, "no_inline") {
             lines.push(format!("{rel}: stored (`.decl … no_inline`)"));
             continue;
         }
         if let Some(why) = reasons.get(rel) {
-            if forced {
+            if forced && !chain.contains(rel) {
                 refused_inline.push(format!("{rel}: {why}"));
+            } else if chain.contains(rel) {
+                lines.push(format!("{rel}: stored, {why} (a functional chain, the design's S1)"));
             }
             continue;
         }
@@ -264,13 +275,15 @@ pub fn choose(base: &Placed, model: &mut Model) -> Result<Option<(Vec<String>, P
         let Some(copies) = reads.iter().map(|&(ri, i)| inline::count(&base.v, base.rule(ri), i, &def_refs)).sum::<Option<usize>>() else {
             if f.qualified(rel, "inline") {
                 refused_inline.push(format!("{rel}: a negated read is not a negation of plain literals"));
+            } else if chain.contains(rel) {
+                lines.push(format!("{rel}: stored, a negated read is not a negation of plain literals (a functional chain, the design's S1)"));
             } else if only.is_some() {
                 lines.push(format!("{rel}: stored, a negated read is not a negation of plain literals (RERAIL_INLINE_ONLY)"));
             }
             continue;
         };
         if forced {
-            let by = if f.qualified(rel, "inline") { "`.decl … inline`" } else { "RERAIL_INLINE_ONLY" };
+            let by = if f.qualified(rel, "inline") { "`.decl … inline`" } else if chain.contains(rel) { "a functional chain, the design's S1" } else { "RERAIL_INLINE_ONLY" };
             lines.push(format!("{rel}: inlined ({by}), {copies} reader copies"));
             inline.insert(rel.to_owned());
             continue;
@@ -304,7 +317,7 @@ pub fn choose(base: &Placed, model: &mut Model) -> Result<Option<(Vec<String>, P
             memo.insert(rel, k);
             k
         }
-        let forced = |rel: &str| f.qualified(rel, "inline");
+        let forced = |rel: &str| f.qualified(rel, "inline") || chain.contains(rel);
         let reads = |rel: &str| { ids_of.get(rel).into_iter().flatten().flat_map(|&k| reads_of(k)).collect::<Vec<_>>() };
         let mut memo: BTreeMap<&str, bool> = BTreeMap::new();
         let names: Vec<&str> = ids_of.keys().copied().filter(|r| inline.contains(*r)).collect();

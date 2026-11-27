@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
+import { FolderPlaces } from "../../../src/engine/catalog/checkouts/folder-places.js";
+import { nativeTreeWatch } from "../../../src/engine/code-rule/tree-watch.js";
 import { CheckoutCodeRuleRouter } from "../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { CodeRuleBridge } from "../../../src/engine/code-rule/code-rule-bridge.js";
 import { NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
@@ -144,13 +146,15 @@ function router(
   followGitignore = false,
   requestSteer: () => Promise<undefined> = async () => undefined,
   gitIgnoreMatchers?: GitIgnoreMatchers,
+  places?: FolderPlaces,
 ): CheckoutCodeRuleRouter {
-  const owners = new CheckoutOwners();
+  const owners = new CheckoutOwners(undefined, undefined, places);
   const catalogs = new CheckoutCatalogs(databasePath, ruleCatalog === undefined ? {} : { ruleCatalog });
   const auditor = new CheckoutCodeRuleRouter({
     sessionRoot,
     startingCheckout: startingCheckout(owners, sessionRoot).checkoutRoot,
     owners,
+    places,
     catalogs,
     steerDelivery: { requestSteer },
     audits: recorder,
@@ -440,6 +444,24 @@ describe("CheckoutCodeRuleRouter", () => {
       files: [[false, false], [true, false], [false, true], [true, false], [false, false], [false, true]],
     });
     expect(answers(view)).toEqual(answers(auditor));
+    expect(answers(auditor.walkView("."))).toEqual(answers(auditor));
+  });
+
+  it("answers a walk from a folder that is a link as it answers each path alone", async (context) => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const { parent, sub } = await withSubmodule(root);
+    await mkdir(join(sub, "api"), { recursive: true });
+    setUpTestRepository(parent, { library: [file(needle("test:parent", "PARENT"))] }, databasePath);
+    setUpTestRepository(sub, { library: [file(needle("test:sub", "SUB"))] }, databasePath);
+    symlinkOrSkip(context, sub, join(parent, "alias"), "dir");
+    const auditor = router(parent, databasePath, recordingAudits().recorder);
+    await auditor.openWorkspace("view-link");
+    const view = auditor.walkView("alias");
+    const files = ["alias/README.md", "alias/api/b.py"];
+
+    expect(files.map(path => view.acceptsPath(path))).toEqual(files.map(path => auditor.acceptsPath(path)));
+    expect(auditor.acceptsPath("alias/api/b.py")).toBe(true);
   });
 
   it("names the checkout that owns a `.git` entry as it does for the files beside it: a submodule's file, the session checkout's folder", async () => {
@@ -1366,6 +1388,54 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     expect(violations(audits)).toEqual([]);
     expect(recordedCheckouts(databasePath)).toEqual([session]);
   });
+
+  it("lists, looks up and watches no other worktree while the session's own checkout runs no rules", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    const watched: string[] = [];
+    const watch = { watch: (root: string) => watched.push(root) > 0, unwatch: () => {}, take: () => [] };
+    const running = router(session, databasePath, recordingAudits().recorder, undefined, false, undefined, undefined, new FolderPlaces({ watch }));
+    await running.openWorkspace("running-worktrees");
+    expect(running.worktreeRoots()).toEqual([worktree]);
+    const keeps = watched.length > 0;
+
+    watched.length = 0;
+    stopTestRepository(session, databasePath);
+    const stopped = router(session, databasePath, recordingAudits().recorder, undefined, false, undefined, undefined, new FolderPlaces({ watch }));
+    await stopped.openWorkspace("stopped-worktrees");
+    expect(stopped.worktreeRoots()).toEqual([]);
+    expect(watched).toEqual([]);
+    // Where the places keep anything (Linux, Windows), the running session's list watched its worktrees.
+    expect(keeps).toBe(process.platform === "linux" || process.platform === "win32");
+  });
+
+  it.skipIf(nativeTreeWatch() === undefined)("lists the other worktrees with the daemon's places as by the disk, through git worktree add, move, remove and prune", async () => {
+    const { root, databasePath, session } = await repositoryWithWorktree(outside);
+    const watch = nativeTreeWatch()!;
+    cleanups.push(async () => watch.close());
+    const kept = router(session, databasePath, recordingAudits().recorder, undefined, false, undefined, undefined, new FolderPlaces({ watch }));
+    const plain = router(session, databasePath, recordingAudits().recorder);
+    await kept.openWorkspace("places-kept");
+    await plain.openWorkspace("places-plain");
+    const listed = async (): Promise<string[]> => {
+      await new Promise(resolve => setImmediate(resolve));
+      const roots = kept.worktreeRoots().toSorted();
+      expect(roots).toEqual(plain.worktreeRoots().toSorted());
+      return roots;
+    };
+    const [first] = await listed();
+    const later = join(root, "elsewhere", "later");
+    git(session, "worktree", "add", "--quiet", "-b", "later", later);
+    expect(await listed()).toHaveLength(2);
+    git(session, "worktree", "move", later, join(root, "elsewhere", "moved"));
+    expect(await listed()).toContain(await realpath(join(root, "elsewhere", "moved")));
+    git(session, "worktree", "remove", join(root, "elsewhere", "moved"));
+    expect(await listed()).toEqual([first]);
+    removeFolderSync(first!);
+    expect(await listed()).toEqual([]);
+    git(session, "worktree", "prune");
+    expect(await listed()).toEqual([]);
+  });
+
 });
 
 describe("repository settings that reach evaluation", () => {
@@ -1670,4 +1740,46 @@ describe("CheckoutCodeRuleRouter lanes after review", () => {
     await auditor.openWorkspace("ignore-roots");
     expect(auditor.ignoreRuleRoots()).toEqual([session, service, inner]);
   });
+});
+
+describe("CheckoutCodeRuleRouter in a session checkout that runs no rules, replaced at its path", () => {
+  // The session's checkout, `app`, is left in a stopped repository or started but not set up, so no lane reads its
+  // rules; it is then removed and a linked worktree of `other`, a started clone set up with `test:other`, added there.
+  const left: Record<string, (app: string, databasePath: string) => void> = {
+    "in a stopped repository": (app, databasePath) => {
+      const repositoryKey = setUpTestRepository(app, { library: [file(needle("test:app", "APP"))] }, databasePath);
+      const database = openRerailDatabase(databasePath);
+      try {
+        setRepositoryStarted(database, repositoryKey, false);
+      } finally {
+        database.$client.close();
+      }
+    },
+    "not set up": (app, databasePath) => {
+      startTestRepository(app, databasePath);
+    },
+  };
+
+  for (const [state, leave] of Object.entries(left)) {
+    it(`runs the rules of the clone now there at the next event when the session checkout was ${state}`, async () => {
+      const root = await temporaryRoot();
+      const databasePath = join(root, "rerail.sqlite");
+      const app = await repository(join(root, "app"));
+      leave(app, databasePath);
+      const other = await repository(join(root, "other"));
+      setUpTestRepository(other, { library: [file(needle("test:other", "OTHER"))] }, databasePath);
+      const { recorder, audits } = recordingAudits();
+      const auditor = router(app, databasePath, recorder);
+      await auditor.openWorkspace(state);
+      auditor.refreshCodeRules();
+      expect(auditor.acceptsPath("api/x.py")).toBe(false);
+
+      await removeFolder(app);
+      git(other, "worktree", "add", "--quiet", "-b", "side", app);
+      auditor.refreshCodeRules();
+      await edit(auditor, state, 1, "api/x.py");
+
+      expect(violations(audits)).toEqual([{ checkout: app, path: "api/x.py", code: "OTHER", mode: "block" }]);
+    });
+  }
 });

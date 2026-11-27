@@ -137,7 +137,7 @@ pub(super) trait TapeRows: Send + Sync + 'static {
     /// The items (each with its document) a lookup of `value` on a `keyed` column may find, with a row or not: by the
     /// row's own id, its tape node; by a parent's, the nodes under it.
     fn find(&self, batch: &Batch, column: usize, value: i64, each: &mut dyn FnMut(usize, u32)) {
-        let Some(doc) = batch.doc(value >> 32, &mut 0) else { return };
+        let Some(doc) = batch.doc(rerail_blocks::located::Located::key_wide(value), &mut 0) else { return };
         let at = At { batch, doc };
         let p = at.p();
         let Some(local) = p.local_of((value & 0xffff_ffff) as u32) else { return };
@@ -260,6 +260,7 @@ impl<R: TapeRows> Source for RowsView<R> {
         out[column]
     }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         let (doc, k) = self.locate(row);
         let mut all = [0; COLUMNS];
         self.read(doc, k, &mut all);
@@ -321,6 +322,9 @@ impl<R: TapeRows> Source for RowsView<R> {
     }
     /// `lookup`'s rows in its order, sorted in the probe's frame: a list made a probe was 2.07 M on cold PostHog.
     fn lookup_each(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(usize) = &mut |r| { let _caller = _kind.paused(); outer(r) };
         if !self.rows.keyed(column) {
             return false;
         }

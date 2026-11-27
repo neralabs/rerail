@@ -174,6 +174,10 @@ impl ContentStore {
         })
     }
 
+    /// The store's bytes on the disk: its file, write-ahead log and shared memory, and the files beside it (decision
+    /// 0295: tapes and sources, memo entries, atoms, kept facts) as their rows record them (`store_bytes`, kept by
+    /// the tables' triggers in each transaction that names, grows or drops a file). Three stats and one row, whatever
+    /// the store holds: every write is checked against it (`require_write_capacity`).
     pub fn capacity(&self) -> StoreResult<StoreCapacity> {
         let mut bytes = 0_u64;
         for suffix in ["", "-wal", "-shm"] {
@@ -192,8 +196,11 @@ impl ContentStore {
                 Err(error) => return Err(StoreError::Io(error)),
             }
         }
-        // The segments beside it (decision 0295): tapes and sources, frames, memo entries, uncompressed.
-        let bytes = bytes.saturating_add(super::segments::segment_bytes(&self.database_path));
+        let beside: i64 = {
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            connection.query_row_cached("SELECT bytes FROM store_bytes WHERE singleton = 1", [], |r| r.get(0)).optional()?.unwrap_or(0)
+        };
+        let bytes = bytes.saturating_add(beside.max(0) as u64);
         Ok(StoreCapacity {
             bytes,
             state: capacity_state(bytes),

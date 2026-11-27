@@ -455,9 +455,10 @@ below(r, c) :- below(r, b), child(b, c, _).
 .decl deep(u: node, k: symbol)
 deep(u, k) :- imp(u, q), docof(u, a), uses(a, q), def_at(d, q), ann(d, r), below(r, c), kind(c, k).
 // A finding at a guest's node, decoded in the cross part (its node and file off the corpus batch, as a pack's are):
-// so the batch holds the guests' documents.
+// so the batch holds the guests' documents. The importer is another file's (`a != d`): a read of `imp_at` at no
+// column would be an existence read, staged as a relation of names (decision 0709), and the finding per-file.
 .decl finding(category: symbol, k: symbol, n: node)
-finding("deep", k, c) :- imp(_, q), uses(_, q), def_at(d, q), ann(d, r), below(r, c), kind(c, k).
+finding("deep", k, c) :- imp_at(a, q), uses(a, q), def_at(d, q), a != d, ann(d, r), below(r, c), kind(c, k).
 .output finding
 .output shape
 .output ann_kids

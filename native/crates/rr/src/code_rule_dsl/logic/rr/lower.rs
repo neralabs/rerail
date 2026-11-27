@@ -1095,6 +1095,8 @@ pub fn lower_module_seeded_written(statements: Statements, seeds: &Seeds) -> Res
                 if let [h] = st.heads().as_slice()
                     && firsts.dropped.contains(*h)
                 {
+                    // Its join shapes (`.shape` after it) are dropped with it.
+                    last_heads = Some(Vec::new());
                     continue;
                 }
                 l.start_clause(st.file().clone());
@@ -1196,7 +1198,12 @@ fn shapes_hold(version: &crate::code_rule_dsl::logic::program_image::Version, sh
     };
     for (shape, line) in shapes {
         let rules: Vec<RuleRef<'_>> = version.rules().filter(|r| version.rel_name(r.head().rel()) == shape.head).collect();
-        let reads = |rel: &str| rules.iter().any(|r| r.body().filter_map(|l| l.atom()).any(|a| version.rel_name(a.rel()) == rel));
+        // A `nearest(n, a, set)` literal reads the relation preparation makes of it (`rr_nearest_<set>`), the name the
+        // planner joins and EXPLAIN prints.
+        let reads = |rel: &str| rules.iter().any(|r| r.body().any(|l| match l.view() {
+            crate::code_rule_dsl::logic::program_image::Lit::Nearest { kindset, .. } => rel.strip_prefix(crate::code_rule_dsl::logic::front::NEAREST) == Some(version.text(kindset)),
+            _ => l.atom().is_some_and(|a| version.rel_name(a.rel()) == rel),
+        }));
         let missing = match &shape.wait {
             _ if !reads(&shape.lit) => Some(format!("no rule of `{}` reads `{}`", shape.head, shape.lit)),
             ShapeWait::After(a) if !reads(a) => Some(format!("no rule of `{}` reads `{a}`", shape.head)),
@@ -4140,7 +4147,34 @@ impl Lowerer {
     /// the rule asks about (`cross_product`, PR #508's 3fe6f8227, t47).
     fn negated_conjunction(&mut self, lits: &[LitAt], outer: &BTreeSet<String>) -> Result<(String, Vec<Tm>), Error> {
         let shared: Vec<String> = self.shared_vars(lits).into_iter().filter(|v| outer.contains(v)).collect();
-        let bound: BTreeSet<String> = self.body_vars(&lits.iter().filter(|l| self.binds_columns(l)).cloned().collect::<Vec<_>>());
+        let mut bound: BTreeSet<String> = self.body_vars(&lits.iter().filter(|l| self.binds_columns(l)).cloned().collect::<Vec<_>>());
+        // `x = t` with t ground binds x too, as in a rule's own body: `!(doc_sphinx(s, c), k = 1)` needs no context
+        // for k. A context of k alone would hold no location, a join of documents the split refuses once the atoms
+        // beside it are per-file (decision 0695).
+        loop {
+            let more: Vec<String> = lits
+                .iter()
+                .filter_map(|l| match self.lit(l) {
+                    L::Cmp { l: a, op: "=", r: b } => {
+                        let ground = |t: &At| {
+                            let mut vs = Vec::new();
+                            self.term_vars(t, &mut vs);
+                            vs.iter().all(|v| bound.contains(v))
+                        };
+                        let var = |t: &At| match self.tv(t) {
+                            T::Var(v) if !bound.contains(&v) => Some(v),
+                            _ => None,
+                        };
+                        var(&a).filter(|_| ground(&b)).or_else(|| var(&b).filter(|_| ground(&a)))
+                    }
+                    _ => None,
+                })
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            bound.extend(more);
+        }
         let needed: Vec<String> =
             if cross_product(self, lits, &shared, &bound) { shared.clone() } else { shared.iter().filter(|v| !bound.contains(*v)).cloned().collect() };
         let siblings = self.siblings.clone();

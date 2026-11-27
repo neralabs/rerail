@@ -16,7 +16,8 @@
  * slow to answer. The last case checks that a session's edits are still checked after its daemon restarts. One more
  * writes the file through a Bash command while another process keeps it from being read, from its first byte until the
  * session's record shows that the check at the command's result could not read it: the agent's next command is
- * steered on it.
+ * steered on it. Two replace the session's checkout while the session runs, its clone removed and another clone's
+ * linked worktree added at its path: the next edit there is checked with the rules of the clone now there.
  */
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import Database from "better-sqlite3";
@@ -479,6 +480,68 @@ describe("the Claude Code hook against a daemon of this build", () => {
     expect(told.join("\n")).toContain(`last_write.py:1:1`);
     expect(told.join("\n")).toContain(`[${RULE}]`);
   }, 120_000);
+
+  describe("in a checkout replaced at its path while the session runs", () => {
+    /**
+     * Two clones in a folder of their own, `app` and `other`, each with one commit and set up with `appRules` and
+     * `otherRules`; the session starts in `app`, whose clone is then removed and `other`'s linked worktree added there,
+     * as `git worktree add` into a reused folder leaves it.
+     */
+    async function twoClones(name: string, appRules: Parameters<typeof setUpTestRepository>[1], otherRules: Parameters<typeof setUpTestRepository>[1]) {
+      const app = join(root, name, "app");
+      const other = join(root, name, "other");
+      for (const [clone, packageName] of [[app, "a"], [other, "b"]] as const) {
+        await mkdir(join(clone, "src", packageName), { recursive: true });
+        await writeFile(join(clone, "src", packageName, "__init__.py"), "");
+        await writeFile(join(clone, "pyproject.toml"), `[project]\nname = "${packageName}"\nversion = "0.1.0"\n`);
+        await git(["init", "-q", "-b", "main"], clone);
+        await git(["add", "."], clone);
+        await git(["commit", "-q", "-m", "base"], clone);
+      }
+      setUpTestRepository(app, appRules);
+      setUpTestRepository(other, otherRules);
+      const replace = async (): Promise<void> => {
+        await removeFolder(app);
+        await git(["worktree", "add", "-q", "-b", "side", app], other);
+      };
+      return { app, replace };
+    }
+
+    /** The next prompt of `session`, as Claude Code sends it before the agent's next turn. */
+    async function nextPrompt(session: Session, promptId: string): Promise<void> {
+      await hook({ session_id: session.id, cwd: session.projectDir, hook_event_name: "UserPromptSubmit", prompt_id: promptId, prompt: "Go on." }, session.projectDir);
+    }
+
+    it("checks the next edit with no rule of the removed clone's when the clone there has none", async () => {
+      const { app, replace } = await twoClones("replaced-by-none", { packs: ["complexity"] }, {});
+      const session: Session = { id: "replaced-by-none-session", projectDir: app };
+      await startSession(session);
+      const before = join(app, "src", "a", "before_replace.py");
+      expectSteered(await writeTooComplex(session, before), before);
+
+      await replace();
+      await nextPrompt(session, "prompt-2");
+      const after = await writeTooComplex(session, join(app, "src", "b", "after_replace.py"));
+
+      expect(after.stderr).toBe("");
+      expect(contextOf(after)).not.toContain(`[${RULE}]`);
+    }, 120_000);
+
+    it("checks the next edit with the rules of the clone there, which the removed clone did not have", async () => {
+      const { app, replace } = await twoClones("replaced-by-rules", {}, { packs: ["complexity"] });
+      const session: Session = { id: "replaced-by-rules-session", projectDir: app };
+      await startSession(session);
+      const before = join(app, "src", "a", "before_replace.py");
+      const unchecked = await writeTooComplex(session, before);
+      expect(unchecked.stderr).toBe("");
+      expect(contextOf(unchecked)).not.toContain(`[${RULE}]`);
+
+      await replace();
+      await nextPrompt(session, "prompt-2");
+      const after = join(app, "src", "b", "after_replace.py");
+      expectSteered(await writeTooComplex(session, after), after);
+    }, 120_000);
+  });
 
   it("steers and logs it after the daemon restarts mid-session", async () => {
     const session: Session = { id: "daemon-restart-session", projectDir: repo };

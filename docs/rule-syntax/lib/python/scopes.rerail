@@ -243,6 +243,10 @@ cls_read(n, x, s) :- wstart(n, s), kind(s, "class_definition"), nameref(n, x).
 // comprehension's first iterable starts at the outer comprehension.) A name in a string annotation's tree starts
 // where the string sits (`ann_start` below).
 .decl wstart(n: node, s: node)
+// One start a reference: the rules are apart, by `def_outside` and `in_first_iter` against their negations and by
+// `scope` against `comp_scope` (no kind in both); a string annotation's tree has no scope of its own. Declared, as
+// rules apart by kind sets are not inferred (decision 0361); the run checks it.
+.layout wstart key(n)
 wstart(n, s) :- nameref(n, _), nearest(n, s, lscope), kind(s, k), scope(k), !def_outside(n, _).
 wstart(n, c) :- nameref(n, _), nearest(n, c, lscope), kind(c, k), comp_scope(k), !in_first_iter(n, c).
 wstart(n, s) :- def_outside(n, f), nearest(f, s, lscope).
@@ -283,6 +287,10 @@ tp_ref(n, x) :- tp_doc(d), docof(n, d), nameref(n, x), tp_name(o, x), docof(o, d
 tp_doc(d) :- tp_name(o, _), docof(o, d).
 // look(n, x, s): the lookup of reference n stops at scope s, which binds x. At most one s per reference.
 .decl look(n: node, x: symbol, s: node)
+// One scope a reference: its walk is one chain (one start, `scope_up` keyed by s) and stops at the first scope that
+// binds x (not a class binding it late) or declares it global before n. Declared, as a recursion's end is not
+// inferred (decision 0361); the run checks it.
+.layout look key(n)
 look(n, x, s) :- walk(n, x, s), bound_in(s, x), !cls_late(n, x, s).
 look(n, x, s) :- walk(n, x, s), !bound_in(s, x), gbefore(n, x, s).
 // Bound nowhere: a builtin, or (a star import, `globals()`) unknown.

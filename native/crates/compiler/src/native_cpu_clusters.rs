@@ -47,6 +47,10 @@ pub struct Cut {
     /// A call of the grammar (`PUSH`) is a native call of its callee's function, and `RETURN`
     /// a native return (`by_rules`): no stack of places, no compare tree over them.
     pub calls: bool,
+    /// The record stride (`records::RecordLayout::stride`) of the tier 1 it reads, where that is known when it is
+    /// compiled (the CPU's own tier 1): with `ctx` pinned, each read of it is that constant, as the lean parser's
+    /// index into its records is. `None`: read from `ctx`, for any layout.
+    pub stride: Option<u32>,
 }
 
 /// How a switch on a byte picks its arm.
@@ -63,7 +67,7 @@ pub enum Pick {
 impl Cut {
     /// Every word in one function: tier 2 as it was before clusters.
     pub fn one(words: usize) -> Self {
-        Self { of: vec![0; words], count: 1, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: Pick::Tree, pick_traffic: HashMap::new(), near: false, unsigned: false, calls: false }
+        Self { of: vec![0; words], count: 1, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: Pick::Tree, pick_traffic: HashMap::new(), near: false, unsigned: false, calls: false, stride: None }
     }
 }
 
@@ -193,7 +197,7 @@ pub fn by_traffic(native: &Structure, traffic: &HashMap<(u32, u32), u64>, cap: u
             bin_of.get(&r).copied().unwrap_or(0)
         })
         .collect();
-    Cut { of, count: (bins.len() as u32).max(1), held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: Pick::Tree, pick_traffic: HashMap::new(), near: false, unsigned: false, calls: false }
+    Cut { of, count: (bins.len() as u32).max(1), held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: Pick::Tree, pick_traffic: HashMap::new(), near: false, unsigned: false, calls: false, stride: None }
 }
 
 /// The share of `traffic`'s steps that leave their cluster, of all its steps between two words.
@@ -252,7 +256,7 @@ pub fn by_states(native: &Structure) -> Cut {
     }
     let count = count.max(1);
     let of: Vec<u32> = (0..n).map(|pc| of[at[pc]].unwrap_or(0)).collect();
-    Cut { of, count, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: Pick::Tree, pick_traffic: HashMap::new(), near: false, unsigned: false, calls: false }
+    Cut { of, count, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: Pick::Tree, pick_traffic: HashMap::new(), near: false, unsigned: false, calls: false, stride: None }
 }
 
 /// One function a grammar rule (docs/parser-generators/33-compiled-against-lean-shape.md): the

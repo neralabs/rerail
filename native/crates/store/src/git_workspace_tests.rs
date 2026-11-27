@@ -1086,3 +1086,38 @@ impl Publish for GitWorkspace {
             .map_err(|error| crate::git_workspace::discovery_error("cannot persist workspace source", error))
     }
 }
+
+/// A scoped discovery reads the status of its root alone: what is staged, changed and untracked
+/// under it, as Git lists them there, and nothing beside it.
+#[test]
+fn a_scoped_discovery_reads_the_status_under_its_root_alone() {
+    let root = fixture_directory("scoped-status");
+    std::fs::create_dir_all(root.join("pkg")).unwrap();
+    initialize_repository(
+        &root,
+        &[
+            ("pkg/staged.py", b"before\n"),
+            ("pkg/changed.py", b"before\n"),
+            ("pkg/kept.py", b"kept\n"),
+            ("staged.py", b"before\n"),
+            ("changed.py", b"before\n"),
+        ],
+    );
+    for folder in ["pkg/", ""] {
+        for name in ["staged.py", "changed.py", "new.py"] {
+            std::fs::write(root.join(format!("{folder}{name}")), b"after\n").unwrap();
+        }
+    }
+    run_git(&root, &["add", "--", "pkg/staged.py", "staged.py"]);
+    let under_pkg: Vec<_> = porcelain(&root)
+        .into_iter()
+        .filter(|(_, path)| path.starts_with("pkg/"))
+        .collect();
+    assert_eq!(under_pkg.len(), 3, "{under_pkg:?}");
+
+    let workspace = discover_under(&root.join("pkg")).unwrap();
+
+    assert_eq!(overlay_codes(&workspace), under_pkg);
+    assert!(workspace.clean_source_alias("pkg/kept.py").is_some());
+    std::fs::remove_dir_all(root).unwrap();
+}

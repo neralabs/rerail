@@ -10,7 +10,9 @@
 //   pc_qn(n, q)                 a def's or class's name joined to the enclosing class and def names (no <locals>)
 //   pc_sym(d, q, f)             record f has qualname q in file d: the last def of that name (records is a dict)
 //   pc_fq(s, f)                 "module.qualname" of record f
-//   pc_key(f, k)                record f's key, `path::qualname`: how the cross part names it (decision 0677)
+//   pc_key(f, k)                record f's key, `module::qualname`: how the cross part names it, never by its node
+//                               (decision 0677), and how the linter keys its records (symbol_id, decision 0693). A
+//                               key names no file, so the walks over keys are staged (decision 0709)
 //   pc_kfq(s, k)                "module.qualname" of the record whose key is k
 //   pc_param(f, x), pc_local(f, x)   f's parameter names; the names f itself binds (less global / nonlocal)
 //   pc_imp(s, x, q, k)          scope s (a module or a def) imports x as q: k "sym" (`from m import y`) or "mod"
@@ -70,7 +72,7 @@ pc_rec(f) :- pc_sym(_, _, f).
 .decl pc_fq(s: symbol, f: node)
 pc_fq(cat(m, ".", q), f) :- pc_sym(d, q, f), doc(d, _, m), m != "".
 .decl pc_key(f: node, k: symbol)
-pc_key(f, cat(p, "::", q)) :- pc_sym(d, q, f), doc(d, p, _).
+pc_key(f, cat(m, "::", q)) :- pc_sym(d, q, f), doc(d, _, m).
 .decl pc_kfq(s: symbol, k: symbol)
 pc_kfq(s, k) :- pc_fq(s, f), pc_key(f, k).
 .decl pc_param(f: node, x: symbol)

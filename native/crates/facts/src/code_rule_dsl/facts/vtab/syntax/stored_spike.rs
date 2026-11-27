@@ -91,7 +91,7 @@ pub(super) fn run(db: &std::ffi::OsStr, sources: &[(String, Arc<dyn Source>, Kin
         let mut docs: HashMap<Doc, Vec<Vector<i64>>> = HashMap::new();
         for row in 0..source.len() {
             let first = source.value(row, 0);
-            let doc = if by_key { first } else { first >> 32 };
+            let doc = if by_key { first } else { rerail_blocks::located::Located::key_wide(first) };
             let cols = docs.entry(doc).or_insert_with(|| vec![rerail_blocks::vector::Vector::new(); columns.len()]);
             for (c, col) in cols.iter_mut().enumerate() {
                 col.push(source.value(row, c));

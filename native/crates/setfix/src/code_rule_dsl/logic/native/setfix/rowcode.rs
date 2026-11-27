@@ -65,6 +65,9 @@ pub struct Test {
     /// Where the input is a view that reads the chunk's rows at once (t57 E6, decision 0706): asked so, for the rows
     /// still passing, not row by row.
     pub view: Option<ViewTest>,
+    /// A derived input's lookup (`setfix::lookups`, no view): the input's columns it binds, each a computed column
+    /// (`Word::Look`) of the row its key names. Empty for a test that binds nothing, and for a view's (`ViewTest::looks`).
+    pub reads: Vec<usize>,
 }
 
 /// A view's step asked a chunk at a time (`Test::view`): a node's own row by its id (`kind(n, #k)`, or a lookup,
@@ -337,7 +340,7 @@ fn fused_in(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool
                         }
                     }
                 }
-                tests.push(Test { at, neg, slots, view: viewed.take() });
+                tests.push(Test { at, neg, slots, view: viewed.take(), reads: Vec::new() });
                 let t = tests.len() - 1;
                 // A lookup's values: computed columns of the rows that pass.
                 for &(c, s) in binds {
@@ -346,6 +349,49 @@ fn fused_in(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool
                 }
                 let col = Val::Row(Word::Held(t));
                 b.compare(col, CmpOp::Eq, Val::Param(Param { key: Key::Const(1), doc: false })).map(Some)
+            }
+            // A derived input's lookup whose key reads the row (a view's is `viewed`'s): the one row it names asked for
+            // each row of the chunk, its verdict and the values it binds computed columns (`Word::Held`, `Word::Look`),
+            // no probe's loop.
+            Step::Atom { src: super::Src::In(..), neg, ref keys, ref binds, .. } if ask && lookups.get(at).copied().unwrap_or(false) && (binds.is_empty() || !neg) => {
+                let mut slots = Vec::new();
+                let mut row = false;
+                let mut ok = true;
+                for &(_, k) in keys {
+                    if let Key::Slot(s) = k {
+                        match val(&env, k) {
+                            // A computed column is made before the tests (a test's, by the tests before it), but a
+                            // document's after them: not read by one.
+                            Val::Row(w @ (Word::Col(_) | Word::Look(..))) => {
+                                row = true;
+                                slots.push((s, Bind::Column(usize::from(b.column(w)))));
+                            }
+                            // A spanning chunk's bound slot: the walk sets each row's binding's slots before its test.
+                            Val::Row(w @ Word::Bound { slot, doc: false }) => {
+                                if slot != s {
+                                    slots.push((s, Bind::Column(usize::from(b.column(w)))));
+                                }
+                            }
+                            Val::Param(p @ Param { doc: false, .. }) => {
+                                if p.key != Key::Slot(s) {
+                                    slots.push((s, Bind::Param(usize::from(b.param(p)))));
+                                }
+                            }
+                            _ => ok = false,
+                        }
+                    }
+                }
+                if ok && row {
+                    tests.push(Test { at, neg, slots, view: None, reads: binds.iter().map(|&(c, _)| c).collect() });
+                    let t = tests.len() - 1;
+                    for &(c, s) in binds {
+                        env.push((s, Val::Row(Word::Look(t, c))));
+                    }
+                    let held = Val::Row(Word::Held(t));
+                    b.compare(held, CmpOp::Eq, Val::Param(Param { key: Key::Const(1), doc: false })).map(Some)
+                } else {
+                    None
+                }
             }
             // A test of an input whose keys read the row (`Src::In`: an input, fixed while the rule runs; the
             // relations the stratum derives change under it): its verdicts a computed column.
@@ -376,7 +422,7 @@ fn fused_in(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool
                     }
                 }
                 if ok && row {
-                    tests.push(Test { at, neg, slots, view: None });
+                    tests.push(Test { at, neg, slots, view: None, reads: Vec::new() });
                     let col = Val::Row(Word::Held(tests.len() - 1));
                     b.compare(col, CmpOp::Eq, Val::Param(Param { key: Key::Const(1), doc: false })).map(Some)
                 } else {
@@ -403,8 +449,11 @@ fn fused_in(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool
     tests.retain(|t| t.at < steps);
     // The kernel's shape is a scan and the tests on what it binds: every slot the atom binds is read by a fused test.
     // An atom whose tests leave one of its slots unread (`p(c, o, m), f(k, m)`, `$c` the head's alone) is factored by
-    // the walk instead (`setfix::factored`): its tests asked once per group of what they read, not once per row.
-    if ask && !tests.is_empty() {
+    // the walk instead (`setfix::factored`): its tests asked once per group of what they read, not once per row. Not
+    // one with a derived input's lookup (`Test::reads`): a lookup binds, which no factoring skips, and the chunk
+    // carries its rows through it (`main.node(n, ..), n < e, rf_mbind(n, m)`: 0.39 M rows a lookup the walk read a row
+    // at a time).
+    if ask && !tests.is_empty() && tests.iter().all(|t| t.reads.is_empty()) {
         let read = |s: usize| tests.iter().any(|t| {
             let Step::Atom { keys, .. } = &after[t.at] else { return false };
             keys.iter().any(|&(_, k)| k == Key::Slot(s))
@@ -414,7 +463,7 @@ fn fused_in(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool
         }
     }
     // Only the binds the kept steps made, and the atom's.
-    let kept_binds = binds.len() + count_binds(&after[..steps]) + tests.iter().map(|t| t.view.as_ref().map_or(0, |v| v.looks.len())).sum::<usize>();
+    let kept_binds = binds.len() + count_binds(&after[..steps]) + tests.iter().map(|t| t.reads.len() + t.view.as_ref().map_or(0, |v| v.looks.len())).sum::<usize>();
     env.truncate(kept_binds);
     // The outputs: each distinct running mask, the last one's rows extracted.
     let mut outputs: Vector<u16> = Vector::new();
@@ -467,7 +516,7 @@ fn view_test(b: &mut Build, env: &[(usize, Val)], val: impl Fn(&[(usize, Val)], 
     let at = |k: usize| cols.get(keys[k].0).copied();
     let row = |v: Val| matches!(v, Val::Row(Word::Col(_) | Word::Look(..)));
     let known = |v: Val| row(v) || matches!(v, Val::Param(Param { doc: false, .. }));
-    let mut side = |b: &mut Build, v: Val| match v {
+    let side = |b: &mut Build, v: Val| match v {
         Val::Row(w) => PairKey::Col(usize::from(b.column(w))),
         Val::Param(p) => PairKey::Param(usize::from(b.param(p))),
     };
@@ -555,13 +604,32 @@ pub(super) struct Scratch {
     pub(super) from: Vector<u32>,
 }
 
+/// A fused test asked of a chunk at once (`Fused::run`'s `ask`): test `test` of the chunk's `rows` rows, its
+/// `columns` and `params`, of those still `alive` (a bit a row); its verdicts to column `verdict` and a lookup's
+/// values to `looks`' columns (program column, input column).
+pub(super) struct Ask<'a> {
+    pub(super) test: usize,
+    pub(super) columns: &'a mut [Vector<i64>],
+    pub(super) params: &'a [i64],
+    pub(super) alive: &'a mut [u64],
+    pub(super) rows: usize,
+    pub(super) verdict: usize,
+    pub(super) looks: &'a [(usize, usize)],
+}
+
 impl Fused {
     /// The chunk's computed columns from its gathered ones, then the program over the chunk:
     /// calls `each` with each fused step's passed count (`counts`), then returns the output
-    /// words of the rows that go on. `held(test, row, columns, params, out)` is whether test `test`'s input (`Fused::tests`) holds row `row`'s keys,
-    /// asked only of rows that passed the tests before it; a lookup's (`ViewTest::looks`, a node its view cannot read in a batch) writes the values of its
-    /// input's columns to `out` (by column), which become its `Word::Look` columns.
-    pub(super) fn run<'s>(&'s self, s: &'s mut Scratch, mut each: impl FnMut(usize, u64), mut held: impl FnMut(usize, usize, &[Vector<i64>], &[i64], &mut [i64]) -> bool) -> &'s [u64] {
+    /// words of the rows that go on. A test of a view (`Test::view`) is read a chunk at a time here. Another is first
+    /// asked of the chunk at once: `ask` (an `Ask`) asks test `test`'s input
+    /// (`Fused::tests`) of the rows still `alive` (a bit a row) alone, writing 1 to column `verdict` for each that
+    /// passes and a lookup's (`Test::reads`) values of its input's columns to `looks`' program columns (program column,
+    /// input column), its `Word::Look` columns, and clearing in `alive` each that fails; `false` where it has no such
+    /// read (nothing written). Then `held(test, row, columns, params, out)` is whether test `test`'s input holds row
+    /// `row`'s keys, asked only of rows that passed the tests before it; a lookup's (`Test::reads`, or a node its view
+    /// cannot read in a batch, `ViewTest::looks`) writes the values of its input's columns to `out` (by column), which
+    /// become its `Word::Look` columns.
+    pub(super) fn run<'s>(&'s self, s: &'s mut Scratch, mut each: impl FnMut(usize, u64), mut ask: impl FnMut(Ask<'_>) -> bool, mut held: impl FnMut(usize, usize, &[Vector<i64>], &[i64], &mut [i64]) -> bool) -> &'s [u64] {
         let n = s.rows;
         if !self.tests.is_empty() {
             // The rows still passing, a bit each: a test is asked only of rows every test before it passed.
@@ -688,10 +756,25 @@ impl Fused {
                     }
                     (s.view_rows, s.view_ids, s.view_out, s.view_found) = (rows, ids, got, found);
                 } else {
-                    for (r, o) in out.iter_mut().enumerate() {
-                        if alive[r / 64] >> (r % 64) & 1 == 0 { continue; }
-                        if held(t, r, &s.columns, &s.params, &mut [0; super::READ]) != test.neg { *o = 1; } else { alive[r / 64] &= !(1u64 << (r % 64)); }
+                    // A test or a lookup of a derived input: asked of the chunk at once where its input reads so
+                    // (`cands::ask_chunk`), else row by row; a lookup's values its `Word::Look` columns.
+                    s.columns[k] = out;
+                    let looks: InlineVec<(usize, usize), 8> = self.columns.iter().enumerate().filter_map(|(x, &w)| match w { Word::Look(u, c) if u == t => Some((x, c)), _ => None }).collect();
+                    for &(x, _) in looks.iter() {
+                        s.columns[x].clear();
+                        s.columns[x].resize(n, 0);
                     }
+                    if !ask(Ask { test: t, columns: &mut s.columns, params: &s.params, alive: &mut alive, rows: n, verdict: k, looks: &looks }) {
+                        let mut vals = [0i64; super::READ];
+                        for r in 0..n {
+                            if alive[r / 64] >> (r % 64) & 1 == 0 { continue; }
+                            if held(t, r, &s.columns, &s.params, &mut vals) != test.neg {
+                                s.columns[k][r] = 1;
+                                for &(x, c) in looks.iter() { s.columns[x][r] = vals[c]; }
+                            } else { alive[r / 64] &= !(1u64 << (r % 64)); }
+                        }
+                    }
+                    continue;
                 }
                 s.columns[k] = out;
             }
@@ -708,7 +791,7 @@ impl Fused {
                     (&b[0], &mut a[k])
                 };
                 dst.clear();
-                dst.extend(src.iter().map(|&x| x >> 32));
+                dst.extend(src.iter().map(|&x| rerail_blocks::located::Located::key_wide(x)));
             }
         }
         // On the stack (decision 0687): a fused chunk's columns and outputs are few.

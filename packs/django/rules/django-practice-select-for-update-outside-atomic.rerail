@@ -242,17 +242,23 @@ sfu_atomic_view(fq) :- dj_atomic_requests(), kind(f, "function_definition"), par
 sfu_atomic_view(fq) :- dj_atomic_requests(), dj_view_class(k), nearest(f, k, scope), kind(f, "function_definition"),
     pt_tm(f, fq).
 
-// sfu_why(f, why): how f runs outside a transaction: an entry point, or its first bare call by line (a module-level
-// one included, which names no caller).
+// sfu_why(f, why): how f runs outside a transaction: an entry point, or its first bare call by a key an edit in another
+// file does not move (decision 0695): a module-level call first (it names no caller, so no reason is given), then the
+// exposed caller of the least symbol, then the call's line in that caller's file.
 .decl sfu_why(f: symbol, why: symbol)
 sfu_why(fq, "no code in the project calls it, so it is an entry point (a view, task, command or receiver) and nothing opens a transaction around it") :-
     sfu_entry(fq).
 sfu_why(fq, cat("`", cat(g, cat("` calls it outside a transaction at ", cat(p, cat(":", to_string(l))))))) :-
-    sfu_exposed(fq), !sfu_entry(fq), l = min m : { sfu_bare_line(fq, m) }, sfu_bare(gq, ct, fq), sfu_exposed(gq),
-    sfu_call_at(gq, ct, g, p, l).
-.decl sfu_bare_line(f: symbol, l: number)
-sfu_bare_line(fq, l) :- sfu_bare(gq, ct, fq), sfu_exposed(gq), sfu_call_at(gq, ct, _, _, l).
-sfu_bare_line(fq, l) :- sfu_up(fq), sfu_mod_call(fq, l).
+    sfu_exposed(fq), !sfu_entry(fq), !sfu_mod_bare(fq), sfu_first_caller(fq, gq),
+    l = min m : { sfu_bare(gq, c2, fq), sfu_call_at(gq, c2, _, _, m) }, sfu_bare(gq, ct, fq), sfu_call_at(gq, ct, g, p, l).
+.decl sfu_mod_bare(f: symbol)
+sfu_mod_bare(fq) :- sfu_up(fq), sfu_mod_call(fq, _).
+.decl sfu_bare_caller(f: symbol, g: symbol)
+sfu_bare_caller(fq, gq) :- sfu_bare(gq, _, fq), sfu_exposed(gq).
+.decl sfu_later_caller(f: symbol, g: symbol)
+sfu_later_caller(fq, gq) :- sfu_bare_caller(fq, gq), sfu_bare_caller(fq, hq), hq < gq.
+.decl sfu_first_caller(f: symbol, g: symbol)
+sfu_first_caller(fq, gq) :- sfu_bare_caller(fq, gq), !sfu_later_caller(fq, gq).
 
 // The cases, `cases/django-practice-select-for-update-outside-atomic/`, read as one repository: each line ending in `#
 // caught` is reported, and no other line.

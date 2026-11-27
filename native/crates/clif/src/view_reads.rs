@@ -51,7 +51,7 @@ pub fn ukl() -> String {
         ("Run", "node_by_id", offset_of!(ViewDoc, node_by_id)),
     ];
     let mut s = format!(
-        "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint64_t source;\n    uint32_t homes[3];\n    uint32_t key;\n    uint32_t rows[{}];\n    uint32_t view[{}];\n    uint32_t bytes;\n}} ViewRow;\n\
+        "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint64_t source;\n    uint32_t homes[3];\n    uint32_t key;\n    uint32_t rows[{}];\n    uint32_t view[{}];\n    uint32_t bytes;\n    uint32_t at;\n}} ViewRow;\n\
          typedef struct ViewHome {{\n    uint64_t host;\n    UKL_GLOBAL const uint8_t* gpu;\n}} ViewHome;\n\
          typedef struct ViewDir {{
     uint64_t at;
@@ -65,6 +65,10 @@ pub fn ukl() -> String {
     uint32_t ends[{}];
     uint32_t counted;
     uint32_t codes;
+    uint64_t pages;
+    uint64_t order;
+    uint32_t first;
+    uint32_t span;
 }} ViewDir;
 ",
         ROWS,
@@ -82,10 +86,16 @@ pub fn ukl() -> String {
     s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, nbatch) == {}, \"ViewDir.nbatch\");\n", std::mem::offset_of!(ViewDir, nbatch));
     s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, keys) == {}, \"ViewDir.keys\");\n", std::mem::offset_of!(ViewDir, keys));
     s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, codes) == {}, \"ViewDir.codes\");\n", std::mem::offset_of!(ViewDir, codes));
+    s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, pages) == {}, \"ViewDir.pages\");\n", std::mem::offset_of!(ViewDir, pages));
+    s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, order) == {}, \"ViewDir.order\");\n", std::mem::offset_of!(ViewDir, order));
+    s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, at) == {}, \"ViewRow.at\");\n", std::mem::offset_of!(ViewRow, at));
     // A directory's places as a kernel reads them: the block's start, a row, and a row's tape and lines at their
     // homes' device bases.
     s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_block(UKL_GLOBAL const ViewDir* d) { return (UKL_GLOBAL const uint8_t*)d - d->at; }\n";
     s += "UKL_INLINE UKL_GLOBAL const ViewRow* view_rows(UKL_GLOBAL const ViewDir* d) { return (UKL_GLOBAL const ViewRow*)(view_block(d) + d->rows); }\n";
+    // The first row of view `k` past row `e`'s documents' rows: the next in the directory's order's (`ViewDir::order`),
+    // `end` past the last.
+    s += "UKL_INLINE uint32_t view_rows_end(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e, uint32_t k, uint32_t end) { uint32_t m = e->at + 1u; return m < d->ndocs ? view_rows(d)[((UKL_GLOBAL const uint32_t*)(view_block(d) + d->order))[m]].rows[k] : end; }\n";
     s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_home(UKL_GLOBAL const ViewDir* d, uint32_t h, uint64_t at) { return ((UKL_GLOBAL const ViewHome*)(view_block(d) + d->homes))[h].gpu + at; }\n";
     s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_tape(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[0], e->tape); }\n";
     s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_source(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[2], e->source); }\n";
@@ -671,8 +681,18 @@ mod dir_at {
     pub const ROWS: i32 = offset_of!(ViewDir, rows) as i32;
     pub const NBATCH: i32 = offset_of!(ViewDir, nbatch) as i32;
     pub const KEYS: i32 = offset_of!(ViewDir, keys) as i32;
+    pub const PAGES: i32 = offset_of!(ViewDir, pages) as i32;
+    pub const ORDER: i32 = offset_of!(ViewDir, order) as i32;
+    pub const FIRST: i32 = offset_of!(ViewDir, first) as i32;
+    pub const SPAN: i32 = offset_of!(ViewDir, span) as i32;
+    pub const TABLE_HEADER: i64 = size_of::<super::IdPages>() as i64;
+    pub const PAGE_SIZE: i64 = size_of::<super::Page>() as i64;
+    pub const PAGE_NUMBER: i32 = offset_of!(super::Page, number) as i32;
+    pub const PAGE_LOCAL: i32 = offset_of!(super::Page, local) as i32;
     pub const ROW_SIZE: i64 = size_of::<ViewRow>() as i64;
     pub const ROW_ROWS: i32 = offset_of!(ViewRow, rows) as i32;
+    pub const ROW_KEY: i32 = offset_of!(ViewRow, key) as i32;
+    pub const ROW_AT: i32 = offset_of!(ViewRow, at) as i32;
 }
 
 #[cfg(feature = "ir")]
@@ -692,16 +712,38 @@ impl B<'_, '_> {
         let p = self.item(row, k, 4);
         self.word_at(I32, p, dir_at::ROW_ROWS)
     }
-    /// The documents' keys in row order (`ViewDir::keys`): their address.
+    /// The directory's order (`order`): its address.
+    fn dir_view_order(&mut self) -> Value {
+        let at = self.word_at(I64, self.tape, dir_at::AT);
+        let block = self.f.ins().isub(self.tape, at);
+        let order = self.word_at(I64, self.tape, dir_at::ORDER);
+        self.f.ins().iadd(block, order)
+    }
+    /// Row `m`'s place in the directory's order (`ViewRow::at`).
+    fn dir_place(&mut self, rows: Value, m: Value) -> Value {
+        let row = self.item(rows, m, dir_at::ROW_SIZE);
+        self.word_at(I32, row, dir_at::ROW_AT)
+    }
+    /// Row `m`'s key (`NO_DOC` for a number none of its documents has).
+    fn dir_key(&mut self, rows: Value, m: Value) -> Value {
+        let row = self.item(rows, m, dir_at::ROW_SIZE);
+        self.word_at(I32, row, dir_at::ROW_KEY)
+    }
+    /// The documents' keys in the directory's order (`ViewDir::keys`): their address.
     fn dir_keys(&mut self) -> Value {
         let at = self.word_at(I64, self.tape, dir_at::AT);
         let block = self.f.ins().isub(self.tape, at);
         let keys = self.word_at(I64, self.tape, dir_at::KEYS);
         self.f.ins().iadd(block, keys)
     }
-    /// Document `i`'s key (`ViewDir::keys`).
+    /// The `i`th document's key in the directory's order (`ViewDir::keys`).
     fn key_at(&mut self, keys: Value, i: Value) -> Value {
         let p = self.item(keys, i, 4);
+        self.word_at(I32, p, 0)
+    }
+    /// The row `i`th in the directory's order (`order`).
+    fn dir_by_key(&mut self, order: Value, i: Value) -> Value {
+        let p = self.item(order, i, 4);
         self.word_at(I32, p, 0)
     }
     /// `lower_bound` of `key` among the `n` ascending keys at `keys`: a fixed count of steps, `n` alone sets, each a
@@ -763,6 +805,16 @@ impl B<'_, '_> {
         self.f.switch_to_block(done);
         self.f.block_params(done)[0]
     }
+    /// Id `id`'s page in the directory's page table: its address.
+    fn dir_page(&mut self, id: Value) -> Value {
+        let at = self.word_at(I64, self.tape, dir_at::AT);
+        let block = self.f.ins().isub(self.tape, at);
+        let table = self.word_at(I64, self.tape, dir_at::PAGES);
+        let table = self.f.ins().iadd(block, table);
+        let pages = self.f.ins().iadd_imm(table, dir_at::TABLE_HEADER);
+        let page = self.f.ins().ushr_imm(id, i64::from(PAGE_BITS));
+        self.item(pages, page, dir_at::PAGE_SIZE)
+    }
 }
 
 /// `dir_doc_of_row(k, r, memo)`: the document whose rows of view `k` hold row `r` (`ViewDir::doc_of_row`), memo
@@ -771,29 +823,41 @@ impl B<'_, '_> {
 pub fn dir_doc_of_row(b: &mut B<'_, '_>) -> Value {
     let (k, r, memo) = (b.arg(0), b.arg(1), b.arg(2));
     let (rows, n) = b.dir_rows();
-    let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, memo, n);
+    let order = b.dir_view_order();
+    let span = b.word_at(I32, b.tape, dir_at::SPAN);
+    let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, memo, span);
     let held = b.either(I32, inside, |b| {
-        let first = b.dir_first(rows, memo, k);
-        let from = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, first, r);
-        let next = b.f.ins().iadd_imm(memo, 1);
-        let last = b.f.ins().icmp(IntCC::Equal, next, n);
-        let before = b.either(I32, last, |b| b.c32(1), |b| {
-            let after = b.dir_first(rows, next, k);
-            let past = b.f.ins().icmp(IntCC::UnsignedGreaterThan, after, r);
-            b.f.ins().uextend(I32, past)
-        });
-        let from = b.f.ins().uextend(I32, from);
-        b.f.ins().band(from, before)
+        let at = b.dir_place(rows, memo);
+        let placed = b.f.ins().icmp(IntCC::UnsignedLessThan, at, n);
+        b.either(I32, placed, |b| {
+            let first = b.dir_first(rows, memo, k);
+            let from = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, first, r);
+            let next = b.f.ins().iadd_imm(at, 1);
+            let last = b.f.ins().icmp(IntCC::Equal, next, n);
+            let before = b.either(I32, last, |b| b.c32(1), |b| {
+                let m = b.dir_by_key(order, next);
+                let after = b.dir_first(rows, m, k);
+                let past = b.f.ins().icmp(IntCC::UnsignedGreaterThan, after, r);
+                b.f.ins().uextend(I32, past)
+            });
+            let from = b.f.ins().uextend(I32, from);
+            b.f.ins().band(from, before)
+        }, |b| b.c32(0))
     }, |b| b.c32(0));
     let hit = b.f.ins().icmp_imm(IntCC::NotEqual, held, 0);
     b.either(I32, hit, |_| memo, |b| {
-        let c = b.bisect(n, &mut |b, m| {
-            let first = b.dir_first(rows, m, k);
-            b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, first, r)
-        });
-        let one = b.c32(1);
-        let c = b.f.ins().umax(c, one);
-        b.f.ins().isub(c, one)
+        let none = b.f.ins().icmp_imm(IntCC::Equal, n, 0);
+        b.either(I32, none, |b| b.c32(0), |b| {
+            let c = b.bisect(n, &mut |b, m| {
+                let row = b.dir_by_key(order, m);
+                let first = b.dir_first(rows, row, k);
+                b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, first, r)
+            });
+            let one = b.c32(1);
+            let c = b.f.ins().umax(c, one);
+            let c = b.f.ins().isub(c, one);
+            b.dir_by_key(order, c)
+        })
     })
 }
 
@@ -802,13 +866,15 @@ pub fn dir_doc_of_row(b: &mut B<'_, '_>) -> Value {
 #[cfg(feature = "ir")]
 pub fn dir_doc_of_key(b: &mut B<'_, '_>) -> Value {
     let (key, memo) = (b.arg(0), b.arg(1));
-    let n = b.word_at(I32, b.tape, dir_at::NDOCS);
+    let (rows, n) = b.dir_rows();
     let keys = b.dir_keys();
+    let order = b.dir_view_order();
     let nbatch = b.word_at(I32, b.tape, dir_at::NBATCH);
     let nbatch = b.f.ins().umin(nbatch, n);
-    let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, memo, n);
+    let span = b.word_at(I32, b.tape, dir_at::SPAN);
+    let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, memo, span);
     let held = b.either(I32, inside, |b| {
-        let k = b.key_at(keys, memo);
+        let k = b.dir_key(rows, memo);
         let same = b.f.ins().icmp(IntCC::Equal, k, key);
         b.f.ins().uextend(I32, same)
     }, |b| b.c32(0));
@@ -822,8 +888,37 @@ pub fn dir_doc_of_key(b: &mut B<'_, '_>) -> Value {
         let found = b.f.ins().band(within, same);
         // The values' scan, whatever the batch's search found (none with no values): a select, not a branch.
         let scanned = b.scan_keys(keys, nbatch, n, key);
-        b.f.ins().select(found, c, scanned)
+        let m = b.f.ins().select(found, c, scanned);
+        // Its place in the order, then its row (a row is its number in the growth).
+        let none = b.f.ins().icmp_imm(IntCC::Equal, m, i64::from(NO_DOC));
+        b.either(I32, none, |b| b.c32(i64::from(NO_DOC)), |b| b.dir_by_key(order, m))
     })
+}
+
+/// `dir_doc_of_id(id)`: the row of id `id`'s document (`ViewDir::doc_of_id`): its page's number less the
+/// directory's first, or `NO_DOC` past its rows. One load: a row is a number in every directory of the growth.
+#[cfg(feature = "ir")]
+pub fn dir_doc_of_id(b: &mut B<'_, '_>) -> Value {
+    let id = b.arg(0);
+    let page = b.dir_page(id);
+    let number = b.word_at(I32, page, dir_at::PAGE_NUMBER);
+    let first = b.word_at(I32, b.tape, dir_at::FIRST);
+    let span = b.word_at(I32, b.tape, dir_at::SPAN);
+    let row = b.f.ins().isub(number, first);
+    let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, row, span);
+    let no = b.c32(i64::from(NO_DOC));
+    b.f.ins().select(inside, row, no)
+}
+
+/// `dir_local_of_id(id)`: id `id`'s local id in its document (`ViewDir::local_of_id`): its page's first, and its
+/// place in the page.
+#[cfg(feature = "ir")]
+pub fn dir_local_of_id(b: &mut B<'_, '_>) -> Value {
+    let id = b.arg(0);
+    let page = b.dir_page(id);
+    let first = b.word_at(I32, page, dir_at::PAGE_LOCAL);
+    let within = b.f.ins().band_imm(id, i64::from(PAGE - 1));
+    b.f.ins().iadd(first, within)
 }
 
 
@@ -1164,7 +1259,7 @@ pub fn op(b: &mut B<'_, '_>) -> Value {
 
 #[cfg(all(test, feature = "ir"))]
 mod tests {
-    use super::{NO_DOC, ViewDir};
+    use super::{NO_DOC, ViewDir, ViewRow};
 
     /// A directory's documents in row order need not be in key order: a chunk's tape values follow its batch's
     /// documents in the order admitted (`values::Layered`, `device_chunk::views_over`). The search by key bisects the
@@ -1184,20 +1279,33 @@ mod tests {
             for values in [&[][..], &[2_090_826_275u32, 4, 1_786_418_522][..]] {
                 let keys: Vec<u32> = (0..nbatch).map(|i| 3 * i + 5).chain(values.iter().copied()).collect();
                 let n = keys.len();
-                // The keys after the directory (its size this build's: no field of it overlaps them).
-                let (dir_at, keys_at) = (0usize, size_of::<ViewDir>().next_multiple_of(8));
+                // The keys are in the views' order, by place; each place's row is another (the order reversed), whose
+                // `key` and `at` are its place's, so the answer is a row through the order (`ViewDir::row_at`).
+                let order: Vec<u32> = (0..n as u32).rev().collect();
+                // After the directory (its size this build's: no field of it overlaps them): its rows, by number, then
+                // the order and the keys.
+                let dir_at = 0usize;
+                let rows_at = size_of::<ViewDir>().next_multiple_of(8);
+                let order_at = (rows_at + n * size_of::<ViewRow>()).next_multiple_of(8);
+                let keys_at = (order_at + 4 * n).next_multiple_of(8);
                 let mut block = vec![0u64; (keys_at + 4 * n).div_ceil(8) + 1];
                 let base = block.as_mut_ptr().cast::<u8>();
                 // SAFETY: each write within `block`, at an offset aligned for its type.
                 unsafe {
+                    for (place, &row) in order.iter().enumerate() {
+                        let r = ViewRow { key: keys[place], at: place as u32, ..ViewRow::default() };
+                        base.add(rows_at).cast::<ViewRow>().add(row as usize).write(r);
+                    }
+                    std::ptr::copy_nonoverlapping(order.as_ptr(), base.add(order_at).cast::<u32>(), n);
                     std::ptr::copy_nonoverlapping(keys.as_ptr(), base.add(keys_at).cast::<u32>(), n);
-                    base.add(dir_at).cast::<ViewDir>().write(ViewDir { at: dir_at as u64, ndocs: n as u32, nbatch, keys: keys_at as u64, ..ViewDir::default() });
+                    let d = ViewDir { at: dir_at as u64, ndocs: n as u32, rows: rows_at as u64, nbatch, keys: keys_at as u64, order: order_at as u64, span: n as u32, ..ViewDir::default() };
+                    base.add(dir_at).cast::<ViewDir>().write(d);
                 }
                 // SAFETY: the directory just written, in `block`, which outlives it.
                 let dir = unsafe { &*base.add(dir_at).cast::<ViewDir>() };
                 let asked = keys.iter().copied().chain([0, 4, 6, 3 * nbatch + 5, u32::MAX]);
                 for key in asked {
-                    let want = keys.iter().position(|&k| k == key).map_or(NO_DOC, |i| i as u32);
+                    let want = keys.iter().position(|&k| k == key).map_or(NO_DOC, |place| order[place]);
                     for memo in [0, 3, n as u32, NO_DOC] {
                         // SAFETY: as `dir`.
                         assert_eq!(unsafe { ViewDir::doc_of_key(dir, key, memo) }, want, "the host's, batch {nbatch}, values {values:?}, key {key}, memo {memo}");

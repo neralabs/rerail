@@ -22,9 +22,16 @@
 # A version is COMMIT and the patches' hash. While a Relax session of the installed binary runs,
 # the new version is built but not switched to (a running session re-executes bin/relax and reads
 # std from src): run this again once they end, or pass --now.
+#
+# Every worktree shares the one installed Relax, so a checkout switches it only to patches newer
+# than the installed ones: SERIAL, one more with every change of std.patch or rerail.patch. A
+# checkout with a lower SERIAL (a branch behind the hub), or the same one and other patches (two
+# branches that changed them apart), builds its version but leaves the installed one; merge the
+# patches, bump SERIAL, and build again. The version built is still run as v/<version>/relax.
 # Usage: scripts/dev/relax/build [--now]
 set -eu
 COMMIT=5b2d68c26a51a24376eb367f052b913e57fd3db9
+SERIAL=23
 now=
 [ "${1:-}" = "--now" ] && now=1
 here=$(cd "$(dirname "$0")" && pwd)
@@ -78,10 +85,25 @@ prune_versions() {
   done
   git --git-dir="$repo" worktree prune
 }
+record_serial() {
+  echo "$SERIAL" > "$share/serial.tmp" && mv "$share/serial.tmp" "$share/serial"
+  echo "$(cd "$here/../../.." && pwd)" > "$share/serial-from"
+}
 if [ "$(readlink "$share/src" 2>/dev/null)" = "$tree" ] && cmp -s "$tree/relax" "$share/bin/relax" && linux_current; then
+  [ "$(cat "$share/serial" 2>/dev/null || echo 0)" -lt "$SERIAL" ] && record_serial
   prune_versions
   echo "relax: $share/bin/relax is version $version"
   exit 0
+fi
+# Only to newer patches (SERIAL, above). An installed version with no serial came from a script
+# before it: any serial is newer.
+installed=$(basename "$(readlink "$share/src" 2>/dev/null)" 2>/dev/null || true)
+installed_serial=$(cat "$share/serial" 2>/dev/null || echo 0)
+if [ -n "$installed" ] && [ "$installed" != "$version" ] && [ "$SERIAL" -le "$installed_serial" ]; then
+  echo "relax: version $version (patches' SERIAL $SERIAL) is built ($tree/relax), not switched to: the installed" >&2
+  echo "       $installed has SERIAL $installed_serial (from $(cat "$share/serial-from" 2>/dev/null || echo '?'))." >&2
+  echo "       Merge its scripts/dev/relax patches into this checkout's, bump SERIAL, and build again." >&2
+  exit 76
 fi
 running=$(pgrep -f "$share/bin/relax" || true)
 if [ -n "$running" ] && [ -z "$now" ]; then
@@ -97,5 +119,6 @@ fi
 # The checkout an earlier version of this script made at src: kept beside, never removed here.
 if [ -d "$share/src" ] && [ ! -L "$share/src" ]; then mv "$share/src" "$share/v/old-src"; fi
 ln -sfh "$tree" "$share/src"
+record_serial
 prune_versions
 echo "relax: $share/bin/relax is version $version (std: $tree/libs/relax/compiler/std)"

@@ -13,6 +13,8 @@
 //!
 //! Outside a run, each gives a value of its own that nothing keeps.
 
+pub mod work;
+
 thread_local! {
     /// The profile's span this thread's allocations are charged to (`rerail_prof::heap`'s id; 0 none): carried with a
     /// job's handle (`job_run`, `enter`), so a job another thread runs is charged to the span that made it. Not carried,
@@ -31,6 +33,10 @@ pub trait RunOwn: Send + Sync {
     }
     /// A job's handle (`job_run`): the heap span it was made under (`HEAP_SPAN`), which `enter` puts on its thread.
     fn heap_span(&self) -> Option<u32> {
+        None
+    }
+    /// A job's handle (`job_run`): its maker's word of what it was doing (`work`), which `enter` puts on its thread.
+    fn work_word(&self) -> Option<u64> {
         None
     }
     /// Its settings and its own values (`setting`, `local`).
@@ -330,6 +336,37 @@ pub fn is_main_thread() -> bool {
 /// A pool thread's stack: pages are committed only as they are touched, so this is address space, not memory.
 pub const POOL_STACK: usize = 16 << 20;
 
+thread_local! {
+    /// Whether this thread is one of a pool the engine made ([`engine_pool_thread`]).
+    static ENGINE_POOL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Marks this thread as one of a pool the engine made (each such pool's start handler, and the thread a machine takes
+/// into its pool: `Machine::here`). Such a pool's threads have [`POOL_STACK`] of stack ([`engine_pool`]).
+pub fn engine_pool_thread() {
+    ENGINE_POOL.with(|e| e.set(true));
+}
+
+/// `b`, made a pool of the engine's: each thread has [`POOL_STACK`] of stack, so a wait there runs the pool's other
+/// jobs (it keeps 4 MB free for them: `rerail_accel::exec::help_once`, which a 2 MB stack never had), and is marked
+/// as one of the engine's pools' ([`engine_pool_thread`]) before `start` runs on it.
+pub fn engine_pool<S>(b: rayon::ThreadPoolBuilder<S>, start: impl Fn(usize) + Send + Sync + 'static) -> rayon::ThreadPoolBuilder<S> {
+    b.stack_size(POOL_STACK).start_handler(move |i| {
+        engine_pool_thread();
+        start(i);
+    })
+}
+
+/// Whether this thread is one of a pool the engine made: a machine's cores, or one of its lanes' or a training's own
+/// pools ([`engine_pool`]). A thread of any other pool (rayon's global one, or a caller's own: a test's parallel loop)
+/// is a caller's thread, as a thread of no pool is: its parallel loops and scopes run on the machine's cores, and its
+/// waits run none of its own pool's jobs. Taken for one of the engine's, a wait there put a nested run's chunks on
+/// the caller's pool, whose threads (2 MB of stack each) never ran them, and every such run waited forever.
+/// wasm32 has no threads: there every call is as on a pool's thread.
+pub fn on_engine_pool() -> bool {
+    cfg!(target_family = "wasm") || ENGINE_POOL.with(std::cell::Cell::get)
+}
+
 /// The machine's cores (decision 0442 step 5): its one job pool, [`threads`] threads named `rerail-cpu <i>`, made at
 /// its first job. Every job of a caller on the machine runs on it: the cores' launches, host jobs, and every parallel
 /// loop of the engine (`on_cores`, `cores_spawn`, `cores_scope`). Two machines in one process have two pools; two
@@ -369,7 +406,16 @@ fn carry() -> Option<rayon_core::Carried> {
 fn enter_carried(carried: rayon_core::Carried) -> Box<dyn std::any::Any> {
     let job = *carried.downcast::<Option<std::sync::Arc<dyn RunOwn>>>().expect("rerail: the engine's job carrier carries a job's run");
     if holds(&job) {
-        return Box::new(());
+        // The run is here already; the job's word of what its maker was doing still goes on the thread (`work`).
+        struct WordBack(Option<u64>);
+        impl Drop for WordBack {
+            fn drop(&mut self) {
+                if let Some(w) = self.0 {
+                    work::restore(w);
+                }
+            }
+        }
+        return Box::new(WordBack(job.as_ref().and_then(|j| j.work_word()).map(work::set)));
     }
     Box::new(enter(job))
 }
@@ -384,12 +430,15 @@ fn install_carrier() {
 /// runs (`install_carrier`).
 fn make_pool(this_thread: bool) -> rayon::ThreadPool {
     install_carrier();
-    let b = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads())
-        .thread_name(|i| format!("rerail-cpu {i}"))
-        .stack_size(POOL_STACK)
-        .start_handler(move |_| engine_thread());
-    if this_thread { b.use_current_thread() } else { b }.build().expect("rerail: the machine's job pool")
+    let b = engine_pool(rayon::ThreadPoolBuilder::new().num_threads(threads()).thread_name(|i| format!("rerail-cpu {i}")), |_| engine_thread());
+    if this_thread {
+        let pool = b.use_current_thread().build().expect("rerail: the machine's job pool");
+        // The pool takes this thread over without its start handler.
+        engine_pool_thread();
+        pool
+    } else {
+        b.build().expect("rerail: the machine's job pool")
+    }
 }
 
 impl Machine {
@@ -406,11 +455,10 @@ impl Machine {
     }
 }
 
-/// Whether this thread is one of a pool's: a machine's (its cores), or a pool of the machine's own lanes. There a
-/// parallel loop splits over the thread's own pool, as rayon's functions do.
-/// wasm32 has no threads: there rayon's functions run their work here, so every call is as on a pool's thread.
+/// Whether this thread is one of the engine's pools' ([`on_engine_pool`]): a machine's (its cores), or a pool of the
+/// machine's own lanes. There a parallel loop splits over the thread's own pool, as rayon's functions do.
 fn on_a_pool() -> bool {
-    cfg!(target_family = "wasm") || rayon::current_thread_index().is_some()
+    on_engine_pool()
 }
 
 /// Runs `f` on the caller's machine's cores ([`Cores`]): every parallel loop of the engine is inside one, so its items
@@ -487,11 +535,14 @@ pub fn shared_here() -> std::sync::Arc<Shared> {
 /// Puts `run` on this thread (a job of it, on another thread) until the guard drops, then what the thread had. A job's
 /// handle (`job_run`) puts its context on the thread too; a run alone leaves the thread's context as it is.
 pub fn enter(run: Option<std::sync::Arc<dyn RunOwn>>) -> impl Drop {
-    struct Back(Option<Option<std::sync::Arc<dyn RunOwn>>>, Option<Context>, Option<u32>);
+    struct Back(Option<Option<std::sync::Arc<dyn RunOwn>>>, Option<Context>, Option<u32>, Option<u64>);
     impl Drop for Back {
         fn drop(&mut self) {
             if let Some(span) = self.2 {
                 set_heap_span(span);
+            }
+            if let Some(w) = self.3 {
+                work::restore(w);
             }
             let was = self.0.take().flatten();
             // The context first, as it was entered last; each dropped outside its cell (a value's drop may read it).
@@ -504,6 +555,7 @@ pub fn enter(run: Option<std::sync::Arc<dyn RunOwn>>) -> impl Drop {
         }
     }
     let was_span = run.as_ref().and_then(|job| job.heap_span()).map(|span| HEAP_SPAN.try_with(|s| s.replace(span)).unwrap_or(0));
+    let was_word = run.as_ref().and_then(|job| job.work_word()).map(work::set);
     let (run, context) = match run {
         Some(job) => match job.with_context() {
             Some((run, context)) => (Some(std::sync::Arc::clone(run)), Some(context.clone())),
@@ -513,7 +565,7 @@ pub fn enter(run: Option<std::sync::Arc<dyn RunOwn>>) -> impl Drop {
     };
     let was_run = RUN.try_with(|r| r.replace(run)).ok().flatten();
     let was_context = context.and_then(|c| CONTEXT.try_with(|x| x.replace(c)).ok());
-    Back(Some(was_run), was_context, was_span)
+    Back(Some(was_run), was_context, was_span, was_word)
 }
 
 /// The heap span this thread's allocations are charged to now (`HEAP_SPAN`; 0 none).
@@ -589,11 +641,12 @@ pub fn within(shared: std::sync::Arc<Shared>) -> impl Drop {
 pub fn job_run() -> Option<std::sync::Arc<dyn RunOwn>> {
     let run = run_own().unwrap_or_else(|| std::sync::Arc::new(Bare(RunValues::default(), shared_here())));
     let context = context_here();
-    Some(std::sync::Arc::new(InContext(run, context, heap_span())))
+    Some(std::sync::Arc::new(InContext(run, context, heap_span(), work::word())))
 }
 
-/// A job's handle (`job_run`): the run, the context the job was made in, and the heap span open there.
-struct InContext(std::sync::Arc<dyn RunOwn>, Context, u32);
+/// A job's handle (`job_run`): the run, the context the job was made in, the heap span open there, and its maker's
+/// word of what it was doing (`work`).
+struct InContext(std::sync::Arc<dyn RunOwn>, Context, u32, u64);
 
 /// Dropped on a thread that holds no run (a pool thread whose job carried it, its guard gone): the context drops
 /// with the run's shared object on the thread (`within`), as its values' drops may read it (a store's writers). The
@@ -613,6 +666,9 @@ impl RunOwn for InContext {
     }
     fn heap_span(&self) -> Option<u32> {
         Some(self.2)
+    }
+    fn work_word(&self) -> Option<u64> {
+        work::on().then_some(self.3)
     }
     fn values(&self) -> &RunValues {
         self.0.values()

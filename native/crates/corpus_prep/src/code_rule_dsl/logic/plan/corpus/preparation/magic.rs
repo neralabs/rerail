@@ -78,6 +78,8 @@ struct Ctx<'v, 'a> {
     level: &'a BTreeMap<String, usize>,
     /// `answers`' results for the adornments asked at the top level, per `closure`.
     answered: BTreeMap<(String, String), bool>,
+    /// Per `closure`: each relation asked with nothing bound, and the first reader that asked so (`Report::free_readers`).
+    free_by: BTreeMap<String, String>,
 }
 
 fn fresh(r: RuleRef<'_>, n: u32) -> Slot {
@@ -375,7 +377,7 @@ impl<'v> Ctx<'v, '_> {
             }
             let mut body: Vec<M<'_>> = rule.body().map(M::Own).collect();
             body.extend(extra);
-            let Some(order) = self.sips(rule, &body, &bound) else {
+            let Some(order) = self.sips(rule, &body, &bound, full) else {
                 ok = false;
                 break;
             };
@@ -404,10 +406,157 @@ impl<'v> Ctx<'v, '_> {
         }
         ok
     }
+    /// Whether `rel`'s column `i` holds a node.
+    fn node_col(&self, rel: &str, i: usize) -> bool {
+        self.v.decl_of(rel).and_then(|d| d.cols().nth(i).map(|(_, ty)| self.v.text(ty) == "node")).unwrap_or(false)
+    }
+    /// Whether `l` ties nodes: a positive atom, a guard, `nearest` or an AST match.
+    fn ties(&self, l: &M<'v>) -> bool {
+        match l {
+            M::Own(x) => matches!(x.view(), Lit::Atom(a) if !a.neg()) || matches!(x.view(), Lit::Nearest { .. } | Lit::Ast { .. }),
+            M::Guard(..) => true,
+            _ => false,
+        }
+    }
+    /// The variables a rule's literals hold as a document's id: `docof(_, d)`, `doc(d, …)`, `node(d, …)`.
+    fn doc_vars(&self, pre: &[(M<'v>, bool)]) -> VarSet {
+        let mut out = VarSet::new();
+        for (l, _) in pre {
+            if let M::Own(x) = l
+                && let Lit::Atom(a) = x.view()
+                && !a.neg()
+            {
+                let col = match self.v.rel_name(a.rel()) {
+                    "docof" => 1,
+                    "doc" | "node" => 0,
+                    _ => continue,
+                };
+                if let Some(TermRef::Var(s)) = a.args().nth(col) {
+                    out.insert(s);
+                }
+            }
+        }
+        out
+    }
+    /// The variables literal `l` holds in node columns or as a document's id (`docs`): a positive atom's, a guard's
+    /// (its relation's bound columns), `nearest`'s two, an AST match's node and document.
+    fn node_vars(&self, r: RuleRef<'v>, l: &M<'v>, docs: &VarSet) -> VarSet {
+        let mut out = VarSet::new();
+        match l {
+            M::Own(x) => match x.view() {
+                Lit::Atom(a) if !a.neg() => {
+                    let rel = self.v.rel_name(a.rel());
+                    for (i, t) in a.args().enumerate() {
+                        if let TermRef::Var(s) = t
+                            && (self.node_col(rel, i) || docs.contains(s))
+                        {
+                            out.insert(s);
+                        }
+                    }
+                }
+                Lit::Nearest { n, a, .. } => {
+                    out.insert(n);
+                    out.insert(a);
+                }
+                Lit::Ast { document, node, .. } => {
+                    out.insert(node);
+                    out.insert(document);
+                }
+                _ => {}
+            },
+            M::Guard(name, args) => {
+                if let Some((rel, ad)) = name.strip_prefix("magic_").and_then(|n| n.rsplit_once('_')) {
+                    let cols: Vec<usize> = ad.bytes().enumerate().filter(|(_, x)| *x == b'b').map(|(i, _)| i).collect();
+                    for (t, &i) in args.iter().zip(&cols) {
+                        if self.node_col(rel, i) {
+                            tm_vars(r, *t, &mut out);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        out
+    }
+    /// A magic rule's sideways literals for a relation whose bound columns are all nodes (`unparen_bf`, a node's own
+    /// rows): those tied to its arguments through node columns, and the filters over their variables. A node's demand
+    /// is its own document's, so a literal reached only through a value (a name, a symbol) joins another document's
+    /// rows to it and asks nothing more of this one: default-called-once's `magic_unparen_bf(v)` joined every call's
+    /// callee name to every field's class name (`t`), a crossing the split refuses (decision 0695). Leaving a literal
+    /// out only widens the demand. Unchanged when the tied literals would not bind the arguments.
+    fn tied(&self, r: RuleRef<'v>, rel: &str, ad: &str, args: &[Tm<'v>], pre: &[(M<'v>, bool)]) -> Vec<(M<'v>, bool)> {
+        let bound_cols: Vec<usize> = ad.bytes().enumerate().filter(|(_, x)| *x == b'b').map(|(i, _)| i).collect();
+        if bound_cols.is_empty() || !bound_cols.iter().all(|&i| self.node_col(rel, i)) {
+            return pre.to_vec();
+        }
+        let mut seeds = VarSet::new();
+        args.iter().for_each(|t| tm_vars(r, *t, &mut seeds));
+        let want = seeds.clone();
+        let docs = self.doc_vars(pre);
+        let mut taken = vec![false; pre.len()];
+        loop {
+            let mut more = false;
+            for (i, (l, _)) in pre.iter().enumerate() {
+                if taken[i] || !self.ties(l) {
+                    continue;
+                }
+                let nv = self.node_vars(r, l, &docs);
+                if !nv.is_disjoint(&seeds) {
+                    taken[i] = true;
+                    seeds.extend(&nv);
+                    more = true;
+                }
+            }
+            if !more {
+                break;
+            }
+        }
+        let mut held = VarSet::new();
+        for (i, (l, _)) in pre.iter().enumerate() {
+            if taken[i] {
+                held.extend(&l.vars(r));
+            }
+        }
+        if !want.is_subset(&held) {
+            return pre.to_vec();
+        }
+        // An atom over variables the tied literals hold only tests them (`seqkind(kl)`), and so does one whose other
+        // variables no other literal reads (`rifrom(s, x, m, y)` for x): it is kept.
+        let others = |i: usize| {
+            let mut o = VarSet::new();
+            for (j, (l, _)) in pre.iter().enumerate() {
+                if j != i && !taken[j] {
+                    o.extend(&l.vars(r));
+                }
+            }
+            o
+        };
+        let tests: Vec<usize> = (0..pre.len())
+            .filter(|&i| {
+                let vars = pre[i].0.vars(r);
+                !taken[i] && self.ties(&pre[i].0) && (vars.is_subset(&held) || (!vars.is_disjoint(&held) && vars.minus(&held).is_disjoint(&others(i))))
+            })
+            .collect();
+        for i in tests {
+            taken[i] = true;
+        }
+        let mut left = VarSet::new();
+        for (i, (l, _)) in pre.iter().enumerate() {
+            if !taken[i] && self.ties(l) {
+                left.extend(&l.vars(r));
+            }
+        }
+        // A filter goes with the literals it reads: out when a variable of it is bound only by one left out.
+        let gone = left.minus(&held);
+        pre.iter().enumerate().filter(|(i, (l, _))| taken[*i] || (!self.ties(l) && l.vars(r).is_disjoint(&gone))).map(|(_, x)| x.clone()).collect()
+    }
     /// The body in sideways order: filters as soon as they can run; then the left-most positive atom whose key is
     /// bound, an input before a derived one; else one sharing a bound variable (an input or view first); else the
-    /// lowest one in the strata (inputs first). `None` if no order binds the rest.
-    fn sips(&self, r: RuleRef<'v>, body: &[M<'v>], bound: &VarSet) -> Option<Vec<M<'v>>> {
+    /// lowest one in the strata (inputs first) of those computed in full (`full`, or not derived), and only then a
+    /// demanded one: a demanded relation read with nothing bound is computed in full, which its demand is there to
+    /// spare (`pt_vpos_t(t) :- pt_vpos(n), pt_tm(n, t)` started at `pt_tm`, below `pt_vpos` in the strata, and
+    /// made every node's term). `None` if no order binds the rest.
+    fn sips(&self, r: RuleRef<'v>, body: &[M<'v>], bound: &VarSet, full: &BTreeSet<String>) -> Option<Vec<M<'v>>> {
         let v = self.v;
         let (mut rest, mut order, mut bound) = (body.to_vec(), Vec::new(), bound.clone());
         while !rest.is_empty() {
@@ -446,6 +595,10 @@ impl<'v> Ctx<'v, '_> {
                 .find(|&i| first(i) && !derived(i))
                 .or_else(|| pos.iter().copied().find(|&i| first(i)))
                 .or_else(|| lowest(&joined, &|i| i64::from(derived(i))))
+                .or_else(|| {
+                    let undemanded: Vector<usize> = pos.iter().copied().filter(|&i| !derived(i) || full.contains(rest[i].positive(v).expect("a positive atom"))).collect();
+                    lowest(&undemanded, &|i| self.level.get(rest[i].positive(v).expect("a positive atom")).map_or(-1, |&l| l as i64))
+                })
                 .or_else(|| lowest(&pos, &|i| self.level.get(rest[i].positive(v).expect("a positive atom")).map_or(-1, |&l| l as i64)))
                 .expect("a positive atom");
             let l = rest.remove(pick);
@@ -459,7 +612,11 @@ impl<'v> Ctx<'v, '_> {
         let v = self.v;
         let (mut rules, mut magic, mut seen) = (Vec::new(), Vec::new(), BTreeSet::new());
         self.answered.clear();
+        self.free_by.clear();
         let mut todo: Vec<(String, String)> = v.outputs().map(|o| v.text(o)).filter(|o| self.idb.contains(o)).map(|o| (o.to_owned(), "f".repeat(self.arity(o)))).collect();
+        for (o, _) in &todo {
+            self.free_by.insert(o.clone(), "an output of the program".to_owned());
+        }
         while let Some((rel, mut ad)) = todo.pop() {
             if full.contains(&rel) {
                 ad = "f".repeat(self.arity(&rel));
@@ -479,7 +636,7 @@ impl<'v> Ctx<'v, '_> {
                     pre.push((g.clone(), false));
                     gd = Some(g);
                 }
-                let order = self.sips(rule, &body, &bound).ok_or_else(|| Error::Syntax(format!("no order binds the body of {}", v.show_rule(rule))))?;
+                let order = self.sips(rule, &body, &bound, full).ok_or_else(|| Error::Syntax(format!("no order binds the body of {}", v.show_rule(rule))))?;
                 for l in order {
                     if let Some(a) = l.own_atom()
                         && self.idb.contains(v.rel_name(a.rel()))
@@ -489,9 +646,14 @@ impl<'v> Ctx<'v, '_> {
                         // consumers' recursive component.
                         let ad2 = if full.contains(arel) || l.is_agg() { "f".repeat(self.arity(arel)) } else { self.adorn(a, &bound, full) };
                         let ad2 = coarse.get(&(arel.to_owned(), ad2.clone())).cloned().unwrap_or(ad2);
+                        if !ad2.contains('b') && !full.contains(arel) && !self.free_by.contains_key(arel) {
+                            let asked = if l.is_agg() { "in an aggregate".to_owned() } else { format!("as {}", self.pattern(a, &bound)) };
+                            self.free_by.insert(arel.to_owned(), format!("{asked} by {}", v.show_rule(rule)));
+                        }
                         if ad2.contains('b') {
-                            let args = a.args().zip(ad2.bytes()).filter(|(_, x)| *x == b'b').map(|(t, _)| Tm::Own(t)).collect();
-                            magic.push(((format!("magic_{arel}_{ad2}"), args), rule, pre.clone()));
+                            let args: Vec<Tm<'_>> = a.args().zip(ad2.bytes()).filter(|(_, x)| *x == b'b').map(|(t, _)| Tm::Own(t)).collect();
+                            let pre = self.tied(rule, arel, &ad2, &args, &pre);
+                            magic.push(((format!("magic_{arel}_{ad2}"), args), rule, pre));
                         }
                         todo.push((arel.to_owned(), ad2));
                     }
@@ -691,7 +853,7 @@ impl ProgramDemand {
         let level: BTreeMap<String, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.to_owned(), i))).collect();
         let (mut cyc, mut why) = (Vec::new(), Vec::new());
         let made = loop {
-            let mut cx2 = Ctx { v, about, by: &by, idb: &idb, level: &level, answered: BTreeMap::new() };
+            let mut cx2 = Ctx { v, about, by: &by, idb: &idb, level: &level, answered: BTreeMap::new(), free_by: BTreeMap::new() };
             match attempt(&mut cx2, &full, self.gate) {
                 Ok(made) => break made,
                 Err(Attempt::Failed(e)) => return Err(e.to_string()),
@@ -1087,9 +1249,11 @@ fn attempt<'v>(cx: &mut Ctx<'v, '_>, full_in: &BTreeSet<String>, gate: bool) -> 
     // A relation demanded with every argument free anywhere is computed in full; an adornment binding a superset of
     // another's columns is answered through the other (`pv_bbb` through `pv_bbf`).
     let (mut full, mut coarse) = (full_in.clone(), BTreeMap::<(String, String), String>::new());
+    let mut free_readers = Vec::new();
     let (rules, magic, seen) = loop {
         let (rules, magic, seen) = cx.closure(&full, &coarse)?;
         let free: BTreeSet<String> = seen.iter().filter(|(_, a)| !a.contains('b')).map(|(r, _)| r.clone()).filter(|r| !full.contains(r)).collect();
+        free_readers.extend(free.iter().map(|r| format!("{r}: asked {}", cx.free_by.get(r).map_or("with nothing bound", String::as_str))));
         let mut more = BTreeMap::new();
         for (rel, ad) in &seen {
             let under = seen
@@ -1322,6 +1486,7 @@ fn attempt<'v>(cx: &mut Ctx<'v, '_>, full_in: &BTreeSet<String>, gate: bool) -> 
         gates: trial.gates.len(),
         full_for_negation: Vec::new(),
         reasons: Vec::new(),
+        free_readers,
     };
     Ok((trial, decls, report))
 }

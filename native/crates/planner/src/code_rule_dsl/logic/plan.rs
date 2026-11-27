@@ -47,6 +47,9 @@ use super::sql::sql_ast::{SqlBinaryOperator as Op, SqlExpression as Expr, SqlUna
 pub use rerail_plan_search::code_rule_dsl::logic::plan::*;
 // cratify: `corpus` is rerail-logic's (it mounts it: the corpus runner reads the language, above the planner)
 pub mod join_spec;
+pub(crate) mod join_shapes;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use join_shapes::shape_names;
 pub mod compose;
 pub mod emit;
 pub mod issue;
@@ -3656,9 +3659,12 @@ impl<'a> Run<'a, '_> {
             }
             return Ok(Native::Ran);
         }
-        let solving = solving_of(&self.versions, scc, rules);
-        let sources = if solving.is_some() { column_sources(&self.versions, scc, rules) } else { Sources::new() };
-        let out = self.lent(solving, sources, |this, native_rels| this.native_stratum_(scc, rules, native_rels));
+        // `RERAIL_JOIN_FRAMES`: the stratum runs under frames naming it, for a profiler's samples (setfix's `framed`).
+        let out = super::native::setfix::stratum_framed(&|| stratum_label(scc), &mut || {
+            let solving = solving_of(&self.versions, scc, rules);
+            let sources = if solving.is_some() { column_sources(&self.versions, scc, rules) } else { Sources::new() };
+            self.lent(solving, sources, |this, native_rels| this.native_stratum_(scc, rules, native_rels))
+        });
         if let (Some(made), Ok(Native::Ran)) = (&evaluated, &out) {
             let tree = self.spike_tree();
             let chunk = tree.as_ref().map(|(b, t)| spike_strata::Chunk::new(t, Some(b)));
@@ -4111,6 +4117,20 @@ impl<'a> Run<'a, '_> {
         let kept_rows: Vector<usize> = rels.iter().filter(|r| self.model.inputs.kept.contains(**r)).map(|r| ri[*r]).collect();
         if !kept_rows.is_empty() {
             rel_lines.push(SpecLine::KeptRows(kept_rows));
+        }
+        // The relations no other stratum reads (the design's S4, "the walk is inner"): every reader is a rule of this
+        // stratum, and none is kept past the run, an output, stored for a session's next run, started from another's
+        // rows, filled by a request, or a lattice's. A form that runs the component whole keeps their rows in its own
+        // scratch. `RERAIL_SHAPE_INNER_WALK=off` turns it off.
+        if !join_shapes::off("inner walk") && based.is_none() && !scc.iter().any(|r| f.qualified(r, "levels")) {
+            let inner: Vector<usize> = rels
+                .iter()
+                .filter(|r| scc.contains(r) && !self.model.inputs.kept.contains(**r) && is_inner(&f, r, |x| scc.contains(x)))
+                .map(|r| ri[*r])
+                .collect();
+            if !inner.is_empty() {
+                rel_lines.push(SpecLine::Inner(inner));
+            }
         }
         // The relations declared sorted (decision 0456 K7): laid out in canonical order when done.
         let sorted: Vector<usize> = rels.iter().filter(|r| f.qualified(r, "sorted")).map(|r| ri[*r]).collect();
@@ -7284,6 +7304,47 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                 }
                 None => None,
             };
+            // The design's S5: a min or max relation read only to be joined back at it, made in its one reader (no
+            // aggregate relation), the reads a layout's key makes one merged; corpus runs only, as inlining.
+            // The keys are the layouts' (decision 0361): declared, or proved from the rules, of the version the pass reads.
+            let latest = if corpus {
+                body::pass("plan.latest", "latest in a group", inlined.as_ref().unwrap_or(&normal_v), |p| {
+                    let layouts = super::program_image::manager::analysis::<super::program_image::layouts::Layouts>(&p.v).ok();
+                    let keys = |rel: &str| -> Vec<Vec<usize>> {
+                        let (Some(l), Some(id)) = (layouts.as_deref(), p.v.rel(rel)) else { return Vec::new() };
+                        l.of(id).filter_map(|f| match f {
+                            crate::code_rule_dsl::logic::front::LayoutFact::Key(cols) => Some(cols.iter().copied().collect()),
+                            _ => None,
+                        }).collect()
+                    };
+                    keeps::latest::latest(p, &keys)
+                }).map_err(Error::Plan)?
+            } else { None };
+            // The design's S1: the relations every reader reads by a key, reported (profiled runs).
+            if corpus && super::profile::on() {
+                keeps::chain::report(latest.as_ref().map(|x| &x.1).or(inlined.as_ref()).unwrap_or(&normal_v));
+            }
+            let inlined = match latest {
+                Some((done, v)) => {
+                    crate::threads::drop_behind(std::mem::take(&mut model.analysis));
+                    inlined_names.extend(done);
+                    Some(v)
+                }
+                None => inlined,
+            };
+            // The design's S1 as one pass a name (the page "S1 Per-Name Pass"): a chain its readers read beside one
+            // driver atom made once a driver row, in a relation of that row; corpus runs only, as inlining.
+            let forked = if corpus {
+                body::pass("plan.fork", "one pass a name", inlined.as_ref().unwrap_or(&normal_v), keeps::fork::fork).map_err(Error::Plan)?
+            } else { None };
+            let inlined = match forked {
+                Some((done, v)) => {
+                    crate::threads::drop_behind(std::mem::take(&mut model.analysis));
+                    inlined_names.extend(done);
+                    Some(v)
+                }
+                None => inlined,
+            };
             // Relations computed for every node that rules only negate, computed for the keys those rules reach
             // (decision 0048); in a corpus run only (kept plans), so T's golden plans are unchanged.
             let mut demanded_names = Vec::new();
@@ -8317,7 +8378,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                 }
                 // A later program can reuse this producer even when the current cone has no local reader.
                 // Retain its actual answers alongside their observed digest whenever this stratum publishes frames.
-                if f0.is_input(rel) || rows.is_empty() {
+                // An empty answer is kept too: a relation the engine does not hold is read from its table, and an answer
+                // has none (a plain run's `file_line` of a file that is not there failed with "no such table").
+                if f0.is_input(rel) {
                     continue;
                 }
                 if strata_kept.is_none()
@@ -8965,49 +9028,60 @@ fn off_thread(e: &Error) -> bool {
 /// The strata in order of their levels (stable; with `sort`), and each one's level: one more than the deepest level of a stratum
 /// it depends on (`deps`: reads, requests answered, a native operator's inputs). A level's strata do not depend on
 /// each other, so it is a device wave (decision 0095 §5).
-/// The climb's ends (decision 0561): a stratum whose rules each read a keyed walk's rows once, positively, and
+/// Whether `rel`, a relation of the stratum `in_stratum` tells, is read by no rule outside it (the design's S4, "the
+/// walk is inner"), and is neither an output, stored for a session's next run, produced, a request, a gate, nor a
+/// lattice's: its rows matter to no one once the stratum is done. Its structure only, never its name.
+pub(crate) fn is_inner(f: &Fields<'_>, rel: &str, in_stratum: impl Fn(&str) -> bool) -> bool {
+    !f.is_output(rel)
+        && !f.qualified(rel, "no_inline")
+        && !f.produced(rel)
+        && !f.request(rel)
+        && !f.gate(rel)
+        && f.lattice_decl(rel).is_none()
+        && f.v.rel(rel).is_some_and(|id| f.v.readers(id).all(|(rule, _)| in_stratum(f.v.rel_name(rule.head().rel()))))
+}
+
+/// The strata with each registered shape's matches joined (`join_shapes::regroup`, `join_shapes::SHAPES`). The first shape is
+/// the climb's ends (decision 0561): a stratum whose rules each read a keyed walk's rows once, positively, and
 /// otherwise only relations made before the walk (`look` and `miss` over `walk`) joins the walk's stratum, where the
 /// walk's run answers it at each row as the climb makes it (`closure::keyed`), so the walk's rows are not read again
 /// by a join of their own. `RERAIL_CLIMB_ENDS=off` keeps the strata apart.
 /// `None`: the strata as they are.
 fn climb_ends(p: &body::Placed, sccs: &super::front::Components, deps: &super::front::Edges) -> Option<super::front::Components> {
-    if std::env::var("RERAIL_CLIMB_ENDS").is_ok_and(|v| v == "off") {
-        return None;
-    }
+    join_shapes::regroup(p, sccs, deps)
+}
+
+/// The climb's ends as matches (`join_shapes::ClimbEnds`): each keyed walk's relation, then the ends that join its stratum.
+fn climb_end_matches(p: &body::Placed, sccs: &super::front::Components, deps: &super::front::Edges) -> Vec<Vec<String>> {
     let mut rules: HashMap<&str, Vec<usize>> = HashMap::new();
     for k in 0..p.len() {
         rules.entry(p.v.rel_name(p.rule(k).head().rel())).or_default().push(k);
     }
     let at: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(j, scc)| scc.iter().map(move |r| (r, j))).collect();
     let only = |scc: &super::front::Comp| (scc.len() == 1).then(|| scc.first().expect("one").to_owned());
-    let mut into: Vec<Option<usize>> = vec![None; sccs.len()];
+    let mut taken: Vec<bool> = vec![false; sccs.len()];
+    let mut out = Vec::new();
     for j in 0..sccs.len() {
         let Some(w) = only(&sccs[j]) else { continue };
-        if into[j].is_some() || !rules.get(w.as_str()).is_some_and(|ks| keyed_walk(p, &w, ks)) {
+        if taken[j] || !rules.get(w.as_str()).is_some_and(|ks| keyed_walk(p, &w, ks)) {
             continue;
         }
+        let mut m = vec![w.clone()];
         for i in j + 1..sccs.len() {
             let Some(t) = only(&sccs[i]) else { continue };
             let Some(d) = deps.get(&t) else { continue };
             let reads = d.contains(&(w.clone(), false)) && !d.contains(&(w.clone(), true)) && !d.iter().any(|(r, _)| *r == t);
             let before = d.iter().all(|(r, _)| *r == w || at.get(r.as_str()).is_none_or(|&s| s < j));
-            if into[i].is_none() && reads && before && rules.get(t.as_str()).is_some_and(|ks| ks.iter().all(|&k| reads_once(p, k, &w) && of_the_row(p, k, &w))) {
-                into[i] = Some(j);
+            if !taken[i] && reads && before && rules.get(t.as_str()).is_some_and(|ks| ks.iter().all(|&k| reads_once(p, k, &w) && of_the_row(p, k, &w))) {
+                taken[i] = true;
+                m.push(t);
             }
         }
-    }
-    if into.iter().all(Option::is_none) {
-        return None;
-    }
-    // Each stratum kept, with the ends moved into it; `Components::of` sorts each one's members.
-    let mut out: Vec<Vec<&str>> = sccs.iter().map(|c| c.iter().collect()).collect();
-    for (i, to) in into.iter().enumerate() {
-        if let Some(j) = *to {
-            let moved: Vec<&str> = sccs[i].iter().collect();
-            out[j].extend(moved);
+        if m.len() > 1 {
+            out.push(m);
         }
     }
-    Some(super::front::Components::of_names(out.into_iter().enumerate().filter(|(i, _)| into[*i].is_none()).map(|(_, s)| s)))
+    out
 }
 
 /// Whether rule `k` reads relation `w` once, as a positive atom of its own (not an aggregate's).
@@ -10554,17 +10628,107 @@ mod climb_tests {
         let walk = sccs.iter().find(|s| s.contains("walk")).expect("walk's stratum");
         assert!(walk.contains("look"), "a reader of the row alone is answered in the climb: {sccs:?}");
         assert!(!walk.contains("chained"), "a reader that joins out from the row is a stratum of its own: {sccs:?}");
+        assert!(!is_inner(&f, "walk", |r| walk.contains(r)), "a walk another stratum reads is not inner");
+    }
+
+    /// The design's S5: a max read only to be joined back at it is made in its one reader, and the reader's two reads
+    /// of a relation keyed by `i` are one; a max that a second rule reads too is left a relation.
+    #[test]
+    fn a_max_read_only_to_be_joined_back_is_made_in_its_reader() {
+        use crate::code_rule_dsl::logic::front::ast::AggOp;
+        use crate::code_rule_dsl::logic::program_image::{Builder, T};
+        let program = |second_reader: bool| {
+            let mut b = Builder::base();
+            for (rel, cols) in [("rd", &[("i", "node"), ("d", "number"), ("r", "number")][..]), ("def", &[("d", "number"), ("x", "symbol"), ("t", "number"), ("k", "symbol")]), ("seen_at", &[("i", "node"), ("u", "number")]), ("seen", &[("r", "number"), ("k", "symbol")]), ("also", &[("i", "node"), ("u", "number")])] {
+                b.fields().declare(rel, cols);
+            }
+            let v = |x: &'static str| T::Var(x);
+            let max = AggOp::Bounded { max: true, bound: "r".into(), strict: true };
+            b.rule().head("seen_at", &[v("i"), v("u")]).atom("rd", &[v("i"), v("d"), v("r")]).agg(v("u"), &max, Some(v("t")), "def", &[v("d"), T::Str("f"), v("t"), T::Wild]).finish().unwrap();
+            b.rule().head("seen", &[v("r"), v("k")]).atom("rd", &[v("i"), v("d"), v("r")]).atom("seen_at", &[v("i"), v("u")]).atom("def", &[v("d"), T::Str("f"), v("u"), v("k")]).finish().unwrap();
+            if second_reader {
+                b.rule().head("also", &[v("i"), v("u")]).atom("seen_at", &[v("i"), v("u")]).finish().unwrap();
+            }
+            body::Placed::whole(b.finish().unwrap().0)
+        };
+        let keys = |rel: &str| if rel == "rd" { vec![vec![0]] } else { Vec::new() };
+        let p = program(false);
+        let rid = p.v.rel("seen_at").unwrap();
+        assert!(keeps::latest::has_shape(&p.v, rid), "a max joined back at it, read by one rule");
+        let (done, out) = keeps::latest::latest(&p, &keys).unwrap().expect("made in its reader");
+        assert_eq!(done, ["seen_at"]);
+        let shown: Vec<String> = out.v.rules().map(|r| out.v.show_rule(r)).collect();
+        assert!(!shown.iter().any(|r| r.starts_with("seen_at(")), "no aggregate relation: {shown:#?}");
+        let seen: Vec<&String> = shown.iter().filter(|r| r.starts_with("seen(")).collect();
+        assert_eq!(seen.len(), 1, "{shown:#?}");
+        assert_eq!(seen[0].matches("rd(").count(), 1, "the reads keyed by i are one: {}", seen[0]);
+        assert!(seen[0].contains("max") && seen[0].contains("def("), "{}", seen[0]);
+        // A near miss: a second rule reads the max.
+        let p = program(true);
+        assert!(!keeps::latest::has_shape(&p.v, p.v.rel("seen_at").unwrap()), "read by two rules");
+        assert!(keeps::latest::latest(&p, &keys).unwrap().is_none());
+    }
+
+    /// The design's S1: a relation keyed by `n` that every reader reads with `n` bound (`start`) is a functional
+    /// chain; one a reader scans (`scanned`, read first in `cls`) is not, nor a recursive one.
+    #[test]
+    fn a_relation_every_reader_reads_by_its_key_is_a_functional_chain() {
+        use crate::code_rule_dsl::logic::program_image::{Builder, RelId, T};
+        let mut b = Builder::base();
+        for (rel, cols) in [("name", &[("n", "node"), ("x", "symbol")][..]), ("near", &[("n", "node"), ("s", "node")]), ("start", &[("n", "node"), ("s", "node")]), ("scanned", &[("n", "node"), ("s", "node")]), ("seed", &[("n", "node"), ("x", "symbol"), ("s", "node")]), ("cls", &[("s", "node")]), ("up", &[("s", "node"), ("p", "node")]), ("walk", &[("n", "node"), ("s", "node")])] {
+            b.fields().declare(rel, cols);
+        }
+        let v = |x: &'static str| T::Var(x);
+        b.rule().head("start", &[v("n"), v("s")]).atom("name", &[v("n"), T::Wild]).atom("near", &[v("n"), v("s")]).finish().unwrap();
+        b.rule().head("scanned", &[v("n"), v("s")]).atom("near", &[v("n"), v("s")]).finish().unwrap();
+        b.rule().head("seed", &[v("n"), v("x"), v("s")]).atom("name", &[v("n"), v("x")]).atom("start", &[v("n"), v("s")]).not("start", &[v("n"), v("x")]).finish().unwrap();
+        b.rule().head("cls", &[v("s")]).atom("scanned", &[v("n"), v("s")]).finish().unwrap();
+        b.rule().head("walk", &[v("n"), v("s")]).atom("name", &[v("n"), T::Wild]).atom("start", &[v("n"), v("s")]).finish().unwrap();
+        b.rule().head("walk", &[v("n"), v("p")]).atom("walk", &[v("n"), v("s")]).atom("up", &[v("s"), v("p")]).finish().unwrap();
+        let ver = b.finish().unwrap().0;
+        let id = |r: &str| ver.rel(r).unwrap();
+        let keyed: Vec<RelId> = ["start", "scanned", "walk"].iter().map(|r| id(r)).collect();
+        let keys = |r: RelId| if keyed.contains(&r) { vec![vec![0]] } else { Vec::new() };
+        let recursive: BTreeSet<RelId> = [id("walk")].into();
+        let got = keeps::chain::chains(&ver, &keys, &recursive, &|_| false);
+        let names: Vec<&str> = got.iter().map(|c| ver.rel_name(c.rel)).collect();
+        assert_eq!(names, ["start"], "{got:?}");
+        assert_eq!((got[0].key.as_slice(), got[0].reads), (&[0][..], 3));
+    }
+
+    /// The design's S4: a walk read by its climb's ends alone is inner; the ends, read by no rule but stated as
+    /// outputs or read by another stratum, are not.
+    #[test]
+    fn a_walk_its_ends_alone_read_is_inner() {
+        use crate::code_rule_dsl::logic::program_image::{Builder, T};
+        let mut b = Builder::base();
+        for (rel, cols) in [("nameref", &[("n", "node"), ("x", "symbol")][..]), ("wstart", &[("n", "node"), ("s", "node")]), ("bound_in", &[("s", "node"), ("x", "symbol")]), ("up", &[("s", "node"), ("p", "node")]), ("walk", &[("n", "node"), ("x", "symbol"), ("s", "node")]), ("look", &[("n", "node"), ("x", "symbol"), ("s", "node")]), ("used", &[("n", "node"), ("s", "node")])] {
+            b.fields().declare(rel, cols);
+        }
+        let v = |x: &'static str| T::Var(x);
+        b.rule().head("walk", &[v("n"), v("x"), v("s")]).atom("nameref", &[v("n"), v("x")]).atom("wstart", &[v("n"), v("s")]).finish().unwrap();
+        b.rule().head("walk", &[v("n"), v("x"), v("p")]).atom("walk", &[v("n"), v("x"), v("s")]).not("bound_in", &[v("s"), v("x")]).atom("up", &[v("s"), v("p")]).finish().unwrap();
+        b.rule().head("look", &[v("n"), v("x"), v("s")]).atom("walk", &[v("n"), v("x"), v("s")]).atom("bound_in", &[v("s"), v("x")]).finish().unwrap();
+        b.rule().head("used", &[v("n"), v("s")]).atom("look", &[v("n"), v("x"), v("s")]).finish().unwrap();
+        let v = b.finish().unwrap().0;
+        let p = body::Placed::whole(v);
+        let f = Fields::of(&p).expect("a whole version");
+        let deps = crate::code_rule_dsl::logic::program_image::analyses::edges_by_name(f.v, f.about);
+        let sccs = climb_ends(&p, &p.components().unwrap(), &deps).expect("the climb's end joins the walk's stratum");
+        let walk = sccs.iter().find(|s| s.contains("walk")).expect("walk's stratum");
+        assert!(walk.contains("look"), "{sccs:?}");
+        assert!(is_inner(&f, "walk", |r| walk.contains(r)), "a walk its ends alone read is inner");
+        assert!(!is_inner(&f, "look", |r| walk.contains(r)), "an end another stratum reads is not inner");
     }
 }
 
-/// SPIKE (join shapes): appends `line` to the file `RERAIL_SPIKE_SHAPES` names.
+/// SPIKE (join shapes): appends `line` to the file `RERAIL_SPIKE_SHAPES` names (a setting of the run, decision 0442),
+/// opened for each line, so no handle outlives it.
 fn spike_shapes_line(line: &str) {
     use std::io::Write;
-    static FILE: std::sync::LazyLock<Option<std::sync::Mutex<std::fs::File>>> = std::sync::LazyLock::new(|| {
-        let p = std::env::var_os("RERAIL_SPIKE_SHAPES")?;
-        std::fs::OpenOptions::new().create(true).append(true).open(p).ok().map(std::sync::Mutex::new)
-    });
-    if let Some(f) = FILE.as_ref() {
-        let _ = writeln!(f.lock().unwrap(), "{line}");
+    let Some(p) = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SPIKE_SHAPES")) else { return };
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
+        // One write of the whole line: appends from many threads do not interleave.
+        let _ = f.write_all(format!("{line}\n").as_bytes());
     }
 }

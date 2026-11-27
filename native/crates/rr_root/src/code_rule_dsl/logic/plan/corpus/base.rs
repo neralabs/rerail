@@ -1787,6 +1787,9 @@ pub struct ThreadStore {
 impl ThreadStore {
     pub fn select(path: &Path, ownership: Option<(PathBuf, crate::content_store::analysis_scope::AnalysisOwner)>) -> Self {
         let path = (path != Path::new(":memory:")).then(|| path.to_owned());
+        // The owned root canonical, as a run names its root (`owner`): a root given through a link (macOS's `/tmp`,
+        // `/private/tmp`) is the same root.
+        let ownership = ownership.map(|(root, owner)| (dunce::canonicalize(&root).unwrap_or(root), owner));
         Self { _bound: crate::code_rule_dsl::logic::profile::bind(SelectedStore(Some(StoreSelection { path, ownership, git_reads: Arc::default() }))) }
     }
 
@@ -1808,7 +1811,8 @@ impl ThreadStore {
     pub fn owner(root: &Path) -> Option<crate::content_store::analysis_scope::AnalysisOwner> {
         Self::with(|store| {
             let (expected, owner) = store?.ownership.as_ref()?;
-            (expected == root).then(|| owner.clone())
+            // A caller may ask with its root as given (`run_policies`' `root`) or as the run canonicalized it.
+            (expected == root || dunce::canonicalize(root).is_ok_and(|root| &root == expected)).then(|| owner.clone())
         })
     }
 

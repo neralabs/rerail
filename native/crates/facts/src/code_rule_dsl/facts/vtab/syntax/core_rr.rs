@@ -854,7 +854,7 @@ impl CoreRows {
     /// The literal values (n, v, v's type) of the nodes of documents `docs`: where `Extra`'s W's values are bound, a
     /// document W reads no values of (`Dialect::values`) has these.
     pub(super) fn values_of<'a>(&'a self, docs: &'a HashSet<u32>) -> impl Iterator<Item = [i64; 3]> + 'a {
-        self.value.iter().filter(move |r| docs.contains(&((r[0] >> 32) as u32))).copied()
+        self.value.iter().filter(move |r| docs.contains(&rerail_blocks::located::Located(r[0]).key())).copied()
     }
 
     /// The relations, the strings' indexes made atoms by `atom`.

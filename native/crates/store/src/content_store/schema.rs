@@ -110,7 +110,8 @@ CREATE TABLE IF NOT EXISTS tape_objects (
 -- The segments sources and tapes are in (decision 0295 step 5: `<store>.objects/<seg>.seg`, mapped, uncompressed): every
 -- row is of codec 0, names its range (`seg`, `seg_at`, `seg_len`) and holds no frame (floor 7: `frame` is always
 -- empty); `seg` -1 is a row whose segment went missing (absent until stored again).
-CREATE TABLE IF NOT EXISTS object_segments(seg INTEGER PRIMARY KEY);
+-- `bytes`: what each file takes on the disk, recorded by the transaction that names it (`store_bytes`).
+CREATE TABLE IF NOT EXISTS object_segments(seg INTEGER PRIMARY KEY, bytes INTEGER NOT NULL DEFAULT -1);
 CREATE INDEX IF NOT EXISTS tape_objects_by_hash ON tape_objects(canonical_hash_id);
 -- The documents a file derives from its own (an embedded program, a generated one), keyed by the
 -- primary document's tape: documents are a function of source, grammar version and tape format,
@@ -458,7 +459,8 @@ CREATE TABLE IF NOT EXISTS atom_blocks (
     name TEXT NOT NULL UNIQUE,
     first INTEGER NOT NULL UNIQUE CHECK(first >= 1),
     upto INTEGER NOT NULL CHECK(upto >= first),
-    tag INTEGER NOT NULL
+    tag INTEGER NOT NULL,
+    bytes INTEGER NOT NULL DEFAULT -1
 ) STRICT;
 
 -- A space's kept facts (decisions 0401, 0456 K4-K5): a chain of frozen files in `<store>.facts/<space>/`,
@@ -469,6 +471,7 @@ CREATE TABLE IF NOT EXISTS facts_chain (
     seq INTEGER NOT NULL CHECK(seq >= 1),
     name TEXT NOT NULL,
     tag INTEGER NOT NULL,
+    bytes INTEGER NOT NULL DEFAULT -1,
     PRIMARY KEY(space, seq)
 ) STRICT;
 
@@ -518,7 +521,38 @@ CREATE TABLE IF NOT EXISTS memo_entries(space BLOB NOT NULL, part INTEGER NOT NU
     PRIMARY KEY (space, part)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS memo_entries_by_path ON memo_entries(space, path, pack, at);
 -- The segments (and packs before) the entries are in.
-CREATE TABLE IF NOT EXISTS memo_packs(pack INTEGER PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS memo_packs(pack INTEGER PRIMARY KEY, bytes INTEGER NOT NULL DEFAULT -1);
+-- The bytes the store's files beside it take on the disk (decision 0295: the segments of `object_segments` and
+-- `memo_packs`, the `atom_blocks`, the `facts_chain`'s files): the sum of their rows' `bytes`, kept by these
+-- triggers in each transaction that names, grows or drops a file, so the disk budget (`capacity`) reads one row,
+-- the same in every process. A row's `bytes` is -1 where its file is not counted yet (a row an older binary
+-- wrote): the open that finds one counts its file (`schema::count_files`).
+CREATE TABLE IF NOT EXISTS store_bytes(singleton INTEGER PRIMARY KEY CHECK(singleton = 1), bytes INTEGER NOT NULL) STRICT;
+INSERT OR IGNORE INTO store_bytes(singleton, bytes) VALUES (1, 0);
+CREATE TRIGGER IF NOT EXISTS object_segments_bytes_in AFTER INSERT ON object_segments BEGIN
+    UPDATE store_bytes SET bytes = bytes + max(NEW.bytes, 0) WHERE singleton = 1; END;
+CREATE TRIGGER IF NOT EXISTS object_segments_bytes_out AFTER DELETE ON object_segments BEGIN
+    UPDATE store_bytes SET bytes = bytes - max(OLD.bytes, 0) WHERE singleton = 1; END;
+CREATE TRIGGER IF NOT EXISTS object_segments_bytes_set AFTER UPDATE OF bytes ON object_segments BEGIN
+    UPDATE store_bytes SET bytes = bytes + max(NEW.bytes, 0) - max(OLD.bytes, 0) WHERE singleton = 1; END;
+CREATE TRIGGER IF NOT EXISTS memo_packs_bytes_in AFTER INSERT ON memo_packs BEGIN
+    UPDATE store_bytes SET bytes = bytes + max(NEW.bytes, 0) WHERE singleton = 1; END;
+CREATE TRIGGER IF NOT EXISTS memo_packs_bytes_out AFTER DELETE ON memo_packs BEGIN
+    UPDATE store_bytes SET bytes = bytes - max(OLD.bytes, 0) WHERE singleton = 1; END;
+CREATE TRIGGER IF NOT EXISTS memo_packs_bytes_set AFTER UPDATE OF bytes ON memo_packs BEGIN
+    UPDATE store_bytes SET bytes = bytes + max(NEW.bytes, 0) - max(OLD.bytes, 0) WHERE singleton = 1; END;
+CREATE TRIGGER IF NOT EXISTS atom_blocks_bytes_in AFTER INSERT ON atom_blocks BEGIN
+    UPDATE store_bytes SET bytes = bytes + max(NEW.bytes, 0) WHERE singleton = 1; END;
+CREATE TRIGGER IF NOT EXISTS atom_blocks_bytes_out AFTER DELETE ON atom_blocks BEGIN
+    UPDATE store_bytes SET bytes = bytes - max(OLD.bytes, 0) WHERE singleton = 1; END;
+CREATE TRIGGER IF NOT EXISTS atom_blocks_bytes_set AFTER UPDATE OF bytes ON atom_blocks BEGIN
+    UPDATE store_bytes SET bytes = bytes + max(NEW.bytes, 0) - max(OLD.bytes, 0) WHERE singleton = 1; END;
+CREATE TRIGGER IF NOT EXISTS facts_chain_bytes_in AFTER INSERT ON facts_chain BEGIN
+    UPDATE store_bytes SET bytes = bytes + max(NEW.bytes, 0) WHERE singleton = 1; END;
+CREATE TRIGGER IF NOT EXISTS facts_chain_bytes_out AFTER DELETE ON facts_chain BEGIN
+    UPDATE store_bytes SET bytes = bytes - max(OLD.bytes, 0) WHERE singleton = 1; END;
+CREATE TRIGGER IF NOT EXISTS facts_chain_bytes_set AFTER UPDATE OF bytes ON facts_chain BEGIN
+    UPDATE store_bytes SET bytes = bytes + max(NEW.bytes, 0) - max(OLD.bytes, 0) WHERE singleton = 1; END;
 -- Each guest's key (decision 0391): one row per identity (a SHA-256 of its range and parts), its key unique, its host
 -- file (a value's first asker).
 CREATE TABLE IF NOT EXISTS guest_keys(identity BLOB PRIMARY KEY, key INTEGER NOT NULL UNIQUE, path TEXT NOT NULL) WITHOUT ROWID;
@@ -559,6 +593,9 @@ impl ContentStore {
                             }
                         }
                         apply_schema(&transaction)?;
+                        if let Some(path) = transaction.path().filter(|p| !p.is_empty()) {
+                            count_files(&transaction, Path::new(path))?;
+                        }
                         super::analysis_scope::compact_existing_directory_receipts(&transaction)?;
                         // The corpus runs' tables' rows into their kept form (t33 step 3), before the tables go; and
                         // the scopes' memberships off the manifests' table, whose drop would cascade into them.
@@ -688,7 +725,44 @@ fn holds_schema_current(connection: &Connection) -> StoreResult<bool> {
     let present = schema_object_names(connection)?
         .into_iter()
         .collect::<HashSet<_>>();
-    Ok(!retired_in(&present) && holds_objects_in(connection, &present)?)
+    Ok(!retired_in(&present) && holds_objects_in(connection, &present)? && !holds_uncounted(connection)?)
+}
+
+/// The tables whose rows name the store's files beside it, each row's file under the store's path, by the row's
+/// columns (`store_bytes`).
+const COUNTED_FILES: &[(&str, &str)] = &[
+    ("object_segments", "'.objects/' || seg || '.seg'"),
+    ("memo_packs", "'.memo/' || pack || '.seg'"),
+    ("atom_blocks", "'.atoms/' || name"),
+    ("facts_chain", "'.facts/' || lower(hex(space)) || '/' || name"),
+];
+
+/// Whether a row names a file not counted yet (`bytes` -1: written by an older binary, or before the column was).
+fn holds_uncounted(connection: &Connection) -> StoreResult<bool> {
+    for (table, _) in COUNTED_FILES {
+        let sql = format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE bytes < 0)");
+        if connection.query_row_cached(&sql, [], |r| r.get::<_, bool>(0))? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Each row's file not counted yet, counted (`segments::file_bytes`) in the open's transaction `t` of the store at
+/// `database`: the triggers add it to `store_bytes`.
+fn count_files(t: &Connection, database: &Path) -> StoreResult<()> {
+    let base = database.as_os_str().to_string_lossy().into_owned();
+    for (table, file) in COUNTED_FILES {
+        let rows: Vec<(i64, String)> = t
+            .prepare(&format!("SELECT rowid, {file} FROM {table} WHERE bytes < 0"))?
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<_, _>>()?;
+        let mut set = t.prepare(&format!("UPDATE {table} SET bytes = ?1 WHERE rowid = ?2"))?;
+        for (rowid, file) in rows {
+            set.execute(rusqlite::params![super::segments::file_bytes(Path::new(&format!("{base}{file}"))) as i64, rowid])?;
+        }
+    }
+    Ok(())
 }
 
 /// Tables SCHEMA no longer makes, dropped from a store that has them when it is opened: their rows are no build's
@@ -810,6 +884,10 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("tape_objects", "programs", "INTEGER NOT NULL DEFAULT -1"),
     ("file_documents", "at_start", "INTEGER"),
     ("file_documents", "at_end", "INTEGER"),
+    ("object_segments", "bytes", "INTEGER NOT NULL DEFAULT -1"),
+    ("memo_packs", "bytes", "INTEGER NOT NULL DEFAULT -1"),
+    ("atom_blocks", "bytes", "INTEGER NOT NULL DEFAULT -1"),
+    ("facts_chain", "bytes", "INTEGER NOT NULL DEFAULT -1"),
 ];
 
 /// Columns SCHEMA's tables no longer have, dropped from a store that has them when it is opened (`ALTER TABLE …

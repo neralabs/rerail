@@ -359,3 +359,27 @@ fn a_split_copy_splits_the_demand_below_it_in_the_next_round() {
     assert!(with("magic_hop_bf").iter().all(|r| !r.contains("__rr_embed_req")), "{rules:#?}");
     assert!(with("unparen__rr_embed_req").iter().filter(|r| r.contains("hop")).all(|r| r.contains("hop__rr_embed_req(")), "{rules:#?}");
 }
+
+/// With nothing bound, a body's sideways order starts at a relation computed in full, not at a demanded one: read
+/// first, the demanded relation is read with nothing bound, and so computed in full. points_to's
+/// `pt_vpos_t(t) :- pt_vpos(n), pt_tm(n, t)` started at `pt_tm`, which is below `pt_vpos` in the strata, and made
+/// every node's term. Here `pos` is above `tm` (it reads `seen`, which reads `tm`), and `out` reads `pos` first.
+#[test]
+fn a_body_starts_at_a_relation_computed_in_full() {
+    let src = ".decl node(n: node, k: symbol)\n.input node\n.decl ok(k: symbol)\n.input ok\n\
+        .decl tm(n: node, t: symbol)\n.pragma \"magic-transform\" \"tm\"\ntm(n, k) :- node(n, k), ok(k).\n\
+        .decl seen(n: node)\nseen(n) :- node(n, \"z\"), tm(n, _).\n\
+        .decl pos(n: node)\npos(n) :- node(n, \"v\"), seen(n).\n\
+        .decl out(t: symbol)\n.output out\nout(t) :- pos(n), tm(n, t).\n";
+    let v = parse_version(src).unwrap_or_else(|e| panic!("{e}"));
+    let mut p = Pipeline::new("listed demand", v);
+    p.program(&mut Prune::default());
+    let mut demand = ProgramDemand::default();
+    p.program(&mut demand);
+    let v = p.finish().unwrap_or_else(|e| panic!("{e}")).0;
+    let Some(Ok(report)) = &demand.outcome else { panic!("{:?}", demand.outcome) };
+    let rules: Vec<String> = v.rules().map(|r| v.show_rule(r)).collect();
+    assert!(report.adornments.iter().any(|a| a == "tm_bf"), "`out` asks `tm` by the node `pos` binds: {report:?}\n{rules:#?}");
+    assert!(report.free_readers.is_empty(), "nothing asks `tm` with nothing bound: {:?}", report.free_readers);
+    assert!(rules.iter().any(|r| r.starts_with("magic_tm_bf(") && r.contains("pos(")), "`tm`'s demand is `pos`'s nodes: {rules:#?}");
+}

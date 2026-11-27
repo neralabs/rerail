@@ -1836,6 +1836,22 @@ tailless(s) :- callee(_, s), !keyword(@rx_group(s, "^(?:[a-z]+\\.(?<u>[a-z]+))$"
 }
 
 /// `program` over `files` (path, source) by the corpus runner; each of `outputs` as written.
+/// The rows the fused min or max step (the design's S5) made, from the frames file `RERAIL_JOIN_FRAMES` names: its
+/// `rows latest …` lines (`forms::account`).
+fn latest_rows(frames: &std::path::Path) -> u64 {
+    std::fs::read_to_string(frames).unwrap_or_default().lines()
+        .filter_map(|l| l.strip_prefix("rows latest ")).filter_map(|l| l.split(" made ").nth(1)?.split(' ').next()?.parse::<u64>().ok()).sum()
+}
+
+/// Turns the frames file on for this test's process (`RERAIL_JOIN_FRAMES`), before the engine first reads it.
+fn frames_on(name: &str) -> std::path::PathBuf {
+    let path = crate::code_rule_dsl::fixtures::temp().with_extension(format!("{name}.frames"));
+    let _ = std::fs::remove_file(&path);
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("RERAIL_JOIN_FRAMES", &path) };
+    path
+}
+
 fn corpus_outputs(name: &str, files: &[(&str, &str)], program: &str, outputs: &[&str]) -> Vec<Vec<Vec<String>>> {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
     let _ = std::fs::remove_dir_all(&dir);
@@ -1895,6 +1911,156 @@ first(x, s, k) :- def(d, x, s, k, _), s = min t : { def(d, x, t, _, _) }.
     let got = corpus_outputs("aggregate-wildcards", &[("a.py", "def f():\n    pass\nf = 1\n")], program, &["last", "first"]);
     assert_eq!(got[0], [["f", "18", "assign"]]);
     assert_eq!(got[1], [["f", "0", "function"]]);
+}
+
+/// The design's S5: a max joined back at its maximum, bounded or not, is one step on the group (`back_at_extreme`):
+/// the rows at the maximum, ties included, the same as the max and its join back as two steps
+/// (`RERAIL_SHAPE_LATEST=off`).
+#[test]
+fn a_max_joined_back_at_its_maximum_gives_the_rows_there() {
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.input node
+.decl def(d: number, x: symbol, t: number, k: symbol)
+def(d, "f", s, "function") :- node(d, _, "function_definition", s, _).
+def(d, "f", s, "tie") :- node(d, _, "function_definition", s, _).
+def(d, "f", s, "assign") :- node(d, _, "assignment", s, _).
+.decl seen(r: number, k: symbol)
+seen(r, k) :- node(d, _, "identifier", r, _), u = max t : { def(d, "f", t, _), t < r }, def(d, "f", u, k).
+.decl latest(k: symbol)
+latest(k) :- node(d, _, "module", _, _), u = max t : { def(d, "f", t, _) }, def(d, "f", u, k).
+.decl earliest(k: symbol)
+earliest(k) :- node(d, _, "module", _, _), u = min t : { def(d, "f", t, _) }, def(d, "f", u, k).
+.output seen, latest, earliest
+"#;
+    let src = [("a.py", "def f():\n    pass\nf = 1\nf\n")];
+    let frames = frames_on("latest-joined-back");
+    let got = corpus_outputs("latest-joined-back", &src, program, &["seen", "latest", "earliest"]);
+    assert!(latest_rows(&frames) > 0, "the max and its join back run as one step");
+    assert_eq!(got[0], [["18", "function"], ["18", "tie"], ["24", "assign"], ["4", "function"], ["4", "tie"]], "{got:?}");
+    assert_eq!(got[1], [["assign"]]);
+    assert_eq!(got[2], [["function"], ["tie"]]);
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("RERAIL_SHAPE_LATEST", "off") };
+    let two_steps = corpus_outputs("latest-joined-back-off", &src, program, &["seen", "latest", "earliest"]);
+    unsafe { std::env::remove_var("RERAIL_SHAPE_LATEST") };
+    assert_eq!(got, two_steps, "the max and its join back as two steps");
+}
+
+/// The design's S5 through the planner: a max relation read only to be joined back at it (`seen_at`, as
+/// `rf_fn_seen_at`) is made in its reader, with the same rows as the relation stored (`RERAIL_SHAPE_LATEST=off`).
+#[test]
+fn a_max_relation_made_in_its_reader_gives_the_stored_relations_rows() {
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.input node
+.layout node key(n)
+.decl def(d: number, x: symbol, t: number, k: symbol)
+def(d, "f", s, "function") :- node(d, _, "function_definition", s, _).
+def(d, "f", s, "tie") :- node(d, _, "function_definition", s, _).
+def(d, "f", s, "assign") :- node(d, _, "assignment", s, _).
+.decl rd(i: node, d: number, r: number)
+rd(i, d, r) :- node(d, i, "identifier", r, _).
+.decl seen_at(i: node, u: number)
+seen_at(i, u) :- rd(i, d, r), u = max t : { def(d, "f", t, _), t < r }.
+.decl seen(r: number, k: symbol)
+seen(r, k) :- rd(i, d, r), seen_at(i, u), def(d, "f", u, k).
+.output seen
+"#;
+    let src = [("a.py", "def f():\n    pass\nf = 1\nf\n")];
+    let frames = frames_on("latest-in-reader");
+    let got = corpus_outputs("latest-in-reader", &src, program, &["seen"]);
+    assert!(latest_rows(&frames) > 0, "the max made in its reader runs with its join back as one step");
+    assert_eq!(got[0], [["18", "function"], ["18", "tie"], ["24", "assign"], ["4", "function"], ["4", "tie"]], "{got:?}");
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("RERAIL_SHAPE_LATEST", "off") };
+    let stored = corpus_outputs("latest-in-reader-off", &src, program, &["seen"]);
+    unsafe { std::env::remove_var("RERAIL_SHAPE_LATEST") };
+    assert_eq!(got, stored, "the max relation stored");
+}
+
+/// A keyed relation two `dfs_first_memo` searches read as their roots, beside the same edges (the data layer's
+/// `la_roots`, read by `la_line`'s searches over `la_edge`), is a chain of S1's shape, but a native operator reads
+/// it by its name: it stays made where it stands (`chain::of`'s kept). Forked (`pn_roots` read in its place), the
+/// searches found no roots held, and a strict run stopped on a stratum the native engine declined.
+#[test]
+fn a_native_operators_keyed_input_is_not_forked_into_its_readers() {
+    let program = r#"
+.decl e0(a: number, b: number, o: number)
+e0(10, 20, 1). e0(20, 30, 5). e0(10, 40, 0). e0(40, 10, 2). e0(50, 60, 0).
+.decl e(a: number, b: number, o: number)
+e(a, b, o) :- e0(a, b, o), a > 0.
+.decl t(x: number)
+t(x) :- e0(_, x, _), x = 30.
+.decl u(x: number)
+u(x) :- e0(_, x, _), x = 60.
+.decl roots(r: number, k: number)
+.layout roots key(r)
+roots(r, k) :- e0(r, _, _), (r = 40, k = 1 ; r = 10, k = 2 ; r = 50, k = 3).
+.decl hm(r: number, h: number, f: number)
+hm(r, h, f) :- dfs_first_memo(r, h, f, e, t, roots).
+.decl hu(r: number, h: number, f: number)
+hu(r, h, f) :- dfs_first_memo(r, h, f, e, u, roots).
+.output hm, hu
+"#;
+    let (got, native) = run_both("held_operators_keyed_roots", program, &["hm", "hu"]);
+    assert!(native > 0, "the native set engine solved a component");
+    let declined = {
+        use crate::code_rule_dsl::logic::profile;
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("held_operators_keyed_roots_native");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+        let _scratch = super::corpus::switches::set(&[("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off")]);
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        profile::set(true);
+        let ran = super::corpus::run(program, &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+        let declined = profile::declined();
+        profile::set(false);
+        let _ = std::fs::remove_dir_all(&dir);
+        ran.unwrap();
+        declined
+    };
+    assert!(!declined.keys().any(|k| k.contains("rr_dfsm") || k.contains("hm") || k.contains("hu")), "{declined:?}");
+    assert_eq!(got["hm"], [["10", "30", "1"], ["40", "30", "2"]]);
+    assert_eq!(got["hu"], [["50", "60", "0"]]);
+}
+
+/// The design's S1 as one pass a name (the page "S1 Per-Name Pass"): a keyed start (`st`, as `wstart`) read by three
+/// rules beside the same driver atom (`nm(n, x)`, as `nameref`), one negating another's head, gives the rows it gives
+/// stored (`RERAIL_SHAPE_PER_NAME=off`).
+#[test]
+fn a_start_its_readers_read_beside_one_driver_gives_the_rows_it_gives_stored() {
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.input node
+.layout node key(n)
+.decl nm(n: node, x: number)
+nm(n, x) :- node(_, n, "identifier", x, _).
+.decl near(n: node, s: node)
+near(n, s) :- node(d, n, "identifier", _, _), node(d, s, "module", _, _).
+.decl st(n: node, s: node)
+.layout st key(n)
+st(n, s) :- nm(n, _), near(n, s).
+.decl a(n: node, x: number, s: node)
+a(n, x, s) :- nm(n, x), st(n, s).
+.decl b(n: node, x: number, s: node)
+b(n, x, s) :- st(n, s), node(_, s, "module", _, _), nm(n, x), x > 10.
+.decl c(n: node, x: number, s: node)
+c(n, x, s) :- st(n, s), nm(n, x), !b(n, x, s).
+.decl seen(x: number, w: symbol)
+seen(x, "a") :- a(_, x, _).
+seen(x, "b") :- b(_, x, _).
+seen(x, "c") :- c(_, x, _).
+.output seen
+"#;
+    let src = [("a.py", "f = 1\ng = f\nprint(g, f)\n")];
+    let got = corpus_outputs("per-name", &src, program, &["seen"]);
+    assert!(got[0].iter().any(|r| r[1] == "b") && got[0].iter().any(|r| r[1] == "c"), "{got:?}");
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("RERAIL_SHAPE_PER_NAME", "off") };
+    let stored = corpus_outputs("per-name-off", &src, program, &["seen"]);
+    unsafe { std::env::remove_var("RERAIL_SHAPE_PER_NAME") };
+    assert_eq!(got, stored, "the start stored");
 }
 
 /// A variable named `top` is a variable where an atom binds it, not the lattice's top: `child(p, top, _)` joins as
@@ -3539,6 +3705,11 @@ fn a_join_shape_directive_holds_a_join_back_in_its_rule() {
     assert!(err.contains("no rule of `out` reads `nothing`"), "{err}");
     let err = format!("{:?}", parse_version(".shape retparam bound f\n").unwrap_err());
     assert!(err.contains("follows no rule"), "{err}");
+    // A `nearest` literal is read as the relation preparation makes of it, which the planner joins.
+    let near = ".decl fdef(k:symbol)\nfdef(\"function_definition\").\n.decl s(n:node)\n.decl o(n:node,g:node)\n.output o\no(n, g) :- s(n), nearest(n, g, fdef).\n";
+    assert!(parse_version(&format!("{near}.shape rr_nearest_fdef after s\n")).is_ok(), "the relation a nearest literal is made");
+    let err = format!("{:?}", parse_version(&format!("{near}.shape rr_nearest_scope after s\n")).unwrap_err());
+    assert!(err.contains("no rule of `o` reads `rr_nearest_scope`"), "{err}");
     // No directive, `pv`'s delta driving, and `posarg` unsized: no cross product priced against its default.
     let no_posarg: Vec<(&str, f64, Vector<f64>)> = sizes.iter().filter(|s| s.0 != "posarg").cloned().collect();
     let guarded = order_of(rule, &no_posarg, None, Some(0));
@@ -4292,6 +4463,67 @@ fn kept_keys_price_a_probe_by_the_keys_two_columns_share() {
     let apart = work(Some((Keys::of(0..1_000), Keys::of(5_000..6_000))));
     assert!((same / containment - 1.0).abs() < 0.1, "the same keys price as containment does: {same} against {containment}");
     assert!(apart < 0.5 * containment, "keys two columns do not share are probes that miss: {apart} against {containment}");
+}
+
+/// Decision 0488's kept keys measure a probe's hits against the binding's domain as its constant filters leave it, not
+/// against the whole column the keys were kept of. `references.rerail`'s `rf_in` in small: `$g` is a function
+/// (`t($g, 7)`, 2,000 of 300,000 nodes) with a body (`f($g, 3, $b)`), and `up($n, $g)` (each node's nearest
+/// function) holds every function. Against `t`'s column the shared keys are 2,000 of 300,000, and a probe of `up` by
+/// `$g` was priced at 0.7% of its 142 rows a function. Against the 2,000 functions every probe hits.
+///
+/// That fixed, the planner still starts from the functions: the statistics take a function's having a body as a node's
+/// (7.5%), and a body's nodes (`w` by `$b`) as an average node's subtree (20, where a function's holds 142). No
+/// statistic sees either correlation; join shape directives (decision 0137) hold the order where they mislead. A
+/// directive holds back the literal it names only, so both ways to a function's nodes wait for the sites: `up` (the
+/// nearest function) and `w` (a body's nodes). (On the corpus `rf_in` costs the same either way, its rows taken
+/// through cheap tests, so `references.rerail` writes no directive for it; `names.rerail`'s class rules have them.)
+#[test]
+fn kept_keys_price_a_probe_against_the_binding_its_constant_filters_leave() {
+    use crate::code_rule_dsl::logic::bloom::Keys;
+    let decls = ".decl s(n:number)\n.decl up(n:number,g:number)\n.decl t(g:number,k:number)\n.decl f(g:number,k:number,b:number)\n\
+        .decl w(n:number,b:number)\n.decl out(n:number,g:number)\n.output out\n";
+    let derived: HashSet<String> = ["s", "up", "t", "f", "w", "out"].into_iter().map(str::to_owned).collect();
+    let model_of = |p: &Arc<Version>| {
+        let mut model = Model { shapes: super::ShapeSource::of(&body::Placed::whole(p.clone())),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: derived.iter().collect()};
+        let sizes: [(&str, f64, &[f64], &[f64]); 5] = [
+            ("s", 44_000.0, &[44_000.0], &[1.0]),
+            ("up", 284_000.0, &[284_000.0, 2_000.0], &[1.0, 142.0]),
+            ("t", 300_000.0, &[300_000.0, 200.0], &[1.0, 1_500.0]),
+            ("f", 250_000.0, &[200_000.0, 50.0, 250_000.0], &[1.25, 5_000.0, 1.0]),
+            ("w", 2_000_000.0, &[284_000.0, 100_000.0], &[7.0, 20.0]),
+        ];
+        for (rel, rows, ndv, fan) in sizes {
+            model.stats.card.insert(rel, rows);
+            for (c, (&ndv, &fan)) in ndv.iter().zip(fan).enumerate() {
+                model.ndv.insert((rel, c), ndv);
+                model.stats.fan.insert((rel, c), fan);
+            }
+        }
+        model.stats.dfreq.insert(("t", 1), std::sync::Arc::new(HashMap::from([(Constant::Int(7), 2_000), (Constant::Int(9), 298_000)]).into_iter().collect()));
+        model.stats.dfreq.insert(("f", 1), std::sync::Arc::new(HashMap::from([(Constant::Int(3), 15_000), (Constant::Int(4), 235_000)]).into_iter().collect()));
+        model.stats.keys.insert(("up", 1), Keys::of(0..2_000));
+        model.stats.keys.insert(("t", 0), Keys::of(0..300_000));
+        model.stats.keys.insert(("f", 0), Keys::of(0..200_000));
+        model
+    };
+    let plan = |text: &str| {
+        let p = parse_version(&format!("{decls}{text}")).unwrap();
+        let model = model_of(&p);
+        let _plans = KeepPlans::start();
+        let ((order, work, rows), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, 0), None).unwrap();
+        (order.iter().filter_map(|s| rel_at(&p, 0, s.at)).collect::<Vec<_>>(), work, rows)
+    };
+    // The probe alone: each of the 2,000 functions' 142 nodes.
+    let (_, _, rows) = plan("out(n,g) :- t(g,7), up(n,g).\n");
+    assert!(rows > 0.5 * 284_000.0 && rows < 2.0 * 284_000.0, "every function's nodes, not 0.7% of them: {rows}");
+    // `rf_in`: the planner's own order starts from the functions, the directive's from the sites.
+    let rule = "out(n,g) :- s(n), up(n,g), t(g,7), f(g,3,b), w(n,b).\n";
+    let (free, _, _) = plan(rule);
+    assert_eq!(free.first().map(String::as_str), Some("t"), "unshaped, the correlations the statistics miss start it from the functions: {free:?}");
+    let (half, _, _) = plan(&format!("{rule}.shape up after s\n"));
+    assert_eq!(half.first().map(String::as_str), Some("t"), "`up` held back, the bodies' nodes are still read from the functions: {half:?}");
+    let (shaped, work, _) = plan(&format!("{rule}.shape up after s\n.shape w after s\n"));
+    assert_eq!(shaped.first().map(String::as_str), Some("s"), "the sites first, each one's function looked up: {shaped:?}, work={work}");
 }
 
 /// Decision 0488: a join of two columns skewed on the same few keys, priced by their sketches' counters (`join_size`):

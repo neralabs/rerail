@@ -5,6 +5,11 @@ import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 export const RERAIL_EVENT_PROTOCOL_PREFACE = "RERAIL-EVENTS/1";
 export const INACTIVE_SESSION = "inactive-session";
 
+/** The codes an error frame of the event stream may carry. */
+const RERAIL_EVENT_ERROR_CODES = ["invalid-event", INACTIVE_SESSION, "unsupported-version", "internal-error", "overloaded"] as const;
+export type RerailEventErrorCode = (typeof RERAIL_EVENT_ERROR_CODES)[number];
+const EventErrorCodeSchema = z.enum(RERAIL_EVENT_ERROR_CODES);
+
 /**
  * An event for a session the runtime has not started or has ended; the event stream answers it as `inactive-session`.
  * The stream reads the `code`, not the class, so an event loop may throw any `Error` whose `code` is `inactive-session`.
@@ -15,6 +20,19 @@ export class InactiveSessionError extends Error {
   constructor(sessionId: string) {
     super(`Inactive session: ${sessionId}`);
   }
+}
+
+/**
+ * The protocol's code `error` carries in its `code`, or undefined for an error with none or with another kind of code
+ * (a system call's `ENOENT`). Read by `code`, not by class: `build:events` bundles the stream with its own copy of each
+ * class, so an error thrown from the package's other entry points is of another class. The daemon writes this code
+ * beside the message of an event it refuses, and the stream's client gives it back to the error it throws
+ * (`answerEngineRequest`, `postEngineEvent`), so a frame says the same in a build from a checkout and in an installed one.
+ */
+export function eventErrorCode(error: unknown): RerailEventErrorCode | undefined {
+  if (!(error instanceof Error) || !("code" in error)) return undefined;
+  const code = EventErrorCodeSchema.safeParse(error.code);
+  return code.success ? code.data : undefined;
 }
 export const RERAIL_EVENT_MAX_FRAME_BYTES = 1024 * 1024;
 
@@ -103,7 +121,7 @@ const EventSuccessFrameSchema = z.object({
 const EventErrorFrameSchema = z.object({
   eventId: z.string().min(1).nullable(),
   error: z.object({
-    code: z.enum(["invalid-event", "inactive-session", "unsupported-version", "internal-error", "overloaded"]),
+    code: EventErrorCodeSchema,
     message: z.string(),
   }).strict(),
 }).strict();
@@ -122,6 +140,28 @@ export function decodeRerailEventFrame(line: string): RerailEventFrame {
     throw new RangeError(`Rerail event frame exceeds ${RERAIL_EVENT_MAX_FRAME_BYTES} bytes`);
   }
   return EventFrameSchema.parse(JSON.parse(line));
+}
+
+/**
+ * The body of the daemon's answer to a request it could not run: the error's message under `error`, as every daemon
+ * writes it, and the protocol's code beside it when the error carries one (`eventErrorCode`). A client older than the
+ * code reads the body as text.
+ */
+const EngineRefusalSchema = z.object({ error: z.string(), code: EventErrorCodeSchema.optional() });
+
+export function encodeEngineRefusal(error: unknown): string {
+  const code = eventErrorCode(error);
+  return JSON.stringify({ error: error instanceof Error ? error.message : String(error), ...(code === undefined ? {} : { code }) });
+}
+
+/** The code and the daemon's own message of a refusal that carries a code; undefined for any other answer. */
+export function decodeEngineRefusal(text: string): { code: RerailEventErrorCode; message: string } | undefined {
+  try {
+    const refusal = EngineRefusalSchema.safeParse(JSON.parse(text));
+    return refusal.success && refusal.data.code !== undefined ? { code: refusal.data.code, message: refusal.data.error } : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function encodeRerailEventResult(frame: RerailEventResultFrame): string {

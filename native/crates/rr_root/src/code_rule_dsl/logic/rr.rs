@@ -356,7 +356,8 @@ impl Text {
     /// its settings, `.policy`, `.language` and outputs, as its whole program has them, less `.global library` (which
     /// `read_file` writes) and the settings a clause makes. Lowering only that is a fraction of lowering its rules.
     pub fn header(self) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
-        let header = |s: &Stmt| !matches!(s.what(), Some(S::Clause | S::Include(_)));
+        // No rules, and so none of their join shapes (`.shape`).
+        let header = |s: &Stmt| !matches!(s.what(), Some(S::Clause | S::Include(_) | S::Setting { key: "shape", .. }));
         match self.0 {
             Read::Plain(statements) => lower_statements_version(statements.into_iter().filter(header).collect()),
             Read::Modular { files, own, .. } => {
@@ -498,9 +499,15 @@ impl Text {
                 })
                 .collect()
         };
+        // A rule's join shapes (`.shape` after it) are kept with it.
+        let mut rule_kept = true;
         let kept = |s: &Stmt| match s.what() {
             Some(S::Include(_)) => false,
-            Some(S::Clause) => clauses || s.heads().iter().all(|h| unary.contains(*h)),
+            Some(S::Clause) => {
+                rule_kept = clauses || s.heads().iter().all(|h| unary.contains(*h));
+                rule_kept
+            }
+            Some(S::Setting { key: "shape", .. }) => rule_kept,
             _ => true,
         };
         let mut statements: Statements = all.into_iter().filter(kept).collect();
@@ -2883,6 +2890,8 @@ fn reached_statements(own: &Path, statements: &[(&PathBuf, Statements)]) -> File
                 // What another file declares reads nothing (`.decl`, `.input`, `.stored`, `.functor`, `.type`, `.edit`):
                 // its relations are reached only when read. Its outputs, violations and settings are read.
                 Some(S::Decl(_) | S::Functor(_) | S::Type(_) | S::Edit(_) | S::Lattice(_) | S::Include(_) | S::Io { output: false }) if !kept_whole => {}
+                // A rule's join shape (`.shape`) reads nothing: it goes with the rule before it.
+                Some(S::Setting { key: "shape", .. }) if !kept_whole => {}
                 _ => idents(st.text(), &mut reached),
             }
         }
@@ -2911,7 +2920,23 @@ fn reached_statements(own: &Path, statements: &[(&PathBuf, Statements)]) -> File
         .enumerate()
         .map(|(f, (file, items))| {
             let kept_whole = whole.contains(*file);
-            let items = items.iter().enumerate().filter(|(s, st)| kept_whole || !matches!(st.what(), Some(S::Clause)) || keep.contains(&(f, *s))).map(|(_, i)| i).collect();
+            // A rule's join shapes (`.shape` after it) are kept with it, and left out with it.
+            let mut rule_kept = true;
+            let items = items
+                .iter()
+                .enumerate()
+                .filter(|(s, st)| {
+                    kept_whole || match st.what() {
+                        Some(S::Clause) => {
+                            rule_kept = keep.contains(&(f, *s));
+                            rule_kept
+                        }
+                        Some(S::Setting { key: "shape", .. }) => rule_kept,
+                        _ => true,
+                    }
+                })
+                .map(|(_, i)| i)
+                .collect();
             ((*file).clone(), items)
         })
         .collect()

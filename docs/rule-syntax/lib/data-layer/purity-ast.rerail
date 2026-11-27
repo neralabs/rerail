@@ -11,7 +11,7 @@
 //   class_field_name(c, x)  `x: T` (an AnnAssign to a bare name) is a statement of class c's own body
 //   deco_at(f, i, e)   e is f's i-th decorator expression, in source order
 //   walk_qualname(f, q)  the `__qualname__` of def or class f, for defs a walk of statement bodies reaches
-//   py_repr(s, r)      r is Python's repr of the str s, for each s of repr_want(s), which the check fills
+//   (Python's repr of a str is core's @py_repr functor.)
 //
 // They differ from python/ast's neighbours where the scripts do: call_name looks through subscripts, short_name
 // looks through calls; method_of takes any def whose nearest scope is the class (one under `if` in the class

@@ -136,7 +136,7 @@ impl Held {
     /// first column) sorted, counted, and dropped. A column not held is stated as a key.
     fn measured(&self) -> Vec<(String, i64, i64, i64, i64)> {
         let n = self.n as i64;
-        let doc = |r: usize| self.slot[0].map_or(0, |s| self.at(r, s) >> 32);
+        let doc = |r: usize| self.slot[0].map_or(0, |s| rerail_blocks::located::Located::key_wide(self.at(r, s)));
         (0..self.columns.len())
             .map(|c| {
                 let name = self.columns[c].clone();

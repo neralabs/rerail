@@ -24,7 +24,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 61
+VERSION = 62
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -1473,6 +1473,12 @@ def probe(host, cfg, fell_back=False, recovered=False):
         h["ok"], h["why"], h["failures"] = True, "", 0
         if h["free_gb"] < cfg["min_free_gb"]:
             h["short"] = f"{h['free_gb']} GB free, under {cfg['min_free_gb']}: {short_of_disk(host, h, cfg)}"
+        elif h.get("df_free_gb", h["free_gb"]) < cfg["min_free_gb"]:
+            # macOS counts what it would purge (Time Machine's local snapshots) as available, but a
+            # plain write does not wait for it: the M3 Max showed 274 GB available with 0 by df, its Linux
+            # guest's disk image failing every write (2026-11-27). So the farm frees there by df's
+            # figure too, and its free step thins those snapshots (farm-agent's `free_space`).
+            h["short"] = f"{h['df_free_gb']} GB free by df, under {cfg['min_free_gb']}: {short_of_disk(host, h, cfg)}"
     return h
 
 
