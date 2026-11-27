@@ -47,17 +47,26 @@
 // a workspace package the importer and the helper name by different specifiers (`@repo/db` and `./client`); a second
 // client of the same database under another name (`db.$transaction(async (tx) => prisma.x.create(…))`); a query in a
 // `.then(…)` callback of an awaited promise, or in a callback a wrapper runs at once (`withRetries(() => …)`), which
-// do run inside the transaction.
+// do run inside the transaction; an alias (`@/x`, `~/x`) the tsconfig's `paths` do not map, which names the module
+// by its specifier, as a package's import does. A helper whose body queries one client by two names (`db` and its
+// default export) is reported once for each, at that name's first query.
 
 #include "tsx/eslint-a-common.rerail"
 
 .violation OuterClientInTransaction(at: node, call: symbol, r: symbol, l: number) "`{call}(…)` runs inside the interactive `{r}.$transaction(…)` callback at line {l} but goes through the outer client `{r}`, not the callback's transaction client: Prisma sends it on another pooled connection, outside the transaction, so a write commits even when the transaction rolls back, a read misses the transaction's uncommitted writes, and a write to a row the transaction has locked waits until the transaction times out (P2028). Call it on the transaction client the callback receives (`async (tx) => tx.<model>.<op>(…)`; add that parameter if the callback has none). If it must run outside the transaction on purpose (an audit or failure record that has to survive a rollback), make it after the `$transaction` call or in its catch instead."
-OuterClientInTransaction(q, call, rt, l) :- gct_direct(q, c, r), callee(q, m), text(m, call), text(r, rt), line(c, l).
+OuterClientInTransaction(q, call, rt, l) :- gct_direct(q, c, r), docof(q, d), gct_doc(d), callee(q, m), text(m, call),
+    text(r, rt), line(c, l).
 
 .violation HelperUsesOuterClient(at: node, g: symbol, r: symbol, l: number, q: symbol, p: symbol, ql: number) "`{g}(…)`, called inside the interactive `{r}.$transaction(…)` callback at line {l}, queries the module's Prisma client itself (`{q}(…)` at {p}:{ql}) instead of a client it is given, so that query runs on another connection, outside this transaction: a write commits even when the transaction rolls back, and a read misses the transaction's uncommitted writes. Give `{g}` a client parameter (`client: Prisma.TransactionClient = prisma`), query through it, and pass the callback's `tx`. If `{g}` must write outside the transaction on purpose (an audit or failure record that has to survive a rollback), call it after the `$transaction` call or in its catch instead."
-HelperUsesOuterClient(k, gx, rt, l, qt, p, ql) :- gct_helper(k, c, r, g, _), gct_fn_name(g, gx), text(r, rt), line(c, l),
-    ql = min m : { gct_helper(k, c, r, g, q0), line(q0, m) }, gct_helper(k, c, r, g, q2), line(q2, ql),
-    callee(q2, m2), text(m2, qt), docof(q2, d), doc(d, p, _).
+HelperUsesOuterClient(k, gx, rt, l, qt, p, ql) :- gct_local_first(k, c, r, gx, sb, ql, qt, p), gct_sym(r, sa),
+    gct_canon(sa, s), gct_canon(sb, s), text(r, rt), line(c, l).
+HelperUsesOuterClient(k, gx, rt, l, qt, p, ql) :- gct_import_call(k, c, r, g), gct_sym(r, sa), gct_canon(sa, s),
+    gct_helper_first(g, s, gx, ql, qt, p), text(r, rt), line(c, l).
+// gct_doc(d): d is a document of the run. Each finding reads it at its own document, declared across files:
+// HelperUsesOuterClient reads other files' helpers (gct_helper_first), and the findings are written out together, so
+// a finding read per file alone would hand its node to the cross-file part (decision 0677).
+.decl gct_doc(d: number) cross_file
+gct_doc(d) :- doc(d, _, _).
 
 // gct_tx(c, r, f): call c is `<r>.$transaction(f, …)`, f a function written inline: the interactive form.
 .decl gct_tx(c: node, r: node, f: node)
@@ -128,82 +137,83 @@ gct_same_root(o, o2) :- gct_root(_, o), gct_root(_, o2), kind(o, "this"), kind(o
 gct_same_root(o, o2) :- gct_root(_, o), gct_root(_, o2), kind(o, "identifier"), kind(o2, "identifier"),
     !ref_site(o, _), !ref_site(o2, _), text(o, x), text(o2, x), docof(o, d), docof(o2, d).
 
-// gct_helper(k, c, r, g, q): call k, in the callback of transaction c on client r, calls function g, whose body
-// sends query q through the client r names, by its module binding; k passes none of the callback's parameters.
-.decl gct_helper(k: node, c: node, r: node, g: node, q: node)
-gct_helper(k, c, r, g, q) :- gct_in_tx(k, c, r, f), !gct_lock_tx(f), callee(k, n), kind(n, "identifier"), gct_fn_of(n, g),
-    !gct_passes_param(k, f), field(g, "body", gb), within(q, gb), gct_query(q, r3), kind(r3, "identifier"),
-    gct_client_sym(r, s), gct_client_sym(r3, s).
+// gct_call(k, c, r, n): call k, of the function the identifier n names, is in the callback of transaction c on the
+// client identifier r, takes no advisory lock, and passes none of the callback's parameters.
+.decl gct_call(k: node, c: node, r: node, n: node)
+gct_call(k, c, r, n) :- gct_in_tx(k, c, r, f), !gct_lock_tx(f), callee(k, n), kind(n, "identifier"),
+    kind(r, "identifier"), !gct_passes_param(k, f).
 // gct_passes_param(k, f): an argument of call k names a parameter of f: `g(tx)`, `g({ tx })`, `g(a, tx)`.
 .decl gct_passes_param(k: node, f: node)
 gct_passes_param(k, f) :- gct_in_tx(k, _, _, f), call_arg(k, a, _), (i = a ; within(i, a)), ref_site(i, s),
     decl_site(f, _, s, "param", "value").
 
-// gct_fn_of(n, g): identifier n calls function g of the project: a declaration in reach, or an imported one.
-.decl gct_fn_of(n: node, g: node)
-gct_fn_of(n, g) :- gct_callee(n), ref_site(n, s), gct_fn_site(s, g).
-gct_fn_of(n, g) :- gct_callee(n), ref_site(n, sp), import_binding(sp, _, _, _), gct_sym(n, q), gct_fn_sym(q, g).
+// A helper declared in the call's own file, any function in reach, is read in that file.
+// gct_local_query(k, c, r, g, q, sb): call k (gct_call) calls g, a function of its own file, whose body sends query q
+// through a client identifier that names the binding sb (gct_sym).
+.decl gct_local_query(k: node, c: node, r: node, g: node, q: node, sb: symbol)
+gct_local_query(k, c, r, g, q, sb) :- gct_call(k, c, r, n), ref_site(n, s), gct_fn_site(s, g), field(g, "body", gb),
+    within(q, gb), gct_query(q, r3), kind(r3, "identifier"), gct_sym(r3, sb).
+// gct_local_first(k, c, r, gx, sb, ql, qt, p): of those queries through sb, the first is `qt(…)` at line ql of the file
+// at path p; the helper is named gx.
+.decl gct_local_first(k: node, c: node, r: node, gx: symbol, sb: symbol, ql: number, qt: symbol, p: symbol)
+gct_local_first(k, c, r, gx, sb, ql, qt, p) :- gct_local_query(k, c, r, g, _, sb), gct_fn_name(g, gx),
+    ql = min m : { gct_local_query(k, c, r, g, q0, sb), line(q0, m) }, gct_local_query(k, c, r, g, q2, sb),
+    line(q2, ql), callee(q2, m2), text(m2, qt), docof(q2, d), doc(d, p, _).
+
+// An imported helper is another file's: each file states its top-level functions' queries by symbol, path and line
+// (gct_helper_query), and the call reads them by the helper's symbol (gct_helper_first, across files).
+// gct_import_call(k, c, r, g): call k (gct_call) calls the imported binding g ("module#name").
+.decl gct_import_call(k: node, c: node, r: node, g: symbol)
+gct_import_call(k, c, r, g) :- gct_call(k, c, r, n), ref_site(n, sp), import_binding(sp, _, _, _), gct_sym(n, g).
+// gct_helper_query(g, gx, sb, l, qt, p): the top-level function g ("module#name"), named gx, of the file at path p,
+// sends a query `qt(…)` at line l through a client identifier that names the binding sb.
+.decl gct_helper_query(g: symbol, gx: symbol, sb: symbol, l: number, qt: symbol, p: symbol)
+gct_helper_query(@qname(m, gx), gx, sb, l, qt, p) :- gct_fn_site(s, g), top_level(s, gx), field(g, "body", gb),
+    within(q, gb), gct_query(q, r3), kind(r3, "identifier"), gct_sym(r3, sb), line(q, l), callee(q, m2),
+    text(m2, qt), docof(s, d), ts_module(d, m), doc(d, p, _).
+// gct_helper_first(g, s, gx, ql, qt, p): of helper g's queries through the client s (gct_canon), the first.
+.decl gct_helper_first(g: symbol, s: symbol, gx: symbol, ql: number, qt: symbol, p: symbol) cross_file
+gct_helper_first(g, s, gx, ql, qt, p) :- gct_helper_query(g, gx, sb, _, _, _), gct_canon(sb, s),
+    ql = min l : { gct_helper_query(g, _, sb0, l, _, _), gct_canon(sb0, s) }, gct_helper_query(g, gx, sb2, ql, qt, p),
+    gct_canon(sb2, s).
+
 .decl gct_callee(n: node)
 gct_callee(n) :- gct_in_tx(k, _, _, _), callee(k, n), kind(n, "identifier").
 .decl gct_fn_site(s: node, g: node)
 gct_fn_site(g, g) :- kind(g, "function_declaration").
 gct_fn_site(s, g) :- kind(s, "variable_declarator"), field(s, "value", v), deparen(v, g),
     (kind(g, "arrow_function") ; kind(g, "function_expression")).
-.decl gct_fn_sym(q: symbol, g: node)
-gct_fn_sym(@qname(m, x), g) :- gct_fn_site(s, g), top_level(s, x), docof(s, d), doc(d, _, m).
 .decl gct_fn_name(g: node, x: symbol)
 gct_fn_name(g, x) :- gct_fn_site(s, g), (field(s, "name", n) ; s = g, field(g, "name", n)), text(n, x).
 
-// gct_client_sym(r, s): client identifier r denotes the exported or top-level binding s; `export default prisma`
-// stands for `prisma`.
-.decl gct_client_sym(r: node, s: symbol)
-gct_client_sym(r, s) :- gct_client_ask(r), gct_sym(r, s0), gct_default_of(s0, s).
-gct_client_sym(r, s) :- gct_client_ask(r), gct_sym(r, s), !gct_default_of(s, _).
+// gct_canon(s0, s): the client binding s0 is the client s: `export default prisma` makes "m#default" stand for
+// "m#prisma"; any other binding is itself. The default export is the exporting file's, so this crosses, by symbols.
+.decl gct_canon(s0: symbol, s: symbol) cross_file
+gct_canon(s0, s) :- gct_client_name(s0), gct_default_of(s0, s).
+gct_canon(s0, s0) :- gct_client_name(s0), !gct_default_of(s0, _).
+.decl gct_client_name(s0: symbol)
+gct_client_name(s0) :- gct_client_ask(r), gct_sym(r, s0).
 .decl gct_client_ask(r: node)
 gct_client_ask(r) :- gct_tx(_, r, _), kind(r, "identifier").
-gct_client_ask(r) :- gct_query(q, r), kind(r, "identifier"), gct_fn_of(_, g), field(g, "body", gb), within(q, gb).
+gct_client_ask(r) :- gct_query(q, r), kind(r, "identifier"), gct_fn_site(_, g), field(g, "body", gb), within(q, gb).
 .decl gct_default_of(s0: symbol, s: symbol)
 gct_default_of(@qname(m, "default"), @qname(m, x)) :- kind(e, "export_statement"), field(e, "value", v0),
-    deparen(v0, v), kind(v, "identifier"), text(v, x), docof(e, d), doc(d, _, m).
+    deparen(v0, v), kind(v, "identifier"), text(v, x), docof(e, d), ts_module(d, m).
 
-// ---- library candidate: import resolution -------------------------------------------------------------------------
-// The runner binds no tsconfig_for/tsconfig_path/file rows, so tsx/names' `target` (and with it sym_of across files)
-// resolves nothing, and a tsconfig.json read as text sits in a lane of its own that code cannot join; this rule
-// resolves its own imports, by file layout.
 // gct_sym(n, q): identifier n names the binding q ("module#name"): declared at the top of its file; imported from a
-// module of the run and followed through `export … from` and `export *`; or imported from a package the run does not
-// resolve (`@repo/db`), which then names it ("@repo/db#prisma"), as tsx/names does for packages.
+// module tsx/names resolves (a relative path, or an alias the tsconfig's `paths` map) and followed through
+// `export … from` and `export *` (tsx_names__exports), or named "module#x" where that module exports no x it can
+// follow (a `.ts` module seen from the `.tsx` run is only text there); or imported from a package, or by a specifier
+// nothing resolves, which then names it ("@repo/db#prisma"), as tsx/names does for packages.
 .decl gct_sym_ask(n: node)
 gct_sym_ask(n) :- gct_callee(n).
 gct_sym_ask(n) :- gct_client_ask(n).
 .decl gct_sym(n: node, q: symbol)
-gct_sym(n, @qname(m, x)) :- gct_sym_ask(n), ref_site(n, site), top_level(site, x), docof(n, d), doc(d, _, m).
-gct_sym(n, q) :- gct_sym_ask(n), ref_site(n, sp), import_binding(sp, _, s, x), x != "*", docof(n, d),
-    gct_target(d, s, t), gct_exports(t, x, q).
+gct_sym(n, @qname(m, x)) :- gct_sym_ask(n), ref_site(n, site), top_level(site, x), docof(n, d), ts_module(d, m).
+gct_sym(n, q) :- gct_sym_ask(n), resolved_name(n, t, x), tsx_names__exports(t, x, q).
+gct_sym(n, @qname(t, x)) :- gct_sym_ask(n), resolved_name(n, t, x), !tsx_names__exports(t, x, _).
 gct_sym(n, @qname(s, x)) :- gct_sym_ask(n), ref_site(n, sp), import_binding(sp, _, s, x), x != "*", docof(n, d),
-    !prefix(".", s), !gct_target(d, s, _).
-.decl gct_exports(m: symbol, x: symbol, q: symbol)
-gct_exports(m, x, @qname(m, x)) :- kind(e, "export_statement"), docof(e, d), doc(d, _, m), exported_decl(e, x).
-gct_exports(m, x, q) :- kind(e, "export_statement"), docof(e, d), doc(d, _, m), export_from(e, s, y, x),
-    gct_target(d, s, t), gct_exports(t, y, q).
-gct_exports(m, x, q) :- kind(e, "export_statement"), docof(e, d), doc(d, _, m), star_export(e, s),
-    gct_target(d, s, t), gct_exports(t, x, q), x != "default".
-// gct_target(d, s, t): import specifier s in document d names module t of the run: "./x" and "../x" from d's
-// directory, and the aliases "@/x" and "~/x" as `<dir>/src/x` or `<dir>/x` for a directory above d (the
-// create-next-app and T3 layouts), each with tsx/names' extension and index candidates (resolve_base). t must be parsed
-// in this run: another dialect's file (a `.ts` module seen from the `.tsx` run) is only text here, has no exports to
-// follow, and is named as a package is (the fallback of gct_sym), the same way from every file of the run.
-.decl gct_target(d: number, s: symbol, t: symbol)
-gct_target(d, s, t) :- import_spec(i, s), prefix(".", s), docof(i, d), doc(d, p, _), resolve_base(@join(@dir(p), s), t),
-    gct_parsed(t).
-gct_target(d, s, t) :- import_spec(i, s), match("[@~]/(?<r>.+)", s), docof(i, d), doc(d, p, _), gct_anc(p, a),
-    (b = @join(a, cat("src/", r)) ; b = @join(a, r)), resolve_base(b, t), gct_parsed(t).
-.decl gct_parsed(m: symbol)  // module m is a document this run parsed (it has nodes), not one it reads as text only
-gct_parsed(m) :- kind(n, "program"), docof(n, d), doc(d, _, m).
-.decl gct_anc(p: symbol, a: symbol)  // a is a directory above document p ("" for the root)
-gct_anc(p, a) :- import_spec(i, s), match("[@~]/.+", s), docof(i, d), doc(d, p, _), match("(?<a>.*)/[^/]*", p).
-gct_anc(p, "") :- import_spec(i, s), match("[@~]/.+", s), docof(i, d), doc(d, p, _).
-gct_anc(p, a) :- gct_anc(p, b), match("(?<a>.*)/[^/]*", b).
+    !prefix(".", s), !target(d, s, _).
 
 // The cases, `cases/prisma-practice-global-client-in-transaction/`, read as one repository: each line ending in
 // `// caught` is reported, and no other line.
