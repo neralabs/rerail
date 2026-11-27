@@ -78,8 +78,10 @@ request-api-in-cache-scope's `src/components/greeting.tsx:6` (a `'use cache'` co
 
 **Effect, by rule.**
 - server-action-without-auth: a `.tsx` action whose write is in a `.ts` module is missed (case
-  `src/app/notes/page.tsx` `archiveFromNotes`); one whose only session check is a `.ts` helper with a neutral name
-  would be reported.
+  `src/app/notes/page.tsx` `archiveFromNotes`). A session check in the other dialect's helper is read from its text
+  (the helper's body, from its top-level line to the next line at column 0, calls a name that reads as a check: cases
+  `src/app/stores/actions.ts` `renameStore`, `src/app/notes/page.tsx` `claimNote`); one it reaches only through another
+  neutral name is not seen, and the action is reported.
 - server-action-unvalidated-input: a `.tsx` inline action passing its argument to a `.ts` helper is missed (case
   `src/app/projects/page.tsx:18`).
 - middleware-not-applied: reads the file tree and package.json (shared across lanes) for its main check; the

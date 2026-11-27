@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { auth } from "@/auth";
 import { archiveProject } from "@/server/projects";
+import { currentOwnerId } from "@/lib/session";
 import { deleteNoteRow, NoteList } from "./note-list";
 
 export default async function NotesPage() {
@@ -29,12 +30,20 @@ export default async function NotesPage() {
     await prisma.note.update({ where: { id }, data: { pinned: true } });
   };
 
+  // Its check is in a .ts helper, read from the .ts file's text: currentOwnerId's body calls requireUser().
+  async function claimNote(id: string) {
+    "use server";
+    const ownerId = await currentOwnerId();
+    await prisma.note.update({ where: { id }, data: { ownerId } });
+  }
+
   return (
     <form action={addNote}>
       <NoteList ids={[]} />
       <button formAction={pinNote.bind(null, "1")}>Pin</button>
       <button formAction={removeNote.bind(null, "1")}>Remove</button>
       <button formAction={archiveFromNotes.bind(null, "1")}>Archive</button>
+      <button formAction={claimNote.bind(null, "1")}>Claim</button>
     </form>
   );
 }

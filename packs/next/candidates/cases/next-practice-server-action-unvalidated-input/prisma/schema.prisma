@@ -1,0 +1,56 @@
+// The models the cases' unique lookups use. A model not declared here (Member, Project, …) is read without the schema.
+model Roadmap {
+  uid     String   @id @default(cuid())
+  userUid String
+  answers Answer[]
+}
+
+model Answer {
+  uid        String  @id @default(cuid())
+  roadmapUid String
+  userUid    String
+  roadmap    Roadmap @relation(fields: [roadmapUid], references: [uid])
+}
+
+model Question {
+  uid         String @id @default(cuid())
+  roadmapUid  String
+  regenerated Boolean @default(false)
+}
+
+model AnswerOption {
+  uid         String @id @default(cuid())
+  questionUid String
+}
+
+model UserAnswer {
+  uid         String @id @default(cuid())
+  questionUid String
+}
+
+model Solution {
+  id      Int    @id @default(autoincrement())
+  title   String
+  userId  String
+  status  String
+  visible Boolean @default(true)
+}
+
+model Comment {
+  id         Int    @id @default(autoincrement())
+  solutionId Int
+  userId     String
+  visible    Boolean @default(true)
+}
+
+model User {
+  id     String @id
+  email  String @unique
+  status String
+}
+
+model Bookmark {
+  id          Int    @id @default(autoincrement())
+  challengeId Int
+  userId      String
+}

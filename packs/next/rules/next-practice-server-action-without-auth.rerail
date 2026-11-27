@@ -19,6 +19,8 @@
 // any depth), makes a Prisma write (`<client>.<model>.create|createMany|createManyAndReturn|update|updateMany|
 // updateManyAndReturn|upsert|delete|deleteMany({ where | data | create | update … })`, `$executeRaw`,
 // `$executeRawUnsafe`) or a Drizzle one (`db.insert(t).values(…)`, `db.update(t).set(…)`, `db.delete(t).where(…)`).
+// A Prisma `update`/`updateMany` whose data only bumps counters (`{ clicks: { increment: 1 }, seenAt: new Date() }`)
+// is no write here: it counts a visit (a link click, a page view), which a signed-out visitor is meant to do.
 // It checks the caller when it, or a function it reaches, calls something whose name reads as an auth or session
 // check, on camelCase word boundaries (auth, requireAuth, getServerSession, getSession, currentUser, getUser,
 // requireUser, validateRequest, requireRole, checkPermission, assertCanEdit, isAdmin, …; never `getAuthor`,
@@ -26,6 +28,10 @@
 // create, update, delete, set or setup), reads a cookie (`(await cookies()).get("session")`; not cookies().set()),
 // reads an `authorization` or `cookie` header (`h.get("authorization")`), or passes headers() on
 // (`getSession({ headers: await headers() })`); a headers() read of another header (`x-forwarded-for`) is no check.
+// It checks too when it calls an auth client's method (`supabase.auth.updateUser(…)`, a method of an `auth`
+// member, which fails without the session) and one of its writes reads a name bound from that call's result
+// (`const { data } = await …; const id = data.user.id; …update({ where: { id } })`): the row it changes is the
+// signed-in user's, whatever the method's name.
 // A function the action passes by name to a call (`.use(throwIfSignedIn)`) is followed like one it calls. One
 // finding per action, at its name, naming one write.
 //   actions.ts:   'use server'
@@ -47,6 +53,9 @@
 //                 word of the name or of a path folder: `(public)/`, `signup/`, `contact-us/`; `public` only as a
 //                 name's first word, `publicAction`)
 //   actions.ts:   .use(throwIfSignedIn).action(…) where throwIfSignedIn reads the session   not reported
+//   actions.ts:   { data } = await supabase.auth.updateUser(…); update({ where: { id: data.user.id } })   not reported
+//   actions.ts:   update({ data: { clicks: { increment: 1 } } }) its only write   not reported: counts a visit
+//   actions.ts:   calls getStoreId() of a .tsx file, whose body calls currentUser()   not reported (read as text)
 //   lib/data.ts:  the same functions without 'use server'           not reported: not an endpoint
 // Gaps: writes through other clients (Supabase, Mongoose, raw pg), service objects (`svc.remove()`), callbacks
 // stored and run later, or packages the resolver cannot find (monorepo workspaces by package name); auth checks by
@@ -57,9 +66,11 @@
 // extensions and index files TypeScript tries; an ESM `./x.js` specifier for an `x.ts` source is not followed, nor a
 // `paths` target under a `baseUrl` other than the tsconfig's folder (tsx_names joins it to the folder). The
 // call graph meets across files at symbols ("src/server/projects#archiveProject"), so two inline actions with the
-// same name and text in one file are one. The engine keeps .ts and .tsx files apart, so a call from one into the
-// other is not followed: a .tsx action is missed when its write is in a .ts module, and is reported if only a .ts
-// helper with a neutral name checks the session.
+// same name and text in one file are one. The engine keeps .ts and .tsx files apart: a run reads the other
+// dialect's files as text only (decision 0337), so a function there is a unit by its text: from its top-level
+// `function x` or `const x =` line to the next line that starts at column 0, it checks when a line calls a name that
+// reads as an auth check (`currentUser()`); its writes and its own calls are not seen. A .tsx action is missed when
+// its write is in a .ts module, and is reported if the .ts helper that checks reaches the check through a neutral name.
 
 #include "tsx/names.rerail"
 
@@ -279,21 +290,69 @@ nsaw_writer(a, k) :- nsaw_writes(a, k), !nsaw_writes_before(a, k).
 // nsaw_writing(k): the unit keyed k writes.
 .decl nsaw_writing(k: symbol)
 nsaw_writing(k) :- nsaw_key(g, k), nsaw_first_write(g, _).
-// nsaw_checks(k): the unit keyed k makes an auth or session check.
+// nsaw_checks(k): the unit keyed k makes an auth or session check: a call that reads as one, or a write that reads
+// what an auth client's method returned (nsaw_auth_bound). A function of another dialect's file, read as text, checks
+// when its text does (nsaw_text_checks).
 .decl nsaw_checks(k: symbol)
 nsaw_checks(k) :- nsaw_key(g, k), nsaw_in(c, g), nsaw_auth_call(c).
+nsaw_checks(k) :- nsaw_key(g, k), nsaw_auth_bound(g, x), nsaw_in(w, g), nsaw_write(w, _), field(w, "arguments", al),
+    within(r, al), (kind(r, "identifier") ; kind(r, "shorthand_property_identifier")), text(r, x).
+nsaw_checks(@qname(m, x)) :- nsaw_text_checks(d, x), ts_module(d, m).
+// nsaw_auth_bound(g, x): unit g binds x from the result of an auth client's method, `o.auth.m(…)` (awaited or not:
+// `const { data, error } = await supabase.auth.updateUser(…)`), or from a name so bound (`const id = data.user.id`).
+.decl nsaw_auth_bound(g: node, x: symbol)
+nsaw_auth_bound(g, x) :- nsaw_client_auth(c), nsaw_in(c, g), (e = c ; kind(e, "await_expression"), child(e, c, 0)),
+    field(v, "value", e), kind(v, "variable_declarator"), field(v, "name", n), nsaw_bound_name(n, x).
+nsaw_auth_bound(g, x) :- nsaw_auth_bound(g, y), kind(v, "variable_declarator"), inside(v, g, nsaw_fnk),
+    field(v, "value", e), (r = e ; within(r, e)), kind(r, "identifier"), text(r, y), field(v, "name", n),
+    nsaw_bound_name(n, x).
+// nsaw_client_auth(c): c calls a method of an `auth` member: `supabase.auth.updateUser(…)`, `client.auth.getUser()`.
+.decl nsaw_client_auth(c: node)
+nsaw_client_auth(c) :- kind(c, "call_expression"), field(c, "function", fn), kind(fn, "member_expression"),
+    field(fn, "object", o), kind(o, "member_expression"), field(o, "property", p), text(p, "auth").
+// nsaw_bound_name(n, x): the declarator name n binds x: `x`, or a name of a destructuring pattern (`{ data, error }`).
+.decl nsaw_bound_name(n: node, x: symbol)
+nsaw_bound_name(n, x) :- field(v, "name", n), kind(v, "variable_declarator"), kind(n, "identifier"), text(n, x).
+nsaw_bound_name(n, x) :- field(v, "name", n), kind(v, "variable_declarator"), within(i, n),
+    (kind(i, "shorthand_property_identifier_pattern") ; kind(i, "identifier")), text(i, x).
+// nsaw_text_checks(d, x): document d, of another dialect and read as text (no tree), declares a top-level function x
+// (`export async function x(`, `export const x = async (…) =>`, at column 0), and a line of its body calls a name
+// that reads as an auth check (`currentUser()`). Its body runs from its first line to the next line that starts at
+// column 0 (its closing `}`), as a formatted file lays it out.
+.decl nsaw_text_checks(d: number, x: symbol)
+nsaw_text_checks(d, x) :- nsaw_text_fn(d, x, l0), nsaw_text_call(d, l, y), l >= l0, nsaw_auth_word(d, y),
+    count : { nsaw_text_col0(d, j), j > l0, j < l } = 0.
+.decl nsaw_text_doc(d: number)
+nsaw_text_doc(d) :- doc(d, p, _), match(".*\\.[cm]?[jt]sx?", p), !nsaw_parsed(d).
+.decl nsaw_parsed(d: number)
+nsaw_parsed(d) :- kind(p, "program"), docof(p, d).
+.decl nsaw_text_fn(d: number, x: symbol, l: number)
+nsaw_text_fn(d, x, l) :- nsaw_text_doc(d), src_line(d, l, sp),
+    match("(?:export\\s+)?(?:default\\s+)?(?:async\\s+)?function\\s*\\*?\\s*(?<n>[A-Za-z_$][\\w$]*)\\s*[(<].*", sp),
+    text(n, x).
+nsaw_text_fn(d, x, l) :- nsaw_text_doc(d), src_line(d, l, sp),
+    match("(?:export\\s+)?(?:const|let|var)\\s+(?<n>[A-Za-z_$][\\w$]*)\\s*(?::[^=]*)?=.*", sp), text(n, x).
+// nsaw_text_col0(d, l): line l of text document d starts at column 0 (a top-level statement or a closing brace).
+.decl nsaw_text_col0(d: number, l: number)
+nsaw_text_col0(d, l) :- nsaw_text_doc(d), src_line(d, l, sp), match("\\S.*", sp).
+// nsaw_text_call(d, l, y): line l of text document d calls the name y (`y(`, `o.y(`).
+.decl nsaw_text_call(d: number, l: number, y: symbol)
+nsaw_text_call(d, l, y) :- nsaw_text_doc(d), src_line(d, l, sp), match_all("(?<c>[A-Za-z_$][\\w$]*)\\s*\\(", sp),
+    text(c, y).
 // nsaw_guarded(a): the action keyed a reaches an auth or session check.
 .decl nsaw_guarded(a: symbol)
 nsaw_guarded(a) :- nsaw_reach(a, k), nsaw_checks(k).
 
 // nsaw_write(c, what): c writes rows. Prisma: `a.model.m({ … })` with a write method m and an object literal
 // argument holding where, data, create or update (so `url.searchParams.delete("x")` and `map.delete(k)` are
-// not writes); `a.$executeRaw…`. Drizzle: `a.insert(t).values(…)`, `a.update(t).set(…)`, `a.delete(t).where(…)`.
+// not writes), unless it only bumps counters (nsaw_bump); `a.$executeRaw…`. Drizzle: `a.insert(t).values(…)`,
+// `a.update(t).set(…)`, `a.delete(t).where(…)`.
 .decl nsaw_write(c: node, what: symbol)
 nsaw_write(c, cat(mx, ".", m, "()")) :- kind(c, "call_expression"), field(c, "function", fn),
     kind(fn, "member_expression"), field(fn, "property", pr), text(pr, m), nsaw_write_method(m),
     field(fn, "object", mo), kind(mo, "member_expression"), field(mo, "property", mp), text(mp, mx),
-    match("[a-zA-Z]\\w*", mx), field(c, "arguments", al), child(al, a, 0), kind(a, "object"), nsaw_prisma_arg(a).
+    match("[a-zA-Z]\\w*", mx), field(c, "arguments", al), child(al, a, 0), kind(a, "object"), nsaw_prisma_arg(a),
+    !nsaw_bump(m, a).
 nsaw_write(c, cat(m, "()")) :- kind(c, "call_expression"), field(c, "function", fn), kind(fn, "member_expression"),
     field(fn, "property", pr), text(pr, m), (m = "$executeRaw" ; m = "$executeRawUnsafe").
 nsaw_write(c, cat(m, "(…).", s, "()")) :- kind(c, "call_expression"), field(c, "function", fn),
@@ -308,6 +367,21 @@ nsaw_write_method("upsert"). nsaw_write_method("delete"). nsaw_write_method("del
 .decl nsaw_prisma_arg(a: node)
 nsaw_prisma_arg(a) :- kind(a, "object"), child(a, pr, _), (kind(pr, "pair"), field(pr, "key", k), text(k, x) ;
     kind(pr, "shorthand_property_identifier"), text(pr, x)), (x = "where" ; x = "data" ; x = "create" ; x = "update").
+// nsaw_bump(m, a): `update`/`updateMany` argument a's data sets nothing but counters, each `{ increment: n }` or
+// `{ decrement: n }`, and timestamps (`new Date()`, `Date.now()`), at least one counter: a visit counted
+// (`data: { clicks: { increment: 1 }, lastClicked: new Date() }`), not a row the caller changes.
+.decl nsaw_bump(m: symbol, a: node)
+nsaw_bump(m, a) :- (m = "update" ; m = "updateMany"), kind(a, "object"), child(a, pr, _), kind(pr, "pair"),
+    field(pr, "key", k), text(k, "data"), field(pr, "value", o), kind(o, "object"), child(o, e, _), nsaw_counter(e),
+    count : { child(o, f, _), !kind(f, "comment"), !nsaw_counter(f), !nsaw_stamp(f), f != o } = 0.
+// nsaw_counter(e): object entry e is `k: { increment: n }` or `k: { decrement: n }`, that one key alone.
+.decl nsaw_counter(e: node)
+nsaw_counter(e) :- kind(e, "pair"), field(e, "value", v), kind(v, "object"), child(v, q, _), kind(q, "pair"),
+    field(q, "key", k), text(k, x), (x = "increment" ; x = "decrement"), count : { child(v, f, _), kind(f, "pair") } = 1,
+    count : { child(v, f, _), (kind(f, "spread_element") ; kind(f, "shorthand_property_identifier")) } = 0.
+// nsaw_stamp(e): object entry e is `k: new Date()` or `k: Date.now()`.
+.decl nsaw_stamp(e: node)
+nsaw_stamp(e) :- kind(e, "pair"), field(e, "value", v), text(v, t), (t = "new Date()" ; t = "Date.now()").
 
 // nsaw_auth_call(c): c reads the session or checks the caller: its callee's name (`auth()`, `getSession()`,
 // `supabase.auth.getUser()`, `auth.api.getSession()`) reads as one, it reads a cookie (`(await cookies()).get(…)`,
@@ -358,10 +432,17 @@ nsaw_callee_name(fn, x) :- kind(fn, "member_expression"), field(fn, "property", 
 // A workspace helper with another name is still followed into, so its own auth() call counts. Gaps: a package's
 // helper under another name (`getRequiredUser`, `serverUser`, `getToken`, `getCurrentAdmin`, `verifyOwnership`).
 // These names are a naming convention, not an API: a check under a name none of them reads as is missed.
+// nsaw_auth_word(d, x) tests a name of document d (keyed by the document, so each file tests its own names): a callee
+// or wrapper root of its tree (nsaw_name_q), or a name its text calls when it is read as text (nsaw_text_call).
 .decl nsaw_auth_name(n: node)
-nsaw_auth_name(n) :- nsaw_name_q(n, x), match("((.*[a-z0-9])?Auth|(.*_)?auth)(enticat[a-z]*|oriz[a-z]*|ed|s)?([A-Z0-9_].*)?", x),
+nsaw_auth_name(n) :- nsaw_name_q(n, x), docof(n, d), nsaw_auth_word(d, x).
+.decl nsaw_auth_q(d: number, x: symbol)
+nsaw_auth_q(d, x) :- nsaw_name_q(n, x), docof(n, d).
+nsaw_auth_q(d, x) :- nsaw_text_call(d, _, x).
+.decl nsaw_auth_word(d: number, x: symbol)
+nsaw_auth_word(d, x) :- nsaw_auth_q(d, x), match("((.*[a-z0-9])?Auth|(.*_)?auth)(enticat[a-z]*|oriz[a-z]*|ed|s)?([A-Z0-9_].*)?", x),
     !match("(create|update|delete|remove|set|add|insert|upsert|save|reset|enable|disable|setup|start|end|send|resend|initiate|complete|generate|handle|to|revoke|clear|sign|log|register|refresh|store|persist|mark|link|unlink|connect|disconnect|invite)([A-Z0-9_].*)?", x).
-nsaw_auth_name(n) :- nsaw_name_q(n, x),
+nsaw_auth_word(d, x) :- nsaw_auth_q(d, x),
     (match("(get|require|validate|verify|check|ensure|assert|use|read|load|fetch)(Server|Iron|Auth|User|Current|Active|Valid|Supabase|Kinde|Optional)*Session(Or[A-Z0-9][A-Za-z0-9]*|User|Token|Cookie|Data|From[A-Z][A-Za-z]*)?|session(User|Or[A-Z][A-Za-z]*)?", x) ;
      match("(get|require|ensure|assert|check|validate|verify|use|fetch|load|read|current)(Server|Current|Authenticated|Auth|Session|Signed|Logged|In|Valid|Optional|Active)*User(Id|Or[A-Z0-9][A-Za-z0-9]*|Session|From[A-Z][A-Za-z]*)?", x) ;
      match("(require|check|assert|ensure|verify|validate|has|is|can)([A-Z][a-z0-9]*)*(Role|Roles|Permission|Permissions|Access|Admin|Member|Membership|Owner|Scope|Scopes)(OrThrow|OrRedirect|For[A-Z][A-Za-z]*|In[A-Z][A-Za-z]*|On[A-Z][A-Za-z]*)?|(assert|check|ensure|require)Can[A-Z][A-Za-z0-9]*", x) ;
@@ -412,11 +493,15 @@ nsaw_import(d, x, s, "*") :- kind(ns, "namespace_import"), child(ns, id, 0), tex
     .fixture "src/app/catalog/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/catalog/actions.ts"
     .fixture "src/app/contact-us/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/contact-us/actions.ts"
     .fixture "src/app/crm/contacts/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/crm/contacts/actions.ts"
+    .fixture "src/app/links/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/links/actions.ts"
     .fixture "src/app/notes/note-list.tsx" from "../cases/next-practice-server-action-without-auth/src/app/notes/note-list.tsx"
     .fixture "src/app/notes/page.tsx" from "../cases/next-practice-server-action-without-auth/src/app/notes/page.tsx"
     .fixture "src/app/projects/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/projects/actions.ts"
+    .fixture "src/app/profile/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/profile/actions.ts"
     .fixture "src/app/publications/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/publications/actions.ts"
     .fixture "src/app/settings/verify-domain/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/settings/verify-domain/actions.ts"
+    .fixture "src/app/stores/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/stores/actions.ts"
+    .fixture "src/app/stores/store-details.tsx" from "../cases/next-practice-server-action-without-auth/src/app/stores/store-details.tsx"
     .fixture "src/app/tags/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/tags/actions.ts"
     .fixture "src/app/teams/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/teams/actions.ts"
     .fixture "src/app/webhooks/actions.ts" from "../cases/next-practice-server-action-without-auth/src/app/webhooks/actions.ts"
@@ -431,6 +516,7 @@ nsaw_import(d, x, s, "*") :- kind(ns, "namespace_import"), child(ns, id, 0), tex
     .fixture "src/lib/projects-admin.ts" from "../cases/next-practice-server-action-without-auth/src/lib/projects-admin.ts"
     .fixture "src/lib/safe-action.ts" from "../cases/next-practice-server-action-without-auth/src/lib/safe-action.ts"
     .fixture "src/lib/session.ts" from "../cases/next-practice-server-action-without-auth/src/lib/session.ts"
+    .fixture "src/lib/supabase/server.ts" from "../cases/next-practice-server-action-without-auth/src/lib/supabase/server.ts"
     .fixture "src/lib/workout.ts" from "../cases/next-practice-server-action-without-auth/src/lib/workout.ts"
     .fixture "src/server/audit.ts" from "../cases/next-practice-server-action-without-auth/src/server/audit.ts"
     .fixture "src/server/index.ts" from "../cases/next-practice-server-action-without-auth/src/server/index.ts"
@@ -443,10 +529,13 @@ nsaw_import(d, x, s, "*") :- kind(ns, "namespace_import"), child(ns, id, 0), tex
     .expect _ at "src/app/admin/actions.ts":29
     .expect _ at "src/app/catalog/actions.ts":6
     .expect _ at "src/app/crm/contacts/actions.ts":6
-    .expect _ at "src/app/notes/page.tsx":10
-    .expect _ at "src/app/notes/page.tsx":15
+    .expect _ at "src/app/links/actions.ts":14
+    .expect _ at "src/app/notes/page.tsx":11
+    .expect _ at "src/app/notes/page.tsx":16
+    .expect _ at "src/app/profile/actions.ts":16
     .expect _ at "src/app/publications/actions.ts":6
     .expect _ at "src/app/settings/verify-domain/actions.ts":6
+    .expect _ at "src/app/stores/actions.ts":14
     .expect _ at "src/app/tags/actions.ts":7
     .expect _ at "src/app/tags/actions.ts":11
     .expect _ at "src/app/teams/actions.ts":11

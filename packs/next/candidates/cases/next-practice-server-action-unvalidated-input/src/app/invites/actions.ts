@@ -145,10 +145,11 @@ async function loadListForWrite(listId: string) {
   return list;
 }
 
-// The unique lookup comes after the filter: the ownership check already ran with the client's object.
+// The unique delete comes after the read, in the same run of statements: it rejects an object before anything is
+// deleted, so the read's match on another row has no effect (the ownership check passing on it only throws later).
 export async function deleteAccount(id: string) {
   const session = await auth();
-  const account = await prisma.account.findFirst({ where: { id, ownerId: session.user.id } }); // caught
+  const account = await prisma.account.findFirst({ where: { id, ownerId: session.user.id } });
   if (!account) throw new Error("Not found");
   await prisma.account.delete({ where: { id } });
 }

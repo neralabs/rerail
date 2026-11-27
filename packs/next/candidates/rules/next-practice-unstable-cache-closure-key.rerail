@@ -33,12 +33,20 @@
 //   export const getX = unstable_cache(async (id) => db.x.find(id), ["x"])        not reported: module scope only
 //   const take = 10; const orderBy = { updatedAt: "desc" } (in the function)      not reported: no request value
 //   unstable_cache(async (...a) => fn(...a), keys) in a wrapper `cache(fn, keys)` not reported: fn is only called
+//   unstable_cache(async (...a) => opts.fn(...a), [...opts.keys])(...opts.args)   not reported: a captured function
+//                                                    called with the cached function's own arguments, keyed by them
+//   function q(key, fetcher: () => Promise<T>, o) { unstable_cache(() => run(key, fetcher, o), [key])() }
+//                                    not reported: a wrapper; the computation and its parameters are its callers'
+//   unstable_cache(() => gh(e.name, tokens.get(e.id) ?? process.env.TOKEN), ["r", e.name])()   not reported: a
+//                                    value with a deployment-wide fallback is a setting (a credential), not the key
 //   function visible(p) {…} in the function, read by the cached function         not reported: code, not data
 //   `'use cache'` functions                                                       not reported: not unstable_cache
 // Gaps: what a captured function or helper itself reads is not followed; a captured value that is the same for every
 // request (a client or config built by a call in the function) is reported; a project's own wrapper around
-// unstable_cache (a workspace module that re-exports or wraps it) is not followed to its callers; `this` is not read;
-// only initial values are traced, not reassignments.
+// unstable_cache (a workspace module that re-exports or wraps it, or a function taking a function-typed parameter the
+// cached function uses) is not followed to its callers, so a data parameter beside a callback parameter is not
+// reported; a request value with a `process.env` fallback is not reported; `this` is not read; only initial values
+// are traced, not reassignments.
 
 #include "tsx/names.rerail"
 
@@ -85,10 +93,12 @@ ucck_fn_site(s, s) :- kind(s, "function_declaration").
 ucck_fn_site(s, g) :- kind(s, "variable_declarator"), field(s, "value", v), ucck_bare(v, g), ucck_fn_kind(g).
 
 // ucck_free(c, x, s): the function c caches reads x, a variable of a function around it declared at s, other than
-// one it only calls (a wrapper's `fn` parameter); ucck_read(c, r, s) names each such read r.
+// one it only calls (a wrapper's `fn` parameter, or `opts.fn(...args)` forwarding the cached function's own
+// arguments), one with a `process.env` fallback, or a parameter of a wrapper; ucck_read(c, r, s) names each such
+// read r.
 .decl ucck_read(c: node, r: node, s: node)
 ucck_read(c, r, s) :- ucck_fn(c, g), within(r, g), ref(r, _, "value"), ref_site(r, s), s != g, !within(s, g),
-    ucck_local_data(s), !ucck_called(r).
+    ucck_local_data(s), !ucck_called(r), !ucck_forwarded(c, r), !ucck_setting(r), !ucck_caller_param(c, s).
 .decl ucck_free(c: node, x: symbol, s: node)
 ucck_free(c, x, s) :- ucck_read(c, r, s), ref(r, x, "value").
 // ucck_local_data(s): s declares a variable of a function (not the module), holding data: not a function, a class
@@ -99,6 +109,42 @@ ucck_local_data(s) :- nearest(s, h, fn_scope), !kind(h, "program"), !ucck_code(s
 ucck_code(s) :- site_form(s, "function") ; site_form(s, "class") ; site_form(s, "type") ; ucck_fn_site(s, _).
 .decl ucck_called(r: node)  // `fn(...args)`: r is the callee
 ucck_called(r) :- kind(cl, "call_expression"), field(cl, "function", r).
+// ucck_forwarded(c, r): r heads the callee `r.p.q(...)` of a call, in the function c caches, whose arguments are all
+// that function's own parameters (`opts.fn(...args)`): a captured function given the values the call is keyed on.
+.decl ucck_forwarded(c: node, r: node)
+ucck_forwarded(c, r) :- ucck_fwd_chain(c, m), field(m, "object", r), kind(r, "identifier").
+.decl ucck_fwd_chain(c: node, m: node)
+ucck_fwd_chain(c, m) :- ucck_fn(c, g), within(cl, g), kind(cl, "call_expression"), field(cl, "function", m),
+    kind(m, "member_expression"), field(cl, "arguments", al), child(al, a, _), !kind(a, "comment"),
+    !ucck_fwd_other(cl, g).
+ucck_fwd_chain(c, o) :- ucck_fwd_chain(c, m), field(m, "object", o), kind(o, "member_expression").
+// ucck_fwd_other(cl, g): an argument of cl is not a parameter of g, plain or spread.
+.decl ucck_fwd_other(cl: node, g: node)
+ucck_fwd_other(cl, g) :- ucck_fn(_, g), within(cl, g), kind(cl, "call_expression"), field(cl, "arguments", al),
+    child(al, a, _), !kind(a, "comment"), !ucck_own_arg(a, g).
+.decl ucck_own_arg(a: node, g: node)
+ucck_own_arg(a, g) :- kind(a, "identifier"), ref_site(a, p), decl_site(g, _, p, "param", _).
+ucck_own_arg(a, g) :- kind(a, "spread_element"), child(a, i, _), kind(i, "identifier"), ref_site(i, p),
+    decl_site(g, _, p, "param", _).
+// ucck_setting(r): r is read in the left side of `x ?? process.env.Y` (or `||`): a value with a deployment-wide
+// fallback picks a setting such as a credential, which must not change the result.
+.decl ucck_setting(r: node)
+ucck_setting(r) :- kind(b, "binary_expression"), (op(b, "??") ; op(b, "||")),
+    field(b, "right", rt), ucck_bare(rt, e), ucck_env(e), field(b, "left", l), (r = l ; within(r, l)),
+    ref(r, _, "value").
+.decl ucck_env(e: node)  // `process.env.X`, `process.env["X"]`
+ucck_env(e) :- (kind(e, "member_expression") ; kind(e, "subscript_expression")), field(e, "object", pe),
+    kind(pe, "member_expression"), field(pe, "object", p), kind(p, "identifier"), text(p, "process"),
+    field(pe, "property", q), text(q, "env").
+// ucck_caller_param(c, s): s is a parameter of a wrapper around c: a function one of whose parameters, typed as a
+// function (`fetcher: () => Promise<T>`), the cached function reads. The wrapper's callers choose what it computes
+// and the key; its parameters are theirs.
+.decl ucck_caller_param(c: node, s: node)
+ucck_caller_param(c, s) :- ucck_wrapper(c, f), decl_site(f, _, s, "param", _).
+.decl ucck_wrapper(c: node, f: node)
+ucck_wrapper(c, f) :- ucck_fn(c, g), within(r, g), ref(r, _, "value"), ref_site(r, p), !within(p, g),
+    decl_site(f, _, p, "param", _), field(par, "pattern", p), field(par, "type", ta), child(ta, ft, _),
+    kind(ft, "function_type").
 // ucck_init(s, v): v is the initial value of the variable declared at s, a plain name or a destructured one.
 .decl ucck_init(s: node, v: node)
 ucck_init(s, v) :- kind(s, "variable_declarator"), field(s, "value", v).
@@ -176,10 +222,17 @@ ucck_path_covered(c, s, t) :- ucck_read(c, r, s), ucck_top(r, t), ucck_key_ref(c
     .fixture "app/dashboard/page.tsx" from "../cases/next-practice-unstable-cache-closure-key/app/dashboard/page.tsx"
     .fixture "app/orgs/page.tsx" from "../cases/next-practice-unstable-cache-closure-key/app/orgs/page.tsx"
     .fixture "app/teams/[teamId]/page.tsx" from "../cases/next-practice-unstable-cache-closure-key/app/teams/[teamId]/page.tsx"
+    .fixture "lib/content-cache.ts" from "../cases/next-practice-unstable-cache-closure-key/lib/content-cache.ts"
+    .fixture "lib/with-cache.ts" from "../cases/next-practice-unstable-cache-closure-key/lib/with-cache.ts"
+    .fixture "lib/leaderboard.ts" from "../cases/next-practice-unstable-cache-closure-key/lib/leaderboard.ts"
     .expect _ at "app/dashboard/page.tsx":10
     .expect ClosureKeyField at "app/orgs/page.tsx":10
     .expect _ at "app/teams/[teamId]/page.tsx":10
     .expect _ at "app/teams/[teamId]/page.tsx":21
     .expect _ at "lib/data/invoices.ts":7
     .expect _ at "lib/data/invoices.ts":14
+    .expect ClosureKey at "lib/content-cache.ts":26
+    .expect ClosureKey at "lib/content-cache.ts":31
+    .expect ClosureKeyField at "lib/with-cache.ts":29
+    .expect _ at "lib/leaderboard.ts":21
 .end

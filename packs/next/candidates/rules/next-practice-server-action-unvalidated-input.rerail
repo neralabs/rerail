@@ -27,8 +27,18 @@
 //                                            not reported: the earlier unique lookup with `id` as its only key
 //                                            (any field: `where: { email }`; here or in a helper called first)
 //                                            already threw on an object
+//   findUnique({ where: { uid: id, AND: { … } } }) then findMany({ where: { roadmapUid: id } })
+//                                            not reported: the schema marks `uid` @id or @unique on that model, so
+//                                            beside an AND, a relation filter or another field it is still the key
 //   update({ where: { id, projectId } }) then deleteMany({ where: { memberId: id } })
-//                                            reported: beside another key, `id` proves nothing on its own
+//                                            reported when no schema says which is unique: `id` may be a plain filter
+//   findFirst({ where: { id } }) then update({ where: { id } }), plain statements of one block
+//                                            not reported: the unique write throws before the read's rows are used
+//                                            (not when the read is in a branch that returns, nor for a bulk write
+//                                            before it, unless both are in one `$transaction(async (tx) => …)`)
+//   $transaction([updateMany({ where: { userId } }), user.update({ where: { id: userId } })])
+//                                            not reported: the batch fails whole when the unique update throws
+//   if (userId !== session.user.id) return …  not reported: past it userId is that value, not an object
 //   schema.parse(input), v.parse(schema, id), typeof id, assertX(…, id), validateX(id)
 //                                            not reported: the value (or what it was read from) is checked first
 //   isX(id), checkX(id), ensureX(id), verifyX(id)   not reported: a type test of that value alone
@@ -42,7 +52,8 @@
 // Gaps: filters built in a variable before the call (`const where = { id }`), nested writes' filters, members of
 // helper objects (`repo.find(id)`), re-exported helpers, `export default` helpers, and wrapper-made actions
 // (next-safe-action's are validated; others are not seen). A check counts wherever it is in the function, not
-// only before the query; a check of `id` does not cover `data.id`.
+// only before the query; a check of `id` does not cover `data.id`; what code does with a read's rows before a later
+// unique write throws (an email sent) is not read.
 
 #include "tsx/eslint-a-common.rerail"
 
@@ -150,7 +161,28 @@ sau_checked(s) :- sau_val(a, s), call_arg(c, a, _), callee(c, fn), sau_last_name
 sau_checked(s) :- sau_val(a, s), call_arg(c, a, 0), callee(c, fn), sau_last_name(fn, x), sau_test_name(x),
     !call_arg(c, _, 1).
 sau_checked(s) :- sau_val(a, s), kind(u, "unary_expression"), op(u, "typeof"), field(u, "argument", a).
+sau_checked(s) :- sau_val(a, s), sau_strict_guard(b), child(b, a, _).
 sau_checked(t) :- sau_from(t, s), sau_checked(s).
+// sau_strict_guard(b): b is `a !== o`, o no client value (`userId !== session.user.id`, `kind !== "post"`), in the
+// condition of an `if` that returns or throws, alone or as a part of an `||` chain: past it, a equals o, so it is not
+// an object the client built.
+.decl sau_strict_guard(b: node)
+sau_strict_guard(b) :- sau_strict_ne(b), sau_or_up(b, e), field(i, "condition", e), kind(i, "if_statement"),
+    field(i, "consequence", q), sau_leaves(q).
+.decl sau_strict_ne(b: node)
+sau_strict_ne(b) :- kind(b, "binary_expression"), op(b, "!=="), child(b, a, _), sau_val(a, _), child(b, o, _), o != a,
+    !sau_client_val(o).
+.decl sau_client_val(o: node)
+sau_client_val(o) :- sau_val(o, s), sau_site(s).
+// sau_or_up(b, e): e is b, or an `||` or parentheses around it.
+.decl sau_or_up(b: node, e: node)
+sau_or_up(b, b) :- sau_strict_ne(b).
+sau_or_up(b, p) :- sau_or_up(b, e), child(p, e, _),
+    (kind(p, "parenthesized_expression") ; kind(p, "binary_expression"), op(p, "||")).
+// sau_leaves(q): statement q returns or throws, or is a block that does.
+.decl sau_leaves(q: node)
+sau_leaves(q) :- kind(q, "return_statement") ; kind(q, "throw_statement").
+sau_leaves(q) :- kind(q, "statement_block"), child(q, r, _), (kind(r, "return_statement") ; kind(r, "throw_statement")).
 .decl sau_last_name(fn: node, x: symbol)
 sau_last_name(fn, x) :- kind(fn, "identifier"), text(fn, x).
 sau_last_name(fn, x) :- kind(fn, "member_expression"), field(fn, "property", p), text(p, x).
@@ -186,29 +218,85 @@ sau_operator(x) :- (x = "equals" ; x = "not" ; x = "in" ; x = "notIn" ; x = "lt"
 .decl sau_sink(g: node, s: node, v: node, c: node, op: symbol, how: symbol)
 sau_sink(g, s, v, c, op, "value") :- sau_filter_call(c, op, w), has(w, pr, "pair"), field(pr, "key", k),
     key_static(k, x), !sau_operator(x), field(pr, "value", v), sau_val(v, s), sau_taint(g, s, _),
-    !sau_unique_before(s, c).
+    !sau_settled(s, c).
 sau_sink(g, s, v, c, op, "value") :- sau_filter_call(c, op, w), has(w, v, "shorthand_property_identifier"),
-    text(v, x), !sau_operator(x), sau_val(v, s), sau_taint(g, s, _), !sau_unique_before(s, c).
+    text(v, x), !sau_operator(x), sau_val(v, s), sau_taint(g, s, _), !sau_settled(s, c).
 sau_sink(g, s, w, c, op, "whole") :- sau_filter_call(c, op, w), sau_val(w, s), sau_taint(g, s, _).
 sau_sink(g, s, e, c, op, "whole") :- sau_filter_call(c, op, w), child(w, sp, _), kind(sp, "spread_element"),
     child(sp, e, 0), sau_val(e, s), sau_taint(g, s, _).
-// sau_unique_before(s, c): before filter call c, s was the whole key of a unique lookup (findUnique, update, delete,
-// …: `where: { id }`, `where: { slug: s }`), here or in a helper it was passed to. A unique lookup's where must name a
-// unique field, so when s is its only key, s is that field's value, which Prisma rejects when it is not a scalar: the
-// code after it never runs with an object. (A key beside another, `where: { id, ownerId }`, may be a non-unique
-// filter field, so it does not count.)
+// sau_settled(s, c): an object in s never gets a filter call c's effect: a unique key on s threw first
+// (sau_unique_before), throws after a read in the same run of statements (sau_unique_after), or throws in the same
+// batch transaction (sau_batch_unique).
+.decl sau_settled(s: node, c: node)
+sau_settled(s, c) :- sau_unique_before(s, c).
+sau_settled(s, c) :- sau_unique_after(s, c).
+sau_settled(s, c) :- sau_batch_unique(s, c).
+// sau_unique_before(s, c): before filter call c, s was a unique key of a unique lookup (findUnique, update, delete,
+// …), here or in a helper it was passed to (sau_unique_id). Prisma rejects an object where a unique field goes, so
+// the code after it never runs with one.
 .decl sau_unique_before(s: node, c: node)
 sau_unique_before(s, c) :- sau_unique_id(s, c2), sau_later(c), docof(c, d), docof(c2, d), line(c2, l2),
     line(c, l), l2 < l.
+// sau_unique_after(s, c): filter call c reads rows (findFirst, findMany, count, …), or writes them inside an
+// interactive transaction (`$transaction(async (tx) => …)`, rolled back when the callback throws), and a unique write
+// (update, delete, upsert) keyed on s follows it in the same block, each a plain statement of that block: no branch,
+// loop, nested function or (for c) return between it and the block. The write throws on an object before c's rows
+// are returned or kept. Gap: what the code does with c's rows between the two (an email sent) is not read.
+.decl sau_unique_after(s: node, c: node)
+sau_unique_after(s, c) :- sau_filter_call(c, op, _), (sau_read_op(op) ; sau_in_tx(c)), nearest(c, b, "statement_block"),
+    within_stop(c, b, sau_lead_stop), sau_unique_id(s, c2), sau_where_call(c2, op2, _),
+    (op2 = "update" ; op2 = "delete" ; op2 = "upsert"), nearest(c2, b, "statement_block"),
+    within_stop(c2, b, sau_flow_stop), line(c, l), line(c2, l2), l < l2.
+.decl sau_read_op(op: symbol)
+sau_read_op("findFirst"). sau_read_op("findFirstOrThrow"). sau_read_op("findMany"). sau_read_op("count").
+sau_read_op("aggregate"). sau_read_op("groupBy").
+// sau_flow_stop: what makes a statement run only sometimes, or later; sau_lead_stop adds leaving the function.
+.decl sau_flow_stop(k: symbol)
+sau_flow_stop("if_statement"). sau_flow_stop("ternary_expression"). sau_flow_stop("switch_statement").
+sau_flow_stop("for_statement"). sau_flow_stop("for_in_statement"). sau_flow_stop("while_statement").
+sau_flow_stop("do_statement"). sau_flow_stop("catch_clause"). sau_flow_stop("function_declaration").
+sau_flow_stop("function_expression"). sau_flow_stop("arrow_function"). sau_flow_stop("method_definition").
+.decl sau_lead_stop(k: symbol)
+sau_lead_stop(k) :- sau_flow_stop(k).
+sau_lead_stop("return_statement"). sau_lead_stop("throw_statement").
+// sau_in_tx(c): c's own function is the callback of a `$transaction(…)` call.
+.decl sau_in_tx(c: node)
+sau_in_tx(c) :- sau_filter_call(c, _, _), nearest(c, f, fn_scope), sau_fn(f), child(al, f, _), kind(al, "arguments"),
+    field(t, "arguments", al), sau_tx_call(t).
+.decl sau_tx_call(t: node)
+sau_tx_call(t) :- kind(t, "call_expression"), field(t, "function", fn), kind(fn, "member_expression"),
+    field(fn, "property", p), text(p, "$transaction").
+// sau_batch_unique(s, c): c and a unique call keyed on s are queries of one `$transaction([…])`, which Prisma runs
+// as one transaction: when the unique call rejects an object, c is rolled back or never returned.
+.decl sau_batch_unique(s: node, c: node)
+sau_batch_unique(s, c) :- sau_filter_call(c, _, _), child(arr, c, _), kind(arr, "array"), child(al, arr, _),
+    kind(al, "arguments"), field(t, "arguments", al), sau_tx_call(t), child(arr, c2, _), c2 != c,
+    sau_unique_id(s, c2).
 .decl sau_later(c: node)
 sau_later(c) :- sau_filter_call(c, _, _).
 sau_later(k) :- sau_link(_, _, k, _, _, _).
+// sau_unique_id(s, c): s is a unique key of unique call c's where (findUnique, findUniqueOrThrow, update, delete,
+// upsert), which Prisma rejects when it is not a scalar: the where's only entry, whatever the field (a unique call's
+// where must name a unique field), or a field the schema marks `@id` or `@unique` on the call's model, beside other
+// entries (`where: { uid: id, AND: { userUid } }`, `where: { id, roadmap: { userUid } }`, `where: { id, userId }`);
+// or s is passed to a helper whose parameter is one (k is then the helper's call). Without the schema, a key beside
+// another (`where: { id, projectId }`) proves nothing: the other may be the unique field and this one a plain filter.
 .decl sau_unique_id(s: node, c: node)
 sau_unique_id(s, c) :- sau_where_call(c, op, w), sau_unique_op(op), sau_only_key(w, pr), kind(pr, "pair"),
     field(pr, "value", v), sau_val(v, s).
 sau_unique_id(s, c) :- sau_where_call(c, op, w), sau_unique_op(op), sau_only_key(w, v),
     kind(v, "shorthand_property_identifier"), sau_val(v, s).
+sau_unique_id(s, c) :- sau_where_call(c, op, w), sau_unique_op(op), sau_call_model(c, x), kind(w, "object"),
+    child(w, pr, _), kind(pr, "pair"), field(pr, "key", k), key_static(k, n), sau_unique_field(x, n),
+    field(pr, "value", v), sau_val(v, s).
+sau_unique_id(s, c) :- sau_where_call(c, op, w), sau_unique_op(op), sau_call_model(c, x), kind(w, "object"),
+    child(w, v, _), kind(v, "shorthand_property_identifier"), text(v, n), sau_unique_field(x, n), sau_val(v, s).
 sau_unique_id(s, k) :- sau_link(_, s, k, _, h, j), sau_taint(h, s2, j), sau_unique_id(s2, _).
+// sau_call_model(c, x): unique call c is on the delegate of model x of the repository's schema (`prisma.roadmapUser`
+// for `model RoadmapUser`, compared without case).
+.decl sau_call_model(c: node, x: symbol)
+sau_call_model(c, x) :- sau_where_call(c, op, _), sau_unique_op(op), field(c, "function", fn), field(fn, "object", mo),
+    field(mo, "property", p), text(p, m), sau_model(x, _, _, _), @lower(x) = @lower(m).
 // sau_only_key(w, e): e is the one entry of the object w (a pair, a shorthand name or a spread).
 .decl sau_entry(w: node, e: node)
 sau_entry(w, e) :- sau_where_call(_, op, w), sau_unique_op(op), kind(w, "object"), child(w, e, _),
@@ -264,11 +352,36 @@ sau_spec(d, src) :- sau_taint(_, s, _), sau_val(a, s), call_arg(k, a, _), callee
 sau_ext(".ts"). sau_ext(".tsx"). sau_ext(".js"). sau_ext(".jsx"). sau_ext("/index.ts"). sau_ext("/index.tsx").
 sau_ext("/index.js").
 
+// ---- schema.prisma --------------------------------------------------------------------------------------------------
+// As prisma-practice-find-first-without-order-by reads it. sau_model(x, f, s, e): `model x {` on line s of schema file
+// f, closed by the `}` line e.
+.decl sau_model(x: symbol, f: symbol, s: number, e: number)
+sau_model(x, f, s, e) :- sau_schema_file(f), file_line(f, s, t), match("\\s*model\\s+(?<x>\\w+)\\s*\\{.*", t),
+    e = min i : { file_line(f, i, u), i > s, match("\\s*\\}.*", u) }.
+// sau_unique_field(x, n): field n of model x carries `@id` or `@unique`.
+.decl sau_unique_field(x: symbol, n: symbol)
+sau_unique_field(x, n) :- sau_model(x, f, s, e), file_line(f, i, t), i > s, i < e,
+    match("\\s*(?<n>[A-Za-z_]\\w*)\\s+[A-Za-z_][^/]*@(id|unique)\\b.*", t).
+// sau_schema_file(f): a .prisma file of the repository, six directory levels down from the root at most
+// (`prisma/schema.prisma`, `prisma/schema/*.prisma`, `packages/db/schema.prisma`), skipping node_modules, build output
+// and dot directories.
+.decl sau_schema_file(f: symbol)
+sau_schema_file(n) :- dir_entry("", n, 0), match(".*\\.prisma", n).
+sau_schema_file(f) :- sau_dir(p, k), k > 0, dir_entry(p, n, 0), match(".*\\.prisma", n), f = cat(p, "/", n).
+.decl sau_dir(p: symbol, k: number)
+sau_dir("", 0).
+sau_dir(n, 1) :- dir_entry("", n, 1), !sau_skip_dir(n).
+sau_dir(c, k + 1) :- sau_dir(p, k), k > 0, k < 6, dir_entry(p, n, 1), !sau_skip_dir(n), c = cat(p, "/", n).
+.decl sau_skip_dir(n: symbol)
+sau_skip_dir(n) :- dir_entry(_, n, 1), (match("\\..*", n) ; n = "node_modules" ; n = "dist" ; n = "build" ;
+    n = "coverage" ; n = "out").
+
 // The cases, `cases/next-practice-server-action-unvalidated-input/`, read as one repository: each line ending in
 // `// caught` is reported, and no other line.
 .test cases exactly
     .fixture "tsconfig.json" from "../cases/next-practice-server-action-unvalidated-input/tsconfig.json"
     .fixture "package.json" from "../cases/next-practice-server-action-unvalidated-input/package.json"
+    .fixture "prisma/schema.prisma" from "../cases/next-practice-server-action-unvalidated-input/prisma/schema.prisma"
     .fixture "rr-app/package.json" from "../cases/next-practice-server-action-unvalidated-input/rr-app/package.json"
     .fixture "rr-app/react-router.config.ts" from "../cases/next-practice-server-action-unvalidated-input/rr-app/react-router.config.ts"
     .fixture "rr-app/app/routes/invites/actions.ts" from "../cases/next-practice-server-action-unvalidated-input/rr-app/app/routes/invites/actions.ts"
@@ -277,9 +390,11 @@ sau_ext("/index.js").
     .fixture "src/lib/invites.ts" from "../cases/next-practice-server-action-unvalidated-input/src/lib/invites.ts"
     .fixture "src/lib/projects.ts" from "../cases/next-practice-server-action-unvalidated-input/src/lib/projects.ts"
     .fixture "src/lib/tokens.ts" from "../cases/next-practice-server-action-unvalidated-input/src/lib/tokens.ts"
+    .fixture "src/lib/questions.ts" from "../cases/next-practice-server-action-unvalidated-input/src/lib/questions.ts"
     .fixture "src/lib/archive/index.ts" from "../cases/next-practice-server-action-unvalidated-input/src/lib/archive/index.ts"
     .fixture "src/app/invites/actions.ts" from "../cases/next-practice-server-action-unvalidated-input/src/app/invites/actions.ts"
     .fixture "src/app/projects/page.tsx" from "../cases/next-practice-server-action-unvalidated-input/src/app/projects/page.tsx"
+    .fixture "src/app/roadmaps/actions.ts" from "../cases/next-practice-server-action-unvalidated-input/src/app/roadmaps/actions.ts"
     .expect _ at "src/app/invites/actions.ts":15
     .expect _ at "src/app/invites/actions.ts":25
     .expect _ at "src/app/invites/actions.ts":29
@@ -288,9 +403,15 @@ sau_ext("/index.js").
     .expect _ at "src/app/invites/actions.ts":45
     .expect _ at "src/app/invites/actions.ts":50
     .expect _ at "src/app/invites/actions.ts":54
-    .expect _ at "src/app/invites/actions.ts":151
-    .expect _ at "src/app/invites/actions.ts":161
-    .expect _ at "src/app/invites/actions.ts":178
-    .expect _ at "src/app/invites/actions.ts":184
+    .expect _ at "src/app/invites/actions.ts":162
+    .expect _ at "src/app/invites/actions.ts":179
+    .expect _ at "src/app/invites/actions.ts":185
     .expect _ at "src/app/projects/page.tsx":12
+    .expect _ at "src/app/roadmaps/actions.ts":15
+    .expect _ at "src/app/roadmaps/actions.ts":38
+    .expect _ at "src/app/roadmaps/actions.ts":45
+    .expect _ at "src/app/roadmaps/actions.ts":69
+    .expect _ at "src/app/roadmaps/actions.ts":70
+    .expect _ at "src/app/roadmaps/actions.ts":81
+    .expect _ at "src/app/roadmaps/actions.ts":91
 .end
