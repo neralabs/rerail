@@ -297,7 +297,7 @@ def b2(failures: list) -> None:
     # parts, not found by a search of the layer's rows.
     layer = crates / "blocks/src/layer.rs"
     lcode = strip_rust(layer_text())
-    if "vec![crate::rows::I32, 8, 4, 4, 4, 4]" not in lcode:
+    if "LayerSpec::of(&[crate::rows::I32, 8, 4, 4, 4, 4], Some(0), n)" not in lcode:
         failures.append(f"{layer.relative_to(ROOT)}: parts is (part, digest, added, gone, first, kills_at), the partition index")
     hits(layer, lcode, r"leading\(self\.(rows|gone)\b", "a partition found by a search of the layer's rows or kills, not its index", failures)
     # A layer's kills are kept once: its partition index's `gone(part, id)` (P§: "a range of the block, by the
@@ -317,7 +317,7 @@ def b2(failures: list) -> None:
     # `own` is the reader of its rows where they lie (its relation's, or its encoded form's), not a store.
     if fields != ["bytes", "head", "rows", "parts", "gone", "own"]:
         failures.append(f"{layer.relative_to(ROOT)}: a layer holds {fields}; its rows, parts and gone alone, and its rows' reader")
-    if "Spec { widths: vec![crate::rows::I32, 4], sort: Some(0)" not in lcode:
+    if "LayerSpec::of(&[crate::rows::I32, 4], Some(0), n)" not in lcode:
         failures.append(f"{layer.relative_to(ROOT)}: gone is (partition, id), sorted on the partition")
     tcode = strip_rust((TWINS / "src/trace.rs").read_text())
     # The twins name a layer's part (`layer_write::Part`); blocks makes it, its rows continuing the layer below.
@@ -325,7 +325,7 @@ def b2(failures: list) -> None:
     direct = re.findall(r"Relation::try_(?:create|continue_far)\(", tcode)
     if sorted(made) != ["Part::Gone", "Part::Parts", "rp"] or "let rp = Part::Rows(shape);" not in tcode or direct:
         failures.append(f"the twins' trace.rs makes {made} (and {len(direct)} relations directly); a layer's rows, its parts and its gone alone")
-    if not re.search(r"Part::Rows\(_\) => Relation::try_continue_far\(block, &spec, below\),\s*Part::Parts \| Part::Gone => Relation::try_create\(block, &spec, None\)", lw):
+    if not re.search(r"Part::Rows\(_\) => super::try_continue_far_cols\(block, spec\.cols\(\), below\),\s*Part::Parts \| Part::Gone => super::try_create_cols\(block, spec\.cols\(\), None\)", lw):
         failures.append("blocks/src/relation/layer_write.rs: create makes a layer's rows continuing the one below, its parts and gone of their own")
 
 

@@ -23,8 +23,8 @@
 
 #![deny(clippy::disallowed_methods, clippy::disallowed_types, clippy::disallowed_macros)]
 
-use super::{ADDED_INDEXES, ColStats, FROZEN, Index, Relation, Spec, build_one_index};
-use crate::layer::{ENC_DICT, ENC_RANGED};
+use super::{ADDED_INDEXES, ColStats, FROZEN, Index, Relation, build_one_index};
+use crate::layer::{ENC_DICT, ENC_RANGED, LayerSpec};
 use crate::packed::RowsIn;
 use crate::refs::Span;
 use crate::region::BlockPin;
@@ -35,8 +35,8 @@ fn check_open(pin: &BlockPin, rel: &Relation) {
     assert!(pin.block().holds(std::ptr::from_ref(rel)) && pin.writes() && !rel.is_frozen(), "an open layer of a block pinned to write");
 }
 
-/// One of a layer's three relations, as an operation names it (its `Spec` is blocks' to build): its rows, of the
-/// trace's shape; its partitions' change; its kills by partition.
+/// One of a layer's three relations, as an operation names it (its spec is blocks', `LayerSpec`, fixed: nothing a
+/// phase calls here takes the heap): its rows, of the trace's shape; its partitions' change; its kills by partition.
 #[derive(Clone, Copy, Debug)]
 pub enum Part {
     Rows(crate::layer::ShapeW),
@@ -46,28 +46,27 @@ pub enum Part {
 
 impl Part {
     /// Its spec, for `n` rows.
-    fn spec(self, n: usize) -> Spec {
+    fn spec(self, n: usize) -> LayerSpec {
         match self {
-            Part::Rows(shape) => crate::layer::rows_spec(&shape, n),
-            Part::Parts => crate::layer::parts_spec(n),
-            Part::Gone => crate::layer::gone_spec(n),
+            Part::Rows(shape) => LayerSpec::rows(&shape, n),
+            Part::Parts => LayerSpec::parts(n),
+            Part::Gone => LayerSpec::gone(n),
         }
     }
 }
 
 /// The hashed indexes a layer of `shape` has (`index`'s items): each `Hash` index of the shape, and its row index.
 pub fn index_count(shape: &crate::layer::ShapeW) -> usize {
-    crate::layer::rows_spec(shape, 0).indexes.len()
+    LayerSpec::rows(shape, 0).nkeys()
 }
 
 /// Layer part `part` made in `block`, for `n` rows: its rows continuing the layer below (`below`, as
 /// `Relation::try_continue_far` takes it), the others a relation of their own. `None` when the block has no room.
 pub fn create<'b>(block: &'b crate::block::Block, part: Part, n: usize, below: Option<(u32, usize, &Relation, u32)>) -> Option<&'b Relation> {
-    use crate::relation::RelationW;
     let spec = part.spec(n);
     match part {
-        Part::Rows(_) => Relation::try_continue_far(block, &spec, below),
-        Part::Parts | Part::Gone => Relation::try_create(block, &spec, None),
+        Part::Rows(_) => super::try_continue_far_cols(block, spec.cols(), below),
+        Part::Parts | Part::Gone => super::try_create_cols(block, spec.cols(), None),
     }
 }
 
@@ -102,13 +101,13 @@ pub fn sketch_change(pin: &mut BlockPin, rel: &Relation, c: usize, below: Option
 }
 
 /// Lays out the freeze's directories of an open layer `rel` of `spec`: a range a column (`stat`), the index directory
-/// (`spec.indexes`, and room for the orders added after it is frozen), and a sketch a column when `sketched`
+/// (its hashed indexes, and room for the orders added after it is frozen), and a sketch a column when `sketched`
 /// (`sketch`). False when the block has no room. A layer records no change of its own: its kills are its `gone` relation's.
-pub fn open(pin: &mut BlockPin, rel: &Relation, spec: &Spec, sketched: bool) -> bool {
+pub fn open(pin: &mut BlockPin, rel: &Relation, spec: &LayerSpec, sketched: bool) -> bool {
     check_open(pin, rel);
     let block = pin.block();
     let a = rel.arity as usize;
-    let room = ADDED_INDEXES.max(spec.indexes.len());
+    let room = ADDED_INDEXES.max(spec.nkeys());
     let (Some(sp), Some(ixp)) = (block.try_alloc_t::<ColStats>(a.max(1)), block.try_alloc_t::<Index>(room)) else { return false };
     let sk = if sketched {
         let Some(p) = block.try_alloc_t::<Span<u8>>(a.max(1)) else { return false };
@@ -144,25 +143,28 @@ pub fn stat(pin: &mut BlockPin, rel: &Relation, c: usize, rows: &dyn RowsIn) {
     unsafe { rel.stats.as_mut_slice()[c] = ColStats { min: lo, max: hi } };
 }
 
-/// Index `x` of `spec.indexes`, over the layer's own rows `rows` (in id order, as they lie), into its directory entry
-/// (`open`'s), its temporaries from `scratch`: after every column's range (`stat`).
-pub fn index(pin: &mut BlockPin, rel: &Relation, spec: &Spec, x: usize, scratch: &Scratch, rows: &dyn RowsIn) {
+/// Hashed index `x` of `spec`, over the layer's own rows `rows` (in id order, as they lie), into its directory entry
+/// (`open`'s), its temporaries from `scratch`: after every column's range (`stat`). Its columns' bounds and numbers
+/// on the stack, at most `MAX_COLS`.
+pub fn index(pin: &mut BlockPin, rel: &Relation, spec: &LayerSpec, x: usize, scratch: &Scratch, rows: &dyn RowsIn) {
+    use rerail_delta_core::runs::MAX_COLS;
     check_open(pin, rel);
     let a = rel.arity as usize;
+    assert!(a <= MAX_COLS, "a layer of at most MAX_COLS columns");
     let n = rows.n();
     let stats = rel.stats.as_slice();
-    let lo: Vec<i64> = stats.iter().map(|s| s.min).collect(); // copy: not block data (the key columns' bounds)
-    let hi: Vec<i64> = stats.iter().map(|s| s.max).collect(); // copy: not block data (the key columns' bounds)
+    let lo: [i64; MAX_COLS] = core::array::from_fn(|c| stats.get(c).map_or(0, |s| s.min));
+    let hi: [i64; MAX_COLS] = core::array::from_fn(|c| stats.get(c).map_or(0, |s| s.max));
+    let every: [u16; MAX_COLS] = core::array::from_fn(|c| c as u16);
     let order: &mut [u32] = scratch.take(n);
     for (i, o) in order.iter_mut().enumerate() {
         *o = i as u32;
     }
-    let every: Vec<u16> = (0..a as u16).collect(); // copy: not block data (the columns' numbers)
     let val = |c: usize, i: usize| rows.get(i, c);
-    let sort = spec.sort.map(usize::from);
+    let sort = spec.sort().map(usize::from);
     // SAFETY: entry `x` of the open relation's directory (`open`'s); this call is its one writer.
     let ix = unsafe { &mut rel.indexes.as_mut_slice()[x] };
-    build_one_index(pin.block(), ix, &spec.indexes[x], &every, sort, &val, order, &lo, &hi, rel.base_rows as usize, scratch);
+    build_one_index(pin.block(), ix, spec.key(x), &every[..a], sort, &val, order, &lo[..a], &hi[..a], rel.base_rows as usize, scratch);
 }
 
 /// Lays out the layer's own rows in `encoding` (not Open: `layer::ENC_*`) in `rel`'s block, for `n` rows of `arity`
@@ -205,14 +207,15 @@ pub fn encode_perm(pin: &mut BlockPin, rel: &Relation, at: usize, x: usize, rows
     unsafe { crate::packed::writer::write_perm(block, &*block.ptr::<crate::packed::Packed>(at), x, rows, scratch) }
 }
 
-/// Freezes the layer: sorted on `spec.sort` (its rows were written in the trace's canonical order), its directory
-/// holding `spec.indexes` (each built, `index`), its `n` own rows live (its relation's, or its encoded form's). After
-/// every item of its other phases, and before its orders (`Relation::add_order`) and sketches (`sketch`).
-pub fn seal(pin: &mut BlockPin, rel: &Relation, spec: &Spec, n: u32) {
+/// Freezes the layer: sorted on its spec's sort column (its rows were written in the trace's canonical order), its
+/// directory holding its hashed indexes (each built, `index`), its `n` own rows live (its relation's, or its encoded
+/// form's). After every item of its other phases, and before its orders (`Relation::add_order`) and sketches
+/// (`sketch`).
+pub fn seal(pin: &mut BlockPin, rel: &Relation, spec: &LayerSpec, n: u32) {
     check_open(pin, rel);
     assert!(rel.changed.as_slice().is_empty(), "a layer's kills are kept once, in its gone relation: its rows record no change");
-    rel.set_sort_col(spec.sort.map(usize::from));
-    rel.nindex.store(spec.indexes.len() as u32, Relaxed);
+    rel.set_sort_col(spec.sort().map(usize::from));
+    rel.nindex.store(spec.nkeys() as u32, Relaxed);
     assert!(rel.rows.is_empty() || rel.rows.len() == n, "a layer's rows are its relation's or its encoded form's");
     rel.live.store(n, Relaxed);
     rel.flags.fetch_or(FROZEN, Release);

@@ -29,7 +29,7 @@ use crate::bistate::{ColStats, ColumnIndex, Flips, Since, WordIndex};
 pub use rerail_delta_core::trace::{ChainError, ChainFlips, MAX_BELOW, MAX_LAYERS, ProbeIter, Ranges, Scan, State};
 use crate::gens::{BODY_AT, Id, Table, word};
 use crate::relation::layer_write::layer_sketch;
-use crate::relation::{Relation, Spec, View};
+use crate::relation::{Relation, View};
 use crate::sketch::Sketch;
 
 // The shape's words, its bounds and the δ runs block: the floor's one definition (`rerail_delta_core::runs`).
@@ -306,19 +306,81 @@ fn one_chunk(n: usize) -> u32 {
     (n.max(1).next_power_of_two().trailing_zeros() + 2).max(crate::rows::MIN_LOG)
 }
 
-/// The layer relation's spec: the shape's columns at their widths, sorted on its canonical order's first column (the
-/// partition, when it has one; its rows written in the whole order, which the sort keeps), a hashed index for each
-/// `Hash` index (P§11.2), and its row index (every column: the next layer finds a row's live copy by it). Room for `n`
-/// rows in one chunk.
-pub fn rows_spec(shape: &ShapeW, n: usize) -> Spec {
-    let a = shape.arity();
-    let widths = (0..a).map(|c| col_width(if shape.width(c) == 8 { ColType::I64 } else { ColType::I32 })).collect();
-    let mut indexes: Vec<Vec<u16>> = (0..shape.nidx as usize).filter(|&x| shape.index_kind(x) & IX_HASH != 0).map(|x| shape.index_key(x).iter().map(|&c| u16::from(c)).collect()).collect();
-    let every: Vec<u16> = (0..a as u16).collect();
-    if a <= crate::relation::MAX_KEY && !indexes.contains(&every) {
-        indexes.push(every);
+/// A layer relation's spec, fixed (no heap: the phases that write a layer hold it on their stack, `layer_write`): its
+/// columns' widths, its sort column, its hashed indexes' keys, and the chunk size that holds its rows.
+#[derive(Clone, Copy, Debug)]
+pub struct LayerSpec {
+    widths: [u32; MAX_COLS],
+    arity: usize,
+    sort: Option<u16>,
+    keys: [[u16; MAX_KEY]; MAX_IX + 1],
+    key_len: [usize; MAX_IX + 1],
+    nkeys: usize,
+    min_log: u32,
+}
+
+impl LayerSpec {
+    fn of(widths: &[u32], sort: Option<u16>, n: usize) -> LayerSpec {
+        let mut w = [0; MAX_COLS];
+        w[..widths.len()].copy_from_slice(widths);
+        LayerSpec { widths: w, arity: widths.len(), sort, keys: [[0; MAX_KEY]; MAX_IX + 1], key_len: [0; MAX_IX + 1], nkeys: 0, min_log: one_chunk(n) }
     }
-    Spec { widths, sort: Some(u16::from(shape.order()[0])), indexes, min_log: one_chunk(n) }
+
+    fn push_key(&mut self, key: impl Iterator<Item = u16>) {
+        let k = self.nkeys;
+        for (j, c) in key.enumerate() {
+            self.keys[k][j] = c;
+            self.key_len[k] = j + 1;
+        }
+        self.nkeys += 1;
+    }
+
+    /// The layer's rows: the shape's columns at their widths, sorted on its canonical order's first column (the
+    /// partition, when it has one; its rows written in the whole order, which the sort keeps), a hashed index for each
+    /// `Hash` index (P§11.2), and its row index (every column: the next layer finds a row's live copy by it). Room for
+    /// `n` rows in one chunk.
+    pub fn rows(shape: &ShapeW, n: usize) -> LayerSpec {
+        let a = shape.arity();
+        let widths: [u32; MAX_COLS] = core::array::from_fn(|c| if c < a { col_width(if shape.width(c) == 8 { ColType::I64 } else { ColType::I32 }) } else { 0 });
+        let mut s = LayerSpec::of(&widths[..a], Some(u16::from(shape.order()[0])), n);
+        for x in (0..shape.nidx as usize).filter(|&x| shape.index_kind(x) & IX_HASH != 0) {
+            s.push_key(shape.index_key(x).iter().map(|&c| u16::from(c)));
+        }
+        let every = |k: &[u16]| k.len() == a && k.iter().enumerate().all(|(j, &c)| c as usize == j);
+        if a <= MAX_KEY && !(0..s.nkeys).any(|k| every(s.key(k))) {
+            s.push_key(0..a as u16);
+        }
+        s
+    }
+
+    /// `parts`: the partition (signed 32 bits), its digest's move, rows added, rows gone, its first own row's place
+    /// among the layer's, its first kill's place in `gone`; sorted on the partition.
+    pub fn parts(n: usize) -> LayerSpec {
+        LayerSpec::of(&[crate::rows::I32, 8, 4, 4, 4, 4], Some(0), n)
+    }
+
+    /// `gone`: the partition, the id killed; sorted on the partition, in one chunk (a partition's ids are a slice).
+    pub fn gone(n: usize) -> LayerSpec {
+        LayerSpec::of(&[crate::rows::I32, 4], Some(0), n)
+    }
+
+    /// Its columns, as a relation is made with them.
+    pub fn cols(&self) -> crate::relation::Cols<'_> {
+        crate::relation::Cols { widths: &self.widths[..self.arity], sort: self.sort, min_log: self.min_log }
+    }
+
+    pub fn sort(&self) -> Option<u16> {
+        self.sort
+    }
+
+    /// Its hashed indexes' count, and index `x`'s key.
+    pub fn nkeys(&self) -> usize {
+        self.nkeys
+    }
+
+    pub fn key(&self, x: usize) -> &[u16] {
+        &self.keys[x][..self.key_len[x]]
+    }
 }
 
 /// A column type's width in a relation's spec: a signed 32-bit column's `rows::I32`.
@@ -327,17 +389,6 @@ fn col_width(t: ColType) -> u32 {
         ColType::I32 => crate::rows::I32,
         ColType::I64 => 8,
     }
-}
-
-/// `parts`' spec: the partition (signed 32 bits), its digest's move, rows added, rows gone, its first own row's place
-/// among the layer's, its first kill's place in `gone`; sorted on the partition.
-pub fn parts_spec(n: usize) -> Spec {
-    Spec { widths: vec![crate::rows::I32, 8, 4, 4, 4, 4], sort: Some(0), indexes: Vec::new(), min_log: one_chunk(n) }
-}
-
-/// `gone`'s spec: the partition, the id killed; sorted on the partition, in one chunk (a partition's ids are a slice).
-pub fn gone_spec(n: usize) -> Spec {
-    Spec { widths: vec![crate::rows::I32, 4], sort: Some(0), indexes: Vec::new(), min_log: one_chunk(n) }
 }
 
 /// A layer being written's own rows in its block: blocks' own, over the floor's `OwnRows`.

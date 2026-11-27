@@ -41,8 +41,9 @@ pub struct Scratch {
     /// The bytes `end` gave back to the OS, from and to: marked in use again (`reuse_pages`) when a take reaches them.
     given: Cell<(usize, usize)>,
     backing: Option<Box<dyn Backing>>,
-    /// Its ledger: what a kernel's bind of its bytes holds (`Fence::uses_address`).
-    ledger: std::sync::Arc<crate::ledger::Ledger>,
+    /// Its ledger: what a kernel's bind of its bytes holds (`Fence::uses_address`). None for a lent scratch (`lend`):
+    /// its bytes are a block's, which keeps its own.
+    ledger: Option<std::sync::Arc<crate::ledger::Ledger>>,
 }
 
 fn ledger_of(base: *mut u8, len: usize) -> std::sync::Arc<crate::ledger::Ledger> {
@@ -54,38 +55,23 @@ impl Scratch {
     /// An anonymous region of `reserved` bytes of address space.
     pub fn anon(reserved: usize) -> Scratch {
         let p = crate::mem::reserve(reserved);
-        Scratch { base: p, len: reserved, top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: None, ledger: ledger_of(p, reserved) }
+        Scratch { base: p, len: reserved, top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: None, ledger: Some(ledger_of(p, reserved)) }
     }
 
     /// The region `backing` holds (a pooled slab): it may hold an earlier use's bytes.
     pub fn over(backing: Box<dyn Backing>) -> Scratch {
         let ledger = ledger_of(backing.base(), backing.len());
-        Scratch { base: backing.base(), len: backing.len(), top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: Some(backing), ledger }
+        Scratch { base: backing.base(), len: backing.len(), top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: Some(backing), ledger: Some(ledger) }
     }
 
     /// `f` with a scratch over `bytes` (an operation's scratch slot's, where its block lies), for the call alone: its
-    /// takes are of those bytes (from their first 64-byte boundary), and nothing is mapped, kept or given back.
+    /// takes are of those bytes (from their first 64-byte boundary), a bump of an offset. Nothing is allocated, mapped,
+    /// kept or given back: what a phase's call takes is its slot's bytes, as on a device.
     pub fn lend<R>(bytes: &mut [u8], f: impl FnOnce(&Scratch) -> R) -> R {
-        /// The lent bytes: their owner keeps them, so dropping this lets nothing go.
-        struct Lent(*mut u8, usize);
-        // SAFETY: the bytes of a `&mut [u8]` the call holds alone, while the scratch over them lives.
-        unsafe impl Send for Lent {}
-        unsafe impl Sync for Lent {}
-        impl Backing for Lent {
-            fn base(&self) -> *mut u8 {
-                self.0
-            }
-            fn len(&self) -> usize {
-                self.1
-            }
-        }
         let skip = bytes.as_ptr().align_offset(64).min(bytes.len());
         let bytes = &mut bytes[skip..];
-        let s = Scratch::over(Box::new(Lent(bytes.as_mut_ptr(), bytes.len())));
-        let r = f(&s);
-        s.quiet("the end of a lent use");
-        drop(s);
-        r
+        let s = Scratch { base: bytes.as_mut_ptr(), len: bytes.len(), top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: None, ledger: None };
+        f(&s)
     }
 
     /// `n` values of `T`, their contents whatever the last use left.
@@ -124,14 +110,14 @@ impl Scratch {
     }
 
     fn quiet(&self, what: &str) {
-        if self.top.get() > 0 && !self.ledger.quiet() {
+        if self.top.get() > 0 && self.ledger.as_ref().is_some_and(|l| !l.quiet()) {
             panic!("scratch: {what} of {} bytes taken, with GPU work that reads them queued (wait for its fence first)", self.top.get());
         }
     }
 
-    /// Its ledger (decision 0487): what a fence's use of its bytes holds.
-    pub fn ledger(&self) -> &std::sync::Arc<crate::ledger::Ledger> {
-        &self.ledger
+    /// Its ledger (decision 0487): what a fence's use of its bytes holds; none for a lent scratch.
+    pub fn ledger(&self) -> Option<&std::sync::Arc<crate::ledger::Ledger>> {
+        self.ledger.as_ref()
     }
 
     /// The most bytes a use has taken.
@@ -157,9 +143,11 @@ impl Scratch {
 impl Drop for Scratch {
     /// Its memory goes once no queued work binds it (R5): the mapping it made released, or its backing dropped.
     fn drop(&mut self) {
+        // A lent scratch's bytes are their owner's: nothing to let go.
+        let Some(ledger) = &self.ledger else { return };
         let (base, len) = (self.base as usize, self.len);
         let backing = self.backing.take();
-        self.ledger.let_go(Box::new(move || match backing {
+        ledger.let_go(Box::new(move || match backing {
             Some(b) => drop(b),
             // SAFETY: the mapping this region made, which no work reaches now.
             None => unsafe { crate::mem::release(base as *mut u8, len) },

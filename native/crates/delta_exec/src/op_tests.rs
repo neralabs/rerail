@@ -604,11 +604,10 @@ fn append(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     if word::<u64>(c.read(1), BODY_AT + 8) != 0 || !c.room(1, 8 * n) {
         return;
     }
-    let v: Vec<i64> = samples::vals(c.read(0)).to_vec(); // copy: not block data (a test twin's input values)
-    let pin = c.pin_mut(1);
-    let at = pin.block().alloc(8 * n, 64);
-    let b = pin.bytes_mut().expect("a write pin");
-    for (k, x) in v.iter().enumerate() {
+    let at = c.block(1).alloc(8 * n, 64);
+    // Its input read where it lies while the out block is written.
+    let ([input], [b]) = c.views([0], [1]);
+    for (k, x) in samples::vals(input).iter().enumerate() {
         b[at + 8 * k..at + 8 * k + 8].copy_from_slice(&x.to_ne_bytes());
     }
     rerail_blocks::gens::set_word::<u64>(b, BODY_AT, at as u64);
@@ -753,4 +752,38 @@ fn every_launch_counts_in_the_evaluation_and_one_past_its_budget_fails() {
         run_cpu(&reg, &dir, op, &c.slots, &c.params, Tiling::WHOLE).unwrap_err()
     };
     assert!(e.contains("launch 6 of an evaluation whose budget is 5 (0601): evens.count 2, evens.scan 2, evens.place 2"), "{e}");
+}
+
+/// A twin that takes the heap in a phase: the run fails, naming it (`heap_watch`: a device has no heap, so a twin's
+/// phase holds what it holds in its slots or fixed working memory). A host version's phases are not watched.
+fn heaped(c: &mut Ctx<'_, '_, '_>, t: Tile) {
+    let held: Vec<i64> = samples::vals(c.read(0)).iter().map(|x| x + 1).collect(); // copy: not block data (the test's heap use)
+    let ([_], [out]) = c.views([0], [1]);
+    let dst = samples::vals_mut(out, held.len());
+    for i in t.items() {
+        dst[i] = held[i];
+    }
+}
+
+static HEAPED_TWIN: [TwinPhase; 1] = [TwinPhase { name: "map", items: |c| samples::vals(c.read(0)).len() as u32, run: heaped, again: None }];
+
+#[test]
+fn a_twin_that_takes_the_heap_fails_its_run() {
+    let io = || vec![slot("in", R, kind::FACTS), slot("out", W, kind::FACTS)];
+    let v: Vec<i64> = (0..100).collect();
+    let run = |host: bool| {
+        let s = bounded(if host { "heaped on the host" } else { "heaped" }, io(), lanes("map", Found::Fixed, Across::Nothing, Output::ByIndex, &[]), values);
+        let mut reg = Registry::default();
+        let op = reg.declare(s).unwrap();
+        let v0 = if host { Version::host(op, "host", &HEAPED_TWIN, s.shape) } else { Version::twin(op, "twin", &HEAPED_TWIN, s.shape) };
+        reg.register_reference(v0).unwrap();
+        let mut dir = Directory::default();
+        let i = values_block(&mut dir, &v);
+        let o = dir.make(kind::FACTS, samples::vals_bytes(v.len()));
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_cpu(&reg, &dir, op, &[i, o], &[], Tiling::WHOLE)))
+    };
+    let e = run(false).expect_err("a twin's heap use fails its run");
+    let e = e.downcast_ref::<String>().map_or("", String::as_str);
+    assert!(e.contains("heaped run 0: a twin's phase allocated on the heap"), "{e}");
+    run(true).expect("a host version is not watched").unwrap();
 }

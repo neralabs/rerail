@@ -51,6 +51,8 @@ pub mod tape;
 pub mod trace;
 
 #[cfg(test)]
+mod heap_watch;
+#[cfg(test)]
 mod tests;
 
 /// `bootstrap-l0.rerail`: the reader of rules (P2) and the rule that orders the bootstrap's modules.

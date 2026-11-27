@@ -79,6 +79,69 @@ pub struct Spec {
     pub min_log: u32,
 }
 
+/// A relation's columns as it is made with them, borrowed (a `Spec`'s, or a layer's fixed `layer::LayerSpec`): their
+/// widths, its sort column, and the chunk size its rows start at. What making a relation reads of a spec.
+#[derive(Clone, Copy, Debug)]
+pub struct Cols<'a> {
+    pub widths: &'a [u32],
+    pub sort: Option<u16>,
+    pub min_log: u32,
+}
+
+impl Spec {
+    pub fn cols(&self) -> Cols<'_> {
+        Cols { widths: &self.widths, sort: self.sort, min_log: self.min_log }
+    }
+}
+
+/// `RelationW::try_create` of `cols`: the descriptor and both row sets' column directories, in one chunk of `block`.
+pub fn try_create_cols<'b>(block: &'b Block, cols: Cols<'_>, base: Option<&Relation>) -> Option<&'b Relation> {
+    let at = block.try_alloc_chunk(Relation::descriptor_bytes(cols.widths.len()), 64)?;
+    let p: *mut Relation = block.ptr(at);
+    let dirs: *mut crate::rows::ColDir = block.ptr(at + Relation::DIRS_AT);
+    unsafe {
+        (*p).arity = cols.widths.len() as u32;
+        (*p).flags.store(if base.is_some() { DELTA } else { 0 }, Relaxed);
+        (*p).base_rows = base.map_or(0, |b| {
+            // A continuation's delta (its kills, which read no rows through it) counts its base's rows too.
+            if b.continues() {
+                return b.base_rows + b.rows.len();
+            }
+            assert_eq!(b.base_rows, 0, "a delta's base is a full relation");
+            b.rows.len()
+        });
+        // A delta lies in its base's order, so a view merges the two on one column.
+        (*p).set_sort_col(match base {
+            Some(b) => b.sort_col(),
+            None => cols.sort.map(usize::from),
+        });
+        Rows::init_in(&raw mut (*p).rows, dirs, cols.widths, cols.min_log);
+        Rows::init_in(&raw mut (*p).killed, dirs.add(cols.widths.len()), &[4], 6);
+        (*p).base_block = NO_BLOCK;
+        Some(&*p)
+    }
+}
+
+/// `RelationW::try_continue_far` of `cols`.
+pub fn try_continue_far_cols<'b>(block: &'b Block, cols: Cols<'_>, below: Option<(u32, usize, &Relation, u32)>) -> Option<&'b Relation> {
+    let rel = try_create_cols(block, cols, None)?;
+    let Some((id, at, b, end)) = below else { return Some(rel) };
+    if !b.is_frozen() || id == NO_BLOCK || at == 0 || block.holds(std::ptr::from_ref(b)) || end < b.len_all() {
+        // SAFETY: just made in `block`; no one has it.
+        unsafe { rel.release(block) };
+        return None;
+    }
+    // SAFETY: just made, this caller's alone.
+    unsafe {
+        let me = std::ptr::from_ref(rel).cast_mut();
+        (*me).base_rows = end;
+        (*me).base_block = id;
+    }
+    rel.base_off.store(at as i64, Release);
+    rel.flags.fetch_or(DELTA | CONTINUES | FAR_BASE, Release);
+    Some(rel)
+}
+
 /// A relation's writes that take room from a block, a pin, or the heap: blocks' own, over the floor's `Relation`.
 pub trait RelationW {
     /// Makes an empty relation in `block`: a delta of `base` when given. Returns its descriptor.
@@ -278,30 +341,7 @@ impl RelationW for Relation {
 
     fn try_create<'b>(block: &'b Block, spec: &Spec, base: Option<&Relation>) -> Option<&'b Relation> {
         // The descriptor and both row sets' column directories, one chunk: given back whole (`release`).
-        let at = block.try_alloc_chunk(Relation::descriptor_bytes(spec.widths.len()), 64)?;
-        let p: *mut Relation = block.ptr(at);
-        let cols: *mut crate::rows::ColDir = block.ptr(at + Relation::DIRS_AT);
-        unsafe {
-            (*p).arity = spec.widths.len() as u32;
-            (*p).flags.store(if base.is_some() { DELTA } else { 0 }, Relaxed);
-            (*p).base_rows = base.map_or(0, |b| {
-                // A continuation's delta (its kills, which read no rows through it) counts its base's rows too.
-                if b.continues() {
-                    return b.base_rows + b.rows.len();
-                }
-                assert_eq!(b.base_rows, 0, "a delta's base is a full relation");
-                b.rows.len()
-            });
-            // A delta lies in its base's order, so a view merges the two on one column.
-            (*p).set_sort_col(match base {
-                Some(b) => b.sort_col(),
-                None => spec.sort.map(usize::from),
-            });
-            Rows::init_in(&raw mut (*p).rows, cols, &spec.widths, spec.min_log);
-            Rows::init_in(&raw mut (*p).killed, cols.add(spec.widths.len()), &[4], 6);
-            (*p).base_block = NO_BLOCK;
-            Some(&*p)
-        }
+        try_create_cols(block, spec.cols(), base)
     }
 
     fn try_continue<'b>(block: &'b Block, spec: &Spec, base: &Relation, base_rows: u32) -> Option<&'b Relation> {
@@ -380,22 +420,7 @@ impl RelationW for Relation {
     }
 
     fn try_continue_far<'b>(block: &'b Block, spec: &Spec, below: Option<(u32, usize, &Relation, u32)>) -> Option<&'b Relation> {
-        let rel = Relation::try_create(block, spec, None)?;
-        let Some((id, at, b, end)) = below else { return Some(rel) };
-        if !b.is_frozen() || id == NO_BLOCK || at == 0 || block.holds(std::ptr::from_ref(b)) || end < b.len_all() {
-            // SAFETY: just made in `block`; no one has it.
-            unsafe { rel.release(block) };
-            return None;
-        }
-        // SAFETY: just made, this caller's alone.
-        unsafe {
-            let me = std::ptr::from_ref(rel).cast_mut();
-            (*me).base_rows = end;
-            (*me).base_block = id;
-        }
-        rel.base_off.store(at as i64, Release);
-        rel.flags.fetch_or(DELTA | CONTINUES | FAR_BASE, Release);
-        Some(rel)
+        try_continue_far_cols(block, spec.cols(), below)
     }
 
     fn in_block(block: &Block, at: usize) -> Option<&Relation> {
@@ -1055,7 +1080,7 @@ fn build_one_index(block: &Block, ix: &mut Index, icols: &[u16], every: &[u16], 
         };
         let nk = icols.len();
         // Distinct keys: a bitmap over the key's packed range when it is at most 2^24, else the hashes sorted.
-        let ibits: Vec<u32> = icols.iter().map(|&c| bits_for((hi[c as usize] as i128 - lo[c as usize] as i128) as u64)).collect();
+        let ibits: [u32; MAX_KEY] = core::array::from_fn(|t| icols.get(t).map_or(0, |&c| bits_for((hi[c as usize] as i128 - lo[c as usize] as i128) as u64)));
         let span: u32 = ibits.iter().sum();
         let distinct = if live == 0 {
             0

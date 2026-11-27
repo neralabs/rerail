@@ -275,52 +275,40 @@ pub fn stats_of<R: Read>(state: &R, c: ColumnIndex) -> ColStats {
     ColStats { min, max, rows: r.rows, ndv: r.ndv, sq: r.sq }
 }
 
-/// A state's recorded change over several of its versions (`Read::flips_from`): each version's flipped ids, merged
-/// ascending, each once, over as many versions as it has. The ids are read where they lie; it holds only a handle and
-/// a cursor a version.
-#[derive(Clone, Default)]
+/// A state's recorded change (`Read::flips_from`): its flipped ids, read where they lie, each once: a relation's own
+/// record, one run of ids (a cursor into it), or a trace's state's, read by the floor's fixed cursors over its layers
+/// (`trace::ChainFlips`). No id is gathered and nothing is allocated: an operation reads it as a kernel would.
+#[derive(Clone)]
 pub struct Flips<'s> {
-    // copy: not block data (a handle and a cursor a version)
-    runs: Vec<(&'s [u32], u32)>,
-    /// Each run's next id, smallest first: a trace's layer gives a run a partition it changed, so there can be many.
-    heads: std::collections::BinaryHeap<std::cmp::Reverse<(u32, u32)>>,
-    started: bool,
+    at: Of<'s>,
     last: Option<u32>,
-    /// A trace's state's flips, read by the floor's fixed cursors in place (`trace::ChainFlips`): no run is gathered.
-    chain: Option<rerail_delta_core::trace::ChainFlips<'s>>,
+}
+
+// The chain's cursors are fixed (a cursor a layer, `MAX_LAYERS`): held where the read is, never boxed (a box is the
+// heap, which a device has none of).
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone)]
+enum Of<'s> {
+    Run(&'s [u32], usize),
+    Chain(rerail_delta_core::trace::ChainFlips<'s>),
 }
 
 impl<'s> Flips<'s> {
     /// A trace's state's flips (`trace::State::flips_since`).
     pub fn chain(c: rerail_delta_core::trace::ChainFlips<'s>) -> Flips<'s> {
-        Flips { chain: Some(c), ..Flips::default() }
+        Flips { at: Of::Chain(c), last: None }
     }
 
+    /// One run's flips, in its order (an id twice in a row read once).
     pub fn one(run: &'s [u32]) -> Flips<'s> {
-        let mut f = Flips::default();
-        f.push(run);
-        f
-    }
-
-    /// Adds one version's flips.
-    pub fn push(&mut self, run: &'s [u32]) {
-        self.runs.push((run, 0));
+        Flips { at: Of::Run(run, 0), last: None }
     }
 
     /// Whether no id flipped.
     pub fn is_empty(&self) -> bool {
-        if let Some(c) = &self.chain {
-            return c.is_empty();
-        }
-        self.heads.is_empty() && self.runs.iter().all(|(r, at)| r.len() == *at as usize)
-    }
-
-    /// Run `k`'s next id onto the heap.
-    fn advance(&mut self, k: usize) {
-        let (run, at) = &mut self.runs[k];
-        if let Some(&id) = run.get(*at as usize) {
-            *at += 1;
-            self.heads.push(std::cmp::Reverse((id, k as u32)));
+        match &self.at {
+            Of::Run(r, at) => *at >= r.len(),
+            Of::Chain(c) => c.is_empty(),
         }
     }
 }
@@ -329,22 +317,16 @@ impl Iterator for Flips<'_> {
     type Item = RowId;
 
     fn next(&mut self) -> Option<RowId> {
-        if let Some(c) = &mut self.chain {
-            return c.next();
-        }
-        if !self.started {
-            self.started = true;
-            for k in 0..self.runs.len() {
-                self.advance(k);
-            }
-        }
-        loop {
-            let std::cmp::Reverse((id, k)) = self.heads.pop()?;
-            self.advance(k as usize);
-            if self.last != Some(id) {
-                self.last = Some(id);
-                return Some(RowId::new(id));
-            }
+        match &mut self.at {
+            Of::Chain(c) => c.next(),
+            Of::Run(r, at) => loop {
+                let id = *r.get(*at)?;
+                *at += 1;
+                if self.last != Some(id) {
+                    self.last = Some(id);
+                    return Some(RowId::new(id));
+                }
+            },
         }
     }
 }

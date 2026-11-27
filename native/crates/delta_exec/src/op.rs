@@ -689,18 +689,32 @@ trait Runs {
 struct TwinRuns<'s, 'p, 't> {
     ctx: Ctx<'s, 'p, 't>,
     twin: Twin,
+    /// A twin's, not a host version's: its phases are watched for the heap (in tests, `heap_watch`).
+    watched: bool,
+    name: &'static str,
+}
+
+/// `f`, its heap allocations failing the run when `on` (the crate's tests' `heap_watch`); elsewhere `f`.
+#[cfg(test)]
+use crate::heap_watch::during as heap_watched;
+#[cfg(not(test))]
+fn heap_watched<R>(_on: bool, _what: &str, f: impl FnOnce() -> R) -> R {
+    f()
 }
 
 impl Runs for TwinRuns<'_, '_, '_> {
     fn items(&mut self, p: usize) -> Result<u32, String> {
-        Ok((self.twin[p].items)(&self.ctx))
+        let (twin, ctx) = (self.twin, &self.ctx);
+        Ok(heap_watched(self.watched, &format!("{} items {p}", self.name), || (twin[p].items)(ctx)))
     }
     fn run(&mut self, p: usize, t: Tile) -> Result<(), String> {
-        (self.twin[p].run)(&mut self.ctx, t);
+        let (twin, ctx) = (self.twin, &mut self.ctx);
+        heap_watched(self.watched, &format!("{} run {p}", self.name), || (twin[p].run)(ctx, t));
         Ok(())
     }
     fn again(&mut self, p: usize) -> Result<bool, String> {
-        Ok(self.twin[p].again.is_some_and(|again| again(&mut self.ctx)))
+        let (twin, ctx) = (self.twin, &mut self.ctx);
+        Ok(heap_watched(self.watched, &format!("{} again {p}", self.name), || twin[p].again.is_some_and(|again| again(ctx))))
     }
     fn meter(&mut self) -> Option<&mut Meter> {
         Some(&mut *self.ctx.meter)
@@ -783,7 +797,7 @@ fn execute(sig: &Signature, v: &Version, dir: &Directory, slots: &[BlockId], par
                 let blocks: Vec<&rerail_blocks::block::Block> = held.iter().map(|b| &**b).collect();
                 let mut slot_views: Vec<Slot<'_>> = pins.iter_mut().map(|p| if p.writes() { Slot::Write(p) } else { Slot::Read(p) }).collect();
                 let ctx = Ctx { slots: &mut slot_views, blocks: &blocks, table: &table, params, meter: &mut meter };
-                drive(sig, v, tiling, dir, slots, &mut TwinRuns { ctx, twin })?
+                drive(sig, v, tiling, dir, slots, &mut TwinRuns { ctx, twin, watched: matches!(v.imp, Impl::Twin(_)), name: sig.name })?
             }
             Impl::Ukl { source, entry } => return on_device(sig, v, dir, slots, params, tiling, device, launch, source, entry),
             Impl::Compiled(_) => return Err(format!("{}: {} is compiled ahead, which is not built", sig.name, v.name)),
