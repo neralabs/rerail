@@ -1763,14 +1763,15 @@ export type HookDaemon = { status: "running"; endpoint: EngineEndpoint } | Exclu
  * (design N11). A busy one is waited for (`patientLookup`), until `deadline` when the hook names one. A healthy daemon
  * from another package (an update installed mid-session), or of a release before the engine's proof
  * ({@link daemonServesPackage}), is replaced as `daemonEngineEndpoint(true)` replaces it, so steering carries on with
- * this package's engine.
+ * this package's engine; with `replaceOtherPackage` false it is taken as `daemonEngineEndpoint(false)` takes it, which
+ * the event stream asks after its first event, so a stream that outlives `rerail update` keeps the newer daemon.
  */
-export async function runningDaemonEngineEndpoint(deadline?: number, machine: DaemonMachine = THIS_MACHINE): Promise<HookDaemon> {
+export async function runningDaemonEngineEndpoint(deadline?: number, machine: DaemonMachine = THIS_MACHINE, replaceOtherPackage = true): Promise<HookDaemon> {
   const lookup = await patientLookup(defaultRerailHome(machine.env), machine, deadline);
   if (!foundRunning(lookup)) return lookup;
   const endpoint = await daemonServesPackage(lookup, PACKAGE_ROOT)
     ? engineEndpointOf(lookup.state)
-    : await daemonEngineEndpoint(true, deadline, machine);
+    : await daemonEngineEndpoint(replaceOtherPackage, deadline, machine);
   return { status: "running", endpoint };
 }
 
@@ -2164,12 +2165,24 @@ function handOverClaim(home: string, launcher: number | undefined): void {
  * engine service and status.
  */
 export function autostartDaemon(machine: DaemonMachine = THIS_MACHINE): void {
-  if (autostartAttempted || autostartOff(machine.env)) return;
+  if (!autostartAttempted) autostartAttempted = launchAutostart(machine);
+}
+
+/**
+ * The launch {@link autostartDaemon} makes, without its one per process: one per Rerail home while its claim holds
+ * (`claimAutostart`), and none under `RERAIL_AUTOSTART=0`. Returns whether this call claimed the launch. A process that
+ * hands many events to the daemon over its life, the event stream, calls it at each event that finds no daemon: the
+ * claim holds while a launch runs, so it launches again only once the last launch has ended, without a daemon or
+ * with one that stopped since.
+ */
+export function launchAutostart(machine: DaemonMachine = THIS_MACHINE): boolean {
+  if (autostartOff(machine.env)) return false;
   const home = defaultRerailHome(machine.env);
+  let claimed = false;
   try {
     makeRerailHome(home);
-    if (!claimAutostart(home, machine.kill)) return;
-    autostartAttempted = true;
+    claimed = claimAutostart(home, machine.kill);
+    if (!claimed) return false;
     let launcher: number | undefined;
     try {
       launcher = launchDetached({
@@ -2184,6 +2197,7 @@ export function autostartDaemon(machine: DaemonMachine = THIS_MACHINE): void {
   } catch {
     // Autostart is a convenience; the session must never notice it failing.
   }
+  return claimed;
 }
 
 /**
