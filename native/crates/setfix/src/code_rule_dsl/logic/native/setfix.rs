@@ -8190,8 +8190,9 @@ impl Count {
 /// (`6..14`, `Cands`' variants in order); its calls by candidates walked (`14..20`: 0, 1, 2-3, 4-15, 16-255, more);
 /// every ask of the step by the rows it matched (`20..23`: 0, 1, more), its keys and tests held (a test's first match
 /// ends it, so it counts as 1), its `Rows::each` calls and its one-row reads (a lookup's, a node-keyed bit's, a fused
-/// test's) alike; and of those asks, the one-row reads (`23`).
-pub const SHAPES: usize = 24;
+/// test's) alike; and of those asks, the one-row reads (`23`); and a fused chunk's rows passed on, by where they go
+/// (`24..27`: the head, a lookup, another step).
+pub const SHAPES: usize = 27;
 /// A fused step's gather of its candidates into its chunk.
 const SITE_GATHER: usize = 0;
 /// The walk's step, a candidate at a time.
@@ -9121,20 +9122,84 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     /// Enters step `i` (past the last, the head's row): profiled, its time is charged to it until it returns.
     #[inline(always)]
     fn go<'a>(cx: &mut Ctx<'a, '_>, i: usize, slots: &mut [i64]) {
-        let Some(clock) = cx.clock.as_mut() else { return enter(cx, i, slots) };
+        let Some(clock) = cx.clock.as_mut() else { return walk_step(cx, i, slots) };
         let was = clock.to(i);
-        enter(cx, i, slots);
+        walk_step(cx, i, slots);
         if let Some(clock) = cx.clock.as_mut() { clock.to(was); }
     }
-    fn enter<'a>(cx: &mut Ctx<'a, '_>, i: usize, slots: &mut [i64]) {
-        if cx.error.is_some() || cx.stop { return; }
+    /// A binding into step `i`: the head's row (`to_head`) and a lookup (`read_lookup`) each by a function of its own, every
+    /// other step by `enter`. A row a chunk or a walk passes on to the head or to a lookup is then no frame of the
+    /// walk's every step (`enter` holds them all, its frame their room): 17.2 M of the 43.8 M rows chunks passed on in
+    /// the corpus went to the head.
+    #[inline]
+    fn walk_step<'a>(cx: &mut Ctx<'a, '_>, i: usize, slots: &mut [i64]) {
+        let j = cx.j;
+        if cx.pending.is_empty() {
+            if i >= j.steps.len() {
+                return to_head(cx, i, slots);
+            }
+            if i > 0 && i != cx.only_step && j.lookups.get(i).copied().unwrap_or(false) && cx.screen.is_none_or(|f| f.step != i) {
+                return read_lookup(cx, i, slots);
+            }
+        }
+        enter(cx, i, slots)
+    }
+    /// The walk's bookkeeping of a binding into step `i`: whether it goes on (no error, not stopped, its work within
+    /// the budget), the rows into and out of the steps counted.
+    #[inline]
+    fn arrive_at(cx: &mut Ctx<'_, '_>, i: usize) -> bool {
+        if cx.error.is_some() || cx.stop { return false; }
         // The walk's work is the steps it enters, as the planner counts a line's (`profile::plan_work`).
         cx.work += 1;
-        if cx.work > cx.budget { cx.stop = true; return; }
-        let (j, store): (&'a JoinRule, &'a Store) = (cx.j, cx.store);
+        if cx.work > cx.budget { cx.stop = true; return false; }
         if i > 0 { let c = &cx.counts[i - 1][1]; c.set(c.get() + 1); }
         if let Some(c) = cx.counts.get(i) { c[0].set(c[0].get() + 1); }
         if i > cx.deep { cx.deep = i; }
+        true
+    }
+    /// The head's row of the binding (`i` past the last step), no sum pending.
+    fn to_head(cx: &mut Ctx<'_, '_>, i: usize, slots: &mut [i64]) {
+        if arrive_at(cx, i) {
+            emit_head(cx, slots);
+        }
+    }
+    /// A lookup's step (`lookups`): its one row read in place (`cands::read_one`), its binds set, and the walk going
+    /// on. Where the source has no such read now, the step's probe (`enter`).
+    fn read_lookup<'a>(cx: &mut Ctx<'a, '_>, i: usize, slots: &mut [i64]) {
+        let j: &'a JoinRule = cx.j;
+        let Step::Atom { src, neg, keys, binds, tests } = &j.steps[i] else { return enter(cx, i, slots) };
+        cx.key.clear();
+        cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
+        let need = binds.iter().fold(0u64, |m, &(c, _)| m | 1 << c);
+        let mut row = [0i64; READ];
+        let Some(found) = cands::read_one(j, src, keys, tests, &cx.key, need, &mut cx.last[i].cursor, &mut row) else { return enter(cx, i, slots) };
+        if !arrive_at(cx, i) { return; }
+        if cx.clock.is_some() { count_match(j, i, u64::from(found), true); }
+        if found && !*neg {
+            for &(c, s) in binds { slots[s] = row[c]; }
+        }
+        if found != *neg { go(cx, i + 1, slots); }
+    }
+    /// The head's row of `slots`: offered to its relation's fresh rows (or collected).
+    fn emit_head(cx: &mut Ctx<'_, '_>, slots: &mut [i64]) {
+        let (j, store) = (cx.j, cx.store);
+        cx.row.clear();
+        for o in &j.out {
+            let v = match o { Term::Slot(s) => slots[*s], Term::Const(c) => *c, Term::Cat(a, b) => cat(cx.syms, slots[*a], slots[*b]) };
+            cx.row.push(v);
+        }
+        cx.n += 1;
+        if let Some(c) = &mut cx.collect { c.extend_from_slice(&cx.row); return; }
+        // Decision 0462: no relation past the width cap. Its rows and those this walk made (an upper bound: some
+        // may repeat) stop at it; the run stops or cuts the probe (`width`), never fills memory.
+        let rel = &store.rels[cx.head];
+        if cx.fresh[cx.head].n + rel.n >= cx.cap { cx.error = Some(super::width::too_wide(&rel.table, cx.cap)); return; }
+        cx.fresh[cx.head].emitted += 1;
+        cx.fresh[cx.head].offer(&cx.row, rel);
+    }
+    fn enter<'a>(cx: &mut Ctx<'a, '_>, i: usize, slots: &mut [i64]) {
+        if !arrive_at(cx, i) { return; }
+        let (j, store): (&'a JoinRule, &'a Store) = (cx.j, cx.store);
         // Keep exact sums until a predicate, lookup, function, or emitted head
         // observes the binding. A later filter can remove a row before that use.
         if !cx.pending.is_empty()
@@ -9144,19 +9209,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 cx.error=Some(super::aggregation::sum_value(*value).unwrap_err());return;
             }
         let Some(step) = j.steps.get(i) else {
-            cx.row.clear();
-            for o in &j.out {
-                let v = match o { Term::Slot(s) => slots[*s], Term::Const(c) => *c, Term::Cat(a, b) => cat(cx.syms, slots[*a], slots[*b]) };
-                cx.row.push(v);
-            }
-            cx.n += 1;
-            if let Some(c) = &mut cx.collect { c.extend_from_slice(&cx.row); return; }
-            // Decision 0462: no relation past the width cap. Its rows and those this walk made (an upper bound: some
-            // may repeat) stop at it; the run stops or cuts the probe (`width`), never fills memory.
-            let rel = &store.rels[cx.head];
-            if cx.fresh[cx.head].n + rel.n >= cx.cap { cx.error = Some(super::width::too_wide(&rel.table, cx.cap)); return; }
-            cx.fresh[cx.head].emitted += 1;
-            cx.fresh[cx.head].offer(&cx.row, rel);
+            emit_head(cx, slots);
             return;
         };
         /// The candidates: an input's index on exactly the key columns, a component relation's composite index, or
@@ -9340,6 +9393,10 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                                     slots[slot] = match b { rowcode::Bind::Column(k) => s.columns[k][r], rowcode::Bind::Param(k) => s.params[k] };
                                 }
                                 if i == 0 { cx.at0 = s.ids[r]; cx.seen0 = true; }
+                                if cx.clock.is_some() && let Some(c) = j.shapes.get(i) {
+                                    let next = i + 1 + f.steps;
+                                    c[if next >= j.steps.len() { 24 } else if j.lookups.get(next).copied().unwrap_or(false) { 25 } else { 26 }].add(1);
+                                }
                                 go(cx, i + 1 + f.steps, slots);
                                 if cut.is_some_and(|made| cx.n > made) { break 'rows; }
                             }

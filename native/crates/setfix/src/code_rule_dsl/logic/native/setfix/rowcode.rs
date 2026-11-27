@@ -331,8 +331,10 @@ pub fn fused(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[boo
     tests.retain(|t| t.at < steps);
     // The kernel's shape is a scan and the tests on what it binds: every slot the atom binds is read by a fused test.
     // An atom whose tests leave one of its slots unread (`p(c, o, m), f(k, m)`, `$c` the head's alone) is factored by
-    // the walk instead (`setfix::factored`): its tests asked once per group of what they read, not once per row.
-    if !tests.is_empty() {
+    // the walk instead (`setfix::factored`): its tests asked once per group of what they read, not once per row. Not
+    // one with a lookup (`Test::reads`): a lookup binds, which no factoring skips, and the chunk carries its rows
+    // through it (`main.node(n, ..), n < e, rf_mbind(n, m)`: 0.39 M rows a lookup the walk read a row at a time).
+    if !tests.is_empty() && tests.iter().all(|t| t.reads.is_empty()) {
         let read = |s: usize| tests.iter().any(|t| {
             let Step::Atom { keys, .. } = &after[t.at] else { return false };
             keys.iter().any(|&(_, k)| k == Key::Slot(s))
