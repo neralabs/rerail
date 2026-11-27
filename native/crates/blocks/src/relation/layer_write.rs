@@ -86,18 +86,23 @@ pub fn seal_part(pin: &mut BlockPin, rel: &Relation, part: Part, n: u32) {
 }
 
 /// Column `c`'s statistics of the state a layer ends, into its entry (`sketch`): the sketch of the layer below's
-/// state (`below`'s kept one; none for a trace's first layer), each value of `added` added and of `removed` taken.
-/// False when the block has no room.
-pub fn sketch_change(pin: &mut BlockPin, rel: &Relation, c: usize, below: Option<&crate::layer::Layer<'_>>, added: &mut dyn Iterator<Item = i64>, removed: &mut dyn Iterator<Item = i64>) -> bool {
-    use crate::layer::LayerSketch;
-    let mut s = below.and_then(|l| l.sketch(c)).unwrap_or_else(|| crate::sketch::Sketch::new_in(crate::layer::sketch_room()));
+/// state (`below`'s kept one; none for a trace's first layer, or one that is no sketch of this format), each value of
+/// `added` added and of `removed` taken, worked in `work` (`sketch::WORK_BYTES` of the operation's scratch, the floor's
+/// `SketchW`: no heap) and encoded into its chunk of the block. False when the block has no room.
+pub fn sketch_change(pin: &mut BlockPin, rel: &Relation, c: usize, below: Option<&crate::layer::Layer<'_>>, added: &mut dyn Iterator<Item = i64>, removed: &mut dyn Iterator<Item = i64>, work: &mut [u8]) -> bool {
+    use rerail_delta_core::sketch::SketchW;
+    let mut s = SketchW::over(work).expect("a sketch's working bytes, aligned");
+    if let Some(kept) = below.and_then(|l| layer_sketch(l.rows, c)) {
+        s.decode(kept);
+    }
     for v in added {
         s.add(v);
     }
     for v in removed {
         s.remove(v);
     }
-    sketch(pin, rel, c, &s.encode())
+    let n = s.encoded_len();
+    sketch_with(pin, rel, c, n, |to| s.encode_into(to))
 }
 
 /// Lays out the freeze's directories of an open layer `rel` of `spec`: a range a column (`stat`), the index directory
@@ -224,17 +229,22 @@ pub fn seal(pin: &mut BlockPin, rel: &Relation, spec: &LayerSpec, n: u32) {
 /// Column `c`'s statistics, in its kept form (`Sketch::encode`), into its entry of the layer's sketches' directory
 /// (`open`'s, `sketched`): a chunk of the block of its own. False when the block has no room.
 pub fn sketch(pin: &mut BlockPin, rel: &Relation, c: usize, kept: &[u8]) -> bool {
+    // copy: derived: a column's statistics, computed by its writer, written once where the layer keeps them
+    sketch_with(pin, rel, c, kept.len(), |to| to.copy_from_slice(kept))
+}
+
+/// Column `c`'s kept sketch of `n` bytes, written by `write` into its chunk of the block, where it lies.
+fn sketch_with(pin: &mut BlockPin, rel: &Relation, c: usize, n: usize, write: impl FnOnce(&mut [u8])) -> bool {
     let block = pin.block();
     assert!(block.holds(std::ptr::from_ref(rel)) && pin.writes(), "a layer of a block pinned to write");
     let dir = sketches(rel);
     assert!(c < dir.len() && dir[c].is_empty(), "column {c}'s sketch, written once");
-    let Some(p) = block.try_alloc_t::<u8>(kept.len().max(1)) else { return false };
-    // SAFETY: `p` holds `kept.len()` bytes, just allocated in the block the pin holds to write; entry `c` of the
-    // directory is this call's alone.
+    let Some(p) = block.try_alloc_t::<u8>(n.max(1)) else { return false };
+    // SAFETY: `p` holds `n` bytes, just allocated in the block the pin holds to write; entry `c` of the directory is
+    // this call's alone.
     unsafe {
-        // copy: derived: a column's statistics, computed by its writer, written once where the layer keeps them
-        std::ptr::copy_nonoverlapping(kept.as_ptr(), p, kept.len());
-        Span::set(&dir[c], p, kept.len());
+        write(std::slice::from_raw_parts_mut(p, n));
+        Span::set(&dir[c], p, n);
     }
     true
 }

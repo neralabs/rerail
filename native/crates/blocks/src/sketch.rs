@@ -521,6 +521,8 @@ impl std::fmt::Debug for Sketch {
 
 // What a sketch's state reads, and that reading taken from its kept bytes in place: the floor's one definition.
 pub use rerail_delta_core::sketch::Reading;
+// A sketch worked in fixed memory (an operation's scratch): the floor's, its kept bytes this module's `encode`'s.
+pub use rerail_delta_core::sketch::{SketchW, WORK_BYTES};
 
 /// A version's change, signed: each value it touched, with its rows added less those taken (decision 0678 step 10).
 /// Its size is the values the change touched, never the version's.
@@ -1186,6 +1188,85 @@ mod tests {
     /// A block of the tests' own: this crate's tests install no run room, so `Sketch::default` takes the heap's.
     fn room() -> Arc<dyn Room> {
         Arc::new(crate::maps::InBlock(Arc::new(crate::block::Block::anon(crate::block::kind::FACTS, 1 << 22).with_free_list())))
+    }
+
+    /// The floor's working sketch (`SketchW`, an operation's, in fixed memory) keeps the bytes this module's `Sketch`
+    /// keeps, add by add and removal by removal, through every form and every change of form: few values, a page, a
+    /// label set, rank counts; a page to a label set and to rank counts; few values straight to rank counts; removals
+    /// to none. A sketch's kept bytes decoded into a working one and into a sketch encode alike, and work on alike.
+    #[test]
+    fn a_working_sketch_keeps_the_bytes_a_sketch_keeps() {
+        let mut held = vec![0u64; WORK_BYTES / 8 + 1];
+        // SAFETY: the vector's own bytes, aligned to 8, held while the working sketch lives.
+        let bytes = unsafe { std::slice::from_raw_parts_mut(held.as_mut_ptr().cast::<u8>(), WORK_BYTES) };
+        type Gen = fn(usize, u64) -> i64;
+        // Each case's values, its steps, and the form it ends in (its kept bytes' second byte).
+        let cases: [(&str, Gen, usize, u8); 8] = [
+            ("few", |_, r| (r % 40) as i64, 400, 0),
+            ("a page", |_, r| 3 * 4096 + (r % 3000) as i64, 6000, 1),
+            ("a label set", |_, r| (r % 900) as i64 * 7919, 5000, 2),
+            ("a label set to rank counts", |_, r| (r % 3000) as i64 * 7919, 12_000, 3),
+            ("few to rank counts", |_, r| r as i64, 2000, 3),
+            ("few, negative, to rank counts", |_, r| -((r % 100) as i64), 1500, 3),
+            ("a page to a label set", |i, r| if i < 2500 { (r % 600) as i64 } else { 100_000 + (r % 300) as i64 }, 4000, 2),
+            ("a page to rank counts", |i, r| if i < 2500 { (r % 2000) as i64 } else { -1 - (r % 300) as i64 }, 4000, 3),
+        ];
+        for (name, value, steps, form) in cases {
+            let mut x = 0x9e37_79b9_7f4a_7c15_u64 ^ steps as u64;
+            let mut rand = || {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x
+            };
+            let mut heap = Sketch::new_in(room());
+            let mut work = SketchW::over(bytes).expect("aligned working bytes");
+            let mut live: Vec<(i64, u64)> = Vec::new();
+            let same = |heap: &Sketch, work: &SketchW<'_>, at: usize| {
+                let mut b = vec![0; work.encoded_len()];
+                work.encode_into(&mut b);
+                assert_eq!(b, heap.encode(), "{name}, step {at}: the working sketch's bytes");
+            };
+            for i in 0..steps {
+                let r = rand();
+                if live.is_empty() || r % 10 < 7 {
+                    let (v, n) = (value(i, rand()), 1 + r % 3);
+                    heap.add_n(v, n);
+                    work.add_n(v, n);
+                    match live.iter_mut().find(|e| e.0 == v) {
+                        Some(e) => e.1 += n,
+                        None => live.push((v, n)),
+                    }
+                } else {
+                    // A row of a value it holds, or (one time in four) every row of it.
+                    let k = (rand() as usize) % live.len();
+                    let (v, held) = live[k];
+                    let n = if r % 4 == 0 { held } else { 1 };
+                    heap.remove_n(v, n);
+                    work.remove_n(v, n);
+                    live[k].1 -= n;
+                    if live[k].1 == 0 {
+                        live.swap_remove(k);
+                    }
+                }
+                if i % 97 == 0 || i + 1 == steps {
+                    same(&heap, &work, i);
+                }
+                if i % 1000 == 999 {
+                    // Both read back from the kept bytes (a label set's slots are made again in its bytes' order, as
+                    // `decode` makes them), then worked on alike.
+                    let kept = heap.encode();
+                    heap = Sketch::decode(&|k| kept[k], 0, kept.len(), room()).expect("its own bytes");
+                    assert!(work.decode(&kept), "{name}, step {i}: a sketch's bytes decoded");
+                    same(&heap, &work, i);
+                }
+                if i == 2499 && name.starts_with("a page to") {
+                    assert_eq!(heap.encode()[1], 1, "{name}: a page first");
+                }
+            }
+            assert_eq!(heap.encode()[1], form, "{name}: the form it ends in");
+        }
+        assert!(!SketchW::over(bytes).expect("aligned").decode(&[SKETCH_FORMAT, 9]), "no sketch of this format");
     }
 
     fn of(values: impl IntoIterator<Item = i64>) -> Sketch {

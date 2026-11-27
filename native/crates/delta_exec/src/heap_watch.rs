@@ -13,10 +13,10 @@ use std::cell::{Cell, RefCell};
 /// The twins that still take the heap, and through what: this list only shrinks. A twin not on it that allocates
 /// fails the run. A phase that takes room in its out block takes it through the block's allocator, whose bookkeeping
 /// (`ledger::Ledger`: free lists, live bits, under a lock) and bump top (`block::Extent`) are host memory, not the
-/// block's bytes; a write pin's access is checked there too. A layer's statistics are built in a heap `Sketch`.
+/// block's bytes; a write pin's access is checked there too.
 const NOT_YET: &[(&str, &str)] = &[
-    ("consolidate", "the block allocator's host bookkeeping; the layer's sketch"),
-    ("merge", "the block allocator's host bookkeeping; the layer's sketch"),
+    ("consolidate", "the block allocator's host bookkeeping"),
+    ("merge", "the block allocator's host bookkeeping"),
     ("square", "a write pin's access, checked in the block's ledger"),
     ("append", "the block allocator's host bookkeeping"),
 ];

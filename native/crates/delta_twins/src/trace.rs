@@ -64,10 +64,15 @@ const OUT: usize = 1;
 const CTL: usize = 2;
 
 /// The bytes of the scratch slot a launch over `cap` source items takes: a call's temporaries, one index's or one
-/// order's at a time (a key range's bitmap, 2^24 bits at most, and a few words a row).
+/// order's at a time (a key range's bitmap, 2^24 bits at most, and a few words a row), or a working sketch a column
+/// (`SKETCH_WORK` each, in a region of its own).
 pub fn scratch_bytes(cap: usize) -> usize {
     ((4 << 20) + cap.max(1) * 64 + 64).next_multiple_of(rerail_blocks::block::PAGE)
 }
+
+/// A column's working sketch's bytes in the scratch slot (the floor's `SketchW`), at 64 bytes.
+const SKETCH_WORK: usize = rerail_blocks::sketch::WORK_BYTES.next_multiple_of(64);
+const _: () = assert!(MAX_COLS * SKETCH_WORK + 64 <= 4 << 20, "every column's working sketch in the scratch slot");
 
 /// A refusal, in control's first word: none, a row's diffs summing past ±1, a row gone not live below, a row added
 /// that already is.
@@ -956,10 +961,13 @@ fn sketch<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     let chain = below_chain(table, below, a);
     let below_layer = (below != NONE).then(|| Layer::new(table.block(below).expect("reached")).expect("committed"));
     let gone = gone_ids(block, &head);
-    let pin = c.pin_mut(OUT);
     for col in t.items() {
         let (mut added, mut removed) = (own.ids().map(|id| own.get(id, col)), gone.iter().map(|&id| chain.get(id, col)));
-        assert!(layer_write::sketch_change(pin, rows, col, below_layer.as_ref(), &mut added, &mut removed), "room for the layer's statistics");
+        // Each column's working sketch in a region of the scratch slot of its own (items independent of each other).
+        let (_, pin, scratch) = c.split(SRC, OUT, O::SCRATCH);
+        let at = scratch.as_ptr().align_offset(8) + col * SKETCH_WORK;
+        let work = &mut scratch[at..at + SKETCH_WORK];
+        assert!(layer_write::sketch_change(pin, rows, col, below_layer.as_ref(), &mut added, &mut removed, work), "room for the layer's statistics");
     }
 }
 
