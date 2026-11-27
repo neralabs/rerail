@@ -29,7 +29,7 @@ RUF046(c, "Drop the `int(...)` wrapper; this call already returns an int. Keep i
     any_round(x), !int_round(x)).
 .decl int_cast(c: node, x: node)
 int_cast(c, x) :- call_q(c, "builtins.int"), call_only(c, x).
-int_cast(c, x) :- type_str_node(c), call_q(c, "builtins.int"), type_arg(c, 0, x), type_nargs(c, 1), type_nkwargs(c, 0).
+int_cast(c, x) :- type_str_node(c), call_q(c, "builtins.int"), tree_call_arg(c, 0, x), type_nargs(c, 1), type_nkwargs(c, 0).
 .decl int_fn(q: symbol)
 int_fn("builtins.len"). int_fn("builtins.id"). int_fn("builtins.ord"). int_fn("builtins.hash"). int_fn("builtins.int").
 int_fn(cat("math.", f)) :- (f = "comb" ; f = "factorial" ; f = "gcd" ; f = "lcm" ; f = "isqrt" ; f = "perm").
@@ -49,7 +49,7 @@ int_round(x) :- round_call(x, m), round_param(m, "number", v), (int_typed(v) ; i
 .decl round_param(m: node, x: symbol, v: node)
 round_param(m, x, v) :- call_param(m, x, v).
 round_param(m, x, v) :- type_str_node(m), call_q(m, "builtins.round"), param_slot("builtins.round", x, i),
-    (type_arg(m, i, v) ; type_kwarg(m, x, v)).
+    (tree_call_arg(m, i, v) ; type_kwarg(m, x, v)).
 .decl round_size(m: node, n: number)
 round_size(m, a + k) :- call_q(m, "builtins.round"), !type_str_node(m), call_nargs(m, a), call_nkwargs(m, k).
 round_size(m, a + k) :- type_str_node(m), call_q(m, "builtins.round"), type_nargs(m, a), type_nkwargs(m, k).

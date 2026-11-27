@@ -61,7 +61,7 @@ fields) makes each a part, with no tuple taken apart. `except KeyError, e:` stay
 Ruff checks the code it parses from string annotations, `cast("…", x)`'s type and TypeVar bounds
 (`INT001-string-annotations.py`: lines 5, 6, 7, 11, 12; `INT002-string-annotations.py`: 4, 5, 6, 11). misc2-messages'
 `msg_arg` counts positional arguments in an aggregate, which does not see a guest tree's nodes, so it has no row
-there. `p09_gettext_arg` adds python-03's `type_arg` for a `type_str_node` call.
+there. `p09_gettext_arg` adds python-03's `tree_call_arg` for a `type_str_node` call.
 
 Literal strings: a guest tree's rows are reached only from its string, through `parsed`. names' `literal_str` starts
 from `kind(l, "subscript")`, so it finds no subscript of a guest tree, and the string in
@@ -71,7 +71,7 @@ finds such subscripts from the guest's nodes (`type_str_node`) and leaves their 
 
 **Library change proposed:** names' `literal_str` (python/scopes) should be seeded from the guest's nodes too (a
 clause over `parsed_in`, as `p09_in_literal`); then the nested strings of a Literal are not parsed for any rule, and
-`p09_in_literal` goes. `msg_arg` could fall back to `type_arg` on a `type_str_node`, and `p09_gettext_arg` go.
+`p09_in_literal` goes. `msg_arg` could fall back to `tree_call_arg` on a `type_str_node`, and `p09_gettext_arg` go.
 
 ## Engine gaps
 

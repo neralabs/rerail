@@ -25,10 +25,10 @@ mapped(t, h) :- returns(_, t), tsub(t, h, 0, _).
 mapped(t, h) :- returns(_, t), tsub(t, m, 0, _), tsub(m, h, 0, _).
 // ruff_q(n, q): name or attribute n of a method's return annotation names q, through imports and definitions.
 .decl ruff_q(n: node, q: symbol)
-ruff_q(n, q) :- ann_name(n, _), text(n, x), ruff_site(n, x, a), site_q(a, q).
+ruff_q(n, q) :- ret_name(n, _), text(n, x), ruff_site(n, x, a), site_q(a, q).
 ruff_q(n, @dot(q, y)) :- attr_of(n, o, y), ruff_q(o, q).
-.decl ann_name(n: node, f: node)
-ann_name(n, f) :- pyi_method(_, f, _), returns(f, t), (n = t ; within(n, t)), kind(n, "identifier").
+.decl ret_name(n: node, f: node)
+ret_name(n, f) :- pyi_method(_, f, _), returns(f, t), (n = t ; within(n, t)), kind(n, "identifier").
 .decl site_q(a: node, q: symbol)
 site_q(a, q) :- import_alias(_, a, m, "", l), (kind(a, "dotted_name"), q = l ; kind(a, "aliased_import"), q = m).
 site_q(a, @dot(m, y)) :- import_alias(_, a, m, y, _), y != "".
@@ -43,11 +43,11 @@ site_q(a, q) :- (kind(a, "function_definition") ; kind(a, "class_definition")), 
 //       def __iter__(self) -> R[int]: ...     ← PYI045: R is the import here
 //   R = list
 .decl chain(n: node, s: node)  // the scopes looked up from n, innermost first by within
-chain(n, c) :- ann_name(n, f), nearest(f, c, scope).
-chain(n, s) :- ann_name(n, f), within(f, s), (kind(s, "module") ; kind(s, "function_definition") ; kind(s, "lambda")).
+chain(n, c) :- ret_name(n, f), nearest(f, c, scope).
+chain(n, s) :- ret_name(n, f), within(f, s), (kind(s, "module") ; kind(s, "function_definition") ; kind(s, "lambda")).
 .decl late(n: node, s: node)  // s is read complete from n
-late(n, s) :- chain(n, s), ann_name(n, f), field(f, "return_type", r), deferred_ann(r).
-late(n, s) :- chain(n, s), ann_name(n, f), inside(f, g, "function_definition"), within(g, s).
+late(n, s) :- chain(n, s), ret_name(n, f), within(n, f), field(f, "return_type", r), deferred_ann(r).
+late(n, s) :- chain(n, s), ret_name(n, f), kind(g, "function_definition"), within(f, g), within(g, s).
 // seen(n, s, a, w): binding a of n's name in s counts when n is read now (w "now") or once the module is done ("end").
 .decl seen(n: node, s: node, a: node, w: symbol)
 seen(n, s, a, "now") :- chain(n, s), text(n, x), binding(s, x, a, _), (late(n, s) ; a < n).

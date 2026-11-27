@@ -17,7 +17,7 @@
     "Pass the number as a string, such as `Decimal(\"1.2345\")`, so it keeps the exact decimal value; keep the float only if its exact binary value is intended."
     suppress ruff "RUF032"
 RUF032(a) :- call_q(c, "decimal.Decimal"), ruff_arg(c, 0, a), signed_float(a).
-RUF032(a) :- type_str_node(c), call_q(c, "decimal.Decimal"), type_arg(c, 0, a), signed_float(a).
+RUF032(a) :- type_str_node(c), call_q(c, "decimal.Decimal"), tree_call_arg(c, 0, a), signed_float(a).
 .decl signed_float(e: node)
 signed_float(e) :- unparen(e, m), kind(m, "float"), text(m, t), !match("[\\s\\S]*[jJ]", t).
 signed_float(e) :- unparen(e, m), kind(m, "unary_operator"), (op(m, "-") ; op(m, "+")), field(m, "argument", a),
