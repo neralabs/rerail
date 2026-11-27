@@ -124,13 +124,29 @@ pub fn select64(m: u64, k: u32) -> u32 {
     // The bytes whose running count is at most `k` come before the bit's byte: one high bit for each.
     let byte = ((u64::from(k).wrapping_mul(ONES) | HIGH).wrapping_sub(sums) & HIGH).count_ones();
     let before = if byte == 0 { 0 } else { (sums >> (8 * (byte - 1))) & 0xff };
-    let mut bits = (m >> (8 * byte)) & 0xff;
-    // Clear the byte's lower set bits: at most 7.
-    for _ in 0..u64::from(k) - before {
-        bits &= bits - 1;
-    }
-    8 * byte + bits.trailing_zeros()
+    let bits = (m >> (8 * byte)) & 0xff;
+    // The bit within the byte, from a table: clearing the byte's lower set bits in a loop of 0 to 7 turns, its exit
+    // mispredicted, was 54% of `select`'s samples in an idc run (1,044 of 1,930).
+    8 * byte + u32::from(SELECT_IN_BYTE[bits as usize][(u64::from(k) - before) as usize])
 }
+
+/// `SELECT_IN_BYTE[b][j]`: the position of byte `b`'s set bit `j` (8 where it has none).
+const SELECT_IN_BYTE: [[u8; 8]; 256] = {
+    let mut t = [[8u8; 8]; 256];
+    let mut b = 0;
+    while b < 256 {
+        let (mut j, mut i) = (0, 0);
+        while i < 8 {
+            if b >> i & 1 != 0 {
+                t[b][j] = i as u8;
+                j += 1;
+            }
+            i += 1;
+        }
+        b += 1;
+    }
+    t
+};
 
 /// The first `i` in `lo..hi` for which `below(i)` is false, `below` true before it and false from it (`hi` where
 /// none is; the CLIF's `bisect_in`).
@@ -591,4 +607,28 @@ pub fn ukl() -> String {
         s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, {name}) == {at}, \"Numbering.{name}\");\n");
     }
     s
+}
+
+#[cfg(test)]
+mod select_tests {
+    /// `select64` finds set bit `k` of a word as a scan of its bits does: every set bit of words of every density,
+    /// each byte's every pattern among them.
+    #[test]
+    fn a_words_set_bit_k_is_where_a_scan_finds_it() {
+        let mut words: Vec<u64> = (0..256u64).flat_map(|b| (0..8).map(move |at| b << (8 * at))).collect();
+        let mut r = 0x9e37_79b9_7f4a_7c15u64;
+        for _ in 0..20_000 {
+            r ^= r << 13;
+            r ^= r >> 7;
+            r ^= r << 17;
+            // Sparse, even and dense words.
+            words.extend([r, r & r.rotate_left(17), r | r.rotate_left(29), u64::MAX, 1 << (r % 64)]);
+        }
+        for &m in &words {
+            let set: Vec<u32> = (0..64).filter(|&i| m >> i & 1 != 0).collect();
+            for (k, &want) in set.iter().enumerate() {
+                assert_eq!(super::select64(m, k as u32), want, "{m:#x} bit {k}");
+            }
+        }
+    }
 }
