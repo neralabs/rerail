@@ -1013,9 +1013,14 @@ pub fn heavy_batch(reqs: Vec<HeavyReq>) -> Vec<Option<Vec<HeavyCol>>> {
                 let counts = (0..n.div_ceil(MORSEL))
                     .into_par_iter()
                     .fold(empty, |mut counts, m| {
+                        // A row's columns read at once, its document found from the last row's (`row_at_memo`): a
+                        // value at a time, a batch's view found the row's document and selected its node for each
+                        // (idc: 262 samples of `Source::value` here).
+                        let (mut memo, mut vals) = (crate::code_rule_dsl::facts::vtab::NO_MEMO, vec![0i64; cols.len()]);
                         for row in m * MORSEL..((m + 1) * MORSEL).min(n) {
-                            for (k, &c) in cols.iter().enumerate() {
-                                *counts[k].entry(src.value(row, c)).or_default() += 1;
+                            src.row_at_memo(row, &cols, &mut vals, &mut memo);
+                            for (k, &v) in vals.iter().enumerate() {
+                                *counts[k].entry(v).or_default() += 1;
                             }
                         }
                         counts
