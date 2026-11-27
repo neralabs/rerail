@@ -150,10 +150,14 @@ async function sessionStart(p: Place, agent: Agent, env: NodeJS.ProcessEnv): Pro
   return { note: answer.hookSpecificOutput?.additionalContext ?? answer.systemMessage ?? "", stdout: ran.stdout.trim(), stderr: ran.stderr };
 }
 
-/** The step a hook's line names, as a person copies it: the words after "then run", to the end of its sentence. */
-function namedStep(line: string): string {
-  const step = /, then run (.+?)(?:: |\.$)/u.exec(line.trim())?.[1];
-  if (step === undefined) throw new Error(`the hook named no step: ${line}`);
+/**
+ * The step the hook's line on stderr names, as a person copies it: on that line alone, the words after "then run", to
+ * the sentence on what the rerail command runs or to the line's end.
+ */
+function namedStep(stderr: string): string {
+  const line = stderr.split(/\r?\n/u).find(each => each.startsWith("rerail hook: Rerail needs Node "));
+  const step = /, then run (.+?)(?:: the rerail command runs .+)?\.$/u.exec(line ?? "")?.[1];
+  if (step === undefined) throw new Error(`the hook named no step: ${stderr}`);
   return step;
 }
 
@@ -169,6 +173,11 @@ async function inShell(shell: (typeof SHELLS)[number], step: string, cwd: string
 }
 
 describe("an older Node at the path set-up recorded", () => {
+  it("reads the step from the hook's own line, whatever other line stderr holds", () => {
+    const line = "rerail hook: Rerail needs Node 24 or newer and this is Node 22.20.0, so it is off in this session. Put Node 24 or newer first on PATH, then run rerail install --refresh.";
+    expect(namedStep(`${line}\n(node:1) Warning: a second line\n`)).toBe("rerail install --refresh");
+  });
+
   it.each(AGENTS.flatMap(agent => SHELLS.map(shell => ({ ...agent, shell }))))("leaves $id's hook naming a step that, done as written in $shell with Node 24 first on PATH, gets its start note back", async ({ shell, ...agent }) => {
     const p = await place();
     const installed = await run(p.recorded, [join(PACKAGE_ROOT, ENTRY_POINTS.cli), "install", "--root", PACKAGE_ROOT, "--agents", agent.id], p.root, p.env);
