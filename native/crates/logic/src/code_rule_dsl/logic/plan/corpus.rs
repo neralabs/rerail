@@ -8774,10 +8774,11 @@ fn run_observed_within(
     // The exports the cross part could call instead (the callable spike's feedback, first version): by their rows.
     crate::code_rule_dsl::logic::profile::decision("callable candidates: the files' relations every reader asks for by columns", || {
         let located = |r: &str| split.locations.get(r).is_some_and(|l| l.contains(&0));
-        let mut by: Vec<(usize, preparation::callable::Candidate)> = preparation::callable::candidates(&lowered.version, &split.file_local, &split.exports, &located).into_iter().map(|c| (totals.rows(&c.rel).unwrap_or(0), c)).collect();
-        by.sort_unstable_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.rel.cmp(&b.1.rel)));
-        let shown: Vec<String> = by.iter().take(12).map(|(n, c)| format!("{} {} ({n} rows, {} readers{})", c.rel, c.pattern(), c.readers, c.refused.as_ref().map(|w| format!("; {w}")).unwrap_or_default())).collect();
-        format!("{} of {} exports: {}", by.len(), split.exports.len(), shown.join(", "))
+        let mut by: Vec<(usize, String, std::result::Result<preparation::callable::Candidate, String>)> = preparation::callable::candidates(&lowered.version, &split.file_local, &split.exports, &located).into_iter().map(|(r, c)| (totals.rows(&r).unwrap_or(0), r, c)).collect();
+        by.sort_unstable_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        let shown: Vec<String> = by.iter().filter_map(|(n, _, c)| c.as_ref().ok().map(|c| format!("{} {} ({n} rows, {} readers{})", c.rel, c.pattern(), c.readers, c.refused.as_ref().map(|w| format!("; {w}")).unwrap_or_default()))).take(12).collect();
+        let not: Vec<String> = by.iter().filter_map(|(n, r, c)| c.as_ref().err().map(|why| format!("{r} ({n} rows): {why}"))).take(8).collect();
+        format!("{} of {} exports: {}; the largest not: {}", by.iter().filter(|b| b.2.is_ok()).count(), split.exports.len(), shown.join(", "), not.join("; "))
     });
     // The cross-file part's statistics: T's for the base relations, the chunks' totals for the rest.
     let applying = crate::code_rule_dsl::logic::profile::span(|| "apply the chunks' totals".into());
