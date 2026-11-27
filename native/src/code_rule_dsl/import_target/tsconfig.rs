@@ -93,7 +93,11 @@ pub(crate) struct Chains<'a> {
 
 impl<'a> Chains<'a> {
     pub(crate) fn new(view: &'a View, based: bool) -> Self {
-        Self { view, based, read: HashMap::new() }
+        Self {
+            view,
+            based,
+            read: HashMap::new(),
+        }
     }
 
     /// The merged `compilerOptions` of the configuration at `file` (absolute). `None` where it cannot be read.
@@ -107,7 +111,11 @@ impl<'a> Chains<'a> {
         if let Some(known) = self.read.get(&key) {
             return known.clone();
         }
-        let made = if self.read.len() < MAX_CONFIGURATIONS { self.merged(file, depth) } else { None };
+        let made = if self.read.len() < MAX_CONFIGURATIONS {
+            self.merged(file, depth)
+        } else {
+            None
+        };
         self.read.insert(key, made.clone());
         made
     }
@@ -122,7 +130,9 @@ impl<'a> Chains<'a> {
         }
         let directory = path::dirname(file);
         for base in bases(&config).into_iter().rev() {
-            let Some(base) = extends_path(self.view, base, directory).and_then(|base| self.options(&base, depth + 1)) else {
+            let Some(base) = extends_path(self.view, base, directory)
+                .and_then(|base| self.options(&base, depth + 1))
+            else {
                 continue;
             };
             options = merge(base, options);
@@ -132,8 +142,15 @@ impl<'a> Chains<'a> {
 
     /// The configuration's own `compilerOptions`, its `baseUrl` absolute from its folder where the walk is `based`.
     fn own(&self, file: &str, config: &Json) -> Entries {
-        let mut options = config.get("compilerOptions").and_then(Json::entries).map(<[_]>::to_vec).unwrap_or_default();
-        for (key, value) in options.iter_mut().filter(|(key, _)| self.based && key == "baseUrl") {
+        let mut options = config
+            .get("compilerOptions")
+            .and_then(Json::entries)
+            .map(<[_]>::to_vec)
+            .unwrap_or_default();
+        for (_, value) in options
+            .iter_mut()
+            .filter(|(key, _)| self.based && key == "baseUrl")
+        {
             if let Json::String(url) = &*value {
                 *value = Json::String(path::resolve(path::dirname(file), url));
             }
@@ -239,21 +256,48 @@ mod tests {
     /// first's.
     #[test]
     fn a_fan_out_of_bases_reads_each_base_once() {
-        let root = std::env::temp_dir().join(format!("rerail-tsconfig-fan-{}-{:?}", std::process::id(), std::thread::current().id()));
+        let root = std::env::temp_dir().join(format!(
+            "rerail-tsconfig-fan-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         for k in 0..8 {
             let next = format!("\"./c{}.json\"", k + 1);
-            std::fs::write(root.join(format!("c{k}.json")), format!("{{ \"extends\": [{}], \"compilerOptions\": {{ \"o{k}\": true }} }}", [next.as_str(); 6].join(", "))).unwrap();
+            std::fs::write(
+                root.join(format!("c{k}.json")),
+                format!(
+                    "{{ \"extends\": [{}], \"compilerOptions\": {{ \"o{k}\": true }} }}",
+                    [next.as_str(); 6].join(", ")
+                ),
+            )
+            .unwrap();
         }
-        std::fs::write(root.join("c8.json"), r#"{ "compilerOptions": { "strict": true, "baseUrl": "src" } }"#).unwrap();
+        std::fs::write(
+            root.join("c8.json"),
+            r#"{ "compilerOptions": { "strict": true, "baseUrl": "src" } }"#,
+        )
+        .unwrap();
         let view = View::new(Arc::new(HeldFiles::default()), Some(&root));
         let mut chains = Chains::new(&view, true);
         let options = chains.of(&view.absolute("c0.json")).expect("read");
         let _ = std::fs::remove_dir_all(&root);
-        assert!(chains.read.len() <= 9, "{} configurations read", chains.read.len());
-        assert!(options.iter().any(|(k, v)| k == "strict" && *v == Json::Bool(true)));
-        assert!(options.iter().any(|(k, v)| k == "o0" && *v == Json::Bool(true)));
+        assert!(
+            chains.read.len() <= 9,
+            "{} configurations read",
+            chains.read.len()
+        );
+        assert!(
+            options
+                .iter()
+                .any(|(k, v)| k == "strict" && *v == Json::Bool(true))
+        );
+        assert!(
+            options
+                .iter()
+                .any(|(k, v)| k == "o0" && *v == Json::Bool(true))
+        );
         assert!(options.iter().any(|(k, v)| k == "baseUrl" && v.as_str().is_some_and(|url| url.ends_with("/src"))));
     }
 }
