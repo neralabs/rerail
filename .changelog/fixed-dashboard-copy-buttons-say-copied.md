@@ -1,0 +1,1 @@
+In the dashboard, a Copy button now reads Copied for a moment after it copies, so you can see the copy worked without looking for the message at the bottom of the window. Copy in the Update available popover leaves the popover open.
