@@ -12106,3 +12106,41 @@ Fixes the merge needed:
 Checked under Relax: rerail-setfix, logic joins::tests, tests-corpus base_tests, logic-core, tests-logic
 native::tests, rerail-facts, blocks relation, plan-search; device-metal compiles (its tests listed, none run). No
 Metal or farm runs.
+
+### Q585. Roll-up 157 (final-rerail-shape e4e21eb0cb onto Pulling-it-all-together): what the merge chose
+
+final-rerail-shape's two commits: a step whose key names at most one row is a lookup (`Plan::one`, `at_most_one`,
+measured for a derived input by `Csr::at_most_one`), and a fused chunk asks a derived input's test or lookup once a
+chunk (`cands::ask_chunk`: a node-keyed bit, or the row by the key's value-keyed index); a row passed on to the head
+is no frame of the walk's every step (`walk_step`, `arrive_at`, `to_head`, `emit_head`); RERAIL_PROF counts each
+step's `Rows::each` shapes (`native_shapes`).
+
+Not taken, by decision A (one batched own-row read, `Source::read_own_batch`; `row_column`, `read_one_at`,
+`cands::read_one` and `View::read_one` removed in roll-up 141):
+- within.rs's `row_column` and `read_one_at` for the nearest axis, and tests_lang's asserts of them;
+- `cands::read_one`, `read_one_in` and `one_row`, the walk's `read_lookup`, and `ask_chunk`'s view arm (a view's
+  lookup is its source's own-row read a chunk at a time, `rowcode::ViewTest`).
+- a_derived_inputs_key_of_one_row_is_measured_and_read keeps its measuring half (now `..._is_measured`); its read
+  half tested `read_one_in`.
+
+Conflicts, resolved by invariant:
+- `lookups`: the hub's view lookups (a source reading its rows by their own id, now `reads_own`, the same
+  `read_own_batch` ask), and final-rerail-shape's derived-input lookups (`Plan::one`, binds, not negated). A view's
+  key counts as one row by `reads_own` or `keys_rows`, not `row_column`; `lookup_why` prints the own-read columns.
+- `analysed`: `Plan::one` measured on the encoded plan, then the hub's view closure, lookups, fusion and spans.
+- rowcode.rs: `Test` carries both the hub's `view` and final-rerail-shape's `reads`; the derived lookup arm sits
+  after the hub's viewed arm. `Fused::run` takes both: `ask` (an `Ask`, the chunk's columns; replaces a
+  seven-argument closure type, no lint allow) first, then the hub's `held` row by row where `ask` has no read.
+  `kept_binds` counts both kinds of lookups' values. The factoring exemption is final-rerail-shape's, for derived
+  lookups (`Test::reads`) only: widened to the hub's view lookups it kept `node(_, x, k, ..)` fused and
+  node_reads_that_bind_in_batches_give_each_rows_rows read no rows in batches.
+- setfix.rs: the hub's `run_batch`, `span_flush` and filters, with `walk_step`/`arrive_at`/`to_head`/`emit_head`;
+  every flush site (a fused step's, a spanning chunk's) gives `run` the chunk ask and the hub's `held`; Csr and Plan
+  literals carry both sides' fields; SetfixCounts the hub's view counts and `chunk_asks`.
+
+Fixes the merge needed:
+- a_chunk_asks_a_derived_lookup_and_test_a_chunk_at_a_time builds `l`'s value-keyed rows and `b`'s node bits ahead,
+  as the level's build ahead does: in the hub a reader builds none (decision 0706 §5).
+
+Checked under Relax: rerail-setfix (147), tests-logic native::tests and plan::tests (1 thread), tests-corpus
+base_tests (54), tests-lang syntax::tests. Relax has no clippy: none run. No Metal or farm runs.

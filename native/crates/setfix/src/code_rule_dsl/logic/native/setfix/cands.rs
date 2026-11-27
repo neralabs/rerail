@@ -502,8 +502,76 @@ pub(super) fn holds(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], ask
     })
 }
 
-/// A lookup's row a fused chunk's batch could not read (`rowcode::ViewTest::looks`, `found` 2: a values part's
-/// node), `slots` the row's values: whether its one row is there and holds its keys and tests, its values of the
+/// A fused test or lookup (`rowcode::Test`, step `step`) asked of every row of a chunk still `alive` at once, where
+/// its one key column is read by value: a loop over the key's column, not a probe a row. Its forms:
+/// - a test of a derived input (binds nothing): the input's node-keyed bit of each value (`Csr::node_bits_has`);
+/// - a lookup of a derived input: each value's row by its value-keyed index (`Csr::by_value`, at most one live row);
+///
+/// A row that passes gets 1 in column `verdict` and a lookup's values in `looks`' columns; one that fails is cleared
+/// in `alive`. Returns the rows it found no row for and those it found one for; `None` (nothing written) where the
+/// step has no such read: the caller asks row by row.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn ask_chunk(j: &JoinRule, step: &Step, test: &rowcode::Test, columns: &mut [Vector<i64>], alive: &mut [u64], n: usize, verdict: usize, looks: &[(usize, usize)], asked: &mut Asked) -> Option<(u64, u64)> {
+    let Step::Atom { src: Src::In(rel, ix), keys, tests, binds, neg } = step else { return None };
+    let [(col, Key::Slot(s))] = keys.as_slice() else { return None };
+    if !tests.is_empty() {
+        return None;
+    }
+    // The key's values: a column of the chunk (a test fused so reads the row, `rowcode::fused`).
+    let kc = test.slots.iter().find_map(|&(x, b)| match b { rowcode::Bind::Column(k) if x == *s => Some(k), _ => None })?;
+    let (rel, ix) = j.src_in(rel, ix);
+    let lookup = !binds.is_empty();
+    let hint = &mut asked.hints[0];
+    let (mut none, mut one) = (0u64, 0u64);
+    // Each alive row's verdict from `found(v)`, its look columns from `got` (input column `c`'s value).
+    let mut each = |columns: &mut [Vector<i64>], alive: &mut [u64], found: &mut dyn FnMut(i64, &mut [i64; super::READ]) -> bool| {
+        let mut got = [0i64; super::READ];
+        for r in 0..n {
+            if alive[r / 64] >> (r % 64) & 1 == 0 {
+                continue;
+            }
+            let hit = found(columns[kc][r], &mut got);
+            if hit { one += 1 } else { none += 1 }
+            if hit != *neg {
+                columns[verdict][r] = 1;
+                for &(k, c) in looks {
+                    columns[k][r] = got[c];
+                }
+            } else {
+                alive[r / 64] &= !(1u64 << (r % 64));
+            }
+        }
+    };
+    match &rel.view {
+        None if ix.cols.len() != 1 || ix.cols[0] != *col => return None,
+        None if !lookup => {
+            ix.node_bits_has(rel, 0, &mut 0)?;
+            run_counts().chunk_asks[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            each(columns, alive, &mut |v, _| ix.node_bits_has(rel, v, hint).unwrap_or(false));
+        }
+        None => {
+            if rel.k > super::READ || !ix.by_value_kind() || ix.by_value(rel, 0, &mut 0).is_none() {
+                return None;
+            }
+            run_counts().chunk_asks[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            each(columns, alive, &mut |v, got| {
+                let Some(&id) = ix.by_value(rel, v, hint).and_then(|ids| ids.first()) else { return false };
+                let row = rel.at(id as usize);
+                for (c, o) in got.iter_mut().enumerate().take(rel.k) {
+                    *o = row.at(c);
+                }
+                true
+            });
+        }
+        // A view's lookup is its source's own-row read a chunk at a time (`rowcode::ViewTest`, decision A), not here.
+        Some(_) => return None,
+    }
+    Some((none, one))
+}
+
+/// A lookup's row a fused chunk could not ask at once (a derived input's, `rowcode::Test::reads`, where `ask_chunk`
+/// has no read) or its batch could not read (`rowcode::ViewTest::looks`, `found` 2: a values part's node), `slots`
+/// the row's values: whether its one row is there and holds its keys and tests, its values of the
 /// columns it binds in `out` (by column), probed, its first matching row's.
 pub(super) fn look(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], asked: &mut Asked, out: &mut [i64]) -> bool {
     let Step::Atom { src, keys, tests, binds, .. } = step else { unreachable!("a lookup is an atom") };
