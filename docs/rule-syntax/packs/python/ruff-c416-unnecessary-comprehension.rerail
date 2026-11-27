@@ -77,3 +77,24 @@ third(t, i, j) :- pair_at(t), child(t, _, i), child(t, _, j), i < j, child(t, z,
 .decl dict_items(i: node)
 dict_items(i) :- unparen(i, c), kind(c, "call"), call_nargs(c, 0), call_nkwargs(c, 0), field(c, "function", f),
     attr_of(f, o, "items"), kind(o, "identifier"), dict_ref(o).
+
+// Ruff 0.17.6 (python-15 review): parenthesized names, an if-expression of dicts, `.items(…)` with arguments, and
+// a function reading the module's last binding.
+.test parentheses_and_dict_inference exactly
+    .fixture "case.py" ```
+        pairs = [("a", 1)]
+        parenthesized_names = {(k): (v) for k, v in pairs}
+        conditional_dict = {} if pairs else {}
+        conditional_type = [(k, v) for k, v in conditional_dict.items()]
+        direct_dict = {}
+        items_with_argument = [(k, v) for k, v in direct_dict.items(1)]
+        deferred_dict = []
+        def deferred_lookup():
+            return [(k, v) for k, v in deferred_dict.items()]
+        deferred_dict = {}
+        ```
+    .expect C416 at "case.py":2
+    .expect C416 at "case.py":4
+    .expect C416 at "case.py":6
+    .expect C416 at "case.py":9
+.end

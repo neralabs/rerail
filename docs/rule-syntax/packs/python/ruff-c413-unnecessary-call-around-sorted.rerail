@@ -32,3 +32,17 @@ unwrap(c, "list", _, _) :- call_only(c, a), around_sorted(c, "list", _), one_lin
 unwrap(c, "list", _, _) :- call_only(c, a), around_sorted(c, "list", _), !one_line(c) => replace(c, `($a)`).
 .decl one_line(c: node)
 one_line(c) :- around_sorted(c, "list", _), text(c, t), !contains("\n", t).
+
+// Ruff 0.17.6 (python-15 review): an alias imported from builtins is the builtin, and `builtins.list` is looked
+// up in a string type definition too.
+.test aliases_and_qualified_names_in_strings exactly
+    .fixture "case.py" ```
+        from builtins import list as builtin_list
+        import builtins
+        xs = [2, 1]
+        alias_case = builtin_list(sorted(xs))
+        qualified_string_case: "builtins.list(sorted(xs))"
+        ```
+    .expect C413 at "case.py":4
+    .expect C413 at "case.py":5
+.end

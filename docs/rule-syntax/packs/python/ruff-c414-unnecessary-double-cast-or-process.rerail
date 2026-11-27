@@ -63,3 +63,15 @@ kw_elt(m, i, a) :- kw_pair(_, w), unparen(w, m), kind(m, "list"), child(m, a, j)
 cmp_same_ask(a, b) :- kw_pair(v, w), unparen(v, l), unparen(w, m), kw_elt(l, i, a), kw_elt(m, i, b).
 .decl kw_elt_differs(l: node, m: node)
 kw_elt_differs(l, m) :- kw_pair(v, w), unparen(v, l), unparen(w, m), kw_elt(l, i, a), kw_elt(m, i, b), !cmp_same(a, b).
+
+// Ruff 0.17.6 (python-15 review): an alias imported from builtins is the builtin; string type definitions are code.
+.test aliases_and_string_type_definitions exactly
+    .fixture "case.py" ```
+        from builtins import set as builtin_set
+        xs = [2, 1]
+        alias_case = builtin_set(list(xs))
+        string_case: "set(list(xs))"
+        ```
+    .expect C414 at "case.py":3
+    .expect C414 at "case.py":4
+.end

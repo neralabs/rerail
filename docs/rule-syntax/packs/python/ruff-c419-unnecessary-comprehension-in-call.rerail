@@ -23,3 +23,17 @@ C419(e, k) :- (p15_builtin_call(c, f) ; p15_str_call(c, f)), (f = "any" ; f = "a
 p15_name("any"). p15_name("all").
 .decl async_for(e: node)  // `[x async for x in xs]`
 async_for(e) :- p15_first(_, e), child(e, fc, _), kind(fc, "for_in_clause"), op(fc, "async").
+
+// Ruff 0.17.6 (python-15 review): an alias imported from builtins is the builtin, and `builtins.any` is looked up
+// in a string type definition too.
+.test aliases_and_qualified_names_in_strings exactly
+    .fixture "case.py" ```
+        from builtins import any as builtin_any
+        import builtins
+        xs = [1, 2]
+        alias_case = builtin_any([x > 0 for x in xs])
+        qualified_string_case: "builtins.any([x > 0 for x in xs])"
+        ```
+    .expect C419 at "case.py":4
+    .expect C419 at "case.py":5
+.end

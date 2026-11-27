@@ -62,3 +62,17 @@ coll_call(c) :- kind(c, "call"), field(c, "function", f), ruff_qual(f, q),
 // outer(c, k, m): `list(map(…))`: the builtin k called with the one argument m, a map call.
 .decl outer(c: node, k: symbol, m: node)
 outer(c, k, m) :- p15_builtin_call(c, k), (k = "list" ; k = "set" ; k = "dict"), c4_only(c, m), map_lambda(m, _).
+
+// Ruff 0.17.6 (python-15 review): an alias imported from builtins is the builtin; string type definitions are
+// code; a nested lambda that loads the parameter's name keeps the map, even where a comprehension rebinds it.
+.test aliases_strings_and_late_binding exactly
+    .fixture "case.py" ```
+        from builtins import map as builtin_map
+        xs = [1, 2]
+        alias_case = builtin_map(lambda x: x + 1, xs)
+        string_case: "map(lambda x: x + 1, xs)"
+        late_binding_case = map(lambda x: lambda: [x for x in xs], xs)
+        ```
+    .expect C417 at "case.py":3
+    .expect C417 at "case.py":4
+.end
