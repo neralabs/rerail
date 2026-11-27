@@ -792,7 +792,6 @@ const ORACLE_CASES: &[(&str, &[&str])] = &[
     ("closure", &["a_walk_along_an_edge_runs_as_its_closure", "a_closure_over_many_components_runs_in_pieces_like_semi_naive", "a_keyed_walk_along_an_edge_runs_as_a_closure_in_one_wave", "a_walks_readers_are_answered_in_its_climb"]),
     ("climb ends", &["a_walks_readers_are_answered_in_its_climb", "plan::climb_tests::a_reader_that_joins_out_from_the_walks_row_is_not_a_climb_end"]),
     ("inner walk", &["a_walks_readers_are_answered_in_its_climb", "plan::climb_tests::a_walk_its_ends_alone_read_is_inner"]),
-    ("per name fork", &["plan::tests::a_start_forked_in_the_climbs_seed_join_gives_the_rows_it_gives_apart", "plan::tests::a_start_its_readers_read_beside_one_driver_gives_the_rows_it_gives_stored"]),
 ];
 
 /// The registry's rule (the design "Registering an executor for a join shape"): no executor or shape runs without a

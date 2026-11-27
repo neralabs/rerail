@@ -74,28 +74,6 @@ pub(super) struct Closure {
     /// An inner keyed walk's seeds' rows, collected by the seed loop and never written to its relation (the design's
     /// S4: the start joined in the climb, `folds_seeds`).
     folded: Option<Vector<i64>>,
-    /// The row the walk's seed and other relations of the component share, forked (the design's S1, one pass a name):
-    /// its rows made once, each reader's rest run on each of them before the climb.
-    fork: Option<Fork>,
-}
-
-/// A fork (the design's S1, one pass a name, the page "S1 Per-Name Pass"): relation `src` of the component, made by
-/// seeds alone that read none of its relations, and read by the other rules of the component only by its delta, its
-/// whole row first. Its rows, collected by the seed loop (`rows`), are deduplicated, and each tail (a reader's rest
-/// after that row, to its head's terms) runs on each row, in `tails`' order: a relation's tails before any tail that
-/// reads it. The walk's seed is a tail too; its rows start the climb. Every other relation the tails make is whole
-/// before the climb, so the walk's and its ends' rests read them as made.
-pub(super) struct Fork {
-    src: usize,
-    tails: Vec<Reader>,
-    /// Each tail's read of the row: the columns it binds (to its `slots`, in order), and the constants it tests.
-    reads: Vec<(Vec<usize>, Vec<(usize, i64)>)>,
-    /// The row tests the tails share (decision 0561's, over the fork's row: slot `c` its column `c`), each asked once a
-    /// row by the index's probe alone (`cands::holds`); a tail's `need` names its own.
-    tests: Vec<JoinRule>,
-    rows: Option<Vector<i64>>,
-    /// The rows its tails made (the walk's seeds' among them), for the run's account (`forms::account("per name")`).
-    made: std::cell::Cell<u64>,
 }
 
 /// Whether two row tests ask the same: the same source by the same index, the same keys.
@@ -177,7 +155,7 @@ struct Walk<'a> {
 
 /// Whether probe `j` of relation 0 (of `k` columns) is a walk: its delta atom first, a distinct slot in every column,
 /// the head the same slots but one column's, which is a slot the rest binds; the rest reads the relation nowhere.
-fn walk_of<'a>(j: &'a JoinRule, k: usize, w: usize, nrels: usize, made: &[usize]) -> Option<Walk<'a>> {
+fn walk_of(j: &JoinRule, k: usize, w: usize, nrels: usize) -> Option<Walk<'_>> {
     let Some(Step::Atom { src: Src::Delta(d), neg: false, keys, binds, tests }) = j.steps.first() else { return None };
     if *d != w {
         return None;
@@ -210,7 +188,7 @@ fn walk_of<'a>(j: &'a JoinRule, k: usize, w: usize, nrels: usize, made: &[usize]
     let rest = &j.steps[1..];
     let mut used = Vector::new();
     for s in rest {
-        if (0..nrels).any(|r| !made.contains(&r) && reads(s, r)) {
+        if (0..nrels).any(|r| reads(s, r)) {
             return None;
         }
         step_slots(s, &mut used);
@@ -223,9 +201,8 @@ fn walk_of<'a>(j: &'a JoinRule, k: usize, w: usize, nrels: usize, made: &[usize]
 }
 
 /// A reader's probe (decision 0561): its walk atom first, reading the walk's delta with a distinct slot in every
-/// column; its rest reads none of the component's relations but those a fork makes (`made`). Each column's slot, and
-/// the rest.
-fn reader_of<'a>(j: &'a JoinRule, k: usize, w: usize, nrels: usize, made: &[usize]) -> Option<(Vec<usize>, &'a [Step])> {
+/// column; its rest reads none of the component's relations. Each column's slot, and the rest.
+fn reader_of(j: &JoinRule, k: usize, w: usize, nrels: usize) -> Option<(Vec<usize>, &[Step])> {
     let Some(Step::Atom { src: Src::Delta(d), neg: false, keys, binds, tests }) = j.steps.first() else { return None };
     if *d != w || !keys.is_empty() || !tests.is_empty() || binds.len() != k {
         return None;
@@ -238,33 +215,10 @@ fn reader_of<'a>(j: &'a JoinRule, k: usize, w: usize, nrels: usize, made: &[usiz
         return None;
     }
     let rest = &j.steps[1..];
-    if rest.iter().any(|s| (0..nrels).any(|r| !made.contains(&r) && reads(s, r))) {
+    if rest.iter().any(|s| (0..nrels).any(|r| reads(s, r))) {
         return None;
     }
     Some((slot_of, rest))
-}
-
-/// A tail's probe (the design's S1, one pass a name): the fork's row first, read by its delta, some columns bound to
-/// distinct slots and others tested against constants (`pn_wstart(_, n, "identifier", _, s)`); its rest reads none
-/// of the component's relations but those a fork makes (`made`). The columns bound with their slots, the constants
-/// tested, and the rest.
-#[allow(clippy::type_complexity)]
-fn tail_of<'a>(j: &'a JoinRule, w: usize, nrels: usize, made: &[usize]) -> Option<(Vec<(usize, usize)>, Vec<(usize, i64)>, &'a [Step])> {
-    let Some(Step::Atom { src: Src::Delta(d), neg: false, keys, binds, tests }) = j.steps.first() else { return None };
-    if *d != w || !tests.is_empty() {
-        return None;
-    }
-    let mut cols: Vec<(usize, usize)> = binds.iter().map(|&(c, s)| (c as usize, s as usize)).collect();
-    cols.sort();
-    if (1..cols.len()).any(|i| cols[..i].iter().any(|x| x.1 == cols[i].1)) {
-        return None;
-    }
-    let consts: Vec<(usize, i64)> = keys.iter().map(|(c, k)| match k { Key::Const(v) => Some((*c as usize, *v as i64)), Key::Slot(_) => None }).collect::<Option<_>>()?;
-    let rest = &j.steps[1..];
-    if rest.iter().any(|s| (0..nrels).any(|r| !made.contains(&r) && reads(s, r))) {
-        return None;
-    }
-    Some((cols, consts, rest))
 }
 
 /// A rest's steps made again, its run's objects the same ones (`steps::Plan::decoded`'s), to be a join of their own.
@@ -374,20 +328,6 @@ impl Closure {
     pub(super) fn take_seeds(&mut self, rows: Vector<i64>) {
         self.folded = Some(rows);
     }
-    /// The relation the climb forks (`Fork`), its seeds' rows collected by the seed loop.
-    pub(super) fn fork_source(&self) -> Option<usize> {
-        self.fork.as_ref().map(|f| f.src)
-    }
-    /// The rows the fork's tails made, once it ran.
-    pub(super) fn fork_rows(&self) -> u64 {
-        self.fork.as_ref().map_or(0, |f| f.made.get())
-    }
-    /// The fork's rows the seed loop collected.
-    pub(super) fn take_fork(&mut self, rows: Vector<i64>) {
-        if let Some(f) = &mut self.fork {
-            f.rows = Some(rows);
-        }
-    }
 }
 
 /// The component's closure, when it has the shape (see the module's comment). `RERAIL_CLOSURE_FORM=off` turns it off.
@@ -409,94 +349,29 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
     let ks: Vec<usize> = store.rels.iter().map(|r| r.k).collect();
     drop(store);
     let k = ks[wi];
-    // The fork (the design's S1, one pass a name): a relation besides the walk made by seeds alone that read none of
-    // the component's relations, which other probes read by its delta. `RERAIL_SHAPE_PER_NAME_FORK=off` (or
-    // `RERAIL_SHAPE_PER_NAME=off`) forks none.
-    let per_name = !["RERAIL_SHAPE_PER_NAME", "RERAIL_SHAPE_PER_NAME_FORK"].iter().any(|k| std::env::var(k).is_ok_and(|v| v == "off"));
-    let seeds_only = |f: usize| {
-        c.probes.iter().filter(|p| p.head == f).all(|p| p.delta == SEED && matches!(&p.body, Body::Join(j) if !j.steps.iter().any(|s| (0..nrels).any(|r| reads(s, r)))))
-    };
-    let src = (0..nrels).find(|&f| per_name && f != wi && c.probes.iter().any(|p| p.delta == f) && seeds_only(f));
-    // The relations its tails make besides the walk's seeds: whole before the climb, read as made.
-    let mut made: Vec<usize> = src.map_or(Vec::new(), |f| c.probes.iter().filter(|p| p.delta == f && p.head != wi).map(|p| p.head).collect());
-    made.sort();
-    made.dedup();
-    let (mut walks, mut readers, mut tails) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut walks, mut readers) = (Vec::new(), Vec::new());
     for p in &c.probes {
         match (&p.body, p.delta) {
             (Body::Join(_), SEED) if p.head == wi => {}
-            // The fork's seeds are collected by the seed loop; a tail's head is made by its tails.
-            (Body::Join(_), SEED) if Some(p.head) == src || made.contains(&p.head) => {}
-            (Body::Join(j), d) if Some(d) == src && j.out.len() == ks[p.head] => {
-                let (cols, consts, rest) = tail_of(j, d, nrels, &made)?;
-                tails.push((p.head, cols, consts, rest, j));
-            }
-            // A made relation's delta: it is whole before the climb, which reads it as made.
-            (Body::Join(_), d) if made.contains(&d) => {}
-            (Body::Join(j), d) if d == wi && p.head == wi => walks.push((walk_of(j, k, wi, nrels, &made)?, j.nslots)),
+            (Body::Join(j), d) if d == wi && p.head == wi => walks.push((walk_of(j, k, wi, nrels)?, j.nslots)),
             (Body::Join(j), d) if d == wi && j.out.len() == ks[p.head] => {
-                let (slots, rest) = reader_of(j, k, wi, nrels, &made)?;
+                let (slots, rest) = reader_of(j, k, wi, nrels)?;
                 readers.push((p.head, slots, rest, j));
             }
             _ => return None,
         }
     }
-    // Each other relation is a reader's head, and only a reader's, or the fork's or a tail's.
-    if (0..nrels).any(|r| r != wi && Some(r) != src && !made.contains(&r) && !readers.iter().any(|x| x.0 == r)) {
+    // Each other relation is a reader's head, and only a reader's.
+    if (0..nrels).any(|r| r != wi && !readers.iter().any(|x| x.0 == r)) {
         return None;
     }
-    // The tails in order: a relation's tails before any tail that reads it, the walk's seeds' last.
-    let fork = match src {
-        None => None,
-        Some(src) => {
-            let mut order: Vec<usize> = Vec::new();
-            while order.len() < made.len() {
-                let next = made.iter().copied().find(|&h| !order.contains(&h) && tails.iter().filter(|t| t.0 == h).all(|t| t.3.iter().all(|s| made.iter().all(|&m| m == h || order.contains(&m) || !reads(s, m)))))?;
-                if tails.iter().any(|t| t.0 == next && t.3.iter().any(|s| reads(s, next))) {
-                    return None;
-                }
-                order.push(next);
-            }
-            order.push(wi);
-            let ordered: Vec<_> = order.iter().flat_map(|&h| tails.iter().filter(move |t| t.0 == h)).collect();
-            let reads: Vec<(Vec<usize>, Vec<(usize, i64)>)> = ordered.iter().map(|t| (t.1.iter().map(|x| x.0).collect(), t.2.clone())).collect();
-            let kf = ks[src];
-            let mut tests: Vec<Made> = Vec::new();
-            let tails: Vec<Reader> = ordered
-                .iter()
-                .map(|(head, cols, _, rest, j)| {
-                    let slots: Vec<usize> = cols.iter().map(|x| x.1).collect();
-                    // Each column's slot (none: `usize::MAX`), for the tests over the row.
-                    let mut by_col = vec![usize::MAX; kf];
-                    for &(c, x) in cols.iter() {
-                        by_col[c] = x;
-                    }
-                    let (left, need) = take_tests(j, rest, &by_col, &mut tests);
-                    let direct = left.is_empty().then(|| j.out.iter().map(|t| match *t {
-                        Term::Slot(x) => by_col.iter().position(|&y| y == x).map(Ok),
-                        Term::Const(v) => Some(Err(v)),
-                        Term::Cat(..) => None,
-                    }).collect::<Option<Vec<_>>>()).flatten();
-                    let (left, need) = if left.is_empty() && direct.is_none() { (decoded(j, rest), Vec::new()) } else { (left, need) };
-                    Reader { head: *head, rest: rest_join_to(left, j.out.to_vec(), j.nslots, &slots), slots, need, direct }
-                })
-                .collect();
-            let all: Vec<usize> = (0..kf).collect();
-            let tests = tests.into_iter().map(|t| rest_join_to(vec![t], vec![Term::Const(1)], kf, &all)).collect();
-            Some(Fork { src, tails, reads, tests, rows: None, made: std::cell::Cell::new(0) })
-        }
-    };
     let col = walks.first()?.0.col;
     if walks.iter().any(|(w, _)| w.col != col) {
         return None;
     }
     // One walk whose rest reads only the walking column: the reach per node.
     if let [(w, nslots)] = &walks[..] && !w.keyed && readers.is_empty() && wi == 0 {
-        // A fork is the keyed climb's (its tails run before the worklist).
-        if fork.is_some() {
-            return None;
-        }
-        return Some(Closure { col, rest: rest_join(decoded(w.j, w.rest), w.z, *nslots, &w.slot_of), y: w.slot_of[col], keyed: Vec::new(), w: 0, readers: Vec::new(), tests: Vec::new(), inner: false, folded: None, fork: None });
+        return Some(Closure { col, rest: rest_join(decoded(w.j, w.rest), w.z, *nslots, &w.slot_of), y: w.slot_of[col], keyed: Vec::new(), w: 0, readers: Vec::new(), tests: Vec::new(), inner: false, folded: None });
     }
     // Keyed (decision 0570): `RERAIL_KEYED_CLOSURE=off` leaves it semi-naive.
     if std::env::var("RERAIL_KEYED_CLOSURE").is_ok_and(|v| v == "off") {
@@ -530,7 +405,7 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
     let all: Vec<usize> = (0..k).collect();
     let tests = tests.into_iter().map(|t| rest_join_to(vec![t], vec![Term::Const(1)], k, &all)).collect();
     let (w, nslots) = &walks[0];
-    Some(Closure { col, rest: rest_join(decoded(w.j, w.rest), w.z, *nslots, &w.slot_of), y: w.slot_of[col], keyed, w: wi, readers, tests, inner: c.inner.contains(&wi), folded: None, fork })
+    Some(Closure { col, rest: rest_join(decoded(w.j, w.rest), w.z, *nslots, &w.slot_of), y: w.slot_of[col], keyed, w: wi, readers, tests, inner: c.inner.contains(&wi), folded: None })
 }
 
 /// What the closure did, for the run's report: nodes reached, rows made, and which way.
@@ -686,87 +561,6 @@ fn keyed(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<
         return None;
     }
     let k = store.rels[wi].k;
-    let (mut rows, mut depths) = (0usize, 0usize);
-    // The fork (the design's S1, one pass a name): its rows, each once, and each tail on each, in order; a made
-    // relation's rows pushed and put in its orders before a later tail or the climb reads it, the walk's seeds' kept
-    // to start the climb.
-    let mut forked: Vector<i64> = Vector::new();
-    if let Some(fk) = &cl.fork {
-        let _f = prof::host("closure", "keyed: the fork's tails (the design's S1, one pass a name)");
-        let kf = store.rels[fk.src].k;
-        // Not deduplicated: a row twice only runs the tails twice; each head's push, and the climb's scratch for the
-        // walk's seeds, keep a row once.
-        let empty = Vector::new();
-        let all: &Vector<i64> = fk.rows.as_ref().unwrap_or(&empty);
-        let n = all.len() / kf;
-        prof::count("closure", "keyed: the fork's rows", n as u64);
-        let mut got: Vector<i64> = Vector::new();
-        // Each shared test's answer a row: 0 not asked yet, 1 holds, 2 does not.
-        let mut answers: Vec<Vector<u8>> = fk.tests.iter().map(|_| { let mut a = Vector::new(); a.resize(n, 0u8); a }).collect();
-        let mut asked: Vec<super::cands::Asked> = fk.tests.iter().map(|_| Default::default()).collect();
-        for (t, (cols, consts)) in fk.tails.iter().zip(&fk.reads) {
-            got.clear();
-            // The rows its constants and its tests pass.
-            let mut pass: Vector<u32> = (0..n as u32).filter(|&i| consts.iter().all(|&(c, v)| all[i as usize * kf + c] == v)).collect();
-            for &(ti, want) in &t.need {
-                let test = &fk.tests[ti];
-                pass.retain(|&r| {
-                    let r = r as usize;
-                    if answers[ti][r] == 0 {
-                        answers[ti][r] = if super::cands::holds(test, &test.steps[0], store, &all[r * kf..(r + 1) * kf], &mut asked[ti]) { 1 } else { 2 };
-                    }
-                    (answers[ti][r] == 1) == want
-                });
-            }
-            if let Some(terms) = &t.direct {
-                for &r in pass.iter() {
-                    let row = &all[r as usize * kf..(r as usize + 1) * kf];
-                    got.extend(terms.iter().map(|x| match *x { Ok(c) => row[c], Err(v) => v }));
-                }
-            }
-            if t.direct.is_some() {
-                prof::count("closure", "keyed: the fork's rows a tail took as they are", pass.len() as u64);
-            } else {
-                prof::count("closure", "keyed: the fork's rows a tail's rest ran on", pass.len() as u64);
-            }
-            let pass = if t.direct.is_some() { Vector::new() } else { pass };
-            let mut i = 0;
-            run_join_each_row(&t.rest, store, syms, &t.slots, &mut |out: &mut Vector<i64>, vals: &mut [i64]| {
-                if i > 0 {
-                    got.extend_from_slice(out);
-                }
-                if i == pass.len() {
-                    return false;
-                }
-                let row = &all[pass[i] as usize * kf..(pass[i] as usize + 1) * kf];
-                for (v, &c) in vals.iter_mut().zip(cols) {
-                    *v = row[c];
-                }
-                i += 1;
-                true
-            })
-            .ok()?;
-            if t.head == wi {
-                forked.extend_from_slice(&got);
-                continue;
-            }
-            let rel = &mut store.rels[t.head];
-            let hk = rel.k;
-            for row in got.chunks(hk) {
-                rows += rel.push(row) as usize;
-            }
-            rel.index_kept();
-        }
-        prof::count("closure", "keyed: the fork's tails' rows", (rows + forked.len() / k) as u64);
-        fk.made.set((rows + forked.len() / k) as u64);
-        if !cl.inner {
-            let rel = &mut store.rels[wi];
-            for row in forked.chunks(k) {
-                rows += rel.push(row) as usize;
-            }
-            forked.clear();
-        }
-    }
     let mut frontier: Vector<i64> = Vector::new();
     {
         let rel = &store.rels[wi];
@@ -781,7 +575,7 @@ fn keyed(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<
     let mut scratch: Option<(hashbrown::HashTable<u32>, Vector<i64>)> = cl.inner.then(|| {
         let (mut seen, mut all) = (hashbrown::HashTable::new(), Vector::new());
         let mut start: Vector<i64> = Vector::new();
-        for row in frontier.chunks(k).chain(cl.folded.iter().flat_map(|f| f.chunks(k))).chain(forked.chunks(k)) {
+        for row in frontier.chunks(k).chain(cl.folded.iter().flat_map(|f| f.chunks(k))) {
             if seen_insert(&mut seen, &mut all, k, row) {
                 start.extend_from_slice(row);
             }
@@ -789,6 +583,7 @@ fn keyed(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<
         frontier = start;
         (seen, all)
     });
+    let (mut rows, mut depths) = (0usize, 0usize);
     let mut made: Vector<i64> = Vector::new();
     let all: Vector<usize> = (0..k).collect();
     // Each shared test's answer for each row of the depth: 0 not asked yet, 1 holds, 2 does not.
