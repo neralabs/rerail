@@ -13,7 +13,7 @@ import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf, pipeServer } fr
 import {
   chooseEngineSocketPath, ingestEngineEvent, ingestEngineEventAnswer, listenBesideHeldPipe, preparePrivateDirectory, startEngineService,
 } from "../../../src/runtime/engine-service.js";
-import type { HeldSession } from "../../../src/engine/index.js";
+import type { AdapterEvent, HeldSession } from "../../../src/engine/index.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { fakeMachine } from "../../support/platform/daemon-machine.js";
@@ -482,6 +482,14 @@ describe.runIf(process.platform === "win32")("starting the engine beside a pipe 
 });
 
 describe("the answer to a hook's event", () => {
+  /** An auditor that checks nothing and opens no workspace. */
+  const quietAuditor: NonNullable<Parameters<typeof startEngineService>[0]["createAuditor"]> = () => ({
+    openWorkspace: async () => undefined,
+    acceptsPath: () => true,
+    auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] }),
+    close: async () => undefined,
+  });
+
   it("carries the event's deliveries when the facts beside them cannot be told, and what its runtime holds to a hook that asks once they can", async () => {
     const root = await realpath(await mkdtemp(join(process.platform === "win32" ? tmpdir() : SOCKET_ROOT, "rerail-event-answer-")));
     const databasePath = join(root, "rerail.sqlite");
@@ -496,12 +504,7 @@ describe("the answer to a hook's event", () => {
       storageRoot: join(root, "state"),
       databasePath,
       embedder: testEmbedder,
-      createAuditor: () => ({
-        openWorkspace: async () => undefined,
-        acceptsPath: () => true,
-        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] }),
-        close: async () => undefined,
-      }),
+      createAuditor: quietAuditor,
       answerFacts: (_event, _deliveries, readHeld) => {
         const session = readHeld();
         held.push(session);
@@ -519,6 +522,32 @@ describe("the answer to a hook's event", () => {
       // What the runtime that took each start holds of its session: its checkout, and a note for a repository not set up.
       const session = { checkout: { repositoryKey, checkoutPath: root }, sessionNote: { setUp: false } };
       expect(held).toEqual([session, session]);
+    } finally {
+      await service.close();
+      await removeFolder(root);
+    }
+  });
+
+  // As the event stream of an installed Rerail sends an event: no session in it, so only the runtime knows the session.
+  it("refuses an event of a session its runtime does not hold by the protocol's code, which the sender's error carries with the runtime's message", async () => {
+    const root = await realpath(await mkdtemp(join(process.platform === "win32" ? tmpdir() : SOCKET_ROOT, "rerail-event-refused-")));
+    const databasePath = join(root, "rerail.sqlite");
+    startTestRepository(root, databasePath);
+    const socketPath = process.platform === "win32"
+      ? String.raw`\\.\pipe\rerail-event-refused-${process.pid}-${Date.now().toString(16)}`
+      : join(root, "engine.sock");
+    const service = await startEngineService({ socketPath, storageRoot: join(root, "state"), databasePath, workspaceRoot: root, embedder: testEmbedder, createAuditor: quietAuditor });
+    const refusal = async (event: AdapterEvent): Promise<unknown> => await ingestEngineEventAnswer({ socketPath }, event).then(() => undefined, (error: unknown) => error);
+    try {
+      const inactive = await refusal({ kind: "user-prompt", eventId: "prompt", sessionId: "never-started", text: "go" });
+      expect(inactive).toBeInstanceOf(Error);
+      expect(inactive).toHaveProperty("code", "inactive-session");
+      expect(inactive).toHaveProperty("message", "Inactive session: never-started");
+      // An error with no code of the protocol is answered with its message alone, as before the code.
+      const mismatched = await refusal({ kind: "user-prompt", eventId: "mismatched", sessionId: "a", session: { host: "claude-code", sessionId: "b", cwd: root }, text: "go" });
+      expect(mismatched).toBeInstanceOf(Error);
+      expect(mismatched).not.toHaveProperty("code");
+      expect(mismatched).toHaveProperty("message", `Kernel request failed (400): ${JSON.stringify({ error: "Event session descriptor does not match sessionId" })}`);
     } finally {
       await service.close();
       await removeFolder(root);

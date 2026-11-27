@@ -112,6 +112,10 @@ describe("Rerail event stream", () => {
     expect(await answers(new Error("Inactive session: s1"))).toEqual([
       { eventId: "prompt", error: { code: "invalid-event", message: "Inactive session: s1" } },
     ]);
+    // A code that is not the protocol's, as a system call's error carries, is no frame's code.
+    expect(await answers(Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" }))).toEqual([
+      { eventId: "prompt", error: { code: "invalid-event", message: "ENOENT: no such file or directory" } },
+    ]);
   });
 
   it("rejects an incompatible preface without ingesting", async () => {
@@ -175,6 +179,17 @@ async function fakeEngineService(socketPath: string): Promise<EngineRequestBody[
   return received;
 }
 
+/** Stands in for a daemon's engine service that refuses each event in turn with HTTP 400 and the body `refusals` gives. */
+async function refusingEngineService(socketPath: string, refusals: readonly string[]): Promise<void> {
+  const left = [...refusals];
+  const server: Server = createServer((request, response) => {
+    request.resume();
+    request.once("end", () => response.writeHead(400).end(left.shift()));
+  });
+  await new Promise<void>(resolve => server.listen(socketPath, resolve));
+  cleanups.push(async () => await new Promise<void>(resolve => server.close(() => resolve())));
+}
+
 describe("rerail events in a main build", () => {
   it("sends every event to the daemon engine service instead of evaluating in-process", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-events-main-"));
@@ -224,6 +239,40 @@ describe("rerail events in a main build", () => {
       expect(deadline).toBeGreaterThanOrEqual(before + HOOK_DAEMON_WAIT_MS);
       expect(deadline).toBeLessThanOrEqual(after + HOOK_DAEMON_WAIT_MS);
     }
+  });
+
+  // The daemon refuses an event of a session it does not hold with the protocol's code beside its runtime's message; a
+  // daemon older than that code sends the message alone, and its refusal reads as before.
+  it("answers an event the daemon refused by the code and message its answer carries, and an older daemon's refusal as an invalid event", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-events-refused-"));
+    cleanups.push(async () => await removeFolder(root));
+    const socketPath = testEngineEndpoint(root);
+    const older = JSON.stringify({ error: "Inactive session: ended" });
+    await refusingEngineService(socketPath, [JSON.stringify({ error: "Inactive session: never-started", code: "inactive-session" }), older]);
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    vi.stubEnv("RERAIL_AUTOSTART", "0");
+    cleanups.push(async () => { vi.unstubAllEnvs(); });
+    routing.isMainRerailBuild.mockReturnValue(true);
+    routing.daemonEngineEndpoint.mockResolvedValue({ socketPath });
+    startTestRepository(root, join(root, "rerail.sqlite"));
+    const prompt = (eventId: string, sessionId: string): string => JSON.stringify({ event: { kind: "user-prompt", eventId, sessionId, text: "go" } });
+    const output = new PassThrough();
+    let written = "";
+    output.setEncoding("utf8").on("data", (chunk: string) => { written += chunk; });
+
+    await runRerailEventStream({
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      databasePath: join(root, "rerail.sqlite"),
+      input: Readable.from([RERAIL_EVENT_PROTOCOL_PREFACE, prompt("never", "never-started"), prompt("ended", "ended")].map(line => `${line}\n`)),
+      output,
+    });
+
+    expect(written.trim().split("\n").map(line => JSON.parse(line) as unknown)).toEqual([
+      { eventId: "never", error: { code: "inactive-session", message: "Inactive session: never-started" } },
+      { eventId: "ended", error: { code: "invalid-event", message: `Kernel request failed (400): ${older}` } },
+    ]);
   });
 
   /** A session's start and nine prompts, as a coding agent's stream sends them. */
@@ -329,7 +378,7 @@ describe("rerail events in a main build", () => {
   });
 
   // A daemon can stop between the lookup and the send (a crash, `rerail daemon stop`): as a hook reads it, nothing
-  // listens at its socket, so its event is one no daemon took. An event the daemon answers with a refusal stays invalid.
+  // listens at its socket, so its event is one no daemon took. An event the daemon refuses with no code stays invalid.
   it("answers an event whose daemon is gone at the send as one no daemon took, and one the daemon refuses as invalid", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-events-gone-"));
     cleanups.push(async () => await removeFolder(root));
@@ -341,11 +390,7 @@ describe("rerail events in a main build", () => {
     routing.isMainRerailBuild.mockReturnValue(true);
     routing.daemonEngineEndpoint.mockResolvedValue({ socketPath: testEngineEndpoint(home), accessToken: "daemon-capability" });
     const refusing = testEngineEndpoint(root);
-    const server = createServer((request, response) => {
-      request.resume().on("end", () => response.writeHead(400).end(JSON.stringify({ error: "refused" })));
-    });
-    await new Promise<void>(resolve => server.listen(refusing, resolve));
-    cleanups.push(async () => await new Promise<void>(resolve => server.close(() => resolve())));
+    await refusingEngineService(refusing, [JSON.stringify({ error: "refused" })]);
     routing.runningDaemonEngineEndpoint.mockResolvedValueOnce({ status: "running", endpoint: { socketPath: refusing, accessToken: "daemon-capability" } });
     startTestRepository(root, join(root, "rerail.sqlite"));
     const [start, prompt] = sessionOfTen(root);
