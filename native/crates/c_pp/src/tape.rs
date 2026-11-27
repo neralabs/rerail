@@ -155,7 +155,7 @@ impl Gather<'_> {
 pub fn image(src: &[u8], opts: Options) -> Tape16 {
     let nodes = nodes(src, opts);
     let mut widths = Widths::guess(src.len());
-    let target: Target = Ok(Sixteen { lang: lang(), terminators: LINE_ENDS, tag: TAG, z: false, blocks: true, number: std::sync::Arc::new(number) });
+    let target: Target = Ok(Sixteen { lang: lang(), terminators: LINE_ENDS, tag: TAG, z: false, blocks: true, number: std::sync::Arc::new(number), rooms: None });
     loop {
         match write(&nodes, src, widths, target.clone()).and_then(|mut w| w.finish_16()) {
             Ok(Ok(f)) => match f.tape {

@@ -47,6 +47,10 @@ fn bootstrap_spelling(s: &str) -> std::borrow::Cow<'_, str> {
     s.into()
 }
 
+/// A path bootstrap.rerail gives, as the host spells it. A pack's table beside the library keeps its include's
+/// spelling (`lib/../packs/…`): bootstrap takes a file under the library for a module (`p0_seed_reaches`), and the
+/// table is one (decision 0639 §2). Where a module's files meet a program's canonical list (`Library::scope`), both
+/// are spelled once (`rr::one_spelling`).
 fn host_spelling(s: &str) -> String {
     #[cfg(windows)]
     if s.contains('/') && std::path::Path::new(s).is_absolute() {
@@ -671,12 +675,12 @@ pub fn composed_here(seed: &Seed) -> std::result::Result<Option<Graph>, Error> {
     composed(seed, &Dirs::here().expect("the library and the phase programs' directory"))
 }
 
-/// Graph `g` read back from each form a graph is kept in: the store's kept facts (`Images::facts`) and the shipped
-/// bundle's image (`Images::encode`), for the engine's tests of phase 0 (`phase0::tests`).
+/// Graph `g` read back from each form a graph is kept in: the store's kept facts (`Graph::kept_and_read`) and the
+/// shipped bundle's image (`Images::encode`), for the engine's tests of phase 0 (`phase0::tests`).
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn through_kept_forms(g: &Graph) -> Option<(Graph, Graph)> {
+    let facts = g.kept_and_read()?;
     let images = Images::here()?;
-    let facts = images.graph_of(&images.facts(g), &mut Read::default())?;
     let image = images.decode(&images.encode(g))?;
     Some((facts, image))
 }

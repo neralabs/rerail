@@ -23,7 +23,7 @@ pub(in crate::content_store) mod vtab;
 #[allow(unused_imports)]
 use crate::content_store::Cached as _;
 use super::bounded_insert::insert;
-use super::kept_facts::{ChainRows, KeptSpace, chain_rows};
+use super::kept_facts::{ChainRows, KeptSpace};
 use super::postings::append_delta;
 use super::{ContentStore, MAX_PUBLICATION_BATCH, StoreError, StoreResult, TapeId};
 use rusqlite::{Connection, types::Value};
@@ -294,8 +294,7 @@ impl ContentStore {
 
 /// The prefilter's space as transaction `t` of the store at `store` finds it.
 fn open(store: &std::path::Path, t: &Connection, space: &[u8; 32]) -> StoreResult<Option<KeptSpace>> {
-    let rows = chain_rows(t, space)?;
-    if rows.is_empty() { Ok(None) } else { KeptSpace::open(store, space, &rows).map(Some) }
+    KeptSpace::read(store, t, space)
 }
 
 /// Tapes `tapes`' prefilter rows counted out and gone, in transaction `t` of the store at `store`, which deletes

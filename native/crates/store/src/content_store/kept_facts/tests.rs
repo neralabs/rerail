@@ -639,3 +639,31 @@ fn rows_another_writer_replaced_open_as_the_last_commit() {
     assert_eq!(rels, ["a", "b", "c"], "every entry the last commit keeps");
     assert_eq!(store.kept_row(&SPACE).unwrap(), Some(now), "the rows held are the last commit's");
 }
+
+/// A reader's rows can name a file a later commit swept: read before a write merged the chain into one file, and the
+/// write after removed the file they name. The space is read by the rows read again (`KeptSpace::settle`), as the
+/// store's last commit names its files; a file gone from the rows the store names still is corruption. Before, a
+/// reader of a store other threads wrote failed now and then ("a space's kept facts: No such file or directory",
+/// `rule_files_pass_their_own_tests`).
+#[test]
+fn a_reader_whose_files_a_commit_swept_reads_the_last_commits() {
+    let (path, c) = store("swept");
+    write(&path, &c, vec![put("p", 0, 1, flat(&[1, 10]))]);
+    let stale = chain_rows(&c, &SPACE).unwrap();
+    // As big as the chain: every file merged into one, and the next write sweeps the one `stale` names.
+    let big: Vec<i64> = (0..100_000i64).flat_map(|i| [(i * 7919) % 100_003, (i * 104_729) % 150_001]).collect();
+    write(&path, &c, vec![put("q", 0, 2, flat(&big))]);
+    write(&path, &c, vec![put("r", 0, 3, flat(&[2, 20]))]);
+    assert!(stale.iter().all(|(_, name, _)| !space_dir(&path, &SPACE).join(name).exists()), "the stale rows' file swept");
+    assert!(KeptSpace::open(&path, &SPACE, &stale).is_err(), "the stale rows name a file that is gone");
+    let (rows, kept) = KeptSpace::settle(&path, &c, &SPACE, stale).unwrap().expect("the space");
+    assert_eq!(rows, chain_rows(&c, &SPACE).unwrap(), "mapped by the last commit's rows");
+    let view = kept.view();
+    for (rel, digest) in [("p", 1), ("q", 2), ("r", 3)] {
+        assert_eq!(view.get(&FactKey { rel, ident: &ID, part: 0 }).map(|k| k.digest), Some(digest), "{rel}");
+    }
+    // A file the store's rows name, gone: corruption, not a loop.
+    std::fs::remove_file(space_dir(&path, &SPACE).join(&rows[0].1)).unwrap();
+    let err = KeptSpace::read(&path, &c, &SPACE).err().expect("a file the last commit names, gone");
+    assert!(err.to_string().contains("a space's kept facts"), "{err}");
+}

@@ -20,19 +20,17 @@ mod test_watchdog;
 #[cfg(test)]
 #[path = "../../../src/test_flush.rs"]
 mod test_flush;
+// Its test binary's allocator, the engine's (`rerail_prof::heap::Sampled`, as `rerail-engine`'s `lib.rs` and every test
+// crate declare it): a library declares none for its users, so without it its own tests ran on the system allocator.
+#[cfg(all(test, not(any(windows, target_family = "wasm", feature = "system-allocator"))))]
+#[global_allocator]
+static GLOBAL: rerail_prof::heap::Sampled = rerail_prof::heap::Sampled;
 
 /// The program, booted as the engine boots it (`boot::install`), with this binary's own build identities.
 #[cfg(test)]
 pub(crate) fn install_store_functions() {
     rerail_boot::code_rule_dsl::boot::install_for_tests();
 }
-
-// This crate's own test binary's allocator, the engine's (`rerail_prof::heap::Sampled`, as `rerail-engine`'s
-// `lib.rs` declares it): without it the binary ran on the system allocator (`test_flush`'s jemalloc test). Only its
-// test build: rerail-tests-demand, which links this crate, declares its own.
-#[cfg(all(test, not(any(windows, target_family = "wasm", feature = "system-allocator"))))]
-#[global_allocator]
-static GLOBAL: rerail_prof::heap::Sampled = rerail_prof::heap::Sampled;
 
 #[cfg(test)]
 mod test_load {

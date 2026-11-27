@@ -2677,10 +2677,29 @@ mod settings_tests {
 /// fails the test, every one shown.
 #[cfg(test)]
 mod pack_split_tests {
+    /// Every policy of `dir` (from the repository's root) run over one file of each language, its scope's paths dropped.
     fn pack_runs(dir: &str) {
+        pack_shard_runs(dir, None)
+    }
+
+    /// Every policy of `dir`, or with `shard` (k, n) those whose place in the sorted list is k modulo n: python-main's
+    /// 537 policies, 142 of which ask for guests of their own and run alone, take 84 s of CPU at once,
+    /// JavaScript's 121 about 15 s (decision 0652).
+    fn pack_shard_runs(dir: &str, shard: Option<(usize, usize)>) {
+        pack_runs_as(dir, shard, "strict")
+    }
+
+    /// Every policy of `dir` run alone (`RERAIL_BATCH_PACK=off`), as a run of one policy is: a policy batched with
+    /// others is split as part of their pack, which can hold a relation one file's that the policy alone does not.
+    /// bounded-composed-graph-paths was refused alone over the corpus, its batch passing (decision 0665).
+    fn pack_alone_runs(dir: &str) {
+        pack_runs_as(dir, None, "off")
+    }
+
+    fn pack_runs_as(dir: &str, shard: Option<(usize, usize)>, batch: &str) {
         // SAFETY: nextest runs each test in a process of its own.
-        unsafe { std::env::set_var("RERAIL_BATCH_PACK", "strict") };
-        let from = crate::source_tree::native().join("../docs/rule-syntax").join(dir);
+        unsafe { std::env::set_var("RERAIL_BATCH_PACK", batch) };
+        let from = crate::source_tree::native().join("..").join(dir);
         let tmp = tempfile::tempdir().unwrap();
         let rules = tmp.path().join("rules").join(dir);
         let mut policies = Vec::new();
@@ -2716,6 +2735,9 @@ mod pack_split_tests {
             }
         }
         policies.sort();
+        if let Some((k, n)) = shard {
+            policies = policies.into_iter().enumerate().filter(|(i, _)| i % n == k).map(|(_, p)| p).collect();
+        }
         let root = tmp.path().join("root");
         std::fs::create_dir_all(&root).unwrap();
         for (name, text) in [
@@ -2745,23 +2767,60 @@ mod pack_split_tests {
     }
 
     packs! {
-        the_data_layer_is_split_with_its_crossings_declared: "data-layer",
-        the_blade_pack_is_split_with_its_crossings_declared: "packs/blade",
-        the_complexity_pack_is_split_with_its_crossings_declared: "packs/complexity",
-        the_django_pack_is_split_with_its_crossings_declared: "packs/django",
-        the_javascript_pack_is_split_with_its_crossings_declared: "packs/javascript",
-        the_next_pack_is_split_with_its_crossings_declared: "packs/next",
-        the_node_pack_is_split_with_its_crossings_declared: "packs/node",
-        the_php_pack_is_split_with_its_crossings_declared: "packs/php",
-        the_python_pack_is_split_with_its_crossings_declared: "packs/python",
-        the_python_main_pack_is_split_with_its_crossings_declared: "packs/python-main",
-        the_react_pack_is_split_with_its_crossings_declared: "packs/react",
-        the_rerail_pack_is_split_with_its_crossings_declared: "packs/rerail",
-        the_rr_pack_is_split_with_its_crossings_declared: "packs/rr",
-        the_rust_pack_is_split_with_its_crossings_declared: "packs/rust",
-        the_sql_pack_is_split_with_its_crossings_declared: "packs/sql",
-        the_typescript_pack_is_split_with_its_crossings_declared: "packs/typescript",
-        the_vue_pack_is_split_with_its_crossings_declared: "packs/vue",
+        the_data_layer_is_split_with_its_crossings_declared: "docs/rule-syntax/data-layer",
+        the_blade_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/blade",
+        the_complexity_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/complexity",
+        the_django_pack_is_split_with_its_crossings_declared: "packs/django/rules",
+        the_next_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/next",
+        the_node_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/node",
+        the_php_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/php",
+        the_react_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/react",
+        the_rerail_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/rerail",
+        the_rr_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/rr",
+        the_rust_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/rust",
+        the_sql_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/sql",
+        the_typescript_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/typescript",
+        the_vue_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/vue",
+    }
+
+    #[test]
+    fn the_data_layer_is_split_with_its_crossings_declared_policy_by_policy() {
+        pack_alone_runs("docs/rule-syntax/data-layer")
+    }
+
+    macro_rules! shards {
+        ($dir:expr, $n:expr, $($name:ident: $k:expr),* $(,)?) => {
+            $(#[test] fn $name() { pack_shard_runs($dir, Some(($k, $n))) })*
+        };
+    }
+
+    shards! {
+        "docs/rule-syntax/packs/python-main", 12,
+        the_python_main_pack_is_split_with_its_crossings_declared_0: 0,
+        the_python_main_pack_is_split_with_its_crossings_declared_1: 1,
+        the_python_main_pack_is_split_with_its_crossings_declared_2: 2,
+        the_python_main_pack_is_split_with_its_crossings_declared_3: 3,
+        the_python_main_pack_is_split_with_its_crossings_declared_4: 4,
+        the_python_main_pack_is_split_with_its_crossings_declared_5: 5,
+        the_python_main_pack_is_split_with_its_crossings_declared_6: 6,
+        the_python_main_pack_is_split_with_its_crossings_declared_7: 7,
+        the_python_main_pack_is_split_with_its_crossings_declared_8: 8,
+        the_python_main_pack_is_split_with_its_crossings_declared_9: 9,
+        the_python_main_pack_is_split_with_its_crossings_declared_10: 10,
+        the_python_main_pack_is_split_with_its_crossings_declared_11: 11,
+    }
+
+    shards! {
+        "docs/rule-syntax/packs/python", 2,
+        the_python_pack_is_split_with_its_crossings_declared_0: 0,
+        the_python_pack_is_split_with_its_crossings_declared_1: 1,
+    }
+
+    shards! {
+        "docs/rule-syntax/packs/javascript", 3,
+        the_javascript_pack_is_split_with_its_crossings_declared_0: 0,
+        the_javascript_pack_is_split_with_its_crossings_declared_1: 1,
+        the_javascript_pack_is_split_with_its_crossings_declared_2: 2,
     }
 }
 

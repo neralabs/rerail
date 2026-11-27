@@ -627,9 +627,32 @@ impl Library {
 
     /// The modules a program whose library files are `files` reads: those all of whose files it includes, in order,
     /// with their keys.
+    /// Both lists spelled once (`one_spelling`): a pack's table beside the library is `lib/../packs/…` as phase 0
+    /// plans it and `packs/…` in a run's canonical list, and spelled two ways it was in no program's scope.
     pub fn scope(&self, files: &[PathBuf]) -> (Vec<&lower::Module>, Vec<crate::content_store::HashKey>) {
+        let files: BTreeSet<PathBuf> = files.iter().map(|f| one_spelling(f)).collect();
         self.modules.iter().zip(&self.files).zip(&self.keys).filter(|((_, fs), _)| fs.iter().all(|f| files.contains(f))).map(|((m, _), k)| (m, *k)).unzip()
     }
+}
+
+/// `path` spelled once: its `.` and `..` taken out by its text, as the library's directory is canonical and only an
+/// include's own `..` is left (`lib/../packs/…` is `packs/…`). A relative path is as written.
+pub fn one_spelling(path: &Path) -> PathBuf {
+    use std::path::Component;
+    if !path.is_absolute() || !path.components().any(|c| matches!(c, Component::CurDir | Component::ParentDir)) {
+        return path.to_path_buf();
+    }
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// The library files `paths` (canonical, includes first, as `Modules::files` lists them) as one program, lowered
@@ -762,7 +785,8 @@ pub fn library_modules_planned(paths: &[PathBuf]) -> Result<(Vec<lower::Module>,
     let mut keys = Vec::with_capacity(plan.len());
     for m in &plan {
         modules.push(m.module()?);
-        files.push(m.files.lines().map(PathBuf::from).collect());
+        // Spelled once, as `Library::scope` compares them.
+        files.push(m.files.lines().map(|f| one_spelling(Path::new(f))).collect());
         keys.push(planned_key(&m.key).ok_or_else(|| Error::Syntax(format!("{}: no module key", m.key)))?);
     }
     Ok((modules, files, keys))
@@ -1118,6 +1142,9 @@ pub fn lower_planned_module(key: &str, files: &str, scope: &str, reached: &str) 
         return Ok(digest);
     }
     let k = planned_key(key).ok_or_else(|| Error::Syntax(format!("{key}: no module key")))?;
+    if std::env::var_os("RERAIL_PHASE0_TRACE").is_some() {
+        eprintln!("rerail: phase 0 lowers module {key}: {}", files.lines().collect::<Vec<_>>().join(", "));
+    }
     let _s = crate::code_rule_dsl::logic::profile::span(|| "a module lowered for phase 0's plan".to_owned());
     let scope: Vec<lower::Module> = scope.split(',').filter(|s| !s.is_empty()).map(|s| held_or_ahead(s).map(|(m, _)| m).ok_or_else(|| Error::Syntax(format!("module {key}: its scope's module {s} is not lowered")))).collect::<Result<_, _>>()?;
     let own = module_statements(files, reached)?;
@@ -1750,8 +1777,12 @@ fn resolve_shared(statements: Statements) -> Result<(SharedFiles, Statements, Ve
     let planned: BTreeSet<&Path> = plan.iter().flat_map(|m| m.files.lines().map(Path::new)).collect();
     if let Some((path, digest, _)) = files.iter().find(|(p, _, _)| !planned.contains(p.as_path())) {
         let hex: String = rerail_prof::code_rule_dsl::prof::lower_hex(&digest[..]);
-        let modules: Vec<&String> = g.plan.keys().collect();
-        return Err(Error::Syntax(format!("{}: in no module of phase 0's plan (decision 0639 §1): its digest {hex}, the plan's modules {modules:?}", path.display())));
+        let modules: Vec<String> = g.plan.iter().map(|(name, m)| format!("{name} (rank {})", m.rank)).collect();
+        return Err(Error::Syntax(format!(
+            "{}: in no module of phase 0's plan (decision 0639 §1): its digest {hex}, the plan's modules {modules:?}, their files {planned:?}, the graph's digests of {:?}",
+            path.display(),
+            g.digests.keys().collect::<Vec<_>>()
+        )));
     }
     Ok((files, own, plan))
 }
@@ -1925,7 +1956,7 @@ pub(in crate::code_rule_dsl) fn includes_and_phases(src: &str) -> Result<(Vec<(i
     let mut names = Vec::new();
     for st in &statements {
         if let Some(S::Include(name)) = st.what() {
-            names.push((st.start() as i64, name));
+            names.push((st.start() as i64, include_switched(&name)));
         }
     }
     Ok((names, t_shape(&statements), phases_named(&statements)))
@@ -2047,7 +2078,25 @@ impl LibraryFile {
 /// The relations `core.rerail` declares for libraries to derive for the engine to read: the documents they load (t21 E2).
 pub const LIBRARY_DERIVED: [&str; 1] = ["load"];
 /// The relations `core.rerail` declares that one library file derives, and that file (decision 0483: the reference graph).
-pub const DERIVED_BY: [(&str, &str); 2] = [("reference_edge", "python/references.rerail"), ("reference_open", "python/references.rerail")];
+/// `python/references_w.rerail` derives them from W's Rust graph instead, which the engine binds (`RERAIL_REFERENCES`).
+pub const DERIVED_BY: [(&str, &str); 4] = [
+    ("reference_edge", "python/references.rerail"),
+    ("reference_open", "python/references.rerail"),
+    ("reference_edge", REFERENCES_W),
+    ("reference_open", REFERENCES_W),
+];
+
+/// The library file whose `reference_edge` and `reference_open` are W's Rust graph (`corpus::w_references`).
+pub const REFERENCES_W: &str = "python/references_w.rerail";
+
+/// An include's name as the run reads it: `python/references.rerail` is `REFERENCES_W` where `RERAIL_REFERENCES=rust`
+/// (the reference graph made by W's Rust, not the rules; for comparing the two on one program), else itself.
+pub(in crate::code_rule_dsl) fn include_switched(name: &str) -> String {
+    if name == "python/references.rerail" && std::env::var("RERAIL_REFERENCES").is_ok_and(|v| v == "rust") {
+        return REFERENCES_W.to_owned();
+    }
+    name.to_owned()
+}
 /// The library's programs the engine adds to a run itself (decision 0076's import components).
 const ENGINE_FILES: [&str; 1] = ["components.rerail"];
 
@@ -2616,7 +2665,7 @@ fn t_shape(statements: &Statements) -> bool {
 
 /// Each `#include`'s name and line, in order.
 fn include_names(statements: &Statements) -> Vec<(String, usize)> {
-    statements.iter().filter_map(|s| if let Some(S::Include(name)) = s.what() { Some((name.to_owned(), s.line())) } else { None }).collect()
+    statements.iter().filter_map(|s| if let Some(S::Include(name)) = s.what() { Some((include_switched(&name), s.line())) } else { None }).collect()
 }
 
 /// `path` and what it includes, each once (`seen`), includes first, added to `out`; every library file read or

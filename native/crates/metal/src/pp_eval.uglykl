@@ -84,8 +84,9 @@ UKL_INLINE uint64_t word_at(PP_GLOBAL const uint64_t* d, uint32_t a) {
 }
 
 // Where a line splice at byte `i` (a `\\`, blanks, then a newline) ends, before `end`; `i`
-// where there is none (`rerail_c_lean::pp`'s `splice_at`).
-UKL_INLINE uint32_t splice_end(PP_GLOBAL const uint8_t* b, uint32_t i, uint32_t end) {
+// where there is none (`rerail_c_lean::pp`'s `splice_at`). A rare case's body, called (`UKL_RARE`): read at a
+// backslash only, inlined at 56 sites of `lp_piece` its exits counted past 255 there on the M1 (decision 0672).
+UKL_RARE uint32_t splice_end(PP_GLOBAL const uint8_t* b, uint32_t i, uint32_t end) {
     uint32_t k = i + 1u;
     for (; k < end && (b[k] == ((uint8_t)(' ')) || b[k] == ((uint8_t)('\t')) || b[k] == 0x0bu || b[k] == 0x0cu); k++) {}
     if (k < end && b[k] == ((uint8_t)('\n'))) return k + 1u;

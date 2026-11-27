@@ -1,0 +1,70 @@
+// The phase `tsx_names` (decision 0083): TypeScript and JavaScript module resolution across the workspace's files, run
+// over the same files as the program that reads it, in its language and dialect (a phase naming no `.language` takes
+// its reader's). It hands on symbols alone (decision 0665): a per-file rule reading them stays per-file.
+//   target_at(p, spec, t)  specifier spec in the file at path p names t: a workspace document's module, or a package
+//   exports(m, x, q)       module m exports name x, which is symbol q, followed through re-exports
+//   module(m)              m is a workspace document's module (a target that is none is a package)
+// tsx/names.rerail reads them as `tsx_names__target_at`, `tsx_names__exports` and `tsx_names__module`.
+
+#include "core.rerail"
+#include "tsx/exports.rerail"
+
+.phase tsx_names
+.export target_at, exports, module
+
+// target(d, spec, t): specifier spec in document d names t: a workspace document's module, or a package name.
+// Resolution, in the order TypeScript tries it:
+//   "./a" or "../a"   relative to the importing file's directory, then extensions and index files (resolve_base)
+//   "@/lib/x"         a tsconfig `paths` pattern ("@/*": ["src/*"]) rewrites it to a path under the tsconfig dir
+//   "react", "@a/b"   anything else is a package; the target is the package specifier itself, not its files
+// So target(d, "./util", "src/util") and target(d, "react", "react").
+.decl target(d: number, spec: symbol, t: symbol)
+// Relative: `import "../c"` from src/a/b.ts joins to src/c, then tries src/c.ts, src/c.tsx, src/c/index.ts, ….
+target(d, s, t) :- docof(i, d), import_spec(i, s), prefix(".", s), doc(d, p, _),
+    base = @join(@dir(p), s), resolve_base(base, t).
+// tsconfig paths: find the tsconfig governing the file, substitute the `*` of a matching pattern into its target.
+target(d, s, t) :- docof(i, d), import_spec(i, s), doc(d, p, _), tsconfig_for(p, dir),
+    tsconfig_path(dir, pat, to), sub = @glob_sub(pat, to, s), sub != "", resolve_base(@join(dir, sub), t).
+// Bare package: neither relative nor matched by a paths pattern. The package is opaque (no node_modules reading),
+// so symbols from it are just "react#useState" and rules match on those names.
+target(d, s, @package_of(s)) :- docof(i, d), import_spec(i, s), !prefix(".", s), !path_mapped(d, s).
+// path_mapped(d, s): some tsconfig paths pattern for d's tsconfig matches s, so s is not a package name.
+// Needed as its own relation so the bare-package rule can negate it.
+.decl path_mapped(d: number, s: symbol)
+path_mapped(d, s) :- docof(i, d), import_spec(i, s), doc(d, p, _), tsconfig_for(p, dir),
+    tsconfig_path(dir, pat, to), @glob_sub(pat, to, s) != "".
+// resolve_base(base, module): the first existing file among base's candidate names, as a module name.
+// TypeScript lets imports omit the extension and lets a directory stand for its index file.
+.decl resolve_base(base: symbol, t: symbol)  // base, base.ts, base.tsx, …, base/index.*
+// Read backwards from the files that exist: b is a file's path with one candidate ending removed.
+resolve_base(b, m) :- doc(d, f, _), ts_module(d, m), ts_ext(ext), k = strlen(f) - strlen(ext), k >= 0,
+    b = substr(f, 0, k), f = cat(b, ext).
+.decl ts_ext(e: symbol)
+ts_ext(""). ts_ext(".ts"). ts_ext(".tsx"). ts_ext(".js"). ts_ext(".jsx"). ts_ext(".mts").
+ts_ext("/index.ts"). ts_ext("/index.tsx"). ts_ext("/index.js").
+// exports(m, x, q): module m exports x, which is symbol q.
+// Three ways a name gets exported, one rule each:
+//   export function f() {} / export const x = 1 / export default …  -> q is m's own symbol "m#f"
+//   export { y as x } from "./other"                               -> q is whatever ./other's y is
+//   export * from "./other"                                        -> every name ./other exports, except default
+// The last two recurse through exports, so a chain of barrel files (index.ts re-exporting index.ts …) resolves to
+// the module that really defines the name.
+.decl exports(m: symbol, x: symbol, q: symbol)
+exports(m, x, @qname(m, x)) :- kind(e, "export_statement"), docof(e, d), ts_module(d, m), exported_decl(e, x).
+exports(m, x, q) :- kind(e, "export_statement"), docof(e, d), ts_module(d, m), export_from(e, s, y, x),
+    target(d, s, t), symbol(t, y, q).
+// `export *` never re-exports `default` (ECMAScript rule), hence x != "default".
+exports(m, x, q) :- kind(e, "export_statement"), docof(e, d), ts_module(d, m), star_export(e, s),
+    target(d, s, t), exports(t, x, q), x != "default".
+// symbol(t, x, q): name x of resolved target t is symbol q: a workspace module's export, else (a package) its name.
+// Only re-exported names are asked here (`exports` reads `symbol` for those alone); tsx/names.rerail asks the rest.
+.decl symbol(t: symbol, x: symbol, q: symbol)
+symbol(t, x, q) :- exports(t, x, q).
+symbol(t, y, @qname(t, y)) :- reexported(t, y), !module(t).
+.decl reexported(t: symbol, y: symbol)
+reexported(t, y) :- kind(e, "export_statement"), docof(e, d), export_from(e, s, y, _), target(d, s, t).
+
+.decl target_at(p: symbol, spec: symbol, t: symbol)
+target_at(p, s, t) :- target(d, s, t), doc(d, p, _).
+.decl module(m: symbol)
+module(m) :- ts_module(_, m).

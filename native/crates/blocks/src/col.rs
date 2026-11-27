@@ -119,6 +119,32 @@ pub trait Vals: Sync {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    /// The values from `from` on into `out` (`out.len()` of them): a pass's chunk read in one call, so values read
+    /// where they lie through a reader (`packed::Part`) cost a call a chunk, not one a value.
+    #[inline]
+    fn read(&self, from: usize, out: &mut [i64]) {
+        for (j, o) in out.iter_mut().enumerate() {
+            *o = self.at(from + j);
+        }
+    }
+}
+
+/// Values a pass reads at a time (`each_in`).
+pub(crate) const CHUNK: usize = 256;
+
+/// `v`'s values at `r`, in order, read a chunk at a time (`Vals::read`): `f(i, value)` each.
+#[inline]
+pub(crate) fn each_in<V: Vals + ?Sized>(v: &V, r: std::ops::Range<usize>, mut f: impl FnMut(usize, i64)) {
+    let mut buf = [0i64; CHUNK];
+    let mut i = r.start;
+    while i < r.end {
+        let k = (r.end - i).min(CHUNK);
+        v.read(i, &mut buf[..k]);
+        for (j, &x) in buf[..k].iter().enumerate() {
+            f(i + j, x);
+        }
+        i += k;
+    }
 }
 
 impl Vals for [i64] {
@@ -129,6 +155,10 @@ impl Vals for [i64] {
     #[inline]
     fn at(&self, i: usize) -> i64 {
         self[i]
+    }
+    #[inline]
+    fn read(&self, from: usize, out: &mut [i64]) {
+        out.copy_from_slice(&self[from..from + out.len()]);
     }
 }
 
@@ -141,6 +171,10 @@ impl Vals for Vec<i64> {
     fn at(&self, i: usize) -> i64 {
         self[i]
     }
+    #[inline]
+    fn read(&self, from: usize, out: &mut [i64]) {
+        out.copy_from_slice(&self[from..from + out.len()]);
+    }
 }
 
 impl<V: Vals + ?Sized> Vals for &V {
@@ -151,6 +185,10 @@ impl<V: Vals + ?Sized> Vals for &V {
     #[inline]
     fn at(&self, i: usize) -> i64 {
         (**self).at(i)
+    }
+    #[inline]
+    fn read(&self, from: usize, out: &mut [i64]) {
+        (**self).read(from, out)
     }
 }
 
@@ -214,10 +252,12 @@ fn pack_fixed<const B: usize, const L: bool, V: Vals + ?Sized>(out: &mut [u64], 
     };
     let n = r.len();
     let groups = n / 64;
+    let mut buf = [0i64; 64];
     for g in 0..groups {
         let o: &mut [u64] = &mut out[g * B..g * B + B];
-        for j in 0..64 {
-            let x = res(v.at(from + g * 64 + j));
+        v.read(from + g * 64, &mut buf);
+        for (j, &x) in buf.iter().enumerate() {
+            let x = res(x);
             let bit = j * B;
             let (w, sh) = (bit / 64, bit % 64);
             o[w] |= x << sh;
@@ -226,8 +266,10 @@ fn pack_fixed<const B: usize, const L: bool, V: Vals + ?Sized>(out: &mut [u64], 
             }
         }
     }
-    for i in groups * 64..n {
-        let x = res(v.at(from + i));
+    let tail = &mut buf[..n - groups * 64];
+    v.read(from + groups * 64, tail);
+    for (i, &x) in (groups * 64..n).zip(tail.iter()) {
+        let x = res(x);
         let bit = i * B;
         let (w, sh) = (bit / 64, bit % 64);
         out[w] |= x << sh;
@@ -349,12 +391,12 @@ fn line_fit<V: Vals + ?Sized>(v: &V, slope: i64, bits: u32, lo: i64, hi: i64, sa
         if small {
             let (v0, slope) = (v.at(0), slope);
             let (mut lo, mut hi, mut t) = (i64::MAX, i64::MIN, r.start as i64 * slope);
-            for x in r.map(|i| v.at(i)) {
+            each_in(v, r, |_, x| {
                 let d = x - (v0 + (t >> 16));
                 lo = lo.min(d);
                 hi = hi.max(d);
                 t += slope;
-            }
+            });
             (lo as i128, hi as i128)
         } else {
             r.map(resid).fold((i128::MAX, i128::MIN), |(a, b), d| (a.min(d), b.max(d)))
@@ -372,11 +414,9 @@ fn line_fit<V: Vals + ?Sized>(v: &V, slope: i64, bits: u32, lo: i64, hi: i64, sa
 /// The least and greatest of `v`'s values at `r` (not empty).
 #[inline]
 fn range_of<V: Vals + ?Sized>(v: &V, r: std::ops::Range<usize>) -> (i64, i64) {
-    let first = v.at(r.start);
-    r.fold((first, first), |(a, b), i| {
-        let x = v.at(i);
-        (a.min(x), b.max(x))
-    })
+    let (mut a, mut b) = (i64::MAX, i64::MIN);
+    each_in(v, r, |_, x| (a, b) = (a.min(x), b.max(x)));
+    (a, b)
 }
 
 /// The groups of `GROUP` values in `r` (`r.start` a multiple of `GROUP`), each its range of positions.
@@ -387,8 +427,16 @@ fn groups_of(r: std::ops::Range<usize>) -> impl Iterator<Item = std::ops::Range<
 
 /// The runs that start in `r`: a position whose value differs from the one before it, and position 0.
 fn runs_in<V: Vals + ?Sized>(v: &V, r: std::ops::Range<usize>) -> usize {
-    let from = r.start.max(1);
-    (r.start == 0) as usize + (from..r.end).filter(|&i| v.at(i) != v.at(i - 1)).count()
+    if r.is_empty() {
+        return 0;
+    }
+    let mut before = if r.start == 0 { None } else { Some(v.at(r.start - 1)) };
+    let mut runs = 0;
+    each_in(v, r, |_, x| {
+        runs += usize::from(before != Some(x));
+        before = Some(x);
+    });
+    runs
 }
 
 /// The smallest encoding of `v`: one pass for the range and the runs, one for the line's residuals (when a sample
@@ -426,10 +474,17 @@ fn distinct_upto<'f, V: Vals + ?Sized>(fr: &'f crate::frame::Frame, v: &V, limit
     }
     let cap = (2 * limit + 2).next_power_of_two();
     let mut d = Distinct { slots: fr.zeroed(cap), full: fr.zeroed(cap), values: fr.vec_with(limit + 1), mask: cap - 1 };
-    for x in (0..v.len()).map(|i| v.at(i)) {
-        if d.insert(x) && d.values.len() > limit {
-            return None;
+    let mut i = 0;
+    let mut buf = [0i64; CHUNK];
+    while i < v.len() {
+        let k = (v.len() - i).min(CHUNK);
+        v.read(i, &mut buf[..k]);
+        for &x in &buf[..k] {
+            if d.insert(x) && d.values.len() > limit {
+                return None;
+            }
         }
+        i += k;
     }
     Some(d)
 }
@@ -708,15 +763,13 @@ pub fn write<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mut [
                     wv.push(x.wrapping_sub(c.base) as u64);
                     ws.push(i as u64);
                 };
-                if r.start == 0 {
-                    push(0, v.at(0));
-                }
-                for i in r.start.max(1)..r.end {
-                    let x = v.at(i);
-                    if x != v.at(i - 1) {
+                let mut before = if r.start == 0 { None } else { Some(v.at(r.start - 1)) };
+                each_in(v, r, |i, x| {
+                    if before != Some(x) {
                         push(i, x);
                     }
-                }
+                    before = Some(x);
+                });
                 wv.flush();
                 ws.flush();
             });
@@ -736,9 +789,7 @@ fn write_dict<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mut 
         let d = d.codes();
         over_pieces(v.len(), |r| {
             let mut w = BitW::new(out, r.start * c.rbits as usize, c.rbits);
-            for i in r {
-                w.push(d.code(v.at(i)));
-            }
+            each_in(v, r, |_, x| w.push(d.code(x)));
             w.flush();
         });
     });
@@ -777,9 +828,7 @@ fn write_groups<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mu
             ents.push((offs[k] as u64) << WIDTH_BITS | w as u64);
             if w > 0 {
                 let mut out = BitW::new(d, offs[k], w);
-                for i in k * GROUP..((k + 1) * GROUP).min(n) {
-                    out.push(v.at(i).wrapping_sub(gmin) as u64);
-                }
+                each_in(v, k * GROUP..((k + 1) * GROUP).min(n), |_, x| out.push(x.wrapping_sub(gmin) as u64));
                 out.flush();
             }
         }
@@ -1209,6 +1258,7 @@ impl Dec<'_> {
                 }
             }
             GROUPS => out.iter_mut().enumerate().for_each(|(j, o)| *o = self.grp(lo + j)),
+            DICT => out.iter_mut().enumerate().for_each(|(j, o)| *o = self.dct(lo + j)),
             _ => out.iter_mut().enumerate().for_each(|(j, o)| *o = self.on_line(lo + j)),
         }
     }
@@ -1390,6 +1440,12 @@ mod tests {
             write(&c, v, data, runs);
             let col = unsafe { &*p };
             assert!((0..v.len()).all(|i| col.get(i) == v[i] && col.dec().get(i) == v[i]), "a value read back");
+            // A window at once (`Dec::fill`, the packer's ranged read): a dictionary's codes, not read as a line.
+            for (lo, m) in [(0, v.len()), (1, v.len() - 1), (v.len() / 3, v.len() / 3), (v.len() - 1, 1)] {
+                let mut out = vec![0i64; m];
+                col.dec().fill(lo, &mut out);
+                assert_eq!(&out[..], &v[lo..lo + m], "a window from {lo}");
+            }
             let mut each = Vec::new();
             col.for_each(|x| each.push(x));
             assert_eq!(&each, v);

@@ -274,7 +274,7 @@ fn a_test_by_one_node_column_reads_the_blocks_node_bits() {
     let mut hint = 0;
     // Decision 0706 §5: a reader never builds it; with none built ahead it probes as before.
     assert_eq!(rel.index(&[0, 1]).node_bits_has(&rel, node(0, 10), &mut hint), None, "none built ahead: none read");
-    assert!(rel.in_block().unwrap().relation().find_node_bits(0, n as u32).is_none(), "and the reader built none");
+    assert!(rel.in_block().unwrap().relation().find_node_index(rerail_blocks::relation::NODE_BITS, 0, n as u32).is_none(), "and the reader built none");
     // Built ahead, as the level's batch builds it.
     rel.in_block().unwrap().own_node_bits(0).expect("room");
     for doc in 0..4 {
@@ -284,7 +284,7 @@ fn a_test_by_one_node_column_reads_the_blocks_node_bits() {
         }
     }
     let ib = rel.in_block().unwrap();
-    assert!(ib.relation().find_node_bits(0, n as u32).is_some(), "in the relation's block");
+    assert!(ib.relation().find_node_index(rerail_blocks::relation::NODE_BITS, 0, n as u32).is_some(), "in the relation's block");
     assert_eq!(super::run_counts().node_bits[0].load(std::sync::atomic::Ordering::Relaxed), 1);
     assert_eq!(super::run_counts().node_bits[1].load(std::sync::atomic::Ordering::Relaxed), 1, "the index on both columns had none");
     let mut dead = rerail_blocks::vector![0u64; n.div_ceil(64)];

@@ -708,7 +708,8 @@ fn live_statistics_allocate_little() {
 fn the_matcher_wave_allocates_little() {
     let (c, names) = case();
     let a = c.allocated("ast matcher wave run");
-    assert!(a / names <= 128, "the AST matcher waves allocated {a} bytes, {} a name read", a / names);
+    let by: Vec<String> = c.alloc.iter().filter(|(p, _)| p.rsplit('/').next().is_some_and(|l| l.starts_with("ast matcher wave run"))).map(|(p, a)| format!("{} bytes in {p}", a.0)).collect();
+    assert!(a / names <= 128, "the AST matcher waves allocated {a} bytes, {} a name read:\n{}", a / names, by.join("\n"));
 }
 
 /// Blocks freed in the run go back to the system: at its end none wait on the free lists (`all`: 829 MB did at the

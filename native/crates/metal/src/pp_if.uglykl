@@ -673,7 +673,9 @@ UKL_INLINE uint32_t p1_request(IfFiles x, IfNames nm, uint64_t base, uint32_t f,
 
 // The file the header name `out` spells names (`h`), from file `f` of unit `unit`: as
 // `p1_find`, and a request with the name's bytes where the table has no row.
-UKL_INLINE uint32_t p1_find_header(Ux u, IfFiles x, IfNames nm, Ov out, HName h, bool next, uint32_t f, uint32_t unit, UKL_PRIVATE bool* found) {
+// Compiled once and called (`UKL_ONCE`): inlined at its two sites, its loop exits counted toward 255 in its
+// callers (decision 0672).
+UKL_ONCE uint32_t p1_find_header(Ux u, IfFiles x, IfNames nm, Ov out, HName h, bool next, uint32_t f, uint32_t unit, UKL_PRIVATE bool* found) {
     KeyAcc ka = ka_new(0u);
     uint32_t n = p1_header_bytes(u, out, h, 0u, &ka, nm.bytes);
     ka = ka_new(n);
@@ -814,7 +816,9 @@ UKL_INLINE void p1_if_slot(Ux u, UKL_PRIVATE Ov* look, uint32_t o, uint32_t o1, 
 // An `#if` line's test: its lane's, or (`group`) its SIMD group's, lane 0 running the evaluation:
 // at each step the lanes read the next 32 tokens, one each (`p1_if_plain`, into `win`), and the
 // run before the first that needs the step below feeds the evaluation at once.
-UKL_INLINE void p1_if_line(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLOBAL const uint32_t* kinds, PP_GLOBAL const PpInst* insts, PP_GLOBAL const uint32_t* n_nodes, PP_GLOBAL const PpNode* nodes, PP_GLOBAL const uint32_t* dir_bases,
+// Compiled once and called (`UKL_ONCE`): inlined at its two sites, its loop exits counted past 255 in `pp_step`
+// (decision 0672).
+UKL_ONCE void p1_if_line(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLOBAL const uint32_t* kinds, PP_GLOBAL const PpInst* insts, PP_GLOBAL const uint32_t* n_nodes, PP_GLOBAL const PpNode* nodes, PP_GLOBAL const uint32_t* dir_bases,
                            PP_GLOBAL const uint32_t* n_dirs, PP_GLOBAL const uint32_t* count, PP_GLOBAL const uint32_t* first, PP_GLOBAL const uint32_t* at, PP_GLOBAL const uint32_t* total,
                            PP_GLOBAL const uint32_t* dslot, PP_GLOBAL const uint32_t* ops, PP_GLOBAL const uint32_t* state, PP_GLOBAL const uint32_t* outc, PP_GLOBAL const uint32_t* obase,
                            PP_GLOBAL const uint32_t* vtotal, PP_GLOBAL const uint32_t* ptotal, uint64_t defined_key, uint64_t true_key, uint32_t true_is_one, PP_GLOBAL const uint64_t* op_keys, PP_GLOBAL const uint32_t* op_kinds,
@@ -834,14 +838,17 @@ UKL_INLINE void p1_if_line(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLO
     uint8_t b[IF_TOKB];
     Ov look = out;
     if (group && ln != 0u) {
-        // Lane `ln` of the group: token `at + ln` of each window lane 0 asks for.
-        for (;;) {
+        // Lane `ln` of the group: token `at + ln` of each window lane 0 asks for. Lane 0 asks for one a step, each
+        // step past one token at least, then tells there are no more: `o1 - o0 + 1` turns at most (the unit's loops
+        // bounded in their heads or their bodies, decision 0613 §4).
+        for (uint32_t turn = 0u; turn <= o1 - o0; turn++) {
             ukl_sg_barrier();
             uint32_t at0 = win->at;
             if (at0 == IF_NOT_PLAIN) return;
             p1_if_slot(u, &look, at0 + ln, o1, g0, count[w], ops, s0, defined_key, true_key, true_is_one, op_keys, op_kinds, n_ops, &win->s[ln]);
             ukl_sg_barrier();
         }
+        return;
     }
     // Where lane 0 stops early (`P1_IF_*`): the group is told there are no more windows first.
     uint32_t quit = 0u;

@@ -95,7 +95,20 @@ it: a piece read again wrote half its output entries with their words exchanged 
 the same loop, the same steps and requests, and wrote them all. With the phase its own `UKL_ONCE` function
 (`lp_loop_run`) m3 passes 47 of 47. One group (`RERAIL_PP_GROUPS=1`) failed alike, so no race between groups.
 - m1max fails 18 of the eval tests, and 20 at the merge 8e3ba68cbb: older than this change, and its own (wrong
-  pastes and stringizes, `X_PAST_END` refusals, results past their stores).
+  pastes and stringizes, `X_PAST_END` refusals, results past their stores). Two causes, found by a trace of the
+  device's own words (records in the output store's spare words, set against the CPU backend's):
+  - The M1 Max's back end lost a store of a threadgroup word: `lp_collect_run` incremented a frame's place in its
+    loop, then added the rest of the run, and the addition never landed (`F((a,b))` closed at the nested `)`). The
+    place is now held in a register and stored once: 10 fail.
+  - In the 10, a private value of the loop's unit is overwritten: a paste's result and verdict read as the words of
+    the key accumulator `px_paste_name` had just made (`ka_new(3)`: `0x9e3779b97f4a7c16`), in a piece read again.
+    Passing the accumulator and the paste's result by value did not change it, nor did a deeper call stack (+2); at
+    +16 Metal refuses the pipeline ("exceeds available stack space"), so the units' frames are near the M1 Max's
+    stack. A whole compile (`RERAIL_METAL_UNITS=off`) takes past 10 minutes there. m3 and the CPU backend pass all.
+  - **Resolved by decision 0672** (2026-11-24): the 10 were not the stack. The G13's back end tests a loop
+    exit's number by its low byte, and `lp_loop_run`'s exits were numbered to 637: a thread past 255 left the
+    function as though it had returned, with the value its register held (the accumulator's words). With the large
+    helpers called the M1 Max and the M1 pass 47 of 47, and the engine refuses any kernel past 255 on a G13.
 - On Metal every eval test passes its 1 s (nextest's profile `second`) only past its kernels' setup: a test's process
   makes its pipelines (seconds) before its first run, so each times out at 1 s; one process (`cargo test`) runs the
   47 in 88 s on m3, its compile included.

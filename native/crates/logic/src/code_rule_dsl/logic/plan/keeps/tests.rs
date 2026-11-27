@@ -290,6 +290,36 @@
         assert!(!done.is_empty(), "nothing inlined: the case does not choose");
     }
 
+    /// A relation whose column is a call's value (`text(i, x)` lowered to `$x = @rr_node_text_any($i)`), read by a rule
+    /// that joins another atom on that column, is stored: a copy can only test the call against the join's rows,
+    /// never read them by the column (`rf_annot_head` in `rf_forward`, 15.2 M rows inlined, 0.2 M stored). The same
+    /// relation with the column taken from an atom stays a candidate; so does a reader that joins nothing on it.
+    #[test]
+    fn a_column_a_copy_only_tests_a_call_against_is_kept() {
+        let prog = parse_version(
+            ".decl a(i: number)\n.decl m(x: symbol, y: number)\n.decl t(i: number, x: symbol)\n.input a\n.input m\n.input t\n\
+             .decl h(i: number, x: symbol)\nh(i, x) :- a(i), x = @rr_node_text_any(i).\n\
+             .decl g(i: number, x: symbol)\ng(i, x) :- a(i), t(i, x).\n\
+             .decl o(i: number, y: number)\no(i, y) :- h(i, x), m(x, y).\n\
+             .decl p(i: number, y: number)\np(i, y) :- g(i, x), m(x, y).\n\
+             .decl q(i: number)\nq(i) :- h(i, _), a(i).\n.output o, p, q\n",
+        )
+        .unwrap();
+        let placed = Placed::whole(prog.clone());
+        let bodies: Vec<Body<'_>> = (0..placed.len()).map(|k| placed.body(k)).collect();
+        let lost = |reader: &str, read: &str| {
+            let k = (0..placed.len()).find(|&k| bodies[k].rel(bodies[k].head()) == reader).unwrap();
+            let i = (0..bodies[k].len()).find(|&l| read_at(&prog, placed.rule(k), l) == read).unwrap();
+            let defs: Vec<RuleId> = (0..placed.len()).filter(|&d| bodies[d].rel(bodies[d].head()) == read).map(|d| placed.id(d)).collect();
+            let (cv, made) = inline::copies(&prog, &[(placed.id(k), i)], &defs).unwrap();
+            let copies: Vec<Body<'_>> = made[0].iter().map(|&id| Body::of(&cv, cv.rule(id).unwrap())).collect();
+            key_lost(&bodies[k], i, &copies)
+        };
+        assert_eq!(lost("o", "h").as_deref(), Some("x"), "o joins m on h's x, a call's value");
+        assert_eq!(lost("p", "g"), None, "g's x comes from t: a copy reads t by it");
+        assert_eq!(lost("q", "h"), None, "q joins nothing on h's x");
+    }
+
     /// An aggregate's demand, read first by the aggregate it restricts (`Body::demand_first`), is stored: inlined,
     /// the aggregate would enumerate the demand's own join in place of its keys. A relation of the same shape read
     /// otherwise stays a candidate.

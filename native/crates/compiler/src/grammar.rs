@@ -300,7 +300,9 @@ fn desugar(g: &Gram, levels: &mut Vec<(String, String, String)>, tokens: &[Strin
         a => f(a),
     };
     match g {
-        Gram::Lit(_) | Gram::Sym(_) => g.clone(),
+        // Kept for the Rust writer, which makes the leaf after its rule reads the tokens; the machine's build reads it
+        // desugared (`gather`).
+        Gram::Lit(_) | Gram::Sym(_) | Gram::Leaf { .. } => g.clone(),
         Gram::Seq(gs) => Gram::Seq(gs.iter().map(&mut d).collect()),
         Gram::Alt(gs) => Gram::Alt(gs.iter().map(&mut d).collect()),
         Gram::Opt(a) => Gram::Opt(Box::new(d(a))),
@@ -476,6 +478,7 @@ impl Builder<'_> {
                 e
             }
             Gram::Balanced { kind, .. } => return Err(format!("balanced {kind}: not desugared")),
+            Gram::Leaf { kind, .. } => return Err(format!("leaf {kind}: not desugared")),
             Gram::Any(_) => return Err("any: not desugared".into()),
             Gram::Merge(k, a) => {
                 let name = match &**a {
@@ -897,7 +900,7 @@ fn follow_contexts(rules: &[Rule], choices: &[(String, Option<String>, Gram)], l
                 Some(f) => f.clone(),
                 None => (if hidden.contains(n) { [n.clone()].into() } else { BTreeSet::new() }, false),
             },
-            Gram::Lit(_) | Gram::Any(_) | Gram::Balanced { .. } => (BTreeSet::new(), false),
+            Gram::Lit(_) | Gram::Any(_) | Gram::Balanced { .. } | Gram::Leaf { .. } => (BTreeSet::new(), false),
             Gram::Seq(gs) => {
                 let mut acc = BTreeSet::new();
                 for g in gs {
@@ -940,7 +943,7 @@ fn follow_contexts(rules: &[Rule], choices: &[(String, Option<String>, Gram)], l
                     uses.push((n.clone(), after.clone()));
                 }
             }
-            Gram::Lit(_) | Gram::Any(_) | Gram::Balanced { .. } => {}
+            Gram::Lit(_) | Gram::Any(_) | Gram::Balanced { .. } | Gram::Leaf { .. } => {}
             Gram::Seq(gs) => {
                 let mut follow = after.clone();
                 for g in gs.iter().rev() {
@@ -1007,7 +1010,7 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
             Gram::Plus(a) => count(a, 2 * times, uses),
             Gram::Opt(a) | Gram::Star(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => count(a, times, uses),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => count(body, times, uses),
-            Gram::Lit(_) | Gram::Any(_) | Gram::Balanced { .. } => {}
+            Gram::Lit(_) | Gram::Any(_) | Gram::Balanced { .. } | Gram::Leaf { .. } => {}
         }
     }
     let mut f = Facts { by_rules, ..Facts::default() };
@@ -1017,7 +1020,7 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
     // A name's positions where it is used: one for a call or a token, its body's inlined.
     fn size(g: &Gram, f: &mut Facts, ctx: &dyn Fn(&str) -> (Option<Gram>, bool), stack: &mut Vec<String>) -> usize {
         match g {
-            Gram::Lit(_) | Gram::Merge(..) | Gram::Any(_) | Gram::Balanced { .. } => 1,
+            Gram::Lit(_) | Gram::Merge(..) | Gram::Any(_) | Gram::Balanced { .. } | Gram::Leaf { .. } => 1,
             Gram::Sym(n) => match ctx(n) {
                 (Some(b), false) if !stack.contains(n) => {
                     if decide(n, &b, f, ctx, stack) { 1 } else { f.size[n] }
@@ -1033,7 +1036,7 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
     // Whether `n` may match no token, and whether its first token merges into the leaf before.
     fn empty(g: &Gram, ctx: &dyn Fn(&str) -> (Option<Gram>, bool), called: &HashMap<String, bool>, stack: &mut Vec<String>) -> bool {
         match g {
-            Gram::Lit(_) | Gram::Merge(..) | Gram::Any(_) | Gram::Balanced { .. } => false,
+            Gram::Lit(_) | Gram::Merge(..) | Gram::Any(_) | Gram::Balanced { .. } | Gram::Leaf { .. } => false,
             Gram::Sym(n) => match ctx(n) {
                 (Some(b), false) if !stack.contains(n) && !called.get(n).copied().unwrap_or(false) => {
                     stack.push(n.clone());
@@ -1053,7 +1056,7 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
     fn merges_first(g: &Gram, ctx: &dyn Fn(&str) -> (Option<Gram>, bool), called: &HashMap<String, bool>, stack: &mut Vec<String>) -> bool {
         match g {
             Gram::Merge(..) => true,
-            Gram::Lit(_) | Gram::Any(_) | Gram::Balanced { .. } => false,
+            Gram::Lit(_) | Gram::Any(_) | Gram::Balanced { .. } | Gram::Leaf { .. } => false,
             Gram::Sym(n) => match ctx(n) {
                 (Some(b), false) if !stack.contains(n) && !called.get(n).copied().unwrap_or(false) => {
                     stack.push(n.clone());
@@ -1082,7 +1085,7 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
     // The positions `g` may end with, the rules it uses decided.
     fn lasts(g: &Gram, ctx: &dyn Fn(&str) -> (Option<Gram>, bool), called: &HashMap<String, bool>, stack: &mut Vec<String>) -> usize {
         match g {
-            Gram::Lit(_) | Gram::Merge(..) | Gram::Any(_) | Gram::Balanced { .. } => 1,
+            Gram::Lit(_) | Gram::Merge(..) | Gram::Any(_) | Gram::Balanced { .. } | Gram::Leaf { .. } => 1,
             Gram::Sym(n) => match ctx(n) {
                 (Some(b), false) if !stack.contains(n) && !called.get(n).copied().unwrap_or(false) => {
                     stack.push(n.clone());
@@ -1138,7 +1141,7 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
             Gram::Seq(gs) | Gram::Alt(gs) => gs.iter().for_each(|g| reach(g, ctx, out)),
             Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => reach(a, ctx, out),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => reach(body, ctx, out),
-            Gram::Lit(_) | Gram::Any(_) | Gram::Balanced { .. } => {}
+            Gram::Lit(_) | Gram::Any(_) | Gram::Balanced { .. } | Gram::Leaf { .. } => {}
         }
     }
     // What takes a remembered token, by inlining: inlined for good, as a call's level would
@@ -1170,6 +1173,7 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
 /// The rules and choices of a tree section that become calls (`shared`), for tests.
 #[cfg(test)]
 pub(crate) fn shared_names(stmts: &[Stmt], tokens: &[String]) -> Vec<String> {
+    let stmts = &::bitlex::syntax::desugar_leaves(stmts).expect("leaves desugar");
     let (rules, choices, levels, _) = gather(stmts, tokens);
     shared(&rules, &choices, &levels, stmts, false)
 }
@@ -1188,6 +1192,8 @@ pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow
 /// function a rule. Without it, one state machine: states that act alike merge wherever they
 /// are, the smallest machine (simdjson's shape, for a small grammar).
 pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Vec<StateRow>, Vec<ArmRow>, bool), String> {
+    // `leaf K R`: its rule read again, every token merged into one leaf (`desugar_leaves`).
+    let stmts = &::bitlex::syntax::desugar_leaves(stmts)?;
     let (mut rules, mut choices, mut nested_choices, balanced) = gather(stmts, ids.tokens);
     // The rules shared by calls (`shared`): levels of their own, as if marked `nested`.
     let calls = shared(&rules, &choices, &nested_choices, stmts, by_rules);
@@ -1771,7 +1777,8 @@ pub fn with_extras(
         // A merge joins the leaf before the extras: they must be pending, to be its text.
         let merges = merging.contains(&s) || mine.iter().any(|a| a.acts.iter().any(|x| matches!(x, Act::Merge { .. })) || (a.call && merging.contains(&a.to)));
         let early = !merges && if marked { through(s).is_some_and(|w| w.iter().all(|&x| x == 0)) } else { ways.iter().all(|&w| w == ways[0]) };
-        let m = if marked { 0 } else { ways[0] };
+        // A state of no arms (`refused`) refuses every token: nothing closes early.
+        let m = if marked { 0 } else { ways.first().copied().unwrap_or(0) };
         if early {
             let to = if m == 0 {
                 s
@@ -1852,7 +1859,7 @@ pub fn byte_check(g: &Gram, classes: &HashMap<String, Vec<(u32, u32)>>) -> Resul
             Gram::Opt(a) => E::Opt(Box::new(expand(a, classes, sets)?)),
             Gram::Star(a) => E::Star(Box::new(expand(a, classes, sets)?)),
             Gram::Plus(a) => E::Seq(vec![expand(a, classes, sets)?, E::Star(Box::new(expand(a, classes, sets)?))]),
-            Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Fold { .. } | Gram::Reread { .. } | Gram::Balanced { .. } | Gram::Any(_) | Gram::As(..) | Gram::Flag { .. } | Gram::Unless { .. } => return Err("check: a tree's notation in a byte grammar".into()),
+            Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Fold { .. } | Gram::Reread { .. } | Gram::Balanced { .. } | Gram::Any(_) | Gram::As(..) | Gram::Flag { .. } | Gram::Unless { .. } | Gram::Leaf { .. } => return Err("check: a tree's notation in a byte grammar".into()),
         })
     }
     let mut sets = Vec::new();

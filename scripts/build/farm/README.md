@@ -282,7 +282,10 @@ first, and two Macs ran loads of 44 and 88 while the Linux hosts' 150 cores sat 
 link of 8 MB/s or more through ssh go first (a slower one, such as a remote site's tunnel, costs
 minutes a send), then slower links, then VMs on this Mac; within those, the
 most free slots, then the most spare cores. A slow link only puts a host later; it never takes it
-out ("Health"). Both figures are measured through ssh: the round trip is the least of three (each
+out ("Health"). Waiting commands take slots first come, first served (farm 60, `farm.SlotQueue`): each
+holds a ticket in `tests/queue` naming the machines it would take now, and a freed slot goes to the
+earliest one that would take it, not to whichever looks first. Without the line, a command held to
+the M3 by `--host` waited 20 minutes while later commands took its slots as they freed. Both figures are measured through ssh: the round trip is the least of three (each
 starts an ssh process, which a loaded Mac delays), and the throughput 32 MB through a plain pipe,
 every 10 minutes. They fall when either machine is busy, so a low one is no proof of a slow link:
 the order uses the best throughput of the last hour (`mbps_best`). A PC's 10 MB/s link read 4.6

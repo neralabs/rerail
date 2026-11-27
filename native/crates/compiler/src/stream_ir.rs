@@ -68,17 +68,16 @@ pub struct Reading {
     pub root: Option<u16>,
 }
 
-/// A program's readings, and its provisional fields: a node holding one at `ACCEPT` refuses.
+/// A program's readings, and its extras' kinds.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Readings {
     pub maps: Vec<Reading>,
-    pub provisional: Vec<u16>,
     /// The extras' kinds (`extra K`): a node of one is flagged an extra in the table (comments).
     pub extras: Vec<u16>,
 }
 
 impl Readings {
     pub fn is_empty(&self) -> bool {
-        self.maps.is_empty() && self.provisional.is_empty() && self.extras.is_empty()
+        self.maps.is_empty() && self.extras.is_empty()
     }
 }

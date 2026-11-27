@@ -6683,13 +6683,17 @@ fn every_module_lowers_alike_against_its_scopes_headers() {
 fn every_library_file_a_pack_includes_is_a_planned_module() {
     let lib = crate::code_rule_dsl::logic::rr::library();
     let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
+    // A program that does not read is no evidence either way: named, with its error, where the tables are missed.
+    let mut unread: Vec<String> = Vec::new();
     for path in walk_rr(&lib.join("../packs/python")) {
         let Ok(src) = std::fs::read_to_string(&path) else { continue };
-        if let Ok(Some(m)) = super::modules(&src) {
-            paths.extend(m.files.into_iter().map(|(p, _, _)| p));
+        match super::modules(&src) {
+            Ok(Some(m)) => paths.extend(m.files.into_iter().map(|(p, _, _)| p)),
+            Ok(None) => {}
+            Err(e) => unread.push(format!("{}: {e}", path.display())),
         }
     }
-    assert!(paths.iter().any(|p| p.to_string_lossy().ends_with(".stdlib.rerail")), "a pack's table among the library files: {paths:?}");
+    assert!(paths.iter().any(|p| p.to_string_lossy().ends_with(".stdlib.rerail")), "a pack's table among the library files: {paths:?}\nprograms that do not read: {unread:#?}");
     let plan = super::planned_library(&paths.iter().cloned().collect::<Vec<_>>()).unwrap();
     let canonical = |p: &Path| dunce::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     let planned: BTreeSet<PathBuf> = plan.iter().flat_map(|m| m.files.lines().filter(|f| !f.is_empty()).map(|f| canonical(Path::new(f))).collect::<Vec<_>>()).collect();

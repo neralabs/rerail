@@ -17,7 +17,7 @@
 //! (a column past the relation's arity is NULL). Values are as the store numbers them: an atom is the store's id,
 //! as the `atoms` table answers. `space = ?`, `rel = ?` and `part = ?` choose the entries; `c0 = ?` narrows each
 //! entry to a range where its first column leads its canonical order. SQLite rechecks every constraint.
-use super::{KeptSpace, chain_rows};
+use super::KeptSpace;
 use rerail_blocks::kept::KeptRead as _;
 use rerail_blocks::packed::Packed;
 use rusqlite::{
@@ -206,11 +206,8 @@ unsafe impl VTabCursor for Cursor {
         let spaces = spaces_of(&connection, space)?;
         let mut entries = Vec::new();
         for space in spaces {
-            let rows = chain_rows(&connection, &space).map_err(error)?;
-            if rows.is_empty() {
-                continue;
-            }
-            let chain = Arc::new(KeptSpace::open(&self.store, &space, &rows).map_err(error)?);
+            let Some(chain) = KeptSpace::read(&self.store, &connection, &space).map_err(error)? else { continue };
+            let chain = Arc::new(chain);
             let view = chain.view();
             let kept: Box<dyn Iterator<Item = _>> = match &rel {
                 Some(r) => view.of(r),
@@ -349,11 +346,7 @@ unsafe impl VTabCursor for EntriesCursor {
         // SAFETY: the connection SQLite calls this filter on; not closed by the wrapper.
         let connection = unsafe { Connection::from_handle(self.db) }?;
         for space in spaces_of(&connection, space)? {
-            let chain_rows = chain_rows(&connection, &space).map_err(error)?;
-            if chain_rows.is_empty() {
-                continue;
-            }
-            let chain = KeptSpace::open(&self.store, &space, &chain_rows).map_err(error)?;
+            let Some(chain) = KeptSpace::read(&self.store, &connection, &space).map_err(error)? else { continue };
             for k in chain.view().all() {
                 let reads: Vec<String> = k.reads().map(|(r, d)| format!("{r}:{d:016x}")).collect();
                 self.rows.push(EntryRow {

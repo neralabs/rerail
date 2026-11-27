@@ -249,6 +249,9 @@ fn targets_are_their_names() {
     assert_eq!(m5.backend, Backend::Metal { version: 400 });
     assert_eq!(m5.defines, [("UKL_HAS_MATMUL2D".to_string(), "1".to_string())]);
     assert_eq!(Target::named("apple7").unwrap().defines, []);
+    // The M1s' tier (decision 0672): apple7's version, its large bodies called.
+    let g13 = Target::named("apple7-g13").unwrap();
+    assert_eq!((g13.backend, g13.defines), (Backend::Metal { version: 310 }, vec![("UKL_METAL_G13".to_string(), "1".to_string())]));
     assert_eq!(Target::named("sm_121").unwrap().backend, Backend::Cuda { sm: 121 });
     assert_eq!(Target::named("gfx90a").unwrap().backend, Backend::Hip { wave: 64 });
     let rdna2 = Target::named("gfx1035").unwrap();
@@ -267,6 +270,8 @@ fn a_target_runs_its_own_and_its_compatible_targets_code() {
     let runs = |n: &str| Target::named(n).unwrap().runs();
     assert_eq!(runs("apple10"), ["apple10", "apple7"]);
     assert_eq!(runs("apple7"), ["apple7"]);
+    // A G13's text is its own: it runs no other tier's code, and no other tier runs its.
+    assert_eq!(runs("apple7-g13"), ["apple7-g13"]);
     assert_eq!(runs("sm_86"), ["sm_86", "sm_80", "compute_80", "compute_70"]);
     assert_eq!(runs("sm_121"), ["sm_121", "sm_120", "compute_80", "compute_70"]);
     assert_eq!(runs("sm_70"), ["sm_70", "compute_70"]);

@@ -1190,7 +1190,7 @@ impl Lowering {
                 }
                 Stmt::Tree { body, .. } => self.stmts(body)?,
                 // The grammar's rules: the state machine is built once the token rows are known.
-                Stmt::Node { .. } | Stmt::Choice { .. } | Stmt::Refuse { .. } | Stmt::Reading { .. } | Stmt::Provisional(_) | Stmt::Remember(_) | Stmt::Flags(_) | Stmt::Recover { .. } | Stmt::Ending { .. } => self.tree.push(stmt.clone()),
+                Stmt::Node { .. } | Stmt::Choice { .. } | Stmt::Refuse { .. } | Stmt::Reading { .. } | Stmt::Remember(_) | Stmt::Flags(_) | Stmt::Recover { .. } | Stmt::Ending { .. } => self.tree.push(stmt.clone()),
                 // Applied by the parser: each token it names marked `A as IMPLIED` in its rule.
                 Stmt::Implied { .. } => {}
                 Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
@@ -3690,54 +3690,46 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         }
     }
     // The readings (`reading R = …`, `reread R`): each kind's way, an extra's leaf staying as
-    // it is; and the provisional fields.
+    // it is.
     let mut reading_names: Vec<String> = Vec::new();
     let mut readings = crate::stream_ir::Readings::default();
     let remember: Vec<&String> = low.tree.iter().filter_map(|s| if let Stmt::Remember(n) = s { Some(n.iter()) } else { None }).flatten().collect();
     for s in &low.tree {
-        match s {
-            Stmt::Reading { name, reading } => {
-                if reading_names.contains(name) {
-                    return Err(format!("reading {name}: two of that name"));
-                }
-                reading_names.push(name.clone());
-                let mut r = crate::stream_ir::Reading::default();
-                for (k, what) in &reading.kinds {
-                    let to = match what {
-                        ::bitlex::syntax::ReadKind::Keep => crate::stream_ir::KEEP,
-                        ::bitlex::syntax::ReadKind::Gone => crate::stream_ir::GONE,
-                        ::bitlex::syntax::ReadKind::As(m) if remember.contains(&m) => crate::stream_ir::REMEMBERED,
-                        ::bitlex::syntax::ReadKind::As(m) => id(m.as_str())?,
-                    };
-                    let k = id(k)?;
-                    if r.kinds.iter().any(|x| x.0 == k) {
-                        return Err(format!("reading {name}: a kind twice"));
-                    }
-                    r.kinds.push((k, to));
-                }
-                for e in &low.extra {
-                    let e = id(e)?;
-                    if !r.kinds.iter().any(|x| x.0 == e) {
-                        r.kinds.push((e, e));
-                    }
-                }
-                for (f, g) in &reading.fields {
-                    r.fields.push((field_id(f)?, field_id(g)?));
-                }
-                r.root = match &reading.root {
-                    None => None,
-                    Some(::bitlex::syntax::ReadKind::Gone) => Some(crate::stream_ir::GONE),
-                    Some(::bitlex::syntax::ReadKind::As(m)) => Some(id(m.as_str())?),
-                    Some(::bitlex::syntax::ReadKind::Keep) => return Err(format!("reading {name}: a root kept")),
+        if let Stmt::Reading { name, reading } = s {
+            if reading_names.contains(name) {
+                return Err(format!("reading {name}: two of that name"));
+            }
+            reading_names.push(name.clone());
+            let mut r = crate::stream_ir::Reading::default();
+            for (k, what) in &reading.kinds {
+                let to = match what {
+                    ::bitlex::syntax::ReadKind::Keep => crate::stream_ir::KEEP,
+                    ::bitlex::syntax::ReadKind::Gone => crate::stream_ir::GONE,
+                    ::bitlex::syntax::ReadKind::As(m) if remember.contains(&m) => crate::stream_ir::REMEMBERED,
+                    ::bitlex::syntax::ReadKind::As(m) => id(m.as_str())?,
                 };
-                readings.maps.push(r);
+                let k = id(k)?;
+                if r.kinds.iter().any(|x| x.0 == k) {
+                    return Err(format!("reading {name}: a kind twice"));
+                }
+                r.kinds.push((k, to));
             }
-            Stmt::Provisional(fields) => {
-                for f in fields {
-                    readings.provisional.push(field_id(f)?);
+            for e in &low.extra {
+                let e = id(e)?;
+                if !r.kinds.iter().any(|x| x.0 == e) {
+                    r.kinds.push((e, e));
                 }
             }
-            _ => {}
+            for (f, g) in &reading.fields {
+                r.fields.push((field_id(f)?, field_id(g)?));
+            }
+            r.root = match &reading.root {
+                None => None,
+                Some(::bitlex::syntax::ReadKind::Gone) => Some(crate::stream_ir::GONE),
+                Some(::bitlex::syntax::ReadKind::As(m)) => Some(id(m.as_str())?),
+                Some(::bitlex::syntax::ReadKind::Keep) => return Err(format!("reading {name}: a root kept")),
+            };
+            readings.maps.push(r);
         }
     }
     let (states, mut arms, whole, by_rules, desugared) = {
@@ -4877,7 +4869,12 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                         without |= 1 << k;
                     }
                 }
-                token_read |= without | with;
+                // A token mark past the code's bits is tier 2's alone, which asks a gap mark it reads of the bytes where
+                // tier 1 sets none (`lazy_marks`), as the lean parser asks whether a word is on its line: the token step
+                // reads only the code's marks' bits.
+                if usize::from(*order) < code_marks.min(crate::records::MARKS) {
+                    token_read |= without | with;
+                }
                 let mut nests = Vec::new();
                 for (counter, open, ns, ws) in nest_rows {
                     let (kinds, except, rows) = kind_set(ns)?;

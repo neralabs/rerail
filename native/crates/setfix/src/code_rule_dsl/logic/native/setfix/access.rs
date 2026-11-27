@@ -198,7 +198,10 @@ pub(super) fn prefetch(reads: &BTreeSet<String>, held: impl Fn(&str) -> Option<A
             let ib = rel.in_block()?;
             match kind {
                 Kind::NodeBits(c) => {
-                    let had = ib.relation().find_node_bits(*c, ib.rows).is_some();
+                    // A rows index (`node_rows`) holds the bits too (`own_node_bits` reads it there).
+                    use rerail_blocks::relation::{NODE_BITS, NODE_ROWS};
+                    let r = ib.relation();
+                    let had = r.find_node_index(NODE_ROWS, *c, ib.rows).or_else(|| r.find_node_index(NODE_BITS, *c, ib.rows)).is_some();
                     ib.own_node_bits(*c).filter(|_| !had).map(|_| (0, rel.n as u64))
                 }
                 Kind::Filter(cols) => {

@@ -275,6 +275,30 @@ errors(l, m) :- syntax_error(_, l, m).
     assert_eq!(errors[0][0], "2", "{errors:?}");
 }
 
+/// `op`'s names are the batch's vocabulary's (decision 0353 row 7): a text test of an operator, `glob("<*", o)`,
+/// finds the operators of that name, read through the `op` view and its names in each document's entry.
+#[test]
+fn a_text_test_of_an_operator_finds_its_name() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("op-glob");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), "a = 1 < 2\nb = 3 >= 4\nc = 5 <= 6\n").unwrap();
+    let rule = r#".language python
+.decl ops(o: symbol)
+ops(o) :- node(_, n, "comparison_operator", _, _), op(n, o), glob("<*", o).
+.output ops
+"#;
+    let path = root.with_extension("rule.rerail");
+    std::fs::write(&path, rule).unwrap();
+    let program = print_version(&parse_file_version(&path).unwrap()).unwrap();
+    let out = root.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let mut ops = crate::code_rule_dsl::logic::plan::output::shown(&out, "ops").unwrap_or_default();
+    ops.sort();
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(ops, [["<"], ["<="]]);
+}
+
 /// O105: a Python policy and an `rr` policy over one repository (`tools::run_policies`). Each reads its own
 /// language's documents through the one store, and the findings of both come back together.
 #[test]

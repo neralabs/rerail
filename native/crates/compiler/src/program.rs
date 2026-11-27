@@ -122,8 +122,7 @@ pub const SETTLE_REFUSE: u8 = 19;
 /// `SETTLE`'s first moving mode (`m=36`; `m=37+F` with a flag).
 pub const SETTLE_MOVE: u8 = 36;
 /// A statement starts here: right after the `TOKEN` of each of the root's states between statements (where it may
-/// end), where the grammar recovers (`recover`, decision 0650; `Words::recover`). The statement before it ends here:
-/// one that holds a provisional field fails (the lean parser's literal fails there). Then the state a statement
+/// end), where the grammar recovers (`recover`, decision 0650; `Words::recover`). The state a statement
 /// changes is marked, as the lean parser's `mark`: a statement that fails by its syntax is cut back to it, the
 /// statement before closed, one ERROR leaf made to the resume point (`Words::recover`'s patterns), and read on from
 /// there at the root's first state. A limit (the depth, a count, a check) still refuses the file.
@@ -295,7 +294,7 @@ pub struct Words {
     pub block_programs: Vec<BlockProgram>,
     /// Tier 2's switch tables (`SWITCH`, decision 0087).
     pub switches: Vec<ByteSwitch>,
-    /// Tier 2's readings (`RETAG m=3`) and provisional fields.
+    /// Tier 2's readings (`RETAG m=3`) and the extras' kinds.
     pub readings: Readings,
     /// Tier 2's rules, when it has them (`rule N @P`): each rule's first place, from 0 up; a rule
     /// is the places from its first to the next rule's. Each rule is a function (a grammar

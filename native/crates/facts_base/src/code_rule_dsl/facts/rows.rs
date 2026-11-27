@@ -988,10 +988,10 @@ fn capacity_for(rows: usize) -> u64 {
 }
 
 /// The bytes `indexes` indexes of `rows` rows take in their relation's block (`Relation::try_reserve_index`): each
-/// its buckets and its rows, each chunk aligned, and the directory.
+/// its buckets and its rows with their marks (decision 0671), each chunk aligned, and the directory.
 fn index_room(indexes: usize, rows: u64) -> usize {
     let rows = rows.max(1) as usize;
-    let one = 4 * (rows.next_power_of_two() + 1) + 4 * rows + 2 * rerail_blocks::block::PAGE;
+    let one = 4 * (rows.next_power_of_two() + 1) + rerail_blocks::relation::index_rows_bytes(rows) + 2 * rerail_blocks::block::PAGE;
     indexes * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64
 }
 
@@ -1016,7 +1016,8 @@ fn lease_exact(bytes: usize, life: Life) -> Result<Block, String> {
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn anon_in_block(k: usize, vals: &[i64]) -> InBlock {
     let rows = vals.len() / k;
-    let facts = Arc::new(Facts::new(Block::anon(kind::FACTS, 2 * room_for(k, rows) + 8 * MARGIN), Life::Run));
+    // Its rows twice, and two indexes of them (each its buckets, rows and marks, decision 0671).
+    let facts = Arc::new(Facts::new(Block::anon(kind::FACTS, 2 * room_for(k, rows) + index_room(2, rows as u64) + 8 * MARGIN), Life::Run));
     let rel = Relation::try_create(&facts.block, &spec(k), None).expect("room for the relation");
     assert!(rel.rows.try_reserve(&facts.block, rows as u64));
     // SAFETY: rows `0..rows` are reserved, and this thread alone writes them before any reader looks.
@@ -1698,8 +1699,9 @@ impl Part {
     /// A relation of `k` columns, room for `rows` rows reserved (none claimed) alone in a block of `life`'s, with room
     /// for `indexes` indexes of them.
     fn reserved(life: Life, k: usize, rows: usize, indexes: usize) -> Result<Part, String> {
+        // Each index its buckets, and its rows with their marks (decision 0671).
         let cap = rows.next_power_of_two().max(1);
-        let one = 4 * (cap + 1) + 4 * rows.max(1) + 2 * 64;
+        let one = 4 * (cap + 1) + rerail_blocks::relation::index_rows_bytes(rows) + 2 * 64;
         let index = indexes.max(1) * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
         Part::try_new_with(life, k, rows, index, false)
     }
@@ -1766,6 +1768,12 @@ impl Part {
     #[inline(always)]
     pub fn get(&self, i: u32, c: usize) -> i64 {
         self.cols[c].get(self.skip + i)
+    }
+
+    /// Column `c`'s values at its rows `i..i + out.len()`, read where they lie a chunk at a time
+    /// (`rerail_blocks::rows::Rows::read_range`).
+    pub fn read_range(&self, c: usize, i: u32, out: &mut [i64]) {
+        self.rel().rows.read_range(c, self.skip + i, out);
     }
 
     /// An empty relation of `k` columns in a run's block, with room for `rows` rows that a writer other than the
@@ -2285,6 +2293,21 @@ impl InBlock {
         }
     }
 
+    /// The relation's node-keyed index with rows on column `col` over its rows (`Relation::try_add_node_index`): found, or
+    /// built now into its block. `None` as `own_node_bits`'s.
+    pub fn own_node_rows(&self, col: u16) -> Option<usize> {
+        let r = self.relation();
+        if self.dead != 0 || r.base_rows != 0 || self.far().is_some() {
+            return None;
+        }
+        let _g = self.facts.ix.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = r.find_node_index(rerail_blocks::relation::NODE_ROWS, col, self.rows) {
+            return Some(i);
+        }
+        // SAFETY: under the block's index lock; the relation's rows `0..rows` are written.
+        unsafe { r.try_add_node_index(&self.facts.block, col, self.rows, true) }
+    }
+
     /// The relation's node-keyed index on column `col` over its rows (decision 0694 step 1): found, or built now into
     /// its block. `None` for a delta (dead rows), a continuation, a chain past its block, or a block with no room.
     pub fn own_node_bits(&self, col: u16) -> Option<usize> {
@@ -2293,11 +2316,13 @@ impl InBlock {
             return None;
         }
         let _g = self.facts.ix.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(i) = r.find_node_bits(col, self.rows) {
+        // Its rows' index holds the bits too: read there where it is, not built twice.
+        use rerail_blocks::relation::{NODE_BITS, NODE_ROWS};
+        if let Some(i) = r.find_node_index(NODE_ROWS, col, self.rows).or_else(|| r.find_node_index(NODE_BITS, col, self.rows)) {
             return Some(i);
         }
         // SAFETY: under the block's index lock; the relation's rows `0..rows` are written.
-        unsafe { r.try_add_node_bits(&self.facts.block, col, self.rows) }
+        unsafe { r.try_add_node_index(&self.facts.block, col, self.rows, false) }
     }
 
     /// The relation's membership filter on `cols` over its rows (decision 0706 E2): found, or built now into its
@@ -2865,6 +2890,11 @@ impl Rows {
     /// Rows `lo..hi`, part by part in id order: each part, the rows of it (its own row numbers `from..to`), and the
     /// id of row `from`. A sequential reader finds each part once, not each row's (rows gathered from many relations,
     /// `append_part`, lie in many parts).
+    /// Column `c`'s values at ids `lo..lo + out.len()`, each part's run read as a range of it (`Part::read_range`).
+    pub fn read_range(&self, c: usize, lo: u32, out: &mut [i64]) {
+        self.each_run(lo, lo + out.len() as u32, |p, i, j, id| p.read_range(c, i, &mut out[(id - lo) as usize..(id - lo + j - i) as usize]));
+    }
+
     pub fn each_run(&self, lo: u32, hi: u32, mut f: impl FnMut(&Part, u32, u32, u32)) {
         let mut id = lo;
         while id < hi {

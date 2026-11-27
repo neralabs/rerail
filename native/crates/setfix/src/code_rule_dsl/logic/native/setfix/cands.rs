@@ -128,6 +128,10 @@ fn stream_probe<'a>(v: &'a View, cols: &'a [usize], lead: usize, key: &[i64], la
 pub(super) fn exact_cols(j: &JoinRule, src: &Src, membership: bool) -> u64 {
     let Src::In(rel, ix) = src else { return 0 };
     let (rel, ix) = j.src_in(rel, ix);
+    // A probe by value (`candidates`) gives the key's rows alone.
+    if ix.by_value_kind() && ix.by_value(rel, 0, &mut 0).is_some() {
+        return 1 << ix.cols[0];
+    }
     if let Some(index) = ix.runs(rel) {
         return index.cols.iter().take_while(|c| ix.cols.contains(c)).fold(0, |m, &c| m | 1 << c);
     }
@@ -178,6 +182,13 @@ pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, ke
             let settings = last.settings();
             if settings.noted && !keys.is_empty() { probed::note(rel.name.get().map_or("?input", String::as_str), ix.cols.iter().copied()); }
             if keys.is_empty() { scan_within(Rows::In(rel), 0, rel.len() as u32, within) }
+            // A one-column key's rows by its value-keyed index (the shape kernel's keyed read): found by position,
+            // each probe walking on from where the last ended, not by searching the runs' tagged order.
+            else if keys.len() == 1 && ix.by_value_kind()
+                && let Some(ids) = ix.by_value(rel, key[0], &mut hints[0])
+            {
+                (Rows::In(rel), Cands::Slice(ids))
+            }
             else if let Some(index) = ix.runs(rel) {
                 // An order answering the key's columns, or leading with some of them (`chain_lead`: every key
                 // is checked): the key's values in the order's column order.
@@ -378,10 +389,70 @@ pub(super) fn holds(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], ask
     })
 }
 
+/// A lookup's one row (`setfix::lookups`: a view by a key with at most one row, a node's own facts by its id), read
+/// in place (`View::read_one`): whether it holds the keys and `tests`, its values of view columns `need` in `out`.
+/// `None` where the source has no such read now (it probes).
+pub(super) fn read_one(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tests: &[(usize, usize)], key: &[i64], need: u64, cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor, out: &mut [i64; super::READ]) -> Option<bool> {
+    let Src::In(rel, ix) = src else { return None };
+    if keys.len() > MAX_KEY {
+        return None;
+    }
+    let (rel, _) = j.src_in(rel, ix);
+    let v = rel.view.as_ref()?;
+    let mut cols = [0usize; MAX_KEY];
+    for (o, &(c, _)) in cols.iter_mut().zip(keys) {
+        *o = c;
+    }
+    v.read_one(&cols[..keys.len()], key, tests, need, cursor, out)
+}
+
+/// A lookup asked in a fused chunk (`rowcode::Test::reads`), `slots` the row's values: whether its one row is there
+/// and holds its keys and tests, its values of the columns it binds in `out` (by column). Read in place
+/// (`read_one`); where the source cannot read it so now, probed, its first matching row's.
+pub(super) fn look(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], asked: &mut Asked, out: &mut [i64]) -> bool {
+    let Step::Atom { src, keys, tests, binds, .. } = step else { unreachable!("a lookup is an atom") };
+    let val = |k: Key| match k {
+        Key::Slot(s) => slots[s],
+        Key::Const(c) => c,
+    };
+    asked.key.clear();
+    asked.key.extend(keys.iter().map(|&(_, k)| val(k)));
+    let need = binds.iter().fold(0u64, |m, &(c, _)| m | 1 << c);
+    let mut row = [0i64; super::READ];
+    if let Some(found) = read_one(j, src, keys, tests, &asked.key, need, &mut asked.last.cursor, &mut row) {
+        if found {
+            for &(c, _) in binds {
+                out[c] = row[c];
+            }
+        }
+        return found;
+    }
+    let need = need | keys.iter().fold(0u64, |m, &(c, _)| m | 1 << c) | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0);
+    let (rows, cands) = candidates(j, src, store, &asked.key, keys, &mut asked.hints, &mut asked.last, need, None, true);
+    let mut found = false;
+    rows.each(cands, need, &mut asked.last, |id, r| {
+        if rows.dead(id) || !keys.iter().all(|&(c, k)| r.at(c) == val(k)) || !tests.iter().all(|&(c, c0)| r.at(c) == r.at(c0)) {
+            return false;
+        }
+        for &(c, _) in binds {
+            out[c] = r.at(c);
+        }
+        found = true;
+        true
+    });
+    found
+}
+
 /// Whether a test of one node column reads its node-keyed index: `RERAIL_NODE_BITS=off` (a measurement aid, the
 /// run's setting) probes as before.
 pub(super) fn node_bits_on() -> bool {
     rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_NODE_BITS").map_or(true, |v| v != "off"))
+}
+
+/// Whether a one-column probe of a derived input reads its value-keyed rows index (`Csr::by_value`):
+/// `RERAIL_BY_VALUE=off` (a measurement aid, the run's setting) probes as before.
+pub(super) fn by_value_on() -> bool {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_BY_VALUE").map_or(true, |v| v != "off"))
 }
 
 /// Whether a test of a derived input's whole key asks its sorted hash: `RERAIL_SORTED_HASH=off` (a measurement aid,

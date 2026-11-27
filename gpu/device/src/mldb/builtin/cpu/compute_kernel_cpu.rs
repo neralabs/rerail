@@ -226,10 +226,14 @@ pub fn gpu_seconds_awaited() -> f64 {
 }
 
 /// A compiled library: the shared object the host's compiler made of the source, loaded; or the kernels run by an
-/// interpreter (`CpuInterpreter`).
+/// interpreter (`CpuInterpreter`). Its kernels that are Rust of its very source (`rerail_ukl_rust`, decision 0567
+/// step 3) run as that Rust (`host`), their arguments the library's rows.
 pub struct CpuComputeFunctionLibrary {
     code: Code,
     name: String,
+    host: Vec<(&'static str, rerail_ukl_rust::Kernel)>,
+    /// The compiled reads `host`'s kernels call (`rerail_ukl_rust::Launch::reads`), where one does.
+    reads: Option<Arc<rerail_ukl_rust::Reads>>,
 }
 
 enum Code {
@@ -277,18 +281,24 @@ fn open_library(lib: &std::path::Path) -> Result<crate::os::Lib, String> {
     crate::os::Lib::open(&[path.as_ref()], crate::os::Scope::Local).ok_or_else(|| format!("loading {}: {}", lib.display(), crate::os::Lib::error()))
 }
 
+/// A debugging aid: `RERAIL_CPU_SANITIZE`, flags the kernels' compile adds (`-fsanitize=undefined,bounds-strict`: a
+/// read or write past a fixed array, of a thread's or a group's, reported at its line). Its own libraries (the key).
+fn sanitize() -> Vec<String> {
+    std::env::var("RERAIL_CPU_SANITIZE").map(|v| v.split_whitespace().map(str::to_owned).collect()).unwrap_or_default()
+}
+
 impl CpuComputeFunctionLibrary {
     /// Compiles C++ (UKL preprocessed for the CPU) with the host's compiler into a shared object, and loads it.
     pub fn compile_from_source(_device: &CpuDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let cxx = compiler()?;
         // The store's (`crate::store`), else the temporary directory's: the CPU's form is a file `dlopen` loads.
-        let k = crate::store::key(&[b"cpu", cxx.as_bytes(), compiler_version(cxx).as_bytes(), CXX_FLAGS.join(" ").as_bytes(), if strict_simd() { b"-O0" } else { b"" }, preprocessed_source.as_bytes()]);
+        let k = crate::store::key(&[b"cpu", cxx.as_bytes(), compiler_version(cxx).as_bytes(), CXX_FLAGS.join(" ").as_bytes(), if strict_simd() { b"-O0" } else { b"" }, sanitize().join(" ").as_bytes(), preprocessed_source.as_bytes()]);
         // The shipped library (`crate::store::shipped`), of this compiler: loaded in place.
         if let Some(shipped) = crate::store::shipped("cpu", &k, LIB_EXTENSION)
             && let Ok(opened) = open_library(&shipped)
         {
             crate::store::count(true);
-            return Ok(CpuComputeFunctionLibrary { code: Code::Compiled(opened), name: file_name_to_appear_in_error_messages.to_string() });
+            return Ok(CpuComputeFunctionLibrary { code: Code::Compiled(opened), name: file_name_to_appear_in_error_messages.to_string(), host: Vec::new(), reads: None });
         }
         let lib = match crate::store::path("cpu", &k, LIB_EXTENSION) {
             Some(p) => p,
@@ -305,7 +315,7 @@ impl CpuComputeFunctionLibrary {
                 Ok(opened) => {
                     crate::store::count(true);
                     crate::store::used(&lib);
-                    return Ok(CpuComputeFunctionLibrary { code: Code::Compiled(opened), name: file_name_to_appear_in_error_messages.to_string() });
+                    return Ok(CpuComputeFunctionLibrary { code: Code::Compiled(opened), name: file_name_to_appear_in_error_messages.to_string(), host: Vec::new(), reads: None });
                 }
                 // Damaged, or another build's: compiled again, and replaced.
                 Err(_) => _ = std::fs::remove_file(&lib),
@@ -325,6 +335,7 @@ impl CpuComputeFunctionLibrary {
             let o = std::process::Command::new(cxx)
                 .args(flags)
                 .args(strict_simd().then_some("-O0"))
+                .args(sanitize())
                 .args(out)
                 .arg(&tmp)
                 .arg(&src)
@@ -355,12 +366,22 @@ impl CpuComputeFunctionLibrary {
             }
         }
         let opened = open_library(&lib)?;
-        Ok(CpuComputeFunctionLibrary { code: Code::Compiled(opened), name: file_name_to_appear_in_error_messages.to_string() })
+        Ok(CpuComputeFunctionLibrary { code: Code::Compiled(opened), name: file_name_to_appear_in_error_messages.to_string(), host: Vec::new(), reads: None })
     }
 
     /// The kernels `interpreter` runs, named `name` in errors.
     pub fn interpreted(interpreter: Arc<dyn CpuInterpreter>, name: &str) -> Self {
-        CpuComputeFunctionLibrary { code: Code::Interpreted(interpreter), name: name.to_string() }
+        CpuComputeFunctionLibrary { code: Code::Interpreted(interpreter), name: name.to_string(), host: Vec::new(), reads: None }
+    }
+
+    /// This library, its kernels `host` names run as their Rust (`rerail_ukl_rust::kernels` of its source and
+    /// defines): a compiled library's alone, whose rows give their arguments. `reads`: the compiled reads they call.
+    pub fn with_host(mut self, host: Vec<(&'static str, rerail_ukl_rust::Kernel)>, reads: Option<Arc<rerail_ukl_rust::Reads>>) -> Self {
+        if matches!(self.code, Code::Compiled(_)) {
+            self.host = host;
+            self.reads = reads;
+        }
+        self
     }
 
     fn symbol(&self, name: &str) -> Result<*mut c_void, String> {
@@ -413,7 +434,11 @@ impl CpuComputeFunctionLibrary {
         let (arguments, param_sizes) = crate::rows::arguments(function_name, &text, &rows, |ty| self.struct_type(ty))?;
         // SAFETY: the shim's entry has this signature.
         let entry: Entry = unsafe { std::mem::transmute(entry) };
-        Ok(CpuComputeFunction { entry: Run::Compiled(entry), name: function_name.to_string(), arguments, param_sizes })
+        let entry = match self.host.iter().find(|(n, _)| *n == function_name) {
+            Some(&(_, k)) => Run::Host(k, self.reads.clone()),
+            None => Run::Compiled(entry),
+        };
+        Ok(CpuComputeFunction { entry, name: function_name.to_string(), arguments, param_sizes })
     }
 }
 
@@ -487,6 +512,8 @@ pub fn resident_groups(threads: usize) -> usize {
 enum Run {
     Compiled(Entry),
     Interpreted(Arc<dyn CpuInterpreter>),
+    /// Its source's Rust (`rerail_ukl_rust`): a group at a time, each its threads in lanes.
+    Host(rerail_ukl_rust::Kernel, Option<Arc<rerail_ukl_rust::Reads>>),
 }
 
 /// A kernel's entry: a pointer to each argument's bytes, and the launch; 0, or 1 with the launch's error written.
@@ -759,6 +786,34 @@ impl CpuBindContext<'_> {
             let entry = match entry {
                 Run::Compiled(e) => e,
                 Run::Interpreted(i) => return i.launch(&name, &params, grid, block, shared).map_err(|e| format!("{name} on the CPU: {e}")),
+                Run::Host(k, reads) => {
+                    // Its threadgroup memory is its own (`tg`, its `SHARED` rows'): a row of the launch's has no place.
+                    if shared != 0 {
+                        return Err(format!("{name} on the CPU: its Rust takes no threadgroup row of the launch's"));
+                    }
+                    // The shim's two arguments past the kernel's: no groups' counts (the device read them), and the
+                    // first group's position 0.
+                    let (counts, first): (*const u32, u32) = (std::ptr::null(), 0);
+                    let mut argv: Vec<*const u8> = params.iter().map(|p| p.as_ptr().cast::<u8>()).collect();
+                    argv.extend([(&raw const counts).cast::<u8>(), (&raw const first).cast::<u8>()]);
+                    // A kernel's panic is its launch's error: the queue's thread goes on, and its waiters hear of it.
+                    let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        for z in 0..grid[2] {
+                            for y in 0..grid[1] {
+                                for x in 0..grid[0] {
+                                    let l = rerail_ukl_rust::Launch { group: [x, y, z], block, groups: grid, reads: reads.as_ref().map_or(std::ptr::null(), |r| r.table()) };
+                                    // SAFETY: `argv` holds the kernel's arguments as its rows bound them (each buffer's
+                                    // address, each value's bytes), and the shim's two.
+                                    unsafe { k(argv.as_ptr(), &l) };
+                                }
+                            }
+                        }
+                    }));
+                    return ran.map_err(|p| {
+                        let why = p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default();
+                        format!("{name} on the CPU: its Rust panicked: {why}")
+                    });
+                }
             };
             let groups = grid.iter().map(|&g| g as usize).product::<usize>();
             let resident = resident_groups(threads).min(groups);
@@ -874,6 +929,42 @@ DEFINE_KERNEL2(t, t_divergent,
         }
         ctx.launch(&[grid], &[block])?;
         q.finish()
+    }
+
+    /// A kernel's Rust (`with_host`) runs in place of the compiler's build: each group in turn, its arguments the
+    /// library's rows bound (here `out`'s address), then the shim's two.
+    #[test]
+    fn a_kernel_with_rust_runs_its_rust() {
+        unsafe fn host(argv: *const *const u8, l: &rerail_ukl_rust::Launch) {
+            let out = unsafe { (*argv.add(0) as *const *mut u32).read_unaligned() };
+            let counts = unsafe { (*argv.add(1) as *const *const u32).read_unaligned() };
+            let first = unsafe { (*argv.add(2) as *const u32).read_unaligned() };
+            for lid in 0..l.block[0] {
+                let i = l.group[0] * l.block[0] + lid;
+                unsafe { out.add(i as usize).write(1000 + i + first + u32::from(!counts.is_null())) };
+            }
+        }
+        let Some((device, lib)) = compile("t.uglykl", KERNELS) else { return };
+        let lib = lib.with_host(vec![("t_ends_after", host)], None);
+        let f = lib.get_function(&device, "t_ends_after").unwrap();
+        let out = alloc_uninitialized_array_sync::<u32>(&device, 64);
+        run(&device, &f, &out, None, 2, 32).unwrap();
+        assert_eq!(transfer_to_host_sync::<u32>(&out, 64), (1000..1064).collect::<Vec<u32>>());
+        // A kernel of the library without Rust: its compiled build.
+        let g = lib.get_function(&device, "t_group").unwrap();
+        assert!(matches!(g.entry, Run::Compiled(_)));
+    }
+
+    /// A kernel's Rust keeps its threadgroup memory itself: a launch that gives it a threadgroup row is refused.
+    #[test]
+    fn a_kernel_with_rust_takes_no_threadgroup_row() {
+        unsafe fn host(_: *const *const u8, _: &rerail_ukl_rust::Launch) {}
+        let Some((device, lib)) = compile("t.uglykl", KERNELS) else { return };
+        let lib = lib.with_host(vec![("t_group", host)], None);
+        let f = lib.get_function(&device, "t_group").unwrap();
+        let out = alloc_uninitialized_array_sync::<u32>(&device, 64);
+        let e = run(&device, &f, &out, Some(64), 1, 64).unwrap_err();
+        assert!(e.contains("no threadgroup row"), "{e}");
     }
 
     /// Threadgroup memory, a barrier and SIMD-group shuffles give each thread what a GPU gives it.

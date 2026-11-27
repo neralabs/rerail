@@ -218,7 +218,8 @@ sections, the program image, the corpus memo, setfix, the planner); 257 sites on
    writer's parts, a growing vector's later regions), not long-lived small ones: replayed, every region on the stack
    held 9.0 times the live bytes (headers counted), and with the large ones off it 3.2 times. They are about 2% of
    the regions, the big pieces this record's free lists were made for. A large room's chunk under 256 KB keeps its
-   pages when freed (`Block::keeping_pages_below`), as a growing vector's next step takes them again.
+   pages when freed, as a growing vector's next step takes them again: since roll-up 125, every listed block's free
+   chunk does, merged with its buddies (`ledger::GIVE_MIN`, t57 §8), and the large room's own switch is gone.
 5. **The stack is the run's default room** (`default_room`), and `AnonRoom` is gone: its free-listed blocks are the
    large room, a thread's own, with no shards.
 6. **An owner's family is made in its room** (`maps::within(room, f)`: every structure made with no room on the
@@ -260,7 +261,7 @@ Item 6's families have two owners, not one. The census's long-lived regions by t
    mechanism (decision item 4) made an owner's: a mutex over the open block, the next leased when it is full, a block
    gone with its last region. The large room becomes a `FreeRoom` a thread; an owner's is a `FreeRoom` the owner
    holds in an `Arc`, shared by the threads that make its structures. Its blocks reserve address space (pages are
-   touched as used) and keep a freed chunk's pages below `LARGE_RESIDENT`. A small region takes the free list's
+   touched as used) and keep a freed chunk's pages below `ledger::GIVE_MIN`, as every listed block does. A small region takes the free list's
    smallest class (64 bytes); the families above are a few thousand regions a run, not millions.
 2. **The memo's room** (`derived::Memo::room`): what the memo keeps is made in it. `derived::value` gives `make`
    no room; the value's maker encodes what is kept within it (`derived::placed(|| spec.encode())`), so a spec's

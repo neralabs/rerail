@@ -13,7 +13,7 @@ pub mod builtins;
 pub mod entrypoints;
 pub mod fs;
 pub mod json;
-pub mod path;
+pub use rerail_lang::code_rule_dsl::node_path as path;
 pub mod resolver;
 pub mod term;
 pub mod tsconfig;

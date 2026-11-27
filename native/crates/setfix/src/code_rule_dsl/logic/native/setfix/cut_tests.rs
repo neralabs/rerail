@@ -512,6 +512,72 @@ fn a_fused_step_past_the_bound_head_stops_at_its_first_witness() {
     assert!(into_l <= 40, "one witness a document reaches `l`, not each of its nodes: {:?}", counts[0]);
 }
 
+/// The first shape kernel (the design's layer 5): a scan and the tests on the nodes it binds, asked of their inputs a
+/// chunk at a time inside the fused row program (`rowcode::Test`), a negation's too. The rows are the rule's, and each
+/// test step's counts are the rows that reached it and those it passed, as the walk counts them row by row.
+/// `r(d, n) :- k(d), m(d, n), d != n, a(n), !b(n)`: 20 documents of 50 nodes; `a` holds the even nodes, `b` those
+/// divisible by 3.
+#[test]
+fn a_scans_tests_on_its_nodes_are_asked_a_chunk_at_a_time() {
+    let nodes = |d: i64| (0..50).map(move |i| 1_000 + d * 50 + i);
+    let k: Vec<String> = (0..20).map(|d| format!("({d})")).collect();
+    let m: Vec<String> = (0..20).flat_map(|d| nodes(d).map(move |n| format!("({d}, {n})"))).collect();
+    let a: Vec<String> = (0..20).flat_map(nodes).filter(|n| n % 2 == 0).map(|n| format!("({n})")).collect();
+    let b: Vec<String> = (0..20).flat_map(nodes).filter(|n| n % 3 == 0).map(|n| format!("({n})")).collect();
+    let db = connection();
+    db.execute_batch(&format!("CREATE TABLE k(c0); INSERT INTO k VALUES {};\nCREATE TABLE m(c0, c1); INSERT INTO m VALUES {};\nCREATE TABLE a(c0); INSERT INTO a VALUES {};\nCREATE TABLE b(c0); INSERT INTO b VALUES {};\nCREATE TABLE r(c0, c1);",
+        k.join(", "), m.join(", "), a.join(", "), b.join(", "))).unwrap();
+    let rel = |t: &str, cols: &str, kinds: &str| format!("t:b:{}:{}:{kinds}", hex(t), hex(cols));
+    let join = format!("pos {} v0\npos {} v0 v1\nne v0 v1\npos {} v1\nneg {} v1\nhead v0 v1", rel("k", "c0", "i"), rel("m", "c0, c1", "ii"), rel("a", "c0", "i"), rel("b", "c0", "i"));
+    open(&db, &format!("name kern\nrel r ii empty\nseed 0 {}", hex(&join))).unwrap();
+    {
+        let comp = component(&db, "kern").unwrap();
+        let comp = comp.lock().unwrap();
+        let Body::Join(j) = &comp.probes[0].body else { panic!("a join") };
+        assert!((0..j.steps.len()).filter_map(|i| j.fused_at(i)).any(|f| f.tests.len() == 2), "both tests fused into the scan's chunk");
+    }
+    walks_whole(|| run(&db, "kern", 0).unwrap());
+    let counts = step_counts(&db, "kern").unwrap();
+    close(&db, "kern").unwrap();
+    let want: Vec<(i64, i64)> = (0..20).flat_map(|d| nodes(d).filter(|n| n % 2 == 0 && n % 3 != 0).map(move |n| (d, n))).collect();
+    let mut got: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM r").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+    got.sort_unstable();
+    assert_eq!(got, want);
+    // Into `a` every node (1,000), out of it the even ones; out of `!b` those `b` does not hold.
+    let c = &counts[0];
+    assert_eq!(c[3], (1_000, 500), "the test of `a`: {c:?}");
+    assert_eq!(c[4], (500, want.len() as i64), "the negated test of `b`: {c:?}");
+}
+
+/// A fused test whose key reads a slot a fused `let` set (`$e = $d`, `$d` bound before the scan): the walk sets that
+/// slot only for a row that passes the chunk, so the test is given its value from the parameter, not the slot as the
+/// last row left it. `r(d, n) :- k(d), m(d, n), d != n, e = d, c(e, n)`; `c` holds each document's nodes divisible by 5.
+#[test]
+fn a_fused_tests_key_from_a_let_is_the_bound_value() {
+    let nodes = |d: i64| (0..50).map(move |i| 1_000 + d * 50 + i);
+    let k: Vec<String> = (0..20).map(|d| format!("({d})")).collect();
+    let m: Vec<String> = (0..20).flat_map(|d| nodes(d).map(move |n| format!("({d}, {n})"))).collect();
+    let c: Vec<String> = (0..20).flat_map(|d| nodes(d).filter(|n| n % 5 == 0).map(move |n| format!("({d}, {n})"))).collect();
+    let db = connection();
+    db.execute_batch(&format!("CREATE TABLE k(c0); INSERT INTO k VALUES {};\nCREATE TABLE m(c0, c1); INSERT INTO m VALUES {};\nCREATE TABLE c(c0, c1); INSERT INTO c VALUES {};\nCREATE TABLE r(c0, c1);",
+        k.join(", "), m.join(", "), c.join(", "))).unwrap();
+    let rel = |t: &str, cols: &str, kinds: &str| format!("t:b:{}:{}:{kinds}", hex(t), hex(cols));
+    let join = format!("pos {} v0\npos {} v0 v1\nne v0 v1\neq v2 v0\npos {} v2 v1\nhead v0 v1", rel("k", "c0", "i"), rel("m", "c0, c1", "ii"), rel("c", "c0, c1", "ii"));
+    open(&db, &format!("name klet\nrel r ii empty\nseed 0 {}", hex(&join))).unwrap();
+    {
+        let comp = component(&db, "klet").unwrap();
+        let comp = comp.lock().unwrap();
+        let Body::Join(j) = &comp.probes[0].body else { panic!("a join") };
+        assert!((0..j.steps.len()).filter_map(|i| j.fused_at(i)).any(|f| f.tests.iter().any(|t| t.slots.iter().any(|(_, b)| matches!(b, rowcode::Bind::Param(_))))), "the test reads the let's slot from a parameter");
+    }
+    walks_whole(|| run(&db, "klet", 0).unwrap());
+    close(&db, "klet").unwrap();
+    let want: Vec<(i64, i64)> = (0..20).flat_map(|d| nodes(d).filter(|n| n % 5 == 0).map(move |n| (d, n))).collect();
+    let mut got: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM r").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+    got.sort_unstable();
+    assert_eq!(got, want);
+}
+
 /// Decisions 0206 and 0098 §1: a component run as its closure runs its seeds first, and a seed that spends its budget
 /// is cut there as any seed is: the run returns `5`, and the next goes on from the rows it left, then runs the
 /// closure. Its seeds ran unlimited before: corpus0 (2026-11-21), `open_tuple`'s seed (a cross product, 41 M rows a

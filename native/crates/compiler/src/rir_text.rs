@@ -252,7 +252,7 @@ pub fn rule_rows(out: &mut String, rules: &[u16]) {
 }
 
 /// A reading's rows: `reading N #K as #M`, `reading N #K gone`, `reading N #K keep`,
-/// `reading N field #F as #G`; then `provisional #F`; then `extra #K`, the extras' kinds.
+/// `reading N field #F as #G`; then `extra #K`, the extras' kinds.
 pub fn reading_rows(out: &mut String, readings: &crate::stream_ir::Readings) {
     use std::fmt::Write as _;
     for (at, r) in readings.maps.iter().enumerate() {
@@ -272,9 +272,6 @@ pub fn reading_rows(out: &mut String, readings: &crate::stream_ir::Readings) {
             Some(crate::stream_ir::GONE) => writeln!(out, "  reading {at} root gone"),
             Some(m) => writeln!(out, "  reading {at} root as #{m}"),
         };
-    }
-    for f in &readings.provisional {
-        let _ = writeln!(out, "  provisional #{f}");
     }
     for k in &readings.extras {
         let _ = writeln!(out, "  extra #{k}");

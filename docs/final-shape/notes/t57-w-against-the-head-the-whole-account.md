@@ -272,3 +272,98 @@ room's own cost: a small region taken without three shared `Arc`s and two locks 
 bumped), and a wave's rows read a chunk at a time in the sort, not one span-and-column lookup a value. The largest
 takers: `ast_wave::captured_rows` (a capture's one-node `Vector`, about 2,100 samples) and `Within::rows` (a
 vector a probe, about 970).
+
+## 10. The merged head against W, again (2026-11-25)
+
+The head after the merge of django-bugs (de3b8fc8b3, with Typing-support's rooms and t60's step 2) and W's Rust
+(6970a3e539), each run profiled and sampled over the whole run on `all`, back to back on m3 at load 9: W 54.1 s CPU
+and 595 G instructions, the head 128.8 s and 1,679 G. The spans' own CPU is 46.5 s and 111.6 s. §9's account was of
+the run room the merge has since replaced, so this one starts again from the spans.
+
+**The two runs do different work.** W resolves Python's names and references in Rust as it builds each document
+("W's reference graph", 5.7 s). The head resolves them in rules: `references.rerail`, `names.rerail` and the
+helpers the planner makes for them (`pre_*`). The program both run, `internal_dead_code`, is cheaper on the head: its
+strata's join steps take 8.1 s, against W's 14.7 s (`reach_edges` 7.9 s → 0.5 s).
+
+| Own CPU of the spans, by kind of work | W s | head s | difference |
+|---|---|---|---|
+| The per-file joins (`joins: wait`, `joins: phase 1`) | 3.7 | 65.0 | +61.2 |
+| The per-file facts outside the joins (W: `local`, its reference graph; the head: the AST matchers' waves, node rows) | 22.4 | 13.8 | −8.6 |
+| The cross-file joins | 13.5 | 15.5 | +2.1 |
+| Measuring sources (the AST matchers run for `measure pkg`) | 0.1 | 5.1 | +5.0 |
+| Parsing | 3.5 | 5.0 | +1.5 |
+| Live statistics, bookkeeping | 0.1 | 2.4 | +2.4 |
+| Planning (strata, join order) | 0.1 | 1.2 | +1.0 |
+| The rest | 3.0 | 3.6 | +0.6 |
+| All | 46.5 | 111.6 | +65.1 |
+
+Outside every span: 7.0 s and 11.2 s.
+
+**Where the per-file joins go.** The steps' CPU of each stratum, summed by the file that defines its head:
+
+| Rule file | Step CPU, head |
+|---|---|
+| `references.rerail` (`rf_*`) | 22.1 s |
+| `names.rerail` (`wstart`, `bind_only`, `nameref`, `cls_early`, `param`, `binding`, `look/walk`, `tgt`, `tp_*`) | 10.0 s |
+| their helpers (`pre_387`, `pre_434`, …) | 2.8 s |
+| `internal_dead_code.rerail` | 8.1 s (W: 14.7 s) |
+| the rest of the library | 5.3 s |
+
+So name resolution costs the head about 35 s of steps, plus the joins' work around the steps, where W's Rust takes
+5.7 s. That is most of the gap: the 3.5x is the rules for references against Rust, not the engine's overhead.
+
+**The AST matchers.** Their spans take 13.0 s on the head (the wave run 8.65, captures 2.83, confirmations 1.20, rows
+0.33), against 4.7 s on W, and their threads allocate about 12 GB, against about 2 GB on W. `literal_str`'s
+batch is the largest: 6.0 GB in 29 calls, because the matcher's rows are made on its first read.
+
+**Smaller items.** `look/walk` takes 3.17 s but only 0.7 s in steps; its recursion's rounds cost the rest.
+String annotations 2.08 s, identity maps 1.42 s (W 0.11), `Fresh::settle` 0.58 s.
+
+**Memory.** Peak footprint 2,426 MB against 1,075 MB. What the run wrote is close on both (1,236 MB at most against
+1,056 MB, decision 0435). W's peak is what it wrote, and the head's is twice that: about 1.2 GB the account of
+0435 doesn't cover. It needs its own breakdown.
+
+**What follows, in order of CPU:**
+1. The references and names rules (about 35 s of steps): their heaviest heads are `rf_in`, `wstart`, `bind_only`,
+   `rf_ref`, `nameref`, `rf_bind`, `cls_early`, `rf_expr` and `rf_selfish` (§8: E7, E4, E6, E9, E10).
+2. The AST matchers (13.0 s against 4.7, 12 GB of allocation): the captures written as rows, the kind read from the
+   code alone.
+3. `look/walk`'s rounds, the live statistics, the identity maps.
+4. The 1.2 GB of peak memory that 0435's account doesn't cover.
+
+## 11. The list of §10 not taken elsewhere (2026-11-25)
+
+After merging phased-facts (ca60a3ad0c), django-bugs (58029a3b26) and Typing-support (53269b48ad). Typing-support
+took E4, E7, `literal_str` and the per-value tape reads; django-bugs t60's allocations. This is the rest.
+
+**The debug relations** (`dbg_cls`, `dbg_rd`) were the measurement's, not the engine's: its copy of the program
+(`idc_dbg`) added them, and `dbg_cls` ran an AST matcher of 1.4 M rows. The runs now take `idc_head`, W's program as
+the head reads it. `rr_embed_req` is the engine's request for embedded parses (string annotations), not a debug
+relation; W has no such parse.
+
+**The AST matchers.** Without `dbg_cls`, the head's matchers take 7.9 s against W's 10.0 s in the same run (wave
+7.9 s → 5.3 s, captures 2.2 s, confirmations 0.4 s): no longer a gap. The captures now write a tape's rows into one
+buffer as W's match binds them (`findings::captured_each`), no `Vector` a capture and no row cloned a capture. The
+cost case `the_matcher_wave_allocates_little` still fails (an earlier "passes" here was wrong): six runs at
+ec929805d0 allocate 1,632-1,636 bytes a name read, and six at the merge of django-bugs (187dc91678) 774-777, its
+bound 128. The merge's arenas (394543d27f, f5e6f0d694) take it from about 1,630 to 775; diffs reversed in the tree:
+without them 1,625, without the whole django merge 1,637. What remains is one wave over a chunk's documents made
+ahead (1.20 MB of 1.25 MB).
+
+**E6 and E10: a plan's tests in the order that drops rows soonest** (`tests_ordered`). Cost cases: `cls_late` 945 →
+657 units, `rf_builtin` 3,441 → 2,881. Their orders are now as the cases ask; what keeps them over their bounds is a
+unit a row for each comparison step, which E3 measured at under 1% of the steps' CPU. `rf_crossing` (0.3 s on `all`)
+and `rf_fcond` (under 0.03 s) are one `nearest` read a row each; E9's `rf_same_qn` costs 0.07 s on `all` (59 k pairs,
+mostly a name with itself). None of the three is built: each is under 0.3% of the head's CPU.
+
+**`look/walk`**: 3.9 s, 0.63 s of it in its steps. Its delta plans show no rows (the profile's steps see none of
+its rounds), and the closure form has a few dozen samples. Where the rest goes is still open: the rounds of its
+recursion inside `engine run (joins)`, unspanned.
+
+**The peak** (`all`, profiled, 2,523 MB; the profile now counts the threads' stacks and long rooms, and the free
+chunks whose pages went back): heap 528 MB (379 live); blocks in memory 1,263 MB, of which 764 MB are live and
+499 MB free on their lists; the threads' stacks 302 MB; their long rooms 42 MB; the device's idle buffers 19 MB;
+the rest 368 MB (code, thread stacks, maps). W's 1,075 MB: heap 1,001 MB, blocks 124 MB. So the head's excess is
+blocks (+690 MB live, +450 MB free and resident) and the stacks (+302 MB), against 470 MB less heap. Next: the
+free lists' resident chunks (499 MB) given back at a high-water mark, and which stacks hold 302 MB at the peak
+(the census, `RERAIL_ANON_CENSUS`).

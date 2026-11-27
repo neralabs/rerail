@@ -49,6 +49,7 @@ const REL_INDEXES: i32 = offset_of!(Relation, indexes) as i32;
 const INDEX_MASK: i32 = offset_of!(Index, mask) as i32;
 const INDEX_OFFS: i32 = offset_of!(Index, offs) as i32;
 const INDEX_ROWS: i32 = offset_of!(Index, rows) as i32;
+const INDEX_MARKS: i32 = offset_of!(Index, marks) as i32;
 const INDEX_SIZE: i64 = size_of::<Index>() as i64;
 const BLOOM_WORDS: i32 = offset_of!(Bloom, words) as i32;
 // A sealed chunk's frozen column (`col::IntCol`, decision 0622).
@@ -611,6 +612,16 @@ pub fn rel_group_row(b: &mut B<'_, '_>) -> Value {
     let ix = index(b, idx);
     let rows = b.follow(ix, INDEX_ROWS);
     let p = b.item(rows, k, 4);
+    b.word_at(I32, p, 0)
+}
+
+/// `rel_group_mark(rel, idx, k)`: entry `k` of index `idx`'s marks (decision 0671): the tag of its row's key, and
+/// `MARK_SAME` (bit 0) where its key is its bucket's head's for its tag.
+pub fn rel_group_mark(b: &mut B<'_, '_>) -> Value {
+    let (idx, k) = (b.arg(0), b.arg(1));
+    let ix = index(b, idx);
+    let marks = b.follow(ix, INDEX_MARKS);
+    let p = b.item(marks, k, 4);
     b.word_at(I32, p, 0)
 }
 

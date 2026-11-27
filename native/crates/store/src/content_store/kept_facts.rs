@@ -255,6 +255,39 @@ impl KeptSpace {
         Self::mapped(store, space, rows).map_err(|(path, e)| StoreError::Corrupt(format!("a space's kept facts: {}: {e}", path.display())))
     }
 
+    /// `space` as connection `t` finds it: its chain's rows, read, then the files they name, mapped; `None` when it
+    /// keeps none. A writer's commit sweeps the files it replaced (`sweep`), and one the rows named can go between
+    /// the read and the mapping (another shared object's writer in this process, or another process): the rows are
+    /// read again, and name the files that commit wrote. Outside a transaction each read is the store's last commit;
+    /// inside a write transaction no commit comes between. A file gone from rows read twice the same is corruption.
+    pub fn read(store: &Path, t: &Connection, space: &[u8; 32]) -> StoreResult<Option<KeptSpace>> {
+        Ok(Self::read_rows(store, t, space)?.map(|(_, kept)| kept))
+    }
+
+    /// `read`, with the rows the space was mapped by (a reader that keeps a mapping while its chain stays).
+    pub fn read_rows(store: &Path, t: &Connection, space: &[u8; 32]) -> StoreResult<Option<(ChainRows, KeptSpace)>> {
+        Self::settle(store, t, space, chain_rows(t, space)?)
+    }
+
+    /// `read_rows` from `rows`, read on `t` earlier: the rows read again where a file they name is gone.
+    pub(crate) fn settle(store: &Path, t: &Connection, space: &[u8; 32], mut rows: ChainRows) -> StoreResult<Option<(ChainRows, KeptSpace)>> {
+        loop {
+            if rows.is_empty() {
+                return Ok(None);
+            }
+            match Self::mapped(store, space, &rows) {
+                Ok(kept) => return Ok(Some((rows, kept))),
+                Err((path, e)) => {
+                    let again = (e.kind() == std::io::ErrorKind::NotFound).then(|| chain_rows(t, space)).transpose()?;
+                    match again {
+                        Some(now) if now != rows => rows = now,
+                        _ => return Err(StoreError::Corrupt(format!("a space's kept facts: {}: {e}", path.display()))),
+                    }
+                }
+            }
+        }
+    }
+
     /// `open`'s files, or the first that does not open, with why.
     fn mapped(store: &Path, space: &[u8; 32], rows: &ChainRows) -> Result<KeptSpace, (PathBuf, std::io::Error)> {
         let dir = space_dir(store, space);
@@ -409,6 +442,53 @@ impl RowsIn for PutRows<'_> {
             PutRows::Picked(rows) => rows.get(r, c),
         }
     }
+    /// A relation's chunk read where it lies: rows from a position on, as a range of its column (`Rows::read_range`: a
+    /// chunk at a time, a sealed chunk decoded in one pass); rows by id, through the column resolved once (`reader`).
+    /// A continuation's rows, down its chain, row by row. A picked put's by its own read.
+    #[inline]
+    fn read(&self, c: usize, at: rerail_blocks::packed::At<'_>, out: &mut [i64]) {
+        use rerail_blocks::packed::At;
+        match self {
+            PutRows::Rel { rel, ids, .. } if !rel.continues() => match (ids, at) {
+                (None, At::From(r)) => rel.rows.read_range(c, r as u32, out),
+                (ids, at) => {
+                    let col = rel.rows.reader(c);
+                    let id = |r: usize| ids.as_ref().map_or(r as u32, |ids| ids[r]);
+                    match at {
+                        At::From(r) => {
+                            for (j, o) in out.iter_mut().enumerate() {
+                                *o = col.get(id(r + j));
+                            }
+                        }
+                        At::Rows(rows) => {
+                            for (o, &r) in out.iter_mut().zip(rows) {
+                                *o = col.get(id(r as usize));
+                            }
+                        }
+                    }
+                }
+            },
+            PutRows::Rel { rel, ids, .. } => {
+                let one = |r: usize| {
+                    let id = ids.as_ref().map_or(r as u32, |ids| ids[r]);
+                    if rel.continues() { rel.get(id, c) } else { rel.rows.get(id, c) }
+                };
+                match at {
+                    At::From(r) => {
+                        for (j, o) in out.iter_mut().enumerate() {
+                            *o = one(r + j);
+                        }
+                    }
+                    At::Rows(rows) => {
+                        for (o, &r) in out.iter_mut().zip(rows) {
+                            *o = one(r as usize);
+                        }
+                    }
+                }
+            }
+            PutRows::Picked(rows) => rows.read(c, at, out),
+        }
+    }
 }
 
 /// `rows` with each atom column's ids mapped (a forked process's to the store's, `map`): each column's distinct ids
@@ -431,6 +511,15 @@ impl RowsIn for Mapped<'_> {
         match &self.tables[c] {
             Some(t) => t[&v],
             None => v,
+        }
+    }
+    #[inline]
+    fn read(&self, c: usize, at: rerail_blocks::packed::At<'_>, out: &mut [i64]) {
+        self.rows.read(c, at, out);
+        if let Some(t) = &self.tables[c] {
+            for v in out.iter_mut() {
+                *v = t[v];
+            }
         }
     }
 }
@@ -491,7 +580,12 @@ fn put_rows(w: &mut KeptW, meta: Meta, p: &KeptPut, map: Option<MapIds>) -> Stor
     let (rows, levels) = rows_of(&p.what);
     let mapped = map.map(|m| Mapped::of(&rows, &p.types, m)).transpose()?;
     let rows: &dyn RowsIn = match &mapped { Some(m) => m, None => &rows };
+    // `RERAIL_KEPT_PUT_TRACE`: each put's relation, its values and the time its rows took to pack and write.
+    let traced = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_KEPT_PUT_TRACE").is_some()).then(std::time::Instant::now);
     w.put_rows(meta, rows, levels.as_deref(), given).map_err(StoreError::Io)?;
+    if let Some(t0) = traced {
+        eprintln!("RERAIL_KEPT_PUT {} values {} arity {} us {}", p.rel, expected_bytes(&p.what) / 3, p.types.len(), t0.elapsed().as_micros());
+    }
     Ok(())
 }
 
@@ -1051,20 +1145,17 @@ impl super::ContentStore {
             }
             Err(_) => {}
         }
-        let now = {
+        let read = {
             let connection = self.connection.lock().expect("content store mutex poisoned");
-            chain_rows(&connection, space)?
+            KeptSpace::read_rows(&self.database_path, &connection, space)?
         };
+        let now = read.as_ref().map(|(rows, _)| rows.clone()).unwrap_or_default();
         super::held::snapshot_kept(&self.database_path, |kept| {
             if let Some(kept) = kept {
                 kept.insert(*space, now.clone());
             }
         });
-        if now.is_empty() {
-            return Ok(None);
-        }
-        let kept = KeptSpace::open(&self.database_path, space, &now)?;
-        Ok(Some((now, kept)))
+        Ok(read)
     }
 
     /// The kept facts of `space` as this process holds its chain's rows (else the store's last commit), mapped
@@ -1103,12 +1194,15 @@ impl super::ContentStore {
     }
 }
 
+/// A space's chain as mapped: the rows that named its files, and the mapping.
+type MappedChain = (ChainRows, Arc<KeptSpace>);
+
 /// Each space's chain as this process mapped it, by the store's file and the space, with the rows that named its
 /// files (`kept_space`): mapped again only when a commit changed them. A file a row names is never rewritten (a
 /// write makes a new file, and its row), so a mapping of the same rows reads what a new one would. The shared
 /// object's (decision 0442), shared by design by the runs on a store.
 #[derive(Default)]
-struct MappedSpaces(std::sync::Mutex<HashMap<(PathBuf, [u8; 32]), (ChainRows, Arc<KeptSpace>)>>);
+struct MappedSpaces(std::sync::Mutex<HashMap<(PathBuf, [u8; 32]), MappedChain>>);
 
 impl super::ContentStore {
     /// Notes `space`'s chain as a write in a transaction of this process's left it (`written`, from `write_space`),
@@ -1162,7 +1256,7 @@ pub fn by_relation(path: &std::path::Path) -> StoreResult<Vec<KeptOf>> {
     let mut by: std::collections::HashMap<(String, &'static str), (usize, usize, usize)> = Default::default();
     for s in &spaces {
         let space: [u8; 32] = s.as_slice().try_into().map_err(|_| StoreError::Invalid("a space of another length".into()))?;
-        let kept = KeptSpace::open(path, &space, &chain_rows(&c, &space)?)?;
+        let Some(kept) = KeptSpace::read(path, &c, &space)? else { continue };
         for k in kept.view().all() {
             let bytes = (0..k.rows.arity as usize).map(|col| k.rows.col(col).bytes()).sum::<usize>() + k.rows.levels().map_or(0, |l| l.bytes());
             let what = match k.key.part { 0 => "rows", p if p > 0 => "granule", _ => "beside" };

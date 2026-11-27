@@ -688,6 +688,488 @@ Left: numbers' link (55 a node, half of its two). Its chains are long and many l
 round is a gather. Those rounds' indices are consecutive only among the running lanes, and a vector over them
 reads past every address the C proves valid.
 
+## Step 3, the engine's bulk parents: `label_parents` (the user's, 2026-11-23)
+
+The user: "if we don't call it directly, then find which UKL kernel we _do_ run inlines this and use it from there"
+and "improve current host performance on a kernel which actually runs (the "engine bulk pass")". The engine has no
+host caller of the step. Its bulk parent pass is `label_passes.uglykl`'s `label_parents` (decision 0475), which the
+CPU device runs as c++ of its UKL. It has a thread per word of 32 nodes, its slot read inlined (`tape_parent`,
+`clif_tape_slot`), heads on a local atomic list, and 3 rounds of pointer jumping in threadgroup memory, between 6
+barriers.
+
+rs.rs now writes it (`ukl_aot/src/label_parents_w8.rs`, from the source as the engine assembles it, the format 16
+define for its specialization constant). That took these, each in the compiler:
+
+1. **Phases inside a callee.** A call of a function with phases spans them (`Part::Sub`): its first phase in the
+   caller's, each next one a phase of its own, its state after the caller's. A loop of a constant count (at most
+   16) whose body a barrier parts is its rounds one after another (`unrolled`, `Part::Set`).
+2. **A struct copied from bytes no lane writes** (`DocView d = docs[file]`): read in place where its copy is only
+   read, with no copy kept (decision 0353). An aggregate argument is each lane's address.
+3. **Constant memory** (`static DATA`); a scalar loaded from it is its literal.
+4. **A load at one index for all lanes:** where the running lanes' indexes are one (a view's fields, when a group's
+   words are one file's), one load and a broadcast.
+5. **Lanes a stride apart** (`up[lane * 32 + b]`): each lane's load and store at its step from the first's
+   (`vld1q_lane_u32` / `vst1q_lane_u32`, a lane that does not run storing to the stack), where no index wraps;
+   else each lane's index.
+6. **A loop whose `continue`s are some lanes'** is rounds of one condition, with a mask of the round's lanes that
+   continued; every lane comes to the step.
+7. **Unsigned `/` and `%` of lanes by a power of two** are a shift and a mask, not each lane's division.
+
+Instructions (cycles) a node, one run of `label_bench` (20 runs less 1, the setup and the c++ compile out), this Mac
+under load. `cpu` is the CPU device's c++ of the same UKL (`RERAIL_GPU=cpu`):
+
+| | records (700,002 nodes) | numbers (700,002) | random (190,963) |
+|---|---|---|---|
+| Rust, first run | 129.9 (29.8) | 155.7 (40.7) | 136.0 (41.6) |
+| Rust, 4 | 116.9 (25.7) | 136.2 (30.7) | 122.3 (29.3) |
+| Rust, 5 to 7 | 99.7 (21.1) | 119.4 (25.3) | 105.3 (23.3) |
+| c++ (`cpu`) | 111.7 (40.5) | 157.0 (49.9) | 118.7 (58.0) |
+
+The guard: `the_label_passes_parents_take_no_more_instructions` (ukl-aot) counts the test thread's instructions
+(`thread_selfcounts`) and fails above a tenth over 98.1, 117.3 and 103.3 a node, or at the host's scalar read
+(105.3, 491.9, 132.1). The checked-in test asserts the shapes of 4 to 7.
+
+### The CPU device runs it (2026-11-23)
+
+The checked-in Rust the engine runs lives in `rerail-ukl-rust` (no dependency): each kernel with the digest of the
+source and defines it was written from (`sources.rs`, FNV-1a over the defines as `#define` lines, then the text).
+rerail-ukl-vec's test writes both; ukl-aot re-exports the crate's `Launch`, so it is one definition.
+
+`rerail_gpu::kernels::program_with` compiles the library as before, then `with_rust(text, defines)`. On the CPU,
+a kernel whose program has a digest here runs as its Rust (`Run::Host`), its arguments the compiled library's
+rows bound as before, each group in turn on the queue's thread. A launch that gives it a threadgroup row is refused:
+its threadgroup memory is its own. Any other kernel, source, format or processor is the compiler's build, as
+before. `RERAIL_CPU_RUST=0` keeps the compiler's build, for measuring.
+
+The engine's test `the_label_source_is_the_one_its_rust_was_written_from` (device_metal) checks that the label
+source a run's batch compiles has that digest, so a change to the passes or their pieces fails it until the Rust
+is written again.
+
+The device's run (`label_bench`, `cpu`), instructions (cycles) a node:
+
+| | records | numbers | random |
+|---|---|---|---|
+| the device, its Rust | 99.1 (20.9) | 119.4 (25.9) | 105.0 (23.6) |
+| the device, `RERAIL_CPU_RUST=0` (c++) | 111.6 (33.0) | 156.1 (38.9) | 117.6 (53.5) |
+
+## Step 3, the leaf tests: `label_leaves` (2026-11-23)
+
+The next kernel of the label passes: each node's leaf tests, a thread a word of 32 nodes, its tests' bits a block
+of 8 in `bits[LEAF_BLOCK]`. rs.rs writes it now (`rerail_ukl_rust::label_leaves_w8`, checked in by rerail-ukl-vec's
+`the_label_leaves_kernels_rust_is_the_checked_in_one`). rerail-ukl-aot's `the_label_passes_leaves_are_the_cpu_devices`
+holds it to the CPU device's c++ build of the same UKL, over each document alone and all of them in one batch. What
+rs.rs gained:
+
+1. **A thread's array** (a variable over 8 bytes, its every access a 4-byte integer's at it plus an offset) is an
+   array of registers of the chunk's lanes, each element one (`arrays`, `elem`). Its offset is one value for all
+   lanes, or an index the vector tape proves one value in the lanes that run, kept as each lane's: the largest of
+   the running lanes'. Not under barriers yet (a phase's state would have to hold it).
+2. **A variable whose every read is of one value in the lanes that run** (the tape's `Uniform`: where control
+   rejoins, a variable written apart is raised to the level that split it) is one value, wherever its writes run
+   (`read_uniform`). The test loop's `j` was each lane's, because it is set inside the varying node loop. That made
+   every test's dispatch a mask, where it is one branch.
+3. **A `break` all the lanes in a round take together** (each statement between the loop and it an `if` of a
+   condition of one value) is Rust's `break` of the loop's label (`Cx::exit`). It is not a mask of lanes that left.
+4. **Each lane's addresses of a pointer** (64-bit lanes, as `[usize; W]`) are made once where the variable is set,
+   and reused by its every read in that block (`addrs`, in `memo`). The same holds for the pointer plus one offset
+   (a field). A loop forgets those of the variables it sets. The code's kind, field and flags were one rebuild each.
+5. A function returning a pointer starts its result at null, not `0`.
+
+The test documents had no code table. Their views pointed past their bytes, so both builds read whatever lay there,
+and differed from run to run. `parent::json_doc` now places the language's codes after the tape, as a slab does.
+
+`label_bench`, `LABEL_KERNEL=leaves`, 23 tests (each kind at several arguments), instructions (cycles) a node:
+
+| | records | numbers | random |
+|---|---|---|---|
+| the Rust | 1577.1 (460.2) | 2120.8 (544.5) | 1712.2 (522.0) |
+| the CPU device's c++ | 1734.2 (277.5) | 3313.8 (618.2) | 1856.0 (394.9) |
+| the Rust, the code's tests alone (19) | 475.1 (92.5) | | |
+| the c++, the code's tests alone | 822.1 (123.4) | | |
+| the Rust, tests 18 / 19 / 21 / 22 | 342.1 (101.5) / 118.2 (24.8) / 394.0 (125.1) / 547.0 (179.1) | | |
+| the c++, tests 18 / 19 / 21 / 22 | 340.2 (62.1) / 171.5 (31.5) / 287.9 (56.9) / 407.3 (79.1) | | |
+
+The tests of a node's code are faster than the c++, and so is test 19 (a node's size). Tests 18, 21 and 22 are
+slower. Each walks the tape (`tape_next`, a node's children, its siblings) in loops whose rounds differ from lane to
+lane, and a round is a gather of each lane's. On records and random the whole is more cycles than the c++, so the
+device does not run it yet (`rerail_ukl_rust::kernels` names `label_parents` alone). Next: the walks' loops.
+
+## Step 3, the join program: `join_run` (the user's, 2026-11-23)
+
+The user: "replace the hand-coded CPU join path by an uglykl path, so that both CPU and GPU are running the same
+kernel (but one via AOT Rust and the other via Metal/whatever)". The kernel is `join_stages.uglykl`'s `join_run`, the
+work-queue program Metal runs (`metal_join::program_pipe`, `JOIN_PROGRAM`), with the view reads of `view.h` (all
+three formats: the format is the view's, chosen at run time). rs.rs now writes all of it: 1,039 instances of 370
+functions, at 32 lanes, one SIMD group a group (`rs::kernel_group`: its barriers lower to nothing, its SIMD-group
+operations act across the chunk's registers). What it took, in the lowering (`lower.rs`) and in rs.rs:
+
+1. **C the program uses**: an enumeration at file scope (its enumerators `int` constants), `offsetof`, and a call
+   whose callee is a parenthesized typedef (a cast).
+2. **A thread variable's address passed** (`&mut`, `Sh::Ref`), **a thread array passed** (`Sh::Arr`), and **a
+   structure of fields** (each field a variable, `fields`): copied into whole, passed whole, returned. A structure
+   read whole has every byte a field's: the bytes no access names are fields too (`gaps`). Without them, the stage
+   record `join_run` copies and passes to its stage dispatch had its op as `0`, and LLVM, rightly, removed every
+   stage (the kernel compiled to 52 KB). A structure copied in from memory and only read is read where it is
+   (`aliasable`), not copied. A structure of other uses is bytes of each lane's.
+3. **`switch`** (an entry index; a case runs where `e <= j`; a `break` all lanes take, the label, else a mask),
+   **`do`**, atomics of every operation (one at each lane's address, a loop over the lanes), a fence, the SIMD-group
+   operations (ballot, reductions, shuffles), lanes of 1 and 2 bytes, aggregate results, updates of memory, a
+   store at each lane's address.
+4. **A loop whose breaks are its label's** no longer sees an outer loop's mask of lanes that broke: with it, a
+   `break` of the inner loop wrote that mask and the loop went on (`label_leaves` lost a test's bit to it; its test
+   against the c++ build caught it).
+5. **At 32 lanes the code is written once over registers and lanes** (`rolled`): a register list that is one
+   expression of its index is `core::array::from_fn` (`roll`), a 64-bit value's two halves too, and a gather is a
+   loop over the lanes into a `[u32; 4P]` (`load_lanes`). `join_run`'s Rust went from 29 MB to 10.7 MB.
+6. **A function the source declares a call** (`UKL_SHARED`, `UKL_LARGE`, `UKL_COLD`) is the Rust compiler's to inline
+   or not when its instance is over 200 lines (`CALLED_LINES`), inlined otherwise. The label passes' reads are
+   54 lines at most; left to LLVM they stayed calls, and in instructions (`label_bench`, 700 K nodes, 20 runs)
+   `label_parents` took 1,511 M against 1,403 M inlined, `label_leaves` 24,837 M against 22,947 M.
+
+`join_run`'s 10.7 MB of Rust compiles (rustc, opt-level 1) in 587 s at 6 GB, to 9.5 MB of code. That is not a
+kernel to check in: the instances of the view reads are the bulk (`clif_verdict_entry` and `clif_cache_open` 3,800
+lines each, twice; each format's `view_loc_*` read 1,900). Next: the code's size, then the kernel against Metal's
+and the c++ build's results, then the CPU joins on it.
+
+### The reads called, not written again (the user's: "under 200kb ... substantially smaller than 1MB", 2026-11-23)
+
+The reads written once in CLIF (decision 0310) are compiled code on the CPU already (`rerail_clif::jit::Reads`). A
+kernel's Rust now calls them through the launch's table (`Launch::reads`, `READS`' order: `Reads::table`), not as 32
+lanes' vector code of their UKL (`rs::Read`, `call_compiled`): once where the arguments are each one value, else once
+per running lane, its result gathered into the lanes. Their UKL passes a base `t` and the pointer's offset `a0` from
+it, and computes addresses as offsets from `t`; the compiled read takes `t + a0`. So a read whose result is an
+address from that pointer gives its result less `t`, and one parameter that is an address (`cache_done`'s) is passed
+plus `t`: `reads::addresses`, a flow of the pointer through each read's CLIF, finds them
+(`the_reads_addresses_are_these`: eight results, one parameter).
+
+Two changes it needed in `rs.rs`. A structure copied whole that `fields` had left to be read in place, where its copy
+then finds it cannot be (its source's bytes a write reaches), is marked (`unaliased`) and gets its fields from the
+next pass. And a pass that learned something and then refused a statement ends only that pass: the refusal may be of
+what it learned too late to apply.
+
+`join_run`'s Rust: 10.8 MB to 2.53 MB (26,245 lines, 309 instances of 161 functions; the view, relation and lines
+reads now 79 calls). The largest: `row_text_one` 210 KB, `txt_of` 174 KB (2 instances), `lat_merge_one` 145 KB,
+`ukl_radix_scatter_tile_u32_prog` 134 KB (2). Not compiled yet. Next: the instances (one per shape where shapes
+differ little), then the text of each (declarations, splats, masks).
+
+### The instances and their text (the user's: "please address these", 2026-11-23)
+
+`join_run`'s Rust, 2.53 MB to 669 KB (17,026 lines), in these steps (each its size after):
+
+1. **Instances of one text, once** (2.33 MB). A function's instances are keyed by what a call knows of its arguments
+   (`Em::inst`), and some of that changes nothing written. The module's last pass (`merge_instances`) writes once each
+   set whose text is one but for its temporaries' numbers and its callees (each merged too, to a fixed point).
+2. **A lane's loads and stores as loops** (1.70 MB). A gather, a scatter, a strided store: a loop over the lanes of
+   their words, not 32 lines of `vgetq_lane_u32` (`lane_words`).
+3. **Operations over the registers, once** (1.23 MB, then 1.11 MB). `roll` takes a list whose elements are one
+   expression but for a constant offset from the register's index (`x[r]` and `x[r + 8]`, a 64-bit value's
+   halves); the prelude has each NEON operation of whole registers over a kernel's arrays (`and_r(a, b)` for
+   `from_fn(|r| vandq_u32(a[r], b[r]))`), its reductions (`maxv`, `minv`, `maxv_on`), and its words of registers
+   (`words8`, `regs8`); indentation is a tab.
+4. **Large functions written once** (959 KB). A function the source declares a call, or of more than 400 nodes
+   (`vector::JOIN_NODES`), has one body for its calls, not one per context (`vector::joins`), at a call where
+   neither it nor its caller reaches a sync point: a context is what shows a group's lanes reach one together, and
+   a callee's result of one value what keeps its caller's control so. Its instances' shapes are joined in its Rust
+   (`Em::joined`): a value's parameter each lane's where calls differ, the instance of a mask where any call's lanes
+   part.
+5. **Names and types** (854 KB). Temporaries are numbered in each function; a `let`'s type is left out where its
+   value says it (`untyped`); a function that does not read the thread's id does not compute it.
+6. **The lanes' accesses as the prelude's functions** (699 KB): an element of each lane's index (`ld_u32(b, ix, s)`,
+   one load where the indexes are one), a running lane's index for one that is not (`ix_on`), a load or a store at
+   each lane's address (`ldj_u32(|j| ...)`, `stj_u32(k, v, |j| ...)`), each lane's 64-bit address (`addrs`), and the
+   operations of one register NEON has as several (`vmulhiq_u32`, `vlt64q_u32`, `veq64q_u32`, `vadcq_u32`) or a
+   64-bit splat (`splat64`), which roll as NEON's do.
+7. **Splats** (669 KB): the zero register a constant (`Z`), a value in every lane `splat(x)`.
+
+**Compiled** (the user's "compile it and see"). At opt-level 1 `join_run` did not compile in 15 minutes: one thread
+in LLVM's full unroll of loops (`LoopFullUnrollPass`), its time in `ScalarEvolution::forgetLoop`. The prelude's
+functions of a loop over the lanes (`ld_*`, `ldj_*`, `stj_*`, `stjf_*`) were `#[inline(always)]`, inlined before
+LLVM simplifies anything, so each of their 32-iteration loops was unrolled in the kernel's function, every unroll
+walking that function's values. As `#[inline]` each is simplified (unrolled) on its own and then inlined: 158 s,
+1.2 GB, 2.1 MB of code. Keeping long instances out of line instead (`#[inline(never)]`) did not end the unrolls'
+walk and cost `label_parents` 2-4% of its instructions; it was not kept.
+
+Every kernel checked in at 8 lanes is now also checked in at 32 (`rerail-ukl-aot`'s `*_w32`,
+`the_kernels_rust_at_32_lanes_is_the_checked_in_one`), and its tests run both against the same answers (the scalar
+kernels', the host's parents, the CPU device's c++ build's leaves): the Rust of more than two registers, which only
+`join_run` had, is run. Writing them found an operation reading a 64-bit value's low half as an array of the
+result's registers; such an operand is `lo(x)` (`Em::wide`).
+
+### The oracle: `join_run` by hand (the user's: "hand-create an idiomatic Rust SIMD version of the kernel ... then identify the correct structure of the code ... I am SURE that we need much smaller functions", 2026-11-23)
+
+`rerail_ukl_rust::join_run` is the join program written by hand from `join_stages.uglykl`: 2,609 lines, 90 KB,
+117 functions (median 9 lines; the largest `row_text` 186, the turn loop `run` 94, the item's dispatch `item` 88).
+It calls the compiled reads through `Launch::reads` as rs.rs's Rust does (36 of them, their places checked against
+`READS`: `the_reads_are_at_their_places`). The CPU device runs it in place of its c++ build for the join program's
+three texts (formats 0, 16 and 16z, `JOIN_PROGRAM`; the format is the view's, read by the compiled reads, so one Rust
+serves all three; `the_join_programs_rust_is_of_this_source` fails when the source changes). For it the CPU device
+now gives a kernel's Rust the compiled reads: `rerail_ukl_rust::Reads`, a table and the JIT's code that holds it,
+made by rerail-gpu (`rerail_clif::jit::Reads`) for the library whose kernel calls them (`calls_reads`), none for
+the others, and kept by that library.
+
+**Checked.** `setfix::device`'s 39 tests (`RERAIL_GPU=cpu`: the strata, the parity families, recursion, lattices,
+texts, verdicts, views) pass on it, as on the c++ build (`RERAIL_CPU_RUST=0`). Two things they found. `substr`'s
+range wraps on the device (`substr_range` of extreme numbers); the Rust's did not, and a debug build panicked. And
+a kernel's Rust that panicked took the CPU queue's thread with it, and the batch's waiter waited for ever: the
+launch now catches it, and the panic is the launch's error.
+
+**Measured** (this Mac, rustc 1.99.1, `rustc --crate-type=lib -C codegen-units=1` of the file alone):
+
+| | rs.rs's `join_run` (32 lanes) | the hand-written `join_run` |
+|---|---|---|
+| Rust | 669 KB, 309 functions (`row_text_one` 58 KB, 1,329 lines) | 90 KB, 117 functions (`row_text` 186 lines) |
+| opt-level 1 | 158 s, 1.2 GB, 2.1 MB of code | 0.6 s, 42 KB of code |
+| opt-level 3 | 337 s, 1.9 MB of code | 0.8 s, 51 KB of code (17 functions after LLVM's inlining) |
+| a group's threads | 32 of its 256 | 256 |
+
+**The structure.** The program's work is a thread's: an item's job is a function of `t` (`stage_count_one`,
+`dedup_claim_one`, `lat_merge_one`, ...) whose control is the thread's own (a candidate loop runs to its binding's
+end, a probe takes its hash's chain, a CAS loop its own retries, a text its own length), and whose every step calls a
+read or follows an address. The oracle is that, read as a CPU runs it:
+
+1. **A group is a loop over its threads**, each a call of the item's function (`Prog::item`): scalar, its branches
+   one arm, its loops its own, its calls calls. LLVM inlines what it chooses.
+2. **What a SIMD group does together is one thread's walk.** `row_text`'s automaton over a text's bytes (the GPU's
+   chunked prefix of states), a `.`'s or a `/`'s place (a ballot, a minimum), a text's characters (a sum), a compare
+   eight bytes a word: each a loop over the bytes.
+3. **The group's own steps are plain code.** Lane 0 takes an item, a barrier, every thread reads it: one thread takes
+   it and runs it. A scan's tile is a running sum; a sort's tile a histogram and a stable scatter.
+
+rs.rs writes the other shape: every value of every function is the 32 lanes' (`[uint32x4_t; 8]`, 16 registers for
+64 bits), both arms of a branch run under masks, a read is a loop over the running lanes, and a function has an
+instance for each shape of its arguments. For code whose lanes part at the first branch this multiplies the text
+and buys nothing: the vector work is masks. And `kernel_group` takes one SIMD group for the group, so of a group's
+256 threads only 32 run.
+
+What rs.rs must do so that its `join_run` is the oracle's size:
+
+- **A width for each function, not one for the kernel** (step 3's bar: "width 1–32 per block"). A function whose
+  control depends on its thread's values (a loop bound, a branch on a read, an address followed) is width 1: written
+  once as the source's function, scalar, a call. Width 32 is for a block whose lanes keep together and whose
+  operations are each lane's (consecutive loads, arithmetic, selects), as `label_parents`' are.
+- **A kernel cut at its barriers, each part a loop over the group's threads** (all of them, by SIMD groups where a
+  part is width 32), what a thread holds across a cut in arrays of the group's threads.
+- **A SIMD-group operation a cut too**: the lanes up to it a loop, the operation over their values, the lanes after
+  it a loop.
+- **No instances at width 1** (one value has one shape), and no inlining of the generator's own: functions the size
+  of the source's.
+
+### The program's own waste, on Metal and the CPU alike (the user's: "Fix the join program that metal runs as well", 2026-11-23)
+
+A profile of the closure stratum (400 nodes, 157,228 rows; the CPU device running `join_run`) put most of the time
+in the program's own work, not the joins': the round's dedup table cleared at its room, and the head's index rebuilt
+every round. Both are the program's, so both are fixed in `join_stages.uglykl` (Metal's) and `join_run` alike.
+
+1. **The dedup's places are its round's rows'** (done). A dedup's table was twice its input's room, cleared every
+   round: 2^20 places for a union of room 311,855 that a round fills with a few thousand rows. Its clear, its claims
+   and its marks now take their mask from the round's rows (`dedup_mask`: twice `min(totals[in_slot], cap)`, a power
+   of two, 16 at least, within its room), and the clear's items are those rows and 4, four places a thread. Closure:
+   245 ms to 227 ms. Small: the room's clear was not the cost the profile's `fill_u32` was.
+2. **The head's rows a set the program keeps, not an index each round builds** (done). A round's new rows were its
+   union made distinct, less the head's rows (an ANTI stage probing an index of all the head's columns). That index
+   is live (`IX_LIVE`): every round sorted every row the head had and placed its offsets over all its buckets
+   (262,144, 24 rounds), so a component's time was its rounds times its rows. Indexes of a range of rows
+   (`Index::from`) do not help: the rounds are the device's (a template the program repeats), so the host cannot
+   choose a round's ranges. A fold (the lattice heads' `lattice_fold`, a key map kept across rounds) does not either:
+   it writes the relation as it claims, so its gate must come first and count the union's rows. Against an exact
+   bound (the closure's reach, 160 K rows) a round of mostly held rows would stop the program for nothing.
+
+   Now a set head keeps a map of its rows (`SetHead::map`), laid out as a lattice head's key map, in its block, twice
+   the program's bound. Each program first empties it and places the relation's rows in it (`Batch::set_map`, code 4
+   of `lat_rehash_one`), so a round that a gate stopped in the last program leaves nothing behind. The round's dedup
+   (`Batch::dedup_less`) marks a row new where it is the first of its rows and its map holds no equal row
+   (`dedup_held`, reading the relation in place). Its scatter places each new row in the map as the row it becomes:
+   the relation's rows as the device holds them, and its place among the new ones, which `append_live` writes there.
+   The gate reads the new rows' count, as before. `round_index` and the ANTI stage are gone.
+
+   **Measured** (this Mac, debug build, `joins_timed_on_the_cpu_and_the_device`, the CPU device running
+   `join_run`): closure, 400 nodes, from 227 ms to 56.8 ms wall (70 ms CPU); the CPU's scalar joins take 42.8 ms
+   (59 ms CPU). The keyed join (100 K × 100 K) is unchanged: 80 ms against the CPU joins' 54 ms. **Checked:**
+   `setfix::device`'s tests pass on the CPU (40). On Metal they fail no test that passed before: m3 fails 11, 12
+   before (`a_leveled_recursion_on_the_device_has_the_cpus_levels` now passes; the rest are "a stratum past one
+   launch and its budget's relaunches"), and the mini fails 2, 3 before (text functions).
+
+### The jobs as lanes, driven phase by phase (the user's: "complete this", 2026-11-23)
+
+**Driven phase by phase, no queue** (`Prog::drive`). The CPU device runs a launch's groups one after another on one
+thread, so the first group runs every item. It walks a launch's items in order: the items a last launch left, the
+seeds, then each phase's items (its segments' ranges, `Work`) as the phase before ends. It counts them as the host
+counts pending items (`ctl[2]`). Only when the budget ends with items left are they written to the slots, for the
+next launch, which takes them back first. `push`, `take` and the turn bound are gone.
+
+**At 8 lanes** (`rerail-simd`, the relation reads of `crate::lanes`):
+
+- **Relational stages** (`stage_lanes`): a join, semi-join or anti-join of a relation in its block, probed by keys
+  or read whole. Each step does 8 bindings' keys, screen, probe, candidate rows, key and column tests, binds,
+  arithmetic and row program as vectors, each lane's walk masked past its own length. A product's, quotient's and
+  remainder's overflow test is each lane's: NEON has no vector test for them.
+- **Dedups and index keys** (`dedup_lanes`):
+  - A mark walks 8 rows' places at once (gathers of the places, of the rows they name, of a set head's map and the
+    relation's rows).
+  - The claims and map placements take their places from 8 rows' hashes; each compare-and-swap is its lane's.
+  - An index's keys are 8 rows' hashes a step.
+- **Still per thread:**
+  - stages over views (`has`, a parent's children, a view read in place);
+  - text stages and aggregates;
+  - the lattice fold's claim, best and merge.
+
+  Neither stratum below uses them.
+
+**Measured** (m3, `--profile profiling`: every crate at opt-level 3; `RERAIL_THREADS=1`, so the CPU's joins run on
+one thread, as the CPU device's program does; `joins_timed_on_the_cpu_and_the_device`, the best of three, the
+process's CPU time):
+
+| stratum | the CPU's scalar joins | the join program at 8 lanes |
+|---|---|---|
+| keyed join, 100 K × 100 K (249,484 rows) | 113.9 ms | 103.4 ms |
+| closure, 400 nodes (157,228 rows, 24 rounds) | 56.6 ms | 72.6 ms |
+
+The keyed join is 9% faster than the scalar joins. The closure is 28% slower; where its time goes at opt-level 3 is
+not yet measured (a profile of this build is the next step), and that gap is the next work.
+
+### The large joins, profiled (the user's: "we should be able to do a LOT better on the larger joins, especially if we vectorize things like hash computation and the hash searches and scans", 2026-11-23)
+
+Each change was found by a profile of the build above (xctrace and `sample`, the program's thread), then measured.
+The program's own time is what the timed test prints as "its program" (waited on). The rest of a run is the host's
+work, the same for both columns: the rule's SQL and the rows' way out.
+
+**A stage's candidates as a stream** (`stage_lanes::Lanes::walk`), as a GPU's threads expand them:
+- A tile of 256 bindings has its groups found 8 bindings a step: keys hashed, screened and looked up together.
+- The tile's groups are then expanded into chunks of 512 candidates, each one a binding and a place. Every step
+  takes 8 candidates, so every lane has work, however long or short each binding's group is. Before, a lane walked
+  its own binding's group, and the step waited for the longest.
+- A count's verdicts are a chunk's exclusive prefix sums. A binding's count is the sums at its candidates' end less
+  their start.
+
+**Reads by index.** A column's rows in one chunk, an index's rows and a dedup's map are gathers from one base by
+32-bit indices, scaled by shifts (`lanes::gather64_ix`, `gather32_ix`, `scatter64_ix`). Before, each lane read
+through its own 64-bit pointer. `rerail-simd`'s pointer offsets also scale by shifts where the element's size is a
+power of two.
+
+**A scatter as a stream compaction.** A range's rows out are contiguous, from its first offset.
+- Where the range has room for 8 more rows, each column's passing lanes move to the front with one table lookup
+  (`swizzle_dyn`, NEON's `tbl`, a 256-entry table) and are stored as one 64-byte write. Later rows overwrite the
+  places past them.
+- The masked per-lane scatter is left for a range's last places.
+- The per-lane stores had been half the program's samples. Page faults were not the cause: writing every page of
+  the output first changed nothing.
+
+**Lanes built by an inlined loop.** `core::array::from_fn` stayed a call inside the walk, its array passed through
+memory. `rerail-simd` and the lane reads now build each vector with an unrolled loop.
+
+**Measured** (m3, opt-level 3, one thread, the program's time, the best of three):
+
+| | keyed join, 100 K × 100 K | closure, 400 nodes |
+|---|---|---|
+| the jobs at 8 lanes, the section above | 33.0 ms | 33.3 ms |
+| the candidates as a stream | 23.9 ms | 27.6 ms |
+| reads by index | 21.9 ms | 26.1 ms |
+| the scatter packed, lanes inlined | 19.2 ms | 24.7 ms |
+
+Whole runs, against the CPU's scalar joins: the keyed join takes 83.4 ms against 105.8 ms. The closure takes 62.0 ms
+against 51.3 ms.
+
+**Where the program's time is now** (the keyed join, `sample`, about 1,270 samples):
+
+| Phase | Samples |
+|---|---|
+| Scatter | 354 |
+| Count | 283 |
+| Dedup mark | 228 |
+| Dedup claim | 116 |
+| Kept rows' scan | 73 |
+
+The line profile is flat, no line above 6%. The time is in the reads every candidate needs:
+- its row's block and chunk (`chunk`, `rel_at`);
+- its key's and its binds' columns, by gathers;
+- its binding's slots.
+
+Two costs remain that are structure, not vector code:
+
+- **The count and the scatter each walk every candidate.** Both hash the keys, find the groups, read the rows and
+  test them: half the program's time is that walk, twice. The scatter cannot be cheaper while it repeats the count's
+  probe. Removing the second walk means the count keeps what it found: each tile's passing candidates, compacted, as
+  a derived fact of the stage, which the scatter then writes out. That changes the program's phases on Metal too.
+- **A dedup's rows are hashed twice.** The claim hashes every row, then the mark hashes it again and walks the same
+  places.
+
+### The count keeps what it found (the user's: "sure, go ahead and do that", 2026-11-24)
+
+Both costs above are removed in the program itself (`join_stages.uglykl`), so Metal runs the same phases as the CPU.
+
+**A join's finds.** The count already decides each candidate's verdict, but the scan has not yet given any binding
+its offset. So it cannot write (binding, row) pairs in their order. Instead it keeps, for each binding of a join
+(mode 0), its finds in the job's `V`: a word of the group's first place and a bit a candidate, set where the
+candidate is a row out.
+- `V` is placed with the stage's input where that is placed, 8 bytes a binding, as a row job's values are
+  (`v_place`).
+- The finds are kept where a binding's candidates are at most 32 consecutive places: an index's group, or the rows
+  themselves. A view's walk (`has`, a parent's children) and a longer group keep `FINDS_WALK` instead.
+- The scatter writes a binding's rows from its finds: place to row, then the row out. It does no hash, group
+  lookup, dead-row read, key compare, column test or row program again. A binding of `FINDS_WALK` is walked as
+  before.
+- On the CPU, the count's lanes build each binding's bits from a chunk's verdicts, a field of a bitset at the
+  binding's candidates, shifted past its candidates in the chunks before. The scatter expands a tile's finds a byte
+  at a time (a table of each byte's set bits), into candidates that are all rows out. It walks a tile again only
+  where one binding of it is `FINDS_WALK`.
+
+**A dedup's places.** Equal rows share one place, because a claim stops at an equal row's place. That place holds
+the least of them, and a place never empties. So the claim keeps where each row's claim ended, past the places
+(`P + places`, the places' array twice as long). The mark is one read: a row is kept where its place holds it. Its
+hash, its probe and its rows' compares are gone. A relation's held rows (`Dedup::seen`) are still found through the
+relation's map.
+
+The join program's digests (`rerail_ukl_rust::JOIN_PROGRAM`) are this source's. Until they were brought to it,
+the CPU device ran the program's compiled C instead of its Rust: 743 ms against 15 ms for the keyed join.
+
+**Measured** (m3, opt-level 3, one thread, the program's time, the best of 10; the machine's runs differ by up to a
+tenth from one to the next):
+
+| | keyed join, 100 K × 100 K | closure, 400 nodes |
+|---|---|---|
+| the scatter packed (above) | 19.2 ms | 24.7 ms |
+| the finds and the dedup's places | 12.8 ms | 20.9 ms |
+
+Whole runs, against the CPU's scalar joins: the keyed join takes 77.6 ms against 105.7 ms, and the closure 58.0 ms
+against 50.8 ms. Of a whole run, the program is now its smaller part: the rest is the host's work (the rule's SQL,
+the rows' way out), the same for both columns.
+
+In the keyed join's program (`sample`), the count is now the largest phase (335 samples), then the claim (163), the
+scatter (113) and the kept rows' scan (73). The mark is too small to be listed.
+
+On Metal (the M1 Max; the M3 Max's GPU did not answer the farm's probe that day), the device tests pass as before. 38
+pass, and `parity_row_texts` fails in two cases of a product of two relations, then texts made per row and compared
+(`cat`, `str_cmp`): the device has 0 or 38 rows where the CPU has 14,637 and 17,140. It fails the same way with the
+source before this change, only within the whole suite and not when it runs alone, so it is not this change's; it
+is not yet found.
+
+On the M1 Max it fails only while other tests use the GPU (`--test-threads=1`: all pass); its report has the text
+arena grown in place six times in one program (`remaps: 6`) and no rows out. The user's: "take note of the arena
+failure, we will do it later" (2026-11-24).
+
+### The count's reads, measured (the user's: "please address these", 2026-11-24)
+
+The keyed join's count, one thread on the M3: 200,000 bindings, 1,134,822 candidates (the places of their index
+groups), 997,886 of them past the key check, 249,484 rows out past `z < x`. The closure's: 314,456 bindings, 660,660
+candidates, 393,056 past the keys. So the index's slots are not the cost (88% of the keyed join's candidates are its
+rows): what the count reads is the join's own, each candidate's key and test columns at its row, which the index's
+places scatter over the relation.
+
+Tried and measured, neither kept (the count's samples, against 335 before):
+- **The binding columns and the chunk words, one load of 8.** Where a step's lanes are within 8 of the least, one
+  64-byte load and a table lookup (`tbl`) for its 8 words: 363 samples. A step's candidates' chunks span more than 8
+  words of the directory, so most steps fell to the lane loads, after the test.
+- **The candidates' bindings as bytes.** A tile is 256 bindings, so a byte each: one 8-byte store where there were
+  32 bytes, no change.
+
+Kept: the chunks' words read by a scalar base and each lane's index (`gather64_ix`), as the columns' are (325
+samples; no vector of addresses).
+
+What would take the reads down is the index's layout, not the program's: a group's key and test columns in the
+index's order (or a tag per place beside its row), so a group's candidates are read in place, in order. That changes
+the relation's index in its block (decision 0353's: an index in its relation's block), read by every reader, and is
+not made here.
+
 ## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one

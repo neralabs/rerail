@@ -131,9 +131,17 @@ pub fn vectorize(p: &Program, kernel: u32) -> R<Kernel> {
         }
         // The next round's bodies: at each site, those the rounds before wanted there, and what this one did.
         let at: HashMap<usize, (Spec, usize)> = e.origins.iter().map(|(call, site)| (*call, site.clone())).collect();
+        let callees: HashMap<usize, u32> = e.origins.iter().map(|(call, _)| (*call, e.b.word(*call, 0))).collect();
+        // Each call's caller's body (the last body to start before it: the tape is in preorder).
+        let starts: Vec<usize> = kids(&e.b, 0).into_iter().filter(|&c| kind(&e.b, c) == Kind::Body).collect();
+        let caller = |call: usize| starts.partition_point(|&s| s < call).checked_sub(1).map(|k| starts[k]);
         drop(e);
         for (call, c) in std::mem::take(&mut a.wanted) {
-            if !c.is_empty() {
+            // A function written once for its calls has its fallback body at a call where neither it nor its caller
+            // reaches a sync point: a context is what shows a group's lanes reach one together, and a callee's
+            // result of one value (its context's) what keeps its caller's control so.
+            let syncs = a.sync[call] || caller(call).is_none_or(|b| a.sync[b]);
+            if !c.is_empty() && (syncs || !joins(p, &kv, callees[&call])) {
                 known.entry(at[&call].clone()).or_default().insert(c);
             }
         }
@@ -150,6 +158,17 @@ pub fn vectorize(p: &Program, kernel: u32) -> R<Kernel> {
     let tape = b.finish();
     let code = crate::code::compile(&tape)?;
     Ok(Kernel { tape, code, name: f.name.clone(), lid, jit: Default::default(), cl: Default::default() })
+}
+
+/// The nodes past which a function is written once for its calls (`joins`).
+pub const JOIN_NODES: usize = 400;
+
+/// Whether function `id` of `p` is written once for its calls: its fallback body alone (no context's, where it
+/// reaches no sync point), its arguments' shapes joined in its Rust (rs.rs). A function the source declares a call (`Func::called`), or one of
+/// more than `JOIN_NODES` nodes, whose bodies' code would outweigh what knowing an argument one value saves.
+pub fn joins(p: &Program, kv: &View, id: u32) -> bool {
+    let f = &p.funcs[id as usize];
+    f.called || f.node.is_some_and(|n| kv.size(n) > JOIN_NODES)
 }
 
 /// The context a function is called in: each argument's level (an aggregate's, its most varying byte's). A body's

@@ -124,8 +124,10 @@ enum Kind {
     Names,
     /// A made text per row (`mj::ROWTEXT`: a cat, a regex's replacement, a text function, a text test of one), a SIMD
     /// group a row, its symbols' bytes read in place (decision 0478 step 2e), with its automaton; `kept`, the id its
-    /// text is kept by in the one rolling cache (`mj::ROW_KEPT`), with the source symbol (0 when it keeps none).
-    RowText { auto: RowAuto, kept: u32 },
+    /// text is kept by in the one rolling cache (`mj::ROW_KEPT`), with the source symbol (0 when it keeps none);
+    /// `nodes`, a node's text's (`mj::TEXTFN_NODE_TEXT*`): the run's binding of the nodes it reads, whose batch's `node`
+    /// view the stage reads the node's text through, where it lies (decision 0287 §2).
+    RowText { auto: RowAuto, kept: u32, nodes: Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> },
     /// The rule's steps past the one that binds the head (`setfix::tail`): an atom over `rel` (by its key columns
     /// `cols`) and the atoms after it (`rest`: each relation, its key columns and its probe), run as one witness per
     /// binding (`mj::WITNESS`, decision 0277), as the CPU's walk runs them (decision 0229).
@@ -171,7 +173,7 @@ fn row_stage(first: usize, op: u32, x: Key, y: Key, auto: RowAuto, deferred: &Ha
     if !matches!(st.kind, Kind::Names) {
         return Err("a made text's operands of no names".into());
     }
-    st.kind = Kind::RowText { auto, kept: 0 };
+    st.kind = Kind::RowText { auto, kept: 0, nodes: None };
     Ok(st)
 }
 
@@ -230,6 +232,8 @@ fn text_function(name: &str) -> Option<(u32, usize, usize)> {
         ZeroPad => mj::TEXTFN_ZERO_PAD,
         StrBetween => mj::TEXTFN_STR_BETWEEN,
         PkgUp => mj::TEXTFN_PKG_UP,
+        NodeTextAny => mj::TEXTFN_NODE_TEXT_ANY,
+        NodeText => mj::TEXTFN_NODE_TEXT,
         RxGroup => mj::TEXTFN_RX_GROUP,
         Replace => mj::TEXTFN_REPLACE,
     };
@@ -339,6 +343,17 @@ pub(in crate::code_rule_dsl) fn arith_op(name: &str) -> Option<u32> {
     })
 }
 
+/// A step's fusion as the device runs it: the filters after its atom, not the tests of an input the CPU's walk asks
+/// in the chunk (`rowcode::Test`).
+fn fused_at(j: &JoinRule, i: usize) -> Option<std::borrow::Cow<'_, rowcode::Fused>> {
+    let f = j.fused_at(i)?;
+    if f.tests.is_empty() {
+        return Some(std::borrow::Cow::Borrowed(f));
+    }
+    let Step::Atom { binds, .. } = &j.steps[i] else { return None };
+    rowcode::fused(binds, &j.steps[i + 1..], false, &[]).map(std::borrow::Cow::Owned)
+}
+
 /// The program's columns, parameters, operations and outputs of a fused row program, into `d`; the source of a
 /// column (`Word::Col(c)`) is `kind` (a candidate's column, or the binding's slot `c`).
 fn program(d: &mut mj::Stage, f: &rowcode::Fused, kind: u32) -> Result<(), String> {
@@ -347,7 +362,7 @@ fn program(d: &mut mj::Stage, f: &rowcode::Fused, kind: u32) -> Result<(), Strin
         return Err("a row program larger than a stage holds".into());
     }
     for (k, w) in f.columns.iter().enumerate() {
-        let (c, doc) = match *w { rowcode::Word::Col(c) => (c, 0), rowcode::Word::Doc(c) => (c, 1) };
+        let (c, doc) = match *w { rowcode::Word::Col(c) => (c, 0), rowcode::Word::Doc(c) => (c, 1), rowcode::Word::Held(_) | rowcode::Word::Look(..) => unreachable!("the device's fusion asks no input (`fused_at`)") };
         d.col_kind[k] = kind;
         d.col_idx[k] = c as u32;
         d.col_doc[k] = doc;
@@ -431,7 +446,7 @@ fn witness_stage(j: &JoinRule, i: usize, bound: &[bool]) -> Option<PStage> {
     let Step::Atom { src: Src::In(rel, _), neg: false, keys, binds, tests } = &j.steps[i] else { return None };
     let rel = j.bound(rel);
     let rest = &j.steps[i + 1..];
-    if binds.is_empty() || j.fused_at(i).is_some() || rest.len() > mj::WITNESS_PROBES || keys.len() > mj::MAX_KEYS || tests.len() > mj::MAX_TESTS {
+    if binds.is_empty() || fused_at(j, i).is_some() || rest.len() > mj::WITNESS_PROBES || keys.len() > mj::MAX_KEYS || tests.len() > mj::MAX_TESTS {
         return None;
     }
     readable(rel, keys.len()).ok()?;
@@ -459,7 +474,7 @@ fn witness_stage(j: &JoinRule, i: usize, bound: &[bool]) -> Option<PStage> {
     for (m, st) in rest.iter().enumerate() {
         let Step::Atom { src: Src::In(r, _), neg, keys: bk, tests: bt, .. } = st else { return None };
         let r = j.bound(r);
-        if j.fused_at(i + 1 + m).is_some() || bk.len() > mj::MAX_KEYS || bt.len() > mj::MAX_TESTS || readable(r, bk.len()).is_err() {
+        if fused_at(j, i + 1 + m).is_some() || bk.len() > mj::MAX_KEYS || bt.len() > mj::MAX_TESTS || readable(r, bk.len()).is_err() {
             return None;
         }
         let mut b = mj::Stage { mode: if *neg { mj::ANTI } else { mj::SEMI }, ..mj::Stage::default() };
@@ -550,7 +565,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 // one text made in two rounds has two values.
                 if let Some((rel, _)) = own && own_texts.iter().any(|&(r, _)| r == rel) {
                     let text = |c: usize| own_texts.contains(&(rel, c));
-                    if keys.iter().any(|&(c, _)| text(c)) || tests.iter().any(|&(a, b)| text(a) || text(b)) || j.fused_at(i).is_some() || *neg {
+                    if keys.iter().any(|&(c, _)| text(c)) || tests.iter().any(|&(a, b)| text(a) || text(b)) || fused_at(j, i).is_some() || *neg {
                         return Err("a made text across rounds matched, tested or negated (decision 0307: read only as a text)".into());
                     }
                     for &(_, s) in atom_binds.iter().filter(|&&(c, _)| text(c)) {
@@ -605,10 +620,10 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 d.ntests = tests.len() as u32;
                 let mut span = 1;
                 let mut npassed = 0;
-                match j.fused_at(i) {
+                match fused_at(j, i) {
                     Some(f) if d.mode == mj::JOIN && compared.is_none() => {
-                        program(&mut d, f, mj::RIGHT)?;
-                        binds(&mut d, f, false);
+                        program(&mut d, &f, mj::RIGHT)?;
+                        binds(&mut d, &f, false);
                         for &(s, _) in &f.binds { bound[s] = true; }
                         span += f.steps;
                         npassed = f.steps;
@@ -943,7 +958,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 let stop = (i..j.steps.len())
                     .find(|&k| deferred.keys().copied().chain(ARENA.with_borrow(Clone::clone)).any(|x| mentions(&j.steps[k], x)))
                     .unwrap_or(j.steps.len());
-                let Some(f) = rowcode::fused(&slots, &j.steps[i..stop]) else { return Err(format!("{} has no device form", step_name(step))) };
+                let Some(f) = rowcode::fused(&slots, &j.steps[i..stop], false, &[]) else { return Err(format!("{} has no device form", step_name(step))) };
                 let mut d = mj::Stage { mode: mj::FILTER, ..mj::Stage::default() };
                 program(&mut d, &f, mj::LEFT)?;
                 binds(&mut d, &f, true);
@@ -984,7 +999,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 let mut st = row_stage(i, mj::ROW_REPLACE, args[0], Key::Const(with), RowAuto::Replace { pattern, with }, &deferred, &origin, &known)?;
                 st.desc.bind_slot[0] = *out as u32;
                 if let Some((id, chain)) = keep_text(&mut st.desc, args[0], Some(rerail_blocks::vector![pattern, with]), name, &origin, &kept_texts) {
-                    st.kind = Kind::RowText { auto: RowAuto::Replace { pattern, with }, kept: id };
+                    st.kind = Kind::RowText { auto: RowAuto::Replace { pattern, with }, kept: id, nodes: None };
                     kept_texts.insert(*out, chain);
                 }
                 stages.push(st);
@@ -998,7 +1013,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
             Step::Func { name, .. } if matches!(name.as_str(), "replace_all" | "rx_replace") => {
                 return Err(format!("the function {name} of a constant text, or of a regex or replacement not a constant, has no device form"));
             }
-            Step::Func { name, args, out, bind, .. } if text_function(name).is_some() => {
+            Step::Func { name, args, out, bind, texts, .. } if text_function(name).is_some() => {
                 // A text function: its text made into the batch's arena (or a range of its argument's), its value
                 // where the text is. Read by text tests, `str_cmp`, `strlen`, other text functions and the head (as a
                 // symbol), as a held cat's text is. Compared with a bound slot (not bound), it is made into a slot of
@@ -1073,6 +1088,18 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 }
                 d.agg = [mj::ROW_MAP | f << 16, xk];
                 d.bind_slot[0] = target as u32;
+                // A node's text: read through the run's binding of the nodes (`texts`), whose batch's `node` view the
+                // stage reads it by (decision 0287 §2).
+                let node_text = matches!(f, mj::TEXTFN_NODE_TEXT_ANY | mj::TEXTFN_NODE_TEXT);
+                let nodes = if node_text {
+                    let nodes = texts.as_ref().and_then(|h| match &**j.plan.bound(h) {
+                        super::NodeTexts::Held(n) => Some(Arc::clone(n)),
+                        super::NodeTexts::At(at) => at.upgrade().and_then(|d| crate::code_rule_dsl::facts::vtab::bound_source_in(&d, crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES)),
+                    });
+                    Some(nodes.ok_or_else(|| format!("the function {name} with no binding of the nodes it reads has no device form"))?)
+                } else {
+                    None
+                };
                 if finds {
                     d.agg[0] |= mj::ROW_FIND;
                 }
@@ -1089,11 +1116,17 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 } else {
                     RowAuto::None
                 };
-                let mut kind = if matches!(auto, RowAuto::None) { kind } else { Kind::RowText { auto: auto.clone(), kept: 0 } };
+                let mut kind = if node_text {
+                    Kind::RowText { auto: RowAuto::None, kept: 0, nodes }
+                } else if matches!(auto, RowAuto::None) {
+                    kind
+                } else {
+                    Kind::RowText { auto: auto.clone(), kept: 0, nodes: None }
+                };
                 if ntexts > 0
                     && !finds
                     && let Some((id, chain)) = keep_text(&mut d, args[0], args[1..].iter().map(konst).collect(), name, &origin, &kept_texts) {
-                        kind = Kind::RowText { auto, kept: id };
+                        kind = Kind::RowText { auto, kept: id, nodes: None };
                         kept_texts.insert(target, chain);
                     }
                 if target >= bound.len() {
@@ -1848,6 +1881,15 @@ impl<'p> Run<'p> {
                         (Kind::Own { rel, delta, cols }, None) => {
                             self.rels[k] = Some(own.get(*rel, *delta, cols, batch, rep)?.ok_or("an own relation with no rows")?);
                         }
+                        (Kind::RowText { nodes: Some(nodes), .. }, None) => {
+                            // A node's text is read through its batch's `node` view in place (decision 0287 §2): the
+                            // stage's probed relation, which binds the directory and makes its slabs, the sources'
+                            // among them, resident. Where the device does not read every source, the host does.
+                            let (n, view) = nodes.node_view().ok_or("a node's text where the device does not read its batch's sources")?;
+                            let dev = mj::DevRel::view(5, n, view).map_err(|e| format!("{e:?}: the node view a node's text is read through"))?;
+                            rep.in_place += 1;
+                            self.rels[k] = Some((Rc::new(dev), None));
+                        }
                         _ => {}
                     }
                     let right = self.rels[k].as_ref().map(|(r, ix)| (&**r, ix.as_deref()));
@@ -1888,7 +1930,7 @@ impl<'p> Run<'p> {
                         // Its automaton, and its id in the one rolling cache: a test's (its verdicts) or the
                         // functions' (their texts).
                         let (auto, id) = match &s.kind {
-                            Kind::RowText { auto, kept } => (row_automaton(auto, names)?, *kept),
+                            Kind::RowText { auto, kept, .. } => (row_automaton(auto, names)?, *kept),
                             Kind::Verdict { table, test } => {
                                 let a = Rc::new(mj::DevBytes::of(&table.automaton).map_err(|e| format!("{e:?}"))?);
                                 (Some((a, [table.states, table.states, table.classes, table.start])), *test)
@@ -3120,27 +3162,6 @@ fn union_of(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)], h: us
     Ok(Some((union, words, cap)))
 }
 
-/// Each set head's sort by all its columns (the anti-join's: a round's new rows less its relation's), built in
-/// `batch` before the round's gate, so nothing after the gate builds an index.
-#[allow(clippy::too_many_arguments)]
-fn round_index(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, own: &mut Own, rep: &mut Report, batch: &mut mj::Batch, lattices: &HashMap<usize, LatHead>,
-               sets: &HashMap<usize, SetHead>) -> Result<(), String> {
-    for &h in heads {
-        if lattices.contains_key(&h) || !runs.iter().enumerate().any(|(x, r)| r.is_some() && rules[x].2 == h) {
-            continue;
-        }
-        // Its relation's room for the round's rows first, then its index: the index's room is reserved past it.
-        let cap: usize = runs.iter().enumerate().filter_map(|(x, r)| r.as_ref().filter(|_| rules[x].2 == h)).map(|r| r.uniq.as_ref().map_or(0, mj::Table::room)).sum();
-        let had = own.total.get(&h).map_or(0, |t| t.rows);
-        if let Some(part) = sets.get(&h).and_then(|s| s.part.as_ref()) && !part.reserve((had + cap) as u64) {
-            return Err(format!("a recursive head of {} rows past its block's room", had + cap));
-        }
-        let all: Vec<usize> = (0..store.rels[h].k).collect();
-        own.get(h, false, &all, batch, rep)?;
-    }
-    Ok(())
-}
-
 /// The gate after a round's joins (`mj::Batch::gate`): every stage's table of every run, by its room.
 fn round_gate(runs: &[Option<Run<'_>>], batch: &mut mj::Batch) -> Result<(), String> {
     // A placed table's room is its rows: not checked.
@@ -3196,9 +3217,15 @@ const HEAD_ROOM: usize = LAT_ROOM;
 /// A recursive component's set head on the device: its one relation, in a block of the run's life, its rows so far
 /// claimed and each round's new rows written past them (never moved; its indexes forgotten as it grows, so a round's
 /// probes build them of its rows then). The store takes it as it lies (`Fresh::place`).
+///
+/// Its map (`map`, decision 0567): its rows by key, as a lattice head's key map is laid out, in its block. Each program
+/// places its rows in it first (`mj::Batch::set_map`), at twice the program's bound; a round's new rows are its union
+/// made distinct less the rows the map holds, each placed in it as the row it becomes (`mj::Batch::dedup_less`), so a
+/// round's work is its own rows', not the head's.
 #[derive(Default)]
 struct SetHead {
     part: Option<Part>,
+    map: Option<super::keys::KeyMap>,
 }
 
 /// A key map where it lies, for the device to bind.
@@ -3301,7 +3328,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
     // grown in its block round after round, each row with its round where the head keeps levels. Nothing copied.
     drop(own);
     for &h in heads {
-        let Some(SetHead { part: Some(part) }) = sets.remove(&h) else { continue };
+        let Some(SetHead { part: Some(part), .. }) = sets.remove(&h) else { continue };
         let n = part.len() as usize;
         if n == 0 {
             continue;
@@ -3650,13 +3677,12 @@ struct Kept {
     words: Vec<mj::Words>,
 }
 
-/// A head's round (`encode_live_tail`): the words of its rows' counts (`[union, distinct, new]`), a lattice head's
-/// counters (`[changed, new]`) or a set head's anti-join's, and the delta it writes.
+/// A head's round (`encode_live_tail`): the words of its rows' counts (`[union, distinct, new]`; a set head's distinct
+/// rows are its new ones, `dedup_less`), a lattice head's counters (`[changed, new]`), and the delta it writes.
 struct HeadEnd {
     head: usize,
     words: mj::Words,
     lat: Option<mj::Words>,
-    anti: Option<mj::Words>,
     delta: Rc<mj::DevRel>,
     /// Its union's room (`union_of`'s): past it, its gate stopped the round.
     cap: usize,
@@ -3942,6 +3968,21 @@ fn encode_program<'p>(seeding: Option<(&[(&'p Plan, &JoinRule, usize)], &mut Has
             g.now.set((m.at as u64, m.places));
         }
     }
+    // A set head's map with room for its bound's rows at half full, its rows placed in it again: a round its gate
+    // stopped in the last program may have placed rows it never wrote.
+    for (&h, l) in live {
+        if lp.lattices.contains_key(&h) {
+            continue;
+        }
+        let need = (2 * l.bound).next_power_of_two().max(16);
+        let set = lp.sets.entry(h).or_default();
+        if set.map.as_ref().is_none_or(|m| m.places() < need) {
+            // SAFETY: `lat_hclear_one` (`set_map`'s first phase) writes every slot before any read.
+            let words = unsafe { crate::code_rule_dsl::facts::rows::unwritten_in(Some(&l.total.home()), need * super::keys::SLOT) };
+            kept.maps.extend(set.map.replace(super::keys::KeyMap::of(words, 0)));
+        }
+        batch.set_map(&lp.own.total[&h], l.len, map_at(set.map.as_ref().expect("its map"))).map_err(e)?;
+    }
     // The seed round: its rules read no delta, and its rows are the first round's delta, which template 0 reads.
     let seeded = match seeding {
         Some((seeds, ssizes, ssums)) => Some(encode_round(seeds, None, side, None, heads, store, names, named, shared, lp, live, ssizes, ssums, logs, round, batch, kept)?),
@@ -4052,8 +4093,6 @@ fn encode_round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], reads: Option<usize>
             }
         }
     }
-    // Its relations' rooms were reserved before they were bound (`device_rounds`): none reserved here.
-    round_index(&runs, rules, heads, store, lp.own, lp.rep, batch, lp.lattices, &HashMap::new())?;
     // The gate: every stage's table by its room.
     round_gate(&runs, batch)?;
     let ends = encode_live_tail(&runs, rules, heads, store, lp, live, writes, round, named, shared, batch, kept)?;
@@ -4076,7 +4115,7 @@ fn encode_round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], reads: Option<usize>
             ops.push(mj::RoundOp::Log(log, added));
         }
         ops.push(mj::RoundOp::Zero(&end.words, 0, 3));
-        if let Some(c) = end.lat.as_ref().or(end.anti.as_ref()) {
+        if let Some(c) = end.lat.as_ref() {
             ops.push(mj::RoundOp::Zero(c, 0, c.len));
         }
     }
@@ -4099,8 +4138,8 @@ fn encode_round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], reads: Option<usize>
 }
 
 /// A round's heads in a program of rounds (`encode_program`), after its joins: each head's rows from every rule that
-/// makes it (`union_of`), a set head's made distinct and less its relation's as the device claimed them (the
-/// anti-join); a gate on each head's room (its delta's for a round's rows, its relation's bound for them past its
+/// makes it (`union_of`), a set head's made distinct less the rows its map holds (`SetHead::map`, its relation's as
+/// the device claimed them); a gate on each head's room (its delta's for a round's rows, its relation's bound for them past its
 /// rows); then a set head's new rows past its rows (`append_live`) and into its delta of side `writes`, a lattice
 /// head's folded into its relation through its key map, its changed rows into that delta. Their counts the device's,
 /// claimed by the round's end.
@@ -4110,7 +4149,7 @@ fn encode_live_tail(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)
     fn e(e: impl std::fmt::Debug) -> String {
         format!("{e:?}")
     }
-    // A head's rows of the round, before its gate: its union (and a set head's new rows, of the anti-join).
+    // A head's rows of the round, before its gate: its union (and a set head's new rows).
     struct Made {
         end: HeadEnd,
         union: mj::Table,
@@ -4128,26 +4167,16 @@ fn encode_live_tail(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)
         let Some((union, words, cap)) = union_of(runs, rules, h, store, named, batch)? else { continue };
         let delta = Rc::new(into(h)?);
         if lp.lattices.contains_key(&h) {
-            made.push(Made { end: HeadEnd { head: h, words, lat: Some(mj::Words::zeroed(2).map_err(e)?), anti: None, delta, cap }, union, cap, fresh: None });
+            made.push(Made { end: HeadEnd { head: h, words, lat: Some(mj::Words::zeroed(2).map_err(e)?), delta, cap }, union, cap, fresh: None });
             continue;
         }
-        let distinct = batch.table(k, cap).map_err(e)?;
+        // Made distinct, less the rows its relation holds (its map's, `SetHead::map`): its new rows, their count the
+        // words' third, which the head gate reads.
         let all: Vec<usize> = (0..k).collect();
-        batch.dedup(&union, &all, 0, 1, &words, &distinct).map_err(e)?;
-        // Its relation's sort, built before the joins' gate (`round_index`) of its rows as the round reads them.
-        let (total, ix) = lp.own.get(h, false, &all, batch, lp.rep)?.ok_or("a recursive head's relation")?;
-        let mut d = mj::Stage { mode: mj::ANTI, ..mj::Stage::default() };
-        for c in 0..k {
-            d.key_rcol[c] = c as u32;
-            d.key_kind[c] = mj::SLOT;
-            d.key_slot[c] = c as u32;
-        }
-        d.nkeys = k as u32;
         let fresh = batch.table(k, cap).map_err(e)?;
-        let counters = mj::Words::zeroed(1).map_err(e)?;
-        batch.stage(d, &distinct, Some((&total, ix.as_deref())), None, 1, 2, &words, &counters, None, &fresh).map_err(e)?;
-        kept.tables.push(distinct);
-        made.push(Made { end: HeadEnd { head: h, words, lat: None, anti: Some(counters), delta, cap }, union, cap, fresh: Some(fresh) });
+        let map = lp.sets.get(&h).and_then(|s| s.map.as_ref()).ok_or("a set head's map")?;
+        batch.dedup_less(&union, &all, 0, 2, &words, &fresh, Some((&lp.own.total[&h], map_at(map)))).map_err(e)?;
+        made.push(Made { end: HeadEnd { head: h, words, lat: None, delta, cap }, union, cap, fresh: Some(fresh) });
     }
     // The head gate: a round's rows past its relation's rows within its bound (a lattice head's union's rows: its new
     // keys and its changed rows at most). Its delta's room is its relation's past its rows when the program started
