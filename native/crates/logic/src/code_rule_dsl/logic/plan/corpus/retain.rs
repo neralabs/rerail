@@ -351,6 +351,9 @@ pub(in crate::code_rule_dsl) fn document_delta_except(rel: &str, old: &Arc<dyn S
             now
         }
         None => {
+            if std::env::var_os("RERAIL_STRATA_LIVE").is_some() {
+                eprintln!("RERAIL_STRATA_LIVE document delta {rel}: every row hashed ({}; owner column {g})", if same.is_some() { "an unchanged document's count differs" } else { "no unchanged documents given" });
+            }
             super::maintain::shape::input_hashed_whole();
             let _s = crate::code_rule_dsl::logic::profile::span(|| "document delta: every row hashed".into());
             by_doc(new.as_ref(), &mut row)
@@ -2161,6 +2164,14 @@ const MEMO_PLAN_READ: &str = "#memo-plan";
 /// The tag of a memo plan, as a documents' table records it.
 pub(in crate::code_rule_dsl) fn memo_plan_tag(plan: &[u8; 32]) -> u64 {
     u64::from_le_bytes(plan[..8].try_into().expect("eight bytes"))
+}
+
+/// The tag a documents' table is written and read under: the memo plan's, and, when a file's entry is kept under the
+/// project's settings (decision 0665, a phase's exports read as settings by 0705), the digest of every settings row.
+/// A file of the same content and key holds the rows it held only under the same settings too: an asked phase's reader
+/// is keyed by its asks' answers, which another file's edit changes.
+pub(in crate::code_rule_dsl) fn table_tag(plan: &[u8; 32], settings: Option<[u8; 32]>) -> u64 {
+    memo_plan_tag(plan) ^ settings.map_or(0, |s| memo_plan_tag(&s).rotate_left(1))
 }
 
 /// A documents' table as read (`base_documents`).

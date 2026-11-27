@@ -2087,9 +2087,11 @@ impl LibraryFile {
 pub const LIBRARY_DERIVED: [&str; 1] = ["load"];
 /// The relations `core.rerail` declares that one library file derives, and that file (decision 0483: the reference graph).
 /// `python/references_w.rerail` derives them from W's Rust graph instead, which the engine binds (`RERAIL_REFERENCES`).
-pub const DERIVED_BY: [(&str, &str); 4] = [
+pub const DERIVED_BY: [(&str, &str); 6] = [
+    ("reference_def", "python/references.rerail"),
     ("reference_edge", "python/references.rerail"),
     ("reference_open", "python/references.rerail"),
+    ("reference_def", REFERENCES_W),
     ("reference_edge", REFERENCES_W),
     ("reference_open", REFERENCES_W),
 ];

@@ -297,7 +297,7 @@ fn failed_batch_reports_each_policy_in_argument_order() {
     let broken = f.area.path().join("bad references.rerail");
     // The reference graph is `python/references.rerail`'s rules (decision 0483), which read the `.references`
     // setting: without the include, `reference_edge` has no rule and the setting is never read.
-    fs::write(&broken, ".policy \"broken\" revision 1\n.language python\n#include \"python/references.rerail\"\n.references {\"unknownParameter\":true}\n.violation Edge(at: node) \"edge\"\nEdge(n) :- reference_edge(n,_,_).\n").unwrap();
+    fs::write(&broken, ".policy \"broken\" revision 1\n.language python\n#include \"python/references.rerail\"\n.references {\"unknownParameter\":true}\n.violation Edge(at: node) \"edge\"\nEdge(n) :- reference_def(n, s), reference_edge(s,_,_).\n").unwrap();
     for scope in [Some("batch"), None] {
         for bad_first in [true, false] {
             let (first, second) = if bad_first {

@@ -1641,11 +1641,13 @@ label(n, s) :- fname(n, s).
 label(n, s) :- stmt_call(n, s).
 .decl top_fn(f: node, s: symbol)
 top_fn(f, s) :- fname(f, s), !nearest(f, _, fn).
-// A set of nodes: the functions but inner; and a set of kinds that a rule derives.
+// A set of nodes: the functions but inner; and a set of kinds that a rule derives, from a constant: derived from
+// every file's nodes, it is a table of the run's, and each file's nodes read in it went to the cross-file part
+// (decision 0677, refused).
 .decl fnode(n: node)
 fnode(n) :- fname(n, x), x != "inner".
 .decl fk(k: symbol)
-fk(k) :- node(_, f, k, _, _), field(f, "name", _).
+fk(k) :- fn(k), k != "class_definition".
 .decl skipnode(n: node)
 skipnode(n) :- fname(n, "skip").
 .decl near_d(c: symbol, f: symbol)

@@ -558,6 +558,9 @@ pub struct StageDigests {
     whole: BTreeMap<String, [u8; 32]>,
     /// Each memoised relation's exports reached, in order.
     reach: BTreeMap<String, Vec<String>>,
+    /// The probes read from an entry's exported rows, not its outputs: a probe of values the split located (decision
+    /// 0680), whose twin the cross part reads back. Their keys are the store's atoms, as the entry's rows hold them.
+    twins: BTreeSet<String>,
 }
 
 impl StageDigests {
@@ -568,13 +571,17 @@ impl StageDigests {
 
     /// Of the phases' rows (`phased`), the probes (`(probe, export, columns)`), the exports read whole, and the
     /// memoised relations' identities' leaves (`Strata`). A probe the file-local part does not output (`local`) keys
-    /// nothing: its export is read whole, as is one a memoised relation reaches with no probe of it.
+    /// nothing: its export is read whole, as is one a memoised relation reaches with no probe of it. A probe among
+    /// `twins` is read from the entry's exported rows, its texts the store's atoms (`atoms`, of texts in order; `None`,
+    /// or too few, and the export is read whole).
     pub fn of(
         phased: &BTreeMap<String, Vec<Vec<crate::code_rule_dsl::logic::front::Value>>>,
         probes: &[(String, String, Vec<usize>)],
         whole: &BTreeSet<String>,
         strata: &Strata,
         local: &dyn Fn(&str) -> bool,
+        twins: &BTreeSet<String>,
+        atoms: &dyn Fn(&[&str]) -> Option<Vec<i64>>,
     ) -> Self {
         use crate::code_rule_dsl::logic::front::Value;
         let row_key = |row: &[Value], cols: &[usize]| {
@@ -621,8 +628,36 @@ impl StageDigests {
         }
         for (probe, export, cols) in probes {
             let mut by: HashMap<Vec<u8>, Vec<[u8; 32]>> = HashMap::new();
-            for row in phased.get(export).into_iter().flatten() {
-                by.entry(row_key(row, cols)).or_default().push(digest(row));
+            let rows = phased.get(export).map(Vec::as_slice).unwrap_or_default();
+            if twins.contains(probe) {
+                // Keyed as the twin's rows hold the values: a text by its atom, a number by itself.
+                let texts: Vec<&str> = rows.iter().flat_map(|row| cols.iter().filter_map(|&c| match row.get(c) {
+                    Some(Value::Str(t)) => Some(t.as_str()),
+                    _ => None,
+                })).collect();
+                // Texts the store cannot name: the export is read whole, never keyed short of its rows.
+                let Some(ids) = atoms(&texts).filter(|ids| ids.len() == texts.len()) else {
+                    whole.insert(export.clone());
+                    continue;
+                };
+                let mut ids = ids.into_iter();
+                for row in rows {
+                    let mut k = Vec::new();
+                    for &c in cols {
+                        match row.get(c) {
+                            Some(Value::Str(_)) => key_bytes(&mut k, None, ids.next().expect("an atom for each text")),
+                            Some(Value::Int(i)) => key_bytes(&mut k, None, *i),
+                            Some(other) => key_bytes(&mut k, Some(&format!("{other:?}")), 0),
+                            None => {}
+                        }
+                    }
+                    by.entry(k).or_default().push(digest(row));
+                }
+                out.twins.insert(probe.clone());
+            } else {
+                for row in rows {
+                    by.entry(row_key(row, cols)).or_default().push(digest(row));
+                }
             }
             for rows in by.values_mut() {
                 rows.sort_unstable();
@@ -657,19 +692,31 @@ impl StageDigests {
                 }
                 for (probe, (e, by)) in self.probes.iter().filter(|(_, (e, _))| e == export) {
                     let _ = e;
-                    let Some((_, rows)) = entry.outputs.get(probe) else { continue };
-                    let mut keys: Vec<Vec<u8>> = (0..rows.len())
-                        .map(|i| {
-                            let mut k = Vec::new();
-                            for c in 1..rows.width() {
-                                match rows.cell(i, c) {
-                                    super::super::output::Cell::Text(t) => key_bytes(&mut k, Some(t), 0),
-                                    super::super::output::Cell::Int(x) => key_bytes(&mut k, None, x),
+                    // Past the location, column 0: the values the probe fixed the export's read at.
+                    let mut keys: Vec<Vec<u8>> = if self.twins.contains(probe) {
+                        let Some((w, rows)) = entry.rows.get(probe) else { continue };
+                        rows.chunks_exact((*w).max(1))
+                            .map(|row| {
+                                let mut k = Vec::new();
+                                row.iter().skip(1).for_each(|&x| key_bytes(&mut k, None, x));
+                                k
+                            })
+                            .collect()
+                    } else {
+                        let Some((_, rows)) = entry.outputs.get(probe) else { continue };
+                        (0..rows.len())
+                            .map(|i| {
+                                let mut k = Vec::new();
+                                for c in 1..rows.width() {
+                                    match rows.cell(i, c) {
+                                        super::super::output::Cell::Text(t) => key_bytes(&mut k, Some(t), 0),
+                                        super::super::output::Cell::Int(x) => key_bytes(&mut k, None, x),
+                                    }
                                 }
-                            }
-                            k
-                        })
-                        .collect();
+                                k
+                            })
+                            .collect()
+                    };
                     keys.sort_unstable();
                     keys.dedup();
                     h.update(probe.as_bytes());

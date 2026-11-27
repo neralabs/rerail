@@ -275,6 +275,43 @@ anc(s, a) :- anc(s, b), p1__base(b, a).
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A constant folded first (`constants::fold`) whose listing a request reads, where another request reads the
+    /// files' rows: `stub_dir` lists `stubs` (one value for the run), and `listed` asks for each directory a hit names,
+    /// so the requests' cone reads `want`, each file's. The constants' run is over no documents, so its copy of
+    /// `stub_dir` is one set of rows for the run (`cross_file`, decision 0652), not a union of the files' rows: it was
+    /// none, and gamma's stubs were not found.
+    #[test]
+    fn a_constant_whose_listing_a_request_reads_is_the_runs_where_another_request_reads_the_files() {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("phases-constant-cone");
+        let _ = std::fs::remove_dir_all(&dir);
+        let (src, phases) = (dir.join("src"), dir.join("phases"));
+        std::fs::create_dir_all(src.join("stubs/types-gamma/gamma")).unwrap();
+        std::fs::create_dir_all(&phases).unwrap();
+        std::fs::write(src.join("main.py"), "import gamma\n").unwrap();
+        std::fs::write(src.join("stubs/types-gamma/gamma/__init__.pyi"), "def f() -> None: ...\n").unwrap();
+        std::fs::write(phases.join("s.rerail"), r#"#include "core.rerail"
+.phase s
+.export hit
+.decl want(q: symbol)
+want(q) :- kind(i, "import_statement"), field(i, "name", n), text(n, q).
+.decl stub_dir(b: symbol)
+stub_dir(b) :- dir_entry("stubs", w, 1), b = cat("stubs/", w).
+.decl hit(q: symbol, l: symbol, b: symbol)
+hit(q, "declarations", "") :- want(q).
+hit(q, "stubs", b) :- want(q), dir_entry(b, q, 1), stub_dir(b).
+.decl listed(d: symbol)
+listed(d) :- hit(_, "stubs", d), dir_entry(d, _, _).
+"#).unwrap();
+        let out = dir.join("out");
+        crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        let options = serde_json::json!({ "phase_dir": phases.to_string_lossy() });
+        let reader = "#include \"core.rerail\"\n.decl s__hit(q: symbol, l: symbol, b: symbol)\n.decl r(q: symbol, l: symbol, b: symbol)\nr(q, l, b) :- s__hit(q, l, b).\n.output r\n";
+        let reader = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(reader).unwrap()).unwrap();
+        crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&reader], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
+        assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "r").unwrap(), [["gamma", "declarations", ""], ["gamma", "stubs", "stubs/types-gamma"]]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// An asked phase (decision 0705), `q`: a file's asks of other modules by key (`asked_at`, "m.x"), each sent to
     /// the file of the module it names (`ask_in`), answered there in the next round (`answer`), and followed through
     /// a star import into another module's file in the round after (`forward`, `resolved`).

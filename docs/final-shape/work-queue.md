@@ -11928,3 +11928,38 @@ Tests:
 - planner 6/6, and boot `tools` without the split tests 10/10.
 - tests-corpus `a_text_the_walk_holds_is_joined_whatever_steps_batch` under `RERAIL_PROF=1`, so the walk's tallies run: 1/1.
 - Not run: the device crate's Metal tests and `all` (no farm).
+
+### Q577. Roll-up 149 (sync-integration-hub-tape b1cfe3436f onto Pulling-it-all-together): what the merge chose
+
+sync-integration-hub-tape's one new commit, b1cfe3436f (0677): a node id in the cross-file part is a hard fail, and the programs that carried one are keyed by symbol. `RERAIL_STRICT_NODES`, `RERAIL_NODE_CROSSINGS` and `node_crossings.txt` go. python/references.rerail, workload.rerail, calls_rust.rerail and the typing program `calls`, now P3, are rewritten by symbol, and calls.rerail, calls_cx.rerail and make_cx.py are removed.
+
+- **The hub's crossings meet the hard fail.** The hub's own programs and tests that put a node in the cross-file part are ported to 0677, so that none of them is refused:
+  - **python/references_w.rerail and `w_references`.** These hold W's reference graph, which named a definition by its node id. They now name it by a symbol: the file's path and the definition's byte range (`pkg/m.py:120:480`). Each file's rules place that symbol on its own definition through `reference_def`, as python/references.rerail does. `syntax::definitions`, the node lookup they used, goes.
+  - **The engine tests that read a split which 0677 now refuses.** The device file_local tests, cross_views, maintain and warm read the split short of its refusal (`unrefused`). Each test keeps its stratum.
+- **core.rerail: the three reference relations are not `extensible`.** Sync declared `reference_def`, `reference_edge` and `reference_open` extensible, which let any file add to them. They are rules (0483). Only python/references.rerail and python/references_w.rerail may derive them (`rr::DERIVED_BY`, 0263's exception). `a_module_derives_the_core_relation_its_file_is_named_for` holds again.
+- **0709 meets sync's P3 `calls`.** Points-to's `pt_wsown(d) :- types__owner(d, m), pt_wsmod(m)` fixes `m` at the file's own module through `pt_wsmod`, a relation of values (0680) that binds no location. It used to make no probe, so `types__owner` was read whole and every row of it keyed every file's entry: moving one definition missed all 25 entries of 0094 §8's test. Three changes fix it:
+  - **A `_v` probe.** `phases::stage` now makes a probe of the fixed values alone (`rr_probe_<digest>_<columns>_v`). The split locates it as it does any relation of values. `memo::StageDigests` keys an entry by the located twin's rows, read from the entry's exported rows, texts by the store's atoms.
+  - **Probed exports stay out of the memo plan.** `under_phased` leaves out an export that probes read (`phased::is_probed`), as it leaves out the settings. Before this, the same edit made a new plan, and the cross part found no documents' table under it (0458).
+  - **A setting keeps its declared key.** An export its phase declares a key for (0705) gets no `_v` probe.
+  Decision 0709 records the first two.
+- **setfix's extension takes a layout's `key` line.** It is a check where the engine writes the rows (0361 step 6), which this extension does not make. Its rows are the same.
+- **Stage maintenance in the tests.** Each stage now keeps its own state, so `maintained_with_stages` maintains a program with its stages, as a run does.
+
+Fixed on the way, a hub engine bug the merge exposed: **a constants' copy is `cross_file`.** `imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order` failed on the merged tree and on the hub's own tree with sync's version of the test: gamma, whose stubs are in typeshed's `stubs/`, got no "stubs" try.
+- **Cause:** the sources phase's `py_stub_dir` is a constant (`constants::fold`, 0094 §6). A listing with a key from a setting makes it, and the constants' run, over no documents, derives it first. That run's program is the whole program with a copy of each constant as an output (`as_outputs_of`). The sources phase's requests also read each file's imports: `py_listed` asks for each directory a try names, so the cone reads `py_want`. That gives the constants' run a per-file part. Under 0680/0708 the split then made `py_stub_dir` a per-file view of values, and the undeclared copy `rr_const_py_stub_dir` a per-file relation, which 0652 makes the union of the files' rows. With no files that union is empty, so the constant was folded with no rows.
+- **Fix:** the copies are declared `cross_file`, which is what they are: one set of rows for the run. The cross part derives what they read, where the cone answers its requests, and `py_stub_dir` now holds `../ts/stubs/types-gamma`.
+- **Minimal repro, now a test:** tests-corpus `a_constant_whose_listing_a_request_reads_is_the_runs_where_another_request_reads_the_files`. A phase of five rules: `want` from a file's imports, `stub_dir` from a listing with a constant key, and two `hit` rules (the declarations row and the stubs listing). A fifth rule asks for each directory a stubs hit names. Without the fix the stubs row is missing. With it, both rows come back.
+
+Found while reducing it and not fixed here, both outside this merge:
+- A plain program (no phase) whose request reads a relation made from the run's own files gets none of that relation's rows in the cone: the cone takes per-file rows only from loads.
+- A phase whose only constant-key listing is outside the root, under a setting's directory, exports its relation with no columns ("dbg_try: 0 columns, not 4").
+
+Relax: the "optimized native build's scripts said other cfgs" flake stopped one run before any test ran; the rerun passed. Large suites were split to fit the 12 GB cap.
+
+Tests (Relax, CPU; no farm, no `all`):
+- tests-logic: typing 34/34 (with the pep_561 test and `calls_into_the_standard_library_reach_its_stubs`), plan 117/117, the native, waves, stats, strings, profile, liveness and costs groups 90/90.
+- tests-corpus: every non-Metal test, in module groups (phases 19, base 52, maintain 17, cross_views 12, session and phase0 40, partial, warm and the rest 51, `corpus::tests` 113 by name at one thread, made_batch, cache, guests and fresh_tier 13).
+- tests-rr: rr::tests 230/231, the red one `rule_syntax_files_pass_check_rr`, which is red on the hub and on sync: 41 undeclared relations in lib/python/py-names-handed.rerail. program_image, tape, json_rules and program_text 85/85.
+- rr-root 55/55, logic 312/312, typing 13/13, corpus-prep 19/19.
+- boot: everything but the 17 cost_shape_tests, which are red on the hub's tree as they are here.
+- Not run: the Metal tests (no farm). `a_contexts_rows_on_metal_are_the_cpus` ran once by mistake, under `--exact`, with the device set to CPU, and failed there; it is not counted.

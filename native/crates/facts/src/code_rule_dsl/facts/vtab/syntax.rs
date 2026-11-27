@@ -6414,19 +6414,6 @@ struct Known {
 /// The field atom of field `code` in the dialect whose tape tag is `tag`.
 pub use rerail_tape_format::codes::field_atom;
 
-/// Document `key`'s `function_definition` and `class_definition` nodes by byte range (start, end), as ids of
-/// `node` in the run's shape (`core`: core.rerail's, else T's; a node's id is its rank among the shape's numbered nodes,
-/// so T's ids name other nodes of a run in core.rerail's shape): what W's call summaries name a definition by
-/// (`calls::summary::Def`).
-pub fn definitions(key: u32, facts: &Arc<Facts>, core: bool) -> StoreResult<HashMap<(u32, u32), i64>> {
-    let dialect = Dialect::new(crate::code_rule_dsl::facts::core::facts_tag(facts))?;
-    let p = Projected::new(key, Arc::clone(facts), Some(&dialect), if core { Shape::Core } else { Shape::T }, false, None);
-    Ok(p.node_ids()
-        .filter(|&(_, id, _)| matches!(dialect.name(p.f(), id), "function_definition" | "class_definition"))
-        .map(|(_, id, n)| ((p.f().start(id), p.f().end(id)), n))
-        .collect())
-}
-
 /// T's nine base relations over `documents`, and the `py.*` families, by table name.
 pub fn sources(store: &dyn FactStore, documents: Vec<Document>) -> StoreResult<Vec<(&'static str, Arc<dyn Source>)>> {
     shaped(store, documents, &Projection::default())

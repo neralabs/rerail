@@ -817,7 +817,15 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
                         _ => false,
                     })
                     .collect();
-                let (Some((n, n_type)), false, false) = (node.clone(), in_agg, fixed.is_empty()) else {
+                // A rule binding no location still fixes the read where the values come from the file's own rows: a
+                // relation of values its rules derive per file (decision 0680, `pt_wsown`'s `pt_wsmod(m)`, the file's
+                // own module). Its probe is those values alone, and the split places it: per file, it keys the entry
+                // by the export's rows at them; elsewhere it keys nothing, and the export is read whole
+                // (`memo::StageDigests`), as it was for every such read.
+                // An export its phase declares a key for (decision 0705, a setting) is keyed by its declaration where
+                // no located probe reads it: a probe of values alone is not made for it.
+                let declared = crate::code_rule_dsl::typing::file_local::setting_input(e);
+                let (false, false) = (in_agg, fixed.is_empty() || (node.is_none() && (others.is_empty() || declared))) else {
                     whole.insert(read_name(e));
                     continue;
                 };
@@ -825,18 +833,20 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
                 let probe = {
                     use sha2::Digest as _;
                     let d: [u8; 32] = sha2::Sha256::new().chain_update(e.as_bytes()).finalize().into();
-                    format!("{PROBE}{}_{}", d[..4].iter().map(|b| format!("{b:02x}")).collect::<String>(), cols.iter().map(usize::to_string).collect::<Vec<_>>().join("_"))
+                    // One with no location is another relation (`_v`, its values): its columns are not a located probe's.
+                    let valued = if node.is_none() { "_v" } else { "" };
+                    format!("{PROBE}{}_{}{valued}", d[..4].iter().map(|b| format!("{b:02x}")).collect::<String>(), cols.iter().map(usize::to_string).collect::<Vec<_>>().join("_"))
                 };
                 if !probes.iter().any(|(p, _, _)| *p == probe) {
                     let types = v.columns_of(e).unwrap_or_default();
-                    let mut decl: Vec<(String, String)> = vec![("n".to_owned(), n_type.clone())];
+                    let mut decl: Vec<(String, String)> = node.iter().map(|(_, t)| ("n".to_owned(), t.clone())).collect();
                     decl.extend(cols.iter().map(|&c| (format!("c{c}"), types[c].1.clone())));
                     let decl: Vec<(&str, &str)> = decl.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
                     b.fields().declare(&probe, &decl);
                     b.fields().add_output(&probe);
                     probes.push((probe.clone(), read_name(e), cols.clone()));
                 }
-                let mut head = vec![t_of(r, TermRef::Var(n))];
+                let mut head: Vec<_> = node.iter().map(|(n, _)| t_of(r, TermRef::Var(*n))).collect();
                 head.extend(fixed.iter().map(|(_, t)| t_of(r, *t)));
                 let mut rb = b.rule().head(probe.as_str(), &head);
                 for ((_, l), named) in others.iter().zip(&other_names) {

@@ -271,6 +271,9 @@ pub fn open(st: &State, conn: &Connection, spec: &str) -> Result<String> {
             "probe" => probes.push(ProbeRule { head: num(toks[1])?, delta: num(toks[2])?, body: Body::Sql(unhex(toks[3])?), whole: None }),
             "seed" => probes.push(ProbeRule { head: num(toks[1])?, delta: SEED, body: Body::Join(parse_join(st, conn, &unhex(toks[2])?, &mut syms)?), whole: None }),
             "nowrite" => write = false,
+            // A layout's declared key, checked where the engine writes the rows (decision 0361 step 6): a check that
+            // makes no row, which this extension does not make. Its rows are the same.
+            "key" => {}
             "gate" => {
                 let list = |t: &str| -> Result<Vector<usize>> { if t == "-" { Ok(rerail_blocks::vector::Vector::new()) } else { t.split(',').map(num::<usize>).collect() } };
                 let src = if toks[2] == "-" { None } else { Some(num(toks[2])?) };
