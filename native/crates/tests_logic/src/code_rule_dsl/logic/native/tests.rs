@@ -573,7 +573,7 @@ fn a_walks_readers_are_answered_in_its_climb() {
     let starts = [(1000, 100, 4), (1001, 200, 4), (1002, 100, 6), (1003, 300, 7), (1004, 400, 8), (1005, 200, 8), (1005, 200, 3)];
     let late = [(1001, 200, 3)];
     type Rows = (Vec<(i64, i64, i64)>, Vec<(i64, i64)>, Vec<(i64, i64, i64)>);
-    let rows = |semi_naive: bool| -> (Rows, String) {
+    let rows = |semi_naive: bool, inner: bool| -> (Rows, String) {
         let db = connection();
         db.execute_batch("CREATE TABLE st(c0, c1, c2); CREATE TABLE up(c0, c1); CREATE TABLE bound(c0, c1); CREATE TABLE late(c0, c1, c2); CREATE TABLE look(c0, c1, c2); CREATE TABLE miss(c0, c1); CREATE TABLE walk(c0, c1, c2);").unwrap();
         for (a, b, c) in starts {
@@ -597,7 +597,7 @@ fn a_walks_readers_are_answered_in_its_climb() {
         let look = format!("pos d2 v0 v1 v2\npos {bnd} v2 v1\nneg {lat} v0 v1 v2\nhead v0 v1 v2");
         let miss = format!("pos d2 v0 v1 v2\nneg {bnd} v2 v1\nneg {upr} v2 _\nhead v0 v1");
         super::setfix::closure::semi_naive_here(semi_naive);
-        let spec = format!("name ends\nrel look iii empty\nrel miss ii empty\nrel walk iii empty\nseed 2 {}\njoin 2 2 {}\njoin 2 2 {}\njoin 0 2 {}\njoin 1 2 {}", hex(&seed), hex(&step), hex(&past), hex(&look), hex(&miss));
+        let spec = format!("name ends\nrel look iii empty\nrel miss ii empty\nrel walk iii empty\nseed 2 {}\njoin 2 2 {}\njoin 2 2 {}\njoin 0 2 {}\njoin 1 2 {}{}", hex(&seed), hex(&step), hex(&past), hex(&look), hex(&miss), if inner { "\ninner 2" } else { "" });
         super::setfix::open(&db, &spec).unwrap();
         super::setfix::closure::semi_naive_here(false);
         let report = super::setfix::run(&db, "ends", 0).unwrap();
@@ -642,13 +642,20 @@ fn a_walks_readers_are_answered_in_its_climb() {
     miss.sort();
     miss.dedup();
     let want = (look, miss, walk);
-    let (semi, semi_report) = rows(true);
+    let (semi, semi_report) = rows(true, false);
     assert_eq!(semi, want, "semi-naive is the search");
     let waves = |r: &str| r.split(' ').nth(1).unwrap().parse::<u32>().unwrap();
     assert!(waves(&semi_report) > 2, "semi-naive climbs a scope a wave: {semi_report}");
-    let (keyed, report) = rows(false);
+    let (keyed, report) = rows(false, false);
     assert_eq!(keyed, semi, "the climb answers its readers with semi-naive's rows");
     assert_eq!(waves(&report), 1, "the climb and its readers run in one wave: {report}");
+    // The walk inner (the design's S4): its ends the same, its rows climbed in scratch, its relation its seeds alone.
+    let (inner, report) = rows(false, true);
+    assert_eq!((&inner.0, &inner.1), (&semi.0, &semi.1), "an inner walk's ends are semi-naive's");
+    let mut seeds: Vec<(i64, i64, i64)> = starts.to_vec();
+    seeds.sort();
+    assert_eq!(inner.2, seeds, "an inner walk's relation keeps its seeds alone");
+    assert_eq!(waves(&report), 1, "{report}");
 }
 
 /// A count step that many bindings reach is answered from a count table (decision 0098 §1), exactly as walking counts:
@@ -785,6 +792,7 @@ fn a_split_looks_its_parts_up_and_skips_those_that_are_no_atom() {
 const ORACLE_CASES: &[(&str, &[&str])] = &[
     ("closure", &["a_walk_along_an_edge_runs_as_its_closure", "a_closure_over_many_components_runs_in_pieces_like_semi_naive", "a_keyed_walk_along_an_edge_runs_as_a_closure_in_one_wave", "a_walks_readers_are_answered_in_its_climb"]),
     ("climb ends", &["a_walks_readers_are_answered_in_its_climb", "plan::climb_tests::a_reader_that_joins_out_from_the_walks_row_is_not_a_climb_end"]),
+    ("inner walk", &["a_walks_readers_are_answered_in_its_climb", "plan::climb_tests::a_walk_its_ends_alone_read_is_inner"]),
 ];
 
 /// The registry's rule (the design "Registering an executor for a join shape"): no executor or shape runs without a

@@ -3509,6 +3509,20 @@ impl<'a> Run<'a, '_> {
         if !kept_rows.is_empty() {
             rel_lines.push(SpecLine::KeptRows(kept_rows));
         }
+        // The relations no other stratum reads (the design's S4, "the walk is inner"): every reader is a rule of this
+        // stratum, and none is kept past the run, an output, stored for a session's next run, started from another's
+        // rows, filled by a request, or a lattice's. A form that runs the component whole keeps their rows in its own
+        // scratch. `RERAIL_SHAPE_INNER_WALK=off` turns it off.
+        if !join_shapes::off("inner walk") && based.is_none() && !scc.iter().any(|r| f.qualified(r, "levels")) {
+            let inner: Vector<usize> = rels
+                .iter()
+                .filter(|r| scc.contains(r) && !self.model.inputs.kept.contains(**r) && is_inner(&f, r, |x| scc.contains(x)))
+                .map(|r| ri[*r])
+                .collect();
+            if !inner.is_empty() {
+                rel_lines.push(SpecLine::Inner(inner));
+            }
+        }
         // The relations declared sorted (decision 0456 K7): laid out in canonical order when done.
         let sorted: Vector<usize> = rels.iter().filter(|r| f.qualified(r, "sorted")).map(|r| ri[*r]).collect();
         if !sorted.is_empty() {
@@ -8271,6 +8285,19 @@ fn off_thread(e: &Error) -> bool {
 /// The strata in order of their levels (stable; with `sort`), and each one's level: one more than the deepest level of a stratum
 /// it depends on (`deps`: reads, requests answered, a native operator's inputs). A level's strata do not depend on
 /// each other, so it is a device wave (decision 0095 §5).
+/// Whether `rel`, a relation of the stratum `in_stratum` tells, is read by no rule outside it (the design's S4, "the
+/// walk is inner"), and is neither an output, stored for a session's next run, produced, a request, a gate, nor a
+/// lattice's: its rows matter to no one once the stratum is done. Its structure only, never its name.
+pub(crate) fn is_inner(f: &Fields<'_>, rel: &str, in_stratum: impl Fn(&str) -> bool) -> bool {
+    !f.is_output(rel)
+        && !f.qualified(rel, "no_inline")
+        && !f.produced(rel)
+        && !f.request(rel)
+        && !f.gate(rel)
+        && f.lattice_decl(rel).is_none()
+        && f.v.rel(rel).is_some_and(|id| f.v.readers(id).all(|(rule, _)| in_stratum(f.v.rel_name(rule.head().rel()))))
+}
+
 /// The strata with each registered shape's matches joined (`join_shapes::regroup`, `join_shapes::SHAPES`). The first shape is
 /// the climb's ends (decision 0561): a stratum whose rules each read a keyed walk's rows once, positively, and
 /// otherwise only relations made before the walk (`look` and `miss` over `walk`) joins the walk's stratum, where the
@@ -9857,5 +9884,31 @@ mod climb_tests {
         let walk = sccs.iter().find(|s| s.contains("walk")).expect("walk's stratum");
         assert!(walk.contains("look"), "a reader of the row alone is answered in the climb: {sccs:?}");
         assert!(!walk.contains("chained"), "a reader that joins out from the row is a stratum of its own: {sccs:?}");
+        assert!(!is_inner(&f, "walk", |r| walk.contains(r)), "a walk another stratum reads is not inner");
+    }
+
+    /// The design's S4: a walk read by its climb's ends alone is inner; the ends, read by no rule but stated as
+    /// outputs or read by another stratum, are not.
+    #[test]
+    fn a_walk_its_ends_alone_read_is_inner() {
+        use crate::code_rule_dsl::logic::program_image::{Builder, T};
+        let mut b = Builder::base();
+        for (rel, cols) in [("nameref", &[("n", "node"), ("x", "symbol")][..]), ("wstart", &[("n", "node"), ("s", "node")]), ("bound_in", &[("s", "node"), ("x", "symbol")]), ("up", &[("s", "node"), ("p", "node")]), ("walk", &[("n", "node"), ("x", "symbol"), ("s", "node")]), ("look", &[("n", "node"), ("x", "symbol"), ("s", "node")]), ("used", &[("n", "node"), ("s", "node")])] {
+            b.fields().declare(rel, cols);
+        }
+        let v = |x: &'static str| T::Var(x);
+        b.rule().head("walk", &[v("n"), v("x"), v("s")]).atom("nameref", &[v("n"), v("x")]).atom("wstart", &[v("n"), v("s")]).finish().unwrap();
+        b.rule().head("walk", &[v("n"), v("x"), v("p")]).atom("walk", &[v("n"), v("x"), v("s")]).not("bound_in", &[v("s"), v("x")]).atom("up", &[v("s"), v("p")]).finish().unwrap();
+        b.rule().head("look", &[v("n"), v("x"), v("s")]).atom("walk", &[v("n"), v("x"), v("s")]).atom("bound_in", &[v("s"), v("x")]).finish().unwrap();
+        b.rule().head("used", &[v("n"), v("s")]).atom("look", &[v("n"), v("x"), v("s")]).finish().unwrap();
+        let v = b.finish().unwrap().0;
+        let p = body::Placed::whole(v);
+        let f = Fields::of(&p).expect("a whole version");
+        let deps = crate::code_rule_dsl::logic::program_image::analyses::edges_by_name(f.v, f.about);
+        let sccs = climb_ends(&p, &p.components().unwrap(), &deps).expect("the climb's end joins the walk's stratum");
+        let walk = sccs.iter().find(|s| s.contains("walk")).expect("walk's stratum");
+        assert!(walk.contains("look"), "{sccs:?}");
+        assert!(is_inner(&f, "walk", |r| walk.contains(r)), "a walk its ends alone read is inner");
+        assert!(!is_inner(&f, "look", |r| walk.contains(r)), "an end another stratum reads is not inner");
     }
 }

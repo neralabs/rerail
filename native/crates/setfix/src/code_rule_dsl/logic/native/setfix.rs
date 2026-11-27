@@ -1974,6 +1974,9 @@ pub struct Store { pub rels: Vec<Rel>, syms: Arc<Symbols> }
 /// one at run time.
 struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<ProbeRule>, gates: Vec<Gate>, seeded: bool, write: bool, done: bool,
                    requests: Vec<(usize, usize)>, produced: Vector<usize>, form: Option<Box<dyn forms::Form>>,
+                   /// The relations no other stratum reads (`Line::Inner`): a form that runs the component whole keeps
+                   /// their rows in its own scratch.
+                   inner: Vector<usize>,
                    /// Request rows the caller held back (`defer`): asked again once the run is otherwise quiet. Until
                    /// then they are as rows not yet asked (they keep no gate shut).
                    deferred: Vec<(usize, Vec<Vector<i64>>)>,
@@ -2612,6 +2615,7 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
     let mut kept_n: Vector<usize> = rerail_blocks::vector::Vector::new();
     // The relations whose rows outlive the run: their own blocks (`Life::Kept`).
     let kept_rows: Vector<usize> = spec.lines.iter().find_map(|l| if let Line::KeptRows(r) = l { Some(r.iter().map(|&x| x as usize).collect()) } else { None }).unwrap_or_default();
+    let inner: Vector<usize> = spec.lines.iter().find_map(|l| if let Line::Inner(r) = l { Some(r.iter().map(|&x| x as usize).collect()) } else { None }).unwrap_or_default();
     let us = |xs: &[u64]| -> Vector<usize> { xs.iter().map(|&x| x as usize).collect() };
     for line in spec.lines.iter() {
         match line {
@@ -2671,7 +2675,7 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
             Line::Leveled(rels) => { leveled = true; cyclic.extend(rels.iter().map(|&r| r as usize)); }
             Line::Measured { desc, key, keyed, cols, ranks } => maint.measured = Some(Measured { desc: *desc, key: key.as_ref().map(|k| k.to_string()), keyed: *keyed, cols: us(cols), ranks: us(ranks) }),
             Line::KeptOld => kept_old = true,
-            Line::KeptRows(_) | Line::Sorted(_) => {}
+            Line::KeptRows(_) | Line::Inner(_) | Line::Sorted(_) => {}
             Line::Lattice { rel, keys, name, widen } => {
                 let lattice = super::lattice(name).map_err(|e| err(format!("lattice {name}: {e}")))?;
                 rels.get_mut(*rel as usize).ok_or_else(|| err(format!("lattice: no relation {rel}")))?.set_lattice(name, *keys as usize, lattice, widen.get())?;
@@ -2927,7 +2931,7 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
     let on = on(conn);
     let mut reg = on.components.lock();
     let key = name.clone();
-    let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, form: None, waiting: None, device_wait: None,
+    let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, inner, form: None, waiting: None, device_wait: None,
                                device: device_plans, seed_specs, deferred: Vec::new(), presenting: false, cut: None, last_cut: None, trial_rows: None, maint };
     // A stratum placed on the device runs there whole: a recursive one as the device's rounds (`fixpoint`), not as
     // a closure (decision 0098 §1's form, for a stratum on the CPU).

@@ -68,6 +68,9 @@ pub(super) struct Closure {
     /// row however many rests read it, with whichever sign.
     /// Each is asked as the index's probe alone by its one step (`cands::holds`).
     tests: Vec<JoinRule>,
+    /// The walk is inner (`Line::Inner`, the design's S4): no stratum reads it but its ends, so the rows it climbs
+    /// through are this run's scratch, never pushed to its relation (which keeps only its seeds).
+    inner: bool,
 }
 
 /// Whether two row tests ask the same: the same source by the same index, the same keys.
@@ -357,7 +360,7 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
     }
     // One walk whose rest reads only the walking column: the reach per node.
     if let [(w, nslots)] = &walks[..] && !w.keyed && readers.is_empty() && wi == 0 {
-        return Some(Closure { col, rest: rest_join(decoded(w.j, w.rest), w.z, *nslots, &w.slot_of), y: w.slot_of[col], keyed: Vec::new(), w: 0, readers: Vec::new(), tests: Vec::new() });
+        return Some(Closure { col, rest: rest_join(decoded(w.j, w.rest), w.z, *nslots, &w.slot_of), y: w.slot_of[col], keyed: Vec::new(), w: 0, readers: Vec::new(), tests: Vec::new(), inner: false });
     }
     // Keyed (decision 0570): `RERAIL_KEYED_CLOSURE=off` leaves it semi-naive.
     if std::env::var("RERAIL_KEYED_CLOSURE").is_ok_and(|v| v == "off") {
@@ -391,7 +394,7 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
     let all: Vec<usize> = (0..k).collect();
     let tests = tests.into_iter().map(|t| rest_join_to(vec![t], vec![Term::Const(1)], k, &all)).collect();
     let (w, nslots) = &walks[0];
-    Some(Closure { col, rest: rest_join(decoded(w.j, w.rest), w.z, *nslots, &w.slot_of), y: w.slot_of[col], keyed, w: wi, readers, tests })
+    Some(Closure { col, rest: rest_join(decoded(w.j, w.rest), w.z, *nslots, &w.slot_of), y: w.slot_of[col], keyed, w: wi, readers, tests, inner: c.inner.contains(&wi) })
 }
 
 /// What the closure did, for the run's report: nodes reached, rows made, and which way.
@@ -548,6 +551,14 @@ fn keyed(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<
             }
         }
     }
+    // An inner walk's rows (`Closure::inner`): its seeds and every row climbed, each once, in this run's scratch.
+    let mut scratch: Option<(hashbrown::HashTable<u32>, Vector<i64>)> = cl.inner.then(|| {
+        let (mut seen, mut all) = (hashbrown::HashTable::new(), Vector::new());
+        for row in frontier.chunks(k) {
+            seen_insert(&mut seen, &mut all, k, row);
+        }
+        (seen, all)
+    });
     let (mut rows, mut depths) = (0usize, 0usize);
     let mut made: Vector<i64> = Vector::new();
     let all: Vector<usize> = (0..k).collect();
@@ -663,17 +674,45 @@ fn keyed(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<
             .ok()?;
         }
         frontier.clear();
-        let rel = &mut store.rels[wi];
-        for row in made.chunks(k) {
-            if rel.push(row) {
-                frontier.extend_from_slice(row);
-                rows += 1;
+        if let Some((seen, all)) = &mut scratch {
+            for row in made.chunks(k) {
+                if seen_insert(seen, all, k, row) {
+                    frontier.extend_from_slice(row);
+                    rows += 1;
+                }
+            }
+        } else {
+            let rel = &mut store.rels[wi];
+            for row in made.chunks(k) {
+                if rel.push(row) {
+                    frontier.extend_from_slice(row);
+                    rows += 1;
+                }
             }
         }
+    }
+    if let Some((_, all)) = &scratch {
+        prof::count("closure", "keyed: an inner walk's rows climbed in scratch", (all.len() / k) as u64);
     }
     prof::count("closure", "keyed closures", 1);
     prof::count("closure", "keyed closure depths", depths as u64);
     Some(Prepared { nodes: Vector::new(), index: BlockHash::default(), adj: Lists::new(), at: Vector::new(), pieces: Lists::new(), launches: Vec::new(), levels: false, keyed: Some((rows, depths)) })
+}
+
+/// Whether `row` is new to an inner walk's scratch (`keyed`): `all` holds its rows, `seen` their numbers by hash.
+fn seen_insert(seen: &mut hashbrown::HashTable<u32>, all: &mut Vector<i64>, k: usize, row: &[i64]) -> bool {
+    use std::hash::BuildHasher as _;
+    let hasher = foldhash::fast::FixedState::with_seed(0);
+    let h = hasher.hash_one(row);
+    let at = |i: u32| &all[i as usize * k..(i as usize + 1) * k];
+    if seen.find(h, |&i| at(i) == row).is_some() {
+        return false;
+    }
+    let n = (all.len() / k) as u32;
+    all.extend_from_slice(row);
+    let all = &*all;
+    seen.insert_unique(h, n, |&i| hasher.hash_one(&all[i as usize * k..(i as usize + 1) * k]));
+    true
 }
 
 /// The reach graph's weakly connected components, each a chain, a part of a dense piece, or walked on the host; and

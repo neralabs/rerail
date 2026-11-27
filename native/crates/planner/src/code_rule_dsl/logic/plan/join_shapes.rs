@@ -41,7 +41,7 @@ pub fn shape_names() -> Vec<&'static str> {
 }
 
 /// Whether shape `name` is turned off for this run.
-fn off(name: &str) -> bool {
+pub(crate) fn off(name: &str) -> bool {
     let var = format!("RERAIL_SHAPE_{}", name.to_ascii_uppercase().replace(' ', "_"));
     std::env::var("RERAIL_SHAPES").is_ok_and(|v| v == "off") || std::env::var(var).is_ok_and(|v| v == "off")
 }
