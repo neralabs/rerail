@@ -5218,6 +5218,17 @@ impl Viewed {
             }
         } else if matches!(self.view, View::Node) && column == 2 {
             b.by_kind(v).iter().filter(|&&[doc, _, _]| kept(&(doc as usize))).for_each(|&[doc, local, _]| one(Some(b.nodes().at(doc as usize) + local as usize)));
+        } else if matches!(self.view, View::Field) && column == 1 {
+            // A field's rows by the field alone: each document's nodes walked on the tape, a row for each in the field
+            // (`read_matches`' case).
+            for doc in (0..b.docs.len()).filter(|doc| kept(doc)) {
+                let p = &b.docs[doc];
+                for (l, x) in p.nodes() {
+                    if i64::from(field_atom(p.tag(), p.f().field(x))) == v {
+                        one(b.row_of_node(View::Field, doc, l, x));
+                    }
+                }
+            }
         } else {
             return false;
         }
@@ -5453,6 +5464,19 @@ impl Viewed {
             // The batch's index by kind (`Batch::by_kind`): each match with its local id and tape node.
             for &[doc, local, x] in b.by_kind(value) {
                 emit(doc as usize, local, x, None, None, Known::default());
+            }
+        } else if matches!(self.view, View::Field) && column == 1 {
+            // A field's rows by the field alone (`field($p, #f, $c)`, neither node bound): each document's nodes walked
+            // once in preorder, each one's field read off the tape and its parent kept by the walk, each match with
+            // its tape node in hand. The general lookup found each row and read its values again, 978 ns a row out
+            // on idc (3.1 s).
+            for doc in 0..b.docs.len() {
+                let p = &b.docs[doc];
+                for (l, x, up) in p.walk_up() {
+                    if i64::from(field_atom(p.tag(), p.f().field(x))) == value {
+                        emit(doc, l, x, None, Some(up.map_or(-1, |(q, _)| p.global(q))), Known::default());
+                    }
+                }
             }
         } else {
             return false;
