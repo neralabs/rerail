@@ -284,6 +284,9 @@ impl<K: ShardKey> Keys<K> {
     }
 }
 
+/// The columns `Layered::read_many_at` reads of a part's row on the stack: more go value by value.
+const PART_ROW: usize = 16;
+
 /// A relation's parts, in the order admitted, each found by the keys of the nodes it holds rows of. The index of the
 /// parts' sources, not their rows: an add makes the next one from it (`Values::add`), sharing what it does not change.
 #[derive(Clone, Default)]
@@ -654,6 +657,31 @@ impl Layered {
             seen: AtomicU64::new(0),
             part_docs: parking_lot::Mutex::new((0, Arc::from([]))),
         }
+    }
+    /// The row of value `value` in `column` in the parts that may hold it (`Parts::of`, `keyed` the base's
+    /// `keys_documents`): its values of `columns` written to `out`; `false` where none holds it. A value's rows in the
+    /// parts are few: each part's read of it (`lookup_read`, else its lookup, else its scan).
+    fn part_row(&self, p: &Parts, keyed: bool, column: usize, value: i64, columns: &[usize], out: &mut [i64]) -> bool {
+        let mut found = false;
+        p.of(value, keyed, &mut |part| {
+            if found {
+                return;
+            }
+            let mut each = |_: usize, got: &[i64]| {
+                if !found {
+                    out[..got.len()].copy_from_slice(got);
+                    found = true;
+                }
+            };
+            if !part.src.lookup_read(column, value, columns, &mut each) {
+                let rows = part.src.lookup(column, &[value]).unwrap_or_else(|| (0..part.src.len()).filter(|&r| part.src.value(r, column) == value).collect());
+                if let Some(&r) = rows.first() {
+                    part.src.row_at(r, columns, &mut out[..columns.len()]);
+                    found = true;
+                }
+            }
+        });
+        found
     }
     /// The batch's rows, where a value's rows are numbered past them (never for a base made on lookup, whose values'
     /// rows are at `MADE_AT`).
@@ -1190,13 +1218,42 @@ impl Source for Layered {
     fn row_column(&self) -> Option<usize> {
         self.base.row_column()
     }
-    /// The base's read of the chunk where no part holds admitted values; else each value as `read_one_at` reads it.
+    /// The base's read of the chunk; where a part holds admitted values, each value the base has no row of is then
+    /// asked of the parts that may hold it (`part_row`, as `read_one_at` asks them): the base's rows read in one call,
+    /// not one a value (the per-value read was 60% of the batched view reads of `all`).
     fn read_many_at(&self, column: usize, values: &[i64], columns: &[usize], out: &mut [i64], alive: &mut [u64], cursor: &mut super::super::ProbeCursor) -> Option<()> {
         let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
-        if self.values.admitted.load(Ordering::Acquire) == 0 || self.values.parts.load().get(self.name.as_str()).is_none_or(|p| p.total == 0) {
+        if self.values.admitted.load(Ordering::Acquire) == 0 {
             return self.base.read_many_at(column, values, columns, out, alive, cursor);
         }
-        super::super::read_many_each(self, column, values, columns, out, alive, cursor)
+        let all = self.values.parts.load();
+        let Some(p) = all.get(self.name.as_str()).filter(|p| p.total > 0) else {
+            return self.base.read_many_at(column, values, columns, out, alive, cursor);
+        };
+        const WORDS: usize = 64;
+        if self.made.is_some() || alive.len() > WORDS || columns.len() > PART_ROW {
+            return super::super::read_many_each(self, column, values, columns, out, alive, cursor);
+        }
+        let n = values.len();
+        let mut was = [0u64; WORDS];
+        was[..alive.len()].copy_from_slice(alive);
+        self.base.read_many_at(column, values, columns, out, alive, cursor)?;
+        let keyed = self.base.keys_documents(column);
+        let mut row = [0i64; PART_ROW];
+        for (w, a) in alive.iter_mut().enumerate() {
+            let mut missing = was[w] & !*a;
+            while missing != 0 {
+                let r = w * 64 + missing.trailing_zeros() as usize;
+                missing &= missing - 1;
+                if self.part_row(p, keyed, column, values[r], columns, &mut row[..columns.len()]) {
+                    for k in 0..columns.len() {
+                        out[k * n + r] = row[k];
+                    }
+                    *a |= 1u64 << (r % 64);
+                }
+            }
+        }
+        Some(())
     }
     /// The base's read, else the row of the part that holds the value (as `test_at` asks them: the base, then each
     /// part that may hold it, a value's rows are few). Made on lookup, `None` (the matches are read).
@@ -1215,26 +1272,33 @@ impl Source for Layered {
         if self.base.read_one_at(column, value, columns, out, cursor)? {
             return Some(true);
         }
-        let mut found = false;
-        p.of(value, self.base.keys_documents(column), &mut |part| {
-            if found {
-                return;
-            }
-            let mut each = |_: usize, got: &[i64]| {
-                if !found {
-                    out[..got.len()].copy_from_slice(got);
-                    found = true;
-                }
-            };
-            if !part.src.lookup_read(column, value, columns, &mut each) {
-                let rows = part.src.lookup(column, &[value]).unwrap_or_else(|| (0..part.src.len()).filter(|&r| part.src.value(r, column) == value).collect());
-                if let Some(&r) = rows.first() {
-                    part.src.row_at(r, columns, &mut out[..columns.len()]);
-                    found = true;
-                }
+        Some(self.part_row(p, self.base.keys_documents(column), column, value, columns, &mut out[..columns.len()]))
+    }
+    /// Includes the rows of the base that pass (its own scan, document by document), then the values' rows past them,
+    /// numbered as `for_rows` numbers them (Typing's 4e1d423523). The trait's scan read each row's columns through
+    /// `value`: a select of the row's node for each column of each row (1,766 samples of an idc run, `View::filtered`).
+    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vector<u32> {
+        let mut out = self.base.filter_eq(eqs);
+        let passes = |r: &[i64]| eqs.iter().all(|&(c, v)| r[c] == v);
+        if self.made.is_some() {
+            let at = self.scan_at();
+            self.scanned(|s| {
+                s.each(at, self.width.max(1), &mut |i, r| {
+                    if passes(r) {
+                        out.push(i as u32);
+                    }
+                    true
+                });
+            });
+            return out;
+        }
+        self.parts(|p| {
+            for part in &p.list {
+                let at = (self.base_len() + part.start) as u32;
+                out.extend(part.src.filter_eq(eqs).iter().map(|&r| at + r));
             }
         });
-        Some(found)
+        out
     }
     fn keys_documents(&self, column: usize) -> bool {
         self.base.keys_documents(column)

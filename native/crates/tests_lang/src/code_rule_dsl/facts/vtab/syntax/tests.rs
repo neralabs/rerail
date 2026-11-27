@@ -468,53 +468,121 @@ fn a_views_membership_test_is_its_rows() {
 /// strided, every third row not asked and one id in ten absent. A row not asked stays so and is not written.
 #[test]
 fn a_views_rows_of_a_chunk_read_at_once_are_its_one_rows() {
-    use crate::code_rule_dsl::facts::vtab::ProbeCursor;
     let store = ContentStore::open(&temp("read-many")).unwrap();
     let mut tried = 0;
     for (name, source) in sources(&store, documents().into_iter().take(4).collect()).unwrap() {
-        let (n, width) = (source.len(), source.columns().len());
-        if n == 0 {
-            continue;
-        }
-        for column in (0..width).filter(|&c| source.row_column() == Some(c) || source.keys_rows(c)) {
-            let others: Vec<usize> = (0..width).filter(|&c| c != column).collect();
-            let past = (0..n).map(|r| source.value(r, column)).max().unwrap() + 1;
-            let orders: [Vec<usize>; 3] = [(0..n).collect(), (0..n).rev().collect(), (0..n).map(|i| i * 7919 % n).collect()];
-            let mut read = false;
-            for order in &orders {
-                let mut cursor = ProbeCursor::default();
-                for chunk in order.chunks(300) {
-                    let values: Vec<i64> = chunk.iter().enumerate().map(|(i, &r)| if i % 10 == 9 { past + i as i64 } else { source.value(r, column) }).collect();
-                    let k = values.len();
-                    let asked: Vec<u64> = (0..k.div_ceil(64)).map(|w| (0..64).filter(|b| w * 64 + b < k && (w * 64 + b) % 3 != 2).fold(0, |m, b| m | 1 << b)).collect();
-                    let mut alive = asked.clone();
-                    let mut out = vec![i64::MIN; others.len() * k];
-                    if source.read_many_at(column, &values, &others, &mut out, &mut alive, &mut cursor).is_none() {
-                        continue;
-                    }
-                    read = true;
-                    for (r, &value) in values.iter().enumerate() {
-                        let was = asked[r / 64] >> (r % 64) & 1 != 0;
-                        let got = alive[r / 64] >> (r % 64) & 1 != 0;
-                        let row: Vec<i64> = others.iter().map(|&c| out[others.iter().position(|&x| x == c).unwrap() * k + r]).collect();
-                        if !was {
-                            assert!(!got && row.iter().all(|&v| v == i64::MIN), "{name} by {column}: row {r} not asked, not written");
-                            continue;
-                        }
-                        let mut one = vec![0i64; others.len()];
-                        let want = if source.row_column() == Some(column) {
-                            source.read_one_at(column, value, &others, &mut one, &mut ProbeCursor::default()).expect("its one-row read").then_some(one)
-                        } else {
-                            source.key_row(column, value).map(|q| others.iter().map(|&c| source.value(q, c)).collect())
-                        };
-                        assert_eq!(got.then_some(row), want, "{name} by {column}: value {value} (chunk row {r})");
-                    }
-                }
-            }
-            tried += usize::from(read);
-        }
+        tried += chunk_reads_are_one_rows(&name, source.as_ref());
     }
     assert!(tried >= 3, "views read a chunk at once: {tried}");
+}
+
+/// Checks `source`'s chunk reads (`read_many_at`) by each column whose values name one row: three orders of its
+/// rows a chunk at a time, every tenth value one no row has and every third row not asked, against its one-row
+/// reads. Returns the columns read a chunk at once.
+fn chunk_reads_are_one_rows(name: &str, source: &dyn Source) -> usize {
+    use crate::code_rule_dsl::facts::vtab::ProbeCursor;
+    let (n, width) = (source.len(), source.columns().len());
+    if n == 0 {
+        return 0;
+    }
+    let mut tried = 0;
+    for column in (0..width).filter(|&c| source.row_column() == Some(c) || source.keys_rows(c)) {
+        let others: Vec<usize> = (0..width).filter(|&c| c != column).collect();
+        let past = (0..n).map(|r| source.value(r, column)).max().unwrap() + 1;
+        let orders: [Vec<usize>; 3] = [(0..n).collect(), (0..n).rev().collect(), (0..n).map(|i| i * 7919 % n).collect()];
+        let mut read = false;
+        for order in &orders {
+            let mut cursor = ProbeCursor::default();
+            for chunk in order.chunks(300) {
+                let values: Vec<i64> = chunk.iter().enumerate().map(|(i, &r)| if i % 10 == 9 { past + i as i64 } else { source.value(r, column) }).collect();
+                let k = values.len();
+                let asked: Vec<u64> = (0..k.div_ceil(64)).map(|w| (0..64).filter(|b| w * 64 + b < k && (w * 64 + b) % 3 != 2).fold(0, |m, b| m | 1 << b)).collect();
+                let mut alive = asked.clone();
+                let mut out = vec![i64::MIN; others.len() * k];
+                if source.read_many_at(column, &values, &others, &mut out, &mut alive, &mut cursor).is_none() {
+                    continue;
+                }
+                read = true;
+                for (r, &value) in values.iter().enumerate() {
+                    let was = asked[r / 64] >> (r % 64) & 1 != 0;
+                    let got = alive[r / 64] >> (r % 64) & 1 != 0;
+                    let row: Vec<i64> = others.iter().map(|&c| out[others.iter().position(|&x| x == c).unwrap() * k + r]).collect();
+                    if !was {
+                        assert!(!got && row.iter().all(|&v| v == i64::MIN), "{name} by {column}: row {r} not asked, not written");
+                        continue;
+                    }
+                    let mut one = vec![0i64; others.len()];
+                    let want = if source.row_column() == Some(column) {
+                        source.read_one_at(column, value, &others, &mut one, &mut ProbeCursor::default()).expect("its one-row read").then_some(one)
+                    } else {
+                        source.key_row(column, value).map(|q| others.iter().map(|&c| source.value(q, c)).collect())
+                    };
+                    assert_eq!(got.then_some(row), want, "{name} by {column}: value {value} (chunk row {r})");
+                }
+            }
+        }
+        tried += usize::from(read);
+    }
+    tried
+}
+
+/// A chunk's source as it binds a relation (`Layered`: the batch's rows, then the values admitted past them), a
+/// document admitted: its chunk reads are its one-row reads, the base's rows read at once and the admitted values'
+/// from the parts (each layered source by its one-row columns).
+#[test]
+fn a_layered_sources_chunk_reads_with_values_admitted_are_its_one_rows() {
+    use crate::code_rule_dsl::facts::nearest::Binding;
+    let store = ContentStore::open(&temp("layered-read-many")).unwrap();
+    let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
+    let projection = Projection::core();
+    let file = |k: u32| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x, y=[1, 2]):\n    return g(x, *y)\n"));
+    let (sources, mut grower) = Grower::start(&store, vec![file(20), file(23)], &[], &Matchers::default(), &tests, Binding::Cpu, &projection, &HashMap::new()).unwrap();
+    let values = Arc::new(super::values::Values::default());
+    values.add(&[5], &[], grower.admit(&store, vec![file(5)], &[], &tests, Binding::Cpu, &projection).unwrap());
+    let mut tried = 0;
+    for (name, s) in &sources {
+        let source = super::values::Layered::new(name, Arc::clone(s), Arc::clone(&values));
+        tried += chunk_reads_are_one_rows(&format!("{name} layered"), &source);
+    }
+    assert!(tried >= 3, "layered sources read a chunk at once: {tried}");
+}
+
+/// A chunk's source as it binds a relation (`Layered`: the batch's rows, then the values admitted past them) filters to
+/// the rows a per-row read keeps: for every source, on each column at every seventh row's value, and on two columns at
+/// once. Its own scan, where the trait's read each row's columns one select at a time (Typing's 4e1d423523).
+#[test]
+fn a_layered_sources_filter_scan_holds_the_rows_a_per_row_read_finds() {
+    use crate::code_rule_dsl::facts::nearest::Binding;
+    let store = ContentStore::open(&temp("layered-filter")).unwrap();
+    let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
+    let projection = Projection::core();
+    let file = |k: u32| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x, y=[1, 2]):\n    return g(x, *y)\n"));
+    let (sources, mut grower) = Grower::start(&store, vec![file(20), file(23)], &[], &Matchers::default(), &tests, Binding::Cpu, &projection, &HashMap::new()).unwrap();
+    let values = Arc::new(super::values::Values::default());
+    values.add(&[5], &[], grower.admit(&store, vec![file(5)], &[], &tests, Binding::Cpu, &projection).unwrap());
+    let mut tried = 0;
+    for (name, s) in &sources {
+        let source = super::values::Layered::new(name, Arc::clone(s), Arc::clone(&values));
+        let n = source.len();
+        let width = source.columns().len();
+        for c in 0..width {
+            for r0 in (0..n).step_by(7) {
+                let v = source.value(r0, c);
+                let mut eqs = vec![(c, v)];
+                if width > 1 {
+                    let d = (c + 1) % width;
+                    eqs.push((d, source.value(r0, d)));
+                }
+                for eqs in [&eqs[..1], &eqs[..]] {
+                    let want: Vec<u32> = (0..n).filter(|&r| eqs.iter().all(|&(c, v)| source.value(r, c) == v)).map(|r| r as u32).collect();
+                    let got: Vec<u32> = source.filter_eq(eqs).iter().copied().collect();
+                    assert_eq!(got, want, "{name} {eqs:?}");
+                    tried += 1;
+                }
+            }
+        }
+    }
+    assert!(tried > 50, "{tried} filters");
 }
 
 /// The statistics of a relation held as a view of `node` (decision 0329) are its rows' counts, made without reading
