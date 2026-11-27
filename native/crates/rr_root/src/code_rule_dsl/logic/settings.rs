@@ -183,7 +183,7 @@ fn module_text(path: &std::path::Path, text: &str, graph: &crate::code_rule_dsl:
 
 /// File `path`'s name from the library directory `library` (both canonical): `..` up to their common directory,
 /// then down to the file, with `/` between, as a text's `#include` names it on every host.
-fn from_library(path: &std::path::Path, library: &std::path::Path) -> String {
+pub(in crate::code_rule_dsl) fn from_library(path: &std::path::Path, library: &std::path::Path) -> String {
     let (p, l): (Vec<_>, Vec<_>) = (path.components().collect(), library.components().collect());
     let common = p.iter().zip(&l).take_while(|(a, b)| a == b).count();
     let up = std::iter::repeat_n("..".to_owned(), l.len() - common);
