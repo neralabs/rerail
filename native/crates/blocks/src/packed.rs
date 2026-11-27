@@ -16,7 +16,7 @@
 //! a roll-up: `pack` reads any view, so a base and its delta pack into one full relation.
 
 use crate::block::Block;
-use crate::col::{Choice, Dec, IntCol, choose};
+use crate::col::{Choice, Dec, IntCol, IntColW, choose};
 use crate::refs::Span;
 use crate::relation::{Spec, View};
 use crate::scratch::Scratch;

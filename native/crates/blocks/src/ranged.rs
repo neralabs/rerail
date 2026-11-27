@@ -16,7 +16,7 @@
 //! ```
 
 use crate::block::Block;
-use crate::col::{Choice, IntCol, choose, write};
+use crate::col::{Choice, IntCol, IntColW, choose, write};
 use crate::refs::Span;
 use crate::structure;
 use rayon::prelude::*;

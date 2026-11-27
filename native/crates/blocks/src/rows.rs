@@ -501,7 +501,7 @@ impl Rows {
                     std::ptr::write_bytes(block.ptr::<u8>(at), 0, bytes);
                     let this = block.ptr::<crate::col::IntCol>(at);
                     let words = block.ptr::<u8>(at).add(std::mem::size_of::<crate::col::IntCol>()).cast::<u64>();
-                    let (data, runs) = crate::col::IntCol::lay_out_at(this, words, &choice);
+                    let (data, runs) = <crate::col::IntCol as crate::col::IntColW>::lay_out_at(this, words, &choice);
                     crate::col::write(&choice, &vals, data, runs);
                 }
                 let old = d.chunk[k].load(Relaxed);

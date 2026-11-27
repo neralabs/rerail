@@ -10,10 +10,12 @@
 //! - `kernel`: how a structure in a block is declared (`structure!`) and its UKL text (`KernelField`), written with no
 //!   allocator.
 //! - `hash`: the hash every index and kernel uses for a key.
+//! - `col`: a frozen integer column's format (`IntCol`) and its reads (`Dec`).
 
 #![no_std]
 
 pub mod block;
+pub mod col;
 pub mod hash;
 pub mod kernel;
 pub mod pod;
