@@ -654,3 +654,31 @@ statements and blocks end.
       nested f-string). The strata take 24.0 instructions and 8.18 cycles a byte, the lean lexer 31.2 and 8.02: 0.98x
       its speed, both lexers timed a pass each in turn. The strata below the walk take 2.25 cycles a byte (classes
       0.96, regions 0.93, depth 0.36), the walk 5.9 against about 7.4 for the lean lexer's.
+
+95. **The strata by the plan** (the user's choices: item 94's departures are rejected; "bit tricks only, no loops
+    except an outer block loop"; both region variants built and measured).
+    - **The depth is the plan's prefix sum,** in SIMD registers: a block's 64 lanes as four `i8x16`, four shifted
+      adds each, then the carries across registers. The clamp at 0 is a prefix minimum, taken only where a block's
+      sum goes below 0. The bracket walk is removed.
+    - **Escaped braces by masks:** a `{` is escaped by the odd-run trick over the `{` runs (`lbu`), carried from the
+      text's start; a lone `}` by the same trick over the `}` runs past the interpolation's closer. The pair stepping
+      is removed.
+    - **A string's prefix by masks:** the prefix letters' masks of the block and the one before, and the nearest
+      byte below the quote that is not a prefix letter (`leading_zeros`). They are made only where a word byte lies
+      just below a quote.
+    - **Variant A, the plan's region step:** an outer loop over blocks; in a block each region's opener is the
+      lowest live bit, its closer one mask search, all with mask operations; an f-string's interiors by the same
+      step.
+    - **Variant B, no step inside a block:** triple quotes by a three-state machine, one-line strings by a
+      three-state machine reset at a bare line end, comments by an addition carry chain. The machines are bit-sliced
+      and composed by Kogge-Stone in six rounds. Where no quote of one kind lies in a string of the other, each
+      kind's strings are its quotes' prefix XOR (simdjson's), the plan's one-step shortcut. B reads an f-string's
+      interior as text; each layer's guess is checked by masks, and a file whose check fails, or whose walk finds a
+      string inside an interior, is read by A.
+    - **The walk reads a string to stratum 2's closer** (`send`): its text stops only at that closer, a backslash
+      and a format string's braces. Each string is read once by the masks, not again by its quotes.
+    - **As measured** (the 1644-file corpus, an M1 Max): both variants 1635 the same, 0 differ, 9 refused (each a
+      nested f-string); B reads 1641 of the 1644 files itself. Instructions and cycles a byte: the lean lexer 32.6
+      and 8.5, A 28.5 and 8.9, B 28.1 and 8.8; timed a pass each in turn, A 0.95x the lean lexer's speed, B 0.96x.
+      Classes 1.26 cycles a byte, regions A 0.92 and B 0.78, depth 0.45, the walk about 6.3 (the sampled profile:
+      the walk 71% of the time, classes 14%, regions 9%, depth 5%).
