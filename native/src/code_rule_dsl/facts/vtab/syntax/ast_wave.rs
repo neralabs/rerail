@@ -185,7 +185,7 @@ struct Ran<'a> {
 
 /// Each matcher's relation over the documents' tapes: the chunk's matcher wave as one launch ([`MatcherWave`]), its
 /// roots mapped from tape preorder (a core id) to the batch's node ids. A document with no tape (a text-only file), a
-/// guest in another grammar or one a matcher's gates exclude has no rows of that matcher (`syntax::matcher_tapes`).
+/// file or guest in a grammar the matcher does not read, or one its gates exclude, has no rows (`syntax::matcher_tapes`).
 fn matched(
     batch: &Batch,
     tapes: &[WaveTape],

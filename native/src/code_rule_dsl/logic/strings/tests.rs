@@ -13,6 +13,8 @@ fn case_predicates_use_rust_unicode_properties_not_regex_tables() {
         ("a日", [0, 0, 1, 0]),
         ("A日", [0, 0, 0, 1]),
         ("ǅx", [0, 0, 1, 0]),
+        // The pinned Unicode 17 tables classify U+0295 as alphabetic but uncased.
+        ("ʕ", [0, 0, 0, 0]),
         ("ʕx", [0, 0, 1, 0]),
     ] {
         for (name, result) in ["is_lowercase", "is_uppercase", "is_cased_lowercase", "is_cased_uppercase"].into_iter().zip(expected) {

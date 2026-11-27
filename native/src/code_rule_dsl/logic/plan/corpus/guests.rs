@@ -515,12 +515,11 @@ type Parsed = (Arc<core::Facts>, u32, [u8; 32]);
 /// two alone, so each distinct text is looked up in the store, restored and digested once.
 fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&ContentStore>) -> Result<Option<(Parsed, Tape)>, String> {
     use std::sync::{LazyLock, Mutex};
-    /// The texts kept, in bytes, before the memo starts again (the facts kept are a small multiple of it).
+    /// The estimated bytes the kept parses held as each was kept (`held`) before the memo starts again.
     const KEPT_BYTES: usize = 8 << 20;
-    static KEPT: LazyLock<Mutex<(usize, HashMap<(String, bool, String), Option<(Parsed, Tape)>>)>> = LazyLock::new(Default::default);
-    let kept = &*KEPT;
+    static KEPT: LazyLock<Mutex<Kept>> = LazyLock::new(Default::default);
     let key = (label.to_owned(), wrap, text);
-    if let Some(hit) = kept.lock().expect("the parsed guests").1.get(&key) {
+    if let Some(hit) = KEPT.lock().expect("the parsed guests").parsed.get(&key) {
         crate::code_rule_dsl::prof::count("guests.parse_kept", 1);
         return Ok(hit.clone());
     }
@@ -530,13 +529,54 @@ fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&Conte
         let root = if wrap { wrapped_root(&facts, label) } else { 0 };
         ((facts, root, digest), tape)
     });
-    let mut kept = kept.lock().expect("the parsed guests");
-    if kept.0 + key.2.len() > KEPT_BYTES {
-        *kept = Default::default();
-    }
-    kept.0 += key.2.len();
-    kept.1.insert(key, parsed.clone());
+    KEPT.lock().expect("the parsed guests").keep(key, &parsed, KEPT_BYTES);
     Ok(parsed)
+}
+
+/// What `parse` keeps by grammar, wrapper and text.
+type KeptKey = (String, bool, String);
+
+/// The parses `parse` keeps, and the sum of their estimates (`held`) as each was kept.
+#[derive(Default)]
+struct Kept {
+    bytes: usize,
+    parsed: HashMap<KeptKey, Option<(Parsed, Tape)>>,
+}
+
+impl Kept {
+    /// Keeps `parsed` under `key` while the estimates kept stay within `budget`: one that would take them past it
+    /// starts the memo again, and one whose estimate alone passes it is not kept. A key kept already (by a parse of
+    /// the same text on another thread) is not counted twice. The budget bounds the estimates, not what the process
+    /// holds: `held` leaves out the map's and the `Arc`s' own overhead and what a tape allocates once kept.
+    fn keep(&mut self, key: KeptKey, parsed: &Option<(Parsed, Tape)>, budget: usize) {
+        if self.parsed.contains_key(&key) {
+            return;
+        }
+        let bytes = held(&key, parsed);
+        if bytes > budget {
+            return;
+        }
+        if self.bytes + bytes > budget {
+            *self = Self::default();
+        }
+        self.bytes += bytes;
+        self.parsed.insert(key, parsed.clone());
+    }
+}
+
+/// An estimate of the bytes a parse holds as it is kept: its key, its source, its line table and its tape (the image
+/// and what its reads have kept so far). The facts and the matchers' document share their source and tape where
+/// they were built together (`taped`); one they do not share is counted for each. Not counted: the map's entry and
+/// the `Arc`s' headers, and what a tape allocates later (a parent column, a laid-out 16z tape, a point table).
+fn held(key: &KeptKey, parsed: &Option<(Parsed, Tape)>) -> usize {
+    let keyed = std::mem::size_of::<KeptKey>() + key.0.capacity() + key.2.capacity();
+    let Some(((facts, _, _), tape)) = parsed else { return keyed };
+    let doc = tape.as_ref().map(|(doc, _)| doc);
+    let source = facts.source.capacity() + doc.filter(|d| !Arc::ptr_eq(&d.source, &facts.source)).map_or(0, |d| d.source.capacity());
+    let lines = 2 * facts.lines.starts().len() * std::mem::size_of::<usize>();
+    let own = facts.tape.as_deref().map_or(0, |t| t.bytes());
+    let docs = doc.filter(|d| facts.tape.as_ref().is_none_or(|t| !Arc::ptr_eq(t, d.doc_tape()))).map_or(0, |d| d.doc_tape().bytes());
+    keyed + source + lines + own + docs
 }
 
 /// The program `host` (of `dialect`) embeds through `via` (`Guests::program`): its dialect's label, its placement,
@@ -619,4 +659,31 @@ fn wrapped_root(f: &core::Facts, label: &str) -> u32 {
         Some(e)
     })();
     path.unwrap_or(first)
+}
+
+/// The parse memo's contract on a real parse, for the engine's test (where the languages are registered): `Kept`
+/// counts what a parse holds, its tree and tape too, not its text alone. Under a budget its key and its source fit
+/// but its tree and tape do not, the parse is not kept, and the parse given back still reads its literal and its
+/// tape; under one it fits, it is kept, and the kept parse reads the same.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn test_kept_parse_budget() {
+    /// What a reader of a parse sees: its string literals, its root, its tape's source, and whether its tape reads
+    /// clean.
+    fn reads(parsed: Option<&(Parsed, Tape)>) -> (Vec<String>, u32, String, bool) {
+        let Some(((facts, root, _), Some((doc, _)))) = parsed else { panic!("a parse with its tape") };
+        let strings = (0..facts.len() as u32).filter(|&id| syntax::kind_name(facts, id) == "string").map(|id| facts.text(id).to_owned()).collect();
+        (strings, *root, doc.source.to_string(), doc.syntax_error_ranges().is_empty())
+    }
+    let text = "x = 'kept'\n";
+    let key = || ("python".to_owned(), false, text.to_owned());
+    let want = (vec!["'kept'".to_owned()], 0, text.to_owned(), true);
+    let parsed = taped("a.py", "python", text.to_owned(), None).expect("a parse");
+    // Room for the key and the source the parse holds, none for its tree and tape.
+    let text_only = std::mem::size_of::<KeptKey>() + "python".len() + 2 * text.len();
+    let mut kept = Kept::default();
+    kept.keep(key(), &parsed, text_only);
+    assert!(!kept.parsed.contains_key(&key()), "a parse larger than its budget is not kept");
+    assert_eq!(reads(parsed.as_ref()), want);
+    kept.keep(key(), &parsed, 1 << 20);
+    assert_eq!(reads(kept.parsed.get(&key()).and_then(Option::as_ref)), want);
 }

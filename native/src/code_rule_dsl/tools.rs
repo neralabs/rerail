@@ -1740,6 +1740,31 @@ mod settings_tests {
     }
 
     #[test]
+    fn python_ast_rules_only_report_python_files_in_a_mixed_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "f(1)\n").unwrap();
+        std::fs::write(root.join("b.js"), "f(1);\n").unwrap();
+        let rule = dir.path().join("policy.rerail");
+        std::fs::write(
+            &rule,
+            ".policy \"matcher-grammars\" revision 1\n.language python\n.scope \"**/*.py\", \"**/*.js\"\n\
+             .violation Seen(at: node) code \"seen\" \"seen\"\n\
+             Seen(n) :- (kind(n, \"module\") ; kind(n, \"program\")).\n\
+             .violation Call(at: node) code \"call\" \"call\"\n\
+             Call(c) :- kind(c, \"call\"), field(c, \"arguments\", a), kind(a, \"argument_list\").\n",
+        )
+        .unwrap();
+        let args = ["run-policies".to_owned(), root.display().to_string(), dir.path().join("out").display().to_string(), rule.display().to_string()];
+        let report: serde_json::Value = serde_json::from_str(&super::cli_in(&args, &mut Default::default()).unwrap()).unwrap();
+        assert_eq!(report["runs"][0]["files"], 1, "language routing excludes JavaScript before matching: {report:#}");
+        let mut found: Vec<_> = report["diagnostics"].as_array().unwrap().iter().map(|d| (d["path"].as_str().unwrap().to_owned(), d["code"].as_str().unwrap().to_owned())).collect();
+        found.sort_unstable();
+        assert_eq!(found, [("a.py".into(), "call".into()), ("a.py".into(), "seen".into())], "{report:#}");
+    }
+
+    #[test]
     fn python_parse_functor_rejects_prose_and_accepts_statements() {
         let report = guest_policy(
             "",

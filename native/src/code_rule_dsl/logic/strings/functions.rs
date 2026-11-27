@@ -321,7 +321,8 @@ fn eval_path(name: &str, text: &[&str], numbers: &[i64]) -> Option<String> {
         "dir" => text[0].rsplit_once('/').map_or("", |(d, _)| d).to_owned(),
         "join" => join(text[0], text[1]),
         "glob_sub" => glob_sub(text[0], text[1], text[2]),
-        _ => text[0].to_owned(),
+        "package_of" => text[0].to_owned(),
+        _ => return None,
     })
 }
 
@@ -333,7 +334,8 @@ fn eval_pattern(name: &str, text: &[&str], numbers: &[i64]) -> Option<String> {
         "rx_group" => super::group(text[0], text[1], text[2]),
         "rx_extract" => with_regex(text[1], |re| re.captures(text[0])?.get(usize::try_from(numbers[0]).ok()?).map(|m| m.as_str().to_owned())).flatten(),
         "rx_replace" => with_regex(text[1], |re| re.replace_all(text[0], text[2]).into_owned()),
-        _ => text[0].strip_prefix(text[1]).and_then(|rest| rest.strip_suffix(text[2])).map(str::to_owned),
+        "str_between" => text[0].strip_prefix(text[1]).and_then(|rest| rest.strip_suffix(text[2])).map(str::to_owned),
+        _ => None,
     }
 }
 
@@ -347,7 +349,8 @@ fn eval_format(name: &str, text: &[&str], numbers: &[i64]) -> Option<String> {
         "str_concat" => Some(format!("{}{}", text[0], text[1])),
         "nfkc" => Some(text[0].nfkc().collect()),
         "py_repr" => PY_REPR.get().map(|repr| repr(text[0])),
-        _ => precision(text[0], numbers[0]),
+        "to_precision" => precision(text[0], numbers[0]),
+        _ => None,
     }
 }
 
@@ -368,7 +371,8 @@ fn eval_language(name: &str, text: &[&str]) -> Value {
         "is_uppercase" => text[0].chars().all(|c| !c.is_alphabetic() || c.is_uppercase()),
         "is_cased_lowercase" => cased(text[0], char::is_lowercase, char::is_uppercase),
         "is_cased_uppercase" => cased(text[0], char::is_uppercase, char::is_lowercase),
-        _ => crate::code_rule_dsl::logic::crypto::ed25519_ok(text[0], text[1], text[2]),
+        "ed25519_ok" => crate::code_rule_dsl::logic::crypto::ed25519_ok(text[0], text[1], text[2]),
+        _ => return Value::Null,
     };
     Value::Integer(i64::from(result))
 }
@@ -383,7 +387,8 @@ fn eval_query(name: &str, text: &[&str]) -> Value {
         "semver_subset" => Range::parse(text[0]).zip(Range::parse(text[1])).map_or(Value::Null, |(a, b)| Value::Integer(i64::from(a.is_subset_of(&b)))),
         "count_matches" => with_regex(text[0], |re| Value::Integer(re.find_iter(text[1]).count() as i64)).unwrap_or(Value::Null),
         "str_cmp" => Value::Integer(text[0].cmp(text[1]) as i64),
-        _ => to_number(text[0]).map_or(Value::Null, Value::Integer),
+        "to_number" => to_number(text[0]).map_or(Value::Null, Value::Integer),
+        _ => Value::Null,
     }
 }
 
@@ -391,10 +396,11 @@ fn eval_float(name: &str, text: &[&str], numbers: &[i64]) -> Value {
     match name {
         "to_float" => text[0].trim().parse::<f64>().ok().filter(|f| !f.is_nan()).map_or(Value::Null, |f| Value::Integer(float_key(f))),
         "float_str" => Value::Text(float_of(numbers[0]).to_string()),
-        _ => {
+        "float_add" | "float_sub" | "float_mul" | "float_div" => {
             let f = float_arithmetic(name, float_of(numbers[0]), float_of(numbers[1]));
             if f.is_nan() { Value::Null } else { Value::Integer(float_key(f)) }
         }
+        _ => Value::Null,
     }
 }
 
@@ -403,7 +409,8 @@ fn float_arithmetic(name: &str, a: f64, b: f64) -> f64 {
         "float_add" => a + b,
         "float_sub" => a - b,
         "float_mul" => a * b,
-        _ => a / b,
+        "float_div" => a / b,
+        _ => f64::NAN,
     }
 }
 
