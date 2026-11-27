@@ -129,17 +129,17 @@ drf_cls_ask(s) :- psu_pag_sym(s).
 psu_called(q) :- kind(k, "call"), field(k, "function", fn), sym_of(fn, q), docof(k, d), doc(d, p, _),
     py_names__reads_at(p, m), py_names__class(m, q).
 
-// The cases, `cases/drf-practice-page-size-uncapped/`, read as two repositories: each line ending in `# caught` is
-// reported, and no other line.
+// The cases, `upstream/drf-practice/authored/drf-practice-page-size-uncapped/`, read as two repositories: each line
+// ending in `# caught` is reported, and no other line.
 .test builtin exactly
-    .fixture "config/__init__.py" from "../cases/drf-practice-page-size-uncapped/builtin/config/__init__.py"
-    .fixture "config/settings.py" from "../cases/drf-practice-page-size-uncapped/builtin/config/settings.py"
-    .fixture "config/test_settings.py" from "../cases/drf-practice-page-size-uncapped/builtin/config/test_settings.py"
-    .fixture "shop/__init__.py" from "../cases/drf-practice-page-size-uncapped/builtin/shop/__init__.py"
-    .fixture "shop/models.py" from "../cases/drf-practice-page-size-uncapped/builtin/shop/models.py"
-    .fixture "shop/views.py" from "../cases/drf-practice-page-size-uncapped/builtin/shop/views.py"
-    .fixture "shop/tests/__init__.py" from "../cases/drf-practice-page-size-uncapped/builtin/shop/tests/__init__.py"
-    .fixture "shop/tests/test_views.py" from "../cases/drf-practice-page-size-uncapped/builtin/shop/tests/test_views.py"
+    .fixture "config/__init__.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/builtin/config/__init__.py"
+    .fixture "config/settings.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/builtin/config/settings.py"
+    .fixture "config/test_settings.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/builtin/config/test_settings.py"
+    .fixture "shop/__init__.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/builtin/shop/__init__.py"
+    .fixture "shop/models.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/builtin/shop/models.py"
+    .fixture "shop/views.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/builtin/shop/views.py"
+    .fixture "shop/tests/__init__.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/builtin/shop/tests/__init__.py"
+    .fixture "shop/tests/test_views.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/builtin/shop/tests/test_views.py"
     .expect _ at "config/settings.py":5
     .expect _ at "shop/views.py":14
     .expect _ at "shop/views.py":19
@@ -150,17 +150,17 @@ psu_called(q) :- kind(k, "call"), field(k, "function", fn), sym_of(fn, q), docof
 .end
 
 .test custom exactly
-    .fixture "config/__init__.py" from "../cases/drf-practice-page-size-uncapped/custom/config/__init__.py"
-    .fixture "config/settings.py" from "../cases/drf-practice-page-size-uncapped/custom/config/settings.py"
-    .fixture "api/__init__.py" from "../cases/drf-practice-page-size-uncapped/custom/api/__init__.py"
-    .fixture "api/base.py" from "../cases/drf-practice-page-size-uncapped/custom/api/base.py"
-    .fixture "api/pagination.py" from "../cases/drf-practice-page-size-uncapped/custom/api/pagination.py"
-    .fixture "api/tests/__init__.py" from "../cases/drf-practice-page-size-uncapped/custom/api/tests/__init__.py"
-    .fixture "api/tests/test_pagination.py" from "../cases/drf-practice-page-size-uncapped/custom/api/tests/test_pagination.py"
-    .fixture "reports/__init__.py" from "../cases/drf-practice-page-size-uncapped/custom/reports/__init__.py"
-    .fixture "reports/models.py" from "../cases/drf-practice-page-size-uncapped/custom/reports/models.py"
-    .fixture "reports/pagination.py" from "../cases/drf-practice-page-size-uncapped/custom/reports/pagination.py"
-    .fixture "reports/views.py" from "../cases/drf-practice-page-size-uncapped/custom/reports/views.py"
+    .fixture "config/__init__.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/custom/config/__init__.py"
+    .fixture "config/settings.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/custom/config/settings.py"
+    .fixture "api/__init__.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/custom/api/__init__.py"
+    .fixture "api/base.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/custom/api/base.py"
+    .fixture "api/pagination.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/custom/api/pagination.py"
+    .fixture "api/tests/__init__.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/custom/api/tests/__init__.py"
+    .fixture "api/tests/test_pagination.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/custom/api/tests/test_pagination.py"
+    .fixture "reports/__init__.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/custom/reports/__init__.py"
+    .fixture "reports/models.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/custom/reports/models.py"
+    .fixture "reports/pagination.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/custom/reports/pagination.py"
+    .fixture "reports/views.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/custom/reports/views.py"
     .expect _ at "api/pagination.py":7
     .expect _ at "api/pagination.py":24
     .expect _ at "api/pagination.py":39

@@ -218,28 +218,28 @@ sec_fpass("sqb", c, a, o) :- call_arg(c, _, _, a), sqli_built(a, o).
 sec_fctx("sqb", c, o) :- call_arg(c, _, _, a), sec_tainted(a, o).
 sec_fret("sqb", g, o) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), sqli_built(v, o).
 
-// The cases, `cases/python-security-sql-injection/`, read as one repository: each line ending in `# caught` is
-// reported, and no other line.
+// The cases, `upstream/python-security/authored/python-security-sql-injection/` (pack test data in S3, not in git),
+// read as one repository: each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "api/__init__.py" from "../cases/python-security-sql-injection/api/__init__.py"
-    .fixture "api/asyncdb.py" from "../cases/python-security-sql-injection/api/asyncdb.py"
-    .fixture "api/db.py" from "../cases/python-security-sql-injection/api/db.py"
-    .fixture "api/fragments.py" from "../cases/python-security-sql-injection/api/fragments.py"
-    .fixture "api/routes.py" from "../cases/python-security-sql-injection/api/routes.py"
-    .fixture "api/typed_routes.py" from "../cases/python-security-sql-injection/api/typed_routes.py"
-    .fixture "legacy/__init__.py" from "../cases/python-security-sql-injection/legacy/__init__.py"
-    .fixture "legacy/app.py" from "../cases/python-security-sql-injection/legacy/app.py"
-    .fixture "shop/__init__.py" from "../cases/python-security-sql-injection/shop/__init__.py"
-    .fixture "shop/checks.py" from "../cases/python-security-sql-injection/shop/checks.py"
-    .fixture "shop/kwviews.py" from "../cases/python-security-sql-injection/shop/kwviews.py"
-    .fixture "shop/models.py" from "../cases/python-security-sql-injection/shop/models.py"
-    .fixture "shop/reports.py" from "../cases/python-security-sql-injection/shop/reports.py"
-    .fixture "shop/sqlbuild.py" from "../cases/python-security-sql-injection/shop/sqlbuild.py"
-    .fixture "shop/tests/__init__.py" from "../cases/python-security-sql-injection/shop/tests/__init__.py"
-    .fixture "shop/tests/test_views.py" from "../cases/python-security-sql-injection/shop/tests/test_views.py"
-    .fixture "shop/typed.py" from "../cases/python-security-sql-injection/shop/typed.py"
-    .fixture "shop/urls.py" from "../cases/python-security-sql-injection/shop/urls.py"
-    .fixture "shop/views.py" from "../cases/python-security-sql-injection/shop/views.py"
+    .fixture "api/__init__.py" from "../upstream/python-security/authored/python-security-sql-injection/api/__init__.py"
+    .fixture "api/asyncdb.py" from "../upstream/python-security/authored/python-security-sql-injection/api/asyncdb.py"
+    .fixture "api/db.py" from "../upstream/python-security/authored/python-security-sql-injection/api/db.py"
+    .fixture "api/fragments.py" from "../upstream/python-security/authored/python-security-sql-injection/api/fragments.py"
+    .fixture "api/routes.py" from "../upstream/python-security/authored/python-security-sql-injection/api/routes.py"
+    .fixture "api/typed_routes.py" from "../upstream/python-security/authored/python-security-sql-injection/api/typed_routes.py"
+    .fixture "legacy/__init__.py" from "../upstream/python-security/authored/python-security-sql-injection/legacy/__init__.py"
+    .fixture "legacy/app.py" from "../upstream/python-security/authored/python-security-sql-injection/legacy/app.py"
+    .fixture "shop/__init__.py" from "../upstream/python-security/authored/python-security-sql-injection/shop/__init__.py"
+    .fixture "shop/checks.py" from "../upstream/python-security/authored/python-security-sql-injection/shop/checks.py"
+    .fixture "shop/kwviews.py" from "../upstream/python-security/authored/python-security-sql-injection/shop/kwviews.py"
+    .fixture "shop/models.py" from "../upstream/python-security/authored/python-security-sql-injection/shop/models.py"
+    .fixture "shop/reports.py" from "../upstream/python-security/authored/python-security-sql-injection/shop/reports.py"
+    .fixture "shop/sqlbuild.py" from "../upstream/python-security/authored/python-security-sql-injection/shop/sqlbuild.py"
+    .fixture "shop/tests/__init__.py" from "../upstream/python-security/authored/python-security-sql-injection/shop/tests/__init__.py"
+    .fixture "shop/tests/test_views.py" from "../upstream/python-security/authored/python-security-sql-injection/shop/tests/test_views.py"
+    .fixture "shop/typed.py" from "../upstream/python-security/authored/python-security-sql-injection/shop/typed.py"
+    .fixture "shop/urls.py" from "../upstream/python-security/authored/python-security-sql-injection/shop/urls.py"
+    .fixture "shop/views.py" from "../upstream/python-security/authored/python-security-sql-injection/shop/views.py"
     .expect _ at "api/asyncdb.py":11
     .expect _ at "api/asyncdb.py":18
     .expect _ at "api/asyncdb.py":25

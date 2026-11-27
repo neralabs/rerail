@@ -75,15 +75,16 @@ PatchDecoratorOrder(p, x, real, claimed, y) :- pdo_n(f, n), n >= 2, !pdo_untarge
     !pdo_not_top(f), !pdo_both(f), k = min k2 : { pdo_wrong(f, k2) }, pdo_param(f, k, p, x), bk = n - 1 - k,
     pdo_param(f, bk, _, y), pdo_tgt(f, bk, _, real), pdo_tgt(f, k, _, claimed).
 
-// The cases, `cases/pytest-practice-patch-decorator-order/`, read as one repository: each line ending in `# caught` is
-// reported, and no other line.
+// The cases, `upstream/pytest-practice/authored/pytest-practice-patch-decorator-order/` (pack test data in S3, not in
+// git: `npm run fixtures:pull -- --pack pytest`), read as one repository: each line ending in `# caught` is reported,
+// and no other line.
 .test cases exactly
-    .fixture "shop/__init__.py" from "../cases/pytest-practice-patch-decorator-order/shop/__init__.py"
-    .fixture "shop/checks.py" from "../cases/pytest-practice-patch-decorator-order/shop/checks.py"
-    .fixture "shop/fakes.py" from "../cases/pytest-practice-patch-decorator-order/shop/fakes.py"
-    .fixture "shop/tests/test_legacy.py" from "../cases/pytest-practice-patch-decorator-order/shop/tests/test_legacy.py"
-    .fixture "shop/tests/test_mail.py" from "../cases/pytest-practice-patch-decorator-order/shop/tests/test_mail.py"
-    .fixture "shop/tests/test_tasks.py" from "../cases/pytest-practice-patch-decorator-order/shop/tests/test_tasks.py"
+    .fixture "shop/__init__.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-decorator-order/shop/__init__.py"
+    .fixture "shop/checks.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-decorator-order/shop/checks.py"
+    .fixture "shop/fakes.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-decorator-order/shop/fakes.py"
+    .fixture "shop/tests/test_legacy.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-decorator-order/shop/tests/test_legacy.py"
+    .fixture "shop/tests/test_mail.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-decorator-order/shop/tests/test_mail.py"
+    .fixture "shop/tests/test_tasks.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-decorator-order/shop/tests/test_tasks.py"
     .expect _ at "shop/tests/test_legacy.py":9
     .expect _ at "shop/tests/test_mail.py":13
     .expect _ at "shop/tests/test_mail.py":32

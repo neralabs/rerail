@@ -187,17 +187,17 @@ prl_loop(w) :- prl_loop_handler(w, _).
 prl_what(x, "except:") :- kind(x, "except_clause"), !field(x, "value", _).
 prl_what(x, cat("except ", s)) :- field(x, "value", v), except_type(v, t), text(t, s).
 
-// The cases, `cases/python-practice-retry-loop-without-limit/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/python-practice/authored/python-practice-retry-loop-without-limit/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/__init__.py" from "../cases/python-practice-retry-loop-without-limit/app/__init__.py"
-    .fixture "app/consumers.py" from "../cases/python-practice-retry-loop-without-limit/app/consumers.py"
-    .fixture "app/loops.py" from "../cases/python-practice-retry-loop-without-limit/app/loops.py"
-    .fixture "app/names.py" from "../cases/python-practice-retry-loop-without-limit/app/names.py"
-    .fixture "app/prompts.py" from "../cases/python-practice-retry-loop-without-limit/app/prompts.py"
-    .fixture "app/variants.py" from "../cases/python-practice-retry-loop-without-limit/app/variants.py"
-    .fixture "tests/__init__.py" from "../cases/python-practice-retry-loop-without-limit/tests/__init__.py"
-    .fixture "tests/test_clients.py" from "../cases/python-practice-retry-loop-without-limit/tests/test_clients.py"
+    .fixture "app/__init__.py" from "../upstream/python-practice/authored/python-practice-retry-loop-without-limit/app/__init__.py"
+    .fixture "app/consumers.py" from "../upstream/python-practice/authored/python-practice-retry-loop-without-limit/app/consumers.py"
+    .fixture "app/loops.py" from "../upstream/python-practice/authored/python-practice-retry-loop-without-limit/app/loops.py"
+    .fixture "app/names.py" from "../upstream/python-practice/authored/python-practice-retry-loop-without-limit/app/names.py"
+    .fixture "app/prompts.py" from "../upstream/python-practice/authored/python-practice-retry-loop-without-limit/app/prompts.py"
+    .fixture "app/variants.py" from "../upstream/python-practice/authored/python-practice-retry-loop-without-limit/app/variants.py"
+    .fixture "tests/__init__.py" from "../upstream/python-practice/authored/python-practice-retry-loop-without-limit/tests/__init__.py"
+    .fixture "tests/test_clients.py" from "../upstream/python-practice/authored/python-practice-retry-loop-without-limit/tests/test_clients.py"
     .expect _ at "app/consumers.py":27
     .expect _ at "app/loops.py":14
     .expect _ at "app/loops.py":25

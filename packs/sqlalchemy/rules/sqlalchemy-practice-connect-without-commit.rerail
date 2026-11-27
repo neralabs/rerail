@@ -305,21 +305,21 @@ cwc_sqlite_q(ek) :- cwc_e_sqlite_q(ek).
 cwc_sqlite_q(ek) :- cwc_e_calls_q(ek, gq), cwc_fn_sqlite_x(gq).
 cwc_sqlite_q(ek) :- cwc_e_var_q(ek, q), cwc_var_sqlite_x(q).
 
-// The cases, `cases/sqlalchemy-practice-connect-without-commit/`, read as one repository: each line ending in `# caught`
-// is reported, and no other line.
+// The cases, `upstream/sqlalchemy-practice/authored/sqlalchemy-practice-connect-without-commit/`, read as one
+// repository: each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/__init__.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/__init__.py"
-    .fixture "app/async_jobs.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/async_jobs.py"
-    .fixture "app/batch.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/batch.py"
-    .fixture "app/db.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/db.py"
-    .fixture "app/factories.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/factories.py"
-    .fixture "app/jobs.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/jobs.py"
-    .fixture "app/migrations/versions/0002_backfill.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/migrations/versions/0002_backfill.py"
-    .fixture "app/models.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/models.py"
-    .fixture "app/repo.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/repo.py"
-    .fixture "app/safe.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/safe.py"
-    .fixture "app/tests/__init__.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/tests/__init__.py"
-    .fixture "app/tests/test_jobs.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/tests/test_jobs.py"
+    .fixture "app/__init__.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-connect-without-commit/app/__init__.py"
+    .fixture "app/async_jobs.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-connect-without-commit/app/async_jobs.py"
+    .fixture "app/batch.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-connect-without-commit/app/batch.py"
+    .fixture "app/db.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-connect-without-commit/app/db.py"
+    .fixture "app/factories.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-connect-without-commit/app/factories.py"
+    .fixture "app/jobs.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-connect-without-commit/app/jobs.py"
+    .fixture "app/migrations/versions/0002_backfill.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-connect-without-commit/app/migrations/versions/0002_backfill.py"
+    .fixture "app/models.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-connect-without-commit/app/models.py"
+    .fixture "app/repo.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-connect-without-commit/app/repo.py"
+    .fixture "app/safe.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-connect-without-commit/app/safe.py"
+    .fixture "app/tests/__init__.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-connect-without-commit/app/tests/__init__.py"
+    .fixture "app/tests/test_jobs.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-connect-without-commit/app/tests/test_jobs.py"
     .expect _ at "app/async_jobs.py":9
     .expect _ at "app/async_jobs.py":14
     .expect _ at "app/batch.py":31

@@ -339,22 +339,21 @@ cv_live(n) :- docof(n, d), !cel_test_doc(d), !cv_test_settings(d).
 .decl cv_test_settings(d: number)
 cv_test_settings(d) :- file_name(d, s), (glob("test*.py", s) ; glob("*_test*.py", s)).
 
-// The cases, `cases/celery-practice-countdown-past-visibility-timeout/`: `proj/` is a Redis run with no
-// visibility_timeout (threshold one hour), in which each line ending in `# caught` is reported and no other line;
-// it holds delays read through names and signatures, and look-alike receivers. `vt_set/` sets visibility_timeout to
-// 12 hours; `vt_config/` sets it from the environment and `vt_options/` reads its transport options from
-// configuration (both silent); `rabbit/` uses RabbitMQ (30 minutes, its own message); `rabbit_queue_timeout/` gives
-// its queue a consumer timeout of three hours, `rabbit_queue_timeout_env/` one from configuration (silent); `sqs/`
-// uses SQS (30 minutes) and `sqs_vt/` raises its visibility timeout to four hours; `mixed/` names RabbitMQ and Redis
-// (one hour); `env_broker/` picks RabbitMQ or Redis from the environment, with scheme strings only in a replace()
-// call (one hour).
+// The cases, `upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/`: `proj/` is a Redis
+// run with no visibility_timeout (threshold one hour), in which each line ending in `# caught` is reported and no other
+// line; it holds delays read through names and signatures, and look-alike receivers. `vt_set/` sets visibility_timeout
+// to 12 hours; `vt_config/` sets it from the environment and `vt_options/` reads its transport options from
+// configuration (both silent); `rabbit/` uses RabbitMQ (30 minutes, its own message); `rabbit_queue_timeout/` gives its
+// queue a consumer timeout of three hours, `rabbit_queue_timeout_env/` one from configuration (silent); `sqs/` uses SQS
+// (30 minutes) and `sqs_vt/` raises its visibility timeout to four hours; `mixed/` names RabbitMQ and Redis (one hour);
+// `env_broker/` picks RabbitMQ or Redis from the environment, with scheme strings only in a replace() call (one hour).
 .test cases exactly
-    .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/proj/__init__.py"
-    .fixture "proj/celery.py" from "../cases/celery-practice-countdown-past-visibility-timeout/proj/celery.py"
-    .fixture "proj/jobs.py" from "../cases/celery-practice-countdown-past-visibility-timeout/proj/jobs.py"
-    .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/proj/tasks.py"
-    .fixture "proj/tests/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/proj/tests/__init__.py"
-    .fixture "proj/tests/test_tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/proj/tests/test_tasks.py"
+    .fixture "proj/__init__.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/proj/__init__.py"
+    .fixture "proj/celery.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/proj/celery.py"
+    .fixture "proj/jobs.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/proj/jobs.py"
+    .fixture "proj/tasks.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/proj/tasks.py"
+    .fixture "proj/tests/__init__.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/proj/tests/__init__.py"
+    .fixture "proj/tests/test_tasks.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/proj/tests/test_tasks.py"
     .expect _ at "proj/tasks.py":20
     .expect _ at "proj/tasks.py":21
     .expect _ at "proj/tasks.py":22
@@ -387,30 +386,30 @@ cv_test_settings(d) :- file_name(d, s), (glob("test*.py", s) ; glob("*_test*.py"
 .end
 
 .test vt_set exactly
-    .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/vt_set/proj/__init__.py"
-    .fixture "proj/settings.py" from "../cases/celery-practice-countdown-past-visibility-timeout/vt_set/proj/settings.py"
-    .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/vt_set/proj/tasks.py"
+    .fixture "proj/__init__.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/vt_set/proj/__init__.py"
+    .fixture "proj/settings.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/vt_set/proj/settings.py"
+    .fixture "proj/tasks.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/vt_set/proj/tasks.py"
     .expect _ at "proj/tasks.py":15
     .expect _ at "proj/tasks.py":16
 .end
 
 .test vt_config exactly
-    .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/vt_config/proj/__init__.py"
-    .fixture "proj/celery.py" from "../cases/celery-practice-countdown-past-visibility-timeout/vt_config/proj/celery.py"
-    .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/vt_config/proj/tasks.py"
+    .fixture "proj/__init__.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/vt_config/proj/__init__.py"
+    .fixture "proj/celery.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/vt_config/proj/celery.py"
+    .fixture "proj/tasks.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/vt_config/proj/tasks.py"
 .end
 
 .test vt_options exactly
-    .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/vt_options/proj/__init__.py"
-    .fixture "proj/settings.py" from "../cases/celery-practice-countdown-past-visibility-timeout/vt_options/proj/settings.py"
-    .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/vt_options/proj/tasks.py"
+    .fixture "proj/__init__.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/vt_options/proj/__init__.py"
+    .fixture "proj/settings.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/vt_options/proj/settings.py"
+    .fixture "proj/tasks.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/vt_options/proj/tasks.py"
 .end
 
 .test rabbit exactly
-    .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit/proj/__init__.py"
-    .fixture "proj/celery.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit/proj/celery.py"
-    .fixture "proj/settings.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit/proj/settings.py"
-    .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit/proj/tasks.py"
+    .fixture "proj/__init__.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/rabbit/proj/__init__.py"
+    .fixture "proj/celery.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/rabbit/proj/celery.py"
+    .fixture "proj/settings.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/rabbit/proj/settings.py"
+    .fixture "proj/tasks.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/rabbit/proj/tasks.py"
     .expect PastConsumerTimeout at "proj/tasks.py":9
     .expect PastConsumerTimeout at "proj/tasks.py":14
     .expect PastConsumerTimeout at "proj/tasks.py":15
@@ -420,44 +419,44 @@ cv_test_settings(d) :- file_name(d, s), (glob("test*.py", s) ; glob("*_test*.py"
 .end
 
 .test rabbit_queue_timeout exactly
-    .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit_queue_timeout/proj/__init__.py"
-    .fixture "proj/celery.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit_queue_timeout/proj/celery.py"
-    .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit_queue_timeout/proj/tasks.py"
+    .fixture "proj/__init__.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/rabbit_queue_timeout/proj/__init__.py"
+    .fixture "proj/celery.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/rabbit_queue_timeout/proj/celery.py"
+    .fixture "proj/tasks.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/rabbit_queue_timeout/proj/tasks.py"
     .expect PastConsumerTimeout at "proj/tasks.py":11
 .end
 
 .test rabbit_queue_timeout_env exactly
-    .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit_queue_timeout_env/proj/__init__.py"
-    .fixture "proj/celery.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit_queue_timeout_env/proj/celery.py"
-    .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit_queue_timeout_env/proj/tasks.py"
+    .fixture "proj/__init__.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/rabbit_queue_timeout_env/proj/__init__.py"
+    .fixture "proj/celery.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/rabbit_queue_timeout_env/proj/celery.py"
+    .fixture "proj/tasks.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/rabbit_queue_timeout_env/proj/tasks.py"
 .end
 
 .test sqs_vt exactly
-    .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/sqs_vt/proj/__init__.py"
-    .fixture "proj/settings.py" from "../cases/celery-practice-countdown-past-visibility-timeout/sqs_vt/proj/settings.py"
-    .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/sqs_vt/proj/tasks.py"
+    .fixture "proj/__init__.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/sqs_vt/proj/__init__.py"
+    .fixture "proj/settings.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/sqs_vt/proj/settings.py"
+    .fixture "proj/tasks.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/sqs_vt/proj/tasks.py"
     .expect PastVisibility at "proj/tasks.py":12
 .end
 
 .test mixed exactly
-    .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/mixed/proj/__init__.py"
-    .fixture "proj/settings.py" from "../cases/celery-practice-countdown-past-visibility-timeout/mixed/proj/settings.py"
-    .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/mixed/proj/tasks.py"
+    .fixture "proj/__init__.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/mixed/proj/__init__.py"
+    .fixture "proj/settings.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/mixed/proj/settings.py"
+    .fixture "proj/tasks.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/mixed/proj/tasks.py"
     .expect PastVisibility at "proj/tasks.py":11
 .end
 
 .test sqs exactly
-    .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/sqs/proj/__init__.py"
-    .fixture "proj/celery.py" from "../cases/celery-practice-countdown-past-visibility-timeout/sqs/proj/celery.py"
-    .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/sqs/proj/tasks.py"
+    .fixture "proj/__init__.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/sqs/proj/__init__.py"
+    .fixture "proj/celery.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/sqs/proj/celery.py"
+    .fixture "proj/tasks.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/sqs/proj/tasks.py"
     .expect PastVisibility at "proj/tasks.py":14
     .expect PastVisibility at "proj/tasks.py":15
     .expect PastVisibility at "proj/tasks.py":16
 .end
 
 .test env_broker exactly
-    .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/env_broker/proj/__init__.py"
-    .fixture "proj/celery.py" from "../cases/celery-practice-countdown-past-visibility-timeout/env_broker/proj/celery.py"
-    .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/env_broker/proj/tasks.py"
+    .fixture "proj/__init__.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/env_broker/proj/__init__.py"
+    .fixture "proj/celery.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/env_broker/proj/celery.py"
+    .fixture "proj/tasks.py" from "../upstream/celery-practice/authored/celery-practice-countdown-past-visibility-timeout/env_broker/proj/tasks.py"
     .expect _ at "proj/tasks.py":10
 .end

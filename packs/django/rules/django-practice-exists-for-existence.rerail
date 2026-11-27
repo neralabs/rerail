@@ -42,16 +42,16 @@ ExistsForExistence(x, how) :- py_truth(x), efe_counted(x, q, how), efe_django(q)
 ExistsForExistence(x, "Testing the queryset itself loads every matching row") :- py_truth(x), kind(x, "call"), dj_qs(x),
     !dj_qs_call(x, "raw"), efe_django(x).
 
-// The cases, `cases/django-practice-exists-for-existence/`, read as one repository: each line ending in `# caught` is
-// reported, and no other line.
+// The cases, `upstream/django-practice/authored/django-practice-exists-for-existence/`, read as one repository: each
+// line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "mongo/docs.py" from "../cases/django-practice-exists-for-existence/mongo/docs.py"
-    .fixture "shop/models.py" from "../cases/django-practice-exists-for-existence/shop/models.py"
-    .fixture "shop/services/stock.py" from "../cases/django-practice-exists-for-existence/shop/services/stock.py"
-    .fixture "shop/tests/test_views.py" from "../cases/django-practice-exists-for-existence/shop/tests/test_views.py"
-    .fixture "shop/views.py" from "../cases/django-practice-exists-for-existence/shop/views.py"
-    .fixture "src/inventory/__init__.py" from "../cases/django-practice-exists-for-existence/src/inventory/__init__.py"
-    .fixture "src/inventory/models.py" from "../cases/django-practice-exists-for-existence/src/inventory/models.py"
+    .fixture "mongo/docs.py" from "../upstream/django-practice/authored/django-practice-exists-for-existence/mongo/docs.py"
+    .fixture "shop/models.py" from "../upstream/django-practice/authored/django-practice-exists-for-existence/shop/models.py"
+    .fixture "shop/services/stock.py" from "../upstream/django-practice/authored/django-practice-exists-for-existence/shop/services/stock.py"
+    .fixture "shop/tests/test_views.py" from "../upstream/django-practice/authored/django-practice-exists-for-existence/shop/tests/test_views.py"
+    .fixture "shop/views.py" from "../upstream/django-practice/authored/django-practice-exists-for-existence/shop/views.py"
+    .fixture "src/inventory/__init__.py" from "../upstream/django-practice/authored/django-practice-exists-for-existence/src/inventory/__init__.py"
+    .fixture "src/inventory/models.py" from "../upstream/django-practice/authored/django-practice-exists-for-existence/src/inventory/models.py"
     .expect _ at "shop/services/stock.py":7
     .expect _ at "shop/services/stock.py":12
     .expect _ at "shop/views.py":7

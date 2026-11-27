@@ -67,18 +67,18 @@ bwh_in_hook(c, mq) :- bwh_model(c, _, mq, m), kind(f, "function_definition"), wi
     (x = "save" ; x = "delete"), nearest(f, cb, scope), class_def(cb, bq), (bq = mq ; py_names__ancestor(m, mq, bq)).
 bwh_in_hook(c, mq) :- bwh_model(c, _, mq, _), within(c, f), dj_receiver_def(f, mq).
 
-// The cases, `cases/django-practice-bulk-write-skips-hooks/`, read as one repository: each line ending in `# caught` is
-// reported, and no other line.
+// The cases, `upstream/django-practice/authored/django-practice-bulk-write-skips-hooks/`, read as one repository: each
+// line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "shop/__init__.py" from "../cases/django-practice-bulk-write-skips-hooks/shop/__init__.py"
-    .fixture "shop/migrations/0002_fill.py" from "../cases/django-practice-bulk-write-skips-hooks/shop/migrations/0002_fill.py"
-    .fixture "shop/migrations/__init__.py" from "../cases/django-practice-bulk-write-skips-hooks/shop/migrations/__init__.py"
-    .fixture "shop/models.py" from "../cases/django-practice-bulk-write-skips-hooks/shop/models.py"
-    .fixture "shop/signals.py" from "../cases/django-practice-bulk-write-skips-hooks/shop/signals.py"
-    .fixture "shop/tests/__init__.py" from "../cases/django-practice-bulk-write-skips-hooks/shop/tests/__init__.py"
-    .fixture "shop/tests/test_books.py" from "../cases/django-practice-bulk-write-skips-hooks/shop/tests/test_books.py"
-    .fixture "shop/views.py" from "../cases/django-practice-bulk-write-skips-hooks/shop/views.py"
-    .fixture "unittests/dojo_test_case.py" from "../cases/django-practice-bulk-write-skips-hooks/unittests/dojo_test_case.py"
+    .fixture "shop/__init__.py" from "../upstream/django-practice/authored/django-practice-bulk-write-skips-hooks/shop/__init__.py"
+    .fixture "shop/migrations/0002_fill.py" from "../upstream/django-practice/authored/django-practice-bulk-write-skips-hooks/shop/migrations/0002_fill.py"
+    .fixture "shop/migrations/__init__.py" from "../upstream/django-practice/authored/django-practice-bulk-write-skips-hooks/shop/migrations/__init__.py"
+    .fixture "shop/models.py" from "../upstream/django-practice/authored/django-practice-bulk-write-skips-hooks/shop/models.py"
+    .fixture "shop/signals.py" from "../upstream/django-practice/authored/django-practice-bulk-write-skips-hooks/shop/signals.py"
+    .fixture "shop/tests/__init__.py" from "../upstream/django-practice/authored/django-practice-bulk-write-skips-hooks/shop/tests/__init__.py"
+    .fixture "shop/tests/test_books.py" from "../upstream/django-practice/authored/django-practice-bulk-write-skips-hooks/shop/tests/test_books.py"
+    .fixture "shop/views.py" from "../upstream/django-practice/authored/django-practice-bulk-write-skips-hooks/shop/views.py"
+    .fixture "unittests/dojo_test_case.py" from "../upstream/django-practice/authored/django-practice-bulk-write-skips-hooks/unittests/dojo_test_case.py"
     .expect _ at "shop/models.py":31
     .expect _ at "shop/models.py":34
     .expect _ at "shop/views.py":7

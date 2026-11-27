@@ -314,31 +314,31 @@ ra_dep_less(r, f, txt) :- ra_dep_c(r, f, txt), ra_dep_c(r, f, t2), t2 < txt.
 .decl ra_dep_pick(r: symbol, f: symbol, txt: symbol)
 ra_dep_pick(r, f, txt) :- ra_dep_c(r, f, txt), !ra_dep_less(r, f, txt).
 
-// The cases, `cases/fastapi-practice-route-missing-sibling-auth/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/__init__.py" from "../cases/fastapi-practice-route-missing-sibling-auth/app/__init__.py"
-    .fixture "app/db.py" from "../cases/fastapi-practice-route-missing-sibling-auth/app/db.py"
-    .fixture "app/deps.py" from "../cases/fastapi-practice-route-missing-sibling-auth/app/deps.py"
-    .fixture "app/main.py" from "../cases/fastapi-practice-route-missing-sibling-auth/app/main.py"
-    .fixture "app/routes/__init__.py" from "../cases/fastapi-practice-route-missing-sibling-auth/app/routes/__init__.py"
-    .fixture "app/routes/accounts.py" from "../cases/fastapi-practice-route-missing-sibling-auth/app/routes/accounts.py"
-    .fixture "app/routes/items.py" from "../cases/fastapi-practice-route-missing-sibling-auth/app/routes/items.py"
-    .fixture "app/routes/keys.py" from "../cases/fastapi-practice-route-missing-sibling-auth/app/routes/keys.py"
-    .fixture "app/routes/near_misses.py" from "../cases/fastapi-practice-route-missing-sibling-auth/app/routes/near_misses.py"
-    .fixture "app/routes/orders.py" from "../cases/fastapi-practice-route-missing-sibling-auth/app/routes/orders.py"
-    .fixture "app/routes/projects.py" from "../cases/fastapi-practice-route-missing-sibling-auth/app/routes/projects.py"
-    .fixture "app/routes/reads.py" from "../cases/fastapi-practice-route-missing-sibling-auth/app/routes/reads.py"
-    .fixture "app/routes/reports.py" from "../cases/fastapi-practice-route-missing-sibling-auth/app/routes/reports.py"
-    .fixture "app/routes/seats.py" from "../cases/fastapi-practice-route-missing-sibling-auth/app/routes/seats.py"
-    .fixture "app/tests/__init__.py" from "../cases/fastapi-practice-route-missing-sibling-auth/app/tests/__init__.py"
-    .fixture "app/tests/test_routes.py" from "../cases/fastapi-practice-route-missing-sibling-auth/app/tests/test_routes.py"
-    .fixture "svc/__init__.py" from "../cases/fastapi-practice-route-missing-sibling-auth/svc/__init__.py"
-    .fixture "svc/app.py" from "../cases/fastapi-practice-route-missing-sibling-auth/svc/app.py"
-    .fixture "src/acme/__init__.py" from "../cases/fastapi-practice-route-missing-sibling-auth/src/acme/__init__.py"
-    .fixture "src/acme/api.py" from "../cases/fastapi-practice-route-missing-sibling-auth/src/acme/api.py"
-    .fixture "src/acme/auth.py" from "../cases/fastapi-practice-route-missing-sibling-auth/src/acme/auth.py"
-    .fixture "src/acme/billing/views.py" from "../cases/fastapi-practice-route-missing-sibling-auth/src/acme/billing/views.py"
+    .fixture "app/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/app/__init__.py"
+    .fixture "app/db.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/app/db.py"
+    .fixture "app/deps.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/app/deps.py"
+    .fixture "app/main.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/app/main.py"
+    .fixture "app/routes/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/app/routes/__init__.py"
+    .fixture "app/routes/accounts.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/app/routes/accounts.py"
+    .fixture "app/routes/items.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/app/routes/items.py"
+    .fixture "app/routes/keys.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/app/routes/keys.py"
+    .fixture "app/routes/near_misses.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/app/routes/near_misses.py"
+    .fixture "app/routes/orders.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/app/routes/orders.py"
+    .fixture "app/routes/projects.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/app/routes/projects.py"
+    .fixture "app/routes/reads.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/app/routes/reads.py"
+    .fixture "app/routes/reports.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/app/routes/reports.py"
+    .fixture "app/routes/seats.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/app/routes/seats.py"
+    .fixture "app/tests/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/app/tests/__init__.py"
+    .fixture "app/tests/test_routes.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/app/tests/test_routes.py"
+    .fixture "svc/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/svc/__init__.py"
+    .fixture "svc/app.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/svc/app.py"
+    .fixture "src/acme/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/src/acme/__init__.py"
+    .fixture "src/acme/api.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/src/acme/api.py"
+    .fixture "src/acme/auth.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/src/acme/auth.py"
+    .fixture "src/acme/billing/views.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-missing-sibling-auth/src/acme/billing/views.py"
     .expect _ at "app/routes/items.py":29
     .expect _ at "app/routes/keys.py":24
     .expect _ at "app/routes/orders.py":23

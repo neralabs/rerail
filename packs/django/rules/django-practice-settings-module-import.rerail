@@ -88,26 +88,26 @@ smi_resolves(mi, n, q) :- smi_query(mi, n), smi_root(mi, r), q = @dot(r, n), smi
 smi_reported(i, d, mi) :- smi_imported(i, _), docof(i, d), smi_mod(d, mi), !path_part(d, "settings"), file_name(d, s),
     !glob("*settings*.py", s), s != "manage.py", s != "wsgi.py", s != "asgi.py", !dj_test_doc(d).
 
-// The cases, `cases/django-practice-settings-module-import/`, read as one repository: each line ending in `# caught` is
-// reported, and no other line.
+// The cases, `upstream/django-practice/authored/django-practice-settings-module-import/`, read as one repository: each
+// line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "manage.py" from "../cases/django-practice-settings-module-import/manage.py"
-    .fixture "src/config/prod.py" from "../cases/django-practice-settings-module-import/src/config/prod.py"
-    .fixture "src/deploy/__init__.py" from "../cases/django-practice-settings-module-import/src/deploy/__init__.py"
-    .fixture "src/deploy/asgi.py" from "../cases/django-practice-settings-module-import/src/deploy/asgi.py"
-    .fixture "src/deploy/config.py" from "../cases/django-practice-settings-module-import/src/deploy/config.py"
-    .fixture "src/myproject/__init__.py" from "../cases/django-practice-settings-module-import/src/myproject/__init__.py"
-    .fixture "src/myproject/settings/__init__.py" from "../cases/django-practice-settings-module-import/src/myproject/settings/__init__.py"
-    .fixture "src/myproject/settings/base.py" from "../cases/django-practice-settings-module-import/src/myproject/settings/base.py"
-    .fixture "src/myproject/settings/helpers.py" from "../cases/django-practice-settings-module-import/src/myproject/settings/helpers.py"
-    .fixture "src/myproject/settings/local.py" from "../cases/django-practice-settings-module-import/src/myproject/settings/local.py"
-    .fixture "src/myproject/urls.py" from "../cases/django-practice-settings-module-import/src/myproject/urls.py"
-    .fixture "src/myproject/wsgi.py" from "../cases/django-practice-settings-module-import/src/myproject/wsgi.py"
-    .fixture "src/shop/__init__.py" from "../cases/django-practice-settings-module-import/src/shop/__init__.py"
-    .fixture "src/shop/settings.py" from "../cases/django-practice-settings-module-import/src/shop/settings.py"
-    .fixture "src/shop/tests/test_settings.py" from "../cases/django-practice-settings-module-import/src/shop/tests/test_settings.py"
-    .fixture "src/shop/utils.py" from "../cases/django-practice-settings-module-import/src/shop/utils.py"
-    .fixture "src/shop/views.py" from "../cases/django-practice-settings-module-import/src/shop/views.py"
+    .fixture "manage.py" from "../upstream/django-practice/authored/django-practice-settings-module-import/manage.py"
+    .fixture "src/config/prod.py" from "../upstream/django-practice/authored/django-practice-settings-module-import/src/config/prod.py"
+    .fixture "src/deploy/__init__.py" from "../upstream/django-practice/authored/django-practice-settings-module-import/src/deploy/__init__.py"
+    .fixture "src/deploy/asgi.py" from "../upstream/django-practice/authored/django-practice-settings-module-import/src/deploy/asgi.py"
+    .fixture "src/deploy/config.py" from "../upstream/django-practice/authored/django-practice-settings-module-import/src/deploy/config.py"
+    .fixture "src/myproject/__init__.py" from "../upstream/django-practice/authored/django-practice-settings-module-import/src/myproject/__init__.py"
+    .fixture "src/myproject/settings/__init__.py" from "../upstream/django-practice/authored/django-practice-settings-module-import/src/myproject/settings/__init__.py"
+    .fixture "src/myproject/settings/base.py" from "../upstream/django-practice/authored/django-practice-settings-module-import/src/myproject/settings/base.py"
+    .fixture "src/myproject/settings/helpers.py" from "../upstream/django-practice/authored/django-practice-settings-module-import/src/myproject/settings/helpers.py"
+    .fixture "src/myproject/settings/local.py" from "../upstream/django-practice/authored/django-practice-settings-module-import/src/myproject/settings/local.py"
+    .fixture "src/myproject/urls.py" from "../upstream/django-practice/authored/django-practice-settings-module-import/src/myproject/urls.py"
+    .fixture "src/myproject/wsgi.py" from "../upstream/django-practice/authored/django-practice-settings-module-import/src/myproject/wsgi.py"
+    .fixture "src/shop/__init__.py" from "../upstream/django-practice/authored/django-practice-settings-module-import/src/shop/__init__.py"
+    .fixture "src/shop/settings.py" from "../upstream/django-practice/authored/django-practice-settings-module-import/src/shop/settings.py"
+    .fixture "src/shop/tests/test_settings.py" from "../upstream/django-practice/authored/django-practice-settings-module-import/src/shop/tests/test_settings.py"
+    .fixture "src/shop/utils.py" from "../upstream/django-practice/authored/django-practice-settings-module-import/src/shop/utils.py"
+    .fixture "src/shop/views.py" from "../upstream/django-practice/authored/django-practice-settings-module-import/src/shop/views.py"
     .expect _ at "src/myproject/urls.py":1
     .expect _ at "src/myproject/urls.py":2
     .expect _ at "src/shop/utils.py":1

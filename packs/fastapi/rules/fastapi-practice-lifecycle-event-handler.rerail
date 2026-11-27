@@ -31,24 +31,24 @@
 EventHandlerNotLifespan(c, m) :- oe_at(c, p, t), oe_site_at(p, t, m), !oe_dead_at(p, t).
 EventHandlerNotLifespan(v, k) :- oe_kw(r, k, v), !oe_lifespan_app(r).
 
-// The cases, `cases/fastapi-practice-lifecycle-event-handler/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/__init__.py" from "../cases/fastapi-practice-lifecycle-event-handler/app/__init__.py"
-    .fixture "app/lifespan.py" from "../cases/fastapi-practice-lifecycle-event-handler/app/lifespan.py"
-    .fixture "app/main.py" from "../cases/fastapi-practice-lifecycle-event-handler/app/main.py"
-    .fixture "app/plugins.py" from "../cases/fastapi-practice-lifecycle-event-handler/app/plugins.py"
-    .fixture "app/routers/__init__.py" from "../cases/fastapi-practice-lifecycle-event-handler/app/routers/__init__.py"
-    .fixture "app/routers/items.py" from "../cases/fastapi-practice-lifecycle-event-handler/app/routers/items.py"
-    .fixture "app/startup.py" from "../cases/fastapi-practice-lifecycle-event-handler/app/startup.py"
-    .fixture "app/tests/__init__.py" from "../cases/fastapi-practice-lifecycle-event-handler/app/tests/__init__.py"
-    .fixture "app/tests/test_app.py" from "../cases/fastapi-practice-lifecycle-event-handler/app/tests/test_app.py"
-    .fixture "events/__init__.py" from "../cases/fastapi-practice-lifecycle-event-handler/events/__init__.py"
-    .fixture "events/bus.py" from "../cases/fastapi-practice-lifecycle-event-handler/events/bus.py"
-    .fixture "svc/__init__.py" from "../cases/fastapi-practice-lifecycle-event-handler/svc/__init__.py"
-    .fixture "svc/custom.py" from "../cases/fastapi-practice-lifecycle-event-handler/svc/custom.py"
-    .fixture "svc/legacy.py" from "../cases/fastapi-practice-lifecycle-event-handler/svc/legacy.py"
-    .fixture "svc/modern.py" from "../cases/fastapi-practice-lifecycle-event-handler/svc/modern.py"
+    .fixture "app/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/app/__init__.py"
+    .fixture "app/lifespan.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/app/lifespan.py"
+    .fixture "app/main.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/app/main.py"
+    .fixture "app/plugins.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/app/plugins.py"
+    .fixture "app/routers/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/app/routers/__init__.py"
+    .fixture "app/routers/items.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/app/routers/items.py"
+    .fixture "app/startup.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/app/startup.py"
+    .fixture "app/tests/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/app/tests/__init__.py"
+    .fixture "app/tests/test_app.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/app/tests/test_app.py"
+    .fixture "events/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/events/__init__.py"
+    .fixture "events/bus.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/events/bus.py"
+    .fixture "svc/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/svc/__init__.py"
+    .fixture "svc/custom.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/svc/custom.py"
+    .fixture "svc/legacy.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/svc/legacy.py"
+    .fixture "svc/modern.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/svc/modern.py"
     .expect _ at "app/plugins.py":22
     .expect _ at "app/routers/items.py":5
     .expect _ at "app/routers/items.py":8

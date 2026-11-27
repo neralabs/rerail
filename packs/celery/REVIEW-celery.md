@@ -1,7 +1,8 @@
 # Celery pack: review
 
-Reviewer's audit of the six rules in `packs/celery/` (pack.json, rules, cases, README "Rule details",
-`NOTES-celery.md`). Every number below was measured for this review; none is copied from the README. Corpus runs used
+Reviewer's audit of the six rules in `packs/celery/` (pack.json, rules, cases under
+`upstream/celery-practice/authored/<id>/`, README "Rule details", `NOTES-celery.md`). Every number below was measured
+for this review; none is copied from the README. Corpus runs used
 `~/rerail-bench/python-arch/bin/corpus-run` with all six rules at once per repository (run names
 `review-celery-all-<repo>`), counterexample runs used run names `review-celery-<rule>-cx[-<dir>]`, and every scratch
 repository is under `/tmp/review-celery/`. The machine ran at a load average of 40 to 65 during the runs (other

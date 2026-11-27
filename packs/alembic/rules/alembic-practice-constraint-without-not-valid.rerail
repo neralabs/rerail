@@ -115,18 +115,18 @@ ColumnForeignKey(c, t) :- al_added_ddl(c, t, "foreign_key", _), cwn_live(c, d, c
     !al_kw_ext(d, ct, "inline_references", "true").
 ColumnCheck(c, t) :- al_added_ddl(c, t, "check", _), cwn_live(c, d, ct), !al_np_ext(d, ct).
 
-// The cases, `cases/alembic-practice-constraint-without-not-valid/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/alembic-practice/authored/alembic-practice-constraint-without-not-valid/`, read as one
+// repository: each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/schema.py" from "../cases/alembic-practice-constraint-without-not-valid/app/schema.py"
-    .fixture "migrations/shared/utils.py" from "../cases/alembic-practice-constraint-without-not-valid/migrations/shared/utils.py"
-    .fixture "migrations/versions/c1_orders_constraints.py" from "../cases/alembic-practice-constraint-without-not-valid/migrations/versions/c1_orders_constraints.py"
-    .fixture "migrations/versions/c2_batch_and_new_tables.py" from "../cases/alembic-practice-constraint-without-not-valid/migrations/versions/c2_batch_and_new_tables.py"
-    .fixture "migrations/versions/c3_validate_and_wrapper.py" from "../cases/alembic-practice-constraint-without-not-valid/migrations/versions/c3_validate_and_wrapper.py"
-    .fixture "migrations/versions/c4_other_op.py" from "../cases/alembic-practice-constraint-without-not-valid/migrations/versions/c4_other_op.py"
-    .fixture "migrations/versions/c5_column_constraints.py" from "../cases/alembic-practice-constraint-without-not-valid/migrations/versions/c5_column_constraints.py"
-    .fixture "migrations/versions/c6_class_variants.py" from "../cases/alembic-practice-constraint-without-not-valid/migrations/versions/c6_class_variants.py"
-    .fixture "tests/migrations/versions/t1_fixture.py" from "../cases/alembic-practice-constraint-without-not-valid/tests/migrations/versions/t1_fixture.py"
+    .fixture "app/schema.py" from "../upstream/alembic-practice/authored/alembic-practice-constraint-without-not-valid/app/schema.py"
+    .fixture "migrations/shared/utils.py" from "../upstream/alembic-practice/authored/alembic-practice-constraint-without-not-valid/migrations/shared/utils.py"
+    .fixture "migrations/versions/c1_orders_constraints.py" from "../upstream/alembic-practice/authored/alembic-practice-constraint-without-not-valid/migrations/versions/c1_orders_constraints.py"
+    .fixture "migrations/versions/c2_batch_and_new_tables.py" from "../upstream/alembic-practice/authored/alembic-practice-constraint-without-not-valid/migrations/versions/c2_batch_and_new_tables.py"
+    .fixture "migrations/versions/c3_validate_and_wrapper.py" from "../upstream/alembic-practice/authored/alembic-practice-constraint-without-not-valid/migrations/versions/c3_validate_and_wrapper.py"
+    .fixture "migrations/versions/c4_other_op.py" from "../upstream/alembic-practice/authored/alembic-practice-constraint-without-not-valid/migrations/versions/c4_other_op.py"
+    .fixture "migrations/versions/c5_column_constraints.py" from "../upstream/alembic-practice/authored/alembic-practice-constraint-without-not-valid/migrations/versions/c5_column_constraints.py"
+    .fixture "migrations/versions/c6_class_variants.py" from "../upstream/alembic-practice/authored/alembic-practice-constraint-without-not-valid/migrations/versions/c6_class_variants.py"
+    .fixture "tests/migrations/versions/t1_fixture.py" from "../upstream/alembic-practice/authored/alembic-practice-constraint-without-not-valid/tests/migrations/versions/t1_fixture.py"
     .expect NewColumnForeignKey at "migrations/versions/c1_orders_constraints.py":14
     .expect _ at "migrations/versions/c1_orders_constraints.py":15
     .expect _ at "migrations/versions/c1_orders_constraints.py":23

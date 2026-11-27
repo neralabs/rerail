@@ -340,22 +340,22 @@ ccs_neutral(a) :- kind(a, "none").
 ccs_neutral(a) :- kind(a, "false").
 ccs_neutral(a) :- (kind(a, "identifier") ; kind(a, "attribute")), leaf_name(a, x), match("[A-Z][A-Z0-9_]+", x).
 
-// The cases, `cases/python-practice-contextmanager-cleanup-skipped/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/python-practice/authored/python-practice-contextmanager-cleanup-skipped/`, read as one
+// repository: each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/__init__.py" from "../cases/python-practice-contextmanager-cleanup-skipped/app/__init__.py"
-    .fixture "app/context.py" from "../cases/python-practice-contextmanager-cleanup-skipped/app/context.py"
-    .fixture "app/decorators.py" from "../cases/python-practice-contextmanager-cleanup-skipped/app/decorators.py"
-    .fixture "app/other.py" from "../cases/python-practice-contextmanager-cleanup-skipped/app/other.py"
-    .fixture "app/release_near_misses.py" from "../cases/python-practice-contextmanager-cleanup-skipped/app/release_near_misses.py"
-    .fixture "app/releases.py" from "../cases/python-practice-contextmanager-cleanup-skipped/app/releases.py"
-    .fixture "app/resources.py" from "../cases/python-practice-contextmanager-cleanup-skipped/app/resources.py"
-    .fixture "app/restores.py" from "../cases/python-practice-contextmanager-cleanup-skipped/app/restores.py"
-    .fixture "app/safe.py" from "../cases/python-practice-contextmanager-cleanup-skipped/app/safe.py"
-    .fixture "app/state.py" from "../cases/python-practice-contextmanager-cleanup-skipped/app/state.py"
-    .fixture "tests/__init__.py" from "../cases/python-practice-contextmanager-cleanup-skipped/tests/__init__.py"
-    .fixture "tests/conftest.py" from "../cases/python-practice-contextmanager-cleanup-skipped/tests/conftest.py"
-    .fixture "tests/test_resources.py" from "../cases/python-practice-contextmanager-cleanup-skipped/tests/test_resources.py"
+    .fixture "app/__init__.py" from "../upstream/python-practice/authored/python-practice-contextmanager-cleanup-skipped/app/__init__.py"
+    .fixture "app/context.py" from "../upstream/python-practice/authored/python-practice-contextmanager-cleanup-skipped/app/context.py"
+    .fixture "app/decorators.py" from "../upstream/python-practice/authored/python-practice-contextmanager-cleanup-skipped/app/decorators.py"
+    .fixture "app/other.py" from "../upstream/python-practice/authored/python-practice-contextmanager-cleanup-skipped/app/other.py"
+    .fixture "app/release_near_misses.py" from "../upstream/python-practice/authored/python-practice-contextmanager-cleanup-skipped/app/release_near_misses.py"
+    .fixture "app/releases.py" from "../upstream/python-practice/authored/python-practice-contextmanager-cleanup-skipped/app/releases.py"
+    .fixture "app/resources.py" from "../upstream/python-practice/authored/python-practice-contextmanager-cleanup-skipped/app/resources.py"
+    .fixture "app/restores.py" from "../upstream/python-practice/authored/python-practice-contextmanager-cleanup-skipped/app/restores.py"
+    .fixture "app/safe.py" from "../upstream/python-practice/authored/python-practice-contextmanager-cleanup-skipped/app/safe.py"
+    .fixture "app/state.py" from "../upstream/python-practice/authored/python-practice-contextmanager-cleanup-skipped/app/state.py"
+    .fixture "tests/__init__.py" from "../upstream/python-practice/authored/python-practice-contextmanager-cleanup-skipped/tests/__init__.py"
+    .fixture "tests/conftest.py" from "../upstream/python-practice/authored/python-practice-contextmanager-cleanup-skipped/tests/conftest.py"
+    .fixture "tests/test_resources.py" from "../upstream/python-practice/authored/python-practice-contextmanager-cleanup-skipped/tests/test_resources.py"
     .expect _ at "app/releases.py":20
     .expect _ at "app/releases.py":28
     .expect _ at "app/releases.py":35

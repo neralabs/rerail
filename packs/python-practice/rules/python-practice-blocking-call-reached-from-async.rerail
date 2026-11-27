@@ -224,29 +224,29 @@ pbr_once(y) :- pp_blocking(y, _, _), kind(i, "if_statement"), field(i, "conseque
     child(cnd, l, 0), (kind(l, "attribute") ; kind(l, "identifier")), text(l, lt), kind(s, "assignment"),
     within(s, b), field(s, "left", t), text(t, lt).
 
-// The cases, `cases/python-practice-blocking-call-reached-from-async/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/python-practice/authored/python-practice-blocking-call-reached-from-async/`, read as one
+// repository: each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "svc/__init__.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/__init__.py"
-    .fixture "svc/decorated.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/decorated.py"
-    .fixture "svc/decorators.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/decorators.py"
-    .fixture "svc/dual.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/dual.py"
-    .fixture "svc/lookalikes.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/lookalikes.py"
-    .fixture "svc/main.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/main.py"
-    .fixture "svc/providers.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/providers.py"
-    .fixture "svc/requests.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/requests.py"
-    .fixture "svc/routes.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/routes.py"
-    .fixture "svc/safe.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/safe.py"
-    .fixture "svc/server.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/server.py"
-    .fixture "svc/services/__init__.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/services/__init__.py"
-    .fixture "svc/services/guards.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/services/guards.py"
-    .fixture "svc/services/http.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/services/http.py"
-    .fixture "svc/services/loops.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/services/loops.py"
-    .fixture "svc/services/shell.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/services/shell.py"
-    .fixture "svc/services/wrapped.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/services/wrapped.py"
-    .fixture "svc/startup.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/startup.py"
-    .fixture "svc/tests/__init__.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/tests/__init__.py"
-    .fixture "svc/tests/test_routes.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/tests/test_routes.py"
+    .fixture "svc/__init__.py" from "../upstream/python-practice/authored/python-practice-blocking-call-reached-from-async/svc/__init__.py"
+    .fixture "svc/decorated.py" from "../upstream/python-practice/authored/python-practice-blocking-call-reached-from-async/svc/decorated.py"
+    .fixture "svc/decorators.py" from "../upstream/python-practice/authored/python-practice-blocking-call-reached-from-async/svc/decorators.py"
+    .fixture "svc/dual.py" from "../upstream/python-practice/authored/python-practice-blocking-call-reached-from-async/svc/dual.py"
+    .fixture "svc/lookalikes.py" from "../upstream/python-practice/authored/python-practice-blocking-call-reached-from-async/svc/lookalikes.py"
+    .fixture "svc/main.py" from "../upstream/python-practice/authored/python-practice-blocking-call-reached-from-async/svc/main.py"
+    .fixture "svc/providers.py" from "../upstream/python-practice/authored/python-practice-blocking-call-reached-from-async/svc/providers.py"
+    .fixture "svc/requests.py" from "../upstream/python-practice/authored/python-practice-blocking-call-reached-from-async/svc/requests.py"
+    .fixture "svc/routes.py" from "../upstream/python-practice/authored/python-practice-blocking-call-reached-from-async/svc/routes.py"
+    .fixture "svc/safe.py" from "../upstream/python-practice/authored/python-practice-blocking-call-reached-from-async/svc/safe.py"
+    .fixture "svc/server.py" from "../upstream/python-practice/authored/python-practice-blocking-call-reached-from-async/svc/server.py"
+    .fixture "svc/services/__init__.py" from "../upstream/python-practice/authored/python-practice-blocking-call-reached-from-async/svc/services/__init__.py"
+    .fixture "svc/services/guards.py" from "../upstream/python-practice/authored/python-practice-blocking-call-reached-from-async/svc/services/guards.py"
+    .fixture "svc/services/http.py" from "../upstream/python-practice/authored/python-practice-blocking-call-reached-from-async/svc/services/http.py"
+    .fixture "svc/services/loops.py" from "../upstream/python-practice/authored/python-practice-blocking-call-reached-from-async/svc/services/loops.py"
+    .fixture "svc/services/shell.py" from "../upstream/python-practice/authored/python-practice-blocking-call-reached-from-async/svc/services/shell.py"
+    .fixture "svc/services/wrapped.py" from "../upstream/python-practice/authored/python-practice-blocking-call-reached-from-async/svc/services/wrapped.py"
+    .fixture "svc/startup.py" from "../upstream/python-practice/authored/python-practice-blocking-call-reached-from-async/svc/startup.py"
+    .fixture "svc/tests/__init__.py" from "../upstream/python-practice/authored/python-practice-blocking-call-reached-from-async/svc/tests/__init__.py"
+    .fixture "svc/tests/test_routes.py" from "../upstream/python-practice/authored/python-practice-blocking-call-reached-from-async/svc/tests/test_routes.py"
     .expect _ at "svc/decorated.py":6
     .expect _ at "svc/decorated.py":7
     .expect _ at "svc/decorated.py":8

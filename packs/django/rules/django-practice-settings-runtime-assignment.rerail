@@ -35,14 +35,14 @@ sra_item(t, a) :- kind(t, "subscript"), field(t, "value", v), sra_item(v, a).
 .decl sra_write(t: node, a: node)
 sra_write(t, a) :- sra_item(t, a), (expr_ctx(t, "store") ; expr_ctx(t, "del")).
 
-// The cases, `cases/django-practice-settings-runtime-assignment/`, read as one repository: each line ending in `#
-// caught` is reported, and no other line.
+// The cases, `upstream/django-practice/authored/django-practice-settings-runtime-assignment/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "conftest.py" from "../cases/django-practice-settings-runtime-assignment/conftest.py"
-    .fixture "shop/alias.py" from "../cases/django-practice-settings-runtime-assignment/shop/alias.py"
-    .fixture "shop/plugin.py" from "../cases/django-practice-settings-runtime-assignment/shop/plugin.py"
-    .fixture "shop/tests/test_views.py" from "../cases/django-practice-settings-runtime-assignment/shop/tests/test_views.py"
-    .fixture "shop/views.py" from "../cases/django-practice-settings-runtime-assignment/shop/views.py"
+    .fixture "conftest.py" from "../upstream/django-practice/authored/django-practice-settings-runtime-assignment/conftest.py"
+    .fixture "shop/alias.py" from "../upstream/django-practice/authored/django-practice-settings-runtime-assignment/shop/alias.py"
+    .fixture "shop/plugin.py" from "../upstream/django-practice/authored/django-practice-settings-runtime-assignment/shop/plugin.py"
+    .fixture "shop/tests/test_views.py" from "../upstream/django-practice/authored/django-practice-settings-runtime-assignment/shop/tests/test_views.py"
+    .fixture "shop/views.py" from "../upstream/django-practice/authored/django-practice-settings-runtime-assignment/shop/views.py"
     .expect _ at "shop/alias.py":6
     .expect _ at "shop/alias.py":7
     .expect _ at "shop/views.py":6

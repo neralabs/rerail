@@ -453,25 +453,25 @@ ju_alg_value(c, v) :- ju_alg_arg(c, a), kind(a, "identifier"), text(a, x), look(
 .decl ju_alg_str(c: node, v: symbol)
 ju_alg_str(c, v) :- ju_alg_value(c, a), (kind(a, "list") ; kind(a, "tuple") ; kind(a, "set")), child(a, s, _), str(s, v).
 
-// The cases, `cases/python-security-jwt-unverified/`, read as one repository: each line ending in `# caught` is
-// reported, and no other line.
+// The cases, `upstream/python-security/authored/python-security-jwt-unverified/` (pack test data in S3, not in git),
+// read as one repository: each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/__init__.py" from "../cases/python-security-jwt-unverified/app/__init__.py"
-    .fixture "app/algorithms.py" from "../cases/python-security-jwt-unverified/app/algorithms.py"
-    .fixture "app/deps.py" from "../cases/python-security-jwt-unverified/app/deps.py"
-    .fixture "app/drf_auth.py" from "../cases/python-security-jwt-unverified/app/drf_auth.py"
-    .fixture "app/header_alg.py" from "../cases/python-security-jwt-unverified/app/header_alg.py"
-    .fixture "app/jose_auth.py" from "../cases/python-security-jwt-unverified/app/jose_auth.py"
-    .fixture "app/oauth.py" from "../cases/python-security-jwt-unverified/app/oauth.py"
-    .fixture "app/reverify.py" from "../cases/python-security-jwt-unverified/app/reverify.py"
-    .fixture "app/routing_auth.py" from "../cases/python-security-jwt-unverified/app/routing_auth.py"
-    .fixture "app/sessions.py" from "../cases/python-security-jwt-unverified/app/sessions.py"
-    .fixture "app/tokens.py" from "../cases/python-security-jwt-unverified/app/tokens.py"
-    .fixture "app/trust.py" from "../cases/python-security-jwt-unverified/app/trust.py"
-    .fixture "app/utils.py" from "../cases/python-security-jwt-unverified/app/utils.py"
-    .fixture "app/verifiers.py" from "../cases/python-security-jwt-unverified/app/verifiers.py"
-    .fixture "app/views.py" from "../cases/python-security-jwt-unverified/app/views.py"
-    .fixture "tests/test_auth.py" from "../cases/python-security-jwt-unverified/tests/test_auth.py"
+    .fixture "app/__init__.py" from "../upstream/python-security/authored/python-security-jwt-unverified/app/__init__.py"
+    .fixture "app/algorithms.py" from "../upstream/python-security/authored/python-security-jwt-unverified/app/algorithms.py"
+    .fixture "app/deps.py" from "../upstream/python-security/authored/python-security-jwt-unverified/app/deps.py"
+    .fixture "app/drf_auth.py" from "../upstream/python-security/authored/python-security-jwt-unverified/app/drf_auth.py"
+    .fixture "app/header_alg.py" from "../upstream/python-security/authored/python-security-jwt-unverified/app/header_alg.py"
+    .fixture "app/jose_auth.py" from "../upstream/python-security/authored/python-security-jwt-unverified/app/jose_auth.py"
+    .fixture "app/oauth.py" from "../upstream/python-security/authored/python-security-jwt-unverified/app/oauth.py"
+    .fixture "app/reverify.py" from "../upstream/python-security/authored/python-security-jwt-unverified/app/reverify.py"
+    .fixture "app/routing_auth.py" from "../upstream/python-security/authored/python-security-jwt-unverified/app/routing_auth.py"
+    .fixture "app/sessions.py" from "../upstream/python-security/authored/python-security-jwt-unverified/app/sessions.py"
+    .fixture "app/tokens.py" from "../upstream/python-security/authored/python-security-jwt-unverified/app/tokens.py"
+    .fixture "app/trust.py" from "../upstream/python-security/authored/python-security-jwt-unverified/app/trust.py"
+    .fixture "app/utils.py" from "../upstream/python-security/authored/python-security-jwt-unverified/app/utils.py"
+    .fixture "app/verifiers.py" from "../upstream/python-security/authored/python-security-jwt-unverified/app/verifiers.py"
+    .fixture "app/views.py" from "../upstream/python-security/authored/python-security-jwt-unverified/app/views.py"
+    .fixture "tests/test_auth.py" from "../upstream/python-security/authored/python-security-jwt-unverified/tests/test_auth.py"
     .expect _ at "app/algorithms.py":10
     .expect _ at "app/algorithms.py":14
     .expect _ at "app/algorithms.py":18
@@ -505,17 +505,17 @@ ju_alg_str(c, v) :- ju_alg_value(c, a), (kind(a, "list") ; kind(a, "tuple") ; ki
 // A second repository on PyJWT 1 (it calls `.decode()` on what `jwt.encode` returns): a PyJWT decode without
 // `algorithms` is reported there, and stays silent in the repository above (PyJWT 2 raises).
 .test pyjwt_one exactly
-    .fixture "legacy/__init__.py" from "../cases/python-security-jwt-unverified/pyjwt_one/legacy/__init__.py"
-    .fixture "legacy/auth.py" from "../cases/python-security-jwt-unverified/pyjwt_one/legacy/auth.py"
-    .fixture "legacy/tokens.py" from "../cases/python-security-jwt-unverified/pyjwt_one/legacy/tokens.py"
+    .fixture "legacy/__init__.py" from "../upstream/python-security/authored/python-security-jwt-unverified/pyjwt_one/legacy/__init__.py"
+    .fixture "legacy/auth.py" from "../upstream/python-security/authored/python-security-jwt-unverified/pyjwt_one/legacy/auth.py"
+    .fixture "legacy/tokens.py" from "../upstream/python-security/authored/python-security-jwt-unverified/pyjwt_one/legacy/tokens.py"
     .expect _ at "legacy/auth.py":9
     .expect _ at "legacy/auth.py":13
 .end
 
 // A third on PyJWT 1 by its setup.py pin.
 .test pyjwt_one_setup exactly
-    .fixture "setup.py" from "../cases/python-security-jwt-unverified/pyjwt_one_setup/setup.py"
-    .fixture "svc/__init__.py" from "../cases/python-security-jwt-unverified/pyjwt_one_setup/svc/__init__.py"
-    .fixture "svc/auth.py" from "../cases/python-security-jwt-unverified/pyjwt_one_setup/svc/auth.py"
+    .fixture "setup.py" from "../upstream/python-security/authored/python-security-jwt-unverified/pyjwt_one_setup/setup.py"
+    .fixture "svc/__init__.py" from "../upstream/python-security/authored/python-security-jwt-unverified/pyjwt_one_setup/svc/__init__.py"
+    .fixture "svc/auth.py" from "../upstream/python-security/authored/python-security-jwt-unverified/pyjwt_one_setup/svc/auth.py"
     .expect _ at "svc/auth.py":7
 .end

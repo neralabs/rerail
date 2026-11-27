@@ -399,30 +399,30 @@ dbc_listener(f) :- kind(f, "function_definition"), decorator(f, d0), unparen(d0,
 dbc_listener_q(fq) :- kind(c, "call"), field(c, "function", fn), sym_of(fn, q), dbc_event_fn(q, "call"),
     posarg(c, 1, a), str(a, e), dbc_flush_event(e), posarg(c, 2, r), sym_of(r, fq).
 
-// The cases, `cases/celery-practice-dispatch-before-commit/`, read as one repository: each line ending in `# caught`
-// is reported, and no other line.
+// The cases, `upstream/celery-practice/authored/celery-practice-dispatch-before-commit/`, read as one repository: each
+// line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "shop/__init__.py" from "../cases/celery-practice-dispatch-before-commit/shop/__init__.py"
-    .fixture "shop/api.py" from "../cases/celery-practice-dispatch-before-commit/shop/api.py"
-    .fixture "shop/callers.py" from "../cases/celery-practice-dispatch-before-commit/shop/callers.py"
-    .fixture "shop/celery.py" from "../cases/celery-practice-dispatch-before-commit/shop/celery.py"
-    .fixture "shop/db.py" from "../cases/celery-practice-dispatch-before-commit/shop/db.py"
-    .fixture "shop/dirty.py" from "../cases/celery-practice-dispatch-before-commit/shop/dirty.py"
-    .fixture "shop/django_orders.py" from "../cases/celery-practice-dispatch-before-commit/shop/django_orders.py"
-    .fixture "shop/helpers.py" from "../cases/celery-practice-dispatch-before-commit/shop/helpers.py"
-    .fixture "shop/jobs/__init__.py" from "../cases/celery-practice-dispatch-before-commit/shop/jobs/__init__.py"
-    .fixture "shop/jobs/billing.py" from "../cases/celery-practice-dispatch-before-commit/shop/jobs/billing.py"
-    .fixture "shop/listeners.py" from "../cases/celery-practice-dispatch-before-commit/shop/listeners.py"
-    .fixture "shop/models.py" from "../cases/celery-practice-dispatch-before-commit/shop/models.py"
-    .fixture "shop/orders.py" from "../cases/celery-practice-dispatch-before-commit/shop/orders.py"
-    .fixture "shop/paths.py" from "../cases/celery-practice-dispatch-before-commit/shop/paths.py"
-    .fixture "shop/pool.py" from "../cases/celery-practice-dispatch-before-commit/shop/pool.py"
-    .fixture "shop/rq_jobs.py" from "../cases/celery-practice-dispatch-before-commit/shop/rq_jobs.py"
-    .fixture "shop/sends.py" from "../cases/celery-practice-dispatch-before-commit/shop/sends.py"
-    .fixture "shop/services.py" from "../cases/celery-practice-dispatch-before-commit/shop/services.py"
-    .fixture "shop/sessions.py" from "../cases/celery-practice-dispatch-before-commit/shop/sessions.py"
-    .fixture "shop/tasks.py" from "../cases/celery-practice-dispatch-before-commit/shop/tasks.py"
-    .fixture "shop/tests/test_orders.py" from "../cases/celery-practice-dispatch-before-commit/shop/tests/test_orders.py"
+    .fixture "shop/__init__.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/__init__.py"
+    .fixture "shop/api.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/api.py"
+    .fixture "shop/callers.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/callers.py"
+    .fixture "shop/celery.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/celery.py"
+    .fixture "shop/db.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/db.py"
+    .fixture "shop/dirty.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/dirty.py"
+    .fixture "shop/django_orders.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/django_orders.py"
+    .fixture "shop/helpers.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/helpers.py"
+    .fixture "shop/jobs/__init__.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/jobs/__init__.py"
+    .fixture "shop/jobs/billing.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/jobs/billing.py"
+    .fixture "shop/listeners.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/listeners.py"
+    .fixture "shop/models.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/models.py"
+    .fixture "shop/orders.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/orders.py"
+    .fixture "shop/paths.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/paths.py"
+    .fixture "shop/pool.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/pool.py"
+    .fixture "shop/rq_jobs.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/rq_jobs.py"
+    .fixture "shop/sends.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/sends.py"
+    .fixture "shop/services.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/services.py"
+    .fixture "shop/sessions.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/sessions.py"
+    .fixture "shop/tasks.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/tasks.py"
+    .fixture "shop/tests/test_orders.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/tests/test_orders.py"
     .expect _ at "shop/callers.py":14
     .expect _ at "shop/callers.py":29
     .expect _ at "shop/callers.py":38

@@ -184,18 +184,18 @@ rb_read_ok(p, t, i, e, k) :- rb_read_at(p, t, i, e, k, c1, c2, c3), rb_ok(c1, c2
 .decl rb_first(p: symbol, t: symbol, i: number)
 rb_first(p, t, i) :- rb_read_ok(p, t, _, _, _), i = min j : { rb_read_ok(p, t, j, _, _) }.
 
-// The cases, `cases/fastapi-practice-request-session-in-background-task/`, read as one repository: each line ending
-// in `# caught` is reported, and no other line.
+// The cases, `upstream/fastapi-practice/authored/fastapi-practice-request-session-in-background-task/`, read as one
+// repository: each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/__init__.py" from "../cases/fastapi-practice-request-session-in-background-task/app/__init__.py"
-    .fixture "app/db.py" from "../cases/fastapi-practice-request-session-in-background-task/app/db.py"
-    .fixture "app/deps.py" from "../cases/fastapi-practice-request-session-in-background-task/app/deps.py"
-    .fixture "app/jobs.py" from "../cases/fastapi-practice-request-session-in-background-task/app/jobs.py"
-    .fixture "app/main.py" from "../cases/fastapi-practice-request-session-in-background-task/app/main.py"
-    .fixture "app/routes.py" from "../cases/fastapi-practice-request-session-in-background-task/app/routes.py"
-    .fixture "app/tasks.py" from "../cases/fastapi-practice-request-session-in-background-task/app/tasks.py"
-    .fixture "app/tests/__init__.py" from "../cases/fastapi-practice-request-session-in-background-task/app/tests/__init__.py"
-    .fixture "app/tests/test_routes.py" from "../cases/fastapi-practice-request-session-in-background-task/app/tests/test_routes.py"
+    .fixture "app/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-request-session-in-background-task/app/__init__.py"
+    .fixture "app/db.py" from "../upstream/fastapi-practice/authored/fastapi-practice-request-session-in-background-task/app/db.py"
+    .fixture "app/deps.py" from "../upstream/fastapi-practice/authored/fastapi-practice-request-session-in-background-task/app/deps.py"
+    .fixture "app/jobs.py" from "../upstream/fastapi-practice/authored/fastapi-practice-request-session-in-background-task/app/jobs.py"
+    .fixture "app/main.py" from "../upstream/fastapi-practice/authored/fastapi-practice-request-session-in-background-task/app/main.py"
+    .fixture "app/routes.py" from "../upstream/fastapi-practice/authored/fastapi-practice-request-session-in-background-task/app/routes.py"
+    .fixture "app/tasks.py" from "../upstream/fastapi-practice/authored/fastapi-practice-request-session-in-background-task/app/tasks.py"
+    .fixture "app/tests/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-request-session-in-background-task/app/tests/__init__.py"
+    .fixture "app/tests/test_routes.py" from "../upstream/fastapi-practice/authored/fastapi-practice-request-session-in-background-task/app/tests/test_routes.py"
     .expect _ at "app/main.py":22
     .expect _ at "app/main.py":40
     .expect _ at "app/main.py":41

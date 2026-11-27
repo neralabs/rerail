@@ -366,26 +366,26 @@ bw_exec_names_any_q(fq) :- bw_exec_names_q(fq, _).
 bw_rerun_q(k, mq) :- bw_write_q(_, k, mq, _), bw_exec_listener_q(fq), bw_checks_q(fq, cat("is_", k)),
     (bw_exec_names_q(fq, mq) ; !bw_exec_names_any_q(fq)).
 
-// The cases, `cases/sqlalchemy-practice-bulk-write-skips-hooks/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line. `generic` is a second repository whose do_orm_execute listener names no
-// model.
+// The cases, `upstream/sqlalchemy-practice/authored/sqlalchemy-practice-bulk-write-skips-hooks/`, read as one
+// repository: each line ending in `# caught` is reported, and no other line. `generic` is a second repository whose
+// do_orm_execute listener names no model.
 .test cases exactly
-    .fixture "app/__init__.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/__init__.py"
-    .fixture "app/builders.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/builders.py"
-    .fixture "app/built.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/built.py"
-    .fixture "app/cli.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/cli.py"
-    .fixture "app/db.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/db.py"
-    .fixture "app/events.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/events.py"
-    .fixture "app/legacy.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/legacy.py"
-    .fixture "app/models.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/models.py"
-    .fixture "app/repos.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/repos.py"
-    .fixture "app/services.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/services.py"
-    .fixture "app/stamping.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/stamping.py"
-    .fixture "app/tests/__init__.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/tests/__init__.py"
-    .fixture "app/tests/conftest.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/tests/conftest.py"
-    .fixture "app/tests/test_services.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/tests/test_services.py"
-    .fixture "app/themes.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/app/themes.py"
-    .fixture "migrations/versions/0002_fill_labels.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/migrations/versions/0002_fill_labels.py"
+    .fixture "app/__init__.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-bulk-write-skips-hooks/app/__init__.py"
+    .fixture "app/builders.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-bulk-write-skips-hooks/app/builders.py"
+    .fixture "app/built.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-bulk-write-skips-hooks/app/built.py"
+    .fixture "app/cli.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-bulk-write-skips-hooks/app/cli.py"
+    .fixture "app/db.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-bulk-write-skips-hooks/app/db.py"
+    .fixture "app/events.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-bulk-write-skips-hooks/app/events.py"
+    .fixture "app/legacy.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-bulk-write-skips-hooks/app/legacy.py"
+    .fixture "app/models.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-bulk-write-skips-hooks/app/models.py"
+    .fixture "app/repos.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-bulk-write-skips-hooks/app/repos.py"
+    .fixture "app/services.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-bulk-write-skips-hooks/app/services.py"
+    .fixture "app/stamping.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-bulk-write-skips-hooks/app/stamping.py"
+    .fixture "app/tests/__init__.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-bulk-write-skips-hooks/app/tests/__init__.py"
+    .fixture "app/tests/conftest.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-bulk-write-skips-hooks/app/tests/conftest.py"
+    .fixture "app/tests/test_services.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-bulk-write-skips-hooks/app/tests/test_services.py"
+    .fixture "app/themes.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-bulk-write-skips-hooks/app/themes.py"
+    .fixture "migrations/versions/0002_fill_labels.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-bulk-write-skips-hooks/migrations/versions/0002_fill_labels.py"
     .expect _ at "app/built.py":10
     .expect _ at "app/built.py":14
     .expect _ at "app/built.py":19
@@ -423,8 +423,8 @@ bw_rerun_q(k, mq) :- bw_write_q(_, k, mq, _), bw_exec_listener_q(fq), bw_checks_
 .end
 
 .test generic exactly
-    .fixture "shop/__init__.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/generic/shop/__init__.py"
-    .fixture "shop/models.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/generic/shop/models.py"
-    .fixture "shop/orders.py" from "../cases/sqlalchemy-practice-bulk-write-skips-hooks/generic/shop/orders.py"
+    .fixture "shop/__init__.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-bulk-write-skips-hooks/generic/shop/__init__.py"
+    .fixture "shop/models.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-bulk-write-skips-hooks/generic/shop/models.py"
+    .fixture "shop/orders.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-bulk-write-skips-hooks/generic/shop/orders.py"
     .expect _ at "shop/orders.py":8
 .end

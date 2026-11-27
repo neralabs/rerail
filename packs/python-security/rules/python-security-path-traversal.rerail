@@ -490,31 +490,31 @@ ptr_xpfirst(ct, k) :- ptr_xprobe(ct, k), !ptr_xplater(ct, k).
 .decl ptr_xplater(c: symbol, k: symbol) cross_file
 ptr_xplater(ct, k) :- ptr_xprobe(ct, k), ptr_xprobe(ct, k2), k2 < k.
 
-// The cases, `cases/python-security-path-traversal/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/python-security/authored/python-security-path-traversal/` (pack test data in S3, not in git),
+// read as one repository: each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "api/__init__.py" from "../cases/python-security-path-traversal/api/__init__.py"
-    .fixture "api/cache.py" from "../cases/python-security-path-traversal/api/cache.py"
-    .fixture "api/extensions.py" from "../cases/python-security-path-traversal/api/extensions.py"
-    .fixture "api/paths.py" from "../cases/python-security-path-traversal/api/paths.py"
-    .fixture "api/routes.py" from "../cases/python-security-path-traversal/api/routes.py"
-    .fixture "api/schemas.py" from "../cases/python-security-path-traversal/api/schemas.py"
-    .fixture "api/seeding.py" from "../cases/python-security-path-traversal/api/seeding.py"
-    .fixture "api/segments.py" from "../cases/python-security-path-traversal/api/segments.py"
-    .fixture "api/uploads.py" from "../cases/python-security-path-traversal/api/uploads.py"
-    .fixture "docs/__init__.py" from "../cases/python-security-path-traversal/docs/__init__.py"
-    .fixture "docs/imaging.py" from "../cases/python-security-path-traversal/docs/imaging.py"
-    .fixture "docs/media_views.py" from "../cases/python-security-path-traversal/docs/media_views.py"
-    .fixture "docs/readers.py" from "../cases/python-security-path-traversal/docs/readers.py"
-    .fixture "docs/storage.py" from "../cases/python-security-path-traversal/docs/storage.py"
-    .fixture "docs/tests/__init__.py" from "../cases/python-security-path-traversal/docs/tests/__init__.py"
-    .fixture "docs/tests/test_views.py" from "../cases/python-security-path-traversal/docs/tests/test_views.py"
-    .fixture "docs/urls.py" from "../cases/python-security-path-traversal/docs/urls.py"
-    .fixture "docs/views.py" from "../cases/python-security-path-traversal/docs/views.py"
-    .fixture "webapp/__init__.py" from "../cases/python-security-path-traversal/webapp/__init__.py"
-    .fixture "webapp/app.py" from "../cases/python-security-path-traversal/webapp/app.py"
-    .fixture "webapp/files.py" from "../cases/python-security-path-traversal/webapp/files.py"
-    .fixture "webapp/pages.py" from "../cases/python-security-path-traversal/webapp/pages.py"
+    .fixture "api/__init__.py" from "../upstream/python-security/authored/python-security-path-traversal/api/__init__.py"
+    .fixture "api/cache.py" from "../upstream/python-security/authored/python-security-path-traversal/api/cache.py"
+    .fixture "api/extensions.py" from "../upstream/python-security/authored/python-security-path-traversal/api/extensions.py"
+    .fixture "api/paths.py" from "../upstream/python-security/authored/python-security-path-traversal/api/paths.py"
+    .fixture "api/routes.py" from "../upstream/python-security/authored/python-security-path-traversal/api/routes.py"
+    .fixture "api/schemas.py" from "../upstream/python-security/authored/python-security-path-traversal/api/schemas.py"
+    .fixture "api/seeding.py" from "../upstream/python-security/authored/python-security-path-traversal/api/seeding.py"
+    .fixture "api/segments.py" from "../upstream/python-security/authored/python-security-path-traversal/api/segments.py"
+    .fixture "api/uploads.py" from "../upstream/python-security/authored/python-security-path-traversal/api/uploads.py"
+    .fixture "docs/__init__.py" from "../upstream/python-security/authored/python-security-path-traversal/docs/__init__.py"
+    .fixture "docs/imaging.py" from "../upstream/python-security/authored/python-security-path-traversal/docs/imaging.py"
+    .fixture "docs/media_views.py" from "../upstream/python-security/authored/python-security-path-traversal/docs/media_views.py"
+    .fixture "docs/readers.py" from "../upstream/python-security/authored/python-security-path-traversal/docs/readers.py"
+    .fixture "docs/storage.py" from "../upstream/python-security/authored/python-security-path-traversal/docs/storage.py"
+    .fixture "docs/tests/__init__.py" from "../upstream/python-security/authored/python-security-path-traversal/docs/tests/__init__.py"
+    .fixture "docs/tests/test_views.py" from "../upstream/python-security/authored/python-security-path-traversal/docs/tests/test_views.py"
+    .fixture "docs/urls.py" from "../upstream/python-security/authored/python-security-path-traversal/docs/urls.py"
+    .fixture "docs/views.py" from "../upstream/python-security/authored/python-security-path-traversal/docs/views.py"
+    .fixture "webapp/__init__.py" from "../upstream/python-security/authored/python-security-path-traversal/webapp/__init__.py"
+    .fixture "webapp/app.py" from "../upstream/python-security/authored/python-security-path-traversal/webapp/app.py"
+    .fixture "webapp/files.py" from "../upstream/python-security/authored/python-security-path-traversal/webapp/files.py"
+    .fixture "webapp/pages.py" from "../upstream/python-security/authored/python-security-path-traversal/webapp/pages.py"
     .expect _ at "api/cache.py":16
     .expect _ at "api/extensions.py":72
     .expect _ at "api/extensions.py":79

@@ -456,21 +456,21 @@ rnp_spot(a, cat("qs|", v)) :- class_def(c, v), drf_own_attr(c, "queryset", _, a)
 rnp_spot(a, cat("sc|", v)) :- class_def(c, v), drf_own_attr(c, "serializer_class", _, a).
 rnp_spot(n, cat("name|", v)) :- class_def(c, v), field(c, "name", n).
 
-// The cases, `cases/drf-practice-related-field-not-prefetched/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/drf-practice/authored/drf-practice-related-field-not-prefetched/`, read as one repository: each
+// line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "core/__init__.py" from "../cases/drf-practice-related-field-not-prefetched/core/__init__.py"
-    .fixture "core/views.py" from "../cases/drf-practice-related-field-not-prefetched/core/views.py"
-    .fixture "shop/__init__.py" from "../cases/drf-practice-related-field-not-prefetched/shop/__init__.py"
-    .fixture "shop/models.py" from "../cases/drf-practice-related-field-not-prefetched/shop/models.py"
-    .fixture "shop/api/__init__.py" from "../cases/drf-practice-related-field-not-prefetched/shop/api/__init__.py"
-    .fixture "shop/utils.py" from "../cases/drf-practice-related-field-not-prefetched/shop/utils.py"
-    .fixture "shop/api/mixins.py" from "../cases/drf-practice-related-field-not-prefetched/shop/api/mixins.py"
-    .fixture "shop/api/list_views.py" from "../cases/drf-practice-related-field-not-prefetched/shop/api/list_views.py"
-    .fixture "shop/api/serializers.py" from "../cases/drf-practice-related-field-not-prefetched/shop/api/serializers.py"
-    .fixture "shop/api/views.py" from "../cases/drf-practice-related-field-not-prefetched/shop/api/views.py"
-    .fixture "shop/tests/__init__.py" from "../cases/drf-practice-related-field-not-prefetched/shop/tests/__init__.py"
-    .fixture "shop/tests/test_views.py" from "../cases/drf-practice-related-field-not-prefetched/shop/tests/test_views.py"
+    .fixture "core/__init__.py" from "../upstream/drf-practice/authored/drf-practice-related-field-not-prefetched/core/__init__.py"
+    .fixture "core/views.py" from "../upstream/drf-practice/authored/drf-practice-related-field-not-prefetched/core/views.py"
+    .fixture "shop/__init__.py" from "../upstream/drf-practice/authored/drf-practice-related-field-not-prefetched/shop/__init__.py"
+    .fixture "shop/models.py" from "../upstream/drf-practice/authored/drf-practice-related-field-not-prefetched/shop/models.py"
+    .fixture "shop/api/__init__.py" from "../upstream/drf-practice/authored/drf-practice-related-field-not-prefetched/shop/api/__init__.py"
+    .fixture "shop/utils.py" from "../upstream/drf-practice/authored/drf-practice-related-field-not-prefetched/shop/utils.py"
+    .fixture "shop/api/mixins.py" from "../upstream/drf-practice/authored/drf-practice-related-field-not-prefetched/shop/api/mixins.py"
+    .fixture "shop/api/list_views.py" from "../upstream/drf-practice/authored/drf-practice-related-field-not-prefetched/shop/api/list_views.py"
+    .fixture "shop/api/serializers.py" from "../upstream/drf-practice/authored/drf-practice-related-field-not-prefetched/shop/api/serializers.py"
+    .fixture "shop/api/views.py" from "../upstream/drf-practice/authored/drf-practice-related-field-not-prefetched/shop/api/views.py"
+    .fixture "shop/tests/__init__.py" from "../upstream/drf-practice/authored/drf-practice-related-field-not-prefetched/shop/tests/__init__.py"
+    .fixture "shop/tests/test_views.py" from "../upstream/drf-practice/authored/drf-practice-related-field-not-prefetched/shop/tests/test_views.py"
     .expect _ at "shop/api/views.py":31
     .expect _ at "shop/api/views.py":36
     .expect _ at "shop/api/views.py":41

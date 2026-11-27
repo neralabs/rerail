@@ -183,26 +183,27 @@ v1d_in_import(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, q)
 v1d_at(n) :- v1d_fn_use(n, _, _).
 DeprecatedMethod(n, x, new) :- v1d_fn_use(n, x, new), v1d_report(n, nk), !pd_shim_elsewhere(nk).
 
-// The cases, `cases/pydantic-practice-deprecated-v1-api/`, read as one repository pinned to Pydantic 2 with a
-// `legacy/` project pinned to Pydantic 1: each line ending in `# caught` is reported, and no other line.
+// The cases, `upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/`, read as one repository pinned
+// to Pydantic 2 with a `legacy/` project pinned to Pydantic 1: each line ending in `# caught` is reported, and no other
+// line.
 .test cases exactly
-    .fixture "pyproject.toml" from "../cases/pydantic-practice-deprecated-v1-api/pyproject.toml"
-    .fixture "app/__init__.py" from "../cases/pydantic-practice-deprecated-v1-api/app/__init__.py"
-    .fixture "app/base.py" from "../cases/pydantic-practice-deprecated-v1-api/app/base.py"
-    .fixture "app/checks.py" from "../cases/pydantic-practice-deprecated-v1-api/app/checks.py"
-    .fixture "app/compat.py" from "../cases/pydantic-practice-deprecated-v1-api/app/compat.py"
-    .fixture "app/config.py" from "../cases/pydantic-practice-deprecated-v1-api/app/config.py"
-    .fixture "app/legacy_models.py" from "../cases/pydantic-practice-deprecated-v1-api/app/legacy_models.py"
-    .fixture "app/orm_reads.py" from "../cases/pydantic-practice-deprecated-v1-api/app/orm_reads.py"
-    .fixture "app/schemas.py" from "../cases/pydantic-practice-deprecated-v1-api/app/schemas.py"
-    .fixture "app/services.py" from "../cases/pydantic-practice-deprecated-v1-api/app/services.py"
-    .fixture "app/shims.py" from "../cases/pydantic-practice-deprecated-v1-api/app/shims.py"
-    .fixture "app/tables/__init__.py" from "../cases/pydantic-practice-deprecated-v1-api/app/tables/__init__.py"
-    .fixture "app/tables/heroes.py" from "../cases/pydantic-practice-deprecated-v1-api/app/tables/heroes.py"
-    .fixture "app/tests/__init__.py" from "../cases/pydantic-practice-deprecated-v1-api/app/tests/__init__.py"
-    .fixture "app/tests/test_users.py" from "../cases/pydantic-practice-deprecated-v1-api/app/tests/test_users.py"
-    .fixture "legacy/pyproject.toml" from "../cases/pydantic-practice-deprecated-v1-api/legacy/pyproject.toml"
-    .fixture "legacy/models.py" from "../cases/pydantic-practice-deprecated-v1-api/legacy/models.py"
+    .fixture "pyproject.toml" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/pyproject.toml"
+    .fixture "app/__init__.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/__init__.py"
+    .fixture "app/base.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/base.py"
+    .fixture "app/checks.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/checks.py"
+    .fixture "app/compat.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/compat.py"
+    .fixture "app/config.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/config.py"
+    .fixture "app/legacy_models.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/legacy_models.py"
+    .fixture "app/orm_reads.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/orm_reads.py"
+    .fixture "app/schemas.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/schemas.py"
+    .fixture "app/services.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/services.py"
+    .fixture "app/shims.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/shims.py"
+    .fixture "app/tables/__init__.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/tables/__init__.py"
+    .fixture "app/tables/heroes.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/tables/heroes.py"
+    .fixture "app/tests/__init__.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/tests/__init__.py"
+    .fixture "app/tests/test_users.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/tests/test_users.py"
+    .fixture "legacy/pyproject.toml" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/legacy/pyproject.toml"
+    .fixture "legacy/models.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/legacy/models.py"
     .expect DeprecatedMethod at "app/orm_reads.py":20
     .expect DeprecatedMethod at "app/orm_reads.py":24
     .expect DeprecatedMethod at "app/orm_reads.py":25

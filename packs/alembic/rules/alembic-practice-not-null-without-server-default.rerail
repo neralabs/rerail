@@ -78,15 +78,15 @@ NotNullNoDefault(col, x, t) :- nn_added(col, x, t, d, ct, colt), !al_np_ext(d, c
 NotNullPythonDefault(col, x, t) :- nn_added(col, x, t, d, ct, colt), !al_np_ext(d, ct), nn_not_null(d, colt),
     !nn_default(d, colt, "server_default"), nn_default(d, colt, "default").
 
-// The cases, `cases/alembic-practice-not-null-without-server-default/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/alembic-practice/authored/alembic-practice-not-null-without-server-default/`, read as one
+// repository: each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/other_op.py" from "../cases/alembic-practice-not-null-without-server-default/app/other_op.py"
-    .fixture "app/schema.py" from "../cases/alembic-practice-not-null-without-server-default/app/schema.py"
-    .fixture "migrations/versions/a1_user_columns.py" from "../cases/alembic-practice-not-null-without-server-default/migrations/versions/a1_user_columns.py"
-    .fixture "migrations/versions/a2_teams.py" from "../cases/alembic-practice-not-null-without-server-default/migrations/versions/a2_teams.py"
-    .fixture "migrations/versions/a3_class_variants.py" from "../cases/alembic-practice-not-null-without-server-default/migrations/versions/a3_class_variants.py"
-    .fixture "tests/test_migration_shapes.py" from "../cases/alembic-practice-not-null-without-server-default/tests/test_migration_shapes.py"
+    .fixture "app/other_op.py" from "../upstream/alembic-practice/authored/alembic-practice-not-null-without-server-default/app/other_op.py"
+    .fixture "app/schema.py" from "../upstream/alembic-practice/authored/alembic-practice-not-null-without-server-default/app/schema.py"
+    .fixture "migrations/versions/a1_user_columns.py" from "../upstream/alembic-practice/authored/alembic-practice-not-null-without-server-default/migrations/versions/a1_user_columns.py"
+    .fixture "migrations/versions/a2_teams.py" from "../upstream/alembic-practice/authored/alembic-practice-not-null-without-server-default/migrations/versions/a2_teams.py"
+    .fixture "migrations/versions/a3_class_variants.py" from "../upstream/alembic-practice/authored/alembic-practice-not-null-without-server-default/migrations/versions/a3_class_variants.py"
+    .fixture "tests/test_migration_shapes.py" from "../upstream/alembic-practice/authored/alembic-practice-not-null-without-server-default/tests/test_migration_shapes.py"
     .expect _ at "migrations/versions/a1_user_columns.py":16
     .expect _ at "migrations/versions/a1_user_columns.py":17
     .expect _ at "migrations/versions/a1_user_columns.py":18

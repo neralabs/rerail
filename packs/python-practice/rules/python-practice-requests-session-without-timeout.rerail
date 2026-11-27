@@ -247,18 +247,18 @@ rst_self_patch(a, s, m, w) :- rst_patch(pr, m, w), attr_of(pr, ps, a), kind(ps, 
 .decl rst_cover_self(a: symbol, ot: symbol, v: symbol)
 rst_cover_self(a, ot, v) :- rst_self_patch(a, s, m, w), rst_witness(w), rst_src(s, ot), rst_covers(m, v).
 
-// The cases, `cases/python-practice-requests-session-without-timeout/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/python-practice/authored/python-practice-requests-session-without-timeout/`, read as one
+// repository: each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/__init__.py" from "../cases/python-practice-requests-session-without-timeout/app/__init__.py"
-    .fixture "app/clients.py" from "../cases/python-practice-requests-session-without-timeout/app/clients.py"
-    .fixture "app/locals.py" from "../cases/python-practice-requests-session-without-timeout/app/locals.py"
-    .fixture "app/net.py" from "../cases/python-practice-requests-session-without-timeout/app/net.py"
-    .fixture "app/patched.py" from "../cases/python-practice-requests-session-without-timeout/app/patched.py"
-    .fixture "examples/start_server.py" from "../cases/python-practice-requests-session-without-timeout/examples/start_server.py"
-    .fixture "scripts/smoke.py" from "../cases/python-practice-requests-session-without-timeout/scripts/smoke.py"
-    .fixture "tests/__init__.py" from "../cases/python-practice-requests-session-without-timeout/tests/__init__.py"
-    .fixture "tests/test_clients.py" from "../cases/python-practice-requests-session-without-timeout/tests/test_clients.py"
+    .fixture "app/__init__.py" from "../upstream/python-practice/authored/python-practice-requests-session-without-timeout/app/__init__.py"
+    .fixture "app/clients.py" from "../upstream/python-practice/authored/python-practice-requests-session-without-timeout/app/clients.py"
+    .fixture "app/locals.py" from "../upstream/python-practice/authored/python-practice-requests-session-without-timeout/app/locals.py"
+    .fixture "app/net.py" from "../upstream/python-practice/authored/python-practice-requests-session-without-timeout/app/net.py"
+    .fixture "app/patched.py" from "../upstream/python-practice/authored/python-practice-requests-session-without-timeout/app/patched.py"
+    .fixture "examples/start_server.py" from "../upstream/python-practice/authored/python-practice-requests-session-without-timeout/examples/start_server.py"
+    .fixture "scripts/smoke.py" from "../upstream/python-practice/authored/python-practice-requests-session-without-timeout/scripts/smoke.py"
+    .fixture "tests/__init__.py" from "../upstream/python-practice/authored/python-practice-requests-session-without-timeout/tests/__init__.py"
+    .fixture "tests/test_clients.py" from "../upstream/python-practice/authored/python-practice-requests-session-without-timeout/tests/test_clients.py"
     .expect _ at "app/clients.py":14
     .expect _ at "app/clients.py":22
     .expect _ at "app/clients.py":39

@@ -15,6 +15,9 @@ In the order a team should read them: what it loses when the rule is missing com
 | `celery-practice-task-arg-not-serializable` | Steer | Celery practice: a SQLAlchemy model or session, a set, a file, a lambda or a function passed as a Celery task argument | 0 | no match (cases and counterexamples only) |
 | `celery-practice-unknown-task-name` | Log, starts off | Celery practice: task named by a string that no task of the run registers | 0 | no match (cases and counterexamples only) |
 
+Each rule's `.test cases exactly` block reads its cases, one small repository per rule, from
+`upstream/celery-practice/authored/<id>/`: pack test data in S3 (`npm run fixtures:pull -- --pack celery`), not in git.
+
 ## Rule details
 
 ### `celery-practice-dispatch-before-commit`

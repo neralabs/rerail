@@ -92,26 +92,26 @@ ci_live(c, m, d, t) :- al_call(c, m, _), (m = "create_index" ; m = "drop_index")
 ConcurrentIndexInTransaction(c, m) :- ci_live(c, m, d, t), (al_true_kw(c, "postgresql_concurrently") ;
     al_kw_ext(d, t, "postgresql_concurrently", "true")), !al_np_ext(d, t), !ci_no_transaction(d).
 
-// The cases, `cases/alembic-practice-concurrent-index-outside-autocommit/`, read as one repository: each line ending
-// in `# caught` is reported, and no other line. `autocommit_env/` is a second Alembic tree whose env.py turns
-// transactional DDL off: silent beside the reported tree, and alone.
+// The cases, `upstream/alembic-practice/authored/alembic-practice-concurrent-index-outside-autocommit/`, read as one
+// repository: each line ending in `# caught` is reported, and no other line. `autocommit_env/` is a second Alembic tree
+// whose env.py turns transactional DDL off: silent beside the reported tree, and alone.
 .test cases exactly
-    .fixture "app/__init__.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/app/__init__.py"
-    .fixture "autocommit_env/migrations/env.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/autocommit_env/migrations/env.py"
-    .fixture "autocommit_env/migrations/versions/a1_users.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/autocommit_env/migrations/versions/a1_users.py"
-    .fixture "autocommit_env/elsewhere/a2_orphan.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/autocommit_env/elsewhere/a2_orphan.py"
-    .fixture "autocommit_iso/db.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/autocommit_iso/db.py"
-    .fixture "autocommit_iso/migrations/env.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/autocommit_iso/migrations/env.py"
-    .fixture "autocommit_iso/migrations/versions/i1_users.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/autocommit_iso/migrations/versions/i1_users.py"
-    .fixture "app/db.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/app/db.py"
-    .fixture "app/search.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/app/search.py"
-    .fixture "migrations/env.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/migrations/env.py"
-    .fixture "migrations/versions/c1_users.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/migrations/versions/c1_users.py"
-    .fixture "migrations/versions/c2_batch_and_dialects.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/migrations/versions/c2_batch_and_dialects.py"
-    .fixture "migrations/versions/c4_helpers.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/migrations/versions/c4_helpers.py"
-    .fixture "migrations/versions/c5_constants.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/migrations/versions/c5_constants.py"
-    .fixture "migrations/versions/c3_not_alembic.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/migrations/versions/c3_not_alembic.py"
-    .fixture "tests/migrations/versions/t1_fixture.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/tests/migrations/versions/t1_fixture.py"
+    .fixture "app/__init__.py" from "../upstream/alembic-practice/authored/alembic-practice-concurrent-index-outside-autocommit/app/__init__.py"
+    .fixture "autocommit_env/migrations/env.py" from "../upstream/alembic-practice/authored/alembic-practice-concurrent-index-outside-autocommit/autocommit_env/migrations/env.py"
+    .fixture "autocommit_env/migrations/versions/a1_users.py" from "../upstream/alembic-practice/authored/alembic-practice-concurrent-index-outside-autocommit/autocommit_env/migrations/versions/a1_users.py"
+    .fixture "autocommit_env/elsewhere/a2_orphan.py" from "../upstream/alembic-practice/authored/alembic-practice-concurrent-index-outside-autocommit/autocommit_env/elsewhere/a2_orphan.py"
+    .fixture "autocommit_iso/db.py" from "../upstream/alembic-practice/authored/alembic-practice-concurrent-index-outside-autocommit/autocommit_iso/db.py"
+    .fixture "autocommit_iso/migrations/env.py" from "../upstream/alembic-practice/authored/alembic-practice-concurrent-index-outside-autocommit/autocommit_iso/migrations/env.py"
+    .fixture "autocommit_iso/migrations/versions/i1_users.py" from "../upstream/alembic-practice/authored/alembic-practice-concurrent-index-outside-autocommit/autocommit_iso/migrations/versions/i1_users.py"
+    .fixture "app/db.py" from "../upstream/alembic-practice/authored/alembic-practice-concurrent-index-outside-autocommit/app/db.py"
+    .fixture "app/search.py" from "../upstream/alembic-practice/authored/alembic-practice-concurrent-index-outside-autocommit/app/search.py"
+    .fixture "migrations/env.py" from "../upstream/alembic-practice/authored/alembic-practice-concurrent-index-outside-autocommit/migrations/env.py"
+    .fixture "migrations/versions/c1_users.py" from "../upstream/alembic-practice/authored/alembic-practice-concurrent-index-outside-autocommit/migrations/versions/c1_users.py"
+    .fixture "migrations/versions/c2_batch_and_dialects.py" from "../upstream/alembic-practice/authored/alembic-practice-concurrent-index-outside-autocommit/migrations/versions/c2_batch_and_dialects.py"
+    .fixture "migrations/versions/c4_helpers.py" from "../upstream/alembic-practice/authored/alembic-practice-concurrent-index-outside-autocommit/migrations/versions/c4_helpers.py"
+    .fixture "migrations/versions/c5_constants.py" from "../upstream/alembic-practice/authored/alembic-practice-concurrent-index-outside-autocommit/migrations/versions/c5_constants.py"
+    .fixture "migrations/versions/c3_not_alembic.py" from "../upstream/alembic-practice/authored/alembic-practice-concurrent-index-outside-autocommit/migrations/versions/c3_not_alembic.py"
+    .fixture "tests/migrations/versions/t1_fixture.py" from "../upstream/alembic-practice/authored/alembic-practice-concurrent-index-outside-autocommit/tests/migrations/versions/t1_fixture.py"
     .expect _ at "migrations/versions/c1_users.py":12
     .expect _ at "migrations/versions/c1_users.py":13
     .expect _ at "migrations/versions/c1_users.py":20
@@ -128,7 +128,7 @@ ConcurrentIndexInTransaction(c, m) :- ci_live(c, m, d, t), (al_true_kw(c, "postg
 .end
 
 .test autocommit_env exactly
-    .fixture "migrations/env.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/autocommit_env/migrations/env.py"
-    .fixture "migrations/versions/a1_users.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/autocommit_env/migrations/versions/a1_users.py"
-    .fixture "elsewhere/a2_orphan.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/autocommit_env/elsewhere/a2_orphan.py"
+    .fixture "migrations/env.py" from "../upstream/alembic-practice/authored/alembic-practice-concurrent-index-outside-autocommit/autocommit_env/migrations/env.py"
+    .fixture "migrations/versions/a1_users.py" from "../upstream/alembic-practice/authored/alembic-practice-concurrent-index-outside-autocommit/autocommit_env/migrations/versions/a1_users.py"
+    .fixture "elsewhere/a2_orphan.py" from "../upstream/alembic-practice/authored/alembic-practice-concurrent-index-outside-autocommit/autocommit_env/elsewhere/a2_orphan.py"
 .end

@@ -77,13 +77,13 @@ SelectRelatedInLoop(q, x, rel, "select_related") :- srl_use(q, x, u, rel), attr_
 srl_not_manager(q, rel) :- dj_qs_model(q, mc), dj_model_field(mc, rel, _), !srl_m2m(mc, rel).
 srl_not_manager(q, rel) :- dj_qs_model(q, mc), dj_model_has_method(mc, rel), !srl_m2m(mc, rel).
 
-// The cases, `cases/django-practice-select-related-in-loop/`, read as one repository: each line ending in `# caught` is
-// reported, and no other line.
+// The cases, `upstream/django-practice/authored/django-practice-select-related-in-loop/`, read as one repository: each
+// line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "shop/base.py" from "../cases/django-practice-select-related-in-loop/shop/base.py"
-    .fixture "shop/models.py" from "../cases/django-practice-select-related-in-loop/shop/models.py"
-    .fixture "shop/tests/test_views.py" from "../cases/django-practice-select-related-in-loop/shop/tests/test_views.py"
-    .fixture "shop/views.py" from "../cases/django-practice-select-related-in-loop/shop/views.py"
+    .fixture "shop/base.py" from "../upstream/django-practice/authored/django-practice-select-related-in-loop/shop/base.py"
+    .fixture "shop/models.py" from "../upstream/django-practice/authored/django-practice-select-related-in-loop/shop/models.py"
+    .fixture "shop/tests/test_views.py" from "../upstream/django-practice/authored/django-practice-select-related-in-loop/shop/tests/test_views.py"
+    .fixture "shop/views.py" from "../upstream/django-practice/authored/django-practice-select-related-in-loop/shop/views.py"
     .expect _ at "shop/views.py":6
     .expect _ at "shop/views.py":8
     .expect _ at "shop/views.py":10

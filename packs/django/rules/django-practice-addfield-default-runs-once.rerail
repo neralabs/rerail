@@ -173,32 +173,32 @@ adr_sql_text(o, t) :- dj_mig_db_op(o, "RunSQL", _, _), dj_mig_arg(o, "sql", v), 
 adr_sql_text(o, t) :- dj_mig_db_op(o, "RunSQL", _, _), dj_mig_arg(o, "sql", v), (kind(v, "list") ; kind(v, "tuple")),
     child(v, e, _), (str(e, t) ; (kind(e, "tuple"), child(e, p, 0), str(p, t))).
 
-// The cases, `cases/django-practice-addfield-default-runs-once/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/django-practice/authored/django-practice-addfield-default-runs-once/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "shop/models.py" from "../cases/django-practice-addfield-default-runs-once/shop/models.py"
-    .fixture "shop/migrations/0001_initial.py" from "../cases/django-practice-addfield-default-runs-once/shop/migrations/0001_initial.py"
-    .fixture "shop/migrations/0002_order_tokens.py" from "../cases/django-practice-addfield-default-runs-once/shop/migrations/0002_order_tokens.py"
-    .fixture "shop/migrations/0003_order_backfill.py" from "../cases/django-practice-addfield-default-runs-once/shop/migrations/0003_order_backfill.py"
-    .fixture "shop/migrations/0004_customer_uid.py" from "../cases/django-practice-addfield-default-runs-once/shop/migrations/0004_customer_uid.py"
-    .fixture "shop/migrations/0005_fill_customer_uid.py" from "../cases/django-practice-addfield-default-runs-once/shop/migrations/0005_fill_customer_uid.py"
-    .fixture "shop/migrations/0006_customer_uid_unique.py" from "../cases/django-practice-addfield-default-runs-once/shop/migrations/0006_customer_uid_unique.py"
-    .fixture "shop/migrations/0007_profile_fields.py" from "../cases/django-practice-addfield-default-runs-once/shop/migrations/0007_profile_fields.py"
-    .fixture "shop/migrations/0008_siteconfig_install_id.py" from "../cases/django-practice-addfield-default-runs-once/shop/migrations/0008_siteconfig_install_id.py"
-    .fixture "shop/migrations/0009_coupons.py" from "../cases/django-practice-addfield-default-runs-once/shop/migrations/0009_coupons.py"
-    .fixture "shop/migrations/0010_fill_coupons.py" from "../cases/django-practice-addfield-default-runs-once/shop/migrations/0010_fill_coupons.py"
-    .fixture "shop/migrations/0011_order_sql_backfill.py" from "../cases/django-practice-addfield-default-runs-once/shop/migrations/0011_order_sql_backfill.py"
-    .fixture "shop/migrations/0012_more_generators.py" from "../cases/django-practice-addfield-default-runs-once/shop/migrations/0012_more_generators.py"
-    .fixture "shop/migrations/0013_generator_variants.py" from "../cases/django-practice-addfield-default-runs-once/shop/migrations/0013_generator_variants.py"
-    .fixture "shop/migrations/0014_fill_variants.py" from "../cases/django-practice-addfield-default-runs-once/shop/migrations/0014_fill_variants.py"
-    .fixture "shop/migrations/0015_per_site_settings.py" from "../cases/django-practice-addfield-default-runs-once/shop/migrations/0015_per_site_settings.py"
-    .fixture "shop/views.py" from "../cases/django-practice-addfield-default-runs-once/shop/views.py"
-    .fixture "shop/tests/migrations/0001_fixture.py" from "../cases/django-practice-addfield-default-runs-once/shop/tests/migrations/0001_fixture.py"
-    .fixture "shop/tests/test_views.py" from "../cases/django-practice-addfield-default-runs-once/shop/tests/test_views.py"
-    .fixture "billing/migrations/0001_initial.py" from "../cases/django-practice-addfield-default-runs-once/billing/migrations/0001_initial.py"
-    .fixture "billing/migrations/0002_invoice_secret.py" from "../cases/django-practice-addfield-default-runs-once/billing/migrations/0002_invoice_secret.py"
-    .fixture "billing/migrations/0003_invoice_note.py" from "../cases/django-practice-addfield-default-runs-once/billing/migrations/0003_invoice_note.py"
-    .fixture "billing/migrations/0002_squashed_0003_invoice_note.py" from "../cases/django-practice-addfield-default-runs-once/billing/migrations/0002_squashed_0003_invoice_note.py"
+    .fixture "shop/models.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/models.py"
+    .fixture "shop/migrations/0001_initial.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0001_initial.py"
+    .fixture "shop/migrations/0002_order_tokens.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0002_order_tokens.py"
+    .fixture "shop/migrations/0003_order_backfill.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0003_order_backfill.py"
+    .fixture "shop/migrations/0004_customer_uid.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0004_customer_uid.py"
+    .fixture "shop/migrations/0005_fill_customer_uid.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0005_fill_customer_uid.py"
+    .fixture "shop/migrations/0006_customer_uid_unique.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0006_customer_uid_unique.py"
+    .fixture "shop/migrations/0007_profile_fields.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0007_profile_fields.py"
+    .fixture "shop/migrations/0008_siteconfig_install_id.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0008_siteconfig_install_id.py"
+    .fixture "shop/migrations/0009_coupons.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0009_coupons.py"
+    .fixture "shop/migrations/0010_fill_coupons.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0010_fill_coupons.py"
+    .fixture "shop/migrations/0011_order_sql_backfill.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0011_order_sql_backfill.py"
+    .fixture "shop/migrations/0012_more_generators.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0012_more_generators.py"
+    .fixture "shop/migrations/0013_generator_variants.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0013_generator_variants.py"
+    .fixture "shop/migrations/0014_fill_variants.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0014_fill_variants.py"
+    .fixture "shop/migrations/0015_per_site_settings.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0015_per_site_settings.py"
+    .fixture "shop/views.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/views.py"
+    .fixture "shop/tests/migrations/0001_fixture.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/tests/migrations/0001_fixture.py"
+    .fixture "shop/tests/test_views.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/tests/test_views.py"
+    .fixture "billing/migrations/0001_initial.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/billing/migrations/0001_initial.py"
+    .fixture "billing/migrations/0002_invoice_secret.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/billing/migrations/0002_invoice_secret.py"
+    .fixture "billing/migrations/0003_invoice_note.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/billing/migrations/0003_invoice_note.py"
+    .fixture "billing/migrations/0002_squashed_0003_invoice_note.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/billing/migrations/0002_squashed_0003_invoice_note.py"
     .expect _ at "shop/migrations/0002_order_tokens.py":31
     .expect _ at "shop/migrations/0002_order_tokens.py":36
     .expect _ at "shop/migrations/0002_order_tokens.py":41

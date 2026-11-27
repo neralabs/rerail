@@ -169,20 +169,20 @@ rg_wait_method("collect").
 rg_wait(w, m, nq, nk) :- kind(w, "call"), field(w, "function", fn), attr_of(fn, o, m), rg_wait_method(m),
     rg_result(o, nq, nk), !rg_optout(w), !rg_allowed(w), docof(w, d), !cel_test_doc(d).
 
-// The cases, `cases/celery-practice-result-get-in-task/`, read as one repository: each line ending in `# caught` is
-// reported, and no other line.
+// The cases, `upstream/celery-practice/authored/celery-practice-result-get-in-task/`, read as one repository: each line
+// ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "proj/__init__.py" from "../cases/celery-practice-result-get-in-task/proj/__init__.py"
-    .fixture "proj/celery.py" from "../cases/celery-practice-result-get-in-task/proj/celery.py"
-    .fixture "proj/fanout.py" from "../cases/celery-practice-result-get-in-task/proj/fanout.py"
-    .fixture "proj/helpers.py" from "../cases/celery-practice-result-get-in-task/proj/helpers.py"
-    .fixture "proj/results.py" from "../cases/celery-practice-result-get-in-task/proj/results.py"
-    .fixture "proj/pools.py" from "../cases/celery-practice-result-get-in-task/proj/pools.py"
-    .fixture "proj/tasks.py" from "../cases/celery-practice-result-get-in-task/proj/tasks.py"
-    .fixture "proj/tests/__init__.py" from "../cases/celery-practice-result-get-in-task/proj/tests/__init__.py"
-    .fixture "proj/tests/test_tasks.py" from "../cases/celery-practice-result-get-in-task/proj/tests/test_tasks.py"
-    .fixture "proj/web/__init__.py" from "../cases/celery-practice-result-get-in-task/proj/web/__init__.py"
-    .fixture "proj/web/views.py" from "../cases/celery-practice-result-get-in-task/proj/web/views.py"
+    .fixture "proj/__init__.py" from "../upstream/celery-practice/authored/celery-practice-result-get-in-task/proj/__init__.py"
+    .fixture "proj/celery.py" from "../upstream/celery-practice/authored/celery-practice-result-get-in-task/proj/celery.py"
+    .fixture "proj/fanout.py" from "../upstream/celery-practice/authored/celery-practice-result-get-in-task/proj/fanout.py"
+    .fixture "proj/helpers.py" from "../upstream/celery-practice/authored/celery-practice-result-get-in-task/proj/helpers.py"
+    .fixture "proj/results.py" from "../upstream/celery-practice/authored/celery-practice-result-get-in-task/proj/results.py"
+    .fixture "proj/pools.py" from "../upstream/celery-practice/authored/celery-practice-result-get-in-task/proj/pools.py"
+    .fixture "proj/tasks.py" from "../upstream/celery-practice/authored/celery-practice-result-get-in-task/proj/tasks.py"
+    .fixture "proj/tests/__init__.py" from "../upstream/celery-practice/authored/celery-practice-result-get-in-task/proj/tests/__init__.py"
+    .fixture "proj/tests/test_tasks.py" from "../upstream/celery-practice/authored/celery-practice-result-get-in-task/proj/tests/test_tasks.py"
+    .fixture "proj/web/__init__.py" from "../upstream/celery-practice/authored/celery-practice-result-get-in-task/proj/web/__init__.py"
+    .fixture "proj/web/views.py" from "../upstream/celery-practice/authored/celery-practice-result-get-in-task/proj/web/views.py"
     .expect _ at "proj/fanout.py":15
     .expect _ at "proj/fanout.py":21
     .expect _ at "proj/fanout.py":29

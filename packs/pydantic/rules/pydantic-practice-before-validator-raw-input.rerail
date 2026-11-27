@@ -380,27 +380,27 @@ bvr_http_response(r) :- kind(r, "call"), field(r, "function", fn), sym_of(fn, q)
 bvr_http_response(r) :- kind(r, "identifier"), text(r, x), look(r, x, s), asg(s, x, v, _), bvr_expr(v, e),
     bvr_http_response(e).
 
-// The cases, `cases/pydantic-practice-before-validator-raw-input/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/pydantic-practice/authored/pydantic-practice-before-validator-raw-input/`, read as one
+// repository: each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "pyproject.toml" from "../cases/pydantic-practice-before-validator-raw-input/pyproject.toml"
-    .fixture "app/__init__.py" from "../cases/pydantic-practice-before-validator-raw-input/app/__init__.py"
-    .fixture "app/annotated.py" from "../cases/pydantic-practice-before-validator-raw-input/app/annotated.py"
-    .fixture "app/normalizers.py" from "../cases/pydantic-practice-before-validator-raw-input/app/normalizers.py"
-    .fixture "app/guarded.py" from "../cases/pydantic-practice-before-validator-raw-input/app/guarded.py"
-    .fixture "app/mixins.py" from "../cases/pydantic-practice-before-validator-raw-input/app/mixins.py"
-    .fixture "app/models.py" from "../cases/pydantic-practice-before-validator-raw-input/app/models.py"
-    .fixture "app/routes.py" from "../cases/pydantic-practice-before-validator-raw-input/app/routes.py"
-    .fixture "app/routing.py" from "../cases/pydantic-practice-before-validator-raw-input/app/routing.py"
-    .fixture "app/sources.py" from "../cases/pydantic-practice-before-validator-raw-input/app/sources.py"
-    .fixture "app/services.py" from "../cases/pydantic-practice-before-validator-raw-input/app/services.py"
-    .fixture "app/vendors.py" from "../cases/pydantic-practice-before-validator-raw-input/app/vendors.py"
-    .fixture "app/other_libs.py" from "../cases/pydantic-practice-before-validator-raw-input/app/other_libs.py"
-    .fixture "app/schemas.py" from "../cases/pydantic-practice-before-validator-raw-input/app/schemas.py"
-    .fixture "legacy/requirements.txt" from "../cases/pydantic-practice-before-validator-raw-input/legacy/requirements.txt"
-    .fixture "legacy/models.py" from "../cases/pydantic-practice-before-validator-raw-input/legacy/models.py"
-    .fixture "tests/__init__.py" from "../cases/pydantic-practice-before-validator-raw-input/tests/__init__.py"
-    .fixture "tests/test_schemas.py" from "../cases/pydantic-practice-before-validator-raw-input/tests/test_schemas.py"
+    .fixture "pyproject.toml" from "../upstream/pydantic-practice/authored/pydantic-practice-before-validator-raw-input/pyproject.toml"
+    .fixture "app/__init__.py" from "../upstream/pydantic-practice/authored/pydantic-practice-before-validator-raw-input/app/__init__.py"
+    .fixture "app/annotated.py" from "../upstream/pydantic-practice/authored/pydantic-practice-before-validator-raw-input/app/annotated.py"
+    .fixture "app/normalizers.py" from "../upstream/pydantic-practice/authored/pydantic-practice-before-validator-raw-input/app/normalizers.py"
+    .fixture "app/guarded.py" from "../upstream/pydantic-practice/authored/pydantic-practice-before-validator-raw-input/app/guarded.py"
+    .fixture "app/mixins.py" from "../upstream/pydantic-practice/authored/pydantic-practice-before-validator-raw-input/app/mixins.py"
+    .fixture "app/models.py" from "../upstream/pydantic-practice/authored/pydantic-practice-before-validator-raw-input/app/models.py"
+    .fixture "app/routes.py" from "../upstream/pydantic-practice/authored/pydantic-practice-before-validator-raw-input/app/routes.py"
+    .fixture "app/routing.py" from "../upstream/pydantic-practice/authored/pydantic-practice-before-validator-raw-input/app/routing.py"
+    .fixture "app/sources.py" from "../upstream/pydantic-practice/authored/pydantic-practice-before-validator-raw-input/app/sources.py"
+    .fixture "app/services.py" from "../upstream/pydantic-practice/authored/pydantic-practice-before-validator-raw-input/app/services.py"
+    .fixture "app/vendors.py" from "../upstream/pydantic-practice/authored/pydantic-practice-before-validator-raw-input/app/vendors.py"
+    .fixture "app/other_libs.py" from "../upstream/pydantic-practice/authored/pydantic-practice-before-validator-raw-input/app/other_libs.py"
+    .fixture "app/schemas.py" from "../upstream/pydantic-practice/authored/pydantic-practice-before-validator-raw-input/app/schemas.py"
+    .fixture "legacy/requirements.txt" from "../upstream/pydantic-practice/authored/pydantic-practice-before-validator-raw-input/legacy/requirements.txt"
+    .fixture "legacy/models.py" from "../upstream/pydantic-practice/authored/pydantic-practice-before-validator-raw-input/legacy/models.py"
+    .fixture "tests/__init__.py" from "../upstream/pydantic-practice/authored/pydantic-practice-before-validator-raw-input/tests/__init__.py"
+    .fixture "tests/test_schemas.py" from "../upstream/pydantic-practice/authored/pydantic-practice-before-validator-raw-input/tests/test_schemas.py"
     .expect _ at "app/annotated.py":16
     .expect _ at "app/annotated.py":20
     .expect _ at "app/annotated.py":27

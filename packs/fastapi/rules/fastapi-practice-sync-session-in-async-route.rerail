@@ -321,18 +321,18 @@ ss_state_src(a, c1, c2, c3) :- ss_state_asg(a, r), ss_ec(r, c1, c2, c3).
 .decl ss_state_ok(a: symbol)
 ss_state_ok(a) :- ss_state_src(a, c1, c2, c3), ss_ok(c1, c2, c3).
 
-// The cases, `cases/fastapi-practice-sync-session-in-async-route/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/fastapi-practice/authored/fastapi-practice-sync-session-in-async-route/`, read as one
+// repository: each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/__init__.py" from "../cases/fastapi-practice-sync-session-in-async-route/app/__init__.py"
-    .fixture "app/crud.py" from "../cases/fastapi-practice-sync-session-in-async-route/app/crud.py"
-    .fixture "app/db.py" from "../cases/fastapi-practice-sync-session-in-async-route/app/db.py"
-    .fixture "app/deps.py" from "../cases/fastapi-practice-sync-session-in-async-route/app/deps.py"
-    .fixture "app/main.py" from "../cases/fastapi-practice-sync-session-in-async-route/app/main.py"
-    .fixture "app/models.py" from "../cases/fastapi-practice-sync-session-in-async-route/app/models.py"
-    .fixture "app/routes.py" from "../cases/fastapi-practice-sync-session-in-async-route/app/routes.py"
-    .fixture "app/tests/__init__.py" from "../cases/fastapi-practice-sync-session-in-async-route/app/tests/__init__.py"
-    .fixture "app/tests/test_routes.py" from "../cases/fastapi-practice-sync-session-in-async-route/app/tests/test_routes.py"
+    .fixture "app/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-sync-session-in-async-route/app/__init__.py"
+    .fixture "app/crud.py" from "../upstream/fastapi-practice/authored/fastapi-practice-sync-session-in-async-route/app/crud.py"
+    .fixture "app/db.py" from "../upstream/fastapi-practice/authored/fastapi-practice-sync-session-in-async-route/app/db.py"
+    .fixture "app/deps.py" from "../upstream/fastapi-practice/authored/fastapi-practice-sync-session-in-async-route/app/deps.py"
+    .fixture "app/main.py" from "../upstream/fastapi-practice/authored/fastapi-practice-sync-session-in-async-route/app/main.py"
+    .fixture "app/models.py" from "../upstream/fastapi-practice/authored/fastapi-practice-sync-session-in-async-route/app/models.py"
+    .fixture "app/routes.py" from "../upstream/fastapi-practice/authored/fastapi-practice-sync-session-in-async-route/app/routes.py"
+    .fixture "app/tests/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-sync-session-in-async-route/app/tests/__init__.py"
+    .fixture "app/tests/test_routes.py" from "../upstream/fastapi-practice/authored/fastapi-practice-sync-session-in-async-route/app/tests/test_routes.py"
     .expect _ at "app/main.py":17
     .expect _ at "app/main.py":18
     .expect _ at "app/main.py":29

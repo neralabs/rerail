@@ -270,23 +270,23 @@ ci_sandbox_doc(d) :- ci_sandbox_call(c), docof(c, d).
 ci_hmac_checked(a) :- sec_reads(a, x), nearest(a, h, fscope), kind(c, "call"), sec_call_q(c, q), prefix("hmac.", q),
     nearest(c, h, fscope), call_arg(c, _, _, b), sec_reads(b, x).
 
-// The cases, `cases/python-security-code-injection/`, read as one repository: each line ending in `# caught` is
-// reported, and no other line.
+// The cases, `upstream/python-security/authored/python-security-code-injection/` (pack test data in S3, not in git),
+// read as one repository: each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/__init__.py" from "../cases/python-security-code-injection/app/__init__.py"
-    .fixture "app/api.py" from "../cases/python-security-code-injection/app/api.py"
-    .fixture "app/api_views.py" from "../cases/python-security-code-injection/app/api_views.py"
-    .fixture "app/codec.py" from "../cases/python-security-code-injection/app/codec.py"
-    .fixture "app/flask_app.py" from "../cases/python-security-code-injection/app/flask_app.py"
-    .fixture "app/notify.py" from "../cases/python-security-code-injection/app/notify.py"
-    .fixture "app/services.py" from "../cases/python-security-code-injection/app/services.py"
-    .fixture "app/templating.py" from "../cases/python-security-code-injection/app/templating.py"
-    .fixture "app/titles.py" from "../cases/python-security-code-injection/app/titles.py"
-    .fixture "app/views.py" from "../cases/python-security-code-injection/app/views.py"
-    .fixture "tests/test_views.py" from "../cases/python-security-code-injection/tests/test_views.py"
-    .fixture "app/calc.py" from "../cases/python-security-code-injection/app/calc.py"
-    .fixture "app/decoders.py" from "../cases/python-security-code-injection/app/decoders.py"
-    .fixture "app/django_tpl.py" from "../cases/python-security-code-injection/app/django_tpl.py"
+    .fixture "app/__init__.py" from "../upstream/python-security/authored/python-security-code-injection/app/__init__.py"
+    .fixture "app/api.py" from "../upstream/python-security/authored/python-security-code-injection/app/api.py"
+    .fixture "app/api_views.py" from "../upstream/python-security/authored/python-security-code-injection/app/api_views.py"
+    .fixture "app/codec.py" from "../upstream/python-security/authored/python-security-code-injection/app/codec.py"
+    .fixture "app/flask_app.py" from "../upstream/python-security/authored/python-security-code-injection/app/flask_app.py"
+    .fixture "app/notify.py" from "../upstream/python-security/authored/python-security-code-injection/app/notify.py"
+    .fixture "app/services.py" from "../upstream/python-security/authored/python-security-code-injection/app/services.py"
+    .fixture "app/templating.py" from "../upstream/python-security/authored/python-security-code-injection/app/templating.py"
+    .fixture "app/titles.py" from "../upstream/python-security/authored/python-security-code-injection/app/titles.py"
+    .fixture "app/views.py" from "../upstream/python-security/authored/python-security-code-injection/app/views.py"
+    .fixture "tests/test_views.py" from "../upstream/python-security/authored/python-security-code-injection/tests/test_views.py"
+    .fixture "app/calc.py" from "../upstream/python-security/authored/python-security-code-injection/app/calc.py"
+    .fixture "app/decoders.py" from "../upstream/python-security/authored/python-security-code-injection/app/decoders.py"
+    .fixture "app/django_tpl.py" from "../upstream/python-security/authored/python-security-code-injection/app/django_tpl.py"
     .expect _ at "app/api.py":31
     .expect _ at "app/api.py":38
     .expect _ at "app/titles.py":5

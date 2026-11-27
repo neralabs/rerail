@@ -178,16 +178,16 @@ yd_noreturn(hq) :- yd_noreturn_def(h), pt_def(h, hq).
 .decl yd_raising_at(p: symbol, t: symbol)
 yd_raising_at(p, t) :- yd_tail_at(p, t, h), yd_noreturn(h).
 
-// The cases, `cases/fastapi-practice-yield-dependency-cleanup/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/fastapi-practice/authored/fastapi-practice-yield-dependency-cleanup/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/__init__.py" from "../cases/fastapi-practice-yield-dependency-cleanup/app/__init__.py"
-    .fixture "app/db.py" from "../cases/fastapi-practice-yield-dependency-cleanup/app/db.py"
-    .fixture "app/deps.py" from "../cases/fastapi-practice-yield-dependency-cleanup/app/deps.py"
-    .fixture "app/fixtures.py" from "../cases/fastapi-practice-yield-dependency-cleanup/app/fixtures.py"
-    .fixture "app/routes.py" from "../cases/fastapi-practice-yield-dependency-cleanup/app/routes.py"
-    .fixture "app/tests/__init__.py" from "../cases/fastapi-practice-yield-dependency-cleanup/app/tests/__init__.py"
-    .fixture "app/tests/test_routes.py" from "../cases/fastapi-practice-yield-dependency-cleanup/app/tests/test_routes.py"
+    .fixture "app/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-yield-dependency-cleanup/app/__init__.py"
+    .fixture "app/db.py" from "../upstream/fastapi-practice/authored/fastapi-practice-yield-dependency-cleanup/app/db.py"
+    .fixture "app/deps.py" from "../upstream/fastapi-practice/authored/fastapi-practice-yield-dependency-cleanup/app/deps.py"
+    .fixture "app/fixtures.py" from "../upstream/fastapi-practice/authored/fastapi-practice-yield-dependency-cleanup/app/fixtures.py"
+    .fixture "app/routes.py" from "../upstream/fastapi-practice/authored/fastapi-practice-yield-dependency-cleanup/app/routes.py"
+    .fixture "app/tests/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-yield-dependency-cleanup/app/tests/__init__.py"
+    .fixture "app/tests/test_routes.py" from "../upstream/fastapi-practice/authored/fastapi-practice-yield-dependency-cleanup/app/tests/test_routes.py"
     .expect _ at "app/db.py":29
     .expect _ at "app/db.py":36
     .expect _ at "app/db.py":44

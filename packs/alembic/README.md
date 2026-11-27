@@ -40,7 +40,8 @@ resolve to (aliases, TypeDecorators, subclasses, functions that return a type); 
 run); `autocommit_block()` regions; SQLAlchemy and sqlmodel model classes with their columns; revision ids; env.py and
 the module it imports its engine from.
 
-Each rule is proven three ways: by its cases in `cases/<id>/`, where a line ending in `# caught` must be reported and no
+Each rule is proven three ways: by its cases in `upstream/alembic-practice/authored/<id>/` (pack test data in S3, pulled
+by `npm run fixtures:pull -- --pack alembic`, not in git), where a line ending in `# caught` must be reported and no
 other line may be (`rerail rules test <file>.rerail`, which reads the case directory as one repository); by a run on the
 8 open-source repositories of the corpus that use Alembic ([the corpus](#the-corpus)), whose matches were read and judged
 (every match, or a spread sample covering every repository); and by an independent review

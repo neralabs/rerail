@@ -181,31 +181,31 @@ RenameAsDropAdd(x, a, b, t) :- rad_drop_node(x, dd, xt, t, a), rad_drop_t(dd, xt
     rad_add_t(dd, ct, t, b, ft), rad_match(dd, xt, ct), rad_balanced(dd, t, ft), !rad_moves(dd, ft),
     count : { rad_match(dd, xt, _) } = 1, count : { rad_match(dd, _, ct) } = 1.
 
-// The cases, `cases/alembic-practice-rename-as-drop-add/`, read as one repository: each line ending in `# caught` is
-// reported, and no other line.
+// The cases, `upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/`, read as one repository: each
+// line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/other_op.py" from "../cases/alembic-practice-rename-as-drop-add/app/other_op.py"
-    .fixture "migrations/versions/a1_autogen_rename.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/a1_autogen_rename.py"
-    .fixture "migrations/versions/a2_batch_rename.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/a2_batch_rename.py"
-    .fixture "migrations/versions/a3_unknown_type.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/a3_unknown_type.py"
-    .fixture "migrations/versions/a4_two_renames.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/a4_two_renames.py"
-    .fixture "migrations/versions/a5_lock_timeout_and_widening.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/a5_lock_timeout_and_widening.py"
-    .fixture "migrations/versions/a6_look_alike_writes.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/a6_look_alike_writes.py"
-    .fixture "migrations/versions/b10_ambiguous.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b10_ambiguous.py"
-    .fixture "migrations/versions/b11_same_name_and_length.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b11_same_name_and_length.py"
-    .fixture "migrations/versions/b12_shrink.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b12_shrink.py"
-    .fixture "migrations/versions/b13_copy_constant.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b13_copy_constant.py"
-    .fixture "migrations/versions/b14_copy_table_object.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b14_copy_table_object.py"
-    .fixture "migrations/versions/b1_copy_op_execute.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b1_copy_op_execute.py"
-    .fixture "migrations/versions/b2_copy_connection.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b2_copy_connection.py"
-    .fixture "migrations/versions/b3_copy_sa_update.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b3_copy_sa_update.py"
-    .fixture "migrations/versions/b4_copy_session.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b4_copy_session.py"
-    .fixture "migrations/versions/b5_bulk_insert.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b5_bulk_insert.py"
-    .fixture "migrations/versions/b6_types_differ.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b6_types_differ.py"
-    .fixture "migrations/versions/b7_two_for_one.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b7_two_for_one.py"
-    .fixture "migrations/versions/b8_new_or_dropped_table.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b8_new_or_dropped_table.py"
-    .fixture "migrations/versions/b9_non_pg.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b9_non_pg.py"
-    .fixture "tests/migrations/t1_rename.py" from "../cases/alembic-practice-rename-as-drop-add/tests/migrations/t1_rename.py"
+    .fixture "app/other_op.py" from "../upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/app/other_op.py"
+    .fixture "migrations/versions/a1_autogen_rename.py" from "../upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/migrations/versions/a1_autogen_rename.py"
+    .fixture "migrations/versions/a2_batch_rename.py" from "../upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/migrations/versions/a2_batch_rename.py"
+    .fixture "migrations/versions/a3_unknown_type.py" from "../upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/migrations/versions/a3_unknown_type.py"
+    .fixture "migrations/versions/a4_two_renames.py" from "../upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/migrations/versions/a4_two_renames.py"
+    .fixture "migrations/versions/a5_lock_timeout_and_widening.py" from "../upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/migrations/versions/a5_lock_timeout_and_widening.py"
+    .fixture "migrations/versions/a6_look_alike_writes.py" from "../upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/migrations/versions/a6_look_alike_writes.py"
+    .fixture "migrations/versions/b10_ambiguous.py" from "../upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/migrations/versions/b10_ambiguous.py"
+    .fixture "migrations/versions/b11_same_name_and_length.py" from "../upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/migrations/versions/b11_same_name_and_length.py"
+    .fixture "migrations/versions/b12_shrink.py" from "../upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/migrations/versions/b12_shrink.py"
+    .fixture "migrations/versions/b13_copy_constant.py" from "../upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/migrations/versions/b13_copy_constant.py"
+    .fixture "migrations/versions/b14_copy_table_object.py" from "../upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/migrations/versions/b14_copy_table_object.py"
+    .fixture "migrations/versions/b1_copy_op_execute.py" from "../upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/migrations/versions/b1_copy_op_execute.py"
+    .fixture "migrations/versions/b2_copy_connection.py" from "../upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/migrations/versions/b2_copy_connection.py"
+    .fixture "migrations/versions/b3_copy_sa_update.py" from "../upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/migrations/versions/b3_copy_sa_update.py"
+    .fixture "migrations/versions/b4_copy_session.py" from "../upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/migrations/versions/b4_copy_session.py"
+    .fixture "migrations/versions/b5_bulk_insert.py" from "../upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/migrations/versions/b5_bulk_insert.py"
+    .fixture "migrations/versions/b6_types_differ.py" from "../upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/migrations/versions/b6_types_differ.py"
+    .fixture "migrations/versions/b7_two_for_one.py" from "../upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/migrations/versions/b7_two_for_one.py"
+    .fixture "migrations/versions/b8_new_or_dropped_table.py" from "../upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/migrations/versions/b8_new_or_dropped_table.py"
+    .fixture "migrations/versions/b9_non_pg.py" from "../upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/migrations/versions/b9_non_pg.py"
+    .fixture "tests/migrations/t1_rename.py" from "../upstream/alembic-practice/authored/alembic-practice-rename-as-drop-add/tests/migrations/t1_rename.py"
     .expect RenameAsDropAdd at "migrations/versions/a1_autogen_rename.py":14
     .expect RenameAsDropAdd at "migrations/versions/a2_batch_rename.py":13
     .expect RenameAsDropAdd at "migrations/versions/a3_unknown_type.py":14

@@ -308,27 +308,27 @@ ci_hit(c, "program", need, o) :- ci_sink(c, "exe", e, need), ci_val(e, o).
 ci_live(c) :- ci_hit(c, _, _, _), docof(c, d), !sec_test_doc(d).
 sec_fhit(cat(how, need), c, o) :- ci_hit(c, how, need, o), ci_live(c).
 
-// The cases, `cases/python-security-command-injection/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/python-security/authored/python-security-command-injection/` (pack test data in S3, not in git),
+// read as one repository: each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "api/__init__.py" from "../cases/python-security-command-injection/api/__init__.py"
-    .fixture "api/routes.py" from "../cases/python-security-command-injection/api/routes.py"
-    .fixture "netops/__init__.py" from "../cases/python-security-command-injection/netops/__init__.py"
-    .fixture "netops/checks.py" from "../cases/python-security-command-injection/netops/checks.py"
-    .fixture "netops/kwviews.py" from "../cases/python-security-command-injection/netops/kwviews.py"
-    .fixture "netops/management/__init__.py" from "../cases/python-security-command-injection/netops/management/__init__.py"
-    .fixture "netops/management/commands/__init__.py" from "../cases/python-security-command-injection/netops/management/commands/__init__.py"
-    .fixture "netops/management/commands/runcmd.py" from "../cases/python-security-command-injection/netops/management/commands/runcmd.py"
-    .fixture "netops/net.py" from "../cases/python-security-command-injection/netops/net.py"
-    .fixture "netops/sysutils.py" from "../cases/python-security-command-injection/netops/sysutils.py"
-    .fixture "netops/tests/__init__.py" from "../cases/python-security-command-injection/netops/tests/__init__.py"
-    .fixture "netops/tests/test_views.py" from "../cases/python-security-command-injection/netops/tests/test_views.py"
-    .fixture "netops/typed.py" from "../cases/python-security-command-injection/netops/typed.py"
-    .fixture "netops/urls.py" from "../cases/python-security-command-injection/netops/urls.py"
-    .fixture "netops/utils.py" from "../cases/python-security-command-injection/netops/utils.py"
-    .fixture "netops/views.py" from "../cases/python-security-command-injection/netops/views.py"
-    .fixture "webapp/__init__.py" from "../cases/python-security-command-injection/webapp/__init__.py"
-    .fixture "webapp/app.py" from "../cases/python-security-command-injection/webapp/app.py"
+    .fixture "api/__init__.py" from "../upstream/python-security/authored/python-security-command-injection/api/__init__.py"
+    .fixture "api/routes.py" from "../upstream/python-security/authored/python-security-command-injection/api/routes.py"
+    .fixture "netops/__init__.py" from "../upstream/python-security/authored/python-security-command-injection/netops/__init__.py"
+    .fixture "netops/checks.py" from "../upstream/python-security/authored/python-security-command-injection/netops/checks.py"
+    .fixture "netops/kwviews.py" from "../upstream/python-security/authored/python-security-command-injection/netops/kwviews.py"
+    .fixture "netops/management/__init__.py" from "../upstream/python-security/authored/python-security-command-injection/netops/management/__init__.py"
+    .fixture "netops/management/commands/__init__.py" from "../upstream/python-security/authored/python-security-command-injection/netops/management/commands/__init__.py"
+    .fixture "netops/management/commands/runcmd.py" from "../upstream/python-security/authored/python-security-command-injection/netops/management/commands/runcmd.py"
+    .fixture "netops/net.py" from "../upstream/python-security/authored/python-security-command-injection/netops/net.py"
+    .fixture "netops/sysutils.py" from "../upstream/python-security/authored/python-security-command-injection/netops/sysutils.py"
+    .fixture "netops/tests/__init__.py" from "../upstream/python-security/authored/python-security-command-injection/netops/tests/__init__.py"
+    .fixture "netops/tests/test_views.py" from "../upstream/python-security/authored/python-security-command-injection/netops/tests/test_views.py"
+    .fixture "netops/typed.py" from "../upstream/python-security/authored/python-security-command-injection/netops/typed.py"
+    .fixture "netops/urls.py" from "../upstream/python-security/authored/python-security-command-injection/netops/urls.py"
+    .fixture "netops/utils.py" from "../upstream/python-security/authored/python-security-command-injection/netops/utils.py"
+    .fixture "netops/views.py" from "../upstream/python-security/authored/python-security-command-injection/netops/views.py"
+    .fixture "webapp/__init__.py" from "../upstream/python-security/authored/python-security-command-injection/webapp/__init__.py"
+    .fixture "webapp/app.py" from "../upstream/python-security/authored/python-security-command-injection/webapp/app.py"
     .expect _ at "api/routes.py":24
     .expect _ at "api/routes.py":32
     .expect _ at "api/routes.py":38

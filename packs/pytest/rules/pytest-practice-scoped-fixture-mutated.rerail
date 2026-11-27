@@ -214,17 +214,18 @@ sfm_hit(tq, cat(x, p), o, x, gq) :- sfm_at(uq, tq, s, p, m, o), sfm_holds(tq, s,
 .decl sfm_first(t: symbol, k: symbol, o: number)
 sfm_first(tq, k, o) :- sfm_hit(tq, k, o, _, _), o = min o2 : { sfm_hit(tq, k, o2, _, _) }.
 
-// The cases, `cases/pytest-practice-scoped-fixture-mutated/`, read as one repository: each line ending in `# caught`
-// is reported, and no other line.
+// The cases, `upstream/pytest-practice/authored/pytest-practice-scoped-fixture-mutated/` (pack test data in S3, not in
+// git: `npm run fixtures:pull -- --pack pytest`), read as one repository: each line ending in `# caught` is reported,
+// and no other line.
 .test cases exactly
-    .fixture "conftest.py" from "../cases/pytest-practice-scoped-fixture-mutated/conftest.py"
-    .fixture "shop/__init__.py" from "../cases/pytest-practice-scoped-fixture-mutated/shop/__init__.py"
-    .fixture "shop/app.py" from "../cases/pytest-practice-scoped-fixture-mutated/shop/app.py"
-    .fixture "tests/sub/conftest.py" from "../cases/pytest-practice-scoped-fixture-mutated/tests/sub/conftest.py"
-    .fixture "tests/sub/test_override.py" from "../cases/pytest-practice-scoped-fixture-mutated/tests/sub/test_override.py"
-    .fixture "tests/test_app.py" from "../cases/pytest-practice-scoped-fixture-mutated/tests/test_app.py"
-    .fixture "tests/test_autouse.py" from "../cases/pytest-practice-scoped-fixture-mutated/tests/test_autouse.py"
-    .fixture "tests/test_class_scope.py" from "../cases/pytest-practice-scoped-fixture-mutated/tests/test_class_scope.py"
+    .fixture "conftest.py" from "../upstream/pytest-practice/authored/pytest-practice-scoped-fixture-mutated/conftest.py"
+    .fixture "shop/__init__.py" from "../upstream/pytest-practice/authored/pytest-practice-scoped-fixture-mutated/shop/__init__.py"
+    .fixture "shop/app.py" from "../upstream/pytest-practice/authored/pytest-practice-scoped-fixture-mutated/shop/app.py"
+    .fixture "tests/sub/conftest.py" from "../upstream/pytest-practice/authored/pytest-practice-scoped-fixture-mutated/tests/sub/conftest.py"
+    .fixture "tests/sub/test_override.py" from "../upstream/pytest-practice/authored/pytest-practice-scoped-fixture-mutated/tests/sub/test_override.py"
+    .fixture "tests/test_app.py" from "../upstream/pytest-practice/authored/pytest-practice-scoped-fixture-mutated/tests/test_app.py"
+    .fixture "tests/test_autouse.py" from "../upstream/pytest-practice/authored/pytest-practice-scoped-fixture-mutated/tests/test_autouse.py"
+    .fixture "tests/test_class_scope.py" from "../upstream/pytest-practice/authored/pytest-practice-scoped-fixture-mutated/tests/test_class_scope.py"
     .expect _ at "conftest.py":47
     .expect _ at "conftest.py":61
     .expect _ at "tests/sub/test_override.py":7

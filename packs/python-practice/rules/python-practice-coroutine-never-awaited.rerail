@@ -244,16 +244,16 @@ cnw_open_base(q) :- class_def(c, q), field(c, "superclasses", al), child(al, e, 
 cnw_known_base(e) :- sym_of(e, b), docof(e, d), doc(d, p, _), py_names__reads_at(p, m), py_names__class(m, b).
 cnw_known_base(e) :- sym_of(e, b), (b = "builtins.object" ; b = "abc.ABC" ; b = "typing.Generic" ; b = "typing.Protocol").
 
-// The cases, `cases/python-practice-coroutine-never-awaited/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/python-practice/authored/python-practice-coroutine-never-awaited/`, read as one repository: each
+// line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/__init__.py" from "../cases/python-practice-coroutine-never-awaited/app/__init__.py"
-    .fixture "app/dropped_shapes.py" from "../cases/python-practice-coroutine-never-awaited/app/dropped_shapes.py"
-    .fixture "app/jobs.py" from "../cases/python-practice-coroutine-never-awaited/app/jobs.py"
-    .fixture "app/notify.py" from "../cases/python-practice-coroutine-never-awaited/app/notify.py"
-    .fixture "app/service.py" from "../cases/python-practice-coroutine-never-awaited/app/service.py"
-    .fixture "app/tests/__init__.py" from "../cases/python-practice-coroutine-never-awaited/app/tests/__init__.py"
-    .fixture "app/tests/test_service.py" from "../cases/python-practice-coroutine-never-awaited/app/tests/test_service.py"
+    .fixture "app/__init__.py" from "../upstream/python-practice/authored/python-practice-coroutine-never-awaited/app/__init__.py"
+    .fixture "app/dropped_shapes.py" from "../upstream/python-practice/authored/python-practice-coroutine-never-awaited/app/dropped_shapes.py"
+    .fixture "app/jobs.py" from "../upstream/python-practice/authored/python-practice-coroutine-never-awaited/app/jobs.py"
+    .fixture "app/notify.py" from "../upstream/python-practice/authored/python-practice-coroutine-never-awaited/app/notify.py"
+    .fixture "app/service.py" from "../upstream/python-practice/authored/python-practice-coroutine-never-awaited/app/service.py"
+    .fixture "app/tests/__init__.py" from "../upstream/python-practice/authored/python-practice-coroutine-never-awaited/app/tests/__init__.py"
+    .fixture "app/tests/test_service.py" from "../upstream/python-practice/authored/python-practice-coroutine-never-awaited/app/tests/test_service.py"
     .expect _ at "app/dropped_shapes.py":9
     .expect _ at "app/dropped_shapes.py":14
     .expect _ at "app/dropped_shapes.py":18

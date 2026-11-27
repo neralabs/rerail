@@ -232,21 +232,21 @@ pvr_has_else(s) :- field(s, "alternative", a), kind(a, "else_clause").
 .decl pvr_loop(k: symbol)
 pvr_loop("while_statement"). pvr_loop("for_statement"). pvr_loop("function_definition"). pvr_loop("class_definition").
 
-// The cases, `cases/pydantic-practice-validator-returns-value/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/__init__.py" from "../cases/pydantic-practice-validator-returns-value/app/__init__.py"
-    .fixture "app/annotated.py" from "../cases/pydantic-practice-validator-returns-value/app/annotated.py"
-    .fixture "app/compat.py" from "../cases/pydantic-practice-validator-returns-value/app/compat.py"
-    .fixture "app/errors.py" from "../cases/pydantic-practice-validator-returns-value/app/errors.py"
-    .fixture "app/legacy.py" from "../cases/pydantic-practice-validator-returns-value/app/legacy.py"
-    .fixture "app/mixins.py" from "../cases/pydantic-practice-validator-returns-value/app/mixins.py"
-    .fixture "app/models.py" from "../cases/pydantic-practice-validator-returns-value/app/models.py"
-    .fixture "app/other_libs.py" from "../cases/pydantic-practice-validator-returns-value/app/other_libs.py"
-    .fixture "app/schemas.py" from "../cases/pydantic-practice-validator-returns-value/app/schemas.py"
-    .fixture "app/validation.py" from "../cases/pydantic-practice-validator-returns-value/app/validation.py"
-    .fixture "tests/__init__.py" from "../cases/pydantic-practice-validator-returns-value/tests/__init__.py"
-    .fixture "tests/test_schemas.py" from "../cases/pydantic-practice-validator-returns-value/tests/test_schemas.py"
+    .fixture "app/__init__.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/app/__init__.py"
+    .fixture "app/annotated.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/app/annotated.py"
+    .fixture "app/compat.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/app/compat.py"
+    .fixture "app/errors.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/app/errors.py"
+    .fixture "app/legacy.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/app/legacy.py"
+    .fixture "app/mixins.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/app/mixins.py"
+    .fixture "app/models.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/app/models.py"
+    .fixture "app/other_libs.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/app/other_libs.py"
+    .fixture "app/schemas.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/app/schemas.py"
+    .fixture "app/validation.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/app/validation.py"
+    .fixture "tests/__init__.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/tests/__init__.py"
+    .fixture "tests/test_schemas.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/tests/test_schemas.py"
     .expect _ at "app/annotated.py":25
     .expect _ at "app/annotated.py":32
     .expect _ at "app/annotated.py":89

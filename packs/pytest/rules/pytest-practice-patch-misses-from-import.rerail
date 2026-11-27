@@ -166,34 +166,35 @@ pmi_near_later(sk, q, x, qi) :- pmi_near(sk, q, x, qi), pmi_near(sk, q, x, qj), 
 pmi_pick(sk, q, x, qi) :- pmi_pref(sk, q, x, qi), !pmi_pref_later(sk, q, x, qi).
 pmi_pick(sk, q, x, qi) :- pmi_near(sk, q, x, qi), !pmi_pref(sk, q, x, _), !pmi_near_later(sk, q, x, qi).
 
-// The cases, `cases/pytest-practice-patch-misses-from-import/`, read as one repository: each line ending in `# caught`
-// is reported, and no other line.
+// The cases, `upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/` (pack test data in S3, not
+// in git: `npm run fixtures:pull -- --pack pytest`), read as one repository: each line ending in `# caught` is
+// reported, and no other line.
 .test cases exactly
-    .fixture "shop/__init__.py" from "../cases/pytest-practice-patch-misses-from-import/shop/__init__.py"
-    .fixture "shop/alerts.py" from "../cases/pytest-practice-patch-misses-from-import/shop/alerts.py"
-    .fixture "shop/billing.py" from "../cases/pytest-practice-patch-misses-from-import/shop/billing.py"
-    .fixture "shop/factory.py" from "../cases/pytest-practice-patch-misses-from-import/shop/factory.py"
-    .fixture "shop/http.py" from "../cases/pytest-practice-patch-misses-from-import/shop/http.py"
-    .fixture "shop/inventory.py" from "../cases/pytest-practice-patch-misses-from-import/shop/inventory.py"
-    .fixture "shop/mail.py" from "../cases/pytest-practice-patch-misses-from-import/shop/mail.py"
-    .fixture "shop/management/__init__.py" from "../cases/pytest-practice-patch-misses-from-import/shop/management/__init__.py"
-    .fixture "shop/management/commands/__init__.py" from "../cases/pytest-practice-patch-misses-from-import/shop/management/commands/__init__.py"
-    .fixture "shop/management/commands/sync_stock.py" from "../cases/pytest-practice-patch-misses-from-import/shop/management/commands/sync_stock.py"
-    .fixture "shop/notify/__init__.py" from "../cases/pytest-practice-patch-misses-from-import/shop/notify/__init__.py"
-    .fixture "shop/notify/sms.py" from "../cases/pytest-practice-patch-misses-from-import/shop/notify/sms.py"
-    .fixture "shop/orders.py" from "../cases/pytest-practice-patch-misses-from-import/shop/orders.py"
-    .fixture "shop/receipts.py" from "../cases/pytest-practice-patch-misses-from-import/shop/receipts.py"
-    .fixture "shop/reports.py" from "../cases/pytest-practice-patch-misses-from-import/shop/reports.py"
-    .fixture "shop/stock.py" from "../cases/pytest-practice-patch-misses-from-import/shop/stock.py"
-    .fixture "shop/views.py" from "../cases/pytest-practice-patch-misses-from-import/shop/views.py"
-    .fixture "shop/worker.py" from "../cases/pytest-practice-patch-misses-from-import/shop/worker.py"
-    .fixture "tests/__init__.py" from "../cases/pytest-practice-patch-misses-from-import/tests/__init__.py"
-    .fixture "tests/test_alerts.py" from "../cases/pytest-practice-patch-misses-from-import/tests/test_alerts.py"
-    .fixture "tests/test_inventory.py" from "../cases/pytest-practice-patch-misses-from-import/tests/test_inventory.py"
-    .fixture "tests/test_mail.py" from "../cases/pytest-practice-patch-misses-from-import/tests/test_mail.py"
-    .fixture "tests/test_orders.py" from "../cases/pytest-practice-patch-misses-from-import/tests/test_orders.py"
-    .fixture "tests/test_views.py" from "../cases/pytest-practice-patch-misses-from-import/tests/test_views.py"
-    .fixture "tests/test_worker.py" from "../cases/pytest-practice-patch-misses-from-import/tests/test_worker.py"
+    .fixture "shop/__init__.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/__init__.py"
+    .fixture "shop/alerts.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/alerts.py"
+    .fixture "shop/billing.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/billing.py"
+    .fixture "shop/factory.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/factory.py"
+    .fixture "shop/http.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/http.py"
+    .fixture "shop/inventory.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/inventory.py"
+    .fixture "shop/mail.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/mail.py"
+    .fixture "shop/management/__init__.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/management/__init__.py"
+    .fixture "shop/management/commands/__init__.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/management/commands/__init__.py"
+    .fixture "shop/management/commands/sync_stock.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/management/commands/sync_stock.py"
+    .fixture "shop/notify/__init__.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/notify/__init__.py"
+    .fixture "shop/notify/sms.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/notify/sms.py"
+    .fixture "shop/orders.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/orders.py"
+    .fixture "shop/receipts.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/receipts.py"
+    .fixture "shop/reports.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/reports.py"
+    .fixture "shop/stock.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/stock.py"
+    .fixture "shop/views.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/views.py"
+    .fixture "shop/worker.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/worker.py"
+    .fixture "tests/__init__.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/tests/__init__.py"
+    .fixture "tests/test_alerts.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/tests/test_alerts.py"
+    .fixture "tests/test_inventory.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/tests/test_inventory.py"
+    .fixture "tests/test_mail.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/tests/test_mail.py"
+    .fixture "tests/test_orders.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/tests/test_orders.py"
+    .fixture "tests/test_views.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/tests/test_views.py"
+    .fixture "tests/test_worker.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/tests/test_worker.py"
     .expect _ at "tests/test_alerts.py":7
     .expect _ at "tests/test_alerts.py":8
     .expect _ at "tests/test_inventory.py":13

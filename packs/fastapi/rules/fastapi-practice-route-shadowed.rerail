@@ -136,22 +136,22 @@ RouteShadowed(l, ms, pl, pe, el) :- rs_hit(l, e, "shadow"), rs_methods(l, e, ms)
 RouteDuplicate(l, ms, pl, el) :- rs_hit(l, e, "dup"), rs_methods(l, e, ms), fa_route_path(l, pl), line(e, el),
     rs_dc_router(l, r), fa_router_key(r, _).
 
-// The cases, `cases/fastapi-practice-route-shadowed/`, read as one repository: each line ending in `# caught` is
-// reported, and no other line.
+// The cases, `upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/`, read as one repository: each line
+// ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/__init__.py" from "../cases/fastapi-practice-route-shadowed/app/__init__.py"
-    .fixture "app/main.py" from "../cases/fastapi-practice-route-shadowed/app/main.py"
-    .fixture "app/versioning.py" from "../cases/fastapi-practice-route-shadowed/app/versioning.py"
-    .fixture "app/routes/__init__.py" from "../cases/fastapi-practice-route-shadowed/app/routes/__init__.py"
-    .fixture "app/routes/cases.py" from "../cases/fastapi-practice-route-shadowed/app/routes/cases.py"
-    .fixture "app/routes/files.py" from "../cases/fastapi-practice-route-shadowed/app/routes/files.py"
-    .fixture "app/routes/near_misses.py" from "../cases/fastapi-practice-route-shadowed/app/routes/near_misses.py"
-    .fixture "app/shared/__init__.py" from "../cases/fastapi-practice-route-shadowed/app/shared/__init__.py"
-    .fixture "app/shared/items.py" from "../cases/fastapi-practice-route-shadowed/app/shared/items.py"
-    .fixture "app/shared/router.py" from "../cases/fastapi-practice-route-shadowed/app/shared/router.py"
-    .fixture "app/shared/search.py" from "../cases/fastapi-practice-route-shadowed/app/shared/search.py"
-    .fixture "app/tests/__init__.py" from "../cases/fastapi-practice-route-shadowed/app/tests/__init__.py"
-    .fixture "app/tests/test_routes.py" from "../cases/fastapi-practice-route-shadowed/app/tests/test_routes.py"
+    .fixture "app/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/__init__.py"
+    .fixture "app/main.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/main.py"
+    .fixture "app/versioning.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/versioning.py"
+    .fixture "app/routes/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/routes/__init__.py"
+    .fixture "app/routes/cases.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/routes/cases.py"
+    .fixture "app/routes/files.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/routes/files.py"
+    .fixture "app/routes/near_misses.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/routes/near_misses.py"
+    .fixture "app/shared/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/shared/__init__.py"
+    .fixture "app/shared/items.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/shared/items.py"
+    .fixture "app/shared/router.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/shared/router.py"
+    .fixture "app/shared/search.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/shared/search.py"
+    .fixture "app/tests/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/tests/__init__.py"
+    .fixture "app/tests/test_routes.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/tests/test_routes.py"
     .expect _ at "app/main.py":20
     .expect _ at "app/routes/cases.py":11
     .expect _ at "app/routes/cases.py":22

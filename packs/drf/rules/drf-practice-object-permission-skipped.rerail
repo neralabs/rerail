@@ -433,28 +433,28 @@ ops_checks(v, fq) :- drf_method_q(v, _, fq), ops_self_call(fq, x), drf_method_q(
 .decl ops_vh(v: symbol, fq: symbol)
 ops_vh(v, fq) :- ops_handler_obj(v, fq), !ops_checks(v, fq).
 
-// The cases, `cases/drf-practice-object-permission-skipped/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/drf-practice/authored/drf-practice-object-permission-skipped/`, read as one repository: each
+// line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "config/__init__.py" from "../cases/drf-practice-object-permission-skipped/config/__init__.py"
-    .fixture "config/settings.py" from "../cases/drf-practice-object-permission-skipped/config/settings.py"
-    .fixture "library/__init__.py" from "../cases/drf-practice-object-permission-skipped/library/__init__.py"
-    .fixture "library/api/__init__.py" from "../cases/drf-practice-object-permission-skipped/library/api/__init__.py"
-    .fixture "library/api/access.py" from "../cases/drf-practice-object-permission-skipped/library/api/access.py"
-    .fixture "library/api/base.py" from "../cases/drf-practice-object-permission-skipped/library/api/base.py"
-    .fixture "library/api/fn_views.py" from "../cases/drf-practice-object-permission-skipped/library/api/fn_views.py"
-    .fixture "library/api/permissions.py" from "../cases/drf-practice-object-permission-skipped/library/api/permissions.py"
-    .fixture "library/api/safe_views.py" from "../cases/drf-practice-object-permission-skipped/library/api/safe_views.py"
-    .fixture "library/api/serializers.py" from "../cases/drf-practice-object-permission-skipped/library/api/serializers.py"
-    .fixture "library/api/views.py" from "../cases/drf-practice-object-permission-skipped/library/api/views.py"
-    .fixture "library/api/write_views.py" from "../cases/drf-practice-object-permission-skipped/library/api/write_views.py"
-    .fixture "library/models.py" from "../cases/drf-practice-object-permission-skipped/library/models.py"
-    .fixture "library/tests/__init__.py" from "../cases/drf-practice-object-permission-skipped/library/tests/__init__.py"
-    .fixture "library/tests/test_views.py" from "../cases/drf-practice-object-permission-skipped/library/tests/test_views.py"
-    .fixture "studio/projects/__init__.py" from "../cases/drf-practice-object-permission-skipped/studio/projects/__init__.py"
-    .fixture "studio/projects/api.py" from "../cases/drf-practice-object-permission-skipped/studio/projects/api.py"
-    .fixture "studio/projects/models.py" from "../cases/drf-practice-object-permission-skipped/studio/projects/models.py"
-    .fixture "studio/projects/serializers.py" from "../cases/drf-practice-object-permission-skipped/studio/projects/serializers.py"
+    .fixture "config/__init__.py" from "../upstream/drf-practice/authored/drf-practice-object-permission-skipped/config/__init__.py"
+    .fixture "config/settings.py" from "../upstream/drf-practice/authored/drf-practice-object-permission-skipped/config/settings.py"
+    .fixture "library/__init__.py" from "../upstream/drf-practice/authored/drf-practice-object-permission-skipped/library/__init__.py"
+    .fixture "library/api/__init__.py" from "../upstream/drf-practice/authored/drf-practice-object-permission-skipped/library/api/__init__.py"
+    .fixture "library/api/access.py" from "../upstream/drf-practice/authored/drf-practice-object-permission-skipped/library/api/access.py"
+    .fixture "library/api/base.py" from "../upstream/drf-practice/authored/drf-practice-object-permission-skipped/library/api/base.py"
+    .fixture "library/api/fn_views.py" from "../upstream/drf-practice/authored/drf-practice-object-permission-skipped/library/api/fn_views.py"
+    .fixture "library/api/permissions.py" from "../upstream/drf-practice/authored/drf-practice-object-permission-skipped/library/api/permissions.py"
+    .fixture "library/api/safe_views.py" from "../upstream/drf-practice/authored/drf-practice-object-permission-skipped/library/api/safe_views.py"
+    .fixture "library/api/serializers.py" from "../upstream/drf-practice/authored/drf-practice-object-permission-skipped/library/api/serializers.py"
+    .fixture "library/api/views.py" from "../upstream/drf-practice/authored/drf-practice-object-permission-skipped/library/api/views.py"
+    .fixture "library/api/write_views.py" from "../upstream/drf-practice/authored/drf-practice-object-permission-skipped/library/api/write_views.py"
+    .fixture "library/models.py" from "../upstream/drf-practice/authored/drf-practice-object-permission-skipped/library/models.py"
+    .fixture "library/tests/__init__.py" from "../upstream/drf-practice/authored/drf-practice-object-permission-skipped/library/tests/__init__.py"
+    .fixture "library/tests/test_views.py" from "../upstream/drf-practice/authored/drf-practice-object-permission-skipped/library/tests/test_views.py"
+    .fixture "studio/projects/__init__.py" from "../upstream/drf-practice/authored/drf-practice-object-permission-skipped/studio/projects/__init__.py"
+    .fixture "studio/projects/api.py" from "../upstream/drf-practice/authored/drf-practice-object-permission-skipped/studio/projects/api.py"
+    .fixture "studio/projects/models.py" from "../upstream/drf-practice/authored/drf-practice-object-permission-skipped/studio/projects/models.py"
+    .fixture "studio/projects/serializers.py" from "../upstream/drf-practice/authored/drf-practice-object-permission-skipped/studio/projects/serializers.py"
     .expect _ at "library/api/fn_views.py":14
     .expect _ at "library/api/fn_views.py":23
     .expect _ at "library/api/safe_views.py":32

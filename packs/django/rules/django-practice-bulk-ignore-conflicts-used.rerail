@@ -337,25 +337,25 @@ bic_row_call(c) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, "ad
 bic_dispatch(c) :- dj_side_effect(c, _).
 bic_dispatch(c) :- kind(c, "call"), call_name(c, m), dj_task_method(m).
 
-// The cases, `cases/django-practice-bulk-ignore-conflicts-used/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/django-practice/authored/django-practice-bulk-ignore-conflicts-used/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "shop/__init__.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/__init__.py"
-    .fixture "shop/base.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/base.py"
-    .fixture "shop/catalog/__init__.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/catalog/__init__.py"
-    .fixture "shop/commands.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/commands.py"
-    .fixture "shop/dummy.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/dummy.py"
-    .fixture "shop/free.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/free.py"
-    .fixture "shop/keyed.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/keyed.py"
-    .fixture "shop/links.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/links.py"
-    .fixture "shop/models.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/models.py"
-    .fixture "shop/seed.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/seed.py"
-    .fixture "shop/serializers.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/serializers.py"
-    .fixture "shop/services.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/services.py"
-    .fixture "shop/tasks.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/tasks.py"
-    .fixture "shop/tests/test_views.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/tests/test_views.py"
-    .fixture "shop/views.py" from "../cases/django-practice-bulk-ignore-conflicts-used/shop/views.py"
-    .fixture "vendor/store.py" from "../cases/django-practice-bulk-ignore-conflicts-used/vendor/store.py"
+    .fixture "shop/__init__.py" from "../upstream/django-practice/authored/django-practice-bulk-ignore-conflicts-used/shop/__init__.py"
+    .fixture "shop/base.py" from "../upstream/django-practice/authored/django-practice-bulk-ignore-conflicts-used/shop/base.py"
+    .fixture "shop/catalog/__init__.py" from "../upstream/django-practice/authored/django-practice-bulk-ignore-conflicts-used/shop/catalog/__init__.py"
+    .fixture "shop/commands.py" from "../upstream/django-practice/authored/django-practice-bulk-ignore-conflicts-used/shop/commands.py"
+    .fixture "shop/dummy.py" from "../upstream/django-practice/authored/django-practice-bulk-ignore-conflicts-used/shop/dummy.py"
+    .fixture "shop/free.py" from "../upstream/django-practice/authored/django-practice-bulk-ignore-conflicts-used/shop/free.py"
+    .fixture "shop/keyed.py" from "../upstream/django-practice/authored/django-practice-bulk-ignore-conflicts-used/shop/keyed.py"
+    .fixture "shop/links.py" from "../upstream/django-practice/authored/django-practice-bulk-ignore-conflicts-used/shop/links.py"
+    .fixture "shop/models.py" from "../upstream/django-practice/authored/django-practice-bulk-ignore-conflicts-used/shop/models.py"
+    .fixture "shop/seed.py" from "../upstream/django-practice/authored/django-practice-bulk-ignore-conflicts-used/shop/seed.py"
+    .fixture "shop/serializers.py" from "../upstream/django-practice/authored/django-practice-bulk-ignore-conflicts-used/shop/serializers.py"
+    .fixture "shop/services.py" from "../upstream/django-practice/authored/django-practice-bulk-ignore-conflicts-used/shop/services.py"
+    .fixture "shop/tasks.py" from "../upstream/django-practice/authored/django-practice-bulk-ignore-conflicts-used/shop/tasks.py"
+    .fixture "shop/tests/test_views.py" from "../upstream/django-practice/authored/django-practice-bulk-ignore-conflicts-used/shop/tests/test_views.py"
+    .fixture "shop/views.py" from "../upstream/django-practice/authored/django-practice-bulk-ignore-conflicts-used/shop/views.py"
+    .fixture "vendor/store.py" from "../upstream/django-practice/authored/django-practice-bulk-ignore-conflicts-used/vendor/store.py"
     .expect _ at "shop/commands.py":7
     .expect _ at "shop/commands.py":10
     .expect _ at "shop/dummy.py":27

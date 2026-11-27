@@ -172,26 +172,27 @@ v1i_at(k) :- v1i_call(k, "from_orm", _).
 FromOrmCrash(k) :- v1i_call(k, "from_orm", q), !v1i_own(q, "from_orm"), !pd_from_attributes(q), v1i_report(k, nk),
     !pd_shim_elsewhere(nk).
 
-// The cases, `cases/pydantic-practice-v1-api-in-v2/`, read as one repository pinned to Pydantic 2 with a `legacy/`
-// project pinned to Pydantic 1: each line ending in `# caught` is reported, and no other line.
+// The cases, `upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/`, read as one repository pinned to
+// Pydantic 2 with a `legacy/` project pinned to Pydantic 1: each line ending in `# caught` is reported, and no other
+// line.
 .test cases exactly
-    .fixture "pyproject.toml" from "../cases/pydantic-practice-v1-api-in-v2/pyproject.toml"
-    .fixture "app/__init__.py" from "../cases/pydantic-practice-v1-api-in-v2/app/__init__.py"
-    .fixture "app/base.py" from "../cases/pydantic-practice-v1-api-in-v2/app/base.py"
-    .fixture "app/checks.py" from "../cases/pydantic-practice-v1-api-in-v2/app/checks.py"
-    .fixture "app/compat.py" from "../cases/pydantic-practice-v1-api-in-v2/app/compat.py"
-    .fixture "app/legacy_models.py" from "../cases/pydantic-practice-v1-api-in-v2/app/legacy_models.py"
-    .fixture "app/schemas.py" from "../cases/pydantic-practice-v1-api-in-v2/app/schemas.py"
-    .fixture "app/services.py" from "../cases/pydantic-practice-v1-api-in-v2/app/services.py"
-    .fixture "app/settings.py" from "../cases/pydantic-practice-v1-api-in-v2/app/settings.py"
-    .fixture "app/shims.py" from "../cases/pydantic-practice-v1-api-in-v2/app/shims.py"
-    .fixture "app/tables/__init__.py" from "../cases/pydantic-practice-v1-api-in-v2/app/tables/__init__.py"
-    .fixture "app/tables/heroes.py" from "../cases/pydantic-practice-v1-api-in-v2/app/tables/heroes.py"
-    .fixture "app/orm_reads.py" from "../cases/pydantic-practice-v1-api-in-v2/app/orm_reads.py"
-    .fixture "app/tests/__init__.py" from "../cases/pydantic-practice-v1-api-in-v2/app/tests/__init__.py"
-    .fixture "app/tests/test_users.py" from "../cases/pydantic-practice-v1-api-in-v2/app/tests/test_users.py"
-    .fixture "legacy/pyproject.toml" from "../cases/pydantic-practice-v1-api-in-v2/legacy/pyproject.toml"
-    .fixture "legacy/models.py" from "../cases/pydantic-practice-v1-api-in-v2/legacy/models.py"
+    .fixture "pyproject.toml" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/pyproject.toml"
+    .fixture "app/__init__.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/__init__.py"
+    .fixture "app/base.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/base.py"
+    .fixture "app/checks.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/checks.py"
+    .fixture "app/compat.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/compat.py"
+    .fixture "app/legacy_models.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/legacy_models.py"
+    .fixture "app/schemas.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/schemas.py"
+    .fixture "app/services.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/services.py"
+    .fixture "app/settings.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/settings.py"
+    .fixture "app/shims.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/shims.py"
+    .fixture "app/tables/__init__.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/tables/__init__.py"
+    .fixture "app/tables/heroes.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/tables/heroes.py"
+    .fixture "app/orm_reads.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/orm_reads.py"
+    .fixture "app/tests/__init__.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/tests/__init__.py"
+    .fixture "app/tests/test_users.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/tests/test_users.py"
+    .fixture "legacy/pyproject.toml" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/legacy/pyproject.toml"
+    .fixture "legacy/models.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/legacy/models.py"
     .expect FromOrmCrash at "app/orm_reads.py":54
     .expect FromOrmCrash at "app/orm_reads.py":58
     .expect FromOrmCrash at "app/orm_reads.py":59

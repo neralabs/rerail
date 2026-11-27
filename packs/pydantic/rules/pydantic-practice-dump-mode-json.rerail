@@ -472,20 +472,20 @@ dmj_x_kin(u, b) :- dmj_self_set_q(b, _, _), pd_ancestor(u, b).
 dmj_x_kin(u, b) :- dmj_self_set_q(b, _, _), pd_ancestor(b, u).
 
 .test cases exactly
-    .fixture "pyproject.toml" from "../cases/pydantic-practice-dump-mode-json/pyproject.toml"
-    .fixture "app/__init__.py" from "../cases/pydantic-practice-dump-mode-json/app/__init__.py"
-    .fixture "app/aio.py" from "../cases/pydantic-practice-dump-mode-json/app/aio.py"
-    .fixture "app/base.py" from "../cases/pydantic-practice-dump-mode-json/app/base.py"
-    .fixture "app/clients.py" from "../cases/pydantic-practice-dump-mode-json/app/clients.py"
-    .fixture "app/enums.py" from "../cases/pydantic-practice-dump-mode-json/app/enums.py"
-    .fixture "app/lookalike.py" from "../cases/pydantic-practice-dump-mode-json/app/lookalike.py"
-    .fixture "app/responses.py" from "../cases/pydantic-practice-dump-mode-json/app/responses.py"
-    .fixture "app/schemas.py" from "../cases/pydantic-practice-dump-mode-json/app/schemas.py"
-    .fixture "app/services.py" from "../cases/pydantic-practice-dump-mode-json/app/services.py"
-    .fixture "app/utils/__init__.py" from "../cases/pydantic-practice-dump-mode-json/app/utils/__init__.py"
-    .fixture "app/utils/json.py" from "../cases/pydantic-practice-dump-mode-json/app/utils/json.py"
-    .fixture "app/views.py" from "../cases/pydantic-practice-dump-mode-json/app/views.py"
-    .fixture "tests/test_events.py" from "../cases/pydantic-practice-dump-mode-json/tests/test_events.py"
+    .fixture "pyproject.toml" from "../upstream/pydantic-practice/authored/pydantic-practice-dump-mode-json/pyproject.toml"
+    .fixture "app/__init__.py" from "../upstream/pydantic-practice/authored/pydantic-practice-dump-mode-json/app/__init__.py"
+    .fixture "app/aio.py" from "../upstream/pydantic-practice/authored/pydantic-practice-dump-mode-json/app/aio.py"
+    .fixture "app/base.py" from "../upstream/pydantic-practice/authored/pydantic-practice-dump-mode-json/app/base.py"
+    .fixture "app/clients.py" from "../upstream/pydantic-practice/authored/pydantic-practice-dump-mode-json/app/clients.py"
+    .fixture "app/enums.py" from "../upstream/pydantic-practice/authored/pydantic-practice-dump-mode-json/app/enums.py"
+    .fixture "app/lookalike.py" from "../upstream/pydantic-practice/authored/pydantic-practice-dump-mode-json/app/lookalike.py"
+    .fixture "app/responses.py" from "../upstream/pydantic-practice/authored/pydantic-practice-dump-mode-json/app/responses.py"
+    .fixture "app/schemas.py" from "../upstream/pydantic-practice/authored/pydantic-practice-dump-mode-json/app/schemas.py"
+    .fixture "app/services.py" from "../upstream/pydantic-practice/authored/pydantic-practice-dump-mode-json/app/services.py"
+    .fixture "app/utils/__init__.py" from "../upstream/pydantic-practice/authored/pydantic-practice-dump-mode-json/app/utils/__init__.py"
+    .fixture "app/utils/json.py" from "../upstream/pydantic-practice/authored/pydantic-practice-dump-mode-json/app/utils/json.py"
+    .fixture "app/views.py" from "../upstream/pydantic-practice/authored/pydantic-practice-dump-mode-json/app/views.py"
+    .fixture "tests/test_events.py" from "../upstream/pydantic-practice/authored/pydantic-practice-dump-mode-json/tests/test_events.py"
     .expect _ at "app/aio.py":14
     .expect _ at "app/aio.py":19
     .expect _ at "app/aio.py":25

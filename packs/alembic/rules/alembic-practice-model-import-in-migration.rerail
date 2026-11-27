@@ -170,33 +170,33 @@ mi_model_ref(d, nt) :- mi_obj_at(d, nt, "ident", oq), mi_model(_, oq, _).
 mi_attr_use(d, nt, i, q, x) :- mi_attr_at(d, nt, i, q0), mi_named(q0, q, x), !mi_model_ref(d, nt).
 ModelUse(n, x) :- mi_attr_node(n, d, nt, i), mi_attr_use(d, nt, i, q, x), i = min j : { mi_attr_use(d, _, j, q, _) }.
 
-// The cases, `cases/alembic-practice-model-import-in-migration/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/__init__.py" from "../cases/alembic-practice-model-import-in-migration/app/__init__.py"
-    .fixture "app/ext.py" from "../cases/alembic-practice-model-import-in-migration/app/ext.py"
-    .fixture "app/legacy.py" from "../cases/alembic-practice-model-import-in-migration/app/legacy.py"
-    .fixture "app/models/__init__.py" from "../cases/alembic-practice-model-import-in-migration/app/models/__init__.py"
-    .fixture "app/models/base.py" from "../cases/alembic-practice-model-import-in-migration/app/models/base.py"
-    .fixture "app/models/hero.py" from "../cases/alembic-practice-model-import-in-migration/app/models/hero.py"
-    .fixture "app/models/types.py" from "../cases/alembic-practice-model-import-in-migration/app/models/types.py"
-    .fixture "app/models/user.py" from "../cases/alembic-practice-model-import-in-migration/app/models/user.py"
-    .fixture "app/plugins/billing/__init__.py" from "../cases/alembic-practice-model-import-in-migration/app/plugins/billing/__init__.py"
-    .fixture "app/plugins/billing/models.py" from "../cases/alembic-practice-model-import-in-migration/app/plugins/billing/models.py"
-    .fixture "app/schemas.py" from "../cases/alembic-practice-model-import-in-migration/app/schemas.py"
-    .fixture "app/widgets.py" from "../cases/alembic-practice-model-import-in-migration/app/widgets.py"
-    .fixture "migrations/__init__.py" from "../cases/alembic-practice-model-import-in-migration/migrations/__init__.py"
-    .fixture "migrations/env.py" from "../cases/alembic-practice-model-import-in-migration/migrations/env.py"
-    .fixture "migrations/shared/__init__.py" from "../cases/alembic-practice-model-import-in-migration/migrations/shared/__init__.py"
-    .fixture "migrations/shared/frozen.py" from "../cases/alembic-practice-model-import-in-migration/migrations/shared/frozen.py"
-    .fixture "migrations/versions/m1_populate_slugs.py" from "../cases/alembic-practice-model-import-in-migration/migrations/versions/m1_populate_slugs.py"
-    .fixture "migrations/versions/m2_shapes.py" from "../cases/alembic-practice-model-import-in-migration/migrations/versions/m2_shapes.py"
-    .fixture "migrations/versions/m3_module_attr.py" from "../cases/alembic-practice-model-import-in-migration/migrations/versions/m3_module_attr.py"
-    .fixture "migrations/versions/m4_safe.py" from "../cases/alembic-practice-model-import-in-migration/migrations/versions/m4_safe.py"
-    .fixture "migrations/versions/m5_namespace.py" from "../cases/alembic-practice-model-import-in-migration/migrations/versions/m5_namespace.py"
-    .fixture "migrations/versions/m6_flask_and_table_name.py" from "../cases/alembic-practice-model-import-in-migration/migrations/versions/m6_flask_and_table_name.py"
-    .fixture "tests/migrations/versions/t1_imports.py" from "../cases/alembic-practice-model-import-in-migration/tests/migrations/versions/t1_imports.py"
-    .fixture "tests/test_users.py" from "../cases/alembic-practice-model-import-in-migration/tests/test_users.py"
+    .fixture "app/__init__.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/__init__.py"
+    .fixture "app/ext.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/ext.py"
+    .fixture "app/legacy.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/legacy.py"
+    .fixture "app/models/__init__.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/models/__init__.py"
+    .fixture "app/models/base.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/models/base.py"
+    .fixture "app/models/hero.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/models/hero.py"
+    .fixture "app/models/types.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/models/types.py"
+    .fixture "app/models/user.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/models/user.py"
+    .fixture "app/plugins/billing/__init__.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/plugins/billing/__init__.py"
+    .fixture "app/plugins/billing/models.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/plugins/billing/models.py"
+    .fixture "app/schemas.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/schemas.py"
+    .fixture "app/widgets.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/widgets.py"
+    .fixture "migrations/__init__.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/migrations/__init__.py"
+    .fixture "migrations/env.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/migrations/env.py"
+    .fixture "migrations/shared/__init__.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/migrations/shared/__init__.py"
+    .fixture "migrations/shared/frozen.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/migrations/shared/frozen.py"
+    .fixture "migrations/versions/m1_populate_slugs.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/migrations/versions/m1_populate_slugs.py"
+    .fixture "migrations/versions/m2_shapes.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/migrations/versions/m2_shapes.py"
+    .fixture "migrations/versions/m3_module_attr.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/migrations/versions/m3_module_attr.py"
+    .fixture "migrations/versions/m4_safe.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/migrations/versions/m4_safe.py"
+    .fixture "migrations/versions/m5_namespace.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/migrations/versions/m5_namespace.py"
+    .fixture "migrations/versions/m6_flask_and_table_name.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/migrations/versions/m6_flask_and_table_name.py"
+    .fixture "tests/migrations/versions/t1_imports.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/tests/migrations/versions/t1_imports.py"
+    .fixture "tests/test_users.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/tests/test_users.py"
     .expect _ at "migrations/versions/m1_populate_slugs.py":7
     .expect _ at "migrations/versions/m1_populate_slugs.py":8
     .expect _ at "migrations/versions/m2_shapes.py":8

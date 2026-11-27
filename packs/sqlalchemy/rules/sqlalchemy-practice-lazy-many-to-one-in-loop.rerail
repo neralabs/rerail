@@ -63,13 +63,13 @@ lmo_rel_fk_q(mq, rel, col) :- lmo_rel_owner_q(mq, rel, cq), sa_rel_fk_col_q(cq, 
 lmo_rel_owner_q(mq, rel, mq) :- sa_rel_ok_q(mq, rel).
 lmo_rel_owner_q(mq, rel, bq) :- sa_model_super_q(mq, bq), sa_rel_ok_q(bq, rel).
 
-// The cases, `cases/sqlalchemy-practice-lazy-many-to-one-in-loop/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-many-to-one-in-loop/`, read as one
+// repository: each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/models.py" from "../cases/sqlalchemy-practice-lazy-many-to-one-in-loop/app/models.py"
-    .fixture "app/reports.py" from "../cases/sqlalchemy-practice-lazy-many-to-one-in-loop/app/reports.py"
-    .fixture "app/services.py" from "../cases/sqlalchemy-practice-lazy-many-to-one-in-loop/app/services.py"
-    .fixture "tests/test_reports.py" from "../cases/sqlalchemy-practice-lazy-many-to-one-in-loop/tests/test_reports.py"
+    .fixture "app/models.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-many-to-one-in-loop/app/models.py"
+    .fixture "app/reports.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-many-to-one-in-loop/app/reports.py"
+    .fixture "app/services.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-many-to-one-in-loop/app/services.py"
+    .fixture "tests/test_reports.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-many-to-one-in-loop/tests/test_reports.py"
     .expect _ at "app/reports.py":12
     .expect _ at "app/reports.py":18
     .expect _ at "app/reports.py":19

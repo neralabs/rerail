@@ -92,17 +92,17 @@ prl_retry_pkg(c, what) :- prl_lib_call(c, q, what), (q = "retry.retry_call" ; q 
     !kwarg(c, "tries", _), !exc_arg(c, 4, _).
 prl_retry_pkg(m, cat("@", x)) :- prl_bare(m, q), (q = "retry.retry" ; q = "retry.api.retry"), text(m, x).
 
-// The cases, `cases/python-practice-retry-without-limit/`, read as one repository: each line ending in `# caught`
-// is reported, and no other line.
+// The cases, `upstream/python-practice/authored/python-practice-retry-without-limit/`, read as one repository: each
+// line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/__init__.py" from "../cases/python-practice-retry-without-limit/app/__init__.py"
-    .fixture "app/backoffs.py" from "../cases/python-practice-retry-without-limit/app/backoffs.py"
-    .fixture "app/clients.py" from "../cases/python-practice-retry-without-limit/app/clients.py"
-    .fixture "app/other_retries.py" from "../cases/python-practice-retry-without-limit/app/other_retries.py"
-    .fixture "app/retry_packages.py" from "../cases/python-practice-retry-without-limit/app/retry_packages.py"
-    .fixture "app/settings.py" from "../cases/python-practice-retry-without-limit/app/settings.py"
-    .fixture "tests/__init__.py" from "../cases/python-practice-retry-without-limit/tests/__init__.py"
-    .fixture "tests/test_clients.py" from "../cases/python-practice-retry-without-limit/tests/test_clients.py"
+    .fixture "app/__init__.py" from "../upstream/python-practice/authored/python-practice-retry-without-limit/app/__init__.py"
+    .fixture "app/backoffs.py" from "../upstream/python-practice/authored/python-practice-retry-without-limit/app/backoffs.py"
+    .fixture "app/clients.py" from "../upstream/python-practice/authored/python-practice-retry-without-limit/app/clients.py"
+    .fixture "app/other_retries.py" from "../upstream/python-practice/authored/python-practice-retry-without-limit/app/other_retries.py"
+    .fixture "app/retry_packages.py" from "../upstream/python-practice/authored/python-practice-retry-without-limit/app/retry_packages.py"
+    .fixture "app/settings.py" from "../upstream/python-practice/authored/python-practice-retry-without-limit/app/settings.py"
+    .fixture "tests/__init__.py" from "../upstream/python-practice/authored/python-practice-retry-without-limit/tests/__init__.py"
+    .fixture "tests/test_clients.py" from "../upstream/python-practice/authored/python-practice-retry-without-limit/tests/test_clients.py"
     .expect _ at "app/backoffs.py":8
     .expect _ at "app/backoffs.py":13
     .expect _ at "app/backoffs.py":18

@@ -178,22 +178,23 @@ ms_hit(uq, cat(q, p), o) :- ms_at(uq, q, p, k, d, o), ms_shared(q, d), (k = "" ;
 .decl ms_first(u: symbol, k: symbol, o: number)
 ms_first(uq, k, o) :- ms_hit(uq, k, o), o = min o2 : { ms_hit(uq, k, o2) }.
 
-// The cases, `cases/pytest-practice-module-state-without-monkeypatch/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/pytest-practice/authored/pytest-practice-module-state-without-monkeypatch/` (pack test data in
+// S3, not in git: `npm run fixtures:pull -- --pack pytest`), read as one repository: each line ending in `# caught` is
+// reported, and no other line.
 .test cases exactly
-    .fixture "conftest.py" from "../cases/pytest-practice-module-state-without-monkeypatch/conftest.py"
-    .fixture "shop/__init__.py" from "../cases/pytest-practice-module-state-without-monkeypatch/shop/__init__.py"
-    .fixture "shop/main.py" from "../cases/pytest-practice-module-state-without-monkeypatch/shop/main.py"
-    .fixture "shop/models.py" from "../cases/pytest-practice-module-state-without-monkeypatch/shop/models.py"
-    .fixture "shop/registry.py" from "../cases/pytest-practice-module-state-without-monkeypatch/shop/registry.py"
-    .fixture "tests/__init__.py" from "../cases/pytest-practice-module-state-without-monkeypatch/tests/__init__.py"
-    .fixture "tests/helpers.py" from "../cases/pytest-practice-module-state-without-monkeypatch/tests/helpers.py"
-    .fixture "tests/test_other.py" from "../cases/pytest-practice-module-state-without-monkeypatch/tests/test_other.py"
-    .fixture "tests/test_overrides.py" from "../cases/pytest-practice-module-state-without-monkeypatch/tests/test_overrides.py"
-    .fixture "tests/test_state.py" from "../cases/pytest-practice-module-state-without-monkeypatch/tests/test_state.py"
-    .fixture "tests/unit/__init__.py" from "../cases/pytest-practice-module-state-without-monkeypatch/tests/unit/__init__.py"
-    .fixture "tests/unit/base.py" from "../cases/pytest-practice-module-state-without-monkeypatch/tests/unit/base.py"
-    .fixture "tests/unit/test_case.py" from "../cases/pytest-practice-module-state-without-monkeypatch/tests/unit/test_case.py"
+    .fixture "conftest.py" from "../upstream/pytest-practice/authored/pytest-practice-module-state-without-monkeypatch/conftest.py"
+    .fixture "shop/__init__.py" from "../upstream/pytest-practice/authored/pytest-practice-module-state-without-monkeypatch/shop/__init__.py"
+    .fixture "shop/main.py" from "../upstream/pytest-practice/authored/pytest-practice-module-state-without-monkeypatch/shop/main.py"
+    .fixture "shop/models.py" from "../upstream/pytest-practice/authored/pytest-practice-module-state-without-monkeypatch/shop/models.py"
+    .fixture "shop/registry.py" from "../upstream/pytest-practice/authored/pytest-practice-module-state-without-monkeypatch/shop/registry.py"
+    .fixture "tests/__init__.py" from "../upstream/pytest-practice/authored/pytest-practice-module-state-without-monkeypatch/tests/__init__.py"
+    .fixture "tests/helpers.py" from "../upstream/pytest-practice/authored/pytest-practice-module-state-without-monkeypatch/tests/helpers.py"
+    .fixture "tests/test_other.py" from "../upstream/pytest-practice/authored/pytest-practice-module-state-without-monkeypatch/tests/test_other.py"
+    .fixture "tests/test_overrides.py" from "../upstream/pytest-practice/authored/pytest-practice-module-state-without-monkeypatch/tests/test_overrides.py"
+    .fixture "tests/test_state.py" from "../upstream/pytest-practice/authored/pytest-practice-module-state-without-monkeypatch/tests/test_state.py"
+    .fixture "tests/unit/__init__.py" from "../upstream/pytest-practice/authored/pytest-practice-module-state-without-monkeypatch/tests/unit/__init__.py"
+    .fixture "tests/unit/base.py" from "../upstream/pytest-practice/authored/pytest-practice-module-state-without-monkeypatch/tests/unit/base.py"
+    .fixture "tests/unit/test_case.py" from "../upstream/pytest-practice/authored/pytest-practice-module-state-without-monkeypatch/tests/unit/test_case.py"
     .expect _ at "conftest.py":22
     .expect _ at "conftest.py":28
     .expect _ at "conftest.py":72

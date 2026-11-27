@@ -210,19 +210,19 @@ vrv_has_else(s) :- field(s, "alternative", a), kind(a, "else_clause").
 .decl vrv_loop(k: symbol)
 vrv_loop("while_statement"). vrv_loop("for_statement"). vrv_loop("function_definition"). vrv_loop("class_definition").
 
-// The cases, `cases/drf-practice-validate-returns-value/`, read as one repository: each line ending in `# caught` is
-// reported, and no other line.
+// The cases, `upstream/drf-practice/authored/drf-practice-validate-returns-value/`, read as one repository: each line
+// ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "accounts/__init__.py" from "../cases/drf-practice-validate-returns-value/accounts/__init__.py"
-    .fixture "accounts/serializers.py" from "../cases/drf-practice-validate-returns-value/accounts/serializers.py"
-    .fixture "core/errors.py" from "../cases/drf-practice-validate-returns-value/core/errors.py"
-    .fixture "core/__init__.py" from "../cases/drf-practice-validate-returns-value/core/__init__.py"
-    .fixture "core/serializers.py" from "../cases/drf-practice-validate-returns-value/core/serializers.py"
-    .fixture "shop/__init__.py" from "../cases/drf-practice-validate-returns-value/shop/__init__.py"
-    .fixture "shop/models.py" from "../cases/drf-practice-validate-returns-value/shop/models.py"
-    .fixture "shop/serializers.py" from "../cases/drf-practice-validate-returns-value/shop/serializers.py"
-    .fixture "shop/tests/__init__.py" from "../cases/drf-practice-validate-returns-value/shop/tests/__init__.py"
-    .fixture "shop/tests/test_serializers.py" from "../cases/drf-practice-validate-returns-value/shop/tests/test_serializers.py"
+    .fixture "accounts/__init__.py" from "../upstream/drf-practice/authored/drf-practice-validate-returns-value/accounts/__init__.py"
+    .fixture "accounts/serializers.py" from "../upstream/drf-practice/authored/drf-practice-validate-returns-value/accounts/serializers.py"
+    .fixture "core/errors.py" from "../upstream/drf-practice/authored/drf-practice-validate-returns-value/core/errors.py"
+    .fixture "core/__init__.py" from "../upstream/drf-practice/authored/drf-practice-validate-returns-value/core/__init__.py"
+    .fixture "core/serializers.py" from "../upstream/drf-practice/authored/drf-practice-validate-returns-value/core/serializers.py"
+    .fixture "shop/__init__.py" from "../upstream/drf-practice/authored/drf-practice-validate-returns-value/shop/__init__.py"
+    .fixture "shop/models.py" from "../upstream/drf-practice/authored/drf-practice-validate-returns-value/shop/models.py"
+    .fixture "shop/serializers.py" from "../upstream/drf-practice/authored/drf-practice-validate-returns-value/shop/serializers.py"
+    .fixture "shop/tests/__init__.py" from "../upstream/drf-practice/authored/drf-practice-validate-returns-value/shop/tests/__init__.py"
+    .fixture "shop/tests/test_serializers.py" from "../upstream/drf-practice/authored/drf-practice-validate-returns-value/shop/tests/test_serializers.py"
     .expect _ at "accounts/serializers.py":59
     .expect _ at "accounts/serializers.py":70
     .expect _ at "accounts/serializers.py":81

@@ -224,34 +224,34 @@ ar_same_target(d, i, m, x, e, j, y) :- ar_pair(d, i, m, x, e, j, y), ar_vfk(e, j
 .decl ar_coercible(a: symbol, b: symbol)
 ar_coercible("varchar", "text"). ar_coercible("text", "varchar").
 
-// The cases, `cases/django-practice-alterfield-rewrites-table/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/django-practice/authored/django-practice-alterfield-rewrites-table/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "billing/__init__.py" from "../cases/django-practice-alterfield-rewrites-table/billing/__init__.py"
-    .fixture "shop/__init__.py" from "../cases/django-practice-alterfield-rewrites-table/shop/__init__.py"
-    .fixture "shop/tests/__init__.py" from "../cases/django-practice-alterfield-rewrites-table/shop/tests/__init__.py"
-    .fixture "shop/config.py" from "../cases/django-practice-alterfield-rewrites-table/shop/config.py"
-    .fixture "shop/fields.py" from "../cases/django-practice-alterfield-rewrites-table/shop/fields.py"
-    .fixture "billing/migrations/0001_initial.py" from "../cases/django-practice-alterfield-rewrites-table/billing/migrations/0001_initial.py"
-    .fixture "billing/migrations/0002_order_amount.py" from "../cases/django-practice-alterfield-rewrites-table/billing/migrations/0002_order_amount.py"
-    .fixture "billing/migrations/0002_squashed_0004.py" from "../cases/django-practice-alterfield-rewrites-table/billing/migrations/0002_squashed_0004.py"
-    .fixture "billing/migrations/0005_after_squash.py" from "../cases/django-practice-alterfield-rewrites-table/billing/migrations/0005_after_squash.py"
-    .fixture "billing/migrations/__init__.py" from "../cases/django-practice-alterfield-rewrites-table/billing/migrations/__init__.py"
-    .fixture "shop/migrations/0001_initial.py" from "../cases/django-practice-alterfield-rewrites-table/shop/migrations/0001_initial.py"
-    .fixture "shop/migrations/0002_order_legacy_id.py" from "../cases/django-practice-alterfield-rewrites-table/shop/migrations/0002_order_legacy_id.py"
-    .fixture "shop/migrations/0003_alter_types.py" from "../cases/django-practice-alterfield-rewrites-table/shop/migrations/0003_alter_types.py"
-    .fixture "shop/migrations/0004_state_only.py" from "../cases/django-practice-alterfield-rewrites-table/shop/migrations/0004_state_only.py"
-    .fixture "shop/migrations/0005_rename_nickname.py" from "../cases/django-practice-alterfield-rewrites-table/shop/migrations/0005_rename_nickname.py"
-    .fixture "shop/migrations/0006_widen.py" from "../cases/django-practice-alterfield-rewrites-table/shop/migrations/0006_widen.py"
-    .fixture "shop/migrations/0007_siteconfig.py" from "../cases/django-practice-alterfield-rewrites-table/shop/migrations/0007_siteconfig.py"
-    .fixture "shop/migrations/0008_siteconfig_bigint.py" from "../cases/django-practice-alterfield-rewrites-table/shop/migrations/0008_siteconfig_bigint.py"
-    .fixture "shop/migrations/0009_order_refs.py" from "../cases/django-practice-alterfield-rewrites-table/shop/migrations/0009_order_refs.py"
-    .fixture "shop/migrations/0010_custom_fields.py" from "../cases/django-practice-alterfield-rewrites-table/shop/migrations/0010_custom_fields.py"
-    .fixture "shop/migrations/0011_rename_blurb.py" from "../cases/django-practice-alterfield-rewrites-table/shop/migrations/0011_rename_blurb.py"
-    .fixture "shop/migrations/__init__.py" from "../cases/django-practice-alterfield-rewrites-table/shop/migrations/__init__.py"
-    .fixture "shop/tests/migrations/0001_initial.py" from "../cases/django-practice-alterfield-rewrites-table/shop/tests/migrations/0001_initial.py"
-    .fixture "shop/tests/migrations/0002_widget_bigint.py" from "../cases/django-practice-alterfield-rewrites-table/shop/tests/migrations/0002_widget_bigint.py"
-    .fixture "shop/tests/migrations/__init__.py" from "../cases/django-practice-alterfield-rewrites-table/shop/tests/migrations/__init__.py"
+    .fixture "billing/__init__.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/billing/__init__.py"
+    .fixture "shop/__init__.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/shop/__init__.py"
+    .fixture "shop/tests/__init__.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/shop/tests/__init__.py"
+    .fixture "shop/config.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/shop/config.py"
+    .fixture "shop/fields.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/shop/fields.py"
+    .fixture "billing/migrations/0001_initial.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/billing/migrations/0001_initial.py"
+    .fixture "billing/migrations/0002_order_amount.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/billing/migrations/0002_order_amount.py"
+    .fixture "billing/migrations/0002_squashed_0004.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/billing/migrations/0002_squashed_0004.py"
+    .fixture "billing/migrations/0005_after_squash.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/billing/migrations/0005_after_squash.py"
+    .fixture "billing/migrations/__init__.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/billing/migrations/__init__.py"
+    .fixture "shop/migrations/0001_initial.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/shop/migrations/0001_initial.py"
+    .fixture "shop/migrations/0002_order_legacy_id.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/shop/migrations/0002_order_legacy_id.py"
+    .fixture "shop/migrations/0003_alter_types.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/shop/migrations/0003_alter_types.py"
+    .fixture "shop/migrations/0004_state_only.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/shop/migrations/0004_state_only.py"
+    .fixture "shop/migrations/0005_rename_nickname.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/shop/migrations/0005_rename_nickname.py"
+    .fixture "shop/migrations/0006_widen.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/shop/migrations/0006_widen.py"
+    .fixture "shop/migrations/0007_siteconfig.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/shop/migrations/0007_siteconfig.py"
+    .fixture "shop/migrations/0008_siteconfig_bigint.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/shop/migrations/0008_siteconfig_bigint.py"
+    .fixture "shop/migrations/0009_order_refs.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/shop/migrations/0009_order_refs.py"
+    .fixture "shop/migrations/0010_custom_fields.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/shop/migrations/0010_custom_fields.py"
+    .fixture "shop/migrations/0011_rename_blurb.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/shop/migrations/0011_rename_blurb.py"
+    .fixture "shop/migrations/__init__.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/shop/migrations/__init__.py"
+    .fixture "shop/tests/migrations/0001_initial.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/shop/tests/migrations/0001_initial.py"
+    .fixture "shop/tests/migrations/0002_widget_bigint.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/shop/tests/migrations/0002_widget_bigint.py"
+    .fixture "shop/tests/migrations/__init__.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/shop/tests/migrations/__init__.py"
     .expect _ at "billing/migrations/0002_order_amount.py":17
     .expect _ at "billing/migrations/0005_after_squash.py":12
     .expect _ at "shop/migrations/0003_alter_types.py":12
@@ -280,9 +280,9 @@ ar_coercible("varchar", "text"). ar_coercible("text", "varchar").
 
 // A project that configures MySQL only: the same int → bigint change stays silent.
 .test mysql_only exactly
-    .fixture "settings.py" from "../cases/django-practice-alterfield-rewrites-table/mysql_only/settings.py"
-    .fixture "shop/__init__.py" from "../cases/django-practice-alterfield-rewrites-table/mysql_only/shop/__init__.py"
-    .fixture "shop/migrations/__init__.py" from "../cases/django-practice-alterfield-rewrites-table/mysql_only/shop/migrations/__init__.py"
-    .fixture "shop/migrations/0001_initial.py" from "../cases/django-practice-alterfield-rewrites-table/mysql_only/shop/migrations/0001_initial.py"
-    .fixture "shop/migrations/0002_rating_score_bigint.py" from "../cases/django-practice-alterfield-rewrites-table/mysql_only/shop/migrations/0002_rating_score_bigint.py"
+    .fixture "settings.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/mysql_only/settings.py"
+    .fixture "shop/__init__.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/mysql_only/shop/__init__.py"
+    .fixture "shop/migrations/__init__.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/mysql_only/shop/migrations/__init__.py"
+    .fixture "shop/migrations/0001_initial.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/mysql_only/shop/migrations/0001_initial.py"
+    .fixture "shop/migrations/0002_rating_score_bigint.py" from "../upstream/django-practice/authored/django-practice-alterfield-rewrites-table/mysql_only/shop/migrations/0002_rating_score_bigint.py"
 .end

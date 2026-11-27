@@ -235,26 +235,26 @@ uk_moved(n, q) :- uk_name(n), split_dot(n, _, x), uk_task_def(x, q, nq, nk), uk_
 .decl uk_task_def(x: symbol, q: symbol, nq: symbol, nk: symbol)
 uk_task_def(x, q, nq, nk) :- cel_task(f, nq, nk), def_name(f, x), cel_task_name(f, q, nq, nk).
 
-// The cases, `cases/celery-practice-unknown-task-name/`: one repository in which each line ending in `# caught` is
-// reported and no other line.
+// The cases, `upstream/celery-practice/authored/celery-practice-unknown-task-name/`: one repository in which each line
+// ending in `# caught` is reported and no other line.
 .test cases exactly
-    .fixture "proj/__init__.py" from "../cases/celery-practice-unknown-task-name/proj/__init__.py"
-    .fixture "proj/celery.py" from "../cases/celery-practice-unknown-task-name/proj/celery.py"
-    .fixture "proj/classes.py" from "../cases/celery-practice-unknown-task-name/proj/classes.py"
-    .fixture "proj/client.py" from "../cases/celery-practice-unknown-task-name/proj/client.py"
-    .fixture "proj/contract.py" from "../cases/celery-practice-unknown-task-name/proj/contract.py"
-    .fixture "proj/factory.py" from "../cases/celery-practice-unknown-task-name/proj/factory.py"
-    .fixture "proj/jobs.py" from "../cases/celery-practice-unknown-task-name/proj/jobs.py"
-    .fixture "proj/maintenance.py" from "../cases/celery-practice-unknown-task-name/proj/maintenance.py"
-    .fixture "proj/metrics.py" from "../cases/celery-practice-unknown-task-name/proj/metrics.py"
-    .fixture "proj/schedule.py" from "../cases/celery-practice-unknown-task-name/proj/schedule.py"
-    .fixture "proj/settings.py" from "../cases/celery-practice-unknown-task-name/proj/settings.py"
-    .fixture "proj/tasks.py" from "../cases/celery-practice-unknown-task-name/proj/tasks.py"
-    .fixture "proj/tests/__init__.py" from "../cases/celery-practice-unknown-task-name/proj/tests/__init__.py"
-    .fixture "proj/tests/test_beat.py" from "../cases/celery-practice-unknown-task-name/proj/tests/test_beat.py"
-    .fixture "proj/web/__init__.py" from "../cases/celery-practice-unknown-task-name/proj/web/__init__.py"
-    .fixture "proj/web/views.py" from "../cases/celery-practice-unknown-task-name/proj/web/views.py"
-    .fixture "proj/worker.py" from "../cases/celery-practice-unknown-task-name/proj/worker.py"
+    .fixture "proj/__init__.py" from "../upstream/celery-practice/authored/celery-practice-unknown-task-name/proj/__init__.py"
+    .fixture "proj/celery.py" from "../upstream/celery-practice/authored/celery-practice-unknown-task-name/proj/celery.py"
+    .fixture "proj/classes.py" from "../upstream/celery-practice/authored/celery-practice-unknown-task-name/proj/classes.py"
+    .fixture "proj/client.py" from "../upstream/celery-practice/authored/celery-practice-unknown-task-name/proj/client.py"
+    .fixture "proj/contract.py" from "../upstream/celery-practice/authored/celery-practice-unknown-task-name/proj/contract.py"
+    .fixture "proj/factory.py" from "../upstream/celery-practice/authored/celery-practice-unknown-task-name/proj/factory.py"
+    .fixture "proj/jobs.py" from "../upstream/celery-practice/authored/celery-practice-unknown-task-name/proj/jobs.py"
+    .fixture "proj/maintenance.py" from "../upstream/celery-practice/authored/celery-practice-unknown-task-name/proj/maintenance.py"
+    .fixture "proj/metrics.py" from "../upstream/celery-practice/authored/celery-practice-unknown-task-name/proj/metrics.py"
+    .fixture "proj/schedule.py" from "../upstream/celery-practice/authored/celery-practice-unknown-task-name/proj/schedule.py"
+    .fixture "proj/settings.py" from "../upstream/celery-practice/authored/celery-practice-unknown-task-name/proj/settings.py"
+    .fixture "proj/tasks.py" from "../upstream/celery-practice/authored/celery-practice-unknown-task-name/proj/tasks.py"
+    .fixture "proj/tests/__init__.py" from "../upstream/celery-practice/authored/celery-practice-unknown-task-name/proj/tests/__init__.py"
+    .fixture "proj/tests/test_beat.py" from "../upstream/celery-practice/authored/celery-practice-unknown-task-name/proj/tests/test_beat.py"
+    .fixture "proj/web/__init__.py" from "../upstream/celery-practice/authored/celery-practice-unknown-task-name/proj/web/__init__.py"
+    .fixture "proj/web/views.py" from "../upstream/celery-practice/authored/celery-practice-unknown-task-name/proj/web/views.py"
+    .fixture "proj/worker.py" from "../upstream/celery-practice/authored/celery-practice-unknown-task-name/proj/worker.py"
     .expect _ at "proj/celery.py":10
     .expect _ at "proj/celery.py":11
     .expect _ at "proj/celery.py":19

@@ -540,25 +540,25 @@ pcs_broad_fn(f) :- pcs_suppress(w, f), !pcs_suppress_names_asyncio(w).
 pcs_anyio(f) :- pcs_broad_fn(f), kind(n, "identifier"), within(n, f), pp_frame(n, f), sym_of(n, q),
     (q = "anyio" ; q = "trio" ; prefix("anyio.", q) ; prefix("trio.", q)).
 
-// The cases, `cases/python-practice-cancellation-swallowed/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/python-practice/authored/python-practice-cancellation-swallowed/`, read as one repository: each
+// line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/__init__.py" from "../cases/python-practice-cancellation-swallowed/app/__init__.py"
-    .fixture "app/anyio_worker.py" from "../cases/python-practice-cancellation-swallowed/app/anyio_worker.py"
-    .fixture "app/background.py" from "../cases/python-practice-cancellation-swallowed/app/background.py"
-    .fixture "app/consumer.py" from "../cases/python-practice-cancellation-swallowed/app/consumer.py"
-    .fixture "app/drains.py" from "../cases/python-practice-cancellation-swallowed/app/drains.py"
-    .fixture "app/endings.py" from "../cases/python-practice-cancellation-swallowed/app/endings.py"
-    .fixture "app/flusher.py" from "../cases/python-practice-cancellation-swallowed/app/flusher.py"
-    .fixture "app/groups.py" from "../cases/python-practice-cancellation-swallowed/app/groups.py"
-    .fixture "app/jobs.py" from "../cases/python-practice-cancellation-swallowed/app/jobs.py"
-    .fixture "app/main.py" from "../cases/python-practice-cancellation-swallowed/app/main.py"
-    .fixture "app/runners.py" from "../cases/python-practice-cancellation-swallowed/app/runners.py"
-    .fixture "app/safe.py" from "../cases/python-practice-cancellation-swallowed/app/safe.py"
-    .fixture "app/stream.py" from "../cases/python-practice-cancellation-swallowed/app/stream.py"
-    .fixture "app/suppressing.py" from "../cases/python-practice-cancellation-swallowed/app/suppressing.py"
-    .fixture "tests/__init__.py" from "../cases/python-practice-cancellation-swallowed/tests/__init__.py"
-    .fixture "tests/test_stream.py" from "../cases/python-practice-cancellation-swallowed/tests/test_stream.py"
+    .fixture "app/__init__.py" from "../upstream/python-practice/authored/python-practice-cancellation-swallowed/app/__init__.py"
+    .fixture "app/anyio_worker.py" from "../upstream/python-practice/authored/python-practice-cancellation-swallowed/app/anyio_worker.py"
+    .fixture "app/background.py" from "../upstream/python-practice/authored/python-practice-cancellation-swallowed/app/background.py"
+    .fixture "app/consumer.py" from "../upstream/python-practice/authored/python-practice-cancellation-swallowed/app/consumer.py"
+    .fixture "app/drains.py" from "../upstream/python-practice/authored/python-practice-cancellation-swallowed/app/drains.py"
+    .fixture "app/endings.py" from "../upstream/python-practice/authored/python-practice-cancellation-swallowed/app/endings.py"
+    .fixture "app/flusher.py" from "../upstream/python-practice/authored/python-practice-cancellation-swallowed/app/flusher.py"
+    .fixture "app/groups.py" from "../upstream/python-practice/authored/python-practice-cancellation-swallowed/app/groups.py"
+    .fixture "app/jobs.py" from "../upstream/python-practice/authored/python-practice-cancellation-swallowed/app/jobs.py"
+    .fixture "app/main.py" from "../upstream/python-practice/authored/python-practice-cancellation-swallowed/app/main.py"
+    .fixture "app/runners.py" from "../upstream/python-practice/authored/python-practice-cancellation-swallowed/app/runners.py"
+    .fixture "app/safe.py" from "../upstream/python-practice/authored/python-practice-cancellation-swallowed/app/safe.py"
+    .fixture "app/stream.py" from "../upstream/python-practice/authored/python-practice-cancellation-swallowed/app/stream.py"
+    .fixture "app/suppressing.py" from "../upstream/python-practice/authored/python-practice-cancellation-swallowed/app/suppressing.py"
+    .fixture "tests/__init__.py" from "../upstream/python-practice/authored/python-practice-cancellation-swallowed/tests/__init__.py"
+    .fixture "tests/test_stream.py" from "../upstream/python-practice/authored/python-practice-cancellation-swallowed/tests/test_stream.py"
     .expect _ at "app/anyio_worker.py":50
     .expect _ at "app/anyio_worker.py":67
     .expect _ at "app/consumer.py":59

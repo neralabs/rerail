@@ -388,23 +388,23 @@ olk_key_store(h, x, o) :- kind(c, "call"), field(c, "function", f), attr_of(f, b
 olk_key_store(h, x, o) :- kind(c, "call"), field(c, "function", f), attr_of(f, b, "update"), kind(b, "identifier"),
     text(b, x), olk_kwsplat(c, a), olk_keys(a, o), nearest(c, h, scope).
 
-// The cases, `cases/python-security-orm-lookup-injection/`, read as one repository: each line ending in `# caught`
-// is reported, and no other line.
+// The cases, `upstream/python-security/authored/python-security-orm-lookup-injection/` (pack test data in S3, not in
+// git), read as one repository: each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "catalog/__init__.py" from "../cases/python-security-orm-lookup-injection/catalog/__init__.py"
-    .fixture "catalog/admin_views.py" from "../cases/python-security-orm-lookup-injection/catalog/admin_views.py"
-    .fixture "catalog/api.py" from "../cases/python-security-orm-lookup-injection/catalog/api.py"
-    .fixture "catalog/browse.py" from "../cases/python-security-orm-lookup-injection/catalog/browse.py"
-    .fixture "catalog/helpers.py" from "../cases/python-security-orm-lookup-injection/catalog/helpers.py"
-    .fixture "catalog/keys.py" from "../cases/python-security-orm-lookup-injection/catalog/keys.py"
-    .fixture "catalog/models.py" from "../cases/python-security-orm-lookup-injection/catalog/models.py"
-    .fixture "catalog/queries.py" from "../cases/python-security-orm-lookup-injection/catalog/queries.py"
-    .fixture "catalog/routed.py" from "../cases/python-security-orm-lookup-injection/catalog/routed.py"
-    .fixture "catalog/tests/__init__.py" from "../cases/python-security-orm-lookup-injection/catalog/tests/__init__.py"
-    .fixture "catalog/tests/test_views.py" from "../cases/python-security-orm-lookup-injection/catalog/tests/test_views.py"
-    .fixture "catalog/urls.py" from "../cases/python-security-orm-lookup-injection/catalog/urls.py"
-    .fixture "catalog/validated.py" from "../cases/python-security-orm-lookup-injection/catalog/validated.py"
-    .fixture "catalog/views.py" from "../cases/python-security-orm-lookup-injection/catalog/views.py"
+    .fixture "catalog/__init__.py" from "../upstream/python-security/authored/python-security-orm-lookup-injection/catalog/__init__.py"
+    .fixture "catalog/admin_views.py" from "../upstream/python-security/authored/python-security-orm-lookup-injection/catalog/admin_views.py"
+    .fixture "catalog/api.py" from "../upstream/python-security/authored/python-security-orm-lookup-injection/catalog/api.py"
+    .fixture "catalog/browse.py" from "../upstream/python-security/authored/python-security-orm-lookup-injection/catalog/browse.py"
+    .fixture "catalog/helpers.py" from "../upstream/python-security/authored/python-security-orm-lookup-injection/catalog/helpers.py"
+    .fixture "catalog/keys.py" from "../upstream/python-security/authored/python-security-orm-lookup-injection/catalog/keys.py"
+    .fixture "catalog/models.py" from "../upstream/python-security/authored/python-security-orm-lookup-injection/catalog/models.py"
+    .fixture "catalog/queries.py" from "../upstream/python-security/authored/python-security-orm-lookup-injection/catalog/queries.py"
+    .fixture "catalog/routed.py" from "../upstream/python-security/authored/python-security-orm-lookup-injection/catalog/routed.py"
+    .fixture "catalog/tests/__init__.py" from "../upstream/python-security/authored/python-security-orm-lookup-injection/catalog/tests/__init__.py"
+    .fixture "catalog/tests/test_views.py" from "../upstream/python-security/authored/python-security-orm-lookup-injection/catalog/tests/test_views.py"
+    .fixture "catalog/urls.py" from "../upstream/python-security/authored/python-security-orm-lookup-injection/catalog/urls.py"
+    .fixture "catalog/validated.py" from "../upstream/python-security/authored/python-security-orm-lookup-injection/catalog/validated.py"
+    .fixture "catalog/views.py" from "../upstream/python-security/authored/python-security-orm-lookup-injection/catalog/views.py"
     .expect _ at "catalog/admin_views.py":95
     .expect _ at "catalog/admin_views.py":100
     .expect _ at "catalog/admin_views.py":107

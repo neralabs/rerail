@@ -116,23 +116,23 @@ vwp_fn(f) :- drf_api_view_fn(f), !vwp_fn_perms(f), docof(f, d), !dj_test_doc(d).
 vwp_fn_perms(f) :- kind(f, "function_definition"), decorator(f, dd), unparen(dd, e), kind(e, "call"),
     field(e, "function", fn), sym_of(fn, "rest_framework.decorators.permission_classes").
 
-// The cases, `cases/drf-practice-view-without-permission/`: each sub-directory is one project, read as one repository;
-// each line ending in `# caught` is reported, and no other line.
+// The cases, `upstream/drf-practice/authored/drf-practice-view-without-permission/`: each sub-directory is one project,
+// read as one repository; each line ending in `# caught` is reported, and no other line.
 .test open exactly
-    .fixture "config/__init__.py" from "../cases/drf-practice-view-without-permission/open/config/__init__.py"
-    .fixture "config/settings/__init__.py" from "../cases/drf-practice-view-without-permission/open/config/settings/__init__.py"
-    .fixture "config/settings/base.py" from "../cases/drf-practice-view-without-permission/open/config/settings/base.py"
-    .fixture "config/settings/production.py" from "../cases/drf-practice-view-without-permission/open/config/settings/production.py"
-    .fixture "config/settings/test.py" from "../cases/drf-practice-view-without-permission/open/config/settings/test.py"
-    .fixture "shop/__init__.py" from "../cases/drf-practice-view-without-permission/open/shop/__init__.py"
-    .fixture "shop/api/__init__.py" from "../cases/drf-practice-view-without-permission/open/shop/api/__init__.py"
-    .fixture "shop/api/base.py" from "../cases/drf-practice-view-without-permission/open/shop/api/base.py"
-    .fixture "shop/api/serializers.py" from "../cases/drf-practice-view-without-permission/open/shop/api/serializers.py"
-    .fixture "shop/api/views.py" from "../cases/drf-practice-view-without-permission/open/shop/api/views.py"
-    .fixture "shop/models.py" from "../cases/drf-practice-view-without-permission/open/shop/models.py"
-    .fixture "shop/test_api.py" from "../cases/drf-practice-view-without-permission/open/shop/test_api.py"
-    .fixture "shop/tests/__init__.py" from "../cases/drf-practice-view-without-permission/open/shop/tests/__init__.py"
-    .fixture "shop/tests/test_views.py" from "../cases/drf-practice-view-without-permission/open/shop/tests/test_views.py"
+    .fixture "config/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/config/__init__.py"
+    .fixture "config/settings/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/config/settings/__init__.py"
+    .fixture "config/settings/base.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/config/settings/base.py"
+    .fixture "config/settings/production.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/config/settings/production.py"
+    .fixture "config/settings/test.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/config/settings/test.py"
+    .fixture "shop/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/shop/__init__.py"
+    .fixture "shop/api/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/shop/api/__init__.py"
+    .fixture "shop/api/base.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/shop/api/base.py"
+    .fixture "shop/api/serializers.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/shop/api/serializers.py"
+    .fixture "shop/api/views.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/shop/api/views.py"
+    .fixture "shop/models.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/shop/models.py"
+    .fixture "shop/test_api.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/shop/test_api.py"
+    .fixture "shop/tests/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/shop/tests/__init__.py"
+    .fixture "shop/tests/test_views.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/shop/tests/test_views.py"
     .expect _ at "shop/api/views.py":26
     .expect _ at "shop/api/views.py":31
     .expect _ at "shop/api/views.py":36
@@ -149,31 +149,31 @@ vwp_fn_perms(f) :- kind(f, "function_definition"), decorator(f, dd), unparen(dd,
     .expect _ at "shop/api/views.py":225
 .end
 .test allowany exactly
-    .fixture "notes/__init__.py" from "../cases/drf-practice-view-without-permission/allowany/notes/__init__.py"
-    .fixture "notes/mixins.py" from "../cases/drf-practice-view-without-permission/allowany/notes/mixins.py"
-    .fixture "notes/views.py" from "../cases/drf-practice-view-without-permission/allowany/notes/views.py"
-    .fixture "project/__init__.py" from "../cases/drf-practice-view-without-permission/allowany/project/__init__.py"
-    .fixture "project/local_settings.py" from "../cases/drf-practice-view-without-permission/allowany/project/local_settings.py"
-    .fixture "project/settings.py" from "../cases/drf-practice-view-without-permission/allowany/project/settings.py"
+    .fixture "notes/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/allowany/notes/__init__.py"
+    .fixture "notes/mixins.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/allowany/notes/mixins.py"
+    .fixture "notes/views.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/allowany/notes/views.py"
+    .fixture "project/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/allowany/project/__init__.py"
+    .fixture "project/local_settings.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/allowany/project/local_settings.py"
+    .fixture "project/settings.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/allowany/project/settings.py"
     .expect _ at "notes/views.py":7
     .expect _ at "notes/views.py":11
 .end
 .test closed exactly
-    .fixture "config/__init__.py" from "../cases/drf-practice-view-without-permission/closed/config/__init__.py"
-    .fixture "config/settings/__init__.py" from "../cases/drf-practice-view-without-permission/closed/config/settings/__init__.py"
-    .fixture "config/settings/base.py" from "../cases/drf-practice-view-without-permission/closed/config/settings/base.py"
-    .fixture "config/settings/production.py" from "../cases/drf-practice-view-without-permission/closed/config/settings/production.py"
-    .fixture "shop/__init__.py" from "../cases/drf-practice-view-without-permission/closed/shop/__init__.py"
-    .fixture "shop/views.py" from "../cases/drf-practice-view-without-permission/closed/shop/views.py"
+    .fixture "config/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/closed/config/__init__.py"
+    .fixture "config/settings/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/closed/config/settings/__init__.py"
+    .fixture "config/settings/base.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/closed/config/settings/base.py"
+    .fixture "config/settings/production.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/closed/config/settings/production.py"
+    .fixture "shop/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/closed/shop/__init__.py"
+    .fixture "shop/views.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/closed/shop/views.py"
 .end
 .test unreadable exactly
-    .fixture "project/__init__.py" from "../cases/drf-practice-view-without-permission/unreadable/project/__init__.py"
-    .fixture "project/settings.py" from "../cases/drf-practice-view-without-permission/unreadable/project/settings.py"
-    .fixture "shop/__init__.py" from "../cases/drf-practice-view-without-permission/unreadable/shop/__init__.py"
-    .fixture "shop/views.py" from "../cases/drf-practice-view-without-permission/unreadable/shop/views.py"
+    .fixture "project/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/unreadable/project/__init__.py"
+    .fixture "project/settings.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/unreadable/project/settings.py"
+    .fixture "shop/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/unreadable/shop/__init__.py"
+    .fixture "shop/views.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/unreadable/shop/views.py"
 .end
 .test library exactly
-    .fixture "reviews/__init__.py" from "../cases/drf-practice-view-without-permission/library/reviews/__init__.py"
-    .fixture "reviews/app_settings.py" from "../cases/drf-practice-view-without-permission/library/reviews/app_settings.py"
-    .fixture "reviews/views.py" from "../cases/drf-practice-view-without-permission/library/reviews/views.py"
+    .fixture "reviews/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/library/reviews/__init__.py"
+    .fixture "reviews/app_settings.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/library/reviews/app_settings.py"
+    .fixture "reviews/views.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/library/reviews/views.py"
 .end

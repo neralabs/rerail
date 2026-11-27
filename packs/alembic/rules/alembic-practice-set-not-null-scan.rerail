@@ -155,18 +155,18 @@ SetNotNullScan(c, t, x) :- snn_cand(c, t, x, _, d, ct, ft), snn_set(d, ct, t, x,
 SetNotNullAfterAdd(c, t, x) :- snn_cand(c, t, x, _, d, ct, ft), snn_set(d, ct, t, x, ft), !snn_safe(d, ct),
     snn_added_before(c).
 
-// The cases, `cases/alembic-practice-set-not-null-scan/`, read as one repository: each line ending in `# caught` is
-// reported, and no other line.
+// The cases, `upstream/alembic-practice/authored/alembic-practice-set-not-null-scan/`, read as one repository: each
+// line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/schema.py" from "../cases/alembic-practice-set-not-null-scan/app/schema.py"
-    .fixture "migrations/versions/s1_set_not_null.py" from "../cases/alembic-practice-set-not-null-scan/migrations/versions/s1_set_not_null.py"
-    .fixture "migrations/versions/s2_new_tables_and_dialects.py" from "../cases/alembic-practice-set-not-null-scan/migrations/versions/s2_new_tables_and_dialects.py"
-    .fixture "migrations/versions/s3_added_then_tightened.py" from "../cases/alembic-practice-set-not-null-scan/migrations/versions/s3_added_then_tightened.py"
-    .fixture "migrations/versions/s4_checked_first.py" from "../cases/alembic-practice-set-not-null-scan/migrations/versions/s4_checked_first.py"
-    .fixture "migrations/versions/s5_validate_later.py" from "../cases/alembic-practice-set-not-null-scan/migrations/versions/s5_validate_later.py"
-    .fixture "migrations/versions/s6_other_op.py" from "../cases/alembic-practice-set-not-null-scan/migrations/versions/s6_other_op.py"
-    .fixture "migrations/versions/s7_refunds_checks.py" from "../cases/alembic-practice-set-not-null-scan/migrations/versions/s7_refunds_checks.py"
-    .fixture "tests/migrations/versions/t1_fixture.py" from "../cases/alembic-practice-set-not-null-scan/tests/migrations/versions/t1_fixture.py"
+    .fixture "app/schema.py" from "../upstream/alembic-practice/authored/alembic-practice-set-not-null-scan/app/schema.py"
+    .fixture "migrations/versions/s1_set_not_null.py" from "../upstream/alembic-practice/authored/alembic-practice-set-not-null-scan/migrations/versions/s1_set_not_null.py"
+    .fixture "migrations/versions/s2_new_tables_and_dialects.py" from "../upstream/alembic-practice/authored/alembic-practice-set-not-null-scan/migrations/versions/s2_new_tables_and_dialects.py"
+    .fixture "migrations/versions/s3_added_then_tightened.py" from "../upstream/alembic-practice/authored/alembic-practice-set-not-null-scan/migrations/versions/s3_added_then_tightened.py"
+    .fixture "migrations/versions/s4_checked_first.py" from "../upstream/alembic-practice/authored/alembic-practice-set-not-null-scan/migrations/versions/s4_checked_first.py"
+    .fixture "migrations/versions/s5_validate_later.py" from "../upstream/alembic-practice/authored/alembic-practice-set-not-null-scan/migrations/versions/s5_validate_later.py"
+    .fixture "migrations/versions/s6_other_op.py" from "../upstream/alembic-practice/authored/alembic-practice-set-not-null-scan/migrations/versions/s6_other_op.py"
+    .fixture "migrations/versions/s7_refunds_checks.py" from "../upstream/alembic-practice/authored/alembic-practice-set-not-null-scan/migrations/versions/s7_refunds_checks.py"
+    .fixture "tests/migrations/versions/t1_fixture.py" from "../upstream/alembic-practice/authored/alembic-practice-set-not-null-scan/tests/migrations/versions/t1_fixture.py"
     .expect _ at "migrations/versions/s1_set_not_null.py":14
     .expect _ at "migrations/versions/s1_set_not_null.py":15
     .expect _ at "migrations/versions/s1_set_not_null.py":16

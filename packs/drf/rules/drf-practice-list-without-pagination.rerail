@@ -212,22 +212,22 @@ lwp_slicing(fq) :- kind(s, "subscript"), def_frame(s, f), lwp_slice(s), kind(f, 
 .decl lwp_slice(s: node)
 lwp_slice(s) :- kind(s, "subscript"), child(s, x, _), kind(x, "slice").
 
-// The cases, `cases/drf-practice-list-without-pagination/`: each sub-directory is one project, read as one
-// repository; each line ending in `# caught` is reported, and no other line.
+// The cases, `upstream/drf-practice/authored/drf-practice-list-without-pagination/`: each sub-directory is one project,
+// read as one repository; each line ending in `# caught` is reported, and no other line.
 .test open exactly
-    .fixture "config/__init__.py" from "../cases/drf-practice-list-without-pagination/open/config/__init__.py"
-    .fixture "config/settings/__init__.py" from "../cases/drf-practice-list-without-pagination/open/config/settings/__init__.py"
-    .fixture "config/settings/base.py" from "../cases/drf-practice-list-without-pagination/open/config/settings/base.py"
-    .fixture "config/settings/test.py" from "../cases/drf-practice-list-without-pagination/open/config/settings/test.py"
-    .fixture "shop/__init__.py" from "../cases/drf-practice-list-without-pagination/open/shop/__init__.py"
-    .fixture "shop/api/__init__.py" from "../cases/drf-practice-list-without-pagination/open/shop/api/__init__.py"
-    .fixture "shop/api/base.py" from "../cases/drf-practice-list-without-pagination/open/shop/api/base.py"
-    .fixture "shop/api/serializers.py" from "../cases/drf-practice-list-without-pagination/open/shop/api/serializers.py"
-    .fixture "shop/api/urls.py" from "../cases/drf-practice-list-without-pagination/open/shop/api/urls.py"
-    .fixture "shop/api/views.py" from "../cases/drf-practice-list-without-pagination/open/shop/api/views.py"
-    .fixture "shop/models.py" from "../cases/drf-practice-list-without-pagination/open/shop/models.py"
-    .fixture "shop/tests/__init__.py" from "../cases/drf-practice-list-without-pagination/open/shop/tests/__init__.py"
-    .fixture "shop/tests/test_views.py" from "../cases/drf-practice-list-without-pagination/open/shop/tests/test_views.py"
+    .fixture "config/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/config/__init__.py"
+    .fixture "config/settings/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/config/settings/__init__.py"
+    .fixture "config/settings/base.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/config/settings/base.py"
+    .fixture "config/settings/test.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/config/settings/test.py"
+    .fixture "shop/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/shop/__init__.py"
+    .fixture "shop/api/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/shop/api/__init__.py"
+    .fixture "shop/api/base.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/shop/api/base.py"
+    .fixture "shop/api/serializers.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/shop/api/serializers.py"
+    .fixture "shop/api/urls.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/shop/api/urls.py"
+    .fixture "shop/api/views.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/shop/api/views.py"
+    .fixture "shop/models.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/shop/models.py"
+    .fixture "shop/tests/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/shop/tests/__init__.py"
+    .fixture "shop/tests/test_views.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/shop/tests/test_views.py"
     .expect _ at "shop/api/views.py":10
     .expect _ at "shop/api/views.py":15
     .expect _ at "shop/api/views.py":22
@@ -239,62 +239,62 @@ lwp_slice(s) :- kind(s, "subscript"), child(s, x, _), kind(x, "slice").
 .end
 
 .test nulled exactly
-    .fixture "config/__init__.py" from "../cases/drf-practice-list-without-pagination/nulled/config/__init__.py"
-    .fixture "config/settings.py" from "../cases/drf-practice-list-without-pagination/nulled/config/settings.py"
-    .fixture "notes/__init__.py" from "../cases/drf-practice-list-without-pagination/nulled/notes/__init__.py"
-    .fixture "notes/models.py" from "../cases/drf-practice-list-without-pagination/nulled/notes/models.py"
-    .fixture "notes/views.py" from "../cases/drf-practice-list-without-pagination/nulled/notes/views.py"
+    .fixture "config/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/nulled/config/__init__.py"
+    .fixture "config/settings.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/nulled/config/settings.py"
+    .fixture "notes/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/nulled/notes/__init__.py"
+    .fixture "notes/models.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/nulled/notes/models.py"
+    .fixture "notes/views.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/nulled/notes/views.py"
     .expect _ at "notes/views.py":12
 .end
 
 .test paged exactly
-    .fixture "config/__init__.py" from "../cases/drf-practice-list-without-pagination/paged/config/__init__.py"
-    .fixture "config/settings/__init__.py" from "../cases/drf-practice-list-without-pagination/paged/config/settings/__init__.py"
-    .fixture "config/settings/base.py" from "../cases/drf-practice-list-without-pagination/paged/config/settings/base.py"
-    .fixture "config/settings/production.py" from "../cases/drf-practice-list-without-pagination/paged/config/settings/production.py"
-    .fixture "notes/__init__.py" from "../cases/drf-practice-list-without-pagination/paged/notes/__init__.py"
-    .fixture "notes/models.py" from "../cases/drf-practice-list-without-pagination/paged/notes/models.py"
-    .fixture "notes/pagination.py" from "../cases/drf-practice-list-without-pagination/paged/notes/pagination.py"
-    .fixture "notes/views.py" from "../cases/drf-practice-list-without-pagination/paged/notes/views.py"
+    .fixture "config/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/paged/config/__init__.py"
+    .fixture "config/settings/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/paged/config/settings/__init__.py"
+    .fixture "config/settings/base.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/paged/config/settings/base.py"
+    .fixture "config/settings/production.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/paged/config/settings/production.py"
+    .fixture "notes/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/paged/notes/__init__.py"
+    .fixture "notes/models.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/paged/notes/models.py"
+    .fixture "notes/pagination.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/paged/notes/pagination.py"
+    .fixture "notes/views.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/paged/notes/views.py"
 .end
 
 .test library exactly
-    .fixture "notes/__init__.py" from "../cases/drf-practice-list-without-pagination/library/notes/__init__.py"
-    .fixture "notes/models.py" from "../cases/drf-practice-list-without-pagination/library/notes/models.py"
-    .fixture "notes/views.py" from "../cases/drf-practice-list-without-pagination/library/notes/views.py"
+    .fixture "notes/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/library/notes/__init__.py"
+    .fixture "notes/models.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/library/notes/models.py"
+    .fixture "notes/views.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/library/notes/views.py"
 .end
 
 .test rooted exactly
-    .fixture "backend/board/__init__.py" from "../cases/drf-practice-list-without-pagination/rooted/backend/board/__init__.py"
-    .fixture "backend/board/models.py" from "../cases/drf-practice-list-without-pagination/rooted/backend/board/models.py"
-    .fixture "backend/board/urls.py" from "../cases/drf-practice-list-without-pagination/rooted/backend/board/urls.py"
-    .fixture "backend/board/views/__init__.py" from "../cases/drf-practice-list-without-pagination/rooted/backend/board/views/__init__.py"
-    .fixture "backend/board/views/base.py" from "../cases/drf-practice-list-without-pagination/rooted/backend/board/views/base.py"
-    .fixture "backend/board/views/card.py" from "../cases/drf-practice-list-without-pagination/rooted/backend/board/views/card.py"
-    .fixture "backend/board/views/member.py" from "../cases/drf-practice-list-without-pagination/rooted/backend/board/views/member.py"
-    .fixture "backend/config/__init__.py" from "../cases/drf-practice-list-without-pagination/rooted/backend/config/__init__.py"
-    .fixture "backend/config/settings.py" from "../cases/drf-practice-list-without-pagination/rooted/backend/config/settings.py"
+    .fixture "backend/board/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/rooted/backend/board/__init__.py"
+    .fixture "backend/board/models.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/rooted/backend/board/models.py"
+    .fixture "backend/board/urls.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/rooted/backend/board/urls.py"
+    .fixture "backend/board/views/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/rooted/backend/board/views/__init__.py"
+    .fixture "backend/board/views/base.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/rooted/backend/board/views/base.py"
+    .fixture "backend/board/views/card.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/rooted/backend/board/views/card.py"
+    .fixture "backend/board/views/member.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/rooted/backend/board/views/member.py"
+    .fixture "backend/config/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/rooted/backend/config/__init__.py"
+    .fixture "backend/config/settings.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/rooted/backend/config/settings.py"
     .expect _ at "backend/board/views/card.py":14
     .expect _ at "backend/board/views/card.py":19
     .expect _ at "backend/board/views/member.py":19
 .end
 
 .test inert exactly
-    .fixture "api/__init__.py" from "../cases/drf-practice-list-without-pagination/inert/api/__init__.py"
-    .fixture "api/models.py" from "../cases/drf-practice-list-without-pagination/inert/api/models.py"
-    .fixture "api/pagination.py" from "../cases/drf-practice-list-without-pagination/inert/api/pagination.py"
-    .fixture "api/views.py" from "../cases/drf-practice-list-without-pagination/inert/api/views.py"
-    .fixture "config/__init__.py" from "../cases/drf-practice-list-without-pagination/inert/config/__init__.py"
-    .fixture "config/settings.py" from "../cases/drf-practice-list-without-pagination/inert/config/settings.py"
+    .fixture "api/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/inert/api/__init__.py"
+    .fixture "api/models.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/inert/api/models.py"
+    .fixture "api/pagination.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/inert/api/pagination.py"
+    .fixture "api/views.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/inert/api/views.py"
+    .fixture "config/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/inert/config/__init__.py"
+    .fixture "config/settings.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/inert/config/settings.py"
     .expect _ at "api/views.py":22
     .expect _ at "api/views.py":28
     .expect _ at "config/settings.py":2
 .end
 
 .test sized exactly
-    .fixture "api/__init__.py" from "../cases/drf-practice-list-without-pagination/sized/api/__init__.py"
-    .fixture "api/models.py" from "../cases/drf-practice-list-without-pagination/sized/api/models.py"
-    .fixture "api/views.py" from "../cases/drf-practice-list-without-pagination/sized/api/views.py"
-    .fixture "config/__init__.py" from "../cases/drf-practice-list-without-pagination/sized/config/__init__.py"
-    .fixture "config/settings.py" from "../cases/drf-practice-list-without-pagination/sized/config/settings.py"
+    .fixture "api/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/sized/api/__init__.py"
+    .fixture "api/models.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/sized/api/models.py"
+    .fixture "api/views.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/sized/api/views.py"
+    .fixture "config/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/sized/config/__init__.py"
+    .fixture "config/settings.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/sized/config/settings.py"
 .end

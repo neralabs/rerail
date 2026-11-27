@@ -287,8 +287,9 @@ violation codes it reports. `pack.json` restates none of it; `title`, `group`, `
 - **Includes.** `#include` finds core's `.rerail` library, which core ships, and then files beside the including
   file. A library file only the pack's rules use belongs to the pack: put it under `rules/` (`rules/lib/<name>.rerail`,
   included as `#include "lib/<name>.rerail"`), where it is published with the rules and takes no `pack.json` entry.
-- **Tests.** The file's `.test` blocks are its own tests. Their fixtures may be written inline, or read from files
-  outside `rules/` (`cases/<id>/…`) that `files` does not publish.
+- **Tests.** The file's `.test` blocks are its own tests. Their fixtures may be written inline, or read from the
+  pack's own test data, never in git: a small repository per rule under `upstream/<tool>/authored/<id>/`, published
+  to S3 like any pack data and fetched with `npm run fixtures:pull` ([pack data](#pack-data)).
 - **Digest.** A rule's digest covers its text and the bytes of every file it includes, core's library among them, so
   an edit to any of them, or a core update that changes the library, asks for the pack's approval again where it
   needs one and checks the pack with the engine again.

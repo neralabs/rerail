@@ -122,20 +122,20 @@ hc_cached_q(gq) :- hc_cached(g), pt_def(g, gq).
 .decl hc_cache_q(q: symbol)
 hc_cache_q("functools.lru_cache"). hc_cache_q("functools.cache"). hc_cache_q("async_lru.alru_cache").
 
-// The cases, `cases/fastapi-practice-http-client-per-request/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/__init__.py" from "../cases/fastapi-practice-http-client-per-request/app/__init__.py"
-    .fixture "app/cli.py" from "../cases/fastapi-practice-http-client-per-request/app/cli.py"
-    .fixture "app/clients.py" from "../cases/fastapi-practice-http-client-per-request/app/clients.py"
-    .fixture "app/deps.py" from "../cases/fastapi-practice-http-client-per-request/app/deps.py"
-    .fixture "app/main.py" from "../cases/fastapi-practice-http-client-per-request/app/main.py"
-    .fixture "app/routes.py" from "../cases/fastapi-practice-http-client-per-request/app/routes.py"
-    .fixture "app/services.py" from "../cases/fastapi-practice-http-client-per-request/app/services.py"
-    .fixture "app/tests/__init__.py" from "../cases/fastapi-practice-http-client-per-request/app/tests/__init__.py"
-    .fixture "app/tests/test_routes.py" from "../cases/fastapi-practice-http-client-per-request/app/tests/test_routes.py"
-    .fixture "app/variants.py" from "../cases/fastapi-practice-http-client-per-request/app/variants.py"
-    .fixture "app/worker.py" from "../cases/fastapi-practice-http-client-per-request/app/worker.py"
+    .fixture "app/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/app/__init__.py"
+    .fixture "app/cli.py" from "../upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/app/cli.py"
+    .fixture "app/clients.py" from "../upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/app/clients.py"
+    .fixture "app/deps.py" from "../upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/app/deps.py"
+    .fixture "app/main.py" from "../upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/app/main.py"
+    .fixture "app/routes.py" from "../upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/app/routes.py"
+    .fixture "app/services.py" from "../upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/app/services.py"
+    .fixture "app/tests/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/app/tests/__init__.py"
+    .fixture "app/tests/test_routes.py" from "../upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/app/tests/test_routes.py"
+    .fixture "app/variants.py" from "../upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/app/variants.py"
+    .fixture "app/worker.py" from "../upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/app/worker.py"
     .expect _ at "app/clients.py":27
     .expect _ at "app/clients.py":32
     .expect _ at "app/deps.py":7

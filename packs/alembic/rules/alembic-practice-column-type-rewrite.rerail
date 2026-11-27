@@ -165,16 +165,16 @@ ct_call(c, d, ct) :- al_call(c, "alter_column", _), al_term(c, d, ct).
 TypeChangeRewrites(c, x, t, ch) :- ct_call(c, d, ct), ct_hit(d, ct, x, t, ch), !ct_limit(d, ct, _).
 LengthLimitScan(c, x, t, ch, m) :- ct_call(c, d, ct), ct_hit(d, ct, x, t, ch), ct_limit(d, ct, m).
 
-// The cases, `cases/alembic-practice-column-type-rewrite/`, read as one repository: each line ending in `# caught` is
-// reported, and no other line.
+// The cases, `upstream/alembic-practice/authored/alembic-practice-column-type-rewrite/`, read as one repository: each
+// line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/other_op.py" from "../cases/alembic-practice-column-type-rewrite/app/other_op.py"
-    .fixture "app/types.py" from "../cases/alembic-practice-column-type-rewrite/app/types.py"
-    .fixture "migrations/versions/b1_type_changes.py" from "../cases/alembic-practice-column-type-rewrite/migrations/versions/b1_type_changes.py"
-    .fixture "migrations/versions/b2_dialects.py" from "../cases/alembic-practice-column-type-rewrite/migrations/versions/b2_dialects.py"
-    .fixture "migrations/versions/b3_spellings.py" from "../cases/alembic-practice-column-type-rewrite/migrations/versions/b3_spellings.py"
-    .fixture "migrations/versions/b4_project_types.py" from "../cases/alembic-practice-column-type-rewrite/migrations/versions/b4_project_types.py"
-    .fixture "tests/test_migration_shapes.py" from "../cases/alembic-practice-column-type-rewrite/tests/test_migration_shapes.py"
+    .fixture "app/other_op.py" from "../upstream/alembic-practice/authored/alembic-practice-column-type-rewrite/app/other_op.py"
+    .fixture "app/types.py" from "../upstream/alembic-practice/authored/alembic-practice-column-type-rewrite/app/types.py"
+    .fixture "migrations/versions/b1_type_changes.py" from "../upstream/alembic-practice/authored/alembic-practice-column-type-rewrite/migrations/versions/b1_type_changes.py"
+    .fixture "migrations/versions/b2_dialects.py" from "../upstream/alembic-practice/authored/alembic-practice-column-type-rewrite/migrations/versions/b2_dialects.py"
+    .fixture "migrations/versions/b3_spellings.py" from "../upstream/alembic-practice/authored/alembic-practice-column-type-rewrite/migrations/versions/b3_spellings.py"
+    .fixture "migrations/versions/b4_project_types.py" from "../upstream/alembic-practice/authored/alembic-practice-column-type-rewrite/migrations/versions/b4_project_types.py"
+    .fixture "tests/test_migration_shapes.py" from "../upstream/alembic-practice/authored/alembic-practice-column-type-rewrite/tests/test_migration_shapes.py"
     .expect TypeChangeRewrites at "migrations/versions/b1_type_changes.py":20
     .expect TypeChangeRewrites at "migrations/versions/b1_type_changes.py":21
     .expect TypeChangeRewrites at "migrations/versions/b1_type_changes.py":22

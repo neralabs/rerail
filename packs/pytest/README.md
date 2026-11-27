@@ -38,6 +38,10 @@ conftest.py chain for fixture values.
 
 ## Rule details
 
+Each rule's `.test cases exactly` block reads a small Python repository, `upstream/pytest-practice/authored/<id>/`:
+pack test data in S3, not in git (`npm run fixtures:pull -- --pack pytest`), recorded in
+[`upstream/pytest-practice/UPSTREAM.md`](upstream/pytest-practice/UPSTREAM.md).
+
 ### `pytest-practice-patch-misses-from-import`
 
 **Catches** a mock patch aimed at the module that defines a name, when the code the test runs copied that name with a

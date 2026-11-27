@@ -189,26 +189,26 @@ tas_function(a) :- unparen(a, e), kind(e, "identifier"), sym_of(e, q), docof(e, 
 tas_function(a) :- unparen(a, e), kind(e, "identifier"), text(e, x), look(e, x, s), !kind(s, "module"),
     defn(s, x, g), kind(g, "function_definition").
 
-// The cases, `cases/celery-practice-task-arg-not-serializable/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line. `pickled/` is an app that sets task_serializer to pickle, so it is its
-// own repository.
+// The cases, `upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line. `pickled/` is an app that sets task_serializer to
+// pickle, so it is its own repository.
 .test cases exactly
-    .fixture "proj/__init__.py" from "../cases/celery-practice-task-arg-not-serializable/proj/__init__.py"
-    .fixture "proj/celery.py" from "../cases/celery-practice-task-arg-not-serializable/proj/celery.py"
-    .fixture "proj/models.py" from "../cases/celery-practice-task-arg-not-serializable/proj/models.py"
-    .fixture "proj/tasks.py" from "../cases/celery-practice-task-arg-not-serializable/proj/tasks.py"
-    .fixture "proj/services.py" from "../cases/celery-practice-task-arg-not-serializable/proj/services.py"
-    .fixture "proj/fine.py" from "../cases/celery-practice-task-arg-not-serializable/proj/fine.py"
-    .fixture "proj/db.py" from "../cases/celery-practice-task-arg-not-serializable/proj/db.py"
-    .fixture "proj/rq_jobs.py" from "../cases/celery-practice-task-arg-not-serializable/proj/rq_jobs.py"
-    .fixture "proj/sessions.py" from "../cases/celery-practice-task-arg-not-serializable/proj/sessions.py"
-    .fixture "proj/decorators.py" from "../cases/celery-practice-task-arg-not-serializable/proj/decorators.py"
-    .fixture "proj/reexport.py" from "../cases/celery-practice-task-arg-not-serializable/proj/reexport.py"
-    .fixture "proj/uses.py" from "../cases/celery-practice-task-arg-not-serializable/proj/uses.py"
-    .fixture "proj/ops.py" from "../cases/celery-practice-task-arg-not-serializable/proj/ops.py"
-    .fixture "proj/tests/test_services.py" from "../cases/celery-practice-task-arg-not-serializable/proj/tests/test_services.py"
-    .fixture "dj/__init__.py" from "../cases/celery-practice-task-arg-not-serializable/dj/__init__.py"
-    .fixture "dj/views.py" from "../cases/celery-practice-task-arg-not-serializable/dj/views.py"
+    .fixture "proj/__init__.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/__init__.py"
+    .fixture "proj/celery.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/celery.py"
+    .fixture "proj/models.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/models.py"
+    .fixture "proj/tasks.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/tasks.py"
+    .fixture "proj/services.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/services.py"
+    .fixture "proj/fine.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/fine.py"
+    .fixture "proj/db.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/db.py"
+    .fixture "proj/rq_jobs.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/rq_jobs.py"
+    .fixture "proj/sessions.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/sessions.py"
+    .fixture "proj/decorators.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/decorators.py"
+    .fixture "proj/reexport.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/reexport.py"
+    .fixture "proj/uses.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/uses.py"
+    .fixture "proj/ops.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/ops.py"
+    .fixture "proj/tests/test_services.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/tests/test_services.py"
+    .fixture "dj/__init__.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/dj/__init__.py"
+    .fixture "dj/views.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/dj/views.py"
     .expect _ at "dj/views.py":10
     .expect _ at "proj/sessions.py":19
     .expect _ at "proj/sessions.py":21
@@ -259,10 +259,10 @@ tas_function(a) :- unparen(a, e), kind(e, "identifier"), text(e, x), look(e, x, 
 .end
 
 .test pickled_app exactly
-    .fixture "pickled/__init__.py" from "../cases/celery-practice-task-arg-not-serializable/pickled/__init__.py"
-    .fixture "pickled/celery.py" from "../cases/celery-practice-task-arg-not-serializable/pickled/celery.py"
-    .fixture "pickled/models.py" from "../cases/celery-practice-task-arg-not-serializable/pickled/models.py"
-    .fixture "pickled/jobs.py" from "../cases/celery-practice-task-arg-not-serializable/pickled/jobs.py"
+    .fixture "pickled/__init__.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/pickled/__init__.py"
+    .fixture "pickled/celery.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/pickled/celery.py"
+    .fixture "pickled/models.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/pickled/models.py"
+    .fixture "pickled/jobs.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/pickled/jobs.py"
     .expect _ at "pickled/jobs.py":16
     .expect _ at "pickled/jobs.py":17
     .expect _ at "pickled/jobs.py":21
@@ -271,9 +271,9 @@ tas_function(a) :- unparen(a, e), kind(e, "identifier"), text(e, x), look(e, x, 
 .end
 
 .test wrapped_app exactly
-    .fixture "wrapped/__init__.py" from "../cases/celery-practice-task-arg-not-serializable/wrapped/__init__.py"
-    .fixture "wrapped/celery.py" from "../cases/celery-practice-task-arg-not-serializable/wrapped/celery.py"
-    .fixture "wrapped/models.py" from "../cases/celery-practice-task-arg-not-serializable/wrapped/models.py"
-    .fixture "wrapped/jobs.py" from "../cases/celery-practice-task-arg-not-serializable/wrapped/jobs.py"
+    .fixture "wrapped/__init__.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/wrapped/__init__.py"
+    .fixture "wrapped/celery.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/wrapped/celery.py"
+    .fixture "wrapped/models.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/wrapped/models.py"
+    .fixture "wrapped/jobs.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/wrapped/jobs.py"
     .expect _ at "wrapped/jobs.py":13
 .end

@@ -140,23 +140,24 @@ env_hit(uq, p, o) :- env_hit_at(uq, p, o), pt_runs_in_test(uq), !pt_undo_body(uq
 .decl env_first(u: symbol, p: symbol, o: number)
 env_first(uq, p, o) :- env_hit(uq, p, o), o = min o2 : { env_hit(uq, p, o2) }.
 
-// The cases, `cases/pytest-practice-environ-without-monkeypatch/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/pytest-practice/authored/pytest-practice-environ-without-monkeypatch/` (pack test data in S3,
+// not in git: `npm run fixtures:pull -- --pack pytest`), read as one repository: each line ending in `# caught` is
+// reported, and no other line.
 .test cases exactly
-    .fixture "conftest.py" from "../cases/pytest-practice-environ-without-monkeypatch/conftest.py"
-    .fixture "shop/__init__.py" from "../cases/pytest-practice-environ-without-monkeypatch/shop/__init__.py"
-    .fixture "shop/wsgi.py" from "../cases/pytest-practice-environ-without-monkeypatch/shop/wsgi.py"
-    .fixture "tests/__init__.py" from "../cases/pytest-practice-environ-without-monkeypatch/tests/__init__.py"
-    .fixture "tests/checks/check_server.py" from "../cases/pytest-practice-environ-without-monkeypatch/tests/checks/check_server.py"
-    .fixture "tests/helpers.py" from "../cases/pytest-practice-environ-without-monkeypatch/tests/helpers.py"
-    .fixture "tests/isolated/conftest.py" from "../cases/pytest-practice-environ-without-monkeypatch/tests/isolated/conftest.py"
-    .fixture "tests/isolated/test_isolated.py" from "../cases/pytest-practice-environ-without-monkeypatch/tests/isolated/test_isolated.py"
-    .fixture "tests/runtests.py" from "../cases/pytest-practice-environ-without-monkeypatch/tests/runtests.py"
-    .fixture "tests/test_env.py" from "../cases/pytest-practice-environ-without-monkeypatch/tests/test_env.py"
-    .fixture "tests/test_restores.py" from "../cases/pytest-practice-environ-without-monkeypatch/tests/test_restores.py"
-    .fixture "tests/unit/__init__.py" from "../cases/pytest-practice-environ-without-monkeypatch/tests/unit/__init__.py"
-    .fixture "tests/unit/base.py" from "../cases/pytest-practice-environ-without-monkeypatch/tests/unit/base.py"
-    .fixture "tests/unit/test_case.py" from "../cases/pytest-practice-environ-without-monkeypatch/tests/unit/test_case.py"
+    .fixture "conftest.py" from "../upstream/pytest-practice/authored/pytest-practice-environ-without-monkeypatch/conftest.py"
+    .fixture "shop/__init__.py" from "../upstream/pytest-practice/authored/pytest-practice-environ-without-monkeypatch/shop/__init__.py"
+    .fixture "shop/wsgi.py" from "../upstream/pytest-practice/authored/pytest-practice-environ-without-monkeypatch/shop/wsgi.py"
+    .fixture "tests/__init__.py" from "../upstream/pytest-practice/authored/pytest-practice-environ-without-monkeypatch/tests/__init__.py"
+    .fixture "tests/checks/check_server.py" from "../upstream/pytest-practice/authored/pytest-practice-environ-without-monkeypatch/tests/checks/check_server.py"
+    .fixture "tests/helpers.py" from "../upstream/pytest-practice/authored/pytest-practice-environ-without-monkeypatch/tests/helpers.py"
+    .fixture "tests/isolated/conftest.py" from "../upstream/pytest-practice/authored/pytest-practice-environ-without-monkeypatch/tests/isolated/conftest.py"
+    .fixture "tests/isolated/test_isolated.py" from "../upstream/pytest-practice/authored/pytest-practice-environ-without-monkeypatch/tests/isolated/test_isolated.py"
+    .fixture "tests/runtests.py" from "../upstream/pytest-practice/authored/pytest-practice-environ-without-monkeypatch/tests/runtests.py"
+    .fixture "tests/test_env.py" from "../upstream/pytest-practice/authored/pytest-practice-environ-without-monkeypatch/tests/test_env.py"
+    .fixture "tests/test_restores.py" from "../upstream/pytest-practice/authored/pytest-practice-environ-without-monkeypatch/tests/test_restores.py"
+    .fixture "tests/unit/__init__.py" from "../upstream/pytest-practice/authored/pytest-practice-environ-without-monkeypatch/tests/unit/__init__.py"
+    .fixture "tests/unit/base.py" from "../upstream/pytest-practice/authored/pytest-practice-environ-without-monkeypatch/tests/unit/base.py"
+    .fixture "tests/unit/test_case.py" from "../upstream/pytest-practice/authored/pytest-practice-environ-without-monkeypatch/tests/unit/test_case.py"
     .expect _ at "conftest.py":22
     .expect _ at "conftest.py":27
     .expect _ at "conftest.py":54

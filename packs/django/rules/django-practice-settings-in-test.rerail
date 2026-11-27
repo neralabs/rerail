@@ -125,21 +125,21 @@ dst_hit(uq, x, o) :- dst_at(uq, x, o), djt_runs_in_test(uq), !djt_undo_body(uq),
 .decl dst_first(u: symbol, x: symbol, o: number)
 dst_first(uq, x, o) :- dst_hit(uq, x, o), o = min o2 : { dst_hit(uq, x, o2) }.
 
-// The cases, `cases/django-practice-settings-in-test/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/django-practice/authored/django-practice-settings-in-test/`, read as one repository: each line
+// ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "conftest.py" from "../cases/django-practice-settings-in-test/conftest.py"
-    .fixture "shop/__init__.py" from "../cases/django-practice-settings-in-test/shop/__init__.py"
-    .fixture "shop/conf.py" from "../cases/django-practice-settings-in-test/shop/conf.py"
-    .fixture "shop/testutils/__init__.py" from "../cases/django-practice-settings-in-test/shop/testutils/__init__.py"
-    .fixture "shop/testutils/base.py" from "../cases/django-practice-settings-in-test/shop/testutils/base.py"
-    .fixture "shop/views.py" from "../cases/django-practice-settings-in-test/shop/views.py"
-    .fixture "tests/__init__.py" from "../cases/django-practice-settings-in-test/tests/__init__.py"
-    .fixture "tests/helpers.py" from "../cases/django-practice-settings-in-test/tests/helpers.py"
-    .fixture "tests/runtests.py" from "../cases/django-practice-settings-in-test/tests/runtests.py"
-    .fixture "tests/test_views.py" from "../cases/django-practice-settings-in-test/tests/test_views.py"
-    .fixture "tests/unit/__init__.py" from "../cases/django-practice-settings-in-test/tests/unit/__init__.py"
-    .fixture "tests/unit/test_case.py" from "../cases/django-practice-settings-in-test/tests/unit/test_case.py"
+    .fixture "conftest.py" from "../upstream/django-practice/authored/django-practice-settings-in-test/conftest.py"
+    .fixture "shop/__init__.py" from "../upstream/django-practice/authored/django-practice-settings-in-test/shop/__init__.py"
+    .fixture "shop/conf.py" from "../upstream/django-practice/authored/django-practice-settings-in-test/shop/conf.py"
+    .fixture "shop/testutils/__init__.py" from "../upstream/django-practice/authored/django-practice-settings-in-test/shop/testutils/__init__.py"
+    .fixture "shop/testutils/base.py" from "../upstream/django-practice/authored/django-practice-settings-in-test/shop/testutils/base.py"
+    .fixture "shop/views.py" from "../upstream/django-practice/authored/django-practice-settings-in-test/shop/views.py"
+    .fixture "tests/__init__.py" from "../upstream/django-practice/authored/django-practice-settings-in-test/tests/__init__.py"
+    .fixture "tests/helpers.py" from "../upstream/django-practice/authored/django-practice-settings-in-test/tests/helpers.py"
+    .fixture "tests/runtests.py" from "../upstream/django-practice/authored/django-practice-settings-in-test/tests/runtests.py"
+    .fixture "tests/test_views.py" from "../upstream/django-practice/authored/django-practice-settings-in-test/tests/test_views.py"
+    .fixture "tests/unit/__init__.py" from "../upstream/django-practice/authored/django-practice-settings-in-test/tests/unit/__init__.py"
+    .fixture "tests/unit/test_case.py" from "../upstream/django-practice/authored/django-practice-settings-in-test/tests/unit/test_case.py"
     .expect _ at "conftest.py":14
     .expect _ at "conftest.py":15
     .expect _ at "conftest.py":38

@@ -141,25 +141,25 @@ ColumnIndexNotConcurrent(c, t) :- inc_col(c, "col_index", t, d, ct, q), (q = "" 
     !al_np_ext(d, ct).
 PrimaryKeyNotConcurrent(c, t) :- inc_pk(c, t, d, ct), !al_np_ext(d, ct).
 
-// The cases, `cases/alembic-practice-index-not-concurrent/`, read as one repository: each line ending in `# caught`
-// is reported, and no other line.
+// The cases, `upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/`, read as one repository: each
+// line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/search.py" from "../cases/alembic-practice-index-not-concurrent/app/search.py"
-    .fixture "migrations/scripts/backfill.py" from "../cases/alembic-practice-index-not-concurrent/migrations/scripts/backfill.py"
-    .fixture "migrations/shared/dialects.py" from "../cases/alembic-practice-index-not-concurrent/migrations/shared/dialects.py"
-    .fixture "migrations/shared/flags.py" from "../cases/alembic-practice-index-not-concurrent/migrations/shared/flags.py"
-    .fixture "migrations/shared/utils.py" from "../cases/alembic-practice-index-not-concurrent/migrations/shared/utils.py"
-    .fixture "migrations/versions/c1_user_indexes.py" from "../cases/alembic-practice-index-not-concurrent/migrations/versions/c1_user_indexes.py"
-    .fixture "migrations/versions/c2_batch_and_dialects.py" from "../cases/alembic-practice-index-not-concurrent/migrations/versions/c2_batch_and_dialects.py"
-    .fixture "migrations/versions/c3_unique.py" from "../cases/alembic-practice-index-not-concurrent/migrations/versions/c3_unique.py"
-    .fixture "migrations/versions/c4_search_index.py" from "../cases/alembic-practice-index-not-concurrent/migrations/versions/c4_search_index.py"
-    .fixture "migrations/versions/c5_reports_wrapper.py" from "../cases/alembic-practice-index-not-concurrent/migrations/versions/c5_reports_wrapper.py"
-    .fixture "migrations/versions/c6_guards.py" from "../cases/alembic-practice-index-not-concurrent/migrations/versions/c6_guards.py"
-    .fixture "migrations/versions/c7_columns_keys_helpers.py" from "../cases/alembic-practice-index-not-concurrent/migrations/versions/c7_columns_keys_helpers.py"
-    .fixture "migrations/versions/c8_class_variants.py" from "../cases/alembic-practice-index-not-concurrent/migrations/versions/c8_class_variants.py"
-    .fixture "migrations/versions/c9_dialect_variants.py" from "../cases/alembic-practice-index-not-concurrent/migrations/versions/c9_dialect_variants.py"
-    .fixture "migrations/versions/c10_dialect_reported.py" from "../cases/alembic-practice-index-not-concurrent/migrations/versions/c10_dialect_reported.py"
-    .fixture "tests/migrations/versions/t1_fixture.py" from "../cases/alembic-practice-index-not-concurrent/tests/migrations/versions/t1_fixture.py"
+    .fixture "app/search.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/app/search.py"
+    .fixture "migrations/scripts/backfill.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/scripts/backfill.py"
+    .fixture "migrations/shared/dialects.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/shared/dialects.py"
+    .fixture "migrations/shared/flags.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/shared/flags.py"
+    .fixture "migrations/shared/utils.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/shared/utils.py"
+    .fixture "migrations/versions/c1_user_indexes.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/versions/c1_user_indexes.py"
+    .fixture "migrations/versions/c2_batch_and_dialects.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/versions/c2_batch_and_dialects.py"
+    .fixture "migrations/versions/c3_unique.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/versions/c3_unique.py"
+    .fixture "migrations/versions/c4_search_index.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/versions/c4_search_index.py"
+    .fixture "migrations/versions/c5_reports_wrapper.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/versions/c5_reports_wrapper.py"
+    .fixture "migrations/versions/c6_guards.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/versions/c6_guards.py"
+    .fixture "migrations/versions/c7_columns_keys_helpers.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/versions/c7_columns_keys_helpers.py"
+    .fixture "migrations/versions/c8_class_variants.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/versions/c8_class_variants.py"
+    .fixture "migrations/versions/c9_dialect_variants.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/versions/c9_dialect_variants.py"
+    .fixture "migrations/versions/c10_dialect_reported.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/versions/c10_dialect_reported.py"
+    .fixture "tests/migrations/versions/t1_fixture.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/tests/migrations/versions/t1_fixture.py"
     .expect IndexNotConcurrent at "migrations/versions/c1_user_indexes.py":14
     .expect IndexNotConcurrent at "migrations/versions/c1_user_indexes.py":17
     .expect IndexNotConcurrent at "migrations/versions/c1_user_indexes.py":18

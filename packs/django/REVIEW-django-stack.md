@@ -2,7 +2,7 @@
 
 Reviewer's audit of the six rules added by the Django stack batch (`NOTES-django-stack.md`): what each catches, what it
 misses, what it reports that it should not, how it reads on the corpus, and what to do with it. Nothing in `rules/`,
-`cases/` or `pack.json` was changed; the verdicts below are the output.
+`upstream/django-practice/authored/` or `pack.json` was changed; the verdicts below are the output.
 
 ## Summary
 
@@ -127,8 +127,9 @@ too: `BaseDatabaseSchemaEditor.add_field` calls `column_sql(model, field, includ
 `skip_default_on_alter` (PostgreSQL does not); `_effective_default` calls `field.get_default()`, so
 `UUIDField(default=uuid.uuid4, null=True)` gives every existing row one UUID, not NULL (Django 5.2,
 `django/db/backends/base/schema.py`, `_iter_column_sql` and `add_field`). The case file pins the miss:
-`cases/.../0002_order_tokens.py:133` (`maybe_id`, no backfill) must stay silent. The docs' three-step recipe is still
-silent without the exemption, because its RunPython backfill is already recognised (`adr_backfilled`).
+`upstream/django-practice/authored/.../0002_order_tokens.py:133` (`maybe_id`, no backfill) must stay silent. The docs'
+three-step recipe is still silent without the exemption, because its RunPython backfill is already recognised
+(`adr_backfilled`).
 Counterexamples (`/tmp/review-django/cx-addfield`):
 
 | Label | Shape | Should | Did |

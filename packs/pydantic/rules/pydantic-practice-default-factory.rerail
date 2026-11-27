@@ -180,22 +180,22 @@ dfo_ret_callee_q(q, q1) :- dfo_return_call(q, k), dfo_callee(k, q1).
 dfo_return_call(q, k) :- kind(g, "function_definition"), qualname(g, q), kind(r, "return_statement"),
     nearest(r, g, fdef), within_stop(k, r, dfo_stop), kind(k, "call").
 
-// The cases, `cases/pydantic-practice-default-factory/`, read as one repository: each line ending in `# caught` is
-// reported, and no other line.
+// The cases, `upstream/pydantic-practice/authored/pydantic-practice-default-factory/`, read as one repository: each
+// line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/__init__.py" from "../cases/pydantic-practice-default-factory/app/__init__.py"
-    .fixture "app/base.py" from "../cases/pydantic-practice-default-factory/app/base.py"
-    .fixture "app/clock.py" from "../cases/pydantic-practice-default-factory/app/clock.py"
-    .fixture "app/dataclass_models.py" from "../cases/pydantic-practice-default-factory/app/dataclass_models.py"
-    .fixture "app/events.py" from "../cases/pydantic-practice-default-factory/app/events.py"
-    .fixture "app/jobs.py" from "../cases/pydantic-practice-default-factory/app/jobs.py"
-    .fixture "app/models.py" from "../cases/pydantic-practice-default-factory/app/models.py"
-    .fixture "app/near_misses.py" from "../cases/pydantic-practice-default-factory/app/near_misses.py"
-    .fixture "app/settings.py" from "../cases/pydantic-practice-default-factory/app/settings.py"
-    .fixture "app/timeutil.py" from "../cases/pydantic-practice-default-factory/app/timeutil.py"
-    .fixture "pyproject.toml" from "../cases/pydantic-practice-default-factory/pyproject.toml"
-    .fixture "tests/__init__.py" from "../cases/pydantic-practice-default-factory/tests/__init__.py"
-    .fixture "tests/test_models.py" from "../cases/pydantic-practice-default-factory/tests/test_models.py"
+    .fixture "app/__init__.py" from "../upstream/pydantic-practice/authored/pydantic-practice-default-factory/app/__init__.py"
+    .fixture "app/base.py" from "../upstream/pydantic-practice/authored/pydantic-practice-default-factory/app/base.py"
+    .fixture "app/clock.py" from "../upstream/pydantic-practice/authored/pydantic-practice-default-factory/app/clock.py"
+    .fixture "app/dataclass_models.py" from "../upstream/pydantic-practice/authored/pydantic-practice-default-factory/app/dataclass_models.py"
+    .fixture "app/events.py" from "../upstream/pydantic-practice/authored/pydantic-practice-default-factory/app/events.py"
+    .fixture "app/jobs.py" from "../upstream/pydantic-practice/authored/pydantic-practice-default-factory/app/jobs.py"
+    .fixture "app/models.py" from "../upstream/pydantic-practice/authored/pydantic-practice-default-factory/app/models.py"
+    .fixture "app/near_misses.py" from "../upstream/pydantic-practice/authored/pydantic-practice-default-factory/app/near_misses.py"
+    .fixture "app/settings.py" from "../upstream/pydantic-practice/authored/pydantic-practice-default-factory/app/settings.py"
+    .fixture "app/timeutil.py" from "../upstream/pydantic-practice/authored/pydantic-practice-default-factory/app/timeutil.py"
+    .fixture "pyproject.toml" from "../upstream/pydantic-practice/authored/pydantic-practice-default-factory/pyproject.toml"
+    .fixture "tests/__init__.py" from "../upstream/pydantic-practice/authored/pydantic-practice-default-factory/tests/__init__.py"
+    .fixture "tests/test_models.py" from "../upstream/pydantic-practice/authored/pydantic-practice-default-factory/tests/test_models.py"
     .expect _ at "app/clock.py":47
     .expect _ at "app/clock.py":49
     .expect _ at "app/dataclass_models.py":12

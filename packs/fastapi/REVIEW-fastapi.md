@@ -30,7 +30,8 @@ Verdicts: keep 5 (sync-session, yield-cleanup with a text fix, cors, sibling-aut
 (request-session-in-background-task, response-exposes-secret-field, on-event-handler, http-client-per-request), cut 0.
 
 All nine rules' own `.test` blocks pass (`nice -n 19 node dist/cli/cli.js rules test packs/fastapi/rules/<rule>.rerail`,
-each `1 passed, 0 failed`).
+each `1 passed, 0 failed`). The blocks read their cases from `upstream/fastapi-practice/authored/<rule>/`, pack test
+data in S3 (`npm run fixtures:pull -- --pack fastapi`), not in git.
 
 ## 2. Per rule
 

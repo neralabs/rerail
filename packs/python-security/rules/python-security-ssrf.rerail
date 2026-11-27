@@ -263,28 +263,28 @@ sec_gin(g, o) :- ss_sink_at(_, e), ss_val(e, o), sec_egate("sec", "ss", e, g).
 .decl ss_sink_at(c: node, e: node)
 ss_sink_at(c, e) :- (ss_sink_q(c, e) ; ss_sink_m(c, e, _)), !sec_checked_expr(e), docof(c, d), !sec_test_doc(d).
 
-// The cases, `cases/python-security-ssrf/`, read as one repository: each line ending in `# caught` is reported, and
-// no other line.
+// The cases, `upstream/python-security/authored/python-security-ssrf/` (pack test data in S3, not in git), read as one
+// repository: each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "api/__init__.py" from "../cases/python-security-ssrf/api/__init__.py"
-    .fixture "api/clients.py" from "../cases/python-security-ssrf/api/clients.py"
-    .fixture "api/routes.py" from "../cases/python-security-ssrf/api/routes.py"
-    .fixture "bookmarks/__init__.py" from "../cases/python-security-ssrf/bookmarks/__init__.py"
-    .fixture "bookmarks/http_client.py" from "../cases/python-security-ssrf/bookmarks/http_client.py"
-    .fixture "bookmarks/oauth.py" from "../cases/python-security-ssrf/bookmarks/oauth.py"
-    .fixture "bookmarks/security.py" from "../cases/python-security-ssrf/bookmarks/security.py"
-    .fixture "bookmarks/services.py" from "../cases/python-security-ssrf/bookmarks/services.py"
-    .fixture "bookmarks/tests/__init__.py" from "../cases/python-security-ssrf/bookmarks/tests/__init__.py"
-    .fixture "bookmarks/tests/test_views.py" from "../cases/python-security-ssrf/bookmarks/tests/test_views.py"
-    .fixture "bookmarks/views.py" from "../cases/python-security-ssrf/bookmarks/views.py"
-    .fixture "webapp/__init__.py" from "../cases/python-security-ssrf/webapp/__init__.py"
-    .fixture "webapp/app.py" from "../cases/python-security-ssrf/webapp/app.py"
-    .fixture "hosts/__init__.py" from "../cases/python-security-ssrf/hosts/__init__.py"
-    .fixture "hosts/admin.py" from "../cases/python-security-ssrf/hosts/admin.py"
-    .fixture "hosts/aggregates.py" from "../cases/python-security-ssrf/hosts/aggregates.py"
-    .fixture "hosts/checks.py" from "../cases/python-security-ssrf/hosts/checks.py"
-    .fixture "hosts/guarded.py" from "../cases/python-security-ssrf/hosts/guarded.py"
-    .fixture "hosts/http.py" from "../cases/python-security-ssrf/hosts/http.py"
+    .fixture "api/__init__.py" from "../upstream/python-security/authored/python-security-ssrf/api/__init__.py"
+    .fixture "api/clients.py" from "../upstream/python-security/authored/python-security-ssrf/api/clients.py"
+    .fixture "api/routes.py" from "../upstream/python-security/authored/python-security-ssrf/api/routes.py"
+    .fixture "bookmarks/__init__.py" from "../upstream/python-security/authored/python-security-ssrf/bookmarks/__init__.py"
+    .fixture "bookmarks/http_client.py" from "../upstream/python-security/authored/python-security-ssrf/bookmarks/http_client.py"
+    .fixture "bookmarks/oauth.py" from "../upstream/python-security/authored/python-security-ssrf/bookmarks/oauth.py"
+    .fixture "bookmarks/security.py" from "../upstream/python-security/authored/python-security-ssrf/bookmarks/security.py"
+    .fixture "bookmarks/services.py" from "../upstream/python-security/authored/python-security-ssrf/bookmarks/services.py"
+    .fixture "bookmarks/tests/__init__.py" from "../upstream/python-security/authored/python-security-ssrf/bookmarks/tests/__init__.py"
+    .fixture "bookmarks/tests/test_views.py" from "../upstream/python-security/authored/python-security-ssrf/bookmarks/tests/test_views.py"
+    .fixture "bookmarks/views.py" from "../upstream/python-security/authored/python-security-ssrf/bookmarks/views.py"
+    .fixture "webapp/__init__.py" from "../upstream/python-security/authored/python-security-ssrf/webapp/__init__.py"
+    .fixture "webapp/app.py" from "../upstream/python-security/authored/python-security-ssrf/webapp/app.py"
+    .fixture "hosts/__init__.py" from "../upstream/python-security/authored/python-security-ssrf/hosts/__init__.py"
+    .fixture "hosts/admin.py" from "../upstream/python-security/authored/python-security-ssrf/hosts/admin.py"
+    .fixture "hosts/aggregates.py" from "../upstream/python-security/authored/python-security-ssrf/hosts/aggregates.py"
+    .fixture "hosts/checks.py" from "../upstream/python-security/authored/python-security-ssrf/hosts/checks.py"
+    .fixture "hosts/guarded.py" from "../upstream/python-security/authored/python-security-ssrf/hosts/guarded.py"
+    .fixture "hosts/http.py" from "../upstream/python-security/authored/python-security-ssrf/hosts/http.py"
     .expect _ at "api/clients.py":14
     .expect _ at "api/routes.py":25
     .expect _ at "api/routes.py":32

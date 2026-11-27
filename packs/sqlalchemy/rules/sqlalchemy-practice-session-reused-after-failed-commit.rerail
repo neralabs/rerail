@@ -310,21 +310,21 @@ srf_command_deco(e) :- kind(e, "call"), field(e, "function", g), kind(g, "identi
     prefix("click.", q), srf_entry_deco(n).
 srf_command_deco(e) :- attr_of(e, _, n), srf_entry_deco(n).
 
-// The cases, `cases/sqlalchemy-practice-session-reused-after-failed-commit/`, read as one repository: each line
-// ending in `# caught` is reported, and no other line.
+// The cases, `upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/`, read as
+// one repository: each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/__init__.py" from "../cases/sqlalchemy-practice-session-reused-after-failed-commit/app/__init__.py"
-    .fixture "app/api.py" from "../cases/sqlalchemy-practice-session-reused-after-failed-commit/app/api.py"
-    .fixture "app/commands.py" from "../cases/sqlalchemy-practice-session-reused-after-failed-commit/app/commands.py"
-    .fixture "app/db.py" from "../cases/sqlalchemy-practice-session-reused-after-failed-commit/app/db.py"
-    .fixture "app/extensions.py" from "../cases/sqlalchemy-practice-session-reused-after-failed-commit/app/extensions.py"
-    .fixture "app/importers.py" from "../cases/sqlalchemy-practice-session-reused-after-failed-commit/app/importers.py"
-    .fixture "app/jobs.py" from "../cases/sqlalchemy-practice-session-reused-after-failed-commit/app/jobs.py"
-    .fixture "app/models.py" from "../cases/sqlalchemy-practice-session-reused-after-failed-commit/app/models.py"
-    .fixture "app/services.py" from "../cases/sqlalchemy-practice-session-reused-after-failed-commit/app/services.py"
-    .fixture "app/views.py" from "../cases/sqlalchemy-practice-session-reused-after-failed-commit/app/views.py"
-    .fixture "app/tests/__init__.py" from "../cases/sqlalchemy-practice-session-reused-after-failed-commit/app/tests/__init__.py"
-    .fixture "app/tests/test_services.py" from "../cases/sqlalchemy-practice-session-reused-after-failed-commit/app/tests/test_services.py"
+    .fixture "app/__init__.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/__init__.py"
+    .fixture "app/api.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/api.py"
+    .fixture "app/commands.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/commands.py"
+    .fixture "app/db.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/db.py"
+    .fixture "app/extensions.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/extensions.py"
+    .fixture "app/importers.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/importers.py"
+    .fixture "app/jobs.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/jobs.py"
+    .fixture "app/models.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/models.py"
+    .fixture "app/services.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/services.py"
+    .fixture "app/views.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/views.py"
+    .fixture "app/tests/__init__.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/tests/__init__.py"
+    .fixture "app/tests/test_services.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/tests/test_services.py"
     .expect _ at "app/api.py":31
     .expect _ at "app/commands.py":26
     .expect _ at "app/importers.py":24

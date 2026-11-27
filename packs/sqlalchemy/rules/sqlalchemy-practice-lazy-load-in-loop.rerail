@@ -44,17 +44,17 @@ LazyLoadInLoopShared(u, n, rel, src) :- sl_read_at(u, uk), lil_hit_q(uk, rel, mq
 lil_hit_q(uk, rel, mq, src, how) :- sl_hit_q(uk, _, _, rel, mq, _, src, how), sl_first_q(uk, rel),
     sa_rel_dir_q(mq, rel, "many"), !sa_rel_dir_q(mq, rel, "one").
 
-// The cases, `cases/sqlalchemy-practice-lazy-load-in-loop/`, read as one repository: each line ending in `# caught`
-// is reported, and no other line.
+// The cases, `upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-load-in-loop/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "app/cli.py" from "../cases/sqlalchemy-practice-lazy-load-in-loop/app/cli.py"
-    .fixture "app/models/base.py" from "../cases/sqlalchemy-practice-lazy-load-in-loop/app/models/base.py"
-    .fixture "app/models/catalog.py" from "../cases/sqlalchemy-practice-lazy-load-in-loop/app/models/catalog.py"
-    .fixture "app/models/shop.py" from "../cases/sqlalchemy-practice-lazy-load-in-loop/app/models/shop.py"
-    .fixture "app/services/order_service.py" from "../cases/sqlalchemy-practice-lazy-load-in-loop/app/services/order_service.py"
-    .fixture "app/services/reports.py" from "../cases/sqlalchemy-practice-lazy-load-in-loop/app/services/reports.py"
-    .fixture "migrations/versions/0002_backfill.py" from "../cases/sqlalchemy-practice-lazy-load-in-loop/migrations/versions/0002_backfill.py"
-    .fixture "tests/test_reports.py" from "../cases/sqlalchemy-practice-lazy-load-in-loop/tests/test_reports.py"
+    .fixture "app/cli.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-load-in-loop/app/cli.py"
+    .fixture "app/models/base.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-load-in-loop/app/models/base.py"
+    .fixture "app/models/catalog.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-load-in-loop/app/models/catalog.py"
+    .fixture "app/models/shop.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-load-in-loop/app/models/shop.py"
+    .fixture "app/services/order_service.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-load-in-loop/app/services/order_service.py"
+    .fixture "app/services/reports.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-load-in-loop/app/services/reports.py"
+    .fixture "migrations/versions/0002_backfill.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-load-in-loop/migrations/versions/0002_backfill.py"
+    .fixture "tests/test_reports.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-load-in-loop/tests/test_reports.py"
     .expect _ at "app/cli.py":15
     .expect _ at "app/services/reports.py":15
     .expect _ at "app/services/reports.py":22

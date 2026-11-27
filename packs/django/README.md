@@ -32,12 +32,13 @@ it reaches). These four do the most work across files ([what a run costs](#start
 settings-in-test follows calls too, from a test, fixture or set-up hook to the helpers of test files it calls, and
 resolves pytest fixtures through the conftest.py files. Each rule's details below list what it misses.
 
-Each rule is proven three ways: by its cases in `cases/<id>/`, where a line ending in `# caught` must be reported and no
-other line may be, run by the rule file's own test (`.test cases exactly`, which reads the case directory as one
-repository and expects each `# caught` line; `rerail rules test <file>.rerail`); by a run on 31 open-source Django apps
-at pinned commits ([the corpus](#the-corpus)), whose matches were read and judged real or not (every match where a rule
-had at most 80, otherwise a spread sample of at least 80 with every matching repository represented); and by an
-independent review of each rule that tried counterexamples against it, which were added to its cases.
+Each rule is proven three ways: by its cases in `upstream/django-practice/authored/<id>/`, where a line ending in
+`# caught` must be reported and no other line may be, run by the rule file's own test (`.test cases exactly`, which
+reads the case directory as one repository and expects each `# caught` line; `rerail rules test <file>.rerail`); by a
+run on 31 open-source Django apps at pinned commits ([the corpus](#the-corpus)), whose matches were read and judged real
+or not (every match where a rule had at most 80, otherwise a spread sample of at least 80 with every matching repository
+represented); and by an independent review of each rule that tried counterexamples against it, which were added to its
+cases.
 
 | Rule | Mode | Catches | Matches (repos) on 31 apps | Precision of read matches |
 |---|---|---|---|---|
@@ -1915,7 +1916,7 @@ working tree; main runs the whole pack over netbox with it in 164 s.
 | `rules/django-practice-<id>.rerail` | The 34 rules, written by hand. Each opens with a comment on what it matches and leaves alone, with an example of each |
 | [`rules/lib/django.rerail`](rules/lib/django.rerail) | `lib/django`, the shared vocabulary: models and their fields, querysets, transactions, views, test and migration files, migration history (a field's definition at a point, through renames and squashes; a relation's key type), one-row tables, settings |
 | [`rules/lib/django_tests.rerail`](rules/lib/django_tests.rerail) | `lib/django_tests`, test code under Django's runner and pytest: tests, fixtures and set-up hooks, the helpers they call, fixture lookup through conftest.py, active patches, and the changes to state and the code that undoes them |
-| `cases/<id>/` | Each rule's cases, a small repository: a line ending in `# caught` must be reported, no other line may be (the rule file's `.test cases`). Not published |
+| `upstream/django-practice/authored/<id>/` | Each rule's cases, a small repository: a line ending in `# caught` must be reported, no other line may be (the rule file's `.test cases`). Pack test data in S3 (`npm run fixtures:pull -- --pack django`), not in git |
 | [`NOTES-django.md`](NOTES-django.md) | The batch notes: dropped candidates, open library proposals, overlaps with other tools |
 | [`NOTES-django-stack.md`](NOTES-django-stack.md) | The notes of the six later rules |
 | [`REVIEW-django-stack.md`](REVIEW-django-stack.md) | The independent review of the six later rules, and what was applied |

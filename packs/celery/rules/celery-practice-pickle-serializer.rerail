@@ -87,19 +87,20 @@ ps_signed() :- ps_signs(_).
 .decl ps_signs(d: number)
 ps_signs(d) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "setup_security"), docof(c, d), !cel_test_doc(d).
 
-// The cases, `cases/celery-practice-pickle-serializer/`: `proj/` is one repository, in which each line ending in
-// `# caught` is reported and no other line; `signing/` is a second one that calls app.setup_security() and is silent.
+// The cases, `upstream/celery-practice/authored/celery-practice-pickle-serializer/`: `proj/` is one repository, in
+// which each line ending in `# caught` is reported and no other line; `signing/` is a second one that calls
+// app.setup_security() and is silent.
 .test cases exactly
-    .fixture "proj/__init__.py" from "../cases/celery-practice-pickle-serializer/proj/__init__.py"
-    .fixture "proj/celery.py" from "../cases/celery-practice-pickle-serializer/proj/celery.py"
-    .fixture "proj/celeryconfig.py" from "../cases/celery-practice-pickle-serializer/proj/celeryconfig.py"
-    .fixture "proj/other.py" from "../cases/celery-practice-pickle-serializer/proj/other.py"
-    .fixture "proj/settings.py" from "../cases/celery-practice-pickle-serializer/proj/settings.py"
-    .fixture "proj/settings_test.py" from "../cases/celery-practice-pickle-serializer/proj/settings_test.py"
-    .fixture "proj/signed.py" from "../cases/celery-practice-pickle-serializer/proj/signed.py"
-    .fixture "proj/tasks.py" from "../cases/celery-practice-pickle-serializer/proj/tasks.py"
-    .fixture "proj/tests/__init__.py" from "../cases/celery-practice-pickle-serializer/proj/tests/__init__.py"
-    .fixture "proj/tests/test_tasks.py" from "../cases/celery-practice-pickle-serializer/proj/tests/test_tasks.py"
+    .fixture "proj/__init__.py" from "../upstream/celery-practice/authored/celery-practice-pickle-serializer/proj/__init__.py"
+    .fixture "proj/celery.py" from "../upstream/celery-practice/authored/celery-practice-pickle-serializer/proj/celery.py"
+    .fixture "proj/celeryconfig.py" from "../upstream/celery-practice/authored/celery-practice-pickle-serializer/proj/celeryconfig.py"
+    .fixture "proj/other.py" from "../upstream/celery-practice/authored/celery-practice-pickle-serializer/proj/other.py"
+    .fixture "proj/settings.py" from "../upstream/celery-practice/authored/celery-practice-pickle-serializer/proj/settings.py"
+    .fixture "proj/settings_test.py" from "../upstream/celery-practice/authored/celery-practice-pickle-serializer/proj/settings_test.py"
+    .fixture "proj/signed.py" from "../upstream/celery-practice/authored/celery-practice-pickle-serializer/proj/signed.py"
+    .fixture "proj/tasks.py" from "../upstream/celery-practice/authored/celery-practice-pickle-serializer/proj/tasks.py"
+    .fixture "proj/tests/__init__.py" from "../upstream/celery-practice/authored/celery-practice-pickle-serializer/proj/tests/__init__.py"
+    .fixture "proj/tests/test_tasks.py" from "../upstream/celery-practice/authored/celery-practice-pickle-serializer/proj/tests/test_tasks.py"
     .expect _ at "proj/celery.py":8
     .expect _ at "proj/celery.py":9
     .expect _ at "proj/celery.py":10
@@ -122,6 +123,6 @@ ps_signs(d) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "setup_se
 .end
 
 .test signing exactly
-    .fixture "proj/__init__.py" from "../cases/celery-practice-pickle-serializer/signing/proj/__init__.py"
-    .fixture "proj/celery.py" from "../cases/celery-practice-pickle-serializer/signing/proj/celery.py"
+    .fixture "proj/__init__.py" from "../upstream/celery-practice/authored/celery-practice-pickle-serializer/signing/proj/__init__.py"
+    .fixture "proj/celery.py" from "../upstream/celery-practice/authored/celery-practice-pickle-serializer/signing/proj/celery.py"
 .end

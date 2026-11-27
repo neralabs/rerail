@@ -256,27 +256,27 @@ dfm_reads_key(fq, x) :- dfm_input(o, f), attr_of(fn, o, m), (m = "get" ; m = "po
 dfm_store(n) :- kind(a, "assignment"), field(a, "left", n), kind(n, "subscript").
 dfm_store(n) :- kind(a, "augmented_assignment"), field(a, "left", n), kind(n, "subscript").
 
-// The cases, `cases/drf-practice-declared-field-meta-ignored/`, read as one repository: each line ending in
-// `# caught` is reported, and no other line.
+// The cases, `upstream/drf-practice/authored/drf-practice-declared-field-meta-ignored/`, read as one repository: each
+// line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "core/__init__.py" from "../cases/drf-practice-declared-field-meta-ignored/core/__init__.py"
-    .fixture "core/fields.py" from "../cases/drf-practice-declared-field-meta-ignored/core/fields.py"
-    .fixture "core/serializers.py" from "../cases/drf-practice-declared-field-meta-ignored/core/serializers.py"
-    .fixture "accounts/__init__.py" from "../cases/drf-practice-declared-field-meta-ignored/accounts/__init__.py"
-    .fixture "accounts/models.py" from "../cases/drf-practice-declared-field-meta-ignored/accounts/models.py"
-    .fixture "accounts/serializers.py" from "../cases/drf-practice-declared-field-meta-ignored/accounts/serializers.py"
-    .fixture "accounts/tests/__init__.py" from "../cases/drf-practice-declared-field-meta-ignored/accounts/tests/__init__.py"
-    .fixture "accounts/tests/test_serializers.py" from "../cases/drf-practice-declared-field-meta-ignored/accounts/tests/test_serializers.py"
-    .fixture "writes/__init__.py" from "../cases/drf-practice-declared-field-meta-ignored/writes/__init__.py"
-    .fixture "writes/fields.py" from "../cases/drf-practice-declared-field-meta-ignored/writes/fields.py"
-    .fixture "writes/models.py" from "../cases/drf-practice-declared-field-meta-ignored/writes/models.py"
-    .fixture "writes/serializers.py" from "../cases/drf-practice-declared-field-meta-ignored/writes/serializers.py"
-    .fixture "writes/users.py" from "../cases/drf-practice-declared-field-meta-ignored/writes/users.py"
-    .fixture "posts/__init__.py" from "../cases/drf-practice-declared-field-meta-ignored/posts/__init__.py"
-    .fixture "posts/constants.py" from "../cases/drf-practice-declared-field-meta-ignored/posts/constants.py"
-    .fixture "posts/models.py" from "../cases/drf-practice-declared-field-meta-ignored/posts/models.py"
-    .fixture "posts/serializers.py" from "../cases/drf-practice-declared-field-meta-ignored/posts/serializers.py"
-    .fixture "posts/plain.py" from "../cases/drf-practice-declared-field-meta-ignored/posts/plain.py"
+    .fixture "core/__init__.py" from "../upstream/drf-practice/authored/drf-practice-declared-field-meta-ignored/core/__init__.py"
+    .fixture "core/fields.py" from "../upstream/drf-practice/authored/drf-practice-declared-field-meta-ignored/core/fields.py"
+    .fixture "core/serializers.py" from "../upstream/drf-practice/authored/drf-practice-declared-field-meta-ignored/core/serializers.py"
+    .fixture "accounts/__init__.py" from "../upstream/drf-practice/authored/drf-practice-declared-field-meta-ignored/accounts/__init__.py"
+    .fixture "accounts/models.py" from "../upstream/drf-practice/authored/drf-practice-declared-field-meta-ignored/accounts/models.py"
+    .fixture "accounts/serializers.py" from "../upstream/drf-practice/authored/drf-practice-declared-field-meta-ignored/accounts/serializers.py"
+    .fixture "accounts/tests/__init__.py" from "../upstream/drf-practice/authored/drf-practice-declared-field-meta-ignored/accounts/tests/__init__.py"
+    .fixture "accounts/tests/test_serializers.py" from "../upstream/drf-practice/authored/drf-practice-declared-field-meta-ignored/accounts/tests/test_serializers.py"
+    .fixture "writes/__init__.py" from "../upstream/drf-practice/authored/drf-practice-declared-field-meta-ignored/writes/__init__.py"
+    .fixture "writes/fields.py" from "../upstream/drf-practice/authored/drf-practice-declared-field-meta-ignored/writes/fields.py"
+    .fixture "writes/models.py" from "../upstream/drf-practice/authored/drf-practice-declared-field-meta-ignored/writes/models.py"
+    .fixture "writes/serializers.py" from "../upstream/drf-practice/authored/drf-practice-declared-field-meta-ignored/writes/serializers.py"
+    .fixture "writes/users.py" from "../upstream/drf-practice/authored/drf-practice-declared-field-meta-ignored/writes/users.py"
+    .fixture "posts/__init__.py" from "../upstream/drf-practice/authored/drf-practice-declared-field-meta-ignored/posts/__init__.py"
+    .fixture "posts/constants.py" from "../upstream/drf-practice/authored/drf-practice-declared-field-meta-ignored/posts/constants.py"
+    .fixture "posts/models.py" from "../upstream/drf-practice/authored/drf-practice-declared-field-meta-ignored/posts/models.py"
+    .fixture "posts/serializers.py" from "../upstream/drf-practice/authored/drf-practice-declared-field-meta-ignored/posts/serializers.py"
+    .fixture "posts/plain.py" from "../upstream/drf-practice/authored/drf-practice-declared-field-meta-ignored/posts/plain.py"
     .expect DeclaredReadOnlyIgnored at "core/serializers.py":22
     .expect DeclaredReadOnlyIgnored at "accounts/serializers.py":25
     .expect DeclaredExtraKwargsIgnored at "accounts/serializers.py":47
