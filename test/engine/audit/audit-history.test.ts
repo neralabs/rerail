@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SqliteAuditStore, type RuleActivityTotals } from "../../../src/engine/audit/audit-store.js";
 import type { CodeRuleViolation } from "../../../src/engine/code-rule/code-rule.js";
 import { openRerailDatabase, resetRepositoryHistory, type RerailDatabase } from "../../../src/engine/storage/database.js";
-import { RERAIL_BASELINE_SCHEMA_VERSION } from "../../../src/engine/storage/migrations.js";
+import { RERAIL_BASELINE_SCHEMA_VERSION, RERAIL_MIGRATIONS, type Migration } from "../../../src/engine/storage/migrations.js";
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "../../../src/engine/storage/baseline-schema.js";
 import { SqliteSessionReader, SqliteSessionStore } from "../../../src/runtime/index.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
@@ -31,6 +31,18 @@ function openSaying(path: string): { database: RerailDatabase; said: string[] } 
   try {
     const database = openRerailDatabase(path);
     return { database, said: stderr.mock.calls.map(([chunk]) => String(chunk)) };
+  } finally {
+    stderr.mockRestore();
+  }
+}
+
+/** What an open of `path` wrote on this thread's stderr when a step after every step of this build failed it. */
+function saidByFailedOpen(path: string): string[] {
+  const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+  try {
+    const fails: Migration = { id: "a-later-step-fails", up() { throw new Error("a later step failed"); } };
+    expect(() => openRerailDatabase(path, { migrations: [...RERAIL_MIGRATIONS, fails] })).toThrow("a later step failed");
+    return stderr.mock.calls.map(([chunk]) => String(chunk));
   } finally {
     stderr.mockRestore();
   }
@@ -510,6 +522,8 @@ describe("derived audit history", () => {
       client.close();
     }
 
+    // An open that fails after the step leaves it unrecorded, so it names nothing; the next open runs the step again.
+    expect(saidByFailedOpen(path)).toEqual([]);
     const { database, said } = openSaying(path);
     try {
       expect(database.$client.prepare("SELECT audit_id FROM audits WHERE origin = 'scan' ORDER BY audit_id").pluck().all())
@@ -584,6 +598,7 @@ describe("derived audit history", () => {
       baseline.close();
     }
 
+    expect(saidByFailedOpen(path)).toEqual([]);
     const { database, said } = openSaying(path);
     try {
       expect(database.$client.prepare("SELECT audit_id FROM audits WHERE origin = 'scan' ORDER BY audit_id").pluck().all())

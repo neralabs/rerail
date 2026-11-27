@@ -378,9 +378,12 @@ function applySchema(database: RerailDatabase, path: string, migrations: readonl
   const refusal = schemaRefusal(path, stamp, supported);
   if (refusal !== undefined) throw new Error(refusal);
   if (migrations === undefined) return;
-  const floor = migrate(database, { fresh: stamp.version === 0, floor: stamp.version }, RERAIL_SCHEMA_STATEMENTS, migrations);
+  const said: string[] = [];
+  const floor = migrate(database, { fresh: stamp.version === 0, floor: stamp.version, say: line => said.push(line) }, RERAIL_SCHEMA_STATEMENTS, migrations);
   if (floor !== stamp.version) database.run(sql.raw(`PRAGMA user_version = ${floor}`));
   database.run(sql.raw("COMMIT"));
+  // Only now is each step that said a line recorded as run: an open that failed before this rolled it back and said nothing.
+  for (const line of said) process.stderr.write(line);
 }
 
 function rollbackQuietly(database: RerailDatabase): void {
