@@ -10,13 +10,13 @@
 //   a: "dict({})" = 1                                         ← C418: a string type definition is code
 //   dict({}, a=1)    d: Literal["dict({})"]                   not reported
 #include "python/python-15.rerail"
-//   p15_call(c, x), p15_str_call(c, x), p15_only(c, a); list_like(e, k), c4_comp(e, k)
+//   lookup_call(c, x), lookup_str_call(c, x), lookup_only(c, a); list_like(e, k), c4_comp(e, k)
 
 .violation C418(at: node, kind: symbol) code "C418"
     "Drop the outer `dict()` call and keep the inner dict {kind}; it already builds a new dictionary."
     suppress ruff "C418"
 C418(c, "literal") :- dict_call(c, a), list_like(a, "dict").
 C418(c, "comprehension") :- dict_call(c, a), c4_comp(a, "dict").
-p15_name("dict").
+lookup_name("dict").
 .decl dict_call(c: node, a: node)
-dict_call(c, a) :- (p15_call(c, "dict") ; p15_str_call(c, "dict")), p15_only(c, a).
+dict_call(c, a) :- (lookup_call(c, "dict") ; lookup_str_call(c, "dict")), lookup_only(c, a).

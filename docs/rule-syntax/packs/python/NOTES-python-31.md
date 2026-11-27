@@ -26,4 +26,4 @@ Follows Ruff and the JSON into recursively parsed string annotations. For exampl
 
 ## Library and engine follow-ups
 
-`python/python-31.rerail` adds `python31_setter` for FBT001 and FBT002, plus the string-type-expression and guest-call vocabulary shared by FBT003, LOG004, LOG007 and LOG014. After integration, move setter parenthesis handling into `python/misc-boolean-trap.rerail`; extend `python/typing.rerail`'s cast type root to accept `cast(typ="T", val=x)`; and fold the demand-driven guest call relations into `python/ruff.rerail` and `python/logging.rerail`. Existing libraries were intentionally not edited. No engine primitive is needed.
+`python/python-31.rerail` adds `prop_setter` for FBT001 and FBT002, plus the string-type-expression and guest-call vocabulary shared by FBT003, LOG004, LOG007 and LOG014. After integration, move setter parenthesis handling into `python/misc-boolean-trap.rerail`; extend `python/typing.rerail`'s cast type root to accept `cast(typ="T", val=x)`; and fold the demand-driven guest call relations into `python/ruff.rerail` and `python/logging.rerail`. Existing libraries were intentionally not edited. No engine primitive is needed.

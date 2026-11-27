@@ -15,4 +15,4 @@
 .violation ANN206(at: node, name: symbol) code "ANN206"
     "Add a return type annotation to class method `{name}`, such as `-> Self` for an alternate constructor, naming the type it returns."
     suppress ruff "ANN206"
-ANN206(nm, x) :- p26_ann_missing_return(f, "ANN206"), field(f, "name", nm), text(nm, x).
+ANN206(nm, x) :- ann_ruff_missing_return(f, "ANN206"), field(f, "name", nm), text(nm, x).

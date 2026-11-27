@@ -15,16 +15,16 @@
 //       if x % 2: result.append(x * 2)     ← PERF401: `result = [x * 2 for x in xs if x % 2]`
 //   for x in xs: result.append(x)          not reported here: PERF402
 #include "python/python-30.rerail"
-//   py30_perf_for, perf_body, perf_call_stmt, perf_method_call, perf_mentions, perf_used_after,
-//   py30_perf_list_receiver
+//   perf_ruff_for, perf_body, perf_call_stmt, perf_method_call, perf_mentions, perf_used_after,
+//   perf_ruff_list_receiver
 
 .violation PERF401(at: node, l: node) code "PERF401"
     "Replace this loop with a list comprehension; if `{l}` is not a fresh empty list assigned just before the loop, use `{l}.extend(...)` of a generator (of a list comprehension under `async for`)."
     suppress ruff "PERF401"
-PERF401(c, o) :- py30_perf_for(f, t, _), kind(t, "identifier"), text(t, x), perf_body(f, st, test), perf_call_stmt(st, c),
+PERF401(c, o) :- perf_ruff_for(f, t, _), kind(t, "identifier"), text(t, x), perf_body(f, st, test), perf_call_stmt(st, c),
     perf_method_call(c, o, "append", a), kind(o, "identifier"), text(o, l),
     !copy_only(f, test, a, x), !perf_mentions(a, l), !perf_mentions(test, l),
-    py30_perf_list_receiver(o),
+    perf_ruff_list_receiver(o),
     scope_node(f, s), !decl(s, x, _), !perf_used_after(f, t), !nonlocal_target(f, x).
 // The item is the loop variable, with no test, in a synchronous loop: a plain copy. The item is an argument of a call
 // in the loop's body (`perf_call_stmt`), as PERF401 reads it: f and a are one file's (decision 0677).

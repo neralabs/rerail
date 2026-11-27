@@ -20,7 +20,7 @@ B406(c) :- blacklisted(c, "B406"), kind(c, "call").
 B406(i) :- b406_hit(i, "B406", r), r = min k : { b406_hit(i, _, k) }.
 // b406_hit(i, code, rank): security's import_hit, over each imported name as `ast` spells it, without the spaces
 // and line continuations a dotted name may hold (`import xml.\` / `sax`). The library's import_name should drop
-// them (NOTES-pt1120-python-06.md); then this rule is `blacklisted(n, "B406")` again.
+// them (B406's notes, "Library changes proposed"); then this rule is `blacklisted(n, "B406")` again.
 .decl b406_hit(i: node, code: symbol, rank: number)
 b406_hit(i, code, r) :- import_entry(i, s0), s = @replace_all(s0, "[\\s\\\\]+", ""), blacklist_import(code, r, m),
     prefix(m, s).

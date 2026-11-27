@@ -16,4 +16,4 @@
 .violation FBT002(at: node) code "FBT002"
     "Make `$NAME` keyword-only by moving it after `*` and update positional callers; keep it positional only when a parent signature or callback protocol requires it."
     suppress ruff "FBT002"
-FBT002(nm) :- trap_param(f, nm, _, v), !python31_setter(f), unparen(v, m), (kind(m, "true") ; kind(m, "false")).
+FBT002(nm) :- trap_param(f, nm, _, v), !prop_setter(f), unparen(v, m), (kind(m, "true") ; kind(m, "false")).

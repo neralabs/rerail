@@ -15,10 +15,10 @@
 //   raise ValueError("boom")       not reported
 //   raise X from Exception()       not reported: only the raised exception counts, not the cause
 #include "python/raise-and-gettext.rerail"
-//   p09_raise(r, e), p09_raised_class(e, c); python/upgrade: sym_at(e, q), the name in Ruff's order
+//   raise_value(r, e), raised_class(e, c); python/upgrade: sym_at(e, q), the name in Ruff's order
 
 .violation TRY002(at: node) code "TRY002"
     "Raise a specific built-in exception such as `ValueError` or `RuntimeError`, or define a subclass, instead of `Exception`/`BaseException`, so callers can catch it precisely."
     suppress ruff "TRY002"
-TRY002(e) :- p09_raise(_, e), p09_raised_class(e, c), sym_at(c, q),
+TRY002(e) :- raise_value(_, e), raised_class(e, c), sym_at(c, q),
     (q = "builtins.Exception" ; q = "builtins.BaseException").

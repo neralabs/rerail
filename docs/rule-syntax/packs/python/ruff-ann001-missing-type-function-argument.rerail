@@ -17,4 +17,4 @@
 .violation ANN001(at: node, name: symbol) code "ANN001"
     "Add a type annotation to parameter `{name}`."
     suppress ruff "ANN001"
-ANN001(nm, x) :- ann_def(f), p26_ann_param(f, nm, x, k, a), k != "vararg", k != "kwarg", unset(a).
+ANN001(nm, x) :- ann_def(f), ann_ruff_param(f, nm, x, k, a), k != "vararg", k != "kwarg", unset(a).

@@ -11,7 +11,7 @@
 //   x: "tuple([1])"    ← C409: Ruff checks a string type definition as code
 //   tuple([x for x in y])      not reported
 #include "python/python-15.rerail"
-//   p15_call(c, x), p15_str_call(c, x), p15_only(c, a); list_like(e, k) (python/ruff)
+//   lookup_call(c, x), lookup_str_call(c, x), lookup_only(c, a); list_like(e, k) (python/ruff)
 
 .violation C409(at: node, id: symbol, msg: symbol) code "C409" "{msg}"
     suppress ruff "C409"
@@ -21,7 +21,7 @@ C409(c, "list-literal-within-tuple-call",
 C409(c, "tuple-literal-within-tuple-call",
     "Remove the outer `tuple()` call and keep the tuple literal it wraps; the call just returns that same tuple.") :-
     tuple_of(c, "tuple").
-p15_name("tuple").
+lookup_name("tuple").
 .decl tuple_of(c: node, k: symbol)
-tuple_of(c, k) :- (p15_call(c, "tuple") ; p15_str_call(c, "tuple")), p15_only(c, a), list_like(a, k),
+tuple_of(c, k) :- (lookup_call(c, "tuple") ; lookup_str_call(c, "tuple")), lookup_only(c, a), list_like(a, k),
     (k = "list" ; k = "tuple").

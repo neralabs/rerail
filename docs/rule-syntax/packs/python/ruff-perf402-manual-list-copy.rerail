@@ -11,11 +11,11 @@
 //   for x in items: result.append(x)       ← PERF402: `result = list(items)` or `result.extend(items)`
 //   for x in items: result.append(x + 1)   not reported here: PERF401
 #include "python/python-30.rerail"
-//   py30_perf_for, perf_body, perf_call_stmt, perf_method_call, py30_perf_list_receiver
+//   perf_ruff_for, perf_body, perf_call_stmt, perf_method_call, perf_ruff_list_receiver
 
 .violation PERF402(at: node, l: node) code "PERF402"
     "Copy the iterable in one step: `{l}.extend(<iterable>)`, or `{l} = list(<iterable>)` if `{l}` is a fresh empty list; keep the loop if code after it reads the loop variable."
     suppress ruff "PERF402"
-PERF402(c, o) :- py30_perf_for(f, t, _), !op(f, "async"), kind(t, "identifier"), text(t, x), perf_body(f, st, test),
+PERF402(c, o) :- perf_ruff_for(f, t, _), !op(f, "async"), kind(t, "identifier"), text(t, x), perf_body(f, st, test),
     unset(test), perf_call_stmt(st, c), perf_method_call(c, o, m, a), (m = "append" ; m = "insert"),
-    kind(a, "identifier"), text(a, x), kind(o, "identifier"), !text(o, x), py30_perf_list_receiver(o).
+    kind(a, "identifier"), text(a, x), kind(o, "identifier"), !text(o, x), perf_ruff_list_receiver(o).

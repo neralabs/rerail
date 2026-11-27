@@ -14,9 +14,9 @@
 //   _("Hello, {}!").format(name)           not reported: translated first
 //   x: "_(t.format(a))" = 1                ← INT002: Ruff checks the code of string type definitions too
 #include "python/raise-and-gettext.rerail"
-//   p09_gettext_arg(c, a); python/misc2-messages: msg_form(a, k)
+//   gettext_arg(c, a); python/misc2-messages: msg_form(a, k)
 
 .violation INT002(at: node) code "INT002"
     "Translate the template, then format it: `_(\"Hello, {{}}!\").format(name)`, not `_(\"Hello, {{}}!\".format(name))`. Leave it if the callee is not a translation function or the text is a computed catalog key."
     suppress ruff "INT002"
-INT002(a) :- p09_gettext_arg(_, a), msg_form(a, "format").
+INT002(a) :- gettext_arg(_, a), msg_form(a, "format").

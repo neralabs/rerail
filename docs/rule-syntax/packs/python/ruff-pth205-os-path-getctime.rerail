@@ -14,10 +14,10 @@
 #include "python/pathlib.rerail"
 #include "python/python-22.rerail"
 //   single_arg(c, q, x, f, a)   c calls q with one argument a, for parameter x; f the callee (python/pathlib)
-//   p22_single_arg(c, q, x, f, a)   the same call in a parsed string type definition (python/python-22)
+//   tdef_single_arg(c, q, x, f, a)  the same call in a parsed string type definition (python/python-22)
 
 .violation PTH205(at: node, s: node) code "PTH205"
     "Use `Path({s}).stat().st_ctime` instead of `os.path.getctime({s})` (without the `Path(...)` wrapper if `{s}` is already a path); leave it where the argument is a bytes path or a file descriptor."
     suppress ruff "PTH205"
 PTH205(f, a) :- single_arg(_, "os.path.getctime", "filename", f, a).
-PTH205(f, a) :- p22_single_arg(_, "os.path.getctime", "filename", f, a).
+PTH205(f, a) :- tdef_single_arg(_, "os.path.getctime", "filename", f, a).

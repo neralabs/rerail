@@ -18,4 +18,4 @@
 .violation ANN202(at: node, name: symbol) code "ANN202"
     "Add a return type annotation to `{name}` (for example `-> None` if it returns nothing)."
     suppress ruff "ANN202"
-ANN202(nm, x) :- p26_ann_missing_return(f, "ANN202"), field(f, "name", nm), text(nm, x).
+ANN202(nm, x) :- ann_ruff_missing_return(f, "ANN202"), field(f, "name", nm), text(nm, x).

@@ -35,11 +35,11 @@ log007_concat_falsy(v) :- unparen(v, m), fstring(m), has(m, i, "interpolation"),
 log007_falsy(v) :- truth_of(v, t), (t = "false" ; t = "none").
 log007_falsy(v) :- log007_concat_falsy(v).
 LOG007(c) :- log_call(c, "exception", _, _), log_kw(c, "exc_info", _, v), log007_falsy(v).
-LOG007(c) :- python31_log_call(c, "exception", _), python31_call_item(c, k, _), kind(k, "keyword_argument"),
+LOG007(c) :- texpr_log_call(c, "exception", _), texpr_call_item(c, k, _), kind(k, "keyword_argument"),
     has(k, n, "identifier"), text(n, "exc_info"), has(k, _, "false").
-LOG007(c) :- python31_log_call(c, "exception", _), python31_call_item(c, k, _), kind(k, "keyword_argument"),
+LOG007(c) :- texpr_log_call(c, "exception", _), texpr_call_item(c, k, _), kind(k, "keyword_argument"),
     has(k, n, "identifier"), text(n, "exc_info"), has(k, _, "none").
-LOG007(c) :- python31_log_call(c, "exception", _), python31_call_item(c, k, _), kind(k, "keyword_argument"),
+LOG007(c) :- texpr_log_call(c, "exception", _), texpr_call_item(c, k, _), kind(k, "keyword_argument"),
     has(k, n, "identifier"), text(n, "exc_info"), has(k, v, "integer"), text(v, "0").
-LOG007(c) :- python31_log_call(c, "exception", _), python31_call_item(c, k, _), kind(k, "keyword_argument"),
+LOG007(c) :- texpr_log_call(c, "exception", _), texpr_call_item(c, k, _), kind(k, "keyword_argument"),
     has(k, n, "identifier"), text(n, "exc_info"), has(k, v, "float"), value(v, "0").

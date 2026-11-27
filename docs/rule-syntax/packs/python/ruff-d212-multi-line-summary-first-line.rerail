@@ -11,10 +11,10 @@
 //   Summary.
 //   """                      ← D212
 #include "python/docstrings.rerail"
-#include "python/pt1120-python-05.rerail"
+#include "python/docstrings-ruff-reads.rerail"
 
 .violation D212(at: node) code "D212"
     "Move this docstring's summary onto the line with the opening quotes, removing the line break after them."
     suppress ruff "D212"
 // A body line breaks at \n, \r\n or a lone \r (Ruff's UniversalNewlines).
-D212(s) :- py05_doc(s), doc_checked(s), doc_triple(s), doc_body(s, b), match("[\\r\\n][\\s\\S]*", b).
+D212(s) :- ruff_doc(s), doc_checked(s), doc_triple(s), doc_body(s, b), match("[\\r\\n][\\s\\S]*", b).

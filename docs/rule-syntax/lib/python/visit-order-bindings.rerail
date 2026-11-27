@@ -2,15 +2,15 @@
 // flake8-unused-arguments (ARG002-ARG005) and flake8-logging-format (G002, G003, G201, G202) rules build on it.
 //
 // Interface
-//   Names:      p07_seen(r, b, f)          name r reads binding b (site, form f as scopes' binding, or "deletion")
-//               p07_qual(e, q)             e resolves to qualified name q as Ruff's resolve_qualified_name, at e's
+//   Names:      visit_seen(r, b, f)        name r reads binding b (site, form f as scopes' binding, or "deletion")
+//               visit_qual(e, q)           e resolves to qualified name q as Ruff's resolve_qualified_name, at e's
 //                                          place in Ruff's visit
-//   Arguments:  p07_unused(f, nm, x, code) parameter x (name node nm) of def or lambda f is never read; code is the
+//   Arguments:  visit_unused(f, nm, x, code) parameter x (name node nm) of def or lambda f is never read; code is the
 //                                          one Ruff reports for f, ARG002-ARG005 (misc2-args' arg_unused has ARG001)
-//   Logging:    p07_log_call(c, m, at, how)  as logging's log_call, its logger found by p07_qual
-//               p07_log_msg(c, e)          e is the message: `msg=` if given, else positional 0 (1 for `log`)
-//               p07_exc_info(c, k)         c passes `exc_info=True` or `exc_info=sys.exc_info()` at keyword k
-//               p07_in_handler(c)          c is in an `except` clause, no def or class body between
+//   Logging:    visit_log_call(c, m, at, how)  as logging's log_call, its logger found by visit_qual
+//               visit_log_msg(c, e)        e is the message: `msg=` if given, else positional 0 (1 for `log`)
+//               visit_exc_info(c, k)       c passes `exc_info=True` or `exc_info=sys.exc_info()` at keyword k
+//               visit_in_handler(c)        c is in an `except` clause, no def or class body between
 //
 // Python and Ruff background
 //   - Ruff visits a scope's statements in order, and a def's or lambda's body after the scope around it (deferred).
@@ -37,142 +37,142 @@
 #include "python/logging.rerail"      // logger_q, logger_like, handler_kind
 
 // ---- names -------------------------------------------------------------------------------------------------------
-// p07_need(r): a name whose binding the rules below ask for: a callee, the root of an attribute callee's object, a
+// visit_need(r): a name whose binding the rules below ask for: a callee, the root of an attribute callee's object, a
 // decorator (its callee when called).
-.decl p07_need(r: node)
-p07_need(r) :- kind(c, "call"), field(c, "function", f), unparen(f, g), p07_root_of(g, r).
-p07_need(r) :- kind(c, "call"), field(c, "function", f), unparen(f, g), kind(g, "attribute"), field(g, "object", o),
-    unparen(o, m), p07_root_of(m, r).
-p07_need(r) :- decorator(_, e0), (kind(e0, "call"), field(e0, "function", e) ; !kind(e0, "call"), e = e0),
-    unparen(e, m), p07_root_of(m, r).
-.decl p07_root_of(m: node, r: node)
-p07_root_of(m, m) :- kind(m, "identifier").
-p07_root_of(m, r) :- kind(m, "attribute"), chain_root(m, r), kind(r, "identifier").
-.decl p07_ref(r: node, x: symbol, s: node)
-p07_ref(r, x, s) :- p07_need(r), look(r, x, s).
-// p07_deferred(r, s): r is in a def's or lambda's body nested in s, so Ruff reads it after s is visited.
-.decl p07_defer_kind(k: symbol)
-p07_defer_kind("function_definition"). p07_defer_kind("lambda").
-.decl p07_deferred(r: node, s: node)
-p07_deferred(r, s) :- p07_ref(r, _, s), inside(r, g, p07_defer_kind), within(g, s), field(g, "body", gb),
+.decl visit_need(r: node)
+visit_need(r) :- kind(c, "call"), field(c, "function", f), unparen(f, g), visit_root_of(g, r).
+visit_need(r) :- kind(c, "call"), field(c, "function", f), unparen(f, g), kind(g, "attribute"), field(g, "object", o),
+    unparen(o, m), visit_root_of(m, r).
+visit_need(r) :- decorator(_, e0), (kind(e0, "call"), field(e0, "function", e) ; !kind(e0, "call"), e = e0),
+    unparen(e, m), visit_root_of(m, r).
+.decl visit_root_of(m: node, r: node)
+visit_root_of(m, m) :- kind(m, "identifier").
+visit_root_of(m, r) :- kind(m, "attribute"), chain_root(m, r), kind(r, "identifier").
+.decl visit_ref(r: node, x: symbol, s: node)
+visit_ref(r, x, s) :- visit_need(r), look(r, x, s).
+// visit_deferred(r, s): r is in a def's or lambda's body nested in s, so Ruff reads it after s is visited.
+.decl visit_defer_kind(k: symbol)
+visit_defer_kind("function_definition"). visit_defer_kind("lambda").
+.decl visit_deferred(r: node, s: node)
+visit_deferred(r, s) :- visit_ref(r, _, s), inside(r, g, visit_defer_kind), within(g, s), field(g, "body", gb),
     (r = gb ; within(r, gb)).
-// p07_cand(r, b, f): a binding of s that r may see: before r, or any when r is deferred; an except name only
+// visit_cand(r, b, f): a binding of s that r may see: before r, or any when r is deferred; an except name only
 // inside its clause; never the statement r is in (`x = x.y`).
-.decl p07_cand(r: node, b: node, f: symbol)
-p07_cand(r, b, f) :- p07_ref(r, x, s), binding(s, x, b, f), f != "except", !within(r, b),
-    (b < r ; p07_deferred(r, s)).
-p07_cand(r, b, "except") :- p07_ref(r, x, s), binding(s, x, b, "except"), b < r, nearest(b, ec, "except_clause"),
+.decl visit_cand(r: node, b: node, f: symbol)
+visit_cand(r, b, f) :- visit_ref(r, x, s), binding(s, x, b, f), f != "except", !within(r, b),
+    (b < r ; visit_deferred(r, s)).
+visit_cand(r, b, "except") :- visit_ref(r, x, s), binding(s, x, b, "except"), b < r, nearest(b, ec, "except_clause"),
     within(r, ec).
-p07_cand(r, st, "deletion") :- p07_ref(r, x, s), del_site(s, n, st), text(n, x), !within(r, st),
-    (st < r ; p07_deferred(r, s)).
-.decl p07_later(r: node, b: node)
-p07_later(r, b) :- p07_cand(r, b, _), p07_cand(r, b2, _), b2 > b.
-.decl p07_seen(r: node, b: node, f: symbol)
-p07_seen(r, b, f) :- p07_cand(r, b, f), !p07_later(r, b).
-// p07_builtin(m, x): an eager read of builtin x with no binding of its scope before it.
-.decl p07_builtin(m: node, x: symbol)
-p07_builtin(m, x) :- p07_ref(m, x, s), builtin(x), !p07_deferred(m, s), !p07_seen(m, _, _).
-// p07_qual(e, q): ruff's qn through an import that is the binding in effect; a local def or class has none here
+visit_cand(r, st, "deletion") :- visit_ref(r, x, s), del_site(s, n, st), text(n, x), !within(r, st),
+    (st < r ; visit_deferred(r, s)).
+.decl visit_later(r: node, b: node)
+visit_later(r, b) :- visit_cand(r, b, _), visit_cand(r, b2, _), b2 > b.
+.decl visit_seen(r: node, b: node, f: symbol)
+visit_seen(r, b, f) :- visit_cand(r, b, f), !visit_later(r, b).
+// visit_builtin(m, x): an eager read of builtin x with no binding of its scope before it.
+.decl visit_builtin(m: node, x: symbol)
+visit_builtin(m, x) :- visit_ref(m, x, s), builtin(x), !visit_deferred(m, s), !visit_seen(m, _, _).
+// visit_qual(e, q): ruff's qn through an import that is the binding in effect; a local def or class has none here
 // (Ruff names it in the module, which no rule below asks for). Builtins and `(mod).attr` as ruff_qual.
-.decl p07_qual(e: node, q: symbol)
-p07_qual(e, q) :- unparen(e, m), qn(m, q), p07_root_of(m, r), p07_seen(r, _, "import").
-p07_qual(e, q) :- ruff_qual(e, q), unparen(e, m), !qn(m, _).
-p07_qual(e, cat("builtins.", x)) :- unparen(e, m), p07_builtin(m, x).
+.decl visit_qual(e: node, q: symbol)
+visit_qual(e, q) :- unparen(e, m), qn(m, q), visit_root_of(m, r), visit_seen(r, _, "import").
+visit_qual(e, q) :- ruff_qual(e, q), unparen(e, m), !qn(m, _).
+visit_qual(e, cat("builtins.", x)) :- unparen(e, m), visit_builtin(m, x).
 
 // ---- unused arguments --------------------------------------------------------------------------------------------
-// p07_dec(f, k): as misc2-args' argt_dec, the decorator resolved where Ruff reads it.
-.decl p07_dec(f: node, k: symbol)
-p07_dec(f, k) :- decorator(f, e0), (kind(e0, "call"), field(e0, "function", e) ; !kind(e0, "call"), e = e0),
-    p07_qual(e, q), argt_dec_q(q, k).
-.decl p07_method(f: node, x: symbol, code: symbol, skip: number)
-p07_method(f, x, "ARG004", 0) :- ann_method(f), def_name(f, x), p07_dec(f, "static").
-p07_method(f, x, "ARG003", 1) :- ann_method(f), def_name(f, x), !p07_dec(f, "static"), p07_dec(f, "class").
-p07_method(f, x, c, 1) :- ann_method(f), def_name(f, x), !p07_dec(f, "static"), !p07_dec(f, "class"),
+// visit_dec(f, k): as misc2-args' argt_dec, the decorator resolved where Ruff reads it.
+.decl visit_dec(f: node, k: symbol)
+visit_dec(f, k) :- decorator(f, e0), (kind(e0, "call"), field(e0, "function", e) ; !kind(e0, "call"), e = e0),
+    visit_qual(e, q), argt_dec_q(q, k).
+.decl visit_method(f: node, x: symbol, code: symbol, skip: number)
+visit_method(f, x, "ARG004", 0) :- ann_method(f), def_name(f, x), visit_dec(f, "static").
+visit_method(f, x, "ARG003", 1) :- ann_method(f), def_name(f, x), !visit_dec(f, "static"), visit_dec(f, "class").
+visit_method(f, x, c, 1) :- ann_method(f), def_name(f, x), !visit_dec(f, "static"), !visit_dec(f, "class"),
     (x = "__new__", c = "ARG004" ; (x = "__init_subclass__" ; x = "__class_getitem__"), c = "ARG003" ;
      x != "__new__", x != "__init_subclass__", x != "__class_getitem__", c = "ARG002").
-.decl p07_checked(f: node, code: symbol, skip: number)
-p07_checked(f, "ARG005", 0) :- arg_checked(f, "ARG005", 0).
-p07_checked(f, c, k) :- p07_method(f, x, c, k), !arg_stub(f), !p07_raise_none(f), !argt_abstract(f), !ann_override(f),
-    !ann_overload(f), !argt_in_stub(f), (!glob("__*__", x) ; argt_kept_dunder(x) ; x = "__new__", !p07_dec(f, _)).
-// p07_raise_none(f): Ruff's is_not_implemented_stub_with_variable compares the assignment target's name with the
+.decl visit_checked(f: node, code: symbol, skip: number)
+visit_checked(f, "ARG005", 0) :- arg_checked(f, "ARG005", 0).
+visit_checked(f, c, k) :- visit_method(f, x, c, k), !arg_stub(f), !visit_raise_none(f), !argt_abstract(f), !ann_override(f),
+    !ann_overload(f), !argt_in_stub(f), (!glob("__*__", x) ; argt_kept_dunder(x) ; x = "__new__", !visit_dec(f, _)).
+// visit_raise_none(f): Ruff's is_not_implemented_stub_with_variable compares the assignment target's name with the
 // raised argument's, as options: neither a name is a match too. `self.msg = "…"; raise NotImplementedError(x for x
 // in ())` is a stub (argt_raise_msg has the case of two equal names).
-.decl p07_raise_none(f: node)
-p07_raise_none(f) :- kind(f, "function_definition"), field(f, "body", b), argt_skip_doc(b, o), body_len(b, n), n = o + 2,
+.decl visit_raise_none(f: node)
+visit_raise_none(f) :- kind(f, "function_definition"), field(f, "body", b), argt_skip_doc(b, o), body_len(b, n), n = o + 2,
     body_stmt(b, a0, o), asgstmt(a, a0), !field(a, "type", _), field(a, "left", t), !kind(t, "identifier"),
     field(a, "right", v0), unparen(v0, v), string_type(v, "str"), !argt_tstr(v),
     body_stmt(b, r, o + 1), kind(r, "raise_statement"), child(r, c0, 0), unparen(c0, c),
     call_q(c, "builtins.NotImplementedError"), call_nargs(c, 1), ruff_arg(c, 0, m0), unparen(m0, m),
     !kind(m, "identifier").
-.decl p07_receiver(f: node, i: number)
-p07_receiver(f, i) :- p07_checked(f, _, 1), i = min j : { sig_param(f, _, _, j, k, _, _), argt_fixed(k) }.
-// p07_param(f, x): f's parameter named x, of any form (scopes' param misses `*a: T` and `**k: T`).
-.decl p07_param(f: node, x: symbol)
-p07_param(f, x) :- p07_checked(f, _, _), sig_param(f, _, nm, _, _, _, _), text(nm, x).
-// p07_read(f, x): a load of x in f's body whose lookup passes through f (no scope between binds x).
-.decl p07_read(f: node, x: symbol)
-p07_read(f, x) :- p07_param(f, x), field(f, "body", b), walk(n, x, f), (n = b ; within(n, b)), ast_name(n, x),
+.decl visit_receiver(f: node, i: number)
+visit_receiver(f, i) :- visit_checked(f, _, 1), i = min j : { sig_param(f, _, _, j, k, _, _), argt_fixed(k) }.
+// visit_param(f, x): f's parameter named x, of any form (scopes' param misses `*a: T` and `**k: T`).
+.decl visit_param(f: node, x: symbol)
+visit_param(f, x) :- visit_checked(f, _, _), sig_param(f, _, nm, _, _, _, _), text(nm, x).
+// visit_read(f, x): a load of x in f's body whose lookup passes through f (no scope between binds x).
+.decl visit_read(f: node, x: symbol)
+visit_read(f, x) :- visit_param(f, x), field(f, "body", b), walk(n, x, f), (n = b ; within(n, b)), ast_name(n, x),
     !expr_ctx(n, "store").
-.decl p07_rebound(f: node, x: symbol)
-p07_rebound(f, x) :- p07_param(f, x), (asg(f, x, _, _) ; defn(f, x, _) ; otgt(f, x) ; ibind(f, x, _) ; decl(f, x, _)).
-// p07_locals_call(c): a call of the builtin locals, `(locals)()` too; tree-sitter reads `*locals()` as a call of
+.decl visit_rebound(f: node, x: symbol)
+visit_rebound(f, x) :- visit_param(f, x), (asg(f, x, _, _) ; defn(f, x, _) ; otgt(f, x) ; ibind(f, x, _) ; decl(f, x, _)).
+// visit_locals_call(c): a call of the builtin locals, `(locals)()` too; tree-sitter reads `*locals()` as a call of
 // `*locals`.
-.decl p07_locals_call(c: node)
-p07_locals_call(c) :- call_q(c, "builtins.locals").
-p07_locals_call(c) :- kind(c, "call"), field(c, "function", s), kind(s, "list_splat"), child(s, m, 0),
+.decl visit_locals_call(c: node)
+visit_locals_call(c) :- call_q(c, "builtins.locals").
+visit_locals_call(c) :- kind(c, "call"), field(c, "function", s), kind(s, "list_splat"), child(s, m, 0),
     ruff_qual(m, "builtins.locals").
-// p07_other_scope(g): g opens a scope of its own below a lambda's body: a lambda's body, a comprehension's target,
+// visit_other_scope(g): g opens a scope of its own below a lambda's body: a lambda's body, a comprehension's target,
 // element or later clause (its first `for` clause's iterable is read in the scope around it).
-.decl p07_comp(k: symbol)
-p07_comp("list_comprehension"). p07_comp("set_comprehension"). p07_comp("dictionary_comprehension").
-p07_comp("generator_expression").
-.decl p07_other_scope(g: node)
-p07_other_scope(g) :- kind(l, "lambda"), field(l, "body", g).
-p07_other_scope(g) :- kind(fc, "for_in_clause"), field(fc, "left", g).
-p07_other_scope(g) :- kind(cp, k), p07_comp(k), child(cp, g, _), !p07_first_for(cp, g).
-.decl p07_first_for(cp: node, g: node)
-p07_first_for(cp, g) :- kind(cp, k), p07_comp(k), child(cp, g, _), kind(g, "for_in_clause"),
+.decl visit_comp(k: symbol)
+visit_comp("list_comprehension"). visit_comp("set_comprehension"). visit_comp("dictionary_comprehension").
+visit_comp("generator_expression").
+.decl visit_other_scope(g: node)
+visit_other_scope(g) :- kind(l, "lambda"), field(l, "body", g).
+visit_other_scope(g) :- kind(fc, "for_in_clause"), field(fc, "left", g).
+visit_other_scope(g) :- kind(cp, k), visit_comp(k), child(cp, g, _), !visit_first_for(cp, g).
+.decl visit_first_for(cp: node, g: node)
+visit_first_for(cp, g) :- kind(cp, k), visit_comp(k), child(cp, g, _), kind(g, "for_in_clause"),
     count : { child(cp, h, _), kind(h, "for_in_clause"), h < g } = 0.
-.decl p07_lambda_locals(f: node)
-p07_lambda_locals(f) :- kind(f, "lambda"), field(f, "body", b), p07_locals_call(c), (c = b ; within(c, b)),
-    !p07_scope_between(c, b).
-.decl p07_scope_between(c: node, b: node)
-p07_scope_between(c, b) :- p07_locals_call(c), within(c, b), (g = c ; within(c, g)), within(g, b), p07_other_scope(g).
-.decl p07_in_class_body(f: node)
-p07_in_class_body(f) :- kind(f, "lambda"), inside(f, k, "class_definition"), field(k, "body", kb), within(f, kb).
-.decl p07_locals(f: node)
-p07_locals(f) :- kind(f, "function_definition"), argt_locals(f).
-p07_locals(f) :- p07_lambda_locals(f), !p07_in_class_body(f).
-.decl p07_unused(f: node, nm: node, x: symbol, code: symbol)
-p07_unused(f, nm, x, c) :- p07_checked(f, c, _), !p07_locals(f), sig_param(f, _, nm, i, k, _, _), !p07_receiver(f, i),
-    text(nm, x), !arg_dummy(nm), !p07_read(f, x), !p07_rebound(f, x),
+.decl visit_lambda_locals(f: node)
+visit_lambda_locals(f) :- kind(f, "lambda"), field(f, "body", b), visit_locals_call(c), (c = b ; within(c, b)),
+    !visit_scope_between(c, b).
+.decl visit_scope_between(c: node, b: node)
+visit_scope_between(c, b) :- visit_locals_call(c), within(c, b), (g = c ; within(c, g)), within(g, b), visit_other_scope(g).
+.decl visit_in_class_body(f: node)
+visit_in_class_body(f) :- kind(f, "lambda"), inside(f, k, "class_definition"), field(k, "body", kb), within(f, kb).
+.decl visit_locals(f: node)
+visit_locals(f) :- kind(f, "function_definition"), argt_locals(f).
+visit_locals(f) :- visit_lambda_locals(f), !visit_in_class_body(f).
+.decl visit_unused(f: node, nm: node, x: symbol, code: symbol)
+visit_unused(f, nm, x, c) :- visit_checked(f, c, _), !visit_locals(f), sig_param(f, _, nm, i, k, _, _), !visit_receiver(f, i),
+    text(nm, x), !arg_dummy(nm), !visit_read(f, x), !visit_rebound(f, x),
     (argt_fixed(k) ; !option("flake8-unused-arguments.ignore-variadic-names", "true")).
 
 // ---- logging -----------------------------------------------------------------------------------------------------
-.decl p07_logger(v: node)
-p07_logger(v) :- unparen(v, m), kind(m, "call"), call_q(m, q), (q = "logging.getLogger" ; q = "logging.Logger").
-p07_logger(v) :- unparen(v, m), !kind(m, "call"), p07_qual(m, q), logger_q(q).
-p07_logger(v) :- unparen(v, m), !kind(m, "call"), !p07_qual(m, _), dotted_expr(m, _), leaf_name(m, x), logger_like(x),
-    !p07_local_def(m).
-// p07_local_def(m): m's first name is a def or class of this file where it is read: Ruff names it in the module.
-.decl p07_local_def(m: node)
-p07_local_def(m) :- dotted_expr(m, _), p07_root_of(m, r), p07_seen(r, _, f), (f = "class" ; f = "def").
-.decl p07_log_call(c: node, m: symbol, at: node, how: symbol)
-p07_log_call(c, m, a, "attr") :- kind(c, "call"), field(c, "function", f), unparen(f, g), kind(g, "attribute"),
-    field(g, "attribute", a), text(a, m), log_method(m), field(g, "object", v), p07_logger(v).
-p07_log_call(c, m, g, "name") :- kind(c, "call"), field(c, "function", f), unparen(f, g), kind(g, "identifier"),
-    p07_qual(g, q), split_dot(q, "logging", m), log_method(m).
-.decl p07_log_msg(c: node, e: node)
-p07_log_msg(c, e) :- p07_log_call(c, _, _, _), call_kwarg(c, "msg", a), unparen(a, e).
-p07_log_msg(c, e) :- p07_log_call(c, m, _, _), m != "log", !call_kwarg(c, "msg", _), ruff_arg(c, 0, a), unparen(a, e).
-p07_log_msg(c, e) :- p07_log_call(c, "log", _, _), !call_kwarg(c, "msg", _), ruff_arg(c, 1, a), unparen(a, e).
-.decl p07_exc_info(c: node, k: node)
-p07_exc_info(c, k) :- p07_log_call(c, _, _, _), call_item(c, k, _), kind(k, "keyword_argument"), field(k, "name", n),
+.decl visit_logger(v: node)
+visit_logger(v) :- unparen(v, m), kind(m, "call"), call_q(m, q), (q = "logging.getLogger" ; q = "logging.Logger").
+visit_logger(v) :- unparen(v, m), !kind(m, "call"), visit_qual(m, q), logger_q(q).
+visit_logger(v) :- unparen(v, m), !kind(m, "call"), !visit_qual(m, _), dotted_expr(m, _), leaf_name(m, x), logger_like(x),
+    !visit_local_def(m).
+// visit_local_def(m): m's first name is a def or class of this file where it is read: Ruff names it in the module.
+.decl visit_local_def(m: node)
+visit_local_def(m) :- dotted_expr(m, _), visit_root_of(m, r), visit_seen(r, _, f), (f = "class" ; f = "def").
+.decl visit_log_call(c: node, m: symbol, at: node, how: symbol)
+visit_log_call(c, m, a, "attr") :- kind(c, "call"), field(c, "function", f), unparen(f, g), kind(g, "attribute"),
+    field(g, "attribute", a), text(a, m), log_method(m), field(g, "object", v), visit_logger(v).
+visit_log_call(c, m, g, "name") :- kind(c, "call"), field(c, "function", f), unparen(f, g), kind(g, "identifier"),
+    visit_qual(g, q), split_dot(q, "logging", m), log_method(m).
+.decl visit_log_msg(c: node, e: node)
+visit_log_msg(c, e) :- visit_log_call(c, _, _, _), call_kwarg(c, "msg", a), unparen(a, e).
+visit_log_msg(c, e) :- visit_log_call(c, m, _, _), m != "log", !call_kwarg(c, "msg", _), ruff_arg(c, 0, a), unparen(a, e).
+visit_log_msg(c, e) :- visit_log_call(c, "log", _, _), !call_kwarg(c, "msg", _), ruff_arg(c, 1, a), unparen(a, e).
+.decl visit_exc_info(c: node, k: node)
+visit_exc_info(c, k) :- visit_log_call(c, _, _, _), call_item(c, k, _), kind(k, "keyword_argument"), field(k, "name", n),
     text(n, "exc_info"), field(k, "value", v), unparen(v, m), (kind(m, "true") ; call_q(m, "sys.exc_info")).
-.decl p07_cut_kind(k: symbol)
-p07_cut_kind("function_definition"). p07_cut_kind("class_definition").
-.decl p07_in_handler(c: node)
-p07_in_handler(c) :- p07_log_call(c, _, _, _), inside(c, ec, handler_kind), !p07_handler_cut(c, ec).
-.decl p07_handler_cut(c: node, ec: node)
-p07_handler_cut(c, ec) :- p07_log_call(c, _, _, _), inside(c, ec, handler_kind), inside(c, g, p07_cut_kind),
+.decl visit_cut_kind(k: symbol)
+visit_cut_kind("function_definition"). visit_cut_kind("class_definition").
+.decl visit_in_handler(c: node)
+visit_in_handler(c) :- visit_log_call(c, _, _, _), inside(c, ec, handler_kind), !visit_handler_cut(c, ec).
+.decl visit_handler_cut(c: node, ec: node)
+visit_handler_cut(c, ec) :- visit_log_call(c, _, _, _), inside(c, ec, handler_kind), inside(c, g, visit_cut_kind),
     within(g, ec), field(g, "body", gb), within(c, gb).

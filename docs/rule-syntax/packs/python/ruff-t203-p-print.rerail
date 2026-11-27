@@ -18,8 +18,8 @@
 .violation T203(at: node) code "T203"
     "Log the value through `logging` (`pprint.pformat` keeps the layout), or remove this call if it was debug output; leave it where the program's job is to write to the terminal."
     suppress ruff "T203"
-T203(f) :- p10_call_q(c, "pprint.pprint"), field(c, "function", f), !pprint_elsewhere(c).
+T203(f) :- fwdref_call_q(c, "pprint.pprint"), field(c, "function", f), !pprint_elsewhere(c).
 
 // pprint_elsewhere(c): c passes `stream=` a value other than None, sys.stdout or sys.stderr.
 .decl pprint_elsewhere(c: node)
-pprint_elsewhere(c) :- p10_kwarg(c, "stream", v), !p10_stdio(v).
+pprint_elsewhere(c) :- fwdref_kwarg(c, "stream", v), !stdio_value(v).

@@ -15,12 +15,12 @@
 //   raise \
 //       MyError("Custom message")         ← TRY003: after a backslash continuation too
 #include "python/raise-and-gettext.rerail"
-//   p09_raise(r, e); python/exceptions: exc_arg(c, i, a), exc_qual(e, q)
+//   raise_value(r, e); python/exceptions: exc_arg(c, i, a), exc_qual(e, q)
 
 .violation TRY003(at: node) code "TRY003"
     "Define an exception class that builds this message itself (for example in `__init__`) and raise it with only the varying values. Leave it if a dedicated class would not help callers."
     suppress ruff "TRY003"
-TRY003(e) :- p09_raise(_, e), kind(e, "call"), exc_arg(e, 0, a), has_space(a), field(e, "function", f),
+TRY003(e) :- raise_value(_, e), kind(e, "call"), exc_arg(e, 0, a), has_space(a), field(e, "function", f),
     !exc_qual(f, "builtins.NotImplementedError").
 
 // has_space(a): a string literal (or adjacent ones) with a whitespace character in its literal text.

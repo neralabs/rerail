@@ -18,7 +18,7 @@
 .violation FBT001(at: node) code "FBT001"
     "Make the boolean parameter `$NAME` keyword-only by moving it after `*` and update positional callers; keep it positional only when a parent signature or callback protocol requires it."
     suppress ruff "FBT001"
-FBT001(nm) :- trap_param(f, nm, a, _), !python31_setter(f), !class_bool_rebound(f), bool_hint(a).
+FBT001(nm) :- trap_param(f, nm, a, _), !prop_setter(f), !class_bool_rebound(f), bool_hint(a).
 .decl class_bool_rebound(f: node)
 class_bool_rebound(f) :- scope_node(f, c), kind(c, "class_definition"), binding(c, "bool", _, _).
 

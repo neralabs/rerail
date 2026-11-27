@@ -13,4 +13,4 @@
 .violation YTT302(at: node) code "YTT302"
     "Compare `sys.version_info` to a tuple such as `sys.version_info >= (3,)` instead of comparing `sys.version` to a one-character string; string order misjudges a two-digit major version."
     suppress ruff "YTT302"
-YTT302(l) :- py27_single_cmp(_, l, o, r), ytt_order(o), py27_ytt_sys(l, "version"), py27_one_byte_str(r).
+YTT302(l) :- ytt_ruff_single_cmp(_, l, o, r), ytt_order(o), ytt_ruff_sys(l, "version"), ytt_ruff_one_byte_str(r).

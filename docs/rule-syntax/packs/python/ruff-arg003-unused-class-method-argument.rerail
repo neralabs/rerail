@@ -17,4 +17,4 @@
 .violation ARG003(at: node, name: symbol) code "ARG003"
     "Remove `{name}` if no caller passes it. If the signature must stay, such as to match a base class, prefix it with an underscore, but keep the name when callers pass it by keyword."
     suppress ruff "ARG003"
-ARG003(nm, x) :- p07_unused(_, nm, x, "ARG003").
+ARG003(nm, x) :- visit_unused(_, nm, x, "ARG003").

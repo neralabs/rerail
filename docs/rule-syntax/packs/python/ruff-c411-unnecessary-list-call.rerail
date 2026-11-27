@@ -9,10 +9,10 @@
 //   list([f(x) for x in y])    ← C411: [f(x) for x in y]
 //   list(f(x) for x in y)      not reported here (C400)
 #include "python/python-15.rerail"
-//   p15_call(c, x), p15_str_call(c, x), p15_only(c, a); c4_comp(e, k) (python/comprehensions)
+//   lookup_call(c, x), lookup_str_call(c, x), lookup_only(c, a); c4_comp(e, k) (python/comprehensions)
 
 .violation C411(at: node) code "C411"
     "Remove the outer `list()` call and keep the list comprehension; it already builds a new list."
     suppress ruff "C411"
-C411(c) :- (p15_call(c, "list") ; p15_str_call(c, "list")), p15_only(c, l), c4_comp(l, "list").
-p15_name("list").
+C411(c) :- (lookup_call(c, "list") ; lookup_str_call(c, "list")), lookup_only(c, l), c4_comp(l, "list").
+lookup_name("list").

@@ -1,78 +1,78 @@
 // python/python-31: vocabulary shared by the python-31 translation batch.
 //
 // Interface
-//   python31_setter(f)       def f is decorated with its own property setter, including parentheses around either
+//   prop_setter(f)           def f is decorated with its own property setter, including parentheses around either
 //                            the property name or the whole decorator expression
-//   python31_typedef_node(n) n is in a tree parsed from a string Ruff treats as a type expression: an annotation,
+//   texpr_node(n) n is in a tree parsed from a string Ruff treats as a type expression: an annotation,
 //                            cast type, TypeVar bound or constraint, NewType base, or TypeAlias value
-//   python31_typedef_call(c) c is a call in such a parsed tree; the call/argument relations below expose guest
+//   texpr_call(c) c is a call in such a parsed tree; the call/argument relations below expose guest
 //                            nodes that the file-level Python call vocabulary intentionally does not enumerate
-//   python31_call_item(c,a,i), python31_pos_item(a), python31_call_nargs(c,n), python31_callee_word(c,x),
-//   python31_call_q(c,q), python31_log_call(c,m,how), python31_log_in_handler(c)
+//   texpr_call_item(c,a,i), texpr_pos_item(a), texpr_call_nargs(c,n), texpr_callee_word(c,x),
+//   texpr_call_q(c,q), texpr_log_call(c,m,how), texpr_log_in_handler(c)
 //
 // Ruff background
 //   FBT001 and FBT002 exempt a property setter because its positional signature is fixed by the descriptor.
 //     @(value).setter
-//     def value(self, enabled: bool = False): ...     python31_setter(<value>)
+//     def value(self, enabled: bool = False): ...     prop_setter(<value>)
 //   Ruff runs expression rules inside string type expressions, but not ordinary strings or Annotated metadata:
-//     x = cast("use(True)", 1)                        python31_typedef_node(<use(True)>)
+//     x = cast("use(True)", 1)                        texpr_node(<use(True)>)
 #include "python/typing.rerail"
 #include "python/logging.rerail"
 
-.decl python31_setter(f: node)
-python31_setter(f) :- def_name(f, x), decorator(f, e), unparen(e, m), attr_of(m, o, "setter"), unparen(o, r),
+.decl prop_setter(f: node)
+prop_setter(f) :- def_name(f, x), decorator(f, e), unparen(e, m), attr_of(m, o, "setter"), unparen(o, r),
     kind(r, "identifier"), text(r, x).
 
-.decl python31_typedef_node(n: node)
-python31_typedef_node(n) :- type_ctx(s), python31_typedef_str(s), parsed(s, "annotation", r),
+.decl texpr_node(n: node)
+texpr_node(n) :- type_ctx(s), texpr_str(s), parsed(s, "annotation", r),
     (n = r ; within(n, r)).
-python31_typedef_node(n) :- kind(c, "call"), field(c, "function", f), typing_sym(f, "cast"),
+texpr_node(n) :- kind(c, "call"), field(c, "function", f), typing_sym(f, "cast"),
     field(c, "arguments", al), child(al, k, _), kind(k, "keyword_argument"), field(k, "name", nm), text(nm, "typ"),
-    field(k, "value", s), python31_typedef_str(s), parsed(s, "annotation", r), (n = r ; within(n, r)).
-.decl python31_typedef_str(s: node)
-python31_typedef_str(s) :- kind(s, "string"), !concat_part(s), string_form(s, "str"), str(s, x),
+    field(k, "value", s), texpr_str(s), parsed(s, "annotation", r), (n = r ; within(n, r)).
+.decl texpr_str(s: node)
+texpr_str(s) :- kind(s, "string"), !concat_part(s), string_form(s, "str"), str(s, x),
     !match("[ \\t][\\s\\S]*", x).
-python31_typedef_str(s) :- kind(s, "concatenated_string"), !python31_typedef_other_part(s), child(s, p0, 0),
+texpr_str(s) :- kind(s, "concatenated_string"), !texpr_other_part(s), child(s, p0, 0),
     str(p0, x), !match("[ \\t][\\s\\S]*", x).
-.decl python31_typedef_other_part(s: node)
-python31_typedef_other_part(s) :- kind(s, "concatenated_string"), child(s, p, _), kind(p, "string"),
+.decl texpr_other_part(s: node)
+texpr_other_part(s) :- kind(s, "concatenated_string"), child(s, p, _), kind(p, "string"),
     !string_form(p, "str").
 
-.decl python31_unparen(e: node, m: node)
-python31_unparen(e, e) :- python31_typedef_node(e), !kind(e, "parenthesized_expression").
-python31_unparen(e, m) :- python31_typedef_node(e), kind(e, "parenthesized_expression"), child(e, x, 0),
-    python31_unparen(x, m).
-.decl python31_typedef_call(c: node)
-python31_typedef_call(c) :- python31_typedef_node(c), kind(c, "call").
-.decl python31_call_item(c: node, a: node, j: number)
-python31_call_item(c, a, j) :- python31_typedef_call(c), field(c, "arguments", al), child(al, a, j),
+.decl texpr_unparen(e: node, m: node)
+texpr_unparen(e, e) :- texpr_node(e), !kind(e, "parenthesized_expression").
+texpr_unparen(e, m) :- texpr_node(e), kind(e, "parenthesized_expression"), child(e, x, 0),
+    texpr_unparen(x, m).
+.decl texpr_call(c: node)
+texpr_call(c) :- texpr_node(c), kind(c, "call").
+.decl texpr_call_item(c: node, a: node, j: number)
+texpr_call_item(c, a, j) :- texpr_call(c), field(c, "arguments", al), child(al, a, j),
     !kind(a, "comment"), !kind(a, "line_continuation").
-.decl python31_pos_item(a: node)
-python31_pos_item(a) :- python31_call_item(_, a, _), !kind(a, "keyword_argument"), !kind(a, "dictionary_splat").
-.decl python31_call_nargs(c: node, n: number)
-python31_call_nargs(c, n) :- python31_typedef_call(c),
-    n = count : { python31_call_item(c, a, _), python31_pos_item(a) }.
-.decl python31_callee_word(c: node, x: symbol)
-python31_callee_word(c, x) :- python31_typedef_call(c), field(c, "function", f), python31_unparen(f, g),
+.decl texpr_pos_item(a: node)
+texpr_pos_item(a) :- texpr_call_item(_, a, _), !kind(a, "keyword_argument"), !kind(a, "dictionary_splat").
+.decl texpr_call_nargs(c: node, n: number)
+texpr_call_nargs(c, n) :- texpr_call(c),
+    n = count : { texpr_call_item(c, a, _), texpr_pos_item(a) }.
+.decl texpr_callee_word(c: node, x: symbol)
+texpr_callee_word(c, x) :- texpr_call(c), field(c, "function", f), texpr_unparen(f, g),
     kind(g, "identifier"), text(g, x).
-python31_callee_word(c, x) :- python31_typedef_call(c), field(c, "function", f), python31_unparen(f, g),
+texpr_callee_word(c, x) :- texpr_call(c), field(c, "function", f), texpr_unparen(f, g),
     kind(g, "attribute"), field(g, "attribute", a), text(a, x).
-.decl python31_call_q(c: node, q: symbol)
-python31_call_q(c, q) :- python31_typedef_call(c), field(c, "function", f), ruff_qual(f, q).
+.decl texpr_call_q(c: node, q: symbol)
+texpr_call_q(c, q) :- texpr_call(c), field(c, "function", f), ruff_qual(f, q).
 
-.decl python31_logger_expr(v: node)
-python31_logger_expr(v) :- python31_typedef_node(v), python31_unparen(v, m), ruff_qual(m, q), logger_q(q).
-python31_logger_expr(v) :- python31_typedef_node(v), python31_unparen(v, m), kind(m, "identifier"), text(m, x),
+.decl texpr_logger_expr(v: node)
+texpr_logger_expr(v) :- texpr_node(v), texpr_unparen(v, m), ruff_qual(m, q), logger_q(q).
+texpr_logger_expr(v) :- texpr_node(v), texpr_unparen(v, m), kind(m, "identifier"), text(m, x),
     (prefix("log", x) ; prefix("LOG", x) ; suffix("logger", x) ; suffix("logging", x) ;
      suffix("LOGGER", x) ; suffix("LOGGING", x)).
-python31_logger_expr(v) :- python31_typedef_node(v), python31_unparen(v, m), kind(m, "attribute"),
+texpr_logger_expr(v) :- texpr_node(v), texpr_unparen(v, m), kind(m, "attribute"),
     field(m, "attribute", a), text(a, x), (prefix("log", x) ; prefix("LOG", x) ; suffix("logger", x) ;
     suffix("logging", x) ; suffix("LOGGER", x) ; suffix("LOGGING", x)).
-.decl python31_log_call(c: node, m: symbol, how: symbol)
-python31_log_call(c, m, "attr") :- python31_typedef_call(c), field(c, "function", f), python31_unparen(f, g),
+.decl texpr_log_call(c: node, m: symbol, how: symbol)
+texpr_log_call(c, m, "attr") :- texpr_call(c), field(c, "function", f), texpr_unparen(f, g),
     kind(g, "attribute"), field(g, "attribute", a), text(a, m), log_method(m), field(g, "object", v),
-    python31_logger_expr(v).
-python31_log_call(c, m, "name") :- python31_typedef_call(c), field(c, "function", f), python31_unparen(f, g),
-    kind(g, "identifier"), python31_call_q(c, q), split_dot(q, "logging", m), log_method(m).
-.decl python31_log_in_handler(c: node)
-python31_log_in_handler(c) :- python31_log_call(c, _, _), host_node(c, h), inside(h, _, k), handler_kind(k).
+    texpr_logger_expr(v).
+texpr_log_call(c, m, "name") :- texpr_call(c), field(c, "function", f), texpr_unparen(f, g),
+    kind(g, "identifier"), texpr_call_q(c, q), split_dot(q, "logging", m), log_method(m).
+.decl texpr_log_in_handler(c: node)
+texpr_log_in_handler(c) :- texpr_log_call(c, _, _), host_node(c, h), inside(h, _, k), handler_kind(k).

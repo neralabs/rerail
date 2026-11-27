@@ -6,7 +6,7 @@ T203, TC006 and TC010 are `same` now; T201 and ISC001 differ only where Ruff agr
 library, `lib/python/type-string-names.rerail` (`p10_*`), is per file and keyed by node; with
 `RERAIL_STRICT_CROSSINGS`, `RERAIL_STRICT_NODES` and `RERAIL_STRICT_POSITIONS` the eight rules run.
 
-## Code in string type definitions (`p10_call_q`, `p10_tq`, `p10_kwarg`): T201, T203, TC006
+## Code in string type definitions (`fwdref_call_q`, `fwdref_lookup`, `fwdref_kwarg`): T201, T203, TC006
 
 Ruff visits the code it parses from a string type definition like any other: an annotation's string, a `cast`'s
 type string, a TypeVar's bound and constraints, a string nested in one. The translations saw only annotations'
@@ -24,16 +24,16 @@ strings (python/names' `parsed_in`). Counterexamples, Ruff's findings:
   module level `cast("print(1)", 1)` is not.
 - Arguments: in a type string's tree `call_kwarg` sees no keywords, so `y: "print(9, file=fp)" = 1` was reported
   (Ruff: not), and `None` has no `kind` row there, so `cast("print(1, file=None)", 1)` was missed (Ruff: T201).
-  `p10_kwarg` reads python-04's `ann_kwarg` there, and `p10_stdio` takes the text `None`.
+  `fwdref_kwarg` reads python-04's `ann_kwarg` there, and `stdio_value` takes the text `None`.
 
-`p10_tq` is the forward-reference lookup: the module's import of the name when the module binds it by imports
+`fwdref_lookup` is the forward-reference lookup: the module's import of the name when the module binds it by imports
 alone, else the builtin when the module does not bind it, else the lookup from the string's place. Not followed:
 a module binding by assignment or def gives no qualified name (Ruff's would be that binding's; none of these rules
 asks for one).
 
 **Library change proposed:** python-04's `guest_q` should look names up in this order (it takes a builtin only
 when the file binds the name nowhere), and python/names' `parsed_in` should resolve a type string's names module
-first; `p10_tq` then goes. Engine gap (python-04 already names it): in a guest tree `kind` has no row for a node
+first; `fwdref_lookup` then goes. Engine gap (python-04 already names it): in a guest tree `kind` has no row for a node
 bound through `field`, so python/ruff's argument relations and `kind(v, "none")` see nothing there.
 
 ## Tuples tree-sitter does not make tuple nodes (`comma_beside`): ISC004
@@ -75,7 +75,7 @@ Not followed: `ref_site` is may-precise (every binding of the scope), Ruff's the
 = __all__ = pd.Series(); ` then `__all__.nunique() == 1` between them: Ruff nothing, the translation PD101 (the later
 binding is an Assignment). No corpus has it.
 
-## Star imports in Ruff's module gate (`p10_seen`): PD002, PD101
+## Star imports in Ruff's module gate (`seen_module_or_star`): PD002, PD101
 
 Ruff's `seen_module(PANDAS)` is set by every `from pandas import …`, `from pandas import *` too; misc-seen reads
 `import_alias`, which has no row for a star import. `PD002-future-annotations-deferred.py`: `def g(): from pandas
@@ -84,7 +84,7 @@ import *`, with `from __future__ import annotations as ann`, makes `def f(x: fra
 Not followed, as misc-seen: Ruff sets the flag in visiting order, so the same star import in a def does not gate a
 module-level `frame.drop(inplace=True)` (Ruff nothing); here the whole file sees it.
 
-**Library change proposed:** misc-seen's `seen_module` should take `from m import *`; `p10_seen` then goes.
+**Library change proposed:** misc-seen's `seen_module` should take `from m import *`; `seen_module_or_star` then goes.
 
 ## TypedDict's keyword fields (`td_value`): TC010
 

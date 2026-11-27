@@ -16,7 +16,7 @@
 .violation EM101(at: node) code "EM101"
     "Assign this string literal to a new variable such as `msg` before the `raise`, then pass that variable to the exception instead."
     suppress ruff "EM101"
-EM101(a) :- py30_msg_raised_call(_, c), field(c, "function", f), !msg_typing_cast(f), msg_arg(c, 0, a),
+EM101(a) :- em_ruff_raised_call(_, c), field(c, "function", f), !msg_typing_cast(f), msg_arg(c, 0, a),
     (msg_form(a, "str") ; msg_form(a, "bytes")), em101_len(a, n), em101_min(k), n >= k.
 .decl em101_min(k: number)
 em101_min(to_number(v)) :- option("flake8-errmsg.max-string-length", v).

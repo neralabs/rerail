@@ -10,11 +10,11 @@
 //   "Summary."               ← D300
 //   '''Says """ here.'''     not reported
 #include "python/docstrings.rerail"
-#include "python/pt1120-python-05.rerail"
+#include "python/docstrings-ruff-reads.rerail"
 
 .violation D300(at: node) code "D300"
     "Rewrite this docstring with triple double quotes `\"\"\"`; if its text ends with a double quote, escape that quote or reword it."
     suppress ruff "D300"
-D300(s) :- py05_doc(s), doc_checked(s), doc_body(s, b), !contains("\"\"\"", b), doc_opener(s, _, q), q != "\"\"\"".
-D300(s) :- py05_doc(s), doc_checked(s), doc_body(s, b), contains("\"\"\"", b), !contains("'''", b), doc_opener(s, _, q),
+D300(s) :- ruff_doc(s), doc_checked(s), doc_body(s, b), !contains("\"\"\"", b), doc_opener(s, _, q), q != "\"\"\"".
+D300(s) :- ruff_doc(s), doc_checked(s), doc_body(s, b), contains("\"\"\"", b), !contains("'''", b), doc_opener(s, _, q),
     q != "'''".

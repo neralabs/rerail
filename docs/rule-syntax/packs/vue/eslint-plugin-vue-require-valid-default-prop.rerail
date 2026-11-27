@@ -127,9 +127,9 @@ shown("plain", y, @lower(y)) :- native_type(y).
 shown("factory", y, "function") :- factory_type(y).
 shown("factory", y, @lower(y)) :- native_type(y), !factory_type(y).
 
-// ESLint 9.39.5, eslint-plugin-vue 10.11.1 (pt1120-vue-01): each expected finding is ESLint's, one per default (two
+// ESLint 9.39.5, eslint-plugin-vue 10.11.1: each expected finding is ESLint's, one per default (two
 // on d2's line 2: n and s; three on d3's: a, b and c). Every source of a default, in JavaScript and TypeScript views.
-.test pt1120_defaults_by_source exactly
+.test defaults_by_source exactly
     .fixture "d1.vue" ```
         <script setup lang="ts">
         const props = defineProps({

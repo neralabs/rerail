@@ -17,4 +17,4 @@
 .violation G002(at: node) code "G002"
     "Pass the values after `%` as logger arguments, e.g. `logger.info(\"x=%s\", x)` not `logger.info(\"x=%s\" % x)`; leave it if `%` is arithmetic or the logger is not from `logging`."
     suppress ruff "G002"
-G002(e) :- p07_log_msg(_, e), kind(e, "binary_operator"), op(e, "%").
+G002(e) :- visit_log_msg(_, e), kind(e, "binary_operator"), op(e, "%").

@@ -14,15 +14,15 @@
 // `sorted(sorted(x), reverse=True)`. Ruff's fix is unsafe; none here.
 //   sorted(sorted(x, **{"key": f}), **{'key': f})    sorted(sorted(x, key=[1, 2]), key=[1, 2,])    ← C414
 #include "python/python-15.rerail"
-//   p15_builtin_call(c, x); c4_first(c, a), cmp_same(a, b) (python/compare), call_item(c, a, j), call_nkwargs(c, n)
+//   lookup_builtin_call(c, x); c4_first(c, a), cmp_same(a, b) (python/compare), call_item(c, a, j), call_nkwargs(c, n)
 
 .violation C414(at: node, inner: symbol, outer: symbol, id: symbol) code "C414"
     "Remove the inner `{inner}()` call and pass its argument straight to `{outer}()`, which accepts any iterable and gives the same result. For `sorted(reversed(…))`, keep it only if items that sort equal must stay in reversed input order."
     suppress ruff "C414"
 C414(c, i, o, id) :- double(c, s, o, i), redundant(o, i, id), (o != "sorted" ; i != "sorted" ; same_keywords(c, s)).
 .decl double(c: node, s: node, outer: symbol, inner: symbol)
-double(c, s, o, i) :- p15_builtin_call(c, o), c4_first(c, s), p15_builtin_call(s, i).
-p15_name("set"). p15_name("list"). p15_name("tuple"). p15_name("sorted"). p15_name("reversed").
+double(c, s, o, i) :- lookup_builtin_call(c, o), c4_first(c, s), lookup_builtin_call(s, i).
+lookup_name("set"). lookup_name("list"). lookup_name("tuple"). lookup_name("sorted"). lookup_name("reversed").
 .decl redundant(outer: symbol, inner: symbol, id: symbol)
 redundant("set", "list", "inside-set"). redundant("set", "tuple", "inside-set"). redundant("set", "set", "inside-set").
 redundant("set", "reversed", "inside-set"). redundant("set", "sorted", "inside-set").

@@ -31,7 +31,8 @@ chmod_mode(c, to_number(low)) :- call_leaf(c, x), contains("chmod", x), chmod_ar
     literal(a, "int", v), (strlen(v) <= 5, low = v ; strlen(v) > 5, low = @slice(v, strlen(v) - 5, strlen(v))).
 // chmod_arg(c, i, a), chmod_args(c, k): security's pos_arg and arg_count without the line continuations that
 // tree-sitter leaves among a call's arguments (`f("f", \` / `755)`), which `ast` does not have. The library's
-// in_call_args should leave them out (NOTES-pt1120-python-06.md); then these are pos_arg and arg_count again.
+// in_call_args should leave them out (B103's notes, "Library changes proposed"); then these are pos_arg and
+// arg_count again.
 .decl chmod_arg(c: node, i: number, a: node)
 chmod_arg(c, i, a) :- call_leaf(c, x), contains("chmod", x), pos_arg(c, j, a), !kind(a, "line_continuation"),
     i = count : { pos_arg(c, k, b), k < j, !kind(b, "line_continuation") }.
