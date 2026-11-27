@@ -12035,3 +12035,26 @@ Tests (Relax, CPU; no farm, no Metal):
 - rerail-bitlex 26/26, rerail-compiler 46/46, rerail-cpu-stream 74/74, rerail-cpu-block 7/7, rerail-python-aot (no tests of its own) builds.
 - `relax check` of python_lean's `compare_aot` example passes.
 - Not run: tools/bitlex's own tests. Relax stops before any test, at tree-sitter-json's build script, on the hub's tree as here.
+
+### Q581. Roll-up 153 (Swift-Kotlin-Scala-support f75f188f94 onto Pulling-it-all-together): what the merge chose
+
+Swift-Kotlin-Scala-support's Kotlin tier 2 reads a string's regions in parts (numbered 0703 there, 0721 here), over the hub's
+template grammar (roll-up 136: a template's closer is `${`, `bytes 2`, counted by decision 0698's `level`).
+
+Conflicts, resolved by invariant:
+- bitlex_lex_rust.rs, bytes.rs, bitlex_rust.rs: both sides' passes kept. The hub's `Gap` count and `at`, `finals_read`,
+  `keep_scans` and `rd.checks` beside Swift's `start_open`, `row_starts`, `t2_spans`, `gap_escapes`, the interleave
+  stages and the split/resume readers (with the hub's `open_last` prefix ported into Swift's `split`).
+- Decision: Swift's 0703 collides with the hub's 0703 (the parse's tape index and digest), so it is 0721, the next
+  free number; its file, README row and every mention in Swift's code are renumbered.
+- Generated tiers (kotlin_aot, rr_aot, python_aot) re-blessed from the merged writers; json_aot unchanged.
+
+Fixes the merge needed:
+- `ends_as` (Swift's) did not cover the hub's `Gram::Inner`; it is its body's ending, as `Retag`'s.
+- A region's `scan` format argument the merged template no longer reads, removed.
+- The hub reads the token's code from `cur`, set by `arrive` and by taking a piece; Swift's `advance` resumed a
+  string's parts without either, so the token after a template's `}` read as the record before (18 Kotlin tests
+  refused in tier 2 as Rust). The resume now sets `cur` from its first piece, as `arrive` does after a split.
+
+Checked under Relax: kotlin-parser 91/91, python-parser 29, rr-parser 59, compiler 46, bitlex 26, cpu-stream 74,
+cpu-block 7, json-aot 2; every `rust_is_current` passes. No Metal or farm runs.

@@ -162,8 +162,32 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
     let (starts, lasts) = (&run.positions[0], &run.positions[1]);
     // Tier 1 as Rust keeps the comments apart from the tokens (as the lean lexer); the interpreter's records hold both,
     // by where they start.
-    let mut recs: Vec<_> = lx.recs.iter().chain(&lx.extras).copied().collect();
-    recs.sort_by_key(|r| r.start);
+    // A derived mark (`tier1::DERIVED`, decision 0721) is in no record: its bit is what tier 2 asks of the record's
+    // carrier and the word of the grammar token before (an extra's, its carrier's, `carried`).
+    use rerail_kotlin_aot::{DERIVED, carried, derived};
+    let mut recs: Vec<(rerail_kotlin_aot::Rec, bool, u32)> = lx.recs.iter().enumerate().map(|(j, r)| (*r, false, j.checked_sub(1).map_or(0, |p| lx.recs[p].code >> 8 & 0xff))).chain(lx.extras.iter().map(|r| (*r, true, lx.recs.partition_point(|g| g.start < r.start).checked_sub(1).map_or(0, |p| lx.recs[p].code >> 8 & 0xff)))).collect();
+    recs.sort_by_key(|r| r.0.start);
+    let asked = |(r, extra, before): &(rerail_kotlin_aot::Rec, bool, u32)| -> u32 {
+        let marks = r.code >> 16;
+        let d = (0..32).filter(|&b| DERIVED >> b & 1 == 1).fold(0u32, |m, b| m | u32::from(if *extra { carried(*before, 1 << b) & !(1 << b) & marks != 0 } else { derived(b, marks, *before) }) << b);
+        r.code | d << 16
+    };
+    let extra: Vec<bool> = recs.iter().map(|x| x.1).collect();
+    let mut recs: Vec<rerail_kotlin_aot::Rec> = recs.iter().map(|x| rerail_kotlin_aot::Rec { code: asked(x), ..x.0 }).collect();
+    // A spanned mark (`tier1::SPANNED`, decision 0721) is in no record either: its bit at a grammar token is what tier 2
+    // asks of the bytes before it, back to the grammar token before or the extra before.
+    use rerail_kotlin_aot::{SPANNED, spanned};
+    let (mut ps, mut pe, mut x_end, mut before) = (0usize, 0usize, 0usize, 0u32);
+    for (r, &x) in recs.iter_mut().zip(&extra) {
+        if x {
+            x_end = r.last as usize + 1;
+            continue;
+        }
+        let s = r.start as usize;
+        let d = (0..32).filter(|&b| SPANNED >> b & 1 == 1).fold(0u32, |m, b| m | u32::from(spanned(text.as_bytes(), ps, pe, x_end, s, before, b, &|q| rerail_kotlin_aot::code_at(&lx.recs, &lx.extras, q))) << b);
+        r.code |= d << 16;
+        (ps, pe, before) = (s, r.last as usize + 1, r.code >> 8 & 0xff);
+    }
     let n = starts.len().max(recs.len());
     for k in 0..n {
         let theirs = (starts.get(k), lasts.get(k), run.codes.get(k));
@@ -382,6 +406,10 @@ fn suffixes_are_the_names_touching_a_number() {
         "val b = 1L\nval L = 2\n",
     ]);
     refused(&["val a = 1x\n", "val a = 0xFFg\n", "val a = 0b1z\n", "val a = 1Lx\n", "val a = 1.5x\n", "val a = 1lu\n"]);
+    // A name touching a number is in it where a number starts at the number's last byte (`fill(num_start, ~w)`, as
+    // the number's run keeps it): a letter past ASCII in it is the escape's, after the integer, after the
+    // exponent's sign, and not after a `.`.
+    tier1_same(&["val a = 7u\u{e9}\n", "val a = 12L\u{e9}\n", "val a = 1e+5u\u{e9}\n", "val a = 1e5u\u{e9}\n", "val a = 1.5u\u{e9}\n", "val a = .5u\u{e9}\n", "val a = 0x1Fu\u{e9}\n"]);
 }
 
 /// Step 10: a class's members.
@@ -1087,6 +1115,10 @@ fn what_the_grammar_does_not_read_is_refused() {
         "val a = 1\n// c\n;val b = 2\n",
         "val a = 1\n/* c */\n;val b = 2\n",
         "val a = 1\n/* c */ ;val b = 2\n",
+        // A blank, a comment or a `\r` after a type the lean parser may split: it refuses them too.
+        "fun f() {\n  val a = x as a.B<C> \n  foo()\n}\n",
+        "fun f() {\n  val a = x as a.B<C>// c\n  foo()\n}\n",
+        "fun f() {\n  val a = x as a.B<C>\r\n  foo()\n}\n",
         "/* open\n",
         "val x = 1d\n",
         "val x = 1.5L\n",
@@ -2637,4 +2669,36 @@ fn speed_against_lean() {
         let ((cb, cm), (wb, wm)) = (best(k, false), best(k, true));
         eprintln!("{form:>11}: CPU best {:7.2} ms, median {:7.2} ms; wall best {:7.2} ms, median {:7.2} ms; {:6.1} MB/s; {:.2}x lean's CPU", cb * 1e3, cm * 1e3, wb * 1e3, wm * 1e3, bytes as f64 / cb / 1e6, cb / lean_cpu);
     }
+}
+
+/// Texts across many blocks, as the lean parser reads them: stage 1 is made as the token loop comes to its blocks
+/// (decision 0721 step 6), a scan of a mask past the blocks made makes them as it goes (a string, a comment, a name, a
+/// raw string's template, longer than the blocks made at a time), and a file of many statements.
+#[test]
+fn texts_across_many_blocks_are_the_lean_parsers() {
+    let string = format!("val s = \"{}\"\n", "a".repeat(3000));
+    let comment = format!("/*{}*/\nval a = 1\n", "x ".repeat(2000));
+    let name = format!("val {} = 1\n", "b".repeat(2500));
+    let raw = format!("val r = \"\"\"{}${{a}}\"\"\"\n", "y\n".repeat(1500));
+    let lines: String = (0..300).map(|i| format!("val v{i} = f(a, \"s{i}\") + {i} // c\n")).collect();
+    same(&[&string, &comment, &name, &raw, &lines]);
+}
+
+/// The marks tier 2 asks of the bytes before a token (`tier1::SPANNED`, decision 0721 step 7), where a string's part
+/// lies between two grammar tokens (it carries the gap over), a token is in a template of the token before, and
+/// comments touch the tokens or not.
+#[test]
+fn marks_asked_of_the_gaps_are_the_lean_parsers() {
+    same(&[
+        "fun f() {\n    g(\"a ${\n        b\n    }\")\n    h()\n}\n",
+        "val b = \"${f(1)} and ${a.b}\"\n",
+        "val c = \"${ a}${b }\"\n",
+        "val d = \"\"\"${a}\n  y ${b}\n\"\"\"\n",
+        "val e = a /*c*/+b\n",
+        "val g = a/*c*/ +b\n",
+        "val h = a/*c*//*d*/+b\n",
+        "val i = a\n/*c*/\n.b\n",
+        "val j = \"${/*c*/a}\" + \"${a/*c*/}\"\n",
+        "fun f() {\n    a\n    // c\n    b()\n}\n",
+    ]);
 }

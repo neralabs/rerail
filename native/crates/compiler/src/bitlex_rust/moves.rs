@@ -50,7 +50,10 @@ impl Cond {
                 let s = if *at == 0 { "self.word()".to_owned() } else { format!("self.word_at(self.i + {at})") };
                 match ws.as_slice() {
                     [w] => format!("{s} == {w}"),
-                    ws => format!("matches!({s}, {})", ws.join(" | ")),
+                    ws => match word_runs(ws) {
+                        Some(r) if r.len() == 1 && runs_long(&r[0].0, &r[0].1) => format!("({}..={}).contains(&{s})", r[0].0, r[0].1),
+                        _ => format!("matches!({s}, {})", word_pattern(ws)),
+                    },
                 }
             }
             Cond::Class { at, table } => {
@@ -179,6 +182,52 @@ pub(crate) struct Pat {
     pub guard: Option<Cond>,
 }
 
+/// Words `ws` (`w::NAME_N`, a word's constant ends in its number: `G::word_const`) by runs of their numbers: each
+/// run its first and last, in order. None: a word not so named.
+pub(crate) fn word_runs(ws: &[String]) -> Option<Vec<(String, String)>> {
+    let mut n: Vec<(u32, &String)> = ws.iter().map(|w| w.rsplit('_').next().and_then(|d| d.parse().ok()).map(|d| (d, w))).collect::<Option<_>>()?;
+    n.sort();
+    n.dedup_by_key(|x| x.0);
+    let mut out: Vec<(u32, String, String)> = Vec::new();
+    for (d, w) in n {
+        match out.last_mut() {
+            Some(last) if last.0 + 1 == d => {
+                last.0 = d;
+                last.2 = w.clone();
+            }
+            _ => out.push((d, w.clone(), w.clone())),
+        }
+    }
+    Some(out.into_iter().map(|(_, a, b)| (a, b)).collect())
+}
+
+/// How many tests words `ws` are, a run of three or more numbers one range (`word_pattern`).
+pub(crate) fn word_tests(ws: &[String]) -> usize {
+    match word_runs(ws) {
+        Some(r) => r.iter().map(|(a, b)| if a == b { 1 } else if runs_long(a, b) { 1 } else { 2 }).sum(),
+        None => ws.len(),
+    }
+}
+
+/// Whether the run `a..=b` is three words or more.
+fn runs_long(a: &str, b: &str) -> bool {
+    let num = |w: &str| w.rsplit('_').next().and_then(|d| d.parse::<u32>().ok()).unwrap_or(0);
+    num(b) >= num(a) + 2
+}
+
+/// Words `ws` as a pattern: as listed, unless their numbers run three or more, as the lean parser's words numbered by
+/// class are tested (`code >= w::SOFT`): then in order, each such run one range (`w::A..=w::B`).
+pub(crate) fn word_pattern(ws: &[String]) -> String {
+    match word_runs(ws) {
+        Some(r) if r.iter().any(|(a, b)| runs_long(a, b)) => r
+            .iter()
+            .map(|(a, b)| if a == b { a.clone() } else if runs_long(a, b) { format!("{a}..={b}") } else { format!("{a} | {b}") })
+            .collect::<Vec<_>>()
+            .join(" | "),
+        _ => ws.join(" | "),
+    }
+}
+
 impl Pat {
     pub(crate) fn words(ws: Vec<String>) -> Self {
         Pat { words: ws, guard: None }
@@ -190,7 +239,7 @@ impl Pat {
     }
 
     fn print(&self) -> String {
-        let ws = if self.words.is_empty() { "_".to_owned() } else { self.words.join(" | ") };
+        let ws = if self.words.is_empty() { "_".to_owned() } else { word_pattern(&self.words) };
         match &self.guard {
             Some(g) => format!("{ws} if {}", g.print()),
             None => ws,
@@ -486,9 +535,14 @@ pub(crate) fn classes(b: &mut Block, anon: &[(String, HashSet<String>)]) {
     let split = |at: usize, ws: &[String]| -> Option<Cond> {
         // The choice that leaves the fewest words to list: those it tests besides the choice's, and the choice's it does
         // not. A choice of a few words is as plain as its words, and so is one that leaves as many to list.
-        let listed = |c: &HashSet<String>| ws.iter().filter(|w| !c.contains(*w)).count() + c.iter().filter(|w| !ws.contains(w)).count();
+        // Each counted as its tests: a run of words numbered together one range (`word_tests`).
+        let listed = |c: &HashSet<String>| {
+            let rest: Vec<String> = ws.iter().filter(|w| !c.contains(*w)).cloned().collect();
+            let but: Vec<String> = c.iter().filter(|w| !ws.contains(w)).cloned().collect();
+            word_tests(&rest) + word_tests(&but)
+        };
         let (table, class) = anon.iter().filter(|(_, c)| c.len() >= 4).min_by_key(|(_, c)| listed(c))?;
-        if listed(class) + 2 > ws.len() {
+        if listed(class) + 2 > word_tests(ws) {
             return None;
         }
         let rest: Vec<String> = ws.iter().filter(|w| !class.contains(*w)).cloned().collect();

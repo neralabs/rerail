@@ -1572,12 +1572,16 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         let to = arms.iter().find(|a| usize::from(a.from) == s).map(|a| usize::from(a.to)).expect("an arm");
         e.at_switch[to] = false;
     }
-    // The keywords' strings first, in the order of their kinds, as the lean parser numbers its
-    // words: a keyword's leaf kind is then its word plus a constant over each run of kinds
-    // (`word_kind`), one add, not a compare tree.
-    let mut keywords: Vec<(u16, Vec<u8>)> = rows.iter().flat_map(|r| r.keywords.iter().chain(&r.soft)).map(|(w, k)| (*k, w.clone())).collect();
+    // The keywords' strings first, the hard ones (a row's `keywords`) before the soft, each row's in its order, as the
+    // lean parser numbers its words (hard keywords, then `w::SOFT` on), by class: a name that is no hard keyword is a
+    // word past them, one compare (`bitlex_rust`'s `kind_test`), not a list, and a class a grammar lists together is a
+    // run, one range. A keyword's leaf kind is its word's (`word_kinds`), whatever its number.
+    // Row by row, so that a row's hard keywords are one run (a name row's: the words a name is not). The soft ones in
+    // their row's order: a grammar lists them by class, as the lean parser lists its words (`w`), so that a class of
+    // them (a modifier) is a run of words, one range (`bitlex_rust`'s word tests), not a list.
+    let mut keywords: Vec<(bool, usize, u16, Vec<u8>)> = rows.iter().enumerate().flat_map(|(i, r)| r.keywords.iter().enumerate().map(move |(j, (w, _))| (false, i, j as u16, w.clone())).chain(r.soft.iter().enumerate().map(move |(j, (w, _))| (true, i, j as u16, w.clone())))).collect();
     keywords.sort();
-    for (_, w) in &keywords {
+    for (_, _, _, w) in &keywords {
         e.string(w);
     }
     // The token marks' words, and their elements by offset.

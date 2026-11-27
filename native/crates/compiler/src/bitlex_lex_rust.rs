@@ -28,6 +28,8 @@ use std::fmt::Write;
 mod bytes;
 #[path = "bitlex_lex_rust/reader.rs"]
 mod reader;
+#[path = "bitlex_lex_rust/interleave.rs"]
+mod interleave;
 
 /// What the generator reads: the lexer's statements and the compiler's tables.
 pub struct Input<'a> {
@@ -73,7 +75,7 @@ impl Known {
         match self {
             Known::No => Known::Yes,
             Known::Yes => Known::No,
-            Known::Test(t) => Known::Test(format!("!{t}")),
+            Known::Test(t) => Known::Test(negated(&t)),
         }
     }
 
@@ -81,7 +83,7 @@ impl Known {
         match (self, b) {
             (Known::No, _) | (_, Known::No) => Known::No,
             (Known::Yes, x) | (x, Known::Yes) => x,
-            (Known::Test(a), Known::Test(b)) => Known::Test(format!("({a} && {b})")),
+            (Known::Test(a), Known::Test(b)) => Known::Test(joined(&a, &b, "&&")),
         }
     }
 
@@ -89,7 +91,7 @@ impl Known {
         match (self, b) {
             (Known::Yes, _) | (_, Known::Yes) => Known::Yes,
             (Known::No, x) | (x, Known::No) => x,
-            (Known::Test(a), Known::Test(b)) => Known::Test(format!("({a} || {b})")),
+            (Known::Test(a), Known::Test(b)) => Known::Test(joined(&a, &b, "||")),
         }
     }
 
@@ -110,6 +112,152 @@ impl Known {
     }
 }
 
+/// `!t`, folded where `t` is a class test (`class_at`) or a negation, and wrapped where `t` is not
+/// one term.
+fn negated(t: &str) -> String {
+    let is_lit = |r: &str| (0..=255u8).any(|b| bytes::lit(b) == r);
+    for (eq, ne) in [(" == ", " != "), (" != ", " == ")] {
+        if let Some(i) = t.find(eq)
+            && t.starts_with("src[")
+            && t[..i].ends_with(']')
+            && is_lit(&t[i + eq.len()..])
+        {
+            return format!("{}{ne}{}", &t[..i], &t[i + eq.len()..]);
+        }
+    }
+    if let Some(u) = t.strip_prefix('!')
+        && term(u)
+    {
+        return u.to_owned();
+    }
+    if term(t) { format!("!{t}") } else { format!("!({t})") }
+}
+
+/// Whether Rust expression `t` is one term: a name, a call or a macro's, or in parentheses.
+fn term(t: &str) -> bool {
+    let head = t.find(['(', '[']).unwrap_or(t.len());
+    if !t[..head].chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '!' || c == ':') || t[..head].contains("!!") {
+        return false;
+    }
+    head == t.len() || (t.ends_with([')', ']']) && balanced_outer(&t[head..]))
+}
+
+/// Whether `u`'s first `(` closes at its end.
+fn balanced_outer(u: &str) -> bool {
+    let b = u.as_bytes();
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'\'' => {
+                if let Some(j) = b[i + 1..].iter().take(6).position(|&c| c == b'\'') {
+                    i += j + 2;
+                    continue;
+                }
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth -= 1;
+                if depth == 0 && i + 1 < b.len() {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    true
+}
+
+/// Whether `src[at]` is one of `x`'s bytes, where it is one of `within`: of the fewer of the bytes it
+/// is and is not.
+fn class_at(at: &str, x: &[bool; 256], within: &[bool; 256]) -> Known {
+    let inn: Vec<u8> = (0..=255u8).filter(|&b| within[usize::from(b)] && x[usize::from(b)]).collect();
+    let out: Vec<u8> = (0..=255u8).filter(|&b| within[usize::from(b)] && !x[usize::from(b)]).collect();
+    if inn.is_empty() {
+        return Known::No;
+    }
+    if out.is_empty() {
+        return Known::Yes;
+    }
+    let (set, neg) = if inn.len() <= out.len() { (inn, "") } else { (out, "!") };
+    // Runs of bytes in a row, as ranges.
+    let mut pats: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < set.len() {
+        let mut j = i;
+        while j + 1 < set.len() && set[j + 1] == set[j] + 1 {
+            j += 1;
+        }
+        pats.push(match j - i {
+            0 => bytes::lit(set[i]),
+            1 => format!("{} | {}", bytes::lit(set[i]), bytes::lit(set[j])),
+            _ => format!("{}..={}", bytes::lit(set[i]), bytes::lit(set[j])),
+        });
+        i = j + 1;
+    }
+    Known::Test(if set.len() == 1 {
+        if neg.is_empty() { format!("src[{at}] == {}", pats[0]) } else { format!("src[{at}] != {}", pats[0]) }
+    } else {
+        format!("{neg}matches!(src[{at}], {})", pats.join(" | "))
+    })
+}
+
+/// `a op b` (`op` `&&` or `||`), each operand once: the operands of `a` and `b` that are of `op`
+/// themselves are read as theirs.
+fn joined(a: &str, b: &str, op: &str) -> String {
+    let mut terms: Vec<&str> = Vec::new();
+    for t in operands(a, op).into_iter().chain(operands(b, op)) {
+        if !terms.contains(&t) {
+            terms.push(t);
+        }
+    }
+    if terms.len() == 1 {
+        return terms[0].to_owned();
+    }
+    format!("({})", terms.join(&format!(" {op} ")))
+}
+
+/// The operands of Rust expression `t` where it is `(x op y op …)` at its outer level, else `t`.
+fn operands<'a>(t: &'a str, op: &str) -> Vec<&'a str> {
+    let b = t.as_bytes();
+    if b.first() != Some(&b'(') || b.last() != Some(&b')') {
+        return vec![t];
+    }
+    let (mut depth, mut i, mut cuts, mut from) = (0i32, 0usize, Vec::new(), 1usize);
+    while i < b.len() {
+        match b[i] {
+            // A byte or char literal (`b'('`, `'\x0a'`): skipped.
+            b'\'' => {
+                if let Some(j) = b[i + 1..].iter().take(6).position(|&c| c == b'\'') {
+                    i += j + 2;
+                    continue;
+                }
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth -= 1;
+                if depth == 0 && i + 1 < b.len() {
+                    return vec![t];
+                }
+            }
+            _ if depth == 1 && t[i..].starts_with(&format!(" {op} ")) => {
+                cuts.push(&t[from..i]);
+                from = i + op.len() + 2;
+                i = from;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    if cuts.is_empty() {
+        return vec![t];
+    }
+    cuts.push(&t[from..b.len() - 1]);
+    cuts
+}
+
 /// A fill made of the regions that the token loop keeps, as the lean lexer keeps "a `;` since
 /// the last token" (`fill(S, E)`, `S` a mask `X` or `prev(X)`, each the same over each part of a
 /// token): its value and `X`'s at each token's last byte (`fill_I`, `xl_I`), from which the loop
@@ -125,8 +273,15 @@ struct LoopFill {
     xg: Option<String>,
     /// `E` over the skipped bytes, as stage 1's, where it holds at some (none: at none of them).
     eg: Option<String>,
+    /// `E` at every skipped byte: a gap stops the fill (`s > at`).
+    eg_all: bool,
     /// For `fill(F & Y, ~F)`, `F`'s fill: each of `F`'s runs from its first `Y` on.
     within: Option<usize>,
+    /// Kept for its `X` alone (`fill(prev(M), empty)`, `find_loop_fills`): read at a token's start,
+    /// and no fill over a token's bytes.
+    only_x: bool,
+    /// `X` at every skipped byte.
+    xg_all: bool,
     /// Each row's code for `fill_I` and `xl_I` after its token.
     rows: Vec<(usize, String, String)>,
     /// What each row knows of the fill, for a fill within it.
@@ -239,6 +394,83 @@ pub struct Reader {
 /// A mask's field in `Masks`: a grammar name's own, else the reader's `rd{r}_{role}`. One mask is
 /// one field, whichever readers read it: `all` holds each field made so far by its expression,
 /// and the reader that makes a field first lists it in `masks`.
+/// `e`'s factors of `&`, its names kept whole.
+fn conjuncts(e: &Expr) -> Vec<Expr> {
+    match e {
+        Expr::And(a, b) => {
+            let mut v = conjuncts(a);
+            v.extend(conjuncts(b));
+            v
+        }
+        e => vec![e.clone()],
+    }
+}
+
+/// The names among `e`'s terms of `|` (a row's run: `prev(hex_at) | hx`'s `hx`).
+fn or_names(e: &Expr) -> Vec<String> {
+    match e {
+        Expr::Or(a, b) => {
+            let mut v = or_names(a);
+            v.extend(or_names(b));
+            v
+        }
+        Expr::Name(n) => vec![n.clone()],
+        _ => Vec::new(),
+    }
+}
+
+/// Escape `e`'s anchor: a factor `X` (offset 0) or `prev(X)` (offset 1) of it, `X` made of last bytes of runs
+/// (`Y & ~next(Y)`: their `Y`s), each narrowed or joined (`&`, `|`). Such an escape holds only at a run's last byte, or
+/// the byte after: the last byte of a token whose rule runs `Y`, as the lean lexer's number reader refuses at its end.
+fn anchor(e: &Expr, defs: &HashMap<String, Expr>) -> Option<(Vec<String>, u8)> {
+    fn lasts(x: &Expr, defs: &HashMap<String, Expr>, depth: usize) -> Option<Vec<String>> {
+        if depth > 16 {
+            return None;
+        }
+        match x {
+            Expr::Name(n) => lasts(defs.get(n)?, defs, depth + 1),
+            Expr::And(a, b) => {
+                // `Y & ~next(Y)`.
+                if let (Expr::Name(y), Expr::Not(nx)) = (&**a, &**b)
+                    && matches!(&**nx, Expr::Call(f, args) if f == "next" && matches!(args.as_slice(), [Arg::E(Expr::Name(z))] if z == y))
+                {
+                    return Some(vec![y.clone()]);
+                }
+                lasts(a, defs, depth + 1).or_else(|| lasts(b, defs, depth + 1))
+            }
+            Expr::Or(a, b) => {
+                let mut v = lasts(a, defs, depth + 1)?;
+                v.extend(lasts(b, defs, depth + 1)?);
+                Some(v)
+            }
+            _ => None,
+        }
+    }
+    fn factors<'a>(e: &'a Expr, defs: &'a HashMap<String, Expr>, out: &mut Vec<&'a Expr>, depth: usize) {
+        match e {
+            Expr::And(a, b) => {
+                factors(a, defs, out, depth);
+                factors(b, defs, out, depth);
+            }
+            // A name that is a run's last byte stays whole (`n_last`), else its factors.
+            Expr::Name(n) if depth < 4 && lasts(e, defs, 0).is_none() && defs.get(n).is_some_and(|d| matches!(d, Expr::And(..))) => factors(&defs[n], defs, out, depth + 1),
+            _ => out.push(e),
+        }
+    }
+    let mut fs = Vec::new();
+    factors(e, defs, &mut fs, 0);
+    for f in &fs {
+        if let Expr::Call(p, args) = f
+            && p == "prev"
+            && let [Arg::E(x)] | [Arg::E(x), Arg::N(1)] = args.as_slice()
+            && let Some(ys) = lasts(x, defs, 0)
+        {
+            return Some((ys, 1));
+        }
+    }
+    fs.iter().find_map(|f| lasts(f, defs, 0).map(|ys| (ys, 0)))
+}
+
 fn field_of(e: &Expr, r: usize, role: &str, masks: &mut Vec<(String, Expr)>, all: &mut Vec<(String, String)>) -> String {
     let key = format!("{e:?}");
     if let Some((f, _)) = all.iter().find(|(_, k)| *k == key) {
@@ -746,6 +978,8 @@ struct RowArm {
     /// The escapes at a token's start it tests first: each why and test.
     starts: Vec<(String, String)>,
     start: Expr,
+    /// `start` as its kind's assumptions read it (`in KIND`), as its run is read: what holds at its token's first byte.
+    start_read: Expr,
     check: String,
     /// Its code up to its record's marks, and the marks it always has.
     body: String,
@@ -1226,6 +1460,9 @@ struct Nest {
 
 struct Gen<'a> {
     x: &'a Input<'a>,
+    /// The tests at a byte of the escapes made of `code` (`code_escape`), each where its bytes' factors hold: `code`
+    /// asked of the region spans the loop has read (`code_of`).
+    rare: Option<bytes::Bytes<'a>>,
     /// The body of `lex` so far, after stage 1: the regions and what reads them, in the
     /// statements' order.
     body: String,
@@ -1272,7 +1509,8 @@ struct Gen<'a> {
     lookup: Option<crate::bitlex_pair_lookup::Lookup>,
     /// The escapes over the bytes outside every region token, tested over each token of code's
     /// bytes: each its reason and its mask there.
-    code_checks: Vec<(String, String, Expr)>,
+    /// … and its anchor (`anchor`): the runs whose last byte it holds at, and its offset from it in the mask.
+    code_checks: Vec<(String, String, Expr, Option<(Vec<String>, i64)>, Vec<Expr>)>,
     /// Each class's bytes.
     class_bytes: HashMap<String, [bool; 256]>,
     /// The regions (`regions H { … }`) and the name of their hidden bytes.
@@ -1287,10 +1525,16 @@ struct Gen<'a> {
     skipped: [bool; 256],
     /// The bytes a token's start is known to be one of (`dispatch`'s group); none: any not skipped.
     start_in: Option<[bool; 256]>,
+    /// The region a token's start opens, where it is known (a region token's row): `at_start` reads
+    /// the regions' openers there as known.
+    start_open: Option<usize>,
     /// The fills the loop keeps (`LoopFill`).
     fills: Vec<LoopFill>,
     /// Tier 2's fields the loop writes (`FieldWrite`).
     field_writes: Vec<FieldWrite>,
+    /// Each region tier 2 reads in parts: its index (`opens`), its kind, its opener, its closer's search from its opener
+    /// `s`, and its last byte from its closer `c` (`span`).
+    t2_spans: Vec<(usize, String, String, String, String)>,
     /// How each region token may end (`End`), and the bytes its first bytes may be: what a
     /// byte outside the regions may have before and after it in a region.
     ends: Option<Vec<End>>,
@@ -1308,6 +1552,9 @@ struct Gen<'a> {
     stretch_checks: Vec<(String, Vec<(i64, String)>)>,
     /// The escapes tested over a row's token's bytes after its first: why, the row, the test.
     tail_checks: Vec<(String, usize, String)>,
+    /// The escapes at a gap's first byte (`gap_escape`): each tested at each token's start, and at the
+    /// file's end.
+    gap_escapes: Vec<(String, String)>,
     /// The escapes made of `code` alone, tested after the loop of the bytes outside its region
     /// tokens (`code_l`, `code_escape`): their masks' lines, then their tests.
     code_after: String,
@@ -2670,7 +2917,10 @@ impl Gen<'_> {
                     // A string reader's region: its arms read it, picked at its own token's start or its template's level 0.
                     Some("false".to_owned())
                 } else if let Some(k) = self.opens.as_ref().and_then(|opens| opens.iter().position(|(kind, _, _)| *n == format!("o_{kind}") || *n == format!("f_{kind}"))) {
-                    Some(format!("open == {k}"))
+                    Some(match self.start_open {
+                        Some(o) => (o == k).to_string(),
+                        None => format!("open == {k}"),
+                    })
                 } else if self.kinds.iter().any(|r| *n == format!("o_{}", r.kind) || *n == format!("f_{}", r.kind) || r.empty.as_ref().is_some_and(|(e, _)| e == n)) {
                     // A region's mask where the loop numbers no regions (`opens`: a region opens no token of its own
                     // there): what the grammar states of it (`assume … at starts`), else unknown.
@@ -2726,6 +2976,58 @@ impl Gen<'_> {
         })
     }
 
+    /// The masks of the regions, not fills, that `e` reads at the byte before (`prev(M)`), its names'
+    /// definitions read through.
+    fn regional_prevs(&self, e: &Expr, out: &mut Vec<String>, depth: usize) {
+        if depth > 16 {
+            return;
+        }
+        match e {
+            Expr::Name(n) => {
+                if let Some(d) = self.defs.get(n) {
+                    self.regional_prevs(&d.clone(), out, depth + 1);
+                }
+            }
+            Expr::Call(f, args) if f == "prev" && args.len() == 1 => {
+                if let Arg::E(Expr::Name(m)) = &args[0]
+                    && self.regional(&Expr::Name(m.clone()))
+                    && !matches!(self.defs.get(m), Some(Expr::Call(g, _)) if g == "fill")
+                {
+                    if !out.contains(m) {
+                        out.push(m.clone());
+                    }
+                } else if let Arg::E(a) = &args[0] {
+                    self.regional_prevs(a, out, depth + 1);
+                }
+            }
+            Expr::Call(_, args) => {
+                for a in args {
+                    if let Arg::E(a) = a {
+                        self.regional_prevs(a, out, depth + 1);
+                    }
+                }
+            }
+            Expr::Not(a) => self.regional_prevs(a, out, depth + 1),
+            Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => {
+                self.regional_prevs(a, out, depth + 1);
+                self.regional_prevs(b, out, depth + 1);
+            }
+            Expr::Empty | Expr::Test { .. } => {}
+        }
+    }
+
+    /// `at_start` at region `k`'s opener: its region and its first bytes known.
+    fn opener_start(&mut self, k: usize, e: &Expr) -> Result<Option<String>, String> {
+        let ob = self.bytes_at(&self.kinds[k].opener.clone(), 0, &mut HashMap::new());
+        let (was_in, was_open) = (self.start_in, self.start_open);
+        let sb: [bool; 256] = std::array::from_fn(|i| ob[i] && !self.skipped[i] && was_in.is_none_or(|u| u[i]));
+        self.start_in = Some(sb);
+        self.start_open = Some(k);
+        let v = self.at_start(e);
+        (self.start_in, self.start_open) = (was_in, was_open);
+        v
+    }
+
     /// The fill the loop keeps that `e` is (its name, or its expression).
     fn fill_of(&self, e: &Expr) -> Option<usize> {
         match e {
@@ -2747,7 +3049,7 @@ impl Gen<'_> {
     /// Whether `e` is a fill the loop keeps, or one or its `X` a byte before.
     fn loop_read(&self, e: &Expr) -> bool {
         self.fill_of(e).is_some()
-            || matches!(e, Expr::Call(f, args) if f == "prev" && args.len() == 1 && matches!(&args[0], Arg::E(a) if self.fill_of(a).is_some() || self.fill_x_of(a).is_some()))
+            || matches!(e, Expr::Call(f, args) if f == "prev" && args.len() == 1 && matches!(&args[0], Arg::E(a) if self.fill_of(a).is_some() || self.fill_x_of(a).is_some_and(|i| !self.fills[i].only_x)))
     }
 
     /// `e` with the fills the loop keeps (and their reads a byte before) as every byte: for the
@@ -2766,6 +3068,28 @@ impl Gen<'_> {
             Expr::Or(a, b) => Expr::Or(Box::new(self.fills_as_all(a)), Box::new(self.fills_as_all(b))),
             Expr::Xor(a, b) => Expr::Xor(Box::new(self.fills_as_all(a)), Box::new(self.fills_as_all(b))),
             _ => e.clone(),
+        }
+    }
+
+    /// `e` with its reads of the masks the loop keeps for their `X` alone a byte before as every byte.
+    fn x_only_as_all(&self, e: &Expr) -> Expr {
+        match e {
+            Expr::Call(f, args) if f == "prev" && args.len() == 1 && matches!(&args[0], Arg::E(a) if self.fill_x_of(a).is_some_and(|i| self.fills[i].only_x)) => Expr::Not(Box::new(Expr::Empty)),
+            Expr::Not(a) => Expr::Not(Box::new(self.x_only_as_all(a))),
+            Expr::And(a, b) => Expr::And(Box::new(self.x_only_as_all(a)), Box::new(self.x_only_as_all(b))),
+            Expr::Or(a, b) => Expr::Or(Box::new(self.x_only_as_all(a)), Box::new(self.x_only_as_all(b))),
+            Expr::Xor(a, b) => Expr::Xor(Box::new(self.x_only_as_all(a)), Box::new(self.x_only_as_all(b))),
+            _ => e.clone(),
+        }
+    }
+
+    /// Whether `e` reads a mask the loop keeps for its `X` alone (`LoopFill::only_x`) a byte before.
+    fn reads_x_only(&self, e: &Expr) -> bool {
+        match e {
+            Expr::Call(f, args) if f == "prev" && args.len() == 1 => matches!(&args[0], Arg::E(a) if self.fill_x_of(a).is_some_and(|i| self.fills[i].only_x)),
+            Expr::Not(a) => self.reads_x_only(a),
+            Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => self.reads_x_only(a) || self.reads_x_only(b),
+            _ => false,
         }
     }
 
@@ -3186,6 +3510,15 @@ impl Gen<'_> {
             Shape::Not(a) => self.exact_of(a).map(Bytes::not),
             Shape::And(a, b) => Some(self.exact_of(a)?.and(self.exact_of(b)?)),
             Shape::Or(a, b) => Some(self.exact_of(a)?.or(self.exact_of(b)?)),
+            // One byte's text: its class.
+            Shape::Call(f, args) if self.name_strs.borrow()[f as usize] == "text" => match &*args {
+                [ArgShape::S(t)] if t.len() == 1 => {
+                    let mut b = [false; 256];
+                    b[t[0] as usize] = true;
+                    Some(Bytes::of(&b))
+                }
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -3206,13 +3539,73 @@ impl Gen<'_> {
         test().map(Known::Test)
     }
 
+    /// `known_over` of `e` at a token's first byte (`sb` its bytes), with `v` its mask: where `e`
+    /// is a class, a test of the byte, as the lean lexer's.
+    fn known_first(&self, e: &Expr, sb: &[bool; 256], v: Option<&String>) -> Option<Known> {
+        let k = self.known_over(e, sb, || v.map(|v| format!("bit(&{v}, s)")))?;
+        match (&k, self.exact_bytes(e)) {
+            (Known::Test(_), Some(x)) => Some(class_at("s", &x.bools(), sb)),
+            _ => Some(k),
+        }
+    }
+
+    /// `known_over` of `e` over a token's bytes after its first (`tb`), with `v` its mask: over an
+    /// operator's few bytes (`Pairs`), where `e` is a class, a test of each byte.
+    fn known_tail(&self, e: &Expr, tb: &[bool; 256], rule: &Option<TokenRule>, v: Option<&String>) -> Option<Known> {
+        let k = self.known_over(e, tb, || v.map(|v| format!("any_in(&{v}, s + 1, l)")))?;
+        let (Known::Test(_), Some(TokenRule::Pairs { pairs, .. })) = (&k, rule) else { return Some(k) };
+        let x = self.exact_bytes(e).map(|x| x.bools());
+        let most = pairs.iter().map(|p| p.len()).max().unwrap_or(1);
+        let mut t = Known::No;
+        for k in 1..most {
+            // The pairs' bytes there, and at the byte before.
+            let (mut at, mut before) = ([false; 256], [false; 256]);
+            for p in pairs.iter().filter(|p| p.len() > k) {
+                at[usize::from(p[k])] = true;
+                before[usize::from(p[k - 1])] = true;
+            }
+            let here = if k == 1 { "l > s".to_owned() } else { format!("l >= s + {k}") };
+            let test = match &x {
+                Some(x) => class_at(&format!("s + {k}"), x, &at),
+                None => {
+                    let mut ctx = Ctx::of(at);
+                    ctx.0[3] = before.into();
+                    if !self.may_hold(e, &ctx) {
+                        continue;
+                    }
+                    Known::Test(format!("bit(&{}, s + {k})", v?))
+                }
+            };
+            t = t.or(Known::Test(here).and(test));
+        }
+        Some(t)
+    }
+
     /// The fills made of the regions the loop can keep (`LoopFill`): `fill(X, E)` or
     /// `fill(prev(X), E)`, where `X` holds in no region and `E` in none after its start, `E`
     /// at no skipped byte, and each is the same over a token of code's bytes after its start.
-    fn find_loop_fills(&mut self, rows: &[(usize, &Stmt)], exprs: &[(Option<String>, Expr)]) -> Result<(), String> {
+    fn find_loop_fills(&mut self, rows: &[(usize, &Stmt)], exprs: &[(Option<String>, Expr)], escapes: &[Expr]) -> Result<(), String> {
         let n = self.opens.as_ref().map_or(0, Vec::len);
         let mut seen: Vec<String> = Vec::new();
-        for (name, e) in exprs {
+        // A mask of the regions a fill or an escape reads at the byte before (`prev(M)`, as `r_first`'s `prev(code)`):
+        // the loop keeps it as a fill's `X` is kept, at each token's last byte and before the next token
+        // (`xl_I`, `xs_I`), by `fill(prev(M), empty)`, whose own value nothing reads.
+        let mut before: Vec<(Option<String>, Expr)> = Vec::new();
+        for e in exprs.iter().map(|(_, e)| e).filter(|e| matches!(e, Expr::Call(f, _) if f == "fill")).chain(escapes) {
+            {
+                let mut ms = Vec::new();
+                self.regional_prevs(e, &mut ms, 0);
+                for m in ms {
+                    let kept = Expr::Call("fill".to_owned(), vec![Arg::E(Expr::Call("prev".to_owned(), vec![Arg::E(Expr::Name(m))])), Arg::E(Expr::Empty)]);
+                    if !before.iter().any(|(_, b)| *b == kept) {
+                        before.push((None, kept));
+                    }
+                }
+            }
+        }
+        let only_x: Vec<String> = before.iter().map(|(_, e)| format!("{e:?}")).collect();
+        let exprs: Vec<(Option<String>, Expr)> = before.into_iter().chain(exprs.iter().cloned()).collect();
+        for (name, e) in &exprs {
             let Expr::Call(f, args) = e else { continue };
             let key = format!("{e:?}");
             if f != "fill" || seen.contains(&key) || !self.regional(e) {
@@ -3256,13 +3649,30 @@ impl Gen<'_> {
                 if self.regional(&g) {
                     continue;
                 }
-                Some(self.val(&g)?)
+                Some((self.val(&g)?, self.exact_bytes(&g).is_some_and(|b| (0..256).all(|i| !skipped[i] || b[i]))))
             } else {
                 None
             };
+            let (eg, eg_all) = match eg {
+                Some((g, a)) => (Some(g), a),
+                None => (None, false),
+            };
             let none = |v: Option<Expr>| matches!(v, Some(Expr::Empty));
             let all = |v: Option<Expr>| matches!(v.map(simplify_all), Some(Expr::Not(b)) if matches!(*b, Expr::Empty));
-            if !(0..n).all(|k| (0..3).all(|part| none(self.in_region(&x, Some(k), part)))) {
+            // `X` in no region, or at a region's opener alone where the loop knows it at a token's first byte
+            // (`at_start`: of the bytes there, and of the fills it keeps at the byte before).
+            let mut x_open: Vec<Option<String>> = vec![None; n];
+            for (k, xo) in x_open.iter_mut().enumerate() {
+                if !prev && (1..3).all(|part| none(self.in_region(&x, Some(k), part))) {
+                    match self.in_region(&x, Some(k), 0) {
+                        Some(Expr::Empty) => {}
+                        Some(v) => *xo = self.opener_start(k, &v)?,
+                        // The byte before the opener may be a region's: `X` as the loop knows it at the token's first byte.
+                        None => *xo = self.opener_start(k, &x)?,
+                    }
+                }
+            }
+            if !(0..n).all(|k| x_open[k].is_some() || (0..3).all(|part| none(self.in_region(&x, Some(k), part)))) {
                 continue;
             }
             // In each region, `E` at none of its bytes after the first (the fill stays), or at all
@@ -3279,13 +3689,17 @@ impl Gen<'_> {
             let mut codes = Vec::new();
             let mut info = Vec::new();
             let mut ok = true;
+            // The rows whose values read their kind's assumptions.
+            // The rows whose values read their kind's assumptions, and whether one of the starts' not proved.
+            let mut assumed_rows: Vec<(usize, String, bool)> = Vec::new();
+            let (e0_, x0_) = (e0.clone(), x0.clone());
             for (row, st) in rows {
                 let Stmt::Token { kind, start, last, rule, .. } = st else { continue };
                 if matches!(rule, Some(TokenRule::Inside(..))) {
                     continue;
                 }
-                // A start is never a skipped byte.
-                let sb = self.bytes_at(start, 0, &mut HashMap::new());
+                // A start is never a skipped byte; its bytes as the grammar assumes them at starts.
+                let sb = self.bytes_at(&self.start_assumed(start), 0, &mut HashMap::new());
                 let sb: [bool; 256] = std::array::from_fn(|i| sb[i] && !self.skipped[i]);
                 let regions: Vec<(Known, usize)> = match rule {
                     Some(TokenRule::Read(rs)) => rs.iter().filter_map(|r| self.kinds.iter().position(|q| q.kind == r.kind).map(|k| (if rs.len() > 1 { Known::Test(format!("open == {k}")) } else { Known::Yes }, k))).collect(),
@@ -3308,21 +3722,37 @@ impl Gen<'_> {
                         // At its opener's byte.
                         let ob = self.bytes_at(&self.kinds[k].opener.clone(), 0, &mut HashMap::new());
                         let sb: [bool; 256] = std::array::from_fn(|i| sb[i] && ob[i]);
-                        let Some(es) = self.in_region(stop, Some(k), 0) else {
-                            ok = false;
-                            break;
+                        // `E` at the opener: of its bytes there, or as the loop knows it at a token's first
+                        // byte (`at_start`) where the byte before may be a region's.
+                        let es = match self.in_region(stop, Some(k), 0) {
+                            Some(es) => Ok(es),
+                            None => match self.opener_start(k, stop)? {
+                                Some(t) => Err(Known::Test(t)),
+                                None => {
+                                    ok = false;
+                                    break;
+                                }
+                            },
                         };
-                        let es = if self.regional(&es) {
-                            None
-                        } else {
+                        let es = match es {
+                            Err(t) => Some(t),
+                            Ok(es) if self.regional(&es) => None,
+                            Ok(es) => {
                             let ev = if matches!(es, Expr::Empty) { String::new() } else { self.val(&es)? };
                             self.known_over(&es, &sb, || Some(format!("bit(&{ev}, s)")))
+                            }
                         };
                         let Some(es) = es else {
                             ok = false;
                             break;
                         };
-                        let fk = s_at(Known::No).or(es.not().and(carry.clone()));
+                        let xk = match &x_open[k] {
+                            Some(t) if t == "true" => Known::Yes,
+                            Some(t) if t == "false" => Known::No,
+                            Some(t) => Known::Test(t.clone()),
+                            None => Known::No,
+                        };
+                        let fk = s_at(xk).or(es.not().and(carry.clone()));
                         v_s = v_s.or(cond.clone().and(fk.clone()));
                         v = v.or(cond.and(if !dies[k] {
                             fk
@@ -3335,47 +3765,119 @@ impl Gen<'_> {
                     info.push(RowFill { row: *row, at_s: v_s, at_l: v.clone(), tail_starts: false, tail_stop: Known::No, region: true, dies: row_dies });
                     (v, Known::No)
                 } else {
-                    // A token of code: `X` and `E` stage 1's over its bytes.
+                    // A token of code: `X` and `E` stage 1's over its bytes, as the token's kind's assumptions
+                    // read them (a test build checks the value where they are not proved).
                     let tb = self.row_tail_bytes(kind, rule, last);
                     let has_tail = (0..256).any(|i| tb[i]);
                     let bit = |v: &Option<String>, at: &str| v.as_ref().map(|v| format!("bit(&{v}, {at})"));
-                    let (Some(es), Some(xs)) = (self.known_over(&e0, &sb, || bit(&ev, "s")), self.known_over(&x0, &sb, || bit(&xv, "s"))) else {
+                    // At the first byte, the assumptions of the byte itself; after it, of the byte before too
+                    // (a `prev` there reads the token's).
+                    let (e0f, x0f) = (self.kind_read(kind, &e0, false), self.kind_read(kind, &x0, false));
+                    let (e0, x0) = (self.kind_read(kind, &e0, true), self.kind_read(kind, &x0, true));
+                    if e0 != e0_ || x0 != x0_ || e0f != e0_ || x0f != x0_ {
+                        assumed_rows.push((*row, kind.clone(), false));
+                    }
+                    let xb = self.bytes_at(&x0, 0, &mut HashMap::new());
+                    let (Some(es), Some(xs)) = (self.known_first(&e0f, &sb, ev.as_ref()), self.known_first(&x0f, &sb, xv.as_ref())) else {
                         ok = false;
                         break;
+                    };
+                    // `X` a part of the row's start (`int_at = num_start & …`): it holds at the first byte.
+                    let xs = match (&xs, self.in_region(start, None, 0)) {
+                        (Known::Test(_), Some(st)) => {
+                            let (mut xf, mut sf) = (Vec::new(), Vec::new());
+                            or_and(&x0f, &mut xf);
+                            or_and(&st, &mut sf);
+                            if !xf.is_empty() && xf.iter().all(|f| sf.contains(f)) { Known::Yes } else { xs }
+                        }
+                        _ => xs,
                     };
                     let fs = s_at(xs.clone()).or(es.not().and(carry.clone()));
                     if !has_tail {
                         info.push(RowFill { row: *row, at_s: fs.clone(), at_l: fs.clone(), tail_starts: false, tail_stop: Known::No, region: false, dies: false });
                         (fs, xs)
                     } else {
-                        let Some(et) = self.known_over(&e0, &tb, || ev.as_ref().map(|v| format!("any_in(&{v}, s + 1, l)"))) else {
+                        let Some(et) = self.known_tail(&e0, &tb, rule, ev.as_ref()) else {
                             ok = false;
                             break;
                         };
                         let all: [bool; 256] = std::array::from_fn(|i| sb[i] || tb[i]);
+                        // `X` over the token's bytes after its first, the byte before each one of the token's: none
+                        // there, where so (as `num_start`'s `~prev(w)` in a name).
+                        let mut at_tail = Ctx::of(tb);
+                        at_tail.0[3] = all.into();
+                        let x_tail_none = matches!(self.in_region_of(&x, None, 0, &at_tail, &mut HashMap::new()), Some(Expr::Empty));
+                        // For `prev(X)`, `X` over the token's bytes but its last (a fill starting after one
+                        // of them): at its first byte, as the row's start reads the bytes about it, and after
+                        // it, where the bytes about it are the token's. The byte after is one of the token's.
+                        let none_at = |g: &Gen, e: &Expr, ctx: &Ctx| {
+                            let Some(v) = g.in_region_of(e, None, 0, ctx, &mut HashMap::new()) else { return false };
+                            matches!(v, Expr::Empty) || (!g.regional(&v) && !g.may_hold(&v, ctx))
+                        };
+                        let mut start_unproved = false;
+                        let x_before_last_none = prev && {
+                            let mut first = Ctx::of(sb);
+                            first.0[5] = tb.into();
+                            let mut after = Ctx::of(tb);
+                            after.0[3] = all.into();
+                            after.0[5] = tb.into();
+                            // Or the grammar assumes it none at starts (`assume … at starts M = empty`).
+                            let assumed = self.x.assumed.iter().find(|(sc, m, a, _)| sc.is_none() && matches!(a, Expr::Empty) && self.in_region(&Expr::Name(m.clone()), None, 0) == self.in_region(&x, None, 0));
+                            if let Some((.., proved)) = assumed
+                                && !proved
+                            {
+                                start_unproved = true;
+                            }
+                            (assumed.is_some() || none_at(self, &Expr::And(Box::new(x.clone()), Box::new(start.clone())), &first)) && none_at(self, &x, &after)
+                        };
+                        if x_before_last_none && start_unproved {
+                            assumed_rows.push((*row, kind.clone(), true));
+                        }
+                        let tbx: [bool; 256] = if x_tail_none { [false; 256] } else { tb };
                         let over = |b: &[bool; 256], code: String| if (0..256).any(|i| b[i] && xb[i]) { Known::Test(code) } else { Known::No };
                         let xv_ = xv.clone().unwrap_or_default();
-                        let xt = over(&tb, format!("bit(&{xv_}, l)"));
+                        // `X` at the token's last byte: of the bytes there where it is the same at each.
+                        let xt = match self.known_over(&x0, &tb, || bit(&xv, "l")) {
+                            Some(k @ (Known::Yes | Known::No)) => k,
+                            _ => over(&tb, format!("bit(&{xv_}, l)")),
+                        };
                         let ft = match (&et, prev) {
                             (Known::Yes, true) => over(&all, format!("bit(&{xv_}, l - 1)")),
                             (Known::Yes, false) => xt.clone(),
+                            (Known::No, true) if x_before_last_none => fs.clone(),
                             (Known::No, true) => fs.clone().or(over(&all, format!("any_in(&{xv_}, s, l - 1)"))),
-                            (Known::No, false) => fs.clone().or(over(&tb, format!("any_in(&{xv_}, s + 1, l)"))),
+                            (Known::No, false) => fs.clone().or(over(&tbx, format!("any_in(&{xv_}, s + 1, l)"))),
                             // A stop over some of its bytes: from the last, or the first byte's.
                             (Known::Test(_), _) => {
                                 let ev_ = ev.clone().unwrap_or_default();
-                                let (after, none) = if prev {
+                                let (after, none) = if prev && x_before_last_none {
+                                    (Known::No, fs.clone())
+                                } else if prev {
                                     (over(&all, format!("any_in(&{xv_}, q - 1, l - 1)")), fs.clone().or(over(&all, format!("any_in(&{xv_}, s, l - 1)"))))
                                 } else {
                                     (over(&tb, format!("any_in(&{xv_}, q, l)")), fs.clone().or(over(&tb, format!("any_in(&{xv_}, s + 1, l)"))))
                                 };
-                                Known::Test(format!("match last_in(&{ev_}, s + 1, l) {{ Some(q) => {}, None => {} }}", after.code(), none.code()))
+                                let v = match after {
+                                    // Nothing starts after the last stop: none where one is.
+                                    Known::No => et.clone().not().and(none),
+                                    after => Known::Test(format!("match last_in(&{ev_}, s + 1, l) {{ Some(q) => {}, None => {} }}", after.code(), none.code())),
+                                };
+                                // A run's bytes: where the run is read forward, it keeps the fill as it reads them
+                                // (`run_fill`), from its value at the first byte.
+                                // `X` and `E` as the token's kind reads them over its bytes.
+                                match (&v, rule, prev) {
+                                    (Known::Test(t), Some(TokenRule::Run(_)), false) if !matches!(x0, Expr::Empty) && !matches!(e0, Expr::Empty) => {
+                                        let (xm, em) = (self.val(&x0)?, self.val(&e0)?);
+                                        Known::Test(format!("run_fill(&{xm}, &{em}, {}, {t})", fs.code()))
+                                    }
+                                    _ => v,
+                                }
                             }
                         };
-                        let tail_starts = (0..256).any(|i| (if prev { all[i] } else { tb[i] }) && xb[i]);
+                        let tail_starts = (0..256).any(|i| (if prev { all[i] } else { tbx[i] }) && xb[i]);
                         let pick = |a: Known, b: Known| {
                             let (a, b) = (a.code(), b.code());
-                            if a == b { Known::Test(a) } else { Known::Test(format!("if l > s {{ {a} }} else {{ {b} }}")) }
+                            if a == b { if a == "true" { Known::Yes } else if a == "false" { Known::No } else { Known::Test(a) } } else { Known::Test(format!("if l > s {{ {a} }} else {{ {b} }}")) }
                         };
                         let fl = pick(ft, fs.clone());
                         info.push(RowFill { row: *row, at_s: fs, at_l: fl.clone(), tail_starts, tail_stop: et, region: false, dies: false });
@@ -3387,13 +3889,136 @@ impl Gen<'_> {
             if !ok {
                 continue;
             }
+            // Read as the kind's assumptions read it, not proved: a test build checks it against the mask. One
+            // line: the unread masks' lines are dropped whole.
+            if !assumed_rows.is_empty() {
+                let fv = self.val(e)?;
+                let mut done: Vec<usize> = Vec::new();
+                for (row, kind, starts) in &assumed_rows {
+                    let proved = !starts && self.x.assumed.iter().filter(|a| a.0.as_deref() == Some(kind.as_str())).all(|a| a.3);
+                    if let Some(c) = codes.iter_mut().find(|c| c.0 == *row)
+                        && !proved
+                        && !done.contains(row)
+                    {
+                        done.push(*row);
+                        c.1 = format!("{{ let f = {}; #[cfg(feature = \"test-hooks\")] assert_eq!(f, bit(&{fv}, l), \"assume in {kind}: `{}` at the token's last byte {{l}}\"); f }}", c.1, self.brief(e));
+                    }
+                }
+            }
+            // `X` at every skipped byte: true over any gap.
+            let xg_all = matches!(&xg, Expr::Not(a) if matches!(**a, Expr::Empty));
             let xg = if matches!(xg, Expr::Empty) { None } else { Some(self.val(&xg)?) };
             let start0 = if prev { Expr::Call("prev".into(), vec![Arg::E(x0.clone())]) } else { x0.clone() };
-            self.fills.push(LoopFill { name: name.clone(), key, shown: show(e), prev, x, xg, eg, within: None, rows: codes, info, start0, stop0: e0.clone() });
+            let only_x = only_x.contains(&key);
+            self.fills.push(LoopFill { name: name.clone(), key, shown: show(e), prev, x, xg, eg, eg_all, within: None, only_x, xg_all, rows: codes, info, start0, stop0: e0.clone() });
             // What `in_region_of` read has changed.
             self.region_values.get_mut().clear();
         }
+        self.x_only_rows(rows);
         Ok(())
+    }
+
+    /// A row's start as the grammar assumes it at starts (`assume … at starts m = e`).
+    fn start_assumed(&self, start: &Expr) -> Expr {
+        match start {
+            Expr::Name(n) => match self.x.assumed.iter().find(|(sc, m, _, _)| sc.is_none() && m == n) {
+                Some((_, _, a, _)) => a.clone(),
+                None => start.clone(),
+            },
+            _ => start.clone(),
+        }
+    }
+
+    /// `e`'s terms by name: a name whose definition is a union, its terms.
+    fn named_terms(&self, e: &Expr, out: &mut Vec<Expr>, depth: usize) {
+        match e {
+            Expr::Or(a, b) => {
+                self.named_terms(a, out, depth + 1);
+                self.named_terms(b, out, depth + 1);
+            }
+            Expr::Name(n) if depth < 16 && matches!(self.defs.get(n), Some(Expr::Or(..))) => {
+                let d = self.defs[n].clone();
+                self.named_terms(&d, out, depth + 1);
+            }
+            Expr::Empty => {}
+            e => out.push(e.clone()),
+        }
+    }
+
+    /// The masks the loop keeps for their `X` alone, at a token of code's last byte, by its row (once
+    /// every fill is found): true where a term of `X` is a term of the row's run (a run holds at its
+    /// last byte), a fill the loop keeps where the token neither starts nor stops it (its value at the
+    /// start), none where a term holds at none of the token's bytes; each as the token's kind's
+    /// assumptions read it. Else as found.
+    fn x_only_rows(&mut self, rows: &[(usize, &Stmt)]) {
+        for i in 0..self.fills.len() {
+            if !self.fills[i].only_x {
+                continue;
+            }
+            for (row, st) in rows {
+                let Stmt::Token { kind, start, last, rule, .. } = st else { continue };
+                if matches!(rule, Some(TokenRule::Inside(..) | TokenRule::Read(_) | TokenRule::ReadParts(..))) {
+                    continue;
+                }
+                let Some(k) = self.fills[i].rows.iter().position(|r| r.0 == *row) else { continue };
+                let x = self.fills[i].x.clone();
+                if let Some(xl) = self.x_at_last(kind, start, last, rule, *row, &x) {
+                    // Read as the kind's assumptions read it, not proved: a test build checks it against the mask.
+                    let proved = self.x.assumed.iter().filter(|a| a.0.as_deref() == Some(kind.as_str())).all(|a| a.3);
+                    self.fills[i].rows[k].2 = match (proved, self.val(&x)) {
+                        // One line: the unread masks' lines are dropped whole.
+                        (false, Ok(v)) => format!("{{ let x = {}; #[cfg(feature = \"test-hooks\")] assert_eq!(x, bit(&{v}, l), \"assume in {kind}: `{}` at the token's last byte {{l}}\"); x }}", xl.code(), self.brief(&x)),
+                        _ => xl.code(),
+                    };
+                }
+            }
+        }
+    }
+
+    /// `x_only_rows`' value of `x` at the last byte of a token of row `row`, where it knows it.
+    fn x_at_last(&mut self, kind: &str, start: &Expr, last: &Option<Expr>, rule: &Option<TokenRule>, row: usize, x: &Expr) -> Option<Known> {
+        let mut terms = Vec::new();
+        self.named_terms(&simplify_all(self.kind_names_of(kind, x, 0, true, false)), &mut terms, 0);
+        let mut run = Vec::new();
+        if let Some(TokenRule::Run(r)) = rule {
+            self.named_terms(r, &mut run, 0);
+        }
+        if terms.iter().any(|t| run.contains(t)) {
+            return Some(Known::Yes);
+        }
+        // Assumed of every byte of the token (`assume … in KIND x = ~empty`).
+        if matches!(simplify_all(self.kind_names(kind, x, 0, false)), Expr::Not(a) if *a == Expr::Empty) {
+            return Some(Known::Yes);
+        }
+        let tb = self.row_tail_bytes(kind, rule, last);
+        let sb = self.bytes_at(&self.start_assumed(start), 0, &mut HashMap::new());
+        let all: [bool; 256] = std::array::from_fn(|i| (sb[i] && !self.skipped[i]) || tb[i]);
+        let mut at_tail = Ctx::of(tb);
+        at_tail.0[3] = all.into();
+        let none_at = |g: &Gen, e: &Expr, ctx: &Ctx| {
+            let Some(v) = g.in_region_of(&simplify_all(g.kind_names(kind, e, 0, true)), None, 0, ctx, &mut HashMap::new()) else { return false };
+            !g.regional(&v) && g.cubes(&v, &mut HashMap::new()).iter().all(|c| !c.iter().all(|(o, b)| ctx.at(*o).meets(b)))
+        };
+        let mut v = Known::No;
+        for t in &terms {
+            if let Some(j) = self.fill_of(t).filter(|&j| !self.fills[j].only_x && self.fills[j].within.is_none()) {
+                let r = self.fills[j].info.iter().find(|r| r.row == row)?;
+                let Expr::Call(_, fa) = t else { return None };
+                let [Arg::E(fs), Arg::E(fe)] = fa.as_slice() else { return None };
+                if r.region || (tb.iter().any(|&b| b) && !none_at(self, fs, &at_tail)) {
+                    return None;
+                }
+                if !tb.iter().any(|&b| b) || none_at(self, fe, &at_tail) {
+                    v = v.or(r.at_s.clone());
+                } else if !self.exact_bytes(&simplify_all(self.kind_names(kind, fe, 0, true))).is_some_and(|x| Bytes::of(&tb).within(&x)) {
+                    // Stopped at every byte after the first: none at the last.
+                    return None;
+                }
+            } else if !none_at(self, t, &Ctx::of(all)) {
+                return None;
+            }
+        }
+        Some(v)
     }
 
     /// `fill(F & Y, ~F [| Z])` for a fill `F` the loop keeps and `Y`, `Z` of stage 1: each of
@@ -3453,13 +4078,18 @@ impl Gen<'_> {
             }
             let Some(fr) = self.fills[j].info.iter().find(|r| r.row == *row) else { return Ok(false) };
             let (f_s, f_l, region, dies, tail_starts, tail_stop) = (fr.at_s.clone(), fr.at_l.clone(), fr.region, fr.dies, fr.tail_starts, fr.tail_stop.clone());
+            // `F` at the last byte: the row has set `fill_J` (the fills' rows run in order).
+            let f_l = match f_l {
+                Known::Test(_) => Known::Test(format!("fill_{j}")),
+                k => k,
+            };
             let sb = self.bytes_at(start, 0, &mut HashMap::new());
             let sb: [bool; 256] = std::array::from_fn(|b| sb[b] && !self.skipped[b]);
             let bit = |at: &str| yv.as_ref().map(|v| format!("bit(&{v}, {at})"));
-            let Some(ys) = self.known_over(y, &sb, || bit("s")) else { return Ok(false) };
+            let Some(ys) = self.known_first(y, &sb, yv.as_ref()) else { return Ok(false) };
             // The stop `Z` at the first byte, and none over the bytes after.
             let zs = match &z {
-                Some(z) => match self.known_over(z, &sb, || zv.as_ref().map(|v| format!("bit(&{v}, s)"))) {
+                Some(z) => match self.known_first(z, &sb, zv.as_ref()) {
                     Some(k) => k,
                     None => return Ok(false),
                 },
@@ -3470,10 +4100,10 @@ impl Gen<'_> {
             let z_tail = match (&z, region) {
                 (Some(z), false) => {
                     let tb = self.row_tail_bytes(kind, rule, last);
-                    match self.known_over(z, &tb, || zv.as_ref().map(|v| format!("any_in(&{v}, s + 1, l)"))) {
+                    match self.known_tail(z, &tb, rule, zv.as_ref()) {
                         Some(Known::No) => None,
                         Some(k) => {
-                            let yt = self.known_over(y, &tb, || yv.as_ref().map(|v| format!("any_in(&{v}, s + 1, l)"))).unwrap_or(Known::No);
+                            let yt = self.known_tail(y, &tb, rule, yv.as_ref()).unwrap_or(Known::No);
                             Some((k, yt))
                         }
                         None => return Ok(false),
@@ -3497,7 +4127,7 @@ impl Gen<'_> {
                 if !(0..256).any(|b| tb[b]) {
                     g_s.clone()
                 } else if !tail_starts {
-                    let Some(yt) = self.known_over(y, &tb, || yv.as_ref().map(|v| format!("any_in(&{v}, s + 1, l)"))) else { return Ok(false) };
+                    let Some(yt) = self.known_tail(y, &tb, rule, yv.as_ref()) else { return Ok(false) };
                     f_l.clone().and(g_s.clone().or(yt))
                 } else if matches!(self.known_over(y, &tb, || None), Some(Known::No)) {
                     // A start of `F` may be over them, and no `Y`: the first byte's while `F` holds,
@@ -3520,7 +4150,7 @@ impl Gen<'_> {
             info.push(RowFill { row: *row, at_s: g_s, at_l: g_l.clone(), tail_starts: false, tail_stop: Known::No, region, dies });
             codes.push((*row, g_l.code(), Known::No.code()));
         }
-        self.fills.push(LoopFill { name: name.clone(), key: key.to_owned(), shown: show(e), prev: false, x: x.clone(), xg: None, eg: None, within: Some(j), rows: codes, info, start0: (**y).clone(), stop0: z.unwrap_or(Expr::Empty) });
+        self.fills.push(LoopFill { name: name.clone(), key: key.to_owned(), shown: show(e), prev: false, x: x.clone(), xg: None, eg: None, eg_all: false, within: Some(j), only_x: false, xg_all: false, rows: codes, info, start0: (**y).clone(), stop0: z.unwrap_or(Expr::Empty) });
         // What `in_region_of` read has changed.
         self.region_values.get_mut().clear();
         Ok(true)
@@ -4630,7 +5260,7 @@ impl Gen<'_> {
             Shape::Empty => made(Vec::new()),
             Shape::Name(_) => unreachable!("names are `name_cubes`'"),
             // A class's complement, at its own byte, or shifted at the byte it reads (where the
-            // class's bytes are exact); `~~a`, `a`'s; else nothing known.
+            // class's bytes are exact); `~~a`, `a`'s; an exact mask's complement; else nothing known.
             Shape::Not(a) => match self.shape(*a) {
                 Shape::Name(n) => {
                     self.note_read(n);
@@ -4648,7 +5278,11 @@ impl Gen<'_> {
                     },
                     _ => all(),
                 },
-                _ => all(),
+                // Of a mask whose bytes are exact (a union of classes): their complement.
+                _ => match self.exact_of(*a) {
+                    Some(b) => one(0, b.not()),
+                    None => all(),
+                },
             },
             Shape::And(a, b) => {
                 let (x, y) = (self.cubes_id(*a, memo), self.cubes_id(*b, memo));
@@ -5116,35 +5750,95 @@ impl Gen<'_> {
         Ok(false)
     }
 
+    /// `e` with the masks token kind `kind` assumes (`assume … in KIND m = x`) as assumed, by name:
+    /// a name whose definition reads one is its definition so read.
+    fn kind_names(&self, kind: &str, e: &Expr, depth: usize, prev_in: bool) -> Expr {
+        self.kind_names_of(kind, e, depth, false, prev_in)
+    }
+
+    /// `kind_names`; with `empties`, of the masks the kind assumes empty alone.
+    fn kind_names_of(&self, kind: &str, e: &Expr, depth: usize, empties: bool, prev_in: bool) -> Expr {
+        let r = |x: &Expr| Box::new(self.kind_names_of(kind, x, depth + 1, empties, prev_in));
+        match e {
+            Expr::Name(n) => {
+                if let Some(a) = self.x.assumed.iter().find(|a| a.0.as_deref() == Some(kind) && a.1 == *n && (!empties || a.2 == Expr::Empty)) {
+                    return a.2.clone();
+                }
+                match self.defs.get(n) {
+                    Some(d) if depth < 16 => {
+                        let read = self.kind_names_of(kind, d, depth + 1, empties, prev_in);
+                        if read == *d { e.clone() } else { read }
+                    }
+                    _ => e.clone(),
+                }
+            }
+            Expr::Not(a) => Expr::Not(r(a)),
+            Expr::And(a, b) => Expr::And(r(a), r(b)),
+            Expr::Or(a, b) => Expr::Or(r(a), r(b)),
+            Expr::Xor(a, b) => Expr::Xor(r(a), r(b)),
+            // The byte before, the token's (`prev_in`): as the byte's.
+            Expr::Call(f, args) if prev_in && f == "prev" && args.len() == 1 && let Arg::E(x) = &args[0] => {
+                Expr::Call(f.clone(), vec![Arg::E(self.kind_names_of(kind, x, depth + 1, empties, false))])
+            }
+            // Else a call reads bytes about the byte, which may be outside the token: as it is.
+            _ => e.clone(),
+        }
+    }
+
+    /// `e`, made of the masks in place (`in_region`), as token kind `kind`'s assumptions read it
+    /// (`assume … in KIND m = x`): each assumed mask so made replaced where it is a part of it, and
+    /// each term of a union assumed empty empty too.
+    fn kind_read(&self, kind: &str, e: &Expr, prev_in: bool) -> Expr {
+        let these: Vec<(String, Expr)> = self.x.assumed.iter().filter(|a| a.0.as_deref() == Some(kind)).map(|a| (a.1.clone(), a.2.clone())).collect();
+        let mut read = e.clone();
+        for (m, to) in &these {
+            if let (Some(from), Some(to)) = (self.in_region(&Expr::Name(m.clone()), None, 0), self.in_region(to, None, 0)) {
+                read = replace_here(&read, &from, &to, prev_in);
+                if to == Expr::Empty {
+                    let mut ts = Vec::new();
+                    or_terms(&from, &mut ts);
+                    for t in ts.iter().filter(|_| ts.len() > 1) {
+                        read = replace_here(&read, t, &Expr::Empty, prev_in);
+                    }
+                }
+            }
+        }
+        simplify_all(read)
+    }
+
     /// Escape `why` of `e`, which reads a fill the loop keeps and holds only at a token's start
     /// (at no skipped byte, none in a token of code after its start, none in a region after its
     /// start): tested at each start.
     fn start_escape(&mut self, why: &str, e: &Expr, rows: &[(usize, &Stmt)]) -> Result<bool, String> {
-        if !self.reads_fill(e) {
+        if !self.reads_fill(e) && !self.reads_x_only(e) {
             return Ok(false);
         }
         let n = self.opens.as_ref().map_or(0, Vec::len);
-        let Some(v) = self.in_region(e, None, 0) else { return Ok(false) };
+        // Where it may hold: the masks kept for their `X` alone read as every byte, as the fills the loop keeps are.
+        let wide = self.x_only_as_all(e);
+        let Some(v) = self.in_region(&wide, None, 0) else { return Ok(false) };
         let at = self.bytes_at(&self.fills_as_all(&v), 0, &mut HashMap::new()).bools();
         if (0..256).any(|i| at[i] && self.skipped[i]) {
-            return Ok(false);
+            return self.gap_escape(why, e, rows);
         }
         let mut tails = Vec::new();
         for (row, st) in rows {
-            let Stmt::Token { kind, last, rule, .. } = st else { continue };
+            let Stmt::Token { kind, start, last, rule, .. } = st else { continue };
             if matches!(rule, Some(TokenRule::Inside(..) | TokenRule::Read(_) | TokenRule::ReadParts(..))) {
                 continue;
             }
             let tb = self.row_tail_bytes(kind, rule, last);
             if (0..256).any(|i| at[i] && tb[i]) {
                 // Over the token's bytes after its first, where it is `A & prev(G)`.
-                let Some(t) = self.tail_escape(e, *row)? else { return Ok(false) };
+                let sb = self.bytes_at(start, 0, &mut HashMap::new());
+                let all: [bool; 256] = std::array::from_fn(|i| (sb[i] && !self.skipped[i]) || tb[i]);
+                let Some(t) = self.tail_escape(e, *row, kind, &tb, &all)? else { return Ok(false) };
                 if t != "false" {
                     tails.push((why.to_owned(), *row, t));
                 }
             }
         }
-        if !(0..n).all(|k| (1..3).all(|part| matches!(self.in_region(e, Some(k), part), Some(Expr::Empty)))) {
+        if !(0..n).all(|k| (1..3).all(|part| matches!(self.in_region(&wide, Some(k), part), Some(Expr::Empty)))) {
             return Ok(false);
         }
         let Some(here) = self.at_start(e)? else { return Ok(false) };
@@ -5156,11 +5850,77 @@ impl Gen<'_> {
         Ok(true)
     }
 
+    /// Escape `why` of `e`, `prev(F) & prev(C) & R` for a fill `F` the loop keeps, `C` a class at no
+    /// skipped byte and `R` of the bytes, which holds at skipped bytes: only at a gap's first byte
+    /// (`at`, the token before's last byte `C`, which no gap byte is) or, where the gap is empty, at
+    /// the token's first, so at `at` either way. Where a token's byte after its first may be `R`, `C`
+    /// is none of the token's; in a region, none after its start. Tested at each token's start, as
+    /// the lean parser asks what follows a token, and at the file's end.
+    fn gap_escape(&mut self, why: &str, e: &Expr, rows: &[(usize, &Stmt)]) -> Result<bool, String> {
+        let mut cs = Vec::new();
+        or_and(e, &mut cs);
+        let prev_of = |c: &Expr| match c {
+            Expr::Call(f, args) if f == "prev" && args.len() == 1 => match &args[0] {
+                Arg::E(a) => Some(a.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        let (mut fill, mut class, mut rest) = (None, None, Vec::new());
+        for c in &cs {
+            match prev_of(c) {
+                Some(a) if fill.is_none() && self.fill_of(&a).is_some() => fill = self.fill_of(&a),
+                Some(a) if class.is_none() && self.exact_bytes(&a).is_some_and(|b| (0..256).all(|i| !(b[i] && self.skipped[i]))) => class = Some(a),
+                _ => rest.push(c.clone()),
+            }
+        }
+        let (Some(i), Some(c)) = (fill, class) else { return Ok(false) };
+        let Some(r) = rest.into_iter().reduce(|a, b| Expr::And(Box::new(a), Box::new(b))) else { return Ok(false) };
+        let Some(r0) = self.in_region(&r, None, 0) else { return Ok(false) };
+        // The bytes each may hold at: what a token's bytes may meet.
+        let (rb, cb) = (self.bytes_at(&r0, 0, &mut HashMap::new()), self.bytes_at(&c, 0, &mut HashMap::new()));
+        for (_, st) in rows {
+            let Stmt::Token { kind, start, last, rule, .. } = st else { continue };
+            if matches!(rule, Some(TokenRule::Inside(..) | TokenRule::Read(_) | TokenRule::ReadParts(..))) {
+                continue;
+            }
+            let tb = Bytes::of(&self.row_tail_bytes(kind, rule, last));
+            let sb = self.bytes_at(&self.start_assumed(start), 0, &mut HashMap::new());
+            if tb.meets(&rb) && (tb.meets(&cb) || sb.meets(&cb)) {
+                return Ok(false);
+            }
+        }
+        let n = self.opens.as_ref().map_or(0, Vec::len);
+        // In a region after its start: a factor none there, or for each part the byte before may be in
+        // (the part before, or the same), a `prev(Y)` whose `Y` is none there. A fill the loop keeps is
+        // none after a region token's start where it is none at every region token's last byte (it is
+        // the same over a region token's bytes after its start).
+        let none = |v: Option<Expr>| matches!(v, Some(Expr::Empty));
+        let fill_after = |g: &Gen, y: &Expr| g.fill_of(y).is_some_and(|j| {
+            let rs: Vec<&RowFill> = g.fills[j].info.iter().filter(|r| r.region).collect();
+            !rs.is_empty() && rs.iter().all(|r| matches!(r.at_l, Known::No))
+        });
+        for k in 0..n {
+            for part in 1..3u8 {
+                let here = cs.iter().any(|f| none(self.in_region(f, Some(k), part)));
+                let before = [part - 1, part].iter().all(|&p| {
+                    cs.iter().any(|f| prev_of(f).is_some_and(|y| none(self.in_region(&y, Some(k), p)) || (p > 0 && fill_after(self, &y))))
+                });
+                if !here && !before {
+                    return Ok(false);
+                }
+            }
+        }
+        let t = format!("at > 0 && at < n && fill_{i} && bit(&{}, at - 1) && bit(&{}, at)", self.val(&c)?, self.val(&r0)?);
+        self.gap_escapes.push((why.replace('\n', "\\n").replace('\r', "\\r"), t));
+        Ok(true)
+    }
+
     /// `e`, `A & prev(G)` for `A` of stage 1 outside the regions and `G` a fill within `F`
     /// (`within_fill`), over a token of row `row`'s bytes after its first, where no `F` starts:
     /// `F` holds from the first byte to the first stop over them, `G` from the first byte or the
     /// first `Y` over them, so an `A` after one of them and up to that stop.
-    fn tail_escape(&mut self, e: &Expr, row: usize) -> Result<Option<String>, String> {
+    fn tail_escape(&mut self, e: &Expr, row: usize, kind: &str, tb: &[bool; 256], all: &[bool; 256]) -> Result<Option<String>, String> {
         let mut factors = Vec::new();
         fn conj<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>) {
             if let Expr::And(a, b) = e {
@@ -5178,6 +5938,70 @@ impl Gen<'_> {
             },
             _ => None,
         };
+        // `A & prev(M)`, `M` kept for its `X` alone: `M` a byte before, over the token's bytes after its
+        // first, is its terms there, each a fill the loop keeps that the token neither starts nor stops
+        // (its value at the start) or one the token's kind assumes empty (`assume … in KIND`), as the
+        // lean lexer tells a name's letters past ASCII as it reads the name (`name_end`'s `wide`).
+        let xo: Vec<usize> = factors
+            .iter()
+            .filter_map(|x| match x {
+                Expr::Call(p, pa) if p == "prev" && pa.len() == 1 => match &pa[0] {
+                    Arg::E(a) => self.fill_x_of(a).filter(|&i| self.fills[i].only_x),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        if let [i] = xo.as_slice() {
+            let i = *i;
+            let mut a = Expr::Not(Box::new(Expr::Empty));
+            for x in &factors {
+                let own = matches!(x, Expr::Call(p, pa) if p == "prev" && pa.len() == 1 && matches!(&pa[0], Arg::E(m) if self.fill_x_of(m) == Some(i)));
+                if !own {
+                    a = Expr::And(Box::new(a), Box::new((*x).clone()));
+                }
+            }
+            let Some(a0) = self.in_region(&simplify_all(a), None, 0) else { return Ok(None) };
+            if self.regional(&a0) || self.reads_fill(&a0) {
+                return Ok(None);
+            }
+            let named = self.kind_names_of(kind, &self.fills[i].x.clone(), 0, true, true);
+            let Some(m0) = self.in_region(&simplify_all(named.clone()), None, 0) else { return Ok(None) };
+            let mut terms = Vec::new();
+            or_terms(&m0, &mut terms);
+            let mut at_s = Known::No;
+            for t in terms.iter().filter(|t| !matches!(t, Expr::Empty)) {
+                let Some(j) = self.fill_of(t).filter(|&j| !self.fills[j].only_x && self.fills[j].within.is_none()) else { return Ok(None) };
+                let Some(r) = self.fills[j].info.iter().find(|r| r.row == row) else { return Ok(None) };
+                // Over the bytes after the first, as the kind's assumptions read them, each byte before
+                // one of the token's: the fill neither starts nor stops.
+                let Expr::Call(_, fa) = t else { return Ok(None) };
+                let [Arg::E(fs), Arg::E(fe)] = fa.as_slice() else { return Ok(None) };
+                let mut at_tail = Ctx::of(*tb);
+                at_tail.0[3] = (*all).into();
+                // None where no way it may hold (`cubes`) fits the bytes there.
+                let none = |g: &Gen, x: &Expr| {
+                    let Some(v) = g.in_region_of(&simplify_all(g.kind_names(kind, x, 0, true)), None, 0, &at_tail, &mut HashMap::new()) else { return false };
+                    !g.regional(&v) && g.cubes(&v, &mut HashMap::new()).iter().all(|c| !c.iter().all(|(o, b)| at_tail.at(*o).meets(b)))
+                };
+                if r.region || !none(self, fs) || !none(self, fe) {
+                    return Ok(None);
+                }
+                at_s = at_s.or(r.at_s.clone());
+            }
+            if matches!(at_s, Known::No) || matches!(a0, Expr::Empty) {
+                return Ok(Some("false".to_owned()));
+            }
+            let av = self.val(&a0)?;
+            let t = at_s.and(Known::Test(format!("any_in(&{av}, s + 1, l)"))).code();
+            // Read as the kind's assumptions read it, not proved: a test build checks it against the escape.
+            let proved = self.x.assumed.iter().filter(|a| a.0.as_deref() == Some(kind)).all(|a| a.3);
+            if !proved {
+                let ev = self.val(e)?;
+                return Ok(Some(format!("{{ let t = {t};\n                #[cfg(feature = \"test-hooks\")]\n                assert_eq!(t, any_in(&{ev}, s + 1, l), \"assume in {kind}: an escape over the token's bytes after its first, by byte {{l}}\");\n                t }}")));
+            }
+            return Ok(Some(t));
+        }
         let gs: Vec<usize> = factors.iter().filter_map(|x| is_g(self, x)).collect();
         let [i] = gs.as_slice() else { return Ok(None) };
         let i = *i;
@@ -5288,7 +6112,10 @@ impl Gen<'_> {
             }
             let v = simplify(v);
             let name = self.val(&v)?;
-            self.code_checks.push((why.to_owned(), name, v));
+            // The mask is shifted back by its `prev`'s distance: its anchor too, where every term's is one.
+            let js: Vec<i64> = out.iter().map(|(j, _)| *j).collect();
+            let at = anchor(e, &self.defs).filter(|_| js.windows(2).all(|w| w[0] == w[1])).map(|(ys, a)| (ys, i64::from(a) - js.first().copied().unwrap_or(0)));
+            self.code_checks.push((why.to_owned(), name, v, at, conjuncts(e)));
             return Ok(true);
         }
         let mut code = Vec::new();
@@ -5320,6 +6147,20 @@ impl Gen<'_> {
         })
     }
 
+    /// Whether `e` is made of the bytes alone: classes, texts and their shifts, no region's mask, no fill.
+    fn bytes_only(&self, e: &Expr, depth: usize) -> bool {
+        if depth > 32 {
+            return false;
+        }
+        match e {
+            Expr::Name(n) => n != "code" && !self.regional.contains(n) && self.defs.get(n).is_none_or(|d| self.bytes_only(d, depth + 1)),
+            Expr::Not(a) => self.bytes_only(a, depth + 1),
+            Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => self.bytes_only(a, depth + 1) && self.bytes_only(b, depth + 1),
+            Expr::Call(f, args) => matches!(f.as_str(), "prev" | "next" | "text") && args.iter().all(|a| !matches!(a, Arg::E(x) if !self.bytes_only(x, depth + 1))),
+            Expr::Empty | Expr::Test { .. } => false,
+        }
+    }
+
     /// Escape `why` of `e`, made of the regions through `code` alone: after the loop, of the bytes
     /// outside its region tokens, which it records (`code_l`). The test build checks the record is
     /// the regions' `code`.
@@ -5333,6 +6174,30 @@ impl Gen<'_> {
             self.forget_name("code_l");
             self.names.insert("code_l".to_owned(), "code_l".to_owned());
         }
+        let why_l = why.replace('\n', "\\n").replace('\r', "\\r");
+        // Its factors of the bytes alone (`semicolon`, `prev(gt)`): where they hold, the escape is tested at the byte,
+        // the rest read back from there, as the lean lexer looks at a `;`'s line only at the `;`.
+        let bytes_part = conjuncts(e).into_iter().filter(|f| self.bytes_only(f, 0)).reduce(|a, b| Expr::And(Box::new(a), Box::new(b)));
+        if let Some(bp) = bytes_part {
+            let stmts = self.x.stmts;
+            let rare = self.rare.get_or_insert_with(|| {
+                let mut b = bytes::Bytes::new(stmts, HashMap::new(), HashMap::new());
+                b.set_partial();
+                b.code_fn = true;
+                b.tag = "r";
+                b
+            });
+            if let Ok(call) = rare.at(e, "q", 0) {
+                let before = std::mem::take(&mut self.body);
+                let v = self.val(&bp);
+                let lines = std::mem::replace(&mut self.body, before);
+                let v = v?;
+                let k = self.next;
+                self.next += 1;
+                let _ = write!(self.code_after, "{lines}    let rare_{k}: Vec<u64> = (0..nw).map(|i| {v}[i]).collect();\n    // {why_l}\n    refused |= any_at(&rare_{k}, |q| {call});\n");
+                return Ok(true);
+            }
+        }
         let before = std::mem::take(&mut self.body);
         let open = self.open_pass.take();
         self.in_lane = true;
@@ -5341,7 +6206,7 @@ impl Gen<'_> {
         self.open_pass = open;
         let lines = std::mem::replace(&mut self.body, before);
         let v = v?;
-        let _ = write!(self.code_after, "{lines}    // {why}\n    refused |= any(&{v});\n");
+        let _ = write!(self.code_after, "{lines}    // {why_l}\n    refused |= any(&{v});\n");
         Ok(true)
     }
 
@@ -5428,7 +6293,8 @@ impl Gen<'_> {
         }
         if let Some(v) = outside {
             let name = self.val(&v)?;
-            self.code_checks.push((why.to_owned(), name, v));
+            let at = anchor(e, &self.defs).map(|(ys, a)| (ys, i64::from(a)));
+            self.code_checks.push((why.to_owned(), name, v, at, conjuncts(e)));
         }
         Ok(true)
     }
@@ -5461,10 +6327,83 @@ impl Gen<'_> {
             }
             let _ = write!(out, "// {why}\nif {} {{\n    refused = true;\n    break;\n}}\n", tests.join(" || "));
         }
-        // Tier 2's fields the loop writes, over this token's parts.
-        for fw in &self.field_writes {
+        out
+    }
+
+    /// Tier 2's reads of the region tokens it reads in parts (decision 0721 step 16), as JSON's tier 2 reads a string's
+    /// pieces: of the bytes at the token, tier 1 keeping no mask of the file for them. A token's span (`span`: its region,
+    /// opener, closer and last byte, as the walk reads it); whether a region opens at a byte (`opens`); and each field's
+    /// word of 64 bytes (`field`), written as tier 1 wrote it over the token. Between `T2_BEGIN` and `T2_END`, where
+    /// `bit_reads` reads their masks of the bytes.
+    fn span_reads(&self, x: &Input, field_plan: &[(String, String)]) -> String {
+        let opens: Vec<String> = self.opens.as_ref().map(|o| o.iter().map(|q| q.0.clone()).collect()).unwrap_or_default();
+        let mut out = String::from(T2_BEGIN);
+        out.push_str("/// The regions, by their order in `regions` (the walk's), and each reader's, in that order.\n#[allow(non_upper_case_globals, dead_code)]\npub mod regions {\n");
+        for (k, name) in opens.iter().enumerate() {
+            let _ = writeln!(out, "    pub const k_{name}: u8 = {k};");
+        }
+        for (r, rd) in readers(x.stmts).iter().enumerate() {
+            let mut ks: Vec<usize> = rd.regions.iter().filter_map(|g| opens.iter().position(|o| *o == g.kind)).collect();
+            ks.sort_unstable();
+            let _ = writeln!(out, "    pub const READER_{r}: &[u8] = &[{}];", ks.iter().map(|k| format!("k_{}", opens[*k])).collect::<Vec<_>>().join(", "));
+        }
+        out.push_str("}\n\n/// The fields tier 2 reads a region token's parts by.\n#[allow(non_upper_case_globals, dead_code)]\npub mod fields {\n");
+        for (i, (f, _)) in field_plan.iter().enumerate() {
+            let _ = writeln!(out, "    pub const {f}: u8 = {i};");
+        }
+        out.push_str("}\n\n/// A region token tier 2 reads in parts: its region `k`, its opener's first byte `s`, its closer's first `c`, its last\n/// byte `last`.\n#[derive(Clone, Copy)]\npub struct Span {\n    pub k: u8,\n    pub s: usize,\n    pub c: usize,\n    pub last: usize,\n}\n\n");
+        let mut seen = Vec::new();
+        let mut span = String::new();
+        let mut open = String::new();
+        for (k, kind, o, search, last) in &self.t2_spans {
+            if seen.contains(k) {
+                continue;
+            }
+            seen.push(*k);
+            let _ = write!(span, "        {k} => {{\n            // `{kind}`\n            if !bit(&{o}, s) {{\n                return None;\n            }}\n            let c = {search}?;\n            Some(Span {{ k, s, c, last: {last} }})\n        }}\n");
+            let _ = writeln!(open, "        // `{kind}`\n        {k} => bit(&{o}, s),");
+        }
+        let _ = write!(out, "/// Region `k`'s token from its opener `s`, as the walk reads it: none where its opener does not hold there, or no\n/// closer follows.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[allow(unused_variables)]\nunsafe fn span_on<S: rerail_simd8::Simd8x64>(src: &[u8], k: u8, s: usize) -> Option<Span> {{\n    let n = src.len();\n    match k {{\n{span}        _ => None,\n    }}\n}}\n\nrerail_simd8::dispatch! {{\n    /// Region `k`'s token from its opener `s` (`span_on`).\n    pub fn span(src: &[u8], k: u8, s: usize) -> Option<Span> = span_on, on span_on_best;\n}}\n\n");
+        let _ = write!(out, "/// Whether region `k`'s opener holds at byte `s`.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[allow(unused_variables)]\nunsafe fn opens_on<S: rerail_simd8::Simd8x64>(src: &[u8], k: u8, s: usize) -> bool {{\n    let n = src.len();\n    match k {{\n{open}        _ => false,\n    }}\n}}\n\nrerail_simd8::dispatch! {{\n    /// Whether region `k`'s opener holds at byte `s` (`opens_on`).\n    pub fn opens(src: &[u8], k: u8, s: usize) -> bool = opens_on, on opens_on_best;\n}}\n\n/// The token of the first region of `ks` (in the walk's order) whose opener holds at `s`.\npub fn open_at(src: &[u8], ks: &[u8], s: usize) -> Option<Span> {{\n    ks.iter().find(|&&k| opens(src, k, s)).and_then(|&k| span(src, k, s))\n}}\n\n");
+        let per: Vec<Vec<(usize, String)>> = (0..opens.len()).map(|k| self.field_lines(k)).collect();
+        let mut arms = String::new();
+        for (i, (f, v)) in field_plan.iter().enumerate() {
+            let _ = write!(arms, "        {i} => {{\n            // `{f}`\n");
+            match self.field_writes.iter().position(|fw| fw.var == *v) {
+                Some(w) => {
+                    if let Some(o) = &self.field_writes[w].outside {
+                        let _ = writeln!(arms, "            put(&mut fwin, &{o}, p, p + 63);");
+                    }
+                    let mut ks = String::new();
+                    for (k, lines) in per.iter().enumerate() {
+                        if let Some((_, l)) = lines.iter().find(|l| l.0 == w) {
+                            let _ = write!(ks, "                {k} => {{\n{}\n                }}\n", l.lines().map(|l| format!("                    {l}")).collect::<Vec<_>>().join("\n"));
+                        }
+                    }
+                    if !ks.is_empty() {
+                        let _ = write!(arms, "            match k {{\n{ks}                _ => {{}}\n            }}\n");
+                    }
+                }
+                None => {
+                    let _ = writeln!(arms, "            put(&mut fwin, &{v}, p, p + 63);");
+                }
+            }
+            arms.push_str("        }\n");
+        }
+        let _ = write!(out, "/// Field `f`'s bits at the 64 bytes from `p` (a multiple of 64) in region token `sp`, as tier 1 wrote them over the token.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[allow(unused_variables, unused_mut)]\nunsafe fn field_on<S: rerail_simd8::Simd8x64>(f: u8, src: &[u8], sp: Span, p: usize) -> u64 {{\n    let n = src.len();\n    let Span {{ k, s, c, last }} = sp;\n    let mut fwin = 0u64;\n    match f {{\n{arms}        _ => {{}}\n    }}\n    fwin\n}}\n\nrerail_simd8::dispatch! {{\n    /// Field `f`'s bits at the 64 bytes from `p` in region token `sp` (`field_on`).\n    pub fn field(f: u8, src: &[u8], sp: Span, p: usize) -> u64 = field_on, on field_on_best;\n}}\n\n");
+        out.push_str(WIN_HELPERS);
+        out.push_str(T2_END);
+        out
+    }
+
+    /// Tier 2's fields over region `k`'s token (`field_writes`): each field's writes of its word `fwin`, from the token's
+    /// opener `s`, its closer `c` and its last byte `last` (decision 0721 step 16: tier 2 asks them of the bytes).
+    fn field_lines(&self, k: usize) -> Vec<(usize, String)> {
+        let mut out = Vec::new();
+        for (i, fw) in self.field_writes.iter().enumerate() {
             let FieldPart { why, at, body, closer, grid } = &fw.parts[k];
-            let f = &fw.var;
+            let f = "fwin";
+            let _ = why;
             // A part none: nothing where the field starts as none, else its bits cleared.
             let w = |m: &Option<String>, a: String, b: String| match m.as_deref() {
                 None => None,
@@ -5553,7 +6492,7 @@ impl Gen<'_> {
                 }
             }
             if !lines.is_empty() {
-                let _ = writeln!(out, "// {why}\n{}", lines.join("\n"));
+                out.push((i, lines.join("\n")));
             }
         }
         out
@@ -5618,7 +6557,6 @@ impl Gen<'_> {
                     None
                 } else {
                     let id = self.node(&outside)?;
-                    self.nodes[id].also.push(var.clone());
                     Some(self.nodes[id].name.clone())
                 };
                 let mut parts = Vec::new();
@@ -6429,7 +7367,8 @@ impl Gen<'_> {
                 exprs.extend(inner.into_iter().map(|f| (None, f)));
             }
             self.find_ends(&rows)?;
-            self.find_loop_fills(&rows, &exprs)?;
+            let escape_exprs: Vec<Expr> = escapes.iter().map(|(_, e, _)| (*e).clone()).collect();
+            self.find_loop_fills(&rows, &exprs, &escape_exprs)?;
         }
         let mut refuse = Vec::new();
         // A string reader's refusals are its arms' (`reader_refusals`), where they read its strings as the lean lexer does.
@@ -6545,11 +7484,15 @@ impl Gen<'_> {
             /// the start (none where it holds at every start but an extra's, where no gap mark is
             /// written).
             rec: Option<(usize, Option<String>)>,
+            /// `A`'s conjuncts that read no region, as expressions (`rec`).
+            rec_at: Vec<Expr>,
             /// Its mask's one byte, where tier 2 may ask it of the bytes (decision 0623 step 5): kept by no
             /// accumulator, an extra keeps none of it, and no `else escape` reads it at the file's end.
             byte: Option<u8>,
             /// `X & C.eq(k)`: the loop's count `C` is `k` over the gap (`c_C == k`), its bits only at tokens.
             count: Option<String>,
+            /// Its mask (under its `unless after`, `under_unless`).
+            at: Expr,
         }
         /// A gap mark's mask made of the regions, kept by the loop as it reads (the lean lexer's
         /// "a line break since the token before"): whether it held since the grammar token before
@@ -6561,6 +7504,8 @@ impl Gen<'_> {
             here: String,
             own: bool,
             what: String,
+            /// Its mask's bytes over the skipped bytes, where it is a set of bytes there (`None`: it reads a fill).
+            set: Option<[bool; 256]>,
         }
         let mut accs: Vec<GapAcc> = Vec::new();
         let mut acc_of: HashMap<String, usize> = HashMap::new();
@@ -6580,6 +7525,8 @@ impl Gen<'_> {
         let mut unplaced_masked = false;
         // Each mark's token tests: the kind, `after`, the test, the mask, the least, the bit.
         let mut tests: Vec<(String, bool, TokenTest, Expr, u32, u8)> = Vec::new();
+        // The marks whose `unless after` their mask was taken under (`under_unless`): an extra's own holds it too.
+        let mut absorbed = 0u32;
         for (m, s) in marks.iter().enumerate() {
             let Stmt::Mark { kind, at, unless, unplaced, checks, .. } = s else { continue };
             let Some(bit) = x.mark_bits.get(m).copied().flatten() else { continue };
@@ -6609,6 +7556,18 @@ impl Gen<'_> {
             };
             let at = &at;
             mark_names.insert(bit, kind.clone());
+            // Under `unless after` one-byte tokens, none of their bytes is code in the gap: a code byte of one is a
+            // grammar token, the one before (decision 0721). Its mask with those terms gone, so a mark that is its
+            // carrier's there takes the carrier's accumulator (`DERIVED`).
+            let mut after = [false; 256];
+            for w in unless.iter().filter(|w| w.len() == 1) {
+                after[usize::from(w[0])] = true;
+            }
+            let simpler = if after.iter().any(|&b| b) { under_unless(at, &after, x.stmts, 0) } else { at.clone() };
+            if &simpler != at {
+                absorbed |= 1 << bit;
+            }
+            let at = &simpler;
             // A mask made of the regions: kept by the loop where it is known in each place.
             let mut acc = None;
             if !matches!(at, Expr::Empty) && self.regional(at) && self.opens.is_some() {
@@ -6618,6 +7577,11 @@ impl Gen<'_> {
                 } else {
                     let n = self.opens.as_ref().map_or(0, Vec::len);
                     let gap = self.in_region_of(at, None, 0, &Ctx::of(skipped), &mut HashMap::new());
+                    let set = match &gap {
+                        Some(Expr::Empty) => Some([false; 256]),
+                        Some(g) if !self.regional(g) => self.exact_bytes(g).map(|b| std::array::from_fn(|i| b[i] && skipped[i])),
+                        _ => None,
+                    };
                     let code = self.in_region(at, None, 0);
                     let inside = (0..n).all(|k| (1..3).all(|part| matches!(self.in_region(at, Some(k), part), Some(Expr::Empty))));
                     let here = self.at_start(at)?;
@@ -6646,7 +7610,7 @@ impl Gen<'_> {
                     {
                         let gap = if gap == "false" { None } else { Some(gap) };
                         let what = self.brief(at);
-                        accs.push(GapAcc { gap, code, here, own: false, what });
+                        accs.push(GapAcc { gap, code, here, own: false, what, set });
                         acc_of.insert(key, accs.len() - 1);
                         acc = Some(accs.len() - 1);
                     }
@@ -6660,6 +7624,7 @@ impl Gen<'_> {
             // `A & prev(fill(M, ~W))`: the gap since the record before is skipped bytes alone, so
             // the fill holds before a start where `M` held in it.
             let mut rec = None;
+            let mut rec_at = Vec::new();
             if acc.is_none()
                 && let Expr::And(a, b) = at
             {
@@ -6687,7 +7652,10 @@ impl Gen<'_> {
                                     stack.push(*a);
                                     stack.push(*b);
                                 }
-                                e if !self.regional(&e) => parts.push(format!("bit(&{}, s)", self.val(&e)?)),
+                                e if !self.regional(&e) => {
+                                    parts.push(format!("bit(&{}, s)", self.val(&e)?));
+                                    rec_at.push(e);
+                                }
                                 _ => {}
                             }
                         }
@@ -6741,7 +7709,7 @@ impl Gen<'_> {
             if count.is_some() && unplaced.is_some() {
                 return Err(format!("tier 1 as Rust: mark {kind}: a count's `eq` with `else escape` is not written yet"));
             }
-            gaps.push(Gap { bit, mask, unless, name: kind.clone(), acc, rec, byte, count });
+            gaps.push(Gap { bit, mask, unless, name: kind.clone(), acc, rec, rec_at, byte, count, at: at.clone() });
         }
         let skip = match &skip {
             Some(e) => self.val(e)?,
@@ -6780,6 +7748,8 @@ impl Gen<'_> {
         // kind and the test's bit.
         let mut once_asks: Vec<(String, u8)> = Vec::new();
         let mut row_ids: Vec<(String, bool, u32, [bool; 256], String)> = Vec::new();
+        let mut region_kinds: Vec<u32> = Vec::new();
+        let mut other_kinds: Vec<u32> = Vec::new();
         // Each row's rule where a common token's (decision 0655 step 4): a run of one mask (`run M`), a pair (`pairs F`:
         // the pairs mask `k_F`; `pair M`), one byte (`one`).
         let mut row_shapes: Vec<Option<String>> = Vec::new();
@@ -6810,6 +7780,8 @@ impl Gen<'_> {
             pair_fns.push_str(&rc.fns);
             Some(rc)
         };
+        // Every row's start: an escape with one as a factor holds only at a token's first byte.
+        let row_starts: Vec<Expr> = rows.iter().filter_map(|(_, s)| if let Stmt::Token { start, .. } = s { Some(start.clone()) } else { None }).collect();
         for (row, s) in &rows {
             let Stmt::Token { kind, start, last, rule, .. } = s else { continue };
             if matches!(rule, Some(TokenRule::Inside(..))) {
@@ -6879,7 +7851,7 @@ impl Gen<'_> {
                         Some(read) if !self.regional(&read) => {
                             let v = self.val(&read)?;
                             let proved = x.assumed.iter().filter(|a| a.0.as_ref() == Some(kind)).all(|a| a.3);
-                            let check = if proved { String::new() } else { format!(";\n            // Not proved: a test build checks it against the rule over the file.\n            #[cfg(feature = \"test-hooks\")]\n            assert_eq!(run_last(&{}, s), run_last(&{v}, s), \"assume in {kind} at byte {{s}}\")", self.val(r)?) };
+                            let check = if proved { String::new() } else { format!(";\n            // Not proved: a test build checks it against the rule over the file.\n            #[cfg(feature = \"test-hooks\")]\n            assert_eq!(run_last(&{}, s), l, \"assume in {kind} at byte {{s}}\")", self.val(r)?) };
                             (format!("run {}, read as {} (assumed)", show(r), self.brief(&read)), format!("run_last(&{v}, s){check}"))
                         }
                         _ => (format!("run {}", show(r)), format!("run_last(&{}, s)", self.val(r)?)),
@@ -7004,6 +7976,12 @@ impl Gen<'_> {
                     let r = Self::row_region(start, rs).ok_or_else(|| format!("tier 1 as Rust: `{kind}`'s row reads no one region"))?.clone();
                     let c = self.val(&r.closers())?;
                     let found = self.closer_last(&r, &parts.closes)?;
+                    // Tier 2's span of the token (`span`): its closer and its last byte, of the bytes.
+                    if let Some(k) = self.opens.as_ref().and_then(|o| o.iter().position(|(q, _, _)| *q == r.kind)) {
+                        let search = self.closer_from(&r, &format!("s + {}", r.opens), false)?;
+                        let open = self.val(&r.opener)?;
+                        self.t2_spans.push((k, r.kind.clone(), open, search, found.clone()));
+                    }
                     let tests = self.region_tests(&r.kind);
                     let found = if tests.is_empty() { found } else { format!("{{\n                    let last = {found};\n{}                    last\n                }}", indent(&tests, "                    ")) };
                     let found = self.template_close(&r.kind, found)?;
@@ -7150,7 +8128,9 @@ impl Gen<'_> {
             // The fills the loop keeps, at this token's last byte.
             for (i, f) in self.fills.iter().enumerate() {
                 if let Some((_, fl, xl)) = f.rows.iter().find(|r| r.0 == *row) {
-                    let _ = writeln!(hits, "            fill_{i} = {fl};");
+                    if !f.only_x {
+                        let _ = writeln!(hits, "            fill_{i} = {fl};");
+                    }
                     if f.prev {
                         let _ = writeln!(hits, "            xl_{i} = {xl};");
                     }
@@ -7171,15 +8151,67 @@ impl Gen<'_> {
                 let in_token: [bool; 256] = std::array::from_fn(|i| sb[i] || tb[i]);
                 let mut at_tail = Ctx::of(tb);
                 at_tail.0[3] = in_token.into();
-                for (why, v, e) in &self.code_checks {
+                // The row's run's terms: the masks whose last byte is its token's last (`anchor`).
+                let run_terms: Vec<String> = match rule {
+                    Some(TokenRule::Run(r) | TokenRule::RunOnce(r, _)) => or_names(r),
+                    _ => Vec::new(),
+                };
+                for (why, v, e, at, facs) in &self.code_checks.clone() {
                     let first = self.may_hold(e, &Ctx::of(sb));
                     let after = (0..256).any(|i| tb[i]) && self.may_hold(e, &at_tail);
                     let test = match (first, after) {
-                        (false, false) => continue,
-                        (true, false) => format!("bit(&{v}, s)"),
-                        (false, true) => format!("any_in(&{v}, s + 1, l)"),
-                        (true, true) => format!("any_in(&{v}, s, l)"),
+                        (false, false) => None,
+                        (true, false) => Some(format!("bit(&{v}, s)")),
+                        (false, true) => Some(format!("any_in(&{v}, s + 1, l)")),
+                        (true, true) => Some(format!("any_in(&{v}, s, l)")),
                     };
+                    // One anchored at a run's last byte (`anchor`): tested there, once, in the rows whose run that is,
+                    // as the lean lexer's number reader refuses at the number's end. Elsewhere it holds at none of a
+                    // token's bytes: not proved, a test build checks it.
+                    // One at a row's start (a factor is its `start`): at a token's first byte, the start of that row's token
+                    // alone, as the lean lexer reads an operator from its first byte. Other rows' tokens start no such
+                    // token: not proved, a test build checks it.
+                    if let Some(f) = facs.iter().find(|f| row_starts.contains(f)) {
+                        if f == start {
+                            // The row holds its start at `s`: the escape's other factors there.
+                            let rest = facs.iter().filter(|g| *g != f).fold(Expr::Not(Box::new(Expr::Empty)), |a, g| Expr::And(Box::new(a), Box::new(g.clone())));
+                            let r = self.row_val(&simplify_all(rest), rule)?;
+                            let _ = write!(hits, "            // {why}: at the token's first byte\n            if bit(&{r}, s) {{\n                refused = true;\n                break;\n            }}\n");
+                        } else if let Some(t) = test {
+                            let _ = write!(hits, "            // {why}: at no byte of this token (it holds at another's start), not proved: a test build checks it.\n            #[cfg(feature = \"test-hooks\")]\n            assert!(!({t}), \"escape at a token not its start's: {}\");\n", why.replace('"', "'").replace('\\', ""));
+                        }
+                        continue;
+                    }
+                    if let Some((ys, off)) = at {
+                        if ys.iter().any(|y| run_terms.contains(y)) {
+                            // Its masks as the token's kind's assumptions read them (`in KIND`, as its run): a test build
+                            // checks the test so read against the rule's where an assumption is not proved.
+                            // The check is made of the masks in place (`in_region`): each assumed mask so made is
+                            // replaced where it is a part of it.
+                            let read = self.kind_read(kind, e, true);
+                            let proved = self.x.assumed.iter().filter(|a| a.0.as_deref() == Some(kind)).all(|a| a.3);
+                            let w = if read == *e { v.clone() } else { self.row_val(&read, rule)? };
+                            let byte = match off {
+                                0 => "l".to_owned(),
+                                k if *k > 0 => format!("l + {k}"),
+                                k => format!("l - {}", -k),
+                            };
+                            let guard = match off {
+                                0 => String::new(),
+                                k if *k > 0 => format!("l + {k} < n && "),
+                                k => format!("l >= {} && ", -k),
+                            };
+                            if w != *v && !proved {
+                                let _ = write!(hits, "            // {why}, as `{kind}`'s assumptions read it: not proved, a test build checks it.\n            #[cfg(feature = \"test-hooks\")]\n            assert!(!({guard}true) || ({v}[({byte}) / 64] >> (({byte}) % 64) & 1 == 1) == bit(&{w}, {byte}), \"assume in {kind}: {} at byte {{l}}\");\n", why.replace('"', "'").replace('\\', ""));
+                            }
+                            let at = format!("{guard}bit(&{w}, {byte})");
+                            let _ = write!(hits, "            // {why}: at the token's end, where it may hold\n            if {at} {{\n                refused = true;\n                break;\n            }}\n");
+                        } else if let Some(t) = test {
+                            let _ = write!(hits, "            // {why}: at no byte of this token (it holds at a run's end), not proved: a test build checks it.\n            #[cfg(feature = \"test-hooks\")]\n            assert!(!({t}), \"escape at a token not its anchor's: {}\");\n", why.replace('"', "'").replace('\\', ""));
+                        }
+                        continue;
+                    }
+                    let Some(test) = test else { continue };
                     let _ = write!(hits, "            // {why}\n            if {test} {{\n                refused = true;\n                break;\n            }}\n");
                 }
             }
@@ -7257,6 +8289,19 @@ impl Gen<'_> {
                 None => (String::new(), k, extra.to_string(), hits),
             };
             row_ids.push((kind.clone(), extra, bits, sb, self.kind_of(*row)));
+            // A region's token (a string, a character, a name in backticks): none of its bytes is code (`code_at`). Its
+            // kinds: its own, or each of its first bytes' (`KINDS`).
+            if !extra {
+                let ks: Vec<u32> = match x.row_kinds.get(*row).copied().flatten() {
+                    Some(k) => vec![u32::from(k)],
+                    None => (0..256).filter(|&b| sb[b]).map(|b| u32::from(x.kinds[b])).collect(),
+                };
+                if matches!(rule, Some(TokenRule::Read(_) | TokenRule::ReadParts(..))) {
+                    region_kinds.extend(ks);
+                } else {
+                    other_kinds.extend(ks);
+                }
+            }
             row_shapes.push(row_shape);
             // A template's code's brackets, in a token of code whose bytes may hold one.
             if let Some(rc) = &reader_code
@@ -7267,7 +8312,11 @@ impl Gen<'_> {
                 scans.push_str(&rc.level);
             }
             let sb = if picked { [false; 256] } else { sb };
-            row_arms.push(RowArm { resume, word, open: open_k.is_some(), row: *row, first: sb, tail, starts: first_tests, start: if picked { Expr::Empty } else { start.clone() }, check, body: format!("{{\n            // `{kind}`: {how}\n{decl}            //~defs\n            //~spans\n            let l = {l};\n            let l = l.max(s);\n{pause}{scans}            //~passed\n{hits}            (l, {k}, {extra_is}, "), bits });
+            let start_read = {
+                let these: Vec<(&str, &Expr)> = x.assumed.iter().filter(|a| a.0.as_ref() == Some(kind)).map(|a| (a.1.as_str(), &a.2)).collect();
+                if these.is_empty() { start.clone() } else { substitute(&start, &these, &self.defs) }
+            };
+            row_arms.push(RowArm { resume, word, open: open_k.is_some(), row: *row, first: sb, tail, starts: first_tests, start: if picked { Expr::Empty } else { start.clone() }, start_read, check, body: format!("{{\n            // `{kind}`: {how}\n{decl}            //~defs\n            //~spans\n            let l = {l};\n            let l = l.max(s);\n{pause}{scans}            //~passed\n{hits}            (l, {k}, {extra_is}, "), bits });
         }
         // Each gap mark's bit at a grammar token, and at an extra the marks it keeps of its own gap.
         let mut gap_code = String::new();
@@ -7278,7 +8327,135 @@ impl Gen<'_> {
         // The same where tier 2 asks the token tests too (`tested`): no hits; and each gap mark's `unless`, by its bit.
         let mut gap_tested = String::new();
         let mut unless_of: HashMap<u8, String> = HashMap::new();
+        // The gap marks of one mask (one accumulator, one mask, one record test): tier 1 writes the bit of one with no
+        // `unless after`, its carrier, and tier 2 asks the others of it and the word before where a rule reads one
+        // (`DERIVED`, decision 0721), as the lean lexer gives a token one line-break flag (`nl`) and the lean parser
+        // asks `asi` of it. Not a mark with token tests, an `else escape`, an extra's own bits, or one asked of the bytes.
+        // An extra keeps a mark of its own gap where its carrier is an extra's too: there it is the carrier's bit (an extra's
+        // own bits have no `unless after`), as `carried` reads them.
+        let plain = |g: &Gap| !tests.iter().any(|t| t.5 == g.bit) && !unplaced_asks.iter().any(|u| u.0 == g.bit) && g.byte.is_none() && (g.acc.is_some() || g.mask.is_some() || g.rec.is_some());
+        let key = |g: &Gap| format!("{:?} {:?} {:?}", g.mask, g.acc, g.rec);
+        let mut derived: Vec<(u8, u8, String)> = Vec::new();
+        // Each mask's carrier: its mark of the lowest bit with no `unless after`.
+        let carrier = |g: &Gap| gaps.iter().filter(|c| plain(c) && c.unless.is_empty() && key(c) == key(g) && x.own >> c.bit & 1 == x.own >> g.bit & 1).map(|c| c.bit).min();
+        for g in gaps.iter().filter(|g| plain(g)) {
+            if let Some(c) = carrier(g).filter(|&c| c != g.bit) {
+                derived.push((g.bit, c, if g.unless.is_empty() { String::new() } else { format!(" && !matches!(before, {})", g.unless.iter().map(|w| w.to_string()).collect::<Vec<_>>().join(" | ")) }));
+            }
+        }
+        // The gap marks tier 2 asks of the spans between the records where a rule reads one (`SPANNED`, decision 0721), as
+        // the lean parser asks whether two tokens touch (`adjacent`) and whether a line breaks since the token before
+        // (`asi`): a mark held since the record before by a set of the skipped bytes, at a start a test of the bytes
+        // there (a token first on its line); or held since the grammar token before at every skipped byte and at every
+        // extra (`apart`). Not a mark with token tests, an `else escape`, an extra's own, a derived one or a carrier.
+        // Each extra's regions (a comment's row reads its region): the regions the loop opens at an extra's start.
+        let extra_regions: Vec<Option<Vec<String>>> = extras
+            .iter()
+            .map(|e| {
+                x.stmts.iter().rev().find_map(|st| match st {
+                    Stmt::Token { kind, rule: Some(TokenRule::Read(rs)), .. } if kind == *e => Some(rs.iter().map(|r| r.kind.clone()).collect()),
+                    Stmt::Token { kind, .. } if kind == *e => Some(Vec::new()),
+                    _ => None,
+                })
+            })
+            .collect();
+        let extra_opens: Option<std::collections::BTreeSet<usize>> = match &self.opens {
+            Some(o)
+                if extra_regions.iter().all(|r| r.as_ref().is_some_and(|r| !r.is_empty()))
+                    && !x.stmts.iter().any(|st| matches!(st, Stmt::Token { kind, rule: Some(TokenRule::Read(rs)), .. } if !extras.contains(&kind) && rs.iter().any(|r| extra_regions.iter().flatten().flatten().any(|e| *e == r.kind)))) => Some((0..o.len()).filter(|&k| extra_regions.iter().flatten().flatten().any(|r| *r == o[k].0)).collect()),
+            _ => None,
+        };
+        // Whether `here` holds at the start of every extra and of nothing else: the disjunction of the extras' `open == K`.
+        let only_extras = |here: &str| -> bool {
+            let Some(eo) = &extra_opens else { return false };
+            if eo.is_empty() {
+                return false;
+            }
+            let flat: String = here.chars().filter(|c| *c != '(' && *c != ')').collect();
+            let ks: Option<std::collections::BTreeSet<usize>> = flat.split("||").map(|p| p.trim().strip_prefix("open == ").and_then(|k| k.parse().ok())).collect();
+            ks.as_ref() == Some(eo)
+        };
+        let at_bytes = bytes::Bytes::new(x.stmts, HashMap::new(), HashMap::new());
+        let mut code_bytes = bytes::Bytes::new(x.stmts, HashMap::new(), HashMap::new());
+        code_bytes.set_partial();
+        code_bytes.code_fn = true;
+        let mut spanned: Vec<(u8, String, String)> = Vec::new();
         for g in &gaps {
+            if tests.iter().any(|t| t.5 == g.bit) || unplaced_asks.iter().any(|u| u.0 == g.bit) || g.byte.is_some() || g.mask.is_some() || x.own >> g.bit & 1 == 1 || derived.iter().any(|d| d.0 == g.bit || d.1 == g.bit) {
+                continue;
+            }
+            let unless = if g.unless.is_empty() { String::new() } else { format!(" && !matches!(before, {})", g.unless.iter().map(|w| w.to_string()).collect::<Vec<_>>().join(" | ")) };
+            let ranges = |set: &[bool; 256]| -> Vec<(u32, u32)> {
+                let mut rs: Vec<(u32, u32)> = Vec::new();
+                for b in 0..256u32 {
+                    if set[b as usize] {
+                        match rs.last_mut() {
+                            Some(r) if r.1 + 1 == b => r.1 = b,
+                            _ => rs.push((b, b)),
+                        }
+                    }
+                }
+                rs
+            };
+            let ask = if let Some((j, _)) = &g.rec
+                && let Some(set) = accs[*j].set.filter(|b| b.iter().any(|&x| x))
+            {
+                let mut at = Vec::new();
+                for e in &g.rec_at {
+                    match at_bytes.at(e, "s", 0) {
+                        Ok(t) => at.push(t),
+                        Err(_) => {
+                            at.clear();
+                            at.push(String::new());
+                            break;
+                        }
+                    }
+                }
+                if at.iter().any(String::is_empty) {
+                    continue;
+                }
+                let test = bytes::pattern_test("c", &ranges(&set));
+                let test = match ranges(&set).as_slice() {
+                    [(lo, hi)] if lo == hi => format!("(src[lo..fwd].contains(&{lo:#04x}) || src[back..s].contains(&{lo:#04x}))"),
+                    _ => format!("(src[lo..fwd].iter().chain(&src[back..s]).any(|&c| {test}))"),
+                };
+                let at: String = at.iter().map(|t| format!(" && {t}")).collect();
+                format!("{test}{at}")
+            } else if let Some(j) = g.acc
+                && g.rec.is_none()
+                && accs[j].set == Some(skipped)
+                && !tails.contains(&j)
+                && only_extras(&accs[j].here)
+            {
+                "back < s || fwd > lo || x".to_owned()
+            } else if let Some(j) = g.acc
+                && g.rec.is_none()
+                && accs[j].set.is_none()
+                && !region_kinds.is_empty()
+                && !region_kinds.iter().any(|k| other_kinds.contains(k))
+                && let Ok(t) = code_bytes.at(&g.at, "q", 0)
+            {
+                // Its mask at each byte since the grammar token before's first, `code` asked of the records (`code_at`):
+                // a fill tier 1 kept over the gap, read back from the bytes as the lean lexer reads a run.
+                format!("(from..s).any(|q| {t})")
+            } else {
+                continue;
+            };
+            spanned.push((g.bit, format!("{ask}{unless}"), g.name.clone()));
+        }
+        for g in &gaps {
+            if spanned.iter().any(|d| d.0 == g.bit) {
+                let _ = write!(gap_code, "                // `{}`: tier 2 asks it of the spans between the records (`SPANNED`)\n", g.name);
+                let _ = write!(gap_asked, "                // `{}`: tier 2 asks it of the spans between the records (`SPANNED`)\n", g.name);
+                let _ = write!(gap_tested, "                // `{}`: tier 2 asks it of the spans between the records (`SPANNED`)\n", g.name);
+                continue;
+            }
+            if derived.iter().any(|d| d.0 == g.bit) {
+                let _ = write!(gap_code, "                // `{}`: its carrier's bit (`DERIVED`)\n", g.name);
+                let _ = write!(gap_asked, "                // `{}`: its carrier's bit (`DERIVED`)\n", g.name);
+                let _ = write!(gap_tested, "                // `{}`: its carrier's bit (`DERIVED`)\n", g.name);
+                continue;
+            }
             // `C.eq(k)`: the count's test, before the gap's.
             let (cq, cq_paren) = match &g.count {
                 Some(c) => (format!("{c} && "), true),
@@ -7451,7 +8628,12 @@ impl Gen<'_> {
         }
         let mut acc_after = String::new();
         // The gap masks the loop keeps.
+        // An accumulator no mark tier 1 writes reads (each asked by tier 2), none.
+        let acc_live: Vec<bool> = (0..accs.len()).map(|j| accs[j].own || tails.contains(&j) || gaps.iter().any(|g| !spanned.iter().any(|d| d.0 == g.bit) && (g.acc == Some(j) || g.rec.as_ref().is_some_and(|r| r.0 == j)))).collect();
         for (j, a) in accs.iter().enumerate() {
+            if !acc_live[j] {
+                continue;
+            }
             let what = &a.what;
             let _ = writeln!(span_decl, "    // Whether a gap mask (`{what}`) held since the grammar token before{}.\n    let mut acc_{j} = false;{}", if a.own { ", and since the record before" } else { "" }, if a.own { format!("\n    let mut rec_{j} = false;") } else { String::new() });
             if let Some(g) = &a.gap {
@@ -7570,7 +8752,7 @@ impl Gen<'_> {
             // A row that resumes a string's record goes on to the next token before the record reads `here`.
             if picks.fused && arm.resume.is_none() {
                 for (j, a) in accs.iter().enumerate() {
-                    if a.here != "false" {
+                    if a.here != "false" && acc_live[j] {
                         let _ = writeln!(code, "            here_{j} = {};", fold_open(&a.here, opens));
                     }
                 }
@@ -7619,16 +8801,33 @@ impl Gen<'_> {
         let mut decl_of = vec![String::new(); nf];
         let mut formula_of = vec![String::new(); nf];
         for (i, f) in self.fills.iter().enumerate() {
+            if f.only_x {
+                // `X` alone: at the token before's last byte, and at the byte before the token.
+                decl_of[i] = format!("    // `{}` at the last byte of the token before.\n    let mut xl_{i} = false;\n", self.brief(&f.x));
+                let xs = match &f.xg {
+                    _ if f.xg_all => format!("s > at || xl_{i}"),
+                    Some(g) => format!("if s > at {{ bit(&{g}, s - 1) }} else {{ xl_{i} }}"),
+                    None => format!("s == at && xl_{i}"),
+                };
+                formula_of[i] = xs.clone();
+                let _ = writeln!(fill_top, "        // `{}` at the byte before the token.\n        let xs_{i} = {xs};", self.brief(&f.x));
+                continue;
+            }
             decl_of[i] = format!("    // `{}` at the last byte of the token before{}.\n    let mut fill_{i} = false;\n{}", f.shown, if f.prev { ", and its `X`" } else { "" }, if f.prev { format!("    let mut xl_{i} = false;\n") } else { String::new() });
             let (fs, xs, fgap) = match (f.prev, &f.xg) {
                 _ if f.within.is_some() => (format!("fill_{i} && fs_{}", f.within.unwrap_or_default()), None, None),
+                // A gap stops it, but where it starts at the gap's first byte and no byte after stops it.
+                (true, None) if f.eg_all => (format!("if s > at {{ xl_{i} && s == at + 1 }} else {{ fill_{i} }}"), Some(format!("s == at && xl_{i}")), None),
+                // The last stop in the gap (once a token, as the lean lexer's `skip` notes the gap): none, or
+                // at its first byte where the fill starts there.
                 (true, None) if f.eg.is_some() => {
                     let g = f.eg.clone().unwrap_or_default();
-                    (format!("if s > at {{ (xl_{i} || (fill_{i} && !bit(&{g}, at))) && !any_in(&{g}, at + 1, s - 1) }} else {{ fill_{i} }}"), Some(format!("s == at && xl_{i}")), None)
+                    (format!("if s > at {{ match last_in(&{g}, at, s - 1) {{ None => xl_{i} || fill_{i}, Some(q) => q == at && xl_{i} }} }} else {{ fill_{i} }}"), Some(format!("s == at && xl_{i}")), None)
                 }
+                (false, None) if f.eg_all => (format!("fill_{i} && s == at"), None, None),
                 (false, None) if f.eg.is_some() => (format!("fill_{i} && (s == at || !any_in(&{}, at, s - 1))", f.eg.clone().unwrap_or_default()), None, None),
                 (true, None) => (format!("fill_{i} || (s > at && xl_{i})"), Some(format!("s == at && xl_{i}")), Some(format!("fill_{i} || xl_{i}"))),
-                (true, Some(g)) => (format!("fill_{i} || (s > at && (xl_{i} || (s > at + 1 && any_in(&{g}, at, s - 2))))"), Some(format!("if s > at {{ bit(&{g}, s - 1) }} else {{ xl_{i} }}")), None),
+                (true, Some(g)) => (format!("fill_{i} || (s > at && (xl_{i} || (s > at + 1 && any_in(&{g}, at, s - 2))))"), Some(if f.xg_all { format!("s > at || xl_{i}") } else { format!("if s > at {{ bit(&{g}, s - 1) }} else {{ xl_{i} }}") }), None),
                 (false, None) => (format!("fill_{i}"), None, Some(format!("fill_{i}"))),
                 (false, Some(g)) => (format!("fill_{i} || (s > at && any_in(&{g}, at, s - 1))"), None, None),
             };
@@ -7672,7 +8871,7 @@ impl Gen<'_> {
                 let _ = write!(acc_after, "        if open != usize::MAX {{\n            clear(&mut code_l, s, l);\n        }}\n");
             }
             let code = self.names.get("code").cloned().unwrap_or_default();
-            let _ = write!(span_after, "    for (c, v) in code_l.iter_mut().zip(&lv) {{\n        *c &= v;\n    }}\n    #[cfg(feature = \"test-hooks\")]\n    if !refused {{\n        if let Some(q) = (0..nw).find(|&q| code_l[q] != {code}[q]) {{\n            panic!(\"code_l is not the regions' code in word {{q}} ({{:#x}} against {{:#x}}) of {{:?}}\", code_l[q], {code}[q], String::from_utf8_lossy(src));\n        }}\n    }}\n{}", self.code_after);
+            let _ = write!(span_after, "    for (c, v) in code_l.iter_mut().zip(&lv) {{\n        *c &= v;\n    }}\n    #[cfg(feature = \"test-hooks\")]\n    if !refused {{\n        if let Some(q) = (0..nw).find(|&q| code_l[q] != {code}[q]) {{\n            panic!(\"code_l is not the regions' code in word {{q}} ({{:#x}} against {{:#x}}) of {{:?}}\", code_l[q], {code}[q], String::from_utf8_lossy(src));\n        }}\n    }}\n{}", one_pass_after(&self.code_after).unwrap_or_else(|| self.code_after.clone()));
         }
         // The escapes over each stretch of code: at a region token, the stretch before it; after
         // the loop, the last.
@@ -7701,6 +8900,10 @@ impl Gen<'_> {
         };
         let mut other = String::new();
         let mut own_of = vec![String::new(); nf];
+        for (why, t) in &self.gap_escapes {
+            let _ = write!(open_code, "        // {why}: at the gap's first byte\n        if {t} {{\n            refused = true;\n            break 'tokens;\n        }}\n");
+            let _ = write!(fill_end, "    // {why}: at the gap's first byte after the last token\n    if !refused && {t} {{\n        refused = true;\n    }}\n");
+        }
         for piece in [&branches, &open_code, &gap_code, &own_code, &token_code] {
             for line in piece.lines() {
                 match owner(line) {
@@ -7805,16 +9008,35 @@ impl Gen<'_> {
                 rest = &after[name.len()..];
             }
         }
+        // The same for the last byte of a mask in the gap (`gap_last_NAME`).
+        let mut scanned_last: Vec<String> = Vec::new();
+        for piece in [&open_code, &branches, &gap_code, &own_code, &token_code, &acc_after] {
+            let mut rest = piece.as_str();
+            while let Some(i) = rest.find("match last_in(&") {
+                let after = &rest[i + 15..];
+                let name: String = after.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+                if after[name.len()..].starts_with(", at, s - 1)") && !scanned_last.contains(&name) {
+                    scanned_last.push(name.clone());
+                }
+                rest = &after[name.len()..];
+            }
+        }
         let shared = |t: &str| -> String {
             let mut t = t.to_owned();
             for m in &scanned {
                 t = t.replace(&format!("s > at && any_in(&{m}, at, s - 1)"), &format!("gap_{m}")).replace(&format!("any_in(&{m}, at, s - 1)"), &format!("gap_{m}"));
+            }
+            for m in &scanned_last {
+                t = t.replace(&format!("match last_in(&{m}, at, s - 1)"), &format!("match gap_last_{m}"));
             }
             t
         };
         let mut defs = String::new();
         for m in &scanned {
             let _ = writeln!(defs, "        // Whether `{m}` holds in the gap before the token.\n        let gap_{m} = s > at && any_in(&{m}, at, s - 1);");
+        }
+        for m in &scanned_last {
+            let _ = writeln!(defs, "        // The last byte of the gap before the token where `{m}` holds.\n        let gap_last_{m} = if s > at {{ last_in(&{m}, at, s - 1) }} else {{ None }};");
         }
         open_code = format!("{defs}{}", shared(&open_code));
         let (branches, gap_code, own_code, token_code) = (shared(&branches), shared(&gap_code), shared(&own_code), shared(&token_code));
@@ -7826,11 +9048,8 @@ impl Gen<'_> {
             // No region tier 2 reads in parts (decision 0619, as 0586's): no mask for it.
             out.push_str("/// A token's record (the lean lexer's `Tok`): its first and last byte, and its code (its kind, its word and its marks).\n#[derive(Clone, Copy)]\npub struct Rec {\n    pub start: u32,\n    pub last: u32,\n    pub code: u32,\n}\n\n/// Tier 1's records, one a grammar token; the comments (the extras) apart, as the lean lexer keeps its comments; and\n/// whether the file goes to tree-sitter.\npub struct Lexed {\n    pub recs: Vec<Rec>,\n    pub extras: Vec<Rec>,\n    pub refused: bool,\n}\n\n");
         } else {
-            out.push_str("/// A token's record (the lean lexer's `Tok`): its first and last byte, and its code (its kind, its word and its marks).\n#[derive(Clone, Copy)]\npub struct Rec {\n    pub start: u32,\n    pub last: u32,\n    pub code: u32,\n}\n\n/// The masks tier 2 reads, a bit a byte: those it splits a region by, where it reads one in parts.\npub struct Masks {\n");
-            for f in &fields {
-                let _ = writeln!(out, "    pub {f}: Vec<u64>,");
-            }
-            out.push_str("}\n\n/// Tier 1's records, one a grammar token; the comments (the extras) apart, as the lean lexer keeps its comments; the\n/// masks tier 2 reads; and whether the file goes to tree-sitter.\npub struct Lexed {\n    pub recs: Vec<Rec>,\n    pub extras: Vec<Rec>,\n    pub masks: Masks,\n    pub refused: bool,\n}\n\n");
+            out.push_str("/// A token's record (the lean lexer's `Tok`): its first and last byte, and its code (its kind, its word and its marks).\n#[derive(Clone, Copy)]\npub struct Rec {\n    pub start: u32,\n    pub last: u32,\n    pub code: u32,\n}\n\n/// Tier 1's records, one a grammar token; the comments (the extras) apart, as the lean lexer keeps its comments; and\n/// whether the file goes to tree-sitter.\npub struct Lexed {\n    pub recs: Vec<Rec>,\n    pub extras: Vec<Rec>,\n    pub refused: bool,\n}\n\n");
+            out.push_str(&self.span_reads(x, &field_plan));
         }
         let kinds: Vec<String> = x.kinds.iter().map(|k| k.to_string()).collect();
         let _ = write!(out, "/// Each byte's record kind, as a token's first byte.\nconst KINDS: [u8; 256] = [{}];\n\n", kinds.join(", "));
@@ -7888,7 +9107,8 @@ impl Gen<'_> {
         if !fused {
             let _ = writeln!(out, "    // Stage 1: the masks the regions and the tokens read, and whether an escape holds.\n    let Stage1 {{ {}, refused: escapes }} = stage1_best(src);", kept.join(", "));
         }
-        let rest = format!("{plain_decl_text}{fw_decl}{open_code}{branches}{token_code}{own_code}{gap_code}{acc_after}{span_after}{fields_init}");
+        let _ = &fields_init;
+        let rest = format!("{plain_decl_text}{fw_decl}{open_code}{branches}{token_code}{own_code}{gap_code}{acc_after}{span_after}");
         // A refusal in the token loop leaves both its loops.
         let tokens = |t: &str| t.replace("break;\n", "break 'tokens;\n");
         let (open_code, branches, token_code, own_code, gap_code, acc_after) = (tokens(&open_code), tokens(&branches), tokens(&token_code), tokens(&own_code), tokens(&gap_code), tokens(&acc_after));
@@ -7963,6 +9183,9 @@ impl Gen<'_> {
             let all = [&open_code, &branches, &token_code, &token_read, &own_code, &gap_code, &acc_after].iter().map(|t| bytes::strip_scans(t)).collect::<String>();
             token_scans.iter().any(|(name, ..)| uses(&all, &format!("c_{}", ident(name))))
         };
+        // Each row's start as its run reads it, and its first bytes (`Bytes::row_start`).
+        let row_starts: HashMap<String, Expr> = row_ids.iter().zip(&row_arms).map(|(r, a)| (r.0.clone(), a.start_read.clone())).collect();
+        let row_firsts: HashMap<String, [bool; 256]> = row_ids.iter().zip(&row_arms).map(|(r, a)| (r.0.clone(), a.first)).collect();
         let from_bytes = if fused && finals_read && !self.body.lines().any(|l| l.trim_start().starts_with("refused |=")) {
             let locals: HashMap<String, Expr> = self.nodes.iter().filter_map(|n| n.expr.clone().map(|e| (n.name.clone(), e))).collect();
             // Each class stage 1 writes, by the nibble tables the file holds (`stage1_codes`).
@@ -7970,6 +9193,7 @@ impl Gen<'_> {
             let class_code: HashMap<String, String> = self.nodes.iter().zip(&live).zip(&codes).filter(|((n, l), _)| **l && n.class.is_some()).filter_map(|((n, _), c)| n.what.strip_prefix("class ").map(|w| (w.to_owned(), c.clone()))).collect();
             let mut by = bytes::Bytes::new(x.stmts, locals, class_code);
             by.row_firsts = row_ids.iter().zip(&row_arms).map(|(r, a)| (r.0.clone(), a.first)).collect();
+            by.row_start = row_starts.clone();
             let firsts: Vec<[bool; 256]> = row_arms.iter().map(|a| a.first).collect();
             let ask = if asking { token_tests_fn(&test_asks, &row_ids, &mark_names) } else { None };
             let mut go = || -> Result<_, String> {
@@ -8140,7 +9364,7 @@ impl Gen<'_> {
                 Some((_, st, ..)) => st.clone(),
                 None => format!("        let mut firsts = !{skip}[b]"),
             },
-            masks_init = if fields.is_empty() { String::new() } else { format!("        masks: Masks {{\n{fields_init}        }},\n") },
+            masks_init = String::new(),
         );
         }
         // A string reader's (decision 0698): its state, its pick at a template's level 0, the pieces after its record.
@@ -8354,7 +9578,7 @@ impl Gen<'_> {
             Some((p, ..)) if !p[6].is_empty() => test_asks.iter().fold(0u32, |m, a| m | 1 << a.0),
             _ => 0,
         };
-        let _ = write!(out, "\n/// The marks tier 1's records leave to tier 2 (decisions 0623, 0655): those it asks of the bytes (`ASKED`), those whose\n/// token tests it asks (`TESTED`), and the token marks its code reads no bit of (it asks them of the tokens).\npub const UNRECORDED: u32 = {:#x};\n", bits | tested_bits | unread);
+        let _ = write!(out, "\n/// The marks tier 1's records leave to tier 2 (decisions 0623, 0655): those it asks of the bytes (`ASKED`), those whose\n/// token tests it asks (`TESTED`), and the token marks its code reads no bit of (it asks them of the tokens).\npub const UNRECORDED: u32 = {:#x};\n", bits | tested_bits | unread | derived.iter().fold(0u32, |m, d| m | 1 << d.0) | spanned.iter().fold(0u32, |m, d| m | 1 << d.0));
         match &from_bytes {
             Some((p, ..)) if !p[6].is_empty() => {
                 let unless: String = (0..32u8).filter(|b| tested_bits >> b & 1 == 1).filter_map(|b| unless_of.get(&b).map(|u| format!("        {b} => {},\n", u.trim_start_matches(" && ")))).collect();
@@ -8367,6 +9591,62 @@ impl Gen<'_> {
             }
             _ => out.push_str("\n/// The marks whose token tests tier 2 asks (decision 0655 step 6): none, the records hold them.\npub const TESTED: u32 = 0;\n\n/// Whether a token test of mark `b` holds at grammar token `j`: never asked.\npub fn tested(src: &[u8], recs: &[Rec], xs: &[Rec], j: usize, b: u32) -> bool {\n    let _ = (src, recs, xs, j, b);\n    false\n}\n"),
         }
+        let dbits = derived.iter().fold(0u32, |m, d| m | 1 << d.0);
+        let _ = write!(out, "\n/// The gap marks tier 1 writes one bit for, the carrier's, the others of its mask asked of it where a rule reads one\n/// (decision 0721), as the lean parser asks `asi` of a token's `nl`.\npub const DERIVED: u32 = {dbits:#x};\n\n/// Whether derived mark `b` holds at a token whose marks are `marks`, after a token of word `before`.\n#[inline(always)]\npub fn derived(b: u32, marks: u32, before: u32) -> bool {{\n");
+        if derived.is_empty() {
+            out.push_str("    let _ = (b, marks, before);\n    false\n}\n");
+        } else {
+            if derived.iter().all(|d| d.2.is_empty()) {
+                out.push_str("    let _ = before;\n");
+            }
+            out.push_str("    match b {\n");
+            for (b, c, u) in &derived {
+                let _ = writeln!(out, "        {b} => marks >> {c} & 1 == 1{u},");
+            }
+            out.push_str("        _ => false,\n    }\n}\n");
+        }
+        let _ = write!(out, "\n/// Marks `bits` with the carriers of the derived ones (`DERIVED`): an extra's own, read of its code, after a grammar\n/// token of word `before`. A mark whose mask holds its `unless after` (`under_unless`) holds none after those words.\n#[inline(always)]\npub const fn carried(before: u32, bits: u32) -> u32 {{\n    let _ = before;\n    let mut r = bits;\n");
+        for (b, c, u) in &derived {
+            let u = if absorbed >> b & 1 == 1 { u.clone() } else { String::new() };
+            let _ = writeln!(out, "    if bits >> {b} & 1 == 1{u} {{\n        r |= 1 << {c};\n    }}");
+        }
+        out.push_str("    r\n}\n");
+        let sbits = spanned.iter().fold(0u32, |m, d| m | 1 << d.0);
+        let _ = write!(out, "\n/// The gap marks tier 2 asks of the spans between the records where a rule reads one (decision 0721), as the lean\n/// parser asks whether two tokens touch and whether a line breaks since the token before: tier 1 writes no bit of them.\npub const SPANNED: u32 = {sbits:#x};\n\n/// Whether spanned mark `b` holds at a grammar token starting at `s`: `ps` and `pe` the first byte and the byte after the\n/// grammar token before (0: none), `xend` the byte after the extra before (0: none), `before` the grammar token before's\n/// word.\n#[inline]\npub fn spanned(src: &[u8], ps: usize, pe: usize, xend: usize, s: usize, before: u32, b: u32, code: &dyn Fn(usize) -> bool) -> bool {{\n");
+        if spanned.is_empty() {
+            out.push_str("    let _ = (src, ps, pe, xend, s, before, b, code);\n    false\n}\n");
+        } else {
+            let rs = {
+                let mut rs: Vec<(u32, u32)> = Vec::new();
+                for b in 0..256u32 {
+                    if skipped[b as usize] {
+                        match rs.last_mut() {
+                            Some(r) if r.1 + 1 == b => r.1 = b,
+                            _ => rs.push((b, b)),
+                        }
+                    }
+                }
+                rs
+            };
+            let (sb, sf) = (bytes::pattern_test("src[back - 1]", &rs), bytes::pattern_test("src[fwd]", &rs));
+            let _ = write!(out, "    let _ = before;\n    let n = src.len();\n    // The gap's skipped bytes, as the lean lexer reads a gap back from a token: from the record before's end (the\n    // grammar token before's, or the extra before's) to `s`, but a string's part read between, which is no record and\n    // carries the gap over (at most one: a grammar token follows each), from its first byte to its last, neither\n    // skipped. A token in a template of the grammar token before (`held`) has none since that string's part.\n    let held = pe > s;\n    let x = if held {{ xend > ps }} else {{ xend > pe }};\n    let lo = if x {{ xend }} else if held {{ ps + 1 }} else {{ pe }};\n    let mut back = s;\n    while back > lo && {sb} {{\n        back -= 1;\n    }}\n    let mut fwd = lo;\n    while !held && fwd < back && {sf} {{\n        fwd += 1;\n    }}\n    let _ = (x, code);\n    // A mask tier 1 kept over the gap: from the grammar token before's second byte (none: the file's first).\n    let from = if pe > 0 {{ ps + 1 }} else {{ 0 }};\n    let _ = from;\n    match b {{\n");
+            for (bit, ask, name) in &spanned {
+                let _ = writeln!(out, "        // `{name}`\n        {bit} => {ask},");
+            }
+            out.push_str("        _ => false,\n    }\n}\n");
+        }
+        out.push_str(&code_bytes.named_code());
+        // The escapes made of `code` tested at their bytes (`code_escape`): their tests, and `code` of the spans.
+        if let Some(r) = &self.rare {
+            out.push_str(&r.named_code());
+            out.push_str("/// Whether byte `q` is code: in none of the region tokens' spans read (`code_spans`, in order).\n#[inline]\nfn code_of(spans: &[(usize, usize)], q: usize) -> bool {\n    let k = spans.partition_point(|&(a, _)| a <= q);\n    k == 0 || spans[k - 1].1 < q\n}\n\n");
+        }
+        // Whether a byte is code, of the records: no extra, nor a region's token, holds it.
+        let mut rk = region_kinds.clone();
+        rk.sort_unstable();
+        rk.dedup();
+        let kinds = if rk.is_empty() || rk.iter().any(|k| other_kinds.contains(k)) { "_ if false".to_owned() } else { rk.iter().map(u32::to_string).collect::<Vec<_>>().join(" | ") };
+        let _ = write!(out, "\n/// Whether byte `q` is code, of tier 1's records (`recs`, the extras `xs`): no extra holds it, nor a token of a region\n/// (a string's, a character's, a name in backticks), as the grammar's `code` is none of a region's bytes.\npub fn code_at(recs: &[Rec], xs: &[Rec], q: usize) -> bool {{\n    let q = q as u32;\n    let within = |rs: &[Rec]| rs.partition_point(|r| r.start <= q).checked_sub(1).is_some_and(|k| rs[k].last >= q);\n    let k = recs.partition_point(|r| r.start <= q);\n    let region = k > 0 && recs[k - 1].last >= q && matches!(recs[k - 1].code & 0xff, {kinds});\n    !region && !within(xs)\n}}\n");
         let _ = write!(out, "\n/// The gap marks tier 2 asks of the bytes, where a rule asks one (decision 0623 step 5), by their bits: tier 1's\n/// records hold only its token tests' hits of them.\npub const ASKED: u32 = {bits:#x};\n\n/// Whether gap mark `b` holds over `src[from..to]`, the bytes since the grammar token before's first byte (`before` its\n/// word), as the lean parser asks whether a token is on a line.\n#[inline]\npub fn gap(src: &[u8], from: usize, to: usize, before: u32, b: u32) -> bool {{\n");
         if asked.is_empty() {
             out.push_str("    let _ = (src, from, to, before, b);\n    false\n}\n");
@@ -8400,6 +9680,11 @@ impl Gen<'_> {
         {
             out.insert_str(at + 2, "use rerail_simd8::micro;\n\n");
         }
+        // The two-pass form: the one-byte tests of masks that read no region, of the bytes (decision 0721).
+        if from_bytes.is_none() {
+            let exprs: Vec<(String, Expr)> = self.nodes.iter().filter_map(|n| n.expr.clone().filter(|e| !self.regional(e)).map(|e| (n.name.clone(), e))).collect();
+            out = interleave::bit_reads(&out, self.x.stmts, &exprs, &row_starts, &row_firsts);
+        }
         Ok(out)
     }
 }
@@ -8426,6 +9711,46 @@ fn lookup_code(l: &crate::bitlex_pair_lookup::Lookup) -> String {
 }
 
 /// Whether `e` holds at a byte `b`, where that says (its classes, and the masks of them); `None` where it reads more.
+/// `e` in a gap where no byte of `after` is code (`unless after` one-byte tokens): `code & C`, `C` a class of those
+/// bytes, is none, and what it empties. A mask it changes is read through its definition; any other stays by name.
+fn under_unless(e: &Expr, after: &[bool; 256], stmts: &[Stmt], depth: usize) -> Expr {
+    if depth > 32 {
+        return e.clone();
+    }
+    let r = |x: &Expr| under_unless(x, after, stmts, depth + 1);
+    let none_but = |x: &Expr| bytes_of_expr(x, stmts).is_some_and(|set| set.iter().any(|&b| b) && (0..256).all(|i| !set[i] || after[i]));
+    let code = |x: &Expr| matches!(x, Expr::Name(n) if n == "code");
+    match e {
+        Expr::Name(n) => match stmts.iter().rev().find_map(|s| match s {
+            Stmt::Mask(m, x) if m == n => Some(x),
+            _ => None,
+        }) {
+            Some(d) => {
+                let s = r(d);
+                if &s == d { e.clone() } else { s }
+            }
+            None => e.clone(),
+        },
+        Expr::And(a, b) if (code(a) && none_but(b)) || (code(b) && none_but(a)) => Expr::Empty,
+        Expr::And(a, b) => match (r(a), r(b)) {
+            (Expr::Empty, _) | (_, Expr::Empty) => Expr::Empty,
+            (x, Expr::Not(n)) | (Expr::Not(n), x) if *n == Expr::Empty => x,
+            (x, y) => Expr::And(Box::new(x), Box::new(y)),
+        },
+        Expr::Or(a, b) => match (r(a), r(b)) {
+            (Expr::Empty, x) | (x, Expr::Empty) => x,
+            (x, y) => Expr::Or(Box::new(x), Box::new(y)),
+        },
+        Expr::Not(a) => Expr::Not(Box::new(r(a))),
+        Expr::Call(f, args) => {
+            let args: Vec<Arg> = args.iter().map(|a| if let Arg::E(x) = a { Arg::E(r(x)) } else { a.clone() }).collect();
+            let first_empty = matches!(args.first(), Some(Arg::E(Expr::Empty)));
+            if first_empty && matches!(f.as_str(), "prev" | "next" | "fill") { Expr::Empty } else { Expr::Call(f.clone(), args) }
+        }
+        _ => e.clone(),
+    }
+}
+
 fn at_byte(e: &Expr, b: u8, stmts: &[Stmt]) -> Option<bool> {
     let f = |x: &Expr| at_byte(x, b, stmts);
     match e {
@@ -8830,6 +10155,8 @@ fn simplify(e: Expr) -> Expr {
             a => Expr::Not(Box::new(a)),
         },
         Expr::Call(f, args) if (f == "prev" || f == "next") && matches!(args.first(), Some(Arg::E(Expr::Empty))) => Expr::Empty,
+        // A fill whose start holds nowhere holds nowhere.
+        Expr::Call(f, args) if f == "fill" && matches!(args.first(), Some(Arg::E(Expr::Empty))) => Expr::Empty,
         Expr::And(a, b) if a == b => *a,
         Expr::Or(a, b) if a == b => *a,
         Expr::And(a, b) => {
@@ -9341,7 +10668,7 @@ fn toggle(x: &[u64]) -> Vec<u64> {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), nest: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), ends: None, fill_proofs: Default::default(), region_values: Default::default(), opener_at: [Bytes::ALL; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), shapes: Default::default(), regional_ids: Default::default(), opener_ids: Default::default(), def_ids: Default::default(), end_names: Default::default(), shape_ids: Default::default(), name_strs: Default::default(), name_ids: Default::default(), kept: Default::default(), cube_tangled: Default::default(), opener_cache: Default::default(), cube_open: Default::default(), tangles: Default::default(), cube_read: Default::default(), passes: Vec::new(), open_pass: None, lane_passes: HashSet::new(), in_lane: false, walk_writes: false, walk_read: Vec::new(), region_counts: false, reader_kinds: Vec::new(), readers: Vec::new(), reader_level: None }.source()
+    Gen { x, rare: None, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), nest: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), ends: None, fill_proofs: Default::default(), region_values: Default::default(), opener_at: [Bytes::ALL; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), shapes: Default::default(), regional_ids: Default::default(), opener_ids: Default::default(), def_ids: Default::default(), end_names: Default::default(), shape_ids: Default::default(), name_strs: Default::default(), name_ids: Default::default(), kept: Default::default(), cube_tangled: Default::default(), opener_cache: Default::default(), cube_open: Default::default(), tangles: Default::default(), cube_read: Default::default(), passes: Vec::new(), open_pass: None, lane_passes: HashSet::new(), in_lane: false, walk_writes: false, walk_read: Vec::new(), region_counts: false, reader_kinds: Vec::new(), readers: Vec::new(), reader_level: None, start_open: None, t2_spans: Vec::new(), gap_escapes: Vec::new() }.source().map(|t| interleave::stage1_for_tests(&interleave::generic_lex(&interleave::code_pass_in_loop(&interleave::interleave(&t).unwrap_or(t)))))
 }
 
 /// Whether `e` names `n`.
@@ -10277,5 +11604,279 @@ mod tests {
         assert!(false_at(&Expr::And(Box::new(name("in_string")), Box::new(name("control"))), b' ', &stmts));
         assert!(!false_at(&name("ws"), b' ', &stmts));
         assert!(!false_at(&name("in_string"), b' ', &stmts), "a carried mask is free");
+    }
+}
+
+/// The escapes made of `code` after the token loop (`code_escape`) as passes over the words, each of their masks a
+/// word, not a vector of the file's (decision 0721): a mask's `prev` its word and the word before's, a `fill` its
+/// carry, an `any` the word tested. Each was its own pass over the file, a vector each. A mask read past its word
+/// (`next`) ends the pass before the read, and a mask a later pass reads is kept as a vector too. None where a line is
+/// not one of those forms: the part as it was.
+fn one_pass_after(code: &str) -> Option<String> {
+    enum L<'a> {
+        Note(&'a str),
+        Pass(&'a str, &'a str),
+        Fill(&'a str, &'a str, &'a str),
+        Any(&'a str),
+        At(&'a str, &'a str),
+    }
+    let mut lines = Vec::new();
+    for l in code.lines() {
+        let t = l.trim_start();
+        if t.starts_with("//") {
+            lines.push(L::Note(t));
+        } else if let Some(r) = t.strip_prefix("let ") && let Some((name, r)) = r.split_once(": Vec<u64> = (0..nw).map(|i| ") && let Some(e) = r.strip_suffix(").collect();") {
+            lines.push(L::Pass(name, e));
+        } else if let Some(r) = t.strip_prefix("let ") && let Some((name, r)) = r.split_once(" = fill(&") && let Some((a, b)) = r.strip_suffix(");").and_then(|r| r.split_once(", &")) {
+            lines.push(L::Fill(name, a, b));
+        } else if let Some(x) = t.strip_prefix("refused |= any(&").and_then(|r| r.strip_suffix(");")) {
+            lines.push(L::Any(x));
+        } else if let Some((x, call)) = t.strip_prefix("refused |= any_at(&").and_then(|r| r.strip_suffix(");")).and_then(|r| r.split_once(", |q| ")) {
+            lines.push(L::At(x, call));
+        } else if !t.is_empty() {
+            return None;
+        }
+    }
+    let is_id = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    // Each occurrence of `pat` not inside a longer name, replaced.
+    let bounded = |e: &str, pat: &str, to: &str| -> String {
+        let mut out = String::new();
+        let mut rest = e;
+        while let Some(p) = rest.find(pat) {
+            let ok = rest[..p].chars().next_back().is_none_or(|c| !is_id(c));
+            out.push_str(&rest[..p]);
+            out.push_str(if ok { to } else { pat });
+            rest = &rest[p + pat.len()..];
+        }
+        out.push_str(rest);
+        out
+    };
+    let reads = |e: &str, t: &str| e.contains(&format!("&{t}, ")) || { let x = bounded(e, &format!("{t}[i]"), "\u{1}"); x.contains('\u{1}') };
+    // The passes: each line's, a new one where a line reads past its word a mask of the pass.
+    let mut seg = vec![0usize; lines.len()];
+    let mut of: HashMap<&str, usize> = HashMap::new();
+    let mut cur = 0;
+    let mut here: Vec<&str> = Vec::new();
+    for (k, l) in lines.iter().enumerate() {
+        let (name, e) = match l {
+            L::Pass(n, e) => (Some(*n), Some(*e)),
+            L::Fill(n, _, _) => (Some(*n), None),
+            _ => (None, None),
+        };
+        if let Some(e) = e
+            && here.iter().any(|t| e.contains(&format!("next(&{t}, ")))
+        {
+            cur += 1;
+            here.clear();
+        }
+        seg[k] = cur;
+        if let Some(n) = name {
+            of.insert(n, cur);
+            here.push(n);
+        }
+    }
+    let masks: Vec<&str> = of.keys().copied().collect();
+    if masks.len() < 2 {
+        return None;
+    }
+    // A mask a later pass reads, or an `any` in a later pass: kept as a vector too (`_v`).
+    let mut kept: std::collections::HashSet<&str> = Default::default();
+    for (k, l) in lines.iter().enumerate() {
+        let text: Vec<&str> = match l {
+            L::Pass(_, e) => vec![*e],
+            L::Fill(_, a, b) => vec![*a, *b],
+            L::Any(x) | L::At(x, _) => vec![*x],
+            L::Note(_) => vec![],
+        };
+        for t in &masks {
+            if of[t] < seg[k] && text.iter().any(|e| reads(e, t) || e == t) {
+                kept.insert(t);
+            }
+        }
+    }
+    let mut out = String::new();
+    let last = *seg.last().unwrap_or(&0);
+    for p in 0..=last {
+        let mine: Vec<&str> = masks.iter().copied().filter(|t| of[t] == p).collect();
+        let mut body = String::new();
+        let mut prevs: Vec<String> = Vec::new();
+        let mut fills: Vec<&str> = Vec::new();
+        // A mask's word in this pass: its own (this pass's), its vector's (an earlier one's), or the outer vector's.
+        let read = |e: &str, prevs: &mut Vec<String>| -> String {
+            let mut e = e.to_owned();
+            for t in &masks {
+                if of[t] < p {
+                    e = bounded(&e, &format!("{t}[i]"), &format!("{t}_v[i]"));
+                    e = e.replace(&format!("&{t}, "), &format!("&{t}_v, "));
+                } else if of[t] == p {
+                    for k in 1..64 {
+                        let call = format!("prev(&{t}, i, {k})");
+                        if e.contains(&call) {
+                            if !prevs.iter().any(|x| x == t) {
+                                prevs.push((*t).to_owned());
+                            }
+                            e = e.replace(&call, &format!("({t} << {k} | {t}_p >> {})", 64 - k));
+                        }
+                    }
+                    e = bounded(&e, &format!("{t}[i]"), t);
+                }
+            }
+            e
+        };
+        let word = |x: &str| -> String {
+            match of.get(x) {
+                Some(&q) if q == p => x.to_owned(),
+                Some(_) => format!("{x}_v[i]"),
+                None => format!("{x}[i]"),
+            }
+        };
+        for (k, l) in lines.iter().enumerate().filter(|(k, _)| seg[*k] == p) {
+            let _ = k;
+            match l {
+                L::Note(t) => {
+                    let _ = writeln!(body, "        {t}");
+                }
+                L::Pass(n, e) => {
+                    let _ = writeln!(body, "        let {n} = {};", read(e, &mut prevs));
+                }
+                L::Fill(n, a, b) => {
+                    let _ = writeln!(body, "        let {n} = {{\n            let (s, e) = ({}, {});\n            let b = !e | s;\n            let f = s | (!e & (s.wrapping_add(b).wrapping_add({n}_c) ^ s ^ b));\n            {n}_c = f >> 63;\n            f\n        }};", word(a), word(b));
+                    fills.push(n);
+                }
+                L::Any(x) => {
+                    let _ = writeln!(body, "        refused |= {} != 0;", word(x));
+                }
+                // At each byte the escape's bytes hold at, the escape: `code` of the region spans read.
+                L::At(x, call) => {
+                    let _ = writeln!(body, "        {{\n            let mut h = {};\n            let code = &|q: usize| code_of(&code_spans, q);\n            while h != 0 {{\n                let q = 64 * i + h.trailing_zeros() as usize;\n                h &= h - 1;\n                refused |= {call};\n            }}\n        }}", word(x));
+                }
+            }
+            if let L::Pass(n, _) | L::Fill(n, _, _) = l
+                && kept.contains(n)
+            {
+                let _ = writeln!(body, "        {n}_v[i] = {n};");
+            }
+        }
+        let _ = writeln!(out, "    // The escapes made of `code`: one pass over the words, each mask a word ({} masks).", mine.len());
+        for t in mine.iter().filter(|t| kept.contains(*t)) {
+            let _ = writeln!(out, "    let mut {t}_v = vec![0u64; nw];");
+        }
+        prevs.sort();
+        for t in &prevs {
+            let _ = writeln!(out, "    let mut {t}_p = 0u64;");
+        }
+        for f in &fills {
+            let _ = writeln!(out, "    let mut {f}_c = 0u64;");
+        }
+        let _ = write!(out, "    for i in 0..nw {{\n{body}");
+        for t in &prevs {
+            let _ = writeln!(out, "        {t}_p = {t};");
+        }
+        out.push_str("    }\n");
+    }
+    Some(out)
+}
+
+/// Where tier 1's reads for tier 2 of the region tokens begin and end (`span_reads`, `bit_reads`).
+pub(crate) const T2_BEGIN: &str = "// Tier 2's reads of the region tokens it reads in parts (decision 0721 step 16), of the bytes.\n";
+pub(crate) const T2_END: &str = "// The end of tier 2's reads of the region tokens.\n\n";
+
+/// A field's word at the 64 bytes from `p` (`fwin`), written as `wput`, `set` and `clear` write a mask of the file.
+const WIN_HELPERS: &str = r#"/// Word `v` of the 64 bytes from `p`: its bits at bytes `a..=b` those of the windows `w` gives (`wput`'s).
+#[inline(always)]
+fn win_put(v: &mut u64, p: usize, a: usize, b: usize, mut w: impl FnMut(isize, &mut u64) -> u64) {
+    let (a, b) = (a.max(p), b.min(p + 63));
+    if a > b {
+        return;
+    }
+    let m = (if b - a == 63 { !0 } else { (1u64 << (b - a + 1)) - 1 }) << (a - p);
+    *v = *v & !m | w(p as isize, &mut 0) & m;
+}
+
+/// Word `v` of the 64 bytes from `p`: its bits at bytes `a..b` set (`set`'s).
+#[inline(always)]
+fn win_set(v: &mut u64, p: usize, a: usize, b: usize) {
+    let (a, b) = (a.max(p), b.min(p + 64));
+    if a >= b {
+        return;
+    }
+    *v |= (if b - a == 64 { !0 } else { (1u64 << (b - a)) - 1 }) << (a - p);
+}
+
+/// Word `v` of the 64 bytes from `p`: its bits at bytes `a..=b` cleared (`clear`'s).
+#[inline(always)]
+fn win_clear(v: &mut u64, p: usize, a: usize, b: usize) {
+    let (a, b) = (a.max(p), b.min(p + 63));
+    if a > b {
+        return;
+    }
+    *v &= !((if b - a == 63 { !0 } else { (1u64 << (b - a + 1)) - 1 }) << (a - p));
+}
+
+"#;
+
+/// `e` with each part equal to `from` made `to`.
+fn replace_sub(e: &Expr, from: &Expr, to: &Expr) -> Expr {
+    if e == from {
+        return to.clone();
+    }
+    let r = |x: &Expr| Box::new(replace_sub(x, from, to));
+    match e {
+        Expr::Not(a) => Expr::Not(r(a)),
+        Expr::And(a, b) => Expr::And(r(a), r(b)),
+        Expr::Or(a, b) => Expr::Or(r(a), r(b)),
+        Expr::Xor(a, b) => Expr::Xor(r(a), r(b)),
+        Expr::Call(f, args) => Expr::Call(
+            f.clone(),
+            args.iter()
+                .map(|a| match a {
+                    Arg::E(x) => Arg::E(replace_sub(x, from, to)),
+                    a => a.clone(),
+                })
+                .collect(),
+        ),
+        _ => e.clone(),
+    }
+}
+
+/// `replace_sub` outside calls: a call reads bytes about the byte (`prev`, `next`, `fill`), which a kind's
+/// assumptions, of its token's bytes, do not speak of.
+/// With `prev_in`, the byte before is the token's too: in a `prev(X)` of one byte, its `X`, read as the byte's.
+fn replace_here(e: &Expr, from: &Expr, to: &Expr, prev_in: bool) -> Expr {
+    if e == from {
+        return to.clone();
+    }
+    let r = |x: &Expr| Box::new(replace_here(x, from, to, prev_in));
+    match e {
+        Expr::Not(a) => Expr::Not(r(a)),
+        Expr::And(a, b) => Expr::And(r(a), r(b)),
+        Expr::Or(a, b) => Expr::Or(r(a), r(b)),
+        Expr::Xor(a, b) => Expr::Xor(r(a), r(b)),
+        Expr::Call(f, args) if prev_in && f == "prev" && args.len() == 1 && let Arg::E(x) = &args[0] => {
+            Expr::Call(f.clone(), vec![Arg::E(replace_here(x, from, to, false))])
+        }
+        _ => e.clone(),
+    }
+}
+
+/// The terms of a union, each in `out`.
+fn or_terms(e: &Expr, out: &mut Vec<Expr>) {
+    match e {
+        Expr::Or(a, b) => {
+            or_terms(a, out);
+            or_terms(b, out);
+        }
+        e => out.push(e.clone()),
+    }
+}
+
+/// `e`'s factors: the operands of its `&`s.
+fn or_and(e: &Expr, out: &mut Vec<Expr>) {
+    match e {
+        Expr::And(a, b) => {
+            or_and(a, out);
+            or_and(b, out);
+        }
+        e => out.push(e.clone()),
     }
 }
