@@ -10329,9 +10329,23 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             Src::Delta(r) => format!("{} (delta)", store.rels[*r].table),
         };
         let mut key = format!("{entry}: {}", store.rels.get(head).map_or("-", |r| r.table.as_str()));
-        for st in &j.steps {
+        // How each step runs, as planned: an atom whose filters run as its chunk's row program (`fuses`) and those
+        // filters (`fused`, `rowcode`; a cut or a delta's step walks them), a lookup's one row (`look`), a batch of
+        // node reads, keyed probes or pairs (`own`, `keyed`, `pairs`, decision 0706), or the walk's row by row.
+        let form = |i: usize| -> &'static str {
+            if (0..i).any(|k| j.fused_at(k).is_some_and(|f| i <= k + f.steps)) { return "fused"; }
+            if j.fused_at(i).is_some() { return "fuses"; }
+            if j.lookups.get(i).copied().unwrap_or(false) { return "look"; }
+            match cx.batch.get(i) {
+                Some(Some((kinds::Batched::Own(_), _))) => "own",
+                Some(Some((kinds::Batched::Keyed(_), _))) => "keyed",
+                Some(Some((kinds::Batched::Held(_), _))) => "pairs",
+                _ => "walk",
+            }
+        };
+        for (i, st) in j.steps.iter().enumerate() {
             let what = match st { Step::Atom { src, .. } | Step::Scalar { src, .. } | Step::StrJoin { src, .. } => name_of(src), _ => String::new() };
-            key.push_str(&format!("\n{} {what}", shape_token(st)));
+            key.push_str(&format!("\n{} @{} {what}", shape_token(st), form(i)));
         }
         {
             let mut plans = WALK_PLANS.lock().unwrap();
