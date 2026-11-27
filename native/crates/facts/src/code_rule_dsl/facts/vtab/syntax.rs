@@ -634,8 +634,9 @@ impl Source for LongTexts {
             _ => self.node_read(name, n, more).map(super::NodeRead::Value),
         }
     }
-    fn node_text_atom(&self, name: &str, n: i64) -> Option<i64> {
-        if name != "rr_node_text_any" {
+    fn node_text_atom(&self, name: &str, n: i64, arena: *const ()) -> Option<i64> {
+        // Its atoms the run's symbols' arena, else its atoms are another store's symbols.
+        if name != "rr_node_text_any" || !std::ptr::addr_eq(Arc::as_ptr(&self.batch.atoms), arena) {
             return None;
         }
         let (key, low) = (rerail_blocks::located::Located(n).key(), rerail_blocks::located::Located(n).low());

@@ -371,8 +371,9 @@ pub trait Source: Send + Sync {
     fn build_value_index(&self, _column: usize) -> Option<usize> { None }
     /// Decision 0706 E1: node read `name` of node `n` (`rr_node_text_any`) as its text's atom, read without its text
     /// where the source keeps the text's term (a leaf's, decision 0656: interned at the term's first read). `None`
-    /// where it does not: the text is read (`node_read_ref`).
-    fn node_text_atom(&self, _name: &str, _n: i64) -> Option<i64> { None }
+    /// where it does not, or where its atoms are not `arena` (the address of the run's symbols' atom arena: a batch
+    /// made over another store's atoms names another table's symbols): the text is read (`node_read_ref`).
+    fn node_text_atom(&self, _name: &str, _n: i64, _arena: *const ()) -> Option<i64> { None }
     /// `lookup_read` from a probe cursor (`hint`, the step's, zeroed at its start): where the last probe of the step
     /// ended, which a source may keep its place in (a view of the tape: the document and granule). Probes in key
     /// order (a scan's rows sorted by the next key, decision 0112) then find their place without a search. A hint is

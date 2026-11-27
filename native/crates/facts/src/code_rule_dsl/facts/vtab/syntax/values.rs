@@ -875,8 +875,8 @@ impl Source for Layered {
         p.by_key.parts(rerail_blocks::located::Located(n).key(), p.list.len()).find_map(|i| p.list[i].src.node_read(name, n, more)).map(super::super::NodeRead::Value)
     }
     /// The base's (a part's node is read as text).
-    fn node_text_atom(&self, name: &str, n: i64) -> Option<i64> {
-        self.base.node_text_atom(name, n)
+    fn node_text_atom(&self, name: &str, n: i64, arena: *const ()) -> Option<i64> {
+        self.base.node_text_atom(name, n, arena)
     }
     /// Every node's text where it lies (`LongTexts::node_texts_in_place`), the chunk's documents' and its values': a
     /// node is found through the directory over the chunk's batch and its values (`views_over`), each document's
