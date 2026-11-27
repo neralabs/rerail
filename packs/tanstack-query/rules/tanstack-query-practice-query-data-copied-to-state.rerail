@@ -37,6 +37,11 @@
 // A state that an effect copies query data into is reported at those effect calls, not at its useState. Only a
 // setter called in the effect callback's own code counts: one inside a `.then`, a timer or a nested function records
 // something that happened later (an external call finished, a delay passed), not a copy of the cache.
+// A Hook of another file is known by its module and name: each file states what its own Hooks return, and what it
+// imports and re-exports, by paths and symbols alone (decision 0677); the cross-file part follows them through
+// imports and barrels, and a finding that rests on another file's Hook joins what holds for its file (qdc_true). The
+// copies that keep a useState from being reported at its argument, and the effects whose setter calls are not
+// "elsewhere", count a value of any imported Hook, whatever that Hook returns.
 // Gaps: a value computed by a call (`data.pages.flatMap(…)`, `data.map(…)`) is not followed; nor is a hook that
 // returns the data inside an object (`return { todos: data }`), a query result passed in as a prop, a setter of a
 // store (Jotai, Zustand) rather than useState, or an alias other than `@/`, `~/` and `#/`. The engine evaluates .ts and
@@ -46,10 +51,10 @@
 #include "tsx/react-compiler.rerail"
 
 .violation QueryDataCopiedToState(at: node, msg: symbol) "{msg}"
-QueryDataCopiedToState(a, m) :- qdc_initial(a, s), !qdc_set_elsewhere(s), !qdc_effect_copy(_, s), qdc_says("initial", m),
-    docof(a, d), qdc_tq_pkg(d).
-QueryDataCopiedToState(k, m) :- qdc_effect_copy(k, s), !qdc_set_elsewhere(s), qdc_says("effect", m), docof(k, d),
-    qdc_tq_pkg(d).
+QueryDataCopiedToState(a, m) :- qdc_initial(a, s, cs, cx, cn), !qdc_set_elsewhere(s), !qdc_copied(s),
+    qdc_says("initial", m), docof(a, d), qdc_tq_pkg(d), doc(d, p, _), qdc_true(p, cs, cx, cn).
+QueryDataCopiedToState(k, m) :- qdc_effect_copy(k, s, cs, cx, cn), !qdc_set_elsewhere(s), qdc_says("effect", m),
+    docof(k, d), qdc_tq_pkg(d), doc(d, p, _), qdc_true(p, cs, cx, cn).
 // qdc_tq_pkg(d): document d uses TanStack Query: it imports it itself, or its package (its nearest package.json; the
 // workspace root's for a file under no other) depends on TanStack Query (`@tanstack/react-query`, v3's
 // `react-query`) or tRPC's React Query integration, so an `x.y.useQuery()` there is tRPC's TanStack hook and not
@@ -66,21 +71,19 @@ qdc_says("initial", "This useState copies query data once, on the first render: 
 qdc_says("effect", "This effect copies query data into state that nothing else sets: the copy renders one frame behind the cache and adds a render on every refetch. Use the query's `data` in place of this state (derive values during render or with the query's `select`) and drop the effect; if the copy is there to keep the last value while a new key loads, use `placeholderData: keepPreviousData` on the query instead.").
 
 // ---- query calls ----------------------------------------------------------------------------------------------
-// qdc_query_call(h): call h returns a query result ({ data, isLoading, … }).
-.decl qdc_query_call(h: node)
+// qdc_direct(h): call h is a query hook's: it returns a query result ({ data, isLoading, … }).
+.decl qdc_direct(h: node)
 // useQuery(…) imported from TanStack Query (renamed or not), or RQ.useQuery(…) off `import * as RQ`.
-qdc_query_call(h) :- kind(h, "call_expression"), field(h, "function", f), kind(f, "identifier"), ref_site(f, sp),
+qdc_direct(h) :- kind(h, "call_expression"), field(h, "function", f), kind(f, "identifier"), ref_site(f, sp),
     import_binding(sp, _, src, x), qdc_pkg(src), qdc_hook(x).
-qdc_query_call(h) :- kind(h, "call_expression"), field(h, "function", f), kind(f, "member_expression"),
+qdc_direct(h) :- kind(h, "call_expression"), field(h, "function", f), kind(f, "member_expression"),
     field(f, "object", o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, "*"), qdc_pkg(src),
     field(f, "property", p), qdc_hook(x), text(p, x).
 // tRPC's React Query hooks: `api.post.list.useQuery(…)`, a member of a member; RTK Query's
 // `api.endpoints.x.useQuery()` is another cache and is left out.
-qdc_query_call(h) :- kind(h, "call_expression"), field(h, "function", f), kind(f, "member_expression"),
+qdc_direct(h) :- kind(h, "call_expression"), field(h, "function", f), kind(f, "member_expression"),
     field(f, "property", p), qdc_hook(x), text(p, x), field(f, "object", o), kind(o, "member_expression"),
     !qdc_rtk(o).
-// A custom hook, here or in another file, that returns a query result.
-qdc_query_call(h) :- hook_call(h, n), qdc_callee_fn(n, g), qdc_returns_query(g).
 .decl qdc_rtk(o: node)
 qdc_rtk(o) :- kind(o, "member_expression"), within(n, o), kind(n, "property_identifier"), text(n, "endpoints").
 
@@ -89,31 +92,46 @@ qdc_hook("useQuery"). qdc_hook("useSuspenseQuery"). qdc_hook("useInfiniteQuery")
 .decl qdc_pkg(p: symbol)
 qdc_pkg("@tanstack/react-query"). qdc_pkg("react-query").
 
-// ---- custom hooks across files --------------------------------------------------------------------------------
-// qdc_callee_fn(n, g): identifier n, a Hook call's callee, names function g: a top-level function of this file, or
-// one a workspace module exports (the import resolution at the bottom of this file).
-.decl qdc_callee_fn(n: node, g: node)
-qdc_callee_fn(n, g) :- hook_call(_, n), ref_site(n, s), rc_fn_at(s, g).
-qdc_callee_fn(n, g) :- hook_call(_, n), ref_site(n, sp), import_binding(sp, _, src, x), x != "*", docof(n, d),
-    qdc_target(d, src, t), qdc_mod_def(t, x, g).
+// qdc_is(h, m, cs, cx, cn): call h returns a query result (m = "query") or a query's data (m = "data"), where the
+// Hook imported as cx from specifier cs returns cn (cs, cx and cn "": always). A query hook's call is a query result;
+// a custom Hook's call is what its function returns: a function of this file (qdc_gives), or an imported Hook, which
+// is either as its own file says (qdc_true, read by the finding).
+.decl qdc_is(h: node, m: symbol, cs: symbol, cx: symbol, cn: symbol)
+qdc_is(h, "query", "", "", "") :- qdc_direct(h).
+qdc_is(h, m, cs, cx, cn) :- qdc_local_call(h, g), qdc_gives(g, m, cs, cx, cn).
+qdc_is(h, m, s, x, m) :- qdc_import_call(h, s, x), qdc_mode(m).
+.decl qdc_mode(m: symbol)
+qdc_mode("query"). qdc_mode("data").
 
-// qdc_returns_query(g): g returns a query result: `() => useQuery(…)`, `return useQuery(…)`,
-// `const q = useQuery(…); return q`.
-.decl qdc_returns_query(g: node)
-qdc_returns_query(g) :- qdc_returned(g, e), deparen(e, h), qdc_query_call(h).
-qdc_returns_query(g) :- qdc_returned(g, e), kind(e, "identifier"), ref_site(e, d), qdc_holds(d, h),
-    field(d, "name", n), kind(n, "identifier").
-// qdc_returns_data(g): g returns the data of a query: `const { data } = useQuery(…); return data`.
-.decl qdc_returns_data(g: node)
-qdc_returns_data(g) :- qdc_returned(g, e), qdc_val(e, _).
-// qdc_returned(g, e): function g returns expression e: an arrow's expression body, or a return in g's own code.
+// ---- custom hooks ---------------------------------------------------------------------------------------------
+// qdc_local_call(h, g): Hook call h calls g, a function of this file. qdc_import_call(h, s, x): h calls the Hook
+// imported as x from specifier s.
+.decl qdc_local_call(h: node, g: node)
+qdc_local_call(h, g) :- hook_call(h, n), ref_site(n, s), rc_fn_at(s, g).
+.decl qdc_import_call(h: node, s: symbol, x: symbol)
+qdc_import_call(h, s, x) :- hook_call(h, n), ref_site(n, sp), import_binding(sp, _, s, x), x != "*".
+
+// qdc_gives(g, m, cs, cx, cn): function g returns a query result (m = "query": `() => useQuery(…)`,
+// `return useQuery(…)`, `const q = useQuery(…); return q`) or a query's data (m = "data":
+// `const { data } = useQuery(…); return data`), where the Hook imported as cx from cs returns cn (qdc_is).
+.decl qdc_gives(g: node, m: symbol, cs: symbol, cx: symbol, cn: symbol)
+qdc_gives(g, "query", cs, cx, cn) :- qdc_returned(g, e), deparen(e, h), qdc_is(h, "query", cs, cx, cn).
+qdc_gives(g, "query", cs, cx, cn) :- qdc_returned(g, e), kind(e, "identifier"), ref_site(e, d), qdc_holds(d, h),
+    field(d, "name", n), kind(n, "identifier"), qdc_is(h, "query", cs, cx, cn).
+qdc_gives(g, "data", cs, cx, cn) :- qdc_returned(g, e), qdc_val(e, cs, cx, cn).
+// qdc_returned(g, e): function g, a Hook this file calls or exports (qdc_fn), returns expression e: an arrow's
+// expression body, or a return in g's own code.
+.decl qdc_fn(g: node)
+qdc_fn(g) :- qdc_local_call(_, g).
+qdc_fn(g) :- qdc_own_hook(_, g).
 .decl qdc_returned(g: node, e: node)
-qdc_returned(g, e) :- qdc_callee_fn(_, g), kind(g, "arrow_function"), field(g, "body", e), !kind(e, "statement_block").
-qdc_returned(g, e) :- qdc_callee_fn(_, g), kind(r, "return_statement"), rc_own(r, g), child(r, e, _).
+qdc_returned(g, e) :- qdc_fn(g), kind(g, "arrow_function"), field(g, "body", e), !kind(e, "statement_block").
+qdc_returned(g, e) :- qdc_fn(g), kind(r, "return_statement"), rc_own(r, g), child(r, e, _).
 
-// qdc_holds(d, h): declarator d is initialised with query call h: `const … = useQuery(…)`.
+// qdc_holds(d, h): declarator d is initialised with call h, which returns a query result (qdc_is): `const … =
+// useQuery(…)`.
 .decl qdc_holds(d: node, h: node)
-qdc_holds(d, h) :- kind(d, "variable_declarator"), field(d, "value", v), deparen(v, h), qdc_query_call(h).
+qdc_holds(d, h) :- kind(d, "variable_declarator"), field(d, "value", v), deparen(v, h), qdc_is(h, "query", _, _, _).
 
 // ---- query data -----------------------------------------------------------------------------------------------
 // qdc_data_site(s, h): binding s holds the data of query h.
@@ -132,34 +150,38 @@ qdc_data_site(s, h) :- qdc_holds(d, h), field(d, "name", pat), kind(pat, "array_
 .decl qdc_pattern(h: node, pat: node)
 qdc_pattern(h, pat) :- qdc_holds(d, h), field(d, "name", pat), kind(pat, "object_pattern").
 
-// qdc_val(e, h): expression e's value is the data of query h, or part of it.
-.decl qdc_val(e: node, h: node)
-qdc_val(e, h) :- kind(e, "identifier"), ref_site(e, s), qdc_data_site(s, h).
+// qdc_val(e, cs, cx, cn): expression e's value is the data of a query, or part of it, where the Hook imported as cx
+// from cs returns cn (qdc_is).
+.decl qdc_val(e: node, cs: symbol, cx: symbol, cn: symbol)
+qdc_val(e, cs, cx, cn) :- kind(e, "identifier"), ref_site(e, s), qdc_data_site(s, h), qdc_is(h, "query", cs, cx, cn).
 // q.data, q?.data where `const q = h`; h.data written in place.
-qdc_val(e, h) :- kind(e, "member_expression"), field(e, "property", p), text(p, "data"), field(e, "object", o),
-    kind(o, "identifier"), ref_site(o, d), qdc_holds(d, h), field(d, "name", n), kind(n, "identifier").
-qdc_val(e, h) :- kind(e, "member_expression"), field(e, "property", p), text(p, "data"), field(e, "object", o),
-    deparen(o, h), qdc_query_call(h).
+qdc_val(e, cs, cx, cn) :- kind(e, "member_expression"), field(e, "property", p), text(p, "data"),
+    field(e, "object", o), kind(o, "identifier"), ref_site(o, d), qdc_holds(d, h), field(d, "name", n),
+    kind(n, "identifier"), qdc_is(h, "query", cs, cx, cn).
+qdc_val(e, cs, cx, cn) :- kind(e, "member_expression"), field(e, "property", p), text(p, "data"),
+    field(e, "object", o), deparen(o, h), qdc_is(h, "query", cs, cx, cn).
 // A custom hook that returns query data: `const user = useCurrentUser()`.
-qdc_val(e, e) :- hook_call(e, n), qdc_callee_fn(n, g), qdc_returns_data(g).
+qdc_val(e, cs, cx, cn) :- qdc_is(e, "data", cs, cx, cn).
 // data.items, data?.items, data ?? [], data || [], (data as Todo[]), data!, and a const holding any of them.
-qdc_val(e, h) :- kind(e, "member_expression"), field(e, "property", p), kind(p, "property_identifier"),
-    field(e, "object", o), deparen(o, x), qdc_val(x, h).
-qdc_val(e, h) :- kind(e, "binary_expression"), (op(e, "??") ; op(e, "||")), field(e, "left", l), deparen(l, x),
-    qdc_val(x, h).
-qdc_val(e, h) :- (kind(e, "as_expression") ; kind(e, "non_null_expression") ; kind(e, "satisfies_expression")),
-    child(e, l, 0), deparen(l, x), qdc_val(x, h).
-qdc_val(e, h) :- kind(e, "identifier"), ref_site(e, d), kind(d, "variable_declarator"), field(d, "name", n),
-    kind(n, "identifier"), field(d, "value", v), deparen(v, x), qdc_val(x, h).
+qdc_val(e, cs, cx, cn) :- kind(e, "member_expression"), field(e, "property", p), kind(p, "property_identifier"),
+    field(e, "object", o), deparen(o, x), qdc_val(x, cs, cx, cn).
+qdc_val(e, cs, cx, cn) :- kind(e, "binary_expression"), (op(e, "??") ; op(e, "||")), field(e, "left", l),
+    deparen(l, x), qdc_val(x, cs, cx, cn).
+qdc_val(e, cs, cx, cn) :- (kind(e, "as_expression") ; kind(e, "non_null_expression") ;
+    kind(e, "satisfies_expression")), child(e, l, 0), deparen(l, x), qdc_val(x, cs, cx, cn).
+qdc_val(e, cs, cx, cn) :- kind(e, "identifier"), ref_site(e, d), kind(d, "variable_declarator"), field(d, "name", n),
+    kind(n, "identifier"), field(d, "value", v), deparen(v, x), qdc_val(x, cs, cx, cn).
 
 // ---- copies into state ----------------------------------------------------------------------------------------
-// qdc_initial(a, s): a, the initial value of the useState whose setter binding is s (or the declarator, when the
-// pattern names no setter), is query data: `useState(data)`, `useState(() => data)`.
-.decl qdc_initial(a: node, s: node)
-qdc_initial(a, s) :- rc_react_call(u, "useState"), call_arg(u, a, 0), qdc_init_val(a), qdc_state(u, s).
-.decl qdc_init_val(a: node)
-qdc_init_val(a) :- deparen(a, x), qdc_val(x, _).
-qdc_init_val(a) :- deparen(a, f), kind(f, "arrow_function"), field(f, "body", b), deparen(b, x), qdc_val(x, _).
+// qdc_initial(a, s, cs, cx, cn): a, the initial value of the useState whose setter binding is s (or the declarator,
+// when the pattern names no setter), is query data (qdc_val): `useState(data)`, `useState(() => data)`.
+.decl qdc_initial(a: node, s: node, cs: symbol, cx: symbol, cn: symbol)
+qdc_initial(a, s, cs, cx, cn) :- rc_react_call(u, "useState"), call_arg(u, a, 0), qdc_init_val(a, cs, cx, cn),
+    qdc_state(u, s).
+.decl qdc_init_val(a: node, cs: symbol, cx: symbol, cn: symbol)
+qdc_init_val(a, cs, cx, cn) :- deparen(a, x), qdc_val(x, cs, cx, cn).
+qdc_init_val(a, cs, cx, cn) :- deparen(a, f), kind(f, "arrow_function"), field(f, "body", b), deparen(b, x),
+    qdc_val(x, cs, cx, cn).
 .decl qdc_state(u: node, s: node)  // useState call u's setter binding, else its declarator
 qdc_state(u, s) :- kind(d, "variable_declarator"), field(d, "value", u), field(d, "name", p), kind(p, "array_pattern"),
     child(p, s, 1), kind(s, "identifier").
@@ -168,56 +190,94 @@ qdc_state(u, d) :- kind(d, "variable_declarator"), field(d, "value", u), field(d
 .decl qdc_has_setter(p: node)
 qdc_has_setter(p) :- child(p, s, 1), kind(s, "identifier").
 
-// qdc_effect_copy(k, s): k, a call of setter s in the own code of a useEffect or useLayoutEffect callback (not in a
-// function nested in it), passes query data.
-.decl qdc_effect_copy(k: node, s: node)
-qdc_effect_copy(k, s) :- qdc_effect_cb(cb), rc_set_state(k), rc_own(k, cb), call_arg(k, a, 0), deparen(a, x),
-    qdc_val(x, _), field(k, "function", n), ref_site(n, s).
+// qdc_effect_copy(k, s, cs, cx, cn): k, a call of setter s in the own code of a useEffect or useLayoutEffect
+// callback (not in a function nested in it), passes query data (qdc_val).
+.decl qdc_effect_copy(k: node, s: node, cs: symbol, cx: symbol, cn: symbol)
+qdc_effect_copy(k, s, cs, cx, cn) :- qdc_effect_cb(cb), rc_set_state(k), rc_own(k, cb), call_arg(k, a, 0),
+    deparen(a, x), qdc_val(x, cs, cx, cn), field(k, "function", n), ref_site(n, s).
 .decl qdc_effect_cb(cb: node)
 qdc_effect_cb(cb) :- deps_hook(c, x, _, _), effect_hook(x), deps_cb(c, cb).
+// qdc_copied(s): an effect copies query data into s, or a value of an imported Hook.
+.decl qdc_copied(s: node)
+qdc_copied(s) :- qdc_effect_copy(_, s, _, _, _).
 
 // qdc_set_elsewhere(s): setter s is read anywhere but in an effect that copies query data into it: an event
 // handler, a child's prop, a custom hook's argument. The state is then a draft the user edits.
 .decl qdc_set_elsewhere(s: node)
 qdc_set_elsewhere(s) :- ref_site(r, s), !qdc_in_copying_effect(r, s).
 .decl qdc_in_copying_effect(r: node, s: node)
-qdc_in_copying_effect(r, s) :- qdc_effect_copy(k, s), qdc_effect_cb(cb), within(k, cb), within(r, cb), ref_site(r, s).
+qdc_in_copying_effect(r, s) :- qdc_effect_copy(k, s, _, _, _), qdc_effect_cb(cb), within(k, cb), within(r, cb),
+    ref_site(r, s).
 
-// ---- library candidate: import resolution ---------------------------------------------------------------------
-// tsx/names' sym_of needs the tsconfig facts (tsconfig_for, tsconfig_path), and alias-by-package package_for, which
-// the .rerail runner does not bind; this is the rule's own. A specifier names a workspace module by:
+// ---- across files: other modules' Hooks -----------------------------------------------------------------------
+// Each file states, by its path, its module (ts_module) and symbols alone, what its own Hooks return (qdc_def), what
+// it re-exports (qdc_reexport, qdc_star) and which imported Hooks it calls (qdc_import). A specifier names a
+// workspace module by (the rule's own resolution, tsconfig `paths` not read):
 //   "./hooks", "../x"   the importing file's folder joined with it, then .ts/.tsx/.js/… and index files
 //   "@/x", "~/x", "#/x" x, or src/x, under the importing file's folder or any folder above it (where tsconfig
 //                       `paths` most often points: "@/*": ["./src/*"] or ["./*"])
 // Other aliases and workspace packages are not followed. The engine evaluates .ts and .tsx files apart, so a
 // module only resolves to a file of the same kind.
-// qdc_target(d, s, t): specifier s, imported or re-exported in document d, names workspace module t.
-.decl qdc_target(d: number, s: symbol, t: symbol)
-qdc_target(d, s, t) :- docof(i, d), import_spec(i, s), prefix(".", s), doc(d, p, _),
-    resolve_base(@join(@dir(p), s), t).
-qdc_target(d, s, t) :- docof(i, d), import_spec(i, s), qdc_alias(s, rest), qdc_root(d, a),
-    resolve_base(@join(a, rest), t).
-qdc_target(d, s, t) :- docof(i, d), import_spec(i, s), qdc_alias(s, rest), qdc_root(d, a),
-    resolve_base(@join(@join(a, "src"), rest), t).
-.decl qdc_alias(s: symbol, rest: symbol)
-qdc_alias(s, substr(s, 2, strlen(s) - 2)) :- import_spec(_, s), (prefix("@/", s) ; prefix("~/", s) ; prefix("#/", s)).
-// qdc_root(d, a): a is the folder of document d, which imports an alias, or a folder above it.
-.decl qdc_root(d: number, a: symbol)
-qdc_root(d, @dir(p)) :- docof(i, d), import_spec(i, s), qdc_alias(s, _), doc(d, p, _).
-qdc_root(d, @dir(a)) :- qdc_root(d, a), a != "", a != ".", a != "/".
-
-// qdc_mod_def(t, x, g): module t's name x is the Hook function g: declared there, `export default`, or re-exported
+// qdc_own_hook(x, g): this file's Hook function g is its top-level `use…` function x, or its `export default`.
+.decl qdc_own_hook(x: symbol, g: node)
+qdc_own_hook(x, g) :- top_level(s, x), prefix("use", x), rc_fn_at(s, g).
+qdc_own_hook("default", g) :- kind(e, "export_statement"), field(e, "declaration", g), rc_fn(g), child(e, k, _),
+    text(k, "default").
+qdc_own_hook("default", g) :- kind(e, "export_statement"), field(e, "value", v), kind(v, "identifier"),
+    ref_site(v, s), rc_fn_at(s, g).
+// qdc_def(p, t, x, m, cs, cx, cn): Hook x of module t, the file at path p, returns m (qdc_gives), where the Hook it
+// imports as cx from cs returns cn.
+.decl qdc_def(p: symbol, t: symbol, x: symbol, m: symbol, cs: symbol, cx: symbol, cn: symbol)
+qdc_def(p, t, x, m, cs, cx, cn) :- qdc_own_hook(x, g), qdc_gives(g, m, cs, cx, cn), docof(g, d), doc(d, p, _),
+    ts_module(d, t).
+// qdc_reexport(p, t, x, s, y): module t, the file at path p, exports s's name y as x (`export { y as x } from s`);
+// qdc_star(p, t, s): it exports every name of s but its default (`export * from s`).
+.decl qdc_reexport(p: symbol, t: symbol, x: symbol, s: symbol, y: symbol)
+qdc_reexport(p, t, x, s, y) :- kind(e, "export_statement"), export_from(e, s, y, x), docof(e, d), doc(d, p, _),
+    ts_module(d, t).
+.decl qdc_star(p: symbol, t: symbol, s: symbol)
+qdc_star(p, t, s) :- kind(e, "export_statement"), star_export(e, s), docof(e, d), doc(d, p, _), ts_module(d, t).
+// qdc_import(p, s, x): the file at path p calls the Hook it imports as x from s.
+.decl qdc_import(p: symbol, s: symbol, x: symbol)
+qdc_import(p, s, x) :- qdc_import_call(h, s, x), docof(h, d), doc(d, p, _).
+// qdc_spec(p, s): the file at path p names specifier s, to resolve.
+.decl qdc_spec(p: symbol, s: symbol)
+qdc_spec(p, s) :- qdc_import(p, s, _).
+qdc_spec(p, s) :- qdc_def(p, _, _, _, s, _, _), s != "".
+qdc_spec(p, s) :- qdc_reexport(p, _, _, s, _).
+qdc_spec(p, s) :- qdc_star(p, _, s).
+// qdc_module(b, t): module t is a file whose path is b with one of the endings TypeScript tries (none, .ts, .tsx, …,
+// /index.ts, …): an import of b names t.
+.decl qdc_module(b: symbol, t: symbol)
+qdc_module(b, t) :- doc(d, f, _), ts_module(d, t), qdc_ext(e), k = strlen(f) - strlen(e), k >= 0, b = substr(f, 0, k),
+    f = cat(b, e).
+.decl qdc_ext(e: symbol)
+qdc_ext(""). qdc_ext(".ts"). qdc_ext(".tsx"). qdc_ext(".js"). qdc_ext(".jsx"). qdc_ext(".mts").
+qdc_ext("/index.ts"). qdc_ext("/index.tsx"). qdc_ext("/index.js").
+// qdc_target(p, s, t): specifier s, named by the file at path p, names workspace module t. It pairs two files, by
+// their paths and modules alone.
+.decl qdc_target(p: symbol, s: symbol, t: symbol) cross_file
+qdc_target(p, s, t) :- qdc_spec(p, s), prefix(".", s), qdc_module(@join(@dir(p), s), t).
+qdc_target(p, s, t) :- qdc_alias(p, s, rest), qdc_root(p, a), qdc_module(@join(a, rest), t).
+qdc_target(p, s, t) :- qdc_alias(p, s, rest), qdc_root(p, a), qdc_module(@join(@join(a, "src"), rest), t).
+.decl qdc_alias(p: symbol, s: symbol, rest: symbol)
+qdc_alias(p, s, substr(s, 2, strlen(s) - 2)) :- qdc_spec(p, s), (prefix("@/", s) ; prefix("~/", s) ; prefix("#/", s)).
+// qdc_root(p, a): a is the folder of the file at path p, which imports an alias, or a folder above it.
+.decl qdc_root(p: symbol, a: symbol)
+qdc_root(p, @dir(p)) :- qdc_alias(p, _, _).
+qdc_root(p, @dir(a)) :- qdc_root(p, a), a != "", a != ".", a != "/".
+// qdc_hook_of(t, x, m): module t's name x is a Hook that returns m: declared there, `export default`, or re-exported
 // through `export { x } from` and `export *` barrels.
-.decl qdc_mod_def(t: symbol, x: symbol, g: node)
-qdc_mod_def(t, x, g) :- top_level(s, x), prefix("use", x), rc_fn_at(s, g), docof(s, d), doc(d, _, t).
-qdc_mod_def(t, "default", g) :- kind(e, "export_statement"), field(e, "declaration", g), rc_fn(g),
-    docof(e, d), doc(d, _, t), child(e, k, _), text(k, "default").
-qdc_mod_def(t, "default", g) :- kind(e, "export_statement"), field(e, "value", v), kind(v, "identifier"),
-    ref_site(v, s), rc_fn_at(s, g), docof(e, d), doc(d, _, t).
-qdc_mod_def(t, x, g) :- kind(e, "export_statement"), docof(e, d), doc(d, _, t), export_from(e, s, y, x),
-    qdc_target(d, s, t2), qdc_mod_def(t2, y, g).
-qdc_mod_def(t, x, g) :- kind(e, "export_statement"), docof(e, d), doc(d, _, t), star_export(e, s),
-    qdc_target(d, s, t2), qdc_mod_def(t2, x, g), x != "default".
+.decl qdc_hook_of(t: symbol, x: symbol, m: symbol)
+qdc_hook_of(t, x, m) :- qdc_def(_, t, x, m, "", "", "").
+qdc_hook_of(t, x, m) :- qdc_def(p, t, x, m, cs, cx, cn), qdc_target(p, cs, t2), qdc_hook_of(t2, cx, cn).
+qdc_hook_of(t, x, m) :- qdc_reexport(p, t, x, s, y), qdc_target(p, s, t2), qdc_hook_of(t2, y, m).
+qdc_hook_of(t, x, m) :- qdc_star(p, t, s), qdc_target(p, s, t2), qdc_hook_of(t2, x, m), x != "default".
+// qdc_true(p, cs, cx, cn): in the file at path p, the Hook imported as cx from cs returns cn; and, with all three "",
+// what holds always. A finding reads it at its own file's path.
+.decl qdc_true(p: symbol, cs: symbol, cx: symbol, cn: symbol)
+qdc_true(p, "", "", "") :- doc(_, p, _).
+qdc_true(p, s, x, m) :- qdc_import(p, s, x), qdc_target(p, s, t), qdc_hook_of(t, x, m).
 
 // The cases, `cases/tanstack-query-practice-query-data-copied-to-state/`, read as one repository: each line ending
 // in `// caught` is reported, and no other line.

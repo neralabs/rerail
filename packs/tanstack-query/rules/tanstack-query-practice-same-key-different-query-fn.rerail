@@ -8,7 +8,8 @@
 // the entry, and every other observer of that key reads it. Two query definitions with the same key and different
 // query functions therefore hand one component the other's data (missing fields, another shape), and each refetch
 // overwrites the other. @tanstack/eslint-plugin-query sees one file; this rule joins the query definitions of a
-// package across its files.
+// package across its files. Each file states its definitions by its path and the line of their queryFn, with their
+// templates and fetchers, and the pairing joins those values alone (decision 0677).
 // A query definition is an object literal with a `queryKey` and a `queryFn` (useQuery, useSuspenseQuery,
 // queryOptions, useQueries entries, prefetchQuery, fetchQuery, ensureQueryData, a wrapper hook's options). Its key
 // template is the key array with string, number and keyword elements kept, an object element as its sorted property
@@ -42,8 +43,8 @@
 #include "tsx/names.rerail"
 
 .violation SameKeyDifferentQueryFn(at: node, key: symbol, other: symbol, oline: number) "Another query in this package uses the key {key} with a different queryFn ({other}:{oline}). TanStack Query caches by key alone, so whichever runs first fills the entry and the other component gets that function's data, of the wrong shape. Give one of them its own key by appending an element (such as 'with-invoices'), so invalidations of the shared prefix still reach it, or share one queryOptions and derive the difference with `select`. Leave it if both functions return the same data for the same key values; then call one shared fetcher from both."
-SameKeyDifferentQueryFn(f, t, p, l) :- skd_conflict(a, _), skd_prop(a, "queryFn", f), skd_key(a, t),
-    b = min x : { skd_conflict(a, x) }, skd_prop(b, "queryFn", g), docof(g, d), doc(d, p, _), line(g, l).
+SameKeyDifferentQueryFn(f, t, b, lb) :- skd_at(a, p, la), skd_other(p, la, b, lb), skd_prop(a, "queryFn", f),
+    skd_key(a, t).
 
 // ---- query definitions -------------------------------------------------------------------------------------------
 // skd_raw(o, k, v): object literal o has a pair `k: v`, k queryKey or queryFn.
@@ -192,16 +193,36 @@ skd_ready(o, t, k, pk) :- skd_key(o, t), skd_kind(o, k), skd_fetcher(o, _), skd_
 .decl skd_tq_dep(dir: symbol)
 skd_tq_dep(dir) :- package_field(dir, k, _),
     match("(dependencies|devDependencies|peerDependencies)/(@tanstack~1[a-z0-9-]*query[a-z0-9-]*|react-query|@trpc~1(react-query|tanstack-react-query|next))", k).
-.decl skd_pair(a: node, b: node)
-skd_pair(a, b) :- skd_ready(a, t, k, pk), skd_ready(b, t, k, pk), a != b.
-// skd_shared(a, b): a and b reach a common fetcher, and do not call it with different strings only.
-.decl skd_shared(a: node, b: node)
-skd_shared(a, b) :- skd_pair(a, b), skd_fetcher(a, h), skd_fetcher(b, h), !skd_apart(a, b, h).
-.decl skd_apart(a: node, b: node, h: symbol)
-skd_apart(a, b, h) :- skd_pair(a, b), skd_fetcher(a, h), skd_fetcher(b, h), !skd_open(a, h), !skd_open(b, h),
-    count : { skd_arg(a, h, u), skd_arg(b, h, u) } = 0.
-.decl skd_conflict(a: node, b: node)
-skd_conflict(a, b) :- skd_pair(a, b), !skd_shared(a, b).
+// skd_at(o, p, l): definition o is the one at path p whose queryFn starts on line l, the name the pairing knows it
+// by. skd_def, skd_fetcher_at, skd_arg_at and skd_open_at state what the pairing reads of it under that name.
+.decl skd_at(o: node, p: symbol, l: number)
+skd_at(o, p, l) :- skd_ready(o, _, _, _), skd_prop(o, "queryFn", f), line(f, l), docof(o, d), doc(d, p, _).
+.decl skd_def(p: symbol, l: number, t: symbol, k: symbol, pk: symbol)
+skd_def(p, l, t, k, pk) :- skd_ready(o, t, k, pk), skd_at(o, p, l).
+.decl skd_fetcher_at(p: symbol, l: number, h: symbol)
+skd_fetcher_at(p, l, h) :- skd_at(o, p, l), skd_fetcher(o, h).
+.decl skd_arg_at(p: symbol, l: number, h: symbol, u: symbol)
+skd_arg_at(p, l, h, u) :- skd_at(o, p, l), skd_arg(o, h, u).
+.decl skd_open_at(p: symbol, l: number, h: symbol)
+skd_open_at(p, l, h) :- skd_at(o, p, l), skd_open(o, h).
+// skd_pair(a, la, b, lb): two definitions of one package with one template and kind, in two files or on two lines.
+.decl skd_pair(a: symbol, la: number, b: symbol, lb: number) cross_file
+skd_pair(a, la, b, lb) :- skd_def(a, la, t, k, pk), skd_def(b, lb, t, k, pk), a != b.
+skd_pair(a, la, a, lb) :- skd_def(a, la, t, k, pk), skd_def(a, lb, t, k, pk), la != lb.
+// skd_shared(a, la, b, lb): a and b reach a common fetcher, and do not call it with different strings only.
+.decl skd_shared(a: symbol, la: number, b: symbol, lb: number) cross_file
+skd_shared(a, la, b, lb) :- skd_pair(a, la, b, lb), skd_fetcher_at(a, la, h), skd_fetcher_at(b, lb, h),
+    !skd_apart(a, la, b, lb, h).
+.decl skd_apart(a: symbol, la: number, b: symbol, lb: number, h: symbol) cross_file
+skd_apart(a, la, b, lb, h) :- skd_pair(a, la, b, lb), skd_fetcher_at(a, la, h), skd_fetcher_at(b, lb, h),
+    !skd_open_at(a, la, h), !skd_open_at(b, lb, h), count : { skd_arg_at(a, la, h, u), skd_arg_at(b, lb, h, u) } = 0.
+.decl skd_conflict(a: symbol, la: number, b: symbol, lb: number)
+skd_conflict(a, la, b, lb) :- skd_pair(a, la, b, lb), !skd_shared(a, la, b, lb).
+// skd_other(a, la, b, lb): the conflict a's finding names: the first by path, then by line.
+.decl skd_other(a: symbol, la: number, b: symbol, lb: number)
+skd_other(a, la, b, lb) :- skd_conflict(a, la, b, lb), !skd_later(a, la, b, lb).
+.decl skd_later(a: symbol, la: number, b: symbol, lb: number)
+skd_later(a, la, b, lb) :- skd_conflict(a, la, b, lb), skd_conflict(a, la, b2, lb2), (b2 < b ; b2 = b, lb2 < lb).
 
 // The cases, `cases/tanstack-query-practice-same-key-different-query-fn/`, read as one repository: each line ending in `// caught` is
 // reported, and no other line.
