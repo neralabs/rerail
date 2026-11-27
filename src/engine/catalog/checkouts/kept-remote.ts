@@ -1,7 +1,8 @@
 /**
  * A clone's remote as Git named it, kept while the configuration Git read it from reads the same: the facts it rests on
  * ({@link remoteSource}) are the files and variables Git reads a remote from, read here before Git runs. Where one of
- * them cannot be read or named, no answer is kept and Git is asked each time.
+ * them cannot be read or named, no answer is kept and Git is asked each time. A caller that keeps a remote of its own
+ * keeps it by the text of the repository's own config files ({@link configFilesText}).
  */
 import { existsSync, readdirSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
@@ -167,7 +168,32 @@ const INCLUDE = /include/iu;
  * when it is no regular file, cannot be read or includes another.
  */
 function configText(path: string): string | undefined {
+  const text = textAsGitReads(path);
+  return text === undefined || INCLUDE.test(text) ? undefined : text;
+}
+
+/** A file's text, read now as Git reads it ({@link fileText}); {@link NO_FILE} when nothing is there; undefined when it is no regular file or cannot be read. */
+function textAsGitReads(path: string): string | undefined {
   const read = fileText(path);
-  if (read === "none") return NO_FILE;
-  return read === undefined || INCLUDE.test(read.text) ? undefined : read.text;
+  return read === "none" ? NO_FILE : read?.text;
+}
+
+/**
+ * The repository's own files a checkout's remotes are read from: the common Git folder's `config`, which every
+ * worktree of the clone shares, and the worktree's own `config.worktree` (`gitFolder`, the common one for a main
+ * checkout, a submodule or a clone whose Git folder is kept apart), which Git reads too where
+ * `extensions.worktreeConfig` is on; turning that on writes the first. Without `gitFolder`, the first alone.
+ */
+export function remoteConfigFiles(common: string, gitFolder: string | undefined): readonly string[] {
+  return gitFolder === undefined ? [join(common, "config")] : [join(common, "config"), join(gitFolder, "config.worktree")];
+}
+
+/**
+ * What `files` hold, read now as Git reads them ({@link textAsGitReads}), as one string: a file that appears or goes
+ * changes it. Undefined where one is no regular file or cannot be read. An `include` is not followed, so a file it
+ * names changed alone leaves this as it was: a caller that must see that asks {@link remoteSource}.
+ */
+export function configFilesText(files: readonly string[]): string | undefined {
+  const texts = files.map(textAsGitReads);
+  return texts.some(text => text === undefined) ? undefined : texts.join("\0");
 }
