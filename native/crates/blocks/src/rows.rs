@@ -242,6 +242,12 @@ impl ColRead {
         while i < hi {
             let (chunk, place) = chunk_of(i, self.min_log);
             let n = ((chunk_rows(chunk, self.min_log) - place as u64).min(u64::from(hi - i))) as usize;
+            // A sealed chunk's values lie packed (decision 0622): read as `get` reads them.
+            if let Some(sealed) = d.sealed(chunk) {
+                (place..place + n).for_each(|q| f(sealed.get(q)));
+                i += n as u32;
+                continue;
+            }
             let p = d.at(self.min_log, i);
             unsafe {
                 if self.width == 4 {
@@ -907,6 +913,10 @@ mod tests {
                 for (j, &g) in got.iter().enumerate() {
                     assert_eq!(g, col(c, i64::from(from) + j as i64), "row {} of column {c}, read from {from}", from as usize + j);
                 }
+                // A chunk at a time (`ColRead::each`), sealed chunks included.
+                let mut each = Vec::with_capacity(len as usize);
+                r.each(from, from + len, |v| each.push(v));
+                assert_eq!(each, got, "column {c}'s rows from {from}, a chunk at a time");
             }
         }
         let vals: Vec<i64> = (0..n).map(|i| col(0, i64::from(i))).collect();
