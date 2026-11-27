@@ -74,7 +74,7 @@ const STOREFRONT_FILES: Readonly<Record<string, string>> = {
   "package.json": `${JSON.stringify({
     name: "storefront",
     private: true,
-    // No `next` dependency: the installed next pack would be recommended for it.
+    // No `vue` dependency and no `.vue` file: the installed vue pack would be recommended for it.
     dependencies: { react: "19.1.0" },
     devDependencies: { typescript: "5.9.3" },
   }, null, 2)}\n`,
