@@ -24,7 +24,9 @@ pub mod block;
 pub mod bloom;
 pub mod col;
 pub mod hash;
+pub mod ids;
 pub mod kernel;
+pub mod order;
 pub mod packed;
 pub mod pod;
 pub mod ranged;
@@ -32,6 +34,7 @@ pub mod refs;
 pub mod relation;
 pub mod rows;
 pub mod runs;
+pub mod sketch;
 
 pub use pod::{Pod, set_word, word, words, words_mut};
 

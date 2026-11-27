@@ -180,7 +180,5 @@ fn sketches(rel: &Relation) -> &[Span<u8>] {
     unsafe { std::slice::from_raw_parts(b.as_ptr().cast::<Span<u8>>(), b.len() / size_of::<Span<u8>>()) }
 }
 
-/// Column `c`'s statistics in a layer's sketches' directory, its kept form's bytes; `None` when it keeps none.
-pub fn layer_sketch(rel: &Relation, c: usize) -> Option<&[u8]> {
-    sketches(rel).get(c).filter(|s| !s.is_empty()).map(Span::as_slice)
-}
+// Column `c`'s kept sketch in a layer's sketches' directory: the floor's read (`rerail_delta_core::sketch::kept`).
+pub use rerail_delta_core::sketch::kept as layer_sketch;

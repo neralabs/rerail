@@ -519,13 +519,8 @@ impl std::fmt::Debug for Sketch {
     }
 }
 
-/// What a sketch's state reads: its rows, distinct values and sum of squared rows a value.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Reading {
-    pub rows: u64,
-    pub ndv: u64,
-    pub sq: u64,
-}
+// What a sketch's state reads, and that reading taken from its kept bytes in place: the floor's one definition.
+pub use rerail_delta_core::sketch::Reading;
 
 /// A version's change, signed: each value it touched, with its rows added less those taken (decision 0678 step 10).
 /// Its size is the values the change touched, never the version's.
@@ -1449,6 +1444,8 @@ mod tests {
             let mut back = Sketch::decode(&|i| bytes[i], 0, bytes.len(), room()).expect(what);
             assert_eq!(back.encode(), bytes, "{what}: bytes");
             assert_eq!(back.reading(), s.reading(), "{what}: reading");
+            assert_eq!(rerail_delta_core::sketch::reading(&bytes), Some(s.reading()), "{what}: its reading taken from its bytes in place");
+            assert_eq!(rerail_delta_core::sketch::reading(&bytes[..bytes.len() - 1]), None, "{what}: in place, cut short");
             assert!(back.in_blocks(), "{what}: in blocks");
             for v in [all[1], all[2], 1 << 41] {
                 s.add(v);
@@ -1458,6 +1455,23 @@ mod tests {
             back.remove(all[3]);
             assert_eq!((back.encode(), back.reading()), (s.encode(), s.reading()), "{what}: after");
             assert!(Sketch::decode(&|i| bytes[i], 0, bytes.len() - 1, room()).is_none(), "{what}: cut short");
+        }
+    }
+
+    /// A sketch past its exact counts whose live values are few again (rank counts, its registers mostly empty): its
+    /// distinct values read by the small-range correction (`m ln(m / zeros)`), alike in place and decoded.
+    #[test]
+    fn a_rank_sketch_of_few_live_values_reads_alike_in_place() {
+        for live in [3i64, 40, 300] {
+            let mut s = of((0..5_000i64).map(|i| i * 104_729 + (1 << 40)));
+            for i in live..5_000 {
+                s.remove(i * 104_729 + (1 << 40));
+            }
+            assert!(!s.is_exact(), "{live}: past its exact counts");
+            let bytes = s.encode();
+            let back = Sketch::decode(&|i| bytes[i], 0, bytes.len(), room()).expect("a sketch");
+            assert_eq!(rerail_delta_core::sketch::reading(&bytes), Some(back.reading()), "{live} live values");
+            assert_eq!(back.reading().rows, live as u64);
         }
     }
 
