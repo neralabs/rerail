@@ -602,6 +602,12 @@ AVAILABLE_JS = ('ObjC.import("Foundation"); var r = Ref(); $.NSURL.fileURLWithPa
                 '.getResourceValueForKeyError(r, $.NSURLVolumeAvailableCapacityForImportantUsageKey, null); String(r[0].js)')
 
 
+def df_free_gb():
+    """Free disk by statvfs (df): what a plain write gets, without what macOS would purge."""
+    st = os.statvfs(os.path.expanduser("~"))
+    return st.f_bavail * st.f_frsize / (1 << 30)
+
+
 def free_gb():
     try:
         out = subprocess.run(["osascript", "-l", "JavaScript", "-e", AVAILABLE_JS], capture_output=True, text=True, timeout=10)
@@ -1250,6 +1256,17 @@ def free_space(job):
         say(f"targets kept to {job.get('max_target_gb', MAX_TARGET_GB):g} GB; {free_gb():.0f} GB free")
     if free_gb() < want:
         prune_roots(min_free_gb, (ROOT_DAYS,) + ROOT_SHORT_DAYS + (1 / 24,), say)
+    if sys.platform == "darwin" and df_free_gb() < want:
+        # Time Machine's local snapshots keep every block the farm just deleted, and macOS purges
+        # them for an "important" write only: a plain write (a guest's disk image, a compile) fails
+        # at 0 by df with hundreds of GB "available" (the M3 Max, 2026-11-27). Thinning purges what macOS
+        # already counts as purgeable, down to `want` free; the backups on the backup disk stay.
+        try:
+            subprocess.run(["tmutil", "thinlocalsnapshots", "/", str(int(want * (1 << 30))), "4"],
+                           stdin=subprocess.DEVNULL, capture_output=True, timeout=600)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        say(f"local snapshots thinned; {df_free_gb():.0f} GB free by df")
     held = 0
     for d, dirs, files in os.walk(FARM):
         for n in files:
