@@ -15,8 +15,8 @@
 //     action built by an action client or wrapper w that resolves to a workspace declaration (next-safe-action,
 //     zsa, a home-made `action()`), whose own code is then followed too;
 //   - a function whose body starts with 'use server' (an inline action in a Server Component).
-// It writes when it, or a workspace function or declaration it calls (by name, through imports resolved below, any
-// depth), makes a Prisma write (`<client>.<model>.create|createMany|createManyAndReturn|update|updateMany|
+// It writes when it, or a workspace function or declaration it calls (by name, through imports tsx/names resolves,
+// any depth), makes a Prisma write (`<client>.<model>.create|createMany|createManyAndReturn|update|updateMany|
 // updateManyAndReturn|upsert|delete|deleteMany({ where | data | create | update … })`, `$executeRaw`,
 // `$executeRawUnsafe`) or a Drizzle one (`db.insert(t).values(…)`, `db.update(t).set(…)`, `db.delete(t).where(…)`).
 // It checks the caller when it, or a function it reaches, calls something whose name reads as an auth or session
@@ -52,31 +52,41 @@
 // stored and run later, or packages the resolver cannot find (monorepo workspaces by package name); auth checks by
 // any name the pattern misses; an action gated by a secret token it looks up (an emailed link) is reported unless
 // its name or folder says it is public. Whether the check's result is used, and whether it checks the right owner
-// (authorisation, not only authentication), is not seen: an action that calls auth() and ignores it passes. Import
-// aliases (`@/`, `~/`, `#/`) are resolved by layout (the importing file's nearest directory with the file, at
-// `<dir>/x` or `<dir>/src/x`), not from tsconfig `paths`, which the runner does not read. The engine keeps .ts and
-// .tsx files apart, so a call from one into the other is not followed: a .tsx action is missed when its write is
-// in a .ts module, and is reported if only a .ts helper with a neutral name checks the session.
+// (authorisation, not only authentication), is not seen: an action that calls auth() and ignores it passes. Imports
+// are resolved by tsx/names (the phase tsx_names): relative paths and tsconfig `paths` aliases (`@/`), with the
+// extensions and index files TypeScript tries; an ESM `./x.js` specifier for an `x.ts` source is not followed. The
+// call graph meets across files at symbols ("src/server/projects#archiveProject"), so two inline actions with the
+// same name and text in one file are one. The engine keeps .ts and .tsx files apart, so a call from one into the
+// other is not followed: a .tsx action is missed when its write is in a .ts module, and is reported if only a .ts
+// helper with a neutral name checks the session.
+
+#include "tsx/names.rerail"
 
 .violation ServerActionWithoutAuth(at: node, x: symbol, what: symbol, p: symbol, o: node)
     "`{x}` is a Server Action, which anyone can call with a direct POST request, and it writes to the database (`{what}` at {p}:{o.line}) without checking who is calling: nothing it runs reads the session or calls an auth check. Verify the user, and that they may change this row, inside the action (e.g. `const session = await auth(); if (!session) throw new Error(\"Unauthorized\")`); the page's, layout's or middleware's check does not run for the action. If `{x}` is a helper that only other server code calls after its own check, move it out of the 'use server' file instead: every export of that file is an endpoint. If the action is public by design (sign-up, a contact form, a token-checked link) or a check this rule cannot see covers it, leave it."
-ServerActionWithoutAuth(n, x, what, p, o) :- nsaw_report(f, n, x), !nsaw_wrapped_action(f, _), !nsaw_guarded(f),
-    o = min y : { nsaw_writes(f, y, f) }, nsaw_write(o, what), docof(o, d), doc(d, p, _).
+ServerActionWithoutAuth(n, x, what, p, o) :- nsaw_report(f, n, x), !nsaw_wrap(f, _), nsaw_key(f, a), !nsaw_guarded(a),
+    nsaw_first_write(f, o), nsaw_write(o, what), docof(o, d), doc(d, p, _).
 .violation ServerActionWithoutAuthVia(at: node, x: symbol, g: symbol, what: symbol, p: symbol, o: node)
     "`{x}` is a Server Action, which anyone can call with a direct POST request, and it writes to the database through `{g}()` (`{what}` at {p}:{o.line}) without checking who is calling: nothing it runs reads the session or calls an auth check. Verify the user, and that they may change this row, inside the action before calling `{g}()` (e.g. `const session = await auth(); if (!session) throw new Error(\"Unauthorized\")`); the page's, layout's or middleware's check does not run for the action. If `{x}` is a helper that only other server code calls after its own check, move it out of the 'use server' file instead: every export of that file is an endpoint. If the action is public by design (sign-up, a contact form, a token-checked link) or a check this rule cannot see covers it, leave it."
-ServerActionWithoutAuthVia(n, x, gx, what, p, o) :- nsaw_report(f, n, x), !nsaw_wrapped_action(f, _),
-    !nsaw_guarded(f), !nsaw_writes(f, _, f), o = min y : { nsaw_writes(f, y, _) }, nsaw_writes(f, o, g),
+ServerActionWithoutAuthVia(n, x, gx, what, p, o) :- nsaw_report(f, n, x), !nsaw_wrap(f, _), nsaw_key(f, a),
+    !nsaw_guarded(a), !nsaw_first_write(f, _), nsaw_writer(a, k), nsaw_key(g, k), nsaw_first_write(g, o),
     nsaw_fn_name(g, gx), nsaw_write(o, what), docof(o, d), doc(d, p, _).
 .violation ServerActionWithoutAuthWrapped(at: node, x: symbol, w: symbol, what: symbol, p: symbol, o: node)
     "`{x}` is a Server Action built with `{w}`, which anyone can call with a direct POST request, and it writes to the database (`{what}` at {p}:{o.line}) without checking who is calling: neither the action nor what `{w}` runs reads the session or calls an auth check. Build it with an action client whose middleware checks the session (a `.use()` step that calls `auth()`, throws when there is no session and passes the user on in `ctx`), or verify the user inside the action; the page's, layout's or middleware's check does not run for the action. If the action is public by design (sign-up, a contact form, a token-checked link) or a check this rule cannot see covers it, leave it."
-ServerActionWithoutAuthWrapped(n, x, w, what, p, o) :- nsaw_report(f, n, x), nsaw_wrapped_action(f, w),
-    !nsaw_guarded(f), o = min y : { nsaw_writes(f, y, _) }, nsaw_write(o, what), docof(o, d), doc(d, p, _).
+// The root w resolves to a workspace declaration, in any file, so what it runs can be read. The write named is the
+// action's own first, else nsaw_writer's.
+ServerActionWithoutAuthWrapped(n, x, w, what, p, o) :- nsaw_report(f, n, x), nsaw_wrap(f, w), docof(f, df),
+    nsaw_name_sym(df, w, q), nsaw_unit_key(q), nsaw_key(f, a), !nsaw_guarded(a), nsaw_first_write(f, o),
+    nsaw_write(o, what), docof(o, d), doc(d, p, _).
+ServerActionWithoutAuthWrapped(n, x, w, what, p, o) :- nsaw_report(f, n, x), nsaw_wrap(f, w), docof(f, df),
+    nsaw_name_sym(df, w, q), nsaw_unit_key(q), nsaw_key(f, a), !nsaw_guarded(a), !nsaw_first_write(f, _),
+    nsaw_writer(a, k), nsaw_key(g, k), nsaw_first_write(g, o), nsaw_write(o, what), docof(o, d), doc(d, p, _).
 
 // nsaw_report(f, n, x): f is a Server Action named x, reported at n, in a package that uses Next.js, outside tests
 // and not public by its name or file path.
 .decl nsaw_report(f: node, n: node, x: symbol)
-nsaw_report(f, n, x) :- nsaw_action(f, n, x), docof(f, d), doc(d, p, _), nsaw_next_doc(d), !nsaw_test_doc(d),
-    !nsaw_public_name(x), !nsaw_public_path(p).
+nsaw_report(f, n, x) :- nsaw_action(f, n, x), docof(f, d), nsaw_next_doc(d), !nsaw_test_doc(d),
+    !nsaw_public_name(f, x), !nsaw_public_doc(d).
 // nsaw_next_doc(d): document d is Next.js code: it imports `next` or a `next/…` module (`next/cache`,
 // `next/headers`), or the nearest package.json above it lists next (dependencies, devDependencies or
 // peerDependencies). 'use server' is React's, not only Next.js's: a React Router or Waku app has it too.
@@ -86,41 +96,46 @@ nsaw_next_doc(d) :- nsaw_import(d, _, s, _), (s = "next" ; prefix("next/", s)).
 .decl nsaw_next_pkg(dir: symbol)
 nsaw_next_pkg(dir) :- package_field(dir, k, _),
     (k = "dependencies/next" ; k = "devDependencies/next" ; k = "peerDependencies/next").
-// nsaw_public_name(s): an action's or a wrapper's name that says it is for signed-out visitors: one of the words
-// below as a whole camelCase or snake_case word (`signUp`, `handleSignUp`, `sign_up_user`, `unsubscribe`; not
-// `catalogInfo`, `signups`). `public` counts only as the first word (`publicAction`, not `makeProjectPublic`).
-.decl nsaw_public_name(s: symbol)
-nsaw_public_name(s) :- (nsaw_fn_name(_, s) ; nsaw_vroot(_, s)),
+// nsaw_public_name(f, s): unit f's name, export name or value's root name s says it is for signed-out visitors: one
+// of the words below as a whole camelCase or snake_case word (`signUp`, `handleSignUp`, `sign_up_user`,
+// `unsubscribe`; not `catalogInfo`, `signups`). `public` counts only as the first word (`publicAction`, not
+// `makeProjectPublic`). Keyed by the unit, so each file tests its own names.
+.decl nsaw_named(f: node, s: symbol)
+nsaw_named(f, s) :- nsaw_fn_name(f, s) ; nsaw_vroot(f, s) ; nsaw_exported(f, _, s).
+.decl nsaw_public_name(f: node, s: symbol)
+nsaw_public_name(f, s) :- nsaw_named(f, s),
     match("(?<pre>.*?)(?<w>(?i:sign_?in|sign_?up|log_?in|register|registration|forgot_?password|forgot|reset_?password|password_?reset|confirm_?email|contact_?(?:form|us)|(?:send|submit)_?contact|(?:un)?subscribe|newsletter|wait_?list|magic_?link|(?:send|verify|check|resend)_?otp|captcha|cookie_?banner))(?<post>.*)", s),
     (pre = "" ; suffix("_", pre) ; match(".*[a-z0-9]", pre), match("[A-Z].*", w)),
     (post = "" ; match("[A-Z0-9_].*", post)).
-nsaw_public_name(s) :- (nsaw_fn_name(_, s) ; nsaw_vroot(_, s)), match("public([A-Z0-9_].*)?", s).
-// nsaw_public_path(s): a file path with a folder or file name that is one of those words, whole (`(auth)/signup/`,
-// `contact-us/`, `forgot-password.ts`; not `contacts/`, `verify-domain/`), or a folder named public (`(public)/`,
-// `public/`).
-.decl nsaw_public_path(s: symbol)
-nsaw_public_path(s) :- doc(_, s, _),
+nsaw_public_name(f, s) :- nsaw_named(f, s), match("public([A-Z0-9_].*)?", s).
+// nsaw_public_doc(d): document d's path has a folder or file name that is one of those words, whole
+// (`(auth)/signup/`, `contact-us/`, `forgot-password.ts`; not `contacts/`, `verify-domain/`), or a folder named public
+// (`(public)/`, `public/`).
+.decl nsaw_public_doc(d: number)
+nsaw_public_doc(d) :- doc(d, s, _),
     match("(?i)(?:.*[/(_.-])?(?:sign_?-?in|sign_?-?up|log_?-?in|register|registration|forgot_?-?password|forgot|reset_?-?password|password_?-?reset|confirm_?-?email|contact_?-?(?:form|us)|(?:send|submit)_?-?contact|(?:un)?subscribe|newsletter|wait_?-?list|magic_?-?link|(?:send|verify|check|resend)_?-?otp|captcha|cookie_?-?banner)(?:[-_/).].*)?", s).
-nsaw_public_path(s) :- doc(_, s, _), match("(?i)(.*/)?\\(?public\\)?/.*", s).
+nsaw_public_doc(d) :- doc(d, s, _), match("(?i)(.*/)?\\(?public\\)?/.*", s).
 .decl nsaw_test_doc(d: number)
 nsaw_test_doc(d) :- doc(d, p, _),
     match("(?i)(.*/)?(__tests__|tests?|e2e|__mocks__|__fixtures__|fixtures|cypress|playwright)/.*|.*\\.(test|spec|cy|stories|story)\\.[cm]?[jt]sx?", p).
 
 // ---- Server Actions --------------------------------------------------------------------------------------------
-// nsaw_action(f, n, x): f is a Server Action named x; n is its name node.
+// nsaw_action(f, n, x): f is a Server Action named x, or a wrapped one (nsaw_wrap) whose root is yet to resolve; n is
+// its name node.
 .decl nsaw_action(f: node, n: node, x: symbol)
 nsaw_action(f, n, x) :- nsaw_use_server_doc(p), nsaw_exported(f, p, x), nsaw_top(f, p, _, _), nsaw_name_node(f, n).
 nsaw_action(f, n, x) :- nsaw_inline(f), nsaw_name_node(f, n), nsaw_fn_name(f, x).
-nsaw_action(v, n, x) :- nsaw_wrapped_action(v, _), nsaw_topvar(v, _, x, _), field(v, "name", n).
-// nsaw_wrapped_action(v, w): `export const x = w…(async (…) => …)` in a 'use server' file: an action built by a
-// wrapper or action client (next-safe-action, zsa, a home-made `action(schema, fn)`) whose root name w resolves to
-// a workspace declaration, so what it runs can be read. Left out: a root whose name reads as an auth check
-// (`authActionClient`, `protectedAction`), a function that takes `ctx` (a client's middleware hands it the
-// user), and a root the resolver cannot find (a package, a monorepo workspace).
-.decl nsaw_wrapped_action(v: node, w: symbol)
-nsaw_wrapped_action(v, w) :- nsaw_use_server_doc(p), nsaw_exported(v, p, _), nsaw_topvar(v, p, _, _),
+nsaw_action(v, n, x) :- nsaw_wrap(v, _), nsaw_topvar(v, _, x, _), field(v, "name", n).
+// nsaw_wrap(v, w): `export const x = w…(async (…) => …)` in a 'use server' file: an action built by a wrapper or
+// action client (next-safe-action, zsa, a home-made `action(schema, fn)`) rooted at the name w. It is an action when
+// w resolves to a workspace declaration, so what it runs can be read: asked across files where it is reported
+// (ServerActionWithoutAuthWrapped). Left out: a root whose name reads as an auth check (`authActionClient`,
+// `protectedAction`), a function that takes `ctx` (a client's middleware hands it the user), and a root the resolver
+// cannot find (a package, a monorepo workspace).
+.decl nsaw_wrap(v: node, w: symbol)
+nsaw_wrap(v, w) :- nsaw_use_server_doc(p), nsaw_exported(v, p, _), nsaw_topvar(v, p, _, _),
     field(v, "value", c), kind(c, "call_expression"), field(c, "arguments", al), child(al, f, _), nsaw_fn_value(f),
-    !nsaw_ctx(f), nsaw_vroot(v, w), !nsaw_auth_name(w), !nsaw_public_name(w), docof(v, d), nsaw_name_unit(d, w, _).
+    !nsaw_ctx(f), nsaw_vroot(v, w), !nsaw_auth_name(v), !nsaw_public_name(v, w).
 .decl nsaw_ctx(f: node)
 nsaw_ctx(f) :- nsaw_fn_value(f), field(f, "parameters", ps), within(i, ps), text(i, "ctx"),
     (kind(i, "identifier") ; kind(i, "shorthand_property_identifier_pattern") ; kind(i, "property_identifier")).
@@ -197,7 +212,10 @@ nsaw_fn_name(f, x) :- nsaw_name_node(f, n), n != f, text(n, x).
 nsaw_fn_name(f, "(inline action)") :- nsaw_name_node(f, f).
 
 // ---- what an action runs ---------------------------------------------------------------------------------------
-// nsaw_unit(f): a function the call graph follows: a top-level function, or an inline action.
+// The call graph crosses files by symbol alone (decision 0677): each file's rules give its units keys and say which
+// symbols each runs (nsaw_edge, nsaw_pass); only the closure over those keys (nsaw_reach) joins files, and the
+// findings relate it back to the action's and the write's nodes.
+// nsaw_unit(f): a function the call graph follows: a top-level function or declaration, or an inline action.
 .decl nsaw_unit(f: node)
 nsaw_unit(f) :- nsaw_top(f, _, _, _).
 nsaw_unit(v) :- nsaw_topvar(v, _, _, _).
@@ -206,20 +224,66 @@ nsaw_unit(f) :- nsaw_inline(f).
 .decl nsaw_in(c: node, f: node)
 nsaw_in(c, f) :- kind(c, "call_expression"), inside(c, f, nsaw_fnk), nsaw_unit(f).
 nsaw_in(c, v) :- kind(c, "call_expression"), inside(c, v, "variable_declarator"), nsaw_topvar(v, _, _, _).
-// nsaw_reach(f, g): action f runs unit g: itself, one a call it reaches resolves to, or a function it passes by name
-// to a call (`.use(throwIfSignedIn)`, `items.map(removeItem)`): what it hands over is run.
-.decl nsaw_reach(f: node, g: node)
-nsaw_reach(f, f) :- nsaw_action(f, _, _).
-nsaw_reach(f, h) :- nsaw_reach(f, g), nsaw_in(c, g), nsaw_target(c, h).
-nsaw_reach(f, h) :- nsaw_reach(f, g), nsaw_vroot(g, w), docof(g, d), nsaw_name_unit(d, w, h).
-nsaw_reach(f, h) :- nsaw_reach(f, g), nsaw_in(c, g), field(c, "arguments", al), child(al, a, _), kind(a, "identifier"),
-    text(a, x), docof(c, d), nsaw_name_unit(d, x, h), nsaw_top(h, _, _, _).
-// nsaw_writes(f, o, g): action f reaches write o, in unit g.
-.decl nsaw_writes(f: node, o: node, g: node)
-nsaw_writes(f, o, g) :- nsaw_reach(f, g), nsaw_in(o, g), nsaw_write(o, _).
-// nsaw_guarded(f): action f reaches an auth or session check.
-.decl nsaw_guarded(f: node)
-nsaw_guarded(f) :- nsaw_reach(f, g), nsaw_in(c, g), nsaw_auth_call(c).
+// nsaw_key(g, k): unit g's key. A top-level declaration's is its symbol, "module#name", the one an import of it from
+// another file resolves to (nsaw_name_sym). An inline action nested in a function has none: its key is its module,
+// its name and a hash of its text.
+.decl nsaw_key(g: node, k: symbol)
+nsaw_key(g, @qname(m, x)) :- nsaw_decl(g, p, x, _), docof(p, d), ts_module(d, m).
+nsaw_key(f, @qname(m, cat(x, "@", @sha256(s)))) :- nsaw_inline(f), !nsaw_top(f, _, _, _), nsaw_fn_name(f, x),
+    text(f, s), docof(f, d), ts_module(d, m).
+// nsaw_alias(k, j): a unit exported under another name (`export { f as g }`, `export default function f`) is also
+// that name's symbol k; j is its key.
+.decl nsaw_alias(k: symbol, j: symbol)
+nsaw_alias(@qname(m, y), j) :- nsaw_exported(g, p, y), nsaw_decl(g, p, x, _), y != x, nsaw_key(g, j), docof(p, d),
+    ts_module(d, m).
+// nsaw_unit_key(k): k names a unit, by its key or an exported name.
+.decl nsaw_unit_key(k: symbol)
+nsaw_unit_key(k) :- nsaw_key(_, k).
+nsaw_unit_key(k) :- nsaw_alias(k, _).
+// nsaw_fn_key(k): k names a top-level function, by its key or an exported name.
+.decl nsaw_fn_key(k: symbol)
+nsaw_fn_key(k) :- nsaw_top(h, _, _, _), nsaw_key(h, k).
+nsaw_fn_key(@qname(m, y)) :- nsaw_top(h, p, x, _), nsaw_exported(h, p, y), y != x, docof(p, d), ts_module(d, m).
+// nsaw_edge(k, q): the unit keyed k runs the unit named q: a call in it resolves to q (nsaw_callee_sym), its value is
+// a chain rooted at the name of q (`actionClient.use(…)`), or k is an exported name of q.
+.decl nsaw_edge(k: symbol, q: symbol)
+nsaw_edge(k, q) :- nsaw_in(c, g), nsaw_key(g, k), nsaw_callee_sym(c, q).
+nsaw_edge(k, q) :- nsaw_vroot(g, w), nsaw_key(g, k), docof(g, d), nsaw_name_sym(d, w, q).
+nsaw_edge(k, q) :- nsaw_alias(k, q).
+// nsaw_pass(k, q): the unit keyed k passes the name of q to a call (`.use(throwIfSignedIn)`, `items.map(removeItem)`):
+// what it hands over is run, when q is a function.
+.decl nsaw_pass(k: symbol, q: symbol)
+nsaw_pass(k, q) :- nsaw_in(c, g), nsaw_key(g, k), field(c, "arguments", al), child(al, a, _), kind(a, "identifier"),
+    text(a, x), docof(c, d), nsaw_name_sym(d, x, q).
+// nsaw_root_key(a): a reported action's key.
+.decl nsaw_root_key(a: symbol)
+nsaw_root_key(a) :- nsaw_report(f, _, _), nsaw_key(f, a).
+// nsaw_reach(a, k): the action keyed a runs the unit named k: itself, one a call it reaches resolves to, or a
+// function it passes by name to a call. Across files, by symbol.
+.decl nsaw_reach(a: symbol, k: symbol) cross_file
+nsaw_reach(a, a) :- nsaw_root_key(a).
+nsaw_reach(a, q) :- nsaw_reach(a, k), nsaw_edge(k, q).
+nsaw_reach(a, q) :- nsaw_reach(a, k), nsaw_pass(k, q), nsaw_fn_key(q).
+// nsaw_first_write(g, o): o is unit g's first write.
+.decl nsaw_first_write(g: node, o: node)
+nsaw_first_write(g, o) :- nsaw_unit(g), o = min y : { nsaw_in(y, g), nsaw_write(y, _) }.
+// nsaw_writer(a, k): the unit the action keyed a reaches whose write a finding names: of those it reaches that
+// write, the one whose key is least.
+.decl nsaw_writes(a: symbol, k: symbol)
+nsaw_writes(a, k) :- nsaw_reach(a, k), nsaw_writing(k).
+.decl nsaw_writes_before(a: symbol, k: symbol)
+nsaw_writes_before(a, k) :- nsaw_writes(a, k), nsaw_writes(a, j), j < k.
+.decl nsaw_writer(a: symbol, k: symbol)
+nsaw_writer(a, k) :- nsaw_writes(a, k), !nsaw_writes_before(a, k).
+// nsaw_writing(k): the unit keyed k writes.
+.decl nsaw_writing(k: symbol)
+nsaw_writing(k) :- nsaw_key(g, k), nsaw_first_write(g, _).
+// nsaw_checks(k): the unit keyed k makes an auth or session check.
+.decl nsaw_checks(k: symbol)
+nsaw_checks(k) :- nsaw_key(g, k), nsaw_in(c, g), nsaw_auth_call(c).
+// nsaw_guarded(a): the action keyed a reaches an auth or session check.
+.decl nsaw_guarded(a: symbol)
+nsaw_guarded(a) :- nsaw_reach(a, k), nsaw_checks(k).
 
 // nsaw_write(c, what): c writes rows. Prisma: `a.model.m({ … })` with a write method m and an object literal
 // argument holding where, data, create or update (so `url.searchParams.delete("x")` and `map.delete(k)` are
@@ -252,7 +316,7 @@ nsaw_prisma_arg(a) :- kind(a, "object"), child(a, pr, _), (kind(pr, "pair"), fie
 // check: actions read it for the client's IP or locale. The receiver's name is not read: `session.save()` and
 // `auth.update()` are no checks.
 .decl nsaw_auth_call(c: node)
-nsaw_auth_call(c) :- kind(c, "call_expression"), field(c, "function", fn), nsaw_callee_name(fn, x), nsaw_auth_name(x).
+nsaw_auth_call(c) :- kind(c, "call_expression"), field(c, "function", fn), nsaw_auth_name(fn).
 nsaw_auth_call(c) :- kind(c, "call_expression"), field(c, "function", fn), kind(fn, "member_expression"),
     field(fn, "property", pr), text(pr, "get"), field(c, "arguments", al), child(al, a, 0), str(a, s),
     match("(?i)authorization|cookie|x-api-key|api-key", s).
@@ -281,7 +345,8 @@ nsaw_cookies_value(e) :- (kind(e, "await_expression") ; kind(e, "parenthesized_e
 .decl nsaw_callee_name(fn: node, x: symbol)
 nsaw_callee_name(fn, x) :- kind(fn, "identifier"), text(fn, x).
 nsaw_callee_name(fn, x) :- kind(fn, "member_expression"), field(fn, "property", pr), text(pr, x).
-// nsaw_auth_name(x): a callee or wrapper name that reads as an auth check, matched on camelCase word boundaries:
+// nsaw_auth_name(n): callee n's name, or the root name of top-level declarator n's value (a wrapper), reads as an
+// auth check, matched on camelCase word boundaries (keyed by the node, so each file tests its own names):
 //   - the word Auth (Authed, Authenticated, Authorize…) anywhere, unless the first word is a write (create, update,
 //     delete, set, setup, enable, remove, …: `setupTwoFactorAuth`, `removeAuthToken`); never Author or OAuth;
 //   - a read verb, then Session or User (`getServerSession`, `getKindeServerSession`, `requireUserId`,
@@ -292,42 +357,35 @@ nsaw_callee_name(fn, x) :- kind(fn, "member_expression"), field(fn, "property", 
 // A workspace helper with another name is still followed into, so its own auth() call counts. Gaps: a package's
 // helper under another name (`getRequiredUser`, `serverUser`, `getToken`, `getCurrentAdmin`, `verifyOwnership`).
 // These names are a naming convention, not an API: a check under a name none of them reads as is missed.
-.decl nsaw_auth_name(x: symbol)
-nsaw_auth_name(x) :- nsaw_name_q(x), match("((.*[a-z0-9])?Auth|(.*_)?auth)(enticat[a-z]*|oriz[a-z]*|ed|s)?([A-Z0-9_].*)?", x),
+.decl nsaw_auth_name(n: node)
+nsaw_auth_name(n) :- nsaw_name_q(n, x), match("((.*[a-z0-9])?Auth|(.*_)?auth)(enticat[a-z]*|oriz[a-z]*|ed|s)?([A-Z0-9_].*)?", x),
     !match("(create|update|delete|remove|set|add|insert|upsert|save|reset|enable|disable|setup|start|end|send|resend|initiate|complete|generate|handle|to|revoke|clear|sign|log|register|refresh|store|persist|mark|link|unlink|connect|disconnect|invite)([A-Z0-9_].*)?", x).
-nsaw_auth_name(x) :- nsaw_name_q(x),
+nsaw_auth_name(n) :- nsaw_name_q(n, x),
     (match("(get|require|validate|verify|check|ensure|assert|use|read|load|fetch)(Server|Iron|Auth|User|Current|Active|Valid|Supabase|Kinde|Optional)*Session(Or[A-Z0-9][A-Za-z0-9]*|User|Token|Cookie|Data|From[A-Z][A-Za-z]*)?|session(User|Or[A-Z][A-Za-z]*)?", x) ;
      match("(get|require|ensure|assert|check|validate|verify|use|fetch|load|read|current)(Server|Current|Authenticated|Auth|Session|Signed|Logged|In|Valid|Optional|Active)*User(Id|Or[A-Z0-9][A-Za-z0-9]*|Session|From[A-Z][A-Za-z]*)?", x) ;
      match("(require|check|assert|ensure|verify|validate|has|is|can)([A-Z][a-z0-9]*)*(Role|Roles|Permission|Permissions|Access|Admin|Member|Membership|Owner|Scope|Scopes)(OrThrow|OrRedirect|For[A-Z][A-Za-z]*|In[A-Z][A-Za-z]*|On[A-Z][A-Za-z]*)?|(assert|check|ensure|require)Can[A-Z][A-Za-z0-9]*", x) ;
      match("(?i)(current_?user|get_?me|whoami|validate_?request|verify_?(token|jwt|access_?token|id_?token|session_?cookie|api_?key|request)|jwt_?verify|protect(ed[a-z_]*)?|(auth|role|admin|access|route|session|user|api|login)_?guard|guard|with_?(auth_?)?guard|(is|require|check|ensure)_?(logged|signed)_?in|signed_?in|logged_?in|require_?login|(get|require|current)_?viewer|viewer|current_?member|(require|ensure)_?(org|organization|workspace|team|user)|ensure_?user)", x)).
-.decl nsaw_name_q(x: symbol)
-nsaw_name_q(x) :- nsaw_callee_name(_, x) ; nsaw_vroot(_, x).
+.decl nsaw_name_q(n: node, x: symbol)
+nsaw_name_q(n, x) :- nsaw_callee_name(n, x) ; nsaw_vroot(n, x).
 
-// ---- library candidate: call targets ---------------------------------------------------------------------------
-// nsaw_target(c, g): call c runs unit g: `x()` for a name x that nsaw_name_unit resolves; `ns.y()` for
-// `import * as ns from "s"`.
-.decl nsaw_target(c: node, g: node)
-nsaw_target(c, g) :- kind(c, "call_expression"), field(c, "function", fn), kind(fn, "identifier"), text(fn, x),
-    docof(c, d), nsaw_name_unit(d, x, g).
-nsaw_target(c, g) :- kind(c, "call_expression"), field(c, "function", fn), kind(fn, "member_expression"),
+// ---- call targets, by symbol -----------------------------------------------------------------------------------
+// nsaw_callee_sym(c, q): call c runs the unit named q: `x()` for a name x that nsaw_name_sym resolves; `ns.y()` for
+// `import * as ns from "s"`, s's export y.
+.decl nsaw_callee_sym(c: node, q: symbol)
+nsaw_callee_sym(c, q) :- kind(c, "call_expression"), field(c, "function", fn), kind(fn, "identifier"), text(fn, x),
+    docof(c, d), nsaw_name_sym(d, x, q).
+nsaw_callee_sym(c, q) :- kind(c, "call_expression"), field(c, "function", fn), kind(fn, "member_expression"),
     field(fn, "object", o), kind(o, "identifier"), text(o, ns), field(fn, "property", pr), text(pr, y), docof(c, d),
-    nsaw_import(d, ns, s, "*"), nsaw_resolve(d, s, t), nsaw_export_fn(t, y, g).
-// nsaw_name_unit(d, x, g): the name x, in document d, is unit g: a top-level declaration of d (when no import binds
-// x), or the declaration an import of x resolves to (`import { y as x } from "s"`, `import x from "s"`).
-.decl nsaw_name_unit(d: number, x: symbol, g: node)
-nsaw_name_unit(d, x, g) :- nsaw_import(d, x, s, y), y != "*", nsaw_resolve(d, s, t), nsaw_export_fn(t, y, g).
-nsaw_name_unit(d, x, g) :- nsaw_decl(g, p, x, _), docof(p, d), !nsaw_import(d, x, _, _).
-// nsaw_export_fn(d, y, g): document d exports unit g as y, itself or through `export { x as y } from "s"` and
-// `export * from "s"` (barrels).
-.decl nsaw_export_fn(d: number, y: symbol, g: node)
-nsaw_export_fn(d, y, g) :- nsaw_exported(g, p, y), docof(p, d).
-nsaw_export_fn(d, y, g) :- kind(e, "export_statement"), docof(e, d), field(e, "source", sn), str(sn, s),
-    child(e, c, _), kind(c, "export_clause"), child(c, sp, _), kind(sp, "export_specifier"), field(sp, "name", n),
-    text(n, x), (field(sp, "alias", a), text(a, y) ; !field(sp, "alias", _), y = x), nsaw_resolve(d, s, t),
-    nsaw_export_fn(t, x, g).
-nsaw_export_fn(d, y, g) :- kind(e, "export_statement"), docof(e, d), field(e, "source", sn), str(sn, s),
-    count : { child(e, c, _), kind(c, "export_clause") } = 0, nsaw_resolve(d, s, t), nsaw_export_fn(t, y, g),
-    y != "default".
+    nsaw_import(d, ns, s, "*"), target(d, s, t), (tsx_names__exports(t, y, q) ; q = @qname(t, y)).
+// nsaw_name_sym(d, x, q): the name x, in document d, names the symbol q: a top-level declaration of d (when no import
+// binds x), "module#x"; or the export an import of x names (`import { y as x } from "s"`, `import x from "s"`), as
+// tsx/names resolves it (target: relative paths and tsconfig `paths`) and follows it through `export { x as y } from
+// "s"` and `export * from "s"` (barrels: tsx_names__exports). "s#y" too, which an `export default function f` of s
+// is known by (nsaw_alias).
+.decl nsaw_name_sym(d: number, x: symbol, q: symbol)
+nsaw_name_sym(d, x, q) :- nsaw_import(d, x, s, y), y != "*", target(d, s, t),
+    (tsx_names__exports(t, y, q) ; q = @qname(t, y)).
+nsaw_name_sym(d, x, @qname(m, x)) :- nsaw_decl(_, p, x, _), docof(p, d), ts_module(d, m), !nsaw_import(d, x, _, _).
 // nsaw_import(d, x, s, y): document d binds local name x to export y of module s ("default", "*" or a name).
 // `import type` binds no value.
 .decl nsaw_import(d: number, x: symbol, s: symbol, y: symbol)
@@ -338,36 +396,6 @@ nsaw_import(d, x, s, "default") :- kind(cl, "import_clause"), child(cl, id, 0), 
     nearest(cl, i, "import_statement"), !op(i, "type"), field(i, "source", sn), str(sn, s), docof(i, d).
 nsaw_import(d, x, s, "*") :- kind(ns, "namespace_import"), child(ns, id, 0), text(id, x),
     nearest(ns, i, "import_statement"), field(i, "source", sn), str(sn, s), docof(i, d).
-
-// ---- library candidate: import resolution ----------------------------------------------------------------------
-// nsaw_resolve(d, s, t): specifier s, in document d, names document t. Relative specifiers join the importing
-// file's directory. An alias `@/x`, `~/x` or `#/x` is looked up by layout, as a tsconfig `"@/*": ["./src/*"]` or
-// `["./*"]` would map it: at `<a>/x` or `<a>/src/x` for the deepest directory a above the importing file that has
-// such a file. Either way the file may add .ts, .tsx, .js, .jsx, .mts or /index.*, and a `.js` the
-// specifier names may stand for a .ts source.
-.decl nsaw_spec(d: number, s: symbol)
-nsaw_spec(d, s) :- kind(i, k), (k = "import_statement" ; k = "export_statement"), field(i, "source", sn), str(sn, s),
-    docof(i, d).
-.decl nsaw_resolve(d: number, s: symbol, t: number)
-nsaw_resolve(d, s, t) :- nsaw_spec(d, s), prefix(".", s), doc(d, p, _), nsaw_base(@join(@dir(p), s), t).
-nsaw_resolve(d, s, t) :- nsaw_alias(d, s, r), k = max strlen(a) : { nsaw_alias_hit(d, s, r, a, _) },
-    nsaw_alias_hit(d, s, r, a, t), strlen(a) = k.
-.decl nsaw_alias(d: number, s: symbol, r: symbol)
-nsaw_alias(d, s, r) :- nsaw_spec(d, s), match("[@~#]/(?<r>.+)", s).
-.decl nsaw_alias_hit(d: number, s: symbol, r: symbol, a: symbol, t: number)
-nsaw_alias_hit(d, s, r, a, t) :- nsaw_alias(d, s, r), doc(d, p, _), nsaw_anc(p, a),
-    (nsaw_base(@join(a, r), t) ; nsaw_base(@join(a, cat("src/", r)), t)).
-// nsaw_anc(p, a): a is a directory above path p ("" for the root).
-.decl nsaw_anc(p: symbol, a: symbol)
-nsaw_anc(p, "") :- nsaw_alias(d, _, _), doc(d, p, _).
-nsaw_anc(p, substr(p, 0, st)) :- nsaw_alias(d, _, _), doc(d, p, _), match_all("/", p, _, st, _).
-// nsaw_base(b, t): document t is b with one of the candidate endings, or b names a .js that is t's .ts.
-.decl nsaw_base(b: symbol, t: number)
-nsaw_base(b, t) :- doc(t, f, _), nsaw_ext(e), suffix(e, f), b = substr(f, 0, strlen(f) - strlen(e)).
-nsaw_base(b, t) :- doc(t, f, _), (suffix(".ts", f) ; suffix(".tsx", f)), match("(?<s>.*)\\.tsx?", f), b = cat(s, ".js").
-.decl nsaw_ext(e: symbol)
-nsaw_ext(""). nsaw_ext(".ts"). nsaw_ext(".tsx"). nsaw_ext(".js"). nsaw_ext(".jsx"). nsaw_ext(".mts"). nsaw_ext(".mjs").
-nsaw_ext("/index.ts"). nsaw_ext("/index.tsx"). nsaw_ext("/index.js"). nsaw_ext("/index.jsx").
 
 // The cases, `cases/next-practice-server-action-without-auth/`, read as one repository: each line ending in
 // `// caught` is reported, and no other line.

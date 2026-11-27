@@ -30,14 +30,14 @@
 // dynamic `import()` of the file; a version given only by a workspace catalog.
 
 .violation MiddlewareNotApplied(at: node, file: symbol, want: symbol) "Next.js never loads this `{file}`: it reads the middleware/proxy file only from {want}, the folder that holds this app's `app`/`pages` directory, so every redirect, auth check, rewrite or header in it is silently skipped. Move the file to {want} (keeping the name and its `config`). Leave it where it is only if it is not this app's middleware: a helper another file imports, or a template your build copies into place."
-MiddlewareNotApplied(e, f, w) :- mna_entry(d, e, f, dir), mna_home(r, h), !mna_custom_ext(r),
+MiddlewareNotApplied(e, f, w) :- mna_entry(d, e, f, dir), !mna_imported(d, _), mna_home(r, h), !mna_custom_ext(r),
     (dir = r ; dir = @join(r, "src")), dir != h, mna_where(h, w).
-MiddlewareNotApplied(e, f, w) :- mna_entry(d, e, f, dir), mna_home(r, h), !mna_custom_ext(r),
+MiddlewareNotApplied(e, f, w) :- mna_entry(d, e, f, dir), !mna_imported(d, _), mna_home(r, h), !mna_custom_ext(r),
     a = @join(h, "app"), (dir = a ; prefix(cat(a, "/"), dir)), mna_where(h, w).
 
 .violation ProxyBeforeNext16(at: node, version: symbol) "This app depends on next `{version}`, and `proxy.ts` is only a Next.js 16 convention: before 16 the file is an ordinary module that never runs, so every redirect, auth check or header in it is skipped. Rename it to `middleware.ts` and export the function as `middleware` (or default). If this change also upgrades next to 16, keep `proxy.ts`."
-ProxyBeforeNext16(e, v) :- mna_entry(_, e, f, dir), prefix("proxy.", f), mna_home(r, dir), !mna_custom_ext(r),
-    (package_field(r, "dependencies/next", v) ; package_field(r, "devDependencies/next", v)),
+ProxyBeforeNext16(e, v) :- mna_entry(d, e, f, dir), !mna_imported(d, _), prefix("proxy.", f), mna_home(r, dir),
+    !mna_custom_ext(r), (package_field(r, "dependencies/next", v) ; package_field(r, "devDependencies/next", v)),
     @semver_valid(v) = 1, @semver_subset(v, "<16.0.0-0") = 1, !contains("15.6.0-", v).
 
 // mna_where(h, w): how a message names folder h: `apps/web/src/`, or the repository root.
@@ -46,12 +46,12 @@ mna_where(h, cat("`", h, "/`")) :- mna_home(_, h), h != "".
 mna_where("", "the repository root") :- mna_home(_, "").
 
 // mna_entry(d, e, f, dir): document d, named f in folder dir, is written as a Next.js middleware/proxy file; e is its
-// export that Next.js would run (a default, or the binding named after the file). Not imported by another file, and
-// in a package that uses Next.js: the nearest package.json above it lists next (a React Router or Hono app has
-// middleware files of its own).
+// export that Next.js would run (a default, or the binding named after the file). In a package that uses Next.js:
+// the nearest package.json above it lists next (a React Router or Hono app has middleware files of its own). Whether
+// another file imports it (mna_imported, across files) is asked where it is reported.
 .decl mna_entry(d: number, e: node, f: symbol, dir: symbol)
 mna_entry(d, e, f, @dir(p)) :- file_name(d, f), match("(middleware|proxy)\\.(tsx|ts|jsx|js)", f), doc(d, p, _),
-    package_for(p, pd), mna_next_pkg(pd), mna_runs(d, e), mna_next_like(d), !mna_imported(d).
+    package_for(p, pd), mna_next_pkg(pd), mna_runs(d, e), mna_next_like(d).
 .decl mna_next_pkg(dir: symbol)
 mna_next_pkg(dir) :- package_field(dir, k, _),
     (k = "dependencies/next" ; k = "devDependencies/next" ; k = "peerDependencies/next").
@@ -105,16 +105,24 @@ mna_custom_ext(@dir(p)) :- kind(n, "property_identifier"), text(n, "pageExtensio
 // mna_spec(i, s): import or re-export statement i names module s.
 .decl mna_spec(i: node, s: symbol)
 mna_spec(i, s) :- kind(i, k), (k = "import_statement" ; k = "export_statement"), field(i, "source", n), str(n, s).
-// mna_imported(d): another document imports d: a relative specifier that joins to d's path (with or without its
+// mna_imported(d, by): document by imports d: a relative specifier that joins to d's path (with or without its
 // extension, or as its folder's index), or an alias (`@/x`, `~/x`, `#x/…`, `@scope/x`) whose rest ends d's path.
+// Each file's specifiers are read in its own rules, as paths (mna_rel, mna_alias); only the join of two files'
+// paths crosses, keyed by the two documents.
 .decl mna_base(d: number, b: symbol)
 mna_base(d, b) :- file_name(d, f), match("(middleware|proxy)\\.(tsx|ts|jsx|js)", f), doc(d, p, _),
     match("(?<b>.*)\\.(tsx|ts|jsx|js)", p).
-.decl mna_imported(d: number)
-mna_imported(d) :- mna_base(d, b), doc(d, p, _), mna_spec(i, s), prefix(".", s), docof(i, d2), d2 != d, doc(d2, p2, _),
-    t = @join(@dir(p2), s), (t = b ; t = p).
-mna_imported(d) :- mna_base(d, b), mna_spec(i, s), match("[@~#][^/]*/(?<rest>.+)", s), docof(i, d2), d2 != d,
-    (b = rest ; suffix(cat("/", rest), b)).
+// mna_rel(d, t): document d names path t, a relative specifier joined to its folder.
+.decl mna_rel(d: number, t: symbol)
+mna_rel(d, @join(@dir(p), s)) :- mna_spec(i, s), prefix(".", s), docof(i, d), doc(d, p, _).
+// mna_alias(d, rest): document d imports an alias whose path after the prefix is rest.
+.decl mna_alias(d: number, rest: symbol)
+mna_alias(d, rest) :- mna_spec(i, s), match("[@~#][^/]*/(?<rest>.+)", s), docof(i, d).
+.decl mna_imported(d: number, by: number) cross_file
+mna_imported(d, by) :- mna_base(d, b), mna_rel(by, b), by != d.
+mna_imported(d, by) :- mna_base(d, _), doc(d, p, _), mna_rel(by, p), by != d.
+mna_imported(d, by) :- mna_base(d, b), mna_alias(by, b), by != d.
+mna_imported(d, by) :- mna_base(d, b), mna_alias(by, rest), by != d, suffix(cat("/", rest), b).
 
 // The cases, `cases/next-practice-middleware-not-applied/`, read as one repository of several Next.js apps: each line
 // ending in `// caught` is reported, and no other line.
