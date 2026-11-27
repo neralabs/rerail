@@ -603,6 +603,59 @@ use rerail_blocks::vector::Vector;
         assert_eq!(got[1], got[0], "the device's rows are the CPU's");
     }
 
+    /// An atom over the component's own relation by two keys (`Src::FullMulti`), beside one over it by one key: two
+    /// live indexes of one recursive relation in a round. Its rows are the CPU's.
+    #[test]
+    fn an_own_relation_probed_by_two_keys_and_by_one_is_the_cpus() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE e (c0, c1, c2);").unwrap();
+        // Labeled edges of a graph of 30 nodes, 3 labels, each to a later node: e(x, y, l). Its closure, at most
+        // 3 * 435 rows, within the head's first room (its reach is past `REACH_BYTES`, and a CPU device maps no
+        // room as reached: past it, the program would run again).
+        for x in 0..30i64 {
+            for (d, l) in [(1, 0), (2, 1), (3, 2)] {
+                if x + d < 30 {
+                    db.execute("INSERT INTO e VALUES (?1, ?2, ?3)", [x, x + d, l]).unwrap();
+                }
+            }
+        }
+        let e = format!("t:x:{}:{}:iii", hex("temp.e"), hex("c0, c1, c2"));
+        // p(x, y, l) :- e(x, y, l).
+        // p(x, z, l) :- p(x, y, l), e(y, z, l), p(y, z, l).   (probed by two keys: y, z bound; l tested)
+        // p(x, z, l) :- e(x, y, 0), p(y, z, l), l > 0.        (an own atom by one key)
+        let seed = format!("pos {e} v0 v1 v2\nhead v0 v1 v2");
+        let two = format!("pos d0 v0 v1 v2\npos {e} v1 v3 v2\npos c0 v1 v3 v2\nhead v0 v3 v2");
+        let one = format!("pos {e} v0 v1 i:0\npos d0 v1 v2 v3\nhead v0 v2 v3");
+        let mut got = Vec::new();
+        for device in [false, true] {
+            let name = format!("multi_{}", if device { "dev" } else { "cpu" });
+            db.execute_batch("DROP TABLE IF EXISTS temp.p; CREATE TEMP TABLE p (c0, c1, c2);").unwrap();
+            let mut spec = vec![format!("name {name}")];
+            if device {
+                spec.push("device".into());
+            }
+            spec.extend(["rel p iii empty".to_owned(), format!("seed 0 {}", hex(&seed)), format!("join 0 0 {}", hex(&two)), format!("join 0 0 {}", hex(&one))]);
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, &name, 0).unwrap();
+            if device {
+                let r = super::take_report().expect("a device report");
+                assert!(r.refused.is_none() && !r.handed, "the component on the device: {r:?}");
+            }
+            super::super::close(&db, &name).unwrap();
+            let mut rows: Vec<(i64, i64, i64)> = db.prepare("SELECT c0, c1, c2 FROM temp.p").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect();
+            rows.sort_unstable();
+            got.push(rows);
+        }
+        assert!(got[0].len() > 600, "the CPU's rows: {}", got[0].len());
+        assert_eq!(got[1], got[0], "the device's rows are the CPU's");
+    }
+
     /// A recursive component's own column of symbols read as a text (`OWN_SYMS`): a cat of it with a constant is the
     /// only key of an input atom, its atom found in the atoms directory (`find_stage`) and probed by value, no row
     /// where the text is no atom. On the device, the CPU's rows.

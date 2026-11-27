@@ -598,8 +598,8 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                         None
                     }
                     Src::Delta(r) => Some((*r, true)),
-                    Src::Full(r) => Some((*r, false)),
-                    Src::FullMulti(..) => return Err("an atom over the component's own relation by several indexes".into()),
+                    // Probed by two keys or more (`Src::FullMulti`): its live index of those columns, as one key's.
+                    Src::Full(r) | Src::FullMulti(r, _) => Some((*r, false)),
                 };
                 if keys.len() > mj::MAX_KEYS || tests.len() > mj::MAX_TESTS || atom_binds.len() > mj::MAX_BINDS {
                     return Err("an atom with more keys, tests or binds than a stage holds".into());
@@ -779,8 +779,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                         Kind::Atom { rel: rel.clone(), cols }
                     }
                     Src::Delta(r) => Kind::Own { rel: *r, delta: true, cols },
-                    Src::Full(r) => Kind::Own { rel: *r, delta: false, cols },
-                    Src::FullMulti(..) => return Err("an aggregate over the component's own relation by several indexes".into()),
+                    Src::Full(r) | Src::FullMulti(r, _) => Kind::Own { rel: *r, delta: false, cols },
                 };
                 stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
                 i += 1;
@@ -831,8 +830,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                         Kind::Atom { rel: j.bound(rel).clone(), cols }
                     }
                     Src::Delta(r) => Kind::Own { rel: *r, delta: true, cols },
-                    Src::Full(r) => Kind::Own { rel: *r, delta: false, cols },
-                    Src::FullMulti(..) => return Err("a string join over the component's own relation by several indexes".into()),
+                    Src::Full(r) | Src::FullMulti(r, _) => Kind::Own { rel: *r, delta: false, cols },
                 };
                 stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
                 i += 1;
