@@ -47,15 +47,19 @@
 .violation SideEffectInTransaction(at: node, what: symbol) "`{what}` runs inside a Prisma interactive `$transaction(async (tx) => …)` callback, and it is not part of the transaction: if the transaction then fails or rolls back, the mail, payment, request, job or cache revalidation has already happened, and a worker or webhook receiver it starts can read rows that are not committed yet; a slow call also holds the transaction (its locks and a pooled connection) open toward its 5 s timeout (P2028). Return what it needs from the callback and make the call after `$transaction(…)` resolves, or before it when it only fetches input. Leave it where it is only if the call must happen inside, such as a lock-guarded request whose answer the writes depend on, and is idempotent."
 
 // ---- functions and when their bodies run -------------------------------------------------------------------------
+// The rule runs per file. A file states, by symbols alone, what its top-level functions call and which of its
+// top-level bindings hold a client of an outside service; what another file's helper or client is crosses between
+// files by those symbols (ses_client_sym, ses_reach, ses_canon, declared `cross_file`, decision 0677), and only the
+// finding joins them.
 .decl ses_fn(k: symbol)
 ses_fn("arrow_function"). ses_fn("function_expression"). ses_fn("function_declaration").
 ses_fn("method_definition"). ses_fn("generator_function"). ses_fn("generator_function_declaration").
 
-// ses_runs(g, h): g's body runs while h runs: g is h, or a callback an array method in h calls at once. Only for
-// the functions the rule asks about: transaction callbacks and the helpers they reach (ses_need).
+// ses_runs(g, h): g's body runs while h runs: g is h, or a callback an array method in h calls at once. Asked of the
+// transaction callbacks and of the file's top-level functions (ses_fn_sym), which other files' callbacks may reach.
 .decl ses_runs(g: node, h: node)
 ses_runs(h, h) :- ses_tx_fn(h).
-ses_runs(h, h) :- ses_need(h).
+ses_runs(h, h) :- ses_fn_sym(_, h).
 ses_runs(g, h) :- ses_runs(f, h), kind(k, "call_expression"), nearest(k, f, ses_fn), callee(k, m),
     static_prop(m, _, x), ses_iter(x), call_arg(k, a, 0), deparen(a, g),
     (kind(g, "arrow_function") ; kind(g, "function_expression")).
@@ -99,6 +103,7 @@ ses_func("next/cache#revalidatePath"). ses_func("next/cache#revalidateTag").
 ses_func("axios#default"). ses_func("got#default"). ses_func("ky#default"). ses_func("node-fetch#default").
 ses_func("undici#fetch"). ses_func("undici#request").
 
+
 // ses_client_value(v): expression v makes a client.
 .decl ses_client_value(v: node)
 ses_client_value(v) :- kind(v, "new_expression"), field(v, "constructor", k), ses_sym(k, q), ses_ctor(q).
@@ -111,11 +116,12 @@ ses_client_value(v) :- kind(v, "call_expression"), callee(v, k), static_prop(k, 
 ses_client_value(v) :- kind(v, "binary_expression"), (op(v, "??") ; op(v, "||")), field(v, "right", r), deparen(r, x),
     ses_client_value(x).
 
-// ses_client_sym(q): top-level binding q holds a client.
-.decl ses_client_sym(q: symbol)
-ses_client_sym(cat(m, "#", x)) :- kind(d, "variable_declarator"), field(d, "name", n), kind(n, "identifier"),
+// ses_client_sym(q): the binding q holds a client: a top-level binding of a file whose value makes one, read by
+// every file that imports it, or a module that is one.
+.decl ses_client_sym(q: symbol) cross_file
+ses_client_sym(@qname(m, x)) :- kind(d, "variable_declarator"), field(d, "name", n), kind(n, "identifier"),
     text(n, x), top_level(d, x), field(d, "value", v0), deparen(v0, v), ses_client_value(v), docof(d, dd),
-    doc(dd, m, _).
+    ts_module(dd, m).
 ses_client_sym(q) :- ses_module_client(q).
 
 // ses_root(e, r): r is the identifier a member chain e starts from.
@@ -123,19 +129,17 @@ ses_client_sym(q) :- ses_module_client(q).
 ses_root(e, e) :- kind(e, "identifier").
 ses_root(e, r) :- kind(e, "member_expression"), field(e, "object", o0), deparen(o0, o), ses_root(o, r).
 
-// ---- side effects ------------------------------------------------------------------------------------------------
-// ses_effect(c, what): call c, in a function the rule asks about, talks to the outside world directly.
-.decl ses_effect(c: node, what: symbol)
+
+// ---- calls that are, or may be, side effects ---------------------------------------------------------------------
+// ses_direct(c, w): call c, in a function the rule asks about, talks to the outside world as its file shows:
+.decl ses_direct(c: node, w: symbol)
 // fetch(…), the global
-ses_effect(c, "fetch") :- ses_call_in(c, _), callee(c, f), kind(f, "identifier"), text(f, "fetch"), !ref_site(f, _).
-// stripe.paymentIntents.create(…), resend.emails.send(…), queue.add(…)
-ses_effect(c, w) :- ses_call_in(c, _), callee(c, f), kind(f, "member_expression"), ses_root(f, r), ses_sym(r, q),
-    ses_client_sym(q), !ses_pure_call(f), text(f, w).
+ses_direct(c, "fetch") :- ses_call_in(c, _), callee(c, f), kind(f, "identifier"), text(f, "fetch"), !ref_site(f, _).
 // revalidatePath(…), axios(…); next/cache's functions only in a file whose nearest package.json lists next (the
 // root's when none is nearer).
-ses_effect(c, w) :- ses_call_in(c, _), callee(c, f), kind(f, "identifier"), ses_sym(f, q), ses_func(q),
+ses_direct(c, w) :- ses_call_in(c, _), callee(c, f), kind(f, "identifier"), ses_sym(f, q), ses_func(q),
     !prefix("next/", q), text(f, w).
-ses_effect(c, w) :- ses_call_in(c, _), callee(c, f), kind(f, "identifier"), ses_sym(f, q), ses_func(q),
+ses_direct(c, w) :- ses_call_in(c, _), callee(c, f), kind(f, "identifier"), ses_sym(f, q), ses_func(q),
     prefix("next/", q), docof(c, d), ses_next_doc(d), text(f, w).
 .decl ses_next_doc(d: number)
 ses_next_doc(d) :- doc(d, p, _), package_for(p, dir), ses_next_pkg(dir).
@@ -151,84 +155,76 @@ ses_next_pkg(dir) :- package_field(dir, "devDependencies/next", _).
 ses_pure_call(f) :- static_prop(f, o, _), static_prop(o, _, "webhooks").
 ses_pure_call(f) :- static_prop(f, _, "setApiKey").
 
+// ses_cand(c, k, q, w): call c, in a function the rule asks about, is side effect w (k "direct"); is `w(…)` on a
+// member chain from the binding q (k "client": a side effect when q holds a client, ses_client_sym); or calls the
+// function q by the name w (k "hop": a side effect when q reaches one, ses_reach).
+.decl ses_cand(c: node, k: symbol, q: symbol, w: symbol)
+ses_cand(c, "direct", "", w) :- ses_direct(c, w).
+ses_cand(c, "client", q, w) :- ses_call_in(c, _), callee(c, f), kind(f, "member_expression"), ses_root(f, r),
+    ses_sym(r, q), !ses_pure_call(f), text(f, w).
+ses_cand(c, "hop", q, w) :- ses_call_in(c, _), callee(c, f), kind(f, "identifier"), ses_sym(f, q), !ses_direct(c, _),
+    text(f, w).
+
 // ---- helpers that reach one --------------------------------------------------------------------------------------
-// ses_fn_sym(q, g): top-level function g is symbol q.
+// ses_fn_sym(q, g): top-level function g is symbol q ("module#name", as tsx/names names it).
 .decl ses_fn_sym(q: symbol, g: node)
-ses_fn_sym(cat(m, "#", x), g) :- kind(g, "function_declaration"), field(g, "name", n), text(n, x),
-    top_level(g, x), docof(g, d), doc(d, m, _).
-ses_fn_sym(cat(m, "#", x), g) :- kind(d0, "variable_declarator"), field(d0, "name", n), kind(n, "identifier"),
+ses_fn_sym(@qname(m, x), g) :- kind(g, "function_declaration"), field(g, "name", n), text(n, x),
+    top_level(g, x), docof(g, d), ts_module(d, m).
+ses_fn_sym(@qname(m, x), g) :- kind(d0, "variable_declarator"), field(d0, "name", n), kind(n, "identifier"),
     text(n, x), top_level(d0, x), field(d0, "value", v), deparen(v, g),
-    (kind(g, "arrow_function") ; kind(g, "function_expression")), docof(d0, d), doc(d, m, _).
-ses_fn_sym(cat(m, "#default"), g) :- kind(e, "export_statement"), field(e, "declaration", g),
-    kind(g, "function_declaration"), op(e, "default"), docof(e, d), doc(d, m, _).
-
-// ses_hop(c, g): call c, in a function the rule asks about, calls workspace function g by name. ses_need(g): g is
-// reached so from a transaction callback, at any depth.
-.decl ses_hop(c: node, g: node)
-ses_hop(c, g) :- ses_call_in(c, _), callee(c, f), kind(f, "identifier"), ses_sym(f, q), ses_fn_sym(q, g).
-.decl ses_need(g: node)
-ses_need(g) :- ses_hop(_, g).
-
-// ses_fn_effect(h, w): running function h runs side effect w.
-.decl ses_fn_effect(h: node, w: symbol)
-ses_fn_effect(h, w) :- ses_effect(c, w), ses_call_in(c, h).
-ses_fn_effect(h, w) :- ses_call_in(c, h), ses_hop(c, g), g != h, ses_fn_effect(g, w).
+    (kind(g, "arrow_function") ; kind(g, "function_expression")), docof(d0, d), ts_module(d, m).
+ses_fn_sym(@qname(m, "default"), g) :- kind(e, "export_statement"), field(e, "declaration", g),
+    kind(g, "function_declaration"), op(e, "default"), docof(e, d), ts_module(d, m).
+// ses_fn_cand(q, k, q2, w): running the top-level function q makes a call ses_cand(_, k, q2, w): its file's statement,
+// by symbols.
+.decl ses_fn_cand(q: symbol, k: symbol, q2: symbol, w: symbol)
+ses_fn_cand(q, k, q2, w) :- ses_fn_sym(q, g), ses_call_in(c, g), ses_cand(c, k, q2, w).
+// ses_reach(q, w): running the function q runs side effect w, in its own body or through the helpers it calls, at
+// any depth and in any file.
+.decl ses_reach(q: symbol, w: symbol) cross_file
+ses_reach(q, w) :- ses_fn_cand(q, "direct", _, w).
+ses_reach(q, w) :- ses_fn_cand(q, "client", q0, w), ses_canon(q0, q2), ses_client_sym(q2).
+ses_reach(q, w) :- ses_fn_cand(q, "hop", q0, _), ses_canon(q0, q2), q2 != q, ses_reach(q2, w).
 
 // ---- the finding -------------------------------------------------------------------------------------------------
 .decl ses_test_doc(d: number)
 ses_test_doc(d) :- doc(d, p, _), (glob("**/*.test.*", p) ; glob("**/*.spec.*", p) ; glob("**/__tests__/**", p) ;
     glob("**/e2e/**", p) ; glob("**/test/**", p) ; glob("**/tests/**", p)).
+// ses_tx_cand(c, k, q, w): ses_cand of a call made while a transaction callback runs, outside test code.
+.decl ses_tx_cand(c: node, k: symbol, q: symbol, w: symbol)
+ses_tx_cand(c, k, q, w) :- ses_cand(c, k, q, w), ses_call_in(c, h), ses_tx_fn(h), docof(c, d), !ses_test_doc(d).
 
-SideEffectInTransaction(c, w) :- ses_effect(c, w), ses_call_in(c, h), ses_tx_fn(h), docof(c, d), !ses_test_doc(d).
-SideEffectInTransaction(c, cat(n, " (reaches ", w, ")")) :- ses_call_in(c, h), ses_tx_fn(h), ses_hop(c, g),
-    ses_fn_effect(g, w), !ses_effect(c, _), callee(c, f), text(f, n), docof(c, d), !ses_test_doc(d).
+SideEffectInTransaction(c, w) :- ses_tx_cand(c, "direct", _, w).
+SideEffectInTransaction(c, w) :- ses_tx_cand(c, "client", q0, w), ses_canon(q0, q), ses_client_sym(q).
+SideEffectInTransaction(c, cat(n, " (reaches ", w, ")")) :- ses_tx_cand(c, "hop", q0, n), ses_canon(q0, q),
+    ses_reach(q, w).
 
-// ---- library candidate: import resolution ------------------------------------------------------------------------
-// tsx/names' sym_of reaches `target`, which reads tsconfig_for/tsconfig_path; no runner binds those, and the engine
-// gives TypeScript documents no module name (doc's third column is ""), so this rule resolves imports itself, naming
-// a workspace module by its file's path. ses_sym(n, q): identifier n denotes q, "<path>#<name>":
-//   a name declared at the top of its own file                     "src/lib/email.ts#sendReceipt"
-//   an import from a workspace file (relative, a tsconfig `paths` alias, a workspace package by its package.json
-//   name), followed through `export { a } from` and `export *`    the file that declares it
-//   an import from anything else (an npm package)                  "stripe#default", "next/cache#revalidatePath"
+// ---- names -------------------------------------------------------------------------------------------------------
+// ses_sym(n, q): identifier n denotes q, by tsx/names' sym_of: "src/lib/email#sendReceipt" for a name declared at
+// the top of its file or imported from a workspace module (a relative path, a tsconfig `paths` alias, followed through
+// `export { a } from` and `export *`), "stripe#default" or "next/cache#revalidatePath" for a package's.
 .decl ses_sym(n: node, q: symbol)
-ses_sym(n, cat(m, "#", x)) :- kind(n, "identifier"), ref_site(n, site), top_level(site, x), docof(n, d),
-    doc(d, m, _).
-ses_sym(n, q) :- kind(n, "identifier"), ref_site(n, sp), import_binding(sp, _, s, x), x != "*", docof(n, d),
-    ses_target(d, s, t), ses_resolve(t, x, q).
-ses_sym(n, cat(s, "#", x)) :- kind(n, "identifier"), ref_site(n, sp), import_binding(sp, _, s, x), x != "*",
-    docof(n, d), !prefix(".", s), !ses_resolves(d, s).
-.decl ses_resolves(d: number, s: symbol)
-ses_resolves(d, s) :- ses_target(d, s, _).
+ses_sym(n, q) :- kind(n, "identifier"), sym_of(n, q).
 
-// ses_resolve(t, x, q): name x of workspace file t is q: declared there, or re-exported from another file.
-.decl ses_resolve(t: symbol, x: symbol, q: symbol)
-ses_resolve(t, x, cat(t, "#", x)) :- top_level(site, x), docof(site, d), doc(d, t, _).
-ses_resolve(t, "default", cat(t, "#default")) :- kind(e, "export_statement"), op(e, "default"), docof(e, d),
-    doc(d, t, _).
-ses_resolve(t, x, q) :- export_from(e, s, y, x), docof(e, d), doc(d, t, _), ses_target(d, s, t2), ses_resolve(t2, y, q).
-ses_resolve(t, x, q) :- star_export(e, s), docof(e, d), doc(d, t, _), ses_target(d, s, t2), ses_resolve(t2, x, q),
-    x != "default".
-
-// ses_target(d, s, t): specifier s in document d names workspace file t.
-.decl ses_spec(d: number, s: symbol)
-ses_spec(d, s) :- import_spec(i, s), docof(i, d).
-.decl ses_target(d: number, s: symbol, t: symbol)
-ses_target(d, s, t) :- ses_spec(d, s), prefix(".", s), doc(d, p, _), ses_file(@join(@dir(p), s), t).
-ses_target(d, s, t) :- ses_spec(d, s), !prefix(".", s), doc(d, p, _), ses_tsconfig_of(p, dir),
-    ses_alias(dir, pat, to), sub = @glob_sub(pat, to, s), sub != "", ses_file(@join(dir, sub), t).
-ses_target(d, s, t) :- ses_spec(d, s), !prefix(".", s), ses_pkg_dir(s, dir),
-    (ses_file(@join(dir, "src/index"), t) ; ses_file(@join(dir, "index"), t)).
-ses_target(d, s, t) :- ses_spec(d, s), !prefix(".", s), ses_pkg_dir(n, dir), prefix(cat(n, "/"), s),
+// ses_canon(q0, q): the symbol q0 a file names is q: itself, or, for a name imported from a workspace package by its
+// package.json name ("@acme/emails#sendInvite", which tsx/names leaves a package's), that package's export:
+// `@acme/emails` is the package's src/index or index, `@acme/emails/x` its x or src/x.
+.decl ses_key(q0: symbol)
+ses_key(q0) :- ses_cand(_, k, q0, _), k != "direct".
+.decl ses_canon(q0: symbol, q: symbol) cross_file
+ses_canon(q0, q0) :- ses_key(q0).
+ses_canon(q0, q) :- ses_key(q0), match("(?<s>[^.#][^#]*)#(?<x>[^#]+)", q0), ses_pkg_module(s, m),
+    tsx_names__exports(m, x, q).
+// ses_pkg_module(s, m): specifier s names module m of a workspace package.
+.decl ses_pkg_spec(s: symbol)
+ses_pkg_spec(s) :- ses_key(q0), match("(?<s>[^.#][^#]*)#[^#]+", q0).
+.decl ses_pkg_module(s: symbol, m: symbol)
+ses_pkg_module(s, m) :- ses_pkg_spec(s), ses_pkg_dir(s, dir), (m = @join(dir, "src/index") ; m = @join(dir, "index")),
+    tsx_names__module(m).
+ses_pkg_module(s, m) :- ses_pkg_spec(s), ses_pkg_dir(n, dir), prefix(cat(n, "/"), s),
     rest = substr(s, strlen(n) + 1, strlen(s) - strlen(n) - 1),
-    (ses_file(@join(dir, rest), t) ; ses_file(@join(dir, cat("src/", rest)), t)).
-// ses_file(b, f): import path b (no extension, or a directory) is file f: b, b.ts, b.tsx, …, b/index.ts, ….
-.decl ses_file(b: symbol, f: symbol)
-ses_file(b, f) :- doc(_, f, _), ses_ext(ext), k = strlen(f) - strlen(ext), k >= 0, b = substr(f, 0, k),
-    f = cat(b, ext).
-.decl ses_ext(e: symbol)
-ses_ext(""). ses_ext(".ts"). ses_ext(".tsx"). ses_ext(".js"). ses_ext(".jsx"). ses_ext(".mts"). ses_ext(".mjs").
-ses_ext("/index.ts"). ses_ext("/index.tsx"). ses_ext("/index.js").
+    (m = @join(dir, rest) ; m = @join(dir, cat("src/", rest)) ; m = @join(dir, cat(rest, "/index")) ;
+     m = @join(dir, cat("src/", rest, "/index"))), tsx_names__module(m).
 
 // ses_walk(x, k): directory x, k levels below the root (""), up to 3; dot folders and node_modules left out.
 // (dir_entry can only be asked of folders the rule names from constants, not of documents' folders.)
@@ -237,24 +233,6 @@ ses_walk("", 0).
 ses_walk(b, 1) :- dir_entry("", b, 1), !prefix(".", b), b != "node_modules".
 ses_walk(cat(a, "/", b), k + 1) :- ses_walk(a, k), k >= 1, k < 3, dir_entry(a, b, 1), !prefix(".", b),
     b != "node_modules".
-// ses_tsconfig_of(p, dir): the nearest tsconfig.json above document p is in dir.
-.decl ses_tsconfig(dir: symbol)
-ses_tsconfig(x) :- ses_walk(x, _), dir_entry(x, "tsconfig.json", 0).
-.decl ses_tsconfig_of(p: symbol, dir: symbol)
-ses_tsconfig_of(p, dir) :- ses_doc_tsconfig(p, dir),
-    strlen(dir) = max strlen(y) : { ses_doc_tsconfig(p, y) }.
-.decl ses_doc_tsconfig(p: symbol, dir: symbol)
-ses_doc_tsconfig(p, dir) :- ses_spec(d, s), !prefix(".", s), doc(d, p, _), ses_tsconfig(dir),
-    (dir = "" ; prefix(cat(dir, "/"), p)).
-// ses_alias(dir, pat, to): `"@/*": ["./src/*"]` in dir/tsconfig.json's `paths`, read as text, first target only; also
-// an alias whose array starts on the next line. The key starts with @, ~ or # or holds a *, which leaves out
-// `"lib": ["dom"]` and `"include": [...]`.
-.decl ses_alias(dir: symbol, pat: symbol, to: symbol)
-ses_alias(dir, pat, to) :- ses_tsconfig(dir), file_line(@join(dir, "tsconfig.json"), _, l),
-    match(".*\"(?<pat>[@~#][^\"]*|[^\"]*\\*[^\"]*)\"\\s*:\\s*\\[\\s*\"(?<to>[^\"]+)\".*", l).
-ses_alias(dir, pat, to) :- ses_tsconfig(dir), f = @join(dir, "tsconfig.json"), file_line(f, i, l),
-    match(".*\"(?<pat>[@~#][^\"]*|[^\"]*\\*[^\"]*)\"\\s*:\\s*\\[\\s*", l), file_line(f, i + 1, l2),
-    match("\\s*\"(?<to>[^\"]+)\".*", l2).
 // ses_pkg_dir(n, dir): dir/package.json is named n (its first "name" line): a workspace package of a monorepo.
 .decl ses_pkg_dir(n: symbol, dir: symbol)
 ses_pkg_dir(n, x) :- ses_walk(x, k), k > 0, dir_entry(x, "package.json", 0), f = @join(x, "package.json"),
@@ -297,4 +275,37 @@ ses_pkg_dir(n, x) :- ses_walk(x, k), k > 0, dir_entry(x, "package.json", 0), f =
     .expect _ at "src/server/billing.ts":19
     .expect _ at "src/server/ai/summaries.ts":11
     .expect _ at "src/server/ai/summaries.ts":12
+.end
+
+// The pack.json examples.
+.test example_caught exactly
+    .fixture "app/orders/actions.ts" ```
+        "use server";
+
+        import { prisma } from "@/lib/prisma";
+
+        export async function placeOrder(userId: string, total: number) {
+          return prisma.$transaction(async (tx) => {
+            const order = await tx.order.create({ data: { userId, total, status: "PENDING" } });
+            await fetch("https://hooks.example.com/order-placed", { method: "POST", body: order.id });
+            return order;
+          });
+        }
+        ```
+    .expect SideEffectInTransaction at "app/orders/actions.ts":8
+.end
+.test example_passes exactly
+    .fixture "app/orders/actions.ts" ```
+        "use server";
+
+        import { prisma } from "@/lib/prisma";
+
+        export async function placeOrder(userId: string, total: number) {
+          const order = await prisma.$transaction(async (tx) => {
+            return tx.order.create({ data: { userId, total, status: "PENDING" } });
+          });
+          await fetch("https://hooks.example.com/order-placed", { method: "POST", body: order.id });
+          return order;
+        }
+        ```
 .end

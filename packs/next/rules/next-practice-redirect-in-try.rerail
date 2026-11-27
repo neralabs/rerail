@@ -259,3 +259,54 @@ nrt_fn_of(v, f) :- kind(v, "variable_declarator"), field(v, "value", f),
     .expect _ at "src/app/settings/actions.ts":11
     .expect RedirectInClientHandler at "src/components/delete-post-button.tsx":17
 .end
+
+// The pack.json examples.
+.test example_caught exactly
+    .fixture "package.json" ```
+        {
+          "name": "web",
+          "private": true,
+          "dependencies": { "next": "^15.5.2", "react": "^19.0.0" }
+        }
+        ```
+    .fixture "app/posts/actions.ts" ```
+        'use server'
+        import { redirect } from 'next/navigation'
+        import { prisma } from '@/lib/db'
+
+        export async function createPost(formData: FormData) {
+          try {
+            const post = await prisma.post.create({ data: { title: String(formData.get('title')) } })
+            redirect(`/posts/${post.id}`)
+          } catch (error) {
+            return { error: 'Could not create the post' }
+          }
+        }
+        ```
+    .expect RedirectInTry at "app/posts/actions.ts":8
+.end
+.test example_passes exactly
+    .fixture "package.json" ```
+        {
+          "name": "web",
+          "private": true,
+          "dependencies": { "next": "^15.5.2", "react": "^19.0.0" }
+        }
+        ```
+    .fixture "app/posts/actions.ts" ```
+        'use server'
+        import { redirect } from 'next/navigation'
+        import { prisma } from '@/lib/db'
+
+        export async function createPost(formData: FormData) {
+          let id: string
+          try {
+            const post = await prisma.post.create({ data: { title: String(formData.get('title')) } })
+            id = post.id
+          } catch (error) {
+            return { error: 'Could not create the post' }
+          }
+          redirect(`/posts/${id}`)
+        }
+        ```
+.end

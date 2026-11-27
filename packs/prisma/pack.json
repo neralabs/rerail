@@ -3,7 +3,7 @@
   "id": "prisma",
   "name": "Prisma",
   "category": "framework",
-  "covers": "Rerail's own Prisma rules, from the Prisma docs, for queries run once per item of a list and raw SQL built from values, both off by default.",
+  "covers": "Rerail's own Prisma rules, from the Prisma docs: one PrismaClient per process, request bodies parsed before they reach a write, and mail, payments and requests kept out of interactive transactions, on by default; queries run once per item of a list and raw SQL built from values, off by default.",
   "reason": "matches Prisma",
   "match": {
     "any": [
@@ -58,6 +58,60 @@
         "passes": {
           "path": "app/orders/queries.ts",
           "text": "import { prisma } from \"@/lib/prisma\";\n\nexport async function ordersWithItems(userId: string) {\n  return prisma.order.findMany({ where: { userId }, include: { items: true } });\n}\n\nexport async function ownersOf(ids: string[]) {\n  return Promise.all(ids.map((id) => prisma.user.findUnique({ where: { id } })));\n}\n"
+        }
+      }
+    },
+    {
+      "id": "prisma-practice-one-client",
+      "document": "rules/prisma-practice-one-client.rerail",
+      "title": "Prisma practice: create PrismaClient once per process, never per call in a route handler or server action, and in a Next.js app cache the module-level client on globalThis",
+      "group": "Prisma practice",
+      "on": true,
+      "dimensions": { "risk": "availability", "layer": "data-access", "severity": "medium" },
+      "examples": {
+        "caught": {
+          "path": "app/api/users/route.ts",
+          "text": "import { PrismaClient } from \"@prisma/client\";\n\nexport async function GET() {\n  const prisma = new PrismaClient();\n  const count = await prisma.user.count();\n  return Response.json({ count });\n}\n"
+        },
+        "passes": {
+          "path": "app/api/users/route.ts",
+          "text": "import { prisma } from \"@/lib/prisma\";\n\nexport async function GET() {\n  const count = await prisma.user.count();\n  return Response.json({ count });\n}\n"
+        }
+      }
+    },
+    {
+      "id": "prisma-practice-request-body-as-data",
+      "document": "rules/prisma-practice-request-body-as-data.rerail",
+      "title": "Prisma practice: parse a request body or a Server Action's argument with a schema, or pick its fields, before passing it to a Prisma write as data",
+      "group": "Prisma practice",
+      "on": true,
+      "dimensions": { "risk": "security", "layer": "server", "severity": "high", "hazard": "input.mass-assignment" },
+      "examples": {
+        "caught": {
+          "path": "prisma/schema.prisma",
+          "text": "model User {\n  id    String @id @default(cuid())\n  name  String?\n  role  String @default(\"USER\")\n}\n"
+        },
+        "passes": {
+          "path": "prisma/schema.prisma",
+          "text": "model User {\n  id    String @id @default(cuid())\n  name  String?\n  role  String @default(\"USER\")\n}\n"
+        }
+      }
+    },
+    {
+      "id": "prisma-practice-side-effect-in-transaction",
+      "document": "rules/prisma-practice-side-effect-in-transaction.rerail",
+      "title": "Prisma practice: send mail, charge payments, call HTTP APIs, enqueue jobs and revalidate caches before or after an interactive $transaction, not inside its callback",
+      "group": "Prisma practice",
+      "on": true,
+      "dimensions": { "risk": "data-safety", "layer": "data-access", "severity": "high", "hazard": "tx.side-effect-before-commit" },
+      "examples": {
+        "caught": {
+          "path": "app/orders/actions.ts",
+          "text": "\"use server\";\n\nimport { prisma } from \"@/lib/prisma\";\n\nexport async function placeOrder(userId: string, total: number) {\n  return prisma.$transaction(async (tx) => {\n    const order = await tx.order.create({ data: { userId, total, status: \"PENDING\" } });\n    await fetch(\"https://hooks.example.com/order-placed\", { method: \"POST\", body: order.id });\n    return order;\n  });\n}\n"
+        },
+        "passes": {
+          "path": "app/orders/actions.ts",
+          "text": "\"use server\";\n\nimport { prisma } from \"@/lib/prisma\";\n\nexport async function placeOrder(userId: string, total: number) {\n  const order = await prisma.$transaction(async (tx) => {\n    return tx.order.create({ data: { userId, total, status: \"PENDING\" } });\n  });\n  await fetch(\"https://hooks.example.com/order-placed\", { method: \"POST\", body: order.id });\n  return order;\n}\n"
         }
       }
     }

@@ -207,3 +207,51 @@ saqf_helper_first(hk, x, p, l) :- saqf_helper_hit(hk, _, _, _, _), l = min l0 : 
     .expect _ at "src/hooks/use-project-details.ts":18
     .expect _ at "src/hooks/use-project-total.ts":6
 .end
+
+// The pack.json examples.
+.test example_caught exactly
+    .fixture "package.json" ```
+        { "dependencies": { "@tanstack/react-query": "^5.62.0", "next": "^15.1.0" } }
+        ```
+    .fixture "src/features/projects/actions.ts" ```
+        'use server'
+
+        import { db } from '../../lib/db'
+
+        export async function getProjects() {
+          return db.project.findMany({ orderBy: { createdAt: 'desc' } })
+        }
+        ```
+    .fixture "src/features/projects/use-projects.ts" ```
+        'use client'
+
+        import { useQuery } from '@tanstack/react-query'
+        import { getProjects } from './actions'
+
+        export function useProjects() {
+          return useQuery({ queryKey: ['projects'], queryFn: () => getProjects() })
+        }
+        ```
+    .expect ServerActionQueryFn at "src/features/projects/use-projects.ts":7
+.end
+.test example_passes exactly
+    .fixture "package.json" ```
+        { "dependencies": { "@tanstack/react-query": "^5.62.0", "next": "^15.1.0" } }
+        ```
+    .fixture "src/features/projects/use-projects.ts" ```
+        'use client'
+
+        import { useQuery } from '@tanstack/react-query'
+
+        export function useProjects() {
+          return useQuery({
+            queryKey: ['projects'],
+            queryFn: async () => {
+              const res = await fetch('/api/projects')
+              if (!res.ok) throw new Error(`GET /api/projects failed: ${res.status}`)
+              return res.json()
+            },
+          })
+        }
+        ```
+.end

@@ -8,11 +8,13 @@ to a TypeScript app: `prisma/migrations/<dir>/migration.sql`, drizzle-kit's `dri
 PostgreSQL docs or the migration tool's own docs or maintainers; when public apps held real violations of it; and when
 no lint rule Rerail ships makes the same check. Every rule reads the migrations as SQL trees.
 
-The pack ships three rules, each against a lock that stops the app. Two start on: `set-not-null-scans-table`, a `SET
-NOT NULL` that scans an existing table under an ACCESS EXCLUSIVE lock, and `constraint-on-existing-table-not-valid`, a
-foreign key or CHECK added to an existing table without `NOT VALID`. The third, `lock-timeout`, any DDL that can queue
-behind a long transaction with no `lock_timeout` set, ships off: on apps it was not tuned on, fewer than 9 in 10 of its
-matches were real ([How the rules were measured](#how-the-rules-were-measured)).
+The pack ships four rules, each against a lock that stops the app, and all four start on: `set-not-null-scans-table`,
+a `SET NOT NULL` that scans an existing table under an ACCESS EXCLUSIVE lock; `constraint-on-existing-table-not-valid`,
+a foreign key or CHECK added to an existing table without `NOT VALID`; `index-on-existing-table-blocks-writes`, an
+index built on an existing table without `CONCURRENTLY` (or a UNIQUE or PRIMARY KEY constraint that builds one); and
+`lock-timeout`, any DDL that can queue behind a long transaction with no `lock_timeout` set. Each ships on because more
+than 9 in 10 of its matches on apps it was not tuned or fixed on were real ([How the rules were
+measured](#how-the-rules-were-measured)).
 
 ## Which migrations a rule reads
 
@@ -46,13 +48,14 @@ Every SQL rule reads its migrations through the pack's library,
   `public."Order"` are one table, `order` another). `lock-timeout` takes only creation (an emptied table still has
   others waiting on its lock).
 
-**The `sql` pack.** Its port of sqlfluff PG02 (`sqlfluff-pg02-postgres-not-valid-foreign-key`, a foreign key without
-`NOT VALID`) reads every `.sql` file and fires on every Prisma init migration, where each table is created and then
-given its foreign keys in the same file. `constraint-on-existing-table-not-valid` reports the same statements only on
-tables that already existed, and only in pending migrations; it also covers CHECK constraints, which PG02 does not,
-and gives a fix that follows the migration runner. For migration folders install this pack rather than PG02; keep it
-for hand-written SQL elsewhere. This pack has no counterpart to PG01 (`sqlfluff-pg01-postgres-excessive-locks`, an
-index built or dropped without `CONCURRENTLY`).
+**The `sql` pack.** Its ports of sqlfluff PG01 (`sqlfluff-pg01-postgres-excessive-locks`, an index built or dropped
+without `CONCURRENTLY`) and PG02 (`sqlfluff-pg02-postgres-not-valid-foreign-key`, a foreign key without `NOT VALID`)
+read every `.sql` file and fire on every Prisma init migration, where each table is created and then indexed and given
+its foreign keys in the same file. `index-on-existing-table-blocks-writes` and `constraint-on-existing-table-not-valid`
+report the same statements only on tables that already existed, and only in pending migrations; they also cover what
+PG01 and PG02 do not (`CREATE UNIQUE INDEX`, `ADD CONSTRAINT … UNIQUE`/`PRIMARY KEY`, CHECK constraints) and give a fix
+that follows the migration runner. For migration folders install this pack rather than PG01/PG02; keep those for
+hand-written SQL elsewhere. This pack does not report a `DROP INDEX` without `CONCURRENTLY`, which PG01 does.
 
 ## How the rules were measured
 
@@ -60,7 +63,7 @@ Each rule is proven by its cases in `cases/<id>/`, where a line ending in `-- ca
 may be, run by the rule file's own test (`.test cases exactly`, which reads the case directory as one repository;
 `rerail rules test <file>.rerail`). The cases carry a one-commit `.git` (`cases/_git/`, shared) because the rules read
 Git; a test has no Git base, so the cases test gives the library's `pgm_applied` no rows and reads every case
-migration. Its precision was then measured in three steps, each on apps the step before had not seen:
+migration. Its precision was then measured in steps, each on apps the steps before had not seen:
 
 1. **Tuned on the corpus.** The rules were written and fixed against runs on the public apps of [the
    corpus](#the-corpus) with the largest Prisma and Drizzle migration histories, whose matches were read and judged
@@ -88,29 +91,38 @@ migration. Its precision was then measured in three steps, each on apps the step
    the commits in [NOTES](NOTES-postgres-migrations.md#frozen-test-set-2026-11-26). One run per app with every rule of
    the pack on, as a whole-repository audit (no Git base), on the profiling engine; every match was read by a reader
    who did not write the rules.
+4. **Measured again on two more test sets** that nobody used to write, tune or fix the rules: test set #2, 37
+   open-source apps (2026-11-27), and test set #3, 41 more. One run per app with the pack's rules and candidates on, as
+   a whole-repository audit, every match read by a reader who did not write the rules
+   ([NOTES](NOTES-postgres-migrations.md#test-set-3)).
 
-The bar: a rule ships on only when more than 90% of its matches on the 20 test apps are real. A rule whose matches
-there fall below the bar ships off, and its details give its measured precision, its false-match shapes and the fix
-each needs. A rule with no match on the test set has no measured precision on apps it was not tuned on, so it is not
-part of the pack.
+The bar: a rule ships on only when more than 90% of its matches on apps it was never tuned or fixed on are real. A
+test set counts for a rule only if the rule was not fixed against its findings: `lock-timeout` was fixed after test
+sets #1 and #2, so only test set #3 counts for it. Promoting a candidate or keeping a rule on takes at least 5 such
+matches in at least 2 apps; a rule under that floor with no false match stays where it is. A rule below the bar ships
+off, with its measured precision, its false-match shapes and the fix each needs in its details. A rule without such
+matches has no measured precision on unseen apps, so it is not part of the pack ([the
+candidates](candidates/README.md)).
 
-Not run: for this pack, nothing; every rule ran on all 20 test apps (the test-set runs that did not finish were other
-packs'). Not measured on the test set: a Git base (a session's or pull request's pending migrations), which only the
-corpus's base runs measure, and any app's migration other than each folder's newest.
+Not run: for this pack, nothing; every rule ran on every app of the three test sets (the runs that did not finish
+were other packs'). Not measured on the test sets: a Git base (a session's or pull request's pending migrations),
+which only the corpus's base runs measure, and any app's migration other than each folder's newest.
 
-| Rule | Starts | Mode | Catches | Test set: 20 unseen apps | Held-out: 8 apps | Tuning, audit: 27 apps | Tuning, base: 50 pending | Tuning, whole history: review (3 apps) + writers | Tuning, precision of read matches |
-|---|---|---|---|---|---|---|---|---|---|
-| `postgres-migrations-practice-constraint-on-existing-table-not-valid` | On | Steer | a foreign key or CHECK added to an existing table without `NOT VALID` | 1 of 1 real (usertour) | 0 matches | 3 (1) | 5 (2) | 107 + 320 (6) | 100% (21 of 21; 320 of 320) |
-| `postgres-migrations-practice-set-not-null-scans-table` | On | Steer | `SET NOT NULL` on an existing table with no validated `CHECK (c IS NOT NULL)` | 10 of 10 real (one usertour migration) | 0 matches | 0 | 2 statements (1; 4 findings before one per statement) | 6 + 135 (6) | 100% (10 of 10; 135 of 135) |
-| `postgres-migrations-practice-lock-timeout` | Off | Log | a migration that locks an existing table with no `lock_timeout` set | 6 of 8 real (75%), in 7 apps | 5 of 6 real; 5 of 5 after the explicit-lock fix | 12 (11) | 29 of the 50 migrations | 440 (3) | 100% (14 of 14) |
+| Rule | Starts | Mode | Catches | Test set #1: 20 apps | Test set #2: 37 apps | Test set #3: 41 apps | Held-out: 8 apps | Tuning, audit: 27 apps | Tuning, base: 50 pending | Tuning, whole history: review (3 apps) + writers | Tuning, precision of read matches |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `postgres-migrations-practice-constraint-on-existing-table-not-valid` | On | Steer | a foreign key or CHECK added to an existing table without `NOT VALID` | 1 of 1 real (usertour) | 2 of 2 real, in 2 apps | 3 of 3 real, in 1 app | 0 matches | 3 (1) | 5 (2) | 107 + 320 (6) | 100% (21 of 21; 320 of 320) |
+| `postgres-migrations-practice-index-on-existing-table-blocks-writes` | On | Steer | `CREATE [UNIQUE] INDEX` without `CONCURRENTLY`, or `ADD UNIQUE`/`PRIMARY KEY`, on an existing table | 0 matches | 5 of 5 real, in 3 apps | 0 matches | 3, none real (one operator-run migration that locks the table first); 0 after the explicit-lock fix | 9 (4) | 0 | 204 + 527 (7) | 100% (30 of 30 read by the review; 439 of 442 by the writers, the 3 since fixed) |
+| `postgres-migrations-practice-set-not-null-scans-table` | On | Steer | `SET NOT NULL` on an existing table with no validated `CHECK (c IS NOT NULL)` | 10 of 10 real (one usertour migration) | 0 matches | 0 matches | 0 matches | 0 | 2 statements (1; 4 findings before one per statement) | 6 + 135 (6) | 100% (10 of 10; 135 of 135) |
+| `postgres-migrations-practice-lock-timeout` | On | Log | a migration that locks an existing table with no `lock_timeout` set | 6 of 8 real (75%), in 7 apps; fixed against them | 14 of 17 real, in 16 apps; fixed against them | 9 of 9 real, in 9 apps | 5 of 6 real; 5 of 5 after the explicit-lock fix | 12 (11) | 29 of the 50 migrations | 440 (3) | 100% (14 of 14) |
 
 A match is real when the statement does what the rule names on a table that existed before the migration, even if the
 table is small; the messages say when to keep the statement (a table known to stay small, or one still empty because
-the migration that creates it has not been deployed). The two rules that start on steer: every match read, on the
-corpus and on the test set, was real. `lock-timeout` logs when turned on, because a timeout set on the database role
-outside the repository cannot be seen and it fires on 60 to 90% of the migrations of any repository that sets none;
-it ships off because 2 of its 8 test-set matches were not real (a timeout its app's TypeScript migration runner sets,
-an example app's init migration; [its details](#postgres-migrations-practice-lock-timeout)).
+the migration that creates it has not been deployed). The three rules that steer: every match read on the three test
+sets was real (the index rule's false matches, 3 in the writers' corpus runs and 3 on the held-out apps, were fixed
+before them). `lock-timeout` logs, because a timeout set on the database role outside the repository cannot be seen
+and it fires on 60 to 90% of the migrations of any repository that sets none. It shipped off after test set #1 (6 of
+8 real) and was fixed against the false matches of test sets #1 and #2; on test set #3 all 9 of its matches were
+real, so it ships on ([its details](#postgres-migrations-practice-lock-timeout)).
 
 ## What an audit reports
 
@@ -122,26 +134,30 @@ whole-history matches on the same repositories:
 | Rule | langfuse (500 migrations) | trigger.dev (894) | documenso (170) |
 |---|--:|--:|--:|
 | `constraint-on-existing-table-not-valid` | 0 (was 41) | 0 (was 65) | 0 (was 52) |
+| `index-on-existing-table-blocks-writes` | 1 (was 93) | 0 (not in the writers' run) | 0 (was 73) |
 | `set-not-null-scans-table` | 0 (was 27) | 0 (was 16) | 0 (was 36) |
 | `lock-timeout` | 1 (was 1) | 2 (was 1) | 0 (was 0) |
 
-On those three, 3 matches where whole-history runs gave 239, all `lock-timeout` and all real: langfuse's newest
+On those three, 4 matches where whole-history runs gave 405, all real. Three are `lock-timeout`'s: langfuse's newest
 migration (`20261120140000_add_gateway_spend_limit_warning_thresholds`) alters `gateway_spend_limits` with no
 `lock_timeout` (line 3); trigger.dev's `run-ops-database` folder adds a column to `TaskRun` with no `lock_timeout`, as
-does its `dashboard-agent-db` Drizzle folder to `chats` (a folder newer than the writer's run). The other newest
+does its `dashboard-agent-db` Drizzle folder to `chats` (a folder newer than the writer's run). The fourth,
+`index-on-existing-table-blocks-writes`, is in the same langfuse migration: it rebuilds a unique index on
+`gateway_spend_limit_alerts`, a table an earlier migration created, without `CONCURRENTLY` (line 10). The other newest
 migrations lock nothing the rules name: trigger.dev's main folder ends with a `CREATE INDEX CONCURRENTLY` alone in its
 migration, documenso's with an `UPDATE`.
 
-Over all 27 corpus apps with SQL migrations (the review's audit), the three rules report 15 findings, all real:
-`constraint-on-existing-table-not-valid` 3 (papermark's `20260820000000_add_multiple_team_brands`) and `lock-timeout`
-12 in 11 apps.
+Over all 27 corpus apps with SQL migrations (the review's audit), the four rules report 24 findings, all real:
+`constraint-on-existing-table-not-valid` 3 (papermark's `20260820000000_add_multiple_team_brands`),
+`index-on-existing-table-blocks-writes` 9 in 4 apps (the same papermark migration alone 5; one on a small table,
+airbroke's `accounts`) and `lock-timeout` 12 in 11 apps.
 
 ## Starting values
 
-`constraint-on-existing-table-not-valid` and `set-not-null-scans-table` start on and steer; `lock-timeout` starts off
-and logs when turned on. To turn one on or off or change its mode, use its switch in the Postgres migrations pack's
-page in the dashboard, or `repository_settings_set` (`PUT /api/repository/settings`) for a repository or a checkout
-([rule scoping](../../docs/rule-scoping.md#management-surfaces)).
+All four rules start on. `constraint-on-existing-table-not-valid`, `index-on-existing-table-blocks-writes` and
+`set-not-null-scans-table` steer; `lock-timeout` logs. To turn one on or off or change its mode, use its switch in the
+Postgres migrations pack's page in the dashboard, or `repository_settings_set` (`PUT /api/repository/settings`) for a
+repository or a checkout ([rule scoping](../../docs/rule-scoping.md#management-surfaces)).
 
 The rules are written in `.rerail`, so they run apart from JSON rules: in the background, once the coding agent's writes
 have settled, and in audits and `rerail scan`. They read only migration files (and `migration_lock.toml`, the
@@ -215,11 +231,120 @@ required-column proof of an empty table came from trigger.dev
 `20250319110754_add_org_and_project_to_execution_snapshots`, which adds `NOT NULL` columns without a default and then
 their foreign keys (the table must be empty there).
 
-Test set, 20 unseen apps: 1 match, real. usertour's
+Test set #1, 20 unseen apps: 1 match, real. usertour's
 `20261012000000_required_content_step_theme_segment_columns` drops `Content_environmentId_fkey` and adds it back
 (`FOREIGN KEY ("environmentId") REFERENCES "Environment"("id") ON DELETE RESTRICT`, line 40) without `NOT VALID`, so
 every `Content` row is checked again under SHARE ROW EXCLUSIVE; the comment above it is about the `onDelete` change
 only. Held-out, 8 apps: 0 matches.
+
+Test set #2, 37 apps: 2 matches in 2 apps, both real at low impact: kan's foreign key from `card` to `user` on a
+column the same migration has just added (all NULL, so the scan is short), and devtrack's locale CHECK re-added to
+`users`, probably a small table. Test set #3, 41 apps: 3 matches in one migration, all real: aural-oss's
+`005_account_delete_and_answer_bank.sql` adds foreign keys to `webhooks`, `projects` and `interviews`, tables its
+initial migration created and its app writes to, without `NOT VALID`. On every unseen app, 6 of 6 real in 4 apps.
+
+### `postgres-migrations-practice-index-on-existing-table-blocks-writes`
+
+A plain `CREATE INDEX` locks the table against writes for the whole build, and `ADD CONSTRAINT … UNIQUE` / `ADD
+PRIMARY KEY` build the same index under an ACCESS EXCLUSIVE lock that blocks reads too. Prisma writes a plain `CREATE
+UNIQUE INDEX` for every new `@unique` and `CREATE INDEX` for every `@@index`, so adding one to a model whose table is
+in production stalls the app for as long as the build takes.
+
+Catches, on a table that already exists:
+- `CREATE INDEX` and `CREATE UNIQUE INDEX` without `CONCURRENTLY` (sqlfluff PG01 skips UNIQUE);
+- `ALTER TABLE … ADD [CONSTRAINT …] UNIQUE (…)` and `ADD [CONSTRAINT …] PRIMARY KEY (…)`;
+- `ALTER TABLE … ADD COLUMN … UNIQUE` / `… PRIMARY KEY`.
+
+The fix in the message follows the runner, told from the layout: Prisma (`…/migrations/<dir>/migration.sql`: put
+`CREATE INDEX CONCURRENTLY` alone in a migration of its own, which works on every Prisma version, written with
+`prisma migrate dev --create-only` and edited before it is applied, never by editing a migration `migrate dev` has
+already applied), drizzle-kit (a `meta/_journal.json` beside the file, or drizzle-kit 1.0's `snapshot.json` beside a
+`migration.sql`: drizzle runs all pending migrations in one transaction, so build the index by hand before deploying
+and write it in the migration as `CREATE INDEX IF NOT EXISTS`, which the rule then accepts), or plain SQL
+(`CONCURRENTLY`, outside any transaction). Constraints are steered to a concurrent unique index plus `ADD CONSTRAINT …
+UNIQUE USING INDEX` / `PRIMARY KEY USING INDEX`. An index on a partitioned parent (a table created `PARTITION BY …`),
+where PostgreSQL refuses `CONCURRENTLY`, gets the per-partition fix instead: the index on the parent alone with `ON
+ONLY`, `CREATE INDEX CONCURRENTLY` on each partition, then `ALTER INDEX … ATTACH PARTITION`.
+
+Leaves alone:
+- `CREATE [UNIQUE] INDEX CONCURRENTLY`; `ADD CONSTRAINT … UNIQUE USING INDEX …` and `PRIMARY KEY USING INDEX …`;
+- a table that is not an existing one (created, materialized or emptied earlier in the file, or given a required
+  column first);
+- `CREATE INDEX … ON ONLY t` (a partitioned parent's index shell);
+- in a Drizzle migration, `CREATE [UNIQUE] INDEX IF NOT EXISTS`: the form the Drizzle fix asks for, the index built
+  by hand beforehand (before this, the rule reported the statement its own message prescribed);
+- `ADD CONSTRAINT … UNIQUE`/`PRIMARY KEY` on a partitioned parent (`USING INDEX` is refused there);
+- `ADD CONSTRAINT … EXCLUDE` (no `USING INDEX` form to steer to);
+- an `ALTER TABLE` that also changes a column's type (`ALTER COLUMN "id" SET DATA TYPE TEXT, ADD CONSTRAINT …
+  PRIMARY KEY`, Prisma's primary-key swap): the rewrite holds the lock anyway, and the candidate
+  column-type-change rule owns it;
+- a statement on a table the migration has already locked itself with `LOCK TABLE t` (ACCESS EXCLUSIVE, the default
+  mode; for a `CREATE INDEX`, any mode that stops writes: SHARE, SHARE ROW EXCLUSIVE, EXCLUSIVE): the lock holds to
+  the end of the transaction, so the build stalls nothing the migration did not choose to stop (an operator-run
+  migration in a maintenance window).
+
+Gaps: a table known to stay small is reported (nothing in the repository says how big a table is). `EXCLUDE`
+constraints, and `UNIQUE`/`PRIMARY KEY` constraints on a partitioned table, also block and are not reported. A Drizzle
+`IF NOT EXISTS` index is trusted to have been built by hand. The Prisma version is not read, so the Prisma fix is the
+one that works on every version (alone in its own migration), though Prisma 7.4+ also accepts it beside other
+statements outside `BEGIN … COMMIT`. A column added in the same migration is all NULL, so its index builds fast; the
+rule still reports it (three of its five test-set #2 matches, all real at low impact).
+
+Sources:
+- PostgreSQL, CREATE INDEX, "Building Indexes Concurrently"
+  (https://www.postgresql.org/docs/current/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY): "Normally PostgreSQL
+  locks the table to be indexed against writes and performs the entire index build with a single scan of the table.
+  Other transactions can still read the table, but if they try to insert, update, or delete rows in the table they
+  will block until the index build is finished."
+- PostgreSQL, ALTER TABLE (https://www.postgresql.org/docs/current/sql-altertable.html): `ADD table_constraint_using_index`
+  "This form adds a new PRIMARY KEY or UNIQUE constraint to a table based on an existing unique index."
+- Squawk, require-concurrent-index-creation (https://squawkhq.com/docs/require-concurrent-index-creation): "During a
+  normal index creation, table updates are blocked, but reads are still allowed." / "This rule ignores indexes added
+  to tables created in the same transaction."
+- Squawk, disallowed-unique-constraint (https://squawkhq.com/docs/disallowed-unique-constraint): "Adding a `UNIQUE`
+  constraint requires an `ACCESS EXCLUSIVE` lock which blocks reads and writes to the table while the index is
+  built."
+- strong_migrations (https://github.com/ankane/strong_migrations#adding-an-index-non-concurrently): "In Postgres,
+  adding an index non-concurrently blocks writes." / "indexes on new tables (those created in the same migration)
+  don’t require this."
+- Prisma (https://github.com/prisma/prisma/issues/14456): "ERROR: CREATE INDEX CONCURRENTLY cannot run inside a
+  transaction block"; "I've found that a migration script that contains ONLY the `CREATE INDEX CONCURRENTLY` command
+  will succeed."
+- drizzle-orm (https://github.com/drizzle-team/drizzle-orm/issues/860, open): "[BUG]: Can't create index
+  concurrently due to transaction block".
+
+Corpus, review: audit of the 27 apps with SQL migrations, 9 matches in 4 (papermark 5 on `Brand`, `Team`, `Link`,
+`Dataroom`; langfuse 1; airbroke 1, on the one-row-per-login `accounts`; customermates 2), all real; base, 0 in the 50
+pending migrations (all 36 plain `CREATE INDEX` there are on tables created in the same file or by another pending
+migration, which the Git-base exemption leaves alone); whole history of papermark, comp and customermates, 204 (64, 60,
+80), 17 read, all real. Re-run after the fixes: the same 9 audit and 204 whole-history matches, and 0 on trigger.dev
+(its partitioned tables are indexed `ON ONLY` or on new tables); the adversarial Drizzle `CREATE INDEX IF NOT EXISTS`
+is no longer reported, the drizzle-kit 1.0 folder gets the Drizzle text, and a partitioned parent the per-partition
+one. Writers' whole-history run on 7 repositories with the most Prisma migration SQL (umami, rallly, documenso,
+useSend, langfuse, shelf.nu, inbox-zero): 527 matches in 7. 442 read (every match of six repositories, every fourth of
+inbox-zero's 118): 439 real, 3 not, all three Prisma's primary-key swap with `SET DATA TYPE` in the same `ALTER TABLE`
+(since left to the column-type-change rule). Every reported statement builds an index on a table an earlier migration
+created. The corpus also shows the fix in use: langfuse writes each `CREATE INDEX CONCURRENTLY` alone in its own
+Prisma migration (`20240226165118_add_observations_index` and 20 more), useSend does the same
+(`20261117010000_email_team_created_at_index`), and shelf.nu's own comments make the size call the message asks for
+(`20260525110348_add_trigram_indexes_for_simple_search`: "Each statement takes an ACCESS EXCLUSIVE lock on its table
+for the duration of the index build. On the largest known tenant the affected tables are small … If a much larger
+workspace is onboarded later, run this migration during a low-traffic window or split it across multiple
+CONCURRENTLY-built migrations.").
+
+Held-out, 8 apps: 3 matches, none real, all in one jitsu migration run by an operator that takes `LOCK TABLE … IN
+ACCESS EXCLUSIVE MODE` (writes stopped first) before its index builds; the explicit-lock fix leaves them alone (0 on
+the re-run). Test set #1, 20 apps: 0 matches, so the rule waited as a candidate.
+
+**Ships on.** Test set #2, 37 apps: 5 matches in 3 apps, all real, the first unseen evidence. kan's partial index on
+the existing `card` (`AddCardArchive`, a Drizzle migration), snagtime's three `CREATE UNIQUE INDEX IF NOT EXISTS` on
+the existing `Booking` (a Prisma migration, where `IF NOT EXISTS` still builds under the lock), each on a column the
+same file adds (all NULL, so the builds are short: real at low impact), and quenti's `Highscore` primary key dropped
+and re-added, which rebuilds its index under ACCESS EXCLUSIVE on a table an earlier migration created. Test set #3, 41
+apps: 0 matches. 5 of 5 real in 3 apps clears the bar and the floor. Promoted from the candidates with its cases and
+no change to what it matches; for the split test, the partitioned-parent fact (which any migration of the folder may
+give) is keyed by the document and the table's name instead of by the statement
+([NOTES](NOTES-postgres-migrations.md#test-set-3)).
 
 ### `postgres-migrations-practice-set-not-null-scans-table`
 
@@ -279,11 +404,13 @@ the six uses the CHECK … NOT VALID pattern; langfuse once left the statement c
 migration after application release to minimize ingestion downtime" (`20230809132331_add_project_id_to_observations`),
 the concern this rule steers on.
 
-Test set, 20 unseen apps: 10 matches, all real, all in one usertour migration
+Test set #1, 20 unseen apps: 10 matches, all real, all in one usertour migration
 (`20261012000000_required_content_step_theme_segment_columns`, lines 10 to 35): `SET NOT NULL` on the existing
 `Content`, `Step`, `Theme` and `Segment` tables with no CHECK proof, several right after an `UPDATE` backfill, one on a
 column the file's own comment says may still hold NULLs (the migration then fails). The two on `Theme` and `Segment`,
-probably small tables, are real at low impact. Held-out, 8 apps: 0 matches.
+probably small tables, are real at low impact. Held-out, 8 apps: 0 matches. Test sets #2 (37 apps) and #3 (41 apps):
+0 matches. Its unseen evidence stays 10 of 10 in one app, under the floor of 2 apps with no false match, so it stays
+on.
 
 ### `postgres-migrations-practice-lock-timeout`
 
@@ -387,7 +514,7 @@ migrations, with comments naming the lock queue, and the matched migration is on
 documenso, comp and zoonk: 0 (their newest migrations are an UPDATE backfill or `ALTER TYPE … ADD VALUE`, which lock
 no table). Log: a timeout set on the role outside the repository cannot be seen, and four matches is a small sample.
 
-**Ships off.** Test set, 20 unseen apps: 6 of 8 matches real (75%), below the 90% bar. Real: typebot.io's
+Test set #1, 20 unseen apps: 6 of 8 matches real (75%), below the 90% bar, so it shipped off. Real: typebot.io's
 `20260821120000_remove_inactive_workspace_cleanup` (`DROP COLUMN` on the hot `Workspace`), usertour's
 `20261012000000_required_content_step_theme_segment_columns` (the first of ten ALTERs, on `Content`), and four at low
 impact: Zero's and dittofeed's foreign keys from new tables to the existing `mail0_user` and `Workspace`,
@@ -414,6 +541,22 @@ corpus match.
 
 Held-out, 8 apps: 6 matches, 5 real; the sixth, an operator-run migration that takes `LOCK TABLE … IN ACCESS EXCLUSIVE
 MODE` before altering the table, is left alone since the explicit-lock fix (5 of 5 on the re-run).
+
+Test set #2, 37 apps: 17 matches in 16 apps, 14 real. The 3 not real were each fixed with a case
+([NOTES](NOTES-postgres-migrations.md#fixes-after-the-first-test-set)): a runner in another package than the folder,
+naming it by a resolved path, that sends `SET LOCAL lock_timeout`; a SQLite Prisma folder that a PostgreSQL schema
+deeper in the tree was read as declaring (the library now reads only the schema beside the folder); and an `ALTER
+TABLE … SET (autovacuum_…)`, which takes SHARE UPDATE EXCLUSIVE and blocks no read or write. After the fixes, 14 of
+14 there, and no change on test set #1, the held-out apps or the corpus.
+
+**Ships on.** Test set #3, 41 apps, the first the rule was not fixed against: 9 matches in 9 apps, all real. Seven
+are an `ADD COLUMN` or another strong ALTER on a table an earlier migration created (aural-oss's `webhooks`, refref's
+`product`, next16-conferences' `Talk`, voicehub's `SystemSettings`, nextacular's `domains`, uxie's `Document`,
+v0.diy's `chat_ownerships`, whose own runner sets no timeout), one is a foreign key from a new table to the existing
+`user` (codu), and one adds a `SERIAL` column to next-admin's `Category`, a demo app's table (low impact). None of the
+nine apps sets `lock_timeout` anywhere the rule looks or in a runner. Several of the migrations are dated months or
+years back and are probably applied already: an audit reads each folder's newest migration, applied or not, and the
+finding is real by the statement. 9 of 9 in 9 apps clears the bar and the floor.
 
 ## The corpus
 
@@ -446,9 +589,9 @@ or just before). Each rule's details name the ones it ran on.
 
 | Path | What it is |
 |---|---|
-| `rules/postgres-migrations-practice-<id>.rerail` | The 3 rules, written by hand. Each opens with a comment on what it matches and leaves alone, with an example of each |
+| `rules/postgres-migrations-practice-<id>.rerail` | The 4 rules, written by hand. Each opens with a comment on what it matches and leaves alone, with an example of each |
 | [`rules/lib/postgres-migrations.rerail`](rules/lib/postgres-migrations.rerail) | `lib/postgres-migrations`, the shared gating: migrations, their order and which are pending, other databases' folders, runners, tables and whether they may hold rows, column helpers |
 | `cases/<id>/` | Each rule's cases, a small repository: a line ending in `-- caught` must be reported, no other line may be (the rule file's `.test cases`). `cases/_git/` is the one-commit `.git` every case repository uses, `cases/_other-databases/` the other databases' migrations every rule's `other_databases` test reads. Not published |
-| `candidates/` | Rules written for the pack with no match on the 20 test apps, so not part of it: their files, cases and details ([`candidates/README.md`](candidates/README.md)). Not published |
-| [`NOTES-postgres-migrations.md`](NOTES-postgres-migrations.md) | The batch notes: dropped candidates, the library's history and open proposals, every corpus match read with its verdict, and the frozen test set's matches with theirs |
+| `candidates/` | Rules written for the pack without enough matches on apps they were not tuned or fixed on to ship, so not part of it: their files, cases and details ([`candidates/README.md`](candidates/README.md)). Not published |
+| [`NOTES-postgres-migrations.md`](NOTES-postgres-migrations.md) | The batch notes: dropped candidates, the library's history and open proposals, every corpus match read with its verdict, and the three test sets' matches with theirs |
 | [`ENGINE-GAPS.md`](ENGINE-GAPS.md) | Engine gaps found while writing and measuring these rules |

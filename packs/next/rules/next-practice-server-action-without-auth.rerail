@@ -290,14 +290,19 @@ nsaw_writer(a, k) :- nsaw_writes(a, k), !nsaw_writes_before(a, k).
 // nsaw_writing(k): the unit keyed k writes.
 .decl nsaw_writing(k: symbol)
 nsaw_writing(k) :- nsaw_key(g, k), nsaw_first_write(g, _).
-// nsaw_checks(k): the unit keyed k makes an auth or session check: a call that reads as one, or a write that reads
-// what an auth client's method returned (nsaw_auth_bound). A function of another dialect's file, read as text, checks
-// when its text does (nsaw_text_checks).
-.decl nsaw_checks(k: symbol)
-nsaw_checks(k) :- nsaw_key(g, k), nsaw_in(c, g), nsaw_auth_call(c).
-nsaw_checks(k) :- nsaw_key(g, k), nsaw_auth_bound(g, x), nsaw_in(w, g), nsaw_write(w, _), field(w, "arguments", al),
-    within(r, al), (kind(r, "identifier") ; kind(r, "shorthand_property_identifier")), text(r, x).
+// nsaw_checks(k): the unit keyed k makes an auth or session check: one of its file's units that checks
+// (nsaw_unit_checks), or a function of another dialect's file, read as text, whose text checks (nsaw_text_checks).
+// Across files, by symbol.
+.decl nsaw_checks(k: symbol) cross_file
+nsaw_checks(k) :- nsaw_unit_checks(k).
 nsaw_checks(@qname(m, x)) :- nsaw_text_checks(d, x), ts_module(d, m).
+// nsaw_unit_checks(k): the unit keyed k, in this file, makes a call that reads as a check, or a write that reads what
+// an auth client's method returned (nsaw_auth_bound).
+.decl nsaw_unit_checks(k: symbol)
+nsaw_unit_checks(k) :- nsaw_key(g, k), nsaw_in(c, g), nsaw_auth_call(c).
+nsaw_unit_checks(k) :- nsaw_key(g, k), nsaw_auth_bound(g, x), nsaw_in(w, g), nsaw_write(w, _),
+    field(w, "arguments", al), within(r, al), (kind(r, "identifier") ; kind(r, "shorthand_property_identifier")),
+    text(r, x).
 // nsaw_auth_bound(g, x): unit g binds x from the result of an auth client's method, `o.auth.m(…)` (awaited or not:
 // `const { data, error } = await supabase.auth.updateUser(…)`), or from a name so bound (`const id = data.user.id`).
 .decl nsaw_auth_bound(g: node, x: symbol)

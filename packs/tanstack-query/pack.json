@@ -3,7 +3,7 @@
   "id": "tanstack-query",
   "name": "TanStack Query",
   "category": "framework",
-  "covers": "Rerail's own TanStack Query rules, from the TanStack docs and maintainers' advice, for query data read from the query instead of copied into state, query functions that throw on a failed response, and one query function per query key.",
+  "covers": "Rerail's own TanStack Query rules for query data read from the cache instead of copied into state, query functions that throw on failed responses, and browser queries that use a Route Handler instead of a Server Action.",
   "reason": "matches TanStack Query",
   "match": {
     "any": [
@@ -65,38 +65,34 @@
       }
     },
     {
-      "id": "tanstack-query-practice-same-key-different-query-fn",
-      "document": "rules/tanstack-query-practice-same-key-different-query-fn.rerail",
-      "title": "TanStack Query practice: one query key, one query function",
+      "id": "tanstack-query-practice-server-action-as-query-fn",
+      "document": "rules/tanstack-query-practice-server-action-as-query-fn.rerail",
+      "title": "TanStack Query practice: a queryFn that runs in the browser never calls a Server Action",
       "group": "TanStack Query practice",
-      "on": false,
+      "on": true,
       "dimensions": { "risk": "correctness", "layer": "ui", "severity": "medium" },
       "examples": {
         "caught": {
-          "path": "src/features/billing/use-billing-user.ts",
-          "text": "import { useQuery } from \"@tanstack/react-query\";\nimport { getUserWithInvoices } from \"@/lib/api\";\n\nexport function useBillingUser(userId: string) {\n  return useQuery({\n    queryKey: [\"user\", userId],\n    queryFn: () => getUserWithInvoices(userId),\n  });\n}\n",
+          "path": "src/features/projects/use-projects.ts",
+          "text": "'use client'\n\nimport { useQuery } from '@tanstack/react-query'\nimport { getProjects } from './actions'\n\nexport function useProjects() {\n  return useQuery({ queryKey: ['projects'], queryFn: () => getProjects() })\n}\n",
           "with": [
             {
-              "path": "src/features/user/use-user.ts",
-              "text": "import { useQuery } from \"@tanstack/react-query\";\nimport { getUser } from \"@/lib/api\";\n\nexport function useUser(id: string) {\n  return useQuery({\n    queryKey: [\"user\", id],\n    queryFn: () => getUser(id),\n  });\n}\n"
+              "path": "src/features/projects/actions.ts",
+              "text": "'use server'\n\nimport { db } from '../../lib/db'\n\nexport async function getProjects() {\n  return db.project.findMany({ orderBy: { createdAt: 'desc' } })\n}\n"
             },
             {
               "path": "package.json",
-              "text": "{ \"dependencies\": { \"@tanstack/react-query\": \"^5.62.0\" } }\n"
+              "text": "{ \"dependencies\": { \"@tanstack/react-query\": \"^5.62.0\", \"next\": \"^15.1.0\" } }\n"
             }
           ]
         },
         "passes": {
-          "path": "src/features/billing/use-billing-user.ts",
-          "text": "import { useQuery } from \"@tanstack/react-query\";\nimport { getUserWithInvoices } from \"@/lib/api\";\n\nexport function useBillingUser(userId: string) {\n  return useQuery({\n    queryKey: [\"user\", userId, \"with-invoices\"],\n    queryFn: () => getUserWithInvoices(userId),\n  });\n}\n",
+          "path": "src/features/projects/use-projects.ts",
+          "text": "'use client'\n\nimport { useQuery } from '@tanstack/react-query'\n\nexport function useProjects() {\n  return useQuery({\n    queryKey: ['projects'],\n    queryFn: async () => {\n      const res = await fetch('/api/projects')\n      if (!res.ok) throw new Error(`GET /api/projects failed: ${res.status}`)\n      return res.json()\n    },\n  })\n}\n",
           "with": [
             {
-              "path": "src/features/user/use-user.ts",
-              "text": "import { useQuery } from \"@tanstack/react-query\";\nimport { getUser } from \"@/lib/api\";\n\nexport function useUser(id: string) {\n  return useQuery({\n    queryKey: [\"user\", id],\n    queryFn: () => getUser(id),\n  });\n}\n"
-            },
-            {
               "path": "package.json",
-              "text": "{ \"dependencies\": { \"@tanstack/react-query\": \"^5.62.0\" } }\n"
+              "text": "{ \"dependencies\": { \"@tanstack/react-query\": \"^5.62.0\", \"next\": \"^15.1.0\" } }\n"
             }
           ]
         }

@@ -5,11 +5,12 @@
 migrations and `*.prisma` files as text. None is a port, so there is no upstream to score against: each rule is checked
 by its cases (`cases/<id>/`, run by the rule file's own test) and by runs on the apps of
 [README.md](README.md#the-corpus) with the largest Prisma and Drizzle migration histories, whose matches were read.
-After the [frozen test set](#frozen-test-set-2026-11-26) the pack ships three of them (`set-not-null-scans-table` and
-`constraint-on-existing-table-not-valid` on, `lock-timeout` off); the other seven, with no match there, are candidates
-in `candidates/`. What each rule matches, leaves alone and misses, with its corpus numbers and sources, is in the
-"Rule details" of README.md (shipped rules) or `candidates/README.md` (candidates); the verdict on every match read is
-at the end of this file.
+After the [frozen test set](#frozen-test-set-2026-11-26) the pack shipped three of them (`set-not-null-scans-table`
+and `constraint-on-existing-table-not-valid` on, `lock-timeout` off) and the other seven, with no match there, became
+candidates in `candidates/`. After [test set #3](#test-set-3) it ships four, all on: `lock-timeout` turned on, and
+`index-on-existing-table-blocks-writes` promoted from the candidates; six stay candidates. What each rule matches,
+leaves alone and misses, with its corpus numbers and sources, is in the "Rule details" of README.md (shipped rules) or
+`candidates/README.md` (candidates); the verdict on every match read is at the end of this file.
 
 ## Dropped candidates
 
@@ -501,6 +502,83 @@ No match appeared or disappeared on the three measured sets. The library's narro
 folder's declaration there: of the measured apps, only dossier (`prisma/sqlite/schema.prisma`) and webstudio (a
 `schema.prisma` copy inside each migration folder) keep a datasource deeper than the folder's own schema, and both
 also have one beside the folder that declares PostgreSQL.
+
+## Test set #3
+
+Two more sets of open-source apps nobody used to write, tune or fix the rules: test set #2, 37 apps (2026-11-27),
+and test set #3, 41 more. One `run-policies` per pack per app with no Git base, every match read by a reader who did
+not write the rules. Every app ran this pack's rules; the runs stopped by the engine's 5 GB or 50-minute guard were
+other packs'. Test set #2's matches for `concurrently-inside-transaction` and `lock-timeout`, and the fixes they led
+to, are in [Fixes after the first test set](#fixes-after-the-first-test-set); the rest of both sets are below.
+
+The bar, as for the frozen set: a rule ships on only when more than 90% of its matches on apps it was never tuned or
+fixed on are real. A test set counts for a rule only if the rule was not fixed against its findings, so for
+`lock-timeout` (fixed after test sets #1 and #2) only test set #3 counts. Promoting a candidate or keeping a rule on
+takes at least 5 such matches in at least 2 apps; a rule under that floor with no false match stays where it is.
+
+| Rule | Before | Unseen evidence (real of judged) | After |
+|---|---|---|---|
+| `constraint-on-existing-table-not-valid` | on | test set #2 2 of 2, test set #3 3 of 3 (5 of 5, with test set #1 6 of 6 in 4 apps) | on |
+| `set-not-null-scans-table` | on | test set #1 10 of 10 (one app; none on test sets #2 and #3) | on (under the floor, no false match) |
+| `lock-timeout` | off | test set #3 9 of 9, in 9 apps | **on** |
+| `index-on-existing-table-blocks-writes` | candidate | test set #2 5 of 5, in 3 apps (none on #1 or #3) | **on (promoted)** |
+| `column-type-change-rewrites` | candidate | test set #2 1 of 1 | candidate (under the floor) |
+| `volatile-default-rewrites` | candidate | test set #3 1 of 1 | candidate (under the floor) |
+| `concurrently-inside-transaction` | candidate | none since the fix after test set #2 | candidate |
+| `required-column-without-default`, `rename-as-drop-and-add`, `dropped-column-still-used` | candidate | no match on any test set | candidate |
+
+Test set #2, every match of the pack's other rules (paths in the app, line of the finding; commits: kan `d7b2e10`,
+devtrack `f7aaed5`, snagtime `1c95490`, quenti `b8fa352`, captable `b63006f`):
+
+| Rule | App | Migration | Line | Verdict | Why |
+|---|---|---|--:|---|---|
+| `constraint-on-existing-table-not-valid` | kanbn/kan | `packages/db/migrations/20261125102435_AddCardArchive.sql` | 5 | real, low impact | a foreign key from the existing `card` to `user` without `NOT VALID`, on a column added just above (all NULL, so the scan is short); applied by `drizzle-kit migrate` |
+| `constraint-on-existing-table-not-valid` | priyanshu-byte-coder/devtrack | `supabase/migrations/20261125000000_allow_all_ui_locales.sql` | 21 | real, low impact | `ADD CONSTRAINT users_preferred_locale_check CHECK (…)` without `NOT VALID` scans `users` under ACCESS EXCLUSIVE; the file has just dropped the old check, and the table is probably small |
+| `index-on-existing-table-blocks-writes` | kanbn/kan | same migration | 6 | real, low impact | a plain partial `CREATE INDEX` on the existing `card`; the index is nearly empty, but the build takes the SHARE lock and scans the table. Under `drizzle-kit migrate` the message's Drizzle fix (built by hand, then `IF NOT EXISTS`) applies |
+| `index-on-existing-table-blocks-writes` | nateherkai/snagtime | `prisma/postgresql/migrations/202608240003_payment_investor_safety/migration.sql` | 61 | real, low impact | `CREATE UNIQUE INDEX IF NOT EXISTS` on the existing `Booking`, run by `prisma migrate deploy` (where `IF NOT EXISTS` still builds under the lock); the column was added in the same file, so the build is quick |
+| `index-on-existing-table-blocks-writes` | nateherkai/snagtime | same migration | 62 | real, low impact | same shape, another payment column |
+| `index-on-existing-table-blocks-writes` | nateherkai/snagtime | same migration | 63 | real, low impact | same shape, another payment column |
+| `index-on-existing-table-blocks-writes` | quenti-io/quenti | `packages/prisma/migrations/20230627154438_update_highscore_pkey/migration.sql` | 9 | real | `DROP CONSTRAINT "Highscore_pkey", ADD CONSTRAINT "Highscore_pkey" PRIMARY KEY (…)` rebuilds the key's index under ACCESS EXCLUSIVE on `Highscore`, created by an earlier migration |
+| `column-type-change-rewrites` | captableinc/captable | `prisma/migrations/20240906132847_add_new_status/migration.sql` | 11 | real, low impact | Prisma's enum swap, `ALTER COLUMN "status" TYPE "TemplateStatus_new" USING (…)`, rewrites `Template` under ACCESS EXCLUSIVE; probably a small table |
+
+Test set #3, every match:
+
+| Rule | App | Migration | Line | Verdict | Why |
+|---|---|---|--:|---|---|
+| `constraint-on-existing-table-not-valid` | 1146345502/aural-oss | `supabase/migrations/005_account_delete_and_answer_bank.sql` | 8 | real | a foreign key added without `NOT VALID` to `webhooks`, created by `001_initial_schema.sql` and written by the app |
+| `constraint-on-existing-table-not-valid` | 1146345502/aural-oss | same migration | 18 | real | the same on `projects` |
+| `constraint-on-existing-table-not-valid` | 1146345502/aural-oss | same migration | 25 | real | the same on `interviews` |
+| `lock-timeout` | 1146345502/aural-oss | same migration | 5 | real | `alter table public.webhooks drop constraint …` locks the existing `webhooks`; no timeout in the repository |
+| `lock-timeout` | amicalhq/refref | `packages/coredb/drizzle/0002_charming_ikaris.sql` | 1 | real | `ADD COLUMN "use_case"` on `product`, created by the folder's first migration; probably applied already |
+| `lock-timeout` | aurorascharff/next16-conferences | `prisma/migrations/20250821191213_add_long_description/migration.sql` | 2 | real | `ADD COLUMN "longDescription"` on `Talk`, created by the init migration; probably applied already |
+| `lock-timeout` | codu-code/codu | `drizzle/0039_feed_personalization.sql` | 18 | real | a foreign key from a new table to the existing `user` (created and later renamed by earlier migrations) locks `user` |
+| `lock-timeout` | laoshuikaixue/voicehub | `app/drizzle/migrations/20261107134424_admin_audit_logs_and_log_settings.sql` | 15 | real | `ADD COLUMN "apiLogLevel"` on `SystemSettings`, created by the folder's first migration |
+| `lock-timeout` | nextacular/nextacular | `prisma/migrations/20220508151141_add_domain_verification_columns/migration.sql` | 2 | real | `ADD COLUMN "subdomain"` on `domains`, created by the init migration; probably applied already |
+| `lock-timeout` | zeus-12/uxie | `apps/web/prisma/migrations/20261123192717_add_next_citation_ref/migration.sql` | 2 | real | `ADD COLUMN "nextCitationRef"` on `Document`, created by an earlier migration |
+| `lock-timeout` | premieroctet/next-admin | `packages/database/prisma/migrations/20250408131728_add_category_global_order/migration.sql` | 2 | real, low impact | `ADD COLUMN "order" SERIAL NOT NULL` on the existing `Category` of a demo database |
+| `lock-timeout` | sujalxplores/v0.diy | `src/server/db/migrations/0005_chat_api_version.sql` | 3 | real | `ADD COLUMN IF NOT EXISTS "api_version" … NOT NULL` on `chat_ownerships`; its runner (`postgres(url, { max: 1 })`) sets no timeout |
+| `volatile-default-rewrites` | premieroctet/next-admin | same migration as above | 2 | real, low impact | the `SERIAL` column fills each existing `Category` row from the sequence, a rewrite under ACCESS EXCLUSIVE |
+
+No false match on either set for the pack's rules apart from those fixed after test set #2, so no false-match shape
+is open. The weak spot both sets show is impact, not matching: 7 of the 8 index, constraint and column-type matches on
+test set #2, and the next-admin ones on test set #3, are on a column the same migration adds, on a probably small
+table or on a demo database, which the rules cannot tell apart (the messages say when to keep the statement). Several
+of the `lock-timeout` matches are in migrations dated months or years back, probably applied: a whole-repository audit
+reads each folder's newest migration whether or not it has run.
+
+What changed:
+- `lock-timeout`: `"on": true` in pack.json. It keeps its log mode: a timeout set on the database role outside the
+  repository still cannot be seen.
+- `index-on-existing-table-blocks-writes`: moved back from `candidates/rules/` and `candidates/cases/` to `rules/`
+  and `cases/`, its fixture paths to the shared `cases/_git/` and `cases/_other-databases/` shortened to match, and
+  listed in pack.json, on, in steer mode, with the shipped rules' dimensions (`pg.index-blocks-writes`, severity high).
+  What it matches is unchanged. The pack's split test (`the_postgres_migrations_pack_is_split_with_its_crossings_declared`,
+  which runs only shipped rules) found one relation holding a node id in the cross-file part (decision 0677):
+  `iotb_partitioned(s)`, a statement keyed by lib's `pgm_partitioned(g, x)`, which any migration of the folder may
+  give. It is now `iotb_partitioned(d, x)`, keyed by the statement's document and table name, and each finding
+  relates its own statement to it (`pgm_target`, `docof`); the CREATE INDEX clauses share `iotb_build(s, w)`. Its
+  cases and `other_databases` test pass unchanged, and the split test passes with nothing added to its lists.
+- The candidates' copy of the library (`candidates/rules/lib/`) stays identical to `rules/lib/`, unchanged.
 
 ## Every match read, with its verdict
 

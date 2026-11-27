@@ -3,7 +3,7 @@
   "id": "postgres-migrations",
   "name": "Postgres migrations",
   "category": "framework",
-  "covers": "Rerail's own rules for SQL migrations run on PostgreSQL (Prisma, Drizzle and plain SQL), from the PostgreSQL docs and migration linters' advice, for a SET NOT NULL, foreign key or CHECK that scans an existing table under lock; a missing lock_timeout is checked too, off by default.",
+  "covers": "Rerail's own rules for SQL migrations run on PostgreSQL (Prisma, Drizzle and plain SQL), from the PostgreSQL docs and migration linters' advice, for a SET NOT NULL, foreign key or CHECK that scans an existing table under lock, an index built on an existing table without CONCURRENTLY, and a migration that locks an existing table with no lock_timeout set.",
   "reason": "matches Postgres migrations",
   "match": {
     "any": [
@@ -36,6 +36,24 @@
       }
     },
     {
+      "id": "postgres-migrations-practice-index-on-existing-table-blocks-writes",
+      "document": "rules/postgres-migrations-practice-index-on-existing-table-blocks-writes.rerail",
+      "title": "Postgres migrations practice: build an index on an existing table CONCURRENTLY, and attach a UNIQUE or PRIMARY KEY constraint to it with USING INDEX",
+      "group": "Postgres migrations practice",
+      "on": true,
+      "dimensions": { "risk": "availability", "layer": "migrations", "severity": "high", "hazard": "pg.index-blocks-writes" },
+      "examples": {
+        "caught": {
+          "path": "prisma/migrations/20261120093000_order_email/migration.sql",
+          "text": "-- CreateIndex\nCREATE INDEX \"Order_email_idx\" ON \"Order\"(\"email\");\n"
+        },
+        "passes": {
+          "path": "prisma/migrations/20261120093000_order_email/migration.sql",
+          "text": "-- CreateIndex\nCREATE INDEX CONCURRENTLY \"Order_email_idx\" ON \"Order\"(\"email\");\n"
+        }
+      }
+    },
+    {
       "id": "postgres-migrations-practice-set-not-null-scans-table",
       "document": "rules/postgres-migrations-practice-set-not-null-scans-table.rerail",
       "title": "Postgres migrations practice: make an existing column NOT NULL only after a validated CHECK (col IS NOT NULL), so SET NOT NULL does not scan the table under lock",
@@ -58,7 +76,7 @@
       "document": "rules/postgres-migrations-practice-lock-timeout.rerail",
       "title": "Postgres migrations practice: start a migration that locks an existing table with SET lock_timeout",
       "group": "Postgres migrations practice",
-      "on": false,
+      "on": true,
       "dimensions": { "risk": "availability", "layer": "migrations", "severity": "medium", "hazard": "pg.no-lock-timeout" },
       "examples": {
         "caught": {

@@ -197,3 +197,27 @@ poc_offline_name("tools"). poc_offline_name("playwright"). poc_offline_name("cyp
     .expect _ at "src/lib/analytics-db.ts":4
     .expect _ at "src/lib/latest/feed.ts":5
 .end
+
+// The pack.json examples.
+.test example_caught exactly
+    .fixture "app/api/users/route.ts" ```
+        import { PrismaClient } from "@prisma/client";
+
+        export async function GET() {
+          const prisma = new PrismaClient();
+          const count = await prisma.user.count();
+          return Response.json({ count });
+        }
+        ```
+    .expect PerCallClient at "app/api/users/route.ts":4
+.end
+.test example_passes exactly
+    .fixture "app/api/users/route.ts" ```
+        import { prisma } from "@/lib/prisma";
+
+        export async function GET() {
+          const count = await prisma.user.count();
+          return Response.json({ count });
+        }
+        ```
+.end

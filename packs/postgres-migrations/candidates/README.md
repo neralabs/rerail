@@ -1,18 +1,17 @@
 # Rerail rule pack: Postgres migrations, candidates
 
 Rules written for the Postgres migrations pack that are not part of it: not listed in `pack.json`, not published
-(`package.json` ships only `pack.json`, `rules/` and the licence files). Each was on when the pack was measured on 20
-open-source apps that nobody used to write, tune or generalize the rules (the frozen test set, [How the rules were
-measured](../README.md#how-the-rules-were-measured)), and none of them matched there. With no match on apps it was not
-tuned on, a rule's precision on unseen apps is unmeasured, and a rule ships only when more than 90% of its matches on
-such apps are real; each waits for a test set on which it matches. Its corpus and held-out numbers below are tuning
-numbers.
+(`package.json` ships only `pack.json`, `rules/` and the licence files). A rule ships only when more than 90% of its
+matches on apps it was never tuned or fixed on are real, with at least 5 such matches in at least 2 apps ([How the rules
+were measured](../README.md#how-the-rules-were-measured)): the three test sets, 20, 37 and 41 open-source apps that
+nobody used to write, tune or fix the rules. Each candidate here has fewer: no match on any of them, one match, or
+matches only on a test set it was fixed against, so its precision on unseen apps is unmeasured and it waits for a test
+set on which it matches. Its corpus and held-out numbers below are tuning numbers.
 
-Three guard against a lock that stops the app: an index build (`index-on-existing-table-blocks-writes`) or a table
-rewrite (`volatile-default-rewrites`, `column-type-change-rewrites`). Two guard against a failed deploy
-(`concurrently-inside-transaction`, `required-column-without-default`), which with Prisma also blocks every later
-`migrate deploy` until someone resolves it by hand, and two against data loss or a broken app
-(`rename-as-drop-and-add`, `dropped-column-still-used`). Every one reads the migrations as SQL trees, except
+Two guard against a table rewrite that stops the app (`volatile-default-rewrites`, `column-type-change-rewrites`). Two
+guard against a failed deploy (`concurrently-inside-transaction`, `required-column-without-default`), which with
+Prisma also blocks every later `migrate deploy` until someone resolves it by hand, and two against data loss or a
+broken app (`rename-as-drop-and-add`, `dropped-column-still-used`). Every one reads the migrations as SQL trees, except
 `dropped-column-still-used`, which reads `schema.prisma`, Drizzle `pgTable` declarations and raw SQL in the app's
 TypeScript to find a dropped column's live uses.
 
@@ -24,35 +23,30 @@ rules test candidates/rules/<id>.rerail`. To ship one, add its entry back to `pa
 to `rules/` and `cases/` (its shared fixtures back to `../cases/`), and move its details to the README; delete the
 copy of the library once no candidate is left.
 
-Columns: the test set (20 apps, every rule on, no Git base); the 8 held-out apps of the generalization pass (the nine
-SQL rules, no Git base); and the corpus runs the [README](../README.md#how-the-rules-were-measured) describes: Audit
-(no Git base, the 27 corpus apps with SQL migrations; matches and apps), Base (50 pending migrations in 5 clones with a
-Git base), Whole history (the review's 3 apps + the writers' runs, the writers' app count in parentheses) and the
-precision of the matches read.
+Columns: the three test sets (no Git base, every candidate on; a test set a candidate was fixed against is marked so);
+the 8 held-out apps of the generalization pass (the nine SQL rules, no Git base); and the corpus runs the
+[README](../README.md#how-the-rules-were-measured) describes: Audit (no Git base, the 27 corpus apps with SQL
+migrations; matches and apps), Base (50 pending migrations in 5 clones with a Git base), Whole history (the review's 3
+apps + the writers' runs, the writers' app count in parentheses) and the precision of the matches read.
 
-| Candidate | Mode it had | Catches | Test set, 20 apps | Held-out, 8 apps | Audit, 27 apps | Base, 50 pending | Whole history | Precision of read matches |
-|---|---|---|---|---|---|---|---|---|
-| `postgres-migrations-practice-index-on-existing-table-blocks-writes` | Steer | `CREATE [UNIQUE] INDEX` without `CONCURRENTLY`, or `ADD UNIQUE`/`PRIMARY KEY`, on a table that already exists | 0 matches | 3, none real (one operator-run migration that locks the table first); 0 after the explicit-lock fix | 9 (4 apps) | 0 | 204 + 527 (7) | 100% (30 of 30 read by the review, one on a small table; 439 of 442 by the writers, the 3 since fixed) |
-| `postgres-migrations-practice-concurrently-inside-transaction` | Steer | `CREATE`/`DROP INDEX`, `REINDEX` or `DETACH PARTITION … CONCURRENTLY` where the runner wraps the file in a transaction | 0 matches | 0 matches | 0 | 0 | 0 + 0 (10) | n/a (2 adversarial files caught; 45 read before the deploy-script gate, none real) |
-| `postgres-migrations-practice-required-column-without-default` | Steer | `ADD COLUMN … NOT NULL` with no default on an existing table | 0 matches | 0 matches | 0 | 0 | 10 + 96 (7) | 100% (10 of 10; 96 of 96) |
-| `postgres-migrations-practice-volatile-default-rewrites` | Steer | `ADD COLUMN` with a volatile default, a serial type, an identity or a stored generated expression on an existing table | 0 matches | 0 matches | 0 | 0 | 3 + 56 (5) | 100% (3 of 3; 56 of 56) |
-| `postgres-migrations-practice-column-type-change-rewrites` | Steer | a column type change that rewrites an existing table | 0 matches | 0 matches | 1 (1) | 4 (1) | 20 + 134 (8) | 100% (20 of 20 after `TIMESTAMPTZ` → `TIMESTAMP` joined its reverse as left alone; 132 of 134) |
-| `postgres-migrations-practice-rename-as-drop-and-add` | Log | a `DROP COLUMN` plus an `ADD COLUMN` of the same type in one migration: a rename that deletes the data | 0 matches | 0 matches | 0 | 0 | 4 + 67 (10) | 50% (2 of 4); 82% (55 of 67) |
-| `postgres-migrations-practice-dropped-column-still-used` | Log | a column or table dropped while `schema.prisma`, a Drizzle `pgTable` or raw SQL still uses it | 0 matches | not run | 0 in 10 apps (7 before the review's fixes, all civitai, all false) | — | 0 (13) | n/a (7 of 7 false before the fixes; a drop added to a copy of rallly is reported) |
+| Candidate | Mode it had | Catches | Test set #1, 20 apps | Test set #2, 37 apps | Test set #3, 41 apps | Held-out, 8 apps | Audit, 27 apps | Base, 50 pending | Whole history | Precision of read matches |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `postgres-migrations-practice-concurrently-inside-transaction` | Steer | `CREATE`/`DROP INDEX`, `REINDEX` or `DETACH PARTITION … CONCURRENTLY` where the runner wraps the file in a transaction | 0 matches | 25 in 2 apps, none real; fixed against them | 0 matches | 0 matches | 0 | 0 | 0 + 0 (10) | n/a (2 adversarial files caught; 45 read before the deploy-script gate, none real) |
+| `postgres-migrations-practice-required-column-without-default` | Steer | `ADD COLUMN … NOT NULL` with no default on an existing table | 0 matches | 0 matches | 0 matches | 0 matches | 0 | 0 | 10 + 96 (7) | 100% (10 of 10; 96 of 96) |
+| `postgres-migrations-practice-volatile-default-rewrites` | Steer | `ADD COLUMN` with a volatile default, a serial type, an identity or a stored generated expression on an existing table | 0 matches | 0 matches | 1 of 1 real (under the floor) | 0 matches | 0 | 0 | 3 + 56 (5) | 100% (3 of 3; 56 of 56) |
+| `postgres-migrations-practice-column-type-change-rewrites` | Steer | a column type change that rewrites an existing table | 0 matches | 1 of 1 real (under the floor) | 0 matches | 0 matches | 1 (1) | 4 (1) | 20 + 134 (8) | 100% (20 of 20 after `TIMESTAMPTZ` → `TIMESTAMP` joined its reverse as left alone; 132 of 134) |
+| `postgres-migrations-practice-rename-as-drop-and-add` | Log | a `DROP COLUMN` plus an `ADD COLUMN` of the same type in one migration: a rename that deletes the data | 0 matches | 0 matches | 0 matches | 0 matches | 0 | 0 | 4 + 67 (10) | 50% (2 of 4); 82% (55 of 67) |
+| `postgres-migrations-practice-dropped-column-still-used` | Log | a column or table dropped while `schema.prisma`, a Drizzle `pgTable` or raw SQL still uses it | 0 matches | 0 matches | 0 matches | not run | 0 in 10 apps (7 before the review's fixes, all civitai, all false) | — | 0 (13) | n/a (7 of 7 false before the fixes; a drop added to a copy of rallly is reported) |
 
 On the three corpus repositories with the longest histories, a whole-repository audit (each folder's newest
-migration) gave, against the writers' whole-history matches: `index-on-existing-table-blocks-writes` langfuse 1 (was
-93), trigger.dev 0, documenso 0 (was 73); `required-column-without-default` 0 (was 9 in langfuse and in documenso);
-`column-type-change-rewrites` 0 (was 10, 17, 9); `rename-as-drop-and-add` 0 (was 11, 24, 4);
-`concurrently-inside-transaction`, `volatile-default-rewrites` and `dropped-column-still-used` 0 (was 0). The one
-match, langfuse's `20261120140000_add_gateway_spend_limit_warning_thresholds`, rebuilds a unique index on
-`gateway_spend_limit_alerts`, a table an earlier migration created, without `CONCURRENTLY` (line 10): real. Over the
-27 corpus apps with SQL migrations, `index-on-existing-table-blocks-writes` gave 9 findings in 4 apps (papermark's
-`20260820000000_add_multiple_team_brands` alone 5) and `column-type-change-rewrites` 1 (cal.diy's enum recreation on
-`Webhook`), all real (one on a small table, airbroke's `accounts`); `dropped-column-still-used`, which before the
-review read every migration as raw text, gave 7 findings on civitai, all false (commented-out drops, a `DROP TABLE`
-name list that ran into the next comment, a `/// @view` model, an output alias without AS); it now reads only pending
-migrations and skips comments, and gives 0 on civitai and on the nine other apps re-run.
+migration) gave, against the writers' whole-history matches: `required-column-without-default` 0 (was 9 in langfuse
+and in documenso); `column-type-change-rewrites` 0 (was 10, 17, 9); `rename-as-drop-and-add` 0 (was 11, 24, 4);
+`concurrently-inside-transaction`, `volatile-default-rewrites` and `dropped-column-still-used` 0 (was 0). Over the 27
+corpus apps with SQL migrations, `column-type-change-rewrites` gave 1 finding (cal.diy's enum recreation on
+`Webhook`), real; `dropped-column-still-used`, which before the review read every migration as raw text, gave 7
+findings on civitai, all false (commented-out drops, a `DROP TABLE` name list that ran into the next comment, a `///
+@view` model, an output alias without AS); it now reads only pending migrations and skips comments, and gives 0 on
+civitai and on the nine other apps re-run.
 
 ## Rule details
 
@@ -61,102 +55,12 @@ Every SQL candidate reads `**/migrations/**/*.sql` and `**/drizzle/**/*.sql` out
 only in pending PostgreSQL migrations (see [Which migrations a rule
 reads](../README.md#which-migrations-a-rule-reads)); the lists below do not repeat that.
 
-### `postgres-migrations-practice-index-on-existing-table-blocks-writes`
-
-**Why a candidate.** 0 matches on the 20 test apps. Held-out: 3 matches, none real, all in one jitsu migration run by
-an operator that takes `LOCK TABLE … IN ACCESS EXCLUSIVE MODE` (writes stopped first) before its index builds; the
-explicit-lock fix leaves them alone (0 on the re-run).
-
-A plain `CREATE INDEX` locks the table against writes for the whole build, and `ADD CONSTRAINT … UNIQUE` / `ADD
-PRIMARY KEY` build the same index under an ACCESS EXCLUSIVE lock that blocks reads too. Prisma writes a plain `CREATE
-UNIQUE INDEX` for every new `@unique` and `CREATE INDEX` for every `@@index`, so adding one to a model whose table is
-in production stalls the app for as long as the build takes.
-
-Catches, on a table that already exists:
-- `CREATE INDEX` and `CREATE UNIQUE INDEX` without `CONCURRENTLY` (sqlfluff PG01 skips UNIQUE);
-- `ALTER TABLE … ADD [CONSTRAINT …] UNIQUE (…)` and `ADD [CONSTRAINT …] PRIMARY KEY (…)`;
-- `ALTER TABLE … ADD COLUMN … UNIQUE` / `… PRIMARY KEY`.
-
-The fix in the message follows the runner, told from the layout: Prisma (`…/migrations/<dir>/migration.sql`: put
-`CREATE INDEX CONCURRENTLY` alone in a migration of its own, which works on every Prisma version, written with
-`prisma migrate dev --create-only` and edited before it is applied, never by editing a migration `migrate dev` has
-already applied), drizzle-kit (a `meta/_journal.json` beside the file, or drizzle-kit 1.0's `snapshot.json` beside a
-`migration.sql`: drizzle runs all pending migrations in one transaction, so build the index by hand before deploying
-and write it in the migration as `CREATE INDEX IF NOT EXISTS`, which the rule then accepts), or plain SQL
-(`CONCURRENTLY`, outside any transaction). Constraints are steered to a concurrent unique index plus `ADD CONSTRAINT …
-UNIQUE USING INDEX` / `PRIMARY KEY USING INDEX`. An index on a partitioned parent (a table created `PARTITION BY …`),
-where PostgreSQL refuses `CONCURRENTLY`, gets the per-partition fix instead: the index on the parent alone with `ON
-ONLY`, `CREATE INDEX CONCURRENTLY` on each partition, then `ALTER INDEX … ATTACH PARTITION`.
-
-Leaves alone:
-- `CREATE [UNIQUE] INDEX CONCURRENTLY`; `ADD CONSTRAINT … UNIQUE USING INDEX …` and `PRIMARY KEY USING INDEX …`;
-- a table that is not an existing one (created, materialized or emptied earlier in the file, or given a required
-  column first);
-- `CREATE INDEX … ON ONLY t` (a partitioned parent's index shell);
-- in a Drizzle migration, `CREATE [UNIQUE] INDEX IF NOT EXISTS`: the form the Drizzle fix asks for, the index built
-  by hand beforehand (before this, the rule reported the statement its own message prescribed);
-- `ADD CONSTRAINT … UNIQUE`/`PRIMARY KEY` on a partitioned parent (`USING INDEX` is refused there);
-- `ADD CONSTRAINT … EXCLUDE` (no `USING INDEX` form to steer to);
-- an `ALTER TABLE` that also changes a column's type (`ALTER COLUMN "id" SET DATA TYPE TEXT, ADD CONSTRAINT …
-  PRIMARY KEY`, Prisma's primary-key swap): the rewrite holds the lock anyway, and the column-type-change rule owns it;
-- a statement on a table the migration has already locked itself with `LOCK TABLE t` (ACCESS EXCLUSIVE, the default
-  mode; for a `CREATE INDEX`, any mode that stops writes: SHARE, SHARE ROW EXCLUSIVE, EXCLUSIVE): the lock holds to
-  the end of the transaction, so the build stalls nothing the migration did not choose to stop (an operator-run
-  migration in a maintenance window).
-
-Gaps: a table known to stay small is reported (nothing in the repository says how big a table is). `EXCLUDE`
-constraints, and `UNIQUE`/`PRIMARY KEY` constraints on a partitioned table, also block and are not reported. A Drizzle
-`IF NOT EXISTS` index is trusted to have been built by hand. The Prisma version is not read, so the Prisma fix is the one that works on every version
-(alone in its own migration), though Prisma 7.4+ also accepts it beside other statements outside `BEGIN … COMMIT`.
-
-Sources:
-- PostgreSQL, CREATE INDEX, "Building Indexes Concurrently"
-  (https://www.postgresql.org/docs/current/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY): "Normally PostgreSQL
-  locks the table to be indexed against writes and performs the entire index build with a single scan of the table.
-  Other transactions can still read the table, but if they try to insert, update, or delete rows in the table they
-  will block until the index build is finished."
-- PostgreSQL, ALTER TABLE (https://www.postgresql.org/docs/current/sql-altertable.html): `ADD table_constraint_using_index`
-  "This form adds a new PRIMARY KEY or UNIQUE constraint to a table based on an existing unique index."
-- Squawk, require-concurrent-index-creation (https://squawkhq.com/docs/require-concurrent-index-creation): "During a
-  normal index creation, table updates are blocked, but reads are still allowed." / "This rule ignores indexes added
-  to tables created in the same transaction."
-- Squawk, disallowed-unique-constraint (https://squawkhq.com/docs/disallowed-unique-constraint): "Adding a `UNIQUE`
-  constraint requires an `ACCESS EXCLUSIVE` lock which blocks reads and writes to the table while the index is
-  built."
-- strong_migrations (https://github.com/ankane/strong_migrations#adding-an-index-non-concurrently): "In Postgres,
-  adding an index non-concurrently blocks writes." / "indexes on new tables (those created in the same migration)
-  don’t require this."
-- Prisma (https://github.com/prisma/prisma/issues/14456): "ERROR: CREATE INDEX CONCURRENTLY cannot run inside a
-  transaction block"; "I've found that a migration script that contains ONLY the `CREATE INDEX CONCURRENTLY` command
-  will succeed."
-- drizzle-orm (https://github.com/drizzle-team/drizzle-orm/issues/860, open): "[BUG]: Can't create index
-  concurrently due to transaction block".
-
-Corpus, review: audit of the 27 apps with SQL migrations, 9 matches in 4 (papermark 5 on `Brand`, `Team`, `Link`,
-`Dataroom`; langfuse 1; airbroke 1, on the one-row-per-login `accounts`; customermates 2), all real; base, 0 in the 50
-pending migrations (all 36 plain `CREATE INDEX` there are on tables created in the same file or by another pending
-migration, which the Git-base exemption leaves alone); whole history of papermark, comp and customermates, 204 (64, 60,
-80), 17 read, all real. Re-run after the fixes: the same 9 audit and 204 whole-history matches, and 0 on trigger.dev
-(its partitioned tables are indexed `ON ONLY` or on new tables); the adversarial Drizzle `CREATE INDEX IF NOT EXISTS`
-is no longer reported, the drizzle-kit 1.0 folder gets the Drizzle text, and a partitioned parent the per-partition
-one. Writers' whole-history run on 7 repositories with the most Prisma migration SQL (umami, rallly, documenso,
-useSend, langfuse, shelf.nu, inbox-zero): 527 matches in 7. 442 read (every match of six repositories, every fourth of inbox-zero's
-118): 439 real, 3 not, all three Prisma's primary-key swap with `SET DATA TYPE` in the same `ALTER TABLE` (since left
-to the column-type-change rule). Every reported statement builds an index on a table an earlier migration created. The
-corpus also shows the fix in use: langfuse writes each `CREATE INDEX CONCURRENTLY` alone in its own Prisma migration
-(`20240226165118_add_observations_index` and 20 more), useSend does the same
-(`20261117010000_email_team_created_at_index`), and shelf.nu's own comments make the size call the message asks for
-(`20260525110348_add_trigram_indexes_for_simple_search`: "Each statement takes an ACCESS EXCLUSIVE lock on its table
-for the duration of the index build. On the largest known tenant the affected tables are small … If a much larger
-workspace is onboarded later, run this migration during a low-traffic window or split it across multiple
-CONCURRENTLY-built migrations.").
-
 ### `postgres-migrations-practice-concurrently-inside-transaction`
 
-**Why a candidate.** 0 matches on the 20 test apps and 0 on the 8 held-out apps. On the second test set (37 apps) it
+**Why a candidate.** 0 matches on test set #1 (20 apps) and on the 8 held-out apps. On test set #2 (37 apps) it
 matched 25 times in 2 apps, none real: both were Drizzle projects whose own migration runner applies a migration
-holding `CONCURRENTLY` statement by statement outside a transaction, which the rule now reads (see Leaves alone). The
-next test set decides.
+holding `CONCURRENTLY` statement by statement outside a transaction, which the rule now reads (see Leaves alone). On
+test set #3 (41 apps), the first since that fix, 0 matches: its precision on unseen apps is still unmeasured.
 
 PostgreSQL refuses `CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY` and `ALTER TABLE …
 DETACH PARTITION … CONCURRENTLY` inside a transaction block. A migration that puts one there fails on deploy: Prisma
@@ -250,8 +154,8 @@ it follows `index-on-existing-table-blocks-writes` naively.
 
 ### `postgres-migrations-practice-required-column-without-default`
 
-**Why a candidate.** 0 matches on the 20 test apps and 0 on the 8 held-out apps, so it has matched no app it was not
-tuned on.
+**Why a candidate.** 0 matches on the three test sets (20, 37 and 41 apps) and on the 8 held-out apps, so it has
+matched no app it was not tuned on.
 
 `ALTER TABLE t ADD COLUMN c … NOT NULL` with no `DEFAULT` has no value for the rows `t` already holds, so PostgreSQL
 refuses it on any table that is not empty ("column c contains null values"). A dev database is usually empty, so
@@ -310,8 +214,9 @@ rule steers to (`backfill_participant_token` then `require_participant_token`).
 
 ### `postgres-migrations-practice-volatile-default-rewrites`
 
-**Why a candidate.** 0 matches on the 20 test apps and 0 on the 8 held-out apps, so it has matched no app it was not
-tuned on.
+**Why a candidate.** 0 matches on test sets #1 and #2 and on the 8 held-out apps. On test set #3 (41 apps), 1 match,
+real at low impact: next-admin's `ADD COLUMN "order" SERIAL NOT NULL` on its existing `Category`, a demo app's table,
+rewritten for the sequence's per-row values. 1 of 1 in one app is under the floor of 5 matches in 2 apps.
 
 Since PostgreSQL 11, `ADD COLUMN … DEFAULT <constant>` (or a stable expression such as `now()`) only records the
 default in the catalog. A volatile default must be computed for each existing row, so PostgreSQL rewrites the whole
@@ -361,8 +266,9 @@ id-type swap (`DROP COLUMN "id", ADD COLUMN "id" SERIAL NOT NULL` / `UUID … DE
 
 ### `postgres-migrations-practice-column-type-change-rewrites`
 
-**Why a candidate.** 0 matches on the 20 test apps and 0 on the 8 held-out apps, so it has matched no app it was not
-tuned on.
+**Why a candidate.** 0 matches on test sets #1 and #3 and on the 8 held-out apps. On test set #2 (37 apps), 1 match,
+real at low impact: captable's Prisma enum swap (`ALTER COLUMN "status" TYPE "TemplateStatus_new" USING …`), which
+rewrites its `Template` table, probably small. 1 of 1 in one app is under the floor of 5 matches in 2 apps.
 
 Changing a column's type (`ALTER TABLE … ALTER COLUMN … [SET DATA] TYPE …`) makes PostgreSQL rewrite the whole table
 and every index on it while it holds an ACCESS EXCLUSIVE lock, unless the old type is binary coercible to the new one
@@ -422,8 +328,8 @@ that holds neither, the rule leaves them alone. Near misses seen and left alone:
 
 ### `postgres-migrations-practice-rename-as-drop-and-add`
 
-**Why a candidate.** 0 matches on the 20 test apps and 0 on the 8 held-out apps, so it has matched no app it was not
-tuned on.
+**Why a candidate.** 0 matches on the three test sets (20, 37 and 41 apps) and on the 8 held-out apps, so it has
+matched no app it was not tuned on.
 
 `prisma migrate dev` cannot tell a renamed field from a removed field plus a new one. Renaming `biograpy` to
 `biography` in `schema.prisma` generates `ALTER TABLE "Profile" DROP COLUMN "biograpy", ADD COLUMN "biography" TEXT NOT
@@ -490,9 +396,9 @@ snake_case switch, cal.diy's `orgId` → `organizationId`, shelf.nu's `itemId` �
 
 ### `postgres-migrations-practice-dropped-column-still-used`
 
-**Why a candidate.** 0 matches on the 20 test apps. Not run on the held-out apps (the generalization runs read only
-the nine SQL rules), and 0 corpus matches since the review's fixes, so it has never been seen to match a real
-repository: a history that applied cleanly rarely drops a column it still declares.
+**Why a candidate.** 0 matches on the three test sets (20, 37 and 41 apps). Not run on the held-out apps (the
+generalization runs read only the nine SQL rules), and 0 corpus matches since the review's fixes, so it has never been
+seen to match a real repository: a history that applied cleanly rarely drops a column it still declares.
 
 Catches a migration (`**/migrations/**/*.sql`, `**/drizzle/**/*.sql`) that drops a column (`ALTER TABLE "T" DROP
 COLUMN "c"`, also one action of a multi-action `ALTER TABLE`, `IF EXISTS`) or a table (`DROP TABLE "T"`) while the app

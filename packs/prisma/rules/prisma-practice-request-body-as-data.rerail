@@ -51,34 +51,39 @@
 
 .violation RequestBodyAsData(at: node, k: symbol, src: symbol, m: symbol, op: symbol)
     "`{k}` of `{m}.{op}()` is {src}, unfiltered: the client chooses every column Prisma writes, so it can add `role`, an owner id, a balance or a nested relation write. Parse it with a schema that lists the fields this endpoint may set and pass the parsed result (`const input = Schema.parse(body)`; zod drops unknown keys only in what parse returns, not in the object you passed), or copy the fields one by one (`name: body.name`); set the owner and other server-side fields from the session. Leave it only if every field of the model may be set by whoever can call this endpoint."
-RequestBodyAsData(v, k, src, m, op) :- rbd_write(c, m, op, k), rbd_arg_prop(c, k, v), rbd_tainted(v, src), docof(c, d),
-    !rbd_test_doc(d).
+RequestBodyAsData(v, k, src, m, op) :- rbd_write(c, m, op, k, s, w), rbd_arg_prop(c, k, v), rbd_tainted(v, src),
+    docof(c, d), !rbd_test_doc(d), doc(d, p, _), pcg_holds(p, s, w), rbd_model(@lower(m)).
 
 // ---- Prisma writes ------------------------------------------------------------------------------------------------
-// rbd_model(x): x is a model of a schema file, lower-cased: `model ApiKey {` gives "apikey".
-.decl rbd_model(x: symbol)
+// rbd_model(x): x is a model of a schema file, lower-cased: `model ApiKey {` gives "apikey". The schema is another
+// file's, so this crosses, by symbols (decision 0677): a write states its model's name, and the finding joins it.
+.decl rbd_model(x: symbol) cross_file
 rbd_model(@lower(m)) :- doc(d, p, _), suffix(".prisma", p), source(d, sp),
     match_all("(?m)^[ \\t]*model[ \\t]+[A-Za-z_][A-Za-z0-9_]*[ \\t]*\\{", sp, s), text(s, t),
     match("\\s*model\\s+(?<m>[A-Za-z_][A-Za-z0-9_]*)\\s*\\{", t).
-// rbd_write(c, m, op, k): c is `<x>.<m>.<op>(...)`, a write of model m whose row data is under key k.
-.decl rbd_write(c: node, m: symbol, op: symbol, k: symbol)
-rbd_write(c, m, op, k) :- rbd_shape(c, m, op, k, r), pcg_client(r).
+// rbd_write(c, m, op, k, s, w): c is `<x>.<m>.<op>(...)` on a Prisma client where pcg_holds(path, s, w) holds for c's
+// file, a write whose row data is under key k; the finding asks rbd_model of m.
+.decl rbd_write(c: node, m: symbol, op: symbol, k: symbol, s: symbol, w: symbol)
+rbd_write(c, m, op, k, s, w) :- rbd_shape(c, m, op, k, r), pcg_client(r, s, w).
 .decl rbd_shape(c: node, m: symbol, op: symbol, k: symbol, r: node)
-rbd_shape(c, m, op, k, r) :- called(c, f), static_prop(f, o, op), rbd_write_key(op, k), static_prop(o, r, m),
-    rbd_model(@lower(m)).
+rbd_shape(c, m, op, k, r) :- called(c, f), static_prop(f, o, op), rbd_write_key(op, k), static_prop(o, r, m).
 .decl pcg_ask(r: node)
 pcg_ask(r) :- rbd_shape(_, _, _, _, r).
 // ---- the Prisma client gate (the same block in each rule of the pack that matches `<r>.<model>.<op>(…)`) ----------
-// pcg_client(r): receiver r (pcg_ask) is a Prisma client. Resolved Prisma: r's root name is the parameter of a
-// `$transaction` callback; a parameter, variable or class member typed with a Prisma client type (`PrismaClient`,
-// `Prisma.TransactionClient`, `PrismaService`); a variable whose value makes or extends one (`new PrismaClient(…)`,
-// `prisma.$extends(…)`); or an import from a Prisma module: `@prisma/client`, a generated client, a specifier with a
-// path part naming prisma (`@/lib/prisma`, `@acme/prisma`), or a file of the run that makes a PrismaClient. Resolved
-// otherwise: an import from Drizzle, Kysely, Knex, TypeORM, Sequelize, Mongoose, Objection or MikroORM, a file of the
-// run that imports one, or a variable made by one (`drizzle(…)`, `new Kysely(…)`): never Prisma. Not resolved (`ctx.db`
-// of a tRPC context, an import from a file the run reads in another lane): accepted only under the client names of
-// pcg_named, and only when a package.json of the repository lists Prisma and the file's package and the root list
-// no other ORM.
+// pcg_client(r, s, w): receiver r (pcg_ask) is a Prisma client where pcg_holds(p, s, w) holds for r's file at path p.
+// Resolved Prisma: r's root name is the parameter of a `$transaction` callback; a parameter, variable or class member
+// typed with a Prisma client type (`PrismaClient`, `Prisma.TransactionClient`, `PrismaService`); a variable whose
+// value makes or extends one (`new PrismaClient(…)`, `prisma.$extends(…)`); or an import from a Prisma module:
+// `@prisma/client`, a generated client, a specifier with a path part naming prisma (`@/lib/prisma`, `@acme/prisma`),
+// or a file of the run that makes a PrismaClient. Resolved otherwise: an import from Drizzle, Kysely, Knex, TypeORM,
+// Sequelize, Mongoose, Objection or MikroORM, a file of the run that imports one, or a variable made by one
+// (`drizzle(…)`, `new Kysely(…)`): never Prisma. Not resolved (`ctx.db` of a tRPC context, an import from a file the
+// run reads in another lane): accepted only under the client names of pcg_named, and only when a package.json of the
+// repository lists Prisma and the file's package and the root list no other ORM.
+// What the file an import names makes or imports is another file's (pcg_target, by paths alone, decision 0677): r's
+// own file states what it needs of it, keyed by the specifier s, and the finding joins pcg_holds. w is "" (nothing:
+// r is no import, s is ""), "!other" (s names no file of another ORM) or "prisma" (s names a file of Prisma's, and
+// none of another ORM).
 .decl pcg_root(r: node, o: node)
 pcg_root(r, x) :- pcg_ask(r), deparen(r, x).
 pcg_root(r, o) :- pcg_root(r, e), kind(e, "member_expression"), field(e, "object", o0), deparen(o0, o).
@@ -88,23 +93,27 @@ pcg_root(r, o) :- pcg_root(r, e), kind(e, "await_expression"), child(e, o0, 0), 
 // pcg_base(r, o): o is the identifier or `this` r's chain starts from.
 .decl pcg_base(r: node, o: node)
 pcg_base(r, o) :- pcg_root(r, o), (kind(o, "identifier") ; kind(o, "this")).
+// pcg_prisma(r), pcg_other(r): r's own file resolves it as Prisma's, as another ORM's.
 .decl pcg_prisma(r: node)
 pcg_prisma(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, s), pcg_prisma_site(s).
-pcg_prisma(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _),
-    pcg_prisma_spec(src).
-pcg_prisma(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _), docof(o, d),
-    pcg_target(d, src, dt), pcg_prisma_mod(dt).
+pcg_prisma(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), pcg_prisma_spec(sp).
 pcg_prisma(r) :- pcg_base(r, o), kind(o, "this"), pcg_this_prop(r, o, x), kind(cb, "class_body"), within(o, cb),
     within(s, cb), pcg_member_named(s, x), pcg_prisma_site(s).
 .decl pcg_other(r: node)
 pcg_other(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, s), pcg_other_site(s).
-pcg_other(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _),
-    pcg_other_spec(src).
-pcg_other(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _), docof(o, d),
-    pcg_target(d, src, dt), pcg_other_mod(dt).
-.decl pcg_client(r: node)
-pcg_client(r) :- pcg_prisma(r), !pcg_other(r).
-pcg_client(r) :- pcg_ask(r), !pcg_prisma(r), !pcg_other(r), pcg_named(r), docof(r, d), pcg_prisma_repo(d).
+pcg_other(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), pcg_other_spec(sp).
+// pcg_imported(r, s): r's root name is imported from specifier s.
+.decl pcg_imported(r: node, s: symbol)
+pcg_imported(r, s) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, s, _).
+// pcg_unnamed_ok(r): the names and the repository accept r unresolved.
+.decl pcg_unnamed_ok(r: node)
+pcg_unnamed_ok(r) :- pcg_ask(r), pcg_named(r), docof(r, d), pcg_prisma_repo(d).
+.decl pcg_client(r: node, s: symbol, w: symbol)
+pcg_client(r, "", "") :- pcg_prisma(r), !pcg_other(r), !pcg_imported(r, _).
+pcg_client(r, "", "") :- pcg_ask(r), !pcg_prisma(r), !pcg_other(r), !pcg_imported(r, _), pcg_unnamed_ok(r).
+pcg_client(r, s, "!other") :- pcg_prisma(r), !pcg_other(r), pcg_imported(r, s).
+pcg_client(r, s, "!other") :- pcg_ask(r), !pcg_prisma(r), !pcg_other(r), pcg_imported(r, s), pcg_unnamed_ok(r).
+pcg_client(r, s, "prisma") :- pcg_ask(r), !pcg_prisma(r), !pcg_other(r), pcg_imported(r, s).
 // pcg_this_prop(r, o, x): r's chain reads `this.x` (o the `this`).
 .decl pcg_this_prop(r: node, o: node, x: symbol)
 pcg_this_prop(r, o, x) :- pcg_root(r, e), kind(e, "member_expression"), field(e, "object", o0), deparen(o0, o),
@@ -142,29 +151,37 @@ pcg_site_type(s, t) :- (kind(s, "variable_declarator") ; kind(s, "public_field_d
     text(a, t).
 .decl pcg_site_value(s: node, v: node)
 pcg_site_value(s, v) :- (kind(s, "variable_declarator") ; kind(s, "public_field_definition")), field(s, "value", v).
-// pcg_prisma_spec(s), pcg_other_spec(s): an import specifier of a Prisma module, of another ORM.
-.decl pcg_prisma_spec(s: symbol)
-pcg_prisma_spec(s) :- import_binding(_, _, s, _), match("(?i)(?:.*/)?[^/]*prisma[^/]*(?:/.*)?", s).
-.decl pcg_other_spec(s: symbol)
-pcg_other_spec(s) :- import_binding(_, _, s, _),
+// pcg_prisma_spec(sp), pcg_other_spec(sp): the import at sp names a Prisma module, another ORM's, by its specifier.
+// Tested at the import, not as a table of every file's specifiers (decision 0677).
+.decl pcg_prisma_spec(sp: node)
+pcg_prisma_spec(sp) :- import_binding(sp, _, s, _), match("(?i)(?:.*/)?[^/]*prisma[^/]*(?:/.*)?", s).
+.decl pcg_other_spec(sp: node)
+pcg_other_spec(sp) :- import_binding(sp, _, s, _),
     match("(?:drizzle-orm|kysely|knex|typeorm|sequelize|sequelize-typescript|mongoose|objection|@mikro-orm/[^/]+)(?:/.*)?", s).
-// pcg_prisma_mod(d), pcg_other_mod(d): file d makes a PrismaClient or imports a Prisma module; imports another ORM.
-.decl pcg_prisma_mod(d: number)
-pcg_prisma_mod(d) :- kind(n, "new_expression"), field(n, "constructor", c), text(c, "PrismaClient"), docof(n, d).
-pcg_prisma_mod(d) :- import_binding(sp, _, s, _), pcg_prisma_spec(s), docof(sp, d).
-.decl pcg_other_mod(d: number)
-pcg_other_mod(d) :- import_binding(sp, _, s, _), pcg_other_spec(s), docof(sp, d).
-// pcg_target(d, s, d2): specifier s imported by d names file d2 of the run: relative to d, or `@/x`, `~/x`, `#/x`
-// matched by the path's end (tsconfig `paths` are not read), or `@scope/pkg/x` as /pkg/x or /pkg/src/x.
-.decl pcg_spec(d: number, s: symbol)
-pcg_spec(d, s) :- pcg_base(_, o), ref_site(o, sp), import_binding(sp, _, s, _), docof(o, d).
-.decl pcg_target(d: number, s: symbol, d2: number)
-pcg_target(d, s, d2) :- pcg_spec(d, s), prefix(".", s), doc(d, p, _), b = @join(@dir(p), s), pcg_ext(e),
-    doc(d2, cat(b, e), _).
-pcg_target(d, s, d2) :- pcg_spec(d, s), match("[@~#]/(?<r>.+)", s), pcg_ext(e), t = cat("/", r, e), doc(d2, f, _),
+// pcg_mod(f, w): the file at path f makes a PrismaClient or imports a Prisma module (w = "prisma"), or imports
+// another ORM (w = "other").
+.decl pcg_mod(f: symbol, w: symbol)
+pcg_mod(f, "prisma") :- kind(n, "new_expression"), field(n, "constructor", c), text(c, "PrismaClient"), docof(n, d),
+    doc(d, f, _).
+pcg_mod(f, "prisma") :- pcg_prisma_spec(sp), docof(sp, d), doc(d, f, _).
+pcg_mod(f, "other") :- pcg_other_spec(sp), docof(sp, d), doc(d, f, _).
+// pcg_target(p, s, w): specifier s, imported by the file at path p, names a file of the run that is a pcg_mod of
+// kind w: relative to p, or `@/x`, `~/x`, `#/x` matched by the path's end (tsconfig `paths` are not read), or
+// `@scope/pkg/x` as /pkg/x or /pkg/src/x. It pairs two files, by their paths alone (decision 0677).
+.decl pcg_spec(p: symbol, s: symbol)
+pcg_spec(p, s) :- pcg_client(r, s, _), s != "", docof(r, d), doc(d, p, _).
+.decl pcg_target(p: symbol, s: symbol, w: symbol) cross_file
+pcg_target(p, s, w) :- pcg_spec(p, s), prefix(".", s), b = @join(@dir(p), s), pcg_ext(e), pcg_mod(cat(b, e), w).
+pcg_target(p, s, w) :- pcg_spec(p, s), match("[@~#]/(?<r>.+)", s), pcg_ext(e), t = cat("/", r, e), pcg_mod(f, w),
     (suffix(t, f) ; f = cat(r, e)).
-pcg_target(d, s, d2) :- pcg_spec(d, s), match("@[^/]+/(?<k>[^/]+)/(?<r>.+)", s), pcg_ext(e), doc(d2, f, _),
+pcg_target(p, s, w) :- pcg_spec(p, s), match("@[^/]+/(?<k>[^/]+)/(?<r>.+)", s), pcg_ext(e), pcg_mod(f, w),
     (suffix(cat("/", k, "/", r, e), f) ; suffix(cat("/", k, "/src/", r, e), f)).
+// pcg_holds(p, s, w): what pcg_client asks of specifier s holds for the file at path p (w: "" always, "!other",
+// "prisma"). The importing file's finding reads it at its own path.
+.decl pcg_holds(p: symbol, s: symbol, w: symbol) cross_file
+pcg_holds(p, "", "") :- doc(_, p, _).
+pcg_holds(p, s, "!other") :- pcg_spec(p, s), !pcg_target(p, s, "other").
+pcg_holds(p, s, "prisma") :- pcg_target(p, s, "prisma"), !pcg_target(p, s, "other").
 .decl pcg_ext(e: symbol)
 pcg_ext(".ts"). pcg_ext(".tsx"). pcg_ext(".js"). pcg_ext(".jsx"). pcg_ext(".mts"). pcg_ext(".mjs").
 pcg_ext("/index.ts"). pcg_ext("/index.tsx"). pcg_ext("/index.js").
@@ -176,8 +193,6 @@ pcg_prisma_repo(d) :- pcg_ask(r), docof(r, d), pcg_lists_prisma(1), !pcg_orm_doc
 pcg_lists_prisma(1) :- package_field(_, k, _),
     (k = "dependencies/@prisma~1client" ; k = "devDependencies/@prisma~1client" ; k = "dependencies/prisma" ;
      k = "devDependencies/prisma").
-// A Prisma schema in the repository is the same evidence.
-pcg_lists_prisma(1) :- doc(_, p, _), suffix(".prisma", p).
 .decl pcg_orm_doc(d: number)
 pcg_orm_doc(d) :- pcg_ask(r), docof(r, d), doc(d, p, _), package_for(p, dir), (pcg_orm_pkg(dir) ; pcg_orm_pkg("")).
 .decl pcg_orm_pkg(dir: symbol)
@@ -244,17 +259,17 @@ rbd_param_type(site, t) :- site_form(site, "param"), field(p, "pattern", site), 
 rbd_site(site, src) :- rbd_const(site, v), rbd_tainted(v, src).
 rbd_site(site, src) :- pattern_name(site, _, d), field(d, "value", v), rbd_tainted(v, src), !rbd_reassigned(site).
 rbd_site(site, "a Server Action's argument") :- rbd_action_param(site), !rbd_param_type(site, _), !rbd_reassigned(site).
-rbd_site(site, "a Server Action's argument") :- rbd_action_param(site), rbd_param_type(site, t), !rbd_scalar_type(t),
-    !rbd_reassigned(site).
+rbd_site(site, "a Server Action's argument") :- rbd_action_param(site), rbd_param_type(site, _),
+    !rbd_scalar_param(site), !rbd_reassigned(site).
 // rbd_const(site, v): declarator site, `const x = v` or a `let x = v` that nothing reassigns.
 .decl rbd_const(site: node, v: node)
 rbd_const(site, v) :- kind(site, "variable_declarator"), field(site, "name", n), kind(n, "identifier"),
     field(site, "value", v), !rbd_reassigned(site).
 .decl rbd_reassigned(site: node)
 rbd_reassigned(site) :- write_target(r, _), ref_site(r, site).
-// rbd_scalar_type(t): a parameter annotation that is no object: `: string`, `: number`, `: boolean`, `: Date`.
-.decl rbd_scalar_type(t: symbol)
-rbd_scalar_type(t) :- rbd_param_type(_, t), match(":\\s*(string|number|boolean|bigint|Date|FormData)\\s*", t).
+// rbd_scalar_param(site): parameter site's annotation is no object: `: string`, `: number`, `: boolean`, `: Date`.
+.decl rbd_scalar_param(site: node)
+rbd_scalar_param(site) :- rbd_param_type(site, t), match(":\\s*(string|number|boolean|bigint|Date|FormData)\\s*", t).
 
 // ---- Server Actions -----------------------------------------------------------------------------------------------
 // rbd_action_param(site): site is a name a Server Action's parameter list binds. A Server Action is a function with
@@ -285,7 +300,7 @@ rbd_server_file(d) :- kind(p, "program"), directive(p, _, "use server"), docof(p
 // rbd_bare(e, x): x is e without parentheses, `as T`, `<T>`, `satisfies T`, `!` and `await`. Asked only for the
 // values rbd_want collects.
 .decl rbd_want(e: node)
-rbd_want(v) :- rbd_write(c, _, _, k), rbd_arg_prop(c, k, v).
+rbd_want(v) :- rbd_write(c, _, _, k, _, _), rbd_arg_prop(c, k, v).
 rbd_want(a) :- rbd_want(e), rbd_bare(e, x), static_prop(x, a, _).
 rbd_want(a) :- rbd_want(e), rbd_bare(e, x), kind(x, "object"), child(x, s, _), kind(s, "spread_element"), child(s, a, 0).
 rbd_want(a) :- rbd_want(e), rbd_bare(e, x), called(x, f), static_prop(f, o, "fromEntries"), kind(o, "identifier"),
@@ -358,11 +373,11 @@ rbd_test_doc(d) :- file_name(d, f), (glob("*.test.*", f) ; glob("*.spec.*", f) ;
         ```
     .fixture "src/app/api/profile/route.ts" ```
         import { NextRequest, NextResponse } from "next/server";
-        import { db } from "@/lib/db";
+        import { prisma } from "@/lib/prisma";
 
         export async function PATCH(req: NextRequest) {
           const body = await req.json();
-          const user = await db.user.update({ where: { id: body.id }, data: body });
+          const user = await prisma.user.update({ where: { id: body.id }, data: body });
           return NextResponse.json(user);
         }
         ```
@@ -379,13 +394,13 @@ rbd_test_doc(d) :- file_name(d, f), (glob("*.test.*", f) ; glob("*.spec.*", f) ;
     .fixture "src/app/api/profile/route.ts" ```
         import { NextRequest, NextResponse } from "next/server";
         import { z } from "zod";
-        import { db } from "@/lib/db";
+        import { prisma } from "@/lib/prisma";
 
         const UpdateProfile = z.object({ id: z.string(), name: z.string().max(80) });
 
         export async function PATCH(req: NextRequest) {
           const { id, ...data } = UpdateProfile.parse(await req.json());
-          const user = await db.user.update({ where: { id }, data });
+          const user = await prisma.user.update({ where: { id }, data });
           return NextResponse.json(user);
         }
         ```

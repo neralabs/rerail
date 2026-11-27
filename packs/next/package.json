@@ -1,7 +1,7 @@
 {
   "name": "@neralabs/rerail-pack-next",
   "version": "0.1.8",
-  "description": "Rerail rule pack: @next/eslint-plugin-next rules ported to Rerail code rules, and Rerail's own App Router checks for Server Action auth and middleware placement.",
+  "description": "Rerail rule pack: @next/eslint-plugin-next rules ported to Rerail code rules, and Rerail's own App Router checks for swallowed redirects, revalidatePath targets, Server Action auth and middleware placement.",
   "keywords": [
     "rerail",
     "rerail-pack",
