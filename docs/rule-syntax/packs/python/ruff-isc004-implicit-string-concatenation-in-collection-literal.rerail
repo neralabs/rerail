@@ -1,4 +1,4 @@
-.policy "ruff-isc004-implicit-string-concatenation-in-collection-literal" revision 2
+.policy "ruff-isc004-implicit-string-concatenation-in-collection-literal" revision 3
 .description "Add the missing comma, or wrap the strings in parentheses, where adjacent strings concatenate inside a list, tuple or set literal; the merge usually hides a forgotten comma."
 .language python
 .mode steer
@@ -6,19 +6,43 @@
 
 // Ruff ISC004 (flake8-implicit-str-concat): an element of a list, tuple or set display that is two or more
 // adjacent string literals, not wrapped in parentheses. In a list of strings that is usually a missing comma.
-// Parentheses around the element say the joining is meant. A subscript with a tuple, `d["a" "b", 1]`, counts.
-// Reported at the element.
+// Parentheses around the element say the joining is meant. Every tuple of Ruff's tree counts: a subscript's,
+// `d["a" "b", 1]` and `d["a" "b",]`, an annotation's (`Literal["a" "b", "c"]`), a bare statement's
+// (`"a" "b", 1`) and Python 2's chevron print's, which Ruff reads as a tuple (`print >> f, "a" "b"`). Ruff checks
+// the code of string type definitions too (`j: "f(['j', 'j' 'j'])"`). Reported at the element.
 //   facts = ["Lobsters have blue blood."
 //            "Honey never spoils."]      ← ISC004
 //   facts = [("a"
 //             "b")]                      not reported: parenthesized
-#include "python/ast.rerail"
+//   x: Literal["a" "b",]                 ← ISC004: a one-element tuple
+//   with ("a" "b", 1): ...               not reported: with items
+#include "python/python-04.rerail"
+//   in_ann_tree(e): e is in the tree of a string type definition; python/ast through it
 
 .violation ISC004(at: node) code "ISC004"
     "Add the missing comma if these strings are separate items; if joining them is intended, wrap the concatenation in parentheses."
     suppress ruff "ISC004"
-ISC004(s) :- kind(s, "concatenated_string"), child(c, s, _), kind(c, k),
+ISC004(s) :- in_tuple(s).
+// A type string's tree is parsed only where a rule asks for it.
+ISC004(s) :- in_ann_tree(s), in_tuple(s).
+
+// in_tuple(s): s is an implicit concatenation, an element of a list, tuple or set display.
+.decl in_tuple(s: node)
+in_tuple(s) :- kind(s, "concatenated_string"), child(c, s, _), kind(c, k),
     (k = "list" ; k = "tuple" ; k = "set" ; k = "expression_list").
-// `d["a" "b", 1]`: a subscript of two or more items is a tuple in Ruff's tree; tree-sitter lists the items.
-ISC004(s) :- kind(s, "concatenated_string"), field(c, "subscript", s), kind(c, "subscript"),
-    count : { field(c, "subscript", _) } >= 2.
+// Where tree-sitter lists a tuple's items in their parent, a comma beside the item makes the tuple: a subscript
+// (`d["a" "b", 1]`, `d["a" "b",]`), an annotation's subscript (a type_parameter of `type` items), a bare tuple
+// statement. The tape keeps no `,` token, so the comma is read in the source around the item.
+in_tuple(s) :- kind(s, "concatenated_string"), field(c, "subscript", s), kind(c, "subscript"), comma_beside(s).
+in_tuple(s) :- kind(s, "concatenated_string"), child(t, s, _), kind(t, "type"), child(c, t, _), kind(c, "type_parameter"),
+    comma_beside(t).
+in_tuple(s) :- kind(s, "concatenated_string"), child(c, s, _), kind(c, "expression_statement"), comma_beside(s).
+// `print >> f, "a" "b"`: tree-sitter's print_statement; Ruff's parser reads `(print >> f, "a" "b")`.
+in_tuple(s) :- kind(s, "concatenated_string"), child(c, s, _), kind(c, "print_statement"), child(c, h, _),
+    kind(h, "chevron"), comma_beside(s).
+// comma_beside(x): the source around x has a comma: before or after it among its siblings, or, for the last
+// item, a trailing one before its parent's end (structural_after of a last child is empty there).
+.decl comma_beside(x: node)
+comma_beside(x) :- structural_after(x, a), contains(",", a).
+comma_beside(x) :- structural_before(x, b), contains(",", b).
+comma_beside(x) :- child(c, x, _), node_text(c, t), match("[\\s\\S]*,\\s*\\]?", t).

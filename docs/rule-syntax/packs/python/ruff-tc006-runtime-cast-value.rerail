@@ -1,23 +1,33 @@
-.policy "ruff-tc006-runtime-cast-value" revision 2
+.policy "ruff-tc006-runtime-cast-value" revision 3
 .description "Quote the type expression passed to typing.cast; a quoted type is not evaluated at runtime and every cast call reads the same."
 .language python
 .mode steer
 .scope include "**/*"
 
 // Ruff TC006 (flake8-type-checking): the type argument of `typing.cast` (the first argument, or `typ=`) is
-// not a string. Python evaluates it on every call; a string is not evaluated. Not in stubs. Ruff's fix quotes
-// it (safe unless a comment is inside); no fix is offered here, since quoting must rewrite inner string quotes.
+// not a string. Python evaluates it on every call; a string is not evaluated. Not in stubs. Ruff checks the casts
+// in the code of string type definitions too, names there looked up in the module first (python/pt1120-python-10).
+// Ruff's fix quotes it (safe unless a comment is inside); no fix is offered here, since quoting must rewrite inner
+// string quotes.
 //   cast(int, 3.0)               ← TC006 at `int`
 //   cast(typ=int, val=3.0)       ← TC006
 //   t.cast(t.Literal["3.0"], x)  ← TC006, with `import typing as t`
+//   x: "typing.cast(int, 1)"     ← TC006 at `int`, inside the string
 //   cast("int", 3.0)             not reported
 #include "python/misc2-typecheck.rerail"
 //   tc_cast_type(c, t), stub_file(d)
+#include "python/pt1120-python-10.rerail"
+//   p10_tq(e, q), p10_arg0(c, a), p10_kwarg(c, x, v); python-04's in_ann_tree, guest_file
 
 .violation TC006(at: node) code "TC006"
     "Quote the type expression passed to this `cast()` call, as in `cast(\"list[int]\", value)`."
     suppress ruff "TC006"
 TC006(t) :- tc_cast_type(_, t), !str_literal(t), docof(t, d), !stub_file(d).
+TC006(t) :- ann_cast_type(_, t), !str_literal(t), guest_file(t, d), !stub_file(d).
+// ann_cast_type(c, t): as tc_cast_type, for a cast in a type string's tree.
+.decl ann_cast_type(c: node, t: node)
+ann_cast_type(c, t) :- in_ann_tree(c), kind(c, "call"), field(c, "function", f), unparen(f, g), p10_tq(g, q),
+    (q = "typing.cast" ; q = "typing_extensions.cast"), (p10_arg0(c, t) ; p10_kwarg(c, "typ", t)).
 // A str literal, adjacent ones included; an f-string or bytes literal is not one (Ruff's is_string_literal_expr).
 .decl str_literal(t: node)
 str_literal(t) :- string_form(t, "str").
