@@ -2765,7 +2765,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const kept = this.#suspendedSessions?.get(sessionId)?.ownerClaim;
     const claim = kept !== undefined && this.#controls.holdsOwner(sessionId, kept)
       ? kept
-      : this.#controls.registerOwner(sessionId, this.#ownerDelivery(), this.#ownerLockId, lost => { this.#claimNotMade(sessionId, lost); });
+      : this.#controls.registerOwner(sessionId, this.#ownerDelivery(), this.#ownerLockId, claim => { this.#claimNotMade(sessionId, claim); });
     this.#suspendedSessions?.take(sessionId);
     return claim;
   }
