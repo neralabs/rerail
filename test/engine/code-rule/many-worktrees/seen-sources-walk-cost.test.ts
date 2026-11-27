@@ -2,13 +2,13 @@
  * What a walk of the other worktrees asks the disk about files a session saw there: each existsSync, realpath and lstat
  * on the daemon's thread naming one of them or a path below it, each lstat, realpath and access through the thread pool,
  * each opening of one, and the most full lookups of their owners between two turns of the event loop, over one walk a
- * boundary of the session asks for. A session that lasts sees more files; a walk that asks nothing of a file it does
- * not read costs no more for it.
+ * boundary of the session asks for. A session that lasts sees more files; a walk that asks nothing on the daemon's
+ * thread of a file it does not read costs a hook no more for it. What the walk records of them stays as it was.
  */
 import { execFileSync } from "node:child_process";
 import type * as FileSystem from "node:fs";
 import type * as FilePromises from "node:fs/promises";
-import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -226,44 +226,100 @@ async function askedAbout(session: Session, paths: readonly string[], walk: () =
 
 const NOTHING: Asked = { existsSync: 0, realpath: 0, lstat: 0, promised: 0, opens: 0, run: 0 };
 
+/** `path` (absolute) as the session names it. */
+function named(session: Session, path: string): string {
+  return relative(session.main, path).split(sep).join("/");
+}
+
+/** Records from now each change an audit of the session is asked to record, as `deleted <path>` or `written <path>`. */
+function recordedChanges(): () => string[] {
+  const audits = vi.spyOn(CheckoutCodeRuleRouter.prototype, "auditGeneratedEdits");
+  return () => audits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => `${edit.deleted === true ? "deleted" : "written"} ${edit.path}`));
+}
+
 describe("a walk of the other worktrees, about the files a session saw there", () => {
-  it("asks the disk nothing of the sources the session wrote in a folder no walk enters", { timeout: 120_000 }, async () => {
+  it("asks one lstat through the thread pool of each source the session wrote in a folder no walk enters, there or gone, and nothing on the daemon's thread", { timeout: 120_000 }, async () => {
     const session = await sessionBesideWorktree();
     try {
       const built = [0, 1, 2, 3].map(index => join(session.w1, "build", `b${index}.py`));
       for (const [index, path] of built.entries()) await write(session, path, `b = ${index}\n`);
       await turn(session);
 
-      const asked = await askedAbout(session, built, async () => await turn(session));
+      const there = await askedAbout(session, built, async () => await turn(session));
+      const held = built.map(path => session.bridge.observedDigest(named(session, path)));
+      for (const path of built) await rm(path);
+      const gone = await askedAbout(session, built, async () => await turn(session));
+      const after = await askedAbout(session, built, async () => await turn(session));
 
       // `build` is a folder no walk enters, so no snapshot holds these files. Each walk looked up the owner of each one
-      // twice and opened it, for as long as the session lasted: { existsSync: 8, realpath: 8, lstat: 8, opens: 4 }.
-      expect(asked).toEqual(NOTHING);
-      // The session still holds what it saw of each.
-      expect(built.map(path => session.bridge.observedDigest(relative(session.main, path).split(sep).join("/")))).toEqual(built.map(() => expect.any(String)));
+      // twice and read it, for as long as the session lasted: { existsSync: 8, realpath: 8, lstat: 8, promised: 8,
+      // opens: 4, run: 1 }. The walk that found them gone looked up each owner and opened each once more:
+      // { existsSync: 8, lstat: 8, opens: 4, run: 1 }.
+      expect({ there, gone, after }).toEqual({ there: { ...NOTHING, promised: 4 }, gone: { ...NOTHING, promised: 4 }, after: NOTHING });
+      // While they were there, the session held what it saw of each.
+      expect(held).toEqual(built.map(() => expect.any(String)));
     } finally {
       await session.runtime.dispose();
     }
   });
 
-  it("keeps a source the session wrote in a folder no walk enters once it is gone, unasked, and answers for the session's calls there", { timeout: 120_000 }, async () => {
+  it("records the deletion of a source the session wrote in a folder no walk enters, and answers for the session's calls there", { timeout: 120_000 }, async () => {
     const session = await sessionBesideWorktree();
     try {
       const built = join(session.w1, "build", "gen.py");
       await write(session, built, "g = 1\n");
       await turn(session);
       await rm(built);
-      const audits = vi.spyOn(CheckoutCodeRuleRouter.prototype, "auditGeneratedEdits");
+      const recorded = recordedChanges();
       const answered = vi.spyOn(ToolCallWindows.prototype, "answeredIn");
 
-      const asked = await askedAbout(session, [built], async () => await turn(session));
+      await turn(session);
 
-      // No walk reads `build`, so none records a change there, nor the deletion: the session keeps what it saw.
-      expect(asked).toEqual(NOTHING);
-      expect(audits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => edit.path))).toEqual([]);
-      expect(session.bridge.observedDigest(relative(session.main, built).split(sep).join("/"))).toEqual(expect.any(String));
-      // And the walk answers for the session's calls in `w1`, the Write among them: it leaves the file to no next walk.
-      expect(answered.mock.calls.map(([place]) => place)).toContain(relative(session.main, session.w1).split(sep).join("/"));
+      // The walk records the deletion, as of any source the session saw that is gone, and forgets what it saw of it.
+      expect(recorded()).toEqual([`deleted ${named(session, built)}`]);
+      expect(session.bridge.observedDigest(named(session, built))).toBeUndefined();
+      // And it answers for the session's calls in `w1`, the Write among them.
+      expect(answered.mock.calls.map(([place]) => place)).toContain(named(session, session.w1));
+    } finally {
+      await session.runtime.dispose();
+    }
+  });
+
+  // A link to a file needs a right Windows grants only some accounts.
+  it.skipIf(process.platform === "win32")("records as deleted a source the session wrote in a folder no walk enters once a link takes its place, as a read finds", { timeout: 120_000 }, async () => {
+    const session = await sessionBesideWorktree();
+    try {
+      const built = join(session.w1, "build", "gen.py");
+      await write(session, built, "g = 1\n");
+      await turn(session);
+      await writeFile(join(session.w1, "build", "other.py"), "o = 1\n");
+      await rm(built);
+      await symlink("other.py", built);
+      const recorded = recordedChanges();
+
+      await turn(session);
+
+      // An `lstat` finds a link, which a read does not follow: the read decides, and finds no source there.
+      expect(recorded()).toEqual([`deleted ${named(session, built)}`]);
+    } finally {
+      await session.runtime.dispose();
+    }
+  });
+
+  it("records a file the walk read, and the session never saw, as gone once Git ignores its folder", { timeout: 120_000 }, async () => {
+    const session = await sessionBesideWorktree();
+    try {
+      const generated = join(session.w1, "gen", "g.py");
+      await mkdir(join(session.w1, "gen"));
+      await writeFile(generated, "g = 1\n");
+      await turn(session);
+      await writeFile(join(session.w1, ".gitignore"), "gen/\n");
+      const recorded = recordedChanges();
+
+      await turn(session);
+
+      // The session asked nothing of it before, so the walk weighs it as it weighs every file it read and reads no more.
+      expect(recorded()).toContain(`deleted ${named(session, generated)}`);
     } finally {
       await session.runtime.dispose();
     }
@@ -285,16 +341,18 @@ describe("a walk of the other worktrees, about the files a session saw there", (
     return notes;
   }
 
-  it("asks the disk nothing of the files gone there while a shell command of the session runs through its walks", { timeout: 120_000 }, async () => {
+  it("asks the disk nothing of the files gone there, nor of a source in a folder no walk enters, while a shell command of the session runs through its walks", { timeout: 120_000 }, async () => {
     const session = await sessionBesideWorktree();
     try {
+      const built = join(session.w1, "build", "b.py");
+      await write(session, built, "b = 1\n");
       const notes = await goneWhileCommandRuns(session);
 
-      const during = await askedAbout(session, notes, async () => await shellCall(session));
+      const during = await askedAbout(session, [...notes, built], async () => await shellCall(session));
 
-      // Each walk the command ran through looked up the owner of each one (an existsSync and an lstat naming it, an
-      // existsSync and a realpath of its folder), all in one turn of the event loop, though it leaves them to the next
-      // walk whatever the disk says: { existsSync: 4, lstat: 4, run: 4 }.
+      // Each walk the command ran through looked up the owner of each note (an existsSync and an lstat naming it, an
+      // existsSync and a realpath of its folder), all in one turn of the event loop, { existsSync: 4, lstat: 4, run: 4 },
+      // and read `b.py` as the first case says, though it leaves each to the next walk whatever the disk says.
       expect(during).toEqual(NOTHING);
     } finally {
       await session.runtime.dispose();

@@ -738,6 +738,17 @@ async function openSource(absolute: string): Promise<FileHandle | undefined> {
   }
 }
 /**
+ * What one `lstat` through the thread pool finds at `absolute`: a regular file, no entry ("gone"), or anything else (a
+ * link, a folder, a failure other than a missing entry), which only a read as `openSource` opens can judge.
+ */
+async function entryAt(absolute: string): Promise<"file" | "gone" | "other"> {
+  try {
+    return (await lstat(absolute)).isFile() ? "file" : "other";
+  } catch (error) {
+    return hasErrorCode(error, "ENOENT") ? "gone" : "other";
+  }
+}
+/**
  * The text of the file at `absolute` while its bytes have `digest`, else undefined: what a session held of a source
  * before its runtime suspended it. Read as `openSource` opens a file, and only a regular file of a source's size; the
  * digest proves the bytes are the ones a walk observed in place.
@@ -3938,6 +3949,7 @@ export class CodeRuleBridge {
     records: WorktreeRecords,
   ): Promise<WorktreeTake> {
     const previous = new Map<string, ObservedSource>();
+    const leftOut = new Map<string, ObservedSource>();
     const scan = emptyScan();
     const snapshots = new Map<string, WorktreeSnapshot>();
     const heads = new Map<string, string>();
@@ -3953,8 +3965,9 @@ export class CodeRuleBridge {
       if (!findings.gaveUp) readFrom.set(worktree, findings.readFrom);
       takeCheckouts(root, findings, { heads, unmerged, passed: scan.unmerged });
       if (discovery.worktrees.fresh.has(worktree)) takeFirstSightListings(findings, listedAtFirstSight);
-      this.#takeFindings(discovery, { root, worktree }, findings, kept.get(worktree) ?? [], { previous, scan });
+      this.#takeFindings(discovery, { root, worktree }, findings, kept.get(worktree) ?? [], { previous, scan, leftOut });
     }
+    const gone = await this.#lookLeftOut(discovery, start, leftOut, previous);
     const walk: WalkStart = {
       inSession: false, baseline: false, checkpoint: "edit", worktrees: new Set(snapshots.keys()), previous, versions: start.versions,
       heads, unmerged, callsEnded: start.callsEnded, observedAt, readFrom, listed: start.listed, listedAtFirstSight,
@@ -3966,6 +3979,8 @@ export class CodeRuleBridge {
     const views = await this.#readTakenTexts(discovery, walk, scan, found);
     // Not this take's to record: the session keeps what it saw of them (`#takeSnapshots`), and a record of one waits.
     for (const path of views.keys()) previous.delete(path);
+    // Found gone (`#lookLeftOut`): compared as any source gone is, with no read to ask again.
+    gone.forEach((before, path) => previous.set(path, before));
     discovery.worktrees.unrecorded = new Set();
     leaveRecords(discovery, walk, [...walk.records].filter(path => views.has(path)));
     return { walk, scan, snapshots, views };
@@ -3992,7 +4007,7 @@ export class CodeRuleBridge {
     { root, worktree }: { readonly root: string; readonly worktree: string },
     findings: WorktreeFindings,
     kept: readonly string[],
-    taken: { readonly previous: Map<string, ObservedSource>; readonly scan: SourceScan },
+    taken: { readonly previous: Map<string, ObservedSource>; readonly scan: SourceScan; readonly leftOut: Map<string, ObservedSource> },
   ): void {
     const next = findings.snapshot;
     const takes = takenFrom(root, discovery.root);
@@ -4001,13 +4016,40 @@ export class CodeRuleBridge {
       : changedPaths(this.#worktreeView.snapshot(worktree), next);
     for (const path of new Set([...paths.filter(takes).map(path => inWorktree(worktree, path)), ...kept])) {
       const before = this.#observedSource(path);
-      // A source under what the read left out (a folder Git ignores, one no walk enters, a link) is none of the walk's:
-      // the session keeps what it saw of it, unasked, and leaves it to no next walk.
-      if (before !== undefined && !leftOutOn(findings.leftOut, path.slice(worktree.length + 1))) taken.previous.set(path, before);
+      // A source the session saw itself under what the read left out (a folder Git ignores, one no walk enters, a link)
+      // is none of the read's: the walk asks only whether it is gone (`#lookLeftOut`).
+      if (before !== undefined) (this.#seenLeftOut(findings, worktree, path) ? taken.leftOut : taken.previous).set(path, before);
       const after = takenSource(worktree, findings, path);
       if (after !== undefined) taken.scan.sources.set(path, after);
     }
     takeGaps(worktree, findings, taken.scan, takes);
+  }
+
+  /** Whether the session saw `path` itself (`#observed`) and the read of `worktree` left out the path or a folder on its way. */
+  #seenLeftOut(findings: WorktreeFindings, worktree: string, path: string): boolean {
+    return this.#observed.has(path) && leftOutOn(findings.leftOut, path.slice(worktree.length + 1));
+  }
+
+  /**
+   * Asks one `lstat` through the thread pool of each source of `leftOut`, the sources the session saw that the read left
+   * out, and none while a shell command of the session runs through the walk, which leaves every source to the next
+   * walk (`#toolChanges`). A regular file there stays as the session saw it, out of the walk; one the `lstat` cannot
+   * judge (`entryAt`) goes into `previous`, for the read `#keepSeenStill` makes of each source the snapshot lacks.
+   * Returns those found gone.
+   */
+  async #lookLeftOut(
+    discovery: SourceDiscovery,
+    start: WorktreeStart,
+    leftOut: ReadonlyMap<string, ObservedSource>,
+    previous: Map<string, ObservedSource>,
+  ): Promise<Map<string, ObservedSource>> {
+    const gone = new Map<string, ObservedSource>();
+    if (discovery.toolCalls.commandSince(start.callsEnded) !== undefined) return gone;
+    for (const [path, before] of leftOut) {
+      const entry = await entryAt(join(discovery.root, path));
+      if (entry !== "file") (entry === "gone" ? gone : previous).set(path, before);
+    }
+    return gone;
   }
 
   /**
