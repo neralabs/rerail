@@ -22,11 +22,11 @@ use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 use std::path::Path;
 
-/// The `suppress` lines of a run's policies: each `.violation`'s, by its policy and name, and each policy's
+/// The `suppress` lines of a run's policies: each `.violation`'s, by its policy and then its name, and each policy's
 /// `.language`.
 #[derive(Default)]
 pub struct Suppressions {
-    lines: HashMap<(String, String), Vec<Line>>,
+    lines: HashMap<String, HashMap<String, Vec<Line>>>,
     languages: HashMap<String, Option<String>>,
 }
 
@@ -45,7 +45,7 @@ impl Suppressions {
         let language = settings.clone().into_iter().find(|(key, _)| *key == "language").map(|(_, text)| text.trim().trim_matches('"').to_owned());
         for (_, text) in settings.into_iter().filter(|(key, _)| *key == "suppress") {
             let (violation, line) = line(text).map_err(|e| format!("{policy}: suppress {text}: {e}"))?;
-            self.lines.entry((policy.to_owned(), violation)).or_default().push(line);
+            self.lines.entry(policy.to_owned()).or_default().entry(violation).or_default().push(line);
             self.languages.insert(policy.to_owned(), language.clone());
         }
         Ok(())
@@ -63,7 +63,7 @@ impl Suppressions {
             return dropped;
         }
         // The findings to read, by the file and the dialect their policy reads it in.
-        let mut files: BTreeMap<FileKey<'_>, Vec<(usize, Finding<'_, '_>)>> = BTreeMap::new();
+        let mut files: ByFile<'_, '_> = BTreeMap::new();
         for (k, row) in rows.iter().enumerate() {
             if let Some(finding) = self.finding(row) {
                 let language = self.languages.get(finding.policy).cloned().flatten();
@@ -83,7 +83,7 @@ impl Suppressions {
     /// A finding a `suppress` line asks about: one in a file, of a `.violation` that has them.
     fn finding<'r, 'a>(&'r self, row: &Row<'a>) -> Option<Finding<'r, 'a>> {
         let (policy, violation) = (row.get(0).text()?, row.get(1).text()?);
-        let lines = self.lines.get(&(policy.to_owned(), violation.to_owned()))?;
+        let lines = self.lines.get(policy)?.get(violation)?;
         let path = row.get(3).text().filter(|path| !path.is_empty())?;
         let node = |value: Value<'_>| match value {
             Value::Node(Node::Of { path: Some(of), value, .. }) if of == path => Some(value),
@@ -114,8 +114,9 @@ struct Finding<'r, 'a> {
     lines: Vec<(&'r Suppress, Option<i64>)>,
 }
 
-/// A file a run's findings name, and the dialect their policy reads it in.
-type FileKey<'a> = (&'a str, Option<&'static str>);
+/// A run's findings that `suppress` lines ask about, by their index, under their file and the dialect their policy
+/// reads it in (`Suppressions::suppressed`).
+type ByFile<'r, 'a> = BTreeMap<(&'a str, Option<&'static str>), Vec<(usize, Finding<'r, 'a>)>>;
 
 /// Whether each of a file's findings is suppressed, by its index: read in order of their anchors, under one file scope.
 fn read(path: &str, file: &FileSpans, tree: &TapeDoc, findings: Vec<(usize, Finding<'_, '_>)>) -> Vec<(usize, bool)> {

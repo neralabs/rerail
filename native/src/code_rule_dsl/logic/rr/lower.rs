@@ -1584,10 +1584,7 @@ impl Lowerer {
             Some(Code::Column(c)) => FindingCode::Column(column(&c)?),
             Some(Code::Constant(c)) => FindingCode::Constant(c),
         };
-        for c in suppress.iter().filter_map(|s| s.over.as_ref()) {
-            column(c)?;
-        }
-        self.finding_settings(&name, suppress, fixes, code_in)?;
+        self.finding_settings(&name, &cols, suppress, fixes, code_in)?;
         self.violations.push(Violation { name: name.clone(), arity: cols.len(), code, node, places: false, columns: cols.clone(), message, tag });
         self.decl(name.clone(), cols, &[])?;
         self.prog.outputs.push(name);
@@ -1595,12 +1592,17 @@ impl Lowerer {
     }
 
     /// A `.violation`'s `suppress` and `fix` lines and `code {c} in "re"`, as the findings layer's settings
-    /// (`violation`). A `suppress` line names a linter of `SUPPRESS_TOOLS`.
-    fn finding_settings(&mut self, name: &str, suppress: Vec<Suppress>, fixes: Vec<Fix>, code_in: Option<String>) -> Result<(), Error> {
+    /// (`violation`). A `suppress` line names a linter of `SUPPRESS_TOOLS`, and its `over` a column of `cols`.
+    fn finding_settings(&mut self, name: &str, cols: &[(String, String)], suppress: Vec<Suppress>, fixes: Vec<Fix>, code_in: Option<String>) -> Result<(), Error> {
         for s in suppress {
             if !SUPPRESS_TOOLS.iter().any(|(tool, _, _)| *tool == s.tool) {
                 let tools = SUPPRESS_TOOLS.iter().map(|(tool, _, _)| *tool).collect::<Vec<_>>().join(", ");
                 return Err(Error::Syntax(format!(".violation {name}: suppress {}: no linter of that name (one of {tools})", s.tool)));
+            }
+            if let Some(c) = &s.over
+                && !cols.iter().any(|(n, _)| n == c)
+            {
+                return Err(Error::Syntax(format!(".violation {name}: no column {c}")));
             }
             let rules = s.rules.iter().map(|r| quote(r)).collect::<Vec<_>>().join(", ");
             let over = s.over.map(|c| format!(" over {{{c}}}")).unwrap_or_default();

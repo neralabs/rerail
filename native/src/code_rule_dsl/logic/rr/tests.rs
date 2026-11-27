@@ -679,6 +679,18 @@ fn violation_codes_suppressions_and_places_lower() {
     assert!(format!("{statements:?}").contains("Agg { op: \"sum\", over: Some(Bin { op: \"-\""), "{statements:?}");
 }
 
+/// A `suppress` line names a linter whose comments the findings layer reads (`SUPPRESS_TOOLS`), and its `over` a
+/// column of its `.violation`: lowering refuses either, where the run would otherwise drop nothing.
+#[test]
+fn a_suppress_line_naming_no_linter_or_no_column_is_refused() {
+    let program = |line: &str| format!(".decl text(n: node, s: symbol)\n.input text\n.violation V(at: node, why: symbol) code \"X1\" \"{{why}}\"\n    {line}\nV(n, w) :- text(n, w).\n");
+    let unknown = parse(&program("suppress pylint \"X1\"")).expect_err("no linter is named pylint");
+    assert!(unknown.to_string().contains("suppress pylint: no linter of that name"), "{unknown}");
+    let column = parse(&program("suppress nosec \"B201\" over {call}")).expect_err("V has no column call");
+    assert!(column.to_string().contains(".violation V: no column call"), "{column}");
+    parse(&program("suppress nosec \"B201\" over {why}")).expect("a column V has");
+}
+
 /// Soufflé's built-ins run: `cat` of any arity, `max` and `min` of two, `to_number`, `%`, floats (`to_float`,
 /// decimals, their arithmetic and order), and an aggregate inside a term.
 #[test]
@@ -1192,27 +1204,6 @@ fn violations_at_places_and_their_lines_lower() {
     let again = parse(&printed).unwrap();
     assert_eq!(difference(&p, &again), None, "{printed}");
     assert_eq!(p.settings, again.settings);
-}
-
-/// A `.violation`'s `suppress` line names a linter of `SUPPRESS_TOOLS` and, with `over {c}`, one of its columns: a
-/// linter of no other name, or a column it does not have, is refused when the policy is read.
-#[test]
-fn violation_suppress_lines_refuse_an_unknown_linter_or_column() {
-    let policy = |suppress: &str| {
-        format!(
-            ".policy \"p\" revision 1\n.decl doc(d: number, path: symbol, module: symbol)\n\
-             .decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl line(n: node, l: number)\n\
-             .input doc, node, line\n.violation V(at: loc, x: symbol) code \"a-b\" \"{{x}}\"\n    suppress {suppress}\n\
-             V(n, \"call\") :- node(_, n, \"call\", _, _).\n"
-        )
-    };
-    let refused = |suppress: &str| parse(&policy(suppress)).err().map(|e| e.to_string()).unwrap_or_default();
-    let e = refused("pylint \"a-b\"");
-    assert!(e.contains(".violation V: suppress pylint: no linter of that name (one of ruff, "), "{e}");
-    let e = refused("eslint \"a-b\" over {missing}");
-    assert!(e.contains(".violation V: no column missing"), "{e}");
-    let p = parse(&policy("eslint \"a-b\" over {x}")).unwrap();
-    assert!(p.settings.contains(&("suppress".to_owned(), "V eslint \"a-b\" over {x}".to_owned())), "{:?}", p.settings);
 }
 
 // ---- tree axes and node sets ----

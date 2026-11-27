@@ -408,23 +408,7 @@ impl Guests {
     fn program(&mut self, host: &Document, at: i64, via: crate::code_rule_dsl::language::Via, role: &str, cache: Option<&ContentStore>) -> Result<Option<Document>, String> {
         let host_key = (at >> 32) as u32;
         let Some(dialect) = crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&host.facts)) else { return Ok(None) };
-        let source = host.facts.source.as_str();
-        // The host's tape, read in place by the embedder (whichever parser wrote it, the same tape).
-        let Ok(grammar) = crate::code_rule_dsl::tape::Grammar::new(dialect) else { return Ok(None) };
-        let Some(Ok(image)) = crate::code_rule_dsl::tape::TapeImage::parse(&grammar, source, &|| false) else { return Ok(None) };
-        let built = crate::code_rule_dsl::embed::host::Host::new(&image.primary, &grammar).root().and_then(|root| crate::code_rule_dsl::embed::embedder(via).build(root, source, &|| false));
-        let (label, place, parsed) = match built {
-            Some(program) => {
-                let Some(label) = crate::code_rule_dsl::language::label(program.dialect) else { return Ok(None) };
-                (label, Placement::Segments(Arc::new(program.segments)), taped(&host.path, label, program.text, cache)?)
-            }
-            None => {
-                let Some(derived) = image.derived.into_iter().find(|d| d.via == via && d.parent == 0) else { return Ok(None) };
-                let Some(label) = crate::code_rule_dsl::language::label(derived.dialect()) else { return Ok(None) };
-                (label, Placement::Segments(Arc::clone(derived.segments())), Some(derived_taped(&host.path, label, derived)?))
-            }
-        };
-        let Some(((facts, root, digest), tape)) = parsed else { return Ok(None) };
+        let Some((label, place, Some(((facts, root, digest), tape)))) = embedded(host, dialect, via, cache)? else { return Ok(None) };
         let range = if label == self.run { Range::Code } else { Range::Hidden };
         let key = key(&[host.path.as_bytes(), &at.to_le_bytes(), via.id().as_bytes()], range, &mut self.taken);
         self.host_of.insert(i64::from(key), self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key)));
@@ -565,6 +549,29 @@ fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&Conte
     kept.0 += key.2.len();
     kept.1.insert(key, parsed.clone());
     Ok(parsed)
+}
+
+/// The program `host` (of `dialect`) embeds through `via` (`Guests::program`): its dialect's label, its placement,
+/// and its parse. The embedder writes it from the host's tape, read in place (whichever parser wrote it, the same
+/// tape); a program no embedder builds (Blade's compiled view) is the one the host's parse derived. `None` where the
+/// host embeds none.
+fn embedded(host: &Document, dialect: crate::code_rule_dsl::language::GrammarDialect, via: crate::code_rule_dsl::language::Via, cache: Option<&ContentStore>) -> Result<Option<(&'static str, Placement, Option<(Parsed, Tape)>)>, String> {
+    use crate::code_rule_dsl::{embed, language, tape};
+    let source = host.facts.source.as_str();
+    let Ok(grammar) = tape::Grammar::new(dialect) else { return Ok(None) };
+    let Some(Ok(image)) = tape::TapeImage::parse(&grammar, source, &|| false) else { return Ok(None) };
+    let built = embed::host::Host::new(&image.primary, &grammar).root().and_then(|root| embed::embedder(via).build(root, source, &|| false));
+    match built {
+        Some(program) => {
+            let Some(label) = language::label(program.dialect) else { return Ok(None) };
+            Ok(Some((label, Placement::Segments(Arc::new(program.segments)), taped(&host.path, label, program.text, cache)?)))
+        }
+        None => {
+            let Some(derived) = image.derived.into_iter().find(|d| d.via == via && d.parent == 0) else { return Ok(None) };
+            let Some(label) = language::label(derived.dialect()) else { return Ok(None) };
+            Ok(Some((label, Placement::Segments(Arc::clone(derived.segments())), Some(derived_taped(&host.path, label, derived)?))))
+        }
+    }
 }
 
 /// An embedded program's text parsed as `label`, with its tape kept beside the facts (decision 0222): the rules over
