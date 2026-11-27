@@ -726,13 +726,34 @@ impl St<'_> {
         if key < 0 || (*d).ndocs == 0 {
             return None;
         }
-        let a = dir_doc_of_key(view_block(d), (*d).at, ((key as u64) >> 32) as u32, NONE);
+        let a = dir_doc_of_key(view_block(d), (*d).at, ((key as u64) >> 32) as u32, self.doc.get());
         if a == NONE {
             return None;
         }
+        self.doc.set(a);
         let e = view_rows(d).add(a as usize);
         let l = doc(d, e).number(key as u32);
         (l != NONE).then_some((e, l))
+    }
+
+    /// The `node` or `child` view probed by its id (`Stage::v_parent` 2, `Batch::by_own`): the id's document and
+    /// numbered node, its id checked (as a parent's is, `by_parent`), and its one row there, kept with its node as the
+    /// stage's last (`row`), so its other keys and columns read it with no search; as the host's probe by a node's own
+    /// id (`Batch::node_hint`). None where no node has the id (a `child` row: the root has none).
+    unsafe fn by_own(&self, kv: &[i64; 8]) -> Walk {
+        let s = self.s;
+        let none = Walk { lo: 0, hi: 0, how: 0, tag: 0 };
+        let Some(i) = (0..s.nkeys.min(8) as usize).find(|&i| s.key_rcol[i] == 1) else { return none };
+        let Some((e, l)) = self.doc_node(kv[i]) else { return none };
+        let d = doc(s.v_dir, e);
+        let k = s.r_view - 1;
+        if d.node_id(l) != kv[i] as u64 || (k == 1 && l == 0) {
+            return none;
+        }
+        let local = l - k;
+        let r = (*e).rows[k as usize].wrapping_add(local);
+        self.last.set((r, Some(Row::View(d.at(k, local)))));
+        Walk { lo: r, hi: r.wrapping_add(1), how: 0, tag: 0 }
     }
 
     /// The candidates of keys `kv`: [lo, hi) and how they are walked (0 rows, 1 an index's entries, 2 a parent's
@@ -755,6 +776,9 @@ impl St<'_> {
                 return if u == NONE { none } else { Walk { lo: first.wrapping_add(u), hi: NONE, how: 3, tag: 0 } };
             }
             return Walk { lo: first.wrapping_add(l).wrapping_add(1), hi: first.wrapping_add(doc(d, e).end(l)), how: 0, tag: 0 };
+        }
+        if s.v_parent == 2 {
+            return self.by_own(kv);
         }
         if s.v_parent != 0 {
             let Some((e, l)) = self.doc_node(kv[0]) else { return none };
@@ -1802,11 +1826,12 @@ impl St<'_> {
             *k = if s.key_kind[i] == 1 { col(self.l, s.key_slot[i], s.cap_in, 0) } else { s.key_const[i] };
         }
         let rows = if *j.totals.add(s.in_slot as usize) == 0 { 0 } else { self.rows() };
-        if s.nkeys == 0 || s.v_parent != 0 || s.v_has != 0 || rows == 0 {
+        if s.nkeys == 0 || s.v_parent == 1 || s.v_has != 0 || rows == 0 {
             return (kv, ScanCands { lo: s.r_from, n: rows, tag: 0, grouped: false });
         }
+        // Its keys' index group, or a node's own row (`by_own`).
         let w = self.probe(&kv);
-        (kv, ScanCands { lo: w.lo, n: w.hi.wrapping_sub(w.lo).min(rows), tag: w.tag, grouped: true })
+        (kv, ScanCands { lo: w.lo, n: w.hi.wrapping_sub(w.lo).min(rows), tag: w.tag, grouped: w.how == 1 })
     }
 
     /// Thread `r`'s candidate of `c`: its row; `None` past them, or at a place of another key's tag (as a probe's walk

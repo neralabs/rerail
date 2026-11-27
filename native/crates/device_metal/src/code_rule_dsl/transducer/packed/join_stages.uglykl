@@ -318,6 +318,32 @@ UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_P
     *lo = first + c; *hi = NONE; *how = 2u;
 }
 
+// The `node` or `child` view probed by its id (`Stage::v_parent` 2, `join_run::St::by_own`): the id's document and
+// numbered node (`clif_view_number`), its id checked (as a parent's, `by_parent`), and its one row there; none where no
+// node has the id (a `child` row: the root has none). The other keys are checked on it (`matches`).
+UKL_INLINE void by_own(StageP s, UKL_PRIVATE const int64_t* kv, UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi) {
+    UKL_GLOBAL const ViewDir* d = s->v_dir;
+    *lo = 0u; *hi = 0u;
+    uint32_t i = 0u;
+    while (i < s->nkeys && i < 8u && s->key_rcol[i] != 1u) i++;
+    if (i >= s->nkeys || i >= 8u) return;
+    int64_t key = kv[i];
+    if (key < 0 || d->ndocs == 0u) return;
+    uint32_t a = clif_dir_doc_of_key(view_block(d), d->at, (uint32_t)((uint64_t)key >> 32), NONE);
+    if (a == NONE) return;
+    UKL_GLOBAL const ViewRow* e = &view_rows(d)[a];
+    UKL_GLOBAL const uint8_t* ch = view_block(d);
+    UKL_GLOBAL const uint8_t* t = view_tape(d, e);
+    UKL_GLOBAL const uint8_t* ls = view_lines_base(d, e);
+    uint64_t la = e->lines;
+    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, la, (uint32_t)((uint64_t)key & 0xfffffffful));
+    if (l == NONE) return;
+    uint32_t k = s->r_view - 1u;
+    if ((int64_t)clif_view_order(ch, e->entry, t, e->view, ls, la, l, 0u) != key || (k == 1u && l == 0u)) return;
+    *lo = e->rows[k] + l - k;
+    *hi = *lo + 1u;
+}
+
 // The next sibling's row of `child` row `r`, or `NONE`: its document as `vread` finds it, then the read.
 UKL_INLINE uint32_t child_next(StageP s, uint32_t r) {
     UKL_GLOBAL const ViewDir* d = s->v_dir;
@@ -399,6 +425,7 @@ UKL_INLINE void probe(StageP s, RelB R, UKL_PRIVATE const int64_t* kv, UKL_PRIVA
                       UKL_PRIVATE uint32_t* how) {
     if (s->nkeys == 0) { *lo = s->r_from; *hi = s->r_from + stage_rows(s, R); *how = 0u; return; }
     if (s->v_has != 0u) { by_has(s, kv[0], lo, hi, how); return; }
+    if (s->v_parent == 2u) { by_own(s, kv, lo, hi); *how = 0u; return; }
     if (s->v_parent != 0u) { by_parent(s, kv[0], lo, hi, how); return; }
     *how = 1u;
     group_of(R, s->r_at, s->r_index, kv, s->nkeys, lo, hi);
@@ -1815,7 +1842,13 @@ UKL_INLINE void stage_map_one(JSPACE int64_t* B, JSPACE const uint32_t* totals, 
 UKL_INLINE uint32_t scan_cand(StageP s, Longs L, RelB R, UKL_PRIVATE int64_t* kv, uint32_t r) {
     for (uint32_t i = 0; i < s->nkeys && i < 8; i++) kv[i] = s->key_kind[i] == 1 ? L[(uint64_t)s->key_slot[i] * s->cap_in] : s->key_const[i];
     uint32_t rows = stage_rows(s, R);
-    if (s->nkeys == 0u || s->v_parent != 0u || s->v_has != 0u) return r < rows ? s->r_from + r : NONE;
+    if (s->nkeys == 0u || s->v_parent == 1u || s->v_has != 0u) return r < rows ? s->r_from + r : NONE;
+    // A node's own row (`by_own`): its one candidate.
+    if (s->v_parent == 2u) {
+        uint32_t lo, hi;
+        by_own(s, kv, &lo, &hi);
+        return r < hi - lo ? lo + r : NONE;
+    }
     uint32_t lo, hi;
     group_of(R, s->r_at, s->r_index, kv, s->nkeys, &lo, &hi);
     if (r >= ukl_min(hi - lo, rows)) return NONE;

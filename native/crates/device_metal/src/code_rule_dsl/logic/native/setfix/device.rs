@@ -1796,6 +1796,10 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
         if let Some(ix) = batch.by_parent(&dev, &by).map_err(|e| format!("{e:?}: a parent probe"))? {
             return Ok((dev, Some(Rc::new(ix)), place, consts));
         }
+        // By its own id: its one row, the constants checked on it.
+        if let Some(ix) = batch.by_own(&dev, &by).map_err(|e| format!("{e:?}: a probe by own id"))? {
+            return Ok((dev, Some(Rc::new(ix)), place, consts));
+        }
         let keyed: Vec<usize> = by.iter().copied().chain(consts.iter().map(|&(c, _)| c as usize)).collect();
         let ix = Rc::new(batch.index(&dev, &keyed).map_err(|e| format!("{e:?}: an index of a filtered view's {} rows", dev.rows))?);
         if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
@@ -1877,6 +1881,10 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
     let by: Vector<usize> = cols.iter().map(|&c| place[c] as usize).collect();
     // `child` probed by its parent: its children off the tape, no index of the view (decision 0353 step 4c).
     if let Some(ix) = batch.by_parent(&dev, &by).map_err(|e| format!("{e:?}: a parent probe"))? {
+        return Ok((dev, Some(Rc::new(ix)), place, Vec::new()));
+    }
+    // By its own id: its one row, no index of the view.
+    if let Some(ix) = batch.by_own(&dev, &by).map_err(|e| format!("{e:?}: a probe by own id"))? {
         return Ok((dev, Some(Rc::new(ix)), place, Vec::new()));
     }
     let ix = Rc::new(batch.index(&dev, &by).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);

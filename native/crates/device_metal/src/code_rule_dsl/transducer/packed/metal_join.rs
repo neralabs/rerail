@@ -1110,8 +1110,14 @@ fn bind_right(stage: &mut Stage, rel: &DevRel, index: Option<&DevIndex>) {
     (stage.v_set, stage.v_nset, stage.v_has) = rel.has.as_ref().map_or((0, 0, 0), |set| (set.buffer.buffer.device_address().expect("a has axis's set where views are read in place"), (set.len / 2) as u32, 0));
     if let Some(ix) = index {
         stage.r_index = ix.index;
-        stage.v_parent = u32::from(ix.walk == 1);
-        stage.v_has = ix.walk.saturating_sub(1);
+        // Walks of the tape (`DevIndex::walk`): a parent's children (1), a `has` climb or subtree (2, 3), a node's own
+        // row by its id (4).
+        stage.v_parent = match ix.walk {
+            1 => 1,
+            4 => 2,
+            _ => 0,
+        };
+        stage.v_has = if matches!(ix.walk, 2 | 3) { ix.walk - 1 } else { 0 };
     }
 }
 
@@ -2251,6 +2257,19 @@ impl Batch {
         }
         let home = rel.home.clone().expect("a view's relation of no columns");
         Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk: 1, buffer: bound(&home)?, cols: Vec::new() }))
+    }
+
+    /// `rel`, the `node` or `child` view read in place, probed by its id (column 1, with any others): no index of it is
+    /// built, as a stage finds the id's document and node (`view_number`) and its one row there, the others checked on
+    /// it, as the host's probe by a node's own id (`Batch::node_hint`). `None` for any other relation or key.
+    pub(in crate::code_rule_dsl) fn by_own(&self, rel: &DevRel, cols: &[usize]) -> Result<Option<DevIndex>, Error> {
+        use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::{VIEW_CHILD, VIEW_NODE};
+        let Some(v) = &rel.view else { return Ok(None) };
+        if !(v.kind == 1 + VIEW_NODE || v.kind == 1 + VIEW_CHILD) || !cols.contains(&1) || rel.is_has() {
+            return Ok(None);
+        }
+        let home = rel.home.clone().expect("a view's relation of no columns");
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk: 4, buffer: bound(&home)?, cols: Vec::new() }))
     }
 
     /// A `has` axis probed by one of its columns (decision 0353 step 5): no index, each binding's rows walked on the
