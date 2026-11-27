@@ -383,7 +383,7 @@ After moving to another Node, run `rerail install --refresh` with it first on `P
 hooks and status line. Where an older Node took the place of the recorded one at the same path (a package downgraded,
 Homebrew's `node` linked to an older formula), `rerail` still runs that path, so run
 `node ~/.rerail/current/dist/cli/cli.js install --refresh` instead, with Node 24 or newer first on `PATH`; the hooks'
-line gives it with your own path.
+line gives it with your own path. On Windows run the line's command, since `cmd.exe` passes `~` to `node` as it is.
 
 <details>
 <summary>How Git is found</summary>
