@@ -206,6 +206,14 @@ impl ShardKey for i64 {
 }
 
 impl<K: ShardKey> Keys<K> {
+    /// Every key with parts, in no order.
+    fn keys(&self) -> impl Iterator<Item = u64> + '_ {
+        let table = self.log.as_ref().map(|log| log.table.load_full());
+        (0..table.as_ref().map_or(0, |t| t.slots.len())).filter_map(move |i| {
+            let s = &table.as_ref()?.slots[i];
+            (s.first.load(Ordering::Acquire) != EMPTY).then(|| s.key.load(Ordering::Relaxed))
+        })
+    }
     /// The parts below `bound` that hold rows of key `k`, in the order admitted.
     fn parts(&self, k: K, bound: usize) -> impl Iterator<Item = usize> + '_ {
         // The table borrowed for the first link alone (`load`: no count of its holders written, as a probe of each
@@ -615,13 +623,15 @@ pub struct Layered {
     width: usize,
     /// `has_parts`' last answer and the values admitted then (`admitted << 1 | has`): asked again only when more are.
     seen: AtomicU64,
+    /// `part_docs`' last answer and the values admitted then.
+    part_docs: parking_lot::Mutex<(usize, Arc<[u32]>)>,
 }
 
 impl Layered {
     pub fn new(name: &str, base: Arc<dyn Source>, values: Arc<Values>) -> Self {
         let made = base.made_on_lookup().then(Made::default);
         let width = base.columns().len();
-        Layered { name: name.to_owned(), base, base_len: std::sync::OnceLock::new(), values, made, width, seen: AtomicU64::new(0) }
+        Layered { name: name.to_owned(), base, base_len: std::sync::OnceLock::new(), values, made, width, seen: AtomicU64::new(0), part_docs: parking_lot::Mutex::new((0, Arc::from([]))) }
     }
     /// The batch's rows, where a value's rows are numbered past them (never for a base made on lookup, whose values'
     /// rows are at `MADE_AT`).
@@ -647,6 +657,21 @@ impl Layered {
     /// of a 15 s sample of `all`.
     /// Asked once per value admitted: each probe's load of the parts and hash of the name took about 1% of `all`'s
     /// per-file phase's samples.
+    /// The document keys the relation's parts hold rows of (`Parts::by_key`'s keys), sorted: made again only when more
+    /// values are admitted.
+    fn part_docs(&self) -> Arc<[u32]> {
+        let admitted = self.values.admitted();
+        let mut held = self.part_docs.lock();
+        if held.0 == admitted && admitted != 0 {
+            return Arc::clone(&held.1);
+        }
+        let all = self.values.parts.load();
+        let mut keys: Vec<u32> = all.get(self.name.as_str()).map_or_else(Vec::new, |p| p.by_key.keys().map(|k| k as u32).collect());
+        keys.sort_unstable();
+        keys.dedup();
+        *held = (admitted, Arc::from(keys));
+        Arc::clone(&held.1)
+    }
     fn has_parts(&self) -> bool {
         let admitted = self.values.admitted() as u64;
         if admitted == 0 {
@@ -858,6 +883,21 @@ impl Source for Layered {
     }
     fn build_value_index(&self, column: usize) -> Option<usize> {
         self.base.build_value_index(column)
+    }
+    fn build_value_bits(&self, node: usize, column: usize, value: i64) -> Option<usize> {
+        self.base.build_value_bits(node, column, value)
+    }
+    /// The base's bits, which answer for the batch's nodes: the documents its parts hold rows of are named (`others`),
+    /// and a node of one is read as without them.
+    fn value_bits(&self, node: usize, column: usize, value: i64) -> Option<super::super::ValueBits> {
+        let mut bits = self.base.value_bits(node, column, value)?;
+        if self.has_parts() {
+            bits.others = self.part_docs();
+        }
+        Some(bits)
+    }
+    fn value_bits_gen(&self) -> u32 {
+        self.base.value_bits_gen()
     }
     fn complete_rows(&self) -> bool {
         self.base.complete_rows()

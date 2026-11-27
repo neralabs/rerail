@@ -20,6 +20,11 @@ pub enum Kind {
     NodeBits(u16),
     /// A value index of one column: its rows by value, for a seed scan with a constant (E4).
     Value(u16),
+    /// A view's nodes whose column holds a constant, as node bits in its source's block (`Source::build_value_bits`):
+    /// a test of a bound node against the constant (`kind(n, K)`, `!kind(n, K)`) is one bit, no row of it read. The
+    /// prepare of a filter whose point query is a view's row by node. The source's node column, the constant's column,
+    /// the constant.
+    ValueBits(u16, u16, i64),
     /// A group summary of a bag: its group columns and aggregate (E3).
     Summary { group: Vec<u16>, agg: String },
     /// An interval order on (start, end) columns (E5's `within`).
@@ -98,6 +103,9 @@ impl Use {
 
 /// An exact membership probe of a computed relation, in ns (t57's `probe2-exists` on `all`, 100 to 230 a test).
 pub const PROBE_NS: f64 = 100.0;
+/// A view's row read by a bound node for a test (its document found, its local id, its row's value read), in ns (0706
+/// E1's node reads: `node_hint`, `granule_of_low` and the read, about 150 a row on `all`).
+pub const VIEW_READ_NS: f64 = 150.0;
 /// A filter's test (a key's hash, one load, one compare), in ns.
 pub const FILTER_TEST_NS: f64 = 4.0;
 /// A filter's build, in ns a row (the row's key read, hashed, and its word's bits set).
@@ -131,6 +139,7 @@ pub fn build_ns(kind: &Kind, rows: u64) -> f64 {
             Kind::NodeBits(_) => NODE_BITS_BUILD_NS,
             Kind::Summary { .. } => SUMMARY_BUILD_NS,
             Kind::Value(_) => VALUE_BUILD_NS,
+            Kind::ValueBits(..) => NODE_BITS_BUILD_NS,
             Kind::Order(_) => ORDER_BUILD_NS,
             _ => f64::INFINITY,
         }
@@ -143,6 +152,8 @@ pub fn saves_ns(kind: &Kind, u: Use) -> f64 {
     match kind {
         // Node bits are exact: every test is the bits' alone.
         Kind::NodeBits(_) => u.tests as f64 * (PROBE_NS - NODE_BITS_TEST_NS),
+        // A view's bits are exact too: every test is a bit, not its row's read by node.
+        Kind::ValueBits(..) => u.tests as f64 * (VIEW_READ_NS - NODE_BITS_TEST_NS),
         Kind::Filter(_) => absent * (1.0 - FILTER_PASS) * PROBE_NS - u.tests as f64 * FILTER_TEST_NS,
         _ => 0.0,
     }
@@ -169,6 +180,13 @@ mod tests {
 
     /// Decision 0706 §1, §4: a membership is one `Access` whatever its key's order; a filter pays when its readers'
     /// tests mostly miss and outnumber the rows, and not when they mostly hit.
+    #[test]
+    fn a_views_bits_by_a_constant_pay_by_their_tests_against_the_constants_nodes() {
+        let k = Kind::ValueBits(1, 2, 7);
+        assert!(pays(&k, 50_000, Use { tests: 1_000_000, found: 10 }), "a million tests of 50 k nodes");
+        assert!(!pays(&k, 50_000, Use { tests: 1_000, found: 10 }), "a thousand tests of 50 k nodes");
+    }
+
     #[test]
     fn a_membership_is_one_access_and_pays_by_its_use() {
         assert_eq!(Access::membership("r", [2, 0]), Access::membership("r", [0, 2]));

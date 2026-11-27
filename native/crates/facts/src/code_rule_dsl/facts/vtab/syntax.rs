@@ -2662,6 +2662,12 @@ pub struct Batch {
     /// in one walk of every document's fielded nodes, when the run has seen a chunk's scans walk them for several
     /// fields (`Source::build_value_index`). None until then: a scan walks the field column (`filter_eq`).
     fields: OnceLock<FieldRows>,
+    /// The `node` view's nodes of a kind as node bits (`Source::build_value_bits`), by kind: each its bits' chunk in
+    /// the batch's block, built ahead of the tests of a bound node against the kind (`kind(n, K)`, `!kind(n, K)`) where
+    /// the run has seen them pay. An index of the view in its relation's block (decision 0353), not a copy of it.
+    kind_bits: std::sync::Mutex<Vec<(i64, usize)>>,
+    /// `kind_bits`' generation: one more each time bits are built (`Source::value_bits_gen`).
+    bits_gen: std::sync::atomic::AtomicU32,
     shape: Shape,
     /// The registered lazy families (`Families`, Python's `py.*`: list step 25), by registration; `None` for one
     /// whose dialect has no document in the batch.
@@ -4140,6 +4146,8 @@ impl Batch {
             offsets: made::Offsets::default(),
             kinds: (0..=u8::MAX).filter(|&t| tag_at[usize::from(t) + 1] > tag_at[usize::from(t)]).map(|t| (t, OnceLock::new())).collect(),
             fields: OnceLock::new(),
+            kind_bits: std::sync::Mutex::new(Vec::new()),
+            bits_gen: std::sync::atomic::AtomicU32::new(1),
             by_tag,
             tag_at: in_block(&block, &tag_at),
             shape,
@@ -5338,6 +5346,40 @@ impl Source for Viewed {
             FieldRows::new(&self.batch, all)
         });
         built
+    }
+    fn build_value_bits(&self, node: usize, column: usize, value: i64) -> Option<usize> {
+        if !matches!(self.view, View::Node) || node != self.own() || column != 2 {
+            return None;
+        }
+        let b = &*self.batch;
+        if b.kind_bits.lock().unwrap().iter().any(|&(k, _)| k == value) {
+            return None;
+        }
+        let nodes = b.by_kind(value);
+        // Bounded by a bitmap of every node of the batch, and a word a group past it.
+        let all: usize = (0..b.docs.len()).map(|d| b.docs[d].len() as usize).sum();
+        let (at, _, _) = rerail_blocks::relation::node_bits_chunk(&b.block, nodes.len() as u32, |r| {
+            let [d, l, _] = nodes[r as usize];
+            b.docs[d as usize].global(l)
+        }, false, all / 64 + nodes.len() / 2 + 1024)?;
+        let mut kb = b.kind_bits.lock().unwrap();
+        if kb.iter().any(|&(k, _)| k == value) {
+            return None;
+        }
+        kb.push((value, at));
+        b.bits_gen.fetch_add(1, std::sync::atomic::Ordering::Release);
+        Some(nodes.len())
+    }
+    fn value_bits(&self, node: usize, column: usize, value: i64) -> Option<crate::code_rule_dsl::facts::vtab::ValueBits> {
+        if !matches!(self.view, View::Node) || node != self.own() || column != 2 {
+            return None;
+        }
+        let b = &*self.batch;
+        let at = b.kind_bits.lock().unwrap().iter().find(|&&(k, _)| k == value)?.1;
+        Some(crate::code_rule_dsl::facts::vtab::ValueBits { bits: b.block.ptr::<u8>(at).cast_const(), others: Arc::from([]) })
+    }
+    fn value_bits_gen(&self) -> u32 {
+        if matches!(self.view, View::Node) { self.batch.bits_gen.load(std::sync::atomic::Ordering::Acquire) } else { 0 }
     }
     /// A kind's nodes read in their list (`Batch::by_kind`), not one run each; the other lookups' runs (a document's
     /// rows are one) listed.

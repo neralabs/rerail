@@ -120,6 +120,8 @@ pub use kinds::{keyed_force_for_tests as keyed_batches_forced, keyed_rows_for_te
 pub use kinds::{span_force_for_tests as span_batches_forced, spanned_rows_for_tests as spanned_rows};
 #[cfg(any(test, feature = "test-hooks"))]
 pub use access::value_indexes_built_for_tests as value_indexes_built;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use cands::value_bit_tests_for_tests as value_bit_tests;
 pub mod access;
 mod sorted_hash;
 pub mod table;
@@ -8945,6 +8947,9 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                      /// Each step's place in the runs of the order it probes (`Index::find_at`): the step's keys come
                      /// in a sorted batch where they can (`scan_order`), so each probe starts where the last ended.
                      hints: Vec<[u32; runs::HINTS]>,
+                     /// Per step, the view bits by a constant its tests read (`cands::value_bits_test`): found at its
+                     /// first test in the walk.
+                     vbits: Vec<Option<Option<crate::code_rule_dsl::facts::vtab::ValueBits>>>,
                      /// Each step's last probe of a source's lookup and the candidates it gave: the step's keys come
                      /// sorted where they can, so a key the step probed just before is answered by its candidates
                      /// again, not by the source (a held `kind` probed by kind reads every document of the language).
@@ -9446,6 +9451,17 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         // scratch text (`texts`): a slot may name it, and it is gone when its step returns, before the batch runs (a
         // phase's `@cat("m", x)` of a node's text read `m.`, its tests ordered so the text came before the batched
         // step, ec929805d0). A deferred symbol lives to the morsel's end, past the batches' flush.
+        // A view's test of a bound node against a constant whose bits its source built ahead (the filter's prepare):
+        // its apply is the node's bit. Not a first step (its rows are a cut's), a delta's, a fused or ranged one, or
+        // a screened one.
+        if let Some(Step::Atom { src, neg, keys, binds, tests }) = j.steps.get(i)
+            && i > 0 && i != cx.only_step && binds.is_empty() && !matches!(cx.vbits[i], Some(None))
+            && j.fused[i].is_none() && j.ranges[i].is_none() && cx.screen.is_none_or(|f| f.step != i)
+            && let Some(found) = cands::value_bits_test(j, src, keys, tests, slots, &mut cx.vbits[i], &mut cx.hints[i][0])
+        {
+            if found != *neg { go(cx, i + 1, slots); }
+            return;
+        }
         if let Some(Some((_, rows))) = cx.batch.get_mut(i) && cx.pending.is_empty() && cx.texts.is_empty() {
             rows.extend_from_slice(slots);
             cx.deep = j.steps.len();
@@ -10161,7 +10177,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     let failed = factor.iter().map(|_| Default::default()).collect();
                     let mut w = Ctx { j, head, store, syms: &mut syms, fresh: &mut fresh, n: 0, key: rerail_blocks::vector::Vector::new(), row: rerail_blocks::vector::Vector::new(), error: None, cap, pending: Vec::new(),
                                       scratch: j.steps.iter().map(|_| rowcode::Scratch::default()).collect(), texts: Vec::new(),
-                                      collect: if collecting { Some(&mut rows) } else { None }, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], last: LastProbe::for_steps(j.steps.len()),
+                                      collect: if collecting { Some(&mut rows) } else { None }, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], vbits: vec![None; j.steps.len()], last: LastProbe::for_steps(j.steps.len()),
                                       factor, screen, batch: kinds::batches(j, share == u64::MAX || !collecting, [screen.map(|f| f.step), None]), screening: Default::default(), tally: [0; 10], failed, snap: rerail_blocks::vector::Vector::new(), skipped: 0, deep: 0, work: 0, budget: share, stop: false,
                                       only_step: usize::MAX, only: None, list0: None, cut_from,
                                       counts: j.counts.iter().map(|_| Default::default()).collect(), first: Some((rows_of_first(j, src, store), first)),
@@ -10364,7 +10380,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         join_filter::JoinFilter::choose(j, store)
     } else { None };
     let no_collect = collect.is_none();
-    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: rerail_blocks::vector::Vector::new(), row: rerail_blocks::vector::Vector::new(), error: None, cap: super::width::Limits::here().cap, pending: Vec::new(), scratch, texts: Vec::new(), collect, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], last: LastProbe::for_steps(j.steps.len()),
+    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: rerail_blocks::vector::Vector::new(), row: rerail_blocks::vector::Vector::new(), error: None, cap: super::width::Limits::here().cap, pending: Vec::new(), scratch, texts: Vec::new(), collect, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], vbits: vec![None; j.steps.len()], last: LastProbe::for_steps(j.steps.len()),
                        factor, screen: screen.as_ref(), batch: kinds::batches(j, limit.is_none() || no_collect, [screen.as_ref().map(|f| f.step), limit.as_ref().and_then(|l| l.only.as_ref()).map(|o| o.0)]), screening: Default::default(), tally: [0; 10], failed, snap: rerail_blocks::vector::Vector::new(), skipped: 0, deep: 0,
                        work: 0, budget: limit.as_ref().map_or(u64::MAX, |l| l.budget), stop: false,
                        only_step: limit.as_ref().and_then(|l| l.only.as_ref()).map_or(usize::MAX, |o| o.0), only: limit.and_then(|l| l.only).map(|o| o.1), list0: None,

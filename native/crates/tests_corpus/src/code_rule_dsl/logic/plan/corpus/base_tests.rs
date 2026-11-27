@@ -1854,6 +1854,41 @@ targets(p, l) :- field(a, "left", n), kind(a, "assignment"), at(n, p, l).
     assert_eq!(of(&got[2]), want);
 }
 
+/// A filter's prepare and apply: `kind(n, "identifier")` and its negation with `n` bound are answered by the bits of
+/// the kind's nodes the `node` view's source built ahead (`Source::build_value_bits`), one bit a test, once the run's
+/// first chunks have seen the tests pay. The rows are the source's: each line's assignment's and addition's left
+/// operands are identifiers, and of the right operands, the assignment's (an addition) alone is not. `kinds` reads
+/// `kind` unbound, so `kind` is the view, not rows made on demand for the tested nodes.
+#[test]
+fn kind_tests_by_a_bound_node_read_the_kinds_bits_built_ahead() {
+    use crate::code_rule_dsl::logic::native::component::value_bit_tests;
+    let sources: Vec<(String, String)> = (0..80).map(|i| (format!("g{i:02}.py"), (0..(i % 4 + 1)).map(|k| format!("a{k} = b{k} + c{k}\n")).collect())).collect();
+    let files: Vec<(&str, &str)> = sources.iter().map(|(p, s)| (p.as_str(), s.as_str())).collect();
+    let dir = corpus("kind-bits", &files);
+    let program = r#"
+.decl at(n: node, p: symbol, l: number)
+at(n, p, l) :- docof(n, d), doc(d, p, _), line(n, l).
+.decl lefts(p: symbol, l: number)
+lefts(p, l) :- field(_, "left", n), kind(n, "identifier"), at(n, p, l).
+.decl rights(p: symbol, l: number)
+rights(p, l) :- field(_, "right", n), !kind(n, "identifier"), at(n, p, l).
+.decl kinds(k: symbol)
+kinds(k) :- kind(_, k).
+.output lefts, rights, kinds
+"#;
+    let before = value_bit_tests();
+    let out = dir.join(".out");
+    super::run(program, &dir, None, &out, "program", Binding::Cpu, 64).unwrap();
+    let got = shown_of(&Outputs::open(&out).unwrap(), &["lefts", "rights"]);
+    assert!(value_bit_tests() > before + 100, "the kind's bits answered its tests ({})", value_bit_tests() - before);
+    let file = |p: &str| p.rsplit('/').next().unwrap_or(p).trim_matches('"').to_owned();
+    let of = |rows: &Vec<Vec<String>>| rows.iter().map(|r| (file(&r[0]), r[1].parse::<i64>().unwrap())).collect::<BTreeSet<_>>();
+    let want: BTreeSet<(String, i64)> = (0..80).flat_map(|i| (1..=(i % 4 + 1) as i64).map(move |l| (format!("g{i:02}.py"), l))).collect();
+    assert_eq!(of(&got[0]), want, "lefts: identifiers");
+    assert_eq!(of(&got[1]), want, "rights: the assignments' additions");
+    assert_eq!(got[1].len(), want.len(), "one right operand a line is not an identifier");
+}
+
 /// Decision 0706 E1: a node's text read as a symbol (`node_text(n, s)`, its value bound, compared with a constant,
 /// and joined on) is its leaf's term's atom, read with no hash of the text; and the rows are the text's: each file's
 /// identifiers by name, those named `hit`, and the pairs of lines that name one identifier.
