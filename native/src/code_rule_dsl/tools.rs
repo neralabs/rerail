@@ -336,7 +336,7 @@ pub fn run_program(
     // dialect's (the `dialect` option, `corpus::added`): never printed and read again (decision 0249).
     let dialects = corpus::run_dialects(root, &program, &with_reuse(options)).map_err(|e| e.to_string())?;
     // One dialect with files may be another than the one named: a `.js`-scoped TypeScript pack reads JavaScript.
-    let runs = dialect_runs(&dialects, out);
+    let runs = dialect_dirs(&dialects, out);
     let (mut rows, mut files_read, mut nodes, mut phases) = (Vec::new(), 0, 0, Vec::new());
     let binding = device_binding();
     for (dialect, dir) in &runs {
@@ -548,7 +548,7 @@ fn run_pack_dialects(
     use super::logic::plan::corpus;
     use crate::code_rule_dsl::logic::plan::output;
     let binding = device_binding();
-    let runs = dialect_runs(&group.dialects, dir);
+    let runs = dialect_dirs(&group.dialects, dir);
     let mut files = 0;
     let mut outputs = Vec::with_capacity(runs.len());
     for (dialect, dir) in &runs {
@@ -567,7 +567,7 @@ fn run_pack_dialects(
 
 /// Each dialect's run and its directory: the first into `out`, each other into `out/<dialect>`; one run as written
 /// into `out` where there is no dialect.
-fn dialect_runs(dialects: &[&'static str], out: &std::path::Path) -> Vec<(Option<&'static str>, std::path::PathBuf)> {
+fn dialect_dirs(dialects: &[&'static str], out: &std::path::Path) -> Vec<(Option<&'static str>, std::path::PathBuf)> {
     if dialects.is_empty() {
         return vec![(None, out.to_path_buf())];
     }
