@@ -2290,6 +2290,14 @@ use rerail_blocks::vector::Vector;
                 let host = long.node_read("rr_node_text_any", id).unwrap_or_else(|| panic!("node {id:#x}: the host's text"));
                 let rusqlite::types::Value::Text(host) = host else { panic!("node {id:#x}: a text") };
                 assert_eq!(read(id).as_deref(), Some(host.as_str()), "node {id:#x}: its text read in place");
+                // Its preorder key (`@rr_node_order`, `ARITH_NODE_ORDER`) read through the same directory: the host's.
+                let host = match long.node_read("rr_node_order", id) {
+                    Some(rusqlite::types::Value::Integer(k)) => k,
+                    other => panic!("node {id:#x}: the host's order {other:?}"),
+                };
+                // SAFETY: as `read`.
+                let order = unsafe { Doc::of(d, ViewDir::doc_of_key(d, (id as u64 >> 32) as u32, NO_DOC)).order_of_id(id as u32) };
+                assert_eq!(order, Some(host as u64), "node {id:#x}: its order read in place");
                 seen[k] += 1;
             }
         }
@@ -2300,8 +2308,9 @@ use rerail_blocks::vector::Vector;
         let doc_l: Arc<dyn Source> = Arc::new(Layered::new("doc", find("doc"), Arc::clone(&values)));
         let n = doc_l.len();
         assert!(n >= 3, "the chunk's files and the value's: {n} rows");
-        if let Some(d) = doc_l.device_view() {
+        {
             use crate::code_rule_dsl::transducer::packed::metal_join as mj;
+            let d = doc_l.device_view().expect("doc over the chunk and its value, read in place");
             assert_eq!(d.rows, n);
             let placed = mj::DevRel::view_in(d.home.clone(), 3, n, d.in_place.clone()).unwrap();
             let out = mj::DevRel::empty(3, n).unwrap();
@@ -2560,6 +2569,41 @@ use rerail_blocks::vector::Vector;
             }
             assert_eq!(got[0], want, "{how}: the CPU's rows are the host's");
             assert_eq!(got[1], want, "{how}: the device's rows are the CPU's");
+        }
+        // Every child probed by its parent alone, each document's root among the parents: the parent is the walk's
+        // only key, known by its making (`parent_known`), and a root's children are walked as any parent's where every
+        // numbered node's parent is numbered (`ViewDoc::parented`), else its document's rows, each tested.
+        let mut all: Vec<(i64, i64)> = (0..child.len()).map(|r| (child.value(r, 0), child.value(r, 1))).collect();
+        all.sort_unstable();
+        let mut parents: Vec<i64> = all.iter().map(|r| r.0).collect();
+        parents.dedup();
+        let roots = parents.iter().filter(|&&p| !all.iter().any(|r| r.1 == p)).count();
+        assert!(roots >= 3, "the documents' roots are parents: {roots}");
+        db.execute_batch("DELETE FROM temp.q;").unwrap();
+        for &p in &parents {
+            db.execute("INSERT INTO q VALUES (?1)", [p]).unwrap();
+        }
+        let every = format!("t:d:{}:{}:ii", hex("main.child_t"), hex("p, c"));
+        let rule = format!("pos {q} v0\npos {every} v0 v1\nhead v0 v1");
+        for device in [false, true] {
+            db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+            let mut spec = vec!["name every_child_test".to_owned()];
+            if device {
+                spec.push("device".into());
+            }
+            spec.push("rel h0 ii empty".into());
+            spec.push(format!("seed 0 {}", hex(&rule)));
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, "every_child_test", 0).unwrap();
+            let report = super::take_report();
+            super::super::close(&db, "every_child_test").unwrap();
+            if device {
+                let r = report.as_ref().expect("a device run");
+                assert!(r.refused.is_none(), "every child by its parent: {r:?}");
+            }
+            let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+            rows.sort_unstable();
+            assert_eq!(rows, all, "every child by its parent (device {device}): the host's rows");
         }
     }
 

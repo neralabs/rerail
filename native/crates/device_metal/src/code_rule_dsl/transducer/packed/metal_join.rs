@@ -167,13 +167,21 @@ pub(in crate::code_rule_dsl) const OPND_ARENA: u32 = 3;
 /// An operand that is a node's text (`@rr_node_text_any`): its span of its document's source, read where it lies
 /// through the batch's node view (`Batch::node_texts`, bound as the stage's `v_dir`), never made.
 pub(in crate::code_rule_dsl) const OPND_NODE: u32 = 4;
-/// Whether text stage `stage` (`TEXTOP`, `STRCMP`, `ROWTEXT`) has a node's text among its operands (`OPND_NODE`),
-/// read through the batch's node view (`Batch::node_texts`).
+/// Whether stage `stage` reads nodes through the batch's node view (`Batch::node_texts`, its `v_dir`): a text stage
+/// (`TEXTOP`, `STRCMP`, `ROWTEXT`) with a node's text among its operands (`OPND_NODE`), or a filter whose bind is a
+/// node's preorder key (`ARITH_NODE_ORDER`).
 pub(in crate::code_rule_dsl) fn reads_node_texts(stage: &Stage) -> bool {
     let k = stage.agg[1];
     // A string join's `agg[1]` is no operands' kinds (it reads its relation, by `v_dir` where that is a view).
     let strjoin = stage.mode == ROWTEXT && stage.agg[0] & 15 == ROW_STRJOIN;
-    matches!(stage.mode, TEXTOP | STRCMP | ROWTEXT) && !strjoin && [k & 15, (k >> 4) & 15, (k >> 8) & 15].contains(&OPND_NODE)
+    let text = matches!(stage.mode, TEXTOP | STRCMP | ROWTEXT) && !strjoin && [k & 15, (k >> 4) & 15, (k >> 8) & 15].contains(&OPND_NODE);
+    text || reads_node_orders(stage)
+}
+
+/// Whether filter `stage` binds a node's preorder key (`ARITH_NODE_ORDER`), read through its `v_dir`.
+pub(in crate::code_rule_dsl) fn reads_node_orders(stage: &Stage) -> bool {
+    stage.mode == FILTER
+        && (0..(stage.nbinds as usize).min(stage.bind_kind.len())).any(|b| stage.bind_kind[b] == BIND_ARITH && stage.arith.get(stage.bind_idx[b] as usize).is_some_and(|a| a[0] == ARITH_NODE_ORDER))
 }
 
 /// A held text's form (`setfix::device`'s `deferred`, beside `CAT_DOT` and `CAT_PLAIN`): a node's text (`OPND_NODE`).
@@ -202,6 +210,10 @@ pub(in crate::code_rule_dsl) const ARITH_DIV: u32 = 3;
 pub(in crate::code_rule_dsl) const ARITH_MOD: u32 = 4;
 pub(in crate::code_rule_dsl) const ARITH_MAX: u32 = 5;
 pub(in crate::code_rule_dsl) const ARITH_MIN: u32 = 6;
+/// A node's preorder key (`@rr_node_order`, `node_order`'s `k`) of its id, the first operand: its document by key in
+/// the stage's node view (`v_dir`), its numbered node's order there. A node the view does not number has none, as the
+/// host's read (`LongTexts::order_any`, through the same chunk and values) has none.
+pub(in crate::code_rule_dsl) const ARITH_NODE_ORDER: u32 = 7;
 /// A key's or a parameter's source: a slot of the binding, or a constant.
 pub(in crate::code_rule_dsl) const SLOT: u32 = 1;
 pub(in crate::code_rule_dsl) const CONST: u32 = 0;

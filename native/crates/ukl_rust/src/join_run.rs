@@ -614,7 +614,8 @@ impl St<'_> {
             3 => x.checked_div(y),
             4 => x.checked_rem(y),
             5 => Some(x.max(y)),
-            _ => Some(x.min(y)),
+            6 => Some(x.min(y)),
+            _ => node_order(self.s.v_dir, x, &mut { NONE }),
         }
     }
 
@@ -700,6 +701,12 @@ impl St<'_> {
         (key || self.keys_are(r, kv)) && (0..s.ntests.min(8) as usize).all(|i| self.rget(r, s.test_a[i]) == self.rget(r, s.test_b[i]))
     }
 
+    /// Whether a walk's candidates hold the binding's only key by their making: a parent's children (walk 2, a
+    /// `v_parent` probe's), whose parent column (`child`'s 0) is the parent's id, checked once by the probe.
+    fn parent_known(&self, how: u32) -> bool {
+        how == 2 && self.s.nkeys == 1 && self.s.key_rcol[0] == 0
+    }
+
     /// Whether row `r`'s keys are `kv`.
     unsafe fn keys_are(&self, r: u32, kv: &[i64; 8]) -> bool {
         (0..self.s.nkeys.min(8) as usize).all(|i| self.rget(r, self.s.key_rcol[i]) == kv[i])
@@ -744,10 +751,14 @@ impl St<'_> {
         if s.v_parent != 0 {
             let Some((e, l)) = self.doc_node(kv[0]) else { return none };
             let first = (*e).rows[1];
-            if l == 0 {
+            if l == 0 && doc(d, e).e.parented == 0 {
                 let a = e.offset_from(view_rows(d)) as u32;
                 let hi = if a + 1 < (*d).ndocs { (*view_rows(d).add(a as usize + 1)).rows[1] } else { s.nr };
                 return Walk { lo: first, hi, how: 0, tag: 0 };
+            }
+            // Its children's parent column is its id (`parent_known`): the key is checked here once, not at each child.
+            if doc(d, e).node_id(l) != kv[0] as u64 {
+                return none;
             }
             let c = doc(d, e).child_first(l);
             return if c == NONE { none } else { Walk { lo: first.wrapping_add(c), hi: NONE, how: 2, tag: 0 } };
@@ -805,6 +816,7 @@ impl St<'_> {
     /// tag: it walks its places in order), else compared.
     unsafe fn each(&self, w: Walk, kv: &[i64; 8], mut f: impl FnMut(u32, u32, bool) -> bool) {
         let mut q = w.lo;
+        let known = self.parent_known(w.how);
         // The walk's last place of the tag: none (0), its key `kv` (1), another (2).
         let mut last = 0u32;
         while q < w.hi {
@@ -823,7 +835,7 @@ impl St<'_> {
                     continue;
                 }
             }
-            if !f(self.cand_row(w.how, q), q, key) {
+            if !f(self.cand_row(w.how, q), q, key || known) {
                 return;
             }
             q = self.cand_next(w.how, q);
@@ -1201,6 +1213,22 @@ unsafe fn sym_text(d: *const u8, v: i64, unheld: &mut bool) -> (*const u8, u32) 
         return (d, 0);
     }
     (atoms_at(d, 0, v as u32) as *const u8, n)
+}
+
+/// Node `v`'s preorder key (`@rr_node_order`, `ARITH_NODE_ORDER`): its document by key in the stage's node view `d`
+/// (`memo`: the document found last, tried first), its numbered node's order there; `None` where the view numbers no
+/// node `v`, as the host's read (`LongTexts::order_any`) has none.
+#[inline]
+pub(super) unsafe fn node_order(d: *const ViewDir, v: i64, memo: &mut u32) -> Option<i64> {
+    if d.is_null() || v < 0 {
+        return None;
+    }
+    let m = ViewDir::doc_of_key(d, ((v as u64) >> 32) as u32, *memo);
+    if m == rerail_reads::views::NO_DOC {
+        return None;
+    }
+    *memo = m;
+    reads::Doc::of(d, m).order_of_id(v as u32).map(|k| k as i64)
 }
 
 /// Node `v`'s text (`@rr_node_text_any`, operand kind 4): its span of its document's source, read where it lies

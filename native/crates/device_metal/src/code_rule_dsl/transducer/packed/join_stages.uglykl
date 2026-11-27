@@ -172,6 +172,24 @@ UKL_INLINE int64_t parval(StageP s, uint32_t k, Longs L, uint32_t t) {
     return s->par_doc[k] != 0 ? (v >> 32) : v;
 }
 
+// Node v's preorder key (`@rr_node_order`, `ARITH_NODE_ORDER`): its document by key in the stage's node view
+// (`Stage::v_dir`, `clif_dir_doc_of_key`), its numbered node (`clif_view_number`), its order there (`clif_view_order`'s
+// key). False where the view numbers no node v, as the host's read has none.
+UKL_INLINE bool node_order(StageP s, int64_t v, UKL_PRIVATE int64_t* out) {
+    UKL_GLOBAL const ViewDir* d = s->v_dir;
+    if (d == 0 || v < 0) return false;
+    uint32_t a = clif_dir_doc_of_key(view_block(d), d->at, (uint32_t)((uint64_t)v >> 32), NONE);
+    if (a == NONE) return false;
+    UKL_GLOBAL const ViewRow* e = &view_rows(d)[a];
+    UKL_GLOBAL const uint8_t* ch = view_block(d);
+    UKL_GLOBAL const uint8_t* t = view_tape(d, e);
+    UKL_GLOBAL const uint8_t* ls = view_lines_base(d, e);
+    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, e->lines, (uint32_t)((uint64_t)v & 0xfffffffful));
+    if (l == NONE) return false;
+    *out = (int64_t)clif_view_order(ch, e->entry, t, e->view, ls, e->lines, l, 1u);
+    return true;
+}
+
 // Arithmetic bind j's value for one row, as the CPU's checked arithmetic gives it: false where it has none (an
 // overflow, a zero divisor). Wrapping operations on uint64_t, then the overflow tested, so nothing is undefined.
 UKL_INLINE bool arith(StageP s, uint32_t j, Longs L, uint32_t t, RelB R, uint32_t r, UKL_PRIVATE int64_t* out) {
@@ -199,8 +217,10 @@ UKL_INLINE bool arith(StageP s, uint32_t j, Longs L, uint32_t t, RelB R, uint32_
         v = ok ? x % y : 0;
     } else if (a[0] == 5u) {
         v = ukl_max(x, y);
-    } else {
+    } else if (a[0] == 6u) {
         v = ukl_min(x, y);
+    } else {
+        ok = node_order(s, x, &v);
     }
     *out = v;
     return ok;
@@ -288,7 +308,11 @@ UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_P
     uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, la, (uint32_t)((uint64_t)key & 0xfffffffful));
     if (l == NONE) return;
     uint32_t first = e->rows[1];
-    if (l == 0u) { *lo = first; *hi = a + 1u < d->ndocs ? view_rows(d)[a + 1u].rows[1] : s->nr; return; }
+    // The root's children where a numbered node's parent is left out (`ViewDoc::parented` 0): its document's rows,
+    // which `matches` tests; else its numbered tape children, as any parent's.
+    if (l == 0u && ((UKL_GLOBAL const ViewDoc*)(ch + e->entry))->parented == 0u) { *lo = first; *hi = a + 1u < d->ndocs ? view_rows(d)[a + 1u].rows[1] : s->nr; return; }
+    // Its children's parent column is its id (`parent_known`): the key is checked here once, not at each child.
+    if ((int64_t)clif_view_order(ch, e->entry, t, e->view, ls, la, l, 0u) != key) return;
     uint32_t c = clif_view_child_first(ch, e->entry, t, e->view, ls, la, l);
     if (c == NONE) return;
     *lo = first + c; *hi = NONE; *how = 2u;
@@ -414,6 +438,12 @@ UKL_INLINE bool row_passes(StageP s, RelB R, uint32_t r) {
     return true;
 }
 
+// Whether a walk's candidates hold the binding's only key by their making: a parent's children (walk 2, `by_parent`),
+// whose parent column (`child`'s 0) is the parent's id, checked once by the probe.
+UKL_INLINE bool parent_known(StageP s, uint32_t how) {
+    return how == 2u && s->nkeys == 1u && s->key_rcol[0] == 0u;
+}
+
 // Whether row r matches the binding's keys and the relation's column tests.
 UKL_SHARED bool matches(StageP s, RelB R, uint32_t r, UKL_PRIVATE const int64_t* kv) {
     // A `has` walk's candidates hold its key by their making (`by_has`); a descendant is a row where it is in the set.
@@ -432,6 +462,7 @@ typedef struct Walked { uint32_t tag, head; } Walked;
 // in order, so that is the place the mark names); another is compared.
 UKL_SHARED bool cand_matches(StageP s, RelB R, uint32_t how, uint32_t q, uint32_t r, UKL_PRIVATE const int64_t* kv,
                              UKL_PRIVATE Walked* w) {
+    if (parent_known(s, how)) return row_passes(s, R, r);
     if (how != 1u) return matches(s, R, r, kv);
     if (w->head == 3u) { w->tag = (uint32_t)(key_hash(kv, s->nkeys) >> 32) & ~MARK_SAME; w->head = 0u; }
     uint32_t m = clif_rel_group_mark((JSPACE const uint8_t*)R.p, s->r_at, s->r_index, q);

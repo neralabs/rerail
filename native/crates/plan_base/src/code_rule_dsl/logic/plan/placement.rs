@@ -296,6 +296,8 @@ fn row_term(v: &Version, t: TermRef<'_>) -> bool {
         f => match device_fn(f) {
             Some(d) if d.arity() != args.len() => false,
             Some(DeviceFn::Arith(_)) => args.iter().all(|&a| row_term(v, a)),
+            // A node's preorder key, of a variable (a node bound by a row): read off its tape (`ARITH_NODE_ORDER`).
+            Some(DeviceFn::NodeOrder) => args.iter().all(|a| !is_call(a)),
             // The order of two symbols' names (`<` of symbols lowers to it), or a name's characters: of names or
             // cats' texts (compared from their parts, never made), or of texts the device makes.
             Some(DeviceFn::Names { .. }) => args.iter().all(|&a| !is_call(&a) || is_cat_of_rows(v, a) || is_text_fn_of_rows(v, a)),

@@ -48,7 +48,7 @@ pub fn ukl() -> String {
         ("uint32_t", "place", offset_of!(ViewDoc, place)),
         ("uint32_t", "doc_path", offset_of!(ViewDoc, doc_path)),
         ("uint32_t", "doc_module", offset_of!(ViewDoc, doc_module)),
-        ("uint32_t", "pad", offset_of!(ViewDoc, pad)),
+        ("uint32_t", "parented", offset_of!(ViewDoc, parented)),
         ("Run", "node_table", offset_of!(ViewDoc, node_table)),
         ("Run", "node_by_id", offset_of!(ViewDoc, node_by_id)),
     ];

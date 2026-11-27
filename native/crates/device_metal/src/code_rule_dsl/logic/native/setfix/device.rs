@@ -164,6 +164,18 @@ fn dev_atoms(batch: &mut mj::Batch, names: &Interner) -> Result<(), String> {
     batch.kept(|| mj::DevKept::new(atoms.kept())).map_err(|e| format!("{e:?}: the rolling cache"))
 }
 
+/// Whether two steps' bindings of the long-text nodes (each node read's own, `Step::Func`'s `texts`) bind one source:
+/// a comparison of two nodes' order reads two keys, each step bound apart, through one binding.
+fn same_nodes(a: &Arc<super::NodeTexts>, b: &Arc<super::NodeTexts>) -> bool {
+    use super::NodeTexts::{At, Held};
+    Arc::ptr_eq(a, b)
+        || match (&**a, &**b) {
+            (Held(x), Held(y)) => Arc::ptr_eq(x, y),
+            (At(x), At(y)) => x.ptr_eq(y),
+            _ => false,
+        }
+}
+
 /// The node view the binding of the long-text nodes `nodes` reads nodes' texts through
 /// (`Source::node_texts_in_place`), where it is in place.
 fn node_view(nodes: &super::NodeTexts) -> Option<crate::code_rule_dsl::facts::vtab::ViewInPlace> {
@@ -1046,7 +1058,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     return Err(format!("the function {name} of a slot no node is bound in"));
                 }
                 let h = j.bound(h).clone();
-                if nodes.as_ref().is_some_and(|b| !Arc::ptr_eq(b, &h)) {
+                if nodes.as_ref().is_some_and(|b| !same_nodes(b, &h)) {
                     return Err(format!("the function {name} through two bindings of the long-text nodes"));
                 }
                 nodes = Some(h);
@@ -1197,6 +1209,38 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     stages.push(PStage { first: i, span: 0, kind, desc: d, npassed: 0 });
                     stages.push(textop(i, mj::TEXT_EQ, true, Key::Slot(target), Key::Slot(*out), &deferred, &origin, &known)?);
                 }
+                i += 1;
+            }
+            Step::Func { name, args, out, bind, texts, .. } if name.as_str() == "rr_node_order" => {
+                // A node's preorder key (`node_order`'s `k`, a comparison of two nodes' order): a filter whose bind
+                // reads it off the node's tape through the batch's node view (`mj::ARITH_NODE_ORDER`, its `v_dir`),
+                // as a node's text is read; a node the view does not number has none, and its row is dropped, as
+                // the host's read drops it.
+                let (Some(h), [Key::Slot(n)]) = (texts.as_ref(), &args[..]) else { return Err(format!("the function {name} of no node slot, or with no node reads bound")) };
+                let n = *n;
+                if !*bind || !bound.get(n).copied().unwrap_or(false) || is_arena(n) || deferred.contains_key(&n) {
+                    return Err(format!("the function {name} of a slot no node is bound in, or its value tested"));
+                }
+                let h = j.bound(h).clone();
+                if nodes.as_ref().is_some_and(|b| !same_nodes(b, &h)) {
+                    return Err(format!("the function {name} through two bindings of the long-text nodes"));
+                }
+                nodes = Some(h);
+                let mut d = mj::Stage { mode: mj::FILTER, ..mj::Stage::default() };
+                d.col_kind[0] = mj::LEFT;
+                d.col_idx[0] = n as u32;
+                d.ncols = 1;
+                d.arith[0] = [mj::ARITH_NODE_ORDER, 0, 0, 0];
+                d.bind_slot[0] = *out as u32;
+                d.bind_kind[0] = mj::BIND_ARITH;
+                d.bind_idx[0] = 0;
+                d.nbinds = 1;
+                d.npassed = 1;
+                if *out >= bound.len() {
+                    bound.resize(*out + 1, false);
+                }
+                bound[*out] = true;
+                stages.push(PStage { first: i, span: 1, kind: Kind::Filter, desc: d, npassed: 1 });
                 i += 1;
             }
             Step::Func { name, kinds, args, out, bind, .. } => {
@@ -2123,7 +2167,7 @@ impl<'p> Run<'p> {
         if bit(mj::TEXTFN_UNHELD) {
             // A node's text no tape read finds sets the same bit (`OPND_NODE`): a comment no node is, or a node of
             // no document of the batch's.
-            let nodes = self.plan.stages.iter().zip(&self.counter).any(|(s, c)| mj::reads_node_texts(&s.desc) && c.is_some_and(|c| self.counters.get(c) & mj::TEXTFN_UNHELD != 0));
+            let nodes = self.plan.stages.iter().zip(&self.counter).any(|(s, c)| reads_names(s.desc.mode) && mj::reads_node_texts(&s.desc) && c.is_some_and(|c| self.counters.get(c) & mj::TEXTFN_UNHELD != 0));
             return Some(if nodes { "a node's text no read of its batch's tape finds (a comment no node is, or a node of no document of the batch's)" } else { "a text read of a symbol the atoms directory does not hold" }.to_owned());
         }
         if self.plan.stages.iter().zip(&self.counter).any(|(s, c)| s.desc.mode == mj::TEXTOP && c.is_some_and(|c| self.counters.get(c) & mj::TEXTFN_HOST != 0)) {

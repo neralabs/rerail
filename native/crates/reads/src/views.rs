@@ -59,7 +59,10 @@ pub struct ViewDoc {
     /// once in its batch's atoms (`tape_rows::derive`), as the host's rows give them.
     pub doc_path: u32,
     pub doc_module: u32,
-    pub pad: u32,
+    /// 1 when every numbered node but the root has a numbered tape parent (`Projected::parented`): the root's
+    /// children are its numbered tape children, walked as any parent's (`child_first`, `child_next`); 0 where a
+    /// numbered node's parent is left out, its `child` parent the root.
+    pub parented: u32,
     /// SPIKE (shared strata work, A): by local id, the numbered node's tape node and its id's low bits (`[u32; 2]`s),
     /// derived once at the entry's making in its block; empty: read by the numbering (`num_select`, `num_low_of`).
     pub node_table: Run,

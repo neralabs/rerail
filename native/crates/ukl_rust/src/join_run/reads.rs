@@ -530,6 +530,14 @@ impl<'a> Doc<'a> {
         if l < self.e.nodes { l } else { NO_ROW }
     }
 
+    /// Its node of local id `low`'s preorder key (`@rr_node_order`, `order`'s `k`: its key, its order in the
+    /// document), or `None` where no node of it is numbered so.
+    #[inline]
+    pub unsafe fn order_of_id(&self, low: u32) -> Option<u64> {
+        let l = self.number(low);
+        (l != NO_ROW).then(|| self.order(l, 1))
+    }
+
     /// The text of the node whose id's low 32 bits are `low`: its numbered node's span of the source, where the
     /// source lies (its row's home, `view_source`'s); `None` for no numbered node (a comment no node is, a token) or
     /// a span past the source.

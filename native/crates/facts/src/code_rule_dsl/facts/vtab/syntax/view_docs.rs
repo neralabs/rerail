@@ -99,6 +99,8 @@ impl ViewEntry {
         unsafe {
             (*d).preorder = u32::from(p.defs.is_none());
             (*d).nodes = p.len();
+            // Every numbered node's tape parent numbered (its root's too): the root's children walked as any parent's.
+            (*d).parented = u32::from(p.parented() == p.len());
             if let Some(t) = &node_table {
                 Run::set(&raw mut (*d).node_table, t.as_ptr(), t.len());
             }
