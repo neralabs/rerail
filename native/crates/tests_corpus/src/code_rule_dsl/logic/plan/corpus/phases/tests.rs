@@ -19,7 +19,7 @@
         let defs = || crate::code_rule_dsl::logic::plan::output::shown(&out, "defs").unwrap();
         let first = run();
         let sources = first.phase_runs.iter().find(|r| r.name == "sources").expect("phase 1 ran");
-        assert_eq!(sources.exports, vec![("document".to_owned(), 2), ("library".to_owned(), 0)], "each source file is a document of phase 1's, and no library is set");
+        assert_eq!(sources.exports, vec![("document".to_owned(), 2), ("library".to_owned(), 0), ("source_library".to_owned(), 0)], "each source file is a document of phase 1's, and no library is set");
         assert_eq!(defs(), [["f"], ["g"]]);
         std::fs::write(src.join("a.py"), "def h():\n    return 1\n").unwrap();
         let second = run();
@@ -60,7 +60,7 @@
         let first = run();
         assert_eq!(first.phase_runs.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["sources"]);
         let sources = first.phase_runs.iter().find(|r| r.name == "sources").expect("phase 1 ran");
-        assert_eq!(sources.exports, vec![("document".to_owned(), 1), ("library".to_owned(), 3)], "m, and builtins, a and b: c is imported by none");
+        assert_eq!(sources.exports, vec![("document".to_owned(), 1), ("library".to_owned(), 3), ("source_library".to_owned(), 0)], "m, and builtins, a and b: c is imported by none; each a stub");
         assert_eq!(rows("lib"), [["a"], ["b"], ["builtins"]]);
         assert_eq!(rows("defs"), [["fa"], ["fb"], ["own"]], "the libraries are the reader's documents");
         std::fs::write(lib.join("b.pyi"), "import c\ndef fb2() -> None: ...\n").unwrap();
@@ -69,6 +69,41 @@
         assert_eq!(rows("defs"), [["fa"], ["fb2"], ["fc"], ["own"]]);
         let sources = second.phase_runs.iter().find(|r| r.name == "sources").expect("phase 1 ran");
         assert_eq!(sources.report.memo.0, 3, "phase 1 reads m, builtins and a from the memo, and builds only the edited library and the new one");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A library read from its source (an installed package with neither stubs nor `py.typed`, under `python.untyped =
+    /// read`) is a `source_library` of phase 1's as well as a library. A program that reads `sources__source_library`
+    /// takes those documents as its own, and no other library's: typeshed's stub is not among them.
+    #[test]
+    fn a_reader_of_the_source_libraries_takes_those_alone() {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("sources-source-libraries");
+        let _ = std::fs::remove_dir_all(&dir);
+        let (src, lib, site) = (dir.join("src"), dir.join("ts/stdlib"), dir.join("venv/lib/python3.12/site-packages/u"));
+        for d in [&src, &lib, &site] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(src.join("rerail.env"), "python.typeshed = ../ts\npython.venv = ../venv\npython.untyped = read\n").unwrap();
+        std::fs::write(src.join("m.py"), "import a\nimport u\n\ndef own():\n    return 1\n").unwrap();
+        std::fs::write(lib.join("VERSIONS"), "builtins: 3.0-\na: 3.0-\n").unwrap();
+        std::fs::write(lib.join("builtins.pyi"), "class object: ...\n").unwrap();
+        std::fs::write(lib.join("a.pyi"), "def fa() -> None: ...\n").unwrap();
+        std::fs::write(site.join("__init__.py"), "def fu():\n    return 1\n").unwrap();
+        let out = dir.join("out");
+        crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        let reader = "#include \"core.rerail\"\n.decl sources__source_library(p: symbol)\n.decl srclib(p: symbol)\nsrclib(p) :- sources__source_library(p).\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output srclib, defs\n";
+        let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(reader).unwrap()).unwrap();
+        let report = crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::Value::Null).unwrap();
+        let rows = |rel: &str| {
+            let mut v: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
+            v.sort();
+            v
+        };
+        let sources = report.phase_runs.iter().find(|r| r.name == "sources").expect("phase 1 ran");
+        assert_eq!(sources.exports, vec![("document".to_owned(), 1), ("library".to_owned(), 3), ("source_library".to_owned(), 1)], "m; builtins, a and u; u");
+        let srclib = rows("srclib");
+        assert!(srclib.len() == 1 && srclib[0][0].replace(std::path::MAIN_SEPARATOR, "/").ends_with("site-packages/u/__init__.py"), "{srclib:?}");
+        assert_eq!(rows("defs"), [["fu"], ["own"]], "u's source is the reader's document, a's stub is not");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -12058,3 +12058,14 @@ Fixes the merge needed:
 
 Checked under Relax: kotlin-parser 91/91, python-parser 29, rr-parser 59, compiler 46, bitlex 26, cpu-stream 74,
 cpu-block 7, json-aot 2; every `rust_is_current` passes. No Metal or farm runs.
+
+### Q582. Roll-up 154 (sync-integration-hub-tape 39500fc064 onto Pulling-it-all-together): what the merge chose
+
+sync-integration-hub-tape's three commits: the program demand's sideways order starts at a relation computed in
+full (0145, pt_tm's pragma moves to python/points-to); an untyped library's bodies are typed as the workspace's
+under python.untyped = read (0083, sources__source_library); and a wait helps only on the engine's own pools.
+
+A clean merge: no conflict, no file of the hub's edited by both sides.
+
+Checked under Relax: the feeder's own tests (logic's magic tests, tests-corpus phases, tests-logic oracle tests) and
+the context and run crates. No Metal or farm runs.

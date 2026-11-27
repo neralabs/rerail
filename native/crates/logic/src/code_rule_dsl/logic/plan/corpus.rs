@@ -1416,7 +1416,7 @@ pub fn closes_done() {
     let (n, done) = &held_.0;
     let mut left = n.lock().expect("the closes beside");
     while *left > 0 {
-        if rayon::current_thread_index().is_some() {
+        if rerail_accel::exec::on_pool() {
             drop(left);
             if !matches!(rayon::yield_now(), Some(rayon::Yield::Executed)) {
                 std::thread::yield_now();
@@ -2104,8 +2104,9 @@ fn run_observed_within(
     phase("constants", 0);
     let t = t_facts.map(|t_facts| Connection::open_with_flags(t_facts, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)).transpose()?;
     // The program's `.language` (above) picks the corpus's files: `.rerail` files only when it names `rr` (decision 0061).
-    // The library documents phase 1's imports reached, for a program that reads them (`sources__library`): each a
-    // loaded document of this run, `(canonical path, module)`.
+    // The library documents phase 1's imports reached, for a program that reads them (`sources__library`), or those
+    // read from their source, for one that reads those (`sources__source_library`): each a loaded document of this
+    // run, `(canonical path, module)`.
     let mut libraries: Vec<(String, String)> = Vec::new();
     let (docs, first, label): (Vec<(i64, String)>, HashMap<i64, i64>, &'static str) = match &t {
         Some(t) => {
@@ -2155,6 +2156,9 @@ fn run_observed_within(
                         listed.sort();
                         if v.declares("sources__library") {
                             libraries = one.libraries.iter().map(|(p, m, _, _)| (p.clone(), m.clone())).collect();
+                        } else if v.declares("sources__source_library") {
+                            // A program that types bodies takes the libraries read from their source, and no other.
+                            libraries = one.libraries.iter().filter(|(p, ..)| one.source_libraries.contains(p)).map(|(p, m, _, _)| (p.clone(), m.clone())).collect();
                         }
                         listed
                     }
@@ -2713,6 +2717,9 @@ fn run_observed_within(
                         // Each split, or relations computed in full: the cycle demand would have made, rule by rule.
                         for why in &r.reasons {
                             crate::code_rule_dsl::logic::profile::decision(crate::code_rule_dsl::logic::plan::corpus::preparation::magic::REASON_TOPIC, || why.clone());
+                        }
+                        for why in &r.free_readers {
+                            crate::code_rule_dsl::logic::profile::decision("the program's demand: computed in full, asked with nothing bound (decision 0145)", || why.clone());
                         }
                     }
                     Err(e) => crate::code_rule_dsl::logic::profile::decision("the program's demand (decision 0145)", || format!("{listed}: not applied ({e}); computed in full")),

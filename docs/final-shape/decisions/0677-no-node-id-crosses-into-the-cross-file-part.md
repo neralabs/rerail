@@ -1197,9 +1197,14 @@ part solves over them alone, and the outputs are keyed by them. The design was a
   - **A call into a library is a library symbol, never a target.** P3 reads no library node, so it never names one.
     The standard-library and site-packages tests place the symbol where P1 read it (`struct__at`), and read the
     class of the special-form check from P2's `types__anc`.
-  - **`version()` stays open, by decision.** It is a function of an installed package with no annotation, read under
-    `python.untyped = read`. P1 reads such a package's `.py` files and no function body (0083 §1, §8). The old program
-    typed it `str` by loading the package's document and reading its `return "1.0"`.
+  - **`version()` is open, and that is a regression, not a decision.** It is a function of an installed package with
+    no annotation, read under `python.untyped = read`. The old program typed it `str` by loading the package's document
+    and reading its `return "1.0"`. P3 reads no library document, so it leaves the call open, and
+    `declarations_and_installed_sources_type_calls_without_declared_ret_facts` was changed to expect that. 0083's lines
+    on P1 reading no function body are a draft's (0083 is "Proposed"), not the user's, and its phase table leaves P2
+    "inferred interfaces". The test's `str` is to be restored with the way an untyped library's bodies are typed; the
+    user chooses that way (open, 2026-11-27). The user chose the bodies typed as the workspace's ("do B"): built,
+    0083 § "Built: an untyped library's bodies are typed as the workspace's"; the test expects the `str` again.
   
   The engine tests that used `calls.rerail` as an input:
   - Phase 0's plan test has a program of T's shape of its own: library modules without `core.rerail`, as
@@ -1270,6 +1275,16 @@ own, nested in the pool, and none of those runs ended: the three tests that read
 had taken 7–10 s. They now parse on scoped threads that each run on the test's object, as `rr::tests::in_parallel`
 does, and pass in 12–15 s. Handing the object to the pool's threads (`within` in a rayon closure) was not enough: those
 threads still asked for the process's store.
+
+Why none of those nested runs ended (2026-11-27): the engine took any rayon thread for one of its own pools'. A scope
+on a thread of rayon's global pool queued its jobs on that pool, and a wait there runs a queued job only with 4 MB of
+stack left (`exec::help_once`), which a global thread's 2 MB never has. With every thread of the pool in such a wait,
+nothing ran. Now only a pool the engine made counts (`rerail_context::on_engine_pool`: the machine's cores, the lanes'
+and the training's pools, each with `POOL_STACK`, the lanes' slots and the training's had 2 MB). A thread of any other
+pool is a caller's: its scopes and loops run on the machine's cores. Test: `threads::tests::a_scope_on_a_callers_own_pool_ends`,
+every thread of the global pool in a scope's wait at once; under the old check it hung until killed at 60 s.
+`a_long_job_never_delays_a_finished_batchs_continuation` had run its waits on the global pool, where they ran no job, so
+it held without testing its case; it runs on the machine's cores now.
 
 `rdl_programs_translate_to_the_same_program`: `workload.rdl` and `calls_rust.rdl` are T's still. Their `.rerail` is
 rewritten, so the test no longer compares those two with their translation (`REWRITTEN`). It still translates, lowers
