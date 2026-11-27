@@ -1,0 +1,66 @@
+[
+  {
+    "id": "ruff-isc001-single-line-implicit-string-concatenation",
+    "status": "different",
+    "reason": "ruff/flake8_implicit_str_concat/ISC_syntax_error.py lines 3, 4, 10 and ISC_syntax_error_2.py line 4 are in files that do not parse: the original fails on them (source-incomplete) and reports nothing, the translation reports ISC001 on tree-sitter's recovered tree. Ruff 0.17.6 reports ISC001 at each of these four lines (and at ISC_syntax_error.py:11 and ISC_syntax_error_2.py:2, 3, 5, 7, which neither side reports).",
+    "right": "translation",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 4
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  },
+  {
+    "id": "ruff-isc004-implicit-string-concatenation-in-collection-literal",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pd002-pandas-use-of-inplace-argument",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pd101-pandas-nunique-constant-series-check",
+    "status": "same"
+  },
+  {
+    "id": "ruff-t201-print",
+    "status": "different",
+    "reason": "ruff/pyflakes/F401_0.py:73 `print(pa.csv.read_csv(...))` after `import pyarrow as pa; import pyarrow.csv`, and :101 `print(bop.baz.read_csv(...))` after `import foo.bar as bop; import foo.bar.baz`: calls of the builtin print. Ruff 0.17.6 reports T201 at both; the original misses them.",
+    "right": "translation",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 2
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  },
+  {
+    "id": "ruff-t203-p-print",
+    "status": "same"
+  },
+  {
+    "id": "ruff-tc006-runtime-cast-value",
+    "status": "same"
+  },
+  {
+    "id": "ruff-tc010-runtime-string-union",
+    "status": "same"
+  }
+]

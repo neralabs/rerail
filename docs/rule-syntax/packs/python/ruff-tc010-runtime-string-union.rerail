@@ -1,4 +1,4 @@
-.policy "ruff-tc010-runtime-string-union" revision 2
+.policy "ruff-tc010-runtime-string-union" revision 3
 .description "Avoid quoted members in X | Y union types that Python evaluates at runtime; quote the whole union or remove the quotes, since a string cannot be an operand of the | operator."
 .language python
 .mode steer
@@ -10,6 +10,8 @@
 // NamedTuple and TypedDict calls and a `X: TypeAlias = …` value (in stubs too); the items of `list[…]`,
 // `Optional[…]` and other generic subscripts in running code; a def's annotations in any scope and a module or
 // class variable's, without `from __future__ import annotations`, below Python 3.14. Not in TYPE_CHECKING blocks.
+// A TypedDict's keyword field (`TypedDict("D", a=T)`) is a type only below Python 3.13, and only when the call
+// gives no field mapping: its positional arguments are the name alone, or the name and None.
 //   x: "int" | str                     ← TC010 at "int" (module scope, Python 3.10)
 //   T = TypeVar("T", int | "str", str) ← TC010, also under `from __future__ import annotations`
 //   Y = list["int" | str]              ← TC010, in a function too
@@ -17,13 +19,24 @@
 //   def f(): x: "int" | str            not reported: a local annotation is never evaluated
 //   y: Annotated[int, "a" | str]       not reported: Annotated's metadata is a value
 //   type A = Value["int" | str]        not reported: a `type` statement is lazy
+//   TypedDict("D", {"x": int}, a="A" | B)   not reported: `a=` is no field beside a mapping
 #include "python/misc2-typecheck.rerail"
-//   tc_runtime_typedef(e), tc_union(u), tc_union_member(u, m), up_typing_sub(s, x), type_arg(s, i, a)
+//   tc_runtime_typedef(e), tc_union(u), tc_union_member(u, m), up_typing_sub(s, x), type_arg(s, i, a),
+//   tc_typing_call(c, x); call_kw, call_nargs, ruff_arg, targets
 
 .violation TC010(at: node) code "TC010" "Invalid string member in `X | Y`-style union type"
     suppress ruff "TC010"
-TC010(m) :- tc_runtime_typedef(e), tc_union(u), (u = e ; within(u, e), !not_typedef(u, e)),
+TC010(m) :- tc_runtime_typedef(e), !td_value(e), tc_union(u), (u = e ; within(u, e), !not_typedef(u, e)),
     tc_union_member(u, m), (kind(m, "string") ; kind(m, "concatenated_string")), !fstring(m).
+// td_value(v): v is a TypedDict call's keyword argument that Ruff reads as a value, where misc2-typecheck takes
+// every keyword but `total=` as a type: a field name when the call is not of the legacy form (`extra_items=` is a
+// type in any form).
+.decl td_value(v: node)
+td_value(v) :- tc_typing_call(c, "TypedDict"), call_kw(c, k, v), k != "extra_items", !td_legacy(c).
+.decl td_legacy(c: node)
+td_legacy(c) :- tc_typing_call(c, "TypedDict"), !targets(13), call_nargs(c, 1).
+td_legacy(c) :- tc_typing_call(c, "TypedDict"), !targets(13), call_nargs(c, 2), ruff_arg(c, 1, a), unparen(a, n),
+    kind(n, "none").
 // Inside a type expression, Annotated's metadata is a value, not a type.
 .decl not_typedef(u: node, e: node)
 not_typedef(u, e) :- tc_runtime_typedef(e), up_typing_sub(s, "Annotated"), within(s, e), type_arg(s, i, a), i > 0,
