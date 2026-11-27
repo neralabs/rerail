@@ -7,10 +7,18 @@
 //! equal by a test), so each layout keeps one definition.
 
 use crate::cache::{CACHE_COMMIT, CACHE_OPEN, OpCache};
+use crate::contract::push_layer;
 use crate::dir::Directory;
+use crate::drop::{DROP_PARTS, Parts};
+use crate::trace::{RollUp, Trace};
+use core::mem::offset_of;
+use rerail_blocks::gens::BODY_AT;
+use rerail_blocks::layer::{ColType, LayerHead, MAX_LAYERS, NONE, RunsHead, Shape, ShapeW};
+use rerail_blocks::relation::{FAR_BASE, Relation};
 use crate::op::{Case, Devices, Impl, Kernels, Registry, Runner, Signature, Status, Tiling};
 use rerail_delta_twins::Params;
 use rerail_delta_twins::cache::{self as cache_twin, CacheP};
+use rerail_delta_twins::drop::{self as drop_twin, DropP};
 
 /// Every backend a UKL version runs on.
 const EVERY_BACKEND: Devices = Devices(Devices::CPU.0 | Devices::METAL.0 | Devices::CUDA.0 | Devices::HIP.0 | Devices::OPENCL.0);
@@ -26,12 +34,13 @@ struct Ukl {
 }
 
 /// The modules' kernels, by name.
-const MODULES: &[(&str, &str)] = &[("cache", include_str!("../ukl/cache.uglykl"))];
+const MODULES: &[(&str, &str)] = &[("cache", include_str!("../ukl/cache.uglykl")), ("drop", include_str!("../ukl/drop.uglykl"))];
 
 /// The operations with a UKL version.
 const VERSIONS: &[Ukl] = &[
     Ukl { sig: &CACHE_OPEN, module: "cache", case: cache_open_case },
     Ukl { sig: &CACHE_COMMIT, module: "cache", case: cache_commit_case },
+    Ukl { sig: &DROP_PARTS, module: "drop", case: drop_parts_case },
 ];
 
 /// Each operation's UKL version checked on `device` against its twin, at `TILINGS`, and registered as the device's
@@ -81,15 +90,50 @@ fn cache_commit_case(dir: &mut Directory) -> Case {
     Case { slots: vec![c.0], params: params(CacheP { state: 0xd1 }) }
 }
 
+/// A trace of two layers partitioned on its first column, the second killing a row of the first, its rows in
+/// partitions 3 and 1 (listed out of order) dropped with sign -1: three rows, partition 1's then 3's, the kill skipped.
+fn drop_parts_case(dir: &mut Directory) -> Case {
+    let cpu = Runner::new().expect("the CPU's runner");
+    let mut t = Trace::new(&Shape::run(vec![ColType::I32, ColType::I64], vec![0, 1], Some(0))).expect("a trace").with_roll_up(RollUp::Never);
+    push_layer(&cpu, dir, &mut t, &[(vec![1, 10], 1), (vec![1, 11], 1), (vec![2, 20], 1), (vec![3, 30], 1)]).expect("a layer");
+    let head = push_layer(&cpu, dir, &mut t, &[(vec![1, 11], -1), (vec![3, 31], 1), (vec![4, 40], 1)]).expect("a layer");
+    let runs = t.open(dir, 16);
+    let parts = Parts::write(dir, 2, |put| [3, 1].into_iter().for_each(put)).expect("a parts block");
+    Case { slots: vec![head, parts.id(), runs], params: params(DropP { head: u64::from(head.0), diff: -1 }) }
+}
+
 /// The block layouts the kernels read, by name: the twins' own constants.
 pub fn layout() -> Vec<(&'static str, usize)> {
     vec![
-        ("BODY_AT", rerail_blocks::gens::BODY_AT),
+        ("BODY_AT", BODY_AT),
         ("CACHE_BYTES", cache_twin::CACHE_BYTES),
         ("CACHE_STATE_AT", cache_twin::STATE_AT),
         ("CACHE_OPEN_AT", cache_twin::OPEN_AT),
         ("CACHE_HELD_AT", cache_twin::HELD_AT),
         ("CACHE_USED_AT", cache_twin::USED_AT),
+        // `rerail_delta_core::runs`, `::layer`, `::relation` and `::trace`.
+        ("NONE", NONE as usize),
+        ("MAX_LAYERS", MAX_LAYERS),
+        ("SHAPE_ARITY_AT", offset_of!(ShapeW, arity)),
+        ("SHAPE_PARTITION_AT", offset_of!(ShapeW, partition)),
+        ("SHAPE_ORDER_AT", offset_of!(ShapeW, order)),
+        ("RUNS_CAP_AT", BODY_AT + offset_of!(RunsHead, cap)),
+        ("RUNS_CLAIMED_AT", BODY_AT + offset_of!(RunsHead, claimed)),
+        ("RUNS_NEEDED_AT", BODY_AT + offset_of!(RunsHead, needed)),
+        ("RUNS_TYPES_AT", BODY_AT + offset_of!(RunsHead, shape) + offset_of!(ShapeW, types)),
+        ("RUNS_COL_AT", BODY_AT + offset_of!(RunsHead, col_at)),
+        ("RUNS_DIFF_AT", BODY_AT + offset_of!(RunsHead, diff_at)),
+        ("LAYER_ROWS_AT", BODY_AT + offset_of!(LayerHead, rows)),
+        ("LAYER_PARTS_AT", BODY_AT + offset_of!(LayerHead, parts)),
+        ("LAYER_GONE_AT", BODY_AT + offset_of!(LayerHead, gone)),
+        ("LAYER_SHAPE_AT", BODY_AT + offset_of!(LayerHead, shape)),
+        ("REL_FLAGS_AT", offset_of!(Relation, flags)),
+        ("REL_BASE_ROWS_AT", offset_of!(Relation, base_rows)),
+        ("REL_BASE_BLOCK_AT", offset_of!(Relation, base_block)),
+        ("REL_FAR_BASE", FAR_BASE as usize),
+        // `rerail_delta_twins::drop`'s parts block.
+        ("DROP_N_AT", drop_twin::N_AT),
+        ("DROP_PARTS_AT", drop_twin::PARTS_AT),
     ]
 }
 

@@ -1,0 +1,43 @@
+// `drop_parts` (`rerail_delta_twins::drop`): each live row of a trace's state in the listed partitions, emitted with a
+// sign into a δ runs block, in the canonical order a partition. One item: every partition's rows counted, claimed at
+// once, then written in order.
+#include <ukl/delta/trace.h>
+#include <ukl/delta/runs.h>
+
+// Partition `q`'s live rows of the state `ls` (`n` layers): a merge of its layers' own rows in the canonical order, the
+// newer layer's first on a tie. Each written at places `at..` of `r` with sign `d` when `r` is set; how many.
+UKL_INLINE uint32_t drop_part(UKL_PRIVATE const Layer* ls, uint32_t n, int64_t q, Blk r, uint32_t at, int32_t d) {
+    uint32_t next[MAX_LAYERS], end[MAX_LAYERS], out = 0u;
+    for (uint32_t k = 0u; k < n; k++) {
+        Span s = layer_part_rows(ls[k], q);
+        next[k] = s.lo;
+        end[k] = s.hi;
+    }
+    for (;;) {
+        uint32_t b = NONE;
+        for (uint32_t k = 0u; k < n; k++)
+            if (next[k] < end[k] && (b == NONE || row_before(ls[k], next[k], ls[b], next[b]))) b = k;
+        if (b == NONE) return out;
+        uint32_t id = next[b]++;
+        if (killed_above(ls, b, q, id)) continue;
+        if (r != (Blk)0) {
+            for (uint32_t c = 0u; c < ls[b].arity; c++) runs_set(r, at + out, c, layer_get(ls[b], id, c));
+            runs_diff(r, at + out, d);
+        }
+        out++;
+    }
+}
+
+DELTA_ONE(drop_parts_drop)
+{
+    if (i != 0u) return;
+    DropP q = PARAMS(DropP);
+    CBlk ps = SLOT(1);
+    Blk r = SLOT(2);
+    Layer ls[MAX_LAYERS];
+    uint32_t n = state_layers(t, (uint32_t)q.head, ls), np = (uint32_t)U64(ps, DROP_N_AT), count = 0u;
+    for (uint32_t k = 0u; k < np; k++) count += drop_part(ls, n, I64(ps, DROP_PARTS_AT + 8u * k), (Blk)0, 0u, 0);
+    uint32_t at = runs_claim(r, count);
+    if (at == NONE) return;
+    for (uint32_t k = 0u; k < np; k++) at += drop_part(ls, n, I64(ps, DROP_PARTS_AT + 8u * k), r, at, (int32_t)q.diff);
+}

@@ -24,8 +24,8 @@ pub const PARTS: usize = 1;
 pub const RUNS: usize = 2;
 
 const LEN_AT: usize = BODY_AT;
-const N_AT: usize = BODY_AT + 8;
-const PARTS_AT: usize = BODY_AT + 16;
+pub const N_AT: usize = BODY_AT + 8;
+pub const PARTS_AT: usize = BODY_AT + 16;
 
 /// A parts block's body bytes for `n` partitions.
 pub fn parts_bytes(n: usize) -> usize {

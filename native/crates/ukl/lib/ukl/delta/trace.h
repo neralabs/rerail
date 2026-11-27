@@ -1,0 +1,105 @@
+// ukl/delta/trace.h: a trace's state, read where its layers lie (`rerail_delta_core::layer` and `::trace`). A layer
+// block holds three relations: its own rows, the partitions it changed (`parts(part, digest, added, gone, first,
+// kills_at)`, sorted on the partition) and its kills by partition (`gone(part, id)`). Each layer continues the one
+// below, found by its block id in the launch's table. A row is live when no layer above its own kills it.
+//
+// Rows are read by the relation reads written once in CLIF (`<ukl/reads/relation.h>`, decision 0310). Only the Open
+// encoding is read here (`Shape::run`'s, every executor trace's): a layer's encoded rows have no reads here yet.
+#pragma once
+#include <ukl/delta/op.h>
+#include <ukl/reads/relation.h>
+
+// A layer, read in place: its three relations, its shape's order columns, its own ids `start..end`, the block below
+// (NONE: none), its arity and its partition column (NONE: none).
+typedef struct Layer {
+    CBlk rows, parts, gone, order;
+    uint32_t start, end, below, arity, pcol;
+} Layer;
+
+// Ids `lo..hi`.
+typedef struct Span {
+    uint32_t lo, hi;
+} Span;
+
+// Relation `rel`'s own row `id` in column `c`.
+UKL_INLINE int64_t rel_get(CBlk rel, uint32_t id, uint32_t c) { return (int64_t)clif_rel_get(rel, 0u, id, c, 0u); }
+UKL_INLINE uint32_t rel_start(CBlk rel) { return U32(rel, REL_BASE_ROWS_AT); }
+UKL_INLINE uint32_t rel_end(CBlk rel) { return rel_start(rel) + clif_rel_len(rel, 0u); }
+
+// The layer in block `id`.
+UKL_INLINE Layer layer_of(CBlk t, uint32_t id) {
+    CBlk b = blk(t, id);
+    Layer l;
+    l.rows = b + U64(b, LAYER_ROWS_AT);
+    l.parts = b + U64(b, LAYER_PARTS_AT);
+    l.gone = b + U64(b, LAYER_GONE_AT);
+    l.start = rel_start(l.rows);
+    l.end = rel_end(l.rows);
+    l.below = (U32(l.rows, REL_FLAGS_AT) & REL_FAR_BASE) != 0u ? U32(l.rows, REL_BASE_BLOCK_AT) : NONE;
+    l.arity = U32(b, LAYER_SHAPE_AT + SHAPE_ARITY_AT);
+    l.pcol = U32(b, LAYER_SHAPE_AT + SHAPE_PARTITION_AT);
+    l.order = b + LAYER_SHAPE_AT + SHAPE_ORDER_AT;
+    return l;
+}
+
+// Own row `id`'s value in column `c`.
+UKL_INLINE int64_t layer_get(Layer l, uint32_t id, uint32_t c) { return rel_get(l.rows, id, c); }
+
+// Partition `p`'s entry in the layer's `parts`, or NONE when the layer did not change it.
+UKL_INLINE uint32_t layer_part(Layer l, int64_t p) {
+    uint32_t lo = rel_start(l.parts), hi = rel_end(l.parts), end = hi;
+    while (lo < hi) {
+        uint32_t m = (lo + hi) / 2u;
+        if (rel_get(l.parts, m, 0u) < p) lo = m + 1u; else hi = m;
+    }
+    return lo < end && rel_get(l.parts, lo, 0u) == p ? lo : NONE;
+}
+
+// Partition `p`'s own rows: every own row when the trace has no partition.
+UKL_INLINE Span layer_part_rows(Layer l, int64_t p) {
+    Span s = {l.start, l.end};
+    if (l.pcol == NONE) return s;
+    uint32_t e = layer_part(l, p);
+    if (e == NONE) { s.hi = s.lo; return s; }
+    s.lo = l.start + (uint32_t)rel_get(l.parts, e, 4u);
+    s.hi = s.lo + (uint32_t)rel_get(l.parts, e, 2u);
+    return s;
+}
+
+// Whether the layer kills row `id` of partition `p`: a search of the partition's kills, ascending.
+UKL_INLINE bool layer_kills(Layer l, int64_t p, uint32_t id) {
+    uint32_t e = layer_part(l, p);
+    if (e == NONE) return false;
+    uint32_t at = rel_start(l.gone) + (uint32_t)rel_get(l.parts, e, 5u), n = (uint32_t)rel_get(l.parts, e, 3u);
+    uint32_t lo = at, hi = at + n;
+    while (lo < hi) {
+        uint32_t m = (lo + hi) / 2u;
+        if ((uint32_t)rel_get(l.gone, m, 1u) < id) lo = m + 1u; else hi = m;
+    }
+    return lo < at + n && (uint32_t)rel_get(l.gone, lo, 1u) == id;
+}
+
+// The state at layer `head`: its layers, newest first, into `ls` (at most MAX_LAYERS, as its state was checked when
+// made); how many.
+UKL_INLINE uint32_t state_layers(CBlk t, uint32_t head, UKL_PRIVATE Layer* ls) {
+    uint32_t n = 0;
+    for (uint32_t k = head; k != NONE && n < MAX_LAYERS; k = ls[n - 1u].below) ls[n++] = layer_of(t, k);
+    return n;
+}
+
+// Whether row `id` of partition `p`, an own row of layer `k` of `ls`, is killed by a layer above it.
+UKL_INLINE bool killed_above(UKL_PRIVATE const Layer* ls, uint32_t k, int64_t p, uint32_t id) {
+    for (uint32_t j = 0u; j < k; j++)
+        if (layer_kills(ls[j], p, id)) return true;
+    return false;
+}
+
+// Whether own row `ia` of `a` comes before own row `ib` of `b` in the canonical order: by the shape's order columns.
+UKL_INLINE bool row_before(Layer a, uint32_t ia, Layer b, uint32_t ib) {
+    for (uint32_t k = 0u; k < a.arity; k++) {
+        uint32_t c = a.order[k];
+        int64_t x = layer_get(a, ia, c), y = layer_get(b, ib, c);
+        if (x != y) return x < y;
+    }
+    return false;
+}

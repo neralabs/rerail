@@ -67,4 +67,6 @@ pub const LIBRARY: &[(&str, &str)] = &[
     // operation's kernel shares; its kernels are `rerail-delta-exec`'s (`delta_exec/ukl/`).
     ("ukl/delta/layout.h", include_str!("../lib/ukl/delta/layout.h")),
     ("ukl/delta/op.h", include_str!("../lib/ukl/delta/op.h")),
+    ("ukl/delta/runs.h", include_str!("../lib/ukl/delta/runs.h")),
+    ("ukl/delta/trace.h", include_str!("../lib/ukl/delta/trace.h")),
 ];
