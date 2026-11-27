@@ -1511,11 +1511,13 @@ fn string_annotations_are_ruffs_with_their_trees() {
 annotated(t) :- string_annotation(n), node_text(n, t).
 .decl names(t: symbol, x: symbol)
 names(t, x) :- string_annotation(n), parsed(n, "annotation", r), node_text(n, t), within(m, r), node(_, m, "identifier", _, _), text(m, x).
+.decl roots(t: symbol, k: symbol, s: number, e: number, h: symbol)
+roots(t, k, s, e, h) :- string_annotation(n), parsed(n, "annotation", r), node_text(n, t), node(_, r, k, s, e), host_node(r, x), node_text(x, h).
 .decl files(p: symbol)
 files(p) :- doc(_, p, _).
-.output annotated, names, files
+.output annotated, names, roots, files
 "#;
-    let got = run(&dir, program, &["annotated", "names", "files"]);
+    let got = run(&dir, program, &["annotated", "names", "roots", "files"]);
     let set = |rows: &[Vec<String>]| rows.iter().cloned().collect::<BTreeSet<Vec<String>>>();
     let want = |rows: &[&[&str]]| rows.iter().map(|r| r.iter().map(|v| (*v).to_owned()).collect()).collect::<BTreeSet<Vec<String>>>();
     assert_eq!(
@@ -1537,9 +1539,22 @@ files(p) :- doc(_, p, _).
             &["\"not valid ((\"", "valid"],
         ])
     );
+    // Each root is its guest's module, over the string's value in `(` … `\n)`: from 0 to past the value and the
+    // wrapper's three bytes. In the host it stands over the whole string, quotes included.
+    let annotations = ["\"List[int]\"", "\"Optional[Foo]\"", "'typing.Dict[str, \"Bar\"]'", "\"Bar\"", "\"Baz\"", "\"not valid ((\""];
+    let roots = annotations.iter().map(|t| r![t, "module", 0, t[1..t.len() - 1].len() + 3, t]).collect::<BTreeSet<_>>();
+    assert_eq!(set(&got[2]), roots);
     // The trees are no files.
-    assert_eq!(got[2], [["a.py"]]);
+    assert_eq!(got[3], [["a.py"]]);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The guest parse memo keeps a parse for what it holds, its tree and tape too, not its text alone
+/// (`guests::test_kept_parse_budget`): run here, where the languages are registered.
+#[cfg(feature = "test-hooks")]
+#[test]
+fn guest_parses_are_kept_for_what_they_hold() {
+    super::guests::test_kept_parse_budget();
 }
 
 /// `literal_json(n, v)` is W's pythonAst `literal_json`: CPython's `json.dumps(ast.literal_eval(node), sort_keys=True,
