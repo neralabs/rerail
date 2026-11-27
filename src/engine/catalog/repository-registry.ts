@@ -28,10 +28,11 @@ import {
   WorktreeRegistryPass,
   type RepositoryIdentityLocation,
 } from "./repository-identity.js";
+import { placementInputs } from "./checkouts/git-placement.js";
+import { configFilesText, includesAnother, remoteConfigFiles } from "./checkouts/kept-remote.js";
 import { checkouts, mergeAssistState, repositories, ruleSettings } from "../storage/schema.js";
 import { nameOnce, storedArray, storedItems, type StoredListLog } from "../storage/stored-list.js";
 import { openRecordWriter, type RecordWriter } from "../storage/record-writes.js";
-import { remoteSource } from "./checkouts/kept-remote.js";
 
 type Reader = Pick<RerailDatabase, "select">;
 type Writer = Pick<RerailDatabase, "select" | "insert" | "update" | "delete">;
@@ -379,7 +380,8 @@ export function lookupCheckout(db: FileReader, workspace: string): CheckoutConte
     if (error instanceof GitUnavailableError) return undefined;
     throw error;
   }
-  return lookupAt(db, repositoryIdentityLocation(workspace), {});
+  const location = repositoryIdentityLocation(workspace);
+  return lookupAt(db, location, () => remoteKeyOf(location));
 }
 
 /**
@@ -388,32 +390,27 @@ export function lookupCheckout(db: FileReader, workspace: string): CheckoutConte
  * reads its legacy id from Git's config, as {@link checkoutIdentity} does.
  */
 export function lookupCheckoutAt(db: FileReader, location: RepositoryIdentityLocation): CheckoutContext | undefined {
-  return lookupAt(db, location, {});
-}
-
-/**
- * Where a lookup keeps its checkout's remote: unset until it is read, then its key (undefined where it names none) and
- * the facts it was read from (`remoteSource`), undefined where they cannot be read from the files.
- */
-interface RemoteHolder {
-  remote?: { readonly key: RepositoryKey | undefined; readonly facts: string | undefined };
+  return lookupAt(db, location, () => remoteKeyOf(location));
 }
 
 /** A checkout's clone id as {@link checkoutIdentity} reads it, and whether a marker names it. */
 type CheckoutIdentity = ReturnType<typeof checkoutIdentity>;
 
-/** {@link lookupCheckout} at `location`, its identity read there unless the caller read it ({@link KeptLocation}). */
+/**
+ * {@link lookupCheckout} at `location`, its identity read there unless the caller read it ({@link KeptLocation});
+ * `remoteKey` gives the key of the checkout's remote, asked only for a checkout neither recorded nor of a recorded clone.
+ */
 function lookupAt(
   db: FileReader,
   location: RepositoryIdentityLocation,
-  holder: RemoteHolder,
+  remoteKey: () => RepositoryKey | undefined,
   { id, marked }: CheckoutIdentity = checkoutIdentity(location),
 ): CheckoutContext | undefined {
   // A worktree whose Git folder is gone has no id to read: the one recorded at its path, as its start takes it.
   const cloneId = id ?? refusedCheckoutCloneId(db, location) ?? null;
   const checkoutPath = physicalPath(location.workspaceRoot);
   const knownClone = recordedRepositoryAt(db, location, checkoutPath, cloneId) ?? (cloneId === null ? undefined : cloneRepository(db, cloneId));
-  const repositoryKey = knownClone ?? remoteRepository(db, location, holder);
+  const repositoryKey = knownClone ?? remoteRepository(db, location, remoteKey);
   return repositoryKey === undefined ? undefined : contextOf(location, checkoutPath, repositoryKey, marked || knownClone !== undefined ? cloneId : null);
 }
 
@@ -448,32 +445,64 @@ export function recordedPlainRoot(db: Reader, real: string): string | undefined 
   })?.path;
 }
 
-/**
- * The known repository the checkout's remote names; a folder outside git has none. `holder` keeps the remote while the
- * facts it was read from read the same (`remoteSource`: the config files Git reads it from): a changed URL, a removed
- * remote or branch configuration is read again, and so is every remote whose facts cannot be read from the files (a
- * config that includes another file), as Git is asked each time for it.
- */
-function remoteRepository(db: FileReader, location: RepositoryIdentityLocation, holder: RemoteHolder): RepositoryKey | undefined {
+/** The known repository the checkout's remote names (`remoteKey`); a folder outside git has none. */
+function remoteRepository(db: FileReader, location: RepositoryIdentityLocation, remoteKey: () => RepositoryKey | undefined): RepositoryKey | undefined {
   if (!location.git) return undefined;
-  const facts = remoteSource(location.workspaceRoot)?.facts;
-  if (holder.remote === undefined || facts === undefined || holder.remote.facts !== facts) holder.remote = { key: remoteKeyOf(location), facts };
-  const remoteKey = holder.remote.key;
-  return remoteKey === undefined ? undefined : repositoryByKeyOrAlias(db, remoteKey)?.repositoryKey;
+  const key = remoteKey();
+  return key === undefined ? undefined : repositoryByKeyOrAlias(db, key)?.repositoryKey;
+}
+
+/**
+ * A checkout's remote as the resolver keeps it: its key, undefined where it names none; the config files it is read
+ * from ({@link remoteFilesOf}); and what they held just before Git was asked ({@link configFilesText}).
+ */
+interface KeptRemote {
+  readonly key: RepositoryKey | undefined;
+  readonly files: readonly string[];
+  readonly text: string;
 }
 
 /**
  * A Git location the resolver read for a workspace, with what was there then: the clone id at its identity path, the
  * identity of its top level's `.git` ({@link folderIdentity}; undefined where it could not be read), and the checkout's
- * remote once it was read. Each workspace keeps its own, so a second folder of a checkout reads the remote at its first
- * read, which {@link readRemoteAddress} answers from Git's kept answer while the clone's config files read the same.
+ * remote once it was read ({@link keptRemoteKey}). Each workspace keeps its own, so a second folder of a checkout reads
+ * the remote at its first read, which {@link readRemoteAddress} answers from Git's kept answer while the clone's config
+ * files read the same.
  */
-interface KeptLocation extends RemoteHolder {
+interface KeptLocation {
   readonly location: RepositoryIdentityLocation;
   readonly cloneId: string | undefined;
   /** Its identity as `checkoutIdentity` read it there, which the lookups take. */
   readonly identity: CheckoutIdentity;
   readonly gitEntry: string | undefined;
+  remote?: KeptRemote;
+}
+
+/**
+ * The config files `location`'s remotes are read from ({@link remoteConfigFiles}): its common Git folder's, and its own
+ * Git folder's, which is the common one for a main checkout. A linked worktree's is found from its `.git` file with no
+ * Git process ({@link placementInputs}); where Git's placement of it is not read from its files, the first alone.
+ */
+function remoteFilesOf(location: RepositoryIdentityLocation): readonly string[] {
+  const common = dirname(location.identityPath);
+  return remoteConfigFiles(common, location.main ? common : placementInputs(location.workspaceRoot)?.gitFolder);
+}
+
+/**
+ * `kept`'s remote key, kept while the config files it is read from hold what they held when it was read
+ * ({@link configFilesText}: their text, or what the file system says of one whose text cannot be read), so no Git
+ * runs; `git remote set-url` rewrites the common `config`, and the next lookup reads the remote again
+ * ({@link remoteKeyOf}). One that includes another file is read again at every lookup, as the included file's change
+ * alone does not show in the text ({@link includesAnother}).
+ */
+function keptRemoteKey(kept: KeptLocation): RepositoryKey | undefined {
+  const files = kept.remote?.files ?? remoteFilesOf(kept.location);
+  // Read before Git is asked: a config written between the two reads as changed at the next lookup.
+  const text = configFilesText(files);
+  // A config that includes another file is read again each time: the included file's change alone is not in `text`.
+  if (kept.remote?.text === text && !includesAnother(text)) return kept.remote.key;
+  kept.remote = { key: remoteKeyOf(kept.location), files, text };
+  return kept.remote.key;
 }
 
 /**
@@ -505,7 +534,9 @@ function locatedAfresh(located: Map<string, KeptLocation>, workspace: string): K
  * A `lookupCheckout` for many workspaces over one connection, as the daemon answers per request: each workspace's Git
  * location is kept while the clone there is the one it was read with ({@link stillPlaces}), and read afresh, its remote
  * too, once another checkout takes its path; a folder outside Git is located again each time, so a later `git init` is
- * seen. The database is read on every call, so adoption and new records show at once.
+ * seen. A checkout's remote is kept while its repository's config files read the same ({@link keptRemoteKey}), so a
+ * remote changed in place names its repository at the next lookup. The database is read on every call, so adoption
+ * and new records show at once.
  */
 export function createCheckoutResolver(db: FileReader): (workspace: string) => CheckoutContext | undefined {
   const located = new Map<string, KeptLocation>();
@@ -518,7 +549,7 @@ export function createCheckoutResolver(db: FileReader): (workspace: string) => C
     }
     const known = located.get(workspace);
     const kept = known !== undefined && stillPlaces(known) ? known : locatedAfresh(located, workspace);
-    return lookupAt(db, kept.location, kept, kept.identity);
+    return lookupAt(db, kept.location, () => keptRemoteKey(kept), kept.identity);
   };
 }
 

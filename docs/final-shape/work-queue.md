@@ -12327,3 +12327,27 @@ tests-corpus base_tests (54), tests-logic native::tests (20) and plan::tests (11
 a_max_joined_back_at_its_maximum_gives_the_rows_there alone, which needs a process of its own). rerail-boot's
 cost_shape_tests: the same 15 red as before the merge (the feeder's own head has 17 red). Relax has no clippy: none
 run. No Metal or farm runs.
+
+### Q595. Roll-up 167 (main c3be173fe4 onto Pulling-it-all-together): what the merge chose
+
+main's three commits: a daemon reads a remote changed in place in a checkout not recorded again at the next lookup
+(#1180: the resolver keeps the remote with the text of the config files Git reads it from, `configFilesText`,
+`remoteConfigFiles`); a walk names each file it finds without `path.relative` (#1183); on an older Node at the recorded
+path, the hook's line names a step that gets Rerail back (#1179).
+
+Conflicts, resolved by invariant:
+- repository-registry.ts: both sides fixed #1171, the hub in roll-up 161 (a holder's remote kept while
+  `remoteSource`'s facts read the same) and main now (a `KeptLocation`'s `KeptRemote`, kept while its config files'
+  text reads the same; worktrees' `config.worktree` too, with no Git process). One mechanism, main's: `lookupAt` takes
+  main's `remoteKey` callback and the hub's identity (`checkoutIdentity`, `marked`), its known-clone rule and
+  `recordedPlainRoot`; the hub's `RemoteHolder` and its `remoteSource` import go.
+
+Fixes the merge needed:
+- The hub's "observes changed, removed, and included origin URLs in a long-lived resolver" failed on main's keeping:
+  a change made only in an included config file is not in the files' text (main's `configFilesText` says so, and that
+  a caller that must see it asks again). A config whose text may include another file (`includesAnother`, the
+  kept-remote source's `INCLUDE`) is read again at every lookup, as the hub read it before.
+
+Checked: tsc --noEmit; vitest on the registry, repository identity, catalog/checkouts, walk-session-paths,
+older-node-step and api-repository-context-cost (all pass). main's integration/daemon/remote-changed-in-place starts
+the built daemon (`dist/cli/daemon-entry.js`), which this worktree has not built: not run. No Metal or farm runs.
