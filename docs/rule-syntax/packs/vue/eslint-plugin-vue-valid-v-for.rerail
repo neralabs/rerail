@@ -41,7 +41,7 @@ has_value(a) :- vval(a, v), text(v, t), match("[\\s\\S]*\\S[\\s\\S]*", t).
 alias_text(a, s) :- vfor_dir(_, a), vval(a, v), text(v, t), match("\\s*\\((?<s>[\\s\\S]*)\\)\\s+(?:in|of)\\s+\\S[\\s\\S]*", t).
 // empty_alias(a, w): in v-for a, alias w (value, key or index) is a hole; keyed by the directive (decision 0677). A trailing comma ends the list: `(a, b,)` has no index.
 // An item may hold one level of braces or brackets: `({ a, b }, , i)`; a hole after an item nested two deep
-// (`({ a: { b } }, , i)`) is not seen. (The view's placeholder for a hole carries no mark a clause can read.)
+// (`({ a: { b } }, , i)`) is not seen. (The tape leaves out the view's placeholder for a hole, so no node marks it.)
 .decl empty_alias(a: node, w: symbol)
 empty_alias(a, "value") :- alias_text(a, s), match("\\s*,[\\s\\S]*", s).
 empty_alias(a, "key") :- alias_text(a, s), match("(?:[^,{}\\[\\]]|\\{[^{}]*\\}|\\[[^\\[\\]]*\\])*,\\s*,[\\s\\S]*", s).
@@ -51,13 +51,21 @@ empty_alias(a, "index") :- alias_text(a, s),
 empty_message("value", "Name the empty value alias in this v-for, such as `(item, index) in items`.").
 empty_message("key", "Name the empty key alias in this v-for, such as `(value, key) in object`.").
 empty_message("index", "Name the empty index alias in this v-for, such as `(value, key, index) in object`.").
-// alias_param(a, p, n): p is the parameter in slot n (0: the value, 1: the key, 2: the index) of v-for a's arrow in the
-// view, at any depth of destructuring: `{a: {b}}` is slot 1 of `(v, {a: {b}})`. The view writes a placeholder `_`, a
-// name, in each empty slot before the last (`(v, , i)`), so a slot's position is the file's.
+// alias_param(a, p, n): p is the parameter in slot n (0: the value, 1: the key, 2: the index) of v-for a's arrow in
+// the view, at any depth of destructuring: `{a: {b}}` is slot 1 of `(v, {a: {b}})`. The view writes a placeholder
+// `_` in each empty slot before the last; the tape keeps it as a parameter (its span empty in the file), so a slot's
+// position is the file's:
+//   (, {k}) in xs       `_` slot 0, {k} slot 1
+//   (v, , {i}) in xs    {i} slot 2
+// A comment is a parameter of its own and would shift the slots after it, so an alias list holding one is not read.
 .decl alias_param(a: node, p: node, n: number)
 alias_param(a, p, n) :- vfor_dir(e, a), docof(arr, g),
     (guest(g, _, _, "javascript") ; guest(g, _, _, "typescript") ; guest(g, _, _, "tsx")), host_node(arr, h),
-    (h = e ; vel_tag(e, h)), for_arrow(arr), field(arr, "parameters", ps), child(ps, p, n), !kind(p, "comment").
+    (h = e ; vel_tag(e, h)), for_arrow(arr), field(arr, "parameters", ps), child(ps, p, n), !alias_commented(ps).
+// alias_commented(ps): the parameter list ps holds a comment (read through its guest document, as the view's kinds are).
+.decl alias_commented(ps: node)
+alias_commented(ps) :- docof(c, g), (guest(g, _, _, "javascript") ; guest(g, _, _, "typescript") ; guest(g, _, _, "tsx")),
+    kind(c, "comment"), child(ps, c, _), kind(ps, "formal_parameters").
 // plain_alias(p): a v-for's parameter is a name (ESTree's Identifier).
 .decl plain_alias(p: node)
 plain_alias(p) :- kind(p, "identifier").
@@ -164,6 +172,13 @@ local(r, k) :- reads(r, x), within(r, f), (field(f, "parameters", ps), within(n,
             <li v-for="({a: {b}}, [c, [d]], i) in xs" :key="i" />
             <li v-for="({a: {b}}, i) in xs" :key="i" />
             <li v-for="(x, k, {j: [m]}) in xs" :key="x" />
+            <li v-for="(,
+               {k}) in xs" :key="k" />
+            <li v-for="(/* c */ {a}, b) in xs" :key="b" />
+            <li v-for="(v, ,
+               {i}) in xs" :key="v" />
+            <li v-for="(, ,
+               [j]) in xs" :key="j" />
           </div>
         </template>
         ```
@@ -185,4 +200,10 @@ local(r, k) :- reads(r, x), within(r, f), (field(f, "parameters", ps), within(n,
     .expect "vue/valid-v-for" at "v4.vue":3
     .expect "vue/valid-v-for" at "v4.vue":4
     .expect "vue/valid-v-for" at "v4.vue":6
+    .expect "vue/valid-v-for" at "v4.vue":7
+    .expect "vue/valid-v-for" at "v4.vue":8
+    .expect "vue/valid-v-for" at "v4.vue":10
+    .expect "vue/valid-v-for" at "v4.vue":11
+    .expect "vue/valid-v-for" at "v4.vue":12
+    .expect "vue/valid-v-for" at "v4.vue":13
 .end
