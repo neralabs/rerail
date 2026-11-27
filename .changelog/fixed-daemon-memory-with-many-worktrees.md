@@ -1,1 +1,0 @@
-With many worktrees of one repository, the daemon keeps about a third less memory for its walks of them: a file's path and its digest are kept once for every worktree holding the same file, where each worktree kept copies of its own.

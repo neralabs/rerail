@@ -427,7 +427,7 @@ export function sameObservation(left: ObservedSource, right: ObservedSource): bo
  * `source` without its text, holding the path and digest strings of `twin`, the observation of the same file in another
  * worktree of the repository, where they are the same text. The worktrees of one repository hold mostly the same files,
  * and each read made new strings: with 190 worktrees of 10,000 files, the walks kept 191 copies of each path and digest,
- * 218 MB of the 668 they held. A string is a value, so the one kept answers every comparison as the copy did; the
+ * 229 MB of the 700 they held. A string is a value, so the one kept answers every comparison as the copy did; the
  * observation stays the worktree's own, its stamp being its own.
  */
 function observed({ text: _text, deleted: _deleted, ...kept }: Source, twin: ObservedSource | undefined): ObservedSource {

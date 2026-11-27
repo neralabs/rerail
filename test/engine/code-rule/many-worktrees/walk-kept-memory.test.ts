@@ -1,9 +1,9 @@
 /**
  * What the walks of a repository's other worktrees keep in memory for each file of a worktree they watch. The worktrees
- * of one repository hold mostly the same files under the same paths, so the walks keep a file's path and digest once
- * for every worktree that holds the file the same; each worktree still keeps an observation of its own, since its stamp
- * is its own. With 190 worktrees of 10,000 files each, the walks kept 668 MB, a third of it the same path and digest
- * strings once a worktree.
+ * of one repository hold mostly the same files under the same paths, so a worktree's observation of a file takes the
+ * path and digest strings of the same file's observation in another worktree the walks keep, where they are the same
+ * text; each worktree still keeps an observation of its own, since its stamp is its own. With 190 worktrees of 10,000
+ * files each, the walks kept 700 MB, a third of it the same path and digest strings once a worktree.
  */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -118,7 +118,7 @@ async function copies(): Promise<{ readonly paths: number; readonly digests: num
 }
 
 describe("the walks of the other worktrees", () => {
-  it("keep a file's path and digest once for all the worktrees that hold it the same", { timeout: 120_000 }, async () => {
+  it("share a file's path and digest with another worktree that holds the file the same", { timeout: 120_000 }, async () => {
     const { main, worktrees } = await repository(6);
     const [own, first, ...more] = worktrees;
     // Each count with one session whose first walk reads the checkouts it watches, closed before the next one opens: the
