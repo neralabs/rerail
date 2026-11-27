@@ -317,6 +317,21 @@ them.
    && fs_9`), a token of code clears both, and the `;` row tests `src[s] == b';' && fs_13`, where the code pass read
    the fill back (`rcaf_5`). What the code pass still reads back is two masks: `as_lt` (a fill) and `number`
    (`rca_as_lt`, `rca_number`).
+38. **The code pass reads no mask back: `number` and `as_lt` are the loop's**: a mask of the regions that an escape
+   reads at the byte before is kept as a fill's `X` is (step 37), and an escape that reads one is tested at a token's
+   start and over its bytes after its first, read through the kind's assumptions (`kind_names`: a name's bytes are
+   code and hold no number's bytes after its first; a hex or a binary number is a number; an operator's bytes are
+   code and no number's). The name's escape is the lean lexer's `name_end` `wide` flag: `matches!(src[s],
+   0x80..=0xff) && xs_5` at its first byte, and over its tail a fill the loop keeps (`fs_7`) and a scan for a
+   letter past ASCII. Where an assumption is not proved, a test build checks the loop's value against the mask.
+   An escape `prev(F) & prev(C) & R` that holds at skipped bytes, with `F` a kept fill and `C` a class no token's
+   later byte meets where a byte of the token may be `R`, holds only at a gap's first byte (`at`), so it is tested
+   there at each token's start and after the last token, as the lean parser asks what follows a `>`: `fill_13 &&
+   src[at - 1] == b'>'` and `src[at]` a blank, `/` or `\r`. In a region after its start it is none where the byte
+   before is in no fill the loop keeps at a region token's last byte. `rca_as_lt`, `rca_number` and `any_at` are
+   gone. The loop keeps `as_run`, `as_dot` and `as_lt` per token for it, and their rows' values are written as scans
+   over the token's bytes (`fill_11` in a name's row reads `wlast_in` and `wfirst_in`), where the lean parser reads
+   the type's tokens (`as_split`).
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`
