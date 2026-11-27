@@ -1,4 +1,4 @@
-// python/pt1120-python-10: names and arguments in the code Ruff parses from string type definitions, as the batch's
+// python/type-string-names: names and arguments in the code Ruff parses from string type definitions, as the
 // flake8-print (T201, T203) and flake8-type-checking (TC006) rules read them; and whether a file imports a module,
 // star imports included, as its pandas-vet rules (PD002, PD101) ask.
 //

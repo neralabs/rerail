@@ -1,4 +1,4 @@
-// python/pt1120-python-08: how Ruff's flake8-slots rules read a class's base, beyond misc2-slots (SLOT000, SLOT001).
+// python/slots-bases: how Ruff's flake8-slots rules read a class's base, beyond misc2-slots (SLOT000, SLOT001).
 //
 // Interface
 //   slots_unsub(b, e)          e is base b with one subscript taken off (`Tuple[int]`'s `Tuple`), or b itself;

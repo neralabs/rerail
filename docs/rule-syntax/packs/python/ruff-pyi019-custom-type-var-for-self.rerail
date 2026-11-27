@@ -32,7 +32,7 @@ PYI019(at, x) :- cand(f, t, e), sig_at(f, at), tvar(f, t, e, x).
 cand(f, t, m) :- receiver(f, "instance", t), recv_type(t, m).
 cand(f, t, e) :- receiver(f, k, t), k != "instance", recv_type(t, m), tsub(m, h, 0, e), kind(h, "identifier"),
     tsub_n(m, 1), !sub_comma(m), builtin_type(f, t, h).
-// sub_comma(m): subscript m, or the type_parameter of generic_type m, ends in a `,`: python/pt1120-python-01's
+// sub_comma(m): subscript m, or the type_parameter of generic_type m, ends in a `,`: python/stub-version-checks'
 // bracket_comma test, asked of m here. A relation that ranges over node kinds has no rows for a string's parsed
 // tree (`cls: "type[_S,]"`), so the library's cannot be read.
 .decl sub_comma(m: node)

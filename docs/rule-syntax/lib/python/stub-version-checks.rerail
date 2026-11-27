@@ -1,4 +1,4 @@
-// python/pt1120-python-01: one comparison as Ruff's AST has it, and the `sys.version_info` checks of stub `if`
+// python/stub-version-checks: one comparison as Ruff's AST has it, and the `sys.version_info` checks of stub `if`
 // tests as Ruff's flake8-pyi reads them (PYI002, PYI003, PYI004, PYI005).
 //
 // Interface

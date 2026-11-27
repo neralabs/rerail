@@ -13,7 +13,7 @@
 //   data.dropna().nunique() == 1         ← PD101
 //   data.nunique() >= 1                  not reported: tests non-empty
 //   {"hello": "world"}.nunique() == 1    not reported: not a series
-#include "python/pt1120-python-10.rerail"
+#include "python/type-string-names.rerail"
 //   p10_seen(d, m), seen_ask(m); python/ruff and python/names through it
 
 .violation PD101(at: node, alt: symbol) code "PD101"

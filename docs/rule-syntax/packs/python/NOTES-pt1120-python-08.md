@@ -7,7 +7,7 @@ fixed only by a change to an existing library (below). Every rule stays per file
 `cross_file`, and a run of all six under `RERAIL_STRICT_CROSSINGS`, `RERAIL_STRICT_NODES` and
 `RERAIL_STRICT_POSITIONS` (each with `RERAIL_SHOW_CROSSINGS=1`) passed and printed nothing.
 
-New library: `lib/python/pt1120-python-08.rerail` (SLOT000 and SLOT001 share it): `slots_unsub` (Ruff's
+New library: `lib/python/slots-bases.rerail` (SLOT000 and SLOT001 share it): `slots_unsub` (Ruff's
 map_subscript, one level) and `slots_tp_builtin` (a base naming the class's own type parameter, still read as the
 builtin).
 

@@ -47,7 +47,7 @@ chain(n, c) :- ann_name(n, f), nearest(f, c, scope).
 chain(n, s) :- ann_name(n, f), within(f, s), (kind(s, "module") ; kind(s, "function_definition") ; kind(s, "lambda")).
 .decl late(n: node, s: node)  // s is read complete from n
 late(n, s) :- chain(n, s), ann_name(n, f), field(f, "return_type", r), deferred_ann(r).
-late(n, s) :- chain(n, s), ann_name(n, f), kind(g, "function_definition"), within(f, g), within(g, s).
+late(n, s) :- chain(n, s), ann_name(n, f), inside(f, g, "function_definition"), within(g, s).
 // seen(n, s, a, w): binding a of n's name in s counts when n is read now (w "now") or once the module is done ("end").
 .decl seen(n: node, s: node, a: node, w: symbol)
 seen(n, s, a, "now") :- chain(n, s), text(n, x), binding(s, x, a, _), (late(n, s) ; a < n).

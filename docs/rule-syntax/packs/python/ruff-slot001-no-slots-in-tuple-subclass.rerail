@@ -6,7 +6,7 @@
 
 // Ruff SLOT001 (flake8-slots): a class with `tuple` or `typing.Tuple` (bare or subscripted once) among its bases
 // and no `__slots__` in its body. Stub files are exempt. A type parameter named `tuple` does not hide the builtin
-// from the class's bases (python/pt1120-python-08); one named `Tuple` hides typing's.
+// from the class's bases (python/slots-bases); one named `Tuple` hides typing's.
 //   class Bad(tuple):            ← SLOT001
 //       pass
 //   class Bad(Tuple[str, int]):  ← SLOT001
@@ -17,7 +17,7 @@
 //       __slots__ = ()
 //   class D(Tuple[int][0]):      not reported: one subscript level only
 //       pass
-#include "python/pt1120-python-08.rerail"   // slots_unsub, slots_tp_builtin; python/misc2-slots
+#include "python/slots-bases.rerail"   // slots_unsub, slots_tp_builtin; python/misc2-slots
 
 .violation SLOT001(at: node) code "SLOT001"
     "Add `__slots__ = ()` to this `tuple` subclass so instances skip the per-instance `__dict__`; leave it if the class assigns instance attributes, which an empty `__slots__` forbids."

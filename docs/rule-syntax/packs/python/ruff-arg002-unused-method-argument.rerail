@@ -13,7 +13,7 @@
 //       def g(self, x): ...             not reported: a stub
 //       def __exit__(self, *a): pass    not reported: a dunder
 //   staticmethod = …  (later, at module level): the decorator above is still the builtin where Ruff reads it
-#include "python/pt1120-python-07.rerail"
+#include "python/visit-order-bindings.rerail"
 //   options: dummy-variable-rgx, flake8-unused-arguments.ignore-variadic-names (see the library)
 
 .violation ARG002(at: node, name: symbol) code "ARG002"

@@ -1,4 +1,4 @@
-// python/pt1120-python-09: what batch pt1120-python-09's rules share beyond python/exceptions and
+// python/raise-and-gettext: what the TRY and INT rules share beyond python/exceptions and
 // python/misc2-messages: the raised expression of a raise statement continued with a backslash (TRY002, TRY003),
 // and a translation call's first argument inside type strings (INT001, INT002).
 //

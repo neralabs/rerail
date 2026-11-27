@@ -6,7 +6,7 @@
 
 // Ruff TC006 (flake8-type-checking): the type argument of `typing.cast` (the first argument, or `typ=`) is
 // not a string. Python evaluates it on every call; a string is not evaluated. Not in stubs. Ruff checks the casts
-// in the code of string type definitions too, names there looked up in the module first (python/pt1120-python-10).
+// in the code of string type definitions too, names there looked up in the module first (python/type-string-names).
 // Ruff's fix quotes it (safe unless a comment is inside); no fix is offered here, since quoting must rewrite inner
 // string quotes.
 //   cast(int, 3.0)               ← TC006 at `int`
@@ -16,7 +16,7 @@
 //   cast("int", 3.0)             not reported
 #include "python/misc2-typecheck.rerail"
 //   tc_cast_type(c, t), stub_file(d)
-#include "python/pt1120-python-10.rerail"
+#include "python/type-string-names.rerail"
 //   p10_tq(e, q), p10_arg0(c, a), p10_kwarg(c, x, v); python-04's in_ann_tree, guest_file
 
 .violation TC006(at: node) code "TC006"

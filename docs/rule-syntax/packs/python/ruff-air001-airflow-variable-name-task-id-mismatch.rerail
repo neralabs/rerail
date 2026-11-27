@@ -13,7 +13,7 @@
 //   my_task = PythonOperator(task_id="my_task")            not reported
 //   incorrect_name = MyOperator(task_id="my_task")         not reported: `airflow.MyOperator` is not an operator module
 //   g = (airflow.providers.google).operators.bq.Op(task_id="h")   ← AIR001
-#include "python/pt1120-python-06.rerail"   // air_callq
+#include "python/airflow-bindings.rerail"   // air_callq
 
 .violation AIR001(at: node, tv: symbol) code "AIR001"
     "Rename this task variable to `{tv}` so it matches its `task_id`, or change the `task_id` if this variable name is the one you want."

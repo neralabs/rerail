@@ -11,7 +11,7 @@
 //   x.drop(["a"], axis=1, inplace=True)        ← PD002
 //   x.drop(["a"], axis=1, inplace=False)       not reported
 //   x.rotate_z(45, inplace=True)               not reported: not a pandas method
-#include "python/pt1120-python-10.rerail"
+#include "python/type-string-names.rerail"
 //   p10_seen(d, m), seen_ask(m); python/ruff through it
 
 .violation PD002(at: node) code "PD002"

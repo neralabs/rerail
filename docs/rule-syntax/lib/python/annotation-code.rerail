@@ -1,4 +1,4 @@
-// python/pt1120-python-03: the code inside string annotations, for the rules that check it as Ruff does.
+// python/annotation-code: the code inside string annotations, for the rules that check it as Ruff does.
 //
 // Interface
 //   ann_tree_node(n)   n is a node of the parsed tree of a string Ruff reads as a type (F601, F632)

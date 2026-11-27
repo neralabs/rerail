@@ -13,7 +13,7 @@
 //   gettext("{}".format("line"))           ← INT002
 //   _("Hello, {}!").format(name)           not reported: translated first
 //   x: "_(t.format(a))" = 1                ← INT002: Ruff checks the code of string type definitions too
-#include "python/pt1120-python-09.rerail"
+#include "python/raise-and-gettext.rerail"
 //   p09_gettext_arg(c, a); python/misc2-messages: msg_form(a, k)
 
 .violation INT002(at: node) code "INT002"

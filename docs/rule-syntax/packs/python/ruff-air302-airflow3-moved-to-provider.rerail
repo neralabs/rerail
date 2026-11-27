@@ -17,7 +17,7 @@
 //   except ModuleNotFoundError:
 //       from airflow.operators.http_operator import SimpleHttpOperator as HttpOperator
 //   HttpOperator()                 not reported: the fallback is guarded
-#include "python/pt1120-python-06.rerail"   // air_at, air_safe: by the binding Ruff sees
+#include "python/airflow-bindings.rerail"   // air_at, air_safe: by the binding Ruff sees
 #include "../packs/python/ruff-air302-airflow3-moved-to-provider.moved.rerail"   // air302_moved(old, p, v, m, x)
 
 .violation AIR302(at: node, q: symbol, p: symbol, v: symbol, m: symbol, x: symbol) code "AIR302"

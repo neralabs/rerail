@@ -6,7 +6,7 @@ fixture files and on ad-hoc cases written for each point below. Every difference
 Ruff. Every rule is in #1120's shape: per file, no declared crossing, and `RERAIL_STRICT_CROSSINGS`,
 `RERAIL_STRICT_NODES` and `RERAIL_STRICT_POSITIONS` accept each.
 
-## New library: `lib/python/pt1120-python-02.rerail`
+## New library: `lib/python/type-string-places.rerail`
 
 PYI054, PYI055 and PYI056 read the trees Ruff parses from string type definitions. The library gives
 `str_tree(s, n)` (the tree of core's `string_annotation` s, or of a string nested in it), `simple_string(s)`,
