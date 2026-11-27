@@ -45,8 +45,6 @@ struct B {
     /// The bytes an odd run of backslashes escapes.
     esc: u64,
     hash: u64,
-    lb: u64,
-    rb: u64,
     /// `(`, `[`, `{`.
     ob: u64,
     /// `)`, `]`, `}`.
@@ -95,7 +93,6 @@ fn block(v: V) -> B {
     // Tabs, form feeds and `'\r'` are rare: one mask, and each its own only in a block that has one.
     let rare = (eq(b'\t') | eq(0x0c) | eq(b'\r')).to_bitmask();
     let (tab, ff, cr) = if rare == 0 { (0, 0, 0) } else { (eq(b'\t').to_bitmask(), eq(0x0c).to_bitmask(), eq(b'\r').to_bitmask()) };
-    let (lb, rb) = (eq(b'{').to_bitmask(), eq(b'}').to_bitmask());
     B {
         word,
         space,
@@ -110,19 +107,18 @@ fn block(v: V) -> B {
         bs: eq(b'\\').to_bitmask(),
         esc: 0,
         hash: eq(b'#').to_bitmask(),
-        lb,
-        rb,
-        ob: (eq(b'(') | eq(b'[')).to_bitmask() | lb,
-        cb: (eq(b')') | eq(b']')).to_bitmask() | rb,
+        ob: (eq(b'(') | eq(b'[') | eq(b'{')).to_bitmask(),
+        cb: (eq(b')') | eq(b']') | eq(b'}')).to_bitmask(),
         code: !0,
         depth0: 0,
         sstart: 0,
     }
 }
 
-/// Block `bi`'s `:` and `!`: made from its bytes where an f-string's interior asks, not for every block.
+/// Block `bi`'s bytes that are one of `xs`: made from its bytes where an f-string asks (its braces, an interior's
+/// `:` and `!`), not for every block.
 #[inline(always)]
-fn colon_bang(src: &[u8], bi: usize) -> u64 {
+fn bytes_of<const K: usize>(src: &[u8], bi: usize, xs: [u8; K]) -> u64 {
     let at = bi * 64;
     let v = match src.get(at..at + 64) {
         Some(b) => V::from_slice(b),
@@ -133,7 +129,11 @@ fn colon_bang(src: &[u8], bi: usize) -> u64 {
             V::from_array(b)
         }
     };
-    (v.simd_eq(V::splat(b':')) | v.simd_eq(V::splat(b'!'))).to_bitmask()
+    let mut m = v.simd_eq(V::splat(xs[0]));
+    for &x in &xs[1..] {
+        m |= v.simd_eq(V::splat(x));
+    }
+    m.to_bitmask()
 }
 
 /// Stratum 1 over `src`: a block's masks each, and one block past the end (all clear) for a look at the next
@@ -232,28 +232,6 @@ impl<'a> Masks<'a> {
         f(self.blk(i >> 6)) >> (i & 63) & 1 == 1
     }
 
-    /// The first byte from `at` whose bit is set in the mask `f` makes of a block and the block after it (the
-    /// text's length where none is).
-    #[inline(always)]
-    fn next2(&self, at: usize, f: impl Fn(&B, &B) -> u64) -> usize {
-        let n = self.src.len();
-        if at >= n {
-            return n;
-        }
-        let mut bi = at >> 6;
-        let mut m = f(self.blk(bi), self.blk(bi + 1)) & (!0u64 << (at & 63));
-        loop {
-            if m != 0 {
-                return (bi * 64 + m.trailing_zeros() as usize).min(n);
-            }
-            bi += 1;
-            if bi * 64 >= n {
-                return n;
-            }
-            m = f(self.blk(bi), self.blk(bi + 1));
-        }
-    }
-
     /// The first byte from `at` whose bit is set in a mask.
     #[inline(always)]
     fn next(&self, at: usize, f: impl Fn(&B) -> u64) -> usize {
@@ -272,6 +250,28 @@ impl<'a> Masks<'a> {
                 return n;
             }
             m = f(self.blk(bi));
+        }
+    }
+
+    /// The first byte from `at` whose bit is set in the mask `f` makes of a block's index, the block and the block
+    /// after it.
+    #[inline(always)]
+    fn next2_in(&self, at: usize, f: impl Fn(usize, &B, &B) -> u64) -> usize {
+        let n = self.src.len();
+        if at >= n {
+            return n;
+        }
+        let mut bi = at >> 6;
+        let mut m = f(bi, self.blk(bi), self.blk(bi + 1)) & (!0u64 << (at & 63));
+        loop {
+            if m != 0 {
+                return (bi * 64 + m.trailing_zeros() as usize).min(n);
+            }
+            bi += 1;
+            if bi * 64 >= n {
+                return n;
+            }
+            m = f(bi, self.blk(bi), self.blk(bi + 1));
         }
     }
 
@@ -317,11 +317,6 @@ impl<'s> Text<'s> {
     #[inline(always)]
     fn bit(&self, i: usize, f: impl Fn(&B) -> u64) -> bool {
         self.m().bit(i, f)
-    }
-
-    #[inline(always)]
-    fn next2(&self, at: usize, f: impl Fn(&B, &B) -> u64) -> usize {
-        self.m().next2(at, f)
     }
 
     #[inline(always)]
@@ -419,17 +414,18 @@ impl<'s> Text<'s> {
         let n = self.src.len();
         let q = self.src[o];
         let triple = self.at(o + 1) == q && self.at(o + 2) == q;
-        let braces = |b: &B| if format { b.lb | b.rb } else { 0 };
+        let src = self.src;
+        let braces = |bi: usize| if format { bytes_of(src, bi, *b"{}") } else { 0 };
         let mut j = o + if triple { 3 } else { 1 };
         loop {
             let c = if triple {
                 // A quote no backslash escapes, and the two bytes after it its quote.
-                self.next2(j, |b, b1| {
+                self.m().next2_in(j, |bi, b, b1| {
                     let (qm, q1) = (quotes(b, q), quotes(b1, q));
-                    (qm & !b.esc & (qm >> 1 | q1 << 63) & (qm >> 2 | q1 << 62)) | braces(b)
+                    (qm & !b.esc & (qm >> 1 | q1 << 63) & (qm >> 2 | q1 << 62)) | braces(bi)
                 })
             } else {
-                self.next(j, |b| (quotes(b, q) & !b.esc) | b.bare_lf | braces(b))
+                self.m().next_in(j, |bi, b| (quotes(b, q) & !b.esc) | b.bare_lf | braces(bi))
             };
             if c >= n {
                 return Err(refuse(c));
@@ -469,7 +465,7 @@ impl<'s> Text<'s> {
         let mut depth = 0i32;
         loop {
             let src = self.src;
-            let c = self.m().next_in(i, |bi, b| b.sq | b.dq | b.bt | b.rb | b.hash | b.bs | colon_bang(src, bi));
+            let c = self.m().next_in(i, |bi, b| b.sq | b.dq | b.bt | b.hash | b.bs | bytes_of(src, bi, *b"}:!"));
             if c >= n {
                 return Err(refuse(c));
             }
@@ -502,7 +498,8 @@ impl<'s> Text<'s> {
     fn spec_end(&mut self, mut i: usize, nest: u32) -> Result<usize, Refusal> {
         let n = self.src.len();
         loop {
-            let c = self.next(i, |b| b.lb | b.rb | b.lf);
+            let src = self.src;
+            let c = self.m().next_in(i, |bi, b| b.lf | bytes_of(src, bi, *b"{}"));
             if c >= n || self.src[c] == b'\n' {
                 return Err(refuse(c));
             }
@@ -905,7 +902,7 @@ impl<'s> Walk<'s> {
         let valid = if n - base >= 64 { !0u64 } else { (1u64 << (n - base)) - 1 };
         let ff = b.skip & !b.sptab & !b.lf;
         let stop = (!b.code | b.eol | ff | b.bs | !valid) & (!0u64 << q0);
-        let before_stop = if stop == 0 { !0u64 } else { (stop & stop.wrapping_neg()) - 1 };
+        let before_stop = if stop == 0 { !0u64 } else { stop.isolate_lowest_one() - 1 };
         let mut starts = ((!b.skip & !(b.word & (b.word << 1)) & (!0u64 << q0)) | (1u64 << q0)) & before_stop;
         let mut last = (T::Eof, k);
         while starts != 0 {
@@ -1056,7 +1053,7 @@ impl<'s> Walk<'s> {
         let mut content = false;
         let (quote, format) = (q.quote, q.format);
         loop {
-            let s = self.t.next(j, |b| quotes(b, quote) | b.bs | b.lf | if format { b.lb | b.rb } else { 0 });
+            let s = self.t.next_in(j, |bi, b| quotes(b, quote) | b.bs | b.lf | if format { bytes_of(src, bi, *b"{}") } else { 0 });
             if s >= src.len() {
                 return Err(refuse(s));
             }
@@ -1212,7 +1209,7 @@ impl<'s> Walk<'s> {
     fn spec(&mut self, mut i: usize) -> Result<usize, Refusal> {
         let src = self.t.src;
         loop {
-            let s = self.t.next(i, |b| b.lb | b.rb | b.lf);
+            let s = self.t.next_in(i, |bi, b| b.lf | bytes_of(src, bi, *b"{}"));
             if s >= src.len() || src[s] == b'\n' {
                 return Err(refuse(s));
             }

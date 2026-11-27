@@ -638,8 +638,19 @@ statements and blocks end.
     `examples/compare_strata` over a directory of files).
     - **Its output is the lean lexer's** (`Lexed`), compared token by token and extra by extra. Both read numbers,
       operators, escapes and string prefixes with the same functions (moved out of the lean lexer's methods).
-    - **The bracket depth is clamped at 0 as the lean lexer's counter is:** a block's prefix sum less its prefix
-      minimum where that is below 0, both on `std::simd`'s interface. The walk reads it as one bit of `depth0`.
+    - **The bracket depth is clamped at 0 as the lean lexer's counter is,** made by a walk over a block's brackets'
+      bits: on the corpus 0.37 cycles a byte, against 0.50 for a prefix sum and a prefix minimum of the block's 64
+      lanes on `std::simd`'s interface, which is removed. The walk reads it as one bit of `depth0`.
     - **An f-string's escaped braces (`{{`, `}}`) are stepped a pair at a time** at the text's stops, not found by
       an odd-run mask: a run of `}` can start inside an interior (`f"{x}}}"`), where an odd-run's parity is wrong.
     - **`\N{…}` in an f-string is refused**, as a nested f-string is: the name's braces are not an interpolation's.
+    - **A string's prefix letters are read at its quote,** a few bytes; the block's `{`, `}`, `:` and `!` are made
+      from its bytes only where an f-string reaches it. A block's classes are 11 masks.
+    - **The walk reads rr's run:** from a token in code, the block's starts are one mask up to its first byte that is
+      not code (stratum 2's) or ends a line, so no layout and no string's prefix comes between the run's tokens.
+    - **At a line's end the scanner's look is taken once:** the layout tokens take no bytes, so it is the same for
+      each.
+    - **As measured** (the 1644-file corpus, an M1 Max): 1635 files lex the same, 0 differ, 9 are refused (each a
+      nested f-string). The strata take 24.0 instructions and 8.18 cycles a byte, the lean lexer 31.2 and 8.02: 0.98x
+      its speed, both lexers timed a pass each in turn. The strata below the walk take 2.25 cycles a byte (classes
+      0.96, regions 0.93, depth 0.36), the walk 5.9 against about 7.4 for the lean lexer's.
