@@ -11,7 +11,7 @@ import { resolveSessionPaths } from "../runtime/session-paths.js";
 import {
   decodeRerailEventFrame,
   encodeRerailEventResult,
-  INACTIVE_SESSION,
+  eventErrorCode,
   RERAIL_EVENT_PROTOCOL_PREFACE,
   type RerailEventErrorFrame,
 } from "../runtime/event-protocol.js";
@@ -55,20 +55,12 @@ function eventIdFromLine(line: string): string | null {
 }
 
 /**
- * Read by `code`, not `instanceof InactiveSessionError`: `build:events` bundles this stream with its own copy of the
- * class, so an event loop built from the package's other entry points throws a different one.
- */
-function isInactiveSession(error: unknown): boolean {
-  return error instanceof Error && "code" in error && error.code === INACTIVE_SESSION;
-}
-
-/**
- * An event no daemon took (`eventEndpoint` or its send throws `DaemonUnreachableError`, as a hook's do) may be sound,
- * so its frame says `internal-error`, not `invalid-event`.
+ * The protocol's code the error carries (`eventErrorCode`), thrown by the runtime in this process or by the daemon's
+ * answer in a main build, else what the stream says of it. An event no daemon took (`eventEndpoint` or its send throws
+ * `DaemonUnreachableError`, as a hook's do) may be sound, so its frame says `internal-error`, not `invalid-event`.
  */
 function errorCode(error: unknown): RerailEventErrorFrame["error"]["code"] {
-  if (isInactiveSession(error)) return INACTIVE_SESSION;
-  return error instanceof DaemonUnreachableError ? "internal-error" : "invalid-event";
+  return eventErrorCode(error) ?? (error instanceof DaemonUnreachableError ? "internal-error" : "invalid-event");
 }
 
 function errorFrame(line: string, error: unknown): RerailEventErrorFrame {
