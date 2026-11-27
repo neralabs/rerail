@@ -158,6 +158,7 @@ PrimaryKeyNotConcurrent(c, t) :- inc_pk(c, t, d, ct), !al_np_ext(d, ct).
     .fixture "migrations/versions/c7_columns_keys_helpers.py" from "../cases/alembic-practice-index-not-concurrent/migrations/versions/c7_columns_keys_helpers.py"
     .fixture "migrations/versions/c8_class_variants.py" from "../cases/alembic-practice-index-not-concurrent/migrations/versions/c8_class_variants.py"
     .fixture "migrations/versions/c9_dialect_variants.py" from "../cases/alembic-practice-index-not-concurrent/migrations/versions/c9_dialect_variants.py"
+    .fixture "migrations/versions/c10_dialect_reported.py" from "../cases/alembic-practice-index-not-concurrent/migrations/versions/c10_dialect_reported.py"
     .fixture "tests/migrations/versions/t1_fixture.py" from "../cases/alembic-practice-index-not-concurrent/tests/migrations/versions/t1_fixture.py"
     .expect IndexNotConcurrent at "migrations/versions/c1_user_indexes.py":14
     .expect IndexNotConcurrent at "migrations/versions/c1_user_indexes.py":17
@@ -185,9 +186,9 @@ PrimaryKeyNotConcurrent(c, t) :- inc_pk(c, t, d, ct), !al_np_ext(d, ct).
     .expect ColumnUniqueNotConcurrent at "migrations/versions/c8_class_variants.py":21
     .expect ColumnIndexNotConcurrent at "migrations/versions/c8_class_variants.py":22
     .expect IndexNotConcurrent at "migrations/versions/c8_class_variants.py":24
-    .expect IndexNotConcurrent at "migrations/versions/c9_dialect_variants.py":37
-    .expect IndexNotConcurrent at "migrations/versions/c9_dialect_variants.py":39
-    .expect IndexNotConcurrent at "migrations/versions/c9_dialect_variants.py":42
-    .expect IndexNotConcurrent at "migrations/versions/c9_dialect_variants.py":46
-    .expect IndexNotConcurrent at "migrations/versions/c9_dialect_variants.py":50
+    .expect IndexNotConcurrent at "migrations/versions/c10_dialect_reported.py":18
+    .expect IndexNotConcurrent at "migrations/versions/c10_dialect_reported.py":20
+    .expect IndexNotConcurrent at "migrations/versions/c10_dialect_reported.py":23
+    .expect IndexNotConcurrent at "migrations/versions/c10_dialect_reported.py":27
+    .expect IndexNotConcurrent at "migrations/versions/c10_dialect_reported.py":31
 .end
