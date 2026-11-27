@@ -288,9 +288,13 @@ function listOrNone(value: string): string {
   return `CASE WHEN ${isJsonArray(value)} THEN ${value} END`;
 }
 
-/** What the SQL expression `name` gives for each row of `table` whose `column` holds no JSON array (`isJsonArray`). */
-function unreadRows(database: RerailDatabase, table: string, column: string, name: string): string[] {
-  return database.all<{ name: string }>(sql.raw(`SELECT ${name} AS name FROM ${identifier(table)} WHERE NOT ${isJsonArray(identifier(column))}`))
+/**
+ * What `nameSql` gives for each row of `table` whose `column` holds no JSON array (`isJsonArray`). `table` and `column`
+ * are checked as identifiers; `nameSql` is a trusted SQL expression over the row, which each caller writes as a literal,
+ * and goes into the statement as it is.
+ */
+function unreadRows(database: RerailDatabase, table: string, column: string, nameSql: string): string[] {
+  return database.all<{ name: string }>(sql.raw(`SELECT ${nameSql} AS name FROM ${identifier(table)} WHERE NOT ${isJsonArray(identifier(column))}`))
     .map(row => row.name);
 }
 
