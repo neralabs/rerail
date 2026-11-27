@@ -3613,8 +3613,12 @@ impl Batch {
                             Some((count, plus)) => (count, rerail_accel_gpu::gpu::join::GROUP as u32, plus),
                             None => (0, 0, 0),
                         };
-                        segs.push(SegAt { first: items.len() as u32, items: n as u32, count, per, plus });
-                        items.extend((0..n).map(|g| (what, (first_job + i) as u32, g as u32)));
+                        // A segment of a count runs its first item as each group its count needs (`phase_group`): its
+                        // one item. Its groups at most were each an item before, written out: the tail's growths alone
+                        // 3.3 M a program of the points-to component, its item lists grown and copied as they were.
+                        let listed = if per == 0 { n } else { 1 };
+                        segs.push(SegAt { first: items.len() as u32, items: listed as u32, count, per, plus });
+                        items.extend((0..listed).map(|g| (what, (first_job + i) as u32, g as u32)));
                     }
                 }
             }
