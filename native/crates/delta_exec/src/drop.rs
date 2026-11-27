@@ -50,26 +50,74 @@ impl DropOps {
     }
 }
 
-/// Pushes every live row of the state at `head` in partitions `parts` into `runs` with sign `diff`: how many.
-pub fn drop_parts(reg: &Registry, ops: &DropOps, dir: &mut Directory, head: BlockId, parts: &[i64], diff: i32, runs: BlockId) -> Result<u64, String> {
+/// A parts block: the partitions a run retracts (L1's documents gone), written where it lies as they are found, then
+/// sealed, sorted and each once (`twin::seal_parts`). `drop_parts` and `k0_pass` read it there; its maker lets it go
+/// (`release`).
+pub struct Parts {
+    id: BlockId,
+    n: usize,
+}
+
+impl Parts {
+    /// A parts block with room for `cap` partitions, each `fill` puts written in place, then sealed.
+    pub fn write(dir: &mut Directory, cap: usize, fill: impl FnOnce(&mut dyn FnMut(i64))) -> Result<Parts, String> {
+        let id = dir.make(kind::CONTROL, twin::parts_bytes(cap));
+        let b = dir.block(id).expect("just made");
+        let mut w = match pin_block(&b, "a parts block", true) {
+            Ok(w) => w,
+            Err(e) => {
+                drop(b);
+                dir.release(id);
+                return Err(e);
+            }
+        };
+        let bytes = w.bytes_mut().expect("a write pin");
+        twin::open_parts(bytes);
+        let mut n = 0;
+        fill(&mut |p| {
+            assert!(n < cap, "a parts block's room: {cap} partitions");
+            twin::put_part(bytes, n, p);
+            n += 1;
+        });
+        let n = twin::seal_parts(bytes, n);
+        Ok(Parts { id, n })
+    }
+
+    pub fn id(&self) -> BlockId {
+        self.id
+    }
+
+    /// How many partitions it lists.
+    pub fn len(&self) -> usize {
+        self.n
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.n == 0
+    }
+
+    /// `f` of each partition it lists, read where the block holds them.
+    pub fn each(&self, dir: &Directory, f: &mut dyn FnMut(i64)) -> Result<(), String> {
+        let l = dir.read("a parts block", &[self.id])?;
+        twin::parts(l.block(0)).for_each(f);
+        Ok(())
+    }
+
+    pub fn release(self, dir: &mut Directory) {
+        dir.release(self.id);
+    }
+}
+
+/// Pushes every live row of the state at `head` in the partitions `parts` lists into `runs` with sign `diff`: how many.
+pub fn drop_parts(reg: &Registry, ops: &DropOps, dir: &mut Directory, head: BlockId, parts: &Parts, diff: i32, runs: BlockId) -> Result<u64, String> {
     if parts.is_empty() {
         return Ok(0);
     }
-    let block = dir.make(kind::CONTROL, twin::parts_bytes(parts.len()));
-    let ran = (|| {
-        {
-            let b = dir.block(block).expect("just made");
-            let mut w = pin_block(&b, "drop_parts", true)?;
-            twin::init_parts(w.bytes_mut().expect("a write pin"), parts);
-        }
-        let before = Runs::new(dir.read("drop_parts", &[runs])?.block(0)).head.claimed;
-        let mut p = vec![0u8; DropP::SIZE];
-        DropP { head: u64::from(head.0), diff: i64::from(diff) }.write(&mut p);
-        run_cpu(reg, dir, ops.drop_parts, &[head, block, runs], &p, Tiling::WHOLE)?;
-        Ok(u64::from(Runs::new(dir.read("drop_parts", &[runs])?.block(0)).head.claimed - before))
-    })();
-    dir.release(block);
-    ran
+    let before = Runs::new(dir.read("drop_parts", &[runs])?.block(0)).head.claimed;
+    let mut p = vec![0u8; DropP::SIZE];
+    DropP { head: u64::from(head.0), diff: i64::from(diff) }.write(&mut p);
+    run_cpu(reg, dir, ops.drop_parts, &[head, parts.id(), runs], &p, Tiling::WHOLE)?;
+    Ok(u64::from(Runs::new(dir.read("drop_parts", &[runs])?.block(0)).head.claimed - before))
 }
 
 #[cfg(test)]

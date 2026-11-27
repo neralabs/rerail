@@ -1,6 +1,7 @@
 //! The harness on a toy operator, and on four toys each built to break one law (B3).
 
 use super::*;
+use rerail_blocks::bistate::RowId;
 use rerail_blocks::layer::ColType;
 
 /// What a toy gets wrong.

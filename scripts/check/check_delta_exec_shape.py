@@ -520,8 +520,8 @@ def b6(failures: list) -> None:
     hits(l1, code, r"\bpass\([^;]*,\s*-1\s*,|k0_pass\([^;]*,\s*-1\s*,", "an old tape read again with -1 (retract the kept rows, P§3)", failures)
     if len(re.findall(r"\bk0_pass\(", code)) != 1:
         failures.append("l1.rs: k0_pass called at more than one place (one launch reads every changed tape)")
-    if not re.search(r"pub fn k0_pass\([^)]*docs: &\[K0Doc\]", k0):
-        failures.append("k0.rs: k0_pass does not take every document of the run (one launch)")
+    if not re.search(r"pub fn k0_pass\([^)]*docs: &DocsIn,", k0):
+        failures.append("k0.rs: k0_pass does not take every document of the run (one launch, its docs blocks)")
     if len(re.findall(r"\brun_cpu\(", strip_rust(k0))) != 1:
         failures.append("k0.rs: k0_pass launched at more than one place")
     files = (CRATE / "src/files.rs").read_text()
@@ -549,8 +549,16 @@ def b6(failures: list) -> None:
             failures.append(f"boot.rs: the document set does not read through the {n} answerer")
     # Demand (P§7.1): L1 asks of its tape port (its only rows written in Rust: the demand on its input), restricts its
     # work to the want, and the boot's run answers only what is asked.
-    if "const ASKED: &'static [usize] = &[0];" not in l1 or "asks.writer(cx.dir, L1Ports::TAPE)" not in l1 or "want_rows(" not in l1:
-        failures.append("l1.rs: L1 neither restricts to its want nor asks of its tape port (P§7.1)")
+    if "const ASKED: &'static [usize] = &[0];" not in l1 or "asks.writer(cx.dir, L1Ports::TAPE)" not in l1 or "Read::matching(s, &[WANT_KEY], &[d])" not in l1:
+        failures.append("l1.rs: L1 neither restricts to its want (read in place) nor asks of its tape port (P§7.1)")
+    # Step 4 (0686): L1's delta holds no set or list of its own. The want is read where its states lie, the asks
+    # pushed as found, the documents gone and read written into the run's parts and docs blocks as found
+    # (`Parts::write`, `Docs`), which `drop_parts` and `k0_pass` read in place.
+    l1_code = strip_rust(l1)
+    delta = l1_code[l1_code.find("fn delta("):l1_code.find("fn run(")]
+    hits(l1, delta, r"\bBTree\w*|\bHash(Map|Set)\b|\bVec\b|vec!|collect::<|\.collect\(\)|want_rows\(", "a set or list of L1's delta's own (read the want in place; write the parts and docs blocks as found)", failures)
+    if "Parts::write(cx.dir" not in delta or "docs_written(cx" not in delta:
+        failures.append("l1.rs: L1's delta does not write its parts and docs blocks as it finds them")
     boot = (CRATE / "src/boot.rs").read_text()
     if "inst.asks_of(" not in boot or "docs.forget(" not in boot or "inst.set_want(" not in boot:
         failures.append("boot.rs: the run's demand does not reach the world as reads (P§7.1)")

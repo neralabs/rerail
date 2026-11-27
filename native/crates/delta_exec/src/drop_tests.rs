@@ -17,7 +17,11 @@ fn the_live_rows_of_the_listed_partitions_through_every_layer() {
     push_layer(&reg, &traces, &mut dir, &mut t, &[(r(1, 10), 1), (r(1, 11), 1), (r(2, 20), 1), (r(3, 30), 1)]).unwrap();
     let head = push_layer(&reg, &traces, &mut dir, &mut t, &[(r(1, 11), -1), (r(3, 31), 1), (r(4, 40), 1)]).unwrap();
     let runs = t.open(&mut dir, 16);
-    assert_eq!(drop_parts(&reg, &ops, &mut dir, head, &[1, 3], -1, runs).unwrap(), 3);
+    // Listed out of order and twice: sealed, each once.
+    let parts = Parts::write(&mut dir, 3, |put| [3, 1, 3].into_iter().for_each(put)).unwrap();
+    assert_eq!(parts.len(), 2);
+    assert_eq!(drop_parts(&reg, &ops, &mut dir, head, &parts, -1, runs).unwrap(), 3);
+    parts.release(&mut dir);
     let l = dir.read("t", &[runs]).unwrap();
     let got = drop_facts(&l.table(), 2, l.block(0));
     assert_eq!(got, vec![vec![1, 10, -1], vec![3, 30, -1], vec![3, 31, -1]]);
@@ -33,7 +37,9 @@ fn past_its_room_the_claims_are_counted_as_needed() {
     let pairs: Vec<(Vec<i64>, i32)> = (0..10).map(|v| (vec![1, v], 1)).collect();
     let head = push_layer(&reg, &traces, &mut dir, &mut t, &pairs).unwrap();
     let runs = t.open(&mut dir, 4);
-    drop_parts(&reg, &ops, &mut dir, head, &[1], 1, runs).unwrap();
+    let parts = Parts::write(&mut dir, 1, |put| put(1)).unwrap();
+    drop_parts(&reg, &ops, &mut dir, head, &parts, 1, runs).unwrap();
+    parts.release(&mut dir);
     let l = dir.read("t", &[runs]).unwrap();
     let r = Runs::new(l.block(0));
     assert!(r.needed() > 0);

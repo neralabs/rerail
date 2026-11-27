@@ -379,7 +379,9 @@ fn k0_doc(fx: &Fx, d: &D, module: i64) -> crate::k0::K0Doc {
 /// `k0_pass`'s rows over `docs`, one call, by relation: each `(row, diff)`, sorted.
 fn k0_rows(fx: &mut Fx, docs: &[crate::k0::K0Doc]) -> Result<Vec<Vec<Vec<i64>>>, crate::kform::Refused> {
     let runs: Vec<crate::dir::BlockId> = (0..RELATIONS.len()).map(|k| Trace::new(&crate::kform::shape(k)).unwrap().open(&mut fx.dir, 4096)).collect();
-    let ran = crate::k0::k0_pass(&fx.reg, &fx.k0, &mut fx.dir, fx.atoms.0, docs, &[], 1, &runs, None);
+    let d = crate::k0::Docs::of(&mut fx.dir, docs).map_err(|why| crate::kform::Refused { module: -1, rule: -1, why })?;
+    let ran = crate::k0::k0_pass(&fx.reg, &fx.k0, &mut fx.dir, fx.atoms.0, &d, None, 1, &runs, None);
+    d.release(&mut fx.dir);
     let got = runs
         .iter()
         .enumerate()
@@ -430,7 +432,14 @@ fn k0_pass_keeps_each_documents_sizes_and_a_gone_one_takes_its_entry() {
     let b = fx.doc("e(3, 4).\n", "b.rerail");
     let cache = crate::cache::OpCache::new(&mut fx.dir).0;
     let runs: Vec<crate::dir::BlockId> = (0..RELATIONS.len()).map(|k| Trace::new(&crate::kform::shape(k)).unwrap().open(&mut fx.dir, 4096)).collect();
-    let pass = |fx: &mut Fx, docs: &[crate::k0::K0Doc], gone: &[i64]| crate::k0::k0_pass(&fx.reg, &fx.k0, &mut fx.dir, fx.atoms.0, docs, gone, 1, &runs, Some(cache)).unwrap();
+    let pass = |fx: &mut Fx, docs: &[crate::k0::K0Doc], gone: &[i64]| {
+        let d = crate::k0::Docs::of(&mut fx.dir, docs).unwrap();
+        let g = crate::drop::Parts::write(&mut fx.dir, gone.len(), |put| gone.iter().copied().for_each(put)).unwrap();
+        let n = crate::k0::k0_pass(&fx.reg, &fx.k0, &mut fx.dir, fx.atoms.0, &d, Some(&g), 1, &runs, Some(cache)).unwrap();
+        d.release(&mut fx.dir);
+        g.release(&mut fx.dir);
+        n
+    };
     let (da, db) = (k0_doc(&fx, &a, 7), k0_doc(&fx, &b, 8));
     pass(&mut fx, &[da, db], &[]);
     let rows = |fx: &mut Fx, d: crate::k0::K0Doc| -> Vec<u32> { k0_rows(fx, &[d]).unwrap().iter().map(|r| r.len() as u32).collect() };

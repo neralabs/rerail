@@ -26,16 +26,15 @@
 //! Its Rust beyond `k0_pass` and `drop_parts` is the wiring of these ports.
 
 use crate::cache::Sizes;
-use crate::contract::{Asks, At, CacheW, Cx, DeltaOp, In, Out, Port, PortGlobal, PortIn, PortOut, PortSet, Ports, Work, outs, want_rows};
+use crate::contract::{Asks, At, CacheW, Cx, DeltaOp, In, Out, Port, PortGlobal, PortIn, PortOut, PortSet, Ports, Work, outs};
 use crate::dir::{BlockId, Directory};
-use crate::drop::{DropOps, drop_parts};
+use crate::drop::{DropOps, Parts, drop_parts};
 use crate::files::{BlobId, BlobRows, DocIds};
-use crate::k0::{K0Doc, K0Ops, k0_pass};
+use crate::k0::{Docs, DocsIn, K0Doc, K0Ops, k0_pass};
 use crate::kform::{self, RELATIONS};
 use rerail_blocks::bistate::{Bistate, ColumnIndex, Read, RowId};
 use rerail_blocks::layer::{ColType, Shape};
 use rerail_blocks::relation::View;
-use std::collections::BTreeSet;
 
 /// L1's port set (B§4's ports): the tape, the atoms, and K-form's eight relations.
 pub struct L1Ports;
@@ -110,7 +109,7 @@ fn cell(v: &View<'_>, id: RowId, c: u16) -> i64 {
 /// The document of tape row `id` of `tape`, its blobs where `blobs` has them.
 fn doc_at(blobs: &BlobRows, dir: &Directory, tape: &View<'_>, id: RowId) -> Result<K0Doc, String> {
     let blob = |at: u16| {
-        let w: Vec<i64> = (at..at + 4).map(|c| cell(tape, id, c)).collect();
+        let w: [i64; 4] = core::array::from_fn(|k| cell(tape, id, at + k as u16));
         blobs.get(dir, &BlobId::of_words(&w))?.ok_or_else(|| "a blob the tape port names, which nothing holds".to_string())
     };
     Ok(K0Doc { module: cell(tape, id, 0), src: blob(TAPE_SOURCE as u16)?, tape: blob(TAPE_TAPE as u16)?, syms: blob(TAPE_SYMS as u16)?.block })
@@ -120,13 +119,52 @@ fn live<'v>(v: &'v View<'_>) -> impl Iterator<Item = RowId> + 'v {
     (0..Read::end(v).get()).map(RowId::new).filter(|&id| Read::live(v, id))
 }
 
+/// A run's documents, each `push` writes into its docs blocks as it is found, then sealed; on an error, let go.
+fn docs_written(cx: &mut Cx<'_>, push: impl FnOnce(&mut Docs, &mut Cx<'_>) -> Result<(), String>) -> Result<DocsIn, String> {
+    let mut docs = Docs::default();
+    match push(&mut docs, cx) {
+        Ok(()) => docs.finish(cx.dir),
+        Err(e) => {
+            docs.release(cx.dir);
+            Err(e)
+        }
+    }
+}
+
+/// The want rows' key column (`contract::want_shape`: `(port, key)`, partitioned by key): L1's is a document.
+const WANT_KEY: ColumnIndex = ColumnIndex::new(1);
+
+/// Whether document `d` is wanted in want state `s` (none: nothing is), read where it lies, by its partition.
+fn wanted(s: Option<&View<'_>>, d: i64) -> bool {
+    s.is_some_and(|s| Read::matching(s, &[WANT_KEY], &[d]).next().is_some())
+}
+
+/// The documents whose want rows `ids` of state `to` start, and which state `from` does not want: each once (at its
+/// first row in `to`), read where the states lie. The want's flips into `to` (its rows added, or gone when `to` is
+/// its before) give the documents newly wanted (or no longer wanted).
+fn moved<'a>(ids: impl Iterator<Item = RowId> + 'a, to: &'a View<'a>, from: Option<&'a View<'a>>) -> impl Iterator<Item = i64> + 'a {
+    ids.filter_map(move |id| {
+        let d = cell(to, id, 1);
+        (!wanted(from, d) && Read::matching(to, &[WANT_KEY], &[d]).min() == Some(id)).then_some(d)
+    })
+}
+
+/// The documents newly wanted under `w`, and those no longer wanted.
+fn newly<'a>(w: &'a Bistate<View<'a>>) -> impl Iterator<Item = i64> + 'a {
+    moved(w.added(), w.after(), w.before())
+}
+
+fn dropped<'a>(w: &'a Bistate<View<'a>>) -> impl Iterator<Item = i64> + 'a {
+    w.before().into_iter().flat_map(move |b| moved(w.gone(), b, Some(w.after())))
+}
+
 impl L1 {
     /// `k0_pass` over documents `docs`, one launch, into the outputs' runs (+1), their sizes kept in `cache` where the
     /// modules `gone` let go of theirs.
     #[allow(clippy::too_many_arguments)]
-    fn pass(&self, cx: &mut Cx<'_>, atoms: BlockId, docs: &[K0Doc], gone: &[i64], out: &Out<L1Ports>, cache: Option<BlockId>, work: &mut Work) -> Result<(), String> {
-        let runs: Vec<BlockId> = outs::<L1Ports>().map(|k| out.block(k)).collect();
-        work.rows_read += docs.len() as u64;
+    fn pass(&self, cx: &mut Cx<'_>, atoms: BlockId, docs: &DocsIn, gone: Option<&Parts>, out: &Out<L1Ports>, cache: Option<BlockId>, work: &mut Work) -> Result<(), String> {
+        let runs: [BlockId; RELATIONS.len()] = core::array::from_fn(|k| out.block(L1Ports::relation(k)));
+        work.rows_read += docs.n as u64;
         work.rows_written += k0_pass(cx.reg, &self.ops, cx.dir, atoms, docs, gone, 1, &runs, cache).map_err(|e| e.to_string())?;
         Ok(())
     }
@@ -137,78 +175,117 @@ impl DeltaOp for L1 {
     type Cache = Sizes;
 
     fn delta(&self, cx: &mut Cx<'_>, ins: &In<'_, L1Ports>, want: Option<&Bistate<View<'_>>>, cache: &mut CacheW<Sizes>, out: &mut Out<L1Ports>, asks: &mut Asks<L1Ports>) -> Result<Work, String> {
-        let mut work = Work::default();
-        // The documents wanted on each side (`None`: all). L1's grain is the document: a wanted relation of a document
-        // is all of that document's relations (over-demand at its grain, which D1 allows).
-        let docs_of = |v: &View<'_>| want_rows(v).into_iter().map(|w| w.1).collect::<BTreeSet<i64>>();
-        let (wb, wa) = match want {
-            None => (None, None),
-            Some(w) => (Some(w.before().map_or_else(BTreeSet::new, docs_of)), Some(docs_of(w.after()))),
-        };
-        if ins.is_identity() && wb == wa {
+        let work = Work::default();
+        // The documents wanted on each side (`None`: all), read where the want's states lie. L1's grain is the
+        // document: a wanted relation of a document is all of that document's relations (over-demand at its grain,
+        // which D1 allows).
+        if ins.is_identity() && want.is_none_or(Bistate::is_identity) {
             return Ok(work);
         }
-        let (was, now) = (|d: i64| wb.as_ref().is_none_or(|s| s.contains(&d)), |d: i64| wa.as_ref().is_none_or(|s| s.contains(&d)));
-        let (newly, dropped): (Vec<i64>, Vec<i64>) = match (&wb, &wa) {
-            (Some(b), Some(a)) => (a.difference(b).copied().collect(), b.difference(a).copied().collect()), // copy: derived (the want's change, by document)
-            _ => (Vec::new(), Vec::new()),
-        };
-        // Demand out (P§7.1): the documents newly wanted asked of the tape port, those no longer wanted let go.
-        if !newly.is_empty() || !dropped.is_empty() {
-            let w = asks.writer(cx.dir, L1Ports::TAPE)?;
-            for (&d, diff) in newly.iter().map(|d| (d, 1)).chain(dropped.iter().map(|d| (d, -1))) {
-                w.push(&[d], diff);
+        let was = |d: i64| want.is_none_or(|w| wanted(w.before(), d));
+        let now = |d: i64| want.is_none_or(|w| wanted(Some(w.after()), d));
+        // Demand out (P§7.1): the documents newly wanted asked of the tape port, those no longer wanted let go, each
+        // pushed as it is found.
+        if let Some(w) = want {
+            let mut asked = None;
+            for (d, diff) in newly(w).map(|d| (d, 1)).chain(dropped(w).map(|d| (d, -1))) {
+                if asked.is_none() {
+                    asked = Some(asks.writer(cx.dir, L1Ports::TAPE)?);
+                }
+                asked.as_ref().expect("a writer").push(&[d], diff);
             }
         }
         let (tape, atoms) = (ins.port(L1Ports::TAPE), ins.global(L1Ports::ATOMS).block);
-        // Retracted: the documents gone from the tape port that were wanted, and those no longer wanted.
-        let mut parts: Vec<i64> = tape.before().map_or_else(Vec::new, |tb| tape.gone().map(|id| cell(tb, id, 0)).filter(|&d| was(d)).collect()); // copy: derived (the gone documents' ids)
-        parts.extend(&dropped);
-        parts.sort_unstable();
-        parts.dedup();
-        // Read: the documents added to the tape port that are wanted, and those newly wanted that it holds unchanged (a
-        // newly wanted relation is an initial run of it, P§5).
-        let mut ids: Vec<RowId> = tape.added().filter(|&id| now(cell(tape.after(), id, 0))).collect(); // copy: derived (the documents to read)
-        let added: BTreeSet<RowId> = ids.iter().copied().collect(); // copy: derived (the added rows' ids)
-        for &d in &newly {
-            ids.extend(Read::matching(tape.after(), &[ColumnIndex::new(0)], &[d]).filter(|id| !added.contains(id)));
-        }
-        let docs = ids.into_iter().map(|id| doc_at(cx.blobs, cx.dir, tape.after(), id)).collect::<Result<Vec<_>, _>>()?; // copy: derived (the documents' places, from their blobs)
+        // Retracted: the documents gone from the tape port that were wanted, and those no longer wanted, written into
+        // the run's parts block as they are found (sealed: sorted, each once).
+        let cap = tape.gone().count() + want.map_or(0, |w| w.gone().count());
+        let parts = Parts::write(cx.dir, cap, |put| {
+            if let Some(tb) = tape.before() {
+                tape.gone().map(|id| cell(tb, id, 0)).filter(|&d| was(d)).for_each(&mut *put);
+            }
+            if let Some(w) = want {
+                dropped(w).for_each(put);
+            }
+        })?;
+        // Read: the documents added to the tape port that are wanted, and those newly wanted that it holds unchanged
+        // (a newly wanted relation is an initial run of it, P§5), each written into the run's docs blocks as found.
+        let docs = docs_written(cx, |docs, cx| {
+            for id in tape.added().filter(|&id| now(cell(tape.after(), id, 0))) {
+                docs.push(cx.dir, &doc_at(cx.blobs, cx.dir, tape.after(), id)?)?;
+            }
+            for d in want.into_iter().flat_map(newly) {
+                // Its rows the tape port held before: an added one is read above.
+                for id in Read::matching(tape.after(), &[ColumnIndex::new(0)], &[d]).filter(|&id| tape.before().is_some_and(|b| Read::live(b, id))) {
+                    docs.push(cx.dir, &doc_at(cx.blobs, cx.dir, tape.after(), id)?)?;
+                }
+            }
+            Ok(())
+        });
+        let docs = match docs {
+            Ok(d) => d,
+            Err(e) => {
+                parts.release(cx.dir);
+                return Err(e);
+            }
+        };
+        let ran = self.retract_and_read(cx, atoms, &docs, &parts, cache, out, work);
+        docs.release(cx.dir);
+        parts.release(cx.dir);
+        ran
+    }
+
+    fn run(&self, cx: &mut Cx<'_>, ins: &At<'_, L1Ports>, out: &mut Out<L1Ports>) -> Result<(), String> {
+        let (tape, atoms) = (ins.port(L1Ports::TAPE), ins.global(L1Ports::ATOMS).block);
+        let mut work = Work::default();
+        let docs = docs_written(cx, |docs, cx| {
+            for id in live(tape) {
+                docs.push(cx.dir, &doc_at(cx.blobs, cx.dir, tape, id)?)?;
+            }
+            Ok(())
+        })?;
+        let ran = self.pass(cx, atoms, &docs, None, out, None, &mut work);
+        docs.release(cx.dir);
+        ran
+    }
+}
+
+impl L1 {
+    /// A delta's retractions and reads, its documents `docs` and its parts `parts` written: the room its runs need
+    /// from the cache's sizes, then `drop_parts` over each kept output and one `k0_pass`.
+    #[allow(clippy::too_many_arguments)]
+    fn retract_and_read(&self, cx: &mut Cx<'_>, atoms: BlockId, docs: &DocsIn, parts: &Parts, cache: &mut CacheW<Sizes>, out: &mut Out<L1Ports>, mut work: Work) -> Result<Work, String> {
         if docs.is_empty() && parts.is_empty() {
             // Only its demand moved (or a document no one wants): nothing to read or retract.
             return Ok(work);
         }
         // The room the run needs, from the cache's sizes: each gone document's kept rows, and each added one's as they
         // were, an eighth more for an edit that grew.
+        let dir: &Directory = cx.dir;
         let need = cache.body(cx, |sizes| {
-            let mut need = vec![0usize; RELATIONS.len()];
-            for d in parts.iter().copied().chain(docs.iter().map(|d| d.module)) {
+            let mut need = [0usize; RELATIONS.len()];
+            let mut add = |d: i64| {
                 for (k, &n) in sizes.of(d as u32).unwrap_or(&[]).iter().enumerate() {
                     need[k] += n as usize;
                 }
-            }
-            need
+            };
+            parts.each(dir, &mut add)?;
+            docs.each_module(dir, &mut add)?;
+            Ok::<_, String>(need)
         })?;
-        for (k, n) in need.into_iter().flatten().enumerate() {
-            out.room(cx.dir, L1Ports::relation(k), n + n / 8)?;
+        if let Some(need) = need.transpose()? {
+            for (k, n) in need.into_iter().enumerate() {
+                out.room(cx.dir, L1Ports::relation(k), n + n / 8)?;
+            }
         }
         let cache = cache.write(cx)?;
         work.rows_read += parts.len() as u64;
         for k in outs::<L1Ports>() {
             if let Some(kept) = out.kept(k) {
-                work.rows_written += drop_parts(cx.reg, &self.drops, cx.dir, kept, &parts, -1, out.block(k))?;
+                work.rows_written += drop_parts(cx.reg, &self.drops, cx.dir, kept, parts, -1, out.block(k))?;
             }
         }
-        self.pass(cx, atoms, &docs, &parts, out, Some(cache), &mut work)?;
+        self.pass(cx, atoms, docs, Some(parts), out, Some(cache), &mut work)?;
         Ok(work)
-    }
-
-    fn run(&self, cx: &mut Cx<'_>, ins: &At<'_, L1Ports>, out: &mut Out<L1Ports>) -> Result<(), String> {
-        let (tape, atoms) = (ins.port(L1Ports::TAPE), ins.global(L1Ports::ATOMS).block);
-        let mut work = Work::default();
-        let docs = live(tape).map(|id| doc_at(cx.blobs, cx.dir, tape, id)).collect::<Result<Vec<_>, _>>()?; // copy: derived (the documents' places, from their blobs)
-        self.pass(cx, atoms, &docs, &[], out, None, &mut work)?;
-        Ok(())
     }
 }
 

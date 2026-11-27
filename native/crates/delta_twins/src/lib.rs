@@ -44,7 +44,7 @@ pub mod tape;
 pub mod trace;
 
 /// One slot's block as a twin sees it: pinned by the executor, to read or to write (`BlockPin`). A twin reads a
-/// block's structures through `pin.block()` and its bytes through `pin.bytes()`, and writes only a `Write` slot's.
+/// block's structures through `Ctx::block` and its bytes through `pin.bytes()`, and writes only a `Write` slot's.
 pub enum Slot<'a> {
     Read(&'a BlockPin),
     Write(&'a mut BlockPin),
@@ -197,7 +197,7 @@ impl<'p> Ctx<'_, 'p, '_> {
     /// recorded (the capacity the allocation needs) and the item writes nothing past the capacity: the executor
     /// refuses, grows the capacity and runs the phase again, or runs the launch again, as the phase's bound says.
     pub fn room(&mut self, slot: usize, bytes: usize) -> bool {
-        let need = self.slots[slot].pin().block().used().next_multiple_of(64) + bytes;
+        let need = self.blocks[slot].used().next_multiple_of(64) + bytes;
         self.reach(slot, need)
     }
 

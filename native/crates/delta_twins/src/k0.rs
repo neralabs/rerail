@@ -165,12 +165,14 @@ crate::params! {
     }
 }
 
-/// The slots: the first docs block, the atoms (read), control (rw), then the δ runs block of each K-form relation
-/// (write), in `RELATIONS`' order.
+/// The slots: the first docs block, the atoms (read), control (rw), the documents gone (read: a parts block,
+/// `drop::parts`, the one `drop_parts` reads), then the δ runs block of each K-form relation (write), in `RELATIONS`'
+/// order.
 pub const DOCS: usize = 0;
 pub const ATOMS: usize = 1;
 pub const CONTROL: usize = 2;
-pub const RUNS: usize = 3;
+pub const GONE: usize = 3;
+pub const RUNS: usize = 4;
 const R: usize = 8;
 /// L1's cache (read-write): each document's sizes, the rows it was given by relation (`cache::keep_sizes`).
 pub const CACHE: usize = RUNS + R;
@@ -204,18 +206,40 @@ pub fn docs_bytes(n: usize) -> usize {
     DOCS_AT - BODY_AT + 8 * DOC_WORDS * n
 }
 
-/// A docs block, written by the host: its documents and the next docs block.
-pub fn init_docs(bytes: &mut [u8], docs: &[DocAt], next: u32) {
-    assert!(docs.len() <= DOCS_PER_BLOCK, "a docs block's references");
-    set_word::<u64>(bytes, DOCS_LEN_AT, docs_bytes(docs.len()) as u64);
-    set_word::<u64>(bytes, DOCS_N_AT, docs.len() as u64);
+/// A docs block opened by the host (its room `docs_bytes(DOCS_PER_BLOCK)`): no document yet, and the next docs block.
+/// Its documents are written where they lie as they are found (`put_doc`), then it is sealed (`seal_docs`).
+pub fn open_docs(bytes: &mut [u8], next: u32) {
+    set_word::<u64>(bytes, DOCS_LEN_AT, docs_bytes(0) as u64);
+    set_word::<u64>(bytes, DOCS_N_AT, 0);
     set_word::<u64>(bytes, DOCS_NEXT_AT, u64::from(next));
-    for (i, d) in docs.iter().enumerate() {
-        let w = [d.module as u64, u64::from(d.source), u64::from(d.tape), u64::from(d.syms), d.src.0, d.src.1, d.at.0, d.at.1];
-        for (k, x) in w.into_iter().enumerate() {
-            set_word::<u64>(bytes, DOCS_AT + 8 * (DOC_WORDS * i + k), x);
-        }
+}
+
+/// Document `d` at place `i` of an open docs block.
+pub fn put_doc(bytes: &mut [u8], i: usize, d: &DocAt) {
+    assert!(i < DOCS_PER_BLOCK, "a docs block's references");
+    let w = [d.module as u64, u64::from(d.source), u64::from(d.tape), u64::from(d.syms), d.src.0, d.src.1, d.at.0, d.at.1];
+    for (k, x) in w.into_iter().enumerate() {
+        set_word::<u64>(bytes, DOCS_AT + 8 * (DOC_WORDS * i + k), x);
     }
+}
+
+/// A docs block's next docs block (`NO_NEXT`: none), and its module at place `i` (sealed: its `n` documents).
+pub fn docs_next(bytes: &[u8]) -> u32 {
+    word::<u64>(bytes, DOCS_NEXT_AT) as u32
+}
+
+pub fn docs_n(bytes: &[u8]) -> usize {
+    word::<u64>(bytes, DOCS_N_AT) as usize
+}
+
+pub fn docs_module(bytes: &[u8], i: usize) -> i64 {
+    word::<u64>(bytes, DOCS_AT + 8 * DOC_WORDS * i) as i64
+}
+
+/// The open docs block sealed, its first `n` documents listed.
+pub fn seal_docs(bytes: &mut [u8], n: usize) {
+    set_word::<u64>(bytes, DOCS_LEN_AT, docs_bytes(n) as u64);
+    set_word::<u64>(bytes, DOCS_N_AT, n as u64);
 }
 
 /// One document of the launch, read where it lies: its module, its tape's reads, its symbols, its statements' count.
@@ -268,42 +292,36 @@ fn each<'t>(docs: impl Iterator<Item = Doc<'t>>, items: core::ops::Range<usize>,
     }
 }
 
-/// Control's words, at `BODY_AT`: the first refused node (`u64::MAX`: none), why (`WHY`'s place) and its document's
-/// place, the rows placed; then each statement's places, a relation a word (counts, then places, after `scan`).
+/// Control's words, at `BODY_AT`: the first refused node (`u64::MAX`: none), why (`WHY`'s place), its document's
+/// place and module, the rows placed; then each statement's places, a relation a word (counts, then places, after
+/// `scan`).
 pub const REFUSED_NODE: usize = BODY_AT;
 pub const REFUSED_WHY: usize = BODY_AT + 8;
 pub const REFUSED_DOC: usize = BODY_AT + 12;
 pub const PLACED: usize = BODY_AT + 16;
-/// The documents gone from L1's tape port (their cache entries let go): their count, then their modules.
-const GONE_N: usize = BODY_AT + 24;
+pub const REFUSED_MODULE: usize = BODY_AT + 24;
 /// Each relation's end in its runs block after `scan` (its first place past the run's rows; `UNCLAIMED`: none).
 const ENDS: usize = BODY_AT + 32;
-const GONE: usize = ENDS + 4 * R;
-
-/// Where control's statement places start, past its gone documents.
-fn places_at(control: &[u8]) -> usize {
-    GONE + (4 * word::<u64>(control, GONE_N) as usize).next_multiple_of(8)
-}
+/// Where control's statement places start.
+const PLACES: usize = ENDS + 4 * R;
 /// A relation whose places could not be claimed (its runs block too small: the driver runs again).
 const UNCLAIMED: u32 = u32::MAX;
 
-/// Control's body bytes for documents of `n` nodes in all (at most `n` statements), and `gone` documents gone.
-pub fn control_bytes(n: usize, gone: usize) -> usize {
-    GONE - BODY_AT + (4 * gone).next_multiple_of(8) + 4 * R * n.max(1)
+/// Control's body bytes for documents of `n` nodes in all (at most `n` statements).
+pub fn control_bytes(n: usize) -> usize {
+    PLACES - BODY_AT + 4 * R * n.max(1)
 }
 
-/// Control laid out before a run: no refusal, no row placed, and the documents gone.
-pub fn init_control(bytes: &mut [u8], gone: &[u32]) {
+/// Control laid out before a run: no refusal, no row placed.
+pub fn init_control(bytes: &mut [u8]) {
     set_word::<u64>(bytes, REFUSED_NODE, u64::MAX);
     set_word::<u64>(bytes, PLACED, 0);
-    set_word::<u64>(bytes, GONE_N, gone.len() as u64);
-    words_mut::<u32>(bytes, GONE, gone.len()).copy_from_slice(gone);
 }
 
-/// The run's refusal, if any, the first by document and node order: its document's place, its node, and why.
-pub fn refused(control: &[u8]) -> Option<(usize, usize, &'static str)> {
+/// The run's refusal, if any, the first by document and node order: its document's module, its node, and why.
+pub fn refused(control: &[u8]) -> Option<(i64, usize, &'static str)> {
     let n = word::<u64>(control, REFUSED_NODE);
-    (n != u64::MAX).then(|| (word::<u32>(control, REFUSED_DOC) as usize, n as usize, WHY[word::<u32>(control, REFUSED_WHY) as usize]))
+    (n != u64::MAX).then(|| (word::<i64>(control, REFUSED_MODULE), n as usize, WHY[word::<u32>(control, REFUSED_WHY) as usize]))
 }
 
 /// The rows the run placed.
@@ -326,22 +344,23 @@ fn count(c: &mut Ctx<'_, '_, '_>, tile: Tile) {
     let (p, table) = launch(c);
     let ([atoms], [control]) = c.views([ATOMS], [CONTROL]);
     // Each statement's counts written to its places' words as it is walked.
-    let at = places_at(control);
-    let mut first: Option<(usize, usize, &'static str)> = None;
+    let at = PLACES;
+    let mut first: Option<(usize, usize, &'static str, i64)> = None;
     each(docs_of(table, p.docs as u32), tile.items(), &mut |k, d, s, i| {
         let mut n = [0u32; R];
         if let Err((node, why)) = statement(&d.t, d.module, d.syms, atoms, s, &mut |r, _| n[r] += 1) {
-            let e = (k, node, why);
+            let e = (k, node, why, d.module);
             first = Some(first.map_or(e, |f| if (e.0, e.1) < (f.0, f.1) { e } else { f }));
         }
         words_mut::<u32>(control, at + 4 * R * i, R).copy_from_slice(&n);
     });
-    if let Some((k, node, why)) = first {
+    if let Some((k, node, why, module)) = first {
         let was = (word::<u64>(control, REFUSED_NODE) != u64::MAX).then(|| (word::<u32>(control, REFUSED_DOC) as usize, word::<u64>(control, REFUSED_NODE) as usize));
         if was.is_none_or(|w| (k, node) < w) {
             set_word::<u64>(control, REFUSED_NODE, node as u64);
             set_word::<u32>(control, REFUSED_WHY, WHY.iter().position(|w| *w == why).expect("a reason of WHY") as u32);
             set_word::<u32>(control, REFUSED_DOC, k as u32);
+            set_word::<i64>(control, REFUSED_MODULE, module);
         }
     }
 }
@@ -356,7 +375,7 @@ fn scan(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     if word::<u64>(control, REFUSED_NODE) != u64::MAX {
         return;
     }
-    let at = places_at(control);
+    let at = PLACES;
     let mut total = [0u32; R];
     for i in 0..items {
         let n = words_mut::<u32>(control, at + 4 * R * i, R);
@@ -391,7 +410,7 @@ fn place(c: &mut Ctx<'_, '_, '_>, tile: Tile) {
         return;
     }
     let ([atoms, control], mut runs) = c.views([ATOMS, CONTROL], core::array::from_fn::<usize, R, _>(|r| RUNS + r));
-    let places = places_at(control);
+    let places = PLACES;
     each(docs_of(table, p.docs as u32), tile.items(), &mut |_, d, s, i| {
         let mut at: [u32; R] = words::<u32>(control, places + 4 * R * i, R).try_into().expect("a statement's places");
         let walked = statement(&d.t, d.module, d.syms, atoms, s, &mut |r, row| {
@@ -413,11 +432,11 @@ fn keep(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     if word::<u64>(c.read(CONTROL), REFUSED_NODE) != u64::MAX {
         return;
     }
-    // The documents gone, read where control holds them, let go of their entries.
+    // The documents gone, read where their parts block lists them, let go of their entries.
     {
-        let ([control], [cache]) = c.views([CONTROL], [CACHE]);
-        for &g in words::<u32>(control, GONE, word::<u64>(control, GONE_N) as usize) {
-            crate::cache::forget(cache, g);
+        let ([gone], [cache]) = c.views([GONE], [CACHE]);
+        for g in crate::drop::parts(gone) {
+            crate::cache::forget(cache, g as u32);
         }
     }
     let control = c.read(CONTROL);
@@ -426,7 +445,7 @@ fn keep(c: &mut Ctx<'_, '_, '_>, _: Tile) {
         return;
     }
     let items = docs_of(table, p.docs as u32).map(|d| d.n).sum::<usize>();
-    let start = |control: &[u8], i: usize, r: usize| if i == items { ends[r] } else { word::<u32>(control, places_at(control) + 4 * (R * i + r)) };
+    let start = |control: &[u8], i: usize, r: usize| if i == items { ends[r] } else { word::<u32>(control, PLACES + 4 * (R * i + r)) };
     // Each document's sizes, from its statements' places, kept as it is read.
     let mut first = 0;
     for d in docs_of(table, p.docs as u32) {

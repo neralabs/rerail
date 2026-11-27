@@ -42,7 +42,7 @@
 
 use crate::contract::{Bench, Global, GlobalIn, Instance, Work};
 use crate::dir::{BlockId, Directory};
-use crate::drop::{DropOps, drop_parts};
+use crate::drop::{DropOps, Parts, drop_parts};
 use crate::files::{Answer, Answerer, Doc, DocIds, Intern, Load, Load1, LeavesW, Parse, Reach, World, key_of, probe};
 use crate::intern::InternOps;
 use crate::kform::RELATIONS;
@@ -95,7 +95,12 @@ impl DocSet {
     pub fn forget(&mut self, bench: &mut Bench, d: i64) -> Result<(), String> {
         let Some(h) = self.tape.head() else { return Ok(()) };
         let runs = self.tape.open(&mut bench.dir, 4);
-        if let Err(e) = drop_parts(&bench.reg, &self.drops, &mut bench.dir, h, &[d], -1, runs) {
+        let dropped = Parts::write(&mut bench.dir, 1, |put| put(d)).and_then(|parts| {
+            let n = drop_parts(&bench.reg, &self.drops, &mut bench.dir, h, &parts, -1, runs);
+            parts.release(&mut bench.dir);
+            n
+        });
+        if let Err(e) = dropped {
             bench.dir.release(runs);
             return Err(e);
         }
@@ -153,7 +158,10 @@ impl DocSet {
                 rerail_blocks::layer::RunsW::new(&pin).push(&tape_row(d, p, rerail_rr_syntax::grammar()[1], &doc.after, &syms), 1).ok_or("the document set's runs, full")?;
             }
             if let Some(h) = self.tape.head() {
-                drop_parts(&bench.reg, &self.drops, &mut bench.dir, h, &[d], -1, runs)?;
+                let parts = Parts::write(&mut bench.dir, 1, |put| put(d))?;
+                let n = drop_parts(&bench.reg, &self.drops, &mut bench.dir, h, &parts, -1, runs);
+                parts.release(&mut bench.dir);
+                n?;
             }
             Ok::<(), String>(())
         })();

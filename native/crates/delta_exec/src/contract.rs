@@ -36,7 +36,7 @@ use crate::dir::{BlockId, Directory};
 use crate::files::BlobRows;
 use crate::op::{Registry, Tiling};
 use crate::trace::{RollUp, Trace, TraceOps};
-use rerail_blocks::bistate::{Bistate, ColumnIndex, Read, RowId};
+use rerail_blocks::bistate::{Bistate, ColumnIndex, Read};
 use rerail_blocks::layer::{ColType, Runs, RunsW, Shape};
 use rerail_blocks::region::{BlockPin, pin_block};
 use rerail_blocks::relation::View;
@@ -294,11 +294,6 @@ pub fn want_shape() -> Shape {
 /// An ask's rows on an input port (P§7.1's demand out): `(key)`, the port's partition key it needs.
 pub fn asks_shape() -> Shape {
     Shape::run(vec![ColType::I32], vec![0], Some(0))
-}
-
-/// The want rows of a state, read where they lie: `(port, key)`.
-pub fn want_rows(v: &impl Read) -> BTreeSet<(usize, i64)> {
-    (0..Read::end(v).get()).map(RowId::new).filter(|&id| Read::live(v, id)).map(|id| (Read::get(v, id, ColumnIndex::new(0)) as usize, Read::get(v, id, ColumnIndex::new(1)))).collect() // copy: derived (the wanted keys)
 }
 
 #[cfg(any(test, feature = "test-hooks"))]

@@ -6,7 +6,7 @@
 
 use crate::{Ctx, Tile, TwinPhase};
 use rerail_blocks::bistate::{ColumnIndex, Read};
-use rerail_blocks::gens::{BODY_AT, set_word, word};
+use rerail_blocks::gens::{BODY_AT, set_word, word, words_mut};
 use rerail_blocks::layer::{Layer, runs_claim_in, runs_set_in};
 use rerail_blocks::relation;
 
@@ -32,13 +32,32 @@ pub fn parts_bytes(n: usize) -> usize {
     16 + 8 * n
 }
 
-/// A parts block, written by the host before `drop_parts` runs: the partitions.
-pub fn init_parts(bytes: &mut [u8], parts: &[i64]) {
-    set_word::<u64>(bytes, LEN_AT, parts_bytes(parts.len()) as u64);
-    set_word::<u64>(bytes, N_AT, parts.len() as u64);
-    for (i, &p) in parts.iter().enumerate() {
-        set_word::<i64>(bytes, PARTS_AT + 8 * i, p);
+/// A parts block opened by the host: it lists none yet. Its partitions are written where they lie as they are found
+/// (`put_part`), then sealed (`seal_parts`), before a launch reads it.
+pub fn open_parts(bytes: &mut [u8]) {
+    set_word::<u64>(bytes, LEN_AT, parts_bytes(0) as u64);
+    set_word::<u64>(bytes, N_AT, 0);
+}
+
+/// Partition `p` at place `i` of an open parts block (its room made for `i + 1`: `parts_bytes`).
+pub fn put_part(bytes: &mut [u8], i: usize, p: i64) {
+    set_word::<i64>(bytes, PARTS_AT + 8 * i, p);
+}
+
+/// The open parts block's first `n` places sealed: sorted and each partition once, where they lie. How many it lists.
+pub fn seal_parts(bytes: &mut [u8], n: usize) -> usize {
+    let ps = words_mut::<i64>(bytes, PARTS_AT, n);
+    ps.sort_unstable();
+    let mut k = 0;
+    for i in 0..n {
+        if k == 0 || ps[i] != ps[k - 1] {
+            ps[k] = ps[i];
+            k += 1;
+        }
     }
+    set_word::<u64>(bytes, LEN_AT, parts_bytes(k) as u64);
+    set_word::<u64>(bytes, N_AT, k as u64);
+    k
 }
 
 /// The partitions a parts block lists.
