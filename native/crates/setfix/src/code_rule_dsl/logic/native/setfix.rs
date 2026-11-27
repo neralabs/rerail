@@ -7409,9 +7409,23 @@ impl InRel {
         let home = crate::code_rule_dsl::facts::rows::Part::for_host(0, n).unwrap_or_else(|e| panic!("a view's index home of {n} rows: {e}"));
         let ib = home.in_block(n as u32);
         let key: Vector<u16> = cols.iter().map(|&c| c as u16).collect();
-        let hash = |i: u32| {
-            let row = self.at(i as usize);
-            cols.iter().fold(rerail_blocks::SEED, |h, &c| rerail_blocks::mix(h, row.at(c)))
+        let fold = |vals: &mut dyn Iterator<Item = i64>| vals.fold(rerail_blocks::SEED, rerail_blocks::mix);
+        // Over a view whose rows are its source's, each row's key read in one walk of the source (`for_rows`: a view
+        // of a batch walks each document once): read a value at a time, a row found its document and selected its
+        // node again for each (idc: 730 samples of `Source::value` under the index's build). The hashes are the
+        // build's scratch, dropped with it.
+        let walked: Option<Vec<u64>> = self.view.as_ref().filter(|v| v.ids().is_none() && v.src.len() == n).map(|v| {
+            let src_cols: Vector<usize> = cols.iter().map(|&c| v.cols[c]).collect();
+            let mut hashes = vec![0u64; n];
+            v.src.for_rows(&src_cols, &mut |r, vals| hashes[r] = fold(&mut vals.iter().copied()));
+            hashes
+        });
+        let hash = |i: u32| match &walked {
+            Some(h) => h[i as usize],
+            None => {
+                let row = self.at(i as usize);
+                fold(&mut cols.iter().map(|&c| row.at(c)))
+            }
         };
         charge(Unit::IndexEntry, n as u64);
         let i = ib.own_index_hashed(&key, &hash).expect("room for its one index");
