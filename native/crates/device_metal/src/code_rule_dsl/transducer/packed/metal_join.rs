@@ -842,9 +842,11 @@ impl DevRel {
     }
 }
 
-/// An atoms directory for the device (decision 0478 step 2b): its spans device addresses, the atoms blocks they reach
-/// (each its device buffer, made resident where a kernel reads through it), and the atoms it holds, below `end`. Kept
-/// with the blocks until its batch's work completes. A device whose buffers have no addresses (OpenCL) has none.
+/// An atoms directory for the device (decision 0478 step 2b), read through the launch's table of it for the device's
+/// addresses (`AtomsDir::table`: the directory's root and each atoms block's base). The directory and the atoms
+/// blocks are each a device buffer, made resident where a kernel reads through the table, and it holds the atoms below
+/// `end`. Kept with the blocks until its batch's work completes. A device whose buffers have no addresses (OpenCL) has
+/// none.
 pub(in crate::code_rule_dsl) struct DevAtoms {
     dir: (Buffer, u64),
     reads: Vec<Buffer>,
@@ -853,39 +855,21 @@ pub(in crate::code_rule_dsl) struct DevAtoms {
 }
 
 impl DevAtoms {
-    /// The directory of `runs` (`Atoms::runs`), for the device's addresses.
+    /// The directory of `runs` (`Atoms::runs`), and the launch's arguments for the device: each block's device
+    /// descriptor (its buffer), and the table of which argument is which descriptor's stable id. A directory over more
+    /// blocks than a launch binds is a launch error.
     pub(in crate::code_rule_dsl) fn new(runs: Vec<(rerail_blocks::atoms::Run, std::sync::Arc<rerail_blocks::block::Block>)>) -> Result<DevAtoms, Error> {
         let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
-        let mut blocks: Vec<std::sync::Arc<rerail_blocks::block::Block>> = Vec::new();
-        for (_, b) in &runs {
-            if !blocks.iter().any(|k| std::sync::Arc::ptr_eq(k, b)) {
-                blocks.push(b.clone());
-            }
-        }
+        let end = runs.iter().map(|(r, _)| r.end).max().unwrap_or(0);
+        let dir = rerail_blocks::atoms::AtomsDir::new(&runs);
+        let blocks = dir.launch_blocks().map_err(Error::from)?;
         let reads: Vec<Buffer> = blocks.iter().map(|b| b.device_buffer(device)).collect::<Result<_, _>>().map_err(|_| Error::BackendCapacity)?;
-        let addresses: Vector<u64> = reads.iter().map(Buffer::device_address).collect::<Option<_>>().ok_or(Error::BackendCapacity)?;
-        // A host address in a block, as the device's: its buffer's device address plus its offset.
-        let at = |p: *const u8| {
-            let k = blocks.iter().position(|b| (b.base_ptr() as usize..b.base_ptr() as usize + b.reserved()).contains(&(p as usize))).expect("an address in an atoms block");
-            addresses[k] + (p as u64 - blocks[k].base_ptr() as u64)
-        };
-        let only: Vec<rerail_blocks::atoms::Run> = runs.iter().map(|(r, _)| *r).collect();
-        let end = only.iter().map(|r| r.end).max().unwrap_or(0);
-        // The directory's own block's address, once it is made (its spans are offsets from it).
-        let own = std::cell::Cell::new(true);
-        let dir = rerail_blocks::atoms::AtomsDir::new(&only, &at, &|b| match b.device_buffer(device).ok().and_then(|x| x.device_address()) {
-            Some(a) => a,
-            None => {
-                own.set(false);
-                0
-            }
-        });
-        if !own.get() {
-            return Err(Error::BackendCapacity);
-        }
-        let dir_buf = dir.block().device_buffer(device).map_err(|_| Error::BackendCapacity)?;
-        let dir_at = dir.root_at() as u64;
-        Ok(DevAtoms { dir: (dir_buf, dir_at), reads, end, keep: std::sync::Arc::new((dir, blocks)) })
+        // A device whose buffers have no addresses has no arguments by address.
+        let descs: Vec<u64> = reads.iter().map(Buffer::device_address).collect::<Option<_>>().ok_or(Error::BackendCapacity)?;
+        let args = dir.bind(&descs, &|b| b.device_buffer(device).ok().and_then(|x| x.device_address())).map_err(Error::from)?;
+        let args_buf = args.block().device_buffer(device).map_err(|_| Error::BackendCapacity)?;
+        let args_at = args.root_at() as u64;
+        Ok(DevAtoms { dir: (args_buf, args_at), reads, end, keep: std::sync::Arc::new((args, dir)) })
     }
 
     /// The atoms below which it holds every one.

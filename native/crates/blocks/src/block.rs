@@ -78,6 +78,10 @@ pub trait Backing: Send + Sync {
     }
 }
 
+/// The machine's next descriptor id (`Block::desc_id`): `0` is no block's.
+#[derive(Default)]
+struct DescIds(std::sync::atomic::AtomicU32);
+
 /// The bytes zeroed as blocks' memory was handed out again (a free list's chunk, a dirty block's allocation).
 pub fn zeroed_bytes() -> u64 {
     rerail_context::with_local::<Zeroed, _>(|z| z.0.load(Relaxed))
@@ -128,6 +132,8 @@ pub struct Block {
     /// space at about 20 ms a GiB (0266 §12), so it is made once and remade only when the block outgrows it.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     gpu: std::sync::Mutex<Option<(rerail_device::device::Buffer, usize)>>,
+    /// Its descriptor's stable id (`desc_id`): made once, kept for its life.
+    desc: std::sync::OnceLock<u32>,
     /// Its ledger (decision 0487): its live chunks, the GPU's queued uses, and when chunks and memory may go.
     ledger: Arc<crate::ledger::Ledger>,
 }
@@ -228,6 +234,7 @@ impl Block {
             trims: false,
             #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             gpu: std::sync::Mutex::new(None),
+            desc: std::sync::OnceLock::new(),
         }
     }
 
@@ -452,6 +459,8 @@ impl Block {
     /// only when the block has outgrown it).
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub fn device_buffer(&self, device: &rerail_device::device::Device) -> Result<rerail_device::device::Buffer, String> {
+        // Its descriptor's stable id, made with its first descriptor.
+        let _ = self.desc_id();
         if let Some(b) = self.backing.as_ref().and_then(|b| b.buffer()) {
             return Ok(b);
         }
@@ -473,6 +482,15 @@ impl Block {
         let b = unsafe { rerail_device::device::wrap_host_memory(device, self.base, len)? };
         *kept = Some((b.clone(), len));
         Ok(b)
+    }
+
+    /// The stable id of its device descriptor: made with its first descriptor (`device_buffer`), or the first
+    /// reference another block stores to it, whichever comes first, and the same on every device and for the block's
+    /// whole life. Unique on its machine (`rerail_context::machine`). A reference into it from another block stores this
+    /// id and an offset, never an address: a launch passes the block's descriptor as one of its arguments, with the
+    /// table of which argument is which id.
+    pub fn desc_id(&self) -> u32 {
+        *self.desc.get_or_init(|| rerail_context::machine::<DescIds>().0.fetch_add(1, Relaxed) + 1)
     }
 
     fn init(&self, kind: u32) {

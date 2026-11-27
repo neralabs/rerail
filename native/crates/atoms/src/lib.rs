@@ -136,9 +136,9 @@ impl Interner {
         runs
     }
 
-    /// `runs` as a directory for the host.
+    /// `runs` as a directory: read through a launch's arguments (`AtomsDir::bind`, `host_args`).
     pub fn dir(&self) -> rerail_blocks::atoms::AtomsDir {
-        rerail_blocks::atoms::AtomsDir::host(&self.runs().into_iter().map(|(r, _)| r).collect::<Vec<_>>())
+        rerail_blocks::atoms::AtomsDir::new(&self.runs())
     }
 
     /// The string of `s`, if this process holds it: the store's (mapped), or pending.

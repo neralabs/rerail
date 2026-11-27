@@ -422,14 +422,15 @@ fn a_commit_past_a_blocks_room_starts_the_next() {
     {
         store.atoms.with_interner(|atoms| {
         let dir = atoms.dir();
+        let t = dir.host_args().unwrap();
         let last = *more_ids.last().unwrap();
         for id in (0..=last).step_by(97).chain([1, cap, cap + 1, 70_001 + cap, more_ids[0], last]) {
-            // SAFETY: a host directory over blocks this process maps.
-            let got = unsafe { rerail_blocks::atoms::str_in(dir.root(), id) };
+            // SAFETY: a host table of a directory over blocks this process maps.
+            let got = unsafe { rerail_blocks::atoms::str_in(t.root(), id) };
             assert_eq!(got, atoms.str(id).map(str::as_bytes), "id {id}");
         }
         // SAFETY: as above.
-        assert_eq!(unsafe { rerail_blocks::atoms::str_in(dir.root(), last + 1) }, None, "past every atom");
+        assert_eq!(unsafe { rerail_blocks::atoms::str_in(t.root(), last + 1) }, None, "past every atom");
         });
     }
     drop(store);

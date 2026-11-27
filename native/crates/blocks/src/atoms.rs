@@ -612,124 +612,215 @@ impl AtomsV {
 
 structure! {
     /// A directory's entry (decision 0478 step 2b): a run of atoms, `first..end`, its block's first id (`from`), and
-    /// spans to the block's `ends` and `strings` whose offsets are in the reader's address space: the host's, or the
-    /// device's (its buffers' GPU addresses).
+    /// where the block holds the run's `ends` and `strings`: the block by its descriptor's stable id (`desc`,
+    /// `Block::desc_id`), and byte offsets into it. No address: each device places the block where it will, and a
+    /// launch passes the block's descriptor as one of its arguments (`AtomsArgs`).
     pub struct DirEntry {
         pub first: u32,
         pub end: u32,
         pub from: u32,
-        pub pad: u32,
-        pub ends: Far<u64>,
-        pub strings: Far<u8>,
+        pub desc: u32,
+        pub ends: u32,
+        pub strings: u32,
+        /// The run's `ends` (u64s) and string bytes its block has room for.
+        pub nends: u32,
+        pub nbytes: u32,
     }
 }
 
-/// A directory entry's span into another block, in the reader's address space: a 64-bit reach, since the blocks
-/// it names lie anywhere in that space.
-pub type Far<T> = RelSpan<T, rerail_delta_core::flat::R64, AtomicU64>;
-
 structure! {
     /// A directory of runs of atoms (decision 0478 step 2b), sorted by first id and not overlapping: the store's chain
-    /// below the process's pending atoms, then theirs. The atoms reads (`atoms_at`, `atoms_len`, in CLIF) take its
-    /// address and find an id's run by a binary search.
+    /// below the process's pending atoms, then theirs. The atoms reads (`atoms_at`, `atoms_len`, in CLIF) find an id's
+    /// run by a binary search, through a launch's arguments (`AtomsArgs`).
     pub struct AtomsDirRoot {
-        pub n: u64,
+        pub n: u32,
+        pub pad: u32,
         pub entries: RelSpan<DirEntry>,
     }
 }
 
-/// A directory of runs of atoms in a block of its own (decision 0478 step 2b), its spans written for one address
-/// space.
+/// The most blocks a launch binds: Metal's argument table has 31 entries, one of them the params'. A directory and the
+/// atoms blocks it names past it is a launch error.
+pub const LAUNCH_BLOCKS: usize = 30;
+
+structure! {
+    /// A launch's arguments to the atoms reads, in one reader's space (the host's, or one device's): the blocks it
+    /// passes, each its descriptor's address (`args`), and the table of which argument is which descriptor, by its
+    /// stable id (`ids`, ascending; `args` in the same order). A read takes an entry's `desc`, finds its argument in
+    /// `ids`, and reads the block at that argument's address. The directory's own block is argument `dir`, its root
+    /// at `root` in it. An address is the argument's offset from this record: a read's addresses are in its base's
+    /// space (the record's, `t`). Made for each launch and device, held by the launch: no block readers share holds it.
+    pub struct AtomsArgs {
+        pub n: u32,
+        pub dir: u32,
+        pub root: u32,
+        pub pad: u32,
+        pub ids: [u32; LAUNCH_BLOCKS],
+        pub args: [i64; LAUNCH_BLOCKS],
+    }
+}
+
+/// A directory of runs of atoms in a block of its own (decision 0478 step 2b), and the blocks its entries name. It
+/// holds no address: a launch passes it and them as arguments (`launch_blocks`, `bind`).
 pub struct AtomsDir {
     block: Block,
+    blocks: Vec<std::sync::Arc<Block>>,
 }
 
 // SAFETY: written once when made, before any reader is given it; read-only after.
 unsafe impl Send for AtomsDir {}
 unsafe impl Sync for AtomsDir {}
 
-impl AtomsDir {
-    /// `runs` (sorted by first id, not overlapping) as a directory, for the host. Its spans' offsets are host
-    /// addresses' differences.
-    pub fn host(runs: &[Run]) -> AtomsDir {
-        AtomsDir::new(runs, &|p| p as u64, &|b| b.base_ptr() as u64)
-    }
+/// A launch's arguments (`AtomsArgs`) in a block of its own, for one reader's space: the table sent with the blocks.
+pub struct AtomsBound {
+    block: Block,
+}
 
-    /// `runs` (sorted by first id, not overlapping) as a directory. `at` gives a run's host address's value in the
-    /// reader's address space: the identity for the host, its block's GPU address plus the offset for the device.
-    /// `own` gives the directory's block's first byte's, once the block is made.
-    pub fn new(runs: &[Run], at: &dyn Fn(*const u8) -> u64, own: &dyn Fn(&Block) -> u64) -> AtomsDir {
-        assert!(runs.windows(2).all(|w| w[0].end <= w[1].first), "a directory's runs sorted and apart");
-        let block = Block::anon(kind::ATOMS, 4 * PAGE + std::mem::size_of_val(runs) * 2 + 256);
-        let root: *mut AtomsDirRoot = block.alloc_t(1);
-        let entries: *mut DirEntry = block.alloc_t(runs.len().max(1));
-        let (base, base_at) = (block.base_ptr() as u64, own(&block));
-        let here = |p: *const u8| (p as u64).wrapping_sub(base).wrapping_add(base_at);
-        // A span's offset: from the span's own address to its target's, both in the reader's space.
-        fn set<T>(s: &Far<T>, field: u64, target: u64, n: u64) {
-            s.set_in_space(field, target, n as usize).unwrap_or_else(|e| panic!("a directory's span to {target:#x}: {e:?}"));
-        }
-        // SAFETY: the pointers are into this block, which no reader has yet.
-        unsafe {
-            let r = &mut *root;
-            r.n = runs.len() as u64;
-            // Its entries are in its own block: the same difference in every space.
-            block.span(&raw const r.entries, entries, runs.len());
-            for (k, run) in runs.iter().enumerate() {
-                let e = &mut *entries.add(k);
-                e.first = run.first;
-                e.end = run.end;
-                e.from = run.from;
-                e.pad = 0;
-                set(&e.ends, here(std::ptr::from_ref(&e.ends).cast()), at(run.ends.cast()), u64::from(run.cap));
-                set(&e.strings, here(std::ptr::from_ref(&e.strings).cast()), at(run.strings), run.bytes_cap);
-            }
-        }
-        block.set_root(root);
-        AtomsDir { block }
-    }
+// SAFETY: as `AtomsDir`'s.
+unsafe impl Send for AtomsBound {}
+unsafe impl Sync for AtomsBound {}
 
-    /// The directory's address on the host: what the atoms reads take.
+impl AtomsBound {
+    /// The record's address on the host: what the host's reads take (`str_in`, the JIT's `atoms_at`, `atoms_len`).
     pub fn root(&self) -> *const u8 {
-        std::ptr::from_ref(self.block.root::<AtomsDirRoot>()).cast()
+        std::ptr::from_ref(self.block.root::<AtomsArgs>()).cast()
     }
 
-    /// Its block (a device binds its wrap at `root`'s offset).
+    /// Its block (a device binds its buffer at `root_at`).
     pub fn block(&self) -> &Block {
         &self.block
     }
 
-    /// The root's offset in its block.
     pub fn root_at(&self) -> usize {
         self.block.offset_of(self.root())
     }
 }
 
-/// The string of `id` in the directory at `dir` (host addresses), as the CLIF's `atoms_len` and `atoms_at` read it
-/// (the kernels' and the JIT's): the last run whose first id is at most `id`, if `id` is below its end; its string
-/// ends at `ends[id - from]` and begins where the one before ends (`0` for the run's first). Id 0 is the empty
-/// string; `None` for an id none of its runs holds.
+impl AtomsDir {
+    /// `runs` (sorted by first id, not overlapping), each with the block that holds it, as a directory.
+    pub fn new(runs: &[(Run, std::sync::Arc<Block>)]) -> AtomsDir {
+        assert!(runs.windows(2).all(|w| w[0].0.end <= w[1].0.first), "a directory's runs sorted and apart");
+        let mut blocks: Vec<std::sync::Arc<Block>> = Vec::new();
+        let block = Block::anon(kind::ATOMS, 4 * PAGE + std::mem::size_of_val(runs) * 2 + 256);
+        let root: *mut AtomsDirRoot = block.alloc_t(1);
+        let entries: *mut DirEntry = block.alloc_t(runs.len().max(1));
+        // SAFETY: the pointers are into this block, which no reader has yet.
+        unsafe {
+            for (k, (run, home)) in runs.iter().enumerate() {
+                if !blocks.iter().any(|b| std::sync::Arc::ptr_eq(b, home)) {
+                    blocks.push(std::sync::Arc::clone(home));
+                }
+                let off = |p: *const u8| {
+                    assert!(home.holds(p), "a run's arrays in its block");
+                    u32::try_from(home.offset_of(p)).expect("an atoms block's arrays within 4 GiB of its start")
+                };
+                entries.add(k).write(DirEntry {
+                    first: run.first,
+                    end: run.end,
+                    from: run.from,
+                    desc: home.desc_id(),
+                    ends: off(run.ends.cast()),
+                    strings: off(run.strings),
+                    nends: run.cap,
+                    nbytes: u32::try_from(run.bytes_cap).expect("an atoms block's strings within 4 GiB"),
+                });
+            }
+            (*root).n = runs.len() as u32;
+            block.span(&raw const (*root).entries, entries, runs.len());
+        }
+        block.set_root(root);
+        AtomsDir { block, blocks }
+    }
+
+    /// Its block, and the blocks its entries name.
+    pub fn block(&self) -> &Block {
+        &self.block
+    }
+
+    pub fn blocks(&self) -> &[std::sync::Arc<Block>] {
+        &self.blocks
+    }
+
+    /// The root's offset in its block.
+    pub fn root_at(&self) -> usize {
+        self.block.offset_of(std::ptr::from_ref(self.block.root::<AtomsDirRoot>()))
+    }
+
+    /// The blocks a launch passes as its arguments, in order: its own, then each its entries name. More than
+    /// `LAUNCH_BLOCKS` is a launch error, which names the count.
+    pub fn launch_blocks(&self) -> Result<Vec<&Block>, String> {
+        let n = self.blocks.len() + 1;
+        if n > LAUNCH_BLOCKS {
+            return Err(format!("an atoms directory over {n} blocks (its own and {} of atoms): a launch binds at most {LAUNCH_BLOCKS}", n - 1));
+        }
+        Ok(std::iter::once(&self.block).chain(self.blocks.iter().map(|b| &**b)).collect())
+    }
+
+    /// The launch's arguments for one reader's space: `descs[i]`, the address there of argument `i`'s descriptor
+    /// (`launch_blocks`' order), passed with the table of which argument is which stable id, in a record of its own
+    /// whose address there is `at(record's block)`.
+    pub fn bind(&self, descs: &[u64], at: &dyn Fn(&Block) -> Option<u64>) -> Result<AtomsBound, String> {
+        let blocks = self.launch_blocks()?;
+        assert_eq!(descs.len(), blocks.len(), "a descriptor for each of the launch's blocks");
+        let block = Block::anon(kind::ATOMS, 2 * PAGE);
+        let t: *mut AtomsArgs = block.alloc_t(1);
+        let here = at(&block).ok_or("the launch's arguments have no address in its space")? + block.offset_of(t) as u64;
+        let mut order: Vec<usize> = (0..blocks.len()).collect();
+        order.sort_by_key(|&i| blocks[i].desc_id());
+        let mut args = AtomsArgs { n: blocks.len() as u32, dir: 0, root: self.root_at() as u32, pad: 0, ids: [0; LAUNCH_BLOCKS], args: [0; LAUNCH_BLOCKS] };
+        for (k, &i) in order.iter().enumerate() {
+            args.ids[k] = blocks[i].desc_id();
+            args.args[k] = descs[i].wrapping_sub(here) as i64;
+            if i == 0 {
+                args.dir = k as u32;
+            }
+        }
+        // SAFETY: the record's room, just allocated in its block, which no reader has yet.
+        unsafe { t.write(args) };
+        block.set_root(t);
+        Ok(AtomsBound { block })
+    }
+
+    /// Its arguments on the host: each block's own memory.
+    pub fn host_args(&self) -> Result<AtomsBound, String> {
+        let descs: Vec<u64> = self.launch_blocks()?.iter().map(|b| b.base_ptr() as u64).collect();
+        self.bind(&descs, &|b| Some(b.base_ptr() as u64))
+    }
+}
+
+/// The string of `id` through the launch's arguments at `args` (host addresses: `AtomsDir::host_args`), as the
+/// CLIF's `atoms_len` and `atoms_at` read it (the kernels' and the JIT's): the last run whose first id is at most `id`,
+/// if `id` is below its end; its string ends at `ends[id - from]` and begins where the one before ends (`0` for the
+/// run's first), both in the run's block: the argument whose stable id is the entry's. Id 0 is the empty string;
+/// `None` for an id none of its runs holds.
 ///
 /// # Safety
-/// `dir` is a directory made for the host (`AtomsDir::new` with host addresses), whose blocks are mapped.
-pub unsafe fn str_in<'a>(dir: *const u8, id: u32) -> Option<&'a [u8]> {
+/// `args` is a live host record of a live directory, whose blocks are mapped.
+pub unsafe fn str_in<'a>(args: *const u8, id: u32) -> Option<&'a [u8]> {
     if id == 0 {
         return Some(&[]);
     }
-    // SAFETY: the caller's: a live directory, its spans in this address space, its runs' blocks mapped.
+    // SAFETY: the caller's: a live record, its arguments in this address space, the directory's blocks mapped.
     unsafe {
-        let root = &*dir.cast::<AtomsDirRoot>();
-        let entries = std::slice::from_raw_parts(root.entries.as_ptr(), root.n as usize);
+        let t = &*args.cast::<AtomsArgs>();
+        let arg = |desc: u32| {
+            let ids = &t.ids[..t.n as usize];
+            let k = ids.partition_point(|&d| d < desc);
+            (ids.get(k) == Some(&desc)).then(|| args.offset(t.args[k] as isize))
+        };
+        let root = &*args.offset(t.args[t.dir as usize] as isize).add(t.root as usize).cast::<AtomsDirRoot>();
+        let entries = root.entries.as_slice();
         let k = entries.partition_point(|e| e.first <= id);
         let e = entries.get(k.checked_sub(1)?)?;
         if id >= e.end {
             return None;
         }
+        let base = arg(e.desc)?;
         let i = (id - e.from) as usize;
-        let ends = e.ends.as_ptr();
+        let ends = base.add(e.ends as usize).cast::<u64>();
         let end = *ends.add(i) as usize;
         let start = if i == 0 { 0 } else { *ends.add(i - 1) as usize };
-        Some(std::slice::from_raw_parts(e.strings.as_ptr().add(start), end - start))
+        Some(std::slice::from_raw_parts(base.add(e.strings as usize + start), end - start))
     }
 }
 
@@ -752,19 +843,42 @@ mod tests {
             b.append(w, k_hash(w)).unwrap();
         }
         // The second block's first three atoms stored since: its run begins at 12, the store's run covers them.
-        let runs = [a.run_from(1), b.run_from(12)];
-        let dir = AtomsDir::host(&runs);
+        let runs = [(a.run_from(1), a.block().clone()), (b.run_from(12), b.block().clone())];
+        let dir = AtomsDir::new(&runs);
+        let t = dir.host_args().unwrap();
         for id in 1..=20u32 {
-            // SAFETY: a host directory over blocks that live here.
-            let got = unsafe { str_in(dir.root(), id) };
+            // SAFETY: a host table of a directory over blocks that live here.
+            let got = unsafe { str_in(t.root(), id) };
             let want = if (9..12).contains(&id) { None } else { [&a, &b].iter().find_map(|w| w.str(id)).map(str::as_bytes) };
             assert_eq!(got, want, "id {id}");
         }
         // SAFETY: as above.
         unsafe {
-            assert_eq!(str_in(dir.root(), 0), Some(&b""[..]), "id 0, the empty string");
-            assert_eq!(str_in(dir.root(), 21), None, "past every run");
+            assert_eq!(str_in(t.root(), 0), Some(&b""[..]), "id 0, the empty string");
+            assert_eq!(str_in(t.root(), 21), None, "past every run");
         }
+    }
+
+    /// A launch passes the directory and every block it names among its 30 arguments: a directory over 29 atoms
+    /// blocks binds, and each entry's block is found by its descriptor's stable id; one over 30 is a launch error
+    /// that names the count.
+    #[test]
+    fn a_directory_past_a_launchs_blocks_is_a_launch_error() {
+        use super::{AtomsDir, AtomsW, LAUNCH_BLOCKS, str_in};
+        let made: Vec<AtomsW> = (0..LAUNCH_BLOCKS as u32)
+            .map(|k| {
+                let mut w = AtomsW::anon(k + 1, 1, 64);
+                w.append(&format!("a{k}"), k_hash(&format!("a{k}"))).unwrap();
+                w
+            })
+            .collect();
+        let runs = |n: usize| made[..n].iter().map(|w| (w.run_from(0), w.block().clone())).collect::<Vec<_>>();
+        let fits = AtomsDir::new(&runs(LAUNCH_BLOCKS - 1));
+        let t = fits.host_args().unwrap();
+        // SAFETY: a host table of a directory over blocks that live here.
+        assert_eq!(unsafe { str_in(t.root(), LAUNCH_BLOCKS as u32 - 1) }, Some(&b"a28"[..]), "the last block's atom");
+        let past = AtomsDir::new(&runs(LAUNCH_BLOCKS)).host_args().err().expect("past the launch's blocks");
+        assert!(past.contains("over 31 blocks") && past.contains("at most 30"), "{past}");
     }
 
     fn k_hash(s: &str) -> u64 {

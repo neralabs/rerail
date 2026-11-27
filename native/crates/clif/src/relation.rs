@@ -75,12 +75,6 @@ impl B<'_, '_> {
         self.follow_units(p, at, units, align_of::<T>() as i64)
     }
 
-    /// As `follow_rel`, for a `RelSpan<T, R64, _>` (a 64-bit offset: a directory's span into another block).
-    pub(crate) fn follow_far<T>(&mut self, p: Value, at: i32) -> Value {
-        let units = self.word_at(I64, p, at);
-        self.follow_units(p, at, units, align_of::<T>() as i64)
-    }
-
     fn follow_units(&mut self, p: Value, at: i32, units: Value, align: i64) -> Value {
         let field = self.f.ins().iadd_imm(p, i64::from(at));
         if align == 1 {
@@ -1164,13 +1158,14 @@ mod tests {
         for w in &words[8..] {
             b.append(w, k_hash(w)).unwrap();
         }
-        let runs = [a.run_from(1), b.run_from(12)];
-        let dir = AtomsDir::host(&runs);
+        let runs = [(a.run_from(1), a.block().clone()), (b.run_from(12), b.block().clone())];
+        let dir = AtomsDir::new(&runs);
+        let t = dir.host_args().unwrap();
         for id in 0..=22u32 {
-            // SAFETY: a host directory over blocks that live here.
-            let host = unsafe { str_in(dir.root(), id) };
-            let n = len(dir.root(), id);
-            let jit = (n != u32::MAX).then(|| unsafe { std::slice::from_raw_parts(at(dir.root(), id) as *const u8, n as usize) });
+            // SAFETY: a host table of a directory over blocks that live here.
+            let host = unsafe { str_in(t.root(), id) };
+            let n = len(t.root(), id);
+            let jit = (n != u32::MAX).then(|| unsafe { std::slice::from_raw_parts(at(t.root(), id) as *const u8, n as usize) });
             assert_eq!(jit, host, "id {id}");
         }
     }
