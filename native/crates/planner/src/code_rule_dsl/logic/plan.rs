@@ -3716,12 +3716,7 @@ impl<'a> Run<'a, '_> {
         // The probes so left, with their keys: decided once.
         let rule_bodies: Vec<Body<'_>> = rules.iter().map(|&r| vs.at(r)).collect();
         let mut lazy: HashMap<(RuleKey, usize), PlanKey> = HashMap::new();
-        // Nor in a component one of whose relations is made by seed rules alone and read by its others (a fork's, the
-        // design's S1): the closure form reads every probe at open (`closure::Fork`), and that relation's first delta
-        // is all its rows.
-        let seeded_only = |a: &str| rules.iter().all(|&r| vs.head_at(r) != a || seeds.contains(&r));
-        let forked = rules.iter().zip(&rule_bodies).any(|(_, b)| recursive(b, scc).iter().any(|(_, a)| seeded_only(a)));
-        if lazy_probes() && !answering && rels.len() > 1 && !forked {
+        if lazy_probes() && !answering && rels.len() > 1 {
             for (&r, b) in rules.iter().zip(&rule_bodies) {
                 for (ai, a) in recursive(b, scc) {
                     if !whole_wanted(self, a) && let Some(key) = self.model.first_sight(b, Some(ai)) {
@@ -8640,70 +8635,6 @@ fn climb_end_matches(p: &body::Placed, sccs: &super::front::Components, deps: &s
         }
         if m.len() > 1 {
             out.push(m);
-        }
-    }
-    out
-}
-
-/// Forks in climbs' seed joins as matches (`join_shapes::PerName`): each keyed walk, the relation `F` its seed rules
-/// read, and `F`'s other readers. `F` is a stratum of its own before the walk's, not recursive; every rule reading it
-/// reads it once, positively, and is a seed rule of the walk or a rule of a reader `T`; each `T` is a stratum of its
-/// own whose every rule reads `F`, reading nothing of the walk's stratum; whatever else reads `F` or a `T` is in the
-/// walk's stratum or a later one.
-fn per_name_matches(p: &body::Placed, sccs: &super::front::Components, deps: &super::front::Edges) -> Vec<Vec<String>> {
-    let mut rules: HashMap<&str, Vec<usize>> = HashMap::new();
-    for k in 0..p.len() {
-        rules.entry(p.v.rel_name(p.rule(k).head().rel())).or_default().push(k);
-    }
-    let at: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(j, scc)| scc.iter().map(move |r| (r, j))).collect();
-    let only = |scc: &super::front::Comp| (scc.len() == 1).then(|| scc.first().expect("one").to_owned());
-    let reads_rel = |k: usize, f: &str| p.rule(k).body().any(|l| matches!(l.view(), Lit::Atom(a) if p.v.rel_name(a.rel()) == f) || matches!(l.view(), Lit::Agg { atom, .. } if p.v.rel_name(atom.rel()) == f));
-    let self_read = |t: &str| deps.get(t).is_some_and(|d| d.iter().any(|(r, _)| r == t));
-    let mut out = Vec::new();
-    for j in 0..sccs.len() {
-        let Some(w) = only(&sccs[j]) else { continue };
-        let Some(wk) = rules.get(w.as_str()) else { continue };
-        if !keyed_walk(p, &w, wk) {
-            continue;
-        }
-        let seeds: Vec<usize> = wk.iter().copied().filter(|&k| !reads_rel(k, &w)).collect();
-        let mut fs: Vec<String> = seeds.iter().flat_map(|&k| p.rule(k).body().filter_map(|l| match l.view() { Lit::Atom(a) if !a.neg() => Some(p.v.rel_name(a.rel()).to_owned()), _ => None }).collect::<Vec<_>>()).collect();
-        fs.sort();
-        fs.dedup();
-        for f in fs {
-            let Some(&fi) = at.get(f.as_str()) else { continue };
-            if fi >= j || only(&sccs[fi]).is_none() || self_read(&f) {
-                continue;
-            }
-            // Every rule reading F: once, positively; a seed rule of the walk or another relation's.
-            let readers: Vec<usize> = (0..p.len()).filter(|&k| reads_rel(k, &f)).collect();
-            if !readers.iter().all(|&k| reads_once(p, k, &f)) {
-                continue;
-            }
-            let mut ts: Vec<String> = readers.iter().map(|&k| p.v.rel_name(p.rule(k).head().rel()).to_owned()).filter(|h| *h != w).collect();
-            ts.sort();
-            ts.dedup();
-            if ts.is_empty() || readers.iter().any(|&k| p.v.rel_name(p.rule(k).head().rel()) == w && !seeds.contains(&k)) {
-                continue;
-            }
-            let ok = ts.iter().all(|t| {
-                let Some(&ti) = at.get(t.as_str()) else { return false };
-                let reads_w = deps.get(t).is_some_and(|d| d.iter().any(|(r, _)| *r == w));
-                ti < j && only(&sccs[ti]).is_some() && !self_read(t) && !reads_w && rules.get(t.as_str()).is_some_and(|ks| ks.iter().all(|&k| reads_once(p, k, &f)))
-            });
-            if !ok {
-                continue;
-            }
-            // What else reads F or a T: the walk's stratum or later.
-            let group: Vec<&str> = std::iter::once(w.as_str()).chain(std::iter::once(f.as_str())).chain(ts.iter().map(String::as_str)).collect();
-            let outside_ok = deps.iter().all(|(r, d)| group.contains(&r.as_str()) || !d.iter().any(|(x, _)| x != &w && group.contains(&x.as_str())) || at.get(r.as_str()).is_some_and(|&ri| ri > j));
-            if !outside_ok {
-                continue;
-            }
-            let mut m = vec![w.clone(), f.clone()];
-            m.extend(ts);
-            out.push(m);
-            break;
         }
     }
     out

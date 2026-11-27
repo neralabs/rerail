@@ -12069,3 +12069,12 @@ A clean merge: no conflict, no file of the hub's edited by both sides.
 
 Checked under Relax: the feeder's own tests (logic's magic tests, tests-corpus phases, tests-logic oracle tests) and
 the context and run crates. No Metal or farm runs.
+
+### Q583. Roll-up 155 (Typing-support-final-shape c1bea28f4d onto Pulling-it-all-together): what the merge chose
+
+Typing-support-final-shape's one commit removes the forked start of the climb's seed join (8df0859cd9): off by
+default, and slower when on. A clean merge: the planner's and setfix's code for it, and its tests, go.
+
+Checked under Relax: rerail-planner 9, rerail-setfix 145, tests-logic native::tests 20 and plan::tests 115 (on one
+thread: its tests set RERAIL_SHAPE_LATEST, as under nextest's process per test, so two threads in one process
+cross them). No Metal or farm runs.

@@ -2070,64 +2070,6 @@ seen(x, "c") :- c(_, x, _).
     assert_eq!(got, stored, "the start stored");
 }
 
-/// The design's S1 in the climb's seed join (the page "S1 Per-Name Pass"): the lookup chain's shape, a keyed start
-/// (`pst`, as `wstart`) read beside one driver (`nm`, as `nameref`) by a keyed walk's seed and by two readers of the
-/// climb (`early`, and `late`, which negates `early`), runs in the walk's component as a fork: its tails' rows counted
-/// as the per-name executor's, the rows those of the strata apart (`RERAIL_SHAPE_PER_NAME=off`).
-#[test]
-fn a_start_forked_in_the_climbs_seed_join_gives_the_rows_it_gives_apart() {
-    let program = r#"
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.input node
-.layout node key(n)
-.decl text(n: node, s: symbol)
-.input text
-.decl nm(n: node, x: symbol)
-nm(n, x) :- node(_, n, "identifier", _, _), text(n, x).
-.decl sc(x: symbol, s: number)
-sc("f", 1). sc("g", 1). sc("print", 2).
-.decl up(s: number, p: number)
-up(1, 2). up(2, 3). up(3, 4).
-.decl cls(s: number)
-cls(1). cls(3).
-.decl bound(s: number, x: symbol)
-bound(1, "g"). bound(1, "f"). bound(3, "f"). bound(4, "print").
-.decl defn(s: number, x: symbol)
-defn(1, "g").
-.decl skip(x: symbol)
-skip("h").
-.decl pst(n: node, s: number)
-.layout pst key(n)
-pst(n, s) :- nm(n, x), sc(x, s).
-.decl early(n: node, x: symbol, s: number) no_magic
-early(n, x, s) :- pst(n, s), cls(s), nm(n, x), defn(s, x).
-.decl late(n: node, x: symbol, s: number) no_magic
-late(n, x, s) :- pst(n, s), cls(s), nm(n, x), bound(s, x), !early(n, x, s).
-.decl walk(n: node, x: symbol, s: number) no_magic
-walk(n, x, s) :- nm(n, x), pst(n, s), !skip(x).
-walk(n, x, p) :- walk(n, x, s), !bound(s, x), up(s, p).
-walk(n, x, p) :- walk(n, x, s), late(n, x, s), up(s, p).
-.decl look(x: symbol, s: number)
-look(x, s) :- walk(n, x, s), bound(s, x), !late(n, x, s).
-.output look
-"#;
-    let frames = frames_on("per-name-climb");
-    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment meanwhile.
-    unsafe { std::env::set_var("RERAIL_SHAPE_PER_NAME_FORK", "on") };
-    let src = [("a.py", "f = 1\ng = f\nprint(g, f)\n")];
-    let got = corpus_outputs("per-name-climb", &src, program, &["look"]);
-    let text = std::fs::read_to_string(&frames).unwrap_or_default();
-    let forked: u64 = text.lines().filter_map(|l| l.strip_prefix("rows per name ")).filter_map(|l| l.split(" made ").nth(1)?.split(' ').next()?.parse::<u64>().ok()).sum();
-    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment meanwhile.
-    unsafe { std::env::set_var("RERAIL_SHAPE_PER_NAME", "off") };
-    let apart = corpus_outputs("per-name-climb-off", &src, program, &["look"]);
-    unsafe { std::env::remove_var("RERAIL_SHAPE_PER_NAME") };
-    assert_eq!(got, apart, "the fork's rows are the strata's");
-    // `f` climbs past its class scope (late) to 3; `g` stops in it (early); `print` climbs from a scope not a class.
-    assert_eq!(got[0], [["f", "3"], ["g", "1"], ["print", "4"]], "{got:?}");
-    assert!(forked > 0, "the per-name executor made the tails' rows:\n{text}");
-}
-
 /// A variable named `top` is a variable where an atom binds it, not the lattice's top: `child(p, top, _)` joins as
 /// `child(p, c, _)` does.
 #[test]
