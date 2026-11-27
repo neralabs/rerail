@@ -542,8 +542,8 @@ def b6(failures: list) -> None:
         failures.append("files.rs: the blobs are not rows in a trace, as the store's objects are (P§12 item 1)")
     l1 = (CRATE / "src/l1.rs").read_text()
     k0h = (CRATE / "src/k0.rs").read_text()
-    if not re.search(r"fn delta\([^)]*\bcache: &mut CacheW", l1) or "cache.write(cx)" not in l1 or "cache.body(cx," not in l1 or "type Cache = Sizes;" not in l1:
-        failures.append("l1.rs: L1 keeps no cache, or reads none (Bootstrap, Figure 2: k0_pass rw L1's cache)")
+    if not re.search(r"fn delta\([^)]*\bcache: &mut CacheW", l1) or "cache.write(cx)" not in l1 or "cache.read(cx)" not in l1 or "room_of(cx.reg, &self.ops" not in l1 or "type Cache = Sizes;" not in l1:
+        failures.append("l1.rs: L1 keeps no cache, or reads none by room_of (Bootstrap, Figure 2: k0_pass rw L1's cache)")
     if not re.search(r'SlotSpec \{ name: "cache", mode: Mode::ReadWrite, kind: kind::CACHE \}', k0h):
         failures.append("k0.rs: k0_pass has no read-write slot for L1's cache")
     # The answerers (P§12 item 7): `answer(key, leaves) -> Answer`, a world reader's leaves into the run's layer; the
