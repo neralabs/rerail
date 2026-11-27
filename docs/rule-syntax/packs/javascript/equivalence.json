@@ -5,8 +5,8 @@
   "untranslated": {},
   "different": {
     "eslint-one-var": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "The original spends its work budget on src/engine/code-rule/code-rule-schema.ts and reports 1 of its 127 findings there (line 347); ESLint 9 one-var reports all 127, as the translation does. The other 4 (test/support/ui-modules.d.ts:132, 203, 276, 308) are a second `export const` in a `declare module` block, where the original misses the declaration and ESLint reports it. ESLint 9 over the whole corpus reports every translation-only key. misc-untranslated.result.json.",
+      "right": "translation",
       "counts": {
         "rerail-typescript": {
           "originalOnly": 0,

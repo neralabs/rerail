@@ -1,52 +1,7 @@
 {
   "format": "rerail.translation-equivalence/v1",
   "pack": "vue",
-  "equivalent": false,
+  "equivalent": true,
   "untranslated": {},
-  "different": {
-    "eslint-plugin-vue-no-watch-after-await": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 5,
-          "translationOnly": 0
-        }
-      }
-    },
-    "eslint-plugin-vue-require-valid-default-prop": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 70,
-          "translationOnly": 0
-        }
-      }
-    },
-    "eslint-plugin-vue-return-in-computed-property": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 56,
-          "translationOnly": 0
-        }
-      }
-    },
-    "eslint-plugin-vue-valid-v-for": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 5,
-          "translationOnly": 48
-        },
-        "samples-vue": {
-          "originalOnly": 0,
-          "translationOnly": 17
-        }
-      }
-    }
-  }
+  "different": {}
 }

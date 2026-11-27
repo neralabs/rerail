@@ -4,19 +4,9 @@
   "equivalent": false,
   "untranslated": {},
   "different": {
-    "bandit-b103-set-bad-file-permissions": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 1
-        }
-      }
-    },
     "bandit-b110-try-except-pass": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "Bandit reports all 9 handlers: the translation matches Bandit on all 56 fixture findings (and all 36 in samples-python). The JSON's patterns miss them; the sampled ones are handlers with a comment on the except line (`except:  # noqa`, E722.py 8/13/18/23) and B012.py:22's `except Exception: pass` inside a finally.",
+      "right": "translation",
       "counts": {
         "fixtures": {
           "originalOnly": 0,
@@ -25,62 +15,22 @@
       }
     },
     "bandit-b405-import-xml-etree": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "Bandit reads imported names from `ast`, without spaces or line continuations: `import xml.etree\\` / `.ElementTree` and `import xml.\\` / `etree.cElementTree` are B405. The JSON's regex allows spaces but not continuations; the translation strips both and matches Bandit on all 46 fixture findings.",
+      "right": "translation",
       "counts": {
         "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 0
+          "originalOnly": 0,
+          "translationOnly": 5
         }
       }
     },
     "bandit-b406-import-xml-sax": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "`from xml.sax.saxutils import XMLGenerator` is B406 in Bandit (\"xml.sax.saxutils\" starts with \"xml.sax\"); the JSON exempts saxutils. The translation matches Bandit on all 3 samples-python findings.",
+      "right": "translation",
       "counts": {
         "samples-python": {
           "originalOnly": 0,
           "translationOnly": 1
-        }
-      }
-    },
-    "ruff-air001-airflow-variable-name-task-id-mismatch": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-air302-airflow3-moved-to-provider": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-air311-airflow3-suggested-update": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 13
-        }
-      }
-    },
-    "ruff-air312-airflow3-suggested-to-move-to-provider": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 12
         }
       }
     },
@@ -114,70 +64,6 @@
         }
       }
     },
-    "ruff-arg002-unused-method-argument": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 3
-        },
-        "samples-python": {
-          "originalOnly": 0,
-          "translationOnly": 8
-        }
-      }
-    },
-    "ruff-arg003-unused-class-method-argument": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "samples-python": {
-          "originalOnly": 0,
-          "translationOnly": 6
-        }
-      }
-    },
-    "ruff-arg004-unused-static-method-argument": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 1
-        }
-      }
-    },
-    "ruff-arg005-unused-lambda-argument": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 13,
-          "translationOnly": 1
-        }
-      }
-    },
-    "ruff-b030-except-with-non-exception-classes": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-b905-zip-without-explicit-strict": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 1
-        }
-      }
-    },
     "ruff-d101-undocumented-public-class": {
       "reason": "The translation reports D101 for the undocumented public ServiceRefOrValue classes at ruff/pyupgrade/UP045_1.py:35 and :43. Ruff 0.17.6 reports both; the JSON original reports neither.",
       "right": "translation",
@@ -198,69 +84,9 @@
         }
       }
     },
-    "ruff-d212-multi-line-summary-first-line": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-d300-triple-single-quotes": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-d403-first-word-uncapitalized": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 1
-        }
-      }
-    },
-    "ruff-d406-missing-new-line-after-section-name": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 2
-        }
-      }
-    },
-    "ruff-d418-overload-with-docstring": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-d419-empty-docstring": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 1
-        }
-      }
-    },
     "ruff-era001-commented-out-code": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "Ruff and the JSON do not report prose comments such as `# SIM103 (but not fixable)` or `# (See: http://example.test/revision)`. The translation's bounded regex grammar accepts 22 such fixture lines and 24 sample lines as Python. Exact parity needs a demand-driven native `py_parses(symbol)` relation using Ruff's Python parser.",
+      "right": "original",
       "counts": {
         "fixtures": {
           "originalOnly": 0,
@@ -272,89 +98,9 @@
         }
       }
     },
-    "ruff-f541-f-string-missing-placeholders": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 4
-        }
-      }
-    },
-    "ruff-f601-multi-value-repeated-key-literal": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-f631-assert-tuple": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-f632-is-literal": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-f701-break-outside-loop": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 1
-        }
-      }
-    },
-    "ruff-f722-forward-annotation-syntax-error": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 37,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-f822-undefined-export": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 6,
-          "translationOnly": 33
-        }
-      }
-    },
-    "ruff-f823-undefined-local": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 1
-        }
-      }
-    },
     "ruff-fast001-fast-api-redundant-response-model": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "For `response_model=List[Item,]` versus `-> List[Item]`, Ruff reports FAST001 and so does the translation; the JSON original does not. Ruff treats the trailing subscript comma as insignificant when comparing these types.",
+      "right": "translation",
       "counts": {
         "fixtures": {
           "originalOnly": 0,
@@ -363,68 +109,8 @@
       }
     },
     "ruff-fly002-static-join-to-f-string": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 4,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-g002-logging-percent-format": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 1
-        }
-      }
-    },
-    "ruff-g003-logging-string-concat": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 2
-        }
-      }
-    },
-    "ruff-g201-logging-exc-info": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 2
-        }
-      }
-    },
-    "ruff-g202-logging-redundant-exc-info": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 2
-        }
-      }
-    },
-    "ruff-int001-f-string-in-get-text-func-call": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 5,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-int002-format-in-get-text-func-call": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "Ruff and the JSON inspect expressions parsed from string annotations, including `x: \"''.join([a, b])\"`. The translation's ordinary tree relations do not receive those guest calls; explicitly demanding `parsed_in` and replacing child aggregates with an index walk still yielded no guest findings.",
+      "right": "original",
       "counts": {
         "fixtures": {
           "originalOnly": 4,
@@ -433,22 +119,12 @@
       }
     },
     "ruff-isc001-single-line-implicit-string-concatenation": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "ruff/flake8_implicit_str_concat/ISC_syntax_error.py lines 3, 4, 10 and ISC_syntax_error_2.py line 4 are in files that do not parse: the original fails on them (source-incomplete) and reports nothing, the translation reports ISC001 on tree-sitter's recovered tree. Ruff 0.17.6 reports ISC001 at each of these four lines (and at ISC_syntax_error.py:11 and ISC_syntax_error_2.py:2, 3, 5, 7, which neither side reports).",
+      "right": "translation",
       "counts": {
         "fixtures": {
           "originalOnly": 0,
           "translationOnly": 4
-        }
-      }
-    },
-    "ruff-isc004-implicit-string-concatenation-in-collection-literal": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 7,
-          "translationOnly": 0
         }
       }
     },
@@ -462,36 +138,6 @@
         }
       }
     },
-    "ruff-pd002-pandas-use-of-inplace-argument": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-pd101-pandas-nunique-constant-series-check": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-perf403-manual-dict-comprehension": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 1
-        }
-      }
-    },
     "ruff-pt026-pytest-use-fixtures-without-parameters": {
       "reason": "ruff/rerail/probes/PT026-bare-name-and-trailing-comment.py:23 is `@pytest.mark.usefixtures()` on `class TestE: ...`. The original's `inside` accepts a class_definition as well as a function_definition, so it reports it. Ruff 0.17.6 runs PT026 only on a def's decorators and reports lines 6, 10, 18 and 27 of that file, not 23. The translation reports the same four lines.",
       "right": "translation",
@@ -502,89 +148,19 @@
         }
       }
     },
-    "ruff-pyi002-complex-if-statement-in-stub": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 3
-        }
-      }
-    },
-    "ruff-pyi003-unrecognized-version-info-check": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 6
-        }
-      }
-    },
-    "ruff-pyi004-patch-version-comparison": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-pyi005-wrong-tuple-length-version-comparison": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-pyi013-ellipsis-in-non-empty-class-body": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 1
-        }
-      }
-    },
-    "ruff-pyi014-argument-default-in-stub": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 1
-        }
-      }
-    },
-    "ruff-pyi019-custom-type-var-for-self": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 6,
-          "translationOnly": 0
-        }
-      }
-    },
     "ruff-pyi020-quoted-annotation-in-stub": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "Both keys come from parsing the string. fixtures ruff/pyupgrade/UP037_2.pyi:32 (`a: '''\\\\` newline `list[int]''' = [42]`): the string has an escape, so Ruff parses its value as a bare expression, and the value is a backslash line continuation before `list[int]`; Ruff 0.17.6 reports PYI020 at 32:4, and so does the translation (the engine's python guest parses the value as one expression statement); the original does not. fixtures ruff/pyupgrade/UP037_2.pyi:41 (`Foo['''` newline `    Bar` … `    ]  # Comment''']`): Ruff reports 41:14, and so does the original; the translation cannot parse the string: Ruff parses it in parentheses, the engine's annotation guest wraps the value as `( value )` so the trailing comment hides the `)`, and the python guest refuses the leading indentation (an engine gap, NOTES-pt1120-python-01.md).",
+      "right": "neither",
       "counts": {
         "fixtures": {
-          "originalOnly": 5,
-          "translationOnly": 5
+          "originalOnly": 1,
+          "translationOnly": 1
         }
       }
     },
     "ruff-pyi024-collections-named-tuple": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "A name in a string annotation, `-> \"namedtuple\"` after `from collections import namedtuple` (F401_0.py:46): Ruff reports it (46:21), the original does not.",
+      "right": "translation",
       "counts": {
         "fixtures": {
           "originalOnly": 0,
@@ -593,8 +169,8 @@
       }
     },
     "ruff-pyi030-unnecessary-literal-union": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "`\"list[int] | Literal[1]\" \"\"` has one Literal member; Ruff does not report it, the original does.",
+      "right": "translation",
       "counts": {
         "fixtures": {
           "originalOnly": 1,
@@ -603,108 +179,18 @@
       }
     },
     "ruff-pyi044-future-annotations-in-stub": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "`from ..__future__ import annotations` and `from . __future__ import annotations` are relative imports of a package module, not future statements; Ruff does not report them, the original does.",
+      "right": "translation",
       "counts": {
         "fixtures": {
           "originalOnly": 2,
           "translationOnly": 0
-        }
-      }
-    },
-    "ruff-pyi045-iter-method-return-iterable": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 1
-        }
-      }
-    },
-    "ruff-pyi047-unused-private-type-alias": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 8,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-pyi049-unused-private-typed-dict": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 4,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-pyi051-redundant-literal-union": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-pyi053-string-or-bytes-too-long": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 4
-        }
-      }
-    },
-    "ruff-pyi054-numeric-literal-too-long": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 4,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-pyi055-unnecessary-type-union": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 4,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-pyi056-unsupported-method-call-on-all": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 15,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-rse102-unnecessary-paren-on-raise-exception": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 3
         }
       }
     },
     "ruff-ruf013-implicit-optional": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "ruff/modin-modin-pandas-series.py-049dcbbeb196/modin/pandas/series.py:1514 `method: str = None` sits in a method of `class Series`, which binds `str = CachedAccessor(\"str\", StringMethods)` later, at line 1821, and the file has `from __future__ import annotations`. Ruff 0.17.6 reports RUF013 at 1514:17, and so does the translation. The original does not; it seems to resolve `str` to the class attribute. Minimal case, which Ruff reports: `from __future__ import annotations` / `class S:` / `    def f(self, method: str = None): ...` / `    str = 1`.",
+      "right": "translation",
       "counts": {
         "samples-python": {
           "originalOnly": 0,
@@ -713,8 +199,8 @@
       }
     },
     "ruff-ruf061-legacy-form-pytest-raises": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "The original reports pytest.raises(E, x) used as a `with` item (`with pytest.raises(Exception, \"hello\"):` at flake8_bugbear/B017_0.py:51, rerail/probes/B017-comment-before-argument.py:3, rerail/probes/RUF043-import-forms-and-other-calls.py:14). Ruff 0.17.6 (--preview, --isolated) reports none of the three: a call in a with statement's items is the context-manager form already. The translation skips calls inside a with_clause and matches ruff on every file of the fixtures and samples-python corpora.",
+      "right": "translation",
       "counts": {
         "fixtures": {
           "originalOnly": 3,
@@ -723,8 +209,8 @@
       }
     },
     "ruff-sim102-collapsible-if": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "bandit/django-django-urls-resolvers.py-ed87b99ee423/django/urls/resolvers.py:341: an `if` with two `elif`s, the first (`elif self._is_endpoint:`) holding a lone `if`, the last (`elif path.startswith(...)`) a `return`. Ruff 0.17.6 looks at the last branch only and reports no SIM102 in the file; the original reports the first `elif`, the translation follows Ruff.",
+      "right": "translation",
       "counts": {
         "samples-python": {
           "originalOnly": 1,
@@ -732,79 +218,9 @@
         }
       }
     },
-    "ruff-slf001-private-member-access": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 4
-        }
-      }
-    },
-    "ruff-slot000-no-slots-in-str-subclass": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-slot001-no-slots-in-tuple-subclass": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 1
-        }
-      }
-    },
-    "ruff-slot002-no-slots-in-namedtuple-subclass": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        }
-      }
-    },
     "ruff-t201-print": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 2
-        }
-      }
-    },
-    "ruff-t203-p-print": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-tc006-runtime-cast-value": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-tc010-runtime-string-union": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "ruff/pyflakes/F401_0.py:73 `print(pa.csv.read_csv(...))` after `import pyarrow as pa; import pyarrow.csv`, and :101 `print(bop.baz.read_csv(...))` after `import foo.bar as bop; import foo.bar.baz`: calls of the builtin print. Ruff 0.17.6 reports T201 at both; the original misses them.",
+      "right": "translation",
       "counts": {
         "fixtures": {
           "originalOnly": 0,
@@ -813,8 +229,8 @@
       }
     },
     "ruff-td002-missing-todo-author": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "The original is right. fixtures ruff/rerail/probes/FIX002-unicode-word-boundaries.py:3 (`# TODO→ arrow`): Ruff 0.17.6 takes the first word as a run of Unicode alphanumerics, so `→` ends it and TODO is a tag (TD002, TD003, TD004 at 3:3), as the original reports; misc2-todo's todo_tag and misc2-todo-span's todo_at allow only ASCII punctuation or a space after the tag. Fixed by one character class in those existing library files (proposed in NOTES-pt1120-python-08.md; checked on a box over fixtures and samples-python: exactly these keys are added), which this batch may not edit.",
+      "right": "original",
       "counts": {
         "fixtures": {
           "originalOnly": 1,
@@ -823,8 +239,8 @@
       }
     },
     "ruff-td003-missing-todo-link": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "The original is right. fixtures ruff/rerail/probes/FIX002-unicode-word-boundaries.py:3 (`# TODO→ arrow`): Ruff 0.17.6 takes the first word as a run of Unicode alphanumerics, so `→` ends it and TODO is a tag (TD002, TD003, TD004 at 3:3), as the original reports; misc2-todo's todo_tag and misc2-todo-span's todo_at allow only ASCII punctuation or a space after the tag. Fixed by one character class in those existing library files (proposed in NOTES-pt1120-python-08.md; checked on a box over fixtures and samples-python: exactly these keys are added), which this batch may not edit.",
+      "right": "original",
       "counts": {
         "fixtures": {
           "originalOnly": 1,
@@ -833,41 +249,11 @@
       }
     },
     "ruff-td004-missing-todo-colon": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "The original is right. fixtures ruff/rerail/probes/FIX002-unicode-word-boundaries.py:3 (`# TODO→ arrow`): Ruff 0.17.6 takes the first word as a run of Unicode alphanumerics, so `→` ends it and TODO is a tag (TD002, TD003, TD004 at 3:3), as the original reports; misc2-todo's todo_tag and misc2-todo-span's todo_at allow only ASCII punctuation or a space after the tag. Fixed by one character class in those existing library files (proposed in NOTES-pt1120-python-08.md; checked on a box over fixtures and samples-python: exactly these keys are added), which this batch may not edit.",
+      "right": "original",
       "counts": {
         "fixtures": {
           "originalOnly": 1,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-try002-raise-vanilla-class": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-try003-raise-vanilla-args": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 6,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-try401-verbose-log-message": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 3,
           "translationOnly": 0
         }
       }
@@ -882,16 +268,6 @@
         }
       }
     },
-    "ruff-up008-super-call-with-parameters": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 1
-        }
-      }
-    },
     "ruff-up012-unnecessary-encode-utf8": {
       "reason": "pyupgrade/UP012.py:86, `x: '\"foo\".encode(\"utf-8\")'`: Ruff checks the call inside the string annotation, as the original does. The engine parses the string and the call is in the parsed tree, but strings of a parsed fragment have no `value` row, so python/ast's plain_str (and upgrade-format's str_lit and utf8_only_arg) hold for none of them. Engine gap: stamp `value` on parsed fragments' strings.",
       "right": "original",
@@ -903,8 +279,8 @@
       }
     },
     "ruff-up032-f-string": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "The original reports a .format() call whose string mixes automatic and numbered fields: `\"{} {1}\".format(1, 2)` and `\"{0} {}\".format(1, 2)` (pyflakes/F525.py:1, 2; rerail/noqa/F525.py:1, 5, 7, 9). Ruff 0.17.6 reports none of them: f_strings.rs returns early when the summary has both autos and indices, as `str.format` raises ValueError there and an f-string would not. The translation skips mixed strings (`mixed(v)`) and matches Ruff on both files.",
+      "right": "translation",
       "counts": {
         "fixtures": {
           "originalOnly": 6,
@@ -912,19 +288,9 @@
         }
       }
     },
-    "ruff-up034-extraneous-parentheses": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 16,
-          "translationOnly": 3
-        }
-      }
-    },
     "ruff-up035-deprecated-import": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "The translation is right. fixtures ruff/pyflakes/F401_0.py:13 (`from typing import (… Dict, List, Set, Type …)`), :84 (`from typing_extensions import TypeAlias`) and ruff/pyupgrade/UP045_1.py:55 (`from typing_extensions import (… Optional …)`): Ruff 0.17.6 at target 3.10 reports UP035 on all three. The original reports nothing in either file: its run fails on them, `source-incomplete: file has syntax errors` (checked with each file alone; F401_0.py holds `match *0, 1, *2:`).",
+      "right": "translation",
       "counts": {
         "fixtures": {
           "originalOnly": 0,
@@ -933,41 +299,11 @@
       }
     },
     "ruff-up036-outdated-version-block": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "The translation is right. fixtures ruff/pyflakes/F401_0.py:81 (`if sys.version_info >= (3, 10):`, always true at the 3.10 minimum): Ruff 0.17.6 at target 3.10 reports UP036. The original reports nothing in the file: its run fails on it, `source-incomplete: file has syntax errors` (`match *0, 1, *2:`).",
+      "right": "translation",
       "counts": {
         "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 1
-        }
-      }
-    },
-    "ruff-up039-unnecessary-class-parentheses": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-up041-timeout-error-alias": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-up043-unnecessary-default-type-args": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 2,
+          "originalOnly": 0,
           "translationOnly": 1
         }
       }
