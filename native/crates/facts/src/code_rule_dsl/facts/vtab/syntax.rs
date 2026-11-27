@@ -5298,6 +5298,45 @@ impl Viewed {
             }
             return true;
         }
+        // A field's rows by the field alone (`field($p, #f, $c)`, neither node bound), no document narrowed to anchors:
+        // each document's nodes walked once in preorder, each one's field read off the tape, and a match's values the
+        // walk's: the parent's id (found once while its children pass; not narrowed, the walk's parent is the tape's),
+        // the field, the child's id (from the last one's granule, `global_near`). The general lookup found each row
+        // and read its values again, 978 ns a row out on idc (3.1 s); a match read as a probe's (`emit`, below), 596.
+        if matches!(self.view, View::Field) && column == 1 && columns.len() <= 8 && columns.iter().all(|&c| c < 3) {
+            let b = &*self.batch;
+            if (0..b.docs.len()).all(|doc| !b.docs[doc].anchored) {
+                let (firsts, mut vals) = (b.firsts(View::Field), [0i64; 8]);
+                for doc in 0..b.docs.len() {
+                    let p = &b.docs[doc];
+                    let (mut near, mut up_near, mut last_up) = (0u32, 0u32, (NONE, -1i64));
+                    for (l, x, up) in p.walk_up() {
+                        if i64::from(field_atom(p.tag(), p.f().field(x))) != value {
+                            continue;
+                        }
+                        let Some(r) = p.ranks().local(Item::Field, x) else { continue };
+                        let parent = match up {
+                            None => -1,
+                            Some((q, _)) if q == last_up.0 => last_up.1,
+                            Some((q, _)) => {
+                                last_up = (q, p.global_near(q, &mut up_near));
+                                last_up.1
+                            }
+                        };
+                        let child = p.global_near(l, &mut near);
+                        for (o, &c) in vals.iter_mut().zip(columns) {
+                            *o = match c {
+                                0 => parent,
+                                1 => value,
+                                _ => child,
+                            };
+                        }
+                        each(firsts.at(doc) + r as usize, &vals[..columns.len()]);
+                    }
+                }
+                return true;
+            }
+        }
         // A field's rows are its fielded nodes: a probe's match without a field has no row (`row_of_node`), and is
         // passed over.
         if !cursor.plan.is_for(column, columns) {
@@ -5466,10 +5505,9 @@ impl Viewed {
                 emit(doc as usize, local, x, None, None, Known::default());
             }
         } else if matches!(self.view, View::Field) && column == 1 {
-            // A field's rows by the field alone (`field($p, #f, $c)`, neither node bound): each document's nodes walked
-            // once in preorder, each one's field read off the tape and its parent kept by the walk, each match with
-            // its tape node in hand. The general lookup found each row and read its values again, 978 ns a row out
-            // on idc (3.1 s).
+            // A field's rows by the field alone, some document narrowed to anchors (the walk above, otherwise): each
+            // document's nodes walked once in preorder, each one's field read off the tape, each match read as a
+            // probe's with its tape node in hand.
             for doc in 0..b.docs.len() {
                 let p = &b.docs[doc];
                 for (l, x, up) in p.walk_up() {
