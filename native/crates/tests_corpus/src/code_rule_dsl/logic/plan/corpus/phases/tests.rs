@@ -381,6 +381,39 @@ listed(d) :- dbg_try(_, _, d, _), dir_entry(d, _, _).
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A phase's export whose rules are all the cone of requests' (a request reads it, as
+    /// `an_output_whose_rules_are_all_the_cone_of_requests_is_published`'s): its reader reads its rows.
+    #[test]
+    fn a_phases_export_whose_rules_are_all_the_cone_of_requests_is_handed_on() {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("phases-export-cone");
+        let _ = std::fs::remove_dir_all(&dir);
+        let (src, phases) = (dir.join("src"), dir.join("phases"));
+        std::fs::create_dir_all(src.join("stubs/types-gamma/gamma")).unwrap();
+        std::fs::create_dir_all(&phases).unwrap();
+        std::fs::write(src.join("main.py"), "import gamma\n").unwrap();
+        std::fs::write(phases.join("s2.rerail"), r#"#include "core.rerail"
+.phase s2
+.export dbg_try
+.decl dbg_try(q: symbol, l: symbol, b: symbol, t: symbol)
+.decl want(q: symbol)
+want(q) :- kind(i, "import_statement"), field(i, "name", n), text(n, q).
+.decl sd(b: symbol)
+sd(b) :- r = "stubs", dir_entry(r, w, 1), b = cat(r, "/", w).
+dbg_try(q, "declarations", "", q) :- want(q), q = "gamma".
+dbg_try(q, "stubs", b, q) :- want(q), dir_entry(b, q, 1), sd(b).
+.decl listed(d: symbol)
+listed(d) :- dbg_try(_, _, d, _), dir_entry(d, _, _).
+"#).unwrap();
+        let out = dir.join("out");
+        crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        let options = serde_json::json!({ "phase_dir": phases.to_string_lossy() });
+        let reader = "#include \"core.rerail\"\n.decl s2__dbg_try(q: symbol, l: symbol, b: symbol, t: symbol)\n.decl r(q: symbol, l: symbol, b: symbol)\nr(q, l, b) :- s2__dbg_try(q, l, b, _).\n.output r\n";
+        let reader = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(reader).unwrap()).unwrap();
+        crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&reader], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
+        assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "r").unwrap(), [["gamma", "declarations", ""], ["gamma", "stubs", "stubs/types-gamma"]]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// An asked phase (decision 0705), `q`: a file's asks of other modules by key (`asked_at`, "m.x"), each sent to
     /// the file of the module it names (`ask_in`), answered there in the next round (`answer`), and followed through
     /// a star import into another module's file in the round after (`forward`, `resolved`).
