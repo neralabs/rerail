@@ -990,7 +990,8 @@ impl St<'_> {
 }
 
 /// A join's binding's finds (`join_stages.uglykl`'s): its candidates' first place and a bit a candidate, where they
-/// are at most `FINDS_MAX` consecutive places; else `FINDS_WALK`.
+/// are at most `FINDS_MAX` consecutive places, or a view walk's first row out and a bit a row from it, where its rows
+/// out lie within `FINDS_MAX` rows of it; else `FINDS_WALK`.
 const FINDS_MAX: u32 = 32;
 const FINDS_WALK: i64 = NONE as i64;
 
@@ -1616,6 +1617,11 @@ unsafe fn stage_count_one(st: &St, j: &Job, b: &Bufs, t: u32, acc: &mut [u32; 17
     let passed = s.npassed.min(16) as usize;
     // A join's finds (`V`): a bit a candidate of at most `FINDS_MAX` consecutive places, set where it is a row out.
     let kept = s.mode == 0 && s.v_has == 0 && s.v_parent == 0 && w.how <= 1 && w.hi.wrapping_sub(w.lo) <= FINDS_MAX;
+    // A view walk's (a `has`, a parent's children, an own id): its rows out kept as rows, a bit a row from its first,
+    // while they lie within `FINDS_MAX` rows of it in ascending order (the walk's, which the scatter keeps); else its
+    // scatter walks again.
+    let as_rows = s.mode == 0 && (s.v_has != 0 || s.v_parent != 0);
+    let (mut first, mut over) = (NONE, false);
     let mut finds = 0u32;
     st.each(w, &kv, |r, q, key| {
         if if s.mode == 3 { !st.row_live(r) } else { !st.matches(r, &kv, key) } {
@@ -1634,6 +1640,17 @@ unsafe fn stage_count_one(st: &St, j: &Job, b: &Bufs, t: u32, acc: &mut [u32; 17
         if ok && (s.last == NONE || st.out_bit(v, s.last)) {
             if kept {
                 finds |= 1 << (q.wrapping_sub(w.lo) & 31);
+            } else if as_rows {
+                if first == NONE {
+                    first = r;
+                }
+                // In the walk's order: past every row kept before it.
+                let d = r.wrapping_sub(first);
+                if d < FINDS_MAX && (d == 0 || finds >> d == 0) {
+                    finds |= 1 << d;
+                } else {
+                    over = true;
+                }
             }
             c += 1;
         }
@@ -1642,7 +1659,13 @@ unsafe fn stage_count_one(st: &St, j: &Job, b: &Bufs, t: u32, acc: &mut [u32; 17
     if exists {
         c = (found != (s.mode == 2)) as u32;
     } else if s.mode == 0 {
-        *b.v.add(t as usize) = if kept { (u64::from(w.lo) | u64::from(finds) << 32) as i64 } else { FINDS_WALK };
+        *b.v.add(t as usize) = if kept {
+            (u64::from(w.lo) | u64::from(finds) << 32) as i64
+        } else if as_rows && !over {
+            (u64::from(if first == NONE { 0 } else { first }) | u64::from(finds) << 32) as i64
+        } else {
+            FINDS_WALK
+        };
     }
     *counts.add(t as usize) = c;
     if !exists {
@@ -1698,12 +1721,14 @@ unsafe fn stage_scatter_one(st: &St, j: &Job, b: &Bufs, t: u32) {
             }
         }
         0 if *b.v.add(t as usize) as u32 != NONE => {
-            // Its finds (`stage_count_one`'s): its rows out, each found once, none walked again.
+            // Its finds (`stage_count_one`'s): its rows out, each found once, none walked again; a view walk's are
+            // rows, an index's its group's places.
             let found = *b.v.add(t as usize) as u64;
             let (first, mut bits) = (found as u32, (found >> 32) as u32);
+            let rows = s.nkeys == 0 || s.v_has != 0 || s.v_parent != 0;
             while bits != 0 && a < s.cap_out {
                 let q = first + bits.trailing_zeros();
-                st.write_row(t, if s.nkeys == 0 { q } else { st.cand_row(1, q) }, o, a);
+                st.write_row(t, if rows { q } else { st.cand_row(1, q) }, o, a);
                 bits &= bits - 1;
                 a += 1;
             }
