@@ -174,16 +174,14 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
     // An audit's `origin`: `ongoing`, or `scan` for one someone asked for, whose violations the dashboard leaves out.
     // The four triggers that derive history from `audits` are dropped, and the DDL right after creates them again
     // skipping scans. The scans a file already holds are marked where it still names them (`markRecordedScans`), and a
-    // scan request whose stored audit ids do not read is left out and named (`markRequestedScans`). The column goes in
-    // with the rows' CHECKs off (`withoutRowChecks`), so an audit a damaged file left fails no check. No floor: an older
+    // scan request whose stored audit ids do not read is left out and named (`markRequestedScans`). No floor: an older
     // build never reads the column, its inserts take the default, and it creates a trigger only when the trigger is
     // missing, so it keeps these.
     id: "audits-origin",
     up(database) {
       for (const trigger of ["audits_history_insert", "audits_history_violations_append", "audits_history_violations_update", "audits_history_rule_set_update"])
         database.run(sql.raw(`DROP TRIGGER IF EXISTS \`${trigger}\``));
-      withoutRowChecks(database, () => addColumn(database, "audits", "origin",
-        `text DEFAULT 'ongoing' NOT NULL CONSTRAINT "audits_origin" CHECK("audits"."origin" IN ('ongoing', 'scan'))`));
+      addColumn(database, "audits", "origin", `text DEFAULT 'ongoing' NOT NULL CONSTRAINT "audits_origin" CHECK("audits"."origin" IN ('ongoing', 'scan'))`);
       markRecordedScans(database);
     },
   },
@@ -447,12 +445,13 @@ function identifier(name: string): string {
 /**
  * Adds `column` to `table` with `definition` (`text`, `integer DEFAULT 0 NOT NULL`, ...), unless the table does
  * not exist yet or already has the column. SQLite adds a column in place without copying the table; a
- * `NOT NULL` column needs a `DEFAULT`.
+ * `NOT NULL` column needs a `DEFAULT`, and a column with a CHECK a `DEFAULT` that meets it. The column goes in with
+ * the rows' CHECKs off (`withoutRowChecks`), so one row a damaged file left fails no step.
  */
 export function addColumn(database: RerailDatabase, table: string, column: string, definition: string): void {
   const columns = database.all<{ name: string }>(sql`SELECT name FROM pragma_table_info(${table})`);
   if (columns.length === 0 || columns.some(existing => existing.name === column)) return;
-  database.run(sql.raw(`ALTER TABLE ${identifier(table)} ADD COLUMN ${identifier(column)} ${definition}`));
+  withoutRowChecks(database, () => database.run(sql.raw(`ALTER TABLE ${identifier(table)} ADD COLUMN ${identifier(column)} ${definition}`)));
 }
 
 /**
