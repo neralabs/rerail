@@ -1010,20 +1010,15 @@ describe("Rerail daemon", () => {
   // a dashboard link shown for it still answers, whether it was asked for any port or named none; where another program
   // took that port in between, it goes on as it would without one, and its start does not fail.
   it.each([
-    ["any free port", 0, "a free one"],
-    ["no port", undefined, "the remembered one"],
-  ])("asked for %s in place of another daemon, comes back on that daemon's port, and goes on to %s where that port is held", async (_asked, port, _then) => {
+    { asked: "any free port", port: 0, then: "a free one" },
+    { asked: "no port", port: undefined, then: "the remembered one" },
+  ])("asked for $asked in place of another daemon, goes on to $then where that daemon's port is held, and comes back on it when free", async ({ port }) => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     process.env.RERAIL_HOME = join(root, "home");
     const portFile = join(root, "daemon-port.json");
     const options = { version: "0.0.0-test", databasePath: join(root, "rerail.sqlite"), workspaceRoot: root, nativeHealth: healthyNative, portFile, ...(port === undefined ? {} : { port }) };
     const [old = 0, remembered = 0] = await freePorts(2);
     await writeFile(portFile, `${JSON.stringify({ port: remembered })}\n`);
-
-    const back = await RerailDaemon.start({ ...options, preferredPort: old });
-    daemons.push(back);
-    expect(back.port).toBe(old);
-    await back.close();
 
     const blocker = createServer();
     await new Promise<void>((resolveListening) => blocker.listen(old, "127.0.0.1", () => resolveListening()));
@@ -1032,9 +1027,14 @@ describe("Rerail daemon", () => {
       daemons.push(moved);
       expect(moved.port).not.toBe(old);
       if (port === undefined) expect(moved.port).toBe(remembered);
+      await moved.close();
     } finally {
       await new Promise<void>((resolveClosed) => blocker.close(() => resolveClosed()));
     }
+
+    const back = await RerailDaemon.start({ ...options, preferredPort: old });
+    daemons.push(back);
+    expect(back.port).toBe(old);
   });
 
   it("restarts itself trying first the port it listens on, in place of any it was given to try", () => {

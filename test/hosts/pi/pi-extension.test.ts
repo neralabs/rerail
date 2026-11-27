@@ -49,12 +49,9 @@ import type { HostCommandContext } from "../../../src/harness/index.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
-import { withAutostartOn } from "../../support/environment/autostart.js";
 import { withExperiments } from "../../support/environment/experiments.js";
 
 withExperiments("CONVERSATION_RULES", "SEMANTIC_TOOLS");
-// The attach starts or replaces a daemon only with autostart on, as a person's shell has it.
-withAutostartOn();
 
 // Every test here builds real sessions (native model, engine, rule catalog); on a loaded CI runner a
 // build alone can pass the 5 s default, whichever test happens to pay the cold start.
@@ -86,9 +83,20 @@ const originalRerailHome = process.env.RERAIL_HOME;
 /** Every harness is shut down before its fetch stub goes: a live client left polling would bleed its close into the next test. */
 const shutdowns: Array<() => Promise<unknown>> = [];
 
+/**
+ * A main build's Pi, whose attach goes through the daemon, with autostart on as a person's shell has it: the attach starts
+ * or replaces a daemon only then. Checkout builds keep the suite's `RERAIL_AUTOSTART=0`, so nothing else here starts one.
+ */
+const autostartBefore = process.env.RERAIL_AUTOSTART;
+function routeThroughDaemon(): void {
+  daemonRoute.main = true;
+  vi.stubEnv("RERAIL_AUTOSTART", "1");
+}
+
 afterEach(async () => {
   for (const shutdown of shutdowns.splice(0)) await shutdown();
   daemonRoute.main = undefined;
+  vi.stubEnv("RERAIL_AUTOSTART", autostartBefore);
   daemonRoute.startDaemonForPackage.mockReset();
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -579,7 +587,7 @@ describe("Pi conversation-rules extension", () => {
   });
   it("never fails a tool call or result when the session could not attach, since Pi would block the tool", async () => {
     const harness = createHarness();
-    daemonRoute.main = true;
+    routeThroughDaemon();
     daemonRoute.startDaemonForPackage.mockResolvedValue({
       started: false,
       daemon: { state: { url: "http://127.0.0.1:4737/", nativeToken: "native-token" }, health: { workspaceRoot: harness.context.cwd } },
@@ -623,7 +631,7 @@ describe("Pi conversation-rules extension", () => {
 
     it("takes the prompts meanwhile, counts them as dropped in the footer, and attaches again with no new session start", async () => {
       const harness = createHarness();
-      daemonRoute.main = true;
+      routeThroughDaemon();
       daemonRoute.startDaemonForPackage.mockRejectedValueOnce(failedStart()).mockResolvedValue(daemon(harness.context.cwd));
       const requests = answering();
       const footer: Array<string[] | undefined> = [];
@@ -654,7 +662,7 @@ describe("Pi conversation-rules extension", () => {
 
     it("counts the events of the session Pi moved to, not handing them to the runtime of the session it left", async () => {
       const harness = createHarness();
-      daemonRoute.main = true;
+      routeThroughDaemon();
       daemonRoute.startDaemonForPackage.mockResolvedValue(daemon(harness.context.cwd));
       const requests = answering();
       vi.spyOn(process.stderr, "write").mockReturnValue(true);
@@ -670,7 +678,7 @@ describe("Pi conversation-rules extension", () => {
 
     it("hands a prompt that waited on a try that failed to the session Pi started meanwhile", async () => {
       const harness = createHarness();
-      daemonRoute.main = true;
+      routeThroughDaemon();
       const held = Promise.withResolvers<never>();
       daemonRoute.startDaemonForPackage
         .mockRejectedValueOnce(failedStart())
@@ -697,7 +705,7 @@ describe("Pi conversation-rules extension", () => {
 
     it("gives the marker its final count before Pi leaves the session, and tries no more once Pi shuts down", async () => {
       const harness = createHarness();
-      daemonRoute.main = true;
+      routeThroughDaemon();
       daemonRoute.startDaemonForPackage.mockRejectedValue(failedStart());
       answering();
       vi.useFakeTimers();
@@ -727,7 +735,7 @@ describe("Pi conversation-rules extension", () => {
       /** A start that finds no daemon and a prompt dropped meanwhile; `after` says what each daemon start after it finds. */
       const startFails = async (after: "down" | "up" | "down, then up") => {
         const harness = createHarness();
-        daemonRoute.main = true;
+        routeThroughDaemon();
         const starts = daemonRoute.startDaemonForPackage.mockRejectedValueOnce(failedStart());
         if (after === "down, then up") starts.mockRejectedValueOnce(failedStart());
         if (after === "down") starts.mockRejectedValue(failedStart());
@@ -826,7 +834,7 @@ describe("Pi conversation-rules extension", () => {
 
       it("attaches nothing when `/rerail-start` or `/rerail-stop` reattaches after Pi shut the session down", async () => {
         const harness = createHarness();
-        daemonRoute.main = true;
+        routeThroughDaemon();
         daemonRoute.startDaemonForPackage.mockResolvedValue(daemon(harness.context.cwd));
         const requests = answering();
         const footer = footerOf(harness);
@@ -862,7 +870,7 @@ describe("Pi conversation-rules extension", () => {
 
   it("releases a tool call that a wedged daemon never answers before Pi's own deadline blocks it", async () => {
     const harness = createHarness();
-    daemonRoute.main = true;
+    routeThroughDaemon();
     daemonRoute.startDaemonForPackage.mockResolvedValue({
       started: false,
       daemon: { state: { url: "http://127.0.0.1:4737/", nativeToken: "native-token" }, health: { workspaceRoot: harness.context.cwd } },
@@ -892,7 +900,7 @@ describe("Pi conversation-rules extension", () => {
 
   it("drops a breaker-driven reattach that fired while a newer session was attaching", async () => {
     const harness = createHarness();
-    daemonRoute.main = true;
+    routeThroughDaemon();
     daemonRoute.startDaemonForPackage.mockResolvedValue({
       started: false,
       daemon: { state: { url: "http://127.0.0.1:4737/", nativeToken: "native-token" }, health: { workspaceRoot: harness.context.cwd } },
@@ -942,7 +950,7 @@ describe("Pi conversation-rules extension", () => {
 
   it("keeps a closing client's final gap marker out of the session Pi switched to", async () => {
     const harness = createHarness();
-    daemonRoute.main = true;
+    routeThroughDaemon();
     daemonRoute.startDaemonForPackage.mockResolvedValue({
       started: false,
       daemon: { state: { url: "http://127.0.0.1:4737/", nativeToken: "native-token" }, health: { workspaceRoot: harness.context.cwd } },
