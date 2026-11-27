@@ -8,8 +8,9 @@
 //   def f():
 //       """   """          ← D419
 #include "python/docstrings.rerail"
+#include "python/pt1120-python-05.rerail"
 
 .violation D419(at: node) code "D419"
     "Write a one-line summary of what this module, class or function does in the docstring, or delete the empty docstring."
     suppress ruff "D419"
-D419(s) :- doc_body(s, b), match("\\s*", b).
+D419(s) :- py05_doc(s), doc_body(s, b), match("\\s*", b).

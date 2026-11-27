@@ -10,8 +10,25 @@
 //   Returns:                 ← D406
 //   -------
 #include "python/docstrings-sections.rerail"
+#include "python/pt1120-python-05.rerail"
 
 .violation D406(at: span, k: symbol) code "D406"
     "Remove the colon or trailing whitespace after the section name `{k}` so the line holds only the name."
     suppress ruff "D406"
-D406(at, v) :- doc_style(s, "numpy"), doc_section(s, i, v, _, _, suf), suf != "", doc_at(s, i, at).
+D406(at, v) :- numpy_doc(s), py05_doc(s), doc_sec(s, "numpy", i), head_line(s, i, v, _, _, suf), suf != "",
+    doc_at(s, i, at).
+// numpy_doc(s): s is read in the NumPy convention: by the option, or, unset, by its sections. This is the
+// library's doc_style but for its tie: `tie` binds g twice (`g = count …, g = count …`), which the engine does not
+// read as a test, so every docstring with a Google section counts as a tie and is NumPy too (NOTES). A Google one
+// is not checked:
+//   """
+//   TODO:              one Google section, no NumPy one: Google, no D406
+//       -
+//   """
+.decl numpy_doc(s: node)
+numpy_doc(s) :- doc_checked(s), option("pydocstyle.convention", "numpy").
+numpy_doc(s) :- doc_checked(s), !option("pydocstyle.convention", "google"), !option("pydocstyle.convention", "numpy"),
+    numpy_params(s).
+numpy_doc(s) :- doc_checked(s), !option("pydocstyle.convention", "google"), !option("pydocstyle.convention", "numpy"),
+    !numpy_params(s), !google_args(s), g = count : { doc_sec(s, "google", _) }, n = count : { doc_sec(s, "numpy", _) },
+    (n > g ; n = g, !tie_by(s, "google")).
