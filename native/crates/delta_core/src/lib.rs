@@ -3,6 +3,8 @@
 //! a row on the heap. A format moves here from `rerail_blocks` (or `rerail_vector`) when the executor's code that
 //! reads or writes it moves onto this crate; the old paths re-export it, so it stays one definition.
 //!
+//! - `flat`: structures in flat memory: offsets as a type parameter (`Offset`, `R32`), references relative to
+//!   their own field (`Rel`, `RelSpan`, `BitSpan`) inside a `Region` (*Flat Views and Lifecycles*).
 //! - `pod`: `Pod`, a type whose bytes are its value, and the typed word reads over a block's bytes.
 //! - `block`: an operation block's reference table and where its body starts (`BODY_AT`).
 //! - `runs`: a trace's shape as its blocks hold it (`ShapeW`) and the δ runs block, the rows a layer is made from.
@@ -23,6 +25,7 @@
 pub mod block;
 pub mod bloom;
 pub mod col;
+pub mod flat;
 pub mod hash;
 pub mod ids;
 pub mod kernel;

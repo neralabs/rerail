@@ -3,7 +3,7 @@
 //! A block's columns are fixed-width integers read where they lie: `words` and `words_mut` give a run of a `Pod` type
 //! at a byte offset, checked for bounds and alignment.
 
-use core::sync::atomic::{AtomicI64, AtomicU32, AtomicU64};
+use core::sync::atomic::{AtomicI16, AtomicI32, AtomicI64, AtomicU16, AtomicU32, AtomicU64};
 
 /// A type whose bytes are its value: no pointers, no padding the compiler chose (`rerail_blocks::structure!` checks).
 ///
@@ -19,7 +19,7 @@ macro_rules! pod {
 pod!(u8, u16, u32, u64, u128, i16, i32, i64, i128, f32, f64, usize, ());
 // A field that changes while its block is open (a counter, a chunk's offset, a span set at freeze) is an atomic:
 // written through a shared reference, which Rust allows only by interior mutability.
-pod!(AtomicU32, AtomicU64, AtomicI64);
+pod!(AtomicU16, AtomicU32, AtomicU64, AtomicI16, AtomicI32, AtomicI64);
 unsafe impl<T: Pod, const N: usize> Pod for [T; N] {}
 
 /// A run of `n` `T`s at byte `at` of `bytes`, read in place. Panics, naming the run, past the bytes or misaligned.
