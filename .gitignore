@@ -19,6 +19,10 @@ __pycache__/
 .env
 .env.*
 !.env.example
+# A pack rule's cases are the small repository its `.test` blocks read, a rule's own and a candidate's: their `.env`
+# files hold placeholders a rule reads (`.env.production`, `.env.local`), never a secret.
+!packs/*/cases/**/.env*
+!packs/*/candidates/cases/**/.env*
 
 # The derivation's runtimes are pinned by their manifests alone (scripts/pack-data/runtimes.ts): installs resolve in
 # .rerail/pack-data/runtimes/, and a lockfile here would put every transitive package in the dependency graph.
