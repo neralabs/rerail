@@ -982,6 +982,8 @@ struct RowArm {
     /// The escapes at a token's start it tests first: each why and test.
     starts: Vec<(String, String)>,
     start: Expr,
+    /// `start` as its kind's assumptions read it (`in KIND`), as its run is read: what holds at its token's first byte.
+    start_read: Expr,
     check: String,
     /// Its code up to its record's marks, and the marks it always has.
     body: String,
@@ -8105,7 +8107,7 @@ impl Gen<'_> {
                         Some(read) if !self.regional(&read) => {
                             let v = self.val(&read)?;
                             let proved = x.assumed.iter().filter(|a| a.0.as_ref() == Some(kind)).all(|a| a.3);
-                            let check = if proved { String::new() } else { format!(";\n            // Not proved: a test build checks it against the rule over the file.\n            #[cfg(feature = \"test-hooks\")]\n            assert_eq!(run_last(&{}, s), run_last(&{v}, s), \"assume in {kind} at byte {{s}}\")", self.val(r)?) };
+                            let check = if proved { String::new() } else { format!(";\n            // Not proved: a test build checks it against the rule over the file.\n            #[cfg(feature = \"test-hooks\")]\n            assert_eq!(run_last(&{}, s), l, \"assume in {kind} at byte {{s}}\")", self.val(r)?) };
                             (format!("run {}, read as {} (assumed)", show(r), self.brief(&read)), format!("run_last(&{v}, s){check}"))
                         }
                         _ => (format!("run {}", show(r)), format!("run_last(&{}, s)", self.val(r)?)),
@@ -8570,7 +8572,11 @@ impl Gen<'_> {
                 scans.push_str(&rc.level);
             }
             let sb = if picked { [false; 256] } else { sb };
-            row_arms.push(RowArm { resume, word, open: open_k.is_some(), row: *row, first: sb, tail, starts: first_tests, start: if picked { Expr::Empty } else { start.clone() }, check, body: format!("{{\n            // `{kind}`: {how}\n{decl}            //~defs\n            //~spans\n            let l = {l};\n            let l = l.max(s);\n{pause}{scans}            //~passed\n{hits}            (l, {k}, {extra_is}, "), bits });
+            let start_read = {
+                let these: Vec<(&str, &Expr)> = x.assumed.iter().filter(|a| a.0.as_ref() == Some(kind)).map(|a| (a.1.as_str(), &a.2)).collect();
+                if these.is_empty() { start.clone() } else { substitute(&start, &these, &self.defs) }
+            };
+            row_arms.push(RowArm { resume, word, open: open_k.is_some(), row: *row, first: sb, tail, starts: first_tests, start: if picked { Expr::Empty } else { start.clone() }, start_read: if picked { Expr::Empty } else { start_read }, check, body: format!("{{\n            // `{kind}`: {how}\n{decl}            //~defs\n            //~spans\n            let l = {l};\n            let l = l.max(s);\n{pause}{scans}            //~passed\n{hits}            (l, {k}, {extra_is}, "), bits });
         }
         // Each gap mark's bit at a grammar token, and at an extra the marks it keeps of its own gap.
         let mut gap_code = String::new();
@@ -9460,6 +9466,9 @@ impl Gen<'_> {
         }
         // Each region's end from inside it, for lexing from the middle (`chunked_lean`): its name and its function.
         let mut enter_fns: Option<(Vec<(String, String)>, [bool; 256])> = None;
+        // Each row's start as its run reads it, and its first bytes (`Bytes::row_start`).
+        let row_starts: HashMap<String, Expr> = row_ids.iter().zip(&row_arms).map(|(r, a)| (r.0.clone(), a.start_read.clone())).collect();
+        let row_firsts: HashMap<String, [bool; 256]> = row_ids.iter().zip(&row_arms).map(|(r, a)| (r.0.clone(), a.first)).collect();
         let from_bytes = if fused && self.stage1_parts(true).finals.trim().is_empty() && !self.body.lines().any(|l| l.trim_start().starts_with("refused |=")) {
             let locals: HashMap<String, Expr> = self.nodes.iter().filter_map(|n| n.expr.clone().map(|e| (n.name.clone(), e))).collect();
             // Each class stage 1 writes, by the nibble tables the file holds (`stage1_codes`).
@@ -9467,6 +9476,7 @@ impl Gen<'_> {
             let class_code: HashMap<String, String> = self.nodes.iter().zip(&live).zip(&codes).filter(|((n, l), _)| **l && n.class.is_some()).filter_map(|((n, _), c)| n.what.strip_prefix("class ").map(|w| (w.to_owned(), c.clone()))).collect();
             let mut by = bytes::Bytes::new(x.stmts, locals, class_code);
             by.row_firsts = row_ids.iter().zip(&row_arms).map(|(r, a)| (r.0.clone(), a.first)).collect();
+            by.row_start = row_starts.clone();
             let firsts: Vec<[bool; 256]> = row_arms.iter().map(|a| a.first).collect();
             let ask = if asking { token_tests_fn(&test_asks, &row_ids, &mark_names) } else { None };
             let mut go = || -> Result<_, String> {
@@ -9950,7 +9960,7 @@ impl Gen<'_> {
         // The two-pass form: the one-byte tests of masks that read no region, of the bytes (decision 0703).
         if from_bytes.is_none() {
             let exprs: Vec<(String, Expr)> = self.nodes.iter().filter_map(|n| n.expr.clone().filter(|e| !self.regional(e)).map(|e| (n.name.clone(), e))).collect();
-            out = interleave::bit_reads(&out, self.x.stmts, &exprs);
+            out = interleave::bit_reads(&out, self.x.stmts, &exprs, &row_starts, &row_firsts);
         }
         Ok(out)
     }
