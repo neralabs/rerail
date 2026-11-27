@@ -128,8 +128,14 @@ describe("a pack's .rerail rule with options, fixes and suppression comments", {
 
 describe("check 4 on a .rerail port's suppress lines", { timeout: CHILD_TIMEOUT }, () => {
   let read: RerailDescription | undefined;
-  /** The engine's reading of curly, read once, by the first test that asks. */
-  const curly = (): RerailDescription => (read ??= describeRerailRules([RULE_FILE])[0] as RerailDescription);
+  /** The engine's reading of curly, read once, by the first test that asks; a reading the engine refuses fails it. */
+  const curly = (): RerailDescription => {
+    if (read !== undefined) return read;
+    const [row] = describeRerailRules([RULE_FILE]);
+    if (row === undefined || !row.ok) throw new Error(`the engine does not read ${RULE_FILE}: ${row?.ok === false ? row.error : "no reading"}`);
+    read = row;
+    return row;
+  };
   /** The rule curly reads as, with `violations` in place of its own. */
   const withViolations = (language: string, violations: RerailDescription["violations"]): RerailDescription => ({ ...curly(), language, violations });
   const line = (tool: string, ...rules: string[]) => ({ tool, rules });

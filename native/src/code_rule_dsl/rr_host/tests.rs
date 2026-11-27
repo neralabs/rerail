@@ -207,8 +207,8 @@ fn a_policy_runs_with_its_own_options_and_its_findings_carry_their_fixes() {
     assert_eq!([&describe[0]["violations"], &describe[0]["options"]], [&fixes, &json!({"loud": {"type": "boolean", "default": false}})]);
 }
 
-/// Calls of shout() with fixes none of which is offered: two edits that overlap (the call, and its function inside it),
-/// and a deletion, which is not run.
+/// Calls of shout() with three fixes, the first two not offered: two edits that overlap (the call, and its function
+/// inside it), and a deletion, which is not run. The third renames the function.
 const UNFIXABLE: &str = ".policy \"rr-host-unfixable\" revision 1
 .language python
 .mode log
@@ -219,12 +219,15 @@ const UNFIXABLE: &str = ".policy \"rr-host-unfixable\" revision 1
 .violation Shout(at: node) \"shout() is called here\"
     fix overlapping \"Overlapping edits\"
     fix removal \"Remove the call\"
+    fix rename \"Call whisper() instead\"
 Shout(c) :- shout_call(c).
 overlapping(c) :- field(c, \"function\", f) => replace(c, `quiet()`), replace(f, `quiet`).
 removal(c) => delete(c).
+rename(c) :- field(c, \"function\", f) => replace(f, `whisper`).
 ";
 
-/// Decision 0720: a fix whose edits overlap is not offered, nor one with an edit that is not run; the finding stands.
+/// Decision 0720: a finding carries its first fix whose edits all apply: not one whose edits overlap, nor one with an
+/// edit that is not run.
 #[test]
 fn a_finding_offers_no_fix_whose_edits_overlap_or_are_not_run() {
     let root = folder("rr-host-unfixable", &[("a.py", "shout(1)\n")]);
@@ -233,7 +236,8 @@ fn a_finding_offers_no_fix_whose_edits_overlap_or_are_not_run() {
     let _ = (std::fs::remove_dir_all(&root), std::fs::remove_dir_all(&rules));
     let findings = result["findings"].as_array().unwrap();
     assert_eq!(findings.len(), 1, "{result:#}");
-    assert_eq!((&findings[0]["code"], &findings[0]["fix"]), (&json!("Shout"), &Value::Null), "{result:#}");
+    let span = json!({"startByte": 0, "endByte": 5, "startLine": 0, "startColumn": 0, "endLine": 0, "endColumn": 5});
+    assert_eq!((&findings[0]["code"], &findings[0]["fix"]), (&json!("Shout"), &json!({"span": span, "text": "whisper"})), "{result:#}");
 }
 
 /// An option takes no name the run's own settings have: the run reads its values from the same object.
