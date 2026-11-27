@@ -103,3 +103,56 @@ UKL_INLINE bool row_before(Layer a, uint32_t ia, Layer b, uint32_t ib) {
     }
     return false;
 }
+
+// A state by its head alone (NONE: the empty state), each read a walk down its layers: what a kernel reads a row of
+// one by, where order does not matter.
+
+// The first id past the state's.
+UKL_INLINE uint32_t state_end(CBlk t, uint32_t head) { return head == NONE ? 0u : layer_of(t, head).end; }
+
+// The layer that holds own row `id`: its block, or NONE.
+UKL_INLINE uint32_t state_owner(CBlk t, uint32_t head, uint32_t id) {
+    for (uint32_t k = head; k != NONE;) {
+        Layer l = layer_of(t, k);
+        if (id >= l.start) return id < l.end ? k : NONE;
+        k = l.below;
+    }
+    return NONE;
+}
+
+// Own row `id`'s partition: its value in the partition column (0 when the trace has none).
+UKL_INLINE int64_t layer_part_of(Layer l, uint32_t id) { return l.pcol == NONE ? 0 : layer_get(l, id, l.pcol); }
+
+// Row `id` in column `c`, of a row the state holds.
+UKL_INLINE int64_t state_get(CBlk t, uint32_t head, uint32_t id, uint32_t c) {
+    return layer_get(layer_of(t, state_owner(t, head, id)), id, c);
+}
+
+// Whether row `id` is live: an own row of a layer, killed by no layer above it.
+UKL_INLINE bool state_live(CBlk t, uint32_t head, uint32_t id) {
+    uint32_t own = state_owner(t, head, id);
+    if (own == NONE) return false;
+    int64_t p = layer_part_of(layer_of(t, own), id);
+    for (uint32_t k = head; k != own;) {
+        Layer l = layer_of(t, k);
+        if (layer_kills(l, p, id)) return false;
+        k = l.below;
+    }
+    return true;
+}
+
+// The first live row whose column `c` is `v`, or NONE.
+UKL_INLINE uint32_t state_first(CBlk t, uint32_t head, uint32_t c, int64_t v) {
+    for (uint32_t id = 0u, end = state_end(t, head); id < end; id++)
+        if (state_live(t, head, id) && state_get(t, head, id, c) == v) return id;
+    return NONE;
+}
+UKL_INLINE bool state_has(CBlk t, uint32_t head, uint32_t c, int64_t v) { return state_first(t, head, c, v) != NONE; }
+
+// A trace between two states (`before` NONE: cold): row `id` gone, added, or kept.
+typedef struct Bi {
+    uint32_t before, after;
+} Bi;
+UKL_INLINE bool bi_gone(CBlk t, Bi s, uint32_t id) { return state_live(t, s.before, id) && !state_live(t, s.after, id); }
+UKL_INLINE bool bi_added(CBlk t, Bi s, uint32_t id) { return state_live(t, s.after, id) && !state_live(t, s.before, id); }
+UKL_INLINE bool bi_kept(CBlk t, Bi s, uint32_t id) { return state_live(t, s.before, id) && state_live(t, s.after, id); }

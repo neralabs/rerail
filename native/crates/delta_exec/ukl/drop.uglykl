@@ -3,6 +3,7 @@
 // once, then written in order.
 #include <ukl/delta/trace.h>
 #include <ukl/delta/runs.h>
+#include <ukl/delta/parts.h>
 
 // Partition `q`'s live rows of the state `ls` (`n` layers): a merge of its layers' own rows in the canonical order, the
 // newer layer's first on a tie. Each written at places `at..` of `r` with sign `d` when `r` is set; how many.
@@ -35,9 +36,9 @@ DELTA_ONE(drop_parts_drop)
     CBlk ps = SLOT(1);
     Blk r = SLOT(2);
     Layer ls[MAX_LAYERS];
-    uint32_t n = state_layers(t, (uint32_t)q.head, ls), np = (uint32_t)U64(ps, DROP_N_AT), count = 0u;
-    for (uint32_t k = 0u; k < np; k++) count += drop_part(ls, n, I64(ps, DROP_PARTS_AT + 8u * k), (Blk)0, 0u, 0);
+    uint32_t n = state_layers(t, (uint32_t)q.head, ls), np = parts_len(ps), count = 0u;
+    for (uint32_t k = 0u; k < np; k++) count += drop_part(ls, n, parts_get(ps, k), (Blk)0, 0u, 0);
     uint32_t at = runs_claim(r, count);
     if (at == NONE) return;
-    for (uint32_t k = 0u; k < np; k++) at += drop_part(ls, n, I64(ps, DROP_PARTS_AT + 8u * k), r, at, (int32_t)q.diff);
+    for (uint32_t k = 0u; k < np; k++) at += drop_part(ls, n, parts_get(ps, k), r, at, (int32_t)q.diff);
 }

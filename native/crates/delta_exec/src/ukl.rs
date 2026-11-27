@@ -10,6 +10,7 @@ use crate::cache::{CACHE_COMMIT, CACHE_OPEN, OpCache};
 use crate::contract::push_layer;
 use crate::dir::Directory;
 use crate::drop::{DROP_PARTS, Parts};
+use crate::semi::{CHANGE_ROWS, REPLACE_ROWS, SEMI_CHANGE};
 use crate::trace::{RollUp, Trace};
 use core::mem::offset_of;
 use rerail_blocks::gens::BODY_AT;
@@ -19,6 +20,7 @@ use crate::op::{Case, Devices, Impl, Kernels, Registry, Runner, Signature, Statu
 use rerail_delta_twins::Params;
 use rerail_delta_twins::cache::{self as cache_twin, CacheP};
 use rerail_delta_twins::drop::{self as drop_twin, DropP};
+use rerail_delta_twins::semi::{ReplaceP, SemiP};
 
 /// Every backend a UKL version runs on.
 const EVERY_BACKEND: Devices = Devices(Devices::CPU.0 | Devices::METAL.0 | Devices::CUDA.0 | Devices::HIP.0 | Devices::OPENCL.0);
@@ -34,13 +36,20 @@ struct Ukl {
 }
 
 /// The modules' kernels, by name.
-const MODULES: &[(&str, &str)] = &[("cache", include_str!("../ukl/cache.uglykl")), ("drop", include_str!("../ukl/drop.uglykl"))];
+const MODULES: &[(&str, &str)] = &[
+    ("cache", include_str!("../ukl/cache.uglykl")),
+    ("drop", include_str!("../ukl/drop.uglykl")),
+    ("semi", include_str!("../ukl/semi.uglykl")),
+];
 
 /// The operations with a UKL version.
 const VERSIONS: &[Ukl] = &[
     Ukl { sig: &CACHE_OPEN, module: "cache", case: cache_open_case },
     Ukl { sig: &CACHE_COMMIT, module: "cache", case: cache_commit_case },
     Ukl { sig: &DROP_PARTS, module: "drop", case: drop_parts_case },
+    Ukl { sig: &SEMI_CHANGE, module: "semi", case: semi_change_case },
+    Ukl { sig: &CHANGE_ROWS, module: "semi", case: change_rows_case },
+    Ukl { sig: &REPLACE_ROWS, module: "semi", case: replace_rows_case },
 ];
 
 /// Each operation's UKL version checked on `device` against its twin, at `TILINGS`, and registered as the device's
@@ -102,6 +111,86 @@ fn drop_parts_case(dir: &mut Directory) -> Case {
     Case { slots: vec![head, parts.id(), runs], params: params(DropP { head: u64::from(head.0), diff: -1 }) }
 }
 
+/// A trace of `(doc, value)` rows partitioned by doc and one of wants `(port, doc)`, three layers each: their heads.
+fn semi_traces(cpu: &Runner, dir: &mut Directory) -> (Trace, Vec<crate::dir::BlockId>, Vec<crate::dir::BlockId>) {
+    let mut a = Trace::new(&Shape::run(vec![ColType::I32, ColType::I64], vec![0, 1], Some(0))).expect("a trace").with_roll_up(RollUp::Never);
+    let mut b = Trace::new(&crate::contract::want_shape()).expect("a trace").with_roll_up(RollUp::Never);
+    let r = |d: i64, v: i64| (vec![d, v], 1);
+    let k = |d: i64, v: i64| (vec![d, v], -1);
+    let al = [
+        vec![r(1, 10), r(2, 20), r(3, 30), r(4, 40)],
+        // Doc 1 edited, doc 3 gone, doc 5 new.
+        vec![k(1, 10), r(1, 11), k(3, 30), r(5, 50)],
+        // Doc 2 edited, doc 3 back.
+        vec![k(2, 20), r(2, 21), r(3, 31)],
+    ];
+    let bl = [
+        vec![r(0, 1), r(0, 2), r(0, 3)],
+        // 2 no longer wanted, 4 and 5 newly.
+        vec![k(0, 2), r(0, 4), r(0, 5)],
+        // 2 wanted again, 1 not.
+        vec![r(0, 2), k(0, 1)],
+    ];
+    let (mut ah, mut bh) = (vec![], vec![]);
+    for (x, y) in al.iter().zip(&bl) {
+        ah.push(push_layer(cpu, dir, &mut a, x).expect("a layer"));
+        bh.push(push_layer(cpu, dir, &mut b, y).expect("a layer"));
+    }
+    (a, ah, bh)
+}
+
+/// `semi_change`'s params: `A` and `B` each from their first layer's state to their last's.
+fn semi_p(ah: &[crate::dir::BlockId], bh: Option<&[crate::dir::BlockId]>) -> Vec<u8> {
+    let h = |b: crate::dir::BlockId| u64::from(b.0);
+    let none = rerail_delta_twins::semi::NONE;
+    params(SemiP {
+        a_before: h(ah[0]),
+        a_after: h(ah[2]),
+        b_before: bh.map_or(none, |b| h(b[0])),
+        b_after: bh.map_or(none, |b| h(b[2])),
+        a_arity: 2,
+        b_arity: bh.map_or(0, |_| 2),
+        a_col: 0,
+        b_col: bh.map_or(0, |_| 1),
+        neg: 0,
+        parts_sign: -1,
+    })
+}
+
+/// `A ⋉ B` between their first and last states: rows gone and added, a kept row whose doc came to be wanted (4)
+/// added; the docs of the rows gone; the wants' change (4, 5 held, 1 not).
+fn semi_change_case(dir: &mut Directory) -> Case {
+    let cpu = Runner::new().expect("the CPU's runner");
+    let (a, ah, bh) = semi_traces(&cpu, dir);
+    let asks = Trace::new(&crate::contract::asks_shape()).expect("a trace");
+    let (rows, parts, keys) = (a.open(dir, 64), Parts::open(dir, 16).expect("a parts block"), asks.open(dir, 16));
+    Case { slots: vec![ah[2], bh[2], rows, parts, keys], params: semi_p(&ah, Some(&bh)) }
+}
+
+/// `A`'s change alone between its first and last states.
+fn change_rows_case(dir: &mut Directory) -> Case {
+    let cpu = Runner::new().expect("the CPU's runner");
+    let (a, ah, _) = semi_traces(&cpu, dir);
+    let (rows, parts) = (a.open(dir, 64), Parts::open(dir, 16).expect("a parts block"));
+    Case { slots: vec![ah[2], rows, parts], params: semi_p(&ah, None) }
+}
+
+/// A state of two keys' rows given three: one as it is (nothing), one changed (its old row goes, it comes), one new.
+fn replace_rows_case(dir: &mut Directory) -> Case {
+    let cpu = Runner::new().expect("the CPU's runner");
+    let mut t = Trace::new(&Shape::run(vec![ColType::I32, ColType::I64, ColType::I64], vec![0, 1, 2], Some(0))).expect("a trace").with_roll_up(RollUp::Never);
+    let head = push_layer(&cpu, dir, &mut t, &[(vec![1, 10, 100], 1), (vec![2, 20, 200], 1)]).expect("a layer");
+    let given = t.open(dir, 3);
+    let b = dir.block(given).expect("just made");
+    let pin = rerail_blocks::region::pin_block(&b, "given rows", true).expect("a write pin");
+    for r in [[1, 10, 100], [2, 21, 200], [3, 30, 300]] {
+        rerail_blocks::layer::RunsW::new(&pin).push(&r, 1).expect("room for the given rows");
+    }
+    drop(pin);
+    let runs = t.open(dir, 8);
+    Case { slots: vec![head, given, runs], params: params(ReplaceP { head: u64::from(head.0), arity: 3, key: 1 }) }
+}
+
 /// The block layouts the kernels read, by name: the twins' own constants.
 pub fn layout() -> Vec<(&'static str, usize)> {
     vec![
@@ -132,8 +221,8 @@ pub fn layout() -> Vec<(&'static str, usize)> {
         ("REL_BASE_BLOCK_AT", offset_of!(Relation, base_block)),
         ("REL_FAR_BASE", FAR_BASE as usize),
         // `rerail_delta_twins::drop`'s parts block.
-        ("DROP_N_AT", drop_twin::N_AT),
-        ("DROP_PARTS_AT", drop_twin::PARTS_AT),
+        ("PARTS_N_AT", drop_twin::N_AT),
+        ("PARTS_AT", drop_twin::PARTS_AT),
     ]
 }
 

@@ -24,3 +24,16 @@ UKL_INLINE void runs_set(Blk r, uint32_t k, uint32_t c, int64_t v) {
 
 // Place `k`'s diff.
 UKL_INLINE void runs_diff(Blk r, uint32_t k, int32_t d) { I32(r, U64(r, RUNS_DIFF_AT) + 4u * k) = d; }
+
+// Its rows: the claims within its capacity.
+UKL_INLINE uint32_t runs_len(CBlk r) {
+    uint32_t n = U32(r, RUNS_CLAIMED_AT), cap = U32(r, RUNS_CAP_AT);
+    return n < cap ? n : cap;
+}
+
+// Row `k`'s cell in column `c`, and its diff.
+UKL_INLINE int64_t runs_get(CBlk r, uint32_t k, uint32_t c) {
+    uint64_t at = U64(r, RUNS_COL_AT + 8u * c);
+    return r[RUNS_TYPES_AT + c] != 0u ? I64(r, at + 8u * k) : (int64_t)I32(r, at + 4u * k);
+}
+UKL_INLINE int32_t runs_sign(CBlk r, uint32_t k) { return I32(r, U64(r, RUNS_DIFF_AT) + 4u * k); }

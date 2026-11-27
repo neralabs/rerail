@@ -27,5 +27,5 @@
 #define REL_BASE_ROWS_AT 8u
 #define REL_BASE_BLOCK_AT 208u
 #define REL_FAR_BASE 64u
-#define DROP_N_AT 328u
-#define DROP_PARTS_AT 336u
+#define PARTS_N_AT 328u
+#define PARTS_AT 336u
