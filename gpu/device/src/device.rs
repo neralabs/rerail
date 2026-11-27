@@ -998,14 +998,15 @@ impl Reserved {
         }
     }
 
-    /// Its address space as the host addresses it, the whole reservation (what `map` grows into): where a kernel's
-    /// bind of its buffer finds what holds it (`rerail_blocks::ledger::Tracked`). Memory with no host address (a
-    /// sparse buffer's private storage, a discrete card's allocation) has none: null, no bytes.
-    pub fn address_space(&self) -> (*mut u8, usize) {
+    /// The host's addresses of every byte it can map, however far `map` grows it: its pages' range (a wrap's address
+    /// is its pages'), or its buffer's where it does not grow; null, no bytes, where the host cannot address it
+    /// (Metal's private storage of a sparse buffer, a discrete card's allocation). What a ledger finds it by while it
+    /// lives (`rerail_blocks::ledger::Tracked`).
+    pub fn span(&self) -> (*mut u8, usize) {
         match &self.kind {
+            ReservedKind::Host(p, _) | ReservedKind::Wrapped(_, _, p) => (p.ptr, p.len),
             #[cfg(target_os = "macos")]
             ReservedKind::Sparse(..) => (std::ptr::null_mut(), 0),
-            ReservedKind::Host(p, _) | ReservedKind::Wrapped(_, _, p) => (p.ptr, p.len),
             ReservedKind::Fixed(n) => {
                 let at = self.buffer.contents().cast::<u8>();
                 (at, if at.is_null() { 0 } else { *n })

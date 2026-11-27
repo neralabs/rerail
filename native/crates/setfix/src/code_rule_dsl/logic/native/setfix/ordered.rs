@@ -150,7 +150,7 @@ pub(super) fn key_hash(vals: impl Iterator<Item = i64>) -> u64 {
     let mut h = vals.fold(0u64, |h, v| (h.rotate_left(5) ^ v as u64).wrapping_mul(0x517c_c1b7_2722_0a95));
     h ^= h >> 29;
     h = h.wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    h ^ (h >> 32)
+    h ^ (h >> 32) // bits: a hash's mix
 }
 
 /// mldb's frozen `PathIndex` (the IdHash idea, `plugins/tabular/tabular_dataset.cc`): the live rows sorted by the hash

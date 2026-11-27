@@ -29,6 +29,10 @@ pub struct Filled {
     _placed: Option<Cells<u64>>,
     /// An embedder's program's segments (`ViewDoc::segments`).
     _segments: Option<Cells<u32>>,
+    /// Each node's tape node and id's low bits (`ViewDoc::node_table`), and the nodes by their id's place
+    /// (`ViewDoc::node_by_id`).
+    _node_table: Option<Cells<[u32; 2]>>,
+    _node_by_id: Option<Cells<u32>>,
 }
 
 impl ViewEntry {
@@ -67,7 +71,7 @@ impl ViewEntry {
             Cells::build(block, n.max(1), |out| {
                 for (l, o) in out.iter_mut().enumerate().take(n) {
                     let [s, e] = place.host(p.span(l as u32));
-                    *o = u64::from(s) << 32 | u64::from(e);
+                    *o = u64::from(s) << 32 | u64::from(e); // bits: a span's start and end
                 }
                 n
             })
@@ -87,12 +91,39 @@ impl ViewEntry {
             ),
             _ => None,
         });
+        // SPIKE (shared strata work, A): each numbered node's tape node and id's low bits, by local id, one walk.
+        let node_table = (std::env::var("RERAIL_SPIKE_NODE_TABLE").as_deref() != Ok("off") && p.len() > 0).then(|| {
+            let n = p.len() as usize;
+            // copy: derived (each node's tape node and id low, computed once from the numbering)
+            Cells::build(block, n, |out: &mut [[u32; 2]]| {
+                for (l, x, low) in super::granules::ids(p.table(), p.ranks(), super::ranks::Item::Node, p.len()) {
+                    out[l as usize] = [x, if p.defs.is_none() { l } else { low }];
+                }
+                n
+            })
+            .expect("a batch's block holds its entries")
+        });
+        // SPIKE (local fixes, 1): the nodes' locals by their place among the granules' own nodes (`local_of`).
+        let node_by_id = node_table.as_ref().filter(|_| p.defs.is_some()).map(|_| {
+            let num = p.ranks().numbering();
+            // SAFETY: the projection's numbering, read as every read of it.
+            let places = unsafe { num.own_places() };
+            // copy: derived (each node's number by its id's place, computed once from the numbering)
+            Cells::build(block, places.max(1), |out: &mut [u32]| unsafe { num.own_numbers(out) })
+                .expect("a batch's block holds its entries")
+        });
         let d = desc.as_ptr();
         // SAFETY: the entry is written by this alone (inside its projection's `OnceLock`), and its runs point at cells
         // of the same block (the numbering's descriptor among them), which live as long as it.
         unsafe {
             (*d).preorder = if p.tape_ids() { rerail_clif::view_reads::IDS_TAPE } else { u32::from(p.defs.is_none()) };
             (*d).nodes = p.len();
+            if let Some(t) = &node_table {
+                Run::set(&raw mut (*d).node_table, t.as_ptr(), t.len());
+            }
+            if let Some(t) = &node_by_id {
+                Run::set(&raw mut (*d).node_by_id, t.as_ptr(), t.len());
+            }
             Run::set(&raw mut (*d).numbering, p.ranks().desc().cast::<rerail_clif::ids::Numbering>(), 1);
             if let Some(names) = &names {
                 Run::set(&raw mut (*d).names, names.as_ptr(), names.len());
@@ -143,7 +174,7 @@ impl ViewEntry {
                 }
             }
         }
-        Filled { _names: names, _placed: placed, _segments: segments }
+        Filled { _names: names, _placed: placed, _segments: segments, _node_table: node_table, _node_by_id: node_by_id }
     }
 
     /// `p`'s positions where the views' reads answer its `Loc` rows: core.rerail's; a guest's through its host's

@@ -20,7 +20,7 @@ up030_permuted(n) :- up030_demand_permuted(n), up030_plain_string(n), parsed(n, 
     count : { child(r1, c3, _), kind(c3, "error") } = 0,
     count : { within(c4, r1), (kind(c4, "auto") ; kind(c4, "name")) } = 0,
     count : { has(r1, c5, "format_spec"), child(c5, c6, _), kind(c6, "field") } = 0,
-    count : { has(r1, c7, "index"), value(c7, v8), (value_type(v8, "int") ; value_type(v8, "float")), to_number(v8) > 15 } = 0,
+    count : { has(r1, c7, "index"), value(c7, v8), (value_type_of(c7, "int") ; value_type_of(c7, "float")), to_number(v8) > 15 } = 0,
     count : { has(r1, c9, "index"), !up030_alt_1(c9) } = 0,
     count : { child(r1, c40, _), kind(c40, "field"), I1 = c40, precedes(c40, s41), kind(s41, "field"), I2 = s41, value(I1, t42), value(I2, t42) } = 0.
 up030_permuted(n) :- up030_demand_permuted(n), kind(n, "parenthesized_expression"),

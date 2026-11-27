@@ -530,15 +530,16 @@ pub fn axis_in_place(views: &crate::code_rule_dsl::facts::vtab::ViewInPlace, nod
     // directory's rows (each one's key and first `node` row) and the scanned starts where they lie.
     // SAFETY: the directory lies in `block` at `dir_at` (`views_in_place`), alive while the batch is; its rows are
     // written once its views were.
-    let (dir, rows) = unsafe {
+    // Its rows in its views' order (`ViewDir::order`: a row is a number of the growth).
+    let (dir, rows, order) = unsafe {
         let d = &*block.ptr::<ViewDir>(dir_at);
-        (d, std::slice::from_raw_parts(block.ptr::<ViewRow>(d.rows as usize), d.ndocs as usize))
+        (d, std::slice::from_raw_parts(block.ptr::<ViewRow>(d.rows as usize), d.span as usize), std::slice::from_raw_parts(block.ptr::<u32>(d.order as usize), d.ndocs as usize))
     };
     // SAFETY: the scanned starts, `n + 1` values.
     let start = unsafe { std::slice::from_raw_parts(block.ptr::<u32>(start_at), n + 1) };
     let runs_of = |put: &mut dyn FnMut(u32, u32)| {
-        for (i, r) in rows.iter().enumerate() {
-            let end = rows.get(i + 1).map_or(dir.ends[0], |e| e.rows[0]) as usize;
+        for (i, r) in order.iter().map(|&o| &rows[o as usize]).enumerate() {
+            let end = order.get(i + 1).map_or(dir.ends[0], |&o| rows[o as usize].rows[0]) as usize;
             let (from, to) = (start[r.rows[0] as usize], start[end.min(n)]);
             if to > from {
                 put(from, r.key);
@@ -4887,29 +4888,27 @@ fn rank_bits(n: usize) -> u32 {
     usize::BITS - n.saturating_sub(1).leading_zeros()
 }
 
-/// A sorted dedup's key (t58 increment A, `join_stages.uglykl`'s `HeadKeyP`): the order's leading column's 16-bit
-/// tag where `tagged`, then each part, most significant first: (column of the dedup's `cols`, bits, least).
+/// A sorted dedup's key (t58 increment A, `join_stages.uglykl`'s `HeadKeyP`): each part, most significant first
+/// (column of the dedup's `cols`, bits, least); an order is by value, with no tag (decision 0187 P1).
 /// `presorted`: its rows come in its order already (one rule's, sorted by its run's dedup), so its level sorts no
 /// keys where every sorted dedup of it says so.
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) struct SortKey {
-    pub tagged: bool,
     pub parts: Vec<(u32, u32, i64)>,
     pub bits: u32,
     pub presorted: bool,
 }
 
 impl SortKey {
-    /// Its parts' bits, less its tag: a row's index among every row its bounds allow (`HeldBits`).
+    /// Its parts' bits: a row's index among every row its bounds allow (`HeldBits`).
     pub(in crate::code_rule_dsl) fn index_bits(&self) -> u32 {
-        self.bits - if self.tagged { 16 } else { 0 }
+        self.bits
     }
 
-    /// `HeadKeyP`'s words: tagged, its parts, its rank's shift and its rank (its level's, `flush`); each part its
-    /// column, bits, least's words.
+    /// `HeadKeyP`'s words: a reserved word (0: where a tag's flag was, kept for the layout), its parts, its rank's
+    /// shift and its rank (its level's, `flush`); each part its column, bits, least's words.
     fn words(&self) -> [u32; 72] {
         let mut w = [0u32; 72];
-        w[0] = u32::from(self.tagged);
         w[1] = self.parts.len() as u32;
         for (i, &(c, bits, lo)) in self.parts.iter().enumerate() {
             w[4 + 4 * i..8 + 4 * i].copy_from_slice(&[c, bits, lo as u64 as u32, (lo as u64 >> 32) as u32]);

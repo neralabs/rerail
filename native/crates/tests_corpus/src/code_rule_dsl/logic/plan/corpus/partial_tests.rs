@@ -35,7 +35,8 @@ const FILES: &[(&str, &str)] = &[
 ];
 
 /// A cross-file rule (`at`) reads `col` of the nodes an export (`called`) names, joined with another file's export
-/// (`defined`); a file-local rule (`flagged`) is the one edited, its body testing `kind`. `both` and `doubled` are
+/// (`defined`); a file-local rule (`flagged`) is the one edited, its body testing `kind`. `both` pairs the files that
+/// define a name (by their document keys: no node crosses, decision 0677). `both` and `doubled` are
 /// read by a later stratum (`many` reads `doubled`), so a cold run hands `both` off once `doubled` has read it, which
 /// its hand-off asserts (Q206; the counting supports, gone with decision 0364, were the relations it handed before).
 fn program(kind: &str) -> String {
@@ -47,8 +48,10 @@ called(c, x) :- kind(c, "call"), field(c, "function", f), text(f, x).
 defined(d, x) :- kind(d, "function_definition"), field(d, "name", n), text(n, x).
 .decl at(x: symbol, k: number) cross_file
 at(x, k) :- called(c, x), defined(_, x), col(c, k).
-.decl both(d: node, e: node, x: symbol) cross_file
-both(d, e, x) :- defined(d, x), defined(e, x), d != e.
+.decl def_in(a: number, x: symbol)
+def_in(a, x) :- defined(d, x), docof(d, a).
+.decl both(a: number, b: number, x: symbol) cross_file
+both(a, b, x) :- def_in(a, x), def_in(b, x), a != b.
 .decl doubled(x: symbol)
 doubled(x) :- both(_, _, x).
 .decl many(x: symbol)

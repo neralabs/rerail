@@ -14,7 +14,7 @@
 //                  u_piece(s)             string piece s has a `u` or `U` prefix
 //   3. Encodings:  utf8_name(x)           Ruff's spellings of UTF-8, lowercased: "utf-8", "u8", "cp65001", …
 //                  utf8_only_arg(c)       c's one argument is UTF-8: `("utf-8")` or `(encoding="utf8")`
-//   5. Percent:    pct_conv(v, i, flags, conv)   placeholder i of printf-style string v (pyflakes-format's pct_spec)
+//   5. Percent:    pct_conv(b, i, flags, conv)   placeholder i of printf-style format b (pyflakes-format's pct_spec)
 //                                         has these flags (`#0- +`) and conversion character
 //                  rhs_form(e)            the right side of `S % e` is one Ruff rewrites: a literal, a name, an
 //                                         attribute, a subscript, a call, a tuple or a dict (UP031)
@@ -59,7 +59,7 @@ utf8_only_arg(c) :- up_argc(c, 1), (up_arg(c, 0, a) ; call_kw(c, "encoding", a))
 // ---- 5. percent format -------------------------------------------------------------------------------------------
 // pct_conv(v, i, flags, conv): the parts of placeholder i that pct_spec does not keep, by the same regex.
 //   "%-5d" gives flags "-", conv "d"
-.decl pct_conv(v: symbol, i: number, flags: symbol, conv: symbol)
+.decl pct_conv(v: node, i: number, flags: symbol, conv: symbol)
 pct_conv(v, i, fl, cv) :- pct_spec(v, i, _, _, _, _), pct_rest(v, r, i), match(
     "[^%]*%(\\([^)]*\\))?(?<fl>[#0 +\\-]*)(\\*|[0-9]+)?(\\.(\\*|[0-9]*))?[hlL]?(?<cv>[diouxXeEfFgGcrsab])[\\s\\S]*",
     r).

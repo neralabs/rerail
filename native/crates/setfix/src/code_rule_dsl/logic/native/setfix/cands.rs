@@ -128,6 +128,10 @@ fn stream_probe<'a>(v: &'a View, cols: &'a [usize], lead: usize, key: &[i64], la
 pub(super) fn exact_cols(j: &JoinRule, src: &Src, membership: bool) -> u64 {
     let Src::In(rel, ix) = src else { return 0 };
     let (rel, ix) = j.src_in(rel, ix);
+    // A probe by value (`candidates`) gives the key's rows alone.
+    if ix.by_value_kind() && ix.by_value(rel, 0, &mut 0).is_some() {
+        return 1 << ix.cols[0];
+    }
     if let Some(index) = ix.runs(rel) {
         return index.cols.iter().take_while(|c| ix.cols.contains(c)).fold(0, |m, &c| m | 1 << c);
     }
@@ -159,6 +163,17 @@ pub(super) fn node_bits_test(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tes
     ix.node_bits_has(rel, v, hint)
 }
 
+/// A membership test of a derived input by several bound columns (decision 0706 E2): whether the filter the level's
+/// build ahead made rejects `key` (the step's keys' values): then no row holds it, and the step reads none.
+pub(super) fn filter_rejects(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tests: &[(usize, usize)], key: &[i64]) -> bool {
+    let Src::In(rel, ix) = src else { return false };
+    if keys.len() < 2 || !tests.is_empty() {
+        return false;
+    }
+    let (rel, ix) = j.src_in(rel, ix);
+    ix.cols.len() == keys.len() && ix.cols.iter().zip(keys).all(|(&c, &(k, _))| c == k) && ix.filter_rejects(rel, key)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, key: &[i64], keys: &[(usize, Key)], hints: &mut [u32; runs::HINTS], last: &mut LastProbe, need: u64, within: Within, stream: bool) -> (Rows<'a>, Cands<'a>) {
     match src {
@@ -166,7 +181,25 @@ pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, ke
             let (rel, ix) = j.src_in(rel, ix);
             let settings = last.settings();
             if settings.noted && !keys.is_empty() { probed::note(rel.name.get().map_or("?input", String::as_str), ix.cols.iter().copied()); }
-            if keys.is_empty() { scan_within(Rows::In(rel), 0, rel.len() as u32, within) }
+            if keys.is_empty() {
+                // A range of a column read alone, where its order is the range's column (`index_then`): the range's
+                // rows, two searches a run, none walked (a document's nodes, `Ranged::doc`).
+                if let Some((c, lo, hi)) = within
+                    && ix.then == Some(c)
+                    && let Some(index) = ix.runs(rel)
+                {
+                    let found = index.find_at(&rel.rows, rel.k, &[], None, hints).within(&rel.rows, rel.k, c, lo, hi);
+                    return (Rows::In(rel), Cands::Runs(found));
+                }
+                scan_within(Rows::In(rel), 0, rel.len() as u32, within)
+            }
+            // A one-column key's rows by its value-keyed index (the shape kernel's keyed read): found by position,
+            // each probe walking on from where the last ended, not by searching the runs' tagged order.
+            else if keys.len() == 1 && ix.by_value_kind()
+                && let Some(ids) = ix.by_value(rel, key[0], &mut hints[0])
+            {
+                (Rows::In(rel), Cands::Slice(ids))
+            }
             else if let Some(index) = ix.runs(rel) {
                 // An order answering the key's columns, or leading with some of them (`chain_lead`: every key
                 // is checked): the key's values in the order's column order.
@@ -280,6 +313,10 @@ pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, ke
             let rel = &store.rels[*r];
             let delta = matches!(src, Src::Delta(_));
             if keys.is_empty() {
+                // A range of a column (a document's nodes, `Ranged::doc`) read in an order that leads with it.
+                if let Some((cands, _)) = rel.scan_within(delta, hints, within) {
+                    return (Rows::Comp(rel), cands);
+                }
                 (Rows::Comp(rel), if delta { Cands::Range(rel.lo as u32, rel.hi as u32) } else { Cands::Range(0, rel.n as u32) })
             } else {
                 if last.settings().noted { probed::note(&if delta { format!("{}+delta", rel.table) } else { rel.table.clone() }, keys.iter().map(|&(c, _)| c)); }
@@ -300,7 +337,7 @@ pub(super) fn scan_within<'a>(rows: Rows<'a>, lo: u32, hi: u32, within: Within) 
     if hi <= lo {
         return (rows, Cands::Range(lo, hi));
     }
-    if r.sorted.within(&[c], r.k, lo, hi) == [(lo, hi)] {
+    if r.sorted.within(&[c], lo, hi) == [(lo, hi)] {
         let at = |p: usize| rows.row(p as u32).at(c);
         let s = a.map_or(lo as usize, |(x, eq)| rerail_blocks::order::split_at_pos(lo as usize, hi as usize, |p| if eq { at(p) < x } else { at(p) <= x }));
         let e = b.map_or(hi as usize, |(x, eq)| rerail_blocks::order::split_at_pos(s, hi as usize, |p| if eq { at(p) <= x } else { at(p) < x }));
@@ -341,6 +378,9 @@ pub(super) fn holds(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], ask
     if let Some(found) = node_bits_test(j, src, keys, tests, asked.key.first().copied().unwrap_or(0), &mut asked.hints[0]) {
         return found;
     }
+    if filter_rejects(j, src, keys, tests, &asked.key) {
+        return false;
+    }
     // As the join's step: the key columns the probe matched exactly, which its rows need not be checked for.
     let exact: u64 = if keys.is_empty() { 0 } else { exact_cols(j, src, tests.is_empty()) };
     let need: u64 = keys.iter().filter(|&&(c, _)| exact >> c & 1 == 0).fold(0u64, |m, &(c, _)| m | 1 << c) | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0);
@@ -364,10 +404,43 @@ pub(super) fn holds(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], ask
     })
 }
 
+/// A lookup's row a fused chunk's batch could not read (`rowcode::ViewTest::looks`, `found` 2: a values part's
+/// node), `slots` the row's values: whether its one row is there and holds its keys and tests, its values of the
+/// columns it binds in `out` (by column), probed, its first matching row's.
+pub(super) fn look(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], asked: &mut Asked, out: &mut [i64]) -> bool {
+    let Step::Atom { src, keys, tests, binds, .. } = step else { unreachable!("a lookup is an atom") };
+    let val = |k: Key| match k {
+        Key::Slot(s) => slots[s],
+        Key::Const(c) => c,
+    };
+    asked.key.clear();
+    asked.key.extend(keys.iter().map(|&(_, k)| val(k)));
+    let need = binds.iter().fold(0u64, |m, &(c, _)| m | 1 << c) | keys.iter().fold(0u64, |m, &(c, _)| m | 1 << c) | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0);
+    let (rows, cands) = candidates(j, src, store, &asked.key, keys, &mut asked.hints, &mut asked.last, need, None, true);
+    let mut found = false;
+    rows.each(cands, need, &mut asked.last, |id, r| {
+        if rows.dead(id) || !keys.iter().all(|&(c, k)| r.at(c) == val(k)) || !tests.iter().all(|&(c, c0)| r.at(c) == r.at(c0)) {
+            return false;
+        }
+        for &(c, _) in binds {
+            out[c] = r.at(c);
+        }
+        found = true;
+        true
+    });
+    found
+}
+
 /// Whether a test of one node column reads its node-keyed index: `RERAIL_NODE_BITS=off` (a measurement aid, the
 /// run's setting) probes as before.
 pub(super) fn node_bits_on() -> bool {
     rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_NODE_BITS").map_or(true, |v| v != "off"))
+}
+
+/// Whether a one-column probe of a derived input reads its value-keyed rows index (`Csr::by_value`):
+/// `RERAIL_BY_VALUE=off` (a measurement aid, the run's setting) probes as before.
+pub(super) fn by_value_on() -> bool {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_BY_VALUE").map_or(true, |v| v != "off"))
 }
 
 /// Whether a test of a derived input's whole key asks its sorted hash: `RERAIL_SORTED_HASH=off` (a measurement aid,

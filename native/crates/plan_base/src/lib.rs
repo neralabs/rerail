@@ -40,7 +40,7 @@ pub mod code_rule_dsl {
         pub use rerail_rr::code_rule_dsl::logic::front;
         pub use rerail_program_image::code_rule_dsl::logic::program_facts;
         pub use rerail_facts::code_rule_dsl::logic::strings;
-        pub use rerail_logic_core::code_rule_dsl::logic::{analysis, bloom, crypto, derived, join_size, liveness, reach_form, sql, version_trace};
+        pub use rerail_logic_core::code_rule_dsl::logic::{access, analysis, bloom, crypto, derived, join_size, liveness, reach_form, sql, version_trace};
         pub use rerail_costs::code_rule_dsl::logic::costs;
         pub use rerail_setfix::code_rule_dsl::logic::{device, lanes, native, run, run_state};
         pub mod answers;
@@ -147,7 +147,7 @@ pub mod code_rule_dsl {
         pub mod rr {
             pub use rerail_rr::code_rule_dsl::logic::rr::lower;
             pub use rerail_rr::code_rule_dsl::logic::rr::lower::{FILE_SYSTEM, WORLD};
-            pub use rerail_rr::code_rule_dsl::logic::rr::lower::findings::UNPLACED;
+            pub use rerail_rr::code_rule_dsl::logic::rr::lower::findings::{UNPLACED, UNPLACED_NODE, UNPLACED_THROUGH};
             pub use rerail_rr::code_rule_dsl::logic::rr::aggregate_demand;
             pub use rerail_rr::code_rule_dsl::logic::rr::print::{self, print_version};
             pub use rerail_rr_syntax::syntax::quote;

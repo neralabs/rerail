@@ -533,14 +533,19 @@ fn a_syntax_sources_column_bounds_hold_its_rows() {
     let src = "import os\ndef f(a, b):\n    x = a not in b\n    return g(x, [a, b])\n";
     let docs = vec![document(5, "m.py", "python", src), document(1000, "n.py", "python", "class C:\n    def m(self):\n        return self.v\n")];
     let projection = Projection { shape: Shape::Core, reads: Some(["node", "text", "str", "child", "line", "col", "name", "rr_report_location"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
-    let core = shaped(&store, docs, &projection).unwrap();
+    // The views its projection reads: one it does not read is made without what its rows read (the `op` view's
+    // names, `ViewDoc::names`).
+    let read = |sources: Vec<(&'static str, Arc<dyn Source>)>| -> Vec<(&'static str, Arc<dyn Source>)> {
+        sources.into_iter().filter(|(name, _)| projection.reads.as_ref().is_none_or(|r| r.contains(*name))).collect()
+    };
+    let core = read(shaped(&store, docs, &projection).unwrap());
     check(&core, [5, 1000], &["node.d", "node.n", "node.kind", "node.start", "node.end_", "child.p", "child.c", "child.idx", "text.n", "text.s", "str.n", "str.s", "line.n", "line.l", "col.n", "col.c", "name.n", "name.s", "rr_report_location.n", "rr_report_location.line", "rr_report_location.column", "rr_report_location.end_line", "rr_report_location.end_column"]);
     // A file's own tree alone (`Made::File`, decision 0512), under a hidden key: its document column is its file's
     // (decision 0431 §4), a key the batch does not hold.
     let mut tree = document(HIDDEN_KEYS + 5, "t.py", "python", src);
     let whole = Placement::Copied { delta: 0, within: [0, src.len() as u32] };
     tree.guest = Some(Arc::new(Guest { host: 7, file: 7, at: 7 << 32, grammar: "python".to_owned(), role: "file".to_owned(), root: 0, place: whole.clone(), in_file: whole, made: Made::File }));
-    let alone = shaped(&store, vec![tree], &projection).unwrap();
+    let alone = read(shaped(&store, vec![tree], &projection).unwrap());
     let node = &alone.iter().find(|(n, _)| *n == "node").unwrap().1;
     assert!((0..node.len()).any(|r| node.value(r, 0) == 7), "the tree's nodes are its file's");
     check(&alone, [7, i64::from(HIDDEN_KEYS) + 5], &["node.d", "node.n", "child.p", "child.c"]);
@@ -4472,8 +4477,8 @@ fn the_views_directory_is_the_hosts_too() {
         assert_eq!(homes[row.homes[2] as usize].host + row.source, p.facts.source.as_bytes().as_ptr() as u64, "document {}'s source, where it lies", p.key());
     }
     // The homes its rows name (fixed: a row's tape in `3i`, its lines in `3i + 1`, its source in `3i + 2`), the
-    // 16z cache's where it has one, and the codes'. The device reads the directory where it reads every tape and
-    // lines; a source it does not read keeps a node's text on the host alone (`ViewsInPlace::sources`).
+    // 16z cache's where it has one, and the codes' directory's. The device reads the directory where it reads every
+    // tape and lines; a source it does not read keeps a node's text on the host alone (`ViewsInPlace::sources`).
     assert_eq!(dir.nhomes as usize, 3 * rows.len() + 2, "three homes a row, the cache's and the codes'");
     // The codes' directory's home: the binary's (decision 0697).
     assert_eq!(homes[dir.codes as usize].host, rerail_tape_format::codes_dir::bytes().as_ptr() as u64, "the codes' home is the binary's directory");
@@ -4679,6 +4684,158 @@ fn the_join_programs_view_reads_are_the_jits() {
         });
     }
     assert!(tried > 1000, "{tried} reads");
+}
+
+/// Plan "Chunk node numbers", step 1: a growth's ids. Each document takes whole pages of 32-bit ids when it is first
+/// made in the growth, in its role's region (files from 0, code guests from 2^30, hidden documents from 1.5 × 2^30)
+/// and in making order, and its later spans one run more; every id's document and local id come back from its page,
+/// on the host and by the JIT (`dir_doc_of_id`, `dir_local_of_id`), through each directory that holds it: the
+/// chunk's first batch, the batch a round grew it into (its documents in key order, so a document's place moves),
+/// and the layered directory with a tape value admitted (`views_over`). A row is the document's number less the
+/// directory's first, the same in each: one load from the page. An id handed out in the first round is the same id
+/// in the second. The directory's searches by row and by key (`dir_doc_of_row`, `dir_doc_of_key`) are the JIT's
+/// too on the grown and the layered directories, where a document's row is not its place in their order.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+#[test]
+fn an_ids_document_and_local_id_come_back_in_every_role_and_round() {
+    use crate::code_rule_dsl::facts::nearest::Binding;
+    use rerail_clif::view_reads::{NO_DOC, PAGE, PAGE_BITS, ROLE_PAGES, VIEWS, ViewDir};
+    let store = ContentStore::open(&temp("chunk-ids")).unwrap();
+    let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
+    let projection = Projection::core();
+    let file = |k: u32, p: &str| document(k, p, "python", &format!("def f(x):\n    return g(x, {k})\n\nclass C:\n    pass\n"));
+    let (guest, hidden) = (GUEST_KEYS + 2, HIDDEN_KEYS + 5);
+    let (_, mut grower) = Grower::start(&store, vec![file(3, "a.py"), file(9, "b.py"), file(guest, "g.py")], &[], &Matchers::default(), &tests, Binding::Cpu, &projection, &HashMap::new()).unwrap();
+    let first = Arc::clone(grower.batch().expect("a batch"));
+    let jit = rerail_clif::jit::Reads::new();
+    type OfId = extern "C" fn(*const u8, u32) -> u32;
+    // SAFETY: each read's signature: the descriptor (a directory), then the id.
+    let (doc_of, local_of): (OfId, OfId) = unsafe { (std::mem::transmute::<*const u8, OfId>(jit.function("dir_doc_of_id")), std::mem::transmute::<*const u8, OfId>(jit.function("dir_local_of_id"))) };
+    type ByRow = extern "C" fn(*const u8, u32, u32, u32) -> u32;
+    type ByKey = extern "C" fn(*const u8, u32, u32) -> u32;
+    // SAFETY: each read's signature: the descriptor, then its arguments.
+    let (by_row, by_key): (ByRow, ByKey) = unsafe { (std::mem::transmute::<*const u8, ByRow>(jit.function("dir_doc_of_row")), std::mem::transmute::<*const u8, ByKey>(jit.function("dir_doc_of_key"))) };
+    // The searches of directory `d` (its first rows counted), the host's and the JIT's, over every row of the
+    // node and child views and every key: the row found holds the view's row, and is the key's.
+    let searched = |d: *const ViewDir, keys: &[(u32, u32)], at: &str| {
+        // SAFETY: the directory in its batch's block, which the test holds, its first rows counted.
+        let (n, span, ends) = unsafe { ((*d).ndocs, (*d).span, (*d).ends) };
+        for k in 0..2u32.min(VIEWS.len() as u32) {
+            for r in 0..ends[k as usize] {
+                for memo in [0, span / 2, span.saturating_sub(1), span, NO_DOC] {
+                    // SAFETY: as above.
+                    let host = unsafe { ViewDir::doc_of_row(d, k, r, memo) };
+                    assert_eq!(by_row(d.cast(), k, r, memo), host, "{at}: view {k}, row {r}, memo {memo}");
+                    // SAFETY: as above; the row found one of its documents'.
+                    let (place, from) = unsafe { (ViewDir::at_of(d, host), ViewDir::first_of(d, k as usize, ViewDir::at_of(d, host))) };
+                    // SAFETY: as above.
+                    let to = unsafe { ViewDir::first_of(d, k as usize, place + 1) };
+                    assert!(place < n && from <= r && r < to, "{at}: view {k}, row {r}: row {host}, place {place}, rows {from}..{to}");
+                }
+            }
+        }
+        for &(key, row) in keys {
+            for memo in [0, row, span, NO_DOC] {
+                // SAFETY: as above.
+                let host = unsafe { ViewDir::doc_of_key(d, key, memo) };
+                assert_eq!((by_key(d.cast(), key, memo), host), (row, row), "{at}: key {key}, memo {memo}");
+            }
+        }
+    };
+    // Every id of `ids` (first id, first local id, how many) comes back as document `row` through directory `d`.
+    let mut tried = 0usize;
+    let mut check = |d: *const ViewDir, row: u32, (id, local, n): (u32, u32, u32), at: &str| {
+        for k in 0..n {
+            // SAFETY: the directory in its batch's block, which the test holds; each id handed out.
+            let (doc, loc) = unsafe { (ViewDir::doc_of_id(d, id + k), ViewDir::local_of_id(d, id + k)) };
+            assert_eq!((doc, loc), (row, local + k), "{at}: id {:#x}", id + k);
+            assert_eq!((doc_of(d.cast(), id + k), local_of(d.cast(), id + k)), (doc, loc), "{at}: id {:#x} by the JIT", id + k);
+            tried += 1;
+        }
+    };
+    let ids_of = |docs: &made::Docs, i: usize| {
+        let p = docs.get(i).expect("a document");
+        p.locs() + p.f().lines.count() as u32 + 1
+    };
+    let docs = &first.docs;
+    let row = |docs: &made::Docs, key: u32| docs.position(key).expect("a document of the key");
+    // Made in reverse key order: the guest, then b.py, then a.py.
+    let (a, b, g) = (row(docs, 3), row(docs, 9), row(docs, guest));
+    for i in [g, b, a] {
+        docs.get(i);
+    }
+    let base = |docs: &made::Docs, i: usize| docs.base(i).expect("room in its region");
+    let pages = |n: u32| n.div_ceil(PAGE) * PAGE;
+    assert_eq!(base(docs, b), 0, "b.py, made first of the files, takes the files' first page");
+    assert_eq!(base(docs, a), pages(ids_of(docs, b)), "a.py's pages follow b.py's");
+    assert_eq!(base(docs, g), ROLE_PAGES[1] << PAGE_BITS, "the guest takes the guests' first page");
+    // Later spans: one run more, past the pages taken since, its local ids past the document's first.
+    let later = docs.later_ids(a, 5000).expect("room");
+    assert_eq!(later, (pages(ids_of(docs, b)) + pages(ids_of(docs, a)), ids_of(docs, a)), "a.py's later spans");
+    assert_eq!(docs.later_ids(a, 7), Some(later), "taken once");
+    let held: Vec<(u32, [(u32, u32, u32); 2])> = [a, b, g]
+        .into_iter()
+        .map(|i| (docs.key(i), [(base(docs, i), 0, ids_of(docs, i)), if i == a { (later.0, later.1, 5000) } else { (0, 0, 0) }]))
+        .collect();
+    // A document's row in any directory of the growth: its number less the directory's first.
+    // SAFETY: each directory in the chunk's block, which the test holds.
+    let row_in = |d: *const ViewDir, docs: &made::Docs, key: u32| docs.number(row(docs, key)) - unsafe { (*d).first };
+    for &(key, runs) in &held {
+        assert_eq!(docs.row(row(docs, key)), row_in(docs.dir(), docs, key), "key {key}: its row is its number");
+        for run in runs {
+            check(docs.dir(), row_in(docs.dir(), docs, key), run, "the first batch");
+        }
+    }
+    // A round grows the batch: c.py's row comes between a.py's and b.py's, and every id stays.
+    grower.grow(&store, vec![file(5, "c.py")], &[], &tests, Binding::Cpu, &projection).unwrap();
+    let second = Arc::clone(grower.batch().expect("a batch"));
+    assert!(Arc::ptr_eq(second.docs.ids(), first.docs.ids()), "one growth, one numbering");
+    let c = row(&second.docs, 5);
+    second.docs.get(c);
+    assert_eq!(base(&second.docs, c), pages(ids_of(docs, b)) + pages(ids_of(docs, a)) + pages(5000), "c.py's pages follow the later spans'");
+    let sd = second.docs.dir();
+    assert_eq!(c, 1, "c.py is second by key");
+    assert_ne!(second.docs.row(c), c as u32, "c.py's row is its number, not its place");
+    for &(key, runs) in &held {
+        let i = row(&second.docs, key);
+        assert_eq!(base(&second.docs, i), runs[0].0, "key {key}: its ids in the second round");
+        assert_eq!(row_in(sd, &second.docs, key), row_in(docs.dir(), docs, key), "key {key}: its row in the second round");
+        for run in runs {
+            check(sd, row_in(sd, &second.docs, key), run, "the grown batch");
+        }
+    }
+    check(sd, row_in(sd, &second.docs, 5), (base(&second.docs, c), 0, ids_of(&second.docs, c)), "the grown batch, c.py");
+    // Its first rows counted, its rows' reads written (the views' directory, device or not).
+    device_chunk::views_in_place(&second).expect("the grown batch's directory");
+    let keys_of = |d: *const ViewDir, docs: &[&made::Docs]| -> Vec<(u32, u32)> {
+        let mut keys: Vec<(u32, u32)> = docs.iter().flat_map(|docs| docs.keys().map(|k| (k, row_in(d, docs, k))).collect::<Vec<_>>()).collect();
+        keys.extend([(0, NO_DOC), (4, NO_DOC), (u32::MAX - 1, NO_DOC)]);
+        keys
+    };
+    searched(sd, &keys_of(sd, &[&second.docs]), "the grown batch");
+    // A tape value admitted: a hidden document, numbered in the chunk's growth.
+    let admitted = grower.admit(&store, vec![file(hidden, "v.py")], &[], &tests, Binding::Cpu, &projection).unwrap();
+    let value = admitted.iter().find_map(|(_, s)| s.python_batch()).expect("the value's batch");
+    assert!(Arc::ptr_eq(value.docs.ids(), first.docs.ids()), "the value is numbered in the chunk's growth");
+    value.docs.get(0);
+    let v = base(&value.docs, 0);
+    assert_eq!(v, ROLE_PAGES[2] << PAGE_BITS, "the value takes the hidden documents' first page");
+    check(value.docs.dir(), 0, (v, 0, ids_of(&value.docs, 0)), "the value's batch: its row 0, its number its first");
+    // SAFETY: the value's directory, in the chunk's block: none of its rows is a chunk's file.
+    assert_eq!(unsafe { ViewDir::doc_of_id(value.docs.dir(), base(&second.docs, c)) }, NO_DOC, "c.py is no row of the value's batch");
+    let layered = device_chunk::views_over(&second, std::slice::from_ref(&value)).expect("a layered directory");
+    let ld = second.block().ptr::<ViewDir>(layered.at).cast_const();
+    // SAFETY: the layered directory, in the chunk's block.
+    assert_eq!(unsafe { ((*ld).first, (*ld).span) }, (0, 5), "the layered directory's rows: the growth's five numbers");
+    check(ld, row_in(ld, &value.docs, hidden), (v, 0, ids_of(&value.docs, 0)), "the layered directory, the value");
+    for &(key, runs) in &held {
+        assert_eq!(row_in(ld, &second.docs, key), row_in(sd, &second.docs, key), "key {key}: its row in the layered directory");
+        for run in runs {
+            check(ld, row_in(ld, &second.docs, key), run, "the layered directory");
+        }
+    }
+    searched(ld, &keys_of(ld, &[&second.docs, &value.docs]), "the layered directory");
+    assert!(tried > 5000, "{tried} ids");
 }
 
 /// Decision 0353, step 3 on the CPU (step 2): the directory's searches in the kernels (`clif_dir_doc_of_row`,
@@ -5101,12 +5258,13 @@ fn what_a_kind_test_of_a_bound_node_costs() {
     }
 }
 
-/// t57 E6: the node view's tests of a chunk of nodes by their own ids (`Source::holds_each`, read off the tape)
-/// answer as its probes do (`holds_each_probed`): every node's id in row order and shuffled, ids of no node, each
-/// kind the documents have and none (a node's row alone), across chunks that keep one cursor.
+/// t57 E6: the node view's tests of a chunk of nodes by their own ids, read as one batch (`Source::read_own_batch`,
+/// the fused row program's view tests, decision 0706 E1) answer as its probes do (`lookup_read_at`): every node's id
+/// in row order and shuffled, ids of no node, each kind the documents have and none (a node's row alone), across
+/// chunks that keep one cursor.
 #[test]
 fn a_node_views_tests_of_a_chunk_are_its_probes() {
-    use crate::code_rule_dsl::facts::vtab::{ProbeCursor, holds_each_probed};
+    use crate::code_rule_dsl::facts::vtab::ProbeCursor;
     let store = ContentStore::open(&temp("holds-each")).unwrap();
     let (_, node) = sources(&store, documents().into_iter().take(4).collect()).unwrap().into_iter().find(|(name, _)| *name == "node").unwrap();
     let n = node.len();
@@ -5125,13 +5283,42 @@ fn a_node_views_tests_of_a_chunk_are_its_probes() {
         let col = if want.is_some() { 2 } else { 1 };
         let (mut cursor, mut probes) = (ProbeCursor::default(), ProbeCursor::default());
         for chunk in ids.chunks(97) {
-            let (mut got, mut expect) = (vec![9i64; chunk.len()], vec![9i64; chunk.len()]);
-            assert!(node.holds_each(1, chunk, col, want, &mut cursor, &mut got), "the node view reads its tests");
-            assert!(holds_each_probed(node.as_ref(), 1, chunk, col, want, &mut probes, &mut expect));
+            let reads: &[usize] = if want.is_some() { &[2] } else { &[] };
+            let (mut vals, mut found) = (vec![9i64; chunk.len() * reads.len()], vec![9u8; chunk.len()]);
+            assert!(node.read_own_batch(1, chunk, reads, &mut vals, &mut found, &mut cursor), "the node view reads its rows in a batch");
+            assert!(found.iter().all(|&f| f < 2), "the node view answers every id");
+            let got: Vec<i64> = (0..chunk.len()).map(|j| i64::from(found[j] == 1 && want.is_none_or(|w| vals[j] == w))).collect();
+            let expect: Vec<i64> = chunk
+                .iter()
+                .map(|&v| {
+                    let mut hit = false;
+                    assert!(node.lookup_read_at(1, v, &[col], &mut probes, &mut |_, g| hit |= want.is_none_or(|w| g[0] == w)), "the node view probes");
+                    i64::from(hit)
+                })
+                .collect();
             assert_eq!(got, expect, "kind {want:?}");
             tried += got.iter().filter(|&&v| v == 1).count();
         }
     }
     assert!(tried > n, "{tried}");
-    assert!(!node.holds_each(2, &ids[..4], 1, None, &mut ProbeCursor::default(), &mut [0; 4]), "by a column not its own: refused");
+    assert!(!node.read_own_batch(2, &ids[..4], &[], &mut [], &mut [0; 4], &mut ProbeCursor::default()), "by a column not its own: refused");
+}
+
+/// Decision 0431 step 6: a dialect whose embeddings are all the parse's (`programs_are_the_parse`: none reads the
+/// scope) has a file's derived documents as its whole record of programs, so a writer that has only those (the
+/// workspace's publication) records their count with the tape. HTML's scripts and styles are the parse's: the facts'
+/// programs are exactly the parse's derived documents. Python's embedding by call argument reads the scope
+/// (decision 0470), so its derived documents are not all its programs, and its count is left to the engine's record.
+#[test]
+fn a_dialect_whose_embeddings_are_the_parse_s_has_its_derived_documents_as_its_programs() {
+    let grammar = |label: &str| crate::code_rule_dsl::tape::Grammar::embedded(dialect_by_label(label).unwrap()).unwrap();
+    assert!(core::programs_are_the_parse(&grammar("html")), "HTML embeds by its structure alone");
+    assert!(!core::programs_are_the_parse(&grammar("python")), "Python embeds by call argument, which reads the scope");
+    let source = "<html><body><script>let a = 1;</script><style>p { color: red }</style></body></html>\n";
+    let file = FileInput::new("p.html".to_owned(), "html".to_owned(), Arc::new(source.to_owned().into()), None, None, "core").unwrap();
+    let (Built::Facts(facts), _) = core::build_with_tape(&file, false).unwrap() else { panic!("p.html did not parse") };
+    let parsed = crate::code_rule_dsl::tape::TapeImage::parse(&grammar("html"), source, &|| false).unwrap().unwrap();
+    let programs = facts.programs.as_ref().expect("the facts know their programs");
+    assert!(!parsed.derived.is_empty(), "the page's script and style are programs");
+    assert_eq!(programs.len(), parsed.derived.len(), "the facts' programs are the parse's derived documents");
 }

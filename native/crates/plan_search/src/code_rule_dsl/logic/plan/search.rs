@@ -1137,7 +1137,7 @@ const REPLAN: f64 = 4.0;
 /// ...and by more than this many rows of work: below it, running the kept order costs less than a search (about
 /// 1.6 ms for 12 joins, some 10^4 to 10^5 rows of native joins). A plan made where a text test matched nothing
 /// prices at a few rows, and any later chunk is 4 times that.
-const REPLAN_ROWS: f64 = 10_000.0;
+pub const REPLAN_ROWS: f64 = 10_000.0;
 
 /// What a join-order search costs, in rows of join work (O-live-replan item 1): a fixed part and one row a candidate.
 /// Measured on the P3 bench (debug): a search costs about 0.3 ms plus 0.7 µs a candidate priced, and a join about
@@ -3127,6 +3127,75 @@ impl Model {
         driven && (first.is_some() || order.first().is_none_or(|s| b.demand_bounds_lead(s.at)))
     }
 
+    /// Whether `order` reads, past its first step, a relation or a document whole for each row it is given: a positive
+    /// atom none of whose variables a step before it binds (a cross product), or an input none of whose indexes
+    /// (`Stats::indexes`, the tape views' `vtab_indexes`) starts with a bound column, as `docof(n, d)` read from its
+    /// document (every node of it). Under 0090 §4's floor a maintain mode's line is led by its delta and taken as the
+    /// program planned it (`Stats::lead_free` off): cheap whatever its order where the delta binds the rest, but not
+    /// here. On corpus0's move, `bv(f, x, "inst", s) :- pann(f, x, t), …, uinst(t, c), anc(s, c), docof(f, d9),
+    /// docof(s, e9), rr_cx_reach(d9, e9)` led by `rr_cx_reach`'s 156 changed rows read all of `pann` for each (9.96 M
+    /// rows of work a line, two such lines 20 M of the move's 42 M); led by `pann`'s 37, it walked each reached
+    /// document's nodes for `docof(s, e9)` before `uinst` and `anc` bound `s` (1.32 M a line, eight such 8.3 M).
+    /// With `given`, the variables a lead outside `order` binds (a negated driver's, `Body::with_bound`), every step
+    /// of `order` is past the lead.
+    pub fn reads_whole_past_lead(&self, b: &Body<'_>, given: Option<&VarSet>, order: &[Step]) -> bool {
+        let (mut bound, rest) = match given {
+            Some(g) => (g.clone(), order),
+            None => {
+                let Some(lead) = order.first() else { return false };
+                (b.vars(lead.at).clone(), &order[1..])
+            }
+        };
+        for s in rest {
+            if let Lit::Atom(a) = b.view(s.at)
+                && !a.neg()
+            {
+                let vars = b.vars(s.at);
+                if !vars.is_empty() && !vars.iter().any(|v| bound.contains(v)) {
+                    return true;
+                }
+                let (rel, args) = (b.rel(a), b.args(s.at));
+                let given = |c: usize| b.constant(args[c]).is_some() || matches!(args[c], TermRef::Var(x) if bound.contains(x));
+                if let Some(ixs) = self.stats.indexes.get(rel)
+                    && !ixs.is_empty()
+                    && !ixs.iter().any(|ix| ix.first().is_some_and(|c0| (0..args.len()).any(|c| given(c) && c0.as_str() == self.col(rel, c))))
+                {
+                    return true;
+                }
+            }
+            bound.extend(b.vars(s.at));
+        }
+        false
+    }
+
+    /// A maintain mode's line led by `first`'s delta under 0090 §4's floor (`Stats::lead_free` off), and `led` the
+    /// order the program planned or kept for it: cheap whatever its order where the delta binds the rest, so taken as
+    /// it is. Priced now with the run's sizes over `REPLAN_ROWS` (what a search could save), or reading a relation
+    /// whole a delta row (`reads_whole_past_lead`), it is planned free to start as past the floor, and the cheaper of
+    /// the two taken: the plan, priced now, and whether it is the free one (its key then `reused_key`'s with
+    /// `lead_free` on). Led by `pann`'s 37 changed rows on corpus0's move, eight `bv` lines walked each reached
+    /// document's nodes (`docof(s, e9)` from its document, a tape view read by node alone) before `uinst` and `anc`
+    /// bound `s`: 1.32 M rows of work a line, 8.3 M of the move's 17.4 M. A line a negated driver leads is planned
+    /// so too, its body with the driver's variables bound (`given`, `first` none): led by `!method`'s 18 changed rows,
+    /// `pv(a, k, v)` was read whole for each (177,625 rows of work a line) before `cfn` and `posarg` bound `a`.
+    pub fn under_floor_line(&mut self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>, given: Option<&VarSet>, led: Plan) -> (Plan, bool) {
+        let price = if self.reads_whole_past_lead(b, given, &led.0) { f64::INFINITY } else { self.plan_inner(pf, b, first, Some(&led.0), false).map_or(led.1, |p| p.0.1) };
+        let led = if price.is_finite() { (led.0, price, led.2) } else { led };
+        if price <= REPLAN_ROWS {
+            return (led, false);
+        }
+        self.stats.lead_free = true;
+        let free = self.plan_rule_reused(pf, b, first);
+        self.stats.lead_free = false;
+        match free {
+            Ok((p, _)) if p.1 < price => {
+                super::super::profile::decision("a maintain mode's line under the floor, planned free to start (decision 0094 §8)", || format!("{}: {price:.0} led by its delta, {:.0} free", b.show_head(), p.1));
+                (p, true)
+            }
+            _ => (led, false),
+        }
+    }
+
     /// Records the work a rule's line did in the engine (`plan_work`, every order it ran in) on its kept plan, for
     /// the next run's planning budget (decision 0122).
     pub fn ran(key: PlanKey, work: f64) {
@@ -4275,10 +4344,15 @@ impl Model {
                     // Where both columns' keys are kept (decision 0488), the bindings that hit are the share of the
                     // domain's keys this column holds too, whichever has more: two columns of disjoint values
                     // (a node's ids against another kind's) hit nothing, which distinct counts cannot tell.
+                    // The bindings are the domain's values as its constant filters leave them (`from`), not every key
+                    // of its column: of those, at most the keys both columns hold hit. Against the whole column, a
+                    // probe of each node's nearest function by `$g`, a function (`kind($g, function_definition)`),
+                    // hit the 2,000 functions among 300,000 nodes' keys (0.7%), where every one hits: `rf_in` read
+                    // every node of every function's body, 12.7 M rows for 1.2 M.
                     let kept = at.and_then(|(d, c2)| {
                         let (mine, theirs) = (self.stats.keys.at(rel, c)?, self.keys_or_source(b.rel(b.atom(d)?), c2)?);
-                        let of = theirs.distinct();
-                        (of >= 1.0).then(|| Some((mine.shared(theirs)? / of).clamp(0.5 / of, 1.0))).flatten()
+                        let of = theirs.distinct().min(from);
+                        (of >= 1.0).then(|| Some((mine.shared(theirs)?.min(of) / of).clamp(0.5 / of, 1.0))).flatten()
                     });
                     if let Some(share) = kept {
                         hit = hit.min(share);
@@ -4929,6 +5003,48 @@ impl Model {
             }
             best
         };
+        // Decision 0706 §3: a probe of an input the run holds reads its order on the probe's columns (E5's), built ahead
+        // of its level. The search prices it with what is available: an order the run's readers probed before is
+        // scheduled, its build shared by the plans that read it; one never probed is absent, and the first plan to
+        // probe it pays its whole build. The price is work (rows, at a probe's ns a row), added once to the step.
+        // Per join, where it may read such an order: the absent order's price over its relation's rows, and the orders
+        // available of that relation, by their columns as a mask, with their prices (found once a search).
+        // `RERAIL_ORDER_PRICES=off` (a measurement aid) prices none: on `all` these prices cost instructions +0.8% to
+        // +1.7% for the same rows (decision 0706 step 5's record).
+        let priced_orders = super::super::native::setfix::access::order_prices();
+        let available = if priced_orders { super::super::native::setfix::access::orders_available() } else { Default::default() };
+        let orders: Vec<Option<(f64, Vec<(u64, f64)>)>> = joins
+            .iter()
+            .map(|&j| {
+                let Lit::Atom(a) = b.view(j) else { return None };
+                let rel = b.rel(a);
+                if !priced_orders || a.neg() || !self.stats.held.contains(rel) || self.derived.contains(rel) || self.view_src.contains_key(rel) || self.stats.solving.contains(rel) {
+                    return None;
+                }
+                use rerail_logic_core::code_rule_dsl::logic::access::{Kind, build_ns};
+                let of: Vec<(u64, f64)> = available
+                    .0
+                    .iter()
+                    .filter(|(k, _)| k.rel == rel)
+                    .filter_map(|(k, _)| match &k.kind { Kind::Order(cols) => Some((cols.iter().fold(0u64, |m, &c| m | 1 << c.min(63)), available.cost(k, 0))), _ => None })
+                    .collect();
+                Some((build_ns(&Kind::Order(Vec::new()), self.card(rel) as u64), of))
+            })
+            .collect();
+        let order_cost = |i: usize, bound: u128| -> f64 {
+            let Some((absent, of)) = &orders[i] else { return 0.0 };
+            if jmask[i] & bound == 0 {
+                return 0.0;
+            }
+            let j = joins[i];
+            let cols = b.args(j).iter().enumerate().filter(|&(_, &t)| b.constant(t).is_some() || matches!(t, TermRef::Var(v) if pinned.contains(v) || var_ids[v.index()].is_some_and(|k| k < 128 && bound >> k & 1 == 1))).fold(0u64, |m, (c, _)| m | 1 << c.min(63));
+            // No column bound, or every one (a membership test, E2's filters and node bits): no order read.
+            let all = (1u64 << b.args(j).len().min(63)) - 1;
+            if cols == 0 || cols == all {
+                return 0.0;
+            }
+            of.iter().find(|&&(m, _)| m == cols).map_or(*absent, |&(_, c)| c) / rerail_logic_core::code_rule_dsl::logic::access::PROBE_NS
+        };
         // By subset mask (at most `GREEDY` joins, so 4,096 subsets).
         let mut cells: Vec<Option<Cell>> = (0..1usize << joins.len()).map(|_| None).collect();
         let mut closed: Vec<(u128, u128)> = vec![(0, 0); 1 << joins.len()];
@@ -4994,7 +5110,7 @@ impl Model {
                     let p = price(i, *bound);
                     let by = match p { Price::Atom(_, _, by, _) => by, _ => "" };
                     let Some((w, mut out, mode)) = priced(p, left) else { continue };
-                    let w = w * range_pass(i, *bound);
+                    let w = w * range_pass(i, *bound) + order_cost(i, *bound);
                     let fan = if left > 0.0 { out / left } else { 0.0 };
                     let unfounded = (prev == 0 || from.unfounded) && no_rows_when_priced(i);
                     candidates += 1;
@@ -5152,7 +5268,7 @@ impl Model {
                     },
                 };
                 bound.extend(b.vars(s.at));
-                out.push(super::super::profile::StepPlan { literal: String::new(), access: access.to_owned(), source: source.to_owned(), rows: r, all: r, passed: Vec::new(), basis: by.to_owned() });
+                out.push(super::super::profile::StepPlan { literal: String::new(), access: access.to_owned(), source: source.to_owned(), rows: r, all: r, passed: Vec::new(), basis: by.to_owned(), vars: Vec::new() });
             }
             Some(out)
         };
@@ -5295,9 +5411,9 @@ impl Model {
                         _ => r *= self.pass_at(b, s.at, &|v| bound.contains(v)),
                     }
                     bound.extend(b.vars(s.at));
-                    steps.push(super::super::profile::StepPlan { literal: String::new(), access: String::new(), source: String::new(), rows: r, all: r, passed: Vec::new(), basis: String::new() });
+                    steps.push(super::super::profile::StepPlan { literal: String::new(), access: String::new(), source: String::new(), rows: r, all: r, passed: Vec::new(), basis: String::new(), vars: Vec::new() });
                 }
-                return super::super::profile::RulePlan { work, rows, subsets, candidates, steps, shaped: shaped.clone() };
+                return super::super::profile::RulePlan { work, rows, subsets, candidates, steps, shaped: shaped.clone(), ..Default::default() };
             }
             // The rows each step makes when every row is walked, past the bound head too (no witness cut, decision
             // 0229): what the device's breadth-first stages make (decision 0277).
@@ -5384,9 +5500,15 @@ impl Model {
                 };
                 r_all = walked.unwrap_or(if before > 0.0 { r_all * r / before } else { r_all });
                 bound.extend(b.vars(s.at));
-                steps.push(super::super::profile::StepPlan { literal: b.show(s.at), access, source: src, rows: r, all: r_all.max(r), passed, basis });
+                let vars = b.vars(s.at).iter().map(|v| format!("${}", b.var(v))).collect();
+                steps.push(super::super::profile::StepPlan { literal: b.show(s.at), access, source: src, rows: r, all: r_all.max(r), passed, basis, vars });
             }
-            super::super::profile::RulePlan { work, rows, subsets, candidates, steps, shaped: shaped.clone() }
+            let mut head_vars = VarSet::new();
+            for t in b.head().args() {
+                body::term_vars(t, &mut head_vars);
+            }
+            let head_vars = head_vars.iter().map(|v| format!("${}", b.var(v))).collect();
+            super::super::profile::RulePlan { work, rows, subsets, candidates, steps, shaped: shaped.clone(), head: b.show_head(), head_vars }
         });
         Ok(((order, work, rows), explained))
     }
@@ -5652,7 +5774,7 @@ pub fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "text" | "name" | "str" | "strprefix" | "node_text" | "comment" | "structural_before" | "structural_after" => &[&["n"], &["s", "n"]],
         // W's values (`facts::vtab::syntax::Extra`).
         "value" | "static_value" | "rr_value_lit" => &[&["n"], &["v", "n"]],
-        "value_type_of" => &[&["n"], &["t", "n"]],
+        "value_type_of" | "static_value_type_of" => &[&["n"], &["t", "n"]],
         "value_type" => &[&["v"], &["t", "v"]],
         "fstring_piece" => &[&["n"], &["v", "n"]],
         "fstring_template" => &[&["n"], &["v", "n"]],

@@ -251,29 +251,27 @@ fn settings_key(root: &Path, packages: &BTreeMap<String, String>, configs: &BTre
 }
 
 /// The kept settings rows (`KEPT_SETTINGS`, atoms) under `key` in `space`, where the disk answers each question their
-/// reading asked (`Probe`) as it did: then no configuration file is read. Read through the store's hook
-/// (`observer_store::base::STORE`): this crate holds the store as a `FactStore`.
+/// reading asked (`Probe`) as it did: then no configuration file is read.
 fn kept_settings(store: &dyn FactStore, space: &[u8; 32], key: &[u8; 32], disk: &Disk<'_>) -> StoreResult<Option<Vec<Vec<Vec<i64>>>>> {
-    let Some(kept) = rerail_observe::content_store::observer_store::base::STORE.try_get().and_then(|s| s.open(store.database_path())) else { return Ok(None) };
-    let mut out = None;
-    kept.read(space, &mut |view| {
-        let Some(view) = view else { return };
-        let mut rels = Vec::new();
+    let mut out: Option<Vec<Vec<Vec<i64>>>> = None;
+    store.kept().read(space, &mut |chain| {
+        let Some(chain) = chain else { return };
+        let mut rows = Vec::new();
         for (k, (rel, _)) in KEPT_SETTINGS.iter().enumerate() {
-            let Some(entry) = view.get(&rerail_blocks::kept::FactKey { rel, ident: key, part: 0 }) else { return };
+            let Some(entry) = chain.get(&rerail_blocks::kept::FactKey { rel, ident: key, part: 0 }) else { return };
             if k == 0 && !entry.reads().all(|r| Probe::holds(r, disk)) {
                 return;
             }
-            rels.push((0..entry.rows.len()).map(|i| entry.row(i)).collect());
+            rows.push((0..entry.rows.len()).map(|i| entry.row(i)).collect());
         }
-        out = Some(rels);
+        out = Some(rows);
     });
     Ok(out)
 }
 
 /// Keeps `rows` (`KEPT_SETTINGS`' relations, atoms) under `key` in `space`, with the questions their reading asked.
 fn keep_settings(store: &dyn FactStore, space: [u8; 32], key: [u8; 32], rows: &[Vec<Vec<i64>>], probes: &[Probe]) {
-    use rerail_observe::content_store::kept_facts::base::{BlockFlat, KeptPut, KeptWhat};
+    use crate::content_store::kept_facts::base::{BlockFlat, KeptPut, KeptWhat};
     use sha2::Digest as _;
     let reads: Vec<(String, u64)> = probes.iter().map(Probe::read).collect();
     let puts = KEPT_SETTINGS
@@ -295,9 +293,7 @@ fn keep_settings(store: &dyn FactStore, space: [u8; 32], key: [u8; 32], rows: &[
             KeptPut { rel: rel.to_owned(), ident: key, part: 0, digest, reads: reads.clone(), types: vec![b's'; width], what: KeptWhat::Picked(Box::new(flat)) }
         })
         .collect();
-    if let Some(kept) = rerail_observe::content_store::observer_store::base::STORE.try_get().and_then(|s| s.open(store.database_path())) {
-        kept.queue(space, puts, "the settings kept");
-    }
+    store.kept().queue(space, puts, "the settings kept");
 }
 
 /// The names a project configuration has, the first found in a folder governing it.
@@ -611,6 +607,7 @@ pub fn relations(store: &dyn FactStore, root: &Path, docs: &[String], opts: &Val
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::content_store::ContentStore;
 
     #[test]
     fn options_flatten_as_rrlab_reads_them() {

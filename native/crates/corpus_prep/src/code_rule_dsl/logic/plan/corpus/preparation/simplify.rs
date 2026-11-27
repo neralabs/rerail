@@ -309,8 +309,8 @@ impl Rewrite for Subst {
         match t {
             TermRef::Var(s) => self.to.get(&s).cloned(),
             TermRef::Call(f, mut args) if Some(f) == self.doc && args.count() == 1 => match args.next() {
-                Some(TermRef::Int(n)) => Some(T::Int(n >> 32)),
-                Some(TermRef::Var(s)) => self.ints.get(&s).map(|n| T::Int(n >> 32)),
+                Some(TermRef::Int(n)) => Some(T::Int(rerail_blocks::located::Located::key_wide(n))),
+                Some(TermRef::Var(s)) => self.ints.get(&s).map(|n| T::Int(rerail_blocks::located::Located::key_wide(*n))),
                 _ => None,
             },
             _ => None,
@@ -2855,13 +2855,34 @@ fn location_column(v: &Version, f: &Fields<'_>, rel: &str, rules: &[RuleRef<'_>]
 /// location is no file's, and a location kept there only multiplies its rows: `bcgp_decorated`'s zero count read
 /// `!rr_agg15($a, $b, $p, _)`, whose helper over `rr_ctx16($a, $b, $p)` (pairs of a decorator and a later def, no
 /// location) kept each line's span, a row per line between every pair (3.6-10 M rows priced for 25,425 pairs).
+/// A read of a relation of no location that only tests values the located reads bind (`er_tr_helper(a)`, a set of names,
+/// after `er_cattr(c, a, _)`) makes no rows of its own: the rule is still its file's. Without it, a stage's existence
+/// read of `er_tr(_, k)` (decision 0709) dropped `er_tr`'s def, and its rules moved to the cross-file part over every
+/// file's nodes (0677).
 /// `rules` are the relation's, and `by_head` every derived relation's, indexed once (`ProjectAll`).
 fn file_local_reads(v: &Version, f: &Fields<'_>, by_head: &BTreeMap<&str, Vec<RuleRef<'_>>>, rules: &[RuleRef<'_>]) -> bool {
+    fn vars(t: TermRef<'_>, out: &mut BTreeSet<Slot>) {
+        match t {
+            TermRef::Var(s) => drop(out.insert(s)),
+            TermRef::Call(_, xs) => xs.for_each(|x| vars(x, out)),
+            _ => {}
+        }
+    }
     rules.iter().all(|r| {
         let rel = v.rel_name(r.head().rel());
-        r.body().filter_map(|l| if let Lit::Atom(a) = l.view() { Some(a) } else { None }).filter(|a| !a.neg()).all(|a| {
+        let atoms: Vec<AtomRef<'_>> = r.body().filter_map(|l| if let Lit::Atom(a) = l.view() { Some(a) } else { None }).filter(|a| !a.neg()).collect();
+        let located = |a: &AtomRef<'_>| {
             let name = v.rel_name(a.rel());
             name == rel || by_head.get(name).is_none_or(|of| (0..a.args().count()).any(|c| location_column(v, f, name, of, c)))
+        };
+        let mut bound: BTreeSet<Slot> = BTreeSet::new();
+        for a in atoms.iter().filter(|a| located(a)) {
+            a.args().for_each(|t| vars(t, &mut bound));
+        }
+        atoms.iter().filter(|a| !located(a)).all(|a| {
+            let mut own = BTreeSet::new();
+            a.args().for_each(|t| vars(t, &mut own));
+            own.is_subset(&bound)
         })
     })
 }

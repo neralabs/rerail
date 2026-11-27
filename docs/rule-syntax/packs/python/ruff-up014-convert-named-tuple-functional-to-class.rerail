@@ -14,7 +14,7 @@
 //   X = NamedTuple(typename="X", a=int)           not reported
 //   X = NamedTuple("X", (("a", int),))            not reported: a tuple
 #include "python/upgrade.rerail"
-//   functional_def(s, x, c, what), up_arg(c, i, a), call_nargs(c, n), call_nkwargs(c, n), call_kwsplat(c), identifier(x)
+//   functional_def(s, x, c, what), up_arg(c, i, a), call_nargs(c, n), call_nkwargs(c, n), call_kwsplat(c), identifier_str(s)
 
 .violation UP014(at: node, x: symbol) code "UP014"
     "Define `{x}` as `class {x}(NamedTuple):` with one `field: type` line per field, in the same order."
@@ -29,4 +29,4 @@ fields_ok(c) :- call_nargs(c, 2), call_nkwargs(c, 0), up_arg(c, 1, l), kind(l, "
 bad_pair(l) :- child(l, e, _), !kind(e, "comment"), !good_pair(e).
 .decl good_pair(e: node)
 good_pair(e) :- kind(e, "tuple"), count : { child(e, o, _), !kind(o, "comment") } = 2, child(e, k, 0),
-    plain_str(k, v), identifier(v), !prefix("_", v), child(e, t, 1), !kind(t, "list_splat").
+    plain_str(k, v), identifier_str(k), !prefix("_", v), child(e, t, 1), !kind(t, "list_splat").

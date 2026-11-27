@@ -144,7 +144,7 @@ struct PlacedDir {
     rows: u32,
     pad: u32,
 }
-const _: () = assert!(size_of::<ViewRow>() == 296 && size_of::<ViewDir>() == 168 && size_of::<PlacedDir>() == 32);
+const _: () = assert!(size_of::<ViewRow>() == 304 && size_of::<ViewDir>() == 192 && size_of::<PlacedDir>() == 32);
 const _: () = assert!(core::mem::offset_of!(ViewRow, source) == 24 && core::mem::offset_of!(ViewRow, homes) == 32 && core::mem::offset_of!(ViewRow, view) == 156);
 
 #[repr(C)]
@@ -469,6 +469,12 @@ unsafe fn view_block(d: *const ViewDir) -> *const u8 {
 unsafe fn view_rows(d: *const ViewDir) -> *const ViewRow {
     view_block(d).add((*d).rows as usize) as *const ViewRow
 }
+/// The first row of view `k` past document `e`'s: the next in the directory's order's (`ViewRow::at`, `row_at`), `end`
+/// past the last.
+unsafe fn view_rows_end(d: *const ViewDir, e: *const ViewRow, k: usize, end: u32) -> u32 {
+    let m = (*e).at + 1;
+    if m < (*d).ndocs { (*view_rows(d).add(ViewDir::row_at(d, m) as usize)).rows[k] } else { end }
+}
 
 /// Row `e`'s document of directory `d`, as the views' reads take it (`reads::doc`).
 #[inline(always)]
@@ -757,8 +763,7 @@ impl St<'_> {
             let Some((e, l)) = self.doc_node(kv[0]) else { return none };
             let first = (*e).rows[1];
             if l == 0 {
-                let a = e.offset_from(view_rows(d)) as u32;
-                let hi = if a + 1 < (*d).ndocs { (*view_rows(d).add(a as usize + 1)).rows[1] } else { s.nr };
+                let hi = view_rows_end(d, e, 1, s.nr);
                 return Walk { lo: first, hi, how: 0, tag: 0 };
             }
             let c = doc(d, e).child_first(l);
@@ -1544,7 +1549,7 @@ unsafe fn rx_group_closure(w: *const u32, list: &mut [u32], count: &mut u32, sta
     }
 }
 
-/// A regex's capture group (`TEXTFN_RX_GROUP`, decision 0668): program `g` (`text::table::GroupProgram`, the regex's
+/// A regex's capture group (`TEXTFN_RX_GROUP`, decision 0688): program `g` (`text::table::GroupProgram`, the regex's
 /// Thompson NFA) walked over `x` by a Pike VM, as `regex_automata`'s `PikeVM` walks it: its threads in priority order,
 /// each state once a position, the group's two slots a thread; a match cuts the threads after it, and the last match
 /// found is the leftmost-first one (`rx_group_range`). `scratch`: two thread lists and the closure's stack, grown here.
@@ -2653,7 +2658,8 @@ unsafe fn scan_scatter_range(st: &St, j: &Job, b: &Bufs, r0: u32, r1: u32) {
 /// A sorted dedup's key (`HeadKeyP`, t58 increment A): the head's first order packed to its columns' bounds.
 #[repr(C)]
 struct HeadKeyP {
-    tagged: u32,
+    /// Reserved, 0: where a tag's flag was (no order carries a tag, decision 0187 P1), kept for the layout.
+    _reserved: u32,
     nparts: u32,
     rank_shift: u32,
     rank: u32,
@@ -2689,9 +2695,6 @@ unsafe fn wide_at(base: *mut u32, n: u32) -> WideAt {
 unsafe fn head_key(t: *const i64, d: &Dedup, p: &HeadKeyP, x: u32) -> u64 {
     let val = |c: u32| *colp(t, d.cols[c as usize], d.cap, x) as u64;
     let mut k = 0u64;
-    if p.tagged != 0 {
-        k = val(p.part[0][0]).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 48;
-    }
     for part in &p.part[..p.nparts.min(16) as usize] {
         let w = part[1];
         if w == 0 {
@@ -3914,6 +3917,24 @@ impl Prog {
             let from = ((shift / 8) % 2) as usize;
             let tstep = step / TG;
             let mut tile = g;
+            // The wide sort's (t58 increment A): its region the arena's, from its size script's word; its tiles as many
+            // as its keys claimed, an item each stride.
+            if w(3) != 0 {
+                let wa = wide_at(self.counts.add(w(3) as usize - 1), n);
+                let from = ((shift / 8) % 2) as usize;
+                while tile < tiles {
+                    if kind == PK_RADIX_HIST {
+                        radix_hist_tile64(wa.keys[from], wa.hist, n, shift, tiles, tile);
+                    } else {
+                        radix_scatter_tile64(wa, from, n, shift, tiles, tile);
+                    }
+                    if tstep == 0 || tile + tstep >= tiles {
+                        break;
+                    }
+                    tile += tstep;
+                }
+                return true;
+            }
             loop {
                 match wide {
                     Some(_) if tile >= tiles => break,

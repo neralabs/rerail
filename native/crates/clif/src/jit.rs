@@ -120,7 +120,8 @@ impl Writer {
     pub fn new() -> Self {
         // Its code in one reservation, so a call between the ops stays in a `bl`'s reach (`builder`): near.
         let mut module = cranelift_jit::JITModule::new(builder().unwrap());
-        let ids = crate::writer::define_ops(&mut module, cranelift_module::Linkage::Export, true).unwrap();
+        let cc = module.isa().default_call_conv();
+        let ids = crate::writer::define_ops(&mut module, cranelift_module::Linkage::Export, true, cc).unwrap();
         module.finalize_definitions().unwrap();
         let fns = ids.into_iter().map(|(name, (id, _))| (name, module.get_finalized_function(id))).collect();
         Self { _module: module, fns }

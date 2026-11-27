@@ -998,7 +998,9 @@ pub fn tape_identity(source: &[u8; 32], tag: u8, format_version: u32) -> [u8; 32
     key.sha256_bytes().expect("a SHA-256 identity")
 }
 
-fn source_digest(source: &str, budget: &impl Fn() -> bool) -> Result<[u8; 32], String> {
+/// `source`'s SHA-256, the documents' and the memo's key and its tape's auxiliary index's (`formats::aux_of`): read in
+/// chunks, the budget checked between them.
+pub fn source_digest(source: &str, budget: &impl Fn() -> bool) -> Result<[u8; 32], String> {
     let mut digest = Sha256::new();
     for chunk in source.as_bytes().chunks(4096) {
         checked(budget)?;
@@ -1644,8 +1646,9 @@ impl TapeImage {
     ) -> Result<Self, String> {
         let mut ops = formats::TreeOps::of_run_as(grammar.lang, source.as_bytes(), nodes, packed)?;
         walk(&mut ops)?;
+        // The index from the writer's record, keyed by the digest the writer took (`AuxFor`): no second pass.
         let aux = formats::AuxFor::new(grammar.lang, source, None, budget);
-        Self::written_16(ops.finish(&aux)?, grammar.lang, source, aux.digest(), budget)
+        Self::written_16(ops.finish(Some(&|t, nodes, taken| aux.make(t, nodes, taken)))?, grammar.lang, source, aux.digest(), budget)
     }
 
     /// `source`'s lines as `terminators` end them (decision 0612): the tape's line index, read where it lies, where

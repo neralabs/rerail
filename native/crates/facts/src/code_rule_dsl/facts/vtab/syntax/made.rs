@@ -16,6 +16,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 mod reads;
 pub use reads::RowReads;
+mod ids;
+pub use ids::{Ids, Numbered};
 
 /// A document's views' counts (decision 0494): its nodes, fielded nodes, siblings after it, places, tokens, spread
 /// nodes (`spread`'s), the token order's places (`tokens`: with a token, one before, one after), `op`'s rows,
@@ -47,28 +49,37 @@ pub(super) fn view_counts(p: &Projected) -> ViewCounts {
 }
 
 /// A batch's views' directory with its search layer's keys (`view_reads::ViewDir`, decision 0353 step 3 on the CPU), in
-/// `block`: `n` rows, each its document's key, `keys` in order; the first rows are written when counted
-/// (`Batch::firsts`), and each document's reads layer on its first read (`Docs::reads`). Its homes are fixed: row
-/// `i`'s tape in home `3i`, its lines in `3i + 1`, its source in `3i + 2`, the 16z cache in `3n` (`ViewDir::cache` is
-/// `3n + 1` once it is made), the codes' directory in `3n + 1` (`ViewDir::codes`: the binary's, decision 0697; its
-/// device address written with the first row the device reads). Beside it, each document's views' counts as the
-/// documents' table gave them (`Given`, `[counts, 1]`, or
+/// `block`: `n` documents, each its key, `keys` in order, each one's row its number in the growth (`numbered`) less
+/// the first's, rows of the numbers between that none of them has with key `NO_DOC`; the first rows are written when
+/// counted (`Batch::firsts`), and each document's reads layer on its first read (`Docs::reads`). Its homes are fixed:
+/// the `i`th document's tape in home `3i`, its lines in `3i + 1`, its source in `3i + 2`, the 16z cache in `3n`
+/// (`ViewDir::cache` is `3n + 1` once it is made), the codes' directory in `3n + 1` (`ViewDir::codes`: the binary's,
+/// decision 0697; its device address written with the first row the device reads). Beside it, each document's views'
+/// counts as the documents' table gave them (`Given`, `[counts, 1]`, or
 /// zeros where none was given). Its offset in the block, and the given counts'.
-pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<ViewCounts>)>, n: usize) -> (usize, usize) {
+pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<ViewCounts>)>, n: usize, ids: &Ids, numbered: &[Arc<Numbered>]) -> (usize, usize) {
     use rerail_clif::view_reads::{ViewDir, ViewHome, ViewRow};
-    let rows: *mut ViewRow = block.alloc_t(n.max(1));
+    // Its rows: the numbers from its first document's to its last (plan "Chunk node numbers").
+    let (first, span) = numbers_spanned(numbered.iter().map(|d| d.number));
+    let rows: *mut ViewRow = block.alloc_t((span as usize).max(1));
     let given: *mut Given = block.alloc_t(n.max(1));
     let homes: *mut ViewHome = block.alloc_t(HOMES * n + 2);
-    // Its documents' keys in row order (`ViewDir::keys`), which a search by key reads alone: all the batch's, in key
-    // order (`Docs::new`, `Docs::grown`).
+    // Its documents' keys in its order (`ViewDir::keys`, `order`'s), which a search by key reads alone: all the batch's,
+    // in key order (`Docs::new`, `Docs::grown`), as its order is.
     let keys: *mut u32 = block.alloc_t(n.max(1));
+    let order: *mut u32 = block.alloc_t(n.max(1));
+    // SAFETY: `span` rows, just allocated in `block`: the numbers none of its documents has.
+    unsafe { write_absent(rows, first, span, numbered.iter().map(|d| d.number)) };
     let dir: *mut ViewDir = block.alloc_t(1);
     let mut k = 0;
     for (key, counts) in docs.take(n) {
-        // SAFETY: row `k` of the rows, the given counts and the keys just allocated in `block`, and its homes.
+        let row = numbered[k].number - first;
+        // SAFETY: its row of the rows, its given counts and its key just allocated in `block`, its homes, and its place
+        // in the order.
         unsafe {
             let h = (HOMES * k) as u32;
-            rows.add(k).write(ViewRow { key, homes: [h, h + 1, h + 2], ..Default::default() });
+            rows.add(row as usize).write(ViewRow { key, homes: [h, h + 1, h + 2], at: k as u32, ..Default::default() });
+            order.add(k).write(row);
             given.add(k).write(counts.map_or([0; COUNTS + 1], |c| {
                 let mut g = [1; COUNTS + 1];
                 // copy: not block data (a document's view counts as given, into its directory row)
@@ -93,9 +104,46 @@ pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<V
     let at = block.offset_of(dir);
     // SAFETY: the directory just allocated in `block`.
     unsafe {
-        dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes: (HOMES * n) as u32 + 2, rows: block.offset_of(rows) as u64, homes: block.offset_of(homes) as u64, nbatch: n as u32, keys: block.offset_of(keys) as u64, codes: (HOMES * n) as u32 + 1, ..Default::default() })
+        dir.write(ViewDir {
+            at: at as u64,
+            ndocs: n as u32,
+            nhomes: (HOMES * n) as u32 + 2,
+            rows: block.offset_of(rows) as u64,
+            homes: block.offset_of(homes) as u64,
+            nbatch: n as u32,
+            keys: block.offset_of(keys) as u64,
+            codes: (HOMES * n) as u32 + 1,
+            pages: ids.table_at() as u64,
+            order: block.offset_of(order) as u64,
+            first,
+            span,
+            ..Default::default()
+        })
     };
     (at, block.offset_of(given))
+}
+
+/// The first of `numbers` and how many numbers from it to the last: a directory's rows (`ViewDir::first`, `span`).
+pub(super) fn numbers_spanned(numbers: impl Iterator<Item = u32>) -> (u32, u32) {
+    let (lo, hi) = numbers.fold((u32::MAX, 0), |(lo, hi), x| (lo.min(x), hi.max(x)));
+    if lo > hi { (0, 0) } else { (lo, hi - lo + 1) }
+}
+
+/// Writes the rows of `rows` (`span` of them, from number `first`) whose numbers none of `held` is: key and place
+/// `NO_DOC`, so a search tried on one finds no document there.
+///
+/// # Safety
+/// `rows` holds `span` rows, written by this caller alone; `held` are numbers from `first` within `span`.
+pub(super) unsafe fn write_absent(rows: *mut rerail_clif::view_reads::ViewRow, first: u32, span: u32, held: impl Iterator<Item = u32>) {
+    use rerail_clif::view_reads::{NO_DOC, ViewRow};
+    let mut is = vec![false; span as usize];
+    for x in held {
+        is[(x - first) as usize] = true;
+    }
+    for (j, _) in is.iter().enumerate().filter(|(_, h)| !**h) {
+        // SAFETY: the caller's.
+        unsafe { rows.add(j).write(ViewRow { key: NO_DOC, at: NO_DOC, ..Default::default() }) };
+    }
 }
 
 /// A directory row's homes (`ViewRow::homes`): its tape's, its lines', its source's.
@@ -119,6 +167,8 @@ pub struct Docs {
     made: AtomicUsize,
     /// The directory's reads layer, each row written on its document's first read through the views (`reads`).
     layer: reads::Layer,
+    /// Each document's number in the growth, and its ids once taken (plan "Chunk node numbers", `Ids`).
+    numbered: Vec<Arc<Numbered>>,
 }
 
 struct Slot {
@@ -222,6 +272,9 @@ pub(super) struct Context {
     /// The store's atoms, where the batch reads the `op` view: each entry's codes' names are interned into its table
     /// (`view_docs::ViewEntry::new`, `ViewDoc::names`). None where it does not, so no name is interned for it.
     pub(super) names: Option<Arc<dyn crate::content_store::AtomTable>>,
+    /// The growth's ids (plan "Chunk node numbers"): shared with the batches it grows into and the tape values
+    /// admitted to them, so an id is the same in each.
+    pub(super) ids: Arc<Ids>,
 }
 
 impl Docs {
@@ -236,10 +289,11 @@ impl Docs {
 
     /// `documents`, sorted by key and distinct, with the views' counts `given` of some, by key.
     pub(super) fn new(documents: Vec<Input>, context: Context, given: &HashMap<u32, ViewCounts>) -> Self {
-        let (dir, given) = directory(&context.block, documents.iter().map(|d| (d.key(), given.get(&d.key()).copied())), documents.len());
+        let numbered: Vec<Arc<Numbered>> = documents.iter().map(|d| context.ids.numbered(d.key())).collect();
+        let (dir, given) = directory(&context.block, documents.iter().map(|d| (d.key(), given.get(&d.key()).copied())), documents.len(), &context.ids, &numbered);
         let slots: Vec<Arc<Slot>> = documents.into_iter().map(|input| Arc::new(Slot { input, made: OnceLock::new() })).collect();
         let layer = reads::Layer::new(slots.len());
-        Self { slots, dir, given, context, made: AtomicUsize::new(0), layer }
+        Self { slots, dir, given, context, made: AtomicUsize::new(0), layer, numbered }
     }
     /// `prior`'s documents and `documents` (sorted by key, none of `prior`'s), in key order: `prior`'s shared, as
     /// made there (decision 0431 §6), `documents` unmade, with the views' counts `given` of some. Each one's index here
@@ -261,9 +315,10 @@ impl Docs {
                 j += 1;
             }
         }
-        let (dir, given) = directory(&context.block, slots.iter().map(|s| s.input.key()).zip(counts), slots.len());
+        let numbered: Vec<Arc<Numbered>> = slots.iter().map(|s| context.ids.numbered(s.input.key())).collect();
+        let (dir, given) = directory(&context.block, slots.iter().map(|s| s.input.key()).zip(counts), slots.len(), &context.ids, &numbered);
         let layer = reads::Layer::new(slots.len());
-        (Self { slots, dir, given, context, made: AtomicUsize::new(0), layer }, at)
+        (Self { slots, dir, given, context, made: AtomicUsize::new(0), layer, numbered }, at)
     }
     /// `documents` (sorted by key, distinct), those `held` holds as they are (key, digest and path) sharing its slots,
     /// as made there (decision 0616): their projections are not made again. Returned with each of `held`'s documents'
@@ -358,9 +413,21 @@ impl Docs {
     }
     /// Document `i`'s key, made or not: its directory row's.
     pub fn key(&self, i: usize) -> u32 {
+        // SAFETY: the directory `new` made in the batch's block, which the context holds; `row(i)` is one of its.
+        unsafe { rerail_clif::view_reads::ViewDir::key_of(self.dir(), self.row(i)) }
+    }
+    /// Document `i`'s row in its directory: its number in the growth less the directory's first (`ViewDir`'s rows,
+    /// the `i`th of its order).
+    pub fn row(&self, i: usize) -> u32 {
         assert!(i < self.slots.len(), "document {i} of {}", self.slots.len());
-        // SAFETY: the directory `new` made in the batch's block, which the context holds; row `i` is one of its.
-        unsafe { rerail_clif::view_reads::ViewDir::key_of(self.dir(), i as u32) }
+        // SAFETY: the directory `new` made in the batch's block, which the context holds; its order written there.
+        unsafe { rerail_clif::view_reads::ViewDir::row_at(self.dir(), i as u32) }
+    }
+    /// The document of row `row` of its directory, by index (`ViewRow::at`), `None` for a row of none.
+    pub fn of_row(&self, row: u32) -> Option<usize> {
+        // SAFETY: as `row`; a row below its span.
+        let at = unsafe { (row < rerail_clif::view_reads::ViewDir::span_of(self.dir())).then(|| rerail_clif::view_reads::ViewDir::at_of(self.dir(), row)) }?;
+        (at != rerail_clif::view_reads::NO_DOC).then_some(at as usize)
     }
     /// Every document's key, in order.
     pub fn keys(&self) -> impl ExactSizeIterator<Item = u32> + '_ {
@@ -393,9 +460,10 @@ impl Docs {
     }
     /// `position`, the document `memo` tried first (the directory's search, `ViewDir::doc_of_key`).
     pub fn position_from(&self, key: u32, memo: u32) -> Option<usize> {
+        let memo = if (memo as usize) < self.slots.len() { self.row(memo as usize) } else { rerail_clif::view_reads::NO_DOC };
         // SAFETY: as `key`.
         let d = unsafe { rerail_clif::view_reads::ViewDir::doc_of_key(self.dir(), key, memo) };
-        (d != rerail_clif::view_reads::NO_DOC).then_some(d as usize)
+        if d == rerail_clif::view_reads::NO_DOC { None } else { self.of_row(d) }
     }
     /// What document `i` is made from: its facts, tape, path and place, built if it is pending (`Pending`, Q332). One
     /// that could not be built fails the batch (`failure`).
@@ -467,6 +535,13 @@ impl Docs {
     }
     /// Document `i`, made if it is not.
     pub(super) fn made(&self, i: usize) -> &MadeDoc {
+        let made = self.made_alone(i);
+        // Its ids, taken when it is first made in the growth (plan "Chunk node numbers"): making order.
+        self.base(i);
+        made
+    }
+    /// Document `i`'s projection, made if it is not, its ids not taken.
+    fn made_alone(&self, i: usize) -> &MadeDoc {
         self.slots[i].made.get_or_init(|| {
             self.made.fetch_add(1, Ordering::Relaxed);
             let made = self.project(i);
@@ -488,6 +563,38 @@ impl Docs {
             }
             made
         })
+    }
+    /// Document `i`'s number in its growth (`Ids`).
+    pub fn number(&self, i: usize) -> u32 {
+        self.numbered[i].number
+    }
+    /// The growth's ids, which every batch of the growth shares.
+    pub fn ids(&self) -> &Arc<Ids> {
+        &self.context.ids
+    }
+    /// Document `i`'s first id in its growth (plan "Chunk node numbers"): its nodes', tokens' and spans' local ids
+    /// (`Projected::locs`), then its source's span and its lines' (`src_line`), from it. Taken when it is first made
+    /// in the growth; `None` where its role's region has no room (the batch fails).
+    pub fn base(&self, i: usize) -> Option<u32> {
+        let d = &self.numbered[i];
+        let base = self.context.ids.base(d, || {
+            let p = &self.made_alone(i).p;
+            p.locs() + p.f().lines.count() as u32 + 1
+        });
+        if base.is_none() {
+            self.fail(format!("{}: its ids pass its role's region of the chunk's ids (plan \"Chunk node numbers\")", self.slots[i].input.path()));
+        }
+        base
+    }
+    /// Document `i`'s later spans (its comments no node is, then its matches: `ids` of them, made with its rows):
+    /// their first id and first local id, taken once in the growth.
+    pub fn later_ids(&self, i: usize, ids: u32) -> Option<(u32, u32)> {
+        self.base(i)?;
+        let later = self.context.ids.later(&self.numbered[i], ids);
+        if later.is_none() {
+            self.fail(format!("{}: its spans pass its role's region of the chunk's ids (plan \"Chunk node numbers\")", self.slots[i].input.path()));
+        }
+        later
     }
     /// Document `i`'s nodes as its projection would number them, by their codes as the `node` view reads them
     /// (`Dialect::code`): `(nodes, each code's nodes)`, read off its index (decision 0656 step 4) with none made.
@@ -718,8 +825,16 @@ impl Firsts<'_> {
     /// The document whose rows hold `row`, `memo` tried first (the directory's search, `ViewDir::doc_of_row`).
     #[inline]
     pub fn doc_of(&self, row: usize, memo: u32) -> usize {
-        // SAFETY: as `at`.
-        unsafe { rerail_clif::view_reads::ViewDir::doc_of_row(self.dir, self.k as u32, row as u32, memo) as usize }
+        use rerail_clif::view_reads::{NO_DOC, ViewDir};
+        // SAFETY: as `at`: the directory's order and rows (the search's answer one of its documents' rows, or 0 for
+        // none).
+        unsafe {
+            let memo = if (memo as usize) < self.n { ViewDir::row_at(self.dir, memo) } else { NO_DOC };
+            if self.n == 0 {
+                return 0;
+            }
+            ViewDir::at_of(self.dir, ViewDir::doc_of_row(self.dir, self.k as u32, row as u32, memo)) as usize
+        }
     }
 }
 
@@ -748,34 +863,40 @@ const INDEXED: usize = 8;
 /// A group's index of one column of one relation (an index in its relation's block, decision 0353): nothing where
 /// the group's rows are in the column's order, else its rows in that order (stable: equal values in row order). A
 /// probe is a binary search. A hash map of a row list a value was most of a made relation's first probes' time.
-/// A made relation's node ids in one group as bits: each document's ids, by the key in their high half, a bit an id
-/// from the document's least (`Group::holds`). Built only where the words are at most 4 bytes a row (`2 * words <=
-/// rows`): a document's rows are a few of its nodes, near each other. Made from the rows read twice where they lie
-/// (each document's range, then its bits), no copy of them: a copy of the ids, sorted, and words up to 16 bytes a row
-/// held 1.5 GB of the heap at the peak of a run on `all` (`import_item`'s and `rf_site`'s groups).
+/// A made relation's node ids in one group as bits (`Group::holds`): the ids grouped by all but their low
+/// `ID_SPLIT` bits (a document and, by definition, a granule's slot; by tape position, a stretch of 2^18 of them),
+/// and within a group a bit an id from its least, as decision 0694's set form keys its bits by slot. Built only
+/// where the words are at most 4 bytes a row, from the rows read where they lie (d2036b8dfa): a sorted copy of the
+/// ids and words up to 16 bytes a row held 1.5 GB of the heap at the peak of a run on `all`.
 pub(super) struct NodeBits {
-    /// Each document's key, its least low half, and its words' start in `words`, by key.
-    docs: Vec<(u32, u32, u32)>,
+    /// Each group's high bits, its least id's low bits, and its words' start in `words`, by group.
+    docs: Vec<(i64, u32, u32)>,
     words: Vec<u64>,
 }
 
+/// The low bits of an id within its `NodeBits` group.
+const SPLIT: u32 = rerail_blocks::packed::ID_SPLIT;
+
 impl NodeBits {
-    /// The bits of rows `0..rows`, row `i`'s id `at(i)`; `None` where an id is negative or the bits outweigh the rows.
+    /// The bits of rows `0..rows`, row `i`'s id `at(i)`, read where they lie: once for each group's span (a group's
+    /// rows mostly lie together, its runs merged by key), once for its bits. `None` where an id is negative or the
+    /// words would be more than 4 bytes a row (`2 * words > rows`): the probe reads the rows.
     fn new(rows: usize, at: impl Fn(usize) -> i64) -> Option<Self> {
-        // Each run of rows of one document: its key, least and most low half (a document's rows mostly lie together).
-        let mut spans: Vec<(u32, u32, u32)> = Vec::new();
+        let low = |v: i64| (v & ((1 << SPLIT) - 1)) as u32;
+        // Each run of rows of one group: its key, least and greatest low bits.
+        let mut spans: Vec<(i64, u32, u32)> = Vec::new();
         for i in 0..rows {
             let v = at(i);
             if v < 0 {
                 return None;
             }
-            let (key, low) = ((v >> 32) as u32, v as u32);
+            let (key, l) = (v >> SPLIT, low(v));
             match spans.last_mut() {
-                Some(s) if s.0 == key => (s.1, s.2) = (s.1.min(low), s.2.max(low)),
-                _ => spans.push((key, low, low)),
+                Some(s) if s.0 == key => (s.1, s.2) = (s.1.min(l), s.2.max(l)),
+                _ => spans.push((key, l, l)),
             }
         }
-        // A document's runs as one, by key.
+        // A group's runs as one, by key.
         spans.sort_unstable_by_key(|s| s.0);
         spans.dedup_by(|b, a| {
             let same = a.0 == b.0;
@@ -795,26 +916,26 @@ impl NodeBits {
         }
         drop(spans);
         let mut words = vec![0u64; n];
-        // The document of the row before: the next row's most often.
+        // The group of the row before: the next row's most often.
         let mut d = 0;
         for i in 0..rows {
             let v = at(i);
-            let key = (v >> 32) as u32;
+            let key = v >> SPLIT;
             if docs[d].0 != key {
                 d = docs.partition_point(|e| e.0 < key);
             }
             let (_, base, start) = docs[d];
-            let at = (v as u32 - base) as usize;
-            words[start as usize + at / 64] |= 1 << (at % 64);
+            let x = (low(v) - base) as usize;
+            words[start as usize + x / 64] |= 1 << (x % 64);
         }
         Some(NodeBits { docs, words })
     }
     fn has(&self, value: i64) -> bool {
-        let key = (value >> 32) as u32;
+        let key = value >> SPLIT;
         let d = self.docs.partition_point(|e| e.0 < key);
         let Some(&(k, base, start)) = self.docs.get(d).filter(|e| e.0 == key) else { return false };
         let end = self.docs.get(d + 1).map_or(self.words.len(), |e| e.2 as usize);
-        let Some(at) = (value as u32).checked_sub(base) else { return false };
+        let Some(at) = ((value & ((1 << SPLIT) - 1)) as u32).checked_sub(base) else { return false };
         let w = start as usize + at as usize / 64;
         debug_assert_eq!(k, key);
         w < end && self.words[w] >> (at % 64) & 1 != 0
@@ -902,16 +1023,18 @@ mod node_bits_tests {
     }
 
     /// A membership by bits answers as the rows do: each document's ids, none of another document's, none outside,
-    /// a document's rows apart from each other (another's between) too.
+    /// a group's rows apart from each other (another's between) too.
     #[test]
     fn bits_hold_exactly_the_rows_ids() {
         let id = |doc: i64, low: i64| doc << 32 | low;
-        let rows = [id(9, 5), id(7, 1000), id(7, 1003), id(7, 1050), id(9, 70), id(7, 1003), id(7, 1063), id(9, 6), id(9, 40), id(7, 1001)];
+        // By definition: a granule's slot above 18 index bits (two slots of document 7).
+        let def = |doc: i64, slot: i64, index: i64| doc << 32 | slot << 18 | index;
+        let rows = [id(9, 5), id(7, 1000), id(7, 1003), def(7, 3, 4), id(7, 1050), id(9, 70), id(7, 1003), def(7, 3, 9), def(7, 5, 0), id(7, 1001), id(9, 6)];
         let bits = bits(&rows).expect("dense ids take bits");
         for &v in &rows {
             assert!(bits.has(v), "{v:#x}");
         }
-        for v in [id(7, 999), id(7, 1002), id(7, 1064), id(7, 1 << 20), id(8, 1000), id(9, 4), id(9, 71), id(10, 5)] {
+        for v in [id(7, 999), id(7, 1002), id(7, 1051), id(7, 1 << 20), id(8, 1000), id(9, 4), id(9, 71), id(10, 5), def(7, 3, 5), def(7, 4, 4), def(7, 5, 1), def(7, 6, 0)] {
             assert!(!bits.has(v), "{v:#x}");
         }
     }
@@ -919,7 +1042,7 @@ mod node_bits_tests {
     /// Ids whose words would be past 4 bytes a row, or negative, take no bits: the probe reads the rows.
     #[test]
     fn sparse_or_negative_ids_take_no_bits() {
-        assert!(bits(&[1i64 << 32, (1i64 << 32) | 1 << 20]).is_none());
+        assert!(bits(&[1i64 << 32, (1i64 << 32) | (1 << 17)]).is_none());
         assert!(bits(&[-1i64]).is_none());
         // Two rows a word is 4 bytes a row: bits; three words for four rows is 6: none.
         let id = |doc: i64, low: i64| doc << 32 | low;
@@ -1251,7 +1374,7 @@ impl ByDocument {
     fn document(self, value: i64) -> Option<u32> {
         match self {
             Self::Key(_) => u32::try_from(value).ok(),
-            Self::Id(_) | Self::Host(_) => u32::try_from(value >> 32).ok().filter(|_| value >= 0),
+            Self::Id(_) | Self::Host(_) => rerail_blocks::located::Located::key_of(value),
             Self::No => None,
         }
     }
@@ -1429,6 +1552,7 @@ pub(super) enum ColKind {
     U32,
 }
 
+
 impl Batch {
     /// Bounds of what a column of `kind` of the batch's rows holds, its documents made or not (`Source::col_bounds`).
     /// A key: the least and greatest of its documents' keys and their files' (a program's document and nodes are its
@@ -1442,12 +1566,13 @@ impl Batch {
         match kind {
             ColKind::Key => keys,
             ColKind::Node if keys[0] > keys[1] => keys,
-            ColKind::Node => [keys[0] << 32, (keys[1] << 32) | i64::from(u32::MAX)],
+            ColKind::Node => rerail_blocks::located::Located::range(keys[0], keys[1]),
             ColKind::NodeOrNone if keys[0] > keys[1] => keys,
-            ColKind::NodeOrNone => [-1, (keys[1] << 32) | i64::from(u32::MAX)],
+            ColKind::NodeOrNone => [-1, rerail_blocks::located::Located::range(keys[0], keys[1])[1]],
             ColKind::Atom | ColKind::U32 => [0, i64::from(u32::MAX)],
         }
     }
+
 
     /// The rows of `want`'s documents made: those not made yet, as one group (decision 0494), which each relation goes
     /// on with in its block relation. A group is made unlocked (its prefilter and matchers run on the pool, where a
@@ -1985,7 +2110,7 @@ impl MadeRows {
                     .map(|(c, name)| {
                         pairs.resize(0, [0, 0]);
                         for &row in &rows {
-                            pairs.push([Source::value(r.as_ref(), row, c), Source::value(r.as_ref(), row, 0) >> 32]);
+                            pairs.push([Source::value(r.as_ref(), row, c), rerail_blocks::located::Located::key_wide(Source::value(r.as_ref(), row, 0))]);
                         }
                         pairs.sort_unstable();
                         let (mut ndv, mut sq, mut sqd) = (0i64, 0i64, 0i64);
@@ -2584,18 +2709,13 @@ impl Source for MadeRows {
             None => self.template().keys_rows(_column),
         }
     }
-    /// A chunk's tests of nodes (t57 E6) as `keys_rows` answers: the relation's once made, else its template's (a
-    /// view of the tape reads a node's document in place, makes no document's rows).
-    fn reads_tests_by(&self, by: usize) -> bool {
+    /// A batch of rows by their own id (decision 0706 E1; a fused row program's tests of the nodes it bound, t57
+    /// E6) as `keys_rows` answers: the relation's once made, else its template's (a view of the tape reads a node's
+    /// document in place, makes no document's rows).
+    fn read_own_batch(&self, column: usize, values: &[i64], reads: &[usize], out: &mut [i64], found: &mut [u8], cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor) -> bool {
         match self.done() {
-            Some(t) => t.reads_tests_by(by),
-            None => self.template().reads_tests_by(by),
-        }
-    }
-    fn holds_each(&self, by: usize, ids: &[i64], col: usize, want: Option<i64>, cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor, out: &mut [i64]) -> bool {
-        match self.done() {
-            Some(t) => t.holds_each(by, ids, col, want, cursor, out),
-            None => self.template().holds_each(by, ids, col, want, cursor, out),
+            Some(t) => t.read_own_batch(column, values, reads, out, found, cursor),
+            None => self.template().read_own_batch(column, values, reads, out, found, cursor),
         }
     }
     /// A key column's row. `keys_rows` answers from the template before the rows are made, and a key's values are one

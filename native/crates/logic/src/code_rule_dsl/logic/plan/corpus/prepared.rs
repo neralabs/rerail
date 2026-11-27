@@ -35,9 +35,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// The pointer's schema: bumped when its meaning changes (105: the programs as their text, decision 0155; 106: the
-/// decisions preparing made, decision 0269; 107: the memo's strata's leaves, each set of them once). It names the
-/// shipped pointer (`shipped_key`).
-const POINTER: u32 = 108;
+/// decisions preparing made, decision 0269; 107: the memo's strata's leaves, each set of them once; 108: a relation's columns in one row; 109: the views the split
+/// covers, decision 0708). It names the shipped pointer (`shipped_key`).
+const POINTER: u32 = 109;
 
 /// The pointer's plan: the engine build, the grammar version and `key` (the program's texts, the dialect and the
 /// run's additions).
@@ -90,6 +90,7 @@ pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
         ("prepared_split", &["ok:int"]),
         ("prepared_file_local", &["k:int", "rel:sym"]),
         ("prepared_constant", &["k:int", "rel:sym"]),
+        ("prepared_view", &["k:int", "rel:sym"]),
         // A relation's columns, in order, comma-separated (empty for none): a row a relation.
         ("prepared_location", &["rel:sym", "cols:sym"]),
         ("prepared_same_doc", &["rel:sym", "cols:sym"]),
@@ -206,6 +207,9 @@ fn rest_of(prepared: &Prepared) -> Facts {
     }
     for (k, rel) in prepared.split.constants.iter().enumerate() {
         row("prepared_constant", vec![n(k), s(rel)]);
+    }
+    for (k, rel) in prepared.split.views.iter().enumerate() {
+        row("prepared_view", vec![n(k), s(rel)]);
     }
     for (which, map) in [("prepared_location", &prepared.split.locations), ("prepared_same_doc", &prepared.split.same_doc)] {
         for (rel, cols) in map {
@@ -358,7 +362,7 @@ fn gather(rows: &Rows<'_>) -> Result<Gathered, String> {
             "prepared_op" => g.ops.push((r.int(0)?, r.int(1)?)),
             "prepared_set_kind" => g.set_kinds.entry(r.int(0)?).or_default().push((r.int(1)?, r.int(2)?)),
             "prepared_set" => g.sets.push((r.int(0)?, r.text(1)?)),
-            "prepared_located_rel" | "prepared_demanded" | "prepared_pushed" | "prepared_factorized" | "prepared_marker" | "prepared_file_local" | "prepared_constant" => {
+            "prepared_located_rel" | "prepared_demanded" | "prepared_pushed" | "prepared_factorized" | "prepared_marker" | "prepared_file_local" | "prepared_constant" | "prepared_view" => {
                 g.lists.entry(rel.to_owned()).or_default().push((r.int(0)?, r.text(1)?));
             }
             // Captured names (decision 0107): none in a program kept before.
@@ -469,8 +473,8 @@ fn prepared_from(
         true => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the split's parts, of the lowered program and what the split found".into());
             let set = |rels: Vec<String>| rels.into_iter().collect::<std::collections::BTreeSet<String>>();
-            let (local, constants) = (set(list("prepared_file_local")), set(list("prepared_constant")));
-            crate::code_rule_dsl::typing::file_local::assemble(version.clone(), local, constants, std::mem::take(&mut g.locations), std::mem::take(&mut g.same_doc))?
+            let (local, constants, views) = (set(list("prepared_file_local")), set(list("prepared_constant")), set(list("prepared_view")));
+            crate::code_rule_dsl::typing::file_local::assemble(version.clone(), local, constants, views, std::mem::take(&mut g.locations), std::mem::take(&mut g.same_doc))?
         }
         false => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "split the lowered program".into());
@@ -695,6 +699,22 @@ pub(super) fn documents(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Vec
         }
     }
     program_text::sources(store, &digests)
+}
+
+/// The sources of the program `key` for the run's manifest, where the store does not hold its text yet: this process
+/// queued its write (`record`), which stores them. Looked up in the run's record (decision 0306), behind that write
+/// (FIFO), and named there (`Apply::name`): the text's source and its programs'. A run that read the program from
+/// memory before the write was applied (an asked phase's round 2, behind round 1's) named neither, and its manifest
+/// differed from the next process's, which reads them from the store.
+pub(super) fn named_late(store: &ContentStore, text: String, key: &[u8; 32]) {
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
+        let (text, key): (String, [u8; 32]) = crate::content_store::record::codec::from_body("the prepared program's sources", body)?;
+        let text_source = cx.store.source_by_hash(crate::content_store::HashKey::sha256(text.as_bytes()))?;
+        let documents = documents(cx.store, &key)?;
+        cx.name(text_source.into_iter().chain(documents));
+        Ok(())
+    }
+    store.record("the prepared program's sources", Vec::new(), &(text, *key), None, apply);
 }
 
 /// What the write of the program `key` is queued under (`write_back`, decision 0102).

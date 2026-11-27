@@ -247,14 +247,18 @@ impl ProgramPass for Hide {
                 // A kind read off a guest's node is its grammar's (decision 0222): `kind(f, k), fn_scope(k)` over a view's
                 // node reads the kind set named in the view's grammar, and `k = "arrow_function"` names that grammar's
                 // kind. Unqualified, both are the run language's, and a library over another grammar (tsx/names.rerail
-                // read over a Vue component's view) finds none of its kinds.
+                // read over a Vue component's view) finds none of its kinds. Only in a grammar whose kinds are named by a
+                // dialect's label: a name qualified by anything else is not `qualified`, and was qualified again each
+                // round, without end (Blade's `compiled-view` before `kinds_label` knew it, a `k != "comment"`).
                 let kind_of: BTreeMap<Slot, String> = rule
                     .body
                     .iter()
                     .filter_map(|(_, l)| {
                         let a = l.positive()?;
                         match (a.rel.as_str(), a.args.as_slice()) {
-                            ("kind", [S::Var(x), S::Var(k)]) | ("node", [_, S::Var(x), S::Var(k), _, _]) => grammar_of(*x).map(|g| (*k, g)),
+                            ("kind", [S::Var(x), S::Var(k)]) | ("node", [_, S::Var(x), S::Var(k), _, _]) => {
+                                grammar_of(*x).filter(|g| crate::code_rule_dsl::language::dialect_by_label(dialect_label(g)).is_some()).map(|g| (*k, g))
+                            }
                             _ => None,
                         }
                     })
@@ -440,7 +444,7 @@ impl ProgramPass for Hide {
         let reached: BTreeSet<String> = delta.made.iter().cloned().collect();
         drop(delta);
         let bound = self.bound;
-        let bound_of = |doc_column: bool| if doc_column { i64::from(bound) } else { i64::from(bound) << 32 };
+        let bound_of = |doc_column: bool| if doc_column { i64::from(bound) } else { rerail_blocks::located::Located::new(bound, 0).0 };
         let reaches = reaching(&rules, &seeds);
         // What `parsed` asks for (`rr_embed_req`, and the contexts `rr_ctx<k>` only it reads) is not bounded: asking is
         // not seeing. A string in an annotation is in a document not shown, and its rule's demand is made of inputs
@@ -536,6 +540,13 @@ impl ProgramPass for Hide {
             let cols: Vec<(&str, &str)> = h.vars.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
             prog.b.fields().declare(&h.name, &cols);
         }
+        // A copy is its relation with a column seeded: it keeps the relation's qualifiers. Without them a `no_inline`
+        // relation's copy was inlined: the findings' `rr_unplaced_through`, read through an ESLint directive's copy,
+        // became a part of the finding's rule that `ProjectExistentials` moved into a relation of documents reading
+        // the finding's node in the cross part (decision 0677, batch 8).
+        let quals = crate::code_rule_dsl::logic::program_image::fields::ProgramFields::qualifiers(&*input);
+        let carried_quals: Vec<(String, String)> = specialized.iter().flat_map(|(copy, (orig, _))| quals.get(orig).into_iter().flatten().map(|q| (copy.clone(), q.clone()))).collect();
+        prog.b.fields().add_qualifiers(&carried_quals);
         // The version: every rule copied from its source with its edits, then the helpers, then the fields.
         let b = w.derive()?;
         b.fields().state_fields_of(&prog.b);
@@ -828,7 +839,7 @@ fn write_rule(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, v
 /// Hiding's last stage for one rule: its kind and field names qualified, its wildcards named, and its bounds
 /// (`bound`), by its facts (`analyse`; none where it is not reached).
 fn bounded(v: &Version, rule: &W, facts: &Facts, base_locations: &HashMap<String, Vector<usize>>, bound: u32) -> Final {
-    let bound_of = |doc_column: bool| if doc_column { i64::from(bound) } else { i64::from(bound) << 32 };
+    let bound_of = |doc_column: bool| if doc_column { i64::from(bound) } else { rerail_blocks::located::Located::new(bound, 0).0 };
     let src = v.rule(rule.src).expect("a rule of the input");
     let name = |s: Slot| v.text(src.var(s)).to_owned();
     let mut out = Final::default();
@@ -1107,10 +1118,13 @@ fn shown_columns(rules: &[W], outputs: &[String]) -> HashMap<String, BTreeSet<us
         shown.insert(o.clone(), (0..arity).collect());
         todo.push(o.as_str());
     }
-    // A finding's place: the column its `rr_unplaced` rule reads a node of (decision 0431 R9).
+    // A finding's place: the column its `rr_unplaced` rule tests is placed (decision 0431 R9), by the nodes no file
+    // places (`rr_unplaced_node`, `rr_unplaced_through`).
+    use crate::code_rule_dsl::logic::rr::{UNPLACED_NODE, UNPLACED_THROUGH};
+    let tests = |rel: &str| rel == UNPLACED_NODE || rel == UNPLACED_THROUGH;
     for w in rules.iter().filter(|w| w.head == crate::code_rule_dsl::logic::rr::UNPLACED) {
-        let placed: BTreeSet<Slot> = w.body.iter().filter_map(|(_, l)| l.positive()).filter(|a| a.rel == "node").filter_map(|a| a.args.get(1).and_then(S::var)).collect();
-        for a in w.body.iter().filter_map(|(_, l)| l.positive()).filter(|a| a.rel != "node") {
+        let placed: BTreeSet<Slot> = w.body.iter().filter_map(|(_, l)| l.positive()).filter(|a| tests(&a.rel)).filter_map(|a| a.args.first().and_then(S::var)).collect();
+        for a in w.body.iter().filter_map(|(_, l)| l.positive()).filter(|a| !tests(&a.rel)) {
             let cols: Vec<usize> = a.args.iter().enumerate().filter(|(_, t)| t.var().is_some_and(|x| placed.contains(&x))).map(|(c, _)| c).collect();
             if !cols.is_empty() {
                 shown.entry(a.rel.clone()).or_default().extend(cols);

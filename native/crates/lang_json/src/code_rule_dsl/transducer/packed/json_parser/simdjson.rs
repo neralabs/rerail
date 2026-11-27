@@ -69,7 +69,8 @@ pub fn encode_with<'s>(route: Option<rerail_simdjson::Kernel>, grammar: &Grammar
     let src = source.as_bytes();
     let walk = |jsonc: bool| -> Result<(f16::Writer, Option<[u8; 32]>, Option<String>), Refusal> {
         // About a node for every 8 bytes: the writer grows past it.
-        // The source's digest where its reader took it: the writer takes none of its own.
+        // The source's digest where its reader took it: the writer takes none of its own. Its tape is written in the
+        // run's rooms (0353 row 17).
         let doc = f16::Document { lang, source: src, tag, z, blocks: true, nodes: src.len() / 8 + 16, sha256: source.sha256 };
         let mut w = f16::Writer::placing(crate::code_rule_dsl::tape::placed::rooms());
         w.begin(&doc, crate::code_rule_dsl::lines::terminators(GrammarDialect::Json));
@@ -127,7 +128,7 @@ pub fn encode_with<'s>(route: Option<rerail_simdjson::Kernel>, grammar: &Grammar
         return Ok(Err(why));
     }
     let aux = crate::code_rule_dsl::tape::formats::AuxFor::new(GrammarDialect::Json, source, digest, budget);
-    Ok(w.finish_with(Some(&|t, nodes| aux.make(t, nodes))).and_then(|f| TapeImage::written_16(f, GrammarDialect::Json, source, aux.digest(), budget)))
+    Ok(w.finish_laid(Some(&|t, nodes, taken| aux.make(t, nodes, taken))).and_then(|f| TapeImage::written_16(f, GrammarDialect::Json, source, aux.digest(), budget)))
 }
 
 /// The code of a node of kind `kind` and field `field` (`in_value`: a member of `_value`): a comment is an extra.

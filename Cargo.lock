@@ -3280,6 +3280,9 @@ name = "rerail-bitlex"
 version = "0.1.0"
 dependencies = [
  "bitlex",
+ "foldhash",
+ "libc",
+ "rayon",
  "rerail-bitlex",
  "rerail-blocks",
  "rerail-compiler",
@@ -5707,18 +5710,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-python-aot"
+version = "0.1.0"
+dependencies = [
+ "rerail-python-aot",
+ "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-python-lean"
 version = "0.1.0"
 dependencies = [
+ "rerail-python-aot",
  "rerail-python-lean",
+ "rerail-python-parser",
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
 ]
 
 [[package]]
+name = "rerail-python-parser"
+version = "0.1.0"
+dependencies = [
+ "bitlex",
+ "rerail-bitlex",
+ "rerail-compiler",
+ "rerail-cpu-block",
+ "rerail-cpu-stream",
+ "rerail-python-aot",
+ "rerail-python-lean",
+ "rerail-python-parser",
+ "rerail-rir",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-reads"
 version = "0.1.0"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "rerail-registry"
@@ -6366,6 +6399,7 @@ dependencies = [
  "rerail-atoms",
  "rerail-blocks",
  "rerail-compiler",
+ "rerail-context",
  "rerail-facts",
  "rerail-lang",
  "rerail-logic-core",

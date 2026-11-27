@@ -85,6 +85,10 @@ pub const fn key(kind: u16, field: u16, flags: u8) -> u32 {
     (kind as u32 | (field as u32) << KIND_BITS) | (flags as u32) << 16
 }
 
+/// A key's first class bit, above its flags: bit `CLASS_SHIFT + j` puts the node in its parser's supertype `j`, which
+/// the parser's own numbering reads (decision 0698; tier 2 as Rust's `SUPERS`).
+pub const CLASS_SHIFT: u32 = 19;
+
 /// A source's SHA-256 (not in the header since format 12; the engine keeps it in memory).
 pub fn digest(src: &[u8]) -> [u8; 32] {
     use sha2::{Digest, Sha256};
@@ -1564,16 +1568,27 @@ impl<L: Layout> Writer<L> {
         self.wide_from = if self.marks.is_empty() { 0x10000 } else { 0 };
     }
 
+    /// Each code's key given to `f` before it is numbered: a parser that holds a node's slot in the bits from
+    /// `CLASS_SHIFT` while it parses numbers its node by its classes, from its slot and kind (the interpreter's code
+    /// table, decision 0698). Before the first commit: format 16's nodes are numbered as they are committed.
+    pub fn map_code_keys(&mut self, f: fn(u32) -> u32) {
+        assert_eq!(self.coded, 0, "code keys mapped after a commit");
+        if let Ok(s) = &mut self.sixteen {
+            let number = s.number.clone();
+            s.number = std::sync::Arc::new(move |key| number(f(key)));
+        }
+    }
+
     /// The tape in format 16 or 16z and its presence, where the writer writes it (`to`; decision 0434 §2): the nodes
     /// not yet passed on given to the ops, then their `finish`. `Redo` where the writer's widths did not keep every
     /// size and end exactly; `Ok(Err)` where the writer writes no tape, or the nodes are not a format 16 tape (a code
     /// the language's table lacks, an edit before a commit, a node past format 16's bounds).
     pub fn finish_16(&mut self) -> Result<Result<f16::Finished, String>, Redo> {
-        self.finish_16_with(None)
+        self.finish_16_laid(None)
     }
 
-    /// `finish_16`, the tape's auxiliary index made by `aux` and laid where the tape lies (`f16::Writer::finish_with`).
-    pub fn finish_16_with(&mut self, aux: Option<f16::AuxMaker<'_>>) -> Result<Result<f16::Finished, String>, Redo> {
+    /// `finish_16`, the tape's auxiliary index laid in its home where `lay` builds one (`f16::ops::Writer::finish_laid`).
+    pub fn finish_16_laid(&mut self, lay: Option<f16::LayAux<'_>>) -> Result<Result<f16::Finished, String>, Redo> {
         debug_assert!(self.chains.is_empty(), "a chain not ended");
         self.commit();
         let w = self.layout.widths();
@@ -1599,7 +1614,7 @@ impl<L: Layout> Writer<L> {
             return Ok(Err(format!("node {node} read after its commit")));
         }
         s.close_to(self.n);
-        Ok(s.w.finish_with(aux))
+        Ok(s.w.finish_laid(lay))
     }
 }
 

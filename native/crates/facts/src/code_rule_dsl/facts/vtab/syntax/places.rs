@@ -308,7 +308,7 @@ impl Source for Places {
         let mut all = columns.to_vec();
         all.push(column);
         let k = columns.len();
-        let docs: BTreeSet<u32> = spans.iter().map(|&s| (s >> 32) as u32).collect();
+        let docs: BTreeSet<u32> = spans.iter().map(|&s| rerail_blocks::located::Located(s).key()).collect();
         if let Some(rows) = self.spans.rows_of_documents(&docs) {
             let mut row = vec![0; all.len()];
             for r in rows {
@@ -408,6 +408,19 @@ impl Source for Places {
         }
         true
     }
+    /// By a row's id (decision 0706 E1): a node's or a position's place is the view's batch read; a span's is probed
+    /// as one row (`found` 2).
+    fn read_own_batch(&self, column: usize, values: &[i64], reads: &[usize], out: &mut [i64], found: &mut [u8], cursor: &mut super::super::ProbeCursor) -> bool {
+        if column != 0 || !self.view.read_own_batch(column, values, reads, out, found, cursor) {
+            return false;
+        }
+        for (f, &v) in found.iter_mut().zip(values) {
+            if is_span(v) {
+                *f = 2;
+            }
+        }
+        true
+    }
     fn made_on_lookup(&self) -> bool {
         self.spans.made_on_lookup()
     }
@@ -462,7 +475,7 @@ impl Pairs {
     }
     /// A row of `id` (the first column: its document is the high half) and `value`.
     fn add(&mut self, id: i64, value: i64) {
-        self.0.push([value, id >> 32]);
+        self.0.push([value, rerail_blocks::located::Located::key_wide(id)]);
     }
     /// `(rows, distinct values, the sum of their postings' squares, that sum within each document)`.
     fn measure(mut self) -> (i64, i64, i64, i64) {

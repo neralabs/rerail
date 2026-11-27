@@ -1,20 +1,33 @@
 // The phase `tsx_names` (decision 0083): TypeScript and JavaScript module resolution across the workspace's files, run
 // over the same files as the program that reads it, in its language and dialect (a phase naming no `.language` takes
 // its reader's). It hands on symbols alone (decision 0665): a per-file rule reading them stays per-file.
+//
+// It is asked (decision 0705): a module's exports are resolved only where a file asks for them. Each file asks for
+// each name it imports of a workspace module (`tx_ask`: an import's name, or a member of a namespace import), the
+// cross part follows each ask through the modules' re-exports and `export *` (`fwd`, `star_of`) and sends it to the
+// file of each module it reaches (`ask_in`), and that file answers it in the next round from its own export
+// statements (`ans_def`). Round 2 finds no new ask, so a cold run takes two rounds, and a run from its last run's asks
+// one.
 //   target_at(p, spec, t)  specifier spec in the file at path p names t: a workspace document's module, or a package
-//   exports(m, x, q)       module m exports name x, which is symbol q, followed through re-exports
+//   asked_at(p, k)         the file at path p asks for k = t#x: name x of its target t, a workspace module
+//   resolved(k, q)         asked k is symbol q, followed through re-exports
 //   module(m)              m is a workspace document's module (a target that is none is a package)
-// tsx/names.rerail reads them as `tsx_names__target_at`, `tsx_names__exports` and `tsx_names__module`.
+// tsx/names.rerail reads them as `tsx_names__target_at`, `tsx_names__asked_at`, `tsx_names__resolved` and
+// `tsx_names__module`.
 
 #include "core.rerail"
 #include "tsx/exports.rerail"
 
 .phase tsx_names
-.export target_at, exports, module
+// Keyed in a reader's memo (decision 0705): a file's targets and asks at its path, naming each target in column 2 and
+// each ask in column 1; each target's module by the target, and each ask's answer by the ask.
+.rounds ask_in
+.export ask_in by_path, target_at by_path 2, asks_at as asked_at by_path 1, resolved by_key, module by_key
 
 // target(d, spec, t): specifier spec in document d names t: a workspace document's module, or a package name.
 // Resolution, in the order TypeScript tries it:
-//   "./a" or "../a"   relative to the importing file's directory, then extensions and index files (resolve_base)
+//   "./a" or "../a"   relative to the importing file's directory, then extensions and index files (resolve_base);
+//                     "./a.js" is a.ts's output, and names a.ts
 //   "@/lib/x"         a tsconfig `paths` pattern ("@/*": ["src/*"]) rewrites it to a path under the tsconfig dir
 //   "react", "@a/b"   anything else is a package; the target is the package specifier itself, not its files
 // So target(d, "./util", "src/util") and target(d, "react", "react").
@@ -42,27 +55,62 @@ resolve_base(b, m) :- doc(d, f, _), ts_module(d, m), ts_ext(ext), k = strlen(f) 
 .decl ts_ext(e: symbol)
 ts_ext(""). ts_ext(".ts"). ts_ext(".tsx"). ts_ext(".js"). ts_ext(".jsx"). ts_ext(".mts").
 ts_ext("/index.ts"). ts_ext("/index.tsx"). ts_ext("/index.js").
-// exports(m, x, q): module m exports x, which is symbol q.
-// Three ways a name gets exported, one rule each:
+// TypeScript's ESM resolution (`node16`, `nodenext`, `bundler`): a specifier spells the file's output, so "./a.js"
+// names a.ts (or a.tsx, a.d.ts), "./a.jsx" a.tsx, "./a.mjs" a.mts, "./a.cjs" a.cts. Read backwards as above: b is the
+// file's path with its TypeScript ending replaced by the JavaScript one.
+resolve_base(b, m) :- doc(d, f, _), ts_module(d, m), js_spelled(js, ts), k = strlen(f) - strlen(ts), k >= 0,
+    stem = substr(f, 0, k), f = cat(stem, ts), b = cat(stem, js).
+.decl js_spelled(js: symbol, ts: symbol)
+js_spelled(".js", ".ts"). js_spelled(".js", ".tsx"). js_spelled(".js", ".d.ts"). js_spelled(".jsx", ".tsx").
+js_spelled(".mjs", ".mts"). js_spelled(".mjs", ".d.mts"). js_spelled(".cjs", ".cts"). js_spelled(".cjs", ".d.cts").
+// tx_ask(d, t, x): document d may name x of its target t: an import of x (a specifier's name, or "default"), or a
+// member x of a namespace import's name (`import * as RR from "m"; RR.x`: any member chain of the file spelled so, a
+// superset of tsx/names' `ns_target`, which follows the name's scope).
+.decl tx_ask(d: number, t: symbol, x: symbol)
+tx_ask(d, t, x) :- import_binding(sp, _, s, x), x != "*", docof(sp, d), target(d, s, t).
+tx_ask(d, t, x) :- import_binding(ns, l, s, "*"), docof(ns, d), target(d, s, t), kind(n, k),
+    (k = "member_expression" ; k = "nested_identifier"), docof(n, d), field(n, "object", o), text(o, l),
+    field(n, "property", r), text(r, x).
+// asks_at(p, k): the file at p asks for k = t#x of a workspace module t. A package is asked of no file (tsx/names
+// names a package's symbol by its target alone), so its names are no ask.
+.decl asks_at(p: symbol, k: symbol)
+asks_at(p, @qname(t, x)) :- tx_ask(d, t, x), module(t), doc(d, p, _).
+// asked(m, x): workspace module m is asked for x, by a file or through a re-export of a module asked. A package is
+// asked of no file: tsx/names names its exports by the package.
+.decl asked(m: symbol, x: symbol) cross_file
+asked(t, x) :- tx_ask(_, t, x), module(t).
+asked(t, y) :- asked(m, x), fwd(m, x, t, y), module(t).
+// `export *` never re-exports `default` (ECMAScript rule).
+asked(t, x) :- asked(m, x), star_of(m, t), x != "default", module(t).
+// ask_in(p, x): the file at path p, module m's, is asked for x. The rounds hand it back as tsx_names__ask_in.
+.decl ask_in(p: symbol, x: symbol)
+ask_in(p, x) :- asked(m, x), ts_module(d, m), doc(d, p, _).
+.decl tsx_names__ask_in(p: symbol, x: symbol)
+// fwd(m, x, t, y): module m re-exports its target t's y as x (`export { y as x } from "s"`); star_of(m, t): m has
+// `export * from "s"`, which names t. Each file's own, made whatever is asked.
+.decl fwd(m: symbol, x: symbol, t: symbol, y: symbol)
+fwd(m, x, t, y) :- kind(e, "export_statement"), docof(e, d), ts_module(d, m), export_from(e, s, y, x), target(d, s, t).
+.decl star_of(m: symbol, t: symbol)
+star_of(m, t) :- kind(e, "export_statement"), docof(e, d), ts_module(d, m), star_export(e, s), target(d, s, t).
+// ans_def(m, x): module m's file, asked for x, exports a declaration of its own named x (`export function x`,
+// `export const x`, `export default`, `export { x }`): symbol m#x.
+.decl ans_def(m: symbol, x: symbol)
+ans_def(m, x) :- doc(d, p, _), tsx_names__ask_in(p, x), ts_module(d, m), kind(e, "export_statement"), docof(e, d),
+    exported_decl(e, x).
+// exports(m, x, q): asked module m exports x, which is symbol q. Three ways a name gets exported, one rule each:
 //   export function f() {} / export const x = 1 / export default …  -> q is m's own symbol "m#f"
-//   export { y as x } from "./other"                               -> q is whatever ./other's y is
+//   export { y as x } from "./other"                               -> q is whatever ./other's y is (a package's: its name)
 //   export * from "./other"                                        -> every name ./other exports, except default
 // The last two recurse through exports, so a chain of barrel files (index.ts re-exporting index.ts …) resolves to
 // the module that really defines the name.
-.decl exports(m: symbol, x: symbol, q: symbol)
-exports(m, x, @qname(m, x)) :- kind(e, "export_statement"), docof(e, d), ts_module(d, m), exported_decl(e, x).
-exports(m, x, q) :- kind(e, "export_statement"), docof(e, d), ts_module(d, m), export_from(e, s, y, x),
-    target(d, s, t), symbol(t, y, q).
-// `export *` never re-exports `default` (ECMAScript rule), hence x != "default".
-exports(m, x, q) :- kind(e, "export_statement"), docof(e, d), ts_module(d, m), star_export(e, s),
-    target(d, s, t), exports(t, x, q), x != "default".
-// symbol(t, x, q): name x of resolved target t is symbol q: a workspace module's export, else (a package) its name.
-// Only re-exported names are asked here (`exports` reads `symbol` for those alone); tsx/names.rerail asks the rest.
-.decl symbol(t: symbol, x: symbol, q: symbol)
-symbol(t, x, q) :- exports(t, x, q).
-symbol(t, y, @qname(t, y)) :- reexported(t, y), !module(t).
-.decl reexported(t: symbol, y: symbol)
-reexported(t, y) :- kind(e, "export_statement"), docof(e, d), export_from(e, s, y, _), target(d, s, t).
+.decl exports(m: symbol, x: symbol, q: symbol) cross_file
+exports(m, x, @qname(m, x)) :- ans_def(m, x).
+exports(m, x, q) :- asked(m, x), fwd(m, x, t, y), exports(t, y, q).
+exports(m, x, @qname(t, y)) :- asked(m, x), fwd(m, x, t, y), !module(t).
+exports(m, x, q) :- asked(m, x), star_of(m, t), exports(t, x, q), x != "default".
+// resolved(k, q): what each ask k = t#x denotes.
+.decl resolved(k: symbol, q: symbol)
+resolved(@qname(t, x), q) :- exports(t, x, q).
 
 .decl target_at(p: symbol, spec: symbol, t: symbol)
 target_at(p, s, t) :- target(d, s, t), doc(d, p, _).

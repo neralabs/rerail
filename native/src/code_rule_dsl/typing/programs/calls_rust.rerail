@@ -9,6 +9,15 @@
 // methods, and enum variants. A call's answer is three-valued: `call_open`, else the definitions `call_target` names
 // (none: no edge, such as `std::mem::swap` or a method of `Vec`).
 // Its cross-file part is one fixpoint over every loaded document, as any program's is (decision 0065).
+//
+// Keyed across files by symbol and term (decision 0677): no node is held or read in the cross-file part. An entity
+// and an item scope are named by their symbol (`rs_ss`): a module by its qualified name (`crate.net`), an item by its
+// scope's symbol and its name (`crate.net::h`, `crate::Point`), an impl by its scope's and its place among the
+// scope's impls (`crate::impl#1`), a block by its scope's and its place relative to that scope's start. Any other
+// node the cross-file part reasons about (a path, a call, a receiver, a type) is named by its term (`rs_tm`): its
+// nearest scope's symbol, its place relative to that scope's start, its length, and how many of its ancestors span
+// it too. Each file states its facts over symbols and terms; the cross-file part resolves over them alone; the
+// outputs are keyed by them.
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
@@ -28,10 +37,52 @@ fnk("function_item"). fnk("closure_expression").
 fdef("function_item").
 .decl implk(kind: symbol)
 implk("impl_item"). implk("trait_item").
+.decl itemk(kind: symbol)
+itemk("function_item"). itemk("struct_item"). itemk("enum_item"). itemk("trait_item"). itemk("mod_item").
+// The kinds of a type an expression has: a crate struct or enum.
+.decl tyk(k: symbol)
+tyk("struct"). tyk("enum").
 
 .decl kind(n: node, k: symbol)
 .decl nm(n: node, x: symbol)
 nm(n, x) :- field(n, "name", i), text(i, x).
+
+// ---- symbols and terms (decision 0677) ----------------------------------------------------------------------------
+// rs_tk: the kinds a symbol is made down through, each from its nearest one of them.
+.decl rs_tk(kind: symbol)
+rs_tk("source_file"). rs_tk("mod_item"). rs_tk("function_item"). rs_tk("impl_item"). rs_tk("trait_item").
+rs_tk("struct_item"). rs_tk("enum_item"). rs_tk("block").
+// rs_namedk: the kinds named by their name in their scope.
+.decl rs_namedk(kind: symbol)
+rs_namedk("function_item"). rs_namedk("struct_item"). rs_namedk("enum_item"). rs_namedk("trait_item").
+rs_namedk("function_signature_item"). rs_namedk("enum_variant").
+// Each named entity's, impl's and block's place under its scope, made once, outside the recursion.
+.decl rs_named(v: node, s: node, x: symbol)
+rs_named(v, s, x) :- kind(v, k), rs_namedk(k), nm(v, x), nearest(v, s, rs_tk).
+.decl rs_impl_in(i: node, s: node)
+rs_impl_in(i, s) :- kind(i, "impl_item"), nearest(i, s, rs_tk).
+.decl rs_impl_ord(i: node, s: node, k: number)
+rs_impl_ord(i, s, k) :- rs_impl_in(i, s), node(_, i, _, b, _), k = count : { rs_impl_in(j, s), node(_, j, _, c, _), c < b }.
+.decl rs_block_in(b: node, s: node, o: number, l: number)
+rs_block_in(b, s, bb - sb, be - bb) :- kind(b, "block"), nearest(b, s, rs_tk), node(_, b, _, bb, be), node(_, s, _, sb, _).
+// rs_ss(v, q): entity or scope v's symbol, made down from its module one scope at a time.
+.decl rs_ss(v: node, q: symbol)
+rs_ss(m, q) :- modn(m, q).
+rs_ss(v, cat(q, "::", x)) :- rs_ss(s, q), rs_named(v, s, x).
+rs_ss(i, cat(q, "::impl#", to_string(k))) :- rs_ss(s, q), rs_impl_ord(i, s, k).
+rs_ss(b, cat(q, "@", to_string(o), "+", to_string(l))) :- rs_ss(s, q), rs_block_in(b, s, o, l).
+// rs_tm(n, t): node n's term: its place in its nearest scope, relative to the scope's start, with its length, and
+// how many of its ancestors span it too (`rs_same`).
+.decl rs_tm(n: node, t: symbol)
+.pragma "magic-transform" "rs_tm"
+rs_tm(n, cat(q, "@", to_string(b - sb), "+", to_string(e - b), "^", to_string(c))) :- node(_, n, _, b, e),
+    nearest(n, s, rs_tk), node(_, s, _, sb, _), rs_ss(s, q), rs_same(n, c).
+.decl rs_same(n: node, c: number)
+.pragma "magic-transform" "rs_same"
+rs_same(n, 0) :- node(_, n, _, _, _), !child(_, n, _).
+rs_same(n, 0) :- child(p, n, _), node(_, p, _, pb, _), node(_, n, _, b, _), pb != b.
+rs_same(n, 0) :- child(p, n, _), node(_, p, _, _, pe), node(_, n, _, _, e), pe != e.
+rs_same(n, c + 1) :- child(p, n, _), node(_, p, _, b, e), node(_, n, _, b, e), rs_same(p, c).
 
 // ---- modules ------------------------------------------------------------------------------------------------------
 .decl modn(m: node, q: symbol)
@@ -40,15 +91,22 @@ nm(n, x) :- field(n, "name", i), text(i, x).
 .layout modn fanout(q -> m, few)
 modn(r, q) :- node(d, r, "source_file", _, _), doc(d, _, q).
 modn(m, @dot(q, x)) :- kind(m, "mod_item"), field(m, "body", _), nm(m, x), nearest(m, p, modk), modn(p, q).
-// `mod x;` names the file module `<parent>.x`; an inline `mod x { }` is its own node.
-// Cross-file: `mod x;` names the module of another file, by its path (decision 0652).
-.decl modchild(p: node, x: symbol, c: node) cross_file
-modchild(p, x, c) :- kind(md, "mod_item"), !field(md, "body", _), nm(md, x), nearest(md, p, modk), modn(p, q), modn(c, cq), cq = @dot(q, x).
-modchild(p, x, m) :- kind(m, "mod_item"), field(m, "body", _), nm(m, x), nearest(m, p, modk).
-.decl modpar(c: node, p: node)
+// modq(q): q is a module of the crate.
+.decl modq(q: symbol)
+modq(q) :- modn(m, q).
+// `mod x;` in module p names the file module `<p>.x`; an inline `mod x { }` is its own.
+.decl moddecl(p: symbol, x: symbol)
+moddecl(q, x) :- kind(md, "mod_item"), !field(md, "body", _), nm(md, x), nearest(md, p, modk), modn(p, q).
+.decl modinline(p: symbol, x: symbol, c: symbol)
+modinline(q, x, c) :- kind(m, "mod_item"), field(m, "body", _), nm(m, x), nearest(m, p, modk), modn(p, q), modn(m, c).
+// Cross-file: `mod x;` names the module of another file, by its name (decision 0652).
+.decl modchild(p: symbol, x: symbol, c: symbol) cross_file
+modchild(p, x, c) :- moddecl(p, x), modq(c), c = @dot(p, x).
+modchild(p, x, c) :- modinline(p, x, c).
+.decl modpar(c: symbol, p: symbol)
 modpar(c, p) :- modchild(p, _, c).
-.decl inmod(c: node, m: node)
-inmod(m, m) :- modn(m, _).
+.decl inmod(c: symbol, m: symbol)
+inmod(m, m) :- modq(m).
 inmod(c, m) :- inmod(c, p), modpar(p, m).
 .decl isvis(v: node)
 isvis(v) :- child(v, vm, _), kind(vm, "visibility_modifier").
@@ -58,33 +116,44 @@ isvis(v) :- child(v, vm, _), kind(vm, "visibility_modifier").
 iparent(v, s) :- child(s, v, _), kind(s, "source_file").
 iparent(v, s) :- child(s, v, _), kind(s, "block").
 iparent(v, m) :- child(b, v, _), kind(b, "declaration_list"), field(m, "body", b), kind(m, "mod_item").
-.decl item(s: node, x: symbol, k: symbol, v: node)
-item(s, x, "fn", v) :- kind(v, "function_item"), iparent(v, s), nm(v, x).
-item(s, x, "struct", v) :- kind(v, "struct_item"), iparent(v, s), nm(v, x).
-item(s, x, "enum", v) :- kind(v, "enum_item"), iparent(v, s), nm(v, x).
-item(s, x, "trait", v) :- kind(v, "trait_item"), iparent(v, s), nm(v, x).
-item(s, x, "mod", c) :- kind(v, "mod_item"), iparent(v, s), nm(v, x), modchild(s, x, c).
-.decl pubitem(s: node, x: symbol)
-pubitem(s, x) :- item(s, x, _, v), isvis(v).
-pubitem(s, x) :- kind(v, "mod_item"), iparent(v, s), nm(v, x), isvis(v).
-// `uent(s, x, pre, y, u)`: use declaration u binds x in s to member y of what path `pre` denotes.
-.decl uent(s: node, x: symbol, pre: node, y: symbol, u: node)
-uent(s, y, p, y, u) :- kind(u, "use_declaration"), iparent(u, s), field(u, "argument", a), kind(a, "scoped_identifier"),
+// item_l(s, x, k, v): scope s binds x to its own item v of kind k.
+.decl item_l(s: symbol, x: symbol, k: symbol, v: symbol)
+item_l(ss, x, "fn", vs) :- kind(v, "function_item"), iparent(v, s), nm(v, x), rs_ss(s, ss), rs_ss(v, vs).
+item_l(ss, x, "struct", vs) :- kind(v, "struct_item"), iparent(v, s), nm(v, x), rs_ss(s, ss), rs_ss(v, vs).
+item_l(ss, x, "enum", vs) :- kind(v, "enum_item"), iparent(v, s), nm(v, x), rs_ss(s, ss), rs_ss(v, vs).
+item_l(ss, x, "trait", vs) :- kind(v, "trait_item"), iparent(v, s), nm(v, x), rs_ss(s, ss), rs_ss(v, vs).
+// modsite(s, x): scope s declares module x.
+.decl modsite(s: symbol, x: symbol)
+modsite(ss, x) :- kind(v, "mod_item"), iparent(v, s), nm(v, x), rs_ss(s, ss).
+.decl item(s: symbol, x: symbol, k: symbol, v: symbol)
+item(s, x, k, v) :- item_l(s, x, k, v).
+item(s, x, "mod", c) :- modsite(s, x), modchild(s, x, c).
+.decl pubitem(s: symbol, x: symbol)
+pubitem(ss, x) :- kind(v, k), itemk(k), iparent(v, s), nm(v, x), isvis(v), rs_ss(s, ss).
+// `uent_n(s, x, pre, y, u)`: use declaration u binds x in s to member y of what path `pre` denotes.
+.decl uent_n(s: node, x: symbol, pre: node, y: symbol, u: node)
+uent_n(s, y, p, y, u) :- kind(u, "use_declaration"), iparent(u, s), field(u, "argument", a), kind(a, "scoped_identifier"),
     field(a, "path", p), nm(a, y).
-uent(s, x, p, y, u) :- kind(u, "use_declaration"), iparent(u, s), field(u, "argument", c), kind(c, "use_as_clause"),
+uent_n(s, x, p, y, u) :- kind(u, "use_declaration"), iparent(u, s), field(u, "argument", c), kind(c, "use_as_clause"),
     field(c, "path", a), kind(a, "scoped_identifier"), field(a, "path", p), nm(a, y), field(c, "alias", al), text(al, x).
-uent(s, y, p, y, u) :- kind(u, "use_declaration"), iparent(u, s), field(u, "argument", l), kind(l, "scoped_use_list"),
+uent_n(s, y, p, y, u) :- kind(u, "use_declaration"), iparent(u, s), field(u, "argument", l), kind(l, "scoped_use_list"),
     field(l, "path", p), field(l, "list", ul), child(ul, e, _), kind(e, "identifier"), text(e, y).
-uent(s, x, p, y, u) :- kind(u, "use_declaration"), iparent(u, s), field(u, "argument", l), kind(l, "scoped_use_list"),
+uent_n(s, x, p, y, u) :- kind(u, "use_declaration"), iparent(u, s), field(u, "argument", l), kind(l, "scoped_use_list"),
     field(l, "path", p), field(l, "list", ul), child(ul, c, _), kind(c, "use_as_clause"), field(c, "path", e),
     kind(e, "identifier"), text(e, y), field(c, "alias", al), text(al, x).
-.decl pubuse(s: node, x: symbol)
-pubuse(s, x) :- uent(s, x, _, _, u), isvis(u).
-.decl glob_(s: node, p: node, u: node)
-glob_(s, p, u) :- kind(u, "use_declaration"), iparent(u, s), field(u, "argument", w), kind(w, "use_wildcard"), child(w, p, 0).
+.decl uent(s: symbol, x: symbol, pre: symbol, y: symbol)
+uent(ss, x, pt, y) :- uent_n(s, x, p, y, _), rs_ss(s, ss), rs_tm(p, pt).
+.decl pubuse(s: symbol, x: symbol)
+pubuse(ss, x) :- uent_n(s, x, _, _, u), isvis(u), rs_ss(s, ss).
+.decl glob_(s: symbol, p: symbol)
+glob_(ss, pt) :- kind(u, "use_declaration"), iparent(u, s), field(u, "argument", w), kind(w, "use_wildcard"), child(w, p, 0),
+    rs_ss(s, ss), rs_tm(p, pt).
+// bound_here(s, x): scope s binds x itself, by an item or a `use`.
 .decl bound_here(s: node, x: symbol)
-bound_here(s, x) :- item(s, x, _, _).
-bound_here(s, x) :- uent(s, x, _, _, _).
+bound_here(s, x) :- kind(v, k), itemk(k), iparent(v, s), nm(v, x).
+bound_here(s, x) :- uent_n(s, x, _, _, _).
+.decl bound(s: symbol, x: symbol)
+bound(ss, x) :- bound_here(s, x), rs_ss(s, ss).
 
 // ---- locals: let bindings and parameters of the enclosing function or closure (the value namespace) --------------
 .decl local(f: node, x: symbol, b: node)
@@ -132,37 +201,57 @@ lwalk(p, x, t) :- lwalk(p, x, s), kind(s, "block"), !bound_here(s, x), nearest(s
 lfound(p, x, s) :- lwalk(p, x, s), bound_here(s, x).
 .decl lglob(p: node, x: symbol, m: node)
 lglob(p, x, m) :- lwalk(p, x, m), modn(m, _), !bound_here(m, x).
+// What each file says of its paths, by term: its first segment is bound in scope s (`rfound`) or comes from a glob
+// import into module m (`rglob`); it is `crate` (`rcrate`), `self` (`rmod`), `super` (`rsuper`), `Self` (`rself`,
+// the impl type's base path), or a member y of path p (`rscoped`).
+.decl rfound(p: symbol, s: symbol, x: symbol)
+rfound(pt, ss, x) :- lfound(p, x, s), rs_tm(p, pt), rs_ss(s, ss).
+.decl rglob(p: symbol, m: symbol, x: symbol)
+rglob(pt, q, x) :- lglob(p, x, m), modn(m, q), rs_tm(p, pt).
+.decl rcrate(p: symbol, m: symbol)
+rcrate(pt, x) :- kind(p, "crate"), text(p, x), rs_tm(p, pt).
+.decl rmod(p: symbol, m: symbol)
+rmod(pt, q) :- kind(p, "self"), field(_, "path", p), nearest(p, m, modk), modn(m, q), rs_tm(p, pt).
+rmod(pt, q) :- kind(p, "self"), kind(w, "use_wildcard"), child(w, p, 0), nearest(p, m, modk), modn(m, q), rs_tm(p, pt).
+.decl rsuper(p: symbol, m: symbol)
+rsuper(pt, q) :- kind(p, "super"), nearest(p, m, modk), modn(m, q), rs_tm(p, pt).
+.decl selfk(kind: symbol)
+selfk("identifier"). selfk("type_identifier").
+.decl rself(p: symbol, b: symbol)
+rself(pt, bt) :- kind(p, k), selfk(k), text(p, "Self"), nearest(p, i, implk), kind(i, "impl_item"), field(i, "type", t),
+    tbase(t, b), rs_tm(p, pt), rs_tm(b, bt).
+.decl scopedk(kind: symbol)
+scopedk("scoped_identifier"). scopedk("scoped_type_identifier").
+.decl rscoped(n: symbol, p: symbol, y: symbol)
+rscoped(nt, pt, y) :- kind(n, k), scopedk(k), field(n, "path", p), nm(n, y), rs_tm(n, nt), rs_tm(p, pt).
 
 // Cross-file: a path resolves to what any file of the crate defines (decision 0652).
-.decl res(p: node, k: symbol, v: node) cross_file
-res(p, k, v) :- lfound(p, x, s), item(s, x, k, v).
-res(p, k, v) :- lfound(p, x, s), ures(s, x, k, v).
-res(p, k, v) :- lglob(p, x, m), globx(m, x, k, v).
-// `crate` names the module named `crate`: a join on the name, not a product of two node ranges.
-res(p, "mod", r) :- kind(p, "crate"), text(p, x), modn(r, x).
-res(p, "mod", m) :- kind(p, "self"), field(_, "path", p), nearest(p, m, modk).
-res(p, "mod", m) :- kind(p, "self"), kind(w, "use_wildcard"), child(w, p, 0), nearest(p, m, modk).
-res(p, "mod", par) :- kind(p, "super"), nearest(p, m, modk), modpar(m, par).
+.decl res(p: symbol, k: symbol, v: symbol) cross_file
+res(p, k, v) :- rfound(p, s, x), item(s, x, k, v).
+res(p, k, v) :- rfound(p, s, x), ures(s, x, k, v).
+res(p, k, v) :- rglob(p, m, x), globx(m, x, k, v).
+// `crate` names the module named `crate`.
+res(p, "mod", m) :- rcrate(p, m), modq(m).
+res(p, "mod", m) :- rmod(p, m).
+res(p, "mod", q) :- rsuper(p, m), modpar(m, q).
 // `Self` in an impl is the impl's type.
-res(p, k, v) :- kind(p, "identifier"), text(p, "Self"), nearest(p, i, implk), kind(i, "impl_item"), field(i, "type", t), tbase(t, b), res(b, k, v).
-res(p, k, v) :- kind(p, "type_identifier"), text(p, "Self"), nearest(p, i, implk), kind(i, "impl_item"), field(i, "type", t), tbase(t, b), res(b, k, v).
-res(n, k, v) :- kind(n, "scoped_identifier"), field(n, "path", p), nm(n, y), res(p, kp, e), member(kp, e, y, k, v).
-res(n, k, v) :- kind(n, "scoped_type_identifier"), field(n, "path", p), nm(n, y), res(p, kp, e), member(kp, e, y, k, v).
-.decl ures(s: node, x: symbol, k: symbol, v: node)
-ures(s, x, k, v) :- uent(s, x, p, y, _), res(p, kp, e), member(kp, e, y, k, v).
+res(p, k, v) :- rself(p, b), res(b, k, v).
+res(n, k, v) :- rscoped(n, p, y), res(p, kp, e), member(kp, e, y, k, v).
+.decl ures(s: symbol, x: symbol, k: symbol, v: symbol)
+ures(s, x, k, v) :- uent(s, x, p, y), res(p, kp, e), member(kp, e, y, k, v).
 // What a module exports to paths through it (visibility not checked) and to glob imports (checked).
-.decl mexport(m: node, y: symbol, k: symbol, v: node)
+.decl mexport(m: symbol, y: symbol, k: symbol, v: symbol)
 mexport(m, y, k, v) :- item(m, y, k, v).
 mexport(m, y, k, v) :- ures(m, y, k, v).
 mexport(m, y, k, v) :- globx(m, y, k, v).
-.decl mpub(m: node, y: symbol)
+.decl mpub(m: symbol, y: symbol)
 mpub(m, y) :- pubitem(m, y).
 mpub(m, y) :- pubuse(m, y).
 // A glob import into m: the source module's public names, or all of them when m is inside it (`use super::*`).
-.decl globx(m: node, y: symbol, k: symbol, v: node)
-globx(m, y, k, v) :- glob_(m, p, _), res(p, "mod", n), mexport(n, y, k, v), mpub(n, y), !bound_here(m, y).
-globx(m, y, k, v) :- glob_(m, p, _), res(p, "mod", n), inmod(m, n), mexport(n, y, k, v), !bound_here(m, y).
-.decl member(kp: symbol, e: node, y: symbol, k: symbol, v: node)
+.decl globx(m: symbol, y: symbol, k: symbol, v: symbol)
+globx(m, y, k, v) :- glob_(m, p), res(p, "mod", n), mexport(n, y, k, v), mpub(n, y), !bound(m, y).
+globx(m, y, k, v) :- glob_(m, p), res(p, "mod", n), inmod(m, n), mexport(n, y, k, v), !bound(m, y).
+.decl member(kp: symbol, e: symbol, y: symbol, k: symbol, v: symbol)
 member("mod", e, y, k, v) :- mexport(e, y, k, v).
 member("struct", e, y, k, v) :- assoc(e, y, k, v).
 member("enum", e, y, k, v) :- assoc(e, y, k, v).
@@ -175,22 +264,32 @@ tbase(t, t) :- kind(t, "scoped_type_identifier").
 tbase(t, b) :- kind(t, "reference_type"), field(t, "type", u), tbase(u, b).
 tbase(t, b) :- kind(t, "generic_type"), field(t, "type", u), tbase(u, b).
 // Associated items: impl blocks of the type (inherent and trait impls), the trait's default methods it does not
-// override, enum variants; a trait's own methods are `traitfn`.
-.decl impl_of(i: node, t: node)
-impl_of(i, t) :- kind(i, "impl_item"), field(i, "type", tn), tbase(tn, b), res(b, "struct", t).
-impl_of(i, t) :- kind(i, "impl_item"), field(i, "type", tn), tbase(tn, b), res(b, "enum", t).
-.decl impl_fn(i: node, y: symbol, f: node)
-impl_fn(i, y, f) :- kind(i, "impl_item"), field(i, "body", b), child(b, f, _), kind(f, "function_item"), nm(f, y).
-.decl impl_trait(i: node, tr: node)
-impl_trait(i, tr) :- kind(i, "impl_item"), field(i, "trait", tn), tbase(tn, b), res(b, "trait", tr).
-.decl trait_fn(tr: node, y: symbol, f: node)
-trait_fn(tr, y, f) :- kind(tr, "trait_item"), field(tr, "body", b), child(b, f, _), kind(f, "function_item"), nm(f, y).
-trait_fn(tr, y, f) :- kind(tr, "trait_item"), field(tr, "body", b), child(b, f, _), kind(f, "function_signature_item"), nm(f, y).
-.decl assoc(t: node, y: symbol, k: symbol, v: node)
+// override, enum variants; a trait's own methods are `traitfn`. Each file states its impls' type and trait paths,
+// their functions, its traits' functions (`function_item` a default one) and its enums' variants.
+.decl impl_ty(i: symbol, b: symbol)
+impl_ty(is, bt) :- kind(i, "impl_item"), field(i, "type", tn), tbase(tn, b), rs_ss(i, is), rs_tm(b, bt).
+.decl impl_tr(i: symbol, b: symbol)
+impl_tr(is, bt) :- kind(i, "impl_item"), field(i, "trait", tn), tbase(tn, b), rs_ss(i, is), rs_tm(b, bt).
+.decl impl_fn(i: symbol, y: symbol, f: symbol)
+impl_fn(is, y, fs) :- kind(i, "impl_item"), field(i, "body", b), child(b, f, _), kind(f, "function_item"), nm(f, y),
+    rs_ss(i, is), rs_ss(f, fs).
+.decl traitfnk(kind: symbol)
+traitfnk("function_item"). traitfnk("function_signature_item").
+.decl trait_fn(tr: symbol, y: symbol, f: symbol, k: symbol)
+trait_fn(ts, y, fs, k) :- kind(tr, "trait_item"), field(tr, "body", b), child(b, f, _), kind(f, k), traitfnk(k), nm(f, y),
+    rs_ss(tr, ts), rs_ss(f, fs).
+.decl variant(e: symbol, y: symbol, v: symbol)
+variant(es, y, vs) :- kind(e, "enum_item"), field(e, "body", b), child(b, v, _), kind(v, "enum_variant"), nm(v, y),
+    rs_ss(e, es), rs_ss(v, vs).
+.decl impl_of(i: symbol, t: symbol)
+impl_of(i, t) :- impl_ty(i, b), res(b, k, t), tyk(k).
+.decl impl_trait(i: symbol, tr: symbol)
+impl_trait(i, tr) :- impl_tr(i, b), res(b, "trait", tr).
+.decl assoc(t: symbol, y: symbol, k: symbol, v: symbol)
 assoc(t, y, "fn", f) :- impl_of(i, t), impl_fn(i, y, f).
-assoc(t, y, "fn", f) :- impl_of(i, t), impl_trait(i, tr), trait_fn(tr, y, f), kind(f, "function_item"), !impl_fn(i, y, _).
-assoc(e, y, "variant", v) :- kind(e, "enum_item"), field(e, "body", b), child(b, v, _), kind(v, "enum_variant"), nm(v, y).
-assoc(tr, y, "traitfn", f) :- trait_fn(tr, y, f).
+assoc(t, y, "fn", f) :- impl_of(i, t), impl_trait(i, tr), trait_fn(tr, y, f, "function_item"), !impl_fn(i, y, _).
+assoc(e, y, "variant", v) :- variant(e, y, v).
+assoc(tr, y, "traitfn", f) :- trait_fn(tr, y, f, _).
 
 // ---- calls ----------------------------------------------------------------------------------------------------
 .decl callee(c: node, e: node)
@@ -199,94 +298,141 @@ callee(c, e) :- kind(c, "call_expression"), field(c, "function", e).
 pathk("identifier"). pathk("scoped_identifier").
 // An expression's type, where it is a crate type, from declarations: `self` in an impl, a parameter's or a `let`'s
 // annotation, a `let`'s value, a field through the struct's declaration, a call through the callee's declared return
-// type (`-> Self` is the impl's type), a struct literal, `&e` and `(e)`.
-.decl etype(o: node, t: node)
-etype(o, t) :- kind(o, "self"), nearest(o, i, implk), kind(i, "impl_item"), impl_of(i, t).
-etype(o, t) :- kind(o, "identifier"), text(o, x), islocal(o, x, p), field(p, "type", tn), ttype(tn, t).
-etype(o, t) :- kind(o, "identifier"), text(o, x), islocal(o, x, l), kind(l, "let_declaration"), !field(l, "type", _),
-    field(l, "value", v), etype(v, t).
-etype(o, t) :- kind(o, "field_expression"), field(o, "value", v), field(o, "field", fi), text(fi, y), etype(v, s),
-    sfield(s, y, tn), ttype(tn, t).
-etype(c, t) :- callee(c, e), call_target(c, f), kind(f, "function_item"), field(f, "return_type", tn), ttype(tn, t).
-etype(c, t) :- callee(c, e), res(e, "struct", t).
-etype(o, t) :- kind(o, "struct_expression"), field(o, "name", tn), ttype(tn, t).
-etype(o, t) :- kind(o, "reference_expression"), field(o, "value", v), etype(v, t).
-etype(o, t) :- kind(o, "parenthesized_expression"), child(o, v, 0), etype(v, t).
-.decl ttype(tn: node, t: node)
-ttype(tn, t) :- tbase(tn, b), res(b, "struct", t).
-ttype(tn, t) :- tbase(tn, b), res(b, "enum", t).
+// type (`-> Self` is the impl's type), a struct literal, `&e` and `(e)`. Each file states, by term, what an
+// expression's type follows from.
+// rcall(c, e): call c's callee is e.
+.decl rcall(c: symbol, e: symbol)
+rcall(ct, et) :- callee(c, e), rs_tm(c, ct), rs_tm(e, et).
+// eself(o, i): o is `self` in impl i.
+.decl eself(o: symbol, i: symbol)
+eself(ot, is) :- kind(o, "self"), nearest(o, i, implk), kind(i, "impl_item"), rs_tm(o, ot), rs_ss(i, is).
+// elocal_t(o, t): o is a local whose declaration's type is t; estruct_t(o, t): o is a struct literal of type t.
+.decl elocal_t(o: symbol, t: symbol)
+elocal_t(ot, tt) :- kind(o, "identifier"), text(o, x), islocal(o, x, p), field(p, "type", tn), rs_tm(o, ot), rs_tm(tn, tt).
+.decl estruct_t(o: symbol, t: symbol)
+estruct_t(ot, tt) :- kind(o, "struct_expression"), field(o, "name", tn), rs_tm(o, ot), rs_tm(tn, tt).
+// eflow(o, v, w): o has v's type: an unannotated `let`'s value (`let`), `&v` (`ref`), `(v)` (`paren`).
+.decl eflow(o: symbol, v: symbol, w: symbol)
+eflow(ot, vt, "let") :- kind(o, "identifier"), text(o, x), islocal(o, x, l), kind(l, "let_declaration"), !field(l, "type", _),
+    field(l, "value", v), rs_tm(o, ot), rs_tm(v, vt).
+eflow(ot, vt, "ref") :- kind(o, "reference_expression"), field(o, "value", v), rs_tm(o, ot), rs_tm(v, vt).
+eflow(ot, vt, "paren") :- kind(o, "parenthesized_expression"), child(o, v, 0), rs_tm(o, ot), rs_tm(v, vt).
+// efield(o, v, y): o is field y of v.
+.decl efield(o: symbol, v: symbol, y: symbol)
+efield(ot, vt, y) :- kind(o, "field_expression"), field(o, "value", v), field(o, "field", fi), text(fi, y), rs_tm(o, ot), rs_tm(v, vt).
 // A struct's named fields and their declared types.
-.decl sfield(s: node, y: symbol, tn: node)
-sfield(s, y, tn) :- kind(s, "struct_item"), field(s, "body", b), child(b, fd, _), kind(fd, "field_declaration"), nm(fd, y), field(fd, "type", tn).
+.decl sfield(s: symbol, y: symbol, tn: symbol)
+sfield(ss, y, tt) :- kind(s, "struct_item"), field(s, "body", b), child(b, fd, _), kind(fd, "field_declaration"), nm(fd, y),
+    field(fd, "type", tn), rs_ss(s, ss), rs_tm(tn, tt).
+// fn_ret(f, t): function f declares return type t; fnsym(f): f is a function_item.
+.decl fn_ret(f: symbol, tn: symbol)
+fn_ret(fs, tt) :- kind(f, "function_item"), field(f, "return_type", tn), rs_ss(f, fs), rs_tm(tn, tt).
+.decl fnsym(f: symbol)
+fnsym(fs) :- kind(f, "function_item"), rs_ss(f, fs).
+// tyb(t, b): declared type t's base path b.
+.decl tyb(tn: symbol, b: symbol)
+tyb(tt, bt) :- troot(t), tbase(t, b), rs_tm(t, tt), rs_tm(b, bt).
+.decl etype(o: symbol, t: symbol)
+etype(o, t) :- eself(o, i), impl_of(i, t).
+etype(o, t) :- elocal_t(o, tn), ttype(tn, t).
+etype(o, t) :- eflow(o, v, _), etype(v, t).
+etype(o, t) :- efield(o, v, y), etype(v, s), sfield(s, y, tn), ttype(tn, t).
+etype(c, t) :- rcall(c, _), call_target(c, f), fn_ret(f, tn), ttype(tn, t).
+etype(c, t) :- rcall(c, e), res(e, "struct", t).
+etype(o, t) :- estruct_t(o, tn), ttype(tn, t).
+.decl ttype(tn: symbol, t: symbol)
+ttype(tn, t) :- tyb(tn, b), res(b, k, t), tyk(k).
 // A receiver whose type is no crate type: a literal, or a declared type that is primitive or external.
-.decl rext(o: node)
-rext(o) :- kind(o, k), litk(k).
-rext(o) :- kind(o, "identifier"), text(o, x), islocal(o, x, p), field(p, "type", tn), exttype(tn).
-rext(o) :- kind(o, "identifier"), text(o, x), islocal(o, x, l), kind(l, "let_declaration"), !field(l, "type", _), field(l, "value", v), rext(v).
-rext(o) :- kind(o, "field_expression"), field(o, "value", v), field(o, "field", fi), text(fi, y), etype(v, s), sfield(s, y, tn), exttype(tn).
-rext(c) :- callee(c, e), call_target(c, f), kind(f, "function_item"), field(f, "return_type", tn), exttype(tn).
-rext(o) :- kind(o, "reference_expression"), field(o, "value", v), rext(v).
 .decl litk(k: symbol)
 litk("string_literal"). litk("integer_literal"). litk("float_literal"). litk("array_expression"). litk("boolean_literal").
 litk("char_literal"). litk("tuple_expression").
-.decl exttype(t: node)
-exttype(t) :- kind(t, "primitive_type").
-exttype(t) :- kind(t, "reference_type"), field(t, "type", u), exttype(u).
-exttype(t) :- tbase(t, b), !res(b, _, _), !generic(b).
+.decl rlit(o: symbol)
+rlit(ot) :- wants(o), kind(o, k), litk(k), rs_tm(o, ot).
+// xprim(t): declared type t is primitive (through references); xbase(t, b): t's base path b is no generic parameter.
+.decl xprim_n(t: node)
+xprim_n(t) :- kind(t, "primitive_type").
+xprim_n(t) :- kind(t, "reference_type"), field(t, "type", u), xprim_n(u).
+.decl xprim(tn: symbol)
+xprim(tt) :- troot(t), xprim_n(t), rs_tm(t, tt).
+.decl xbase(tn: symbol, b: symbol)
+xbase(tt, bt) :- troot(t), tbase(t, b), !generic(b), rs_tm(t, tt), rs_tm(b, bt).
+.decl rextw(w: symbol)
+rextw("let"). rextw("ref").
+.decl rext(o: symbol)
+rext(o) :- rlit(o).
+rext(o) :- elocal_t(o, tn), exttype(tn).
+rext(o) :- eflow(o, v, w), rextw(w), rext(v).
+rext(o) :- efield(o, v, y), etype(v, s), sfield(s, y, tn), exttype(tn).
+rext(c) :- rcall(c, _), call_target(c, f), fn_ret(f, tn), exttype(tn).
+.decl exttype(tn: symbol)
+exttype(t) :- xprim(t).
+exttype(t) :- xbase(t, b), !res(b, _, _).
 // A generic parameter of the enclosing function or impl: what it is, is decided by the caller.
 .decl generic(b: node)
-generic(b) :- tpname(x), text(b, x), wants(b), kind(b, "type_identifier"), nearest(b, f, fdef), field(f, "type_parameters", tp), child(tp, p, _), nm(p, x).
-generic(b) :- tpname(x), text(b, x), wants(b), kind(b, "type_identifier"), nearest(b, i, implk), field(i, "type_parameters", tp), child(tp, p, _), nm(p, x).
-// The names any generic parameter has: only a type path with one of them can be one.
-.decl tpname(x: symbol)
-tpname(x) :- kind(tp, "type_parameters"), child(tp, p, _), nm(p, x).
+generic(b) :- wants(b), kind(b, "type_identifier"), text(b, x), nearest(b, f, fdef), field(f, "type_parameters", tp), child(tp, p, _), nm(p, x).
+generic(b) :- wants(b), kind(b, "type_identifier"), text(b, x), nearest(b, i, implk), field(i, "type_parameters", tp), child(tp, p, _), nm(p, x).
 
-.decl call_target(c: node, f: node)
-call_target(c, v) :- callee(c, e), res(e, "fn", v).
-call_target(c, v) :- callee(c, e), res(e, "struct", v).
-call_target(c, v) :- callee(c, e), res(e, "variant", v).
-call_target(c, f) :- callee(c, e), kind(e, "field_expression"), field(e, "value", o), field(e, "field", fi), text(fi, y), etype(o, t), assoc(t, y, "fn", f).
-// A local holding a function item (`let p: fn() = helper; p()`): the function it holds.
-call_target(c, v) :- callee(c, e), kind(e, "identifier"), text(e, x), islocal(e, x, l), kind(l, "let_declaration"), field(l, "value", val), res(val, "fn", v).
-.decl call_open(c: node)
-// Through a trait (`Trait::f(&x)`, `<T as Trait>::f`) or a generic receiver: dispatched at run time.
-call_open(c) :- callee(c, e), res(e, "traitfn", _).
-call_open(c) :- callee(c, e), kind(e, "scoped_identifier"), field(e, "path", p), kind(p, "bracketed_type").
-call_open(c) :- callee(c, e), res(e, "mod", _).
-call_open(c) :- callee(c, e), res(e, "trait", _).
-call_open(c) :- callee(c, e), res(e, "enum", _).
-// A crate path that resolves to nothing (a macro-generated item, a cfg'd-out module).
-call_open(c) :- callee(c, e), kind(e, "scoped_identifier"), field(e, "path", p), res(p, "mod", _), !res(e, _, _).
-call_open(c) :- callee(c, e), kind(e, "identifier"), text(e, x), islocal(e, x, l), !lethasfn(l).
-call_open(c) :- callee(c, e), !pathk2(e).
-call_open(c) :- callee(c, e), kind(e, "field_expression"), field(e, "value", o), !etype(o, _), !rext(o).
-// A crate type with no such method of its own: a trait's method (a derive, a blanket impl) or a `Deref` target's.
-call_open(c) :- callee(c, e), kind(e, "field_expression"), field(e, "value", o), field(e, "field", fi), text(fi, y), etype(o, t), !assoc(t, y, "fn", _).
-.decl lethasfn(l: node)
-lethasfn(l) :- kind(l, "let_declaration"), field(l, "value", val), res(val, "fn", _).
+// What each file says of its calls, by term: a method call c of y on receiver o (`emeth`); a call through a local
+// `let` holding v (`elocal_v`); a call through path e whose own path is p (`rscall`); and the calls its own file
+// leaves open (`copen`): through `<T as Trait>::f`, a local no `let` value gives, or a callee that is no path.
+.decl emeth(c: symbol, o: symbol, y: symbol)
+emeth(ct, ot, y) :- callee(c, e), kind(e, "field_expression"), field(e, "value", o), field(e, "field", fi), text(fi, y),
+    rs_tm(c, ct), rs_tm(o, ot).
+.decl elocal_v(c: symbol, v: symbol)
+elocal_v(ct, vt) :- callee(c, e), kind(e, "identifier"), text(e, x), islocal(e, x, l), kind(l, "let_declaration"),
+    field(l, "value", val), rs_tm(c, ct), rs_tm(val, vt).
+.decl rscall(c: symbol, e: symbol, p: symbol)
+rscall(ct, et, pt) :- callee(c, e), kind(e, "scoped_identifier"), field(e, "path", p), rs_tm(c, ct), rs_tm(e, et), rs_tm(p, pt).
+.decl letval(l: node)
+letval(l) :- kind(l, "let_declaration"), field(l, "value", _).
 .decl pathk2(e: node)
 pathk2(e) :- kind(e, k), pathk(k).
 pathk2(e) :- kind(e, "field_expression").
+.decl copen(c: symbol)
+copen(ct) :- callee(c, e), kind(e, "scoped_identifier"), field(e, "path", p), kind(p, "bracketed_type"), rs_tm(c, ct).
+copen(ct) :- callee(c, e), kind(e, "identifier"), text(e, x), islocal(e, x, l), !letval(l), rs_tm(c, ct).
+copen(ct) :- callee(c, e), !pathk2(e), rs_tm(c, ct).
+
+.decl ctk(k: symbol)
+ctk("fn"). ctk("struct"). ctk("variant").
+.decl call_target(c: symbol, f: symbol)
+call_target(c, v) :- rcall(c, e), res(e, k, v), ctk(k).
+call_target(c, f) :- emeth(c, o, y), etype(o, t), assoc(t, y, "fn", f).
+// A local holding a function item (`let p: fn() = helper; p()`): the function it holds.
+call_target(c, v) :- elocal_v(c, val), res(val, "fn", v).
+.decl openk(k: symbol)
+openk("traitfn"). openk("mod"). openk("trait"). openk("enum").
+.decl call_open(c: symbol)
+call_open(c) :- copen(c).
+// Through a trait (`Trait::f(&x)`, `<T as Trait>::f`) or a generic receiver: dispatched at run time.
+call_open(c) :- rcall(c, e), res(e, k, _), openk(k).
+// A crate path that resolves to nothing (a macro-generated item, a cfg'd-out module).
+call_open(c) :- rscall(c, e, p), res(p, "mod", _), !res(e, _, _).
+call_open(c) :- elocal_v(c, v), !res(v, "fn", _).
+call_open(c) :- emeth(c, o, _), !etype(o, _), !rext(o).
+// A crate type with no such method of its own: a trait's method (a derive, a blanket impl) or a `Deref` target's.
+call_open(c) :- emeth(c, o, y), etype(o, t), !assoc(t, y, "fn", _).
 .output call_target, call_open
 
 // ---- call chains ----------------------------------------------------------------------------------------------
-.decl owner(c: node, f: node)
-owner(c, f) :- kind(c, "call_expression"), nearest(c, f, fdef).
-.decl calls(f: node, g: node)
-calls(f, g) :- owner(c, f), call_target(c, g), kind(g, "function_item").
+// cowner(c, f): call c is in function f.
+.decl cowner(c: symbol, f: symbol)
+cowner(ct, fs) :- kind(c, "call_expression"), nearest(c, f, fdef), rs_tm(c, ct), rs_ss(f, fs).
+.decl calls(f: symbol, g: symbol)
+calls(f, g) :- cowner(c, f), call_target(c, g), fnsym(g).
 // A macro whose tokens name a crate function may call it: the enclosing function's calls are not all known.
 .decl crate_fn_name(x: symbol)
-crate_fn_name(x) :- item(_, x, "fn", _).
-crate_fn_name(x) :- impl_fn(_, x, _).
-.decl macro_open(f: node)
-macro_open(f) :- kind(m, "macro_invocation"), field(m, "macro", _), child(m, tt, _), kind(tt, "token_tree"), child(tt, i, _),
-    kind(i, "identifier"), text(i, x), crate_fn_name(x), nearest(m, f, fdef).
-.decl calls_open(f: node)
-calls_open(f) :- owner(c, f), call_open(c).
+crate_fn_name(x) :- kind(v, "function_item"), iparent(v, _), nm(v, x).
+crate_fn_name(x) :- kind(i, "impl_item"), field(i, "body", b), child(b, f, _), kind(f, "function_item"), nm(f, x).
+.decl mtok(f: symbol, x: symbol)
+mtok(fs, x) :- kind(m, "macro_invocation"), field(m, "macro", _), child(m, tt, _), kind(tt, "token_tree"), child(tt, i, _),
+    kind(i, "identifier"), text(i, x), nearest(m, f, fdef), rs_ss(f, fs).
+.decl macro_open(f: symbol)
+macro_open(f) :- mtok(f, x), crate_fn_name(x).
+.decl calls_open(f: symbol)
+calls_open(f) :- cowner(c, f), call_open(c).
 calls_open(f) :- macro_open(f).
-.decl isasync(f: node)
-isasync(f) :- op(f, "async").
-.decl reaches_open(f: node)
+.decl reaches_open(f: symbol)
 reaches_open(f) :- calls_open(f).
 reaches_open(f) :- calls(f, g), reaches_open(g).
 .output calls, reaches_open

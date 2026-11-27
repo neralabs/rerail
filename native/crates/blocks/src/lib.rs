@@ -48,6 +48,7 @@ pub const RELATION_READS: &str = "#include <ukl/reads/relation.h>\n";
 pub mod journal;
 pub mod kept;
 pub mod ledger;
+pub mod located;
 pub mod maps;
 pub mod mapped;
 pub use rerail_vector::vector;

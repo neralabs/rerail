@@ -301,7 +301,7 @@ impl<'a> Parser<'a> {
                 (b | x, e || y)
             }),
             Gram::Opt(a) | Gram::Star(a) => (self.first(a).0, true),
-            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => self.first(a),
+            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => self.first(a),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.first(body),
             Gram::Balanced { open, .. } => (self.look_bit(open), false),
             // Desugared before (`desugar_leaves`).
@@ -332,7 +332,7 @@ impl<'a> Parser<'a> {
                 (s, e || y)
             }),
             Gram::Opt(a) | Gram::Star(a) => (self.starts(a).0, true),
-            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => self.starts(a),
+            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => self.starts(a),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.starts(body),
             Gram::Balanced { open, .. } => (Starts::of(open), false),
             Gram::Leaf { .. } => (Starts::default(), false),
@@ -352,7 +352,7 @@ impl<'a> Parser<'a> {
     fn starts_flagged(&self, g: &Gram, flags: &[String]) -> (Starts, bool) {
         match g {
             Gram::Unless { flag, .. } if flags.contains(flag) => (Starts::default(), false),
-            Gram::Unless { body, .. } | Gram::Plus(body) | Gram::Field(_, body) | Gram::Retag(_, body) | Gram::Merge(_, body) | Gram::As(_, body) => self.starts_flagged(body, flags),
+            Gram::Unless { body, .. } | Gram::Plus(body) | Gram::Field(_, body) | Gram::Retag(_, body) | Gram::Inner { body, .. } | Gram::Merge(_, body) | Gram::As(_, body) => self.starts_flagged(body, flags),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.starts_flagged(body, flags),
             Gram::Flag { flag, set, body } => {
                 let mut f: Vec<String> = flags.iter().filter(|x| *x != flag).cloned().collect();
@@ -379,6 +379,27 @@ impl<'a> Parser<'a> {
             }),
             Gram::Opt(a) | Gram::Star(a) => (self.starts_flagged(a, flags).0, true),
             Gram::Lit(_) | Gram::Sym(_) | Gram::Balanced { .. } | Gram::Any(_) | Gram::Leaf { .. } => self.starts(g),
+        }
+    }
+
+    /// `first`'s looks, with the flags the level runs with: a way `unless F` guards while `F` is set starts none.
+    fn first_flagged(&self, g: &Gram) -> u128 {
+        match g {
+            Gram::Unless { flag, .. } if self.flags.contains(flag) => 0,
+            Gram::Alt(alts) => alts.iter().fold(0, |b, a| b | self.first_flagged(a)),
+            Gram::Seq(items) => {
+                let mut bits = 0;
+                for i in items {
+                    bits |= self.first_flagged(i);
+                    if !self.first(i).1 {
+                        break;
+                    }
+                }
+                bits
+            }
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Unless { body: a, .. } => self.first_flagged(a),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.first_flagged(body),
+            _ => self.first(g).0,
         }
     }
 
@@ -447,6 +468,15 @@ impl<'a> Parser<'a> {
                 Some(p)
             }
             Gram::Alt(alts) => {
+                // A hidden mark only ways the flags guard take (`unless F`, `F` set): not asked here, as the machine's
+                // state does not ask it; the choice is the token's after it.
+                let mut at = at;
+                while let Some(bit) = self.tokens.get(at).filter(|t| t.mark).map(|t| self.look_bit(&t.kind)) {
+                    if self.hidden & bit == 0 || alts.iter().all(|a| self.first(a).0 & bit == 0) || alts.iter().any(|a| self.first_flagged(a) & bit != 0) {
+                        break;
+                    }
+                    at += 1;
+                }
                 let mark = self.out.len();
                 let taken = self.settled.len();
                 // A soft keyword: the alternatives that can start with it, where there are any.
@@ -531,6 +561,13 @@ impl<'a> Parser<'a> {
                 let next = self.matches(a, at, follow)?;
                 let me = *self.open.last()?;
                 self.out[me].kind = self.kind_of(kind)?;
+                Some(next)
+            }
+            Gram::Inner { field, body } => {
+                // The open node's first child: the row after it.
+                let next = self.matches(body, at, follow)?;
+                let me = *self.open.last()?;
+                self.out.get_mut(me + 1)?.field = Some(field.clone());
                 Some(next)
             }
             Gram::As(kind, a) => {
@@ -708,7 +745,7 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
-            Gram::Wrap { kind, field, moved, body } => {
+            Gram::Wrap { kind, field, moved, body, .. } => {
                 // The node just made at this level: the innermost open node's last child.
                 let c = self.last_made()?;
                 let was = (self.out[c].field.clone(), self.out[c].kind.clone());
@@ -909,6 +946,9 @@ fn reread(out: &mut Vec<Node>, root: usize, r: &crate::syntax::Reading, remember
 /// The nodes of `decl` over `tokens` (a file of `n` bytes), or the reason the file goes to
 /// tree-sitter.
 pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, String> {
+    if !decl.indented.is_empty() {
+        return Err("an `indented` level: this reference does not ask a mark's column yet (decision 0698)".into());
+    }
     let root = decl.rules.first().ok_or("the tree section has no rule")?.0.clone();
     // The extras, each with the number of other tokens before it.
     // The extras, each with the number of other tokens before it (marks left out: they make no

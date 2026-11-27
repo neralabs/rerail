@@ -7,7 +7,7 @@
 //   ref_site(r, site)     identifier r refers to the declaration at site, in this file
 //   sym_of(n, q)          identifier or member chain n denotes the exported symbol q, across files
 //   global_ref(r, x)      r names a global (window, process, …) that nothing in the file declares
-//   tsx_names__exports(m, x, q)  module m exports name x, which is symbol q (the phase tsx_names')
+//   tsx_names__resolved(k, q)  name x of module t (k = t#x), which the file asks for, is symbol q (the phase tsx_names')
 //   jsx_tag_ref(r)        r is a component tag `<Row/>`, a value reference here (typescript-eslint's view; espree
 //                         makes none, so a rule following plain ESLint excludes these)
 //   spec_name(n, x)       an import or export list's name n reads x: `a`, or the value of a string `"a-b"`
@@ -431,34 +431,15 @@ unresolved_ref(r) :- field(p, "name", r), kind(p, "export_specifier"), within(p,
     !es_global(x), docof(r, d), !directive_global(d, x).
 
 // ---- imports and exports -----------------------------------------------------------------------------------------
-// import_binding(site, local, source, imported): imported is "default", "*" or the exported name.
-// The forms, with the row each produces:
-//   import { a } from "m"           (spec, "a", "m", "a")
-//   import { a as b } from "m"      (spec, "b", "m", "a")        local name differs from the exported name
-//   import D from "m"               (clause, "D", "m", "default")
-//   import * as NS from "m"         (ns, "NS", "m", "*")         NS is the module object, see ns_target
-.decl import_binding(site: node, local: symbol, src: symbol, imported: symbol)
-import_binding(sp, l, m, x) :- kind(sp, "import_specifier"), field(sp, "name", n), spec_name(n, x),
-    local_of(sp, l), source_of(sp, m).
-// Default import: the clause's first child is the identifier (in `import D, { a } from "m"` that is D).
-import_binding(c, l, m, "default") :- kind(c, "import_clause"), child(c, id, 0), kind(id, "identifier"),
-    text(id, l), source_of(c, m).
-import_binding(ns, l, m, "*") :- kind(ns, "namespace_import"), child(ns, id, 0), text(id, l), source_of(ns, m).
-// local_of: the name a specifier binds in this file: the alias if there is one (`a as b` binds b), else the name.
-.decl local_of(sp: node, l: symbol)
-local_of(sp, l) :- field(sp, "alias", a), text(a, l).
-local_of(sp, l) :- !field(sp, "alias", _), field(sp, "name", n), spec_name(n, l).
-// source_of: the module specifier string of the enclosing import statement, without quotes: "./util", "react".
-.decl source_of(n: node, m: symbol)
-source_of(n, m) :- nearest(n, i, "import_statement"), field(i, "source", s), str(s, m).
-
 // target(d, spec, t): specifier spec in document d names t, a workspace document's module or a package name;
-// exports(m, x, q): module m exports name x, which is symbol q. Both are resolved across the workspace's files
-// (relative paths against every file, tsconfig `paths`, chains of re-exports) by the phase `tsx_names`
-// (native/src/code_rule_dsl/typing/programs/tsx_names.rerail), which runs first over the same files and hands on
-// symbols alone: here they are read as settings are, so a rule reading them stays per-file (decision 0665).
+// tsx_names__resolved(k, q): the name k = t#x the file at p asks for (`tsx_names__asked_at(p, k)`) is symbol q. Both are
+// resolved across the workspace's files (relative paths against every file, tsconfig `paths`, chains of re-exports)
+// by the phase `tsx_names` (native/src/code_rule_dsl/typing/programs/tsx_names.rerail), which runs first over the
+// same files and hands on symbols alone: here they are read as settings are, so a rule reading them stays per-file
+// (decision 0665), and a file reads each answer under its own ask (decision 0705).
 .decl tsx_names__target_at(p: symbol, spec: symbol, t: symbol)
-.decl tsx_names__exports(m: symbol, x: symbol, q: symbol)
+.decl tsx_names__asked_at(p: symbol, k: symbol)
+.decl tsx_names__resolved(k: symbol, q: symbol)
 .decl tsx_names__module(m: symbol)
 .decl target(d: number, spec: symbol, t: symbol)
 target(d, s, t) :- doc(d, p, _), tsx_names__target_at(p, s, t).
@@ -468,9 +449,10 @@ target(d, s, t) :- doc(d, p, _), tsx_names__target_at(p, s, t).
 // router was imported, renamed or re-exported. Four cases:
 .decl sym_of(n: node, q: symbol)
 // Cases 1, 2 and 4 name x of a resolved target t (`resolved_name`): a workspace module's export, followed through
-// re-exports by the phase (`tsx_names__exports`), else (a package, no workspace module) opaque, "react-router-dom#Link". Read
-// by the node's own target, each stays in its file (decision 0665).
-sym_of(n, q) :- resolved_name(n, t, x), tsx_names__exports(t, x, q).
+// re-exports by the phase (`tsx_names__resolved`), else (a package, no workspace module) opaque, "react-router-dom#Link".
+// Read by the node's own target and its file's own ask, each stays in its file (decisions 0665, 0705).
+sym_of(n, q) :- resolved_name(n, t, x), docof(n, d), doc(d, p, _), tsx_names__asked_at(p, k), k = @qname(t, x),
+    tsx_names__resolved(k, q).
 sym_of(n, @qname(t, x)) :- resolved_name(n, t, x), !tsx_names__module(t).
 // 3. A name declared at the top level of this file: `function App() {}; App` -> "src/app#App". This is the same
 // symbol other files get when they import App, so cross-file joins meet here.

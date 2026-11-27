@@ -113,6 +113,8 @@
 // the type of n's own value. value_type cannot say it: its key is the value's text, which "12" and 12 share, and a
 // container or bytes has no text in `value`.
 .decl value_type_of(n: node, t: symbol)                  // the type of n's value, containers and bytes included
+// static_value_type_of(n, t): the type of static_value's value of n, as value_type_of names it.
+.decl static_value_type_of(n: node, t: symbol)
 // fstring_piece(n, i, kind, v): the pieces of f-string n (a Python string, concatenated_string or format_specifier
 // whose value is a JoinedStr), in order from 0: in f'a{x!r:>10}b{y=}', (0, "literal", "a"), (1, "interpolation",
 // "x"), (1, "format_spec", ">10"), (2, "literal", "by="), (3, "interpolation", "y"), (3, "debug", "y="). A literal
@@ -229,14 +231,19 @@
 // Which definition refers to which, over the policy's files, as the linker resolves names: through imports,
 // re-exports and packages, self/cls through the bases breadth first, declared parameter types, constructor
 // fields, and the policy's sibling links (`.references`, at the end). What dead-code and caller checks walk.
-// reference_edge(f, g, "self"): f's body refers to g, here as `self.g`. f and g are function_definition or
-// class_definition nodes; via is how: name, bare, unqualified, self, super, field, param_type, late or sibling.
-.decl reference_edge(src: node, dst: node, via: symbol)
-// reference_open(f): f refers to something no static name denotes, or f's file does not parse: what f reaches
-// is not all known.
-.decl reference_open(n: node)
-// Both are rules, not inputs (decision 0483): a program that reads them includes python/references.rerail, the one
-// file that derives them, and the one file that may add to them (`rr::DERIVED_BY`, decision 0263's exception).
+// The graph is across files, so it is keyed by each definition's symbol, never its node (decision 0677): a file's
+// rules place a symbol on its own definition by reference_def.
+// reference_def(f, s): definition f (a function_definition or class_definition node) has symbol s.
+.decl reference_def(n: node, s: symbol)
+// reference_edge(f, g, "self"): definition f's body refers to definition g, here as `self.g`, f and g their
+// symbols; via is how: name, bare, unqualified, self, super, field, param_type, late or sibling.
+.decl reference_edge(src: symbol, dst: symbol, via: symbol)
+// reference_open(f): definition f refers to something no static name denotes, or f's file does not parse: what f
+// reaches is not all known.
+.decl reference_open(s: symbol)
+// All three are rules, not inputs (decision 0483): a program that reads them includes python/references.rerail, the
+// file that derives them, or python/references_w.rerail, which derives them from W's Rust graph for comparing the two.
+// Those two files alone may add to them (`rr::DERIVED_BY`, decision 0263's exception): another file is refused.
 
 // ---- tree structure (tape arithmetic, never Datalog recursion) -------------------------------------------------
 // These answer ancestor and sibling questions from node offsets. A recursive `ancestor` relation in Datalog
@@ -662,6 +669,11 @@
 .decl str_part_word(lit: node, i: number, w: symbol, at: node, spec: number)
 .decl str_part_start(lit: node, i: number, l: number, c: number)
 .input file, tsconfig, tsconfig_for, tsconfig_path, package, package_export, package_for, package_field
+// How a file's results read the project's settings (decision 0665), and so how they key its memo entry (0705): the
+// package and tsconfig over a file by its path, naming their folder in column 1; each folder's rows by the folder; a
+// package's exports and the run's environment whole.
+.keyed package_for by_path 1, tsconfig_for by_path 1, package by_key, package_field by_key, tsconfig by_key,
+    tsconfig_path by_key, package_export, env
 .input string_annotation, option, option_item
 .input signed_list, git_rev, str_part, str_part_word, str_part_start, literal_json
 .input dump_sha256, body_sha256, signature_sha256

@@ -512,6 +512,72 @@ fn a_fused_step_past_the_bound_head_stops_at_its_first_witness() {
     assert!(into_l <= 40, "one witness a document reaches `l`, not each of its nodes: {:?}", counts[0]);
 }
 
+/// The first shape kernel (the design's layer 5): a scan and the tests on the nodes it binds, asked of their inputs a
+/// chunk at a time inside the fused row program (`rowcode::Test`), a negation's too. The rows are the rule's, and each
+/// test step's counts are the rows that reached it and those it passed, as the walk counts them row by row.
+/// `r(d, n) :- k(d), m(d, n), d != n, a(n), !b(n)`: 20 documents of 50 nodes; `a` holds the even nodes, `b` those
+/// divisible by 3.
+#[test]
+fn a_scans_tests_on_its_nodes_are_asked_a_chunk_at_a_time() {
+    let nodes = |d: i64| (0..50).map(move |i| 1_000 + d * 50 + i);
+    let k: Vec<String> = (0..20).map(|d| format!("({d})")).collect();
+    let m: Vec<String> = (0..20).flat_map(|d| nodes(d).map(move |n| format!("({d}, {n})"))).collect();
+    let a: Vec<String> = (0..20).flat_map(nodes).filter(|n| n % 2 == 0).map(|n| format!("({n})")).collect();
+    let b: Vec<String> = (0..20).flat_map(nodes).filter(|n| n % 3 == 0).map(|n| format!("({n})")).collect();
+    let db = connection();
+    db.execute_batch(&format!("CREATE TABLE k(c0); INSERT INTO k VALUES {};\nCREATE TABLE m(c0, c1); INSERT INTO m VALUES {};\nCREATE TABLE a(c0); INSERT INTO a VALUES {};\nCREATE TABLE b(c0); INSERT INTO b VALUES {};\nCREATE TABLE r(c0, c1);",
+        k.join(", "), m.join(", "), a.join(", "), b.join(", "))).unwrap();
+    let rel = |t: &str, cols: &str, kinds: &str| format!("t:b:{}:{}:{kinds}", hex(t), hex(cols));
+    let join = format!("pos {} v0\npos {} v0 v1\nne v0 v1\npos {} v1\nneg {} v1\nhead v0 v1", rel("k", "c0", "i"), rel("m", "c0, c1", "ii"), rel("a", "c0", "i"), rel("b", "c0", "i"));
+    open(&db, &format!("name kern\nrel r ii empty\nseed 0 {}", hex(&join))).unwrap();
+    {
+        let comp = component(&db, "kern").unwrap();
+        let comp = comp.lock().unwrap();
+        let Body::Join(j) = &comp.probes[0].body else { panic!("a join") };
+        assert!((0..j.steps.len()).filter_map(|i| j.fused_at(i)).any(|f| f.tests.len() == 2), "both tests fused into the scan's chunk");
+    }
+    walks_whole(|| run(&db, "kern", 0).unwrap());
+    let counts = step_counts(&db, "kern").unwrap();
+    close(&db, "kern").unwrap();
+    let want: Vec<(i64, i64)> = (0..20).flat_map(|d| nodes(d).filter(|n| n % 2 == 0 && n % 3 != 0).map(move |n| (d, n))).collect();
+    let mut got: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM r").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+    got.sort_unstable();
+    assert_eq!(got, want);
+    // Into `a` every node (1,000), out of it the even ones; out of `!b` those `b` does not hold.
+    let c = &counts[0];
+    assert_eq!(c[3], (1_000, 500), "the test of `a`: {c:?}");
+    assert_eq!(c[4], (500, want.len() as i64), "the negated test of `b`: {c:?}");
+}
+
+/// A fused test whose key reads a slot a fused `let` set (`$e = $d`, `$d` bound before the scan): the walk sets that
+/// slot only for a row that passes the chunk, so the test is given its value from the parameter, not the slot as the
+/// last row left it. `r(d, n) :- k(d), m(d, n), d != n, e = d, c(e, n)`; `c` holds each document's nodes divisible by 5.
+#[test]
+fn a_fused_tests_key_from_a_let_is_the_bound_value() {
+    let nodes = |d: i64| (0..50).map(move |i| 1_000 + d * 50 + i);
+    let k: Vec<String> = (0..20).map(|d| format!("({d})")).collect();
+    let m: Vec<String> = (0..20).flat_map(|d| nodes(d).map(move |n| format!("({d}, {n})"))).collect();
+    let c: Vec<String> = (0..20).flat_map(|d| nodes(d).filter(|n| n % 5 == 0).map(move |n| format!("({d}, {n})"))).collect();
+    let db = connection();
+    db.execute_batch(&format!("CREATE TABLE k(c0); INSERT INTO k VALUES {};\nCREATE TABLE m(c0, c1); INSERT INTO m VALUES {};\nCREATE TABLE c(c0, c1); INSERT INTO c VALUES {};\nCREATE TABLE r(c0, c1);",
+        k.join(", "), m.join(", "), c.join(", "))).unwrap();
+    let rel = |t: &str, cols: &str, kinds: &str| format!("t:b:{}:{}:{kinds}", hex(t), hex(cols));
+    let join = format!("pos {} v0\npos {} v0 v1\nne v0 v1\neq v2 v0\npos {} v2 v1\nhead v0 v1", rel("k", "c0", "i"), rel("m", "c0, c1", "ii"), rel("c", "c0, c1", "ii"));
+    open(&db, &format!("name klet\nrel r ii empty\nseed 0 {}", hex(&join))).unwrap();
+    {
+        let comp = component(&db, "klet").unwrap();
+        let comp = comp.lock().unwrap();
+        let Body::Join(j) = &comp.probes[0].body else { panic!("a join") };
+        assert!((0..j.steps.len()).filter_map(|i| j.fused_at(i)).any(|f| f.tests.iter().any(|t| t.slots.iter().any(|(_, b)| matches!(b, rowcode::Bind::Param(_))))), "the test reads the let's slot from a parameter");
+    }
+    walks_whole(|| run(&db, "klet", 0).unwrap());
+    close(&db, "klet").unwrap();
+    let want: Vec<(i64, i64)> = (0..20).flat_map(|d| nodes(d).filter(|n| n % 5 == 0).map(move |n| (d, n))).collect();
+    let mut got: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM r").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+    got.sort_unstable();
+    assert_eq!(got, want);
+}
+
 /// Decisions 0206 and 0098 §1: a component run as its closure runs its seeds first, and a seed that spends its budget
 /// is cut there as any seed is: the run returns `5`, and the next goes on from the rows it left, then runs the
 /// closure. Its seeds ran unlimited before: corpus0 (2026-11-21), `open_tuple`'s seed (a cross product, 41 M rows a
@@ -539,7 +605,7 @@ fn a_closures_seed_is_cut_at_its_budget_and_goes_on_from_its_rows_left() {
     let db = connection();
     setup(&db);
     open(&db, &spec).unwrap();
-    assert!(component(&db, "cutc").unwrap().lock().unwrap().closure.is_some(), "the component runs as its closure");
+    assert!(component(&db, "cutc").unwrap().lock().unwrap().form.as_ref().is_some_and(|f| f.name() == "reach" || f.name() == "keyed walk"), "the component runs as its closure");
     let (mut cuts, mut done, mut last) = (0, false, String::new());
     for _ in 0..1_000 {
         set_budgets(&db, "cutc", &[(0, Some(300))]).unwrap();
@@ -564,19 +630,24 @@ fn a_closures_seed_is_cut_at_its_budget_and_goes_on_from_its_rows_left() {
 /// works keeps its time. Measured on the clock itself, one thread, in ticks.
 #[test]
 fn a_step_clocks_switches_are_no_steps_time() {
-    let cost = measure_switch_ticks();
-    assert!(cost > 0.0 && cost.is_finite(), "{cost}");
-    let fresh = || StepClock { ticks: rerail_blocks::vector![0; 4], switches: rerail_blocks::vector![0; 4], at: 3, last: ticks(), t0: 0, cpu0: 0.0, acc: crate::code_rule_dsl::logic::profile::accounted_ticks(), acc0: (0, 0.0), cost };
-    // Empty steps 0 and 1, entered in turn: their charge is the switches'.
-    let mut c = fresh();
-    for k in 0..200_000usize {
-        c.to(k & 1);
-    }
-    let raw = (c.ticks[0] + c.ticks[1]) as f64;
-    let own = c.own(0) + c.own(1);
+    let fresh = |cost: f64| StepClock { ticks: rerail_blocks::vector![0; 4], switches: rerail_blocks::vector![0; 4], at: 3, last: ticks(), t0: 0, cpu0: 0.0, acc: crate::code_rule_dsl::logic::profile::accounted_ticks(), acc0: (0, 0.0), cost };
+    // Empty steps 0 and 1, entered in turn: their charge is the switches'. They are made by the code the cost is
+    // measured on (`switch_between_empty`): a loop here costs what this module's code costs, and that time is between
+    // the switches, the steps' own. Ticks are the wall's: each round measures the cost just before its switches, and
+    // the round that kept least of its ticks is compared (a round the thread moved or was slowed in keeps more, never
+    // less).
+    let (raw, own, cost) = (0..8)
+        .map(|_| {
+            let cost = measure_switch_ticks();
+            assert!(cost > 0.0 && cost.is_finite(), "{cost}");
+            let mut c = fresh(cost);
+            switch_between_empty(&mut c, 25_000);
+            ((c.ticks[0] + c.ticks[1]) as f64, c.own(0) + c.own(1), cost)
+        })
+        .fold((1.0, f64::INFINITY, 0.0), |best, round| if round.1 / round.0 < best.1 / best.0 { round } else { best });
     assert!(raw > 0.0 && own <= 0.2 * raw, "empty steps: {own} of {raw} ticks kept (a switch {cost} ticks)");
     // Step 2 works between its switches: its time is kept.
-    let mut c = fresh();
+    let mut c = fresh(measure_switch_ticks());
     let mut x = 1u64;
     for _ in 0..2_000 {
         c.to(2);

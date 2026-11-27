@@ -345,6 +345,17 @@ pub(in crate::code_rule_dsl) fn arith_op(name: &str) -> Option<u32> {
     })
 }
 
+/// A step's fusion as the device runs it: the filters after its atom, not the tests of an input the CPU's walk asks
+/// in the chunk (`rowcode::Test`).
+fn fused_at(j: &JoinRule, i: usize) -> Option<std::borrow::Cow<'_, rowcode::Fused>> {
+    let f = j.fused_at(i)?;
+    if f.tests.is_empty() {
+        return Some(std::borrow::Cow::Borrowed(f));
+    }
+    let Step::Atom { binds, .. } = &j.steps[i] else { return None };
+    rowcode::fused(binds, &j.steps[i + 1..], false, &[]).map(std::borrow::Cow::Owned)
+}
+
 /// The program's columns, parameters, operations and outputs of a fused row program, into `d`; the source of a
 /// column (`Word::Col(c)`) is `kind` (a candidate's column, or the binding's slot `c`).
 fn program(d: &mut mj::Stage, f: &rowcode::Fused, kind: u32) -> Result<(), String> {
@@ -353,12 +364,7 @@ fn program(d: &mut mj::Stage, f: &rowcode::Fused, kind: u32) -> Result<(), Strin
         return Err("a row program larger than a stage holds".into());
     }
     for (k, w) in f.columns.iter().enumerate() {
-        let (c, doc) = match *w {
-            rowcode::Word::Col(c) => (c, 0),
-            rowcode::Word::Doc(c) => (c, 1),
-            // A view's test of a node (t57 E6) is the host's read; the stage has none yet (decision 0310's CLIF read).
-            rowcode::Word::Holds(..) => return Err("a row program that tests a node by a view".into()),
-        };
+        let (c, doc) = match *w { rowcode::Word::Col(c) => (c, 0), rowcode::Word::Doc(c) => (c, 1), rowcode::Word::Held(_) | rowcode::Word::Look(..) => unreachable!("the device's fusion asks no input (`fused_at`)") };
         d.col_kind[k] = kind;
         d.col_idx[k] = c as u32;
         d.col_doc[k] = doc;
@@ -442,7 +448,7 @@ fn witness_stage(j: &JoinRule, i: usize, bound: &[bool]) -> Option<PStage> {
     let Step::Atom { src: Src::In(rel, _), neg: false, keys, binds, tests } = &j.steps[i] else { return None };
     let rel = j.bound(rel);
     let rest = &j.steps[i + 1..];
-    if binds.is_empty() || j.fused_at(i).is_some() || rest.len() > mj::WITNESS_PROBES || keys.len() > mj::MAX_KEYS || tests.len() > mj::MAX_TESTS {
+    if binds.is_empty() || fused_at(j, i).is_some() || rest.len() > mj::WITNESS_PROBES || keys.len() > mj::MAX_KEYS || tests.len() > mj::MAX_TESTS {
         return None;
     }
     readable(rel, keys.len()).ok()?;
@@ -470,7 +476,7 @@ fn witness_stage(j: &JoinRule, i: usize, bound: &[bool]) -> Option<PStage> {
     for (m, st) in rest.iter().enumerate() {
         let Step::Atom { src: Src::In(r, _), neg, keys: bk, tests: bt, .. } = st else { return None };
         let r = j.bound(r);
-        if j.fused_at(i + 1 + m).is_some() || bk.len() > mj::MAX_KEYS || bt.len() > mj::MAX_TESTS || readable(r, bk.len()).is_err() {
+        if fused_at(j, i + 1 + m).is_some() || bk.len() > mj::MAX_KEYS || bt.len() > mj::MAX_TESTS || readable(r, bk.len()).is_err() {
             return None;
         }
         let mut b = mj::Stage { mode: if *neg { mj::ANTI } else { mj::SEMI }, ..mj::Stage::default() };
@@ -564,7 +570,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 // one text made in two rounds has two values.
                 if let Some((rel, _)) = own && own_texts.iter().any(|&(r, _)| r == rel) {
                     let text = |c: usize| own_texts.contains(&(rel, c));
-                    if keys.iter().any(|&(c, _)| text(c)) || tests.iter().any(|&(a, b)| text(a) || text(b)) || j.fused_at(i).is_some() || *neg {
+                    if keys.iter().any(|&(c, _)| text(c)) || tests.iter().any(|&(a, b)| text(a) || text(b)) || fused_at(j, i).is_some() || *neg {
                         return Err("a made text across rounds matched, tested or negated (decision 0307: read only as a text)".into());
                     }
                     for &(_, s) in atom_binds.iter().filter(|&&(c, _)| text(c)) {
@@ -619,10 +625,10 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 d.ntests = tests.len() as u32;
                 let mut span = 1;
                 let mut npassed = 0;
-                match j.fused_at(i) {
+                match fused_at(j, i) {
                     Some(f) if d.mode == mj::JOIN && compared.is_none() => {
-                        program(&mut d, f, mj::RIGHT)?;
-                        binds(&mut d, f, false);
+                        program(&mut d, &f, mj::RIGHT)?;
+                        binds(&mut d, &f, false);
                         for &(s, _) in &f.binds { bound[s] = true; }
                         span += f.steps;
                         npassed = f.steps;
@@ -965,7 +971,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 let stop = (i..j.steps.len())
                     .find(|&k| deferred.keys().copied().chain(ARENA.with_borrow(Clone::clone)).any(|x| mentions(&j.steps[k], x)))
                     .unwrap_or(j.steps.len());
-                let Some(f) = rowcode::fused(&slots, &j.steps[i..stop]) else { return Err(format!("{} has no device form", step_name(step))) };
+                let Some(f) = rowcode::fused(&slots, &j.steps[i..stop], false, &[]) else { return Err(format!("{} has no device form", step_name(step))) };
                 let mut d = mj::Stage { mode: mj::FILTER, ..mj::Stage::default() };
                 program(&mut d, &f, mj::LEFT)?;
                 binds(&mut d, &f, true);
@@ -1225,7 +1231,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 stages.push(PStage { first: j.steps.len(), span: 0, kind, desc: d, npassed: 0 });
                 head.push(None);
                 head_slots.push(nslots);
-                // A made text's: a value computed, unbounded.
+                // A made text: unbounded (`head_bounds`).
                 head_from.push(None);
                 arena.push(true);
                 nslots += 1;
@@ -2878,12 +2884,11 @@ pub(in crate::code_rule_dsl) fn head_bounds(rules: &[(&Plan, &JoinRule, usize)],
 }
 
 /// A head's rows' sort key (t58 increment A): its first order (`Rel::first_order`), packed most significant first:
-/// the leading column's 16-bit tag where the order is tagged (`runs::tag`), then each column of the order as its
-/// value less its least, in the bits its bounds need (none for a column of one value). Its rows sorted by it are in the
+/// each column of the order as its value less its least, in the bits its bounds need (none for a column of one
+/// value): an order is by value (decision 0187 P1). Its rows sorted by it are in the
 /// order the host notes them in, so the host takes them as they lie.
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) struct HeadKey {
-    pub tagged: bool,
     /// (column, least, bits), most significant first.
     pub parts: Vec<(usize, i64, u32)>,
     pub bits: u32,
@@ -2891,9 +2896,9 @@ pub(in crate::code_rule_dsl) struct HeadKey {
 
 impl HeadKey {
     /// The key of `order`'s rows under `bounds` (a column's least and greatest), where it fits 64 bits.
-    pub(in crate::code_rule_dsl) fn of(order: &[usize], tagged: bool, bounds: &[[i64; 2]]) -> Option<HeadKey> {
+    pub(in crate::code_rule_dsl) fn of(order: &[usize], bounds: &[[i64; 2]]) -> Option<HeadKey> {
         let mut parts = Vec::with_capacity(order.len());
-        let mut bits = if tagged { 16 } else { 0 };
+        let mut bits = 0;
         for &c in order {
             let [lo, hi] = *bounds.get(c)?;
             // No rows: one value's width.
@@ -2902,20 +2907,18 @@ impl HeadKey {
             parts.push((c, if hi < lo { 0 } else { lo }, w));
             bits += w;
         }
-        (bits <= 64).then_some(HeadKey { tagged, parts, bits })
+        (bits <= 64).then_some(HeadKey { parts, bits })
     }
 }
 
 /// A run's head rows' key (t58 increment A): its head's `HeadKey` under `bounds`, each part the column of its run's
 /// distinct rows (`uniq_cols`) that holds it. A column this rule makes a constant holds one value of its rows: no
-/// bits, so none where its bounds give it some (another rule's values); a constant leading column leaves its rows'
-/// tags all one, so the key is not tagged.
+/// bits, so none where its bounds give it some (another rule's values).
 fn run_key(plan: &Plan, uniq_cols: &[usize], rel: &super::Rel, bounds: &[[i64; 2]]) -> Option<mj::SortKey> {
     if rel.folds() || rel.k == 0 || rel.k > 16 || plan.head.len() != rel.k || plan.arena.iter().any(|&a| a) {
         return None;
     }
-    let (order, tagged) = rel.first_order();
-    let hk = HeadKey::of(order, tagged, bounds)?;
+    let hk = HeadKey::of(rel.first_order(), bounds)?;
     let mut parts = Vec::with_capacity(hk.parts.len());
     for &(c, lo, w) in &hk.parts {
         match plan.head[c] {
@@ -2924,8 +2927,7 @@ fn run_key(plan: &Plan, uniq_cols: &[usize], rel: &super::Rel, bounds: &[[i64; 2
             None => parts.push((uniq_cols.iter().position(|&u| u == plan.head_slots[c])? as u32, w, lo)),
         }
     }
-    let tagged = hk.tagged && plan.head[order[0]].is_none();
-    Some(mj::SortKey { tagged, parts, bits: hk.bits, presorted: false })
+    Some(mj::SortKey { parts, bits: hk.bits, presorted: false })
 }
 
 /// `place`'s work encoded into the stratum's own program, after its joins (decision 0603: a stratum is one launch):
@@ -2985,9 +2987,7 @@ fn encode_place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], stor
         let all: Vector<usize> = (0..k).collect();
         // Its rows' key in its first order, where its bounds pack it in 64 bits (t58 increment A): made distinct in
         // that order, so the host takes them as they lie (the stage less its held rows, and the place, keep it).
-        let (order, tagged) = rel.first_order();
-        let key = bounds.get(&h).and_then(|bd| HeadKey::of(order, tagged, bd)).map(|hk| mj::SortKey {
-            tagged: hk.tagged,
+        let key = bounds.get(&h).and_then(|bd| HeadKey::of(rel.first_order(), bd)).map(|hk| mj::SortKey {
             parts: hk.parts.iter().map(|&(c, lo, w)| (c as u32, w, lo)).collect(),
             bits: hk.bits,
             presorted: false,
@@ -3434,9 +3434,9 @@ fn set_key(rel: &super::Rel, bounds: Option<&Vec<[i64; 2]>>) -> Option<mj::SortK
     if rel.folds() || rel.k == 0 || rel.k > 8 {
         return None;
     }
-    let (order, tagged) = rel.first_order();
-    let hk = HeadKey::of(order, tagged, bounds?)?;
-    let key = mj::SortKey { tagged: hk.tagged, parts: hk.parts.iter().map(|&(c, lo, w)| (c as u32, w, lo)).collect(), bits: hk.bits, presorted: false };
+    let order = rel.first_order();
+    let hk = HeadKey::of(order, bounds?)?;
+    let key = mj::SortKey { parts: hk.parts.iter().map(|&(c, lo, w)| (c as u32, w, lo)).collect(), bits: hk.bits, presorted: false };
     (order.len() == rel.k && key.index_bits() <= mj::HELD_BITS_MAX).then_some(key)
 }
 
@@ -4210,7 +4210,7 @@ fn encode_program<'p>(seeding: Option<(&[(&'p Plan, &JoinRule, usize)], &mut Has
             let b = key.index_bits();
             if set.bits.as_ref().is_none_or(|x| x.1 != b) {
                 // SAFETY: `lat_hclear_one` (`set_bits`'s first phase, code 6) writes every word before any read.
-                let words = unsafe { crate::code_rule_dsl::facts::rows::unwritten_in(Some(&l.total.home()), mj::HeldBits::words_for(b)) };
+                let words = unsafe { crate::code_rule_dsl::facts::rows::unwritten_in::<u32>(Some(&l.total.home()), mj::HeldBits::words_for(b)) };
                 kept.bits.extend(set.bits.replace((words, b)).map(|x| x.0));
             }
             batch.set_bits(&lp.own.total[&h], l.len, bits_at(set.bits.as_ref().expect("its bitmap")), &key).map_err(e)?;
@@ -4422,7 +4422,7 @@ fn encode_live_tail(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)
             (Some(bits), Some(mut key)) => {
                 let mut from = rules.iter().zip(runs).filter_map(|(r, run)| run.as_ref().filter(|_| r.2 == h));
                 key.presorted = match (from.next(), from.next()) {
-                    (Some(run), None) => run.key.as_ref().is_some_and(|rk| rk.tagged == key.tagged && rk.bits == key.bits),
+                    (Some(run), None) => run.key.as_ref().is_some_and(|rk| rk.bits == key.bits),
                     _ => false,
                 };
                 batch.dedup_sorted(&union, &all, 0, 2, &words, &fresh, Some(bits_at(bits)), &key).map_err(e)?;

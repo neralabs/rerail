@@ -184,6 +184,7 @@ fn a_chain_past_seven_links_is_a_corrupt_tape() {
 
 /// The hand-vectorized NEON reads (`hand::parent_all`, the kernel's walks; `hand::parent_all_scan`, from the answers
 /// before) on every node of every document: the host's parents.
+#[cfg(target_arch = "aarch64")]
 #[test]
 fn the_hand_vectorized_parent_is_the_hosts() {
     let lang = crate::parent::json_lang();
@@ -201,6 +202,7 @@ fn the_hand_vectorized_parent_is_the_hosts() {
 
 /// The 8-lane slot reader (`hand::slots_all`: its runs, gathers, and side lists' count search) on every node of every
 /// document: the host's slots, every escaped one among them.
+#[cfg(target_arch = "aarch64")]
 #[test]
 fn the_hand_vectorized_slot_read_is_the_hosts() {
     let lang = crate::parent::json_lang();

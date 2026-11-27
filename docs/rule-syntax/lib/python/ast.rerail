@@ -41,16 +41,7 @@ wrapper_node(p) :- kind(p, "expression_statement"), child(p, a, 0),
 ast_parent(n, p) :- child(p, n, _), !wrapper_node(p), !kind(p, "decorator"), !kind(n, "comment").
 ast_parent(e, f) :- decorator(f, e).
 ast_parent(n, q) :- child(p, n, _), wrapper_node(p), !kind(n, "decorator"), !kind(n, "comment"), ast_parent(p, q).
-// unparen(e, m): m is e with any parentheses taken off: `((x))` gives x. Every other node gives itself. A comment
-// inside the parentheses is a child of them too, so the expression is the one child that is not a comment:
-//   assert (
-//       # why
-//       a and b
-//   )                    unparen(<( … )>, <a and b>)
-.decl unparen(e: node, m: node)
-.pragma "magic-transform" "unparen"
-unparen(e, e) :- kind(e, k), k != "parenthesized_expression".
-unparen(e, m) :- kind(e, "parenthesized_expression"), child(e, i, _), !kind(i, "comment"), unparen(i, m).
+// unparen(e, m) (python/syntax): m is e with any parentheses taken off.
 // py_frame(n, f): f is the innermost def or lambda that holds n, as `ast` nests them: n in a decorator of g, a
 // default of g or an annotation of g is in g. (nearest(n, f, fdef) puts decorators outside g.)
 // def_frame(n, f): the same with lambdas transparent: the innermost def.
@@ -250,30 +241,7 @@ assign_target(a, t) :- assign_chain(a, x), field(x, "left", t).
 assign_value(a, v) :- assign_chain(a, x), field(x, "right", v), !kind(v, "assignment").
 .decl assign_ann(a: node, t: node)
 assign_ann(a, t) :- asgstmt(a, _), field(a, "type", t).
-// body_stmt(b, s, i): statement s is the i-th of body b (a block or the module), comments not counted.
-// body_len(b, k): how many there are. e.g. a def whose body is a docstring and `...` has body_len 2.
-.decl body_node(b: node)
-body_node(b) :- kind(b, "block").
-body_node(b) :- kind(b, "module").
-.decl body_stmt(b: node, s: node, i: number)
-body_stmt(b, s, i) :- body_node(b), child(b, s, _), !kind(s, "comment"),
-    i = count : { child(b, s2, _), !kind(s2, "comment"), s2 < s }.
-.decl body_len(b: node, k: number)
-body_len(b, k) :- body_node(b), k = count : { child(b, s, _), !kind(s, "comment") }.
-// docstring(o, s): s is the docstring of module, class or def o: its first statement is a lone str literal
-// (doc_stmt). Ruff's is_docstring_stmt: parentheses off, adjacent literals joined; not bytes or an f-string.
-//   def f():
-//       ("Doc.")          docstring(<f>, <"Doc.">)
-//   def g():
-//       f"Doc."           no docstring
-.decl body_of(o: node, b: node)
-body_of(o, b) :- (kind(o, "function_definition") ; kind(o, "class_definition")), field(o, "body", b).
-body_of(m, m) :- kind(m, "module").
-.decl docstring(o: node, s: node)
-docstring(o, s) :- body_of(o, b), body_stmt(b, st, 0), doc_stmt(st, s).
-// doc_stmt(s, e): statement s is a lone str literal e, unparenthesised: Ruff's is_docstring_stmt.
-.decl doc_stmt(s: node, e: node)
-doc_stmt(s, e) :- kind(s, "expression_statement"), child(s, e0, 0), !child(s, _, 1), unparen(e0, e), plain_str_node(e).
+// body_stmt, body_len, body_of, docstring, doc_stmt: python/syntax.
 // py_if(i, test, body) and py_orelse(i, o): an `ast.If`. Each `elif` is an If of its own, the orelse of the one
 // before it; o is the next elif clause, or the else clause (whose body is its "body" field).
 .decl py_if(i: node, test: node, body: node)
@@ -304,23 +272,7 @@ bool_operand(t, o, v) :- bool_part(t, v), bool_top(t, o), !same_bool(v, o).
 cmp_pair(c, i, o, l, r) :- kind(c, "comparison_operator"), child(c, l, i), j = i + 1, child(c, r, j), op_at(c, i, o).
 
 // ---- 5. strings and constants ------------------------------------------------------------------------------------
-// fstring(n): n is an `ast.JoinedStr`: an f-string, or adjacent literals one of which is.
-.decl fstring(n: node)
-fstring(n) :- kind(n, "string"), child(n, s0, 0), kind(s0, "string_start"), text(s0, t),
-    match("[rRbBuU]*[fF][rR]?[\"'].*", t).
-fstring(c) :- kind(c, "concatenated_string"), child(c, s, _), fstring(s).
-// string_form(n, f): "str", "fstr", "bytes" or "tstr" (a template string, PEP 750), from the prefix.
-.decl string_form(n: node, f: symbol)
-string_form(n, "fstr") :- fstring(n).
-string_form(n, "bytes") :- kind(n, "string"), child(n, s0, 0), text(s0, t), match("[rR]?[bB][rR]?[\"'].*", t).
-string_form(n, "tstr") :- kind(n, "string"), child(n, s0, 0), text(s0, t), match("[rR]?[tT][rR]?[\"'].*", t).
-string_form(n, "str") :- kind(n, "string"), child(n, s0, 0), text(s0, t), match("[rRuU]*[\"'].*", t).
-// A string Constant's syntactic type does not require a scalar decoded value.
-// Python strings can contain lone surrogates, which Rust String cannot represent.
-.decl plain_str_node(e: node)
-plain_str_node(e) :- string_form(e, "str"), !fstring(e).
-plain_str_node(e) :- kind(e, "concatenated_string"),
-    count : { child(e, s0, _), !kind(s0, "comment"), !string_form(s0, "str") } = 0.
+// fstring, string_form, plain_str_node: python/syntax.
 // plain_str(e, v): e is a str literal without interpolation (not bytes, not an f- or t-string), or adjacent
 // ones, and v its decoded value: `"a" 'b'` gives "ab". What Ruff calls a StringLiteral.
 .decl plain_str(e: node, v: symbol)

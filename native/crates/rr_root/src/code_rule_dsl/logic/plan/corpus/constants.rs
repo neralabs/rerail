@@ -266,6 +266,7 @@ pub fn as_outputs_of(v: &std::sync::Arc<Version>, wanted: &[String]) -> Result<s
         let args: Vec<T<'_>> = names.iter().map(|n| T::Var(n.as_str())).collect();
         let pairs: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
         b.fields().declare(&copy(rel), &pairs);
+        b.fields().add_qualifiers(&[(copy(rel).as_str(), crate::code_rule_dsl::typing::file_local::CROSS_FILE)]);
         b.rule().head(copy(rel).as_str(), &args).atom(rel.as_str(), &args).finish().map_err(super::super::Error::Plan)?;
         outputs.push(copy(rel));
     }

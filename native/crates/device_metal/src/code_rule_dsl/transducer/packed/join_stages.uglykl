@@ -288,7 +288,7 @@ UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_P
     uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, la, view_codes(d), (uint32_t)((uint64_t)key & 0xfffffffful));
     if (l == NONE) return;
     uint32_t first = e->rows[1];
-    if (l == 0u) { *lo = first; *hi = a + 1u < d->ndocs ? view_rows(d)[a + 1u].rows[1] : s->nr; return; }
+    if (l == 0u) { *lo = first; *hi = view_rows_end(d, e, 1u, s->nr); return; }
     uint32_t c = clif_view_child_first(ch, e->entry, t, e->view, ls, la, view_codes(d), l);
     if (c == NONE) return;
     *lo = first + c; *hi = NONE; *how = 2u;
@@ -1350,7 +1350,7 @@ UKL_INLINE void row_strjoin(Longs L, Longs R_rows, JSPACE const uint8_t* R_far, 
     }
 }
 
-// A regex's capture group (`TEXTFN_RX_GROUP`, decision 0668): program G (`text::table::GroupProgram`, the regex's
+// A regex's capture group (`TEXTFN_RX_GROUP`, decision 0688): program G (`text::table::GroupProgram`, the regex's
 // Thompson NFA) walked over x by a Pike VM, as `regex_automata`'s `PikeVM` walks it, by lane 0: its threads in
 // priority order, each state once a position (a sparse set), the group's two slots a thread; a match cuts the threads
 // after it, and the last match found is the leftmost-first one. f: the group's scratch, two thread lists and the
@@ -1956,8 +1956,8 @@ UKL_INLINE void dedup_mark_one(Longs T, JSPACE const uint32_t* totals, JSPACE co
 }
 
 // A head's rows made distinct in its first order (t58 increment A, `Dedup::sorted`), so the host takes them as they
-// lie and sorts nothing: each row's key (`HeadKeyP`: the order's leading column's 16-bit tag where it is tagged, then
-// each column of the order less its least, in the bits its bounds need, most significant first; the job's rank in
+// lie and sorts nothing: each row's key (`HeadKeyP`: an order is by value, decision 0187 P1; its first word reserved,
+// 0, for the layout; each column of the order less its least, in the bits its bounds need, most significant first; the job's rank in
 // its level above them), with its place, sorted by the level's wide sort (every sorted dedup's keys end to end, each
 // one's from its first, `eb`); a row kept where its key is not the one before it's. The key holds every column, so
 // equal keys are equal rows. Its kept rows come out in the key's order. `part`: column (of `cols`), bits, least's low
@@ -1965,7 +1965,7 @@ UKL_INLINE void dedup_mark_one(Longs T, JSPACE const uint32_t* totals, JSPACE co
 // `total`: the level's wide sort's keys (its size script's); `odd`: its passes are odd, its sorted keys in its region's
 // second half. Its region (`h_at`, claimed by its size script): keys A and B, then its histograms. A key holds its
 // whole row, so the sort moves keys alone, and the kept rows are decoded from them (`head_row`).
-typedef struct HeadKeyP { uint32_t tagged; uint32_t nparts; uint32_t rank_shift; uint32_t rank; uint32_t part[16][4]; uint32_t total; uint32_t odd; uint32_t pad[2]; } HeadKeyP;
+typedef struct HeadKeyP { uint32_t reserved; uint32_t nparts; uint32_t rank_shift; uint32_t rank; uint32_t part[16][4]; uint32_t total; uint32_t odd; uint32_t pad[2]; } HeadKeyP;
 UKL_STATIC_ASSERT(sizeof(HeadKeyP) == 288, "HeadKeyP: size");
 #define WIDE_KEYS(base, n, i) ((JSPACE uint64_t*)(base) + (uint64_t)(i) * (n))
 #define WIDE_HIST(base, n) ((base) + 4ul * (n))
@@ -1973,7 +1973,6 @@ UKL_STATIC_ASSERT(sizeof(HeadKeyP) == 288, "HeadKeyP: size");
 UKL_INLINE uint64_t head_key(Longs T, DedupP d, JSPACE const HeadKeyP* p, uint32_t x)
 {
     uint64_t k = 0ul;
-    if (p->tagged != 0u) k = ((uint64_t)T[(uint64_t)d->cols[p->part[0][0]] * d->cap + x] * 0x9E3779B97F4A7C15ul) >> 48;
     for (uint32_t i = 0u; i < p->nparts && i < 16u; i++) {
         uint32_t w = p->part[i][1];
         if (w == 0u) continue;
@@ -2626,6 +2625,7 @@ UKL_INLINE void round_one(JSPACE const RoundP* p, UKL_GLOBAL uint32_t* ctl, uint
 #define PK_IX_OFFS 30u
 // An index's marks (decision 0671), of its buckets placed (`PK_IX_OFFS`), before its rows are (`PK_IX_PLACE`).
 #define PK_IX_MARK 31u
+// A placed head's rows' sort keys (t58 increment A): each row's packed first order, for its sorted dedup.
 #define PK_DEDUP_KEY 32u
 
 // An item: its kind and which job, scan level or sort pass (`kind << 24 | which`), its group in that, its phase, its
@@ -3272,10 +3272,9 @@ UKL_INLINE bool axis_in(UKL_GLOBAL const AxisP* p, UKL_GLOBAL const uint32_t* bi
 
 // Node row `v`'s document's row in the directory, its first `node` row and its rows' end.
 UKL_INLINE UKL_GLOBAL const ViewRow* axis_doc(UKL_GLOBAL const ViewDir* d, uint32_t v, UKL_PRIVATE uint32_t* end) {
-    uint32_t i = clif_dir_doc_of_row(view_block(d), d->at, 0u, v, NONE);
-    UKL_GLOBAL const ViewRow* rows = view_rows(d);
-    *end = i + 1u < d->ndocs ? rows[i + 1u].rows[0] : d->ends[0];
-    return &rows[i];
+    UKL_GLOBAL const ViewRow* e = &view_rows(d)[clif_dir_doc_of_row(view_block(d), d->at, 0u, v, NONE)];
+    *end = view_rows_end(d, e, 0u, d->ends[0]);
+    return e;
 }
 
 // Each node row's rows (its ancestors in the set), into `start`; the extra value past the last row is 0, so the scan

@@ -37,6 +37,9 @@ const FACT_STORE: &[&str] = &[
     // The segment files objects (sources, tapes) are in, by number (decision 0295), and each guest's key, an identity
     // interned to its number as `strings` and `hashes` are (decision 0391; frames retired, 0439).
     "object_segments",
+    // The sum of the bytes of the store's files its rows name (`bytes`), kept by their triggers: the store's
+    // bookkeeping its capacity check reads in one row, as `store_state` is.
+    "store_bytes",
     "guest_keys",
     "push_pending",
     "rows",
@@ -208,6 +211,8 @@ const STATE: &[(&str, &str)] = &[
     // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
     ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
     ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
+    // The entry of the walk a caller starts (`RERAIL_PROF`): a switch the caller sets and the walk takes.
+    ("code_rule_dsl/logic/native/setfix.rs", "WALK_ENTRY"),
     // A test process's own tape cache path (`corpus::test_tape_cache`): where the store is, not a result kept.
     ("code_rule_dsl/logic/plan/corpus/base.rs", "PATH"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
@@ -231,12 +236,16 @@ const STATE: &[(&str, &str)] = &[
     // The stores this process owns or was refused, with their held locks, and the slot it took of each base store
     // (`corpus::owner`): which files are this process's, not results.
     ("code_rule_dsl/logic/plan/corpus/owner.rs", "CLAIMS"),
-    ("code_rule_dsl/logic/plan/corpus/owner.rs", "SLOTS"),
     // Profiling totals, consumed and cleared by each report; no reusable results.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HandedDown"),
     // Phase 1's exports while the run that ran it is under way: the run's own facts, gone when it ends.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HeldPhaseOne"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "Phases"),
+    // The run's stages (decision 0709) while the run is under way: its own program's parts, gone when it ends.
+    ("code_rule_dsl/logic/plan/corpus/phases.rs", "Stages"),
+    // The keys the run's phases declare for their exports (decision 0705), bound while the run is under way: how its
+    // readers' entries are keyed, not results.
+    ("code_rule_dsl/logic/plan/phased.rs", "DeclaredKeys"),
     ("code_rule_dsl/logic/profile.rs", "Dir"),
     // The invocation's rule sources (decision 0488's report of authored joins), bound while a run profiles them.
     ("code_rule_dsl/logic/profile/author_joins.rs", "Held"),
@@ -252,6 +261,12 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "QUEUE_LABELS"),
     // The frame keys of the run under way, for its manifest to name: bound while the run runs, gone when it ends.
     ("code_rule_dsl/logic/plan/corpus/reuse.rs", "RunFrame"),
+    // The keys the run's phases declared on their exports (decision 0705), bound once they ran: the run's own
+    // binding, gone when it ends.
+    ("code_rule_dsl/logic/plan/phased.rs", "DeclaredKeys"),
+    // What an asked phase's first round measured (a chunk mix's constants), bound for its rounds alone (decision
+    // 0705): the rounds' own state, as a run's chunks share their first chunk's within it; gone when the rounds end.
+    ("code_rule_dsl/logic/plan/corpus/phases.rs", "RoundsMeasured"),
     ("code_rule_dsl/logic/profile/memory.rs", "DOING"),
     ("code_rule_dsl/logic/profile/memory.rs", "SAMPLED"),
     // The width census's counts by relation and by span (`RERAIL_WIDTH_CENSUS`), printed at the run's end: a
@@ -299,6 +314,9 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "OPERATION_WAITED"),
     ("content_store/connection.rs", "THREAD_CONNECTIONS"),
     ("content_store/connection.rs", "WAIT_SPENT"),
+    // The spaces the open write transaction has written once (decision 0677 fix 3: one sweep a space a transaction),
+    // cleared when its scope closes: state of an open thing, kept for no later use.
+    ("content_store/connection.rs", "WRITTEN_SPACES"),
     // A switch: testing mode's store (decision 0130).
     ("code_rule_dsl/logic/plan/corpus/base.rs", "UseStore"),
     // Phase 1's runs within one batch of policies over one tree, dropped with it: nothing kept past the batch.

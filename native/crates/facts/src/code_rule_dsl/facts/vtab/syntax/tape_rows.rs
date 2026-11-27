@@ -137,7 +137,7 @@ pub(super) trait TapeRows: Send + Sync + 'static {
     /// The items (each with its document) a lookup of `value` on a `keyed` column may find, with a row or not: by the
     /// row's own id, its tape node; by a parent's, the nodes under it.
     fn find(&self, batch: &Batch, column: usize, value: i64, each: &mut dyn FnMut(usize, u32)) {
-        let Some(doc) = batch.doc(value >> 32, &mut 0) else { return };
+        let Some(doc) = batch.doc(rerail_blocks::located::Located::key_wide(value), &mut 0) else { return };
         let at = At { batch, doc };
         let p = at.p();
         let Some(local) = p.local_of((value & 0xffff_ffff) as u32) else { return };

@@ -351,6 +351,9 @@ pub(in crate::code_rule_dsl) fn document_delta_except(rel: &str, old: &Arc<dyn S
             now
         }
         None => {
+            if std::env::var_os("RERAIL_STRATA_LIVE").is_some() {
+                eprintln!("RERAIL_STRATA_LIVE document delta {rel}: every row hashed ({}; owner column {g})", if same.is_some() { "an unchanged document's count differs" } else { "no unchanged documents given" });
+            }
             super::maintain::shape::input_hashed_whole();
             let _s = crate::code_rule_dsl::logic::profile::span(|| "document delta: every row hashed".into());
             by_doc(new.as_ref(), &mut row)
@@ -1159,7 +1162,7 @@ impl Retained {
     /// `(copy, rows, rows with a guest document's value, rows also in the original, the original's rows)`: a value is
     /// a guest's when its document key (`>> 32`) is in the guests' range (`hiding`). `RERAIL_COPIES` prints it.
     pub(in crate::code_rule_dsl) fn copies(&self) -> Vec<(String, usize, usize, usize, usize)> {
-        let guest = |v: i64| (v >> 32) >= (1 << 30) && (v >> 32) < (1i64 << 31);
+        let guest = |v: i64| (rerail_blocks::located::Located::key_wide(v)) >= (1 << 30) && (rerail_blocks::located::Located::key_wide(v)) < (1i64 << 31);
         let mut out = Vec::new();
         for (rel, k) in &self.rels {
             let Some(rest) = rel.strip_prefix("rr_in_") else { continue };
@@ -1821,6 +1824,10 @@ pub(in crate::code_rule_dsl) struct InKept {
 }
 
 impl InKept {
+    /// The space its entries were bound from before the first wave (decision 0401 F3), if any.
+    pub(in crate::code_rule_dsl) fn bound(&self) -> Option<&Arc<kept_read::Bound>> {
+        self.bound.as_ref()
+    }
     /// The digest input `rel` is kept at, when it is kept.
     pub(in crate::code_rule_dsl) fn input_digest(&self, rel: &str) -> Option<u64> {
         self.inputs.get(rel).map(|(d, _)| *d)
@@ -2145,6 +2152,19 @@ fn base_documents_ident(binds: &[u8; 32]) -> [u8; 32] {
     h.finalize().into()
 }
 
+/// The documents' table's own: of `binds` and the memo plan it is written under. Two programs over the same base
+/// relations (a stage and the program it was cut from, decision 0709) each hold the rows a document held under their
+/// own plan: one table for both was each one's in turn, and each run read the other's, every input hashed whole and a
+/// warm run writing the table again.
+fn base_table_ident(binds: &[u8; 32], plan: u64) -> [u8; 32] {
+    use sha2::{Digest as _, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"rerail.base-documents/v2\0");
+    h.update(binds);
+    h.update(plan.to_le_bytes());
+    h.finalize().into()
+}
+
 /// A file of the documents' table: its path, document key and content (`Stored`, or `Unstored` by its digest when
 /// the store did not hold it yet as the table was written).
 pub(in crate::code_rule_dsl) type BaseDocument = (String, i64, super::memo::Content);
@@ -2156,6 +2176,14 @@ const MEMO_PLAN_READ: &str = "#memo-plan";
 /// The tag of a memo plan, as a documents' table records it.
 pub(in crate::code_rule_dsl) fn memo_plan_tag(plan: &[u8; 32]) -> u64 {
     u64::from_le_bytes(plan[..8].try_into().expect("eight bytes"))
+}
+
+/// The tag a documents' table is written and read under: the memo plan's, and, when a file's entry is kept under the
+/// project's settings (decision 0665, a phase's exports read as settings by 0705), the digest of every settings row.
+/// A file of the same content and key holds the rows it held only under the same settings too: an asked phase's reader
+/// is keyed by its asks' answers, which another file's edit changes.
+pub(in crate::code_rule_dsl) fn table_tag(plan: &[u8; 32], settings: Option<[u8; 32]>) -> u64 {
+    memo_plan_tag(plan) ^ settings.map_or(0, |s| memo_plan_tag(&s).rotate_left(1))
 }
 
 /// A documents' table as read (`base_documents`).
@@ -2171,15 +2199,15 @@ pub(in crate::code_rule_dsl) struct BaseTable {
 
 /// The documents' table the store's frames in `space` keep for the cross part of `binds`, as a `BaseTable`; `None`
 /// when there is none. Read before the first wave.
-pub(in crate::code_rule_dsl) fn base_documents(store: &ContentStore, space: [u8; 32], binds: [u8; 32]) -> Result<Option<BaseTable>> {
+pub(in crate::code_rule_dsl) fn base_documents(store: &ContentStore, space: [u8; 32], binds: [u8; 32], plan: u64) -> Result<Option<BaseTable>> {
     let Some(bound) = kept_read::Bound::of(store, &space).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(None) };
-    base_documents_in(store, &bound, binds)
+    base_documents_in(store, &bound, binds, plan)
 }
 
 /// The documents' table of `base_documents`, read from a space already bound (a kept part's, `InKept::bound_space`):
 /// a run inside another's waves reads it there, where it reads no store.
-pub(in crate::code_rule_dsl) fn base_documents_in(store: &ContentStore, bound: &Arc<kept_read::Bound>, binds: [u8; 32]) -> Result<Option<BaseTable>> {
-    let Some(entry) = bound.entry(BASE_DOCUMENTS, &base_documents_ident(&binds), DOCS_PART) else { return Ok(None) };
+pub(in crate::code_rule_dsl) fn base_documents_in(store: &ContentStore, bound: &Arc<kept_read::Bound>, binds: [u8; 32], plan: u64) -> Result<Option<BaseTable>> {
+    let Some(entry) = bound.entry(BASE_DOCUMENTS, &base_table_ident(&binds, plan), DOCS_PART) else { return Ok(None) };
     let plan = entry.reads().into_iter().find(|(r, _)| r == MEMO_PLAN_READ).map(|(_, tag)| tag);
     Ok(documents_table(store, &entry)?.map(|docs| BaseTable { docs, plan, digest: entry.digest() }))
 }
@@ -2490,7 +2518,7 @@ pub(in crate::code_rule_dsl) fn put_base_documents(store: &ContentStore, was: &I
             }
         }
     }
-    let name = KeptRel { name: BASE_DOCUMENTS.to_owned(), ident: base_documents_ident(&binds) };
+    let name = KeptRel { name: BASE_DOCUMENTS.to_owned(), ident: base_table_ident(&binds, plan) };
     let mut types = vec![b'i'; crate::content_store::PLACED_WORDS];
     types[0] = b's';
     let what = crate::content_store::kept_facts::KeptWhat::Documents { rows, tape };

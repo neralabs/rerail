@@ -265,7 +265,7 @@ impl Stored {
                 // next is twice its size, and has room for this string.
                 let (cap, bytes) = match self.writer.take() {
                     Some((seq, w)) => {
-                        Self::seal(connection, seq, &w)?;
+                        Self::seal(connection, seq, &w, &self.block_path(&dir, seq))?;
                         (w.cap().saturating_mul(2), w.bytes_cap().saturating_mul(2))
                     }
                     None => (first_cap(), first_bytes()),
@@ -282,8 +282,8 @@ impl Stored {
                 std::fs::rename(&made, dir.join(&name)).map_err(io)?;
                 sync_dir(&dir, rerail_store_base::content_store::flush_of(connection)).map_err(io)?;
                 connection
-                    .prepare_cached("INSERT INTO main.atom_blocks(seq, name, first, upto, tag) VALUES (?1, ?2, ?3, ?3, ?4)")?
-                    .execute(rusqlite::params![next_seq, name, i64::from(id), tag as i64])?;
+                    .prepare_cached("INSERT INTO main.atom_blocks(seq, name, first, upto, tag, bytes) VALUES (?1, ?2, ?3, ?3, ?4, ?5)")?
+                    .execute(rusqlite::params![next_seq, name, i64::from(id), tag as i64, rerail_store_base::content_store::segments::file_bytes(&dir.join(&name)) as i64])?;
                 self.known.push(Known { seq: next_seq, name, first: id, tag });
                 self.writer = Some((next_seq, w));
                 next_seq += 1;
@@ -291,7 +291,7 @@ impl Stored {
             id += 1;
         }
         if let Some((seq, w)) = &self.writer {
-            Self::seal(connection, *seq, w)?;
+            Self::seal(connection, *seq, w, &self.block_path(&dir, *seq))?;
         }
         let rows = self::rows(connection)?;
         if roll_up_due(&rows) {
@@ -331,8 +331,8 @@ impl Stored {
         sync_dir(&dir, rerail_store_base::content_store::flush_of(connection)).map_err(io)?;
         connection.prepare_cached("DELETE FROM main.atom_blocks")?.execute([])?;
         connection
-            .prepare_cached("INSERT INTO main.atom_blocks(seq, name, first, upto, tag) VALUES (?1, ?2, 1, ?3, ?4)")?
-            .execute(rusqlite::params![seq, name, i64::from(end), tag as i64])?;
+            .prepare_cached("INSERT INTO main.atom_blocks(seq, name, first, upto, tag, bytes) VALUES (?1, ?2, 1, ?3, ?4, ?5)")?
+            .execute(rusqlite::params![seq, name, i64::from(end), tag as i64, rerail_store_base::content_store::segments::file_bytes(&dir.join(&name)) as i64])?;
         // Read through the base from now on: the deltas' views go, and the base's covers what they did.
         let base = Row { seq, name, first: 1, upto: end, tag };
         let was = self.end;
@@ -344,11 +344,18 @@ impl Stored {
     }
 
     /// A block's appends written back (on the disk with `Flush::Synced`, decision 0481), then its row's end moved to
-    /// them, in the transaction.
-    fn seal(connection: &Connection, seq: i64, w: &AtomsW) -> StoreResult<()> {
+    /// them, in the transaction, and the bytes its file (at `path`) takes now: an open block's grow as it fills.
+    fn seal(connection: &Connection, seq: i64, w: &AtomsW, path: &Path) -> StoreResult<()> {
         w.sync().map_err(io)?;
-        connection.prepare_cached("UPDATE main.atom_blocks SET upto = ?1 WHERE seq = ?2")?.execute(rusqlite::params![i64::from(w.end()), seq])?;
+        connection
+            .prepare_cached("UPDATE main.atom_blocks SET upto = ?1, bytes = ?2 WHERE seq = ?3")?
+            .execute(rusqlite::params![i64::from(w.end()), rerail_store_base::content_store::segments::file_bytes(path) as i64, seq])?;
         Ok(())
+    }
+
+    /// The file of block `seq` this process knows of, in `dir`.
+    fn block_path(&self, dir: &Path, seq: i64) -> PathBuf {
+        dir.join(self.known.iter().find(|k| k.seq == seq).map_or_else(String::new, |k| k.name.clone()))
     }
 }
 

@@ -376,11 +376,10 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         }
         "rr_place" => {
             let (p, l) = (numbers[0], numbers[1]);
-            let place = (0..1i64 << 32).contains(&l).then(|| p.checked_mul(1 << 32).and_then(|x| x.checked_add(l)).and_then(|x| (-2i64).checked_sub(x))).flatten();
-            return Value::Integer(place.unwrap_or(-1));
+            return Value::Integer(rerail_blocks::located::place(p, l).unwrap_or(-1));
         }
-        "rr_place_path" => return (-2i64).checked_sub(numbers[0]).map_or(Value::Null, |n| Value::Integer(n / (1 << 32))),
-        "rr_place_line" => return (-2i64).checked_sub(numbers[0]).map_or(Value::Null, |n| Value::Integer(n - n / (1 << 32) * (1 << 32))),
+        "rr_place_path" => return rerail_blocks::located::place_parts(numbers[0]).map_or(Value::Null, |(p, _)| Value::Integer(p)),
+        "rr_place_line" => return rerail_blocks::located::place_parts(numbers[0]).map_or(Value::Null, |(_, l)| Value::Integer(l)),
         "rr_strlen" | "sql_length" => return Value::Integer(t(0).chars().count() as i64),
         "sql_instr" => return Value::Integer(t(0).find(t(1)).map_or(0, |at| t(0)[..at].chars().count() as i64 + 1)),
         "sql_substr" => Some(sql_substr(t(0), numbers[0], Some(numbers[1]))),

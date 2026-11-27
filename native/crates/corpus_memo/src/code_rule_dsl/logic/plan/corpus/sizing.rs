@@ -100,9 +100,9 @@ pub struct Schedule {
     /// filing, each chunk cut, built, evaluated, then filed in order. One window (the plans') held the builder to
     /// 8 chunks past the last filed, shared by those built, evaluating and evaluated: cold PostHog's chunks ran 2-4
     /// at once of 8, the main thread waiting 16 s for the next chunk's size.
-    horizon: usize,
-    /// The plans' window: while chunks grow, chunk `n` sizes chunk `n + window`, growth included.
+    /// The plans' window (`plan::PLAN_WINDOW`): while chunks grow, chunk `n + window` is sized by chunk `n`.
     window: usize,
+    horizon: usize,
     at_most: usize,
     /// Three quarters of the limit, less the run's start.
     room: usize,
@@ -134,8 +134,8 @@ impl Schedule {
         Schedule {
             first,
             most,
-            horizon: HORIZON * window,
             window,
+            horizon: HORIZON * window,
             at_most: at_most.max(1),
             room: (limit / 4 * 3).saturating_sub(base),
             // The first window's chunks are the first's size: each later one is sized by the chunk a window before it.
@@ -162,12 +162,7 @@ impl Schedule {
         if let Some(f) = self.fixed.filter(|_| n > 0) {
             return Some(f);
         }
-        if let Some(&Some((nodes, _))) = self.sizes.get(n) {
-            return Some(nodes);
-        }
-        // From the chunk growth stopped at to the first a chunk filed since sizes, the size it stopped at.
-        let s = self.stopped?;
-        (n >= s && n < s + 1 + self.horizon - self.window).then(|| self.sizes[s].expect("the size growth stopped at").0)
+        self.sizes.get(n).copied().flatten().map(|(nodes, _)| nodes)
     }
 
     /// The next chunk is cut: its number.
@@ -209,11 +204,12 @@ impl Schedule {
             }
             if grown < least.0 { (grown, By::Grown) } else { least }
         };
-        // Growing, the chunk a window on, `GROWTH` times this one; growth stopped, the chunk a horizon on, the least of
-        // the most, what the room holds and the spread.
-        let (chunk, (nodes, by)) = match self.stopped {
-            None => (n + self.window, bound(m.nodes.max(target).saturating_mul(GROWTH))),
-            Some(_) => (n + self.horizon, bound(usize::MAX)),
+        // Growing, the chunk a window on, `GROWTH` times this one; growth stopped, the chunk `HORIZON` windows on (the
+        // builder builds a window ahead of those evaluating), the least of the most, what the room holds and the spread.
+        let chunk = n + if self.stopped.is_none() { self.window } else { self.horizon };
+        let (nodes, by) = match self.stopped {
+            None => bound(m.nodes.max(target).saturating_mul(GROWTH)),
+            Some(_) => bound(usize::MAX),
         };
         let nodes = nodes.clamp(self.first, self.most);
         if self.sizes.len() <= chunk {
@@ -222,6 +218,15 @@ impl Schedule {
         self.sizes[chunk] = Some((nodes, by));
         if self.stopped.is_none() && by != By::Grown {
             self.stopped = Some(chunk);
+            // The chunks past it up to the first a later chunk's filing decides (`n + 1 + horizon`) are its size: each
+            // chunk's size decided once, before the builder reaches it (Q314).
+            let last = n + self.horizon;
+            if self.sizes.len() <= last {
+                self.sizes.resize(last + 1, None);
+            }
+            for c in chunk + 1..=last {
+                self.sizes[c] = Some((nodes, by));
+            }
         }
         self.at_once = if by == By::Grown { 1 } else { (fit / nodes.max(1)).clamp(1, self.at_most) };
         Decided { chunk, nodes, at_once: self.at_once, by, per_node, room, fit, spread }
@@ -268,13 +273,12 @@ mod tests {
         let d = s.file(1, wrote(131_072, 30));
         assert_eq!((d.chunk, d.nodes, d.by), (9, MOST, By::Most));
         assert!(d.at_once > 1 && d.at_once <= 8, "{d:?}");
-        // Chunks 9 to 25 the size growth stopped at, to the first chunk 2 sizes (2 + 3 windows).
         for n in 9..26 {
             assert_eq!(s.size(n), Some(MOST), "chunk {n} is sized by growth's stop");
         }
         assert_eq!(s.size(26), None, "chunk 26 is sized by chunk 2");
         let d = s.file(2, wrote(MOST, 60));
-        assert_eq!((d.chunk, d.nodes), (26, MOST), "growth stopped: the most, a horizon on");
+        assert_eq!((d.chunk, d.nodes), (26, MOST), "growth stopped: the most");
     }
 
     /// A chunk whose growth a node would not fit `GROWTH` times its size is held to what the room holds, alone.

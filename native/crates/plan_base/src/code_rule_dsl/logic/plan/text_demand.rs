@@ -746,7 +746,8 @@ pub fn node_anchors(v: &Version, settings: &[(String, String)], matchers: &Match
     if setting("phase").is_empty() {
         return Err("not a phase".into());
     }
-    let exports: Vec<String> = setting("export").iter().flat_map(|x| x.split(',').map(|e| e.trim().trim_end_matches('.').to_owned()).collect::<Vec<_>>()).filter(|e| !e.is_empty()).collect();
+    // An export's name is its item's first word: an asked phase writes its key after it (`asked_at by_path 1`).
+    let exports: Vec<String> = setting("export").iter().flat_map(|x| x.split(',').filter_map(|e| e.trim().trim_end_matches('.').split_whitespace().next().map(str::to_owned)).collect::<Vec<_>>()).collect();
     let is_node = |t: &str| t == "node" || t == "loc";
     let ast = crate::code_rule_dsl::facts::core::ast_matches::PREFIX;
     let types = |rel: &str| -> Option<Vec<&str>> { v.decl_of(rel).map(|d| d.cols().map(|(_, t)| v.text(t)).collect()) };
@@ -763,7 +764,7 @@ pub fn node_anchors(v: &Version, settings: &[(String, String)], matchers: &Match
     let node_col = |rel: &str, c: usize| rel.starts_with(ast) || types(rel).and_then(|ts| ts.get(c).copied()).is_some_and(is_node);
     // What a node holds itself; `child` and `field` go down from their first column. `rr_long_text_node(n)` is a
     // long-text twin's (`long_text_twins`): that `n`'s text is past the inline bound, made from the projected nodes.
-    const LOCAL: &[&str] = &["kind", "node", "text", "name", "str", "strprefix", "value", "static_value", "docof", "line", "col", "end_line", "intval", "op", "op_at", "comment", "rr_long_text_node"];
+    const LOCAL: &[&str] = &["kind", "node", "text", "name", "str", "strprefix", "value", "static_value", "static_value_type_of", "docof", "line", "col", "end_line", "intval", "op", "op_at", "comment", "rr_long_text_node"];
     let down = |rel: &str| match rel {
         "child" => Some(1),
         "field" => Some(2),

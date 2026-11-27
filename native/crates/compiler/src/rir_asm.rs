@@ -59,6 +59,7 @@ pub const OPCODES: &[(u8, &str)] = &[
     (WRAP, "WRAP"),
     (REMEMBER, "REMEMBER"),
     (FLAG, "FLAG"),
+    (INDENT, "INDENT"),
     (COUNT, "COUNT"),
     (CHECK, "CHECK"),
     (SETTLE, "SETTLE"),
@@ -511,6 +512,31 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             }
             parts.mark_passes.push((k, m));
         }
+        "markcolumn" => {
+            let k: u8 = line.number("")?;
+            let c: u8 = line.number("")?;
+            if parts.mark_columns.last().is_some_and(|&(x, _)| x >= k) {
+                return Err(format!("markcolumn {k} out of order"));
+            }
+            if !(1..=2).contains(&c) {
+                return Err(format!("markcolumn {k} {c}: 1 (deeper) or 2 (shallower)"));
+            }
+            parts.mark_columns.push((k, c));
+        }
+        "superclass" => {
+            let (s, k) = (line.kind()?, line.kind()?);
+            let mut cs = Vec::new();
+            while line.tokens.peek().is_some() {
+                cs.push(line.kind()?);
+            }
+            if parts.super_classes.last().is_some_and(|x| (x.0, x.1) >= (s, k)) {
+                return Err(format!("superclass #{s} #{k} out of order"));
+            }
+            if s == 0 || cs.is_empty() || cs.windows(2).any(|w| w[0] >= w[1]) {
+                return Err(format!("superclass #{s} #{k}: a slot, then its classes, rising"));
+            }
+            parts.super_classes.push((s, k, cs));
+        }
         "wordkind" => {
             let s: u16 = line.number("s")?;
             let k = line.kind()?;
@@ -607,6 +633,9 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                         2 => el.ending.as_mut().ok_or("an ending's row marks")?.rows = bits,
                         _ => el.rows = bits,
                     }
+                } else if let Some(h) = w.strip_prefix("whole") {
+                    let bits = u8::from_str_radix(h, 16).map_err(|_| format!("a bad `whole` `{w}`"))?;
+                    elems.last_mut().ok_or("a `whole` before its run")?.whole = bits;
                 } else if let Some(h) = w.strip_prefix('w') {
                     let bits = u32::from_str_radix(h, 16).map_err(|_| format!("a bad `without` `{w}`"))?;
                     elems.last_mut().ok_or("a `without` before its element")?.without = bits;
@@ -733,7 +762,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let group: u16 = line.number("")?;
                 let (opener, closer, open, fill): (u16, u16, u16, u16) = (line.number("%")?, line.number("%")?, line.number("%")?, line.number("%")?);
                 let bytes: u8 = line.number("")?;
-                let (mut outside, mut empty, mut or, mut after, mut resumes) = (false, None, None, 0u16, false);
+                let (mut outside, mut empty, mut or, mut after, mut resumes, mut opens) = (false, None, None, 0u16, false, 1u8);
                 while let Some(w) = line.peek_word() {
                     if w == "outside" {
                         line.word()?;
@@ -750,17 +779,37 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     } else if w == "resumes" {
                         line.word()?;
                         resumes = true;
+                    } else if w == "opens" {
+                        line.word()?;
+                        opens = line.number("")?;
                     } else {
-                        return Err(format!("block {at} region: `outside`, `else %e M`, `or %c M` or `after MASK [resumes]`, not {w}"));
+                        return Err(format!("block {at} region: `outside`, `else %e M`, `or %c M`, `after MASK [resumes]` or `opens N`, not {w}"));
                     }
                 }
-                let kind = crate::block::WalkKind { opener, closer, open, fill, bytes, outside, empty, or, after, resumes };
+                let kind = crate::block::WalkKind { opener, opens, closer, open, fill, bytes, outside, empty, or, after, resumes };
                 match program.walks.last_mut() {
                     Some(w) if w.group == group => w.kinds.push(kind),
                     _ => {
                         let hidden = program.rounds.get(usize::from(group)).and_then(|g| g.first()).ok_or(format!("block {at} region of no rounds group {group}"))?.0;
-                        program.walks.push(crate::block::Walk { group, hidden, kinds: vec![kind] })
+                        program.walks.push(crate::block::Walk { group, hidden, kinds: vec![kind], level: None })
                     }
+                }
+            } else if first == "level" {
+                // `block N level G %opens %closes MAX %deep [nest N %d0 %d1]`: the level of rounds
+                // group G's walk (`crate::block::Level`), after its kinds.
+                let group: u16 = line.number("")?;
+                let (opens, closes): (u16, u16) = (line.number("%")?, line.number("%")?);
+                let max: u8 = line.number("")?;
+                let deep: u16 = line.number("%")?;
+                let (mut nest, mut depths) = (1u8, None);
+                if line.peek_word().as_deref() == Some("nest") {
+                    line.word()?;
+                    nest = line.number("")?;
+                    depths = Some((line.number("%")?, line.number("%")?));
+                }
+                match program.walks.last_mut() {
+                    Some(w) if w.group == group && w.level.is_none() => w.level = Some(crate::block::Level { opens, closes, max, deep, nest, depths }),
+                    _ => return Err(format!("block {at} level of no walk of group {group} before it")),
                 }
             } else if first == "extract" {
                 program.extracts.push(line.number("%")?);
@@ -827,7 +876,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     Ok(w) if w == "retag" => Some((line.number("")?, line.number("")?)),
                     _ => None,
                 };
-                r.readers.push(crate::records::Reader { arms: Vec::new(), other, retag, parts: Vec::new(), content: None, closers: Vec::new(), split: crate::records::Split::Tier1, quiet: false, resumes: false });
+                r.readers.push(crate::records::Reader { arms: Vec::new(), other, retag, parts: Vec::new(), content: None, closers: Vec::new(), split: crate::records::Split::Tier1, quiet: false, resumes: false, nest: None, open_last: None });
             } else if first == "recretag" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recretag before its records"))?;
                 let (o, kind, marks): (u16, u8, u32) = (line.number("")?, line.number("")?, line.number("")?);
@@ -898,6 +947,19 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let r = program.records.as_mut().ok_or(format!("block {at} recresumes before its records"))?;
                 let k: usize = line.number("")?;
                 r.readers.get_mut(k).ok_or(format!("block {at} recresumes {k}: no such reader"))?.resumes = true;
+            } else if first == "recnest" {
+                // `recnest K O0 O1 M`: reader K's depth bits' outputs and how deep templates nest
+                // (`Reader::nest`).
+                let r = program.records.as_mut().ok_or(format!("block {at} recnest before its records"))?;
+                let k: usize = line.number("")?;
+                let nest = (line.number("")?, line.number("")?, line.number("")?);
+                r.readers.get_mut(k).ok_or(format!("block {at} recnest {k}: no such reader"))?.nest = Some(nest);
+            } else if first == "recopen" {
+                // `recopen K O`: reader K's opener past its prefix, its first piece's last (`Reader::open_last`).
+                let r = program.records.as_mut().ok_or(format!("block {at} recopen before its records"))?;
+                let k: usize = line.number("")?;
+                let o = line.number("")?;
+                r.readers.get_mut(k).ok_or(format!("block {at} recopen {k}: no such reader"))?.open_last = Some(o);
             } else if first == "recquiet" {
                 // `recquiet K`: reader K's region holds no mask mark (`Reader::quiet`).
                 let r = program.records.as_mut().ok_or(format!("block {at} recquiet before its records"))?;
@@ -1128,6 +1190,8 @@ pub fn head_rows(out: &mut String, program: &Words) {
     reading_rows(out, &program.readings);
     crate::rir_text::mark_word_rows(out, &program.mark_words);
     crate::rir_text::mark_pass_rows(out, &program.mark_passes);
+    crate::rir_text::mark_column_rows(out, &program.mark_columns);
+    crate::rir_text::super_class_rows(out, &program.super_classes);
     crate::rir_text::word_kind_rows(out, &program.word_kinds);
     crate::rir_text::extra_rows(out, &program.extras);
     crate::rir_text::token_mark_rows(out, &program.token_marks);

@@ -37,7 +37,7 @@ impl Dense {
     }
 }
 
-const LABEL_LIMIT:i64=1_i64<<32;
+const LABEL_LIMIT:i64=1_i64<<32; // bits: a label's room
 const SPARSE_LIMIT:usize=1024;
 /// Slots of a sparse sketch's counts at most: twice its values, a power of two. It starts at `SPARSE_FIRST` and
 /// doubles while its values pass half its slots.

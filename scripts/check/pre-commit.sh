@@ -57,3 +57,6 @@ python3 scripts/check/check_no_global_state.py
 python3 scripts/check/check_machine_pool.py
 # Nor kept beside its block in a thread's or the process's map (decision 0478, R7): a commit that adds one is refused.
 python3 scripts/check/check_no_relation_maps.py
+# Node ids' encodings are defined once (rerail_blocks::located, plan "Chunk node numbers"): a shift by 32 written by
+# hand in a crate that handles ids is refused unless marked as bits that are no id.
+python3 scripts/check/check_node_ids.py

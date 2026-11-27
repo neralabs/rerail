@@ -28,11 +28,11 @@
 
 .violation FkIdNotRelation(at: node, obj: symbol, fk: symbol, key: symbol) "{obj}.{fk}.{key} loads the related object only to read its key; use {obj}.{fk}_id, which the row already holds and needs no query."
 
-// fir_has_fk(c, x): model c has x as a ForeignKey or OneToOneField to the target's primary key, declared in its body
-// or in a base class of the run.
+// fir_has_fk(c, x): the model c names (the class, or an expression naming it: dj_model_named) has x as a ForeignKey or
+// OneToOneField to the target's primary key, declared in its body or an ancestor's of the run.
 .decl fir_has_fk(c: node, x: symbol)
-fir_has_fk(c, x) :- dj_has_field(c, x, call, t), dj_fk_class(t), !call_arg(call, _, "to_field", _).
-// fir_row(o, c): expression o (a name) is a row of model c.
+fir_has_fk(c, x) :- dj_model_field(c, x, t), dj_fk_class(t), !dj_model_field_kw(c, x, "to_field", _).
+// fir_row(o, c): expression o (a name) is a row of the model c names.
 .decl fir_row(o: node, c: node)
 fir_row(s, c) :- kind(s, "identifier"), text(s, "self"), dj_model_method(c, f, _), param(f, "self", 0), within(s, f).
 fir_row(s, c) :- kind(s, "identifier"), latest_assign(s, x, a), field(a, "right", r), unparen(r, g),

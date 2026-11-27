@@ -14,10 +14,12 @@
 
 #include "tsx/eslint-a-functions.rerail"   // function_node, fn_start; names.rerail's decl_site, ref_site
 
-.decl err_name(x: symbol)  // the parameter names the option asks about
-err_name(x) :- first(_, x, _), option("option", e), !prefix("^", e), x = e.
-err_name(x) :- first(_, x, _), option("option", e), prefix("^", e), match(cat(e, ".*"), x).
-err_name("err") :- first(_, "err", _), !option("option", _).
+// err_first(f, p): function f's first parameter p has a name the option asks about. Tested at the function, not as a
+// table of every file's names (decision 0677).
+.decl err_first(f: node, p: node)
+err_first(f, p) :- first(f, x, p), option("option", e), !prefix("^", e), x = e.
+err_first(f, p) :- first(f, x, p), option("option", e), prefix("^", e), match(cat(e, ".*"), x).
+err_first(f, p) :- first(f, "err", p), !option("option", _).
 // first(f, x, p): p, binding x, is the first parameter name of function f.
 .decl first(f: node, x: symbol, p: node)
 first(f, x, p) :- function_node(f), decl_site(f, x, p, "param", "value"),
@@ -25,4 +27,4 @@ first(f, x, p) :- function_node(f), decl_site(f, x, p, "param", "value"),
 
 .violation callback_err(at: node) code "n/handle-callback-err" "Expected error to be handled."
     suppress eslint "n/handle-callback-err"
-callback_err(at) :- first(f, x, p), err_name(x), !ref_site(_, p), fn_start(f, at).
+callback_err(at) :- err_first(f, p), !ref_site(_, p), fn_start(f, at).

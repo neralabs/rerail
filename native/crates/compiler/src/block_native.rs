@@ -202,7 +202,8 @@ impl BlockNative {
     /// A walk with its values renamed by `m`.
     fn walk_renamed(w: &crate::block::Walk, m: impl Fn(u16) -> u16) -> crate::block::Walk {
         let kinds = w.kinds.iter().map(|k| crate::block::WalkKind { opener: m(k.opener), closer: m(k.closer), open: m(k.open), fill: m(k.fill), empty: k.empty.map(|(e, n)| (m(e), n)), or: k.or.map(|(c, n)| (m(c), n)), ..*k }).collect();
-        crate::block::Walk { group: w.group, hidden: m(w.hidden), kinds }
+        let level = w.level.map(|l| crate::block::Level { opens: m(l.opens), closes: m(l.closes), deep: m(l.deep), depths: l.depths.map(|(a, b)| (m(a), m(b))), ..l });
+        crate::block::Walk { group: w.group, hidden: m(w.hidden), kinds, level }
     }
 
     /// The CPU's form (decision 0139): each walk's group made by the walk, not by rounds. The
@@ -424,7 +425,7 @@ impl BlockNative {
             EndRule::Read(_) | EndRule::Next(_) => None,
         }));
         read.extend(r.readers.iter().flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer].into_iter().chain(a.last).chain(a.template))));
-        read.extend(r.readers.iter().flat_map(|rd| rd.parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last))));
+        read.extend(r.readers.iter().flat_map(|rd| rd.parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last)).chain(rd.open_last)));
         read.extend(r.checks.iter().map(|c| c.o));
         // The marks the token loop sets from the bytes (`loop_marks`); an output another mark
         // still reads from its row stays stored.
@@ -461,7 +462,7 @@ impl BlockNative {
             .readers
             .iter()
             .filter(|rd| rd.split == crate::records::Split::Tier2 && !rd.parts.is_empty() && !rd.parts.iter().any(|p| unread.contains(&p.start)))
-            .flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer].into_iter().chain(a.last).chain(a.template)).chain(rd.parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last))))
+            .flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer].into_iter().chain(a.last).chain(a.template)).chain(rd.parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last))).chain(rd.open_last))
             .collect();
         let mut v: Vector<usize> = read.into_iter().filter(|&o| (bytes.can(o) || unread.contains(&o)) && !stored.contains(&o) && !split_read.contains(&o)).map(usize::from).collect();
         v.sort_unstable();
@@ -495,8 +496,13 @@ impl BlockNative {
     /// The outputs of the start masks the CPU's readers say instead (`Records::retags`): where
     /// its token loop runs, a reader gives its token's kind and marks, and the walk a part's, so it
     /// makes none of them. A token's own kind no reader gives (a `0x`, decision 0509) it reads.
+    /// A start mask a reader's arm reads too (its opener taken, a format spec's `:` beside the
+    /// code's) the loop reads from its row: it stays made.
     pub fn readers_tags(&self) -> Vector<usize> {
-        self.records.as_ref().filter(|r| r.skip.is_some()).map_or(rerail_blocks::vector::Vector::new(), |r| r.retags.iter().filter(|t| !crate::records::own_retag(r, t)).map(|t| usize::from(t.o)).collect())
+        self.records.as_ref().filter(|r| r.skip.is_some()).map_or(rerail_blocks::vector::Vector::new(), |r| {
+            let armed: Vector<u16> = r.readers.iter().flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer].into_iter().chain(a.last).chain(a.template))).collect();
+            r.retags.iter().filter(|t| !crate::records::own_retag(r, t) && !armed.contains(&t.o)).map(|t| usize::from(t.o)).collect()
+        })
     }
 
     /// The outputs of the errors the CPU's token loop checks (`Records::untaken`), where it finds
@@ -820,7 +826,7 @@ impl BlockNative {
                 .collect();
             // A walk is made in the pass of its values, all in one (its `Walk`s read one `Args`).
             // In another pass it is a walk of no kinds, of nothing (its `hidden` any value).
-            let walks: Vec<crate::block::Walk> = self.walks.iter().map(|w| if w.made().iter().all(|&v| in_pass(usize::from(v), p)) { Self::walk_renamed(w, |v| place(usize::from(v)) as u16) } else { crate::block::Walk { group: w.group, hidden: 0, kinds: Vec::new() } }).collect();
+            let walks: Vec<crate::block::Walk> = self.walks.iter().map(|w| if w.made().iter().all(|&v| in_pass(usize::from(v), p)) { Self::walk_renamed(w, |v| place(usize::from(v)) as u16) } else { crate::block::Walk { group: w.group, hidden: 0, kinds: Vec::new(), level: None } }).collect();
             let body = |outputs: Vector<u16>, last: bool| BlockNative {
                 walks: walks.clone(),
                 pad: self.pad,

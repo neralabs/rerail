@@ -62,6 +62,10 @@ pub const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/ukl_vec/src/run.rs", "SLOTS", Thread, "this thread's last launches' slots, by their shape: storage the next launch of one reuses, written before it is read"),
     ("crates/vector/src/lib.rs", "FOUND", Thread, "the run's room provider, kept once found (`default_room`): registered once at load, the same on any thread"),
     ("crates/compiler/src/pp_words.rs", "HOST_RUNS", Thread, "a count of this thread's work, read by tests and the profile"),
+    ("crates/compiler/src/bitlex_masks.rs", "START", Thread, "with `RERAIL_PROVING_TRACE` (a measuring aid), this thread's compile's start: its time, steps left and CPU"),
+    ("crates/compiler/src/bitlex_masks.rs", "LAST", Thread, "with `RERAIL_PROVING_TRACE` (a measuring aid), this thread's last phase mark's time and CPU"),
+    ("crates/compiler/src/native_cpu_stream.rs", "SPARE", Thread, "the buffers of this thread's last tape, each kept for the same use in the next and written before it is read"),
+    ("crates/setfix/src/code_rule_dsl/logic/native/setfix/access.rs", "AHEAD", Call, "whether this thread is building a level's orders ahead (`orders_ahead`): set and cleared around that build, on the thread that runs it"),
     ("crates/metal/src/buffer_observation.rs", "ACTIVE", Thread, "this thread's scratch or counters in a backend"),
     ("crates/metal/src/test_pool.rs", "LEDGERS", Thread, "this thread's share of the test pool"),
     ("crates/metal/src/test_pool.rs", "MEASURED", Thread, "this thread's test reads the driver's own figure (a test switch, per thread as the test pool is)"),
@@ -106,6 +110,8 @@ pub const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/facts_base/src/code_rule_dsl/facts/rows.rs", "TOP", Carried, ""),
     ("crates/boot/src/code_rule_dsl/boot.rs", "COUNTERS", Thread, "jemalloc's counters of this thread's allocations"),
     ("crates/setfix/src/code_rule_dsl/logic/native/setfix.rs", "IN_MORSELS", Thread, "the walks this thread ran in morsels, read by tests"),
+    ("crates/setfix/src/code_rule_dsl/logic/native/setfix.rs", "WALK_ENTRY", Call, "the entry of the walk a caller starts on this thread (`RERAIL_PROF`): set by the caller, taken as the walk starts"),
+    ("crates/setfix/src/code_rule_dsl/logic/native/setfix.rs", "WALK_SEED", Call, "whether the walk a caller starts on this thread is a seed's (`RERAIL_PROF`): set by the caller, taken as the walk starts"),
     ("crates/setfix/src/code_rule_dsl/logic/native/setfix.rs", "VARIANTS", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("crates/setfix/src/code_rule_dsl/logic/native/setfix/closure.rs", "SEMI_NAIVE_HERE", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("crates/setfix/src/code_rule_dsl/logic/native/setfix/runs.rs", "INLINE", Call, "a lazy order's build under way on this thread (`runs::inline`): its sorts stay on the thread, never handed to the pool"),
@@ -209,6 +215,7 @@ pub const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/store/src/content_store/connection.rs", "OPERATION_WAITED", Thread, "this thread's SQLite connections and their waits"),
     ("crates/store/src/content_store/connection.rs", "THREAD_CONNECTIONS", Thread, "this thread's SQLite connections and their waits"),
     ("crates/store/src/content_store/connection.rs", "WAIT_SPENT", Thread, "this thread's SQLite connections and their waits"),
+    ("crates/store/src/content_store/connection.rs", "WRITTEN_SPACES", Thread, "this thread's open write transaction's kept spaces"),
 ];
 
 /// How many thread-locals are run context not carried yet ([`NotYet`]): lowered as each is carried, never raised.

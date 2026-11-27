@@ -249,6 +249,10 @@ pub enum Line {
     /// The relations whose rows the run keeps past it (a chunk's exports): made in blocks of their own
     /// (`Life::Kept`), apart from the run's other relations (`keptrows <rels>`).
     KeptRows(Vector<usize>),
+    /// The relations no stratum reads but this one's own rules (the design's S4, "the walk is inner"): a form that runs
+    /// the component whole may keep their rows in its own scratch and leave them out of the relation, which then holds
+    /// only its seeds once the run is done (`inner <rels>`).
+    Inner(Vector<usize>),
     /// Relation `rel` is a lattice's (decision 0124): its last column the value, joined by the lattice `name`'s join,
     /// the `keys` columns before it the key; after `widen` changes of a key, widened.
     Lattice { rel: usize, keys: usize, name: String, widen: Option<u32> },
@@ -601,6 +605,7 @@ fn line_text(spec: &Spec, l: &ArchivedLine) -> String {
         ArchivedLine::Measured { desc, key, keyed, cols, ranks } => format!("measured {} {} {} {} {}", if *desc { "d" } else { "a" }, key.as_ref().map_or_else(|| "-".to_owned(), |k| hex(k)), if *keyed { "k" } else { "u" }, comma(cols), comma(ranks)),
         ArchivedLine::KeptOld => "keptold".to_owned(),
         ArchivedLine::KeptRows(rels) => format!("keptrows {}", comma(rels)),
+        ArchivedLine::Inner(rels) => format!("inner {}", comma(rels)),
         ArchivedLine::Lattice { rel, keys, name, widen } => format!("lattice {rel} {keys} {} {}", hex(name), widen.get().map_or_else(|| "-".to_owned(), |w| w.to_string())),
         ArchivedLine::Key { rel, cols } => format!("key {rel} {}", cols.iter().map(u64::to_string).collect::<Vec<_>>().join(",")),
         ArchivedLine::Request(r) => format!("request {r}"),
@@ -702,6 +707,7 @@ impl ComponentSpec {
                 },
                 "keptold" => Line::KeptOld,
                 "keptrows" => Line::KeptRows(list(at(1)?)?),
+                "inner" => Line::Inner(list(at(1)?)?),
                 "lattice" => Line::Lattice {
                     rel: num(at(1)?)?,
                     keys: num(at(2)?)?,
