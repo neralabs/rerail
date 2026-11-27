@@ -420,6 +420,65 @@ impl Numbering {
         (k < all).then(|| (item, unsafe { self.number_in(g, item, k, None) }))
     }
 
+    /// `number_of` of each of `lows`, ascending (a document's probes in a batch: the bulk read of t57's view reads),
+    /// into `out`: `item << 32 | number` each, `u64::MAX` for none. One pass: the slot table's entry found by moving on
+    /// from the last low's (a bisection of the rest past `STEPS` entries, as `number_of`'s guess falls back), and a
+    /// granule's child granules searched by moving on from the last number's while the granule and item are the same.
+    ///
+    /// # Safety
+    /// As every read's; `lows` ascending, `out` as long.
+    pub unsafe fn number_of_sorted(&self, lows: &[u32], out: &mut [u64]) {
+        const STEPS: u32 = 8;
+        debug_assert!(lows.is_sorted() && out.len() == lows.len());
+        // SAFETY: the caller's.
+        let (by_slot, nodes, tokens) = unsafe { (Self::of::<[u32; 3]>(&self.by_slot), Self::of::<u32>(&self.nodes), Self::of::<u32>(&self.tokens)) };
+        let n = by_slot.len() as u32;
+        let mut at = 0u32;
+        // The last granule and item searched, and the child granules before the last number (`number_in`'s `i`).
+        let (mut last_g, mut last_item, mut i) = (u32::MAX, u32::MAX, 0u32);
+        for (o, &low) in out.iter_mut().zip(lows) {
+            *o = u64::MAX;
+            let slot = low >> INDEX_BITS;
+            let mut steps = 0;
+            while at < n && steps < STEPS && by_slot[at as usize][0] < slot {
+                (at, steps) = (at + 1, steps + 1);
+            }
+            if steps == STEPS {
+                at = bisect(at, n, |e| by_slot[e as usize][0] < slot);
+            }
+            let Some(&[s, g, c]) = by_slot.get(at as usize) else { continue };
+            if s != slot {
+                continue;
+            }
+            let index = c << INDEX_BITS | low & ((1 << INDEX_BITS) - 1);
+            let g1 = g as usize + 1;
+            let own = nodes[g1].wrapping_sub(nodes[g as usize]);
+            let (item, k, all) = if index < own { (0, index, own) } else { (1, index - own, tokens[g1].wrapping_sub(tokens[g as usize])) };
+            if k >= all {
+                continue;
+            }
+            // SAFETY: the caller's.
+            let kids = unsafe { self.kids(g) };
+            let w = item as usize + 1;
+            if g != last_g || item != last_item || (i > 0 && kids[i as usize - 1][w] > k) {
+                (last_g, last_item) = (g, item);
+                i = bisect(0, kids.len() as u32, |t| kids[t as usize][w] <= k);
+            } else {
+                while (i as usize) < kids.len() && kids[i as usize][w] <= k {
+                    i += 1;
+                }
+            }
+            // SAFETY: the caller's.
+            let number = unsafe {
+                match i.checked_sub(1) {
+                    None => Self::u32_at(&self.rank_starts[item as usize], g).wrapping_add(k),
+                    Some(e) => Self::u32_at(&self.rank_ends[item as usize], kids[e as usize][0]).wrapping_add(k).wrapping_sub(kids[e as usize][w]),
+                }
+            };
+            *o = u64::from(item) << 32 | u64::from(number);
+        }
+    }
+
     /// Node number `l`'s order key: its stretch's run rank, then its index in its granule (its number itself where
     /// the keys are preorder indexes); `NONE` for none (`num_order_of`).
     ///

@@ -2609,6 +2609,81 @@ fn host_id_reads(h: &rerail_clif::ids::Numbering, x: u32) -> [u32; 12] {
     }
 }
 
+/// A document's sorted lows numbered in one pass (`Numbering::number_of_sorted`, the bulk read of t57's view reads)
+/// answer as each low's `number_of`: every node's and token's low, lows of no item, and repeats, in every format and
+/// shape.
+#[test]
+fn a_documents_sorted_lows_number_as_each_low_does() {
+    if !definition_ids() {
+        return;
+    }
+    let mut tried = 0;
+    for (at, p, n) in id_read_cases() {
+        let d = p.ranks().numbering();
+        // SAFETY: the projection's live descriptor.
+        unsafe {
+            let mut lows: Vec<u32> = (0..n).flat_map(|x| [d.low_of(0, x), d.low_of(1, x), x << 7 | 0xffff_0000, x.wrapping_mul(2_654_435_761)]).collect();
+            lows.sort_unstable();
+            let mut out = vec![0u64; lows.len()];
+            d.number_of_sorted(&lows, &mut out);
+            for (&low, &got) in lows.iter().zip(&out) {
+                let want = d.number_of(low).map_or(u64::MAX, |(i, k)| u64::from(i) << 32 | u64::from(k));
+                assert_eq!(got, want, "{at}: low {low:#x}");
+            }
+            tried += lows.len();
+        }
+    }
+    assert!(tried > 100_000, "{tried}");
+}
+
+/// What numbering a document's probes costs one by one (`number_of`) and in one sorted pass (`number_of_sorted`):
+/// every node of the 17,000-function document, and every 37th (a relation's few nodes a document). A measurement.
+#[test]
+#[ignore]
+fn what_numbering_a_documents_lows_costs_one_by_one_and_sorted() {
+    let (at, p, n) = id_read_cases().into_iter().max_by_key(|(_, p, _)| p.len()).unwrap();
+    let d = p.ranks().numbering();
+    // SAFETY: the projection's live descriptor.
+    let all: Vec<u32> = unsafe { (0..n).map(|x| d.low_of(0, x)).filter(|&l| l != u32::MAX).collect() };
+    for (label, step) in [("every node", 1usize), ("every 37th node", 37)] {
+        let mut lows: Vec<u32> = all.iter().copied().step_by(step).collect();
+        lows.sort_unstable();
+        let mut out = vec![0u64; lows.len()];
+        let reps = 50;
+        let t = std::time::Instant::now();
+        let mut sum = 0u64;
+        for _ in 0..reps {
+            for &l in &lows {
+                // SAFETY: as above.
+                sum = sum.wrapping_add(unsafe { d.number_of(l) }.map_or(0, |(_, k)| u64::from(k)));
+            }
+        }
+        let one = t.elapsed().as_secs_f64() / (reps * lows.len()) as f64;
+        let t = std::time::Instant::now();
+        for _ in 0..reps {
+            // SAFETY: as above.
+            unsafe { d.number_of_sorted(&lows, &mut out) };
+            sum = sum.wrapping_add(out[out.len() / 2]);
+        }
+        let sorted = t.elapsed().as_secs_f64() / (reps * lows.len()) as f64;
+        // The sort a batch pays: its lows shuffled, then sorted.
+        let mut shuffled = lows.clone();
+        let mut r = 7u64;
+        for i in (1..shuffled.len()).rev() {
+            r = r.wrapping_mul(6364136223846793005).wrapping_add(1);
+            shuffled.swap(i, (r >> 33) as usize % (i + 1));
+        }
+        let t = std::time::Instant::now();
+        for _ in 0..reps {
+            let mut v = shuffled.clone();
+            v.sort_unstable();
+            sum = sum.wrapping_add(u64::from(v[0]));
+        }
+        let sort = t.elapsed().as_secs_f64() / (reps * lows.len()) as f64;
+        eprintln!("{at}, {} nodes, {label} ({} lows): one by one {:.1} ns a low, sorted pass {:.1} ns, the sort {:.1} ns ({sum})", p.len(), lows.len(), one * 1e9, sorted * 1e9, sort * 1e9);
+    }
+}
+
 /// Decision 0536: the numbering's reads written directly in Rust (`Numbering::is`, …) answer what its reads in CLIF
 /// answer, by the JIT: for every tape node, the kernels' probes (`the_kernels_id_reads_are_the_hosts`) and every
 /// item's bit, rank and select, and lows and order keys that are no item's. In both formats (16 and 16z), whole and narrowed.
