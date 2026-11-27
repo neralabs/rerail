@@ -1408,13 +1408,14 @@ impl NearestChild {
         crate::code_rule_dsl::logic::profile::once(&self.solved, "axis: nearest with the child solved", || self.solve())
     }
 
-    /// Per node row its nearest member and the member's child that holds it (node rows, `nearest::NONE` for none).
-    fn found(&self) -> (Vector<u32>, Vector<u32>) {
+    /// Per node row its nearest member, the member's child that holds it (node rows, `nearest::NONE` for none), and
+    /// the child's field atom (`field_atom`, its field 0 where it hangs by none).
+    fn found(&self) -> (Vector<u32>, Vector<u32>, Vector<u32>) {
         use crate::code_rule_dsl::facts::nearest::NONE as NO;
         use rerail_tape_format::tape::{NONE as TAPE_NONE, nearest_child_all};
         let w = &self.axis;
         let total = w.batch.nodes().total();
-        let (mut near, mut child) = (Vector::with_capacity(total), Vector::with_capacity(total));
+        let (mut near, mut child, mut field) = (Vector::with_capacity(total), Vector::with_capacity(total), Vector::with_capacity(total));
         let (mut tn, mut tc) = (Vector::new(), Vector::new());
         for (doc, p) in w.batch.docs.iter().enumerate() {
             let base = w.batch.nodes().at(doc) as u32;
@@ -1431,8 +1432,10 @@ impl NearestChild {
                     tc.resize(t.len(), 0);
                     nearest_child_all(&t, &w.set(doc, &t), |id| p.local_of_node(id as u32) != NONE, &mut tn, &mut tc);
                     for (_, id) in p.nodes() {
+                        let c = tc[id as usize];
                         near.push(row(tn[id as usize]));
-                        child.push(row(tc[id as usize]));
+                        child.push(row(c));
+                        field.push(if c == TAPE_NONE { 0 } else { super::field_atom(p.tag(), t.table().entry(t.code(c as usize)).field) });
                     }
                 }),
                 None => {
@@ -1443,11 +1446,12 @@ impl NearestChild {
                         }
                         near.push(if q == NONE { NO } else { base + q });
                         child.push(if q == NONE || below == l { NO } else { base + below });
+                        field.push(if q == NONE || below == l { 0 } else { super::field_atom(p.tag(), p.f().field(p.node(below))) });
                     }
                 }
             }
         }
-        (near, child)
+        (near, child, field)
     }
 
     fn solve(&self) -> Solved {
@@ -1455,7 +1459,7 @@ impl NearestChild {
         use crate::code_rule_dsl::facts::nearest::NONE as NO;
         use crate::code_rule_dsl::facts::rows::Part;
         let batch = &self.axis.batch;
-        let (near, child) = self.found();
+        let (near, child, field) = self.found();
         let n = near.len();
         let mut start = Vector::with_capacity(n + 1);
         let mut len = 0u32;
@@ -1469,7 +1473,7 @@ impl NearestChild {
         let first = |doc: usize| start[offsets.at(doc)];
         let has_rows = |doc: usize| first(doc + 1) > first(doc);
         let runs = (0..batch.docs.len()).filter(|&d| has_rows(d)).count();
-        let (rows, keys) = Part::over_key_runs(crate::code_rule_dsl::facts::rows::Life::Run, 3, len as usize, runs);
+        let (rows, keys) = Part::over_key_runs_of(crate::code_rule_dsl::facts::rows::Life::Run, 4, 3, len as usize, runs);
         for (k, (doc, key)) in batch.docs.keys().enumerate().filter(|&(d, _)| has_rows(d)).enumerate() {
             keys.put(k, first(doc), key);
         }
@@ -1484,6 +1488,7 @@ impl NearestChild {
                 rows.put(at, 0, batch.id(v, &mut memo));
                 rows.put(at, 1, batch.id(near[v] as usize, &mut memo));
                 rows.put(at, 2, batch.id(child[v] as usize, &mut memo));
+                rows.put(at, 3, i64::from(field[v]));
             }
             at += 1;
         }
@@ -1508,7 +1513,7 @@ impl NearestChild {
 
 impl Source for NearestChild {
     fn columns(&self) -> Vec<String> {
-        vec!["n".into(), "a".into(), "c".into()]
+        vec!["n".into(), "a".into(), "c".into(), "f".into()]
     }
     fn len(&self) -> usize {
         let s = self.solved();
@@ -1528,10 +1533,13 @@ impl Source for NearestChild {
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         let v = self.axis.statistics()?;
         let (rows, (ndv, sq)) = (v[0].1, (v[1].2, v[1].3));
-        Some(vec![("n".into(), rows, rows, rows, rows), ("a".into(), rows, ndv, sq, sq), ("c".into(), rows, rows.min(ndv.saturating_mul(4)), sq, sq)])
+        // A field's rows: the few fields a member's children hang by.
+        let fields = 8i64.min(rows.max(1));
+        let fsq = rows.saturating_mul(rows) / fields;
+        Some(vec![("n".into(), rows, rows, rows, rows), ("a".into(), rows, ndv, sq, sq), ("c".into(), rows, rows.min(ndv.saturating_mul(4)), sq, sq), ("f".into(), rows, fields, fsq, fsq)])
     }
     fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
-        self.axis.col_bounds(column.min(1))
+        if column == 3 { None } else { self.axis.col_bounds(column.min(1)) }
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vector<usize>> {
         let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);

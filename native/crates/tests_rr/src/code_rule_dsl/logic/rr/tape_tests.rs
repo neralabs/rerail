@@ -731,9 +731,10 @@ fn ruff_ruf013_finds_an_implicit_optional() {
 }
 
 /// The library's rules read a node's nearest member and the member's child that holds it as one literal,
-/// `nearest(n, a, S, p)` (`rr_near_child_<set>`, one row a node), not as `nearest(n, a, S)`, `field(a, _, p)` (or
-/// `child(a, p, _)`) and `within(n, p)`: that chain lists every node under `p` (3 s of the joins' CPU of `all`). A
-/// lint over the library's text: each rule of the chain's shape is named, with the form to write.
+/// `nearest_in_field(n, a, S, "F")` or `nearest(n, a, S, p)` (`rr_near_child_<set>`, one row a node), not as
+/// `nearest(n, a, S)`, `field(a, _, p)` (or `child(a, p, _)`) and `within(n, p)`: that chain lists every node under `p`
+/// (3 s of the joins' CPU of `all`). A lint over the library's text: each rule of the chain's shape is named, with the
+/// form to write.
 #[test]
 fn the_library_reads_a_nearest_members_child_as_one_literal() {
     /// The positive top-level-or-grouped atoms of `body`: each `(relation, arguments)`, as written.
@@ -797,13 +798,24 @@ fn the_library_reads_a_nearest_members_child_as_one_literal() {
             let atoms = atoms(body);
             let has = |rel: &str, a: &str, p: &str| atoms.iter().any(|(r, x)| r == rel && x.len() == 3 && ((rel == "field" && x[0] == a && x[2] == p) || (rel == "child" && x[0] == a && x[1] == p)));
             for (rel, x) in &atoms {
+                // `nearest(n, a, S, p), field(a, "F", p)`: `nearest_in_field(n, a, S, "F")`, no field read.
+                if rel == "nearest" && x.len() == 4 {
+                    if let Some((_, w)) = atoms.iter().find(|(r, w)| r == "field" && w.len() == 3 && w[0] == x[1] && w[2] == x[3] && w[1].starts_with('"')) {
+                        found.push(format!("{}: {}: write nearest_in_field({}, {}, {}, {}) for nearest(.., {}) and its field", path.strip_prefix(&lib).unwrap().display(), head.trim(), x[0], x[1], x[2], w[1], x[3]));
+                    }
+                }
                 if rel != "nearest" || x.len() != 3 {
                     continue;
                 }
                 let (n, a) = (&x[0], &x[1]);
                 if let Some((_, w)) = atoms.iter().find(|(r, w)| r == "within" && w.len() == 2 && &w[0] == n && w[1] != *n && (has("field", a, &w[1]) || has("child", a, &w[1]))) {
                     let p = &w[1];
-                    found.push(format!("{}: {}: write nearest({n}, {a}, {}, {p}) for within({n}, {p})", path.strip_prefix(&lib).unwrap().display(), head.trim(), x[2]));
+                    let label = atoms.iter().find(|(r, f)| r == "field" && f.len() == 3 && &f[0] == a && &f[2] == p && f[1].starts_with('"')).map(|(_, f)| f[1].clone());
+                    let form = match label {
+                        Some(l) => format!("nearest_in_field({n}, {a}, {}, {l})", x[2]),
+                        None => format!("nearest({n}, {a}, {}, {p})", x[2]),
+                    };
+                    found.push(format!("{}: {}: write {form} for within({n}, {p})", path.strip_prefix(&lib).unwrap().display(), head.trim()));
                 }
             }
         }

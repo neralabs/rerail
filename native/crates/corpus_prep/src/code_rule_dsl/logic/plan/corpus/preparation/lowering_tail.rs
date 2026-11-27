@@ -1200,7 +1200,12 @@ impl ProgramPass for DeclareAxes {
         if !axes.is_empty() {
             let b = w.on()?;
             for rel in axes {
-                let cols: Vec<(&str, &str)> = crate::code_rule_dsl::logic::front::transduced_columns(rel).iter().map(|&c| (c, "node")).collect();
+                let near = crate::code_rule_dsl::logic::front::near_child(rel).is_some();
+                let cols: Vec<(&str, &str)> = crate::code_rule_dsl::logic::front::transduced_columns(rel)
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &c)| (c, if near { crate::code_rule_dsl::logic::front::NEAR_CHILD_TYPES[i] } else { "node" }))
+                    .collect();
                 b.fields().declare(rel, &cols);
                 b.fields().add_input(rel);
             }

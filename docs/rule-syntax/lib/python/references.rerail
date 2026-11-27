@@ -87,16 +87,16 @@ rf_is_function(f) :- rf_def(f, _), kind(f, "function_definition").
 .decl rf_body(g: node, b: node)
 rf_body(g, b) :- kind(g, "function_definition"), field(g, "body", b).
 // rf_in(n, g): g is the nearest function whose body holds n. A node in a function's parameters or return type is in
-// the context around the function. rf_in_body(n, g): n's nearest function g holds it in its body (the child of g
-// that holds n, `nearest`'s fourth argument, is g's body).
+// the context around the function. rf_in_body(n, g): n's nearest function g holds it in its body (g's child that
+// holds n hangs by the field "body").
 .decl rf_in_body(n: node, g: node)
-rf_in_body(n, g) :- rf_site(n), nearest(n, g, fdef, b), rf_body(g, b).
+rf_in_body(n, g) :- rf_site(n), nearest_in_field(n, g, fdef, "body").
 .decl rf_in(n: node, g: node)
 rf_in(n, g) :- rf_in_body(n, g).
 rf_in(n, h) :- rf_site(n), nearest(n, g, fdef), !rf_in_body(n, g), rf_fn_in(g, h).
 // rf_fn_in(g, h): the same for a function g.
 .decl rf_fn_body(g: node, h: node)
-rf_fn_body(g, h) :- rf_is_function(g), nearest(g, h, fdef, b), rf_body(h, b).
+rf_fn_body(g, h) :- rf_is_function(g), nearest_in_field(g, h, fdef, "body").
 .decl rf_fn_in(g: node, h: node)
 rf_fn_in(g, h) :- rf_fn_body(g, h).
 rf_fn_in(g, h) :- rf_is_function(g), nearest(g, h0, fdef), !rf_fn_body(g, h0), rf_fn_in(h0, h).

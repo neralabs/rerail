@@ -2095,15 +2095,21 @@ in_body2(n, g) :- kind(n, "identifier"), nearest(n, g, fdef, b), field(g, "body"
 outside(n, f) :- kind(n, "identifier"), nearest(n, f, scope), (kind(f, "function_definition") ; kind(f, "lambda")), (field(f, "parameters", p) ; field(f, "return_type", p)), within(n, p).
 .decl outside2(n: node, f: node)
 outside2(n, f) :- kind(n, "identifier"), nearest(n, f, scope, p), (kind(f, "function_definition") ; kind(f, "lambda")), (field(f, "parameters", p) ; field(f, "return_type", p)).
+.decl in_body3(n: node, g: node)
+in_body3(n, g) :- kind(n, "identifier"), nearest_in_field(n, g, fdef, "body").
+.decl outside3(n: node, f: node)
+outside3(n, f) :- kind(n, "identifier"), (nearest_in_field(n, f, scope, "parameters") ; nearest_in_field(n, f, scope, "return_type")), (kind(f, "function_definition") ; kind(f, "lambda")).
 .decl children(n: node, a: node, c: node)
 children(n, a, c) :- nearest(n, a, scope, c).
-.output in_body, in_body2, outside, outside2, children
+.output in_body, in_body2, outside, outside2, children, in_body3, outside3
 "#;
-    let got = run(&dir, program, &["in_body", "in_body2", "outside", "outside2", "children"]);
+    let got = run(&dir, program, &["in_body", "in_body2", "outside", "outside2", "children", "in_body3", "outside3"]);
     let set = |rows: &Vec<Vec<String>>| rows.iter().cloned().collect::<BTreeSet<_>>();
     assert!(got[0].len() > 10 && got[2].len() > 5, "the chains hold rows: {} in bodies, {} outside", got[0].len(), got[2].len());
     assert_eq!(set(&got[1]), set(&got[0]), "a function's body");
     assert_eq!(set(&got[3]), set(&got[2]), "a function's or lambda's parameters and return type");
+    assert_eq!(set(&got[5]), set(&got[0]), "a function's body, by the field its child hangs by");
+    assert_eq!(set(&got[6]), set(&got[2]), "parameters and return type, by the field");
     // Each node below a member's child has a row, and the child's parent is the member.
     assert!(got[4].len() > got[0].len(), "every scope's children: {}", got[4].len());
 }

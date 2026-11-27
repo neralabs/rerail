@@ -249,8 +249,8 @@ wstart(n, s) :- nameref(n, _), host_node(n, h), ann_start(h, s).   // a name of 
 // annotation, which run where the definition does: the lookup starts in the scope around f. One level: a lambda
 // default inside another definition's parameters starts at that definition.
 .decl def_outside(n: node, f: node)
-def_outside(n, f) :- nameref(n, _), !bind_only(n), nearest(n, f, lscope, p), (kind(f, "function_definition") ; kind(f, "lambda")),
-    (field(f, "parameters", p) ; field(f, "return_type", p)).
+def_outside(n, f) :- nameref(n, _), !bind_only(n), (nearest_in_field(n, f, lscope, "parameters") ; nearest_in_field(n, f, lscope, "return_type")),
+    (kind(f, "function_definition") ; kind(f, "lambda")).
 .decl in_first_iter(n: node, c: node)
 in_first_iter(n, c) :- nameref(n, _), nearest(n, c, lscope, fc), comp_scope(k), kind(c, k), first_for(c, fc),
     field(fc, "right", e), (n = e ; within(n, e)).

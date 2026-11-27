@@ -96,11 +96,12 @@ pub(super) fn test_of(rel: &str) -> Option<&'static str> {
 /// The built-ins that take a relation, and its position.
 /// Relations the lowering makes itself rather than a `.decl` (`check::undeclared`): regex matches, tree axes and
 /// walks, the dotted-name split.
-pub(super) const BUILT_INS: &[&str] = &["match_all", "match_group", "nearest", "inside", "has", "within", "within_stop", "precedes_stop", "split_dot", "ast", "unset"];
+pub(super) const BUILT_INS: &[&str] = &["match_all", "match_group", "nearest", "nearest_in_field", "inside", "has", "within", "within_stop", "precedes_stop", "split_dot", "ast", "unset"];
 
-pub(super) const RELATION_ARG: [(&str, &[usize]); 13] = [
+pub(super) const RELATION_ARG: [(&str, &[usize]); 14] = [
     ("within_stop", &[2]),
     ("nearest", &[2]),
+    ("nearest_in_field", &[2]),
     ("precedes_stop", &[2]),
     ("inside", &[2]),
     ("has", &[2]),
@@ -2726,10 +2727,13 @@ impl Lowerer {
         args.iter().for_each(|t| tm_vars(&self.prog, t, &mut vars));
         if !neg {
             let cols = self.prog.columns_of(rel);
-            let axis = crate::code_rule_dsl::logic::front::is_axis(rel) || crate::code_rule_dsl::logic::front::near_child(rel).is_some();
+            let axis = crate::code_rule_dsl::logic::front::is_axis(rel);
+            let near = crate::code_rule_dsl::logic::front::near_child(rel).is_some();
             for (i, t) in args.iter().enumerate() {
                 if let Some(v) = tm_var(&self.prog, t) {
-                    if axis {
+                    if near {
+                        typed.push((v.to_owned(), crate::code_rule_dsl::logic::front::NEAR_CHILD_TYPES[i].to_owned()));
+                    } else if axis {
                         typed.push((v.to_owned(), "node".to_owned()));
                     } else if let Some((_, ty)) = cols.as_ref().and_then(|c| c.get(i)) {
                         typed.push((v.to_owned(), ty.clone()));
@@ -4971,8 +4975,17 @@ impl Lowerer {
             // below it, `(n, a, c)` rows the transducer makes (one sweep of each tape, `nearest_child_all`).
             ("nearest", [n, a, set, c]) => {
                 let set = self.set_name(rel, set)?;
-                let terms = terms(self, &[n, a, c])?;
-                return Ok((format!("{}{set}", crate::code_rule_dsl::logic::front::NEAREST_CHILD), terms));
+                let mut tm = terms(self, &[n, a, c])?;
+                tm.push(Tm::Wild);
+                return Ok((format!("{}{set}", crate::code_rule_dsl::logic::front::NEAREST_CHILD), tm));
+            }
+            // `nearest_in_field(n, a, set, f)`: the same, with the field the child hangs by (`field(a, f, c)`).
+            ("nearest_in_field", [n, a, set, f]) => {
+                let set = self.set_name(rel, set)?;
+                let mut tm = terms(self, &[n, a])?;
+                tm.push(Tm::Wild);
+                tm.extend(terms(self, &[f])?);
+                return Ok((format!("{}{set}", crate::code_rule_dsl::logic::front::NEAREST_CHILD), tm));
             }
             // `inside(n, a, set)`: a is an ancestor of n in the set; `has(a, n, set)`: n is a descendant of a in the
             // set. Both are `(n, a)` rows the transducer makes.
