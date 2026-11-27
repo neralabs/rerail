@@ -125,12 +125,21 @@ test("Edit with coding agent and the agent-sees Edit hand off prompts, one box a
   }
   expect(prompts.size).toBe(4);
 
+  // Its Copy copies the prompt shown and reads Copied for a moment.
+  const askCopy = askBox.locator('[data-act="askcopy"]');
+  await askCopy.click();
+  await expect(askCopy).toHaveText("Copied");
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(await page.locator("#askText").inputValue());
+  await expect(askCopy).toHaveText("Copy");
+
   // Edit on What the agent sees closes the prompt box, and opens a draft of the current text.
   await sheet(page).locator('[data-act="promptedit"]').click();
   await expect(askBox).toBeHidden();
   await expect(draft).toHaveValue(message);
   await draft.fill("Call the API through the generated client in src/api.");
-  await sheet(page).locator('[data-act="promptcopy"]').click();
+  const promptCopy = sheet(page).locator('[data-act="promptcopy"]');
+  await promptCopy.click();
+  await expect(promptCopy).toHaveText("Copied");
   const copied = await page.evaluate(() => navigator.clipboard.readText());
   expect(copied).toContain(`"${STEER_LIBRARY_RULE}"`);
   expect(copied).toContain("Call the API through the generated client in src/api.");
