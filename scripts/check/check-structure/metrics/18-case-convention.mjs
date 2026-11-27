@@ -88,11 +88,16 @@ function pythonProblem(path) {
   return SNAKE.test(moduleStem(base)) || base === "__init__.py" || base === "__main__.py" ? null : `${base} is not snake_case`;
 }
 
+/** A path no convention applies to: data, vendored code, a fixture tree, a rule's cases, or a kept record. */
+function exempt(path) {
+  return isDataPath(path) || isVendored(path) || path.split("/").slice(0, -1).includes("fixtures") || RULE_CASES.test(path) || kept(path);
+}
+
 export function check(repo) {
   const findings = [];
   let checked = 0;
   for (const path of repo.files) {
-    if (isDataPath(path) || isVendored(path) || path.split("/").slice(0, -1).includes("fixtures") || RULE_CASES.test(path) || kept(path)) continue;
+    if (exempt(path)) continue;
     const ext = extension(path);
     let problem;
     if (SCRIPT.includes(ext)) problem = scriptProblem(path);
