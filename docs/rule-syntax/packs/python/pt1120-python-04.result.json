@@ -1,0 +1,62 @@
+[
+  {
+    "id": "ruff-up008-super-call-with-parameters",
+    "status": "same"
+  },
+  {
+    "id": "ruff-up034-extraneous-parentheses",
+    "status": "same"
+  },
+  {
+    "id": "ruff-up035-deprecated-import",
+    "status": "different",
+    "reason": "The translation is right. fixtures ruff/pyflakes/F401_0.py:13 (`from typing import (… Dict, List, Set, Type …)`), :84 (`from typing_extensions import TypeAlias`) and ruff/pyupgrade/UP045_1.py:55 (`from typing_extensions import (… Optional …)`): Ruff 0.17.6 at target 3.10 reports UP035 on all three. The original reports nothing in either file: its run fails on them, `source-incomplete: file has syntax errors` (checked with each file alone; F401_0.py holds `match *0, 1, *2:`).",
+    "right": "translation",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 3
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  },
+  {
+    "id": "ruff-up036-outdated-version-block",
+    "status": "different",
+    "reason": "The translation is right. fixtures ruff/pyflakes/F401_0.py:81 (`if sys.version_info >= (3, 10):`, always true at the 3.10 minimum): Ruff 0.17.6 at target 3.10 reports UP036. The original reports nothing in the file: its run fails on it, `source-incomplete: file has syntax errors` (`match *0, 1, *2:`).",
+    "right": "translation",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 1
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  },
+  {
+    "id": "ruff-up039-unnecessary-class-parentheses",
+    "status": "same"
+  },
+  {
+    "id": "ruff-up041-timeout-error-alias",
+    "status": "same"
+  },
+  {
+    "id": "ruff-up043-unnecessary-default-type-args",
+    "status": "same"
+  }
+]
