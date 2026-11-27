@@ -967,6 +967,85 @@ describe("the engine service's idle close", () => {
     }
   }, 30_000);
 
+  // Before, the suspension kept the claim its session asked for while another process held the write lock, and the
+  // claim, refused once the lock was given back, stayed on it: the daemon's stop interrupted the owner's scans.
+  it("leaves the owner's scans queued as it ends a session suspended while its claim waited, once that claim was refused", async () => {
+    const { clock, service, start, turnEnd, databasePath } = await idleService({ needsRoom: () => false });
+    await start("a");
+    await turnEnd("a", "turn");
+    const controls = new SqliteAuditControlStore(databasePath);
+    const writer = new Database(databasePath);
+    const lockWait = Promise.withResolvers<void>();
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      writer.exec("BEGIN IMMEDIATE");
+      lockWaitGate.held = lockWait.promise;
+      await start("b");
+      claimFirst(writer, "b");
+      writer.exec("COMMIT");
+      // The lock is free, and the record writer's wait has not seen it: the session is suspended while its claim waits.
+      clock.now += 60_000;
+      await service.closeIdleSessions();
+      lockWaitGate.held = undefined;
+      lockWait.resolve();
+      await vi.waitFor(() => expect(stderr.mock.calls.map(([text]) => String(text)))
+        .toContain("rerail: the claim on session b was not made, so this process does not own it\n"), { timeout: 10_000, interval: 20 });
+      const queued = await controls.requestAudit("b", { scope: "repository" });
+      services.splice(services.indexOf(service), 1);
+      await service.close();
+      expect(controls.listAuditRequests("b").find(request => request.id === queued.id)?.status).toBe("queued");
+    } finally {
+      stderr.mockRestore();
+      lockWaitGate.held = undefined;
+      lockWait.resolve();
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      controls.close();
+    }
+  }, 30_000);
+
+  // Before, the runtime made again for a session suspended while its claim waited took that claim, and only the runtime
+  // that asked for it was told once it was refused: the session's end interrupted the owner's scans.
+  it("leaves the owner's scans queued as a session opened again in a new runtime ends, once the claim it took was refused", async () => {
+    const { clock, service, start, prompt, turnEnd, send, session, databasePath } = await idleService();
+    await start("a");
+    await turnEnd("a", "turn");
+    const controls = new SqliteAuditControlStore(databasePath);
+    const writer = new Database(databasePath);
+    // Another runtime's store over the database, whose use of this process's record writer keeps the claim waiting as
+    // `b`'s runtime closes.
+    const records = new SqliteSessionStore(databasePath);
+    const lockWait = Promise.withResolvers<void>();
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      writer.exec("BEGIN IMMEDIATE");
+      lockWaitGate.held = lockWait.promise;
+      await start("b");
+      claimFirst(writer, "b");
+      writer.exec("COMMIT");
+      clock.now += 60_000;
+      await service.closeIdleSessions();
+      // `b`'s runtime closed with `a` and `b` suspended: `b`'s next event makes it again, and it takes the waiting claim.
+      expect(service.openRuntimes()).toBe(0);
+      await prompt("b", "back");
+      lockWaitGate.held = undefined;
+      lockWait.resolve();
+      await vi.waitFor(() => expect(stderr.mock.calls.map(([text]) => String(text)))
+        .toContain("rerail: the claim on session b was not made, so this process does not own it\n"), { timeout: 10_000, interval: 20 });
+      const queued = await controls.requestAudit("b", { scope: "repository" });
+      await send({ kind: "session-end", eventId: "b:end", sessionId: "b", session: session("b") });
+      expect(controls.listAuditRequests("b").find(request => request.id === queued.id)?.status).toBe("queued");
+    } finally {
+      stderr.mockRestore();
+      lockWaitGate.held = undefined;
+      lockWait.resolve();
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      records.close();
+      controls.close();
+    }
+  }, 30_000);
+
   // Before, the wait went on, a worker thread with its own connection watching the database's log, until the lock was
   // given back, though nothing was left for it to open. An event of the session cannot open it while the lock is held.
   it("stops a quiet session's wait for the write lock its open for a scan met once the session's end comes", async () => {
@@ -1983,6 +2062,15 @@ function ownerTokenOf(databasePath: string, sessionId: string): string {
   } finally {
     database.close();
   }
+}
+
+/**
+ * Another runtime's claim on `sessionId`, written through `writer`, which holds the write lock: a claim of this process
+ * waiting for that lock is refused once it is made.
+ */
+function claimFirst(writer: Database.Database, sessionId: string): void {
+  writer.prepare("INSERT INTO policy_session_owners (session_id, delivery, active, process_id, token, updated_at) VALUES (?, 'background', 1, ?, 'another runtime', 0)")
+    .run(sessionId, process.pid);
 }
 
 /** Makes the owner row of `sessionId` name process `pid`, through a connection of its own. */

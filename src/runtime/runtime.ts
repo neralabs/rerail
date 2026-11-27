@@ -997,11 +997,23 @@ function heldCallsOf(restored: ReadonlyMap<string, RestoredCall>): HeldCall[] {
 }
 
 /**
+ * Interrupts the session's queued and running scans and releases its owner while `claim` still holds it (`holdsOwner`).
+ * A claim kept for the write lock and not made is told only to the open session of the runtime that asked for it
+ * (`#claimNotMade`): a suspension, or a runtime made again that took it from one, still holds it, and ending it would
+ * interrupt the scans of the runtime that owns the session.
+ */
+function endHeldOwnership(controls: SqliteAuditControlStore, sessionId: string, claim: PolicyOwnerClaim | undefined): void {
+  if (claim === undefined || !controls.holdsOwner(sessionId, claim)) return;
+  controls.interrupt(sessionId);
+  controls.releaseOwner(sessionId, claim);
+}
+
+/**
  * Ends suspended sessions no runtime opened again, as `closeSession` ends an open one: their queued scans are
- * interrupted, their owner released and their record ended at `endedAt`, the time their end came. Without one, as when
- * the daemon stops, each record ends when its session was suspended (`suspendedAt`): nothing was heard from it after. One
- * that fails is reported and the rest are still ended, as a runtime's close ends each of its sessions whatever another's
- * does.
+ * interrupted and their owner released while their claim holds it (`endHeldOwnership`), and their record ended at
+ * `endedAt`, the time their end came. Without one, as when the daemon stops, each record ends when its session was
+ * suspended (`suspendedAt`): nothing was heard from it after. One that fails is reported and the rest are still ended,
+ * as a runtime's close ends each of its sessions whatever another's does.
  */
 export function endSuspendedSessions(databasePath: string, suspensions: readonly SessionSuspension[], endedAt?: number): void {
   const sessions = new SqliteSessionStore(databasePath);
@@ -1009,10 +1021,7 @@ export function endSuspendedSessions(databasePath: string, suspensions: readonly
   try {
     for (const { descriptor, ownerClaim, suspendedAt } of suspensions) {
       try {
-        if (ownerClaim !== undefined) {
-          controls.interrupt(descriptor.sessionId);
-          controls.releaseOwner(descriptor.sessionId, ownerClaim);
-        }
+        endHeldOwnership(controls, descriptor.sessionId, ownerClaim);
         sessions.closeSession(descriptor.sessionId, endedAt ?? suspendedAt);
       } catch (error) {
         process.stderr.write(`rerail: ending quiet session ${descriptor.sessionId} failed: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -3178,15 +3187,14 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * Interrupts the session's queued and running scans and releases its owner, unless it is being suspended, which keeps
-   * both for its next open. Its checkout audit is interrupted either way: the evaluator running it closes.
+   * Interrupts the session's queued and running scans and releases its owner while its claim holds it
+   * (`endHeldOwnership`), unless it is being suspended, which keeps both for its next open. Its checkout audit is
+   * interrupted either way: the evaluator running it closes.
    */
   #endOwnership(sessionId: string, state: RuntimeSessionState): void {
     if (state.ownerClaim === undefined) return;
     this.#controls.interruptRepositoryAudit(sessionId);
-    if (state.suspending) return;
-    this.#controls.interrupt(sessionId);
-    this.#controls.releaseOwner(sessionId, state.ownerClaim);
+    if (!state.suspending) endHeldOwnership(this.#controls, sessionId, state.ownerClaim);
   }
 
   /**
