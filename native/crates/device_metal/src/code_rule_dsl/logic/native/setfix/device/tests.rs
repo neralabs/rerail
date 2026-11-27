@@ -2611,7 +2611,9 @@ use rerail_blocks::vector::Vector;
     /// Decision 0353 step 5: a `has` axis is read off the tape by the device, not uploaded. Probed by its node, a
     /// stage climbs the node's numbered ancestors where the node is in the set; by its ancestor, it reads the
     /// ancestor's subtree, the nodes in the set. The rows are the CPU's, and nothing of the axis is uploaded; read by
-    /// neither column alone (whole), its rows are uploaded as before.
+    /// neither column alone (whole), its rows are uploaded as before. `inside` and `nearest` are walked the same way
+    /// (their set tested at the ancestor, `nearest`'s climb its first member and its subtree less what lies below a
+    /// nearer one), and each by both columns: the node's climb, each ancestor checked against the bound one.
     #[test]
     fn a_has_axis_on_the_device_is_walked_on_the_tape() {
         use crate::code_rule_dsl::facts::core::{self, Built};
@@ -2641,8 +2643,9 @@ use rerail_blocks::vector::Vector;
         kinds.sort_unstable();
         kinds.dedup();
         let kinds: Vec<i64> = kinds.into_iter().step_by(2).collect();
-        let has: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(Within::axis(Arc::clone(&batch), Axis::Has, &kinds, Binding::Cpu));
-        assert!(has.has_walk().is_some(), "the batch's views are read in place");
+        for axis in [Axis::Has, Axis::Inside, Axis::Nearest] {
+        let has: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(Within::axis(Arc::clone(&batch), axis, &kinds, Binding::Cpu));
+        assert!(has.has_walk().is_some(), "{axis:?}: the batch's views are read in place");
         let ids: Vec<i64> = (0..node.len()).map(|r| node.value(r, 1)).collect();
         // The host's rows, from its lookups: by the node (column 0) and by the ancestor (column 1).
         let expect = |col: usize| -> Vec<(i64, i64)> {
@@ -2656,18 +2659,26 @@ use rerail_blocks::vector::Vector;
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
-        db.execute_batch("CREATE TEMP TABLE q (c0);").unwrap();
+        db.execute_batch("CREATE TEMP TABLE q (c0); CREATE TEMP TABLE q2 (c0, c1);").unwrap();
         for &id in &ids {
             db.execute("INSERT INTO q VALUES (?1)", [id]).unwrap();
         }
+        // Each pair and its reverse, which no axis holds (an ancestor is strict).
+        for &(n, a) in &expect(0) {
+            db.execute("INSERT INTO q2 VALUES (?1, ?2)", [n, a]).unwrap();
+            db.execute("INSERT INTO q2 VALUES (?1, ?2)", [a, n]).unwrap();
+        }
         super::super::hold_source(&db, "has_t", Arc::clone(&has), b"ii".to_vec());
         let q = format!("t:x:{}:{}:i", hex("temp.q"), hex("c0"));
+        let q2 = format!("t:x:{}:{}:ii", hex("temp.q2"), hex("c0, c1"));
         let h = format!("r:{}", hex("has_t"));
         // h0(n, a) :- q(n), has(n, a): by the node. h0(n, a) :- q(a), has(n, a): by the ancestor.
         // h0(n, a) :- has(n, a): whole, not read in place: refused, on the CPU (`None`; nothing is uploaded).
-        for (col, rule) in [(Some(0), format!("pos {q} v0\npos {h} v0 v1\nhead v0 v1")), (Some(1), format!("pos {q} v1\npos {h} v0 v1\nhead v0 v1")), (None, format!("pos {h} v0 v1\nhead v0 v1"))] {
-            let want = expect(col.unwrap_or(0));
-            assert!(want.len() > 20, "by column {col:?}: {} rows", want.len());
+        // h0(n, a) :- q2(n, a), has(n, a): by both.
+        for (col, rule) in [(Some(0), format!("pos {q} v0\npos {h} v0 v1\nhead v0 v1")), (Some(1), format!("pos {q} v1\npos {h} v0 v1\nhead v0 v1")), (Some(2), format!("pos {q2} v0 v1\npos {h} v0 v1\nhead v0 v1")), (None, format!("pos {h} v0 v1\nhead v0 v1"))] {
+            let want = expect(col.unwrap_or(0).min(1));
+            assert_eq!(want, expect(1 - col.unwrap_or(0).min(1)), "{axis:?}: the host's lookups by either column give the same pairs");
+            assert!(want.len() > 20, "{axis:?} by column {col:?}: {} rows", want.len());
             let mut got = Vec::new();
             for device in [false, true] {
                 db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
@@ -2683,14 +2694,20 @@ use rerail_blocks::vector::Vector;
                 super::super::close(&db, "has_test").unwrap();
                 if device {
                     let r = report.as_ref().expect("a device run");
-                    assert_eq!(r.refused.is_none(), col.is_some(), "by column {col:?}: refused only whole: {r:?}");
+                    // Read whole, `has` is refused (no solve makes it whole); `inside` and `nearest` are read as the
+                    // batch's solve made them (decision 0277).
+                    assert_eq!(r.refused.is_none(), col.is_some() || axis != Axis::Has, "{axis:?} by column {col:?}: refused only has, whole: {r:?}");
+                    if col.is_some() {
+                        assert_eq!(r.sorts, 0, "{axis:?} by column {col:?}: no index of the axis: {r:?}");
+                    }
                 }
                 let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
                 rows.sort_unstable();
                 got.push(rows);
             }
-            assert_eq!(got[0], want, "by column {col:?}: the CPU's rows are the host's lookups");
-            assert_eq!(got[1], want, "by column {col:?}: the device's rows are the CPU's");
+            assert_eq!(got[0], want, "{axis:?} by column {col:?}: the CPU's rows are the host's lookups");
+            assert_eq!(got[1], want, "{axis:?} by column {col:?}: the device's rows are the CPU's");
+        }
         }
     }
 
@@ -2723,7 +2740,7 @@ use rerail_blocks::vector::Vector;
         let node = &all.iter().find(|(n, s)| *n == "node" && s.python_batch().is_some()).unwrap().1;
         let batch = node.python_batch().expect("the batch");
         let within: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(Within::new(Arc::clone(&batch), Mode::Tree));
-        assert!(within.has_walk().is_some_and(|w| w.every), "containment is walked as has of every kind");
+        assert!(within.has_walk().is_some_and(|w| w.axis == crate::code_rule_dsl::facts::vtab::HasWalk::EVERY), "containment is walked as has of every kind");
         let ids: Vec<i64> = (0..node.len()).map(|r| node.value(r, 1)).collect();
         // The host's pairs, from its lookups by the node (column 0) and by the ancestor (column 1): the same pairs.
         let expect = |col: usize| -> Vec<(i64, i64)> {

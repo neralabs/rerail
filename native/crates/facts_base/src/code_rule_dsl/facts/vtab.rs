@@ -87,14 +87,26 @@ pub struct ViewInPlace {
 }
 
 /// A `has` axis read off the tape (`Source::has_walk`): its batch's `node` view in place, of `nodes` rows, through which
-/// a stage climbs a node's ancestors or reads a node's subtree, and its set's kind atoms, ascending. `every`: the set
-/// is every kind (`kinds` empty), so it is containment, `within(n, a)`: `n` strictly below `a`.
+/// a stage climbs a node's ancestors or reads a node's subtree, and its set's kind atoms, ascending. `axis`: which
+/// ancestors are a node's (`HasWalk::HAS` and the rest).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub struct HasWalk {
     pub nodes: usize,
     pub view: ViewInPlace,
     pub kinds: Arc<[i64]>,
-    pub every: bool,
+    pub axis: u32,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+impl HasWalk {
+    /// Every ancestor, where the node is in the set (`has`).
+    pub const HAS: u32 = 0;
+    /// Every ancestor in the set (`inside`).
+    pub const INSIDE: u32 = 1;
+    /// The nearest ancestor in the set (`nearest`).
+    pub const NEAREST: u32 = 2;
+    /// Every ancestor, the set every kind (`kinds` none): containment, `within(n, a)`, `n` strictly below `a`.
+    pub const EVERY: u32 = 3;
 }
 
 /// A batch's 16z cache as its views' directory names it (decision 0353 step 4b, `view::cache`): the batch's one cache

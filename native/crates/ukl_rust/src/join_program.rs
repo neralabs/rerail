@@ -681,17 +681,43 @@ impl St<'_> {
         self.s.r_dead == 0 || rel_dead(self.r as *const u8, self.s.r_dead, r) == 0
     }
 
+    /// A walked axis's kind (`Stage::v_nset`'s top bits, `metal_join::HAS_AXIS`): `has` (0), `inside` (1), `nearest`
+    /// (2), every kind, containment (3).
+    fn has_axis(&self) -> u32 {
+        self.s.v_nset >> HAS_AXIS
+    }
+
     /// Whether node row `q`'s kind atom is in the stage's set (ascending): every node where the set is every kind
-    /// (`HAS_EVERY`, containment).
+    /// (axis 3, containment).
     unsafe fn has_member(&self, q: u32) -> bool {
         let s = self.s;
-        if s.v_nset == HAS_EVERY {
+        if self.has_axis() == 3 {
             return true;
         }
         // A `has` stage's rows are `node`'s (`row`): a walk's candidate is the row it holds.
         let k = self.row(q).get(2);
-        let set = core::slice::from_raw_parts(s.v_set, s.v_nset as usize);
+        let set = core::slice::from_raw_parts(s.v_set, (s.v_nset & ((1 << HAS_AXIS) - 1)) as usize);
         set.binary_search(&k).is_ok()
+    }
+
+    /// Whether a walk's candidate `r` is a row of the axis: of a climb (`v_has` 1), `inside`'s where it is in the set
+    /// (the others' candidates are theirs by the probe: `has`'s node is in it, `nearest`'s one); of a subtree (2),
+    /// `has`'s where it is in the set (the others' ancestor is in it, by the probe).
+    unsafe fn has_admits(&self, r: u32) -> bool {
+        match (self.s.v_has, self.has_axis()) {
+            (1, 1) | (2, 0) => self.has_member(r),
+            _ => true,
+        }
+    }
+
+    /// The row past `node` row `q`'s subtree (`nearest`'s walk of a subtree, `how` 4, steps past a nearer member's).
+    unsafe fn has_skip(&self, q: u32) -> u32 {
+        let d = self.s.v_dir;
+        let a = dir_doc_of_row(view_block(d), (*d).at, 0, q, self.doc.get());
+        self.doc.set(a);
+        let e = view_rows(d).add(a as usize);
+        let first = (*e).rows[0];
+        first.wrapping_add(doc(d, e).end(q.wrapping_sub(first)))
     }
 
     /// Whether row `r` has the binding's keys and passes the relation's column tests.
@@ -701,7 +727,7 @@ impl St<'_> {
         if s.v_has != 0 {
             // Probed by both columns: the node's climb, the ancestor the bound one (`has_other`).
             let other = self.has_other();
-            return s.ntests == 0 && (s.v_has == 1 || self.has_member(r)) && other.is_none_or(|i| self.rget(r, 1) == kv[i]);
+            return s.ntests == 0 && self.has_admits(r) && other.is_none_or(|i| self.rget(r, 1) == kv[i]);
         }
         if !self.row_live(r) {
             return false;
@@ -781,14 +807,27 @@ impl St<'_> {
         if s.v_has != 0 {
             let Some((e, l)) = self.doc_node(kv[self.has_key()]) else { return none };
             let first = (*e).rows[0];
+            let axis = self.has_axis();
             if s.v_has == 1 {
-                if !self.has_member(first.wrapping_add(l)) {
+                // `has`: the node in the set, every ancestor; `nearest`: the first ancestor in the set, alone.
+                if axis == 0 && !self.has_member(first.wrapping_add(l)) {
                     return none;
                 }
-                let u = doc(d, e).up(l);
+                let mut u = doc(d, e).up(l);
+                if axis == 2 {
+                    while u != NONE && !self.has_member(first.wrapping_add(u)) {
+                        u = doc(d, e).up(u);
+                    }
+                    return if u == NONE { none } else { Walk { lo: first.wrapping_add(u), hi: first.wrapping_add(u).wrapping_add(1), how: 0, tag: 0 } };
+                }
                 return if u == NONE { none } else { Walk { lo: first.wrapping_add(u), hi: NONE, how: 3, tag: 0 } };
             }
-            return Walk { lo: first.wrapping_add(l).wrapping_add(1), hi: first.wrapping_add(doc(d, e).end(l)), how: 0, tag: 0 };
+            // `inside` and `nearest`: the ancestor in the set; `nearest`'s subtree less what lies below a nearer member.
+            if matches!(axis, 1 | 2) && !self.has_member(first.wrapping_add(l)) {
+                return none;
+            }
+            let how = if axis == 2 { 4 } else { 0 };
+            return Walk { lo: first.wrapping_add(l).wrapping_add(1), hi: first.wrapping_add(doc(d, e).end(l)), how, tag: 0 };
         }
         if s.v_parent == 2 {
             return self.by_own(kv);
@@ -912,7 +951,8 @@ impl St<'_> {
             if !f(self.cand_row(w.how, q), q, key || known) {
                 return;
             }
-            q = q.wrapping_add(1);
+            // `nearest`'s subtree: past a member, past its subtree (its nodes' nearest is it or lower).
+            q = if w.how == 4 && self.has_member(q) { self.has_skip(q) } else { q.wrapping_add(1) };
         }
     }
 
@@ -1016,8 +1056,8 @@ struct Walk {
     tag: u32,
 }
 
-/// A `has` stage's set size for a set of every kind (`metal_join::HAS_EVERY`): containment, `within`.
-const HAS_EVERY: u32 = u32::MAX;
+/// Where a `has` stage's set size (`v_nset`) holds its axis (`metal_join::HAS_AXIS`): its top two bits.
+const HAS_AXIS: u32 = 30;
 
 /// A mark's `MARK_SAME` (decision 0671, `rerail_blocks::relation::MARK_SAME`).
 const MARK_SAME: u32 = 1;

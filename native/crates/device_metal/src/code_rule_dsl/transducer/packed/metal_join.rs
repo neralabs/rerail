@@ -633,10 +633,10 @@ pub(in crate::code_rule_dsl) struct DevRel {
     /// The relation's holder, for one read where it lies in its block (`in_block`): what an index built into it keeps
     /// until its batch is done (`Building`, Q268).
     kept: Option<crate::code_rule_dsl::facts::rows::Part>,
-    /// A `has` axis read off the tape (`DevRel::has`): its set's kind atoms, ascending, two words each; and whether
-    /// the set is every kind (containment, `within`), its words then none read.
+    /// A `has` axis read off the tape (`DevRel::has`): its set's kind atoms, ascending, two words each; and its axis
+    /// (`HasWalk::axis`: every kind, containment, reads none of them).
     has: Option<Words>,
-    has_every: bool,
+    has_axis: u32,
     /// Its rows are its length as the device claims it, `rows` at most (`live`): a recursive component's relation that
     /// grows round after round within one launch (decision 0603 step 3).
     live: bool,
@@ -677,7 +677,7 @@ impl DevRel {
         let buffer = held_block(device, part.facts(), Box::new(part.facts().clone()))?;
         debug_assert_eq!(part.rows_at(), part.rel_at() + REL_ROWS as usize);
         let home = Some(part.facts().clone());
-        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), from: 0, kept: None, has: None, has_every: false, live: false, mapped: None, far: None }.noted())
+        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), from: 0, kept: None, has: None, has_axis: 0, live: false, mapped: None, far: None }.noted())
     }
 
     /// A view of `cols` columns and `rows` rows read in place (decision 0353 step 4d): a relation of no columns of
@@ -701,8 +701,11 @@ impl DevRel {
     /// A `has` axis read off the tape (decision 0353 step 5): the batch's `node` view in place (`view`, of `nodes`
     /// rows) and its set's kind atoms `kinds`, ascending. It has no rows of its own: a stage probes it by one of its
     /// columns only (`Batch::by_has`), each binding's rows walked on the tape.
-    /// `every`: the set is every kind (`kinds` none), containment (`within`): its walks read no kind.
-    pub(in crate::code_rule_dsl) fn has(nodes: usize, view: crate::code_rule_dsl::facts::vtab::ViewInPlace, kinds: &[i64], every: bool) -> Result<DevRel, Error> {
+    /// `axis`: which ancestors are a node's (`HasWalk::axis`); of every kind (containment), its walks read no kind.
+    pub(in crate::code_rule_dsl) fn has(nodes: usize, view: crate::code_rule_dsl::facts::vtab::ViewInPlace, kinds: &[i64], axis: u32) -> Result<DevRel, Error> {
+        if kinds.len() >= 1 << HAS_AXIS || axis > 3 {
+            return Err(Error::UnsupportedFeature("a walked axis's set past its stage's bits"));
+        }
         // Nothing indexes it (`Batch::by_has` walks the tape): its relation of no columns has no room for an index.
         let part = crate::code_rule_dsl::facts::rows::Part::for_device_unindexed(nodes).map_err(|_| Error::BackendCapacity)?;
         let mut dev = DevRel::of_part(part, 0, nodes)?;
@@ -714,7 +717,7 @@ impl DevRel {
             set.set(2 * i + 1, (k >> 32) as u32);
         }
         dev.has = Some(set);
-        dev.has_every = every;
+        dev.has_axis = axis;
         Ok(dev)
     }
 
@@ -779,7 +782,7 @@ impl DevRel {
 
     /// The words of `buffer`, `words` of them (not a relation).
     fn raw(buffer: Held, words: usize) -> DevRel {
-        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0), from: 0, kept: None, has: None, has_every: false, live: false, mapped: None, far: None }
+        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0), from: 0, kept: None, has: None, has_axis: 0, live: false, mapped: None, far: None }
     }
 
     /// Whether it is a relation read where it lies (`in_block`): it holds the relation's block while it lives.
@@ -796,7 +799,7 @@ impl DevRel {
         // The block, the relation and its pages: not given back while the device reads them (decisions 0342, Q76).
         let buffer = held_block(device, &b.facts, Box::new(b.clone()))?;
         let far = b.far().map(|f| held_block(device, &f, Box::new(f.clone()))).transpose()?;
-        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), from: 0, kept: b.part.clone(), has: None, has_every: false, live: false, mapped: None, far }.noted())
+        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), from: 0, kept: b.part.clone(), has: None, has_axis: 0, live: false, mapped: None, far }.noted())
     }
 
     /// The buffer its kernels bind as its far base's block (`far`): `bound`, the buffer its own reads bind, when its
@@ -1108,9 +1111,9 @@ pub(in crate::code_rule_dsl) struct Screen {
     pub(in crate::code_rule_dsl) key: u32,
 }
 
-/// A `has` stage's set size (`Stage::v_nset`) for a set of every kind: containment, `within` (the join programs'
-/// `HAS_EVERY`).
-pub(in crate::code_rule_dsl) const HAS_EVERY: u32 = u32::MAX;
+/// Where a walked axis's stage holds its axis (`HasWalk::axis`): its set size's (`Stage::v_nset`) top two bits, as
+/// the join programs read it (`HAS_AXIS`).
+pub(in crate::code_rule_dsl) const HAS_AXIS: u32 = 30;
 
 /// A stage's probed relation `rel` (and its index, read by keys) into its fields.
 fn bind_right(stage: &mut Stage, rel: &DevRel, index: Option<&DevIndex>) {
@@ -1122,8 +1125,8 @@ fn bind_right(stage: &mut Stage, rel: &DevRel, index: Option<&DevIndex>) {
     // A relation reads none: a stage bound before to a view reads its new relation, not the view.
     (stage.v_dir, stage.r_view) = rel.view.as_ref().map_or((0, 0), |v| (v.dir, v.kind));
     stage.v_parent = 0;
-    // A set of every kind is `HAS_EVERY` kinds: each node is in it, its words not read.
-    (stage.v_set, stage.v_nset, stage.v_has) = rel.has.as_ref().map_or((0, 0, 0), |set| (set.buffer.buffer.device_address().expect("a has axis's set where views are read in place"), if rel.has_every { HAS_EVERY } else { (set.len / 2) as u32 }, 0));
+    // The set's size, its axis in the top bits (`HAS_AXIS`): of every kind, each node is in it, its words not read.
+    (stage.v_set, stage.v_nset, stage.v_has) = rel.has.as_ref().map_or((0, 0, 0), |set| (set.buffer.buffer.device_address().expect("a has axis's set where views are read in place"), if rel.has_axis == 3 { u32::MAX } else { (rel.has_axis << HAS_AXIS) | (set.len / 2) as u32 }, 0));
     if let Some(ix) = index {
         stage.r_index = ix.index;
         // Walks of the tape (`DevIndex::walk`): a parent's children (1), a `has` climb or subtree (2, 3), a node's own

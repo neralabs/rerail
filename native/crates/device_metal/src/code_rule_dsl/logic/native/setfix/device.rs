@@ -478,8 +478,9 @@ fn binds(d: &mut mj::Stage, f: &rowcode::Fused, filter: bool) {
 fn readable(rel: &InRel, keys: usize) -> Result<(), String> {
     match &rel.view {
         // A kind-set axis or containment is made whole by the batch's solve, and read so (decision 0277).
-        // A `has` axis probed by one key is read off the tape (decision 0353 step 5, `resident`): nothing is made.
-        Some(v) if keys > 0 && v.src.made_on_lookup() && !v.src.complete_rows() && !(keys == 1 && rel.ndead == 0 && v.src.has_walk().is_some()) => Err("an atom read by keys over a relation made on lookup".into()),
+        // A walked axis probed by either key or both is read off the tape (decision 0353 step 5, `resident`): nothing
+        // is made.
+        Some(v) if keys > 0 && v.src.made_on_lookup() && !v.src.complete_rows() && !(keys <= 2 && rel.ndead == 0 && v.src.has_walk().is_some()) => Err("an atom read by keys over a relation made on lookup".into()),
         _ => Ok(()),
     }
 }
@@ -1805,7 +1806,8 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
     // A `has` axis probed by its columns is read off the tape (decision 0353 step 5): a stage walks each binding's
     // rows there (`mj::Batch::by_has`), nothing made, uploaded or indexed. First: where its pairs were solved into a
     // block (`placed`), an index of them is not built either. Scanned whole, its rows are read where they lie.
-    // Containment (`within`) is `has` of every kind, read the same way; probed by both columns, the node's climb.
+    // Containment (`within`) is `has` of every kind, and `inside` and `nearest` the same walks; probed by both
+    // columns, the node's climb.
     let walked = rel.ndead == 0 && matches!(cols.iter().map(|&c| owner_col(rel, c)).collect::<Vec<_>>()[..], [0] | [1] | [0, 1] | [1, 0]);
     // A measurement aid: why a containment or axis view probed here is not walked.
     if crate::code_rule_dsl::logic::profile::on()
@@ -1816,9 +1818,9 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
         crate::code_rule_dsl::prof::count_named_args(format_args!("device.walk {why}: {} by {cols:?} ndead {} src {}", of.chars().take(60).collect::<String>(), rel.ndead, v.src.as_any().map_or("?", |a| if a.is::<crate::code_rule_dsl::facts::vtab::syntax::within::Within>() { "Within" } else if a.is::<crate::code_rule_dsl::facts::vtab::syntax::values::Layered>() { "Layered" } else { "other" })), 1);
     }
     if let Some(w) = rel.view.as_ref().filter(|_| walked).and_then(|v| v.src.has_walk()) {
-        let dev = Rc::new(mj::DevRel::has(w.nodes, w.view, &w.kinds, w.every).map_err(|e| format!("{e:?}: a has axis read off the tape"))?);
+        let dev = Rc::new(mj::DevRel::has(w.nodes, w.view, &w.kinds, w.axis).map_err(|e| format!("{e:?}: a has axis read off the tape"))?);
         rep.in_place += 1;
-        crate::code_rule_dsl::prof::count(if w.every { "device.view_read.within" } else { "device.view_read.has" }, 1);
+        crate::code_rule_dsl::prof::count(["device.view_read.has", "device.view_read.inside", "device.view_read.nearest", "device.view_read.within"][w.axis as usize], 1);
         let place: Vector<u32> = (0..rel.k).map(|c| match owner_col(rel, c) { at @ (0 | 1) => at as u32, _ => mj::NONE }).collect();
         let by: Vec<usize> = cols.iter().map(|&c| place[c] as usize).collect();
         let ix = batch.by_has(&dev, &by).map_err(|e| format!("{e:?}: a has probe"))?.ok_or("a has axis probed by neither of its columns")?;

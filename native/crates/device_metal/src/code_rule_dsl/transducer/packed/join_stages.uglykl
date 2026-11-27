@@ -359,21 +359,31 @@ UKL_INLINE uint32_t child_next(StageP s, uint32_t r) {
 // (2), the numbered nodes of its subtree (`clif_view_end`), those in the set (`matches`). As the host's
 // `Within::containers_on` and `contained_on`.
 
-// A set of every kind (`Stage::v_nset`, `metal_join::HAS_EVERY`): containment, `within(n, a)`, whose walks read no kind.
-#define HAS_EVERY 0xffffffffu
+// A walked axis's kind, in its set size's top two bits (`Stage::v_nset`, `metal_join::HAS_AXIS`): `has` (0), `inside`
+// (1), `nearest` (2), every kind (3: containment, `within(n, a)`, whose walks read no kind).
+#define HAS_AXIS 30u
+UKL_INLINE uint32_t has_axis(StageP s) { return s->v_nset >> HAS_AXIS; }
 
 // Whether node row `q`'s kind atom is in the set (the stage's, ascending), by bisection; every node where the set is
 // every kind.
 UKL_INLINE bool has_member(StageP s, uint32_t q) {
-    if (s->v_nset == HAS_EVERY) return true;
+    if (has_axis(s) == 3u) return true;
     uint32_t memo = NONE;
     int64_t k = vread(1u, s->v_dir, q, 2u, &memo);
-    uint32_t lo = 0u, hi = s->v_nset;
+    uint32_t n = s->v_nset & ((1u << HAS_AXIS) - 1u);
+    uint32_t lo = 0u, hi = n;
     while (lo < hi) {
         uint32_t m = (lo + hi) / 2u;
         if (s->v_set[m] < k) lo = m + 1u; else hi = m;
     }
-    return lo < s->v_nset && s->v_set[lo] == k;
+    return lo < n && s->v_set[lo] == k;
+}
+
+// Whether a walk's candidate `r` is a row of the axis: of a climb (`v_has` 1), `inside`'s where it is in the set (the
+// others' are theirs by the probe); of a subtree (2), `has`'s where it is in the set.
+UKL_INLINE bool has_admits(StageP s, uint32_t r) {
+    uint32_t a = has_axis(s);
+    return (s->v_has == 1u && a == 1u) || (s->v_has == 2u && a == 0u) ? has_member(s, r) : true;
 }
 
 // The key a `has` stage's walk starts from: the node's (relation column 0) for a climb (`v_has` 1), the ancestor's
@@ -405,15 +415,33 @@ UKL_INLINE void by_has(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_PRIV
     uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, la, (uint32_t)((uint64_t)key & 0xfffffffful));
     if (l == NONE) return;
     uint32_t first = e->rows[0];
+    uint32_t axis = has_axis(s);
     if (s->v_has == 1u) {
-        if (!has_member(s, first + l)) return;
+        // `has`: the node in the set, every ancestor; `nearest`: the first ancestor in the set, alone.
+        if (axis == 0u && !has_member(s, first + l)) return;
         uint32_t u = clif_view_up(ch, e->entry, t, e->view, ls, la, l);
+        if (axis == 2u) {
+            while (u != NONE && !has_member(s, first + u)) u = clif_view_up(ch, e->entry, t, e->view, ls, la, u);
+            if (u == NONE) return;
+            *lo = first + u; *hi = *lo + 1u;
+            return;
+        }
         if (u == NONE) return;
         *lo = first + u; *hi = NONE; *how = 3u;
         return;
     }
+    // `inside` and `nearest`: the ancestor in the set; `nearest`'s subtree less what lies below a nearer member (4).
+    if ((axis == 1u || axis == 2u) && !has_member(s, first + l)) return;
     *lo = first + l + 1u;
     *hi = first + clif_view_end(ch, e->entry, t, e->view, ls, la, l);
+    *how = axis == 2u ? 4u : 0u;
+}
+
+// The row past node row `q`'s subtree: `nearest`'s walk of a subtree steps past a nearer member's.
+UKL_INLINE uint32_t has_skip(StageP s, uint32_t q) {
+    UKL_GLOBAL const ViewDir* d = s->v_dir;
+    UKL_GLOBAL const ViewRow* e = &view_rows(d)[clif_dir_doc_of_row(view_block(d), d->at, 0u, q, NONE)];
+    return e->rows[0] + clif_view_end(view_block(d), e->entry, view_tape(d, e), e->view, view_lines_base(d, e), e->lines, q - e->rows[0]);
 }
 
 // The next numbered ancestor's row of node row `q`, or `NONE`: its document as `vread` finds it, then the climb.
@@ -429,7 +457,7 @@ UKL_INLINE uint32_t cand_row(StageP s, RelB R, uint32_t how, uint32_t q) {
     return how == 1u ? group_row(s, R, q) : q;
 }
 UKL_INLINE uint32_t cand_next(StageP s, uint32_t how, uint32_t q) {
-    return how == 2u ? child_next(s, q) : (how == 3u ? has_up(s, q) : q + 1u);
+    return how == 2u ? child_next(s, q) : (how == 3u ? has_up(s, q) : (how == 4u && has_member(s, q) ? has_skip(s, q) : q + 1u));
 }
 
 // R's rows from `r_from`: `nr`, or its length on the device past `r_from` (`r_len`), at most `nr`.
@@ -497,7 +525,7 @@ UKL_SHARED bool matches(StageP s, RelB R, uint32_t r, UKL_PRIVATE const int64_t*
     // Probed by both columns: the node's climb, each ancestor checked against the bound one (`has_other`).
     if (s->v_has != 0u) {
         uint32_t o = has_other(s), memo = NONE;
-        return s->ntests == 0u && (s->v_has == 1u || has_member(s, r)) && (o == NONE || vread(1u, s->v_dir, r, 1u, &memo) == kv[o]);
+        return s->ntests == 0u && has_admits(s, r) && (o == NONE || vread(1u, s->v_dir, r, 1u, &memo) == kv[o]);
     }
     return row_live(s, R, r) && keys_are(s, R, r, kv) && row_passes(s, R, r);
 }

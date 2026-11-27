@@ -639,17 +639,20 @@ impl Within {
     }
 
     /// The walk of `has_walk` over `views` (the batch's views, or a layered source's over the batch and its values:
-    /// `values::Layered`), of `nodes` node rows, `keep` keeping them: for `has` and containment only.
+    /// `values::Layered`), of `nodes` node rows, `keep` keeping them: for containment and every kind-set axis.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub(super) fn walk_over(&self, views: &super::device_chunk::ViewsInPlace, nodes: usize, keep: Arc<dyn std::any::Any + Send + Sync>) -> Option<crate::code_rule_dsl::facts::vtab::HasWalk> {
-        let every = match self.mode {
-            Mode::Axis(Axis::Has) => false,
-            Mode::Tree => true,
-            _ => return None,
+        use crate::code_rule_dsl::facts::vtab::HasWalk;
+        let axis = match self.mode {
+            Mode::Axis(Axis::Has) => HasWalk::HAS,
+            Mode::Axis(Axis::Inside) => HasWalk::INSIDE,
+            Mode::Axis(Axis::Nearest) => HasWalk::NEAREST,
+            Mode::Tree => HasWalk::EVERY,
+            Mode::Span => return None,
         };
         // The node view as the join programs here read it: at the host's addresses where they run on the host.
         let view = views.read_of(super::device_chunk::VIEW_NODE, keep)?;
-        Some(crate::code_rule_dsl::facts::vtab::HasWalk { nodes, view, kinds: Arc::clone(&self.kinds), every })
+        Some(HasWalk { nodes, view, kinds: Arc::clone(&self.kinds), axis })
     }
 
     /// Whether `other`'s walk is this one's (the same mode and set), so one walk reads both batches' nodes.
@@ -1139,8 +1142,9 @@ impl Source for Within {
     }
     /// `has`, read by the device off the tape (decision 0353 step 5): where the batch's views are read in place, its
     /// `node` view, which a stage's walk reads a node's kind, ancestors and subtree through, and the set's atoms.
-    /// Containment (`within`, `Mode::Tree`) is `has` of every kind: by `n` its numbered ancestors, by `a` its subtree,
-    /// read the same way, no pair made.
+    /// Containment (`within`, `Mode::Tree`) is `has` of every kind, and `inside` and `nearest` the same walks with
+    /// the set tested elsewhere: by `n` its numbered ancestors (nearest's first member), by `a` its subtree (nearest's
+    /// less what lies below a nearer member), no pair made.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn has_walk(&self) -> Option<crate::code_rule_dsl::facts::vtab::HasWalk> {
         let v = super::device_chunk::views_in_place(&self.batch)?;
