@@ -1409,9 +1409,11 @@ impl<'a> Bytes<'a> {
             }));
         }
         // A run of terms read forward from the token's first byte, as the lean lexer reads a number (`forward_run`).
+        // Not in a test build's check: a run's notes are the loop's, and a check's run is gone from a build without it.
         if self.partial
             && name == "run_last"
             && args.len() == 2
+            && !line.contains("assert")
             && let Some(r) = self.forward_run(&m, args[1].trim())
         {
             return Ok(Some(r));

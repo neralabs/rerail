@@ -7005,7 +7005,7 @@ impl Gen<'_> {
                         Some(read) if !self.regional(&read) => {
                             let v = self.val(&read)?;
                             let proved = x.assumed.iter().filter(|a| a.0.as_ref() == Some(kind)).all(|a| a.3);
-                            let check = if proved { String::new() } else { format!(";\n            // Not proved: a test build checks it against the rule over the file.\n            #[cfg(feature = \"test-hooks\")]\n            assert_eq!(run_last(&{}, s), run_last(&{v}, s), \"assume in {kind} at byte {{s}}\")", self.val(r)?) };
+                            let check = if proved { String::new() } else { format!(";\n            // Not proved: a test build checks it against the rule over the file.\n            #[cfg(feature = \"test-hooks\")]\n            assert_eq!(run_last(&{}, s), l, \"assume in {kind} at byte {{s}}\")", self.val(r)?) };
                             (format!("run {}, read as {} (assumed)", show(r), self.brief(&read)), format!("run_last(&{v}, s){check}"))
                         }
                         _ => (format!("run {}", show(r)), format!("run_last(&{}, s)", self.val(r)?)),

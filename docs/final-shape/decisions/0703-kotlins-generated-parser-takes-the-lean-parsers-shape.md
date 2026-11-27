@@ -365,6 +365,14 @@ them.
    run's own class tests are of the run's bytes. `num_start` in a number's run is `last >> 5 & 1 == 1 &&
    matches!(src[q], b'0'..=b'9')`, a digit after the exponent's sign, and its stop `matches!(src[q], b'+' | b'-' |
    b'.')`; the run notes a sign as `matches!(src[q], b'+' | b'-')`.
+42. **A token's run is read once, and its check reads what it found**: an unproved run's check was
+   `assert_eq!(run_last(&R, s), run_last(&V, s))`, so the byte form read `V`'s run a second time, in the test build's
+   check, and the fills and notes a row reads (`end_seen`, `end_fills`, step 40) were that second run's. A build without
+   `test-hooks` read them as none: the integer row's `fill_7` was false at any integer of more than one byte. The
+   check is now `assert_eq!(run_last(&R, s), l)`, and a run in a check is never read forward. One run per number row,
+   as the lean lexer's `number`; the file is 17 KB smaller. The tests build `kotlin_aot` without `test-hooks`, and no
+   input read the fill: a name touching a number now has its cases (`suffixes_are_the_names_touching_a_number`), which
+   fail with `fill_7` false.
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`

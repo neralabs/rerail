@@ -406,6 +406,10 @@ fn suffixes_are_the_names_touching_a_number() {
         "val b = 1L\nval L = 2\n",
     ]);
     refused(&["val a = 1x\n", "val a = 0xFFg\n", "val a = 0b1z\n", "val a = 1Lx\n", "val a = 1.5x\n", "val a = 1lu\n"]);
+    // A name touching a number is in it where a number starts at the number's last byte (`fill(num_start, ~w)`, as
+    // the number's run keeps it): a letter past ASCII in it is the escape's, after the integer, after the
+    // exponent's sign, and not after a `.`.
+    tier1_same(&["val a = 7u\u{e9}\n", "val a = 12L\u{e9}\n", "val a = 1e+5u\u{e9}\n", "val a = 1e5u\u{e9}\n", "val a = 1.5u\u{e9}\n", "val a = .5u\u{e9}\n", "val a = 0x1Fu\u{e9}\n"]);
 }
 
 /// Step 10: a class's members.
