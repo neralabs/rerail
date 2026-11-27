@@ -1,0 +1,33 @@
+[package]
+name = "rerail-tray"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[[bin]]
+name = "rerail-tray"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+png = "=0.18.1"
+
+# The macOS menu bar item and the Windows notification-area icon.
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+muda = { version = "=0.22.0", default-features = false }
+tao = { version = "=0.38.0", default-features = false }
+tray-icon = { version = "=0.27.0", default-features = false }
+
+# AppKit calls muda does not make: SF Symbol item images and macOS 27's image visibility. The versions muda uses.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "=0.6.5", default-features = false, features = ["std"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSImage", "NSMenu", "NSMenuItem"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString"] }
+
+# The Linux icon, over the StatusNotifierItem D-Bus protocol: no GTK, and no async runtime of ours.
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "=0.3.7", default-features = false, features = ["blocking", "async-io"] }
+# ksni's own zbus, named only to tell a missing StatusNotifierWatcher from another failure to register with one.
+zbus = { version = "=5.19.0", default-features = false }

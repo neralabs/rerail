@@ -7,6 +7,8 @@ target/
 /index.d.ts
 /native/index.js
 /native/index.d.ts
+# The tray icon program npm run build:tray builds (scripts/build/release-tray.mjs).
+/native/rerail-tray.*
 coverage/
 .DS_Store
 __pycache__/
