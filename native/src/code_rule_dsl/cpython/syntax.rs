@@ -41,6 +41,26 @@ pub(crate) struct Raised {
     pub(crate) message: String,
 }
 
+/// Whether Ruff's parser parses `source` as a module without a syntax error: Ruff's own test, not CPython's verdict
+/// (`syntax_error`), as eradicate's ERA001 asks it of a comment's text (`parse_module(line).is_ok()`). Syntax the
+/// target version lacks (`unsupported_syntax_errors`) does not count, as it does not for Ruff (`@py_parses`).
+pub fn parses(source: &str) -> bool {
+    ruff_python_parser::parse_module(source).is_ok()
+}
+
+/// Ruff's prose fast path: two consecutive identifier tokens after trivia is skipped. Tokenizing, rather than
+/// splitting words, distinguishes a string prefix from an apostrophe in prose (`exceptions we've seen`).
+pub fn consecutive_names(source: &str) -> bool {
+    use ruff_python_trivia::{SimpleTokenKind, SimpleTokenizer};
+    let mut previous = false;
+    SimpleTokenizer::starts_at(TextSize::default(), source).skip_trivia().any(|token| {
+        let name = token.kind == SimpleTokenKind::Name;
+        let pair = previous && name;
+        previous = name;
+        pair
+    })
+}
+
 /// `ast.parse(source)`'s verdict: `Ok(None)` where it parses, its `SyntaxError`, or another exception it raises.
 pub(crate) fn syntax_error(source: &str) -> Result<Option<SyntaxError>, Raised> {
     if source.contains('\0') {

@@ -2768,3 +2768,60 @@ fn two_modules_of_one_name_keep_their_own_call_targets() {
     assert_eq!(tgt, vec![row("conftest.py", "conftest.a"), row("s1/app/m.py", "app.m.c"), row("s2/app/m.py", "app.m.e"), row("tests/conftest.py", "tests.conftest.b")]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A relation the negation split demands (decision 0048) whose demand would close a cycle through a reach index
+/// (decision 0119) is computed in full: the reach stays native, each start's whole closure. T201 over a type string
+/// beside a larger file: `in_ann_tree`'s demand came from the reader's `pre_<i>`, which reads `guest_file`, which reads
+/// the reach `ann_host_up`, whose seeds read `in_ann_tree`. In that component the reach's one rule, which only orders
+/// it, ran as rows: a seed's one step over `host_node`, so only the call in a string nested in a type string (two hosts
+/// deep) was found. The large file makes `kind(c, "call")` and `host_node` anchors, so the split cuts both reads; the
+/// rows equal those of the closure held as rows (`RERAIL_REACH_INDEX=off`).
+#[test]
+fn a_demand_that_would_close_a_cycle_through_a_reach_index_leaves_the_closure_whole() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("demand-reach");
+    let _ = std::fs::remove_dir_all(&dir);
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("a.py"),
+        "x: \"print(1)\" = 1\ny: \"Tuple[print(2), print(3)]\" = 1\ndef f(a: \"print(5)\") -> \"print(7)\":\n    pass\nv: \"List[Literal['print(10)']]\" = []\n",
+    )
+    .unwrap();
+    std::fs::write(src.join("b.py"), (0..3000).map(|i| format!("a{i} = {i}\n")).collect::<String>()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(
+        &crate::code_rule_dsl::logic::rr::parse(
+            r#"#include "core.rerail"
+.decl ann_tree(r: node)
+ann_tree(r) :- string_annotation(s), parsed(s, "annotation", r).
+.decl in_ann_tree(e: node) magic
+in_ann_tree(e) :- ann_tree(e).
+in_ann_tree(e) :- ann_tree(t), within(e, t).
+.decl ann_host_up(e: node, h: node)
+ann_host_up(e, h) :- in_ann_tree(e), host_node(e, h).
+ann_host_up(e, h) :- ann_host_up(e, m), host_node(m, h).
+.decl guest_file(e: node)
+guest_file(e) :- ann_host_up(e, h), !host_node(h, _), docof(h, _).
+.decl found(l: number)
+found(l) :- in_ann_tree(c), kind(c, "call"), guest_file(c), line(c, l).
+.output found
+"#,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let run = |store: &str| {
+        let out = dir.join(store).with_extension("out");
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        super::run(&text, &src, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        crate::code_rule_dsl::logic::plan::output::shown(&out, "found").unwrap()
+    };
+    let native = run("native.sqlite");
+    let rows = {
+        let _switched = super::switches::set(&[("RERAIL_REACH_INDEX", "off")]);
+        run("rows.sqlite")
+    };
+    let lines = |ls: &[&str]| ls.iter().map(|l| vec![(*l).to_owned()]).collect::<Vec<_>>();
+    assert_eq!(native, lines(&["1", "2", "3", "5"]), "every call in a type string, by the reach's whole closure");
+    assert_eq!(native, rows);
+    let _ = std::fs::remove_dir_all(&dir);
+}

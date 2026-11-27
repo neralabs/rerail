@@ -59,7 +59,7 @@
 //! `m132($n) :- pre_i($n), m131($n)`. Corpus runs only, so the golden plans are unchanged.
 
 use super::super::front::{Atom, Literal, Program, Rule, Term};
-use super::super::program_image::{Builder, CmpOp, RuleId, RuleRef, T, TermRef, Version};
+use super::super::program_image::{About, Builder, CmpOp, RelId, RuleId, RuleRef, T, TermRef, Version};
 use super::keeps::inline::{named, renumbered};
 use std::collections::{BTreeMap, BTreeSet};
 use super::body::Placed;
@@ -105,9 +105,9 @@ pub(super) fn split_negations(placed: &Placed, model: &super::Model) -> Option<(
     if candidates.is_empty() {
         return None;
     }
-    // A candidate whose split fails (a variable of no known type, or a cycle through a negation) is left as it was,
-    // and the rest are split again: one rule must not keep every other from its demand (in a combined program, one
-    // component closing a cycle left all 100 rules without one).
+    // A candidate whose split fails (a variable of no known type, a cycle through a negation, or one through a native
+    // operator) is left as it was, and the rest are split again: one rule must not keep every other from its demand (in
+    // a combined program, one component closing a cycle left all 100 rules without one).
     let mut rounds = 0;
     loop {
         rounds += 1;
@@ -135,30 +135,60 @@ fn split_with(f: &Fields<'_>, base: &Placed, model: &super::Model, candidates: &
     // The split as an overlay of the program's version (t36 item 6, step 3). A demanded relation's rules read its
     // demand first (`overlaid`).
     let placed = overlaid(base, candidates, &splits, &decls, &nullary).map_err(|e| BTreeSet::from([e]))?;
-    // A split that closes a cycle through a negation (a reader's body reading what the negated relation depends on)
-    // leaves the program as it was.
+    // A split that closes a cycle through a negation (a reader's body reading what the negated relation depends on),
+    // or through a native operator, leaves the program as it was.
     // Every failing component at once, not the first: a round per component was a split and strata per round.
-    let about = super::super::program_image::manager::analysis::<super::super::program_image::About>(&placed.v).map_err(|e| BTreeSet::from([e]))?;
+    let about = super::super::program_image::manager::analysis::<About>(&placed.v).map_err(|e| BTreeSet::from([e]))?;
     let errors = super::super::program_image::analyses::unstratified(&placed.v, &about);
-    if errors.is_empty() {
-        return Ok((demanded, placed));
+    if !errors.is_empty() {
+        return Err(failed_by_negation(&errors, candidates));
     }
+    let failed = natives_in_cycles(&placed.v, &about, candidates);
+    if failed.is_empty() { Ok((demanded, placed)) } else { Err(failed) }
+}
+
+/// The candidates in the components a negation or a non-monotone aggregate closes a cycle in (`errors`).
+fn failed_by_negation(errors: &[super::super::front::Error], candidates: &BTreeSet<&str>) -> BTreeSet<String> {
     let mut failed: BTreeSet<String> = BTreeSet::new();
-    for e in &errors {
-        // The candidates in the failing component (a `demand_<c>` there names `c`).
+    for e in errors {
         let mine: BTreeSet<String> = match e {
-            super::super::front::Error::NotStratifiable { component, .. } | super::super::front::Error::AggregationInRecursion { component, .. } => component
-                .iter()
-                .map(|r| r.strip_prefix("demand_").unwrap_or(r))
-                .filter(|r| candidates.contains(r))
-                .map(str::to_owned)
-                .collect(),
+            super::super::front::Error::NotStratifiable { component, .. } | super::super::front::Error::AggregationInRecursion { component, .. } => {
+                in_component(component.iter().map(String::as_str), candidates)
+            }
             _ => BTreeSet::new(),
         };
         super::super::profile::decision("demand (decision 0048)", || format!("not demanded: {} (their split closes a cycle through a negation or an aggregate)", mine.iter().cloned().collect::<Vec<_>>().join(", ")));
         failed.extend(mine);
     }
-    Err(failed)
+    failed
+}
+
+/// The candidates whose split puts a native operator (`front::Native`) in a component of more than one relation. The
+/// planner makes a native's rows from its reads' whole rows only in a stratum of its own; in a larger one the
+/// evaluator runs the native's rule instead, and a reach index's rule (decision 0119) only orders it after its seeds
+/// and edges: its rows were the seeds' one step over the edge, not their closure. T201 over a type string beside a
+/// larger file: `in_ann_tree`'s demand came from `Host`'s `pre_<i>`, which reads `guest_file`, which reads the reach
+/// `ann_host_up`, whose seeds read `in_ann_tree`; of the calls in type strings only those two hosts deep were found. A
+/// positive cycle of rules alone stays demanded, and a cycle through a native that no candidate is in is not the
+/// split's.
+fn natives_in_cycles(v: &Version, about: &About, candidates: &BTreeSet<&str>) -> BTreeSet<String> {
+    let Ok(strata) = super::super::program_image::analyses::strata(v, about) else { return BTreeSet::new() };
+    let native: BTreeSet<RelId> = about.natives.iter().map(|n| n.rel).collect();
+    let mut failed: BTreeSet<String> = BTreeSet::new();
+    for scc in strata.sccs.iter().filter(|s| s.len() > 1 && s.iter().any(|r| native.contains(r))) {
+        let mine = in_component(scc.iter().map(|&r| v.rel_name(r)), candidates);
+        if mine.is_empty() {
+            continue;
+        }
+        super::super::profile::decision("demand (decision 0048)", || format!("not demanded: {} (their split closes a cycle through a native operator)", mine.iter().cloned().collect::<Vec<_>>().join(", ")));
+        failed.extend(mine);
+    }
+    failed
+}
+
+/// The candidates in a component: a candidate itself, or its demand (`demand_<c>` names `c`).
+fn in_component<'a>(component: impl Iterator<Item = &'a str>, candidates: &BTreeSet<&str>) -> BTreeSet<String> {
+    component.map(|r| r.strip_prefix("demand_").unwrap_or(r)).filter(|r| candidates.contains(r)).map(str::to_owned).collect()
 }
 
 /// A reader's split (`split_with`): its `pre_<i>`, the variables it hands on, and the places of the reads it cuts.
