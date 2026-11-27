@@ -1779,7 +1779,7 @@ function refusedPath(error: unknown): string | undefined {
 function noteRefusal(walk: SourceWalk, absolute: string, error: unknown, before: EntryId | undefined): void {
   if (!hasErrorCode(error, "EPERM")) return;
   const refused = refusedPath(error) ?? absolute;
-  const path = sessionPath(walk.discovery.root, absolute);
+  const path = walkPath(walk, absolute);
   if (startRefused(walk, absolute, refused) || walk.held(path || ".")) return;
   (walk.refusals ??= []).push(refusalOf(path, absolute, refused, before));
 }
@@ -1957,7 +1957,7 @@ function scanGaps(errors: readonly ScanError[]): WalkGap[] {
  */
 function ignoredFolder(walk: SourceWalk, child: string): boolean {
   try {
-    return walk.view.ignoresPath?.(sessionPath(walk.discovery.root, child), true) === true;
+    return walk.view.ignoresPath?.(walkPath(walk, child), true) === true;
   } catch (error) {
     if (vanished(error)) return false;
     throw error;
@@ -2110,6 +2110,19 @@ function inSessionFolder(worktrees: ReadonlySet<string>, path: string): boolean 
 /** `absolute` relative to the walk's root (the session folder), `/`-separated, as the auditor names paths. */
 function sessionPath(root: string, absolute: string): string {
   return relative(root, absolute).split(sep).join("/");
+}
+/**
+ * `sessionPath` of a path `walk` reached: the walk joins each name a listing gives to the path of its folder, from its
+ * root, so the part after the root and a separator is the path, and no `relative` resolves both paths again for each
+ * file. A path that does not start so (none the walk builds) is worked out by `sessionPath`.
+ */
+function walkPath(walk: SourceWalk, absolute: string): string {
+  const { root } = walk.discovery;
+  if (absolute === root) return "";
+  const prefix = root.endsWith(sep) ? root : `${root}${sep}`;
+  if (!absolute.startsWith(prefix)) return sessionPath(root, absolute);
+  const below = absolute.slice(prefix.length);
+  return sep === "/" ? below : below.replaceAll(sep, "/");
 }
 /** `configuredPath` (as a tool names it) relative to the session folder `root`, `/`-separated; undefined for the folder itself or another drive. */
 function sessionRelativePath(root: string, configuredPath: string): string | undefined {
@@ -4971,12 +4984,12 @@ export class CodeRuleBridge {
   async #expandDirectory(walk: SourceWalk, absolute: string): Promise<void> {
     const listing = await opendir(absolute);
     const seen = walk.scan.seen;
-    seen?.folders.add(sessionPath(walk.discovery.root, absolute));
+    seen?.folders.add(walkPath(walk, absolute));
     for await (const entry of listing) {
       if (walk.discovery.cancelled) return;
       if (entry.name === ".git") this.#noteCheckout(walk, join(absolute, entry.name));
       else if (this.#walksInto(walk, absolute, entry)) walk.stack.push(join(absolute, entry.name));
-      else seen?.leftOut.add(sessionPath(walk.discovery.root, join(absolute, entry.name)));
+      else seen?.leftOut.add(walkPath(walk, join(absolute, entry.name)));
     }
   }
 
@@ -4989,7 +5002,7 @@ export class CodeRuleBridge {
   #noteCheckout(walk: SourceWalk, gitEntry: string): void {
     let checkout: string | undefined;
     try {
-      checkout = walk.checkoutOf(sessionPath(walk.discovery.root, gitEntry));
+      checkout = walk.checkoutOf(walkPath(walk, gitEntry));
     } catch (error) {
       if (vanished(error)) return;
       throw error;
@@ -5010,7 +5023,7 @@ export class CodeRuleBridge {
    * `.gitignore` is observed by its stamp whatever Git says of it, since it decides what is ignored.
    */
   async #observeRegularFile(walk: SourceWalk, absolute: string, info: FoundEntry): Promise<void> {
-    const path = sessionPath(walk.discovery.root, absolute);
+    const path = walkPath(walk, absolute);
     if (basename(path) === GITIGNORE || !walk.view.ignoresPath?.(path, false)) await this.#observeFile(walk, sourceLocation(absolute, path), info);
     else walk.scan.seen?.leftOut.add(path);
   }
@@ -5059,7 +5072,7 @@ export class CodeRuleBridge {
 
   /** `file` when the path is known to be a file: an unlisted one fails as a source, not as a folder walked. */
   #recordObservationFailure(walk: SourceWalk, absolute: string, error: unknown, file: boolean): void {
-    const path = sessionPath(walk.discovery.root, absolute);
+    const path = walkPath(walk, absolute);
     const language = sourceLanguageOfPath(path) ?? (file ? UNLISTED_TEXT_LANGUAGE : undefined);
     const readError = errorMessage(error);
     if (language === undefined) failFolder(walk, path, readError);
