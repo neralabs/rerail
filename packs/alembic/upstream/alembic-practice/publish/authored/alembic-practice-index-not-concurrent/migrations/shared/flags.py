@@ -1,2 +1,0 @@
-CONCURRENT = True
-NO_INDEX = False

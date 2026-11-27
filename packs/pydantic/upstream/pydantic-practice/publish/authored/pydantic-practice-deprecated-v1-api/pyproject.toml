@@ -1,9 +1,0 @@
-[project]
-name = "app"
-version = "0.1.0"
-dependencies = [
-    "fastapi>=0.115",
-    "pydantic>=2.7,<3",
-    "pydantic-settings>=2.3",
-    "sqlmodel>=0.0.22",
-]
