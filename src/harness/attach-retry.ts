@@ -63,7 +63,7 @@ export class AttachRetry<Context> {
       if (generation === this.#generation) this.#failed(context, generation);
       throw error;
     }
-    if (generation === this.#generation) this.#attached();
+    if (generation === this.#generation) this.#attached(context);
   }
 
   #failed(context: Context, generation: number): void {
@@ -80,7 +80,7 @@ export class AttachRetry<Context> {
     this.#timer.unref();
   }
 
-  #attached(): void {
+  #attached(context: Context): void {
     if (this.#failures > 0) process.stderr.write(`Rerail attached after ${this.#failures} failed attempt(s)\n`);
     this.#failures = 0;
     this.#failing = undefined;
@@ -88,12 +88,27 @@ export class AttachRetry<Context> {
     this.#drops = undefined;
     if (dropped === undefined) return;
     this.#host.reportDropped(0);
-    // Events of a session that never attached have nowhere to be recorded but their marker, which got its final count
-    // before the host left that session.
+    // Events of a session the host left have nowhere to be recorded but their marker, which got its final count before
+    // the host left that session.
+    if (dropped.sessionId !== this.#host.sessionId(context)) return;
+    this.#host.appendEntry(EVENTS_DROPPED_ENTRY_TYPE, { ...dropped.gap, recovered: this.#recorded(dropped) });
+  }
+
+  /**
+   * Whether the runtime attached to the dropped events' session recorded their gap. With no runtime (Rerail was stopped
+   * meanwhile) or a record that failed, the session's marker is all that keeps the count; a failure is said on stderr.
+   */
+  #recorded(dropped: { sessionId: string; gap: DroppedEvents }): boolean {
     const recorder = this.#host.recorder(dropped.sessionId);
-    if (recorder === undefined) return;
-    this.#host.appendEntry(EVENTS_DROPPED_ENTRY_TYPE, { ...dropped.gap, recovered: true });
-    recorder.recordDropped([dropped.gap]);
+    if (recorder === undefined) return false;
+    try {
+      recorder.recordDropped([dropped.gap]);
+      return true;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`Rerail could not record ${dropped.gap.count} dropped session event(s); it is not retried: ${reason}\n`);
+      return false;
+    }
   }
 
   /**
