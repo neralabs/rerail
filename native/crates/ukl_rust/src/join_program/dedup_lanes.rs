@@ -232,7 +232,7 @@ where
             for j in 0..n as usize {
                 let r = t - first + j as u32;
                 for (c, &col) in v[..nk].iter_mut().zip(&p.cols) {
-                    c[j] = reads::col(&doc, k.min(12), r, col);
+                    c[j] = reads::col(&doc, k.min(reads::LAST_VIEW), r, col);
                 }
             }
             let mut h = U::<N>::splat(KEY_SEED);
