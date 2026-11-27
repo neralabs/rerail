@@ -3189,6 +3189,16 @@ impl<'a> G<'a> {
                 };
                 let test = if rd.parts.len() == 1 { String::new() } else { format!(".filter(|&e| bit(&m.{start}, e))") };
                 let _ = write!(parts, "            // `{name}`\n            if let Some(e) = first{test} {{\n                if part.is_none_or(|q| (e, {bytes}, {i}) < q) {{\n                    part = Some((e, {bytes}, {i}));\n                }}\n            }}\n");
+                // A part read by its check (`P = E check else K`): at `E`, the check's match is `P`, else `K` one byte, as
+                // the lean lexer's `backslash` reads an escape or a lone `\`.
+                if let Some((g, other)) = &rd.checks[i] {
+                    let f = crate::bitlex_lex_rust::ident(name);
+                    if !free.contains(&format!("fn check_{f}(")) {
+                        free.push_str(&crate::bitlex_check_rust::Checks::new(self.x.lexer, "tier 2 as Rust").check_fn(&f, name, g, false)?);
+                    }
+                    let _ = writeln!(lasts, "                        // `{name}` by its check, else `{other}`\n                        {i} => match check_{f}(&self.src[e..]) {{\n                            Some(n) => (e + n - 1, {}),\n                            None => (e, {}),\n                        }},", kind_or(piece(name, false), "e"), kind_or(piece(other, false), "e"));
+                    continue;
+                }
                 let l = match last {
                     Some(f) => format!("match first_bit(&m.{f}, e) {{\n                            Some(l) => l,\n                            None => return self.refuse(),\n                        }}"),
                     None => format!("e + {}", usize::from(bytes).saturating_sub(1)),

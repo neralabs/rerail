@@ -19,7 +19,7 @@
 //! Tier 2 (`bitlex_rust`) reads the masks it splits a region by from tier 1's `Masks`, by name
 //! (`readers`).
 
-use ::bitlex::syntax::{Arg, Expr, PartLen, Region, Stmt, TokenRule, TokenTest};
+use ::bitlex::syntax::{Arg, Expr, Gram, PartLen, Region, Stmt, TokenRule, TokenTest};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
@@ -221,6 +221,10 @@ pub struct Reader {
     pub region_or: Vec<Option<String>>,
     /// Each part: its kind, its start's field, and its bytes or its last's field.
     pub parts: Vec<(String, String, PartLen, Option<String>)>,
+    /// Each part read by its check (`Parts::checked`, `P = E check else K`), by the part: its grammar and `K`. The
+    /// part's start is `E`; at it the check's match is `P` through its end, else `K` one byte, as the lean lexer reads
+    /// an escape at a backslash.
+    pub checks: Vec<Option<(Gram, String)>>,
     pub content: String,
     /// Each closer of a kind of its own (`closes { K = E bytes N }`): its kind, its field, its bytes.
     pub closes: Vec<(String, String, u8)>,
@@ -562,21 +566,29 @@ pub fn readers(stmts: &[Stmt]) -> Vec<Reader> {
         let close = field_of(&closer, r, "close", &mut masks, &mut all);
         let region_open = if rs.len() > 1 { rs.iter().map(|q| field_of(&name(format!("o_{}", q.kind)), r, "in", &mut masks, &mut all)).collect() } else { Vec::new() };
         let region_or = rs.iter().enumerate().map(|(q, g)| g.or.as_ref().map(|(c2, _)| field_of(c2, r, &format!("or{q}"), &mut masks, &mut all))).collect();
-        let parts_out = parts
-            .parts
-            .iter()
-            .enumerate()
-            .map(|(i, (p, e, len))| {
-                let start = field_of(e, r, &format!("part{i}"), &mut masks, &mut all);
-                let last = match len {
-                    PartLen::Last(l) => Some(field_of(l, r, &format!("part{i}_last"), &mut masks, &mut all)),
-                    PartLen::Bytes(_) => None,
-                };
-                (p.clone(), start, len.clone(), last)
-            })
-            .collect();
+        // A checked part's two (`P` and `K`) are one, at `E`.
+        let mut parts_out = Vec::new();
+        let mut checks = Vec::new();
+        for (p, e, len) in &parts.parts {
+            if parts.checked.iter().any(|c| c.3 == *p) {
+                continue;
+            }
+            let i = parts_out.len();
+            if let Some((_, at, g, other)) = parts.checked.iter().find(|c| c.0 == *p) {
+                parts_out.push((p.clone(), field_of(at, r, &format!("part{i}"), &mut masks, &mut all), PartLen::Bytes(1), None));
+                checks.push(Some((g.clone(), other.clone())));
+                continue;
+            }
+            let start = field_of(e, r, &format!("part{i}"), &mut masks, &mut all);
+            let last = match len {
+                PartLen::Last(l) => Some(field_of(l, r, &format!("part{i}_last"), &mut masks, &mut all)),
+                PartLen::Bytes(_) => None,
+            };
+            parts_out.push((p.clone(), start, len.clone(), last));
+            checks.push(None);
+        }
         let closes = parts.closes.iter().enumerate().map(|(j, (k, e, n))| (k.clone(), field_of(e, r, &format!("closes{j}"), &mut masks, &mut all), *n)).collect();
-        out.push(Reader { kind: kind.clone(), open: String::new(), close, regions: rs.clone(), region_open, region_or, parts: parts_out, content: parts.content.clone(), closes, masks });
+        out.push(Reader { kind: kind.clone(), open: String::new(), close, regions: rs.clone(), region_open, region_or, parts: parts_out, checks, content: parts.content.clone(), closes, masks });
     }
     for (r, rd) in out.iter_mut().enumerate() {
         let open = starts[&rd.kind].iter().cloned().reduce(|a, b| Expr::Or(Box::new(a), Box::new(b))).expect("a row");
@@ -602,7 +614,7 @@ pub fn piece_kind(stmts: &[Stmt], row_kinds: &[Option<u8>], reader: &str, name: 
 }
 
 /// A name as a Rust identifier.
-fn ident(name: &str) -> String {
+pub(crate) fn ident(name: &str) -> String {
     let s: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' }).collect();
     const KEYWORDS: &[&str] = &[
         "as", "break", "const", "continue", "crate", "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use", "where", "while", "async", "await", "dyn", "abstract", "become", "box", "do", "final", "macro", "override", "priv", "typeof", "unsized", "virtual", "yield", "try", "gen",

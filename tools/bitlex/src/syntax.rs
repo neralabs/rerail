@@ -151,9 +151,9 @@ pub struct Parts {
     pub closes: Vec<(String, Expr, u8)>,
     /// `P = E check else K`: the parts read by their `check P = G`, as a lexer reads an escape by its grammar from the
     /// byte `E` holds at. Each is two of `parts`: `P` where `G` matches from there, through its match's last byte
-    /// (`last`), and `K` one byte where it does not. Its kind, its grammar and `K`, for the writers that read the
-    /// part as the lexer does; the masks path reads the two parts.
-    pub checked: Vec<(String, Gram, String)>,
+    /// (`last`), and `K` one byte where it does not. Its kind, `E`, its grammar and `K`, for the writers that read
+    /// the part as the lexer does (at `E`, the check's match or `K`); the masks path reads the two parts.
+    pub checked: Vec<(String, Expr, Gram, String)>,
 }
 
 /// How far a part of a region read in parts runs (`Parts`): `bytes N`, or `last L`, through the
@@ -2773,8 +2773,8 @@ impl P {
                                 let g = self.checks.iter().rev().find(|(k, _)| *k == p).map(|(_, g)| g.clone()).ok_or_else(|| format!("part `{p}` read by its check: `check {p} = …` before its reader"))?;
                                 let (ok, last) = self.part_check(&p, &e, &g)?;
                                 parts.push((p.clone(), Expr::And(Box::new(e.clone()), Box::new(ok.clone())), PartLen::Last(last)));
-                                parts.push((other.clone(), Expr::And(Box::new(e), Box::new(Expr::Not(Box::new(ok)))), PartLen::Bytes(1)));
-                                checked.push((p.clone(), g, other));
+                                parts.push((other.clone(), Expr::And(Box::new(e.clone()), Box::new(Expr::Not(Box::new(ok)))), PartLen::Bytes(1)));
+                                checked.push((p.clone(), e, g, other));
                                 if !self.part_checks.contains(&p) {
                                     self.part_checks.push(p);
                                 }

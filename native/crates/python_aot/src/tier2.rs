@@ -340,6 +340,92 @@ const ANON: [u16; 91] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, k::STAR, 0, k
 /// A word's leaf's kind where `aug_op` takes it (the lean parser's `anon()`); 0: none of its words.
 const AUG_OP: [u16; 91] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, k::PLUS_EQ, k::MINUS_EQ, k::STAR_EQ, k::SLASH_EQ, k::AT_EQ, k::SLASH_SLASH_EQ, k::PERCENT_EQ, k::STAR_STAR_EQ, k::GT_GT_EQ, k::LT_LT_EQ, k::AMP_EQ, k::CARET_EQ, k::BAR_EQ, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
+/// `check escape_sequence`: the end of the check's grammar's match from the start of `b` (the bytes from the token's,
+/// to the source's end), or none.
+fn check_escape_sequence(b: &[u8]) -> Option<usize> {
+let mut j = 0usize;
+if !matches!(b.get(j), Some(0x5c)) {
+return None;
+}
+j += 1;
+if matches!(b.get(j), Some(0x75)) {
+j += 1;
+if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
+return None;
+}
+j += 1;
+if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
+return None;
+}
+j += 1;
+if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
+return None;
+}
+j += 1;
+if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
+return None;
+}
+j += 1;
+} else if matches!(b.get(j), Some(0x55)) {
+j += 1;
+if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
+return None;
+}
+j += 1;
+if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
+return None;
+}
+j += 1;
+if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
+return None;
+}
+j += 1;
+if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
+return None;
+}
+j += 1;
+if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
+return None;
+}
+j += 1;
+if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
+return None;
+}
+j += 1;
+if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
+return None;
+}
+j += 1;
+if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
+return None;
+}
+j += 1;
+} else if matches!(b.get(j), Some(0x78)) {
+j += 1;
+if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
+return None;
+}
+j += 1;
+if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
+return None;
+}
+j += 1;
+} else if matches!(b.get(j), Some(0x30..=0x39)) {
+j += 1;
+if matches!(b.get(j), Some(0x30..=0x39)) {
+j += 1;
+if matches!(b.get(j), Some(0x30..=0x39)) {
+j += 1;
+}
+}
+} else if matches!(b.get(j), Some(0x0a | 0x22 | 0x27 | 0x5c | 0x61..=0x62 | 0x66 | 0x6e | 0x72 | 0x74 | 0x76)) {
+j += 1;
+} else {
+return None;
+}
+Some(j)
+}
+
 /// The word of a piece of record kind `kind`, its bytes `b`: its kind's keywords'.
 fn word_in(kind: u32, b: &[u8]) -> u32 {
     match kind {
@@ -4240,7 +4326,7 @@ impl<L: Layout> P<'_, L> {
             };
             // The part first after `at`, before the closer: the earliest, the shortest at one byte. One scan of the
             // parts' starts, to the closer.
-            let first = first_of([&m.rd0_part0, &m.rd0_part1, &m.rd0_part2, &m.esc_ib], at, c);
+            let first = first_of([&m.rd0_part0, &m.esc, &m.esc_ib], at, c);
             let mut part: Option<(usize, u8, usize)> = None;
             // `quote2`
             if let Some(e) = first.filter(|&e| bit(&m.rd0_part0, e)) {
@@ -4249,21 +4335,15 @@ impl<L: Layout> P<'_, L> {
                 }
             }
             // `escape_sequence`
-            if let Some(e) = first.filter(|&e| bit(&m.rd0_part1, e)) {
-                if part.is_none_or(|q| (e, 0, 1) < q) {
-                    part = Some((e, 0, 1));
-                }
-            }
-            // `\`
-            if let Some(e) = first.filter(|&e| bit(&m.rd0_part2, e)) {
-                if part.is_none_or(|q| (e, 1, 2) < q) {
-                    part = Some((e, 1, 2));
+            if let Some(e) = first.filter(|&e| bit(&m.esc, e)) {
+                if part.is_none_or(|q| (e, 1, 1) < q) {
+                    part = Some((e, 1, 1));
                 }
             }
             // `escape_interpolation`
             if let Some(e) = first.filter(|&e| bit(&m.esc_ib, e)) {
-                if part.is_none_or(|q| (e, 2, 3) < q) {
-                    part = Some((e, 2, 3));
+                if part.is_none_or(|q| (e, 2, 2) < q) {
+                    part = Some((e, 2, 2));
                 }
             }
             let to = part.map_or(c, |q| q.0);
@@ -4274,12 +4354,12 @@ impl<L: Layout> P<'_, L> {
                 Some((e, _, i)) => {
                     let (l, kind) = match i {
                         0 => (e + 1, 10),
-                        1 => (match first_bit(&m.escape_sequence_last, e) {
-                            Some(l) => l,
-                            None => return self.refuse(),
-                        }, 7),
-                        2 => (e + 0, 9),
-                        3 => (e + 1, 8),
+                        // `escape_sequence` by its check, else `\`
+                        1 => match check_escape_sequence(&self.src[e..]) {
+                            Some(n) => (e + n - 1, 7),
+                            None => (e, 9),
+                        },
+                        2 => (e + 1, 8),
                         _ => unreachable!(),
                     };
                     self.piece(e, l, kind);
@@ -4340,24 +4420,18 @@ impl<L: Layout> P<'_, L> {
             };
             // The part first after `at`, before the closer: the earliest, the shortest at one byte. One scan of the
             // parts' starts, to the closer.
-            let first = first_of([&m.rd0_part1, &m.rd0_part2, &m.esc_ib], at, c);
+            let first = first_of([&m.esc, &m.esc_ib], at, c);
             let mut part: Option<(usize, u8, usize)> = None;
             // `escape_sequence`
-            if let Some(e) = first.filter(|&e| bit(&m.rd0_part1, e)) {
-                if part.is_none_or(|q| (e, 0, 0) < q) {
-                    part = Some((e, 0, 0));
-                }
-            }
-            // `\`
-            if let Some(e) = first.filter(|&e| bit(&m.rd0_part2, e)) {
-                if part.is_none_or(|q| (e, 1, 1) < q) {
-                    part = Some((e, 1, 1));
+            if let Some(e) = first.filter(|&e| bit(&m.esc, e)) {
+                if part.is_none_or(|q| (e, 1, 0) < q) {
+                    part = Some((e, 1, 0));
                 }
             }
             // `escape_interpolation`
             if let Some(e) = first.filter(|&e| bit(&m.esc_ib, e)) {
-                if part.is_none_or(|q| (e, 2, 2) < q) {
-                    part = Some((e, 2, 2));
+                if part.is_none_or(|q| (e, 2, 1) < q) {
+                    part = Some((e, 2, 1));
                 }
             }
             let to = part.map_or(c, |q| q.0);
@@ -4367,12 +4441,12 @@ impl<L: Layout> P<'_, L> {
             match part {
                 Some((e, _, i)) => {
                     let (l, kind) = match i {
-                        0 => (match first_bit(&m.escape_sequence_last, e) {
-                            Some(l) => l,
-                            None => return self.refuse(),
-                        }, 7),
-                        1 => (e + 0, 9),
-                        2 => (e + 1, 8),
+                        // `escape_sequence` by its check, else `\`
+                        0 => match check_escape_sequence(&self.src[e..]) {
+                            Some(n) => (e + n - 1, 7),
+                            None => (e, 9),
+                        },
+                        1 => (e + 1, 8),
                         _ => unreachable!(),
                     };
                     self.piece(e, l, kind);

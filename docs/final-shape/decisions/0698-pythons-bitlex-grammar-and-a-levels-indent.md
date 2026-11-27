@@ -472,3 +472,8 @@ statements and blocks end.
       token's.
     - The writers that read a part as the lexer does get the kind, the grammar and the other part from
       `Parts::checked`.
+82. **Tier 2 as Rust reads a checked part as the lean lexer does.** A reader's checked part is one part at `E`
+    (`Reader::checks`). At it, `check_P(&src[e..])` gives the escape through its match's end, and none gives `K`'s
+    one byte, as the lean lexer's `backslash` calls `escape`. The check's function is `bitlex_check_rust`'s, the one
+    tier 1 uses for a token's check. Tier 1 gives tier 2 the `E` mask, not `E & P_ok`, `E & ~P_ok` and `P_last`, so
+    it no longer makes the check's masks.
