@@ -219,7 +219,7 @@ pub mod f {
 /// The records' kinds (a code's low byte), by their tokens' names.
 #[allow(dead_code)]
 pub mod t {
-    pub const PUNCT: u32 = 0;
+    pub const BAD: u32 = 0;
     pub const QUOTE2: u32 = 1;
     pub const TYPE_CONVERSION: u32 = 2;
     pub const SPEC_TEXT: u32 = 3;
@@ -232,10 +232,11 @@ pub mod t {
     pub const BACKSLASH: u32 = 10;
     pub const INTERP_END_CLOSE: u32 = 11;
     pub const ELLIPSIS: u32 = 12;
-    pub const STR_PREFIX: u32 = 13;
-    pub const STRING_START: u32 = 14;
-    pub const INTEGER: u32 = 15;
-    pub const IDENTIFIER: u32 = 16;
+    pub const BASED: u32 = 13;
+    pub const STR_PREFIX: u32 = 14;
+    pub const STRING_START: u32 = 15;
+    pub const INTEGER: u32 = 16;
+    pub const IDENTIFIER: u32 = 17;
 }
 
 /// The words, as a record's code names them.
@@ -342,58 +343,7 @@ const AUG_OP: [u16; 91] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 /// The word of a piece of record kind `kind`, its bytes `b`: its kind's keywords'.
 fn word_in(kind: u32, b: &[u8]) -> u32 {
     match kind {
-        0 => match b {
-            b"\x28" => w::LPAREN_34,
-            b"\x29" => w::RPAREN_35,
-            b"\x5b" => w::LBRACK_36,
-            b"\x5d" => w::RBRACK_37,
-            b"\x7b" => w::LBRACE_38,
-            b"\x7d" => w::RBRACE_39,
-            b"\x2c" => w::COMMA_40,
-            b"\x3a" => w::COLON_41,
-            b"\x3b" => w::SEMI_42,
-            b"\x2e" => w::DOT_43,
-            b"\x3d" => w::EQ_44,
-            b"\x2b" => w::PLUS_45,
-            b"\x2d" => w::MINUS_46,
-            b"\x2a" => w::STAR_47,
-            b"\x2f" => w::SLASH_48,
-            b"\x25" => w::PERCENT_49,
-            b"\x26" => w::AMP_50,
-            b"\x7c" => w::BAR_51,
-            b"\x5e" => w::CARET_52,
-            b"\x7e" => w::TILDE_53,
-            b"\x3c" => w::LT_54,
-            b"\x3e" => w::GT_55,
-            b"\x40" => w::AT_56,
-            b"\x21" => w::BANG_57,
-            b"\x2a\x2a" => w::STAR_STAR_58,
-            b"\x2f\x2f" => w::SLASH_SLASH_59,
-            b"\x3d\x3d" => w::EQ_EQ_60,
-            b"\x21\x3d" => w::BANG_EQ_61,
-            b"\x3c\x3d" => w::LT_EQ_62,
-            b"\x3e\x3d" => w::GT_EQ_63,
-            b"\x3c\x3c" => w::LT_LT_64,
-            b"\x3e\x3e" => w::GT_GT_65,
-            b"\x2d\x3e" => w::MINUS_GT_66,
-            b"\x2b\x3d" => w::PLUS_EQ_67,
-            b"\x2d\x3d" => w::MINUS_EQ_68,
-            b"\x2a\x3d" => w::STAR_EQ_69,
-            b"\x2f\x3d" => w::SLASH_EQ_70,
-            b"\x25\x3d" => w::PERCENT_EQ_71,
-            b"\x26\x3d" => w::AMP_EQ_72,
-            b"\x7c\x3d" => w::BAR_EQ_73,
-            b"\x5e\x3d" => w::CARET_EQ_74,
-            b"\x40\x3d" => w::AT_EQ_75,
-            b"\x3a\x3d" => w::COLON_EQ_76,
-            b"\x3c\x3e" => w::LT_GT_77,
-            b"\x2a\x2a\x3d" => w::STAR_STAR_EQ_78,
-            b"\x2f\x2f\x3d" => w::SLASH_SLASH_EQ_79,
-            b"\x3c\x3c\x3d" => w::LT_LT_EQ_80,
-            b"\x3e\x3e\x3d" => w::GT_GT_EQ_81,
-            _ => 0,
-        },
-        16 => match b {
+        17 => match b {
             b"False" => w::FALSE_1,
             b"None" => w::NONE_2,
             b"True" => w::TRUE_3,
@@ -443,7 +393,7 @@ fn word_in(kind: u32, b: &[u8]) -> u32 {
 }
 
 /// Each byte's record kind, as a token's first byte (`Records::kinds`).
-const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 0, 0, 0, 0, 14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 0, 0, 0, 0, 16, 0, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 11, 6, 5, 7, 8, 9, 10, 2, 3, 4, 13, 12, 15];
+const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 15, 0, 0, 0, 0, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 0, 0, 0, 0, 17, 0, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 11, 6, 5, 7, 8, 9, 10, 2, 3, 4, 14, 12, 16, 13];
 
 /// An extra's node kind: a later extra kind's by its bit, else the first's.
 fn extra_kind(code: u32) -> u16 {
@@ -1039,7 +989,7 @@ impl<L: Layout> P<'_, L> {
     fn module(&mut self) -> R {
         self.open_root(k::MODULE);
         loop {
-            if self.m_m_stmt() || self.word() == w::TYPE_86 && self.kind_at(self.i + 1) == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word_at(self.i + 1)) || matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::ASSERT_6..=w::DEL_11 | w::FOR_16..=w::IMPORT_20 | w::LAMBDA_23..=w::NOT_25 | w::PASS_27..=w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45..=w::STAR_47 | w::TILDE_53 | w::AT_56 | w::ASYNC_82 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+            if self.m_m_stmt() || self.word() == w::TYPE_86 && self.kind_at(self.i + 1) == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word_at(self.i + 1)) || matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::ASSERT_6..=w::DEL_11 | w::FOR_16..=w::IMPORT_20 | w::LAMBDA_23..=w::NOT_25 | w::PASS_27..=w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45..=w::STAR_47 | w::TILDE_53 | w::AT_56 | w::ASYNC_82 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
                 self.r_statement()?;
             } else {
                 break;
@@ -1062,7 +1012,7 @@ impl<L: Layout> P<'_, L> {
                 w::CLASS_8 | w::DEF_10 | w::FOR_16 | w::IF_19 | w::TRY_30..=w::WITH_32 | w::AT_56 | w::ASYNC_82 => {
                     self.compound_statement()?;
                 }
-                _ if self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS => {
+                _ if self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS => {
                     self.simple_statements()?;
                 }
                 _ => {
@@ -1083,7 +1033,7 @@ impl<L: Layout> P<'_, L> {
             }
             self.p_stored(w::SEMI_42, k::SEMI)?;
             if self.m_newline() {
-            } else if self.word() == w::TYPE_86 && self.kind_at(self.i + 1) == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word_at(self.i + 1)) || matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::ASSERT_6 | w::BREAK_7 | w::CONTINUE_9 | w::DEL_11 | w::FROM_17 | w::GLOBAL_18 | w::IMPORT_20 | w::LAMBDA_23..=w::NOT_25 | w::PASS_27..=w::RETURN_29 | w::YIELD_33 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45..=w::STAR_47 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+            } else if self.word() == w::TYPE_86 && self.kind_at(self.i + 1) == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word_at(self.i + 1)) || matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::ASSERT_6 | w::BREAK_7 | w::CONTINUE_9 | w::DEL_11 | w::FROM_17 | w::GLOBAL_18 | w::IMPORT_20 | w::LAMBDA_23..=w::NOT_25 | w::PASS_27..=w::RETURN_29 | w::YIELD_33 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45..=w::STAR_47 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
                 self.simple_statement()?;
             } else {
             }
@@ -1319,7 +1269,7 @@ impl<L: Layout> P<'_, L> {
         self.open(k::WITH_CLAUSE);
         if self.i > 0 && self.word_at(self.i - 1) == w::WITH_32 && self.pat_w_paren_0_0(self.i, self.n) {
             self.list_0(Self::with_item)?;
-        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.list_4(Self::with_item)?;
         } else {
             return self.refuse();
@@ -1430,7 +1380,7 @@ impl<L: Layout> P<'_, L> {
             self.close()?;
         } else if self.word() == w::X_90 {
             self.implied()?;
-        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::MINUS_46 | w::STAR_47 | w::STAR_STAR_58) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START {
+        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::MINUS_46 | w::STAR_47 | w::STAR_STAR_58) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START {
             self.case_simple()?;
             if self.word() == w::BAR_51 {
                 self.wrap(k::UNION_PATTERN, 0)?;
@@ -1455,7 +1405,7 @@ impl<L: Layout> P<'_, L> {
                     self.bump_as(k::MINUS)?;
                     if self.bit_at(self.i, 6) {
                         self.tk_as(self.kind() == t::INTEGER, k::FLOAT, 0)?;
-                    } else if self.kind() == t::INTEGER {
+                    } else if self.kind() == t::INTEGER || self.kind() == t::BASED {
                         self.bump_as(k::INTEGER)?;
                     } else {
                         return self.refuse();
@@ -1474,7 +1424,7 @@ impl<L: Layout> P<'_, L> {
                     self.open(UNSET);
                     self.retag(k::LIST_PATTERN);
                     self.implied()?;
-                    if self.kind_at(self.i) == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) && self.word_at(self.i + 1) == w::EQ_44 || matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::MINUS_46 | w::STAR_47 | w::STAR_STAR_58 | w::X_90) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START {
+                    if self.kind_at(self.i) == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) && self.word_at(self.i + 1) == w::EQ_44 || matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::MINUS_46 | w::STAR_47 | w::STAR_STAR_58 | w::X_90) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START {
                         self.case_item()?;
                         self.case_items()?;
                     }
@@ -1485,7 +1435,7 @@ impl<L: Layout> P<'_, L> {
                     self.open(UNSET);
                     self.retag(k::TUPLE_PATTERN);
                     self.implied()?;
-                    if self.kind_at(self.i) == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) && self.word_at(self.i + 1) == w::EQ_44 || matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::MINUS_46 | w::STAR_47 | w::STAR_STAR_58 | w::X_90) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START {
+                    if self.kind_at(self.i) == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) && self.word_at(self.i + 1) == w::EQ_44 || matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::MINUS_46 | w::STAR_47 | w::STAR_STAR_58 | w::X_90) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START {
                         self.case_item()?;
                         self.case_items()?;
                     }
@@ -1495,7 +1445,7 @@ impl<L: Layout> P<'_, L> {
                 w::LBRACE_38 => {
                     self.open(k::DICT_PATTERN);
                     self.implied()?;
-                    if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::MINUS_46 | w::STAR_47 | w::STAR_STAR_58) || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::INTEGER {
+                    if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::MINUS_46 | w::STAR_47 | w::STAR_STAR_58) || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::INTEGER || self.kind() == t::BASED {
                         self.list_4(Self::dict_entry)?;
                     }
                     self.p(w::RBRACE_39)?;
@@ -1506,7 +1456,7 @@ impl<L: Layout> P<'_, L> {
                     if self.word() == w::LPAREN_34 {
                         self.wrap(k::CLASS_PATTERN, 0)?;
                         self.implied()?;
-                        if self.kind_at(self.i) == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) && self.word_at(self.i + 1) == w::EQ_44 || matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::MINUS_46 | w::STAR_47 | w::STAR_STAR_58 | w::X_90) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START {
+                        if self.kind_at(self.i) == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) && self.word_at(self.i + 1) == w::EQ_44 || matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::MINUS_46 | w::STAR_47 | w::STAR_STAR_58 | w::X_90) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START {
                             self.list_1(Self::case_item)?;
                         } else if self.word() == w::RPAREN_35 {
                             self.implied()?;
@@ -1516,7 +1466,7 @@ impl<L: Layout> P<'_, L> {
                         self.close()?;
                     }
                 }
-                _ if self.kind() == t::INTEGER => {
+                _ if self.kind() == t::INTEGER || self.kind() == t::BASED => {
                     self.bump_as(k::INTEGER)?;
                 }
                 _ if self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START => {
@@ -1567,7 +1517,7 @@ impl<L: Layout> P<'_, L> {
 
     /// `dict_entry`.
     fn dict_entry(&mut self) -> R {
-        if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::MINUS_46) || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::INTEGER {
+        if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::MINUS_46) || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::INTEGER || self.kind() == t::BASED {
             self.case_key()?;
             self.field_made(f::KEY);
             self.p(w::COLON_41)?;
@@ -1584,7 +1534,11 @@ impl<L: Layout> P<'_, L> {
         match self.word() {
             w::MINUS_46 => {
                 self.bump_as(k::MINUS)?;
-                self.tk_as(self.kind() == t::INTEGER, k::INTEGER, 0)?;
+                if self.kind() == t::INTEGER || self.kind() == t::BASED {
+                    self.bump_as(k::INTEGER)?;
+                } else {
+                    return self.refuse();
+                }
             }
             w::NONE_2 => {
                 self.bump_as(k::NONE)?;
@@ -1603,7 +1557,7 @@ impl<L: Layout> P<'_, L> {
                     self.strings()?;
                 }
             }
-            _ if self.kind() == t::INTEGER => {
+            _ if self.kind() == t::INTEGER || self.kind() == t::BASED => {
                 self.bump_as(k::INTEGER)?;
             }
             _ => {
@@ -1902,7 +1856,7 @@ impl<L: Layout> P<'_, L> {
                 w::RETURN_29 => {
                     self.open(k::RETURN_STATEMENT);
                     self.implied()?;
-                    if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45..=w::STAR_47 | w::TILDE_53 | w::AWAIT_83) && !(!self.marked && self.m_newline()) || (self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline()) {
+                    if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45..=w::STAR_47 | w::TILDE_53 | w::AWAIT_83) && !(!self.marked && self.m_newline()) || (self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline()) {
                         self.expressions()?;
                     } else {
                     }
@@ -1911,7 +1865,7 @@ impl<L: Layout> P<'_, L> {
                 w::RAISE_28 => {
                     self.open(k::RAISE_STATEMENT);
                     self.implied()?;
-                    if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45..=w::STAR_47 | w::TILDE_53 | w::AWAIT_83) && !(!self.marked && self.m_newline()) || (self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline()) {
+                    if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45..=w::STAR_47 | w::TILDE_53 | w::AWAIT_83) && !(!self.marked && self.m_newline()) || (self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline()) {
                         self.expressions()?;
                     } else {
                     }
@@ -2001,7 +1955,7 @@ impl<L: Layout> P<'_, L> {
                     }
                     self.close()?;
                 }
-                _ if self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS => {
+                _ if self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS => {
                     self.expression_statement()?;
                 }
                 _ => {
@@ -2034,7 +1988,7 @@ impl<L: Layout> P<'_, L> {
             self.rhs()?;
             self.field_made(f::RIGHT);
             self.close()?;
-        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
             match self.word() {
@@ -2134,7 +2088,7 @@ impl<L: Layout> P<'_, L> {
                 self.r_expression()?;
                 self.slot_made(1);
             }
-            _ if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45..=w::STAR_47 | w::TILDE_53 | w::AWAIT_83) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) => {
+            _ if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45..=w::STAR_47 | w::TILDE_53 | w::AWAIT_83) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) => {
                 self.expressions()?;
             }
             _ => {
@@ -2153,14 +2107,14 @@ impl<L: Layout> P<'_, L> {
             self.wrap(k::EXPRESSION_LIST, 0)?;
             self.slot_moved(1)?;
             self.p(w::COMMA_40)?;
-            if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45..=w::STAR_47 | w::TILDE_53 | w::AWAIT_83) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
+            if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45..=w::STAR_47 | w::TILDE_53 | w::AWAIT_83) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
                 self.list_part()?;
             } else {
             }
             self.list_parts()?;
         } else if self.word() == w::YIELD_33 {
             self.r_yield()?;
-        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
             match self.word() {
@@ -2168,7 +2122,7 @@ impl<L: Layout> P<'_, L> {
                     self.wrap(k::EXPRESSION_LIST, 0)?;
                     self.slot_moved(1)?;
                     self.implied()?;
-                    if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45..=w::STAR_47 | w::TILDE_53 | w::AWAIT_83) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
+                    if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45..=w::STAR_47 | w::TILDE_53 | w::AWAIT_83) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
                         self.list_part()?;
                     } else {
                     }
@@ -2248,19 +2202,19 @@ impl<L: Layout> P<'_, L> {
             self.wrap(k::EXPRESSION_LIST, 0)?;
             self.slot_moved(1)?;
             self.p(w::COMMA_40)?;
-            if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45..=w::STAR_47 | w::TILDE_53 | w::AWAIT_83) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
+            if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45..=w::STAR_47 | w::TILDE_53 | w::AWAIT_83) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
                 self.list_part()?;
             } else {
             }
             self.list_parts()?;
-        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
             if self.word() == w::COMMA_40 && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
                 self.wrap(k::EXPRESSION_LIST, 0)?;
                 self.slot_moved(1)?;
                 self.implied()?;
-                if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45..=w::STAR_47 | w::TILDE_53 | w::AWAIT_83) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
+                if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45..=w::STAR_47 | w::TILDE_53 | w::AWAIT_83) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
                     self.list_part()?;
                 } else {
                 }
@@ -2275,7 +2229,7 @@ impl<L: Layout> P<'_, L> {
 
     /// `list_part`.
     fn list_part(&mut self) -> R {
-        if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
         } else {
@@ -2368,10 +2322,10 @@ impl<L: Layout> P<'_, L> {
             self.slot_made(1);
             self.field_made(f::BODY);
             self.close()?;
-        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             if self.word() == w::NOT_25 {
                 self.not_operator()?;
-            } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+            } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
                 self.primary_expression()?;
                 self.slot_made(2);
                 match self.word() {
@@ -2537,7 +2491,7 @@ impl<L: Layout> P<'_, L> {
         self.deeper()?;
         if self.word() == w::NOT_25 {
             self.not_operator()?;
-        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.primary_expression()?;
             self.slot_made(2);
             if matches!(self.word(), w::IN_21 | w::IS_22 | w::NOT_25 | w::LT_54 | w::GT_55 | w::EQ_EQ_60..=w::GT_EQ_63 | w::LT_GT_77) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
@@ -2573,7 +2527,7 @@ impl<L: Layout> P<'_, L> {
         self.deeper()?;
         if self.word() == w::NOT_25 {
             self.not_operator()?;
-        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.primary_expression()?;
             self.slot_made(2);
             if matches!(self.word(), w::IN_21 | w::IS_22 | w::NOT_25 | w::LT_54 | w::GT_55 | w::EQ_EQ_60..=w::GT_EQ_63 | w::LT_GT_77) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
@@ -2870,7 +2824,7 @@ impl<L: Layout> P<'_, L> {
             self.await_operand()?;
             self.slot_made(2);
             self.close()?;
-        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.atom()?;
             self.postfixs()?;
         } else {
@@ -2922,7 +2876,7 @@ impl<L: Layout> P<'_, L> {
 
     /// `sub_item`.
     fn sub_item(&mut self) -> R {
-        if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
             if self.word() == w::COLON_41 {
@@ -2942,13 +2896,13 @@ impl<L: Layout> P<'_, L> {
     /// `slice_rest`.
     fn slice_rest(&mut self) -> R {
         self.p_stored(w::COLON_41, k::COLON)?;
-        if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
         }
         if self.word() == w::COLON_41 {
             self.bump_as(k::COLON)?;
-            if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+            if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
                 self.r_expression()?;
                 self.slot_made(1);
             }
@@ -2983,7 +2937,7 @@ impl<L: Layout> P<'_, L> {
                 _ if self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) => {
                     self.bump_as(k::IDENTIFIER)?;
                 }
-                _ if self.kind() == t::INTEGER => {
+                _ if self.kind() == t::INTEGER || self.kind() == t::BASED => {
                     self.bump_as(k::INTEGER)?;
                 }
                 _ if self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START => {
@@ -3103,7 +3057,7 @@ impl<L: Layout> P<'_, L> {
         self.p(w::LPAREN_34)?;
         if self.word() == w::RPAREN_35 {
             self.implied()?;
-        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45..=w::STAR_47 | w::TILDE_53 | w::STAR_STAR_58 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45..=w::STAR_47 | w::TILDE_53 | w::STAR_STAR_58 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.argument()?;
             match self.word() {
                 w::ASYNC_82 | w::FOR_16 => {
@@ -3148,7 +3102,7 @@ impl<L: Layout> P<'_, L> {
     fn argument(&mut self) -> R {
         if self.word() == w::STAR_47 {
             self.list_splat()?;
-        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
             if self.word() == w::EQ_44 {
@@ -3191,7 +3145,7 @@ impl<L: Layout> P<'_, L> {
         self.p(w::LBRACK_36)?;
         if self.word() == w::RBRACK_37 {
             self.implied()?;
-        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
             match self.word() {
@@ -3226,7 +3180,7 @@ impl<L: Layout> P<'_, L> {
 
     /// `list_item`.
     fn list_item(&mut self) -> R {
-        if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
         } else {
@@ -3286,7 +3240,7 @@ impl<L: Layout> P<'_, L> {
         self.deeper()?;
         if self.word() == w::NOT_25 {
             self.not_operator()?;
-        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.primary_expression()?;
             self.slot_made(2);
             if matches!(self.word(), w::IN_21 | w::IS_22 | w::NOT_25 | w::LT_54 | w::GT_55 | w::EQ_EQ_60..=w::GT_EQ_63 | w::LT_GT_77) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
@@ -3372,7 +3326,7 @@ impl<L: Layout> P<'_, L> {
 
     /// `dict_item`.
     fn dict_item(&mut self) -> R {
-        if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
             self.wrap(k::PAIR, f::KEY)?;
@@ -3405,7 +3359,7 @@ impl<L: Layout> P<'_, L> {
             self.retag(k::TUPLE);
             self.list_splat()?;
             self.paren_more()?;
-        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45 | w::MINUS_46 | w::TILDE_53 | w::AWAIT_83) || self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
             match self.word() {
@@ -3559,7 +3513,7 @@ impl<L: Layout> P<'_, L> {
         loop {
             if self.word() == w::COMMA_40 && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
                 self.implied()?;
-                if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45..=w::STAR_47 | w::TILDE_53 | w::AWAIT_83) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
+                if matches!(self.word(), w::FALSE_1..=w::TRUE_3 | w::LAMBDA_23 | w::NOT_25 | w::LPAREN_34 | w::LBRACK_36 | w::LBRACE_38 | w::PLUS_45..=w::STAR_47 | w::TILDE_53 | w::AWAIT_83) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !(w::FALSE_1..=w::YIELD_33).contains(&self.word()) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
                     self.list_part()?;
                 } else {
                 }

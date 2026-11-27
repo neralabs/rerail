@@ -52,13 +52,20 @@ test builds only. Python's grammar did not compile under it:
   numbers each node passed to format 16 by its classes, from its slot and final kind; a node retagged
   later is numbered again. `map_code_keys` ends it.
 
+- **A fused loop steps a count at its rows** (at the merge of e8c4cb277a): with `skip ws`, Python's rows pick the
+  region a token opens (`picks.fused`), and no `open` exists before the pick. A count's step at a region opener
+  (`scan_starts`) is written in each row's arm, its `open == K` folded against the regions that row opens
+  (`fold_open`). The count before the token (`cb_C`) is still read before the pick.
+- **A token of `pair empty` is one byte:** no byte after its first can be its (`row_tail_bytes`), so a gap mark's
+  mask over the tokens of code is clear of Python's `bad` token.
+
 ## Not yet
 
 The product build still walks the regions, for seven escapes tested over the file that read its
 masks: `\N` in a bytes string, a raw string of backslashes only, an empty interpolation, a `}` alone,
 a comment in an interpolation, an interpolation's `=`, and past 7 frames. Each is being made a check
-of the region tokens that read it, or of the loop's own count, as Kotlin's are. Python's number
-escapes are still whole-file passes over `code_l`, not folded into the loop.
+of the region tokens that read it, or of the loop's own count, as Kotlin's are. (The number escapes
+are gone: Parser-generators' da0f2e4188 made a number a run with a check at the token.)
 
 ## Tests
 

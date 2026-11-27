@@ -3362,7 +3362,7 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
         w
     };
     #[cfg(feature = "test-hooks")]
-    let (m_t_brace, m_code, m_nb, m_name_more, m_p_start, t193, t199) = {
+    let (m_hidden, m_o_line, m_f_line, m_o_block, m_f_block, m_o_rstr, m_f_rstr, m_o_str, m_f_str, m_o_rstr2, m_f_rstr2, m_o_str2, m_f_str2, m_o_chr, m_f_chr, m_o_tick, m_f_tick, m_o_tail, m_f_tail, m_o_rtail, m_f_rtail, m_o_tail2, m_f_tail2, m_o_rtail2, m_f_rtail2, m_t_brace, m_code, m_nb, m_name_more, m_p_start, t193, t199) = {
         // regions hidden { … }: the first opener not hidden opens its region, to its closer.
         let mut m_hidden = vec![0u64; nw];
         let mut m_o_line = vec![0u64; nw];
@@ -3911,7 +3911,6 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
     let mut m_lone = vec![0u64; nw];
     let mut m_d_run = vec![0u64; nw];
     {
-        let mut p_m_d_run = 0u64;
         for i in 0..nw {
             // mask id_last = s_word & ~next(s_word)
             let w_m_id_last = m_s_word[i] & (!next(&m_s_word, i, 1) & lv[i]);
@@ -3924,7 +3923,6 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
             // mask d_run = (lone & ~next(lbrace)) & ~t_run
             let w_m_d_run = w_m_lone & (!next(&s1w.m_lbrace, i, 1) & lv[i]) & (!w_m_t_run & lv[i]);
             m_d_run[i] = w_m_d_run;
-            p_m_d_run = w_m_d_run;
         }
     }
         // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (m_s2, m_id2l, m_d_run2).
@@ -3933,7 +3931,6 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
     let mut m_d_run2 = vec![0u64; nw];
     {
         let mut p_m_s2 = 0u64;
-        let mut p_m_d_run2 = 0u64;
         for i in 0..nw {
             // mask s2 = s_dollar & body2
             let w_m_s2 = m_s_dollar[i] & m_body2[i];
@@ -3949,7 +3946,6 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
             let w_m_d_run2 = w_m_s2 & (!w_m_extra2 & lv[i]) & (!w_m_id2 & lv[i]) & (!w_m_id2l & lv[i]) & (!s1w.m_t2_dollar[i] & lv[i]) & (!prev(&s1w.m_t2_dollar, i, 1) & lv[i]);
             m_d_run2[i] = w_m_d_run2;
             p_m_s2 = w_m_s2;
-            p_m_d_run2 = w_m_d_run2;
         }
     }
         // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (m_id_name, m_w, t17, m_word_run, m_num_start, m_hex_at, m_bin_at, m_hx, m_bx, m_di, m_nb).
@@ -4109,7 +4105,6 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
     {
         let mut p_m_int_last = 0u64;
         let mut c_m_name_tok = 0u64;
-        let mut p_m_r_x = 0u64;
         for i in 0..nw {
             // mask n_last = nb & ~next(nb)
             let w_m_n_last = m_nb[i] & (!next(&m_nb, i, 1) & lv[i]);
@@ -4143,7 +4138,6 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
             let w_m_r_x = m_rbody[i] & (!w_m_r_dol & lv[i]) & (!m_id_name[i] & lv[i]) & (!w_m_r_lead & lv[i]);
             m_r_x[i] = w_m_r_x;
             p_m_int_last = w_m_int_last;
-            p_m_r_x = w_m_r_x;
         }
     }
         // mask r_id = id_name
@@ -4164,7 +4158,7 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
             t199[i] = w_t199;
         }
     }
-        (m_t_brace, m_code, m_nb, m_name_more, m_p_start, t193, t199)
+        (m_hidden, m_o_line, m_f_line, m_o_block, m_f_block, m_o_rstr, m_f_rstr, m_o_str, m_f_str, m_o_rstr2, m_f_rstr2, m_o_str2, m_f_str2, m_o_chr, m_f_chr, m_o_tick, m_f_tick, m_o_tail, m_f_tail, m_o_rtail, m_f_rtail, m_o_tail2, m_f_tail2, m_o_rtail2, m_f_rtail2, m_t_brace, m_code, m_nb, m_name_more, m_p_start, t193, t199)
     };
     // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.
     // Room for a record a byte, as the lean lexer's: each token's first byte is after the last's, so the writes need no check.
@@ -4189,6 +4183,33 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
     let mut rec_0 = false;
     // The closer the region token read ends at, where a fill the loop keeps opens after it, or a read resumes a string's.
     let mut close: usize;
+    // The regions' masks as the walk makes them (`regions`), written as the loop reads each region: its opener, its
+    // fill to its closer, and the bytes it hides.
+    let mut lw_hidden = vec![0u64; nw];
+    let mut lw_o_line = vec![0u64; nw];
+    let mut lw_f_line = vec![0u64; nw];
+    let mut lw_o_block = vec![0u64; nw];
+    let mut lw_f_block = vec![0u64; nw];
+    let mut lw_o_rstr = vec![0u64; nw];
+    let mut lw_f_rstr = vec![0u64; nw];
+    let mut lw_o_str = vec![0u64; nw];
+    let mut lw_f_str = vec![0u64; nw];
+    let mut lw_o_rstr2 = vec![0u64; nw];
+    let mut lw_f_rstr2 = vec![0u64; nw];
+    let mut lw_o_str2 = vec![0u64; nw];
+    let mut lw_f_str2 = vec![0u64; nw];
+    let mut lw_o_chr = vec![0u64; nw];
+    let mut lw_f_chr = vec![0u64; nw];
+    let mut lw_o_tick = vec![0u64; nw];
+    let mut lw_f_tick = vec![0u64; nw];
+    let mut lw_o_tail = vec![0u64; nw];
+    let mut lw_f_tail = vec![0u64; nw];
+    let mut lw_o_rtail = vec![0u64; nw];
+    let mut lw_f_rtail = vec![0u64; nw];
+    let mut lw_o_tail2 = vec![0u64; nw];
+    let mut lw_f_tail2 = vec![0u64; nw];
+    let mut lw_o_rtail2 = vec![0u64; nw];
+    let mut lw_f_rtail2 = vec![0u64; nw];
     // The bytes outside the region tokens (`code`), as the loop reads them.
     // The region tokens' spans, in order, and the first not yet passed by the escapes made of `code` (`code_pass`).
     let mut code_k = 0usize;
@@ -4465,7 +4486,14 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
             match row {
                 0 => {
                     // `line_comment`: read line
-                    let l = s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_lf(src, n, p, esc) })).unwrap_or(n) - 1;
+                    let l = {
+                        let c = s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_lf(src, n, p, esc) })).unwrap_or(n);
+                        let last = c - 1;
+                        set(&mut lw_o_line, s, s + 1);
+                        set(&mut lw_f_line, s, c);
+                        set(&mut lw_hidden, s + 1, c);
+                        last
+                    };
                     let l = l.max(s);
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
@@ -4498,12 +4526,18 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                         }
                     } {
                         Some(c) => {
+                            let last = {
                             let last = c + 0;
                             // a `*/*/` in a block comment
                             if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s, c - 1, |p: isize, esc: &mut u64| unsafe { l_t79(src, n, p, esc, upto(p, c - 1)) })).is_some() {
                                 refused = true;
                                 break 'tokens;
                             }
+                            last
+                        };
+                            set(&mut lw_o_block, s, s + 1);
+                            set(&mut lw_f_block, s, c);
+                            set(&mut lw_hidden, s + 1, last + 1);
                             last
                         },
                         None => {
@@ -5059,6 +5093,7 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                     // `"`: read str parts, to its closer
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t6(src, n, p, esc) })) {
                         Some(c) => {
+                            let last = {
                             if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) {
                                 template = 3;
                                 if depth == 4 {
@@ -5093,6 +5128,11 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                             }
                             last
                         }
+                        };
+                            set(&mut lw_o_str, s, s + 1);
+                            set(&mut lw_f_str, s, c);
+                            set(&mut lw_hidden, s + 1, (c + 0) + 1);
+                            last
                         },
                         None => {
                             refused = true;
@@ -5110,6 +5150,7 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                     // `"`: read rstr parts, to its closer
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 3, |p: isize, esc: &mut u64| unsafe { w_t4(src, n, p, esc) })) {
                         Some(c) => {
+                            let last = {
                             if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) {
                                 template = 2;
                                 if depth == 4 {
@@ -5144,6 +5185,11 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                             }
                             last
                         }
+                        };
+                            set(&mut lw_o_rstr, s, s + 1);
+                            set(&mut lw_f_rstr, s, c);
+                            set(&mut lw_hidden, s + 1, (if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 0 } else { c + 2 }) + 1);
+                            last
                         },
                         None => {
                             refused = true;
@@ -5161,6 +5207,7 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                     // `"`: read str2 parts, to its closer
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t10(src, n, p, esc) })) {
                         Some(c) => {
+                            let last = {
                             if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) {
                                 template = 5;
                                 if depth == 4 {
@@ -5190,6 +5237,11 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                             }
                             last
                         }
+                        };
+                            set(&mut lw_o_str2, s, s + 1);
+                            set(&mut lw_f_str2, s, c);
+                            set(&mut lw_hidden, s + 1, (if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 0 }) + 1);
+                            last
                         },
                         None => {
                             refused = true;
@@ -5207,6 +5259,7 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                     // `"`: read rstr2 parts, to its closer
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 3, |p: isize, esc: &mut u64| unsafe { w_t8(src, n, p, esc) })) {
                         Some(c) => {
+                            let last = {
                             if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) {
                                 template = 4;
                                 if depth == 4 {
@@ -5236,6 +5289,11 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                             }
                             last
                         }
+                        };
+                            set(&mut lw_o_rstr2, s, s + 1);
+                            set(&mut lw_f_rstr2, s, c);
+                            set(&mut lw_hidden, s + 1, (if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 2 }) + 1);
+                            last
                         },
                         None => {
                             refused = true;
@@ -5254,6 +5312,7 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t6(src, n, p, esc) })) {
                         Some(c) => {
                             close = c;
+                            let last = {
                             let last = if (((c < n && (src[c] == b'"')) && (c < n && !af_1(src, n, c)))) { c + 0 } else if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 0 };
                             // an empty `${}`
                             if ((s >= 1 && (s - 1 < n && (src[s - 1] == b'{')))) {
@@ -5275,6 +5334,11 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                                 refused = true;
                                 break 'tokens;
                             }
+                            last
+                        };
+                            set(&mut lw_o_tail, s, s + 1);
+                            set(&mut lw_f_tail, s, c);
+                            set(&mut lw_hidden, s + 1, (c + 0) + 1);
                             last
                         },
                         None => {
@@ -5328,6 +5392,7 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t4(src, n, p, esc) })) {
                         Some(c) => {
                             close = c;
+                            let last = {
                             let last = if ((at_dq3(src, n, c) && (c < n && !(c + 3 < n && (src[c + 3] == b'"'))))) { c + 2 } else if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 0 } else { c + 2 } };
                             // an empty `${}`
                             if ((s >= 1 && (s - 1 < n && (src[s - 1] == b'{')))) {
@@ -5349,6 +5414,11 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                                 refused = true;
                                 break 'tokens;
                             }
+                            last
+                        };
+                            set(&mut lw_o_rtail, s, s + 1);
+                            set(&mut lw_f_rtail, s, c);
+                            set(&mut lw_hidden, s + 1, (if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 0 } else { c + 2 }) + 1);
                             last
                         },
                         None => {
@@ -5402,6 +5472,7 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t10(src, n, p, esc) })) {
                         Some(c) => {
                             close = c;
+                            let last = {
                             let last = if (((c < n && (src[c] == b'"')) && (c < n && !af_1(src, n, c)))) { c + 0 } else if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 2 } else { if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 0 } };
                             // an empty `${}`
                             if ((s >= 1 && (s - 1 < n && (src[s - 1] == b'{')))) {
@@ -5418,6 +5489,11 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                                 refused = true;
                                 break 'tokens;
                             }
+                            last
+                        };
+                            set(&mut lw_o_tail2, s, s + 1);
+                            set(&mut lw_f_tail2, s, c);
+                            set(&mut lw_hidden, s + 1, (if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 0 }) + 1);
                             last
                         },
                         None => {
@@ -5471,6 +5547,7 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_t8(src, n, p, esc) })) {
                         Some(c) => {
                             close = c;
+                            let last = {
                             let last = if ((at_dq3(src, n, c) && (c < n && !(c + 3 < n && (src[c + 3] == b'"'))))) { c + 2 } else if (((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 2 } else { if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 2 } };
                             // an empty `${}`
                             if ((s >= 1 && (s - 1 < n && (src[s - 1] == b'{')))) {
@@ -5487,6 +5564,11 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                                 refused = true;
                                 break 'tokens;
                             }
+                            last
+                        };
+                            set(&mut lw_o_rtail2, s, s + 1);
+                            set(&mut lw_f_rtail2, s, c);
+                            set(&mut lw_hidden, s + 1, (if ((((((c < n && (src[c] == b'$')) && (c + 1 < n && (src[c + 1] == b'$'))) && (c + 2 < n && (src[c + 2] == b'{'))) && (c < n && !af_1(src, n, c))) && (c < n && !(c >= 1 && at_esc_dollar(src, n, (c - 1)))))) { c + 1 } else { c + 2 }) + 1);
                             last
                         },
                         None => {
@@ -5559,6 +5641,7 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                     // `'`: read chr parts, to its closer
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_sq_close(src, n, p, esc) })) {
                         Some(c) => {
+                            let last = {
                             let last = c + 0;
                             // a character or a backtick name over a line
                             if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_m_lf(src, n, p, esc, upto(p, c - 1)) })).is_some() {
@@ -5570,6 +5653,11 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                                 refused = true;
                                 break 'tokens;
                             }
+                            last
+                        };
+                            set(&mut lw_o_chr, s, s + 1);
+                            set(&mut lw_f_chr, s, c);
+                            set(&mut lw_hidden, s + 1, last + 1);
                             last
                         },
                         None => {
@@ -5588,12 +5676,18 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
                     // `backtick_name`: read tick
                     let l = match s1_past(src, &mut st1, &mut s1, wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_bt(src, n, p, esc) })) {
                         Some(c) => {
+                            let last = {
                             let last = c + 0;
                             // a character or a backtick name over a line
                             if s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, c - 1, |p: isize, esc: &mut u64| unsafe { l_m_lf(src, n, p, esc, upto(p, c - 1)) })).is_some() {
                                 refused = true;
                                 break 'tokens;
                             }
+                            last
+                        };
+                            set(&mut lw_o_tick, s, s + 1);
+                            set(&mut lw_f_tick, s, c);
+                            set(&mut lw_hidden, s + 1, last + 1);
                             last
                         },
                         None => {
@@ -5711,6 +5805,34 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
     let escapes = s1.refused;
     refused |= escapes;
     let _ = (from, from_record, before, pending);
+    #[cfg(feature = "test-hooks")]
+    if !refused {
+        assert!(lw_hidden == m_hidden, "the loop's `hidden` is the walk's");
+        assert!(lw_o_line == m_o_line, "the loop's `o_line` is the walk's");
+        assert!(lw_f_line == m_f_line, "the loop's `f_line` is the walk's");
+        assert!(lw_o_block == m_o_block, "the loop's `o_block` is the walk's");
+        assert!(lw_f_block == m_f_block, "the loop's `f_block` is the walk's");
+        assert!(lw_o_rstr == m_o_rstr, "the loop's `o_rstr` is the walk's");
+        assert!(lw_f_rstr == m_f_rstr, "the loop's `f_rstr` is the walk's");
+        assert!(lw_o_str == m_o_str, "the loop's `o_str` is the walk's");
+        assert!(lw_f_str == m_f_str, "the loop's `f_str` is the walk's");
+        assert!(lw_o_rstr2 == m_o_rstr2, "the loop's `o_rstr2` is the walk's");
+        assert!(lw_f_rstr2 == m_f_rstr2, "the loop's `f_rstr2` is the walk's");
+        assert!(lw_o_str2 == m_o_str2, "the loop's `o_str2` is the walk's");
+        assert!(lw_f_str2 == m_f_str2, "the loop's `f_str2` is the walk's");
+        assert!(lw_o_chr == m_o_chr, "the loop's `o_chr` is the walk's");
+        assert!(lw_f_chr == m_f_chr, "the loop's `f_chr` is the walk's");
+        assert!(lw_o_tick == m_o_tick, "the loop's `o_tick` is the walk's");
+        assert!(lw_f_tick == m_f_tick, "the loop's `f_tick` is the walk's");
+        assert!(lw_o_tail == m_o_tail, "the loop's `o_tail` is the walk's");
+        assert!(lw_f_tail == m_f_tail, "the loop's `f_tail` is the walk's");
+        assert!(lw_o_rtail == m_o_rtail, "the loop's `o_rtail` is the walk's");
+        assert!(lw_f_rtail == m_f_rtail, "the loop's `f_rtail` is the walk's");
+        assert!(lw_o_tail2 == m_o_tail2, "the loop's `o_tail2` is the walk's");
+        assert!(lw_f_tail2 == m_f_tail2, "the loop's `f_tail2` is the walk's");
+        assert!(lw_o_rtail2 == m_o_rtail2, "the loop's `o_rtail2` is the walk's");
+        assert!(lw_f_rtail2 == m_f_rtail2, "the loop's `f_rtail2` is the walk's");
+    }
     #[cfg(feature = "test-hooks")]
     for (c, v) in code_l.iter_mut().zip(&lv) {
         *c &= v;

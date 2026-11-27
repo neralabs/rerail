@@ -20,7 +20,7 @@
 //! (`readers`).
 
 use ::bitlex::syntax::{Arg, Expr, PartLen, Region, Stmt, TokenRule, TokenTest};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 // Mounted by `rerail-bitlex` from the compiler's folder (`#[path]`): its submodule is found beside it.
@@ -1385,6 +1385,14 @@ struct Gen<'a> {
     /// in one pass over the blocks: each in the code where its marker is (`pass_marker`), the pass open last too.
     passes: Vec<Vec<PassNode>>,
     open_pass: Option<usize>,
+    /// The passes of the masks made of the loop's `code_l` (`code_escape`): a lane of the token loop's, each a word at a
+    /// time behind the loop (`render_passes`), not a pass after it.
+    lane_passes: HashSet<usize>,
+    /// Whether the masks made now are the lane's.
+    in_lane: bool,
+    /// Whether the token loop writes the regions' masks as the walk makes them (`lw_…`): every region a row reads,
+    /// none with an `else` form, in the loop of the blocks (not the one pass).
+    walk_writes: bool,
 }
 
 /// A mask of a pass over the file's words (`Gen::fuse`): its word at word `i` a local of the step (`w_NAME`), the word
@@ -1400,6 +1408,12 @@ struct PassNode {
     /// A later mask of the pass reads its word before (`prev`).
     prev: bool,
 }
+
+/// The token loop's head, where the lane (`Gen::lane_passes`) is stepped.
+const LOOP_HEAD: &str = "    'tokens: while b < nw {\n        let base = b * 64;\n";
+
+/// Where the lane's last words are made, after the token loop.
+const LANE_DRAIN: &str = "    //~lane drain\n";
 
 /// The line that stands for pass `k` in the code until it is written (`Gen::render_passes`).
 fn pass_marker(k: usize) -> String {
@@ -1496,11 +1510,15 @@ impl Gen<'_> {
             return f(self);
         }
         let now = std::mem::replace(&mut self.regional, at.regional.clone());
+        // What `in_region_of` read has changed.
+        self.region_values.get_mut().clear();
         let names = std::mem::replace(&mut self.names, at.names.clone());
         let node_of = std::mem::replace(&mut self.node_of, at.node_of.clone());
         let temps = std::mem::take(&mut self.temps);
         let r = f(self);
         (self.regional, self.names, self.node_of, self.temps) = (now, names, node_of, temps);
+        // What `in_region_of` read has changed.
+        self.region_values.get_mut().clear();
         r
     }
 
@@ -2440,6 +2458,9 @@ impl Gen<'_> {
         let open = self.open_pass.filter(|&k| {
             let Some(at) = self.body.find(&pass_marker(k)) else { return false };
             let after = &self.body[at + pass_marker(k).len()..];
+            if self.lane_passes.contains(&k) != self.in_lane {
+                return false;
+            }
             let mine = |n: &str| self.passes[k].iter().any(|x| x.name == n);
             // A mask of a pass after it: made after its marker too.
             let later = |n: &str| self.passes[k + 1..].iter().any(|p| p.iter().any(|x| x.name == n));
@@ -2450,6 +2471,9 @@ impl Gen<'_> {
             None => {
                 self.passes.push(Vec::new());
                 let k = self.passes.len() - 1;
+                if self.in_lane {
+                    self.lane_passes.insert(k);
+                }
                 self.body.push_str(&pass_marker(k));
                 self.open_pass = Some(k);
                 k
@@ -2472,13 +2496,31 @@ impl Gen<'_> {
     /// kept in a vector where `readers`, `text` outside the pass or another pass reads them.
     fn render_passes(&self, text: &str, readers: &str) -> String {
         let mut text = text.to_owned();
+        // The lane (`lane_passes`): its decls before the token loop, its steps in it and after it.
+        let (mut lane_decl, mut lane_step, mut lanes) = (String::new(), String::new(), 0usize);
         for (k, nodes) in self.passes.iter().enumerate() {
             let marker = pass_marker(k);
             let Some(at) = text.find(&marker) else { continue };
+            let lane = self.lane_passes.contains(&k) && text.contains(LOOP_HEAD);
+            // A lane's escape is tested at each word, as the step makes it.
+            let mut tests = String::new();
+            if lane {
+                for x in nodes {
+                    let line = format!("    refused |= any(&{});\n", x.name);
+                    if let Some(j) = text.find(&line) {
+                        let comment = text[..j].rfind("\n    // ").map(|c| c + 1).filter(|&c| !text[c..j].trim_end().contains('\n'));
+                        let from = comment.unwrap_or(j);
+                        let why = text[from..j].to_owned();
+                        text.replace_range(from..j + line.len(), "");
+                        let _ = write!(tests, "{}            refused |= w_{} != 0;\n", indent(&why, "        "), x.name);
+                    }
+                }
+            }
+            let Some(at) = text.find(&marker).or(Some(at)) else { continue };
             let others: Vec<&str> = self.passes.iter().enumerate().filter(|(j, _)| *j != k).flat_map(|(_, p)| p.iter().map(|x| x.code.as_str())).collect();
             let stored: Vec<bool> = nodes.iter().map(|x| uses(&text, &x.name) || uses(readers, &x.name) || others.iter().any(|c| uses(c, &x.name))).collect();
-            // Live: kept, or read by a live mask of the pass.
-            let mut live = stored.clone();
+            // Live: kept, tested, or read by a live mask of the pass.
+            let mut live: Vec<bool> = nodes.iter().zip(&stored).map(|(x, s)| *s || uses(&tests, &format!("w_{}", x.name))).collect();
             for i in (0..nodes.len()).rev() {
                 if live[i] {
                     for j in 0..i {
@@ -2488,47 +2530,73 @@ impl Gen<'_> {
                     }
                 }
             }
-            let mut out = String::new();
+            // A carried word (`p_…`) where a live mask of the pass reads it.
+            let carried: Vec<bool> = nodes.iter().zip(&live).map(|(x, l)| *l && x.prev && nodes.iter().zip(&live).any(|(y, ly)| *ly && uses(&y.code, &format!("p_{}", x.name)))).collect();
+            let mut decl = String::new();
+            let mut step = String::new();
             if live.iter().any(|l| *l) {
                 let names: Vec<&str> = nodes.iter().zip(&stored).filter(|(_, s)| **s).map(|(x, _)| x.name.as_str()).collect();
-                let _ = writeln!(out, "    // A pass over the file's words: the masks below, each word a local of its step{}.", if names.is_empty() { String::new() } else { format!(", kept for what reads them later ({})", names.join(", ")) });
                 for n in &names {
-                    let _ = writeln!(out, "    let mut {n} = vec![0u64; nw];");
+                    let _ = writeln!(decl, "    let mut {n} = vec![0u64; nw];");
                 }
-                out.push_str("    {
-");
-                for (x, l) in nodes.iter().zip(&live) {
+                for ((x, l), p) in nodes.iter().zip(&live).zip(&carried) {
                     if *l && x.carry {
-                        let _ = writeln!(out, "        let mut c_{} = 0u64;", x.name);
+                        let _ = writeln!(decl, "    let mut c_{} = 0u64;", x.name);
                     }
-                    if *l && x.prev {
-                        let _ = writeln!(out, "        let mut p_{} = 0u64;", x.name);
+                    if *p {
+                        let _ = writeln!(decl, "    let mut p_{} = 0u64;", x.name);
                     }
                 }
-                out.push_str("        for i in 0..nw {
-");
                 for ((x, l), st) in nodes.iter().zip(&live).zip(&stored) {
                     if !*l {
                         continue;
                     }
                     if !x.comment.is_empty() {
-                        out.push_str(&indent(&x.comment, "        "));
+                        step.push_str(&indent(&x.comment, "        "));
                     }
-                    let _ = writeln!(out, "            let w_{} = {};", x.name, x.code.replace("\n", "\n    "));
+                    let _ = writeln!(step, "            let w_{} = {};", x.name, x.code.replace("\n", "\n    "));
                     if *st {
-                        let _ = writeln!(out, "            {}[i] = w_{};", x.name, x.name);
+                        let _ = writeln!(step, "            {}[i] = w_{};", x.name, x.name);
                     }
                 }
-                for (x, l) in nodes.iter().zip(&live) {
-                    if *l && x.prev {
-                        let _ = writeln!(out, "            p_{} = w_{};", x.name, x.name);
+                step.push_str(&tests);
+                for (x, p) in nodes.iter().zip(&carried) {
+                    if *p {
+                        let _ = writeln!(step, "            p_{} = w_{};", x.name, x.name);
                     }
                 }
-                out.push_str("        }
-    }
-");
             }
+            let mut out = String::new();
+            if lane {
+                if !step.is_empty() {
+                    // Pass `lanes` of the lane makes word `lane - lanes`: the word after it is made by the pass before.
+                    lane_decl.push_str(&decl);
+                    let test = if lanes == 0 { "lane < nw".to_owned() } else { format!("lane >= {lanes} && lane - {lanes} < nw") };
+                    let _ = write!(lane_step, "        if {test} {{\n            let i = lane - {lanes};\n{}        }}\n", indent(&step, "    "));
+                    lanes += 1;
+                }
+                if lanes == 1 && !step.is_empty() {
+                    out.push_str(LANE_DRAIN);
+                }
+            } else if !step.is_empty() {
+                let names: Vec<&str> = nodes.iter().zip(&stored).filter(|(_, s)| **s).map(|(x, _)| x.name.as_str()).collect();
+                let _ = writeln!(out, "    // A pass over the file's words: the masks below, each word a local of its step{}.", if names.is_empty() { String::new() } else { format!(", kept for what reads them later ({})", names.join(", ")) });
+                out.push_str(&decl.lines().filter(|l| l.contains("vec![")).map(|l| format!("{l}\n")).collect::<String>());
+                out.push_str("    {\n");
+                out.push_str(&indent(&decl.lines().filter(|l| !l.contains("vec![")).map(|l| format!("{l}\n")).collect::<String>(), "    "));
+                out.push_str("        for i in 0..nw {\n");
+                out.push_str(&step);
+                out.push_str("        }\n    }\n");
+            }
+            let at = text.find(&marker).unwrap_or(at);
             text.replace_range(at..at + marker.len(), &out);
+        }
+        if lanes > 0 {
+            // The lane's words a step at a time: in the token loop, each word whose next the loop has passed (its
+            // `code_l` final there: a region token clears its bytes before the loop moves past them); after it, the rest.
+            let step = format!("    // The masks of the loop's code (`code_l`) and their escapes, a word at a time behind the loop, as the lean\n    // lexer's readers test a token's bytes as they read them: each pass a word behind the one before, whose next it reads.\n    let mut lane = 0usize;\n{lane_decl}");
+            text = text.replacen(LOOP_HEAD, &format!("{step}{LOOP_HEAD}        // The lane, to the words the loop has passed.\n        while lane + 2 <= b {{\n{}            lane += 1;\n        }}\n", indent(&lane_step, "    ")), 1);
+            text = text.replacen(LANE_DRAIN, &format!("    // The lane's words the loop left.\n    while lane < nw + {} {{\n{lane_step}        lane += 1;\n    }}\n", lanes - 1), 1);
         }
         text
     }
@@ -4757,7 +4825,9 @@ impl Gen<'_> {
                 let read = if these.is_empty() { r.clone() } else { substitute(r, &these, &self.defs) };
                 self.bytes_at(&read, 0, &mut memo).bools()
             }
+            // A pair whose mask never holds is one byte (`pair empty`): no byte after its first.
             None if last.is_none() => [false; 256],
+            Some(TokenRule::Pair(Expr::Empty)) => [false; 256],
             _ => [true; 256],
         }
     }
@@ -5403,7 +5473,11 @@ impl Gen<'_> {
             }
         }
         let before = std::mem::take(&mut self.body);
+        let open = self.open_pass.take();
+        self.in_lane = true;
         let v = self.val(&x);
+        self.in_lane = false;
+        self.open_pass = open;
         let lines = std::mem::replace(&mut self.body, before);
         let v = v?;
         let _ = write!(self.code_after, "{lines}    // {why_l}\n    refused |= any(&{v});\n");
@@ -5978,6 +6052,8 @@ impl Gen<'_> {
             self.names.insert(name.clone(), deep.clone());
             self.forget_name(name);
             self.regional.insert(name.clone());
+            // What `in_region_of` read has changed.
+            self.region_values.get_mut().clear();
             self.deep = Some(name.clone());
         }
         for r in ks {
@@ -6405,6 +6481,18 @@ impl Gen<'_> {
             && x.assumed_ends.is_empty()
             && self.kinds.iter().all(|r| !r.resumes && r.or.is_none() && r.after.is_empty())
             && !x.stmts.iter().any(|s| matches!(s, Stmt::Token { rule: Some(TokenRule::ReadParts(..)), .. }));
+        // The loop writes the regions' masks where it reads every region, as the walk makes them (`lw_…`).
+        let read: Vec<&str> = x
+            .stmts
+            .iter()
+            .filter_map(|s| match s {
+                Stmt::Token { rule: Some(TokenRule::Read(rs) | TokenRule::ReadParts(rs, _)), .. } => Some(rs),
+                _ => None,
+            })
+            .flatten()
+            .map(|r| r.kind.as_str())
+            .collect();
+        self.walk_writes = !fused && !self.kinds.is_empty() && self.kinds.iter().all(|r| r.empty.is_none() && read.contains(&r.kind.as_str()));
         // The escapes and errors: a bit of any sends the file to tree-sitter.
         // Those not made of the regions, stage 1 tests a block at a time.
         // Those made of the regions where they hold only in a region a token reads: tests there.
@@ -7095,7 +7183,11 @@ impl Gen<'_> {
                         };
                         let c = self.val(&r.closers())?;
                         let tests = self.region_tests(&r.kind);
-                        let one = if r.outside {
+                        let one = if r.outside && self.walk_writes {
+                            // To its closer, or the file's end, outside it; its masks as the walk writes them.
+                            let k = ident(&r.kind);
+                            format!("{{\n                let c = first_bit(&{c}, s + 1).unwrap_or(n);\n                let last = c - 1;\n{}                set(&mut lw_o_{k}, s, s + 1);\n                set(&mut lw_f_{k}, s, c);\n                set(&mut lw_{h}, s + 1, c);\n                last\n            }}", indent(&tests, "                "), h = ident(&self.hidden))
+                        } else if r.outside {
                             // To its closer, or the file's end, outside it.
                             if tests.is_empty() {
                                 format!("first_bit(&{c}, s + 1).unwrap_or(n) - 1")
@@ -7106,6 +7198,7 @@ impl Gen<'_> {
                             let found = self.closer_last(r, &[])?;
                             let some = if tests.is_empty() { found } else { format!("{{\n                    let last = {found};\n{}                    last\n                }}", indent(&tests, "                    ")) };
                             let some = self.template_close(&r.kind, some)?;
+                            let some = if self.walk_writes { with_walk_writes(&some, &r.kind, &self.hidden, None) } else { some };
                             let some = if !self.keeps_close(*row, rule) { some } else { with_close(&some) };
                             let search = self.closer_from(r, &format!("s + {}", r.opens), false)?;
                             format!("match {search} {{\n                Some(c) => {some},\n                None => {none}\n            }}")
@@ -7134,6 +7227,13 @@ impl Gen<'_> {
                     let tests = self.region_tests(&r.kind);
                     let found = if tests.is_empty() { found } else { format!("{{\n                    let last = {found};\n{}                    last\n                }}", indent(&tests, "                    ")) };
                     let found = self.template_close(&r.kind, found)?;
+                    let found = if self.walk_writes {
+                        let own = self.closer_last(&r, &[])?;
+                        let token = self.closer_last(&r, &parts.closes)?;
+                        with_walk_writes(&found, &r.kind, &self.hidden, (own != token).then_some(format!("({own})")).as_deref())
+                    } else {
+                        found
+                    };
                     let found = if !self.keeps_close(*row, rule) { found } else { with_close(&found) };
                     let search = self.closer_from(&r, &format!("s + {}", r.opens), false)?;
                     let _ = &c;
@@ -7144,6 +7244,28 @@ impl Gen<'_> {
                     None => ("one byte".to_owned(), "s".to_owned()),
                 },
                 Some(TokenRule::Inside(..)) => unreachable!(),
+            };
+            // `check KIND = G`: the token's bytes must be `G`'s match, as the lean lexer reads a number by its grammar;
+            // one that is not sends the file to tree-sitter.
+            let (how, l) = match x.stmts.iter().find_map(|t| match t {
+                Stmt::Check { kind: k, body } if k == kind => Some(body),
+                _ => None,
+            }) {
+                Some(body) => {
+                    let f = ident(kind);
+                    if !pair_fns.contains(&format!("fn check_{f}(")) {
+                        pair_fns.push_str(&crate::bitlex_check_rust::Checks::new(x.stmts, "tier 1 as Rust").check_fn(&f, kind, body, false)?);
+                    }
+                    (format!("{how}, checked"), format!("{{
+                let l = {l};
+                if check_{f}(&src[s..]) != Some(l + 1 - s) {{
+                    refused = true;
+                    break;
+                }}
+                l
+            }}"))
+                }
+                None => (how, l),
             };
             let row_shape: Option<String> = match rule {
                 Some(TokenRule::Run(r)) if l == format!("run_last(&{}, s)", self.val(r)?) => Some(format!("run {}", self.val(r)?)),
@@ -7639,6 +7761,12 @@ impl Gen<'_> {
             let _ = writeln!(fields_init, "            {f}: {v},");
         }
         let mut fw_decl = String::new();
+        if self.walk_writes {
+            let _ = writeln!(fw_decl, "    // The regions' masks as the walk makes them (`regions`), written as the loop reads each region: its opener, its\n    // fill to its closer, and the bytes it hides.\n    let mut lw_{} = vec![0u64; nw];", ident(&self.hidden));
+            for r in &self.kinds {
+                let _ = writeln!(fw_decl, "    let mut lw_o_{0} = vec![0u64; nw];\n    let mut lw_f_{0} = vec![0u64; nw];", ident(&r.kind));
+            }
+        }
         // The region a token's start opens, as the walk opens them (`regions`): the first declared whose
         // opener holds there, a kind `after` others where the region opened last of those with none is one.
         let mut open_code = String::new();
@@ -7686,7 +7814,8 @@ impl Gen<'_> {
                 let _ = writeln!(open_code, "        let cb_{0} = c_{0};", ident(name));
             }
         }
-        for (name, t, up, max) in &scan_starts {
+        // Fused, the region a token opens is its row's: each row's arm steps the counts (below).
+        for (name, t, up, max) in scan_starts.iter().filter(|_| !picks.fused) {
             let name = ident(name);
             if *up {
                 let _ = write!(open_code, "        if {t} {{\n            c_{name} += 1;\n            if c_{name} > {max} {{\n                refused = true;\n            }}\n        }}\n");
@@ -7838,6 +7967,20 @@ impl Gen<'_> {
                     }
                 }
             }
+            // The counts stepped at the region opener this row is (`scan_starts`).
+            for (name, t, up, max) in scan_starts.iter().filter(|_| picks.fused) {
+                let t = fold_open(t, opens);
+                let name = ident(name);
+                match (t.as_str(), up) {
+                    ("false", _) => {}
+                    (_, true) => {
+                        let _ = write!(code, "            if {t} {{\n                c_{name} += 1;\n                if c_{name} > {max} {{\n                    refused = true;\n                }}\n            }}\n");
+                    }
+                    (_, false) => {
+                        let _ = write!(code, "            if {t} {{\n                c_{name} = c_{name}.saturating_sub(1);\n            }}\n");
+                    }
+                }
+            }
             for (why, t) in &arm.starts {
                 let t = if picks.fused || opens.len() == 1 { fold_open(t, opens) } else { t.clone() };
                 if t != "false" {
@@ -7905,6 +8048,20 @@ impl Gen<'_> {
                     }
                 }
             }
+        }
+        // The regions' masks the loop wrote, the walk's in a test build.
+        if self.walk_writes {
+            let mut checks = String::new();
+            let mut pairs = vec![(ident(&self.hidden), self.names.get(&self.hidden).cloned().unwrap_or_default())];
+            for r in &self.kinds {
+                for p in ["o", "f"] {
+                    pairs.push((format!("{p}_{}", ident(&r.kind)), self.names.get(&format!("{p}_{}", r.kind)).cloned().unwrap_or_default()));
+                }
+            }
+            for (lw, walk) in pairs {
+                let _ = writeln!(checks, "        assert!(lw_{lw} == {walk}, \"the loop's `{lw}` is the walk's\");");
+            }
+            let _ = write!(span_after, "    #[cfg(feature = \"test-hooks\")]\n    if !refused {{\n{checks}    }}\n");
         }
         // The bytes outside the region tokens, for the escapes made of `code`.
         if !self.code_after.is_empty() {
@@ -9033,6 +9190,15 @@ fn class_code(pairs: &mut Vec<Vec<Rect>>, set: &[bool; 256]) -> String {
     }
 }
 
+/// A read's arm at its closer `c` (`Some(c) => …`), its region's masks written as the walk writes them (`Gen::regions`):
+/// its opener at `s`, its fill to the closer, the hidden bytes after its opener through the region's last (`lw_…`):
+/// `region_last`, the walk's, where the token's closers are its parts' (a template's `${` to the region's `$`).
+fn with_walk_writes(arm: &str, kind: &str, hidden: &str, region_last: Option<&str>) -> String {
+    let k = ident(kind);
+    let end = region_last.map_or_else(|| "last + 1".to_owned(), |l| format!("{l} + 1"));
+    format!("{{\n                    let last = {arm};\n                    set(&mut lw_o_{k}, s, s + 1);\n                    set(&mut lw_f_{k}, s, c);\n                    set(&mut lw_{h}, s + 1, {end});\n                    last\n                }}", h = ident(hidden))
+}
+
 /// A read's arm at its closer `c` (`Some(c) => …`), keeping `c` as `close` first.
 fn with_close(arm: &str) -> String {
     match arm.strip_prefix("{\n") {
@@ -9700,7 +9866,7 @@ fn toggle(x: &[u64]) -> Vec<u64> {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, rare: None, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), nest: None, scan_templates: Vec::new(), level: None, deep: None, passes: Vec::new(), open_pass: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), t2_spans: Vec::new(), ends: None, fill_proofs: Default::default(), region_values: Default::default(), opener_at: [Bytes::ALL; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), shapes: Default::default(), regional_ids: Default::default(), opener_ids: Default::default(), def_ids: Default::default(), end_names: Default::default(), shape_ids: Default::default(), name_strs: Default::default(), name_ids: Default::default(), kept: Default::default(), cube_tangled: Default::default(), opener_cache: Default::default(), cube_open: Default::default(), tangles: Default::default(), cube_read: Default::default() }.source().map(|t| interleave::stage1_for_tests(&interleave::generic_lex(&interleave::code_pass_in_loop(&interleave::interleave(&t).unwrap_or(t)))))
+    Gen { x, rare: None, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), nest: None, scan_templates: Vec::new(), level: None, deep: None, passes: Vec::new(), open_pass: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), t2_spans: Vec::new(), ends: None, fill_proofs: Default::default(), region_values: Default::default(), opener_at: [Bytes::ALL; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), shapes: Default::default(), regional_ids: Default::default(), opener_ids: Default::default(), def_ids: Default::default(), end_names: Default::default(), shape_ids: Default::default(), name_strs: Default::default(), name_ids: Default::default(), kept: Default::default(), cube_tangled: Default::default(), opener_cache: Default::default(), cube_open: Default::default(), tangles: Default::default(), cube_read: Default::default(), in_lane: false, lane_passes: HashSet::new(), walk_writes: false }.source().map(|t| interleave::stage1_for_tests(&interleave::generic_lex(&interleave::code_pass_in_loop(&interleave::interleave(&t).unwrap_or(t)))))
 }
 
 /// Whether `e` names `n`.

@@ -143,7 +143,10 @@ fn comprehensions_are_the_lean_parsers() {
 fn await_ellipsis_and_async_are_the_lean_parsers() {
     same(&["x = await a.b(c)\n", "await a\n", "x = [await a for a in b]\n", "x: tuple[int, ...] = ...\n", "def f():\n    ...\n", "x = a[...]\n"]);
     same(&["async def f():\n    async for a in b:\n        c\n    async with a as b:\n        c\n", "async def f() -> int:\n    a\n"]);
-    same(&["from . import a\n", "from .. import a\n"]);
+    same(&["from . import a\n", "from .. import a\n", "x = a[1:...]\n"]);
+    // An ellipsis is a run of three dots (`check ellipsis`): four or more are refused, to the lean parser. Not read
+    // yet: an import's prefix of three dots, which tree-sitter reads as three `.` leaves.
+    refused(&["x = ....__class__\n", "from .... import a\n", "from ... import a\n"]);
 }
 
 #[test]
@@ -157,6 +160,14 @@ fn targets_slices_lambdas_yields_and_concatenations_are_the_lean_parsers() {
     same(&["def f():\n    x = \"a\" \"b\"\n", "def f():\n    x = (\n        \"a\"\n        \"b\"\n    )\n", "if a:\n    f(\n        \"a\"\n        \"b\"\n    )\n"]);
     // Not read yet: a bare list of expressions as a statement, a tuple as a target.
     refused(&["a, b\n"]);
+}
+
+/// A byte no token begins with is a `bad` token, which no rule takes: the file is refused, as the lean lexer fails
+/// there. In the regions they are text.
+#[test]
+fn bytes_no_token_begins_with_are_refused() {
+    refused(&["x = $a\n", "x = a ? b\n", "x = `a`\n", "x = \x01\n", "x = a\x7f\n", "if a:\n    b $\n"]);
+    same(&["x = \"$?`\"\n", "x = 1  # $?`\n"]);
 }
 
 #[test]
@@ -268,6 +279,15 @@ fn f_strings_are_the_lean_parsers() {
 fn numbers_are_the_lean_parsers() {
     same(&["x = 1j\n", "x = 1.5j\n", "x = 0x1F\n", "x = 1_000\n", "x = 1.\n", "x = .5\n", "x = 1e5\n", "x = 1.5e-3\n", "x = 1E+5\n", "x = 0XAB\n"]);
     same(&["x = 1_0.2_5\n", "x = a.b + 1.5\n", "x = 2e-3 - e - 5\n", "x = [1.5, .25]\n", "x = f(1.)\n", "x = 0\n", "x = 007\n", "x = 0x_1\n"]);
+    // A float's `.` past the block's first word, and after a word of digits.
+    same(&["b /= 1024.0\n", "f(l=((2, 3600.0),))\n", "x = 10.5\n", "x = 12.0\n"]);
+    same(&["if b < 1024.0:\n    return f\"{b:.1f} {u}\"\nb /= 1024.0\n", "x = f\"{b:.1f}\"\ny = 2.0\n"]);
+    // Numbers over a block's edge: a float's `.` and exponent after it, a based number's digits.
+    for k in 58..64 {
+        let name = "x".repeat(k);
+        let texts = [format!("{name} = 1024.0\n"), format!("{name} = 1.5e-3\n"), format!("{name} = 0x7e0\n"), format!("{name} = 12_345\n")];
+        same(&texts.iter().map(String::as_str).collect::<Vec<_>>());
+    }
 }
 
 #[test]
@@ -428,7 +448,8 @@ fn corpus() {
 /// `rerail-python-aot`'s tiers are the compiler's output (`RERAIL_BLESS=1` writes them again).
 #[test]
 fn rust_is_current() {
-    let (tier1, tier2) = crate::tiers_rust(crate::GRAMMAR).unwrap_or_else(|e| panic!("the parser as Rust: {e}"));
+    let grammar = std::env::var("RERAIL_PYTHON_GRAMMAR").map_or_else(|_| GRAMMAR.to_owned(), |p| std::fs::read_to_string(p).expect("the grammar file"));
+    let (tier1, tier2) = crate::tiers_rust(&grammar).unwrap_or_else(|e| panic!("the parser as Rust: {e}"));
     for (file, rust) in [("tier1.rs", tier1), ("tier2.rs", tier2)] {
         let path = format!("{}/../python_aot/src/{file}", env!("CARGO_MANIFEST_DIR"));
         if std::env::var_os("RERAIL_BLESS").is_some() {

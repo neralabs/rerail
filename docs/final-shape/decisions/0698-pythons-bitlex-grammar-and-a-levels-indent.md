@@ -366,3 +366,96 @@ statements and blocks end.
     record's split, `take` sets it at a piece after another, and `advance` sets it after resuming a string. Past the
     last record it is `END_CODE` (word 0 and kind 255, which no token has). Grammars with no string read in parts had
     this already; it is now the runtime's own.
+68. **The masks of the loop's code are a lane of the token loop, not passes after it.** The escapes made of `code`
+    alone (Python's six of its numbers) read the loop's `code_l`, and were 7 passes over the file after the loop. The
+    loop goes over the blocks in order, and a region token clears its bytes from `code_l` before the loop moves past
+    them. So every block before the loop's is final. The lane makes those masks a word at a time behind the loop
+    (`Gen::lane_passes`, `render_passes`):
+    - at each block the loop comes to, the lane makes each word whose next block the loop has passed (`lane + 2 <=
+      b`);
+    - each of its passes makes the word one behind the pass before, whose `next` it reads;
+    - after the loop, it makes the words left;
+    - an escape is tested as its word is made (`refused |= w_X != 0`), so no vector is kept for it.
+
+    This is the first step to one pass over the file. The walk's masks, which the string escapes read, and stage 1
+    still run before the loop.
+69. **The token loop writes the regions' masks as it reads each region.** These are the masks the walk makes: each
+    region's opener `o_K` and fill `f_K`, and `hidden`. They are written with the walk's own writes, in `lw_…`
+    vectors (`Gen::walk_writes`, `with_walk_writes`). A grammar gets them when every region is read by a row (`read`,
+    or `read … parts`), none has an `else` form, and it is not lexed in the one pass (0619).
+    - `hidden` ends at the region's own last, not at the token's. A template's `${` is the token's closer, two bytes,
+      but the region closes at its `$`.
+    - A test build asserts each `lw_…` equals the walk's mask on every file not refused.
+
+    This is the second step to one pass. Next, the regional escapes and tier 2's regional masks are made from these
+    in the lane, and the walk runs only in test builds.
+70. **A compile asks every prover question through the kept answers, and writes the Rust tiers only for a caller
+    that reads them.** A test's compile of Python took 18 s on the M1 Max, and Kotlin's Rust-writing compile 25 s,
+    with every answer already kept. Three causes:
+    - `last_row` and `token_ops_back` asked the provers directly. They skipped the answers (0414) and rebuilt the
+      prover's operations for each row of each check: 11 s of Python's compile. They now ask through
+      `Lowering::never` and `settled_never`, as `token_row` does. Kotlin's shipped answers hold the new questions.
+    - The Rust writers ran in every compile. Only `rust_is_current` reads their text. `Symbols::rust` asks for it:
+      Python's and Kotlin's `tiers_rust` set it, and the parsers' `compiled`, JSON's and the C directives' do not.
+    - Tier 1's writer expanded a named mask again at each reader in `in_region_of`, so a mask DAG became a tree:
+      22 s of Kotlin's. `Gen::region_memo` keeps each named mask's answer by region, part and context. `region_gen`
+      goes up at each change of `regional` or `fills`, so the memo never answers from an older state.
+
+    A test's compile is now 3.7 s: bitlex 1.5 s, Cranelift 2.1 s. nextest runs each test in a process of its own,
+    which compiles the grammar again, so Python's suite takes 26 s and Kotlin's 51 s.
+71. **A test binary's processes compile the grammar once.** nextest runs each test in a process of its own. The
+    Bitlex compiler's half of each compile (`bitlex_output`) is now kept in the answers directory
+    (`answers::kept_output`), and the rest of each process reads it. The key is the grammar text and the test
+    binary's path, size and time, since the binary's code is the compiler, so a rebuild misses. The first process to
+    miss compiles under the family's lock, and the others wait, then read. Only `compiled()` reads the kept output:
+    the tests of the shipped answers and of a cold compile call `compile_timed` and still compile.
+
+    A test's own work is now Cranelift's code for both tiers, 2.1 s of its 2.3 s.
+72. **A number is a run over a class, and a check at the token.** This is the lean lexer's `number()`: a number's
+    bytes are run, then its grammar is read once. About 15 derived masks and six escapes are gone.
+    - `token based = start based_at run word` and `token integer = start int_start | dot_start run num_run`. The
+      starts are `assume … at starts`, so the loop reads three byte terms.
+    - `check based` and `check integer` hold the numbers' grammar: hex, octal and binary digits after `0x`, `0o` and
+      `0b`; a decimal's `.`, its exponent and its `j`/`l` suffix; `_` between digits.
+    - The float mark is `count(dot & number | exp_l & number & ~based_n)` at `integer`. A `.` operator is no
+      number's byte, so the mark never holds at one.
+    - `based` and `integer` share a kind, as no tree rule tells them apart. The tree reads a based number as
+      `based as integer`.
+    - Tier 1 as Rust is about 420 lines shorter. Its row arm calls `check_K` at the token
+      (`bitlex_check_rust::Checks`), the same writer tier 2 as one loop uses.
+73. **A check may loop through states that its bytes tell apart.** `check_parts` splits the check's machine into
+    its strongly connected parts. A cycle whose states each have their own entering bytes is lowered as one fill
+    over the cycle's bytes. Each state's mask is that fill, masked by its own bytes. A cycle in which one byte
+    enters two states is still refused.
+74. **A kind that two rows share is named by both.** Tier 2's symbols list a moved row's name as a second name of
+    its kind, so a tree rule may name either. A moved row with a check keeps its moved byte in the check's set, when
+    the check takes any of its real first bytes.
+75. **A pass carries a mask's last word only where one of its live masks reads it.** The dead carry warned in
+    Python's tier 1, and Kotlin's had two.
+76. **A token's tests wait for the blocks they read.** The token loop runs a part at a time between blocks, for the
+    tokens that start in the blocks already final. A delayed output's word is final only after the next block is
+    made. A test whose output is read from the rows, not from the bytes, read the token's last block before it was
+    final. A float such as `1024.0` across a block's edge lost its `.` there. `tested` now takes the part's
+    `Limit`: a token whose last block is not final waits for it, as a run's search past the final blocks does.
+77. **A token starts in code, and a quote or a `#` at a start opens its region.** These are rr's assumes:
+    - `code = ~empty`, `o_str = quote` and `o_cmt = hash` at starts;
+    - an ellipsis's start is three dots, the first after none, without `code`.
+
+    Tier 1 as Rust no longer works out, at each token, which region it opens: a row's start never asks again
+    whether a region opened there. A conversion's start (`conv_at`), a tail's `}` and a spec's `:` depend on the
+    interpolation's level. Tier 1 as Rust refuses an assume that reads a region's mask, so those wait for the
+    f-string reader.
+78. **A name runs over its word, and a byte no token begins with is a `bad` token.** As rr's:
+    - `token identifier = start word_start run word`. `name_more` and its assume are gone.
+    - `class junk`: the control bytes, `$`, `?`, the backtick, `\` and 0x7f. `token bad = start bad_first pair empty`,
+      with `bad_first = junk` assumed at starts. The tree has `untaken bad`, so no rule takes one and the file is
+      refused, as the lean lexer fails at a byte its operators do not take. The `error … by tokens` is gone.
+    - A byte past ASCII is no `junk`. Its escape refuses the file in code, and its bytes stay free for the kinds a
+      reader moves (0509). With them in `junk`, `spec_text` had no byte left.
+
+79. **An ellipsis is a run of dots, and its check is three.** `token ellipsis = start ell_at run dot`, with
+    `check ellipsis = '.' '.' '.'`, in place of the run over `ell`. A pairs triple, as the lean lexer's table has it,
+    cannot hold `...`: a triple's first two bytes must be a pair, and Python's `..` is two tokens. Four dots or more
+    are refused to the lean parser, which reads `....` as an ellipsis and a `.`. None is in the corpus.
+80. **The loop skips a class.** `skip ws`, as rr's, Kotlin's and JSON's, in place of `skip code & (blank | lf)`.
+    Between tokens the loop is always in code: a region's bytes are its token's.

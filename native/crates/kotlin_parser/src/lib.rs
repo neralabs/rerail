@@ -84,9 +84,9 @@ pub fn shipped_answers() -> Proofs {
 /// edit asks anew is proved by one compile on the machine, and kept for the others).
 pub fn compile_answered(grammar: &str) -> Result<Compiled, String> {
     rerail_bitlex::answers::answered("kotlin", grammar.as_bytes(), shipped_answers(), |known| {
-        let c = compile_timed(grammar, known, &mut |_, _| {})?;
-        let made = c.proofs.clone();
-        Ok((c, made))
+        let out = kept(grammar, known, &mut |_, _| {})?;
+        let made = out.proofs.clone();
+        Ok((from_output(out, &mut |_, _| {})?, made))
     })
 }
 
@@ -153,6 +153,33 @@ pub fn compile_text(grammar: &str) -> Result<Compiled, String> {
 /// tier 2's functions cut into clusters, and Cranelift's code for each tier. `known`: the provers'
 /// answers a compile made before (`Compiled::proofs`, decision 0414).
 pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static str, std::time::Duration)) -> Result<Compiled, String> {
+    let out = bitlex_output(grammar, known, lap)?;
+    from_output(out, lap)
+}
+
+/// What the Bitlex compiler makes of a grammar that the rest of a compile reads (`from_output`): the program's text,
+/// tier 2's words and its machine as text, and the provers' answers it made.
+pub struct Output {
+    pub text: String,
+    pub words: String,
+    pub machine: String,
+    pub proofs: Vec<(rerail_bitlex::bitlex_prove::Key, rerail_bitlex::bitlex_prove::Answer)>,
+}
+
+/// `bitlex_output`, kept for this test binary's other processes (`answers::kept_output`): its first process compiles
+/// the grammar, the others read what it made.
+fn kept(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static str, std::time::Duration)) -> Result<Output, String> {
+    let bytes = rerail_bitlex::answers::kept_output("kotlin-compiled", grammar.as_bytes(), || {
+        let o = bitlex_output(grammar, known, lap)?;
+        Ok(rerail_bitlex::answers::pack(&[o.text.as_bytes(), o.words.as_bytes(), o.machine.as_bytes(), &rerail_bitlex::bitlex_prove::encode(&o.proofs)]))
+    })?;
+    let parts = rerail_bitlex::answers::unpack(&bytes, 4).ok_or("a kept compile not of four parts")?;
+    let text = |b: &[u8]| String::from_utf8(b.to_vec()).map_err(|e| e.to_string());
+    Ok(Output { text: text(parts[0])?, words: text(parts[1])?, machine: text(parts[2])?, proofs: rerail_bitlex::bitlex_prove::decode(parts[3]).into_iter().collect() })
+}
+
+/// The Bitlex compiler's half of a compile (`compile_timed`): the grammar's syntax and the compiler.
+pub fn bitlex_output(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static str, std::time::Duration)) -> Result<Output, String> {
     let mut at = std::time::Instant::now();
     let mut lap = |name: &'static str| {
         lap(name, at.elapsed());
@@ -171,7 +198,18 @@ pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static 
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known, bitlex_compile::AsRust::No)?;
     lap("bitlex compiler");
-    let program = rir::assemble(&compiled.text()).map_err(|e| format!("{e}\n{}", compiled.words))?;
+    Ok(Output { text: compiled.text(), words: compiled.words.clone(), machine: compiled.machine.clone(), proofs: compiled.proofs.clone() })
+}
+
+/// The rest of a compile, from the Bitlex compiler's output: the words assembled, lowered to the native IR, tier 2's
+/// functions cut into clusters, and Cranelift's code for each tier.
+pub fn from_output(compiled: Output, lap: &mut dyn FnMut(&'static str, std::time::Duration)) -> Result<Compiled, String> {
+    let mut at = std::time::Instant::now();
+    let mut lap = |name: &'static str| {
+        lap(name, at.elapsed());
+        at = std::time::Instant::now();
+    };
+    let program = rir::assemble(&compiled.text).map_err(|e| format!("{e}\n{}", compiled.words))?;
     lap("assembled");
     let mut native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
     lap("native IR");

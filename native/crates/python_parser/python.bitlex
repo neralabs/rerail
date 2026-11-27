@@ -11,6 +11,8 @@ lexer python
 
 class blank     = ' ' '\t' 0x0c '\r'
 class lf        = '\n'
+# What the loop skips between tokens: blanks and line breaks (a line break's marks are below).
+class ws        = ' ' '\t' 0x0c '\r' '\n'
 class hash      = '#'
 class word      = 'a'..'z' 'A'..'Z' '0'..'9' '_'
 class alpha     = 'a'..'z' 'A'..'Z' '_'
@@ -56,11 +58,15 @@ class zero      = '0'
 class x_any     = 'x' 'X'
 class o_any     = 'o' 'O'
 class b_any     = 'b' 'B'
-class not_oct   = '8' '9'
-class not_bin   = '2'..'9'
+class oct_d     = '0'..'7'
+class bin_d     = '0' '1'
 class exp_l     = 'e' 'E'
 class imag_l    = 'j' 'J'
 class punct     = '(' ')' '[' ']' '{' '}' ',' ':' ';' '.' '=' '+' '-' '*' '/' '%' '&' '|' '^' '~' '<' '>' '@' '!'
+# The bytes no token begins with, outside the regions: each its own `bad` token, as the lean lexer fails at a byte
+# its operators do not take. A backslash is an escape too (below). A byte past ASCII is an escape alone, and its
+# bytes are left free for the kinds a reader moves (decision 0509).
+class junk      = 0x00..0x08 0x0b 0x0e..0x1f '$' '?' '`' '\\' 0x7f
 
 # --- Regions -----------------------------------------------------------------------------------
 
@@ -214,61 +220,55 @@ escape "a tab or a form feed starting the file" when tab_ff & ~prev(~empty)
 
 mask w          = code & word
 
-# A number (tree-sitter-python's `integer` and `float`): the word from its first digit (a digit
-# after a `.` or an exponent's sign is no number's first), a `.` right after that word and the
-# word after it, or a `.` before a digit not after a word (`.5`); an exponent's sign and the
-# word after it. One token, an `integer`; a float has a `.` or an exponent (`real`, a test of
-# the token's bytes, as Kotlin's).
+# A number (tree-sitter-python's `integer` and `float`), read as the lean lexer's `number`: from its first
+# digit, or a `.` before a digit not after a word (`.5`), the run of its bytes (word bytes, `.`s, an
+# exponent's sign), which its grammar must match at the token (`check`). A digit after a `.` or an
+# exponent's sign is no number's first: the run before it takes it. A number with `0x`, `0o` or
+# `0b` is `based`, never a float; a decimal one with a `.` or an exponent is (`real`, below).
 mask num0       = w & digit & ~prev(w)
 mask e_sign0    = code & sign & prev(exp_l & fill(num0, ~w)) & next(digit)
-mask int_start  = num0 & ~prev(dot) & ~prev(e_sign0)
-mask n_word     = fill(int_start, ~w)
-mask hex_n      = fill(int_start & zero & next(x_any), ~w)
-# An octal or a binary number (`0o7`, `0b1`): its letter after its `0`, then digits of its base.
-mask oct_n      = fill(int_start & zero & next(o_any), ~w)
-mask bin_n      = fill(int_start & zero & next(b_any), ~w)
-mask ob_n       = oct_n | bin_n
+mask num_first  = num0 & ~prev(dot) & ~prev(e_sign0)
+mask based_at   = num_first & zero & next(x_any | o_any | b_any)
+mask int_start  = num_first & ~based_at
 mask dot_start  = code & dot & next(digit) & ~prev(w)
-mask n_dot      = code & dot & prev(n_word & ~hex_n & ~ob_n) | dot_start
-mask f_word     = fill(prev(n_dot) & w, ~w)
-mask d_word     = n_word & ~hex_n & ~ob_n | f_word
-mask n_sign     = code & sign & prev(d_word & exp_l) & next(digit)
-mask e_word     = fill(prev(n_sign) & w, ~w)
-mask number     = n_word | n_dot | f_word | n_sign | e_word
-mask exp_at     = d_word & exp_l & (next(digit) | next(n_sign))
-# The letters a number takes: a hex number's `x` and digits, an octal's `o`, a binary's `b`,
-# an exponent's `e`, a last `j`. `L` and the rest are not read yet.
-mask n_letter   = hex_n & (hex | x_any & prev(int_start)) | ob_n & (o_any | b_any) & prev(int_start) | exp_at | imag_l & (d_word | e_word) & ~next(number)
-escape "a number with a letter it does not take" when number & letter & ~n_letter
-escape "a number with an `_` not between digits" when number & us & ~(prev(digit) & next(digit) & ~hex_n & ~ob_n | hex_n & prev(hex | x_any) & next(hex) | ob_n & prev(digit | o_any | b_any) & next(digit))
-escape "an octal or a binary number with a digit past its base" when oct_n & not_oct | bin_n & not_bin
-escape "an octal or a binary number with no digits" when ob_n & (o_any | b_any) & prev(int_start) & ~next(digit | us)
-escape "a number with more after its exponent" when (exp_at | n_dot) & fill(prev(exp_at) & number, ~number)
-escape "a hex number with no digits" when hex_n & x_any & prev(int_start) & ~next(hex | us)
+mask num_run    = word | dot | sign & prev(exp_l) & next(digit)
+mask number     = fill(based_at | int_start | dot_start, ~num_run)
+mask based_n    = fill(based_at, ~word)
 
 mask word_start = w & alpha & ~prev(w) & ~p1 & ~p2 & ~number & ~prev(conv_at)
-mask name_more  = fill(word_start, ~w) & ~word_start
 
 # Where a start reads them: no region's token starts there (the loop decides those first), and no row above does.
+assume "a token starts in code: the regions open only at a token's start" at starts code = ~empty
+assume "a quote at a start opens a string: any quote outside the regions opens one" at starts o_str = quote
+assume "a `#` at a start opens a comment" at starts o_cmt = hash
 assume "a name starts at a word's first letter that starts no string's prefix: a start is never in a word" at starts word_start = alpha & ~p1 & ~p2
-assume "a name runs over its word's bytes" in identifier name_more = word
-assume "a number's bytes are code" in integer code = ~empty
+assume "a number starts at a digit, `0x`, `0o` and `0b` apart: a start is never in a word or a number's run" at starts int_start = digit & ~prev(dot) & ~(zero & next(x_any | o_any | b_any))
+assume "a number starts at `0x`, `0o` or `0b`: a start is never in a word or a number's run" at starts based_at = zero & next(x_any | o_any | b_any) & ~prev(dot)
+assume "a number starts at a `.` before a digit after no word" at starts dot_start = dot & next(digit) & ~prev(word)
+assume "a decimal number's bytes are a number's, and no based number's" in integer number = ~empty
+assume "a decimal number's bytes are no based number's" in integer based_n = empty
 
-token identifier = start word_start run name_more
-token integer   = start int_start | dot_start run number
+token identifier = start word_start run word
+token based     = start based_at run word
+token integer   = start int_start | dot_start run num_run
+check based     = zero (x_any [us] hex ([us] hex)* | o_any [us] oct_d ([us] oct_d)* | b_any [us] bin_d ([us] bin_d)*)
+check integer   = digit ([us] digit)* ['.' [digit ([us] digit)*]] [exp_l [sign] digit ([us] digit)*] [imag_l]
+                | '.' digit ([us] digit)* [exp_l [sign] digit ([us] digit)*] [imag_l]
 
 # --- Operators ---------------------------------------------------------------------------------
 
 pairs two_start = "**" "//" "==" "!=" "<=" ">=" "<<" ">>" "->" "+=" "-=" "*=" "/=" "%=" "&=" "|=" "^=" "@=" ":=" "<>" "**=" "//=" "<<=" ">>="
 mask second     = (prev(two_start) | prev(two_start_three, 2)) & code
-# `...`: three dots, a token of its own (`ellipsis`), from the first dot of a run; past it the
-# run's dots are operators, as the lean lexer reads `....`. Two dots are two operators.
+# `...`: three dots, a token of its own (`ellipsis`), from the first dot of a run: the run of dots, which must be
+# three (`check`). The lean lexer reads `....` as an ellipsis and a `.`; here it is refused, to the lean parser.
+# Two dots are two operators.
 mask ell_at     = code & dot & next(dot) & next(dot, 2) & ~prev(dot)
-mask ell        = ell_at | prev(ell_at) | prev(ell_at, 2)
-mask p_start    = code & punct & ~second & ~number & ~conv_at & ~ell
+mask p_start    = code & punct & ~second & ~number & ~conv_at & ~fill(ell_at, ~dot)
+assume "an ellipsis starts at the first of three dots" at starts ell_at = dot & next(dot) & next(dot, 2) & ~prev(dot)
 assume "an operator starts at its first byte, but an ellipsis's or a conversion's (a `!` with no `=`): a start is never a pair's second" at starts p_start = punct & ~(dot & next(dot) & next(dot, 2) & ~prev(dot)) & ~(bang & ~next(eq))
 token punct     = start p_start pair two_start
-token ellipsis  = start ell_at run ell
+token ellipsis  = start ell_at run dot
+check ellipsis  = '.' '.' '.'
 
 token comment   = start hash & o_cmt read cmt
 
@@ -311,8 +311,10 @@ keywords identifier {
 }
 keywords punct { "(" ")" "[" "]" "{" "}" "," ":" ";" "." "=" "+" "-" "*" "/" "%" "&" "|" "^" "~" "<" ">" "@" "!" "**" "//" "==" "!=" "<=" ">=" "<<" ">>" "->" "+=" "-=" "*=" "/=" "%=" "&=" "|=" "^=" "@=" ":=" "<>" "**=" "//=" "<<=" ">>=" } required
 
-skip code & (blank | lf)
-error "a byte no token takes" by tokens when code & ~blank & ~lf & ~word & ~punct
+skip ws
+mask bad_first  = code & junk
+assume "a byte no token begins with is a bad token of its own" at starts bad_first = junk
+token bad       = start bad_first pair empty
 
 # --- Layout ------------------------------------------------------------------------------------
 
@@ -335,7 +337,7 @@ mark future     = tokens "from" "__future__"
 # A name before `[`: in a type, a generic type's (tree-sitter-python's `generic_type`).
 mark generic    = tokens identifier "["
 # A number with a `.` or an exponent: a float.
-mark real       = empty, at integer when count(n_dot | exp_at) at least 1
+mark real       = empty, at integer when count(dot & number | exp_l & number & ~based_n) at least 1
 # `with (`: the clause's parentheses, not an expression's, where a comma at their depth has more
 # after it (the lean parser's `paren_is_clause`): `(a, b)`, not `(a,)` or `(a as b)`. The lean
 # parser asks for a `:` after them too; where none follows (`with (a, b) as c:`) the clause's
@@ -393,7 +395,7 @@ tree python {
   node case_pattern     = '_' | kw_pat keyword_pattern | case_simple [wrap union_pattern _ ('|' case_simple)+]
   node keyword_pattern  = identifier '=' case_simple [wrap union_pattern _ ('|' case_simple)+]
   choice case_simple    = dotted_name [wrap class_pattern _ '(' (')' | case_item (',' case_item)* (trail_paren | ')'))]
-                        | '-' (real integer as float | integer) | real integer as float | integer
+                        | '-' (real integer as float | integer | based as integer) | real integer as float | integer | based as integer
                         | string [wrap concatenated_string _ string+]
                         | 'None' as none | 'True' as true | 'False' as false
                         | case_list | case_tuple | dict_pattern | splat_pattern
@@ -402,7 +404,7 @@ tree python {
   node case_tuple       = retag tuple_pattern '(' [case_item (',' case_item)*] ')'
   node dict_pattern     = '{' [dict_entry (',' dict_entry)*] '}'
   choice dict_entry     = key: case_key ':' value: case_item | splat_pattern
-  choice case_key       = string [wrap concatenated_string _ string+] | '-' integer | integer | 'None' as none | 'True' as true | 'False' as false
+  choice case_key       = string [wrap concatenated_string _ string+] | '-' (integer | based as integer) | integer | based as integer | 'None' as none | 'True' as true | 'False' as false
   # --- Definitions
   # `async`: a leaf before `def`, `for` or `with`, the node retagged by the word after it.
   node function_definition = 'async' ('def' def_rest | retag for_statement 'for' for_rest | retag with_statement 'with' with_rest)
@@ -548,7 +550,7 @@ tree python {
   node slice            = slice_rest
   choice slice_rest     = ':' [expression] [':' [expression]]
   # Strings side by side: a `concatenated_string` of them.
-  choice atom           = identifier | real integer as float | integer | string [wrap concatenated_string _ string+] | list | parenthesized_expression | dictionary
+  choice atom           = identifier | real integer as float | integer | based as integer | string [wrap concatenated_string _ string+] | list | parenthesized_expression | dictionary
                         | 'True' as true | 'False' as false | 'None' as none | ellipsis
   # The patterns an assignment's target is in (tree-sitter-python's `pattern`), and a loop's
   # target read as one: a name, its attributes and subscripts.
@@ -686,4 +688,6 @@ tree python {
   implied dict_item ':'
   implied set_more ',' '}'
   extra comment
+  # The lexer's errors: no rule takes them, as the lean lexer fails at a byte no token takes.
+  untaken bad
 }
