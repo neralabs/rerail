@@ -63,7 +63,7 @@ impl Suppressions {
             return dropped;
         }
         // The findings to read, by the file and the dialect their policy reads it in.
-        let mut files: BTreeMap<(&str, Option<&'static str>), Vec<(usize, Finding<'_, '_>)>> = BTreeMap::new();
+        let mut files: ByFile<'_, '_> = BTreeMap::new();
         for (k, row) in rows.iter().enumerate() {
             if let Some(finding) = self.finding(row) {
                 let language = self.languages.get(finding.policy).cloned().flatten();
@@ -113,6 +113,10 @@ struct Finding<'r, 'a> {
     at: Option<i64>,
     lines: Vec<(&'r Suppress, Option<i64>)>,
 }
+
+/// A run's findings that `suppress` lines ask about, by their index, under their file and the dialect their policy
+/// reads it in (`Suppressions::suppressed`).
+type ByFile<'r, 'a> = BTreeMap<(&'a str, Option<&'static str>), Vec<(usize, Finding<'r, 'a>)>>;
 
 /// Whether each of a file's findings is suppressed, by its index: read in order of their anchors, under one file scope.
 fn read(path: &str, file: &FileSpans, tree: &TapeDoc, findings: Vec<(usize, Finding<'_, '_>)>) -> Vec<(usize, bool)> {
