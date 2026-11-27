@@ -12418,3 +12418,14 @@ Fixed on the way (red on the hub before the merge):
 
 Checked: tsc --noEmit; vitest on main's router, catalog, router-cost tests, the registry tests and code-rule-schema
 (all pass). No Rust changed but capabilities.json, read by lookup of a rule's language. No Metal or farm runs.
+
+### Q599. Roll-up 171 (sync-integration-hub-tape 6f70bd7177 onto Pulling-it-all-together): what the merge chose
+
+sync-integration-hub-tape's commit: callable candidates look through the split's relays, and tell routing by file
+from routing by key (decision 0725's spike).
+
+Conflicts, resolved by invariant:
+- decisions README: the hub's rows (0708, 0709, 0706, 0721, 0724), with the feeder's 0725 row, its newer text.
+
+Checked under Relax: tests-rr callable (4; the 9 measurements ignored, as on the feeder) and tests-corpus
+phases::tests (23). No Metal or farm runs.
