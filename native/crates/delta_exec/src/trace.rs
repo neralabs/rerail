@@ -12,7 +12,7 @@
 
 use crate::dir::{BlockId, Directory, Launch};
 use crate::op::{
-    Across, Bound, Found, Independence, Inside, Mode, OpId, Output, Over, ParamsLayout, Phase, Registry, Signature, SlotSpec, Tiling, Unit,
+    Across, Bound, Found, Independence, Inside, OpId, Output, Over, ParamsLayout, Phase, Registry, Signature, Tiling, Unit,
     Version, run_cpu,
 };
 #[cfg(any(test, feature = "test-hooks"))]
@@ -82,14 +82,8 @@ fn scratch_slot(dir: &mut Directory, cap: usize) -> BlockId {
 const ALONG: Independence = Independence::Along("rows: a chunk, a pair of runs, a row out, an index");
 
 /// `consolidate`: scratch δ runs · write facts · rw control · scratch (a call's temporaries: an index's, an order's).
-pub static CONSOLIDATE: Signature = Signature::new(
-    "consolidate",
-    &[
-        SlotSpec { name: "δ runs", mode: Mode::Scratch, kind: kind::SCRATCH },
-        SlotSpec { name: "facts", mode: Mode::Write, kind: kind::FACTS },
-        SlotSpec { name: "control", mode: Mode::ReadWrite, kind: kind::CONTROL },
-        SlotSpec { name: "scratch", mode: Mode::Scratch, kind: kind::SCRATCH },
-    ],
+pub static CONSOLIDATE: Signature = Signature::of(
+    &crate::op::interfaces::CONSOLIDATE,
     ParamsLayout::of::<ConsolidateP>(),
     &PIPELINE,
     ALONG,
@@ -97,13 +91,8 @@ pub static CONSOLIDATE: Signature = Signature::new(
 );
 
 /// `merge`: read facts (the newest layer merged; older ones by reference) · write facts · scratch.
-pub static MERGE: Signature = Signature::new(
-    "merge",
-    &[
-        SlotSpec { name: "newest", mode: Mode::Read, kind: kind::FACTS },
-        SlotSpec { name: "facts", mode: Mode::Write, kind: kind::FACTS },
-        SlotSpec { name: "scratch", mode: Mode::Scratch, kind: kind::SCRATCH },
-    ],
+pub static MERGE: Signature = Signature::of(
+    &crate::op::interfaces::MERGE,
     ParamsLayout::of::<MergeP>(),
     &PIPELINE,
     ALONG,

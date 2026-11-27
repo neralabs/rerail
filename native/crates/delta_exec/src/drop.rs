@@ -3,7 +3,7 @@
 //! block. L1 retracts a changed document's kept rows with it: read in its output trace, where they lie.
 
 use crate::dir::{BlockId, Directory};
-use crate::op::{Across, Found, Independence, Inside, Mode, OpId, Output, ParamsLayout, Phase, Registry, Signature, SlotSpec, Tiling, Unit, Version, run_cpu};
+use crate::op::{Across, Found, Independence, Inside, OpId, Output, ParamsLayout, Phase, Registry, Signature, Tiling, Unit, Version, run_cpu};
 use rerail_blocks::block::kind;
 use rerail_blocks::gens::Table;
 use rerail_blocks::layer::Runs;
@@ -15,13 +15,8 @@ use rerail_delta_twins::drop::{self as twin, DropP};
 static DROP_PHASE: [Phase; 1] = [Phase { name: "drop", found: Found::Fixed, unit: Unit::Threadgroup, inside: Inside::Nothing, across: Across::Nothing, output: Output::ByScan, bounds: &[] }];
 
 /// `drop_parts`: read facts (the state's head; the layers below by reference) · read the parts · write δ runs.
-pub static DROP_PARTS: Signature = Signature::new(
-    "drop_parts",
-    &[
-        SlotSpec { name: "head", mode: Mode::Read, kind: kind::FACTS },
-        SlotSpec { name: "parts", mode: Mode::Read, kind: kind::CONTROL },
-        SlotSpec { name: "runs", mode: Mode::Write, kind: kind::SCRATCH },
-    ],
+pub static DROP_PARTS: Signature = Signature::of(
+    &crate::op::interfaces::DROP_PARTS,
     ParamsLayout::of::<DropP>(),
     &DROP_PHASE,
     Independence::Along("partitions: a partition's rows are its own"),

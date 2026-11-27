@@ -1,0 +1,129 @@
+// The delta executor's operations (decision 0686, Operations §3): each one's interface, declared once
+// (`<ukl/operation.h>`). The registry's table of interfaces is read from here (`build.rs`), and every version of an
+// operation, its twin first, is registered against its interface.
+#pragma once
+#include <ukl/operation.h>
+
+// rerail_delta_exec::answer
+DECLARE_KERNEL2(delta_exec, answer_load,
+    ROBUFFER, ukl_control_block, plan, "[block]",
+    RWBUFFER, ukl_tape_block, tapes, "[block]",
+    RWBUFFER, ukl_control_block, control, "[block]",
+    WOBUFFER, ukl_facts_block, facts, "[block]",
+    ARGS, NoParams, p, )
+
+// rerail_delta_exec::answer
+DECLARE_KERNEL2(delta_exec, parse,
+    RWBUFFER, ukl_tape_block, tapes, "[block]",
+    RWBUFFER, ukl_control_block, control, "[block]",
+    ARGS, NoParams, p, )
+
+// rerail_delta_exec::cache
+DECLARE_KERNEL2(delta_exec, cache_open,
+    RWBUFFER, ukl_cache_block, cache, "[block]",
+    ARGS, CacheP, p, )
+
+// rerail_delta_exec::cache
+DECLARE_KERNEL2(delta_exec, cache_commit,
+    RWBUFFER, ukl_cache_block, cache, "[block]",
+    ARGS, CacheP, p, )
+
+// rerail_delta_exec::cache
+DECLARE_KERNEL2(delta_exec, order,
+    ROBUFFER, ukl_facts_block, layer, "[block]",
+    RWBUFFER, ukl_cache_block, cache, "[block]",
+    ARGS, OrderP, p, )
+
+// rerail_delta_exec::drop
+DECLARE_KERNEL2(delta_exec, drop_parts,
+    ROBUFFER, ukl_facts_block, head, "[block]",
+    ROBUFFER, ukl_control_block, parts, "[block]",
+    WOBUFFER, ukl_scratch_block, runs, "[block]",
+    ARGS, DropP, p, )
+
+// rerail_delta_exec::intern
+DECLARE_KERNEL2(delta_exec, intern,
+    ROBUFFER, ukl_tape_block, source, "[block]",
+    ROBUFFER, ukl_tape_block, tape, "[block]",
+    RWBUFFER, ukl_atoms_block, atoms, "[block]",
+    RWBUFFER, ukl_facts_block, syms, "[block]",
+    ARGS, InternP, p, )
+
+// rerail_delta_exec::k0
+DECLARE_KERNEL2(delta_exec, k0_pass,
+    ROBUFFER, ukl_control_block, docs, "[block]",
+    ROBUFFER, ukl_atoms_block, atoms, "[block]",
+    RWBUFFER, ukl_control_block, control, "[block]",
+    ROBUFFER, ukl_control_block, gone, "[block]",
+    WOBUFFER, ukl_scratch_block, k_rule, "[block]",
+    WOBUFFER, ukl_scratch_block, k_step, "[block]",
+    WOBUFFER, ukl_scratch_block, k_arg, "[block]",
+    WOBUFFER, ukl_scratch_block, k_var, "[block]",
+    WOBUFFER, ukl_scratch_block, k_str, "[block]",
+    WOBUFFER, ukl_scratch_block, k_num, "[block]",
+    WOBUFFER, ukl_scratch_block, k_wild, "[block]",
+    WOBUFFER, ukl_scratch_block, k_order, "[block]",
+    RWBUFFER, ukl_cache_block, cache, "[block]",
+    ARGS, K0P, p, )
+
+// rerail_delta_exec::k0
+DECLARE_KERNEL2(delta_exec, docs_of,
+    ROBUFFER, ukl_scratch_block, rows, "[block]",
+    ROBUFFER, ukl_facts_block, blobs, "[block]",
+    WOBUFFER, ukl_control_block, docs, "[block]",
+    WOBUFFER, ukl_control_block, blocks, "[block]",
+    ARGS, DocsOfP, p, )
+
+// rerail_delta_exec::k0
+DECLARE_KERNEL2(delta_exec, room_of,
+    ROBUFFER, ukl_cache_block, cache, "[block]",
+    ROBUFFER, ukl_control_block, gone, "[block]",
+    ROBUFFER, ukl_control_block, docs, "[block]",
+    WOBUFFER, ukl_control_block, room, "[block]",
+    ARGS, NoParams, p, )
+
+// rerail_delta_exec::k0
+DECLARE_KERNEL2(delta_exec, named_blocks,
+    ROBUFFER, ukl_facts_block, set, "[block]",
+    ROBUFFER, ukl_facts_block, blobs, "[block]",
+    WOBUFFER, ukl_control_block, blocks, "[block]",
+    WOBUFFER, ukl_control_block, missing, "[block]",
+    ARGS, NamedP, p, )
+
+// rerail_delta_exec::semi
+DECLARE_KERNEL2(delta_exec, semi_change,
+    ROBUFFER, ukl_facts_block, a, "[block]",
+    ROBUFFER, ukl_facts_block, b, "[block]",
+    WOBUFFER, ukl_scratch_block, rows, "[block]",
+    WOBUFFER, ukl_control_block, parts, "[block]",
+    WOBUFFER, ukl_scratch_block, keys, "[block]",
+    ARGS, SemiP, p, )
+
+// rerail_delta_exec::semi
+DECLARE_KERNEL2(delta_exec, change_rows,
+    ROBUFFER, ukl_facts_block, a, "[block]",
+    WOBUFFER, ukl_scratch_block, rows, "[block]",
+    WOBUFFER, ukl_control_block, parts, "[block]",
+    ARGS, SemiP, p, )
+
+// rerail_delta_exec::semi
+DECLARE_KERNEL2(delta_exec, replace_rows,
+    ROBUFFER, ukl_facts_block, state, "[block]",
+    ROBUFFER, ukl_scratch_block, given, "[block]",
+    WOBUFFER, ukl_scratch_block, runs, "[block]",
+    ARGS, ReplaceP, p, )
+
+// rerail_delta_exec::trace
+DECLARE_KERNEL2(delta_exec, consolidate,
+    RWBUFFER, ukl_scratch_block, delta_runs, "[block]",
+    WOBUFFER, ukl_facts_block, facts, "[block]",
+    RWBUFFER, ukl_control_block, control, "[block]",
+    RWBUFFER, ukl_scratch_block, scratch, "[block]",
+    ARGS, ConsolidateP, p, )
+
+// rerail_delta_exec::trace
+DECLARE_KERNEL2(delta_exec, merge,
+    ROBUFFER, ukl_facts_block, newest, "[block]",
+    WOBUFFER, ukl_facts_block, facts, "[block]",
+    RWBUFFER, ukl_scratch_block, scratch, "[block]",
+    ARGS, MergeP, p, )

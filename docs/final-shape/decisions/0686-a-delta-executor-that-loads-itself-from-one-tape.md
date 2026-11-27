@@ -1666,3 +1666,36 @@ Checks (Relax, local, 91 of 91):
   - the document set reading through each;
   - no leaf committed on its own.
 - Clippy is clean on `delta_exec`.
+
+## Operations through a runner: step 1, interfaces in UKL (2026-11-27)
+
+The user: "Twins: okay, but they need to be registered via a registry. Operations should not be invoked directly,
+there should be an operations runner which does it. Then it can take the implementation of the operation from the
+registry and set it up and run it. The UKL kernel definitions were designed to be able to create tables of operation
+interfaces. We can then start with running the twin, and switch the executor to running the UKL version later."
+
+The steps: (1) each operation's interface declared once in UKL, the registry's table read from it; (2) every twin
+registered in one registry, the runner's; (3) the runner: a caller asks it to run an operation by its interface, and
+it takes the implementation from the registry (the twin), pins the slots, writes the descriptor table and runs it;
+(4) later, the runner runs the UKL version where one is registered and checked.
+
+Step 1, built:
+
+- `<ukl/operation.h>`: `DECLARE_KERNEL2(Library, Name, rows...)`, a kernel definition's head with no body, and a byte
+  type for each kind of block a slot takes (`ukl_facts_block`, `ukl_scratch_block`, `ukl_atoms_block`,
+  `ukl_control_block`, `ukl_cache_block`, `ukl_tape_block`). A slot is a buffer row: `ROBUFFER` read, `WOBUFFER`
+  written, `RWBUFFER` read and written, and a `RWBUFFER` of a scratch block the operation's scratch. The last row is
+  the params' `ARGS` row, naming the `params!` structure. A declaration emits nothing on any backend.
+- `delta_exec/src/operations.uglykl`: the 16 operations' declarations. `consolidate`'s slot `δ runs` is
+  `delta_runs` (a row's name is an identifier).
+- `delta_exec/build.rs` reads the declarations into `op::interfaces` (a static `Interface` each: name, slots,
+  params' name), refusing a row that is not a slot's access, a type that is not a block's, a declaration whose last
+  row is not `ARGS`, or a name declared twice.
+- `Signature::of(&interfaces::NAME, ParamsLayout::of::<P>(), shape, independence, facts)`: its name and slots are the
+  interface's, and a params structure other than the one the `ARGS` row names fails at compile time.
+  `Signature::new` (slots by hand) is for tests only (`test`, `test-hooks`); the shape check refuses it in the
+  crate's sources.
+
+Checks: the 16 interfaces the build wrote are the 60 slots the hand-written signatures had, slot for slot (name,
+mode, kind; `delta_runs` the one rename); `tests::k0_pass_rows_by_hand` (Relax, 1 s), whose fixture declares every
+operation and runs `k0_pass`'s 13 slots; the shape check, now reading `k0_pass`'s cache slot from its declaration.

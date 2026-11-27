@@ -544,8 +544,17 @@ def b6(failures: list) -> None:
     k0h = (CRATE / "src/k0.rs").read_text()
     if not re.search(r"fn delta\([^)]*\bcache: &mut CacheW", l1) or "cache.write(cx)" not in l1 or "cache.read(cx)" not in l1 or "room_of(cx.reg, &self.ops" not in l1 or "type Cache = Sizes;" not in l1:
         failures.append("l1.rs: L1 keeps no cache, or reads none by room_of (Bootstrap, Figure 2: k0_pass rw L1's cache)")
-    if not re.search(r'SlotSpec \{ name: "cache", mode: Mode::ReadWrite, kind: kind::CACHE \}', k0h):
-        failures.append("k0.rs: k0_pass has no read-write slot for L1's cache")
+    ops_ukl = (CRATE / "src/operations.uglykl").read_text()
+    k0_decl = re.search(r"DECLARE_KERNEL2\(delta_exec, k0_pass,(.*?)\)\s*$", ops_ukl, re.S | re.M)
+    if not k0_decl or not re.search(r"RWBUFFER, ukl_cache_block, cache,", k0_decl.group(1)):
+        failures.append("operations.uglykl: k0_pass has no read-write slot for L1's cache")
+    # Every operation's interface is its UKL declaration (operations.uglykl, read by build.rs): a signature outside
+    # the tests is `Signature::of` an interface, never slots written by hand.
+    for src in sorted((CRATE / "src").glob("*.rs")):
+        if src.name.endswith("tests.rs") or src.name == "op.rs":
+            continue
+        if "Signature::new(" in strip_rust(src.read_text()):
+            failures.append(f"{src.name}: a signature written by hand (Signature::new): declare its interface in operations.uglykl and take Signature::of it")
     # The answerers (P§12 item 7): `answer(key, leaves) -> Answer`, a world reader's leaves into the run's layer; the
     # document set reads through all three.
     files = strip_rust((CRATE / "src/files.rs").read_text())

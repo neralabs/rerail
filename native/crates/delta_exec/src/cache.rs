@@ -15,7 +15,7 @@
 //! Dropping a cache is always correct (L5): a new one is ∅, and its operator's answers do not change.
 
 use crate::dir::{BlockId, Directory};
-use crate::op::{Across, Bound, Found, Independence, Inside, Mode, OpId, Output, Over, ParamsLayout, Phase, Registry, Signature, SlotSpec, Tiling, Unit, Version, run_cpu};
+use crate::op::{Across, Bound, Found, Independence, Inside, OpId, Output, Over, ParamsLayout, Phase, Registry, Signature, Tiling, Unit, Version, run_cpu};
 use rerail_blocks::block::kind;
 use rerail_blocks::gens::Table;
 use rerail_delta_twins::Params;
@@ -32,9 +32,8 @@ static COMMIT_PHASE: [Phase; 1] = [one("commit", Inside::Nothing, Output::InPlac
 static ORDER_PHASE: [Phase; 1] = [one("order", Inside::GroupMemory, Output::WriterState, &[Bound::Capacity(Over::Grow)])];
 
 /// `cache_open`: rw the cache: reset to ∅ unless it holds the run's before, then marked open.
-pub static CACHE_OPEN: Signature = Signature::new(
-    "cache_open",
-    &[SlotSpec { name: "cache", mode: Mode::ReadWrite, kind: kind::CACHE }],
+pub static CACHE_OPEN: Signature = Signature::of(
+    &crate::op::interfaces::CACHE_OPEN,
     ParamsLayout::of::<CacheP>(),
     &OPEN_PHASE,
     Independence::Along("one cache"),
@@ -42,9 +41,8 @@ pub static CACHE_OPEN: Signature = Signature::new(
 );
 
 /// `cache_commit`: rw the cache: the after state's digest, then the mark cleared, last.
-pub static CACHE_COMMIT: Signature = Signature::new(
-    "cache_commit",
-    &[SlotSpec { name: "cache", mode: Mode::ReadWrite, kind: kind::CACHE }],
+pub static CACHE_COMMIT: Signature = Signature::of(
+    &crate::op::interfaces::CACHE_COMMIT,
     ParamsLayout::of::<CacheP>(),
     &COMMIT_PHASE,
     Independence::Along("one cache"),
@@ -52,9 +50,8 @@ pub static CACHE_COMMIT: Signature = Signature::new(
 );
 
 /// `order`: read a layer · rw the cache.
-pub static ORDER: Signature = Signature::new(
-    "order",
-    &[SlotSpec { name: "layer", mode: Mode::Read, kind: kind::FACTS }, SlotSpec { name: "cache", mode: Mode::ReadWrite, kind: kind::CACHE }],
+pub static ORDER: Signature = Signature::of(
+    &crate::op::interfaces::ORDER,
     ParamsLayout::of::<OrderP>(),
     &ORDER_PHASE,
     Independence::Not("one order a launch, appended at the cache's cursor"),

@@ -15,7 +15,7 @@
 //! facts.
 
 use crate::dir::{BlockId, Directory};
-use crate::op::{Across, Bound, Found, Over, Independence, Inside, Mode, OpId, Output, ParamsLayout, Phase, Registry, Signature, SlotSpec, Tiling, Unit, Version, run_cpu};
+use crate::op::{Across, Bound, Found, Over, Independence, Inside, OpId, Output, ParamsLayout, Phase, Registry, Signature, Tiling, Unit, Version, run_cpu};
 use rerail_blocks::block::{Block, kind};
 use rerail_blocks::gens::{BODY_AT, Table};
 use rerail_blocks::maps::InBlock;
@@ -38,14 +38,8 @@ const FACTS: usize = 3;
 /// A path an item: its digest step, and its read placed in a room of the slab (host work, the observer's one lock).
 static LOAD_PHASE: [Phase; 1] = [Phase { name: "load", found: Found::Fixed, unit: Unit::Partition, inside: Inside::Nothing, across: Across::Nothing, output: Output::ByIndex, bounds: &[] }];
 
-pub static ANSWER_LOAD: Signature = Signature::new(
-    "answer_load",
-    &[
-        SlotSpec { name: "plan", mode: Mode::Read, kind: kind::CONTROL },
-        SlotSpec { name: "tapes", mode: Mode::ReadWrite, kind: kind::TAPE },
-        SlotSpec { name: "control", mode: Mode::ReadWrite, kind: kind::CONTROL },
-        SlotSpec { name: "facts", mode: Mode::Write, kind: kind::FACTS },
-    ],
+pub static ANSWER_LOAD: Signature = Signature::of(
+    &crate::op::interfaces::ANSWER_LOAD,
     ParamsLayout::of::<NoParams>(),
     &LOAD_PHASE,
     Independence::Not("one observer: its answers under one lock"),
@@ -259,9 +253,8 @@ static PARSE_PHASE: [Phase; 1] = [Phase {
 /// nest far less).
 pub const MAX_DEPTH: u32 = 1 << 12;
 
-pub static PARSE: Signature = Signature::new(
-    "parse",
-    &[SlotSpec { name: "tapes", mode: Mode::ReadWrite, kind: kind::TAPE }, SlotSpec { name: "control", mode: Mode::ReadWrite, kind: kind::CONTROL }],
+pub static PARSE: Signature = Signature::of(
+    &crate::op::interfaces::PARSE,
     ParamsLayout::of::<NoParams>(),
     &PARSE_PHASE,
     Independence::Along("documents: each claims its own room in the slab"),

@@ -8,7 +8,7 @@ use crate::dir::{BlockId, Directory};
 use crate::drop::Parts;
 use crate::files::Placed;
 use crate::kform::{RELATIONS, Refused};
-use crate::op::{Across, Bound, Found, Over, Independence, Inside, Mode, OpId, Output, ParamsLayout, Phase, Registry, Signature, SlotSpec, Tiling, Unit, Version, run_cpu};
+use crate::op::{Across, Bound, Found, Over, Independence, Inside, OpId, Output, ParamsLayout, Phase, Registry, Signature, Tiling, Unit, Version, run_cpu};
 use rerail_blocks::block::kind;
 use rerail_blocks::gens::Table;
 use rerail_blocks::layer::Runs;
@@ -32,29 +32,10 @@ static K0_PHASES: [Phase; 4] = [
     Phase { name: "keep", found: Found::Fixed, unit: Unit::Threadgroup, inside: Inside::Nothing, across: Across::Nothing, output: Output::InPlace, bounds: &[Bound::Capacity(Over::Grow)] },
 ];
 
-const fn runs(name: &'static str) -> SlotSpec {
-    SlotSpec { name, mode: Mode::Write, kind: kind::SCRATCH }
-}
-
 /// `k0_pass`: read the documents (a docs block, their tape and symbols blocks by reference) and the atoms · rw
 /// control · read the documents gone (a parts block) · write each K-form relation's δ runs · rw L1's cache (Bootstrap, Figure 2).
-pub static K0_PASS: Signature = Signature::new(
-    "k0_pass",
-    &[
-        SlotSpec { name: "docs", mode: Mode::Read, kind: kind::CONTROL },
-        SlotSpec { name: "atoms", mode: Mode::Read, kind: kind::ATOMS },
-        SlotSpec { name: "control", mode: Mode::ReadWrite, kind: kind::CONTROL },
-        SlotSpec { name: "gone", mode: Mode::Read, kind: kind::CONTROL },
-        runs("k_rule"),
-        runs("k_step"),
-        runs("k_arg"),
-        runs("k_var"),
-        runs("k_str"),
-        runs("k_num"),
-        runs("k_wild"),
-        runs("k_order"),
-        SlotSpec { name: "cache", mode: Mode::ReadWrite, kind: kind::CACHE },
-    ],
+pub static K0_PASS: Signature = Signature::of(
+    &crate::op::interfaces::K0_PASS,
     ParamsLayout::of::<K0P>(),
     &K0_PHASES,
     Independence::Along("statements: a statement's rows are its own"),
@@ -65,14 +46,8 @@ static DOCS_OF_PHASE: [Phase; 1] = [ph("docs_of", Across::Nothing, Output::BySca
 
 /// `docs_of`: read the selection's rows (a runs block) and the blobs' rows (their head; the layers below by reference)
 /// · write the docs block · write the blocks it names (a parts block).
-pub static DOCS_OF: Signature = Signature::new(
-    "docs_of",
-    &[
-        SlotSpec { name: "rows", mode: Mode::Read, kind: kind::SCRATCH },
-        SlotSpec { name: "blobs", mode: Mode::Read, kind: kind::FACTS },
-        SlotSpec { name: "docs", mode: Mode::Write, kind: kind::CONTROL },
-        SlotSpec { name: "blocks", mode: Mode::Write, kind: kind::CONTROL },
-    ],
+pub static DOCS_OF: Signature = Signature::of(
+    &crate::op::interfaces::DOCS_OF,
     ParamsLayout::of::<DocsOfP>(),
     &DOCS_OF_PHASE,
     Independence::Along("documents: a row's document is its own"),
@@ -94,14 +69,8 @@ static ROOM_OF_PHASE: [Phase; 1] = [ph("room_of", Across::Nothing, Output::InPla
 
 /// `room_of`: read L1's cache · read the documents gone (a parts block) · read the documents read (a docs block) ·
 /// write the room each K-form relation's runs need (control).
-pub static ROOM_OF: Signature = Signature::new(
-    "room_of",
-    &[
-        SlotSpec { name: "cache", mode: Mode::Read, kind: kind::CACHE },
-        SlotSpec { name: "gone", mode: Mode::Read, kind: kind::CONTROL },
-        SlotSpec { name: "docs", mode: Mode::Read, kind: kind::CONTROL },
-        SlotSpec { name: "room", mode: Mode::Write, kind: kind::CONTROL },
-    ],
+pub static ROOM_OF: Signature = Signature::of(
+    &crate::op::interfaces::ROOM_OF,
     ParamsLayout::of::<rerail_delta_twins::NoParams>(),
     &ROOM_OF_PHASE,
     Independence::Not("a sum over every document"),
@@ -125,14 +94,8 @@ static NAMED_PHASE: [Phase; 1] = [ph("named_blocks", Across::Nothing, Output::By
 
 /// `named_blocks`: read the document set and the blobs' rows (their heads; the layers below by reference) · write the
 /// blocks the set's documents' blobs lie in · write the documents whose source or tape no blobs' row names.
-pub static NAMED_BLOCKS: Signature = Signature::new(
-    "named_blocks",
-    &[
-        SlotSpec { name: "set", mode: Mode::Read, kind: kind::FACTS },
-        SlotSpec { name: "blobs", mode: Mode::Read, kind: kind::FACTS },
-        SlotSpec { name: "blocks", mode: Mode::Write, kind: kind::CONTROL },
-        SlotSpec { name: "missing", mode: Mode::Write, kind: kind::CONTROL },
-    ],
+pub static NAMED_BLOCKS: Signature = Signature::of(
+    &crate::op::interfaces::NAMED_BLOCKS,
     ParamsLayout::of::<NamedP>(),
     &NAMED_PHASE,
     Independence::Along("documents: a document's blobs are its own"),

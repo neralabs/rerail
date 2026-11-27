@@ -4,8 +4,7 @@
 //! a second runs block. L1's selection is one of them: which documents it retracts, which it reads, and its asks.
 
 use crate::dir::{BlockId, Directory};
-use crate::op::{Across, Found, Independence, Inside, Mode, OpId, Output, ParamsLayout, Phase, Registry, Signature, SlotSpec, Tiling, Unit, Version, run_cpu};
-use rerail_blocks::block::kind;
+use crate::op::{Across, Found, Independence, Inside, OpId, Output, ParamsLayout, Phase, Registry, Signature, Tiling, Unit, Version, run_cpu};
 use rerail_blocks::gens::Table;
 use rerail_blocks::layer::Runs;
 use rerail_delta_twins::Params;
@@ -18,15 +17,8 @@ static CHANGE_PHASE: [Phase; 1] = [Phase { name: "change", found: Found::Fixed, 
 
 /// `semi_change`: read facts (`A`'s head, `B`'s; the layers below each by reference) · write δ runs (the rows) · write
 /// control (the parts) · write δ runs (the keys).
-pub static SEMI_CHANGE: Signature = Signature::new(
-    "semi_change",
-    &[
-        SlotSpec { name: "a", mode: Mode::Read, kind: kind::FACTS },
-        SlotSpec { name: "b", mode: Mode::Read, kind: kind::FACTS },
-        SlotSpec { name: "rows", mode: Mode::Write, kind: kind::SCRATCH },
-        SlotSpec { name: "parts", mode: Mode::Write, kind: kind::CONTROL },
-        SlotSpec { name: "keys", mode: Mode::Write, kind: kind::SCRATCH },
-    ],
+pub static SEMI_CHANGE: Signature = Signature::of(
+    &crate::op::interfaces::SEMI_CHANGE,
     ParamsLayout::of::<SemiP>(),
     &SEMI_PHASE,
     Independence::Along("keys: a key's rows are its own"),
@@ -34,13 +26,8 @@ pub static SEMI_CHANGE: Signature = Signature::new(
 );
 
 /// `change_rows`: read facts (`A`'s head; the layers below by reference) · write δ runs · write control (the parts).
-pub static CHANGE_ROWS: Signature = Signature::new(
-    "change_rows",
-    &[
-        SlotSpec { name: "a", mode: Mode::Read, kind: kind::FACTS },
-        SlotSpec { name: "rows", mode: Mode::Write, kind: kind::SCRATCH },
-        SlotSpec { name: "parts", mode: Mode::Write, kind: kind::CONTROL },
-    ],
+pub static CHANGE_ROWS: Signature = Signature::of(
+    &crate::op::interfaces::CHANGE_ROWS,
     ParamsLayout::of::<SemiP>(),
     &CHANGE_PHASE,
     Independence::Along("keys: a key's rows are its own"),
@@ -51,13 +38,8 @@ static REPLACE_PHASE: [Phase; 1] = [Phase { name: "replace", found: Found::Fixed
 
 /// `replace_rows`: read facts (the state's head; the layers below by reference) · read the rows given (a runs block)
 /// · write δ runs (the state's change).
-pub static REPLACE_ROWS: Signature = Signature::new(
-    "replace_rows",
-    &[
-        SlotSpec { name: "state", mode: Mode::Read, kind: kind::FACTS },
-        SlotSpec { name: "given", mode: Mode::Read, kind: kind::SCRATCH },
-        SlotSpec { name: "runs", mode: Mode::Write, kind: kind::SCRATCH },
-    ],
+pub static REPLACE_ROWS: Signature = Signature::of(
+    &crate::op::interfaces::REPLACE_ROWS,
     ParamsLayout::of::<ReplaceP>(),
     &REPLACE_PHASE,
     Independence::Along("keys: a key's rows are its own"),

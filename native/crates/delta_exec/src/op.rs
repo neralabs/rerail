@@ -286,8 +286,41 @@ impl ParamsLayout {
 /// wrote the same facts, whatever their order or ids. Given the slot's index, its bytes and the launch's table.
 pub type FactsFn = fn(&Table<'_>, usize, &[u8]) -> Vec<Vec<i64>>;
 
-/// What an operation is: its slots, params, shape, the axis its items are independent along, and how its written
-/// slots' facts are read. Declared once, as a constant; `Registry::declare` takes it.
+/// An operation's interface, as UKL declares it (`operations.uglykl`, `<ukl/operation.h>`'s `DECLARE_KERNEL2`): its
+/// name, its slots (each a buffer row: its access the slot's mode, its type its block's kind) and its params'
+/// structure's name. Read into `interfaces` by the build; every version of the operation runs against it.
+pub struct Interface {
+    pub name: &'static str,
+    pub slots: &'static [SlotSpec],
+    pub params: &'static str,
+}
+
+/// The table of interfaces: one an operation, read from `operations.uglykl` (`build.rs`).
+pub mod interfaces {
+    use super::{Interface, Mode, SlotSpec};
+    use rerail_blocks::block::kind;
+    include!(concat!(env!("OUT_DIR"), "/interfaces.rs"));
+}
+
+/// Whether two names are the same, in a constant.
+const fn same_name(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// What an operation is: its interface (its name, slots and params), shape, the axis its items are independent along,
+/// and how its written slots' facts are read. Declared once, as a constant, from its UKL interface
+/// (`Signature::of`); `Registry::declare` takes it.
 pub struct Signature {
     pub name: &'static str,
     pub slots: &'static [SlotSpec],
@@ -298,8 +331,27 @@ pub struct Signature {
 }
 
 impl Signature {
-    /// A signature; more than `MAX_SLOTS` slots fails where it is declared (at compile time for a constant).
+    /// The signature of the operation `interface` declares: its params `params`, whose structure must be the one its
+    /// `ARGS` row names, and more than `MAX_SLOTS` slots fail where it is declared (at compile time for a constant).
+    pub const fn of(interface: &'static Interface, params: ParamsLayout, shape: &'static [Phase], independent: Independence, facts: FactsFn) -> Signature {
+        assert!(same_name(interface.params, params.name), "an operation's params are not the structure its UKL interface names");
+        Signature::parts(interface.name, interface.slots, params, shape, independent, facts)
+    }
+
+    /// A signature not declared in UKL: a test's own operation, never the engine's.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub const fn new(
+        name: &'static str,
+        slots: &'static [SlotSpec],
+        params: ParamsLayout,
+        shape: &'static [Phase],
+        independent: Independence,
+        facts: FactsFn,
+    ) -> Signature {
+        Signature::parts(name, slots, params, shape, independent, facts)
+    }
+
+    const fn parts(
         name: &'static str,
         slots: &'static [SlotSpec],
         params: ParamsLayout,

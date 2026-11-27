@@ -4,7 +4,7 @@
 
 use crate::dir::Directory;
 use crate::files::{BlobId, BlobRows, Placed};
-use crate::op::{Across, Found, Independence, Inside, Mode, OpId, Output, ParamsLayout, Phase, Registry, Signature, SlotSpec, Tiling, Unit, Version, run_cpu};
+use crate::op::{Across, Found, Independence, Inside, OpId, Output, ParamsLayout, Phase, Registry, Signature, Tiling, Unit, Version, run_cpu};
 use crate::sym::Atoms;
 use rerail_blocks::atoms::{count_in, name_in};
 use rerail_blocks::block::kind;
@@ -22,14 +22,8 @@ static INTERN_PHASE: [Phase; 2] = [
 
 /// `intern`: read the document's source and tape (their blocks, which may be one) · rw the atoms · rw the document's
 /// symbols block.
-pub static INTERN: Signature = Signature::new(
-    "intern",
-    &[
-        SlotSpec { name: "source", mode: Mode::Read, kind: kind::TAPE },
-        SlotSpec { name: "tape", mode: Mode::Read, kind: kind::TAPE },
-        SlotSpec { name: "atoms", mode: Mode::ReadWrite, kind: kind::ATOMS },
-        SlotSpec { name: "syms", mode: Mode::ReadWrite, kind: kind::FACTS },
-    ],
+pub static INTERN: Signature = Signature::of(
+    &crate::op::interfaces::INTERN,
     ParamsLayout::of::<InternP>(),
     &INTERN_PHASE,
     Independence::Not("one writer of the atoms"),
