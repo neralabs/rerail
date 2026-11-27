@@ -1,0 +1,1 @@
+The dashboard and the status line read a checkout replaced at its path, by another clone's worktree or a new clone, as the new one at once, not as the removed checkout's repository until a session started there or the daemon restarted. `rerail status` in a new clone at a removed clone's path no longer reads that clone's start state.
