@@ -1310,7 +1310,7 @@ export function rerailFeaturesCoreFailure(stated: string | undefined, described:
   const uses = (rule: RerailDescription): boolean => rule.options !== null || rule.violations.some(violation => violation.suppress.length > 0 || violation.fixes.length > 0);
   const using = [...described].filter(([, rule]) => uses(rule)).map(([id]) => id);
   if (using.length === 0 || (stated !== undefined && semver.gte(stated, RERAIL_RULE_FEATURES_SINCE))) return undefined;
-  return `package.json: rerail.core is ${stated ?? "not set"}, and Rerail runs the options, fixes and linters' comments of ${using.join(", ")} from ${RERAIL_RULE_FEATURES_SINCE}; set rerail.core to ${RERAIL_RULE_FEATURES_SINCE} or later`;
+  return `package.json: rerail.core is ${stated ?? "not set to a release version"}, and Rerail runs the options, fixes and linters' comments of ${using.join(", ")} from ${RERAIL_RULE_FEATURES_SINCE}; set rerail.core to ${RERAIL_RULE_FEATURES_SINCE} or later`;
 }
 
 /** package.json's `rerail`, which core never reads: the core the pack's `.rerail` rules need, a release version. */

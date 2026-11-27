@@ -802,7 +802,7 @@ describe("validatePack", () => {
         editRule(ASSERT, text => text.replace('runs with -O."\n', 'runs with -O."\n    suppress nosec "B101"\n')),
         {
           proof: ["rr-sample-assert: a violation sets suppress, and the rule ports no tool: give it a port entry in conformance.json, or drop the suppress lines"],
-          package: ["package.json: rerail.core is not set, and Rerail runs the options, fixes and linters' comments of rr-sample-assert from 0.2.3; set rerail.core to 0.2.3 or later"],
+          package: ["package.json: rerail.core is not set to a release version, and Rerail runs the options, fixes and linters' comments of rr-sample-assert from 0.2.3; set rerail.core to 0.2.3 or later"],
         },
       ],
       [
