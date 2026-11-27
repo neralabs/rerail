@@ -10,7 +10,7 @@ use rerail_blocks::gens::Table;
 use rerail_blocks::layer::Runs;
 use rerail_delta_twins::Params;
 use rerail_delta_twins::drop::parts;
-use rerail_delta_twins::semi::{self as twin, NONE, SemiP};
+use rerail_delta_twins::semi::{self as twin, NONE, ReplaceP, SemiP};
 
 /// One phase, one item: walk, count, claim, write (an emit with one writer).
 static SEMI_PHASE: [Phase; 1] = [Phase { name: "semi", found: Found::Fixed, unit: Unit::Threadgroup, inside: Inside::Nothing, across: Across::Nothing, output: Output::ByScan, bounds: &[] }];
@@ -47,6 +47,27 @@ pub static CHANGE_ROWS: Signature = Signature::new(
     change_facts,
 );
 
+static REPLACE_PHASE: [Phase; 1] = [Phase { name: "replace", found: Found::Fixed, unit: Unit::Threadgroup, inside: Inside::Nothing, across: Across::Nothing, output: Output::ByScan, bounds: &[] }];
+
+/// `replace_rows`: read facts (the state's head; the layers below by reference) · read the rows given (a runs block)
+/// · write δ runs (the state's change).
+pub static REPLACE_ROWS: Signature = Signature::new(
+    "replace_rows",
+    &[
+        SlotSpec { name: "state", mode: Mode::Read, kind: kind::FACTS },
+        SlotSpec { name: "given", mode: Mode::Read, kind: kind::SCRATCH },
+        SlotSpec { name: "runs", mode: Mode::Write, kind: kind::SCRATCH },
+    ],
+    ParamsLayout::of::<ReplaceP>(),
+    &REPLACE_PHASE,
+    Independence::Along("keys: a key's rows are its own"),
+    replace_facts,
+);
+
+pub fn replace_facts(_: &Table<'_>, _: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
+    runs_facts(bytes)
+}
+
 /// A written runs slot's facts by meaning: its `(row, diff)`s, sorted.
 fn runs_facts(bytes: &[u8]) -> Vec<Vec<i64>> {
     let r = Runs::new(bytes);
@@ -73,6 +94,7 @@ pub fn change_facts(_: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
 pub struct SemiOps {
     pub semi: OpId,
     pub change: OpId,
+    pub replace: OpId,
 }
 
 impl SemiOps {
@@ -81,7 +103,9 @@ impl SemiOps {
         reg.register_reference(Version::twin(semi, "semi_change twin", twin::SEMI_CHANGE, &SEMI_PHASE))?;
         let change = reg.declare(&CHANGE_ROWS)?;
         reg.register_reference(Version::twin(change, "change_rows twin", twin::CHANGE_ROWS, &CHANGE_PHASE))?;
-        Ok(SemiOps { semi, change })
+        let replace = reg.declare(&REPLACE_ROWS)?;
+        reg.register_reference(Version::twin(replace, "replace_rows twin", twin::REPLACE_ROWS, &REPLACE_PHASE))?;
+        Ok(SemiOps { semi, change, replace })
     }
 }
 
@@ -148,6 +172,19 @@ pub fn select(reg: &Registry, ops: &SemiOps, dir: &mut Directory, a: &Side, b: O
         (Some(_), Some(_)) if !how.neg => Ok(()),
         (Some(ah), _) => run_cpu(reg, dir, ops.change, &[ah, rows, parts], &params(a, None, how), Tiling::WHOLE),
     }
+}
+
+/// The change of a trace's state at `head` (`arity` columns, its first `key` the key) by the rows of the runs block
+/// `given` (each key once): a given row the state holds as it is changes nothing; else the state's rows of its key go
+/// and it comes. Written into the open runs block `runs` by one launch; the block to commit, which is `given` itself
+/// when the state is empty (every given row comes, and nothing is read).
+#[allow(clippy::too_many_arguments)]
+pub fn replace(reg: &Registry, ops: &SemiOps, dir: &mut Directory, head: Option<BlockId>, arity: usize, key: usize, given: BlockId, runs: BlockId) -> Result<BlockId, String> {
+    let Some(h) = head else { return Ok(given) };
+    let mut p = [0u8; ReplaceP::SIZE];
+    ReplaceP { head: u64::from(h.0), arity: arity as u32, key: key as u32 }.write(&mut p);
+    run_cpu(reg, dir, ops.replace, &[h, given, runs], &p, Tiling::WHOLE)?;
+    Ok(runs)
 }
 
 #[cfg(test)]

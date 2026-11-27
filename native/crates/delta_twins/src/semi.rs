@@ -26,7 +26,7 @@ use crate::drop::{put_part, seal_parts};
 use crate::{Ctx, Tile, TwinPhase};
 use rerail_blocks::bistate::{Bistate, ColumnIndex, Read, RowId};
 use rerail_blocks::gens::Table;
-use rerail_blocks::layer::{runs_claim_in, runs_set_in};
+use rerail_blocks::layer::{Runs, runs_claim_in, runs_set_in};
 use rerail_blocks::relation::View;
 
 crate::params! {
@@ -210,3 +210,68 @@ pub const SEMI_CHANGE: &[TwinPhase] = &[TwinPhase { name: "semi", items: |_| 1, 
 
 /// `change_rows`: one item.
 pub const CHANGE_ROWS: &[TwinPhase] = &[TwinPhase { name: "change", items: |_| 1, run: change_rows, again: None }];
+
+crate::params! {
+    /// `replace_rows`: the state's head (`NONE`: empty), its arity, and how many leading columns are the key.
+    pub struct ReplaceP {
+        pub head: u64,
+        pub arity: u32,
+        pub key: u32,
+    }
+}
+
+/// `replace_rows`' slots: the state's head (read; the layers below by reference), the rows it is given (read: a runs
+/// block, its +1 rows, each key once) and its change (write: a δ runs block).
+pub const R_HEAD: usize = 0;
+pub const R_GIVEN: usize = 1;
+pub const R_RUNS: usize = 2;
+
+/// Each change of the state by the rows given, by key: a given row the state holds
+/// as it is changes nothing; else the state's rows of its key go (−1) and it comes (+1).
+fn replaced<'t>(s: Option<&View<'t>>, given: &Runs<'_>, arity: usize, key: usize, f: &mut dyn FnMut(i32, Option<(&View<'t>, RowId)>, usize)) {
+    let cols: [ColumnIndex; MAX_COLS] = core::array::from_fn(|k| ColumnIndex::new(k as u16));
+    let mut k = [0i64; MAX_COLS];
+    for i in (0..given.len()).filter(|&i| given.diff(i) > 0) {
+        for (c, v) in k[..key].iter_mut().enumerate() {
+            *v = given.get(i, c);
+        }
+        let same = |id: RowId| (0..arity).all(|c| Read::get(s.expect("a state"), id, cols[c]) == given.get(i, c));
+        let held = s.is_some_and(|s| Read::matching(s, &cols[..key], &k[..key]).any(same));
+        if held {
+            continue;
+        }
+        if let Some(s) = s {
+            for id in Read::matching(s, &cols[..key], &k[..key]) {
+                f(-1, Some((s, id)), i);
+            }
+        }
+        f(1, None, i);
+    }
+}
+
+/// `replace_rows`' one item: counted, claimed at once, then written in order.
+fn replace_rows(c: &mut Ctx<'_, '_, '_>, _: Tile) {
+    let p = <ReplaceP as crate::Params>::read(c.params);
+    let (arity, key) = (p.arity as usize, p.key as usize);
+    assert!(arity <= MAX_COLS && key <= arity, "a row of at most {MAX_COLS} columns, its key among them");
+    let s = state(c.table, p.head, arity);
+    let ([given], [runs]) = c.views([R_GIVEN], [R_RUNS]);
+    let given = Runs::new(given);
+    let mut n = 0u32;
+    replaced(s.as_ref(), &given, arity, key, &mut |_, _, _| n += 1);
+    let Some(mut at) = runs_claim_in(runs, n) else { return };
+    let mut row = [0i64; MAX_COLS];
+    replaced(s.as_ref(), &given, arity, key, &mut |sign, old, i| {
+        for (k, v) in row[..arity].iter_mut().enumerate() {
+            *v = match old {
+                Some((s, id)) => Read::get(s, id, ColumnIndex::new(k as u16)),
+                None => given.get(i, k),
+            };
+        }
+        runs_set_in(runs, at, &row[..arity], sign);
+        at += 1;
+    });
+}
+
+/// `replace_rows`: one item.
+pub const REPLACE_ROWS: &[TwinPhase] = &[TwinPhase { name: "replace", items: |_| 1, run: replace_rows, again: None }];

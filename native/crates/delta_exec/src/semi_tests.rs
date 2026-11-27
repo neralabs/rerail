@@ -148,3 +148,35 @@ fn semi_change_is_the_change_forms_semi_join_over_every_pair_of_states() {
     }
     assert_eq!(checked, 100);
 }
+
+/// `replace_rows` by key: a given row the state holds as it is changes nothing; a changed one's old row goes and it
+/// comes; a new key's row comes; over an empty state, the given block is the change itself.
+#[test]
+fn replace_rows_changes_each_key_whose_row_differs() {
+    let mut reg = Registry::default();
+    let (tops, ops) = (TraceOps::declare(&mut reg).unwrap(), SemiOps::declare(&mut reg).unwrap());
+    let mut dir = Directory::default();
+    let mut t = Trace::new(&Shape::run(vec![ColType::I32, ColType::I64, ColType::I64], vec![0, 1, 2], Some(0))).unwrap().with_roll_up(RollUp::Never);
+    let given = |dir: &mut Directory, t: &Trace, rows: &[[i64; 3]]| {
+        let g = t.open(dir, rows.len());
+        let b = dir.block(g).unwrap();
+        let pin = rerail_blocks::region::pin_block(&b, "t", true).unwrap();
+        for r in rows {
+            rerail_blocks::layer::RunsW::new(&pin).push(r, 1).unwrap();
+        }
+        g
+    };
+    let g = given(&mut dir, &t, &[[1, 10, 100], [2, 20, 200]]);
+    let opened = t.open(&mut dir, 4);
+    assert_eq!(replace(&reg, &ops, &mut dir, None, 3, 1, g, opened).unwrap(), g);
+    dir.release(opened);
+    t.commit(&reg, &tops, &mut dir, g, crate::op::Tiling::WHOLE).unwrap();
+    let g = given(&mut dir, &t, &[[1, 10, 100], [2, 21, 200], [3, 30, 300]]);
+    let runs = t.open(&mut dir, 8);
+    assert_eq!(replace(&reg, &ops, &mut dir, t.head(), 3, 1, g, runs).unwrap(), runs);
+    dir.release(g);
+    let none = Parts::open(&mut dir, 0).unwrap();
+    let got = written(&dir, runs, none, None).0;
+    let want: BTreeSet<(Vec<i64>, i32)> = [(vec![2, 20, 200], -1), (vec![2, 21, 200], 1), (vec![3, 30, 300], 1)].into_iter().collect();
+    assert_eq!(got, want);
+}

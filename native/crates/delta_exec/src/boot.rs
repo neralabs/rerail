@@ -62,6 +62,7 @@ pub struct DocSet {
     pub world: World,
     pub iops: InternOps,
     pub drops: DropOps,
+    pub semis: SemiOps,
     /// A row a document (`l1::tape_shape`): no roll-up while a run reads it (its before is a layer in its chain), then
     /// rolled up at the run's end (`Trace::roll_up_run`).
     pub tape: Trace,
@@ -72,9 +73,9 @@ pub struct DocSet {
 impl DocSet {
     /// The document set of `world`, at `head` (a kept run's; `None`: empty), placed where the directory keeps what
     /// lasts; `kept` the pins block that run left (let go when the next run keeps its own).
-    pub fn new(world: World, iops: InternOps, drops: DropOps, dir: &Directory, head: Option<BlockId>, kept: Option<BlockId>) -> Result<DocSet, String> {
+    pub fn new(world: World, iops: InternOps, drops: DropOps, semis: SemiOps, dir: &Directory, head: Option<BlockId>, kept: Option<BlockId>) -> Result<DocSet, String> {
         let tape = Trace::new(&tape_shape())?.with_roll_up(RollUp::Never).resumed(dir.lasting(), head);
-        Ok(DocSet { world, iops, drops, tape, kept })
+        Ok(DocSet { world, iops, drops, semis, tape, kept })
     }
 
     /// The row of the document at `path`, by its path's symbol (the set's index on its path), when it has one.
@@ -186,25 +187,28 @@ impl DocSet {
         let syms = blob((Intern { at: reach!(), iops: &self.iops, atoms, named: &named }).answer(&key, leaves)?, "intern")?;
         self.world.place(&bench.reg, &bench.traces, &mut bench.dir, d, Some(doc.after.source))?;
         let p = atoms.find(&bench.dir, path).ok_or("the path, interned")?;
-        let runs = self.tape.open(&mut bench.dir, 4);
+        // The answer, written once where it is made: the document's row of the set. Its change of the set (its old
+        // row gone where it differs, its new row come) is `replace_rows`'.
+        let given = self.tape.open(&mut bench.dir, 1);
+        let opened = self.tape.open(&mut bench.dir, 2);
+        let release = |dir: &mut Directory| [given, opened].into_iter().for_each(|x| dir.release(x));
         let written = (|| {
             {
-                let b = bench.dir.block(runs).expect("just made");
-                let pin = rerail_blocks::region::pin_block(&b, "the document set", true)?;
-                rerail_blocks::layer::RunsW::new(&pin).push(&tape_row(d, p, rerail_rr_syntax::grammar()[1], &doc.after, &syms), 1).ok_or("the document set's runs, full")?;
+                let b = bench.dir.block(given).expect("just made");
+                let pin = rerail_blocks::region::pin_block(&b, "the document set's answer", true)?;
+                rerail_blocks::layer::RunsW::new(&pin).push(&tape_row(d, p, rerail_rr_syntax::grammar()[1], &doc.after, &syms), 1).ok_or("the document set's answer, full")?;
             }
-            if let Some(h) = self.tape.head() {
-                let parts = Parts::write(&mut bench.dir, 1, |put| put(d))?;
-                let n = drop_parts(&bench.reg, &self.drops, &mut bench.dir, h, &parts, -1, runs);
-                parts.release(&mut bench.dir);
-                n?;
-            }
-            Ok::<(), String>(())
+            semi::replace(&bench.reg, &self.semis, &mut bench.dir, self.tape.head(), TAPE_ARITY, 1, given, opened)
         })();
-        if let Err(e) = written {
-            bench.dir.release(runs);
-            return Err(e);
-        }
+        let runs = match written {
+            Ok(r) => r,
+            Err(e) => {
+                release(&mut bench.dir);
+                return Err(e);
+            }
+        };
+        // The one not committed let go: the opened runs, when the set was empty and the answer is its change.
+        bench.dir.release(if runs == given { opened } else { given });
         self.tape.commit(&bench.reg, &bench.traces, &mut bench.dir, runs, Tiling::WHOLE)?;
         Ok(doc)
     }
