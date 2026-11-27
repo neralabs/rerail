@@ -37,11 +37,16 @@ pub struct Edit {
     holes: Vec<(String, Cell)>,
 }
 
-/// The fix edits of a run, by the finding each fixes: its policy, violation and `at` (as a finding's JSON holds it),
-/// with the violation's other columns by name, which tell findings at one place apart.
+/// A finding's policy, violation and `at`, as its JSON holds them.
+type FindingKey = (String, String, String);
+
+/// An edit, with the violation's other columns by name, which tell findings at one place apart.
+type ColumnsEdit = (Vec<(String, Value)>, Edit);
+
+/// The fix edits of a run, by the finding each fixes.
 #[derive(Default)]
 pub struct Edits {
-    by_at: HashMap<(String, String, String), Vec<(Vec<(String, Value)>, Edit)>>,
+    by_at: HashMap<FindingKey, Vec<ColumnsEdit>>,
 }
 
 /// A row's value as a finding's JSON holds it (`tools::diagnostic`): a text, a number, a node's value, or null.

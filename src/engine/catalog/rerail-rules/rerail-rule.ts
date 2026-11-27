@@ -40,8 +40,8 @@ export interface RerailViolation {
 }
 
 /**
- * The JSON rule's `violation.suppress` key each tool a `.rerail` `suppress` line names stands for, as the engine
- * applies them (`rr::SUPPRESS_TOOLS`): Ruff's and flake8's comments are `# noqa`. A port's own linters are read by these.
+ * The JSON rule's `violation.suppress` key each tool a `.rerail` `suppress` line may name stands for: Ruff's and
+ * flake8's comments are `# noqa`. Set-up reads a port's linters by these, and check 2 its tool's comments.
  */
 export const RERAIL_SUPPRESS_KEYS: Readonly<Record<string, "eslint" | "noqa" | "nosec" | "oxlint" | "biome" | "phpstan" | "psalm" | "phpcs" | "clippy" | "sqlfluff">> = {
   ruff: "noqa", flake8: "noqa", noqa: "noqa", nosec: "nosec", eslint: "eslint", oxlint: "oxlint", biome: "biome",
