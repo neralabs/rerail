@@ -4852,6 +4852,8 @@ fn counted(r: &Run<'_>, plan: &Plan, j: &JoinRule, rep: &mut Report) -> Vec<(usi
         let c = &j.counts[0][0];
         c.set(c.get() + 1);
     }
+    // Each step's rows out, as the stages counted them.
+    let mut outs: Vec<Option<u64>> = vec![None; j.counts.len()];
     for (k, s) in plan.stages.iter().enumerate() {
         let (i, o) = r.io[k];
         let n_in = get(i);
@@ -4868,12 +4870,7 @@ fn counted(r: &Run<'_>, plan: &Plan, j: &JoinRule, rep: &mut Report) -> Vec<(usi
             _ => rerail_blocks::vector![n_out],
         };
         for (m, v) in vals.into_iter().enumerate() {
-            let at = s.first + m;
-            let c = &j.counts[at][1];
-            c.set(c.get() + v);
-            if let Some(next) = j.counts.get(at + 1) {
-                next[0].set(next[0].get() + v);
-            }
+            outs[s.first + m] = Some(v);
         }
         // The growth seen, for the next runs' guesses.
         if i != o && r.caps[i] > 0 {
@@ -4882,7 +4879,46 @@ fn counted(r: &Run<'_>, plan: &Plan, j: &JoinRule, rep: &mut Report) -> Vec<(usi
             grew.push((k, g));
         }
     }
+    as_ranged(j, &mut outs);
+    for (at, v) in outs.into_iter().enumerate() {
+        let Some(v) = v else { continue };
+        let c = &j.counts[at][1];
+        c.set(c.get() + v);
+        if let Some(next) = j.counts.get(at + 1) {
+            next[0].set(next[0].get() + v);
+        }
+    }
     grew
+}
+
+/// Each step's rows out (`outs`) as the CPU's walk counts them where it reads an atom as a range (`JoinRule::ranges`,
+/// `Found::within`): the comparisons right after the atom that bound its range's column (`Lt`, or a `DocOf` for a
+/// document's nodes) narrow the atom's candidates there, so the atom yields the rows they pass and they pass every
+/// row. The device reads the atom whole and filters after it; the rows are the same, the counts the CPU's.
+fn as_ranged(j: &JoinRule, outs: &mut [Option<u64>]) {
+    for (i, r) in j.ranges.iter().enumerate() {
+        let (Some(r), Some(Step::Atom { binds, .. })) = (r, j.steps.get(i)) else { continue };
+        let on_col = |k: &Key| matches!(*k, Key::Slot(x) if binds.iter().any(|&(c, s)| c == r.col && s == x));
+        let mut last = i;
+        while let Some(st) = j.steps.get(last + 1) {
+            let bounds = match st {
+                Step::Lt { a, b, .. } => !r.doc && (on_col(a) || on_col(b)),
+                Step::DocOf { n, bind: false, .. } => r.doc && on_col(n),
+                _ => false,
+            };
+            if !bounds {
+                break;
+            }
+            last += 1;
+        }
+        if let (true, Some(v)) = (last > i, outs.get(last).copied().flatten()) {
+            for out in &mut outs[i..last] {
+                if out.is_some() {
+                    *out = Some(v);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
