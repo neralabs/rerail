@@ -425,6 +425,7 @@ pub fn check(before: Option<Vec<Vec<i64>>>, after: Vec<Vec<i64>>, change: Vec<(S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::relation::RelationW;
     use crate::block::{Block, kind};
     use crate::relation::{self, Relation, RelW, Spec, View};
     use std::sync::Mutex;

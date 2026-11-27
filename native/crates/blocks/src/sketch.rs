@@ -1186,6 +1186,7 @@ impl Version {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::relation::RelationW;
 
     /// A block of the tests' own: this crate's tests install no run room, so `Sketch::default` takes the heap's.
     fn room() -> Arc<dyn Room> {

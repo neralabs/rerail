@@ -6,6 +6,7 @@
 //! in a scratch block and moved whole: into the journal (one `memcpy`), and on a hit from the journal into the
 //! next run's chunk (one `memcpy`). No entry is ever decoded.
 
+use crate::relation::RelationW;
 use crate::block::{Block, kind};
 use crate::facts::{Facts, Schema, root_of};
 use crate::refs::{Ptr, Span};

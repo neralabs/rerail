@@ -1,3 +1,5 @@
+use rerail_blocks::rows::RowsW;
+use rerail_blocks::relation::RelationW;
 use super::*;
 use rerail_blocks::block::{Block, kind};
 use rerail_blocks::relation::{RelW, Relation, Spec, freeze};

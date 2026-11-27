@@ -134,7 +134,7 @@ pub fn source() -> String {
 mod tests {
     use super::*;
     use crate::block::{Block, kind};
-    use crate::relation::{RelW, Spec, freeze};
+    use crate::relation::{RelW, RelationW, Spec, freeze};
     use crate::rows::RowsW;
     use std::sync::Mutex;
 

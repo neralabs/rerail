@@ -23,6 +23,8 @@
 //! step 6): a chain of forks reads down its descriptors' jumps (O(log n) steps), and parts in several blocks read as
 //! one relation through links where two blocks hold them; past that they are not bound as one, and are read by part.
 
+use rerail_blocks::rows::RowsW;
+use rerail_blocks::relation::RelationW;
 use rerail_blocks::vector::Vector;
 use std::sync::{Arc, Mutex};
 
@@ -3284,6 +3286,10 @@ mod tests {
     /// gives its chunk back to the block's free list when dropped.
     #[test]
     fn an_index_array_lies_in_its_relations_block() {
+        // Its own run, so its own open block (`open_blocks`): the free bytes counted are this test's. Outside a run the
+        // block is the machine's lane's, which a test on another thread shares, and its chunks given back meanwhile
+        // (megabytes against this test's two of about 800 bytes) decided the count.
+        let _own = crate::code_rule_dsl::logic::profile::within(crate::code_rule_dsl::logic::profile::Shared::new());
         let mut rows = Rows::new(1);
         // copy: not block data: a test's rows
         rows.extend_from_slice(&[1, 2, 3]);

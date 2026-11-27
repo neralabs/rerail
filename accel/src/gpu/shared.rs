@@ -1046,6 +1046,7 @@ pub(crate) fn big_leases() -> std::sync::MutexGuard<'static, ()> {
 
 #[cfg(test)]
 mod tests {
+    use rerail_blocks::relation::RelationW;
     use super::*;
 
     /// Decision 0487 steps 2 and 3: what the process's queue reaches is held by the submission's fence, with no caller

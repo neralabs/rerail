@@ -21,6 +21,7 @@
 //! Rows a relation's writer knows to be in an order already (`Sorted`, decision 0180: a wave's batch is written
 //! sorted by the first order) make runs in place: the rows `lo..hi` themselves, no ids listed and no sort.
 
+use rerail_blocks::relation::RelationW;
 use rerail_blocks::vector::Vector;
 use std::cmp::Ordering;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};

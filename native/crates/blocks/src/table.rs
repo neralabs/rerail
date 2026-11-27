@@ -507,6 +507,7 @@ impl crate::kept::Kept<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::relation::RelationW;
     use crate::block::{Block, kind};
     use crate::relation::{self, Relation, RelW, Spec};
     use std::sync::Mutex;

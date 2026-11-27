@@ -242,6 +242,7 @@ impl RowsW for Rows {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::relation::RelationW;
     use crate::block::{Block, kind};
 
     /// A relation whose last holder went gives its chunks' pages back to the OS (Q76) as they go to the block's free

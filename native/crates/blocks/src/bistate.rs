@@ -841,6 +841,7 @@ impl<G: Fn(RowId, ColumnIndex) -> i64> Read for Marked<'_, G> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::relation::RelationW;
     use crate::block::{Block, kind};
     use crate::relation::{self, Relation, RelW, Spec};
     use std::sync::Mutex;

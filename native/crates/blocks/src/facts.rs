@@ -5,6 +5,7 @@
 //! A `Facts` block is full, or a delta of a full one (its `base`). A delta is cumulative: the next run carries
 //! it forward into a new delta of the same base, and a roll-up writes a new full block.
 
+use crate::relation::RelationW;
 use crate::block::{Block, Frozen, kind};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::Relaxed};
 use crate::refs::{Ptr, Span};

@@ -36,6 +36,7 @@
 //! per_probe done": per_probe is a comma-separated "ms:rows" for each probe line in spec order, and done is 1 at the
 //! fixpoint (new rows are written then), 0 when max_waves stopped it. `set_fixpoint_stats(name)` and
 //! `set_fixpoint_reprobe(name, i, hex SQL)` let the caller replan probes between bounded runs.
+use rerail_blocks::relation::RelationW;
 use rerail_blocks::bistate::{Bistate, ColumnIndex, RowId, Since};
 use rerail_blocks::vector::Vector;
 use rerail_section::{Handle, Section};

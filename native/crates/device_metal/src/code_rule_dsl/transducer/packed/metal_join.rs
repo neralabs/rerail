@@ -43,6 +43,8 @@
 //! A parameter block past a launch's own (a stage's, a copy's, a dedup's, an index's: their arrays and a view's
 //! address) lies in a buffer of its own (`Batch::block`), which the batch keeps until its work completes.
 
+use rerail_blocks::rows::RowsW;
+use rerail_blocks::relation::RelationW;
 use rerail_blocks::vector::Vector;
 use super::Error;
 use rerail_accel_gpu::gpu::join::{FREE, Held, Pass, Scan, Submitted, Width, groups, pipeline, scratch, simd_group};

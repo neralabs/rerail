@@ -6,6 +6,7 @@
 //! cargo run -p rerail-blocks --profile profiling --example encodings
 //! ```
 
+use rerail_blocks::relation::RelationW;
 use rerail_blocks::block::{Block, kind};
 // The device's columns (macOS, Linux and Windows, decision 0440 step C) are its only readers.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]

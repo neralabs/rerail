@@ -21,6 +21,7 @@ pub mod hash;
 pub mod kernel;
 pub mod pod;
 pub mod refs;
+pub mod relation;
 pub mod rows;
 pub mod runs;
 
