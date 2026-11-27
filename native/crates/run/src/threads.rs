@@ -167,6 +167,34 @@ pub mod tests {
         assert_eq!(n.into_inner(), 16);
     }
 
+    /// A thread of a caller's own pool (rayon's global one: a test's parallel loop) is the caller's, not the engine's: a
+    /// scope there starts its jobs on the machine's cores, and a wait there for them ends. Every thread of the pool is
+    /// in such a wait at once. Taken for one of the engine's, each queued its jobs on its own pool and waited; a wait
+    /// on a 2 MB stack runs none of them (it keeps 4 MB free), and none ended (the program image's pack tests, each
+    /// parse a nested run).
+    #[test]
+    fn a_scope_on_a_callers_own_pool_ends() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        assert!(!rerail_accel::exec::on_pool(), "a test's thread is no pool's");
+        let all = std::sync::Barrier::new(rayon::current_num_threads());
+        let ended: Vec<bool> = rayon::broadcast(|_| {
+            all.wait();
+            assert!(!rerail_accel::exec::on_pool(), "a thread of rayon's global pool is not the engine's");
+            let done = AtomicUsize::new(0);
+            super::scope(|jobs| {
+                for _ in 0..4 {
+                    jobs.spawn("a test's job", |_| {
+                        assert!(rerail_accel::exec::on_pool(), "the job runs on the machine's cores");
+                        done.fetch_add(1, SeqCst);
+                    });
+                }
+                rerail_accel::exec::help_until(|| (done.load(SeqCst) == 4).then_some(()));
+            });
+            true
+        });
+        assert!(ended.iter().all(|&e| e));
+    }
+
     /// Q203 item 5: a wait whose work is expected by a deadline (a batch's device launches) runs only jobs expected
     /// to end by then. A job known to take longer, popped by it, goes back to its scope for another thread, so the
     /// wait ends when its work is ready, not when the long job does; a short job still runs in the wait.
@@ -177,7 +205,9 @@ pub mod tests {
         // Their expected walls, from a run each.
         as_job("a test's long job", || std::thread::sleep(Duration::from_millis(150)));
         as_job("a test's short job", || ());
-        rayon::scope(|_| {
+        // On the machine's cores, where a wait runs the pool's jobs (a thread of rayon's global pool runs none).
+        crate::code_rule_dsl::logic::profile::on_cores(|| {
+            assert!(rerail_accel::exec::on_pool());
             super::scope(|jobs| {
                 jobs.spawn("a test's long job", |_| std::thread::sleep(Duration::from_millis(150)));
                 // The batch's work is ready 20 ms from now.

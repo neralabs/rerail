@@ -1423,7 +1423,7 @@ pub fn closes_done() {
     let (n, done) = &held_.0;
     let mut left = n.lock().expect("the closes beside");
     while *left > 0 {
-        if rayon::current_thread_index().is_some() {
+        if rerail_accel::exec::on_pool() {
             drop(left);
             if !matches!(rayon::yield_now(), Some(rayon::Yield::Executed)) {
                 std::thread::yield_now();
