@@ -70,58 +70,27 @@ class junk      = 0x00..0x08 0x0b 0x0e..0x1f '$' '?' '`' '\\' 0x7f
 
 # --- Regions -----------------------------------------------------------------------------------
 
-# A string's prefix: one or two prefix letters that start a word, then its quote. Three or more
-# are not read yet.
-mask pw         = pfx & ~prev(word)
-mask p1         = pw & next(quote)
-mask p2         = pw & next(pfx) & next(quote, 2)
-# A quote after a prefix with an `r`: a raw string's opener.
-mask raw_q      = quote & (prev(p1 & raw_l) | prev(p2 & raw_l, 2) | prev(raw_l & prev(p2)))
-mask sq3        = sq & next(sq) & next(sq, 2)
-mask dq3        = dq & next(dq) & next(dq, 2)
-# A closer: a quote no backslash escapes; a triple's, the last three of its run.
-mask sq_c       = sq & ~escaped(bslash)
-mask dq_c       = dq & ~escaped(bslash)
-mask sq3_c      = sq3 & ~next(sq, 3) & ~escaped(bslash)
-mask dq3_c      = dq3 & ~next(dq, 3) & ~escaped(bslash)
-# A quote after a prefix with an `f`: an f-string's opener.
-mask fq         = quote & (prev(p1 & f_l) | prev(p2 & f_l, 2) | prev(f_l & prev(p2)))
-# An interpolation's `{`: one alone (`{{` is text).
-# The last of a run of them the pairs from its start leave over (`{{{a` is `{{` and an
-# interpolation's `{`), as the lean lexer reads `{{` from the run's first.
-mask i_open     = lbrace & ~next(lbrace) & ~escaped(lbrace)
-# A raw string closes as any does (a quote no backslash escapes); only its escapes differ, so it
-# is a region of its quotes' kind, and `in_raw` says which strings are raw.
-# An f-string closes at its quote or at an interpolation's `{` (`or i_open`), as Kotlin's at a
-# template's `$`. After the interpolation's code, its tail (`t…`) opens at the `}`, and goes on
-# as the kind of f-string the interpolation is in (`resumes`): the string's text to its quote or
-# the next interpolation. A format spec is a region of its own, from its `:` to the byte before
-# the `}`, in an interpolation's code only (`after`), and there at its bracket level zero
-# (`level`): `{a[1:2]}` has no spec, and `{ {k: v} }`'s first `}` is the dict's. An f-string in
-# an interpolation's code opens a template of its own (`nest`, four deep), as the lean lexer's
-# stack of strings does; the outer one goes on after its string ends.
-regions hidden level opens to closes max 7 nest 4 depth i_d0 i_d1 else i_deep {
+# A string, read as the lean lexer's `string` reads one (`read string`): its prefix's letters, one or two starting a
+# word (three or more are not read yet), say how it reads: raw (`raw_q`, at its quote), bytes, format, template. Its
+# quote, one or three. A backslash keeps a quote from closing it, raw or not: a raw string closes as any does, so it
+# is a region of its quotes' kind, and `in_raw` says which strings are raw. A format string (`format`) closes at its
+# quote or at an interpolation's `{` (an `{` alone: `{{` is text, the pairs read from a run's first). After the
+# interpolation's code, its tail opens at the `}` and goes on as the kind of string the interpolation is in. A format
+# spec runs from its `:` to the byte before the `}`, in an interpolation's code only, and there at its bracket level
+# zero: `{a[1:2]}` has no spec, and `{ {k: v} }`'s first `}` is the dict's. An f-string in an interpolation's code
+# opens one of its own, four deep, as the lean lexer's stack of strings does; the outer one goes on after it ends.
+# The reader makes the walk's kinds of each (`s1`, `d3`, `fs1`, its tails `ts1`, `spec`) and their unions (`o_str`,
+# `f_str`, `o_f`, `f_f`, `o_t`, `f_t`).
+regions hidden {
   cmt = hash .. lf outside
-  s1  = sq & ~sq3 & ~fq .. sq_c
-  d1  = dq & ~dq3 & ~fq .. dq_c
-  s3  = sq3 & ~fq .. sq3_c bytes 3
-  d3  = dq3 & ~fq .. dq3_c bytes 3
-  fs1 = sq & ~sq3 & fq .. sq_c or i_open
-  fd1 = dq & ~dq3 & fq .. dq_c or i_open
-  fs3 = sq3 & fq .. sq3_c bytes 3 or i_open
-  fd3 = dq3 & fq .. dq3_c bytes 3 or i_open
-  ts1 = rbrace .. sq_c or i_open resumes fs1
-  td1 = rbrace .. dq_c or i_open resumes fd1
-  ts3 = rbrace .. sq3_c bytes 3 or i_open resumes fs3
-  td3 = rbrace .. dq3_c bytes 3 or i_open resumes fd3
-  spec = colon .. next(rbrace) after fs1 fd1 fs3 fd3
+  read string {
+    prefix pfx max 2 after word
+    flags raw = raw_l, bytes = bytes_l, format = f_l, template = t_l
+    quotes sq | dq triple
+    escape bslash
+    interpolation format lbrace .. rbrace spec colon level opens to closes max 7 nest 4 depth i_d0 i_d1 else i_deep
+  }
 }
-mask o_f        = o_fs1 | o_fd1 | o_fs3 | o_fd3
-mask o_t        = o_ts1 | o_td1 | o_ts3 | o_td3
-mask f_f        = f_fs1 | f_fd1 | f_fs3 | f_fd3
-mask f_t        = f_ts1 | f_td1 | f_ts3 | f_td3
-mask o_str      = o_s1 | o_d1 | o_s3 | o_d3 | o_f
-mask f_str      = f_s1 | f_d1 | f_s3 | f_d3 | f_f | f_t
 # A raw f-string's tails too: from its opener to the next f-string's that is not raw.
 mask in_raw     = fill(raw_q & o_str, ~f_str) | f_t & fill(raw_q & o_f, o_f & ~raw_q)
 mask code       = ~hidden & ~o_cmt & ~o_str & ~o_t & ~o_spec
@@ -134,7 +103,7 @@ mask t_more     = prev(t_open) | prev(t_open, 2)
 mask s_body     = f_str & ~o_str & ~o_t & ~t_more
 mask body       = s_body & ~in_raw
 mask r_body     = s_body & in_raw
-escape "a template string" when o_str & (prev(p1 & t_l) | prev(p2 & t_l, 2) | prev(t_l & prev(p2)))
+escape "a template string" when o_str & template_q
 escape "a string prefix of three letters or more" when code & pw & next(pfx) & next(pfx, 2) & (next(quote, 3) | next(pfx, 3) & next(quote, 4))
 escape "a string open at the end of the file" when f_str & ~next(~empty)
 escape "a line break in a one-line string that no backslash escapes" when (f_s1 | f_d1 | f_fs1 | f_fd1 | f_ts1 | f_td1) & lf & ~escaped(bslash)
@@ -147,8 +116,7 @@ escape "a triple-quoted string closed by four quotes or more" when (body | r_bod
 mask esc        = body & bslash & ~escaped(bslash)
 escape "a `\\N{…}` escape" when esc & next(nn_l)
 # In a bytes string, `\N`, `\u` and `\U` are text: not read yet.
-mask b_open     = quote & (prev(p1 & bytes_l) | prev(p2 & bytes_l, 2) | prev(bytes_l & prev(p2)))
-escape "a `\\N`, `\\u` or `\\U` in a bytes string" when esc & next(bytes_esc) & fill(b_open, ~f_str)
+escape "a `\\N`, `\\u` or `\\U` in a bytes string" when esc & next(bytes_esc) & fill(bytes_q, ~f_str)
 # An escape, read at its backslash as the lean lexer's `escape` reads it: by its grammar, each choice at the byte
 # after the backslash (`check`). Where it matches no escape the backslash is a `\` of its own (`else`).
 check escape_sequence = '\\' (u_l hex hex hex hex | uu_l hex hex hex hex hex hex hex hex | x_l hex hex

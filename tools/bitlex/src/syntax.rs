@@ -434,6 +434,27 @@ pub struct Regions {
     pub kinds: Vec<Region>,
     /// `level O to C max N else D` (after `H`): the bracket level in a template's code.
     pub level: Option<RegionLevel>,
+    /// `read R { … }`: the strings read as the lean lexer reads them, which make the kinds above (`StringReader`).
+    pub readers: Vec<StringReader>,
+}
+
+/// `read R { prefix P max M after W  flags F = L, …  quotes Q | … triple  escape E  interpolation F O .. C spec S
+/// level … }` in `regions`: a string as the lean lexer's `string` reads one. Its prefix's letters (`P`, at most `M`,
+/// starting a word: no `W` before) say how it reads (`F` where one is of class `L`: `F_q`, at its quote); its quote,
+/// one or three; an escape `E` keeps a quote from closing it; where `F` holds, an interpolation from an `O` to its
+/// `C`, with a spec from an `S`, and the bracket level and nest of its code. The writers that read strings as the
+/// lean lexer does read this; the walk reads the kinds it makes (`string_reader`).
+#[derive(Clone, Debug)]
+pub struct StringReader {
+    pub name: String,
+    /// `P`, `M`, `W`.
+    pub prefix: Option<(String, u8, String)>,
+    pub flags: Vec<(String, String)>,
+    pub quotes: Vec<String>,
+    pub triple: bool,
+    pub escape: String,
+    /// `F`, `O`, `C`, `S`.
+    pub interpolation: Option<(String, String, String, String)>,
 }
 
 /// `regions H level O to C max N else D { … }`: from where a plain kind's region closes at its
@@ -1815,7 +1836,40 @@ impl P {
     /// [open K] … }` (`Regions`).
     fn regions(&mut self) -> R<Regions> {
         let hidden = self.ident()?;
-        let level = if self.eat_kw("level") {
+        let mut level = self.level_clause()?;
+        self.want_p("{")?;
+        self.nls();
+        let mut kinds = Vec::new();
+        let mut readers = Vec::new();
+        while !self.eat_p("}") {
+            if self.eat_kw("read") {
+                let (ks, lv, rd) = self.string_reader()?;
+                if lv.is_some() && level.is_some() {
+                    return self.err("one `level`: the regions' or a reader's");
+                }
+                level = level.or(lv);
+                kinds.extend(ks);
+                readers.push(rd);
+                self.nls();
+                continue;
+            }
+            let kind = self.ident()?;
+            self.want_p("=")?;
+            let opener = self.expr()?;
+            self.want_p("..")?;
+            let closer = self.expr()?;
+            kinds.push(self.region_rest(kind, opener, closer)?);
+            self.nls();
+        }
+        if kinds.is_empty() {
+            return self.err("a region");
+        }
+        self.regions_checked(hidden, kinds, level, readers)
+    }
+
+    /// `level O to C max N [nest M depth A B] else D`, if any.
+    fn level_clause(&mut self) -> R<Option<RegionLevel>> {
+        Ok(if self.eat_kw("level") {
             let opens = self.expr()?;
             self.want_kw("to")?;
             let closes = self.expr()?;
@@ -1838,16 +1892,12 @@ impl P {
             Some(RegionLevel { opens, closes, max: max as u8, deep: self.ident()?, nest })
         } else {
             None
-        };
-        self.want_p("{")?;
-        self.nls();
-        let mut kinds = Vec::new();
-        while !self.eat_p("}") {
-            let kind = self.ident()?;
-            self.want_p("=")?;
-            let opener = self.expr()?;
-            self.want_p("..")?;
-            let closer = self.expr()?;
+        })
+    }
+
+    /// A region's clauses after `K = O .. C`.
+    fn region_rest(&mut self, kind: String, opener: Expr, closer: Expr) -> R<Region> {
+        {
             let bytes = if self.eat_kw("bytes") { self.int()? } else { 1 };
             let or = if self.eat_kw("or") {
                 let c = self.expr()?;
@@ -1884,12 +1934,12 @@ impl P {
             if !(1..=3).contains(&bytes) || (outside && bytes != 1) || (outside && or.is_some()) || empty.as_ref().is_some_and(|e| !(1..=3).contains(&e.1)) {
                 return self.err("a closer of 1 to 3 bytes (`outside`: 1, and no `or`), an `else` of 1 to 3");
             }
-            kinds.push(Region { kind, opener, closer, bytes: bytes as u8, outside, empty: empty.map(|(e, m)| (e, m as u8)), or, after, resumes, open });
-            self.nls();
+            Ok(Region { kind, opener, closer, bytes: bytes as u8, outside, empty: empty.map(|(e, m)| (e, m as u8)), or, after, resumes, open })
         }
-        if kinds.is_empty() {
-            return self.err("a region");
-        }
+    }
+
+    /// The regions' checks, once their kinds are read.
+    fn regions_checked(&mut self, hidden: String, kinds: Vec<Region>, level: Option<RegionLevel>, readers: Vec<StringReader>) -> R<Regions> {
         // `after` names kinds of these regions with no `after` of their own and with an `or` (a
         // template's closer); at most 15 kinds.
         for r in &kinds {
@@ -1909,7 +1959,179 @@ impl P {
         if level.is_some() && !kinds.iter().any(|r| !r.after.is_empty()) {
             return self.err("a `level` on regions with a kind with `after`");
         }
-        Ok(Regions { hidden, kinds, level })
+        Ok(Regions { hidden, kinds, level, readers })
+    }
+
+    /// `read R { … }` in `regions` (`StringReader`): its kinds, its level, and the reader. The masks its kinds read
+    /// are made before the regions, the unions of its kinds after them:
+    ///
+    /// ```text
+    /// mask pw    = P & ~prev(W)                       # a prefix's first letter
+    /// mask p1    = pw & next(Q)                       # one letter, then a quote (Q: any of the quotes)
+    /// mask p2    = pw & next(P) & next(Q, 2)          # two (`max 2`)
+    /// mask F_q   = Q & (prev(p1 & L) | prev(p2 & L, 2) | prev(L & prev(p2)))   # a quote after a prefix with an `L`
+    /// mask q3    = q & next(q) & next(q, 2)           # `triple`, each quote `q`
+    /// mask q_c   = q & ~escaped(E)                    # a closer: a quote no escape escapes
+    /// mask q3_c  = q3 & ~next(q, 3) & ~escaped(E)     # a triple's: the last three of its run
+    /// mask i_open = O & ~next(O) & ~escaped(O)        # an interpolation's `O` (`OO` is text)
+    /// x1  = q & ~q3 & ~F_q .. q_c                     # each quote's kinds (`x`: its name's first letter)
+    /// x3  = q3 & ~F_q .. q3_c bytes 3
+    /// fx1 = q & ~q3 & F_q .. q_c or i_open            # an interpolating one closes at its `O` too
+    /// fx3 = q3 & F_q .. q3_c bytes 3 or i_open
+    /// tx1 = C .. q_c or i_open resumes fx1            # its tail after the code, from the `C`
+    /// tx3 = C .. q3_c bytes 3 or i_open resumes fx3
+    /// spec = S .. next(C) after fx1 … fx3             # a spec, at the code's level zero
+    /// mask o_f = o_fx1 | …   o_t = o_tx1 | …   f_f   f_t
+    /// mask o_str = o_x1 | … | o_f   f_str = f_x1 | … | f_f | f_t
+    /// ```
+    fn string_reader(&mut self) -> R<(Vec<Region>, Option<RegionLevel>, StringReader)> {
+        let name = self.ident()?;
+        self.want_p("{")?;
+        let (mut prefix, mut flags, mut quotes, mut triple, mut escape, mut interpolation, mut level) = (None, Vec::new(), Vec::new(), false, None, None, None);
+        loop {
+            self.nls();
+            if self.eat_p("}") {
+                break;
+            }
+            if self.eat_kw("prefix") {
+                let p = self.ident()?;
+                self.want_kw("max")?;
+                let m = self.int()?;
+                if !(1..=2).contains(&m) {
+                    return self.err("a prefix of at most 1 or 2 letters");
+                }
+                self.want_kw("after")?;
+                prefix = Some((p, m as u8, self.ident()?));
+            } else if self.eat_kw("flags") {
+                loop {
+                    let f = self.ident()?;
+                    self.want_p("=")?;
+                    flags.push((f, self.ident()?));
+                    if !self.eat_p(",") {
+                        break;
+                    }
+                }
+            } else if self.eat_kw("quotes") {
+                quotes.push(self.ident()?);
+                while self.eat_p("|") {
+                    quotes.push(self.ident()?);
+                }
+                triple = self.eat_kw("triple");
+            } else if self.eat_kw("escape") {
+                escape = Some(self.ident()?);
+            } else if self.eat_kw("interpolation") {
+                let f = self.ident()?;
+                let o = self.ident()?;
+                self.want_p("..")?;
+                let c = self.ident()?;
+                self.want_kw("spec")?;
+                let sp = self.ident()?;
+                level = self.level_clause()?;
+                if level.is_none() {
+                    return self.err("an interpolation's `level`");
+                }
+                interpolation = Some((f, o, c, sp));
+            } else {
+                return self.err("a reader's `prefix`, `flags`, `quotes`, `escape` or `interpolation`");
+            }
+        }
+        let Some(escape) = escape else { return self.err("a reader's `escape`") };
+        if quotes.is_empty() || !triple {
+            return self.err("a reader's `quotes … triple`");
+        }
+        if let Some((f, ..)) = &interpolation {
+            if !flags.iter().any(|(g, _)| g == f) {
+                return Err(format!("reader {name}: `interpolation {f}`, not one of its flags"));
+            }
+        }
+        if !flags.is_empty() && prefix.is_none() {
+            return Err(format!("reader {name}: flags with no prefix"));
+        }
+        let n = |x: &str| Expr::Name(x.to_owned());
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let not = |a: Expr| Expr::Not(Box::new(a));
+        let next = |e: Expr, k: u64| Expr::Call("next".into(), if k == 1 { vec![Arg::E(e)] } else { vec![Arg::E(e), Arg::N(k)] });
+        let escaped = |e: Expr| Expr::Call("escaped".into(), vec![Arg::E(e)]);
+        let any_of = |names: &[String]| names.iter().map(|q| n(q)).reduce(|a, b| Expr::Or(Box::new(a), Box::new(b))).expect("a name");
+        let q_any = any_of(&quotes);
+        if let Some((p, m, w)) = &prefix {
+            self.before.push(Stmt::Mask("pw".into(), and(n(p), not(prev(n(w), 1)))));
+            self.before.push(Stmt::Mask("p1".into(), and(n("pw"), next(q_any.clone(), 1))));
+            if *m == 2 {
+                self.before.push(Stmt::Mask("p2".into(), and(and(n("pw"), next(n(p), 1)), next(q_any.clone(), 2))));
+            }
+            for (f, l) in &flags {
+                let mut at = prev(and(n("p1"), n(l)), 1);
+                if *m == 2 {
+                    at = Expr::Or(Box::new(at), Box::new(prev(and(n("p2"), n(l)), 2)));
+                    at = Expr::Or(Box::new(at), Box::new(prev(and(n(l), prev(n("p2"), 1)), 1)));
+                }
+                self.before.push(Stmt::Mask(format!("{f}_q"), and(q_any.clone(), at)));
+            }
+        }
+        for q in &quotes {
+            self.before.push(Stmt::Mask(format!("{q}3"), and(and(n(q), next(n(q), 1)), next(n(q), 2))));
+        }
+        for q in &quotes {
+            self.before.push(Stmt::Mask(format!("{q}_c"), and(n(q), not(escaped(n(&escape))))));
+        }
+        for q in &quotes {
+            self.before.push(Stmt::Mask(format!("{q}3_c"), and(and(n(&format!("{q}3")), not(next(n(q), 3))), not(escaped(n(&escape))))));
+        }
+        let x = |q: &str| q.chars().next().unwrap_or('q').to_string();
+        let mut kinds = Vec::new();
+        let region = |kind: String, opener: Expr, closer: Expr, bytes: u8, or: Option<(Expr, u8)>, after: Vec<String>, resumes: bool| Region { kind, opener, closer, bytes, outside: false, empty: None, or, after, resumes, open: None };
+        let fq = interpolation.as_ref().map(|(f, ..)| format!("{f}_q"));
+        let plain = |q: &str| match &fq {
+            Some(f) => and(and(n(q), not(n(&format!("{q}3")))), not(n(f))),
+            None => and(n(q), not(n(&format!("{q}3")))),
+        };
+        let plain3 = |q: &str| match &fq {
+            Some(f) => and(n(&format!("{q}3")), not(n(f))),
+            None => n(&format!("{q}3")),
+        };
+        for q in &quotes {
+            kinds.push(region(format!("{}1", x(q)), plain(q), n(&format!("{q}_c")), 1, None, vec![], false));
+        }
+        for q in &quotes {
+            kinds.push(region(format!("{}3", x(q)), plain3(q), n(&format!("{q}3_c")), 3, None, vec![], false));
+        }
+        let mut after = Vec::new();
+        if let (Some((_, o, c, sp)), Some(f)) = (&interpolation, &fq) {
+            self.before.push(Stmt::Mask("i_open".into(), and(and(n(o), not(next(n(o), 1))), not(escaped(n(o))))));
+            let or = Some((n("i_open"), 1));
+            for q in &quotes {
+                kinds.push(region(format!("f{}1", x(q)), and(and(n(q), not(n(&format!("{q}3")))), n(f)), n(&format!("{q}_c")), 1, or.clone(), vec![], false));
+            }
+            for q in &quotes {
+                kinds.push(region(format!("f{}3", x(q)), and(n(&format!("{q}3")), n(f)), n(&format!("{q}3_c")), 3, or.clone(), vec![], false));
+            }
+            for q in &quotes {
+                kinds.push(region(format!("t{}1", x(q)), n(c), n(&format!("{q}_c")), 1, or.clone(), vec![format!("f{}1", x(q))], true));
+            }
+            for q in &quotes {
+                kinds.push(region(format!("t{}3", x(q)), n(c), n(&format!("{q}3_c")), 3, or.clone(), vec![format!("f{}3", x(q))], true));
+            }
+            let fs: Vec<String> = kinds.iter().filter(|k| k.or.is_some() && !k.resumes).map(|k| k.kind.clone()).collect();
+            kinds.push(region("spec".into(), n(sp), next(n(c), 1), 1, None, fs, false));
+            let of = |pre: &str, group: char| -> Vec<String> { kinds.iter().filter(|k| k.kind.starts_with(group) && k.kind != "spec").map(|k| format!("{pre}_{}", k.kind)).collect() };
+            after.push(Stmt::Mask("o_f".into(), any_of(&of("o", 'f'))));
+            after.push(Stmt::Mask("o_t".into(), any_of(&of("o", 't'))));
+            after.push(Stmt::Mask("f_f".into(), any_of(&of("f", 'f'))));
+            after.push(Stmt::Mask("f_t".into(), any_of(&of("f", 't'))));
+        }
+        let plain_kinds: Vec<String> = kinds.iter().filter(|k| k.or.is_none() && k.after.is_empty()).map(|k| k.kind.clone()).collect();
+        let with = |pre: &str, more: &[&str]| -> Expr {
+            let mut v: Vec<String> = plain_kinds.iter().map(|k| format!("{pre}_{k}")).collect();
+            if interpolation.is_some() {
+                v.extend(more.iter().map(|m| m.to_string()));
+            }
+            any_of(&v)
+        };
+        after.push(Stmt::Mask("o_str".into(), with("o", &["o_f"])));
+        after.push(Stmt::Mask("f_str".into(), with("f", &["f_f", "f_t"])));
+        self.after.extend(after);
+        Ok((kinds, level, StringReader { name, prefix, flags, quotes, triple, escape, interpolation }))
     }
 
     fn block(&mut self) -> R<Vec<Stmt>> {
@@ -3148,6 +3370,25 @@ mod tier2_tests {
     /// `back_fill` is refused, as a mask's and as a number's, with what to write instead
     /// (decision 0416), with or without the old `deprecated back_fill`; `backward` makes one for
     /// the IR's tests.
+    /// A string reader (`read R { … }`) makes the walk's kinds of each quote, its tails and its spec, and their
+    /// masks, as the regions written out would be.
+    #[test]
+    fn a_string_reader_makes_its_kinds() {
+        let src = "lexer t\nclass word = 'a'..'z'\nclass pfx = 'f' 'r'\nclass f_l = 'f'\nclass raw_l = 'r'\nclass sq = '\\''\nclass dq = '\"'\nclass bslash = '\\\\'\nclass lb = '{'\nclass rb = '}'\nclass colon = ':'\nclass opens = '('\nclass closes = ')'\nregions hidden {\n  read string {\n    prefix pfx max 2 after word\n    flags raw = raw_l, format = f_l\n    quotes sq | dq triple\n    escape bslash\n    interpolation format lb .. rb spec colon level opens to closes max 7 nest 4 depth a b else deep\n  }\n}\n";
+        let stmts = parse(src).expect("parses");
+        let masks: Vec<&str> = stmts.iter().filter_map(|s| if let Stmt::Mask(n, _) = s { Some(n.as_str()) } else { None }).collect();
+        assert_eq!(masks, ["pw", "p1", "p2", "raw_q", "format_q", "sq3", "dq3", "sq_c", "dq_c", "sq3_c", "dq3_c", "i_open", "o_f", "o_t", "f_f", "f_t", "o_str", "f_str"]);
+        let Some(Stmt::Rounds { regions: Some(r), .. }) = stmts.iter().find(|s| matches!(s, Stmt::Rounds { regions: Some(_), .. })) else { panic!("no regions") };
+        let kinds: Vec<&str> = r.kinds.iter().map(|k| k.kind.as_str()).collect();
+        assert_eq!(kinds, ["s1", "d1", "s3", "d3", "fs1", "fd1", "fs3", "fd3", "ts1", "td1", "ts3", "td3", "spec"]);
+        assert!(r.kinds[8].resumes && r.kinds[8].after == ["fs1"] && r.kinds[4].or.is_some());
+        assert_eq!(r.kinds[12].after, ["fs1", "fd1", "fs3", "fd3"]);
+        assert_eq!(r.level.as_ref().and_then(|l| l.nest.as_ref()).map(|n| n.0), Some(4));
+        assert_eq!(r.readers.len(), 1);
+        // An interpolation on a flag the reader has not: refused.
+        assert!(parse(&src.replace("flags raw = raw_l, format = f_l", "flags raw = raw_l")).is_err());
+    }
+
     #[test]
     fn back_fill_is_refused() {
         for body in ["mask m = back_fill(q, sp)\n", "number n = back_fill(q, sp, position)\n"] {

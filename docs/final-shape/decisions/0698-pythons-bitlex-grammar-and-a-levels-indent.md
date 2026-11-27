@@ -477,3 +477,16 @@ statements and blocks end.
     one byte, as the lean lexer's `backslash` calls `escape`. The check's function is `bitlex_check_rust`'s, the one
     tier 1 uses for a token's check. Tier 1 gives tier 2 the `E` mask, not `E & P_ok`, `E & ~P_ok` and `P_last`, so
     it no longer makes the check's masks.
+83. **A string is a reader in the regions, `read string { … }`.** It says what the lean lexer's `string` reads, and
+    Python's grammar no longer writes `or`, `resumes`, `after`, `level` or `nest`:
+    - `prefix pfx max 2 after word`: one or two letters starting a word, then a quote;
+    - `flags raw = raw_l, bytes = bytes_l, format = f_l, template = t_l`: a quote after a prefix with such a letter
+      (`raw_q`, `bytes_q`, `format_q`, `template_q`);
+    - `quotes sq | dq triple` and `escape bslash`: one quote or three, and a closer no backslash escapes;
+    - `interpolation format lbrace .. rbrace spec colon level …`: where `format` holds, the code from a lone `{`
+      to its `}`, a spec from a `:` at its level zero, and the level and nest of its code.
+
+    Bitlex (`string_reader`) lowers it to the kinds the walk reads: each quote's (`s1`, `d3`), the format ones
+    (`fs1`, closed at the `{` too), their tails (`ts1`, which resume them), `spec`, and their unions (`o_str`,
+    `f_str`, `o_f`, `f_f`, `o_t`, `f_t`). The masks path runs the same walk. `Regions::readers` keeps the reader
+    for the writers that read strings as the lean lexer does. Kotlin's templates keep `or` and `resumes`.
