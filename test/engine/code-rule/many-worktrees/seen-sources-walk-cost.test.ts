@@ -1,8 +1,9 @@
 /**
- * What a walk of the other worktrees asks the disk, on the daemon's thread, about files a session saw there: each
- * existsSync, realpath and lstat naming one of them or a path below it, each opening of one, and the most full lookups
- * of their owners between two turns of the event loop, over one walk a boundary of the session asks for. A session that
- * lasts sees more files; a walk that asks nothing of a file it does not read costs no more for it.
+ * What a walk of the other worktrees asks the disk about files a session saw there: each existsSync, realpath and lstat
+ * on the daemon's thread naming one of them or a path below it, each lstat, realpath and access through the thread pool,
+ * each opening of one, and the most full lookups of their owners between two turns of the event loop, over one walk a
+ * boundary of the session asks for. A session that lasts sees more files; a walk that asks nothing of a file it does
+ * not read costs no more for it.
  */
 import { execFileSync } from "node:child_process";
 import type * as FileSystem from "node:fs";
@@ -12,8 +13,8 @@ import { join, relative, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 /**
- * While `on`: each look on the daemon's thread, by kind and path (`looks`), and each file opened (`opens`); the turn of
- * the event loop, counted by `turn`, of each full owner lookup (`lookups`, by session-relative path).
+ * While `on`: each look, by kind and path (`looks`), and each file opened (`opens`); the turn of the event loop, counted
+ * by `turn`, of each full owner lookup (`lookups`, by session-relative path).
  */
 const disk = vi.hoisted(() => ({
   on: false,
@@ -54,11 +55,27 @@ vi.mock("node:fs", async importOriginal => {
 });
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal<typeof FilePromises>();
+  // Each look the walk can ask through the thread pool, as kind `promised`.
+  const look = (path: unknown): void => {
+    if (disk.on) disk.looks.push({ kind: "promised", path: String(path) });
+  };
   return {
     ...actual,
     open: async (...args: Parameters<typeof actual.open>) => {
       if (disk.on) disk.opens.push(String(args[0]));
       return await actual.open(...args);
+    },
+    lstat: async (...args: Parameters<typeof actual.lstat>) => {
+      look(args[0]);
+      return await actual.lstat(...args);
+    },
+    realpath: async (...args: Parameters<typeof actual.realpath>) => {
+      look(args[0]);
+      return await actual.realpath(...args);
+    },
+    access: async (...args: Parameters<typeof actual.access>) => {
+      look(args[0]);
+      await actual.access(...args);
     },
   };
 });
@@ -168,6 +185,8 @@ interface Asked {
   readonly existsSync: number;
   readonly realpath: number;
   readonly lstat: number;
+  /** Each `lstat`, `realpath` and `access` of `node:fs/promises`. */
+  readonly promised: number;
   readonly opens: number;
   readonly run: number;
 }
@@ -199,12 +218,12 @@ async function askedAbout(session: Session, paths: readonly string[], walk: () =
   const perTurn = new Map<number, number>();
   for (const { turn: at } of disk.lookups) perTurn.set(at, (perTurn.get(at) ?? 0) + 1);
   return {
-    existsSync: looks("existsSync"), realpath: looks("realpath"), lstat: looks("lstat"),
+    existsSync: looks("existsSync"), realpath: looks("realpath"), lstat: looks("lstat"), promised: looks("promised"),
     opens: disk.opens.filter(path => about(paths, path)).length, run: Math.max(0, ...perTurn.values()),
   };
 }
 
-const NOTHING: Asked = { existsSync: 0, realpath: 0, lstat: 0, opens: 0, run: 0 };
+const NOTHING: Asked = { existsSync: 0, realpath: 0, lstat: 0, promised: 0, opens: 0, run: 0 };
 
 describe("a walk of the other worktrees, about the files a session saw there", () => {
   it("asks the disk nothing of the sources the session wrote in a folder no walk enters", { timeout: 120_000 }, async () => {
@@ -276,7 +295,7 @@ describe("a walk of the other worktrees, about the files a session saw there", (
     }
   });
 
-  it("asks the disk nothing of the sources the session saw that it reads unchanged, and two lstats of each folder it reads", { timeout: 120_000 }, async () => {
+  it("asks the disk only the read's own lstat of each source the session saw that it reads unchanged, and two more of each folder it reads", { timeout: 120_000 }, async () => {
     const session = await sessionBesideWorktree();
     try {
       const sources = [0, 1, 2, 3].map(index => join(session.w1, "src", `s${index}.py`));
@@ -292,10 +311,12 @@ describe("a walk of the other worktrees, about the files a session saw there", (
       const walked = await askedAbout(session, folders, async () => await turn(session));
 
       expect({ seen, walked }).toEqual({
-        seen: NOTHING,
-        // Of each folder's `.git` entry, to find its checkout (`holdsGitEntry`), and of its `.gitignore`, to find Git's
-        // ignore rules there (`GitIgnoreAnswers`): the listing of the folder above cannot tell either.
-        walked: { ...NOTHING, lstat: 8 },
+        // The read's own lstat of each entry it meets (`lookAt`), on the thread pool: none more for the session's sight.
+        seen: { ...NOTHING, promised: 4 },
+        // That lstat of each folder and of its file, and on the daemon's thread, of each folder's `.git` entry, to find its
+        // checkout (`holdsGitEntry`), and of its `.gitignore`, to find Git's ignore rules there (`GitIgnoreAnswers`): the
+        // listing of the folder above cannot tell either.
+        walked: { ...NOTHING, lstat: 8, promised: 8 },
       });
     } finally {
       await session.runtime.dispose();
