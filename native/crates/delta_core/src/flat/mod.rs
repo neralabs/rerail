@@ -8,6 +8,10 @@
 //! - [`arena`]: a region whose header holds its own top ([`Arena`]): room claimed by one atomic add, a failed claim a
 //!   value ([`Full`]), room given back whole, at a phase's or a launch's end or a round's ([`Mark`]). Each lifecycle
 //!   [`Bucket`] (phase, launch, out block, kept) is arenas.
+//! - Working forms, in a phase's or a launch's arena, shaped for building: [`Grow`] (a growing vector), [`Pool`] and
+//!   [`Chain`] (items and lists by index), [`Map`] and [`Stamped`] (hash tables, the latter emptied by a round),
+//!   [`Stack`] (its top on the machine stack, the rest spilled). Each is a `structure!` header the kernels share, its
+//!   parts reached by offsets, and a typed view; many lanes claim through `&self`, one owner grows through `&mut`.
 //! - [`rel`]: references relative to their own field ([`Rel`], [`RelSpan`], [`BitSpan`]), as the floor's `refs::Ptr`
 //!   and MLDB's `MappedPtr` are: a structure is correct at any address, and a method reaches its parts from `&self`.
 //!
@@ -20,11 +24,19 @@
 //! any view in it, as a self-relative reference must.
 
 pub mod arena;
+pub mod grow;
+pub mod map;
 pub mod offset;
+pub mod pool;
 pub mod rel;
+pub mod stack;
 
 pub use offset::{Aligned, AtomicWord, B16, B32, Bit32, Bits, Bytes, F32, Off, Offset, R16, R32, R64, Unit, UnitKind};
 pub use arena::{Arena, ArenaHead, Bucket, Full, Mark};
+pub use grow::{Grow, GrowHead};
+pub use map::{Claimed, Least, Map, MapHead, Stamped, StampedHead, Word};
+pub use pool::{Chain, ChainHead, Link, Pool, PoolHead};
+pub use stack::Stack;
 pub use rel::{BitSpan, Rel, RelSpan};
 
 use core::marker::PhantomData;
@@ -116,3 +128,5 @@ impl<'r> Region<'r> {
 mod tests;
 #[cfg(test)]
 mod tests_arena;
+#[cfg(test)]
+mod tests_work;

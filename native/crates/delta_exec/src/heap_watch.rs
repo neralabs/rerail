@@ -101,3 +101,58 @@ pub fn during<R>(on: bool, what: &str, f: impl FnOnce() -> R) -> R {
     }
     r
 }
+
+#[cfg(test)]
+mod tests {
+    use rerail_blocks::flat::{Arena, Bucket, Chain, Grow, Map, Pool, Region, Stack, Stamped};
+
+    /// *Flat Views and Lifecycles* step 3: the working forms, built, grown, read and emptied in an arena over a
+    /// buffer made before the watch, take nothing from the heap.
+    #[test]
+    fn the_working_forms_take_no_heap() {
+        let mut bytes = vec![0u64; 1 << 17];
+        let bytes = unsafe { std::slice::from_raw_parts_mut(bytes.as_mut_ptr().cast::<u8>(), 1 << 20) };
+        let total = super::during(true, "flat working forms", || {
+            let mut a = Arena::init(Region::of(bytes), Bucket::Launch).unwrap();
+            let keep = a.mark();
+            let mut sum = 0u64;
+            {
+                let g = Grow::<u64>::make(&a, 1, 0).unwrap();
+                for i in 0..5000 {
+                    g.push(&a, i).unwrap();
+                }
+                sum += g.as_slice().iter().sum::<u64>();
+                let p = Pool::<u32>::make(&a, 2, 100).unwrap();
+                let (i, room) = p.take().unwrap();
+                room.write(9);
+                sum += *p.get(i) as u64;
+                p.give(i);
+                let c = Chain::<u32>::make(&a, 3, 100).unwrap();
+                let l = c.cons(0, 1).unwrap();
+                let l = c.cons(l, 2).unwrap();
+                sum += c.read().walk(l).map(|&v| v as u64).sum::<u64>();
+                let m = Map::<u64, u64>::make(&a, 4, 1000, u64::MAX, u64::MAX).unwrap();
+                for k in 0..1000 {
+                    m.claim_min(k % 300, k).unwrap();
+                }
+                m.remove(7);
+                sum += m.iter().map(|(_, v)| v).sum::<u64>();
+                let t = Stamped::<u32>::make(&a, 5, 100).unwrap();
+                let c = t.claim(&a, 3).unwrap();
+                t.set_at(c.slot, 4);
+                sum += t.get(&a, 3).unwrap() as u64;
+                let spill = Grow::<u32>::make(&a, 6, 0).unwrap();
+                let mut s: Stack<'_, '_, u32, 8> = Stack::new(spill, &a);
+                for i in 0..100 {
+                    s.push(i).unwrap();
+                }
+                while let Some(v) = s.pop() {
+                    sum += v as u64;
+                }
+            }
+            a.next_round(keep);
+            sum
+        });
+        assert_eq!(total, (0..5000).sum::<u64>() + 9 + 3 + ((0..300).sum::<u64>() - 7) + 4 + (0..100).sum::<u64>());
+    }
+}

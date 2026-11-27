@@ -85,6 +85,8 @@ pub use rerail_vector::Pod;
 /// that lives in a block.
 pub use rerail_delta_core::kernel::{Decls, KernelField};
 pub use rerail_delta_core::structure;
+/// Structures in flat memory: offsets, arenas and the working forms over them (`rerail_delta_core::flat`).
+pub use rerail_delta_core::flat;
 /// The hash every index and every kernel uses for a key: the floor's (`rerail_delta_core::hash`).
 pub use rerail_delta_core::hash::{SEED, key_hash, mix};
 
