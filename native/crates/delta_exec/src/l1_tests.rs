@@ -3,13 +3,18 @@
 use super::*;
 use crate::L0;
 use crate::boot::{DocSet, Pins};
-use crate::contract::{Bench, Global, Instance, harness_on, reference, rows_at};
+use crate::contract::{Bench, Global, Instance, harness_on, oracle_rows, reference};
 use crate::dir::Directory;
 use crate::files::{Doc, Store, World};
 use crate::files::tests::{past_racy_window, racy_window, root, write};
 use crate::intern::InternOps;
 use crate::sym::Atoms;
 use rerail_blocks::maps::hash_bytes;
+
+/// The keys (column 0) of `t`'s rows at its head: the oracle's, by meaning.
+fn keys(dir: &Directory, t: &crate::trace::Trace) -> BTreeSet<i64> {
+    oracle_rows(dir, t, t.head()).unwrap().into_iter().map(|r| r[0]).collect()
+}
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
@@ -164,9 +169,9 @@ fn a_document_no_longer_asked_goes_and_is_not_read() {
     assert_eq!(disk.docs.world.asked.reads, reads + 1, "the other document read; l0, asked by no one, not read");
     let other = disk.docs.key(&bench.dir, disk.atoms, "other.rerail").unwrap();
     assert_ne!(other, l0);
-    assert_eq!(disk.docs.keys(&bench.dir).unwrap(), BTreeSet::from([other]), "l0 gone from the document set");
-    assert_eq!(disk.inst.asked(&bench.dir, 0).unwrap(), BTreeSet::from([other]), "L1 asks for the other alone");
-    let outs: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| rows_at(&bench.dir, t, t.head()).unwrap()).collect();
+    assert_eq!(keys(&bench.dir, &disk.docs.tape), BTreeSet::from([other]), "l0 gone from the document set");
+    assert_eq!(keys(&bench.dir, disk.inst.asks_of(0).expect("L1 asks of its tape port")), BTreeSet::from([other]), "L1 asks for the other alone");
+    let outs: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| oracle_rows(&bench.dir, t, t.head()).unwrap()).collect();
     assert!(outs.iter().flatten().all(|r| r[0] == other), "no row of l0 left in L1's output");
     let globals = [disk.globals(&bench)];
     let plain = crate::contract::apply(&disk.l1, &mut bench.cx(), &[(&disk.docs.tape, disk.docs.tape.head())], &globals).unwrap();
@@ -176,9 +181,9 @@ fn a_document_no_longer_asked_goes_and_is_not_read() {
     let last = disk.last.take();
     let (pins, _, _) = crate::boot::run(&disk.l1, &mut disk.inst, PATH, MODULE, disk.atoms, &mut disk.docs, &mut bench, last.as_ref()).unwrap();
     disk.last = Some(pins);
-    assert_eq!(disk.docs.keys(&bench.dir).unwrap(), BTreeSet::from([l0]));
+    assert_eq!(keys(&bench.dir, &disk.docs.tape), BTreeSet::from([l0]));
     assert_eq!(disk.docs.world.asked.parses, parses, "l0's content is answered before: not parsed again");
-    let outs: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| rows_at(&bench.dir, t, t.head()).unwrap()).collect();
+    let outs: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| oracle_rows(&bench.dir, t, t.head()).unwrap()).collect();
     assert_eq!(outs[0].len(), 14, "l0's 14 rules again");
     assert!(outs.iter().flatten().all(|r| r[0] == l0), "no row of the other left");
     let globals = [disk.globals(&bench)];
@@ -219,7 +224,7 @@ fn an_edited_files_delta_is_the_diff_of_two_cold_runs() {
     // The run's before, held as a reader holds a generation: the run rolls it up at its end (`Trace::roll_up_run`).
     let _before = bench.dir.block(tape0.unwrap()).unwrap();
     // The output's rows before the run (its layers may be rolled up by the run's commit).
-    let before: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| rows_at(&bench.dir, t, t.head()).unwrap()).collect();
+    let before: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| oracle_rows(&bench.dir, t, t.head()).unwrap()).collect();
     let (doc, work) = disk.run(&mut bench).unwrap();
     assert!(!doc.is_identity());
     assert_eq!(work.rows_read, 2, "the gone document's kept rows retracted, the new tape read whole: {work:?}");
@@ -228,7 +233,7 @@ fn an_edited_files_delta_is_the_diff_of_two_cold_runs() {
     let want = reference(&disk.l1, &mut bench.cx(), &ins, &g).unwrap();
     let mut changes = 0;
     for (k, t) in disk.inst.outs.iter().enumerate() {
-        let (b, a) = (&before[k], rows_at(&bench.dir, t, t.head()).unwrap());
+        let (b, a) = (&before[k], oracle_rows(&bench.dir, t, t.head()).unwrap());
         let (added, gone): (BTreeSet<_>, BTreeSet<_>) = (a.difference(b).cloned().collect(), b.difference(&a).cloned().collect());
         assert_eq!((&added, &gone), (&want[k].added, &want[k].gone), "{}", RELATIONS[k].0);
         changes += added.len() + gone.len();
@@ -242,7 +247,7 @@ fn l1_cold_on_l0_gives_its_14_rules() {
     let mut disk = Disk::new(&mut bench, "b6-cold");
     disk.run(&mut bench).unwrap();
     let o = &disk.inst.outs[0];
-    let rules = rows_at(&bench.dir, o, o.head()).unwrap();
+    let rules = oracle_rows(&bench.dir, o, o.head()).unwrap();
     assert_eq!(rules.len(), 14);
     let heads: BTreeSet<String> = rules.iter().map(|r| disk.atoms.name(&bench.dir, r[2])).collect();
     assert!(heads.iter().all(|h| RELATIONS.iter().any(|(n, _)| n == h)), "{heads:?}");
@@ -262,7 +267,7 @@ fn a_run_takes_and_returns_pins() {
     let (p1, doc, work) = disk.run_from(&mut bench, Some(&p0)).unwrap();
     assert!(!doc.is_identity());
     assert_eq!(work.rows_read, 2, "the delta since p0: l0's kept rows retracted, the edit read: {work:?}");
-    let warm: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| rows_at(&bench.dir, t, t.head()).unwrap()).collect();
+    let warm: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| oracle_rows(&bench.dir, t, t.head()).unwrap()).collect();
     // p0 is no longer where the traces are.
     let e = disk.run_from(&mut bench, Some(&p0)).unwrap_err();
     assert!(e.starts_with("pins of another state"), "{e}");
@@ -273,7 +278,7 @@ fn a_run_takes_and_returns_pins() {
     // Cold: every bistate from ∅, the same rows.
     let (_, _, work) = disk.run_from(&mut bench, None).unwrap();
     assert_eq!(work.rows_read, 1, "a cold run reads the document whole: {work:?}");
-    let cold: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| rows_at(&bench.dir, t, t.head()).unwrap()).collect();
+    let cold: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| oracle_rows(&bench.dir, t, t.head()).unwrap()).collect();
     assert_eq!(cold, warm);
 }
 
@@ -301,11 +306,11 @@ fn l1s_cache_sizes_its_runs_and_dropped_costs_an_attempt_not_an_answer() {
     let (_, cold) = disk.run(&mut bench).unwrap();
     assert!(outgrown(&cold) > 0, "l0's k_arg rows outgrow a first room: {cold:?}");
     // The document's key (decision 0052 §3), its tape row's first column.
-    let d = rows_at(&bench.dir, &disk.docs.tape, disk.docs.tape.head()).unwrap().first().unwrap()[0] as u32;
+    let d = oracle_rows(&bench.dir, &disk.docs.tape, disk.docs.tape.head()).unwrap().first().unwrap()[0] as u32;
     {
         let l = bench.dir.read("t", &[disk.inst.cache.0]).unwrap();
         let sizes = rerail_delta_twins::cache::sizes(l.block(0), d).expect("l0's sizes");
-        let rows: Vec<u32> = disk.inst.outs.iter().map(|t| rows_at(&bench.dir, t, t.head()).unwrap().len() as u32).collect();
+        let rows: Vec<u32> = disk.inst.outs.iter().map(|t| oracle_rows(&bench.dir, t, t.head()).unwrap().len() as u32).collect();
         assert_eq!(sizes, &rows[..], "the rows k0_pass gave l0, by relation");
     }
     let [added, changed, _] = edits();
@@ -317,14 +322,14 @@ fn l1s_cache_sizes_its_runs_and_dropped_costs_an_attempt_not_an_answer() {
     disk.inst.drop_cache(&mut bench.dir);
     let (tape0, atoms0) = (disk.docs.tape.head(), disk.globals(&bench).count);
     let _before = bench.dir.block(tape0.unwrap()).unwrap();
-    let before: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| rows_at(&bench.dir, t, t.head()).unwrap()).collect();
+    let before: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| oracle_rows(&bench.dir, t, t.head()).unwrap()).collect();
     let (_, work) = disk.run(&mut bench).unwrap();
     assert!(outgrown(&work) > 0, "from ∅, the edit outgrows a first room: {work:?}");
     let ins = [(&disk.docs.tape, tape0, disk.docs.tape.head())];
     let g = [crate::contract::GlobalIn { block: disk.atoms.0, before: Some(atoms0), after: disk.globals(&bench).count }];
     let want = reference(&disk.l1, &mut bench.cx(), &ins, &g).unwrap();
     for (k, t) in disk.inst.outs.iter().enumerate() {
-        let a = rows_at(&bench.dir, t, t.head()).unwrap();
+        let a = oracle_rows(&bench.dir, t, t.head()).unwrap();
         let got = (a.difference(&before[k]).cloned().collect::<BTreeSet<_>>(), before[k].difference(&a).cloned().collect::<BTreeSet<_>>());
         assert_eq!((&got.0, &got.1), (&want[k].added, &want[k].gone), "{}", RELATIONS[k].0);
     }
@@ -350,7 +355,7 @@ fn a_run_retires_the_least_recently_used_slab_past_the_budget_and_keeps_the_cont
     bench.dir = dir.with_residency(budget, std::time::Duration::from_secs(3600));
     let mut disk = Disk::new(&mut bench, "b6-retire");
     let (cold, _) = disk.run(&mut bench).unwrap();
-    let rules = |disk: &Disk, bench: &Bench| rows_at(&bench.dir, &disk.inst.outs[0], disk.inst.outs[0].head()).unwrap().len();
+    let rules = |disk: &Disk, bench: &Bench| oracle_rows(&bench.dir, &disk.inst.outs[0], disk.inst.outs[0].head()).unwrap().len();
     for (k, text) in texts.iter().enumerate() {
         disk.edit(text, 40 - 10 * k as u64);
         disk.run(&mut bench).unwrap();
@@ -395,7 +400,7 @@ fn the_residency_drops_all_after_a_run_and_the_next_run_loads_again() {
     let (doc, work) = disk.run(&mut bench).unwrap();
     assert!(doc.is_identity() && work.is_checks_only(), "{work:?}");
     assert_eq!((disk.docs.world.asked.parses, disk.docs.world.asked.loads), (asked.parses, asked.loads + 1));
-    assert_eq!(rows_at(&bench.dir, &disk.inst.outs[0], disk.inst.outs[0].head()).unwrap().len(), 14);
+    assert_eq!(oracle_rows(&bench.dir, &disk.inst.outs[0], disk.inst.outs[0].head()).unwrap().len(), 14);
 }
 
 /// What a run keeps lasts across processes (*Operations* §5, P§11.4): its traces' layers, the symbols blocks and the
@@ -422,7 +427,7 @@ fn a_later_process_starts_where_the_last_run_left_off() {
         assert!(disk.last.is_none(), "a new store: no pins");
         let (doc, _) = disk.run(&mut bench).unwrap();
         assert_eq!(doc.before, None);
-        let rows: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| rows_at(&bench.dir, t, t.head()).unwrap()).collect();
+        let rows: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| oracle_rows(&bench.dir, t, t.head()).unwrap()).collect();
         let names: Vec<String> = rows[0].iter().map(|r| disk.atoms.name(&bench.dir, r[2])).collect();
         (rows, names)
     };
@@ -430,7 +435,7 @@ fn a_later_process_starts_where_the_last_run_left_off() {
     rerail_observe::content_store::observe::forget(&rerail_observe::content_store::observe::store_beside(&folder.join("objects.db")));
     let (mut bench, mut disk) = open(&root);
     assert!(disk.last.is_some(), "the last run's pins");
-    let again: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| rows_at(&bench.dir, t, t.head()).unwrap()).collect();
+    let again: Vec<BTreeSet<Vec<i64>>> = disk.inst.outs.iter().map(|t| oracle_rows(&bench.dir, t, t.head()).unwrap()).collect();
     assert_eq!(again, rows, "L1's outputs, where the last run left them");
     let c0 = disk.docs.world.counts();
     let (doc, work) = disk.run(&mut bench).unwrap();
@@ -450,5 +455,5 @@ fn a_later_process_starts_where_the_last_run_left_off() {
     let (doc, work) = disk.run(&mut bench).unwrap();
     assert!(!doc.is_identity());
     assert_eq!(work.rows_read, 2, "{work:?}");
-    assert_eq!(rows_at(&bench.dir, &disk.inst.outs[0], disk.inst.outs[0].head()).unwrap().len(), 15, "l0's 14 rules and the one added");
+    assert_eq!(oracle_rows(&bench.dir, &disk.inst.outs[0], disk.inst.outs[0].head()).unwrap().len(), 15, "l0's 14 rules and the one added");
 }

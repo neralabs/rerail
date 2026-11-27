@@ -28,7 +28,9 @@
 //! (`Out`) and committed by `consolidate`. One harness (`harness`) checks every law of any `DeltaOp` over a chain of
 //! edits.
 
-use crate::cache::{CacheOps, OpCache, cache_facts};
+use crate::cache::{CacheOps, OpCache};
+#[cfg(any(test, feature = "test-hooks"))]
+use crate::cache::cache_facts;
 use std::marker::PhantomData;
 use crate::dir::{BlockId, Directory};
 use crate::files::BlobRows;
@@ -299,6 +301,7 @@ pub fn want_rows(v: &impl Read) -> BTreeSet<(usize, i64)> {
     (0..Read::end(v).get()).map(RowId::new).filter(|&id| Read::live(v, id)).map(|id| (Read::get(v, id, ColumnIndex::new(0)) as usize, Read::get(v, id, ColumnIndex::new(1)))).collect() // copy: derived (the wanted keys)
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
 /// Rows `rows` of output port `port` (its shape `shape`) restricted to `want` (P§7.1, D1): those whose partition key
 /// is wanted on the port; a port with no partition, whole when any key of it is wanted.
 pub fn restrict(rows: &BTreeSet<Vec<i64>>, port: usize, shape: &Shape, want: &BTreeSet<(usize, i64)>) -> BTreeSet<Vec<i64>> {
@@ -506,25 +509,36 @@ impl Instance {
         self.asks.iter().map(|t| t.as_ref().and_then(Trace::head)).collect()
     }
 
-    /// The keys it asks of input port `p` now (its requests trace's state).
-    pub fn asked(&self, dir: &Directory, p: usize) -> Result<BTreeSet<i64>, String> {
-        let Some(t) = self.asks.get(p).and_then(Option::as_ref) else { return Ok(BTreeSet::new()) };
-        Ok(rows_at(dir, t, t.head())?.into_iter().map(|r| r[0]).collect())
+    /// Its requests trace of input port `p` (`None`: it asks nothing of it): the keys it asks now, `(key)`, read where
+    /// its state lies.
+    pub fn asks_of(&self, p: usize) -> Option<&Trace> {
+        self.asks.get(p).and_then(Option::as_ref)
     }
 
     /// Its want moved to `rows` (`(port, key)`), a layer of their change on its want trace: the heads the run's want is
     /// between (the identity when they are the same rows).
     pub fn set_want(&mut self, cx: &mut Cx<'_>, rows: &BTreeSet<(usize, i64)>) -> Result<(Option<BlockId>, Option<BlockId>), String> {
         let before = self.want.head();
-        let now: BTreeSet<(usize, i64)> = match before {
-            None => BTreeSet::new(),
-            Some(_) => rows_at(cx.dir, &self.want, before)?.into_iter().map(|r| (r[0] as usize, r[1])).collect(),
-        };
-        let pairs: Vec<(Vec<i64>, i32)> = now.difference(rows).map(|w| (vec![w.0 as i64, w.1], -1)).chain(rows.difference(&now).map(|w| (vec![w.0 as i64, w.1], 1))).collect(); // copy: derived (the want's change)
-        if pairs.is_empty() {
+        // The want's change, read where its state lies: its rows `rows` lacks, gone; those of `rows` it lacks, added
+        // (by its canonical order, key first).
+        let row = |s: &View<'_>, id| (Read::get(s, id, ColumnIndex::new(0)) as usize, Read::get(s, id, ColumnIndex::new(1)));
+        let held = |s: &View<'_>, w: &(usize, i64)| Read::matching(s, &[ColumnIndex::new(1), ColumnIndex::new(0)], &[w.1, w.0 as i64]).next().is_some();
+        let n = self.want.reading(cx.dir, before, |s| s.live_ids().filter(|&id| !rows.contains(&row(s, id))).count() + rows.iter().filter(|w| !held(s, w)).count())?;
+        if n == 0 {
             return Ok((before, before));
         }
-        let after = push_layer(cx.reg, cx.traces, cx.dir, &mut self.want, &pairs)?;
+        let after = push_with(cx.reg, cx.traces, cx.dir, &mut self.want, n, |dir, t, w| {
+            t.reading(dir, before, |s| {
+                for id in s.live_ids().filter(|&id| !rows.contains(&row(s, id))) {
+                    let (p, k) = row(s, id);
+                    w.push(&[p as i64, k], -1).ok_or("room for the want's change")?;
+                }
+                for x in rows.iter().filter(|w| !held(s, w)) {
+                    w.push(&[x.0 as i64, x.1], 1).ok_or("room for the want's change")?;
+                }
+                Ok(())
+            })?
+        })?;
         Ok((before, Some(after)))
     }
 
@@ -644,16 +658,15 @@ impl Instance {
     }
 }
 
-/// A port's rows: its trace's state at `head`, read where it lies.
-pub fn rows_at(dir: &Directory, t: &Trace, head: Option<BlockId>) -> Result<BTreeSet<Vec<i64>>, String> {
-    let Some(h) = head else { return Ok(BTreeSet::new()) };
-    let l = t.read(dir, &[Some(h)])?;
-    let table = l.table();
-    let s = t.state(&table, head)?;
-    let live = (0..Read::end(&s).get()).map(RowId::new).filter(|&id| Read::live(&s, id));
-    Ok(live.map(|id| ColumnIndex::all(Read::arity(&s)).map(|c| Read::get(&s, id, c)).collect()).collect()) // copy: derived (the oracle's rows)
+/// The oracle's rows of a port (F1, by meaning): its trace's state at `head`, read where it lies, gathered as a set to
+/// compare with the plain function's. Tests and the law harness only: no product build has it.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn oracle_rows(dir: &Directory, t: &Trace, head: Option<BlockId>) -> Result<BTreeSet<Vec<i64>>, String> {
+    // copy: derived (the oracle's rows)
+    t.reading(dir, head, |s| s.live_ids().map(|id| ColumnIndex::all(Read::arity(s)).map(|c| Read::get(s, id, c)).collect()).collect())
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
 /// A port's change, by its rows (the oracle's form).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Change {
@@ -661,6 +674,7 @@ pub struct Change {
     pub gone: BTreeSet<Vec<i64>>,
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
 /// The plain function's output on the inputs' states `heads`: `run` into fresh output traces, committed, read.
 pub fn apply<O: DeltaOp>(op: &O, cx: &mut Cx<'_>, ins: &[(&Trace, Option<BlockId>)], globals: &[Global]) -> Result<Vec<BTreeSet<Vec<i64>>>, String> {
     let ports = ports_of::<O>()?;
@@ -692,12 +706,13 @@ pub fn apply<O: DeltaOp>(op: &O, cx: &mut Cx<'_>, ins: &[(&Trace, Option<BlockId
         let mut rows = Vec::with_capacity(outs.len());
         for (t, &r) in outs.iter_mut().zip(&out.runs) {
             let head = t.commit(cx.reg, cx.traces, cx.dir, r, Tiling::WHOLE)?;
-            rows.push(rows_at(cx.dir, t, Some(head))?);
+            rows.push(oracle_rows(cx.dir, t, Some(head))?);
         }
         return Ok(rows);
     }
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
 /// The generic reference (P§2, Figure 4): the plain function run on the inputs' before side and on their after side,
 /// and the two diffed, port by port.
 pub fn reference<O: DeltaOp>(op: &O, cx: &mut Cx<'_>, ins: &[InPort<'_>], globals: &[GlobalIn]) -> Result<Vec<Change>, String> {
@@ -708,6 +723,7 @@ pub fn reference<O: DeltaOp>(op: &O, cx: &mut Cx<'_>, ins: &[InPort<'_>], global
     Ok(b.iter().zip(&a).map(|(b, a)| Change { added: a.difference(b).cloned().collect(), gone: b.difference(a).cloned().collect() }).collect())
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
 /// A law the harness found broken: which, at which step of the chain, and how.
 #[derive(Debug)]
 pub struct Broken {
@@ -716,10 +732,12 @@ pub struct Broken {
     pub what: String,
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
 /// One edit chain: for each step, each input port's `(row, ±1)` pairs, a set change of the port's state (an empty one
 /// leaves the port's state where it was: the identity).
 pub type Chain = Vec<Vec<Vec<(Vec<i64>, i32)>>>;
 
+#[cfg(any(test, feature = "test-hooks"))]
 /// Checks every law of `op` over `chain` (P§12's "one test harness for every operator"): each step run by a threaded
 /// instance (its cache carried), by an instance whose cache is dropped at step `drop_at`, and cold, by a fresh
 /// instance from ∅; each against the reference. In order, a step's checks are L2 (the cold run is ∅ → op(X)), L1 (the
@@ -730,6 +748,7 @@ pub fn harness<O: DeltaOp>(op: &O, chain: &Chain, drop_at: usize) -> Result<(), 
     harness_under(op, chain, drop_at, None)
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
 /// `harness` under `wants` (a want a state of the chain, the first the state before it): D1 checked at each step
 /// (`harness_on`).
 pub fn harness_under<O: DeltaOp>(op: &O, chain: &Chain, drop_at: usize, wants: Option<&Wants>) -> Result<(), Broken> {
@@ -779,9 +798,9 @@ impl Bench {
         // by key): every other kept block is a state no run reads again (an older run's, a process stopped before
         // letting it go), released, its file removed.
         if let Some((id, _)) = &pins {
-            let named = crate::contract::rows_at(&bench.dir, bench.blobs.rows_trace(), bench.blobs.head())?;
             let mut keep = bench.dir.reach(&[*id]);
-            keep.extend(named.iter().map(|r| BlockId(r[4] as u32)));
+            // The blocks the blobs' rows name, read where the rows lie.
+            bench.blobs.rows_trace().reading(&bench.dir, bench.blobs.head(), |s| keep.extend(s.live_ids().map(|r| BlockId(Read::get(s, r, ColumnIndex::new(4)) as u32))))?;
             for b in bench.dir.owned() {
                 if !keep.contains(&b) {
                     bench.dir.release(b);
@@ -798,6 +817,7 @@ impl Bench {
     }
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
 /// The input traces of a chain of row changes, a trace a port, every state kept (a layer a step, none rolled up), and
 /// each step's heads.
 #[allow(clippy::type_complexity)]
@@ -819,23 +839,39 @@ fn inputs<O: DeltaOp>(bench: &mut Bench, chain: &Chain) -> Result<(Vec<Trace>, V
 }
 
 /// Trace `t`'s next layer, of the `(row, ±1)` pairs `pairs`: its new head.
-pub fn push_layer(reg: &Registry, traces: &TraceOps, dir: &mut Directory, t: &mut Trace, pairs: &[(Vec<i64>, i32)]) -> Result<BlockId, String> {
-    let id = t.open(dir, pairs.len().max(1));
-    {
+pub fn push_layer<R: AsRef<[i64]>>(reg: &Registry, traces: &TraceOps, dir: &mut Directory, t: &mut Trace, pairs: &[(R, i32)]) -> Result<BlockId, String> {
+    push_with(reg, traces, dir, t, pairs.len(), |_, _, w| {
+        for (r, d) in pairs {
+            w.push(r.as_ref(), *d).ok_or("room for the pairs")?;
+        }
+        Ok(())
+    })
+}
+
+/// A layer of at most `n` pairs on `t`, committed: `fill` pushes them into its runs block, reading what it needs where
+/// it lies (a state of `t` itself among them: its layers are other blocks), so no pair is gathered first. The runs
+/// block is let go when `fill` fails.
+pub fn push_with(reg: &Registry, traces: &TraceOps, dir: &mut Directory, t: &mut Trace, n: usize, fill: impl FnOnce(&Directory, &Trace, &RunsW<'_>) -> Result<(), String>) -> Result<BlockId, String> {
+    let id = t.open(dir, n.max(1));
+    let filled = {
         let b = dir.block(id).expect("made");
         let pin = pin_block(&b, "a layer's pairs", true)?;
         let w = RunsW::new(&pin);
-        for (r, d) in pairs {
-            w.push(r, *d).ok_or("room for the pairs")?;
-        }
+        fill(dir, t, &w)
+    };
+    if let Err(e) = filled {
+        dir.release(id);
+        return Err(e);
     }
     t.commit(reg, traces, dir, id, Tiling::WHOLE)
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
 /// A chain's wants: the want at each state of the chain (`(port, key)`), the first the state before it (its inputs ∅, so
 /// its output is ∅ under any want).
 pub type Wants = [BTreeSet<(usize, i64)>];
 
+#[cfg(any(test, feature = "test-hooks"))]
 /// `harness`'s laws over input traces `ins` made already, at `heads`, a step's heads each (the first, every port's
 /// state before the chain), and its globals' states at each step, `globals`: the traces and the globals an
 /// operator's world read writes, as L1's tape port and its atoms are (B6). Under `wants` (a want a state), every
@@ -864,7 +900,7 @@ pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], head
             Some(w) => rows.iter().enumerate().map(|(p, r)| restrict(r, p, &ports.outs[p].shape, &w[k])).collect(),
         }
     };
-    let outs_of = |cx: &Cx<'_>, inst: &Instance| -> Result<Vec<BTreeSet<Vec<i64>>>, String> { inst.outs.iter().map(|t| rows_at(cx.dir, t, t.head())).collect() };
+    let outs_of = |cx: &Cx<'_>, inst: &Instance| -> Result<Vec<BTreeSet<Vec<i64>>>, String> { inst.outs.iter().map(|t| oracle_rows(cx.dir, t, t.head())).collect() };
     let mut full = vec![apply(op, &mut cx, &at(0), &globals[0]).map_err(setup)?];
     let mut threaded = Instance::new(op, cx.dir).map_err(setup)?;
     let mut dropped = Instance::new(op, cx.dir).map_err(setup)?;
@@ -927,9 +963,10 @@ pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], head
                 if threaded.asks[p].is_none() {
                     continue;
                 }
-                let asked = threaded.asked(cx.dir, p).map_err(|e| fail("D1", k, e))?;
+                let at = threaded.asks[p].as_ref().expect("a port asked of");
+                let asked: BTreeSet<i64> = oracle_rows(cx.dir, at, at.head()).map_err(|e| fail("D1", k, e))?.into_iter().map(|r| r[0]).collect();
                 let c = ports.ins[p].shape.partition.map_or(0, |c| c as usize);
-                let rows: Vec<(Vec<i64>, i32)> = rows_at(cx.dir, t, heads[k][p]).map_err(|e| fail("D1", k, e))?.into_iter().filter(|r| asked.contains(&r[c])).map(|r| (r, 1)).collect();
+                let rows: Vec<(Vec<i64>, i32)> = oracle_rows(cx.dir, t, heads[k][p]).map_err(|e| fail("D1", k, e))?.into_iter().filter(|r| asked.contains(&r[c])).map(|r| (r, 1)).collect();
                 let mut n = Trace::new(&ports.ins[p].shape).map_err(|e| fail("D1", k, e))?.with_roll_up(RollUp::Never);
                 nheads.push(if rows.is_empty() { None } else { Some(push_layer(cx.reg, cx.traces, cx.dir, &mut n, &rows).map_err(|e| fail("D1", k, e))?) });
                 narrowed.push(n);
@@ -989,6 +1026,7 @@ pub fn harness_on<O: DeltaOp>(op: &O, bench: &mut Bench, ins: &mut [Trace], head
     Ok(())
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
 /// A random edit chain of `steps` over `ports` input ports, each a set change of its port's state: some live rows
 /// gone, some new rows added (`row` makes one from a random word), and every fourth step the identity.
 pub fn random_chain(ports: usize, steps: usize, seed: u64, row: &dyn Fn(u64) -> Vec<i64>) -> Chain {

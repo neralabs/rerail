@@ -49,7 +49,7 @@ use crate::kform::RELATIONS;
 use crate::l1::{L1, L1Ports, TAPE_PATH, row_blobs, tape_row, tape_shape};
 use crate::op::Tiling;
 use crate::sym::Atoms;
-use crate::trace::{RollUp, Trace};
+use crate::trace::{RollUp, Row, Trace};
 use rerail_blocks::bistate::{ColumnIndex, Read};
 use rerail_blocks::block::kind;
 use rerail_blocks::gens::BODY_AT;
@@ -77,13 +77,9 @@ impl DocSet {
     }
 
     /// The row of the document at `path`, by its path's symbol (the set's index on its path), when it has one.
-    fn row_at(&self, dir: &Directory, atoms: Atoms, path: &str) -> Result<Option<Vec<i64>>, String> {
+    fn row_at(&self, dir: &Directory, atoms: Atoms, path: &str) -> Result<Option<Row>, String> {
         let (Some(p), Some(h)) = (atoms.find(dir, path), self.tape.head()) else { return Ok(None) };
-        let l = self.tape.read(dir, &[Some(h)])?;
-        let table = l.table();
-        let s = self.tape.state(&table, Some(h))?;
-        // copy: derived (one row's cells, read where they lie)
-        Ok(Read::matching(&s, &[ColumnIndex::new(TAPE_PATH as u16)], &[p]).next().map(|r| (0..Read::arity(&s) as u16).map(|c| Read::get(&s, r, ColumnIndex::new(c))).collect()))
+        self.tape.reading(dir, Some(h), |s| Read::matching(s, &[ColumnIndex::new(TAPE_PATH as u16)], &[p]).next().map(|r| Row::of(s, r)))
     }
 
     /// The key of the document at `path` (decision 0052 §3, from its path's hash): its row's, when the set has one.
@@ -92,11 +88,6 @@ impl DocSet {
             Some(r) => r[0],
             None => key_of(path, |k| probe(dir, &self.tape, &[k]).ok().flatten().is_some()),
         })
-    }
-
-    /// The keys of the documents the set holds.
-    pub fn keys(&self, dir: &Directory) -> Result<BTreeSet<i64>, String> {
-        Ok(crate::contract::rows_at(dir, &self.tape, self.tape.head())?.into_iter().map(|r| r[0]).collect())
     }
 
     /// Document `d` let go: nothing asks for it any more (P§7, "a file goes as X → ∅ when nothing asks for it"), its
@@ -178,9 +169,13 @@ impl DocSet {
     /// used now: one whose source and tape the residency no longer holds (retired under the budget, dropped after an
     /// execution, or a process started since) is loaded from the store where its places say.
     pub fn resident(&mut self, bench: &mut Bench) -> Result<(), String> {
-        let rows = crate::contract::rows_at(&bench.dir, &self.tape, self.tape.head())?;
-        for r in &rows {
-            let (ids, syms) = row_blobs(r);
+        let head = self.tape.head();
+        let l = self.tape.read(&bench.dir, &[head])?;
+        let table = l.table();
+        let s = self.tape.state(&table, head)?;
+        for id in s.live_ids() {
+            let r = Row::of(&s, id);
+            let (ids, syms) = row_blobs(&r);
             self.world.resident(&bench.reg, &mut bench.dir, &mut bench.blobs, r[0], ids)?;
             for b in [ids.source, ids.tape, syms] {
                 if let Some(p) = bench.blobs.get(&bench.dir, &b)? {
@@ -318,12 +313,30 @@ pub fn run(l1: &L1, inst: &mut Instance, l0: &str, module: &str, globals: Atoms,
             work += inst.step(l1, &mut bench.cx(), &ins, &atoms, Some(want))?;
             from = (docs.tape.head(), Some(count));
             want = (wa, wa);
-            // Demand reaches the world as reads: what is asked answered, what is no longer asked let go.
-            let asked = inst.asked(&bench.dir, L1Ports::TAPE.index())?;
-            for gone in docs.keys(&bench.dir)?.difference(&asked) {
-                docs.forget(bench, *gone)?;
+            // Demand reaches the world as reads: what is asked answered, what is no longer asked let go. The asks and
+            // the document set are read where their states lie.
+            let asks = inst.asks_of(L1Ports::TAPE.index());
+            let la = asks.map(|t| t.read(&bench.dir, &[t.head()])).transpose()?;
+            let ta = la.as_ref().map(|l| l.table());
+            let sa = match (asks, &ta) {
+                (Some(t), Some(table)) => Some(t.state(table, t.head())?),
+                _ => None,
+            };
+            let key = |s: &rerail_blocks::relation::View<'_>, id| Read::get(s, id, ColumnIndex::new(0));
+            let is_asked = |k: i64| sa.as_ref().is_some_and(|s| Read::matching(s, &[ColumnIndex::new(0)], &[k]).next().is_some());
+            {
+                let head = docs.tape.head();
+                let ld = docs.tape.read(&bench.dir, &[head])?;
+                let td = ld.table();
+                let sd = docs.tape.state(&td, head)?;
+                for id in sd.live_ids() {
+                    let k = key(&sd, id);
+                    if !is_asked(k) {
+                        docs.forget(bench, k)?;
+                    }
+                }
             }
-            for &k in &asked {
+            for k in sa.iter().flat_map(|s| s.live_ids().map(move |id| key(s, id))) {
                 if round > 0 && answered.contains(&k) {
                     continue;
                 }

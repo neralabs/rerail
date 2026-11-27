@@ -15,7 +15,8 @@ use crate::op::{
     Across, Bound, Case, Found, Independence, Inside, Mode, OpId, Output, ParamsLayout, Phase, Registry, Signature, SlotSpec, Tiling, Unit,
     Version, run_cpu,
 };
-use rerail_blocks::bistate::Bistate;
+use rerail_blocks::bistate::{Bistate, ColumnIndex, Read, RowId};
+use rerail_blocks::layer::MAX_COLS;
 use rerail_blocks::block::kind;
 use rerail_blocks::gens::{BODY_AT, Table, word};
 use rerail_blocks::layer::{Layer, NONE, Runs, Shape, ShapeW, init_runs, layer_room, runs_bytes};
@@ -373,6 +374,23 @@ impl Trace {
         dir.read("read", &heads.iter().flatten().copied().collect::<Vec<_>>())
     }
 
+    /// The state at `head`, read where its layers lie, given to `f`: a launch over them held while `f` reads.
+    pub fn reading<R>(&self, dir: &Directory, head: Option<BlockId>, f: impl FnOnce(&View<'_>) -> R) -> Result<R, String> {
+        let l = self.read(dir, &[head])?;
+        let table = l.table();
+        Ok(f(&self.state(&table, head)?))
+    }
+
+    /// The first row of the state at `head` whose leading columns are `key` (by its layers' indexes), its cells read
+    /// where they lie.
+    pub fn probe(&self, dir: &Directory, head: Option<BlockId>, key: &[i64]) -> Result<Option<Row>, String> {
+        if head.is_none() {
+            return Ok(None);
+        }
+        let cols: [ColumnIndex; MAX_COLS] = std::array::from_fn(|c| ColumnIndex::new(c as u16));
+        self.reading(dir, head, |s| Read::matching(s, &cols[..key.len()], key).next().map(|id| Row::of(s, id)))
+    }
+
     /// The state at `head`, read through a launch's table.
     pub fn state<'t>(&self, table: &'t Table<'t>, head: Option<BlockId>) -> Result<View<'t>, String> {
         View::chain(table, head.map(|h| h.0), self.shape.arity())
@@ -385,6 +403,58 @@ impl Trace {
             None => Bistate::cold(a),
             Some(b) => Bistate::new(self.state(table, Some(b))?, a),
         })
+    }
+}
+
+/// One row's cells, read where they lie into a value of at most `MAX_COLS` cells (as a load into registers is): a key
+/// to probe by, a row to compare with or to push, never a structure a reader reads instead of the block.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Row {
+    n: u8,
+    cells: [i64; MAX_COLS],
+}
+
+impl Row {
+    /// The row of `cells`.
+    pub fn new(cells: &[i64]) -> Row {
+        cells.iter().copied().collect()
+    }
+
+    /// Row `id` of state `s`.
+    pub fn of(s: &impl Read, id: RowId) -> Row {
+        (0..Read::arity(s)).map(|c| Read::get(s, id, ColumnIndex::new(c as u16))).collect()
+    }
+}
+
+impl FromIterator<i64> for Row {
+    fn from_iter<I: IntoIterator<Item = i64>>(it: I) -> Row {
+        let mut r = Row { n: 0, cells: [0; MAX_COLS] };
+        for v in it {
+            assert!((r.n as usize) < MAX_COLS, "a row of more than {MAX_COLS} cells");
+            r.cells[r.n as usize] = v;
+            r.n += 1;
+        }
+        r
+    }
+}
+
+impl std::ops::Deref for Row {
+    type Target = [i64];
+
+    fn deref(&self) -> &[i64] {
+        &self.cells[..self.n as usize]
+    }
+}
+
+impl AsRef<[i64]> for Row {
+    fn as_ref(&self) -> &[i64] {
+        self
+    }
+}
+
+impl std::fmt::Debug for Row {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
     }
 }
 

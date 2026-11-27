@@ -338,7 +338,7 @@ fn l0_is_k0() {
 /// read (here no blob holds it), and the run's output is the new document's cold rows.
 #[test]
 fn a_gone_document_is_retracted_from_the_kept_rows_not_its_old_tape() {
-    use crate::contract::{GlobalIn, Instance, rows_at};
+    use crate::contract::{GlobalIn, Instance, oracle_rows};
     let mut fx = Fx::new();
     let a = fx.doc("e(1, 2).\np(x) :- e(x, _).\n", "m.rerail");
     let b = fx.doc("e(1, 3).\n", "m.rerail");
@@ -354,7 +354,7 @@ fn a_gone_document_is_retracted_from_the_kept_rows_not_its_old_tape() {
     let mut inst = Instance::new(&l1, &mut fx.dir).unwrap();
     let mut cx = Cx { reg: &fx.reg, dir: &mut fx.dir, blobs: &fx.blobs, traces: &fx.traces, caches: &fx.caches };
     inst.step(&l1, &mut cx, &[(&t, None, Some(h1))], &atoms, None).unwrap();
-    let kept: usize = inst.outs.iter().map(|o| rows_at(&fx.dir, o, o.head()).unwrap().len()).sum();
+    let kept: usize = inst.outs.iter().map(|o| oracle_rows(&fx.dir, o, o.head()).unwrap().len()).sum();
     assert!(kept > 0);
     // The new document's blobs alone.
     let mut only_b = BlobRows::new(&fx.traces);
@@ -367,7 +367,7 @@ fn a_gone_document_is_retracted_from_the_kept_rows_not_its_old_tape() {
     let added: usize = want.iter().map(BTreeSet::len).sum();
     assert_eq!(work.rows_written as usize, kept + added, "the kept rows retracted, the new ones placed");
     for (k, o) in inst.outs.iter().enumerate() {
-        assert_eq!(rows_at(&fx.dir, o, o.head()).unwrap(), want[k], "{}", RELATIONS[k].0);
+        assert_eq!(oracle_rows(&fx.dir, o, o.head()).unwrap(), want[k], "{}", RELATIONS[k].0);
     }
 }
 

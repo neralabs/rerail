@@ -24,12 +24,13 @@
 //! the old tape → the new one when it changed: the file is the grain. A file that does not parse, is not UTF-8, or
 //! cannot be read is refused, naming its path. Nothing here reads a file itself.
 
-use crate::contract::{push_layer, rows_at};
+use crate::contract::{push_layer, push_with};
 use crate::dir::{BlockId, Directory};
 use crate::answer::{AnswerOps, Ask, READ_ANYWAY, answer_load, code, parse_sources};
 use crate::op::Registry;
-use crate::trace::{Trace, TraceOps};
-use rerail_blocks::bistate::{ColumnIndex, Read};
+use crate::trace::{Row, Trace, TraceOps};
+use rerail_blocks::bistate::{ColumnIndex, Read, RowId};
+use rerail_blocks::relation::View;
 use rerail_blocks::layer::{ColType, Runs, Shape};
 use rerail_blocks::block::kind;
 use rerail_observe::content_store::observe;
@@ -82,10 +83,19 @@ impl BlobRows {
     /// Forgets the blobs whose block nothing holds: a slab the residency retired or dropped, or a new process's (a slab
     /// is the run's memory). Their bytes are in the store's objects, loaded again when asked.
     pub fn forget_dead(&mut self, reg: &Registry, dir: &mut Directory) -> Result<(), String> {
-        let rows = rows_at(dir, &self.rows, self.rows.head())?;
-        let gone: Vec<(Vec<i64>, i32)> = rows.into_iter().filter(|r| !dir.alive(BlockId(r[4] as u32))).map(|r| (r, -1)).collect(); // copy: derived (the dead blobs' rows, killed)
-        if !gone.is_empty() {
-            push_layer(reg, &self.ops, dir, &mut self.rows, &gone)?;
+        let head = self.rows.head();
+        // Its rows whose block nothing holds, read where they lie: counted, then each pushed as a kill.
+        let is_dead = |dir: &Directory, s: &View<'_>, id: RowId| !dir.alive(BlockId(Read::get(s, id, ColumnIndex::new(4)) as u32));
+        let n = self.rows.reading(dir, head, |s| s.live_ids().filter(|&id| is_dead(dir, s, id)).count())?;
+        if n > 0 {
+            push_with(reg, &self.ops, dir, &mut self.rows, n, |dir, t, w| {
+                t.reading(dir, head, |s| {
+                    for id in s.live_ids().filter(|&id| is_dead(dir, s, id)) {
+                        w.push(&Row::of(s, id), -1).ok_or("room for the dead blobs' kills")?;
+                    }
+                    Ok(())
+                })?
+            })?;
         }
         Ok(())
     }
@@ -130,7 +140,7 @@ impl BlobRows {
 
     /// How many it holds.
     pub fn len(&self, dir: &Directory) -> Result<usize, String> {
-        Ok(rows_at(dir, &self.rows, self.rows.head())?.len())
+        self.rows.reading(dir, self.rows.head(), |s| s.live_ids().count())
     }
 }
 
@@ -347,26 +357,25 @@ pub fn places_shape() -> Shape {
     Shape::run(c, (0..13).collect(), Some(0))
 }
 
-/// The first row of `t` at its head whose leading columns are `key`, read where it lies.
-pub fn probe(dir: &Directory, t: &Trace, key: &[i64]) -> Result<Option<Vec<i64>>, String> {
-    let Some(h) = t.head() else { return Ok(None) };
-    let l = t.read(dir, &[Some(h)])?;
-    let table = l.table();
-    let s = t.state(&table, Some(h))?;
-    let cols: Vec<ColumnIndex> = (0..key.len() as u16).map(ColumnIndex::new).collect();
-    // copy: derived (one row's cells, read where they lie)
-    Ok(Read::matching(&s, &cols, key).next().map(|r| (0..Read::arity(&s) as u16).map(|c| Read::get(&s, r, ColumnIndex::new(c))).collect()))
+/// The first row of `t` at its head whose leading columns are `key`, read where it lies (`Trace::probe`).
+pub fn probe(dir: &Directory, t: &Trace, key: &[i64]) -> Result<Option<Row>, String> {
+    t.probe(dir, t.head(), key)
 }
 
 /// `t`'s row keyed by `key` (its leading columns) replaced by `row` (`None`: taken out), in one layer; nothing written
 /// when it holds that row already.
-pub fn put_row(reg: &Registry, ops: &TraceOps, dir: &mut Directory, t: &mut Trace, key: &[i64], row: Option<Vec<i64>>) -> Result<(), String> {
+pub fn put_row(reg: &Registry, ops: &TraceOps, dir: &mut Directory, t: &mut Trace, key: &[i64], row: Option<Row>) -> Result<(), String> {
     let old = probe(dir, t, key)?;
     if old == row {
         return Ok(());
     }
-    let pairs: Vec<(Vec<i64>, i32)> = old.map(|r| (r, -1)).into_iter().chain(row.map(|r| (r, 1))).collect(); // copy: derived (the row's change)
-    push_layer(reg, ops, dir, t, &pairs)?;
+    let mut pairs = [(Row::default(), 0); 2];
+    let mut n = 0;
+    for p in old.map(|r| (r, -1)).into_iter().chain(row.map(|r| (r, 1))) {
+        pairs[n] = p;
+        n += 1;
+    }
+    push_layer(reg, ops, dir, t, &pairs[..n])?;
     Ok(())
 }
 
@@ -457,9 +466,9 @@ impl World {
     /// Leaf `d`'s row as read now: `digest` (`None`: a miss), written when it changed (D3: every leaf, misses too).
     fn leaf(&mut self, reg: &Registry, ops: &TraceOps, dir: &mut Directory, leaves: &mut LeavesW, d: i64, digest: Option<[u8; 32]>) -> Result<(), String> {
         let w = digest.map_or([0; 4], |g| BlobId(g).words());
-        let row = vec![d, w[0], w[1], w[2], w[3], i64::from(digest.is_some())];
+        let row = Row::new(&[d, w[0], w[1], w[2], w[3], i64::from(digest.is_some())]);
         let old = probe(dir, &self.leaves, &[d])?;
-        if old.as_ref() == Some(&row) {
+        if old == Some(row) {
             return Ok(());
         }
         let (len, cap) = {
@@ -650,7 +659,7 @@ impl World {
             None => None,
             Some(s) => {
                 let p = self.store.objects.document_places(s.0, self.grammar).map_err(|e| e.to_string())?.ok_or("a document's source and tape, not in the store")?;
-                Some(std::iter::once(d).chain(p.source).chain(p.tape_hash).chain(p.tape).chain([p.tape_length]).collect())
+                Some(std::iter::once(d).chain(p.source).chain(p.tape_hash).chain(p.tape).chain([p.tape_length]).collect::<Row>())
             }
         };
         put_row(reg, ops, dir, &mut self.places, &[d], row)
@@ -663,12 +672,11 @@ impl World {
             return Ok(());
         }
         let row = probe(dir, &self.places, &[d])?.ok_or("a document's places, not kept")?;
-        let w = |a: usize, b: usize| -> Vec<i64> { row[a..b].to_vec() }; // copy: derived (a place's words)
         let places = DocumentPlaces {
             sha256: ids.source.0,
-            source: w(1, 4).try_into().expect("three"),
-            tape_hash: w(4, 9).try_into().expect("five"),
-            tape: w(9, 12).try_into().expect("three"),
+            source: row[1..4].try_into().expect("three"),
+            tape_hash: row[4..9].try_into().expect("five"),
+            tape: row[9..12].try_into().expect("three"),
             tape_length: row[12],
         };
         let got = self.load_places(reg, dir, blobs, &places)?;
@@ -706,17 +714,17 @@ impl World {
 }
 
 /// A parse answer's key: the answerer, the source's four words, the grammar's word, and a word unused.
-fn parse_key(source: BlobId, grammar: i64) -> Vec<i64> {
+fn parse_key(source: BlobId, grammar: i64) -> Row {
     std::iter::once(PARSE).chain(source.words()).chain([grammar, 0]).collect()
 }
 
 /// An intern answer's key: the answerer, the tape's four words, the path's and the module's symbols.
-fn intern_key(tape: BlobId, path: i64, module: i64) -> Vec<i64> {
+fn intern_key(tape: BlobId, path: i64, module: i64) -> Row {
     std::iter::once(INTERN).chain(tape.words()).chain([path, module]).collect()
 }
 
 /// An answer's row: its key, then the blob.
-fn answer_row(key: &[i64], blob: BlobId) -> Vec<i64> {
+fn answer_row(key: &[i64], blob: BlobId) -> Row {
     key.iter().copied().chain(blob.words()).collect()
 }
 
