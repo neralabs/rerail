@@ -4046,7 +4046,7 @@ fn the_join_programs_view_reads_are_the_jits() {
                 let at = format!("{} document {m}", format.name());
                 for k in 0..VIEWS.len() {
                     let n = firsts[m as usize + 1].rows[k] - firsts[m as usize].rows[k];
-                    let cols = [5, 3, 3, 3, 2, 2, 2, 2, 2, 4, 2, 2][k];
+                    let cols = [5, 3, 3, 3, 2, 2, 2, 2, 2, 4, 2, 2, 3][k];
                     for r in 0..n {
                         for c in 0..cols {
                             // SAFETY: a row of the document's, of the view's.

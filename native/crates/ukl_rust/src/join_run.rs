@@ -500,7 +500,7 @@ unsafe fn vrow_dir<'a>(kind: u32, d: *const ViewDir, r: u32, memo: &mut u32) -> 
     *memo = lo;
     let e = view_rows(d).add(lo as usize);
     let i = r.wrapping_sub((*e).rows[k as usize]);
-    Row::View(doc(d, e).at(k.min(11), i))
+    Row::View(doc(d, e).at(k.min(reads::LAST_VIEW), i))
 }
 
 /// A row of a view or a relation, found once, so that each of its columns is read from it: a view row's document

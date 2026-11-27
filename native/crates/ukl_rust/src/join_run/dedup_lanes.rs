@@ -221,7 +221,7 @@ where
             t += 1;
             continue;
         }
-        let mut w = doc(d, e).rows_from(k.min(11), t - first);
+        let mut w = doc(d, e).rows_from(k.min(super::reads::LAST_VIEW), t - first);
         while t < stop {
             let n = (stop - t).min(N as u32);
             // Each key column's values of the lanes' rows (0 past them, their keys not written).

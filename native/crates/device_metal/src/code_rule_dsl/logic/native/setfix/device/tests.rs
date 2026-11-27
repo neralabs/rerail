@@ -1929,8 +1929,9 @@ use rerail_blocks::vector::Vector;
         let device = rerail_accel_gpu::gpu::join::device().expect("the device");
         let (mut seen, mut in_place) = (0, 0);
         // `line` (`View::Line`, decision 0325 step 3): the view, not a relation of that name. `tape`, `ast_depth` and
-        // `node_order` are read in place only (decision 0353 step 6: uploaded from the host before).
-        for name in ["node", "child", "field", "core_node", "line", "tape", "ast_depth", "node_order"] {
+        // `node_order` are read in place only (decision 0353 step 6: uploaded from the host before). `doc`'s rows, one a
+        // file, read in place too: its key and its path's and module's atoms, in its entry (`view_doc`).
+        for name in ["node", "child", "field", "core_node", "line", "tape", "ast_depth", "node_order", "doc"] {
             let src = &all.iter().find(|(n, s)| *n == name && s.python_batch().is_some()).unwrap_or_else(|| panic!("{name}")).1;
             let Some(d) = src.device_view() else {
                 assert!(!device.has_addresses(), "{name}: read in place where buffers have addresses");
@@ -1964,8 +1965,8 @@ use rerail_blocks::vector::Vector;
         // Read in place where every buffer has an address, memory wrapped in place too, which the views' directory is
         // of (Metal's, CUDA's, the CPU's); given to the device by none of them elsewhere (decision 0440 step C:
         // OpenCL's wraps have none, though its allocations may, Intel's unified shared memory).
-        let placed = if device.has_addresses() { 16 } else { 0 };
-        assert_eq!((seen, in_place), (placed, placed), "node, child, field, core_node, line, tape, ast_depth and node_order read in place");
+        let placed = if device.has_addresses() { 18 } else { 0 };
+        assert_eq!((seen, in_place), (placed, placed), "node, child, field, core_node, line, tape, ast_depth, node_order and doc read in place");
         // core.rerail's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
         {
             use crate::code_rule_dsl::facts::vtab::syntax::{Guest, Made, Placement, Projection, shaped};
@@ -2294,6 +2295,25 @@ use rerail_blocks::vector::Vector;
         }
         assert!(seen[0] > 20 && seen[1] > 10, "the chunk's and the value's nodes read: {seen:?}");
         drop(view);
+        // `doc` through the same layered binding: read in place where every batch's entries hold its atoms, a row a
+        // file (the value's too), its key, path and module the host's; a value whose entries hold none refuses it.
+        let doc_l: Arc<dyn Source> = Arc::new(Layered::new("doc", find("doc"), Arc::clone(&values)));
+        let n = doc_l.len();
+        assert!(n >= 3, "the chunk's files and the value's: {n} rows");
+        if let Some(d) = doc_l.device_view() {
+            use crate::code_rule_dsl::transducer::packed::metal_join as mj;
+            assert_eq!(d.rows, n);
+            let placed = mj::DevRel::view_in(d.home.clone(), 3, n, d.in_place.clone()).unwrap();
+            let out = mj::DevRel::empty(3, n).unwrap();
+            let _evaluation = rerail_accel::gpu::launch::LaunchScope::enter();
+            let mut batch = mj::Batch::new().expect("the device");
+            batch.copy_rows(mj::Rows::Rel(&placed), n, &[mj::Col::From(0), mj::Col::From(1), mj::Col::From(2)], mj::Rows::Rel(&out), 0).unwrap();
+            batch.finish().unwrap();
+            for c in 0..3 {
+                let host: Vec<i64> = (0..n).map(|r| doc_l.value(r, c)).collect();
+                assert_eq!(out.column(c), &host[..], "doc, layered: column {c} read in place");
+            }
+        }
         let _ = std::fs::remove_file(&store_path);
     }
 

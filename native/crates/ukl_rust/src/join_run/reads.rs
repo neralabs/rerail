@@ -137,6 +137,9 @@ pub struct Doc<'a> {
     pub source: *const u8,
 }
 
+/// The last view of `view_reads::VIEWS` (`doc`'s): a view's number past it is clamped to it, as `At::col`'s arms end.
+pub const LAST_VIEW: u32 = (rerail_reads::views::VIEWS.len() - 1) as u32;
+
 /// A view row found (`Doc::at`): its document, its view (`view_reads::VIEWS`), its row in the document and the tape
 /// node its columns read (0 where they read none, or where a column finds its own: the `Loc` views').
 #[derive(Clone, Copy)]
@@ -164,7 +167,8 @@ impl At<'_> {
             8 => d.loc(Place::Docof, r, col),
             9 => d.tape(r, x, col),
             10 => d.depth(r, x, col),
-            _ => d.order(r, col),
+            11 => d.order(r, col),
+            _ => d.doc(col),
         }
     }
 }
@@ -424,6 +428,15 @@ impl<'a> Doc<'a> {
         }
         let low = if self.local() { l } else { self.n.order_of(l) };
         u64::from(self.e.key) << 32 | u64::from(low)
+    }
+
+    /// `doc`'s row (one a file): its key, its path's atom, its module's (`ViewDoc::doc_path`, `doc_module`).
+    unsafe fn doc(&self, col: u32) -> u64 {
+        u64::from(match col {
+            0 => self.e.key,
+            1 => self.e.doc_path,
+            _ => self.e.doc_module,
+        })
     }
 
     /// View `k`'s (`view_reads::VIEWS`) row `r`, column `col`.

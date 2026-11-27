@@ -779,6 +779,10 @@ impl Layered {
             false => None,
         };
         let dir = self.values.dir(&batch)?;
+        // Each value's batch's entries hold what the view's read reads (`doc`'s atoms), as the chunk's do.
+        if !dir.batches.iter().all(|b| super::tape_rows::entries_hold(dv_ref.view, b)) {
+            return None;
+        }
         let views = &dir.views;
         let loc = (super::device_chunk::VIEW_LOC_LINE..=super::device_chunk::VIEW_LOC_DOCOF).contains(&dv_ref.view);
         let (lines, locs) = views.holds();

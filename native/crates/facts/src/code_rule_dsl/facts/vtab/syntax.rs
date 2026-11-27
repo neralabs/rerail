@@ -4448,10 +4448,11 @@ impl Batch {
                 let [nodes, fielded, siblings, locs] = [c[0], c[1], c[2], c[3]];
                 let own = [nodes, nodes.saturating_sub(1), if wants_field { fielded } else { 0 }, if wants_sibling { siblings } else { 0 }, locs];
                 // `ROWS`' order: node, child, field, core_node, line, the four `Loc` views, tape, ast_depth,
-                // node_order, then siblings; then the host's alone: `op`, the token order's four, `spread`, `end_point`,
-                // `text`, and the tape's other relations (`tape_rows`), whose token order's four it counts too.
+                // node_order, `doc` (a free slot, written above), then siblings; then the host's alone: `op`, the
+                // token order's four, `spread`, `end_point`, `text`, and the tape's other relations (`tape_rows`),
+                // whose token order's four it counts too.
                 let views: [usize; TAPE] = [
-                    own[0], own[1], own[2], own[0], own[0], own[4], own[4], own[4], own[4], own[0], own[0], own[0], own[3],
+                    own[0], own[1], own[2], own[0], own[0], own[4], own[4], own[4], own[4], own[0], own[0], own[0], 0, own[3],
                     c[9], 0, 0, 0, 0, if wants_spread { c[5] } else { 0 }, if wants_end { nodes } else { 0 }, c[11],
                 ];
                 let mut by: [usize; ROWS] = std::array::from_fn(|k| views.get(k).copied().unwrap_or(0));

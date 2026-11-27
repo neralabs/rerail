@@ -177,6 +177,9 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "atoms_find", params: &[I64, I32, I32], ret: I32, hot: false, body: crate::atoms_reads::atoms_find },
     // A hashed index's place's mark (decision 0671). Last, so no other read's number moves.
     Read { family: Family::Relation, name: "rel_group_mark", params: &[I32, I32], ret: I32, hot: true, body: crate::relation::rel_group_mark },
+    // `doc` read in place: a file's row of its key and its path's and module's atoms, in its entry. Last, so no other
+    // read's number moves.
+    Read { family: Family::View, name: "view_doc", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::doc },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by
