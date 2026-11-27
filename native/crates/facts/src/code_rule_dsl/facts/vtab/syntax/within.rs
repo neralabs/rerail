@@ -134,6 +134,8 @@ pub struct Within {
     members: Vector<u32>,
     /// The set's kind atoms, ascending: what the device tests a node's kind against (`has_walk`).
     kinds: Arc<[i64]>,
+    /// SPIKE (S3): a member's parent must be a member of this axis's set too (`RERAIL_SPIKE_PARENT_SET`).
+    parent: Option<Arc<Within>>,
     /// Where the batch's solve runs.
     binding: crate::code_rule_dsl::facts::nearest::Binding,
     /// The `n` lookups the planner expects, summed over its plans (`expect_lookups`).
@@ -206,6 +208,7 @@ impl Within {
             len: AtomicUsize::new(0),
             members: Vector::new(),
             kinds: Arc::from(Vec::new()),
+            parent: None,
             binding: crate::code_rule_dsl::facts::nearest::Binding::Cpu,
             expected: Mutex::new(0.0),
             chosen: std::sync::atomic::AtomicBool::new(false),
@@ -218,6 +221,16 @@ impl Within {
     }
 
     /// The same, its solve shared with the batch's other axes over its set (`Solves`).
+    /// SPIKE (S3): a member's parent must be in `parent`'s set.
+    pub fn parent_in(self, parent: Arc<Within>) -> Self {
+        Within { parent: Some(parent), ..self }
+    }
+
+    /// Whether tape node `id` is a member: its code in the set, and its parent's in `parent`'s where given.
+    fn is_member<T: Tape>(&self, set: &CodeSet<'_>, doc: usize, t: &T, id: usize) -> bool {
+        set.contains(t.code(id)) && self.parent.as_ref().is_none_or(|q| t.parent(id).is_some_and(|up| q.set(doc, t).contains(t.code(up))))
+    }
+
     pub fn sharing(self, solves: Arc<Solves>) -> Self {
         Within { solves: Some(solves), ..self }
     }
@@ -282,7 +295,7 @@ impl Within {
             Some(dt) => with_tape!(self.tape_of(dt), |t| {
                 let set = self.set(doc, &t);
                 for (l, id) in p.nodes().map(|(l, x)| (l as usize, x)) {
-                    f(l as u32, set.contains(t.code(id as usize)));
+                    f(l as u32, self.is_member(&set, doc, &t, id as usize));
                 }
             }),
             None => (0..p.len()).for_each(|l| f(l, self.member(doc, l))),
@@ -297,13 +310,13 @@ impl Within {
             _ => None,
         };
         let id = p.node(local) as usize;
-        if axis == Some(Axis::Has) && !set.contains(t.code(id)) {
+        if axis == Some(Axis::Has) && !self.is_member(&set, doc, t, id) {
             return;
         }
         let mut up = t.parent(id);
         while let Some(a) = up {
             let l = p.local_of_node(a as u32);
-            if l != NONE && (matches!(axis, None | Some(Axis::Has)) || set.contains(t.code(a))) {
+            if l != NONE && (matches!(axis, None | Some(Axis::Has)) || self.is_member(&set, doc, t, a)) {
                 out.push(l);
                 if axis == Some(Axis::Nearest) {
                     break;
@@ -321,7 +334,7 @@ impl Within {
             _ => None,
         };
         let id = p.node(local) as usize;
-        if matches!(axis, Some(Axis::Nearest | Axis::Inside)) && !set.contains(t.code(id)) {
+        if matches!(axis, Some(Axis::Nearest | Axis::Inside)) && !self.is_member(&set, doc, t, id) {
             return;
         }
         let (mut n, end) = (id + 1, t.subtree_end(id));
@@ -330,12 +343,12 @@ impl Within {
             if l != NONE {
                 match axis {
                     None | Some(Axis::Inside) => out.push(l),
-                    Some(Axis::Has) if set.contains(t.code(n)) => out.push(l),
+                    Some(Axis::Has) if self.is_member(&set, doc, t, n) => out.push(l),
                     Some(Axis::Has) => {}
                     // The subtree, less what lies below a nearer member: its nearest is that member or lower.
                     Some(Axis::Nearest) => {
                         out.push(l);
-                        if set.contains(t.code(n)) {
+                        if self.is_member(&set, doc, t, n) {
                             n = t.subtree_end(n);
                             continue;
                         }
@@ -527,7 +540,8 @@ impl Within {
             let dt = self.doc_tape(doc).expect("every document holds its tape");
             with_tape!(self.tape_of(dt), |t| {
                 near.resize(t.len(), 0);
-                nearest_all(&t, &self.set(doc, &t), |id| p.local_of_node(id as u32) != NONE, &mut near);
+                let set = self.set(doc, &t);
+                nearest_all(&t, &set, |id| p.local_of_node(id as u32) != NONE && self.is_member(&set, doc, &t, id), &mut near);
             });
             found.extend(p.nodes().map(|(_, id)| match near[id as usize] {
                 rerail_tape_format::tape::NONE => file_local::NONE,
