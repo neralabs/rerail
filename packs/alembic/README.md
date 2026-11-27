@@ -533,7 +533,7 @@ is no binary coercion either: PostgreSQL re-reads every row against the limit un
 
 Both say when to keep the change as written: a table that stays small.
 
-Types are compared by the PostgreSQL type their class renders, not by spelling (lib/alembic's `al_pg_type`): the
+Types are compared by the PostgreSQL type their class renders, not by spelling (lib/alembic's `al_pg_type_t`): the
 class is resolved through imports and aliases (`from sqlalchemy import Integer as Int`, `Int32 = sa.Integer` in
 another module), a project TypeDecorator's `impl` (dify's `StringUUID`), a project subclass of a SQLAlchemy type, and
 a project function that returns a type (superset's `MediumText()`, `Text().with_variant(MEDIUMTEXT(), "mysql")`, is
@@ -854,7 +854,7 @@ the pair reads as a rename that loses the data:
 - `upgrade()` neither creates nor drops `t`, and adds as many columns to `t` as it drops;
 - the dropped column's type, read from `downgrade()`'s `add_column(t, Column("a", T))`, is the added column's type,
   or `downgrade()` does not show it. Types compare by the PostgreSQL type their class renders (lib/alembic's
-  `al_pg_type`, through imports, aliases and project TypeDecorators): VARCHAR, String and sqlmodel's AutoString are
+  `al_pg_type_t`, through imports, aliases and project TypeDecorators): VARCHAR, String and sqlmodel's AutoString are
   one, TIMESTAMP and DateTime one, INTEGER and Integer one. A widened length still pairs (`VARCHAR(40)` to
   `String(80)`: a rename with a widening); a shorter one does not;
 - the pair is unique: no other add or drop on `t` in that `upgrade()` matches either side;
@@ -928,7 +928,7 @@ test code (module level, `upgrade()`, `downgrade()` or a helper), it reports
   model in the file, outside type annotations.
 
 A mapped class is a class of the repository that declares `__tablename__`, is a sqlmodel `table=True` class,
-subclasses either (`al_mapped_class`), or subclasses a declarative base (`class Base(DeclarativeBase)`, a module-level
+subclasses either (`al_model_q`), or subclasses a declarative base (`class Base(DeclarativeBase)`, a module-level
 `Base = declarative_base()`, or Flask-SQLAlchemy's `db.Model` for a module-level `db = SQLAlchemy(...)`, each resolved
 through imports) without `__abstract__ = True`: Netflix/dispatch names every table with a `declared_attr` on its base,
 so its models declare no `__tablename__`. A class of another library that merely has a `Model` attribute is no base.

@@ -47,15 +47,16 @@
     "Route `{ms} {p}` repeats the path and method of line {el} on this router, which is served instead, so this handler never runs. Merge it into that handler, or give it its own path."
 
 // ---- paths -------------------------------------------------------------------------------------------------------
-// rs_path(p): route path p, a literal whose braces are all parameters with a converter Starlette ships (none, str,
-// int, float, uuid, path).
-.decl rs_path(p: symbol)
-rs_path(p) :- fa_route_path(_, p),
+// rs_path(dc, p): route call dc's path p, a literal whose braces are all parameters with a converter Starlette ships
+// (none, str, int, float, uuid, path).
+.decl rs_path(dc: node, p: symbol)
+rs_path(dc, p) :- fa_route_path(dc, p),
     match("([^{}]|\\{[A-Za-z_][A-Za-z0-9_]*(:(str|int|float|uuid|path))?\\})*", p).
-// rs_rx(p, rx): the regex an earlier path p is tested with: its literal text escaped, each parameter replaced by what
-// Starlette's converter matches, or by the token rs_shape writes for a later parameter it matches every value of.
-.decl rs_rx(p: symbol, rx: symbol)
-rs_rx(p, rx) :- rs_path(p),
+// rs_rx(dc, rx): the regex route call dc's path is tested with when it is the earlier one: its literal text escaped,
+// each parameter replaced by what Starlette's converter matches, or by the token rs_shape writes for a later
+// parameter it matches every value of.
+.decl rs_rx(dc: node, rx: symbol)
+rs_rx(dc, rx) :- rs_path(dc, p),
     e = @replace_all(p, "([.^$*+?()\\[\\]|\\\\])", "\\$1"),
     a = @replace_all(e, "\\{[A-Za-z_][A-Za-z0-9_]*(:str)?\\}", "[^/]+"),
     b = @replace_all(a, "\\{[A-Za-z_][A-Za-z0-9_]*:int\\}", "(?:[0-9]+|\\{i\\})"),
@@ -63,11 +64,11 @@ rs_rx(p, rx) :- rs_path(p),
     u = @replace_all(c, "\\{[A-Za-z_][A-Za-z0-9_]*:uuid\\}",
         "(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|\\{u\\})"),
     rx = @replace_all(u, "\\{[A-Za-z_][A-Za-z0-9_]*:path\\}", ".*").
-// rs_shape(p, s): a later path p with each parameter written as a token of its converter: `{s}` (any segment), `{i}`,
-// `{f}`, `{u}`, and `{p}/{p}` for a path parameter (only `.*` matches all of its values). Two paths with the same
-// shape are duplicates.
-.decl rs_shape(p: symbol, s: symbol)
-rs_shape(p, s) :- rs_path(p),
+// rs_shape(dc, s): route call dc's path with each parameter written as a token of its converter: `{s}` (any
+// segment), `{i}`, `{f}`, `{u}`, and `{p}/{p}` for a path parameter (only `.*` matches all of its values). Two paths
+// with the same shape are duplicates.
+.decl rs_shape(dc: node, s: symbol)
+rs_shape(dc, s) :- rs_path(dc, p),
     a = @replace_all(p, "\\{[A-Za-z_][A-Za-z0-9_]*(:str)?\\}", "{s}"),
     b = @replace_all(a, "\\{[A-Za-z_][A-Za-z0-9_]*:int\\}", "{i}"),
     c = @replace_all(b, "\\{[A-Za-z_][A-Za-z0-9_]*:float\\}", "{f}"),
@@ -81,16 +82,18 @@ rs_method(dc, m) :- fa_route(_, dc, _, m), m != "api_route".
 rs_method(dc, @lower(s)) :- fa_route(_, dc, _, "api_route"), fa_route_kw(dc, "methods", l), fa_list_item(l, i),
     str(i, s).
 rs_method(dc, "get") :- fa_route(_, dc, _, "api_route"), !fa_route_kw(dc, "methods", _).
-// rs_dc_router(dc, r): route call dc registers on router r. A call whose receiver resolves to more than one router (a
-// name bound twice) is left out.
-.decl rs_dc_router(dc: node, r: node)
+// rs_dc_router(dc, r): route call dc registers on router key r. A call whose receiver resolves to more than one router
+// (a name bound twice) is left out.
+.decl rs_dc_router(dc: node, r: symbol)
 rs_dc_router(dc, r) :- fa_route(_, dc, r, _).
 .decl rs_block_kind(k: symbol)
 rs_block_kind("block"). rs_block_kind("module").
-// rs_route(dc, f, r, b, p): route call dc registers def f on router r with path p, in block b, outside test code.
-.decl rs_route(dc: node, f: node, r: node, b: node, p: symbol)
-rs_route(dc, f, r, b, p) :- fa_route(f, dc, r, _), count : { rs_dc_router(dc, r2) } = 1, fa_route_path(dc, p),
-    rs_path(p), nearest(dc, b, rs_block_kind), docof(dc, d), !fa_test_doc(d).
+// rs_route(dc, f, r, b, p): route call dc registers def f on router key r with path p, in block b, outside test code.
+// Whether r is an app or router (an import of another module's variable may be anything) is the outputs' question,
+// by symbol (lib/fastapi's fa_router_key): routes compared share their key, so the later route's answers for both.
+.decl rs_route(dc: node, f: node, r: symbol, b: node, p: symbol)
+rs_route(dc, f, r, b, p) :- fa_route(f, dc, r, _), count : { rs_dc_router(dc, r2) } = 1, rs_path(dc, p),
+    nearest(dc, b, rs_block_kind), docof(dc, d), !fa_test_doc(d).
 
 // ---- versioned duplicates ----------------------------------------------------------------------------------------
 // rs_extra_dec(f): def f carries a decorator that is not one of its route decorators.
@@ -103,19 +106,19 @@ rs_name(dc, "") :- rs_route(dc, _, _, _, _), !fa_route_kw(dc, "name", _).
 // rs_versioned(dc): route call dc passes a keyword named for a version.
 .decl rs_versioned(dc: node)
 rs_versioned(dc) :- rs_route(dc, _, _, _, _), fa_route_kw(dc, k, _), match("(?i).*version.*", k).
-// rs_variant(e, l): routes e and l are variants a custom route class tells apart.
+// rs_variant(e, l): duplicate routes e and l (rs_pair) are variants a custom route class tells apart.
 .decl rs_variant(e: node, l: node)
-rs_variant(e, l) :- rs_route(e, fe, _, _, _), rs_route(l, _, _, _, _), rs_extra_dec(fe).
-rs_variant(e, l) :- rs_route(e, _, _, _, _), rs_route(l, fl, _, _, _), rs_extra_dec(fl).
-rs_variant(e, l) :- rs_name(e, x), rs_name(l, y), x != y.
-rs_variant(e, l) :- rs_route(e, _, _, _, _), rs_route(l, _, _, _, _), (rs_versioned(e) ; rs_versioned(l)).
+rs_variant(e, l) :- rs_pair(l, e, _, "dup"), rs_route(e, fe, _, _, _), rs_extra_dec(fe).
+rs_variant(e, l) :- rs_pair(l, e, _, "dup"), rs_route(l, fl, _, _, _), rs_extra_dec(fl).
+rs_variant(e, l) :- rs_pair(l, e, _, "dup"), rs_name(e, x), rs_name(l, y), x != y.
+rs_variant(e, l) :- rs_pair(l, e, _, "dup"), (rs_versioned(e) ; rs_versioned(l)).
 
 // ---- the rule ----------------------------------------------------------------------------------------------------
 // rs_pair(l, e, m, how): earlier route e of the same router and block serves method m on every path later route l
 // serves; how "dup" when their paths have the same shape, else "shadow".
 .decl rs_pair(l: node, e: node, m: symbol, how: symbol)
-rs_pair(l, e, m, how) :- rs_route(l, fl, r, b, pl), rs_route(e, fe, r, b, pe), fl != fe, earlier(e, l),
-    rs_method(l, m), rs_method(e, m), rs_rx(pe, rx), rs_shape(pl, sl), match(rx, sl), rs_shape(pe, se),
+rs_pair(l, e, m, how) :- rs_route(l, fl, r, b, _), rs_route(e, fe, r, b, _), fl != fe, earlier(e, l),
+    rs_method(l, m), rs_method(e, m), rs_rx(e, rx), rs_shape(l, sl), match(rx, sl), rs_shape(e, se),
     ((se = sl, how = "dup") ; (se != sl, how = "shadow")).
 // rs_hit(l, e, how): the first such earlier route, a versioned duplicate aside.
 .decl rs_cand(l: node, e: node, how: symbol)
@@ -129,8 +132,9 @@ rs_hit(l, e, how) :- rs_cand(l, _, _), i = min vi : { rs_cand(l, e2, _), visit_i
 rs_methods(l, e, ms) :- rs_hit(l, e, _), ms = join u by u sep "/" : { rs_pair(l, e, m, _), u = @upper(m) }.
 
 RouteShadowed(l, ms, pl, pe, el) :- rs_hit(l, e, "shadow"), rs_methods(l, e, ms), fa_route_path(l, pl),
-    fa_route_path(e, pe), line(e, el).
-RouteDuplicate(l, ms, pl, el) :- rs_hit(l, e, "dup"), rs_methods(l, e, ms), fa_route_path(l, pl), line(e, el).
+    fa_route_path(e, pe), line(e, el), rs_dc_router(l, r), fa_router_key(r, _).
+RouteDuplicate(l, ms, pl, el) :- rs_hit(l, e, "dup"), rs_methods(l, e, ms), fa_route_path(l, pl), line(e, el),
+    rs_dc_router(l, r), fa_router_key(r, _).
 
 // The cases, `cases/fastapi-practice-route-shadowed/`, read as one repository: each line ending in `# caught` is
 // reported, and no other line.

@@ -12,14 +12,14 @@
 //
 // It matches a def decorated with one of those Pydantic decorators (resolved through imports, lib/pydantic's
 // pd_validator, in any class: a mixin in another module counts), or a def a field's annotation attaches with
-// `AfterValidator(fn)`, `BeforeValidator(fn)`, `WrapValidator(fn)` or `PlainValidator(fn)` (pd_fn_validator, directly
-// in `Annotated[...]` or through an alias; its return becomes the field's value), that can reach the end of its body
-// (reported at its name), and each bare `return` in it (reported at the return); and `return None` in an after model
-// validator, where None is never right: `model_validate()` returns it. "Can reach its end" is the Django rule
-// django-practice-clean-field-returns-value's analysis: a return or raise closes a path, an if, try, with, loop or
-// match is open when one of its ways through is; `assert` is not a way out. A call statement closes a path when its
-// callee never returns: a def of the run whose body ends in a `raise` or that is annotated `-> NoReturn` / `Never`,
-// `sys.exit`, `os._exit`, `typing.assert_never`.
+// `AfterValidator(fn)`, `BeforeValidator(fn)`, `WrapValidator(fn)` or `PlainValidator(fn)` (pd_fnv_attached, directly
+// in `Annotated[...]` or through an alias, in any module; its return becomes the field's value), that can reach the
+// end of its body (reported at its name), and each bare `return` in it (reported at the return); and `return None` in
+// an after model validator, where None is never right: `model_validate()` returns it. "Can reach its end" is the
+// Django rule django-practice-clean-field-returns-value's analysis: a return or raise closes a path, an if, try,
+// with, loop or match is open when one of its ways through is; `assert` is not a way out. A call statement closes a
+// path when its callee never returns: a def of the run (in any module) whose body ends in a `raise` or that is
+// annotated `-> NoReturn` / `Never`, `sys.exit`, `os._exit`, `typing.assert_never`.
 //
 // Left alone: a validator whose every path returns or raises; `return None` written out in any other validator (a
 // deliberate None);
@@ -49,12 +49,16 @@
 #include "python/flow-return.rerail"   // fn_return, bare_return, fn_yields
 
 .violation ValidatorFallsOff(at: node, m: symbol, effect: symbol, fix: symbol) "`{m}()` can end without returning: {effect} Return {fix} on every path that does not raise."
-ValidatorFallsOff(n, m, e, x) :- pvr_fn(f, k), field(f, "body", b), pvr_open(b), field(f, "name", n), def_name(f, m),
-    pvr_effect(k, e), pvr_fix(f, x).
+ValidatorFallsOff(n, m, e, x) :- pvr_fn(f, k), field(f, "body", b), pvr_open(b, ck), !pvr_blocked(ck),
+    field(f, "name", n), def_name(f, m), pvr_effect(k, e), pvr_fix(f, x).
+ValidatorFallsOff(n, m, e, x) :- pvr_fnv(f, vk), pd_fnv_attached(vk, md, _), field(f, "body", b), pvr_open(b, ck),
+    !pvr_blocked(ck), field(f, "name", n), def_name(f, m), pvr_effect("field", e), pvr_fix_mode(f, md, x).
 
 .violation ValidatorBareReturn(at: node, m: symbol, effect: symbol, fix: symbol) "This bare `return` in `{m}()` returns None: {effect} Return {fix} instead, raise ValueError, or write `return None` if None is intended."
 ValidatorBareReturn(r, m, e, x) :- pvr_fn(f, k), k != "self", fn_return(f, r), bare_return(r), def_name(f, m),
     pvr_effect(k, e), pvr_fix(f, x).
+ValidatorBareReturn(r, m, e, x) :- pvr_fnv(f, vk), pd_fnv_attached(vk, md, _), fn_return(f, r), bare_return(r),
+    def_name(f, m), pvr_effect("field", e), pvr_fix_mode(f, md, x).
 
 .violation ModelValidatorReturnsNone(at: node, m: symbol) "This `return` in after model validator `{m}()` returns None, so `model_validate()` returns None and so does this model where nested. Return `self` instead."
 ModelValidatorReturnsNone(r, m) :- pvr_fn(f, "self"), fn_return(f, r), (bare_return(r) ; none_return(r)), def_name(f, m).
@@ -66,8 +70,12 @@ ModelValidatorReturnsNone(r, m) :- pvr_fn(f, "self"), fn_return(f, r), (bare_ret
 .decl pvr_fn(f: node, k: symbol)
 pvr_fn(f, k) :- pd_validator(f, _, api, mode), pvr_kind(api, mode, k), docof(f, d), !pd_test_doc(d), !fn_yields(f),
     !pvr_stub(f), !pvr_overload(f).
-pvr_fn(f, "field") :- pd_fn_validator(k, f, _), kind(f, "function_definition"), !pd_validator(f, _, _, _),
-    pd_fn_validator_field(k, _), docof(f, d), !pd_test_doc(d), !fn_yields(f), !pvr_stub(f), !pvr_overload(f).
+// pvr_fnv(f, vk): def f, outside test code and not a decorated validator, goes by vk as a function validator
+// (lib/pydantic's pd_fnv_def): whether a field's annotation attaches it, and in which mode, is pd_fnv_attached's
+// cross-file answer, which the outputs read. Its return becomes the field's value.
+.decl pvr_fnv(f: node, vk: symbol)
+pvr_fnv(f, vk) :- pd_fnv_def(f, vk), kind(f, "function_definition"), !pd_validator(f, _, _, _), docof(f, d),
+    !pd_test_doc(d), !fn_yields(f), !pvr_stub(f), !pvr_overload(f).
 .decl pvr_kind(api: symbol, mode: symbol, k: symbol)
 pvr_kind("field_validator", "before", "field"). pvr_kind("field_validator", "after", "field").
 pvr_kind("field_validator", "wrap", "field"). pvr_kind("field_validator", "plain", "field").
@@ -85,18 +93,21 @@ pvr_effect("model", "Pydantic takes the returned value as the validated model, s
 pvr_effect("self", "`model_validate()` then returns None, and so does this model where it is nested in another.").
 
 // pvr_fix(f, x): the value to return. A wrap validator returns its handler's result; the others the value they
-// receive (pd_value_param), an after model validator `self`.
+// receive (pd_value_param), an after model validator `self`. pvr_fix_mode(f, m, x): the same for function validator
+// f, were it attached in mode m.
 .decl pvr_fix(f: node, x: symbol)
 pvr_fix(f, x) :- pvr_fn(f, "self"), x = "`self`".
-pvr_fix(f, x) :- pvr_fn(f, k), k != "self", pvr_mode(f, m), m != "wrap", pd_value_param(f, _, v),
+pvr_fix(f, x) :- pvr_fn(f, k), k != "self", pd_validator(f, _, _, m), m != "wrap", pd_value_param(f, _, v),
     x = cat("`", v, "` (or the normalised value)").
-pvr_fix(f, x) :- pvr_fn(f, k), k != "self", pvr_mode(f, "wrap"), pd_value_param(f, _, v),
+pvr_fix(f, x) :- pvr_fn(f, k), k != "self", pd_validator(f, _, _, "wrap"), pd_value_param(f, _, v),
     x = cat("`handler(", v, ")`'s result").
 pvr_fix(f, x) :- pvr_fn(f, k), k != "self", !pd_value_param(f, _, _), x = "the validated value".
-// pvr_mode(f, m): the mode validator f runs in, by its decorator or the validator class that attaches it.
-.decl pvr_mode(f: node, m: symbol)
-pvr_mode(f, m) :- pvr_fn(f, _), pd_validator(f, _, _, m).
-pvr_mode(f, m) :- pvr_fn(f, _), pd_fn_validator(_, f, m).
+.decl pvr_fix_mode(f: node, m: symbol, x: symbol)
+pvr_fix_mode(f, m, x) :- pvr_fnv(f, _), pd_fn_validator_class(_, m), m != "wrap", pd_value_param(f, _, v),
+    x = cat("`", v, "` (or the normalised value)").
+pvr_fix_mode(f, "wrap", x) :- pvr_fnv(f, _), pd_value_param(f, _, v), x = cat("`handler(", v, ")`'s result").
+pvr_fix_mode(f, m, x) :- pvr_fnv(f, _), pd_fn_validator_class(_, m), !pd_value_param(f, _, _),
+    x = "the validated value".
 
 // pvr_stub(f): f's body holds only a docstring, `pass` or `...`: an abstract or placeholder def.
 .decl pvr_stub(f: node)
@@ -109,28 +120,33 @@ pvr_inert(s) :- kind(s, "expression_statement"), child(s, e, 0), (kind(e, "strin
 .decl pvr_overload(f: node)
 pvr_overload(f) :- decorator(f, e), sym_of(e, q), (q = "typing.overload" ; q = "typing_extensions.overload").
 
-// pvr_open(b): block b can run to its end: its last statement can. Statements after a return or raise are
-// unreachable and not looked at. The analysis is django-practice-clean-field-returns-value's (cfr_open).
-.decl pvr_open(b: node)
-pvr_open(b) :- pvr_block(b), j = max i : { child(b, s0, i), !kind(s0, "comment") }, child(b, s, j), pvr_s_open(s).
-// pvr_block(b) / pvr_stmt(s): the blocks of the validators, and their statements: the only ones followed.
+// pvr_open(b, ck): block b can run to its end, unless the calls ck names never return: its last statement can.
+// Statements after a return or raise are unreachable and not looked at. The analysis is
+// django-practice-clean-field-returns-value's (cfr_open). Whether a callee never returns is answered across the
+// files (pvr_noreturn: a helper may be another module's def), so the file says on which callees its path depends: ck
+// is "" (none), a callee's qualified name, or `c1 & c2` (both: a try's body and its finally, pvr_conj); the outputs
+// read `!pvr_blocked(ck)`.
+.decl pvr_open(b: node, ck: symbol)
+pvr_open(b, ck) :- pvr_block(b), j = max i : { child(b, s0, i), !kind(s0, "comment") }, child(b, s, j),
+    pvr_s_open(s, ck).
+// pvr_block(b) / pvr_stmt(s): the blocks of the validators (and of the defs a function validator may attach), and
+// their statements: the only ones followed.
 .decl pvr_block(b: node)
-pvr_block(b) :- pvr_fn(f, _), field(f, "body", b).
-pvr_block(b) :- pvr_fn(f, _), field(f, "body", fb), within(b, fb), kind(b, "block").
+pvr_block(b) :- (pvr_fn(f, _) ; pvr_fnv(f, _)), field(f, "body", b).
+pvr_block(b) :- (pvr_fn(f, _) ; pvr_fnv(f, _)), field(f, "body", fb), within(b, fb), kind(b, "block").
 .decl pvr_stmt(s: node)
 pvr_stmt(s) :- pvr_block(b), child(b, s, _), !kind(s, "comment").
-// pvr_s_open(s): statement s can complete normally. A simple statement can; return and raise cannot; an if, try or
-// with can when one of its ways through can; a for or while loop can unless it has an else that cannot and no
-// break (`while True` only by a break); a match can when a case body can or no case catches every value.
+// pvr_s_open(s, ck): statement s can complete normally, unless the calls ck names never return. A simple statement
+// can (a call statement unless its callee never returns); return and raise cannot; an if, try or with can when one
+// of its ways through can; a for or while loop can unless it has an else that cannot and no break (`while True`
+// only by a break); a match can when a case body can or no case catches every value.
 .decl pvr_compound(k: symbol)
 pvr_compound("return_statement"). pvr_compound("raise_statement"). pvr_compound("if_statement").
 pvr_compound("try_statement"). pvr_compound("with_statement"). pvr_compound("while_statement").
 pvr_compound("for_statement"). pvr_compound("match_statement").
-.decl pvr_s_open(s: node)
-pvr_s_open(s) :- pvr_stmt(s), kind(s, k), !pvr_compound(k), !pvr_noreturn_stmt(s).
-// pvr_noreturn_stmt(s): s is a call statement whose callee never returns (pvr_noreturn).
-.decl pvr_noreturn_stmt(s: node)
-pvr_noreturn_stmt(s) :- pvr_call_stmt(s, q), pvr_noreturn(q).
+.decl pvr_s_open(s: node, ck: symbol)
+pvr_s_open(s, "") :- pvr_stmt(s), kind(s, k), !pvr_compound(k), !pvr_call_stmt(s, _).
+pvr_s_open(s, q) :- pvr_stmt(s), pvr_call_stmt(s, q).
 // pvr_call_stmt(s, q): s is an expression statement that is only a call of q, resolved through imports.
 .decl pvr_call_stmt(s: node, q: symbol)
 pvr_call_stmt(s, q) :- kind(s, "expression_statement"), child(s, e, 0), !child(s, _, 1), unparen(e, k),
@@ -138,34 +154,46 @@ pvr_call_stmt(s, q) :- kind(s, "expression_statement"), child(s, e, 0), !child(s
 // pvr_noreturn(q): calling q never returns: `sys.exit`, `os._exit`, `assert_never`; a def of the run annotated
 // `-> NoReturn` / `-> Never`; or a def of the run whose last statement is a `raise` or a call of another such
 // function, followed through the run's call graph to any depth (`def fail(msg): raise ValueError(msg)`, `def
-// reject(msg): log(msg); fail(msg)`).
-.decl pvr_noreturn(q: symbol)
+// reject(msg): log(msg); fail(msg)`). Each def's file says how its body ends, by symbol (pvr_ends_q); the chain joins
+// the defs' modules by symbol, on purpose, holding no node. pvr_blocked(ck): a call ck names never returns.
+.decl pvr_noreturn(q: symbol) cross_file
 pvr_noreturn("sys.exit"). pvr_noreturn("os._exit"). pvr_noreturn("typing.assert_never").
 pvr_noreturn("typing_extensions.assert_never").
-pvr_noreturn(q) :- pvr_last_stmt(q, s), kind(s, "raise_statement").
-pvr_noreturn(q) :- pvr_last_stmt(q, s), pvr_call_stmt(s, q2), q2 != q, pvr_noreturn(q2).
+pvr_noreturn(q) :- pvr_ends_q(q, "raise").
+pvr_noreturn(q) :- pvr_ends_q(q, "never").
+pvr_noreturn(q) :- pvr_ends_call_q(q, q2), q2 != q, pvr_noreturn(q2).
+.decl pvr_blocked(ck: symbol) cross_file
+pvr_blocked(ck) :- pvr_noreturn(ck).
+pvr_blocked(ck) :- pvr_conj(ck, c1, _), pvr_blocked(c1).
+pvr_blocked(ck) :- pvr_conj(ck, _, c2), pvr_blocked(c2).
+// pvr_ends_q(q, how): def q of this file ends in a `raise` (how "raise"), or is annotated NoReturn or Never (how
+// "never"); pvr_ends_call_q(q, q2): its last statement is a call of q2.
+.decl pvr_ends_q(q: symbol, how: symbol)
+pvr_ends_q(q, "raise") :- pvr_last_stmt(q, s), kind(s, "raise_statement").
+pvr_ends_q(q, "never") :- kind(g, "function_definition"), qualname(g, q), field(g, "return_type", t),
+    (n = t ; within(n, t)), sym_of(n, r), (r = "typing.NoReturn" ; r = "typing.Never" ; r = "typing_extensions.NoReturn" ;
+    r = "typing_extensions.Never").
+.decl pvr_ends_call_q(q: symbol, q2: symbol)
+pvr_ends_call_q(q, q2) :- pvr_last_stmt(q, s), pvr_call_stmt(s, q2).
 .decl pvr_last_stmt(q: symbol, s: node)
 pvr_last_stmt(q, s) :- kind(g, "function_definition"), qualname(g, q), field(g, "body", b),
     j = max i : { child(b, s0, i), !kind(s0, "comment") }, child(b, s, j).
-pvr_noreturn(q) :- kind(g, "function_definition"), qualname(g, q), field(g, "return_type", t), (n = t ; within(n, t)),
-    sym_of(n, r), (r = "typing.NoReturn" ; r = "typing.Never" ; r = "typing_extensions.NoReturn" ;
-    r = "typing_extensions.Never").
-pvr_s_open(s) :- pvr_stmt(s), kind(s, "if_statement"), field(s, "consequence", b), pvr_open(b).
-pvr_s_open(s) :- pvr_stmt(s), kind(s, "if_statement"), !pvr_has_else(s).
-pvr_s_open(s) :- pvr_stmt(s), kind(s, "if_statement"), field(s, "alternative", a), kind(a, "elif_clause"),
-    field(a, "consequence", b), pvr_open(b).
-pvr_s_open(s) :- pvr_stmt(s), kind(s, "if_statement"), field(s, "alternative", a), kind(a, "else_clause"),
-    field(a, "body", b), pvr_open(b).
-pvr_s_open(s) :- pvr_stmt(s), kind(s, "with_statement"), field(s, "body", b), pvr_open(b).
+pvr_s_open(s, ck) :- pvr_stmt(s), kind(s, "if_statement"), field(s, "consequence", b), pvr_open(b, ck).
+pvr_s_open(s, "") :- pvr_stmt(s), kind(s, "if_statement"), !pvr_has_else(s).
+pvr_s_open(s, ck) :- pvr_stmt(s), kind(s, "if_statement"), field(s, "alternative", a), kind(a, "elif_clause"),
+    field(a, "consequence", b), pvr_open(b, ck).
+pvr_s_open(s, ck) :- pvr_stmt(s), kind(s, "if_statement"), field(s, "alternative", a), kind(a, "else_clause"),
+    field(a, "body", b), pvr_open(b, ck).
+pvr_s_open(s, ck) :- pvr_stmt(s), kind(s, "with_statement"), field(s, "body", b), pvr_open(b, ck).
 // A loop's else runs when the loop ends without a break; `while True` never ends that way.
-pvr_s_open(s) :- pvr_stmt(s), pvr_ending_loop(s), !pvr_has_else(s).
-pvr_s_open(s) :- pvr_stmt(s), pvr_ending_loop(s), field(s, "alternative", a), kind(a, "else_clause"),
-    field(a, "body", b), pvr_open(b).
-pvr_s_open(s) :- pvr_stmt(s), (kind(s, "while_statement") ; kind(s, "for_statement")), kind(k, "break_statement"),
+pvr_s_open(s, "") :- pvr_stmt(s), pvr_ending_loop(s), !pvr_has_else(s).
+pvr_s_open(s, ck) :- pvr_stmt(s), pvr_ending_loop(s), field(s, "alternative", a), kind(a, "else_clause"),
+    field(a, "body", b), pvr_open(b, ck).
+pvr_s_open(s, "") :- pvr_stmt(s), (kind(s, "while_statement") ; kind(s, "for_statement")), kind(k, "break_statement"),
     nearest(k, s, pvr_loop).
-pvr_s_open(s) :- pvr_stmt(s), kind(s, "match_statement"), within(b, s), kind(b, "block"), child(cc, b, _),
-    kind(cc, "case_clause"), nearest(cc, s, "match_statement"), pvr_open(b).
-pvr_s_open(s) :- pvr_stmt(s), kind(s, "match_statement"), !pvr_match_total(s).
+pvr_s_open(s, ck) :- pvr_stmt(s), kind(s, "match_statement"), within(b, s), kind(b, "block"), child(cc, b, _),
+    kind(cc, "case_clause"), nearest(cc, s, "match_statement"), pvr_open(b, ck).
+pvr_s_open(s, "") :- pvr_stmt(s), kind(s, "match_statement"), !pvr_match_total(s).
 .decl pvr_ending_loop(s: node)
 pvr_ending_loop(s) :- kind(s, "for_statement").
 pvr_ending_loop(s) :- kind(s, "while_statement"), field(s, "condition", c), !kind(c, "true").
@@ -177,15 +205,25 @@ pvr_match_total(s) :- kind(s, "match_statement"), child(s, mb, _), kind(mb, "blo
 .decl pvr_multi_pattern(cc: node)
 pvr_multi_pattern(cc) :- kind(cc, "case_clause"), child(cc, p, i), kind(p, "case_pattern"), child(cc, q, j),
     kind(q, "case_pattern"), i != j.
-// A try completes when its finally (if any) does, and its body (then else) or some handler does.
-pvr_s_open(s) :- pvr_stmt(s), kind(s, "try_statement"), pvr_try_tail_open(s), pvr_try_main_open(s).
-.decl pvr_try_tail_open(t: node)
-pvr_try_tail_open(t) :- kind(t, "try_statement"), !pvr_clause(t, "finally_clause", _).
-pvr_try_tail_open(t) :- pvr_clause(t, "finally_clause", b), pvr_open(b).
-.decl pvr_try_main_open(t: node)
-pvr_try_main_open(t) :- kind(t, "try_statement"), field(t, "body", b), pvr_open(b), !pvr_clause(t, "else_clause", _).
-pvr_try_main_open(t) :- pvr_clause(t, "else_clause", b), pvr_open(b).
-pvr_try_main_open(t) :- (pvr_clause(t, "except_clause", b) ; pvr_clause(t, "except_group_clause", b)), pvr_open(b).
+// A try completes when its finally (if any) does, and its body (then else) or some handler does: both conditions.
+pvr_s_open(s, c2) :- pvr_stmt(s), kind(s, "try_statement"), pvr_try_tail_open(s, ""), pvr_try_main_open(s, c2).
+pvr_s_open(s, c1) :- pvr_stmt(s), kind(s, "try_statement"), pvr_try_tail_open(s, c1), c1 != "",
+    pvr_try_main_open(s, "").
+pvr_s_open(s, ck) :- pvr_stmt(s), kind(s, "try_statement"), pvr_try_tail_open(s, c1), c1 != "",
+    pvr_try_main_open(s, c2), c2 != "", ck = cat(c1, " & ", c2).
+// pvr_conj(ck, c1, c2): condition ck is c1 and c2 (by value, no node: what pvr_blocked reads).
+.decl pvr_conj(ck: symbol, c1: symbol, c2: symbol)
+pvr_conj(ck, c1, c2) :- pvr_stmt(s), kind(s, "try_statement"), pvr_try_tail_open(s, c1), c1 != "",
+    pvr_try_main_open(s, c2), c2 != "", ck = cat(c1, " & ", c2).
+.decl pvr_try_tail_open(t: node, ck: symbol)
+pvr_try_tail_open(t, "") :- kind(t, "try_statement"), !pvr_clause(t, "finally_clause", _).
+pvr_try_tail_open(t, ck) :- pvr_clause(t, "finally_clause", b), pvr_open(b, ck).
+.decl pvr_try_main_open(t: node, ck: symbol)
+pvr_try_main_open(t, ck) :- kind(t, "try_statement"), field(t, "body", b), pvr_open(b, ck),
+    !pvr_clause(t, "else_clause", _).
+pvr_try_main_open(t, ck) :- pvr_clause(t, "else_clause", b), pvr_open(b, ck).
+pvr_try_main_open(t, ck) :- (pvr_clause(t, "except_clause", b) ; pvr_clause(t, "except_group_clause", b)),
+    pvr_open(b, ck).
 // pvr_clause(t, k, b): try statement t has a clause of kind k whose block is b.
 .decl pvr_clause(t: node, k: symbol, b: node)
 pvr_clause(t, k, b) :- kind(t, "try_statement"), child(t, c, _), kind(c, k), child(c, b, _), kind(b, "block").

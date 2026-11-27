@@ -34,9 +34,13 @@
 
 .violation RenameAsDropAdd(at: node, old: symbol, new: symbol, table: symbol) "This upgrade drops `{old}` of `{table}` and adds `{new}` without copying data. For a rename, use `alter_column(..., new_column_name='{new}')`; else copy the data first. Keep it if the data should go."
 
+// What crosses files is read by term (decision 0677): a column's type resolved in another module (lib/alembic's
+// al_pg_type_t, al_type_class_t), a dialect test of another module (al_np_ext), SQL in another module's constant
+// (rad_moves_const). Each file states its drops, adds, types and steps by term (al_term); the pairing runs on those,
+// and the finding reads its drop back by its term.
 // ---- operations on an existing table -----------------------------------------------------------------------------
 // rad_drop(d, t, a, f) / rad_add(c, t, b, col, f): upgrade f drops column a / adds Column col named b on table t, which
-// f does not create or drop, outside a non-PostgreSQL branch, in a migration that is no test code.
+// f does not create or drop, outside a non-PostgreSQL branch of its own file, in a migration that is no test code.
 .decl rad_live(c: node, m: symbol, t: symbol, f: node)
 rad_live(c, m, t, f) :- al_on_existing(c, m, t, f), (m = "add_column" ; m = "drop_column"), !al_non_pg(c),
     !rad_drops_table(f, t), docof(c, d), al_migration_doc(d), !al_test_doc(d).
@@ -46,10 +50,20 @@ rad_drops_table(f, t) :- al_call(c, "drop_table", _), al_in_step(c, f), al_step(
 rad_drop(d, t, a, f) :- rad_live(d, "drop_column", t, f), al_role(d, "column_name", e), al_name_value(e, a).
 .decl rad_add(c: node, t: symbol, b: symbol, col: node, f: node)
 rad_add(c, t, b, col, f) :- rad_live(c, "add_column", t, f), al_added_column(c, col), al_column_name(col, b).
-// rad_balanced(t, f): upgrade f adds as many columns to t as it drops.
-.decl rad_balanced(t: symbol, f: node)
-rad_balanced(t, f) :- rad_live(_, _, t, f), n1 = count : { rad_live(_, "add_column", t, f) },
-    n2 = count : { rad_live(_, "drop_column", t, f) }, n1 = n2.
+// By term: rad_live_at(dd, xt, m, t, ft), operation xt of document dd in step ft; rad_drop_at(dd, xt, t, a, ft);
+// rad_add_at(dd, ct, t, b, ft). rad_live_t: no test function of another module rules PostgreSQL out (al_np_ext).
+.decl rad_live_at(dd: number, xt: symbol, m: symbol, t: symbol, ft: symbol)
+rad_live_at(dd, xt, m, t, ft) :- rad_live(x, m, t, f), al_term(x, dd, xt), al_term(f, dd, ft).
+.decl rad_drop_at(dd: number, xt: symbol, t: symbol, a: symbol, ft: symbol)
+rad_drop_at(dd, xt, t, a, ft) :- rad_drop(x, t, a, f), al_term(x, dd, xt), al_term(f, dd, ft).
+.decl rad_add_at(dd: number, ct: symbol, t: symbol, b: symbol, ft: symbol)
+rad_add_at(dd, ct, t, b, ft) :- rad_add(c, t, b, _, f), al_term(c, dd, ct), al_term(f, dd, ft).
+.decl rad_live_t(dd: number, xt: symbol, m: symbol, t: symbol, ft: symbol)
+rad_live_t(dd, xt, m, t, ft) :- rad_live_at(dd, xt, m, t, ft), !al_np_ext(dd, xt).
+// rad_balanced(dd, t, ft): upgrade ft adds as many columns to t as it drops.
+.decl rad_balanced(dd: number, t: symbol, ft: symbol)
+rad_balanced(dd, t, ft) :- rad_live_t(dd, _, _, t, ft), n1 = count : { rad_live_t(dd, _, "add_column", t, ft) },
+    n2 = count : { rad_live_t(dd, _, "drop_column", t, ft) }, n1 = n2.
 
 // ---- types -------------------------------------------------------------------------------------------------------
 // rad_coltype(col, e): Column col's type expression: its second positional argument or `type_=`.
@@ -61,36 +75,53 @@ rad_coltype(col, e) :- al_column_call(col), call_arg(col, -1, "type_", v), unpar
 rad_old_type(d, e) :- rad_drop(d, t, a, _), docof(d, doc), al_step(g, "downgrade"), docof(g, doc),
     al_call(c, "add_column", _), al_in_step(c, g), al_table(c, t), al_added_column(c, col), al_column_name(col, a),
     rad_coltype(col, e).
-.decl rad_type_expr(e: node)
-rad_type_expr(e) :- rad_old_type(_, e).
-rad_type_expr(e) :- rad_add(_, _, _, col, _), rad_coltype(col, e).
-// rad_fam(e, f): the type's family: the PostgreSQL type its class renders (lib/alembic's al_pg_type, which resolves
-// imports, aliases and project TypeDecorators, so VARCHAR and String, TIMESTAMP and DateTime are one), with and without
-// a time zone taken as one; a class whose DDL the library does not know, by its own name.
-.decl rad_fam(e: node, f: symbol)
-rad_fam(e, f) :- rad_type_expr(e), al_pg_type(e, k), k != "timestamptz", f = k.
-rad_fam(e, "timestamp") :- rad_type_expr(e), al_pg_type(e, "timestamptz").
-rad_fam(e, n) :- rad_type_expr(e), al_type_class(e, n), !al_pg_type(e, _).
+// By term: rad_old_type_at(dd, xt, ot), drop xt's old type ot; rad_has_old_at(dd, xt), it has one;
+// rad_add_type_at(dd, ct, nt), add ct's Column type nt; rad_untyped_at(dd, ct), its Column has none.
+.decl rad_old_type_at(dd: number, xt: symbol, ot: symbol)
+rad_old_type_at(dd, xt, ot) :- rad_old_type(x, o), al_term(x, dd, xt), al_term(o, dd, ot).
+.decl rad_has_old_at(dd: number, xt: symbol)
+rad_has_old_at(dd, xt) :- rad_old_type_at(dd, xt, _).
+.decl rad_add_type_at(dd: number, ct: symbol, nt: symbol)
+rad_add_type_at(dd, ct, nt) :- rad_add(c, _, _, col, _), rad_coltype(col, n), al_term(c, dd, ct), al_term(n, dd, nt).
+.decl rad_untyped_at(dd: number, ct: symbol)
+rad_untyped_at(dd, ct) :- rad_add(c, _, _, col, _), !rad_coltype(col, _), al_term(c, dd, ct).
+// rad_fam(dd, et, f): the type's family: the PostgreSQL type its class renders (lib/alembic's al_pg_type_t, which
+// resolves imports, aliases and project TypeDecorators, so VARCHAR and String, TIMESTAMP and DateTime are one), with
+// and without a time zone taken as one; a class whose DDL the library does not know, by its own name.
+.decl rad_fam(dd: number, et: symbol, f: symbol)
+rad_fam(dd, et, f) :- rad_type_at(dd, et), al_pg_type_t(dd, et, k), k != "timestamptz", f = k.
+rad_fam(dd, et, "timestamp") :- rad_type_at(dd, et), al_pg_type_t(dd, et, "timestamptz").
+rad_fam(dd, et, n) :- rad_type_at(dd, et), al_type_class_t(dd, et, n), !rad_has_pg(dd, et).
+.decl rad_has_pg(dd: number, et: symbol)
+rad_has_pg(dd, et) :- rad_type_at(dd, et), al_pg_type_t(dd, et, _).
+.decl rad_type_at(dd: number, et: symbol)
+rad_type_at(dd, et) :- rad_old_type_at(dd, _, et).
+rad_type_at(dd, et) :- rad_add_type_at(dd, _, et).
 // rad_len(e, n): a literal length (`String(40)`, `VARCHAR(length=40)`).
 .decl rad_len(e: node, n: number)
-rad_len(e, n) :- rad_type_expr(e), kind(e, "call"), (call_arg(e, 0, "", a) ; call_arg(e, -1, "length", a)),
-    unparen(a, u), kind(u, "integer"), text(u, s), n = to_number(s).
-.decl rad_same(o: node, n: node)
-rad_same(o, n) :- rad_old_type(_, o), rad_add(_, _, _, col, _), rad_coltype(col, n), rad_fam(o, f), rad_fam(n, f),
-    !rad_len_differs(o, n).
-// rad_len_differs(o, n): the added type's literal length is shorter than the dropped one's (a widening still pairs).
-.decl rad_len_differs(o: node, n: node)
-rad_len_differs(o, n) :- rad_old_type(_, o), rad_len(o, x), rad_add(_, _, _, col, _), rad_coltype(col, n),
-    rad_len(n, y), y < x.
+rad_len(e, n) :- kind(e, "call"), (call_arg(e, 0, "", a) ; call_arg(e, -1, "length", a)), unparen(a, u),
+    kind(u, "integer"), text(u, s), n = to_number(s).
+// rad_len_differs_at(dd, ot, nt): the added type's literal length is shorter than the dropped one's (a widening still
+// pairs).
+.decl rad_len_differs_at(dd: number, ot: symbol, nt: symbol)
+rad_len_differs_at(dd, ot, nt) :- rad_old_type(_, o), rad_len(o, x), rad_add(_, _, _, col, _), rad_coltype(col, n),
+    rad_len(n, y), y < x, al_term(o, dd, ot), al_term(n, dd, nt).
+.decl rad_same(dd: number, ot: symbol, nt: symbol)
+rad_same(dd, ot, nt) :- rad_old_type_at(dd, _, ot), rad_add_type_at(dd, _, nt), rad_fam(dd, ot, f), rad_fam(dd, nt, f),
+    !rad_len_differs_at(dd, ot, nt).
 
 // ---- pairs -------------------------------------------------------------------------------------------------------
-// rad_match(d, c): drop d and add c on the same table in the same upgrade, of other names, whose types agree (or the
-// dropped type is unknown, or the added one has none).
-.decl rad_match(d: node, c: node)
-rad_match(d, c) :- rad_drop(d, t, a, f), rad_add(c, t, b, col, f), a != b, rad_old_type(d, o), rad_coltype(col, n),
-    rad_same(o, n).
-rad_match(d, c) :- rad_drop(d, t, a, f), rad_add(c, t, b, _, f), a != b, !rad_old_type(d, _).
-rad_match(d, c) :- rad_drop(d, t, a, f), rad_add(c, t, b, col, f), a != b, !rad_coltype(col, _).
+// rad_match(dd, xt, ct): drop xt and add ct on the same table in the same upgrade, of other names, whose types agree
+// (or the dropped type is unknown, or the added one has none).
+.decl rad_drop_t(dd: number, xt: symbol, t: symbol, a: symbol, ft: symbol)
+rad_drop_t(dd, xt, t, a, ft) :- rad_drop_at(dd, xt, t, a, ft), !al_np_ext(dd, xt).
+.decl rad_add_t(dd: number, ct: symbol, t: symbol, b: symbol, ft: symbol)
+rad_add_t(dd, ct, t, b, ft) :- rad_add_at(dd, ct, t, b, ft), !al_np_ext(dd, ct).
+.decl rad_match(dd: number, xt: symbol, ct: symbol)
+rad_match(dd, xt, ct) :- rad_drop_t(dd, xt, t, a, ft), rad_add_t(dd, ct, t, b, ft), a != b, rad_old_type_at(dd, xt, ot),
+    rad_add_type_at(dd, ct, nt), rad_same(dd, ot, nt).
+rad_match(dd, xt, ct) :- rad_drop_t(dd, xt, t, a, ft), rad_add_t(dd, ct, t, b, ft), a != b, !rad_has_old_at(dd, xt).
+rad_match(dd, xt, ct) :- rad_drop_t(dd, xt, t, a, ft), rad_add_t(dd, ct, t, b, ft), a != b, rad_untyped_at(dd, ct).
 
 // ---- data movement -----------------------------------------------------------------------------------------------
 // Data movement is read by what it resolves to, not by a method name: `op.bulk_insert` (al_call); SQLAlchemy's
@@ -98,7 +129,8 @@ rad_match(d, c) :- rad_drop(d, t, a, f), rad_add(c, t, b, col, f), a != b, !rad_
 // object's `.update()`/`.insert()`, where the object is bound to `sa.table(...)`/`sa.Table(...)` or is a model's
 // `__table__`; SQL text holding UPDATE or INSERT, literal or a module constant; and an ORM session (`Session`,
 // `sessionmaker`, `scoped_session` resolved to sqlalchemy.orm). A `dict.update(...)` or a project's own `insert()`
-// moves no rows.
+// moves no rows. rad_moves_data(f) is what f's own file shows; rad_moves(dd, ft) adds a constant of another module,
+// by its qualified name.
 .decl rad_moves_data(f: node)
 rad_moves_data(f) :- al_step(f, "upgrade"), al_call(k, "bulk_insert", _), al_in_step(k, f).
 rad_moves_data(f) :- al_step(f, "upgrade"), kind(k, "call"), al_in_step(k, f), field(k, "function", fn), sym_of(fn, q),
@@ -107,14 +139,27 @@ rad_moves_data(f) :- al_step(f, "upgrade"), kind(k, "call"), al_in_step(k, f), f
     attr_of(fn, o, m), (m = "update" ; m = "insert"), unparen(o, u), rad_table_object(u).
 rad_moves_data(f) :- al_step(f, "upgrade"), kind(s, "string"), al_in_step(s, f), text(s, x), y = @lower(x),
     (contains("update ", y) ; contains("insert ", y)).
-rad_moves_data(f) :- al_step(f, "upgrade"), kind(n, "identifier"), al_in_step(n, f), sym_of(n, q),
-    al_module_const(q, v), unparen(v, s), text(s, x), y = @lower(x), (contains("update ", y) ; contains("insert ", y)).
 rad_moves_data(f) :- al_step(f, "upgrade"), kind(n, "identifier"), al_in_step(n, f), text(n, x), docof(n, d),
     al_top_assign(d, x, v), unparen(v, s), kind(s, "string"), text(s, z), y = @lower(z),
     (contains("update ", y) ; contains("insert ", y)).
 rad_moves_data(f) :- al_step(f, "upgrade"), kind(n, "identifier"), al_in_step(n, f), sym_of(n, q),
     (q = "sqlalchemy.orm.Session" ; q = "sqlalchemy.orm.sessionmaker" ; q = "sqlalchemy.orm.scoped_session" ;
     q = "sqlalchemy.orm.session.Session" ; q = "sqlmodel.Session").
+// rad_moves_at(dd, ft): its own file's; rad_names_at(dd, ft, q): upgrade ft names q (sym_of).
+.decl rad_moves_at(dd: number, ft: symbol)
+rad_moves_at(dd, ft) :- rad_moves_data(f), al_term(f, dd, ft).
+.decl rad_names_at(dd: number, ft: symbol, q: symbol)
+rad_names_at(dd, ft, q) :- al_step(f, "upgrade"), kind(n, "identifier"), al_in_step(n, f), sym_of(n, q), al_term(f, dd, ft).
+// rad_moves_const(q): module constant q holds UPDATE or INSERT text, stated in its own file (rad_moves_const_at). The
+// run's such constants, by qualified name: it spans files on purpose (cross_file), no node.
+.decl rad_moves_const_at(d: number, q: symbol)
+rad_moves_const_at(d, q) :- al_const_def(d, q, v), unparen(v, s), text(s, x), y = @lower(x),
+    (contains("update ", y) ; contains("insert ", y)).
+.decl rad_moves_const(q: symbol) cross_file
+rad_moves_const(q) :- rad_moves_const_at(_, q).
+.decl rad_moves(dd: number, ft: symbol)
+rad_moves(dd, ft) :- rad_moves_at(dd, ft).
+rad_moves(dd, ft) :- rad_names_at(dd, ft, q), rad_moves_const(q).
 // rad_table_object(u): u is a table: `x.__table__`, a call of `sa.table`/`sa.Table`, or a name bound to one (in the
 // same scope or at module level).
 .decl rad_table_object(u: node)
@@ -129,8 +174,12 @@ rad_table_object(u) :- kind(u, "identifier"), text(u, x), docof(u, d), al_top_as
 rad_table_call(v) :- kind(v, "call"), field(v, "function", fn), sym_of(fn, q), prefix("sqlalchemy.", q),
     (suffix(".table", q) ; suffix(".Table", q)).
 
-RenameAsDropAdd(d, a, b, t) :- rad_drop(d, t, a, f), rad_add(c, t, b, _, f), rad_match(d, c), rad_balanced(t, f),
-    !rad_moves_data(f), count : { rad_match(d, _) } = 1, count : { rad_match(_, c) } = 1.
+// rad_drop_node(x, dd, xt, t, a): drop x of document dd, by the term a finding reads it back by.
+.decl rad_drop_node(x: node, dd: number, xt: symbol, t: symbol, a: symbol)
+rad_drop_node(x, dd, xt, t, a) :- rad_drop(x, t, a, _), al_term(x, dd, xt).
+RenameAsDropAdd(x, a, b, t) :- rad_drop_node(x, dd, xt, t, a), rad_drop_t(dd, xt, t, a, ft),
+    rad_add_t(dd, ct, t, b, ft), rad_match(dd, xt, ct), rad_balanced(dd, t, ft), !rad_moves(dd, ft),
+    count : { rad_match(dd, xt, _) } = 1, count : { rad_match(dd, _, ct) } = 1.
 
 // The cases, `cases/alembic-practice-rename-as-drop-add/`, read as one repository: each line ending in `# caught` is
 // reported, and no other line.

@@ -9,17 +9,18 @@
 // has its own parent, one in all when they share it. The rule cannot see the data, so it is a log rule: on the corpus
 // about half its reads were real (a distinct parent per row), the rest a handful of shared parents (tag types,
 // priorities, plugins) or loops that stop early.
-// Direction (lib's sa_rel_dir): `Mapped["B"]`, `Optional[...]`, `uselist=False`, a foreign key on the declaring
-// model (`b_id = Column(ForeignKey("b.id"))`, `foreign_keys=[b_id]`, `remote_side=`), or the backref of a
-// one-to-many. A relationship whose direction cannot be decided is reported here too, never by the collection rule.
-// Loops, rows, reads and loader options are lib/sqlalchemy_loops' sl_hit (the same as the collection rule).
+// Direction (lib's sa_rel_dir_q, across files by symbol): `Mapped["B"]`, `Optional[...]`, `uselist=False`, a foreign
+// key on the declaring model (`b_id = Column(ForeignKey("b.id"))`, `foreign_keys=[b_id]`, `remote_side=`), or the
+// backref of a one-to-many. A relationship whose direction cannot be decided is reported here too, never by the
+// collection rule.
+// Loops, rows, reads and loader options are lib/sqlalchemy_loops' sl_hit_q (the same as the collection rule).
 //   for o in session.scalars(select(Order)): o.customer.name                         reported
 //   for l in session.scalars(select(Line).where(Line.order_id == oid)): l.order      not reported: one parent
 //   for o in session.scalars(select(Order).options(joinedload(Order.customer))): ...  not reported: loaded
 //   for o in session.scalars(select(Order)): o.lines                                  not reported: a collection
 // Left alone too: a statement that filters on the relationship's own foreign key with `==` (`.where(M.fk == v)`,
 // `.filter(...)`, `.filter_by(fk=v)`), so every row shares one parent, in the loop's function or the callee that
-// builds it; collections (the other rule); everything sl_hit leaves alone (options, streams, one row, tests,
+// builds it; collections (the other rule); everything sl_hit_q leaves alone (options, streams, one row, tests,
 // Alembic revisions).
 // Gaps: how many distinct parents the rows have is data, which the rule cannot read; a loop that stops after a few
 // rows is reported; a filter on the parent through a join (`.join(M.rel).where(P.id == v)`) is not read as one parent.
@@ -29,34 +30,38 @@
 
 .violation LazyManyToOneInLoop(at: node, model: symbol, rel: symbol, src: symbol) "Add .options(selectinload({model}.{rel})) to {src} when the rows point at many different {rel} rows: each new one costs a SELECT. Leave it when most rows share a few."
 
-LazyManyToOneInLoop(u, n, rel, src) :- sl_hit(u, _, rel, mq, s, src, _), sl_first(u, rel), class_def(c, mq),
-    !sa_rel_dir(c, rel, "many"), !lmo_one_parent(s, c, rel), split_dot(mq, _, n).
+LazyManyToOneInLoop(u, n, rel, src) :- sl_read_at(u, uk), lmo_hit_q(uk, rel, mq, src), split_dot(mq, _, n).
 
-// lmo_one_parent(s, c, rel): statement chain s keeps rows of a single parent: a `where`/`filter` comparing one of
-// rel's foreign key columns with `==`, or `filter_by(<that column>=...)`.
-.decl lmo_one_parent(s: node, c: node, rel: symbol)
-lmo_one_parent(s, c, rel) :- lmo_cand(s, c, rel), sl_chain_call(s, k), field(k, "function", f), attr_of(f, _, m),
-    (m = "where" ; m = "filter"), call_arg(k, _, "", a), kind(cmp, "comparison_operator"), (cmp = a ; within(cmp, a)),
-    cmp_pair(cmp, _, "==", l, r), (lmo_col_ref(l, col) ; lmo_col_ref(r, col)), lmo_rel_fk(c, rel, col).
-lmo_one_parent(s, c, rel) :- lmo_cand(s, c, rel), sl_chain_call(s, k), field(k, "function", f),
-    attr_of(f, _, "filter_by"), call_arg(k, -1, col, _), lmo_rel_fk(c, rel, col).
-.decl lmo_cand(s: node, c: node, rel: symbol)
-lmo_cand(s, c, rel) :- sl_hit(_, _, rel, mq, s, _, _), class_def(c, mq).
+// lmo_hit_q(uk, rel, mq, src): read uk is the first read of rel in its loop, a single object (or undecided), and the
+// rows may point at many parents. By the read's term: the relationship is read across files.
+.decl lmo_hit_q(uk: symbol, rel: symbol, mq: symbol, src: symbol)
+lmo_hit_q(uk, rel, mq, src) :- sl_hit_q(uk, _, _, rel, mq, sk, src, _), sl_first_q(uk, rel),
+    !sa_rel_dir_q(mq, rel, "many"), !lmo_one_parent_q(sk, mq, rel).
+// lmo_one_parent_q(sk, mq, rel): statement chain sk keeps rows of a single parent: a `where`/`filter` comparing one
+// of rel's foreign key columns with `==`, or `filter_by(<that column>=...)`.
+.decl lmo_one_parent_q(sk: symbol, mq: symbol, rel: symbol)
+lmo_one_parent_q(sk, mq, rel) :- lmo_stmt_col_q(sk, col), lmo_rel_fk_q(mq, rel, col).
+// lmo_stmt_col_q(sk, col): statement chain sk filters on column col with `==` (`.where(M.col == v)`, `.filter(...)`)
+// or `filter_by(col=v)`. Stated in the statement's file.
+.decl lmo_stmt_col_q(sk: symbol, col: symbol)
+lmo_stmt_col_q(sk, col) :- sl_chain_call(s, k), field(k, "function", f), attr_of(f, _, m), (m = "where" ; m = "filter"),
+    call_arg(k, _, "", a), kind(cmp, "comparison_operator"), (cmp = a ; within(cmp, a)), cmp_pair(cmp, _, "==", l, r),
+    (lmo_col_ref(l, col) ; lmo_col_ref(r, col)), pt_tm(s, sk).
+lmo_stmt_col_q(sk, col) :- sl_chain_call(s, k), field(k, "function", f), attr_of(f, _, "filter_by"),
+    call_arg(k, -1, col, _), pt_tm(s, sk).
 // lmo_col_ref(e, col): e is `<Model>.col` (or `<Model>.__table__.c.col`, `cls.col`).
 .decl lmo_col_ref(e: node, col: symbol)
 lmo_col_ref(e, col) :- unparen(e, a), attr_of(a, _, col).
-// lmo_rel_fk(c, rel, col): col is a foreign key column of relationship rel of model c: named in `foreign_keys=`, or,
-// without it, a column of c (or its bases) with a ForeignKey to rel's target.
-.decl lmo_rel_fk(c: node, rel: symbol, col: symbol)
-lmo_rel_fk(c, rel, col) :- lmo_rel_call(c, rel, call), !sa_rel_has_fk_arg(call), sa_rel_target(call, mq), sa_fk_on(c, col, mq).
-lmo_rel_fk(c, rel, col) :- lmo_rel_call(c, rel, call), sa_rel_fk_elem(call, e), unparen(e, i), kind(i, "identifier"),
-    text(i, col).
-lmo_rel_fk(c, rel, col) :- lmo_rel_call(c, rel, call), sa_rel_fk_elem(call, e), unparen(e, a), attr_of(a, _, col).
-lmo_rel_fk(c, rel, col) :- lmo_rel_call(c, rel, call), sa_rel_fk_elem(call, e), str(e, s),
-    col = @replace_all(s, "^\\s*\\[?\\s*(?:\\w+\\.)?(\\w+)\\s*\\]?\\s*$", "${1}").
-.decl lmo_rel_call(c: node, rel: symbol, call: node)
-lmo_rel_call(c, rel, call) :- lmo_cand(_, c, rel), sa_relationship(c, rel, call).
-lmo_rel_call(c, rel, call) :- lmo_cand(_, c, rel), sa_model_super(c, b), sa_relationship(b, rel, call).
+// lmo_rel_fk_q(mq, rel, col): col is a foreign key column of relationship rel of model mq: named in `foreign_keys=`,
+// or, without it, a column of mq (or its bases) with a ForeignKey to rel's target.
+.decl lmo_rel_fk_q(mq: symbol, rel: symbol, col: symbol)
+lmo_rel_fk_q(mq, rel, col) :- lmo_rel_owner_q(mq, rel, cq), !sa_rel_fk_arg_q(cq, rel), sa_rel_target_q(cq, rel, tq),
+    sa_fk_on_q(mq, col, tq).
+lmo_rel_fk_q(mq, rel, col) :- lmo_rel_owner_q(mq, rel, cq), sa_rel_fk_col_q(cq, rel, col).
+// lmo_rel_owner_q(mq, rel, cq): relationship rel of mq is declared on cq: mq itself or one of its bases.
+.decl lmo_rel_owner_q(mq: symbol, rel: symbol, cq: symbol)
+lmo_rel_owner_q(mq, rel, mq) :- sa_rel_ok_q(mq, rel).
+lmo_rel_owner_q(mq, rel, bq) :- sa_model_super_q(mq, bq), sa_rel_ok_q(bq, rel).
 
 // The cases, `cases/sqlalchemy-practice-lazy-many-to-one-in-loop/`, read as one repository: each line ending in
 // `# caught` is reported, and no other line.

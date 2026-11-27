@@ -9,8 +9,8 @@
 // error code already report); `add_event_handler` and `on_startup=`/`on_shutdown=` are FastAPI's own and still work.
 // Starlette 1.0 removed all of them from plain Starlette apps. This rule is the advisory half; a handler that is
 // already dead under a lifespan is fastapi-practice-on-event-handler's.
-// Reported (lib/fastapi_events): a registration (oe_site) on an app or router that is not dead under a lifespan
-// (!oe_dead): `o.on_event(E)`, `o.add_event_handler(E, fn)`, and `on_startup=`/`on_shutdown=` on a constructor without
+// Reported (lib/fastapi_events): a registration (oe_site_at) on an app or router that is not dead under a lifespan
+// (!oe_dead_at): `o.on_event(E)`, `o.add_event_handler(E, fn)`, and `on_startup=`/`on_shutdown=` on a constructor without
 // `lifespan=`, unless the value is None or an empty list. A receiver that does not resolve to an app or router counts
 // only with a literal "startup"/"shutdown" event and when it is an unannotated parameter or a name the run cannot
 // resolve to a constructor (letta's `setup_fastapi_instrumentation(app)`).
@@ -28,7 +28,7 @@
 #include "lib/fastapi_events.rerail"
 
 .violation EventHandlerNotLifespan(at: node, form: symbol) "Move this `{form}` handler into an `@asynccontextmanager` lifespan passed as `FastAPI(lifespan=...)`, with all the app's handlers at once: a lifespan added later stops every handler left."
-EventHandlerNotLifespan(c, m) :- oe_site(c, m), !oe_dead(c).
+EventHandlerNotLifespan(c, m) :- oe_at(c, p, t), oe_site_at(p, t, m), !oe_dead_at(p, t).
 EventHandlerNotLifespan(v, k) :- oe_kw(r, k, v), !oe_lifespan_app(r).
 
 // The cases, `cases/fastapi-practice-lifecycle-event-handler/`, read as one repository: each line ending in

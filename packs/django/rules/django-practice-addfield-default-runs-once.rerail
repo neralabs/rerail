@@ -59,21 +59,27 @@
 // app read that way silences this one; a per-site row is silent also in a project that serves several sites, whose
 // rows then share the value. Generators outside the list (`nanoid`) and functions more than two calls deep are not
 // followed.
+// The defaults' functions, the backfills' functions and the later migrations are in other files, so they are read by
+// symbol and by key (decision 0691): each def states by its qualified name what it calls and writes (adr_gen_here,
+// dj_calls, adr_writes, adr_names), each migration its AddFields and backfills by its key, and the output reads the
+// answers back at the default.
 
 #include "lib/django.rerail"
 
 .violation SharedValue(at: node, x: symbol, fn: symbol) "All existing rows get one `{fn}()` value. Add `{x}` null=True, fill rows in RunPython, then AlterField; if already applied, regenerate the values in a new data migration. Skip if rows may share one."
-SharedValue(v, x, fn) :- adr_add(_, d, i, m, x, f, v), !adr_unique(f), adr_gen_default(v, fn), !adr_backfilled(d, i, m, x).
+SharedValue(v, x, fn) :- adr_add(_, d, i, m, x, f, v), !adr_unique(f), adr_default_ref(v, _, fn),
+    (adr_gen_fn(fn) ; prefix("secrets.", fn) ; adr_gen_def(fn)), dj_mig_key(d, k), !adr_backfilled(k, i, m, x),
+    !dj_one_row(m).
 
 .violation UniqueDefault(at: node, x: symbol) "Every existing row gets one default, so unique `{x}` fails on two rows. Add it nullable and not unique, fill each row in RunPython, then AlterField to unique. Skip for one-row tables."
-UniqueDefault(v, x) :- adr_add(_, _, _, _, x, f, v), adr_unique(f), unparen(v, u), !kind(u, "none").
+UniqueDefault(v, x) :- adr_add(_, _, _, m, x, f, v), adr_unique(f), unparen(v, u), !kind(u, "none"), !dj_one_row(m).
 
 // adr_add(o, d, i, m, x, f, v): AddField o, which changes the database at position i of migration d (neither a test
 // file nor a squash), adds field x to model m as field call f with default v, on a model d does not create, and
-// without db_default.
+// without db_default. A one-row model (dj_one_row, a fact about the whole repository) is left out in the outputs.
 .decl adr_add(o: node, d: number, i: number, m: symbol, x: symbol, f: node, v: node)
 adr_add(o, d, i, m, x, f, v) :- dj_mig_db_op(o, "AddField", d, i), !dj_test_doc(d), !dj_mig_attr(d, "replaces", _),
-    dj_mig_model(o, m), !dj_mig_creates(d, m), !dj_one_row(m), dj_mig_field(o, x, f, _),
+    dj_mig_model(o, m), !dj_mig_creates(d, m), dj_mig_field(o, x, f, _),
     call_arg(f, -1, "default", v), !call_arg(f, -1, "db_default", _).
 
 // adr_unique(f): field call f is unique: unique=True, primary_key=True, or a OneToOneField.
@@ -81,14 +87,8 @@ adr_add(o, d, i, m, x, f, v) :- dj_mig_db_op(o, "AddField", d, i), !dj_test_doc(
 adr_unique(f) :- adr_add(_, _, _, _, _, f, _), call_arg(f, -1, k, v), (k = "unique" ; k = "primary_key"), kind(v, "true").
 adr_unique(f) :- adr_add(_, _, _, _, _, f, _), dj_mig_field_class(f, "OneToOneField").
 
-// adr_gen(q): a function that returns a fresh unguessable value per call (q among the names a default or a def it
-// names reaches, adr_cand). random.* is left out: its corpus defaults are colours and picks, not secrets.
-.decl adr_gen(q: symbol)
-adr_gen(q) :- adr_gen_fn(q).
-adr_gen(q) :- adr_cand(q), prefix("secrets.", q).
-.decl adr_cand(q: symbol)
-adr_cand(q) :- adr_default_ref(_, _, q).
-adr_cand(q) :- adr_calls(_, q).
+// adr_gen_fn(q): a function that returns a fresh unguessable value per call; so does every `secrets.*` function.
+// random.* is left out: its corpus defaults are colours and picks, not secrets.
 .decl adr_gen_fn(q: symbol)
 adr_gen_fn("uuid.uuid1"). adr_gen_fn("uuid.uuid4"). adr_gen_fn("uuid.uuid6"). adr_gen_fn("uuid.uuid7").
 adr_gen_fn("os.urandom"). adr_gen_fn("django.utils.crypto.get_random_string").
@@ -101,76 +101,72 @@ adr_default_ref(v, u, fn) :- adr_add(_, _, _, _, _, _, v), unparen(v, u), (kind(
     sym_of(u, fn).
 adr_default_ref(v, a, fn) :- adr_add(_, _, _, _, _, _, v), unparen(v, u), kind(u, "call"), field(u, "function", pf),
     sym_of(pf, "functools.partial"), posarg(u, 0, a0), unparen(a0, a), sym_of(a, fn).
-// adr_named_def(g): a def of the run a default names: the defs whose bodies adr_gen_def reads.
-.decl adr_named_def(g: node)
-adr_named_def(g) :- adr_default_ref(_, _, q), kind(g, "function_definition"), qualname(g, q).
-// adr_calls(g, q): def g's body calls a function named q (code in a nested def or lambda included).
-.decl adr_calls(g: node, q: symbol)
-adr_calls(g, q) :- adr_named_def(g), kind(c, "call"), within(c, g), field(c, "function", e), sym_of(e, q).
-adr_calls(h, q) :- adr_calls(g, hq), adr_named_def(g), kind(h, "function_definition"), qualname(h, hq),
-    kind(c, "call"), within(c, h), field(c, "function", e), sym_of(e, q).
-// adr_gen_def(g): def g calls a generator, directly or through one more def of the run.
-.decl adr_gen_def(g: node)
-adr_gen_def(g) :- adr_named_def(g), adr_calls(g, q), adr_gen(q).
-adr_gen_def(g) :- adr_named_def(g), adr_calls(g, hq), kind(h, "function_definition"), qualname(h, hq),
-    adr_calls(h, q), adr_gen(q).
-// adr_gen_default(v, fn): default v is the generator fn, or a def fn of the run that calls one.
-.decl adr_gen_default(v: node, fn: symbol)
-adr_gen_default(v, fn) :- adr_default_ref(v, _, fn), adr_gen(fn).
-adr_gen_default(v, fn) :- adr_default_ref(v, _, fn), kind(g, "function_definition"), qualname(g, fn), adr_gen_def(g).
+// adr_gen_here(g): the def of qualified name g calls a generator (code in a nested def or lambda included). Stated in
+// g's file.
+.decl adr_gen_here(g: symbol)
+adr_gen_here(gq) :- kind(g, "function_definition"), qualname(g, gq), kind(c, "call"), within(c, g),
+    field(c, "function", e), sym_of(e, q), (adr_gen_fn(q) ; prefix("secrets.", q)).
+// adr_gen_def(g): def g of the run calls a generator, directly or through one more def of the run (dj_calls), in any
+// file: by qualified names alone.
+.decl adr_gen_def(g: symbol)
+adr_gen_def(gq) :- adr_gen_here(gq).
+adr_gen_def(gq) :- dj_calls(gq, hq), adr_gen_here(hq).
 
-// adr_backfilled(d, i, m, x): a backfill after position i of migration d, or in a migration of the same app applied
-// after d, writes field x of model m: a RunPython (adr_fills) or a RunSQL UPDATE (adr_sql_fills).
-.decl adr_backfilled(d: number, i: number, m: symbol, x: symbol)
-adr_backfilled(d, i, m, x) :- adr_add(_, d, i, m, x, _, _), adr_backfill_op(o, d, j), j > i, adr_op_fills(o, m, x).
-adr_backfilled(d, i, m, x) :- adr_add(_, d, i, m, x, _, _), dj_mig_ran_before(d, e), adr_backfill_op(o, e, _),
-    adr_op_fills(o, m, x).
-// adr_backfill_op(o, d, j): operation o, item j of migration d, is a RunPython or a RunSQL.
-.decl adr_backfill_op(o: node, d: number, j: number)
-adr_backfill_op(o, d, j) :- dj_mig_db_op(o, "RunPython", d, j).
-adr_backfill_op(o, d, j) :- dj_mig_db_op(o, "RunSQL", d, j).
-// adr_op_fills(o, m, x): backfill operation o writes field x of model m.
-.decl adr_op_fills(o: node, m: symbol, x: symbol)
-adr_op_fills(o, m, x) :- dj_runpython(o, _, _, g), adr_fills(g, m, x).
-adr_op_fills(o, m, x) :- adr_sql_fills(o, m, x).
+// adr_backfilled(k, i, m, x): a backfill after position i of migration k (by key), or in a migration of the same app
+// applied after k, writes field x of model m: a RunPython (adr_fills) or a RunSQL UPDATE (adr_bf_sql).
+.decl adr_backfilled(k: symbol, i: number, m: symbol, x: symbol)
+adr_backfilled(k, i, m, x) :- adr_add_at(k, i, m, x), adr_fills_at(k, j, m, x), j > i.
+adr_backfilled(k, i, m, x) :- adr_add_at(k, i, m, x), dj_mig_ran_before(k, e), adr_fills_at(e, _, m, x).
+// adr_add_at(k, i, m, x): adr_add by the migration's key.
+.decl adr_add_at(k: symbol, i: number, m: symbol, x: symbol)
+adr_add_at(k, i, m, x) :- adr_add(o, _, i, m, x, _, _), dj_key_of(o, k).
+// adr_fills_at(k, j, m, x): backfill item j of migration k writes field x of model m.
+.decl adr_fills_at(k: symbol, j: number, m: symbol, x: symbol)
+adr_fills_at(k, j, m, x) :- adr_bf_rp(k, j, q), adr_fills(q, m, x).
+adr_fills_at(k, j, m, x) :- adr_bf_sql(k, j, s), adr_add_at(_, _, m, x),
+    match(cat("(?s).*\\bupdate\\s+[a-z0-9_.\"]*", m, "\"?\\s+set\\s.*\\b", @lower(x), "\"?\\s*=.*"), s).
+// adr_bf_rp(k, j, q): item j of migration k is a RunPython of function q (dj_runpython). adr_bf_sql(k, j, s): item j
+// is a RunSQL one of whose statements, lowercased, is s and updates something.
+.decl adr_bf_rp(k: symbol, j: number, q: symbol)
+adr_bf_rp(k, j, q) :- dj_runpython(o, _, j, q), dj_key_of(o, k).
+.decl adr_bf_sql(k: symbol, j: number, s: symbol)
+adr_bf_sql(k, j, s) :- dj_mig_db_op(o, "RunSQL", _, j), adr_sql_text(o, t), s = @lower(t), contains("update", s),
+    dj_key_of(o, k).
 
-// adr_rp_scope(g, h): h is RunPython function g, or a def of the run g calls.
-.decl adr_rp_scope(g: node, h: node)
-adr_rp_scope(g, g) :- dj_runpython(_, _, _, g).
-adr_rp_scope(g, h) :- dj_runpython(_, _, _, g), kind(c, "call"), within(c, g), field(c, "function", e), sym_of(e, q),
-    kind(h, "function_definition"), qualname(h, q).
-// adr_writes_here(h, x): def h assigns `obj.x = …`, calls `setattr(obj, "x", …)` or passes `x=` to a call.
-.decl adr_writes_here(h: node, x: symbol)
-adr_writes_here(h, x) :- adr_rp_scope(_, h), kind(a, "assignment"), within(a, h), field(a, "left", l), attr_of(l, _, x).
-adr_writes_here(h, x) :- adr_rp_scope(_, h), kind(c, "call"), within(c, h), call_arg(c, -1, x, _), x != "".
-adr_writes_here(h, x) :- adr_rp_scope(_, h), kind(c, "call"), within(c, h), field(c, "function", e),
-    sym_of(e, "builtins.setattr"), posarg(c, 1, n), str(n, x).
-// adr_names_model(h, m): def h names model m (lowercased): `apps.get_model("shop", "Order")` (by position or as
-// `model_name=`), `apps.get_model("shop.Order")`, or a manager of a name bound to the model (`Order.objects`,
-// `Order._default_manager`, under the local name or the class an import resolves to).
-.decl adr_names_model(h: node, m: symbol)
-adr_names_model(h, @lower(s)) :- adr_rp_scope(_, h), adr_get_model(c, h),
-    (posarg(c, 1, a) ; call_arg(c, -1, "model_name", a)), str(a, s).
-adr_names_model(h, @lower(s)) :- adr_rp_scope(_, h), adr_get_model(c, h),
-    (posarg(c, 0, a) ; call_arg(c, -1, "app_label", a)), str(a, t), match("[^.]+\\.(?<s>[^.]+)", t).
-adr_names_model(h, @lower(s)) :- adr_rp_scope(_, h), dj_manager(q), within(q, h), attr_of(q, r, _),
-    kind(r, "identifier"), text(r, s).
-adr_names_model(h, @lower(s)) :- adr_rp_scope(_, h), dj_manager(q), within(q, h), attr_of(q, r, _),
-    kind(r, "identifier"), sym_of(r, qr), split_dot(qr, _, s).
+// adr_rp_scope(g, h): h is RunPython function g, or a def of the run g calls (dj_calls), by qualified names.
+.decl adr_rp_scope(g: symbol, h: symbol)
+adr_rp_scope(q, q) :- adr_bf_rp(_, _, q).
+adr_rp_scope(q, h) :- adr_bf_rp(_, _, q), dj_calls(q, h).
+// adr_writes(h, x): the def of qualified name h assigns `obj.x = …`, calls `setattr(obj, "x", …)` or passes `x=` to a
+// call. Stated in h's file.
+.decl adr_writes(h: symbol, x: symbol)
+adr_writes(hq, x) :- kind(h, "function_definition"), qualname(h, hq), kind(a, "assignment"), within(a, h),
+    field(a, "left", l), attr_of(l, _, x).
+adr_writes(hq, x) :- kind(h, "function_definition"), qualname(h, hq), kind(c, "call"), within(c, h),
+    call_arg(c, -1, x, _), x != "".
+adr_writes(hq, x) :- kind(h, "function_definition"), qualname(h, hq), kind(c, "call"), within(c, h),
+    field(c, "function", e), sym_of(e, "builtins.setattr"), posarg(c, 1, n), str(n, x).
+// adr_names(h, m): the def of qualified name h names model m (lowercased): `apps.get_model("shop", "Order")` (by
+// position or as `model_name=`), `apps.get_model("shop.Order")`, or a manager of a name bound to the model
+// (`Order.objects`, `Order._default_manager`, under the local name or the class an import resolves to). Stated in h's
+// file.
+.decl adr_names(h: symbol, m: symbol)
+adr_names(hq, @lower(s)) :- adr_get_model(c, h), (posarg(c, 1, a) ; call_arg(c, -1, "model_name", a)), str(a, s),
+    qualname(h, hq).
+adr_names(hq, @lower(s)) :- adr_get_model(c, h), (posarg(c, 0, a) ; call_arg(c, -1, "app_label", a)), str(a, t),
+    match("[^.]+\\.(?<s>[^.]+)", t), qualname(h, hq).
+adr_names(hq, @lower(s)) :- kind(h, "function_definition"), dj_manager(q), within(q, h), attr_of(q, r, _),
+    kind(r, "identifier"), text(r, s), qualname(h, hq).
+adr_names(hq, @lower(s)) :- kind(h, "function_definition"), dj_manager(q), within(q, h), attr_of(q, r, _),
+    kind(r, "identifier"), sym_of(r, qr), split_dot(qr, _, s), qualname(h, hq).
 // adr_get_model(c, h): call c in def h is `<apps>.get_model(…)`.
 .decl adr_get_model(c: node, h: node)
-adr_get_model(c, h) :- adr_rp_scope(_, h), kind(c, "call"), within(c, h), field(c, "function", e),
+adr_get_model(c, h) :- kind(h, "function_definition"), kind(c, "call"), within(c, h), field(c, "function", e),
     attr_of(e, _, "get_model").
 // adr_fills(g, m, x): RunPython function g writes field x and names model m, itself or in defs of the run it calls.
-.decl adr_fills(g: node, m: symbol, x: symbol)
-adr_fills(g, m, x) :- adr_rp_scope(g, h), adr_writes_here(h, x), adr_rp_scope(g, k), adr_names_model(k, m).
+.decl adr_fills(g: symbol, m: symbol, x: symbol)
+adr_fills(g, m, x) :- adr_rp_scope(g, h), adr_writes(h, x), adr_rp_scope(g, k), adr_names(k, m).
 
-// adr_sql_fills(o, m, x): RunSQL o's SQL updates a table whose name ends in model m (`shop_order`) and sets column x:
-// `UPDATE shop_order SET secret = …`, as one string, a list of strings, or a list of (sql, params) pairs.
-.decl adr_sql_fills(o: node, m: symbol, x: symbol)
-adr_sql_fills(o, m, x) :- adr_add(_, _, _, m, x, _, _), dj_mig_db_op(o, "RunSQL", _, _), adr_sql_text(o, t),
-    s = @lower(t), contains("update", s),
-    match(cat("(?s).*\\bupdate\\s+[a-z0-9_.\"]*", m, "\"?\\s+set\\s.*\\b", @lower(x), "\"?\\s*=.*"), s).
 // adr_sql_text(o, t): t is one SQL statement RunSQL o runs forwards.
 .decl adr_sql_text(o: node, t: symbol)
 adr_sql_text(o, t) :- dj_mig_db_op(o, "RunSQL", _, _), dj_mig_arg(o, "sql", v), str(v, t).

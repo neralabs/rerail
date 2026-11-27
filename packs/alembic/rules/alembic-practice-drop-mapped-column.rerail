@@ -77,6 +77,9 @@
 .violation RenameMappedTable(at: node, t: symbol, y: symbol) "A model still maps table {t}, which this upgrade renames to {y}. Map {y} instead; if migrations run before new code is live, keep a view named {t} until old code is gone."
 
 // ---- the models of each Alembic tree -----------------------------------------------------------------------------
+// Which documents a tree's env.py loads is a question of the run's import graph, by documents and module names: each
+// file states what it imports (dm_import_mod, dm_import_pkg) and where it sits; the relations that join two documents
+// by a module name or a directory are cross_file, keyed by documents, paths and names alone.
 // dm_app_doc(d): application code: no migration, env.py or test file (a migration's own throwaway model is not the
 // application's).
 .decl dm_app_doc(d: number)
@@ -93,10 +96,10 @@ dm_import_mod(d, @dot(m, x)) :- import_alias(i, _, m, x, _), x != "", docof(i, d
 dm_import_pkg(d, p) :- dm_import_mod(d, q), p = @pkg_up(q, 1), p != "".
 dm_import_pkg(d, p) :- dm_import_pkg(d, q), p = @pkg_up(q, 1), p != "".
 // dm_imports(d, d2): document d imports the module of document d2 itself; dm_runs(d, d2): importing makes d2 run (d2
-// itself, or a package above it).
-.decl dm_imports(d: number, d2: number)
+// itself, or a package above it). The run's import graph, by documents: cross_file.
+.decl dm_imports(d: number, d2: number) cross_file
 dm_imports(d, d2) :- dm_import_mod(d, q), doc(d2, _, q), d2 != d.
-.decl dm_runs(d: number, d2: number)
+.decl dm_runs(d: number, d2: number) cross_file
 dm_runs(d, d2) :- dm_imports(d, d2).
 dm_runs(d, d2) :- dm_import_pkg(d, q), doc(d2, _, q), d2 != d.
 // dm_reach(e, d): running env.py e runs module d: through its imports, transitively. dm_reached(e, d): d is imported
@@ -111,8 +114,9 @@ dm_reached(e, d) :- dm_reach(e, m), dm_imports(m, d), d != e.
 .decl dm_dir(d: number, p: symbol)
 dm_dir(d, p) :- doc(d, f, _), p = @replace_all(cat("/", f), "/[^/]*$", "").
 // dm_import_tree(e, d): document d holds models env.py e loads: a module it runs, or a module of the same package
-// (directory, not its subpackages) as a module it imports by name. The root directory is no package.
-.decl dm_import_tree(e: number, d: number)
+// (directory, not its subpackages) as a module it imports by name. The root directory is no package. It pairs
+// documents by directory: cross_file.
+.decl dm_import_tree(e: number, d: number) cross_file
 dm_import_tree(e, d) :- dm_reach(e, d).
 dm_import_tree(e, d) :- dm_reached(e, d1), dm_dir(d1, p), p != "", dm_dir(d, p).
 // dm_model_doc(d): application document d declares a model or a Core Table.
@@ -126,14 +130,19 @@ dm_import_tree_models(e) :- dm_import_tree(e, d), dm_model_doc(d).
 dm_top_dir(d, s) :- doc(d, f, _), contains("/", f), s = @replace_all(f, "/.*$", "").
 dm_top_dir(d, "") :- doc(d, f, _), !contains("/", f).
 // dm_tree_doc(e, d): application document d belongs to the tree of env.py e: what env.py loads, or, when that holds
-// no model, what sits under env.py's top-level directory (every document, for an env.py at the root).
-.decl dm_tree_doc(e: number, d: number)
+// no model, what sits under env.py's top-level directory (every document, for an env.py at the root). It pairs
+// documents by directory: cross_file.
+.decl dm_tree_doc(e: number, d: number) cross_file
 dm_tree_doc(e, d) :- dm_import_tree(e, d), dm_app_doc(d).
 dm_tree_doc(e, d) :- al_env_doc(e), !dm_import_tree_models(e), dm_top_dir(e, s), s != "", dm_top_dir(d, s),
     dm_app_doc(d).
 dm_tree_doc(e, d) :- al_env_doc(e), !dm_import_tree_models(e), dm_top_dir(e, ""), dm_app_doc(d).
 
 // ---- what a class maps -------------------------------------------------------------------------------------------
+// A class's columns, mapper arguments and unmapped attributes are read by symbol (decision 0677): each file states
+// what its classes declare under their qualified names (the dm_*_at relations), a mapped class's ancestry is
+// python/names' class_anc (the phase py_names), and the run's declarations by qualified name are cross_file unions
+// (dm_col, dm_none, dm_margs, dm_mname, dm_mseq, dm_tconst, dm_tconst_col), joined to each mapped class by symbol.
 // Columns al_class_column does not see: a Column wrapped in deferred()/column_property(), and `name="x"` given as a
 // keyword. dm_extra_column(k, x, a): statement a of class k's body maps column x. (Candidates for lib/alembic.)
 .decl dm_wrapper_q(q: symbol)
@@ -150,6 +159,9 @@ dm_extra_column(k, x, a) :- al_class_stmt(k, a), field(a, "right", v), al_mapped
 .decl dm_declared_column(k: node, x: symbol, a: node)
 dm_declared_column(k, x, a) :- al_class_column(k, x, a).
 dm_declared_column(k, x, a) :- dm_extra_column(k, x, a).
+// dm_col_at(d, q, x, y): class q of document d declares column x under attribute y in its own body.
+.decl dm_col_at(d: number, q: symbol, x: symbol, y: symbol)
+dm_col_at(d, q, x, y) :- dm_declared_column(k, x, a), field(a, "left", l), text(l, y), class_def(k, q), docof(k, d).
 // dm_core_table(c, t): `Table("t", metadata, ...)` in application code: an association table, or a `__table__`.
 .decl dm_table_q(q: symbol)
 dm_table_q("sqlalchemy.Table"). dm_table_q("sqlalchemy.schema.Table"). dm_table_q("sqlalchemy.sql.schema.Table").
@@ -157,23 +169,35 @@ dm_table_q("sqlmodel.Table").
 .decl dm_core_table(c: node, t: symbol)
 dm_core_table(c, t) :- kind(c, "call"), field(c, "function", f), sym_of(f, q), dm_table_q(q), call_arg(c, 0, "", a),
     al_name_value(a, t), call_arg(c, 1, "", _), docof(c, d), dm_app_doc(d).
-// dm_table_value(v, c): expression v is Table c: the call itself, a module-level name bound to it in the same file,
-// or a name imported from the module that binds it.
-.decl dm_table_value(v: node, c: node)
-dm_table_value(v, c) :- unparen(v, c), dm_core_table(c, _).
-dm_table_value(v, c) :- unparen(v, u), kind(u, "identifier"), text(u, x), docof(u, d), al_top_assign(d, x, r),
-    unparen(r, c), dm_core_table(c, _).
-dm_table_value(v, c) :- unparen(v, u), sym_of(u, q), al_top_assign(d2, x, r), unparen(r, c), dm_core_table(c, _),
-    doc(d2, _, mq), q = @dot(mq, x).
-// dm_table_class(k, c): class k maps Table c: `__table__ = <c>`.
-.decl dm_table_class(k: node, c: node)
-dm_table_class(k, c) :- al_class_stmt(k, a), field(a, "left", l), text(l, "__table__"), field(a, "right", v),
-    dm_table_value(v, c).
-// dm_super(k, b): class b of the run is among the bases of k, a model or a `__table__` class, directly or not.
-.decl dm_super(k: node, b: node)
-dm_super(k, b) :- al_model_super(k, b).
-dm_super(k, b) :- dm_table_class(k, _), class_base(k, q), class_def(b, q).
-dm_super(k, b) :- dm_table_class(k, _), dm_super(k, m), class_base(m, q), class_def(b, q).
+// dm_core_column(c, x): Table c lists Column x.
+.decl dm_core_column(c: node, x: symbol)
+dm_core_column(c, x) :- dm_core_table(c, _), call_arg(c, i, "", e), i > 1, unparen(e, col), al_column_call(col),
+    al_column_name(col, x).
+// dm_tconst_at(d, r, t): module constant r of document d is Table t; dm_tconst_col_at(d, r, x): it lists Column x.
+.decl dm_tconst_at(d: number, r: symbol, t: symbol)
+dm_tconst_at(d, r, t) :- al_const_def(d, r, v), unparen(v, c), dm_core_table(c, t).
+.decl dm_tconst_col_at(d: number, r: symbol, x: symbol)
+dm_tconst_col_at(d, r, x) :- al_const_def(d, r, v), unparen(v, c), dm_core_column(c, x).
+// dm_table_attr(k, v): class k's body says `__table__ = v`. dm_tlocal(k, c): v is the Table call c itself;
+// dm_tref_at(d, q, r): v is a name (of the same file, or imported) that denotes module constant r.
+.decl dm_table_attr(k: node, v: node)
+dm_table_attr(k, v) :- al_class_stmt(k, a), field(a, "left", l), text(l, "__table__"), field(a, "right", v).
+.decl dm_tlocal(k: node, c: node)
+dm_tlocal(k, c) :- dm_table_attr(k, v), unparen(v, c), dm_core_table(c, _).
+.decl dm_tref_at(d: number, q: symbol, r: symbol)
+dm_tref_at(d, q, r) :- dm_table_attr(k, v), unparen(v, u), kind(u, "identifier"), text(u, x), docof(u, d),
+    al_top_assign(d, x, _), doc(d, _, mq), r = @dot(mq, x), class_def(k, q).
+dm_tref_at(d, q, r) :- dm_table_attr(k, v), unparen(v, u), sym_of(u, r), class_def(k, q), docof(k, d).
+// dm_mapped_at(d, q): class q of document d is mapped: it names its table (al_model) or sets `__table__`.
+// dm_anc_at(d, q, b): it inherits from b, at any depth (class_anc).
+.decl dm_mapped_at(d: number, q: symbol)
+dm_mapped_at(d, q) :- al_model(k, _), class_def(k, q), docof(k, d).
+dm_mapped_at(d, q) :- dm_table_attr(k, _), class_def(k, q), docof(k, d).
+.decl dm_anc_at(d: number, q: symbol, b: symbol)
+dm_anc_at(d, q, b) :- dm_mapped_at(d, q), class_def(k, q), docof(k, d), class_anc(k, b).
+// dm_sqltable_at(d, q): class q of document d is a sqlmodel table class, whose bases' annotated fields it maps.
+.decl dm_sqltable_at(d: number, q: symbol)
+dm_sqltable_at(d, q) :- al_sqlmodel_table(k), class_def(k, q), docof(k, d).
 // Mapper arguments. dm_mapper_seq(k, key, s): class k's own `__mapper_args__` (a dict display or `dict(...)`) gives
 // key the sequence s; dm_mapper_name(k, key, x): s lists x, as a string or a Column object (`prefs_table.c.theme`).
 .decl dm_mapper_args(k: node, v: node)
@@ -190,49 +214,101 @@ dm_seq_kind("list"). dm_seq_kind("tuple"). dm_seq_kind("set").
 dm_mapper_name(k, key, x) :- dm_mapper_seq(k, key, s), kind(s, sk), dm_seq_kind(sk), child(s, e, _), str(e, x).
 dm_mapper_name(k, key, x) :- dm_mapper_seq(k, key, s), kind(s, sk), dm_seq_kind(sk), child(s, e, _),
     attr_of(e, _, x).
-// dm_args_of(k, b): the `__mapper_args__` that applies to class k is b's: k's own, else one among its bases (Python
-// finds the attribute on the nearest base; when several bases set it, each counts).
-.decl dm_args_of(k: node, b: node)
-dm_args_of(k, k) :- dm_mapper_args(k, _).
-dm_args_of(k, b) :- dm_super(k, b), !dm_mapper_args(k, _), dm_mapper_args(b, _).
-.decl dm_excluded(k: node, x: symbol)
-dm_excluded(k, x) :- dm_args_of(k, b), dm_mapper_name(b, "exclude_properties", x).
-.decl dm_includes(k: node)
-dm_includes(k) :- dm_args_of(k, b), dm_mapper_seq(b, "include_properties", _).
-.decl dm_included(k: node, x: symbol)
-dm_included(k, x) :- dm_args_of(k, b), dm_mapper_name(b, "include_properties", x).
-// dm_unmapped_attr(k, y): model k, or a class among its bases, sets attribute y to None: the way a subclass stops
-// mapping a column a mixin declares (`client_secret = None`), while the column still exists in the database.
+// By qualified name: dm_margs_at(d, q), class q sets `__mapper_args__`; dm_mseq_at(d, q, key), it gives key a
+// sequence; dm_mname_at(d, q, key, x), the sequence lists x.
+.decl dm_margs_at(d: number, q: symbol)
+dm_margs_at(d, q) :- dm_mapper_args(k, _), class_def(k, q), docof(k, d).
+.decl dm_mseq_at(d: number, q: symbol, key: symbol)
+dm_mseq_at(d, q, key) :- dm_mapper_seq(k, key, _), class_def(k, q), docof(k, d).
+.decl dm_mname_at(d: number, q: symbol, key: symbol, x: symbol)
+dm_mname_at(d, q, key, x) :- dm_mapper_name(k, key, x), class_def(k, q), docof(k, d).
+// dm_none_at(d, q, y): class q sets attribute y to None: the way a subclass stops mapping a column a mixin declares
+// (`client_secret = None`), while the column still exists in the database.
 .decl dm_sets_none(k: node, y: symbol)
 dm_sets_none(k, y) :- al_class_stmt(k, a), !field(a, "type", _), field(a, "left", l), text(l, y), field(a, "right", v),
     unparen(v, u), kind(u, "none").
-.decl dm_unmapped_attr(k: node, y: symbol)
-dm_unmapped_attr(k, y) :- al_model(k, _), dm_sets_none(k, y).
-dm_unmapped_attr(k, y) :- al_model_super(k, b), dm_sets_none(b, y).
-// dm_class_column(k, x, y): class k declares column x under attribute y (a Table's column: its own name), itself or
-// on a class among its bases; dm_hidden(k, x, y): k's mapper leaves it out (excluded by column or attribute name, or
-// named by neither in include_properties).
-.decl dm_class_column(k: node, x: symbol, y: symbol)
-dm_class_column(k, x, y) :- al_model(k, _), dm_declared_column(k, x, a), field(a, "left", l), text(l, y).
-dm_class_column(k, x, y) :- al_model(k, _), al_model_super(k, b), dm_declared_column(b, x, a), field(a, "left", l),
-    text(l, y).
-dm_class_column(k, x, x) :- dm_table_class(k, c), call_arg(c, i, "", e), i > 1, unparen(e, col), al_column_call(col),
-    al_column_name(col, x).
-.decl dm_hidden(k: node, x: symbol, y: symbol)
-dm_hidden(k, x, y) :- dm_class_column(k, x, y), dm_unmapped_attr(k, y).
-dm_hidden(k, x, y) :- dm_class_column(k, x, y), dm_excluded(k, x).
-dm_hidden(k, x, y) :- dm_class_column(k, x, y), dm_excluded(k, y).
-dm_hidden(k, x, y) :- dm_class_column(k, x, y), dm_includes(k), !dm_included(k, x), !dm_included(k, y).
-// dm_maps(d, t, x): application document d maps column x of table t: a model class there, or a Core Table that no
-// class maps (a Core query names all its columns).
+.decl dm_none_at(d: number, q: symbol, y: symbol)
+dm_none_at(d, q, y) :- dm_sets_none(k, y), class_def(k, q), docof(k, d).
+
+// The run's declarations, by qualified name (cross_file unions of each file's own rows, no node): dm_col(q, x, y),
+// class q declares column x under attribute y (its own body; a sqlmodel field of a class among a sqlmodel table's
+// bases, dm_sqlbase); dm_none(q, y); dm_margs(q); dm_mseq(q, key); dm_mname(q, key, x); dm_tconst(r, t) and
+// dm_tconst_col(r, x), module constant r is Table t listing x; dm_table_used(r), some class's `__table__` names r.
+.decl dm_sqlbase(b: symbol) cross_file
+dm_sqlbase(b) :- dm_sqltable_at(d, q), dm_anc_at(d, q, b).
+.decl dm_col(q: symbol, x: symbol, y: symbol) cross_file
+dm_col(q, x, y) :- dm_col_at(_, q, x, y).
+dm_col(q, x, x) :- al_sqlmodel_field_at(_, q, x), dm_sqlbase(q).
+.decl dm_none(q: symbol, y: symbol) cross_file
+dm_none(q, y) :- dm_none_at(_, q, y).
+.decl dm_margs(q: symbol) cross_file
+dm_margs(q) :- dm_margs_at(_, q).
+.decl dm_mseq(q: symbol, key: symbol) cross_file
+dm_mseq(q, key) :- dm_mseq_at(_, q, key).
+.decl dm_mname(q: symbol, key: symbol, x: symbol) cross_file
+dm_mname(q, key, x) :- dm_mname_at(_, q, key, x).
+.decl dm_tconst(r: symbol, t: symbol) cross_file
+dm_tconst(r, t) :- dm_tconst_at(_, r, t).
+.decl dm_tconst_col(r: symbol, x: symbol) cross_file
+dm_tconst_col(r, x) :- dm_tconst_col_at(_, r, x).
+.decl dm_table_used(r: symbol) cross_file
+dm_table_used(r) :- dm_tref_at(_, _, r).
+
+// dm_mtable(d, q, t): mapped class q of document d maps table t: it names it, or its `__table__` is Table t (of its own
+// file, or a module constant: dm_tconst).
+.decl dm_mtable_at(d: number, q: symbol, t: symbol)
+dm_mtable_at(d, q, t) :- al_model(k, t), class_def(k, q), docof(k, d).
+dm_mtable_at(d, q, t) :- dm_tlocal(k, c), dm_core_table(c, t), class_def(k, q), docof(k, d).
+.decl dm_tlocal_col_at(d: number, q: symbol, x: symbol)
+dm_tlocal_col_at(d, q, x) :- dm_tlocal(k, c), dm_core_column(c, x), class_def(k, q), docof(k, d).
+.decl dm_model_at(d: number, q: symbol)
+dm_model_at(d, q) :- al_model(k, _), class_def(k, q), docof(k, d).
+.decl dm_mtable(d: number, q: symbol, t: symbol)
+dm_mtable(d, q, t) :- dm_mtable_at(d, q, t).
+dm_mtable(d, q, t) :- dm_tref_at(d, q, r), dm_tconst(r, t).
+// dm_class_column(d, k, x, y): mapped class k declares column x under attribute y (a Table's column: its own name),
+// itself or, for a model, on a class among its bases; dm_hidden(d, k, x, y): k's mapper leaves it out (excluded by
+// column or attribute name, or named by neither in include_properties).
+.decl dm_class_column(d: number, k: symbol, x: symbol, y: symbol)
+dm_class_column(d, k, x, y) :- dm_model_at(d, k), dm_col_at(d, k, x, y).
+dm_class_column(d, k, x, y) :- dm_model_at(d, k), dm_anc_at(d, k, b), dm_col(b, x, y).
+dm_class_column(d, k, x, x) :- dm_tlocal_col_at(d, k, x).
+dm_class_column(d, k, x, x) :- dm_tref_at(d, k, r), dm_tconst_col(r, x).
+// dm_args_of(d, k, b): the `__mapper_args__` that applies to class k is b's: k's own, else one among its bases (Python
+// finds the attribute on the nearest base; when several bases set it, each counts).
+.decl dm_args_of(d: number, k: symbol, b: symbol)
+dm_args_of(d, k, k) :- dm_mapped_at(d, k), dm_margs_at(d, k).
+dm_args_of(d, k, b) :- dm_anc_at(d, k, b), !dm_margs_at(d, k), dm_margs(b).
+.decl dm_excluded(d: number, k: symbol, x: symbol)
+dm_excluded(d, k, x) :- dm_args_of(d, k, b), dm_mname(b, "exclude_properties", x).
+.decl dm_includes(d: number, k: symbol)
+dm_includes(d, k) :- dm_args_of(d, k, b), dm_mseq(b, "include_properties").
+.decl dm_included(d: number, k: symbol, x: symbol)
+dm_included(d, k, x) :- dm_args_of(d, k, b), dm_mname(b, "include_properties", x).
+// dm_unmapped_attr(d, k, y): model k, or a class among its bases, sets attribute y to None.
+.decl dm_unmapped_attr(d: number, k: symbol, y: symbol)
+dm_unmapped_attr(d, k, y) :- dm_model_at(d, k), dm_none_at(d, k, y).
+dm_unmapped_attr(d, k, y) :- dm_model_at(d, k), dm_anc_at(d, k, b), dm_none(b, y).
+.decl dm_hidden(d: number, k: symbol, x: symbol, y: symbol)
+dm_hidden(d, k, x, y) :- dm_class_column(d, k, x, y), dm_unmapped_attr(d, k, y).
+dm_hidden(d, k, x, y) :- dm_class_column(d, k, x, y), dm_excluded(d, k, x).
+dm_hidden(d, k, x, y) :- dm_class_column(d, k, x, y), dm_excluded(d, k, y).
+dm_hidden(d, k, x, y) :- dm_class_column(d, k, x, y), dm_includes(d, k), !dm_included(d, k, x), !dm_included(d, k, y).
+// dm_maps(d, t, x): application document d maps column x of table t: a mapped class there, or a Core Table that no
+// class maps (a Core query names all its columns): one bound to no module name, or to one no class's `__table__`
+// names (dm_core_free_at, r "" for the first).
 .decl dm_maps(d: number, t: symbol, x: symbol)
-dm_maps(d, t, x) :- al_model(k, t), dm_class_column(k, x, y), !dm_hidden(k, x, y), docof(k, d), dm_app_doc(d).
-dm_maps(d, t, x) :- dm_table_class(k, c), dm_core_table(c, t), dm_class_column(k, x, y), !dm_hidden(k, x, y),
-    docof(k, d), dm_app_doc(d).
-.decl dm_class_mapped_table(c: node)
-dm_class_mapped_table(c) :- dm_table_class(_, c).
-dm_maps(d, t, x) :- dm_core_table(c, t), !dm_class_mapped_table(c), call_arg(c, i, "", e), i > 1, unparen(e, col),
-    al_column_call(col), al_column_name(col, x), docof(c, d).
+dm_maps(d, t, x) :- dm_mtable(d, k, t), dm_class_column(d, k, x, y), !dm_hidden(d, k, x, y), dm_app_doc(d).
+dm_maps(d, t, x) :- dm_core_free_at(d, "", t, x).
+dm_maps(d, t, x) :- dm_core_free_at(d, r, t, x), r != "", !dm_table_used(r).
+.decl dm_core_free_at(d: number, r: symbol, t: symbol, x: symbol)
+dm_core_free_at(d, r, t, x) :- dm_core_table(c, t), !dm_tlocal(_, c), dm_core_column(c, x), docof(c, d),
+    dm_core_key(c, r).
+.decl dm_core_key(c: node, r: symbol)
+dm_core_key(c, r) :- dm_core_bound(c, r).
+dm_core_key(c, "") :- dm_core_table(c, _), !dm_core_bound(c, _).
+.decl dm_core_bound(c: node, r: symbol)
+dm_core_bound(c, r) :- dm_core_table(c, _), docof(c, d), al_const_def(d, r, v), unparen(v, c).
 .decl dm_maps_table(d: number, t: symbol)
 dm_maps_table(d, t) :- al_model(k, t), docof(k, d), dm_app_doc(d).
 dm_maps_table(d, t) :- dm_core_table(c, t), docof(c, d).
@@ -260,20 +336,26 @@ dm_adds_column(c, f, t, x) :- dm_upgrade_op(c, "alter_column", f), al_table(c, t
 .decl dm_adds_table(c: node, f: node, t: symbol)
 dm_adds_table(c, f, t) :- dm_upgrade_op(c, "create_table", f), al_table(c, t).
 dm_adds_table(c, f, t) :- dm_upgrade_op(c, "rename_table", f), al_role(c, "new_table", e), al_name_value(e, t).
+// dm_adds_column_doc(n, t, x) / dm_adds_table_doc(n, t): an upgrade of revision n adds t.x / t.
+.decl dm_adds_column_doc(n: number, t: symbol, x: symbol)
+dm_adds_column_doc(n, t, x) :- dm_adds_column(a, _, t, x), docof(a, n).
+.decl dm_adds_table_doc(n: number, t: symbol)
+dm_adds_table_doc(n, t) :- dm_adds_table(a, _, t), docof(a, n).
 
 // ---- revision order ----------------------------------------------------------------------------------------------
 // dm_later(m, n): revision n descends from revision m (lib/alembic's al_ancestor: its down_revision chain reaches m).
 .decl dm_later(m: number, n: number)
 dm_later(m, n) :- al_ancestor(n, m).
-// dm_column_back(c, f, t, x): after operation c of step f, t.x exists again: a later operation of the same step, or
-// any upgrade of a descendant revision, adds it back.
+// dm_column_back(c, f, t, x): a later operation of the same step f adds t.x back after operation c; dm_later_column(m,
+// t, x): any upgrade of a descendant revision of m adds it back (by document, through the revision graph).
 .decl dm_column_back(c: node, f: node, t: symbol, x: symbol)
 dm_column_back(c, f, t, x) :- dm_adds_column(a, f, t, x), dm_upgrade_op(c, _, f), earlier(c, a).
-dm_column_back(c, f, t, x) :- dm_upgrade_op(c, _, f), docof(c, m), dm_later(m, n), dm_adds_column(a, _, t, x),
-    docof(a, n).
+.decl dm_later_column(m: number, t: symbol, x: symbol)
+dm_later_column(m, t, x) :- dm_later(m, n), dm_adds_column_doc(n, t, x).
 .decl dm_table_back(c: node, f: node, t: symbol)
 dm_table_back(c, f, t) :- dm_adds_table(a, f, t), dm_upgrade_op(c, _, f), earlier(c, a).
-dm_table_back(c, f, t) :- dm_upgrade_op(c, _, f), docof(c, m), dm_later(m, n), dm_adds_table(a, _, t), docof(a, n).
+.decl dm_later_table(m: number, t: symbol)
+dm_later_table(m, t) :- dm_later(m, n), dm_adds_table_doc(n, t).
 // dm_reset_table(f, t): the revision of upgrade f drops t in its downgrade() too: neither direction keeps the table,
 // so something else builds it again (jupyterhub's 833da8570507 drops api_tokens both ways, and the hub's
 // `create_all()` recreates it from the model at startup, with the hub stopped for `upgrade-db`). A removal writes
@@ -283,14 +365,24 @@ dm_reset_table(f, t) :- al_step(f, "upgrade"), docof(f, d), al_call(c, "drop_tab
     al_step(g, "downgrade"), docof(g, d), al_table(c, t).
 
 // ---- reports -----------------------------------------------------------------------------------------------------
-DropMappedColumn(c, t, x) :- dm_upgrade_op(c, "drop_column", f), al_table(c, t), al_role(c, "column_name", e),
-    al_name_value(e, x), docof(c, m), dm_sees_column(m, t, x), !dm_column_back(c, f, t, x).
-RenameMappedColumn(c, t, x, y) :- dm_upgrade_op(c, "alter_column", f), al_table(c, t), al_role(c, "column_name", e),
-    al_name_value(e, x), dm_new_name(c, y), y != x, docof(c, m), dm_sees_column(m, t, x), !dm_column_back(c, f, t, x).
-DropMappedTable(c, t) :- dm_upgrade_op(c, "drop_table", f), al_table(c, t), docof(c, m), dm_sees_table(m, t),
-    !dm_table_back(c, f, t), !dm_reset_table(f, t).
-RenameMappedTable(c, t, y) :- dm_upgrade_op(c, "rename_table", f), al_table(c, t), al_role(c, "new_table", e),
-    al_name_value(e, y), y != t, docof(c, m), dm_sees_table(m, t), !dm_table_back(c, f, t).
+// dm_drop_col(c, t, x, m) / dm_rename_col(c, t, x, y, m) / dm_drop_table(c, t, m) / dm_rename_table(c, t, y, m): the
+// operation c of migration m, and what its own file says adds it back (dm_column_back, dm_table_back, dm_reset_table).
+.decl dm_drop_col(c: node, t: symbol, x: symbol, m: number)
+dm_drop_col(c, t, x, m) :- dm_upgrade_op(c, "drop_column", f), al_table(c, t), al_role(c, "column_name", e),
+    al_name_value(e, x), docof(c, m), !dm_column_back(c, f, t, x).
+.decl dm_rename_col(c: node, t: symbol, x: symbol, y: symbol, m: number)
+dm_rename_col(c, t, x, y, m) :- dm_upgrade_op(c, "alter_column", f), al_table(c, t), al_role(c, "column_name", e),
+    al_name_value(e, x), dm_new_name(c, y), y != x, docof(c, m), !dm_column_back(c, f, t, x).
+.decl dm_drop_table(c: node, t: symbol, m: number)
+dm_drop_table(c, t, m) :- dm_upgrade_op(c, "drop_table", f), al_table(c, t), docof(c, m), !dm_table_back(c, f, t),
+    !dm_reset_table(f, t).
+.decl dm_rename_table(c: node, t: symbol, y: symbol, m: number)
+dm_rename_table(c, t, y, m) :- dm_upgrade_op(c, "rename_table", f), al_table(c, t), al_role(c, "new_table", e),
+    al_name_value(e, y), y != t, docof(c, m), !dm_table_back(c, f, t).
+DropMappedColumn(c, t, x) :- dm_drop_col(c, t, x, m), dm_sees_column(m, t, x), !dm_later_column(m, t, x).
+RenameMappedColumn(c, t, x, y) :- dm_rename_col(c, t, x, y, m), dm_sees_column(m, t, x), !dm_later_column(m, t, x).
+DropMappedTable(c, t) :- dm_drop_table(c, t, m), dm_sees_table(m, t), !dm_later_table(m, t).
+RenameMappedTable(c, t, y) :- dm_rename_table(c, t, y, m), dm_sees_table(m, t), !dm_later_table(m, t).
 
 // The cases, `cases/alembic-practice-drop-mapped-column/`, read as one repository of four Alembic trees (app, billing,
 // accounts, ledger): each line ending in `# caught` is reported, and no other line.

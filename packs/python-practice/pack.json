@@ -21,6 +21,12 @@
       "document": "rules/python-practice-cancellation-swallowed.rerail",
       "title": "Python practice: asyncio.CancelledError caught or suppressed in an async def and not re-raised",
       "group": "Async",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "code",
+        "severity": "high",
+        "hazard": "async.cancellation-swallowed"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -39,6 +45,12 @@
       "document": "rules/python-practice-blocking-call-reached-from-async.rerail",
       "title": "Python practice: an async def calls a sync helper, in any module, that sleeps, does network I/O, runs a subprocess or starts an event loop",
       "group": "Async",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "code",
+        "severity": "critical",
+        "hazard": "async.blocking-call-in-async"
+      },
       "mode": "log",
       "on": true,
       "examples": {
@@ -85,6 +97,12 @@
       "document": "rules/python-practice-requests-session-without-timeout.rerail",
       "title": "Python practice: an HTTP call on a requests Session without a timeout",
       "group": "Timeouts and retries",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "code",
+        "severity": "high",
+        "hazard": "http.call-without-timeout"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -103,6 +121,12 @@
       "document": "rules/python-practice-retry-without-limit.rerail",
       "title": "Python practice: a tenacity, backoff, retrying or retry decorator without a limit",
       "group": "Timeouts and retries",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "code",
+        "severity": "high",
+        "hazard": "retry.unbounded"
+      },
       "mode": "log",
       "on": false,
       "examples": {
@@ -121,6 +145,12 @@
       "document": "rules/python-practice-retry-loop-without-limit.rerail",
       "title": "Python practice: a hand-written retry loop that never gives up",
       "group": "Timeouts and retries",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "code",
+        "severity": "high",
+        "hazard": "retry.unbounded"
+      },
       "mode": "log",
       "on": false,
       "examples": {
@@ -139,6 +169,12 @@
       "document": "rules/python-practice-coroutine-never-awaited.rerail",
       "title": "Python practice: coroutine of an async def created and never run",
       "group": "Async",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "code",
+        "severity": "high",
+        "hazard": "async.coroutine-never-awaited"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -169,6 +205,12 @@
       "document": "rules/python-practice-contextmanager-cleanup-skipped.rerail",
       "title": "Python practice: release after an unguarded yield in a @contextmanager is skipped on error",
       "group": "Resources",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "code",
+        "severity": "medium",
+        "hazard": "resource.release-skipped-on-error"
+      },
       "mode": "log",
       "on": false,
       "examples": {

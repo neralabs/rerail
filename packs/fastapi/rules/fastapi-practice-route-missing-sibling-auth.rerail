@@ -56,130 +56,238 @@
 
 #include "lib/fastapi.rerail"
 
+// A router's routes, its includes, its auth dependencies and their aliases may each sit in another module (decision
+// 0691: no node crosses files). Each file states its facts by symbol: a route by its def's symbol (pt_def), a router
+// by its key (lib/fastapi's fa_rkey), a Depends call by its path and term (ra_place); the relations over symbols below
+// decide auth, coverage and the siblings, and the output reads the route's def at its node.
 .violation RouteMissingSiblingAuth(at: node, fx: symbol, n: number, dep: symbol)
     "Write route `{fx}` has no auth, while {n} other routes of its router require it (`{dep}` for one). Add that dependency; if the endpoint is meant to be public, say so in a comment."
+RouteMissingSiblingAuth(f, fx, n, dep) :- kind(f, "function_definition"), pt_def(f, fq), ra_report(fq, n, dep),
+    docof(f, d), !fa_test_doc(d), def_name(f, fx).
+// ra_report(f, n, dep): open write route f of a router no auth covers, whose n >= 3 other routes have auth (dep for
+// one) and none other is open.
+.decl ra_report(f: symbol, n: number, dep: symbol)
+ra_report(fq, n, dep) :- ra_open(r, fq), ra_write_at(fq), !ra_covered(r), count : { ra_open(r, g), g != fq } = 0,
+    n = count : { ra_authed(r, g), g != fq }, n >= 3, ra_dep_pick(r, fq, dep).
 
 // ---- names -------------------------------------------------------------------------------------------------------
-// ra_auth_name(x): a dependency or helper named x authenticates the caller.
-.decl ra_auth_name(x: symbol)
-ra_auth_name(x) :- ra_name(x), match("(?i).*auth.*", x), !match("(?i)(.*_)?authors?(_.*)?", x).
-ra_auth_name(x) :- ra_name(x), match("(?i)(get_)?current_.*|get_[a-z_]*user|require_.*|.*_required|.*permission.*|.*perms?|.*superuser.*|.*api_?key.*|.*login.*|.*logged_in.*|.*token.*|.*jwt.*|.*bearer.*|.*credential.*|.*admin.*|.*(Role|Scope|Permission|Access)Check(er)?.*|check_.*access.*|.*_role.*|has_.*role.*", x).
-// ra_check_name(x): a helper called in a route's body that checks credentials.
-.decl ra_check_name(x: symbol)
-ra_check_name(x) :- ra_name(x), ra_auth_name(x).
-ra_check_name(x) :- ra_name(x),
+// ra_named(n, how, x): node n carries a name x the rule tests: a Depends call's dependency (how "dep": a function or
+// variable, an instance's class, or the callee that builds the instance a variable of this module holds, polar's
+// `_CustomerRead = Authenticator(...)`), a def (how "def"), a call (how "call"), the callee building a module
+// variable's value (how "var").
+.decl ra_named(n: node, how: symbol, x: symbol)
+ra_named(c, "dep", x) :- fa_depends_arg(c, e), leaf_name(e, x).
+ra_named(c, "dep", x) :- fa_depends_arg(c, e), kind(e, "call"), call_name(e, x).
+ra_named(c, "dep", x) :- fa_depends_arg(c, e), fa_value(e, v), kind(v, "call"), call_name(v, x).
+ra_named(g, "def", x) :- kind(g, "function_definition"), def_name(g, x).
+ra_named(c, "call", x) :- kind(c, "call"), call_name(c, x).
+ra_named(v, "var", x) :- fa_module_var(_, v), kind(v, "call"), call_name(v, x).
+// ra_auth_at(n, how): one of n's names says it authenticates the caller.
+.decl ra_auth_at(n: node, how: symbol)
+ra_auth_at(n, how) :- ra_named(n, how, x), match("(?i).*auth.*", x), !match("(?i)(.*_)?authors?(_.*)?", x).
+ra_auth_at(n, how) :- ra_named(n, how, x), match("(?i)(get_)?current_.*|get_[a-z_]*user|require_.*|.*_required|.*permission.*|.*perms?|.*superuser.*|.*api_?key.*|.*login.*|.*logged_in.*|.*token.*|.*jwt.*|.*bearer.*|.*credential.*|.*admin.*|.*(Role|Scope|Permission|Access)Check(er)?.*|check_.*access.*|.*_role.*|has_.*role.*", x).
+// ra_check_at(c): call c, in a route's body, checks credentials.
+.decl ra_check_at(c: node)
+ra_check_at(c) :- ra_auth_at(c, "call").
+ra_check_at(c) :- ra_named(c, "call", x),
     match("(?i)verify.*|.*_verify.*|decode.*|.*signature.*|.*hmac.*|check_ips?|.*_ip_allowed|.*(allow|white)list.*", x).
-// ra_name(x): the names the rule tests: dependencies' and calls' names.
-.decl ra_name(x: symbol)
-ra_name(x) :- ra_dep_name(_, x).
-ra_name(x) :- fa_depends_fn(_, g), def_name(g, x).
-ra_name(x) :- kind(c, "call"), call_name(c, x), def_frame(c, f), fa_route_def(f).
 
 // ---- auth dependencies -------------------------------------------------------------------------------------------
-// ra_scheme_q(q): a fastapi.security scheme class, or a subclass of the run.
+// ra_scheme_q(q): a fastapi.security scheme class; ra_scheme_value(e): expression e builds an instance of one (or of a
+// subclass of the run: lib/fastapi's fa_names), or names a variable of this module bound to one.
 .decl ra_scheme_q(q: symbol)
 ra_scheme_q(q) :- ra_scheme_leaf(x), (q = cat("fastapi.security.", x) ; q = cat("fastapi.security.oauth2.", x) ;
     q = cat("fastapi.security.http.", x) ; q = cat("fastapi.security.api_key.", x) ;
     q = cat("fastapi.security.open_id_connect_url.", x)).
-ra_scheme_q(q) :- class_def(c, q), class_base(c, b), ra_scheme_q(b).
 .decl ra_scheme_leaf(x: symbol)
 ra_scheme_leaf("OAuth2"). ra_scheme_leaf("OAuth2PasswordBearer"). ra_scheme_leaf("OAuth2AuthorizationCodeBearer").
 ra_scheme_leaf("OpenIdConnect"). ra_scheme_leaf("HTTPBearer"). ra_scheme_leaf("HTTPBasic"). ra_scheme_leaf("HTTPDigest").
 ra_scheme_leaf("HTTPBase"). ra_scheme_leaf("APIKeyHeader"). ra_scheme_leaf("APIKeyCookie"). ra_scheme_leaf("APIKeyQuery").
-// ra_scheme_value(e): expression e builds a scheme instance, or names a variable bound to one.
 .decl ra_scheme_value(e: node)
-ra_scheme_value(e) :- kind(e, "call"), field(e, "function", f), sym_of(f, q), ra_scheme_q(q).
+ra_scheme_value(e) :- kind(e, "call"), field(e, "function", f), fa_names(f, b), ra_scheme_q(b).
 ra_scheme_value(e) :- fa_value(e, v), ra_scheme_value(v).
-// ra_dep_name(c, x): a name Depends call c gives its dependency: a function or variable, an instance's class, or the
-// callee that builds the instance a variable holds (polar's `_CustomerRead = Authenticator(...)`).
-.decl ra_dep_name(c: node, x: symbol)
-ra_dep_name(c, x) :- fa_depends_arg(c, e), leaf_name(e, x).
-ra_dep_name(c, x) :- fa_depends_arg(c, e), kind(e, "call"), call_name(e, x).
-ra_dep_name(c, x) :- fa_depends_arg(c, e), fa_value(e, v), kind(v, "call"), call_name(v, x).
-// ra_auth_call(c): Depends/Security call c authenticates: it is a Security call, it names a scheme instance, its
-// dependency's name says so, or the def it runs is ra_auth_def.
-.decl ra_auth_call(c: node)
-ra_auth_call(c) :- fa_depends(c), field(c, "function", f), sym_of(f, q), suffix(".Security", q).
-ra_auth_call(c) :- fa_depends_arg(c, e), ra_scheme_value(e).
-ra_auth_call(c) :- ra_dep_name(c, x), ra_auth_name(x).
-ra_auth_call(c) :- fa_depends_fn(c, g), ra_auth_def(g).
-// ra_auth_def(h): dependency def h authenticates: its name says so, or one of its parameters' Depends calls does
-// (recursively: the closure fa_needs_reach walks, with the scheme instances and Security calls it has no def for).
-.decl ra_auth_def(h: node)
-ra_auth_def(h) :- fa_dependency(h), def_name(h, x), ra_auth_name(x).
-ra_auth_def(h) :- fa_dependency(h), fa_param_dep(h, _, _, c), ra_auth_call(c).
-// ra_route_auth(f, c): FastAPI runs auth dependency c, a Depends call in f's signature or decorator, for route f.
-.decl ra_route_auth(f: node, c: node)
-ra_route_auth(f, c) :- ra_on(_, f), fa_param_dep(f, _, _, c), ra_auth_call(c).
-ra_route_auth(f, c) :- ra_on(_, f), fa_route(f, dc, _, _), fa_decorator_dep(dc, c), ra_auth_call(c).
+// A variable of another module, stated in its file: ra_var_scheme(q): it holds a scheme instance (or names another
+// variable that does); ra_var_auth(q): it is built by a callee whose name says it authenticates.
+.decl ra_var_scheme_here(q: symbol)
+ra_var_scheme_here(q) :- fa_module_var(q, v), ra_scheme_value(v).
+.decl ra_var_ref(q: symbol, q2: symbol)
+ra_var_ref(q, q2) :- fa_module_var(q, v), fa_ext(v, q2).
+.decl ra_var_scheme(q: symbol)
+ra_var_scheme(q) :- ra_var_scheme_here(q).
+ra_var_scheme(q) :- ra_var_ref(q, q2), ra_var_scheme(q2).
+.decl ra_var_auth(q: symbol)
+ra_var_auth(q) :- fa_module_var(q, v), ra_auth_at(v, "var").
+// ra_dc(c, ck, c1, c2): Depends/Security call c authenticates when (ck, c1, c2) holds (ra_cond): ("sure", "", "") it
+// is a Security call, it names a scheme instance of this module, or its dependency's name says so; ("vscheme", q, "")
+// its dependency is a variable q of another module holding a scheme instance; ("vname", q, "") that variable is built
+// by a callee whose name says so; ("spec", how, q) the def it runs (lib/fastapi's fa_spec_runs) is ra_auth_def.
+.decl ra_dc(c: node, ck: symbol, c1: symbol, c2: symbol)
+ra_dc(c, "sure", "", "") :- fa_depends(c), field(c, "function", f), sym_of(f, q), suffix(".Security", q).
+ra_dc(c, "sure", "", "") :- fa_depends_arg(c, e), ra_scheme_value(e).
+ra_dc(c, "sure", "", "") :- fa_depends(c), ra_auth_at(c, "dep").
+ra_dc(c, "vscheme", q, "") :- fa_depends_arg(c, e), fa_ext(e, q).
+ra_dc(c, "vname", q, "") :- fa_depends_arg(c, e), fa_ext(e, q).
+ra_dc(c, "spec", how, q) :- fa_dep_spec(c, how, q).
+// ra_place(c, p, t): Depends call c's path and term (python/points-to-file's pt_tm), what the relations over symbols
+// name it by. ra_dc_at: ra_dc by place.
+.decl ra_place(c: node, p: symbol, t: symbol)
+ra_place(c, p, t) :- fa_depends(c), docof(c, d), doc(d, p, _), pt_tm(c, t).
+.decl ra_dc_at(p: symbol, t: symbol, ck: symbol, c1: symbol, c2: symbol)
+ra_dc_at(p, t, ck, c1, c2) :- ra_dc(c, ck, c1, c2), ra_place(c, p, t).
+.decl ra_cond(ck: symbol, c1: symbol, c2: symbol)
+ra_cond("sure", "", "").
+ra_cond("vscheme", q, "") :- ra_var_scheme(q).
+ra_cond("vname", q, "") :- ra_var_auth(q).
+ra_cond("spec", how, q) :- fa_spec_runs(how, q, g), ra_auth_def(g).
+// ra_dc_ok(p, t): the Depends call at (p, t) authenticates.
+.decl ra_dc_ok(p: symbol, t: symbol)
+ra_dc_ok(p, t) :- ra_dc_at(p, t, ck, c1, c2), ra_cond(ck, c1, c2).
+// ra_pdc(f, p, t, txt): a Depends call (written txt) at (p, t) fills a parameter of def f: in its signature or an
+// alias of its module. ra_alias_dc(aq, p, t, txt): the Depends call in alias aq's metadata. Stated in their files.
+.decl ra_pdc(f: symbol, p: symbol, t: symbol, txt: symbol)
+ra_pdc(fq, p, t, txt) :- fa_param_dep(f, _, _, c), ra_place(c, p, t), text(c, txt), pt_def(f, fq).
+.decl ra_alias_dc(aq: symbol, p: symbol, t: symbol, txt: symbol)
+ra_alias_dc(aq, p, t, txt) :- fa_alias_dep(aq, c), ra_place(c, p, t), text(c, txt).
+// ra_auth_def(g): dependency def g authenticates: its name says so (ra_def_auth, stated in its file), or one of its
+// parameters' Depends calls does (recursively: the closure fa_needs_reach walks, with the scheme instances and
+// Security calls it has no def for).
+.decl ra_def_auth(g: symbol)
+ra_def_auth(gq) :- ra_auth_at(g, "def"), pt_def(g, gq).
+.decl ra_auth_def(g: symbol)
+ra_auth_def(g) :- fa_dependency(g), ra_def_auth(g).
+ra_auth_def(g) :- fa_dependency(g), ra_pdc(g, p, t, _), ra_dc_ok(p, t).
+ra_auth_def(g) :- fa_dependency(g), fa_palias_at(g, _, aq), ra_alias_dc(aq, p, t, _), ra_dc_ok(p, t).
+// ra_auth_dep(f, txt): FastAPI runs auth dependency txt, a Depends call in f's signature (or an alias it names) or a
+// route decorator's `dependencies=`, for route f.
+.decl ra_auth_dep(f: symbol, txt: symbol)
+ra_auth_dep(fq, txt) :- ra_pdc(fq, p, t, txt), ra_dc_ok(p, t).
+ra_auth_dep(fq, txt) :- fa_palias_at(fq, _, aq), ra_alias_dc(aq, p, t, txt), ra_dc_ok(p, t).
+ra_auth_dep(fq, txt) :- ra_ddc(fq, p, t, txt), ra_dc_ok(p, t).
+.decl ra_has_auth(f: symbol)
+ra_has_auth(fq) :- ra_auth_dep(fq, _).
+
+// ---- routes ------------------------------------------------------------------------------------------------------
+// ra_reg(dc, f, k, m): route call dc registers def f on router key k with method m: lib/fastapi's fa_route, and the
+// `add_api_route` and by-hand forms whose endpoint is another module's def. What dc says of f is stated in dc's file,
+// by f's symbol: its path's words (ra_path_pub, ra_path_getpub), a write method (ra_write_at: by its verb, or
+// `methods=[...]` of `api_route` / `add_api_route`), its `dependencies=` (ra_ddc).
+.decl ra_reg(dc: node, f: symbol, k: symbol, m: symbol)
+ra_reg(dc, fq, k, m) :- fa_route(f, dc, k, m), pt_def(f, fq).
+ra_reg(c, fq, k, "api_route") :- fa_add_route(c, k, e), sym_of(e, fq).
+ra_reg(dc, fq, k, m) :- fa_hand_route(dc, k, m, e), sym_of(e, fq).
+.decl ra_path(dc: node, p: symbol)
+ra_path(dc, p) :- ra_reg(dc, _, _, _), (call_arg(dc, 0, "", a) ; call_arg(dc, -1, "path", a)), str(a, p).
+.decl ra_path_pub(f: symbol)
+ra_path_pub(fq) :- ra_reg(dc, fq, _, _), ra_path(dc, p), ra_public_word(w),
+    match(cat("(?i)(.*[/_.{}-])?(", w, ")([/_.{}-].*)?"), p).
+.decl ra_path_getpub(f: symbol)
+ra_path_getpub(fq) :- ra_reg(dc, fq, _, "get"), ra_path(dc, p), ra_get_word(w),
+    match(cat("(?i)(.*[/_.{}-])?(", w, ")([/_.{}-].*)?"), p).
+.decl ra_write_at(f: symbol)
+ra_write_at(fq) :- ra_reg(_, fq, _, m), (m = "post" ; m = "put" ; m = "patch" ; m = "delete").
+ra_write_at(fq) :- ra_reg(dc, fq, _, "api_route"), call_arg(dc, -1, "methods", l0), unparen(l0, l), fa_list_item(l, i),
+    str(i, s), match("(?i)post|put|patch|delete", s).
+.decl ra_ddc(f: symbol, p: symbol, t: symbol, txt: symbol)
+ra_ddc(fq, p, t, txt) :- ra_reg(dc, fq, _, _), call_arg(dc, -1, "dependencies", l0), unparen(l0, l),
+    fa_list_item(l, c), fa_depends(c), ra_place(c, p, t), text(c, txt).
+// ra_on(r, f): f is an HTTP route of router r (HEAD, OPTIONS and websocket routes left out).
+.decl ra_on(r: symbol, f: symbol)
+ra_on(r, fq) :- fa_route_at(fq, r, m), fa_router_key(r, _), m != "head", m != "options", m != "websocket".
 
 // ---- routers -----------------------------------------------------------------------------------------------------
-// ra_on(r, f): f is an HTTP route of router r (HEAD, OPTIONS and websocket routes left out).
-.decl ra_on(r: node, f: node)
-ra_on(r, f) :- fa_route(f, _, r, m), m != "head", m != "options", m != "websocket".
-// ra_ref(o, r): expression o refers to router r (fa_router_ref), or imports it from a module of a namespace package (a
+// ra_inc(p, c, ip, it): `p.include_router(c, ...)` (lib/fastapi's fa_include) at the call of path ip and term it;
+// ra_inc_dep(ip, it, dp, dt): that call lists the Depends call at (dp, dt) in `dependencies=`; ra_rdep(r, dp, dt):
+// router r's constructor does. Stated in their files.
+.decl ra_inc(p: symbol, c: symbol, ip: symbol, it: symbol)
+ra_inc(pk, ck, ip, it) :- fa_include(pk, ck, call), docof(call, d), doc(d, ip, _), pt_tm(call, it).
+.decl ra_inc_dep(ip: symbol, it: symbol, dp: symbol, dt: symbol)
+ra_inc_dep(ip, it, dp, dt) :- fa_include(_, _, call), fa_include_kw(call, "dependencies", l), fa_list_item(l, c),
+    fa_depends(c), ra_place(c, dp, dt), docof(call, d), doc(d, ip, _), pt_tm(call, it).
+.decl ra_rdep(r: symbol, dp: symbol, dt: symbol)
+ra_rdep(k, dp, dt) :- fa_router_dep(r, c), fa_rkey(r, k), ra_place(c, dp, dt).
+// ra_rk(k0, k): an include's router k0 is router k: itself, or one imported from a module of a namespace package (a
 // directory without __init__.py, as dispatch's `dispatch/case_cost/`), whose module name the run takes from its path
-// (`src.dispatch.case_cost.views`) while the import names it from the package root (`dispatch.case_cost.views`):
-// the import's name is then a dotted suffix of the variable's.
-.decl ra_ref(o: node, r: node)
-ra_ref(o, r) :- fa_router_ref(o, r).
-ra_ref(o, r) :- ra_include_arg(o), !fa_router_ref(o, _), sym_of(o, q), !fa_module_var(q, _), fa_module_var(q2, r),
-    fa_ctor(r, _), suffix(cat(".", q), q2).
-// ra_include_arg(o): o is the receiver or the router of an `include_router(...)` call.
-.decl ra_include_arg(o: node)
-ra_include_arg(o) :- ra_include_call(call, o, _).
-ra_include_arg(a) :- ra_include_call(call, _, a).
-.decl ra_include_call(call: node, o: node, a: node)
-ra_include_call(call, o, a) :- kind(call, "call"), field(call, "function", fn), attr_of(fn, o, "include_router"),
-    (call_arg(call, 0, "", a0) ; call_arg(call, -1, "router", a0)), unparen(a0, a).
-// ra_include(p, c, call): `p.include_router(c, ...)` at call (lib/fastapi's fa_include, with ra_ref).
-.decl ra_include(p: node, c: node, call: node)
-ra_include(p, c, call) :- ra_include_call(call, o, a), ra_ref(o, p), ra_ref(a, c).
+// (`src.dispatch.case_cost.views`) while the import names it from the package root (`dispatch.case_cost.views`): the
+// import's name, no module variable of the run, is then a dotted suffix of the variable's.
+.decl ra_var(q: symbol)
+ra_var(q) :- fa_module_var(q, _).
+.decl ra_inc_need(k: symbol)
+ra_inc_need(k) :- ra_inc(k, _, _, _).
+ra_inc_need(k) :- ra_inc(_, k, _, _).
+.decl ra_rk(k0: symbol, k: symbol)
+ra_rk(k, k) :- ra_inc_need(k), fa_router_key(k, _).
+ra_rk(q, k) :- ra_inc_need(q), !ra_var(q), fa_router_key(k, _), suffix(cat(".", q), k).
 // ra_covered(r): every route of r runs an auth dependency its router, an include of it or its app lists.
-.decl ra_covered(r: node)
-ra_covered(r) :- fa_router_dep(r, c), ra_auth_call(c).
-ra_covered(r) :- ra_include(_, r, call), call_arg(call, -1, "dependencies", l0), unparen(l0, l), fa_list_item(l, c),
-    fa_depends(c), ra_auth_call(c).
-ra_covered(r) :- ra_include(p, r, _), ra_covered(p).
+.decl ra_covered(r: symbol)
+ra_covered(r) :- ra_rdep(r, dp, dt), ra_dc_ok(dp, dt).
+ra_covered(r) :- ra_inc(_, c0, ip, it), ra_rk(c0, r), ra_inc_dep(ip, it, dp, dt), ra_dc_ok(dp, dt).
+ra_covered(r) :- ra_inc(p0, c0, _, _), ra_rk(c0, r), ra_rk(p0, p), ra_covered(p).
 
 // ---- public routes -----------------------------------------------------------------------------------------------
 .decl ra_public_word(w: symbol)
 ra_public_word("(?i)login|logout|logon|signin|sign_in|signout|sign_out|signup|sign_up|register|registration|token|tokens|refresh|oauth|oauth2|oidc|callback|sso|saml|authorize|authorization|mfa|2fa|otp|totp|challenge|webhook|webhooks|health|healthz|healthcheck|ready|readyz|readiness|live|livez|liveness|ping|docs|redoc|openapi|public|verify|verification|confirm|confirmation|reset|forgot|recover|recovery|invite|invitation|unsubscribe|jwks|well-known|well_known|magic|captcha").
 .decl ra_get_word(w: symbol)
 ra_get_word("(?i)status|version|metrics|config|info|about|manifest|favicon|robots").
-// ra_word_in(s, w): string s holds word w (alternation), between start, end, `/`, `_`, `-`, `.`, `{` or `}`.
-.decl ra_word_in(s: symbol, w: symbol)
-ra_word_in(s, w) :- ra_text(s), (ra_public_word(w) ; ra_get_word(w)), match(cat("(?i)(.*[/_.{}-])?(", w, ")([/_.{}-].*)?"), s).
-.decl ra_text(s: symbol)
-ra_text(x) :- ra_on(_, f), def_name(f, x).
-ra_text(p) :- ra_on(_, f), fa_route(f, dc, _, _), fa_route_path(dc, p).
-// ra_public(f): f's name or path says the endpoint is public.
-.decl ra_public(f: node)
-ra_public(f) :- ra_on(_, f), def_name(f, x), ra_public_word(w), ra_word_in(x, w).
-ra_public(f) :- ra_on(_, f), fa_route(f, dc, _, _), fa_route_path(dc, p), ra_public_word(w), ra_word_in(p, w).
-ra_public(f) :- fa_route(f, _, _, "get"), def_name(f, x), ra_get_word(w), ra_word_in(x, w).
-ra_public(f) :- fa_route(f, dc, _, "get"), fa_route_path(dc, p), ra_get_word(w), ra_word_in(p, w).
-// ra_by_hand(f): f reads or checks credentials itself.
-.decl ra_by_hand(f: node)
-ra_by_hand(f) :- ra_on(_, f), fa_param(f, _, x, _, d), ra_param_call(d, k), ra_hand_param(k, x).
-ra_by_hand(f) :- ra_on(_, f), fa_param(f, _, x, a, _), fa_annotated(a, _, m), ra_param_call(m, k), ra_hand_param(k, x).
-ra_by_hand(f) :- ra_on(_, f), attr_of(n, _, a), (a = "headers" ; a = "cookies"), def_frame(n, f).
-ra_by_hand(f) :- ra_on(_, f), kind(c, "call"), call_name(c, x), def_frame(c, f), ra_check_name(x).
-// A credential the client sends in the request itself: a parameter not filled by a dependency, or a field of the body
-// model a parameter is typed with (or of a base of it), named for a token, a secret, a code or a password (polar's
-// `claim_seat(seat_claim: SeatClaim)`, `SeatClaim.invitation_token`).
-ra_by_hand(f) :- ra_on(_, f), fa_param(f, _, x, _, _), !fa_param_dep(f, _, x, _), ra_credential_name(x).
-ra_by_hand(f) :- ra_on(_, f), fa_param_type(f, _, x, t), !fa_param_dep(f, _, x, _), sym_of(t, q),
-    (b = q ; subclass(q, b)), class_def(c, b), kind(a, "assignment"), scope_node(a, c), field(a, "left", l),
-    kind(l, "identifier"), text(l, y), ra_credential_name(y).
-.decl ra_credential_name(x: symbol)
-ra_credential_name(x) :- ra_field_name(x),
+// A word w is in a name or path s when s matches `(?i)(.*[/_.{}-])?(w)([/_.{}-].*)?`: between start, end, `/`, `_`,
+// `-`, `.`, `{` or `}`. ra_def_pub(f), ra_def_getpub(f): def f's name holds a public word, a GET-only word.
+.decl ra_def_pub(f: symbol)
+ra_def_pub(fq) :- kind(f, "function_definition"), def_name(f, x), ra_public_word(w),
+    match(cat("(?i)(.*[/_.{}-])?(", w, ")([/_.{}-].*)?"), x), pt_def(f, fq).
+.decl ra_def_getpub(f: symbol)
+ra_def_getpub(fq) :- kind(f, "function_definition"), def_name(f, x), ra_get_word(w),
+    match(cat("(?i)(.*[/_.{}-])?(", w, ")([/_.{}-].*)?"), x), pt_def(f, fq).
+// ra_public(f): f's name or path says the endpoint is public (a status, version, metrics, ... name or path on a GET
+// route).
+.decl ra_public(f: symbol)
+ra_public(fq) :- ra_def_pub(fq).
+ra_public(fq) :- ra_path_pub(fq).
+ra_public(fq) :- ra_def_getpub(fq), fa_route_at(fq, _, "get").
+ra_public(fq) :- ra_path_getpub(fq).
+// ra_by_hand(f): f reads or checks credentials itself: a `Header(...)` parameter named for auth, a token, a key, a
+// signature, a secret or the client IP, any `Cookie(...)` parameter, `<x>.headers` or `<x>.cookies` in its body, a
+// call in its body of a helper whose name says it authenticates, verifies or allowlists (ra_hand_sure, stated in its
+// file); a credential the client sends in the request itself (ra_hand_cred, ra_hand_model).
+.decl ra_hand_sure(f: symbol)
+ra_hand_sure(fq) :- fa_param(f, _, x, _, d), ra_param_call(d, k), ra_hand_param(k, x), pt_def(f, fq).
+ra_hand_sure(fq) :- fa_param(f, _, x, a, _), fa_annotated(a, _, m), ra_param_call(m, k), ra_hand_param(k, x),
+    pt_def(f, fq).
+ra_hand_sure(fq) :- kind(f, "function_definition"), attr_of(n, _, a), (a = "headers" ; a = "cookies"), def_frame(n, f),
+    pt_def(f, fq).
+ra_hand_sure(fq) :- kind(f, "function_definition"), kind(c, "call"), def_frame(c, f), ra_check_at(c), pt_def(f, fq).
+// A parameter not filled by a dependency, or a field of the body model a parameter is typed with (or of a base of
+// it), named for a token, a secret, a code or a password (polar's `claim_seat(seat_claim: SeatClaim)`,
+// `SeatClaim.invitation_token`). ra_hand_cred(f, aq), ra_hand_model(f, q, aq): such a parameter of f, its model class
+// q; aq "" when no Depends call of its signature fills it, else the alias of another module its annotation names,
+// which must hold none (ra_dep_alias).
+.decl ra_hand_cred(f: symbol, aq: symbol)
+ra_hand_cred(fq, "") :- ra_cred_param(f, x), !fa_param_dep(f, _, x, _), !fa_param_alias(f, _, x, _), pt_def(f, fq).
+ra_hand_cred(fq, aq) :- ra_cred_param(f, x), !fa_param_dep(f, _, x, _), fa_param_alias(f, _, x, aq), pt_def(f, fq).
+.decl ra_hand_model(f: symbol, q: symbol, aq: symbol)
+ra_hand_model(fq, q, "") :- fa_param_type(f, _, x, t), !fa_param_dep(f, _, x, _), !fa_param_alias(f, _, x, _),
+    sym_of(t, q), pt_def(f, fq).
+ra_hand_model(fq, q, aq) :- fa_param_type(f, _, x, t), !fa_param_dep(f, _, x, _), fa_param_alias(f, _, x, aq),
+    sym_of(t, q), pt_def(f, fq).
+.decl ra_dep_alias(aq: symbol)
+ra_dep_alias(aq) :- fa_alias_dep(aq, _).
+// ra_cred_param(f, x): def f's parameter x is named for a credential. ra_cls_cred(b): class b's body binds a name
+// named so, stated in its file; ra_cred_class(q): q or a base of it (python/scopes' subclass) does.
+.decl ra_cred_param(f: node, x: symbol)
+ra_cred_param(f, x) :- fa_param(f, _, x, _, _),
     match("(?i)(.*_)?(token|secret|signature|otp|totp|nonce|hmac|password|code)|(.*_)?api_?key", x),
     !match("(?i)(.*_)?(country|currency|language|lang|zip|postal|area|status|error|discount|promo|color|colour)_?code", x).
-.decl ra_field_name(x: symbol)
-ra_field_name(x) :- fa_param(f, _, x, _, _), ra_on(_, f).
-ra_field_name(y) :- kind(a, "assignment"), scope_node(a, c), kind(c, "class_definition"), field(a, "left", l),
-    kind(l, "identifier"), text(l, y).
+.decl ra_cls_cred(b: symbol)
+ra_cls_cred(b) :- class_def(c, b), kind(a, "assignment"), scope_node(a, c), field(a, "left", l), kind(l, "identifier"),
+    text(l, y), match("(?i)(.*_)?(token|secret|signature|otp|totp|nonce|hmac|password|code)|(.*_)?api_?key", y),
+    !match("(?i)(.*_)?(country|currency|language|lang|zip|postal|area|status|error|discount|promo|color|colour)_?code", y).
+.decl ra_cred_class(q: symbol)
+ra_cred_class(q) :- ra_cls_cred(q).
+ra_cred_class(q) :- subclass(q, b), ra_cls_cred(b).
+.decl ra_by_hand(f: symbol)
+ra_by_hand(fq) :- ra_hand_sure(fq).
+ra_by_hand(fq) :- ra_hand_cred(fq, "").
+ra_by_hand(fq) :- ra_hand_cred(fq, aq), aq != "", !ra_dep_alias(aq).
+ra_by_hand(fq) :- ra_hand_model(fq, q, ""), ra_cred_class(q).
+ra_by_hand(fq) :- ra_hand_model(fq, q, aq), aq != "", !ra_dep_alias(aq), ra_cred_class(q).
 // ra_param_call(e, k): e is fastapi's `Header(...)` or `Cookie(...)` (k "Header" / "Cookie").
 .decl ra_param_call(e: node, k: symbol)
 ra_param_call(e, k) :- kind(e, "call"), field(e, "function", fn), sym_of(fn, q), (k = "Header" ; k = "Cookie"),
@@ -190,24 +298,21 @@ ra_hand_param("Header", x) :- fa_param(_, _, x, _, _),
     match("(?i).*(auth|token|key|signature|secret|session|hmac|sig|forwarded|real_ip|client_ip).*", x).
 
 // ---- the rule ----------------------------------------------------------------------------------------------------
-// ra_open(r, f): route f of r has no auth and is not public or authenticated by hand.
-.decl ra_bare(r: node, f: node)
-ra_bare(r, f) :- ra_on(r, f), !ra_route_auth(f, _).
-.decl ra_open(r: node, f: node)
+// ra_open(r, f): route f of r has no auth and is not public or authenticated by hand. ra_authed(r, f): it has auth.
+.decl ra_bare(r: symbol, f: symbol)
+ra_bare(r, f) :- ra_on(r, f), !ra_has_auth(f).
+.decl ra_open(r: symbol, f: symbol)
 ra_open(r, f) :- ra_bare(r, f), !ra_public(f), !ra_by_hand(f).
-.decl ra_authed(r: node, f: node)
-ra_authed(r, f) :- ra_on(r, f), ra_route_auth(f, _).
-
-// ra_write(f): f serves POST, PUT, PATCH or DELETE: by its decorator, or `methods=[...]` of `api_route` /
-// `add_api_route`.
-.decl ra_write(f: node)
-ra_write(f) :- fa_route(f, _, _, m), (m = "post" ; m = "put" ; m = "patch" ; m = "delete").
-ra_write(f) :- fa_route(f, dc, _, "api_route"), fa_route_kw(dc, "methods", l), fa_list_item(l, i), str(i, s),
-    match("(?i)post|put|patch|delete", s).
-
-RouteMissingSiblingAuth(f, fx, n, dep) :- ra_open(r, f), ra_write(f), !ra_covered(r), docof(f, d), !fa_test_doc(d),
-    count : { ra_open(r, g), g != f } = 0, n = count : { ra_authed(r, g), g != f }, n >= 3,
-    o = min c : { ra_authed(r, g), g != f, ra_route_auth(g, c) }, text(o, dep), def_name(f, fx).
+.decl ra_authed(r: symbol, f: symbol)
+ra_authed(r, f) :- ra_on(r, f), ra_has_auth(f).
+// ra_dep_pick(r, f, txt): the auth dependency the message names for open route f of r: the least, by its text, of the
+// other routes' (a `min` over symbols would order their ids).
+.decl ra_dep_c(r: symbol, f: symbol, txt: symbol)
+ra_dep_c(r, f, txt) :- ra_open(r, f), ra_authed(r, g), g != f, ra_auth_dep(g, txt).
+.decl ra_dep_less(r: symbol, f: symbol, txt: symbol)
+ra_dep_less(r, f, txt) :- ra_dep_c(r, f, txt), ra_dep_c(r, f, t2), t2 < txt.
+.decl ra_dep_pick(r: symbol, f: symbol, txt: symbol)
+ra_dep_pick(r, f, txt) :- ra_dep_c(r, f, txt), !ra_dep_less(r, f, txt).
 
 // The cases, `cases/fastapi-practice-route-missing-sibling-auth/`, read as one repository: each line ending in
 // `# caught` is reported, and no other line.

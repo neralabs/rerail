@@ -74,17 +74,26 @@
 
 .violation CleanupSkipped(at: node, fx: symbol, what: symbol, r: node)
     "`{what}` (line {r.line}) is skipped when the with-block of `{fx}` raises, so what it releases stays held or changed. Move it into a finally around the yield, unless it must run only on success."
-CleanupSkipped(y, fx, what, r) :- ccs_yield(y, f), r = min o : { ccs_after(y, f, o) }, ccs_release(r, f, what),
-    def_name(f, fx).
+CleanupSkipped(y, fx, what, r) :- ccs_first(y, f, r), ccs_release(r, f, what), def_name(f, fx), pt_def(f, fq),
+    !ccs_lifespan(fq).
+// ccs_first(y, f, r): r is the first release after yield y of f (ccs_after).
+.decl ccs_first(y: node, f: node, r: node)
+ccs_first(y, f, r) :- ccs_yield(y, f), r = min o : { ccs_after(y, f, o) }.
 
-// ccs_yield(y, f): y is a yield of contextmanager f, outside test code, and f is not a lifespan.
+// ccs_yield(y, f): y is a yield of contextmanager f, outside test code. The finding leaves out a lifespan's.
 .decl ccs_yield(y: node, f: node)
-ccs_yield(y, f) :- pp_cm_yield(y, f), pp_live(y), !ccs_lifespan(f).
-// ccs_lifespan(f): an ASGI lifespan: its shutdown is the server's, judged elsewhere.
-.decl ccs_lifespan(f: node)
-ccs_lifespan(f) :- pp_cm_def(f), def_name(f, x), contains("lifespan", x).
-ccs_lifespan(f) :- kind(ka, "keyword_argument"), field(ka, "name", n), text(n, "lifespan"), field(ka, "value", v0),
-    unparen(v0, v), sym_of(v, q), qualname(f, q), pp_cm_def(f).
+ccs_yield(y, f) :- pp_cm_yield(y, f), pp_live(y).
+// ccs_lifespan(f): an ASGI lifespan: its shutdown is the server's, judged elsewhere. It may be passed as `lifespan=`
+// in another file, so it is over symbols (decision 0677): the file that passes it states the name it passes
+// (ccs_lifespan_named), the file of the def its qualified name and symbol (ccs_cm_q).
+.decl ccs_lifespan(f: symbol)
+ccs_lifespan(fq) :- pp_cm_def(f), def_name(f, x), contains("lifespan", x), pt_def(f, fq).
+ccs_lifespan(fq) :- ccs_lifespan_named(q), ccs_cm_q(q, fq).
+.decl ccs_lifespan_named(q: symbol)
+ccs_lifespan_named(q) :- kind(ka, "keyword_argument"), field(ka, "name", n), text(n, "lifespan"),
+    field(ka, "value", v0), unparen(v0, v), sym_of(v, q).
+.decl ccs_cm_q(q: symbol, f: symbol)
+ccs_cm_q(q, fq) :- pp_cm_def(f), qualname(f, q), pt_def(f, fq).
 
 // ccs_after(y, f, r): release r, in f's own frame, runs after the yield y on the normal path only: a later
 // statement of a block that holds y, with no return or raise between them and no handler between them that
@@ -246,26 +255,21 @@ ccs_attr_key(c, cat(cat(ot, "."), an)) :- ccs_call_in(c, _), posarg(c, 0, o), po
 
 // ---- removal from a container the def added to -------------------------------------------------------------------
 // ccs_unregister(c, f): `X.remove(...)` and the other remove verbs after a yield of f, before which f called an add
-// verb on X (by X's text); or `X.pop(k)` after f set `X[k]` before the yield.
+// verb on X (by X's text); or `X.pop(k)` after f set `X[k]` before the yield. A verb is a test of the method's name,
+// written where the name is read.
 .decl ccs_unregister(c: node, f: node)
-ccs_unregister(c, f) :- ccs_call_in(c, f), field(c, "function", fn), attr_of(fn, o, m), ccs_remove_verb(m), text(o, d),
+ccs_unregister(c, f) :- ccs_call_in(c, f), field(c, "function", fn), attr_of(fn, o, m),
+    match("(remove|pop|popleft|discard|clear|unregister|unsubscribe|detach|uninstall)([A-Z_].*)?", m), text(o, d),
     ccs_pre_add(f, d, y), earlier(y, c).
 ccs_unregister(c, f) :- ccs_call_in(c, f), field(c, "function", fn), attr_of(fn, o, "pop"), text(o, d), posarg(c, 0, k),
     text(k, kt), ccs_pre_item(f, d, kt, y), earlier(y, c).
 .decl ccs_pre_add(f: node, d: symbol, y: node)
-ccs_pre_add(f, d, y) :- ccs_call_in(c, f), field(c, "function", fn), attr_of(fn, o, m), ccs_add_verb(m), text(o, d),
+ccs_pre_add(f, d, y) :- ccs_call_in(c, f), field(c, "function", fn), attr_of(fn, o, m),
+    match("(append|appendleft|insert|add|extend|push|register|subscribe|attach|install)([A-Z_].*)?", m), text(o, d),
     pp_cm_yield(y, f), earlier(c, y).
 .decl ccs_pre_item(f: node, d: symbol, k: symbol, y: node)
 ccs_pre_item(f, d, k, y) :- ccs_assign(f, a, l, _), (n = l ; child(l, n, _)), kind(n, "subscript"), field(n, "value", v),
     text(v, d), field(n, "subscript", s), text(s, k), pp_cm_yield(y, f), earlier(a, y).
-.decl ccs_method_name(m: symbol)
-ccs_method_name(m) :- ccs_call_in(c, _), field(c, "function", fn), attr_of(fn, _, m).
-.decl ccs_add_verb(m: symbol)
-ccs_add_verb(m) :- ccs_method_name(m),
-    match("(append|appendleft|insert|add|extend|push|register|subscribe|attach|install)([A-Z_].*)?", m).
-.decl ccs_remove_verb(m: symbol)
-ccs_remove_verb(m) :- ccs_method_name(m),
-    match("(remove|pop|popleft|discard|clear|unregister|unsubscribe|detach|uninstall)([A-Z_].*)?", m).
 
 // ---- paired calls ------------------------------------------------------------------------------------------------
 // ccs_effect(c): call c is a statement of its own (or `await c` is): it is made for its effect, its value dropped.
@@ -284,10 +288,11 @@ ccs_set_call(c, f, y) :- ccs_assign(f, _, _, r), unparen(r, w), kind(w, "await")
 .decl ccs_key(c: node, k: symbol)
 ccs_key(c, q) :- ccs_call_in(c, _), field(c, "function", fn), sym_of(fn, q).
 ccs_key(c, d) :- ccs_call_in(c, _), field(c, "function", fn), !sym_of(fn, _), dotted_expr(fn, d).
-// ccs_computes(c): call c computes a value: it calls a builtin (str, int, len, print, ...) or a class of the run.
+// ccs_computes(c): call c computes a value: it calls a builtin (str, int, len, print, ...) or a class of the run (one
+// that a module c's file can name defines, through python/names' phase).
 .decl ccs_computes(c: node)
 ccs_computes(c) :- ccs_key(c, q), prefix("builtins.", q).
-ccs_computes(c) :- ccs_key(c, q), class_def(_, q).
+ccs_computes(c) :- ccs_key(c, q), docof(c, d), doc(d, p, _), py_names__reads_at(p, m), py_names__class(m, q).
 .decl ccs_nargs(c: node, n: number)
 ccs_nargs(c, n) :- ccs_call_in(c, _), n = count : { posarg(c, _, _) }.
 // ccs_pair(c0, c, f): c0 sets something before a yield of f, and c, a statement after that yield, calls the same
@@ -314,11 +319,12 @@ ccs_read(r) :- kind(r, "subscript").
 ccs_read(r) :- kind(r, "call"), !ccs_computed(r).
 ccs_read(r) :- kind(r, "await"), child(r, c, 0), kind(c, "call").
 // ccs_computed(r): call r computes a value rather than reading state: a builtin other than getattr, or a class of
-// the run.
+// the run (as in ccs_computes).
 .decl ccs_computed(r: node)
 ccs_computed(r) :- kind(r, "call"), field(r, "function", fn), sym_of(fn, q), prefix("builtins.", q),
     q != "builtins.getattr".
-ccs_computed(r) :- kind(r, "call"), field(r, "function", fn), sym_of(fn, q), class_def(_, q).
+ccs_computed(r) :- kind(r, "call"), field(r, "function", fn), sym_of(fn, q), docof(r, d), doc(d, p, _),
+    py_names__reads_at(p, m), py_names__class(m, q).
 // ccs_reset_call(c, f): the reset form: every argument of c is a neutral constant, and c0 passed other arguments.
 .decl ccs_reset_call(c: node, f: node)
 ccs_reset_call(c, f) :- ccs_pair(c0, c, f), posarg(c, _, _), !ccs_live_arg(c), field(c, "arguments", l),

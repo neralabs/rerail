@@ -48,57 +48,101 @@
 
 #include "lib/security.rerail"
 
+// Per file and across files (lib/security's origins): each file states its own commands, values and flags by
+// origin, and a finding reads the cross-file answer by its sink's term. The shell flag (`shell=shell`, a `**kw` the
+// caller fills) and an argument list's shape (a helper returning a list) are yes/no origins (sec_bres), so a sink
+// whose shell may be on or off in another file's say waits on it (ci_xshell); an argument list's shape the same
+// (gates `G|cil:…|`, `G|nocil:…|`, `G|plus:…|`, `G|noplus:…|`, ci_xlisty).
 .violation ShellCommand(at: node, what: symbol, p: symbol, l: number) "Client data from {what} ({p}:{l}) reaches this shell command. Pass an argument list without a shell, or shlex.quote() the value, unless it was checked against a fixed allow-list first."
+ShellCommand(c, what, p, l) :- ci_hit(c, "shell", need, _), ci_live(c), pt_tm(c, ct), ci_need(ct, need),
+    sec_xfirst(cat("shell", need), ct, k), sec_src_info(k, what, p, l).
 .violation ClientProgram(at: node, what: symbol, p: symbol, l: number) "Client data from {what} ({p}:{l}) picks the program this call runs. Look the program up in a fixed mapping, unless the value was checked against a fixed allow-list first."
+ClientProgram(c, what, p, l) :- ci_hit(c, "program", need, _), ci_live(c), pt_tm(c, ct), ci_need(ct, need),
+    sec_xfirst(cat("program", need), ct, k), sec_src_info(k, what, p, l).
 // The functions that run a command are this rule's sinks: a validator-named one is no check.
-sec_sink_fn(g) :- ci_sink(c, _, _), nearest(c, g, fdef).
+sec_sink_fn(gq) :- ci_sink(c, _, _, _), nearest(c, g, fdef), pt_def(g, gq).
+sec_flavor("civ"). sec_flavor("cip"). sec_flavor("cipr"). sec_flavor("cil"). sec_flavor("citrue").
 
 // ---- checks ------------------------------------------------------------------------------------------------------
 // ci_quoted(c): c quotes for a POSIX shell. lib/security's `.join()` step would read `shlex.join(…)` as `str.join`.
 .decl ci_quoted(c: node)
 ci_quoted(c) :- sec_call_q(c, "shlex.join"). ci_quoted(c) :- sec_call_q(c, "shlex.quote").
 ci_quoted(c) :- sec_call_q(c, "pipes.quote").
+// ci_checked(h, x), ci_checked_expr(e): lib/security's checks. A check call of the run (sec_checked_c) clears a name
+// only when no sink of this rule is reached from it: what reads the name passes a gate on that (sec_ngate/sec_egate
+// of lib/security's own "sec" checks).
 .decl ci_checked(h: node, x: symbol)
 ci_checked(h, x) :- sec_checked(h, x).
 .decl ci_checked_expr(e: node)
 ci_checked_expr(e) :- sec_checked_expr(e).
 // ---- client text, check-aware ------------------------------------------------------------------------------------
-// ci_val(e, s): e's value holds client text from source s: lib/security's propagation (sec_step), with a name its
-// function checks (ci_checked) cut, across files through ci_param and ci_returns.
-.decl ci_val(e: node, s: node)
-ci_val(e, e) :- sec_source(e, _).
-ci_val(e, s) :- sec_step(e, a), !ci_quoted(e), ci_val(a, s).
-ci_val(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, h), !ci_checked(h, x), sec_bind(h, x, v), ci_val(v, s),
-    r != v.
-ci_val(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, g), !ci_checked(g, x), ci_param(g, x, s).
-ci_val(e, s) :- attr_of(e, o, a), sec_validated_attr(a), kind(o, "identifier"), text(o, x), look(o, x, h),
-    sec_holder_call(h, x, c), call_arg(c, _, _, v), ci_val(v, s).
-ci_val(c, s) :- sec_call_q(c, "shlex.split"), sec_arg(c, 0, _, a), ci_val(a, s).
-ci_val(c, s) :- call_target(c, g), ci_returns(g, s), !sec_validator_def(g), call_arg(c, _, _, a), ci_val(a, s).
-ci_val(c, s) :- call_target(c, g), ci_returns(g, s), !sec_validator_def(g), ci_own_source(g, s).
-// ci_param(g, x, s): parameter x of g holds client text: a route parameter, or what a call of the run passes it.
-.decl ci_param(g: node, x: symbol, s: node)
-ci_param(g, x, p) :- sec_route_param(g, x, p).
-ci_param(g, x, s) :- sec_param_at(_, g, a, x), ci_val(a, s).
-.decl ci_returns(g: node, s: node)
-ci_returns(g, s) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), ci_val(v, s),
-    !ci_checked_expr(v).
-.decl ci_own_source(g: node, s: node)
-ci_own_source(g, s) :- ci_returns(g, s), within(s, g).
-ci_own_source(g, s) :- ci_returns(g, s), ci_reach(g, h), within(s, h).
-.decl ci_reach(g: node, h: node)
-ci_reach(g, h) :- ci_returns(g, _), calls(g, h).
-ci_reach(g, k) :- ci_reach(g, h), calls(h, k).
+// ci_val(e, o): e's value holds client text from origin o: lib/security's propagation (sec_stepg, sec_stepq), with a
+// name its function checks (ci_checked) cut; a parameter's text is what the callers pass (`P|civ|…`), a call's is
+// what its function returns (`R|civ|…`).
+.decl ci_val(e: node, o: symbol)
+ci_val(e, o) :- sec_start(e, o).
+ci_val(e, o) :- sec_stepg(e, a), !ci_quoted(e), ci_val(a, o).
+ci_val(e, g) :- sec_stepq("civ", e, a, g), !ci_quoted(e), ci_val(a, _).
+sec_gin(g, o) :- sec_stepq("civ", e, a, g), !ci_quoted(e), ci_val(a, o).
+ci_val(r, o) :- ci_vin(r, h, x, o), !ci_checked(h, x), !sec_nchk_any("sec", h, x).
+ci_val(r, g) :- ci_vin(r, h, x, _), !ci_checked(h, x), sec_ngate("sec", "civ", h, x, g).
+sec_gin(g, o) :- ci_vin(_, h, x, o), !ci_checked(h, x), sec_ngate("sec", "civ", h, x, g).
+ci_val(e, o) :- attr_of(e, b, a), sec_validated_attr(a), kind(b, "identifier"), text(b, x), look(b, x, h),
+    sec_holder_call(h, x, c), call_arg(c, _, _, v), ci_val(v, o).
+ci_val(c, o) :- sec_call_q(c, "shlex.split"), sec_arg(c, 0, _, a), ci_val(a, o).
+ci_val(c, o) :- sec_rorig(c, "civ", o).
+// ci_vin(r, h, x, o): name r, x as scope h binds it, reads o before its checks: a value bound to it, a parameter's,
+// a route's capture.
+.decl ci_vin(r: node, h: node, x: symbol, o: symbol)
+ci_vin(r, h, x, o) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), ci_val(v, o), r != v.
+ci_vin(r, g, x, o) :- sec_porig(r, "civ", g, x, o).
+ci_vin(r, g, x, k) :- sec_param_ref(r, g, x), sec_route_param(g, x, p), sec_key(p, k).
+// Across files: a parameter holds what a call of the run passes it, or a Django URLconf's text capture; a call's
+// value is its function's return where the call passed it (or the function read it itself), unless the function
+// checks it there or is named like a check.
+sec_froute("civ", "seg"). sec_froute("civ", "free").
+sec_fpass("civ", c, a, o) :- call_arg(c, _, _, a), ci_val(a, o).
+sec_fctx("civ", c, o) :- call_arg(c, _, _, a), ci_val(a, o).
+sec_fret("civ", g, o) :- ci_ret(g, v), ci_val(v, o), !sec_echk_any("sec", v).
+sec_fret("civ", g, eg) :- ci_ret(g, v), ci_val(v, _), sec_egate("sec", "civ", v, eg).
+sec_gin(eg, o) :- ci_ret(g, v), ci_val(v, o), sec_egate("sec", "civ", v, eg).
+// ci_ret(g, v): function g returns v, which it does not check.
+.decl ci_ret(g: node, v: node)
+ci_ret(g, v) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), !ci_checked_expr(v).
 
 // ---- argument lists ------------------------------------------------------------------------------------------------
-// ci_listy(e): e is an argument list: a list, tuple or list comprehension, `a + b` with a list on the left, a name
-// assigned one, or a call of a function of the run that returns one.
-.decl ci_listy(e: node)
-ci_listy(e) :- kind(e, "list"). ci_listy(e) :- kind(e, "tuple"). ci_listy(e) :- kind(e, "list_comprehension").
-ci_listy(p) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a, ci_listy(a).
-ci_listy(b) :- kind(b, "binary_operator"), op(b, "+"), field(b, "left", a), ci_listy(a).
-ci_listy(r) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), ci_listy(v).
-ci_listy(c) :- call_target(c, g), kind(rs, "return_statement"), child(rs, v, 0), nearest(rs, g, fdef), ci_listy(v).
+// ci_listy(e, o): e is an argument list (o "T"): a list, tuple or list comprehension, `a + b` with a list on the left,
+// a name assigned one; or a call of a function of the run, which is one when the function returns one (`R|cil|…`, a
+// yes/no origin).
+.decl ci_listy(e: node, o: symbol)
+ci_listy(e, "T") :- kind(e, "list"). ci_listy(e, "T") :- kind(e, "tuple"). ci_listy(e, "T") :- kind(e, "list_comprehension").
+ci_listy(p, o) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a, ci_listy(a, o).
+ci_listy(b, o) :- kind(b, "binary_operator"), op(b, "+"), field(b, "left", a), ci_listy(a, o).
+ci_listy(r, o) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), ci_listy(v, o).
+ci_listy(c, o) :- sec_rorig(c, "cil", o).
+sec_bret("cil", g, o) :- kind(rs, "return_statement"), child(rs, v, 0), nearest(rs, g, fdef), ci_listy(v, o).
+// ci_maybe_list(e): e is an argument list only where another file says so (a call of the run, sec_bres).
+.decl ci_maybe_list(e: node)
+ci_maybe_list(e) :- ci_listy(e, o), o != "T", !ci_listy(e, "T").
+// ci_xlisty(e): e, by its term, is an argument list. ci_plus_at(b, a, r): `a + r` by the terms.
+.decl ci_xlisty(e: symbol) cross_file
+ci_xlisty(et) :- ci_listy(e, o), pt_tm(e, et), sec_bres(o).
+.decl ci_plus_at(b: symbol, a: symbol, r: symbol)
+ci_plus_at(bt, at, rt) :- ci_plus(b, a, r), pt_tm(b, bt), pt_tm(a, at), pt_tm(r, rt).
+.decl ci_plus(b: node, a: node, r: node)
+ci_plus(b, a, r) :- kind(b, "binary_operator"), op(b, "+"), field(b, "left", a), field(b, "right", r).
+// The gates on a shape another file decides: `cil:<e>` e is an argument list, `nocil:<e>` it is none, `plus:<b>` an
+// operand of `+` b is one, `noplus:<b>` none is.
+sec_xcond(c) :- sec_xcondq(c), match("cil:(?<et>.*)", c), ci_xlisty(et).
+sec_xcond(c) :- sec_xcondq(c), match("nocil:(?<et>.*)", c), !ci_xlisty(et).
+sec_xcond(c) :- sec_xcondq(c), match("plus:(?<bt>.*)", c), ci_plus_at(bt, at, rt), (ci_xlisty(at) ; ci_xlisty(rt)).
+sec_xcond(c) :- sec_xcondq(c), match("noplus:(?<bt>.*)", c), ci_plus_at(bt, at, rt), !ci_xlisty(at),
+    !ci_xlisty(rt).
+// ci_vnl(e, o): ci_val(e, o) where e is no argument list: surely, or through a gate on its shape (`G|nocil:…|`).
+.decl ci_vnl(e: node, o: symbol)
+ci_vnl(e, o) :- ci_val(e, o), !ci_listy(e, _).
+ci_vnl(e, g) :- ci_val(e, _), ci_maybe_list(e), pt_tm(e, et), g = cat("G|nocil:", cat(et, "|")).
+sec_gin(g, o) :- ci_val(e, o), ci_maybe_list(e), pt_tm(e, et), g = cat("G|nocil:", cat(et, "|")).
 // ci_shaped(e): ci_prog reads e by its shape, not as one value.
 .decl ci_shaped(e: node)
 ci_shaped(e) :- kind(e, "list"). ci_shaped(e) :- kind(e, "tuple"). ci_shaped(e) :- kind(e, "list_comprehension").
@@ -108,64 +152,106 @@ ci_shaped(c) :- call_target(c, _).
 // ci_aug_value(v): v is the right side of an augmented assignment (`cmd += […]` extends a list).
 .decl ci_aug_value(v: node)
 ci_aug_value(v) :- kind(a, "augmented_assignment"), field(a, "right", v).
-// ci_prog(e, s): the program of argument list e (its first item), or e itself when it is one value, is client
-// text from s.
-.decl ci_prog(e: node, s: node)
-ci_prog(t, s) :- (kind(t, "list") ; kind(t, "tuple")), child(t, a, 0), !kind(a, "list_splat"), ci_val(a, s).
-ci_prog(t, s) :- (kind(t, "list") ; kind(t, "tuple")), child(t, sp, 0), kind(sp, "list_splat"), child(sp, a, 0),
-    ci_prog(a, s).
-ci_prog(t, s) :- kind(t, "list_comprehension"), field(t, "body", a), ci_val(a, s).
-ci_prog(p, s) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a, ci_prog(a, s).
-ci_prog(b, s) :- kind(b, "binary_operator"), op(b, "+"), field(b, "left", a), field(b, "right", r),
-    (ci_listy(a) ; ci_listy(r)), ci_prog(a, s).
-ci_prog(b, s) :- kind(b, "binary_operator"), op(b, "+"), field(b, "left", a), field(b, "right", r), !ci_listy(a),
-    !ci_listy(r), ci_val(b, s).
-ci_prog(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, h), !ci_checked(h, x), asg(h, x, v, _), ci_prog(v, s).
-ci_prog(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, h), !ci_checked(h, x), sec_bind(h, x, v),
-    !asg(h, x, v, _), !ci_listy(v), !ci_aug_value(v), ci_val(v, s).
-ci_prog(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, g), !ci_checked(g, x), sec_param_at(_, g, a, x),
-    ci_prog(a, s).
-ci_prog(r, p) :- kind(r, "identifier"), text(r, x), look(r, x, g), sec_route_param(g, x, p).
-ci_prog(c, s) :- call_target(c, g), !sec_validator_def(g), kind(rs, "return_statement"), child(rs, v, 0),
-    nearest(rs, g, fdef), !ci_checked_expr(v), ci_prog(v, s).
-ci_prog(e, s) :- ci_val(e, s), !ci_shaped(e).
-// ci_shellcmd(e, s): command e of a shell holds client text: the string, or a list's first item.
-.decl ci_shellcmd(e: node, s: node)
-ci_shellcmd(e, s) :- ci_val(e, s), !ci_listy(e).
-ci_shellcmd(e, s) :- ci_listy(e), ci_prog(e, s).
+// ci_prog(e, o): the program of argument list e (its first item), or e itself when it is one value, is client
+// text from origin o: a parameter's is what the callers pass as a list (`P|cip|…`), or a route's capture
+// (`P|cipr|…`, which no check of the view clears); a call's is what its function returns as one (`R|cip|…`).
+.decl ci_prog(e: node, o: symbol)
+ci_prog(t, o) :- (kind(t, "list") ; kind(t, "tuple")), child(t, a, 0), !kind(a, "list_splat"), ci_val(a, o).
+ci_prog(t, o) :- (kind(t, "list") ; kind(t, "tuple")), child(t, sp, 0), kind(sp, "list_splat"), child(sp, a, 0),
+    ci_prog(a, o).
+ci_prog(t, o) :- kind(t, "list_comprehension"), field(t, "body", a), ci_val(a, o).
+ci_prog(p, o) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a, ci_prog(a, o).
+// `a + r`: a list's program is a's when either is a list, else the sum is one value.
+ci_prog(b, o) :- ci_plus(b, a, r), (ci_listy(a, "T") ; ci_listy(r, "T")), ci_prog(a, o).
+ci_prog(b, g) :- ci_plus(b, a, r), ci_plus_maybe(b), ci_prog(a, _), pt_tm(b, bt), g = cat("G|plus:", cat(bt, "|")).
+sec_gin(g, o) :- ci_plus(b, a, _), ci_plus_maybe(b), ci_prog(a, o), pt_tm(b, bt), g = cat("G|plus:", cat(bt, "|")).
+ci_prog(b, o) :- ci_plus(b, a, r), !ci_listy(a, _), !ci_listy(r, _), ci_val(b, o).
+ci_prog(b, g) :- ci_plus_maybe(b), ci_val(b, _), pt_tm(b, bt), g = cat("G|noplus:", cat(bt, "|")).
+sec_gin(g, o) :- ci_plus_maybe(b), ci_val(b, o), pt_tm(b, bt), g = cat("G|noplus:", cat(bt, "|")).
+ci_prog(r, o) :- ci_pin(r, h, x, o), !ci_checked(h, x), !sec_nchk_any("sec", h, x).
+ci_prog(r, g) :- ci_pin(r, h, x, _), !ci_checked(h, x), sec_ngate("sec", "cip", h, x, g).
+sec_gin(g, o) :- ci_pin(_, h, x, o), !ci_checked(h, x), sec_ngate("sec", "cip", h, x, g).
+ci_prog(r, k) :- sec_param_ref(r, g, x), sec_route_param(g, x, p), sec_key(p, k).
+ci_prog(r, o) :- sec_porig(r, "cipr", _, _, o).
+ci_prog(c, o) :- sec_rorig(c, "cip", o).
+ci_prog(e, o) :- ci_val(e, o), !ci_shaped(e).
+// ci_plus_maybe(b): neither operand of `+` b is surely a list, and one may be (a call of the run).
+.decl ci_plus_maybe(b: node)
+ci_plus_maybe(b) :- ci_plus(b, a, r), !ci_listy(a, "T"), !ci_listy(r, "T"), (ci_maybe_list(a) ; ci_maybe_list(r)).
+// ci_pin(r, h, x, o): name r, x as scope h binds it, reads program o before its checks: what it is assigned, a
+// value bound to it that is no argument list (`for x in …`, `with … as x`), a parameter's.
+.decl ci_pin(r: node, h: node, x: symbol, o: symbol)
+ci_pin(r, h, x, o) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), ci_prog(v, o).
+ci_pin(r, h, x, o) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), !asg(h, x, v, _),
+    !ci_aug_value(v), ci_vnl(v, o).
+ci_pin(r, g, x, o) :- sec_porig(r, "cip", g, x, o).
+sec_froute("cipr", "seg"). sec_froute("cipr", "free").
+sec_fpass("cip", c, a, o) :- call_arg(c, _, _, a), ci_prog(a, o).
+// A function's argument list is every call's (no context): what it returns unchecked, unless it is named like a
+// check.
+sec_ffree("cip").
+sec_fret("cip", g, o) :- ci_ret(g, v), ci_prog(v, o), !sec_echk_any("sec", v).
+sec_fret("cip", g, eg) :- ci_ret(g, v), ci_prog(v, _), sec_egate("sec", "cip", v, eg).
+sec_gin(eg, o) :- ci_ret(g, v), ci_prog(v, o), sec_egate("sec", "cip", v, eg).
+// ci_shellcmd(e, o): command e of a shell holds client text: the string, or a list's first item.
+.decl ci_shellcmd(e: node, o: symbol)
+ci_shellcmd(e, o) :- ci_vnl(e, o).
+ci_shellcmd(e, o) :- ci_listy(e, "T"), ci_prog(e, o).
+ci_shellcmd(e, g) :- ci_maybe_list(e), ci_prog(e, _), pt_tm(e, et), g = cat("G|cil:", cat(et, "|")).
+sec_gin(g, o) :- ci_maybe_list(e), ci_prog(e, o), pt_tm(e, et), g = cat("G|cil:", cat(et, "|")).
 
 // ---- the shell flag ------------------------------------------------------------------------------------------------
-// ci_truthy(v): v is True: the literal, a name assigned it, a parameter defaulting to it, or a parameter some call
-// of the run passes it.
-.decl ci_truthy(v: node)
-ci_truthy(v) :- kind(v, "true").
-ci_truthy(p) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a, ci_truthy(a).
-ci_truthy(r) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), ci_truthy(v).
-ci_truthy(r) :- kind(r, "identifier"), text(r, x), look(r, x, g), sig_param(g, _, nm, _, _, _, d), text(nm, x),
-    ci_truthy(d).
-ci_truthy(r) :- kind(r, "identifier"), text(r, x), look(r, x, g), sec_param_at(_, g, a, x), ci_truthy(a).
-// ci_kw_shell(k): name k, splatted as `**k`, holds `"shell": True`.
-.decl ci_kw_shell(k: node)
-ci_kw_shell(k) :- kind(k, "identifier"), text(k, x), look(k, x, h), asg(h, x, v, _), unparen(v, d),
+// ci_truthy(v, o): v is True (o "T"): the literal, a name assigned it, a parameter defaulting to it; or a parameter
+// some call of the run passes it (`P|citrue|…`, a yes/no origin).
+.decl ci_truthy(v: node, o: symbol)
+ci_truthy(v, "T") :- kind(v, "true").
+ci_truthy(p, o) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a, ci_truthy(a, o).
+ci_truthy(r, o) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), ci_truthy(v, o).
+ci_truthy(r, o) :- kind(r, "identifier"), text(r, x), look(r, x, g), sig_param(g, _, nm, _, _, _, d), text(nm, x),
+    ci_truthy(d, o).
+ci_truthy(r, o) :- sec_porig(r, "citrue", _, _, o).
+sec_bpass("citrue", c, a, o) :- call_arg(c, _, _, a), ci_truthy(a, o).
+// ci_kw_shell(k, o): name k, splatted as `**k`, holds `"shell": True`; or k is the function's own `**k`, given
+// `shell=True` by a call of the run (`P|cikw|<def>|<k>`, ci_kw_pass).
+.decl ci_kw_shell(k: node, o: symbol)
+ci_kw_shell(k, o) :- kind(k, "identifier"), text(k, x), look(k, x, h), asg(h, x, v, _), unparen(v, d),
     kind(d, "dictionary"), child(d, pr, _), kind(pr, "pair"), field(pr, "key", kk), str(kk, "shell"),
-    field(pr, "value", vv), ci_truthy(vv).
-ci_kw_shell(k) :- kind(k, "identifier"), text(k, x), look(k, x, h), asg(h, x, v, _), unparen(v, c),
-    sec_call_q(c, "builtins.dict"), sec_arg(c, -1, "shell", vv), ci_truthy(vv).
-ci_kw_shell(k) :- kind(k, "identifier"), text(k, x), look(k, x, h), kind(a, "assignment"), field(a, "left", l),
-    kind(l, "subscript"), field(l, "value", o), kind(o, "identifier"), text(o, x), field(l, "subscript", kk),
-    str(kk, "shell"), field(a, "right", vv), ci_truthy(vv), nearest(a, h, scope).
-ci_kw_shell(k) :- kind(k, "identifier"), text(k, x), look(k, x, h), kind(c, "call"), field(c, "function", f),
-    attr_of(f, o, "setdefault"), kind(o, "identifier"), text(o, x), posarg(c, 0, kk), str(kk, "shell"),
-    posarg(c, 1, vv), ci_truthy(vv), nearest(c, h, scope).
-ci_kw_shell(k) :- kind(k, "identifier"), text(k, x), look(k, x, h), kind(c, "call"), field(c, "function", f),
-    attr_of(f, o, "update"), kind(o, "identifier"), text(o, x), sec_arg(c, -1, "shell", vv), ci_truthy(vv),
+    field(pr, "value", vv), ci_truthy(vv, o).
+ci_kw_shell(k, o) :- kind(k, "identifier"), text(k, x), look(k, x, h), asg(h, x, v, _), unparen(v, c),
+    sec_call_q(c, "builtins.dict"), sec_arg(c, -1, "shell", vv), ci_truthy(vv, o).
+ci_kw_shell(k, o) :- kind(k, "identifier"), text(k, x), look(k, x, h), kind(a, "assignment"), field(a, "left", l),
+    kind(l, "subscript"), field(l, "value", b), kind(b, "identifier"), text(b, x), field(l, "subscript", kk),
+    str(kk, "shell"), field(a, "right", vv), ci_truthy(vv, o), nearest(a, h, scope).
+ci_kw_shell(k, o) :- kind(k, "identifier"), text(k, x), look(k, x, h), kind(c, "call"), field(c, "function", f),
+    attr_of(f, b, "setdefault"), kind(b, "identifier"), text(b, x), posarg(c, 0, kk), str(kk, "shell"),
+    posarg(c, 1, vv), ci_truthy(vv, o), nearest(c, h, scope).
+ci_kw_shell(k, o) :- kind(k, "identifier"), text(k, x), look(k, x, h), kind(c, "call"), field(c, "function", f),
+    attr_of(f, b, "update"), kind(b, "identifier"), text(b, x), sec_arg(c, -1, "shell", vv), ci_truthy(vv, o),
     nearest(c, h, scope).
-ci_kw_shell(k) :- kind(k, "identifier"), text(k, x), look(k, x, g), sig_param(g, _, nm, _, "kwarg", _, _),
-    text(nm, x), call_target(c, g), sec_arg(c, -1, "shell", vv), ci_truthy(vv).
-.decl ci_shell_on(c: node)
-ci_shell_on(c) :- sec_arg(c, -1, "shell", v), ci_truthy(v).
-ci_shell_on(c) :- kind(c, "call"), field(c, "arguments", al), child(al, sp, _), kind(sp, "dictionary_splat"),
-    child(sp, k, 0), ci_kw_shell(k).
+ci_kw_shell(k, cat("P|cikw|", cat(gq, cat("|", x)))) :- kind(k, "identifier"), text(k, x), look(k, x, g),
+    sig_param(g, _, nm, _, "kwarg", _, _), text(nm, x), pt_def(g, gq).
+// ci_kw_pass(g, o): a call of this file to the def whose symbol is g passes `shell=` a value that is True by o.
+// ci_kwarg_q(g, x): that def's `**x`.
+.decl ci_kw_pass(g: symbol, o: symbol)
+ci_kw_pass(gq, o) :- call_target(c, gq), sec_arg(c, -1, "shell", vv), ci_truthy(vv, o).
+.decl ci_kwarg_q(g: symbol, x: symbol)
+ci_kwarg_q(gq, x) :- sig_param(g, _, nm, _, "kwarg", _, _), text(nm, x), pt_def(g, gq).
+sec_bxparam("cikw", gq, x) :- ci_kw_pass(gq, o), sec_bres(o), ci_kwarg_q(gq, x).
+// ci_shell_on(c, o): call c turns the shell on, by o: `shell=` a true value, or a `**k` that holds it.
+.decl ci_shell_on(c: node, o: symbol)
+ci_shell_on(c, o) :- sec_arg(c, -1, "shell", v), ci_truthy(v, o).
+ci_shell_on(c, o) :- kind(c, "call"), field(c, "arguments", al), child(al, sp, _), kind(sp, "dictionary_splat"),
+    child(sp, k, 0), ci_kw_shell(k, o).
+// ci_xshell(c): call c, by its term, turns the shell on. ci_need(c, need): sink call c is one of its kind: always
+// (need ""), with its shell on ("on"), or off ("off").
+.decl ci_xshell(c: symbol) cross_file
+ci_xshell(ct) :- ci_shell_on(c, o), pt_tm(c, ct), sec_bres(o).
+.decl ci_need(c: symbol, need: symbol) cross_file
+ci_need(ct, "") :- ci_sink_at(ct).
+ci_need(ct, "on") :- ci_sink_at(ct), ci_xshell(ct).
+ci_need(ct, "off") :- ci_sink_at(ct), !ci_xshell(ct).
+.decl ci_sink_at(c: symbol)
+ci_sink_at(ct) :- ci_sink(c, _, _, _), pt_tm(c, ct).
 
 // ---- sinks -------------------------------------------------------------------------------------------------------
 .decl ci_popen_q(q: symbol)
@@ -183,24 +269,25 @@ ci_exe_q("os.spawnl", 1). ci_exe_q("os.spawnle", 1). ci_exe_q("os.spawnlp", 1). 
 ci_exe_q("os.spawnv", 1). ci_exe_q("os.spawnve", 1). ci_exe_q("os.spawnvp", 1). ci_exe_q("os.spawnvpe", 1).
 ci_exe_q("os.posix_spawn", 0). ci_exe_q("os.posix_spawnp", 0). ci_exe_q("os.startfile", 0).
 ci_exe_q("asyncio.create_subprocess_exec", 0).
-// ci_sink(c, how, e): call c runs e as a shell command (how "shell"), as an argument list or program (how
-// "argv"), or as the program itself (how "exe").
-.decl ci_sink(c: node, how: symbol, e: node)
-ci_sink(c, "shell", e) :- sec_call_q(c, q), ci_popen_q(q), (sec_arg(c, 0, _, e) ; sec_arg(c, -1, "args", e)),
-    ci_shell_on(c).
-ci_sink(c, "argv", e) :- sec_call_q(c, q), ci_popen_q(q), (sec_arg(c, 0, _, e) ; sec_arg(c, -1, "args", e)),
-    !ci_shell_on(c).
-ci_sink(c, "exe", e) :- sec_call_q(c, q), ci_popen_q(q), sec_arg(c, -1, "executable", e).
-ci_sink(c, "shell", e) :- sec_call_q(c, q), ci_shell_q(q),
+// ci_sink(c, how, e, need): call c runs e as a shell command (how "shell"), as an argument list or program (how
+// "argv"), or as the program itself (how "exe"), always (need "") or when its shell flag is on ("on") or off
+// ("off"): a `subprocess` call is a shell sink where its flag may be on, an argument list sink where it may be off.
+.decl ci_sink(c: node, how: symbol, e: node, need: symbol)
+ci_sink(c, "shell", e, "on") :- sec_call_q(c, q), ci_popen_q(q), (sec_arg(c, 0, _, e) ; sec_arg(c, -1, "args", e)),
+    ci_shell_on(c, _).
+ci_sink(c, "argv", e, "off") :- sec_call_q(c, q), ci_popen_q(q), (sec_arg(c, 0, _, e) ; sec_arg(c, -1, "args", e)),
+    !ci_shell_on(c, "T").
+ci_sink(c, "exe", e, "") :- sec_call_q(c, q), ci_popen_q(q), sec_arg(c, -1, "executable", e).
+ci_sink(c, "shell", e, "") :- sec_call_q(c, q), ci_shell_q(q),
     (sec_arg(c, 0, _, e) ; sec_arg(c, -1, "cmd", e) ; sec_arg(c, -1, "command", e)).
-ci_sink(c, "exe", e) :- sec_call_q(c, q), ci_exe_q(q, i), sec_arg(c, i, _, e).
-ci_sink(c, "argv", e) :- sec_call_q(c, "asyncio.create_subprocess_exec"), field(c, "arguments", al),
+ci_sink(c, "exe", e, "") :- sec_call_q(c, q), ci_exe_q(q, i), sec_arg(c, i, _, e).
+ci_sink(c, "argv", e, "") :- sec_call_q(c, "asyncio.create_subprocess_exec"), field(c, "arguments", al),
     child(al, sp, 0), kind(sp, "list_splat"), child(sp, e, 0).
-ci_sink(c, "argv", e) :- sec_call_q(c, "pty.spawn"), (sec_arg(c, 0, _, e) ; sec_arg(c, -1, "argv", e)).
+ci_sink(c, "argv", e, "") :- sec_call_q(c, "pty.spawn"), (sec_arg(c, 0, _, e) ; sec_arg(c, -1, "argv", e)).
 // A shell started by name, `["sh", "-c", cmd]` or `create_subprocess_exec("bash", "-c", cmd)`: cmd is a shell command.
-ci_sink(c, "shell", e) :- ci_sink(c, "argv", a), ci_argv_lit(a, t), child(t, a0, 0), ci_shell_word(a0),
+ci_sink(c, "shell", e, need) :- ci_sink(c, "argv", a, need), ci_argv_lit(a, t), child(t, a0, 0), ci_shell_word(a0),
     child(t, a1, 1), ci_dash_c(a1), child(t, e, 2).
-ci_sink(c, "shell", e) :- sec_call_q(c, "asyncio.create_subprocess_exec"), posarg(c, 0, a0), ci_shell_word(a0),
+ci_sink(c, "shell", e, "") :- sec_call_q(c, "asyncio.create_subprocess_exec"), posarg(c, 0, a0), ci_shell_word(a0),
     posarg(c, 1, a1), ci_dash_c(a1), posarg(c, 2, e).
 // ci_argv_lit(a, t): argument list a is the list or tuple literal t, written there or assigned to the name a.
 .decl ci_argv_lit(a: node, t: node)
@@ -211,17 +298,15 @@ ci_argv_lit(r, t) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x,
 ci_shell_word(a) :- str(a, v), match("(/usr)?(/bin/)?(sh|bash|zsh|dash|ksh|ash)", v).
 .decl ci_dash_c(a: node)
 ci_dash_c(a) :- str(a, v), match("-[a-z]*c", v).
-// ci_hit(c, how, s): sink c runs client text from s.
-.decl ci_hit(c: node, how: symbol, s: node)
-ci_hit(c, "shell", s) :- ci_sink(c, "shell", e), ci_shellcmd(e, s).
-ci_hit(c, "program", s) :- ci_sink(c, "argv", e), ci_prog(e, s).
-ci_hit(c, "program", s) :- ci_sink(c, "exe", e), ci_val(e, s).
-.decl ci_live(c: node, how: symbol)
-ci_live(c, how) :- ci_hit(c, how, _), docof(c, d), !sec_test_doc(d).
-
-ShellCommand(c, what, p, l) :- ci_live(c, "shell"), s = min s2 : { ci_hit(c, "shell", s2) }, sec_origin(s, what, p, l).
-ClientProgram(c, what, p, l) :- ci_live(c, "program"), s = min s2 : { ci_hit(c, "program", s2) },
-    sec_origin(s, what, p, l).
+// ci_hit(c, how, need, o): sink c runs client text from origin o, as a shell command (how "shell") or a program
+// ("program"), when its need holds.
+.decl ci_hit(c: node, how: symbol, need: symbol, o: symbol)
+ci_hit(c, "shell", need, o) :- ci_sink(c, "shell", e, need), ci_shellcmd(e, o).
+ci_hit(c, "program", need, o) :- ci_sink(c, "argv", e, need), ci_prog(e, o).
+ci_hit(c, "program", need, o) :- ci_sink(c, "exe", e, need), ci_val(e, o).
+.decl ci_live(c: node)
+ci_live(c) :- ci_hit(c, _, _, _), docof(c, d), !sec_test_doc(d).
+sec_fhit(cat(how, need), c, o) :- ci_hit(c, how, need, o), ci_live(c).
 
 // The cases, `cases/python-security-command-injection/`, read as one repository: each line ending in
 // `# caught` is reported, and no other line.

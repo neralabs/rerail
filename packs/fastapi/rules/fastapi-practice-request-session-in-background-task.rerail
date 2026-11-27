@@ -44,26 +44,34 @@
 
 #include "lib/fastapi.rerail"
 
+// Which session a parameter holds, and whether a middleware puts one on `.state.<a>`, are questions over the run's
+// files (the dependency, its alias and the middleware may each sit in another module): each file states its
+// expressions' sessions under a condition (rb_ec), the relations over symbols below settle the conditions (rb_ok), and
+// the outputs join both at the expression's node. A callable that reads a session itself is reported at its first
+// such read, its reads named by the callable's path and term (rb_fn_place) and their order in the file.
 .violation MiddlewareSessionToTask(at: node, task: symbol, e: symbol)
     "Background task `{task}` gets `{e}`, the HTTP middleware's session, which is closed once `call_next` returns, before or while the task runs. Pass ids and open a new session in the task."
-MiddlewareSessionToTask(a, t, e) :- rb_report(a, t, e, "middleware").
+MiddlewareSessionToTask(a, t, e) :- rb_start(c, fn, f), rb_arg(c, a), rb_ec(a, e, "middleware", c1, c2, c3),
+    rb_ok(c1, c2, c3), rb_task_name(fn, t), pt_def(f, fq), fa_per_request(fq).
+MiddlewareSessionToTask(fn, t, e) :- rb_start(_, fn, f), rb_fn_place(fn, p, ft), rb_first(p, ft, i),
+    rb_read_ok(p, ft, i, e, "middleware"), rb_task_name(fn, t), pt_def(f, fq), fa_per_request(fq).
 .violation FunctionScopeSessionToTask(at: node, task: symbol, e: symbol)
     "Background task `{task}` gets `{e}`, a function-scoped dependency's session, closed before the response is sent and the task runs. Pass ids and open a new session in the task."
-FunctionScopeSessionToTask(a, t, e) :- rb_report(a, t, e, "function").
+FunctionScopeSessionToTask(a, t, e) :- rb_start(c, fn, f), rb_arg(c, a), rb_ec(a, e, "function", c1, c2, c3),
+    rb_ok(c1, c2, c3), rb_task_name(fn, t), pt_def(f, fq), fa_per_request(fq).
+FunctionScopeSessionToTask(fn, t, e) :- rb_start(_, fn, f), rb_fn_place(fn, p, ft), rb_first(p, ft, i),
+    rb_read_ok(p, ft, i, e, "function"), rb_task_name(fn, t), pt_def(f, fq), fa_per_request(fq).
 .violation WithSessionToTask(at: node, task: symbol, e: symbol)
     "Background task `{task}` gets `{e}`, a session whose `with` block closes it before the task runs. Pass ids and open a new session in the task."
-WithSessionToTask(a, t, e) :- rb_report(a, t, e, "with").
+WithSessionToTask(a, t, e) :- rb_start(c, fn, f), rb_arg(c, a), rb_ec(a, e, "with", c1, c2, c3), rb_ok(c1, c2, c3),
+    rb_task_name(fn, t), pt_def(f, fq), fa_per_request(fq).
+WithSessionToTask(fn, t, e) :- rb_start(_, fn, f), rb_fn_place(fn, p, ft), rb_first(p, ft, i),
+    rb_read_ok(p, ft, i, e, "with"), rb_task_name(fn, t), pt_def(f, fq), fa_per_request(fq).
 
-// rb_report(at, t, e, k): report at `at` that task t gets session e (written so), owned as k: at an argument holding
-// the session, or at the callable when it reads one itself (the first such read).
-.decl rb_report(at: node, t: symbol, e: symbol, k: symbol)
-rb_report(a, t, e, k) :- rb_start(c, fn, _), rb_arg(c, a), rb_session(a, e, k), rb_task_name(fn, t).
-rb_report(fn, t, e, k) :- rb_start(_, fn, _), s = min y : { rb_reads(fn, y), rb_session(y, _, _) },
-    rb_session(s, e, k), rb_task_name(fn, t).
-
-// rb_start(c, fn, f): call c schedules callable fn in f, a route, dependency or HTTP middleware outside test code.
+// rb_start(c, fn, f): call c schedules callable fn in def f, outside test code; f must be a route, dependency or HTTP
+// middleware (lib/fastapi's fa_per_request, by symbol: the outputs ask).
 .decl rb_start(c: node, fn: node, f: node)
-rb_start(c, fn, f) :- fa_add_task(c, fn, f), fa_per_request(f), docof(c, d), !fa_test_doc(d).
+rb_start(c, fn, f) :- fa_add_task(c, fn, f), docof(c, d), !fa_test_doc(d).
 
 // rb_task_name(fn, t): how the message names the scheduled callable.
 .decl rb_task_name(fn: node, t: symbol)
@@ -75,39 +83,70 @@ rb_task_name(fn, "lambda") :- rb_start(_, fn, _), kind(fn, "lambda").
 rb_arg(c, a) :- rb_start(c, _, _), call_arg(c, i, "", a0), i >= 1, unparen(a0, a).
 rb_arg(c, a) :- rb_start(c, _, _), call_arg(c, -1, k, a0), k != "", unparen(a0, a).
 
-// rb_session(e, t, k): expression e (written t) holds a session closed before the task: k "middleware" (a parameter
-// whose dependency gives `<x>.state.<a>`, or that expression itself), k "function" (a parameter filled by a
-// `scope="function"` dependency), k "with" (one the enclosing function opened with `with`); also through a local
-// alias (`s = db`).
-.decl rb_session(e: node, t: symbol, k: symbol)
-rb_session(e, x, "function") :- ast_name(e, x), look(e, x, s), fa_session_param(s, p, x, _), fa_param_dep(s, p, x, c),
-    rb_fn_scope(c).
-rb_session(e, x, "middleware") :- ast_name(e, x), look(e, x, s), fa_session_param(s, p, x, _),
-    fa_param_dep(s, p, x, c), fa_depends_fn(c, g), rb_gives_state(g).
-rb_session(e, x, "with") :- ast_name(e, x), look(e, x, s), fa_with_session(w, x, _), def_frame(w, s).
-rb_session(e, t, "middleware") :- rb_state_expr(e), text(e, t).
-rb_session(e, x, k) :- ast_name(e, x), look(e, x, s), kind(s, "function_definition"), fa_bind(s, x, v),
-    rb_session(v, _, k), !fa_param(s, _, x, _, _).
+// rb_need(e): an expression whose session the rule asks for: a task's argument, what its callable reads, the value a
+// local alias or a `.state.<a>` assignment takes.
+.decl rb_need(e: node)
+rb_need(a) :- rb_arg(_, a).
+rb_need(e) :- rb_reads(_, e).
+rb_need(v) :- rb_need(e), ast_name(e, x), look(e, x, s), kind(s, "function_definition"), fa_bind(s, x, v).
+rb_need(r) :- rb_state_asg(_, r, _).
+// rb_ec(e, t, k, c1, c2, c3): expression e (written t) holds a session closed before the task, owned as k, when
+// condition (c1, c2, c3) holds (rb_ok): k "function" ("pfn", f, x: parameter x of def f is a session filled by a
+// `scope="function"` dependency); k "middleware" ("pmw", f, x: parameter x of f is a session whose dependency gives
+// `<x>.state.<a>`; or ("state", a, ""): e is `<x>.state.<a>` and a middleware puts a session there); k "with"
+// ("with", ck, cq: the enclosing function opened it with `with`, its maker under lib/fastapi's condition (ck, cq));
+// also through a local alias (`s = db`).
+.decl rb_ec(e: node, t: symbol, k: symbol, c1: symbol, c2: symbol, c3: symbol)
+rb_ec(e, x, "function", "pfn", sq, x) :- rb_need(e), ast_name(e, x), look(e, x, s), param_named(s, x, _),
+    pt_def(s, sq).
+rb_ec(e, x, "middleware", "pmw", sq, x) :- rb_need(e), ast_name(e, x), look(e, x, s), param_named(s, x, _),
+    pt_def(s, sq).
+rb_ec(e, x, "with", "with", ck, cq) :- rb_need(e), ast_name(e, x), look(e, x, s), fa_with_session(w, x, ck, cq),
+    def_frame(w, s).
+rb_ec(e, t, "middleware", "state", a, "") :- rb_need(e), rb_state_attr(e, a), text(e, t).
+rb_ec(e, x, k, c1, c2, c3) :- rb_need(e), ast_name(e, x), look(e, x, s), kind(s, "function_definition"),
+    fa_bind(s, x, v), rb_ec(v, _, k, c1, c2, c3), !fa_param(s, _, x, _, _).
+// rb_state_attr(e, a): e is `<x>.state.<a>`.
+.decl rb_state_attr(e: node, a: symbol)
+rb_state_attr(e, a) :- attr_of(e, o, a), attr_of(o, _, "state").
 
 // rb_fn_scope(c): Depends call c passes `scope="function"`: its exit code runs before the response is sent.
 .decl rb_fn_scope(c: node)
 rb_fn_scope(c) :- fa_depends(c), call_arg(c, -1, "scope", v0), unparen(v0, v), str(v, "function").
+// rb_fn_param(f, x): parameter x of def f is filled by a `scope="function"` Depends call: in its signature (rb_pfn_here,
+// stated in its file), or in an alias of another module its annotation names (rb_alias_fn, stated in the alias's).
+.decl rb_pfn_here(fq: symbol, x: symbol)
+rb_pfn_here(fq, x) :- fa_param_dep(f, _, x, c), rb_fn_scope(c), pt_def(f, fq).
+.decl rb_alias_fn(aq: symbol)
+rb_alias_fn(aq) :- fa_alias_dep(aq, c), rb_fn_scope(c).
+.decl rb_fn_param(fq: symbol, x: symbol)
+rb_fn_param(fq, x) :- rb_pfn_here(fq, x).
+rb_fn_param(fq, x) :- fa_palias_at(fq, x, aq), rb_alias_fn(aq).
 // rb_gives_state(g): dependency g returns or yields `<x>.state.<a>` with a middleware session on it, directly or
-// through a local (`session = request.state.db; return session`).
-.decl rb_gives_state(g: node)
-rb_gives_state(g) :- fa_dependency(g), fa_gives(g, e), rb_state_expr(e).
-rb_gives_state(g) :- fa_dependency(g), fa_gives(g, e), kind(e, "identifier"), text(e, x), def_frame(e, g),
-    fa_bind(g, x, v), rb_state_expr(v).
-// rb_state_expr(e): e is `<x>.state.<a>` and an HTTP middleware assigns a session to `.state.<a>`.
-.decl rb_state_expr(e: node)
-rb_state_expr(e) :- attr_of(e, o, a), attr_of(o, _, "state"), rb_state(a).
+// through a local (`session = request.state.db; return session`); rb_gives_attr(g, a) states it in g's file.
+.decl rb_gives_attr(g: symbol, a: symbol)
+rb_gives_attr(gq, a) :- fa_gives(g, e), rb_state_attr(e, a), pt_def(g, gq).
+rb_gives_attr(gq, a) :- fa_gives(g, e), kind(e, "identifier"), text(e, x), def_frame(e, g), fa_bind(g, x, v),
+    rb_state_attr(v, a), pt_def(g, gq).
+.decl rb_gives_state(g: symbol)
+rb_gives_state(g) :- rb_gives_attr(g, a), rb_state(a).
 // rb_state(a): an HTTP middleware of the run (lib/fastapi's fa_middleware) assigns a session to `<x>.state.a`
-// (`request.state.db = SessionLocal()`), and so closes it once `call_next` returns.
+// (`request.state.db = SessionLocal()`), and so closes it once `call_next` returns. rb_state_src(a, m, ck, cq): def m
+// assigns `.state.a` a session it makes, or one it opened with `with`, under condition (ck, cq); stated in m's file.
+.decl rb_state_asg(a: symbol, r: node, m: node)
+rb_state_asg(a, r, m) :- kind(n, "assignment"), field(n, "left", l), rb_state_attr(l, a), field(n, "right", r0),
+    fa_unwrap(r0, r), def_frame(n, m).
+.decl rb_state_src(a: symbol, m: symbol, ck: symbol, cq: symbol)
+rb_state_src(a, mq, ck, cq) :- rb_state_asg(a, r, m), fa_maker(r, ck, cq), pt_def(m, mq).
+rb_state_src(a, mq, ck, cq) :- rb_state_asg(a, r, m), rb_ec(r, _, "with", "with", ck, cq), pt_def(m, mq).
 .decl rb_state(a: symbol)
-rb_state(a) :- kind(n, "assignment"), field(n, "left", l), attr_of(l, s, a), attr_of(s, _, "state"),
-    field(n, "right", r0), fa_unwrap(r0, r), fa_session_maker(r, _), def_frame(n, m), fa_middleware(m).
-rb_state(a) :- kind(n, "assignment"), field(n, "left", l), attr_of(l, s, a), attr_of(s, _, "state"),
-    field(n, "right", r0), fa_unwrap(r0, r), rb_session(r, _, "with"), def_frame(n, m), fa_middleware(m).
+rb_state(a) :- rb_state_src(a, mq, ck, cq), fa_middleware(mq), fa_sess_cond(ck, cq, _).
+// rb_ok(c1, c2, c3): condition (c1, c2, c3) of rb_ec holds.
+.decl rb_ok(c1: symbol, c2: symbol, c3: symbol)
+rb_ok("pfn", fq, x) :- rb_fn_param(fq, x), fa_session_param(fq, x, _).
+rb_ok("pmw", fq, x) :- fa_session_param(fq, x, _), fa_pspec(fq, x, how, q), fa_spec_runs(how, q, g), rb_gives_state(g).
+rb_ok("state", a, "") :- rb_state(a).
+rb_ok("with", ck, cq) :- fa_sess_cond(ck, cq, _).
 
 // rb_reads(fn, e): the scheduled callable fn itself reads expression e from the function that schedules it.
 .decl rb_reads(fn: node, e: node)
@@ -129,6 +168,21 @@ rb_reads(fn, a) :- rb_start(_, fn, f), attr_of(fn, o0, _), unparen(o0, o), ast_n
     fa_bind(f, y, v), kind(v, "call"), rb_ctor_arg(v, a).
 .decl rb_ctor_arg(v: node, a: node)
 rb_ctor_arg(v, a) :- kind(v, "call"), call_arg(v, _, _, a0), unparen(a0, a).
+// rb_fn_place(fn, p, t): the scheduled callable's path and term (python/points-to-file's pt_tm). rb_read_at(p, t, i,
+// e, k, c1, c2, c3): it reads, i-th among its reads rb_ec answers (counted in the callable's own order, so an edit
+// elsewhere in the file moves nothing), such an expression; rb_read_ok: those whose condition holds; rb_first: the
+// first of them.
+.decl rb_fn_place(fn: node, p: symbol, t: symbol)
+rb_fn_place(fn, p, t) :- rb_start(_, fn, _), docof(fn, d), doc(d, p, _), pt_tm(fn, t).
+.decl rb_sread(fn: node, y: node)
+rb_sread(fn, y) :- rb_reads(fn, y), rb_ec(y, _, _, _, _, _).
+.decl rb_read_at(p: symbol, t: symbol, i: number, e: symbol, k: symbol, c1: symbol, c2: symbol, c3: symbol)
+rb_read_at(p, t, i, e, k, c1, c2, c3) :- rb_sread(fn, y), rb_ec(y, e, k, c1, c2, c3), visit_index(y, v),
+    i = count : { rb_sread(fn, y2), visit_index(y2, v2), v2 < v }, rb_fn_place(fn, p, t).
+.decl rb_read_ok(p: symbol, t: symbol, i: number, e: symbol, k: symbol)
+rb_read_ok(p, t, i, e, k) :- rb_read_at(p, t, i, e, k, c1, c2, c3), rb_ok(c1, c2, c3).
+.decl rb_first(p: symbol, t: symbol, i: number)
+rb_first(p, t, i) :- rb_read_ok(p, t, _, _, _), i = min j : { rb_read_ok(p, t, j, _, _) }.
 
 // The cases, `cases/fastapi-practice-request-session-in-background-task/`, read as one repository: each line ending
 // in `# caught` is reported, and no other line.

@@ -21,6 +21,12 @@
       "document": "rules/python-security-sql-injection.rerail",
       "title": "Don't build SQL from request data",
       "group": "Python security",
+      "dimensions": {
+        "risk": "security",
+        "layer": "data-access",
+        "severity": "critical",
+        "hazard": "orm.raw-sql-interpolation"
+      },
       "mode": "steer",
       "examples": {
         "caught": {
@@ -50,6 +56,12 @@
       "document": "rules/python-security-command-injection.rerail",
       "title": "Don't run shell commands or programs built from request data",
       "group": "Python security",
+      "dimensions": {
+        "risk": "security",
+        "layer": "server",
+        "severity": "critical",
+        "hazard": "input.command-injection"
+      },
       "mode": "steer",
       "examples": {
         "caught": {
@@ -79,6 +91,12 @@
       "document": "rules/python-security-code-injection.rerail",
       "title": "Don't run request data as code: eval, pickle, unsafe YAML or template source",
       "group": "Python security",
+      "dimensions": {
+        "risk": "security",
+        "layer": "server",
+        "severity": "critical",
+        "hazard": "input.code-injection"
+      },
       "mode": "steer",
       "examples": {
         "caught": {
@@ -96,6 +114,12 @@
       "document": "rules/python-security-jwt-unverified.rerail",
       "title": "Don't trust a JWT you didn't verify",
       "group": "Python security",
+      "dimensions": {
+        "risk": "security",
+        "layer": "server",
+        "severity": "critical",
+        "hazard": "auth.jwt-unverified"
+      },
       "mode": "steer",
       "examples": {
         "caught": {
@@ -113,6 +137,12 @@
       "document": "rules/python-security-path-traversal.rerail",
       "title": "Don't build file paths from request data",
       "group": "Python security",
+      "dimensions": {
+        "risk": "security",
+        "layer": "server",
+        "severity": "critical",
+        "hazard": "input.path-traversal"
+      },
       "mode": "log",
       "examples": {
         "caught": {
@@ -142,6 +172,12 @@
       "document": "rules/python-security-ssrf.rerail",
       "title": "Don't let request data pick where the server sends HTTP requests",
       "group": "Python security",
+      "dimensions": {
+        "risk": "security",
+        "layer": "server",
+        "severity": "high",
+        "hazard": "input.ssrf"
+      },
       "mode": "log",
       "examples": {
         "caught": {
@@ -171,6 +207,12 @@
       "document": "rules/python-security-orm-lookup-injection.rerail",
       "title": "Don't let the client choose ORM lookup names",
       "group": "Python security",
+      "dimensions": {
+        "risk": "security",
+        "layer": "data-access",
+        "severity": "high",
+        "hazard": "orm.lookup-injection"
+      },
       "mode": "steer",
       "examples": {
         "caught": {

@@ -65,158 +65,176 @@
 
 #include "lib/drf.rerail"
 
+// A serializer and its bases may sit in different modules: each serializer and field is judged by symbol (dfm_where),
+// and a finding is written at the node of the serializer's own file that dfm_where names (dfm_spot).
 .violation DeclaredReadOnlyIgnored(at: node, ser: symbol, x: symbol) "`{ser}` declares `{x}`, so DRF ignores read_only_fields for it and clients can write it. If clients must not write it, set read_only=True on the declared field; else drop the entry."
-DeclaredReadOnlyIgnored(at, s, x) :- dfm_at(c, x, "read_only_fields", at), drf_model_serializer(c), !dfm_written(c, x),
-    def_name(c, s).
+DeclaredReadOnlyIgnored(at, s, x) :- dfm_where(c, x, "read_only_fields", key), dfm_spot(at, key),
+    drf_model_serializer_q(c), !dfm_written(c, x), split_dot(c, _, s).
 
 .violation PlainSerializerReadOnlyIgnored(at: node, ser: symbol, x: symbol) "`{ser}` is a plain Serializer, which ignores Meta, so clients can write `{x}`. If clients must not write it, set read_only=True on the declared field; else drop the entry."
-PlainSerializerReadOnlyIgnored(at, s, x) :- dfm_at(c, x, "read_only_fields", at), !drf_model_serializer(c),
-    !dfm_written(c, x), def_name(c, s).
+PlainSerializerReadOnlyIgnored(at, s, x) :- dfm_where(c, x, "read_only_fields", key), dfm_spot(at, key),
+    !drf_model_serializer_q(c), !dfm_written(c, x), split_dot(c, _, s).
 
 .violation DeclaredReadOnlyWritten(at: node, x: symbol) "`{x}` is written on purpose here; drop it from read_only_fields, which DRF ignores for declared fields. Setting read_only=True instead would break that write."
-DeclaredReadOnlyWritten(at, x) :- dfm_at(c, x, "read_only_fields", at), dfm_written(c, x).
+DeclaredReadOnlyWritten(at, x) :- dfm_where(c, x, "read_only_fields", key), dfm_spot(at, key), dfm_written(c, x).
 
 .violation DeclaredExtraKwargsIgnored(at: node, ser: symbol, x: symbol) "`{ser}` declares `{x}`, so DRF ignores its extra_kwargs entry. Pass these arguments to the declared field and drop the entry; if the field already behaves as intended, only drop the entry."
-DeclaredExtraKwargsIgnored(at, s, x) :- dfm_at(c, x, "extra_kwargs", at), def_name(c, s).
+DeclaredExtraKwargsIgnored(at, s, x) :- dfm_where(c, x, "extra_kwargs", key), dfm_spot(at, key), split_dot(c, _, s).
 
 // ---- declarations ------------------------------------------------------------------------------------------------
-// dfm_decl(c, x, k): serializer c's field x is declared as call k: in c's body, else in the nearest run base
-// serializer that declares it with no class between it and c assigning x.
-.decl dfm_decl(c: node, x: symbol, k: node)
-dfm_decl(c, x, k) :- drf_declared_own(c, x, k).
-dfm_decl(c, x, k) :- drf_serializer(c), drf_ancestor(c, b), drf_declared_own(b, x, k), !drf_own_attr_name(c, x),
+// dfm_decl(c, x, o): serializer c's field x is declared as `x = <call>` in o's body (home "o.x"): c's own, else the
+// nearest run base serializer that declares it with no class between it and c assigning x.
+.decl dfm_decl(c: symbol, x: symbol, o: symbol)
+dfm_decl(c, x, c) :- drf_serializer_q(c), drf_decl_own(c, x).
+dfm_decl(c, x, b) :- drf_serializer_q(c), drf_anc(c, b), drf_serializer_q(b), drf_decl_own(b, x), !drf_qattr(c, x),
     !dfm_shadowed(c, b, x).
-.decl dfm_shadowed(c: node, b: node, x: symbol)
-dfm_shadowed(c, b, x) :- drf_ancestor(c, m), drf_ancestor(m, b), drf_declared_own(b, x, _), drf_own_attr_name(m, x).
-// dfm_fieldish(k): call k builds a serializer field, so DRF collects it as a declared field: a rest_framework field
-// or a subclass, a nested serializer of the run, or a `…Field`/`…Serializer` class from another package. A class of
-// the run that derives from no DRF class (InvenTree's OptionalField, a placeholder its mixin swaps for a field) is
-// not one.
-.decl dfm_fieldish(k: node)
-dfm_fieldish(k) :- drf_declared_own(_, _, k), drf_field_lib(k, _).
-dfm_fieldish(k) :- drf_declared_own(_, _, k), drf_nested(k, _).
-dfm_fieldish(k) :- drf_declared_own(_, _, k), call_name(k, t), (suffix("Field", t) ; suffix("Serializer", t)),
-    !dfm_run_callee(k).
-// dfm_callee(k, fc): the declared call k constructs class fc of the run.
-.decl dfm_callee(k: node, fc: node)
-dfm_callee(k, fc) :- drf_declared_own(_, _, k), field(k, "function", fn), sym_of(fn, q), drf_cls(q, fc).
-.decl dfm_run_callee(k: node)
-dfm_run_callee(k) :- dfm_callee(k, _).
-// dfm_ro(k): the declared field is read-only whatever Meta says (drf_kw reads `**RO` too).
+.decl dfm_shadowed(c: symbol, b: symbol, x: symbol)
+dfm_shadowed(c, b, x) :- drf_serializer_q(c), drf_anc(c, m), drf_node_q(m), drf_anc(m, b), drf_serializer_q(b),
+    drf_decl_own(b, x), drf_qattr(m, x).
+// dfm_fieldish(hd): declaration hd builds a serializer field, so DRF collects it as a declared field: a
+// rest_framework field or a subclass, a nested serializer of the run, or a `…Field`/`…Serializer` class from another
+// package. A class of the run that derives from no DRF class (InvenTree's OptionalField, a placeholder its mixin
+// swaps for a field) is not one.
+.decl dfm_fieldish(hd: symbol)
+dfm_fieldish(hd) :- drf_decl_lib_q(hd, _).
+dfm_fieldish(hd) :- drf_decl_nested_q(hd, _).
+dfm_fieldish(hd) :- dfm_named_field(hd), !dfm_run_callee(hd).
+// dfm_named_field(hd): the call home hd holds is a `…Field` or `…Serializer` by its callee's last name.
+.decl dfm_named_field(hd: symbol)
+dfm_named_field(hd) :- drf_hv(hd, v), unparen(v, k), kind(k, "call"), call_name(k, t),
+    (suffix("Field", t) ; suffix("Serializer", t)).
+// dfm_callee(hd, fc): declaration hd constructs class fc of the run.
+.decl dfm_callee(hd: symbol, fc: symbol)
+dfm_callee(hd, fc) :- drf_hcall(hd, f), drf_cls_q(f, fc).
+.decl dfm_run_callee(hd: symbol)
+dfm_run_callee(hd) :- dfm_callee(hd, _).
+// dfm_ro(hd): the declared field is read-only whatever Meta says (`read_only=True`, written out or through `**RO`).
 .decl dfm_ro_kind(t: symbol)
 dfm_ro_kind("SerializerMethodField"). dfm_ro_kind("ReadOnlyField"). dfm_ro_kind("HiddenField").
 dfm_ro_kind("HyperlinkedIdentityField"). dfm_ro_kind("StringRelatedField").
-.decl dfm_ro(k: node)
-dfm_ro(k) :- drf_declared_own(_, _, k), drf_kw_true(k, "read_only").
-dfm_ro(k) :- drf_declared_own(_, _, k), drf_field_kind(k, t), dfm_ro_kind(t).
+.decl dfm_ro(hd: symbol)
+dfm_ro(hd) :- drf_kw_q(hd, "read_only", hk), drf_hkind(hk, "true").
+dfm_ro(hd) :- drf_decl_kind_q(hd, t), dfm_ro_kind(t).
 
 // dfm_applied(c, o): serializer c, or a class of the run among its bases, has an `__init__` or `get_fields` that
 // names option o (`self.Meta.read_only_fields`, `getattr(self.Meta, "read_only_fields", ())`): it applies the option
-// itself.
-.decl dfm_applied(c: node, o: symbol)
-dfm_applied(c, o) :- drf_serializer(c), dfm_reads_opt(c, o).
-dfm_applied(c, o) :- drf_serializer(c), drf_ancestor(c, b), dfm_reads_opt(b, o).
-.decl dfm_reads_opt(b: node, o: symbol)
-dfm_reads_opt(b, o) :- (m = "__init__" ; m = "get_fields"), drf_own_method(b, m, f), within(n, f),
-    (attr_of(n, _, o) ; str(n, o)), (o = "read_only_fields" ; o = "extra_kwargs").
+// itself. Each class's methods are read in its own file (dfm_reads_opt, dfm_refuses_input, dfm_sets_ro).
+.decl dfm_applied(c: symbol, o: symbol)
+dfm_applied(c, o) :- drf_serializer_q(c), dfm_reads_opt(c, o).
+dfm_applied(c, o) :- drf_serializer_q(c), drf_anc(c, b), dfm_reads_opt(b, o).
+.decl dfm_reads_opt(b: symbol, o: symbol)
+dfm_reads_opt(b, o) :- (m = "__init__" ; m = "get_fields"), drf_own_method(bc, m, f), within(n, f),
+    (attr_of(n, _, o) ; str(n, o)), (o = "read_only_fields" ; o = "extra_kwargs"), class_def(bc, b).
 // A serializer that refuses all input (its own or a run base's `validate`, `to_internal_value` or `run_validation`
 // raises as a statement of its body, as pretix's `raise TypeError("this serializer is readonly")`) writes no field:
 // read_only_fields has nothing to protect.
-dfm_applied(c, "read_only_fields") :- drf_serializer(c), dfm_refuses_input(c).
-dfm_applied(c, "read_only_fields") :- drf_serializer(c), drf_ancestor(c, b), dfm_refuses_input(b).
-.decl dfm_refuses_input(b: node)
-dfm_refuses_input(b) :- (m = "validate" ; m = "to_internal_value" ; m = "run_validation"), drf_own_method(b, m, f),
-    field(f, "body", fb), body_stmt(fb, s, _), kind(s, "raise_statement").
+dfm_applied(c, "read_only_fields") :- drf_serializer_q(c), dfm_refuses_input(c).
+dfm_applied(c, "read_only_fields") :- drf_serializer_q(c), drf_anc(c, b), dfm_refuses_input(b).
+.decl dfm_refuses_input(b: symbol)
+dfm_refuses_input(b) :- (m = "validate" ; m = "to_internal_value" ; m = "run_validation"), drf_own_method(bc, m, f),
+    field(f, "body", fb), body_stmt(fb, s, _), kind(s, "raise_statement"), class_def(bc, b).
 // dfm_ro_set(c, x): serializer c, or a run base, makes field x read-only in its `__init__` or `get_fields`:
 // `self.fields["x"].read_only = True` (any receiver of the subscript), or `....fields[name].read_only = True` in a
 // `for name in [...]` loop over literal names.
-.decl dfm_ro_set(c: node, x: symbol)
-dfm_ro_set(c, x) :- drf_serializer(c), dfm_sets_ro(c, x).
-dfm_ro_set(c, x) :- drf_serializer(c), drf_ancestor(c, b), dfm_sets_ro(b, x).
+.decl dfm_ro_set(c: symbol, x: symbol)
+dfm_ro_set(c, x) :- drf_serializer_q(c), dfm_sets_ro(c, x).
+dfm_ro_set(c, x) :- drf_serializer_q(c), drf_anc(c, b), dfm_sets_ro(b, x).
 .decl dfm_ro_store(f: node, a: node, s: node)
 dfm_ro_store(f, a, s) :- (m = "__init__" ; m = "get_fields"), drf_own_method(_, m, f), within(a, f),
     kind(a, "assignment"), field(a, "left", l), attr_of(l, sub, "read_only"), kind(sub, "subscript"),
     field(sub, "subscript", s), field(a, "right", r), kind(r, "true").
-.decl dfm_sets_ro(b: node, x: symbol)
-dfm_sets_ro(b, x) :- drf_own_method(b, _, f), dfm_ro_store(f, _, s), str(s, x).
-dfm_sets_ro(b, x) :- drf_own_method(b, _, f), dfm_ro_store(f, a, s), kind(s, "identifier"), text(s, y),
+.decl dfm_sets_ro(b: symbol, x: symbol)
+dfm_sets_ro(b, x) :- drf_own_method(bc, _, f), dfm_ro_store(f, _, s), str(s, x), class_def(bc, b).
+dfm_sets_ro(b, x) :- drf_own_method(bc, _, f), dfm_ro_store(f, a, s), kind(s, "identifier"), text(s, y),
     kind(fs, "for_statement"), within(a, fs), within(fs, f), field(fs, "left", t), kind(t, "identifier"), text(t, y),
-    field(fs, "right", it), drf_str_elem(it, x).
+    field(fs, "right", it), drf_str_elem(it, x), class_def(bc, b).
 
 // ---- Meta values -------------------------------------------------------------------------------------------------
 // dfm_ser(c): a serializer outside test code.
-.decl dfm_ser(c: node)
-dfm_ser(c) :- drf_serializer(c), docof(c, d), !dj_test_doc(d).
+.decl dfm_ser(c: symbol)
+dfm_ser(c) :- drf_serializer_q(c), !drf_qtest(c).
 
-// dfm_ek(c, x, ov, e): serializer c's (inherited) extra_kwargs has an entry for field x whose options are ov, keyed
-// at node e (the key of a dict literal, or a dict() keyword's value).
-.decl dfm_ek(c: node, x: symbol, ov: node, e: node)
-dfm_ek(c, x, ov, e) :- dfm_ser(c), drf_meta_opt(c, "extra_kwargs", d), drf_dict_entry(d, x, ov), dfm_ek_at(ov, e).
-.decl dfm_ek_at(ov: node, e: node)
-dfm_ek_at(ov, e) :- kind(p, "pair"), field(p, "value", ov), field(p, "key", e).
-dfm_ek_at(ov, ov) :- kind(p, "keyword_argument"), field(p, "value", ov).
-// dfm_lit(ov): the entry's options are written out (a dict literal or `dict(...)`), so the rule reads all of them.
-.decl dfm_lit(ov: node)
-dfm_lit(ov) :- dfm_ek(_, _, ov, _), unparen(ov, u), kind(u, "dictionary").
-dfm_lit(ov) :- dfm_ek(_, _, ov, _), unparen(ov, u), kind(u, "call"), field(u, "function", f),
-    sym_of(f, "builtins.dict").
-// dfm_live(c, x, k): c's entry for x says something declared call k does not: an option k does not pass with the same
-// text, or options the rule cannot read.
-.decl dfm_cand(c: node, x: symbol, k: node)
-dfm_cand(c, x, k) :- dfm_ek(c, x, _, _), dfm_decl(c, x, k).
-.decl dfm_same(c: node, x: symbol, key: symbol)
-dfm_same(c, x, key) :- dfm_cand(c, x, k), drf_extra_kw(c, x, key, val), drf_kw(k, key, kv), text(kv, t), text(val, t).
-dfm_same(c, x, "read_only") :- dfm_cand(c, x, k), drf_extra_kw(c, x, "read_only", val), kind(val, "true"), dfm_ro(k).
+// dfm_ek(c, x, he): serializer c's (inherited) extra_kwargs has an entry for field x, home he.
+.decl dfm_ek(c: symbol, x: symbol, he: symbol)
+dfm_ek(c, x, he) :- dfm_ser(c), drf_opt(c, "extra_kwargs", d), drf_sub_q(d, x, he).
+// dfm_lit(he): the entry's options are written out (a dict literal or `dict(...)`), so the rule reads all of them.
+.decl dfm_lit(he: symbol)
+dfm_lit(he) :- drf_hkind(he, "dictionary").
+dfm_lit(he) :- drf_hcall(he, "builtins.dict").
+// dfm_live(c, x, hd): c's entry for x says something declaration hd does not: an option hd does not pass with the
+// same text, or options the rule cannot read.
+.decl dfm_cand(c: symbol, x: symbol, hd: symbol)
+dfm_cand(c, x, hd) :- dfm_ek(c, x, _), dfm_decl(c, x, o), hd = @dot(o, x).
+.decl dfm_same(c: symbol, x: symbol, key: symbol)
+dfm_same(c, x, key) :- dfm_cand(c, x, hd), drf_extra_kw_q(c, x, key, hv), drf_kw_q(hd, key, hk), drf_htext(hk, t),
+    drf_htext(hv, t).
+dfm_same(c, x, "read_only") :- dfm_cand(c, x, hd), drf_extra_kw_q(c, x, "read_only", hv), drf_hkind(hv, "true"),
+    dfm_ro(hd).
 // A field with a default (or a read-only one) is already not required: `required: False` asks nothing new.
-dfm_same(c, x, "required") :- dfm_cand(c, x, k), drf_extra_kw(c, x, "required", val), kind(val, "false"),
-    (drf_kw(k, "default", _) ; dfm_ro(k)).
-.decl dfm_live(c: node, x: symbol, k: node)
-dfm_live(c, x, k) :- dfm_cand(c, x, k), drf_extra_kw(c, x, key, _), !dfm_same(c, x, key).
-dfm_live(c, x, k) :- dfm_cand(c, x, k), dfm_ek(c, x, ov, _), !dfm_lit(ov).
+dfm_same(c, x, "required") :- dfm_cand(c, x, hd), drf_extra_kw_q(c, x, "required", hv), drf_hkind(hv, "false"),
+    (drf_kw_q(hd, "default", _) ; dfm_ro(hd)).
+.decl dfm_live(c: symbol, x: symbol, hd: symbol)
+dfm_live(c, x, hd) :- dfm_cand(c, x, hd), drf_extra_kw_q(c, x, key, _), !dfm_same(c, x, key).
+dfm_live(c, x, hd) :- dfm_cand(c, x, hd), dfm_ek(c, x, he), !dfm_lit(he).
 
 // ---- hits and where they are reported ----------------------------------------------------------------------------
-// dfm_rhit(c, x, e, k): serializer c's read_only_fields names its declared, writable field x (call k) at string e.
-.decl dfm_rhit(c: node, x: symbol, e: node, k: node)
-dfm_rhit(c, x, e, k) :- dfm_ser(c), drf_meta_opt(c, "read_only_fields", v), drf_str_at(v, e, x), dfm_decl(c, x, k),
-    dfm_fieldish(k), !dfm_ro(k), !dfm_applied(c, "read_only_fields"), !dfm_ro_set(c, x).
-.decl dfm_rof_hit(c: node, x: symbol)
+// dfm_rhit(c, x, w, o): serializer c's read_only_fields names its declared, writable field x (declared in o's body) by
+// a string written in home w (the Meta option, a base's, or a module constant: drf_strs).
+.decl dfm_rhit(c: symbol, x: symbol, w: symbol, o: symbol)
+dfm_rhit(c, x, w, o) :- dfm_ser(c), drf_opt_str(c, "read_only_fields", x, w), dfm_decl(c, x, o), hd = @dot(o, x),
+    dfm_fieldish(hd), !dfm_ro(hd), !dfm_applied(c, "read_only_fields"), !dfm_ro_set(c, x).
+.decl dfm_rof_hit(c: symbol, x: symbol)
 dfm_rof_hit(c, x) :- dfm_rhit(c, x, _, _).
-// dfm_hit(c, x, opt, e, k): serializer c's Meta option opt names its declared field x (call k) at node e, uselessly.
-.decl dfm_hit(c: node, x: symbol, opt: symbol, e: node, k: node)
-dfm_hit(c, x, "read_only_fields", e, k) :- dfm_rhit(c, x, e, k).
-dfm_hit(c, x, "extra_kwargs", e, k) :- dfm_ek(c, x, _, e), dfm_decl(c, x, k), dfm_fieldish(k), dfm_live(c, x, k),
-    !dfm_applied(c, "extra_kwargs"), !dfm_rof_hit(c, x).
+// dfm_hit(c, x, opt, w, o): serializer c's Meta option opt names its declared field x (declared in o's body),
+// uselessly, by a string or an entry written in home w.
+.decl dfm_hit(c: symbol, x: symbol, opt: symbol, w: symbol, o: symbol)
+dfm_hit(c, x, "read_only_fields", w, o) :- dfm_rhit(c, x, w, o).
+dfm_hit(c, x, "extra_kwargs", he, o) :- dfm_ek(c, x, he), dfm_decl(c, x, o), hd = @dot(o, x), dfm_fieldish(hd),
+    dfm_live(c, x, hd), !dfm_applied(c, "extra_kwargs"), !dfm_rof_hit(c, x).
 // A base serializer of c with the same pair is reported itself; c, inheriting both, is not.
-.decl dfm_inherited(c: node, x: symbol, opt: symbol)
-dfm_inherited(c, x, opt) :- dfm_hit(c, x, opt, e, k), drf_ancestor(c, b), dfm_hit(b, x, opt, e, k).
-.decl dfm_at(c: node, x: symbol, opt: symbol, at: node)
-dfm_at(c, x, opt, e) :- dfm_hit(c, x, opt, e, _), within(e, c).
-dfm_at(c, x, opt, a) :- dfm_hit(c, x, opt, e, k), !within(e, c), drf_own_attr(c, x, v, a), unparen(v, k).
-dfm_at(c, x, opt, n) :- dfm_hit(c, x, opt, e, _), !within(e, c), !drf_own_attr_name(c, x),
-    !dfm_inherited(c, x, opt), field(c, "name", n).
+.decl dfm_inherited(c: symbol, x: symbol, opt: symbol)
+dfm_inherited(c, x, opt) :- dfm_hit(c, x, opt, w, o), drf_anc(c, b), dfm_hit(b, x, opt, w, o).
+// dfm_where(c, x, opt, key): where the finding goes, as a dfm_spot key: the name in the Meta option when it is written
+// in c's own body (its home under c); else c's own declaration of x; else (both inherited) c's name, unless a base
+// with the same pair is reported.
+.decl dfm_where(c: symbol, x: symbol, opt: symbol, key: symbol)
+dfm_where(c, x, "read_only_fields", cat("str|", w, "|", x)) :- dfm_hit(c, x, "read_only_fields", w, _),
+    prefix(cat(c, "."), w).
+dfm_where(c, x, "extra_kwargs", cat("entry|", w)) :- dfm_hit(c, x, "extra_kwargs", w, _), prefix(cat(c, "."), w).
+dfm_where(c, x, opt, cat("decl|", c, ".", x)) :- dfm_hit(c, x, opt, w, c), !prefix(cat(c, "."), w).
+dfm_where(c, x, opt, cat("name|", c)) :- dfm_hit(c, x, opt, w, _), !prefix(cat(c, "."), w), !drf_qattr(c, x),
+    !dfm_inherited(c, x, opt).
+// dfm_spot(at, key): the nodes a finding can go at: a string holding x in home w's value ("str|w|x"); the key of an
+// extra_kwargs entry he (or, for `dict(x=...)`, its value: "entry|he"); the statement `x = …` of class c ("decl|c.x");
+// class c's name ("name|c").
+.decl dfm_spot(at: node, key: symbol)
+dfm_spot(e, cat("str|", w, "|", x)) :- drf_hv(w, v), drf_vlit_at(v, e, x).
+dfm_spot(e, cat("entry|", he)) :- drf_hsubv(he, ov), kind(p, "pair"), field(p, "value", ov), field(p, "key", e).
+dfm_spot(ov, cat("entry|", he)) :- drf_hsubv(he, ov), kind(p, "keyword_argument"), field(p, "value", ov).
+dfm_spot(a, cat("decl|", c, ".", x)) :- class_def(k, c), drf_own_attr(k, x, _, a).
+dfm_spot(n, cat("name|", c)) :- class_def(k, c), field(k, "name", n).
 
 // ---- written on purpose ------------------------------------------------------------------------------------------
 // dfm_carrier(c, x, h): serializer h shares c's read_only_fields entry for x: c itself, a run base whose Meta lists x
-// at the same string, or a run subclass with the same entry and declaration.
-.decl dfm_carrier(c: node, x: symbol, h: node)
+// by the same string (written in the same home), or a run subclass with the same entry and declaration.
+.decl dfm_carrier(c: symbol, x: symbol, h: symbol)
 dfm_carrier(c, x, c) :- dfm_rhit(c, x, _, _).
-dfm_carrier(c, x, b) :- dfm_rhit(c, x, e, _), drf_ancestor(c, b), drf_meta_opt(b, "read_only_fields", v),
-    drf_str_at(v, e, x).
-dfm_carrier(c, x, s) :- dfm_rhit(c, x, e, k), drf_ancestor(s, c), dfm_rhit(s, x, e, k).
+dfm_carrier(c, x, b) :- dfm_rhit(c, x, w, _), drf_anc(c, b), drf_opt_str(b, "read_only_fields", x, w).
+dfm_carrier(c, x, s) :- dfm_rhit(c, x, w, o), drf_anc(s, c), dfm_rhit(s, x, w, o).
 // dfm_written(c, x): some carrier writes x on purpose, or the field's class (a field, not a serializer) parses input.
-.decl dfm_written(c: node, x: symbol)
+.decl dfm_written(c: symbol, x: symbol)
 dfm_written(c, x) :- dfm_carrier(c, x, h), dfm_writes(h, x).
-dfm_written(c, x) :- dfm_rhit(c, x, _, k), dfm_callee(k, fc), !drf_serializer(fc),
-    drf_method(fc, "to_internal_value", _).
+dfm_written(c, x) :- dfm_rhit(c, x, _, o), hd = @dot(o, x), dfm_callee(hd, fc), !drf_serializer_q(fc),
+    drf_method_q(fc, "to_internal_value", _).
 .decl dfm_in_method(m: symbol)
 dfm_in_method("create"). dfm_in_method("update"). dfm_in_method("validate"). dfm_in_method("save").
 dfm_in_method("to_internal_value").
-.decl dfm_writes(h: node, x: symbol)
-dfm_writes(h, x) :- dfm_carrier(_, x, h), drf_own_method(h, m, _), m = cat("validate_", x).
-dfm_writes(h, x) :- dfm_carrier(_, x, h), drf_own_method(h, m, f), dfm_in_method(m), dfm_reads_key(f, x).
-// dfm_in_fn(f): an input method of a carrier.
+.decl dfm_writes(h: symbol, x: symbol)
+dfm_writes(h, x) :- dfm_carrier(_, x, h), drf_qmethod(h, m, _), m = cat("validate_", x).
+dfm_writes(h, x) :- dfm_carrier(_, x, h), drf_qmethod(h, m, fq), dfm_in_method(m), dfm_reads_key(fq, x).
+// dfm_in_fn(f): an input method of a class (create, update, validate, save, to_internal_value).
 .decl dfm_in_fn(f: node)
-dfm_in_fn(f) :- dfm_carrier(_, _, h), drf_own_method(h, m, f), dfm_in_method(m).
+dfm_in_fn(f) :- drf_own_method(_, m, f), dfm_in_method(m).
 // dfm_input(o, f): expression o in method f holds the input: a parameter (not self, not a `**` one), or
 // self.validated_data / self.initial_data.
 .decl dfm_input(o: node, f: node)
@@ -227,13 +245,13 @@ dfm_input(o, f) :- dfm_in_fn(f), within(o, f), attr_of(o, s, a), kind(s, "identi
 .decl dfm_kwsplat(f: node, y: symbol)
 dfm_kwsplat(f, y) :- dfm_in_fn(f), field(f, "parameters", ps), child(ps, p, _), kind(p, "dictionary_splat_pattern"),
     child(p, id, 0), text(id, y).
-// dfm_reads_key(f, x): method f reads key x of its input: `o["x"]` (not as an assignment target), `o.get("x")`,
+// dfm_reads_key(fq, x): method fq reads key x of its input: `o["x"]` (not as an assignment target), `o.get("x")`,
 // `o.pop("x")`.
-.decl dfm_reads_key(f: node, x: symbol)
-dfm_reads_key(f, x) :- dfm_input(o, f), field(n, "value", o), kind(n, "subscript"), field(n, "subscript", s), str(s, x),
-    !dfm_store(n).
-dfm_reads_key(f, x) :- dfm_input(o, f), attr_of(fn, o, m), (m = "get" ; m = "pop"), field(n, "function", fn),
-    kind(n, "call"), call_arg(n, 0, "", a), str(a, x).
+.decl dfm_reads_key(fq: symbol, x: symbol)
+dfm_reads_key(fq, x) :- dfm_input(o, f), field(n, "value", o), kind(n, "subscript"), field(n, "subscript", s),
+    str(s, x), !dfm_store(n), qualname(f, fq).
+dfm_reads_key(fq, x) :- dfm_input(o, f), attr_of(fn, o, m), (m = "get" ; m = "pop"), field(n, "function", fn),
+    kind(n, "call"), call_arg(n, 0, "", a), str(a, x), qualname(f, fq).
 .decl dfm_store(n: node)
 dfm_store(n) :- kind(a, "assignment"), field(a, "left", n), kind(n, "subscript").
 dfm_store(n) :- kind(a, "augmented_assignment"), field(a, "left", n), kind(n, "subscript").

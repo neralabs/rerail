@@ -47,7 +47,12 @@
 
 .violation RetryLoopWithoutLimit(at: node, what: symbol, x: node)
     "Count the attempts or set a deadline here and re-raise past it: `{what}` at line {x.line} retries forever. Leave it if the loop must run until it succeeds, like a long-lived connection."
-RetryLoopWithoutLimit(w, what, x) :- prl_loop(w), x = min y : { prl_loop_handler(w, y) }, prl_what(x, what).
+// A loop whose every turn calls a helper that prompts (prl_turn_asks) is no retry: that walk crosses files, so it is
+// over symbols (decision 0677: no node crosses files), and the finding reads it by its loop's term.
+RetryLoopWithoutLimit(w, what, x) :- prl_first(w, x), prl_what(x, what), pt_tm(w, wt), !prl_turn_asks(wt).
+// prl_first(w, x): the first handler of loop w that retries.
+.decl prl_first(w: node, x: node)
+prl_first(w, x) :- prl_loop(w), x = min y : { prl_loop_handler(w, y) }.
 
 // ---- loops that end only from inside -----------------------------------------------------------------------------
 // prl_forever(w): `while True:`, `while 1:`, `for ... in itertools.count(...)`, or `while not v:` (prl_flag).
@@ -101,8 +106,9 @@ prl_try_block(eb) :- prl_loop_try(_, t), child(t, ec, _), kind(ec, "else_clause"
 .decl prl_bounded(w: node, t: node)
 prl_bounded(w, t) :- prl_loop_try(w, t), prl_exit(e, w), !within(e, t).
 prl_bounded(w, t) :- prl_loop_try(w, t), child(t, fc, _), kind(fc, "finally_clause"), prl_exit(e, w), within(e, fc).
-// An interactive prompt on every turn (`name = input(...)`, `click.prompt(...)`, or a helper that always asks) makes
-// each turn a new attempt the person at the terminal ends, not the same call repeated.
+// An interactive prompt on every turn (`name = input(...)`, `click.prompt(...)`) makes each turn a new attempt the
+// person at the terminal ends, not the same call repeated. A helper that always asks does too: the finding reads it
+// (prl_turn_asks), since it may be in another file.
 prl_bounded(w, t) :- prl_loop_try(w, t), prl_turn_prompt(_, w).
 
 // ---- prompts -----------------------------------------------------------------------------------------------------
@@ -123,14 +129,24 @@ prl_every_turn(c, w) :- prl_forever(w), kind(c, "call"), within_stop(c, w, pp_st
 prl_every_turn(c, g) :- kind(g, "function_definition"), kind(c, "call"), pp_frame(c, g), !prl_cond_in(c, g).
 .decl prl_cond_in(c: node, top: node)
 prl_cond_in(c, top) :- kind(c, "call"), within(c, k), within(k, top), kind(k, ck), prl_cond_kind(ck).
-// prl_asks(g): def g of the run prompts on every call, itself or through a sure call at any depth.
-.decl prl_asks(g: node)
-prl_asks(g) :- prl_prompt_call(c), pp_frame(c, g), prl_every_turn(c, g).
-prl_asks(g) :- prl_asks(h), pp_sure_target(c, h), pp_frame(c, g), prl_every_turn(c, g).
-// prl_turn_prompt(c, w): call c in loop w prompts on every turn, itself or through a helper that always asks.
+// prl_asks(g): def g of the run prompts on every call, itself or through a sure call at any depth. Over symbols: each
+// file states its defs that prompt (prl_prompts) and their every-call sure targets (prl_step).
+.decl prl_asks(g: symbol)
+prl_asks(g) :- prl_prompts(g).
+prl_asks(g) :- prl_step(g, h), prl_asks(h).
+.decl prl_prompts(g: symbol)
+prl_prompts(gq) :- prl_prompt_call(c), pp_frame(c, g), prl_every_turn(c, g), pt_def(g, gq).
+.decl prl_step(g: symbol, h: symbol)
+prl_step(gq, h) :- pp_sure_target(c, h), pp_frame(c, g), prl_every_turn(c, g), pt_def(g, gq).
+// prl_turn_prompt(c, w): call c in loop w prompts on every turn itself.
 .decl prl_turn_prompt(c: node, w: node)
 prl_turn_prompt(c, w) :- prl_forever(w), prl_prompt_call(c), prl_every_turn(c, w).
-prl_turn_prompt(c, w) :- prl_forever(w), pp_sure_target(c, h), prl_asks(h), prl_every_turn(c, w).
+// prl_turn_asks(wt): the loop whose term is wt calls, on every turn, a helper that always asks. prl_turn_target(wt,
+// h): it calls h surely on every turn (stated in the loop's file).
+.decl prl_turn_asks(wt: symbol)
+prl_turn_asks(wt) :- prl_turn_target(wt, h), prl_asks(h).
+.decl prl_turn_target(wt: symbol, h: symbol)
+prl_turn_target(wt, h) :- prl_forever(w), pp_sure_target(c, h), prl_every_turn(c, w), pt_tm(w, wt).
 
 // ---- handlers ----------------------------------------------------------------------------------------------------
 // prl_handler_exits(x, w): handler x has a path that leaves w.

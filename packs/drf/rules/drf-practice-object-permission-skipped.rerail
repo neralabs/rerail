@@ -40,7 +40,7 @@
 // create handlers, list actions; views with no object permission; plain Django views; test files.
 //   class NoteRead(GenericAPIView):  permission_classes = [IsOwnerOrReadOnly]
 //       def get(self, request, pk): note = get_object_or_404(Note, pk=pk)     not reported: the check allows every GET
-// Model, serializer and permission names resolve through lib's drf_cls: the import root (label-studio imports
+// Model, serializer and permission names resolve through lib's drf_cls_q: the import root (label-studio imports
 // `from tasks.models import Task` for label_studio/tasks/models.py) and package re-exports.
 // Gaps: a lookup of another model than the view's in a view with a model (a project row fetched to authorise a task
 // row); a lookup in a helper the handler calls (only the handler's own body is read); a check in a module-level
@@ -51,33 +51,49 @@
 
 #include "lib/drf.rerail"
 
+// A view, its permission classes and its models are judged by symbol (ops_vh: each class and method may sit in its own
+// module, and each method's body is read in its own file); a lookup is found in its handler's file (ops_lookup) and
+// described there by the names it reads (ops_lk_root, ops_lk_self, ops_lk_url). The finding joins the two at the
+// lookup.
 .violation ObjectPermissionSkipped(at: node) "Call self.check_object_permissions(request, obj) on this row before using it: DRF runs object permissions only in get_object(). Not needed if the lookup already limits rows to the user."
-ObjectPermissionSkipped(c) :- ops_view_hit(c).
+ObjectPermissionSkipped(c) :- ops_lookup(c, fq, "fetch"), ops_vh(v, fq), ops_lk_root(c, s, x), ops_root_model(s, x, mq),
+    ops_view_model(v, mq).
+ObjectPermissionSkipped(c) :- ops_lookup(c, fq, "fetch"), ops_vh(v, fq), ops_lk_self(c), !ops_qs_user(v).
+ObjectPermissionSkipped(c) :- ops_lookup(c, fq, "fetch"), ops_vh(v, fq), ops_lk_root(c, s, x), ops_root_model(s, x, _),
+    !ops_has_model(v), ops_lk_url(c).
 
 .violation ObjectPermissionSkippedWrite(at: node) "Fetch the URL's row and call self.check_object_permissions(request, obj) on it before this delete or update, which skips the object permission; not needed if the filter limits rows to the user."
-ObjectPermissionSkippedWrite(c) :- ops_view_write(c).
+ObjectPermissionSkippedWrite(c) :- ops_lookup(c, fq, "write"), ops_vh(v, fq), ops_lk_root(c, s, x),
+    ops_root_model(s, x, mq), ops_view_model(v, mq).
+ObjectPermissionSkippedWrite(c) :- ops_lookup(c, fq, "write"), ops_vh(v, fq), ops_lk_self(c), !ops_qs_user(v).
+ObjectPermissionSkippedWrite(c) :- ops_lookup(c, fq, "write"), ops_vh(v, fq), ops_lk_root(c, s, x),
+    ops_root_model(s, x, _), !ops_has_model(v), ops_lk_url(c).
 
 .violation FunctionViewObjectPermissionSkipped(at: node) "A function view never runs has_object_permission, so this lookup skips it. Compare the row's owner to request.user before using or changing it, or filter by request.user; not if the row is public."
-FunctionViewObjectPermissionSkipped(c) :- ops_fn_hit(c).
+FunctionViewObjectPermissionSkipped(c) :- ops_fn_site(c, fq), ops_fn_obj(fq), ops_lk_root(c, s, x),
+    ops_root_model(s, x, _), ops_lk_url(c).
 
 // ---- permissions -------------------------------------------------------------------------------------------------
 // ops_obj(q): permission class q, named by a view, action, function view or the settings, checks objects: q, or the
-// class of the run it names (drf_cls: through the import root and package re-exports), passes ops_obj_cls.
+// class of the run it names (drf_cls_q: through the import root and package re-exports), passes ops_obj_cls.
 .decl ops_obj(q: symbol)
 ops_obj(q) :- ops_obj_named(q), ops_obj_cls(q).
 ops_obj(q) :- ops_obj_named(q), drf_cls_q(q, cq), ops_obj_cls(cq).
 .decl ops_obj_named(q: symbol)
 ops_obj_named(q) :- ops_view_perm(_, q).
-ops_obj_named(q) :- drf_action_perm(_, q).
+ops_obj_named(q) :- drf_action_perm_q(_, q).
 ops_obj_named(q) :- ops_fn_perm(_, q).
 // ops_obj_cls(cq): class cq's has_object_permission reads its obj argument (its own, else a base's), or cq is
 // DjangoObjectPermissions. One that never reads obj (Tandoor's CustomIsGuest: `return has_group_permission(request,
-// ["guest"])`) checks nothing about the row, so a handler skipping it skips nothing.
+// ["guest"])`) checks nothing about the row, so a handler skipping it skips nothing. Each class's method is read in its
+// file (ops_hop_obj); bases by symbol.
 .decl ops_obj_cls(cq: symbol)
 ops_obj_cls("rest_framework.permissions.DjangoObjectPermissions").
-ops_obj_cls(cq) :- method(cq, "has_object_permission", f), param(f, x, 3), field(f, "body", b), within(r, b),
+ops_obj_cls(cq) :- ops_hop_obj(cq).
+ops_obj_cls(cq) :- drf_qrun(cq), !drf_qmethod_name(cq, "has_object_permission"), ops_safe_base(cq, b), ops_obj_cls(b).
+.decl ops_hop_obj(cq: symbol)
+ops_hop_obj(cq) :- method(cq, "has_object_permission", f), param(f, x, 3), field(f, "body", b), within(r, b),
     kind(r, "identifier"), text(r, x), look(r, x, f).
-ops_obj_cls(cq) :- class_def(c, cq), !method(cq, "has_object_permission", _), ops_safe_base(c, b), ops_obj_cls(b).
 // ops_safe_open(q): object permission q returns True for every safe request (GET, HEAD, OPTIONS) whatever the row.
 .decl ops_safe_open(q: symbol)
 ops_safe_open(q) :- ops_obj_named(q), ops_safe_cls(q).
@@ -87,12 +103,14 @@ ops_safe_open(q) :- ops_obj_named(q), drf_cls_q(q, cq), ops_safe_cls(cq).
 // (DRF's permissions.py); a subclass that sets perms_map or get_required_object_permissions may require one.
 .decl ops_safe_cls(cq: symbol)
 ops_safe_cls("rest_framework.permissions.DjangoObjectPermissions").
-ops_safe_cls(cq) :- method(cq, "has_object_permission", f), ops_safe_body(f).
-ops_safe_cls(cq) :- class_def(c, cq), !method(cq, "has_object_permission", _), ops_safe_base(c, b), ops_safe_cls(b),
-    !drf_own_attr_name(c, "perms_map"), !method(cq, "get_required_object_permissions", _).
-.decl ops_safe_base(c: node, b: symbol)
-ops_safe_base(c, b) :- drf_base(c, b).
-ops_safe_base(c, bq) :- drf_base(c, b), drf_cls_q(b, bq).
+ops_safe_cls(cq) :- ops_hop_safe(cq).
+ops_safe_cls(cq) :- drf_qrun(cq), !drf_qmethod_name(cq, "has_object_permission"), ops_safe_base(cq, b), ops_safe_cls(b),
+    !drf_qattr(cq, "perms_map"), !drf_qmethod_name(cq, "get_required_object_permissions").
+.decl ops_hop_safe(cq: symbol)
+ops_hop_safe(cq) :- method(cq, "has_object_permission", f), ops_safe_body(f).
+.decl ops_safe_base(cq: symbol, b: symbol)
+ops_safe_base(cq, b) :- drf_qbase(cq, b).
+ops_safe_base(cq, b) :- drf_qbase(cq, b0), drf_cls_q(b0, b).
 // ops_safe_body(f): statement i of has_object_permission f is `if <safe test>: return True` (its first statement)
 // or `return <safe test> or …`, and no statement before it can return or raise.
 .decl ops_safe_body(f: node)
@@ -123,47 +141,66 @@ ops_safe_set(r) :- unparen(r, u), kind(u, "identifier"), text(u, x), look(u, x, 
 ops_safe_list(v) :- drf_str_elem(v, _), !ops_unsafe_list(v).
 .decl ops_unsafe_list(v: node)
 ops_unsafe_list(v) :- drf_str_elem(v, s), !match("(?i)(get|head|options)", s).
-// ops_perm_value(v, q): the permission_classes value v names class q: a list or tuple (drf_perm_elem), an operand of
-// `+`, or `api_settings.DEFAULT_PERMISSION_CLASSES`, which is the settings default.
-.decl ops_perm_value(v: node, q: symbol)
-ops_perm_value(v, q) :- drf_perm_elem(v, e), sym_of(e, q).
-ops_perm_value(v, q) :- unparen(v, u), kind(u, "binary_operator"), op(u, "+"), (field(u, "left", x) ; field(u, "right", x)),
-    ops_perm_value(x, q).
-ops_perm_value(v, q) :- unparen(v, u), attr_of(u, _, "DEFAULT_PERMISSION_CLASSES"), drf_default_perm(q).
+// ops_pv(v, q): the permission_classes value v names class q: a list or tuple (drf_perm_elem), an operand of `+`.
+// ops_pv_default(v): v holds `api_settings.DEFAULT_PERMISSION_CLASSES`, which is the settings default. ops_hperm and
+// ops_hperm_default: the same of a home (a view's permission_classes attribute).
+.decl ops_pv(v: node, q: symbol)
+ops_pv(v, q) :- drf_perm_elem(v, e), sym_of(e, q).
+ops_pv(v, q) :- unparen(v, u), kind(u, "binary_operator"), op(u, "+"), (field(u, "left", x) ; field(u, "right", x)),
+    ops_pv(x, q).
+.decl ops_pv_default(v: node)
+ops_pv_default(v) :- unparen(v, u), attr_of(u, _, "DEFAULT_PERMISSION_CLASSES").
+ops_pv_default(v) :- unparen(v, u), kind(u, "binary_operator"), op(u, "+"), (field(u, "left", x) ; field(u, "right", x)),
+    ops_pv_default(x).
+.decl ops_hperm(h: symbol, q: symbol)
+ops_hperm(h, q) :- drf_hv(h, v), ops_pv(v, q).
+.decl ops_hperm_default(h: symbol)
+ops_hperm_default(h) :- drf_hv(h, v), ops_pv_default(v).
+drf_cls_ask(q) :- ops_hperm(_, q).
 // ops_gp_perm(v, q): view v's get_permissions() (its own or a base's) has one return, a list or tuple of instances,
-// one of class q: `return [IsAuthenticated(), IsOwner()]`. It replaces permission_classes.
-.decl ops_gp_ret(v: node, g: node, val: node)
-ops_gp_ret(v, g, val) :- drf_view(v), drf_method(v, "get_permissions", g), kind(r, "return_statement"), def_frame(r, g),
-    child(r, e, 0), unparen(e, val).
+// one of class q: `return [IsAuthenticated(), IsOwner()]`. It replaces permission_classes. Each get_permissions() is
+// read in its file, by its def's qualname (ops_gp_known_fq, ops_gp_perm_fq).
+.decl ops_gp_ret(g: node, val: node)
+ops_gp_ret(g, val) :- kind(g, "function_definition"), def_name(g, "get_permissions"), kind(r, "return_statement"),
+    def_frame(r, g), child(r, e, 0), unparen(e, val).
 .decl ops_gp_multi(g: node)
 ops_gp_multi(g) :- kind(r1, "return_statement"), def_frame(r1, g), kind(r2, "return_statement"), def_frame(r2, g),
     r1 != r2, def_name(g, "get_permissions").
-.decl ops_gp_known(v: node)
-ops_gp_known(v) :- ops_gp_ret(v, g, val), !ops_gp_multi(g), kind(val, k), drf_seq(k).
-.decl ops_gp_perm(v: node, q: symbol)
-ops_gp_perm(v, q) :- ops_gp_ret(v, g, val), !ops_gp_multi(g), kind(val, k), drf_seq(k), drf_perm_elem(val, e),
-    kind(e, "call"), field(e, "function", fn), sym_of(fn, q).
+.decl ops_gp_known_fq(gq: symbol)
+ops_gp_known_fq(gq) :- ops_gp_ret(g, val), !ops_gp_multi(g), kind(val, k), drf_seq(k), qualname(g, gq).
+.decl ops_gp_perm_fq(gq: symbol, q: symbol)
+ops_gp_perm_fq(gq, q) :- ops_gp_ret(g, val), !ops_gp_multi(g), kind(val, k), drf_seq(k), drf_perm_elem(val, e),
+    kind(e, "call"), field(e, "function", fn), sym_of(fn, q), qualname(g, gq).
+drf_cls_ask(q) :- ops_gp_perm_fq(_, q).
+.decl ops_gp_known(v: symbol)
+ops_gp_known(v) :- drf_view_q(v), drf_method_q(v, "get_permissions", gq), ops_gp_known_fq(gq).
+.decl ops_gp_perm(v: symbol, q: symbol)
+ops_gp_perm(v, q) :- drf_view_q(v), drf_method_q(v, "get_permissions", gq), ops_gp_perm_fq(gq, q).
 // ops_view_perm(v, q): view v runs permission class q.
-.decl ops_view_perm(v: node, q: symbol)
+.decl ops_view_perm(v: symbol, q: symbol)
 ops_view_perm(v, q) :- ops_gp_perm(v, q).
-ops_view_perm(v, q) :- drf_effective_perm(v, q), !ops_gp_known(v).
-ops_view_perm(v, q) :- drf_view(v), !ops_gp_known(v), drf_attr(v, "permission_classes", val), ops_perm_value(val, q).
+ops_view_perm(v, q) :- drf_effective_perm_q(v, q), !ops_gp_known(v).
+ops_view_perm(v, q) :- drf_view_q(v), !ops_gp_known(v), drf_attr_q(v, "permission_classes", h), ops_hperm(h, q).
+ops_view_perm(v, q) :- drf_view_q(v), !ops_gp_known(v), drf_attr_q(v, "permission_classes", h), ops_hperm_default(h),
+    drf_default_perm(q).
 
 // ---- handlers ----------------------------------------------------------------------------------------------------
 // ops_detail(x): the handlers that act on one row.
 .decl ops_detail(x: symbol)
 ops_detail("get"). ops_detail("put"). ops_detail("patch"). ops_detail("delete"). ops_detail("retrieve").
 ops_detail("update"). ops_detail("partial_update"). ops_detail("destroy").
-.decl ops_handler(v: node, f: node)
-ops_handler(v, f) :- drf_handler(v, f, x), ops_detail(x), !drf_action_def(f, _).
-ops_handler(v, f) :- drf_handler(v, f, _), drf_action_detail(f).
-// ops_safe_handler(v, f): handler f of view v serves only safe methods: get, head, options, retrieve, list, or an
+.decl ops_handler(v: symbol, fq: symbol)
+ops_handler(v, fq) :- drf_handler_q(v, fq, x), ops_detail(x), !drf_qaction(fq).
+ops_handler(v, fq) :- drf_handler_q(v, fq, _), drf_qaction_detail(fq).
+// ops_safe_handler(v, fq): handler fq of view v serves only safe methods: get, head, options, retrieve, list, or an
 // `@action` whose methods (GET by default) are all safe.
 .decl ops_safe_name(x: symbol)
 ops_safe_name("get"). ops_safe_name("head"). ops_safe_name("options"). ops_safe_name("retrieve"). ops_safe_name("list").
-.decl ops_safe_handler(v: node, f: node)
-ops_safe_handler(v, f) :- drf_handler(v, f, x), ops_safe_name(x), !drf_action_def(f, _).
-ops_safe_handler(v, f) :- drf_handler(v, f, _), drf_action_def(f, e), ops_safe_call(e, "methods").
+.decl ops_safe_handler(v: symbol, fq: symbol)
+ops_safe_handler(v, fq) :- drf_handler_q(v, fq, x), ops_safe_name(x), !drf_qaction(fq).
+ops_safe_handler(v, fq) :- drf_handler_q(v, fq, _), ops_action_safe(fq).
+.decl ops_action_safe(fq: symbol)
+ops_action_safe(fq) :- drf_action_def(f, e), ops_safe_call(e, "methods"), qualname(f, fq).
 // ops_safe_call(e, key): decorator call e's method list (keyword key, or for @api_view its first argument) is
 // absent, so GET, or names only safe methods.
 .decl ops_method_list(e: node, key: symbol, v: node)
@@ -176,60 +213,73 @@ ops_unsafe_call(e, key) :- ops_method_list(e, key, v), !ops_safe_list(v).
 .decl ops_safe_call(e: node, key: symbol)
 ops_safe_call(e, key) :- kind(e, "call"), (key = "methods" ; key = "http_method_names"), !ops_has_list(e, key).
 ops_safe_call(e, key) :- ops_method_list(e, key, _), !ops_unsafe_call(e, key).
-// ops_action_sets(f): `@action(permission_classes=...)` on f, which replaces the view's classes for it.
-.decl ops_action_sets(f: node)
-ops_action_sets(f) :- drf_action_def(f, e), drf_kw(e, "permission_classes", _).
-// ops_handler_perm(v, f, q): handler f of view v runs permission class q.
-.decl ops_handler_perm(v: node, f: node, q: symbol)
-ops_handler_perm(v, f, q) :- ops_handler(v, f), drf_action_perm(f, q).
-ops_handler_perm(v, f, q) :- ops_handler(v, f), !ops_action_sets(f), ops_view_perm(v, q).
-// ops_handler_obj(v, f): handler f of view v runs an object permission that its requests can fail: f serves an
+// ops_action_sets(fq): `@action(permission_classes=...)` on fq, which replaces the view's classes for it.
+.decl ops_action_sets(fq: symbol)
+ops_action_sets(fq) :- drf_action_def(f, e), drf_kw(e, "permission_classes", _), qualname(f, fq).
+// ops_handler_perm(v, fq, q): handler fq of view v runs permission class q.
+.decl ops_handler_perm(v: symbol, fq: symbol, q: symbol)
+ops_handler_perm(v, fq, q) :- ops_handler(v, fq), drf_action_perm_q(fq, q).
+ops_handler_perm(v, fq, q) :- ops_handler(v, fq), !ops_action_sets(fq), ops_view_perm(v, q).
+// ops_handler_obj(v, fq): handler fq of view v runs an object permission that its requests can fail: fq serves an
 // unsafe method, or the permission does not answer True for every safe request.
-.decl ops_handler_obj(v: node, f: node)
-ops_handler_obj(v, f) :- ops_handler_perm(v, f, q), ops_obj(q), !ops_safe_handler(v, f).
-ops_handler_obj(v, f) :- ops_handler_perm(v, f, q), ops_obj(q), !ops_safe_open(q).
-// ops_fn_obj(f): `@api_view` function f runs such a permission: its @permission_classes, else the settings default.
+.decl ops_handler_obj(v: symbol, fq: symbol)
+ops_handler_obj(v, fq) :- ops_handler_perm(v, fq, q), ops_obj(q), !ops_safe_handler(v, fq).
+ops_handler_obj(v, fq) :- ops_handler_perm(v, fq, q), ops_obj(q), !ops_safe_open(q).
+// ops_fn_obj(fq): `@api_view` function fq runs such a permission: its @permission_classes, else the settings default.
 .decl ops_fn_sets(f: node)
 ops_fn_sets(f) :- kind(f, "function_definition"), decorator(f, d), unparen(d, e), kind(e, "call"),
     field(e, "function", fn), sym_of(fn, "rest_framework.decorators.permission_classes").
-.decl ops_fn_perm(f: node, q: symbol)
-ops_fn_perm(f, q) :- drf_api_view_fn(f), drf_fn_perm(f, q).
-ops_fn_perm(f, q) :- drf_api_view_fn(f), !ops_fn_sets(f), drf_default_perm(q).
-// ops_fn_safe(f): `@api_view`, `@api_view()` (GET only) or `@api_view(["GET", ...])` with safe methods only.
-.decl ops_fn_safe(f: node)
-ops_fn_safe(f) :- drf_api_view_fn(f), decorator(f, d), unparen(d, e), sym_of(e, "rest_framework.decorators.api_view").
-ops_fn_safe(f) :- drf_api_view_fn(f), decorator(f, d), unparen(d, e), kind(e, "call"), field(e, "function", fn),
-    sym_of(fn, "rest_framework.decorators.api_view"), ops_safe_call(e, "http_method_names").
-.decl ops_fn_obj(f: node)
-ops_fn_obj(f) :- ops_fn_perm(f, q), ops_obj(q), !ops_fn_safe(f).
-ops_fn_obj(f) :- ops_fn_perm(f, q), ops_obj(q), !ops_safe_open(q).
+.decl ops_fn_own_perm(fq: symbol, q: symbol)
+ops_fn_own_perm(fq, q) :- drf_api_view_fn(f), drf_fn_perm(f, q), qualname(f, fq).
+.decl ops_fn_default(fq: symbol)
+ops_fn_default(fq) :- drf_api_view_fn(f), !ops_fn_sets(f), qualname(f, fq).
+.decl ops_fn_perm(fq: symbol, q: symbol)
+ops_fn_perm(fq, q) :- ops_fn_own_perm(fq, q).
+ops_fn_perm(fq, q) :- ops_fn_default(fq), drf_default_perm(q).
+// ops_fn_safe(fq): `@api_view`, `@api_view()` (GET only) or `@api_view(["GET", ...])` with safe methods only.
+.decl ops_fn_safe(fq: symbol)
+ops_fn_safe(fq) :- drf_api_view_fn(f), decorator(f, d), unparen(d, e), sym_of(e, "rest_framework.decorators.api_view"),
+    qualname(f, fq).
+ops_fn_safe(fq) :- drf_api_view_fn(f), decorator(f, d), unparen(d, e), kind(e, "call"), field(e, "function", fn),
+    sym_of(fn, "rest_framework.decorators.api_view"), ops_safe_call(e, "http_method_names"), qualname(f, fq).
+.decl ops_fn_obj(fq: symbol)
+ops_fn_obj(fq) :- ops_fn_perm(fq, q), ops_obj(q), !ops_fn_safe(fq).
+ops_fn_obj(fq) :- ops_fn_perm(fq, q), ops_obj(q), !ops_safe_open(q).
 
 // ---- querysets ---------------------------------------------------------------------------------------------------
-// ops_mgr_decl(mc, x): class mc's body declares a manager x: `live = LiveManager()`, `QS.as_manager()`,
+// ops_qmgr(mq, x): class mq's body declares a manager x: `live = LiveManager()`, `QS.as_manager()`,
 // `Manager.from_queryset(QS)()`.
-.decl ops_mgr_decl(mc: node, x: symbol)
-ops_mgr_decl(mc, x) :- drf_own_attr(mc, x, v, _), unparen(v, k), kind(k, "call"), field(k, "function", fn),
-    ops_mgr_ctor(fn).
+.decl ops_qmgr(mq: symbol, x: symbol)
+ops_qmgr(mq, x) :- drf_own_attr(mc, x, v, _), unparen(v, k), kind(k, "call"), field(k, "function", fn),
+    ops_mgr_ctor(fn), class_def(mc, mq).
 .decl ops_mgr_ctor(fn: node)
 ops_mgr_ctor(fn) :- leaf_name(fn, nm), match(".*Manager", nm).
 ops_mgr_ctor(fn) :- attr_of(fn, _, "as_manager").
 ops_mgr_ctor(fn) :- kind(fn, "call"), field(fn, "function", g), attr_of(g, _, "from_queryset").
-.decl ops_mgr_name(x: symbol)
-ops_mgr_name(x) :- dj_manager_name(x).
-ops_mgr_name(x) :- ops_mgr_decl(_, x).
-// ops_mgr_ref(u, mc): u is `M.<manager>` with M model class mc.
-.decl ops_mgr_ref(u: node, mc: node)
-ops_mgr_ref(u, mc) :- attr_of(u, r, x), dj_manager_name(x), sym_of(r, q), drf_cls(q, mc), dj_model(mc).
-ops_mgr_ref(u, mc) :- attr_of(u, r, x), ops_mgr_decl(_, x), sym_of(r, q), drf_cls(q, mc), dj_model(mc),
-    ops_mgr_decl(mc, x).
-// ops_qs_model(o, mc): o is a queryset of model mc's rows: a manager, a chain of QuerySet methods from one, or a
-// name bound to one (`books = Book.objects`).
-.decl ops_qs_model(o: node, mc: node)
-ops_qs_model(o, mc) :- unparen(o, u), ops_mgr_ref(u, mc).
-ops_qs_model(o, mc) :- unparen(o, u), kind(u, "call"), field(u, "function", fn), attr_of(fn, p, m), dj_qs_method(m),
-    ops_qs_model(p, mc).
-ops_qs_model(o, mc) :- unparen(o, u), kind(u, "identifier"), text(u, x), look(u, x, s), asg(s, x, val, _),
-    ops_qs_model(val, mc).
+// ops_mgr_root(u, s, x): u is `R.x` with R naming s: a manager name Django gives every model, or an attribute of a
+// class of a module u's file reads (a manager the class may declare: ops_root_model decides, by symbol).
+.decl ops_mgr_root(u: node, s: symbol, x: symbol)
+ops_mgr_root(u, s, x) :- attr_of(u, r, x), dj_manager_name(x), sym_of(r, s).
+ops_mgr_root(u, s, x) :- attr_of(u, r, x), !dj_manager_name(x), sym_of(r, s), docof(u, d), doc(d, p, _),
+    py_names__reads_at(p, m), py_names__class(m, s).
+// ops_qs_root(o, s, x): o is a queryset from `R.x`, R naming s: the manager itself, a chain of QuerySet methods from
+// one, or a name bound to one (`books = Book.objects`).
+.decl ops_qs_root(o: node, s: symbol, x: symbol)
+ops_qs_root(o, s, x) :- unparen(o, u), ops_mgr_root(u, s, x).
+ops_qs_root(o, s, x) :- unparen(o, u), kind(u, "call"), field(u, "function", fn), attr_of(fn, p, m), dj_qs_method(m),
+    ops_qs_root(p, s, x).
+ops_qs_root(o, s, x) :- unparen(o, u), kind(u, "identifier"), text(u, n), look(u, n, sc), asg(sc, n, val, _),
+    ops_qs_root(val, s, x).
+// ops_root_model(s, x, mq): `R.x`, R naming s, is a manager of model mq of the run: one of the names Django gives
+// every model, or a manager the model declares (ops_qmgr); x "" is the model class itself (get_object_or_404(M)).
+.decl ops_root_ask(s: symbol, x: symbol)
+ops_root_ask(s, x) :- ops_lk_root(_, s, x).
+ops_root_ask(s, x) :- ops_hqs_root(_, s, x).
+drf_cls_ask(s) :- ops_root_ask(s, _).
+.decl ops_root_model(s: symbol, x: symbol, mq: symbol)
+ops_root_model(s, x, mq) :- ops_root_ask(s, x), dj_manager_name(x), drf_cls_q(s, mq), drf_model_q(mq).
+ops_root_model(s, x, mq) :- ops_root_ask(s, x), drf_cls_q(s, mq), drf_model_q(mq), ops_qmgr(mq, x).
+ops_root_model(s, "", mq) :- ops_root_ask(s, ""), drf_cls_q(s, mq), drf_model_q(mq).
 // ops_qs_self(o): o is the view's own queryset: `self.queryset`, `self.get_queryset()`, `self.filter_queryset(…)`,
 // a chain from one, or a name bound to one.
 .decl ops_qs_self(o: node)
@@ -239,8 +289,10 @@ ops_qs_self(o) :- unparen(o, u), kind(u, "call"), field(u, "function", fn), attr
 ops_qs_self(o) :- unparen(o, u), kind(u, "call"), field(u, "function", fn), attr_of(fn, p, m), dj_qs_method(m),
     ops_qs_self(p).
 ops_qs_self(o) :- unparen(o, u), kind(u, "identifier"), text(u, x), look(u, x, s), asg(s, x, val, _), ops_qs_self(val).
+// ops_qs(o): o is a queryset the rule reads: from a manager-like `R.x` (whose model ops_root_model checks in the
+// finding), or the view's own.
 .decl ops_qs(o: node)
-ops_qs(o) :- ops_qs_model(o, _).
+ops_qs(o) :- ops_qs_root(o, _, _).
 ops_qs(o) :- ops_qs_self(o).
 // ops_filtered(o): queryset o is narrowed by `.filter(…)` somewhere along its chain.
 .decl ops_filtered(o: node)
@@ -249,6 +301,15 @@ ops_filtered(o) :- ops_qs(o), unparen(o, u), kind(u, "call"), field(u, "function
     dj_qs_method(m), ops_filtered(p).
 ops_filtered(o) :- ops_qs(o), unparen(o, u), kind(u, "identifier"), text(u, x), look(u, x, s), asg(s, x, val, _),
     ops_filtered(val).
+// ops_view_model(v, mq): view v's rows are model mq's: lib's drf_view_model_q (its queryset's model, or its
+// serializer's Meta.model), or a queryset from a manager the model declares (ops_hqs_root, in the attribute's file).
+.decl ops_hqs_root(h: symbol, s: symbol, x: symbol)
+ops_hqs_root(h, s, x) :- drf_hv(h, e), ops_qs_root(e, s, x).
+.decl ops_view_model(v: symbol, mq: symbol)
+ops_view_model(v, mq) :- drf_view_model_q(v, mq).
+ops_view_model(v, mq) :- drf_view_q(v), drf_attr_q(v, "queryset", h), ops_hqs_root(h, s, x), ops_root_model(s, x, mq).
+.decl ops_has_model(v: symbol)
+ops_has_model(v) :- ops_view_model(v, _).
 
 // ---- lookups -----------------------------------------------------------------------------------------------------
 // ops_fetch(c, o): c fetches one row from o: `o.get(…)`, a filtered o ended by `.get()`, `.first()`, `.last()`,
@@ -271,25 +332,28 @@ ops_write(c, o) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, m),
 .decl ops_site(c: node, o: node, k: node)
 ops_site(c, o, c) :- ops_fetch(c, o).
 ops_site(c, o, o) :- ops_write(c, o).
-// ops_model(o, mc): the rows o fetches from are model mc's: a queryset of mc, or the model class itself.
-.decl ops_model(o: node, mc: node)
-ops_model(o, mc) :- ops_site(_, o, _), ops_qs_model(o, mc).
-ops_model(o, mc) :- ops_fetch(_, o), unparen(o, u), sym_of(u, q), drf_cls(q, mc), dj_model(mc).
-// ops_view_model(v, mc): view v's rows are model mc's: lib's drf_view_model (its queryset's model, or its
-// serializer's Meta.model), or a queryset from a manager the model declares (ops_qs_model).
-.decl ops_view_model(v: node, mc: node)
-ops_view_model(v, mc) :- drf_view_model(v, mc).
-ops_view_model(v, mc) :- drf_view_queryset(v, e), ops_qs_model(e, mc).
-.decl ops_has_model(v: node)
-ops_has_model(v) :- ops_view_model(v, _).
-// The model names this rule resolves through drf_cls (the import root, package re-exports): the receivers of every
-// manager (`M._default_manager`, `M.live`) and a get_object_or_404 model argument. Syntax only.
-drf_cls_ask(q) :- attr_of(_, r, x), ops_mgr_name(x), sym_of(r, q).
-drf_cls_ask(q) :- kind(c, "call"), field(c, "function", fn), leaf_name(fn, "get_object_or_404"), call_arg(c, 0, "", o),
-    unparen(o, u), sym_of(u, q).
-// The permission classes a get_permissions() instantiates.
-drf_cls_ask(q) :- kind(g, "function_definition"), def_name(g, "get_permissions"), kind(r, "return_statement"),
-    def_frame(r, g), child(r, e, 0), drf_perm_elem(e, k), kind(k, "call"), field(k, "function", fn), sym_of(fn, q).
+// ops_lookup(c, fq, how): c, outside test code, fetches ("fetch") or writes ("write", by a filter that reads a URL
+// kwarg) rows in def fq, and does not pass the requester.
+.decl ops_lookup(c: node, fq: symbol, how: symbol)
+ops_lookup(c, fq, "fetch") :- ops_fetch(c, _), def_frame(c, f), !ops_scoped(c), docof(c, d), !dj_test_doc(d),
+    qualname(f, fq).
+ops_lookup(c, fq, "write") :- ops_write(c, o), def_frame(c, f), ops_url_in(o, f), !ops_scoped(c), docof(c, d),
+    !dj_test_doc(d), qualname(f, fq).
+// ops_lk_root(c, s, x): lookup c reads the rows of `R.x`, R naming s (x "" for get_object_or_404's model class).
+.decl ops_lk_root(c: node, s: symbol, x: symbol)
+ops_lk_root(c, s, x) :- ops_site(c, o, _), ops_qs_root(o, s, x).
+ops_lk_root(c, s, "") :- ops_fetch(c, o), unparen(o, u), sym_of(u, s).
+// ops_lk_self(c): lookup c reads the view's own queryset.
+.decl ops_lk_self(c: node)
+ops_lk_self(c) :- ops_site(c, o, _), ops_qs_self(o).
+// ops_lk_url(c): lookup c chooses its rows by a URL kwarg of its function.
+.decl ops_lk_url(c: node)
+ops_lk_url(c) :- ops_site(c, _, k), def_frame(c, f), ops_url_in(k, f).
+// ops_fn_site(c, fq): lookup c, outside test code, is in `@api_view` function fq, which checks nothing itself, and
+// does not pass the requester.
+.decl ops_fn_site(c: node, fq: symbol)
+ops_fn_site(c, fq) :- drf_api_view_fn(f), def_frame(c, f), ops_site(c, _, _), !ops_scoped(c), !ops_check_call(f),
+    docof(c, d), !dj_test_doc(d), qualname(f, fq).
 
 // ops_url_in(k, f): node k reads a URL kwarg of handler f: one of f's parameters other than self, request and
 // format, `self.kwargs`, or a name f binds to an expression reading one (`book_id = self.kwargs["pk"]`).
@@ -309,12 +373,16 @@ ops_url_val(v, f) :- asg(f, _, v, _), ops_url_read(v, f).
 .decl ops_scoped(c: node)
 ops_scoped(c) :- ops_site(c, _, k), def_frame(k, f), ops_reads_user(k, f).
 // ops_qs_user(v): view v's get_queryset() reads request.user: its rows are already the requester's.
-.decl ops_qs_user(v: node)
-ops_qs_user(v) :- drf_method(v, "get_queryset", g), within(u, g), drf_request_user(u).
+.decl ops_qs_user(v: symbol)
+ops_qs_user(v) :- drf_method_q(v, "get_queryset", gq), ops_reads_request_user(gq).
 // A method of the view (NetBox's initial()) that sets `self.queryset = <…request.user…>` restricts it per request.
-ops_qs_user(v) :- drf_method(v, _, g), kind(a, "assignment"), def_frame(a, g), field(a, "left", l),
-    attr_of(l, s, "queryset"), kind(s, "identifier"), text(s, "self"), field(a, "right", r), within(u, r),
-    drf_request_user(u).
+ops_qs_user(v) :- drf_method_q(v, _, gq), ops_sets_user_queryset(gq).
+.decl ops_reads_request_user(gq: symbol)
+ops_reads_request_user(gq) :- kind(g, "function_definition"), def_name(g, "get_queryset"), within(u, g),
+    drf_request_user(u), qualname(g, gq).
+.decl ops_sets_user_queryset(gq: symbol)
+ops_sets_user_queryset(gq) :- kind(a, "assignment"), def_frame(a, g), field(a, "left", l), attr_of(l, s, "queryset"),
+    kind(s, "identifier"), text(s, "self"), field(a, "right", r), within(u, r), drf_request_user(u), qualname(g, gq).
 
 // ---- checks ------------------------------------------------------------------------------------------------------
 // ops_check_call(f): f calls get_object(), check_object_permissions() or has_object_permission() itself.
@@ -347,33 +415,23 @@ ops_reads_user(k, f) :- def_frame(k, f), within(r, k), kind(r, "identifier"), te
 .decl ops_user_value(v: node)
 ops_user_value(v) :- drf_request_user(v).
 ops_user_value(v) :- within(u, v), drf_request_user(u).
-// ops_self_call(f, x): f calls `self.x(…)`.
-.decl ops_self_call(f: node, x: symbol)
-ops_self_call(f, x) :- kind(k, "call"), def_frame(k, f), field(k, "function", fn), attr_of(fn, s, x),
-    kind(s, "identifier"), text(s, "self").
-// ops_checks(v, f): method f of view v checks the row: itself, through a method of v it calls, or by calling a
+// ops_check_q(fq): def fq checks the row itself (ops_check_call). ops_self_call(fq, x): fq calls `self.x(…)`.
+.decl ops_check_q(fq: symbol)
+ops_check_q(fq) :- ops_check_call(f), qualname(f, fq).
+.decl ops_self_call(fq: symbol, x: symbol)
+ops_self_call(fq, x) :- kind(k, "call"), def_frame(k, f), field(k, "function", fn), attr_of(fn, s, x),
+    kind(s, "identifier"), text(s, "self"), qualname(f, fq).
+// ops_checks(v, fq): method fq of view v checks the row: itself, through a method of v it calls, or by calling a
 // detail handler v inherits from DRF's mixins (`self.update()` in partial_update), which calls get_object().
-.decl ops_checks(v: node, f: node)
-ops_checks(v, f) :- drf_method(v, _, f), ops_check_call(f).
-ops_checks(v, f) :- drf_method(v, _, f), ops_self_call(f, x), ops_detail(x), !drf_method(v, x, _).
-ops_checks(v, f) :- drf_method(v, _, f), ops_self_call(f, x), drf_method(v, x, g), ops_checks(v, g).
+.decl ops_checks(v: symbol, fq: symbol)
+ops_checks(v, fq) :- drf_method_q(v, _, fq), ops_check_q(fq).
+ops_checks(v, fq) :- drf_method_q(v, _, fq), ops_self_call(fq, x), ops_detail(x), !drf_method_q(v, x, _).
+ops_checks(v, fq) :- drf_method_q(v, _, fq), ops_self_call(fq, x), drf_method_q(v, x, gq), ops_checks(v, gq).
 
 // ---- the findings ------------------------------------------------------------------------------------------------
-// ops_view_rows(v, f, c, o): lookup c from o in handler f reads view v's rows.
-.decl ops_view_rows(v: node, f: node, c: node, o: node)
-ops_view_rows(v, f, c, o) :- ops_handler(v, f), def_frame(c, f), ops_site(c, o, _), ops_model(o, mc), ops_view_model(v, mc).
-ops_view_rows(v, f, c, o) :- ops_handler(v, f), def_frame(c, f), ops_site(c, o, _), ops_qs_self(o), !ops_qs_user(v).
-ops_view_rows(v, f, c, o) :- ops_handler(v, f), def_frame(c, f), ops_site(c, o, k), ops_model(o, _), !ops_has_model(v),
-    ops_url_in(k, f).
-.decl ops_view_hit(c: node)
-ops_view_hit(c) :- ops_handler_obj(v, f), ops_fetch(c, o), ops_view_rows(v, f, c, o), !ops_scoped(c),
-    !ops_checks(v, f), docof(c, d), !dj_test_doc(d).
-.decl ops_view_write(c: node)
-ops_view_write(c) :- ops_handler_obj(v, f), ops_write(c, o), ops_view_rows(v, f, c, o), ops_url_in(o, f),
-    !ops_scoped(c), !ops_checks(v, f), docof(c, d), !dj_test_doc(d).
-.decl ops_fn_hit(c: node)
-ops_fn_hit(c) :- ops_fn_obj(f), def_frame(c, f), ops_site(c, o, k), ops_model(o, _), ops_url_in(k, f),
-    !ops_scoped(c), !ops_check_call(f), docof(c, d), !dj_test_doc(d).
+// ops_vh(v, fq): handler fq of view v runs an object permission its requests can fail and checks no row.
+.decl ops_vh(v: symbol, fq: symbol)
+ops_vh(v, fq) :- ops_handler_obj(v, fq), !ops_checks(v, fq).
 
 // The cases, `cases/drf-practice-object-permission-skipped/`, read as one repository: each line ending in
 // `# caught` is reported, and no other line.

@@ -25,6 +25,12 @@
       "document": "rules/sqlalchemy-practice-session-reused-after-failed-commit.rerail",
       "title": "SQLAlchemy practice: an except handler swallows a failed commit() or flush() and the session is used again without rollback()",
       "group": "SQLAlchemy practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "data-access",
+        "severity": "high",
+        "hazard": "tx.no-rollback-after-error"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -43,6 +49,12 @@
       "document": "rules/sqlalchemy-practice-bulk-write-skips-hooks.rerail",
       "title": "SQLAlchemy practice: a bulk UPDATE, DELETE or INSERT on a model whose mapper events, attribute events or validators it skips",
       "group": "SQLAlchemy practice",
+      "dimensions": {
+        "risk": "data-safety",
+        "layer": "data-access",
+        "severity": "high",
+        "hazard": "orm.bulk-write-skips-hooks"
+      },
       "mode": "log",
       "on": false,
       "examples": {
@@ -81,6 +93,12 @@
       "document": "rules/sqlalchemy-practice-lazy-load-in-loop.rerail",
       "title": "SQLAlchemy practice: a loop over ORM rows that reads a lazily loaded collection of every row",
       "group": "SQLAlchemy practice",
+      "dimensions": {
+        "risk": "performance",
+        "layer": "data-access",
+        "severity": "medium",
+        "hazard": "orm.query-in-loop"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -111,6 +129,12 @@
       "document": "rules/sqlalchemy-practice-lazy-many-to-one-in-loop.rerail",
       "title": "SQLAlchemy practice: a loop over ORM rows that reads a lazily loaded many-to-one relationship of every row",
       "group": "SQLAlchemy practice",
+      "dimensions": {
+        "risk": "performance",
+        "layer": "data-access",
+        "severity": "low",
+        "hazard": "orm.query-in-loop"
+      },
       "mode": "log",
       "on": false,
       "examples": {
@@ -141,6 +165,12 @@
       "document": "rules/sqlalchemy-practice-connect-without-commit.rerail",
       "title": "SQLAlchemy practice: writes on a connection from engine.connect() are committed, or the connection comes from engine.begin()",
       "group": "SQLAlchemy practice",
+      "dimensions": {
+        "risk": "data-safety",
+        "layer": "data-access",
+        "severity": "critical",
+        "hazard": "tx.writes-without-transaction"
+      },
       "mode": "log",
       "on": true,
       "examples": {

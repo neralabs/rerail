@@ -42,72 +42,120 @@
 #include "python/calls.rerail"
 #include "python/types.rerail"
 
+// Whether an expression holds a sync session is a question over the run's files: the session may come from a
+// dependency, an alias, a maker, a helper's return, a class attribute or a caller in another module (decision 0691: no
+// node crosses files). Each file states its expressions' sessions under a condition (ss_ec, ss_mk, ss_ty: settled
+// there, or naming another file's def, class, parameter or variable by symbol), the relations over symbols below
+// settle the conditions (ss_ok), and the call graph is walked over defs' symbols (python/calls' call_target). A
+// finding reads its call's node in its own file; SessionReached names the session call it reaches by path and line.
 .violation SessionCallInAsync(at: node, what: symbol, fx: symbol)
     "`{what}` blocks the event loop inside `async def {fx}`. Make `{fx}` a plain `def` if it awaits nothing and sets no ContextVar; otherwise use an `AsyncSession` or `await run_in_threadpool(...)`."
-SessionCallInAsync(o, what, fx) :- ss_work(o, f, what), ss_async_start(f), def_name(f, fx).
-.violation SessionReached(at: node, x: symbol, fx: symbol, what: symbol, p: symbol, o: node)
-    "`{x}()` runs sync session work (`{what}` at {p}:{o.line}) on the event loop in `async def {fx}`. Make `{fx}` a plain `def` if it awaits nothing; else `await run_in_threadpool({x}, ...)`."
-SessionReached(c, x, fx, what, p, o) :- ss_start(f, c, g), def_name(f, fx), field(c, "function", fn), text(fn, x),
-    o = min y : { ss_reach(g, h), ss_work(y, h, _) }, ss_work(o, _, what), docof(o, d), doc(d, p, _).
+SessionCallInAsync(o, what, fx) :- ss_work(o, f, what, c1, c2, c3), ss_ok(c1, c2, c3), pt_def(f, fq),
+    ss_async_start(fq), def_name(f, fx).
+.violation SessionReached(at: node, x: symbol, fx: symbol, what: symbol, p: symbol, l: number)
+    "`{x}()` runs sync session work (`{what}` at {p}:{l}) on the event loop in `async def {fx}`. Make `{fx}` a plain `def` if it awaits nothing; else `await run_in_threadpool({x}, ...)`."
+SessionReached(c, x, fx, what, p, l) :- ss_frame_call(f, c), pt_def(f, fq), ss_async_start(fq), ss_tgt(c, g),
+    ss_sync(g), ss_first(g, what, p, l), def_name(f, fx), field(c, "function", fn), text(fn, x).
+SessionReached(c, x, fx, what, p, l) :- ss_frame_call(f, c), pt_def(f, fq), ss_async_start(fq),
+    ss_prop_site(c, kq, pp, m), ss_prop_target(kq, pp, m, g), ss_sync(g), ss_first(g, what, p, l), def_name(f, fx),
+    field(c, "function", fn), text(fn, x).
 
 // ss_stop: code in a nested def, lambda or class runs later, not in the frame that writes it.
 .decl ss_stop(k: symbol)
 ss_stop("function_definition"). ss_stop("lambda"). ss_stop("class_definition").
 
-// ss_async_start(f): async def f, outside test code, that FastAPI calls per request: lib/fastapi's fa_per_request, or
-// a route registered by calling the decorator (`app.get("/x")(f)`), which lib/fastapi's fa_route does not read.
-.decl ss_async_start(f: node)
-ss_async_start(f) :- ss_per_request(f), is_async(f), docof(f, d), !fa_test_doc(d).
-.decl ss_per_request(f: node)
-ss_per_request(f) :- fa_per_request(f).
-ss_per_request(f) :- kind(c, "call"), field(c, "function", dc), kind(dc, "call"), field(dc, "function", fn),
-    attr_of(fn, o, m), fa_route_verb(m), fa_router_ref(o, _), call_arg(c, 0, "", e0), unparen(e0, e), sym_of(e, q),
-    qualname(f, q), kind(f, "function_definition").
+// ss_async_start(f): async def f, outside test code, that FastAPI calls per request (lib/fastapi's fa_per_request: a
+// route in any of its forms, a route registered by calling the decorator, `app.get("/x")(f)`, included). ss_async_def
+// states the def's half in its file.
+.decl ss_async_def(f: symbol)
+ss_async_def(fq) :- kind(f, "function_definition"), is_async(f), docof(f, d), !fa_test_doc(d), pt_def(f, fq).
+.decl ss_async_start(f: symbol)
+ss_async_start(fq) :- fa_per_request(fq), ss_async_def(fq).
 
-// ss_start(f, c, g): call c, in async start f's own frame and not awaited, surely calls the sync def g: the call
-// program's only answers (no unknown target), or, where it has none, a method reached through a property
-// (ss_prop_call).
-.decl ss_start(f: node, c: node, g: node)
-ss_start(f, c, g) :- ss_async_start(f), kind(c, "call"), nearest(c, f, ss_stop), !awaited(c), ss_target(c, g),
-    ss_sync(g).
-.decl ss_target(c: node, g: node)
-ss_target(c, g) :- kind(c, "call"), !call_open(c), call_target(c, g).
-ss_target(c, g) :- ss_prop_call(c, g), !call_target(c, _).
-.decl ss_sync(g: node)
-ss_sync(g) :- kind(g, "function_definition"), !is_async(g).
-// ss_reach(g, h): from start g, the sync def h runs in the same thread: g, or a call in a reached def's own frame.
-.decl ss_reach(g: node, h: node)
-ss_reach(g, g) :- ss_start(_, _, g).
-ss_reach(g, h) :- ss_reach(g, x), call_target(c, h), nearest(c, x, ss_stop), ss_sync(h).
-ss_reach(g, h) :- ss_reach(g, x), ss_prop_call(c, h), !call_target(c, _), nearest(c, x, ss_stop), ss_sync(h).
+// ss_frame_call(f, c): call c, in def f's own frame, not awaited. ss_tgt(c, g): the call program surely calls g (no
+// unknown target). ss_start_at(f, g): by symbols, what ss_start reads.
+.decl ss_frame_call(f: node, c: node)
+ss_frame_call(f, c) :- kind(c, "call"), nearest(c, f, ss_stop), kind(f, "function_definition"), !awaited(c).
+.decl ss_tgt(c: node, g: symbol)
+ss_tgt(c, g) :- kind(c, "call"), !call_open(c), call_target(c, g).
+.decl ss_start_at(f: symbol, g: symbol)
+ss_start_at(fq, g) :- ss_frame_call(f, c), ss_tgt(c, g), pt_def(f, fq).
+.decl ss_start_prop(f: symbol, k: symbol, p: symbol, m: symbol)
+ss_start_prop(fq, kq, pp, m) :- ss_frame_call(f, c), ss_prop_site(c, kq, pp, m), pt_def(f, fq).
+// ss_start(g): an async start's call surely calls the sync def g: the call program's only answers, or, where it has
+// none, a method reached through a property (ss_prop_target).
+.decl ss_start(g: symbol)
+ss_start(g) :- ss_start_at(fq, g), ss_async_start(fq), ss_sync(g).
+ss_start(g) :- ss_start_prop(fq, kq, pp, m), ss_prop_target(kq, pp, m, g), ss_async_start(fq), ss_sync(g).
+.decl ss_sync(g: symbol)
+ss_sync(gq) :- kind(g, "function_definition"), !is_async(g), pt_def(g, gq).
+// ss_reach(g, h): from start g, the sync def h runs in the same thread: g, or a call in a reached def's own frame
+// (ss_edge, ss_prop_edge: stated in the calling def's file).
+.decl ss_reach(g: symbol, h: symbol)
+ss_reach(g, g) :- ss_start(g).
+ss_reach(g, h) :- ss_reach(g, x), ss_edge(x, h), ss_sync(h).
+ss_reach(g, h) :- ss_reach(g, x), ss_prop_edge(x, kq, pp, m), ss_prop_target(kq, pp, m, h), ss_sync(h).
+.decl ss_edge(x: symbol, h: symbol)
+ss_edge(xq, h) :- kind(c, "call"), call_target(c, h), nearest(c, x, ss_stop), kind(x, "function_definition"),
+    pt_def(x, xq).
+.decl ss_prop_edge(x: symbol, k: symbol, p: symbol, m: symbol)
+ss_prop_edge(xq, kq, pp, m) :- ss_prop_site(c, kq, pp, m), nearest(c, x, ss_stop), kind(x, "function_definition"),
+    pt_def(x, xq).
+// ss_first(g, what, p, l): the session work reached from start g that SessionReached names: in the reached def of the
+// least symbol, its first work (ss_work_ok: the i-th work of def h, counted in h's own order so an edit elsewhere in
+// the file moves nothing, at line l of path p, which only the message reads, whose condition holds).
+.decl ss_work_at(h: symbol, i: number, p: symbol, l: number, what: symbol, c1: symbol, c2: symbol, c3: symbol)
+ss_work_at(hq, i, p, l, what, c1, c2, c3) :- ss_work(o, h, what, c1, c2, c3), visit_index(o, v),
+    i = count : { ss_work(o2, h, _, _, _, _), visit_index(o2, v2), v2 < v }, pt_def(h, hq), line(o, l), docof(o, d),
+    doc(d, p, _).
+.decl ss_work_ok(h: symbol, i: number, p: symbol, l: number, what: symbol)
+ss_work_ok(hq, i, p, l, what) :- ss_work_at(hq, i, p, l, what, c1, c2, c3), ss_ok(c1, c2, c3).
+.decl ss_hit(g: symbol, h: symbol)
+ss_hit(g, h) :- ss_reach(g, h), ss_work_ok(h, _, _, _, _).
+.decl ss_later_hit(g: symbol, h: symbol)
+ss_later_hit(g, h) :- ss_hit(g, h), ss_hit(g, h2), h2 < h.
+.decl ss_first(g: symbol, what: symbol, p: symbol, l: number)
+ss_first(g, what, p, l) :- ss_hit(g, h), !ss_later_hit(g, h), i = min j : { ss_work_ok(h, j, _, _, _) },
+    ss_work_ok(h, i, p, l, what).
 
-// ss_prop_call(c, g): c is `r.p.m(...)` where the type program proves r an instance of class k, p is a property or
-// cached_property of k whose return annotation names a class q of the run, and q's method m is g
-// (`repos.users.get_one(...)` with `@cached_property def users(self) -> RepositoryUsers`). The call program leaves
-// such calls open.
-.decl ss_prop_call(c: node, g: node)
-ss_prop_call(c, g) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, pe, m), attr_of(pe, r, p),
-    proven_type(r, kq), ss_method(kq, p, pd), ss_property(pd), field(pd, "return_type", rt0), fa_strip(rt0, rt),
-    ss_class_of(rt, q), ss_method(q, m, g).
+// ss_prop_site(c, k, p, m): c is `r.p.m(...)` where the type program proves r an instance of class k and the call
+// program has no target. ss_prop_target(k, p, m, g): p is a property or cached_property of k whose return annotation
+// names a class q of the run, and q's method m is g (`repos.users.get_one(...)` with `@cached_property def users(self)
+// -> RepositoryUsers`). The call program leaves such calls open.
+.decl ss_prop_site(c: node, k: symbol, p: symbol, m: symbol)
+ss_prop_site(c, kq, pp, m) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, pe, m), attr_of(pe, r, pp),
+    proven_type(r, kq), !call_target(c, _).
+.decl ss_prop_target(k: symbol, p: symbol, m: symbol, g: symbol)
+ss_prop_target(kq, pp, m, g) :- ss_prop_need(kq, pp, m), ss_meth(kq, pp, pd), ss_prop_ret(pd, q), ss_meth(q, m, g).
+.decl ss_prop_need(k: symbol, p: symbol, m: symbol)
+ss_prop_need(kq, pp, m) :- ss_prop_site(_, kq, pp, m).
+// ss_prop_ret(pd, q): def pd is a property or cached_property whose return annotation names q, or a parametrized q
+// (`Repo[User]`). Stated in its file.
+.decl ss_prop_ret(pd: symbol, q: symbol)
+ss_prop_ret(pdq, q) :- ss_property(pd), field(pd, "return_type", rt0), fa_strip(rt0, rt), ss_class_of(rt, q),
+    pt_def(pd, pdq).
 .decl ss_property(pd: node)
 ss_property(pd) :- decorator(pd, e), unparen(e, d), (sym_of(d, "property") ; sym_of(d, "builtins.property") ;
     sym_of(d, "functools.cached_property")).
-// ss_class_of(t, q): type expression t names class q of the run, or a parametrized one (`Repo[User]`).
 .decl ss_class_of(t: node, q: symbol)
-ss_class_of(t, q) :- sym_of(t, q), class_def(_, q).
-ss_class_of(t, q) :- fa_sub(t, q), class_def(_, q).
+ss_class_of(t, q) :- sym_of(t, q).
+ss_class_of(t, q) :- fa_sub(t, q).
 // ss_super(q, b): class q inherits from b, also through a parametrized base (`class R(Repo[User])`), which
-// python/names' class_base does not read. ss_method(q, m, g): q's method m is g, its own or, if none, an ancestor's
-// (python/names' mro_method, over ss_super).
+// python/names' class_base does not read. ss_meth(q, m, g): q's method m is def g, its own or, if none, an ancestor's
+// (python/names' mro_method, over ss_super, by symbol). ss_base and ss_own_meth are stated in the class's file.
 .decl ss_base(q: symbol, b: symbol)
 ss_base(q, b) :- class_def(c, q), class_base(c, b).
 ss_base(q, b) :- class_def(c, q), field(c, "superclasses", al), child(al, e, _), fa_sub(e, b).
 .decl ss_super(q: symbol, b: symbol)
 ss_super(q, b) :- ss_base(q, b).
 ss_super(q, b) :- ss_super(q, m), ss_base(m, b).
-.decl ss_method(q: symbol, m: symbol, g: node)
-ss_method(q, m, g) :- method(q, m, g).
-ss_method(q, m, g) :- class_def(_, q), !method(q, m, _), ss_super(q, b), method(b, m, g).
+.decl ss_own_meth(q: symbol, m: symbol, g: symbol)
+ss_own_meth(q, m, gq) :- method(q, m, g), pt_def(g, gq).
+.decl ss_has_meth(q: symbol, m: symbol)
+ss_has_meth(q, m) :- ss_own_meth(q, m, _).
+.decl ss_meth(q: symbol, m: symbol, g: symbol)
+ss_meth(q, m, g) :- ss_own_meth(q, m, g).
+ss_meth(q, m, g) :- ss_super(q, b), ss_own_meth(b, m, g), !ss_has_meth(q, m).
 
 // ---- session work ------------------------------------------------------------------------------------------------
 // ss_blocking(m): Session methods that do IO (a query, a flush, a connection's commit, rollback or release).
@@ -116,52 +164,116 @@ ss_method(q, m, g) :- class_def(_, q), !method(q, m, _), ss_super(q, b), method(
 ss_blocking("query"). ss_blocking("execute"). ss_blocking("scalars"). ss_blocking("scalar"). ss_blocking("get").
 ss_blocking("commit"). ss_blocking("flush"). ss_blocking("refresh"). ss_blocking("rollback"). ss_blocking("delete").
 ss_blocking("merge"). ss_blocking("exec"). ss_blocking("close"). ss_blocking("remove").
-// ss_work(o, h, what): call o, in def h's own frame and not awaited, is a blocking method on a sync session.
-.decl ss_work(o: node, h: node, what: symbol)
-ss_work(o, h, cat(rt, ".", m, "()")) :- kind(o, "call"), field(o, "function", fn), attr_of(fn, r0, m), ss_blocking(m),
-    unparen(r0, r), ss_expr(r), nearest(o, h, ss_stop), kind(h, "function_definition"), !awaited(o), text(r, rt).
+// ss_work(o, h, what, c1, c2, c3): call o, in def h's own frame and not awaited, is a blocking method on a sync
+// session, under condition (c1, c2, c3).
+.decl ss_work(o: node, h: node, what: symbol, c1: symbol, c2: symbol, c3: symbol)
+ss_work(o, h, cat(rt, ".", m, "()"), c1, c2, c3) :- ss_recv(o, r, m), ss_ec(r, c1, c2, c3), nearest(o, h, ss_stop),
+    kind(h, "function_definition"), !awaited(o), text(r, rt).
+.decl ss_recv(o: node, r: node, m: symbol)
+ss_recv(o, r, m) :- kind(o, "call"), field(o, "function", fn), attr_of(fn, r0, m), ss_blocking(m), unparen(r0, r).
 
-// ss_expr(e): expression e holds a sync session: a name its scope binds to one (ss_name), `self.a`/`cls.a` or `K.a`
-// for a class attribute a holding one (ss_attr), or `<x>.state.a` when the run assigns a session to `.state.a`.
-.decl ss_expr(e: node)
-ss_expr(e) :- kind(e, "identifier"), text(e, x), look(e, x, s), ss_name(s, x).
-ss_expr(e) :- attr_of(e, o, a), kind(o, "identifier"), (text(o, "self") ; text(o, "cls")), text(o, y), look(o, y, m),
-    nearest(m, k, scope), class_def(k, kq), ss_class_attr(kq, a).
-ss_expr(e) :- attr_of(e, o, a), sym_of(o, q), class_def(_, q), ss_class_attr(q, a).
-ss_expr(e) :- attr_of(e, s, a), attr_of(s, _, "state"), ss_state(a).
-// ss_class_attr(q, a): class q, or one of its bases, has attribute a holding a sync session.
-.decl ss_class_attr(q: symbol, a: symbol)
-ss_class_attr(q, a) :- ss_attr(q, a).
-ss_class_attr(q, a) :- ss_super(q, b), ss_attr(b, a).
+// ---- conditions --------------------------------------------------------------------------------------------------
+// A per-file relation states a session under a condition (c1, c2, c3), which ss_ok settles over symbols:
+//   ("sure", "", "")      settled in its file
+//   ("name", h, x)        name x of def h holds a sync session (ss_name_ok)
+//   ("attr", k, a)        class k, or a base, has attribute a holding one (ss_class_attr)
+//   ("state", a, "")      the run assigns one to `<x>.state.a` (ss_state_ok)
+//   ("type", q, "")       q, a variable of another module, is a sync session type alias (lib/fastapi's fa_var_session)
+//   ("maker", q, "")      q, a variable of another module, is a sync session maker (lib/fastapi's fa_var_maker)
+//   ("ret", g, "")        g, a sync def a call surely calls, gives a sync session (ss_returns_ok)
+//   ("retcm", g, "")      the same for a @contextmanager def, whose call stays open
+.decl ss_ok(c1: symbol, c2: symbol, c3: symbol)
+ss_ok("sure", "", "").
+ss_ok("name", h, x) :- ss_name_ok(h, x).
+ss_ok("attr", k, a) :- ss_class_attr(k, a).
+ss_ok("state", a, "") :- ss_state_ok(a).
+ss_ok("type", q, "") :- fa_var_session(q, "sync").
+ss_ok("maker", q, "") :- fa_var_maker(q, "sync").
+ss_ok("ret", g, "") :- ss_sync(g), ss_returns_ok(g).
+ss_ok("retcm", g, "") :- ss_sync(g), ss_returns_ok(g), ss_cm(g).
 
-// ss_name(h, x): in def h, the name x holds a sync session.
-.decl ss_name(h: node, x: symbol)
+// ss_need(e): an expression whose session the rule asks for: a session method's receiver, a call's argument, a value
+// a def binds, an attribute's or a `.state.<a>`'s assigned value.
+.decl ss_need(e: node)
+ss_need(r) :- ss_recv(_, r, _).
+ss_need(a) :- kind(c, "call"), call_target(c, _), call_arg(c, _, _, a0), unparen(a0, a).
+ss_need(v) :- fa_bind(h, _, v), kind(h, "function_definition").
+ss_need(r) :- assigned_attr(_, "self", _, r0), unparen(r0, r).
+ss_need(r) :- ss_state_asg(_, r).
+// ss_ec(e, c1, c2, c3): expression e holds a sync session: a name of a def that holds one (ss_name_ok), `self.a`/
+// `cls.a` or `K.a` for a class attribute a holding one (ss_class_attr), or `<x>.state.a` when the run assigns a session
+// to `.state.a`.
+.decl ss_ec(e: node, c1: symbol, c2: symbol, c3: symbol)
+ss_ec(e, "name", sq, x) :- ss_need(e), kind(e, "identifier"), text(e, x), look(e, x, s), kind(s, "function_definition"),
+    pt_def(s, sq).
+ss_ec(e, "attr", kq, a) :- ss_need(e), attr_of(e, o, a), kind(o, "identifier"), (text(o, "self") ; text(o, "cls")),
+    text(o, y), look(o, y, m), nearest(m, k, scope), class_def(k, kq).
+ss_ec(e, "attr", q, a) :- ss_need(e), attr_of(e, o, a), sym_of(o, q).
+ss_ec(e, "state", a, "") :- ss_need(e), attr_of(e, s, a), attr_of(s, _, "state").
+// ss_mk(v, c1, c2, c3): call v makes a sync session (lib/fastapi's fa_session_maker and fa_maker_ext; a maker built
+// inline, `sessionmaker(bind=e)()`), or surely calls a sync def that gives one (ss_returns_ok).
+.decl ss_mk(v: node, c1: symbol, c2: symbol, c3: symbol)
+ss_mk(v, "sure", "", "") :- fa_session_maker(v, "sync").
+ss_mk(v, "maker", q, "") :- fa_maker_ext(v, q).
+ss_mk(v, "ret", g, "") :- kind(v, "call"), !call_open(v), call_target(v, g).
+// A @contextmanager def is the call's target, with the call open (the decorator is outside the run).
+ss_mk(v, "retcm", g, "") :- kind(v, "call"), call_target(v, g).
+// ss_cm(g): def g is decorated with contextlib.contextmanager. Stated in its file.
+.decl ss_cm(g: symbol)
+ss_cm(gq) :- decorator(g, e), unparen(e, m), sym_of(m, "contextlib.contextmanager"), pt_def(g, gq).
+// ss_ty(t, c1, c2, c3): type expression t names a sync session class: directly (lib/fastapi's fa_session_type, or
+// fa_session_type_ext for an alias of another module), through ClassVar, or through a module alias of this file.
+.decl ss_ty(t: node, c1: symbol, c2: symbol, c3: symbol)
+ss_ty(t, "sure", "", "") :- fa_session_type(t, "sync").
+ss_ty(t, "type", q, "") :- fa_session_type_ext(t, q).
+ss_ty(t, c1, c2, c3) :- fa_sub(t, q), (q = "typing.ClassVar" ; q = "typing_extensions.ClassVar"), fa_sub_arg(t, 0, a),
+    ss_ty(a, c1, c2, c3).
+ss_ty(t, c1, c2, c3) :- fa_value(t, v), fa_sub(v, _), ss_ty(v, c1, c2, c3).
+ss_ty(t, c1, c2, c3) :- fa_strip(t, m), m != t, ss_ty(m, c1, c2, c3).
+
+// ss_name_ok(h, x): in def h, the name x holds a sync session.
+.decl ss_name_ok(h: symbol, x: symbol)
 // The request's session, from the parameter's type or its dependency.
-ss_name(h, x) :- fa_session_param(h, _, x, "sync").
-// A parameter annotated as a sync session, in any def.
-ss_name(h, x) :- fa_param_type(h, _, x, t), ss_type(t).
-// A session h opens: `x = SessionLocal()`, `with Session(engine) as x`, `x = open_session()`; or a local alias of a
-// session.
-ss_name(h, x) :- fa_bind(h, x, v), kind(h, "function_definition"), ss_maker(v).
-ss_name(h, x) :- fa_bind(h, x, v), kind(h, "function_definition"), ss_expr(v).
-ss_name(h, x) :- ss_with(w, x), nearest(w, h, ss_stop), kind(h, "function_definition").
-// A parameter some caller passes a session to.
-ss_name(h, x) :- ss_passed(c, h, x).
-// ss_with(w, x): with-statement w binds x to the session its item makes (`with SessionLocal() as x`, `with
-// session_scope() as x`).
-.decl ss_with(w: node, x: symbol)
-ss_with(w, x) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, wi, _),
+ss_name_ok(h, x) :- fa_session_param(h, x, "sync").
+ss_name_ok(h, x) :- ss_name_src(h, x, c1, c2, c3), ss_ok(c1, c2, c3).
+// A parameter some caller passes a session to (ss_pass_at, stated in the caller's file; ss_pos_param and
+// ss_kw_param, in h's).
+ss_name_ok(h, x) :- ss_pass_at(h, j, "", c1, c2, c3), ss_pos_param(h, j, x), ss_ok(c1, c2, c3).
+ss_name_ok(h, x) :- ss_pass_at(h, -1, x, c1, c2, c3), ss_kw_param(h, x), ss_ok(c1, c2, c3).
+// ss_name_src(h, x, c1, c2, c3): a parameter of h annotated as a sync session; a session h opens (`x =
+// SessionLocal()`, `with Session(engine) as x`, `x = open_session()`); or a local alias of a session.
+.decl ss_name_src(h: symbol, x: symbol, c1: symbol, c2: symbol, c3: symbol)
+ss_name_src(hq, x, c1, c2, c3) :- fa_param_type(h, _, x, t), ss_ty(t, c1, c2, c3), pt_def(h, hq).
+ss_name_src(hq, x, c1, c2, c3) :- fa_bind(h, x, v), kind(h, "function_definition"), ss_mk(v, c1, c2, c3),
+    pt_def(h, hq).
+ss_name_src(hq, x, c1, c2, c3) :- fa_bind(h, x, v), kind(h, "function_definition"), ss_ec(v, c1, c2, c3),
+    pt_def(h, hq).
+ss_name_src(hq, x, c1, c2, c3) :- ss_with(w, x, c1, c2, c3), nearest(w, h, ss_stop), kind(h, "function_definition"),
+    pt_def(h, hq).
+// ss_with(w, x, c1, c2, c3): with-statement w binds x to the session its item makes (`with SessionLocal() as x`,
+// `with session_scope() as x`).
+.decl ss_with(w: node, x: symbol, c1: symbol, c2: symbol, c3: symbol)
+ss_with(w, x, c1, c2, c3) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, wi, _),
     kind(wi, "with_item"), field(wi, "value", ap), kind(ap, "as_pattern"), child(ap, v0, 0), unparen(v0, v),
-    ss_maker(v), field(ap, "alias", t), child(t, n, 0), kind(n, "identifier"), text(n, x).
-ss_with(w, x) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, wi, _),
+    ss_mk(v, c1, c2, c3), field(ap, "alias", t), child(t, n, 0), kind(n, "identifier"), text(n, x).
+ss_with(w, x, c1, c2, c3) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, wi, _),
     kind(wi, "with_item"), field(wi, "value", ap), kind(ap, "as_pattern"), child(ap, v0, 0), unparen(v0, v),
-    ss_maker(v), field(ap, "alias", t), kind(t, "identifier"), text(t, x).
+    ss_mk(v, c1, c2, c3), field(ap, "alias", t), kind(t, "identifier"), text(t, x).
 
-// ss_passed(c, h, x): call c, whose target is h, passes a sync session to h's parameter x.
-.decl ss_passed(c: node, h: node, x: symbol)
-ss_passed(c, h, x) :- call_target(c, h), call_arg(c, j, "", a0), unparen(a0, a), ss_expr(a), ss_offset(h, n),
-    i = j + n, sig_param(h, _, nm, i, k, _, _), (k = "pos" ; k = "posonly"), text(nm, x).
-ss_passed(c, h, x) :- call_target(c, h), call_arg(c, -1, x, a0), unparen(a0, a), ss_expr(a), param_named(h, x, _).
+// ss_pass_at(h, j, x, c1, c2, c3): a call whose target is h passes a sync session, positionally (j its place, x "")
+// or by keyword x (j -1).
+.decl ss_pass_at(h: symbol, j: number, x: symbol, c1: symbol, c2: symbol, c3: symbol)
+ss_pass_at(h, j, "", c1, c2, c3) :- call_target(c, h), call_arg(c, j, "", a0), j >= 0, unparen(a0, a),
+    ss_ec(a, c1, c2, c3).
+ss_pass_at(h, -1, x, c1, c2, c3) :- call_target(c, h), call_arg(c, -1, x, a0), x != "", unparen(a0, a),
+    ss_ec(a, c1, c2, c3).
+// ss_pos_param(h, j, x): the j-th positional argument of a call of def h fills its parameter x, past a method's self
+// or cls (ss_offset). ss_kw_param(h, x): h has a parameter x.
+.decl ss_pos_param(h: symbol, j: number, x: symbol)
+ss_pos_param(hq, j, x) :- ss_offset(h, n), sig_param(h, _, nm, i, k, _, _), (k = "pos" ; k = "posonly"), text(nm, x),
+    j = i - n, j >= 0, pt_def(h, hq).
+.decl ss_kw_param(h: symbol, x: symbol)
+ss_kw_param(hq, x) :- kind(h, "function_definition"), param_named(h, x, _), pt_def(h, hq).
 // ss_offset(h, n): a call's first positional argument fills h's parameter n: 1 for a method's self or cls.
 .decl ss_offset(h: node, n: number)
 ss_offset(h, 1) :- kind(h, "function_definition"), nearest(h, k, scope), kind(k, "class_definition"), !ss_static(h).
@@ -171,44 +283,43 @@ ss_offset(h, 0) :- kind(h, "function_definition"), nearest(h, k, scope), !kind(k
 ss_static(h) :- decorator(h, e), unparen(e, m), sym_of(m, "staticmethod").
 ss_static(h) :- decorator(h, e), unparen(e, m), kind(m, "identifier"), text(m, "staticmethod").
 
-// ss_type(t): type expression t names a sync session class: directly (lib/fastapi), as a parametrized class
-// (`scoped_session[Session]`), through ClassVar, or through a module alias of either.
-.decl ss_type(t: node)
-ss_type(t) :- fa_session_type(t, "sync").
-ss_type(t) :- fa_sub(t, q), fa_session_class(q, "sync").
-ss_type(t) :- fa_sub(t, q), (q = "typing.ClassVar" ; q = "typing_extensions.ClassVar"), fa_sub_arg(t, 0, a), ss_type(a).
-ss_type(t) :- fa_value(t, v), fa_sub(v, _), ss_type(v).
-ss_type(t) :- fa_strip(t, m), m != t, ss_type(m).
+// ss_returns_ok(g): def g returns or yields a sync session: its return annotation names one (`-> Session`,
+// `-> Iterator[Session]` on a @contextmanager), or it returns or yields a session it makes or holds (ss_ret_src,
+// stated in g's file).
+.decl ss_returns_ok(g: symbol)
+ss_returns_ok(g) :- ss_ret_src(g, c1, c2, c3), ss_ok(c1, c2, c3).
+.decl ss_ret_src(g: symbol, c1: symbol, c2: symbol, c3: symbol)
+ss_ret_src(gq, c1, c2, c3) :- kind(g, "function_definition"), field(g, "return_type", rt0), fa_strip(rt0, rt),
+    ss_ty(rt, c1, c2, c3), pt_def(g, gq).
+ss_ret_src(gq, c1, c2, c3) :- fa_gives(g, e), ss_mk(e, c1, c2, c3), pt_def(g, gq).
+ss_ret_src(gq, "name", gq, x) :- fa_gives(g, e), kind(e, "identifier"), text(e, x), pt_def(g, gq).
 
-// ss_maker(v): call v makes a sync session (lib/fastapi's fa_session_maker), calls a maker built inline
-// (`sessionmaker(bind=e)()`), or surely calls a sync def that gives one (ss_returns).
-.decl ss_maker(v: node)
-ss_maker(v) :- fa_session_maker(v, "sync").
-ss_maker(v) :- kind(v, "call"), field(v, "function", f0), unparen(f0, f), fa_maker_value(f, "sync").
-ss_maker(v) :- kind(v, "call"), !call_open(v), call_target(v, g), ss_sync(g), ss_returns(g).
-// A @contextmanager def is the call's target, with the call open (the decorator is outside the run).
-ss_maker(v) :- kind(v, "call"), call_target(v, g), ss_sync(g), ss_returns(g), decorator(g, e), unparen(e, m),
-    sym_of(m, "contextlib.contextmanager").
-// ss_returns(g): def g returns or yields a sync session: its return annotation names one (`-> Session`,
-// `-> Iterator[Session]` on a @contextmanager), or it returns or yields a session it makes or holds.
-.decl ss_returns(g: node)
-ss_returns(g) :- kind(g, "function_definition"), field(g, "return_type", rt0), fa_strip(rt0, rt), ss_type(rt).
-ss_returns(g) :- fa_gives(g, e), ss_maker(e).
-ss_returns(g) :- fa_gives(g, e), kind(e, "identifier"), text(e, x), ss_name(g, x).
-
-// ss_attr(q, a): class q declares attribute a as a sync session (`session: ClassVar[SessionType]`, `session:
-// Session`), or one of its methods assigns `self.a` a sync session (`self.session = session` with `session: Session`).
-.decl ss_attr(q: symbol, a: symbol)
-ss_attr(q, a) :- class_def(c, q), field(c, "body", b), child(b, s, _), kind(s, "expression_statement"),
+// ss_class_attr(q, a): class q, or one of its bases, has attribute a holding a sync session. ss_attr_src(q, a, c1,
+// c2, c3): q declares a as one (`session: ClassVar[SessionType]`, `session: Session`), or one of its methods assigns
+// `self.a` one (`self.session = session` with `session: Session`); stated in q's file.
+.decl ss_attr_src(q: symbol, a: symbol, c1: symbol, c2: symbol, c3: symbol)
+ss_attr_src(q, a, c1, c2, c3) :- class_def(c, q), field(c, "body", b), child(b, s, _), kind(s, "expression_statement"),
     child(s, n, 0), kind(n, "assignment"), field(n, "left", l), kind(l, "identifier"), text(l, a), field(n, "type", t0),
-    fa_strip(t0, t), ss_type(t).
-ss_attr(q, a) :- assigned_attr(m, "self", a, r0), unparen(r0, r), (ss_expr(r) ; ss_maker(r)), nearest(m, c, scope),
-    class_def(c, q).
+    fa_strip(t0, t), ss_ty(t, c1, c2, c3).
+ss_attr_src(q, a, c1, c2, c3) :- assigned_attr(m, "self", a, r0), unparen(r0, r), ss_ec(r, c1, c2, c3),
+    nearest(m, c, scope), class_def(c, q).
+ss_attr_src(q, a, c1, c2, c3) :- assigned_attr(m, "self", a, r0), unparen(r0, r), ss_mk(r, c1, c2, c3),
+    nearest(m, c, scope), class_def(c, q).
+.decl ss_attr_ok(q: symbol, a: symbol)
+ss_attr_ok(q, a) :- ss_attr_src(q, a, c1, c2, c3), ss_ok(c1, c2, c3).
+.decl ss_class_attr(q: symbol, a: symbol)
+ss_class_attr(q, a) :- ss_attr_ok(q, a).
+ss_class_attr(q, a) :- ss_super(q, b), ss_attr_ok(b, a).
 
-// ss_state(a): the run assigns a sync session to `<x>.state.a` (`request.state.db = SessionLocal()`).
-.decl ss_state(a: symbol)
-ss_state(a) :- kind(n, "assignment"), field(n, "left", l), attr_of(l, s, a), attr_of(s, _, "state"),
-    field(n, "right", r0), fa_unwrap(r0, r), (ss_maker(r) ; ss_expr(r)).
+// ss_state_ok(a): the run assigns a sync session to `<x>.state.a` (`request.state.db = SessionLocal()`).
+.decl ss_state_asg(a: symbol, r: node)
+ss_state_asg(a, r) :- kind(n, "assignment"), field(n, "left", l), attr_of(l, s, a), attr_of(s, _, "state"),
+    field(n, "right", r0), fa_unwrap(r0, r).
+.decl ss_state_src(a: symbol, c1: symbol, c2: symbol, c3: symbol)
+ss_state_src(a, c1, c2, c3) :- ss_state_asg(a, r), ss_mk(r, c1, c2, c3).
+ss_state_src(a, c1, c2, c3) :- ss_state_asg(a, r), ss_ec(r, c1, c2, c3).
+.decl ss_state_ok(a: symbol)
+ss_state_ok(a) :- ss_state_src(a, c1, c2, c3), ss_ok(c1, c2, c3).
 
 // The cases, `cases/fastapi-practice-sync-session-in-async-route/`, read as one repository: each line ending in
 // `# caught` is reported, and no other line.

@@ -7,9 +7,9 @@
 // permission_classes replaces the default, so in a project whose settings never set a default (or set AllowAny only)
 // a view that names no permission classes is open to anonymous users. The rule reads the project's REST_FRAMEWORK
 // settings in every non-test file of the run (base, production and local settings modules alike) and reports:
-//   - a concrete DRF view class (an APIView, generic view or viewset, lib/drf's drf_view) that neither assigns
+//   - a concrete DRF view class (an APIView, generic view or viewset, lib/drf's drf_view_q) that neither assigns
 //     permission_classes nor defines get_permissions(), itself or through a base view of the run in any module
-//     (drf_view_sets_perms). Concrete: no class of the run derives from it, and its name does not start with `Base`
+//     (drf_view_sets_perms_q). Concrete: no class of the run derives from it, and its name does not start with `Base`
 //     or `Abstract`; a base view is reported through its subclasses;
 //   - an `@api_view` function without a `@permission_classes(...)` decorator.
 //   # settings.py: REST_FRAMEWORK = {"DEFAULT_AUTHENTICATION_CLASSES": [...]}      no DEFAULT_PERMISSION_CLASSES
@@ -37,7 +37,8 @@
 #include "lib/drf.rerail"
 
 .violation ViewWithoutPermission(at: node, name: symbol, why: symbol) "`{name}` sets no permission classes and {why}, so anonymous users can call it. Set permission_classes (IsAuthenticated or stricter), or `[AllowAny]` if it is public by design."
-ViewWithoutPermission(n, x, why) :- vwp_open(why), vwp_view(c), field(c, "name", n), text(n, x).
+// A view is judged by its symbol (its bases and members may sit in other modules) and reported at its own name.
+ViewWithoutPermission(n, x, why) :- vwp_open(why), vwp_view(q), class_def(c, q), field(c, "name", n), text(n, x).
 ViewWithoutPermission(n, x, why) :- vwp_open(why), vwp_fn(f), field(f, "name", n), text(n, x).
 
 // vwp_open(why): the run holds the project's settings (some non-test file assigns REST_FRAMEWORK) and they leave
@@ -49,14 +50,17 @@ vwp_open("the project's default permission is AllowAny") :- drf_settings_known()
     !vwp_closed().
 // vwp_closed(): a settings module sets a default other than AllowAny, or one the rule cannot read; or REST_FRAMEWORK
 // is built from something other than a dict literal or dict(...) call, or a dict literal splices another dict
-// (`{**BASE, ...}`), so a default may hide there.
+// (`{**BASE, ...}`), so a default may hide there. What a settings file's syntax says is vwp_closed_here, stated in
+// that file; the classes its strings name may come from another module's constant (drf_setting_class).
 .decl vwp_closed()
 vwp_closed() :- drf_setting_class("DEFAULT_PERMISSION_CLASSES", q), q != "rest_framework.permissions.AllowAny".
-vwp_closed() :- drf_setting("DEFAULT_PERMISSION_CLASSES", v), unparen(v, u), !vwp_readable(u).
-vwp_closed() :- drf_setting("DEFAULT_PERMISSION_CLASSES", v), unparen(v, u), kind(u, k), drf_seq(k), child(u, e, _),
-    !kind(e, "comment"), unparen(e, eu), !vwp_name(eu).
-vwp_closed() :- drf_settings_asg(_, v), !kind(v, "dictionary"), !vwp_dict_call(v).
-vwp_closed() :- drf_settings_dict(m), child(m, s, _), kind(s, "dictionary_splat").
+vwp_closed() :- vwp_closed_here().
+.decl vwp_closed_here()
+vwp_closed_here() :- drf_setting("DEFAULT_PERMISSION_CLASSES", v), unparen(v, u), !vwp_readable(u).
+vwp_closed_here() :- drf_setting("DEFAULT_PERMISSION_CLASSES", v), unparen(v, u), kind(u, k), drf_seq(k),
+    child(u, e, _), !kind(e, "comment"), unparen(e, eu), !vwp_name(eu).
+vwp_closed_here() :- drf_settings_asg(_, v), !kind(v, "dictionary"), !vwp_dict_call(v).
+vwp_closed_here() :- drf_settings_dict(m), child(m, s, _), kind(s, "dictionary_splat").
 .decl vwp_dict_call(v: node)
 vwp_dict_call(v) :- kind(v, "call"), field(v, "function", f), sym_of(f, "builtins.dict").
 // vwp_readable(u) / vwp_name(e): a value naming classes the rule reads: a dotted string or a class reference, alone
@@ -69,41 +73,41 @@ vwp_name(e) :- str(e, _).
 vwp_name(e) :- kind(e, "identifier").
 vwp_name(e) :- kind(e, "attribute").
 
-// vwp_view(c): a concrete DRF view outside test code that sets no permissions, is not public by its empty
+// vwp_view(q): a concrete DRF view outside test code that sets no permissions, is not public by its empty
 // authentication_classes, has no base outside the run that is not DRF's own, and is not a viewset whose only
-// handlers are `@action(permission_classes=[...])`s.
-.decl vwp_view(c: node)
-vwp_view(c) :- drf_view(c), !drf_view_sets_perms(c), !vwp_has_subclass(c), def_name(c, x), !prefix("Base", x),
-    !prefix("Abstract", x), !vwp_no_auth(c), !vwp_foreign(c), !vwp_actions_only(c), docof(c, d), !dj_test_doc(d).
-.decl vwp_has_subclass(c: node)
-vwp_has_subclass(c) :- drf_sub(_, c).
-// vwp_no_auth(c): view c's (inherited) authentication_classes is an empty list or tuple.
-.decl vwp_no_auth(c: node)
-vwp_no_auth(c) :- drf_attr(c, "authentication_classes", v), unparen(v, u), kind(u, k), drf_seq(k), !vwp_has_elem(u).
+// handlers are `@action(permission_classes=[...])`s. By symbol: its bases, members and subclasses in any module.
+.decl vwp_view(q: symbol)
+vwp_view(q) :- drf_view_q(q), !drf_view_sets_perms_q(q), !drf_has_sub(q), split_dot(q, _, x), !prefix("Base", x),
+    !prefix("Abstract", x), !vwp_no_auth(q), !vwp_foreign(q), !vwp_actions_only(q), !drf_qtest(q).
+// vwp_no_auth(q): view q's (inherited) authentication_classes is an empty list or tuple (vwp_empty, in its file).
+.decl vwp_no_auth(q: symbol)
+vwp_no_auth(q) :- drf_attr_q(q, "authentication_classes", h), vwp_empty(h).
+.decl vwp_empty(h: symbol)
+vwp_empty(h) :- drf_hv(h, v), unparen(v, u), kind(u, k), drf_seq(k), !vwp_has_elem(u).
 .decl vwp_has_elem(u: node)
 vwp_has_elem(u) :- child(u, e, _), !kind(e, "comment").
-// vwp_actions_only(c): every handler view c has (its own or a run base's) is an `@action` naming its own permission
-// classes, and c's DRF bases bring no handler of their own: only the guarded actions are routed (addons-server's
+// vwp_actions_only(q): every handler view q has (its own or a run base's) is an `@action` naming its own permission
+// classes, and q's DRF bases bring no handler of their own: only the guarded actions are routed (addons-server's
 // AddonReviewerViewSet).
-.decl vwp_actions_only(c: node)
-vwp_actions_only(c) :- drf_handler(c, f, _), vwp_guarded(f), !vwp_open_handler(c), !vwp_lib_handlers(c).
-.decl vwp_guarded(f: node)
-vwp_guarded(f) :- drf_action_def(f, e), drf_kw(e, "permission_classes", _).
-.decl vwp_open_handler(c: node)
-vwp_open_handler(c) :- drf_handler(c, f, _), !vwp_guarded(f).
+.decl vwp_actions_only(q: symbol)
+vwp_actions_only(q) :- drf_handler_q(q, fq, _), vwp_guarded(fq), !vwp_open_handler(q), !vwp_lib_handlers(q).
+.decl vwp_guarded(fq: symbol)
+vwp_guarded(fq) :- drf_action_def(f, e), drf_kw(e, "permission_classes", _), qualname(f, fq).
+.decl vwp_open_handler(q: symbol)
+vwp_open_handler(q) :- drf_handler_q(q, fq, _), !vwp_guarded(fq).
 .decl vwp_bare_base(x: symbol)
 vwp_bare_base("APIView"). vwp_bare_base("GenericAPIView"). vwp_bare_base("ViewSet"). vwp_bare_base("GenericViewSet").
 vwp_bare_base("ViewSetMixin").
-.decl vwp_lib_handlers(c: node)
-vwp_lib_handlers(c) :- class_def(c, q), drf_lib_q(q, b), split_dot(b, _, x), !vwp_bare_base(x).
-// vwp_foreign(c): view c, or one of its run bases, lists a base class that is neither in the run nor rest_framework's
+.decl vwp_lib_handlers(q: symbol)
+vwp_lib_handlers(q) :- drf_lib(q, b), split_dot(b, _, x), !vwp_bare_base(x).
+// vwp_foreign(q): view q, or one of its run bases, lists a base class that is neither in the run nor rest_framework's
 // nor a typing or builtins helper.
-.decl vwp_foreign(c: node)
-vwp_foreign(c) :- drf_view(c), vwp_foreign_base(c).
-vwp_foreign(c) :- drf_view(c), drf_ancestor(c, b), vwp_foreign_base(b).
-.decl vwp_foreign_base(c: node)
-vwp_foreign_base(c) :- drf_base(c, q), !drf_cls(q, _), !prefix("rest_framework.", q), !prefix("builtins.", q),
-    !prefix("typing.", q), !prefix("typing_extensions.", q), !prefix("abc.", q).
+.decl vwp_foreign(q: symbol)
+vwp_foreign(q) :- drf_view_q(q), vwp_foreign_base(q).
+vwp_foreign(q) :- drf_view_q(q), drf_anc(q, b), vwp_foreign_base(b).
+.decl vwp_foreign_base(q: symbol)
+vwp_foreign_base(q) :- drf_qbase(q, b), !drf_cls_q(b, _), !prefix("rest_framework.", b), !prefix("builtins.", b),
+    !prefix("typing.", b), !prefix("typing_extensions.", b), !prefix("abc.", b).
 
 // vwp_fn(f): an `@api_view` function outside test code without a `@permission_classes(...)` decorator.
 .decl vwp_fn(f: node)

@@ -34,9 +34,9 @@
 //                                                     which is dropped with it (an item write is not, unless the
 //                                                     override replaces that setting)
 //   settings.X = 1; try: ... finally: settings.X = old
-//                                                     undone (the library's djt_undo): in a finally, after a fixture's
-//                                                     or @contextmanager's yield, in a tearDown/tearDownClass of the
-//                                                     class or a base class, teardown_module, an addCleanup /
+//                                                     undone (the library's djt_restored): in a finally, after a
+//                                                     fixture's or @contextmanager's yield, in a tearDown/tearDownClass
+//                                                     of the class or a base class, teardown_module, an addCleanup /
 //                                                     addfinalizer callback (a lambda, a def, a bound method,
 //                                                     `self.addCleanup(setattr, settings, "X", old)`), a def that undo
 //                                                     code calls, or the teardown of a fixture the test requests; the
@@ -57,7 +57,7 @@
 #include "lib/django_tests.rerail"
 
 .violation DjangoSettingsInTest(at: node, name: symbol) "`settings.{name}` set directly stays changed for every later test. Use override_settings or pytest-django's settings fixture; keep it only if code this rule cannot see restores it."
-DjangoSettingsInTest(n, x) :- dst_hit(n, x, u), !dst_later(n, x, u).
+DjangoSettingsInTest(n, x) :- dst_cand(n, x, u), pt_def(u, uq), djt_order(n, o), dst_first(uq, x, o).
 
 // dst_setting(a, x): a is `settings.X`, X upper-case, settings being django.conf.settings.
 .decl dst_setting(a: node, x: symbol)
@@ -96,18 +96,34 @@ dst_override_around(n, e) :- dst_write(n, _, _), def_frame(n, u), dst_override(e
 dst_overridden(n, x, "attr") :- dst_write(n, x, "attr"), dst_override_around(n, _).
 dst_overridden(n, x, how) :- dst_write(n, x, how), dst_override_around(n, e), call_arg(e, -1, x, _).
 
-// dst_restored(n): an undo or patch the library sees puts n's write back (djt_restore, matched by djt_covers).
-.decl dst_restored(n: node)
-dst_restored(n) :- dst_write(n, _, _), djt_loc(n, e, p, _), dj_settings(e), djt_restore(n, e2, a), dj_settings(e2),
+// dst_kept(n): a patch active where n runs puts n's write back (djt_guard_restore, matched by djt_covers). A write of
+// a test document, outside an override, that is no undo code its own file shows and that no such patch keeps is a
+// candidate (dst_cand).
+djt_root(e, "django.conf.settings") :- dj_settings(e).
+.decl dst_kept(n: node)
+dst_kept(n) :- dst_write(n, _, _), djt_loc(n, e, p, _), dj_settings(e), djt_guard_restore(n, e2, a), dj_settings(e2),
     djt_covers(n, e, p, a).
+.decl dst_cand(n: node, x: symbol, u: node)
+dst_cand(n, x, u) :- dst_write(n, x, how), def_frame(n, u), docof(n, d), dj_test_doc(d), !dst_overridden(n, x, how),
+    !djt_undo_at(n, _), !dst_kept(n).
 
-// dst_hit(n, x, u): a write of x in u, a def of a test document that runs inside a test, outside an override, that
-// is not itself undo code and that nothing restores; dst_later(n, x, u): another one comes before it.
-.decl dst_hit(n: node, x: symbol, u: node)
-dst_hit(n, x, u) :- dst_write(n, x, how), def_frame(n, u), djt_runs_in_test(u), docof(n, d), dj_test_doc(d),
-    !dst_overridden(n, x, how), !djt_undo(n, _), !dst_restored(n).
-.decl dst_later(n: node, x: symbol, u: node)
-dst_later(n, x, u) :- dst_hit(n, x, u), dst_hit(m, x, u), earlier(m, n).
+// What takes other files is asked by u's symbol (decision 0677): whether u runs inside a test or is undo code itself
+// (djt_runs_in_test, djt_undo_body), and whether undo code that runs after u, or a function-scoped fixture u
+// requests, puts the write back (the library's djt_restored). Each file hands on its candidates by def, setting and
+// order (dst_at), and the paths that put each back (dst_cov, the library's djt_covers).
+.decl dst_at(u: symbol, x: symbol, o: number)
+dst_at(uq, x, o) :- dst_cand(n, x, u), pt_def(u, uq), djt_order(n, o).
+.decl dst_cov(u: symbol, o: number, a: symbol)
+dst_cov(uq, o, a) :- dst_cand(n, _, u), pt_def(u, uq), djt_order(n, o), djt_loc(n, e, p, _), dj_settings(e),
+    djt_covers(n, e, p, a).
+.decl dst_restored(u: symbol, o: number)
+dst_restored(uq, o) :- dst_cov(uq, o, a), djt_restored(uq, "django.conf.settings", a).
+// dst_hit(u, x, o): a write of x at order o in u, a def that runs inside a test, that is not itself undo code and
+// that nothing restores; dst_first(u, x, o): the first of them, the one reported.
+.decl dst_hit(u: symbol, x: symbol, o: number)
+dst_hit(uq, x, o) :- dst_at(uq, x, o), djt_runs_in_test(uq), !djt_undo_body(uq), !dst_restored(uq, o).
+.decl dst_first(u: symbol, x: symbol, o: number)
+dst_first(uq, x, o) :- dst_hit(uq, x, o), o = min o2 : { dst_hit(uq, x, o2) }.
 
 // The cases, `cases/django-practice-settings-in-test/`, read as one repository: each line ending in
 // `# caught` is reported, and no other line.

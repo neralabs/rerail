@@ -76,19 +76,22 @@
 
 #include "lib/drf.rerail"
 
+// The view, its serializer and the model are judged by symbol (rnp_hit: their classes may sit in three modules, and
+// each method body and attribute value is read in its own file), and the finding is written at the node of the
+// view's own file that rnp_where names (rnp_spot).
 .violation RelatedFieldNotPrefetched(at: node, view: symbol, ser: symbol, load: symbol) "`{view}` lists `{ser}` rows but does not load the relations they read: one query per row. Add {load} to its queryset. Leave it if list() serialises another class or a manager loads them."
-RelatedFieldNotPrefetched(at, vn, sn, load) :- rnp_load_text(v, sc, load), rnp_at(v, sc, at), def_name(v, vn),
-    def_name(sc, sn).
+RelatedFieldNotPrefetched(at, vn, sn, load) :- rnp_load_text(v, sc, load), rnp_where(v, sc, key), rnp_spot(at, key),
+    split_dot(v, _, vn), split_dot(sc, _, sn).
 
 // rnp_miss(v, sc, r, many): view v's list misses relation r; rnp_lookups joins them per kind as a call's arguments.
-.decl rnp_miss(v: node, sc: node, r: symbol, many: symbol)
+.decl rnp_miss(v: symbol, sc: symbol, r: symbol, many: symbol)
 rnp_miss(v, sc, r, many) :- rnp_hit(v, sc, _, r, many).
-.decl rnp_lookups(v: node, sc: node, many: symbol, s: symbol)
+.decl rnp_lookups(v: symbol, sc: symbol, many: symbol, s: symbol)
 rnp_lookups(v, sc, many, s) :- rnp_miss(v, sc, _, many),
     s = join q by r sep ", " : { rnp_miss(v, sc, r, many), q = cat("\"", r, "\"") }.
-.decl rnp_misses(v: node, sc: node, many: symbol)
+.decl rnp_misses(v: symbol, sc: symbol, many: symbol)
 rnp_misses(v, sc, many) :- rnp_miss(v, sc, _, many).
-.decl rnp_load_text(v: node, sc: node, t: symbol)
+.decl rnp_load_text(v: symbol, sc: symbol, t: symbol)
 rnp_load_text(v, sc, t) :- rnp_lookups(v, sc, "one", a), rnp_lookups(v, sc, "many", b),
     t = cat("select_related(", a, ") and prefetch_related(", b, ")").
 rnp_load_text(v, sc, t) :- rnp_lookups(v, sc, "one", a), !rnp_misses(v, sc, "many"), t = cat("select_related(", a, ")").
@@ -104,122 +107,151 @@ rnp_rel_class("ManyToManyField", "many"). rnp_rel_class("ParentalManyToManyField
 rnp_ext_rel("mptt.fields.TreeForeignKey", "one"). rnp_ext_rel("mptt.fields.TreeOneToOneField", "one").
 rnp_ext_rel("mptt.fields.TreeManyToManyField", "many"). rnp_ext_rel("taggit.managers.TaggableManager", "many").
 // rnp_model_class(mc, c): c is model mc or a class of the run among its bases: where mc's fields are written.
-.decl rnp_model_class(mc: node, c: node)
-rnp_model_class(mc, mc) :- dj_model(mc).
-rnp_model_class(mc, c) :- dj_model_super(mc, c).
+.decl rnp_model_class(mc: symbol, c: symbol)
+rnp_model_class(mc, mc) :- drf_model_q(mc).
+rnp_model_class(mc, c) :- drf_model_q(mc), drf_anc(mc, c).
 // rnp_body_call(c, x, k): class c's body has `x = k`, k a call.
 .decl rnp_body_call(c: node, x: symbol, k: node)
 rnp_body_call(c, x, k) :- kind(c, "class_definition"), field(c, "body", b), body_stmt(b, s, _),
     kind(s, "expression_statement"), child(s, a, 0), kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"),
     text(l, x), field(a, "right", v), unparen(v, k), kind(k, "call").
-// rnp_fwd(c, x, k, many): model class c declares relation field x as call k.
-.decl rnp_fwd(c: node, x: symbol, k: node, many: symbol)
-rnp_fwd(c, x, k, many) :- dj_class_field(c, x, k, t), rnp_rel_class(t, many).
-rnp_fwd(c, x, k, many) :- rnp_body_call(c, x, k), field(k, "function", fn), sym_of(fn, q), rnp_ext_rel(q, many).
-// rnp_rel(mc, r, many, fwd): r is a relation of model mc: a forward field of mc or its bases ("fwd"), or the
+// rnp_fwd_at(c, x, k, many): model class c declares relation field x as call k. rnp_fwd(cq, x, many): by the class's
+// qualname, stated in its file.
+.decl rnp_fwd_at(c: node, x: symbol, k: node, many: symbol)
+rnp_fwd_at(c, x, k, many) :- dj_class_field(c, x, k, t), rnp_rel_class(t, many).
+rnp_fwd_at(c, x, k, many) :- rnp_body_call(c, x, k), field(k, "function", fn), sym_of(fn, q), rnp_ext_rel(q, many).
+.decl rnp_fwd(cq: symbol, x: symbol, many: symbol)
+rnp_fwd(cq, x, many) :- rnp_fwd_at(c, x, _, many), class_def(c, cq).
+// rnp_rel(mc, r, many, dir): r is a relation of model mc: a forward field of mc or its bases ("fwd"), or the
 // accessor of another model's relation to mc ("rev").
-.decl rnp_rel(mc: node, r: symbol, many: symbol, dir: symbol)
-rnp_rel(mc, r, many, "fwd") :- rnp_model_class(mc, c), rnp_fwd(c, r, _, many).
-rnp_rel(mc, r, many, "rev") :- rnp_fwd(x, f, k, fm), rnp_target(k, x, mc), rnp_rev_name(x, f, k, fm, r, many).
-// rnp_target(k, x, mc): relation call k, in model class x, points to model class mc: its first argument or `to=`.
+.decl rnp_rel(mc: symbol, r: symbol, many: symbol, dir: symbol)
+rnp_rel(mc, r, many, "fwd") :- rnp_model_class(mc, c), rnp_fwd(c, r, many).
+rnp_rel(mc, r, many, "rev") :- rnp_rev(x, f, r, many), rnp_target(x, f, mc).
+// rnp_to(k, a): relation call k's target argument: its first argument or `to=`.
 .decl rnp_to(k: node, a: node)
-rnp_to(k, a) :- rnp_fwd(_, _, k, _), call_arg(k, 0, "", a).
-rnp_to(k, a) :- rnp_fwd(_, _, k, _), call_arg(k, -1, "to", a).
-.decl rnp_target(k: node, x: node, mc: node)
-rnp_target(k, x, mc) :- rnp_fwd(x, _, k, _), rnp_to(k, a), unparen(a, u), sym_of(u, q), drf_cls(q, mc), dj_model(mc).
-// The names this rule resolves through lib/drf's drf_cls beyond lib's own: relation targets and manager classes.
-drf_cls_ask(q) :- rnp_to(_, a), unparen(a, u), sym_of(u, q).
-drf_cls_ask(q) :- rnp_mgr_class(_, q).
-rnp_target(k, x, mc) :- rnp_fwd(x, _, k, _), rnp_to(k, a), str(a, s), def_name(mc, s), dj_model(mc).
-rnp_target(k, x, mc) :- rnp_fwd(x, _, k, _), rnp_to(k, a), str(a, s), match("[A-Za-z_][A-Za-z0-9_]*\\.(?<n>[A-Za-z_][A-Za-z0-9_]*)", s),
-    def_name(mc, n), dj_model(mc).
-rnp_target(k, x, x) :- rnp_fwd(x, _, k, _), rnp_to(k, a), str(a, "self").
-// rnp_rev_name(x, f, k, fm, r, many): the accessor r on the target model: related_name, else `<model>_set` (or
-// `<model>` for a OneToOneField); "+" or a `%(class)s` template names none.
-.decl rnp_rev_name(x: node, f: symbol, k: node, fm: symbol, r: symbol, many: symbol)
-rnp_rev_name(x, f, k, fm, r, many) :- rnp_fwd(x, f, k, fm), call_arg(k, -1, "related_name", a), str(a, r),
-    !contains("+", r), !contains("%", r), rnp_rev_many(k, fm, many).
-rnp_rev_name(x, f, k, fm, r, "many") :- rnp_fwd(x, f, k, fm), !call_arg(k, -1, "related_name", _), !rnp_one_to_one(k),
-    def_name(x, n), r = cat(@lower(n), "_set").
-rnp_rev_name(x, f, k, "one", r, "one") :- rnp_fwd(x, f, k, "one"), !call_arg(k, -1, "related_name", _),
-    rnp_one_to_one(k), def_name(x, n), r = @lower(n).
+rnp_to(k, a) :- rnp_fwd_at(_, _, k, _), call_arg(k, 0, "", a).
+rnp_to(k, a) :- rnp_fwd_at(_, _, k, _), call_arg(k, -1, "to", a).
+// rnp_to_sym(x, f, s) / rnp_to_str(x, f, s): model class x's relation f points at the class named s, or at the
+// string s. Stated in x's file.
+.decl rnp_to_sym(x: symbol, f: symbol, s: symbol)
+rnp_to_sym(xq, f, s) :- rnp_fwd_at(x, f, k, _), rnp_to(k, a), unparen(a, u), sym_of(u, s), class_def(x, xq).
+.decl rnp_to_str(x: symbol, f: symbol, s: symbol)
+rnp_to_str(xq, f, s) :- rnp_fwd_at(x, f, k, _), rnp_to(k, a), str(a, s), class_def(x, xq).
+// The names this rule resolves through lib/drf's drf_cls_q beyond lib's own: relation targets and manager classes.
+drf_cls_ask(s) :- rnp_to_sym(_, _, s).
+drf_cls_ask(s) :- rnp_mgr_sym(_, s).
+// rnp_target(x, f, mc): relation f of model class x points to model class mc: a class reference, "Model",
+// "app.Model" (by class name), or "self".
+.decl rnp_target(x: symbol, f: symbol, mc: symbol)
+rnp_target(x, f, mc) :- rnp_to_sym(x, f, s), drf_cls_q(s, mc), drf_model_q(mc).
+rnp_target(x, f, mc) :- rnp_to_str(x, f, s), drf_qrun_x(mc, s), drf_model_q(mc).
+rnp_target(x, f, mc) :- rnp_to_str(x, f, s), match("[A-Za-z_][A-Za-z0-9_]*\\.(?<n>[A-Za-z_][A-Za-z0-9_]*)", s),
+    drf_qrun_x(mc, n), drf_model_q(mc).
+rnp_target(x, f, x) :- rnp_to_str(x, f, "self").
+// rnp_rev(x, f, r, many): the accessor r on the target model of model class x's relation f: related_name, else
+// `<model>_set` (or `<model>` for a OneToOneField); "+" or a `%(class)s` template names none. Stated in x's file.
+.decl rnp_rev(x: symbol, f: symbol, r: symbol, many: symbol)
+rnp_rev(xq, f, r, many) :- rnp_fwd_at(x, f, k, fm), call_arg(k, -1, "related_name", a), str(a, r),
+    !contains("+", r), !contains("%", r), rnp_rev_many(k, fm, many), class_def(x, xq).
+rnp_rev(xq, f, r, "many") :- rnp_fwd_at(x, f, k, _), !call_arg(k, -1, "related_name", _), !rnp_one_to_one(k),
+    def_name(x, n), r = cat(@lower(n), "_set"), class_def(x, xq).
+rnp_rev(xq, f, r, "one") :- rnp_fwd_at(x, f, k, "one"), !call_arg(k, -1, "related_name", _), rnp_one_to_one(k),
+    def_name(x, n), r = @lower(n), class_def(x, xq).
 .decl rnp_one_to_one(k: node)
 rnp_one_to_one(k) :- dj_class_field(_, _, k, "OneToOneField").
-rnp_one_to_one(k) :- rnp_fwd(_, _, k, _), field(k, "function", fn), sym_of(fn, "mptt.fields.TreeOneToOneField").
+rnp_one_to_one(k) :- rnp_fwd_at(_, _, k, _), field(k, "function", fn), sym_of(fn, "mptt.fields.TreeOneToOneField").
 .decl rnp_rev_many(k: node, fm: symbol, many: symbol)
-rnp_rev_many(k, "many", "many") :- rnp_fwd(_, _, k, "many").
-rnp_rev_many(k, "one", "many") :- rnp_fwd(_, _, k, "one"), !rnp_one_to_one(k).
+rnp_rev_many(k, "many", "many") :- rnp_fwd_at(_, _, k, "many").
+rnp_rev_many(k, "one", "many") :- rnp_fwd_at(_, _, k, "one"), !rnp_one_to_one(k).
 rnp_rev_many(k, "one", "one") :- rnp_one_to_one(k).
 
 // ---- the list view and its serializer ----------------------------------------------------------------------------
 // rnp_view(v, sc, mc): list view v outside test code serializes with sc (its inherited serializer_class, with no
 // get_serializer_class or get_serializer of its own or a run base's), a serializer of model mc that does not override
 // to_representation.
-.decl rnp_view(v: node, sc: node, mc: node)
-rnp_view(v, sc, mc) :- drf_list_view(v), docof(v, d), !dj_test_doc(d), drf_attr(v, "serializer_class", e),
-    unparen(e, u), sym_of(u, q), drf_cls(q, sc), drf_model_serializer(sc), drf_meta_model(sc, mc),
-    !drf_method(v, "get_serializer_class", _), !drf_method(v, "get_serializer", _),
-    !drf_method(sc, "to_representation", _).
+.decl rnp_view(v: symbol, sc: symbol, mc: symbol)
+rnp_view(v, sc, mc) :- drf_list_view_q(v), !drf_qtest(v), drf_attr_q(v, "serializer_class", h), drf_hsym(h, s),
+    drf_cls_q(s, sc), drf_model_serializer_q(sc), drf_meta_model_q(sc, mc),
+    !drf_method_q(v, "get_serializer_class", _), !drf_method_q(v, "get_serializer", _),
+    !drf_method_q(sc, "to_representation", _).
 
 // ---- serializer fields that read a relation per row --------------------------------------------------------------
-// rnp_listed(sc, x): serializer sc's Meta.fields names x. rnp_covers(sc): its fields are "__all__", or it sets exclude
-// (and no fields), so every forward model field not excluded is in.
-.decl rnp_listed(sc: node, x: symbol)
-rnp_listed(sc, x) :- rnp_view(_, sc, _), drf_meta_opt(sc, "fields", v), drf_str_elem(v, x).
-.decl rnp_has_fields(sc: node)
-rnp_has_fields(sc) :- rnp_view(_, sc, _), drf_meta_opt(sc, "fields", _).
-.decl rnp_excluded(sc: node, x: symbol)
-rnp_excluded(sc, x) :- rnp_view(_, sc, _), drf_meta_opt(sc, "exclude", v), drf_str_elem(v, x).
-.decl rnp_covered(sc: node, x: symbol)
-rnp_covered(sc, x) :- rnp_view(_, sc, mc), drf_fields_all(sc), rnp_rel(mc, x, _, "fwd").
-rnp_covered(sc, x) :- rnp_view(_, sc, mc), !rnp_has_fields(sc), drf_meta_opt(sc, "exclude", _), rnp_rel(mc, x, _, "fwd"),
+// rnp_listed(sc, x): serializer sc's Meta.fields names x. rnp_covered(sc, x): its fields are "__all__", or it sets
+// exclude (and no fields), so every forward model field not excluded is in.
+.decl rnp_listed(sc: symbol, x: symbol)
+rnp_listed(sc, x) :- rnp_view(_, sc, _), drf_opt_str(sc, "fields", x, _).
+.decl rnp_has_fields(sc: symbol)
+rnp_has_fields(sc) :- rnp_view(_, sc, _), drf_opt(sc, "fields", _).
+.decl rnp_has_exclude(sc: symbol)
+rnp_has_exclude(sc) :- rnp_view(_, sc, _), drf_opt(sc, "exclude", _).
+.decl rnp_excluded(sc: symbol, x: symbol)
+rnp_excluded(sc, x) :- rnp_view(_, sc, _), drf_opt_str(sc, "exclude", x, _).
+.decl rnp_covered(sc: symbol, x: symbol)
+rnp_covered(sc, x) :- rnp_view(_, sc, mc), drf_fields_all_q(sc), rnp_rel(mc, x, _, "fwd").
+rnp_covered(sc, x) :- rnp_view(_, sc, mc), !rnp_has_fields(sc), rnp_has_exclude(sc), rnp_rel(mc, x, _, "fwd"),
     !rnp_excluded(sc, x).
-.decl rnp_in(sc: node, x: symbol)
+.decl rnp_in(sc: symbol, x: symbol)
 rnp_in(sc, x) :- rnp_listed(sc, x).
-rnp_in(sc, x) :- rnp_view(_, sc, _), drf_fields_all(sc), drf_declared(sc, x, _).
-rnp_in(sc, x) :- rnp_view(_, sc, _), !rnp_has_fields(sc), drf_meta_opt(sc, "exclude", _), drf_declared(sc, x, _).
-// Declared fields. rnp_path(k, x, p): field x = k reads attribute path p of the row: its source, else its name.
-.decl rnp_decl(sc: node, x: symbol, k: node)
-rnp_decl(sc, x, k) :- rnp_view(_, sc, _), drf_declared(sc, x, k), rnp_in(sc, x), !drf_kw_true(k, "write_only"),
-    !rnp_silent_kind(k), !rnp_custom_get(k).
-.decl rnp_silent_kind(k: node)
-rnp_silent_kind(k) :- drf_field_kind(k, "SerializerMethodField").
-rnp_silent_kind(k) :- drf_field_kind(k, "HiddenField").
-rnp_silent_kind(k) :- drf_field_kind(k, "HyperlinkedIdentityField").
-// rnp_custom_get(k): k's field class is a class of the run that, itself or through a run base, decides what it reads
-// (get_attribute, use_pk_only_optimization).
-.decl rnp_custom_get(k: node)
-rnp_custom_get(k) :- rnp_view(_, sc, _), drf_declared(sc, _, k), field(k, "function", fn), sym_of(fn, q), drf_cls(q, c),
-    (drf_method(c, "get_attribute", _) ; drf_method(c, "use_pk_only_optimization", _)).
-.decl rnp_path(k: node, x: symbol, p: symbol)
-rnp_path(k, x, p) :- rnp_decl(_, x, k), drf_kw(k, "source", sv), str(sv, p).
-rnp_path(k, x, x) :- rnp_decl(_, x, k), !drf_kw(k, "source", _).
-// rnp_pk_only(k): the field reads the key of a one-row relation, not the related row.
-.decl rnp_pk_only(k: node)
-rnp_pk_only(k) :- drf_field_kind(k, "PrimaryKeyRelatedField").
-rnp_pk_only(k) :- drf_field_kind(k, "HyperlinkedRelatedField"), !drf_kw(k, "lookup_field", _).
+rnp_in(sc, x) :- rnp_view(_, sc, _), drf_fields_all_q(sc), drf_declared_q(sc, x, _).
+rnp_in(sc, x) :- rnp_view(_, sc, _), !rnp_has_fields(sc), rnp_has_exclude(sc), drf_declared_q(sc, x, _).
+// Declared fields, by their declaration's home hd. rnp_path(hd, x, p): field x reads attribute path p of the row: its
+// source, else its name.
+.decl rnp_decl(sc: symbol, x: symbol, hd: symbol)
+rnp_decl(sc, x, hd) :- rnp_view(_, sc, _), drf_declared_q(sc, x, o), hd = @dot(o, x), rnp_in(sc, x),
+    !rnp_kw_true(hd, "write_only"), !rnp_silent_kind(hd), !rnp_custom_get(hd).
+.decl rnp_kw_true(hd: symbol, key: symbol)
+rnp_kw_true(hd, key) :- drf_kw_q(hd, key, hk), drf_hkind(hk, "true").
+.decl rnp_silent_kind(hd: symbol)
+rnp_silent_kind(hd) :- drf_decl_kind_q(hd, "SerializerMethodField").
+rnp_silent_kind(hd) :- drf_decl_kind_q(hd, "HiddenField").
+rnp_silent_kind(hd) :- drf_decl_kind_q(hd, "HyperlinkedIdentityField").
+// rnp_custom_get(hd): hd's field class is a class of the run that, itself or through a run base, decides what it
+// reads (get_attribute, use_pk_only_optimization).
+.decl rnp_custom_get(hd: symbol)
+rnp_custom_get(hd) :- drf_hcall(hd, f), drf_cls_q(f, c),
+    (drf_method_q(c, "get_attribute", _) ; drf_method_q(c, "use_pk_only_optimization", _)).
+.decl rnp_path(hd: symbol, x: symbol, p: symbol)
+rnp_path(hd, x, p) :- rnp_decl(_, x, hd), drf_kw_q(hd, "source", hk), drf_hstr(hk, p).
+rnp_path(hd, x, x) :- rnp_decl(_, x, hd), !rnp_has_source(hd).
+.decl rnp_has_source(hd: symbol)
+rnp_has_source(hd) :- drf_kw_q(hd, "source", _).
+// rnp_pk_only(hd): the field reads the key of a one-row relation, not the related row.
+.decl rnp_pk_only(hd: symbol)
+rnp_pk_only(hd) :- drf_decl_kind_q(hd, "PrimaryKeyRelatedField").
+rnp_pk_only(hd) :- drf_decl_kind_q(hd, "HyperlinkedRelatedField"), !rnp_lookup_field(hd).
+.decl rnp_lookup_field(hd: symbol)
+rnp_lookup_field(hd) :- drf_kw_q(hd, "lookup_field", _).
 // rnp_reads(sc, x, r, many): serializer sc's field x reads relation r of each row.
-.decl rnp_reads(sc: node, x: symbol, r: symbol, many: symbol)
-rnp_reads(sc, x, r, many) :- rnp_view(_, sc, mc), rnp_decl(sc, x, k), rnp_path(k, x, p),
+.decl rnp_reads(sc: symbol, x: symbol, r: symbol, many: symbol)
+rnp_reads(sc, x, r, many) :- rnp_view(_, sc, mc), rnp_decl(sc, x, hd), rnp_path(hd, x, p),
     match("(?<r>[^.]+)\\..+", p), rnp_rel(mc, r, many, _).
-rnp_reads(sc, x, r, many) :- rnp_view(_, sc, mc), rnp_decl(sc, x, k), rnp_path(k, x, r), rnp_rel(mc, r, many, _),
-    (drf_nested(k, _) ; many = "many" ; drf_field_lib(k, _), !rnp_pk_only(k)).
+rnp_reads(sc, x, r, many) :- rnp_view(_, sc, mc), rnp_decl(sc, x, hd), rnp_path(hd, x, r), rnp_rel(mc, r, many, _),
+    (drf_decl_nested_q(hd, _) ; many = "many" ; drf_decl_lib_q(hd, _), !rnp_pk_only(hd)).
 // Fields ModelSerializer builds: a many relation named in fields (or a forward one covered by "__all__"/exclude), and
 // with depth >= 1 any relation.
-.decl rnp_auto(sc: node, x: symbol)
-rnp_auto(sc, x) :- rnp_view(_, sc, _), (rnp_listed(sc, x) ; rnp_covered(sc, x)), !drf_declared(sc, x, _),
-    !drf_extra_kw(sc, x, "write_only", _).
-.decl rnp_deep(sc: node)
-rnp_deep(sc) :- rnp_view(_, sc, _), drf_meta_opt(sc, "depth", v), unparen(v, u), kind(u, "integer"), text(u, t), t != "0".
+.decl rnp_auto(sc: symbol, x: symbol)
+rnp_auto(sc, x) :- rnp_view(_, sc, _), (rnp_listed(sc, x) ; rnp_covered(sc, x)), !rnp_declared(sc, x),
+    !rnp_write_only_kw(sc, x).
+.decl rnp_declared(sc: symbol, x: symbol)
+rnp_declared(sc, x) :- rnp_view(_, sc, _), drf_declared_q(sc, x, _).
+.decl rnp_write_only_kw(sc: symbol, x: symbol)
+rnp_write_only_kw(sc, x) :- rnp_view(_, sc, _), drf_extra_kw_q(sc, x, "write_only", _).
+.decl rnp_deep(sc: symbol)
+rnp_deep(sc) :- rnp_view(_, sc, _), drf_opt(sc, "depth", h), drf_hint(h, t), t != "0".
 rnp_reads(sc, x, x, "many") :- rnp_view(_, sc, mc), rnp_auto(sc, x), rnp_rel(mc, x, "many", _).
 rnp_reads(sc, x, x, many) :- rnp_view(_, sc, mc), rnp_deep(sc), rnp_auto(sc, x), rnp_rel(mc, x, many, "fwd").
 
 // ---- the view's queryset -----------------------------------------------------------------------------------------
-// rnp_qfn(v, f): a get_queryset() view v runs: its own, else a run base's; and the bases' when one calls super().
-.decl rnp_qfn(v: node, f: node)
-rnp_qfn(v, f) :- rnp_view(v, _, _), drf_method(v, "get_queryset", f).
-rnp_qfn(v, g) :- rnp_qfn(v, f), rnp_super_call(c, "get_queryset"), within(c, f), drf_ancestor(v, b),
-    drf_own_method(b, "get_queryset", g).
+// A queryset scope is a get_queryset() (by its def's qualname) or a class-body `queryset = …` (by its home), read in
+// its own file (rnp_hscope and the facts below, keyed by the scope's symbol); the view picks its scopes by symbol.
+// rnp_qfn(v, fq): a get_queryset() view v runs: its own, else a run base's; and the bases' when one calls super().
+.decl rnp_qfn(v: symbol, fq: symbol)
+rnp_qfn(v, fq) :- rnp_view(v, _, _), drf_method_q(v, "get_queryset", fq).
+rnp_qfn(v, gq) :- rnp_qfn(v, fq), rnp_super_calls(fq, "get_queryset"), drf_anc(v, b),
+    drf_qmethod(b, "get_queryset", gq).
+// rnp_super_calls(fq, m): def fq calls `super().m(...)`.
+.decl rnp_super_calls(fq: symbol, m: symbol)
+rnp_super_calls(fq, m) :- rnp_super_call(c, m), within(c, f), kind(f, "function_definition"), qualname(f, fq).
 // rnp_super_call(c, m): c is `super().m(...)`.
 .decl rnp_super_call(c: node, m: symbol)
 rnp_super_call(c, m) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, m), kind(o, "call"),
@@ -228,16 +260,21 @@ rnp_super_call(c, m) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o
 .decl rnp_self_call(c: node, m: symbol)
 rnp_self_call(c, m) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, m), kind(o, "identifier"),
     text(o, "self").
-// rnp_scope(v, h): a scope view v's queryset is read in: a get_queryset() it runs, or its queryset attribute's value.
-.decl rnp_scope(v: node, h: node)
-rnp_scope(v, f) :- rnp_qfn(v, f).
-rnp_scope(v, e) :- rnp_view(v, _, _), drf_view_queryset(v, e).
+// rnp_scope(v, s): a scope view v's queryset is read in: a get_queryset() it runs, or its queryset attribute.
+.decl rnp_scope(v: symbol, s: symbol)
+rnp_scope(v, fq) :- rnp_qfn(v, fq).
+rnp_scope(v, h) :- rnp_view(v, _, _), drf_view_q(v), drf_attr_q(v, "queryset", h).
+// rnp_hscope(s, h): node h is scope s: a get_queryset() def, or a class-body queryset attribute's value.
+.decl rnp_hscope(s: symbol, h: node)
+rnp_hscope(s, f) :- kind(f, "function_definition"), def_name(f, "get_queryset"), qualname(f, s).
+rnp_hscope(s, e) :- class_def(c, q), drf_own_attr(c, "queryset", e, _), s = @dot(q, "queryset").
 // rnp_ex(x, h): expression x is a queryset the view may list, read in scope h (a get_queryset, or the queryset
 // attribute's own value for a class attribute): a returned value, a receiver along a QuerySet chain, the argument of
 // `self.filter_queryset(...)`, or a value a local name the chain starts from is assigned.
 .decl rnp_ex(x: node, h: node)
-rnp_ex(e, f) :- rnp_qfn(_, f), kind(r, "return_statement"), def_frame(r, f), child(r, e, 0).
-rnp_ex(e, e) :- rnp_view(v, _, _), drf_view_queryset(v, e).
+rnp_ex(e, f) :- rnp_hscope(_, f), kind(f, "function_definition"), kind(r, "return_statement"), def_frame(r, f),
+    child(r, e, 0).
+rnp_ex(e, e) :- rnp_hscope(_, e), !kind(e, "function_definition").
 rnp_ex(o, h) :- rnp_ex(x, h), unparen(x, u), rnp_step(u, o).
 rnp_ex(a, h) :- rnp_ex(x, h), unparen(x, u), rnp_self_call(u, "filter_queryset"), call_arg(u, 0, "", a).
 rnp_ex(w, h) :- rnp_ex(x, h), unparen(x, u), kind(u, "identifier"), text(u, n), asg(h, n, w, _).
@@ -259,39 +296,55 @@ rnp_seen(x, h) :- rnp_ex(x, h), unparen(x, u), kind(u, "identifier"), text(u, n)
 // rnp_root(x, q): x is `M.objects`, M named q.
 .decl rnp_root(x: node, q: symbol)
 rnp_root(x, q) :- rnp_ex(x, _), unparen(x, u), attr_of(u, o, "objects"), !rnp_self_model(u), sym_of(o, q).
+// What each scope s shows: something not followed (rnp_s_unseen), a chain from `M.objects` with M named q
+// (rnp_s_root), one from `self.model.objects` (rnp_s_self_model), a `.filter(k=...)` along a chain (rnp_s_filter_kw).
+.decl rnp_s_unseen(s: symbol)
+rnp_s_unseen(s) :- rnp_hscope(s, h), rnp_ex(x, h), !rnp_seen(x, h).
+.decl rnp_s_root(s: symbol, q: symbol)
+rnp_s_root(s, q) :- rnp_hscope(s, h), rnp_ex(x, h), rnp_root(x, q).
+drf_cls_ask(q) :- rnp_s_root(_, q).
+.decl rnp_s_self_model(s: symbol)
+rnp_s_self_model(s) :- rnp_hscope(s, h), rnp_ex(x, h), unparen(x, u), rnp_self_model(u).
+.decl rnp_s_filter_kw(s: symbol, k: symbol)
+rnp_s_filter_kw(s, k) :- rnp_hscope(s, h), rnp_ex(x, h), unparen(x, u), kind(u, "call"), field(u, "function", fn),
+    attr_of(fn, _, "filter"), call_arg(u, -1, k, _).
 // rnp_model_attr(v, mc): view v's (inherited) `model = ...` names mc, the model `self.model` reads.
-.decl rnp_model_attr(v: node, mc: node)
-rnp_model_attr(v, mc) :- rnp_view(v, _, mc), drf_attr(v, "model", e), unparen(e, u), sym_of(u, q), drf_cls(q, mc).
+.decl rnp_model_attr(v: symbol, mc: symbol)
+rnp_model_attr(v, mc) :- rnp_view(v, _, mc), drf_attr_q(v, "model", h), drf_hsym(h, s), drf_cls_q(s, mc).
 // rnp_hidden(v, mc): something view v lists comes from where the rule cannot see.
-.decl rnp_hidden(v: node, mc: node)
-rnp_hidden(v, mc) :- rnp_view(v, _, mc), rnp_scope(v, h), rnp_ex(x, h), !rnp_seen(x, h).
-rnp_hidden(v, mc) :- rnp_view(v, _, mc), rnp_scope(v, h), rnp_ex(x, h), rnp_root(x, q), !drf_cls(q, mc).
-rnp_hidden(v, mc) :- rnp_view(v, _, mc), rnp_scope(v, h), rnp_ex(x, h), unparen(x, u), rnp_self_model(u),
-    !rnp_model_attr(v, mc).
+.decl rnp_hidden(v: symbol, mc: symbol)
+rnp_hidden(v, mc) :- rnp_view(v, _, mc), rnp_scope(v, s), rnp_s_unseen(s).
+rnp_hidden(v, mc) :- rnp_view(v, _, mc), rnp_scope(v, s), rnp_s_root(s, q), !drf_cls_q(q, mc).
+rnp_hidden(v, mc) :- rnp_view(v, _, mc), rnp_scope(v, s), rnp_s_self_model(s), !rnp_model_attr(v, mc).
 rnp_hidden(v, mc) :- rnp_view(v, _, mc), rnp_custom_manager(mc).
-.decl rnp_has_qs(v: node)
+.decl rnp_has_qs(v: symbol)
 rnp_has_qs(v) :- rnp_scope(v, _).
 // rnp_custom_manager(mc): mc (or a model base) sets `objects` to a manager class of the run, directly or through
 // `.from_queryset(...)`, that overrides get_queryset itself or through a run base.
-.decl rnp_custom_manager(mc: node)
-rnp_custom_manager(mc) :- rnp_view(_, _, mc), rnp_model_class(mc, c), rnp_body_call(c, "objects", k), rnp_mgr_class(k, q),
-    drf_cls(q, m), rnp_gq_class(m).
-.decl rnp_mgr_class(k: node, q: symbol)
-rnp_mgr_class(k, q) :- rnp_body_call(_, "objects", k), field(k, "function", fn), sym_of(fn, q).
-rnp_mgr_class(k, q) :- rnp_body_call(_, "objects", k), field(k, "function", fn), kind(fn, "call"),
-    field(fn, "function", g), attr_of(g, o, "from_queryset"), sym_of(o, q).
-// rnp_gq_class(c): manager or queryset class c of the run overrides get_queryset, itself or through a run base.
-.decl rnp_gq_class(c: node)
-rnp_gq_class(c) :- drf_own_method(c, "get_queryset", _).
-rnp_gq_class(c) :- drf_base(c, b), drf_cls(b, m), rnp_gq_class(m).
+.decl rnp_custom_manager(mc: symbol)
+rnp_custom_manager(mc) :- rnp_view(_, _, mc), rnp_model_class(mc, c), rnp_mgr_sym(c, s), drf_cls_q(s, m),
+    rnp_gq_class(m).
+// rnp_mgr_sym(c, s): class c's body sets `objects` to a call of s, or of `S.from_queryset(...)` with S naming s.
+.decl rnp_mgr_sym(c: symbol, s: symbol)
+rnp_mgr_sym(cq, s) :- rnp_body_call(c, "objects", k), field(k, "function", fn), sym_of(fn, s), class_def(c, cq).
+rnp_mgr_sym(cq, s) :- rnp_body_call(c, "objects", k), field(k, "function", fn), kind(fn, "call"),
+    field(fn, "function", g), attr_of(g, o, "from_queryset"), sym_of(o, s), class_def(c, cq).
+// rnp_gq_class(m): manager or queryset class m of the run overrides get_queryset, itself or through a run base.
+.decl rnp_gq_class(m: symbol)
+rnp_gq_class(m) :- drf_qmethod(m, "get_queryset", _).
+rnp_gq_class(m) :- drf_anc(m, b), drf_qmethod(b, "get_queryset", _).
 
 // rnp_loaded(v, r, many): a select_related/prefetch_related call in view v's class body, or a run base view's, loads r.
-.decl rnp_view_class(v: node, c: node)
+.decl rnp_view_class(v: symbol, c: symbol)
 rnp_view_class(v, v) :- rnp_view(v, _, _).
-rnp_view_class(v, b) :- rnp_view(v, _, _), drf_ancestor(v, b).
-.decl rnp_load(v: node, s: symbol)
-rnp_load(v, s) :- rnp_view_class(v, c), drf_related_load(k, s), within(k, c).
-.decl rnp_loaded(v: node, r: symbol, many: symbol)
+rnp_view_class(v, b) :- rnp_view(v, _, _), drf_anc(v, b).
+// rnp_qload(c, s): a load call within class c's body loads s; rnp_qopaque(c): one has an argument the rule cannot
+// read. Stated in c's file.
+.decl rnp_qload(c: symbol, s: symbol)
+rnp_qload(cq, s) :- drf_related_load(k, s), within(k, c), kind(c, "class_definition"), class_def(c, cq).
+.decl rnp_load(v: symbol, s: symbol)
+rnp_load(v, s) :- rnp_view_class(v, c), rnp_qload(c, s).
+.decl rnp_loaded(v: symbol, r: symbol, many: symbol)
 rnp_loaded(v, r, many) :- rnp_reads(sc, _, r, many), rnp_view(v, sc, _), rnp_load(v, r).
 rnp_loaded(v, r, many) :- rnp_reads(sc, _, r, many), rnp_view(v, sc, _), rnp_load(v, s), prefix(cat(r, "__"), s).
 rnp_loaded(v, r, "one") :- rnp_reads(sc, _, r, "one"), rnp_view(v, sc, mc), rnp_rel(mc, r, "one", "fwd"),
@@ -308,24 +361,27 @@ rnp_prefetch_lit(p) :- kind(p, "call"), field(p, "function", pf), sym_of(pf, "dj
 rnp_opaque_call(k) :- rnp_load_call(k), call_arg(k, _, "", a), !str(a, _), !rnp_prefetch_lit(a).
 rnp_opaque_call(k) :- rnp_load_call(k), field(k, "arguments", al), child(al, sp, _), kind(sp, "list_splat"),
     child(sp, x, 0), !kind(x, "identifier").
-.decl rnp_opaque(v: node)
-rnp_opaque(v) :- rnp_view_class(v, c), rnp_opaque_call(k), within(k, c).
+.decl rnp_qopaque(c: symbol)
+rnp_qopaque(cq) :- rnp_opaque_call(k), within(k, c), kind(c, "class_definition"), class_def(c, cq).
+.decl rnp_opaque(v: symbol)
+rnp_opaque(v) :- rnp_view_class(v, c), rnp_qopaque(c).
 
 // ---- lists that are not the serializer's, or load elsewhere -------------------------------------------------------
-// rnp_list_fn(v, f): a list() of the run view v runs: its own, else a run base's; and the bases' when one calls
+// rnp_list_fn(v, fq): a list() of the run view v runs: its own, else a run base's; and the bases' when one calls
 // super().list().
-.decl rnp_list_fn(v: node, f: node)
-rnp_list_fn(v, f) :- rnp_view(v, _, _), drf_method(v, "list", f).
-rnp_list_fn(v, g) :- rnp_list_fn(v, f), rnp_super_call(c, "list"), within(c, f), drf_ancestor(v, b),
-    drf_own_method(b, "list", g).
-// rnp_list_ser(f): list() f serialises with the view's serializer: it calls `self.get_serializer(...)` or
+.decl rnp_list_fn(v: symbol, fq: symbol)
+rnp_list_fn(v, fq) :- rnp_view(v, _, _), drf_method_q(v, "list", fq).
+rnp_list_fn(v, gq) :- rnp_list_fn(v, fq), rnp_super_calls(fq, "list"), drf_anc(v, b), drf_qmethod(b, "list", gq).
+// rnp_list_ser(fq): list() fq serialises with the view's serializer: it calls `self.get_serializer(...)` or
 // `super().list(...)`.
-.decl rnp_list_ser(f: node)
-rnp_list_ser(f) :- rnp_list_fn(_, f), rnp_self_call(c, "get_serializer"), within(c, f).
-rnp_list_ser(f) :- rnp_list_fn(_, f), rnp_super_call(c, "list"), within(c, f).
+.decl rnp_list_ser(fq: symbol)
+rnp_list_ser(fq) :- rnp_self_call(c, "get_serializer"), within(c, f), kind(f, "function_definition"),
+    def_name(f, "list"), qualname(f, fq).
+rnp_list_ser(fq) :- rnp_super_call(c, "list"), within(c, f), kind(f, "function_definition"), def_name(f, "list"),
+    qualname(f, fq).
 // rnp_list_other(v): a list() view v runs serialises with something else.
-.decl rnp_list_other(v: node)
-rnp_list_other(v) :- rnp_list_fn(v, f), !rnp_list_ser(f).
+.decl rnp_list_other(v: symbol)
+rnp_list_other(v) :- rnp_list_fn(v, fq), !rnp_list_ser(fq).
 // rnp_pro(v): a list(), paginate_queryset(), get_queryset() or filter_queryset() view v runs calls Django's
 // prefetch_related_objects() on the rows.
 .decl rnp_pro_fn(q: symbol)
@@ -333,21 +389,29 @@ rnp_pro_fn("django.db.models.prefetch_related_objects"). rnp_pro_fn("django.db.m
 .decl rnp_list_hook(x: symbol)
 rnp_list_hook("list"). rnp_list_hook("paginate_queryset"). rnp_list_hook("get_queryset").
 rnp_list_hook("filter_queryset").
-.decl rnp_hook_fn(v: node, f: node)
-rnp_hook_fn(v, f) :- rnp_view(v, _, _), rnp_list_hook(x), drf_method(v, x, f).
-rnp_hook_fn(v, f) :- rnp_list_fn(v, f).
-rnp_hook_fn(v, f) :- rnp_qfn(v, f).
-rnp_hook_fn(v, g) :- rnp_view(v, _, _), rnp_list_hook(x), drf_method(v, x, f), rnp_super_call(c, x), within(c, f),
-    drf_ancestor(v, b), drf_own_method(b, x, g).
-.decl rnp_pro(v: node)
-rnp_pro(v) :- rnp_hook_fn(v, f), kind(c, "call"), within(c, f), field(c, "function", fn), sym_of(fn, q), rnp_pro_fn(q).
+.decl rnp_hook_fn(v: symbol, fq: symbol)
+rnp_hook_fn(v, fq) :- rnp_view(v, _, _), rnp_list_hook(x), drf_method_q(v, x, fq).
+rnp_hook_fn(v, fq) :- rnp_list_fn(v, fq).
+rnp_hook_fn(v, fq) :- rnp_qfn(v, fq).
+rnp_hook_fn(v, gq) :- rnp_view(v, _, _), rnp_list_hook(x), drf_method_q(v, x, fq), rnp_super_calls(fq, x),
+    drf_anc(v, b), drf_qmethod(b, x, gq).
+// rnp_pro_in(fq): def fq calls prefetch_related_objects().
+.decl rnp_pro_in(fq: symbol)
+rnp_pro_in(fq) :- kind(c, "call"), within(c, f), kind(f, "function_definition"), field(c, "function", fn),
+    sym_of(fn, q), rnp_pro_fn(q), qualname(f, fq).
+.decl rnp_pro(v: symbol)
+rnp_pro(v) :- rnp_hook_fn(v, fq), rnp_pro_in(fq).
 // rnp_one_row(v): view v's queryset filters a unique field of its model by keyword, so it lists at most one row.
-.decl rnp_unique_field(mc: node, f: symbol)
-rnp_unique_field(mc, f) :- rnp_view(_, _, mc), rnp_model_class(mc, c), rnp_body_call(c, f, k), field(k, "function", fn),
-    sym_of(fn, q), split_dot(q, _, t), suffix("OneToOneField", t).
-rnp_unique_field(mc, f) :- rnp_view(_, _, mc), rnp_model_class(mc, c), rnp_body_call(c, f, k),
-    (drf_kw_true(k, "unique") ; drf_kw_true(k, "primary_key")).
-.decl rnp_unique_kw(mc: node, k: symbol)
+// rnp_unique_decl(c, f): class c's body declares f as a OneToOneField (any `…OneToOneField`), `unique=True` or
+// `primary_key=True`; stated in c's file.
+.decl rnp_unique_decl(c: symbol, f: symbol)
+rnp_unique_decl(cq, f) :- rnp_body_call(c, f, k), field(k, "function", fn), sym_of(fn, q), split_dot(q, _, t),
+    suffix("OneToOneField", t), class_def(c, cq).
+rnp_unique_decl(cq, f) :- rnp_body_call(c, f, k), (drf_kw_true(k, "unique") ; drf_kw_true(k, "primary_key")),
+    class_def(c, cq).
+.decl rnp_unique_field(mc: symbol, f: symbol)
+rnp_unique_field(mc, f) :- rnp_view(_, _, mc), rnp_model_class(mc, c), rnp_unique_decl(c, f).
+.decl rnp_unique_kw(mc: symbol, k: symbol)
 rnp_unique_kw(mc, "pk") :- rnp_view(_, _, mc).
 rnp_unique_kw(mc, "id") :- rnp_view(_, _, mc).
 rnp_unique_kw(mc, f) :- rnp_unique_field(mc, f).
@@ -355,36 +419,42 @@ rnp_unique_kw(mc, k) :- rnp_unique_field(mc, f), k = cat(f, "_id").
 rnp_unique_kw(mc, k) :- rnp_unique_field(mc, f), k = cat(f, "__pk").
 rnp_unique_kw(mc, k) :- rnp_unique_field(mc, f), k = cat(f, "__id").
 rnp_unique_kw(mc, k) :- rnp_unique_field(mc, f), k = cat(f, "__exact").
-.decl rnp_one_row(v: node)
-rnp_one_row(v) :- rnp_view(v, _, mc), rnp_scope(v, h), rnp_ex(x, h), unparen(x, u), kind(u, "call"),
-    field(u, "function", fn), attr_of(fn, _, "filter"), call_arg(u, -1, k, _), rnp_unique_kw(mc, k).
+.decl rnp_one_row(v: symbol)
+rnp_one_row(v) :- rnp_view(v, _, mc), rnp_scope(v, s), rnp_s_filter_kw(s, k), rnp_unique_kw(mc, k).
 // rnp_left(v): view v is left alone whatever it reads.
-.decl rnp_left(v: node)
+.decl rnp_left(v: symbol)
 rnp_left(v) :- rnp_list_other(v).
 rnp_left(v) :- rnp_pro(v).
 rnp_left(v) :- rnp_one_row(v).
 rnp_left(v) :- rnp_opaque(v).
 
 // ---- hits and where they are reported ----------------------------------------------------------------------------
-.decl rnp_hit(v: node, sc: node, x: symbol, r: symbol, many: symbol)
+.decl rnp_hit(v: symbol, sc: symbol, x: symbol, r: symbol, many: symbol)
 rnp_hit(v, sc, x, r, many) :- rnp_view(v, sc, mc), rnp_reads(sc, x, r, many), rnp_has_qs(v), !rnp_hidden(v, mc),
     !rnp_left(v), !rnp_loaded(v, r, many).
-// rnp_at(v, sc, at): own get_queryset, else own queryset, else own serializer_class, else the class name unless a run
-// base view listing with the same serializer is itself a hit.
-.decl rnp_own_gq(v: node)
-rnp_own_gq(v) :- drf_own_method(v, "get_queryset", _).
-.decl rnp_own(v: node)
+// rnp_where(v, sc, key): own get_queryset ("gq|v"), else own queryset ("qs|v"), else own serializer_class ("sc|v"),
+// else the class name ("name|v") unless a run base view listing with the same serializer is itself a hit.
+.decl rnp_own_gq(v: symbol)
+rnp_own_gq(v) :- drf_qmethod(v, "get_queryset", _).
+.decl rnp_own(v: symbol)
 rnp_own(v) :- rnp_own_gq(v).
-rnp_own(v) :- drf_own_attr(v, "queryset", _, _).
-rnp_own(v) :- drf_own_attr(v, "serializer_class", _, _).
-.decl rnp_base_hit(v: node, sc: node)
-rnp_base_hit(v, sc) :- rnp_hit(v, sc, _, _, _), drf_ancestor(v, b), rnp_hit(b, sc, _, _, _).
-.decl rnp_at(v: node, sc: node, at: node)
-rnp_at(v, sc, n) :- rnp_hit(v, sc, _, _, _), drf_own_method(v, "get_queryset", f), field(f, "name", n).
-rnp_at(v, sc, a) :- rnp_hit(v, sc, _, _, _), !rnp_own_gq(v), drf_own_attr(v, "queryset", _, a).
-rnp_at(v, sc, a) :- rnp_hit(v, sc, _, _, _), !rnp_own_gq(v), !drf_own_attr(v, "queryset", _, _),
-    drf_own_attr(v, "serializer_class", _, a).
-rnp_at(v, sc, n) :- rnp_hit(v, sc, _, _, _), !rnp_own(v), !rnp_base_hit(v, sc), field(v, "name", n).
+rnp_own(v) :- drf_qattr(v, "queryset").
+rnp_own(v) :- drf_qattr(v, "serializer_class").
+.decl rnp_base_hit(v: symbol, sc: symbol)
+rnp_base_hit(v, sc) :- rnp_hit(v, sc, _, _, _), drf_anc(v, b), rnp_hit(b, sc, _, _, _).
+.decl rnp_where(v: symbol, sc: symbol, key: symbol)
+rnp_where(v, sc, cat("gq|", v)) :- rnp_hit(v, sc, _, _, _), rnp_own_gq(v).
+rnp_where(v, sc, cat("qs|", v)) :- rnp_hit(v, sc, _, _, _), !rnp_own_gq(v), drf_qattr(v, "queryset").
+rnp_where(v, sc, cat("sc|", v)) :- rnp_hit(v, sc, _, _, _), !rnp_own_gq(v), !drf_qattr(v, "queryset"),
+    drf_qattr(v, "serializer_class").
+rnp_where(v, sc, cat("name|", v)) :- rnp_hit(v, sc, _, _, _), !rnp_own(v), !rnp_base_hit(v, sc).
+// rnp_spot(at, key): class v's own get_queryset's name, its own `queryset = …` and `serializer_class = …`
+// statements, its name.
+.decl rnp_spot(at: node, key: symbol)
+rnp_spot(n, cat("gq|", v)) :- class_def(c, v), drf_own_method(c, "get_queryset", f), field(f, "name", n).
+rnp_spot(a, cat("qs|", v)) :- class_def(c, v), drf_own_attr(c, "queryset", _, a).
+rnp_spot(a, cat("sc|", v)) :- class_def(c, v), drf_own_attr(c, "serializer_class", _, a).
+rnp_spot(n, cat("name|", v)) :- class_def(c, v), field(c, "name", n).
 
 // The cases, `cases/drf-practice-related-field-not-prefetched/`, read as one repository: each line ending in
 // `# caught` is reported, and no other line.

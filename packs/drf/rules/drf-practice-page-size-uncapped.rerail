@@ -45,11 +45,12 @@ BuiltinLimitOffset(e, "this pagination class") :- psu_pag_value(e), unparen(e, u
 BuiltinLimitOffset(k, "this paginator") :- kind(k, "call"), field(k, "function", fn), sym_of(fn, q), psu_builtin_lo(q),
     docof(k, d), !dj_test_doc(d).
 
+// A project class is judged by its symbol (its bases and members may sit in other modules) and reported at its name.
 .violation LimitOffsetUncapped(at: node, name: symbol) "`{name}` sets no max_limit, so `?limit=` can load a whole table. Set max_limit no lower than your own clients' largest page; a larger request is then capped, not rejected."
-LimitOffsetUncapped(n, x) :- psu_lo_open(c), field(c, "name", n), text(n, x).
+LimitOffsetUncapped(n, x) :- psu_lo_open(q), class_def(c, q), field(c, "name", n), text(n, x).
 
 .violation PageSizeUncapped(at: node, name: symbol, p: symbol) "`{name}` reads `?{p}=` with no max_page_size, so one request can load a whole table. Set max_page_size no lower than your own clients' largest page; a larger request is capped, not rejected."
-PageSizeUncapped(n, x, p) :- psu_ps_open(c, p), field(c, "name", n), text(n, x).
+PageSizeUncapped(n, x, p) :- psu_ps_open(q, p), class_def(c, q), field(c, "name", n), text(n, x).
 
 .decl psu_builtin_lo(q: symbol)
 psu_builtin_lo("rest_framework.pagination.LimitOffsetPagination").
@@ -67,58 +68,66 @@ psu_pag_value(e) :- kind(a, "assignment"), field(a, "left", l), attr_of(l, _, "p
     docof(a, d), !dj_test_doc(d).
 psu_pag_value(e) :- drf_action_def(_, k), drf_kw(k, "pagination_class", e), docof(k, d), !dj_test_doc(d).
 
-// psu_lo_open(c): project class c derives from LimitOffsetPagination, keeps its limit parameter, and has no cap.
-.decl psu_lo_open(c: node)
-psu_lo_open(c) :- drf_class_mod(c, "rest_framework.pagination", "LimitOffsetPagination"), psu_reportable(c),
-    !psu_capped(c, "max_limit"), !psu_override(c, "get_limit"), !psu_param_off(c, "limit_query_param").
+// psu_lo_open(q): project class q derives from LimitOffsetPagination, keeps its limit parameter, and has no cap.
+.decl psu_lo_open(q: symbol)
+psu_lo_open(q) :- drf_class_mod_q(q, "rest_framework.pagination", "LimitOffsetPagination"), psu_reportable(q),
+    !psu_capped(q, "max_limit"), !psu_override(q, "get_limit"), !psu_param_off(q, "limit_query_param").
 
-// psu_ps_open(c, p): project class c derives from PageNumberPagination or CursorPagination, reads the page size
+// psu_ps_open(q, p): project class q derives from PageNumberPagination or CursorPagination, reads the page size
 // from query parameter p, and has no cap.
-.decl psu_ps_open(c: node, p: symbol)
-psu_ps_open(c, p) :- drf_class_mod(c, "rest_framework.pagination", x),
-    (x = "PageNumberPagination" ; x = "CursorPagination"), drf_attr(c, "page_size_query_param", v), unparen(v, u),
-    str(u, p), psu_reportable(c), !psu_capped(c, "max_page_size"), !psu_override(c, "get_page_size").
+.decl psu_ps_open(q: symbol, p: symbol)
+psu_ps_open(q, p) :- drf_class_mod_q(q, "rest_framework.pagination", x),
+    (x = "PageNumberPagination" ; x = "CursorPagination"), drf_attr_q(q, "page_size_query_param", h), drf_hstr(h, p),
+    psu_reportable(q), !psu_capped(q, "max_page_size"), !psu_override(q, "get_page_size").
 
-// psu_capped(c, x): class c has cap x: an attribute that is not None (its own, else a run base's), a method or
+// psu_capped(q, x): class q has cap x: an attribute that is not None (its own, else a run base's), a method or
 // property of that name, or an `self.x = ...` in its (inherited) __init__.
-.decl psu_capped(c: node, x: symbol)
-psu_capped(c, x) :- drf_attr(c, x, v), unparen(v, u), !kind(u, "none").
-psu_capped(c, x) :- drf_method(c, x, _), (x = "max_limit" ; x = "max_page_size").
-psu_capped(c, x) :- drf_method(c, "__init__", f), kind(a, "assignment"), def_frame(a, f), field(a, "left", l),
-    attr_of(l, o, x), text(o, "self"), (x = "max_limit" ; x = "max_page_size").
+.decl psu_capped(q: symbol, x: symbol)
+psu_capped(q, x) :- drf_attr_q(q, x, h), !drf_hkind(h, "none").
+psu_capped(q, x) :- drf_method_q(q, x, _), (x = "max_limit" ; x = "max_page_size").
+psu_capped(q, x) :- drf_method_q(q, "__init__", fq), drf_init_sets(fq, x), (x = "max_limit" ; x = "max_page_size").
 
-// psu_param_off(c, x): class c's (inherited) query parameter x is None: the client cannot pick the size.
-.decl psu_param_off(c: node, x: symbol)
-psu_param_off(c, x) :- drf_attr(c, x, v), unparen(v, u), kind(u, "none").
+// psu_param_off(q, x): class q's (inherited) query parameter x is None: the client cannot pick the size.
+.decl psu_param_off(q: symbol, x: symbol)
+psu_param_off(q, x) :- drf_attr_q(q, x, h), drf_hkind(h, "none").
 
-// psu_override(c, x): class c (or a run base) overrides x (get_limit, get_page_size) in a way that may cap it: any
-// override but one that returns `super().x(...)` unchanged and neither raises nor calls min().
-.decl psu_override(c: node, x: symbol)
-psu_override(c, x) :- drf_method(c, x, f), (x = "get_limit" ; x = "get_page_size"), !psu_pass_through(f, x).
+// psu_override(q, x): class q (or a run base) overrides x (get_limit, get_page_size) in a way that may cap it: any
+// override but one that returns `super().x(...)` unchanged and neither raises nor calls min(). Each method's body is
+// read in its own file (psu_pass_through, psu_checks, by the def's qualname).
+.decl psu_override(q: symbol, x: symbol)
+psu_override(q, x) :- drf_method_q(q, x, fq), (x = "get_limit" ; x = "get_page_size"), !psu_pass_through(fq, x).
 // A paginate_queryset() that clamps or rejects the size itself caps every size the class reads.
-psu_override(c, x) :- drf_pagination(c), drf_method(c, "paginate_queryset", f), psu_checks(f),
+psu_override(q, x) :- drf_pagination_q(q), drf_method_q(q, "paginate_queryset", fq), psu_checks(fq),
     (x = "get_limit" ; x = "get_page_size").
-.decl psu_pass_through(f: node, x: symbol)
-psu_pass_through(f, x) :- kind(f, "function_definition"), def_name(f, x), (x = "get_limit" ; x = "get_page_size"),
+.decl psu_pass_through(fq: symbol, x: symbol)
+psu_pass_through(fq, x) :- kind(f, "function_definition"), def_name(f, x), (x = "get_limit" ; x = "get_page_size"),
     kind(r, "return_statement"), def_frame(r, f), child(r, e, 0), unparen(e, u), kind(u, "call"),
     field(u, "function", fn), attr_of(fn, s, x), kind(s, "call"), field(s, "function", sf), text(sf, "super"),
-    !psu_checks(f).
-.decl psu_checks(f: node)
-psu_checks(f) :- kind(r, "raise_statement"), def_frame(r, f).
-psu_checks(f) :- kind(k, "call"), def_frame(k, f), field(k, "function", fn), sym_of(fn, "builtins.min").
+    !psu_checks_at(f), qualname(f, fq).
+.decl psu_checks(fq: symbol)
+psu_checks(fq) :- psu_checks_at(f), qualname(f, fq).
+.decl psu_checks_at(f: node)
+psu_checks_at(f) :- kind(r, "raise_statement"), def_frame(r, f).
+psu_checks_at(f) :- kind(k, "call"), def_frame(k, f), field(k, "function", fn), sym_of(fn, "builtins.min").
 
-// psu_reportable(c): c is outside test code, and is used or is a leaf: no class of the run derives from it, or a
+// psu_reportable(q): q is outside test code, and is used or is a leaf: no class of the run derives from it, or a
 // setting, a `pagination_class` value or a call names it.
-.decl psu_reportable(c: node)
-psu_reportable(c) :- drf_pagination(c), docof(c, d), !dj_test_doc(d), !psu_has_sub(c).
-psu_reportable(c) :- drf_pagination(c), docof(c, d), !dj_test_doc(d), psu_used(c).
-.decl psu_has_sub(c: node)
-psu_has_sub(c) :- drf_sub(_, c).
-.decl psu_used(c: node)
-psu_used(c) :- drf_pagination(c), drf_setting_class("DEFAULT_PAGINATION_CLASS", q), drf_ref_class(q, c).
-psu_used(c) :- drf_pagination(c), class_def(c, q), psu_pag_value(e), unparen(e, u), sym_of(u, q).
-psu_used(c) :- drf_pagination(c), psu_pag_value(e), unparen(e, u), sym_of(u, q), drf_cls(q, c).
-psu_used(c) :- drf_pagination(c), class_def(c, q), kind(k, "call"), field(k, "function", fn), sym_of(fn, q).
+.decl psu_reportable(q: symbol)
+psu_reportable(q) :- drf_pagination_q(q), !drf_qtest(q), !drf_has_sub(q).
+psu_reportable(q) :- drf_pagination_q(q), !drf_qtest(q), psu_used(q).
+.decl psu_used(q: symbol)
+psu_used(q) :- drf_pagination_q(q), drf_setting_class("DEFAULT_PAGINATION_CLASS", s), drf_cls_q(s, q).
+psu_used(q) :- drf_pagination_q(q), psu_pag_sym(q).
+psu_used(q) :- drf_pagination_q(q), psu_pag_sym(s), drf_cls_q(s, q).
+psu_used(q) :- drf_pagination_q(q), psu_called(q).
+// psu_pag_sym(s): a pagination_class value names s. psu_called(q): a call constructs class q of a module its file
+// reads (the phase py_names).
+.decl psu_pag_sym(s: symbol)
+psu_pag_sym(s) :- psu_pag_value(e), unparen(e, u), sym_of(u, s).
+drf_cls_ask(s) :- psu_pag_sym(s).
+.decl psu_called(q: symbol)
+psu_called(q) :- kind(k, "call"), field(k, "function", fn), sym_of(fn, q), docof(k, d), doc(d, p, _),
+    py_names__reads_at(p, m), py_names__class(m, q).
 
 // The cases, `cases/drf-practice-page-size-uncapped/`, read as two repositories: each line ending in `# caught` is
 // reported, and no other line.

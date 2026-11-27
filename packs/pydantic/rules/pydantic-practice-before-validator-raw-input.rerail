@@ -18,7 +18,7 @@
 // `data["x"] = ...`), unpacked (`**data`), passed to `len()`, iterated (`for k in data`, a comprehension), or the
 // right side of `in` (`"k" in data`: TypeError on an int); but only in a validator of a model that foreign input
 // reaches, on evidence read across files (bvr_exposed): a web route names the model in a parameter's annotation
-// (`body: M`, `list[M]`, `M | None`), the route resolved through its router object (lib/pydantic's pd_route: a
+// (`body: M`, `list[M]`, `M | None`), the route resolved through its router object (lib/pydantic's pd_router_obj: a
 // FastAPI or flask-openapi3 app or router, or a project subclass of one, here or imported; a `.get`/`.post`
 // decorator of anything else is not a route); or the model is parsed from raw text (`model_validate_json`,
 // `parse_raw`, a TypeAdapter's `validate_json`) or from a value the code shows is foreign (decoded JSON/YAML, a
@@ -76,34 +76,51 @@
 #include "lib/pydantic.rerail"
 
 .violation RawInputUnchecked(at: node, what: symbol, x: symbol, deco: symbol, exc: symbol) "`{what}` assumes a type for `{x}`, the raw input of a {deco} validator: other input raises {exc}, a 500 not a 422. Return `{x}` unchanged unless isinstance() confirms that type."
-RawInputUnchecked(u, w, x, dl, e) :- bvr_report(u, w, x, dl, e, "before").
+RawInputUnchecked(u, w, x, dl, e) :- bvr_report(u, w, x, dl, e, "before", b), bvr_reach_cls(b).
+RawInputUnchecked(u, w, x, "`BeforeValidator`", e) :- bvr_report_fn(u, w, x, e, vk),
+    pd_fnv_attached(vk, "before", _), bvr_fnv_reached(vk).
 
 .violation RawInputUncheckedWrap(at: node, what: symbol, x: symbol, deco: symbol, exc: symbol) "`{what}` assumes a type for `{x}`, the raw input of a {deco} validator: other input raises {exc}, a 500 not a 422. Pass `{x}` to the handler unchanged unless isinstance() confirms that type."
-RawInputUncheckedWrap(u, w, x, dl, e) :- bvr_report(u, w, x, dl, e, "wrap").
+RawInputUncheckedWrap(u, w, x, dl, e) :- bvr_report(u, w, x, dl, e, "wrap", b), bvr_reach_cls(b).
+RawInputUncheckedWrap(u, w, x, "`WrapValidator`", e) :- bvr_report_fn(u, w, x, e, vk), pd_fnv_attached(vk, "wrap", _),
+    bvr_fnv_reached(vk).
 
 .violation RawInputUncheckedPlain(at: node, what: symbol, x: symbol, deco: symbol, exc: symbol) "`{what}` assumes a type for `{x}`, the raw input of a {deco} validator: other input raises {exc}, a 500 not a 422. Raise ValueError unless isinstance() confirms that type; never return it unchecked."
-RawInputUncheckedPlain(u, w, x, dl, e) :- bvr_report(u, w, x, dl, e, "plain").
+RawInputUncheckedPlain(u, w, x, dl, e) :- bvr_report(u, w, x, dl, e, "plain", b), bvr_reach_cls(b).
+RawInputUncheckedPlain(u, w, x, "`PlainValidator`", e) :- bvr_report_fn(u, w, x, e, vk),
+    pd_fnv_attached(vk, "plain", _), bvr_fnv_reached(vk).
 
 .violation AfterValidatorGetsInstance(at: node, what: symbol, x: symbol, exc: symbol) "`{what}` treats `{x}` as a dict, but an after model validator receives the model instance, so it raises {exc} every time. Read `{x}.<field>`, or use mode=\"before\" with an isinstance() check."
 AfterValidatorGetsInstance(u, w, x, e) :- bvr_first(f, u), bvr_fn(f, x, "instance"), bvr_use(f, x, u, w, e).
 
-// bvr_report(u, what, x, deco, exc, mode): use u is the first unchecked use of raw input x in validator f, which runs
-// in mode (before, wrap or plain) on a model that foreign input reaches.
-.decl bvr_report(u: node, w: symbol, x: symbol, dl: symbol, e: symbol, m: symbol)
-bvr_report(u, w, x, dl, e, m) :- bvr_first(f, u), bvr_fn(f, x, "raw"), bvr_use(f, x, u, w, e), bvr_deco(f, dl, m),
-    bvr_reached(f).
+// bvr_report(u, what, x, deco, exc, mode, b): use u is the first unchecked use of raw input x in decorated validator f
+// of class b, which runs in mode (before, wrap or plain); whether foreign input reaches b is bvr_reach_cls's
+// cross-file answer, by b's qualified name.
+.decl bvr_report(u: node, w: symbol, x: symbol, dl: symbol, e: symbol, m: symbol, b: symbol)
+bvr_report(u, w, x, dl, e, m, bq) :- bvr_first(f, u), bvr_fn(f, x, "raw"), bvr_use(f, x, u, w, e), bvr_deco(f, dl, m),
+    pd_validator(f, b, _, _), class_def(b, bq).
+// bvr_report_fn(u, what, x, exc, vk): the same for def or lambda f, which a function validator may attach as vk
+// (lib/pydantic's pd_fnv_def): whether one does, in which mode, on a model foreign input reaches, is the outputs'
+// question (pd_fnv_attached, bvr_fnv_reached).
+.decl bvr_report_fn(u: node, w: symbol, x: symbol, e: symbol, vk: symbol)
+bvr_report_fn(u, w, x, e, vk) :- bvr_first(f, u), bvr_fn(f, x, "fn"), bvr_use(f, x, u, w, e), pd_fnv_def(f, vk).
 
-// bvr_fn(f, x, how): validator f outside test code receives in its parameter x the raw input (how "raw") or, for a
+// bvr_fn(f, x, how): validator f outside test code receives in its parameter x the raw input (how "raw"; how "fn"
+// for an undecorated def or lambda, raw when a function validator attaches it in a mode but "after") or, for a
 // classmethod after model validator `(cls, values)`, the model instance (how "instance"). A def that carries another
 // decorator (bvr_wrapped) is not one: what it receives is up to that wrapper.
 .decl bvr_fn(f: node, x: symbol, how: symbol)
 bvr_fn(f, x, "raw") :- pd_validator(f, _, api, m), bvr_raw_mode(api, m), pd_value_param(f, _, x), docof(f, d),
     !pd_test_doc(d), !bvr_wrapped(f).
-bvr_fn(f, x, "raw") :- pd_fn_validator(_, f, m), m != "after", pd_value_param(f, _, x), docof(f, d), !pd_test_doc(d),
-    !decorator(f, _).
+bvr_fn(f, x, "fn") :- pd_fnv_def(f, _), !pd_validator(f, _, _, _), pd_value_param(f, _, x), docof(f, d),
+    !pd_test_doc(d), !decorator(f, _).
 bvr_fn(f, x, "instance") :- pd_validator(f, _, "model_validator", "after"), decorator(f, e),
     sym_of(e, "builtins.classmethod"), sig_param(f, _, nm, 1, _, _, _), text(nm, x), docof(f, d), !pd_test_doc(d),
     !bvr_wrapped(f).
+// bvr_raw(f, x): f's parameter x receives the raw input.
+.decl bvr_raw(f: node, x: symbol)
+bvr_raw(f, x) :- bvr_fn(f, x, "raw").
+bvr_raw(f, x) :- bvr_fn(f, x, "fn").
 // bvr_wrapped(f): validator f carries a decorator other than Pydantic's validators, classmethod, staticmethod and
 // typing's override: a project wrapper between Pydantic and the def (zenml's `@before_validator_handler`) that may
 // convert the input first.
@@ -118,14 +135,13 @@ bvr_raw_mode("field_validator", "before"). bvr_raw_mode("field_validator", "wrap
 bvr_raw_mode("field_validator", "plain"). bvr_raw_mode("validator", "before").
 bvr_raw_mode("model_validator", "before"). bvr_raw_mode("model_validator", "wrap").
 bvr_raw_mode("root_validator", "before").
-// bvr_deco(f, dl, m): how the message names f's decorator or validator class, and the mode f runs in.
+// bvr_deco(f, dl, m): how the message names decorated validator f's decorator, and the mode f runs in (a function
+// validator's class is named in the outputs).
 .decl bvr_deco(f: node, dl: symbol, m: symbol)
 bvr_deco(f, dl, m) :- bvr_fn(f, _, "raw"), pd_validator(f, _, api, m), (api = "field_validator" ; api = "model_validator"),
     dl = cat("`@", api, "(mode=\"", m, "\")`").
 bvr_deco(f, dl, "before") :- bvr_fn(f, _, "raw"), pd_validator(f, _, api, _), (api = "validator" ; api = "root_validator"),
     dl = cat("`@", api, "(pre=True)`").
-bvr_deco(f, dl, m) :- bvr_fn(f, _, "raw"), pd_fn_validator(_, f, m), m != "after", pd_fn_validator_class(c, m),
-    dl = cat("`", c, "`").
 
 // bvr_ref(f, x, r): identifier r reads f's parameter x (in f or a lambda or comprehension inside it).
 .decl bvr_ref(f: node, x: symbol, r: node)
@@ -135,7 +151,7 @@ bvr_ref(f, x, r) :- bvr_fn(f, x, _), kind(r, "identifier"), text(r, x), within(r
 // exception other input raises.
 .decl bvr_use(f: node, x: symbol, u: node, what: symbol, exc: symbol)
 bvr_use(f, x, u, w, "AttributeError") :- bvr_ref(f, x, r), attr_of(a, r, m), kind(u, "call"), field(u, "function", a),
-    !prefix("__", m), (bvr_fn(f, x, "raw") ; bvr_dict_method(m)), w = cat(x, ".", m, "()").
+    !prefix("__", m), (bvr_raw(f, x) ; bvr_dict_method(m)), w = cat(x, ".", m, "()").
 bvr_use(f, x, u, w, "TypeError") :- bvr_ref(f, x, r), kind(u, "subscript"), field(u, "value", r), bvr_type_errors(f),
     w = cat(x, "[...]").
 bvr_use(f, x, u, w, "TypeError") :- bvr_ref(f, x, r), kind(u, "dictionary_splat"), child(u, r, 0), bvr_type_errors(f),
@@ -144,10 +160,10 @@ bvr_use(f, x, u, w, "TypeError") :- bvr_ref(f, x, r), kind(u, "call"), field(u, 
     sym_of(g, "builtins.len"), posarg(u, 0, r), bvr_type_errors(f), w = cat("len(", x, ")").
 // Iteration: a model instance iterates (over its fields), so only raw input counts.
 bvr_use(f, x, r, w, "TypeError") :- bvr_ref(f, x, r), (kind(l, "for_statement") ; kind(l, "for_in_clause")),
-    field(l, "right", r), bvr_fn(f, x, "raw"), bvr_type_errors(f), w = cat("for ... in ", x).
+    field(l, "right", r), bvr_raw(f, x), bvr_type_errors(f), w = cat("for ... in ", x).
 // `"k" in x` (or `not in`): a membership test on an int or None raises TypeError.
 bvr_use(f, x, u, w, "TypeError") :- bvr_ref(f, x, r), cmp(u, op, _, r), (op = "in" ; op = "not in"),
-    bvr_fn(f, x, "raw"), bvr_type_errors(f), w = cat("... ", op, " ", x).
+    bvr_raw(f, x), bvr_type_errors(f), w = cat("... ", op, " ", x).
 
 // A call of any method on raw input is a use; on a model instance (how "instance"), only of the dict methods a
 // BaseModel lacks.
@@ -228,34 +244,57 @@ bvr_rebound(f, x, u) :- bvr_use(f, x, u, _, _), asg(f, x, v, a), node(_, a, _, _
 .decl bvr_keeps(v: node, x: symbol)
 bvr_keeps(v, x) :- kind(v, "boolean_operator"), field(v, "left", l), text(l, x).
 
-// bvr_reached(f): validator f sits in a model, or a base or mixin of a model, that foreign input reaches; or a field
-// of such a model (or of a base of one) attaches it through `Annotated`.
-.decl bvr_reached(f: node)
-bvr_reached(f) :- bvr_fn(f, _, "raw"), pd_validator(f, b, _, _), bvr_exposed(b).
-bvr_reached(f) :- bvr_fn(f, _, "raw"), pd_validator(f, b, _, _), pd_model_super(c, b), bvr_exposed(c).
-bvr_reached(f) :- bvr_fn(f, _, "raw"), pd_fn_validator(k, f, _), pd_fn_validator_field(k, c), bvr_exposed(c).
-bvr_reached(f) :- bvr_fn(f, _, "raw"), pd_fn_validator(k, f, _), pd_fn_validator_field(k, b), pd_model_super(c, b),
-    bvr_exposed(c).
+// The evidence that foreign input reaches a model sits in other files than the validator: a route module, a module
+// that parses the model, the module of a model holding it as a field. Each file says what it shows by symbol (the
+// `_q` relations: a model's, a module-level adapter's, a router object's qualified name), and the relations below
+// join them across the modules, on purpose, holding no node; the outputs read them by the validator's class or key.
+// bvr_reach_cls(b): a validator of class b gets foreign input: b is a model foreign input reaches, or a base or mixin
+// of one (lib/pydantic's pd_ancestor).
+.decl bvr_reach_cls(b: symbol) cross_file
+bvr_reach_cls(b) :- bvr_exposed(b).
+bvr_reach_cls(b) :- bvr_exposed(c), pd_ancestor(c, b).
+// bvr_fnv_reached(vk): a field of such a model (or of a base of one) attaches function validator vk through
+// `Annotated` (lib/pydantic's pd_fnv_attached).
+.decl bvr_fnv_reached(vk: symbol) cross_file
+bvr_fnv_reached(vk) :- pd_fnv_attached(vk, _, c), bvr_reach_cls(c).
 // bvr_exposed(c): model c is validated from foreign data, outside test code, on evidence the code shows:
-//   - a web route (lib/pydantic's pd_route: a resolved FastAPI or flask-openapi3 router) names it in a parameter's
-//     annotation (`body: M`, `list[M]`, `M | None`), unless FastAPI builds that parameter from typed query, path,
-//     header or cookie values (bvr_built_param);
+//   - a web route (lib/pydantic's pd_route_via and pd_router_obj: a resolved FastAPI or flask-openapi3 router) names
+//     it in a parameter's annotation (`body: M`, `list[M]`, `M | None`), unless FastAPI builds that parameter from
+//     typed query, path, header or cookie values (bvr_built_param);
 //   - it is parsed from raw text (`M.model_validate_json(...)`, v1's `parse_raw` / `parse_file`, a TypeAdapter's
 //     `validate_json`), or from a value the code shows is foreign (bvr_foreign: decoded JSON or YAML, a request's or
 //     an HTTP response's body, a route's raw parameter, a part of one) by `M.model_validate(...)`, v1's `parse_obj` /
 //     `validate`, a TypeAdapter's `validate_python`, or `M(**value)`;
-//   - it is (in) the type of a field of such a model.
+//   - it is (in) the type of a field of such a model (or of a base of one).
 // A model parsed from anything else (an ORM row, another model's dump, the project's settings, a parameter whose
-// origin the function does not show) is not exposed by that call.
-.decl bvr_exposed(c: node)
-bvr_exposed(c) :- pd_route(f), docof(f, d), !pd_test_doc(d), sig_param(f, p, _, _, _, t, _), !bvr_built_param(p),
+// origin the function does not show) is not exposed by that call. Evidence a route's raw parameter gives counts when
+// the route's object is a router (bvr_ev_q's o).
+.decl bvr_exposed(c: symbol) cross_file
+bvr_exposed(c) :- bvr_ev_q(c, "").
+bvr_exposed(c) :- bvr_ev_q(c, o), pd_router_obj(o).
+bvr_exposed(c) :- bvr_ev_adapter_q(g, ""), bvr_adapter_q(g, c).
+bvr_exposed(c) :- bvr_ev_adapter_q(g, o), pd_router_obj(o), bvr_adapter_q(g, c).
+bvr_exposed(c) :- bvr_exposed(p), bvr_field_ref_q(p, c).
+bvr_exposed(c) :- bvr_exposed(p), pd_ancestor(p, b), bvr_field_ref_q(b, c).
+// bvr_ev_q(c, o): this file, outside test code, validates model c from foreign data (o "") or from a raw parameter
+// of a def decorated as a route of module-level object o (when o is a router).
+.decl bvr_ev_q(c: symbol, o: symbol)
+bvr_ev_q(c, o) :- pd_route_via(f, o), docof(f, d), !pd_test_doc(d), sig_param(f, p, _, _, _, t, _), !bvr_built_param(p),
     pd_class_ref(n, c), (n = t ; within(n, t)).
-bvr_exposed(c) :- bvr_parse_call(k, c, m), docof(k, d), !pd_test_doc(d), bvr_raw_text(m).
-bvr_exposed(c) :- bvr_parse_call(k, c, m), docof(k, d), !pd_test_doc(d), !bvr_raw_text(m), posarg(k, 0, a),
-    bvr_foreign(a).
-bvr_exposed(c) :- kind(k, "call"), field(k, "function", fn), pd_class_ref(fn, c), field(k, "arguments", al),
-    child(al, s, _), kind(s, "dictionary_splat"), child(s, a, 0), bvr_foreign(a), docof(k, d), !pd_test_doc(d).
-bvr_exposed(c) :- bvr_exposed(p), pd_has_field(p, _, _, t), pd_class_ref(n, c), (n = t ; within(n, t)).
+bvr_ev_q(c, "") :- bvr_parse_call(k, c, m), docof(k, d), !pd_test_doc(d), bvr_raw_text(m).
+bvr_ev_q(c, o) :- bvr_parse_call(k, c, m), docof(k, d), !pd_test_doc(d), !bvr_raw_text(m), posarg(k, 0, a),
+    bvr_foreign(a, o).
+bvr_ev_q(c, o) :- kind(k, "call"), field(k, "function", fn), pd_class_ref(fn, c), field(k, "arguments", al),
+    child(al, s, _), kind(s, "dictionary_splat"), child(s, a, 0), bvr_foreign(a, o), docof(k, d), !pd_test_doc(d).
+// bvr_ev_adapter_q(g, o): the same through module-level TypeAdapter g (of this module or another): its
+// `validate_json(...)`, or its `validate_python(...)` of a foreign value.
+.decl bvr_ev_adapter_q(g: symbol, o: symbol)
+bvr_ev_adapter_q(g, "") :- bvr_parse_global(k, g, "validate_json"), docof(k, d), !pd_test_doc(d).
+bvr_ev_adapter_q(g, o) :- bvr_parse_global(k, g, "validate_python"), docof(k, d), !pd_test_doc(d), posarg(k, 0, a),
+    bvr_foreign(a, o).
+// bvr_field_ref_q(b, c): a field of model b of this file names model c in its annotation, at any depth.
+.decl bvr_field_ref_q(b: symbol, c: symbol)
+bvr_field_ref_q(bq, c) :- pd_field(b, _, _, t), (n = t ; within(n, t)), pd_class_ref(n, c), class_def(b, bq).
 // bvr_built_param(p): FastAPI builds route parameter p from query, path, header or cookie values, each validated as
 // its declared type before the model sees it: `Depends()`, `Query()`, ... as its default or in its Annotated metadata.
 .decl bvr_built_param(p: node)
@@ -266,44 +305,53 @@ bvr_param_source(k) :- kind(k, "call"), field(k, "function", fn), sym_of(fn, q),
     (m = "fastapi" ; m = "fastapi.params" ; m = "fastapi.param_functions"),
     (x = "Depends" ; x = "Query" ; x = "Header" ; x = "Cookie" ; x = "Path" ; x = "Security").
 // bvr_parse_call(k, c, m): call k parses into model c by method m: `M.m(...)` on the class, or `o.m(...)` on a
-// TypeAdapter over c (bvr_adapter).
-.decl bvr_parse_call(k: node, c: node, m: symbol)
+// TypeAdapter over c built in place or bound in o's function (bvr_adapter).
+.decl bvr_parse_call(k: node, c: symbol, m: symbol)
 bvr_parse_call(k, c, m) :- kind(k, "call"), field(k, "function", fn), attr_of(fn, o, m), bvr_parse(m), pd_class_ref(o, c).
 bvr_parse_call(k, c, m) :- kind(k, "call"), field(k, "function", fn), attr_of(fn, o, m),
     (m = "validate_python" ; m = "validate_json"), unparen(o, u), bvr_adapter(u, c).
+// bvr_parse_global(k, g, m): call k is `o.m(...)`, o module-level name g (lib/pydantic's pd_gname: of this module or
+// imported), whose TypeAdapter its own module says (bvr_adapter_q).
+.decl bvr_parse_global(k: node, g: symbol, m: symbol)
+bvr_parse_global(k, g, m) :- kind(k, "call"), field(k, "function", fn), attr_of(fn, o, m),
+    (m = "validate_python" ; m = "validate_json"), unparen(o, u), pd_gname(u, g).
 .decl bvr_parse(m: symbol)
 bvr_parse("model_validate"). bvr_parse("model_validate_json"). bvr_parse("parse_obj"). bvr_parse("parse_raw").
 bvr_parse("parse_file"). bvr_parse("validate").
 .decl bvr_raw_text(m: symbol)
 bvr_raw_text("model_validate_json"). bvr_raw_text("parse_raw"). bvr_raw_text("parse_file"). bvr_raw_text("validate_json").
 // bvr_adapter(o, c): o is a TypeAdapter over a type naming model c: `TypeAdapter(list[M])` itself, or a name bound to
-// one in its scope or at module level here or in another module (lib/pydantic's pd_name_value).
-.decl bvr_adapter_call(k: node, c: node)
+// one in its function's scope. bvr_adapter_q(g, c): this file's module-level name g is bound to one.
+.decl bvr_adapter_call(k: node, c: symbol)
 bvr_adapter_call(k, c) :- kind(k, "call"), field(k, "function", fn), sym_of(fn, q),
     (q = "pydantic.TypeAdapter" ; q = "pydantic.type_adapter.TypeAdapter"), posarg(k, 0, a), pd_class_ref(n, c),
     (n = a ; within(n, a)).
-.decl bvr_adapter(o: node, c: node)
+.decl bvr_adapter(o: node, c: symbol)
 bvr_adapter(o, c) :- bvr_adapter_call(o, c).
-bvr_adapter(o, c) :- pd_name_value(o, v), unparen(v, k), bvr_adapter_call(k, c).
 bvr_adapter(o, c) :- kind(o, "identifier"), text(o, x), look(o, x, s), !kind(s, "module"), asg(s, x, v, _),
     unparen(v, k), bvr_adapter_call(k, c).
-// bvr_foreign(a): expression a holds data from outside the program: the result of a decoder (`json.loads`, `orjson`,
-// `yaml.safe_load`, `tomllib`, `msgpack`), the body of the request a handler receives (`await request.json()`,
-// `request.form()`, Flask's `request.get_json()`, with the request a parameter annotated with Starlette's, FastAPI's,
-// Flask's, aiohttp's or Django's request class, or Flask's `request` global), an HTTP response's `.json()` (a
-// response from a `requests` / `httpx` call), a raw parameter of a route, a key or `.get()` of such a value, or a
-// name its scope binds to one.
-.decl bvr_foreign(a: node)
-bvr_foreign(a) :- bvr_expr(a, e), kind(e, "call"), field(e, "function", fn), sym_of(fn, q), bvr_decoder(q).
-bvr_foreign(a) :- bvr_expr(a, e), kind(e, "call"), field(e, "function", fn), attr_of(fn, o, m), bvr_body_method(m),
-    bvr_request(o).
-bvr_foreign(a) :- bvr_expr(a, e), kind(e, "call"), field(e, "function", fn), attr_of(fn, o, "json"), bvr_expr(o, r),
-    bvr_http_response(r).
-bvr_foreign(a) :- bvr_expr(a, e), kind(e, "identifier"), text(e, x), look(e, x, f), pd_route(f),
+.decl bvr_adapter_q(g: symbol, c: symbol)
+bvr_adapter_q(g, c) :- pd_global_value(g, v), unparen(v, k), bvr_adapter_call(k, c).
+// bvr_foreign(a, o): expression a holds data from outside the program (o ""): the result of a decoder (`json.loads`,
+// `orjson`, `yaml.safe_load`, `tomllib`, `msgpack`), the body of the request a handler receives (`await
+// request.json()`, `request.form()`, Flask's `request.get_json()`, with the request a parameter annotated with
+// Starlette's, FastAPI's, Flask's, aiohttp's or Django's request class, or Flask's `request` global), an HTTP
+// response's `.json()` (a response from a `requests` / `httpx` call); or a raw parameter of a def decorated as a
+// route of module-level object o (foreign when o is a router, lib/pydantic's pd_router_obj); a key or `.get()` of
+// such a value, or a name its scope binds to one.
+.decl bvr_foreign(a: node, o: symbol)
+bvr_foreign(a, "") :- bvr_expr(a, e), kind(e, "call"), field(e, "function", fn), sym_of(fn, q), bvr_decoder(q).
+bvr_foreign(a, "") :- bvr_expr(a, e), kind(e, "call"), field(e, "function", fn), attr_of(fn, ob, m), bvr_body_method(m),
+    bvr_request(ob).
+bvr_foreign(a, "") :- bvr_expr(a, e), kind(e, "call"), field(e, "function", fn), attr_of(fn, ob, "json"),
+    bvr_expr(ob, r), bvr_http_response(r).
+bvr_foreign(a, o) :- bvr_expr(a, e), kind(e, "identifier"), text(e, x), look(e, x, f), pd_route_via(f, o),
     sig_param(f, _, nm, _, _, _, _), text(nm, x), !asg(f, x, _, _).
-bvr_foreign(a) :- bvr_expr(a, e), kind(e, "subscript"), field(e, "value", o), bvr_foreign(o).
-bvr_foreign(a) :- bvr_expr(a, e), kind(e, "call"), field(e, "function", fn), attr_of(fn, o, "get"), bvr_foreign(o).
-bvr_foreign(a) :- bvr_expr(a, e), kind(e, "identifier"), text(e, x), look(e, x, s), asg(s, x, v, _), bvr_foreign(v).
+bvr_foreign(a, o) :- bvr_expr(a, e), kind(e, "subscript"), field(e, "value", ob), bvr_foreign(ob, o).
+bvr_foreign(a, o) :- bvr_expr(a, e), kind(e, "call"), field(e, "function", fn), attr_of(fn, ob, "get"),
+    bvr_foreign(ob, o).
+bvr_foreign(a, o) :- bvr_expr(a, e), kind(e, "identifier"), text(e, x), look(e, x, s), asg(s, x, v, _),
+    bvr_foreign(v, o).
 // bvr_expr(a, e): e is expression a without parentheses and an `await`.
 .decl bvr_expr(a: node, e: node)
 bvr_expr(a, e) :- unparen(a, w), kind(w, "await"), child(w, e0, 0), unparen(e0, e).

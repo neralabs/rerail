@@ -40,7 +40,7 @@
 // added by SQL (`ADD CONSTRAINT {NOT_NULL_CHECK} CHECK (x IS NOT NULL) NOT VALID`) or by create_check_constraint whose
 // condition spells `x IS NOT NULL`, in this revision or an earlier one of the run. A VALIDATE of another constraint
 // whose name merely contains the column's (`fk_users_email_domain` for `email`) exempts nothing. Flags are read by
-// value (lib/alembic's al_bool).
+// value (lib/alembic's al_flag_t).
 // Gaps: `op.execute("ALTER TABLE ... SET NOT NULL")` is not read; a table created by an earlier revision of the same
 // release counts as existing; a column name the rule cannot resolve is reported as `<column>`; a NOT NULL check added
 // outside the run (another repository, a manual step) is not seen, so its column is reported; a column already NOT
@@ -54,9 +54,9 @@
 .violation SetNotNullScan(at: node, table: symbol, col: symbol) "SET NOT NULL on `{table}`.`{col}` scans every row under ACCESS EXCLUSIVE. Add a NOT VALID `{col} IS NOT NULL` check, validate it after a commit, then set NOT NULL. Fine for a small table."
 .violation SetNotNullAfterAdd(at: node, table: symbol, col: symbol) "`{col}` was just added to `{table}`, and SET NOT NULL scans every row under ACCESS EXCLUSIVE. Add it with `server_default=` and nullable=False in one step instead. Fine for a small table."
 
-// snn_false(e): e is False by value (a literal or a module constant: lib/alembic's al_bool).
-.decl snn_false(e: node)
-snn_false(e) :- al_bool(e, "false").
+// Flags are read by value (lib/alembic's al_flag_t: a literal, or a module constant of the file or imported). What
+// crosses files is read by term and value (decision 0677): the alter_column by its term (al_term), a check constraint
+// or SQL string of another revision by its table, condition and name.
 
 // snn_col(c, x): alter_column c's column, as its name or a placeholder when the rule cannot read it.
 .decl snn_known_col(c: node, x: symbol)
@@ -67,44 +67,61 @@ snn_col_named(c) :- snn_known_col(c, _).
 snn_col(c, x) :- snn_known_col(c, x).
 snn_col(c, "<column>") :- al_call(c, "alter_column", _), !snn_col_named(c).
 
-// snn_set(c, t, x, f, d): alter_column c in upgrade step f of revision d sets column x of existing table t NOT NULL,
-// outside another database's branch and outside test code. `existing_nullable=False` says it already is: a no-op.
-.decl snn_set(c: node, t: symbol, x: symbol, f: node, d: number)
-snn_set(c, t, x, f, d) :- al_on_existing(c, "alter_column", t, f), al_kw(c, "nullable", v), snn_false(v),
-    !snn_already_not_null(c), !al_non_pg(c), docof(c, d), al_migration_doc(d), !al_test_doc(d), snn_col(c, x).
-.decl snn_already_not_null(c: node)
-snn_already_not_null(c) :- al_kw(c, "existing_nullable", v), snn_false(v).
+// snn_cand(c, t, x, f, d, ct, ft): alter_column c (term ct) in upgrade step f (term ft) of revision d passes
+// `nullable=` for column x of existing table t, outside test code and outside another database's branch of its own
+// file. snn_set(d, ct, t, x, ft): it sets the column NOT NULL: `nullable=False`, not `existing_nullable=False` (already
+// NOT NULL: a no-op), and no test function of another module rules PostgreSQL out (al_np_ext).
+.decl snn_cand(c: node, t: symbol, x: symbol, f: node, d: number, ct: symbol, ft: symbol)
+snn_cand(c, t, x, f, d, ct, ft) :- al_on_existing(c, "alter_column", t, f), al_kw(c, "nullable", _), !al_non_pg(c),
+    docof(c, d), al_migration_doc(d), !al_test_doc(d), snn_col(c, x), al_term(c, d, ct), al_term(f, d, ft).
+.decl snn_cand_at(d: number, ct: symbol, t: symbol, x: symbol, ft: symbol)
+snn_cand_at(d, ct, t, x, ft) :- snn_cand(_, t, x, _, d, ct, ft).
+.decl snn_set(d: number, ct: symbol, t: symbol, x: symbol, ft: symbol)
+snn_set(d, ct, t, x, ft) :- snn_cand_at(d, ct, t, x, ft), al_flag_t(d, ct, "nullable", "false"),
+    !al_flag_t(d, ct, "existing_nullable", "false"), !al_np_ext(d, ct).
 
 // snn_sql(n, s): a string literal's source text, lowercased, read whole: an implicit concatenation as one (an
-// f-string's placeholders stay as written, so `{NOT_NULL_CHECK}` reads `{not_null_check}`).
+// f-string's placeholders stay as written, so `{NOT_NULL_CHECK}` reads `{not_null_check}`). snn_sql_at(d, s): such a
+// string of document d that spells a NOT NULL check (` is not null`).
 .decl snn_in_concat(n: node)
 snn_in_concat(n) :- kind(n, "string"), child(p, n, _), kind(p, "concatenated_string").
 .decl snn_sql(n: node, s: symbol)
 snn_sql(n, y) :- kind(n, "concatenated_string"), text(n, s), y = @lower(s).
 snn_sql(n, y) :- kind(n, "string"), !snn_in_concat(n), text(n, s), y = @lower(s).
-// snn_validates(f, nm): upgrade step f runs `VALIDATE CONSTRAINT nm` (nm lowercased, as written).
-.decl snn_validates(f: node, nm: symbol)
-snn_validates(f, nm) :- snn_set(_, _, _, f, _), snn_sql(n, s), al_in_step(n, f),
+.decl snn_sql_at(d: number, s: symbol)
+snn_sql_at(d, s) :- snn_sql(n, s), contains(" is not null", s), docof(n, d).
+// snn_validates_at(d, ft, nm): upgrade step ft of document d runs `VALIDATE CONSTRAINT nm` (nm lowercased, as written).
+.decl snn_validates_at(d: number, ft: symbol, nm: symbol)
+snn_validates_at(d, ft, nm) :- snn_cand(_, _, _, f, d, _, ft), snn_sql(n, s), al_in_step(n, f),
     match("(?s).*validate constraint\\s+(?<nm>[^\\s\"';]+).*", s).
-// snn_validated(f, x): upgrade step f validates a constraint that is a NOT NULL check of column x, added by SQL
-// (`ADD CONSTRAINT {NOT_NULL_CHECK} CHECK (x IS NOT NULL) NOT VALID`, a string that names the constraint and spells the
-// check) or by create_check_constraint whose condition spells `x IS NOT NULL`, anywhere in the run.
-.decl snn_validated(f: node, x: symbol)
-snn_validated(f, x) :- snn_set(_, _, x, f, _), snn_validates(f, nm), snn_sql(n, s), contains(nm, s),
+// snn_validated(d, ft, x): upgrade step ft of revision d validates a constraint that is a NOT NULL check of column x
+// (a string that spells `x IS NOT NULL`, bare or double-quoted), added by SQL (`ADD CONSTRAINT {NOT_NULL_CHECK} CHECK
+// (x IS NOT NULL) NOT VALID`, a string that names the constraint and spells the check) or by create_check_constraint
+// whose condition spells it, anywhere in the run. It joins a revision to the strings and checks of the others, so it
+// spans files on purpose (cross_file), keyed by documents, terms and values: no node.
+.decl snn_validated(d: number, ft: symbol, x: symbol) cross_file
+snn_validated(d, ft, x) :- snn_set(d, _, _, x, ft), snn_validates_at(d, ft, nm), snn_sql_at(_, s), contains(nm, s),
     lx = @lower(x), (contains(cat(lx, " is not null"), s) ; contains(cat(cat("\"", lx), "\" is not null"), s)).
-snn_validated(f, x) :- snn_set(_, t, x, f, _), snn_validates(f, nm), snn_check_says(k, t, x, _), al_role(k, "name", e),
-    unparen(e, u), (al_name_value(u, en), nm = @lower(en) ; kind(u, "identifier"), text(u, en), contains(@lower(en), nm)).
-// snn_check_says(k, t, x, d): create_check_constraint k in document d, on table t, has a condition that spells
-// `x IS NOT NULL` (bare or double-quoted name).
-.decl snn_check_says(k: node, t: symbol, x: symbol, d: number)
-snn_check_says(k, t, x, d) :- snn_set(_, t, x, _, _), al_call(k, "create_check_constraint", fm), al_table(k, t),
-    docof(k, d), snn_condition(k, fm, s), lx = @lower(x), (contains(cat(lx, " is not null"), s) ;
-    contains(cat(cat("\"", lx), "\" is not null"), s)).
+snn_validated(d, ft, x) :- snn_set(d, _, t, x, ft), snn_validates_at(d, ft, nm), snn_check_at(e, kt, t, s),
+    lx = @lower(x), (contains(cat(lx, " is not null"), s) ; contains(cat(cat("\"", lx), "\" is not null"), s)),
+    snn_check_name_at(e, kt, en, how), ((how = "value", nm = en) ; (how = "ident", contains(en, nm))).
+// snn_check_at(d, kt, t, s): create_check_constraint of term kt in document d, on table t, has the condition s
+// (lowercased) that spells a NOT NULL check. snn_check_name_at(d, kt, en, how): its name, lowercased: a name value
+// (how "value") or an identifier's text (how "ident", which a VALIDATE's placeholder may spell in part).
+.decl snn_check_at(d: number, kt: symbol, t: symbol, s: symbol)
+snn_check_at(d, kt, t, s) :- al_call(k, "create_check_constraint", fm), al_table(k, t), snn_condition(k, fm, s),
+    contains(" is not null", s), al_term(k, d, kt).
+.decl snn_check_name_at(d: number, kt: symbol, en: symbol, how: symbol)
+snn_check_name_at(d, kt, y, "value") :- al_call(k, "create_check_constraint", _), al_role(k, "name", e), unparen(e, u),
+    al_name_value(u, en), y = @lower(en), al_term(k, d, kt).
+snn_check_name_at(d, kt, y, "ident") :- al_call(k, "create_check_constraint", _), al_role(k, "name", e), unparen(e, u),
+    kind(u, "identifier"), text(u, en), y = @lower(en), al_term(k, d, kt).
 // snn_check_added(d, t, x): revision d itself adds that check validated: no postgresql_not_valid, or False.
 .decl snn_check_added(d: number, t: symbol, x: symbol)
-snn_check_added(d, t, x) :- snn_set(_, t, x, _, d), snn_check_says(k, t, x, d), !snn_not_valid(k).
-.decl snn_not_valid(k: node)
-snn_not_valid(k) :- al_kw(k, "postgresql_not_valid", v), !snn_false(v).
+snn_check_added(d, t, x) :- snn_set(d, _, t, x, _), snn_check_at(d, kt, t, s), lx = @lower(x),
+    (contains(cat(lx, " is not null"), s) ; contains(cat(cat("\"", lx), "\" is not null"), s)), !snn_not_valid(d, kt).
+.decl snn_not_valid(d: number, kt: symbol)
+snn_not_valid(d, kt) :- al_kw_at(d, kt, "postgresql_not_valid"), !al_flag_t(d, kt, "postgresql_not_valid", "false").
 // snn_condition(k, fm, s): create_check_constraint k's condition, lowercased: its text, or a module constant's value.
 .decl snn_condition_arg(k: node, fm: symbol, e: node)
 snn_condition_arg(k, "op", e) :- al_call(k, "create_check_constraint", "op"), call_arg(k, 2, "", e).
@@ -115,25 +132,28 @@ snn_condition(k, fm, y) :- snn_condition_arg(k, fm, e), text(e, s), y = @lower(s
 snn_condition(k, fm, y) :- snn_condition_arg(k, fm, e), unparen(e, u), kind(u, "identifier"), static_value(u, s),
     y = @lower(s).
 
-.decl snn_safe(c: node)
-snn_safe(c) :- snn_set(c, _, x, f, _), snn_validated(f, x).
-snn_safe(c) :- snn_set(c, t, x, _, d), snn_check_added(d, t, x).
+// snn_safe(d, ct): the column alter_column ct sets is validated as NOT NULL first, or checked in the same revision.
+.decl snn_safe(d: number, ct: symbol)
+snn_safe(d, ct) :- snn_set(d, ct, _, x, ft), snn_validated(d, ft, x).
+snn_safe(d, ct) :- snn_set(d, ct, t, x, _), snn_check_added(d, t, x).
 
 // snn_added_before(c): the same upgrade step adds column x to t before alter_column c: an Alembic add_column, or a
 // project's own `add_columns("t", sa.Column("x", ...), ...)` / `add_column("t", sa.Column(...))` wrapper (superset's
 // migrations.shared.utils.add_columns).
 .decl snn_added_before(c: node)
-snn_added_before(c) :- snn_set(c, t, x, f, d), al_on_existing(a, "add_column", t, f), al_added_column(a, col),
+snn_added_before(c) :- snn_cand(c, t, x, f, d, _, _), al_on_existing(a, "add_column", t, f), al_added_column(a, col),
     al_column_name(col, x), node(d, a, _, sa, _), node(d, c, _, sc, _), sa < sc.
-snn_added_before(c) :- snn_set(c, t, x, f, d), snn_add_wrapper(a), al_in_step(a, f), call_arg(a, 0, "", e),
+snn_added_before(c) :- snn_cand(c, t, x, f, d, _, _), snn_add_wrapper(a), al_in_step(a, f), call_arg(a, 0, "", e),
     al_name_value(e, t), call_arg(a, i, "", col), i > 0, unparen(col, u), al_column_name(u, x), node(d, a, _, sa, _),
     node(d, c, _, sc, _), sa < sc.
 .decl snn_add_wrapper(a: node)
 snn_add_wrapper(a) :- kind(a, "call"), field(a, "function", fn), (kind(fn, "identifier"), text(fn, m) ;
     attr_of(fn, _, m)), (m = "add_columns" ; m = "add_column"), !al_call(a, _, _).
 
-SetNotNullScan(c, t, x) :- snn_set(c, t, x, _, _), !snn_safe(c), !snn_added_before(c).
-SetNotNullAfterAdd(c, t, x) :- snn_set(c, t, x, _, _), !snn_safe(c), snn_added_before(c).
+SetNotNullScan(c, t, x) :- snn_cand(c, t, x, _, d, ct, ft), snn_set(d, ct, t, x, ft), !snn_safe(d, ct),
+    !snn_added_before(c).
+SetNotNullAfterAdd(c, t, x) :- snn_cand(c, t, x, _, d, ct, ft), snn_set(d, ct, t, x, ft), !snn_safe(d, ct),
+    snn_added_before(c).
 
 // The cases, `cases/alembic-practice-set-not-null-scan/`, read as one repository: each line ending in `# caught` is
 // reported, and no other line.

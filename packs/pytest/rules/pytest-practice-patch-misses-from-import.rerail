@@ -38,88 +38,133 @@
 #include "lib/pytest.rerail"
 
 .violation PatchMissesFromImport(at: node, target: symbol, importer: symbol, fix: symbol) "`{importer}` holds its own copy of this name, so patching `{target}` leaves its code on the real object. Patch `{fix}` instead, or drop the patch if this test never runs `{importer}`."
-PatchMissesFromImport(at, t, qi, @dot(qi, l)) :- pmi_site(at, q, x, t), pmi_pick(at, q, x, mi), pmi_open(at, q, x, mi, l),
-    modname(mi, qi).
+PatchMissesFromImport(at, t, qi, @dot(qi, l)) :- pmi_site(at, q, x, t, _), pmi_key(at, sk), pmi_pick(sk, q, x, qi),
+    pmi_open(sk, q, x, qi, l).
 
-// pmi_site(at, q, x, t): a patch reported at `at` replaces name x of workspace module q (t = "q.x"): a target string
-// whose module part is a workspace module, or patch.object / monkeypatch.setattr on an expression naming one.
-.decl pmi_site(at: node, q: symbol, x: symbol, t: symbol)
-pmi_site(a, q, x, t) :- pt_patch_name(c, t, a), !pt_mp_call(c, "delattr"), q = @pkg_up(t, 1), q != "",
-    x = @replace_all(t, "^.*\\.", ""), workspace_module(q), !workspace_module(t).
-pmi_site(c, q, x, @dot(q, x)) :- pt_patch_attr(c, o, x), !pt_mp_call(c, "delattr"), pmi_modref(o, q).
-// pmi_modref(o, q): expression o names workspace module q (`mail` after `from shop import mail`, `shop.http`).
+// The modules, their copies and their reads are questions of other files, asked by module name (decision 0677): each
+// file states what its module binds, copies and reads (pmi_binds, pmi_imp_at, pmi_reads, pmi_named), and each patch
+// is handed on by a key, its file's path and its term (pmi_key), with what its own file shows
+// about it (pmi_name_k, pmi_attr_k, pmi_cov_k, pmi_cov_pkg_k, pmi_body_imp_k, pmi_imports_k, pmi_reload_k). The
+// cross-file part picks the importer by those keys, and the finding reads the answer back at the patch's node.
+
+// pmi_site(at, q, x, t, k): a patch reported at `at` replaces name x of module q (t = "q.x"): k "name", a target
+// string (pmi_ok: whose module part is a workspace module, and t none), or k "attr", patch.object /
+// monkeypatch.setattr on an expression naming a workspace module.
+.decl pmi_site(at: node, q: symbol, x: symbol, t: symbol, k: symbol)
+pmi_site(a, q, x, t, "name") :- pt_patch_name(c, t, a), !pt_mp_call(c, "delattr"), q = @pkg_up(t, 1), q != "",
+    x = @replace_all(t, "^.*\\.", "").
+pmi_site(c, q, x, @dot(q, x), "attr") :- pt_patch_attr(c, o, x), !pt_mp_call(c, "delattr"), pmi_modref(o, q).
+// pmi_modref(o, q): expression o names workspace module q (`mail` after `from shop import mail`, `shop.http`), one
+// its file reads (the phase py_names's reads_at).
 .decl pmi_modref(o: node, q: symbol)
-pmi_modref(o, q) :- qn(o, q), workspace_module(q).
-pmi_modref(o, q) :- sym_of(o, q), workspace_module(q).
-// pmi_target(q, x): some patch replaces x in q, and q's module binds x at its top level.
+pmi_modref(o, q) :- qn(o, q), docof(o, d), doc(d, p, _), py_names__reads_at(p, q).
+pmi_modref(o, q) :- sym_of(o, q), docof(o, d), doc(d, p, _), py_names__reads_at(p, q).
+// pmi_key(at, sk): patch site at's key, its file's path and its term (python/points-to-file's pt_tm: its place in its
+// nearest definition, so an edit above that definition leaves it). pmi_name_k(sk, q, x, t):
+// a target string site by key; pmi_attr_k(sk, q, x): a patch.object / monkeypatch.setattr site by key.
+.decl pmi_key(at: node, sk: symbol)
+pmi_key(at, cat(p, " ", t)) :- pmi_site(at, _, _, _, _), docof(at, d), doc(d, p, _), pt_tm(at, t).
+.decl pmi_name_k(sk: symbol, q: symbol, x: symbol, t: symbol)
+pmi_name_k(sk, q, x, t) :- pmi_site(at, q, x, t, "name"), pmi_key(at, sk).
+.decl pmi_attr_k(sk: symbol, q: symbol, x: symbol)
+pmi_attr_k(sk, q, x) :- pmi_site(at, q, x, _, "attr"), pmi_key(at, sk).
+// pmi_module(q): q is a module of the run. pmi_ok(sk, q, x): site sk replaces x of a workspace module q.
+.decl pmi_module(q: symbol)
+pmi_module(q) :- modname(_, q).
+.decl pmi_ok(sk: symbol, q: symbol, x: symbol)
+pmi_ok(sk, q, x) :- pmi_name_k(sk, q, x, t), pmi_module(q), !pmi_module(t).
+pmi_ok(sk, q, x) :- pmi_attr_k(sk, q, x).
+// pmi_target(q, x): some patch replaces x in q, and q's module binds x at its top level (pmi_binds).
+.decl pmi_binds(q: symbol, x: symbol)
+pmi_binds(q, x) :- modname(m, q), bound_in(m, x).
 .decl pmi_target(q: symbol, x: symbol)
-pmi_target(q, x) :- pmi_site(_, q, x, _), modname(m, q), bound_in(m, x).
+pmi_target(q, x) :- pmi_ok(_, q, x), pmi_binds(q, x).
 
-// pmi_copy(q, x, mi, l): non-test module mi holds q's x under the local name l, copied by a from-import that runs
-// when mi is imported, directly or through modules that re-export it.
-.decl pmi_copy(q: symbol, x: symbol, mi: node, l: symbol)
-pmi_copy(q, x, mi, l) :- pmi_target(q, x), import_alias(i, _, q, x, l), pmi_top_import(i, mi).
-pmi_copy(q, x, mj, l2) :- pmi_copy(q, x, mi, l1), modname(mi, qi), import_alias(j, _, qi, l1, l2), pmi_top_import(j, mj).
+// pmi_copy(q, x, qi, l): non-test module qi holds q's x under the local name l, copied by a from-import that runs
+// when qi is imported (pmi_imp_at), directly or through modules that re-export it.
+.decl pmi_imp_at(qi: symbol, q: symbol, x: symbol, l: symbol)
+pmi_imp_at(qi, q, x, l) :- import_alias(i, _, q, x, l), x != "", pmi_top_import(i, mi), modname(mi, qi).
+.decl pmi_copy(q: symbol, x: symbol, qi: symbol, l: symbol)
+pmi_copy(q, x, qi, l) :- pmi_target(q, x), pmi_imp_at(qi, q, x, l).
+pmi_copy(q, x, qj, l2) :- pmi_copy(q, x, qi, l1), pmi_imp_at(qj, qi, l1, l2).
 .decl pmi_top_import(i: node, m: node)
 pmi_top_import(i, m) :- import_time(i), nearest(i, m, scope), kind(m, "module"), docof(i, d), !pt_test_doc(d).
-// pmi_user(q, x, mi, l): mi reads its copy l when it runs (a type annotation is no such read).
-.decl pmi_user(q: symbol, x: symbol, mi: node, l: symbol)
-pmi_user(q, x, mi, l) :- pmi_copy(q, x, mi, l), nameref(n, l), look(n, l, mi), !bind_only(n), !annotation(n).
+// pmi_user(q, x, qi, l): qi reads its copy l when it runs (pmi_reads: a name a top-level from-import of qi binds,
+// read in qi; a type annotation is no such read).
+.decl pmi_reads(qi: symbol, l: symbol)
+pmi_reads(qi, l) :- pmi_top_import(i, mi), import_alias(i, _, _, _, l), nameref(n, l), look(n, l, mi), !bind_only(n),
+    !annotation(n), modname(mi, qi).
+.decl pmi_user(q: symbol, x: symbol, qi: symbol, l: symbol)
+pmi_user(q, x, qi, l) :- pmi_copy(q, x, qi, l), pmi_reads(qi, l).
 
-// pmi_live(q, x): some code reads q's x itself when it runs, so the patch reaches it: `mail.send_email(...)` or
-// `getattr(mail, "send_email")` anywhere, a from-import inside a function, a read inside q, or a from-import in a
-// Django management command, whose module `call_command` imports when it runs, inside the test's patch.
+// pmi_live(q, x): some code reads q's x itself when it runs, so the patch reaches it (pmi_named):
+// `mail.send_email(...)` or `getattr(mail, "send_email")` anywhere, a from-import inside a function, a read inside q,
+// or a from-import in a Django management command, whose module `call_command` imports when it runs, inside the
+// test's patch.
+.decl pmi_named(q: symbol, x: symbol)
+pmi_named(q, x) :- attr_of(_, o, x), pmi_modref(o, q).
+pmi_named(q, x) :- kind(c, "call"), field(c, "function", f), text(f, "getattr"), posarg(c, 0, o), posarg(c, 1, s),
+    str(s, x), pmi_modref(o, q).
+pmi_named(q, x) :- import_alias(i, _, q, x, _), nearest(i, f, scope), (kind(f, "function_definition") ; kind(f, "lambda")).
+pmi_named(q, x) :- modname(m, q), nameref(n, x), look(n, x, m), !bind_only(n).
+pmi_named(q, x) :- import_alias(i, _, q, x, _), docof(i, d), doc(d, p, _), contains("management/commands/", p).
 .decl pmi_live(q: symbol, x: symbol)
-pmi_live(q, x) :- pmi_target(q, x), attr_of(n, o, x), pmi_modref(o, q).
-pmi_live(q, x) :- pmi_target(q, x), kind(c, "call"), field(c, "function", f), text(f, "getattr"), posarg(c, 0, o),
-    posarg(c, 1, s), str(s, x), pmi_modref(o, q).
-pmi_live(q, x) :- pmi_target(q, x), import_alias(i, _, q, x, _), nearest(i, f, scope),
-    (kind(f, "function_definition") ; kind(f, "lambda")).
-pmi_live(q, x) :- pmi_target(q, x), modname(m, q), nameref(n, x), look(n, x, m), !bind_only(n).
-pmi_live(q, x) :- pmi_target(q, x), import_alias(i, _, q, x, _), docof(i, d), doc(d, p, _),
-    contains("management/commands/", p).
+pmi_live(q, x) :- pmi_target(q, x), pmi_named(q, x).
 
-// pmi_imports(d, m): document d imports module m (`import a.m`, `from a import m`, `from a.m import y`).
-.decl pmi_imports(d: number, m: symbol)
-pmi_imports(d, m) :- import_alias(i, _, m, _, _), docof(i, d).
-pmi_imports(d, @dot(m, y)) :- import_alias(i, _, m, y, _), y != "", docof(i, d).
+// pmi_imports_k(sk, m): the file of site sk imports module m (`import a.m`, `from a import m`, `from a.m import y`).
+.decl pmi_imports_k(sk: symbol, m: symbol)
+pmi_imports_k(sk, m) :- pmi_key(at, sk), docof(at, d), import_alias(i, _, m, _, _), docof(i, d).
+pmi_imports_k(sk, @dot(m, y)) :- pmi_key(at, sk), docof(at, d), import_alias(i, _, m, y, _), y != "", docof(i, d).
 // pmi_owner(n, f): n is part of a patch of def f: in one of f's decorators, or in its body.
 .decl pmi_owner(n: node, f: node)
 pmi_owner(n, f) :- pt_patch_deco(f, c, _), (n = c ; within(n, c)).
 pmi_owner(n, f) :- pt_patch(c, _), (n = c ; within(n, c)), !pt_patch_deco(_, c, _), nearest(c, f, fdef).
-// pmi_patched(f, t): def f also patches the dotted name t.
+// pmi_patched(f, t): def f also patches the dotted name t. pmi_cov_k(sk, t): the test or fixture of site sk does;
+// pmi_cov_pkg_k(sk, m): one of those names is in module m.
 .decl pmi_patched(f: node, t: symbol)
 pmi_patched(f, t) :- pt_patch_name(c, t, _), pmi_owner(c, f).
 pmi_patched(f, @dot(m, y)) :- pt_patch_attr(c, o, y), pmi_modref(o, m), pmi_owner(c, f).
-// pmi_open(at, q, x, mi, l): importer mi's copy l still holds the real object under the patch at `at`: nothing
-// reaches q's x itself, the same test or fixture does not patch `mi.l` as well or import an importer in its body
-// (`with patch("pkg.create_app"): from pkg.worker import task` loads it under the patch), and the patching file does
-// not (re)load modules with importlib.
-.decl pmi_open(at: node, q: symbol, x: symbol, mi: node, l: symbol)
-pmi_open(at, q, x, mi, l) :- pmi_site(at, q, x, _), pmi_user(q, x, mi, l), !pmi_live(q, x), modname(mi, qi),
-    !pmi_covered(at, @dot(qi, l)), !pmi_lazy(at, q, x).
-.decl pmi_lazy(at: node, q: symbol, x: symbol)
-pmi_lazy(at, q, x) :- pmi_site(at, q, x, _), pmi_user(q, x, mi, _), modname(mi, qi), pmi_owner(at, f),
-    import_alias(i, _, m, y, _), (m = qi ; y != "", @dot(m, y) = qi), nearest(i, f, fdef).
-pmi_lazy(at, q, x) :- pmi_site(at, q, x, _), docof(at, d), kind(c, "call"), docof(c, d), field(c, "function", f),
+.decl pmi_cov_k(sk: symbol, t: symbol)
+pmi_cov_k(sk, t) :- pmi_key(at, sk), pmi_owner(at, f), pmi_patched(f, t).
+.decl pmi_cov_pkg_k(sk: symbol, m: symbol)
+pmi_cov_pkg_k(sk, @pkg_up(t, 1)) :- pmi_key(at, sk), pmi_owner(at, f), pmi_patched(f, t).
+// pmi_body_imp_k(sk, m): the test or fixture of site sk imports module m in its body (`with patch("pkg.create_app"):
+// from pkg.worker import task` loads it under the patch). pmi_reload_k(sk): the file of site sk (re)loads modules
+// with importlib.
+.decl pmi_body_imp_k(sk: symbol, m: symbol)
+pmi_body_imp_k(sk, m) :- pmi_key(at, sk), pmi_owner(at, f), import_alias(i, _, m, _, _), nearest(i, f, fdef).
+pmi_body_imp_k(sk, @dot(m, y)) :- pmi_key(at, sk), pmi_owner(at, f), import_alias(i, _, m, y, _), y != "",
+    nearest(i, f, fdef).
+.decl pmi_reload_k(sk: symbol)
+pmi_reload_k(sk) :- pmi_key(at, sk), docof(at, d), kind(c, "call"), docof(c, d), field(c, "function", f),
     (sym_of(f, "importlib.import_module") ; sym_of(f, "importlib.reload")).
-.decl pmi_covered(at: node, t: symbol)
-pmi_covered(at, t) :- pmi_site(at, _, _, _), pmi_owner(at, f), pmi_patched(f, t).
-// pmi_near(at, q, x, mi): the patching file imports importer mi (at its top or in a function), so the test runs mi's
+// pmi_open(sk, q, x, qi, l): importer qi's copy l still holds the real object under the patch sk: nothing reaches q's
+// x itself, the same test or fixture does not patch `qi.l` as well or import an importer in its body, and the
+// patching file does not (re)load modules with importlib (pmi_lazy).
+.decl pmi_open(sk: symbol, q: symbol, x: symbol, qi: symbol, l: symbol)
+pmi_open(sk, q, x, qi, l) :- pmi_ok(sk, q, x), pmi_user(q, x, qi, l), !pmi_live(q, x), !pmi_cov_k(sk, @dot(qi, l)),
+    !pmi_lazy(sk, q, x).
+.decl pmi_lazy(sk: symbol, q: symbol, x: symbol)
+pmi_lazy(sk, q, x) :- pmi_ok(sk, q, x), pmi_user(q, x, qi, _), pmi_body_imp_k(sk, qi).
+pmi_lazy(sk, q, x) :- pmi_ok(sk, q, x), pmi_reload_k(sk).
+// pmi_near(sk, q, x, qi): the patching file imports importer qi (at its top or in a function), so the test runs qi's
 // code. A patch whose file imports no importer is not reported: on the corpus such patches were mostly dead (the test
 // never reaches an importer) or guarded q's own code (`mod.run()` then `helper.assert_not_called()`), and the
 // message could not name the module to patch.
-.decl pmi_near(at: node, q: symbol, x: symbol, mi: node)
-pmi_near(at, q, x, mi) :- pmi_open(at, q, x, mi, _), modname(mi, qi), docof(at, d), pmi_imports(d, qi).
-// pmi_pick(at, q, x, mi): the importer the message names: the first one whose other names the same test or fixture
-// patches (`patch("pkg.dns.resolver")` beside `patch("pkg.extensions.metrics")` names pkg.dns), else the first one
-// the patching file imports.
-.decl pmi_pref(at: node, q: symbol, x: symbol, mi: node)
-pmi_pref(at, q, x, mi) :- pmi_near(at, q, x, mi), modname(mi, qi), pmi_owner(at, f), pmi_patched(f, t),
-    @pkg_up(t, 1) = qi.
-.decl pmi_pick(at: node, q: symbol, x: symbol, mi: node)
-pmi_pick(at, q, x, mi) :- pmi_pref(at, q, x, _), mi = min m2 : { pmi_pref(at, q, x, m2) }.
-pmi_pick(at, q, x, mi) :- pmi_near(at, q, x, _), !pmi_pref(at, q, x, _), mi = min m2 : { pmi_near(at, q, x, m2) }.
+.decl pmi_near(sk: symbol, q: symbol, x: symbol, qi: symbol)
+pmi_near(sk, q, x, qi) :- pmi_open(sk, q, x, qi, _), pmi_imports_k(sk, qi).
+// pmi_pick(sk, q, x, qi): the importer the message names: of those whose other names the same test or fixture
+// patches (`patch("pkg.dns.resolver")` beside `patch("pkg.extensions.metrics")` names pkg.dns), else of those the
+// patching file imports, the least module name.
+.decl pmi_pref(sk: symbol, q: symbol, x: symbol, qi: symbol)
+pmi_pref(sk, q, x, qi) :- pmi_near(sk, q, x, qi), pmi_cov_pkg_k(sk, qi).
+.decl pmi_pref_later(sk: symbol, q: symbol, x: symbol, qi: symbol)
+pmi_pref_later(sk, q, x, qi) :- pmi_pref(sk, q, x, qi), pmi_pref(sk, q, x, qj), qj < qi.
+.decl pmi_near_later(sk: symbol, q: symbol, x: symbol, qi: symbol)
+pmi_near_later(sk, q, x, qi) :- pmi_near(sk, q, x, qi), pmi_near(sk, q, x, qj), qj < qi.
+.decl pmi_pick(sk: symbol, q: symbol, x: symbol, qi: symbol)
+pmi_pick(sk, q, x, qi) :- pmi_pref(sk, q, x, qi), !pmi_pref_later(sk, q, x, qi).
+pmi_pick(sk, q, x, qi) :- pmi_near(sk, q, x, qi), !pmi_pref(sk, q, x, _), !pmi_near_later(sk, q, x, qi).
 
 // The cases, `cases/pytest-practice-patch-misses-from-import/`, read as one repository: each line ending in `# caught`
 // is reported, and no other line.

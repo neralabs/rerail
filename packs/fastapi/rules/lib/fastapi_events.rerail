@@ -2,20 +2,27 @@
 // event rules read them (on-event-handler: a handler that never runs; lifecycle-event-handler: every other one).
 //
 // Interface
-//   oe_site(c, form)        call c registers a handler: `o.on_event(E)` (a decorator, or applied by hand:
-//                           `app.on_event("startup")(fn)`) or `o.add_event_handler(E, fn)` (also `event_type=`), form
-//                           the method's name, outside test code, where o is an app or router (lib/fastapi's
-//                           fa_router_ref, or `app.router` of an app), or, when E is the literal "startup" or
+//   oe_reg(c, o, form)      call c is `o.on_event(...)` or `o.add_event_handler(...)`, form the method's name
+//   oe_at(c, p, t)          registration c's place by symbols: its path and its term (python/points-to-file's pt_tm),
+//                           what the relations over symbols below name it by
+//   oe_site_at(p, t, form)  the registration at (p, t) registers a handler: `o.on_event(E)` (a decorator, or applied
+//                           by hand: `app.on_event("startup")(fn)`) or `o.add_event_handler(E, fn)` (also
+//                           `event_type=`), outside test code, where o is an app or router (lib/fastapi's fa_rref and
+//                           fa_router_key, or `app.router` of an app), or, when E is the literal "startup" or
 //                           "shutdown", any other receiver (letta registers on an unannotated parameter `app`) unless
 //                           it is foreign (oe_foreign: built by a class or a function outside the run,
 //                           `pyee.EventEmitter()`; a parameter annotated with another class) or the call reaches an
 //                           on_event/add_event_handler method the run defines itself (an event bus)
+//   oe_dead_at(p, t)        that registration is on an app (FastAPI/Starlette, not a router) built with `lifespan=`:
+//                           the receiver refers to that constructor (in its module, or a module variable another module
+//                           imports), or it is a parameter of a def that some call of the run (python/calls) passes
+//                           such an app, positionally or by keyword
 //   oe_kw(r, k, v)          app or router constructor r passes `on_startup=v` or `on_shutdown=v` (k), v neither None
 //                           nor an empty list, outside test code
-//   oe_dead(c)              registration c is on an app (FastAPI/Starlette, not a router) built with `lifespan=`: the
-//                           receiver refers to that constructor, or it is a parameter of a def that some call of the run
-//                           (python/calls) passes such an app, positionally or by keyword
 //   oe_lifespan_app(r)      constructor r builds an app (not a router) with `lifespan=` (not None)
+// The receiver and the calls that pass an app may be in other files than the registration: those questions are
+// answered by symbol (decision 0691), each file stating its registrations, receivers and calls by their places and
+// keys, and oe_site_at and oe_dead_at join them; a rule reads the answer at its call's node through oe_at.
 // FastAPI background: an app built with `lifespan=` runs only the lifespan (fastapi/routing.py uses `_DefaultLifespan`,
 // which runs on_startup/on_shutdown, only when no lifespan is given). A router's handlers are not dead under an
 // including app's lifespan: include_router merges the router's own default lifespan into the app's
@@ -26,66 +33,104 @@
 // ---- registrations -----------------------------------------------------------------------------------------------
 .decl oe_event(s: symbol)
 oe_event("startup"). oe_event("shutdown").
-// oe_reg(c, o, form): call c is `o.on_event(...)` or `o.add_event_handler(...)`.
 .decl oe_reg(c: node, o: node, form: symbol)
 oe_reg(c, o, m) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o0, m),
     (m = "on_event" ; m = "add_event_handler"), unparen(o0, o).
+.decl oe_at(c: node, p: symbol, t: symbol)
+oe_at(c, p, t) :- oe_reg(c, _, _), docof(c, d), doc(d, p, _), pt_tm(c, t).
+// oe_site_here(c, form): registration c outside test code.
+.decl oe_site_here(c: node, form: symbol)
+oe_site_here(c, m) :- oe_reg(c, _, m), docof(c, d), !fa_test_doc(d).
 // oe_literal(c): its event is the literal "startup" or "shutdown".
 .decl oe_literal(c: node)
 oe_literal(c) :- oe_reg(c, _, _), (call_arg(c, 0, "", e0) ; call_arg(c, -1, "event_type", e0)), unparen(e0, e),
     str(e, s), oe_event(s).
-// oe_own(c): c calls an on_event/add_event_handler method the run defines (an event bus of its own).
+// oe_own(c): c calls an on_event/add_event_handler method the run defines (an event bus of its own): a target whose
+// symbol's last name is the method's.
 .decl oe_own(c: node)
-oe_own(c) :- oe_reg(c, _, m), call_target(c, g), def_name(g, m).
-// oe_recv(o, r): receiver o stands for app or router r (a constructor, or an annotated parameter): directly, or as
-// `x.router` of an app x.
-.decl oe_recv(o: node, r: node)
-oe_recv(o, r) :- oe_reg(_, o, _), fa_router_ref(o, r).
-oe_recv(o, r) :- oe_reg(_, o, _), attr_of(o, x0, "router"), unparen(x0, x), fa_router_ref(x, r), fa_ctor(r, "app").
-.decl oe_site(c: node, form: symbol)
-oe_site(c, m) :- oe_reg(c, o, m), oe_recv(o, _), docof(c, d), !fa_test_doc(d).
-oe_site(c, m) :- oe_reg(c, o, m), !oe_recv(o, _), oe_literal(c), !oe_own(c), !oe_foreign(o), docof(c, d),
-    !fa_test_doc(d).
-// oe_foreign(o): receiver o is another object than an app: a name bound to a call that builds no app or router and
-// resolves to a class (`emitter = pyee.EventEmitter()`, `sio = socketio.AsyncServer()`, a class of the run) or to
-// anything else outside the run's functions, or a parameter annotated with a class other than an app or router
-// (`def wire(bus: EventBus)`). A name bound to a call of a function of the run (`app = create_app()`) is not foreign.
+oe_own(c) :- oe_reg(c, _, m), call_target(c, g), suffix(cat(".", m), g).
+// oe_recv(o, key, need): receiver o stands for app or router key (lib/fastapi's fa_rref; need "any"), or is
+// `x.router` of x standing for key, which must be an app (need "app").
+.decl oe_recv(o: node, key: symbol, need: symbol)
+oe_recv(o, k, "any") :- oe_reg(_, o, _), fa_rref(o, k).
+oe_recv(o, k, "app") :- oe_reg(_, o, _), attr_of(o, x0, "router"), unparen(x0, x), fa_rref(x, k).
+// oe_foreign(o): receiver o is another object than an app: a name bound in this file to a call that builds no app or
+// router and resolves to a class (`emitter = pyee.EventEmitter()`, `sio = socketio.AsyncServer()`, a class of the
+// run) or to anything else outside the run's functions, or a parameter annotated with a class other than an app or
+// router (`def wire(bus: EventBus)`). A name bound to a call of a function of the run (`app = create_app()`) is not
+// foreign. A module variable another module imports is foreign by oe_var_foreign, in its own file.
 .decl oe_foreign(o: node)
-oe_foreign(o) :- oe_reg(_, o, _), fa_value(o, v), kind(v, "call"), field(v, "function", f), sym_of(f, q),
-    !fa_ctor(v, _), !oe_run_fn(q).
-.decl oe_run_fn(q: symbol)
-oe_run_fn(q) :- qualname(g, q), kind(g, "function_definition").
+oe_foreign(o) :- oe_reg(_, o, _), fa_value(o, v), oe_foreign_call(v).
 oe_foreign(o) :- oe_reg(_, o, _), kind(o, "identifier"), text(o, x), look(o, x, f), sig_param(f, p, nm, _, _, a, _),
     text(nm, x), !unset(a), !fa_router_param(p, _).
+.decl oe_foreign_call(v: node)
+oe_foreign_call(v) :- kind(v, "call"), field(v, "function", f), sym_of(f, q), !fa_ctor(v, _), !fa_defq(f, q, "def").
+.decl oe_var_foreign(q: symbol)
+oe_var_foreign(q) :- fa_module_var(q, v), oe_foreign_call(v).
+
+// ---- by symbol ---------------------------------------------------------------------------------------------------
+// oe_recv_at(p, t, key, need): registration (p, t), outside test code, has receiver key (oe_recv).
+.decl oe_recv_at(p: symbol, t: symbol, key: symbol, need: symbol)
+oe_recv_at(p, t, k, need) :- oe_site_here(c, _), oe_reg(c, o, _), oe_recv(o, k, need), oe_at(c, p, t).
+// oe_lit_at(p, t, form, q): registration (p, t), outside test code, names a literal event, calls no method of the
+// run's and has no receiver foreign in its file; q is the receiver's symbol when it imports one, else "".
+.decl oe_lit_at(p: symbol, t: symbol, form: symbol, q: symbol)
+oe_lit_at(p, t, m, q) :- oe_site_here(c, m), oe_reg(c, o, _), oe_literal(c), !oe_own(c), !oe_foreign(o), fa_ext(o, q),
+    oe_at(c, p, t).
+oe_lit_at(p, t, m, "") :- oe_site_here(c, m), oe_reg(c, o, _), oe_literal(c), !oe_own(c), !oe_foreign(o),
+    !fa_ext(o, _), oe_at(c, p, t).
+.decl oe_reg_at(p: symbol, t: symbol, form: symbol)
+oe_reg_at(p, t, m) :- oe_site_here(c, m), oe_at(c, p, t).
+// oe_app_recv(p, t): registration (p, t)'s receiver is an app or router.
+.decl oe_app_recv(p: symbol, t: symbol)
+oe_app_recv(p, t) :- oe_recv_at(p, t, k, "any"), fa_router_key(k, _).
+oe_app_recv(p, t) :- oe_recv_at(p, t, k, "app"), fa_router_key(k, "app").
+.decl oe_site_at(p: symbol, t: symbol, form: symbol)
+oe_site_at(p, t, m) :- oe_reg_at(p, t, m), oe_app_recv(p, t).
+oe_site_at(p, t, m) :- oe_lit_at(p, t, m, q), !oe_app_recv(p, t), !oe_var_foreign(q).
 
 // ---- the app's lifespan ------------------------------------------------------------------------------------------
-// oe_lifespan_app(r): constructor r builds an app (not a router) with a lifespan.
+// oe_lifespan_app(r): constructor r builds an app (not a router) with a lifespan. oe_lifespan_key(key): by its key.
 .decl oe_lifespan_app(r: node)
 oe_lifespan_app(r) :- fa_ctor(r, "app"), fa_router_kw(r, "lifespan", v), !kind(v, "none").
-// oe_param_site(c, f, x): registration c's receiver is parameter x of def f.
+.decl oe_lifespan_key(key: symbol)
+oe_lifespan_key(k) :- oe_lifespan_app(r), fa_rkey(r, k).
+// oe_param_site(c, f, x): registration c's receiver is parameter x of def f. oe_param_at(p, t, fq, x): by symbols.
 .decl oe_param_site(c: node, f: node, x: symbol)
-oe_param_site(c, f, x) :- oe_site(c, _), oe_reg(c, o, _), kind(o, "identifier"), text(o, x), look(o, x, f),
+oe_param_site(c, f, x) :- oe_site_here(c, _), oe_reg(c, o, _), kind(o, "identifier"), text(o, x), look(o, x, f),
     kind(f, "function_definition"), param_named(f, x, _).
-.decl oe_param_def(f: node)
-oe_param_def(f) :- oe_param_site(_, f, _).
-// oe_passed(k, h, x, a): call k, whose target is h, passes argument a to h's parameter x.
-.decl oe_passed(k: node, h: node, x: symbol, a: node)
-oe_passed(k, h, x, a) :- oe_param_def(h), call_target(k, h), call_arg(k, j, "", a0), unparen(a0, a), oe_offset(h, n),
-    i = j + n, sig_param(h, _, nm, i, kd, _, _), (kd = "pos" ; kd = "posonly"), text(nm, x).
-oe_passed(k, h, x, a) :- oe_param_def(h), call_target(k, h), call_arg(k, -1, x, a0), unparen(a0, a),
-    param_named(h, x, _).
+.decl oe_param_at(p: symbol, t: symbol, fq: symbol, x: symbol)
+oe_param_at(p, t, fq, x) :- oe_param_site(c, f, x), pt_def(f, fq), oe_at(c, p, t).
+// oe_pos_param(hq, j, x): the j-th positional argument of a call of def hq (one with a registration on a parameter)
+// fills its parameter x: past a method's self or cls. Stated in h's file.
+.decl oe_pos_param(hq: symbol, j: number, x: symbol)
+oe_pos_param(hq, j, x) :- oe_param_site(_, h, _), oe_offset(h, n), sig_param(h, _, nm, i, kd, _, _),
+    (kd = "pos" ; kd = "posonly"), text(nm, x), j = i - n, j >= 0, pt_def(h, hq).
+.decl oe_kw_param(hq: symbol, x: symbol)
+oe_kw_param(hq, x) :- oe_param_site(_, h, _), param_named(h, x, _), pt_def(h, hq).
 // oe_offset(h, n): a call's first positional argument fills h's parameter n: 1 for a method's self or cls.
 .decl oe_offset(h: node, n: number)
-oe_offset(h, 1) :- oe_param_def(h), nearest(h, k, scope), kind(k, "class_definition"), !oe_static(h).
-oe_offset(h, 0) :- oe_param_def(h), nearest(h, k, scope), kind(k, "class_definition"), oe_static(h).
-oe_offset(h, 0) :- oe_param_def(h), nearest(h, k, scope), !kind(k, "class_definition").
+oe_offset(h, 1) :- oe_param_site(_, h, _), nearest(h, k, scope), kind(k, "class_definition"), !oe_static(h).
+oe_offset(h, 0) :- oe_param_site(_, h, _), nearest(h, k, scope), kind(k, "class_definition"), oe_static(h).
+oe_offset(h, 0) :- oe_param_site(_, h, _), nearest(h, k, scope), !kind(k, "class_definition").
 .decl oe_static(h: node)
 oe_static(h) :- decorator(h, e), unparen(e, m), sym_of(m, "staticmethod").
 oe_static(h) :- decorator(h, e), unparen(e, m), kind(m, "identifier"), text(m, "staticmethod").
-// oe_dead(c): registration c is on an app built with `lifespan=`.
-.decl oe_dead(c: node)
-oe_dead(c) :- oe_site(c, _), oe_reg(c, o, _), oe_recv(o, r), oe_lifespan_app(r).
-oe_dead(c) :- oe_param_site(c, f, x), oe_passed(_, f, x, a), fa_router_ref(a, r), oe_lifespan_app(r).
+// oe_passes(hq, j, x, key): a call whose target is hq passes an argument standing for app or router key (fa_rref),
+// positionally (j its place, x "") or by keyword x (j -1). Stated in the call's file.
+.decl oe_passes(hq: symbol, j: number, x: symbol, key: symbol)
+oe_passes(hq, j, "", k) :- kind(c, "call"), call_target(c, hq), call_arg(c, j, "", a0), j >= 0, unparen(a0, a),
+    fa_rref(a, k).
+oe_passes(hq, -1, x, k) :- kind(c, "call"), call_target(c, hq), call_arg(c, -1, x, a0), x != "", unparen(a0, a),
+    fa_rref(a, k).
+// oe_dead_param(hq, x): some call of def hq passes an app built with `lifespan=` to its parameter x.
+.decl oe_dead_param(hq: symbol, x: symbol)
+oe_dead_param(hq, x) :- oe_passes(hq, j, "", k), oe_lifespan_key(k), oe_pos_param(hq, j, x).
+oe_dead_param(hq, x) :- oe_passes(hq, -1, x, k), oe_lifespan_key(k), oe_kw_param(hq, x).
+// oe_dead_at(p, t): registration (p, t) is on an app built with `lifespan=`.
+.decl oe_dead_at(p: symbol, t: symbol)
+oe_dead_at(p, t) :- oe_recv_at(p, t, k, _), oe_lifespan_key(k).
+oe_dead_at(p, t) :- oe_param_at(p, t, fq, x), oe_dead_param(fq, x).
 
 // ---- constructor keywords ----------------------------------------------------------------------------------------
 // oe_kw(r, k, v): constructor r passes `on_startup=v` or `on_shutdown=v`, v neither None nor an empty list.

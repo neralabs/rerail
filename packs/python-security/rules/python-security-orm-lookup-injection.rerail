@@ -43,7 +43,7 @@
 // `self.kwargs` (the URLconf's capture names); server-built dicts; `create(**request.data)` (mass assignment: the drf
 // pack); `order_by(x)` on a receiver not resolved to a queryset (`Table().order_by(x)`, a parameter only ever given
 // a table); a field name under `if "<text>" in name:` (only names holding that text pass); test files; staff-only
-// code, where the client is staff who already see and sort the admin's data: lib/security's sec_admin_only (a
+// code, where the client is staff who already see and sort the admin's data: lib/security's sec_xadmin_fn (a
 // function that rejects when `not request.user.is_staff`/`is_superuser`, `@staff_member_required`,
 // `@user_passes_test(lambda u: u.is_staff)`, `@permission_required(…)`, DRF `@permission_classes([IsAdminUser])`,
 // `method_decorator` of a staff decorator, ModelAdmin/AdminSite methods, a DRF view with IsAdminUser, methods of a
@@ -63,20 +63,36 @@
 
 #include "lib/security.rerail"
 
+// Per file and across files (lib/security's origins): each file states what its ORM calls take by origin
+// (sec_fhit, keyed by the splat or the field-name argument), and a finding reads the cross-file answer by that
+// node's term (sec_xfirst): its first source. A queryset receiver a helper of another file returns or is passed, and
+// a related manager another file's model declares, are yes/no origins (sec_bres); staff-only functions are decided
+// over the call graph by symbol (olk_xstaff).
 .violation LookupKeys(at: node, what: symbol, p: symbol, l: number) "ORM lookup names chosen by {what} ({p}:{l}): keep only allow-listed keys, or pass request values to fixed lookups. Leave it if the keys were checked against an allow-list in another function."
-LookupKeys(c, what, p, l) :- olk_splat(c, a), s = min s2 : { olk_keys(a, s2) }, sec_origin(s, what, p, l),
-    docof(c, d), !sec_test_doc(d), !olk_keys_cleared(c, a), !olk_staff_at(c), !olk_staff_at(s).
+LookupKeys(c, what, p, l) :- olk_splat(c, a, q), sec_bres(q), pt_tm(a, at), !olk_xcleared(at), pt_tm(c, ct),
+    !olk_xstaff_at(ct), sec_xfirst("olkL", at, k), sec_src_info(k, what, p, l).
+sec_fhit("olkL", a, o) :- olk_splat(c, a, _), olk_keys(a, o), olk_live(c).
 .violation FieldName(at: node, what: symbol, p: symbol, l: number) "Field name from {what} ({p}:{l}) reaches the ORM: map it through a dict of fixed names or an allow-list (DRF: OrderingFilter with ordering_fields). Leave it if the name was already checked."
-FieldName(c, what, p, l) :- olk_name_arg(c, v), !sec_checked_expr(v), !olk_guarded(c, v),
-    s = min s2 : { olk_str(v, s2) }, sec_origin(s, what, p, l), docof(c, d), !sec_test_doc(d), !olk_staff_at(c),
-    !olk_staff_at(s).
+FieldName(c, what, p, l) :- olk_name_arg(c, v, q), sec_bres(q), pt_tm(c, ct), !olk_xstaff_at(ct), pt_tm(v, vt),
+    sec_xfirst("olkF", vt, k), sec_src_info(k, what, p, l).
+sec_fhit("olkF", v, o) :- olk_name_arg(c, v, _), !sec_checked_expr(v), !olk_guarded(c, v), olk_live(c), olk_str(v, o),
+    !sec_echk_any("sec", v).
+sec_fhit("olkF", v, g) :- olk_name_arg(c, v, _), !sec_checked_expr(v), !olk_guarded(c, v), olk_live(c), olk_str(v, _),
+    sec_egate("sec", "olks", v, g).
+sec_gin(g, o) :- olk_name_arg(_, v, _), olk_str(v, o), sec_egate("sec", "olks", v, g).
+// olk_live(c): sink call c is outside test code and under no `if <user>.is_staff:`.
+.decl olk_live(c: node)
+olk_live(c) :- (olk_splat(c, _, _) ; olk_name_arg(c, _, _)), docof(c, d), !sec_test_doc(d), !olk_staff_if(c).
+// A source read in staff-only code was sent by staff.
+sec_xdrop(r, k) :- (r = "olkL" ; r = "olkF"), olk_xstaff_src(k).
+sec_flavor("olks"). sec_flavor("olkk"). sec_flavor("olkq").
 
 // olk_guarded(c, v): call c sits in the body of an `if`/`elif` whose test compares, with `in` or `==`, a name that
 // sink value v reads or a name derived from one (`order_field = ordering.lstrip("-")` then `elif order_field in
 // ("name", "owner__username"): qs.order_by(ordering)`), or tests that the name contains fixed text (`if
 // "date_created" in orderby:`: only names holding that text get through).
 .decl olk_guarded(c: node, v: node)
-olk_guarded(c, v) :- olk_name_arg(c, v), py_if(_, t, b), within(c, b), olk_test_name(t, y),
+olk_guarded(c, v) :- olk_name_arg(c, v, _), py_if(_, t, b), within(c, b), olk_test_name(t, y),
     nearest(c, h, fscope), olk_derived(h, y, x), olk_val_reads(v, x).
 .decl olk_test_name(t: node, y: symbol)
 olk_test_name(t, y) :- olk_test_left(t, a), sec_reads(a, y).
@@ -98,17 +114,20 @@ olk_derived(h, y, x) :- olk_guard_name(h, y), sec_bind(h, y, e), has(e, i, "iden
     !field(_, "attribute", i).
 olk_derived(h, y, x) :- olk_guard_name(h, y), sec_bind(h, y, e), kind(e, "identifier"), text(e, x).
 .decl olk_guard_name(h: node, y: symbol)
-olk_guard_name(h, y) :- olk_name_arg(c, _), py_if(_, t, b), within(c, b), olk_test_name(t, y), nearest(c, h, fscope).
+olk_guard_name(h, y) :- olk_name_arg(c, _, _), py_if(_, t, b), within(c, b), olk_test_name(t, y),
+    nearest(c, h, fscope).
 .decl olk_val_reads(v: node, x: symbol)
-olk_val_reads(v, x) :- olk_name_arg(_, v), kind(v, "identifier"), text(v, x).
-olk_val_reads(v, x) :- olk_name_arg(_, v), has(v, i, "identifier"), text(i, x), !field(_, "attribute", i).
+olk_val_reads(v, x) :- olk_name_arg(_, v, _), kind(v, "identifier"), text(v, x).
+olk_val_reads(v, x) :- olk_name_arg(_, v, _), has(v, i, "identifier"), text(i, x), !field(_, "attribute", i).
 
 // ---- sinks ---------------------------------------------------------------------------------------------------------
-// olk_splat(c, a): call c expands mapping a with `**` into lookup or field names.
-.decl olk_splat(c: node, a: node)
-olk_splat(c, a) :- olk_kwsplat(c, a), field(c, "function", f), attr_of(f, _, m), olk_splat_method(m).
-olk_splat(c, a) :- olk_kwsplat(c, a), field(c, "function", f), attr_of(f, r0, "update"), unparen(r0, r), olk_qs(r).
-olk_splat(c, a) :- olk_kwsplat(c, a), sec_call_q(c, q), (q = "django.db.models.Q" ; q = "django.db.models.query_utils.Q").
+// olk_splat(c, a, q): call c expands mapping a with `**` into lookup or field names; on a queryset receiver for
+// `update` (q its yes/no origin, olk_qs), else q "T".
+.decl olk_splat(c: node, a: node, q: symbol)
+olk_splat(c, a, "T") :- olk_kwsplat(c, a), field(c, "function", f), attr_of(f, _, m), olk_splat_method(m).
+olk_splat(c, a, q) :- olk_kwsplat(c, a), field(c, "function", f), attr_of(f, r0, "update"), unparen(r0, r), olk_qs(r, q).
+olk_splat(c, a, "T") :- olk_kwsplat(c, a), sec_call_q(c, q), (q = "django.db.models.Q" ;
+    q = "django.db.models.query_utils.Q").
 .decl olk_splat_method(m: symbol)
 olk_splat_method("filter"). olk_splat_method("exclude"). olk_splat_method("get"). olk_splat_method("get_or_create").
 olk_splat_method("update_or_create"). olk_splat_method("annotate"). olk_splat_method("alias").
@@ -117,15 +136,16 @@ olk_splat_method("aggregate"). olk_splat_method("values"). olk_splat_method("ord
 olk_kwsplat(c, a) :- kind(c, "call"), field(c, "arguments", al), child(al, sp, _), kind(sp, "dictionary_splat"),
     child(sp, a0, 0), unparen(a0, a).
 
-// olk_name_arg(c, v): v is a field name, lookup or kind that call c hands to the ORM.
-.decl olk_name_arg(c: node, v: node)
-olk_name_arg(c, v) :- kind(c, "call"), field(c, "function", f), attr_of(f, r0, m), olk_name_method(m), unparen(r0, r),
-    olk_qs(r), olk_pos_item(c, v).
-olk_name_arg(c, v) :- sec_call_q(c, q), (q = "django.db.models.F" ; q = "django.db.models.expressions.F"),
+// olk_name_arg(c, v, q): v is a field name, lookup or kind that call c hands to the ORM: a queryset method's (q the
+// receiver's yes/no origin, olk_qs), or `F`, `Trunc`, `Extract`'s (q "T").
+.decl olk_name_arg(c: node, v: node, q: symbol)
+olk_name_arg(c, v, q) :- kind(c, "call"), field(c, "function", f), attr_of(f, r0, m), olk_name_method(m), unparen(r0, r),
+    olk_qs(r, q), olk_pos_item(c, v).
+olk_name_arg(c, v, "T") :- sec_call_q(c, q), (q = "django.db.models.F" ; q = "django.db.models.expressions.F"),
     (sec_arg(c, 0, "", v) ; sec_arg(c, -1, "name", v)).
-olk_name_arg(c, v) :- sec_call_q(c, q), (q = "django.db.models.functions.Trunc" ;
+olk_name_arg(c, v, "T") :- sec_call_q(c, q), (q = "django.db.models.functions.Trunc" ;
     q = "django.db.models.functions.datetime.Trunc"), (sec_arg(c, 1, "", v) ; sec_arg(c, -1, "kind", v)).
-olk_name_arg(c, v) :- sec_call_q(c, q), (q = "django.db.models.functions.Extract" ;
+olk_name_arg(c, v, "T") :- sec_call_q(c, q), (q = "django.db.models.functions.Extract" ;
     q = "django.db.models.functions.datetime.Extract"), (sec_arg(c, 1, "", v) ; sec_arg(c, -1, "lookup_name", v)).
 .decl olk_name_method(m: symbol)
 olk_name_method("order_by"). olk_name_method("values"). olk_name_method("values_list"). olk_name_method("only").
@@ -136,77 +156,86 @@ olk_pos_item(c, v) :- sec_arg(c, i, "", v), i >= 0.
 olk_pos_item(c, v) :- kind(c, "call"), field(c, "arguments", al), child(al, sp, _), kind(sp, "list_splat"),
     child(sp, v0, 0), unparen(v0, v).
 
-// olk_qs(r): receiver r is a Django queryset or manager, or a chain from one.
-.decl olk_qs(r: node)
-olk_qs(r) :- olk_qs_head(r).
-olk_qs(r) :- chain_below(r, p), olk_qs_head(p).
-.decl olk_qs_head(p: node)
-olk_qs_head(p) :- attr_of(p, _, a), (a = "objects" ; a = "all_objects" ; a = "_default_manager" ;
+// olk_qs(r, q): receiver r is a Django queryset or manager, or a chain from one, by yes/no origin q: `.objects` and
+// the like, `get_queryset()`, a framework hook's queryset parameter (q "T"); a related manager of a model of the run
+// (`RN|<name>`, olk_rel_name in the model's file); a name bound to one; a parameter some call of the run passes one
+// (`P|olkq|…`); a call of a function of the run that returns one (`R|olkq|…`).
+.decl olk_qs(r: node, q: symbol)
+olk_qs(r, q) :- olk_qs_head(r, q).
+olk_qs(r, q) :- chain_below(r, p), olk_qs_head(p, q).
+.decl olk_qs_head(p: node, q: symbol)
+olk_qs_head(p, "T") :- attr_of(p, _, a), (a = "objects" ; a = "all_objects" ; a = "_default_manager" ;
     a = "_base_manager" ; a = "queryset").
-olk_qs_head(p) :- attr_of(p, _, a), olk_related(a).
-olk_qs_head(p) :- kind(p, "call"), call_name(p, m), (m = "get_queryset" ; m = "filter_queryset").
-olk_qs_head(p) :- kind(p, "identifier"), text(p, x), look(p, x, h), sec_bind(h, x, v), unparen(v, w), w != p, olk_qs(w).
-olk_qs_head(p) :- kind(p, "identifier"), text(p, x), look(p, x, g), olk_qs_param(g, x).
-olk_qs_head(p) :- kind(p, "call"), call_target(p, g), olk_qs_returns(g).
-// olk_qs_param(g, x): parameter x of function g receives a queryset: a call of the run passes one, or g is a DRF or
-// django-filter hook the framework calls with one.
-.decl olk_qs_param(g: node, x: symbol)
-olk_qs_param(g, x) :- sec_param_at(_, g, a, x), unparen(a, w), olk_qs(w).
-olk_qs_param(g, x) :- def_name(g, m), nearest(g, k, scope), class_def(k, cq), subclass(cq, b), olk_qs_hook(b, m, i),
-    param(g, x, i).
-// olk_qs_returns(g): function g of the run returns a queryset.
-.decl olk_qs_returns(g: node)
-olk_qs_returns(g) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), unparen(v, w), olk_qs(w).
-// olk_qs_hook(b, m, i): a subclass of framework class b overrides method m, whose parameter i (self is 0) is the
-// queryset the framework passes: a filter backend's `filter_queryset(self, request, queryset, view)`, a generic
-// view's, a pagination class's or a FilterSet's `filter_queryset(self, queryset)` / `paginate_queryset(self,
-// queryset, …)`.
-.decl olk_qs_hook(b: symbol, m: symbol, i: number)
-olk_qs_hook(b, "filter_queryset", 2) :- olk_filter_backend(b).
-olk_qs_hook(b, m, 1) :- subclass(_, b), (prefix("rest_framework.", b) ; prefix("django_filters.", b) ;
-    prefix("django.views.", b)), !olk_filter_backend(b), (m = "filter_queryset" ; m = "paginate_queryset").
+olk_qs_head(p, cat("RN|", a)) :- attr_of(p, _, a).
+olk_qs_head(p, "T") :- kind(p, "call"), call_name(p, m), (m = "get_queryset" ; m = "filter_queryset").
+olk_qs_head(p, q) :- kind(p, "identifier"), text(p, x), look(p, x, h), sec_bind(h, x, v), unparen(v, w), w != p,
+    olk_qs(w, q).
+olk_qs_head(p, q) :- sec_porig(p, "olkq", _, _, q).
+olk_qs_head(p, "T") :- kind(p, "identifier"), text(p, x), look(p, x, g), olk_qs_hook_param(g, x).
+olk_qs_head(p, q) :- kind(p, "call"), sec_rorig(p, "olkq", q).
+sec_bpass("olkq", c, a, q) :- call_arg(c, _, _, a), unparen(a, w), olk_qs(w, q).
+sec_bret("olkq", g, q) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), unparen(v, w), olk_qs(w, q).
+sec_bres(cat("RN|", a)) :- olk_rel_name(a).
+// olk_qs_hook_param(g, x): g is a DRF or django-filter hook the framework calls with a queryset as parameter x: a
+// method of a subclass (python/names' class_anc) of a filter backend overriding `filter_queryset(self, request,
+// queryset, view)`, or of another framework class (a generic view, a pagination class, a FilterSet) overriding
+// `filter_queryset(self, queryset)` / `paginate_queryset(self, queryset, …)`.
+.decl olk_qs_hook_param(g: node, x: symbol)
+olk_qs_hook_param(g, x) :- def_name(g, "filter_queryset"), nearest(g, k, scope), class_anc(k, b), olk_filter_backend(b),
+    param(g, x, 2).
+olk_qs_hook_param(g, x) :- def_name(g, m), (m = "filter_queryset" ; m = "paginate_queryset"), nearest(g, k, scope),
+    class_anc(k, b), (prefix("rest_framework.", b) ; prefix("django_filters.", b) ; prefix("django.views.", b)),
+    !olk_filter_backend(b), param(g, x, 1).
 .decl olk_filter_backend(b: symbol)
 olk_filter_backend("rest_framework.filters.BaseFilterBackend"). olk_filter_backend("rest_framework.filters.OrderingFilter").
 olk_filter_backend("rest_framework.filters.SearchFilter").
 olk_filter_backend("django_filters.rest_framework.DjangoFilterBackend").
 olk_filter_backend("django_filters.rest_framework.backends.DjangoFilterBackend").
-// olk_related(a): attribute a is a related manager of a model of the run: the `related_name` of a ForeignKey or
-// ManyToManyField, `<model>_set` for a model with one and no related_name, or a ManyToManyField's own name.
-.decl olk_related(a: symbol)
-olk_related(a) :- olk_rel_field(_, _, v, _), call_arg(v, -1, "related_name", r), str(r, a), a != "+",
+// olk_rel_name(a): attribute a is a related manager of a model of this file: the `related_name` of a ForeignKey or
+// ManyToManyField, `<model>_set` for a model with one and no related_name, or a ManyToManyField's own name. By name:
+// another file's `obj.<a>` reads it as the origin `RN|<a>`.
+.decl olk_rel_name(a: symbol)
+olk_rel_name(a) :- olk_rel_field(_, _, v, _), call_arg(v, -1, "related_name", r), str(r, a), a != "+",
     !contains("%(", a).
-olk_related(a) :- olk_rel_field(k, _, v, _), !call_arg(v, -1, "related_name", _), field(k, "name", nn), text(nn, n),
+olk_rel_name(a) :- olk_rel_field(k, _, v, _), !call_arg(v, -1, "related_name", _), field(k, "name", nn), text(nn, n),
     a = cat(@lower(n), "_set").
-olk_related(a) :- olk_rel_field(_, a, _, "m2m").
+olk_rel_name(a) :- olk_rel_field(_, a, _, "m2m").
 // olk_rel_field(k, x, v, how): model class k of the run declares relation x = v, a ForeignKey ("fk") or a
 // ManyToManyField ("m2m").
 .decl olk_rel_field(k: node, x: symbol, v: node, how: symbol)
-olk_rel_field(k, x, v, how) :- class_def(k, cq), olk_model(cq), asg(k, x, v0, _), unparen(v0, v), kind(v, "call"),
-    field(v, "function", f), sym_of(f, q), olk_rel_q(q, how).
+olk_rel_field(k, x, v, how) :- class_anc(k, b), (b = "django.db.models.Model" ; b = "django.db.models.base.Model"),
+    asg(k, x, v0, _), unparen(v0, v), kind(v, "call"), field(v, "function", f), sym_of(f, q), olk_rel_q(q, how).
 .decl olk_rel_q(q: symbol, how: symbol)
 olk_rel_q("django.db.models.ForeignKey", "fk"). olk_rel_q("django.db.models.fields.related.ForeignKey", "fk").
 olk_rel_q("django.db.models.ManyToManyField", "m2m").
 olk_rel_q("django.db.models.fields.related.ManyToManyField", "m2m").
-.decl olk_model(cq: symbol)
-olk_model(cq) :- subclass(cq, b), (b = "django.db.models.Model" ; b = "django.db.models.base.Model").
 
 // ---- staff-only code -------------------------------------------------------------------------------------------------
-// olk_staff_at(n): n sits in a function only staff reach, or under `if <user>.is_staff:`.
-.decl olk_staff_at(n: node)
-olk_staff_at(n) :- nearest(n, g, fdef), olk_staff_fn(g).
-olk_staff_at(n) :- py_if(_, t, b), within(n, b), olk_reads_staff(t), !olk_negated_staff(t).
-// olk_staff_fn(g): g is admin-only (lib/security's sec_admin_only), or every call of it
-// the call graph sees comes from such a function, two levels deep.
-.decl olk_staff_fn(g: node)
-olk_staff_fn(g) :- olk_staff_fn1(g).
-olk_staff_fn(g) :- calls(_, g), !olk_open_caller1(g).
-.decl olk_open_caller1(g: node)
-olk_open_caller1(g) :- calls(f, g), !olk_staff_fn1(f).
-.decl olk_staff_fn1(g: node)
-olk_staff_fn1(g) :- sec_admin_only(g).
-olk_staff_fn1(g) :- calls(_, g), !olk_open_caller0(g).
-.decl olk_open_caller0(g: node)
-olk_open_caller0(g) :- calls(f, g), !sec_admin_only(f).
+// olk_staff_if(n): n sits under `if <user>.is_staff:`.
+.decl olk_staff_if(n: node)
+olk_staff_if(n) :- py_if(_, t, b), within(n, b), olk_reads_staff(t), !olk_negated_staff(t).
+// olk_xstaff(g): the def whose symbol is g only staff reach: it is admin-only (lib/security's sec_xadmin_fn), or every
+// call of it the call graph sees comes from such a function, two levels deep (python/calls' calls, by symbol).
+.decl olk_xstaff(g: symbol) cross_file
+olk_xstaff(gq) :- olk_xstaff1(gq).
+olk_xstaff(gq) :- calls(_, gq), !olk_xopen1(gq).
+.decl olk_xopen1(g: symbol) cross_file
+olk_xopen1(gq) :- calls(fq, gq), !olk_xstaff1(fq).
+.decl olk_xstaff1(g: symbol) cross_file
+olk_xstaff1(gq) :- sec_xadmin_fn(gq).
+olk_xstaff1(gq) :- calls(_, gq), !olk_xopen0(gq).
+.decl olk_xopen0(g: symbol) cross_file
+olk_xopen0(gq) :- calls(fq, gq), !sec_xadmin_fn(fq).
+// olk_xstaff_at(c): sink call c, by its term, sits in such a function. olk_xstaff_src(k): source k is read in one,
+// or under `if <user>.is_staff:` (olk_src_staff_if, in its file).
+.decl olk_xstaff_at(c: symbol) cross_file
+olk_xstaff_at(ct) :- (olk_splat(c, _, _) ; olk_name_arg(c, _, _)), nearest(c, g, fdef), pt_def(g, gq), olk_xstaff(gq),
+    pt_tm(c, ct).
+.decl olk_xstaff_src(k: symbol) cross_file
+olk_xstaff_src(k) :- sec_src_fn(k, gq), olk_xstaff(gq).
+olk_xstaff_src(k) :- olk_src_staff_if(k).
+.decl olk_src_staff_if(k: symbol)
+olk_src_staff_if(k) :- sec_key(s, k), olk_staff_if(s).
 .decl olk_staff_attr(a: symbol)
 olk_staff_attr("is_staff"). olk_staff_attr("is_superuser").
 // olk_reads_staff(e): e is or contains `<x>.is_staff` / `<x>.is_superuser`.
@@ -219,11 +248,15 @@ olk_negated_staff(t) :- unparen(t, n), kind(n, "not_operator"), olk_reads_staff(
 olk_negated_staff(t) :- py_if(_, t, _), has(t, n, "not_operator"), olk_reads_staff(n).
 
 // ---- keys checked against an allow-list ------------------------------------------------------------------------------
-// olk_keys_cleared(c, a): splat a of call c expands a request mapping whose every key the function reading it
-// checks against an allow-list (olk_keys_checked), the same mapping by its text (`request.GET`).
-.decl olk_keys_cleared(c: node, a: node)
-olk_keys_cleared(c, a) :- olk_splat(c, a), olk_keys(a, s2), text(s2, t), nearest(s2, h, fscope),
-    olk_keys_checked(h, m), olk_keys(m, s1), text(s1, t), nearest(s1, h, fscope).
+// olk_xcleared(a): splat a, by its term, expands a request mapping whose every key the function reading it checks
+// against an allow-list (olk_src_cleared, in the source's file).
+.decl olk_xcleared(a: symbol) cross_file
+olk_xcleared(at) :- olk_splat(_, a, _), olk_keys(a, o), sec_xres(o, k), olk_src_cleared(k), pt_tm(a, at).
+// olk_src_cleared(k): the function that reads source k checks every key of a mapping read off the same request
+// mapping, by its text (`request.GET`): olk_keys_checked.
+.decl olk_src_cleared(k: symbol)
+olk_src_cleared(k) :- sec_key(s2, k), text(s2, t), nearest(s2, h, fscope), olk_keys_checked(h, m), olk_keys(m, k1),
+    sec_key(s1, k1), text(s1, t), nearest(s1, h, fscope).
 // olk_keys_checked(h, m): scope h checks every key of mapping m: `for k in m: if k not in ALLOWED: raise` (also
 // `m.keys()`, `for k, v in m.items()`, a return instead of the raise), `set(m) - ALLOWED`, `set(m) <= ALLOWED`,
 // `set(m).issubset(ALLOWED)`, the same on `m.keys()`.
@@ -255,56 +288,89 @@ olk_key_set(e, m) :- kind(e, "call"), field(e, "function", f), attr_of(f, m0, "k
 // ---- names from the request -----------------------------------------------------------------------------------------
 // olk_checked_ref(r): name r is read in a function that checks it (sec_checked: an `in` test or a validator-named
 // call), or resolves it with `<model>._meta.get_field(name)` (which raises for anything but one of the model's own
-// field names, so no `__` path), so its value is taken as one of the allowed names.
+// field names, so no `__` path), so its value is taken as one of the allowed names. A check call of the run clears
+// it where it reaches no sink of this rule: a name read so passes a gate (sec_ngate "olk", by the name's scope).
 .decl olk_checked_ref(r: node)
 olk_checked_ref(r) :- kind(r, "identifier"), text(r, x), nearest(r, h, fscope), sec_checked(h, x).
 olk_checked_ref(r) :- kind(r, "identifier"), text(r, x), nearest(r, h, fscope), call_name(c, "get_field"),
     sec_arg(c, 0, "", a), unparen(a, i), kind(i, "identifier"), text(i, x), nearest(c, h, fscope).
+sec_nchk_c("olk", h, x, t) :- sec_checked_c(h, x, t).
+// olk_ref(r, h, x): name r, of x, is read in scope h (nearest), and its function does not surely check it.
+.decl olk_ref(r: node, h: node, x: symbol)
+olk_ref(r, h, x) :- kind(r, "identifier"), text(r, x), nearest(r, h, fscope), !olk_checked_ref(r).
 
-// olk_str(e, s): e may hold text from source s that no check stopped: lib/security's taint steps (which stop at a
+// olk_str(e, o): e may hold text from origin o that no check stopped: lib/security's taint steps (which stop at a
 // typed validated value, sec_typed), a form's `cleaned_data` or a serializer's `validated_data` built from request
 // data (a free-text field's value is the client's text), minus the names their function checks, and across calls
-// only through arguments the caller did not check.
-.decl olk_str(e: node, s: node)
-olk_str(e, e) :- sec_source(e, _).
-olk_str(e, s) :- sec_step(e, a), olk_str(a, s).
-olk_str(e, s) :- attr_of(e, o, a), sec_validated_attr(a), kind(o, "identifier"), text(o, x), look(o, x, h),
-    sec_holder_call(h, x, c), call_arg(c, _, _, v), olk_str(v, s).
-olk_str(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), r != v, olk_str(v, s),
-    !olk_checked_ref(r).
-olk_str(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, g), olk_param(g, x, s), !olk_checked_ref(r).
-olk_str(c, s) :- call_target(c, g), olk_returns(g, s), !sec_validator_def(g), call_arg(c, _, _, a), olk_str(a, s).
-olk_str(c, s) :- call_target(c, g), olk_returns(g, s), !sec_validator_def(g), olk_own(g, s).
+// only through arguments the caller did not check (`P|olks|…`, `R|olks|…`).
+.decl olk_str(e: node, o: symbol)
+olk_str(e, o) :- sec_start(e, o).
+olk_str(e, o) :- sec_stepg(e, a), olk_str(a, o).
+olk_str(e, g) :- sec_stepq("olks", e, a, g), olk_str(a, _).
+sec_gin(g, o) :- sec_stepq("olks", e, a, g), olk_str(a, o).
+olk_str(e, o) :- attr_of(e, b, a), sec_validated_attr(a), kind(b, "identifier"), text(b, x), look(b, x, h),
+    sec_holder_call(h, x, c), call_arg(c, _, _, v), olk_str(v, o).
+olk_str(r, o) :- olk_sin(r, o), olk_ref(r, h, x), !sec_nchk_any("olk", h, x).
+olk_str(r, g) :- olk_sin(r, _), olk_ref(r, h, x), sec_ngate("olk", "olks", h, x, g).
+sec_gin(g, o) :- olk_sin(r, o), olk_ref(r, h, x), sec_ngate("olk", "olks", h, x, g).
+olk_str(c, o) :- sec_rorig(c, "olks", o).
+// olk_sin(r, o): name r reads o before its checks: a value bound to it, a parameter's, a route's.
+.decl olk_sin(r: node, o: symbol)
+olk_sin(r, o) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), r != v, olk_str(v, o).
+olk_sin(r, o) :- sec_porig(r, "olks", _, _, o).
+olk_sin(r, k) :- sec_param_ref(r, g, x), sec_route_param(g, x, p), sec_key(p, k).
 // The functions holding this rule's sinks: a validator-named helper that itself filters or orders is no check.
-sec_sink_fn(g) :- olk_name_arg(c, _), nearest(c, g, fdef).
-sec_sink_fn(g) :- olk_splat(c, _), nearest(c, g, fdef).
-.decl olk_param(g: node, x: symbol, s: node)
-olk_param(g, x, s) :- sec_param_at(_, g, a, x), olk_str(a, s), !sec_checked_expr(a).
-olk_param(g, x, p) :- sec_route_param(g, x, p).
-.decl olk_returns(g: node, s: node)
-olk_returns(g, s) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), olk_str(v, s),
-    !sec_checked_expr(v).
-.decl olk_own(g: node, s: node)
-olk_own(g, s) :- olk_returns(g, s), within(s, g).
-olk_own(g, s) :- olk_returns(g, s), calls(g, h), within(s, h).
+sec_sink_fn(gq) :- olk_name_arg(c, _, q), sec_bres(q), nearest(c, g, fdef), pt_def(g, gq).
+sec_sink_fn(gq) :- olk_splat(c, _, q), sec_bres(q), nearest(c, g, fdef), pt_def(g, gq).
+// Across files: what a call passes unchecked, what a function returns unchecked; a check call of the run passes it
+// through a gate (sec_egate of lib/security's "sec" checks).
+sec_froute("olks", "seg"). sec_froute("olks", "free").
+sec_fpass("olks", c, a, o) :- call_arg(c, _, _, a), olk_str(a, o), !sec_checked_expr(a), !sec_echk_any("sec", a).
+sec_fpass("olks", c, a, g) :- call_arg(c, _, _, a), olk_str(a, _), !sec_checked_expr(a), sec_egate("sec", "olks", a, g).
+sec_gin(g, o) :- call_arg(_, _, _, a), olk_str(a, o), !sec_checked_expr(a), sec_egate("sec", "olks", a, g).
+sec_fctx("olks", c, o) :- call_arg(c, _, _, a), olk_str(a, o).
+sec_fret("olks", g, o) :- olk_ret(g, v), olk_str(v, o), !sec_echk_any("sec", v).
+sec_fret("olks", g, eg) :- olk_ret(g, v), olk_str(v, _), sec_egate("sec", "olks", v, eg).
+sec_gin(eg, o) :- olk_ret(g, v), olk_str(v, o), sec_egate("sec", "olks", v, eg).
+.decl olk_ret(g: node, v: node)
+olk_ret(g, v) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), !sec_checked_expr(v).
 
-// olk_keys(e, s): e is a mapping whose keys the client chose, from source s: the request's own mappings and what is
-// read off them, a dict or comprehension with a request-derived key, a name filled with such keys. Not `self.kwargs`:
-// its keys are the URLconf's capture names (its values are text, olk_str).
-.decl olk_keys(e: node, s: node)
-olk_keys(e, e) :- sec_source(e, w), w != "self.kwargs".
-olk_keys(e, s) :- sec_step(e, a), olk_key_step(e), olk_keys(a, s).
-olk_keys(t, s) :- kind(t, "dictionary"), child(t, p, _), kind(p, "pair"), field(p, "key", k), olk_str(k, s).
-olk_keys(t, s) :- kind(t, "dictionary"), child(t, sp, _), kind(sp, "dictionary_splat"), child(sp, a, 0),
-    olk_keys(a, s).
-olk_keys(t, s) :- kind(t, "dictionary_comprehension"), field(t, "body", p), field(p, "key", k), olk_str(k, s).
-olk_keys(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), r != v, olk_keys(v, s),
-    !olk_checked_ref(r).
-olk_keys(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, h), olk_key_store(h, x, s), !olk_checked_ref(r).
-olk_keys(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, g), olk_kparam(g, x, s), !olk_checked_ref(r).
-olk_keys(c, s) :- call_target(c, g), olk_kreturns(g, s), !sec_validator_def(g), call_arg(c, _, _, a),
-    (olk_keys(a, s) ; olk_str(a, s)).
-olk_keys(c, s) :- call_target(c, g), olk_kreturns(g, s), !sec_validator_def(g), olk_kown(g, s).
+// olk_keys(e, o): e is a mapping whose keys the client chose, from origin o: the request's own mappings and what is
+// read off them, a dict or comprehension with a request-derived key, a name filled with such keys, a parameter given
+// one (`P|olkk|…`), a call of a function of the run that returns one (`R|olkk|…`). Not `self.kwargs`: its keys are
+// the URLconf's capture names (its values are text, olk_str).
+.decl olk_keys(e: node, o: symbol)
+olk_keys(e, k) :- sec_source(e, _), sec_key(e, k).
+olk_keys(e, o) :- sec_stepg(e, a), olk_key_step(e), olk_keys(a, o).
+olk_keys(e, g) :- sec_stepq("olkk", e, a, g), olk_key_step(e), olk_keys(a, _).
+sec_gin(g, o) :- sec_stepq("olkk", e, a, g), olk_key_step(e), olk_keys(a, o).
+olk_keys(t, o) :- kind(t, "dictionary"), child(t, p, _), kind(p, "pair"), field(p, "key", k), olk_str(k, o).
+olk_keys(t, o) :- kind(t, "dictionary"), child(t, sp, _), kind(sp, "dictionary_splat"), child(sp, a, 0),
+    olk_keys(a, o).
+olk_keys(t, o) :- kind(t, "dictionary_comprehension"), field(t, "body", p), field(p, "key", k), olk_str(k, o).
+olk_keys(r, o) :- olk_kin(r, o), olk_ref(r, h, x), !sec_nchk_any("olk", h, x).
+olk_keys(r, g) :- olk_kin(r, _), olk_ref(r, h, x), sec_ngate("olk", "olkk", h, x, g).
+sec_gin(g, o) :- olk_kin(r, o), olk_ref(r, h, x), sec_ngate("olk", "olkk", h, x, g).
+olk_keys(c, o) :- sec_rorig(c, "olkk", o).
+// olk_kin(r, o): name r reads keys o before its checks: a value bound to it, keys stored into it, a parameter's, a
+// FastAPI route's dict parameter.
+.decl olk_kin(r: node, o: symbol)
+olk_kin(r, o) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), r != v, olk_keys(v, o).
+olk_kin(r, o) :- kind(r, "identifier"), text(r, x), look(r, x, h), olk_key_store(h, x, o).
+olk_kin(r, o) :- sec_porig(r, "olkk", _, _, o).
+olk_kin(r, k) :- sec_param_ref(r, g, x), sec_route_param(g, x, p), olk_dict_param(g, p), sec_key(p, k).
+// olk_dict_param(g, p): parameter p of g is annotated as a mapping (`dict`, `Dict`, `Any`, Optional of one).
+.decl olk_dict_param(g: node, p: node)
+olk_dict_param(g, p) :- sig_param(g, p, _, _, _, an, _), text(an, t), match("(typing\\.)?(Optional\\[)?\\s*(dict|Dict|Any)\\b.*", t).
+// A Django view's capture holds keys when its parameter is so annotated (olk_dict_q, in the view's file).
+.decl olk_dict_q(g: symbol, x: symbol)
+olk_dict_q(gq, x) :- olk_dict_param(g, p), sig_param(g, p, nm, _, _, _, _), text(nm, x), pt_def(g, gq).
+sec_xparam("olkk", gq, x, k) :- sec_xdj_param(gq, x, k, _), olk_dict_q(gq, x).
+sec_fpass("olkk", c, a, o) :- call_arg(c, _, _, a), olk_keys(a, o), !sec_checked_expr(a), !sec_echk_any("sec", a).
+sec_fpass("olkk", c, a, g) :- call_arg(c, _, _, a), olk_keys(a, _), !sec_checked_expr(a), sec_egate("sec", "olkk", a, g).
+sec_gin(g, o) :- call_arg(_, _, _, a), olk_keys(a, o), !sec_checked_expr(a), sec_egate("sec", "olkk", a, g).
+sec_fctx("olkk", c, o) :- call_arg(c, _, _, a), (olk_keys(a, o) ; olk_str(a, o)).
+sec_fret("olkk", g, o) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), olk_keys(v, o).
 // olk_key_step(e): the steps that keep a mapping's keys: reading off it (`.dict()`, `.copy()`, `["filters"]`,
 // `.get("filters")`), awaiting it, parentheses, a conditional or `or`; not a validated form's or serializer's data.
 .decl olk_key_step(e: node)
@@ -312,24 +378,15 @@ olk_key_step(e) :- kind(e, "subscript"). olk_key_step(e) :- kind(e, "call"). olk
 olk_key_step(e) :- kind(e, "parenthesized_expression"). olk_key_step(e) :- kind(e, "conditional_expression").
 olk_key_step(e) :- kind(e, "boolean_operator").
 olk_key_step(e) :- attr_of(e, _, m), !sec_validated_attr(m).
-// olk_key_store(h, x, s): scope h stores a client-chosen key into name x: `x[key] = …`, `x.update(<request
+// olk_key_store(h, x, o): scope h stores a client-chosen key into name x: `x[key] = …`, `x.update(<request
 // mapping>)`, `x.update(**<request mapping>)`.
-.decl olk_key_store(h: node, x: symbol, s: node)
-olk_key_store(h, x, s) :- kind(a, "assignment"), field(a, "left", l), kind(l, "subscript"), field(l, "value", o),
-    kind(o, "identifier"), text(o, x), field(l, "subscript", k), olk_str(k, s), nearest(a, h, scope).
-olk_key_store(h, x, s) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "update"), kind(o, "identifier"),
-    text(o, x), sec_arg(c, 0, "", a), olk_keys(a, s), nearest(c, h, scope).
-olk_key_store(h, x, s) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "update"), kind(o, "identifier"),
-    text(o, x), olk_kwsplat(c, a), olk_keys(a, s), nearest(c, h, scope).
-.decl olk_kparam(g: node, x: symbol, s: node)
-olk_kparam(g, x, s) :- sec_param_at(_, g, a, x), olk_keys(a, s), !sec_checked_expr(a).
-olk_kparam(g, x, p) :- sec_route_param(g, x, p), sig_param(g, p, _, _, _, an, _), text(an, t),
-    match("(typing\\.)?(Optional\\[)?\\s*(dict|Dict|Any)\\b.*", t).
-.decl olk_kreturns(g: node, s: node)
-olk_kreturns(g, s) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), olk_keys(v, s).
-.decl olk_kown(g: node, s: node)
-olk_kown(g, s) :- olk_kreturns(g, s), within(s, g).
-olk_kown(g, s) :- olk_kreturns(g, s), calls(g, h), within(s, h).
+.decl olk_key_store(h: node, x: symbol, o: symbol)
+olk_key_store(h, x, o) :- kind(a, "assignment"), field(a, "left", l), kind(l, "subscript"), field(l, "value", b),
+    kind(b, "identifier"), text(b, x), field(l, "subscript", k), olk_str(k, o), nearest(a, h, scope).
+olk_key_store(h, x, o) :- kind(c, "call"), field(c, "function", f), attr_of(f, b, "update"), kind(b, "identifier"),
+    text(b, x), sec_arg(c, 0, "", a), olk_keys(a, o), nearest(c, h, scope).
+olk_key_store(h, x, o) :- kind(c, "call"), field(c, "function", f), attr_of(f, b, "update"), kind(b, "identifier"),
+    text(b, x), olk_kwsplat(c, a), olk_keys(a, o), nearest(c, h, scope).
 
 // The cases, `cases/python-security-orm-lookup-injection/`, read as one repository: each line ending in `# caught`
 // is reported, and no other line.

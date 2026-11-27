@@ -90,319 +90,405 @@
 
 #include "lib/security.rerail"
 
+// Per file and across files (lib/security's origins): each file states what its file paths take by origin, with the
+// value's shape (ptr_val), and a finding reads the cross-file answer by its sink's term (ptr_xfirst): its first
+// source. An upload's `.save()` is a sink when the receiver is a Werkzeug upload by another file's say
+// (ptr_xupload); a pydantic field another file's model validates, and a helper of the run that tests its parameter
+// stays in a base, clear the value by that file's say (gates `ptf:`, and check tokens `pf:`, `pc:`).
 .violation PathTraversal(at: node, what: symbol, p: symbol, l: number) "Client data from `{what}` ({p}:{l}) reaches this file path; `..` or an absolute path escapes the base. Keep its basename, or resolve it and check it stays in the base, unless a check elsewhere does."
+PathTraversal(c, what, p, l) :- (ptr_sink(c, _) ; ptr_sink_u(c, _, _)), pt_tm(c, ct), ptr_xfirst(ct, k),
+    sec_src_info(k, what, p, l).
 .violation PathProbe(at: node, what: symbol, p: symbol, l: number) "Client data from `{what}` ({p}:{l}) picks the path this tests, so `..` probes files outside the base. Keep its basename, or resolve it and check it stays in the base, unless a check elsewhere does."
+PathProbe(c, what, p, l) :- ptr_probe(c, _), pt_tm(c, ct), ptr_xpfirst(ct, k), sec_src_info(k, what, p, l).
+sec_flavor("ptfree"). sec_flavor("ptseg"). sec_flavor("ptlatent").
+// ptr_shape_fl(m, fl): the flavor that carries shape m across calls.
+.decl ptr_shape_fl(m: symbol, fl: symbol)
+ptr_shape_fl("free", "ptfree"). ptr_shape_fl("seg", "ptseg"). ptr_shape_fl("latent", "ptlatent").
 
 // ---- paths -------------------------------------------------------------------------------------------------------
-.decl pt_path_q(q: symbol)
-pt_path_q("pathlib.Path"). pt_path_q("pathlib.PurePath"). pt_path_q("pathlib.PosixPath").
-pt_path_q("pathlib.PurePosixPath"). pt_path_q("pathlib.WindowsPath"). pt_path_q("anyio.Path").
-// pt_path_method(m): pathlib methods that answer another path.
-.decl pt_path_method(m: symbol)
-pt_path_method("resolve"). pt_path_method("absolute"). pt_path_method("joinpath"). pt_path_method("with_name").
-pt_path_method("with_suffix"). pt_path_method("with_stem"). pt_path_method("expanduser").
-pt_path_method("relative_to").
-// pt_pathy(e): e's value is a pathlib path.
-.decl pt_pathy(e: node)
-pt_pathy(c) :- sec_call_q(c, q), pt_path_q(q).
-pt_pathy(b) :- kind(b, "binary_operator"), op(b, "/").
-pt_pathy(p) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a, pt_pathy(a).
-pt_pathy(w) :- kind(w, "await"), child(w, a, 0), pt_pathy(a).
-pt_pathy(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), pt_path_method(m), pt_pathy(o).
-pt_pathy(e) :- attr_of(e, o, "parent"), pt_pathy(o).
-pt_pathy(r) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), pt_pathy(v).
-pt_pathy(r) :- kind(r, "identifier"), text(r, x), look(r, x, g), sig_param(g, _, nm, _, _, a, _), text(nm, x),
+.decl ptr_path_q(q: symbol)
+ptr_path_q("pathlib.Path"). ptr_path_q("pathlib.PurePath"). ptr_path_q("pathlib.PosixPath").
+ptr_path_q("pathlib.PurePosixPath"). ptr_path_q("pathlib.WindowsPath"). ptr_path_q("anyio.Path").
+// ptr_path_method(m): pathlib methods that answer another path.
+.decl ptr_path_method(m: symbol)
+ptr_path_method("resolve"). ptr_path_method("absolute"). ptr_path_method("joinpath"). ptr_path_method("with_name").
+ptr_path_method("with_suffix"). ptr_path_method("with_stem"). ptr_path_method("expanduser").
+ptr_path_method("relative_to").
+// ptr_pathy(e): e's value is a pathlib path.
+.decl ptr_pathy(e: node)
+ptr_pathy(c) :- sec_call_q(c, q), ptr_path_q(q).
+ptr_pathy(b) :- kind(b, "binary_operator"), op(b, "/").
+ptr_pathy(p) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a, ptr_pathy(a).
+ptr_pathy(w) :- kind(w, "await"), child(w, a, 0), ptr_pathy(a).
+ptr_pathy(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), ptr_path_method(m), ptr_pathy(o).
+ptr_pathy(e) :- attr_of(e, o, "parent"), ptr_pathy(o).
+ptr_pathy(r) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), ptr_pathy(v).
+ptr_pathy(r) :- kind(r, "identifier"), text(r, x), look(r, x, g), sig_param(g, _, nm, _, _, a, _), text(nm, x),
     text(a, t), match("(Optional\\[)?(pathlib\\.|anyio\\.)?(Pure)?Path\\b.*", t).
 
 // ---- sanitisers and checks ---------------------------------------------------------------------------------------
-// pt_clean_q(q): library calls that reduce a value to a bare, safe name or a contained path.
-.decl pt_clean_q(q: symbol)
-pt_clean_q("os.path.basename"). pt_clean_q("posixpath.basename"). pt_clean_q("ntpath.basename").
-pt_clean_q("werkzeug.utils.secure_filename"). pt_clean_q("werkzeug.secure_filename").
-pt_clean_q("django.utils.text.get_valid_filename"). pt_clean_q("django.utils.text.slugify").
-pt_clean_q("werkzeug.security.safe_join"). pt_clean_q("werkzeug.utils.safe_join"). pt_clean_q("flask.safe_join").
-pt_clean_q("flask.helpers.safe_join"). pt_clean_q("builtins.int"). pt_clean_q("uuid.UUID").
-.decl pt_clean_method(m: symbol)
-pt_clean_method("get_valid_name"). pt_clean_method("generate_filename"). pt_clean_method("get_available_name").
-pt_clean_method("temporary_file_path").
-// pt_name_attr(m): a pathlib path's attributes that hold its last component only.
-.decl pt_name_attr(m: symbol)
-pt_name_attr("name"). pt_name_attr("stem"). pt_name_attr("suffix"). pt_name_attr("suffixes").
-// pt_cut(e): e holds no client path even when what it is built from does.
-.decl pt_cut(e: node)
-pt_cut(e) :- attr_of(e, o, m), pt_name_attr(m), pt_pathy(o).
-pt_cut(e) :- attr_of(e, _, "file").
-pt_cut(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m), pt_clean_method(m).
-// A field of a pydantic model of the run that the model validates (`@field_validator("locale")`, `@validator(…)`,
-// `Field(pattern=…)`), read off a parameter annotated with the model (mealie's `registration.locale`).
-pt_cut(e) :- attr_of(e, o, fld), kind(o, "identifier"), text(o, x), look(o, x, g), sig_param(g, _, nm, _, _, a, _),
-    text(nm, x), sec_ann(a, t), sym_of(t, q), pt_model_checked(q, fld).
-.decl pt_model_checked(q: symbol, fld: symbol)
-pt_model_checked(q, fld) :- class_def(c, q), sec_model_q(q), kind(g, "function_definition"), nearest(g, c, scope),
+// ptr_clean_q(q): library calls that reduce a value to a bare, safe name or a contained path.
+.decl ptr_clean_q(q: symbol)
+ptr_clean_q("os.path.basename"). ptr_clean_q("posixpath.basename"). ptr_clean_q("ntpath.basename").
+ptr_clean_q("werkzeug.utils.secure_filename"). ptr_clean_q("werkzeug.secure_filename").
+ptr_clean_q("django.utils.text.get_valid_filename"). ptr_clean_q("django.utils.text.slugify").
+ptr_clean_q("werkzeug.security.safe_join"). ptr_clean_q("werkzeug.utils.safe_join"). ptr_clean_q("flask.safe_join").
+ptr_clean_q("flask.helpers.safe_join"). ptr_clean_q("builtins.int"). ptr_clean_q("uuid.UUID").
+.decl ptr_clean_method(m: symbol)
+ptr_clean_method("get_valid_name"). ptr_clean_method("generate_filename"). ptr_clean_method("get_available_name").
+ptr_clean_method("temporary_file_path").
+// ptr_name_attr(m): a pathlib path's attributes that hold its last component only.
+.decl ptr_name_attr(m: symbol)
+ptr_name_attr("name"). ptr_name_attr("stem"). ptr_name_attr("suffix"). ptr_name_attr("suffixes").
+// ptr_cut(e): e holds no client path even when what it is built from does. A field of a pydantic model of the run
+// that the model validates is cut where the model's file says so (ptr_model_checked0): its read passes a gate
+// (ptr_fgate), and a name assigned it a check token (`pf:`).
+.decl ptr_cut(e: node)
+ptr_cut(e) :- attr_of(e, o, m), ptr_name_attr(m), ptr_pathy(o).
+ptr_cut(e) :- attr_of(e, _, "file").
+ptr_cut(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m), ptr_clean_method(m).
+// ptr_model_checked0(q, fld): pydantic model q of this file validates field fld (`@field_validator("locale")`,
+// `@validator(…)`, `Field(pattern=…)`): mealie's `registration.locale`, read off a parameter annotated with q.
+.decl ptr_model_checked0(q: symbol, fld: symbol)
+ptr_model_checked0(q, fld) :- class_def(c, q), sec_model_class(c), kind(g, "function_definition"), nearest(g, c, scope),
     dexpr(g, e), unparen(e, dc), kind(dc, "call"), call_name(dc, n), (n = "field_validator" ; n = "validator"),
     posarg(dc, _, s), str(s, fld).
-pt_model_checked(q, fld) :- class_def(c, q), sec_model_q(q), asg(c, fld, v, _), unparen(v, fc), kind(fc, "call"),
+ptr_model_checked0(q, fld) :- class_def(c, q), sec_model_class(c), asg(c, fld, v, _), unparen(v, fc), kind(fc, "call"),
     call_name(fc, "Field"), (sec_arg(fc, -1, "pattern", _) ; sec_arg(fc, -1, "regex", _)).
-// pt_clean(v): v is a sanitised value (pt_cut, a sanitising library call, or a check call of lib/security).
-.decl pt_clean(v: node)
-pt_clean(v) :- unparen(v, e), pt_cut(e).
-pt_clean(v) :- unparen(v, c), sec_call_q(c, q), pt_clean_q(q).
-pt_clean(v) :- unparen(v, c), sec_check_call(c).
+// ptr_clean(v): v is a sanitised value (ptr_cut, a sanitising library call, or a check call of lib/security).
+// ptr_clean_c(v, t): by what another file says (token t): a check call of the run, a pydantic field.
+.decl ptr_clean(v: node)
+ptr_clean(v) :- unparen(v, e), ptr_cut(e).
+ptr_clean(v) :- unparen(v, c), sec_call_q(c, q), ptr_clean_q(q).
+ptr_clean(v) :- unparen(v, c), sec_check_call(c).
+.decl ptr_clean_c(v: node, t: symbol)
+ptr_clean_c(v, t) :- unparen(v, c), sec_check_cond(c, t).
+ptr_clean_c(v, cat("pf:", cat(q, cat(":", fld)))) :- unparen(v, e), sec_typed_at(e, q, fld).
 
-// pt_resolved(e): e is a canonical path: `.resolve()`, os.path.realpath/abspath/normpath, `str()`/`Path()` of one,
+// ptr_resolved(e): e is a canonical path: `.resolve()`, os.path.realpath/abspath/normpath, `str()`/`Path()` of one,
 // or a name assigned one.
-.decl pt_resolved(e: node)
-pt_resolved(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "resolve").
-pt_resolved(c) :- sec_call_q(c, q), pt_norm_q(q).
-pt_resolved(c) :- sec_call_q(c, q), (q = "builtins.str" ; q = "os.fspath" ; pt_path_q(q)), sec_arg(c, 0, _, a),
-    pt_resolved(a).
-pt_resolved(p) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a, pt_resolved(a).
-pt_resolved(r) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), pt_resolved(v).
-// pt_norm_q(q): the lexical normalisations: they fold `x/..` without asking whether x exists.
-.decl pt_norm_q(q: symbol)
-pt_norm_q("os.path.realpath"). pt_norm_q("os.path.abspath"). pt_norm_q("os.path.normpath").
-pt_norm_q("posixpath.realpath"). pt_norm_q("posixpath.abspath"). pt_norm_q("posixpath.normpath").
-// pt_sep_arg(a): the prefix a `startswith` tests ends in a path separator (`base + os.sep`, `f"{base}/"`,
+.decl ptr_resolved(e: node)
+ptr_resolved(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "resolve").
+ptr_resolved(c) :- sec_call_q(c, q), ptr_norm_q(q).
+ptr_resolved(c) :- sec_call_q(c, q), (q = "builtins.str" ; q = "os.fspath" ; ptr_path_q(q)), sec_arg(c, 0, _, a),
+    ptr_resolved(a).
+ptr_resolved(p) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a, ptr_resolved(a).
+ptr_resolved(r) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), ptr_resolved(v).
+// ptr_norm_q(q): the lexical normalisations: they fold `x/..` without asking whether x exists.
+.decl ptr_norm_q(q: symbol)
+ptr_norm_q("os.path.realpath"). ptr_norm_q("os.path.abspath"). ptr_norm_q("os.path.normpath").
+ptr_norm_q("posixpath.realpath"). ptr_norm_q("posixpath.abspath"). ptr_norm_q("posixpath.normpath").
+// ptr_sep_arg(a): the prefix a `startswith` tests ends in a path separator (`base + os.sep`, `f"{base}/"`,
 // `str(base) + "/"`, a name assigned one).
-.decl pt_sw_arg(a: node)
-pt_sw_arg(a) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "startswith"), sec_arg(c, 0, _, a).
-pt_sw_arg(v) :- pt_sw_arg(r), kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _).
-.decl pt_sep_arg(a: node)
-pt_sep_arg(a) :- pt_sw_arg(a), text(a, t), contains("sep", t).
-pt_sep_arg(a) :- pt_sw_arg(a), text(a, t), match("(?s).*/[\"']\\)*", t).
-pt_sep_arg(r) :- pt_sw_arg(r), kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), pt_sep_arg(v).
-// pt_contain(h, a): scope h tests that the resolved path a stays under a base.
-.decl pt_contain(h: node, a: node)
-pt_contain(h, o) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m),
-    (m = "is_relative_to" ; m = "relative_to"), pt_resolved(o), nearest(c, h, fscope).
-pt_contain(h, o) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "startswith"), pt_resolved(o),
-    sec_arg(c, 0, _, a), pt_sep_arg(a), nearest(c, h, fscope).
-pt_contain(h, it) :- sec_call_q(c, q), (q = "os.path.commonpath" ; q = "posixpath.commonpath"), sec_arg(c, 0, _, l),
-    (kind(l, "list") ; kind(l, "tuple")), child(l, it, _), pt_resolved(it), nearest(c, h, fscope).
+.decl ptr_sw_arg(a: node)
+ptr_sw_arg(a) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "startswith"), sec_arg(c, 0, _, a).
+ptr_sw_arg(v) :- ptr_sw_arg(r), kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _).
+.decl ptr_sep_arg(a: node)
+ptr_sep_arg(a) :- ptr_sw_arg(a), text(a, t), contains("sep", t).
+ptr_sep_arg(a) :- ptr_sw_arg(a), text(a, t), match("(?s).*/[\"']\\)*", t).
+ptr_sep_arg(r) :- ptr_sw_arg(r), kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), ptr_sep_arg(v).
+// ptr_contain(h, a): scope h tests that the resolved path a stays under a base.
+.decl ptr_contain(h: node, a: node)
+ptr_contain(h, o) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m),
+    (m = "is_relative_to" ; m = "relative_to"), ptr_resolved(o), nearest(c, h, fscope).
+ptr_contain(h, o) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "startswith"), ptr_resolved(o),
+    sec_arg(c, 0, _, a), ptr_sep_arg(a), nearest(c, h, fscope).
+ptr_contain(h, it) :- sec_call_q(c, q), (q = "os.path.commonpath" ; q = "posixpath.commonpath"), sec_arg(c, 0, _, l),
+    (kind(l, "list") ; kind(l, "tuple")), child(l, it, _), ptr_resolved(it), nearest(c, h, fscope).
 // `x.parent.samefile(base)`, `os.path.samefile(os.path.dirname(x), base)`: the file system compares the real paths.
-pt_contain(h, o) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "samefile"), nearest(c, h, fscope).
-pt_contain(h, a) :- sec_call_q(c, "os.path.samefile"), sec_arg(c, _, _, a), nearest(c, h, fscope).
-// A function of the run that tests its parameter so (`is_path_in_dir(path, base)`) checks the argument a call
-// passes it.
-pt_contain(h, a) :- call_target(c, g), sec_param_at(c, g, a, x), pt_checked_param(g, x), nearest(c, h, fscope).
-.decl pt_checked_param(g: node, x: symbol)
-pt_checked_param(g, x) :- param(g, x, _), pt_contain(g, a), pt_reads(a, x).
-// pt_reads(a, x): expression a reads name x.
-.decl pt_reads(a: node, x: symbol)
-pt_reads(a, x) :- unparen(a, i), kind(i, "identifier"), text(i, x).
-pt_reads(a, x) :- within(i, a), kind(i, "identifier"), text(i, x), !field(_, "attribute", i).
-// pt_checked(h, x): scope h checks or sanitises name x.
-.decl pt_checked(h: node, x: symbol)
-pt_checked(h, x) :- sec_checked(h, x).
-pt_checked(h, x) :- pt_contain(h, a), pt_reads(a, x), x != "self", x != "cls", x != "request".
-pt_checked(h, x) :- asg(h, x, v, _), pt_clean(v), pt_reads(v, x).
+ptr_contain(h, o) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "samefile"), nearest(c, h, fscope).
+ptr_contain(h, a) :- sec_call_q(c, "os.path.samefile"), sec_arg(c, _, _, a), nearest(c, h, fscope).
+// ptr_contain_c(h, a, t): a function of the run that tests its parameter so (`is_path_in_dir(path, base)`) checks
+// the argument a that a call in scope h passes it: token `pc:<call's term>:<how>:<index>:<keyword>`, which the
+// callee's file decides (ptr_xcparam).
+.decl ptr_contain_c(h: node, a: node, t: symbol)
+ptr_contain_c(h, a, cat("pc:", cat(ct, cat(":", cat(how, cat(":", cat(to_string(i), ":"))))))) :- call_target(c, _),
+    posarg(c, i, a), sec_call_how(c, how), pt_tm(c, ct), nearest(c, h, fscope).
+ptr_contain_c(h, a, cat("pc:", cat(ct, cat(":", cat(how, cat(":-1:", k)))))) :- call_target(c, _),
+    call_arg(c, -1, k, a), sec_call_how(c, how), pt_tm(c, ct), nearest(c, h, fscope).
+// ptr_cparam_sure(g, x), ptr_cparam_tok(g, x, t): def g tests its parameter x stays in a base, surely, or by token t.
+.decl ptr_cparam_sure(g: symbol, x: symbol)
+ptr_cparam_sure(gq, x) :- pt_def(g, gq), param(g, x, _), ptr_contain(g, a), ptr_reads(a, x).
+.decl ptr_cparam_tok(g: symbol, x: symbol, t: symbol)
+ptr_cparam_tok(gq, x, t) :- pt_def(g, gq), param(g, x, _), ptr_contain_c(g, a, t), ptr_reads(a, x).
+// ptr_xcparam(g, x): the def whose symbol is g tests its parameter x so, across files (a helper calls another).
+.decl ptr_xcparam(g: symbol, x: symbol) cross_file
+ptr_xcparam(gq, x) :- ptr_cparam_sure(gq, x).
+ptr_xcparam(gq, x) :- ptr_cparam_tok(gq, x, t), sec_xchk(t).
+// The tokens of this rule: `pc:` the callee tests the parameter the argument lands on (lib/security's mapping);
+// `pf:<q>:<f>` model q validates field f.
+.decl ptr_tok(t: symbol)
+ptr_tok(t) :- ptr_checked_c(_, _, t).
+ptr_tok(t) :- ptr_cparam_tok(_, _, t).
+sec_xchk(t) :- ptr_tok(t), match("pf:(?<q>[^:]*):(?<fld>.*)", t), ptr_model_checked0(q, fld).
+sec_xchk(t) :- ptr_tok(t), match("pc:(?<ct>[^:]*):(?<how>[^:]*):(?<is>[^:]*):(?<k>.*)", t), sec_site(ct, gq),
+    i = to_number(is), i >= 0, sec_def_pos(gq, how, i, x), ptr_xcparam(gq, x).
+sec_xchk(t) :- ptr_tok(t), match("pc:(?<ct>[^:]*):[^:]*:-1:(?<x>.*)", t), sec_site(ct, gq), sec_def_param(gq, x, _),
+    ptr_xcparam(gq, x).
+// ptr_reads(a, x): expression a reads name x.
+.decl ptr_reads(a: node, x: symbol)
+ptr_reads(a, x) :- unparen(a, i), kind(i, "identifier"), text(i, x).
+ptr_reads(a, x) :- within(i, a), kind(i, "identifier"), text(i, x), !field(_, "attribute", i).
+// ptr_checked(h, x): scope h checks or sanitises name x. ptr_checked_c(h, x, t): by token t, which another file
+// decides; a name read so passes a gate (sec_ngate "ptr"), a value site a gate (sec_egate "ptr").
+.decl ptr_checked(h: node, x: symbol)
+ptr_checked(h, x) :- sec_checked(h, x).
+ptr_checked(h, x) :- ptr_contain(h, a), ptr_reads(a, x), x != "self", x != "cls", x != "request".
+ptr_checked(h, x) :- asg(h, x, v, _), ptr_clean(v), ptr_reads(v, x).
 // `x.isalnum()`, `x.isdigit()`, …: a name of letters or digits only holds no separator or dot.
-pt_checked(h, x) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), pt_charclass_method(m),
+ptr_checked(h, x) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), ptr_charclass_method(m),
     unparen(o, i), kind(i, "identifier"), text(i, x), nearest(c, h, fscope).
-.decl pt_charclass_method(m: symbol)
-pt_charclass_method("isalnum"). pt_charclass_method("isalpha"). pt_charclass_method("isdigit").
-pt_charclass_method("isdecimal"). pt_charclass_method("isnumeric"). pt_charclass_method("isidentifier").
-.decl pt_checked_expr(e: node)
-pt_checked_expr(e) :- sec_value_site(e), pt_reads(e, x), nearest(e, h, fscope), pt_checked(h, x).
-// pt_seg_guard(h, a): scope h stops the one climb a one-segment value has, `..`: `startswith(base)` on its resolved
+.decl ptr_checked_c(h: node, x: symbol, t: symbol)
+ptr_checked_c(h, x, t) :- sec_checked_c(h, x, t).
+ptr_checked_c(h, x, t) :- ptr_contain_c(h, a, t), ptr_reads(a, x), x != "self", x != "cls", x != "request".
+ptr_checked_c(h, x, t) :- asg(h, x, v, _), ptr_clean_c(v, t), ptr_reads(v, x).
+sec_nchk_c("ptr", h, x, t) :- ptr_checked_c(h, x, t).
+sec_echk_c("ptr", e, t) :- sec_value_site(e), ptr_reads(e, x), nearest(e, h, fscope), ptr_checked_c(h, x, t).
+.decl ptr_charclass_method(m: symbol)
+ptr_charclass_method("isalnum"). ptr_charclass_method("isalpha"). ptr_charclass_method("isdigit").
+ptr_charclass_method("isdecimal"). ptr_charclass_method("isnumeric"). ptr_charclass_method("isidentifier").
+.decl ptr_checked_expr(e: node)
+ptr_checked_expr(e) :- sec_value_site(e), ptr_reads(e, x), nearest(e, h, fscope), ptr_checked(h, x).
+// ptr_seg_guard(h, a): scope h stops the one climb a one-segment value has, `..`: `startswith(base)` on its resolved
 // path (a separator is not needed, as the value cannot reach a sibling `base-x`), or a `..` test on it.
-.decl pt_seg_guard(h: node, a: node)
-pt_seg_guard(h, o) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "startswith"), pt_resolved(o),
+.decl ptr_seg_guard(h: node, a: node)
+ptr_seg_guard(h, o) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "startswith"), ptr_resolved(o),
     nearest(c, h, fscope).
-pt_seg_guard(h, r) :- cmp_pair(c, _, o, l, r), (o = "in" ; o = "not in"), unparen(l, l2), str(l2, ".."),
+ptr_seg_guard(h, r) :- cmp_pair(c, _, o, l, r), (o = "in" ; o = "not in"), unparen(l, l2), str(l2, ".."),
     nearest(c, h, fscope).
-pt_seg_guard(h, l) :- cmp_pair(c, _, o, l, r), (o = "==" ; o = "!=" ; o = "in" ; o = "not in"), unparen(r, r2),
+ptr_seg_guard(h, l) :- cmp_pair(c, _, o, l, r), (o = "==" ; o = "!=" ; o = "in" ; o = "not in"), unparen(r, r2),
     (str(r2, "..") ; has(r2, s, "string"), str(s, "..")), nearest(c, h, fscope).
-.decl pt_guarded(h: node, x: symbol, m: symbol)
-pt_guarded(h, x, "seg") :- pt_seg_guard(h, a), pt_reads(a, x).
+.decl ptr_guarded(h: node, x: symbol, m: symbol)
+ptr_guarded(h, x, "seg") :- ptr_seg_guard(h, a), ptr_reads(a, x).
 
 // ---- what the client text can do in a path ---------------------------------------------------------------------
 // The shape of a value (header): "free" may hold `/`; "seg" is one segment, without `/`; "latent" is free text after
 // fixed text of its segment.
-// pt_seg_param(f, x): route f binds parameter x to one path segment in every route that names it.
-.decl pt_seg_param(f: node, x: symbol)
-pt_seg_param(f, x) :- sec_route_param(f, x, _), pt_seg_capture(f, x), !pt_wide_capture(f, x).
-.decl pt_seg_capture(f: node, x: symbol)
-pt_seg_capture(f, x) :- sec_route_param(f, x, _), sec_route(f, "fastapi"), sec_route_decorator(f, _, path),
+// ptr_seg_param(f, x): FastAPI or Flask route f binds parameter x to one path segment in every route that names it
+// (a Django view's capture: lib/security's sec_xdj_param, of shape "seg" or "free").
+.decl ptr_seg_param(f: node, x: symbol)
+ptr_seg_param(f, x) :- sec_route_param(f, x, _), ptr_seg_capture(f, x), !ptr_wide_capture(f, x).
+.decl ptr_seg_capture(f: node, x: symbol)
+ptr_seg_capture(f, x) :- sec_route_param(f, x, _), sec_route(f, "fastapi"), sec_route_decorator(f, _, path),
     contains(cat("{", cat(x, "}")), path).
-pt_seg_capture(f, x) :- sec_route_param(f, x, _), sec_route(f, "flask"), sec_route_decorator(f, _, path),
+ptr_seg_capture(f, x) :- sec_route_param(f, x, _), sec_route(f, "flask"), sec_route_decorator(f, _, path),
     (contains(cat("<", cat(x, ">")), path) ; contains(cat("<string:", cat(x, ">")), path) ;
     match(cat("(?s).*<string\\([^>]*\\):", cat(x, ">.*")), path)).
-pt_seg_capture(f, x) :- sec_route_param(f, x, _), sec_url_view_fn(r, f), sec_url_route(r, _, route),
-    (contains(cat("<", cat(x, ">")), route) ; contains(cat("<str:", cat(x, ">")), route) ;
-    contains(cat("<slug:", cat(x, ">")), route)).
-// pt_wide_capture(f, x): some route of f lets x hold `/`, or captures it with a converter this rule does not know.
-.decl pt_wide_capture(f: node, x: symbol)
-pt_wide_capture(f, x) :- sec_route_param(f, x, _), sec_route(f, "fastapi"), sec_route_decorator(f, _, path),
+// ptr_wide_capture(f, x): some route of f lets x hold `/`, or captures it with a converter this rule does not know.
+.decl ptr_wide_capture(f: node, x: symbol)
+ptr_wide_capture(f, x) :- sec_route_param(f, x, _), sec_route(f, "fastapi"), sec_route_decorator(f, _, path),
     contains(cat("{", cat(x, ":")), path).
-pt_wide_capture(f, x) :- sec_route_param(f, x, _), sec_route(f, "flask"), sec_route_decorator(f, _, path),
+ptr_wide_capture(f, x) :- sec_route_param(f, x, _), sec_route(f, "flask"), sec_route_decorator(f, _, path),
     contains(cat(":", cat(x, ">")), path), !contains(cat("<string:", cat(x, ">")), path),
     !match(cat("(?s).*<(string|any)\\([^>]*\\):", cat(x, ">.*")), path).
-pt_wide_capture(f, x) :- sec_route_param(f, x, _), sec_url_view_fn(r, f), sec_url_route(r, _, route),
-    (contains(cat("<path:", cat(x, ">")), route) ; contains(cat("(?P<", cat(x, ">")), route)).
 
-// pt_prefixed(a) / pt_suffixed(a): spliced value a has fixed text before / after it in its own path segment, text
+// ptr_prefixed(a) / ptr_suffixed(a): spliced value a has fixed text before / after it in its own path segment, text
 // that holds a character other than `.` (or a server value beside literal text), so a cannot be the whole segment.
-.decl pt_prefixed(a: node)
-pt_prefixed(a) :- sec_text_before(_, a, pre), g = @rx_replace(pre, "(?s)^.*[/\\\\]", ""),
+.decl ptr_prefixed(a: node)
+ptr_prefixed(a) :- sec_text_before(_, a, pre), g = @rx_replace(pre, "(?s)^.*[/\\\\]", ""),
     r = @rx_replace(g, "\\{\\}", ""), (match("(?s).*[^.].*", r) ; (contains("{}", g), r != "")).
-.decl pt_suffixed(a: node)
-pt_suffixed(a) :- sec_text_after(_, a, post), g = @rx_replace(post, "(?s)[/\\\\].*$", ""),
+.decl ptr_suffixed(a: node)
+ptr_suffixed(a) :- sec_text_after(_, a, post), g = @rx_replace(post, "(?s)[/\\\\].*$", ""),
     r = @rx_replace(g, "\\{\\}", ""), (match("(?s).*[^.].*", r) ; (contains("{}", g), r != "")).
-// pt_keeps_latent(e): the step into e keeps a fixed prefix in front of the value: building, joining, grouping.
-.decl pt_keeps_latent(e: node)
-pt_keeps_latent(e) :- kind(e, k), (k = "parenthesized_expression" ; k = "await" ; k = "string" ;
+// ptr_keeps_latent(e): the step into e keeps a fixed prefix in front of the value: building, joining, grouping.
+.decl ptr_keeps_latent(e: node)
+ptr_keeps_latent(e) :- kind(e, k), (k = "parenthesized_expression" ; k = "await" ; k = "string" ;
     k = "concatenated_string" ; k = "binary_operator" ; k = "conditional_expression" ; k = "boolean_operator" ;
     k = "tuple" ; k = "list" ; k = "set" ; k = "expression_list" ; k = "dictionary" ; k = "list_comprehension" ;
     k = "generator_expression" ; k = "set_comprehension").
-pt_keeps_latent(c) :- sec_call_q(c, q), pt_join_q(q).
-pt_keeps_latent(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m), (m = "format" ; m = "join").
-.decl pt_join_q(q: symbol)
-pt_join_q("builtins.str"). pt_join_q("os.fspath"). pt_join_q("os.path.join"). pt_join_q("posixpath.join").
-pt_join_q("builtins.format"). pt_join_q(q) :- pt_path_q(q).
-// pt_keeps_seg(e): the step into e adds no `/` to a one-segment value: the above, a slice or index, a string method
+ptr_keeps_latent(c) :- sec_call_q(c, q), ptr_join_q(q).
+ptr_keeps_latent(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m), (m = "format" ; m = "join").
+.decl ptr_join_q(q: symbol)
+ptr_join_q("builtins.str"). ptr_join_q("os.fspath"). ptr_join_q("os.path.join"). ptr_join_q("posixpath.join").
+ptr_join_q("builtins.format"). ptr_join_q(q) :- ptr_path_q(q).
+// ptr_keeps_seg(e): the step into e adds no `/` to a one-segment value: the above, a slice or index, a string method
 // other than `.replace()`/`.translate()`, a normalisation.
-.decl pt_keeps_seg(e: node)
-pt_keeps_seg(e) :- pt_keeps_latent(e).
-pt_keeps_seg(e) :- kind(e, "subscript").
-pt_keeps_seg(e) :- attr_of(e, _, m), m != "replace", m != "translate".
-pt_keeps_seg(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m), m != "replace", m != "translate".
-pt_keeps_seg(c) :- sec_call_q(c, q), pt_norm_q(q).
+.decl ptr_keeps_seg(e: node)
+ptr_keeps_seg(e) :- ptr_keeps_latent(e).
+ptr_keeps_seg(e) :- kind(e, "subscript").
+ptr_keeps_seg(e) :- attr_of(e, _, m), m != "replace", m != "translate".
+ptr_keeps_seg(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m), m != "replace", m != "translate".
+ptr_keeps_seg(c) :- sec_call_q(c, q), ptr_norm_q(q).
+// ptr_trans(e, a, m, m2): lib/security's step from a to e (sec_step) turns a value of shape m into one of shape m2.
+.decl ptr_trans(e: node, a: node, m: symbol, m2: symbol)
+ptr_trans(e, a, "free", "free") :- sec_step(e, a), !ptr_cut(e), !ptr_prefixed(a).
+ptr_trans(e, a, "free", "latent") :- sec_step(e, a), !ptr_cut(e), ptr_prefixed(a).
+ptr_trans(e, a, "latent", "latent") :- sec_step(e, a), !ptr_cut(e), ptr_keeps_latent(e).
+ptr_trans(e, a, "latent", "free") :- sec_step(e, a), !ptr_cut(e), !ptr_keeps_latent(e).
+ptr_trans(e, a, "seg", "seg") :- sec_step(e, a), !ptr_cut(e), ptr_keeps_seg(e), !ptr_prefixed(a), !ptr_suffixed(a).
+ptr_trans(e, a, "seg", "free") :- sec_step(e, a), !ptr_cut(e), !ptr_keeps_seg(e).
+// ptr_fgate(e, m, g): e reads a field of a pydantic model of the run (sec_typed_at): a value of shape m passes gate
+// g, which holds where the model's file neither types nor validates the field (`G|ptf:<q>:<f>|<m>@<e's term>`).
+.decl ptr_fgate(e: node, m: symbol, g: symbol)
+ptr_fgate(e, m, cat("G|ptf:", cat(q, cat(":", cat(fld, cat("|", cat(m, cat("@", et)))))))) :- sec_typed_at(e, q, fld),
+    pt_tm(e, et), ptr_shape_fl(m, _).
+sec_xcond(c) :- sec_xcondq(c), match("ptf:(?<q>[^:]*):(?<fld>.*)", c), !sec_xmodel_typed(q, fld),
+    !ptr_model_checked0(q, fld).
 
-// pt_val(e, s, m): e's value holds client text from source s, of shape m: lib/security's propagation (sec_step)
-// with the sanitisers above cut, across files through pt_param and pt_returns.
-.decl pt_val(e: node, s: node, m: symbol)
-pt_val(e, e, "free") :- sec_source(e, _).
-pt_val(e, s, "free") :- sec_step(e, a), !pt_cut(e), pt_val(a, s, "free"), !pt_prefixed(a).
-pt_val(e, s, "latent") :- sec_step(e, a), !pt_cut(e), pt_val(a, s, "free"), pt_prefixed(a).
-pt_val(e, s, "latent") :- sec_step(e, a), !pt_cut(e), pt_val(a, s, "latent"), pt_keeps_latent(e).
-pt_val(e, s, "free") :- sec_step(e, a), !pt_cut(e), pt_val(a, s, "latent"), !pt_keeps_latent(e).
-pt_val(e, s, "seg") :- sec_step(e, a), !pt_cut(e), pt_val(a, s, "seg"), pt_keeps_seg(e), !pt_prefixed(a),
-    !pt_suffixed(a).
-pt_val(e, s, "free") :- sec_step(e, a), !pt_cut(e), pt_val(a, s, "seg"), !pt_keeps_seg(e).
-pt_val(r, s, m) :- kind(r, "identifier"), text(r, x), look(r, x, h), !pt_checked(h, x), sec_bind(h, x, v),
-    pt_val(v, s, m), r != v, !pt_guarded(h, x, m).
-pt_val(r, s, m) :- kind(r, "identifier"), text(r, x), look(r, x, g), !pt_checked(g, x), pt_param(g, x, s, m),
-    !pt_guarded(g, x, m).
-pt_val(e, s, m) :- attr_of(e, o, a), sec_validated_attr(a), kind(o, "identifier"), text(o, x), look(o, x, h),
-    sec_holder_call(h, x, c), call_arg(c, _, _, v), pt_val(v, s, m).
-pt_val(c, s, m) :- call_target(c, g), pt_returns(g, s, m), !sec_validator_def(g), call_arg(c, _, _, a),
-    pt_val(a, s, _).
-pt_val(c, s, m) :- call_target(c, g), pt_returns(g, s, m), !sec_validator_def(g), pt_own_source(g, s).
-.decl pt_param(g: node, x: symbol, s: node, m: symbol)
-pt_param(g, x, p, "seg") :- sec_route_param(g, x, p), pt_seg_param(g, x).
-pt_param(g, x, p, "free") :- sec_route_param(g, x, p), !pt_seg_param(g, x).
-pt_param(g, x, s, m) :- sec_param_at(_, g, a, x), pt_val(a, s, m).
-.decl pt_returns(g: node, s: node, m: symbol)
-pt_returns(g, s, m) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), pt_val(v, s, m),
-    !pt_checked_expr(v).
-.decl pt_own_source(g: node, s: node)
-pt_own_source(g, s) :- pt_returns(g, s, _), within(s, g).
-pt_own_source(g, s) :- pt_returns(g, s, _), pt_reach(g, h), within(s, h).
-.decl pt_reach(g: node, h: node)
-pt_reach(g, h) :- pt_returns(g, _, _), calls(g, h).
-pt_reach(g, k) :- pt_reach(g, h), calls(h, k).
+// ptr_val(e, o, m): e's value holds client text from origin o, of shape m: lib/security's propagation (sec_step)
+// with the sanitisers above cut; a parameter's is what the callers pass in that shape (`P|pt<m>|…`), a call's what
+// its function returns (`R|pt<m>|…`).
+.decl ptr_val(e: node, o: symbol, m: symbol)
+ptr_val(e, o, "free") :- sec_start(e, o).
+ptr_val(e, o, m2) :- ptr_trans(e, a, m, m2), !sec_typed_at(e, _, _), ptr_val(a, o, m).
+ptr_val(e, g, m2) :- ptr_trans(e, a, m, m2), ptr_fgate(e, m2, g), ptr_val(a, _, m).
+sec_gin(g, o) :- ptr_trans(e, a, m, m2), ptr_fgate(e, m2, g), ptr_val(a, o, m).
+ptr_val(r, o, m) :- ptr_vin(r, h, x, o, m), !ptr_checked(h, x), !ptr_guarded(h, x, m), !sec_nchk_any("ptr", h, x).
+ptr_val(r, g, m) :- ptr_vin(r, h, x, _, m), !ptr_checked(h, x), !ptr_guarded(h, x, m), ptr_shape_fl(m, fl),
+    sec_ngate("ptr", fl, h, x, g).
+sec_gin(g, o) :- ptr_vin(_, h, x, o, m), !ptr_checked(h, x), !ptr_guarded(h, x, m), ptr_shape_fl(m, fl),
+    sec_ngate("ptr", fl, h, x, g).
+ptr_val(e, o, m) :- attr_of(e, b, a), sec_validated_attr(a), kind(b, "identifier"), text(b, x), look(b, x, h),
+    sec_holder_call(h, x, c), call_arg(c, _, _, v), ptr_val(v, o, m).
+ptr_val(c, o, m) :- ptr_shape_fl(m, fl), sec_rorig(c, fl, o).
+// ptr_vin(r, h, x, o, m): name r, x as scope h binds it, reads o of shape m before its checks: a value bound to it,
+// a parameter's (each shape its callers pass), a FastAPI or Flask route's capture.
+.decl ptr_vin(r: node, h: node, x: symbol, o: symbol, m: symbol)
+ptr_vin(r, h, x, o, m) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), ptr_val(v, o, m), r != v.
+ptr_vin(r, g, x, o, m) :- ptr_shape_fl(m, fl), sec_porig(r, fl, g, x, o).
+ptr_vin(r, g, x, k, "seg") :- sec_param_ref(r, g, x), sec_route_param(g, x, p), ptr_seg_param(g, x), sec_key(p, k).
+ptr_vin(r, g, x, k, "free") :- sec_param_ref(r, g, x), sec_route_param(g, x, p), !ptr_seg_param(g, x), sec_key(p, k).
+// Across files, shape by shape: a parameter holds what a call passes it, or a Django URLconf's capture of its shape;
+// a call's value is its function's return where the call passed it client data (any shape) or the function read it.
+sec_froute("ptseg", "seg"). sec_froute("ptfree", "free").
+sec_fpass(fl, c, a, o) :- call_arg(c, _, _, a), ptr_val(a, o, m), ptr_shape_fl(m, fl).
+sec_fctx(fl, c, o) :- call_arg(c, _, _, a), ptr_val(a, o, _), ptr_shape_fl(_, fl).
+sec_fret(fl, g, o) :- ptr_ret(g, v), ptr_val(v, o, m), ptr_shape_fl(m, fl), !sec_echk_any("ptr", v).
+sec_fret(fl, g, eg) :- ptr_ret(g, v), ptr_val(v, _, m), ptr_shape_fl(m, fl), sec_egate("ptr", fl, v, eg).
+sec_gin(eg, o) :- ptr_ret(g, v), ptr_val(v, o, m), ptr_shape_fl(m, fl), sec_egate("ptr", fl, v, eg).
+.decl ptr_ret(g: node, v: node)
+ptr_ret(g, v) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), !ptr_checked_expr(v).
 
 // ---- sinks -------------------------------------------------------------------------------------------------------
-// pt_path_arg(q, i, k): call q takes a path as positional argument i or keyword k.
-.decl pt_path_arg(q: symbol, i: number, k: symbol)
-pt_path_arg("builtins.open", 0, "file"). pt_path_arg("io.open", 0, "file"). pt_path_arg("codecs.open", 0, "filename").
-pt_path_arg("os.open", 0, "path"). pt_path_arg("aiofiles.open", 0, "file"). pt_path_arg("os.remove", 0, "path").
-pt_path_arg("os.unlink", 0, "path"). pt_path_arg("os.rmdir", 0, "path"). pt_path_arg("os.removedirs", 0, "name").
-pt_path_arg("os.mkdir", 0, "path"). pt_path_arg("os.makedirs", 0, "name"). pt_path_arg("os.listdir", 0, "path").
-pt_path_arg("os.scandir", 0, "path"). pt_path_arg("os.walk", 0, "top"). pt_path_arg("shutil.rmtree", 0, "path").
-pt_path_arg("glob.glob", 0, "pathname"). pt_path_arg("glob.iglob", 0, "pathname").
-pt_path_arg("flask.send_file", 0, "path_or_file"). pt_path_arg("flask.helpers.send_file", 0, "path_or_file").
-pt_path_arg("werkzeug.utils.send_file", 0, "path_or_file").
-pt_path_arg("flask.send_from_directory", 0, "directory").
-pt_path_arg("flask.helpers.send_from_directory", 0, "directory").
-pt_path_arg("werkzeug.utils.send_from_directory", 0, "directory").
-pt_path_arg("starlette.responses.FileResponse", 0, "path"). pt_path_arg("fastapi.responses.FileResponse", 0, "path").
-pt_path_arg("django.core.files.storage.FileSystemStorage", 0, "location").
-pt_path_arg("django.core.files.storage.filesystem.FileSystemStorage", 0, "location").
-pt_path_arg(q, 0, "src") :- pt_path_q2(q). pt_path_arg(q, 1, "dst") :- pt_path_q2(q).
-pt_path_arg("shutil.make_archive", 0, "base_name"). pt_path_arg("shutil.make_archive", 2, "root_dir").
-pt_path_arg("shutil.make_archive", 3, "base_dir").
-// Readers that open the path they are given (a file-like argument is no path: pt_filelike).
-pt_path_arg("PIL.Image.open", 0, "fp"). pt_path_arg("zipfile.ZipFile", 0, "file").
-pt_path_arg("tarfile.open", 0, "name"). pt_path_arg("tarfile.TarFile", 0, "name").
-pt_path_arg(cat("pandas.read_", f), 0, k) :- pt_pandas_reader(f, k).
-.decl pt_pandas_reader(f: symbol, k: symbol)
-pt_pandas_reader("csv", "filepath_or_buffer"). pt_pandas_reader("table", "filepath_or_buffer").
-pt_pandas_reader("fwf", "filepath_or_buffer"). pt_pandas_reader("json", "path_or_buf").
-pt_pandas_reader("excel", "io"). pt_pandas_reader("parquet", "path"). pt_pandas_reader("feather", "path").
-pt_pandas_reader("orc", "path"). pt_pandas_reader("xml", "path_or_buffer"). pt_pandas_reader("html", "io").
-pt_pandas_reader("sas", "filepath_or_buffer"). pt_pandas_reader("stata", "filepath_or_buffer").
-pt_pandas_reader("spss", "path"). pt_pandas_reader("hdf", "path_or_buf").
-// pt_path_q2(q): the path is the source (first) or the destination (second) argument.
-.decl pt_path_q2(q: symbol)
-pt_path_q2("os.rename"). pt_path_q2("os.replace"). pt_path_q2("shutil.copy"). pt_path_q2("shutil.copy2").
-pt_path_q2("shutil.copyfile"). pt_path_q2("shutil.copytree"). pt_path_q2("shutil.move").
-// pt_fs_method(m): pathlib methods no other client-derived value has (a string, an upload).
-.decl pt_fs_method(m: symbol)
-pt_fs_method("read_text"). pt_fs_method("read_bytes"). pt_fs_method("write_text"). pt_fs_method("write_bytes").
-pt_fs_method("unlink"). pt_fs_method("rmdir"). pt_fs_method("mkdir"). pt_fs_method("touch").
-pt_fs_method("iterdir"). pt_fs_method("glob"). pt_fs_method("rglob").
-// pt_upload(e): e is a Werkzeug upload (`request.files[…]`).
-.decl pt_upload(e: node)
-pt_upload(e) :- pt_val(e, s, _), sec_source(s, "request.files").
-// pt_sink(c, e): call c uses e as a filesystem path.
-.decl pt_sink(c: node, e: node)
-pt_sink(c, e) :- sec_call_q(c, q), pt_path_arg(q, i, k), (sec_arg(c, i, _, e) ; sec_arg(c, -1, k, e)).
-pt_sink(c, e) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), pt_fs_method(m), unparen(o, e).
-pt_sink(c, e) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), (m = "open" ; m = "rename" ;
-    m = "replace"), pt_pathy(o), unparen(o, e).
-pt_sink(c, e) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "save"), pt_upload(o),
+// ptr_path_arg(q, i, k): call q takes a path as positional argument i or keyword k.
+.decl ptr_path_arg(q: symbol, i: number, k: symbol)
+ptr_path_arg("builtins.open", 0, "file"). ptr_path_arg("io.open", 0, "file"). ptr_path_arg("codecs.open", 0, "filename").
+ptr_path_arg("os.open", 0, "path"). ptr_path_arg("aiofiles.open", 0, "file"). ptr_path_arg("os.remove", 0, "path").
+ptr_path_arg("os.unlink", 0, "path"). ptr_path_arg("os.rmdir", 0, "path"). ptr_path_arg("os.removedirs", 0, "name").
+ptr_path_arg("os.mkdir", 0, "path"). ptr_path_arg("os.makedirs", 0, "name"). ptr_path_arg("os.listdir", 0, "path").
+ptr_path_arg("os.scandir", 0, "path"). ptr_path_arg("os.walk", 0, "top"). ptr_path_arg("shutil.rmtree", 0, "path").
+ptr_path_arg("glob.glob", 0, "pathname"). ptr_path_arg("glob.iglob", 0, "pathname").
+ptr_path_arg("flask.send_file", 0, "path_or_file"). ptr_path_arg("flask.helpers.send_file", 0, "path_or_file").
+ptr_path_arg("werkzeug.utils.send_file", 0, "path_or_file").
+ptr_path_arg("flask.send_from_directory", 0, "directory").
+ptr_path_arg("flask.helpers.send_from_directory", 0, "directory").
+ptr_path_arg("werkzeug.utils.send_from_directory", 0, "directory").
+ptr_path_arg("starlette.responses.FileResponse", 0, "path"). ptr_path_arg("fastapi.responses.FileResponse", 0, "path").
+ptr_path_arg("django.core.files.storage.FileSystemStorage", 0, "location").
+ptr_path_arg("django.core.files.storage.filesystem.FileSystemStorage", 0, "location").
+ptr_path_arg(q, 0, "src") :- ptr_path_q2(q). ptr_path_arg(q, 1, "dst") :- ptr_path_q2(q).
+ptr_path_arg("shutil.make_archive", 0, "base_name"). ptr_path_arg("shutil.make_archive", 2, "root_dir").
+ptr_path_arg("shutil.make_archive", 3, "base_dir").
+// Readers that open the path they are given (a file-like argument is no path: ptr_filelike).
+ptr_path_arg("PIL.Image.open", 0, "fp"). ptr_path_arg("zipfile.ZipFile", 0, "file").
+ptr_path_arg("tarfile.open", 0, "name"). ptr_path_arg("tarfile.TarFile", 0, "name").
+ptr_path_arg(cat("pandas.read_", f), 0, k) :- ptr_pandas_reader(f, k).
+.decl ptr_pandas_reader(f: symbol, k: symbol)
+ptr_pandas_reader("csv", "filepath_or_buffer"). ptr_pandas_reader("table", "filepath_or_buffer").
+ptr_pandas_reader("fwf", "filepath_or_buffer"). ptr_pandas_reader("json", "path_or_buf").
+ptr_pandas_reader("excel", "io"). ptr_pandas_reader("parquet", "path"). ptr_pandas_reader("feather", "path").
+ptr_pandas_reader("orc", "path"). ptr_pandas_reader("xml", "path_or_buffer"). ptr_pandas_reader("html", "io").
+ptr_pandas_reader("sas", "filepath_or_buffer"). ptr_pandas_reader("stata", "filepath_or_buffer").
+ptr_pandas_reader("spss", "path"). ptr_pandas_reader("hdf", "path_or_buf").
+// ptr_path_q2(q): the path is the source (first) or the destination (second) argument.
+.decl ptr_path_q2(q: symbol)
+ptr_path_q2("os.rename"). ptr_path_q2("os.replace"). ptr_path_q2("shutil.copy"). ptr_path_q2("shutil.copy2").
+ptr_path_q2("shutil.copyfile"). ptr_path_q2("shutil.copytree"). ptr_path_q2("shutil.move").
+// ptr_fs_method(m): pathlib methods no other client-derived value has (a string, an upload).
+.decl ptr_fs_method(m: symbol)
+ptr_fs_method("read_text"). ptr_fs_method("read_bytes"). ptr_fs_method("write_text"). ptr_fs_method("write_bytes").
+ptr_fs_method("unlink"). ptr_fs_method("rmdir"). ptr_fs_method("mkdir"). ptr_fs_method("touch").
+ptr_fs_method("iterdir"). ptr_fs_method("glob"). ptr_fs_method("rglob").
+// ptr_sink(c, e): call c uses e as a filesystem path.
+.decl ptr_sink(c: node, e: node)
+ptr_sink(c, e) :- sec_call_q(c, q), ptr_path_arg(q, i, k), (sec_arg(c, i, _, e) ; sec_arg(c, -1, k, e)).
+ptr_sink(c, e) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), ptr_fs_method(m), unparen(o, e).
+ptr_sink(c, e) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), (m = "open" ; m = "rename" ;
+    m = "replace"), ptr_pathy(o), unparen(o, e).
+// ptr_sink_u(c, e, u): call c saves upload u to path e when u is a Werkzeug upload (`request.files[…]`): ptr_xupload,
+// by the origins of u's client data.
+.decl ptr_sink_u(c: node, e: node, u: node)
+ptr_sink_u(c, e, u) :- kind(c, "call"), field(c, "function", f), attr_of(f, u, "save"), ptr_val(u, _, _),
     (sec_arg(c, 0, _, e) ; sec_arg(c, -1, "dst", e)).
-pt_sink(c, e) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "save"), sec_arg(c, 0, _, u), pt_upload(u),
-    (sec_arg(c, -1, "name", e) ; sec_arg(c, -1, "folder", e)).
-// pt_latent_sink(c): a sink that reaches a path whose prefixed segment does not exist: it creates the directories
+ptr_sink_u(c, e, u) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "save"), sec_arg(c, 0, _, u),
+    ptr_val(u, _, _), (sec_arg(c, -1, "name", e) ; sec_arg(c, -1, "folder", e)).
+.decl ptr_xupload(c: symbol) cross_file
+ptr_xupload(ct) :- ptr_sink_u(c, _, u), ptr_val(u, o, _), sec_xres(o, k), sec_src_info(k, "request.files", _, _),
+    pt_tm(c, ct).
+sec_xorig(o) :- ptr_sink_u(_, _, u), ptr_val(u, o, _).
+// ptr_latent_sink(c): a sink that reaches a path whose prefixed segment does not exist: it creates the directories
 // (`os.makedirs`, `.mkdir(parents=True)`) or normalises the path first (Django `FileSystemStorage`).
-.decl pt_latent_sink(c: node)
-pt_latent_sink(c) :- sec_call_q(c, q), (q = "os.makedirs" ; q = "django.core.files.storage.FileSystemStorage" ;
+.decl ptr_latent_sink(c: node)
+ptr_latent_sink(c) :- sec_call_q(c, q), (q = "os.makedirs" ; q = "django.core.files.storage.FileSystemStorage" ;
     q = "django.core.files.storage.filesystem.FileSystemStorage").
-pt_latent_sink(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "mkdir"), sec_arg(c, -1, "parents", v),
+ptr_latent_sink(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "mkdir"), sec_arg(c, -1, "parents", v),
     text(v, "True").
-// pt_probe(c, e): call c tells whether path e exists, or its size or times: an existence oracle.
-.decl pt_probe(c: node, e: node)
-pt_probe(c, e) :- sec_call_q(c, q), pt_probe_q(q), sec_arg(c, 0, _, e).
-pt_probe(c, e) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), (m = "exists" ; m = "is_file" ;
-    m = "is_dir" ; m = "stat"), pt_pathy(o), unparen(o, e).
-.decl pt_probe_q(q: symbol)
-pt_probe_q(cat("os.path.", f)) :- (f = "exists" ; f = "lexists" ; f = "isfile" ; f = "isdir" ; f = "islink" ;
+// ptr_probe(c, e): call c tells whether path e exists, or its size or times: an existence oracle.
+.decl ptr_probe(c: node, e: node)
+ptr_probe(c, e) :- sec_call_q(c, q), ptr_probe_q(q), sec_arg(c, 0, _, e).
+ptr_probe(c, e) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), (m = "exists" ; m = "is_file" ;
+    m = "is_dir" ; m = "stat"), ptr_pathy(o), unparen(o, e).
+.decl ptr_probe_q(q: symbol)
+ptr_probe_q(cat("os.path.", f)) :- (f = "exists" ; f = "lexists" ; f = "isfile" ; f = "isdir" ; f = "islink" ;
     f = "getsize" ; f = "getmtime" ; f = "getatime" ; f = "getctime").
-pt_probe_q("os.stat"). pt_probe_q("os.lstat"). pt_probe_q("os.access").
-// pt_filelike(e): e is file content, not a path: an upload object, `.stream`, an in-memory file.
-.decl pt_filelike(e: node)
-pt_filelike(e) :- unparen(e, c), sec_call_q(c, q), (q = "io.BytesIO" ; q = "io.StringIO").
-pt_filelike(e) :- unparen(e, u), pt_upload_obj(u).
-.decl pt_upload_obj(e: node)
-pt_upload_obj(e) :- kind(e, "subscript"), field(e, "value", o), sec_source(o, w),
+ptr_probe_q("os.stat"). ptr_probe_q("os.lstat"). ptr_probe_q("os.access").
+// ptr_filelike(e): e is file content, not a path: an upload object, `.stream`, an in-memory file.
+.decl ptr_filelike(e: node)
+ptr_filelike(e) :- unparen(e, c), sec_call_q(c, q), (q = "io.BytesIO" ; q = "io.StringIO").
+ptr_filelike(e) :- unparen(e, u), ptr_upload_obj(u).
+.decl ptr_upload_obj(e: node)
+ptr_upload_obj(e) :- kind(e, "subscript"), field(e, "value", o), sec_source(o, w),
     (w = "request.FILES" ; w = "request.files").
-pt_upload_obj(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "get"), sec_source(o, w),
+ptr_upload_obj(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "get"), sec_source(o, w),
     (w = "request.FILES" ; w = "request.files").
-pt_upload_obj(e) :- attr_of(e, _, "stream").
-pt_upload_obj(r) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), unparen(v, u), pt_upload_obj(u).
-pt_upload_obj(r) :- kind(r, "identifier"), text(r, x), look(r, x, g), sig_param(g, _, nm, _, _, a, _), text(nm, x),
+ptr_upload_obj(e) :- attr_of(e, _, "stream").
+ptr_upload_obj(r) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), unparen(v, u),
+    ptr_upload_obj(u).
+ptr_upload_obj(r) :- kind(r, "identifier"), text(r, x), look(r, x, g), sig_param(g, _, nm, _, _, a, _), text(nm, x),
     text(a, t), match("(?s)(Optional\\[)?([A-Za-z_.]*\\.)?(UploadFile|UploadedFile|InMemoryUploadedFile|FileStorage)\\b.*", t).
 // sec_sink_fn: a function holding one of these sinks is never a check (lib/security).
-sec_sink_fn(g) :- sec_call_q(c, q), pt_path_arg(q, _, _), nearest(c, g, fdef).
-sec_sink_fn(g) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m), pt_fs_method(m), nearest(c, g, fdef).
+sec_sink_fn(gq) :- sec_call_q(c, q), ptr_path_arg(q, _, _), nearest(c, g, fdef), pt_def(g, gq).
+sec_sink_fn(gq) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m), ptr_fs_method(m), nearest(c, g, fdef),
+    pt_def(g, gq).
 
-.decl pt_hit(c: node, s: node)
-pt_hit(c, s) :- pt_sink(c, e), !pt_filelike(e), pt_val(e, s, m), m != "latent".
-pt_hit(c, s) :- pt_sink(c, e), pt_latent_sink(c), pt_val(e, s, "latent").
-.decl pt_live(c: node)
-pt_live(c) :- pt_hit(c, _), docof(c, d), !sec_test_doc(d).
-// An oracle is reported only where no full sink of the same function takes the same client data.
-.decl pt_fn_hit(h: node, s: node)
-pt_fn_hit(h, s) :- pt_hit(c, s), nearest(c, h, fscope).
-.decl pt_probe_live(c: node, s: node)
-pt_probe_live(c, s) :- pt_probe(c, e), !pt_filelike(e), pt_val(e, s, m), m != "latent", nearest(c, h, fscope),
-    !pt_fn_hit(h, s), docof(c, d), !sec_test_doc(d).
-
-PathTraversal(c, what, p, l) :- pt_live(c), s = min s2 : { pt_hit(c, s2) }, sec_origin(s, what, p, l).
-PathProbe(c, what, p, l) :- pt_probe_live(c, _), s = min s2 : { pt_probe_live(c, s2) }, sec_origin(s, what, p, l).
+// ptr_hit(c, o): sink c, outside test code, takes client text from o in a shape that escapes there (a latent one only
+// at a latent sink). ptr_hit_u(c, o): the same of an upload's save (sec_fhit "ptu", ptr_xupload).
+.decl ptr_hit(c: node, o: symbol)
+ptr_hit(c, o) :- ptr_sink(c, e), ptr_hit_at(c, e, o).
+.decl ptr_hit_u(c: node, o: symbol)
+ptr_hit_u(c, o) :- ptr_sink_u(c, e, _), ptr_hit_at(c, e, o).
+.decl ptr_hit_at(c: node, e: node, o: symbol)
+ptr_hit_at(c, e, o) :- (ptr_sink(c, e) ; ptr_sink_u(c, e, _)), !ptr_filelike(e), ptr_val(e, o, m), m != "latent",
+    ptr_live(c).
+ptr_hit_at(c, e, o) :- (ptr_sink(c, e) ; ptr_sink_u(c, e, _)), ptr_latent_sink(c), ptr_val(e, o, "latent"),
+    ptr_live(c).
+.decl ptr_live(c: node)
+ptr_live(c) :- docof(c, d), !sec_test_doc(d), (ptr_sink(c, _) ; ptr_sink_u(c, _, _) ; ptr_probe(c, _)).
+sec_fhit("pt", c, o) :- ptr_hit(c, o).
+sec_fhit("ptu", c, o) :- ptr_hit_u(c, o).
+// An oracle is reported only where no full sink of the same function takes the same client data (ptr_xfn_hit).
+sec_fhit("ptp", c, o) :- ptr_probe(c, e), !ptr_filelike(e), ptr_val(e, o, m), m != "latent", ptr_live(c).
+// ptr_scope_at(c, h): sink or oracle c, by its term, sits in scope h (its term).
+.decl ptr_scope_at(c: symbol, h: symbol)
+ptr_scope_at(ct, ht) :- (ptr_sink(c, _) ; ptr_sink_u(c, _, _) ; ptr_probe(c, _)), nearest(c, h, fscope), pt_tm(c, ct),
+    pt_tm(h, ht).
+// ptr_xhit(c, k): sink c takes source k; ptr_xfirst(c, k): the least such k. ptr_xprobe(c, k), ptr_xpfirst(c, k):
+// the same of an oracle whose scope's sinks take no k.
+.decl ptr_xhit(c: symbol, k: symbol) cross_file
+ptr_xhit(ct, k) :- sec_xhit("pt", ct, k).
+ptr_xhit(ct, k) :- sec_xhit("ptu", ct, k), ptr_xupload(ct).
+.decl ptr_xfn_hit(h: symbol, k: symbol) cross_file
+ptr_xfn_hit(ht, k) :- ptr_xhit(ct, k), ptr_scope_at(ct, ht).
+.decl ptr_xfirst(c: symbol, k: symbol) cross_file
+ptr_xfirst(ct, k) :- ptr_xhit(ct, k), !ptr_xlater(ct, k).
+.decl ptr_xlater(c: symbol, k: symbol) cross_file
+ptr_xlater(ct, k) :- ptr_xhit(ct, k), ptr_xhit(ct, k2), k2 < k.
+.decl ptr_xprobe(c: symbol, k: symbol) cross_file
+ptr_xprobe(ct, k) :- sec_xhit("ptp", ct, k), ptr_scope_at(ct, ht), !ptr_xfn_hit(ht, k).
+.decl ptr_xpfirst(c: symbol, k: symbol) cross_file
+ptr_xpfirst(ct, k) :- ptr_xprobe(ct, k), !ptr_xplater(ct, k).
+.decl ptr_xplater(c: symbol, k: symbol) cross_file
+ptr_xplater(ct, k) :- ptr_xprobe(ct, k), ptr_xprobe(ct, k2), k2 < k.
 
 // The cases, `cases/python-security-path-traversal/`, read as one repository: each line ending in
 // `# caught` is reported, and no other line.

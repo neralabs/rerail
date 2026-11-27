@@ -94,16 +94,21 @@
 #include "python/exceptions.rerail"
 #include "python/flow.rerail"
 
+// What crosses files is over symbols (decision 0677: no node crosses files): a def by its symbol, a call, a handler or
+// a guard by its term. A helper that always raises, a helper that cancels, a runner, a spawner and the callers of a
+// function may be in other files: each file states its own by symbol and term, and the finding reads the answers by
+// its handler's, its guard's and its function's.
 .violation CancellationSwallowed(at: node)
     "Re-raise the CancelledError at the end of this handler (`raise` after cleanup); swallowing it breaks cancel(), asyncio.timeout() and TaskGroup. Leave it if this function cancelled the task it awaits."
-CancellationSwallowed(x) :- pcs_handler(x, t, f), pcs_awaits(t, f), exc_body(x, b), !pcs_reraises(x, b),
-    !pcs_drain(t, f), !pcs_checks_cancelling(x), !pcs_runner_entry(f), !pcs_task_end(x, f), !pcs_deferred(x, f),
-    !pcs_inside_reraising(x), !pcs_anyio_handler(x, f), pp_live(x).
+CancellationSwallowed(x) :- pcs_handler(x, t, f), pcs_awaits(t, f), !pcs_drain_here(t, f), !pcs_checks_cancelling(x),
+    !pcs_deferred(x, f), !pcs_anyio_handler(x, f), pp_live(x), pt_tm(x, xt), pt_tm(t, tt), pt_def(f, fq),
+    !pcs_reraised(xt), !pcs_drain_at(tt), !pcs_runner_entry(fq), !pcs_task_end(xt), !pcs_inside_ok(xt).
 
 .violation CancellationSuppressed(at: node)
     "Use try/except with a final `raise` instead of suppress() for CancelledError: the code after this block runs on after a cancel. Leave it if this function cancelled the task it awaits."
-CancellationSuppressed(w) :- pcs_suppress(w, f), pcs_awaits(w, f), !pcs_drain(w, f), !pcs_runner_entry(f),
-    !pcs_end_pos(w, f), !pcs_inside_reraising(w), !pcs_anyio_suppress(w, f), pp_live(w).
+CancellationSuppressed(w) :- pcs_suppress(w, f), pcs_awaits(w, f), !pcs_drain_here(w, f), !pcs_end_pos(w, f),
+    !pcs_anyio_suppress(w, f), pp_live(w), pt_tm(w, wt), pt_def(f, fq), !pcs_drain_at(wt), !pcs_runner_entry(fq),
+    !pcs_inside_ok(wt).
 
 // pcs_handler(x, t, f): except clause x of try t, in async def f's own frame, catches cancellation.
 .decl pcs_handler(x: node, t: node, f: node)
@@ -142,35 +147,68 @@ pcs_suspend(w) :- kind(w, "await").
 pcs_suspend(w) :- (kind(w, "with_statement") ; kind(w, "for_statement") ; kind(w, "for_in_clause")), op(w, "async").
 
 // ---- re-raise paths ----------------------------------------------------------------------------------------------
-// pcs_reraises(x, b): every path through block b (handler x's body, or a block nested in it) re-raises the
-// cancellation: some statement of b always does, and no statement before it may leave b another way.
-.decl pcs_reraises(x: node, b: node)
-pcs_reraises(x, b) :- pcs_block_of(x, b), child(b, s, j), pcs_always(x, s), !pcs_exit_before(x, b, j).
+// A handler re-raises when every path through its body does: some statement of a block always re-raises, and no
+// statement before it may leave the block another way. A call statement re-raises when a helper it surely calls
+// always raises, which is known only across files; so each file states its handlers' bodies as and/or trees over
+// their blocks, statements and clauses, by their terms (pcs_t_or, pcs_t_and, pcs_t_leaf, pcs_t_call: x the handler's
+// term, n a node's, true when ...), and the tree is read with the helpers' answers (pcs_t, pcs_reraised).
 // pcs_block_of(x, b): b is handler x's body or a block inside it, in the same frame.
 .decl pcs_block_of(x: node, b: node)
 pcs_block_of(x, b) :- pcs_handler(x, _, _), exc_body(x, b).
 pcs_block_of(x, b) :- pcs_handler(x, _, f), exc_body(x, hb), kind(b, "block"), within(b, hb), pp_frame(b, f).
-// pcs_always(x, s): statement s, in a block of handler x, re-raises on every path through it.
-.decl pcs_always(x: node, s: node)
-pcs_always(x, s) :- pcs_block_of(x, b), child(b, s, _), pcs_reraise_stmt(x, s).
-pcs_always(x, s) :- pcs_block_of(x, b), child(b, s, _), kind(s, "if_statement"), field(s, "consequence", c),
-    field(s, "condition", k), (pcs_reraises(x, c) ; pcs_other_test(x, k)), alt_first(s, y), pcs_tail(x, y).
-pcs_always(x, s) :- pcs_block_of(x, b), child(b, s, _), kind(s, "with_statement"), field(s, "body", wb),
-    pcs_reraises(x, wb).
-pcs_always(x, s) :- pcs_block_of(x, b), child(b, s, _), kind(s, "try_statement"), child(s, fc, _),
-    kind(fc, "finally_clause"), child(fc, fb, _), kind(fb, "block"), pcs_reraises(x, fb).
-// `if isinstance(e, CancelledError): raise`: the path the cancellation takes re-raises.
-pcs_always(x, s) :- pcs_block_of(x, b), child(b, s, _), kind(s, "if_statement"), field(s, "condition", k),
-    pcs_is_cancel_test(x, k), field(s, "consequence", c), pcs_reraises(x, c).
-// a call of a function of the run whose body always raises: `_surface(exc)`.
-pcs_always(x, s) :- pcs_block_of(x, b), child(b, s, _), kind(s, "expression_statement"), child(s, e, 0),
-    unparen(e, c), pp_sure_target(c, g), field(g, "body", gb), always_raises(gb).
-// pcs_tail(x, y): if-clause y and every clause after it re-raise (or test the caught exception against classes that
-// a cancellation is not), and the chain ends in an else.
-.decl pcs_tail(x: node, y: node)
-pcs_tail(x, y) :- kind(y, "else_clause"), field(y, "body", b), pcs_reraises(x, b).
-pcs_tail(x, y) :- kind(y, "elif_clause"), field(y, "consequence", b), field(y, "condition", k),
-    (pcs_reraises(x, b) ; pcs_other_test(x, k)), alt_next(y, z), pcs_tail(x, z).
+// pcs_stmt(x, s): s is a statement of a block of handler x.
+.decl pcs_stmt(x: node, s: node)
+pcs_stmt(x, s) :- pcs_block_of(x, b), child(b, s, _).
+// n is true when m is: a block when one of its statements is that no statement before may leave by; a `with` when
+// its body is; a `try` when its `finally` is; `if isinstance(e, CancelledError):` when its branch is (the path the
+// cancellation takes); an if or elif clause whose condition tests the caught exception against classes a cancellation
+// is not, when the clauses after it are (pcs_other_test); an else clause when its body is.
+.decl pcs_t_or(xt: symbol, n: symbol, m: symbol)
+pcs_t_or(xt, bt, st) :- pcs_block_of(x, b), child(b, s, j), !kind(s, "comment"), !pcs_exit_before(x, b, j),
+    pt_tm(x, xt), pt_tm(b, bt), pt_tm(s, st).
+pcs_t_or(xt, st, mt) :- pcs_stmt(x, s), kind(s, "with_statement"), field(s, "body", m), pt_tm(x, xt), pt_tm(s, st),
+    pt_tm(m, mt).
+pcs_t_or(xt, st, mt) :- pcs_stmt(x, s), kind(s, "try_statement"), child(s, fc, _), kind(fc, "finally_clause"),
+    child(fc, m, _), kind(m, "block"), pt_tm(x, xt), pt_tm(s, st), pt_tm(m, mt).
+pcs_t_or(xt, st, mt) :- pcs_stmt(x, s), kind(s, "if_statement"), field(s, "condition", kc), pcs_is_cancel_test(x, kc),
+    field(s, "consequence", m), pt_tm(x, xt), pt_tm(s, st), pt_tm(m, mt).
+pcs_t_or(xt, st, yt) :- pcs_clause(x, s, kc, _, y), pcs_other_test(x, kc), pt_tm(x, xt), pt_tm(s, st), pt_tm(y, yt).
+pcs_t_or(xt, yt, mt) :- pcs_clause(x, _, _, _, y), pcs_else(x, y, m), pt_tm(x, xt), pt_tm(y, yt), pt_tm(m, mt).
+// n is true when both m1 and m2 are: an if or elif clause when its branch is and the clauses after it are.
+.decl pcs_t_and(xt: symbol, n: symbol, m1: symbol, m2: symbol)
+pcs_t_and(xt, st, ct, yt) :- pcs_clause(x, s, _, c, y), pt_tm(x, xt), pt_tm(s, st), pt_tm(c, ct), pt_tm(y, yt).
+// pcs_clause(x, s, kc, c, y): if statement or elif clause s, in handler x, tests kc, runs c, and has clause y next.
+// pcs_else(x, y, b): else clause y, after such a clause, runs b.
+.decl pcs_clause(x: node, s: node, kc: node, c: node, y: node)
+pcs_clause(x, s, kc, c, y) :- pcs_stmt(x, s), kind(s, "if_statement"), field(s, "condition", kc),
+    field(s, "consequence", c), alt_first(s, y).
+pcs_clause(x, y, kc, c, z) :- pcs_clause(x, _, _, _, y), kind(y, "elif_clause"), field(y, "condition", kc),
+    field(y, "consequence", c), alt_next(y, z).
+.decl pcs_else(x: node, y: node, b: node)
+pcs_else(x, y, b) :- pcs_clause(x, _, _, _, y), kind(y, "else_clause"), field(y, "body", b).
+// n is true: a re-raise (pcs_reraise_stmt).
+.decl pcs_t_leaf(xt: symbol, n: symbol)
+pcs_t_leaf(xt, st) :- pcs_stmt(x, s), pcs_reraise_stmt(x, s), pt_tm(x, xt), pt_tm(s, st).
+// n is true when the call whose term is c raises: a call statement with a sure target (`_surface(exc)`).
+.decl pcs_t_call(xt: symbol, n: symbol, ct: symbol)
+pcs_t_call(xt, st, ct) :- pcs_stmt(x, s), kind(s, "expression_statement"), child(s, e, 0), unparen(e, c),
+    pp_sure_target(c, _), pt_tm(x, xt), pt_tm(s, st), pt_tm(c, ct).
+// pcs_t(x, n): node n of handler x's tree is true. pcs_reraised(x): handler x's body is.
+.decl pcs_t(xt: symbol, n: symbol)
+pcs_t(xt, n) :- pcs_t_leaf(xt, n).
+pcs_t(xt, n) :- pcs_t_call(xt, n, ct), pcs_raising(ct).
+pcs_t(xt, n) :- pcs_t_or(xt, n, m), pcs_t(xt, m).
+pcs_t(xt, n) :- pcs_t_and(xt, n, m1, m2), pcs_t(xt, m1), pcs_t(xt, m2).
+.decl pcs_reraised(xt: symbol)
+pcs_reraised(xt) :- pcs_body_at(xt, bt), pcs_t(xt, bt).
+.decl pcs_body_at(xt: symbol, bt: symbol)
+pcs_body_at(xt, bt) :- pcs_handler(x, _, _), exc_body(x, b), pt_tm(x, xt), pt_tm(b, bt).
+// pcs_raising(c): a sure target of the call whose term is c is a def of the run whose body always raises (a helper
+// that surfaces the exception it is given). pcs_raises_def(g): stated in g's file.
+.decl pcs_raising(ct: symbol)
+pcs_raising(ct) :- pp_sure_at(ct, g), pcs_raises_def(g).
+.decl pcs_raises_def(g: symbol)
+pcs_raises_def(gq) :- kind(g, "function_definition"), field(g, "body", gb), always_raises(gb), pt_def(g, gq).
 // pcs_reraise_stmt(x, r): a bare `raise`, `raise <the name x binds>`, a raise of a new CancelledError, or a raise of
 // an exception group that carries the caught exception.
 .decl pcs_reraise_stmt(x: node, r: node)
@@ -178,14 +216,17 @@ pcs_reraise_stmt(x, r) :- pcs_handler(x, _, _), kind(r, "raise_statement"), !exc
 pcs_reraise_stmt(x, r) :- exc_alias(x, a), exc_raise(r, e), kind(e, "identifier"), text(e, a), within(r, x).
 pcs_reraise_stmt(x, r) :- pcs_handler(x, _, _), exc_raise(r, e), exc_class(e, c), exc_qual(c, q), pcs_cancel_q(q),
     within(r, x).
-pcs_reraise_stmt(x, r) :- pcs_handler(x, _, _), exc_raise(r, e), within(r, x), kind(e, "call"),
-    field(e, "function", fn), exc_qual(fn, q), pcs_group_q(q), pcs_call_value(e, v), pcs_carries(x, v).
-// pcs_group_q(q): q is BaseExceptionGroup (builtin or the exceptiongroup backport) or a class of the run built on it.
+pcs_reraise_stmt(x, r) :- pcs_handler(x, _, _), exc_raise(r, e), within(r, x), pcs_group_call(e),
+    pcs_call_value(e, v), pcs_carries(x, v).
+// pcs_group_call(e): raised call e builds a BaseExceptionGroup (builtin or the exceptiongroup backport) or a class of
+// the run built on one (its ancestry read through python/names' phase, by the module the class's name reads).
 // ExceptionGroup is left out: it refuses a BaseException and raises TypeError.
-.decl pcs_group_q(q: symbol)
-pcs_group_q("builtins.BaseExceptionGroup"). pcs_group_q("exceptiongroup.BaseExceptionGroup").
-pcs_group_q(q) :- subclass(q, "builtins.BaseExceptionGroup").
-pcs_group_q(q) :- subclass(q, "exceptiongroup.BaseExceptionGroup").
+.decl pcs_group_call(e: node)
+pcs_group_call(e) :- exc_raise(_, e), kind(e, "call"), field(e, "function", fn), exc_qual(fn, q),
+    (q = "builtins.BaseExceptionGroup" ; q = "exceptiongroup.BaseExceptionGroup").
+pcs_group_call(e) :- exc_raise(_, e), kind(e, "call"), field(e, "function", fn), exc_qual(fn, q), docof(e, d),
+    doc(d, p, _), py_names__reads_at(p, m), py_names__ancestor(m, q, b),
+    (b = "builtins.BaseExceptionGroup" ; b = "exceptiongroup.BaseExceptionGroup").
 // pcs_call_value(e, v): v is a positional or keyword argument of call e, parentheses off.
 .decl pcs_call_value(e: node, v: node)
 pcs_call_value(e, v) :- kind(e, "call"), field(e, "arguments", l), kind(l, "argument_list"), child(l, a0, _),
@@ -237,13 +278,16 @@ pcs_loop_between(e, s) :- (kind(e, "break_statement") ; kind(e, "continue_statem
     (kind(l, "for_statement") ; kind(l, "while_statement")), within(e, l), (l = s ; within(l, s)).
 
 // ---- drains ------------------------------------------------------------------------------------------------------
-// pcs_drain(t, f): guard t's body awaits a task or future that f cancelled before: `D` itself, or `D`/`*D` handed to
+// A drain: guard t's body awaits a task or future that f cancelled before: `D` itself, or `D`/`*D` handed to
 // asyncio.gather, wait_for or shield, where `D.cancel()` (or `v.cancel()` in a loop or comprehension over D) comes
-// earlier in f's own frame, or in a helper f calls earlier. D is compared by its text: `task`, `self._task`,
-// `self.tasks[k]`.
-.decl pcs_drain(t: node, f: node)
-pcs_drain(t, f) :- pcs_awaits(t, f), field(t, "body", tb), kind(w, "await"), within(w, tb), pp_frame(w, f),
-    child(w, e0, 0), unparen(e0, e), pcs_drained(e, d), pcs_cancelled(f, d, cc), earlier(cc, w).
+// earlier in f's own frame (pcs_drain_here), or in a helper f calls earlier (pcs_drain_at). D is compared by its text:
+// `task`, `self._task`, `self.tasks[k]`.
+.decl pcs_drain_here(t: node, f: node)
+pcs_drain_here(t, f) :- pcs_drain_wait(t, f, w, d), pcs_cancelled(f, d, cc), earlier(cc, w).
+// pcs_drain_wait(t, f, w, d): guard t's body awaits D (by its text d) at w, in f's own frame.
+.decl pcs_drain_wait(t: node, f: node, w: node, d: symbol)
+pcs_drain_wait(t, f, w, d) :- pcs_awaits(t, f), field(t, "body", tb), kind(w, "await"), within(w, tb), pp_frame(w, f),
+    child(w, e0, 0), unparen(e0, e), pcs_drained(e, d).
 // pcs_key(e, d): e's text as a drain compares it: a dotted name, or a subscript as written.
 .decl pcs_key(e: node, d: symbol)
 pcs_key(e, d) :- dotted_expr(e, d).
@@ -254,30 +298,45 @@ pcs_drained(e, d) :- pcs_key(e, d).
 pcs_drained(e, d) :- exc_call(e, q), (q = "asyncio.gather" ; q = "asyncio.wait_for" ; q = "asyncio.shield"),
     field(e, "arguments", l), child(l, a0, _), (kind(a0, "list_splat"), child(a0, a, 0) ; !kind(a0, "list_splat"),
     a = a0), pcs_key(a, d).
-// pcs_cancelled(f, d, cc): call cc, in f's own frame, cancels D or each item of D, or calls a helper that does.
+// pcs_cancelled(f, d, cc): call cc, in f's own frame, cancels D or each item of D.
 .decl pcs_cancelled(f: node, d: symbol, cc: node)
 pcs_cancelled(f, d, cc) :- pcs_cancel_call(cc, r), pcs_key(r, d), pp_frame(cc, f).
 pcs_cancelled(f, d, cc) :- pcs_cancel_call(cc, r), kind(r, "identifier"), text(r, v),
     (kind(l, "for_statement") ; kind(l, "for_in_clause")), field(l, "left", lv), text(lv, v), field(l, "right", it),
     pcs_key(it, d), pcs_loop_holds(l, cc), pp_frame(cc, f).
-pcs_cancelled(f, d, s) :- pcs_helper_call(s, f, g), pcs_cancelled(g, d, _).
 .decl pcs_cancel_call(cc: node, r: node)
 pcs_cancel_call(cc, r) :- kind(cc, "call"), field(cc, "function", fn), attr_of(fn, r, "cancel").
-// pcs_helper_call(s, f, g): call s, in f's own frame, surely calls g, a method of f's class or of a base of it, or,
-// for a module-level f, a module-level def of the same module: `self.x` and a global name mean the same there.
-.decl pcs_helper_call(s: node, f: node, g: node)
-pcs_helper_call(s, f, g) :- kind(s, "call"), pp_sure_target(s, g), pp_frame(s, f), pp_frame(f, c),
-    kind(c, "class_definition"), pp_frame(g, c).
-pcs_helper_call(s, f, g) :- kind(s, "call"), pp_sure_target(s, g), pp_frame(s, f), pp_frame(f, c),
-    kind(c, "class_definition"), pp_frame(g, cg), kind(cg, "class_definition"), class_def(c, q), class_def(cg, qg),
-    subclass(q, qg).
-pcs_helper_call(s, f, g) :- kind(s, "call"), pp_sure_target(s, g), pp_frame(s, f), kind(f, "function_definition"),
-    !pp_frame(f, _), !pp_frame(g, _), docof(f, d), docof(g, d).
 // pcs_loop_holds(l, cc): cc runs once per item of loop l: in a for statement's body, or in the body of l's
 // comprehension.
 .decl pcs_loop_holds(l: node, cc: node)
 pcs_loop_holds(l, cc) :- kind(l, "for_statement"), field(l, "body", b), within(cc, b).
 pcs_loop_holds(l, cc) :- kind(l, "for_in_clause"), child(m, l, _), field(m, "body", b), (cc = b ; within(cc, b)).
+// Helpers, over symbols. pcs_drain_via(t, h, g, d): before guard t (by its term) awaits D, a call in its function f's
+// own frame surely calls g, where f's home is h. pcs_drain_at(t): such a g is a helper f may use (pcs_home_ok) and
+// cancels D (pcs_cancels).
+.decl pcs_drain_via(tt: symbol, h: symbol, g: symbol, d: symbol)
+pcs_drain_via(tt, h, g, d) :- pcs_drain_wait(t, f, w, d), kind(s, "call"), pp_sure_target(s, g), pp_frame(s, f),
+    earlier(s, w), pcs_home_of(f, h), pt_tm(t, tt).
+.decl pcs_drain_at(tt: symbol)
+pcs_drain_at(tt) :- pcs_drain_via(tt, h, g, d), pcs_home(g, hg), pcs_home_ok(h, hg), pcs_cancels(g, d).
+// pcs_cancels(g, d): def g's own frame cancels D, or calls a helper that does. pcs_helper(f, h, g): a call in def f's
+// own frame (f's home h) surely calls g. Stated in f's file.
+.decl pcs_cancels(g: symbol, d: symbol)
+pcs_cancels(gq, d) :- pcs_cancelled(g, d, _), pt_def(g, gq).
+pcs_cancels(fq, d) :- pcs_helper(fq, h, g), pcs_home(g, hg), pcs_home_ok(h, hg), pcs_cancels(g, d).
+.decl pcs_helper(f: symbol, h: symbol, g: symbol)
+pcs_helper(fq, h, g) :- kind(s, "call"), pp_sure_target(s, g), pp_frame(s, f), pcs_home_of(f, h), pt_def(f, fq).
+// pcs_home_of(f, h): def f's home: the class it is a method of (h its symbol), or, for a module-level def, its module
+// (h "file:" and its path). pcs_home(g, h): by g's symbol. A helper of f is a def of f's home or, for a method, of a
+// base class of it (pcs_home_ok): there `self.x` and a global name mean the same.
+.decl pcs_home_of(f: node, h: symbol)
+pcs_home_of(f, cq) :- kind(f, "function_definition"), pp_frame(f, c), kind(c, "class_definition"), class_def(c, cq).
+pcs_home_of(f, cat("file:", p)) :- kind(f, "function_definition"), !pp_frame(f, _), docof(f, d), doc(d, p, _).
+.decl pcs_home(g: symbol, h: symbol)
+pcs_home(gq, h) :- pcs_home_of(g, h), pt_def(g, gq).
+.decl pcs_home_ok(h: symbol, hg: symbol)
+pcs_home_ok(h, h) :- pcs_home(_, h).
+pcs_home_ok(h, hg) :- pcs_home(_, h), subclass(h, hg), pcs_home(_, hg).
 
 // pcs_checks_cancelling(x): handler x asks the current task whether it is being cancelled, and has a raise.
 .decl pcs_checks_cancelling(x: node)
@@ -286,10 +345,13 @@ pcs_checks_cancelling(x) :- exc_body(x, b), kind(c, "call"), within(c, b), field
 
 // ---- runners -----------------------------------------------------------------------------------------------------
 // pcs_runner_entry(f): f is the coroutine an event-loop runner starts, also at module level: handed as a coroutine
-// (`asyncio.run(f())`) or, to anyio and trio, as the function (`anyio.run(f)`).
-.decl pcs_runner_entry(f: node)
-pcs_runner_entry(f) :- pcs_coro_runner(c), exc_arg(c, 0, a), kind(a, "call"), call_target(a, f).
-pcs_runner_entry(f) :- exc_call(c, q), (q = "anyio.run" ; q = "trio.run"), exc_arg(c, 0, a), pcs_ref_of(a, f).
+// (`asyncio.run(f())`) or, to anyio and trio, as the function (`anyio.run(f)`). By f's symbol: the runner may be in
+// another file.
+.decl pcs_runner_entry(f: symbol)
+pcs_runner_entry(fq) :- pcs_coro_runner(c), exc_arg(c, 0, a), kind(a, "call"), call_target(a, fq).
+pcs_runner_entry(fq) :- pcs_runner_ref(k, x), pcs_ref_def(k, x, fq).
+.decl pcs_runner_ref(k: symbol, x: symbol)
+pcs_runner_ref(k, x) :- exc_call(c, q), (q = "anyio.run" ; q = "trio.run"), exc_arg(c, 0, a), pcs_ref(a, k, x).
 // pcs_coro_runner(c): call c runs the coroutine it is given on an event loop and returns its result.
 .decl pcs_coro_runner(c: node)
 pcs_coro_runner(c) :- exc_call(c, q), (q = "asyncio.run" ; q = "uvloop.run" ; q = "asyncio.run_coroutine_threadsafe").
@@ -311,12 +373,18 @@ pcs_runner_bind(b, v) :- kind(b, "assignment"), field(b, "left", l), kind(l, "id
     field(b, "right", r0), unparen(r0, r), exc_call(r, "asyncio.Runner").
 
 // ---- the handler ends the function -------------------------------------------------------------------------------
-// pcs_task_end(x, f): handler x ends f, and no code of the run resumes after f: f only ever runs as a task's top
-// coroutine, or no code of the run awaits f and x only records or logs.
-.decl pcs_task_end(x: node, f: node)
-pcs_task_end(x, f) :- pcs_ends(x, f), pcs_spawned(f), !pcs_called_otherwise(f), !pcs_handler_returns(x).
-pcs_task_end(x, f) :- pcs_ends(x, f), pcs_handed_off(f), !pcs_consumed(f), !pcs_handler_acts(x),
-    !pcs_handler_returns(x).
+// Over symbols: the function f a handler ends (by its symbol), its calls anywhere in the run (by their terms).
+// pcs_task_end(x): the handler whose term is x ends its function f, and no code of the run resumes after f: f only
+// ever runs as a task's top coroutine, or no code of the run awaits f and the handler only records or logs.
+.decl pcs_task_end(xt: symbol)
+pcs_task_end(xt) :- pcs_end_at(xt, f, "spawned"), pcs_spawned(f), !pcs_called_otherwise(f).
+pcs_task_end(xt) :- pcs_end_at(xt, f, "handed"), pcs_handed_off(f), !pcs_consumed(f).
+// pcs_end_at(x, f, how): handler x ends f and returns no value (how "spawned"), and also only records or logs (how
+// "handed"). Stated in their file.
+.decl pcs_end_at(xt: symbol, f: symbol, how: symbol)
+pcs_end_at(xt, fq, "spawned") :- pcs_ends(x, f), !pcs_handler_returns(x), pt_tm(x, xt), pt_def(f, fq).
+pcs_end_at(xt, fq, "handed") :- pcs_ends(x, f), !pcs_handler_returns(x), !pcs_handler_acts(x), pt_tm(x, xt),
+    pt_def(f, fq).
 // pcs_ends(x, f): handler x's try is a statement of a tail block of f, or of the body of a loop that is, when x then
 // ends in `break` or `return`; and only a `return` without a value follows.
 .decl pcs_ends(x: node, f: node)
@@ -358,14 +426,21 @@ pcs_leaves(x) :- pcs_handler(x, _, _), exc_body(x, b), j = max k : { child(b, s2
 pcs_handler_acts(x) :- pcs_handler(x, _, f), exc_body(x, b), within(n, b), pp_frame(n, f),
     (pcs_suspend(n) ; kind(n, "yield") ; kind(n, "raise_statement")).
 
-// Tasks. pcs_spawn_arg(c): c is the coroutine handed to a spawn call, or to a helper of the run that spawns its first
-// parameter (`def safe_create_task(coro): ... asyncio.create_task(wrapper())` with `await coro` in wrapper). The
-// helper is the def the callee names through imports, not the call program's target: a tracing decorator on the
-// helper (letta's `@trace_method`) makes the call program answer with the decorator's wrapper.
-.decl pcs_spawn_arg(c: node)
-pcs_spawn_arg(c) :- pp_spawn_call(sc, _), exc_arg(sc, 0, c).
-pcs_spawn_arg(c) :- kind(sc, "call"), field(sc, "function", fn), sym_of(fn, q), qualname(g, q), pcs_spawner(g),
-    exc_arg(sc, 0, c).
+// Tasks. pcs_spawn_arg(c): the call whose term is c is the coroutine handed to a spawn call, or to a helper of the
+// run that spawns its first parameter (`def safe_create_task(coro): ... asyncio.create_task(wrapper())` with `await
+// coro` in wrapper). The helper is the def the callee names through imports (pcs_spawn_via, by its qualified name),
+// not the call program's target: a tracing decorator on the helper (letta's `@trace_method`) makes the call program
+// answer with the decorator's wrapper.
+.decl pcs_spawn_arg(ct: symbol)
+pcs_spawn_arg(ct) :- pcs_spawn_direct(ct).
+pcs_spawn_arg(ct) :- pcs_spawn_via(ct, q), pcs_spawner_q(q).
+.decl pcs_spawn_direct(ct: symbol)
+pcs_spawn_direct(ct) :- pp_spawn_call(sc, _), exc_arg(sc, 0, c), kind(c, "call"), pt_tm(c, ct).
+.decl pcs_spawn_via(ct: symbol, q: symbol)
+pcs_spawn_via(ct, q) :- kind(sc, "call"), field(sc, "function", fn), sym_of(fn, q), exc_arg(sc, 0, c), kind(c, "call"),
+    pt_tm(c, ct).
+.decl pcs_spawner_q(q: symbol)
+pcs_spawner_q(q) :- pcs_spawner(g), qualname(g, q).
 .decl pcs_spawner(g: node)
 pcs_spawner(g) :- kind(g, "function_definition"), sig_param(g, _, nm, 0, _, _, _), text(nm, p), p != "self",
     pp_spawn_call(sc, _), within(sc, g), pcs_param_spawned(g, sc, p).
@@ -374,47 +449,62 @@ pcs_param_spawned(g, sc, p) :- pp_spawn_call(sc, _), within(sc, g), exc_arg(sc, 
     text(a, p).
 pcs_param_spawned(g, sc, p) :- pp_spawn_call(sc, _), within(sc, g), kind(w, "await"), within(w, g), child(w, e0, 0),
     unparen(e0, e), kind(e, "identifier"), text(e, p).
-.decl pcs_spawned(f: node)
-pcs_spawned(f) :- pcs_spawn_arg(c), kind(c, "call"), call_target(c, f).
-.decl pcs_called_otherwise(f: node)
-pcs_called_otherwise(f) :- pcs_spawned(f), call_target(c, f), !pcs_spawn_arg(c).
+.decl pcs_spawned(f: symbol)
+pcs_spawned(f) :- pcs_spawn_arg(ct), pp_target_at(ct, f).
+.decl pcs_called_otherwise(f: symbol)
+pcs_called_otherwise(f) :- pcs_spawned(f), pp_target_at(ct, f), !pcs_spawn_arg(ct).
 
 // Hand-offs. pcs_arg_of(a, cc): a is a positional or keyword argument of call cc, parentheses off.
 .decl pcs_arg_of(a: node, cc: node)
 pcs_arg_of(a, cc) :- kind(cc, "call"), pcs_call_value(cc, a).
-// pcs_consumer_call(cc): a coroutine handed to call cc is awaited for the caller: cc is awaited or iterated with
-// `async for`, is an asyncio function other than a spawn or a runner (gather, wait_for, shield, wait), or calls a def
-// of the run that awaits one of its parameters.
-.decl pcs_consumer_call(cc: node)
-pcs_consumer_call(cc) :- kind(cc, "call"), child(w, cc0, 0), kind(w, "await"), unparen(cc0, cc).
-pcs_consumer_call(cc) :- kind(l, "for_statement"), op(l, "async"), field(l, "right", r), unparen(r, cc),
+// pcs_consumer(cc): a coroutine handed to the call whose term is cc is awaited for the caller: cc is awaited or
+// iterated with `async for`, is an asyncio function other than a spawn or a runner (pcs_consumer_here), or calls a
+// def of the run that awaits one of its parameters (pcs_awaits_param, stated in its file).
+.decl pcs_consumer(cct: symbol)
+pcs_consumer(cct) :- pcs_consumer_here(cc), pt_tm(cc, cct).
+pcs_consumer(cct) :- pp_target_at(cct, g), pcs_awaits_param(g).
+.decl pcs_consumer_here(cc: node)
+pcs_consumer_here(cc) :- kind(cc, "call"), child(w, cc0, 0), kind(w, "await"), unparen(cc0, cc).
+pcs_consumer_here(cc) :- kind(l, "for_statement"), op(l, "async"), field(l, "right", r), unparen(r, cc),
     kind(cc, "call").
-pcs_consumer_call(cc) :- exc_call(cc, q), prefix("asyncio.", q), !pp_spawn_call(cc, _), !pcs_coro_runner(cc).
-pcs_consumer_call(cc) :- kind(cc, "call"), call_target(cc, g), pcs_awaits_param(g).
-.decl pcs_awaits_param(g: node)
-pcs_awaits_param(g) :- kind(w, "await"), child(w, e0, 0), unparen(e0, e), kind(e, "identifier"), text(e, p),
-    pp_frame(w, g), param_named(g, p, _).
-// pcs_handoff_call(c): call c is handed, unawaited, to a call that does not await it for the caller.
-.decl pcs_handoff_call(c: node)
-pcs_handoff_call(c) :- kind(c, "call"), pcs_arg_of(c, cc), !pcs_consumer_call(cc).
+pcs_consumer_here(cc) :- exc_call(cc, q), prefix("asyncio.", q), !pp_spawn_call(cc, _), !pcs_coro_runner(cc).
+.decl pcs_awaits_param(g: symbol)
+pcs_awaits_param(gq) :- kind(w, "await"), child(w, e0, 0), unparen(e0, e), kind(e, "identifier"), text(e, p),
+    pp_frame(w, g), param_named(g, p, _), pt_def(g, gq).
+// pcs_handoff(c): the call whose term is c is handed, unawaited, to a call that does not await it for the caller.
+.decl pcs_handoff(ct: symbol)
+pcs_handoff(ct) :- pcs_arg_call(ct, cct), !pcs_consumer(cct).
+.decl pcs_arg_call(ct: symbol, cct: symbol)
+pcs_arg_call(ct, cct) :- pcs_arg_of(c, cc), kind(c, "call"), pt_tm(c, ct), pt_tm(cc, cct).
 // pcs_handed_off(f): f runs for someone other than an awaiting caller of the run: one of its calls is handed off,
 // it is passed uncalled to such a call, or a decorator called on an object registers it (`@router.websocket("/ws")`).
-.decl pcs_handed_off(f: node)
-pcs_handed_off(f) :- pcs_handoff_call(c), call_target(c, f).
-pcs_handed_off(f) :- pcs_arg_of(e, cc), pcs_ref_of(e, f), !pcs_consumer_call(cc), !exc_call(cc, "functools.partial").
-pcs_handed_off(f) :- pp_async_def(f), dexpr(f, e), kind(e, "call"), field(e, "function", fn), kind(fn, "attribute"),
-    !sym_of(fn, _), !call_target(e, _).
-// pcs_ref_of(e, f): e names async def f without calling it: through imports, `self.m` for a method of the class, or
-// `functools.partial(<one of those>, ...)`.
-.decl pcs_ref_of(e: node, f: node)
-pcs_ref_of(e, f) :- pp_async_fn_ref(e, f).
-pcs_ref_of(e, f) :- attr_of(e, o, m), kind(o, "identifier"), text(o, "self"), !field(_, "function", e),
-    pp_frame(e, h), pp_frame(h, c), kind(c, "class_definition"), class_def(c, cq), mro_method(cq, m, f),
-    pp_async_def(f).
-pcs_ref_of(e, f) :- exc_call(e, "functools.partial"), exc_arg(e, 0, r), pcs_ref_of(r, f).
+.decl pcs_handed_off(f: symbol)
+pcs_handed_off(f) :- pcs_handoff(ct), pp_target_at(ct, f).
+pcs_handed_off(f) :- pcs_arg_ref(cct, k, x), !pcs_consumer(cct), pcs_ref_def(k, x, f).
+pcs_handed_off(fq) :- pp_async_def(f), dexpr(f, e), kind(e, "call"), field(e, "function", fn), kind(fn, "attribute"),
+    !sym_of(fn, _), !call_target(e, _), pt_def(f, fq).
+// pcs_arg_ref(cc, k, x): an argument of the call whose term is cc (not functools.partial) names a def (pcs_ref).
+.decl pcs_arg_ref(cct: symbol, k: symbol, x: symbol)
+pcs_arg_ref(cct, k, x) :- pcs_arg_of(e, cc), pcs_ref(e, k, x), !exc_call(cc, "functools.partial"), pt_tm(cc, cct).
+// pcs_ref(e, k, x): e names a def without calling it: through imports (k "", x the name it resolves to), `self.m` in
+// a method of class k (x = m), or `functools.partial(<one of those>, ...)`. pcs_ref_def(k, x, f): such a reference
+// names async def f: the def of that qualified name, or what class k resolves m to.
+.decl pcs_ref(e: node, k: symbol, x: symbol)
+pcs_ref(e, "", q) :- pp_fn_ref(e, q).
+pcs_ref(e, cq, m) :- attr_of(e, o, m), kind(o, "identifier"), text(o, "self"), !field(_, "function", e),
+    pp_frame(e, h), pp_frame(h, c), kind(c, "class_definition"), class_def(c, cq).
+pcs_ref(e, k, x) :- exc_call(e, "functools.partial"), exc_arg(e, 0, r), pcs_ref(r, k, x).
+.decl pcs_ref_used(k: symbol, x: symbol)
+pcs_ref_used(k, x) :- pcs_runner_ref(k, x).
+pcs_ref_used(k, x) :- pcs_arg_ref(_, k, x).
+.decl pcs_ref_def(k: symbol, x: symbol, f: symbol)
+pcs_ref_def("", q, f) :- pcs_ref_used("", q), pp_def_q(q, f), pp_async_sym(f).
+pcs_ref_def(cq, m, f) :- pcs_ref_used(cq, m), cq != "", mro_method_sym(cq, m, f), pp_async_sym(f).
 // pcs_consumed(f): a call of f outside test code is awaited by its caller (anything but a spawn or a hand-off).
-.decl pcs_consumed(f: node)
-pcs_consumed(f) :- pcs_handed_off(f), call_target(c, f), pp_live(c), !pcs_spawn_arg(c), !pcs_handoff_call(c).
+.decl pcs_consumed(f: symbol)
+pcs_consumed(f) :- pcs_handed_off(f), pp_target_at(ct, f), pcs_live_call(ct), !pcs_spawn_arg(ct), !pcs_handoff(ct).
+.decl pcs_live_call(ct: symbol)
+pcs_live_call(ct) :- kind(c, "call"), pp_live(c), pt_tm(c, ct).
 
 // pcs_deferred(x, f): handler x sets a flag `v = True`, and later in f's own frame an `if` that tests v raises
 // CancelledError (a bare `raise` there would raise nothing caught, so only a raise of the class counts).
@@ -425,13 +515,15 @@ pcs_deferred(x, f) :- pcs_handler(x, _, f), exc_body(x, b), kind(a, "assignment"
     kind(k, "identifier"), text(k, v), field(i, "consequence", c), kind(rs, "raise_statement"), within(rs, c),
     exc_raise(rs, e), exc_class(e, cl), exc_qual(cl, q), pcs_cancel_q(q).
 
-// pcs_inside_reraising(n): handler or suppress n sits in the body of a cancellation handler of the same function
-// that re-raises on every path.
-.decl pcs_inside_reraising(n: node)
-pcs_inside_reraising(n) :- pcs_handler(n, _, f), pcs_handler(y, _, f), y != n, exc_body(y, yb), within(n, yb),
-    pcs_reraises(y, yb).
-pcs_inside_reraising(n) :- pcs_suppress(n, f), pcs_handler(y, _, f), exc_body(y, yb), within(n, yb),
-    pcs_reraises(y, yb).
+// pcs_inside_ok(n): the handler or suppress whose term is n sits in the body of a cancellation handler y of the same
+// function that re-raises on every path (pcs_inside_at, stated in their file; pcs_reraised).
+.decl pcs_inside_ok(nt: symbol)
+pcs_inside_ok(nt) :- pcs_inside_at(nt, yt), pcs_reraised(yt).
+.decl pcs_inside_at(nt: symbol, yt: symbol)
+pcs_inside_at(nt, yt) :- pcs_handler(n, _, f), pcs_handler(y, _, f), y != n, exc_body(y, yb), within(n, yb),
+    pt_tm(n, nt), pt_tm(y, yt).
+pcs_inside_at(nt, yt) :- pcs_suppress(n, f), pcs_handler(y, _, f), exc_body(y, yb), within(n, yb), pt_tm(n, nt),
+    pt_tm(y, yt).
 
 // ---- anyio and trio ----------------------------------------------------------------------------------------------
 // pcs_anyio_handler(x, f) / pcs_anyio_suppress(w, f): x (w) catches cancellation only as BaseException or bare, in

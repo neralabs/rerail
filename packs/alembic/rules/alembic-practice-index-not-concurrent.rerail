@@ -55,32 +55,91 @@
 .violation ColumnIndexNotConcurrent(at: node, table: symbol) "`index=True` on this added column builds an index on existing `{table}` under a write lock. Drop it; build the index with `postgresql_concurrently=True` in an autocommit block. Fine for a small table."
 .violation PrimaryKeyNotConcurrent(at: node, table: symbol) "ADD PRIMARY KEY on existing `{table}` builds its index under an exclusive lock. Build a unique index concurrently first, then add the key with `PRIMARY KEY USING INDEX`. Fine for a small table."
 
-// inc_concurrent(c): operation c passes postgresql_concurrently= something not known to be False (a literal, or a
-// constant of this module or an imported one: lib/alembic's al_kw_on).
-.decl inc_concurrent(c: node)
-inc_concurrent(c) :- al_kw_on(c, "postgresql_concurrently").
-// inc_live(c): c sits in a migration that is not test code, outside a branch for another database.
+// What crosses files is read by term and symbol (decision 0677): an operation's flag that is an imported constant
+// (lib/alembic's al_flag_t), a dialect test of another module (al_np_ext), and a helper of another module (al_fwd_op_at,
+// by its qualified name). Each file states its index builds by term (al_term), with their step and their rank among
+// the step's possible builds (inc_rank, compared in the file); the count and the first build run on those, and a
+// finding reads its call back by its term.
+// inc_concurrent(d, ct): operation ct passes postgresql_concurrently= something not known to be False or None (a
+// literal, or a constant of this module or an imported one).
+.decl inc_concurrent(d: number, ct: symbol)
+inc_concurrent(d, ct) :- al_kw_at(d, ct, "postgresql_concurrently"),
+    !al_flag_t(d, ct, "postgresql_concurrently", "false"), !al_flag_t(d, ct, "postgresql_concurrently", "none").
+// inc_live(c): c sits in a migration that is not test code, outside a branch for another database by its own file's
+// tests.
 .decl inc_live(c: node)
 inc_live(c) :- kind(c, "call"), !al_non_pg(c), docof(c, d), al_migration_doc(d), !al_test_doc(d).
-// inc_hit(c, k, t, f): in upgrade step f, c builds an index of kind k on existing table t without CONCURRENTLY.
-.decl inc_hit(c: node, k: symbol, t: symbol, f: node)
-inc_hit(c, "index", t, f) :- al_on_existing(c, "create_index", t, f), !inc_concurrent(c), inc_live(c).
-inc_hit(c, "unique", t, f) :- al_on_existing(c, "create_unique_constraint", t, f), inc_live(c).
-inc_hit(c, "index", t, f) :- al_forwarded(c, "create_index", t, ci, f), !inc_concurrent(ci), !al_non_pg(ci), inc_live(c).
-inc_hit(c, "unique", t, f) :- al_forwarded(c, "create_unique_constraint", t, ci, f), !al_non_pg(ci), inc_live(c).
-inc_hit(c, "col_unique", t, f) :- al_added_ddl(c, t, "unique", f), inc_live(c).
-inc_hit(c, "col_index", t, f) :- al_added_ddl(c, t, "index", f), inc_live(c).
-inc_hit(c, "pk", t, f) :- al_on_existing(c, "create_primary_key", t, f), inc_live(c).
-// inc_first(c, k, t, n): c is the first of the n index builds of kind k on table t in its upgrade step.
-.decl inc_first(c: node, k: symbol, t: symbol, n: number)
-inc_first(c, k, t, n) :- inc_hit(c, k, t, f), docof(c, d), node(d, c, _, s, _),
-    s = min x : { inc_hit(b, k, t, f), node(d, b, _, x, _) }, n = count : { inc_hit(_, k, t, f) }.
+// inc_cand(c, k, t, f, ci): in upgrade step f, c builds an index of kind k ("index" or "unique") on existing table t,
+// through operation ci: c itself, or the operation of a helper of the same file that c calls (al_forwarded).
+.decl inc_cand(c: node, k: symbol, t: symbol, f: node, ci: node)
+inc_cand(c, "index", t, f, c) :- al_on_existing(c, "create_index", t, f), inc_live(c).
+inc_cand(c, "unique", t, f, c) :- al_on_existing(c, "create_unique_constraint", t, f), inc_live(c).
+inc_cand(c, "index", t, f, ci) :- al_forwarded(c, "create_index", t, ci, f), !al_non_pg(ci), inc_live(c).
+inc_cand(c, "unique", t, f, ci) :- al_forwarded(c, "create_unique_constraint", t, ci, f), !al_non_pg(ci), inc_live(c).
+// inc_site(c, f): call c of upgrade step f may build an index: an operation or a local helper's (inc_cand), or a call
+// of another module's function (al_fwd_call). inc_rank(c, f, r): r such calls of f start before c: its order among
+// them, compared in its own file, so no position leaves it.
+.decl inc_site(c: node, f: node)
+inc_site(c, f) :- inc_cand(c, _, _, f, _).
+inc_site(c, f) :- al_fwd_call(c, _, _, _, _, f), inc_live(c).
+.decl inc_rank(c: node, f: node, r: number)
+inc_rank(c, f, r) :- inc_site(c, f), docof(c, d), node(d, c, _, s, _),
+    r = count : { inc_site(b, f), node(d, b, _, x, _), x < s }.
+// inc_cand_at(d, ct, k, t, ft, r, cit): the same by term, with c's rank r in its step, so the first build is told by a
+// value.
+.decl inc_cand_at(d: number, ct: symbol, k: symbol, t: symbol, ft: symbol, r: number, cit: symbol)
+inc_cand_at(d, ct, k, t, ft, r, cit) :- inc_cand(c, k, t, f, ci), inc_rank(c, f, r), al_term(c, d, ct),
+    al_term(f, d, ft), al_term(ci, d, cit).
+// inc_fwd_at(d, ct, g, i, x, t, ft, r): call ct of step ft (rank r) passes table t to g, a function of another
+// module, at position i or as keyword x (lib/alembic's al_fwd_call).
+.decl inc_fwd_at(d: number, ct: symbol, g: symbol, i: number, x: symbol, t: symbol, ft: symbol, r: number)
+inc_fwd_at(d, ct, gq, i, x, t, ft, r) :- al_fwd_call(c, gq, i, x, t, f), inc_rank(c, f, r), al_term(c, d, ct),
+    al_term(f, d, ft).
+// inc_fwd_np_at(e, cit): a helper's operation cit sits in a branch for another database, by its own file's tests.
+.decl inc_fwd_np_at(e: number, cit: symbol)
+inc_fwd_np_at(e, cit) :- al_fwd_op(_, _, _, _, ci), al_non_pg(ci), al_term(ci, e, cit).
+// inc_fwd(d, ct, k, t, ft, r): call ct (rank r in step ft) builds an index of kind k on t through a helper of another
+// module whose operation is not concurrent (an index) and runs on PostgreSQL. It joins the call's file to the
+// helper's by the helper's qualified name, so it spans files on purpose (cross_file), keyed by documents, terms and
+// values.
+.decl inc_fwd(d: number, ct: symbol, k: symbol, t: symbol, ft: symbol, r: number) cross_file
+inc_fwd(d, ct, k, t, ft, r) :- inc_fwd_at(d, ct, gq, i, x, t, ft, r), al_fwd_op_at(e, gq, m, xp, kp, cit),
+    (i = kp ; x = xp), ((m = "create_index", k = "index") ; (m = "create_unique_constraint", k = "unique")),
+    !inc_fwd_np_at(e, cit), !al_np_ext(e, cit), (k = "unique" ; !inc_concurrent(e, cit)).
+// inc_hit(d, ct, k, t, ft, r): in upgrade step ft, ct (rank r) builds an index of kind k on existing table t without
+// CONCURRENTLY.
+.decl inc_hit(d: number, ct: symbol, k: symbol, t: symbol, ft: symbol, r: number)
+inc_hit(d, ct, k, t, ft, r) :- inc_cand_at(d, ct, k, t, ft, r, cit), !al_np_ext(d, ct), !al_np_ext(d, cit),
+    (k = "unique" ; !inc_concurrent(d, cit)).
+inc_hit(d, ct, k, t, ft, r) :- inc_fwd(d, ct, k, t, ft, r), !al_np_ext(d, ct).
+// inc_first(d, ct, k, t, n): ct is the first (lowest rank) of the n index builds of kind k on table t in its upgrade
+// step.
+.decl inc_first(d: number, ct: symbol, k: symbol, t: symbol, n: number)
+inc_first(d, ct, k, t, n) :- inc_hit(d, ct, k, t, ft, r), r = min x : { inc_hit(d, _, k, t, ft, x) },
+    n = count : { inc_hit(d, _, k, t, ft, _) }.
+// inc_call(c, d, ct): a call that may build an index, by the term a finding reads it back by.
+.decl inc_call(c: node, d: number, ct: symbol)
+inc_call(c, d, ct) :- inc_cand(c, _, _, _, _), al_term(c, d, ct).
+inc_call(c, d, ct) :- al_fwd_call(c, _, _, _, _, _), al_term(c, d, ct).
 
-IndexNotConcurrent(c, t, n) :- inc_first(c, "index", t, n).
-UniqueNotConcurrent(c, t, n) :- inc_first(c, "unique", t, n).
-ColumnUniqueNotConcurrent(c, t) :- inc_hit(c, "col_unique", t, _).
-ColumnIndexNotConcurrent(c, t) :- inc_hit(c, "col_index", t, _).
-PrimaryKeyNotConcurrent(c, t) :- inc_hit(c, "pk", t, _).
+IndexNotConcurrent(c, t, n) :- inc_call(c, d, ct), inc_first(d, ct, "index", t, n).
+UniqueNotConcurrent(c, t, n) :- inc_call(c, d, ct), inc_first(d, ct, "unique", t, n).
+// inc_col(c, k, t, d, ct, q): add_column c (term ct) on existing t passes unique=True / index=True (k "col_unique",
+// "col_index"): a literal or a constant of the file (al_added_ddl, q ""), or the constant q of another module
+// (al_added_ddl_if), True by al_const_bool in the finding.
+.decl inc_col(c: node, k: symbol, t: symbol, d: number, ct: symbol, q: symbol)
+inc_col(c, k, t, d, ct, "") :- al_added_ddl(c, t, x, _), (x = "unique", k = "col_unique" ; x = "index", k = "col_index"),
+    inc_live(c), al_term(c, d, ct).
+inc_col(c, k, t, d, ct, q) :- al_added_ddl_if(c, t, x, _, q), (x = "unique", k = "col_unique" ; x = "index",
+    k = "col_index"), inc_live(c), al_term(c, d, ct).
+// inc_pk(c, t, d, ct): create_primary_key c (term ct) on existing t.
+.decl inc_pk(c: node, t: symbol, d: number, ct: symbol)
+inc_pk(c, t, d, ct) :- al_on_existing(c, "create_primary_key", t, _), inc_live(c), al_term(c, d, ct).
+ColumnUniqueNotConcurrent(c, t) :- inc_col(c, "col_unique", t, d, ct, q), (q = "" ; al_const_bool(q, "true")),
+    !al_np_ext(d, ct).
+ColumnIndexNotConcurrent(c, t) :- inc_col(c, "col_index", t, d, ct, q), (q = "" ; al_const_bool(q, "true")),
+    !al_np_ext(d, ct).
+PrimaryKeyNotConcurrent(c, t) :- inc_pk(c, t, d, ct), !al_np_ext(d, ct).
 
 // The cases, `cases/alembic-practice-index-not-concurrent/`, read as one repository: each line ending in `# caught`
 // is reported, and no other line.

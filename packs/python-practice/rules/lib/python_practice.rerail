@@ -2,7 +2,10 @@
 // block the event loop or start a second one, which calls make a coroutine or a task, and what a contextmanager
 // generator runs after its yield. Names resolve through imports (python/names' sym_of), so `import time;
 // time.sleep(1)` and `from time import sleep; sleep(1)` both give "time.sleep"; calls resolve across the files of the
-// run through the call graph of python/calls, so a helper in another module is followed into its body.
+// run through the call targets of python/calls, so a helper in another module is followed into its body.
+// What crosses files is over symbols (decision 0677: no node crosses): a def by its symbol (`pt_def`, as
+// `call_target` names it), a call by its term (`pt_tm`). Each file states its own defs and calls by them; a rule reads
+// an answer back at its own node (`pt_tm(c, ct)`).
 //
 // Interface
 //   Files:      pp_test_doc(d)            document d is test code: a tests/test/testing/unittests directory,
@@ -16,13 +19,21 @@
 //               pp_offloaded(g)           def g is decorated so that calling it runs it in a worker thread
 //                                         (asgiref sync_to_async, channels database_sync_to_async)
 //               pp_discarded(c)           call c is a statement of its own: its value is thrown away
-//               pp_sure_target(c, g)      call c surely calls def g: the call program's answer, and c is not open
+//               pp_sure_target(c, g)      call c surely calls the def whose symbol is g: the call program's answer,
+//                                         and c is not open
 //               pp_kwarg(c, k, v)         call c passes keyword argument k with value v (parentheses taken off)
 //               pp_splat(c)               call c passes `*args` or `**kwargs`, which may hold any keyword
-//               pp_coroutine_call(c, g)   call c calls async def g of the run, and only async defs, so it returns
-//                                         a coroutine (or an async generator) and runs none of g's body
-//               pp_async_fn_ref(e, g)     expression e (a name or attribute, not a call) names async def g of the
-//                                         run, through imports: `worker`, `tasks.worker`
+//               pp_fn_ref(e, q)           expression e (a name or attribute, not a call's callee) names q through
+//                                         imports: `worker`, `tasks.worker`
+//   Symbols:    pp_def_q(q, g)            the def whose qualified name is q (as sym_of names it) has symbol g
+//               pp_async_sym(g)           the def whose symbol is g is an `async def`
+//               pp_sync_sym(g)            the def whose symbol is g is a plain def, not offloaded (pp_sync_def)
+//               pp_target_at(ct, g)       the call whose term is ct may call g (call_target, by the call's term)
+//               pp_open_at(ct)            the call whose term is ct may call something unknown (call_open)
+//               pp_sure_at(ct, g)         pp_sure_target, by the call's term
+//               pp_coroutine_at(ct, g)    the call whose term is ct calls async def g of the run, and only async
+//                                         defs, so it returns a coroutine (or an async generator) and runs none of
+//                                         g's body
 //   Blocking:   pp_blocking(c, h, what)   call c, in h's own frame, blocks its thread on the network, a child
 //                                         process or a timer: time.sleep, requests/httpx module calls, urlopen,
 //                                         subprocess.run and its siblings, os.system, socket connects and lookups;
@@ -32,13 +43,13 @@
 //               pp_loop_guarded(c)        loop start c runs only where no loop runs in its thread, so it cannot
 //                                         raise: in the `except` of a `try` that asks for the running loop, in the
 //                                         branch a loop-running test sends away from, or after nest_asyncio.apply()
-//   Reach:      pp_async_start(c, f, g)   call c, in async def f's own frame outside test code, runs the sync def
-//                                         g (pp_step_target), which runs in the event loop's thread
-//               pp_step_target(c, g)      call c surely runs def g in the caller's thread: a sure target; a def
-//                                         under outside decorators known to call it there (lru_cache, tenacity
-//                                         retry, backoff); the def a decorator of the run wraps, when the wrapper
-//                                         calls the decorator's parameter in its own frame
-//               pp_sync_step(x, c, h)     call c, in sync def x's own frame, runs sync def h (pp_step_target)
+//   Reach:      pp_async_start(ct, f, g)  the call whose term is ct, in async def f's own frame outside test code,
+//                                         runs the sync def g (pp_step_at), which runs in the event loop's thread
+//               pp_step_at(ct, g)         the call whose term is ct surely runs def g in the caller's thread: a
+//                                         sure target; a def under outside decorators known to call it there
+//                                         (lru_cache, tenacity retry, backoff); the def a decorator of the run
+//                                         wraps, when the wrapper calls the decorator's parameter in its own frame
+//               pp_sync_step(x, h)        a call in sync def x's own frame runs sync def h (pp_step_at)
 //               pp_sync_reach(g, h)       from sync def g, sync def h runs in the same thread: g itself, or a
 //                                         chain of pp_sync_steps, none offloaded; a call in a nested def or lambda
 //                                         runs later and is not followed
@@ -61,10 +72,10 @@
 //   - asyncio.run() and run_until_complete() refuse to start while a loop runs in the same thread; asgiref's
 //     async_to_sync refuses too. Reached from a coroutine, they raise RuntimeError.
 //   e.g.  helpers.py:  def fetch(url): return requests.get(url, timeout=5)     pp_blocking(<requests.get(...)>, <fetch>, "requests.get()")
-//         views.py:    async def show(): data = fetch(URL)                    pp_async_start(<fetch(URL)>, <show>, <fetch>)
+//         views.py:    async def show(): data = fetch(URL)                    pp_async_start(<fetch(URL)>'s term, "views.show", "helpers.fetch")
 //                      async def show(): await asyncio.to_thread(fetch, URL)  no start: fetch is passed, not called
 //                      async def ping(): ...
-//                      def kick(): ping()                                      pp_coroutine_call(<ping()>, <ping>), pp_discarded
+//                      def kick(): ping()                                      pp_coroutine_at(<ping()>'s term, "m.ping"), pp_discarded
 #include "python/ast.rerail"
 #include "python/calls.rerail"
 
@@ -104,16 +115,35 @@ pp_kwarg(c, k, v) :- kind(c, "call"), field(c, "arguments", l), child(l, ka, _),
 .decl pp_splat(c: node)
 pp_splat(c) :- kind(c, "call"), field(c, "arguments", l), child(l, a, _),
     (kind(a, "list_splat") ; kind(a, "dictionary_splat")).
-.decl pp_sure_target(c: node, g: node)
+// pp_sure_target(c, g): call c surely calls the def whose symbol is g: its call target, and c is not open.
+.decl pp_sure_target(c: node, g: symbol)
 pp_sure_target(c, g) :- kind(c, "call"), call_target(c, g), !call_open(c).
-.decl pp_sync_target(c: node)
-pp_sync_target(c) :- call_target(c, g), !is_async(g).
-.decl pp_coroutine_call(c: node, g: node)
-pp_coroutine_call(c, g) :- pp_sure_target(c, g), is_async(g), !pp_sync_target(c).
-// pp_async_fn_ref(e, g): a reference, not a call, that names an async def of the run by its qualified name.
-.decl pp_async_fn_ref(e: node, g: node)
-pp_async_fn_ref(e, g) :- (kind(e, "identifier") ; kind(e, "attribute")), sym_of(e, q), qualname(g, q),
-    kind(g, "function_definition"), is_async(g), !field(_, "function", e).
+// pp_fn_ref(e, q): a reference, not a call's callee, that names q through imports (sym_of).
+.decl pp_fn_ref(e: node, q: symbol)
+pp_fn_ref(e, q) :- (kind(e, "identifier") ; kind(e, "attribute")), sym_of(e, q), !field(_, "function", e).
+
+// ---- symbols -----------------------------------------------------------------------------------------------------
+// Each file states its own defs and calls by symbol and term; the rules join them across files by those alone.
+// pp_def_q(q, g): the def whose qualified name is q (python/scopes' qualname, what sym_of names) has symbol g.
+.decl pp_def_q(q: symbol, g: symbol)
+pp_def_q(q, g) :- kind(f, "function_definition"), qualname(f, q), pt_def(f, g).
+.decl pp_async_sym(g: symbol)
+pp_async_sym(g) :- pp_async_def(f), pt_def(f, g).
+.decl pp_sync_sym(g: symbol)
+pp_sync_sym(g) :- pp_sync_def(f), pt_def(f, g).
+// pp_target_at(ct, g), pp_open_at(ct), pp_sure_at(ct, g): call_target, call_open and pp_sure_target by the call's
+// term. Stated in the call's file.
+.decl pp_target_at(ct: symbol, g: symbol)
+pp_target_at(ct, g) :- kind(c, "call"), call_target(c, g), pt_tm(c, ct).
+.decl pp_open_at(ct: symbol)
+pp_open_at(ct) :- kind(c, "call"), call_open(c), pt_tm(c, ct).
+.decl pp_sure_at(ct: symbol, g: symbol)
+pp_sure_at(ct, g) :- pp_sure_target(c, g), pt_tm(c, ct).
+// pp_coroutine_at(ct, g): the call ct surely calls async def g, and no target of it is anything but an async def.
+.decl pp_sync_target_at(ct: symbol)
+pp_sync_target_at(ct) :- pp_target_at(ct, g), !pp_async_sym(g).
+.decl pp_coroutine_at(ct: symbol, g: symbol)
+pp_coroutine_at(ct, g) :- pp_sure_at(ct, g), pp_async_sym(g), !pp_sync_target_at(ct).
 
 // ---- blocking calls ----------------------------------------------------------------------------------------------
 // pp_blocking_q(q, what): functions that block their thread on the network, a child process or a timer. Module-level
@@ -220,27 +250,43 @@ pp_odd_decorator(g) :- decorator(g, e), !pp_known_decorator(e).
 // pp_same_thread_wrapped(g): def g has decorators, every one known to call it in the caller's thread.
 .decl pp_same_thread_wrapped(g: node)
 pp_same_thread_wrapped(g) :- kind(g, "function_definition"), decorator(g, _), !pp_odd_decorator(g).
-// pp_open_elsewhere(c): open call c may also run a def that is not such a wrapped def.
-.decl pp_open_elsewhere(c: node)
-pp_open_elsewhere(c) :- call_open(c), call_target(c, x), !pp_same_thread_wrapped(x).
+.decl pp_wrapped_sym(g: symbol)
+pp_wrapped_sym(g) :- pp_same_thread_wrapped(f), pt_def(f, g).
+// pp_open_elsewhere_at(ct): open call ct may also run a def that is not such a wrapped def.
+.decl pp_open_elsewhere_at(ct: symbol)
+pp_open_elsewhere_at(ct) :- pp_open_at(ct), pp_target_at(ct, x), !pp_wrapped_sym(x).
 // pp_wrapper(w, dq): def w, nested in def p, calls one of p's parameters in its own frame, and p is the decorator
 // named dq or the def a decorator factory dq returns: `def logged(f): @wraps(f) def w(*a): return f(*a)`.
 .decl pp_wrapper(w: node, dq: symbol)
 pp_wrapper(w, dq) :- kind(w, "function_definition"), pp_frame(w, p), kind(p, "function_definition"), param(p, x, _),
     kind(k, "call"), pp_frame(k, w), field(k, "function", fn), kind(fn, "identifier"), text(fn, x),
     (qualname(p, dq) ; (pp_frame(p, d), kind(d, "function_definition"), qualname(d, dq))).
-.decl pp_step_target(c: node, g: node)
-pp_step_target(c, g) :- pp_sure_target(c, g).
-pp_step_target(c, g) :- call_open(c), call_target(c, g), pp_same_thread_wrapped(g), !pp_open_elsewhere(c).
-pp_step_target(c, g) :- pp_sure_target(c, w), pp_wrapper(w, dq), field(c, "function", fn), sym_of(fn, q),
-    qualname(g, q), kind(g, "function_definition"), decorator(g, e), pp_decorator_name(e, dq).
-.decl pp_async_start(c: node, f: node, g: node)
-pp_async_start(c, f, g) :- pp_step_target(c, g), pp_sync_def(g), pp_frame(c, f), pp_async_def(f), pp_live(c).
-.decl pp_sync_step(x: node, c: node, h: node)
-pp_sync_step(x, c, h) :- pp_step_target(c, h), pp_sync_def(h), pp_frame(c, x), pp_sync_def(x).
-.decl pp_sync_reach(g: node, h: node)
+.decl pp_wrapper_sym(w: symbol, dq: symbol)
+pp_wrapper_sym(wq, dq) :- pp_wrapper(w, dq), pt_def(w, wq).
+// pp_decorated_q(q, dq, g): def g, whose qualified name is q, has a decorator that names dq.
+.decl pp_decorated_q(q: symbol, dq: symbol, g: symbol)
+pp_decorated_q(q, dq, gq) :- kind(g, "function_definition"), qualname(g, q), decorator(g, e), pp_decorator_name(e, dq),
+    pt_def(g, gq).
+// pp_callee_at(ct, q): the sure call ct names q by its callee (sym_of).
+.decl pp_callee_at(ct: symbol, q: symbol)
+pp_callee_at(ct, q) :- pp_sure_target(c, _), field(c, "function", fn), sym_of(fn, q), pt_tm(c, ct).
+.decl pp_step_at(ct: symbol, g: symbol)
+pp_step_at(ct, g) :- pp_sure_at(ct, g).
+pp_step_at(ct, g) :- pp_open_at(ct), pp_target_at(ct, g), pp_wrapped_sym(g), !pp_open_elsewhere_at(ct).
+pp_step_at(ct, g) :- pp_sure_at(ct, w), pp_wrapper_sym(w, dq), pp_callee_at(ct, q), pp_decorated_q(q, dq, g).
+// pp_async_call_at(ct, f): call ct is in async def f's own frame, outside test code. pp_sync_call_at(ct, x): call ct
+// is in sync def x's own frame. Stated in the call's file.
+.decl pp_async_call_at(ct: symbol, f: symbol)
+pp_async_call_at(ct, fq) :- kind(c, "call"), pp_frame(c, f), pp_async_def(f), pp_live(c), pt_def(f, fq), pt_tm(c, ct).
+.decl pp_sync_call_at(ct: symbol, x: symbol)
+pp_sync_call_at(ct, xq) :- kind(c, "call"), pp_frame(c, x), pp_sync_def(x), pt_def(x, xq), pt_tm(c, ct).
+.decl pp_async_start(ct: symbol, f: symbol, g: symbol)
+pp_async_start(ct, f, g) :- pp_async_call_at(ct, f), pp_step_at(ct, g), pp_sync_sym(g).
+.decl pp_sync_step(x: symbol, h: symbol)
+pp_sync_step(x, h) :- pp_sync_call_at(ct, x), pp_step_at(ct, h), pp_sync_sym(h).
+.decl pp_sync_reach(g: symbol, h: symbol)
 pp_sync_reach(g, g) :- pp_async_start(_, _, g).
-pp_sync_reach(g, h) :- pp_sync_reach(g, x), pp_sync_step(x, _, h).
+pp_sync_reach(g, h) :- pp_sync_reach(g, x), pp_sync_step(x, h).
 
 // ---- tasks -------------------------------------------------------------------------------------------------------
 .decl pp_spawn_call(c: node, what: symbol)

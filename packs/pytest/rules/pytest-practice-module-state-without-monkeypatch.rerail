@@ -28,9 +28,10 @@
 //                                                     the fix (also monkeypatch.setitem/delattr, patch.object,
 //                                                     patch.dict, patch("a.b.X"), patch.multiple)
 //   with mock.patch.object(registry, "TIMEOUT", 1): registry.TIMEOUT = 3
-//                                                     a patch of the target active where the change runs (pt_guarded)
+//                                                     a patch of the target active where the change runs (pt_guarded,
+//                                                     pt_guard_fx)
 //   old = registry.X; registry.X = 1; try: ... finally: registry.X = old
-//                                                     undone (the library's pt_undo and pt_covers): in a finally,
+//                                                     undone (the library's pt_restored and pt_covers): in a finally,
 //                                                     after a fixture's or @contextmanager's yield, in a teardown hook
 //                                                     or __exit__ of the class or a base class, teardown_module, an
 //                                                     addCleanup / addfinalizer callback (`addCleanup(setattr,
@@ -65,72 +66,86 @@
 #include "lib/pytest.rerail"
 
 .violation ModuleStateWithoutMonkeypatch(at: node, name: symbol) "`{name}` is module or class state, shared by every later test. Use monkeypatch.setattr/setitem or mock.patch.object instead; keep it only if a restore this rule cannot see puts it back."
-ModuleStateWithoutMonkeypatch(n, x) :- ms_hit(n, k, u), !ms_later(n, k, u), ms_label(n, x).
+ModuleStateWithoutMonkeypatch(n, x) :- ms_cand(n, u, q, p, _), pt_def(u, uq), pt_order(n, o),
+    ms_first(uq, cat(q, p), o), ms_label(n, x).
+
+// A change's file shows what it writes and the symbol of the object it writes below (python/names' sym_of); whether
+// that symbol is shared state of the run is a question of the file that defines it, asked by symbol (decision 0677):
+// each file states its modules, classes, module-level variables and containers (ms_module, ms_class, ms_var,
+// ms_container), and the cross-file part joins them to the candidates (ms_shared).
 
 // ---- what is shared state -------------------------------------------------------------------------------------------
-// ms_var(q, r): module-level variable q ("pkg.mod.X") of the run, assigned value r.
-.decl ms_var(q: symbol, r: node)
-ms_var(@dot(mq, x), r) :- asg(m, x, r, _), kind(m, "module"), modname(m, mq).
-// ms_class_attr(q, r): class-level attribute q ("pkg.mod.C.x") of a class of the run, assigned value r.
-.decl ms_class_attr(q: symbol, r: node)
-ms_class_attr(@dot(cq, x), r) :- asg(c, x, r, _), class_def(c, cq).
-// ms_container(q): q is a module-level variable or class attribute whose value is a mutable container.
+// ms_module(q): q is a module of the run. ms_var(q): q ("pkg.mod.X") is a module-level variable of the run.
+.decl ms_module(q: symbol)
+ms_module(q) :- modname(_, q).
+.decl ms_var(q: symbol)
+ms_var(@dot(mq, x)) :- asg(m, x, _, _), kind(m, "module"), modname(m, mq).
+// ms_class(q): q is a class of the run, not one defined inside a def.
+.decl ms_class(q: symbol)
+ms_class(q) :- class_def(c, q), !pt_in_def_class(c).
+// ms_container(q): q is a module-level variable or a class-level attribute ("pkg.mod.C.x") whose value is a mutable
+// container.
 .decl ms_container(q: symbol)
-ms_container(q) :- (ms_var(q, r0) ; ms_class_attr(q, r0)), unparen(r0, r), ms_container_value(r).
+ms_container(@dot(mq, x)) :- asg(m, x, r0, _), kind(m, "module"), modname(m, mq), unparen(r0, r), ms_container_value(r).
+ms_container(@dot(cq, x)) :- asg(c, x, r0, _), class_def(c, cq), unparen(r0, r), ms_container_value(r).
 .decl ms_container_value(r: node)
 ms_container_value(r) :- kind(r, k), (k = "dictionary" ; k = "list" ; k = "set" ; k = "dictionary_comprehension" ;
     k = "list_comprehension" ; k = "set_comprehension").
 ms_container_value(r) :- kind(r, "call"), field(r, "function", f), sym_of(f, q),
     (q = "builtins.dict" ; q = "builtins.list" ; q = "builtins.set" ; q = "collections.defaultdict" ;
     q = "collections.OrderedDict" ; q = "collections.Counter" ; q = "collections.deque").
-
-// ms_root(o, q, k): expression o names shared object q of the run: k "module" (a module), "class" (a class: not one
-// defined inside a def, nor one of a test document that only its own document names), "var" (a module-level
-// variable, read through an import).
-.decl ms_root(o: node, q: symbol, k: symbol)
-ms_root(o, q, "module") :- sym_of(o, q), modname(_, q).
-ms_root(o, q, "class") :- sym_of(o, q), class_def(c, q), !pt_in_def_class(c), !ms_private_class(c, o).
-ms_root(o, q, "var") :- sym_of(o, q), ms_var(q, _).
-// ms_private_class(c, o): class c is defined in the test document o is in, and no other document names it.
-.decl ms_private_class(c: node, o: node)
-ms_private_class(c, o) :- class_def(c, q), sym_of(o, q), docof(c, d), docof(o, d), pt_test_doc(d),
-    !ms_named_elsewhere(q, d).
-.decl ms_named_elsewhere(q: symbol, d: number)
-ms_named_elsewhere(q, d) :- class_def(c, q), docof(c, d), sym_of(n, q), docof(n, d2), d2 != d.
-// ms_key(e, k): expression e is shared object k: a module-level variable (`HANDLERS`, `registry.HANDLERS`), or an
-// attribute of a shared object (`Locks.seen`, `app.config`).
-.decl ms_key(e: node, k: symbol)
-ms_key(e, q) :- ms_root(e, q, "var").
-ms_key(e, @dot(q, a)) :- attr_of(e, o, a), ms_root(o, q, _).
+// ms_private(q, d): class q is defined in test document d, and no other document names it (ms_named_at: document d
+// names class q, a class of a module its file reads, by the phase py_names). ms_named_elsewhere joins documents on
+// purpose: whether a document other than q's own names q, by symbol and document number, no node.
+.decl ms_test_class(q: symbol, d: number)
+ms_test_class(q, d) :- class_def(c, q), docof(c, d), pt_test_doc(d).
+.decl ms_named_at(q: symbol, d: number)
+ms_named_at(q, d) :- sym_of(n, q), docof(n, d), doc(d, p, _), py_names__reads_at(p, m), py_names__class(m, q).
+.decl ms_named_elsewhere(q: symbol, d: number) cross_file
+ms_named_elsewhere(q, d) :- ms_test_class(q, d), ms_named_at(q, d2), d2 != d.
+.decl ms_private(q: symbol, d: number)
+ms_private(q, d) :- ms_test_class(q, d), !ms_named_elsewhere(q, d).
+// ms_shared(q, d): q, named in document d, is shared state of the run: a module, a module-level variable, or a class
+// (not one defined inside a def, nor one of test document d that only d names).
+.decl ms_shared(q: symbol, d: number)
+ms_shared(q, d) :- ms_at(_, q, _, _, d, _), ms_module(q).
+ms_shared(q, d) :- ms_at(_, q, _, _, d, _), ms_var(q).
+ms_shared(q, d) :- ms_at(_, q, _, _, d, _), ms_class(q), !ms_private(q, d).
 
 // ---- changes ------------------------------------------------------------------------------------------------------
-// ms_shape(p): a path this rule reads below a shared object: one attribute, one item, or an attribute's item.
-.decl ms_shape(p: symbol)
-ms_shape(p) :- pt_loc(_, _, p, _), match("(\\.[A-Za-z_][A-Za-z0-9_]*)?(\\[('[^']*'|=[^\\]]*|\\*)\\])?", p), p != "".
-// ms_view(n, e, q, p): change or restore n writes path p below e, which names shared object q.
+// ms_view(n, e, q, p): change or restore n writes path p below e, which names q: one attribute, one item, or an
+// attribute's item.
 .decl ms_view(n: node, e: node, q: symbol, p: symbol)
-ms_view(n, e, q, p) :- pt_loc(n, e, p, _), ms_shape(p), ms_root(e, q, _).
-// ms_change(n): a change this rule reads: a store, del, augmented assignment or setattr/delattr, or a mutator called on
+ms_view(n, e, q, p) :- pt_loc(n, e, p, _), p != "", match("(\\.[A-Za-z_][A-Za-z0-9_]*)?(\\[('[^']*'|=[^\\]]*|\\*)\\])?", p),
+    sym_of(e, q).
+// ms_recv(c, k): mutator call c's receiver is object k: a name of one (`HANDLERS`, `registry.HANDLERS`), or an
+// attribute of a named object (`Locks.seen`, `app.config`). A mutator call is a change this rule reads only when k is
 // a shared container (a method call on any other object is no list/dict/set change it can confirm).
-.decl ms_change(n: node)
-ms_change(n) :- pt_change(n), !pt_mcall(n, _, _).
-ms_change(c) :- pt_change(c), pt_mcall(c, r, _), ms_key(r, k), ms_container(k).
-// ms_write(n, k, e, q, p): change n writes k ("pkg.mod.X.attr['key']"), seen as path p below e, naming q.
-.decl ms_write(n: node, k: symbol, e: node, q: symbol, p: symbol)
-ms_write(n, cat(q, p), e, q, p) :- ms_change(n), ms_view(n, e, q, p), pt_at(n, _, _, how), how != "restore".
+.decl ms_recv(c: node, k: symbol)
+ms_recv(c, q) :- pt_mcall(c, r, _), sym_of(r, q).
+ms_recv(c, @dot(q, a)) :- pt_mcall(c, r, _), attr_of(r, o, a), sym_of(o, q).
+// ms_cand(n, u, q, p, k): change n in def u writes path p below q, and is no undo code, reset or patched write its
+// own file shows; k is the container a mutator call needs ("" for a store, del, augmented assignment or
+// setattr/delattr).
+.decl ms_cand(n: node, u: node, q: symbol, p: symbol, k: symbol)
+ms_cand(n, u, q, p, "") :- pt_change(n), !pt_mcall(n, _, _), ms_view(n, _, q, p), def_frame(n, u), !pt_undo_at(n, _),
+    !ms_reset(n), !ms_kept(n, q, p).
+ms_cand(c, u, q, p, k) :- pt_change(c), ms_recv(c, k), ms_view(c, _, q, p), def_frame(c, u), !pt_undo_at(c, _),
+    !ms_reset(c), !ms_kept(c, q, p).
 // ms_label(n, x): what the message names: the store target, the receiver of a call, `o.x` for setattr.
 .decl ms_label(n: node, x: symbol)
-ms_label(n, x) :- ms_write(n, _, _, _, _), !kind(n, "call"), text(n, x).
-ms_label(n, x) :- ms_write(n, _, _, _, _), pt_mcall(n, r, _), text(r, x).
-ms_label(n, cat(t, ".", a)) :- ms_write(n, _, _, _, _), pt_setattr_call(n, _), posarg(n, 0, o), text(o, t),
+ms_label(n, x) :- ms_cand(n, _, _, _, _), !kind(n, "call"), text(n, x).
+ms_label(n, x) :- ms_cand(n, _, _, _, _), pt_mcall(n, r, _), text(r, x).
+ms_label(n, cat(t, ".", a)) :- ms_cand(n, _, _, _, _), pt_setattr_call(n, _), posarg(n, 0, o), text(o, t),
     posarg(n, 1, s), str(s, a).
 
 // ---- undoing ------------------------------------------------------------------------------------------------------
-// ms_restored(n, k): an undo or patch the library sees puts k back (pt_restore, matched by pt_covers on the same
-// shared object), or a patch by dotted name active where n runs names k or an object it runs through.
-.decl ms_restored(n: node, k: symbol)
-ms_restored(n, k) :- ms_write(n, k, e, q, p), pt_restore(n, e2, a), ms_root(e2, q, _), pt_covers(n, e, p, a).
-ms_restored(n, k) :- ms_write(n, k, _, _, _), pt_guarded(n, c), ms_patch_name(c, s),
+// ms_kept(n, q, p): a patch active where n runs puts q's path p back (pt_guard_restore, matched by pt_covers on the
+// same object), or a patch by dotted name active there names it or an object it runs through.
+pt_root(e, q) :- pt_loc(_, e, _, _), sym_of(e, q).
+.decl ms_kept(n: node, q: symbol, p: symbol)
+ms_kept(n, q, p) :- ms_view(n, e, q, p), pt_guard_restore(n, e2, a), sym_of(e2, q), pt_covers(n, e, p, a).
+ms_kept(n, q, p) :- ms_view(n, _, q, p), pt_guarded(n, c), ms_patch_name(c, s), k = cat(q, p),
     (s = k ; prefix(cat(s, "."), k) ; prefix(cat(s, "["), k)).
 .decl ms_patch_name(c: node, s: symbol)
 ms_patch_name(c, s) :- pt_patch_name(c, s, _).
@@ -139,15 +154,29 @@ ms_patch_name(c, @dot(s, x)) :- pt_patch(c, "multiple"), posarg(c, 0, a), str(a,
 // ms_reset(n): n is a reset (clear, discard, pop with a default, del): alone it empties a cache or removes what other
 // code registered; after a write of the test's own it is a restore by hand, and that write is the one reported.
 .decl ms_reset(n: node)
-ms_reset(n) :- ms_write(n, _, _, _, _), pt_at(n, _, _, "reset").
+ms_reset(n) :- pt_change(n), pt_at(n, _, _, "reset").
+// By u's symbol: each file hands on its candidates (ms_at: def, object, path, needed container, document, order), the
+// paths that put each back (ms_cov, the library's pt_covers), and the dotted names its fixtures patch (ms_fx_name).
+// ms_restored(u, q, p): undo code that runs after u, or a function-scoped fixture u requests, puts q's path p back
+// (the library's pt_restored), or such a fixture patches its dotted name or one it runs through.
+.decl ms_at(u: symbol, q: symbol, p: symbol, k: symbol, d: number, o: number)
+ms_at(uq, q, p, k, d, o) :- ms_cand(n, u, q, p, k), pt_def(u, uq), docof(n, d), pt_order(n, o).
+.decl ms_cov(u: symbol, q: symbol, p: symbol, a: symbol)
+ms_cov(uq, q, p, a) :- ms_cand(n, u, q, p, _), ms_view(n, e, q, p), pt_covers(n, e, p, a), pt_def(u, uq).
+.decl ms_fx_name(g: symbol, s: symbol)
+ms_fx_name(gq, s) :- pt_fixture(g), ms_patch_name(c, s), def_frame(c, g), pt_def(g, gq).
+.decl ms_restored(u: symbol, q: symbol, p: symbol)
+ms_restored(uq, q, p) :- ms_cov(uq, q, p, a), pt_restored(uq, q, a).
+ms_restored(uq, q, p) :- ms_at(uq, q, p, _, _, _), pt_guard_fx(uq, gq), ms_fx_name(gq, s), k = cat(q, p),
+    (s = k ; prefix(cat(s, "."), k) ; prefix(cat(s, "["), k)).
 
-// ms_hit(n, k, u): a change of k in u, a def that runs inside a test, that is not itself undo code, not a reset, and
-// that nothing puts back; ms_later(n, k, u): another one of k comes before it.
-.decl ms_hit(n: node, k: symbol, u: node)
-ms_hit(n, k, u) :- ms_write(n, k, _, _, _), def_frame(n, u), pt_runs_in_test(u), !pt_undo(n, _), !ms_restored(n, k),
-    !ms_reset(n).
-.decl ms_later(n: node, k: symbol, u: node)
-ms_later(n, k, u) :- ms_hit(n, k, u), ms_hit(m, k, u), earlier(m, n).
+// ms_hit(u, k, o): a change of k ("pkg.mod.X.attr['key']") at order o in u, a def that runs inside a test, that is
+// not itself undo code and that nothing puts back; ms_first(u, k, o): the first of them, the one reported.
+.decl ms_hit(u: symbol, k: symbol, o: number)
+ms_hit(uq, cat(q, p), o) :- ms_at(uq, q, p, k, d, o), ms_shared(q, d), (k = "" ; ms_container(k)), pt_runs_in_test(uq),
+    !pt_undo_body(uq), !ms_restored(uq, q, p).
+.decl ms_first(u: symbol, k: symbol, o: number)
+ms_first(uq, k, o) :- ms_hit(uq, k, o), o = min o2 : { ms_hit(uq, k, o2) }.
 
 // The cases, `cases/pytest-practice-module-state-without-monkeypatch/`, read as one repository: each line ending in
 // `# caught` is reported, and no other line.

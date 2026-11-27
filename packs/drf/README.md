@@ -36,7 +36,7 @@ It reports, in a handler whose permission classes check objects, a single-row fe
   module (also `api_settings.DEFAULT_PERMISSION_CLASSES + [...]`), a `get_permissions()` with one return of a list of
   instances (`return [IsOwner()]`), else the settings' `DEFAULT_PERMISSION_CLASSES`, which may name the class by a
   dotted string. `@action(permission_classes=[...])` replaces them for its handler. An `@api_view` function uses its
-  `@permission_classes([...])`, else the settings default. Classes resolve through lib/drf's `drf_cls`: across the
+  `@permission_classes([...])`, else the settings default. Classes resolve through lib/drf's `drf_cls_q`: across the
   project's import root and package re-exports.
 - **The handler acts on one row:** `get`, `put`, `patch`, `delete`, `retrieve`, `update`, `partial_update`,
   `destroy`, an `@action(detail=True)`, or an `@api_view` function.
@@ -234,7 +234,7 @@ dates and times, durations, auto keys and relations are left out, so `password_c
 `AbstractBaseUser`, `AbstractUser` or `User` (and `get_user_model()`, or a module's `User = get_user_model()`) has
 Django's `password` hash. A model field class the project defines (`EncryptedTextField`) or another package's
 (`AESField`) counts when its name ends in `Field`. Models, model bases and serializer bases resolve through lib/drf's
-`drf_cls`: across a project's import root (label-studio imports `label_studio/organizations/models.py` as
+`drf_cls_q`: across a project's import root (label-studio imports `label_studio/organizations/models.py` as
 `organizations.models`) and through package re-exports.
 
 It leaves alone a secret the serializer hides: a declaration of the name (in the serializer or a serializer base it
@@ -314,7 +314,7 @@ which ignores its whole Meta) when all of these hold:
 - it declares field `x` as a field call: a rest_framework field or a subclass, a nested serializer of the run, or a
   `…Field`/`…Serializer` class from another package. The declaration is its own, or the nearest base serializer's in
   any module of the run, when no class in between reassigns `x` (`x = None` removes the field). Classes resolve
-  through lib/drf's `drf_cls`: across the project's import root and package re-exports.
+  through lib/drf's `drf_cls_q`: across the project's import root and package re-exports.
 - its Meta names `x`. The Meta can be its own, inherited through `class Meta(Base.Meta)`, or its base's when it has
   no Meta of its own. The name counts in `read_only_fields` (a list or tuple, `+`, `*splat`, a module constant here
   or imported, or `Other.Meta.read_only_fields`) or as a key of `extra_kwargs` (a dict literal, `dict(...)` or a
@@ -686,7 +686,7 @@ the review's per-field count):
 | HumanSignal/label-studio | 0 (0) | 0 |
 
 Precision 31 of 31 read matches (100%), one finding per view. escriptorium's 6 are new: its views import their models
-and serializers through its import root (`app/apps/core/models.py` as `core.models`), which `drf_cls` now resolves; each is a real
+and serializers through its import root (`app/apps/core/models.py` as `core.models`), which `drf_cls_q` now resolves; each is a real
 per-row query (`DocumentMetadataViewSet` and `PartMetadataViewSet` nest `key`, `ImageAnnotationViewSet` and
 `TextAnnotationViewSet` nest `components` many, `TextualWitnessViewSet` and `VirtualCollectionViewSet` read
 `owner.username`). The review's 7 false positives (Tandoor's
@@ -749,7 +749,7 @@ It leaves alone:
 - a view whose own or a run base's `list()`/`get()` calls neither `super().list(...)`, `super().get(...)` nor
   `self.list(...)`;
 - a viewset routed only through `as_view({...})` maps that never map a method to `list` and registered with no router.
-  The receiver resolves through lib/drf's `drf_cls`, so plane's `UserEndpoint`, which `app/urls/user.py` imports as
+  The receiver resolves through lib/drf's `drf_cls_q`, so plane's `UserEndpoint`, which `app/urls/user.py` imports as
   `plane.app.views.UserEndpoint` (a package re-export, under the project's import root `apps/api/`), is left alone;
 - a sliced queryset (`Order.objects.all()[:50]`) or a `get_queryset()` that slices;
 - views whose rows the rule cannot tie to a model, projects that build `REST_FRAMEWORK` from something other than a

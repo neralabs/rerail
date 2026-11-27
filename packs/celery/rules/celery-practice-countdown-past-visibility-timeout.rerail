@@ -61,41 +61,58 @@
 
 .violation PastVisibility(at: node, secs: number, limit: number) "This task waits {secs} s, past the {limit} s visibility timeout: the broker redelivers it to a second worker. Schedule far-off work from the database; a longer timeout delays crashed-task recovery."
 .violation PastConsumerTimeout(at: node, secs: number, limit: number) "This task stays unacknowledged {secs} s, past RabbitMQ's {limit} s consumer_timeout: the channel closes. Schedule far-off work from the database, or raise consumer_timeout in rabbitmq.conf."
-PastVisibility(at, n, t) :- cv_past(at, n, t), !cv_rabbit().
-PastConsumerTimeout(at, n, t) :- cv_past(at, n, t), cv_rabbit().
-// cv_past(at, n, t): the delay at is n seconds, past the run's threshold t.
-.decl cv_past(at: node, n: number, t: number)
-// countdown= and eta= on a send or a task's retry.
-cv_past(at, n, t) :- cv_delay_site(c, at, n), cv_threshold(t), n > t, cv_live(c).
-// A task's default_retry_delay, when the task retries with it.
-cv_past(at, n, t) :- cel_task_option(f, "default_retry_delay", at), cv_delay(at, n), cv_threshold(t), n > t,
-    cv_retries_by_default(f), cv_live(f).
-// A task's retry_backoff_max, when its retries reach it.
-cv_past(at, n, t) :- cel_task_option(f, "retry_backoff_max", at), cv_delay(at, n), cv_threshold(t), n > t,
-    cv_backoff(f, _, d), d > t, cv_live(f).
+// The run's threshold and broker are repository facts (cv_threshold, cv_rabbit: cross_file, no node); each delay is
+// stated in its own file (cv_delay_at), with what its task needs of other files (lib/celery's needs, cel_is), and
+// compared with the threshold here.
+PastVisibility(at, n, t) :- cv_delay_at(at, n, nq, nk), cel_is(nq, nk), cv_threshold(t), n > t, !cv_rabbit().
+PastConsumerTimeout(at, n, t) :- cv_delay_at(at, n, nq, nk), cel_is(nq, nk), cv_threshold(t), n > t, cv_rabbit().
+// A task's default_retry_delay, when the task retries with it through a function it runs (cv_retries_q, by symbol).
+PastVisibility(at, n, t) :- cv_default_delay(f, at, n, nq, nk), cel_is(nq, nk), pt_def(f, fq), cv_retries_q(fq),
+    cv_threshold(t), n > t, !cv_rabbit().
+PastConsumerTimeout(at, n, t) :- cv_default_delay(f, at, n, nq, nk), cel_is(nq, nk), pt_def(f, fq), cv_retries_q(fq),
+    cv_threshold(t), n > t, cv_rabbit().
+// A task's retry_backoff_max, when its retries reach it: the longest backoff before a retry is past the threshold.
+PastVisibility(at, n, t) :- cv_backoff_cap(f, at, n, nq, nk), cel_is(nq, nk), cv_backoff_top(f, d), cv_threshold(t),
+    n > t, d > t, !cv_rabbit().
+PastConsumerTimeout(at, n, t) :- cv_backoff_cap(f, at, n, nq, nk), cel_is(nq, nk), cv_backoff_top(f, d),
+    cv_threshold(t), n > t, d > t, cv_rabbit().
+// cv_delay_at(at, n, nq, nk): the delay at is n seconds: countdown= or eta= on a send or a task's retry; or a task's
+// default_retry_delay when the task retries with it in its own file (autoretry_for without retry_backoff).
+.decl cv_delay_at(at: node, n: number, nq: symbol, nk: symbol)
+cv_delay_at(at, n, nq, nk) :- cv_delay_site(c, at, n, nq, nk), cv_live(c).
+cv_delay_at(at, n, nq, nk) :- cv_default_delay(f, at, n, nq, nk), cel_task_option(f, "autoretry_for", _, nq, nk),
+    !cv_backoff_factor(f, _).
+// cv_default_delay(f, at, n, nq, nk): task f's default_retry_delay= at is n seconds.
+.decl cv_default_delay(f: node, at: node, n: number, nq: symbol, nk: symbol)
+cv_default_delay(f, at, n, nq, nk) :- cel_task_option(f, "default_retry_delay", at, nq, nk), cv_delay(at, n),
+    cv_live(f).
+// cv_backoff_cap(f, at, n, nq, nk): task f's retry_backoff_max= at is n seconds.
+.decl cv_backoff_cap(f: node, at: node, n: number, nq: symbol, nk: symbol)
+cv_backoff_cap(f, at, n, nq, nk) :- cel_task_option(f, "retry_backoff_max", at, nq, nk), cv_delay(at, n), cv_live(f).
 
 // ---- where a delay is given ---------------------------------------------------------------------------------------
-// cv_delay_site(c, v, n): call c delays its task by n seconds, given as v: `countdown=v`, or `eta=v` with v now plus a
-// timedelta.
-.decl cv_delay_site(c: node, v: node, n: number)
-cv_delay_site(c, v, n) :- cv_delay_call(c), call_arg(c, -1, "countdown", v), cv_delay(v, n).
-cv_delay_site(c, v, n) :- cv_delay_call(c), call_arg(c, -1, "eta", v), cv_time(v, n).
-// cv_delay_call(c): a call that takes a task's delay, on a receiver resolved to a task (a look-alike's `.apply_async`
-// or `.set` is not one): `.apply_async(...)` on a task or signature, `.send_task(...)` (cel_send),
+// cv_delay_site(c, v, n, nq, nk): call c delays its task by n seconds, given as v: `countdown=v`, or `eta=v` with v now
+// plus a timedelta.
+.decl cv_delay_site(c: node, v: node, n: number, nq: symbol, nk: symbol)
+cv_delay_site(c, v, n, nq, nk) :- cv_delay_call(c, nq, nk), call_arg(c, -1, "countdown", v), cv_delay(v, n).
+cv_delay_site(c, v, n, nq, nk) :- cv_delay_call(c, nq, nk), call_arg(c, -1, "eta", v), cv_time(v, n).
+// cv_delay_call(c, nq, nk): a call that takes a task's delay, on a receiver resolved to a task (a look-alike's
+// `.apply_async` or `.set` is not one): `.apply_async(...)` on a task or signature, `.send_task(...)` (cel_send),
 // `.set(...)`/`.signature(...)` on a task or signature, `celery.signature(...)`, or a retry of a task.
-.decl cv_delay_call(c: node)
-cv_delay_call(c) :- cel_send(c, "send_task").
-cv_delay_call(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m),
-    (m = "apply_async" ; m = "set" ; m = "signature"), unparen(o, t), cel_task_ref(t).
-cv_delay_call(c) :- kind(c, "call"), field(c, "function", f), sym_of(f, q),
+.decl cv_delay_call(c: node, nq: symbol, nk: symbol)
+cv_delay_call(c, nq, nk) :- cel_send(c, "send_task", nq, nk).
+cv_delay_call(c, nq, nk) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m),
+    (m = "apply_async" ; m = "set" ; m = "signature"), unparen(o, t), cel_task_ref(t, nq, nk).
+cv_delay_call(c, "", "") :- kind(c, "call"), field(c, "function", f), sym_of(f, q),
     (q = "celery.signature" ; q = "celery.canvas.signature" ; q = "celery.canvas.Signature" ; q = "celery.Signature").
-cv_delay_call(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "retry"), unparen(o, r), cv_task_handle(r).
-// cv_task_handle(r): r is a task: a bound task's first parameter, read in that task, or a task (lib/celery's
+cv_delay_call(c, nq, nk) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "retry"), unparen(o, r),
+    cv_task_handle(r, nq, nk).
+// cv_task_handle(r, nq, nk): r is a task: a bound task's first parameter, read in that task, or a task (lib/celery's
 // cel_task_ref, which also takes a Celery wrapper package's `@task` in a module that imports celery).
-.decl cv_task_handle(r: node)
-cv_task_handle(r) :- kind(r, "identifier"), text(r, x), look(r, x, g), cel_task_bound(g), sig_param(g, _, nm, 0, _, _, _),
-    text(nm, x).
-cv_task_handle(r) :- cel_task_ref(r).
+.decl cv_task_handle(r: node, nq: symbol, nk: symbol)
+cv_task_handle(r, nq, nk) :- kind(r, "identifier"), text(r, x), look(r, x, g), cel_task_bound(g, nq, nk),
+    sig_param(g, _, nm, 0, _, _, _), text(nm, x).
+cv_task_handle(r, nq, nk) :- cel_task_ref(r, nq, nk).
 
 // ---- names --------------------------------------------------------------------------------------------------------
 // cv_name(e, s, x, w): e reads name x, which resolves to scope s (any scope: module, enclosing function, own
@@ -130,48 +147,55 @@ cv_time(e, n) :- cv_time_expr(e, n).
 cv_time(e, n) :- cv_name(e, _, _, w), cv_time_expr(w, n).
 
 // ---- task options -------------------------------------------------------------------------------------------------
-// cv_retries_by_default(f): task f retries with its default_retry_delay: a `.retry()` call without countdown or eta
-// in a function the task runs, or autoretry_for without retry_backoff.
-.decl cv_retries_by_default(f: node)
-cv_retries_by_default(f) :- cel_task_runs(f, g), kind(c, "call"), field(c, "function", fn), attr_of(fn, _, "retry"),
-    nearest(c, g, scope), !call_arg(c, -1, "countdown", _), !call_arg(c, -1, "eta", _).
-cv_retries_by_default(f) :- cel_task_option(f, "autoretry_for", _), !cv_backoff_factor(f, _).
+// cv_retries_q(f): task f, by symbol, retries with its default_retry_delay: a `.retry()` call without countdown or eta
+// in a function it runs (f itself, or one python/calls' reach finds from it, over definitions' symbols). The call
+// graph spans files, so this is a repository fact over symbols (cross_file); a file states its own functions'
+// retries (cv_bare_retry).
+.decl cv_retries_q(f: symbol) cross_file
+cv_retries_q(fq) :- cv_bare_retry(fq).
+cv_retries_q(fq) :- reach(fq, gq), cv_bare_retry(gq).
+.decl cv_bare_retry(g: symbol)
+cv_bare_retry(gq) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, _, "retry"), nearest(c, g, scope),
+    !call_arg(c, -1, "countdown", _), !call_arg(c, -1, "eta", _), pt_def(g, gq).
 // cv_backoff_factor(f, k): f sets autoretry_for and retry_backoff, whose first delay is k seconds (True: 1).
 .decl cv_backoff_factor(f: node, k: number)
-cv_backoff_factor(f, 1) :- cel_task_option(f, "autoretry_for", _), cel_task_flag(f, "retry_backoff").
-cv_backoff_factor(f, k) :- cel_task_option(f, "autoretry_for", _), cel_task_option(f, "retry_backoff", v), cv_num(v, k),
-    k > 0.
+cv_backoff_factor(f, 1) :- cel_task_option(f, "autoretry_for", _, nq, nk), cel_task_flag(f, "retry_backoff", nq, nk).
+cv_backoff_factor(f, k) :- cel_task_option(f, "autoretry_for", _, nq, nk), cel_task_option(f, "retry_backoff", v, nq, nk),
+    cv_num(v, k), k > 0.
 // cv_max_retries(f, m): f retries at most m times; -1 is unbounded (`None`). retry_kwargs' max_retries overrides the
 // option; Celery's default is 3. An unreadable value gives no row.
 .decl cv_max_retries(f: node, m: number)
 cv_max_retries(f, m) :- cv_retry_kwarg(f, v), cv_count(v, m).
-cv_max_retries(f, m) :- cel_task(f), !cv_retry_kwarg(f, _), cel_task_option(f, "max_retries", v), cv_count(v, m).
-cv_max_retries(f, 3) :- cel_task(f), !cv_retry_kwarg(f, _), !cel_task_option(f, "max_retries", _).
+cv_max_retries(f, m) :- cel_task(f, _, _), !cv_retry_kwarg(f, _), cel_task_option(f, "max_retries", v, _, _),
+    cv_count(v, m).
+cv_max_retries(f, 3) :- cel_task(f, _, _), !cv_retry_kwarg(f, _), !cv_task_opt(f, "max_retries").
+.decl cv_task_opt(f: node, k: symbol)
+cv_task_opt(f, k) :- cel_task_option(f, k, _, _, _).
 .decl cv_retry_kwarg(f: node, v: node)
-cv_retry_kwarg(f, v) :- cel_task_option(f, "retry_kwargs", d), unparen(d, m), kind(m, "dictionary"), child(m, p, _),
-    kind(p, "pair"), field(p, "key", k), str(k, "max_retries"), field(p, "value", v).
+cv_retry_kwarg(f, v) :- cel_task_option(f, "retry_kwargs", d, _, _), unparen(d, m), kind(m, "dictionary"),
+    child(m, p, _), kind(p, "pair"), field(p, "key", k), str(k, "max_retries"), field(p, "value", v).
 .decl cv_count(v: node, m: number)
 cv_count(v, -1) :- unparen(v, u), kind(u, "none").
 cv_count(v, m) :- cv_num(v, m).
 // cv_backoff(f, i, d): before retry i (0-based) autoretry waits up to d seconds (retry_backoff * 2 ** i); the walk
-// stops once d is past the threshold, or at the last retry.
+// stops at the last retry, or once d is past every threshold a run can have (100000000 seconds, the bound of the
+// values read). cv_backoff_top(f, d): the longest of them, compared with the run's threshold in the output.
 .decl cv_backoff(f: node, i: number, d: number)
 cv_backoff(f, 0, k) :- cv_backoff_factor(f, k), cv_max_retries(f, m), m != 0.
-cv_backoff(f, i + 1, d * 2) :- cv_backoff(f, i, d), i < 40, cv_threshold(t), d <= t, cv_max_retries(f, m),
+cv_backoff(f, i + 1, d * 2) :- cv_backoff(f, i, d), i < 40, d <= 100000000, cv_max_retries(f, m),
     (m = -1 ; i + 1 < m).
+.decl cv_backoff_top(f: node, d: number)
+cv_backoff_top(f, d) :- cv_backoff(f, _, _), d = max x : { cv_backoff(f, _, x) }.
 
 // ---- values -------------------------------------------------------------------------------------------------------
 // Values past 100000000 seconds (three years) are not followed, so arithmetic stays bounded.
-// cv_whole(v, n): the string v of an int or float value has whole part n.
-.decl cv_whole(v: symbol, n: number)
-cv_whole(v, n) :- cv_value_text(v), match("(?<w>[0-9]{1,9})(\\.[0-9]*)?", v), n = to_number(w).
-.decl cv_value_text(v: symbol)
-cv_value_text(v) :- kind(u, k), (k = "integer" ; k = "float"), value(u, v).
-cv_value_text(v) :- kind(u, "identifier"), static_value(u, v).
-// cv_lit(e, n): e is n whole seconds of number literals and file-local constants, with `+` and `*`.
+// cv_lit(e, n): e is n whole seconds of number literals and file-local constants, with `+` and `*`. An int or float
+// value's text has whole part n (the match, tested where the value is read).
 .decl cv_lit(e: node, n: number)
-cv_lit(e, n) :- unparen(e, u), (kind(u, "integer") ; kind(u, "float")), value(u, v), cv_whole(v, n).
-cv_lit(e, n) :- unparen(e, u), kind(u, "identifier"), static_value(u, v), cv_whole(v, n).
+cv_lit(e, n) :- unparen(e, u), (kind(u, "integer") ; kind(u, "float")), value(u, v),
+    match("(?<w>[0-9]{1,9})(\\.[0-9]*)?", v), n = to_number(w).
+cv_lit(e, n) :- unparen(e, u), kind(u, "identifier"), static_value(u, v), match("(?<w>[0-9]{1,9})(\\.[0-9]*)?", v),
+    n = to_number(w).
 cv_lit(e, n) :- unparen(e, u), kind(u, "binary_operator"), op(u, "+"), field(u, "left", l), field(u, "right", r),
     cv_lit(l, a), cv_lit(r, b), n = a + b, n <= 100000000.
 cv_lit(e, n) :- unparen(e, u), kind(u, "binary_operator"), op(u, "*"), field(u, "left", l), field(u, "right", r),
@@ -260,8 +284,8 @@ cv_vt_known(n) :- cv_vt_value(v), cv_secs(v, n).
 // cv_threshold(t): on RabbitMQ, the largest `x-consumer-timeout` the run gives a queue (milliseconds), else its
 // default consumer_timeout of 30 minutes; elsewhere the largest visibility_timeout the run sets, else the broker's
 // default: 30 minutes on SQS, one hour on Redis or a broker the rule cannot name. No row when the value it would take
-// is unreadable.
-.decl cv_threshold(t: number)
+// is unreadable. A fact of the whole run, read from every file's settings: cross_file, a number alone.
+.decl cv_threshold(t: number) cross_file
 cv_threshold(1800) :- cv_rabbit(), !cv_ct_open(), !cv_ct_known(_).
 cv_threshold(t) :- cv_rabbit(), !cv_ct_open(), cv_ct_known(_), m = max n : { cv_ct_known(n) }, t = m / 1000.
 cv_threshold(t) :- !cv_rabbit(), !cv_vt_open(), cv_vt_known(_), t = max n : { cv_vt_known(n) }.
@@ -278,7 +302,7 @@ cv_ct_known(n) :- cv_ct_value(v), cv_secs(v, n).
 // cv_broker_value(v): the run's broker URL: a broker_url setting, or `Celery(..., broker=v)`.
 .decl cv_broker_value(v: node)
 cv_broker_value(v) :- cel_setting("broker_url", v, s), cv_live(s).
-cv_broker_value(v) :- kind(c, "call"), field(c, "function", f), sym_of(f, q), cel_app_class(q),
+cv_broker_value(v) :- kind(c, "call"), field(c, "function", f), cel_app_cls_ref(f),
     call_arg(c, -1, "broker", v), cv_live(c).
 // cv_broker_scheme(s): the URL scheme of a broker value's string literal: the value itself (a string or f-string), or
 // the default of an environment read inside it (`os.environ.get("X", "amqp://...")`, `env("X", default=...)`). Other
@@ -297,13 +321,13 @@ cv_env_fn(f) :- (kind(f, "identifier"), text(f, x) ; attr_of(f, _, x)),
     (x = "get" ; x = "getenv" ; x = "env" ; x = "str" ; x = "config").
 .decl cv_rabbit_scheme(s: symbol)
 cv_rabbit_scheme("amqp"). cv_rabbit_scheme("amqps"). cv_rabbit_scheme("pyamqp"). cv_rabbit_scheme("librabbitmq").
-// cv_rabbit(): every broker scheme the run names is RabbitMQ's, and it names one.
-.decl cv_rabbit()
+// cv_rabbit(): every broker scheme the run names is RabbitMQ's, and it names one. cv_sqs(): every one is SQS's. Facts
+// of the whole run, read from every file's broker settings: cross_file, with no column.
+.decl cv_rabbit() cross_file
 cv_rabbit() :- cv_broker_scheme(s), cv_rabbit_scheme(s), !cv_other_broker().
 .decl cv_other_broker()
 cv_other_broker() :- cv_broker_scheme(s), !cv_rabbit_scheme(s).
-// cv_sqs(): every broker scheme the run names is SQS's, and it names one.
-.decl cv_sqs()
+.decl cv_sqs() cross_file
 cv_sqs() :- cv_broker_scheme("sqs"), !cv_not_sqs().
 .decl cv_not_sqs()
 cv_not_sqs() :- cv_broker_scheme(s), s != "sqs".

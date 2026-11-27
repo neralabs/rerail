@@ -250,9 +250,9 @@ the statement (`selectinload(M.rel)`) loads them all with the rows. Many-to-one 
 `sqlalchemy-practice-lazy-many-to-one-in-loop`'s, since their cost depends on how many rows share a parent.
 
 It matches a loop over ORM rows of model M that reads `x.rel` of each row, where `rel` is a collection of M with the
-lazy "select" strategy. The relationship, its strategy and its direction are read from the models, across files
-(lib/sqlalchemy's `sa_lazy_rel` and `sa_rel_dir`): declared on M, on a base class of the run, or given to M by another
-model's `backref=`; a collection when it is `Mapped[list[...]]` (or set, Sequence, ...), `uselist=True`,
+lazy "select" strategy. The relationship, its strategy and its direction are read from the models, across files, by
+symbol (lib/sqlalchemy's `sa_lazy_rel_q` and `sa_rel_dir_q`): declared on M, on a base class of the run, or given to M
+by another model's `backref=`; a collection when it is `Mapped[list[...]]` (or set, Sequence, ...), `uselist=True`,
 `secondary=` (keyword or second positional argument), a relationship whose foreign key sits on the target
 (`foreign_keys=[B.a_id]`, `foreign_keys="B.a_id"`, or only the target has a ForeignKey to this table, table names read
 from `__tablename__` or, without one, the class name in snake case), or the backref of a many-to-one. A relationship

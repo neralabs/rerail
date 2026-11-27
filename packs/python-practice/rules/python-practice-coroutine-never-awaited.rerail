@@ -15,7 +15,7 @@
 //     statement (`[send(u) for u in users]`), an operand of an `and`/`or` written as a statement (`ok and
 //     send(u)`), or the value of an assignment to a name its function never reads (`_ = send(u)`, also `_` at
 //     module level). A coroutine call is one whose every target by the call graph (python/calls, across files) is an
-//     async def of the run and which can call nothing else (pp_coroutine_call: not open). `self.m()` follows every
+//     async def of the run and which can call nothing else (pp_coroutine_at: not open). `self.m()` follows every
 //     override in the run's subclasses.
 //   - HandedToSync (HandedToThread, HandedToExecutor, HandedToAtexit, HandedToSignal, HandedToLoopCallback): an
 //     async def of the run (by name through imports, `self.m`, wrapped in functools.partial, or a lambda whose body
@@ -47,41 +47,49 @@
 // is not silent.
 #include "lib/python_practice.rerail"
 
-.violation DroppedInAsync(at: node, x: symbol, g: symbol, p: symbol, d: node)
-    "Await `{x}(...)`, or wrap it in `asyncio.create_task()` and keep the task: it only makes a coroutine of `async def {g}` ({p}:{d.line}), so its body never runs."
-DroppedInAsync(c, x, gx, p, g) :- cnw_dropped(c, g), !cnw_agen(g), cnw_in_async(c), cnw_report(c, x, g, gx, p).
-.violation DroppedInSync(at: node, x: symbol, g: symbol, p: symbol, d: node)
-    "Run `{x}(...)` with `asyncio.run()`, or a task in a running loop: it only makes a coroutine of `async def {g}` ({p}:{d.line}). Make `{g}` a plain def if it never awaits."
-DroppedInSync(c, x, gx, p, g) :- cnw_dropped(c, g), !cnw_agen(g), !cnw_in_async(c), cnw_report(c, x, g, gx, p).
-.violation DroppedGenerator(at: node, x: symbol, g: symbol, p: symbol, d: node)
-    "Iterate `{x}(...)` with `async for`: `async def {g}` ({p}:{d.line}) is an async generator, so this call alone runs none of it. Make `{g}` a plain def if nothing is yielded."
-DroppedGenerator(c, x, gx, p, g) :- cnw_dropped(c, g), cnw_agen(g), cnw_report(c, x, g, gx, p).
-.violation HandedToThread(at: node, api: symbol, g: symbol, p: symbol, d: node)
-    "Pass a plain function to `{api}`, e.g. `target=asyncio.run, args=({g}(...),)`: `{g}` is an async def ({p}:{d.line}), so calling it there runs none of its body."
-HandedToThread(e, api, gx, p, g) :- cnw_handed(e, api, g), cnw_api_kind(api, "thread"), cnw_def(g, gx, p).
-.violation HandedToExecutor(at: node, api: symbol, g: symbol, p: symbol, d: node)
-    "Await `{g}(...)` instead of handing it to `{api}`: `{g}` is an async def ({p}:{d.line}), so the worker thread only makes a coroutine. Make `{g}` a plain def if it never awaits."
-HandedToExecutor(e, api, gx, p, g) :- cnw_handed(e, api, g), cnw_api_kind(api, "executor"), cnw_def(g, gx, p).
-.violation HandedToAtexit(at: node, g: symbol, p: symbol, d: node)
-    "Register a plain function, e.g. `atexit.register(lambda: asyncio.run({g}()))`: `{g}` is an async def ({p}:{d.line}), so the exit call runs none of its body."
-HandedToAtexit(e, gx, p, g) :- cnw_handed(e, "atexit.register()", g), cnw_def(g, gx, p).
-HandedToAtexit(e, gx, p, g) :- decorator(g, e), unparen(e, m), sym_of(m, "atexit.register"), pp_async_def(g),
-    pp_live(e), cnw_def(g, gx, p).
-.violation HandedToSignal(at: node, g: symbol, p: symbol, d: node)
-    "Pass a plain handler to `signal.signal()`, or in a running loop use `loop.add_signal_handler()` with a task of `{g}()`: `{g}` is an async def ({p}:{d.line})."
-HandedToSignal(e, gx, p, g) :- cnw_handed(e, "signal.signal()", g), cnw_def(g, gx, p).
-.violation HandedToLoopCallback(at: node, api: symbol, g: symbol, p: symbol, d: node)
-    "Schedule `{g}(...)` with `asyncio.create_task()` instead of `{api}`, or `run_coroutine_threadsafe()` from another thread: `{g}` is an async def ({p}:{d.line})."
-HandedToLoopCallback(e, api, gx, p, g) :- cnw_handed(e, api, g), cnw_api_kind(api, "loop"), cnw_def(g, gx, p).
-// cnw_report(c, x, g, gx, p): call c's callee text x, and g's name gx and file p.
-.decl cnw_report(c: node, x: symbol, g: node, gx: symbol, p: symbol)
-cnw_report(c, x, g, gx, p) :- cnw_dropped(c, g), field(c, "function", fn), text(fn, x), cnw_def(g, gx, p).
-.decl cnw_def(g: node, gx: symbol, p: symbol)
-cnw_def(g, gx, p) :- pp_async_def(g), def_name(g, gx), docof(g, dd), doc(dd, p, _).
+// Across files the rule is over symbols (decision 0677: no node crosses files): an async def by its symbol, a call or
+// a handed reference by its term. Each file states its async defs (cnw_def, cnw_agen, cnw_plain_sym) and what it hands
+// on; a finding reads its call's or reference's node in its own file and names the async def by its path and line.
+.violation DroppedInAsync(at: node, x: symbol, g: symbol, p: symbol, l: number)
+    "Await `{x}(...)`, or wrap it in `asyncio.create_task()` and keep the task: it only makes a coroutine of `async def {g}` ({p}:{l}), so its body never runs."
+DroppedInAsync(c, x, gx, p, l) :- cnw_drop_site(c, ct, x), cnw_in_async(c), pp_coroutine_at(ct, g), !cnw_agen(g),
+    cnw_def(g, gx, p, l).
+.violation DroppedInSync(at: node, x: symbol, g: symbol, p: symbol, l: number)
+    "Run `{x}(...)` with `asyncio.run()`, or a task in a running loop: it only makes a coroutine of `async def {g}` ({p}:{l}). Make `{g}` a plain def if it never awaits."
+DroppedInSync(c, x, gx, p, l) :- cnw_drop_site(c, ct, x), !cnw_in_async(c), pp_coroutine_at(ct, g), !cnw_agen(g),
+    cnw_def(g, gx, p, l).
+.violation DroppedGenerator(at: node, x: symbol, g: symbol, p: symbol, l: number)
+    "Iterate `{x}(...)` with `async for`: `async def {g}` ({p}:{l}) is an async generator, so this call alone runs none of it. Make `{g}` a plain def if nothing is yielded."
+DroppedGenerator(c, x, gx, p, l) :- cnw_drop_site(c, ct, x), pp_coroutine_at(ct, g), cnw_agen(g), cnw_def(g, gx, p, l).
+.violation HandedToThread(at: node, api: symbol, g: symbol, p: symbol, l: number)
+    "Pass a plain function to `{api}`, e.g. `target=asyncio.run, args=({g}(...),)`: `{g}` is an async def ({p}:{l}), so calling it there runs none of its body."
+HandedToThread(e, api, gx, p, l) :- cnw_sink(e, et, api, _), cnw_api_kind(api, "thread"), cnw_handed_at(et, g),
+    cnw_def(g, gx, p, l).
+.violation HandedToExecutor(at: node, api: symbol, g: symbol, p: symbol, l: number)
+    "Await `{g}(...)` instead of handing it to `{api}`: `{g}` is an async def ({p}:{l}), so the worker thread only makes a coroutine. Make `{g}` a plain def if it never awaits."
+HandedToExecutor(e, api, gx, p, l) :- cnw_sink(e, et, api, _), cnw_api_kind(api, "executor"), cnw_handed_at(et, g),
+    cnw_def(g, gx, p, l).
+.violation HandedToAtexit(at: node, g: symbol, p: symbol, l: number)
+    "Register a plain function, e.g. `atexit.register(lambda: asyncio.run({g}()))`: `{g}` is an async def ({p}:{l}), so the exit call runs none of its body."
+HandedToAtexit(e, gx, p, l) :- cnw_sink(e, et, "atexit.register()", _), cnw_handed_at(et, g), cnw_def(g, gx, p, l).
+HandedToAtexit(e, gx, p, l) :- decorator(g, e), unparen(e, m), sym_of(m, "atexit.register"), pp_async_def(g),
+    pp_live(e), def_name(g, gx), docof(g, d), doc(d, p, _), line(g, l).
+.violation HandedToSignal(at: node, g: symbol, p: symbol, l: number)
+    "Pass a plain handler to `signal.signal()`, or in a running loop use `loop.add_signal_handler()` with a task of `{g}()`: `{g}` is an async def ({p}:{l})."
+HandedToSignal(e, gx, p, l) :- cnw_sink(e, et, "signal.signal()", _), cnw_handed_at(et, g), cnw_def(g, gx, p, l).
+.violation HandedToLoopCallback(at: node, api: symbol, g: symbol, p: symbol, l: number)
+    "Schedule `{g}(...)` with `asyncio.create_task()` instead of `{api}`, or `run_coroutine_threadsafe()` from another thread: `{g}` is an async def ({p}:{l})."
+HandedToLoopCallback(e, api, gx, p, l) :- cnw_sink(e, et, api, _), cnw_api_kind(api, "loop"), cnw_handed_at(et, g),
+    cnw_def(g, gx, p, l).
+// cnw_def(g, gx, p, l): async def g is named gx, at line l of path p. Stated in g's file.
+.decl cnw_def(g: symbol, gx: symbol, p: symbol, l: number)
+cnw_def(gq, gx, p, l) :- pp_async_def(g), def_name(g, gx), pt_def(g, gq), docof(g, d), doc(d, p, _), line(g, l).
 
 // ---- shape 1: a coroutine call whose value nothing reads ---------------------------------------------------------
-.decl cnw_dropped(c: node, g: node)
-cnw_dropped(c, g) :- pp_coroutine_call(c, g), cnw_unread(c), pp_live(c).
+// cnw_drop_site(c, ct, x): call c, whose term is ct and whose callee's text is x, is live and its value unread. The
+// finding needs its every target to be an async def (lib: pp_coroutine_at).
+.decl cnw_drop_site(c: node, ct: symbol, x: symbol)
+cnw_drop_site(c, ct, x) :- cnw_unread(c), pp_live(c), field(c, "function", fn), text(fn, x), pt_tm(c, ct).
 // cnw_unread(c): call c's value is thrown away: c is a value of an expression statement (cnw_value_of), or the
 // right side of an assignment to a name nothing reads.
 .decl cnw_unread(c: node)
@@ -101,23 +109,29 @@ cnw_value_of(k, c) :- cnw_value_of(k, b), (kind(b, "list_comprehension") ; kind(
 // cnw_read_in(s, x): some reference in scope s, or in a scope nested in it, reads s's x.
 .decl cnw_read_in(s: node, x: symbol)
 cnw_read_in(s, x) :- look(r, x, s), expr_ctx(r, "load").
-// cnw_agen(g): async def g yields in its own frame, so calling it makes an async generator.
-.decl cnw_agen(g: node)
-cnw_agen(g) :- pp_async_def(g), kind(y, "yield"), pp_frame(y, g).
+// cnw_agen(g): async def g yields in its own frame, so calling it makes an async generator. Stated in g's file.
+.decl cnw_agen(g: symbol)
+cnw_agen(gq) :- pp_async_def(g), kind(y, "yield"), pp_frame(y, g), pt_def(g, gq).
 // cnw_in_async(c): c runs in an async def's own frame, where `await` works.
 .decl cnw_in_async(c: node)
 cnw_in_async(c) :- pp_frame(c, f), pp_async_def(f).
 
 // ---- shape 2: an async def handed to an API that calls it synchronously ----------------------------------------
-// cnw_handed(e, api, g): e, an argument of a call that `api` names, refers to async def g, which that API calls as a
-// plain function, ignoring or only storing what it returns: g itself, `functools.partial(g, ...)`, or a lambda whose
-// body is a coroutine call of g (e is then that call).
-.decl cnw_handed(e: node, api: symbol, g: node)
-cnw_handed(e, api, g) :- cnw_sink_arg(c, api, a), unparen(a, e), cnw_async_ref(e, g), pp_live(c).
-cnw_handed(e, api, g) :- cnw_sink_arg(c, api, a), unparen(a, k), kind(k, "call"), field(k, "function", pf),
-    sym_of(pf, "functools.partial"), posarg(k, 0, r), unparen(r, e), cnw_async_ref(e, g), pp_live(c).
-cnw_handed(e, api, g) :- cnw_sink_arg(c, api, a), unparen(a, k), kind(k, "lambda"), field(k, "body", b),
-    unparen(b, e), pp_coroutine_call(e, g), pp_live(c).
+// cnw_sink(e, et, api, how): e (term et), an argument of a live call that `api` names, is what that API calls as a
+// plain function, ignoring or only storing what it returns: a reference (how "ref"), itself or inside
+// `functools.partial(e, ...)`, or the body of a lambda (how "call"). cnw_handed_at(et, g): it refers to async def g
+// (cnw_async_ref), or, a lambda's body, is a coroutine call of g.
+.decl cnw_sink(e: node, et: symbol, api: symbol, how: symbol)
+cnw_sink(e, et, api, "ref") :- cnw_sink_arg(c, api, a), unparen(a, e), pp_live(c), pt_tm(e, et).
+cnw_sink(e, et, api, "ref") :- cnw_sink_arg(c, api, a), unparen(a, k), kind(k, "call"), field(k, "function", pf),
+    sym_of(pf, "functools.partial"), posarg(k, 0, r), unparen(r, e), pp_live(c), pt_tm(e, et).
+cnw_sink(e, et, api, "call") :- cnw_sink_arg(c, api, a), unparen(a, k), kind(k, "lambda"), field(k, "body", b),
+    unparen(b, e), pp_live(c), pt_tm(e, et).
+.decl cnw_handed_at(et: symbol, g: symbol)
+cnw_handed_at(et, g) :- cnw_async_ref(et, g).
+cnw_handed_at(et, g) :- cnw_lambda_at(et), pp_coroutine_at(et, g).
+.decl cnw_lambda_at(et: symbol)
+cnw_lambda_at(et) :- cnw_sink(_, et, _, "call").
 // cnw_api_kind(api, w): the advice that fits each API.
 .decl cnw_api_kind(api: symbol, w: symbol)
 cnw_api_kind("threading.Thread(target=...)", "thread"). cnw_api_kind("multiprocessing.Process(target=...)", "thread").
@@ -178,15 +192,18 @@ cnw_holds(o, w) :- attr_of(o, r, a), kind(r, "identifier"), text(r, "self"), nea
 cnw_holds(o, "executor") :- leaf_name(o, x),
     (glob("*xecutor*", x) ; glob("*pool", x) ; glob("*Pool", x) ; glob("*pool_*", x)).
 
-// cnw_async_ref(e, g): reference e (not a call) names async def g of the run, whose name binds the def itself: no
+// cnw_async_ref(et, g): the handed reference et names async def g of the run, whose name binds the def itself: no
 // decorator but staticmethod/classmethod/abstractmethod, which keep it a coroutine function. By import or attribute
-// (pp_async_fn_ref), or `self.m` in a method of class k when every m the run's k or its subclasses may resolve to is
-// such an async def and k's bases are all in the run.
-.decl cnw_async_ref(e: node, g: node)
-cnw_async_ref(e, g) :- pp_async_fn_ref(e, g), cnw_plain_async(g).
-cnw_async_ref(e, g) :- cnw_self_ref(e, k, m), cnw_self_target(k, m, g), cnw_plain_async(g), !cnw_self_other(k, m).
-.decl cnw_plain_async(g: node)
-cnw_plain_async(g) :- pp_async_def(g), !cnw_other_decorator(g).
+// (lib: pp_fn_ref), or `self.m` in a method of class k when every m the run's k or its subclasses may resolve to is
+// such an async def and k's bases are all in the run. Each file states its handed references by name (cnw_ref_at) or
+// as `self.m` (cnw_self_ref_at); the classes are joined by symbol.
+.decl cnw_async_ref(et: symbol, g: symbol)
+cnw_async_ref(et, g) :- cnw_ref_at(et, q), pp_def_q(q, g), cnw_plain_sym(g).
+cnw_async_ref(et, g) :- cnw_self_ref_at(et, kq, m), cnw_self_target(kq, m, g), cnw_plain_sym(g), !cnw_self_other(kq, m).
+.decl cnw_ref_at(et: symbol, q: symbol)
+cnw_ref_at(et, q) :- cnw_sink(e, et, _, "ref"), pp_fn_ref(e, q).
+.decl cnw_plain_sym(g: symbol)
+cnw_plain_sym(gq) :- pp_async_def(g), !cnw_other_decorator(g), pt_def(g, gq).
 .decl cnw_other_decorator(g: node)
 cnw_other_decorator(g) :- decorator(g, e), !cnw_kept_decorator(e).
 .decl cnw_kept_decorator(e: node)
@@ -196,26 +213,35 @@ cnw_kept_decorator(e) :- unparen(e, m), sym_of(m, q),
 .decl cnw_self_ref(e: node, kq: symbol, m: symbol)
 cnw_self_ref(e, kq, m) :- attr_of(e, r, m), kind(r, "identifier"), text(r, "self"), !field(_, "function", e),
     nearest(e, f, fdef), param(f, "self", 0), nearest(f, k, scope), class_def(k, kq), pp_live(e).
+.decl cnw_self_ref_at(et: symbol, kq: symbol, m: symbol)
+cnw_self_ref_at(et, kq, m) :- cnw_sink(e, et, _, "ref"), cnw_self_ref(e, kq, m).
+.decl cnw_self_key(kq: symbol, m: symbol)
+cnw_self_key(kq, m) :- cnw_self_ref_at(_, kq, m).
 // cnw_self_target(kq, m, g): `self.m` in kq may be g: what kq or any subclass of it resolves m to.
-.decl cnw_self_target(kq: symbol, m: symbol, g: node)
-cnw_self_target(kq, m, g) :- cnw_self_ref(_, kq, m), mro_method(kq, m, g).
-cnw_self_target(kq, m, g) :- cnw_self_ref(_, kq, m), subclass(sq, kq), mro_method(sq, m, g).
+.decl cnw_self_target(kq: symbol, m: symbol, g: symbol)
+cnw_self_target(kq, m, g) :- cnw_self_key(kq, m), mro_method_sym(kq, m, g).
+cnw_self_target(kq, m, g) :- cnw_self_key(kq, m), subclass(sq, kq), mro_method_sym(sq, m, g).
 // cnw_self_other(kq, m): `self.m` in kq may be something else: a target that is not a plain async def, an attribute
-// assigned on self, no method at all, or a class of the hierarchy with a base outside the run.
+// assigned on self (in any class: cnw_self_assigned, by the attribute's name), no method at all, or a class of the
+// hierarchy with a base outside the run.
 .decl cnw_self_other(kq: symbol, m: symbol)
-cnw_self_other(kq, m) :- cnw_self_target(kq, m, g), !cnw_plain_async(g).
-cnw_self_other(kq, m) :- cnw_self_ref(_, kq, m), !cnw_self_target(kq, m, _).
-cnw_self_other(kq, m) :- cnw_self_ref(_, kq, m), assigned_attr(_, "self", m, _).
-cnw_self_other(kq, m) :- cnw_self_ref(_, kq, m), cnw_open_class(kq).
-cnw_self_other(kq, m) :- cnw_self_ref(_, kq, m), subclass(sq, kq), cnw_open_class(sq).
+cnw_self_other(kq, m) :- cnw_self_target(kq, m, g), !cnw_plain_sym(g).
+cnw_self_other(kq, m) :- cnw_self_key(kq, m), !cnw_self_target(kq, m, _).
+cnw_self_other(kq, m) :- cnw_self_key(kq, m), cnw_self_assigned(m).
+cnw_self_other(kq, m) :- cnw_self_key(kq, m), cnw_open_class(kq).
+cnw_self_other(kq, m) :- cnw_self_key(kq, m), subclass(sq, kq), cnw_open_class(sq).
+.decl cnw_self_assigned(m: symbol)
+cnw_self_assigned(m) :- assigned_attr(_, "self", m, _).
 .decl cnw_open_class(q: symbol)
 cnw_open_class(q) :- cnw_open_base(q).
 cnw_open_class(q) :- subclass(q, b), cnw_open_base(b).
+// cnw_open_base(q): class q lists a base that is no class of the run (one its file can name, through python/names'
+// phase) nor a known root. Stated in q's file.
 .decl cnw_open_base(q: symbol)
 cnw_open_base(q) :- class_def(c, q), field(c, "superclasses", al), child(al, e, _), !kind(e, "keyword_argument"),
     (kind(e, "identifier") ; kind(e, "attribute")), !cnw_known_base(e).
 .decl cnw_known_base(e: node)
-cnw_known_base(e) :- sym_of(e, b), class_def(_, b).
+cnw_known_base(e) :- sym_of(e, b), docof(e, d), doc(d, p, _), py_names__reads_at(p, m), py_names__class(m, b).
 cnw_known_base(e) :- sym_of(e, b), (b = "builtins.object" ; b = "abc.ABC" ; b = "typing.Generic" ; b = "typing.Protocol").
 
 // The cases, `cases/python-practice-coroutine-never-awaited/`, read as one repository: each line ending in
