@@ -60,6 +60,17 @@ impl Gen<'_> {
             return Err("tier 1 as Rust: a string reader of more than 7 flags".into());
         }
         const TRIPLE: &str = "0x80";
+        // What the loop's chunked form needs of the reader (`chunked::ReaderNest`): its interpolation's flag, the flags a
+        // string may hold besides (but those refused at its opener), and the interpolation opener's byte.
+        if let Some(i) = &rd.interpolation
+            && let Some(format) = rd.flags.iter().position(|(g, _)| *g == i.flag)
+            && let Some(ob) = self.exact_bytes(&n(&i.open))
+            && let [open_byte] = (0..256u16).filter(|&c| ob.has(usize::from(c))).map(|c| c as u8).collect::<Vec<u8>>().as_slice()
+        {
+            let refused = |f: &str| rd.refusals.iter().any(|r| r.at == RefuseAt::Open && r.expr.is_none() && r.when.as_ref().is_some_and(|(on, g)| *on && g == f));
+            let free = rd.flags.iter().enumerate().filter(|(k, (f, _))| *k != format && !refused(f)).map(|(k, _)| 1u8 << k).chain(rd.triple.then_some(0x80)).collect();
+            *self.chunk_reader.borrow_mut() = Some(super::chunked::ReaderNest { quotes: rd.quotes.len() as u8, format: 1 << format, free, open_byte: *open_byte });
+        }
         // Its rows: the string's (its regions no tail's), its tail's, its spec's, its conversion's.
         let interp = rd.interpolation.clone();
         let tail_kinds: Vec<String> = interp.as_ref().map(|i| vec![i.close_kind.clone()]).unwrap_or_default();

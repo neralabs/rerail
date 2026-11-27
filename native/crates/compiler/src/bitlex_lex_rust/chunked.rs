@@ -22,8 +22,11 @@ struct Field {
 fn type_of(init: &str) -> Option<String> {
     let init = init.trim();
     if let Some(inner) = init.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
-        let (v, k) = inner.split_once(';')?;
+        let (v, k) = inner.rsplit_once(';')?;
         return Some(format!("[{}; {}]", type_of(v)?, k.trim()));
+    }
+    if let Some(inner) = init.strip_prefix('(').and_then(|r| r.strip_suffix(')')) {
+        return Some(format!("({})", inner.split(',').map(type_of).collect::<Option<Vec<_>>>()?.join(", ")));
     }
     Some(
         match init {
@@ -227,12 +230,27 @@ fn region_entries(body: &str) -> Result<Vec<(usize, usize, usize, usize)>, Strin
 }
 
 /// The chunked form of `out`'s token loop where it keeps a nest (`nest`, `depth`, `template`, `held`, `opened`), its
-/// stage 1 made as it comes to its blocks (`Stage1Run`): `out` with it appended, else `out`.
-pub(super) fn with_chunks(out: String) -> String {
-    match chunked_nest(&out) {
+/// stage 1 made as it comes to its blocks (`Stage1Run`), or where its nest is its string reader's (`reader`,
+/// `chunked_reader`): `out` with it appended, else `out`.
+pub(super) fn with_chunks(out: String, reader: Option<&ReaderNest>) -> String {
+    let t = match reader {
+        Some(r) => chunked_reader(&out, r),
+        None => chunked_nest(&out),
+    };
+    match t {
         Ok(t) => out + &t,
         Err(_) => out,
     }
+}
+
+/// What a token loop's chunked form needs of its string reader (`read R { … }`, decision 0698), whose state is its nest:
+/// its quotes, its interpolation's flag (`format`), the flags a string may hold besides it (`free`: the others but those
+/// refused at its opener, and the triple's), and the interpolation opener's byte.
+pub(super) struct ReaderNest {
+    pub quotes: u8,
+    pub format: u8,
+    pub free: Vec<u8>,
+    pub open_byte: u8,
 }
 
 fn chunked_nest(out: &str) -> Result<String, String> {
@@ -308,13 +326,769 @@ fn chunked_nest(out: &str) -> Result<String, String> {
         .replace("@NREGIONS@", &regions.len().to_string())
         .replace("@REGIONS@", &regions.iter().map(|(o, r, k, lv)| format!("({o}, {r}, {k}, {lv})")).collect::<Vec<_>>().join(", "));
     // The lanes: a chunk's code, each place a token it starts in ends, each region's end, each split by its nest's class.
-    Ok(t + &core(maxd, &kinds_s, kinds.len() + 1, 64, false))
+    Ok(t + &core_with(maxd, &kinds_s, kinds.len() + 1, 64, false, false))
 }
+
+/// The chunked form of a token loop that reads its blocks' bytes (no stage 1) and whose nest is its string reader's state
+/// (`rd_on`, `rd_q`, `rd_fl`, `rd_level`, `rd_total`, `rd_around`, `rd_depth`) and the code's bracket count `c_depth`
+/// (Python's): `chunked_nest`'s template, the nest read as levels (`READER_NEST`) and the loop's reads of it checked
+/// against them where it makes them (`instrument_reader`).
+fn chunked_reader(out: &str, rn: &ReaderNest) -> Result<String, String> {
+    let head = "unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {\n";
+    let f = out.find(head).ok_or("step 1")?;
+    let end = f + out[f..].find("\n}\n").ok_or("the function's end")? + 3;
+    let prod = super::middle::product_text(&out[f..end]);
+    if prod.contains("Stage1Run::new()") || !prod.contains("let cur = unsafe { block_classes(src, n, base) };") {
+        return Err(format!("a condition at line {}", line!()));
+    }
+    let d0 = prod.find("    let mut at = 0usize;\n").ok_or("step 2")?;
+    let d1 = prod.find("    let mut b = at / 64;\n").ok_or("step 3")?;
+    let l0 = prod.find("    'tokens: while b < nw {\n").ok_or("step 4")?;
+    let l1 = l0 + prod[l0..].find("\n    }\n").ok_or("the loop's end")? + "\n    }\n".len();
+    let body = &prod[l0..l1];
+    let all = fields(&prod[d0..d1]).ok_or("step 5")?;
+    let (live, dead): (Vec<&Field>, Vec<&Field>) = all.iter().partition(|fl| reads(body, &fl.name));
+    let need = ["at", "c_depth", "rd_on", "rd_q", "rd_fl", "rd_level", "rd_total", "rd_around", "rd_depth", "rd_open", "rd_code"];
+    if let Some(m) = need.iter().find(|n| !live.iter().any(|fl| fl.name == **n)) {
+        return Err(format!("the loop reads no `{m}`"));
+    }
+    let maxd: usize = body.lines().find_map(|l| l.trim().strip_prefix("if c_depth > ").and_then(|r| r.strip_suffix(" {"))).ok_or("the count's bound")?.parse().map_err(|_| "the count's bound")?;
+    let picked = reader_picked(body)?;
+    let lp = instrument_reader(body, &rn.free, &picked)?;
+    let ws: usize = body.lines().find_map(|l| l.trim().strip_prefix("let k_m_ws = cur[").and_then(|r| r.strip_suffix("];"))).ok_or("the loop's whitespace")?.parse().map_err(|_| "the loop's whitespace")?;
+    let regions = reader_regions(body, rn)?;
+    let after = &prod[l1..prod.find("    unsafe { recs.set_len(len) };").ok_or("the records' length")?];
+    let mut finish = String::new();
+    for l in after.lines() {
+        let t = l.trim();
+        if t.is_empty() || t.starts_with("//") || t.starts_with("let _ = (") {
+            continue;
+        }
+        if t.contains("len") || t.contains("out") {
+            return Err(format!("a condition at line {}", line!()));
+        }
+        let _ = writeln!(finish, "{l}");
+    }
+    // The kinds of string: those an interpolation can be in (a level's kind, `RD_KINDS`), and every string's (where a
+    // chunk can start in its text, `RD_PLACES`).
+    let subsets = |bits: &[u8]| -> Vec<u8> { (0..1u32 << bits.len()).map(|m| bits.iter().enumerate().filter(|(i, _)| m >> i & 1 == 1).fold(0u8, |a, (_, b)| a | b)).collect() };
+    let interp: Vec<(u8, u8)> = (0..rn.quotes).flat_map(|q| subsets(&rn.free).into_iter().map(move |f| (q, f | rn.format))).collect();
+    let mut place_bits = rn.free.clone();
+    place_bits.push(rn.format);
+    let places: Vec<(u8, u8)> = (0..rn.quotes).flat_map(|q| subsets(&place_bits).into_iter().map(move |f| (q, f))).collect();
+    if interp.len() >= 252 || maxd > 64 {
+        return Err(format!("a condition at line {}", line!()));
+    }
+    let table = |v: &[(u8, u8)]| v.iter().map(|(q, f)| format!("({q}, {f:#04x})")).collect::<Vec<_>>().join(", ");
+    // An interpolation's kind as far as a lane read it (`PARTS`): its free flags' bits, then its quote's. Its whole kinds'
+    // codes are `RD_KINDS`' indexes (a quote's kinds after the one before's, its flags' subsets in order).
+    let nb = rn.free.len() + 1;
+    if rn.quotes != 2 || nb > 4 {
+        return Err(format!("a condition at line {}", line!()));
+    }
+    let full = (1u8 << nb) - 1;
+    let mut parts: Vec<(u8, u8)> = (0..=full).map(|v| (full, v)).collect();
+    for known in 1..full {
+        parts.extend((0..=full).filter(|v| v & !known == 0).map(|v| (known, v)));
+    }
+    let mut code_of = [255u8; 256];
+    for (c, &(k, v)) in parts.iter().enumerate() {
+        code_of[usize::from(k << 4 | v)] = c as u8;
+    }
+    let code = |k: u8, v: u8| if k == 0 { 252 } else { code_of[usize::from(k << 4 | v)] };
+    let splits: Vec<String> = parts
+        .iter()
+        .copied()
+        .chain([(0, 0)])
+        .map(|(k, v)| format!("[{}]", (0..nb).map(|b| if k >> b & 1 == 1 { let c = code(k, v); format!("[{c}, {c}]") } else { format!("[{}, {}]", code(k | 1 << b, v), code(k | 1 << b, v | 1 << b)) }).collect::<Vec<_>>().join(", ")))
+        .collect();
+    let first_format = places.iter().position(|&(_, f)| f & rn.format != 0).ok_or("no format string")?;
+    let regions: Vec<(usize, usize, usize, usize)> = regions.into_iter().flat_map(|(row, k, by_kind)| -> Vec<(usize, usize, usize, usize)> {
+        match by_kind {
+            Some(true) => (0..places.len()).map(|p| (p, row, k, 0)).collect(),
+            Some(false) => vec![(first_format, row, k, 0)],
+            None => vec![(usize::MAX, row, k, 0)],
+        }
+    }).collect();
+    let names: Vec<&str> = live.iter().map(|fl| fl.name.as_str()).collect();
+    let struct_fields: String = live.iter().map(|fl| format!("    pub {}: {},\n", fl.name, fl.ty)).collect();
+    let inits: String = live.iter().map(|fl| format!("{}: {}, ", fl.name, fl.init)).collect();
+    let muts: String = names.iter().map(|n| format!("mut {n}, ")).collect();
+    let locals: String = dead.iter().map(|fl| format!("    let mut {}: {} = {};\n", fl.name, fl.ty, fl.init)).collect();
+    let t = swap_section(TEMPLATE, "// @NEST{", "// }NEST@", READER_NEST)?;
+    let t = swap_section(&t, "// @STAGE1{", "// }STAGE1@", NO_STAGE1)?;
+    let t = with_n(&t);
+    let kinds_s = std::iter::once("255".to_owned()).chain((0..interp.len()).map(|i| i.to_string())).collect::<Vec<_>>().join(", ");
+    let t = t
+        .replace("@FIELDS@", &struct_fields)
+        .replace("@INITS@", &inits)
+        .replace("@MUTS@", &muts)
+        .replace("@BACK@", &names.join(", "))
+        .replace("@LOCALS@", &locals)
+        .replace("@LOOP@", &lp)
+        .replace("@FINISH@", &finish)
+        .replace("@ALL@", &names.iter().map(|n| format!("{n}, ")).collect::<String>())
+        .replace("@NREGIONS@", &regions.len().to_string())
+        .replace("@REGIONS@", &regions.iter().map(|(o, r, k, lv)| format!("({}, {r}, {k}, {lv})", if *o == usize::MAX { "usize::MAX".to_owned() } else { o.to_string() })).collect::<Vec<_>>().join(", "))
+        .replace("@NRDKINDS@", &interp.len().to_string())
+        .replace("@RDKINDS@", &table(&interp))
+        .replace("@NPARTS@", &parts.len().to_string())
+        .replace("@PARTS@", &parts.iter().map(|(k, v)| format!("({k:#04x}, {v:#04x})")).collect::<Vec<_>>().join(", "))
+        .replace("@NFREE@", &rn.free.len().to_string())
+        .replace("@FREE@", &rn.free.iter().map(|f| format!("{f:#04x}")).collect::<Vec<_>>().join(", "))
+        .replace("@QBIT@", &format!("{:#04x}", 1u8 << rn.free.len()))
+        .replace("@CODEOF@", &code_of.iter().map(u8::to_string).collect::<Vec<_>>().join(", "))
+        .replace("@NBITS@", &nb.to_string())
+        .replace("@NSPLITS@", &splits.len().to_string())
+        .replace("@SPLITS@", &splits.join(", "))
+        .replace("@FORMAT@", &format!("{:#04x}", rn.format))
+        .replace("@NRDPLACES@", &places.len().to_string())
+        .replace("@RDPLACES@", &table(&places))
+        .replace("@OPENBYTE@", &format!("{:#04x}", rn.open_byte))
+        .replace("@WS@", &ws.to_string());
+    Ok(t + &core_with(maxd, &kinds_s, interp.len() + 1, 128, false, true))
+}
+
+/// `t` with the section from the line `open` to the line `close` (both kept out) `with`.
+fn swap_section(t: &str, open: &str, close: &str, with: &str) -> Result<String, String> {
+    let a = t.find(open).ok_or_else(|| format!("no {open}"))?;
+    let z = a + t[a..].find(close).ok_or_else(|| format!("no {close}"))? + close.len();
+    Ok(format!("{}{}{}", &t[..a], with, &t[z..]))
+}
+
+/// The template's functions of the source with its length apart (`src` padded, its bytes `n`, as `lex(buf, n)`'s).
+fn with_n(t: &str) -> String {
+    let mut t = t.to_owned();
+    for name in ["lex_range", "finish", "stage1_at", "code_entry", "lanes_from", "chunk_ends", "summaries", "serial_entries", "lex_chunked"] {
+        t = t.replace(&format!("fn {name}(src: &[u8],"), &format!("fn {name}(src: &[u8], n: usize,"));
+        t = t.replace(&format!("fn {name}<const WRITE: bool, const ONE: bool>(src: &[u8],"), &format!("fn {name}<const WRITE: bool, const ONE: bool>(src: &[u8], n: usize,"));
+        t = t.replace(&format!(" {name}(src, "), &format!(" {name}(src, n, "));
+        t = t.replace(&format!("({name}(src, "), &format!("({name}(src, n, "));
+        for g in ["false, false", "false, true", "true, false", "true, true"] {
+            t = t.replace(&format!("{name}::<{g}>(src, "), &format!("{name}::<{g}>(src, n, "));
+        }
+    }
+    let t: String = t.lines().filter(|l| l.trim() != "let n = src.len();").map(|l| format!("{l}\n")).collect();
+    t.replace("src.len()", "n")
+}
+
+/// The string reader's rows at a template's level 0 (`rd_pick`'s): its tail, its spec, its conversion.
+fn reader_picked(body: &str) -> Result<Vec<usize>, String> {
+    let p = body.find("let rd_pick = if rd_on && rd_level == 0 {").ok_or("no `rd_pick`")?;
+    let pz = p + body[p..].find("        };").ok_or("`rd_pick`'s end")?;
+    Ok(body[p..pz].lines().filter_map(|l| l.trim().parse().ok()).collect())
+}
+
+/// The string reader's rows a chunk can start inside, by the token loop's rows (`body`): each its row, the bytes its
+/// search starts past the token's start, and whether it reads the string's kind (the tail's, `Some(true)`), its
+/// interpolation's alone (a spec's, a conversion's: `Some(false)`), or neither (a comment's, a search to its end).
+fn reader_regions(body: &str, rn: &ReaderNest) -> Result<Vec<(usize, usize, Option<bool>)>, String> {
+    let _ = rn;
+    let mut out = Vec::new();
+    // The reader's rows at a template's level 0: its tail, its spec, its conversion (`rd_pick`), in that order.
+    let p = body.find("let rd_pick = if rd_on && rd_level == 0 {").ok_or("no `rd_pick`")?;
+    let pz = p + body[p..].find("        };").ok_or("`rd_pick`'s end")?;
+    let picked: Vec<usize> = body[p..pz].lines().filter_map(|l| l.trim().parse().ok()).collect();
+    for (i, &row) in picked.iter().enumerate() {
+        out.push((row, if i == 1 { 2 } else { 1 }, Some(i == 0)));
+    }
+    // A row whose arm is a search to its end from a byte past its start: a comment's.
+    let rm = body.find("            let row = if rd_pick != usize::MAX { rd_pick } else { match group {").ok_or("no row match")?;
+    let mut at = rm;
+    while let Some(i) = body[at..].find("\n                ") {
+        let a = at + i + "\n                ".len();
+        at = a;
+        let Some((r, rest)) = body[a..].split_once(" => {\n") else { break };
+        let Ok(row) = r.parse::<usize>() else { continue };
+        let first = rest.lines().map(str::trim).find(|l| !l.starts_with("//")).unwrap_or("");
+        if let Some(k) = first.strip_prefix("let l = wfirst_bit(n, s + ").and_then(|r| r.split(',').next()).and_then(|k| k.parse::<usize>().ok())
+            && first.ends_with(".unwrap_or(n) - 1;")
+            && !out.iter().any(|x| x.0 == row)
+        {
+            out.push((row, k, None));
+        }
+    }
+    if picked.len() < 1 {
+        return Err("no tail".into());
+    }
+    Ok(out)
+}
+
+/// The loop's product body with its writes on where `WRITE` (pass 2 alone), its first token forced where given
+/// (`Force`), and its nest's changes and reads made on the levels a lane enters with (`Reads::sh`, `READER_NEST`): each
+/// step of `c_depth` a level pushed or popped, and the reader's reads of its nest checked where it makes them.
+fn instrument_reader(body: &str, free: &[u8], picked: &[usize]) -> Result<String, String> {
+    let lines: Vec<&str> = body.lines().collect();
+    let mut out = String::new();
+    let mut in_tail = false;
+    // In a reader's row at its template's level 0 (`picked`), before its first statement past its checks of the token
+    // that opens it (its `}`, `:` or `!`): a forced first token (a region's, `Force`) has none to check.
+    let mut arm_head = false;
+    let (mut guarded, mut after_row, mut seen) = (0, false, std::collections::BTreeMap::<&str, usize>::new());
+    let mut prev = "";
+    for l in &lines {
+        let t = l.trim_start();
+        let pad = &l[..l.len() - t.len()];
+        let mut hit = |k: &'static str| *seen.entry(k).or_default() += 1;
+        if t == "unsafe { out.add(len).write(rec) };" || t == "extras.push(rec);" || t.starts_with("unsafe { out.add(len + 1 + more).write(") {
+            guarded += 1;
+            let _ = writeln!(out, "{pad}if WRITE {{\n{pad}    {t}\n{pad}}}");
+            prev = t;
+            continue;
+        }
+        if pad.len() == 16 && let Some(r) = t.strip_suffix(" => {").and_then(|r| r.parse::<usize>().ok()) {
+            arm_head = picked.contains(&r);
+        } else if arm_head && !(t.is_empty() || t.starts_with("//") || t.starts_with("if ") || matches!(t, "let l = {" | "more = 0;" | "refused = true;" | "break 'tokens;" | "}" | "let (qi, fl, seg, o1) = (rd_q, rd_fl, s, s + 1);")) {
+            arm_head = false;
+        }
+        if arm_head && t.starts_with("if ") && t.ends_with(" {") {
+            let _ = writeln!(out, "{pad}if !forced && ({}) {{", &t[3..t.len() - 2]);
+            prev = t;
+            continue;
+        }
+        if !t.is_empty() && !t.starts_with("//") {
+            match t {
+                "'tokens: while b < nw {" => {
+                    hit("loop");
+                    let _ = writeln!(out, "{pad}'tokens: while b < nw.min(to) {{");
+                }
+                "while firsts != 0 {" if pad.len() == 8 => {
+                    hit("firsts");
+                    let _ = writeln!(out, "{pad}while firsts != 0 || force.is_some() {{");
+                }
+                "let s = base + firsts.trailing_zeros() as usize;" if pad.len() == 8 => {
+                    hit("s");
+                    let _ = writeln!(out, "{pad}let s = match force {{\n{pad}    Some(f) => f.s,\n{pad}    None => base + firsts.trailing_zeros() as usize,\n{pad}}};");
+                }
+                "let g_depth = c_depth;" => {
+                    hit("g_depth");
+                    let _ = writeln!(out, "{l}\n{pad}// The count over the gap 0: of the entry's, nothing below.\n{pad}if g_depth == 0 {{\n{pad}    reads.bottom = true;\n{pad}}}");
+                }
+                "let rd_pick = if rd_on && rd_level == 0 {" => {
+                    hit("pick");
+                    let _ = writeln!(out, "{pad}rd_top(reads);\n{l}");
+                }
+                "let row = if rd_pick != usize::MAX { rd_pick } else { match group {" => {
+                    hit("row");
+                    after_row = true;
+                    let _ = writeln!(out, "{pad}let row = if let Some(f) = force {{ f.row }} else if rd_pick != usize::MAX {{ rd_pick }} else {{ match group {{");
+                }
+                "} };" if after_row && pad.len() == 12 => {
+                    after_row = false;
+                    let _ = writeln!(out, "{l}\n{pad}let forced = force.is_some();\n{pad}force = None;");
+                }
+                "rd_end = usize::MAX;" if pad.len() == 8 && prev.starts_with("at = ") => {
+                    hit("one");
+                    let _ = writeln!(out, "{l}\n{pad}if ONE {{\n{pad}    break 'tokens;\n{pad}}}");
+                }
+                "c_depth += 1;" => {
+                    hit("push");
+                    // A bracket's (the scan of a token's brackets), else an interpolation's.
+                    // A bracket's; the next interpolation of the string a tail's `}` ended one of (its kind that one's, as far
+                    // as read); a string's first.
+                    if prev.contains("matches!(src[i]") {
+                        let _ = writeln!(out, "{pad}sh_push(reads, 255);\n{l}");
+                    } else if in_tail {
+                        let _ = writeln!(out, "{pad}sh_push(reads, reads.popped);\n{l}");
+                    } else {
+                        let _ = writeln!(out, "{pad}sh_push(reads, rd_kind(rd_q, rd_fl));\n{l}");
+                    }
+                }
+                "c_depth = c_depth.saturating_sub(1);" => {
+                    hit("pop");
+                    let _ = writeln!(out, "{pad}sh_pop(reads);\n{l}");
+                }
+                "let (qi, fl, seg, o1) = (rd_q, rd_fl, s, s + 1);" => {
+                    hit("tail");
+                    in_tail = true;
+                    let _ = writeln!(out, "{pad}rd_frame(reads);\n{l}");
+                }
+                _ if in_tail && pad.len() == 16 && t.ends_with(" => {") => {
+                    in_tail = false;
+                    let _ = writeln!(out, "{l}");
+                }
+                _ if in_tail && (t.contains("match qi {") || free.iter().any(|f| t.contains(&format!("fl & {f:#04x}")))) => {
+                    let mut x = l.replace("match qi {", "match rd_quote(reads, qi) {");
+                    for f in free {
+                        x = x.replace(&format!("fl & {f:#04x}"), &format!("rd_flag(reads, fl, {f:#04x})"));
+                    }
+                    let _ = writeln!(out, "{x}");
+                }
+                _ if t.contains("rd_code == usize::MAX") || t.contains("rd_code != usize::MAX") => {
+                    hit("code");
+                    let _ = writeln!(out, "{pad}rd_code_read(reads);\n{l}");
+                }
+                _ if t.starts_with("rd_code = ") => {
+                    let _ = writeln!(out, "{l}\n{pad}reads.set |= 2;\n{pad}reads.code_known = true;");
+                }
+                _ if t.starts_with("rd_open = ") || t.contains("rd_open) = (") => {
+                    let _ = writeln!(out, "{l}\n{pad}reads.set |= 1;");
+                }
+                _ => {
+                    let _ = writeln!(out, "{l}");
+                }
+            }
+            prev = t;
+        } else {
+            let _ = writeln!(out, "{l}");
+        }
+    }
+    for k in ["loop", "firsts", "s", "g_depth", "pick", "row", "one", "push", "pop", "tail", "code"] {
+        if !seen.contains_key(k) {
+            return Err(format!("the reader's loop: no `{k}`"));
+        }
+    }
+    if after_row {
+        return Err("the row match's end".into());
+    }
+    let writes = body.matches("out.add(").count() + body.matches("extras.push(").count();
+    if writes != guarded {
+        return Err(format!("{writes} writes of records, {guarded} of them pass 2's"));
+    }
+    Ok(out)
+}
+
+/// A loop with no stage 1 (its blocks' masks made where it reads them) carries none from chunk to chunk.
+const NO_STAGE1: &str = r#"
+/// No stage 1 runs before the loop: a chunk carries none of it.
+struct Stage1;
+
+impl Stage1 {
+    fn new(_: usize) -> Stage1 {
+        Stage1
+    }
+}
+
+struct Stage1Run;
+
+impl Stage1Run {
+    fn new() -> Stage1Run {
+        Stage1Run
+    }
+}
+
+/// None: no blocks before a chunk's first are read again.
+pub const PRIME: usize = 0;
+
+fn stage1_at(_src: &[u8], _n: usize, _s1: &mut Stage1, _from: usize) -> Stage1Run {
+    Stage1Run
+}
+"#;
+
+/// The nest of a loop whose nest is its string reader's state (`chunked_reader`), as levels: brackets (255) and
+/// interpolations (their string's kind, `RD_KINDS`' index). `c_depth` counts them all; the brackets below the outermost
+/// interpolation are the code's, those above one its code's (`rd_level`, `rd_total`). A lane's level of no kind yet
+/// (254) is a bracket or an interpolation, an interpolation of no kind yet 252.
+const READER_NEST: &str = r#"
+/// A bracket.
+const NB: usize = usize::MAX;
+
+/// The kinds of string an interpolation is in (its quote, its flags), a level's kind its index: its bits (`PARTS`).
+const RD_KINDS: [(u8, u8); @NRDKINDS@] = [@RDKINDS@];
+
+/// A level's kind of interpolation as far as a lane read it: which of its bits it knows, and their values (bit `i` the
+/// flag `FREE[i]`, the top one its quote). Its whole kinds first (`RD_KINDS`', all bits known), then those of some
+/// known; 252 none.
+const PARTS: [(u8, u8); @NPARTS@] = [@PARTS@];
+const FREE: [u8; @NFREE@] = [@FREE@];
+const QUOTE_BIT: u8 = @QBIT@;
+const ALL_BITS: u8 = (QUOTE_BIT << 1) - 1;
+/// A kind's code by its known bits and their values (`known << 4 | values`).
+const CODE_OF: [u8; 256] = [@CODEOF@];
+/// A kind's two kinds by the value of bit `i` (`split_kinds`), 252's last.
+const SPLITS: [[[u8; 2]; @NBITS@]; @NSPLITS@] = [@SPLITS@];
+
+/// The bits a kind knows, and their values.
+#[inline]
+fn part(k: u8) -> (u8, u8) {
+    PARTS.get(usize::from(k)).copied().unwrap_or((0, 0))
+}
+
+/// The kind of known bits `known`, values `v`: 252 where none is known.
+#[inline]
+fn part_code(known: u8, v: u8) -> u8 {
+    if known == 0 { 252 } else { CODE_OF[usize::from(known << 4 | v & known)] }
+}
+
+/// The string a kind is in, its unknown bits none: its quote, its flags.
+#[inline]
+fn whole(k: u8) -> (u8, u8) {
+    let (_, v) = part(k);
+    let fl = FREE.iter().enumerate().filter(|(i, _)| v >> i & 1 == 1).fold(@FORMAT@, |a, (_, b)| a | b);
+    (u8::from(v & QUOTE_BIT != 0), fl)
+}
+
+/// A level a lane leaves of no kind, or an interpolation not whole: one it entered with, as it was.
+#[inline]
+fn wild(k: u8) -> bool {
+    k == 254 || k != 255 && part(k).0 != ALL_BITS
+}
+
+/// The kind of level both `k` and `m` are (254: any; an interpolation, those of its known bits), none where none is.
+#[inline]
+fn meet(k: u8, m: u8) -> Option<u8> {
+    if k == m || k == 254 {
+        return Some(m);
+    }
+    if m == 254 {
+        return Some(k);
+    }
+    if k == 255 || m == 255 {
+        return None;
+    }
+    let ((kk, kv), (mk, mv)) = (part(k), part(m));
+    if (kv ^ mv) & kk & mk != 0 {
+        return None;
+    }
+    Some(part_code(kk | mk, kv | mv))
+}
+
+/// Every kind of string: where a chunk can start in its text (`REGIONS`' `open`).
+const RD_PLACES: [(u8, u8); @NRDPLACES@] = [@RDPLACES@];
+
+/// The interpolation opener's byte.
+const OPEN_BYTE: u8 = @OPENBYTE@;
+
+/// The whitespace class's bits from `p` (`w_m_ws`, as a loop with stage 1 reads them): the loop's own, of `p`'s block.
+#[inline(always)]
+unsafe fn w_m_ws(src: &[u8], n: usize, p: isize, _esc: &mut u64) -> u64 {
+    if p < 0 || p as usize >= n {
+        return 0;
+    }
+    let base = p as usize & !63;
+    (unsafe { block_classes(src, n, base) })[@WS@] >> (p as usize - base)
+}
+
+/// An interpolation's kind of string: its level's kind (251: none, a string no interpolation is in).
+#[inline]
+fn rd_kind(q: u8, fl: u8) -> u8 {
+    RD_KINDS.iter().position(|&k| k == (q, fl)).map_or(251, |i| i as u8)
+}
+
+impl Entry {
+    /// The nest as levels: the count's brackets below the reader's frames, then each frame (its kind, its code's
+    /// brackets).
+    #[inline]
+    fn levels(&self) -> ([usize; MAXD], [usize; MAXD], usize) {
+        let mut nest = [NB; MAXD];
+        let d = (self.c_depth as usize).min(MAXD);
+        let frames = if self.rd_on { self.rd_depth + 1 } else { 0 };
+        let mut i = d.saturating_sub(usize::from(self.rd_total));
+        for f in 0..frames {
+            let (q, fl, lv) = if f < self.rd_depth { self.rd_around[f] } else { (self.rd_q, self.rd_fl, self.rd_level) };
+            if i < MAXD {
+                nest[i] = usize::from(rd_kind(q, fl));
+            }
+            i += 1 + usize::from(lv);
+        }
+        (nest, [0; MAXD], d)
+    }
+
+    /// `self` with the nest `nest[..depth]`: the reader's state of its frames, the count its depth. A level of no kind
+    /// yet is a bracket; a bracket above an interpolation one of its code's.
+    #[inline]
+    fn set_levels(&mut self, nest: &[usize; MAXD], _held: &[usize; MAXD], _opened: usize, depth: usize) {
+        let (mut fr, mut nf, mut total) = ([(0u8, 0u8, 0u8); MAXD], 0usize, 0u8);
+        for &v in &nest[..depth] {
+            match kind_of(v) {
+                255 | 254 => {
+                    if nf > 0 {
+                        fr[nf - 1].2 = fr[nf - 1].2.saturating_add(1);
+                        total = total.saturating_add(1);
+                    }
+                }
+                k => {
+                    let (q, fl) = whole(k);
+                    fr[nf] = (q, fl, 0);
+                    nf += 1;
+                    total = total.saturating_add(1);
+                }
+            }
+        }
+        self.c_depth = depth as _;
+        self.rd_on = nf > 0;
+        (self.rd_q, self.rd_fl, self.rd_level) = if nf > 0 { fr[nf - 1] } else { (0, 0, 0) };
+        self.rd_depth = nf.saturating_sub(1);
+        self.rd_around = Entry::START.rd_around;
+        for f in 0..self.rd_depth.min(self.rd_around.len()) {
+            self.rd_around[f] = fr[f];
+        }
+        self.rd_total = total;
+    }
+
+    /// The values a lane keeps of its entry (`Lane::keep`), `from`'s: the interpolation's `{` (1), where its code began
+    /// (2).
+    #[inline]
+    fn carry(&mut self, from: &Entry, keep: u8) {
+        if keep & 1 != 0 {
+            self.rd_open = from.rd_open;
+        }
+        if keep & 2 != 0 {
+            self.rd_code = from.rd_code;
+        }
+    }
+
+    /// What a lane assumes of its entry: its interpolation's `{` the byte before it where that is one (no other is read
+    /// before the lane sets it: an empty interpolation's `}` is the byte after), where its code began none (a read of it
+    /// is checked, `rd_code_read`).
+    #[inline]
+    fn lane_entry(&mut self, src: &[u8]) {
+        self.rd_open = if self.at > 0 && src[self.at - 1] == OPEN_BYTE { self.at - 1 } else { usize::MAX - 1 };
+        self.rd_code = usize::MAX;
+    }
+
+    /// The entry a region's forced first token is read from: in a string of kind `RD_PLACES[open]`, its interpolation
+    /// the one open.
+    #[inline]
+    fn region_entry(&mut self, open: usize) {
+        if let Some(&(q, fl)) = RD_PLACES.get(open) {
+            (self.rd_on, self.rd_q, self.rd_fl, self.rd_level, self.rd_total, self.c_depth) = (true, q, fl, 0, 1, 1);
+            (self.rd_open, self.rd_code) = (usize::MAX - 1, usize::MAX);
+        }
+    }
+
+    /// The frames past those open as at the start: no read reaches them before a write.
+    #[inline]
+    fn canonical(&mut self) {
+        let k = if self.rd_on { self.rd_depth } else { 0 };
+        for f in k..self.rd_around.len() {
+            self.rd_around[f] = Entry::START.rd_around[f];
+        }
+    }
+
+    /// `self` with its nest as at the start: a lane's exit, whose nest its `p` holds.
+    #[inline]
+    fn without_nest(mut self) -> Entry {
+        self.set_levels(&[NB; MAXD], &[0; MAXD], 0, 0);
+        self
+    }
+}
+
+/// What a lane read of the nest below where it entered (`chunked_nest`'s), and the levels it holds as it goes (`sh`,
+/// `shd`: those it entered with, then its own): a read of a level of no kind yet asks its kind, one of none (the
+/// count 0 at the bottom of what it entered with) the bottom.
+#[derive(Clone, Copy, Debug)]
+pub struct Reads {
+    pub bottom: bool,
+    pub kind_of: Option<usize>,
+    pub low: usize,
+    pub high: usize,
+    pub set: u8,
+    pub lost: bool,
+    sh: [u8; MAXD],
+    shd: usize,
+    /// Whether where the interpolation's code began is the run's own or known none.
+    code_known: bool,
+    /// The level of the interpolation a tail reads (`rd_frame`), and the bit of its kind it read unknown (`split_kinds`).
+    fd: usize,
+    bit: u8,
+    /// The kind of the level popped last (254: one below those it held).
+    popped: u8,
+}
+
+impl Reads {
+    /// A run from an entry whose nest is given whole: its levels from it (`enter`).
+    const NONE: Reads = Reads { bottom: false, kind_of: None, low: 0, high: 0, set: 0, lost: false, sh: [255; MAXD], shd: usize::MAX, code_known: true, fd: 0, bit: 0, popped: 254 };
+
+    #[inline]
+    fn lane(k: &[u8; MAXD], kd: usize) -> Reads {
+        Reads { low: kd, high: kd, sh: *k, shd: kd, code_known: false, ..Reads::NONE }
+    }
+
+    #[inline]
+    fn enter(&mut self, e: &Entry) {
+        if self.shd == usize::MAX {
+            let (nest, _, d) = e.levels();
+            for i in 0..d {
+                self.sh[i] = kind_of(nest[i]);
+            }
+            (self.shd, self.low, self.high) = (d, d, d);
+        }
+    }
+}
+
+/// A level pushed: `c_depth` up.
+#[inline(always)]
+fn sh_push(r: &mut Reads, k: u8) {
+    if r.shd < MAXD {
+        r.sh[r.shd] = k;
+    }
+    r.shd += 1;
+    r.high = r.high.max(r.shd.min(MAXD));
+}
+
+/// A level popped: `c_depth` down, none below the bottom.
+#[inline(always)]
+fn sh_pop(r: &mut Reads) {
+    if r.shd == 0 {
+        r.bottom = true;
+        r.popped = 254;
+    } else {
+        r.shd -= 1;
+        r.low = r.low.min(r.shd);
+        r.popped = if r.shd < MAXD { r.sh[r.shd] } else { 254 };
+    }
+}
+
+/// A read of the top level's class (`rd_on`, `rd_level == 0`: an interpolation, of any kind): none open, the bottom;
+/// of no kind yet, whether it is one. The lane's class holds each level it read (`low`).
+#[inline(always)]
+fn rd_top(r: &mut Reads) {
+    if r.shd == 0 {
+        r.bottom = true;
+    } else {
+        r.low = r.low.min(r.shd - 1);
+        if r.sh[r.shd - 1] == 254 && r.kind_of.is_none() {
+            r.kind_of = Some(r.shd - 1);
+        }
+    }
+}
+
+/// A tail's read of its interpolation (`rd_q`, `rd_fl`), below the top's brackets of its code: its level, read
+/// bit by bit (`rd_flag`, `rd_quote`).
+#[inline(always)]
+fn rd_frame(r: &mut Reads) {
+    let mut d = r.shd.min(MAXD);
+    while d > 0 && r.sh[d - 1] == 255 {
+        d -= 1;
+    }
+    if d == 0 {
+        r.bottom = true;
+        r.low = 0;
+        r.fd = usize::MAX;
+    } else {
+        r.low = r.low.min(d - 1);
+        r.fd = d - 1;
+        if r.sh[d - 1] == 254 && r.kind_of.is_none() {
+            r.kind_of = Some(d - 1);
+            r.bit = 0;
+        }
+    }
+}
+
+/// A read of bit `b` of the interpolation's kind (`rd_frame`'s): one its level's kind does not know, its kind by it.
+#[inline(always)]
+fn rd_bit(r: &mut Reads, b: u8) {
+    if r.fd == usize::MAX || r.kind_of.is_some() {
+        return;
+    }
+    let k = r.sh[r.fd];
+    if k != 254 && part(k).0 & 1 << b == 0 {
+        r.kind_of = Some(r.fd);
+        r.bit = b;
+    }
+}
+
+/// The tail's read of its flag `f` (`fl & f`).
+#[inline(always)]
+fn rd_flag(r: &mut Reads, fl: u8, f: u8) -> u8 {
+    if let Some(b) = FREE.iter().position(|&x| x == f) {
+        rd_bit(r, b as u8);
+    }
+    fl & f
+}
+
+/// The tail's read of its quote.
+#[inline(always)]
+fn rd_quote(r: &mut Reads, qi: u8) -> u8 {
+    rd_bit(r, QUOTE_BIT.trailing_zeros() as u8);
+    qi
+}
+
+/// A read of where the interpolation's code began (`rd_code`), not set by the run: not given by the lane's levels
+/// (`lost`), but by its class of it (`Lane::cond`, `enter_cond`).
+#[inline(always)]
+fn rd_code_read(r: &mut Reads) {
+    if !r.code_known {
+        r.lost = true;
+    }
+}
+
+/// The kinds a level a lane read the kind of is: of no kind yet, a bracket or an interpolation; an interpolation, its
+/// two kinds by the bit read (`Reads::bit`).
+#[inline]
+fn split_kinds(k: u8, r: &Reads) -> &'static [u8] {
+    match k {
+        254 => &[255, 252],
+        255 => &[],
+        k => {
+            let i = if k == 252 { PARTS.len() } else { usize::from(k) };
+            &SPLITS[i][usize::from(r.bit)]
+        }
+    }
+}
+
+/// Any level can be under any other (a bracket's, the code's or an interpolation's code's, is where it is).
+#[inline]
+fn may_hold(_below: u8, _above: u8) -> bool {
+    true
+}
+
+/// Where the interpolation's code began (`rd_code`, kept: `carry`'s 2), read by class (`Lane::cond`): none (1), or one
+/// before the lane (2: its reads of it from the lane's start, a part of the serial lexer's, which pass 2 reads whole).
+const COND_KEEP: u8 = 2;
+const CONDS: &[u8] = &[1, 2];
+
+#[inline]
+fn enter_cond(e: &mut Entry, r: &mut Reads, cond: u8) {
+    match cond {
+        1 => (e.rd_code, r.code_known) = (usize::MAX, true),
+        2 => (e.rd_code, r.code_known) = (e.at, true),
+        _ => {}
+    }
+}
+
+impl Entry {
+    #[inline]
+    fn cond(&self) -> u8 {
+        if self.rd_code == usize::MAX { 1 } else { 2 }
+    }
+}
+
+/// The nest a lane's run leaves: its levels as it went.
+#[inline]
+fn exit_levels(_e: &Entry, r: &Reads) -> ([usize; MAXD], [usize; MAXD], usize) {
+    let d = r.shd.min(MAXD);
+    let mut nest = [NB; MAXD];
+    for i in 0..d {
+        nest[i] = level_of(r.sh[i]);
+    }
+    (nest, [0; MAXD], d)
+}
+"#;
 
 /// The three passes' summary for nesting, one for every token loop's chunked form (`chunked_nest`'s, `chunked_lean`'s):
 /// lanes by the class of nest below their entry, their composition as typed bracket sequences, and pass 3's prefix sum.
 /// A loop's form gives its `Entry` (its `at`, its nest's fields `nest`, `depth`, `template`, `held`, `opened`, and
 /// `START`), and makes its chunks' summaries.
+/// The kinds' operations of a nest whose levels are of one kind each (`chunked_nest`'s, `chunked_lean`'s): 254 any, 252
+/// any below 252.
+const KIND_OPS: &str = r#"
+/// A level a lane leaves of no kind (open, or an interpolation of none): one it entered with, as it was.
+#[inline]
+fn wild(k: u8) -> bool {
+    k == 254 || k == 252
+}
+
+/// The kind of level both `k` and `m` are (254: any; 252: any of the kinds below 252), none where none is.
+#[inline]
+fn meet(k: u8, m: u8) -> Option<u8> {
+    if k == m || k == 254 || k == 252 && m < 252 {
+        Some(m)
+    } else if m == 254 || m == 252 && k < 252 {
+        Some(k)
+    } else {
+        None
+    }
+}
+"#;
+
+/// The three passes' summary (`CORE`) for a nest of `maxd` levels of kinds `kinds` (`nkinds` of them), `l` lanes a
+/// chunk; the kinds' operations (`wild`, `meet`) `KIND_OPS`, where `own_kinds` the nest's own.
+fn core_with(maxd: usize, kinds: &str, nkinds: usize, l: usize, code_anywhere: bool, own_kinds: bool) -> String {
+    core(maxd, kinds, nkinds, l, code_anywhere).replace("@KIND_OPS@", if own_kinds { "" } else { KIND_OPS })
+}
+
 fn core(maxd: usize, kinds: &str, nkinds: usize, l: usize, code_anywhere: bool) -> String {
     CORE.replace("@MAXD@", &maxd.to_string()).replace("@NKINDS@", &nkinds.to_string()).replace("@KINDS@", kinds).replace("@L@", &l.to_string()).replace("@CODE_ANYWHERE@", &code_anywhere.to_string())
 }
@@ -359,11 +1133,11 @@ fn level_of(k: u8) -> usize {
     }
 }
 
-/// Whether a lane's level of kind `k` (254: any; 252: any of the kinds below 252, a string reader's interpolations)
-/// meets a level of kind `m`.
+@KIND_OPS@
+/// Whether a lane's level of kind `k` meets a level of kind `m`: every level of kind `m` is one of `k`.
 #[inline]
 fn meets(k: u8, m: u8) -> bool {
-    k == 254 || k == m || k == 252 && m < 252
+    meet(k, m) == Some(m)
 }
 
 /// One lane of a summary: what a range of chunks does for the entries at `at0` whose innermost `kcn` levels are `kc`
@@ -392,6 +1166,8 @@ pub struct Lane {
     /// The values of its entry it leaves as they were, which it never set (`Entry::carry`'s bits): its exit's are not
     /// read.
     pub keep: u8,
+    /// What it read of a value its entry keeps (`COND_KEEP`'s): the entries it holds for, by `Entry::cond` (0: any).
+    pub cond: u8,
 }
 
 /// A range's summary: its lanes (an entry past the range's head, its first chunk, at one of its later chunks' places,
@@ -416,6 +1192,13 @@ impl Summary {
         if self.lanes[..usize::from(self.n)].contains(&l) {
             return;
         }
+        // The same lane for the other class of a kept value it read (`cond`: the classes are two): for every entry.
+        if l.cond != 0
+            && let Some(m) = self.lanes[..usize::from(self.n)].iter_mut().find(|m| m.cond != 0 && m.cond != l.cond && Lane { cond: l.cond, ..**m } == l)
+        {
+            m.cond = 0;
+            return;
+        }
         if usize::from(self.n) == L {
             self.over = true;
             return;
@@ -435,7 +1218,7 @@ impl Summary {
     }
 }
 
-const NO_LANE: Lane = Lane { at0: 0, kc: [0; MAXD], kcn: 0, exact: false, need: 0, p: [0; MAXD], pn: 0, ph: [0; MAXD], high: 0, recs: 0, exit: Entry::START, refused: false, moved: false, keep: 0 };
+const NO_LANE: Lane = Lane { at0: 0, kc: [0; MAXD], kcn: 0, exact: false, need: 0, p: [0; MAXD], pn: 0, ph: [0; MAXD], high: 0, recs: 0, exit: Entry::START, refused: false, moved: false, keep: 0, cond: 0 };
 
 /// The lanes of `b` a lane of the range before it goes on in: those entered where it leaves the next token, else the
 /// code's (a token from before `b` ends in its code).
@@ -449,6 +1232,10 @@ fn next_lanes(b: &Summary, at: usize) -> impl Iterator<Item = &Lane> {
 /// Lane `a` then lane `b` (entered where `a` leaves), as typed bracket sequences: `b`'s closed levels matched against
 /// what `a` leaves open, the rest of them closed below `a`'s entry. None where they do not meet.
 fn then(a: &Lane, b: &Lane) -> Option<Lane> {
+    // `a` refuses the file: nothing past it is read.
+    if a.refused {
+        return Some(*a);
+    }
     // `b` lexes no token: what `a` leaves goes through it.
     if !b.moved {
         return Some(*a);
@@ -460,15 +1247,41 @@ fn then(a: &Lane, b: &Lane) -> Option<Lane> {
     }
     let (an, bn, pn) = (usize::from(a.kcn), usize::from(b.kcn), usize::from(a.pn));
     let j = bn.min(pn);
-    // `b`'s first `j` closed levels, innermost first, are `a`'s open ones, innermost last.
-    if (0..j).any(|i| !meets(b.kc[i], a.p[pn - 1 - i])) {
-        return None;
+    // `b`'s first `j` closed levels, innermost first, are `a`'s open ones, innermost last. One `a` leaves of no kind
+    // (its entry's, `wild`) that `b` read the kind of: `a`'s class of it that kind (`refine`).
+    let (mut refine, mut nr) = ([(0usize, 0u8); MAXD], 0);
+    for i in 0..j {
+        let (k, m) = (b.kc[i], a.p[pn - 1 - i]);
+        match meet(k, m) {
+            Some(x) if x == m => {}
+            // (What `a`'s class knows of the level, which its wildcard does not say.)
+            Some(_) if wild(m) && pn - 1 - i < an => {
+                let at = an - 1 - (pn - 1 - i);
+                let Some(x) = meet(k, a.kc[at]) else { return None };
+                refine[nr] = (at, x);
+                nr += 1;
+            }
+            _ => return None,
+        }
     }
     let mut l = *b;
     l.at0 = a.at0;
     // What `b` keeps of its entry is `a`'s exit's, where `a` set it; what both keep, `a`'s entry's.
     l.keep = a.keep & b.keep;
     l.exit.carry(&a.exit, b.keep & !a.keep);
+    // What `b` read of its entry's kept values (`cond`): `a`'s exit's where `a` set them, else `a`'s entry's.
+    l.cond = a.cond;
+    if b.cond != 0 {
+        if a.keep & COND_KEEP == 0 {
+            if a.exit.cond() != b.cond {
+                return None;
+            }
+        } else if a.cond != 0 && a.cond != b.cond {
+            return None;
+        } else {
+            l.cond = b.cond;
+        }
+    }
     if bn > pn {
         // `b` closes past what `a` left open: below `a`'s entry, where `a` read none (`exact`) there is none.
         // (No entry has more than `MAXD` levels open: the serial lexer refuses past them.)
@@ -492,6 +1305,9 @@ fn then(a: &Lane, b: &Lane) -> Option<Lane> {
         // `b` holds where `a` leaves at least `bn + b.need` open: `a`'s entry at least that less what `a` opens.
         l.need = a.need.max((usize::from(b.need) + bn).saturating_sub(pn) as u8);
     }
+    for &(i, k) in &refine[..nr] {
+        l.kc[i] = k;
+    }
     // An entry with exactly `kn` levels open can have none more below.
     if l.exact && l.need > 0 {
         return None;
@@ -508,7 +1324,12 @@ fn then(a: &Lane, b: &Lane) -> Option<Lane> {
         return None;
     }
     for i in 0..bp {
-        p[keep + i] = b.p[i];
+        // A level `b` leaves of no kind is its entry's: `a`'s, where `a` left it.
+        let ai = (i + pn).checked_sub(bn).filter(|&x| x < pn);
+        p[keep + i] = match ai {
+            Some(x) if wild(b.p[i]) => a.p[x],
+            _ => b.p[i],
+        };
         ph[keep + i] = if b.p[i] == 255 {
             0
         } else if b.ph[i] >= INHERIT {
@@ -580,7 +1401,7 @@ pub fn apply(s: &Summary, e: &Entry, recs: usize) -> Option<(Entry, usize, bool)
     let (en, eh, d) = e.levels();
     let l = next_lanes(s, e.at).find(|l| {
         let kn = usize::from(l.kcn);
-        kn + usize::from(l.need) <= d && (0..kn).all(|i| meets(l.kc[i], kind_of(en[d - 1 - i]))) && (!l.exact || d == kn)
+        kn + usize::from(l.need) <= d && (0..kn).all(|i| meets(l.kc[i], kind_of(en[d - 1 - i]))) && (!l.exact || d == kn) && (l.cond == 0 || l.cond == e.cond())
     })?;
     if !l.moved {
         return Some((*e, recs, false));
@@ -598,7 +1419,8 @@ pub fn apply(s: &Summary, e: &Entry, recs: usize) -> Option<(Entry, usize, bool)
     held[..strings].copy_from_slice(&eh[..strings]);
     let mut opened = strings;
     for i in 0..usize::from(l.pn) {
-        nest[rest + i] = level_of(l.p[i]);
+        // A level of no kind it leaves is one it entered with as it was: the entry's.
+        nest[rest + i] = if wild(l.p[i]) && rest + i < d { en[rest + i] } else { level_of(l.p[i]) };
         if l.p[i] != 255 {
             held[opened] = if l.ph[i] >= INHERIT {
                 // The string of the entry's level the lane closed `q`th: its record, the entry's.
@@ -723,6 +1545,10 @@ impl Entry {
     #[inline]
     fn lane_entry(&mut self, _src: &[u8]) {}
 
+    /// The entry a region's forced first token (`REGIONS`' `open`) is read from: the file's start's.
+    #[inline]
+    fn region_entry(&mut self, _open: usize) {}
+
     /// The levels above the nest's depth and the strings past those open as at the start: no read reaches them before
     /// a write, so two entries the loop goes on from alike are equal.
     #[inline]
@@ -758,11 +1584,13 @@ pub struct Reads {
     pub high: usize,
     /// The values of the entry the run set (`Lane::keep`'s complement).
     pub set: u8,
+    /// Whether it read a value of its entry its class does not give: no lane for it (pass 3 waits for the entry).
+    pub lost: bool,
 }
 
 impl Reads {
     /// A run whose reads are not asked (pass 2, the serial runs).
-    const NONE: Reads = Reads { bottom: false, kind_of: None, low: 0, high: 0, set: 0 };
+    const NONE: Reads = Reads { bottom: false, kind_of: None, low: 0, high: 0, set: 0, lost: false };
 
     /// A lane's, entered with the levels `k[..kd]` (`lanes_from`).
     #[inline]
@@ -777,7 +1605,7 @@ impl Reads {
 
 /// The kinds a level of kind `k` a lane read the kind of is, one lane each: a level of no kind yet (254), any of them.
 #[inline]
-fn split_kinds(_k: u8) -> &'static [u8] {
+fn split_kinds(_k: u8, _r: &Reads) -> &'static [u8] {
     &LEVEL_KINDS
 }
 
@@ -791,6 +1619,20 @@ fn may_hold(_below: u8, _above: u8) -> bool {
 #[inline]
 fn exit_levels(e: &Entry, _r: &Reads) -> ([usize; MAXD], [usize; MAXD], usize) {
     e.levels()
+}
+
+/// No kept value is read by class (`Lane::cond`).
+const COND_KEEP: u8 = 0;
+const CONDS: &[u8] = &[];
+
+#[inline]
+fn enter_cond(_e: &mut Entry, _r: &mut Reads, _cond: u8) {}
+
+impl Entry {
+    #[inline]
+    fn cond(&self) -> u8 {
+        0
+    }
 }
 
 /// A read of `opened` (the strings open): none, the bottom (the lane's entry may have more); with a level of no kind
@@ -863,6 +1705,7 @@ fn finish(src: &[u8], e: &Entry, refused_io: &mut bool) {
 /// The regions a chunk can start inside (`Force`): each its number, its row, its closer's offset and its level.
 const REGIONS: [(usize, usize, usize, usize); @NREGIONS@] = [@REGIONS@];
 
+// @STAGE1{
 /// The blocks before a chunk's first that its stage 1 starts at: its windows and its carries are the serial run's again
 /// past them.
 pub const PRIME: usize = 8;
@@ -876,6 +1719,7 @@ fn stage1_at(src: &[u8], s1: &mut Stage1, from: usize) -> Stage1Run {
     }
     st
 }
+// }STAGE1@
 
 /// Where the chunk from block `from` is entered in code: past the whitespace before its first byte (the token before
 /// ends there, or runs into the chunk).
@@ -905,10 +1749,21 @@ fn lanes_from(src: &[u8], s1: &mut Stage1, st1: &mut Stage1Run, starts: &[Entry]
     let mut extras = Vec::new();
     // The nests to enter each start with, outermost first: every start's of one depth before any start's deeper
     // (where the lanes pass `L`, the deepest go).
-    let mut todo: Vec<(usize, [u8; MAXD], usize)> = (0..starts.len()).map(|si| (si, [0; MAXD], 0)).collect();
-    let mut deeper: Vec<(usize, [u8; MAXD], usize)> = Vec::new();
+    let mut todo: Vec<(usize, [u8; MAXD], usize, u8)> = (0..starts.len()).map(|si| (si, [0; MAXD], 0, 0)).collect();
+    let mut deeper: Vec<(usize, [u8; MAXD], usize, u8)> = Vec::new();
     let mut i = 0;
+    // The runs a summary's lanes take, at most `4 L`: past them, as past `L` lanes, the classes not yet entered are no
+    // lane's (most of a run's classes can come to lanes it has, which take no room).
+    let mut runs = 0;
     loop {
+        // Past `L` no lane is kept: the classes not yet entered are no lane's (`over`).
+        if runs == 4 * L {
+            sum.over = true;
+        }
+        if sum.over {
+            break;
+        }
+        runs += 1;
         if i == todo.len() {
             if deeper.is_empty() {
                 break;
@@ -916,7 +1771,7 @@ fn lanes_from(src: &[u8], s1: &mut Stage1, st1: &mut Stage1Run, starts: &[Entry]
             todo = core::mem::take(&mut deeper);
             i = 0;
         }
-        let (si, k, kd) = todo[i];
+        let (si, k, kd, cond) = todo[i];
         i += 1;
         let e0 = starts[si];
         let at0 = e0.at;
@@ -932,18 +1787,26 @@ fn lanes_from(src: &[u8], s1: &mut Stage1, st1: &mut Stage1Run, starts: &[Entry]
         e.set_levels(&nest, &held, opened, kd);
         e.lane_entry(src);
         let mut reads = Reads::lane(&k, kd);
+        enter_cond(&mut e, &mut reads, cond);
         let (mut refused, mut len) = (false, 0usize);
         // SAFETY: no record written (`WRITE` false).
         unsafe { lex_range::<false, false>(src, &mut e, st1, s1, to, &mut refused, core::ptr::null_mut(), &mut len, &mut extras, &mut reads, None) };
         // It read the kind of a level it entered with none: one lane for each kind, not this one.
         if let Some(d) = reads.kind_of {
-            for &kind in split_kinds(k[d]) {
+            for &kind in split_kinds(k[d], &reads) {
                 if d + 1 < kd && !may_hold(kind, k[d + 1]) || d > 0 && !may_hold(k[d - 1], kind) {
                     continue;
                 }
                 let mut k2 = k;
                 k2[d] = kind;
-                todo.push((si, k2, kd));
+                todo.push((si, k2, kd, cond));
+            }
+            continue;
+        }
+        // It read a kept value of its entry its class does not give: one lane for each class of it (`CONDS`).
+        if reads.lost {
+            if cond == 0 {
+                todo.extend(CONDS.iter().map(|&c| (si, k, kd, c)));
             }
             continue;
         }
@@ -971,16 +1834,23 @@ fn lanes_from(src: &[u8], s1: &mut Stage1, st1: &mut Stage1Run, starts: &[Entry]
         l.high = (reads.high - low) as u8;
         l.recs = len;
         l.exit = e.without_nest();
+        // Its exit's kept values are not read: one form of them (the start's).
+        l.exit.carry(&Entry::START, l.keep);
         l.refused = refused;
         l.moved = e.at != at0 || refused;
+        // A lane that refuses the file leaves nothing read: one form of it, its class's.
+        if refused {
+            (l.exit, l.p, l.ph, l.pn, l.high, l.recs, l.keep) = (Entry::START, [0; MAXD], [0; MAXD], 0, 0, 0, 0);
+        }
         l.keep = !reads.set;
+        l.cond = cond;
         sum.push(l);
         // It read the bottom: one more lane, with a level more open below, of no kind until one is read.
         if reads.bottom && kd < MAXD {
             let mut k2 = [0u8; MAXD];
             k2[0] = 254;
             k2[1..=kd].copy_from_slice(&k[..kd]);
-            deeper.push((si, k2, kd + 1));
+            deeper.push((si, k2, kd + 1, cond));
         }
     }
 }
@@ -995,7 +1865,10 @@ fn chunk_ends(src: &[u8], s1: &mut Stage1, from: usize, to: usize) -> Summary {
     let mut sum = Summary { lanes: [NO_LANE; L], n: 0, start, end: (64 * to).min(src.len()).max(start), code: e.at, head: (64 * to).min(src.len()).max(start), over: false };
     // A token the chunk starts inside, of code: blanks part the tokens of code, so the serial lexer's tokens from the
     // first byte of the run of bytes before the chunk (a block at most) are its, the last of them the one it starts in.
-    let mut crossed = None;
+    // Lexed from there in each class of nest (`lanes_from`, to the chunk's first block), each end past the chunk's first
+    // byte is one. (A run's first byte starts a token, or is in a region: a region's ends are places of their own.)
+    let mut starts = vec![e];
+    let mut from_run = false;
     if from > 0 && e.at == start && start < src.len() {
         let n = src.len();
         let mut r = start;
@@ -1006,27 +1879,17 @@ fn chunk_ends(src: &[u8], s1: &mut Stage1, from: usize, to: usize) -> Summary {
         if r == 0 || start - r < 64 {
             let mut x = Entry::START;
             x.at = r;
-            let (mut refused, mut len) = (false, 0usize);
-            let mut reads = Reads::NONE;
-            let mut extras = Vec::new();
+            let mut run = Summary { lanes: [NO_LANE; L], n: 0, start: r, end: start, code: r, head: start, over: false };
             let mut st0 = stage1_at(src, s1, r / 64);
-            while x.at < start && !refused {
-                let was = x.at;
-                // SAFETY: no record written (`WRITE` false).
-                unsafe { lex_range::<false, true>(src, &mut x, &mut st0, s1, usize::MAX, &mut refused, core::ptr::null_mut(), &mut len, &mut extras, &mut reads, None) };
-                if x.at == was {
-                    refused = true;
+            lanes_from(src, s1, &mut st0, &[x], from, &mut run);
+            let end = (64 * to).min(n);
+            for l in run.lanes() {
+                if !l.refused && l.exit.at > start && l.exit.at <= end && !starts.iter().any(|y| y.at == l.exit.at) {
+                    starts.push(l.exit.without_nest());
                 }
             }
-            if !refused && !reads.bottom && x.levels().2 == 0 && x.at > start && x.at <= (64 * to).min(n) {
-                crossed = Some(x.without_nest());
-            }
+            from_run = true;
         }
-    }
-    let mut starts = vec![e];
-    // (The chunk may start after a token, too: a string's, whose run reads as an opener.)
-    if let Some(x) = crossed {
-        starts.push(x);
     }
     if from == 0 || start >= src.len() {
         lanes_from(src, s1, &mut st1, &starts, to, &mut sum);
@@ -1035,7 +1898,8 @@ fn chunk_ends(src: &[u8], s1: &mut Stage1, from: usize, to: usize) -> Summary {
     // A token the chunk starts inside, of code: it ends where the code lane's first token does (a name's, a number's,
     // a template's `{`), and the next starts there.
     // The token's end is where one lexed from a byte of it ends: from each byte before the first blank, each end once.
-    // (And where the run's first byte is a region's closer, which reads as an opener from there.)
+    // (And where the run's first byte is a region's closer, which reads as an opener from there.) Where the run before
+    // was lexed in each class, the first end alone: a token lexed from a byte inside one of code ends where it does.
     if e.at == start {
         let end = (64 * to).min(src.len());
         let mut ends: Vec<usize> = Vec::new();
@@ -1054,6 +1918,9 @@ fn chunk_ends(src: &[u8], s1: &mut Stage1, from: usize, to: usize) -> Summary {
                 if !starts.iter().any(|x| x.at == first.at) {
                     starts.push(first.without_nest());
                 }
+                if from_run {
+                    break;
+                }
             }
             p += 1;
         }
@@ -1068,6 +1935,7 @@ fn chunk_ends(src: &[u8], s1: &mut Stage1, from: usize, to: usize) -> Summary {
         let s = from_byte - k;
         let mut e = Entry::START;
         e.at = s;
+        e.region_entry(open);
         let (mut refused, mut len) = (false, 0usize);
         let mut reads = Reads::NONE;
         let mut extras = Vec::new();
@@ -1269,7 +2137,15 @@ impl Entry {{
 
     #[inline]
     fn carry(&mut self, _from: &Entry, _keep: u8) {{}}
+
+    #[inline]
+    fn cond(&self) -> u8 {{
+        0
+    }}
 }}
+
+/// No kept value is read by class (`Lane::cond`).
+const COND_KEEP: u8 = 0;
 
 /// A chunk's places (`chunk_ends`): code, then one inside each region.
 pub const LANES: usize = {lanes};
@@ -1432,7 +2308,7 @@ pub fn lex_chunked(buf: &[u8], n: usize, blocks: usize) -> (Lexed, usize) {{
     );
     // The summaries' lanes, by place alone (the loop keeps no nest), and pass 3's prefix sum: the core's.
     // (A range's lanes are its head's and those of its later chunks' places: room for several chunks'.)
-    Some(t + &core(0, "", 0, 32.max(lanes), true))
+    Some(t + &core_with(0, "", 0, 32.max(lanes), true, false))
 }
 
 /// The statement of `text` that starts at the line starting with `start` (trimmed), to the `;` its braces close at.
@@ -1529,6 +2405,18 @@ mod tests {
         let src = include_str!("../../../kotlin_aot/src/tier1.rs");
         if let Err(e) = super::chunked_nest(src) {
             panic!("Kotlin's token loop has no chunked form: {e}");
+        }
+    }
+
+    /// Python's tier 1 is of the shape: its chunked form, whose nest is its string reader's, is made (its quotes, its
+    /// format flag, its raw, bytes and triple flags, its interpolation's `{`).
+    #[test]
+    fn pythons_loop_has_a_chunked_form() {
+        let src = include_str!("../../../python_aot/src/tier1.rs");
+        let rn = super::ReaderNest { quotes: 2, format: 0x04, free: vec![0x01, 0x02, 0x80], open_byte: b'{' };
+        match super::chunked_reader(src, &rn) {
+            Ok(t) => assert!(src.ends_with(&t), "Python's tier 1 is not its chunked form's"),
+            Err(e) => panic!("Python's token loop has no chunked form: {e}"),
         }
     }
 }

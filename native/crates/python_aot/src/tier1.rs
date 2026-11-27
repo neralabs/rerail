@@ -1929,3 +1929,2089 @@ pub fn gap(src: &[u8], from: usize, to: usize, before: u32, b: u32) -> bool {
     let _ = (src, from, to, before, b);
     false
 }
+
+// Lexing from the middle (the chunk-summaries design): the token loop's state between two tokens, the loop from any of
+// them to any block, and the three passes. Pass 1 lexes each chunk from each class of entries (`chunk_ends`), pass 3
+// composes the chunks' summaries by a prefix sum (`entries`), pass 2 lexes each chunk from its entry (`lex_chunked`).
+
+/// The token loop's state between two tokens: where the next token starts (`at`), the nest (`nest[..depth]`, its top
+/// `template`), the strings its templates hold open (`held[..opened]`, their records), and what the loop keeps of the
+/// token before. The serial lexer's at each chunk's start is that chunk's entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Entry {
+    pub at: usize,
+    pub pending: u32,
+    pub opened: usize,
+    pub acc_0: bool,
+    pub rec_0: bool,
+    pub c_depth: u32,
+    pub rd_on: bool,
+    pub rd_q: u8,
+    pub rd_fl: u8,
+    pub rd_level: u8,
+    pub rd_total: u8,
+    pub rd_open: usize,
+    pub rd_around: [(u8, u8, u8); 3],
+    pub rd_depth: usize,
+    pub rd_code: usize,
+    pub more: usize,
+    pub rd_end: usize,
+    pub rd_bare: bool,
+}
+
+impl Entry {
+    /// The file's first byte: in code, nothing open.
+    pub const START: Entry = Entry { at: 0usize, pending: 0u32, opened: 0usize, acc_0: false, rec_0: false, c_depth: 0u32, rd_on: false, rd_q: 0u8, rd_fl: 0u8, rd_level: 0u8, rd_total: 0u8, rd_open: 0usize, rd_around: [(0u8, 0u8, 0u8); 3], rd_depth: 0usize, rd_code: usize::MAX, more: 0usize, rd_end: usize::MAX, rd_bare: false, };
+}
+
+
+/// A bracket.
+const NB: usize = usize::MAX;
+
+/// The kinds of string an interpolation is in (its quote, its flags), a level's kind its index: its bits (`PARTS`).
+const RD_KINDS: [(u8, u8); 16] = [(0, 0x04), (0, 0x05), (0, 0x06), (0, 0x07), (0, 0x84), (0, 0x85), (0, 0x86), (0, 0x87), (1, 0x04), (1, 0x05), (1, 0x06), (1, 0x07), (1, 0x84), (1, 0x85), (1, 0x86), (1, 0x87)];
+
+/// A level's kind of interpolation as far as a lane read it: which of its bits it knows, and their values (bit `i` the
+/// flag `FREE[i]`, the top one its quote). Its whole kinds first (`RD_KINDS`', all bits known), then those of some
+/// known; 252 none.
+const PARTS: [(u8, u8); 80] = [(0x0f, 0x00), (0x0f, 0x01), (0x0f, 0x02), (0x0f, 0x03), (0x0f, 0x04), (0x0f, 0x05), (0x0f, 0x06), (0x0f, 0x07), (0x0f, 0x08), (0x0f, 0x09), (0x0f, 0x0a), (0x0f, 0x0b), (0x0f, 0x0c), (0x0f, 0x0d), (0x0f, 0x0e), (0x0f, 0x0f), (0x01, 0x00), (0x01, 0x01), (0x02, 0x00), (0x02, 0x02), (0x03, 0x00), (0x03, 0x01), (0x03, 0x02), (0x03, 0x03), (0x04, 0x00), (0x04, 0x04), (0x05, 0x00), (0x05, 0x01), (0x05, 0x04), (0x05, 0x05), (0x06, 0x00), (0x06, 0x02), (0x06, 0x04), (0x06, 0x06), (0x07, 0x00), (0x07, 0x01), (0x07, 0x02), (0x07, 0x03), (0x07, 0x04), (0x07, 0x05), (0x07, 0x06), (0x07, 0x07), (0x08, 0x00), (0x08, 0x08), (0x09, 0x00), (0x09, 0x01), (0x09, 0x08), (0x09, 0x09), (0x0a, 0x00), (0x0a, 0x02), (0x0a, 0x08), (0x0a, 0x0a), (0x0b, 0x00), (0x0b, 0x01), (0x0b, 0x02), (0x0b, 0x03), (0x0b, 0x08), (0x0b, 0x09), (0x0b, 0x0a), (0x0b, 0x0b), (0x0c, 0x00), (0x0c, 0x04), (0x0c, 0x08), (0x0c, 0x0c), (0x0d, 0x00), (0x0d, 0x01), (0x0d, 0x04), (0x0d, 0x05), (0x0d, 0x08), (0x0d, 0x09), (0x0d, 0x0c), (0x0d, 0x0d), (0x0e, 0x00), (0x0e, 0x02), (0x0e, 0x04), (0x0e, 0x06), (0x0e, 0x08), (0x0e, 0x0a), (0x0e, 0x0c), (0x0e, 0x0e)];
+const FREE: [u8; 3] = [0x01, 0x02, 0x80];
+const QUOTE_BIT: u8 = 0x08;
+const ALL_BITS: u8 = (QUOTE_BIT << 1) - 1;
+/// A kind's code by its known bits and their values (`known << 4 | values`).
+const CODE_OF: [u8; 256] = [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 16, 17, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 18, 255, 19, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 20, 21, 22, 23, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 24, 255, 255, 255, 25, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 26, 27, 255, 255, 28, 29, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 30, 255, 31, 255, 32, 255, 33, 255, 255, 255, 255, 255, 255, 255, 255, 255, 34, 35, 36, 37, 38, 39, 40, 41, 255, 255, 255, 255, 255, 255, 255, 255, 42, 255, 255, 255, 255, 255, 255, 255, 43, 255, 255, 255, 255, 255, 255, 255, 44, 45, 255, 255, 255, 255, 255, 255, 46, 47, 255, 255, 255, 255, 255, 255, 48, 255, 49, 255, 255, 255, 255, 255, 50, 255, 51, 255, 255, 255, 255, 255, 52, 53, 54, 55, 255, 255, 255, 255, 56, 57, 58, 59, 255, 255, 255, 255, 60, 255, 255, 255, 61, 255, 255, 255, 62, 255, 255, 255, 63, 255, 255, 255, 64, 65, 255, 255, 66, 67, 255, 255, 68, 69, 255, 255, 70, 71, 255, 255, 72, 255, 73, 255, 74, 255, 75, 255, 76, 255, 77, 255, 78, 255, 79, 255, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+/// A kind's two kinds by the value of bit `i` (`split_kinds`), 252's last.
+const SPLITS: [[[u8; 2]; 4]; 81] = [[[0, 0], [0, 0], [0, 0], [0, 0]], [[1, 1], [1, 1], [1, 1], [1, 1]], [[2, 2], [2, 2], [2, 2], [2, 2]], [[3, 3], [3, 3], [3, 3], [3, 3]], [[4, 4], [4, 4], [4, 4], [4, 4]], [[5, 5], [5, 5], [5, 5], [5, 5]], [[6, 6], [6, 6], [6, 6], [6, 6]], [[7, 7], [7, 7], [7, 7], [7, 7]], [[8, 8], [8, 8], [8, 8], [8, 8]], [[9, 9], [9, 9], [9, 9], [9, 9]], [[10, 10], [10, 10], [10, 10], [10, 10]], [[11, 11], [11, 11], [11, 11], [11, 11]], [[12, 12], [12, 12], [12, 12], [12, 12]], [[13, 13], [13, 13], [13, 13], [13, 13]], [[14, 14], [14, 14], [14, 14], [14, 14]], [[15, 15], [15, 15], [15, 15], [15, 15]], [[16, 16], [20, 22], [26, 28], [44, 46]], [[17, 17], [21, 23], [27, 29], [45, 47]], [[20, 21], [18, 18], [30, 32], [48, 50]], [[22, 23], [19, 19], [31, 33], [49, 51]], [[20, 20], [20, 20], [34, 38], [52, 56]], [[21, 21], [21, 21], [35, 39], [53, 57]], [[22, 22], [22, 22], [36, 40], [54, 58]], [[23, 23], [23, 23], [37, 41], [55, 59]], [[26, 27], [30, 31], [24, 24], [60, 62]], [[28, 29], [32, 33], [25, 25], [61, 63]], [[26, 26], [34, 36], [26, 26], [64, 68]], [[27, 27], [35, 37], [27, 27], [65, 69]], [[28, 28], [38, 40], [28, 28], [66, 70]], [[29, 29], [39, 41], [29, 29], [67, 71]], [[34, 35], [30, 30], [30, 30], [72, 76]], [[36, 37], [31, 31], [31, 31], [73, 77]], [[38, 39], [32, 32], [32, 32], [74, 78]], [[40, 41], [33, 33], [33, 33], [75, 79]], [[34, 34], [34, 34], [34, 34], [0, 8]], [[35, 35], [35, 35], [35, 35], [1, 9]], [[36, 36], [36, 36], [36, 36], [2, 10]], [[37, 37], [37, 37], [37, 37], [3, 11]], [[38, 38], [38, 38], [38, 38], [4, 12]], [[39, 39], [39, 39], [39, 39], [5, 13]], [[40, 40], [40, 40], [40, 40], [6, 14]], [[41, 41], [41, 41], [41, 41], [7, 15]], [[44, 45], [48, 49], [60, 61], [42, 42]], [[46, 47], [50, 51], [62, 63], [43, 43]], [[44, 44], [52, 54], [64, 66], [44, 44]], [[45, 45], [53, 55], [65, 67], [45, 45]], [[46, 46], [56, 58], [68, 70], [46, 46]], [[47, 47], [57, 59], [69, 71], [47, 47]], [[52, 53], [48, 48], [72, 74], [48, 48]], [[54, 55], [49, 49], [73, 75], [49, 49]], [[56, 57], [50, 50], [76, 78], [50, 50]], [[58, 59], [51, 51], [77, 79], [51, 51]], [[52, 52], [52, 52], [0, 4], [52, 52]], [[53, 53], [53, 53], [1, 5], [53, 53]], [[54, 54], [54, 54], [2, 6], [54, 54]], [[55, 55], [55, 55], [3, 7], [55, 55]], [[56, 56], [56, 56], [8, 12], [56, 56]], [[57, 57], [57, 57], [9, 13], [57, 57]], [[58, 58], [58, 58], [10, 14], [58, 58]], [[59, 59], [59, 59], [11, 15], [59, 59]], [[64, 65], [72, 73], [60, 60], [60, 60]], [[66, 67], [74, 75], [61, 61], [61, 61]], [[68, 69], [76, 77], [62, 62], [62, 62]], [[70, 71], [78, 79], [63, 63], [63, 63]], [[64, 64], [0, 2], [64, 64], [64, 64]], [[65, 65], [1, 3], [65, 65], [65, 65]], [[66, 66], [4, 6], [66, 66], [66, 66]], [[67, 67], [5, 7], [67, 67], [67, 67]], [[68, 68], [8, 10], [68, 68], [68, 68]], [[69, 69], [9, 11], [69, 69], [69, 69]], [[70, 70], [12, 14], [70, 70], [70, 70]], [[71, 71], [13, 15], [71, 71], [71, 71]], [[0, 1], [72, 72], [72, 72], [72, 72]], [[2, 3], [73, 73], [73, 73], [73, 73]], [[4, 5], [74, 74], [74, 74], [74, 74]], [[6, 7], [75, 75], [75, 75], [75, 75]], [[8, 9], [76, 76], [76, 76], [76, 76]], [[10, 11], [77, 77], [77, 77], [77, 77]], [[12, 13], [78, 78], [78, 78], [78, 78]], [[14, 15], [79, 79], [79, 79], [79, 79]], [[16, 17], [18, 19], [24, 25], [42, 43]]];
+
+/// The bits a kind knows, and their values.
+#[inline]
+fn part(k: u8) -> (u8, u8) {
+    PARTS.get(usize::from(k)).copied().unwrap_or((0, 0))
+}
+
+/// The kind of known bits `known`, values `v`: 252 where none is known.
+#[inline]
+fn part_code(known: u8, v: u8) -> u8 {
+    if known == 0 { 252 } else { CODE_OF[usize::from(known << 4 | v & known)] }
+}
+
+/// The string a kind is in, its unknown bits none: its quote, its flags.
+#[inline]
+fn whole(k: u8) -> (u8, u8) {
+    let (_, v) = part(k);
+    let fl = FREE.iter().enumerate().filter(|(i, _)| v >> i & 1 == 1).fold(0x04, |a, (_, b)| a | b);
+    (u8::from(v & QUOTE_BIT != 0), fl)
+}
+
+/// A level a lane leaves of no kind, or an interpolation not whole: one it entered with, as it was.
+#[inline]
+fn wild(k: u8) -> bool {
+    k == 254 || k != 255 && part(k).0 != ALL_BITS
+}
+
+/// The kind of level both `k` and `m` are (254: any; an interpolation, those of its known bits), none where none is.
+#[inline]
+fn meet(k: u8, m: u8) -> Option<u8> {
+    if k == m || k == 254 {
+        return Some(m);
+    }
+    if m == 254 {
+        return Some(k);
+    }
+    if k == 255 || m == 255 {
+        return None;
+    }
+    let ((kk, kv), (mk, mv)) = (part(k), part(m));
+    if (kv ^ mv) & kk & mk != 0 {
+        return None;
+    }
+    Some(part_code(kk | mk, kv | mv))
+}
+
+/// Every kind of string: where a chunk can start in its text (`REGIONS`' `open`).
+const RD_PLACES: [(u8, u8); 32] = [(0, 0x00), (0, 0x01), (0, 0x02), (0, 0x03), (0, 0x80), (0, 0x81), (0, 0x82), (0, 0x83), (0, 0x04), (0, 0x05), (0, 0x06), (0, 0x07), (0, 0x84), (0, 0x85), (0, 0x86), (0, 0x87), (1, 0x00), (1, 0x01), (1, 0x02), (1, 0x03), (1, 0x80), (1, 0x81), (1, 0x82), (1, 0x83), (1, 0x04), (1, 0x05), (1, 0x06), (1, 0x07), (1, 0x84), (1, 0x85), (1, 0x86), (1, 0x87)];
+
+/// The interpolation opener's byte.
+const OPEN_BYTE: u8 = 0x7b;
+
+/// The whitespace class's bits from `p` (`w_m_ws`, as a loop with stage 1 reads them): the loop's own, of `p`'s block.
+#[inline(always)]
+unsafe fn w_m_ws(src: &[u8], n: usize, p: isize, _esc: &mut u64) -> u64 {
+    if p < 0 || p as usize >= n {
+        return 0;
+    }
+    let base = p as usize & !63;
+    (unsafe { block_classes(src, n, base) })[27] >> (p as usize - base)
+}
+
+/// An interpolation's kind of string: its level's kind (251: none, a string no interpolation is in).
+#[inline]
+fn rd_kind(q: u8, fl: u8) -> u8 {
+    RD_KINDS.iter().position(|&k| k == (q, fl)).map_or(251, |i| i as u8)
+}
+
+impl Entry {
+    /// The nest as levels: the count's brackets below the reader's frames, then each frame (its kind, its code's
+    /// brackets).
+    #[inline]
+    fn levels(&self) -> ([usize; MAXD], [usize; MAXD], usize) {
+        let mut nest = [NB; MAXD];
+        let d = (self.c_depth as usize).min(MAXD);
+        let frames = if self.rd_on { self.rd_depth + 1 } else { 0 };
+        let mut i = d.saturating_sub(usize::from(self.rd_total));
+        for f in 0..frames {
+            let (q, fl, lv) = if f < self.rd_depth { self.rd_around[f] } else { (self.rd_q, self.rd_fl, self.rd_level) };
+            if i < MAXD {
+                nest[i] = usize::from(rd_kind(q, fl));
+            }
+            i += 1 + usize::from(lv);
+        }
+        (nest, [0; MAXD], d)
+    }
+
+    /// `self` with the nest `nest[..depth]`: the reader's state of its frames, the count its depth. A level of no kind
+    /// yet is a bracket; a bracket above an interpolation one of its code's.
+    #[inline]
+    fn set_levels(&mut self, nest: &[usize; MAXD], _held: &[usize; MAXD], _opened: usize, depth: usize) {
+        let (mut fr, mut nf, mut total) = ([(0u8, 0u8, 0u8); MAXD], 0usize, 0u8);
+        for &v in &nest[..depth] {
+            match kind_of(v) {
+                255 | 254 => {
+                    if nf > 0 {
+                        fr[nf - 1].2 = fr[nf - 1].2.saturating_add(1);
+                        total = total.saturating_add(1);
+                    }
+                }
+                k => {
+                    let (q, fl) = whole(k);
+                    fr[nf] = (q, fl, 0);
+                    nf += 1;
+                    total = total.saturating_add(1);
+                }
+            }
+        }
+        self.c_depth = depth as _;
+        self.rd_on = nf > 0;
+        (self.rd_q, self.rd_fl, self.rd_level) = if nf > 0 { fr[nf - 1] } else { (0, 0, 0) };
+        self.rd_depth = nf.saturating_sub(1);
+        self.rd_around = Entry::START.rd_around;
+        for f in 0..self.rd_depth.min(self.rd_around.len()) {
+            self.rd_around[f] = fr[f];
+        }
+        self.rd_total = total;
+    }
+
+    /// The values a lane keeps of its entry (`Lane::keep`), `from`'s: the interpolation's `{` (1), where its code began
+    /// (2).
+    #[inline]
+    fn carry(&mut self, from: &Entry, keep: u8) {
+        if keep & 1 != 0 {
+            self.rd_open = from.rd_open;
+        }
+        if keep & 2 != 0 {
+            self.rd_code = from.rd_code;
+        }
+    }
+
+    /// What a lane assumes of its entry: its interpolation's `{` the byte before it where that is one (no other is read
+    /// before the lane sets it: an empty interpolation's `}` is the byte after), where its code began none (a read of it
+    /// is checked, `rd_code_read`).
+    #[inline]
+    fn lane_entry(&mut self, src: &[u8]) {
+        self.rd_open = if self.at > 0 && src[self.at - 1] == OPEN_BYTE { self.at - 1 } else { usize::MAX - 1 };
+        self.rd_code = usize::MAX;
+    }
+
+    /// The entry a region's forced first token is read from: in a string of kind `RD_PLACES[open]`, its interpolation
+    /// the one open.
+    #[inline]
+    fn region_entry(&mut self, open: usize) {
+        if let Some(&(q, fl)) = RD_PLACES.get(open) {
+            (self.rd_on, self.rd_q, self.rd_fl, self.rd_level, self.rd_total, self.c_depth) = (true, q, fl, 0, 1, 1);
+            (self.rd_open, self.rd_code) = (usize::MAX - 1, usize::MAX);
+        }
+    }
+
+    /// The frames past those open as at the start: no read reaches them before a write.
+    #[inline]
+    fn canonical(&mut self) {
+        let k = if self.rd_on { self.rd_depth } else { 0 };
+        for f in k..self.rd_around.len() {
+            self.rd_around[f] = Entry::START.rd_around[f];
+        }
+    }
+
+    /// `self` with its nest as at the start: a lane's exit, whose nest its `p` holds.
+    #[inline]
+    fn without_nest(mut self) -> Entry {
+        self.set_levels(&[NB; MAXD], &[0; MAXD], 0, 0);
+        self
+    }
+}
+
+/// What a lane read of the nest below where it entered (`chunked_nest`'s), and the levels it holds as it goes (`sh`,
+/// `shd`: those it entered with, then its own): a read of a level of no kind yet asks its kind, one of none (the
+/// count 0 at the bottom of what it entered with) the bottom.
+#[derive(Clone, Copy, Debug)]
+pub struct Reads {
+    pub bottom: bool,
+    pub kind_of: Option<usize>,
+    pub low: usize,
+    pub high: usize,
+    pub set: u8,
+    pub lost: bool,
+    sh: [u8; MAXD],
+    shd: usize,
+    /// Whether where the interpolation's code began is the run's own or known none.
+    code_known: bool,
+    /// The level of the interpolation a tail reads (`rd_frame`), and the bit of its kind it read unknown (`split_kinds`).
+    fd: usize,
+    bit: u8,
+    /// The kind of the level popped last (254: one below those it held).
+    popped: u8,
+}
+
+impl Reads {
+    /// A run from an entry whose nest is given whole: its levels from it (`enter`).
+    const NONE: Reads = Reads { bottom: false, kind_of: None, low: 0, high: 0, set: 0, lost: false, sh: [255; MAXD], shd: usize::MAX, code_known: true, fd: 0, bit: 0, popped: 254 };
+
+    #[inline]
+    fn lane(k: &[u8; MAXD], kd: usize) -> Reads {
+        Reads { low: kd, high: kd, sh: *k, shd: kd, code_known: false, ..Reads::NONE }
+    }
+
+    #[inline]
+    fn enter(&mut self, e: &Entry) {
+        if self.shd == usize::MAX {
+            let (nest, _, d) = e.levels();
+            for i in 0..d {
+                self.sh[i] = kind_of(nest[i]);
+            }
+            (self.shd, self.low, self.high) = (d, d, d);
+        }
+    }
+}
+
+/// A level pushed: `c_depth` up.
+#[inline(always)]
+fn sh_push(r: &mut Reads, k: u8) {
+    if r.shd < MAXD {
+        r.sh[r.shd] = k;
+    }
+    r.shd += 1;
+    r.high = r.high.max(r.shd.min(MAXD));
+}
+
+/// A level popped: `c_depth` down, none below the bottom.
+#[inline(always)]
+fn sh_pop(r: &mut Reads) {
+    if r.shd == 0 {
+        r.bottom = true;
+        r.popped = 254;
+    } else {
+        r.shd -= 1;
+        r.low = r.low.min(r.shd);
+        r.popped = if r.shd < MAXD { r.sh[r.shd] } else { 254 };
+    }
+}
+
+/// A read of the top level's class (`rd_on`, `rd_level == 0`: an interpolation, of any kind): none open, the bottom;
+/// of no kind yet, whether it is one. The lane's class holds each level it read (`low`).
+#[inline(always)]
+fn rd_top(r: &mut Reads) {
+    if r.shd == 0 {
+        r.bottom = true;
+    } else {
+        r.low = r.low.min(r.shd - 1);
+        if r.sh[r.shd - 1] == 254 && r.kind_of.is_none() {
+            r.kind_of = Some(r.shd - 1);
+        }
+    }
+}
+
+/// A tail's read of its interpolation (`rd_q`, `rd_fl`), below the top's brackets of its code: its level, read
+/// bit by bit (`rd_flag`, `rd_quote`).
+#[inline(always)]
+fn rd_frame(r: &mut Reads) {
+    let mut d = r.shd.min(MAXD);
+    while d > 0 && r.sh[d - 1] == 255 {
+        d -= 1;
+    }
+    if d == 0 {
+        r.bottom = true;
+        r.low = 0;
+        r.fd = usize::MAX;
+    } else {
+        r.low = r.low.min(d - 1);
+        r.fd = d - 1;
+        if r.sh[d - 1] == 254 && r.kind_of.is_none() {
+            r.kind_of = Some(d - 1);
+            r.bit = 0;
+        }
+    }
+}
+
+/// A read of bit `b` of the interpolation's kind (`rd_frame`'s): one its level's kind does not know, its kind by it.
+#[inline(always)]
+fn rd_bit(r: &mut Reads, b: u8) {
+    if r.fd == usize::MAX || r.kind_of.is_some() {
+        return;
+    }
+    let k = r.sh[r.fd];
+    if k != 254 && part(k).0 & 1 << b == 0 {
+        r.kind_of = Some(r.fd);
+        r.bit = b;
+    }
+}
+
+/// The tail's read of its flag `f` (`fl & f`).
+#[inline(always)]
+fn rd_flag(r: &mut Reads, fl: u8, f: u8) -> u8 {
+    if let Some(b) = FREE.iter().position(|&x| x == f) {
+        rd_bit(r, b as u8);
+    }
+    fl & f
+}
+
+/// The tail's read of its quote.
+#[inline(always)]
+fn rd_quote(r: &mut Reads, qi: u8) -> u8 {
+    rd_bit(r, QUOTE_BIT.trailing_zeros() as u8);
+    qi
+}
+
+/// A read of where the interpolation's code began (`rd_code`), not set by the run: not given by the lane's levels
+/// (`lost`), but by its class of it (`Lane::cond`, `enter_cond`).
+#[inline(always)]
+fn rd_code_read(r: &mut Reads) {
+    if !r.code_known {
+        r.lost = true;
+    }
+}
+
+/// The kinds a level a lane read the kind of is: of no kind yet, a bracket or an interpolation; an interpolation, its
+/// two kinds by the bit read (`Reads::bit`).
+#[inline]
+fn split_kinds(k: u8, r: &Reads) -> &'static [u8] {
+    match k {
+        254 => &[255, 252],
+        255 => &[],
+        k => {
+            let i = if k == 252 { PARTS.len() } else { usize::from(k) };
+            &SPLITS[i][usize::from(r.bit)]
+        }
+    }
+}
+
+/// Any level can be under any other (a bracket's, the code's or an interpolation's code's, is where it is).
+#[inline]
+fn may_hold(_below: u8, _above: u8) -> bool {
+    true
+}
+
+/// Where the interpolation's code began (`rd_code`, kept: `carry`'s 2), read by class (`Lane::cond`): none (1), or one
+/// before the lane (2: its reads of it from the lane's start, a part of the serial lexer's, which pass 2 reads whole).
+const COND_KEEP: u8 = 2;
+const CONDS: &[u8] = &[1, 2];
+
+#[inline]
+fn enter_cond(e: &mut Entry, r: &mut Reads, cond: u8) {
+    match cond {
+        1 => (e.rd_code, r.code_known) = (usize::MAX, true),
+        2 => (e.rd_code, r.code_known) = (e.at, true),
+        _ => {}
+    }
+}
+
+impl Entry {
+    #[inline]
+    fn cond(&self) -> u8 {
+        if self.rd_code == usize::MAX { 1 } else { 2 }
+    }
+}
+
+/// The nest a lane's run leaves: its levels as it went.
+#[inline]
+fn exit_levels(_e: &Entry, r: &Reads) -> ([usize; MAXD], [usize; MAXD], usize) {
+    let d = r.shd.min(MAXD);
+    let mut nest = [NB; MAXD];
+    for i in 0..d {
+        nest[i] = level_of(r.sh[i]);
+    }
+    (nest, [0; MAXD], d)
+}
+
+
+/// A first token the loop reads as given, not by its bytes: a region a chunk starts inside, read as its row reads it
+/// from a start `s` its closer's search starts past at the chunk's first byte, at level `lv` where it nests.
+#[derive(Clone, Copy, Debug)]
+struct Force {
+    s: usize,
+    open: usize,
+    row: usize,
+    lv: usize,
+}
+
+/// The token loop (`lex_on`'s, the product's) from `e` to block `to`: `e` where the next token starts after it, its
+/// records written where `WRITE` (pass 2) from `*len_io`, counted where not (pass 1), and its reads of the nest below
+/// its entry in `reads`. Its first token `force` where given; only that one where `ONE`.
+#[inline(always)]
+#[allow(unused_variables, unused_assignments, unused_mut, unused_labels, clippy::all)]
+unsafe fn lex_range<const WRITE: bool, const ONE: bool>(src: &[u8], n: usize, e: &mut Entry, mut st1: &mut Stage1Run, mut s1: &mut Stage1, to: usize, refused_io: &mut bool, out: *mut Rec, len_io: &mut usize, extras: &mut Vec<Rec>, reads: &mut Reads, force: Option<Force>) {
+    let mut force = force;
+    let nw = n.div_ceil(64);
+    let mut refused = *refused_io;
+    let mut len = *len_io;
+    reads.enter(e);
+    let Entry { mut at, mut pending, mut opened, mut acc_0, mut rec_0, mut c_depth, mut rd_on, mut rd_q, mut rd_fl, mut rd_level, mut rd_total, mut rd_open, mut rd_around, mut rd_depth, mut rd_code, mut more, mut rd_end, mut rd_bare, } = *e;
+    let mut from: usize = 0usize;
+    let mut from_record: usize = 0usize;
+    let mut before: u32 = 0u32;
+    let mut template: usize = usize::MAX;
+    let mut held: [usize; 4] = [0usize; 4];
+    let mut level: u8 = 0u8;
+    let mut frames: [(usize, u8); 4] = [(usize::MAX, 0u8); 4];
+    let mut depth: usize = 0usize;
+    let mut close: usize;
+    let mut b = at / 64;
+    'tokens: while b < nw.min(to) {
+        let base = b * 64;
+        // The block's masks, from its classes (the lean lexer's `Window`): what its tokens read of it.
+        // SAFETY: `base` is in the file.
+        let cur = unsafe { block_classes(src, n, base) };
+        let lv = valid(n, base as isize);
+        let k_m_lf = cur[0];
+        let k_t100 = ((cur[1] & (!(((cur[2] & (cur[2] >> 1 | u64::from(base + 64 < n && (src[base + 64] == b'.')) << 63)) & (cur[2] >> 2 | u64::from(base + 64 < n && (src[base + 64] == b'.')) << 62 | u64::from(base + 65 < n && (src[base + 65] == b'.')) << 63)) & (!(cur[2] << 1 | u64::from(base >= 1 && (src[base - 1] == b'.'))) & lv)) & lv)) & (!(cur[3] & (!(cur[4] >> 1 | u64::from(base + 64 < n && (src[base + 64] == b'=')) << 63) & lv)) & lv));
+        let k_t104 = (!(((cur[5] << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U'))) & (!(cur[6] << 2 | u64::from(base >= 2 && matches!(src[base - 2], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) | u64::from(base >= 1 && matches!(src[base - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) << 1) & valid(n, base as isize - 1))) & (cur[7] | cur[8])) & lv);
+        let k_t105 = (!((((cur[5] << 2 | u64::from(base >= 2 && matches!(src[base - 2], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) | u64::from(base >= 1 && matches!(src[base - 1], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 1) & (!(cur[6] << 3 | u64::from(base >= 3 && matches!(src[base - 3], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) | u64::from(base >= 2 && matches!(src[base - 2], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) << 2) & valid(n, base as isize - 2))) & (cur[5] << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')))) & (cur[7] | cur[8])) & lv);
+        let k_t98 = ((cur[2] & (cur[9] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'0'..=b'9')) << 63)) & (!(cur[6] << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))) & lv));
+        let k_t102 = (((cur[2] & (cur[2] >> 1 | u64::from(base + 64 < n && (src[base + 64] == b'.')) << 63)) & (cur[2] >> 2 | u64::from(base + 64 < n && (src[base + 64] == b'.')) << 62 | u64::from(base + 65 < n && (src[base + 65] == b'.')) << 63)) & (!(cur[2] << 1 | u64::from(base >= 1 && (src[base - 1] == b'.'))) & lv));
+        let k_t96 = ((cur[10] & (((cur[11] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'x' | b'X')) << 63) | (cur[12] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'o' | b'O')) << 63)) | (cur[13] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'b' | b'B')) << 63))) & (!(cur[2] << 1 | u64::from(base >= 1 && (src[base - 1] == b'.'))) & lv));
+        let k_t97 = ((cur[9] & (!(cur[2] << 1 | u64::from(base >= 1 && (src[base - 1] == b'.'))) & lv)) & (!(cur[10] & (((cur[11] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'x' | b'X')) << 63) | (cur[12] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'o' | b'O')) << 63)) | (cur[13] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'b' | b'B')) << 63))) & lv));
+        let k_t95 = ((cur[14] & (!((cur[5] & (!(cur[6] << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))) & lv)) & ((cur[7] >> 1 | u64::from(base + 64 < n && (src[base + 64] == b'\'')) << 63) | (cur[8] >> 1 | u64::from(base + 64 < n && (src[base + 64] == b'"')) << 63))) & lv)) & (!(((cur[5] & (!(cur[6] << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))) & lv)) & (cur[5] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 63)) & ((cur[7] >> 2 | u64::from(base + 64 < n && (src[base + 64] == b'\'')) << 62 | u64::from(base + 65 < n && (src[base + 65] == b'\'')) << 63) | (cur[8] >> 2 | u64::from(base + 64 < n && (src[base + 64] == b'"')) << 62 | u64::from(base + 65 < n && (src[base + 65] == b'"')) << 63))) & lv));
+        let k_t103 = (((cur[5] & (!(cur[6] << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))) & lv)) & ((cur[7] >> 1 | u64::from(base + 64 < n && (src[base + 64] == b'\'')) << 63) | (cur[8] >> 1 | u64::from(base + 64 < n && (src[base + 64] == b'"')) << 63))) | (((cur[5] & (!(cur[6] << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))) & lv)) & (cur[5] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 63)) & ((cur[7] >> 2 | u64::from(base + 64 < n && (src[base + 64] == b'\'')) << 62 | u64::from(base + 65 < n && (src[base + 65] == b'\'')) << 63) | (cur[8] >> 2 | u64::from(base + 64 < n && (src[base + 64] == b'"')) << 62 | u64::from(base + 65 < n && (src[base + 65] == b'"')) << 63))));
+        let k_m_word = cur[6];
+        let k_t71 = ((((cur[5] & (!(cur[6] << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))) & lv)) & (cur[5] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 63)) & (cur[5] >> 2 | u64::from(base + 64 < n && matches!(src[base + 64], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 62 | u64::from(base + 65 < n && matches!(src[base + 65], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 63)) & ((cur[15] >> 3 | u64::from(base + 64 < n && matches!(src[base + 64], b'\'' | b'"')) << 61 | u64::from(base + 65 < n && matches!(src[base + 65], b'\'' | b'"')) << 62 | u64::from(base + 66 < n && matches!(src[base + 66], b'\'' | b'"')) << 63) | ((cur[5] >> 3 | u64::from(base + 64 < n && matches!(src[base + 64], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 61 | u64::from(base + 65 < n && matches!(src[base + 65], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 62 | u64::from(base + 66 < n && matches!(src[base + 66], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 63) & (cur[15] >> 4 | u64::from(base + 64 < n && matches!(src[base + 64], b'\'' | b'"')) << 60 | u64::from(base + 65 < n && matches!(src[base + 65], b'\'' | b'"')) << 61 | u64::from(base + 66 < n && matches!(src[base + 66], b'\'' | b'"')) << 62 | u64::from(base + 67 < n && matches!(src[base + 67], b'\'' | b'"')) << 63))));
+        let k_m_num_run = ((cur[6] | cur[2]) | ((cur[16] & (cur[17] << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'e' | b'E')))) & (cur[9] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'0'..=b'9')) << 63)));
+        let k_t99 = (cur[2] | cur[17]);
+        let k_t80 = ((cur[18] | 0u64) | cur[19]);
+        let k_t94 = (cur[18] | cur[19]);
+        let k_m_dot = cur[2];
+        let k_t90 = (((cur[4] << 1 | u64::from(base >= 1 && (src[base - 1] == b'='))) & (!(((cur[4] << 2 | u64::from(base >= 2 && (src[base - 2] == b'=')) | u64::from(base >= 1 && (src[base - 1] == b'=')) << 1) | (cur[3] << 2 | u64::from(base >= 2 && (src[base - 2] == b'!')) | u64::from(base >= 1 && (src[base - 1] == b'!')) << 1)) | (cur[20] << 2 | u64::from(base >= 2 && matches!(src[base - 2], b'<' | b'>')) | u64::from(base >= 1 && matches!(src[base - 1], b'<' | b'>')) << 1)) & valid(n, base as isize - 1))) | ((cur[21] << 1 | u64::from(base >= 1 && matches!(src[base - 1], b' ' | 0x09 | 0x0c | 0x0d))) & ((cur[4] << 2 | u64::from(base >= 2 && (src[base - 2] == b'=')) | u64::from(base >= 1 && (src[base - 1] == b'=')) << 1) & (!(((cur[4] << 3 | u64::from(base >= 3 && (src[base - 3] == b'=')) | u64::from(base >= 2 && (src[base - 2] == b'=')) << 1 | u64::from(base >= 1 && (src[base - 1] == b'=')) << 2) | (cur[3] << 3 | u64::from(base >= 3 && (src[base - 3] == b'!')) | u64::from(base >= 2 && (src[base - 2] == b'!')) << 1 | u64::from(base >= 1 && (src[base - 1] == b'!')) << 2)) | (cur[20] << 3 | u64::from(base >= 3 && matches!(src[base - 3], b'<' | b'>')) | u64::from(base >= 2 && matches!(src[base - 2], b'<' | b'>')) << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'<' | b'>')) << 2)) & valid(n, base as isize - 2)))));
+        let k_m_hash = cur[22];
+        let k_t93 = ((((cur[7] | cur[8]) | cur[23]) | cur[24]) | cur[25]);
+        let k_t92 = ((cur[7] | cur[8]) | cur[23]);
+        let k_m_lbrace = cur[24];
+        let k_m_rbrace = cur[25];
+        let k_t81 = (!(!0u64 & valid(n, base as isize + 1)) & lv);
+        let k_m_cr = cur[26];
+        let k_t28 = (cur[25] >> 1 | u64::from(base + 64 < n && (src[base + 64] == b'}')) << 63);
+        let k_t89 = (cur[24] | cur[0]);
+        let k_m_bslash = cur[23];
+        let k_m_ws = cur[27];
+        let k_t72_a = cur[28];
+        let k_t76 = (cur[28] & (!(!0u64 & valid(n, base as isize - 1)) & lv));
+        let k_m_colon = cur[29];
+        let k_m_bang = cur[3];
+        let mut firsts = !k_m_ws & (!0u64 << at.saturating_sub(base));
+        while firsts != 0 || force.is_some() {
+        let s = match force {
+            Some(f) => f.s,
+            None => base + firsts.trailing_zeros() as usize,
+        };
+        if s >= n {
+            break 'tokens;
+        }
+        // Whether `m_lf` holds in the gap before the token.
+        let gap_m_lf = s > at && bfirst_in(n, base, k_m_lf, at, s - 1, |p: isize, esc: &mut u64| unsafe { w_m_lf(src, n, p, esc) }).is_some();
+        // The count `depth` over the gap: as the token before left it.
+        let g_depth = c_depth;
+        // The count over the gap 0: of the entry's, nothing below.
+        if g_depth == 0 {
+            reads.bottom = true;
+        }
+        // The token's first byte's group, by the dispatch tables (simdjson's `classify`).
+        let c = src[s];
+        let group = (DISPATCH_LO[usize::from(c & 15)] & DISPATCH_HI[usize::from(c >> 4)]).trailing_zeros();
+        // The skipped bytes before the token, for the gap masks (none where there are none).
+        if (gap_m_lf) {
+            acc_0 = true;
+            rec_0 = true;
+        }
+        // A template open at its level 0 (the lean lexer's `interpolation`, at its count 0): its `rbrace`, its spec, its conversion are the string reader's.
+        rd_top(reads);
+        let rd_pick = if rd_on && rd_level == 0 {
+            if (k_m_rbrace >> (s - base) & 1 == 1) {
+                7
+            } else if (k_m_colon >> (s - base) & 1 == 1) {
+                8
+            } else if (k_m_bang >> (s - base) & 1 == 1) && ((s + 1 < n && matches!(src[s + 1], b'r' | b's' | b'a'))) && (((s + 2 < n && (src[s + 2] == b'}'))) || ((s + 2 < n && (src[s + 2] == b':')))) {
+                9
+            } else {
+                usize::MAX
+            }
+        } else {
+            usize::MAX
+        };
+        let mut hits = 0u32;
+        let (l, kind, extra, mut marks, word): (usize, u32, bool, u32, u32) = {
+            // The row: the first whose start holds, of those whose start may be the byte's.
+            let row = if let Some(f) = force { f.row } else if rd_pick != usize::MAX { rd_pick } else { match group {
+                // `\x00\x01\x02\x03\x04\x05\x06\x07\x08\x0b\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f$?\`\x7f`
+                0 | 1 | 2 | 3 | 4 | 5 => 10,
+                // `!%&()*+,-/;<=>@[]^{|~`
+                6 | 7 | 8 | 9 | 10 => if (k_t100 >> (s - base) & 1 == 1) {
+                    3
+                } else {
+                    usize::MAX
+                },
+                // `"`
+                11 => if ((k_t104 >> (s - base) & 1 == 1) && (k_t105 >> (s - base) & 1 == 1)) {
+                    6
+                } else {
+                    usize::MAX
+                },
+                // `#`
+                12 => 5,
+                // `'`
+                13 => if ((k_t104 >> (s - base) & 1 == 1) && (k_t105 >> (s - base) & 1 == 1)) {
+                    6
+                } else {
+                    usize::MAX
+                },
+                // `.`
+                14 => if (k_t98 >> (s - base) & 1 == 1) {
+                    2
+                } else if (k_t100 >> (s - base) & 1 == 1) {
+                    3
+                } else if (k_t102 >> (s - base) & 1 == 1) {
+                    4
+                } else {
+                    usize::MAX
+                },
+                // `0`
+                15 => if (k_t96 >> (s - base) & 1 == 1) {
+                    1
+                } else if (k_t97 >> (s - base) & 1 == 1) {
+                    2
+                } else {
+                    usize::MAX
+                },
+                // `123456789`
+                16 => if (k_t97 >> (s - base) & 1 == 1) {
+                    2
+                } else {
+                    usize::MAX
+                },
+                // `:`
+                17 => if (k_t100 >> (s - base) & 1 == 1) {
+                    3
+                } else {
+                    usize::MAX
+                },
+                // `ACDEGHIJKLMNOPQSVWXYZ_acdeghijklmnopqsvwxyz`
+                18 | 19 | 20 => if (k_t95 >> (s - base) & 1 == 1) {
+                    0
+                } else {
+                    usize::MAX
+                },
+                // `BFRTUbfrtu`
+                21 | 22 => if (k_t95 >> (s - base) & 1 == 1) {
+                    0
+                } else if (k_t103 >> (s - base) & 1 == 1) {
+                    6
+                } else {
+                    usize::MAX
+                },
+                // `}`
+                23 => if (k_t100 >> (s - base) & 1 == 1) {
+                    3
+                } else {
+                    usize::MAX
+                },
+                _ => usize::MAX,
+            } };
+            let forced = force.is_some();
+            force = None;
+            match row {
+                0 => {
+                    // `identifier`: run word
+                    let l = brun_last(n, base, k_m_word, s, |p: isize, esc: &mut u64| unsafe { w_m_word(src, n, p, esc) });
+                    let l = l.max(s);
+                    // a string prefix of three letters or more
+                    if (k_t71 >> (s - base) & 1 == 1) {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, word_at(src, s, l + 1 - s))
+                }
+,
+                1 => {
+                    // `based`: run word, checked
+                    let l = {
+                        let l = brun_last(n, base, k_m_word, s, |p: isize, esc: &mut u64| unsafe { w_m_word(src, n, p, esc) });
+                        if check_based(&src[s..]) != Some(l + 1 - s) {
+                            refused = true;
+                            break 'tokens;
+                        }
+                        l
+                    };
+                    let l = l.max(s);
+                    (l, 13, false, 0x0, 0)
+                }
+,
+                2 => {
+                    // `integer`: run num_run, read as num_run (assumed), checked
+                    let l = {
+                        let l = brun_last(n, base, k_m_num_run, s, |p: isize, esc: &mut u64| unsafe { w_m_num_run(src, n, p, esc) });
+                        if check_integer(&src[s..]) != Some(l + 1 - s) {
+                            refused = true;
+                            break 'tokens;
+                        }
+                        l
+                    };
+                    let l = l.max(s);
+                    if bcount_in(n, base, k_t99, s, l, |p: isize, esc: &mut u64| unsafe { w_t99(src, n, p, esc) }) >= 1 {
+                        hits |= 1 << 6;
+                    }
+                    // a string prefix of three letters or more
+                    if bfirst_in(n, base, k_t71, s + 1, l, |p: isize, esc: &mut u64| unsafe { w_t71(src, n, p, esc) }).is_some() {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    (l, 15, false, 0x0, word_at(src, s, l + 1 - s))
+                }
+,
+                3 => {
+                    // `punct`: pair
+                    let l = pair_3(src, s);
+                    let l = l.max(s);
+                    // scan depth: its bits in the token's bytes, all of them code
+                    let mut q = s;
+                    while let Some(i) = bfirst_in(n, base, k_t80, q, l, |p: isize, esc: &mut u64| unsafe { w_t80(src, n, p, esc) }) {
+                        if (((i < n && matches!(src[i], b'(' | b'[' | b'{')) || false)) {
+                            sh_push(reads, 255);
+                            c_depth += 1;
+                            if c_depth > 31 {
+                                refused = true;
+                                break 'tokens;
+                            }
+                        } else {
+                            sh_pop(reads);
+                            c_depth = c_depth.saturating_sub(1);
+                        }
+                        q = i + 1;
+                    }
+                    // A template's code: its brackets, as the walk counts them (`i_deep`: past its bound, or a close at its level 0).
+                    if rd_on {
+                        let mut q = s;
+                        while let Some(i) = bfirst_in(n, base, k_t94, q, l, |p: isize, esc: &mut u64| unsafe { w_t94(src, n, p, esc) }) {
+                            if ((i < n && matches!(src[i], b'(' | b'[' | b'{'))) {
+                                if rd_total == 7 {
+                                    refused = true;
+                                    break 'tokens;
+                                }
+                                rd_level += 1;
+                                rd_total += 1;
+                            } else if rd_level == 0 {
+                                refused = true;
+                                break 'tokens;
+                            } else {
+                                rd_level -= 1;
+                                rd_total -= 1;
+                            }
+                            q = i + 1;
+                        }
+                    }
+                    // punct: a triple's last byte starts a pair: at the token's first byte
+                    if (((((((((src[s] == b'*') && (s + 1 < n && (src[s + 1] == b'*'))) && (s + 2 < n && (src[s + 2] == b'='))) || (((src[s] == b'/') && (s + 1 < n && (src[s + 1] == b'/'))) && (s + 2 < n && (src[s + 2] == b'=')))) || (((src[s] == b'<') && (s + 1 < n && (src[s + 1] == b'<'))) && (s + 2 < n && (src[s + 2] == b'=')))) || (((src[s] == b'>') && (s + 1 < n && (src[s + 1] == b'>'))) && (s + 2 < n && (src[s + 2] == b'=')))) && ((((((((((((((((((((((src[s] == b'*') && (s + 1 < n && (src[s + 1] == b'*'))) || ((src[s] == b'/') && (s + 1 < n && (src[s + 1] == b'/')))) || ((src[s] == b'=') && (s + 1 < n && (src[s + 1] == b'=')))) || ((src[s] == b'!') && (s + 1 < n && (src[s + 1] == b'=')))) || ((src[s] == b'<') && (s + 1 < n && (src[s + 1] == b'=')))) || ((src[s] == b'>') && (s + 1 < n && (src[s + 1] == b'=')))) || ((src[s] == b'<') && (s + 1 < n && (src[s + 1] == b'<')))) || ((src[s] == b'>') && (s + 1 < n && (src[s + 1] == b'>')))) || ((src[s] == b'-') && (s + 1 < n && (src[s + 1] == b'>')))) || ((src[s] == b'+') && (s + 1 < n && (src[s + 1] == b'=')))) || ((src[s] == b'-') && (s + 1 < n && (src[s + 1] == b'=')))) || ((src[s] == b'*') && (s + 1 < n && (src[s + 1] == b'=')))) || ((src[s] == b'/') && (s + 1 < n && (src[s + 1] == b'=')))) || ((src[s] == b'%') && (s + 1 < n && (src[s + 1] == b'=')))) || ((src[s] == b'&') && (s + 1 < n && (src[s + 1] == b'=')))) || ((src[s] == b'|') && (s + 1 < n && (src[s + 1] == b'=')))) || ((src[s] == b'^') && (s + 1 < n && (src[s + 1] == b'=')))) || ((src[s] == b'@') && (s + 1 < n && (src[s + 1] == b'=')))) || ((src[s] == b':') && (s + 1 < n && (src[s + 1] == b'=')))) || ((src[s] == b'<') && (s + 1 < n && (src[s + 1] == b'>')))) && !{ let mut k6 = s; let mut odd = false; while k6 > 0 && (((((((((((((((((((((k6 - 1 < n && (src[k6 - 1] == b'*')) && (((k6 - 1) + 1) < n && (src[((k6 - 1) + 1)] == b'*'))) || ((k6 - 1 < n && (src[k6 - 1] == b'/')) && (((k6 - 1) + 1) < n && (src[((k6 - 1) + 1)] == b'/')))) || ((k6 - 1 < n && (src[k6 - 1] == b'=')) && (((k6 - 1) + 1) < n && (src[((k6 - 1) + 1)] == b'=')))) || ((k6 - 1 < n && (src[k6 - 1] == b'!')) && (((k6 - 1) + 1) < n && (src[((k6 - 1) + 1)] == b'=')))) || ((k6 - 1 < n && (src[k6 - 1] == b'<')) && (((k6 - 1) + 1) < n && (src[((k6 - 1) + 1)] == b'=')))) || ((k6 - 1 < n && (src[k6 - 1] == b'>')) && (((k6 - 1) + 1) < n && (src[((k6 - 1) + 1)] == b'=')))) || ((k6 - 1 < n && (src[k6 - 1] == b'<')) && (((k6 - 1) + 1) < n && (src[((k6 - 1) + 1)] == b'<')))) || ((k6 - 1 < n && (src[k6 - 1] == b'>')) && (((k6 - 1) + 1) < n && (src[((k6 - 1) + 1)] == b'>')))) || ((k6 - 1 < n && (src[k6 - 1] == b'-')) && (((k6 - 1) + 1) < n && (src[((k6 - 1) + 1)] == b'>')))) || ((k6 - 1 < n && (src[k6 - 1] == b'+')) && (((k6 - 1) + 1) < n && (src[((k6 - 1) + 1)] == b'=')))) || ((k6 - 1 < n && (src[k6 - 1] == b'-')) && (((k6 - 1) + 1) < n && (src[((k6 - 1) + 1)] == b'=')))) || ((k6 - 1 < n && (src[k6 - 1] == b'*')) && (((k6 - 1) + 1) < n && (src[((k6 - 1) + 1)] == b'=')))) || ((k6 - 1 < n && (src[k6 - 1] == b'/')) && (((k6 - 1) + 1) < n && (src[((k6 - 1) + 1)] == b'=')))) || ((k6 - 1 < n && (src[k6 - 1] == b'%')) && (((k6 - 1) + 1) < n && (src[((k6 - 1) + 1)] == b'=')))) || ((k6 - 1 < n && (src[k6 - 1] == b'&')) && (((k6 - 1) + 1) < n && (src[((k6 - 1) + 1)] == b'=')))) || ((k6 - 1 < n && (src[k6 - 1] == b'|')) && (((k6 - 1) + 1) < n && (src[((k6 - 1) + 1)] == b'=')))) || ((k6 - 1 < n && (src[k6 - 1] == b'^')) && (((k6 - 1) + 1) < n && (src[((k6 - 1) + 1)] == b'=')))) || ((k6 - 1 < n && (src[k6 - 1] == b'@')) && (((k6 - 1) + 1) < n && (src[((k6 - 1) + 1)] == b'=')))) || ((k6 - 1 < n && (src[k6 - 1] == b':')) && (((k6 - 1) + 1) < n && (src[((k6 - 1) + 1)] == b'=')))) || ((k6 - 1 < n && (src[k6 - 1] == b'<')) && (((k6 - 1) + 1) < n && (src[((k6 - 1) + 1)] == b'>')))) { odd = !odd; k6 -= 1; } odd })) && (((((((((((((((((((((s + 2 < n && (src[s + 2] == b'*')) && (((s + 2) + 1) < n && (src[((s + 2) + 1)] == b'*'))) || ((s + 2 < n && (src[s + 2] == b'/')) && (((s + 2) + 1) < n && (src[((s + 2) + 1)] == b'/')))) || ((s + 2 < n && (src[s + 2] == b'=')) && (((s + 2) + 1) < n && (src[((s + 2) + 1)] == b'=')))) || ((s + 2 < n && (src[s + 2] == b'!')) && (((s + 2) + 1) < n && (src[((s + 2) + 1)] == b'=')))) || ((s + 2 < n && (src[s + 2] == b'<')) && (((s + 2) + 1) < n && (src[((s + 2) + 1)] == b'=')))) || ((s + 2 < n && (src[s + 2] == b'>')) && (((s + 2) + 1) < n && (src[((s + 2) + 1)] == b'=')))) || ((s + 2 < n && (src[s + 2] == b'<')) && (((s + 2) + 1) < n && (src[((s + 2) + 1)] == b'<')))) || ((s + 2 < n && (src[s + 2] == b'>')) && (((s + 2) + 1) < n && (src[((s + 2) + 1)] == b'>')))) || ((s + 2 < n && (src[s + 2] == b'-')) && (((s + 2) + 1) < n && (src[((s + 2) + 1)] == b'>')))) || ((s + 2 < n && (src[s + 2] == b'+')) && (((s + 2) + 1) < n && (src[((s + 2) + 1)] == b'=')))) || ((s + 2 < n && (src[s + 2] == b'-')) && (((s + 2) + 1) < n && (src[((s + 2) + 1)] == b'=')))) || ((s + 2 < n && (src[s + 2] == b'*')) && (((s + 2) + 1) < n && (src[((s + 2) + 1)] == b'=')))) || ((s + 2 < n && (src[s + 2] == b'/')) && (((s + 2) + 1) < n && (src[((s + 2) + 1)] == b'=')))) || ((s + 2 < n && (src[s + 2] == b'%')) && (((s + 2) + 1) < n && (src[((s + 2) + 1)] == b'=')))) || ((s + 2 < n && (src[s + 2] == b'&')) && (((s + 2) + 1) < n && (src[((s + 2) + 1)] == b'=')))) || ((s + 2 < n && (src[s + 2] == b'|')) && (((s + 2) + 1) < n && (src[((s + 2) + 1)] == b'=')))) || ((s + 2 < n && (src[s + 2] == b'^')) && (((s + 2) + 1) < n && (src[((s + 2) + 1)] == b'=')))) || ((s + 2 < n && (src[s + 2] == b'@')) && (((s + 2) + 1) < n && (src[((s + 2) + 1)] == b'=')))) || ((s + 2 < n && (src[s + 2] == b':')) && (((s + 2) + 1) < n && (src[((s + 2) + 1)] == b'=')))) || ((s + 2 < n && (src[s + 2] == b'<')) && (((s + 2) + 1) < n && (src[((s + 2) + 1)] == b'>')))))) {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, word_at(src, s, l + 1 - s))
+                }
+,
+                4 => {
+                    // `ellipsis`: run dot, checked
+                    let l = {
+                        let l = brun_last(n, base, k_m_dot, s, |p: isize, esc: &mut u64| unsafe { w_m_dot(src, n, p, esc) });
+                        if check_ellipsis(&src[s..]) != Some(l + 1 - s) {
+                            refused = true;
+                            break 'tokens;
+                        }
+                        l
+                    };
+                    let l = l.max(s);
+                    (l, 12, false, 0x0, word_at(src, s, l + 1 - s))
+                }
+,
+                5 => {
+                    // `comment`: read cmt
+                    let l = wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { w_m_lf(src, n, p, esc) }).unwrap_or(n) - 1;
+                    let l = l.max(s);
+                    (l, u32::from(KINDS[usize::from(src[s])]), true, 0x80, 0)
+                }
+,
+                6 => {
+                    // `string_start`: read string, as the lean lexer's `string` reads one
+                    let l = {
+                        more = 0;
+                        // Its quote: the first after its prefix's letters; its flags by its prefix (at its quote); a triple's.
+                        let Some(q) = wfirst_bit(n, s, |p: isize, esc: &mut u64| unsafe { w_t1(src, n, p, esc) }) else {
+                            refused = true;
+                            break 'tokens;
+                        };
+                        let qi = if ((q < n && (src[q] == b'"'))) { 1u8 } else { 0u8 };
+                        let fl = u8::from(((((q < n && (src[q] == b'\'')) || (q < n && (src[q] == b'"'))) && (((q >= 1 && ((((q - 1 < n && matches!(src[q - 1], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))))) && ((((q - 1) + 1) < n && (src[((q - 1) + 1)] == b'\'')) || (((q - 1) + 1) < n && (src[((q - 1) + 1)] == b'"')))) && (q - 1 < n && matches!(src[q - 1], b'r' | b'R')))) || (q >= 2 && (((((q - 2 < n && matches!(src[q - 2], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) && ((q - 2) < n && !((q - 2) >= 1 && (((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))))) && (((q - 2) + 1) < n && matches!(src[((q - 2) + 1)], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U'))) && ((((q - 2) + 2) < n && (src[((q - 2) + 2)] == b'\'')) || (((q - 2) + 2) < n && (src[((q - 2) + 2)] == b'"')))) && (q - 2 < n && matches!(src[q - 2], b'r' | b'R'))))) || (q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'r' | b'R')) && ((q - 1) >= 1 && ((((((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) && (((q - 1) - 1) < n && !(((q - 1) - 1) >= 1 && ((((q - 1) - 1) - 1) < n && matches!(src[(((q - 1) - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))))) && ((((q - 1) - 1) + 1) < n && matches!(src[(((q - 1) - 1) + 1)], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U'))) && (((((q - 1) - 1) + 2) < n && (src[(((q - 1) - 1) + 2)] == b'\'')) || ((((q - 1) - 1) + 2) < n && (src[(((q - 1) - 1) + 2)] == b'"'))))))))))) << 0 | u8::from(((((q < n && (src[q] == b'\'')) || (q < n && (src[q] == b'"'))) && (((q >= 1 && ((((q - 1 < n && matches!(src[q - 1], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))))) && ((((q - 1) + 1) < n && (src[((q - 1) + 1)] == b'\'')) || (((q - 1) + 1) < n && (src[((q - 1) + 1)] == b'"')))) && (q - 1 < n && matches!(src[q - 1], b'b' | b'B')))) || (q >= 2 && (((((q - 2 < n && matches!(src[q - 2], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) && ((q - 2) < n && !((q - 2) >= 1 && (((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))))) && (((q - 2) + 1) < n && matches!(src[((q - 2) + 1)], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U'))) && ((((q - 2) + 2) < n && (src[((q - 2) + 2)] == b'\'')) || (((q - 2) + 2) < n && (src[((q - 2) + 2)] == b'"')))) && (q - 2 < n && matches!(src[q - 2], b'b' | b'B'))))) || (q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'b' | b'B')) && ((q - 1) >= 1 && ((((((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) && (((q - 1) - 1) < n && !(((q - 1) - 1) >= 1 && ((((q - 1) - 1) - 1) < n && matches!(src[(((q - 1) - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))))) && ((((q - 1) - 1) + 1) < n && matches!(src[(((q - 1) - 1) + 1)], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U'))) && (((((q - 1) - 1) + 2) < n && (src[(((q - 1) - 1) + 2)] == b'\'')) || ((((q - 1) - 1) + 2) < n && (src[(((q - 1) - 1) + 2)] == b'"'))))))))))) << 1 | u8::from(((((q < n && (src[q] == b'\'')) || (q < n && (src[q] == b'"'))) && (((q >= 1 && ((((q - 1 < n && matches!(src[q - 1], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))))) && ((((q - 1) + 1) < n && (src[((q - 1) + 1)] == b'\'')) || (((q - 1) + 1) < n && (src[((q - 1) + 1)] == b'"')))) && (q - 1 < n && matches!(src[q - 1], b'f' | b'F')))) || (q >= 2 && (((((q - 2 < n && matches!(src[q - 2], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) && ((q - 2) < n && !((q - 2) >= 1 && (((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))))) && (((q - 2) + 1) < n && matches!(src[((q - 2) + 1)], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U'))) && ((((q - 2) + 2) < n && (src[((q - 2) + 2)] == b'\'')) || (((q - 2) + 2) < n && (src[((q - 2) + 2)] == b'"')))) && (q - 2 < n && matches!(src[q - 2], b'f' | b'F'))))) || (q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'f' | b'F')) && ((q - 1) >= 1 && ((((((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) && (((q - 1) - 1) < n && !(((q - 1) - 1) >= 1 && ((((q - 1) - 1) - 1) < n && matches!(src[(((q - 1) - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))))) && ((((q - 1) - 1) + 1) < n && matches!(src[(((q - 1) - 1) + 1)], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U'))) && (((((q - 1) - 1) + 2) < n && (src[(((q - 1) - 1) + 2)] == b'\'')) || ((((q - 1) - 1) + 2) < n && (src[(((q - 1) - 1) + 2)] == b'"'))))))))))) << 2 | u8::from(((((q < n && (src[q] == b'\'')) || (q < n && (src[q] == b'"'))) && (((q >= 1 && ((((q - 1 < n && matches!(src[q - 1], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))))) && ((((q - 1) + 1) < n && (src[((q - 1) + 1)] == b'\'')) || (((q - 1) + 1) < n && (src[((q - 1) + 1)] == b'"')))) && (q - 1 < n && matches!(src[q - 1], b't' | b'T')))) || (q >= 2 && (((((q - 2 < n && matches!(src[q - 2], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) && ((q - 2) < n && !((q - 2) >= 1 && (((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))))) && (((q - 2) + 1) < n && matches!(src[((q - 2) + 1)], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U'))) && ((((q - 2) + 2) < n && (src[((q - 2) + 2)] == b'\'')) || (((q - 2) + 2) < n && (src[((q - 2) + 2)] == b'"')))) && (q - 2 < n && matches!(src[q - 2], b't' | b'T'))))) || (q >= 1 && ((q - 1 < n && matches!(src[q - 1], b't' | b'T')) && ((q - 1) >= 1 && ((((((q - 1) - 1) < n && matches!(src[((q - 1) - 1)], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) && (((q - 1) - 1) < n && !(((q - 1) - 1) >= 1 && ((((q - 1) - 1) - 1) < n && matches!(src[(((q - 1) - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))))) && ((((q - 1) - 1) + 1) < n && matches!(src[(((q - 1) - 1) + 1)], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U'))) && (((((q - 1) - 1) + 2) < n && (src[(((q - 1) - 1) + 2)] == b'\'')) || ((((q - 1) - 1) + 2) < n && (src[(((q - 1) - 1) + 2)] == b'"'))))))))))) << 3 | u8::from(((((q < n && (src[q] == b'\'')) && (q + 1 < n && (src[q + 1] == b'\''))) && (q + 2 < n && (src[q + 2] == b'\'')))) || ((((q < n && (src[q] == b'"')) && (q + 1 < n && (src[q + 1] == b'"'))) && (q + 2 < n && (src[q + 2] == b'"'))))) << 7;
+                        let seg = q;
+                        let o = if fl & 0x80 != 0 { q + 2 } else { q };
+                        let o1 = o + 1;
+                        if fl & 0x08 != 0 && true {
+                            // a template string
+                            refused = true;
+                            break 'tokens;
+                        }
+                        if fl & 0x80 != 0 && (((q + 3 < n && matches!(src[q + 3], b'\'' | b'"')) && (q < n && !(((q + 4 < n && matches!(src[q + 4], b'\'' | b'"')) && (q + 5 < n && matches!(src[q + 5], b'\'' | b'"'))) && (q < n && !(q + 6 < n && matches!(src[q + 6], b'\'' | b'"'))))))) {
+                            // a triple-quoted string opened by four quotes or more
+                            refused = true;
+                            break 'tokens;
+                        }
+                        // A triple's two more quotes.
+                        if fl & 0x80 != 0 {
+                            {
+                                let (a, z) = (q + 1, q + 2);
+                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+                                if WRITE {
+                                    unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 5 }) };
+                                }
+                                more += 1;
+                            }
+                        }
+                        let mut t0 = o1;
+                        // Its text, from stop to stop (the lean lexer's `string_stop`): its quote, its escape, an interpolation's braces.
+                        let mut at = t0;
+                        let (c, cl, opened) = loop {
+                            let Some(p) = (if fl & 0x04 != 0 { wfirst_bit(n, at, |p: isize, esc: &mut u64| unsafe { w_t93(src, n, p, esc) }) } else { wfirst_bit(n, at, |p: isize, esc: &mut u64| unsafe { w_t92(src, n, p, esc) }) }) else {
+                                // A string open at the file's end.
+                                refused = true;
+                                break 'tokens;
+                            };
+                            if ((p < n && (src[p] == b'\\'))) {
+                                if fl & 0x01 != 0 {
+                                    // A raw string reads no escape: its backslash keeps a quote or a backslash after it from closing it or escaping.
+                                    at = p + 1 + usize::from((((p + 1 < n && (src[p + 1] == b'\'')) || (p + 1 < n && (src[p + 1] == b'"')))) || ((p + 1 < n && (src[p + 1] == b'\\'))));
+                                    continue;
+                                }
+                                if t0 < p {
+                                    {
+                                let (a, z) = (t0, p - 1);
+                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+                                if WRITE {
+                                    unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 8 }) };
+                                }
+                                more += 1;
+                            }
+                                }
+                            if ((p + 1 < n && (src[p + 1] == b'N'))) {
+                                // a `\N{…}` escape
+                                refused = true;
+                                break 'tokens;
+                            }
+                            if fl & 0x02 != 0 && ((p + 1 < n && matches!(src[p + 1], b'N' | b'u' | b'U'))) {
+                                // a `\N`, `\u` or `\U` in a bytes string
+                                refused = true;
+                                break 'tokens;
+                            }
+                                // By its check, else a `\` of one byte (the lean lexer's `backslash`): a quote after it is text.
+                                match check_escape_sequence(&src[p..]) {
+                                    Some(k) => {
+                                        {
+                                let (a, z) = (p, p + k - 1);
+                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+                                if WRITE {
+                                    unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 9 }) };
+                                }
+                                more += 1;
+                            }
+                                        at = p + k;
+                                        t0 = at;
+                                    }
+                                    None => {
+                                        {
+                                let (a, z) = (p, p);
+                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+                                if WRITE {
+                                    unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 11 }) };
+                                }
+                                more += 1;
+                            }
+                                        t0 = p + 1;
+                                        at = p + 1 + usize::from((((p + 1 < n && (src[p + 1] == b'\'')) || (p + 1 < n && (src[p + 1] == b'"')))));
+                                    }
+                                }
+                                continue;
+                            }
+                            if ((p < n && (src[p] == b'{'))) || ((p < n && (src[p] == b'}'))) {
+                                let open = ((p < n && (src[p] == b'{')));
+                                let r = if open { wrun_last(n, p, |p: isize, esc: &mut u64| unsafe { w_m_lbrace(src, n, p, esc) }) } else { wrun_last(n, p, |p: isize, esc: &mut u64| unsafe { w_m_rbrace(src, n, p, esc) }) };
+                                if !open {
+                                if (r + 1 - p) % 2 == 1 {
+                                // a `}` alone in an f-string's text
+                                refused = true;
+                                break 'tokens;
+                                }
+                                }
+                                if t0 < p {
+                                    {
+                                let (a, z) = (t0, p - 1);
+                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+                                if WRITE {
+                                    unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 8 }) };
+                                }
+                                more += 1;
+                            }
+                                }
+                                for i in 0..(r + 1 - p) / 2 {
+                                    {
+                                let (a, z) = (p + 2 * i, p + 2 * i + 1);
+                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+                                if WRITE {
+                                    unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 10 }) };
+                                }
+                                more += 1;
+                            }
+                                }
+                                if open && (r + 1 - p) % 2 == 1 {
+                                    break (r, r, true);
+                                }
+                                at = r + 1;
+                                t0 = at;
+                                continue;
+                            }
+                            // A quote: its own closes it (a triple's, the last three of a run); another is text.
+                            if !(match qi { 0 => ((p < n && (src[p] == b'\''))), _ => ((p < n && (src[p] == b'"'))) }) {
+                                at = p + 1;
+                                continue;
+                            }
+                            if fl & 0x80 != 0 && !(match qi { 0 => ((((((p < n && (src[p] == b'\'')) && (p + 1 < n && (src[p + 1] == b'\''))) && (p + 2 < n && (src[p + 2] == b'\''))) && (p < n && !(p + 3 < n && (src[p + 3] == b'\'')))) && (p < n && !{ let mut k2 = p; let mut odd = false; while k2 > 0 && (k2 - 1 < n && (src[k2 - 1] == b'\\')) { odd = !odd; k2 -= 1; } odd }))), _ => ((((((p < n && (src[p] == b'"')) && (p + 1 < n && (src[p + 1] == b'"'))) && (p + 2 < n && (src[p + 2] == b'"'))) && (p < n && !(p + 3 < n && (src[p + 3] == b'"')))) && (p < n && !{ let mut k2 = p; let mut odd = false; while k2 > 0 && (k2 - 1 < n && (src[k2 - 1] == b'\\')) { odd = !odd; k2 -= 1; } odd }))) }) {
+                                at = p + 1;
+                                continue;
+                            }
+                            if t0 < p {
+                                {
+                                let (a, z) = (t0, p - 1);
+                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+                                if WRITE {
+                                    unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 8 }) };
+                                }
+                                more += 1;
+                            }
+                            }
+                            break (p, if fl & 0x80 != 0 { p + 2 } else { p }, false);
+                        };
+                        if wfirst_in(n, seg, c - 1, |p: isize, esc: &mut u64| unsafe { l_t81(src, n, p, esc, upto(p, c - 1)) }).is_some() {
+                            // a string open at the end of the file
+                            refused = true;
+                            break 'tokens;
+                        }
+                        if fl & 0x80 == 0 && wfirst_in(n, seg, c - 1, |p: isize, esc: &mut u64| unsafe { l_t82(src, n, p, esc, upto(p, c - 1)) }).is_some() {
+                            // a line break in a one-line string that no backslash escapes
+                            refused = true;
+                            break 'tokens;
+                        }
+                        if wfirst_in(n, seg, c - 1, |p: isize, esc: &mut u64| unsafe { l_m_cr(src, n, p, esc, upto(p, c - 1)) }).is_some() {
+                            // a carriage return in a string
+                            refused = true;
+                            break 'tokens;
+                        }
+                        if fl & 0x80 != 0 && (match qi { 0 => wfirst_in(n, o1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t84(src, n, p, esc, upto(p, c - 1)) }).is_some(), _ => wfirst_in(n, o1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t85(src, n, p, esc, upto(p, c - 1)) }).is_some() }) {
+                            // a triple-quoted string closed by four quotes or more
+                            refused = true;
+                            break 'tokens;
+                        }
+                        if fl & 0x01 != 0 && o1 < c && !wfirst_in(n, o1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t91(src, n, p, esc, upto(p, c - 1)) }).is_some() {
+                            // a raw string of backslashes only
+                            refused = true;
+                            break 'tokens;
+                        }
+                        if opened {
+                            {
+                                let (a, z) = (c, c);
+                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+                                if WRITE {
+                                    unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 7 }) };
+                                }
+                                more += 1;
+                            }
+                        } else {
+                            {
+                                let (a, z) = (c, cl);
+                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+                                if WRITE {
+                                    unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 6 }) };
+                                }
+                                more += 1;
+                            }
+                        }
+                        if opened {
+                            if rd_on && rd_depth + 1 >= 4 || rd_total == 7 {
+                            // past 7 frames (f-strings and brackets) or 4 f-strings deep in an interpolation
+                            refused = true;
+                            break 'tokens;
+                            }
+                            if rd_on {
+                                rd_around[rd_depth] = (rd_q, rd_fl, rd_level);
+                                rd_depth += 1;
+                            }
+                            rd_total += 1;
+                            (rd_on, rd_q, rd_fl, rd_level, rd_open) = (true, qi, fl, 0, c);
+                            reads.set |= 1;
+                            rd_code_read(reads);
+                            if rd_code == usize::MAX {
+                                rd_code = c + 1;
+                                reads.set |= 2;
+                                reads.code_known = true;
+                            }
+                            if c_depth == 31 {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            sh_push(reads, rd_kind(rd_q, rd_fl));
+                            c_depth += 1;
+                        }
+                        rd_end = cl;
+                        q
+                    };
+                    let l = l.max(s);
+                    (l, 14, false, 0x0, word_at(src, s, l + 1 - s))
+                }
+,
+                7 => {
+                    // `interp_end`: `rbrace`, read string's, at its template's level 0
+                    let l = {
+                        more = 0;
+                        // Its `}`, then the string's text as the template's string reads it.
+                        rd_frame(reads);
+                        let (qi, fl, seg, o1) = (rd_q, rd_fl, s, s + 1);
+                        if !forced && ((k_t90 >> (s - base) & 1 == 1)) {
+                            // an interpolation's `=`
+                            refused = true;
+                            break 'tokens;
+                        }
+                        if !forced && (s == rd_open + 1) {
+                            // an empty interpolation
+                            refused = true;
+                            break 'tokens;
+                        }
+                        if !forced && (rd_code != usize::MAX && bfirst_in(n, base, k_m_hash, rd_code, s - 1, |p: isize, esc: &mut u64| unsafe { w_m_hash(src, n, p, esc) }).is_some()) {
+                            // a comment in an interpolation
+                            refused = true;
+                            break 'tokens;
+                        }
+                        let mut t0 = o1;
+                        // Its text, from stop to stop (the lean lexer's `string_stop`): its quote, its escape, an interpolation's braces.
+                        let mut at = t0;
+                        let (c, cl, opened) = loop {
+                            let Some(p) = (if fl & 0x04 != 0 { bfirst_bit(n, base, k_t93, at, |p: isize, esc: &mut u64| unsafe { w_t93(src, n, p, esc) }) } else { bfirst_bit(n, base, k_t92, at, |p: isize, esc: &mut u64| unsafe { w_t92(src, n, p, esc) }) }) else {
+                                // A string open at the file's end.
+                                refused = true;
+                                break 'tokens;
+                            };
+                            if ((p < n && (src[p] == b'\\'))) {
+                                if rd_flag(reads, fl, 0x01) != 0 {
+                                    // A raw string reads no escape: its backslash keeps a quote or a backslash after it from closing it or escaping.
+                                    at = p + 1 + usize::from((((p + 1 < n && (src[p + 1] == b'\'')) || (p + 1 < n && (src[p + 1] == b'"')))) || ((p + 1 < n && (src[p + 1] == b'\\'))));
+                                    continue;
+                                }
+                                if t0 < p {
+                                    {
+                                let (a, z) = (t0, p - 1);
+                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+                                if WRITE {
+                                    unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 8 }) };
+                                }
+                                more += 1;
+                            }
+                                }
+                            if ((p + 1 < n && (src[p + 1] == b'N'))) {
+                                // a `\N{…}` escape
+                                refused = true;
+                                break 'tokens;
+                            }
+                            if rd_flag(reads, fl, 0x02) != 0 && ((p + 1 < n && matches!(src[p + 1], b'N' | b'u' | b'U'))) {
+                                // a `\N`, `\u` or `\U` in a bytes string
+                                refused = true;
+                                break 'tokens;
+                            }
+                                // By its check, else a `\` of one byte (the lean lexer's `backslash`): a quote after it is text.
+                                match check_escape_sequence(&src[p..]) {
+                                    Some(k) => {
+                                        {
+                                let (a, z) = (p, p + k - 1);
+                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+                                if WRITE {
+                                    unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 9 }) };
+                                }
+                                more += 1;
+                            }
+                                        at = p + k;
+                                        t0 = at;
+                                    }
+                                    None => {
+                                        {
+                                let (a, z) = (p, p);
+                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+                                if WRITE {
+                                    unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 11 }) };
+                                }
+                                more += 1;
+                            }
+                                        t0 = p + 1;
+                                        at = p + 1 + usize::from((((p + 1 < n && (src[p + 1] == b'\'')) || (p + 1 < n && (src[p + 1] == b'"')))));
+                                    }
+                                }
+                                continue;
+                            }
+                            if ((p < n && (src[p] == b'{'))) || ((p < n && (src[p] == b'}'))) {
+                                let open = ((p < n && (src[p] == b'{')));
+                                let r = if open { brun_last(n, base, k_m_lbrace, p, |p: isize, esc: &mut u64| unsafe { w_m_lbrace(src, n, p, esc) }) } else { brun_last(n, base, k_m_rbrace, p, |p: isize, esc: &mut u64| unsafe { w_m_rbrace(src, n, p, esc) }) };
+                                if !open {
+                                if (r + 1 - p) % 2 == 1 {
+                                // a `}` alone in an f-string's text
+                                refused = true;
+                                break 'tokens;
+                                }
+                                }
+                                if t0 < p {
+                                    {
+                                let (a, z) = (t0, p - 1);
+                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+                                if WRITE {
+                                    unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 8 }) };
+                                }
+                                more += 1;
+                            }
+                                }
+                                for i in 0..(r + 1 - p) / 2 {
+                                    {
+                                let (a, z) = (p + 2 * i, p + 2 * i + 1);
+                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+                                if WRITE {
+                                    unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 10 }) };
+                                }
+                                more += 1;
+                            }
+                                }
+                                if open && (r + 1 - p) % 2 == 1 {
+                                    break (r, r, true);
+                                }
+                                at = r + 1;
+                                t0 = at;
+                                continue;
+                            }
+                            // A quote: its own closes it (a triple's, the last three of a run); another is text.
+                            if !(match rd_quote(reads, qi) { 0 => ((p < n && (src[p] == b'\''))), _ => ((p < n && (src[p] == b'"'))) }) {
+                                at = p + 1;
+                                continue;
+                            }
+                            if rd_flag(reads, fl, 0x80) != 0 && !(match rd_quote(reads, qi) { 0 => ((((((p < n && (src[p] == b'\'')) && (p + 1 < n && (src[p + 1] == b'\''))) && (p + 2 < n && (src[p + 2] == b'\''))) && (p < n && !(p + 3 < n && (src[p + 3] == b'\'')))) && (p < n && !{ let mut k2 = p; let mut odd = false; while k2 > 0 && (k2 - 1 < n && (src[k2 - 1] == b'\\')) { odd = !odd; k2 -= 1; } odd }))), _ => ((((((p < n && (src[p] == b'"')) && (p + 1 < n && (src[p + 1] == b'"'))) && (p + 2 < n && (src[p + 2] == b'"'))) && (p < n && !(p + 3 < n && (src[p + 3] == b'"')))) && (p < n && !{ let mut k2 = p; let mut odd = false; while k2 > 0 && (k2 - 1 < n && (src[k2 - 1] == b'\\')) { odd = !odd; k2 -= 1; } odd }))) }) {
+                                at = p + 1;
+                                continue;
+                            }
+                            if t0 < p {
+                                {
+                                let (a, z) = (t0, p - 1);
+                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+                                if WRITE {
+                                    unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 8 }) };
+                                }
+                                more += 1;
+                            }
+                            }
+                            break (p, if rd_flag(reads, fl, 0x80) != 0 { p + 2 } else { p }, false);
+                        };
+                        if bfirst_in(n, base, k_t81, seg, c - 1, |p: isize, esc: &mut u64| unsafe { w_t81(src, n, p, esc) }).is_some() {
+                            // a string open at the end of the file
+                            refused = true;
+                            break 'tokens;
+                        }
+                        if rd_flag(reads, fl, 0x80) == 0 && wfirst_in(n, seg, c - 1, |p: isize, esc: &mut u64| unsafe { l_t82(src, n, p, esc, upto(p, c - 1)) }).is_some() {
+                            // a line break in a one-line string that no backslash escapes
+                            refused = true;
+                            break 'tokens;
+                        }
+                        if bfirst_in(n, base, k_m_cr, seg, c - 1, |p: isize, esc: &mut u64| unsafe { w_m_cr(src, n, p, esc) }).is_some() {
+                            // a carriage return in a string
+                            refused = true;
+                            break 'tokens;
+                        }
+                        if rd_flag(reads, fl, 0x80) != 0 && (match rd_quote(reads, qi) { 0 => wfirst_in(n, o1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t84(src, n, p, esc, upto(p, c - 1)) }).is_some(), _ => wfirst_in(n, o1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t85(src, n, p, esc, upto(p, c - 1)) }).is_some() }) {
+                            // a triple-quoted string closed by four quotes or more
+                            refused = true;
+                            break 'tokens;
+                        }
+                        if rd_flag(reads, fl, 0x01) != 0 && o1 < c && !wfirst_in(n, o1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t91(src, n, p, esc, upto(p, c - 1)) }).is_some() {
+                            // a raw string of backslashes only
+                            refused = true;
+                            break 'tokens;
+                        }
+                        if opened {
+                            {
+                                let (a, z) = (c, c);
+                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+                                if WRITE {
+                                    unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 7 }) };
+                                }
+                                more += 1;
+                            }
+                        } else {
+                            {
+                                let (a, z) = (c, cl);
+                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+                                if WRITE {
+                                    unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 6 }) };
+                                }
+                                more += 1;
+                            }
+                        }
+                        sh_pop(reads);
+                        c_depth = c_depth.saturating_sub(1);
+                        // The interpolation's code ended at its `}`; a `{` after it begins the next's.
+                        rd_code = usize::MAX;
+                        reads.set |= 2;
+                        reads.code_known = true;
+                        if opened {
+                            rd_open = c;
+                            reads.set |= 1;
+                            rd_code = c + 1;
+                            reads.set |= 2;
+                            reads.code_known = true;
+                            if c_depth == 31 {
+                                refused = true;
+                                break 'tokens;
+                            }
+                            sh_push(reads, reads.popped);
+                            c_depth += 1;
+                        } else {
+                            // The string ended: the template around it is open again.
+                            (rd_on, rd_q, rd_fl, rd_level) = if rd_depth > 0 {
+                                rd_depth -= 1;
+                                let (q, f, v) = rd_around[rd_depth];
+                                (true, q, f, v)
+                            } else {
+                                (false, 0, 0, 0)
+                            };
+                            rd_total = rd_total.saturating_sub(1);
+                        }
+                        rd_end = cl;
+                        rd_bare = true;
+                        s
+                    };
+                    let l = l.max(s);
+                    (l, 3, false, 0x0, word_at(src, s, l + 1 - s))
+                }
+,
+                8 => {
+                    // `spec_text`: `colon`, a format spec, at its template's level 0
+                    let l = {
+                        more = 0;
+                        if !forced && ((k_t90 >> (s - base) & 1 == 1)) {
+                            // an interpolation's `=`
+                            refused = true;
+                            break 'tokens;
+                        }
+                        if !forced && (s == rd_open + 1) {
+                            // an empty interpolation
+                            refused = true;
+                            break 'tokens;
+                        }
+                        if !forced && (rd_code != usize::MAX && bfirst_in(n, base, k_m_hash, rd_code, s - 1, |p: isize, esc: &mut u64| unsafe { w_m_hash(src, n, p, esc) }).is_some()) {
+                            // a comment in an interpolation
+                            refused = true;
+                            break 'tokens;
+                        }
+                        if !forced && ((k_t28 >> (s - base) & 1 == 1)) {
+                            // an empty format spec
+                            refused = true;
+                            break 'tokens;
+                        }
+                        // To the byte before the interpolation's `rbrace` (none at its `colon`'s next).
+                        let Some(e) = bfirst_bit(n, base, k_m_rbrace, s + 2, |p: isize, esc: &mut u64| unsafe { w_m_rbrace(src, n, p, esc) }) else {
+                            refused = true;
+                            break 'tokens;
+                        };
+                        let c = e - 1;
+                        if bfirst_in(n, base, k_t89, s, c - 1, |p: isize, esc: &mut u64| unsafe { w_t89(src, n, p, esc) }).is_some() {
+                            // a `{` or a line break in a format spec
+                            refused = true;
+                            break 'tokens;
+                        }
+                        rd_code = usize::MAX;
+                        reads.set |= 2;
+                        reads.code_known = true;
+                        c
+                    };
+                    let l = l.max(s);
+                    (l, 2, false, 0x0, word_at(src, s, l + 1 - s))
+                }
+,
+                9 => {
+                    // `type_conversion`: a conversion, at its template's level 0
+                    let l = {
+                        more = 0;
+                        if !forced && ((k_t90 >> (s - base) & 1 == 1)) {
+                            // an interpolation's `=`
+                            refused = true;
+                            break 'tokens;
+                        }
+                        s + 1
+                    };
+                    let l = l.max(s);
+                    // a string prefix of three letters or more
+                    if bfirst_in(n, base, k_t71, s + 1, l, |p: isize, esc: &mut u64| unsafe { w_t71(src, n, p, esc) }).is_some() {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    (l, 1, false, 0x0, word_at(src, s, l + 1 - s))
+                }
+,
+                10 => {
+                    // `bad`: one byte
+                    let l = s;
+                    let l = l.max(s);
+                    // a backslash
+                    if (k_m_bslash >> (s - base) & 1 == 1) {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, 0)
+                }
+,
+                _ => {
+                    // A byte no row takes: its group's tests, none of which holds.
+                    refused = true;
+                    break 'tokens;
+                }
+            }
+        }
+;
+        // The token marks: tier 2 tests the rest of each.
+        if extra {
+            // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.
+                if g_depth == 0 && (rec_0) {
+                    marks |= 1 << 0;
+                }
+            pending |= hits & 0xffff | hits >> 16;
+        } else if rd_bare {
+            // A string's tail: its gap is the next token's.
+            marks = 0;
+        } else {
+            let tested = pending | hits;
+                // `newline`
+                if (tested >> 0 & 1 == 1 || g_depth == 0 && (acc_0)) {
+                    marks |= 1 << 0;
+                }
+                // `indent`
+                if (tested >> 1 & 1 == 1 || g_depth == 0 && (acc_0)) {
+                    marks |= 1 << 1;
+                }
+                // `dedent`: its carrier's bit (`DERIVED`)
+                // `real`
+                if (tested >> 6 & 1 == 1) {
+                    marks |= 1 << 6;
+                }
+            from = s + 1;
+            before = word;
+            pending = hits >> 16;
+        }
+        if !rd_bare {
+            from_record = s + 1;
+        }
+        // The gap mask `lf & code`: on after a token the grammar skips; else from this token's bytes after its start.
+        acc_0 = extra && acc_0;
+        rec_0 = false;
+        let rec = Rec { start: s as u32, last: l as u32, code: kind | if rd_bare { 0 } else { word << 8 } | marks << 16 };
+        rd_bare = false;
+        if extra {
+            if WRITE {
+                extras.push(rec);
+            }
+        } else {
+            debug_assert!(len < n && l >= s, "a token a byte at most");
+            // SAFETY: `len < n`, the room reserved: a record's first byte is after the record before's last.
+            if WRITE {
+                unsafe { out.add(len).write(rec) };
+            }
+            // A string's record is its first piece, its others after it (`more`), to its last byte (`rd_end`).
+            len += 1 + more;
+            more = 0;
+        }
+        // a tab or a form feed in a line's indentation: in the gap and the token
+        if { let mut q = at; loop { match bfirst_in(n, base, k_t72_a, q, if rd_end != usize::MAX { rd_end } else { l }, |p: isize, esc: &mut u64| unsafe { w_t72_a(src, n, p, esc) }) { Some(i) if { let mut k0 = i; loop { if (k0 >= 1 && (k0 - 1 < n && (src[k0 - 1] == b'\n'))) { break true; } if (k0 < n && !(k0 < n && matches!(src[k0], b' ' | 0x09 | 0x0c | 0x0d))) || k0 == 0 { break false; } k0 -= 1; } } => break Some(i), Some(i) => q = i + 1, None => break None } } }.is_some() {
+            refused = true;
+            break 'tokens;
+        }
+        // a tab or a form feed starting the file: in the gap and the token
+        if bfirst_in(n, base, k_t76, at, if rd_end != usize::MAX { rd_end } else { l }, |p: isize, esc: &mut u64| unsafe { w_t76(src, n, p, esc) }).is_some() {
+            refused = true;
+            break 'tokens;
+        }
+        at = if rd_end != usize::MAX { rd_end } else { l } + 1;
+        rd_end = usize::MAX;
+        if ONE {
+            break 'tokens;
+        }
+        if at >= base + 64 {
+            b = at / 64;
+            continue 'tokens;
+        }
+        firsts &= !0u64 << (at - base);
+        }
+        b += 1;
+    }
+    *e = Entry { at, pending, opened, acc_0, rec_0, c_depth, rd_on, rd_q, rd_fl, rd_level, rd_total, rd_open, rd_around, rd_depth, rd_code, more, rd_end, rd_bare };
+    e.canonical();
+    (*refused_io, *len_io) = (refused, len);
+}
+
+/// What the serial lexer checks of its state at the file's end.
+#[allow(unused_variables, unused_mut, clippy::all)]
+fn finish(src: &[u8], n: usize, e: &Entry, refused_io: &mut bool) {
+    let Entry { at, pending, opened, acc_0, rec_0, c_depth, rd_on, rd_q, rd_fl, rd_level, rd_total, rd_open, rd_around, rd_depth, rd_code, more, rd_end, rd_bare, } = *e;
+    let mut refused = *refused_io;
+    if rd_code != usize::MAX && rd_code < n && wfirst_in(n, rd_code, n - 1, |p: isize, esc: &mut u64| unsafe { l_m_hash(src, n, p, esc, upto(p, n - 1)) }).is_some() {
+        refused = true;
+    }
+    if at < n && { let mut q = at; loop { match wfirst_in(n, q, n - 1, |p: isize, esc: &mut u64| unsafe { l_t72_a(src, n, p, esc, upto(p, n - 1)) }) { Some(i) if { let mut k0 = i; loop { if (k0 >= 1 && (k0 - 1 < n && (src[k0 - 1] == b'\n'))) { break true; } if (k0 < n && !(k0 < n && matches!(src[k0], b' ' | 0x09 | 0x0c | 0x0d))) || k0 == 0 { break false; } k0 -= 1; } } => break Some(i), Some(i) => q = i + 1, None => break None } } }.is_some() {
+        refused = true;
+    }
+    if at < n && wfirst_in(n, at, n - 1, |p: isize, esc: &mut u64| unsafe { l_t76(src, n, p, esc, upto(p, n - 1)) }).is_some() {
+        refused = true;
+    }
+    *refused_io = refused;
+}
+
+/// The regions a chunk can start inside (`Force`): each its number, its row, its closer's offset and its level.
+const REGIONS: [(usize, usize, usize, usize); 35] = [(0, 7, 1, 0), (1, 7, 1, 0), (2, 7, 1, 0), (3, 7, 1, 0), (4, 7, 1, 0), (5, 7, 1, 0), (6, 7, 1, 0), (7, 7, 1, 0), (8, 7, 1, 0), (9, 7, 1, 0), (10, 7, 1, 0), (11, 7, 1, 0), (12, 7, 1, 0), (13, 7, 1, 0), (14, 7, 1, 0), (15, 7, 1, 0), (16, 7, 1, 0), (17, 7, 1, 0), (18, 7, 1, 0), (19, 7, 1, 0), (20, 7, 1, 0), (21, 7, 1, 0), (22, 7, 1, 0), (23, 7, 1, 0), (24, 7, 1, 0), (25, 7, 1, 0), (26, 7, 1, 0), (27, 7, 1, 0), (28, 7, 1, 0), (29, 7, 1, 0), (30, 7, 1, 0), (31, 7, 1, 0), (8, 8, 2, 0), (8, 9, 1, 0), (usize::MAX, 5, 1, 0)];
+
+
+/// No stage 1 runs before the loop: a chunk carries none of it.
+struct Stage1;
+
+impl Stage1 {
+    fn new(_: usize) -> Stage1 {
+        Stage1
+    }
+}
+
+struct Stage1Run;
+
+impl Stage1Run {
+    fn new() -> Stage1Run {
+        Stage1Run
+    }
+}
+
+/// None: no blocks before a chunk's first are read again.
+pub const PRIME: usize = 0;
+
+fn stage1_at(_src: &[u8], _n: usize, _s1: &mut Stage1, _from: usize) -> Stage1Run {
+    Stage1Run
+}
+
+
+/// Where the chunk from block `from` is entered in code: past the whitespace before its first byte (the token before
+/// ends there, or runs into the chunk).
+fn code_entry(src: &[u8], n: usize, from: usize) -> usize {
+    let mut a = (64 * from).min(n);
+    // SAFETY: `a - 1` is a byte of the file.
+    while a > 0 && unsafe { w_m_ws(src, n, (a - 1) as isize, &mut 0) } & 1 == 1 {
+        a -= 1;
+    }
+    a
+}
+
+/// The backslashes before byte `at`.
+#[inline]
+fn run_before(src: &[u8], at: usize) -> usize {
+    let mut k = 0;
+    while k < at && src[at - 1 - k] == b'\\' {
+        k += 1;
+    }
+    k
+}
+
+/// The lanes from `e0` (its `at`, and what it keeps of the token before) to block `to`: one for each nest below its entry
+/// a lane reads, none first, and where a lane read the bottom, one more level below it of each kind, to `MAXD`.
+fn lanes_from(src: &[u8], n: usize, s1: &mut Stage1, st1: &mut Stage1Run, starts: &[Entry], to: usize, sum: &mut Summary) {
+    let mut extras = Vec::new();
+    // The nests to enter each start with, outermost first: every start's of one depth before any start's deeper
+    // (where the lanes pass `L`, the deepest go).
+    let mut todo: Vec<(usize, [u8; MAXD], usize, u8)> = (0..starts.len()).map(|si| (si, [0; MAXD], 0, 0)).collect();
+    let mut deeper: Vec<(usize, [u8; MAXD], usize, u8)> = Vec::new();
+    let mut i = 0;
+    // The runs a summary's lanes take, at most `4 L`: past them, as past `L` lanes, the classes not yet entered are no
+    // lane's (most of a run's classes can come to lanes it has, which take no room).
+    let mut runs = 0;
+    loop {
+        // Past `L` no lane is kept: the classes not yet entered are no lane's (`over`).
+        if runs == 4 * L {
+            sum.over = true;
+        }
+        if sum.over {
+            break;
+        }
+        runs += 1;
+        if i == todo.len() {
+            if deeper.is_empty() {
+                break;
+            }
+            todo = core::mem::take(&mut deeper);
+            i = 0;
+        }
+        let (si, k, kd, cond) = todo[i];
+        i += 1;
+        let e0 = starts[si];
+        let at0 = e0.at;
+        let mut e = e0;
+        let (mut nest, mut held, mut opened) = ([usize::MAX; MAXD], [0usize; MAXD], 0usize);
+        for d in 0..kd {
+            nest[d] = level_of(k[d]);
+            if k[d] != 255 {
+                held[opened] = INHERIT + (kd - 1 - d);
+                opened += 1;
+            }
+        }
+        e.set_levels(&nest, &held, opened, kd);
+        e.lane_entry(src);
+        let mut reads = Reads::lane(&k, kd);
+        enter_cond(&mut e, &mut reads, cond);
+        let (mut refused, mut len) = (false, 0usize);
+        // SAFETY: no record written (`WRITE` false).
+        unsafe { lex_range::<false, false>(src, n, &mut e, st1, s1, to, &mut refused, core::ptr::null_mut(), &mut len, &mut extras, &mut reads, None) };
+        // It read the kind of a level it entered with none: one lane for each kind, not this one.
+        if let Some(d) = reads.kind_of {
+            for &kind in split_kinds(k[d], &reads) {
+                if d + 1 < kd && !may_hold(kind, k[d + 1]) || d > 0 && !may_hold(k[d - 1], kind) {
+                    continue;
+                }
+                let mut k2 = k;
+                k2[d] = kind;
+                todo.push((si, k2, kd, cond));
+            }
+            continue;
+        }
+        // It read a kept value of its entry its class does not give: one lane for each class of it (`CONDS`).
+        if reads.lost {
+            if cond == 0 {
+                todo.extend(CONDS.iter().map(|&c| (si, k, kd, c)));
+            }
+            continue;
+        }
+        let low = reads.low;
+        let mut l = NO_LANE;
+        l.at0 = at0;
+        l.kcn = (kd - low) as u8;
+        for j in 0..kd - low {
+            l.kc[j] = k[kd - 1 - j];
+        }
+        l.exact = reads.bottom;
+        l.need = low as u8;
+        let (xn, xh, xd) = exit_levels(&e, &reads);
+        l.pn = (xd - low) as u8;
+        // The templates' strings below `low` are the entry's; those above, the lane's, at the records it counted.
+        let below = (0..low).filter(|&d| xn[d] != usize::MAX).count();
+        let mut h = below;
+        for j in 0..xd - low {
+            l.p[j] = kind_of(xn[low + j]);
+            if xn[low + j] != usize::MAX {
+                l.ph[j] = xh[h];
+                h += 1;
+            }
+        }
+        l.high = (reads.high - low) as u8;
+        l.recs = len;
+        l.exit = e.without_nest();
+        // Its exit's kept values are not read: one form of them (the start's).
+        l.exit.carry(&Entry::START, l.keep);
+        l.refused = refused;
+        l.moved = e.at != at0 || refused;
+        // A lane that refuses the file leaves nothing read: one form of it, its class's.
+        if refused {
+            (l.exit, l.p, l.ph, l.pn, l.high, l.recs, l.keep) = (Entry::START, [0; MAXD], [0; MAXD], 0, 0, 0, 0);
+        }
+        l.keep = !reads.set;
+        l.cond = cond;
+        sum.push(l);
+        // It read the bottom: one more lane, with a level more open below, of no kind until one is read.
+        if reads.bottom && kd < MAXD {
+            let mut k2 = [0u8; MAXD];
+            k2[0] = 254;
+            k2[1..=kd].copy_from_slice(&k[..kd]);
+            deeper.push((si, k2, kd + 1, cond));
+        }
+    }
+}
+
+/// Pass 1: the chunk of blocks `from..to`, writing nothing: its lanes from its code entry (`code_entry`), then from the
+/// end of each region it can start inside (its row's read of it from the chunk's first byte, `Force`).
+fn chunk_ends(src: &[u8], n: usize, s1: &mut Stage1, from: usize, to: usize) -> Summary {
+    let mut st1 = stage1_at(src, n, s1, from);
+    let mut e = Entry::START;
+    e.at = if from == 0 { 0 } else { code_entry(src, n, from) };
+    let start = 64 * from;
+    let mut sum = Summary { lanes: [NO_LANE; L], n: 0, start, end: (64 * to).min(n).max(start), code: e.at, head: (64 * to).min(n).max(start), over: false };
+    // A token the chunk starts inside, of code: blanks part the tokens of code, so the serial lexer's tokens from the
+    // first byte of the run of bytes before the chunk (a block at most) are its, the last of them the one it starts in.
+    // Lexed from there in each class of nest (`lanes_from`, to the chunk's first block), each end past the chunk's first
+    // byte is one. (A run's first byte starts a token, or is in a region: a region's ends are places of their own.)
+    let mut starts = vec![e];
+    let mut from_run = false;
+    if from > 0 && e.at == start && start < n {
+        let mut r = start;
+        // SAFETY: `r - 1` is a byte of the file.
+        while r > 0 && start - r < 64 && unsafe { w_m_ws(src, n, (r - 1) as isize, &mut 0) } & 1 == 0 {
+            r -= 1;
+        }
+        if r == 0 || start - r < 64 {
+            let mut x = Entry::START;
+            x.at = r;
+            let mut run = Summary { lanes: [NO_LANE; L], n: 0, start: r, end: start, code: r, head: start, over: false };
+            let mut st0 = stage1_at(src, n, s1, r / 64);
+            lanes_from(src, n, s1, &mut st0, &[x], from, &mut run);
+            let end = (64 * to).min(n);
+            for l in run.lanes() {
+                if !l.refused && l.exit.at > start && l.exit.at <= end && !starts.iter().any(|y| y.at == l.exit.at) {
+                    starts.push(l.exit.without_nest());
+                }
+            }
+            from_run = true;
+        }
+    }
+    if from == 0 || start >= n {
+        lanes_from(src, n, s1, &mut st1, &starts, to, &mut sum);
+        return sum;
+    }
+    // A token the chunk starts inside, of code: it ends where the code lane's first token does (a name's, a number's,
+    // a template's `{`), and the next starts there.
+    // The token's end is where one lexed from a byte of it ends: from each byte before the first blank, each end once.
+    // (And where the run's first byte is a region's closer, which reads as an opener from there.) Where the run before
+    // was lexed in each class, the first end alone: a token lexed from a byte inside one of code ends where it does.
+    if e.at == start {
+        let end = (64 * to).min(n);
+        let mut ends: Vec<usize> = Vec::new();
+        let mut p = start;
+        // SAFETY: `p` is a byte of the file.
+        while p < end && unsafe { w_m_ws(src, n, p as isize, &mut 0) } & 1 == 0 {
+            let (mut refused, mut len) = (false, 0usize);
+            let mut reads = Reads::NONE;
+            let mut extras = Vec::new();
+            let mut first = Entry::START;
+            first.at = p;
+            // SAFETY: no record written (`WRITE` false).
+            unsafe { lex_range::<false, true>(src, n, &mut first, &mut st1, s1, usize::MAX, &mut refused, core::ptr::null_mut(), &mut len, &mut extras, &mut reads, None) };
+            if !refused && first.at > start && first.at <= end && !ends.contains(&first.at) {
+                ends.push(first.at);
+                if !starts.iter().any(|x| x.at == first.at) {
+                    starts.push(first.without_nest());
+                }
+                if from_run {
+                    break;
+                }
+            }
+            p += 1;
+        }
+    }
+    // Inside a region: its closer's search from the chunk's first byte, or from the backslashes before it.
+    let from_byte = start - run_before(src, start);
+    let mut seen: Vec<usize> = Vec::new();
+    for &(open, row, k, lv) in &REGIONS {
+        if from_byte < k {
+            continue;
+        }
+        let s = from_byte - k;
+        let mut e = Entry::START;
+        e.at = s;
+        e.region_entry(open);
+        let (mut refused, mut len) = (false, 0usize);
+        let mut reads = Reads::NONE;
+        let mut extras = Vec::new();
+        // SAFETY: no record written (`WRITE` false).
+        unsafe { lex_range::<false, true>(src, n, &mut e, &mut st1, s1, usize::MAX, &mut refused, core::ptr::null_mut(), &mut len, &mut extras, &mut reads, Some(Force { s, open, row, lv })) };
+        if refused || seen.contains(&e.at) {
+            continue;
+        }
+        seen.push(e.at);
+        // (One start a place: the first, the code's before a region's.)
+        if !starts.iter().any(|x| x.at == e.at) {
+            starts.push(e.without_nest());
+        }
+    }
+    lanes_from(src, n, s1, &mut st1, &starts, to, &mut sum);
+    sum
+}
+
+/// Pass 1 over `src`: each chunk of `blocks` blocks' summary (`chunk_ends`).
+pub fn summaries(src: &[u8], n: usize, blocks: usize) -> Vec<Summary> {
+    let mut s1 = Stage1::new(n.div_ceil(64));
+    chunk_starts(n, blocks).into_iter().map(|q| chunk_ends(src, n, &mut s1, q, q + blocks.max(1))).collect()
+}
+
+/// The serial lexer's entry at each chunk's start, and the records before it: what pass 3 gives where it is right.
+pub fn serial_entries(src: &[u8], n: usize, blocks: usize) -> Vec<(Entry, usize)> {
+    let mut s1 = Stage1::new(n.div_ceil(64));
+    let mut st1 = Stage1Run::new();
+    let (mut e, mut refused, mut len, mut out) = (Entry::START, false, 0usize, Vec::new());
+    let mut extras = Vec::new();
+    chunk_starts(n, blocks)
+        .into_iter()
+        .map(|q| {
+            let at = (e, len);
+            let mut reads = Reads::NONE;
+            // SAFETY: no record written (`WRITE` false).
+            unsafe { lex_range::<false, false>(src, n, &mut e, &mut st1, &mut s1, q + blocks.max(1), &mut refused, core::ptr::null_mut(), &mut len, &mut extras, &mut reads, None) };
+            out.push(());
+            at
+        })
+        .collect()
+}
+
+/// `src` lexed in chunks of `blocks` blocks: pass 1, the prefix sum, then each chunk from its entry, which checks its
+/// exit is the next chunk's entry. The records, and the chunks entered again where pass 3's entry was not the one the
+/// chunk before left (or no lane gave one).
+pub fn lex_chunked(src: &[u8], n: usize, blocks: usize) -> (Lexed, usize) {
+    let nw = n.div_ceil(64);
+    let blocks = blocks.max(1);
+    let starts = chunk_starts(n, blocks);
+    let ends = summaries(src, n, blocks);
+    let mut s1 = Stage1::new(nw);
+    let pred = entries(&ends);
+    let mut recs: Vec<Rec> = Vec::with_capacity(n + 1);
+    let mut extras: Vec<Rec> = Vec::new();
+    let (mut e, mut refused, mut again) = (Entry::START, false, 0usize);
+    for (c, &q) in starts.iter().enumerate() {
+        if pred[c].is_none_or(|(p, r, _)| p != e || r != recs.len()) {
+            again += 1;
+        }
+        let mut st1 = stage1_at(src, n, &mut s1, q);
+        let mut len = recs.len();
+        let mut reads = Reads::NONE;
+        // SAFETY: room for a record a byte of the file (`n + 1`), each after the last.
+        unsafe { lex_range::<true, false>(src, n, &mut e, &mut st1, &mut s1, q + blocks, &mut refused, recs.as_mut_ptr(), &mut len, &mut extras, &mut reads, None) };
+        // SAFETY: `len` records written.
+        unsafe { recs.set_len(len) };
+        if refused {
+            break;
+        }
+    }
+    if !refused {
+        finish(src, n, &e, &mut refused);
+    }
+    (Lexed { recs, extras, refused }, again)
+}
+
+/// A level the lane's entry has open, of a kind it has read none of yet: a bracket's or a template's.
+pub const OPEN: usize = usize::MAX - 1;
+
+/// A string's record a lane keeps from its entry (a tail resumes the string of the level it closes): `INHERIT + i`, the
+/// `i`th level the lane closes (innermost first), where a lane's own are the records it counts.
+pub const INHERIT: usize = 1 << 62;
+
+/// The deepest the nest goes (the serial lexer refuses past it), and the kinds a level can be: a bracket's (255), then
+/// each template's string kind.
+pub const MAXD: usize = 31;
+pub const LEVEL_KINDS: [u8; 17] = [255, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+
+/// Whether an entry in a range's code that no lane starts at goes on in its code lanes: where the loop's tokens from any
+/// byte of the code come to the same place (rr's, whose regions alone hold their openers), the code lane's place.
+const CODE_ANYWHERE: bool = false;
+
+/// The lanes a summary holds at most; a chunk that needs more is unresolved (`Summary::over`): pass 2 enters it from the
+/// entry the chunks before it leave.
+pub const L: usize = 128;
+
+/// A level's kind in a lane (`LEVEL_KINDS`, or 254: open, of no kind yet), its value in `nest`.
+#[inline]
+fn kind_of(k: usize) -> u8 {
+    match k {
+        usize::MAX => 255,
+        OPEN => 254,
+        k => k as u8,
+    }
+}
+
+#[inline]
+fn level_of(k: u8) -> usize {
+    match k {
+        255 => usize::MAX,
+        254 => OPEN,
+        k => usize::from(k),
+    }
+}
+
+
+/// Whether a lane's level of kind `k` meets a level of kind `m`: every level of kind `m` is one of `k`.
+#[inline]
+fn meets(k: u8, m: u8) -> bool {
+    meet(k, m) == Some(m)
+}
+
+/// One lane of a summary: what a range of chunks does for the entries at `at0` whose innermost `kcn` levels are `kc`
+/// (innermost first), all of them where `exact` (it read the bottom: "nothing open" below them). It leaves `p[..pn]`
+/// open (outermost first) above what is left of the entry, the strings of those that are templates at the records
+/// `ph` (from the range's first), and goes `high` levels above what is left. `exit`'s `at` and kept values are its
+/// end's; its nest fields are not read (`p` is).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Lane {
+    pub at0: usize,
+    pub kc: [u8; MAXD],
+    pub kcn: u8,
+    pub exact: bool,
+    /// The levels the entry has open below those the lane closes, which it never comes to: it holds for an entry with
+    /// at least these (a lane with fewer is another's, the one that read the bottom). None where `exact`.
+    pub need: u8,
+    pub p: [u8; MAXD],
+    pub pn: u8,
+    pub ph: [usize; MAXD],
+    pub high: u8,
+    pub recs: usize,
+    pub exit: Entry,
+    pub refused: bool,
+    /// Whether it lexes a token: one that lexes none leaves its entry as it was.
+    pub moved: bool,
+    /// The values of its entry it leaves as they were, which it never set (`Entry::carry`'s bits): its exit's are not
+    /// read.
+    pub keep: u8,
+    /// What it read of a value its entry keeps (`COND_KEEP`'s): the entries it holds for, by `Entry::cond` (0: any).
+    pub cond: u8,
+}
+
+/// A range's summary: its lanes (an entry past the range's head, its first chunk, at one of its later chunks' places,
+/// the lanes of those); its bytes (`start..end`, from the first that lexes a token), an entry at or past whose end goes
+/// through it as it came; where its code lanes start (`code`: past the blanks before `start`, the lanes for an entry
+/// before it) and the end of their chunk (`head`); and
+/// whether an entry may have gone on in a lane past `L` (`over`, how the range was made of its parts, not a fact of the
+/// range: its lanes are those).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Summary {
+    pub lanes: [Lane; L],
+    pub n: u8,
+    pub start: usize,
+    pub end: usize,
+    pub code: usize,
+    pub head: usize,
+    pub over: bool,
+}
+
+impl Summary {
+    fn push(&mut self, l: Lane) {
+        if self.lanes[..usize::from(self.n)].contains(&l) {
+            return;
+        }
+        // The same lane for the other class of a kept value it read (`cond`: the classes are two): for every entry.
+        if l.cond != 0
+            && let Some(m) = self.lanes[..usize::from(self.n)].iter_mut().find(|m| m.cond != 0 && m.cond != l.cond && Lane { cond: l.cond, ..**m } == l)
+        {
+            m.cond = 0;
+            return;
+        }
+        if usize::from(self.n) == L {
+            self.over = true;
+            return;
+        }
+        self.lanes[usize::from(self.n)] = l;
+        self.n += 1;
+    }
+
+    pub fn lanes(&self) -> &[Lane] {
+        &self.lanes[..usize::from(self.n)]
+    }
+
+    /// Whether no lane lexes a token: every entry goes through it as it came (the chunk is blank past its code entry,
+    /// or inside a region to past its end).
+    pub fn transparent(&self) -> bool {
+        self.n > 0 && !self.over && self.lanes().iter().all(|l| !l.moved)
+    }
+}
+
+const NO_LANE: Lane = Lane { at0: 0, kc: [0; MAXD], kcn: 0, exact: false, need: 0, p: [0; MAXD], pn: 0, ph: [0; MAXD], high: 0, recs: 0, exit: Entry::START, refused: false, moved: false, keep: 0, cond: 0 };
+
+/// The lanes of `b` a lane of the range before it goes on in: those entered where it leaves the next token, else the
+/// code's (a token from before `b` ends in its code).
+fn next_lanes(b: &Summary, at: usize) -> impl Iterator<Item = &Lane> {
+    // An entry before the range's first byte comes through blanks to where its code lanes start.
+    // (Where `b` dropped lanes past `L`, an entry with none may have had one: no code lane for it.)
+    let at0 = if at < b.start || (CODE_ANYWHERE && !b.over && at < b.head && !b.lanes().iter().any(|l| l.at0 == at)) { b.code } else { at };
+    b.lanes().iter().filter(move |l| l.at0 == at0)
+}
+
+/// Lane `a` then lane `b` (entered where `a` leaves), as typed bracket sequences: `b`'s closed levels matched against
+/// what `a` leaves open, the rest of them closed below `a`'s entry. None where they do not meet.
+fn then(a: &Lane, b: &Lane) -> Option<Lane> {
+    // `a` refuses the file: nothing past it is read.
+    if a.refused {
+        return Some(*a);
+    }
+    // `b` lexes no token: what `a` leaves goes through it.
+    if !b.moved {
+        return Some(*a);
+    }
+    if !a.moved {
+        let mut l = *b;
+        l.at0 = a.at0;
+        return Some(l);
+    }
+    let (an, bn, pn) = (usize::from(a.kcn), usize::from(b.kcn), usize::from(a.pn));
+    let j = bn.min(pn);
+    // `b`'s first `j` closed levels, innermost first, are `a`'s open ones, innermost last. One `a` leaves of no kind
+    // (its entry's, `wild`) that `b` read the kind of: `a`'s class of it that kind (`refine`).
+    let (mut refine, mut nr) = ([(0usize, 0u8); MAXD], 0);
+    for i in 0..j {
+        let (k, m) = (b.kc[i], a.p[pn - 1 - i]);
+        match meet(k, m) {
+            Some(x) if x == m => {}
+            // (What `a`'s class knows of the level, which its wildcard does not say.)
+            Some(_) if wild(m) && pn - 1 - i < an => {
+                let at = an - 1 - (pn - 1 - i);
+                let Some(x) = meet(k, a.kc[at]) else { return None };
+                refine[nr] = (at, x);
+                nr += 1;
+            }
+            _ => return None,
+        }
+    }
+    let mut l = *b;
+    l.at0 = a.at0;
+    // What `b` keeps of its entry is `a`'s exit's, where `a` set it; what both keep, `a`'s entry's.
+    l.keep = a.keep & b.keep;
+    l.exit.carry(&a.exit, b.keep & !a.keep);
+    // What `b` read of its entry's kept values (`cond`): `a`'s exit's where `a` set them, else `a`'s entry's.
+    l.cond = a.cond;
+    if b.cond != 0 {
+        if a.keep & COND_KEEP == 0 {
+            if a.exit.cond() != b.cond {
+                return None;
+            }
+        } else if a.cond != 0 && a.cond != b.cond {
+            return None;
+        } else {
+            l.cond = b.cond;
+        }
+    }
+    if bn > pn {
+        // `b` closes past what `a` left open: below `a`'s entry, where `a` read none (`exact`) there is none.
+        // (No entry has more than `MAXD` levels open: the serial lexer refuses past them.)
+        if a.exact || an + bn - pn > MAXD {
+            return None;
+        }
+        l.kc = [0; MAXD];
+        l.kc[..an].copy_from_slice(&a.kc[..an]);
+        l.kc[an..an + bn - pn].copy_from_slice(&b.kc[pn..bn]);
+        l.kcn = (an + bn - pn) as u8;
+        l.exact = b.exact;
+        l.need = b.need.max(a.need.saturating_sub((bn - pn) as u8));
+    } else {
+        // `b` read the bottom with levels `a` left open below its own: no such entry.
+        if b.exact && pn > bn {
+            return None;
+        }
+        l.kc = a.kc;
+        l.kcn = a.kcn;
+        l.exact = a.exact || b.exact;
+        // `b` holds where `a` leaves at least `bn + b.need` open: `a`'s entry at least that less what `a` opens.
+        l.need = a.need.max((usize::from(b.need) + bn).saturating_sub(pn) as u8);
+    }
+    for &(i, k) in &refine[..nr] {
+        l.kc[i] = k;
+    }
+    // An entry with exactly `kn` levels open can have none more below.
+    if l.exact && l.need > 0 {
+        return None;
+    }
+    let kn = usize::from(l.kcn);
+    // Open: `a`'s below what `b` closed, then `b`'s; `b`'s strings' records after `a`'s.
+    let keep = pn - j;
+    let mut p = [0u8; MAXD];
+    let mut ph = [0usize; MAXD];
+    p[..keep].copy_from_slice(&a.p[..keep]);
+    ph[..keep].copy_from_slice(&a.ph[..keep]);
+    let bp = usize::from(b.pn);
+    if keep + bp > MAXD {
+        return None;
+    }
+    for i in 0..bp {
+        // A level `b` leaves of no kind is its entry's: `a`'s, where `a` left it.
+        let ai = (i + pn).checked_sub(bn).filter(|&x| x < pn);
+        p[keep + i] = match ai {
+            Some(x) if wild(b.p[i]) => a.p[x],
+            _ => b.p[i],
+        };
+        ph[keep + i] = if b.p[i] == 255 {
+            0
+        } else if b.ph[i] >= INHERIT {
+            // A record `b` keeps from a level it closes: `a`'s, where `a` left it open; else one below `a`'s entry.
+            let q = b.ph[i] - INHERIT;
+            if q < j { a.ph[pn - 1 - q] } else { INHERIT + an + q - pn }
+        } else {
+            b.ph[i] + a.recs
+        };
+    }
+    l.p = p;
+    l.ph = ph;
+    l.pn = (keep + bp) as u8;
+    // The deepest, above the combined base (the entry less its `kn` closed levels): `a` starts `kn - an` above it, and
+    // `b` where `a` leaves it, `kn + pn - an - bn` above it (none where `b` closes past `a`'s open levels).
+    let ha = usize::from(a.high) + (kn - an);
+    let hb = usize::from(b.high) + (kn + pn) - (an + bn);
+    l.high = ha.max(hb) as u8;
+    l.recs = a.recs + b.recs;
+    l.refused = a.refused || b.refused;
+    Some(l)
+}
+
+/// Two ranges' summaries, one after the other: each lane of the first, on through the lanes of the second it meets.
+/// Associative, so a prefix sum composes them in any tree.
+pub fn compose(a: &Summary, b: &Summary) -> Summary {
+    let (start, end) = (a.start, b.end);
+    if b.transparent() {
+        return Summary { start, end, over: a.over || b.over, ..*a };
+    }
+    if a.transparent() {
+        // Every entry goes through `a` as it came, to `b`: `b`'s lanes, an entry before `b` at its code lanes.
+        let _ = start;
+        return Summary { end, over: a.over || b.over, ..*b };
+    }
+    let mut s = Summary { lanes: [NO_LANE; L], n: 0, start, end, code: a.code, head: a.head, over: a.over };
+    for la in a.lanes() {
+        // A lane that leaves at or past `b`'s end goes through `b` as it is.
+        if la.exit.at >= b.end {
+            s.push(*la);
+            continue;
+        }
+        let mut met = false;
+        for lb in next_lanes(b, la.exit.at) {
+            if let Some(l) = then(la, lb) {
+                met = true;
+                s.push(l);
+            }
+        }
+        // A lane of `a` may go on in one `b` dropped.
+        s.over |= !met && b.over;
+    }
+    // An entry at or past `a`'s end goes through `a` to `b`'s lanes there.
+    for lb in b.lanes().iter().filter(|l| l.at0 >= a.end) {
+        s.push(*lb);
+    }
+    s.over |= b.over && b.lanes().iter().any(|l| l.at0 >= a.end);
+    s
+}
+
+/// The entry a range leaves after entry `e` (`e` at its first byte, the records before it `recs`): its lane for `e`'s
+/// nest, and whether the file is refused on the way. None where no lane meets it (one past `L` would have).
+pub fn apply(s: &Summary, e: &Entry, recs: usize) -> Option<(Entry, usize, bool)> {
+    // Each lane holds for its class of entries, and the lanes of a range split them apart: a lane kept where others went
+    // past `L` still holds, and no other lane meets its entries.
+    if s.transparent() || e.at >= s.end {
+        return Some((*e, recs, false));
+    }
+    let (en, eh, d) = e.levels();
+    let l = next_lanes(s, e.at).find(|l| {
+        let kn = usize::from(l.kcn);
+        kn + usize::from(l.need) <= d && (0..kn).all(|i| meets(l.kc[i], kind_of(en[d - 1 - i]))) && (!l.exact || d == kn) && (l.cond == 0 || l.cond == e.cond())
+    })?;
+    if !l.moved {
+        return Some((*e, recs, false));
+    }
+    let rest = d - usize::from(l.kcn);
+    // Past the deepest nest: the serial lexer refuses the file there.
+    if rest + usize::from(l.high) > MAXD || rest + usize::from(l.pn) > MAXD {
+        return Some((Entry::START, recs + l.recs, true));
+    }
+    let mut x = l.exit;
+    let strings = (0..rest).filter(|&i| en[i] != usize::MAX).count();
+    let mut nest = [usize::MAX; MAXD];
+    nest[..rest].copy_from_slice(&en[..rest]);
+    let mut held = [0; MAXD];
+    held[..strings].copy_from_slice(&eh[..strings]);
+    let mut opened = strings;
+    for i in 0..usize::from(l.pn) {
+        // A level of no kind it leaves is one it entered with as it was: the entry's.
+        nest[rest + i] = if wild(l.p[i]) && rest + i < d { en[rest + i] } else { level_of(l.p[i]) };
+        if l.p[i] != 255 {
+            held[opened] = if l.ph[i] >= INHERIT {
+                // The string of the entry's level the lane closed `q`th: its record, the entry's.
+                let lv = d - 1 - (l.ph[i] - INHERIT);
+                eh[(0..lv).filter(|&i| en[i] != usize::MAX).count()]
+            } else {
+                recs + l.ph[i]
+            };
+            opened += 1;
+        }
+    }
+    x.set_levels(&nest, &held, opened, rest + usize::from(l.pn));
+    // What the lane keeps of its entry (`keep`): the entry's.
+    x.carry(e, l.keep);
+    Some((x, recs + l.recs, l.refused))
+}
+
+/// The chunks pass 3 has in flight at once (`entries`): each composes the summaries of those before it in flight.
+pub const IN_FLIGHT: usize = 32;
+
+/// Pass 3: each chunk's entry and the records before it, by a single-pass prefix sum with decoupled look-back (Merrill
+/// and Garland's): a chunk whose predecessor's entry is known applies its predecessor's summary to it; one whose
+/// predecessor is still in flight composes the summaries back to the last known entry and applies that, and where no
+/// lane of the composition meets it (one went past `L`, `over`), waits for its predecessor's entry instead. None for a chunk no lane
+/// reaches; and the chunks that waited.
+pub fn entries_waits(ends: &[Summary]) -> (Vec<Option<(Entry, usize, bool)>>, usize) {
+    let after = |out: &[Option<(Entry, usize, bool)>], c: usize| out[c - 1].and_then(|(e, r, x)| if x { None } else { apply(&ends[c - 1], &e, r) });
+    let mut out: Vec<Option<(Entry, usize, bool)>> = Vec::with_capacity(ends.len());
+    let mut waits = 0;
+    let mut w = 0;
+    while w < ends.len() {
+        // The chunks `w..w + IN_FLIGHT` in flight. The last chunk whose entry is known (`k`: the wave's first, or one
+        // that waited), and the summaries composed from it.
+        let mut k = w;
+        let mut known = if w == 0 { Some((Entry::START, 0, false)) } else { after(&out, w) };
+        let top = (w + IN_FLIGHT).min(ends.len());
+        let mut agg: Option<Summary> = None;
+        out.push(known);
+        for c in w + 1..top {
+            let a = match agg {
+                None => ends[c - 1],
+                Some(a) => compose(&a, &ends[c - 1]),
+            };
+            agg = Some(a);
+            // A lane that meets the entry is its own, whatever lanes went past `L` (a lane holds for its class alone).
+            let e = match known {
+                Some((ke, kr, _)) => apply(&a, &ke, kr),
+                _ => None,
+            };
+            let e = match e {
+                Some(e) => e,
+                None => {
+                    // Its predecessor's entry, when known: from it on, the chunks after look back to this one.
+                    waits += 1;
+                    let e = after(&out, c);
+                    (k, known, agg) = (c, e, None);
+                    out.push(e);
+                    continue;
+                }
+            };
+            let _ = k;
+            out.push(Some(e));
+        }
+        w = top;
+    }
+    (out, waits)
+}
+
+/// Pass 3's entries (`entries_waits`).
+pub fn entries(ends: &[Summary]) -> Vec<Option<(Entry, usize, bool)>> {
+    entries_waits(ends).0
+}
+
+/// The first block of each chunk of `blocks` blocks of a file of `n` bytes.
+pub fn chunk_starts(n: usize, blocks: usize) -> Vec<usize> {
+    (0..n.div_ceil(64).max(1)).step_by(blocks.max(1)).collect()
+}
+
