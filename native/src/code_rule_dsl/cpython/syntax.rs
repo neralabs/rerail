@@ -1124,3 +1124,26 @@ fn try_without_handlers(module: &Mod, tokens: &Tokens) -> Vec<(TextSize, String)
     }
     tries.out
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn consecutive_names_distinguishes_prose_from_python_tokens() {
+        for (source, expected) in [
+            ("exceptions we've seen", true),
+            ("this prose", true),
+            ("this is prose", false),
+            ("two\t names", true),
+            ("one # trivia\n two", true),
+            ("x = 1", false),
+            ("foo(bar)", false),
+            ("obj.method()", false),
+            ("b'x'", false),
+            ("br'x'", false),
+            ("identifier", false),
+            ("", false),
+        ] {
+            assert_eq!(super::consecutive_names(source), expected, "{source:?}");
+        }
+    }
+}
