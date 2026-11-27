@@ -3153,6 +3153,57 @@ pub(super) fn strip_scans(code: &str) -> String {
     out
 }
 
+/// `code` without the state `lex_on` declares before its loop and never reads (decision 0698): a region's, where the
+/// loop reads its strings by a reader. A declaration goes where its name is in no line of the function after it but
+/// as a binding of a `let` (its pattern, before its ` = `) or in a comment; a comment goes with the declarations after
+/// it, where all of them go.
+pub(super) fn drop_unread(code: &str) -> String {
+    let Some(f) = code.find("unsafe fn lex_on(") else { return code.to_owned() };
+    let Some(lp) = code[f..].find("'tokens: while").map(|i| f + i) else { return code.to_owned() };
+    let end = code[lp..].find("\n}\n").map_or(code.len(), |i| lp + i);
+    let head_at = code[..f].rfind('\n').map_or(0, |i| i + 1);
+    let head: Vec<&str> = code[head_at..lp].split_inclusive('\n').collect();
+    let rest = &code[lp..end];
+    let read = |name: &str, after: &str| {
+        after.lines().any(|l| {
+            let t = l.trim_start();
+            if t.starts_with("//") {
+                return false;
+            }
+            let body = match t.strip_prefix("let ") {
+                Some(r) => r.find(" = ").map_or("", |e| &r[e..]),
+                None => t,
+            };
+            let ident = |c: char| c.is_alphanumeric() || c == '_';
+            body.match_indices(name).any(|(i, _)| body[..i].chars().next_back().is_none_or(|c| !ident(c)) && body[i + name.len()..].chars().next().is_none_or(|c| !ident(c)))
+        })
+    };
+    // The one name a declaration binds (`let mut x = …;`, `let mut x: T;`), none for a pattern of more.
+    let bound = |l: &str| -> Option<String> {
+        let r = l.trim().strip_prefix("let ")?;
+        let r = r.strip_prefix("mut ").unwrap_or(r);
+        let name: String = r.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+        (!name.is_empty() && matches!(r[name.len()..].chars().next(), Some(' ' | ':' | '='))).then_some(name)
+    };
+    // A comment goes with the line after it.
+    let mut out_head = String::new();
+    let mut pending = String::new();
+    for (i, l) in head.iter().enumerate() {
+        if l.trim_start().starts_with("//") {
+            pending.push_str(l);
+            continue;
+        }
+        let after: String = head[i + 1..].concat() + rest;
+        if bound(l).is_none_or(|n| read(&n, &after)) {
+            out_head.push_str(&pending);
+            out_head.push_str(l);
+        }
+        pending.clear();
+    }
+    out_head.push_str(&pending);
+    format!("{}{out_head}{}", &code[..head_at], &code[lp..])
+}
+
 /// The loop's own pauses (decision 0619 step 2), where stage 1 made the blocks as the loop came to need them: none
 /// where the loop reads the bytes.
 pub(super) fn strip_pauses(code: &str) -> String {

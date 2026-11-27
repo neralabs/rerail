@@ -336,20 +336,9 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
     let mut at = 0usize;
     // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.
     let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);
-    // The kind of string the template is in, as the lean lexer's string reader keeps it over the template's code: the region read last that closed at its second closer (a template's `$`), of the kinds with no `after`.
-    let mut template = usize::MAX;
-    // The strings' records templates left open (decisions 0600 and 0621), over their templates' code: the first `opened`, innermost last.
-    let mut held = [0usize; 4];
-    let mut opened = 0usize;
-    // The brackets open in the template's code; the templates around it, each its kind and level.
-    let mut level = 0u8;
-    let mut frames = [(usize::MAX, 0u8); 4];
-    let mut depth = 0usize;
     // Whether a gap mask (`lf & code`) held since the grammar token before, and since the record before.
     let mut acc_0 = false;
     let mut rec_0 = false;
-    // The closer the region token read ends at, where a fill the loop keeps opens after it, or a read resumes a string's.
-    let mut close: usize;
     let mut c_depth = 0u32;
     // The string reader `string` (decision 0698): the template open (its quote, its flags, its code's brackets, its `{`), the
     // templates around it, every template's frames, where the interpolation's code began; the pieces a string's arm
@@ -645,11 +634,11 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                             }
                         }
                 // Its text, from stop to stop (`string_text`, the lean lexer's `string`'s loop).
-                let Some((c, cl, opened)) = (unsafe { string_text(src, n, out, len, &mut more, qi, fl, seg, o1, [8, 9, 11, 10, 6, 7]) }) else {
+                let Some((c, cl, to_code)) = (unsafe { string_text(src, n, out, len, &mut more, qi, fl, seg, o1, [8, 9, 11, 10, 6, 7]) }) else {
                     refused = true;
                     break 'tokens;
                 };
-                        if opened {
+                        if to_code {
                             if rd_on && rd_depth + 1 >= 4 || rd_total == 7 {
                             // past 7 frames (f-strings and brackets) or 4 f-strings deep in an interpolation
                             refused = true;
@@ -699,14 +688,14 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                             break 'tokens;
                         }
                 // Its text, from stop to stop (`string_text`, the lean lexer's `string`'s loop).
-                let Some((c, cl, opened)) = (unsafe { string_text(src, n, out, len, &mut more, qi, fl, seg, o1, [8, 9, 11, 10, 6, 7]) }) else {
+                let Some((c, cl, to_code)) = (unsafe { string_text(src, n, out, len, &mut more, qi, fl, seg, o1, [8, 9, 11, 10, 6, 7]) }) else {
                     refused = true;
                     break 'tokens;
                 };
                         c_depth = c_depth.saturating_sub(1);
                         // The interpolation's code ended at its `}`; a `{` after it begins the next's.
                         rd_code = usize::MAX;
-                        if opened {
+                        if to_code {
                             rd_open = c;
                             rd_code = c + 1;
                             if c_depth == 31 {
@@ -1476,7 +1465,7 @@ unsafe fn string_text(src: &[u8], n: usize, out: *mut Rec, len: usize, more_io: 
     let mut t0 = o1;
     // Its text, from stop to stop (the lean lexer's `string_stop`): its quote, its escape, an interpolation's braces.
     let mut at = t0;
-    let (c, cl, opened) = loop {
+    let (c, cl, to_code) = loop {
         let Some(p) = (if fl & 0x04 != 0 { wfirst_bit(n, at, |p: isize, esc: &mut u64| unsafe { w_t93(src, n, p, esc) }) } else { wfirst_bit(n, at, |p: isize, esc: &mut u64| unsafe { w_t92(src, n, p, esc) }) }) else {
             // A string open at the file's end.
             return None;
@@ -1599,7 +1588,7 @@ unsafe fn string_text(src: &[u8], n: usize, out: *mut Rec, len: usize, more_io: 
         // a raw string of backslashes only
         return None;
     }
-    if opened {
+    if to_code {
         {
             let (a, z) = (c, c);
             // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
@@ -1615,7 +1604,7 @@ unsafe fn string_text(src: &[u8], n: usize, out: *mut Rec, len: usize, more_io: 
         }
     }
     *more_io = more;
-    Some((c, cl, opened))
+    Some((c, cl, to_code))
 }
 
 /// The words the grammar reads, a word's code its place plus one, as the lean lexer's `WORD_LIST`.

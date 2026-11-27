@@ -613,3 +613,9 @@ statements and blocks end.
     where the file is refused. The string's arm and a tail's (`}` at a template's level 0) call it. It reads the bytes
     through windows, as the reader's state does. Where the loop reads stage 1's masks, each arm reads the text in
     place still: that form pauses for stage 1's blocks, which a function cannot.
+
+91. **The loop declares no state it never reads.** Where the loop reads the bytes, a declaration before it goes
+    where no line of `lex_on` after it reads its name (a binding of a `let` or a comment is no read), with the
+    comment before it. In Python's tier 1 that is the regions' state the string reader takes the place of
+    (`template`, `held`, `opened`, `level`, `frames`, `depth`, `close`). The reader's own flag that an interpolation's
+    `{` ended the text is `to_code`, apart from the regions' `opened`.

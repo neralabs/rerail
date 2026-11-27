@@ -240,12 +240,12 @@ impl Gen<'_> {
         // no marks): a lookahead over the tokens counts no `{` of an interpolation and no `,` of a string's text.
         let put = |a: &str, z: &str, k: &str| format!("{{\n                        let (a, z) = ({a}, {z});\n                        // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.\n                        unsafe {{ out.add(len + 1 + more).write(Rec {{ start: a as u32, last: z as u32, code: {k} }}) }};\n                        more += 1;\n                    }}");
         let (qm, q3cm) = (by_quote(&q_each, &|m| format!("bit(&{m}, p)")), by_quote(&q3c_each, &|m| format!("bit(&{m}, p)")));
-        // The text from `t0`, its pieces to its closer or an interpolation's `{`: `(c, cl, opened)`, the closer's first
+        // The text from `t0`, its pieces to its closer or an interpolation's `{`: `(c, cl, to_code)`, the closer's first
         // and last byte; `seg` the region's first byte (its fill's).
         let text = |k: &[String; 7]| -> String {
             let mut t = String::new();
             let _ = writeln!(t, "                // Its text, from stop to stop (the lean lexer's `string_stop`): its quote, its escape{}.", if interp.is_some() { ", an interpolation's braces" } else { "" });
-            let _ = write!(t, "                let mut at = t0;\n                let (c, cl, opened) = loop {{\n");
+            let _ = write!(t, "                let mut at = t0;\n                let (c, cl, to_code) = loop {{\n");
             let stops_here = if interp.is_some() { format!("(if fl & {format_bit} != 0 {{ first_bit(&{stops_f}[..made], at) }} else {{ first_bit(&{stops}[..made], at) }})") } else { format!("first_bit(&{stops}[..made], at)") };
             let _ = write!(t, "                    let Some(p) = {stops_here} else {{\n                        if made < nw {{\n                            {PAUSE}\n                        }}\n                        // A string open at the file's end.\n                        refused = true;\n                        break 'tokens;\n                    }};\n                    if p + 1 >= 64 * made && made < nw {{\n                        {PAUSE}\n                    }}\n");
             // An escape.
@@ -272,7 +272,7 @@ impl Gen<'_> {
                 let _ = write!(t, "                if fl & {rb} != 0 && o1 < c && !any_in(&{rp}, o1, c - 1) {{\n{}                }}\n", refuse(&why));
             }
             let _ = write!(t, "                if cl + 1 >= 64 * made && made < nw {{\n                    {PAUSE}\n                }}\n");
-            let close = if interp.is_some() { format!("if opened {{\n                    {}\n                }} else {{\n                    {}\n                }}", put("c", "c", &k[5]), put("c", "cl", &k[4])) } else { put("c", "cl", &k[4]) };
+            let close = if interp.is_some() { format!("if to_code {{\n                    {}\n                }} else {{\n                    {}\n                }}", put("c", "c", &k[5]), put("c", "cl", &k[4])) } else { put("c", "cl", &k[4]) };
             let _ = writeln!(t, "                {close}");
             t
         };
@@ -300,7 +300,7 @@ impl Gen<'_> {
             let shown: Vec<String> = [(0, "its text"), (1, "an escape"), (2, "a lone escape"), (3, "a brace pair"), (4, "its closer"), (5, "an interpolation's `{`")].iter().filter(|(i, _)| !kinds[*i].is_empty()).map(|(i, w)| format!("{i} {w}")).collect();
             let _ = write!(
                 text_fn,
-                "/// String reader `{}`'s text from its byte `o1` to its closer or an interpolation's `{{`, from stop to stop (the lean\n/// lexer's `string`'s loop), the string's quote `qi`, its flags `fl`, its region from `seg`: its pieces written after\n/// record `len` (`more` of them), each of its kind in `kinds` ({}). The closer's first and last byte, and whether it is\n/// a `{{`; none where the file is refused.\n#[inline(always)]\nunsafe fn string_text(src: &[u8], n: usize, out: *mut Rec, len: usize, more_io: &mut usize, qi: u8, fl: u8, seg: usize, o1: usize, kinds: [u32; 6]) -> Option<(usize, usize, bool)> {{\n    let mut more = *more_io;\n    let mut t0 = o1;\n{b}    *more_io = more;\n    Some((c, cl, opened))\n}}\n\n",
+                "/// String reader `{}`'s text from its byte `o1` to its closer or an interpolation's `{{`, from stop to stop (the lean\n/// lexer's `string`'s loop), the string's quote `qi`, its flags `fl`, its region from `seg`: its pieces written after\n/// record `len` (`more` of them), each of its kind in `kinds` ({}). The closer's first and last byte, and whether it is\n/// a `{{`; none where the file is refused.\n#[inline(always)]\nunsafe fn string_text(src: &[u8], n: usize, out: *mut Rec, len: usize, more_io: &mut usize, qi: u8, fl: u8, seg: usize, o1: usize, kinds: [u32; 6]) -> Option<(usize, usize, bool)> {{\n    let mut more = *more_io;\n    let mut t0 = o1;\n{b}    *more_io = more;\n    Some((c, cl, to_code))\n}}\n\n",
                 rd.name,
                 shown.join(", ")
             );
@@ -309,7 +309,7 @@ impl Gen<'_> {
         let mut marked = |k: &[String; 7]| -> String {
             let i = texts.len();
             let ks: Vec<String> = (0..6).map(|j| if k[j].is_empty() { "0".to_owned() } else { k[j].clone() }).collect();
-            texts.push(format!("                // Its text, from stop to stop (`string_text`, the lean lexer's `string`'s loop).\n                let Some((c, cl, opened)) = (unsafe {{ string_text(src, n, out, len, &mut more, qi, fl, seg, o1, [{}]) }}) else {{\n                    refused = true;\n                    break 'tokens;\n                }};\n", ks.join(", ")));
+            texts.push(format!("                // Its text, from stop to stop (`string_text`, the lean lexer's `string`'s loop).\n                let Some((c, cl, to_code)) = (unsafe {{ string_text(src, n, out, len, &mut more, qi, fl, seg, o1, [{}]) }}) else {{\n                    refused = true;\n                    break 'tokens;\n                }};\n", ks.join(", ")));
             format!("{TEXT}{i}\u{0}\n                let mut t0 = o1;\n{}{TEXT_END}\n", text(k))
         };
         // The counts at an interpolation's `{` and a tail's `}` (`i_at`, `o_t`: the reader's masks of them).
@@ -333,7 +333,7 @@ impl Gen<'_> {
         // file is refused past either, before the loop's state changes.
         let r = refuse_now(&deep_why);
         let open = format!(
-            "                if opened {{\n                    if rd_on && rd_depth + 1 >= {nest} || rd_total == {max} {{\n{r}                    }}\n                    if rd_on {{\n                        rd_around[rd_depth] = (rd_q, rd_fl, rd_level);\n                        rd_depth += 1;\n                    }}\n                    rd_total += 1;\n                    (rd_on, rd_q, rd_fl, rd_level, rd_open) = (true, qi, fl, 0, c);\n                    if rd_code == usize::MAX {{\n                        rd_code = c + 1;\n                    }}\n{up}                }}\n"
+            "                if to_code {{\n                    if rd_on && rd_depth + 1 >= {nest} || rd_total == {max} {{\n{r}                    }}\n                    if rd_on {{\n                        rd_around[rd_depth] = (rd_q, rd_fl, rd_level);\n                        rd_depth += 1;\n                    }}\n                    rd_total += 1;\n                    (rd_on, rd_q, rd_fl, rd_level, rd_open) = (true, qi, fl, 0, c);\n                    if rd_code == usize::MAX {{\n                        rd_code = c + 1;\n                    }}\n{up}                }}\n"
         );
         let mut rows_out = Vec::new();
         // The string's row.
@@ -377,7 +377,7 @@ impl Gen<'_> {
                 h.push_str(&pause_at("s + 1"));
                 end(&mut h, true);
                 h.push_str(&marked(tk));
-                let _ = write!(h, "{down}                // The interpolation's code ended at its `}}`; a `{{` after it begins the next's.\n                rd_code = usize::MAX;\n                if opened {{\n                    rd_open = c;\n                    rd_code = c + 1;\n{up}                }} else {{\n                    // The string ended: the template around it is open again.\n                    (rd_on, rd_q, rd_fl, rd_level) = if rd_depth > 0 {{\n                        rd_depth -= 1;\n                        let (q, f, v) = rd_around[rd_depth];\n                        (true, q, f, v)\n                    }} else {{\n                        (false, 0, 0, 0)\n                    }};\n                    rd_total = rd_total.saturating_sub(1);\n                }}\n                rd_end = cl;\n                rd_bare = true;\n                s\n            }}");
+                let _ = write!(h, "{down}                // The interpolation's code ended at its `}}`; a `{{` after it begins the next's.\n                rd_code = usize::MAX;\n                if to_code {{\n                    rd_open = c;\n                    rd_code = c + 1;\n{up}                }} else {{\n                    // The string ended: the template around it is open again.\n                    (rd_on, rd_q, rd_fl, rd_level) = if rd_depth > 0 {{\n                        rd_depth -= 1;\n                        let (q, f, v) = rd_around[rd_depth];\n                        (true, q, f, v)\n                    }} else {{\n                        (false, 0, 0, 0)\n                    }};\n                    rd_total = rd_total.saturating_sub(1);\n                }}\n                rd_end = cl;\n                rd_bare = true;\n                s\n            }}");
                 rows_out.push((row, format!("`{}`, read {}'s, at its template's level 0", i.close, rd.name), h));
                 picked.push(row);
             }

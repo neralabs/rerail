@@ -10029,6 +10029,10 @@ impl Gen<'_> {
         if reader_code.is_some() {
             out = reader::place_texts(&out, &|_| None);
         }
+        // The state the loop never reads (a region's, where a reader reads the strings): not declared.
+        if from_bytes.is_some() {
+            out = bytes::drop_unread(&out);
+        }
         Ok(out)
     }
 }
