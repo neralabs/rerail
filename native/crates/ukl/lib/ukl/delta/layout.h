@@ -29,3 +29,12 @@
 #define REL_FAR_BASE 64u
 #define PARTS_N_AT 328u
 #define PARTS_AT 336u
+#define CACHE_ENTRIES_AT 360u
+#define CACHE_ENTRY_BYTES 32u
+#define DOCS_LEN_AT 320u
+#define DOCS_N_AT 328u
+#define DOCS_MISSING_AT 336u
+#define DOCS_AT 344u
+#define DOC_WORDS 8u
+#define K0_RELATIONS 8u
+#define NO_DOC ((int64_t)0x8000000000000000ull)

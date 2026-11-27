@@ -70,4 +70,6 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/delta/runs.h", include_str!("../lib/ukl/delta/runs.h")),
     ("ukl/delta/parts.h", include_str!("../lib/ukl/delta/parts.h")),
     ("ukl/delta/trace.h", include_str!("../lib/ukl/delta/trace.h")),
+    ("ukl/delta/docs.h", include_str!("../lib/ukl/delta/docs.h")),
+    ("ukl/delta/cache.h", include_str!("../lib/ukl/delta/cache.h")),
 ];

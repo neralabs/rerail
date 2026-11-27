@@ -1,0 +1,91 @@
+// The K0 pass's operations over its documents (`rerail_delta_twins::k0`): `docs_of`, the documents a selection reads;
+// `room_of`, the room a run's runs need; `named_blocks`, the blocks a document set names. Each is one item.
+#include <ukl/delta/docs.h>
+#include <ukl/delta/runs.h>
+#include <ukl/delta/parts.h>
+#include <ukl/delta/cache.h>
+
+// The blob named by the four words at column `at` of the selection's row `k`.
+UKL_INLINE bool row_blob(CBlk t, uint32_t blobs, CBlk rows, uint32_t k, uint32_t at, UKL_PRIVATE Blob* b) {
+    int64_t w[4];
+    for (uint32_t c = 0u; c < 4u; c++) w[c] = runs_get(rows, k, at + c);
+    return blob_find(t, blobs, w, b);
+}
+
+// Each +1 row of the selection a document, its blobs found by their names, written into the docs block in the
+// selection's order; the blocks it names, `(block << 32) | the furthest offset referred to`, into the blocks' list.
+DELTA_ONE(docs_of_docs_of)
+{
+    if (i != 0u) return;
+    DocsOfP q = PARAMS(DocsOfP);
+    CBlk rows = SLOT(0);
+    Blk docs = SLOT(2), blocks = SLOT(3);
+    uint32_t blobs = (uint32_t)q.blobs, n = 0u, nb = 0u;
+    for (uint32_t k = 0u, len = runs_len(rows); k < len; k++) {
+        if (runs_sign(rows, k) <= 0) continue;
+        int64_t module = runs_get(rows, k, q.module);
+        Blob s, tp, y;
+        bool found = row_blob(t, blobs, rows, k, q.source, &s);
+        found = row_blob(t, blobs, rows, k, q.tape, &tp) && found;
+        found = row_blob(t, blobs, rows, k, q.syms, &y) && found;
+        if (!found) {
+            if (I64(docs, DOCS_MISSING_AT) == NO_DOC) I64(docs, DOCS_MISSING_AT) = module;
+            continue;
+        }
+        uint64_t w[8] = {(uint64_t)module, s.block, tp.block, y.block, s.at, s.len, tp.at, tp.len};
+        for (uint32_t c = 0u; c < DOC_WORDS; c++) DOC(docs, n, c) = w[c];
+        n++;
+        parts_put(blocks, nb++, (int64_t)(((uint64_t)s.block << 32) | s.at));
+        parts_put(blocks, nb++, (int64_t)(((uint64_t)tp.block << 32) | tp.at));
+        parts_put(blocks, nb++, (int64_t)(((uint64_t)y.block << 32) | BODY_AT));
+    }
+    docs_seal(docs, n);
+    parts_seal(blocks, nb);
+}
+
+// Document `d`'s sizes, if the cache holds them, added to `need`, by relation.
+UKL_INLINE void room_add(CBlk cache, uint32_t d, UKL_PRIVATE uint64_t* need) {
+    uint32_t at = cache_sizes(cache, d);
+    if (at == NONE) return;
+    for (uint32_t r = 0u, n = U32(cache, at + 24u); r < n && r < K0_RELATIONS; r++)
+        need[r] += U32(cache, at + CACHE_ENTRY_BYTES + 4u * r);
+}
+
+// The room a run's runs need, by relation: each gone document's kept rows and each read one's as they were, an eighth
+// more for an edit that grew.
+DELTA_ONE(room_of_room_of)
+{
+    if (i != 0u) return;
+    CBlk cache = SLOT(0), gone = SLOT(1), docs = SLOT(2);
+    Blk room = SLOT(3);
+    uint64_t need[K0_RELATIONS];
+    for (uint32_t r = 0u; r < K0_RELATIONS; r++) need[r] = 0u;
+    for (uint32_t k = 0u; k < parts_len(gone); k++) room_add(cache, (uint32_t)parts_get(gone, k), need);
+    for (uint32_t k = 0u; k < docs_len(docs); k++) room_add(cache, (uint32_t)docs_module(docs, k), need);
+    for (uint32_t r = 0u; r < K0_RELATIONS; r++) U64(room, BODY_AT + 8u * r) = need[r] + need[r] / 8u;
+}
+
+// Every live row of the document set, its blobs found by their names: the blocks they lie in, and the documents whose
+// source or tape no blobs' row names (to load), each a parts block.
+DELTA_ONE(named_blocks_named_blocks)
+{
+    if (i != 0u) return;
+    NamedP q = PARAMS(NamedP);
+    Blk blocks = SLOT(2), missing = SLOT(3);
+    uint32_t set = (uint32_t)q.set, blobs = (uint32_t)q.blobs, nb = 0u, nm = 0u;
+    uint32_t at[3] = {q.source, q.tape, q.syms};
+    for (uint32_t id = 0u, end = state_end(t, set); id < end; id++) {
+        if (!state_live(t, set, id)) continue;
+        bool found[3];
+        for (uint32_t k = 0u; k < 3u; k++) {
+            int64_t w[4];
+            for (uint32_t c = 0u; c < 4u; c++) w[c] = state_get(t, set, id, at[k] + c);
+            Blob b;
+            found[k] = blob_find(t, blobs, w, &b);
+            if (found[k]) parts_put(blocks, nb++, b.block);
+        }
+        if (!found[0] || !found[1]) parts_put(missing, nm++, state_get(t, set, id, q.module));
+    }
+    parts_seal(blocks, nb);
+    parts_seal(missing, nm);
+}

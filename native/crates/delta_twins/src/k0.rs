@@ -176,7 +176,7 @@ pub const ATOMS: usize = 1;
 pub const CONTROL: usize = 2;
 pub const GONE: usize = 3;
 pub const RUNS: usize = 4;
-const R: usize = 8;
+pub const R: usize = 8;
 /// L1's cache (read-write): each document's sizes, the rows it was given by relation (`cache::keep_sizes`).
 pub const CACHE: usize = RUNS + R;
 
@@ -184,11 +184,11 @@ pub const CACHE: usize = RUNS + R;
 /// blobs' row names (`NO_DOC`: none; `docs_of`'s); then each document's: its module, its source's, its tape's and its
 /// symbols' blocks, where its source and its tape lie in theirs. The blocks they name are bound to the launch by
 /// reference, not by the docs block (it refers to at most `MAX_REFS`).
-const DOCS_LEN_AT: usize = BODY_AT;
-const DOCS_N_AT: usize = BODY_AT + 8;
-const DOCS_MISSING_AT: usize = BODY_AT + 16;
-const DOCS_AT: usize = BODY_AT + 24;
-const DOC_WORDS: usize = 8;
+pub const DOCS_LEN_AT: usize = BODY_AT;
+pub const DOCS_N_AT: usize = BODY_AT + 8;
+pub const DOCS_MISSING_AT: usize = BODY_AT + 16;
+pub const DOCS_AT: usize = BODY_AT + 24;
+pub const DOC_WORDS: usize = 8;
 pub const NO_DOC: i64 = i64::MIN;
 
 /// One document of a docs block.

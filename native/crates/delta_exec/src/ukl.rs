@@ -10,7 +10,11 @@ use crate::cache::{CACHE_COMMIT, CACHE_OPEN, OpCache};
 use crate::contract::push_layer;
 use crate::dir::Directory;
 use crate::drop::{DROP_PARTS, Parts};
+use crate::k0::{DOCS_OF, NAMED_BLOCKS, ROOM_OF};
 use crate::semi::{CHANGE_ROWS, REPLACE_ROWS, SEMI_CHANGE};
+use rerail_blocks::block::kind;
+use rerail_blocks::gens::set_word;
+use rerail_blocks::region::pin_block;
 use crate::trace::{RollUp, Trace};
 use core::mem::offset_of;
 use rerail_blocks::gens::BODY_AT;
@@ -20,6 +24,7 @@ use crate::op::{Case, Devices, Impl, Kernels, Registry, Runner, Signature, Statu
 use rerail_delta_twins::Params;
 use rerail_delta_twins::cache::{self as cache_twin, CacheP};
 use rerail_delta_twins::drop::{self as drop_twin, DropP};
+use rerail_delta_twins::k0::{self as k0_twin, DocAt, DocsOfP, NamedP};
 use rerail_delta_twins::semi::{ReplaceP, SemiP};
 
 /// Every backend a UKL version runs on.
@@ -40,6 +45,7 @@ const MODULES: &[(&str, &str)] = &[
     ("cache", include_str!("../ukl/cache.uglykl")),
     ("drop", include_str!("../ukl/drop.uglykl")),
     ("semi", include_str!("../ukl/semi.uglykl")),
+    ("k0", include_str!("../ukl/k0.uglykl")),
 ];
 
 /// The operations with a UKL version.
@@ -50,6 +56,9 @@ const VERSIONS: &[Ukl] = &[
     Ukl { sig: &SEMI_CHANGE, module: "semi", case: semi_change_case },
     Ukl { sig: &CHANGE_ROWS, module: "semi", case: change_rows_case },
     Ukl { sig: &REPLACE_ROWS, module: "semi", case: replace_rows_case },
+    Ukl { sig: &DOCS_OF, module: "k0", case: docs_of_case },
+    Ukl { sig: &ROOM_OF, module: "k0", case: room_of_case },
+    Ukl { sig: &NAMED_BLOCKS, module: "k0", case: named_blocks_case },
 ];
 
 /// Each operation's UKL version checked on `device` against its twin, at `TILINGS`, and registered as the device's
@@ -191,6 +200,102 @@ fn replace_rows_case(dir: &mut Directory) -> Case {
     Case { slots: vec![head, given, runs], params: params(ReplaceP { head: u64::from(head.0), arity: 3, key: 1 }) }
 }
 
+/// A document's rows for the K0 cases: its module, then its source's, tape's and symbols' blob names, four words
+/// each (`(d, 1, 0, 0)`, `(d, 2, 0, 0)`, `(d, 3, 0, 0)`).
+const DOC_ROW: crate::k0::RowCols = crate::k0::RowCols { module: 0, source: 1, tape: 5, syms: 9 };
+
+fn doc_row(d: i64) -> Vec<i64> {
+    let mut r = vec![d];
+    for k in 1..=3 {
+        r.extend([d, k, 0, 0]);
+    }
+    r
+}
+
+/// A trace of document rows (`doc_row`'s thirteen columns).
+fn doc_trace() -> Trace {
+    Trace::new(&Shape::run(vec![ColType::I64; 13], (0..13).collect(), None)).expect("a trace").with_roll_up(RollUp::Never)
+}
+
+/// The blobs' rows: every blob of documents 1, 2 and 4, document 3's source alone.
+fn blob_rows(cpu: &Runner, dir: &mut Directory) -> crate::dir::BlockId {
+    let mut t = Trace::new(&crate::files::blobs_shape()).expect("a trace");
+    let mut rows = vec![];
+    for (d, kinds) in [(1, 1..=3), (2, 1..=3), (3, 1..=1), (4, 1..=3)] {
+        for k in kinds {
+            rows.push((vec![d, k, 0, 0, 100 + 10 * d + k, 8 * k, 64 + d], 1));
+        }
+    }
+    push_layer(cpu, dir, &mut t, &rows).expect("the blobs' rows")
+}
+
+/// A docs block opened, with room for `n` documents, `fill` writing some.
+fn docs_block(dir: &mut Directory, n: usize, fill: &[DocAt]) -> crate::dir::BlockId {
+    let id = dir.make(kind::CONTROL, k0_twin::docs_bytes(n));
+    let b = dir.block(id).expect("just made");
+    let mut w = pin_block(&b, "a docs block", true).expect("a write pin");
+    let bytes = w.bytes_mut().expect("a write pin");
+    k0_twin::open_docs(bytes);
+    for (i, d) in fill.iter().enumerate() {
+        k0_twin::put_doc(bytes, i, d);
+    }
+    k0_twin::seal_docs(bytes, fill.len());
+    id
+}
+
+/// A selection reading documents 1, 2 and 3 (3's tape in no blobs' row: missing) and retracting 4: the docs of 1 and
+/// 2, and the blocks they name.
+fn docs_of_case(dir: &mut Directory) -> Case {
+    let cpu = Runner::new().expect("the CPU's runner");
+    let blobs = blob_rows(&cpu, dir);
+    let rows = doc_trace().open(dir, 4);
+    let b = dir.block(rows).expect("just made");
+    let pin = pin_block(&b, "the selection", true).expect("a write pin");
+    for (d, sign) in [(1, 1), (2, 1), (3, 1), (4, -1)] {
+        rerail_blocks::layer::RunsW::new(&pin).push(&doc_row(d), sign).expect("room for the selection");
+    }
+    drop(pin);
+    let (docs, list) = (docs_block(dir, 4, &[]), Parts::open(dir, 12).expect("a parts block"));
+    let c = DOC_ROW;
+    let p = DocsOfP { blobs: u64::from(blobs.0), module: c.module as u32, source: c.source as u32, tape: c.tape as u32, syms: c.syms as u32 };
+    Case { slots: vec![rows, blobs, docs, list], params: params(p) }
+}
+
+/// A cache holding the sizes of documents 1, 2 and 5; 5 and 7 gone, 1 and 3 read: the room 1's and 5's take.
+fn room_of_case(dir: &mut Directory) -> Case {
+    let cpu = Runner::new().expect("the CPU's runner");
+    let c = OpCache(dir.make(kind::CACHE, cache_twin::CACHE_BYTES + 256));
+    c.open(&cpu, dir, 0).and_then(|_| c.commit(&cpu, dir, 0xd1)).expect("a committed cache");
+    {
+        let b = dir.block(c.0).expect("just made");
+        let mut w = pin_block(&b, "the cache", true).expect("a write pin");
+        let bytes = w.bytes_mut().expect("a write pin");
+        for d in [1u32, 2, 5] {
+            let at = cache_twin::ENTRIES_AT + cache_twin::used(bytes);
+            cache_twin::put_sizes(bytes, at, d, &core::array::from_fn::<u32, { k0_twin::R }, _>(|r| d * 10 + r as u32), true);
+        }
+        set_word::<u64>(bytes, BODY_AT, (cache_twin::CACHE_BYTES + cache_twin::used(bytes)) as u64);
+    }
+    let gone = Parts::write(dir, 2, |put| [5, 7].into_iter().for_each(put)).expect("a parts block");
+    let doc = |module| DocAt { module, source: 0, tape: 0, syms: 0, src: (0, 0), at: (0, 0) };
+    let docs = docs_block(dir, 2, &[doc(1), doc(3)]);
+    let room = dir.make(kind::CONTROL, 8 * k0_twin::R);
+    Case { slots: vec![c.0, gone.id(), docs, room], params: vec![] }
+}
+
+/// A document set of 1, 2, 3 and 4, 2 gone since: the blocks of 1's and 4's blobs and 3's source; 3 missing its tape.
+fn named_blocks_case(dir: &mut Directory) -> Case {
+    let cpu = Runner::new().expect("the CPU's runner");
+    let blobs = blob_rows(&cpu, dir);
+    let mut t = doc_trace();
+    push_layer(&cpu, dir, &mut t, &[(doc_row(1), 1), (doc_row(2), 1), (doc_row(3), 1)]).expect("a layer");
+    let set = push_layer(&cpu, dir, &mut t, &[(doc_row(2), -1), (doc_row(4), 1)]).expect("a layer");
+    let (blocks, missing) = (Parts::open(dir, 12).expect("a parts block"), Parts::open(dir, 4).expect("a parts block"));
+    let c = DOC_ROW;
+    let p = NamedP { set: u64::from(set.0), blobs: u64::from(blobs.0), arity: 13, module: c.module as u32, source: c.source as u32, tape: c.tape as u32, syms: c.syms as u32, pad: 0 };
+    Case { slots: vec![set, blobs, blocks, missing], params: params(p) }
+}
+
 /// The block layouts the kernels read, by name: the twins' own constants.
 pub fn layout() -> Vec<(&'static str, usize)> {
     vec![
@@ -223,6 +328,16 @@ pub fn layout() -> Vec<(&'static str, usize)> {
         // `rerail_delta_twins::drop`'s parts block.
         ("PARTS_N_AT", drop_twin::N_AT),
         ("PARTS_AT", drop_twin::PARTS_AT),
+        // `rerail_delta_twins::cache`'s entries.
+        ("CACHE_ENTRIES_AT", cache_twin::ENTRIES_AT),
+        ("CACHE_ENTRY_BYTES", cache_twin::ENTRY_BYTES),
+        // `rerail_delta_twins::k0`'s docs block and the relations a pass writes.
+        ("DOCS_LEN_AT", k0_twin::DOCS_LEN_AT),
+        ("DOCS_N_AT", k0_twin::DOCS_N_AT),
+        ("DOCS_MISSING_AT", k0_twin::DOCS_MISSING_AT),
+        ("DOCS_AT", k0_twin::DOCS_AT),
+        ("DOC_WORDS", k0_twin::DOC_WORDS),
+        ("K0_RELATIONS", k0_twin::R),
     ]
 }
 
@@ -235,6 +350,10 @@ pub fn layout_h() -> String {
     );
     for (name, v) in layout() {
         s += &format!("#define {name} {v}u\n");
+    }
+    // The signed ones, as their bits: `k0`'s no document.
+    for (name, v) in [("NO_DOC", k0_twin::NO_DOC)] {
+        s += &format!("#define {name} ((int64_t){:#x}ull)\n", v as u64);
     }
     s
 }

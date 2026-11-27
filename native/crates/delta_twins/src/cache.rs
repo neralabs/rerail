@@ -52,7 +52,7 @@ pub const USED_AT: usize = BODY_AT + 32;
 /// Where the entries start.
 pub const ENTRIES_AT: usize = BODY_AT + CACHE_BYTES;
 /// An entry's header: the layer, the columns' count, four columns, the rows' and the fences' counts.
-const ENTRY_BYTES: usize = 32;
+pub const ENTRY_BYTES: usize = 32;
 /// A fence every so many rows of an order.
 pub const FENCE: usize = 64;
 /// The cache operations' slots: `cache_open`'s and `cache_commit`'s one, the cache; `order`'s, the layer read and the
@@ -205,11 +205,17 @@ pub fn keep_sizes(c: &mut Ctx<'_, '_, '_>, slot: usize, d: u32, counts: &[u32]) 
         Some(at) => (at, false),
         None => (ENTRIES_AT + used(c.read(slot)), true),
     };
-    let len = entry_len(counts.len(), 0);
-    if append && !c.reach(slot, at + len) {
+    if append && !c.reach(slot, at + entry_len(counts.len(), 0)) {
         return false;
     }
     let ([], [b]) = c.views([], [slot]);
+    put_sizes(b, at, d, counts, append);
+    true
+}
+
+/// Document `d`'s sizes entry written at `at` of the cache `b`, its room there; counted in the cache's bytes when it
+/// is `append`ed at the cursor (`ENTRIES_AT + used`).
+pub fn put_sizes(b: &mut [u8], at: usize, d: u32, counts: &[u32], append: bool) {
     set_word::<u32>(b, at + 4, 0);
     for i in 0..4 {
         set_word::<u16>(b, at + 8 + 2 * i, 0);
@@ -220,9 +226,8 @@ pub fn keep_sizes(c: &mut Ctx<'_, '_, '_>, slot: usize, d: u32, counts: &[u32]) 
     // The document named last, and an appended entry counted last: a reader never finds one half written.
     set_word::<u32>(b, at, d);
     if append {
-        set_word::<u64>(b, USED_AT, (at + len - ENTRIES_AT) as u64);
+        set_word::<u64>(b, USED_AT, (at + entry_len(counts.len(), 0) - ENTRIES_AT) as u64);
     }
-    true
 }
 
 /// How many entries the cache holds.
