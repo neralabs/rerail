@@ -445,3 +445,13 @@ statements and blocks end.
     whether a region opened there. A conversion's start (`conv_at`), a tail's `}` and a spec's `:` depend on the
     interpolation's level. Tier 1 as Rust refuses an assume that reads a region's mask, so those wait for the
     f-string reader.
+78. **A name runs over its word, and a byte no token begins with is a `bad` token.** As rr's:
+    - `token identifier = start word_start run word`. `name_more` and its assume are gone.
+    - `class junk`: the control bytes, `$`, `?`, the backtick, `\` and 0x7f. `token bad = start bad_first pair empty`,
+      with `bad_first = junk` assumed at starts. The tree has `untaken bad`, so no rule takes one and the file is
+      refused, as the lean lexer fails at a byte its operators do not take. The `error … by tokens` is gone.
+    - A byte past ASCII is no `junk`. Its escape refuses the file in code, and its bytes stay free for the kinds a
+      reader moves (0509). With them in `junk`, `spec_text` had no byte left.
+
+    The ellipsis stays a run over `ell`. A pairs triple's first two bytes must be a pair, and Python's `..` is two
+    tokens.

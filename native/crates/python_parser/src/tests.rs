@@ -161,6 +161,14 @@ fn targets_slices_lambdas_yields_and_concatenations_are_the_lean_parsers() {
     refused(&["a, b\n"]);
 }
 
+/// A byte no token begins with is a `bad` token, which no rule takes: the file is refused, as the lean lexer fails
+/// there. In the regions they are text.
+#[test]
+fn bytes_no_token_begins_with_are_refused() {
+    refused(&["x = $a\n", "x = a ? b\n", "x = `a`\n", "x = \x01\n", "x = a\x7f\n", "if a:\n    b $\n"]);
+    same(&["x = \"$?`\"\n", "x = 1  # $?`\n"]);
+}
+
 #[test]
 fn octal_and_binary_numbers_and_quotes_in_strings_are_the_lean_parsers() {
     same(&["x = 0o600\n", "x = 0o17\n", "x = 0b101 + 0O7 + 0B1\n", "x = 0o1_7\n", "x = \"a\'\'\'\'b\"\n", "x = \'a\"\"\"\"b\'\n", "x = \"\"\"a\'\'\'\'b\"\"\"\n"]);

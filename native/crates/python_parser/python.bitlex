@@ -61,6 +61,10 @@ class bin_d     = '0' '1'
 class exp_l     = 'e' 'E'
 class imag_l    = 'j' 'J'
 class punct     = '(' ')' '[' ']' '{' '}' ',' ':' ';' '.' '=' '+' '-' '*' '/' '%' '&' '|' '^' '~' '<' '>' '@' '!'
+# The bytes no token begins with, outside the regions: each its own `bad` token, as the lean lexer fails at a byte
+# its operators do not take. A backslash is an escape too (below). A byte past ASCII is an escape alone, and its
+# bytes are left free for the kinds a reader moves (decision 0509).
+class junk      = 0x00..0x08 0x0b 0x0e..0x1f '$' '?' '`' '\\' 0x7f
 
 # --- Regions -----------------------------------------------------------------------------------
 
@@ -211,21 +215,19 @@ mask number     = fill(based_at | int_start | dot_start, ~num_run)
 mask based_n    = fill(based_at, ~word)
 
 mask word_start = w & alpha & ~prev(w) & ~p1 & ~p2 & ~number & ~prev(conv_at)
-mask name_more  = fill(word_start, ~w) & ~word_start
 
 # Where a start reads them: no region's token starts there (the loop decides those first), and no row above does.
 assume "a token starts in code: the regions open only at a token's start" at starts code = ~empty
 assume "a quote at a start opens a string: any quote outside the regions opens one" at starts o_str = quote
 assume "a `#` at a start opens a comment" at starts o_cmt = hash
 assume "a name starts at a word's first letter that starts no string's prefix: a start is never in a word" at starts word_start = alpha & ~p1 & ~p2
-assume "a name runs over its word's bytes" in identifier name_more = word
 assume "a number starts at a digit, `0x`, `0o` and `0b` apart: a start is never in a word or a number's run" at starts int_start = digit & ~prev(dot) & ~(zero & next(x_any | o_any | b_any))
 assume "a number starts at `0x`, `0o` or `0b`: a start is never in a word or a number's run" at starts based_at = zero & next(x_any | o_any | b_any) & ~prev(dot)
 assume "a number starts at a `.` before a digit after no word" at starts dot_start = dot & next(digit) & ~prev(word)
 assume "a decimal number's bytes are a number's, and no based number's" in integer number = ~empty
 assume "a decimal number's bytes are no based number's" in integer based_n = empty
 
-token identifier = start word_start run name_more
+token identifier = start word_start run word
 token based     = start based_at run word
 token integer   = start int_start | dot_start run num_run
 check based     = zero (x_any [us] hex ([us] hex)* | o_any [us] oct_d ([us] oct_d)* | b_any [us] bin_d ([us] bin_d)*)
@@ -288,7 +290,9 @@ keywords identifier {
 keywords punct { "(" ")" "[" "]" "{" "}" "," ":" ";" "." "=" "+" "-" "*" "/" "%" "&" "|" "^" "~" "<" ">" "@" "!" "**" "//" "==" "!=" "<=" ">=" "<<" ">>" "->" "+=" "-=" "*=" "/=" "%=" "&=" "|=" "^=" "@=" ":=" "<>" "**=" "//=" "<<=" ">>=" } required
 
 skip code & (blank | lf)
-error "a byte no token takes" by tokens when code & ~blank & ~lf & ~word & ~punct
+mask bad_first  = code & junk
+assume "a byte no token begins with is a bad token of its own" at starts bad_first = junk
+token bad       = start bad_first pair empty
 
 # --- Layout ------------------------------------------------------------------------------------
 
@@ -662,4 +666,6 @@ tree python {
   implied dict_item ':'
   implied set_more ',' '}'
   extra comment
+  # The lexer's errors: no rule takes them, as the lean lexer fails at a byte no token takes.
+  untaken bad
 }

@@ -219,7 +219,7 @@ pub mod f {
 /// The records' kinds (a code's low byte), by their tokens' names.
 #[allow(dead_code)]
 pub mod t {
-    pub const PUNCT: u32 = 0;
+    pub const BAD: u32 = 0;
     pub const TYPE_CONVERSION: u32 = 1;
     pub const SPEC_TEXT: u32 = 2;
     pub const INTERP_END: u32 = 3;
@@ -343,57 +343,6 @@ const AUG_OP: [u16; 91] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 /// The word of a piece of record kind `kind`, its bytes `b`: its kind's keywords'.
 fn word_in(kind: u32, b: &[u8]) -> u32 {
     match kind {
-        0 => match b {
-            b"\x28" => w::LPAREN_9,
-            b"\x29" => w::RPAREN_6,
-            b"\x5b" => w::LBRACK_64,
-            b"\x5d" => w::RBRACK_7,
-            b"\x7b" => w::LBRACE_77,
-            b"\x7d" => w::RBRACE_8,
-            b"\x2c" => w::COMMA_5,
-            b"\x3a" => w::COLON_12,
-            b"\x3b" => w::SEMI_11,
-            b"\x2e" => w::DOT_10,
-            b"\x3d" => w::EQ_13,
-            b"\x2b" => w::PLUS_18,
-            b"\x2d" => w::MINUS_17,
-            b"\x2a" => w::STAR_14,
-            b"\x2f" => w::SLASH_16,
-            b"\x25" => w::PERCENT_20,
-            b"\x26" => w::AMP_21,
-            b"\x7c" => w::BAR_22,
-            b"\x5e" => w::CARET_23,
-            b"\x7e" => w::TILDE_19,
-            b"\x3c" => w::LT_28,
-            b"\x3e" => w::GT_29,
-            b"\x40" => w::AT_27,
-            b"\x21" => w::BANG_90,
-            b"\x2a\x2a" => w::STAR_STAR_15,
-            b"\x2f\x2f" => w::SLASH_SLASH_26,
-            b"\x3d\x3d" => w::EQ_EQ_32,
-            b"\x21\x3d" => w::BANG_EQ_33,
-            b"\x3c\x3d" => w::LT_EQ_30,
-            b"\x3e\x3d" => w::GT_EQ_31,
-            b"\x3c\x3c" => w::LT_LT_24,
-            b"\x3e\x3e" => w::GT_GT_25,
-            b"\x2d\x3e" => w::MINUS_GT_78,
-            b"\x2b\x3d" => w::PLUS_EQ_40,
-            b"\x2d\x3d" => w::MINUS_EQ_41,
-            b"\x2a\x3d" => w::STAR_EQ_42,
-            b"\x2f\x3d" => w::SLASH_EQ_43,
-            b"\x25\x3d" => w::PERCENT_EQ_46,
-            b"\x26\x3d" => w::AMP_EQ_50,
-            b"\x7c\x3d" => w::BAR_EQ_52,
-            b"\x5e\x3d" => w::CARET_EQ_51,
-            b"\x40\x3d" => w::AT_EQ_44,
-            b"\x3a\x3d" => w::COLON_EQ_65,
-            b"\x3c\x3e" => w::LT_GT_34,
-            b"\x2a\x2a\x3d" => w::STAR_STAR_EQ_47,
-            b"\x2f\x2f\x3d" => w::SLASH_SLASH_EQ_45,
-            b"\x3c\x3c\x3d" => w::LT_LT_EQ_49,
-            b"\x3e\x3e\x3d" => w::GT_GT_EQ_48,
-            _ => 0,
-        },
         17 => match b {
             b"False" => w::FALSE_76,
             b"None" => w::NONE_74,
