@@ -312,17 +312,9 @@ static HI_1: [u8; 16] = [0x20, 0x00, 0x05, 0x00, 0x40, 0x8a, 0x40, 0x8a, 0x10, 0
 static LO_2: [u8; 16] = [0x00, 0x20, 0x43, 0x40, 0x08, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x80, 0x10, 0x80, 0x10, 0x00];
 static HI_2: [u8; 16] = [0x00, 0x00, 0x80, 0x10, 0x06, 0x09, 0x26, 0x49, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
-/// The classes' nibble tables, pair 3 (simdjson's `classify`): a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
-static LO_3: [u8; 16] = [0x20, 0x68, 0x7a, 0x60, 0x70, 0x60, 0x78, 0x22, 0xa0, 0x20, 0x01, 0x00, 0x04, 0x00, 0x08, 0x00];
-static HI_3: [u8; 16] = [0x01, 0x00, 0x02, 0x20, 0x40, 0x84, 0x48, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-
 /// The classes' nibble tables, pair 4 (simdjson's `classify`): a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
 static LO_4: [u8; 16] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x04];
 static HI_4: [u8; 16] = [0x00, 0x00, 0x00, 0x00, 0x0d, 0x02, 0x0c, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-
-/// The classes' nibble tables, pair 5 (simdjson's `classify`): a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
-static LO_5: [u8; 16] = [0x04, 0x01, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x01, 0x01, 0x03, 0x1b, 0x13, 0x1b, 0x1b, 0x01];
-static HI_5: [u8; 16] = [0x00, 0x00, 0x01, 0x02, 0x04, 0x08, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
 /// The token's first byte's group (`dispatch`), as simdjson's `classify`: a byte's bit `r` is set in both where it is of product `r`'s high and low nibbles; each product is one group's.
 static DISPATCH_LO: [u32; 16] = [0x188123, 0x1d0043, 0x610803, 0x1d1003, 0x450007, 0x450043, 0x390043, 0x1d2003, 0x1d0043, 0x1d0042, 0x1e0042, 0x406c3, 0x404d2, 0x8402c2, 0x44683, 0xc004b];
@@ -379,38 +371,24 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
         let cur = unsafe { block_classes(src, n, base) };
         let lv = valid(n, base as isize);
         let k_m_lf = cur[0];
-        let k_t100 = ((cur[1] & (!(((cur[2] & (cur[2] >> 1 | u64::from(base + 64 < n && (src[base + 64] == b'.')) << 63)) & (cur[2] >> 2 | u64::from(base + 64 < n && (src[base + 64] == b'.')) << 62 | u64::from(base + 65 < n && (src[base + 65] == b'.')) << 63)) & (!(cur[2] << 1 | u64::from(base >= 1 && (src[base - 1] == b'.'))) & lv)) & lv)) & (!(cur[3] & (!(cur[4] >> 1 | u64::from(base + 64 < n && (src[base + 64] == b'=')) << 63) & lv)) & lv));
-        let k_t104 = (!(((cur[5] << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U'))) & (!(cur[6] << 2 | u64::from(base >= 2 && matches!(src[base - 2], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) | u64::from(base >= 1 && matches!(src[base - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) << 1) & valid(n, base as isize - 1))) & (cur[7] | cur[8])) & lv);
-        let k_t105 = (!((((cur[5] << 2 | u64::from(base >= 2 && matches!(src[base - 2], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) | u64::from(base >= 1 && matches!(src[base - 1], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 1) & (!(cur[6] << 3 | u64::from(base >= 3 && matches!(src[base - 3], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) | u64::from(base >= 2 && matches!(src[base - 2], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) << 2) & valid(n, base as isize - 2))) & (cur[5] << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')))) & (cur[7] | cur[8])) & lv);
-        let k_t98 = ((cur[2] & (cur[9] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'0'..=b'9')) << 63)) & (!(cur[6] << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))) & lv));
-        let k_t102 = (((cur[2] & (cur[2] >> 1 | u64::from(base + 64 < n && (src[base + 64] == b'.')) << 63)) & (cur[2] >> 2 | u64::from(base + 64 < n && (src[base + 64] == b'.')) << 62 | u64::from(base + 65 < n && (src[base + 65] == b'.')) << 63)) & (!(cur[2] << 1 | u64::from(base >= 1 && (src[base - 1] == b'.'))) & lv));
-        let k_t96 = ((cur[10] & (((cur[11] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'x' | b'X')) << 63) | (cur[12] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'o' | b'O')) << 63)) | (cur[13] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'b' | b'B')) << 63))) & (!(cur[2] << 1 | u64::from(base >= 1 && (src[base - 1] == b'.'))) & lv));
-        let k_t97 = ((cur[9] & (!(cur[2] << 1 | u64::from(base >= 1 && (src[base - 1] == b'.'))) & lv)) & (!(cur[10] & (((cur[11] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'x' | b'X')) << 63) | (cur[12] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'o' | b'O')) << 63)) | (cur[13] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'b' | b'B')) << 63))) & lv));
-        let k_t95 = ((cur[14] & (!((cur[5] & (!(cur[6] << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))) & lv)) & ((cur[7] >> 1 | u64::from(base + 64 < n && (src[base + 64] == b'\'')) << 63) | (cur[8] >> 1 | u64::from(base + 64 < n && (src[base + 64] == b'"')) << 63))) & lv)) & (!(((cur[5] & (!(cur[6] << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))) & lv)) & (cur[5] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 63)) & ((cur[7] >> 2 | u64::from(base + 64 < n && (src[base + 64] == b'\'')) << 62 | u64::from(base + 65 < n && (src[base + 65] == b'\'')) << 63) | (cur[8] >> 2 | u64::from(base + 64 < n && (src[base + 64] == b'"')) << 62 | u64::from(base + 65 < n && (src[base + 65] == b'"')) << 63))) & lv));
-        let k_t103 = (((cur[5] & (!(cur[6] << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))) & lv)) & ((cur[7] >> 1 | u64::from(base + 64 < n && (src[base + 64] == b'\'')) << 63) | (cur[8] >> 1 | u64::from(base + 64 < n && (src[base + 64] == b'"')) << 63))) | (((cur[5] & (!(cur[6] << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))) & lv)) & (cur[5] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 63)) & ((cur[7] >> 2 | u64::from(base + 64 < n && (src[base + 64] == b'\'')) << 62 | u64::from(base + 65 < n && (src[base + 65] == b'\'')) << 63) | (cur[8] >> 2 | u64::from(base + 64 < n && (src[base + 64] == b'"')) << 62 | u64::from(base + 65 < n && (src[base + 65] == b'"')) << 63))));
-        let k_m_word = cur[6];
-        let k_t71 = ((((cur[5] & (!(cur[6] << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))) & lv)) & (cur[5] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 63)) & (cur[5] >> 2 | u64::from(base + 64 < n && matches!(src[base + 64], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 62 | u64::from(base + 65 < n && matches!(src[base + 65], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 63)) & ((cur[15] >> 3 | u64::from(base + 64 < n && matches!(src[base + 64], b'\'' | b'"')) << 61 | u64::from(base + 65 < n && matches!(src[base + 65], b'\'' | b'"')) << 62 | u64::from(base + 66 < n && matches!(src[base + 66], b'\'' | b'"')) << 63) | ((cur[5] >> 3 | u64::from(base + 64 < n && matches!(src[base + 64], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 61 | u64::from(base + 65 < n && matches!(src[base + 65], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 62 | u64::from(base + 66 < n && matches!(src[base + 66], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 63) & (cur[15] >> 4 | u64::from(base + 64 < n && matches!(src[base + 64], b'\'' | b'"')) << 60 | u64::from(base + 65 < n && matches!(src[base + 65], b'\'' | b'"')) << 61 | u64::from(base + 66 < n && matches!(src[base + 66], b'\'' | b'"')) << 62 | u64::from(base + 67 < n && matches!(src[base + 67], b'\'' | b'"')) << 63))));
-        let k_m_num_run = ((cur[6] | cur[2]) | ((cur[16] & (cur[17] << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'e' | b'E')))) & (cur[9] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'0'..=b'9')) << 63)));
-        let k_t99 = (cur[2] | cur[17]);
-        let k_t80 = ((cur[18] | 0u64) | cur[19]);
-        let k_t94 = (cur[18] | cur[19]);
+        let k_m_word = cur[1];
+        let k_m_num_run = ((cur[1] | cur[2]) | ((cur[3] & (cur[4] << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'e' | b'E')))) & (cur[5] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'0'..=b'9')) << 63)));
+        let k_t99 = (cur[2] | cur[4]);
+        let k_t71 = ((((cur[6] & (!(cur[1] << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))) & lv)) & (cur[6] >> 1 | u64::from(base + 64 < n && matches!(src[base + 64], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 63)) & (cur[6] >> 2 | u64::from(base + 64 < n && matches!(src[base + 64], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 62 | u64::from(base + 65 < n && matches!(src[base + 65], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 63)) & ((cur[7] >> 3 | u64::from(base + 64 < n && matches!(src[base + 64], b'\'' | b'"')) << 61 | u64::from(base + 65 < n && matches!(src[base + 65], b'\'' | b'"')) << 62 | u64::from(base + 66 < n && matches!(src[base + 66], b'\'' | b'"')) << 63) | ((cur[6] >> 3 | u64::from(base + 64 < n && matches!(src[base + 64], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 61 | u64::from(base + 65 < n && matches!(src[base + 65], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 62 | u64::from(base + 66 < n && matches!(src[base + 66], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) << 63) & (cur[7] >> 4 | u64::from(base + 64 < n && matches!(src[base + 64], b'\'' | b'"')) << 60 | u64::from(base + 65 < n && matches!(src[base + 65], b'\'' | b'"')) << 61 | u64::from(base + 66 < n && matches!(src[base + 66], b'\'' | b'"')) << 62 | u64::from(base + 67 < n && matches!(src[base + 67], b'\'' | b'"')) << 63))));
+        let k_t80 = ((cur[8] | 0u64) | cur[9]);
+        let k_t94 = (cur[8] | cur[9]);
         let k_m_dot = cur[2];
-        let k_t90 = (((cur[4] << 1 | u64::from(base >= 1 && (src[base - 1] == b'='))) & (!(((cur[4] << 2 | u64::from(base >= 2 && (src[base - 2] == b'=')) | u64::from(base >= 1 && (src[base - 1] == b'=')) << 1) | (cur[3] << 2 | u64::from(base >= 2 && (src[base - 2] == b'!')) | u64::from(base >= 1 && (src[base - 1] == b'!')) << 1)) | (cur[20] << 2 | u64::from(base >= 2 && matches!(src[base - 2], b'<' | b'>')) | u64::from(base >= 1 && matches!(src[base - 1], b'<' | b'>')) << 1)) & valid(n, base as isize - 1))) | ((cur[21] << 1 | u64::from(base >= 1 && matches!(src[base - 1], b' ' | 0x09 | 0x0c | 0x0d))) & ((cur[4] << 2 | u64::from(base >= 2 && (src[base - 2] == b'=')) | u64::from(base >= 1 && (src[base - 1] == b'=')) << 1) & (!(((cur[4] << 3 | u64::from(base >= 3 && (src[base - 3] == b'=')) | u64::from(base >= 2 && (src[base - 2] == b'=')) << 1 | u64::from(base >= 1 && (src[base - 1] == b'=')) << 2) | (cur[3] << 3 | u64::from(base >= 3 && (src[base - 3] == b'!')) | u64::from(base >= 2 && (src[base - 2] == b'!')) << 1 | u64::from(base >= 1 && (src[base - 1] == b'!')) << 2)) | (cur[20] << 3 | u64::from(base >= 3 && matches!(src[base - 3], b'<' | b'>')) | u64::from(base >= 2 && matches!(src[base - 2], b'<' | b'>')) << 1 | u64::from(base >= 1 && matches!(src[base - 1], b'<' | b'>')) << 2)) & valid(n, base as isize - 2)))));
-        let k_m_hash = cur[22];
-        let k_t93 = ((((cur[7] | cur[8]) | cur[23]) | cur[24]) | cur[25]);
-        let k_t92 = ((cur[7] | cur[8]) | cur[23]);
-        let k_m_lbrace = cur[24];
-        let k_m_rbrace = cur[25];
+        let k_m_hash = cur[10];
+        let k_t93 = ((((cur[11] | cur[12]) | cur[13]) | cur[14]) | cur[15]);
+        let k_t92 = ((cur[11] | cur[12]) | cur[13]);
+        let k_m_lbrace = cur[14];
+        let k_m_rbrace = cur[15];
         let k_t81 = (!(!0u64 & valid(n, base as isize + 1)) & lv);
-        let k_m_cr = cur[26];
-        let k_t28 = (cur[25] >> 1 | u64::from(base + 64 < n && (src[base + 64] == b'}')) << 63);
-        let k_t89 = (cur[24] | cur[0]);
-        let k_m_bslash = cur[23];
-        let k_m_ws = cur[27];
-        let k_t72_a = cur[28];
-        let k_t76 = (cur[28] & (!(!0u64 & valid(n, base as isize - 1)) & lv));
-        let k_m_colon = cur[29];
-        let k_m_bang = cur[3];
+        let k_m_cr = cur[16];
+        let k_t89 = (cur[14] | cur[0]);
+        let k_m_ws = cur[17];
+        let k_t72_a = cur[18];
+        let k_t76 = (cur[18] & (!(!0u64 & valid(n, base as isize - 1)) & lv));
         let mut firsts = !k_m_ws & (!0u64 << at.saturating_sub(base));
         while firsts != 0 {
         let s = base + firsts.trailing_zeros() as usize;
@@ -431,11 +409,11 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
         }
         // A template open at its level 0 (the lean lexer's `interpolation`, at its count 0): its `rbrace`, its spec, its conversion are the string reader's.
         let rd_pick = if rd_on && rd_level == 0 {
-            if (k_m_rbrace >> (s - base) & 1 == 1) {
+            if ((src[s] == b'}')) {
                 7
-            } else if (k_m_colon >> (s - base) & 1 == 1) {
+            } else if ((src[s] == b':')) {
                 8
-            } else if (k_m_bang >> (s - base) & 1 == 1) && ((s + 1 < n && matches!(src[s + 1], b'r' | b's' | b'a'))) && (((s + 2 < n && (src[s + 2] == b'}'))) || ((s + 2 < n && (src[s + 2] == b':')))) {
+            } else if ((src[s] == b'!')) && ((s + 1 < n && matches!(src[s + 1], b'r' | b's' | b'a'))) && (((s + 2 < n && (src[s + 2] == b'}'))) || ((s + 2 < n && (src[s + 2] == b':')))) {
                 9
             } else {
                 usize::MAX
@@ -450,13 +428,13 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                 // `\x00\x01\x02\x03\x04\x05\x06\x07\x08\x0b\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f$?\`\x7f`
                 0 | 1 | 2 | 3 | 4 | 5 => 10,
                 // `!%&()*+,-/;<=>@[]^{|~`
-                6 | 7 | 8 | 9 | 10 => if (k_t100 >> (s - base) & 1 == 1) {
+                6 | 7 | 8 | 9 | 10 => if (((matches!(src[s], b'(' | b')' | b'[' | b']' | b'{' | b'}' | b',' | b':' | b';' | b'.' | b'=' | b'+' | b'-' | b'*' | b'/' | b'%' | b'&' | b'|' | b'^' | b'~' | b'<' | b'>' | b'@' | b'!') && !((((src[s] == b'.') && (s + 1 < n && (src[s + 1] == b'.'))) && (s + 2 < n && (src[s + 2] == b'.'))) && !(s >= 1 && (s - 1 < n && (src[s - 1] == b'.'))))) && !((src[s] == b'!') && !(s + 1 < n && (src[s + 1] == b'='))))) {
                     3
                 } else {
                     usize::MAX
                 },
                 // `"`
-                11 => if ((k_t104 >> (s - base) & 1 == 1) && (k_t105 >> (s - base) & 1 == 1)) {
+                11 => if ((!(s >= 1 && (((s - 1 < n && matches!(src[s - 1], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) && ((s - 1) < n && !((s - 1) >= 1 && (((s - 1) - 1) < n && matches!(src[((s - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))))) && ((((s - 1) + 1) < n && (src[((s - 1) + 1)] == b'\'')) || (((s - 1) + 1) < n && (src[((s - 1) + 1)] == b'"')))))) && (!(s >= 2 && ((((s - 2 < n && matches!(src[s - 2], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) && ((s - 2) < n && !((s - 2) >= 1 && (((s - 2) - 1) < n && matches!(src[((s - 2) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))))) && (((s - 2) + 1) < n && matches!(src[((s - 2) + 1)], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U'))) && ((((s - 2) + 2) < n && (src[((s - 2) + 2)] == b'\'')) || (((s - 2) + 2) < n && (src[((s - 2) + 2)] == b'"'))))))) {
                     6
                 } else {
                     usize::MAX
@@ -464,57 +442,57 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                 // `#`
                 12 => 5,
                 // `'`
-                13 => if ((k_t104 >> (s - base) & 1 == 1) && (k_t105 >> (s - base) & 1 == 1)) {
+                13 => if ((!(s >= 1 && (((s - 1 < n && matches!(src[s - 1], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) && ((s - 1) < n && !((s - 1) >= 1 && (((s - 1) - 1) < n && matches!(src[((s - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))))) && ((((s - 1) + 1) < n && (src[((s - 1) + 1)] == b'\'')) || (((s - 1) + 1) < n && (src[((s - 1) + 1)] == b'"')))))) && (!(s >= 2 && ((((s - 2 < n && matches!(src[s - 2], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) && ((s - 2) < n && !((s - 2) >= 1 && (((s - 2) - 1) < n && matches!(src[((s - 2) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))))) && (((s - 2) + 1) < n && matches!(src[((s - 2) + 1)], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U'))) && ((((s - 2) + 2) < n && (src[((s - 2) + 2)] == b'\'')) || (((s - 2) + 2) < n && (src[((s - 2) + 2)] == b'"'))))))) {
                     6
                 } else {
                     usize::MAX
                 },
                 // `.`
-                14 => if (k_t98 >> (s - base) & 1 == 1) {
+                14 => if ((((src[s] == b'.') && (s + 1 < n && matches!(src[s + 1], b'0'..=b'9'))) && !(s >= 1 && (s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_'))))) {
                     2
-                } else if (k_t100 >> (s - base) & 1 == 1) {
+                } else if (((matches!(src[s], b'(' | b')' | b'[' | b']' | b'{' | b'}' | b',' | b':' | b';' | b'.' | b'=' | b'+' | b'-' | b'*' | b'/' | b'%' | b'&' | b'|' | b'^' | b'~' | b'<' | b'>' | b'@' | b'!') && !((((src[s] == b'.') && (s + 1 < n && (src[s + 1] == b'.'))) && (s + 2 < n && (src[s + 2] == b'.'))) && !(s >= 1 && (s - 1 < n && (src[s - 1] == b'.'))))) && !((src[s] == b'!') && !(s + 1 < n && (src[s + 1] == b'='))))) {
                     3
-                } else if (k_t102 >> (s - base) & 1 == 1) {
+                } else if (((((src[s] == b'.') && (s + 1 < n && (src[s + 1] == b'.'))) && (s + 2 < n && (src[s + 2] == b'.'))) && !(s >= 1 && (s - 1 < n && (src[s - 1] == b'.'))))) {
                     4
                 } else {
                     usize::MAX
                 },
                 // `0`
-                15 => if (k_t96 >> (s - base) & 1 == 1) {
+                15 => if ((((src[s] == b'0') && (((s + 1 < n && matches!(src[s + 1], b'x' | b'X')) || (s + 1 < n && matches!(src[s + 1], b'o' | b'O'))) || (s + 1 < n && matches!(src[s + 1], b'b' | b'B')))) && !(s >= 1 && (s - 1 < n && (src[s - 1] == b'.'))))) {
                     1
-                } else if (k_t97 >> (s - base) & 1 == 1) {
+                } else if (((matches!(src[s], b'0'..=b'9') && !(s >= 1 && (s - 1 < n && (src[s - 1] == b'.')))) && !((src[s] == b'0') && (((s + 1 < n && matches!(src[s + 1], b'x' | b'X')) || (s + 1 < n && matches!(src[s + 1], b'o' | b'O'))) || (s + 1 < n && matches!(src[s + 1], b'b' | b'B')))))) {
                     2
                 } else {
                     usize::MAX
                 },
                 // `123456789`
-                16 => if (k_t97 >> (s - base) & 1 == 1) {
+                16 => if (((matches!(src[s], b'0'..=b'9') && !(s >= 1 && (s - 1 < n && (src[s - 1] == b'.')))) && !((src[s] == b'0') && (((s + 1 < n && matches!(src[s + 1], b'x' | b'X')) || (s + 1 < n && matches!(src[s + 1], b'o' | b'O'))) || (s + 1 < n && matches!(src[s + 1], b'b' | b'B')))))) {
                     2
                 } else {
                     usize::MAX
                 },
                 // `:`
-                17 => if (k_t100 >> (s - base) & 1 == 1) {
+                17 => if (((matches!(src[s], b'(' | b')' | b'[' | b']' | b'{' | b'}' | b',' | b':' | b';' | b'.' | b'=' | b'+' | b'-' | b'*' | b'/' | b'%' | b'&' | b'|' | b'^' | b'~' | b'<' | b'>' | b'@' | b'!') && !((((src[s] == b'.') && (s + 1 < n && (src[s + 1] == b'.'))) && (s + 2 < n && (src[s + 2] == b'.'))) && !(s >= 1 && (s - 1 < n && (src[s - 1] == b'.'))))) && !((src[s] == b'!') && !(s + 1 < n && (src[s + 1] == b'='))))) {
                     3
                 } else {
                     usize::MAX
                 },
                 // `ACDEGHIJKLMNOPQSVWXYZ_acdeghijklmnopqsvwxyz`
-                18 | 19 | 20 => if (k_t95 >> (s - base) & 1 == 1) {
+                18 | 19 | 20 => if (((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'_') && !((matches!(src[s], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U') && !(s >= 1 && (s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')))) && ((s + 1 < n && (src[s + 1] == b'\'')) || (s + 1 < n && (src[s + 1] == b'"'))))) && !(((matches!(src[s], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U') && !(s >= 1 && (s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')))) && (s + 1 < n && matches!(src[s + 1], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U'))) && ((s + 2 < n && (src[s + 2] == b'\'')) || (s + 2 < n && (src[s + 2] == b'"')))))) {
                     0
                 } else {
                     usize::MAX
                 },
                 // `BFRTUbfrtu`
-                21 | 22 => if (k_t95 >> (s - base) & 1 == 1) {
+                21 | 22 => if (((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'_') && !((matches!(src[s], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U') && !(s >= 1 && (s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')))) && ((s + 1 < n && (src[s + 1] == b'\'')) || (s + 1 < n && (src[s + 1] == b'"'))))) && !(((matches!(src[s], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U') && !(s >= 1 && (s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')))) && (s + 1 < n && matches!(src[s + 1], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U'))) && ((s + 2 < n && (src[s + 2] == b'\'')) || (s + 2 < n && (src[s + 2] == b'"')))))) {
                     0
-                } else if (k_t103 >> (s - base) & 1 == 1) {
+                } else if ((((matches!(src[s], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U') && !(s >= 1 && (s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')))) && ((s + 1 < n && (src[s + 1] == b'\'')) || (s + 1 < n && (src[s + 1] == b'"')))) || (((matches!(src[s], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U') && !(s >= 1 && (s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')))) && (s + 1 < n && matches!(src[s + 1], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U'))) && ((s + 2 < n && (src[s + 2] == b'\'')) || (s + 2 < n && (src[s + 2] == b'"')))))) {
                     6
                 } else {
                     usize::MAX
                 },
                 // `}`
-                23 => if (k_t100 >> (s - base) & 1 == 1) {
+                23 => if (((matches!(src[s], b'(' | b')' | b'[' | b']' | b'{' | b'}' | b',' | b':' | b';' | b'.' | b'=' | b'+' | b'-' | b'*' | b'/' | b'%' | b'&' | b'|' | b'^' | b'~' | b'<' | b'>' | b'@' | b'!') && !((((src[s] == b'.') && (s + 1 < n && (src[s + 1] == b'.'))) && (s + 2 < n && (src[s + 2] == b'.'))) && !(s >= 1 && (s - 1 < n && (src[s - 1] == b'.'))))) && !((src[s] == b'!') && !(s + 1 < n && (src[s + 1] == b'='))))) {
                     3
                 } else {
                     usize::MAX
@@ -527,7 +505,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                     let l = brun_last(n, base, k_m_word, s, |p: isize, esc: &mut u64| unsafe { w_m_word(src, n, p, esc) });
                     let l = l.max(s);
                     // a string prefix of three letters or more
-                    if (k_t71 >> (s - base) & 1 == 1) {
+                    if (((((matches!(src[s], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U') && !(s >= 1 && (s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')))) && (s + 1 < n && matches!(src[s + 1], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U'))) && (s + 2 < n && matches!(src[s + 2], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U'))) && ((s + 3 < n && matches!(src[s + 3], b'\'' | b'"')) || ((s + 3 < n && matches!(src[s + 3], b'r' | b'R' | b'b' | b'B' | b'f' | b'F' | b't' | b'T' | b'u' | b'U')) && (s + 4 < n && matches!(src[s + 4], b'\'' | b'"')))))) {
                         refused = true;
                         break 'tokens;
                     }
@@ -855,7 +833,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                         more = 0;
                         // Its `}`, then the string's text as the template's string reads it.
                         let (qi, fl, seg, o1) = (rd_q, rd_fl, s, s + 1);
-                        if (k_t90 >> (s - base) & 1 == 1) {
+                        if (((s >= 1 && ((s - 1 < n && (src[s - 1] == b'=')) && ((s - 1) < n && !((s - 1) >= 1 && (((((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'=')) || (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'!'))) || (((s - 1) - 1) < n && matches!(src[((s - 1) - 1)], b'<' | b'>'))))))) || ((s >= 1 && (s - 1 < n && matches!(src[s - 1], b' ' | 0x09 | 0x0c | 0x0d))) && (s >= 2 && ((s - 2 < n && (src[s - 2] == b'=')) && ((s - 2) < n && !((s - 2) >= 1 && (((((s - 2) - 1) < n && (src[((s - 2) - 1)] == b'=')) || (((s - 2) - 1) < n && (src[((s - 2) - 1)] == b'!'))) || (((s - 2) - 1) < n && matches!(src[((s - 2) - 1)], b'<' | b'>')))))))))) {
                             // an interpolation's `=`
                             refused = true;
                             break 'tokens;
@@ -1054,7 +1032,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                     // `spec_text`: `colon`, a format spec, at its template's level 0
                     let l = {
                         more = 0;
-                        if (k_t90 >> (s - base) & 1 == 1) {
+                        if (((s >= 1 && ((s - 1 < n && (src[s - 1] == b'=')) && ((s - 1) < n && !((s - 1) >= 1 && (((((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'=')) || (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'!'))) || (((s - 1) - 1) < n && matches!(src[((s - 1) - 1)], b'<' | b'>'))))))) || ((s >= 1 && (s - 1 < n && matches!(src[s - 1], b' ' | 0x09 | 0x0c | 0x0d))) && (s >= 2 && ((s - 2 < n && (src[s - 2] == b'=')) && ((s - 2) < n && !((s - 2) >= 1 && (((((s - 2) - 1) < n && (src[((s - 2) - 1)] == b'=')) || (((s - 2) - 1) < n && (src[((s - 2) - 1)] == b'!'))) || (((s - 2) - 1) < n && matches!(src[((s - 2) - 1)], b'<' | b'>')))))))))) {
                             // an interpolation's `=`
                             refused = true;
                             break 'tokens;
@@ -1069,7 +1047,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                             refused = true;
                             break 'tokens;
                         }
-                        if (k_t28 >> (s - base) & 1 == 1) {
+                        if ((s + 1 < n && (src[s + 1] == b'}'))) {
                             // an empty format spec
                             refused = true;
                             break 'tokens;
@@ -1096,7 +1074,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                     // `type_conversion`: a conversion, at its template's level 0
                     let l = {
                         more = 0;
-                        if (k_t90 >> (s - base) & 1 == 1) {
+                        if (((s >= 1 && ((s - 1 < n && (src[s - 1] == b'=')) && ((s - 1) < n && !((s - 1) >= 1 && (((((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'=')) || (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'!'))) || (((s - 1) - 1) < n && matches!(src[((s - 1) - 1)], b'<' | b'>'))))))) || ((s >= 1 && (s - 1 < n && matches!(src[s - 1], b' ' | 0x09 | 0x0c | 0x0d))) && (s >= 2 && ((s - 2 < n && (src[s - 2] == b'=')) && ((s - 2) < n && !((s - 2) >= 1 && (((((s - 2) - 1) < n && (src[((s - 2) - 1)] == b'=')) || (((s - 2) - 1) < n && (src[((s - 2) - 1)] == b'!'))) || (((s - 2) - 1) < n && matches!(src[((s - 2) - 1)], b'<' | b'>')))))))))) {
                             // an interpolation's `=`
                             refused = true;
                             break 'tokens;
@@ -1117,7 +1095,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                     let l = s;
                     let l = l.max(s);
                     // a backslash
-                    if (k_m_bslash >> (s - base) & 1 == 1) {
+                    if ((src[s] == b'\\')) {
                         refused = true;
                         break 'tokens;
                     }
@@ -1779,10 +1757,10 @@ unsafe fn l_m_hash(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> 
     (live & unsafe { cls_hash(src, n, p) })
 }
 
-/// The classes the block's words read (`lf`, `punct`, `dot`, `bang`, `eq`, `pfx`, `word`, `sq`, `dq`, `digit`, `zero`, `x_any`, `o_any`, `b_any`, `alpha`, `quote`, `sign`, `exp_l`, `opens`, `closes`, `lt_gt`, `blank`, `hash`, `bslash`, `lbrace`, `rbrace`, `cr`, `ws`, `tab_ff`, `colon`), each's bits in the block at `base`, a byte of the file: one load, and one
+/// The classes the block's words read (`lf`, `word`, `dot`, `sign`, `exp_l`, `digit`, `pfx`, `quote`, `opens`, `closes`, `hash`, `sq`, `dq`, `bslash`, `lbrace`, `rbrace`, `cr`, `ws`, `tab_ff`), each's bits in the block at `base`, a byte of the file: one load, and one
 /// classify a pair of nibble tables, as the lean lexer's `Window`. None past the file.
 #[inline(always)]
-unsafe fn block_classes(src: &[u8], n: usize, base: usize) -> [u64; 30] {
+unsafe fn block_classes(src: &[u8], n: usize, base: usize) -> [u64; 19] {
     let block: &[u8; 64] = src[base..base + 64].try_into().expect("the padded source");
     let lv = valid(n, base as isize);
     // The block's load and its tables (safe: `std::simd`'s operations).
@@ -1791,10 +1769,8 @@ unsafe fn block_classes(src: &[u8], n: usize, base: usize) -> [u64; 30] {
         let c0 = s::classify(v, &LO_0, &HI_0);
         let c1 = s::classify(v, &LO_1, &HI_1);
         let c2 = s::classify(v, &LO_2, &HI_2);
-        let c3 = s::classify(v, &LO_3, &HI_3);
         let c4 = s::classify(v, &LO_4, &HI_4);
-        let c5 = s::classify(v, &LO_5, &HI_5);
-        [s::eq_mask(v, 0x0a) & lv, s::to_bitmask(s::test(c5, s::splat(0x1f))) & lv, s::eq_mask(v, 0x2e) & lv, s::eq_mask(v, 0x21) & lv, s::eq_mask(v, 0x3d) & lv, s::to_bitmask(s::test(c1, s::splat(0xc0))) & lv, s::to_bitmask(s::test(c0, s::splat(0x78))) & lv, s::eq_mask(v, 0x27) & lv, s::eq_mask(v, 0x22) & lv, s::to_bitmask(s::test(c0, s::splat(0x08))) & lv, s::eq_mask(v, 0x30) & lv, s::to_bitmask(s::test(c3, s::splat(0x80))) & lv, s::to_bitmask(s::test(c4, s::splat(0x04))) & lv, s::to_bitmask(s::test(c2, s::splat(0x02))) & lv, s::to_bitmask(s::test(c0, s::splat(0x70))) & lv, s::to_bitmask(s::test(c0, s::splat(0x80))) & lv, s::to_bitmask(s::test(c2, s::splat(0x80))) & lv, s::to_bitmask(s::test(c4, s::splat(0x08))) & lv, s::to_bitmask(s::test(c1, s::splat(0x03))) & lv, s::to_bitmask(s::test(c1, s::splat(0x0c))) & lv, s::to_bitmask(s::test(c2, s::splat(0x10))) & lv, s::to_bitmask(s::test(c0, s::splat(0x03))) & lv, s::eq_mask(v, 0x23) & lv, s::eq_mask(v, 0x5c) & lv, s::eq_mask(v, 0x7b) & lv, s::eq_mask(v, 0x7d) & lv, s::eq_mask(v, 0x0d) & lv, s::to_bitmask(s::test(c0, s::splat(0x06))) & lv, s::to_bitmask(s::test(c1, s::splat(0x20))) & lv, s::eq_mask(v, 0x3a) & lv]
+        [s::eq_mask(v, 0x0a) & lv, s::to_bitmask(s::test(c0, s::splat(0x78))) & lv, s::eq_mask(v, 0x2e) & lv, s::to_bitmask(s::test(c2, s::splat(0x80))) & lv, s::to_bitmask(s::test(c4, s::splat(0x08))) & lv, s::to_bitmask(s::test(c0, s::splat(0x08))) & lv, s::to_bitmask(s::test(c1, s::splat(0xc0))) & lv, s::to_bitmask(s::test(c0, s::splat(0x80))) & lv, s::to_bitmask(s::test(c1, s::splat(0x03))) & lv, s::to_bitmask(s::test(c1, s::splat(0x0c))) & lv, s::eq_mask(v, 0x23) & lv, s::eq_mask(v, 0x27) & lv, s::eq_mask(v, 0x22) & lv, s::eq_mask(v, 0x5c) & lv, s::eq_mask(v, 0x7b) & lv, s::eq_mask(v, 0x7d) & lv, s::eq_mask(v, 0x0d) & lv, s::to_bitmask(s::test(c0, s::splat(0x06))) & lv, s::to_bitmask(s::test(c1, s::splat(0x20))) & lv]
     }
 }
 

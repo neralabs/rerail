@@ -1922,12 +1922,15 @@ impl<'a> Bytes<'a> {
             }
             Ok(f)
         };
-        // A token's one-byte test at its start (`first_clear(&M, s, s + 1)`, `bit(&M, s)`): a bit of the block's mask,
-        // as lean's masks of its one `Window`, where the mask reads no escapes.
+        // A token's one-byte test at its start (`first_clear(&M, s, s + 1)`, `bit(&M, s)`): a test of the bytes at its
+        // first byte, as the lean lexer's `token` asks of its first byte where it is (decision 0698); a bit of the
+        // block's mask only where the mask has no test of a byte.
         let one = name == "first_clear" && args.len() == 3 && args[1].trim() == "s" && args[2].trim() == "s + 1";
         if (one || (name == "bit" && args.len() == 2 && args[1].trim() == "s")) && !self.in_region && !self.partial && !self.window_fn(&m)?.1 {
-            let k = self.block_word(&m);
-            let holds = format!("({k} >> (s - base) & 1 == 1)");
+            let holds = match self.at(&self.expr(&m)?, "s", 0) {
+                Ok(t) => format!("({t})"),
+                Err(_) => format!("({} >> (s - base) & 1 == 1)", self.block_word(&m)),
+            };
             return Ok(Some(if one { format!("(!{holds}).then_some(s)") } else { holds }));
         }
         // A read of one byte (`first_clear(&M, a, a + 1)`): a test of the bytes there.

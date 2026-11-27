@@ -599,3 +599,10 @@ statements and blocks end.
 
     Tier 2 asks the token marks the loop no longer records (`trail`, `future`: `UNRECORDED`), as rr's tier 2 does.
     The tests compare the records without those bits, as rr's do.
+
+89. **A token's start is tested at its first byte, not as a mask of its block.** The loop picks a token's row as the
+    lean lexer's `token` does: by its first byte's group, then each row's start tested at that byte, of the bytes
+    there and around it (`bit(&M, s)` read as `M` at `s`). A block's word of `M` stays only where `M` has no test of
+    one byte. In Python's tier 1, the block's masks go from 63 to 19 and its classes from 30 to 19: what is left is
+    what the runs read (a word's, a number's, the dots', a brace run's), the string reader's stops and refusals, the
+    bracket count's search of a token's bytes and the two indentation escapes.
