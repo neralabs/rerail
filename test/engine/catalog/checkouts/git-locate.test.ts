@@ -162,6 +162,24 @@ describe("a read of where a folder's repository is, whose Git gives no answer", 
     }
   });
 
+  it("names the recorded repository in a lookup and the daemon's read of a recorded checkout whose asks failed", async () => {
+    const top = checkout();
+    const database = openRerailDatabase(join(root, `lookup-${made}.sqlite`));
+    try {
+      const recorded = recordCheckout(database, top).repositoryKey;
+      // A process that has placed nothing yet, as `rerail status` or a hook's start check, asks Git where the folder is.
+      vi.resetModules();
+      const registry = await import("../../../../src/engine/catalog/repository-registry.js");
+      next.ending = "never-ran";
+      next.asks = 2;
+      expect(registry.lookupCheckout(database, top)?.repositoryKey).toBe(recorded);
+      expect(registry.createCheckoutResolver(database)(top)?.repositoryKey).toBe(recorded);
+      expect(next.ending).toBeUndefined();
+    } finally {
+      database.$client.close();
+    }
+  });
+
   it("keeps no owner for a checkout whose ask failed: the next lookup asks Git again and finds it", () => {
     const top = checkout();
     const owners = new CheckoutOwners();
