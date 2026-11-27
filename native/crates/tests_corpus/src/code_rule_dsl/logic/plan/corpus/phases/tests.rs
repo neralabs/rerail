@@ -347,6 +347,39 @@ listed(d) :- hit(_, "stubs", d), dir_entry(d, _, _).
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A plain program whose `rerail.env` names a typeshed (`python.typeshed`): the library asks for the lines of its
+    /// `stdlib/VERSIONS`, which is not there, and an empty answer is kept as one, so its reader reads no rows. It was
+    /// not kept, and the reader failed with "no such table: file_line".
+    #[test]
+    fn a_file_that_is_not_there_has_no_lines_in_a_plain_run() {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("plain-missing-lines");
+        let _ = std::fs::remove_dir_all(&dir);
+        let src = dir.join("ws");
+        std::fs::create_dir_all(src.join("stubs/types-gamma/gamma")).unwrap();
+        std::fs::write(src.join("main.py"), "import gamma\n").unwrap();
+        std::fs::write(src.join("rerail.env"), "python.typeshed = stubs\n").unwrap();
+        let program = r#"#include "core.rerail"
+.decl want(q: symbol)
+want(q) :- kind(i, "import_statement"), q = "gamma".
+.decl sd(b: symbol)
+sd("stubs/types-gamma").
+.decl dbg_try(q: symbol, l: symbol, b: symbol, t: symbol)
+dbg_try(q, "stubs", b, q) :- want(q), dir_entry(b, q, 1), sd(b).
+dbg_try(q, "decl", "", q) :- want(q).
+.decl listed(d: symbol)
+listed(d) :- dbg_try(_, _, d, _), dir_entry(d, _, _).
+.output dbg_try
+"#;
+        let out = dir.join("out");
+        crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        crate::code_rule_dsl::logic::plan::corpus::run(program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        assert_eq!(
+            crate::code_rule_dsl::logic::plan::output::shown(&out, "dbg_try").unwrap(),
+            [["gamma", "decl", "", "gamma"], ["gamma", "stubs", "stubs/types-gamma", "gamma"]]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A plain program whose request reads a listing at a folder its files' rows name: `want` is each file's (its
     /// import), `sd` one folder for the run, `dbg_try`'s stubs row joins them with that folder's listing, and `listed`
     /// asks for the listing of each folder a `dbg_try` row names. The request reads `dbg_try`, so every rule of the

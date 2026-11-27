@@ -7937,7 +7937,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                 }
                 // A later program can reuse this producer even when the current cone has no local reader.
                 // Retain its actual answers alongside their observed digest whenever this stratum publishes frames.
-                if f0.is_input(rel) || rows.is_empty() {
+                // An empty answer is kept too: a relation the engine does not hold is read from its table, and an answer
+                // has none (a plain run's `file_line` of a file that is not there failed with "no such table").
+                if f0.is_input(rel) {
                     continue;
                 }
                 if strata_kept.is_none()
